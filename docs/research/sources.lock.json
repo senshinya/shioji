@@ -1,0 +1,191 @@
+{
+  "formatVersion": 1,
+  "capturedAt": "2026-11-03T08:16:05+00:00",
+  "purpose": "Read-only research evidence and dependency candidates, not an application dependency lock or an approved implementation plan.",
+  "repositories": [
+    {
+      "name": "mygo",
+      "repository": "https://github.com/egoist/mygo",
+      "candidateTag": "v0.7.4",
+      "commit": "9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e",
+      "sourceFiles": [
+        {
+          "path": "go.mod",
+          "sha256": "92f788f08ee788fc0e81f4cc0acb203f0723d746ce7a11b8554122375f607336",
+          "url": "https://github.com/egoist/mygo/blob/9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e/go.mod"
+        },
+        {
+          "path": "docs/ui/README.md",
+          "sha256": "6d0490d1bf9e4fffd5b0c96288f178bb07a4df4a51353fdf37e32968277499a4",
+          "url": "https://github.com/egoist/mygo/blob/9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e/docs/ui/README.md"
+        },
+        {
+          "path": "docs/architecture.md",
+          "sha256": "4ae5594e6a0226d0217eb01c59adb938db02f1a47dee8ffefa4570e1659bb106",
+          "url": "https://github.com/egoist/mygo/blob/9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e/docs/architecture.md"
+        },
+        {
+          "path": "docs/native.md",
+          "sha256": "39463061ca8b36989ecd5d88ad056f447e9a372c8e54295347a64389613632be",
+          "url": "https://github.com/egoist/mygo/blob/9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e/docs/native.md"
+        },
+        {
+          "path": "docs/ui/markdown.md",
+          "sha256": "4cdc30a1ab720f149200af8c0945207dccf142812228e856c4b99b61584f5f46",
+          "url": "https://github.com/egoist/mygo/blob/9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e/docs/ui/markdown.md"
+        },
+        {
+          "path": "docs/ui/list.md",
+          "sha256": "c925b05f187e7635c2134d25c83a481daaf43332921705dcacdffae02f5789ff",
+          "url": "https://github.com/egoist/mygo/blob/9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e/docs/ui/list.md"
+        },
+        {
+          "path": "docs/ui/diff-viewer.md",
+          "sha256": "9b79a0d2d825632bed51315eaf1fbd162345792ed853ae86f2ebc3edd89602e7",
+          "url": "https://github.com/egoist/mygo/blob/9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e/docs/ui/diff-viewer.md"
+        },
+        {
+          "path": "docs/ui/text-input.md",
+          "sha256": "21b18b14d2a18b5a02759c63368f29cf653286556795ba173c8bc06a6bf68015",
+          "url": "https://github.com/egoist/mygo/blob/9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e/docs/ui/text-input.md"
+        },
+        {
+          "path": "docs/ui/views.md",
+          "sha256": "ef4d738fb3c50d0c6c79c1b6ef2fc5d5e2b4e206270e919314ea8c1641e6a093",
+          "url": "https://github.com/egoist/mygo/blob/9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e/docs/ui/views.md"
+        },
+        {
+          "path": "docs/ui/performance.md",
+          "sha256": "d305ecd46b2840a23277c291e9044e8a3ff603aec536e87c6ce9e5732187f923",
+          "url": "https://github.com/egoist/mygo/blob/9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e/docs/ui/performance.md"
+        },
+        {
+          "path": "docs/ui/context-menu.md",
+          "sha256": "0f67776fbb7b6553463060f05366b72962f739f7ccad4904e2787a102a324b71",
+          "url": "https://github.com/egoist/mygo/blob/9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e/docs/ui/context-menu.md"
+        },
+        {
+          "path": "docs/ui/popover.md",
+          "sha256": "585711e735a2403ee5ac67a49c1709a05a5b4cce433a48eb31db5b6ffbcfc43f",
+          "url": "https://github.com/egoist/mygo/blob/9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e/docs/ui/popover.md"
+        },
+        {
+          "path": "docs/ui/overlays.md",
+          "sha256": "7ca748d2e16977071540ba734b2ecb3a1cb9ee869a4608d31aa8fe9f5fbfeddc",
+          "url": "https://github.com/egoist/mygo/blob/9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e/docs/ui/overlays.md"
+        },
+        {
+          "path": "docs/ui/accessibility.md",
+          "sha256": "1f643d8ec90ba4a9aa203c2ebde19c56ebd98ba43b6802376699f1f7b71536e0",
+          "url": "https://github.com/egoist/mygo/blob/9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e/docs/ui/accessibility.md"
+        },
+        {
+          "path": "docs/ui/text-input-client.md",
+          "sha256": "997745c2b658715a9e4715e668ad9f7f276cb3c9618b30b188cfaa0532fbec01",
+          "url": "https://github.com/egoist/mygo/blob/9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e/docs/ui/text-input-client.md"
+        },
+        {
+          "path": "docs/ui/scroll.md",
+          "sha256": "6128bbb169842ff1a972bfabeda9d7841ffcd1f0db9f1aaeca675c876c8f846e",
+          "url": "https://github.com/egoist/mygo/blob/9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e/docs/ui/scroll.md"
+        }
+      ],
+      "role": "research source and dependency candidate"
+    },
+    {
+      "name": "herdr-core",
+      "repository": "https://github.com/herdrdev/herdr-core",
+      "candidateTag": "v0.1.17",
+      "commit": "ce87721557176f6cddaac1c7aefbf76929923263",
+      "sourceFiles": [
+        {
+          "path": "crates/herdr-core/Cargo.toml",
+          "sha256": "be37dd5fe3fec79321a8449c54e24a3e70db20b0c8d768f32d912d9a6470432b",
+          "url": "https://github.com/herdrdev/herdr-core/blob/ce87721557176f6cddaac1c7aefbf76929923263/crates/herdr-core/Cargo.toml"
+        },
+        {
+          "path": "schema/hc.openrpc.json",
+          "sha256": "212641d24600052a7051daa75a93f30c9db59df5aa4ea10dce2c8c491a48b882",
+          "url": "https://github.com/herdrdev/herdr-core/blob/ce87721557176f6cddaac1c7aefbf76929923263/schema/hc.openrpc.json"
+        },
+        {
+          "path": "schema/README.md",
+          "sha256": "3a7070863d6ecffa7c4b1628aadf2c788461ce44ba53d96ecb6335bd6a45d8d7",
+          "url": "https://github.com/herdrdev/herdr-core/blob/ce87721557176f6cddaac1c7aefbf76929923263/schema/README.md"
+        },
+        {
+          "path": "docs/machines.md",
+          "sha256": "9ae72f544148800134ba22c355cb445945120271dcee594f9f11e0072eba4ff8",
+          "url": "https://github.com/herdrdev/herdr-core/blob/ce87721557176f6cddaac1c7aefbf76929923263/docs/machines.md"
+        }
+      ],
+      "role": "historical comparison only; not a runtime dependency candidate"
+    },
+    {
+      "name": "tailscale",
+      "repository": "https://github.com/tailscale/tailscale",
+      "candidateTag": "v1.104.0",
+      "commit": "c8125a977e8714ac9f0d1a1fb43c714490d38bd3",
+      "sourceFiles": [
+        {
+          "path": "go.mod",
+          "sha256": "2b33219e6719b71387e0829efbb2e71605ffb4b0aadf5ef66dceb354751c5f33",
+          "url": "https://github.com/tailscale/tailscale/blob/c8125a977e8714ac9f0d1a1fb43c714490d38bd3/go.mod"
+        },
+        {
+          "path": "tsnet/tsnet.go",
+          "sha256": "33cbbdde2afc71fd1ae92dcad811604d81d56b2b23906ce8c1dc06f2bc0bbaf7",
+          "url": "https://github.com/tailscale/tailscale/blob/c8125a977e8714ac9f0d1a1fb43c714490d38bd3/tsnet/tsnet.go"
+        },
+        {
+          "path": "client/local/local.go",
+          "sha256": "a6b80d8b6462a6cede147625773060e1b19cab12cea309642523f6754234bb72",
+          "url": "https://github.com/tailscale/tailscale/blob/c8125a977e8714ac9f0d1a1fb43c714490d38bd3/client/local/local.go"
+        },
+        {
+          "path": "ipn/ipnstate/ipnstate.go",
+          "sha256": "429e7916044729d11b20e20dc47af5ad6c5b4f66437464710ac1d4667d3e787a",
+          "url": "https://github.com/tailscale/tailscale/blob/c8125a977e8714ac9f0d1a1fb43c714490d38bd3/ipn/ipnstate/ipnstate.go"
+        },
+        {
+          "path": "ipn/store.go",
+          "sha256": "1689a5edd09b5ac996492e3bf5dc51c99df339b5fe7ccca6ff1ed057ef91e35d",
+          "url": "https://github.com/tailscale/tailscale/blob/c8125a977e8714ac9f0d1a1fb43c714490d38bd3/ipn/store.go"
+        }
+      ],
+      "role": "research source and dependency candidate"
+    }
+  ],
+  "officialDocs": [
+    {
+      "url": "https://developers.openai.com/codex/app-server/",
+      "fetchedWith": "OpenAI Developer Docs fetch_openai_doc",
+      "role": "Rolling documentation; pinned CLI schema remains authoritative for version-specific fields."
+    },
+    {
+      "url": "https://tailscale.com/docs/features/tsnet",
+      "role": "Official discovery; implementation claims cross-checked against pinned source."
+    }
+  ],
+  "codex": {
+    "version": "0.166.0",
+    "binaryVersionObserved": "codex-cli 0.166.0",
+    "schemaPath": "design/protocol/codex-0.166.0/",
+    "hashes": {
+      "types.schema.json": "f72bb03a3f519cd19b37a030b42453128ff5b88abaad8c1264cf1ca197dbbed0",
+      "requests.schema.json": "3d7bc481f84dc042984a74420e65c5a8d3c423f37a91b7d5df2365c903a12ac6",
+      "notifications.schema.json": "aea3f632e93d846119aa80ac6e9b212b08505a5c56d3874db93ec0bb8ad26dc9"
+    },
+    "reexportMatchesFrozenSnapshot": true,
+    "items": 19,
+    "serverRequests": 11,
+    "notifications": 85
+  },
+  "architectureDecision": {
+    "decidedOn": "2026-11-03",
+    "authority": "explicit user instruction",
+    "runtime": "self-contained Tahuna worker",
+    "herdrCoreRuntimeDependency": false,
+    "status": "approved direction; implementation details and validation remain open"
+  }
+}

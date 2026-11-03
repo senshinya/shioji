@@ -1,0 +1,968 @@
+{
+  "version": "0.166.0",
+  "capturedAt": "2026-11-02",
+  "source": "codex app-server generate-json-schema --experimental",
+  "documentation": "https://learn.chatgpt.com/docs/app-server",
+  "scope": "ThreadItem, its content unions, human/client server requests, notifications, and realtime timeline types. Presence in the default export is not a guarantee of feature enablement or stability.",
+  "hashes": {
+    "types.schema.json": "f72bb03a3f519cd19b37a030b42453128ff5b88abaad8c1264cf1ca197dbbed0",
+    "requests.schema.json": "3d7bc481f84dc042984a74420e65c5a8d3c423f37a91b7d5df2365c903a12ac6",
+    "notifications.schema.json": "aea3f632e93d846119aa80ac6e9b212b08505a5c56d3874db93ec0bb8ad26dc9"
+  },
+  "items": [
+    {
+      "type": "userMessage",
+      "fields": [
+        "clientId",
+        "content",
+        "id",
+        "type"
+      ],
+      "required": [
+        "content",
+        "id",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "hookPrompt",
+      "fields": [
+        "fragments",
+        "id",
+        "type"
+      ],
+      "required": [
+        "fragments",
+        "id",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "agentMessage",
+      "fields": [
+        "delivery",
+        "id",
+        "memoryCitation",
+        "phase",
+        "questions",
+        "text",
+        "type"
+      ],
+      "required": [
+        "id",
+        "text",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "functionCallOutput",
+      "fields": [
+        "id",
+        "name",
+        "namespace",
+        "output",
+        "type"
+      ],
+      "required": [
+        "id",
+        "name",
+        "output",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "plan",
+      "fields": [
+        "id",
+        "text",
+        "type"
+      ],
+      "required": [
+        "id",
+        "text",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "reasoning",
+      "fields": [
+        "content",
+        "id",
+        "summary",
+        "type"
+      ],
+      "required": [
+        "id",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "commandExecution",
+      "fields": [
+        "aggregatedOutput",
+        "command",
+        "commandActions",
+        "cwd",
+        "durationMs",
+        "exitCode",
+        "id",
+        "pluginId",
+        "processId",
+        "scriptPath",
+        "source",
+        "status",
+        "type"
+      ],
+      "required": [
+        "command",
+        "commandActions",
+        "cwd",
+        "id",
+        "status",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "fileChange",
+      "fields": [
+        "changes",
+        "id",
+        "status",
+        "type"
+      ],
+      "required": [
+        "changes",
+        "id",
+        "status",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "mcpToolCall",
+      "fields": [
+        "appContext",
+        "arguments",
+        "durationMs",
+        "error",
+        "id",
+        "mcpAppResourceUri",
+        "mcpAppUi",
+        "pluginId",
+        "readOnlyHint",
+        "result",
+        "server",
+        "status",
+        "tool",
+        "type"
+      ],
+      "required": [
+        "arguments",
+        "id",
+        "server",
+        "status",
+        "tool",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "dynamicToolCall",
+      "fields": [
+        "arguments",
+        "contentItems",
+        "durationMs",
+        "id",
+        "namespace",
+        "status",
+        "success",
+        "tool",
+        "type"
+      ],
+      "required": [
+        "arguments",
+        "id",
+        "status",
+        "tool",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "collabAgentToolCall",
+      "fields": [
+        "agentsStates",
+        "id",
+        "model",
+        "prompt",
+        "reasoningEffort",
+        "receiverThreadIds",
+        "senderThreadId",
+        "status",
+        "tool",
+        "type"
+      ],
+      "required": [
+        "agentsStates",
+        "id",
+        "receiverThreadIds",
+        "senderThreadId",
+        "status",
+        "tool",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "subAgentActivity",
+      "fields": [
+        "agentPath",
+        "agentThreadId",
+        "id",
+        "kind",
+        "model",
+        "reasoningEffort",
+        "type"
+      ],
+      "required": [
+        "agentPath",
+        "agentThreadId",
+        "id",
+        "kind",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "webSearch",
+      "fields": [
+        "action",
+        "id",
+        "query",
+        "results",
+        "type"
+      ],
+      "required": [
+        "id",
+        "query",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "imageView",
+      "fields": [
+        "id",
+        "path",
+        "type"
+      ],
+      "required": [
+        "id",
+        "path",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "sleep",
+      "fields": [
+        "durationMs",
+        "id",
+        "type"
+      ],
+      "required": [
+        "durationMs",
+        "id",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "imageGeneration",
+      "fields": [
+        "failure",
+        "generationId",
+        "id",
+        "inputImages",
+        "revisedPrompt",
+        "savedPath",
+        "status",
+        "transparentBackground",
+        "type"
+      ],
+      "required": [
+        "id",
+        "status",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "enteredReviewMode",
+      "fields": [
+        "id",
+        "review",
+        "type"
+      ],
+      "required": [
+        "id",
+        "review",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "exitedReviewMode",
+      "fields": [
+        "id",
+        "review",
+        "type"
+      ],
+      "required": [
+        "id",
+        "review",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "contextCompaction",
+      "fields": [
+        "id",
+        "type"
+      ],
+      "required": [
+        "id",
+        "type"
+      ],
+      "inDefaultExport": true
+    }
+  ],
+  "inputs": [
+    {
+      "type": "text",
+      "fields": [
+        "text",
+        "text_elements",
+        "type"
+      ],
+      "required": [
+        "text",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "image",
+      "fields": [
+        "detail",
+        "type"
+      ],
+      "required": [
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "localImage",
+      "fields": [
+        "detail",
+        "path",
+        "type"
+      ],
+      "required": [
+        "path",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "audio",
+      "fields": [
+        "type",
+        "url"
+      ],
+      "required": [
+        "type",
+        "url"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "localAudio",
+      "fields": [
+        "path",
+        "type"
+      ],
+      "required": [
+        "path",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "skill",
+      "fields": [
+        "name",
+        "path",
+        "type"
+      ],
+      "required": [
+        "name",
+        "path",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "mention",
+      "fields": [
+        "name",
+        "path",
+        "type"
+      ],
+      "required": [
+        "name",
+        "path",
+        "type"
+      ],
+      "inDefaultExport": true
+    }
+  ],
+  "realtime": [
+    {
+      "type": "realtimeSessionStarted",
+      "fields": [
+        "type"
+      ],
+      "required": [
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "transcriptSegment",
+      "fields": [
+        "role",
+        "text",
+        "type"
+      ],
+      "required": [
+        "role",
+        "text",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "bemItemPromoted",
+      "fields": [
+        "item_id",
+        "presentation",
+        "turn_id",
+        "type"
+      ],
+      "required": [
+        "item_id",
+        "presentation",
+        "turn_id",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "realtimeSessionClosed",
+      "fields": [
+        "outcome",
+        "type"
+      ],
+      "required": [
+        "outcome",
+        "type"
+      ],
+      "inDefaultExport": true
+    }
+  ],
+  "functionOutputs": [
+    {
+      "type": "input_text",
+      "fields": [
+        "text",
+        "type"
+      ],
+      "required": [
+        "text",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "input_image",
+      "fields": [
+        "detail",
+        "type"
+      ],
+      "required": [
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "input_audio",
+      "fields": [
+        "audio_url",
+        "type"
+      ],
+      "required": [
+        "audio_url",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "encrypted_content",
+      "fields": [
+        "encrypted_content",
+        "type"
+      ],
+      "required": [
+        "encrypted_content",
+        "type"
+      ],
+      "inDefaultExport": true
+    }
+  ],
+  "dynamicOutputs": [
+    {
+      "type": "inputText",
+      "fields": [
+        "text",
+        "type"
+      ],
+      "required": [
+        "text",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "inputImage",
+      "fields": [
+        "imageUrl",
+        "type"
+      ],
+      "required": [
+        "imageUrl",
+        "type"
+      ],
+      "inDefaultExport": true
+    },
+    {
+      "type": "inputAudio",
+      "fields": [
+        "audioUrl",
+        "type"
+      ],
+      "required": [
+        "audioUrl",
+        "type"
+      ],
+      "inDefaultExport": true
+    }
+  ],
+  "requests": [
+    {
+      "method": "item/commandExecution/requestApproval",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/fileChange/requestApproval",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/tool/requestUserInput",
+      "inDefaultExport": true
+    },
+    {
+      "method": "mcpServer/elicitation/request",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/permissions/requestApproval",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/tool/call",
+      "inDefaultExport": true
+    },
+    {
+      "method": "account/chatgptAuthTokens/refresh",
+      "inDefaultExport": true
+    },
+    {
+      "method": "attestation/generate",
+      "inDefaultExport": true
+    },
+    {
+      "method": "currentTime/read",
+      "inDefaultExport": false
+    },
+    {
+      "method": "applyPatchApproval",
+      "inDefaultExport": true
+    },
+    {
+      "method": "execCommandApproval",
+      "inDefaultExport": true
+    }
+  ],
+  "notifications": [
+    {
+      "method": "error",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/started",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/status/changed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/readState/changed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/archived",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/deleted",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/unarchived",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/closed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/reverted",
+      "inDefaultExport": true
+    },
+    {
+      "method": "skills/changed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/name/updated",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/attachment/updated",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/goal/updated",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/prediction/updated",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/goal/cleared",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/queue/changed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "project/changed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/project/updated",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/environment/connected",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/environment/disconnected",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/settings/updated",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/tokenUsage/updated",
+      "inDefaultExport": true
+    },
+    {
+      "method": "turn/started",
+      "inDefaultExport": true
+    },
+    {
+      "method": "hook/started",
+      "inDefaultExport": true
+    },
+    {
+      "method": "turn/completed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "hook/completed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "turn/diff/updated",
+      "inDefaultExport": true
+    },
+    {
+      "method": "turn/plan/updated",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/started",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/autoApprovalReview/started",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/autoApprovalReview/completed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "autoApprovalReview/strictReviewRequired",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/completed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/agentMessage/delta",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/plan/delta",
+      "inDefaultExport": true
+    },
+    {
+      "method": "command/exec/outputDelta",
+      "inDefaultExport": true
+    },
+    {
+      "method": "process/outputDelta",
+      "inDefaultExport": true
+    },
+    {
+      "method": "process/exited",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/commandExecution/outputDelta",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/commandExecution/terminalInteraction",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/fileChange/outputDelta",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/fileChange/patchUpdated",
+      "inDefaultExport": true
+    },
+    {
+      "method": "serverRequest/resolved",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/mcpToolCall/progress",
+      "inDefaultExport": true
+    },
+    {
+      "method": "mcpServer/oauthLogin/completed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "mcpServer/startupStatus/updated",
+      "inDefaultExport": true
+    },
+    {
+      "method": "mcpServer/event/stream/notification",
+      "inDefaultExport": true
+    },
+    {
+      "method": "account/updated",
+      "inDefaultExport": true
+    },
+    {
+      "method": "account/gatewayOAuth/changed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "account/rateLimits/updated",
+      "inDefaultExport": true
+    },
+    {
+      "method": "app/list/updated",
+      "inDefaultExport": true
+    },
+    {
+      "method": "remoteControl/status/changed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "externalAgentConfig/import/progress",
+      "inDefaultExport": true
+    },
+    {
+      "method": "externalAgentConfig/import/completed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "fs/changed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/reasoning/summaryTextDelta",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/reasoning/summaryPartAdded",
+      "inDefaultExport": true
+    },
+    {
+      "method": "item/reasoning/textDelta",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/compacted",
+      "inDefaultExport": true
+    },
+    {
+      "method": "model/rerouted",
+      "inDefaultExport": true
+    },
+    {
+      "method": "model/verification",
+      "inDefaultExport": true
+    },
+    {
+      "method": "modelProvider/authRecoveryStarted",
+      "inDefaultExport": true
+    },
+    {
+      "method": "modelProvider/authRecoveryCompleted",
+      "inDefaultExport": true
+    },
+    {
+      "method": "turn/moderationMetadata",
+      "inDefaultExport": true
+    },
+    {
+      "method": "model/safetyBuffering/updated",
+      "inDefaultExport": true
+    },
+    {
+      "method": "warning",
+      "inDefaultExport": true
+    },
+    {
+      "method": "guardianWarning",
+      "inDefaultExport": true
+    },
+    {
+      "method": "deprecationNotice",
+      "inDefaultExport": true
+    },
+    {
+      "method": "configWarning",
+      "inDefaultExport": true
+    },
+    {
+      "method": "fuzzyFileSearch/sessionUpdated",
+      "inDefaultExport": true
+    },
+    {
+      "method": "fuzzyFileSearch/sessionCompleted",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/realtime/started",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/realtime/itemAdded",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/realtime/item/started",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/realtime/item/transcript/delta",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/realtime/item/completed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/realtime/transcript/delta",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/realtime/transcript/done",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/realtime/outputAudio/delta",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/realtime/sdp",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/realtime/error",
+      "inDefaultExport": true
+    },
+    {
+      "method": "thread/realtime/closed",
+      "inDefaultExport": true
+    },
+    {
+      "method": "windows/worldWritableWarning",
+      "inDefaultExport": true
+    },
+    {
+      "method": "windowsSandbox/setupCompleted",
+      "inDefaultExport": true
+    },
+    {
+      "method": "account/login/completed",
+      "inDefaultExport": true
+    }
+  ]
+}

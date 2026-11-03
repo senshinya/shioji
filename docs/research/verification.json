@@ -1,0 +1,106 @@
+{
+  "formatVersion": 1,
+  "recordedAt": "2026-11-03T08:16:05+00:00",
+  "scope": "Research checks only; no Tahuna native UI implementation or real remote execution integration was tested.",
+  "mygo": {
+    "tag": "v0.7.4",
+    "commit": "9bd34e1eb9525d9a1fe698aadc964c49c8ff8e7e",
+    "toolchain": "go1.27.3 darwin/arm64",
+    "command": "go test ./ui ./ui/markdown ./ui/editor -run '^(TestStreamMatchesView|TestSelectionSurvivesStreaming|TestOnTextKeyTakesEnterByModifier|TestOnTextKeyComposer|TestPopoverMenuKeyboard|TestPopoverMenuFlipsAtTheWindowsEdges|TestReviewFollowStreamInvariants|TestDiffViewer|TestCodeDiffIncremental|TestReviewDiffExpansionKept)$' -count=1 -v",
+    "tests": [
+      {
+        "name": "TestPopoverMenuFlipsAtTheWindowsEdges",
+        "result": "pass"
+      },
+      {
+        "name": "TestPopoverMenuKeyboard",
+        "result": "pass"
+      },
+      {
+        "name": "TestOnTextKeyTakesEnterByModifier",
+        "result": "pass"
+      },
+      {
+        "name": "TestOnTextKeyComposer",
+        "result": "pass"
+      },
+      {
+        "name": "TestReviewFollowStreamInvariants",
+        "result": "pass"
+      },
+      {
+        "name": "TestStreamMatchesView",
+        "result": "pass"
+      },
+      {
+        "name": "TestSelectionSurvivesStreaming",
+        "result": "pass"
+      },
+      {
+        "name": "TestReviewDiffExpansionKept",
+        "result": "pass"
+      },
+      {
+        "name": "TestCodeDiffIncremental",
+        "result": "pass"
+      },
+      {
+        "name": "TestDiffViewer",
+        "result": "pass"
+      }
+    ],
+    "packages": [
+      {
+        "package": "github.com/egoist/mygo/ui",
+        "result": "pass",
+        "durationSeconds": 0.546
+      },
+      {
+        "package": "github.com/egoist/mygo/ui/markdown",
+        "result": "pass",
+        "durationSeconds": 0.377
+      },
+      {
+        "package": "github.com/egoist/mygo/ui/editor",
+        "result": "pass",
+        "durationSeconds": 0.385
+      }
+    ],
+    "executionMode": "upstream headless tests in a temporary source checkout"
+  },
+  "codex": {
+    "version": "0.166.0",
+    "transport": "stdio://",
+    "initialize": "pass",
+    "initializedThenLoadedThreadList": "pass",
+    "wireJsonrpcHeaderPresent": false,
+    "duplicateInitialize": {
+      "code": -32600,
+      "message": "Already initialized"
+    },
+    "createdThread": false,
+    "startedTurn": false,
+    "modelInvocation": false,
+    "schemaReexport": {
+      "command": "python3 scripts/export-codex-component-schema.py --out /tmp/tahuna-codex-schema-research-20261103",
+      "types": 19,
+      "serverRequests": 11,
+      "notifications": 85,
+      "allThreeSchemaHashesMatch": true
+    }
+  },
+  "design": {
+    "manifest": "docs/design-freeze-2026-11-03.json",
+    "fileCount": 1143,
+    "verifier": "python3 scripts/verify-design-freeze.py"
+  },
+  "notVerified": [
+    "Tahuna real native window, Chinese IME and VoiceOver",
+    "Real model turns and concurrent harness sessions",
+    "SSH host verification, remote readiness and disconnection recovery",
+    "Real pending approval and question recovery",
+    "Embedded tailnet login, connectivity and measured peer paths",
+    "Worker deployment, crash consistency and event journal",
+    "Signed app bundle, package size, process memory and CPU"
+  ]
+}

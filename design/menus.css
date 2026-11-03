@@ -1,0 +1,25 @@
+/* Desktop menus share the same compact rhythm as the rest of the app. */
+:root{--menu-row-height:26px;--menu-inset:3px;--menu-radius:7px}
+.context-menu>summary:focus-visible{outline:1px solid var(--muted);outline-offset:2px}
+:is(.workspace-popover,.delivery-popover,.add-device-options,.connection-actions) button:focus-visible{outline:1px solid var(--muted);outline-offset:-1px}
+:is(.workspace-popover,.delivery-popover,.add-device-options){padding:var(--menu-inset);border:0;border-radius:var(--menu-radius);box-shadow:0 4px 16px #00000014,0 0 0 1px var(--line)}
+.workspace-popover{width:216px}
+.workspace-folders{padding:0}
+:is(.workspace-folder,.workspace-popover>button,.delivery-popover button,.add-device-options button){height:var(--menu-row-height);min-height:var(--menu-row-height);padding:2px 7px;gap:8px;border:0;border-radius:4px;font-size:13px;line-height:20px}
+:is(.workspace-folder,.workspace-popover>button,.delivery-popover button,.add-device-options button)>svg{width:14px;height:14px;flex-shrink:0}
+.workspace-popover>button{background:transparent}
+.workspace-popover>button:hover{background:var(--hover)}
+.delivery-popover{bottom:calc(100% + 6px)}
+.delivery-popover kbd{line-height:20px}
+.delivery-divider{margin:3px 4px}
+.connection-popover,.turn-stats-popover{padding:10px;border-radius:8px;box-shadow:0 4px 16px #00000014}
+.connection-heading{min-height:18px;line-height:18px;gap:6px}
+.connection-heading>svg{width:14px;height:14px}
+.connection-popover dl{gap:4px 10px;margin:8px 0}
+.connection-actions{padding-top:4px}
+.connection-actions button{height:var(--menu-row-height);padding:2px 0;font-size:12px;line-height:20px}
+.turn-stats-popover h4{margin-bottom:4px}
+.turn-stats-popover dl{gap:2px 12px}
+.turn-stats-popover p{margin-top:6px;padding-top:6px}
+:root[data-theme=dark] :is(.workspace-popover,.delivery-popover,.add-device-options){box-shadow:0 4px 16px #00000040,0 0 0 1px var(--line)}
+:root[data-theme=dark] :is(.connection-popover,.turn-stats-popover){box-shadow:0 4px 16px #00000040}

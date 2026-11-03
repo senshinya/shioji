@@ -1,0 +1,111 @@
+# macOS / Windows filesystem metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+Desktop.ini
+
+# Local artifact-tool state and duplicate publication exports.
+# Only the selected design/spec/schema inputs below remain versioned.
+/.ryugi/
+/publish/
+
+# Editor-local configuration
+/.idea/
+/.vscode/
+
+# Environment overrides and credentials; keep shareable templates.
+.env
+.env.*
+!.env.example
+!.env.*.example
+.envrc.local
+/secrets/
+/.ssh/
+*.p12
+*.pfx
+*.key
+*.pem
+*.cer
+*.crt
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+
+# Dependencies and tool caches; module manifests and lockfiles stay trackable.
+node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+
+# Go workspace overrides, builds, test binaries and profiling output
+/go.work
+/go.work.sum
+/bin/
+/build/
+/dist/
+/out/
+/coverage/
+coverage.out
+*.test
+*.prof
+*.pprof
+
+# Native application packages and distribution artifacts
+*.app/
+*.dSYM/
+*.dmg
+*.pkg
+*.zip
+*.tar.gz
+
+# Runtime databases, sockets, logs and process state
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.sock
+*.pid
+*.pid.lock
+*.log
+
+# Generated, machine-specific signing commands and live watcher state.
+# Research conclusions stay versioned; raw probes and live state stay local.
+/scripts/research/sign_signed_acceptance.zsh
+/docs/research/signed-acceptance-2026-11-03/notary-watcher.json
+/docs/research/signed-acceptance-2026-11-03/notary-watcher.next
+
+# Temporary editor files
+*~
+*.swp
+*.swo
+
+# Design/research archive stays local; version only the implementation inputs.
+/design/*
+!/design/spec.html
+!/design/menus.css
+!/design/protocol/
+/docs/research/*
+!/docs/research/README.md
+!/docs/research/sources.lock.json
+!/docs/research/verification.json
+/scripts/research/*
+!/scripts/research/README.md
+
+# Browser-prototype checks and local preview/publication tooling.
+/scripts/*.cjs
+/scripts/build-component-fixtures.py
+/scripts/export-codex-component-schema.py
+/scripts/prepare-ryugi-release.py
+/scripts/serve-design.py
