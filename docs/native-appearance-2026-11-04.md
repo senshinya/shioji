@@ -326,3 +326,43 @@ remain pending: the computer-use host still returns “Sky Computer Use native
 pipe startup failed”. No replacement screenshots or fabricated recordings were
 added to the verification artboard. The new build requires a GUI restart; the
 existing GUI and authoritative worker were left intact.
+
+
+## Follow-up: text hover, anchored tool disclosure and popup origins
+
+The user requested text-only hover feedback for tool-group headings and the
+final token summary, real content entrance/exit, and a fixed viewport position
+for the clicked tool heading. They also requested popup entrance from each
+trigger and animated dismissal, equal visible insets for the workspace heading
+and its create button, and removal of the per-workspace new-session plus.
+
+Tool headings and usage controls now animate only their text contrast. Their
+backgrounds remain unchanged in both appearances. The workspace heading keeps
+its original left inset; the create button moves 6px right to compensate for
+the SVG artwork's inset inside its target. The separate per-workspace plus is
+removed and device metadata remains visible.
+
+Manual tool disclosure fades/slides its existing virtualized child rows over
+160ms, preserving item IDs and reversing from current progress. Closing retains
+only the usual visible rows during the short exit, then removes them from the
+projection; it does not mount the full group or whole history. Reduce Motion
+uses at most 60ms of fade without translation. A native list row anchor holds
+the clicked heading in place while the list changes, suspends end following,
+and releases on user scrolling or an explicit scroll request.
+
+The overlay root is now present even when no popups are open. This gives popup
+entrance and exit a persistent parent; previously the parent disappeared with
+the popup and prevented the intended presence transition. Popups use a 120ms
+fade and scale (.92 entrance, .96 exit), pivoting around their actual trigger
+center after native viewport fitting. Reduce Motion retains only the short
+fade. Escape remains immediately available and restores trigger focus.
+
+Regressions were observed failing for full-row hover, unequal visible insets,
+heading jumps, absent tool-content motion and absent popup expansion. Native
+component tests now cover both hover appearances, fixed headings throughout
+open/close, tool entry/exit, rapid reversal, user scroll takeover and actual
+popup entry and exit pixels. The full Go suite, signed development build,
+repository design-freeze verification and diff check pass. Real-window capture
+remains unavailable because the computer-use host cannot start. The user quit
+the old GUI explicitly; the latest build was launched successfully while worker
+PID 5579 continued running. Visual acceptance remains with the user.

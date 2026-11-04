@@ -32,6 +32,9 @@ type ElementTransition struct {
 	// size on the way), and its background and border colors. None set
 	// animates them all.
 	Position, Size, Colors bool
+	// AnchorOrigin scales an AttachTo popover around its trigger's center,
+	// including when viewport fitting flips it above or alongside the trigger.
+	AnchorOrigin bool
 	// Enter, if set, is where the element comes from as it appears in a
 	// parent that the last frame showed: it starts there, and goes to its
 	// place.

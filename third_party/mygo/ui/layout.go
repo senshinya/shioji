@@ -1282,6 +1282,11 @@ func attachTo(c, e *node, pw, ph float32) {
 	dx, dy := c.relative(pw, ph)
 	ox, oy := laidOutOrigin(e)
 	c.x, c.y = x+dx-ox, y+dy-oy
+	if tr := c.st.trec; tr != nil && tr.t.AnchorOrigin {
+		c.originSet = true
+		c.originX = (t.X + t.W/2 - x - dx) / max(w, 1)
+		c.originY = (t.Y + t.H/2 - y - dy) / max(h, 1)
+	}
 	layoutBox(c, w, h)
 }
 

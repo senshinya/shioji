@@ -177,6 +177,11 @@ type ListState struct {
 	anchorKey any
 	following bool
 	started   bool
+	// A disclosure may keep its clicked row at a fixed viewport position.
+	pinned bool
+	pinRow int
+	pinKey any
+	pinY   float64
 	// followLag is how far below its place the end shows as it glides
 	// there (FollowAnimation). follow is the list as the last layout of it
 	// left it, followWas as the frame before left it, and followBase the
@@ -294,6 +299,7 @@ type followMark struct {
 // the list scrolls as the frame is laid out, to where the row is once it
 // is measured.
 func (s *ListState) ScrollTo(row int, align Align) {
+	s.pinned = false
 	s.req = listRequest{set: true, row: row, align: align}
 	s.scrolled = true
 }
@@ -301,6 +307,7 @@ func (s *ListState) ScrollTo(row int, align Align) {
 // ScrollIntoView scrolls the list as little as shows row whole, as
 // Element.ScrollIntoView does an element.
 func (s *ListState) ScrollIntoView(row int) {
+	s.pinned = false
 	s.req = listRequest{set: true, row: row, near: true}
 	s.scrolled = true
 }
@@ -308,9 +315,24 @@ func (s *ListState) ScrollIntoView(row int) {
 // ScrollToEnd scrolls the list to its end, where FollowEnd follows it
 // again.
 func (s *ListState) ScrollToEnd() {
+	s.pinned = false
 	s.req = listRequest{set: true, end: true}
 	s.scrolled = true
 }
+
+// KeepRow keeps row's top at y DIPs below the list's top while its content
+// changes. It pauses end following and allows trailing reading space when
+// collapsing content. User scrolling or a scroll request releases the anchor.
+func (s *ListState) KeepRow(row int, y float32) {
+	s.pinned, s.pinRow, s.pinY, s.pinKey = true, row, float64(y), nil
+	if s.Key != nil {
+		s.pinKey = s.Key(row)
+	}
+	s.following, s.followLag, s.scrolled = false, channel{}, true
+}
+
+// ReleaseRow resumes ordinary list anchoring without moving to another row.
+func (s *ListState) ReleaseRow() { s.pinned = false }
 
 // Visible returns the first and the last row the list showed in the last
 // frame, last below first when it showed none: a list nearing the end of
@@ -521,6 +543,14 @@ func buildList(c *context, e, owner *node, s *ListState, n int, row func(i int),
 // items moving, the user or the app scrolling.
 func (s *ListState) sync(e *node, n int) {
 	st, rt := e.st, e.c.rt
+	if s.pinned {
+		if s.req.set || st.scrollY != s.wroteY {
+			s.pinned = false
+		} else if s.pinKey != nil {
+			row, ok := s.find(s.pinKey, s.pinRow, n)
+			s.pinned, s.pinRow = ok, row
+		}
+	}
 	if !s.started {
 		s.started = true
 		s.following = s.FollowEnd
@@ -636,6 +666,8 @@ func (s *ListState) plan(e *node, n int) (a, first, last int) {
 	hs, gap := &s.heights, s.gap
 	a, y, above := s.anchor, s.padTop-s.inset, 0.0
 	switch r := s.req; {
+	case s.pinned:
+		a, y = max(0, min(s.pinRow, n-1)), s.pinY
 	case r.set && r.offset:
 		a, y = s.anchorAt(r.y)
 		if r.hint {
@@ -1360,6 +1392,10 @@ func (e *node) layoutList(w, h float32) {
 	var a int
 	var ya float64
 	switch req := s.req; {
+	case s.pinned:
+		a = max(0, min(s.pinRow, n-1))
+		ensure(a)
+		ya = s.pinY
 	case req.end || s.following && !req.set:
 		a = n - 1
 		ensure(a)
@@ -1427,7 +1463,7 @@ func (e *node) layoutList(w, h float32) {
 	// Keep the content's ends at the list's: the end may show above the
 	// bottom after rows went away, the start below the top after rows
 	// above turned out shorter than estimated.
-	for k := 0; k < 4 && !(lo == 0 && hi == n-1); k++ {
+	for k := 0; !s.pinned && k < 4 && !(lo == 0 && hi == n-1); k++ {
 		if hi == n-1 && end() < H {
 			shift(H - end())
 		} else if lo == 0 && yLo > padTop {
@@ -1437,7 +1473,7 @@ func (e *node) layoutList(w, h float32) {
 		}
 		cover()
 	}
-	if lo == 0 && hi == n-1 {
+	if !s.pinned && lo == 0 && hi == n-1 {
 		switch start := yLo - padTop; {
 		case end()-start <= H:
 			// The rows fit: Justify places them.
@@ -1469,6 +1505,10 @@ func (e *node) layoutList(w, h float32) {
 	// shows.
 	content := max(padTop+padBottom+hs.top(n, gap)-gap, H)
 	scroll := max(0, min(padTop+hs.top(lo, gap)-yLo, content-H))
+	if s.pinned {
+		scroll = max(0, padTop+hs.top(lo, gap)-yLo)
+		content = max(content, scroll+H)
+	}
 	y := yLo
 	for i := lo; i <= hi; i++ {
 		f.rows[f.at[i]].y = y
@@ -1658,7 +1698,7 @@ func (s *ListState) remember(e *node, first, last int, atEnd bool, scroll float6
 	}
 	s.laidOut, s.wroteY, s.req, s.read = true, scroll, listRequest{}, false
 	s.first, s.last, s.atEnd = first, last, atEnd
-	s.following = s.FollowEnd && atEnd
+	s.following = s.FollowEnd && atEnd && !s.pinned
 	s.anchor, s.anchorKey = max(0, first), nil
 	if n == 0 {
 		s.inset = 0

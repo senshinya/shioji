@@ -6,6 +6,20 @@ import (
 	n "github.com/egoist/mygo/ui"
 )
 
+type toolDisclosureMotion struct {
+	from, to float32
+	start    time.Time
+	duration time.Duration
+}
+
+func (m *toolDisclosureMotion) sample(now time.Time) (float32, bool) {
+	fraction := float32(now.Sub(m.start)) / float32(m.duration)
+	if fraction >= 1 {
+		return m.to, false
+	}
+	return m.from + (m.to-m.from)*n.EaseOut(max(0, fraction)), true
+}
+
 // All custom native controls share one interruptible, neutral feedback layer.
 // It paints below content, preserving selected surfaces, glyph colors and layout.
 func control(c *n.Context, radius ...float32) n.Element {
@@ -41,6 +55,14 @@ func controlFeedback(c *n.Context, e n.Element, radius float32, primary ...bool)
 	})
 }
 
+func textHoverColor(c *n.Context, e n.Element, rest n.Color) n.Color {
+	target := rest
+	if e.Hovered() || e.FocusVisible() || e.Pressed() {
+		target = c.Theme().Text
+	}
+	return e.AnimateColor("text-hover", target, motionAnimation(c, 120*time.Millisecond))
+}
+
 func motionAnimation(c *n.Context, duration time.Duration) n.Animation {
 	if c.Preferences().ReduceMotion {
 		duration = min(duration, 60*time.Millisecond)
@@ -50,11 +72,11 @@ func motionAnimation(c *n.Context, duration time.Duration) n.Animation {
 
 func popupMotion(c *n.Context) n.ElementTransition {
 	a := motionAnimation(c, 120*time.Millisecond)
-	enter, exit := n.Motion{Y: -3}, n.Motion{Y: -2}
+	enter, exit := n.Motion{Scale: .92}, n.Motion{Scale: .96}
 	if c.Preferences().ReduceMotion {
-		enter.Y, exit.Y = 0, 0
+		enter.Scale, exit.Scale = 1, 1
 	}
-	return n.ElementTransition{Duration: a.Duration, Ease: a.Ease, Colors: true, Enter: &enter, Exit: &exit}
+	return n.ElementTransition{Duration: a.Duration, Ease: a.Ease, Colors: true, AnchorOrigin: true, Enter: &enter, Exit: &exit}
 }
 
 func popover(c *n.Context, trigger n.Element, open *bool, build func(n.Element)) n.Element {

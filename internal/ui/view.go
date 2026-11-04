@@ -24,6 +24,10 @@ type editBinding struct {
 }
 
 type View struct {
+	toolMotions             map[string]*toolDisclosureMotion
+	frameTime               time.Time
+	toolsAnimating          bool
+	reduceMotion            bool
 	draftBindings           map[string]*editBinding
 	answerBindings          map[string]*editBinding
 	customBindings          map[string]*editBinding
@@ -111,6 +115,7 @@ var questionIcon = svg("M17.5 13.3h-10l-5 4.2v-15h15z")
 
 func (v *View) View(c *n.Context) {
 	m := v.Model
+	v.frameTime, v.reduceMotion = c.Now(), c.Preferences().ReduceMotion
 	if v.Controller != nil {
 		v.Controller.SetInvalidate(c.Services().Invalidate)
 		for {
@@ -170,6 +175,9 @@ drained:
 	t.AccentHover = t.Accent
 	t.AccentPressed = t.Accent
 	c.SetTheme(&t)
+	// Keep the overlay parent alive so popup entrance and exit both have a
+	// persistent parent, even when no popup is currently open.
+	n.Overlay(c, func() {})
 	v.md.Theme = &markdown.Theme{FontSize: 14, LineHeight: 24.0 / 14, BlockSpacing: 8.0 / 14}
 	if v.Saver != nil {
 		v.Saver.SetInvalidate(c.Services().Invalidate)
@@ -292,7 +300,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 			if navButton(c, attentionIcon, "待我处理").Clicked() {
 				v.nextAttention()
 			}
-			n.Row(c).Height(32).Padding(8, 8, 0, 8).AlignItems(n.Center).Children(func() {
+			n.Row(c).Height(32).Padding(8, 2, 0, 8).AlignItems(n.Center).Children(func() {
 				n.Text(c, "工作区").FontSize(11).FixedLineHeight(16).TextColor(t.TextMuted).Grow(1)
 				if iconButton(c, plus, "创建工作区").Size(24, 24).Disabled(!m.Connected).Clicked() {
 					v.createWorkspace()
@@ -339,14 +347,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 						}).Clicked() {
 							v.collapsedWorkspaces[w.ID] = !v.collapsedWorkspaces[w.ID]
 						}
-						if workspaceRow.Hovered() || workspaceRow.FocusWithin() {
-							if iconButton(c, plus, "在 "+w.Name+" 新建会话").Size(22, 22).Clicked() {
-								m.WorkspaceID = w.ID
-								v.home()
-							}
-						} else {
-							n.Text(c, "这台 Mac").FontSize(11).TextColor(t.TextMuted).PaddingX(6)
-						}
+						n.Text(c, "这台 Mac").FontSize(11).TextColor(t.TextMuted).PaddingX(6)
 					})
 					return
 				}
@@ -616,7 +617,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 		v.runOpen = !v.runOpen
 		v.runPage = ""
 	}
-	popover(c, trigger, &v.runOpen, func(panel n.Element) {
+	popover(c.Key("run-panel:"+key), trigger, &v.runOpen, func(panel n.Element) {
 		panel.Width(240).Padding(4).Radius(9).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
 			if v.runPage != "" {
 				if ghost(c, "‹  返回").FillWidth().TextAlign(n.Start).Clicked() {
@@ -702,7 +703,13 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		state = &n.ListState{FollowEnd: true}
 		v.lists[m.SessionID] = state
 	}
+	if m.FoldToolHistory[m.SessionID] {
+		state.ReleaseRow()
+	}
 	rows := v.transcriptRows(detail.Items)
+	if v.toolsAnimating {
+		c.AnimationFrame()
+	}
 	state.Key = func(i int) any {
 		if i == 0 {
 			return "history-top"
@@ -736,9 +743,16 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			bottom = 32
 		}
 		n.Column(c).FillWidth().PaddingX(18).AlignItems(n.Center).Children(func() {
-			n.Column(c).FillWidth().MaxWidth(768).Gap(8).Padding(0, 0, bottom, 0).Selectable().Children(func() {
+			content := n.Column(c).FillWidth().MaxWidth(768).Gap(8).Padding(0, 0, bottom, 0).Selectable()
+			if entry.toolParent != "" {
+				content.Opacity(entry.opacity)
+				if !v.reduceMotion {
+					content.Transform(n.Translation(0, -4*(1-entry.opacity)))
+				}
+			}
+			content.Children(func() {
 				if entry.group != "" {
-					v.toolGroup(c, t, entry)
+					v.toolGroup(c, t, entry, row)
 				} else {
 					v.item(c, t, item)
 				}
@@ -850,9 +864,11 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 			n.Text(c, fmt.Sprintf("%.1f 秒", float64(*turn.DurationMS)/1000)).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 		}
 		if turn.Status == "completed" {
-			usage := control(c).MinHeight(24).Label("本轮用量").Children(func() {
+			usage := n.ButtonBase(c).MinHeight(24).Label("本轮用量")
+			color := textHoverColor(c, usage, t.TextMuted)
+			usage.Children(func() {
 				n.Text(c, fmt.Sprintf("输入 %s · 输出 %s · 缓存 %s", count(turn.InputTokens), count(turn.OutputTokens), count(turn.CachedInputTokens))).
-					FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+					FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(color)
 			})
 			choices := []menuChoice{}
 			for _, field := range []struct {

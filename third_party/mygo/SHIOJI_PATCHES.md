@@ -1,4 +1,4 @@
-# MyGo native appearance extensions
+# MyGo native presentation extensions
 
 Upstream: `github.com/egoist/mygo` v0.7.4. The upstream LICENSE is retained.
 This local module contains the upstream runtime source and embedded resources;
@@ -20,9 +20,17 @@ not expose the following appearance settings required by the frozen design:
   Outline measurement is supported by the macOS text engine; other engines
   return an empty rectangle. Shaping and measurement share the text-system lock.
   Covered by Shioji's native font-metrics regression.
+- `ui.ElementTransition.AnchorOrigin`: an attached popup scales around its
+  trigger's actual center after viewport fitting, including flipped popups.
+- `ui.ListState.KeepRow` / `ReleaseRow`: preserve a clicked disclosure's viewport
+  position across structural changes, without disabling virtualization. User
+  scrolling and explicit scroll requests release the anchor; collapsing may
+  retain trailing reading space instead of jumping the clicked heading.
 
 Changes are confined to ui/theme.go, ui/paint.go, ui/editor/editor.go and
 ui/editor/theme.go, plus ui/glyphs.go, internal/text/layout.go and
-internal/text/coretext_darwin.go and the regression tests. Remove the replacement when an
+internal/text/coretext_darwin.go, ui/layout.go, ui/transition.go, ui/list.go and the
+regression tests. The popup and list changes are covered by Shioji's native
+component interaction regressions. Remove the replacement when an
 upstream release exposes equivalent controls. This remains a native renderer;
 no HTML or WebView is introduced.
