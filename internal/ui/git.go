@@ -149,8 +149,7 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 		trigger := n.ButtonBase(c).Height(26).MaxWidth(330).Padding(3, 10).Radius(5).Label("选择分支").Tooltip(label).Disabled(!v.canSwitchBranch()).Children(func() {
 			n.Row(c).Height(20).Gap(5).AlignItems(n.Center).Children(func() {
 				n.Icon(c, branchIcon).Size(12, 12).TextColor(t.TextMuted)
-				n.Text(c, label).SingleLine().Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-				n.Icon(c, disclosureDown).Size(9, 9).TextColor(subtle(t))
+				n.Text(c, label).SingleLine().Font("Menlo").FontSize(11).FixedLineHeight(20).Translate(0, -.5).TextColor(t.TextMuted)
 			})
 		})
 		if trigger.Clicked() {
