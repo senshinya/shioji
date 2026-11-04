@@ -153,8 +153,9 @@ type Model struct {
 	Fast          bool     `json:"fast"`
 }
 type Readiness struct {
-	State  string  `json:"state"`
-	Error  string  `json:"error,omitempty"`
-	Models []Model `json:"models,omitempty"`
-	Plan   bool    `json:"plan"`
+	Permissions []string `json:"permissions,omitempty"`
+	State       string   `json:"state"`
+	Error       string   `json:"error,omitempty"`
+	Models      []Model  `json:"models,omitempty"`
+	Plan        bool     `json:"plan"`
 }

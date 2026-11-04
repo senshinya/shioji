@@ -1,0 +1,10 @@
+{
+  "source": "real-app-server-loopback",
+  "codex": "codex-cli 0.166.0",
+  "codexSHA256": "39acf979729dd290f9a24ee38b2914e036c91b65952872e28ae2a6b88a7db7c1",
+  "recordedAt": "2026-11-04T09:36:32Z",
+  "events": 28,
+  "sha256": "5e7b7a659b2c8d9c816b2969d56fe46f32b918b361d77b2c0d47cca625a8a916",
+  "sanitization": "Allowlisted conversation notifications only; disposable workspace paths replaced; auth/config/catalog/RPC responses and stderr excluded.",
+  "modelService": "deterministic-loopback-provider"
+}

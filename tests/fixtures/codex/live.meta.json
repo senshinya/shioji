@@ -1,0 +1,10 @@
+{
+  "source": "real-app-server-live",
+  "codex": "codex-cli 0.166.0",
+  "codexSHA256": "39acf979729dd290f9a24ee38b2914e036c91b65952872e28ae2a6b88a7db7c1",
+  "recordedAt": "2026-11-04T09:37:23Z",
+  "events": 26,
+  "sha256": "2da19671f577da15ba0956a79b18ac39460f703eb04deff5f3f0583a926f39a1",
+  "sanitization": "Allowlisted conversation notifications only; disposable workspace paths replaced; auth/config/catalog/RPC responses and stderr excluded.",
+  "modelService": "real-user-account"
+}
