@@ -161,3 +161,33 @@ func TestHomeKeepsLongWorkspaceHeadingInsidePane(t *testing.T) {
 		t.Fatalf("long workspace heading overflows pane: picker=%+v ending=%+v", picker, end)
 	}
 }
+
+func TestCompactTokenCounts(t *testing.T) {
+	for _, tt := range []struct {
+		n    int64
+		want string
+	}{{999, "999"}, {1000, "1000"}, {1001, "1.0k"}, {19676, "19.7k"}, {39561, "39.6k"}} {
+		if got := count(&tt.n); got != tt.want {
+			t.Errorf("count(%d)=%s want %s", tt.n, got, tt.want)
+		}
+	}
+	if count(nil) != "—" {
+		t.Fatal("missing usage became a number")
+	}
+}
+func TestNativeChromeUsesLabeledIconsAndFrozenNavigationGap(t *testing.T) {
+	test := native.NewTester(New(layoutModel(), nil, "").View, 1440, 900)
+	for _, label := range []string{"新建会话", "待我处理", "搜索", "设置", "设备", "Permission"} {
+		if _, ok := test.Find(label); !ok {
+			t.Errorf("missing native control %s", label)
+		}
+	}
+	first, _ := test.Find("新建会话")
+	next, _ := test.Find("待我处理")
+	if math.Abs(float64(first.Y-59)) > 1 || math.Abs(float64(next.Y-first.Y-first.H-8)) > 1 {
+		t.Errorf("navigation geometry first=%+v next=%+v", first, next)
+	}
+	if !test.HasText("只读") {
+		t.Fatal("permission control lacks visible named permission")
+	}
+}

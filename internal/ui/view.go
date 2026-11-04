@@ -41,6 +41,7 @@ type View struct {
 	selected                string
 	collapsedWorkspaces     map[string]bool
 	dockHeight              float32
+	searchOpen              bool
 }
 
 func New(model *app.Model, controller *app.Controller, path string) *View {
@@ -209,8 +210,13 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 	}
 	n.Column(c).Width(sidebarWidth).FillHeight().Padding(8, 0, 8, 8).Children(func() {
 		n.Column(c).Fill().Padding(8).Gap(4).Radius(14).Background(sidebarColor).Border(1, t.Border).Children(func() {
-			n.Row(c).Height(34).DragWindow().Children(func() { n.Spacer(c).Grow(1) })
-			if ghost(c, "＋  新建会话").Margin(0, 0, 8, 0).FillWidth().TextAlign(n.Start).Background(func() n.Color {
+			n.Row(c).Height(38).DragWindow().Children(func() {
+				n.Spacer(c).Grow(1)
+				if iconButton(c, searchIcon, "搜索").Clicked() {
+					v.searchOpen = true
+				}
+			})
+			if navButton(c, plus, "新建会话").Margin(0, 0, 4, 0).Background(func() n.Color {
 				if m.SessionID == "" && !v.devices {
 					return t.SurfacePressed
 				}
@@ -218,7 +224,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 			}()).Clicked() {
 				v.home()
 			}
-			if ghost(c, "△  待我处理").FillWidth().TextAlign(n.Start).Clicked() {
+			if navButton(c, attentionIcon, "待我处理").Clicked() {
 				v.nextAttention()
 			}
 			n.Row(c).Height(32).AlignItems(n.Center).Children(func() {
@@ -318,10 +324,10 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 			}).Grow(1).FillHeight().Label("工作区与会话")
 			n.Column(c).Height(1).FillWidth().Background(t.Border)
 			n.Row(c).Height(32).Children(func() {
-				if ghost(c, "设备").Grow(1).TextAlign(n.Start).Clicked() {
+				if navButton(c, monitor, "设备").Grow(1).Clicked() {
 					v.devices = true
 				}
-				ghost(c, "设置").Disabled(true)
+				iconButton(c, settingsIcon, "设置").Disabled(true)
 			})
 		})
 	})
@@ -456,7 +462,12 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 		m.Drafts[key] = draft
 		binding.LastModel = draft
 		n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
-			permission := ghost(c, permissionLabel(cfg.Permission)+" ⌄").FontSize(12).TextColor(t.TextMuted).Label("Permission")
+			permission := n.ButtonBase(c).Height(28).PaddingX(6).Radius(6).Label("Permission").Children(func() {
+				n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
+					n.Icon(c, shieldIcon).Size(14, 14).TextColor(t.TextMuted)
+					n.Text(c, permissionLabel(cfg.Permission)).FontSize(12).FontWeight(400).TextColor(t.TextMuted)
+				})
+			})
 			permission.PopoverMenuButton(func(menu *n.Menu) {
 				for _, id := range m.Readiness.Permissions {
 					if menu.Item(permissionLabel(id)).Radio(cfg.Permission == id).Chosen() {
@@ -491,13 +502,13 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 func permissionLabel(id string) string {
 	switch id {
 	case "read-only":
-		return "Read only"
+		return "只读"
 	case "auto-approve":
-		return "Auto Approve"
+		return "自动批准"
 	case "yolo":
 		return "YOLO"
 	default:
-		return "Default"
+		return "默认权限"
 	}
 }
 func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunConfig) {
@@ -511,7 +522,12 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 	if cfg.Fast {
 		summary += " · Fast"
 	}
-	trigger := n.ButtonBase(c).Height(28).MaxWidth(390).MinWidth(0).PaddingX(6).Radius(6).Label("运行配置").Tooltip(summary).Children(func() { n.Text(c, summary+" ⌄").SingleLine().FontSize(12).TextColor(t.TextMuted) })
+	trigger := n.ButtonBase(c).Height(28).MaxWidth(390).MinWidth(0).PaddingX(6).Radius(6).Label("运行配置").Tooltip(summary).Children(func() {
+		n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
+			n.Text(c, summary).SingleLine().FontSize(12).TextColor(t.TextMuted)
+			n.Icon(c, chevron).Size(12, 12).TextColor(t.TextMuted)
+		})
+	})
 	if trigger.Clicked() {
 		v.runOpen = !v.runOpen
 		v.runPage = ""
@@ -718,13 +734,30 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 			n.Text(c, fmt.Sprintf("%.1f 秒", float64(*turn.DurationMS)/1000)).FontSize(11).TextColor(t.TextMuted)
 		}
 		if turn.Status == "completed" {
-			n.Text(c, "输入 "+count(turn.InputTokens)+" · 输出 "+count(turn.OutputTokens)+" · 缓存 "+count(turn.CachedInputTokens)).FontSize(11).TextColor(t.TextMuted)
+			usage := n.ButtonBase(c).MinHeight(24).Label("本轮用量").Children(func() {
+				n.Text(c, "输入 "+count(turn.InputTokens)+" · 输出 "+count(turn.OutputTokens)+" · 缓存 "+count(turn.CachedInputTokens)).FontSize(11).TextColor(t.TextMuted)
+			})
+			usage.PopoverMenuButton(func(menu *n.Menu) {
+				for _, field := range []struct {
+					name  string
+					value *int64
+				}{{"输入", turn.InputTokens}, {"输出", turn.OutputTokens}, {"缓存", turn.CachedInputTokens}} {
+					value := "—"
+					if field.value != nil {
+						value = fmt.Sprint(*field.value)
+					}
+					menu.Item(field.name + " " + value).Disabled(true)
+				}
+			})
 		}
 	})
 }
 func count(value *int64) string {
 	if value == nil {
 		return "—"
+	}
+	if *value > 1000 {
+		return fmt.Sprintf("%.1fk", float64(*value)/1000)
 	}
 	return fmt.Sprint(*value)
 }
