@@ -20,6 +20,7 @@ import (
 )
 
 type Options struct {
+	OnStart          func(int) error
 	Executable, Home string
 	OnEvent          func(domain.Event) error
 }
@@ -74,6 +75,14 @@ func Start(ctx context.Context, opts Options) (*Runtime, error) {
 	r := &Runtime{cmd: cmd, stdin: stdin, pending: map[string]chan wire.Message{}, done: make(chan struct{}), normalizer: NewNormalizer(), onEvent: opts.OnEvent}
 	if err = cmd.Start(); err != nil {
 		return nil, err
+	}
+	if opts.OnStart != nil {
+		if err = opts.OnStart(cmd.Process.Pid); err != nil {
+			stdin.Close()
+			cmd.Process.Kill()
+			cmd.Wait()
+			return nil, err
+		}
 	}
 	go r.read(stdout)
 	var init json.RawMessage
