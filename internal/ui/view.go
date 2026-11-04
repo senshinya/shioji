@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 
@@ -39,6 +40,7 @@ type View struct {
 	devices                 bool
 	selected                string
 	collapsedWorkspaces     map[string]bool
+	dockHeight              float32
 }
 
 func New(model *app.Model, controller *app.Controller, path string) *View {
@@ -114,30 +116,30 @@ drained:
 	t.Spacing = 3
 	t.Radius = 6
 	if t.Dark {
-		t.Background = n.Hex("#1b1b1c")
-		t.Surface = n.Hex("#272728")
-		t.SurfaceHover = n.Hex("#303031")
-		t.SurfacePressed = n.Hex("#39393a")
-		t.Border = n.Hex("#39393a")
-		t.Text = n.Hex("#eeeeef")
-		t.TextMuted = n.Hex("#a1a1a4")
-		t.Accent = n.Hex("#e5e5e7")
-		t.AccentText = n.Hex("#202021")
-		t.Selection = n.Hex("#4b4b4e")
+		t.Background = n.Hex("#101010")
+		t.Surface = n.Hex("#202020")
+		t.SurfaceHover = n.Hex("#292929")
+		t.SurfacePressed = n.Hex("#292929")
+		t.Border = n.Hex("#343434")
+		t.Text = n.Hex("#e9e9e9")
+		t.TextMuted = n.Hex("#ababab")
+		t.Accent = n.Hex("#e5e5e5")
+		t.AccentText = n.Hex("#181818")
+		t.Selection = n.Hex("#292929")
 		t.Focus = n.Hex("#8c8c90")
 		t.Success = n.Hex("#32d769")
 		t.Warning = n.Hex("#ff9f0a")
 	} else {
 		t.Background = n.Hex("#ffffff")
-		t.Surface = n.Hex("#f4f4f5")
-		t.SurfaceHover = n.Hex("#eaeaec")
-		t.SurfacePressed = n.Hex("#e1e1e3")
-		t.Border = n.Hex("#dedee1")
-		t.Text = n.Hex("#28282b")
-		t.TextMuted = n.Hex("#737377")
-		t.Accent = n.Hex("#29292b")
+		t.Surface = n.Hex("#f4f4f4")
+		t.SurfaceHover = n.Hex("#eeeeee")
+		t.SurfacePressed = n.Hex("#e7e7e7")
+		t.Border = n.Hex("#e3e3e3")
+		t.Text = n.Hex("#1c1c1c")
+		t.TextMuted = n.Hex("#666666")
+		t.Accent = n.Hex("#262626")
 		t.AccentText = n.Hex("#ffffff")
-		t.Selection = n.Hex("#dcdcdf")
+		t.Selection = n.Hex("#e7e7e7")
 		t.Focus = n.Hex("#97979b")
 		t.Success = n.Hex("#138a43")
 		t.Warning = n.Hex("#c66a00")
@@ -145,6 +147,7 @@ drained:
 	t.AccentHover = t.Accent
 	t.AccentPressed = t.Accent
 	c.SetTheme(&t)
+	v.md.Theme = &markdown.Theme{FontSize: 14, LineHeight: 24.0 / 14, BlockSpacing: 8.0 / 14}
 	if v.Saver != nil {
 		v.Saver.SetInvalidate(c.Services().Invalidate)
 		saved, err := v.Saver.Result()
@@ -167,10 +170,11 @@ drained:
 	n.Row(c).Fill().Background(t.Background).Children(func() {
 		v.sidebar(c, &t)
 		n.Column(c).FillHeight().Grow(1).Children(func() {
-			v.toolbar(c, &t)
 			if v.devices {
+				v.toolbar(c, &t)
 				v.deviceView(c, &t)
 			} else if m.SessionID == "" {
+				v.toolbar(c, &t)
 				v.homeView(c, &t)
 			} else {
 				v.conversation(c, &t)
@@ -192,10 +196,21 @@ func ghost(c *n.Context, label string) n.Element {
 }
 func (v *View) sidebar(c *n.Context, t *n.Theme) {
 	m := v.Model
-	n.Column(c).Width(248).FillHeight().Padding(8).Children(func() {
-		n.Column(c).Fill().Padding(8).Gap(4).Radius(14).Background(t.Surface).Border(1, t.Border).Children(func() {
+	width, _ := c.Size()
+	sidebarWidth := float32(256)
+	if width <= 980 {
+		sidebarWidth = 224
+	} else if width <= 1160 {
+		sidebarWidth = 236
+	}
+	sidebarColor := t.Surface
+	if t.Dark {
+		sidebarColor = n.Hex("#161616")
+	}
+	n.Column(c).Width(sidebarWidth).FillHeight().Padding(8, 0, 8, 8).Children(func() {
+		n.Column(c).Fill().Padding(8).Gap(4).Radius(14).Background(sidebarColor).Border(1, t.Border).Children(func() {
 			n.Row(c).Height(34).DragWindow().Children(func() { n.Spacer(c).Grow(1) })
-			if ghost(c, "＋  新建会话").FillWidth().TextAlign(n.Start).Background(func() n.Color {
+			if ghost(c, "＋  新建会话").Margin(0, 0, 8, 0).FillWidth().TextAlign(n.Start).Background(func() n.Color {
 				if m.SessionID == "" && !v.devices {
 					return t.SurfacePressed
 				}
@@ -239,33 +254,38 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 				r := rows[i]
 				if r.workspace != nil {
 					w := r.workspace
-					n.Row(c).Height(30).AlignItems(n.Center).Children(func() {
+					workspaceRow := n.Row(c).Height(32).AlignItems(n.Center)
+					workspaceRow.Children(func() {
 						label := "⌄  " + w.Name
 						if v.collapsedWorkspaces[w.ID] {
 							label = "›  " + w.Name
 						}
-						if ghost(c, label).Grow(1).TextAlign(n.Start).Clicked() {
+						if ghost(c, label).FontSize(12).FontWeight(500).Grow(1).TextAlign(n.Start).Clicked() {
 							v.collapsedWorkspaces[w.ID] = !v.collapsedWorkspaces[w.ID]
 						}
-						if iconButton(c, plus, "在 "+w.Name+" 新建会话").Clicked() {
-							m.WorkspaceID = w.ID
-							v.home()
+						if workspaceRow.Hovered() || workspaceRow.FocusWithin() {
+							if iconButton(c, plus, "在 "+w.Name+" 新建会话").Size(22, 22).Clicked() {
+								m.WorkspaceID = w.ID
+								v.home()
+							}
+						} else {
+							n.Text(c, "这台 Mac").FontSize(11).TextColor(t.TextMuted).PaddingX(6)
 						}
 					})
 					return
 				}
 				s := r.session
 				selected := s.ID == m.SessionID && !v.devices
-				row := n.ButtonBase(c).FillWidth().Height(30).PaddingX(10).Radius(7).Label(s.Title)
+				row := n.ButtonBase(c).FillWidth().Height(28).MarginY(1).Padding(4, 8, 4, 24).Radius(8).Label(s.Title)
 				if selected {
 					row.Background(t.SurfacePressed)
 				}
 				row.Children(func() {
 					n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
 						if v.pendingCount(s.ID) > 0 {
-							n.Column(c).Size(4, 4).Radius(2).Background(t.Warning)
+							n.Column(c).Width(10).AlignItems(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Warning) })
 						} else if s.Status == "running" || s.Status == "starting" {
-							n.Column(c).Size(4, 4).Radius(2).Background(t.Success)
+							n.Column(c).Width(10).AlignItems(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Success) })
 						} else if s.Status == "completed" {
 							n.Icon(c, check).Size(10, 10).TextColor(t.TextMuted)
 						} else {
@@ -296,6 +316,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 					v.devices = false
 				}
 			}).Grow(1).FillHeight().Label("工作区与会话")
+			n.Column(c).Height(1).FillWidth().Background(t.Border)
 			n.Row(c).Height(32).Children(func() {
 				if ghost(c, "设备").Grow(1).TextAlign(n.Start).Clicked() {
 					v.devices = true
@@ -311,7 +332,9 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		if m.SessionID != "" {
 			for _, s := range m.Snapshot.Sessions {
 				if s.ID == m.SessionID {
-					n.Text(c, s.Title).SingleLine().Grow(1)
+					n.Text(c, v.workspaceName()).SingleLine().MaxWidth(150).FontSize(12).TextColor(t.TextMuted)
+					n.Column(c).Size(1, 14).Background(t.Border).MarginX(8)
+					n.Text(c, s.Title).SingleLine().Grow(1).FontSize(13).FontWeight(400)
 				}
 			}
 		} else {
@@ -354,28 +377,34 @@ func (v *View) workspaceName() string {
 }
 func (v *View) homeView(c *n.Context, t *n.Theme) {
 	n.Column(c).Fill().PaddingX(36).AlignItems(n.Center).Children(func() {
-		n.Spacer(c).Grow(.65)
+		n.Spacer(c).Grow(.84)
 		if len(v.Model.Snapshot.Workspaces) == 0 {
 			n.Text(c, "从一个工作区开始").FontSize(28)
 			if ghost(c, "创建工作区").Margin(18, 0, 0, 0).Disabled(!v.Model.Connected).Clicked() {
 				v.createWorkspace()
 			}
 		} else {
-			n.Row(c).Gap(12).Margin(0, 0, 26, 0).AlignItems(n.Center).Children(func() {
-				n.Text(c, "想在").FontSize(30).TextColor(t.TextMuted)
-				n.MenuButton(c, v.workspaceName()+" ⌄", func(menu *n.Menu) {
+			n.Row(c).Gap(8).Margin(0, 0, 28, 0).AlignItems(n.Center).Children(func() {
+				n.Text(c, "想在").FontSize(32).TextColor(t.TextMuted)
+				picker := n.ButtonBase(c).Height(48).MaxWidth(360).Label("选择工作区").Children(func() {
+					n.Row(c).Gap(8).AlignItems(n.Center).Children(func() {
+						n.Text(c, v.workspaceName()).FontSize(32).FontWeight(500).SingleLine()
+						n.Icon(c, chevron).Size(14, 14).TextColor(t.TextMuted)
+					})
+				})
+				picker.PopoverMenuButton(func(menu *n.Menu) {
 					for _, w := range v.Model.Snapshot.Workspaces {
 						if menu.Item(w.Name + "   ·   这台 Mac").Radio(w.ID == v.Model.WorkspaceID).Chosen() {
 							v.Model.WorkspaceID = w.ID
 						}
 					}
-				}).FontSize(30).Background(n.Transparent).Border(0, n.Transparent)
-				n.Text(c, "做些什么？").FontSize(30).TextColor(t.TextMuted)
+				})
+				n.Text(c, "做些什么？").FontSize(32).TextColor(t.TextMuted)
 			})
 			v.composer(c, t, true)
 		}
 		v.notice(c, t)
-		n.Spacer(c).Grow(1.2)
+		n.Spacer(c).Grow(1.16)
 	})
 }
 func (v *View) notice(c *n.Context, t *n.Theme) {
@@ -406,8 +435,14 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	if t.Dark {
 		bg = t.Surface
 	}
-	n.Column(c.Key("composer:"+key)).FillWidth().MaxWidth(736).Padding(12, 14).Gap(8).Background(bg).Border(1, t.Border).Radius(16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04)).Children(func() {
-		n.TextAreaBase(c.Key("input"), &binding.Text).Label("消息输入").Placeholder("描述任务…").FillWidth().Lines(3, 7).MinHeight(72).FontSize(14).OnTextKey(func(k n.TextKey) bool {
+	maxWidth := float32(768)
+	inputHeight := float32(54)
+	if home {
+		maxWidth = 736
+		inputHeight = 72
+	}
+	n.Column(c.Key("composer:"+key)).FillWidth().MaxWidth(maxWidth).Padding(10, 14, 8, 14).Gap(4).Background(bg).Border(1, t.Border).Radius(16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04)).Children(func() {
+		n.TextAreaBase(c.Key("input"), &binding.Text).Label("消息输入").Placeholder("描述任务…").FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(14).FixedLineHeight(22).OnTextKey(func(k n.TextKey) bool {
 			if k.Key == n.KeyEnter && (k.Mods == 0 || k.Mods == n.Cmd) {
 				m.Drafts[key] = k.Text()
 				if strings.TrimSpace(k.Text()) != "" {
@@ -421,7 +456,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 		m.Drafts[key] = draft
 		binding.LastModel = draft
 		n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
-			permission := ghost(c, permissionLabel(cfg.Permission)+" ⌄").Label("Permission")
+			permission := ghost(c, permissionLabel(cfg.Permission)+" ⌄").FontSize(12).TextColor(t.TextMuted).Label("Permission")
 			permission.PopoverMenuButton(func(menu *n.Menu) {
 				for _, id := range m.Readiness.Permissions {
 					if menu.Item(permissionLabel(id)).Radio(cfg.Permission == id).Chosen() {
@@ -476,7 +511,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 	if cfg.Fast {
 		summary += " · Fast"
 	}
-	trigger := ghost(c, summary+" ⌄").MaxWidth(390).Tooltip(summary).Label("运行配置")
+	trigger := n.ButtonBase(c).Height(28).MaxWidth(390).MinWidth(0).PaddingX(6).Radius(6).Label("运行配置").Tooltip(summary).Children(func() { n.Text(c, summary+" ⌄").SingleLine().FontSize(12).TextColor(t.TextMuted) })
 	if trigger.Clicked() {
 		v.runOpen = !v.runOpen
 		v.runPage = ""
@@ -567,11 +602,39 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		state = &n.ListState{FollowEnd: true}
 		v.lists[m.SessionID] = state
 	}
-	state.Key = func(i int) any { return detail.Items[i].ID }
-	n.Column(c).Fill().PaddingX(32).Gap(12).Children(func() {
-		n.List(c.Key("history:"+m.SessionID), state, len(detail.Items), func(i int) {
-			item := detail.Items[i]
-			n.Column(c).FillWidth().MaxWidth(736).PaddingY(4).Gap(8).Selectable().Children(func() {
+	state.Key = func(i int) any {
+		if i == 0 {
+			return "history-top"
+		}
+		if i == len(detail.Items)+1 {
+			return "history-bottom"
+		}
+		return detail.Items[i-1].ID
+	}
+	reserve := v.dockHeight
+	if reserve == 0 {
+		reserve = 108
+	}
+	n.List(c.Key("history:"+m.SessionID), state, len(detail.Items)+2, func(row int) {
+		if row == 0 {
+			n.Column(c).Height(80)
+			return
+		}
+		if row == len(detail.Items)+1 {
+			n.Column(c).Height(reserve + 32)
+			return
+		}
+		i := row - 1
+		item := detail.Items[i]
+		bottom := float32(8)
+		if item.Kind == "user" {
+			bottom = 32
+		}
+		if i == len(detail.Items)-1 || (item.TurnID != "" && detail.Items[i+1].TurnID != item.TurnID) {
+			bottom = 32
+		}
+		n.Column(c).FillWidth().PaddingX(18).AlignItems(n.Center).Children(func() {
+			n.Column(c).FillWidth().MaxWidth(768).Gap(8).Padding(0, 0, bottom, 0).Selectable().Children(func() {
 				v.item(c, t, item)
 				if item.TurnID != "" && (i == len(detail.Items)-1 || detail.Items[i+1].TurnID != item.TurnID) {
 					for _, turn := range detail.Turns {
@@ -581,15 +644,26 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 					}
 				}
 			})
-		}).FillWidth().Grow(1).FillHeight().Label("对话记录")
-		n.Column(c).FillWidth().AlignItems(n.Center).Gap(8).Padding(0, 0, 20, 0).Children(func() { v.pending(c, t, detail); v.composer(c, t, false); v.notice(c, t) })
+		})
+	}).Absolute().Left(0).Right(0).Top(0).Bottom(0).Label("对话记录")
+	n.Column(c).Absolute().Left(0).Right(8).Top(0).Height(48).Background(t.Background).Children(func() { v.toolbar(c, t) })
+	dock := n.Column(c.Key("conversation-dock")).Absolute().Left(0).Right(0).Bottom(8).PaddingX(18).AlignItems(n.Center).Gap(8).Label("会话底部面板")
+	// Native wrapping and question disclosure determine the complete dock height.
+	invalidate := c.Services().Invalidate
+	dock.DrawOver(func(_ *n.Painter, r n.Rect) {
+		if math.Abs(float64(v.dockHeight-r.H)) > .5 {
+			v.dockHeight = r.H
+			invalidate()
+		}
 	})
+	dock.Children(func() { v.pending(c, t, detail); v.composer(c, t, false); v.notice(c, t) })
 }
+
 func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 	switch item.Kind {
 	case "user":
 		n.Row(c).FillWidth().Justify(n.End).Children(func() {
-			n.Text(c, item.Text).MaxWidth(600).Padding(10, 14).Background(t.Surface).Radius(12).FontSize(14).Selectable()
+			n.Text(c, item.Text).MaxWidth(676).Padding(12, 16).Background(t.Surface).Radius(14).FontSize(14).FixedLineHeight(24).Selectable()
 		})
 	case "assistant":
 		markdown.View(c.Key(item.ID), item.Text, &v.md).FillWidth().FontSize(14)
@@ -624,7 +698,7 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 	}
 }
 func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
-	n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
+	n.Row(c).FillWidth().Wrap().Gap(7).MinHeight(24).AlignItems(n.Center).Children(func() {
 		label := turn.Status
 		switch turn.Status {
 		case "completed":
@@ -692,9 +766,9 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 	m.Pager[m.SessionID] = index
 	current := pages[index]
 	r := current.request
-	n.Column(c.Key("pending")).FillWidth().MaxWidth(736).Padding(12, 14).Gap(10).Radius(12).Background(t.Surface).Children(func() {
+	n.Column(c.Key("pending")).FillWidth().MaxWidth(768).Padding(10, 14, 12, 14).Gap(8).Radius(10).Background(t.Surface).Border(1, t.Border).Children(func() {
 		n.Row(c).FillWidth().AlignItems(n.Center).Children(func() {
-			if ghost(c, r.Title).TextAlign(n.Start).Grow(1).Clicked() {
+			if ghost(c, r.Title).FontSize(12).TextAlign(n.Start).Grow(1).Clicked() {
 				m.Collapsed[m.SessionID] = !m.Collapsed[m.SessionID]
 			}
 			if len(pages) > 1 {
@@ -710,24 +784,28 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 		if m.Collapsed[m.SessionID] {
 			return
 		}
-		n.Scroll(c.Key(r.ID)).FillWidth().MaxHeight(180).Children(func() {
-			n.Column(c).FillWidth().Padding(10).Gap(8).Background(t.Background).Radius(6).Children(func() {
+		n.Scroll(c.Key(r.ID)).FillWidth().MaxHeight(questionBodyHeight(c)).Children(func() {
+			n.Column(c).FillWidth().Gap(8).Children(func() {
 				if current.question < 0 {
 					n.Text(c, r.Text).Font("Menlo").FontSize(12).Selectable()
 					return
 				}
 				q := r.Questions[current.question]
 				key := m.SessionID + "/" + r.ID + "/" + q.ID
-				n.Text(c, q.Text).FontSize(14)
+				n.Text(c, q.Text).FontSize(12).FixedLineHeight(20)
 				selected := textBinding(v.answerBindings, key, m.Answers[key])
-				for _, option := range q.Options {
-					n.Radio(c.Key(option.Label), &selected.Text, option.Label, option.Label).FillWidth().MinHeight(28).Tooltip(option.Description)
+				if len(q.Options) > 0 {
+					n.Column(c).FillWidth().Padding(6).Gap(2).Radius(5).Background(raised(t)).Children(func() {
+						for _, option := range q.Options {
+							n.Radio(c.Key(option.Label), &selected.Text, option.Label, option.Label).FillWidth().MinHeight(28).FontSize(12).Tooltip(option.Description)
+						}
+					})
 				}
 				m.Answers[key] = selected.Text
 				selected.LastModel = selected.Text
 				if q.Custom || len(q.Options) == 0 {
 					custom := textBinding(v.customBindings, key, m.Answers["custom:"+key])
-					input := n.TextArea(c.Key("answer:"+key), &custom.Text).FillWidth().Lines(1, 4).Label("自定义答案").Placeholder("输入答案…")
+					input := n.TextAreaBase(c.Key("answer:"+key), &custom.Text).FillWidth().Lines(1, 4).MinHeight(32).MaxHeight(96).Padding(5, 8).FontSize(12).FixedLineHeight(20).Background(raised(t)).Border(1, t.Border).Radius(6).Label("自定义答案").Placeholder("输入答案…")
 					if input.Changed() {
 						m.Answers["custom:"+key] = custom.Text
 						m.Answers[key] = custom.Text
@@ -739,7 +817,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 		n.Row(c).Gap(8).Children(func() {
 			disabled := !m.Connected || r.State != "pending"
 			if r.Kind == "approval" {
-				if n.Button(c, "允许本轮").Disabled(disabled).Clicked() {
+				if n.Button(c, "允许本轮").Height(28).FontSize(12).Disabled(disabled).Clicked() {
 					v.respond(r, domain.Answer{RequestID: r.ID, Revision: r.Revision, Decision: "accept"})
 				}
 				if ghost(c, "拒绝").Disabled(disabled).Clicked() {
@@ -755,7 +833,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 					}
 					answers[q.ID] = []string{answer}
 				}
-				if n.Button(c, "提交答案").Disabled(disabled || !complete).Clicked() {
+				if n.Button(c, "提交答案").Height(28).FontSize(12).Disabled(disabled || !complete).Clicked() {
 					v.respond(r, domain.Answer{RequestID: r.ID, Revision: r.Revision, Answers: answers})
 				}
 			}
@@ -901,3 +979,11 @@ func textBinding(bindings map[string]*editBinding, key, value string) *editBindi
 	}
 	return b
 }
+
+func raised(t *n.Theme) n.Color {
+	if t.Dark {
+		return n.Hex("#2d2d2d")
+	}
+	return n.Hex("#ffffff")
+}
+func questionBodyHeight(c *n.Context) float32 { _, h := c.Size(); return min(240, h*.28) }
