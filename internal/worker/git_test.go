@@ -9,7 +9,9 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/store"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func gitTestRun(t *testing.T, dir string, args ...string) string {
@@ -69,6 +71,7 @@ func gitTestSession(t *testing.T, s *Server, w domain.Workspace, branch, status 
 	if _, err = s.store.Apply(sess.ID, domain.Event{Type: "session", Session: &sess}); err != nil {
 		t.Fatal(err)
 	}
+	s.store.Apply(sess.ID, domain.Event{Type: "session.git", Session: &sess})
 	s.store.SetOperation(op.ID, "confirmed", "")
 	return sess.ID
 }
@@ -158,5 +161,34 @@ func TestGitMonitorMarksExternalChangesWithoutSubmitting(t *testing.T) {
 	d, _ := s.store.Session(id, 0, 1)
 	if !d.Session.ContextChanged {
 		t.Fatal("external branch change was invisible before next submission")
+	}
+}
+
+func TestFileReviewRejectsFIFOBeforeItCanBlockDispatch(t *testing.T) {
+	s, w, dir := gitTestServer(t)
+	path := filepath.Join(dir, "pipe")
+	if err := syscall.Mkfifo(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := gitTestCall(s, "git.file", map[string]any{"workspaceId": w.ID, "path": "pipe"})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("FIFO accepted as a regular file")
+		}
+	case <-time.After(2 * time.Second):
+		f, _ := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0600)
+		if f != nil {
+			f.Close()
+		}
+		<-done
+		t.Fatal("FIFO review blocked waiting for a writer")
+	}
+	if _, err := gitTestCall(s, "git.status", map[string]any{"workspaceId": w.ID}); err != nil {
+		t.Fatalf("dispatch stayed blocked: %v", err)
 	}
 }

@@ -322,3 +322,31 @@ func TestNarrowDiffDrawerStaysInsideConversationPane(t *testing.T) {
 		t.Fatalf("diff drawer covers workspace navigation: %+v", drawer)
 	}
 }
+
+func TestSearchRetriesLatestQueryAfterControllerQueueFills(t *testing.T) {
+	m := layoutModel()
+	m.SessionID = ""
+	controller := app.NewController("")
+	v := New(m, controller, "")
+	test := native.NewTester(v.View, 1440, 900)
+	test.Click("搜索")
+	test.Click("搜索会话")
+	for len(controller.Jobs) < cap(controller.Jobs) {
+		controller.Jobs <- app.Job{Method: "readiness"}
+	}
+	test.Type("latest query")
+	for len(controller.Jobs) > 0 {
+		<-controller.Jobs
+	}
+	test.Frame()
+	found := false
+	for len(controller.Jobs) > 0 {
+		job := <-controller.Jobs
+		if q, ok := job.Input.(protocol.SearchQuery); ok && q.Query == "latest query" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("latest query was marked sent even though queue rejected it")
+	}
+}

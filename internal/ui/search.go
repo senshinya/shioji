@@ -7,6 +7,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"strings"
+	"time"
 )
 
 func (v *View) searchControl(c *n.Context, t *n.Theme) {
@@ -21,8 +22,7 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 			n.TextInput(c.Key("search-input"), &v.searchText).FillWidth().Height(32).Label("搜索会话").Placeholder("搜索会话与对话内容…").FontSize(13).Changed()
 			if v.Controller != nil && v.Model.Connected && v.searchSent != v.searchText {
 				query := v.searchText
-				v.searchSent = query
-				v.do(app.Job{Method: "session.search", Input: protocol.SearchQuery{Query: query}, Apply: func(m *app.Model, b json.RawMessage, err error) {
+				accepted := v.do(app.Job{Method: "session.search", Input: protocol.SearchQuery{Query: query}, Apply: func(m *app.Model, b json.RawMessage, err error) {
 					if query != v.searchText {
 						return
 					}
@@ -32,6 +32,11 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 					}
 					json.Unmarshal(b, &v.searchResults)
 				}})
+				if accepted {
+					v.searchSent = query
+				} else {
+					c.After(100 * time.Millisecond)
+				}
 			}
 			results := v.searchResults
 			if strings.TrimSpace(v.searchText) == "" {

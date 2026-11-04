@@ -77,3 +77,5 @@ python3 scripts/verify-design-freeze.py --repository
 ```
 
 录制器只允许固定 conversation notification，工作目录为临时目录；账号、配置、RPC 初始化结果、catalog 和 stderr 不进入录制。固定 schema 校验先于消费测试。真实账号录制会发起两次模型请求，普通 `go test` 不调用真实账号。重新录制是显式操作，不在测试失败时自动执行。
+
+评论批次的最终独立只读审阅发现三项 Important，已一次修复并各自先复现失败：Git 监测仅在事务中更新 Git 字段，保留并发完成状态和独立上下文；设备文件预览以 root-confined 非阻塞方式打开后检查普通文件，FIFO 不再占住调度锁；搜索队列满时不把查询冒充为已发送，并重试当前查询。全量 race 测试、冻结校验及 53 帧录制验证通过。所有对照底图已按明确的 current-v37 亮／暗文件重新复制，并检查模式和尺寸比例；13 条普通评论已逐条回复、解决，视觉 verify verdict 仍由用户决定。

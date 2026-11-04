@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -179,7 +180,7 @@ func (s *Server) detectGitContext(status domain.GitStatus) error {
 		changed := session.GitBranch != status.Branch || (session.GitBranch == "" && session.GitHead != status.Head)
 		if changed && sameCheckout(s.ctx, session.Context.CWD, status.Checkout) {
 			session.ContextChanged = true
-			if _, err = s.store.Apply(session.ID, domain.Event{Type: "session", Session: &session}); err != nil {
+			if _, err = s.store.Apply(session.ID, domain.Event{Type: "session.git", Session: &session}); err != nil {
 				return err
 			}
 		}
@@ -270,7 +271,7 @@ func (s *Server) checkout(in protocol.CheckoutInput) (domain.GitStatus, error) {
 	d.Session.GitBranch = status.Branch
 	d.Session.GitHead = status.Head
 	d.Session.ContextChanged = false
-	_, err = s.store.Apply(d.Session.ID, domain.Event{Type: "session", Session: &d.Session})
+	_, err = s.store.Apply(d.Session.ID, domain.Event{Type: "session.git", Session: &d.Session})
 	return status, err
 }
 func (s *Server) prepareGit(in domain.Submission, launch domain.LaunchContext) (domain.LaunchContext, error) {
@@ -435,7 +436,7 @@ func (s *Server) fileVersions(q protocol.FileQuery) (domain.FileVersions, error)
 		return out, err
 	}
 	defer root.Close()
-	f, err := root.Open(q.Path)
+	f, err := root.OpenFile(q.Path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return out, err
 	}

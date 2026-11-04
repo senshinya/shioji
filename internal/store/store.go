@@ -316,10 +316,20 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 			return e, errors.New("invalid session event")
 		}
 		revision := session.Revision
+		branch, head, changed := session.GitBranch, session.GitHead, session.ContextChanged
 		session = *e.Session
+		session.GitBranch, session.GitHead, session.ContextChanged = branch, head, changed
 		if session.Revision < revision {
 			session.Revision = revision
 		}
+	case "session.git":
+		if e.Session == nil || e.Session.ID != sid {
+			return e, errors.New("invalid Git context event")
+		}
+		session.GitBranch = e.Session.GitBranch
+		session.GitHead = e.Session.GitHead
+		session.ContextChanged = e.Session.ContextChanged
+		e.Type = "session"
 	case "item.upsert":
 		if e.Item == nil {
 			return e, errors.New("missing item")
