@@ -345,7 +345,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 						} else if s.Status == "running" || s.Status == "starting" {
 							n.Column(c).Width(10).AlignItems(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Success) })
 						} else if s.Status == "completed" {
-							n.Icon(c, check).Size(10, 10).TextColor(t.TextMuted)
+							n.Icon(c, check).Size(10, 10).TextColor(t.Success)
 						} else {
 							glyph := "Ⅱ"
 							label := "已暂停"
@@ -504,15 +504,17 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	}
 	maxWidth := float32(768)
 	inputHeight := float32(54)
+	inputInset := float32(9)
 	inputSize, inputLeading := float32(14), float32(22)
 	if home {
 		maxWidth = 736
 		inputHeight = 72
+		inputInset = 0
 		inputSize, inputLeading = 15, 26
 	}
 	n.Column(c.Key("composer:"+key)).FillWidth().MaxWidth(maxWidth).Padding(10, 14, 8, 14).Gap(4).Background(bg).Border(1, t.Border).Radius(16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04)).Children(func() {
 		v.branchStrip(c, t, home)
-		n.TextAreaBase(c.Key("input"), &binding.Text).Label("消息输入").Placeholder("描述任务…").FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(inputSize).FixedLineHeight(inputLeading).OnTextKey(func(k n.TextKey) bool {
+		n.TextAreaBase(c.Key("input"), &binding.Text).Label("消息输入").Placeholder("描述任务…").PlaceholderColor(subtle(t)).Padding(0, inputInset).FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(inputSize).FixedLineHeight(inputLeading).OnTextKey(func(k n.TextKey) bool {
 			if k.Key == n.KeyEnter && (k.Mods == 0 || k.Mods == n.Cmd) {
 				m.Drafts[key] = k.Text()
 				if strings.TrimSpace(k.Text()) != "" {
@@ -862,6 +864,9 @@ func (v *View) pendingCount(session string) int {
 	}
 	return count
 }
+
+const requestRadius = 8
+
 func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 	type page struct {
 		request  domain.PendingRequest
@@ -891,9 +896,9 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 	m.Pager[m.SessionID] = index
 	current := pages[index]
 	r := current.request
-	n.Column(c.Key("pending")).FillWidth().MaxWidth(768).Padding(10, 14, 12, 14).Gap(8).Radius(10).Background(t.Surface).Border(1, t.Border).Children(func() {
+	n.Column(c.Key("pending")).FillWidth().MaxWidth(768).Padding(12, 14).Gap(8).Radius(requestRadius).Background(t.Surface).Border(1, t.Border).Children(func() {
 		n.Row(c).FillWidth().AlignItems(n.Center).Children(func() {
-			title := n.ButtonBase(c).Height(24).Grow(1).Justify(n.Start).Label(r.Title).Children(func() {
+			title := n.ButtonBase(c).Height(24).Grow(1).Radius(requestRadius).Justify(n.Start).Label(r.Title).Children(func() {
 				n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
 					icon := questionIcon
 					if r.Kind == "approval" {
@@ -908,11 +913,11 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 				m.Collapsed[m.SessionID] = !m.Collapsed[m.SessionID]
 			}
 			if len(pages) > 1 {
-				if ghost(c, "‹").Label("上一个请求").Disabled(index == 0).Clicked() {
+				if ghost(c, "‹").Radius(requestRadius).Label("上一个请求").Disabled(index == 0).Clicked() {
 					m.Pager[m.SessionID]--
 				}
 				n.Text(c, fmt.Sprintf("%d / %d", index+1, len(pages))).FontSize(11)
-				if ghost(c, "›").Label("下一个请求").Disabled(index == len(pages)-1).Clicked() {
+				if ghost(c, "›").Radius(requestRadius).Label("下一个请求").Disabled(index == len(pages)-1).Clicked() {
 					m.Pager[m.SessionID]++
 				}
 			}
@@ -931,7 +936,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 				n.Text(c, q.Text).FontSize(12).FixedLineHeight(20)
 				selected := textBinding(v.answerBindings, key, m.Answers[key])
 				if len(q.Options) > 0 {
-					n.Column(c).FillWidth().Padding(6).Gap(2).Radius(5).Background(raised(t)).Children(func() {
+					n.Column(c).FillWidth().Padding(0, 8).Gap(2).Radius(requestRadius).Background(raised(t)).Children(func() {
 						for _, option := range q.Options {
 							n.Radio(c.Key(option.Label), &selected.Text, option.Label, option.Label).FillWidth().MinHeight(28).FontSize(12).Tooltip(option.Description).Changed()
 						}
@@ -941,7 +946,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 				selected.LastModel = selected.Text
 				if q.Custom || len(q.Options) == 0 {
 					custom := textBinding(v.customBindings, key, m.Answers["custom:"+key])
-					input := n.TextAreaBase(c.Key("answer:"+key), &custom.Text).FillWidth().Lines(1, 4).MinHeight(32).MaxHeight(96).Padding(5, 8).FontSize(12).FixedLineHeight(20).Background(raised(t)).Border(1, t.Border).Radius(6).Label("自定义答案").Placeholder("输入答案…")
+					input := n.TextAreaBase(c.Key("answer:"+key), &custom.Text).FillWidth().Lines(1, 4).MinHeight(32).MaxHeight(96).Padding(5, 8).FontSize(12).FixedLineHeight(20).Background(raised(t)).Border(1, t.Border).Radius(requestRadius).Label("自定义答案").Placeholder("输入答案…").PlaceholderColor(subtle(t))
 					if input.Changed() {
 						m.Answers["custom:"+key] = custom.Text
 						m.Answers[key] = custom.Text
@@ -953,10 +958,10 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 		n.Row(c).Gap(8).Children(func() {
 			disabled := !m.Connected || r.State != "pending"
 			if r.Kind == "approval" {
-				if n.PrimaryButton(c, "允许本轮").Height(28).FontSize(12).Disabled(disabled).Clicked() {
+				if n.PrimaryButton(c, "允许本轮").Radius(requestRadius).Height(28).FontSize(12).Disabled(disabled).Clicked() {
 					v.respond(r, domain.Answer{RequestID: r.ID, Revision: r.Revision, Decision: "accept"})
 				}
-				if ghost(c, "拒绝").Disabled(disabled).Clicked() {
+				if ghost(c, "拒绝").Radius(requestRadius).Disabled(disabled).Clicked() {
 					v.respond(r, domain.Answer{RequestID: r.ID, Revision: r.Revision, Decision: "decline"})
 				}
 			} else {
@@ -969,7 +974,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 					}
 					answers[q.ID] = []string{answer}
 				}
-				if n.PrimaryButton(c, "提交答案").Height(28).FontSize(12).Disabled(disabled || !complete).Clicked() {
+				if n.PrimaryButton(c, "提交答案").Radius(requestRadius).Height(28).FontSize(12).Disabled(disabled || !complete).Clicked() {
 					v.respond(r, domain.Answer{RequestID: r.ID, Revision: r.Revision, Answers: answers})
 				}
 			}

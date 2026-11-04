@@ -89,3 +89,21 @@ The rejected screenshot and a fresh native before capture are retained locally.
 Light/dark native frames are replaced in the existing verification groups;
 workspace collapse/expand, branch disclosure and Permission disclosure are checked
 in the running native app. Project tests, build and frozen-design check pass.
+
+## Follow-up: composer and request panel
+
+Four further pins refine the conversation composer and question card. The
+conversation input text, branch path's visible edge and attachment plus now
+share a left edge; home keeps its established context geometry. Placeholder
+colors are explicit frozen subtle values (#707070 light, #969696 dark), while
+entered text keeps the primary color. Completed sidebar ticks use the same
+appearance-specific success green as turn completion.
+
+Per the new comment asking for one corner radius, the pending panel, option
+surface, custom answer and action buttons use 8px. The white option surface uses
+8px horizontal insets; centered 12px radio controls in 28px rows provide matching
+8px first/last vertical insets. Outer card padding uses the established 12/14px
+insets. Question selection/submission and ordinary draft state are unchanged.
+Native before/after evidence is retained in the existing conversation and pending
+verification groups. Dark request-panel evidence is shown independently, without
+substituting a light reference. Existing real conversation recordings are reused.
