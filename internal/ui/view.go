@@ -815,22 +815,25 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 		case "unknown":
 			label = "执行状态待核实"
 		}
-		n.Text(c, label).FontSize(11).TextColor(t.TextMuted)
+		n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 		if turn.DurationMS != nil {
-			n.Text(c, fmt.Sprintf("%.1f 秒", float64(*turn.DurationMS)/1000)).Font("Menlo").FontSize(11).TextColor(t.TextMuted)
+			n.Row(c).Gap(4).AlignItems(n.Baseline).Children(func() {
+				n.Text(c, fmt.Sprintf("%.1f", float64(*turn.DurationMS)/1000)).Font("Menlo").FontSize(11).FixedLineHeight(20).Translate(0, 1).TextColor(t.TextMuted)
+				n.Text(c, "秒").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+			})
 		}
 		if turn.Status == "completed" {
 			usage := n.ButtonBase(c).MinHeight(24).Label("本轮用量").Children(func() {
-				n.Row(c).Gap(4).AlignItems(n.Center).Children(func() {
+				n.Row(c).Gap(4).AlignItems(n.Baseline).Children(func() {
 					for i, field := range []struct {
 						name  string
 						value *int64
 					}{{"输入", turn.InputTokens}, {"输出", turn.OutputTokens}, {"缓存", turn.CachedInputTokens}} {
 						if i > 0 {
-							n.Text(c, "·").FontSize(11).TextColor(t.TextMuted)
+							n.Text(c, "·").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 						}
-						n.Text(c, field.name).FontSize(11).TextColor(t.TextMuted)
-						n.Text(c, count(field.value)).Font("Menlo").FontSize(11).TextColor(t.TextMuted)
+						n.Text(c, field.name).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+						n.Text(c, count(field.value)).Font("Menlo").FontSize(11).FixedLineHeight(20).Translate(0, 1).TextColor(t.TextMuted)
 					}
 				})
 			})
