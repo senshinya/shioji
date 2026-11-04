@@ -387,6 +387,9 @@ func (s *Store) Snapshot() (domain.Snapshot, error) {
 	if out.Sessions, err = rowsOf[domain.Session](s.db, "SELECT body FROM sessions ORDER BY rowid"); err != nil {
 		return out, err
 	}
+	if out.PendingRequests, err = rowsOf[domain.PendingRequest](s.db, "SELECT body FROM requests WHERE json_extract(body,'$.state') IN ('pending','submitting')"); err != nil {
+		return out, err
+	}
 	rows, err := s.db.Query("SELECT id,session_id,state,error FROM operations ORDER BY rowid DESC LIMIT 100")
 	if err != nil {
 		return out, err
@@ -459,38 +462,51 @@ func (s *Store) Events(after int64, limit int) ([]domain.Event, error) {
 
 // Recover never dispatches saved input. An old dispatch may already have caused an external effect.
 func (s *Store) Recover() error {
-	snap, err := s.Snapshot()
+	snapshot, err := s.Snapshot()
 	if err != nil {
 		return err
 	}
-	for _, op := range snap.Operations {
-		if op.State == "dispatched" || op.State == "accepted" {
-			if err = s.SetOperation(op.ID, "indeterminate", "Worker restarted before external acceptance was confirmed"); err != nil {
+	s.mu.Lock()
+	rows, err := s.db.Query("SELECT id FROM operations WHERE state IN ('accepted','dispatched')")
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			break
+		}
+		ids = append(ids, id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err = s.SetOperation(id, "indeterminate", "Worker restarted before external acceptance was confirmed"); err != nil {
+			return err
+		}
+	}
+	for _, session := range snapshot.Sessions {
+		if session.Status == "running" || session.Status == "starting" {
+			session.Status = "unknown"
+			session.Error = "Previous execution needs reconciliation; input was not replayed"
+			if _, err = s.Apply(session.ID, domain.Event{Type: "session", Session: &session}); err != nil {
 				return err
 			}
 		}
 	}
-	for _, session := range snap.Sessions {
-		if session.Status != "running" && session.Status != "starting" {
-			continue
-		}
-		session.Status = "unknown"
-		session.Error = "Previous execution needs reconciliation; input was not replayed"
-		if _, err = s.Apply(session.ID, domain.Event{Type: "session", Session: &session}); err != nil {
+	for _, req := range snapshot.PendingRequests {
+		req.State = "invalidated"
+		req.Revision++
+		if _, err = s.Apply(req.SessionID, domain.Event{Type: "request.resolve", Request: &req}); err != nil {
 			return err
-		}
-		detail, e := s.Session(session.ID, 0, 1)
-		if e != nil {
-			return e
-		}
-		for _, req := range detail.Requests {
-			if req.State == "pending" {
-				req.State = "invalidated"
-				req.Revision++
-				if _, err = s.Apply(session.ID, domain.Event{Type: "request.resolve", Request: &req}); err != nil {
-					return err
-				}
-			}
 		}
 	}
 	return nil

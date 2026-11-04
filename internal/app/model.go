@@ -160,6 +160,18 @@ func (m *Model) Reject(in domain.Submission, message string) {
 	m.ApplyOperation(domain.Operation{ID: in.OperationID, State: "rejected", Error: message})
 }
 func (m *Model) ApplySnapshot(snapshot domain.Snapshot) {
+	if m.Snapshot.Generation != "" && m.Snapshot.Generation != snapshot.Generation {
+		m.Details = map[string]domain.SessionDetail{}
+	}
+	for id, detail := range m.Details {
+		detail.Requests = nil
+		m.Details[id] = detail
+	}
+	for _, req := range snapshot.PendingRequests {
+		detail := m.Details[req.SessionID]
+		detail.Requests = append(detail.Requests, req)
+		m.Details[req.SessionID] = detail
+	}
 	m.Snapshot = snapshot
 	m.KnownDeviceID = snapshot.DeviceID
 	m.Sequence = snapshot.Sequence
@@ -207,6 +219,9 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 	}
 	if e.Operation != nil {
 		m.ApplyOperation(*e.Operation)
+	}
+	if _, ok := m.Details[e.SessionID]; !ok && e.Request != nil {
+		m.Details[e.SessionID] = domain.SessionDetail{}
 	}
 	if detail, ok := m.Details[e.SessionID]; ok && e.Sequence > detail.Sequence {
 		if e.Session != nil {

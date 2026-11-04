@@ -137,7 +137,7 @@ func iconButton(c *n.Context, icon *n.SVG, label string) n.Element {
 	return n.ButtonBase(c).Size(28, 28).Radius(6).Label(label).Tooltip(label).Children(func() { n.Icon(c, icon).Size(16, 16) })
 }
 func ghost(c *n.Context, label string) n.Element {
-	return n.Button(c, label).Background(n.Transparent).Border(0, n.Transparent).Height(28)
+	return n.Button(c, label).FontWeight(400).Justify(n.Start).Background(n.Transparent).Border(0, n.Transparent).Height(28)
 }
 func (v *View) sidebar(c *n.Context, t *n.Theme) {
 	m := v.Model

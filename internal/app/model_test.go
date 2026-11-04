@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"shioji/internal/domain"
 	"testing"
@@ -104,5 +105,29 @@ func TestEventGapRequiresSnapshotInsteadOfSkippingOutput(t *testing.T) {
 	}
 	if m.Sequence != 0 {
 		t.Fatal("advanced broken cursor")
+	}
+}
+
+func TestGenerationChangeDiscardsCachedFormsButKeepsDrafts(t *testing.T) {
+	m := model()
+	m.Drafts["home"] = "keep"
+	m.Details["s"] = domain.SessionDetail{Requests: []domain.PendingRequest{{ID: "old", State: "pending"}}}
+	m.ApplySnapshot(domain.Snapshot{DeviceID: "d", Generation: "new-generation"})
+	if len(m.Details) != 0 {
+		t.Fatal("old forms survived a new authoritative generation")
+	}
+	if m.Drafts["home"] != "keep" {
+		t.Fatal("snapshot lost editable draft")
+	}
+}
+func TestInitialSnapshotMakesBackgroundPendingRequestsDiscoverable(t *testing.T) {
+	m := model()
+	var snapshot domain.Snapshot
+	if err := json.Unmarshal([]byte(`{"deviceId":"d","generation":"g","pendingRequests":[{"id":"r","sessionId":"background","kind":"questions","state":"pending"}]}`), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	m.ApplySnapshot(snapshot)
+	if len(m.Details["background"].Requests) != 1 {
+		t.Fatal("pending background request missing after reconnect")
 	}
 }

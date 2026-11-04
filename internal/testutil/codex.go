@@ -44,6 +44,9 @@ func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(string(encoded), "SHIOJI_SLOW") {
 		kind = "slow"
 	}
+	if strings.Contains(string(encoded), "SHIOJI_APPROVAL") {
+		kind = "approval"
+	}
 	if strings.Contains(string(encoded), "SHIOJI_QUESTION") {
 		kind = "question"
 	}
@@ -66,6 +69,10 @@ func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
 	if kind == "question" && count == 0 {
 		args := `{"questions":[{"id":"q","header":"Choice","question":"Continue?","options":[{"label":"Yes","description":"Continue"},{"label":"No","description":"Decline"}]}]}`
 		item = map[string]any{"type": "function_call", "call_id": "question_call", "name": "request_user_input", "arguments": args}
+	}
+	if kind == "approval" && count == 0 {
+		args := `{"cmd":"printf SHIOJI_DENIED_COMMAND","login":false,"sandbox_permissions":"require_escalated","justification":"Disposable integration check; the client will deny"}`
+		item = map[string]any{"type": "function_call", "call_id": "approval_call", "name": "exec_command", "arguments": args}
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	for _, e := range []map[string]any{{"type": "response.created", "response": map[string]string{"id": "resp"}}, {"type": "response.output_item.done", "item": item}, {"type": "response.completed", "response": map[string]any{"id": "resp", "usage": map[string]int{"input_tokens": 11, "output_tokens": 5, "total_tokens": 16}}}} {

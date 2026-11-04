@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"fmt"
 	"path/filepath"
 	"shioji/internal/domain"
 	"shioji/internal/store"
@@ -166,5 +167,36 @@ func TestRestartMarksDispatchUnknownAndDoesNotReplay(t *testing.T) {
 	d, _ := s.Session(op.SessionID, 0, 100)
 	if d.Session.Status != "unknown" {
 		t.Fatalf("status=%s", d.Session.Status)
+	}
+}
+
+func TestRecoveryCoversOutstandingOperationsBeyondSnapshotPage(t *testing.T) {
+	s := open(t)
+	w := workspace(t, s)
+	first, err := s.Accept(domain.Submission{OperationID: "old-unknown", WorkspaceID: w.ID, Text: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetOperation(first.ID, "dispatched", ""); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 101; i++ {
+		op, err := s.Accept(domain.Submission{OperationID: fmt.Sprint("later-", i), WorkspaceID: w.ID, Text: "later"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = s.SetOperation(op.ID, "confirmed", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = s.Recover(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Operation(first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != "indeterminate" {
+		t.Fatalf("old operation escaped recovery: %s", got.State)
 	}
 }

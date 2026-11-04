@@ -2,6 +2,7 @@ package worker_test
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"shioji/internal/protocol"
 	"shioji/internal/testutil"
 	"shioji/internal/worker"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -164,5 +166,79 @@ func TestWrongDeviceAndOldEpochCannotMutateWorker(t *testing.T) {
 	call(t, c, "snapshot", nil, &snap)
 	if len(snap.Workspaces) != 0 {
 		t.Fatal("old epoch mutated state")
+	}
+}
+
+func TestAppServerDeathMarksExecutionUnknownWithoutReplayingInput(t *testing.T) {
+	server, c, p := startServer(t)
+	var ready domain.Readiness
+	call(t, c, "readiness", nil, &ready)
+	var w domain.Workspace
+	call(t, c, "workspace.create", worker.WorkspaceInput{Name: "Test", Folders: []string{t.TempDir()}}, &w)
+	var op domain.Operation
+	call(t, c, "session.submit", domain.Submission{OperationID: "crash", WorkspaceID: w.ID, Text: "SHIOJI_SLOW", Config: domain.RunConfig{Model: ready.Models[0].ID, Permission: "read-only"}}, &op)
+	select {
+	case <-p.Started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("turn not dispatched")
+	}
+	b, err := os.ReadFile(filepath.Join(server.Directory(), "runtime-process.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		PID int `json:"pid"`
+	}
+	if err = json.Unmarshal(b, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.PID <= 0 {
+		t.Fatal("no owned harness process")
+	}
+	if err = syscall.Kill(record.PID, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	var detail domain.SessionDetail
+	wait(t, func() bool {
+		call(t, c, "session", worker.SessionQuery{ID: op.SessionID}, &detail)
+		return detail.Session.Status == "unknown"
+	})
+	var again domain.Operation
+	call(t, c, "session.submit", domain.Submission{OperationID: "crash", WorkspaceID: w.ID, Text: "SHIOJI_SLOW", Config: domain.RunConfig{Model: ready.Models[0].ID, Permission: "read-only"}}, &again)
+	if again.SessionID != op.SessionID {
+		t.Fatal("replayed into a new session")
+	}
+	select {
+	case <-p.Started:
+		t.Fatal("input was replayed")
+	default:
+	}
+	close(p.Release)
+}
+
+func TestWorkerExecutionApprovalCanBeDenied(t *testing.T) {
+	_, c, _ := startServer(t)
+	var ready domain.Readiness
+	call(t, c, "readiness", nil, &ready)
+	var w domain.Workspace
+	call(t, c, "workspace.create", worker.WorkspaceInput{Name: "Test", Folders: []string{t.TempDir()}}, &w)
+	var op domain.Operation
+	call(t, c, "session.submit", domain.Submission{OperationID: "approval", WorkspaceID: w.ID, Text: "SHIOJI_APPROVAL", Config: domain.RunConfig{Model: ready.Models[0].ID, Permission: "default"}}, &op)
+	var detail domain.SessionDetail
+	wait(t, func() bool {
+		call(t, c, "session", worker.SessionQuery{ID: op.SessionID}, &detail)
+		return len(detail.Requests) > 0
+	})
+	r := detail.Requests[0]
+	if r.Kind != "approval" {
+		t.Fatalf("request kind=%s", r.Kind)
+	}
+	call(t, c, "request.respond", worker.AnswerInput{SessionID: op.SessionID, Answer: domain.Answer{RequestID: r.ID, Revision: r.Revision, Decision: "decline"}}, nil)
+	wait(t, func() bool {
+		call(t, c, "session", worker.SessionQuery{ID: op.SessionID}, &detail)
+		return detail.Session.Status == "completed"
+	})
+	if detail.Requests[0].State != "answered" {
+		t.Fatalf("request=%+v", detail.Requests[0])
 	}
 }

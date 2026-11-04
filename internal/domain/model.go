@@ -129,12 +129,13 @@ type Event struct {
 	Turn      *Turn           `json:"turn,omitempty"`
 }
 type Snapshot struct {
-	DeviceID   string      `json:"deviceId"`
-	Generation string      `json:"generation"`
-	Sequence   int64       `json:"sequence"`
-	Workspaces []Workspace `json:"workspaces"`
-	Sessions   []Session   `json:"sessions"`
-	Operations []Operation `json:"operations"`
+	PendingRequests []PendingRequest `json:"pendingRequests,omitempty"`
+	DeviceID        string           `json:"deviceId"`
+	Generation      string           `json:"generation"`
+	Sequence        int64            `json:"sequence"`
+	Workspaces      []Workspace      `json:"workspaces"`
+	Sessions        []Session        `json:"sessions"`
+	Operations      []Operation      `json:"operations"`
 }
 type SessionDetail struct {
 	Session  Session          `json:"session"`

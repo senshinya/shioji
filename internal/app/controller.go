@@ -22,12 +22,13 @@ type Job struct {
 	Apply     func(*Model, json.RawMessage, error)
 }
 type Controller struct {
-	ExpectedDeviceID string
-	Directory        string
-	Jobs             chan Job
-	Updates          chan Update
-	mu               sync.Mutex
-	invalidate       func()
+	ExpectedDeviceID  string
+	RestoreOperations []string
+	Directory         string
+	Jobs              chan Job
+	Updates           chan Update
+	mu                sync.Mutex
+	invalidate        func()
 }
 
 func NewController(dir string) *Controller {
@@ -58,6 +59,7 @@ func (c *Controller) Run(ctx context.Context) {
 	var sequence int64
 	var selected string
 	var loaded string
+	var lastReadiness time.Time
 	defer func() {
 		if client != nil {
 			client.Close()
@@ -172,6 +174,35 @@ func (c *Controller) Run(ctx context.Context) {
 				sequence = snapshot.Sequence
 				c.post(func(m *Model) { m.Connected = true; m.Readiness = ready; m.ApplySnapshot(snapshot) })
 				loaded = ""
+				for _, id := range c.RestoreOperations {
+					var op domain.Operation
+					err := client.Call(ctx, "operation", struct {
+						ID string `json:"id"`
+					}{id}, &op)
+					if err == nil {
+						c.post(func(m *Model) { m.ApplyOperation(op) })
+					} else {
+						var remote *protocol.RemoteError
+						if errors.As(err, &remote) {
+							key := id
+							c.post(func(m *Model) {
+								if in, ok := m.Pending[key]; ok {
+									m.Reject(in, "未找到已接纳的提交，草稿已保留")
+								}
+							})
+						}
+					}
+				}
+				c.RestoreOperations = nil
+			}
+			if time.Since(lastReadiness) > 5*time.Second {
+				var ready domain.Readiness
+				if err := client.Call(ctx, "readiness", nil, &ready); err != nil {
+					disconnected()
+					continue
+				}
+				lastReadiness = time.Now()
+				c.post(func(m *Model) { m.Readiness = ready })
 			}
 			// Pull the journal before hydrating a selection so the detail's barrier cannot lose an event.
 			var page protocol.EventPage

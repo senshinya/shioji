@@ -1,0 +1,49 @@
+# 本机闭环开发基线
+
+2026-11-04。按照首期实施规格 §14 的阶段 1 开始实施。当前可构建、可运行；**不是完整冻结交互或正式发布验收通过的声明**。后续阶段继续以原实施规格为准。
+
+## 已接通
+
+- 单 Go module；独立 `shioji`／`shioji-worker`；MyGo 原生窗口、Markdown、虚拟列表和输入。没有 WebView 或 herdr-core 运行依赖。
+- 同用户单 worker：0700 私有目录、0600 socket／数据库、文件锁和本地 peer UID 检查。第二个 owner 不替换活跃 socket。
+- SQLite 事务接纳、稳定 DeviceID、工作区主／附加目录、固定会话 launch context、operation 幂等记录、有序 journal 和快照屏障。
+- 私有长度前缀协议，1 MiB 上限、版本／nonce／DeviceID／连接 epoch 校验、分页查询与增量 journal 拉取。当前使用客户端轮询，不是带 Ack 流控的推送订阅。
+- Codex 0.166.0 专用 stdin/stdout、独立进程组、实际模型目录和默认值、effort／Fast／Plan 能力、基础权限映射与 managed 限制检查。无法安全映射的 managed named profiles 不冒充可用。
+- 真实 thread／turn 提交、普通消息增量与最终覆盖、基本 command activity、执行／文件审批、普通 requestUserInput 问题、resolved 生命周期及一次回答保护。未知 request 明确拒绝；未实现 item 显示受限入口，不执行任意客户端工具。
+- 首页非空提交，等首轮被 harness 确认才清草稿；失败／不确定保留；Home、会话和问题草稿独立保存；启动回到 Home。已持久化的待确认操作只查询核对，不自动重发。
+- 多会话不依赖可见选择运行。GUI 断开不终止 harness。进程死亡使待表单失效，活动执行变为 unknown；worker 重启不重发输入，无法核实的旧进程记录阻止新 runtime。
+
+## 本轮实际证据
+
+| 检查 | 实际边界 |
+| --- | --- |
+| `go test ./...`、`go test -race ./...` | 本轮全部通过；真实 pinned app-server 使用隔离 CODEX_HOME／本地确定性 provider 的集成测试，无需重复付费模型调用 |
+| 双会话／客户端断开／问题重连／审批拒绝 | 实际产品 worker＋SQLite＋Unix socket＋真实 Codex app-server；provider 为本地夹具 |
+| app-server SIGKILL | 仅杀测试自己的精确 PID；worker 保留内容、execution unknown，同 OperationID 查询不重发 |
+| 录制回放 | `tests/fixtures/codex/live.jsonl` 是现有已登录账号的两轮真实对话；loopback 是真实 app-server 的工具和问题流程，模型输出来自本地夹具。53 个入站帧通过固定 schema，摘要哈希匹配 |
+| 原生 GUI 实测 | 系统文件选择器创建临时工作区；中文粘贴、Enter 发送；真实账号回复；确认完成／耗时／input→output→cached footer。未把粘贴当作真实 IME 候选窗验收 |
+| GUI 生命周期 | 同一临时会话真实执行 `/bin/sleep 12` 时退出 GUI；原 harness PID 仍在；重新打开可见同一两轮历史、工具与完成回复 |
+| 草稿导航 | 原生窗口输入首页草稿，查看已有会话再 Cmd+N，原文保留；状态层另有独立持久化测试 |
+| 冻结基线 | `python3 scripts/verify-design-freeze.py --repository`；未改冻结设计文件 |
+
+原生截图／生命周期过程证据保存在本地 `.ryugi/run/`，供局域网验收页使用；不加入 Git，不发布云端。
+
+## 明确未完成
+
+- 阶段 2：queue／steer、Git 切分支和 worktree、完整 pinned 类型路由、结构化 Plan／Changes 与 diff、跨虚拟卸载逻辑选择、流式批处理及长期资源预算。当前普通输入保持可编辑；活动 turn 的非空提交暂不可用，不能把它当作 queue。
+- 原生交互仍待验收：run-menu 的侧子菜单／完整键盘行为、完整目录管理、搜索、可配置发送键、滚动条贯穿 dock、tool group 的 prose 边界折叠、全部细节和动画。当前运行配置能修改下一轮模型／effort／Plan／Fast；选择项用菜单内返回页，不能宣称已完整复刻冻结菜单。
+- 阶段 3–4：SSH bootstrap、同设备多客户端安装流程、嵌入 tsnet、配对授权、RTT／路径与网络诊断。
+- 阶段 5：正式 Runtime.app／SMAppService 宿主、签名／公证／升级、登录与电源恢复、正式 Keychain／隐私／支持系统矩阵。开发 bundle 仅 ad-hoc 签名，通过独立后台进程验证 GUI 退出后的继续执行；不自动注册登录服务。
+- worker 或 harness 死亡后的 source-history 自动核对／孤儿显式处理 UI 尚待完善。当前保守地保留 unknown／indeterminate，不提供可导致重复副作用的自动恢复。
+- 当前原生截图需要用户在本机验收；VoiceOver 和物理 IME 尚未在本产品重新验收。研究制品的通过记录不抵扣本产品测试。
+
+## 重复测试与录制
+
+```sh
+env -u GOROOT go test ./...
+env -u GOROOT go test -race ./...
+python3 scripts/verify-codex-recordings.py
+python3 scripts/verify-design-freeze.py --repository
+```
+
+录制器只允许固定 conversation notification，工作目录为临时目录；账号、配置、RPC 初始化结果、catalog 和 stderr 不进入录制。固定 schema 校验先于消费测试。真实账号录制会发起两次模型请求，普通 `go test` 不调用真实账号。重新录制是显式操作，不在测试失败时自动执行。

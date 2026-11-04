@@ -37,6 +37,9 @@ func run() error {
 	}
 	controller := app.NewController(*dir)
 	controller.ExpectedDeviceID = model.KnownDeviceID
+	for id := range model.Pending {
+		controller.RestoreOperations = append(controller.RestoreOperations, id)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
