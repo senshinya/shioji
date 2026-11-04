@@ -53,7 +53,7 @@ func run() error {
 	mygo.App.SetName("Shioji")
 	mygo.App.WhenReady(func() {
 		view := presentation.New(model, controller, *state)
-		window := mygo.NewWindow(mygo.WindowOptions{Title: "Shioji", Width: 1240, Height: 820, MinWidth: 850, MinHeight: 600, TitleBarStyle: mygo.TitleBarHidden, TrafficLightPosition: &mygo.Point{X: 22, Y: 24}, Content: n.View(view.View)})
+		window := mygo.NewWindow(mygo.WindowOptions{Title: "Shioji", Width: 1240, Height: 820, MinWidth: 850, MinHeight: 600, TitleBarStyle: mygo.TitleBarHidden, TrafficLightPosition: &mygo.Point{X: 22, Y: 21}, Content: n.View(view.View)})
 		window.OnClose(func(e *mygo.CloseEvent) {
 			if err := view.Flush(); err != nil {
 				e.PreventDefault()
