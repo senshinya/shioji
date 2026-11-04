@@ -391,7 +391,12 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 }
 func (v *View) toolbar(c *n.Context, t *n.Theme) {
 	m := v.Model
-	n.Row(c).Height(48).FillWidth().PaddingX(24).Gap(6).AlignItems(n.Center).DragWindow().Label("会话工具栏").Children(func() {
+	rightInset := float32(24)
+	if m.SessionID != "" && !v.devices {
+		// The scrollbar gutter and icon inset complete the visible right margin.
+		rightInset = 10
+	}
+	n.Row(c).Height(48).FillWidth().Padding(0, rightInset, 0, 24).Gap(6).AlignItems(n.Center).DragWindow().Label("会话工具栏").Children(func() {
 		if v.devices {
 			n.Text(c, "设备").FontSize(13).Grow(1)
 		} else if m.SessionID != "" {
