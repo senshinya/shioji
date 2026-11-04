@@ -504,17 +504,15 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	}
 	maxWidth := float32(768)
 	inputHeight := float32(54)
-	inputInset := float32(9)
 	inputSize, inputLeading := float32(14), float32(22)
 	if home {
 		maxWidth = 736
 		inputHeight = 72
-		inputInset = 0
 		inputSize, inputLeading = 15, 26
 	}
-	n.Column(c.Key("composer:"+key)).FillWidth().MaxWidth(maxWidth).Padding(10, 14, 8, 14).Gap(4).Background(bg).Border(1, t.Border).Radius(16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04)).Children(func() {
+	n.Column(c.Key("composer:"+key)).FillWidth().MaxWidth(maxWidth).Padding(10, 14, 8, 6).Gap(4).Background(bg).Border(1, t.Border).Radius(16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04)).Children(func() {
 		v.branchStrip(c, t, home)
-		n.TextAreaBase(c.Key("input"), &binding.Text).Label("消息输入").Placeholder("描述任务…").PlaceholderColor(subtle(t)).Padding(0, inputInset).FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(inputSize).FixedLineHeight(inputLeading).OnTextKey(func(k n.TextKey) bool {
+		n.TextAreaBase(c.Key("input"), &binding.Text).Label("消息输入").Placeholder("描述任务…").PlaceholderColor(subtle(t)).Padding(0, 9).FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(inputSize).FixedLineHeight(inputLeading).OnTextKey(func(k n.TextKey) bool {
 			if k.Key == n.KeyEnter && (k.Mods == 0 || k.Mods == n.Cmd) {
 				m.Drafts[key] = k.Text()
 				if strings.TrimSpace(k.Text()) != "" {

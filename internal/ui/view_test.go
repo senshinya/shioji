@@ -95,10 +95,13 @@ func TestConversationSharesCenteredReadingColumn(t *testing.T) {
 			v := New(layoutModel(), nil, "")
 			test := native.NewTester(v.View, width, 900)
 			reply, _ := test.Find("Aligned reply")
-			input, _ := test.Find("消息输入")
 			history, _ := test.Find("对话记录")
-			if math.Abs(float64(reply.X-(input.X-15))) > 1 {
-				t.Fatalf("reply and composer use different columns: reply=%+v input=%+v", reply, input)
+			if err := test.Click("消息输入"); err != nil {
+				t.Fatal(err)
+			}
+			caret, ok := test.TextCaret()
+			if !ok || math.Abs(float64(caret.X-reply.X-16)) > 1 {
+				t.Fatalf("composer text does not retain the 16px reading inset: reply=%+v caret=%+v", reply, caret)
 			}
 			if history.Y != 0 || history.H != 900 {
 				t.Fatalf("scrollport does not span the pane: %+v", history)
@@ -456,5 +459,50 @@ func TestChoiceMenuClosesAcrossDevicePageNavigation(t *testing.T) {
 	test.Frame()
 	if test.HasText("仅查看") {
 		t.Fatal("old menu reopened after device page navigation")
+	}
+}
+
+func TestPendingGitQuestionKeepsBranchVisibleWithoutAllowingSwitch(t *testing.T) {
+	m := layoutModel()
+	m.GitStatuses["session:s"] = domain.GitStatus{Applicable: true, Branch: "main", Head: "abc", Branches: []string{"main", "other"}}
+	d := m.Details["s"]
+	d.Requests = []domain.PendingRequest{{ID: "r", State: "pending", Kind: "questions", Title: "Need input", Questions: []domain.Question{{ID: "q", Text: "Which next?", Options: []domain.Option{{Label: "One"}, {Label: "Two"}}}}}}
+	m.Details["s"] = d
+	v := New(m, nil, "")
+	test := native.NewTester(v.View, 1440, 900)
+	if _, ok := test.Find("选择分支"); !ok {
+		t.Fatal("pending question hid the Git branch")
+	}
+	if v.canSwitchBranch() {
+		t.Fatal("pending question allowed a checkout")
+	}
+	test.Click("选择分支")
+	if test.HasText("搜索分支") {
+		t.Fatal("disabled branch trigger opened a checkout menu")
+	}
+}
+
+func TestHomeAndConversationShareComposerLeadingEdge(t *testing.T) {
+	for _, home := range []bool{false, true} {
+		t.Run(fmt.Sprint(home), func(t *testing.T) {
+			m := layoutModel()
+			key := "session:s"
+			if home {
+				m.SessionID = ""
+				key = "workspace:w"
+			}
+			m.GitStatuses[key] = domain.GitStatus{Applicable: true, Branch: "main", Head: "abc", Branches: []string{"main"}}
+			m.GitDrafts["w"] = domain.GitChoice{Branch: "main"}
+			test := native.NewTester(New(m, nil, "").View, 1440, 900)
+			branch, bok := test.Find("选择分支")
+			attach, aok := test.Find("添加附件（当前 Codex 适配器暂不支持）")
+			if err := test.Click("消息输入"); err != nil {
+				t.Fatal(err)
+			}
+			caret, cok := test.TextCaret()
+			if !bok || !aok || !cok || math.Abs(float64(branch.X-attach.X)) > 1 || math.Abs(float64(caret.X-attach.X-9)) > 1 {
+				t.Fatalf("composer leading edges differ: branch=%+v attachment=%+v caret=%+v", branch, attach, caret)
+			}
+		})
 	}
 }

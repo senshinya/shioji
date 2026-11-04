@@ -145,17 +145,8 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 			label += " · " + status.Head[:7]
 		}
 	}
-	strip := n.Row(c.Key("branch-strip")).FillWidth().Height(26).Gap(12).AlignItems(n.Center)
-	// The frozen home context uses 10px rather than the composer’s 14px inset.
-	if home {
-		strip.Margin(0, 0, 0, -4)
-	}
-	branchInset := float32(10) // align the path’s visible edge with input text and attachment plus
-	if home {
-		branchInset = 4
-	}
-	strip.Children(func() {
-		trigger := n.ButtonBase(c).Height(26).MaxWidth(330).Padding(3, branchInset).Radius(5).Label("选择分支").Tooltip(label).Disabled(!v.canSwitchBranch()).Children(func() {
+	n.Row(c.Key("branch-strip")).FillWidth().Height(26).Gap(12).AlignItems(n.Center).Children(func() {
+		trigger := n.ButtonBase(c).Height(26).MaxWidth(330).Padding(3, 10).Radius(5).Label("选择分支").Tooltip(label).Disabled(!v.canSwitchBranch()).Children(func() {
 			n.Row(c).Height(20).Gap(5).AlignItems(n.Center).Children(func() {
 				n.Icon(c, branchIcon).Size(12, 12).TextColor(t.TextMuted)
 				n.Text(c, label).SingleLine().Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)

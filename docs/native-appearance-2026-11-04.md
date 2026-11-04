@@ -107,3 +107,26 @@ insets. Question selection/submission and ordinary draft state are unchanged.
 Native before/after evidence is retained in the existing conversation and pending
 verification groups. Dark request-panel evidence is shown independently, without
 substituting a light reference. Existing real conversation recordings are reused.
+
+## Follow-up: one composer inset and a real Git question
+
+Home and conversation now use the same left composition: branch control,
+message text and attachment control. The visible reading inset is reduced from
+approximately 24px to 16px. Home no longer has separate branch/text offsets.
+The reading-column test now measures the native text caret, rather than the
+outer text-area box. A new home/session alignment regression fails against the
+preceding UI source and passes with the shared layout.
+
+The earlier pending-card recording was attached to a non-Git directory; its
+missing branch was an evidence-selection problem. The branch renderer already
+keeps Git branch controls visible while requests are pending, disabling checkout.
+A baseline diagnostic regression confirms this behavior. Pending-card evidence
+now comes from a real Git workspace, authoritative local worker and actual pinned
+Codex app-server request using the isolated deterministic local provider. The
+branch remains visible and disabled; selecting an answer does not submit it,
+and its draft survives visiting another session. No production branch is invented
+for non-Git folders, and no new paid model request is made.
+
+Tool/usage evidence continues to replay the existing account recording without
+adding synthetic questions to its non-Git workspace. This keeps the distinct
+recording and live Git-request evidence from implying contradictory branch state.
