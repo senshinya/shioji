@@ -707,8 +707,26 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		state.ReleaseRow()
 	}
 	rows := v.transcriptRows(detail.Items)
+	turns := make(map[string]domain.Turn, len(detail.Turns))
+	for _, turn := range detail.Turns {
+		turns[turn.ID] = turn
+	}
+	rows = withTurnFooters(rows, detail.Items, turns)
 	if v.toolsAnimating {
 		c.AnimationFrame()
+	}
+	state.Reveals = state.Reveals[:0]
+	if !v.reduceMotion {
+		for i, row := range rows {
+			if row.toolParent == "" || row.opacity >= 1 {
+				continue
+			}
+			if len(state.Reveals) > 0 && i > 0 && rows[i-1].toolParent == row.toolParent {
+				state.Reveals[len(state.Reveals)-1].End = i + 2
+			} else {
+				state.Reveals = append(state.Reveals, n.ListReveal{First: i + 1, End: i + 2, Progress: row.opacity})
+			}
+		}
 	}
 	state.Key = func(i int) any {
 		if i == 0 {
@@ -741,6 +759,12 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		}
 		if i >= 0 && (i == len(detail.Items)-1 || (item.TurnID != "" && detail.Items[i+1].TurnID != item.TurnID)) {
 			bottom = 32
+			if _, ok := turns[item.TurnID]; ok {
+				bottom = 8
+			}
+		}
+		if entry.footer != "" {
+			bottom = 32
 		}
 		n.Column(c).FillWidth().PaddingX(18).AlignItems(n.Center).Children(func() {
 			content := n.Column(c).FillWidth().MaxWidth(768).Gap(8).Padding(0, 0, bottom, 0).Selectable()
@@ -751,17 +775,12 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 				}
 			}
 			content.Children(func() {
-				if entry.group != "" {
+				if entry.footer != "" {
+					v.turnFooter(c, t, turns[entry.footer])
+				} else if entry.group != "" {
 					v.toolGroup(c, t, entry, row)
 				} else {
 					v.item(c, t, item)
-				}
-				if i >= 0 && item.TurnID != "" && (i == len(detail.Items)-1 || detail.Items[i+1].TurnID != item.TurnID) {
-					for _, turn := range detail.Turns {
-						if turn.ID == item.TurnID {
-							v.turnFooter(c, t, turn)
-						}
-					}
 				}
 			})
 		})

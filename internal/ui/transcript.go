@@ -16,6 +16,22 @@ type transcriptRow struct {
 	count      int
 	toolParent string
 	opacity    float32
+	footer     string
+}
+
+// A turn receipt is its own stable row below a disclosure, so it follows the
+// group's changing height rather than disappearing inside its clipped body.
+func withTurnFooters(rows []transcriptRow, items []domain.Item, turns map[string]domain.Turn) []transcriptRow {
+	result := make([]transcriptRow, 0, len(rows)+len(turns))
+	for _, row := range rows {
+		result = append(result, row)
+		if row.end >= 0 && row.item.TurnID != "" && (row.end == len(items)-1 || items[row.end+1].TurnID != row.item.TurnID) {
+			if _, ok := turns[row.item.TurnID]; ok {
+				result = append(result, transcriptRow{key: "turn-footer:" + row.item.TurnID, footer: row.item.TurnID, end: -1})
+			}
+		}
+	}
+	return result
 }
 
 // Project groups into the outer virtual list so expanded tool history still

@@ -26,10 +26,15 @@ not expose the following appearance settings required by the frozen design:
   position across structural changes, without disabling virtualization. User
   scrolling and explicit scroll requests release the anchor; collapsing may
   retain trailing reading space instead of jumping the clicked heading.
+- `ui.ListState.Reveals` / `ListReveal`: allocate the changing height of a
+  contiguous virtualized section. Content retains its natural layout, its
+  exposed prefix clips at the animated boundary, and hidden suffix rows are
+  skipped. One viewport is measured ahead to stabilize mixed-height content.
 
 Changes are confined to ui/theme.go, ui/paint.go, ui/editor/editor.go and
 ui/editor/theme.go, plus ui/glyphs.go, internal/text/layout.go and
-internal/text/coretext_darwin.go, ui/layout.go, ui/transition.go, ui/list.go and the
+internal/text/coretext_darwin.go, ui/layout.go, ui/transition.go, ui/list.go,
+ui/list_reveal.go and the
 regression tests. The popup and list changes are covered by Shioji's native
 component interaction regressions. Remove the replacement when an
 upstream release exposes equivalent controls. This remains a native renderer;

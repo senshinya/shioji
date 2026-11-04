@@ -375,6 +375,7 @@ func TestToolGroupClosesOnceOnAgentProseAndKeepsExplicitReopen(t *testing.T) {
 	if err := test.Click("1 次工具调用"); err != nil {
 		t.Fatal(err)
 	}
+	test.Advance(180 * time.Millisecond)
 	d.Items[1].Text = "late tool output"
 	m.Details["s"] = d
 	test.Frame()
@@ -405,6 +406,7 @@ func TestOpeningSavedSessionCollapsesEveryHistoricalToolGroup(t *testing.T) {
 	if err := ui.Click("2 次工具调用"); err != nil {
 		t.Fatal(err)
 	}
+	ui.Advance(180 * time.Millisecond)
 	if !ui.HasText("last command") {
 		t.Fatal("manual expansion did not reveal the saved call")
 	}
@@ -469,6 +471,7 @@ func TestExpandedToolChildrenAndFooterShareGroupLeadingEdge(t *testing.T) {
 		if err := ui.Click("2 次工具调用"); err != nil {
 			t.Fatal(err)
 		}
+		ui.Advance(180 * time.Millisecond)
 		group, _ := ui.Find("2 次工具调用")
 		for _, label := range []string{"first command", "second command"} {
 			child, ok := ui.Find(label)

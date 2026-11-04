@@ -63,6 +63,9 @@ type ListState struct {
 	// goes on from where it is as more comes, and the user scrolling stops
 	// it. It shows the end at once where the desktop asks for less motion.
 	FollowAnimation *Animation
+	// Reveals animate the allocated height of contiguous row ranges without
+	// changing their natural measurements or mounting their hidden suffixes.
+	Reveals []ListReveal
 	// Selected, when set, lets a click choose a row, as Up, Down, Home and
 	// End do while the list has the keyboard focus, and Page Up and Page
 	// Down on Linux and Windows: *Selected is the chosen row, -1 for none,
@@ -516,6 +519,10 @@ func buildList(c *context, e, owner *node, s *ListState, n int, row func(i int),
 	a, first, last := s.plan(e, n)
 	e.Children(func() {
 		for i := first; i < last; i++ {
+			i = s.heights.nextVisible(i, 1)
+			if i >= last {
+				break
+			}
 			f.build(i)
 		}
 		// The row holding the focus stays out of view as well, with the
@@ -543,6 +550,7 @@ func buildList(c *context, e, owner *node, s *ListState, n int, row func(i int),
 // items moving, the user or the app scrolling.
 func (s *ListState) sync(e *node, n int) {
 	st, rt := e.st, e.c.rt
+	s.heights.reveals, s.heights.gap = s.Reveals, s.gap
 	if s.pinned {
 		if s.req.set || st.scrollY != s.wroteY {
 			s.pinned = false
@@ -682,12 +690,16 @@ func (s *ListState) plan(e *node, n int) (a, first, last int) {
 	}
 	last = a
 	for yy := y; last < n && yy < view && last-a < listMaxRows; last++ {
-		yy += hs.height(last) + gap
+		last = hs.nextVisible(last, 1)
+		if last >= n {
+			break
+		}
+		yy += hs.step(last, gap)
 	}
 	first = a
 	for yy := y; first > 0 && yy > above && a-first < listMaxRows; {
-		first--
-		yy -= hs.height(first) + gap
+		first = max(0, hs.nextVisible(first-1, -1))
+		yy -= hs.step(first, gap)
 	}
 	return a, max(0, first-listOverscan), min(n, last+listOverscan)
 }
@@ -1355,6 +1367,7 @@ func (e *node) layoutList(w, h float32) {
 	H := float64(h)
 	top, bottom := float64(e.border[0]), H-float64(e.border[2])
 	s.gap, s.padTop, s.border = gap, padTop, top
+	hs.gap = gap
 	st.list = s
 	if n == 0 {
 		_, uh := boxLayout(e, cw, inf, true)
@@ -1385,6 +1398,18 @@ func (e *node) layoutList(w, h float32) {
 		f.at[i] = len(f.rows) - 1
 		hs.set(i, heightAt(r, cw, inf))
 		return true
+	}
+	// Measure one viewport of a changing section before revealing it. This
+	// stabilizes mixed-height content while its following rows are visible,
+	// without constructing the section's offscreen history.
+	for _, reveal := range hs.reveals {
+		measured := float64(0)
+		for i := reveal.First; i < reveal.End && measured < H; i++ {
+			if !ensure(i) {
+				break
+			}
+			measured += hs.naturalHeight(i) + gap
+		}
 	}
 	ht := hs.height
 
@@ -1448,18 +1473,29 @@ func (e *node) layoutList(w, h float32) {
 	// Rows lo to hi are placed, row lo at yLo and row hi at yHi.
 	lo, hi, yLo, yHi := a, a, ya, ya
 	cover := func() {
-		for hi < n-1 && yHi+ht(hi)+gap < bottom && ensure(hi+1) {
-			yHi += ht(hi) + gap
-			hi++
+		for hi < n-1 && yHi+hs.step(hi, gap) < bottom {
+			next := hs.nextVisible(hi+1, 1)
+			if next >= n || !ensure(next) {
+				break
+			}
+			yHi += hs.top(next, gap) - hs.top(hi, gap)
+			hi = next
 		}
-		for lo > 0 && yLo > top && ensure(lo-1) {
-			lo--
-			yLo -= ht(lo) + gap
+		for lo > 0 && yLo > top {
+			previous := hs.nextVisible(lo-1, -1)
+			if previous < 0 || !ensure(previous) {
+				break
+			}
+			yLo -= hs.top(lo, gap) - hs.top(previous, gap)
+			lo = previous
 		}
 	}
 	shift := func(d float64) { yLo, yHi = yLo+d, yHi+d }
 	end := func() float64 { return yHi + ht(hi) + padBottom }
 	cover()
+	if len(hs.reveals) > 0 {
+		yLo, yHi = ya+hs.top(lo, gap)-hs.top(a, gap), ya+hs.top(hi, gap)-hs.top(a, gap)
+	}
 	// Keep the content's ends at the list's: the end may show above the
 	// bottom after rows went away, the start below the top after rows
 	// above turned out shorter than estimated.
@@ -1492,13 +1528,21 @@ func (e *node) layoutList(w, h float32) {
 		}
 	}
 	glide := s.glideToEnd(e, n, lo, hi, H, padTop+padBottom+hs.top(n, gap)-gap, func(d float64) { shift(d); cover() })
-	for k := 0; k < listOverscan && hi < n-1 && ensure(hi+1); k++ {
-		yHi += ht(hi) + gap
-		hi++
+	for k := 0; k < listOverscan && hi < n-1; k++ {
+		next := hs.nextVisible(hi+1, 1)
+		if next >= n || !ensure(next) {
+			break
+		}
+		yHi += hs.top(next, gap) - hs.top(hi, gap)
+		hi = next
 	}
-	for k := 0; k < listOverscan && lo > 0 && ensure(lo-1); k++ {
-		lo--
-		yLo -= ht(lo) + gap
+	for k := 0; k < listOverscan && lo > 0; k++ {
+		previous := hs.nextVisible(lo-1, -1)
+		if previous < 0 || !ensure(previous) {
+			break
+		}
+		yLo -= hs.top(lo, gap) - hs.top(previous, gap)
+		lo = previous
 	}
 
 	// The offset: where the heights known put row lo's top, less where it
@@ -1509,25 +1553,23 @@ func (e *node) layoutList(w, h float32) {
 		scroll = max(0, padTop+hs.top(lo, gap)-yLo)
 		content = max(content, scroll+H)
 	}
-	y := yLo
-	for i := lo; i <= hi; i++ {
-		f.rows[f.at[i]].y = y
-		y += ht(i) + gap
-	}
 	for k := range f.rows {
-		if r := &f.rows[k]; r.i < lo || r.i > hi {
+		r := &f.rows[k]
+		if r.i >= lo && r.i <= hi {
+			r.y = yLo + hs.top(r.i, gap) - hs.top(lo, gap)
+		} else {
 			r.y = padTop + hs.top(r.i, gap) - scroll
 		}
 	}
 
 	// The rows in view, the first of which anchors the place.
 	first, last := -1, -1
-	for i := lo; i <= hi; i++ {
-		if y := f.rows[f.at[i]].y; y+ht(i) > top && y < bottom {
-			if first < 0 {
-				first = i
+	for _, row := range f.rows {
+		if y := row.y; y+ht(row.i) > top && y < bottom {
+			if first < 0 || row.i < first {
+				first = row.i
 			}
-			last = i
+			last = max(last, row.i)
 		}
 	}
 	if first < 0 {
@@ -1563,7 +1605,12 @@ func (e *node) layoutList(w, h float32) {
 		r := &f.rows[k]
 		link(r.e)
 		r.e.x, r.e.y = e.contentX(), float32(r.y)
-		layoutBox(r.e, cw, float32(ht(r.i)))
+		natural, visible := float32(hs.naturalHeight(r.i)), float32(ht(r.i))
+		layoutBox(r.e, cw, natural)
+		if visible < natural {
+			r.e.h = visible
+			r.e.flags |= flagClip
+		}
 	}
 	for _, ch := range extras {
 		link(ch)
@@ -1808,7 +1855,9 @@ const listBlock = 64
 // their average. The offset of a row sums the totals of the blocks
 // before it, summed in order once they change, and its block's heights.
 type listHeights struct {
-	n int
+	n       int
+	reveals []ListReveal
+	gap     float64
 	// ids are the indexes of the blocks with measured rows, in order.
 	ids    []int
 	blocks []*heightBlock
@@ -1858,7 +1907,7 @@ func (hs *listHeights) estimate() float64 {
 }
 
 // height returns the height of row i, measured or estimated.
-func (hs *listHeights) height(i int) float64 {
+func (hs *listHeights) naturalHeight(i int) float64 {
 	if k, ok := hs.block(i / listBlock); ok {
 		if blk := hs.blocks[k]; blk.known&(1<<(i%listBlock)) != 0 {
 			return float64(blk.h[i%listBlock])
@@ -1869,7 +1918,7 @@ func (hs *listHeights) height(i int) float64 {
 
 // top returns how far below the top of row 0 row i starts, with gap
 // between rows.
-func (hs *listHeights) top(i int, gap float64) float64 {
+func (hs *listHeights) naturalTop(i int, gap float64) float64 {
 	i = max(0, min(i, hs.n))
 	est := hs.estimate()
 	b, j := i/listBlock, i%listBlock
@@ -1906,7 +1955,7 @@ func (hs *listHeights) rowAt(y, gap float64) int {
 	i := lo * listBlock
 	end := min(hs.n, i+listBlock)
 	for at := hs.top(i, gap); i < end-1; i++ {
-		if at += hs.height(i) + gap; at > y {
+		if at += hs.step(i, gap); at > y {
 			break
 		}
 	}

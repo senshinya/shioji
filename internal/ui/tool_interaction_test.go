@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -209,5 +210,117 @@ func TestToolDisclosureCanReverseAndUserScrollReleasesAnchor(t *testing.T) {
 	moved, ok := ui.Find("8 次工具调用")
 	if !ok || math.Abs(float64(moved.Y-heading.Y)) < 5 {
 		t.Fatalf("the disclosure anchor prevents user scrolling: before=%+v after=%+v", heading, moved)
+	}
+}
+
+func TestToolDisclosureHeightContinuouslyMovesFollowingText(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Items = []domain.Item{
+		{ID: "a", Kind: "tool", TurnID: "t", Name: "first", Text: "one\ntwo\nthree"},
+		{ID: "b", Kind: "tool", TurnID: "t", Name: "second", Text: "one\ntwo\nthree"},
+		{ID: "reply", Kind: "assistant", TurnID: "t", Text: "Following reply"},
+	}
+	m.Details["s"] = d
+	ui := n.NewTester(New(m, nil, "").View, 1440, 900)
+	closed, _ := ui.Find("Following reply")
+	heading, _ := ui.Find("2 次工具调用")
+	ui.Click("2 次工具调用")
+	initial, _ := ui.Find("Following reply")
+	if math.Abs(float64(initial.Y-closed.Y)) > .5 {
+		t.Fatalf("following text jumps to expanded height before animation: %v -> %v", closed.Y, initial.Y)
+	}
+	ui.Advance(40 * time.Millisecond)
+	middle, _ := ui.Find("Following reply")
+	ui.Advance(140 * time.Millisecond)
+	opened, _ := ui.Find("Following reply")
+	if middle.Y <= closed.Y+.5 || middle.Y >= opened.Y-.5 {
+		t.Fatalf("following text does not track intermediate content height: closed=%v middle=%v open=%v", closed.Y, middle.Y, opened.Y)
+	}
+	ui.Click("2 次工具调用")
+	initial, _ = ui.Find("Following reply")
+	if math.Abs(float64(initial.Y-opened.Y)) > .5 {
+		t.Fatal("following text jumps at the start of collapse")
+	}
+	ui.Advance(40 * time.Millisecond)
+	middle, _ = ui.Find("Following reply")
+	if middle.Y <= closed.Y+.5 || middle.Y >= opened.Y-.5 {
+		t.Fatalf("following text does not track collapsing content: %+v", middle)
+	}
+	ui.Advance(140 * time.Millisecond)
+	final, _ := ui.Find("Following reply")
+	finalHeading, _ := ui.Find("2 次工具调用")
+	if math.Abs(float64(final.Y-closed.Y)) > .5 || math.Abs(float64(finalHeading.Y-heading.Y)) > .5 {
+		t.Fatalf("disclosure does not restore its layout / anchored heading: reply=%+v heading=%+v", final, finalHeading)
+	}
+}
+
+func TestToolDisclosureFooterFollowsContentHeight(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Items = []domain.Item{{ID: "a", Kind: "tool", TurnID: "t", Name: "first", Text: "one\ntwo"}, {ID: "b", Kind: "tool", TurnID: "t", Name: "second", Text: "one\ntwo"}}
+	d.Turns = []domain.Turn{{ID: "t", Status: "completed"}}
+	m.Details["s"] = d
+	ui := n.NewTester(New(m, nil, "").View, 1440, 900)
+	closed, _ := ui.Find("本轮完成")
+	ui.Click("2 次工具调用")
+	initial, ok := ui.Find("本轮完成")
+	if !ok || math.Abs(float64(initial.Y-closed.Y)) > .5 {
+		t.Fatalf("footer disappears or jumps when disclosure begins: closed=%+v initial=%+v", closed, initial)
+	}
+	ui.Advance(40 * time.Millisecond)
+	middle, _ := ui.Find("本轮完成")
+	ui.Advance(140 * time.Millisecond)
+	opened, _ := ui.Find("本轮完成")
+	if middle.Y <= closed.Y+.5 || middle.Y >= opened.Y-.5 {
+		t.Fatalf("footer does not track the content's visible height: closed=%v middle=%v open=%v", closed.Y, middle.Y, opened.Y)
+	}
+}
+
+func TestLargeToolDisclosureKeepsHiddenRowsVirtualized(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	for i := 0; i < 10000; i++ {
+		d.Items = append(d.Items, domain.Item{ID: fmt.Sprint("call", i), TurnID: "t", Kind: "tool", Name: fmt.Sprint("large command ", i), Text: "result\nmore result"})
+	}
+	d.Items = append(d.Items, domain.Item{ID: "reply", TurnID: "t", Kind: "assistant", Text: "After large group"})
+	m.Details["s"] = d
+	ui := n.NewTester(New(m, nil, "").View, 1440, 900)
+	ui.Click("10000 次工具调用")
+	for _, delay := range []time.Duration{0, 40, 140} {
+		ui.Advance(delay * time.Millisecond)
+		if got := len(ui.Texts()); got > 150 {
+			t.Fatalf("tool disclosure mounted hidden history: %d visible labels", got)
+		}
+	}
+	ui.Click("10000 次工具调用")
+	for _, delay := range []time.Duration{0, 140, 40} {
+		ui.Advance(delay * time.Millisecond)
+		if got := len(ui.Texts()); got > 150 {
+			t.Fatalf("tool collapse mounted its hidden suffix: %d visible labels", got)
+		}
+	}
+}
+
+func TestUnequalToolHeightsDoNotReverseFollowingTextDuringExpansion(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Items = []domain.Item{
+		{ID: "a", Kind: "tool", TurnID: "t", Name: "tall output", Text: strings.Repeat("line\n", 20)},
+		{ID: "b", Kind: "tool", TurnID: "t", Name: "short output"},
+		{ID: "reply", Kind: "assistant", TurnID: "t", Text: "Following reply"},
+	}
+	m.Details["s"] = d
+	ui := n.NewTester(New(m, nil, "").View, 1440, 900)
+	previous, _ := ui.Find("Following reply")
+	ui.Click("2 次工具调用")
+	for i := 0; i < 9; i++ {
+		ui.Advance(20 * time.Millisecond)
+		ui.Frame()
+		current, _ := ui.Find("Following reply")
+		if current.Y < previous.Y-.5 {
+			t.Fatalf("measuring unequal tool rows reversed expansion: %v -> %v", previous.Y, current.Y)
+		}
+		previous = current
 	}
 }

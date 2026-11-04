@@ -366,3 +366,35 @@ repository design-freeze verification and diff check pass. Real-window capture
 remains unavailable because the computer-use host cannot start. The user quit
 the old GUI explicitly; the latest build was launched successfully while worker
 PID 5579 continued running. Visual acceptance remains with the user.
+
+
+## Follow-up: real height allocation during tool disclosure
+
+The user found that the preceding fade/translation left the tool group's layout
+height unchanged until insertion/removal, so following text jumped. The previous
+implementation was incomplete for this behavior. The new native list reveal
+allocates the current visible height of the tool section on every frame. The
+following prose, footer and scroll geometry now use that same height. Individual
+rows keep their natural layout and the exposed prefix clips at the reveal edge;
+text is not scaled. The clicked heading continues using the existing row anchor.
+
+Completed/live turn receipts now have independent stable virtual rows below the
+section. This preserves their original final geometry and spacing while allowing
+them to follow the changing section height, rather than disappearing inside a
+clipped last tool row. Completed turn metrics and lifecycle semantics are unchanged.
+
+Native section measurement looks ahead only one viewport. This corrects stale
+index measurements and mixed-height estimates before following text becomes
+visible; it does not mount the whole section. Hidden suffixes are skipped in one
+step, including a 10,000-call fixture. Reduced Motion retains the prior fade-only
+behavior without spatial height interpolation.
+
+New regressions were observed failing for the initial following-text jump, the
+disappearing completion footer and unequal tool heights temporarily reversing
+the expansion. All now pass. Existing final-geometry assertions wait for the
+160ms transition before measuring; intermediate-frame assertions separately
+cover real height, fixed heading position and reverse/scroll behavior. The full
+Go suite, UI vet, signed development build, repository design-freeze verification
+and diff check pass. The computer-use host still cannot start, so native-window
+recording remains unavailable. The running GUI was not terminated; the new build
+takes effect after restarting it, and authoritative worker PID 5579 remains intact.
