@@ -29,11 +29,16 @@ type Model struct {
 	Pending         map[string]domain.Submission
 	Details         map[string]domain.SessionDetail
 	Resolved        map[string]bool
+	GitDrafts       map[string]domain.GitChoice
+	GitRepositories map[string]string
+	GitStatuses     map[string]domain.GitStatus
+	GitEpochs       map[string]string
+	Inspectors      map[string]bool
 	Error           string
 }
 
 func NewModel() *Model {
-	return &Model{Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {
@@ -112,6 +117,9 @@ func (m *Model) BeginSubmission() (domain.Submission, error) {
 		for _, s := range m.Snapshot.Sessions {
 			if s.ID == m.SessionID {
 				workspace = s.WorkspaceID
+				if s.ContextChanged {
+					return domain.Submission{}, errors.New("执行分支已改变，请先在分支选择中确认")
+				}
 				if s.Status == "running" || s.Status == "starting" || s.Status == "unknown" {
 					return domain.Submission{}, errors.New("current turn is still active or needs reconciliation")
 				}
@@ -128,6 +136,15 @@ func (m *Model) BeginSubmission() (domain.Submission, error) {
 		return domain.Submission{}, errors.New("select a workspace")
 	}
 	in := domain.Submission{OperationID: domain.NewID(), WorkspaceID: workspace, SessionID: m.SessionID, Text: m.Drafts[key], Config: m.Config()}
+	if m.SessionID == "" {
+		choice := m.GitDrafts[workspace]
+		if (choice.Branch != "" || choice.NewWorktree) && m.GitEpochs["workspace:"+workspace] != m.ConnectionEpoch {
+			return domain.Submission{}, errors.New("正在核对设备上的分支，请稍后提交")
+		}
+	}
+	if m.SessionID == "" && m.GitStatuses["workspace:"+workspace].Applicable {
+		in.Git = m.GitDrafts[workspace]
+	}
 	m.Pending[in.OperationID] = in
 	return in, nil
 }
@@ -284,14 +301,17 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 }
 
 type savedState struct {
-	DeviceID    string                       `json:"deviceId"`
-	WorkspaceID string                       `json:"workspaceId"`
-	Drafts      map[string]string            `json:"drafts"`
-	Configs     map[string]domain.RunConfig  `json:"configs"`
-	Answers     map[string]string            `json:"answers"`
-	Pager       map[string]int               `json:"pager"`
-	Collapsed   map[string]bool              `json:"collapsed"`
-	Pending     map[string]domain.Submission `json:"pending"`
+	DeviceID        string                       `json:"deviceId"`
+	WorkspaceID     string                       `json:"workspaceId"`
+	Drafts          map[string]string            `json:"drafts"`
+	Configs         map[string]domain.RunConfig  `json:"configs"`
+	Answers         map[string]string            `json:"answers"`
+	Pager           map[string]int               `json:"pager"`
+	Collapsed       map[string]bool              `json:"collapsed"`
+	Pending         map[string]domain.Submission `json:"pending"`
+	GitDrafts       map[string]domain.GitChoice  `json:"gitDrafts,omitempty"`
+	GitRepositories map[string]string            `json:"gitRepositories,omitempty"`
+	Inspectors      map[string]bool              `json:"inspectors,omitempty"`
 }
 
 func (m *Model) Save(path string) error {
@@ -312,6 +332,15 @@ func (m *Model) Load(path string) error {
 	var saved savedState
 	if err = json.Unmarshal(b, &saved); err != nil {
 		return err
+	}
+	if saved.Inspectors != nil {
+		m.Inspectors = saved.Inspectors
+	}
+	if saved.GitDrafts != nil {
+		m.GitDrafts = saved.GitDrafts
+	}
+	if saved.GitRepositories != nil {
+		m.GitRepositories = saved.GitRepositories
 	}
 	m.KnownDeviceID = saved.DeviceID
 	m.WorkspaceID = saved.WorkspaceID
@@ -343,4 +372,19 @@ func (m *Model) SubmissionError(in domain.Submission, err error) {
 	} else {
 		m.Error = "提交结果待核实，草稿已保留"
 	}
+}
+
+func (m *Model) SetGitStatus(key string, status domain.GitStatus) {
+	m.GitStatuses[key] = status
+	m.GitEpochs[key] = m.ConnectionEpoch
+	if !strings.HasPrefix(key, "workspace:") {
+		return
+	}
+	id := strings.TrimPrefix(key, "workspace:")
+	choice := m.GitDrafts[id]
+	if m.GitRepositories[id] != status.Repository || !slices.Contains(status.Branches, choice.Branch) {
+		choice.Branch = status.DefaultBranch
+	}
+	m.GitDrafts[id] = choice
+	m.GitRepositories[id] = status.Repository
 }

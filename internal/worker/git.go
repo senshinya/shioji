@@ -479,3 +479,49 @@ func (s *Server) removeUnacceptedWorktree(original string, in domain.Submission)
 		_, _ = gitRun(s.ctx, original, "branch", "-d", "shioji/"+id)
 	}
 }
+
+func (s *Server) checkGitContexts() error {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	snapshot, err := s.store.Snapshot()
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, session := range snapshot.Sessions {
+		if session.GitBranch == "" && session.GitHead == "" {
+			continue
+		}
+		key := session.Context.Repository
+		if key == "" {
+			key = session.Context.CWD
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		status, e := queryGit(s.ctx, session.Context.CWD)
+		if e != nil {
+			continue
+		}
+		if status.Applicable {
+			if err = s.detectGitContext(status); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+func (s *Server) monitorGit() {
+	defer s.wg.Done()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			_ = s.checkGitContexts()
+		}
+	}
+}

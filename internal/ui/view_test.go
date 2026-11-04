@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	native "github.com/egoist/mygo/ui"
 	"math"
 	"path/filepath"
 	"shioji/internal/app"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 	"strings"
 	"testing"
 )
@@ -189,5 +191,119 @@ func TestNativeChromeUsesLabeledIconsAndFrozenNavigationGap(t *testing.T) {
 	}
 	if !test.HasText("只读") {
 		t.Fatal("permission control lacks visible named permission")
+	}
+}
+
+func TestBranchStripAndIndependentInspectorGeometry(t *testing.T) {
+	m := layoutModel()
+	m.GitStatuses["session:s"] = domain.GitStatus{Applicable: true, Branch: "main", Branches: []string{"main", "feature"}}
+	v := New(m, nil, "")
+	test := native.NewTester(v.View, 1440, 900)
+	if _, ok := test.Find("选择分支"); !ok {
+		t.Fatal("missing branch control")
+	}
+	if err := test.Click("展开更改侧栏"); err != nil {
+		t.Fatal("missing inspector toggle")
+	}
+	inspector, ok := test.Find("更改侧栏")
+	history, _ := test.Find("对话记录")
+	device, _ := test.Find("当前设备")
+	if !ok || inspector.Y != 0 || inspector.H != 900 || inspector.W != 280 || history.X+history.W > inspector.X || device.X+device.W > inspector.X {
+		t.Fatalf("inspector does not own a full-height column: inspector=%+v history=%+v device=%+v", inspector, history, device)
+	}
+}
+func TestSearchNavigationPreservesHomeDraft(t *testing.T) {
+	m := layoutModel()
+	m.SessionID = ""
+	m.Drafts["home"] = "Keep this draft"
+	v := New(m, nil, "")
+	test := native.NewTester(v.View, 1440, 900)
+	if err := test.Click("搜索"); err != nil {
+		t.Fatal("no search")
+	}
+	if _, ok := test.Find("搜索会话"); !ok {
+		t.Fatal("no native search field")
+	}
+	if err := test.Click("搜索结果：Layout，Example"); err != nil {
+		t.Fatal("no actual session search result")
+	}
+	if m.SessionID != "s" || m.Drafts["home"] != "Keep this draft" {
+		t.Fatal("search navigation changed the Home draft")
+	}
+}
+
+func TestHomeBranchSelectionOnlyRecordsIntent(t *testing.T) {
+	m := layoutModel()
+	m.SessionID = ""
+	m.Drafts["home"] = "Keep draft"
+	m.SetGitStatus("workspace:w", domain.GitStatus{Applicable: true, Repository: "/repo", Branch: "main", Head: "abc", DefaultBranch: "main", Branches: []string{"main", "feature"}})
+	test := native.NewTester(New(m, nil, "").View, 1440, 900)
+	if err := test.Click("选择分支"); err != nil {
+		t.Fatal(err)
+	}
+	if err := test.Click("分支:feature"); err != nil {
+		t.Fatal(err)
+	}
+	if m.GitDrafts["w"].Branch != "feature" || m.Drafts["home"] != "Keep draft" || len(m.Pending) != 0 {
+		t.Fatal("branch menu changed execution or draft instead of intent")
+	}
+}
+func TestDiffReaderLeavesConversationAndDeviceControlBesideIt(t *testing.T) {
+	m := layoutModel()
+	m.Inspectors["s"] = true
+	v := New(m, nil, "")
+	v.changesFor("s").Path = "file.go"
+	test := native.NewTester(v.View, 1440, 900)
+	reader, _ := test.Find("文件差异阅读器")
+	history, _ := test.Find("对话记录")
+	device, _ := test.Find("当前设备")
+	if reader.X <= history.X || history.X+history.W > reader.X || device.X+device.W > reader.X {
+		t.Fatalf("diff squeezed conversation or stole device control: reader=%+v history=%+v device=%+v", reader, history, device)
+	}
+}
+
+func TestSearchSendsTypedQueryAndAppliesAsyncResults(t *testing.T) {
+	m := layoutModel()
+	m.SessionID = ""
+	controller := app.NewController("")
+	v := New(m, controller, "")
+	test := native.NewTester(v.View, 1440, 900)
+	test.Click("搜索")
+	test.Click("搜索会话")
+	test.Type("Recorded")
+	var search *app.Job
+	for len(controller.Jobs) > 0 {
+		job := <-controller.Jobs
+		if job.Method == "session.search" {
+			copy := job
+			search = &copy
+		}
+	}
+	if search == nil {
+		t.Fatalf("typing never sent search: text=%q sent=%q", v.searchText, v.searchSent)
+	}
+	if search.Input.(protocol.SearchQuery).Query != "Recorded" {
+		t.Fatalf("query lagged native input: %+v", search.Input)
+	}
+	test.Command("selectAll")
+	test.SetClipboard("NoMatch")
+	test.Command("paste")
+	search = nil
+	for len(controller.Jobs) > 0 {
+		job := <-controller.Jobs
+		if job.Method == "session.search" {
+			copy := job
+			search = &copy
+		}
+	}
+	if search == nil || search.Input.(protocol.SearchQuery).Query != "NoMatch" {
+		t.Fatalf("paste did not issue current query: %+v", search)
+	}
+
+	results, _ := json.Marshal([]domain.SearchResult{{SessionID: "s", WorkspaceID: "w", Title: "Found", Snippet: "NoMatch result"}})
+	search.Apply(m, results, nil)
+	test.Frame()
+	if !test.HasText("NoMatch result") {
+		t.Fatalf("async result missing: %+v query=%+v", v.searchResults, search.Input)
 	}
 }

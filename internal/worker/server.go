@@ -79,6 +79,8 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	if err != nil {
 		s.readiness = domain.Readiness{State: "unavailable", Error: err.Error()}
 	}
+	s.wg.Add(1)
+	go s.monitorGit()
 	return s, nil
 }
 func (s *Server) Directory() string { return s.config.Directory }

@@ -147,3 +147,16 @@ func TestCheckoutRejectsPendingAndUnsettledOperationsEvenWhenIdle(t *testing.T) 
 		t.Fatal("indeterminate operation allowed context confirmation")
 	}
 }
+
+func TestGitMonitorMarksExternalChangesWithoutSubmitting(t *testing.T) {
+	s, w, dir := gitTestServer(t)
+	id := gitTestSession(t, s, w, "main", "completed")
+	gitTestRun(t, dir, "switch", "other")
+	if err := s.checkGitContexts(); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := s.store.Session(id, 0, 1)
+	if !d.Session.ContextChanged {
+		t.Fatal("external branch change was invisible before next submission")
+	}
+}

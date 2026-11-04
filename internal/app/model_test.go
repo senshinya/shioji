@@ -165,3 +165,32 @@ func TestNewClientUsesAcceptedSessionConfigWithoutGrantingBroaderPermission(t *t
 		t.Fatalf("accepted session config replaced by client defaults: %+v", cfg)
 	}
 }
+
+func TestGitIntentPersistsPerWorkspaceWithoutCreatingSession(t *testing.T) {
+	m := NewModel()
+	m.Connected = true
+	m.Readiness = domain.Readiness{State: "ready"}
+	m.WorkspaceID = "w"
+	m.Snapshot.Workspaces = []domain.Workspace{{ID: "w", Name: "Git"}, {ID: "other", Name: "Other"}}
+	m.SetGitStatus("workspace:w", domain.GitStatus{Applicable: true, Repository: "/repo", Branch: "main", DefaultBranch: "main", Branches: []string{"main", "feature"}})
+	m.GitDrafts["w"] = domain.GitChoice{Branch: "feature", NewWorktree: true}
+	m.Drafts["home"] = "draft"
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := m.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	restored := NewModel()
+	if err := restored.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	if restored.GitDrafts["w"].Branch != "feature" || !restored.GitDrafts["w"].NewWorktree || restored.GitDrafts["other"].Branch != "" {
+		t.Fatal("Git choices lost workspace ownership")
+	}
+	if len(m.Pending) != 0 || len(m.Snapshot.Sessions) != 0 {
+		t.Fatal("selection started a runtime session")
+	}
+	m.SetGitStatus("workspace:w", domain.GitStatus{Applicable: true, Repository: "/replacement", Branch: "main", DefaultBranch: "main", Branches: []string{"main", "feature"}})
+	if m.GitDrafts["w"].Branch != "main" {
+		t.Fatal("new main repository kept old base-branch intent")
+	}
+}

@@ -42,6 +42,16 @@ type View struct {
 	collapsedWorkspaces     map[string]bool
 	dockHeight              float32
 	searchOpen              bool
+	searchText, searchSent  string
+	searchResults           []domain.SearchResult
+	searchList              n.ListState
+	branchOpen              bool
+	branchSearch            string
+	branchList              n.ListState
+	switchingBranch         bool
+	gitLoaded               map[string]string
+	gitPending              map[string]bool
+	changes                 map[string]*changesState
 }
 
 func New(model *app.Model, controller *app.Controller, path string) *View {
@@ -165,11 +175,18 @@ drained:
 		}()
 	}
 
+	v.requestGit(false)
+	if c.Shortcut(n.Cmd, n.KeyK) {
+		v.searchOpen = !v.searchOpen
+	}
 	if c.Shortcut(n.Cmd, n.KeyN) {
 		v.home()
 	}
 	n.Row(c).Fill().Background(t.Background).Children(func() {
 		v.sidebar(c, &t)
+		width, _ := c.Size()
+		open := m.SessionID != "" && !v.devices && m.Inspectors[m.SessionID]
+		inline := width > 1160
 		n.Column(c).FillHeight().Grow(1).Children(func() {
 			if v.devices {
 				v.toolbar(c, &t)
@@ -181,13 +198,32 @@ drained:
 				v.conversation(c, &t)
 			}
 		})
+		if open {
+			if inline {
+				state := v.changesFor(m.SessionID)
+				if state.Path != "" {
+					v.diffReader(c, &t, (width-256-280)/2)
+				}
+				v.inspector(c, &t, false)
+			} else {
+				v.inspector(c, &t, true)
+			}
+		}
 	})
+	if v.Controller != nil && v.selected != m.SessionID {
+		v.selected = m.SessionID
+		v.Controller.Select(m.SessionID)
+		c.After(0)
+	}
 }
+
 func (v *View) home() {
 	v.Model.SessionID = ""
 	v.devices = false
 	v.runOpen = false
 	v.permissionOpen = false
+	v.branchOpen = false
+	v.searchOpen = false
 }
 func iconButton(c *n.Context, icon *n.SVG, label string) n.Element {
 	return n.ButtonBase(c).Size(28, 28).Radius(6).Label(label).Tooltip(label).Children(func() { n.Icon(c, icon).Size(16, 16) })
@@ -212,9 +248,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 		n.Column(c).Fill().Padding(8).Gap(4).Radius(14).Background(sidebarColor).Border(1, t.Border).Children(func() {
 			n.Row(c).Height(38).DragWindow().Children(func() {
 				n.Spacer(c).Grow(1)
-				if iconButton(c, searchIcon, "搜索").Clicked() {
-					v.searchOpen = true
-				}
+				v.searchControl(c, t)
 			})
 			if navButton(c, plus, "新建会话").Margin(0, 0, 4, 0).Background(func() n.Color {
 				if m.SessionID == "" && !v.devices {
@@ -334,8 +368,10 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 }
 func (v *View) toolbar(c *n.Context, t *n.Theme) {
 	m := v.Model
-	n.Row(c).Height(48).FillWidth().PaddingX(24).AlignItems(n.Center).DragWindow().Children(func() {
-		if m.SessionID != "" {
+	n.Row(c).Height(48).FillWidth().PaddingX(24).Gap(6).AlignItems(n.Center).DragWindow().Label("会话工具栏").Children(func() {
+		if v.devices {
+			n.Text(c, "设备").FontSize(13).Grow(1)
+		} else if m.SessionID != "" {
 			for _, s := range m.Snapshot.Sessions {
 				if s.ID == m.SessionID {
 					n.Text(c, v.workspaceName()).SingleLine().MaxWidth(150).FontSize(12).TextColor(t.TextMuted)
@@ -371,6 +407,16 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 				v.devices = true
 			}
 		})
+		if m.SessionID != "" && !v.devices {
+			label := "展开更改侧栏"
+			if m.Inspectors[m.SessionID] {
+				label = "收起更改侧栏"
+			}
+			if iconButton(c, sidebarIcon, label).Clicked() {
+				m.Inspectors[m.SessionID] = !m.Inspectors[m.SessionID]
+			}
+		}
+
 	})
 }
 func (v *View) workspaceName() string {
@@ -448,6 +494,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 		inputHeight = 72
 	}
 	n.Column(c.Key("composer:"+key)).FillWidth().MaxWidth(maxWidth).Padding(10, 14, 8, 14).Gap(4).Background(bg).Border(1, t.Border).Radius(16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04)).Children(func() {
+		v.branchStrip(c, t, home)
 		n.TextAreaBase(c.Key("input"), &binding.Text).Label("消息输入").Placeholder("描述任务…").FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(14).FixedLineHeight(22).OnTextKey(func(k n.TextKey) bool {
 			if k.Key == n.KeyEnter && (k.Mods == 0 || k.Mods == n.Cmd) {
 				m.Drafts[key] = k.Text()
@@ -457,7 +504,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 				return true
 			}
 			return false
-		})
+		}).Changed()
 		draft = binding.Text
 		m.Drafts[key] = draft
 		binding.LastModel = draft
@@ -830,7 +877,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 				if len(q.Options) > 0 {
 					n.Column(c).FillWidth().Padding(6).Gap(2).Radius(5).Background(raised(t)).Children(func() {
 						for _, option := range q.Options {
-							n.Radio(c.Key(option.Label), &selected.Text, option.Label, option.Label).FillWidth().MinHeight(28).FontSize(12).Tooltip(option.Description)
+							n.Radio(c.Key(option.Label), &selected.Text, option.Label, option.Label).FillWidth().MinHeight(28).FontSize(12).Tooltip(option.Description).Changed()
 						}
 					})
 				}
@@ -884,6 +931,11 @@ func (v *View) respond(r domain.PendingRequest, answer domain.Answer) {
 	}})
 }
 func (v *View) submit() {
+	key, _ := v.gitQuery()
+	if v.gitPending[key] {
+		v.Model.Error = "正在核对设备上的分支，请稍后提交"
+		return
+	}
 	if v.Controller == nil {
 		return
 	}
@@ -997,6 +1049,9 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 }
 
 func (v *View) do(job app.Job) bool {
+	if v.Controller == nil {
+		return false
+	}
 	job.ConnectionEpoch = v.Model.ConnectionEpoch
 	return v.Controller.Do(job)
 }
