@@ -77,13 +77,14 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow) {
 	label := fmt.Sprintf("%d 次工具调用", row.count)
 	if n.ButtonBase(c).FillWidth().Height(20).Justify(n.Start).Label(label).Children(func() {
-		n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
+		n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
 			icon := chevron
 			if v.Model.Collapsed[row.group] {
 				icon = rightChevron
 			}
-			n.Icon(c, icon).Size(10, 10).TextColor(subtle(t))
-			n.Icon(c, terminalIcon).Size(12, 12).TextColor(subtle(t))
+			font := n.Font{Family: "system-ui", Size: 11, Weight: 400}
+			inlineSymbol(c, icon, label, font, 10, subtle(t))
+			inlineSymbol(c, terminalIcon, label, font, 12, subtle(t))
 			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 		})
 	}).Clicked() {

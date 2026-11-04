@@ -856,6 +856,43 @@ func (s *System) Metrics(style Style) (ascent, descent, lineHeight float32) {
 	return m.ascent, m.descent, m.lineHeight
 }
 
+// InkBounds returns visible outline bounds relative to a single line's baseline.
+// Engines that do not expose outline metrics return an empty rectangle.
+func (s *System) InkBounds(p Params) (x, y, width, height float32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.engine().(interface {
+		glyphBounds(*Font, uint32) (float32, float32, float32, float32)
+	})
+	if !ok {
+		return
+	}
+	p.NoWrap = true
+	layout := s.layout(p).layout
+	if len(layout.Lines) == 0 {
+		return
+	}
+	line := layout.Lines[0]
+	for _, g := range line.Glyphs {
+		if g.Font == nil {
+			continue
+		}
+		gx, gy, gw, gh := b.glyphBounds(g.Font, g.ID)
+		if gw <= 0 || gh <= 0 {
+			continue
+		}
+		gx += line.X + g.X
+		if width == 0 {
+			x, y, width, height = gx, gy, gw, gh
+			continue
+		}
+		left, top := min(x, gx), min(y, gy)
+		width, height = max(x+width, gx+gw)-left, max(y+height, gy+gh)-top
+		x, y = left, top
+	}
+	return
+}
+
 // font returns the font of a style.
 func (s *System) font(style Style) *Font {
 	key := Style{Family: style.Family, Size: style.FontSize(), Weight: style.weight(), Italic: style.Italic}

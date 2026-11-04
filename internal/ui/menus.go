@@ -37,7 +37,7 @@ func (v *View) choiceMenu(c *n.Context, t *n.Theme, key string, trigger n.Elemen
 							first = false
 						}
 						row.Children(func() {
-							n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
+							n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
 								name := n.Text(c, choice.name).FontSize(13).FixedLineHeight(18)
 								if choice.detail != "" {
 									name.Width(96)
@@ -45,7 +45,7 @@ func (v *View) choiceMenu(c *n.Context, t *n.Theme, key string, trigger n.Elemen
 								} else {
 									name.Grow(1)
 								}
-								n.Icon(c, check).Size(12, 12).Opacity(func() float32 {
+								inlineSymbol(c, check, choice.name, n.Font{Family: "system-ui", Size: 13, Weight: 400}, 12, t.Text).Opacity(func() float32 {
 									if choice.checked {
 										return 1
 									}

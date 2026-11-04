@@ -56,6 +56,14 @@ func (f Font) Metrics() FontMetrics {
 	return FontMetrics{Ascent: a, Descent: d, LineGap: max(h-a-d, 0)}
 }
 
+// InkBounds returns the visible outline bounds of single-line text, relative
+// to its baseline origin. It includes system font fallback, without line
+// leading or whitespace. Currently supported by the macOS text engine.
+func (f Font) InkBounds(s string) Rect {
+	x, y, w, h := text.Shared().InkBounds(text.Params{Text: s, Style: f.style(), NoWrap: true, KeepSpaces: true})
+	return Rect{x, y, w, h}
+}
+
 // Glyph is a glyph of text that Shape placed, which Painter.Glyphs draws.
 type Glyph struct {
 	// Cluster is the rune of the text the glyph's cluster starts at, and

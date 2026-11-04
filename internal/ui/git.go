@@ -147,10 +147,7 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 	}
 	n.Row(c.Key("branch-strip")).FillWidth().Height(26).Gap(12).AlignItems(n.Center).Children(func() {
 		trigger := n.ButtonBase(c).Height(26).MaxWidth(330).Padding(3, 10).Radius(5).Label("选择分支").Tooltip(label).Disabled(!v.canSwitchBranch()).Children(func() {
-			n.Row(c).Height(20).Gap(5).AlignItems(n.Center).Children(func() {
-				n.Icon(c, branchIcon).Size(12, 12).TextColor(t.TextMuted)
-				n.Text(c, label).SingleLine().Font("Menlo").FontSize(11).FixedLineHeight(20).Translate(0, -.5).TextColor(t.TextMuted)
-			})
+			inlineIconText(c, branchIcon, label, n.Font{Family: "Menlo", Size: 11, Weight: 400}, 12, 5, t.TextMuted)
 		})
 		if trigger.Clicked() {
 			v.branchOpen = !v.branchOpen
@@ -178,10 +175,10 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 				n.List(c, &v.branchList, len(choices), func(i int) {
 					name := choices[i]
 					row := n.ButtonBase(c).FillWidth().MinHeight(26).Padding(3, 7).Radius(4).Label("分支:" + name).Children(func() {
-						n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
-							n.Text(c, name).Grow(1).FontSize(13)
+						n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
+							n.Text(c, name).Grow(1).FontSize(13).FixedLineHeight(20)
 							if name == branch {
-								n.Icon(c, check).Size(14, 14)
+								inlineSymbol(c, check, name, n.Font{Family: "system-ui", Size: 13, Weight: 400}, 14, t.Text)
 							}
 						})
 					})

@@ -310,12 +310,12 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 					workspaceRow := n.Row(c).Height(30).Gap(3).AlignItems(n.Center)
 					workspaceRow.Children(func() {
 						if n.ButtonBase(c.Key("workspace:" + w.ID)).Height(24).Grow(1).Justify(n.Start).Label(w.Name).Children(func() {
-							n.Row(c).FillWidth().Gap(3).AlignItems(n.Center).Children(func() {
+							n.Row(c).FillWidth().Gap(3).AlignItems(n.Baseline).Children(func() {
 								icon := disclosureDown
 								if v.collapsedWorkspaces[w.ID] {
 									icon = disclosureRight
 								}
-								n.Row(c).Size(20, 24).Center().Children(func() { n.Icon(c, icon).Size(11, 11).TextColor(t.TextMuted) })
+								inlineSymbol(c, icon, w.Name, n.Font{Family: "system-ui", Size: 12, Weight: 500}, 11, t.TextMuted).Width(20).TextAlign(n.Center)
 								n.Text(c, w.Name).SingleLine().Grow(1).FontSize(12).FontWeight(500).FixedLineHeight(20).Tooltip(w.Name)
 							})
 						}).Clicked() {
@@ -339,13 +339,13 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 					row.Background(t.SurfacePressed)
 				}
 				row.Children(func() {
-					n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
+					n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
 						if v.pendingCount(s.ID) > 0 {
-							n.Column(c).Width(10).AlignItems(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Warning) })
+							n.Column(c).Width(10).AlignItems(n.Center).AlignSelf(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Warning) })
 						} else if s.Status == "running" || s.Status == "starting" {
-							n.Column(c).Width(10).AlignItems(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Success) })
+							n.Column(c).Width(10).AlignItems(n.Center).AlignSelf(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Success) })
 						} else if s.Status == "completed" {
-							n.Icon(c, check).Size(10, 10).TextColor(t.Success)
+							inlineSymbol(c, check, s.Title, n.Font{Family: "system-ui", Size: 13, Weight: 400}, 10, t.Success)
 						} else {
 							glyph := "Ⅱ"
 							label := "已暂停"
@@ -362,7 +362,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 							}
 							n.Text(c, glyph).Width(10).FontSize(11).TextColor(t.TextMuted).Label(label)
 						}
-						n.Text(c, s.Title).SingleLine().Grow(1).FontSize(13).TextColor(func() n.Color {
+						n.Text(c, s.Title).SingleLine().Grow(1).FontSize(13).FixedLineHeight(20).TextColor(func() n.Color {
 							if selected {
 								return t.Text
 							}
@@ -412,15 +412,15 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		}
 		device := n.ButtonBase(c).Height(26).PaddingX(6).Radius(6).Label("当前设备")
 		device.Children(func() {
-			n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
+			n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
 				color := t.TextMuted
 				if m.Connected {
 					color = t.Success
 				}
-				n.Column(c).Size(4, 4).Radius(2).Background(color)
-				n.Icon(c, monitor).Size(14, 14).TextColor(t.TextMuted)
-				n.Text(c, "这台 Mac").FontSize(11).TextColor(t.TextMuted)
-				n.Icon(c, chevron).Size(12, 12).TextColor(t.TextMuted)
+				n.Column(c).Size(4, 4).Radius(2).Background(color).AlignSelf(n.Center)
+				font := n.Font{Family: "system-ui", Size: 11, Weight: 400}
+				inlineIconText(c, monitor, "这台 Mac", font, 14, 6, t.TextMuted)
+				inlineSymbol(c, chevron, "这台 Mac", font, 12, t.TextMuted)
 			})
 		})
 		status := "已连接"
@@ -530,10 +530,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 		n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
 			iconButton(c, plus, "添加附件（当前 Codex 适配器暂不支持）").Size(28, 28).Disabled(true)
 			permission := n.ButtonBase(c).Height(28).PaddingX(6).Radius(6).Label("Permission").Children(func() {
-				n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
-					n.Icon(c, shieldIcon).Size(13, 13).TextColor(t.TextMuted)
-					n.Text(c, permissionLabel(cfg.Permission)).FixedLineHeight(20).FontSize(12).FontWeight(400).TextColor(t.TextMuted)
-				})
+				inlineIconText(c, shieldIcon, permissionLabel(cfg.Permission), n.Font{Family: "system-ui", Size: 12, Weight: 400}, 13, 6, t.TextMuted)
 			})
 			choices := []menuChoice{}
 			for _, id := range m.Readiness.Permissions {
@@ -593,10 +590,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 		summary += " · Fast"
 	}
 	trigger := n.ButtonBase(c).Height(28).MaxWidth(390).MinWidth(0).PaddingX(6).Radius(6).Label("运行配置").Tooltip("Codex · " + summary).Children(func() {
-		n.Row(c).Gap(3).AlignItems(n.Center).Children(func() {
-			n.Icon(c, openAIBlossom).Size(20, 20).Translate(0, 2).TextColor(t.TextMuted)
-			n.Text(c, summary).SingleLine().FontSize(12).TextColor(t.TextMuted)
-		})
+		inlineIconText(c, openAIBlossom, summary, n.Font{Family: "system-ui", Size: 12, Weight: 400}, 20, 3, t.TextMuted)
 	})
 	if trigger.Clicked() {
 		v.runOpen = !v.runOpen
@@ -765,8 +759,8 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 			label = "工具活动"
 		}
 		if n.ButtonBase(c).FillWidth().MinHeight(20).Justify(n.Start).Label(label).Children(func() {
-			n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
-				n.Icon(c, terminalIcon).Size(12, 12).TextColor(subtle(t))
+			n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
+				inlineSymbol(c, terminalIcon, label, n.Font{Family: "Menlo", Size: 11, Weight: 400}, 12, subtle(t))
 				n.Text(c, label).Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 			})
 		}).Clicked() {
@@ -797,11 +791,12 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 			}
 		}
 		if n.ButtonBase(c).FillWidth().MinHeight(28).Justify(n.Start).Label(label).Children(func() {
-			n.Row(c).Gap(7).AlignItems(n.Center).Children(func() {
-				n.Icon(c, icon).Size(12, 12).TextColor(subtle(t))
+			n.Row(c).Gap(7).AlignItems(n.Baseline).Children(func() {
+				font := n.Font{Family: "system-ui", Size: 11, Weight: 400}
+				inlineSymbol(c, icon, label, font, 12, subtle(t))
 				n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 				if item.Status == "pending" || item.Status == "submitting" {
-					n.Icon(c, disclosureRight).Size(10, 10).TextColor(subtle(t))
+					inlineSymbol(c, disclosureRight, label, font, 10, subtle(t))
 				}
 			})
 		}).Clicked() {
@@ -917,14 +912,15 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 	n.Column(c.Key("pending")).FillWidth().MaxWidth(768).Padding(12, 14).Gap(8).Radius(requestRadius).Background(t.Surface).Border(1, t.Border).Children(func() {
 		n.Row(c).FillWidth().AlignItems(n.Center).Children(func() {
 			title := n.ButtonBase(c).Height(24).Grow(1).Radius(requestRadius).Justify(n.Start).Label(r.Title).Children(func() {
-				n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
+				n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
 					icon := questionIcon
 					if r.Kind == "approval" {
 						icon = shieldIcon
 					}
-					n.Icon(c, icon).Size(14, 14).TextColor(t.TextMuted)
+					font := n.Font{Family: "system-ui", Size: 12, Weight: 500}
+					inlineSymbol(c, icon, r.Title, font, 14, t.TextMuted)
 					n.Text(c, r.Title).FontSize(12).FontWeight(500).FixedLineHeight(20)
-					n.Icon(c, disclosureDown).Size(11, 11).Translate(0, 2).TextColor(t.TextMuted)
+					inlineSymbol(c, disclosureDown, r.Title, font, 11, t.TextMuted)
 				})
 			})
 			if title.Clicked() {

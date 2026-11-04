@@ -1104,6 +1104,13 @@ func (e *coreText) positions(f *Font, scale float32, _ bool) (int, bool) {
 // flipped views.
 func (e *coreText) baseline(y float32) float32 { return float32(math.Ceil(float64(y) - 1e-3)) }
 
+func (e *coreText) glyphBounds(f *Font, id uint32) (x, y, width, height float32) {
+	g := uint16(id)
+	var r cgRect
+	ct.fontGetBoundingRects(f.native, ctFontOrientationDefault, &g, &r, 1)
+	return float32(r.x), -float32(r.y + r.h), float32(r.w), float32(r.h)
+}
+
 // textParams leaves coverage as it is: Core Graphics blends text in sRGB
 // space, as renderers do, without subpixels since macOS 10.14.
 func (e *coreText) textParams() (scene.TextParams, bool) { return scene.TextParams{}, false }
