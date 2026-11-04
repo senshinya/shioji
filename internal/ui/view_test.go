@@ -356,10 +356,11 @@ func TestSearchRetriesLatestQueryAfterControllerQueueFills(t *testing.T) {
 
 func TestToolGroupClosesOnceOnAgentProseAndKeepsExplicitReopen(t *testing.T) {
 	m := layoutModel()
+	test := native.NewTester(New(m, nil, "").View, 1440, 900)
 	d := m.Details["s"]
 	d.Items = []domain.Item{{ID: "u", Kind: "user", Text: "Run tools"}, {ID: "tool", Kind: "tool", Name: "command one", Text: "tool output"}}
 	m.Details["s"] = d
-	test := native.NewTester(New(m, nil, "").View, 1440, 900)
+	test.Frame()
 	if !test.HasText("command one") {
 		t.Fatal("live tool group should start expanded")
 	}
@@ -380,6 +381,78 @@ func TestToolGroupClosesOnceOnAgentProseAndKeepsExplicitReopen(t *testing.T) {
 	}
 }
 
+func TestOpeningSavedSessionCollapsesEveryHistoricalToolGroup(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Items = []domain.Item{
+		{ID: "a", TurnID: "one", Kind: "tool", Name: "old command"},
+		{ID: "answer", TurnID: "one", Kind: "assistant", Text: "Earlier reply"},
+		{ID: "b", TurnID: "two", Kind: "tool", Name: "last command", Text: "saved output"},
+		{ID: "c", TurnID: "two", Kind: "tool", Name: "another saved command"},
+	}
+	m.Details["s"] = d
+	// Both groups were manually expanded before the application was closed.
+	m.Collapsed["tool-group:s/a"] = false
+	m.Collapsed["tool-group:s/a:prose"] = true
+	m.Collapsed["tool-group:s/b"] = false
+	v := New(m, nil, "")
+	ui := native.NewTester(v.View, 1440, 900)
+	if ui.HasText("old command") || ui.HasText("last command") {
+		t.Fatal("opening saved history restored expanded tool calls")
+	}
+	if err := ui.Click("2 次工具调用"); err != nil {
+		t.Fatal(err)
+	}
+	if !ui.HasText("last command") {
+		t.Fatal("manual expansion did not reveal the saved call")
+	}
+	d.Items[2].Text = "late output"
+	m.Details["s"] = d
+	ui.Frame()
+	if !ui.HasText("late output") {
+		t.Fatal("an ordinary update collapsed the manually opened group")
+	}
+	v.home()
+	ui.Frame()
+	m.SessionID = "s"
+	ui.Frame()
+	if ui.HasText("last command") {
+		t.Fatal("reopening the saved session did not collapse its tools")
+	}
+	if err := ui.Click("2 次工具调用"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ui.Click("设备"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ui.Click("Layout"); err != nil {
+		t.Fatal(err)
+	}
+	if ui.HasText("last command") {
+		t.Fatal("opening the same session from device management retained expanded tools")
+	}
+}
+
+func TestOpeningSavedSessionWaitsForHistoryBeforeCollapsingTools(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	m.Details["s"] = domain.SessionDetail{Requests: d.Requests}
+	v := New(m, nil, "")
+	ui := native.NewTester(v.View, 1440, 900)
+	d.Items = []domain.Item{{ID: "saved", Kind: "tool", Name: "loaded command"}}
+	m.Details["s"] = d
+	ui.Frame()
+	if ui.HasText("loaded command") {
+		t.Fatal("asynchronously loaded history opened with expanded tools")
+	}
+	d.Items = append(d.Items, domain.Item{ID: "prose", Kind: "assistant", Text: "Continuing"}, domain.Item{ID: "new", Kind: "tool", Name: "live command"})
+	m.Details["s"] = d
+	ui.Frame()
+	if !ui.HasText("live command") {
+		t.Fatal("opening history also collapsed newly arriving live tools")
+	}
+}
+
 func TestExpandedToolChildrenAndFooterShareGroupLeadingEdge(t *testing.T) {
 	for _, width := range []int{1440, 950} {
 		m := layoutModel()
@@ -391,6 +464,9 @@ func TestExpandedToolChildrenAndFooterShareGroupLeadingEdge(t *testing.T) {
 		d.Turns = []domain.Turn{{ID: "t", Status: "completed"}}
 		m.Details["s"] = d
 		ui := native.NewTester(New(m, nil, "").View, width, 900)
+		if err := ui.Click("2 次工具调用"); err != nil {
+			t.Fatal(err)
+		}
 		group, _ := ui.Find("2 次工具调用")
 		for _, label := range []string{"first command", "second command"} {
 			child, ok := ui.Find(label)
@@ -413,11 +489,12 @@ func TestExpandedToolChildrenAndFooterShareGroupLeadingEdge(t *testing.T) {
 
 func TestUserMessageAndEmptyProseDoNotCollapseTools(t *testing.T) {
 	m := layoutModel()
+	test := native.NewTester(New(m, nil, "").View, 1440, 900)
 	d := m.Details["s"]
 	d.Items = []domain.Item{{ID: "tool", Kind: "tool", Name: "still live"}, {ID: "empty", Kind: "assistant", Text: "  "}, {ID: "user", Kind: "user", Text: "ordinary followup"}}
 	m.Details["s"] = d
 	m.Drafts[m.DraftKey()] = "draft"
-	test := native.NewTester(New(m, nil, "").View, 1440, 900)
+	test.Frame()
 	if !test.HasText("still live") {
 		t.Fatal("user message/draft or empty assistant item collapsed tool group")
 	}

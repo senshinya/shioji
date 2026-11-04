@@ -16,8 +16,15 @@ type transcriptRow struct {
 }
 
 // Project groups into the outer virtual list so expanded tool history still
-// unmounts normally. Only a nonempty agent prose boundary auto-closes a group.
+// unmounts normally. While viewing, only nonempty agent prose auto-closes a group.
 func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
+	// A cached projection and a freshly hydrated history each start collapsed
+	// when opened. Consume this only after actual session history is available;
+	// pending-request snapshots can create an empty detail before hydration.
+	collapseHistory := v.Model.FoldToolHistory[v.Model.SessionID] && v.Model.Details[v.Model.SessionID].Session.ID != ""
+	if collapseHistory {
+		delete(v.Model.FoldToolHistory, v.Model.SessionID)
+	}
 	laterProse := make([]bool, len(items)+1)
 	for i := len(items) - 1; i >= 0; i-- {
 		laterProse[i] = laterProse[i+1] || items[i].Kind == "assistant" && strings.TrimSpace(items[i].Text) != ""
@@ -52,6 +59,9 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		}
 		key := "tool-group:" + v.Model.SessionID + "/" + item.ID
 		seen := key + ":prose"
+		if collapseHistory {
+			v.Model.Collapsed[key] = true
+		}
 		if laterProse[end] && !v.Model.Collapsed[seen] {
 			v.Model.Collapsed[key] = true
 			v.Model.Collapsed[seen] = true

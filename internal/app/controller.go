@@ -189,6 +189,7 @@ func (c *Controller) Run(ctx context.Context) {
 	var generation string
 	var sequence int64
 	var selected, loaded string
+	var opening bool
 	var lastReadiness time.Time
 	unconfirmed := map[string]bool{}
 	for _, id := range c.RestoreOperations {
@@ -232,8 +233,13 @@ func (c *Controller) Run(ctx context.Context) {
 		}
 		loaded = selected
 		id := selected
+		collapseHistory := opening
+		opening = false
 		c.post(func(m *Model) {
 			m.Details[id] = all
+			if collapseHistory {
+				m.FoldToolHistory[id] = true
+			}
 			for i, s := range m.Snapshot.Sessions {
 				if s.ID == all.Session.ID && s.Revision <= all.Session.Revision {
 					m.Snapshot.Sessions[i] = all.Session
@@ -249,6 +255,7 @@ func (c *Controller) Run(ctx context.Context) {
 		case job := <-c.Jobs:
 			if job.Method == "$select" {
 				selected = job.Input.(string)
+				opening = selected != ""
 				loaded = ""
 				if client != nil {
 					if err := fetchDetail(); err != nil {

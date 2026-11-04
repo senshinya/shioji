@@ -251,3 +251,30 @@ command/output gap and the footer position. The UI suite, signed development
 build and repository design-freeze verification pass. The user explicitly
 accepted this change on 2026-11-05; this acceptance applies to this disclosure
 change only.
+
+
+## Follow-up: collapse saved tool history on every open
+
+The user clarified that every newly opened saved session starts with all
+historical tool groups collapsed, overriding previously persisted expansion
+choices. The prior implementation only folded at a subsequent assistant-prose
+boundary and could therefore restore expanded groups or leave a trailing group
+open.
+
+An explicit session visit now folds the cached history and the completed
+hydration. Pending-request-only projections wait for actual history before
+consuming that initialization. Ordinary rerenders, late output and reconnect
+hydration do not reset a user's manual disclosure; newly arriving live groups
+retain their existing behavior. Sidebar, search and attention entry points
+also initialize a fresh visit when they reopen the same selected session.
+The initialization flag is transient and excluded from saved client state.
+
+Two regressions were observed failing before the fix: restored expansion and
+asynchronous history opening expanded. A further failing case covered returning
+from device management to the same session. Native headless component tests
+exercise manual disclosure, navigation, delayed history and live arrivals.
+The full Go suite, signed development build and repository design-freeze
+verification pass. Real-window capture/relaunch remains unverified because the
+computer-use host repeatedly returns “Sky Computer Use native pipe startup
+failed”. The running GUI and authoritative worker were left intact; the new
+build takes effect after restarting the GUI. No new model turn was submitted.

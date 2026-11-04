@@ -70,6 +70,7 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 				if row.Clicked() {
 					v.Model.WorkspaceID = r.WorkspaceID
 					v.Model.SessionID = r.SessionID
+					v.Model.FoldToolHistory[r.SessionID] = true
 					v.devices = false
 					v.searchOpen = false
 					v.branchOpen = false

@@ -26,6 +26,8 @@ type Model struct {
 	Answers         map[string]string
 	Pager           map[string]int
 	Collapsed       map[string]bool
+	// Transient: each visit starts with its hydrated tool history collapsed.
+	FoldToolHistory map[string]bool
 	Pending         map[string]domain.Submission
 	Details         map[string]domain.SessionDetail
 	Resolved        map[string]bool
@@ -38,7 +40,7 @@ type Model struct {
 }
 
 func NewModel() *Model {
-	return &Model{Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {

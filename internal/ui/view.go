@@ -122,9 +122,12 @@ func (v *View) View(c *n.Context) {
 		}
 	}
 drained:
-	if v.Controller != nil && v.selected != m.SessionID {
+	if v.selected != m.SessionID {
 		v.selected = m.SessionID
-		v.Controller.Select(m.SessionID)
+		m.FoldToolHistory[m.SessionID] = true
+		if v.Controller != nil {
+			v.Controller.Select(m.SessionID)
+		}
 	}
 	t := *c.Theme()
 	t.FontSize = 13
@@ -223,9 +226,12 @@ drained:
 			}
 		}
 	})
-	if v.Controller != nil && v.selected != m.SessionID {
+	if v.selected != m.SessionID {
 		v.selected = m.SessionID
-		v.Controller.Select(m.SessionID)
+		m.FoldToolHistory[m.SessionID] = true
+		if v.Controller != nil {
+			v.Controller.Select(m.SessionID)
+		}
 		c.After(0)
 	}
 }
@@ -375,6 +381,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 				})
 				if row.Clicked() {
 					m.SessionID = s.ID
+					m.FoldToolHistory[s.ID] = true
 					m.WorkspaceID = s.WorkspaceID
 					v.devices = false
 				}
@@ -1077,6 +1084,7 @@ func (v *View) nextAttention() {
 	for _, s := range v.Model.Snapshot.Sessions {
 		if v.pendingCount(s.ID) > 0 {
 			v.Model.SessionID = s.ID
+			v.Model.FoldToolHistory[s.ID] = true
 			v.Model.WorkspaceID = s.WorkspaceID
 			v.Model.Collapsed[s.ID] = false
 			v.devices = false
