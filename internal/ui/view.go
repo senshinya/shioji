@@ -4,7 +4,6 @@ package ui
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -17,7 +16,17 @@ import (
 	"shioji/internal/protocol"
 )
 
+type editBinding struct {
+	Text      string
+	LastModel string
+}
+
 type View struct {
+	draftBindings           map[string]*editBinding
+	answerBindings          map[string]*editBinding
+	customBindings          map[string]*editBinding
+	Saver                   *app.StateWriter
+	lastQueued              []byte
 	lastState               []byte
 	Model                   *app.Model
 	Controller              *app.Controller
@@ -33,8 +42,43 @@ type View struct {
 }
 
 func New(model *app.Model, controller *app.Controller, path string) *View {
-	return &View{Model: model, Controller: controller, StatePath: path, lists: map[string]*n.ListState{}, collapsedWorkspaces: map[string]bool{}, md: markdown.Options{ShareSelection: true, WrapCode: true}}
+	v := &View{draftBindings: map[string]*editBinding{}, answerBindings: map[string]*editBinding{}, customBindings: map[string]*editBinding{}, Model: model, Controller: controller, StatePath: path, lists: map[string]*n.ListState{}, collapsedWorkspaces: map[string]bool{}, md: markdown.Options{ShareSelection: true, WrapCode: true}}
+	if path != "" {
+		v.Saver = app.NewStateWriter(path)
+	}
+	return v
 }
+func (v *View) Flush() error {
+	for key, b := range v.draftBindings {
+		if b.Text != b.LastModel {
+			v.Model.Drafts[key] = b.Text
+			b.LastModel = b.Text
+		}
+	}
+	for key, b := range v.answerBindings {
+		if b.Text != b.LastModel {
+			v.Model.Answers[key] = b.Text
+			b.LastModel = b.Text
+		}
+	}
+	for key, b := range v.customBindings {
+		if b.Text != b.LastModel {
+			v.Model.Answers["custom:"+key] = b.Text
+			v.Model.Answers[key] = b.Text
+			b.LastModel = b.Text
+		}
+	}
+
+	if v.Saver == nil {
+		return nil
+	}
+	data, err := v.Model.EncodeState()
+	if err != nil {
+		return err
+	}
+	return v.Saver.Flush(data)
+}
+
 func svg(path string) *n.SVG {
 	return n.MustParseSVG([]byte(`<svg viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path d="` + path + `" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 }
@@ -101,13 +145,20 @@ drained:
 	t.AccentHover = t.Accent
 	t.AccentPressed = t.Accent
 	c.SetTheme(&t)
-	if v.Controller != nil && v.StatePath != "" {
-		data, err := m.EncodeState()
-		if err == nil && !bytes.Equal(data, v.lastState) {
-			if v.Controller.Do(app.Job{Method: "$save", StatePath: v.StatePath, State: data}) {
-				v.lastState = data
-			}
+	if v.Saver != nil {
+		v.Saver.SetInvalidate(c.Services().Invalidate)
+		saved, err := v.Saver.Result()
+		v.lastState = saved
+		if err != nil {
+			m.Error = "无法保存草稿：" + err.Error()
 		}
+		defer func() {
+			data, err := m.EncodeState()
+			if err == nil && !bytes.Equal(data, v.lastQueued) {
+				v.Saver.Queue(data)
+				v.lastQueued = data
+			}
+		}()
 	}
 
 	if c.Shortcut(n.Cmd, n.KeyN) {
@@ -211,12 +262,27 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 				}
 				row.Children(func() {
 					n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
-						if s.Status == "running" || s.Status == "starting" {
-							n.Column(c).Size(4, 4).Radius(2).Background(t.Success)
-						} else if v.pendingCount(s.ID) > 0 {
+						if v.pendingCount(s.ID) > 0 {
 							n.Column(c).Size(4, 4).Radius(2).Background(t.Warning)
-						} else {
+						} else if s.Status == "running" || s.Status == "starting" {
+							n.Column(c).Size(4, 4).Radius(2).Background(t.Success)
+						} else if s.Status == "completed" {
 							n.Icon(c, check).Size(10, 10).TextColor(t.TextMuted)
+						} else {
+							glyph := "Ⅱ"
+							label := "已暂停"
+							if s.Status == "failed" {
+								glyph = "×"
+								label = "执行失败"
+							}
+							if s.Status == "unknown" {
+								glyph = "?"
+								label = "执行状态待核实"
+							}
+							if s.Status == "interrupted" {
+								label = "已停止"
+							}
+							n.Text(c, glyph).Width(10).FontSize(11).TextColor(t.TextMuted).Label(label)
 						}
 						n.Text(c, s.Title).SingleLine().Grow(1).FontSize(13)
 						if count := v.pendingCount(s.ID); count > 0 {
@@ -327,7 +393,8 @@ func (v *View) notice(c *n.Context, t *n.Theme) {
 func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	m := v.Model
 	key := m.DraftKey()
-	draft := m.Drafts[key]
+	binding := textBinding(v.draftBindings, key, m.Drafts[key])
+	draft := binding.Text
 	cfg := m.Config()
 	running := false
 	for _, s := range m.Snapshot.Sessions {
@@ -340,7 +407,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 		bg = t.Surface
 	}
 	n.Column(c.Key("composer:"+key)).FillWidth().MaxWidth(736).Padding(12, 14).Gap(8).Background(bg).Border(1, t.Border).Radius(16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04)).Children(func() {
-		n.TextAreaBase(c.Key("input"), &draft).Label("消息输入").Placeholder("描述任务…").FillWidth().Lines(3, 7).MinHeight(72).FontSize(14).OnTextKey(func(k n.TextKey) bool {
+		n.TextAreaBase(c.Key("input"), &binding.Text).Label("消息输入").Placeholder("描述任务…").FillWidth().Lines(3, 7).MinHeight(72).FontSize(14).OnTextKey(func(k n.TextKey) bool {
 			if k.Key == n.KeyEnter && (k.Mods == 0 || k.Mods == n.Cmd) {
 				m.Drafts[key] = k.Text()
 				if strings.TrimSpace(k.Text()) != "" {
@@ -350,7 +417,9 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 			}
 			return false
 		})
+		draft = binding.Text
 		m.Drafts[key] = draft
+		binding.LastModel = draft
 		n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
 			permission := ghost(c, permissionLabel(cfg.Permission)+" ⌄").Label("Permission")
 			permission.PopoverMenuButton(func(menu *n.Menu) {
@@ -536,7 +605,17 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 			n.Text(c, item.Text).FillWidth().Padding(8, 10).Background(t.Surface).Radius(6).Font("Menlo").FontSize(11).Selectable()
 		}
 	case "request":
-		label := item.Text + " · " + item.Status
+		label := item.Text
+		switch item.Status {
+		case "answered":
+			label += " · 已处理"
+		case "resolved":
+			label += " · 已结束"
+		case "invalidated":
+			label += " · 已失效"
+		case "submitting":
+			label += " · 提交中"
+		}
 		if ghost(c, label).FillWidth().TextAlign(n.Start).Clicked() {
 			v.Model.Collapsed[v.Model.SessionID] = false
 		}
@@ -557,6 +636,8 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 			label = "已停止"
 		case "failed":
 			label = "执行失败"
+		case "unknown":
+			label = "执行状态待核实"
 		}
 		n.Text(c, label).FontSize(11).TextColor(t.TextMuted)
 		if turn.DurationMS != nil {
@@ -638,17 +719,19 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 				q := r.Questions[current.question]
 				key := m.SessionID + "/" + r.ID + "/" + q.ID
 				n.Text(c, q.Text).FontSize(14)
-				selected := m.Answers[key]
+				selected := textBinding(v.answerBindings, key, m.Answers[key])
 				for _, option := range q.Options {
-					n.Radio(c.Key(option.Label), &selected, option.Label, option.Label).FillWidth().MinHeight(28).Tooltip(option.Description)
+					n.Radio(c.Key(option.Label), &selected.Text, option.Label, option.Label).FillWidth().MinHeight(28).Tooltip(option.Description)
 				}
-				m.Answers[key] = selected
+				m.Answers[key] = selected.Text
+				selected.LastModel = selected.Text
 				if q.Custom || len(q.Options) == 0 {
-					custom := m.Answers["custom:"+key]
-					input := n.TextArea(c.Key("answer:"+key), &custom).FillWidth().Lines(1, 4).Label("自定义答案").Placeholder("输入答案…")
+					custom := textBinding(v.customBindings, key, m.Answers["custom:"+key])
+					input := n.TextArea(c.Key("answer:"+key), &custom.Text).FillWidth().Lines(1, 4).Label("自定义答案").Placeholder("输入答案…")
 					if input.Changed() {
-						m.Answers["custom:"+key] = custom
-						m.Answers[key] = custom
+						m.Answers["custom:"+key] = custom.Text
+						m.Answers[key] = custom.Text
+						custom.LastModel = custom.Text
 					}
 				}
 			})
@@ -683,7 +766,7 @@ func (v *View) respond(r domain.PendingRequest, answer domain.Answer) {
 	if v.Controller == nil {
 		return
 	}
-	v.Controller.Do(app.Job{Method: "request.respond", Input: protocol.AnswerInput{SessionID: r.SessionID, Answer: answer}, Apply: func(m *app.Model, _ json.RawMessage, err error) {
+	v.do(app.Job{Method: "request.respond", Input: protocol.AnswerInput{SessionID: r.SessionID, Answer: answer}, Apply: func(m *app.Model, _ json.RawMessage, err error) {
 		if err != nil {
 			m.Error = err.Error()
 		}
@@ -699,17 +782,19 @@ func (v *View) submit() {
 		m.Error = err.Error()
 		return
 	}
-	state, _ := m.EncodeState()
-	if !v.Controller.Do(app.Job{StatePath: v.StatePath, State: state, Method: "session.submit", Input: in, Apply: func(m *app.Model, b json.RawMessage, err error) {
+	var prepare func() error
+	if v.Saver != nil {
+		state, _ := m.EncodeState()
+		v.Saver.Queue(state)
+		v.lastQueued = state
+		prepare = v.Saver.FlushLatest
+	}
+	if !v.do(app.Job{Prepare: prepare, Method: "session.submit", Input: in, Apply: func(m *app.Model, b json.RawMessage, err error) {
 		if err != nil {
-			var remote *protocol.RemoteError
-			if errors.As(err, &remote) {
-				m.Reject(in, err.Error())
-			} else {
-				m.Error = "提交结果待核实，草稿已保留"
-			}
+			m.SubmissionError(in, err)
 			return
 		}
+
 		var op domain.Operation
 		if err = json.Unmarshal(b, &op); err != nil {
 			m.Error = err.Error()
@@ -727,7 +812,7 @@ func (v *View) interrupt() {
 	d := v.Model.Details[v.Model.SessionID]
 	for _, turn := range d.Turns {
 		if turn.Status == "running" {
-			v.Controller.Do(app.Job{Method: "turn.interrupt", Input: map[string]string{"sessionId": d.Session.ID, "turnId": turn.ID}, Apply: func(m *app.Model, _ json.RawMessage, err error) {
+			v.do(app.Job{Method: "turn.interrupt", Input: map[string]string{"sessionId": d.Session.ID, "turnId": turn.ID}, Apply: func(m *app.Model, _ json.RawMessage, err error) {
 				if err != nil {
 					m.Error = err.Error()
 				}
@@ -748,7 +833,7 @@ func (v *View) createWorkspace() {
 	if len(paths) == 0 {
 		return
 	}
-	v.Controller.Do(app.Job{Method: "workspace.create", Input: protocol.WorkspaceInput{Name: filepath.Base(paths[0]), Folders: paths}, Apply: func(m *app.Model, b json.RawMessage, err error) {
+	v.do(app.Job{Method: "workspace.create", Input: protocol.WorkspaceInput{Name: filepath.Base(paths[0]), Folders: paths}, Apply: func(m *app.Model, b json.RawMessage, err error) {
 		if err != nil {
 			m.Error = err.Error()
 			return
@@ -798,4 +883,21 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 			}
 		})
 	})
+}
+
+func (v *View) do(job app.Job) bool {
+	job.ConnectionEpoch = v.Model.ConnectionEpoch
+	return v.Controller.Do(job)
+}
+
+func textBinding(bindings map[string]*editBinding, key, value string) *editBinding {
+	b := bindings[key]
+	if b == nil {
+		b = &editBinding{Text: value, LastModel: value}
+		bindings[key] = b
+	} else if value != b.LastModel {
+		b.Text = value
+		b.LastModel = value
+	}
+	return b
 }

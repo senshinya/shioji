@@ -2,6 +2,7 @@ package ui
 
 import (
 	native "github.com/egoist/mygo/ui"
+	"path/filepath"
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"strings"
@@ -34,5 +35,41 @@ func TestHomeDoesNotCreateSessionWhileRendering(t *testing.T) {
 	}
 	if _, ok := test.Find("创建工作区"); !ok {
 		t.Fatal("no workspace setup action")
+	}
+}
+
+func TestUnknownExecutionIsNotShownAsRunningOrCompleted(t *testing.T) {
+	m := app.NewModel()
+	m.SessionID = "s"
+	m.WorkspaceID = "w"
+	s := domain.Session{ID: "s", WorkspaceID: "w", Title: "Needs reconciliation", Status: "unknown"}
+	m.Snapshot = domain.Snapshot{Workspaces: []domain.Workspace{{ID: "w", Name: "Test"}}, Sessions: []domain.Session{s}}
+	m.Details["s"] = domain.SessionDetail{Session: s, Items: []domain.Item{{ID: "i", TurnID: "t", Kind: "assistant", Text: "Partial"}}, Turns: []domain.Turn{{ID: "t", Status: "unknown"}}}
+	v := New(m, nil, "")
+	test := native.NewTester(v.View, 1000, 700)
+	if test.HasText("工作中") || test.HasText("本轮完成") {
+		t.Fatal("unknown execution has a definitive running/completed label")
+	}
+	if !test.HasText("执行状态待核实") {
+		t.Fatal("unknown execution lacks an explicit state")
+	}
+}
+
+func TestCloseFlushCapturesNativeTextBeforeNextRender(t *testing.T) {
+	m := app.NewModel()
+	m.Drafts["home"] = "original"
+	path := filepath.Join(t.TempDir(), "state.json")
+	v := New(m, nil, path)
+	defer v.Saver.Close()
+	v.draftBindings["home"] = &editBinding{Text: "latest native edit", LastModel: "original"}
+	if err := v.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	restored := app.NewModel()
+	if err := restored.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	if restored.Drafts["home"] != "latest native edit" {
+		t.Fatal("quit saved only the previous rendered value")
 	}
 }

@@ -27,10 +27,11 @@ type Normalizer struct {
 	turns          map[string]domain.Turn
 	totals         map[string]wire.Counters
 	baselines      map[string]wire.Counters
+	usageObserved  map[string]bool
 }
 
 func NewNormalizer() *Normalizer {
-	return &Normalizer{sessions: map[string]string{}, requests: map[string]*pending{}, sourceRequests: map[string]string{}, items: map[string]domain.Item{}, turns: map[string]domain.Turn{}, totals: map[string]wire.Counters{}, baselines: map[string]wire.Counters{}}
+	return &Normalizer{usageObserved: map[string]bool{}, sessions: map[string]string{}, requests: map[string]*pending{}, sourceRequests: map[string]string{}, items: map[string]domain.Item{}, turns: map[string]domain.Turn{}, totals: map[string]wire.Counters{}, baselines: map[string]wire.Counters{}}
 }
 func (n *Normalizer) Bind(thread, session string, fresh bool) {
 	n.mu.Lock()
@@ -118,6 +119,16 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		if sid == "" {
 			return nil, unsupported(m.ID, "No bound session"), nil
 		}
+		encoded, _ := json.Marshal(req)
+		active := 0
+		for _, entry := range n.requests {
+			if entry.thread == p.ThreadID && (entry.request.State == "pending" || entry.request.State == "submitting") {
+				active++
+			}
+		}
+		if len(encoded) > 16<<10 || active >= 4 {
+			return nil, unsupported(m.ID, "Question/approval resource limit exceeded"), nil
+		}
 		n.requests[req.ID] = &pending{request: req, sourceID: append(json.RawMessage(nil), m.ID...), thread: p.ThreadID}
 		n.sourceRequests[sourceKey(p.ThreadID, m.ID)] = req.ID
 		event.Type = "request.open"
@@ -142,7 +153,7 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		if p.Turn.Error != nil {
 			t.Error = bounded(p.Turn.Error.Message)
 		}
-		if m.Method == "turn/completed" {
+		if m.Method == "turn/completed" && n.usageObserved[p.Turn.ID] {
 			base := n.baselines[t.ID]
 			total := n.totals[p.ThreadID]
 			t.InputTokens = difference(total.Input, base.Input)
@@ -155,6 +166,7 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		return emit(event)
 	case "thread/tokenUsage/updated":
 		n.totals[p.ThreadID] = p.TokenUsage.Total
+		n.usageObserved[p.TurnID] = true
 		return nil, nil, nil
 	case "item/started", "item/completed":
 		if p.Item.Type == "userMessage" {

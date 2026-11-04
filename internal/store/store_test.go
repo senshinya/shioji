@@ -1,10 +1,12 @@
 package store_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"shioji/internal/domain"
 	"shioji/internal/store"
+	"strings"
 	"testing"
 )
 
@@ -198,5 +200,57 @@ func TestRecoveryCoversOutstandingOperationsBeyondSnapshotPage(t *testing.T) {
 	}
 	if got.State != "indeterminate" {
 		t.Fatalf("old operation escaped recovery: %s", got.State)
+	}
+}
+
+func TestHistoryPagesAreByteBoundedAndCursorAlwaysAdvances(t *testing.T) {
+	s := open(t)
+	w := workspace(t, s)
+	op, _ := s.Accept(domain.Submission{OperationID: "large", WorkspaceID: w.ID, Text: "run"})
+	for i := 0; i < 15; i++ {
+		_, err := s.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: fmt.Sprint(i), Kind: "tool", Text: strings.Repeat("x", 128<<10), Final: true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var after int64
+	seen := 0
+	for {
+		page, err := s.Session(op.SessionID, after, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := json.Marshal(page)
+		if len(b) > 768<<10 {
+			t.Fatalf("history page has %d bytes", len(b))
+		}
+		if len(page.Items) == 0 {
+			t.Fatal("page failed to advance")
+		}
+		after = page.Items[len(page.Items)-1].Order
+		seen += len(page.Items)
+		if !page.HasMore {
+			break
+		}
+	}
+	if seen != 16 {
+		t.Fatalf("lost or duplicated items: %d", seen)
+	}
+}
+
+func TestRequestAnchorBelongsToItsTurnForOneTurnFooter(t *testing.T) {
+	s := open(t)
+	w := workspace(t, s)
+	op, _ := s.Accept(domain.Submission{OperationID: "anchor", WorkspaceID: w.ID, Text: "run"})
+	_, err := s.Apply(op.SessionID, domain.Event{Type: "request.open", Request: &domain.PendingRequest{ID: "request", TurnID: "turn", State: "pending", Title: "Question"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := s.Session(op.SessionID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Items[1].TurnID != "turn" {
+		t.Fatal("request split a turn and would duplicate its footer")
 	}
 }

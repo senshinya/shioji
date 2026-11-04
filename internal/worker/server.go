@@ -129,6 +129,9 @@ func (s *Server) serveConnection(conn net.Conn) {
 		result := protocol.Frame{Type: "result", ID: f.ID, Epoch: epoch, DeviceID: s.store.DeviceID()}
 		if callErr != nil {
 			result.Error = callErr.Error()
+			if errors.Is(callErr, sql.ErrNoRows) {
+				result.ErrorCode = "notFound"
+			}
 		} else {
 			result.Body, err = json.Marshal(out)
 			if err != nil {
@@ -433,6 +436,15 @@ func (s *Server) onEvent(e domain.Event) error {
 		session := detail.Session
 		if session.Status != "running" && session.Status != "starting" {
 			return nil
+		}
+		for _, turn := range detail.Turns {
+			if turn.Status == "running" {
+				turn.Status = "unknown"
+				turn.Error = "Codex process stopped; the in-flight turn needs reconciliation"
+				if _, err := s.store.Apply(e.SessionID, domain.Event{Type: "turn", Turn: &turn}); err != nil {
+					return err
+				}
+			}
 		}
 		session.Status = "unknown"
 		session.Error = "Codex process stopped; the in-flight turn needs reconciliation"

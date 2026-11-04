@@ -23,6 +23,9 @@ type AnswerInput struct {
 	SessionID string        `json:"sessionId"`
 	Answer    domain.Answer `json:"answer"`
 }
-type RemoteError struct{ Message string }
+type RemoteError struct {
+	Code    string
+	Message string
+}
 
 func (e *RemoteError) Error() string { return e.Message }

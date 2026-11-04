@@ -20,6 +20,7 @@ type Provider struct {
 	server  *httptest.Server
 	mu      sync.Mutex
 	counts  map[string]int
+	inputs  []string
 }
 
 func NewProvider(t *testing.T) *Provider {
@@ -51,6 +52,8 @@ func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
 		kind = "question"
 	}
 	p.mu.Lock()
+	recorded, _ := json.Marshal(body)
+	p.inputs = append(p.inputs, string(recorded))
 	count := p.counts[kind]
 	p.counts[kind]++
 	p.mu.Unlock()
@@ -79,4 +82,10 @@ func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(e)
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e["type"], b)
 	}
+}
+
+func (p *Provider) Inputs() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.inputs...)
 }

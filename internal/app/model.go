@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"shioji/internal/protocol"
 	"slices"
 	"strings"
 
@@ -12,22 +13,23 @@ import (
 )
 
 type Model struct {
-	KnownDeviceID string
-	Snapshot      domain.Snapshot
-	Sequence      int64
-	Connected     bool
-	Readiness     domain.Readiness
-	WorkspaceID   string
-	SessionID     string
-	Drafts        map[string]string
-	Configs       map[string]domain.RunConfig
-	Answers       map[string]string
-	Pager         map[string]int
-	Collapsed     map[string]bool
-	Pending       map[string]domain.Submission
-	Details       map[string]domain.SessionDetail
-	Resolved      map[string]bool
-	Error         string
+	ConnectionEpoch string
+	KnownDeviceID   string
+	Snapshot        domain.Snapshot
+	Sequence        int64
+	Connected       bool
+	Readiness       domain.Readiness
+	WorkspaceID     string
+	SessionID       string
+	Drafts          map[string]string
+	Configs         map[string]domain.RunConfig
+	Answers         map[string]string
+	Pager           map[string]int
+	Collapsed       map[string]bool
+	Pending         map[string]domain.Submission
+	Details         map[string]domain.SessionDetail
+	Resolved        map[string]bool
+	Error           string
 }
 
 func NewModel() *Model {
@@ -41,7 +43,15 @@ func (m *Model) DraftKey() string {
 }
 func (m *Model) Config() domain.RunConfig {
 	key := m.DraftKey()
-	c := m.Configs[key]
+	c, configured := m.Configs[key]
+	if !configured && m.SessionID != "" {
+		for _, session := range m.Snapshot.Sessions {
+			if session.ID == m.SessionID {
+				c = session.Config
+				break
+			}
+		}
+	}
 	var model *domain.Model
 	for i := range m.Readiness.Models {
 		if m.Readiness.Models[i].ID == c.Model {
@@ -208,7 +218,9 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 		found := false
 		for i, s := range m.Snapshot.Sessions {
 			if s.ID == e.Session.ID {
-				m.Snapshot.Sessions[i] = *e.Session
+				if s.Revision <= e.Session.Revision {
+					m.Snapshot.Sessions[i] = *e.Session
+				}
 				found = true
 				break
 			}
@@ -322,4 +334,13 @@ func (m *Model) Load(path string) error {
 		m.Pending = saved.Pending
 	}
 	return nil
+}
+
+func (m *Model) SubmissionError(in domain.Submission, err error) {
+	var remote *protocol.RemoteError
+	if errors.As(err, &remote) {
+		m.Reject(in, err.Error())
+	} else {
+		m.Error = "提交结果待核实，草稿已保留"
+	}
 }

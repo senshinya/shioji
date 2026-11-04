@@ -387,12 +387,16 @@ func (r *Runtime) Submit(ctx context.Context, s domain.Session, operationID, tex
 		fast := "fast"
 		params.ServiceTier = &fast
 	}
-	if s.Config.Plan {
+	{
+		mode := "default"
+		if s.Config.Plan {
+			mode = "plan"
+		}
 		var effort *string
 		if s.Config.Effort != "" {
 			effort = &s.Config.Effort
 		}
-		params.CollaborationMode = &wire.CollaborationMode{Mode: "plan", Settings: wire.ModeSettings{Model: s.Config.Model, Effort: effort}}
+		params.CollaborationMode = &wire.CollaborationMode{Mode: mode, Settings: wire.ModeSettings{Model: s.Config.Model, Effort: effort}}
 	}
 	var out struct {
 		Turn wire.Turn `json:"turn"`

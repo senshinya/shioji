@@ -203,6 +203,11 @@ func TestAppServerDeathMarksExecutionUnknownWithoutReplayingInput(t *testing.T) 
 		call(t, c, "session", worker.SessionQuery{ID: op.SessionID}, &detail)
 		return detail.Session.Status == "unknown"
 	})
+	for _, turn := range detail.Turns {
+		if turn.Status == "running" {
+			t.Fatal("dead harness still has a running turn")
+		}
+	}
 	var again domain.Operation
 	call(t, c, "session.submit", domain.Submission{OperationID: "crash", WorkspaceID: w.ID, Text: "SHIOJI_SLOW", Config: domain.RunConfig{Model: ready.Models[0].ID, Permission: "read-only"}}, &again)
 	if again.SessionID != op.SessionID {

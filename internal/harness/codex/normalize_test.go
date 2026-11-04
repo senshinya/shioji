@@ -158,9 +158,27 @@ func TestQuestionRejectsPartialAnswersAndDuplicateResponses(t *testing.T) {
 	}
 }
 
-func TestUsageWithoutBaselineRemainsUnknown(t *testing.T){
- n:=NewNormalizer();n.Bind("t","s",false)
- n.Feed([]byte(`{"method":"turn/started","params":{"threadId":"t","turn":{"id":"u","status":"inProgress","items":[]}}}`))
- n.Feed([]byte(`{"method":"thread/tokenUsage/updated","params":{"threadId":"t","turnId":"u","tokenUsage":{"total":{"inputTokens":100,"outputTokens":20,"cachedInputTokens":50}}}}`))
- events,_,err:=n.Feed([]byte(`{"method":"turn/completed","params":{"threadId":"t","turn":{"id":"u","status":"completed","items":[]}}}`));if err!=nil{t.Fatal(err)};if events[0].Turn.InputTokens!=nil||events[0].Turn.OutputTokens!=nil||events[0].Turn.CachedInputTokens!=nil{t.Fatal("session totals became turn usage")}
+func TestUsageWithoutBaselineRemainsUnknown(t *testing.T) {
+	n := NewNormalizer()
+	n.Bind("t", "s", false)
+	n.Feed([]byte(`{"method":"turn/started","params":{"threadId":"t","turn":{"id":"u","status":"inProgress","items":[]}}}`))
+	n.Feed([]byte(`{"method":"thread/tokenUsage/updated","params":{"threadId":"t","turnId":"u","tokenUsage":{"total":{"inputTokens":100,"outputTokens":20,"cachedInputTokens":50}}}}`))
+	events, _, err := n.Feed([]byte(`{"method":"turn/completed","params":{"threadId":"t","turn":{"id":"u","status":"completed","items":[]}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events[0].Turn.InputTokens != nil || events[0].Turn.OutputTokens != nil || events[0].Turn.CachedInputTokens != nil {
+		t.Fatal("session totals became turn usage")
+	}
+}
+
+func TestNoUsageObservationDoesNotInventZeroConsumption(t *testing.T) {
+	n := NewNormalizer()
+	n.Bind("t", "s", true)
+	n.Feed([]byte(`{"method":"turn/started","params":{"threadId":"t","turn":{"id":"u","status":"inProgress","items":[]}}}`))
+	events, _, _ := n.Feed([]byte(`{"method":"turn/completed","params":{"threadId":"t","turn":{"id":"u","status":"completed","items":[]}}}`))
+	turn := events[0].Turn
+	if turn.InputTokens != nil || turn.OutputTokens != nil || turn.CachedInputTokens != nil {
+		t.Fatal("absent usage became zero")
+	}
 }

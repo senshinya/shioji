@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"shioji/internal/domain"
+	"shioji/internal/testutil"
 	"strings"
 	"sync"
 	"testing"
@@ -95,5 +96,46 @@ func TestIncompatibleExecutableNeverReportsReady(t *testing.T) {
 	_, err := Start(ctx, Options{Executable: "/usr/bin/false"})
 	if err == nil {
 		t.Fatal("incompatible executable reported ready")
+	}
+}
+
+func TestTurningPlanOffChangesActualNextTurnToDefaultMode(t *testing.T) {
+	p := testutil.NewProvider(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	completed := make(chan string, 4)
+	r, err := Start(ctx, Options{Home: p.Home, OnEvent: func(e domain.Event) error {
+		if e.Turn != nil && e.Turn.Status == "completed" {
+			completed <- e.Turn.ID
+		}
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	session := domain.Session{ID: "plan-session", Context: domain.LaunchContext{CWD: t.TempDir()}, Config: domain.RunConfig{Model: r.Readiness().Models[0].ID, Permission: "read-only", Plan: true}}
+	session.ThreadID, err = r.Create(ctx, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, plan := range []bool{true, false} {
+		session.Config.Plan = plan
+		id, err := r.Submit(ctx, session, domain.NewID(), "mode test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case got := <-completed:
+			if got != id {
+				t.Fatal("wrong turn completed")
+			}
+		case <-ctx.Done():
+			t.Fatal("turn timed out")
+		}
+	}
+	inputs := p.Inputs()
+	if len(inputs) != 2 || !strings.Contains(inputs[0], "Plan Mode") || !strings.Contains(inputs[1], "# Collaboration Mode: Default") {
+		t.Fatal("turning Plan off did not produce explicit Default collaboration instructions")
 	}
 }

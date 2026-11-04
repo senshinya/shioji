@@ -19,16 +19,17 @@ const Major = 1
 const MaxFrame = 1 << 20
 
 type Frame struct {
-	Type     string          `json:"type"`
-	Major    int             `json:"major,omitempty"`
-	Minor    int             `json:"minor,omitempty"`
-	Nonce    string          `json:"nonce,omitempty"`
-	DeviceID string          `json:"deviceId,omitempty"`
-	Epoch    string          `json:"epoch,omitempty"`
-	ID       string          `json:"id,omitempty"`
-	Method   string          `json:"method,omitempty"`
-	Body     json.RawMessage `json:"body,omitempty"`
-	Error    string          `json:"error,omitempty"`
+	Type      string          `json:"type"`
+	Major     int             `json:"major,omitempty"`
+	Minor     int             `json:"minor,omitempty"`
+	Nonce     string          `json:"nonce,omitempty"`
+	DeviceID  string          `json:"deviceId,omitempty"`
+	Epoch     string          `json:"epoch,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Method    string          `json:"method,omitempty"`
+	Body      json.RawMessage `json:"body,omitempty"`
+	ErrorCode string          `json:"errorCode,omitempty"`
+	Error     string          `json:"error,omitempty"`
 }
 type Codec struct {
 	r io.Reader
@@ -146,7 +147,7 @@ func (c *Client) Call(ctx context.Context, method string, in, out any) error {
 		return errors.New("response identity mismatch")
 	}
 	if f.Error != "" {
-		return &RemoteError{Message: f.Error}
+		return &RemoteError{Code: f.ErrorCode, Message: f.Error}
 	}
 	if f.Type != "result" {
 		return errors.New("unexpected response")

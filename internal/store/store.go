@@ -310,7 +310,11 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		if e.Session == nil || e.Session.ID != sid {
 			return e, errors.New("invalid session event")
 		}
+		revision := session.Revision
 		session = *e.Session
+		if session.Revision < revision {
+			session.Revision = revision
+		}
 	case "item.upsert":
 		if e.Item == nil {
 			return e, errors.New("missing item")
@@ -345,7 +349,7 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		if _, err = tx.Exec("INSERT INTO requests VALUES(?,?,?) ON CONFLICT(session_id,id) DO UPDATE SET body=excluded.body", sid, e.Request.ID, blob(e.Request)); err != nil {
 			return e, err
 		}
-		anchor := domain.Item{ID: "request:" + e.Request.ID, Kind: "request", Text: e.Request.Title, Status: e.Request.State, Final: e.Request.State != "pending"}
+		anchor := domain.Item{ID: "request:" + e.Request.ID, TurnID: e.Request.TurnID, Kind: "request", Text: e.Request.Title, Status: e.Request.State, Final: e.Request.State != "pending"}
 		if err = putItem(tx, sid, &anchor); err != nil {
 			return e, err
 		}
@@ -423,12 +427,76 @@ func (s *Store) Session(id string, after int64, limit int) (domain.SessionDetail
 		out.HasMore = true
 		out.Items = out.Items[:limit]
 	}
-	if out.Requests, err = rowsOf[domain.PendingRequest](s.db, "SELECT body FROM requests WHERE session_id=?", id); err != nil {
+
+	requestIDs := []string{}
+	turnIDs := []string{}
+	for _, item := range out.Items {
+		if item.Kind == "request" {
+			requestIDs = append(requestIDs, strings.TrimPrefix(item.ID, "request:"))
+		}
+		if item.TurnID != "" {
+			turnIDs = append(turnIDs, item.TurnID)
+		}
+	}
+	queryIDs := func(table string, ids []string, active string) (string, []any) {
+		args := []any{id}
+		condition := active
+		if len(ids) > 0 {
+			slots := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+			condition += " OR id IN (" + slots + ")"
+			for _, v := range ids {
+				args = append(args, v)
+			}
+		}
+		return "SELECT body FROM " + table + " WHERE session_id=? AND (" + condition + ") ORDER BY rowid", args
+	}
+	query, args := queryIDs("requests", requestIDs, "json_extract(body,'$.state') IN ('pending','submitting')")
+	requests, err := rowsOf[domain.PendingRequest](s.db, query, args...)
+	if err != nil {
 		return out, err
 	}
-	if out.Turns, err = rowsOf[domain.Turn](s.db, "SELECT body FROM turns WHERE session_id=? ORDER BY rowid", id); err != nil {
+	query, args = queryIDs("turns", turnIDs, "json_extract(body,'$.status')='running'")
+	turns, err := rowsOf[domain.Turn](s.db, query, args...)
+	if err != nil {
 		return out, err
 	}
+	for i := range out.Items {
+		if len(blob(out.Items[i])) > 256<<10 {
+			out.Items[i].Text = strings.ToValidUTF8(out.Items[i].Text[:min(len(out.Items[i].Text), 128<<10)], "�") + "\n[Output too large for a history page; showing a bounded preview]"
+			out.Items[i].Name = ""
+		}
+	}
+	for {
+		requestSet := map[string]bool{}
+		turnSet := map[string]bool{}
+		for _, item := range out.Items {
+			if item.Kind == "request" {
+				requestSet[strings.TrimPrefix(item.ID, "request:")] = true
+			}
+			turnSet[item.TurnID] = true
+		}
+		out.Requests = nil
+		out.Turns = nil
+		for _, r := range requests {
+			if requestSet[r.ID] || r.State == "pending" || r.State == "submitting" {
+				out.Requests = append(out.Requests, r)
+			}
+		}
+		for _, t := range turns {
+			if turnSet[t.ID] || t.Status == "running" {
+				out.Turns = append(out.Turns, t)
+			}
+		}
+		if len(blob(out)) <= 768<<10 {
+			break
+		}
+		if len(out.Items) <= 1 {
+			return out, errors.New("session metadata exceeds history page budget")
+		}
+		out.Items = out.Items[:len(out.Items)-1]
+		out.HasMore = true
+	}
+
 	err = s.db.QueryRow("SELECT COALESCE(MAX(sequence),0) FROM journal").Scan(&out.Sequence)
 	return out, err
 }
@@ -495,6 +563,19 @@ func (s *Store) Recover() error {
 	}
 	for _, session := range snapshot.Sessions {
 		if session.Status == "running" || session.Status == "starting" {
+			detail, e := s.Session(session.ID, 0, 1)
+			if e != nil {
+				return e
+			}
+			for _, turn := range detail.Turns {
+				if turn.Status == "running" {
+					turn.Status = "unknown"
+					turn.Error = "Previous execution needs reconciliation; input was not replayed"
+					if _, err = s.Apply(session.ID, domain.Event{Type: "turn", Turn: &turn}); err != nil {
+						return err
+					}
+				}
+			}
 			session.Status = "unknown"
 			session.Error = "Previous execution needs reconciliation; input was not replayed"
 			if _, err = s.Apply(session.ID, domain.Event{Type: "session", Session: &session}); err != nil {

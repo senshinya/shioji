@@ -131,3 +131,37 @@ func TestInitialSnapshotMakesBackgroundPendingRequestsDiscoverable(t *testing.T)
 		t.Fatal("pending background request missing after reconnect")
 	}
 }
+
+func TestFinalDraftFlushBypassesBlockedNetworkAndCannotBeOverwritten(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "client.json")
+	writer := NewStateWriter(path)
+	defer writer.Close()
+	m := model()
+	m.Drafts["home"] = "older"
+	old, _ := m.EncodeState()
+	writer.Queue(old)
+	m.Drafts["home"] = "latest edit"
+	latest, _ := m.EncodeState()
+	if err := writer.Flush(latest); err != nil {
+		t.Fatal(err)
+	}
+	writer.Close()
+	restored := NewModel()
+	if err := restored.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	if restored.Drafts["home"] != "latest edit" {
+		t.Fatal("older asynchronous save overwrote final draft")
+	}
+}
+
+func TestNewClientUsesAcceptedSessionConfigWithoutGrantingBroaderPermission(t *testing.T) {
+	m := model()
+	m.Readiness.Plan = true
+	m.SessionID = "existing"
+	m.Snapshot.Sessions = []domain.Session{{ID: "existing", WorkspaceID: "w", Config: domain.RunConfig{Model: "real-default", Permission: "read-only", Effort: "high", Plan: true}}}
+	cfg := m.Config()
+	if cfg.Permission != "read-only" || cfg.Effort != "high" || !cfg.Plan {
+		t.Fatalf("accepted session config replaced by client defaults: %+v", cfg)
+	}
+}

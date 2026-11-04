@@ -54,7 +54,24 @@ func run() error {
 	mygo.App.WhenReady(func() {
 		view := presentation.New(model, controller, *state)
 		window := mygo.NewWindow(mygo.WindowOptions{Title: "Shioji", Width: 1240, Height: 820, MinWidth: 850, MinHeight: 600, TitleBarStyle: mygo.TitleBarHidden, TrafficLightPosition: &mygo.Point{X: 22, Y: 24}, Content: n.View(view.View)})
-		window.OnClosed(func() { cancel() })
+		window.OnClose(func(e *mygo.CloseEvent) {
+			if err := view.Flush(); err != nil {
+				e.PreventDefault()
+				model.Error = "无法保存草稿：" + err.Error()
+			}
+		})
+		mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
+			if err := view.Flush(); err != nil {
+				e.PreventDefault()
+				mygo.Dialog.Error("无法保存草稿", err.Error())
+			}
+		})
+		window.OnClosed(func() {
+			if view.Saver != nil {
+				view.Saver.Close()
+			}
+			cancel()
+		})
 	})
 	return mygo.App.Run()
 }
