@@ -72,3 +72,20 @@ worker test and subsequent complete test runs passed. No worker code changed.
 Only local/ LAN artifact hosting is used. Frozen inputs, original account
 recordings, screenshots and generated state are not added to Git. User changes
 to AGENTS.md remain outside this patch.
+
+## Follow-up: sidebar and inline controls
+
+The next six visual pins identified sidebar header spacing/alignment, workspace
+chevron position, session indentation, the Permission shield shape, and branch
+text/icon/chevron alignment. The original 24px frozen SVG paths now replace the
+approximate shield/branch paths and character-based workspace arrows. Workspace
+headers use 30px rows with a centered 20×24 disclosure slot; the section caption
+is inset 8px and lowered 4px without moving the list. Session left padding is
+reduced from 24 to 20px, and its icon/text gap from 8 to 6px. Inline controls use
+explicit 20px text lines and centered icon boxes, including the worktree check.
+The home branch strip retains the frozen 10px inset inside the composer.
+
+The rejected screenshot and a fresh native before capture are retained locally.
+Light/dark native frames are replaced in the existing verification groups;
+workspace collapse/expand, branch disclosure and Permission disclosure are checked
+in the running native app. Project tests, build and frozen-design check pass.

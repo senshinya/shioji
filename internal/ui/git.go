@@ -145,12 +145,17 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 			label += " · " + status.Head[:7]
 		}
 	}
-	n.Row(c.Key("branch-strip")).FillWidth().Height(26).Gap(10).AlignItems(n.Center).Children(func() {
-		trigger := n.ButtonBase(c).Height(26).MaxWidth(330).PaddingX(2).Radius(5).Label("选择分支").Tooltip(label).Disabled(!v.canSwitchBranch()).Children(func() {
-			n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
+	strip := n.Row(c.Key("branch-strip")).FillWidth().Height(26).Gap(12).AlignItems(n.Center)
+	// The frozen home context uses 10px rather than the composer’s 14px inset.
+	if home {
+		strip.Margin(0, 0, 0, -4)
+	}
+	strip.Children(func() {
+		trigger := n.ButtonBase(c).Height(26).MaxWidth(330).Padding(3, 4).Radius(5).Label("选择分支").Tooltip(label).Disabled(!v.canSwitchBranch()).Children(func() {
+			n.Row(c).Height(20).Gap(5).AlignItems(n.Center).Children(func() {
 				n.Icon(c, branchIcon).Size(12, 12).TextColor(t.TextMuted)
-				n.Text(c, label).SingleLine().Font("Menlo").FontSize(11).TextColor(t.TextMuted)
-				n.Icon(c, chevron).Size(10, 10).TextColor(t.TextMuted)
+				n.Text(c, label).SingleLine().Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+				n.Icon(c, disclosureDown).Size(9, 9).TextColor(subtle(t))
 			})
 		})
 		if trigger.Clicked() {
@@ -195,7 +200,7 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 		if home {
 			choice := v.Model.GitDrafts[v.Model.WorkspaceID]
 			isolate := choice.NewWorktree
-			if n.Checkbox(c, &isolate, "新建 worktree").FontSize(11).Disabled(!v.Model.Connected || status.Head == "").Changed() {
+			if n.Checkbox(c, &isolate, "新建 worktree").FontSize(11).FixedLineHeight(20).AlignItems(n.Center).Disabled(!v.Model.Connected || status.Head == "").Changed() {
 				choice.NewWorktree = isolate
 				v.Model.GitDrafts[v.Model.WorkspaceID] = choice
 			}

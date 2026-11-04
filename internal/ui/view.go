@@ -274,9 +274,9 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 			if navButton(c, attentionIcon, "待我处理").Clicked() {
 				v.nextAttention()
 			}
-			n.Row(c).Height(32).AlignItems(n.Center).Children(func() {
-				n.Text(c, "工作区").FontSize(11).TextColor(t.TextMuted).Grow(1)
-				if iconButton(c, plus, "创建工作区").Disabled(!m.Connected).Clicked() {
+			n.Row(c).Height(32).Padding(8, 8, 0, 8).AlignItems(n.Center).Children(func() {
+				n.Text(c, "工作区").FontSize(11).FixedLineHeight(16).TextColor(t.TextMuted).Grow(1)
+				if iconButton(c, plus, "创建工作区").Size(24, 24).Disabled(!m.Connected).Clicked() {
 					v.createWorkspace()
 				}
 			})
@@ -307,13 +307,18 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 				r := rows[i]
 				if r.workspace != nil {
 					w := r.workspace
-					workspaceRow := n.Row(c).Height(32).AlignItems(n.Center)
+					workspaceRow := n.Row(c).Height(30).Gap(3).AlignItems(n.Center)
 					workspaceRow.Children(func() {
-						label := "⌄  " + w.Name
-						if v.collapsedWorkspaces[w.ID] {
-							label = "›  " + w.Name
-						}
-						if ghost(c, label).FontSize(12).FontWeight(500).Grow(1).TextAlign(n.Start).Clicked() {
+						if n.ButtonBase(c.Key("workspace:" + w.ID)).Height(24).Grow(1).Justify(n.Start).Label(w.Name).Children(func() {
+							n.Row(c).FillWidth().Gap(3).AlignItems(n.Center).Children(func() {
+								icon := disclosureDown
+								if v.collapsedWorkspaces[w.ID] {
+									icon = disclosureRight
+								}
+								n.Row(c).Size(20, 24).Center().Children(func() { n.Icon(c, icon).Size(11, 11).TextColor(t.TextMuted) })
+								n.Text(c, w.Name).SingleLine().Grow(1).FontSize(12).FontWeight(500).FixedLineHeight(20).Tooltip(w.Name)
+							})
+						}).Clicked() {
 							v.collapsedWorkspaces[w.ID] = !v.collapsedWorkspaces[w.ID]
 						}
 						if workspaceRow.Hovered() || workspaceRow.FocusWithin() {
@@ -329,12 +334,12 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 				}
 				s := r.session
 				selected := s.ID == m.SessionID && !v.devices
-				row := n.ButtonBase(c).FillWidth().Height(28).MarginY(1).Padding(4, 8, 4, 24).Radius(8).Label(s.Title)
+				row := n.ButtonBase(c).FillWidth().Height(28).MarginY(1).Padding(4, 8, 4, 20).Radius(8).Label(s.Title)
 				if selected {
 					row.Background(t.SurfacePressed)
 				}
 				row.Children(func() {
-					n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
+					n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
 						if v.pendingCount(s.ID) > 0 {
 							n.Column(c).Width(10).AlignItems(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Warning) })
 						} else if s.Status == "running" || s.Status == "starting" {
@@ -524,8 +529,8 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 			iconButton(c, plus, "添加附件（当前 Codex 适配器暂不支持）").Size(28, 28).Disabled(true)
 			permission := n.ButtonBase(c).Height(28).PaddingX(6).Radius(6).Label("Permission").Children(func() {
 				n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
-					n.Icon(c, shieldIcon).Size(14, 14).TextColor(t.TextMuted)
-					n.Text(c, permissionLabel(cfg.Permission)).FontSize(12).FontWeight(400).TextColor(t.TextMuted)
+					n.Icon(c, shieldIcon).Size(13, 13).TextColor(t.TextMuted)
+					n.Text(c, permissionLabel(cfg.Permission)).FixedLineHeight(20).FontSize(12).FontWeight(400).TextColor(t.TextMuted)
 				})
 			})
 			choices := []menuChoice{}
