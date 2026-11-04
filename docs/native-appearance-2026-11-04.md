@@ -278,3 +278,51 @@ verification pass. Real-window capture/relaunch remains unverified because the
 computer-use host repeatedly returns “Sky Computer Use native pipe startup
 failed”. The running GUI and authoritative worker were left intact; the new
 build takes effect after restarting the GUI. No new model turn was submitted.
+
+
+## Follow-up: native hover feedback and motion
+
+After accepting the static appearance, the user requested hover feedback and
+animation across the existing interface. The implementation follows section 10
+of the approved implementation specification and the archived Lody reference's
+neutral hover surfaces. Frozen design files, static typography, icon sizing,
+spacing and semantic status colors remain unchanged.
+
+A shared native adapter supplies an interruptible 120ms ease-out neutral hover
+layer and stronger pressed feedback below control content. It covers navigation,
+workspace/session rows, search, toolbar controls, branch and configuration
+pickers, menu choices, tools, request sources, file rows, radio/checkbox choices
+and primary actions. Disabled controls show no enabled hover affordance. Composer,
+answer and search fields share animated hover/focus borders. These opacity
+strengths (5.5% hover, 11% pressed) are engineering defaults awaiting real-window
+review; they are not new confirmed product palette values.
+
+Popovers use a 120ms fade with a 3px entrance offset. Their choices and keyboard
+handling are available immediately; Escape explicitly restores trigger focus
+while the exit is still drawing. Request bodies use 160ms height/opacity
+transitions, preserving ordinary and answer drafts and the composer's position.
+Disclosure glyphs rotate around their existing ink center over 160ms.
+
+Desktop review columns transition together over 200ms, sharing their divider
+with the conversation throughout entrance and reversal. The diff reader expands
+alongside the conversation while file navigation retains its own 280px width.
+Narrow drawers enter from the right with a 12px offset and keep their content
+width; they settle at the original geometry. Transitions retain native control
+and item identities. Transcript streaming and lifecycle status do not receive
+decorative entry animations.
+
+System Reduce Motion removes spatial/size interpolation and glyph rotation;
+remaining fades are limited to 60ms. Tests first reproduced missing hover
+feedback and instantaneous inspector changes. Additional regressions caught an
+expired frame-scoped element accessed by exit painting, focus restoration,
+review-column overlap and narrow-drawer resizing; these cases now pass.
+
+The full Go suite, UI vet, signed development build, repository design-freeze
+verification and diff check pass. Native headless component tests cover light
+and dark hover progression, press/disabled states, reduced motion, focused
+composer geometry, immediate Escape, request drafts, full-height review columns,
+rapid reversal and narrow drawers. Real-window recording and visual acceptance
+remain pending: the computer-use host still returns “Sky Computer Use native
+pipe startup failed”. No replacement screenshots or fabricated recordings were
+added to the verification artboard. The new build requires a GUI restart; the
+existing GUI and authoritative worker were left intact.

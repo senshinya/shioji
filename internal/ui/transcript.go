@@ -86,16 +86,16 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 }
 func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow) {
 	label := fmt.Sprintf("%d 次工具调用", row.count)
-	if n.ButtonBase(c).FillWidth().Height(20).Justify(n.Start).Label(label).Children(func() {
+	if control(c).FillWidth().Height(20).Justify(n.Start).Label(label).Children(func() {
 		n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
-			icon := chevron
+			angle := float32(0)
 			if v.Model.Collapsed[row.group] {
-				icon = rightChevron
+				angle = -90
 			}
 			font := n.Font{Family: "system-ui", Size: 11, Weight: 400}
 			inlineSymbol(c, terminalIcon, label, font, 12, subtle(t))
 			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-			inlineSymbol(c, icon, label, font, 10, subtle(t))
+			inlineSymbol(c, chevron, label, font, 10, subtle(t), angle)
 		})
 	}).Clicked() {
 		v.Model.Collapsed[row.group] = !v.Model.Collapsed[row.group]

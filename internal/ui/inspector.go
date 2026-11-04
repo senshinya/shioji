@@ -100,7 +100,7 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool) {
 	state := v.changesFor(id)
 	v.requestChanges(false)
 	c.After(3 * time.Second)
-	panel := n.Column(c.Key("changes-inspector:" + id)).Width(280).FillHeight().Background(t.Background).Label("更改侧栏")
+	panel := n.Column(c.Key("changes-inspector:" + id)).Width(280).Shrink(0).FillHeight().Background(t.Background).Label("更改侧栏")
 	if drawer {
 		width, _ := c.Size()
 		panel.Absolute().Right(0).Top(0).Bottom(0).Shadow(-4, 0, 14, 0, n.RGBA(0, 0, 0, .12))
@@ -111,6 +111,9 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool) {
 			}
 			panel.Width(min(700, width-navigation-16))
 		}
+	}
+	if drawer {
+		panel.Transition(drawerMotion(c))
 	}
 	panel.Children(func() {
 		n.Column(c).Width(1).Absolute().Left(0).Top(0).Bottom(0).Background(t.Border)
@@ -150,7 +153,7 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool) {
 		state.List.Key = func(i int) any { return state.Files[i].Path }
 		n.List(c, &state.List, len(state.Files), func(i int) {
 			file := state.Files[i]
-			row := n.ButtonBase(c).FillWidth().Height(28).PaddingX(12).Label("查看文件:" + file.Path).Children(func() {
+			row := control(c, 0).FillWidth().Height(28).PaddingX(12).Label("查看文件:" + file.Path).Children(func() {
 				n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
 					n.Text(c, file.Path).SingleLine().Grow(1).FontSize(12).Tooltip(file.Path)
 					added, deleted, _, _ := gitColors(t)
@@ -176,7 +179,7 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool) {
 }
 func (v *View) diffReader(c *n.Context, t *n.Theme, width float32) {
 	state := v.changesFor(v.Model.SessionID)
-	n.Column(c.Key("diff-reader:" + v.Model.SessionID)).Width(width).FillHeight().Background(t.Background).Label("文件差异阅读器").Children(func() {
+	n.Column(c.Key("diff-reader:" + v.Model.SessionID)).Width(width).Shrink(1).MinWidth(0).FillHeight().Background(t.Background).Label("文件差异阅读器").Children(func() {
 		n.Column(c).Width(1).Absolute().Left(0).Top(0).Bottom(0).Background(t.Border)
 		n.Row(c).Height(48).FillWidth().PaddingX(14).Gap(8).AlignItems(n.Center).Children(func() {
 			n.Text(c, state.Path).SingleLine().Grow(1).FontSize(12).Tooltip(state.Path)

@@ -146,7 +146,7 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 		}
 	}
 	n.Row(c.Key("branch-strip")).FillWidth().Height(26).Gap(12).AlignItems(n.Center).Children(func() {
-		trigger := n.ButtonBase(c).Height(26).MaxWidth(330).Padding(3, 10).Radius(5).Label("选择分支").Tooltip(label).Disabled(!v.canSwitchBranch()).Children(func() {
+		trigger := control(c, 5).Height(26).MaxWidth(330).Padding(3, 10).Radius(5).Label("选择分支").Tooltip(label).Disabled(!v.canSwitchBranch()).Children(func() {
 			inlineIconText(c, branchIcon, label, n.Font{Family: "Menlo", Size: 11, Weight: 400}, 12, 5, t.TextMuted)
 		})
 		if trigger.Clicked() {
@@ -154,9 +154,9 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 			v.branchSearch = ""
 			v.requestGit(true)
 		}
-		n.PopoverBase(c.Key("branches"), trigger, &v.branchOpen, func(panel n.Element) {
+		popover(c.Key("branches"), trigger, &v.branchOpen, func(panel n.Element) {
 			panel.Width(260).Padding(4).Radius(8).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
-				n.TextInput(c.Key("filter"), &v.branchSearch).FillWidth().Height(28).FontSize(12).Label("搜索分支").Placeholder("搜索分支…").Changed()
+				textField(c.Key("filter"), &v.branchSearch).FillWidth().Height(28).FontSize(12).Label("搜索分支").Placeholder("搜索分支…").Changed()
 				choices := []string{}
 				for _, name := range status.Branches {
 					if strings.Contains(strings.ToLower(name), strings.ToLower(v.branchSearch)) {
@@ -174,7 +174,7 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 				v.branchList.Key = func(i int) any { return choices[i] }
 				n.List(c, &v.branchList, len(choices), func(i int) {
 					name := choices[i]
-					row := n.ButtonBase(c).FillWidth().MinHeight(26).Padding(3, 7).Radius(4).Label("分支:" + name).Children(func() {
+					row := control(c, 4).FillWidth().MinHeight(26).Padding(3, 7).Radius(4).Label("分支:" + name).Children(func() {
 						n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
 							n.Text(c, name).Grow(1).FontSize(13).FixedLineHeight(20)
 							if name == branch {
@@ -191,7 +191,7 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 		if home {
 			choice := v.Model.GitDrafts[v.Model.WorkspaceID]
 			isolate := choice.NewWorktree
-			if n.Checkbox(c, &isolate, "新建 worktree").FontSize(11).FixedLineHeight(20).AlignItems(n.Center).Disabled(!v.Model.Connected || status.Head == "").Changed() {
+			if controlFeedback(c, n.Checkbox(c, &isolate, "新建 worktree").FontSize(11).FixedLineHeight(20).AlignItems(n.Center).Disabled(!v.Model.Connected || status.Head == ""), 4).Changed() {
 				choice.NewWorktree = isolate
 				v.Model.GitDrafts[v.Model.WorkspaceID] = choice
 			}

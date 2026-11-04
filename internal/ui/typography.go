@@ -2,6 +2,7 @@ package ui
 
 import (
 	"sync"
+	"time"
 	"unicode"
 
 	n "github.com/egoist/mygo/ui"
@@ -55,13 +56,17 @@ func inlineIconText(c *n.Context, icon *n.SVG, label string, font n.Font, size, 
 }
 
 // A separate icon with text-baseline metrics preserves stable layout columns.
-func inlineSymbol(c *n.Context, icon *n.SVG, label string, font n.Font, size float32, color n.Color) n.Element {
+func inlineSymbol(c *n.Context, icon *n.SVG, label string, font n.Font, size float32, color n.Color, rotation ...float32) n.Element {
 	m := inlineFontMetrics(label, font)
-	return n.RichText(c, n.Span{Text: "\uFFFC", ObjectWidth: size, ObjectHeight: m.ascent, ObjectDescent: m.descent}).
-		Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).Role(n.RoleNone).
-		DrawObjects(func(p *n.Painter, _ int, r n.Rect) {
-			r.Y += m.ascent - (size/2 + m.center)
-			r.H = size
-			p.Icon(icon, r, color)
-		})
+	e := n.RichText(c, n.Span{Text: "\uFFFC", ObjectWidth: size, ObjectHeight: m.ascent, ObjectDescent: m.descent}).
+		Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).Role(n.RoleNone)
+	angle := float32(0)
+	if len(rotation) > 0 {
+		angle = e.AnimateTo("disclosure-angle", rotation[0], motionAnimation(c, 160*time.Millisecond))
+	}
+	return e.DrawObjects(func(p *n.Painter, _ int, r n.Rect) {
+		r.Y += m.ascent - (size/2 + m.center)
+		r.H = size
+		p.Transform(n.Rotation(angle), r.X+r.W/2, r.Y+r.H/2, func() { p.Icon(icon, r, color) })
+	})
 }

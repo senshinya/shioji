@@ -36,7 +36,7 @@ func navButton(c *n.Context, icon *n.SVG, label string) n.Element {
 	if label == "设备" {
 		size = 12
 	}
-	return n.ButtonBase(c).FillWidth().Height(28).PaddingX(8).Justify(n.Start).Radius(8).Label(label).Children(func() {
+	return control(c, 8).FillWidth().Height(28).PaddingX(8).Justify(n.Start).Radius(8).Label(label).Children(func() {
 		inlineIconText(c, icon, label, n.Font{Family: "system-ui", Size: size, Weight: 400}, 16, 8, color)
 	})
 }

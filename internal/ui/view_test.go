@@ -11,6 +11,7 @@ import (
 	"shioji/internal/protocol"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPendingQuestionKeepsOrdinaryComposerVisible(t *testing.T) {
@@ -208,6 +209,7 @@ func TestBranchStripAndIndependentInspectorGeometry(t *testing.T) {
 	if err := test.Click("展开更改侧栏"); err != nil {
 		t.Fatal("missing inspector toggle")
 	}
+	test.Advance(220 * time.Millisecond)
 	inspector, ok := test.Find("更改侧栏")
 	history, _ := test.Find("对话记录")
 	device, _ := test.Find("当前设备")
