@@ -52,6 +52,8 @@ type View struct {
 	gitLoaded               map[string]string
 	gitPending              map[string]bool
 	changes                 map[string]*changesState
+	menuOpen                map[string]bool
+	menuContext             string
 }
 
 func New(model *app.Model, controller *app.Controller, path string) *View {
@@ -101,8 +103,10 @@ var chevron = svg("M6 8l4 4 4-4")
 var monitor = svg("M3 3h14v10H3zM7 17h6M10 13v4")
 var check = svg("M4 10l4 4 8-9")
 var attention = svg("M10 3l8 14H2zM10 7v4M10 14v.2")
-var arrow = n.MustParseSVG([]byte(`<svg viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path d="M8.75 17V6.4L4.1 11.05 2.35 9.3 10 1.65l7.65 7.65-1.75 1.75-4.65-4.65V17z" fill="currentColor"/></svg>`))
-var stop = n.MustParseSVG([]byte(`<svg viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><rect x="4" y="4" width="12" height="12" rx="2" fill="currentColor"/></svg>`))
+var arrow = n.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 21V3M4 11l8-8 8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
+var stop = n.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><rect x="6" y="5" width="12" height="14" rx="2" fill="currentColor"/></svg>`))
+var terminalIcon = svg("M4 6l4 4-4 4M11 14h5")
+var questionIcon = svg("M17.5 13.3h-10l-5 4.2v-15h15z")
 
 func (v *View) View(c *n.Context) {
 	m := v.Model
@@ -124,6 +128,8 @@ drained:
 	}
 	t := *c.Theme()
 	t.FontSize = 13
+	t.Font = "system-ui"
+	t.FontAntialiased = true
 	t.Spacing = 3
 	t.Radius = 6
 	if t.Dark {
@@ -140,6 +146,7 @@ drained:
 		t.Focus = n.Hex("#8c8c90")
 		t.Success = n.Hex("#32d769")
 		t.Warning = n.Hex("#ff9f0a")
+		t.Danger = n.Hex("#ff6257")
 	} else {
 		t.Background = n.Hex("#ffffff")
 		t.Surface = n.Hex("#f4f4f4")
@@ -154,6 +161,7 @@ drained:
 		t.Focus = n.Hex("#97979b")
 		t.Success = n.Hex("#138a43")
 		t.Warning = n.Hex("#c66a00")
+		t.Danger = n.Hex("#d92d20")
 	}
 	t.AccentHover = t.Accent
 	t.AccentPressed = t.Accent
@@ -175,6 +183,11 @@ drained:
 		}()
 	}
 
+	menuContext := fmt.Sprintf("%s/%s/%t", m.DraftKey(), m.WorkspaceID, v.devices)
+	if menuContext != v.menuContext {
+		clear(v.menuOpen)
+		v.menuContext = menuContext
+	}
 	v.requestGit(false)
 	if c.Shortcut(n.Cmd, n.KeyK) {
 		v.searchOpen = !v.searchOpen
@@ -226,7 +239,7 @@ func (v *View) home() {
 	v.searchOpen = false
 }
 func iconButton(c *n.Context, icon *n.SVG, label string) n.Element {
-	return n.ButtonBase(c).Size(28, 28).Radius(6).Label(label).Tooltip(label).Children(func() { n.Icon(c, icon).Size(16, 16) })
+	return n.ButtonBase(c).Size(28, 28).Radius(6).Label(label).Tooltip(label).TextColor(c.Theme().TextMuted).Children(func() { n.Icon(c, icon).Size(16, 16) })
 }
 func ghost(c *n.Context, label string) n.Element {
 	return n.Button(c, label).FontWeight(400).Justify(n.Start).Background(n.Transparent).Border(0, n.Transparent).Height(28)
@@ -344,7 +357,12 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 							}
 							n.Text(c, glyph).Width(10).FontSize(11).TextColor(t.TextMuted).Label(label)
 						}
-						n.Text(c, s.Title).SingleLine().Grow(1).FontSize(13)
+						n.Text(c, s.Title).SingleLine().Grow(1).FontSize(13).TextColor(func() n.Color {
+							if selected {
+								return t.Text
+							}
+							return t.TextMuted
+						}())
 						if count := v.pendingCount(s.ID); count > 0 {
 							n.Text(c, fmt.Sprint(count)).Font("Menlo").FontSize(11).Width(20).TextAlign(n.End)
 						}
@@ -390,23 +408,16 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 					color = t.Success
 				}
 				n.Column(c).Size(4, 4).Radius(2).Background(color)
-				n.Icon(c, monitor).Size(14, 14)
+				n.Icon(c, monitor).Size(14, 14).TextColor(t.TextMuted)
 				n.Text(c, "这台 Mac").FontSize(11).TextColor(t.TextMuted)
-				n.Icon(c, chevron).Size(12, 12)
+				n.Icon(c, chevron).Size(12, 12).TextColor(t.TextMuted)
 			})
 		})
-		device.PopoverMenuButton(func(menu *n.Menu) {
-			status := "已连接"
-			if !m.Connected {
-				status = "未连接"
-			}
-			menu.Item(status).Disabled(true)
-			menu.Item("Codex · " + m.Readiness.State).Disabled(true)
-			menu.Separator()
-			if menu.Item("设备详情").Chosen() {
-				v.devices = true
-			}
-		})
+		status := "已连接"
+		if !m.Connected {
+			status = "未连接"
+		}
+		v.choiceMenu(c, t, "current-device", device, []menuChoice{{id: "connectivity", name: status, disabled: true}, {id: "runtime", name: "Codex · " + m.Readiness.State, disabled: true}, {id: "details", name: "设备详情", choose: func() { v.devices = true }}})
 		if m.SessionID != "" && !v.devices {
 			label := "展开更改侧栏"
 			if m.Inspectors[m.SessionID] {
@@ -437,21 +448,20 @@ func (v *View) homeView(c *n.Context, t *n.Theme) {
 			}
 		} else {
 			n.Row(c).Gap(8).Margin(0, 0, 28, 0).AlignItems(n.Center).Children(func() {
-				n.Text(c, "想在").FontSize(32).TextColor(t.TextMuted)
+				n.Text(c, "想在").FixedLineHeight(48).FontSize(32).TextColor(t.TextMuted)
 				picker := n.ButtonBase(c).Height(48).MaxWidth(360).Label("选择工作区").Children(func() {
 					n.Row(c).Gap(8).AlignItems(n.Center).Children(func() {
-						n.Text(c, v.workspaceName()).FontSize(32).FontWeight(500).SingleLine()
+						n.Text(c, v.workspaceName()).FixedLineHeight(48).FontSize(32).FontWeight(500).SingleLine()
 						n.Icon(c, chevron).Size(14, 14).TextColor(t.TextMuted)
 					})
 				})
-				picker.PopoverMenuButton(func(menu *n.Menu) {
-					for _, w := range v.Model.Snapshot.Workspaces {
-						if menu.Item(w.Name + "   ·   这台 Mac").Radio(w.ID == v.Model.WorkspaceID).Chosen() {
-							v.Model.WorkspaceID = w.ID
-						}
-					}
-				})
-				n.Text(c, "做些什么？").FontSize(32).TextColor(t.TextMuted)
+				choices := []menuChoice{}
+				for _, w := range v.Model.Snapshot.Workspaces {
+					w := w
+					choices = append(choices, menuChoice{id: w.ID, name: w.Name, detail: "这台 Mac", checked: w.ID == v.Model.WorkspaceID, choose: func() { v.Model.WorkspaceID = w.ID }})
+				}
+				v.choiceMenu(c, t, "home-workspace", picker, choices)
+				n.Text(c, "做些什么？").FixedLineHeight(48).FontSize(32).TextColor(t.TextMuted)
 			})
 			v.composer(c, t, true)
 		}
@@ -489,13 +499,15 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	}
 	maxWidth := float32(768)
 	inputHeight := float32(54)
+	inputSize, inputLeading := float32(14), float32(22)
 	if home {
 		maxWidth = 736
 		inputHeight = 72
+		inputSize, inputLeading = 15, 26
 	}
 	n.Column(c.Key("composer:"+key)).FillWidth().MaxWidth(maxWidth).Padding(10, 14, 8, 14).Gap(4).Background(bg).Border(1, t.Border).Radius(16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04)).Children(func() {
 		v.branchStrip(c, t, home)
-		n.TextAreaBase(c.Key("input"), &binding.Text).Label("消息输入").Placeholder("描述任务…").FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(14).FixedLineHeight(22).OnTextKey(func(k n.TextKey) bool {
+		n.TextAreaBase(c.Key("input"), &binding.Text).Label("消息输入").Placeholder("描述任务…").FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(inputSize).FixedLineHeight(inputLeading).OnTextKey(func(k n.TextKey) bool {
 			if k.Key == n.KeyEnter && (k.Mods == 0 || k.Mods == n.Cmd) {
 				m.Drafts[key] = k.Text()
 				if strings.TrimSpace(k.Text()) != "" {
@@ -509,20 +521,20 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 		m.Drafts[key] = draft
 		binding.LastModel = draft
 		n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
+			iconButton(c, plus, "添加附件（当前 Codex 适配器暂不支持）").Size(28, 28).Disabled(true)
 			permission := n.ButtonBase(c).Height(28).PaddingX(6).Radius(6).Label("Permission").Children(func() {
 				n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
 					n.Icon(c, shieldIcon).Size(14, 14).TextColor(t.TextMuted)
 					n.Text(c, permissionLabel(cfg.Permission)).FontSize(12).FontWeight(400).TextColor(t.TextMuted)
 				})
 			})
-			permission.PopoverMenuButton(func(menu *n.Menu) {
-				for _, id := range m.Readiness.Permissions {
-					if menu.Item(permissionLabel(id)).Radio(cfg.Permission == id).Chosen() {
-						cfg.Permission = id
-						m.Configs[key] = cfg
-					}
-				}
-			})
+			choices := []menuChoice{}
+			for _, id := range m.Readiness.Permissions {
+				id := id
+				detail := map[string]string{"read-only": "仅查看", "default": "按需请求批准", "auto-approve": "沙盒内自动批准", "yolo": "不限制沙盒或批准"}[id]
+				choices = append(choices, menuChoice{id: id, name: permissionLabel(id), detail: detail, checked: cfg.Permission == id, choose: func() { cfg.Permission = id; m.Configs[key] = cfg }})
+			}
+			v.choiceMenu(c, t, "permission:"+key, permission, choices)
 			n.Spacer(c).Grow(1)
 			v.runControl(c, t, key, cfg)
 			empty := strings.TrimSpace(draft) == ""
@@ -534,7 +546,11 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 				label = "停止当前轮"
 				disabled = !m.Connected
 			}
-			send := n.ButtonBase(c).Size(28, 28).Radius(14).Background(t.Accent).TextColor(t.AccentText).Label(label).Disabled(disabled).Children(func() { n.Icon(c, icon).Size(20, 20) })
+			fill := t.Accent
+			if disabled {
+				fill = subtle(t)
+			}
+			send := n.ButtonBase(c).Size(28, 28).Radius(14).Background(fill).TextColor(t.AccentText).Label(label).Disabled(disabled).Children(func() { n.Icon(c, icon).Size(20, 20) })
 			if send.Clicked() {
 				if running && empty {
 					v.interrupt()
@@ -580,7 +596,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 		v.runPage = ""
 	}
 	n.PopoverBase(c, trigger, &v.runOpen, func(panel n.Element) {
-		panel.Width(240).Padding(4).Radius(9).Background(t.Surface).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
+		panel.Width(240).Padding(4).Radius(9).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
 			if v.runPage != "" {
 				if ghost(c, "‹  返回").FillWidth().TextAlign(n.Start).Clicked() {
 					v.runPage = ""
@@ -665,41 +681,47 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		state = &n.ListState{FollowEnd: true}
 		v.lists[m.SessionID] = state
 	}
+	rows := v.transcriptRows(detail.Items)
 	state.Key = func(i int) any {
 		if i == 0 {
 			return "history-top"
 		}
-		if i == len(detail.Items)+1 {
+		if i == len(rows)+1 {
 			return "history-bottom"
 		}
-		return detail.Items[i-1].ID
+		return rows[i-1].key
 	}
 	reserve := v.dockHeight
 	if reserve == 0 {
 		reserve = 108
 	}
-	n.List(c.Key("history:"+m.SessionID), state, len(detail.Items)+2, func(row int) {
+	n.List(c.Key("history:"+m.SessionID), state, len(rows)+2, func(row int) {
 		if row == 0 {
 			n.Column(c).Height(80)
 			return
 		}
-		if row == len(detail.Items)+1 {
+		if row == len(rows)+1 {
 			n.Column(c).Height(reserve + 32)
 			return
 		}
-		i := row - 1
-		item := detail.Items[i]
+		entry := rows[row-1]
+		i := entry.end
+		item := entry.item
 		bottom := float32(8)
 		if item.Kind == "user" {
 			bottom = 32
 		}
-		if i == len(detail.Items)-1 || (item.TurnID != "" && detail.Items[i+1].TurnID != item.TurnID) {
+		if i >= 0 && (i == len(detail.Items)-1 || (item.TurnID != "" && detail.Items[i+1].TurnID != item.TurnID)) {
 			bottom = 32
 		}
 		n.Column(c).FillWidth().PaddingX(18).AlignItems(n.Center).Children(func() {
 			n.Column(c).FillWidth().MaxWidth(768).Gap(8).Padding(0, 0, bottom, 0).Selectable().Children(func() {
-				v.item(c, t, item)
-				if item.TurnID != "" && (i == len(detail.Items)-1 || detail.Items[i+1].TurnID != item.TurnID) {
+				if entry.group != "" {
+					v.toolGroup(c, t, entry)
+				} else {
+					v.item(c, t, item)
+				}
+				if i >= 0 && item.TurnID != "" && (i == len(detail.Items)-1 || detail.Items[i+1].TurnID != item.TurnID) {
 					for _, turn := range detail.Turns {
 						if turn.ID == item.TurnID {
 							v.turnFooter(c, t, turn)
@@ -726,20 +748,27 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 	switch item.Kind {
 	case "user":
 		n.Row(c).FillWidth().Justify(n.End).Children(func() {
-			n.Text(c, item.Text).MaxWidth(676).Padding(12, 16).Background(t.Surface).Radius(14).FontSize(14).FixedLineHeight(24).Selectable()
+			n.Text(c, item.Text).MaxWidth(676).Padding(12, 16).Background(userBubble(t)).Radius(14).FontSize(14).FixedLineHeight(24).Selectable()
 		})
 	case "assistant":
 		markdown.View(c.Key(item.ID), item.Text, &v.md).FillWidth().FontSize(14)
 	case "tool":
-		label := "›  " + item.Name
-		if label == "›  " {
-			label = "›  工具活动"
+		label := item.Name
+		if label == "" {
+			label = "工具活动"
 		}
-		if ghost(c, label).FillWidth().TextAlign(n.Start).Tooltip(item.Name).Clicked() {
+		if n.ButtonBase(c).FillWidth().MinHeight(20).Justify(n.Start).Label(label).Children(func() {
+			n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
+				n.Icon(c, terminalIcon).Size(12, 12).TextColor(subtle(t))
+				n.Text(c, label).Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+			})
+		}).Clicked() {
 			v.Model.Collapsed["tool:"+item.ID] = !v.Model.Collapsed["tool:"+item.ID]
 		}
 		if !v.Model.Collapsed["tool:"+item.ID] && item.Text != "" {
-			n.Text(c, item.Text).FillWidth().Padding(8, 10).Background(t.Surface).Radius(6).Font("Menlo").FontSize(11).Selectable()
+			n.Scroll(c.Key("output:" + item.ID)).FillWidth().MaxHeight(160).Children(func() {
+				n.Text(c, item.Text).FillWidth().Padding(8, 10).Background(codeSurface(t)).Radius(6).Font("Menlo").FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Selectable()
+			})
 		}
 	case "request":
 		label := item.Text
@@ -778,24 +807,35 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 		}
 		n.Text(c, label).FontSize(11).TextColor(t.TextMuted)
 		if turn.DurationMS != nil {
-			n.Text(c, fmt.Sprintf("%.1f 秒", float64(*turn.DurationMS)/1000)).FontSize(11).TextColor(t.TextMuted)
+			n.Text(c, fmt.Sprintf("%.1f 秒", float64(*turn.DurationMS)/1000)).Font("Menlo").FontSize(11).TextColor(t.TextMuted)
 		}
 		if turn.Status == "completed" {
 			usage := n.ButtonBase(c).MinHeight(24).Label("本轮用量").Children(func() {
-				n.Text(c, "输入 "+count(turn.InputTokens)+" · 输出 "+count(turn.OutputTokens)+" · 缓存 "+count(turn.CachedInputTokens)).FontSize(11).TextColor(t.TextMuted)
-			})
-			usage.PopoverMenuButton(func(menu *n.Menu) {
-				for _, field := range []struct {
-					name  string
-					value *int64
-				}{{"输入", turn.InputTokens}, {"输出", turn.OutputTokens}, {"缓存", turn.CachedInputTokens}} {
-					value := "—"
-					if field.value != nil {
-						value = fmt.Sprint(*field.value)
+				n.Row(c).Gap(4).AlignItems(n.Center).Children(func() {
+					for i, field := range []struct {
+						name  string
+						value *int64
+					}{{"输入", turn.InputTokens}, {"输出", turn.OutputTokens}, {"缓存", turn.CachedInputTokens}} {
+						if i > 0 {
+							n.Text(c, "·").FontSize(11).TextColor(t.TextMuted)
+						}
+						n.Text(c, field.name).FontSize(11).TextColor(t.TextMuted)
+						n.Text(c, count(field.value)).Font("Menlo").FontSize(11).TextColor(t.TextMuted)
 					}
-					menu.Item(field.name + " " + value).Disabled(true)
-				}
+				})
 			})
+			choices := []menuChoice{}
+			for _, field := range []struct {
+				name  string
+				value *int64
+			}{{"输入", turn.InputTokens}, {"输出", turn.OutputTokens}, {"缓存", turn.CachedInputTokens}} {
+				value := "—"
+				if field.value != nil {
+					value = fmt.Sprint(*field.value)
+				}
+				choices = append(choices, menuChoice{id: field.name, name: field.name + " " + value, disabled: true})
+			}
+			v.choiceMenu(c, t, "usage:"+turn.ID, usage, choices)
 		}
 	})
 }
@@ -848,7 +888,18 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 	r := current.request
 	n.Column(c.Key("pending")).FillWidth().MaxWidth(768).Padding(10, 14, 12, 14).Gap(8).Radius(10).Background(t.Surface).Border(1, t.Border).Children(func() {
 		n.Row(c).FillWidth().AlignItems(n.Center).Children(func() {
-			if ghost(c, r.Title).FontSize(12).TextAlign(n.Start).Grow(1).Clicked() {
+			title := n.ButtonBase(c).Height(24).Grow(1).Justify(n.Start).Label(r.Title).Children(func() {
+				n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
+					icon := questionIcon
+					if r.Kind == "approval" {
+						icon = shieldIcon
+					}
+					n.Icon(c, icon).Size(14, 14).TextColor(t.TextMuted)
+					n.Text(c, r.Title).FontSize(12).FontWeight(500).FixedLineHeight(20)
+					n.Icon(c, chevron).Size(11, 11).TextColor(t.TextMuted)
+				})
+			})
+			if title.Clicked() {
 				m.Collapsed[m.SessionID] = !m.Collapsed[m.SessionID]
 			}
 			if len(pages) > 1 {
@@ -897,7 +948,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 		n.Row(c).Gap(8).Children(func() {
 			disabled := !m.Connected || r.State != "pending"
 			if r.Kind == "approval" {
-				if n.Button(c, "允许本轮").Height(28).FontSize(12).Disabled(disabled).Clicked() {
+				if n.PrimaryButton(c, "允许本轮").Height(28).FontSize(12).Disabled(disabled).Clicked() {
 					v.respond(r, domain.Answer{RequestID: r.ID, Revision: r.Revision, Decision: "accept"})
 				}
 				if ghost(c, "拒绝").Disabled(disabled).Clicked() {
@@ -913,7 +964,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 					}
 					answers[q.ID] = []string{answer}
 				}
-				if n.Button(c, "提交答案").Height(28).FontSize(12).Disabled(disabled || !complete).Clicked() {
+				if n.PrimaryButton(c, "提交答案").Height(28).FontSize(12).Disabled(disabled || !complete).Clicked() {
 					v.respond(r, domain.Answer{RequestID: r.ID, Revision: r.Revision, Answers: answers})
 				}
 			}

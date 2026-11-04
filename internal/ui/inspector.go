@@ -153,6 +153,7 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool) {
 			row := n.ButtonBase(c).FillWidth().Height(28).PaddingX(12).Label("查看文件:" + file.Path).Children(func() {
 				n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
 					n.Text(c, file.Path).SingleLine().Grow(1).FontSize(12).Tooltip(file.Path)
+					added, deleted, _, _ := gitColors(t)
 					a, d := "—", "—"
 					if file.Added != nil {
 						a = fmt.Sprint(*file.Added)
@@ -160,8 +161,8 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool) {
 					if file.Removed != nil {
 						d = fmt.Sprint(*file.Removed)
 					}
-					n.Text(c, "+"+a).Font("Menlo").FontSize(11).Width(34).TextAlign(n.End).TextColor(t.Success)
-					removed := n.Text(c, "−"+d).Font("Menlo").FontSize(11).Width(34).TextAlign(n.End).TextColor(t.TextMuted)
+					n.Text(c, "+"+a).Font("Menlo").FontSize(11).Width(34).TextAlign(n.End).TextColor(added)
+					removed := n.Text(c, "−"+d).Font("Menlo").FontSize(11).Width(34).TextAlign(n.End).TextColor(deleted)
 					if file.Removed != nil && *file.Removed == 0 {
 						removed.Opacity(0)
 					}
@@ -195,5 +196,11 @@ func (v *View) diffBody(c *n.Context, t *n.Theme, state *changesState) {
 		n.Text(c, "读取文件…").FontSize(12).TextColor(t.TextMuted).Padding(14)
 		return
 	}
+	added, deleted, addedFill, deletedFill := gitColors(t)
+	state.Diff.Font = n.Font{Family: "Menlo", Size: 11, Weight: 400, Antialiased: true}
+	state.Diff.LineHeight = 23.0 / 11
+	state.Diff.Inline = editor.DiffInlineNone
+	state.Diff.Indicators = editor.DiffClassic
+	state.Diff.Theme = &editor.Theme{Background: t.Background, Text: t.Text, LineNumber: subtle(t), Added: added, Deleted: deleted, AddedBackground: addedFill, DeletedBackground: deletedFill}
 	editor.DiffView(c.Key("diff"), &state.Diff).FillWidth().FillHeight().Grow(1).Label("原生文件差异")
 }

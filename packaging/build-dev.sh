@@ -21,6 +21,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleVersion</key><string>0.1.0</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
+<!-- Retain flat AppKit window controls while preserving native actions. -->
+<key>UIDesignRequiresCompatibility</key><true/>
 <key>NSLocalNetworkUsageDescription</key><string>连接你选择的开发设备。</string>
 </dict></plist>
 PLIST

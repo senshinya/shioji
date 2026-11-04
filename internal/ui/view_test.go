@@ -350,3 +350,111 @@ func TestSearchRetriesLatestQueryAfterControllerQueueFills(t *testing.T) {
 		t.Fatal("latest query was marked sent even though queue rejected it")
 	}
 }
+
+func TestToolGroupClosesOnceOnAgentProseAndKeepsExplicitReopen(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Items = []domain.Item{{ID: "u", Kind: "user", Text: "Run tools"}, {ID: "tool", Kind: "tool", Name: "command one", Text: "tool output"}}
+	m.Details["s"] = d
+	test := native.NewTester(New(m, nil, "").View, 1440, 900)
+	if !test.HasText("command one") {
+		t.Fatal("live tool group should start expanded")
+	}
+	d.Items = append(d.Items, domain.Item{ID: "answer", Kind: "assistant", Text: "Nonempty agent prose"})
+	m.Details["s"] = d
+	test.Frame()
+	if test.HasText("command one") {
+		t.Fatal("agent prose did not collapse the preceding tools")
+	}
+	if err := test.Click("1 次工具调用"); err != nil {
+		t.Fatal(err)
+	}
+	d.Items[1].Text = "late tool output"
+	m.Details["s"] = d
+	test.Frame()
+	if !test.HasText("command one") || !test.HasText("late tool output") {
+		t.Fatal("late output or rerender overrode explicit disclosure")
+	}
+}
+func TestUserMessageAndEmptyProseDoNotCollapseTools(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Items = []domain.Item{{ID: "tool", Kind: "tool", Name: "still live"}, {ID: "empty", Kind: "assistant", Text: "  "}, {ID: "user", Kind: "user", Text: "ordinary followup"}}
+	m.Details["s"] = d
+	m.Drafts[m.DraftKey()] = "draft"
+	test := native.NewTester(New(m, nil, "").View, 1440, 900)
+	if !test.HasText("still live") {
+		t.Fatal("user message/draft or empty assistant item collapsed tool group")
+	}
+}
+
+func TestEmptyAssistantEventsKeepToolsInOneVirtualizedGroup(t *testing.T) {
+	m := layoutModel()
+	v := New(m, nil, "")
+	items := []domain.Item{{ID: "a", Kind: "tool", TurnID: "turn"}, {ID: "empty", Kind: "assistant", TurnID: "turn", Text: " "}, {ID: "b", Kind: "tool", TurnID: "turn"}}
+	rows := v.transcriptRows(items)
+	if len(rows) != 3 || rows[0].count != 2 || rows[1].key != "a" || rows[2].key != "b" {
+		t.Fatalf("tool children must stay individual virtual rows under one group: %+v", rows)
+	}
+}
+
+func TestChoiceMenuDoesNotReopenAfterSessionNavigation(t *testing.T) {
+	m := layoutModel()
+	v := New(m, nil, "")
+	test := native.NewTester(v.View, 1440, 900)
+	if err := test.Click("Permission"); err != nil {
+		t.Fatal(err)
+	}
+	if !test.HasText("仅查看") {
+		t.Fatal("permission menu did not open")
+	}
+	m.SessionID = ""
+	test.Frame()
+	m.SessionID = "s"
+	test.Frame()
+	if test.HasText("仅查看") {
+		t.Fatal("old menu reopened after navigation")
+	}
+}
+
+func TestWorkspaceChoiceMenuSupportsDuplicateNamesAndOverflow(t *testing.T) {
+	m := layoutModel()
+	m.SessionID = ""
+	for i := 0; i < 40; i++ {
+		m.Snapshot.Workspaces = append(m.Snapshot.Workspaces, domain.Workspace{ID: fmt.Sprint(i), Name: "project"})
+	}
+	test := native.NewTester(New(m, nil, "").View, 950, 650)
+	if err := test.Click("选择工作区"); err != nil {
+		t.Fatal(err)
+	}
+	// A menu must be able to show repeated user names without key collisions.
+	if !test.HasText("project") {
+		t.Fatal("workspace choices missing")
+	}
+	bounds, ok := test.Find("菜单选项")
+	if !ok || bounds.H > 360 || bounds.Y < 0 || bounds.Y+bounds.H > 650 {
+		t.Fatalf("unbounded menu: %+v", bounds)
+	}
+	test.Key(0, native.KeyEnd)
+	test.Key(0, native.KeyEnter)
+	if m.WorkspaceID != "39" {
+		t.Fatalf("last duplicate name chose wrong workspace: %s", m.WorkspaceID)
+	}
+
+}
+
+func TestChoiceMenuClosesAcrossDevicePageNavigation(t *testing.T) {
+	m := layoutModel()
+	v := New(m, nil, "")
+	test := native.NewTester(v.View, 1440, 900)
+	if err := test.Click("Permission"); err != nil {
+		t.Fatal(err)
+	}
+	v.devices = true
+	test.Frame()
+	v.devices = false
+	test.Frame()
+	if test.HasText("仅查看") {
+		t.Fatal("old menu reopened after device page navigation")
+	}
+}
