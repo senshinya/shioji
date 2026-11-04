@@ -912,7 +912,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 					}
 					n.Icon(c, icon).Size(14, 14).TextColor(t.TextMuted)
 					n.Text(c, r.Title).FontSize(12).FontWeight(500).FixedLineHeight(20)
-					n.Icon(c, chevron).Size(11, 11).TextColor(t.TextMuted)
+					n.Icon(c, disclosureDown).Size(11, 11).Translate(0, 2).TextColor(t.TextMuted)
 				})
 			})
 			if title.Clicked() {
