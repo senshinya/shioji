@@ -1,0 +1,497 @@
+// Package store owns the device's durable SQLite state and journal.
+package store
+
+import (
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"unicode/utf8"
+
+	_ "modernc.org/sqlite"
+	"shioji/internal/domain"
+)
+
+type Store struct {
+	mu                   sync.Mutex
+	db                   *sql.DB
+	deviceID, generation string
+}
+
+func Open(path string) (*Store, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err = f.Chmod(0600); err != nil {
+		f.Close()
+		return nil, err
+	}
+	f.Close()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	fail := func(err error) (*Store, error) { db.Close(); return nil, err }
+	for _, p := range []string{"foreign_keys=ON", "journal_mode=WAL", "synchronous=FULL", "fullfsync=ON", "busy_timeout=3000"} {
+		if _, err = db.Exec("PRAGMA " + p); err != nil {
+			return fail(err)
+		}
+	}
+	var version int
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		return fail(err)
+	}
+	if version > 1 {
+		return fail(fmt.Errorf("database schema %d is newer than supported schema 1", version))
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fail(err)
+	}
+	_, err = tx.Exec(`
+ CREATE TABLE IF NOT EXISTS metadata (id INTEGER PRIMARY KEY CHECK(id=1), device_id TEXT NOT NULL, generation TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, body BLOB NOT NULL);
+ CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, body BLOB NOT NULL);
+ CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), state TEXT NOT NULL, digest TEXT NOT NULL, error TEXT NOT NULL DEFAULT '');
+ CREATE TABLE IF NOT EXISTS items (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, position INTEGER NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
+ CREATE INDEX IF NOT EXISTS items_order ON items(session_id,position);
+ CREATE TABLE IF NOT EXISTS requests (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
+ CREATE TABLE IF NOT EXISTS turns (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
+ CREATE TABLE IF NOT EXISTS journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, body BLOB NOT NULL);
+ PRAGMA user_version=1;`)
+	if err != nil {
+		tx.Rollback()
+		return fail(err)
+	}
+	_, err = tx.Exec("INSERT OR IGNORE INTO metadata VALUES(1,?,?)", domain.NewID(), domain.NewID())
+	if err != nil {
+		tx.Rollback()
+		return fail(err)
+	}
+	if err = tx.Commit(); err != nil {
+		return fail(err)
+	}
+	s := &Store{db: db}
+	if err = db.QueryRow("SELECT device_id,generation FROM metadata WHERE id=1").Scan(&s.deviceID, &s.generation); err != nil {
+		return fail(err)
+	}
+	return s, nil
+}
+func (s *Store) Close() error     { return s.db.Close() }
+func (s *Store) DeviceID() string { return s.deviceID }
+func blob(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+func load[T any](row *sql.Row) (T, error) {
+	var v T
+	var b []byte
+	if err := row.Scan(&b); err != nil {
+		return v, err
+	}
+	err := json.Unmarshal(b, &v)
+	return v, err
+}
+func rowsOf[T any](q interface {
+	Query(string, ...any) (*sql.Rows, error)
+}, query string, args ...any) ([]T, error) {
+	rows, err := q.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []T{}
+	for rows.Next() {
+		var b []byte
+		var v T
+		if err = rows.Scan(&b); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(b, &v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+func journal(tx *sql.Tx, e domain.Event) (domain.Event, error) {
+	r, err := tx.Exec("INSERT INTO journal(body) VALUES(?)", blob(e))
+	if err != nil {
+		return e, err
+	}
+	e.Sequence, err = r.LastInsertId()
+	return e, err
+}
+func (s *Store) CreateWorkspace(name string, folders []string) (domain.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w := domain.Workspace{ID: domain.NewID(), DeviceID: s.deviceID, Name: strings.TrimSpace(name), Folders: folders, Revision: 1}
+	if w.Name == "" || len(folders) == 0 {
+		return w, errors.New("workspace requires a name and primary directory")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return w, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("INSERT INTO workspaces VALUES(?,?)", w.ID, blob(w)); err != nil {
+		return w, err
+	}
+	if _, err = journal(tx, domain.Event{Type: "workspace", Workspace: &w}); err != nil {
+		return w, err
+	}
+	return w, tx.Commit()
+}
+func (s *Store) UpdateWorkspace(w domain.Workspace) (domain.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old, err := load[domain.Workspace](s.db.QueryRow("SELECT body FROM workspaces WHERE id=?", w.ID))
+	if err != nil {
+		return w, err
+	}
+	if w.Revision != old.Revision {
+		return w, errors.New("workspace revision conflict")
+	}
+	if w.Name == "" || len(w.Folders) == 0 || w.DeviceID != s.deviceID {
+		return w, errors.New("invalid workspace")
+	}
+	w.Revision++
+	tx, err := s.db.Begin()
+	if err != nil {
+		return w, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("UPDATE workspaces SET body=? WHERE id=?", blob(w), w.ID); err != nil {
+		return w, err
+	}
+	if _, err = journal(tx, domain.Event{Type: "workspace", Workspace: &w}); err != nil {
+		return w, err
+	}
+	return w, tx.Commit()
+}
+func operation(q interface{ QueryRow(string, ...any) *sql.Row }, id string) (domain.Operation, error) {
+	var op domain.Operation
+	err := q.QueryRow("SELECT id,session_id,state,digest,error FROM operations WHERE id=?", id).Scan(&op.ID, &op.SessionID, &op.State, &op.Digest, &op.Error)
+	return op, err
+}
+func (s *Store) Operation(id string) (domain.Operation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return operation(s.db, id)
+}
+func (s *Store) Accept(in domain.Submission) (domain.Operation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var none domain.Operation
+	if strings.TrimSpace(in.Text) == "" || in.OperationID == "" || len(in.Text) > 128<<10 {
+		return none, errors.New("submission requires an operation ID and 1–131072 bytes of text")
+	}
+	h := sha256.Sum256(blob(in))
+	digest := hex.EncodeToString(h[:])
+	existing, err := operation(s.db, in.OperationID)
+	if err == nil {
+		if existing.Digest != digest {
+			return none, errors.New("operation ID already used with different input")
+		}
+		return existing, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return none, err
+	}
+	w, err := load[domain.Workspace](s.db.QueryRow("SELECT body FROM workspaces WHERE id=?", in.WorkspaceID))
+	if err != nil {
+		return none, err
+	}
+	var session domain.Session
+	if in.SessionID != "" {
+		session, err = load[domain.Session](s.db.QueryRow("SELECT body FROM sessions WHERE id=?", in.SessionID))
+		if err != nil {
+			return none, err
+		}
+		if session.WorkspaceID != in.WorkspaceID || !(session.Status == "idle" || session.Status == "completed" || session.Status == "interrupted" || session.Status == "failed") {
+			return none, errors.New("session is unavailable for a new turn")
+		}
+		session.Config = in.Config
+		session.Status = "starting"
+		session.Revision++
+	} else {
+		title := strings.SplitN(strings.TrimSpace(in.Text), "\n", 2)[0]
+		if utf8.RuneCountInString(title) > 60 {
+			title = string([]rune(title)[:60])
+		}
+		session = domain.Session{ID: domain.NewID(), WorkspaceID: w.ID, Title: title, HarnessID: "codex", Status: "starting", Revision: 1, Config: in.Config, Context: domain.LaunchContext{DeviceID: s.deviceID, CWD: w.Folders[0], AdditionalDirectories: append([]string(nil), w.Folders[1:]...)}}
+	}
+	op := domain.Operation{ID: in.OperationID, SessionID: session.ID, State: "accepted", Digest: digest}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return none, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("INSERT INTO sessions VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body", session.ID, blob(session)); err != nil {
+		return none, err
+	}
+	if _, err = tx.Exec("INSERT INTO operations(id,session_id,state,digest) VALUES(?,?,?,?)", op.ID, op.SessionID, op.State, digest); err != nil {
+		return none, err
+	}
+	item := domain.Item{ID: "input:" + op.ID, Kind: "user", Text: in.Text, Final: true, Status: "dispatching"}
+	if err = putItem(tx, session.ID, &item); err != nil {
+		return none, err
+	}
+	if _, err = journal(tx, domain.Event{Type: "submission", SessionID: session.ID, Session: &session, Operation: &op, Item: &item}); err != nil {
+		return none, err
+	}
+	return op, tx.Commit()
+}
+func (s *Store) SetOperation(id, state, message string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	op, err := operation(s.db, id)
+	if err != nil {
+		return err
+	}
+	op.State = state
+	op.Error = message
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("UPDATE operations SET state=?,error=? WHERE id=?", state, message, id); err != nil {
+		return err
+	}
+	if _, err = journal(tx, domain.Event{Type: "operation", SessionID: op.SessionID, Operation: &op}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func putItem(tx *sql.Tx, sid string, item *domain.Item) error {
+	var pos int64
+	err := tx.QueryRow("SELECT position FROM items WHERE session_id=? AND id=?", sid, item.ID).Scan(&pos)
+	if errors.Is(err, sql.ErrNoRows) {
+		if err = tx.QueryRow("SELECT COALESCE(MAX(position),0)+1 FROM items WHERE session_id=?", sid).Scan(&pos); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	item.Order = pos
+	_, err = tx.Exec("INSERT INTO items VALUES(?,?,?,?) ON CONFLICT(session_id,id) DO UPDATE SET body=excluded.body", sid, item.ID, pos, blob(item))
+	return err
+}
+func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e.SessionID = sid
+	tx, err := s.db.Begin()
+	if err != nil {
+		return e, err
+	}
+	defer tx.Rollback()
+	session, err := load[domain.Session](tx.QueryRow("SELECT body FROM sessions WHERE id=?", sid))
+	if err != nil {
+		return e, err
+	}
+	switch e.Type {
+	case "session":
+		if e.Session == nil || e.Session.ID != sid {
+			return e, errors.New("invalid session event")
+		}
+		session = *e.Session
+	case "item.upsert":
+		if e.Item == nil {
+			return e, errors.New("missing item")
+		}
+		if err = putItem(tx, sid, e.Item); err != nil {
+			return e, err
+		}
+	case "item.delta":
+		item, readErr := load[domain.Item](tx.QueryRow("SELECT body FROM items WHERE session_id=? AND id=?", sid, e.ItemID))
+		if readErr != nil {
+			return e, readErr
+		}
+		if item.Final {
+			return e, nil
+		}
+		item.Text += e.Text
+		if len(item.Text) > 256<<10 {
+			item.Text = item.Text[:256<<10] + "\n[Output limit reached]"
+			item.Final = true
+		}
+		if err = putItem(tx, sid, &item); err != nil {
+			return e, err
+		}
+		e.Item = &item
+		e.Type = "item.upsert"
+		e.Text = ""
+	case "request.open", "request.resolve":
+		if e.Request == nil {
+			return e, errors.New("missing request")
+		}
+		e.Request.SessionID = sid
+		if _, err = tx.Exec("INSERT INTO requests VALUES(?,?,?) ON CONFLICT(session_id,id) DO UPDATE SET body=excluded.body", sid, e.Request.ID, blob(e.Request)); err != nil {
+			return e, err
+		}
+		anchor := domain.Item{ID: "request:" + e.Request.ID, Kind: "request", Text: e.Request.Title, Status: e.Request.State, Final: e.Request.State != "pending"}
+		if err = putItem(tx, sid, &anchor); err != nil {
+			return e, err
+		}
+		e.Item = &anchor
+	case "turn":
+		if e.Turn == nil {
+			return e, errors.New("missing turn")
+		}
+		if _, err = tx.Exec("INSERT INTO turns VALUES(?,?,?) ON CONFLICT(session_id,id) DO UPDATE SET body=excluded.body", sid, e.Turn.ID, blob(e.Turn)); err != nil {
+			return e, err
+		}
+		session.Status = e.Turn.Status
+		session.Error = e.Turn.Error
+	default:
+		return e, fmt.Errorf("unknown domain event: %s", e.Type)
+	}
+	session.Revision++
+	if _, err = tx.Exec("UPDATE sessions SET body=? WHERE id=?", blob(session), sid); err != nil {
+		return e, err
+	}
+	e.Session = &session
+	e, err = journal(tx, e)
+	if err != nil {
+		return e, err
+	}
+	return e, tx.Commit()
+}
+func (s *Store) Snapshot() (domain.Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := domain.Snapshot{DeviceID: s.deviceID, Generation: s.generation}
+	var err error
+	if err = s.db.QueryRow("SELECT COALESCE(MAX(sequence),0) FROM journal").Scan(&out.Sequence); err != nil {
+		return out, err
+	}
+	if out.Workspaces, err = rowsOf[domain.Workspace](s.db, "SELECT body FROM workspaces ORDER BY rowid"); err != nil {
+		return out, err
+	}
+	if out.Sessions, err = rowsOf[domain.Session](s.db, "SELECT body FROM sessions ORDER BY rowid"); err != nil {
+		return out, err
+	}
+	rows, err := s.db.Query("SELECT id,session_id,state,error FROM operations ORDER BY rowid DESC LIMIT 100")
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	out.Operations = []domain.Operation{}
+	for rows.Next() {
+		var o domain.Operation
+		if err = rows.Scan(&o.ID, &o.SessionID, &o.State, &o.Error); err != nil {
+			return out, err
+		}
+		out.Operations = append(out.Operations, o)
+	}
+	return out, rows.Err()
+}
+func (s *Store) Session(id string, after int64, limit int) (domain.SessionDetail, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := domain.SessionDetail{}
+	var err error
+	if limit < 1 || limit > 100 {
+		limit = 100
+	}
+	if out.Session, err = load[domain.Session](s.db.QueryRow("SELECT body FROM sessions WHERE id=?", id)); err != nil {
+		return out, err
+	}
+	if out.Items, err = rowsOf[domain.Item](s.db, "SELECT body FROM items WHERE session_id=? AND position>? ORDER BY position LIMIT ?", id, after, limit+1); err != nil {
+		return out, err
+	}
+	if len(out.Items) > limit {
+		out.HasMore = true
+		out.Items = out.Items[:limit]
+	}
+	if out.Requests, err = rowsOf[domain.PendingRequest](s.db, "SELECT body FROM requests WHERE session_id=?", id); err != nil {
+		return out, err
+	}
+	if out.Turns, err = rowsOf[domain.Turn](s.db, "SELECT body FROM turns WHERE session_id=? ORDER BY rowid", id); err != nil {
+		return out, err
+	}
+	err = s.db.QueryRow("SELECT COALESCE(MAX(sequence),0) FROM journal").Scan(&out.Sequence)
+	return out, err
+}
+func (s *Store) Events(after int64, limit int) ([]domain.Event, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if limit < 1 || limit > 100 {
+		limit = 100
+	}
+	rows, err := s.db.Query("SELECT sequence,body FROM journal WHERE sequence>? ORDER BY sequence LIMIT ?", after, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.Event{}
+	for rows.Next() {
+		var e domain.Event
+		var b []byte
+		if err = rows.Scan(&e.Sequence, &b); err != nil {
+			return nil, err
+		}
+		seq := e.Sequence
+		if err = json.Unmarshal(b, &e); err != nil {
+			return nil, err
+		}
+		e.Sequence = seq
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// Recover never dispatches saved input. An old dispatch may already have caused an external effect.
+func (s *Store) Recover() error {
+	snap, err := s.Snapshot()
+	if err != nil {
+		return err
+	}
+	for _, op := range snap.Operations {
+		if op.State == "dispatched" || op.State == "accepted" {
+			if err = s.SetOperation(op.ID, "indeterminate", "Worker restarted before external acceptance was confirmed"); err != nil {
+				return err
+			}
+		}
+	}
+	for _, session := range snap.Sessions {
+		if session.Status != "running" && session.Status != "starting" {
+			continue
+		}
+		session.Status = "unknown"
+		session.Error = "Previous execution needs reconciliation; input was not replayed"
+		if _, err = s.Apply(session.ID, domain.Event{Type: "session", Session: &session}); err != nil {
+			return err
+		}
+		detail, e := s.Session(session.ID, 0, 1)
+		if e != nil {
+			return e
+		}
+		for _, req := range detail.Requests {
+			if req.State == "pending" {
+				req.State = "invalidated"
+				req.Revision++
+				if _, err = s.Apply(session.ID, domain.Event{Type: "request.resolve", Request: &req}); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
