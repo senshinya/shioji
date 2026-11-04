@@ -83,9 +83,9 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow) {
 				icon = rightChevron
 			}
 			font := n.Font{Family: "system-ui", Size: 11, Weight: 400}
-			inlineSymbol(c, icon, label, font, 10, subtle(t))
 			inlineSymbol(c, terminalIcon, label, font, 12, subtle(t))
 			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+			inlineSymbol(c, icon, label, font, 10, subtle(t))
 		})
 	}).Clicked() {
 		v.Model.Collapsed[row.group] = !v.Model.Collapsed[row.group]

@@ -379,6 +379,38 @@ func TestToolGroupClosesOnceOnAgentProseAndKeepsExplicitReopen(t *testing.T) {
 		t.Fatal("late output or rerender overrode explicit disclosure")
 	}
 }
+
+func TestExpandedToolChildrenAndFooterShareGroupLeadingEdge(t *testing.T) {
+	for _, width := range []int{1440, 950} {
+		m := layoutModel()
+		d := m.Details["s"]
+		d.Items = []domain.Item{
+			{ID: "a", TurnID: "t", Kind: "tool", Name: "first command", Text: "first result"},
+			{ID: "b", TurnID: "t", Kind: "tool", Name: "second command", Text: "second result"},
+		}
+		d.Turns = []domain.Turn{{ID: "t", Status: "completed"}}
+		m.Details["s"] = d
+		ui := native.NewTester(New(m, nil, "").View, width, 900)
+		group, _ := ui.Find("2 次工具调用")
+		for _, label := range []string{"first command", "second command"} {
+			child, ok := ui.Find(label)
+			// Moving the disclosure to the trailing edge leaves all tool icons aligned.
+			if !ok || math.Abs(float64(child.X-group.X)) > .5 {
+				t.Errorf("width %d: %s is not under the group icon: group=%+v child=%+v", width, label, group, child)
+			}
+		}
+		command, _ := ui.Find("first command")
+		output, ok := ui.Find("first result")
+		if !ok || math.Abs(float64(output.Y-command.Y-command.H-8)) > .5 {
+			t.Errorf("width %d: indentation changed the tool-output gap: command=%+v output=%+v", width, command, output)
+		}
+		footer, ok := ui.Find("本轮完成")
+		if !ok || math.Abs(float64(footer.X-group.X)) > .5 {
+			t.Errorf("width %d: tool indentation moved the turn footer: %+v", width, footer)
+		}
+	}
+}
+
 func TestUserMessageAndEmptyProseDoNotCollapseTools(t *testing.T) {
 	m := layoutModel()
 	d := m.Details["s"]

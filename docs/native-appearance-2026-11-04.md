@@ -236,3 +236,18 @@ build and repository design-freeze verification pass. Fresh light/dark and narro
 native captures cover the existing controls, menus, real pending requests and
 file review. Tool/usage checks reuse the existing account conversation; no new
 paid turn is made. User visual verdicts remain pending.
+
+
+## Follow-up: trailing tool-group disclosure
+
+The user requested the tool-group disclosure after the “x 次工具调用” label
+and explicitly rolled back child indentation. The group terminal icon, expanded
+child tool icons, outputs and turn footer keep their original leading edge.
+The disclosure still toggles the same group without changing its lifecycle,
+virtualization or remembered state.
+
+A geometry regression covers 1440px and 950px windows, preserving the 8px
+command/output gap and the footer position. The UI suite, signed development
+build and repository design-freeze verification pass. The user explicitly
+accepted this change on 2026-11-05; this acceptance applies to this disclosure
+change only.
