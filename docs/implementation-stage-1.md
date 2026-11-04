@@ -50,10 +50,18 @@
 
 实机截图使用产品同一 View 的隔离原生预览宿主：1440×900 浅／深色 Home 和会话、问题展开／折叠，以及 950×650 深色长问题和多行草稿。会话只读回放上一轮真实账号记录；长内容和待答问题为布局夹具，不冒充新的 harness 事件。原先验收页把 1440 px 参考稿缩成 1240 px，本轮改为相同尺寸，并保留修复前截图。尚未实现的 Git 分支栏等控件仍不伪造；这些缺口和完整视觉验收分开记录。
 
+## 验收评论修复（2026-11-04）
+
+本地验收页的 13 条评论按冻结规格接通：SVG 导航／搜索／设备／设置图标，导航间距，去掉 Permission 的下拉字符并显示盾牌和权限名称，run 箭头独立居中。token 超过 1000 显示一位小数 k，原生详情保留三项精确数值。
+
+已接通 device-owned Git 查询与显式 checkout、Home 分支草稿和新 worktree、真实会话标题／内容搜索、Changes 文件导航及 MyGo 原生 diff reader。所有 Git／文件读取经 owning worker；UI 不读取设备路径。Home 选择不 checkout；接纳时串行校验 busy/pending/indeterminate、dirty、实际目录身份及分支；同分支普通提交允许 dirty。原 launch context 不重写，外部变化使旧会话 contextChanged，明确确认后才能继续。worker 自己每两秒核对执行目录，不依赖窗口渲染；该轮询为当前工程实现，后续可换原生 watcher。Git 接纳复用 worker 现有 dispatchMu：不同 repo 的短 Git 查询／接纳仍串行，已运行 agents 保持并行。
+
+实测使用独立临时 Git 仓库、真实 worker＋固定 app-server＋本地确定性 provider：分支选择后实际 HEAD 仍为 main、session 数不变；新 worktree 独立执行；正文搜索返回 Recorded text complete；修改的 example.go 在会话旁显示真实 +3/−1 diff。未发起新的真实账号模型请求。用量缩写单独回放上一轮真实账号录制并核对精确值。新截图按 1440×900 亮对亮、暗对暗排列；950×650 抽屉为单独压力证据。仅预览宿主临时保持窗口可见，避免 MyGo 对完全遮挡窗口暂停绘制；产品未改为置顶窗口。
+
 ## 明确未完成
 
-- 阶段 2：queue／steer、Git 切分支和 worktree、完整 pinned 类型路由、结构化 Plan／Changes 与 diff、跨虚拟卸载逻辑选择、流式批处理及长期资源预算。当前普通输入保持可编辑；活动 turn 的非空提交暂不可用，不能把它当作 queue。
-- 原生交互仍待验收：run-menu 的侧子菜单／完整键盘行为、完整目录管理、搜索、可配置发送键、tool group 的 prose 边界折叠、全部细节和动画。当前运行配置能修改下一轮模型／effort／Plan／Fast；选择项用菜单内返回页，不能宣称已完整复刻冻结菜单。
+- 阶段 2：queue／steer、完整 pinned 类型路由、结构化 Plan、跨虚拟卸载逻辑选择、流式批处理及长期资源预算。当前普通输入保持可编辑；活动 turn 的非空提交暂不可用，不能把它当作 queue。
+- 原生交互仍待验收：run-menu 的侧子菜单／完整键盘行为、完整目录管理、可配置发送键、tool group 的 prose 边界折叠、全部细节和动画。当前运行配置能修改下一轮模型／effort／Plan／Fast；选择项用菜单内返回页，不能宣称已完整复刻冻结菜单。
 - 阶段 3–4：SSH bootstrap、同设备多客户端安装流程、嵌入 tsnet、配对授权、RTT／路径与网络诊断。
 - 阶段 5：正式 Runtime.app／SMAppService 宿主、签名／公证／升级、登录与电源恢复、正式 Keychain／隐私／支持系统矩阵。开发 bundle 仅 ad-hoc 签名，通过独立后台进程验证 GUI 退出后的继续执行；不自动注册登录服务。
 - worker 或 harness 死亡后的 source-history 自动核对／孤儿显式处理 UI 尚待完善。当前保守地保留 unknown／indeterminate，不提供可导致重复副作用的自动恢复。

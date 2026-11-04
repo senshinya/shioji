@@ -105,7 +105,11 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool) {
 		width, _ := c.Size()
 		panel.Absolute().Right(0).Top(0).Bottom(0).Shadow(-4, 0, 14, 0, n.RGBA(0, 0, 0, .12))
 		if state.Path != "" {
-			panel.Width(min(700, width-40))
+			navigation := float32(236)
+			if width <= 980 {
+				navigation = 224
+			}
+			panel.Width(min(700, width-navigation-16))
 		}
 	}
 	panel.Children(func() {
@@ -119,7 +123,7 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool) {
 				n.Text(c, "更改").FontSize(12).Grow(1)
 			}
 			if drawer && state.Path != "" {
-				n.Spacer(c).Grow(1)
+				n.Text(c, state.Path).SingleLine().Grow(1).FontSize(12).Tooltip(state.Path)
 			}
 			if iconButton(c, refreshIcon, "刷新更改").Disabled(!v.Model.Connected).Clicked() {
 				v.requestChanges(true)

@@ -307,3 +307,18 @@ func TestSearchSendsTypedQueryAndAppliesAsyncResults(t *testing.T) {
 		t.Fatalf("async result missing: %+v query=%+v", v.searchResults, search.Input)
 	}
 }
+
+func TestNarrowDiffDrawerStaysInsideConversationPane(t *testing.T) {
+	m := layoutModel()
+	m.Inspectors["s"] = true
+	v := New(m, nil, "")
+	v.changesFor("s").Path = "file.go"
+	test := native.NewTester(v.View, 850, 650)
+	if !test.HasText("file.go") {
+		t.Fatal("narrow file reader lacks a file name")
+	}
+	drawer, _ := test.Find("更改侧栏")
+	if drawer.X < 224 || drawer.X+drawer.W > 850 {
+		t.Fatalf("diff drawer covers workspace navigation: %+v", drawer)
+	}
+}
