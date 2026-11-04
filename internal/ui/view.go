@@ -460,10 +460,7 @@ func (v *View) homeView(c *n.Context, t *n.Theme) {
 			n.Row(c).Gap(8).Margin(0, 0, 28, 0).AlignItems(n.Center).Children(func() {
 				n.Text(c, "想在").FixedLineHeight(48).FontSize(32).TextColor(t.TextMuted)
 				picker := n.ButtonBase(c).Height(48).MaxWidth(360).Label("选择工作区").Children(func() {
-					n.Row(c).Gap(8).AlignItems(n.Center).Children(func() {
-						n.Text(c, v.workspaceName()).FixedLineHeight(48).FontSize(32).FontWeight(500).SingleLine()
-						n.Icon(c, chevron).Size(14, 14).TextColor(t.TextMuted)
-					})
+					n.Text(c, v.workspaceName()).FixedLineHeight(48).FontSize(32).FontWeight(400).Underline().SingleLine()
 				})
 				choices := []menuChoice{}
 				for _, w := range v.Model.Snapshot.Workspaces {
