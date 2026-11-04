@@ -259,7 +259,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 	}
 	n.Column(c).Width(sidebarWidth).FillHeight().Padding(8, 0, 8, 8).Children(func() {
 		n.Column(c).Fill().Padding(8).Gap(4).Radius(14).Background(sidebarColor).Border(1, t.Border).Children(func() {
-			n.Row(c).Height(38).DragWindow().Children(func() {
+			n.Row(c).Height(38).AlignItems(n.Start).DragWindow().Children(func() {
 				n.Spacer(c).Grow(1)
 				v.searchControl(c, t)
 			})

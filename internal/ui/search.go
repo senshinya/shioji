@@ -11,7 +11,7 @@ import (
 )
 
 func (v *View) searchControl(c *n.Context, t *n.Theme) {
-	trigger := iconButton(c, searchIcon, "搜索")
+	trigger := iconButton(c, searchIcon, "搜索").Size(24, 24)
 	if trigger.Clicked() {
 		v.searchOpen = !v.searchOpen
 		v.searchSent = ""
