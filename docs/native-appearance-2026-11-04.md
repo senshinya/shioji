@@ -187,3 +187,52 @@ questions, Git and file review use the isolated real worker/app-server fixture.
 The full Go suite passed, followed by UI tests and signed dev builds after the
 last cosmetic adjustments; design-freeze and diff checks pass. Final visual
 verdicts remain with the user.
+
+
+## Follow-up: shared baseline typography and complete icon audit
+
+The next four pins identify the provider mark sitting low, the Permission
+shield sitting high, sinking digits, and the completion color. The user clarified
+that the completion shape remains a check, with gray color. Later feedback
+expanded the review to all implemented icon/text pairs, search versus native
+window controls, and excessive spacing above/between the sidebar actions.
+
+References were checked directly: Apple's [SF Symbols alignment session](https://developer.apple.com/videos/play/wwdc2021/10097/)
+uses the baseline and cap-height center; its [monospaced-digit API](https://developer.apple.com/documentation/swiftui/view/monospaceddigit%28%29)
+keeps the surrounding system font. The [OpenType baseline documentation](https://learn.microsoft.com/en-us/typography/opentype/spec/base)
+distinguishes Roman and ideographic alignment. The implementation applies these
+principles to this app's custom SVGs; it does not claim SVGs acquire SF Symbols
+metadata automatically.
+
+The previous per-element offsets are removed. MyGo exposes CoreText outline
+bounds through Font.InkBounds, measured under the text-system lock with actual
+fallback fonts. Native inline objects share the text baseline: Latin icons use
+the visible H cap box, while Chinese uses the visible ideographic reference
+body. Cached metrics retain the matching ascent/descent, so separate fixed icon
+columns and flexible labels have compatible baseline metadata. Decorative
+objects stay out of the accessibility tree; their named parent controls remain.
+
+This is applied to navigation, workspace disclosures, completed-session marks,
+current-device controls, branch triggers/choices, permission and run controls,
+tool groups/items, request events/cards, completion and menu checks. Existing
+4px status dots and icon sizes remain. Standalone search, attachment, settings,
+send/stop, refresh, close and inspector buttons retain centered button targets.
+File review uses these toolbar buttons; file count columns retain their geometry.
+
+Footer duration and usage now use system text with tabular digits (tnum),
+without a separate Menlo run or a numeric translation. The completion check is
+gray. Per-turn values, unknown fields, ordering and exact-value popovers remain.
+
+Search uses a top-aligned 24px target centered at y=29 DIP with the native
+traffic lights. The sidebar header reserves 26px, placing New session at y=47;
+28px navigation targets have 4px gaps. A coordinate click in the upper portion
+of New session confirms that native titlebar chrome does not intercept it.
+These spacing updates follow the user's latest instruction; frozen inputs are
+not rewritten.
+
+Native glyph, titlebar and compact-navigation regressions were observed failing
+before their fixes. The full Go suite, UI race check, UI vet, signed development
+build and repository design-freeze verification pass. Fresh light/dark and narrow
+native captures cover the existing controls, menus, real pending requests and
+file review. Tool/usage checks reuse the existing account conversation; no new
+paid turn is made. User visual verdicts remain pending.
