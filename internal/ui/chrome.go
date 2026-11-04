@@ -1,6 +1,16 @@
 package ui
 
-import n "github.com/egoist/mygo/ui"
+import (
+	_ "embed"
+	n "github.com/egoist/mygo/ui"
+)
+
+// OpenAI brand asset: https://cdn.openai.com/brand/OpenAI-Logos-2025.zip
+//
+//go:embed assets/openai-monoblossom.svg
+var openAIBlossomSVG []byte
+
+var openAIBlossom = n.MustParseSVG(openAIBlossomSVG)
 
 var searchIcon = svg("M14 14l4 4M15 8.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0")
 var settingsIcon = svg("M8 2h4l.6 2.2 2 .9 2-.8 2 3.4-1.7 1.6v2.3l1.7 1.5-2 3.5-2-.8-2 .9L12 18H8l-.6-2.2-2-.9-2 .8-2-3.5 1.7-1.5V8.4L1.4 6.8l2-3.4 2 .8 2-.9zM13 10a3 3 0 1 1-6 0 3 3 0 0 1 6 0")

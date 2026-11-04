@@ -582,7 +582,7 @@ func permissionLabel(id string) string {
 	}
 }
 func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunConfig) {
-	summary := "Codex · " + cfg.Model
+	summary := cfg.Model
 	if cfg.Effort != "" {
 		summary += " · " + cfg.Effort
 	}
@@ -592,10 +592,10 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 	if cfg.Fast {
 		summary += " · Fast"
 	}
-	trigger := n.ButtonBase(c).Height(28).MaxWidth(390).MinWidth(0).PaddingX(6).Radius(6).Label("运行配置").Tooltip(summary).Children(func() {
-		n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
+	trigger := n.ButtonBase(c).Height(28).MaxWidth(390).MinWidth(0).PaddingX(6).Radius(6).Label("运行配置").Tooltip("Codex · " + summary).Children(func() {
+		n.Row(c).Gap(3).AlignItems(n.Center).Children(func() {
+			n.Icon(c, openAIBlossom).Size(20, 20).Translate(0, 2).TextColor(t.TextMuted)
 			n.Text(c, summary).SingleLine().FontSize(12).TextColor(t.TextMuted)
-			n.Icon(c, chevron).Size(12, 12).TextColor(t.TextMuted)
 		})
 	})
 	if trigger.Clicked() {
