@@ -811,7 +811,7 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 		label := turn.Status
 		switch turn.Status {
 		case "completed":
-			n.Icon(c, check).Size(12, 12).AlignSelf(n.Center).TextColor(t.Success)
+			n.Icon(c, check).Size(12, 12).AlignSelf(n.Center).TextColor(t.TextMuted)
 			label = "本轮完成"
 		case "running":
 			label = "工作中"
