@@ -792,7 +792,22 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 		case "submitting":
 			label += " · 提交中"
 		}
-		if ghost(c, label).FillWidth().TextAlign(n.Start).Clicked() {
+		icon := questionIcon
+		for _, request := range v.Model.Details[v.Model.SessionID].Requests {
+			if item.ID == "request:"+request.ID && request.Kind == "approval" {
+				icon = shieldIcon
+				break
+			}
+		}
+		if n.ButtonBase(c).FillWidth().MinHeight(28).Justify(n.Start).Label(label).Children(func() {
+			n.Row(c).Gap(7).AlignItems(n.Center).Children(func() {
+				n.Icon(c, icon).Size(12, 12).TextColor(subtle(t))
+				n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+				if item.Status == "pending" || item.Status == "submitting" {
+					n.Icon(c, disclosureRight).Size(10, 10).TextColor(subtle(t))
+				}
+			})
+		}).Clicked() {
 			v.Model.Collapsed[v.Model.SessionID] = false
 		}
 	default:

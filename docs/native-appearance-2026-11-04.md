@@ -130,3 +130,27 @@ for non-Git folders, and no new paid model request is made.
 Tool/usage evidence continues to replay the existing account recording without
 adding synthetic questions to its non-Git workspace. This keeps the distinct
 recording and live Git-request evidence from implying contradictory branch state.
+
+## Follow-up: toolbar edges and request indicators
+
+Four new pins identify unequal toolbar end spacing, the visible bottom of
+Menlo numbers relative to Chinese captions, a high pending-title arrow, and a
+missing request icon in the transcript. The conversation toolbar now includes
+the existing scroll gutter and the icon's internal inset in its right margin,
+bringing its visible ends to approximately 24px. Home/device toolbars retain
+their existing geometry.
+
+Footer captions and numbers share 20px lines and baseline alignment; numbers
+receive a 1px optical adjustment for the visible Chinese glyph bottom. Duration
+numbers and their unit use separate text runs with the same treatment. The
+pending-title arrow uses the frozen disclosure path, lowered 2px. Transcript
+request events have a question or approval icon, plus a disclosure for pending
+or submitting requests. Request lifecycle and answer submission are unchanged.
+
+Light and dark windows are launched separately at 1440×900 DIP. Current native
+before/after frames are retained alongside matching frozen references. Request
+selection and navigation persistence are rechecked against the real Git worker
+fixture; the usage and tool disclosure examples replay the existing account
+recording. No paid turn, system appearance preference or credential changes are
+needed. UI tests, the signed dev build, repository design-freeze verification,
+and diff whitespace checks pass. Visual verdicts remain pending with the user.
