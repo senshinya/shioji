@@ -180,7 +180,7 @@ func TestCompactTokenCounts(t *testing.T) {
 		t.Fatal("missing usage became a number")
 	}
 }
-func TestNativeChromeUsesLabeledIconsAndFrozenNavigationGap(t *testing.T) {
+func TestNativeChromeUsesLabeledIconsAndCompactNavigationGap(t *testing.T) {
 	test := native.NewTester(New(layoutModel(), nil, "").View, 1440, 900)
 	for _, label := range []string{"新建会话", "待我处理", "搜索", "设置", "设备", "Permission"} {
 		if _, ok := test.Find(label); !ok {
@@ -189,7 +189,7 @@ func TestNativeChromeUsesLabeledIconsAndFrozenNavigationGap(t *testing.T) {
 	}
 	first, _ := test.Find("新建会话")
 	next, _ := test.Find("待我处理")
-	if math.Abs(float64(first.Y-59)) > 1 || math.Abs(float64(next.Y-first.Y-first.H-8)) > 1 {
+	if math.Abs(float64(first.Y-47)) > 1 || math.Abs(float64(next.Y-first.Y-first.H-4)) > 1 {
 		t.Errorf("navigation geometry first=%+v next=%+v", first, next)
 	}
 	if !test.HasText("只读") {

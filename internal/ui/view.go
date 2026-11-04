@@ -259,11 +259,11 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 	}
 	n.Column(c).Width(sidebarWidth).FillHeight().Padding(8, 0, 8, 8).Children(func() {
 		n.Column(c).Fill().Padding(8).Gap(4).Radius(14).Background(sidebarColor).Border(1, t.Border).Children(func() {
-			n.Row(c).Height(38).AlignItems(n.Start).DragWindow().Children(func() {
+			n.Row(c).Height(26).AlignItems(n.Start).DragWindow().Children(func() {
 				n.Spacer(c).Grow(1)
 				v.searchControl(c, t)
 			})
-			if navButton(c, plus, "新建会话").Margin(0, 0, 4, 0).Background(func() n.Color {
+			if navButton(c, plus, "新建会话").Background(func() n.Color {
 				if m.SessionID == "" && !v.devices {
 					return t.SurfacePressed
 				}
