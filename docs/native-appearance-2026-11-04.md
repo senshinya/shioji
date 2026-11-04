@@ -154,3 +154,36 @@ fixture; the usage and tool disclosure examples replay the existing account
 recording. No paid turn, system appearance preference or credential changes are
 needed. UI tests, the signed dev build, repository design-freeze verification,
 and diff whitespace checks pass. Visual verdicts remain pending with the user.
+
+## Follow-up: native focus and compact selectors
+
+Seven further pins and inline corrections refine window controls, the footer
+and home selectors. Native traffic-light artwork is retained; moving its frame
+from (22,24) to (22,21) equalizes the visible red circle's top/left inset. The
+preview previously forced only the content's dark flag. It now sets the app's
+AppKit appearance too, with an independent native test window taking focus;
+light and dark inactive captures both show three system gray circles. The
+production app continues to follow the system appearance without a preference
+change or replacement window buttons.
+
+The whole footer now aligns by baseline, including duration and the usage
+button; the completion icon remains centered. This corrects the offset between
+the completion caption and the later Chinese units/captions, rather than adding
+more independent number offsets.
+
+The latest comments explicitly replace Codex text in the run summary with the
+gray OpenAI Blossom, remove run/branch/home-heading disclosure arrows, and use
+an underlined, regular-weight workspace name. These are user-directed updates
+to the prior frozen appearance; the frozen files themselves are untouched. The
+unchanged official SVG comes from OpenAI's brand download and remains a provider
+indicator, not application branding. Its visible artwork is optically lowered
+2px beside the model text; the full Codex identity remains in the accessible
+control tooltip and Agent menu. Branch text is raised 0.5px to align with its
+icon and the worktree control. All three menus retain their native interaction.
+
+Fresh 1440×900 light/dark and 950×650 review evidence replaces the affected
+frames. The existing real account recording is reused for tools and usage;
+questions, Git and file review use the isolated real worker/app-server fixture.
+The full Go suite passed, followed by UI tests and signed dev builds after the
+last cosmetic adjustments; design-freeze and diff checks pass. Final visual
+verdicts remain with the user.
