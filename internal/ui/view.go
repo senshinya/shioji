@@ -812,11 +812,11 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 	}
 }
 func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
-	n.Row(c).FillWidth().Wrap().Gap(7).MinHeight(24).AlignItems(n.Center).Children(func() {
+	n.Row(c).FillWidth().Wrap().Gap(7).MinHeight(24).AlignItems(n.Baseline).Children(func() {
 		label := turn.Status
 		switch turn.Status {
 		case "completed":
-			n.Icon(c, check).Size(12, 12).TextColor(t.Success)
+			n.Icon(c, check).Size(12, 12).AlignSelf(n.Center).TextColor(t.Success)
 			label = "本轮完成"
 		case "running":
 			label = "工作中"
