@@ -36,18 +36,24 @@ type LaunchContext struct {
 	DeviceID              string   `json:"deviceId"`
 	CWD                   string   `json:"cwd"`
 	AdditionalDirectories []string `json:"additionalDirectories,omitempty"`
+	Repository            string   `json:"repository,omitempty"`
+	Branch                string   `json:"branch,omitempty"`
+	Head                  string   `json:"head,omitempty"`
 }
 type Session struct {
-	ID          string        `json:"id"`
-	WorkspaceID string        `json:"workspaceId"`
-	Title       string        `json:"title"`
-	HarnessID   string        `json:"harnessId"`
-	ThreadID    string        `json:"threadId,omitempty"` // Opaque source reference.
-	Context     LaunchContext `json:"context"`
-	Config      RunConfig     `json:"config"`
-	Status      string        `json:"status"`
-	Revision    int64         `json:"revision"`
-	Error       string        `json:"error,omitempty"`
+	ID             string        `json:"id"`
+	WorkspaceID    string        `json:"workspaceId"`
+	Title          string        `json:"title"`
+	HarnessID      string        `json:"harnessId"`
+	ThreadID       string        `json:"threadId,omitempty"` // Opaque source reference.
+	Context        LaunchContext `json:"context"`
+	Config         RunConfig     `json:"config"`
+	Status         string        `json:"status"`
+	GitHead        string        `json:"gitHead,omitempty"`
+	GitBranch      string        `json:"gitBranch,omitempty"`
+	ContextChanged bool          `json:"contextChanged,omitempty"`
+	Revision       int64         `json:"revision"`
+	Error          string        `json:"error,omitempty"`
 }
 type Submission struct {
 	OperationID string    `json:"operationId"`
@@ -55,6 +61,7 @@ type Submission struct {
 	SessionID   string    `json:"sessionId,omitempty"`
 	Text        string    `json:"text"`
 	Config      RunConfig `json:"config"`
+	Git         GitChoice `json:"git,omitempty,omitzero"`
 }
 type Operation struct {
 	ID        string `json:"id"`
@@ -159,4 +166,37 @@ type Readiness struct {
 	Error       string   `json:"error,omitempty"`
 	Models      []Model  `json:"models,omitempty"`
 	Plan        bool     `json:"plan"`
+}
+
+// GitChoice is draft intent, validated on the owning device at acceptance.
+type GitChoice struct {
+	Branch      string `json:"branch,omitempty"`
+	NewWorktree bool   `json:"newWorktree,omitempty"`
+}
+type GitStatus struct {
+	Applicable    bool     `json:"applicable"`
+	Repository    string   `json:"repository,omitempty"`
+	Checkout      string   `json:"checkout,omitempty"`
+	CommonDir     string   `json:"commonDir,omitempty"`
+	Branch        string   `json:"branch,omitempty"`
+	Head          string   `json:"head,omitempty"`
+	DefaultBranch string   `json:"defaultBranch,omitempty"`
+	Branches      []string `json:"branches,omitempty"`
+	Dirty         bool     `json:"dirty"`
+}
+type ChangedFile struct {
+	Path    string `json:"path"`
+	Added   *int   `json:"added,omitempty"`
+	Removed *int   `json:"removed,omitempty"`
+}
+type FileVersions struct {
+	Path string `json:"path"`
+	Old  string `json:"old"`
+	New  string `json:"new"`
+}
+type SearchResult struct {
+	SessionID   string `json:"sessionId"`
+	WorkspaceID string `json:"workspaceId"`
+	Title       string `json:"title"`
+	Snippet     string `json:"snippet"`
 }

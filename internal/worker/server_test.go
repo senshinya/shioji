@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"shioji/internal/testutil"
 	"shioji/internal/worker"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -246,4 +248,90 @@ func TestWorkerExecutionApprovalCanBeDenied(t *testing.T) {
 	if detail.Requests[0].State != "answered" {
 		t.Fatalf("request=%+v", detail.Requests[0])
 	}
+}
+
+func TestGitSubmissionProtectsCheckoutAndCreatesIndependentWorktree(t *testing.T) {
+	server, c, p := startServer(t)
+	_ = server
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		b, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %s %v", args, b, err)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	git("init", "-b", "main")
+	git("config", "user.name", "Test")
+	git("config", "user.email", "test@example.invalid")
+	os.WriteFile(filepath.Join(dir, "file"), []byte("original"), 0600)
+	git("add", ".")
+	git("commit", "-m", "initial")
+	git("branch", "other")
+	var ready domain.Readiness
+	call(t, c, "readiness", nil, &ready)
+	var w domain.Workspace
+	call(t, c, "workspace.create", worker.WorkspaceInput{Name: "Git", Folders: []string{dir}}, &w)
+	cfg := domain.RunConfig{Model: ready.Models[0].ID, Permission: "read-only"}
+	var a, b domain.Operation
+	call(t, c, "session.submit", map[string]any{"operationId": "git-a", "workspaceId": w.ID, "text": "SHIOJI_SLOW", "config": cfg, "git": map[string]any{"branch": "main"}}, &a)
+	select {
+	case <-p.Started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("slow turn did not start")
+	}
+	blocked := map[string]any{"operationId": "git-blocked", "workspaceId": w.ID, "text": "SHIOJI_FAST", "config": cfg, "git": map[string]any{"branch": "other"}}
+	if err := c.Call(context.Background(), "session.submit", blocked, nil); err == nil {
+		t.Fatal("home branch intent bypassed busy checkout")
+	}
+	call(t, c, "session.submit", map[string]any{"operationId": "git-worktree", "workspaceId": w.ID, "text": "SHIOJI_FAST", "config": cfg, "git": map[string]any{"branch": "other", "newWorktree": true}}, &b)
+	var d domain.SessionDetail
+	wait(t, func() bool {
+		call(t, c, "session", worker.SessionQuery{ID: b.SessionID}, &d)
+		return d.Session.Status == "completed"
+	})
+	if d.Session.Context.CWD == w.Folders[0] || !strings.HasPrefix(d.Session.Context.CWD, canonicalTestPath(t, server.Directory())) {
+		t.Fatalf("worktree launch scope %+v", d.Session.Context)
+	}
+	if git("branch", "--show-current") != "main" {
+		t.Fatal("worktree creation switched shared checkout")
+	}
+	close(p.Release)
+	wait(t, func() bool {
+		call(t, c, "session", worker.SessionQuery{ID: a.SessionID}, &d)
+		return d.Session.Status == "completed"
+	})
+	if err := c.Call(context.Background(), "session.submit", map[string]any{"operationId": "empty-git", "workspaceId": w.ID, "text": " ", "config": cfg, "git": map[string]any{"branch": "other"}}, nil); err == nil {
+		t.Fatal("empty submission accepted")
+	}
+	if git("branch", "--show-current") != "main" {
+		t.Fatal("invalid submission changed the checkout")
+	}
+	call(t, c, "git.checkout", map[string]any{"workspaceId": w.ID, "sessionId": a.SessionID, "branch": "other"}, nil)
+	os.WriteFile(filepath.Join(dir, "untracked"), []byte("preserve"), 0600)
+	call(t, c, "session.submit", domain.Submission{OperationID: "git-dirty-same", WorkspaceID: w.ID, SessionID: a.SessionID, Text: "SHIOJI_FAST", Config: cfg}, nil)
+	wait(t, func() bool {
+		call(t, c, "session", worker.SessionQuery{ID: a.SessionID}, &d)
+		return d.Session.Status == "completed"
+	})
+	git("switch", "main")
+	if err := c.Call(context.Background(), "session.submit", domain.Submission{OperationID: "git-context-changed", WorkspaceID: w.ID, SessionID: a.SessionID, Text: "SHIOJI_FAST", Config: cfg}, nil); err == nil {
+		t.Fatal("external branch change silently accepted")
+	}
+	call(t, c, "git.checkout", map[string]any{"workspaceId": w.ID, "sessionId": a.SessionID, "branch": "main"}, nil)
+	call(t, c, "session.submit", domain.Submission{OperationID: "git-confirmed", WorkspaceID: w.ID, SessionID: a.SessionID, Text: "SHIOJI_FAST", Config: cfg}, nil)
+	wait(t, func() bool {
+		call(t, c, "session", worker.SessionQuery{ID: a.SessionID}, &d)
+		return d.Session.Status == "completed"
+	})
+}
+
+func canonicalTestPath(t *testing.T, path string) string {
+	t.Helper()
+	p, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

@@ -222,6 +222,42 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 		}
 		in.Folders = folders
 		return s.store.UpdateWorkspace(in)
+	case "session.search":
+		q, err := decode[protocol.SearchQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.store.Search(q.Query)
+	case "git.status":
+		q, err := decode[protocol.GitQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		s.dispatchMu.Lock()
+		defer s.dispatchMu.Unlock()
+		return s.gitStatus(q)
+	case "git.checkout":
+		in, err := decode[protocol.CheckoutInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.checkout(in)
+	case "git.changes":
+		q, err := decode[protocol.GitQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		s.dispatchMu.Lock()
+		defer s.dispatchMu.Unlock()
+		return s.changedFiles(q)
+	case "git.file":
+		q, err := decode[protocol.FileQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		s.dispatchMu.Lock()
+		defer s.dispatchMu.Unlock()
+		return s.fileVersions(q)
 	case "session.submit":
 		in, err := decode[domain.Submission](body)
 		if err != nil {
@@ -308,6 +344,9 @@ func validateFolders(paths []string) ([]string, error) {
 	return out, nil
 }
 func (s *Server) submit(in domain.Submission) (domain.Operation, error) {
+	if in.OperationID == "" || len(in.OperationID) > 256 || strings.TrimSpace(in.Text) == "" || len(in.Text) > 128<<10 {
+		return domain.Operation{}, errors.New("submission requires an operation ID and nonempty bounded text")
+	}
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
 	existing, err := s.store.Operation(in.OperationID)
@@ -345,6 +384,12 @@ func (s *Server) submit(in domain.Submission) (domain.Operation, error) {
 		if err != nil {
 			return domain.Operation{}, err
 		}
+		if d.Session.WorkspaceID != in.WorkspaceID {
+			return domain.Operation{}, errors.New("session is not in this workspace")
+		}
+		if d.Session.Status != "idle" && d.Session.Status != "completed" && d.Session.Status != "interrupted" && d.Session.Status != "failed" {
+			return domain.Operation{}, errors.New("session is unavailable for a new turn")
+		}
 		paths = append([]string{d.Session.Context.CWD}, d.Session.Context.AdditionalDirectories...)
 	}
 	validated, err := validateFolders(paths)
@@ -354,8 +399,18 @@ func (s *Server) submit(in domain.Submission) (domain.Operation, error) {
 	if strings.Join(validated, "\x00") != strings.Join(paths, "\x00") {
 		return domain.Operation{}, errors.New("execution directory identity changed")
 	}
-	op, err := s.store.Accept(in)
+	launch := domain.LaunchContext{DeviceID: s.store.DeviceID(), CWD: paths[0], AdditionalDirectories: append([]string(nil), paths[1:]...)}
+	launch, err = s.prepareGit(in, launch)
 	if err != nil {
+		return domain.Operation{}, err
+	}
+	op, err := s.store.Accept(in, launch)
+	if err != nil {
+		if in.Git.NewWorktree {
+			if _, lookup := s.store.Operation(in.OperationID); errors.Is(lookup, sql.ErrNoRows) {
+				s.removeUnacceptedWorktree(paths[0], in)
+			}
+		}
 		return op, err
 	}
 	s.wg.Add(1)

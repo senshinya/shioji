@@ -29,3 +29,19 @@ type RemoteError struct {
 }
 
 func (e *RemoteError) Error() string { return e.Message }
+
+type GitQuery struct {
+	WorkspaceID string `json:"workspaceId"`
+	SessionID   string `json:"sessionId,omitempty"`
+}
+type CheckoutInput struct {
+	GitQuery
+	Branch string `json:"branch"`
+}
+type FileQuery struct {
+	GitQuery
+	Path string `json:"path"`
+}
+type SearchQuery struct {
+	Query string `json:"query"`
+}

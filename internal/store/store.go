@@ -193,7 +193,7 @@ func (s *Store) Operation(id string) (domain.Operation, error) {
 	defer s.mu.Unlock()
 	return operation(s.db, id)
 }
-func (s *Store) Accept(in domain.Submission) (domain.Operation, error) {
+func (s *Store) Accept(in domain.Submission, launch ...domain.LaunchContext) (domain.Operation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var none domain.Operation
@@ -234,6 +234,11 @@ func (s *Store) Accept(in domain.Submission) (domain.Operation, error) {
 			title = string([]rune(title)[:60])
 		}
 		session = domain.Session{ID: domain.NewID(), WorkspaceID: w.ID, Title: title, HarnessID: "codex", Status: "starting", Revision: 1, Config: in.Config, Context: domain.LaunchContext{DeviceID: s.deviceID, CWD: w.Folders[0], AdditionalDirectories: append([]string(nil), w.Folders[1:]...)}}
+	}
+	if in.SessionID == "" && len(launch) > 0 {
+		session.Context = launch[0]
+		session.GitBranch = session.Context.Branch
+		session.GitHead = session.Context.Head
 	}
 	op := domain.Operation{ID: in.OperationID, SessionID: session.ID, State: "accepted", Digest: digest}
 	tx, err := s.db.Begin()
