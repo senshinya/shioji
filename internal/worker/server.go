@@ -21,27 +21,11 @@ import (
 )
 
 type Config struct{ Directory, CodexExecutable, CodexHome string }
-type WorkspaceInput struct {
-	Name    string   `json:"name"`
-	Folders []string `json:"folders"`
-}
-type SessionQuery struct {
-	ID    string `json:"id"`
-	After int64  `json:"after"`
-	Limit int    `json:"limit"`
-}
-type EventsQuery struct {
-	After      int64  `json:"after"`
-	Generation string `json:"generation"`
-}
-type EventPage struct {
-	Generation string         `json:"generation"`
-	Events     []domain.Event `json:"events"`
-}
-type AnswerInput struct {
-	SessionID string        `json:"sessionId"`
-	Answer    domain.Answer `json:"answer"`
-}
+type WorkspaceInput = protocol.WorkspaceInput
+type SessionQuery = protocol.SessionQuery
+type EventsQuery = protocol.EventsQuery
+type EventPage = protocol.EventPage
+type AnswerInput = protocol.AnswerInput
 type Server struct {
 	config     Config
 	owner      *Owner
@@ -386,6 +370,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation) {
 		return
 	}
 	session := detail.Session
+	var turnID string
 	if session.ThreadID == "" {
 		session.ThreadID, err = s.runtime.Create(ctx, session)
 		if err == nil {
@@ -403,7 +388,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation) {
 		s.mu.Lock()
 		s.bound[session.ID] = true
 		s.mu.Unlock()
-		_, err = s.runtime.Submit(ctx, session, op.ID, in.Text)
+		turnID, err = s.runtime.Submit(ctx, session, op.ID, in.Text)
 	}
 	state := "confirmed"
 	delivery := "sent"
@@ -431,7 +416,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation) {
 		return
 	}
 	// Update the existing accepted input; a wire userMessage never creates a duplicate.
-	_, err = s.store.Apply(session.ID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, Kind: "user", Text: in.Text, Final: true, Status: delivery}})
+	_, err = s.store.Apply(session.ID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: turnID, Kind: "user", Text: in.Text, Final: true, Status: delivery}})
 	if err != nil {
 		s.cancel()
 	}

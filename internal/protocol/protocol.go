@@ -146,7 +146,7 @@ func (c *Client) Call(ctx context.Context, method string, in, out any) error {
 		return errors.New("response identity mismatch")
 	}
 	if f.Error != "" {
-		return errors.New(f.Error)
+		return &RemoteError{Message: f.Error}
 	}
 	if f.Type != "result" {
 		return errors.New("unexpected response")
