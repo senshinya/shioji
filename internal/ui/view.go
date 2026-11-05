@@ -24,6 +24,9 @@ type editBinding struct {
 }
 
 type View struct {
+	replyStreams            map[string]*replyStream
+	replySession            string
+	replyEpoch              string
 	toolMotions             map[string]*toolDisclosureMotion
 	frameTime               time.Time
 	toolsAnimating          bool
@@ -706,6 +709,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	if m.FoldToolHistory[m.SessionID] {
 		state.ReleaseRow()
 	}
+	v.syncReplyStreams(detail)
 	rows := v.transcriptRows(detail.Items)
 	turns := make(map[string]domain.Turn, len(detail.Turns))
 	for _, turn := range detail.Turns {
@@ -805,7 +809,7 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 			n.Text(c, item.Text).MaxWidth(676).Padding(12, 16).Background(userBubble(t)).Radius(14).FontSize(14).FixedLineHeight(24).Selectable()
 		})
 	case "assistant":
-		markdown.View(c.Key(item.ID), item.Text, &v.md).FillWidth().FontSize(14)
+		v.assistantReply(c, item)
 	case "tool":
 		label := item.Name
 		if label == "" {

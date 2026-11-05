@@ -30,12 +30,16 @@ not expose the following appearance settings required by the frozen design:
   contiguous virtualized section. Content retains its natural layout, its
   exposed prefix clips at the animated boundary, and hidden suffix rows are
   skipped. One viewport is measured ahead to stabilize mixed-height content.
+- Native Markdown code blocks apply the stream reveal clock to highlighted
+  source spans as well as prose. Newly appended code fades without replaying
+  existing lines, retokenizing on animation frames, or changing copied code.
 
 Changes are confined to ui/theme.go, ui/paint.go, ui/editor/editor.go and
 ui/editor/theme.go, plus ui/glyphs.go, internal/text/layout.go and
 internal/text/coretext_darwin.go, ui/layout.go, ui/transition.go, ui/list.go,
-ui/list_reveal.go and the
+ui/list_reveal.go, ui/markdown/code.go and the
 regression tests. The popup and list changes are covered by Shioji's native
-component interaction regressions. Remove the replacement when an
+component interaction regressions; streaming code is covered by the native
+reply regressions in internal/ui/streaming_test.go. Remove the replacement when an
 upstream release exposes equivalent controls. This remains a native renderer;
 no HTML or WebView is introduced.

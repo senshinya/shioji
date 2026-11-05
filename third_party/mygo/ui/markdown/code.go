@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/internal/l10n"
@@ -42,9 +43,11 @@ type codeState struct {
 // codeChunk is chunkLines lines of a code block, laid out as one text, so
 // that a block growing as it streams lays out only its last chunk anew.
 type codeChunk struct {
-	spans []ui.Span
-	n     int // lines
-	ok    bool
+	spans   []ui.Span
+	offsets []int // source byte offset of each highlighted span
+	faded   []ui.Span
+	n       int // lines
+	ok      bool
 }
 
 const chunkLines = 32
@@ -165,7 +168,7 @@ func (b *CodeBlockView) Body(c *ui.Context) ui.Element {
 		col.Children(func() {
 			for k := range cs.chunks {
 				ch := &cs.chunks[k]
-				el := ui.RichText(c, ch.spans...)
+				el := ui.RichText(c, st.codeSpans(ch)...)
 				if !st.o.WrapCode {
 					el.NoWrap()
 				}
@@ -173,6 +176,45 @@ func (b *CodeBlockView) Body(c *ui.Context) ui.Element {
 			}
 		})
 	})
+}
+
+// Apply reveal opacity after highlighting, so animation never retokenizes code
+// or changes cached syntax colors. Only the newly revealed suffix is split;
+// settled chunks keep their original spans and text-selection offsets.
+func (st *viewState) codeSpans(ch *codeChunk) []ui.Span {
+	if st.fade == nil || len(ch.offsets) == 0 {
+		return ch.spans
+	}
+	last := len(ch.spans) - 1
+	if st.fade(ch.offsets[last]+max(0, len(ch.spans[last].Text)-1)) >= 1 {
+		return ch.spans
+	}
+	ch.faded = ch.faded[:0]
+	for k, span := range ch.spans {
+		start, alpha := 0, st.fade(ch.offsets[k])
+		emit := func(end int) {
+			piece := span
+			piece.Text = span.Text[start:end]
+			if alpha < 1 {
+				if piece.Color.A == 0 {
+					piece.Color = st.th.CodeColors.Text
+				}
+				piece.Color = piece.Color.Alpha(max(alpha, .02))
+			}
+			ch.faded = append(ch.faded, piece)
+		}
+		for at := range span.Text {
+			if at == 0 {
+				continue
+			}
+			if next := st.fade(ch.offsets[k] + at); next != alpha {
+				emit(at)
+				start, alpha = at, next
+			}
+		}
+		emit(len(span.Text))
+	}
+	return ch.faded
 }
 
 // highlight tokenizes the lines of code block i that changed, and makes
@@ -225,13 +267,23 @@ func (st *viewState) highlight(cs *codeState, i int) {
 			continue
 		}
 		ch.spans = ch.spans[:0]
+		ch.offsets = ch.offsets[:0]
 		first := k * chunkLines
 		last := min(first+chunkLines, n)
 		for l := first; l < last; l++ {
+			_, offset := d.Line(i, l)
+			line := cs.lines[l]
+			// A partially consumed tab can contribute synthetic leading spaces.
+			// They precede the first real source byte, rather than shifting it.
+			rawLength := len(d.Source()) - offset
+			if end := strings.IndexAny(d.Source()[offset:], "\r\n"); end >= 0 {
+				rawLength = end
+			}
+			offset -= max(0, len(line)-rawLength)
 			if l > first {
 				ch.spans = append(ch.spans, ui.Span{Text: "\n"})
+				ch.offsets = append(ch.offsets, offset)
 			}
-			line := cs.lines[l]
 			start := 0
 			for _, t := range cs.toks[l] {
 				end := min(t.End, len(line))
@@ -243,15 +295,18 @@ func (st *viewState) highlight(cs *codeState, i int) {
 						sp.Italic = true
 					}
 					ch.spans = append(ch.spans, sp)
+					ch.offsets = append(ch.offsets, offset+start)
 				}
 				start = max(start, end)
 			}
 			if start < len(line) {
 				ch.spans = append(ch.spans, ui.Span{Text: line[start:], Color: ct.Text})
+				ch.offsets = append(ch.offsets, offset+start)
 			}
 		}
 		if len(ch.spans) == 0 {
 			ch.spans = append(ch.spans, ui.Span{Text: " "})
+			ch.offsets = append(ch.offsets, d.Block(i).Start)
 		}
 		ch.n = last - first
 		ch.ok = true
