@@ -95,42 +95,89 @@ func (v *View) openChangedFile(path string) {
 		}
 	}})
 }
-func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool) {
+func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool, width, limit float32) {
 	id := v.Model.SessionID
 	state := v.changesFor(id)
 	v.requestChanges(false)
 	c.After(3 * time.Second)
-	panel := n.Column(c.Key("changes-inspector:" + id)).Width(280).Shrink(0).FillHeight().Background(t.Background).Label("更改侧栏")
+	panel := n.Column(c.Key("changes-inspector:" + id)).Width(width).Shrink(0).FillHeight().Clip().Background(t.Background).Label("更改侧栏")
 	if drawer {
-		width, _ := c.Size()
 		panel.Absolute().Right(0).Top(0).Bottom(0).Shadow(-4, 0, 14, 0, n.RGBA(0, 0, 0, .12))
-		if state.Path != "" {
-			navigation := float32(236)
-			if width <= 980 {
-				navigation = 224
-			}
-			panel.Width(min(700, width-navigation-16))
+		if !v.resizingInspector {
+			panel.Transition(drawerMotion(c))
 		}
 	}
-	if drawer {
-		panel.Transition(drawerMotion(c))
-	}
-	panel.Children(func() {
-		n.Column(c).Width(1).Absolute().Left(0).Top(0).Bottom(0).Background(t.Border)
-		n.Row(c).FillWidth().Height(48).PaddingX(12).Gap(6).AlignItems(n.Center).Children(func() {
-			if drawer && state.Path != "" {
-				if ghost(c, "‹ 更改").FontSize(12).Clicked() {
-					state.Path = ""
-				}
+	goBack := false
+	fileOpen := state.Path != ""
+	header := func(file bool) {
+		n.Row(c).FillWidth().Height(48).Padding(0, 80, 0, 12).Gap(6).AlignItems(n.Center).Children(func() {
+			if file {
+				back := control(c, 5).Size(24, 26).Label("返回更改列表").Tooltip("返回更改列表").Children(func() { n.Icon(c, disclosureRight).Size(14, 14).Transform(n.Rotation(180)).TextColor(t.TextMuted) })
+				goBack = back.Clicked()
+				n.Text(c, state.Path).SingleLine().Grow(1).FontSize(12).Tooltip(state.Path)
 			} else {
 				n.Text(c, "更改").FontSize(12).Grow(1)
 			}
-			if drawer && state.Path != "" {
-				n.Text(c, state.Path).SingleLine().Grow(1).FontSize(12).Tooltip(state.Path)
+		})
+	}
+	panel.Children(func() {
+		n.Column(c).Width(1).Absolute().Left(0).Top(0).Bottom(0).Background(t.Border)
+		n.Column(c.Key("inspector-list")).FillWidth().FillHeight().IgnoreInput(fileOpen).Children(func() {
+			header(false)
+			if state.Error != "" {
+				n.Text(c, state.Error).FontSize(12).TextColor(t.TextMuted).Padding(12)
 			}
+			if !state.Loaded {
+				n.Text(c, "读取更改…").FontSize(12).TextColor(t.TextMuted).Padding(12)
+			} else if len(state.Files) == 0 {
+				n.Text(c, "没有文件更改").FontSize(12).TextColor(t.TextMuted).Padding(12)
+			}
+			state.List.Key = func(i int) any { return state.Files[i].Path }
+			n.List(c, &state.List, len(state.Files), func(i int) {
+				file := state.Files[i]
+				row := control(c, 0).FillWidth().Height(28).PaddingX(12).Label("查看文件:" + file.Path).Children(func() {
+					n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
+						n.Text(c, file.Path).SingleLine().Grow(1).FontSize(12).Tooltip(file.Path)
+						added, deleted, _, _ := gitColors(t)
+						a, d := "—", "—"
+						if file.Added != nil {
+							a = fmt.Sprint(*file.Added)
+						}
+						if file.Removed != nil {
+							d = fmt.Sprint(*file.Removed)
+						}
+						n.Text(c, "+"+a).Font("Menlo").FontSize(11).Width(34).TextAlign(n.End).TextColor(added)
+						removed := n.Text(c, "−"+d).Font("Menlo").FontSize(11).Width(34).TextAlign(n.End).TextColor(deleted)
+						if file.Removed != nil && *file.Removed == 0 {
+							removed.Opacity(0)
+						}
+					})
+				})
+				if row.Clicked() {
+					v.openChangedFile(file.Path)
+				}
+			}).FillWidth().FillHeight().Grow(1)
+		})
+		// Keep the exiting file above the restored list, including its header.
+		n.Column(c.Key("inspector-file-layer")).Absolute().Left(0).Right(0).Top(0).Bottom(0).Clip().PassThrough().Children(func() {
+			if !fileOpen {
+				return
+			}
+			pose := n.Motion{X: width, Opacity: 1}
+			if c.Preferences().ReduceMotion {
+				pose.X = 0
+			}
+			n.Column(c.Key("inspector-file")).FillWidth().FillHeight().Background(t.Background).
+				Transition(n.ElementTransition{Duration: motionAnimation(c, 260*time.Millisecond).Duration, Ease: n.EaseOut, Colors: true, Enter: &pose, Exit: &pose}).
+				Children(func() {
+					header(true)
+					v.diffBody(c, t, state)
+				})
+		})
+		n.Row(c.Key("inspector-actions")).Absolute().Right(12).Top(10).Height(28).Gap(6).AlignItems(n.Center).Background(t.Background).Children(func() {
 			if iconButton(c, refreshIcon, "刷新更改").Disabled(!v.Model.Connected).Clicked() {
 				v.requestChanges(true)
-				if state.Path != "" {
+				if fileOpen {
 					v.openChangedFile(state.Path)
 				}
 			}
@@ -138,57 +185,28 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool) {
 				v.Model.Inspectors[id] = false
 			}
 		})
-		if drawer && state.Path != "" {
-			v.diffBody(c, t, state)
-			return
+
+		grip := n.Column(c.Key("inspector-resize")).Absolute().Left(0).Top(0).Bottom(0).Width(6).Cursor(n.CursorResizeEW).Focusable().Role(n.RoleSplitter).Label("调整右侧栏宽度")
+		dx, _, held := grip.Dragged()
+		v.resizingInspector = held
+		change := float32(0)
+		if held {
+			change = -dx
 		}
-		if state.Error != "" {
-			n.Text(c, state.Error).FontSize(12).TextColor(t.TextMuted).Padding(12)
+		if grip.Shortcut(0, n.KeyLeft) {
+			change = 10
 		}
-		if !state.Loaded {
-			n.Text(c, "读取更改…").FontSize(12).TextColor(t.TextMuted).Padding(12)
-		} else if len(state.Files) == 0 {
-			n.Text(c, "没有文件更改").FontSize(12).TextColor(t.TextMuted).Padding(12)
+		if grip.Shortcut(0, n.KeyRight) {
+			change = -10
 		}
-		state.List.Key = func(i int) any { return state.Files[i].Path }
-		n.List(c, &state.List, len(state.Files), func(i int) {
-			file := state.Files[i]
-			row := control(c, 0).FillWidth().Height(28).PaddingX(12).Label("查看文件:" + file.Path).Children(func() {
-				n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
-					n.Text(c, file.Path).SingleLine().Grow(1).FontSize(12).Tooltip(file.Path)
-					added, deleted, _, _ := gitColors(t)
-					a, d := "—", "—"
-					if file.Added != nil {
-						a = fmt.Sprint(*file.Added)
-					}
-					if file.Removed != nil {
-						d = fmt.Sprint(*file.Removed)
-					}
-					n.Text(c, "+"+a).Font("Menlo").FontSize(11).Width(34).TextAlign(n.End).TextColor(added)
-					removed := n.Text(c, "−"+d).Font("Menlo").FontSize(11).Width(34).TextAlign(n.End).TextColor(deleted)
-					if file.Removed != nil && *file.Removed == 0 {
-						removed.Opacity(0)
-					}
-				})
-			})
-			if row.Clicked() {
-				v.openChangedFile(file.Path)
-			}
-		}).FillWidth().FillHeight().Grow(1)
+		if change != 0 {
+			v.Model.InspectorWidth = min(max(width+change, 280), min(limit, 960))
+			c.AnimationFrame()
+		}
 	})
-}
-func (v *View) diffReader(c *n.Context, t *n.Theme, width float32) {
-	state := v.changesFor(v.Model.SessionID)
-	n.Column(c.Key("diff-reader:" + v.Model.SessionID)).Width(width).Shrink(1).MinWidth(0).FillHeight().Background(t.Background).Label("文件差异阅读器").Children(func() {
-		n.Column(c).Width(1).Absolute().Left(0).Top(0).Bottom(0).Background(t.Border)
-		n.Row(c).Height(48).FillWidth().PaddingX(14).Gap(8).AlignItems(n.Center).Children(func() {
-			n.Text(c, state.Path).SingleLine().Grow(1).FontSize(12).Tooltip(state.Path)
-			if iconButton(c, closeIcon, "关闭文件差异").Clicked() {
-				state.Path = ""
-			}
-		})
-		v.diffBody(c, t, state)
-	})
+	if goBack {
+		state.Path = ""
+	}
 }
 func (v *View) diffBody(c *n.Context, t *n.Theme, state *changesState) {
 	if state.Error != "" {

@@ -253,17 +253,23 @@ func TestHomeBranchSelectionOnlyRecordsIntent(t *testing.T) {
 		t.Fatal("branch menu changed execution or draft instead of intent")
 	}
 }
-func TestDiffReaderLeavesConversationAndDeviceControlBesideIt(t *testing.T) {
+func TestFileDiffKeepsConversationAndDeviceBesideSingleInspector(t *testing.T) {
 	m := layoutModel()
 	m.Inspectors["s"] = true
 	v := New(m, nil, "")
 	v.changesFor("s").Path = "file.go"
-	test := native.NewTester(v.View, 1440, 900)
-	reader, _ := test.Find("文件差异阅读器")
-	history, _ := test.Find("对话记录")
-	device, _ := test.Find("当前设备")
-	if reader.X <= history.X || history.X+history.W > reader.X || device.X+device.W > reader.X {
-		t.Fatalf("diff squeezed conversation or stole device control: reader=%+v history=%+v device=%+v", reader, history, device)
+	ui := native.NewTester(v.View, 1440, 900)
+	panel, _ := ui.Find("更改侧栏")
+	history, _ := ui.Find("对话记录")
+	device, _ := ui.Find("当前设备")
+	if panel.W != 280 || history.X+history.W > panel.X || device.X+device.W > panel.X {
+		t.Fatal("file diff changes conversation bounds or steals device control", panel, history, device)
+	}
+	if _, extra := ui.Find("文件差异阅读器"); extra {
+		t.Fatal("file diff opens a second sidebar")
+	}
+	if _, back := ui.Find("返回更改列表"); !back {
+		t.Fatal("file diff has no Back control")
 	}
 }
 
@@ -485,7 +491,7 @@ func TestExpandedToolTimelineSeparatesIconAndTextColumns(t *testing.T) {
 		if !ok || math.Abs(float64(output.Y-command.Y-command.H-8)) > .5 {
 			t.Errorf("width %d: indentation changed the tool-output gap: command=%+v output=%+v", width, command, output)
 		}
-		footer, ok := ui.Find("本轮完成")
+		footer, ok := ui.Find("回复信息")
 		if !ok || math.Abs(float64(footer.X-group.X)) > .5 {
 			t.Errorf("width %d: tool indentation moved the turn footer: %+v", width, footer)
 		}

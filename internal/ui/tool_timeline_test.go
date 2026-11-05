@@ -40,7 +40,7 @@ func TestExpandedToolsShareTimelineRailAndEndWithCompleted(t *testing.T) {
 				t.Fatalf("timeline label is not beside the icon column: heading=%+v label=%+v", heading, r)
 			}
 		}
-		footer, _ := ui.Find("本轮完成")
+		footer, _ := ui.Find("回复信息")
 		if !(done.Y > b.Y+b.H && footer.Y > done.Y+done.H) {
 			t.Fatal("group completion is not before the separate turn footer")
 		}

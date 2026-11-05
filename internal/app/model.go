@@ -39,6 +39,7 @@ type Model struct {
 	GitStatuses     map[string]domain.GitStatus
 	GitEpochs       map[string]string
 	Inspectors      map[string]bool
+	InspectorWidth  float32
 	Error           string
 }
 
@@ -332,6 +333,7 @@ type savedState struct {
 	GitDrafts       map[string]domain.GitChoice  `json:"gitDrafts,omitempty"`
 	GitRepositories map[string]string            `json:"gitRepositories,omitempty"`
 	Inspectors      map[string]bool              `json:"inspectors,omitempty"`
+	InspectorWidth  float32                      `json:"inspectorWidth,omitempty"`
 }
 
 func (m *Model) Save(path string) error {
@@ -359,6 +361,7 @@ func (m *Model) Load(path string) error {
 	if saved.QueueEdits != nil {
 		m.QueueEdits = saved.QueueEdits
 	}
+	m.InspectorWidth = saved.InspectorWidth
 	if saved.Inspectors != nil {
 		m.Inspectors = saved.Inspectors
 	}

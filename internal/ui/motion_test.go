@@ -245,26 +245,30 @@ func TestNarrowInspectorSlidesFromWindowEdge(t *testing.T) {
 	}
 }
 
-func TestDiffEntranceKeepsInspectorAndConversationAlongside(t *testing.T) {
+func TestFileDiffNavigationKeepsInspectorWidthAndConversationStable(t *testing.T) {
 	m := layoutModel()
 	m.Inspectors["s"] = true
 	v := New(m, nil, "")
 	ui := n.NewTester(v.View, 1440, 900)
+	before, _ := ui.Find("更改侧栏")
+	history, _ := ui.Find("对话记录")
 	v.changesFor("s").Path = "file.go"
 	ui.Frame()
 	ui.Advance(70 * time.Millisecond)
-	inspector, _ := ui.Find("更改侧栏")
-	reader, _ := ui.Find("文件差异阅读器")
-	history, _ := ui.Find("对话记录")
-	if inspector.X != 1160 || inspector.W != 280 {
-		t.Fatalf("opening a file moved or compressed file navigation: %+v", inspector)
+	panel, _ := ui.Find("更改侧栏")
+	after, _ := ui.Find("对话记录")
+	if panel != before || history != after {
+		t.Fatal("opening a file resizes the sidebar or conversation", before, panel, history, after)
 	}
-	if reader.W <= 0 || reader.W >= 452 || math.Abs(float64(reader.X+reader.W-inspector.X)) > .5 || math.Abs(float64(history.X+history.W-reader.X)) > .5 {
-		t.Fatalf("review panes overlap while opening a file: history=%+v reader=%+v inspector=%+v", history, reader, inspector)
+	if _, extra := ui.Find("文件差异阅读器"); extra {
+		t.Fatal("opening a file creates another inspector")
 	}
-	ui.Advance(220 * time.Millisecond)
-	reader, _ = ui.Find("文件差异阅读器")
-	if reader.W != 452 {
-		t.Fatalf("diff did not settle at its original width: %+v", reader)
+	if err := ui.Click("返回更改列表"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(250 * time.Millisecond)
+	panel, _ = ui.Find("更改侧栏")
+	if panel != before {
+		t.Fatal("Back changes inspector bounds", before, panel)
 	}
 }

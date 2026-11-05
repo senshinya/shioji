@@ -262,16 +262,16 @@ func TestToolDisclosureFooterFollowsContentHeight(t *testing.T) {
 	d.Turns = []domain.Turn{{ID: "t", Status: "completed"}}
 	m.Details["s"] = d
 	ui := n.NewTester(New(m, nil, "").View, 1440, 900)
-	closed, _ := ui.Find("本轮完成")
+	closed, _ := ui.Find("回复信息")
 	ui.Click("2 次工具调用")
-	initial, ok := ui.Find("本轮完成")
+	initial, ok := ui.Find("回复信息")
 	if !ok || math.Abs(float64(initial.Y-closed.Y)) > .5 {
 		t.Fatalf("footer disappears or jumps when disclosure begins: closed=%+v initial=%+v", closed, initial)
 	}
 	ui.Advance(40 * time.Millisecond)
-	middle, _ := ui.Find("本轮完成")
+	middle, _ := ui.Find("回复信息")
 	ui.Advance(140 * time.Millisecond)
-	opened, _ := ui.Find("本轮完成")
+	opened, _ := ui.Find("回复信息")
 	if middle.Y <= closed.Y+.5 || middle.Y >= opened.Y-.5 {
 		t.Fatalf("footer does not track the content's visible height: closed=%v middle=%v open=%v", closed.Y, middle.Y, opened.Y)
 	}

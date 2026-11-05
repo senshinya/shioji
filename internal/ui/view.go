@@ -77,6 +77,7 @@ type View struct {
 	switchingBranch         bool
 	gitLoaded               map[string]string
 	gitPending              map[string]bool
+	resizingInspector       bool
 	changes                 map[string]*changesState
 	menuOpen                map[string]bool
 	menuContext             string
@@ -239,7 +240,27 @@ drained:
 		width, _ := c.Size()
 		open := m.SessionID != "" && !v.devices && m.Inspectors[m.SessionID]
 		inline := width > 1160
-		n.Column(c.Key("conversation-pane")).FillHeight().Grow(1).Transition(n.ElementTransition{Duration: motionAnimation(c, 200*time.Millisecond).Duration, Ease: n.EaseOut, Size: true}).Children(func() {
+		if !open {
+			v.resizingInspector = false
+		}
+		panelWidth := v.Model.InspectorWidth
+		if panelWidth == 0 {
+			panelWidth = 280
+		}
+		limit := width - 256 - 360
+		if !inline {
+			navigation := float32(236)
+			if width <= 980 {
+				navigation = 224
+			}
+			limit = width - navigation - 16
+		}
+		panelWidth = min(max(panelWidth, 280), min(limit, 960))
+		conversation := n.Column(c.Key("conversation-pane")).FillHeight().Grow(1)
+		if !v.resizingInspector {
+			conversation.Transition(n.ElementTransition{Duration: motionAnimation(c, 200*time.Millisecond).Duration, Ease: n.EaseOut, Size: true})
+		}
+		conversation.Children(func() {
 			if v.devices {
 				v.toolbar(c, &t)
 				v.deviceView(c, &t)
@@ -252,20 +273,13 @@ drained:
 		})
 		if open {
 			if inline {
-				state := v.changesFor(m.SessionID)
-				diffWidth := (width - 256 - 280) / 2
-				reviewWidth := float32(280)
-				if state.Path != "" {
-					reviewWidth += diffWidth
+				column := n.Column(c.Key("review-column:" + m.SessionID)).FillHeight().Shrink(0).Clip()
+				if !v.resizingInspector {
+					column.Transition(columnMotion(c, panelWidth))
 				}
-				n.Row(c.Key("review-columns:" + m.SessionID)).FillHeight().Shrink(0).Clip().Transition(columnMotion(c, reviewWidth)).Children(func() {
-					if state.Path != "" {
-						v.diffReader(c, &t, diffWidth)
-					}
-					v.inspector(c, &t, false)
-				})
+				column.Children(func() { v.inspector(c, &t, false, panelWidth, limit) })
 			} else {
-				v.inspector(c, &t, true)
+				v.inspector(c, &t, true, panelWidth, limit)
 			}
 		}
 	})
@@ -1013,11 +1027,9 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 	}
 }
 func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
-	n.Row(c).FillWidth().Wrap().Gap(7).MinHeight(24).AlignItems(n.Baseline).Children(func() {
+	n.Row(c).Label("回复信息").FillWidth().Wrap().Gap(12).MinHeight(24).AlignItems(n.Baseline).Children(func() {
 		label := turn.Status
 		switch turn.Status {
-		case "completed":
-			label = "本轮完成"
 		case "running":
 			label = "进行中"
 		case "interrupted":
@@ -1028,7 +1040,44 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 			label = "执行状态待核实"
 		}
 		if turn.Status == "completed" {
-			inlineIconText(c, check, label, n.Font{Family: "system-ui", Size: 11, Weight: 400}, 12, 7, t.TextMuted)
+			copy := n.ButtonBase(c.Key("copy-reply:"+turn.ID)).Size(20, 24).Justify(n.Start).Label("复制回复")
+			copiedUntil := n.Local(copy, "copied-until", func() time.Time { return time.Time{} })
+			if copy.Clicked() {
+				var parts []string
+				for _, item := range v.Model.Details[v.Model.SessionID].Items {
+					if item.TurnID == turn.ID && item.Kind == "assistant" && strings.TrimSpace(item.Text) != "" {
+						parts = append(parts, item.Text)
+					}
+				}
+				if len(parts) > 0 {
+					c.WriteClipboard(strings.Join(parts, "\n\n"))
+					*copiedUntil = c.Now().Add(2 * time.Second)
+				}
+			}
+			glyph, glyphKey, tooltip := copyReplyIcon, "copy-icon", "复制回复"
+			if c.Now().Before(*copiedUntil) {
+				glyph, glyphKey, tooltip = check, "copied-icon", "已复制"
+				c.After(copiedUntil.Sub(c.Now()))
+			}
+			copy.Tooltip(tooltip)
+			color := textHoverColor(c, copy, t.TextMuted)
+			copy.Children(func() {
+				inlineSymbol(c.Key(glyphKey), glyph, "回复", n.Font{Family: "system-ui", Size: 11, Weight: 400}, 12, color).
+					Label(tooltip).Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 100*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
+			})
+			ended, exact := "—", "结束时间未知"
+			if turn.CompletedAt != nil {
+				local := turn.CompletedAt.Local()
+				ended = local.Format("15:04")
+				exact = local.Format("2006-01-02 15:04:05")
+			}
+			n.Text(c, ended).Label("结束时间：" + ended).Tooltip(exact).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+			duration := "用时 —"
+			if turn.DurationMS != nil {
+				seconds := *turn.DurationMS / 1000
+				duration = fmt.Sprintf("用时 %d分%d秒", seconds/60, seconds%60)
+			}
+			n.Text(c, duration).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 		} else if turn.Status == "running" {
 			n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
 				activityDot(c, t.Success)
@@ -1037,7 +1086,7 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 		} else {
 			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 		}
-		if turn.DurationMS != nil {
+		if turn.Status != "completed" && turn.DurationMS != nil {
 			n.Text(c, fmt.Sprintf("%.1f 秒", float64(*turn.DurationMS)/1000)).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 		}
 		if turn.Status == "completed" {

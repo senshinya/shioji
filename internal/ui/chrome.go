@@ -25,6 +25,7 @@ var disclosureDown = designIcon("m6 9 6 6 6-6")
 var disclosureRight = designIcon("m9 5 7 7-7 7")
 var attentionIcon = svg("M10 3l8 14H2zM10 7v4M10 14v.2")
 var sidebarIcon = svg("M2 3h16v14H2zM12 3v14")
+var copyReplyIcon = svg("M7 3h9a1 1 0 0 1 1 1v10M4 6h9a1 1 0 0 1 1 1v10H3V7a1 1 0 0 1 1-1z")
 var closeIcon = svg("M5 5l10 10M15 5L5 15")
 var branchIcon = designIcon("M6 3v12a4 4 0 0 0 8 0V8M6 5a2 2 0 1 0 0 .01M14 5a2 2 0 1 0 0 .01M6 18a2 2 0 1 0 0 .01")
 
