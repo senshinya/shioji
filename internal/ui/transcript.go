@@ -17,14 +17,18 @@ type transcriptRow struct {
 	toolParent string
 	opacity    float32
 	footer     string
+	toolResult string
 }
 
 // A turn receipt is its own stable row below a disclosure, so it follows the
 // group's changing height rather than disappearing inside its clipped body.
 func withTurnFooters(rows []transcriptRow, items []domain.Item, turns map[string]domain.Turn) []transcriptRow {
 	result := make([]transcriptRow, 0, len(rows)+len(turns))
-	for _, row := range rows {
+	for i, row := range rows {
 		result = append(result, row)
+		if i+1 < len(rows) && rows[i+1].toolResult != "" && rows[i+1].toolParent == row.toolParent {
+			continue
+		}
 		if row.end >= 0 && row.item.TurnID != "" && (row.end == len(items)-1 || items[row.end+1].TurnID != row.item.TurnID) {
 			if _, ok := turns[row.item.TurnID]; ok {
 				result = append(result, transcriptRow{key: "turn-footer:" + row.item.TurnID, footer: row.item.TurnID, end: -1})
@@ -114,6 +118,9 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 					rows[len(rows)-1].end = j
 				}
 			}
+			if result := toolGroupResult(items[i:end]); result != "" {
+				rows = append(rows, transcriptRow{key: key + ":result", item: item, end: end - 1, toolParent: key, toolResult: result, opacity: opacity})
+			}
 		}
 		i = end
 	}
@@ -130,7 +137,6 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 				angle = -90
 			}
 			font := n.Font{Family: "system-ui", Size: 11, Weight: 400}
-			inlineSymbol(c, terminalIcon, label, font, 12, subtle(t))
 			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(color)
 			inlineSymbol(c, chevron, label, font, 10, subtle(t), angle)
 		})
@@ -154,3 +160,47 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 }
 
 var rightChevron = svg("M8 5l5 5-5 5")
+
+// A tool receipt describes closed calls, never a guessed turn completion.
+func toolGroupResult(items []domain.Item) string {
+	result := "completed"
+	for _, item := range items {
+		if item.Kind != "tool" {
+			continue
+		}
+		if !item.Final {
+			return ""
+		}
+		if item.Status == "failed" || item.ExitCode != nil && *item.ExitCode != 0 {
+			result = "failed"
+		} else if item.Status == "declined" && result != "failed" {
+			result = "declined"
+		}
+	}
+	return result
+}
+
+var toolCompleteIcon = svg("M18 10a8 8 0 1 1-16 0a8 8 0 0 1 16 0M6 10l3 3 5-6")
+var toolFailedIcon = svg("M18 10a8 8 0 1 1-16 0a8 8 0 0 1 16 0M7 7l6 6M13 7l-6 6")
+var toolDeclinedIcon = svg("M18 10a8 8 0 1 1-16 0a8 8 0 0 1 16 0M6 10h8")
+
+func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow) {
+	icon := terminalIcon
+	if row.toolResult == "" {
+		v.item(c, t, row.item)
+	} else {
+		label := "已完成"
+		icon = toolCompleteIcon
+		if row.toolResult == "failed" {
+			label, icon = "执行失败", toolFailedIcon
+		}
+		if row.toolResult == "declined" {
+			label, icon = "已拒绝", toolDeclinedIcon
+		}
+		n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+	}
+	// A small neutral mask interrupts the rail around each native glyph.
+	n.Column(c).Absolute().Left(0).Top(0).Size(16, 20).AlignItems(n.Center).Justify(n.Center).Background(t.Background).Children(func() {
+		n.Icon(c, icon).Size(14, 14).TextColor(t.TextMuted).Role(n.RoleNone)
+	})
+}

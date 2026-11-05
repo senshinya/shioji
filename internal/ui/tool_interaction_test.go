@@ -281,7 +281,7 @@ func TestLargeToolDisclosureKeepsHiddenRowsVirtualized(t *testing.T) {
 	m := layoutModel()
 	d := m.Details["s"]
 	for i := 0; i < 10000; i++ {
-		d.Items = append(d.Items, domain.Item{ID: fmt.Sprint("call", i), TurnID: "t", Kind: "tool", Name: fmt.Sprint("large command ", i), Text: "result\nmore result"})
+		d.Items = append(d.Items, domain.Item{ID: fmt.Sprint("call", i), TurnID: "t", Kind: "tool", Name: fmt.Sprint("large command ", i), Text: "result\nmore result", Status: "completed", Final: true})
 	}
 	d.Items = append(d.Items, domain.Item{ID: "reply", TurnID: "t", Kind: "assistant", Text: "After large group"})
 	m.Details["s"] = d

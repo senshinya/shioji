@@ -457,7 +457,7 @@ func TestOpeningSavedSessionWaitsForHistoryBeforeCollapsingTools(t *testing.T) {
 	}
 }
 
-func TestExpandedToolChildrenAndFooterShareGroupLeadingEdge(t *testing.T) {
+func TestExpandedToolTimelineSeparatesIconAndTextColumns(t *testing.T) {
 	for _, width := range []int{1440, 950} {
 		m := layoutModel()
 		d := m.Details["s"]
@@ -475,9 +475,9 @@ func TestExpandedToolChildrenAndFooterShareGroupLeadingEdge(t *testing.T) {
 		group, _ := ui.Find("2 次工具调用")
 		for _, label := range []string{"first command", "second command"} {
 			child, ok := ui.Find(label)
-			// Moving the disclosure to the trailing edge leaves all tool icons aligned.
-			if !ok || math.Abs(float64(child.X-group.X)) > .5 {
-				t.Errorf("width %d: %s is not under the group icon: group=%+v child=%+v", width, label, group, child)
+			// The icon rail stays at the group edge; plain titles use the text column.
+			if !ok || math.Abs(float64(child.X-group.X-24)) > .5 {
+				t.Errorf("width %d: %s is not beside the timeline rail: group=%+v child=%+v", width, label, group, child)
 			}
 		}
 		command, _ := ui.Find("first command")

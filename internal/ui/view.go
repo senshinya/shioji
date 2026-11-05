@@ -816,6 +816,13 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			content := n.Column(c).FillWidth().MaxWidth(768).Gap(8).Padding(0, 0, bottom, 0).Selectable()
 			v.sentMessagePose(c, content, item)
 			if entry.toolParent != "" {
+				content.Padding(0, 0, bottom, 24).Draw(func(p *n.Painter, r n.Rect) {
+					height := r.H
+					if entry.toolResult != "" {
+						height = 10
+					}
+					p.Fill(n.Rect{X: r.X + 7.5, Y: r.Y, W: 1, H: height}, t.Border, 0)
+				})
 				content.Opacity(entry.opacity)
 				if !v.reduceMotion {
 					content.Transform(n.Translation(0, -4*(1-entry.opacity)))
@@ -826,6 +833,8 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 					v.turnFooter(c, t, turns[entry.footer])
 				} else if entry.group != "" {
 					v.toolGroup(c, t, entry, row)
+				} else if entry.toolParent != "" {
+					v.toolTimelineItem(c, t, entry)
 				} else {
 					v.item(c, t, item)
 				}
@@ -860,10 +869,7 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 			label = "工具活动"
 		}
 		if control(c).FillWidth().MinHeight(20).Justify(n.Start).Label(label).Children(func() {
-			n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
-				inlineSymbol(c, terminalIcon, label, n.Font{Family: "Menlo", Size: 11, Weight: 400}, 12, subtle(t))
-				n.Text(c, label).Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-			})
+			n.Text(c, label).Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 		}).Clicked() {
 			v.Model.Collapsed["tool:"+item.ID] = !v.Model.Collapsed["tool:"+item.ID]
 		}
