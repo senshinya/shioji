@@ -30,6 +30,9 @@ type View struct {
 	toolMotions             map[string]*toolDisclosureMotion
 	frameTime               time.Time
 	toolsAnimating          bool
+	sent                    *sentMessageMotion
+	composerHadFocus        bool
+	inputBounds             n.Rect
 	reduceMotion            bool
 	draftBindings           map[string]*editBinding
 	answerBindings          map[string]*editBinding
@@ -131,6 +134,7 @@ func (v *View) View(c *n.Context) {
 		}
 	}
 drained:
+	v.syncSendMotion()
 	if v.selected != m.SessionID {
 		v.selected = m.SessionID
 		m.FoldToolHistory[m.SessionID] = true
@@ -537,7 +541,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	}
 	composer := n.Column(c.Key("composer:"+key)).Label("消息编辑器").FillWidth().MaxWidth(maxWidth).Padding(10, 14, 8, 6).Gap(4).Background(bg).Border(1, t.Border).Radius(16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04)).Children(func() {
 		v.branchStrip(c, t, home)
-		n.TextAreaBase(c.Key("input"), &binding.Text).Label("消息输入").Placeholder("描述任务…").PlaceholderColor(subtle(t)).Padding(0, 9).FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(inputSize).FixedLineHeight(inputLeading).OnTextKey(func(k n.TextKey) bool {
+		input := n.TextAreaBase(c.Key("input"), &binding.Text).Label("消息输入").Placeholder("描述任务…").PlaceholderColor(subtle(t)).Padding(0, 9).FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(inputSize).FixedLineHeight(inputLeading).OnTextKey(func(k n.TextKey) bool {
 			if k.Key == n.KeyEnter && (k.Mods == 0 || k.Mods == n.Cmd) {
 				m.Drafts[key] = k.Text()
 				if strings.TrimSpace(k.Text()) != "" {
@@ -546,7 +550,18 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 				return true
 			}
 			return false
-		}).Changed()
+		})
+		input.Changed()
+		v.inputBounds = input.Bounds()
+		if s := v.sent; s != nil && s.source.W > 0 && s.session == m.SessionID && !home && !c.Preferences().ReduceMotion {
+			input.PlaceholderColor(subtle(t).Alpha(v.sendProgress(c)))
+		}
+		if s := v.sent; s != nil && s.origin == "" && s.session == m.SessionID && !home && !s.focused {
+			if v.composerHadFocus {
+				input.Focus()
+			}
+			s.focused = true
+		}
 		draft = binding.Text
 		m.Drafts[key] = draft
 		binding.LastModel = draft
@@ -589,6 +604,8 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 		})
 	})
 	fieldFeedback(c, composer)
+	v.composerSendTransition(c, composer, home)
+	v.composerHadFocus = composer.FocusWithin()
 }
 func permissionLabel(id string) string {
 	switch id {
@@ -696,11 +713,9 @@ func settingRow(c *n.Context, name, value string) n.Element {
 }
 func (v *View) conversation(c *n.Context, t *n.Theme) {
 	m := v.Model
-	detail, ok := m.Details[m.SessionID]
-	if !ok {
-		n.Text(c, "读取会话…").Padding(30)
-		return
-	}
+	// An empty detail keeps the dock mounted through first-turn hydration.
+	// Its zero Session.ID also keeps the history-fold barrier unconsumed.
+	detail := m.Details[m.SessionID]
 	state := v.lists[m.SessionID]
 	if state == nil {
 		state = &n.ListState{FollowEnd: true}
@@ -741,6 +756,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		}
 		return rows[i-1].key
 	}
+	v.anchorSentMessage(c, state, rows)
 	reserve := v.dockHeight
 	if reserve == 0 {
 		reserve = 108
@@ -772,6 +788,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		}
 		n.Column(c).FillWidth().PaddingX(18).AlignItems(n.Center).Children(func() {
 			content := n.Column(c).FillWidth().MaxWidth(768).Gap(8).Padding(0, 0, bottom, 0).Selectable()
+			v.sentMessagePose(c, content, item)
 			if entry.toolParent != "" {
 				content.Opacity(entry.opacity)
 				if !v.reduceMotion {
@@ -806,7 +823,8 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 	switch item.Kind {
 	case "user":
 		n.Row(c).FillWidth().Justify(n.End).Children(func() {
-			n.Text(c, item.Text).MaxWidth(676).Padding(12, 16).Background(userBubble(t)).Radius(14).FontSize(14).FixedLineHeight(24).Selectable()
+			bubble := n.Text(c, item.Text).MaxWidth(676).Padding(12, 16).Background(userBubble(t)).Radius(14).FontSize(14).FixedLineHeight(24).Selectable()
+			v.sentMessageBubble(c, t, bubble, item)
 		})
 	case "assistant":
 		v.assistantReply(c, item)
@@ -1076,6 +1094,7 @@ func (v *View) submit() {
 		m.Error = err.Error()
 		return
 	}
+	sent := v.beginSendMotion(in)
 	var prepare func() error
 	if v.Saver != nil {
 		state, _ := m.EncodeState()
@@ -1085,17 +1104,35 @@ func (v *View) submit() {
 	}
 	if !v.do(app.Job{Prepare: prepare, Method: "session.submit", Input: in, Apply: func(m *app.Model, b json.RawMessage, err error) {
 		if err != nil {
+			if v.sent == sent {
+				v.sent = nil
+			}
 			m.SubmissionError(in, err)
 			return
 		}
 
 		var op domain.Operation
 		if err = json.Unmarshal(b, &op); err != nil {
+			if v.sent == sent {
+				v.sent = nil
+			}
 			m.Error = err.Error()
 			return
 		}
 		m.Accepted(in, op)
+		if op.State == "rejected" || op.State == "indeterminate" {
+			if v.sent == sent {
+				v.sent = nil
+			}
+			return
+		}
+		if v.sent == sent {
+			sent.session = op.SessionID
+		}
 	}}) {
+		if v.sent == sent {
+			v.sent = nil
+		}
 		m.Reject(in, "操作繁忙，请重试")
 	}
 }

@@ -26,6 +26,13 @@ not expose the following appearance settings required by the frozen design:
   position across structural changes, without disabling virtualization. User
   scrolling and explicit scroll requests release the anchor; collapsing may
   retain trailing reading space instead of jumping the clicked heading.
+- `ui.ElementTransition.From` / `Lift`: retain a source rectangle through
+  asynchronous acceptance and move sent text out of the editor into history.
+  Lift only the moving message above ordinary content, below popovers, keeping
+  its native input ownership. Respect Reduce Motion and retain list virtualization.
+- `ui.ListState.AnchorRow`: move a just-sent message into reading position with
+  an interruptible native scroll animation and temporary reply space. Filled
+  space resumes end following; a reader who scrolls away keeps their position.
 - `ui.ListState.Reveals` / `ListReveal`: allocate the changing height of a
   contiguous virtualized section. Content retains its natural layout, its
   exposed prefix clips at the animated boundary, and hidden suffix rows are

@@ -181,10 +181,17 @@ type ListState struct {
 	following bool
 	started   bool
 	// A disclosure may keep its clicked row at a fixed viewport position.
-	pinned bool
-	pinRow int
-	pinKey any
-	pinY   float64
+	pinned            bool
+	pinRow            int
+	pinKey            any
+	pinY              float64
+	pinStart, pinSent bool
+	pinTarget         float64
+	pinAnimation      Animation
+	pinGlide          channel
+	// A reader who leaves a sent-message anchor stays in reading mode even
+	// when removing its temporary end space makes all current rows fit.
+	followPaused bool
 	// followLag is how far below its place the end shows as it glides
 	// there (FollowAnimation). follow is the list as the last layout of it
 	// left it, followWas as the frame before left it, and followBase the
@@ -319,6 +326,7 @@ func (s *ListState) ScrollIntoView(row int) {
 // again.
 func (s *ListState) ScrollToEnd() {
 	s.pinned = false
+	s.followPaused = false
 	s.req = listRequest{set: true, end: true}
 	s.scrolled = true
 }
@@ -328,10 +336,20 @@ func (s *ListState) ScrollToEnd() {
 // collapsing content. User scrolling or a scroll request releases the anchor.
 func (s *ListState) KeepRow(row int, y float32) {
 	s.pinned, s.pinRow, s.pinY, s.pinKey = true, row, float64(y), nil
+	s.pinStart, s.pinSent, s.pinGlide = false, false, channel{}
+	s.followPaused = false
 	if s.Key != nil {
 		s.pinKey = s.Key(row)
 	}
 	s.following, s.followLag, s.scrolled = false, channel{}, true
+}
+
+// AnchorRow glides a newly sent row to y below the viewport's top, reserving
+// reading space below it. Once growing content fills that space, FollowEnd
+// resumes. User scrolling and explicit scroll requests interrupt the glide.
+func (s *ListState) AnchorRow(row int, y float32, animation Animation) {
+	s.KeepRow(row, y)
+	s.pinStart, s.pinSent, s.pinTarget, s.pinAnimation = true, true, float64(y), animation
 }
 
 // ReleaseRow resumes ordinary list anchoring without moving to another row.
@@ -549,10 +567,19 @@ func buildList(c *context, e, owner *node, s *ListState, n int, row func(i int),
 // sync follows what changed since the last frame: rows added or removed,
 // items moving, the user or the app scrolling.
 func (s *ListState) sync(e *node, n int) {
+	// Clamping temporary reading space can round the offset by a few ulps.
+	// Only a real scroll interrupts the pinned animation.
 	st, rt := e.st, e.c.rt
+	scrollMoved := math.Abs(st.scrollY-s.wroteY) > 1e-6
 	s.heights.reveals, s.heights.gap = s.Reveals, s.gap
+	if s.req.end {
+		s.followPaused = false
+	}
 	if s.pinned {
-		if s.req.set || st.scrollY != s.wroteY {
+		if s.req.set || scrollMoved {
+			if s.pinSent && !s.req.set {
+				s.followPaused = true
+			}
 			s.pinned = false
 		} else if s.pinKey != nil {
 			row, ok := s.find(s.pinKey, s.pinRow, n)
@@ -616,14 +643,17 @@ func (s *ListState) sync(e *node, n int) {
 			s.req = listRequest{set: true, offset: true, y: max(0, st.scrollY)}
 		}
 		st.list = s
-	case st.scrollY != s.wroteY && !s.req.set && s.following && s.followLag.value > 0.5 && st.scrollY > s.wroteY:
+	case scrollMoved && !s.req.set && s.following && s.followLag.value > 0.5 && st.scrollY > s.wroteY:
 		// Scrolled toward the end it glides to: it goes on following.
-	case st.scrollY != s.wroteY && !s.req.set:
+	case scrollMoved && !s.req.set:
 		// Scrolled by the wheel, the keys, the scroll bar or the app: a
 		// step moves the rows by as much, from the place; a jump goes
 		// where the heights known put the offset, or to the end.
 		top := max(0, st.contentH-float64(st.h))
 		y := max(0, min(st.scrollY, top))
+		if s.followPaused && top > 0 && y >= top-.5 && y > s.wroteY {
+			s.followPaused = false
+		}
 		switch d := y - s.wroteY; {
 		case top > 0 && y >= top-0.5:
 			s.req = listRequest{set: true, end: true}
@@ -632,7 +662,7 @@ func (s *ListState) sync(e *node, n int) {
 		default:
 			s.req = listRequest{set: true, offset: true, y: y}
 		}
-		s.following = s.FollowEnd && top > 0 && y >= top-0.5
+		s.following = s.FollowEnd && !s.followPaused && top > 0 && y >= top-0.5
 	}
 	s.wroteY = st.scrollY
 }
@@ -1420,6 +1450,36 @@ func (e *node) layoutList(w, h float32) {
 	case s.pinned:
 		a = max(0, min(s.pinRow, n-1))
 		ensure(a)
+		if s.pinSent {
+			target := min(s.pinTarget, padTop+hs.top(a, gap))
+			if s.pinStart {
+				from := padTop + hs.top(a, gap) - s.wroteY
+				from = min(max(from, target-H), target+H)
+				s.pinGlide = channel{value: from, target: from, at: e.c.now}
+				if e.c.rt.preferences().ReduceMotion {
+					s.pinGlide.value, s.pinGlide.target = target, target
+				} else {
+					headFor(&s.pinGlide, target, s.pinAnimation, e.c.now)
+				}
+				s.pinStart = false
+			}
+			if e.c.rt.preferences().ReduceMotion {
+				s.pinGlide = channel{value: target, target: target, at: e.c.now}
+			}
+			s.pinGlide.advance(e.c.now)
+			s.pinY = s.pinGlide.value
+			if s.pinGlide.moving || s.pinGlide.pending {
+				e.c.rt.animating = true
+			}
+			// Natural content, excluding the temporary reading space, has
+			// reached the viewport bottom. Resume ordinary bottom following.
+			if !s.pinGlide.moving && !s.pinGlide.pending && padTop+padBottom+hs.top(n, gap)-gap >= max(0, padTop+hs.top(a, gap)-target)+H {
+				s.pinned, s.following = false, s.FollowEnd
+				a = n - 1
+				ensure(a)
+				s.pinY = H - padBottom - ht(a)
+			}
+		}
 		ya = s.pinY
 	case req.end || s.following && !req.set:
 		a = n - 1
@@ -1745,7 +1805,7 @@ func (s *ListState) remember(e *node, first, last int, atEnd bool, scroll float6
 	}
 	s.laidOut, s.wroteY, s.req, s.read = true, scroll, listRequest{}, false
 	s.first, s.last, s.atEnd = first, last, atEnd
-	s.following = s.FollowEnd && atEnd && !s.pinned
+	s.following = s.FollowEnd && atEnd && !s.pinned && !s.followPaused
 	s.anchor, s.anchorKey = max(0, first), nil
 	if n == 0 {
 		s.inset = 0

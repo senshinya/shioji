@@ -41,6 +41,17 @@ type Painter struct {
 	// window's scene, and asked that it asked to be painted again (see
 	// paintPart).
 	drawing, asked bool
+	lifted         []liftedPaint
+	paintingLift   bool
+}
+
+// liftedPaint retains only the ancestor state needed to paint one moving
+// element above ordinary content. The original native element keeps its input.
+type liftedPaint struct {
+	e       *node
+	clip    Rect
+	opacity float32
+	theme   *Theme
 }
 
 // opaqueBox is the box of an element painting an opaque background, and
@@ -87,6 +98,7 @@ func (rt *engine) paint(root *node, w, h, scale float32) {
 	rt.partTransient = 0
 	p.cull = !rt.inkStale && !rt.noCull
 	p.element(root)
+	p.paintLifted()
 	p.cull = false
 	if rt.insp.open {
 		rt.insp.paintHighlight(rt, p, h)
@@ -232,8 +244,34 @@ func (p *Painter) paintable(e *node) bool {
 	return false
 }
 
+func (p *Painter) paintLifted() {
+	if len(p.lifted) == 0 {
+		return
+	}
+	savedClip, savedOpacity, savedTheme, savedCull, savedTransform := p.clip, p.opacity, p.theme, p.cull, p.transform
+	p.paintingLift, p.cull = true, false
+	for _, f := range p.lifted {
+		p.transform = scene.Affine{}
+		p.pushClip(f.clip, [4]float32{})
+		p.clip, p.opacity, p.theme = f.clip, f.opacity, f.theme
+		p.element(f.e)
+		p.popClip()
+	}
+	p.lifted = p.lifted[:0]
+	p.clip, p.opacity, p.theme, p.cull = savedClip, savedOpacity, savedTheme, savedCull
+	p.transform = savedTransform
+	p.paintingLift = false
+}
+
 func (p *Painter) element(e *node) {
+	if e.id == overlayID && !p.paintingLift {
+		p.paintLifted()
+	}
 	if e.hidden {
+		return
+	}
+	if r := e.st.trec; !p.paintingLift && r != nil && r.elem == e && r.built == p.rt.frame && r.matching && r.t.From != nil && r.t.Lift {
+		p.lifted = append(p.lifted, liftedPaint{e: e, clip: p.clip, opacity: p.opacity, theme: p.theme})
 		return
 	}
 	savedTransform, savedInline, savedTheme := p.transform, p.inline, p.theme

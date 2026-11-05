@@ -51,6 +51,13 @@ type ElementTransition struct {
 	// colors, as SwiftUI's matchedGeometryEffect and Motion's layoutId.
 	// Use a value of a type of your own, as a struct of the photo's ID.
 	Match any
+	// From starts a newly appearing element at a retained window-space box.
+	// Use it when the source is already gone, such as after async acceptance.
+	// It is used only on appearance and respects Reduce Motion.
+	From *Rect
+	// Lift draws a From transition above ordinary content while moving,
+	// below overlays, without changing layout, focus or input ownership.
+	Lift bool
 }
 
 // Motion is where an element appearing comes from, or where one going
@@ -185,8 +192,10 @@ type transition struct {
 	index int
 	// match moves an element appearing where the one it Matches showed:
 	// its box in the window, from the box that one had.
-	match    [4]channel
-	matching bool
+	match        [4]channel
+	matching     bool
+	fromBox      Rect
+	fromProgress channel
 }
 
 // animation returns how the transition's changes go.
@@ -506,8 +515,8 @@ type matchRec struct {
 }
 
 // animateMatches moves the elements of a Transition's Match appearing
-// from where the element of their Match showed in the frame before, by a
-// transform: once the frame's boxes are in the window.
+// from their retained source or where their Match showed in the frame before:
+// once the frame's boxes are in the window.
 func (rt *engine) animateMatches() {
 	for m, rec := range rt.matched {
 		if rec.frame+1 < rt.frame {
@@ -519,27 +528,46 @@ func (rt *engine) animateMatches() {
 	for _, u := range rt.c.transitions {
 		m, e := u.t.Match, u.e
 		r := e.st.trec
-		if m == nil || r == nil || r.elem != e || r.built != rt.frame {
+		if (m == nil && u.t.From == nil) || r == nil || r.elem != e || r.built != rt.frame {
 			continue
 		}
 		box := Rect{e.x, e.y, e.w, e.h}
 		rec := rt.matched[m]
+		from := u.t.From
+		if from == nil && rec != nil && rec.id != e.id && rec.frame+1 == rt.frame {
+			from = &rec.box
+		}
 		switch {
 		case still || rt.instant():
 			r.matching = false
-		case r.fresh && rec != nil && rec.id != e.id && rec.frame+1 == rt.frame:
-			from := [4]float32{rec.box.X, rec.box.Y, rec.box.W, rec.box.H}
+		case r.fresh && u.t.From != nil:
+			r.fromBox = *u.t.From
+			r.fromProgress = channel{at: now}
+			headFor(&r.fromProgress, 1, r.animation(), now)
+			r.matching = true
+		case r.fresh && from != nil:
+			from := [4]float32{from.X, from.Y, from.W, from.H}
 			for i := range r.match {
 				r.match[i] = channel{value: float64(from[i]), target: float64(from[i]), at: now}
 			}
 			r.matching = true
-			if rec.colors != ([2]Color{}) {
+			if rec != nil && rec.colors != ([2]Color{}) {
 				// Its colors come from the other's too.
 				r.colorSet, r.colorTarget, r.colorShown, r.colorFrame = true, rec.colors, rec.colors, rt.frame-1
 			}
 		}
 		shown := box
-		if r.matching {
+		if r.matching && u.t.From != nil {
+			r.fromProgress.advance(now)
+			k := float32(r.fromProgress.value)
+			f := r.fromBox
+			shown = Rect{f.X + (box.X-f.X)*k, f.Y + (box.Y-f.Y)*k, max(f.W+(box.W-f.W)*k, 0), max(f.H+(box.H-f.H)*k, 0)}
+			r.matching = r.fromProgress.moving || r.fromProgress.pending
+			if r.matching {
+				e.showAt(shown)
+				rt.animating = true
+			}
+		} else if r.matching {
 			a := r.animation()
 			to := [4]float32{box.X, box.Y, box.W, box.H}
 			var v [4]float32
@@ -558,6 +586,9 @@ func (rt *engine) animateMatches() {
 				e.showAt(shown)
 				rt.animating = true
 			}
+		}
+		if m == nil {
+			continue
 		}
 		if rec == nil {
 			if rt.matched == nil {
