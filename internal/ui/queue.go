@@ -12,9 +12,127 @@ import (
 )
 
 var queueAddIcon = svg("M3 5h11M3 10h6M3 15h6M14 10v8M10 14h8")
-var steerMessageIcon = svg("M4 16v-6a3 3 0 0 1 3-3h9M12 3l4 4-4 4")
 var queueEditIcon = svg("M13 3l4 4M4 13l-1 5 5-1L18 6l-4-4L4 13z")
 var queueRemoveIcon = svg("M5 5l10 10M15 5L5 15")
+
+// Window-space text positions survive worker confirmation and queue removal.
+// They belong only to the session currently on screen, never saved history.
+type queuedMessageSource struct {
+	item      domain.QueueItem
+	bounds    n.Rect
+	delivered bool
+}
+
+const queueArrivalDuration = 360 * time.Millisecond
+
+type queuedArrivalMotion struct {
+	session, epoch string
+	started        time.Time
+	ready, seen    bool
+}
+
+func (v *View) beginQueueArrival(id string, ready bool) *queuedArrivalMotion {
+	if v.reduceMotion {
+		return nil
+	}
+	if v.queueArrivals == nil {
+		v.queueArrivals = map[string]*queuedArrivalMotion{}
+	}
+	a := &queuedArrivalMotion{session: v.Model.SessionID, epoch: v.Model.ConnectionEpoch, ready: ready}
+	v.queueArrivals[id] = a
+	return a
+}
+
+// The arriving row's allocated height grows with the queue. The same
+// progress pushes its existing rows up and reveals the new row at the bottom.
+func (v *View) queueArrivalProgress(c *n.Context, id string) float32 {
+	a := v.queueArrivals[id]
+	if a == nil {
+		return 1
+	}
+	if !a.ready || a.started.IsZero() {
+		return 0
+	}
+	p := min(max(float32(c.Now().Sub(a.started))/float32(queueArrivalDuration), 0), 1)
+	if p < 1 {
+		c.AnimationFrame()
+	}
+	return composerDescentEase(p)
+}
+func (v *View) cancelQueuedEdit() {
+	m := v.Model
+	sid := m.SessionID
+	id := m.QueueEdits[sid].ID
+	if id == "" {
+		return
+	}
+	m.CancelQueueEdit(sid)
+	v.focusComposer = true
+}
+
+func (v *View) rememberQueuedSource(item domain.QueueItem, bounds n.Rect) {
+	source := v.queueSources[item.ID]
+	source.item, source.bounds = item, bounds
+	v.queueSources[item.ID] = source
+}
+func (v *View) syncQueuedMotions() {
+	m := v.Model
+	if v.queueSourceSession != m.SessionID || v.queueSourceEpoch != m.ConnectionEpoch || v.devices {
+		v.queueSources = map[string]queuedMessageSource{}
+		v.queueSourceSession, v.queueSourceEpoch = m.SessionID, m.ConnectionEpoch
+		clear(v.queueArrivals)
+		v.queueDisplay = domain.QueueState{}
+	}
+	if v.queueSources == nil {
+		v.queueSources = map[string]queuedMessageSource{}
+	}
+
+	for id, a := range v.queueArrivals {
+		if v.reduceMotion || a.epoch != m.ConnectionEpoch || a.session != m.SessionID || !a.started.IsZero() && v.frameTime.Sub(a.started) >= queueArrivalDuration {
+			delete(v.queueArrivals, id)
+			continue
+		}
+		if m.Resolved[id] {
+			a.ready = true
+		}
+		for _, item := range m.Queue().Items {
+			if item.ID == id {
+				a.seen = true
+				break
+			}
+		}
+		if a.ready && a.seen && a.started.IsZero() {
+			a.started = v.frameTime
+			v.composerHeightUntil = v.frameTime.Add(queueArrivalDuration)
+		}
+	}
+	newest := -1
+	for id, source := range v.queueSources {
+		if !source.delivered && source.item.Input.OperationID != "" {
+			for index, item := range m.Details[m.SessionID].Items {
+				if item.Kind == "user" && item.ID == "input:"+source.item.Input.OperationID {
+					if index > newest {
+						v.sent = &sentMessageMotion{input: item.ID, origin: m.SessionID, session: m.SessionID, epoch: m.ConnectionEpoch, workspace: m.WorkspaceID, source: n.Rect{X: source.bounds.X - 16, Y: source.bounds.Y - 12, W: source.bounds.W + 32, H: source.bounds.H + 24}, queued: true, focused: true}
+						newest = index
+					}
+					source.delivered = true
+					v.queueSources[id] = source
+					break
+				}
+			}
+		}
+		present := false
+		for _, item := range m.Queue().Items {
+			if item.ID == id {
+				present = true
+				break
+			}
+		}
+		if !present {
+			delete(v.queueSources, id)
+		}
+	}
+}
 
 func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 	m := v.Model
@@ -24,22 +142,65 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 	if v.queueDrag != nil && (v.queueDrag.session != sid || v.queueDrag.epoch != m.ConnectionEpoch) {
 		v.queueDrag = nil
 	}
+
 	held := false
-	if sid == "" || len(q.Items) == 0 {
+	present := len(q.Items) > 0
+	if sid == "" {
+		v.queueDisplay = domain.QueueState{}
 		v.queueDrag = nil
 		return
 	}
+	if present {
+		v.queueDisplay = q
+	} else if v.queueDisplay.SessionID == sid && len(v.queueDisplay.Items) > 0 {
+		q = v.queueDisplay
+		v.queueDrag = nil
+	}
+
 	bg := raised(t)
 	if t.Dark {
 		bg = t.Surface
 	}
-	entryMotion := disclosureMotion(c, 160*time.Millisecond)
-	entryMotion.Size = false
-	n.Column(c.Key("queued-turns:"+sid)).Label("待发送队列").FillWidth().Gap(0).Background(bg).Border(1, t.Text.Alpha(.10)).Radius(16, 16, 0, 0).Margin(0, 0, -1, 0).Clip().Transition(entryMotion).Children(func() {
-		n.Row(c).FillWidth().Height(32).PaddingX(14).AlignItems(n.Center).Gap(8).Children(func() {
+	root := n.Column(c.Key("queued-turns:"+sid)).Label("待发送队列").FillWidth().Gap(0).Background(bg).Border(1, t.Border).Radius(16, 16, 0, 0).Margin(0, 0, -17, 0).Clip()
+	opacity := float32(1)
+	if edit.ID != "" {
+		opacity = .45
+	}
+	root.Opacity(root.AnimateTo("queue-edit-opacity", opacity, motionAnimation(c, 180*time.Millisecond)))
+	rowHeight := float32(0)
+	arriving, accepted := false, false
+	for _, item := range q.Items {
+		rowHeight += 32 * v.queueArrivalProgress(c, item.ID)
+		a := v.queueArrivals[item.ID]
+		arriving = arriving || a != nil
+		accepted = accepted || a == nil || a.ready
+	}
+	targetPresence := float32(0)
+	if present && accepted {
+		targetPresence = 1
+	}
+	presenceMotion := motionAnimation(c, 160*time.Millisecond)
+	if arriving {
+		presenceMotion = n.Animation{Duration: queueArrivalDuration, Ease: composerDescentEase}
+	}
+	presence := root.AnimateTo("queue-presence", targetPresence, presenceMotion)
+	if !present && presence <= .001 {
+		v.queueDisplay = domain.QueueState{}
+		root.Height(0).Hidden(true).Margin(0).Border(0, n.Transparent)
+		return
+	}
+	root.IgnoreInput(!present).Children(func() {
+		n.Row(c).FillWidth().Height(32).Shrink(0).PaddingX(14).AlignItems(n.Center).Gap(8).Children(func() {
 			label := fmt.Sprintf("待发送 %d", len(q.Items))
 			trigger := n.ButtonBase(c.Key("queue-disclosure")).Height(32).Grow(1).MinWidth(0).Justify(n.Start).Label(label)
 			color := textHoverColor(c, trigger, t.Text.Alpha(.86))
+			trigger.DrawOver(func(_ *n.Painter, r n.Rect) {
+				for _, item := range q.Items {
+					if present && !m.QueueExpanded[sid] {
+						v.rememberQueuedSource(item, n.Rect{X: r.X + 20, Y: r.Y + 6, W: r.W - 20, H: 20})
+					}
+				}
+			})
 			trigger.Children(func() {
 				n.Row(c).Gap(3).AlignItems(n.Center).Children(func() {
 					angle := float32(-90)
@@ -47,89 +208,130 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 						angle = 0
 					}
 					n.Column(c).Size(16, 18).AlignItems(n.Center).Justify(n.Center).Children(func() {
-						n.Icon(c, chevron).Size(14, 14).TextColor(subtle(t)).Transform(n.Rotation(trigger.AnimateTo("queue-chevron", angle, motionAnimation(c, 180*time.Millisecond))))
+						n.Icon(c, chevron).Size(14, 14).TextColor(subtle(t)).Transform(n.Rotation(trigger.AnimateTo("queue-chevron", angle, motionAnimation(c, 160*time.Millisecond))))
 					})
 					n.Text(c, "待发送").FontSize(12).FontWeight(500).FixedLineHeight(18).TextColor(color)
 					n.Text(c, fmt.Sprint(len(q.Items))).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
 				})
 			})
-			if trigger.Clicked() {
+			if trigger.Clicked() && present {
 				m.QueueExpanded[sid] = !m.QueueExpanded[sid]
 			}
 			if q.Paused {
 				n.Text(c, "已暂停").FontSize(11).TextColor(t.TextMuted).Tooltip(q.Reason)
-				if ghost(c, "继续队列").Height(26).Disabled(!m.Connected || v.queueBusy[sid]).Clicked() {
+				if ghost(c, "继续队列").Height(26).Disabled(!m.Connected || v.queueBusy[sid]).Clicked() && present {
 					v.queueCommand("queue.continue", protocol.QueueInput{SessionID: sid, Revision: q.Revision}, nil)
 				}
 			}
 		})
 		_, windowHeight := c.Size()
-		full := min(float32(len(q.Items))*32, min(float32(160), windowHeight*.22)) + 4
-		target := float32(0)
-		if m.QueueExpanded[sid] {
-			target = full
+		full := min(rowHeight, min(float32(96), windowHeight*.22)) + 4
+		body := n.Column(c.Key("queue-body")).FillWidth().Gap(0).Shrink(0).Clip()
+		extent := full
+		if arriving {
+			body.Jump("queue-content-height", full)
+		} else {
+			extent = body.AnimateTo("queue-content-height", full, motionAnimation(c, 160*time.Millisecond))
 		}
-		body := n.Column(c.Key("queue-body")).FillWidth().Gap(0).Clip()
-		height := body.AnimateTo("queue-height", target, motionAnimation(c, 160*time.Millisecond))
-		opacity := min(float32(1), height/full)
-		body.Height(height).Opacity(opacity).Children(func() {
+		expansion := float32(0)
+		if m.QueueExpanded[sid] {
+			expansion = 1
+		}
+		height := extent * body.AnimateTo("queue-expanded", expansion, motionAnimation(c, 160*time.Millisecond))
+		// Continue the backplate behind the composer's 16 px top corners.
+		surfaceHeight := (32 + height) * presence
+		if arriving {
+			surfaceHeight = 32*presence + height
+		}
+		root.Height(surfaceHeight + 16).Transform(n.Translation(0, 16*(1-presence)))
+		body.Height(height).Children(func() {
 			if height <= .1 {
 				return
 			}
-			n.Column(c).Absolute().Left(0).Right(0).Top(0).Height(full).Gap(0).Children(func() {
-				n.Scroll(c.Key("queue-scroll")).FillWidth().Height(full).Padding(0, 4, 4).Label("待发送消息列表").Children(func() {
+			n.Column(c).Absolute().Left(0).Right(0).Top(0).Height(extent).Gap(0).Children(func() {
+				scroll := n.Scroll(c.Key("queue-scroll")).FillWidth().Height(extent).Padding(0, 4).Label("待发送消息列表")
+				scroll.Children(func() {
 					list := n.Column(c.Key("queue-rows")).FillWidth().Gap(0)
 					items := v.previewQueueRows(c, list, q)
 					list.Children(func() {
 						for i, item := range items {
 							i, item := i, item
-							motion := n.ElementTransition{Position: !c.Preferences().ReduceMotion, Duration: motionAnimation(c, 160*time.Millisecond).Duration, Ease: n.EaseOut, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}}
-							row := n.Row(c.Key(item.ID)).Transition(motion).FillWidth().Height(32).PaddingX(10).Gap(3).Radius(5).AlignItems(n.Center)
-							held = v.queueRowGestures(c, row, q, item) || held
-							hover := n.Transparent
-							if row.Hovered() || row.FocusWithin() {
-								hover = t.Text.Alpha(.04)
+							progress := v.queueArrivalProgress(c, item.ID)
+							motion := n.ElementTransition{Position: !c.Preferences().ReduceMotion && !arriving, Colors: true, Duration: motionAnimation(c, 160*time.Millisecond).Duration, Ease: n.EaseOut}
+							slot := n.Column(c.Key("queue-slot:" + item.ID)).FillWidth().Height(32 * progress).Shrink(0).Transition(motion)
+							if progress < 1 {
+								slot.Clip()
 							}
-							row.Background(row.AnimateColor("queue-row-hover", hover, motionAnimation(c, 120*time.Millisecond)))
-							if row.Dragging() {
-								row.Background(t.SurfaceHover).Shadow(0, 2, 6, 0, n.RGBA(0, 0, 0, .08))
-							}
-							row.Children(func() {
-								n.Text(c, fmt.Sprint(i+1)).Width(16).TextAlign(n.Center).Font("Menlo").FontSize(11).FixedLineHeight(18).TextColor(subtle(t))
-								text := strings.ReplaceAll(strings.TrimSpace(item.Input.Text), "\n", " ")
-								n.Text(c, text).Grow(1).MinWidth(0).Lines(1, 1).Ellipsis("…").FontSize(14).FixedLineHeight(20).TextColor(t.Text.Alpha(.86)).Tooltip(item.Input.Text)
-								if item.State != "" {
-									n.Text(c, map[string]string{"dispatching": "发送中", "failed": "未发送", "unknown": "待核实"}[item.State]).FontSize(11).TextColor(subtle(t))
+							slot.Children(func() {
+								row := n.Row(c.Key(item.ID)).Absolute().Left(0).Right(0).Top(0).FillWidth().Height(32).PaddingX(10).Gap(3).Radius(5).AlignItems(n.Center)
+
+								if present {
+									held = v.queueRowGestures(c, row, q, item) || held
 								}
-								visible := float32(0)
-								width, _ := c.Size()
-								if row.Hovered() || row.FocusWithin() || width < 720 {
-									visible = 1
+								hover := n.Transparent
+								if row.Hovered() || row.FocusWithin() {
+									hover = t.Text.Alpha(.04)
 								}
-								n.Row(c).Gap(1).Opacity(row.AnimateTo("queue-actions", visible, motionAnimation(c, 120*time.Millisecond))).Children(func() {
-									locked := !m.Connected || v.queueBusy[sid] || item.State == "dispatching" || item.State == "unknown"
-									for _, action := range []struct {
-										label    string
-										icon     *n.SVG
-										disabled bool
-										run      func()
-									}{
-										{fmt.Sprintf("立即发送待发消息 %d", i+1), steerMessageIcon, locked || (m.Active() && m.ActiveTurn() == "") || item.State != "", func() {
-											v.queueCommand("queue.send", protocol.QueueInput{SessionID: sid, ID: item.ID, Revision: q.Revision, TurnID: m.ActiveTurn()}, nil)
-										}},
-										{fmt.Sprintf("编辑待发消息 %d", i+1), queueEditIcon, locked || edit.ID != "" || m.HasPendingInput(), func() {
-											v.editQueued(item.ID)
-										}},
-										{fmt.Sprintf("移除待发消息 %d", i+1), queueRemoveIcon, !m.Connected || v.queueBusy[sid] || item.State == "dispatching" || edit.ID == item.ID, func() {
-											v.queueCommand("queue.remove", protocol.QueueInput{SessionID: sid, ID: item.ID, Revision: q.Revision}, nil)
-										}},
-									} {
-										if control(c.Key(action.label), 5).Size(25, 26).Label(action.label).Disabled(action.disabled).Children(func() { n.Icon(c, action.icon).Size(12, 12) }).Clicked() {
-											action.run()
-										}
+								row.Background(row.AnimateColor("queue-row-hover", hover, motionAnimation(c, 120*time.Millisecond)))
+								if row.Dragging() {
+									row.Background(t.SurfaceHover).Shadow(0, 2, 6, 0, n.RGBA(0, 0, 0, .08))
+								}
+
+								row.Children(func() {
+									n.Text(c, fmt.Sprint(i+1)).Width(16).TextAlign(n.Center).Font("Menlo").FontSize(11).FixedLineHeight(18).TextColor(subtle(t))
+									preview := item.Input.Text
+									if edit.ID == item.ID {
+										preview = m.Drafts["session:"+sid]
 									}
+									text := strings.ReplaceAll(strings.TrimSpace(preview), "\n", " ")
+									queuedText := n.Text(c, text).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").FontSize(14).FixedLineHeight(20).TextColor(t.Text.Alpha(.86)).Tooltip(preview)
+									queuedText.DrawOver(func(_ *n.Painter, r n.Rect) {
+										if present {
+											v.rememberQueuedSource(item, r)
+										}
+									})
+									if item.State != "" {
+										n.Text(c, map[string]string{"dispatching": "发送中", "failed": "未发送", "unknown": "待核实"}[item.State]).FontSize(11).TextColor(subtle(t))
+									}
+									visible := float32(0)
+									width, _ := c.Size()
+									if row.Hovered() || row.FocusWithin() || width < 720 {
+										visible = 1
+									}
+									n.Row(c).Gap(1).Opacity(row.AnimateTo("queue-actions", visible, motionAnimation(c, 120*time.Millisecond))).Children(func() {
+										locked := !m.Connected || v.queueBusy[sid] || item.State == "dispatching" || item.State == "unknown"
+										for _, action := range []struct {
+											label    string
+											icon     *n.SVG
+											disabled bool
+											run      func()
+										}{
+											{fmt.Sprintf("立即发送待发消息 %d", i+1), arrow, locked || (m.Active() && m.ActiveTurn() == "") || item.State != "", func() {
+												v.queueCommand("queue.send", protocol.QueueInput{SessionID: sid, ID: item.ID, Revision: q.Revision, TurnID: m.ActiveTurn()}, nil)
+											}},
+											{fmt.Sprintf("编辑待发消息 %d", i+1), queueEditIcon, locked || edit.ID != "" || m.HasPendingInput(), func() {
+												v.editQueued(item.ID)
+											}},
+											{fmt.Sprintf("移除待发消息 %d", i+1), queueRemoveIcon, !m.Connected || v.queueBusy[sid] || item.State == "dispatching" || edit.ID == item.ID, func() {
+												v.queueCommand("queue.remove", protocol.QueueInput{SessionID: sid, ID: item.ID, Revision: q.Revision}, nil)
+											}},
+										} {
+											if control(c.Key(action.label), 5).Size(25, 26).Label(action.label).Disabled(action.disabled).Children(func() { n.Icon(c, action.icon).Size(12, 12) }).Clicked() && present {
+												action.run()
+											}
+										}
+									})
 								})
 							})
+						}
+						end := n.Column(c.Key("queue-end")).Height(4).Shrink(0)
+						if m.QueueExpanded[sid] {
+							for _, item := range q.Items {
+								if a := v.queueArrivals[item.ID]; a != nil && a.ready {
+									end.ScrollIntoView()
+									break
+								}
+							}
 						}
 					})
 				})
@@ -148,62 +350,14 @@ func (v *View) queueEditBar(c *n.Context, t *n.Theme) {
 	if m.QueueEdits[sid].ID == "" {
 		return
 	}
-	n.Row(c.Key("queue-edit-bar")).FillWidth().Padding(0, 0, 6, 10).Gap(5).AlignItems(n.Center).Children(func() {
+	n.Row(c.Key("queue-edit-bar")).Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 180*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}}).Absolute().Left(6).Right(14).Top(10).Height(28).Padding(0, 0, 6, 10).Gap(5).AlignItems(n.Center).Children(func() {
 		n.Icon(c, queueEditIcon).Size(12, 12).TextColor(t.TextMuted)
 		n.Text(c, "编辑待发消息").FontSize(11).FixedLineHeight(22).TextColor(t.TextMuted)
 		n.Spacer(c).Grow(1)
 		if ghost(c, "取消编辑").PaddingX(0).Height(22).Disabled(v.queueBusy[sid]).Clicked() {
-			m.CancelQueueEdit(sid)
-			v.focusComposer = true
+			v.cancelQueuedEdit()
 		}
 	})
-}
-func (v *View) sendActions(c *n.Context, t *n.Theme, empty bool) {
-	trigger := control(c, 5).Size(20, 28).Label("发送操作").Children(func() { n.Icon(c, chevron).Size(11, 11).TextColor(t.TextMuted) })
-	if v.menuOpen == nil {
-		v.menuOpen = map[string]bool{}
-	}
-	key := "send-actions:" + v.Model.DraftKey()
-	open := v.menuOpen[key]
-	if trigger.Clicked() {
-		open = !open
-	}
-	popover(c.Key(key), trigger, &open, func(panel n.Element) {
-		panel.AttachTo(trigger, n.AnchorTopEnd, n.AnchorBottomEnd).Margin(0, 0, 6, 0).Label("发送选项").Width(238).Padding(3).Radius(7).Background(raised(t)).Border(1, t.Border).Shadow(0, 4, 16, 0, n.RGBA(0, 0, 0, .12)).Children(func() {
-			n.Column(c).FillWidth().Gap(0).FocusGroup(n.Vertical).Children(func() {
-				for i, action := range []struct {
-					name     string
-					icon     *n.SVG
-					disabled bool
-					run      func()
-				}{
-					{"加入队列", queueAddIcon, empty || !v.Model.Connected || v.Model.WorkerMinor < 2, func() { v.sendMessage(false) }},
-					{"立即介入", steerMessageIcon, empty || !v.Model.Connected || v.Model.ActiveTurn() == "" || v.Model.WorkerMinor < 2, func() { v.sendMessage(true) }},
-					{"停止当前轮", stop, !v.Model.Connected || v.Model.ActiveTurn() == "", v.interrupt},
-				} {
-					if i == 2 {
-						n.Column(c).FillWidth().Height(1).Margin(3, 4).Background(t.Border)
-					}
-					button := control(c.Key(action.name), 4).FillWidth().Height(26).PaddingX(7).Label(action.name).Disabled(action.disabled)
-					if i == 0 {
-						button.AutoFocus()
-					}
-					button.Children(func() {
-						n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
-							n.Icon(c, action.icon).Size(14, 14).TextColor(t.TextMuted)
-							n.Text(c, action.name).FontSize(13).FixedLineHeight(20).TextColor(t.Text)
-						})
-					})
-					if button.Clicked() {
-						action.run()
-						open = false
-						trigger.Focus()
-					}
-				}
-			})
-		})
-	})
-	v.menuOpen[key] = open
 }
 func (v *View) queueCommand(method string, in protocol.QueueInput, done func(domain.QueueState)) {
 	if v.Controller == nil {
@@ -260,6 +414,10 @@ func (v *View) submitActive(in domain.Submission, method, turn string) {
 	m := v.Model
 	var sent *sentMessageMotion
 	var payload any = in
+	var arrival *queuedArrivalMotion
+	if method == "turn.enqueue" {
+		arrival = v.beginQueueArrival(in.OperationID, false)
+	}
 	if method == "turn.steer" {
 		sent = v.beginSendMotion(in)
 		payload = protocol.SteerInput{Input: in, TurnID: turn}
@@ -273,6 +431,9 @@ func (v *View) submitActive(in domain.Submission, method, turn string) {
 	}
 	if !v.do(app.Job{Method: method, Input: payload, Prepare: prepare, Apply: func(m *app.Model, b json.RawMessage, err error) {
 		if err != nil {
+			if v.queueArrivals[in.OperationID] == arrival {
+				delete(v.queueArrivals, in.OperationID)
+			}
 			if sent != nil && v.sent == sent {
 				v.sent = nil
 			}
@@ -281,6 +442,9 @@ func (v *View) submitActive(in domain.Submission, method, turn string) {
 		}
 		var op domain.Operation
 		if err = json.Unmarshal(b, &op); err != nil {
+			if v.queueArrivals[in.OperationID] == arrival {
+				delete(v.queueArrivals, in.OperationID)
+			}
 			if sent != nil && v.sent == sent {
 				v.sent = nil
 			}
@@ -288,6 +452,9 @@ func (v *View) submitActive(in domain.Submission, method, turn string) {
 			return
 		}
 		m.Accepted(in, op)
+		if arrival != nil && op.State != "confirmed" && v.queueArrivals[in.OperationID] == arrival {
+			delete(v.queueArrivals, in.OperationID)
+		}
 		if sent != nil && v.sent == sent {
 			if op.State == "rejected" || op.State == "indeterminate" {
 				v.sent = nil
@@ -296,6 +463,9 @@ func (v *View) submitActive(in domain.Submission, method, turn string) {
 			}
 		}
 	}}) {
+		if v.queueArrivals[in.OperationID] == arrival {
+			delete(v.queueArrivals, in.OperationID)
+		}
 		if sent != nil && v.sent == sent {
 			v.sent = nil
 		}

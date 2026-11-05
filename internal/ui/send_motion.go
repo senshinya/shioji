@@ -24,7 +24,7 @@ type sentMessageMotion struct {
 	input, origin, session, epoch, workspace string
 	started                                  time.Time
 	source                                   n.Rect
-	anchored, focused, departed              bool
+	anchored, focused, departed, queued      bool
 }
 
 func (v *View) beginSendMotion(in domain.Submission) *sentMessageMotion {
@@ -70,7 +70,10 @@ func (v *View) anchorSentMessage(c *n.Context, state *n.ListState, rows []transc
 			continue
 		}
 		s.started, s.anchored = c.Now(), true
-		state.AnchorRow(i+1, 100, n.Animation{Duration: sentScrollDuration, Ease: sentScrollEase})
+		// Automatic queue dispatch must not pull a reader away from history.
+		if !s.queued || state.AtEnd() {
+			state.AnchorRow(i+1, 100, n.Animation{Duration: sentScrollDuration, Ease: sentScrollEase})
+		}
 		c.AnimationFrame()
 		break
 	}
@@ -114,7 +117,7 @@ func (v *View) sendProgress(c *n.Context) float32 {
 
 func (v *View) composerSendTransition(c *n.Context, composer n.Element, home bool) {
 	s := v.sent
-	if s == nil {
+	if s == nil || s.queued {
 		return
 	}
 	t := n.ElementTransition{Duration: 360 * time.Millisecond, Ease: n.EaseOut, Size: true}

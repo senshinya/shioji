@@ -19,6 +19,7 @@ func (v *View) editQueued(id string) {
 		v.Model.Error = err.Error()
 	} else {
 		v.focusComposer = true
+		delete(v.queueArrivals, id)
 	}
 }
 
@@ -121,10 +122,5 @@ func (v *View) queueRowGestures(c *n.Context, row n.Element, q domain.QueueState
 	if dragging {
 		row.Opacity(0).Cursor(n.CursorGrabbing)
 	}
-	if d != nil && d.id == item.ID && d.moving && d.revision == q.Revision {
-		color := c.Theme().TextMuted
-		row.DrawOver(func(p *n.Painter, r n.Rect) { p.Fill(n.Rect{X: r.X + 10, Y: r.Y - 1, W: r.W - 20, H: 2}, color, 1) })
-	}
-
 	return pressed || dragging
 }

@@ -67,20 +67,37 @@ func TestPressAndReducedMotionFeedback(t *testing.T) {
 	}
 }
 
-func TestComposerFocusChangesOnlyItsBorder(t *testing.T) {
-	ui := n.NewTester(New(layoutModel(), nil, "").View, 1440, 900)
-	r, _ := ui.Find("消息编辑器")
-	x, y := int(r.X), int(r.Y+r.H/2)
-	rest := ui.Image().RGBAAt(x, y)
-	if err := ui.Click("消息输入"); err != nil {
-		t.Fatal(err)
-	}
-	ui.Advance(180 * time.Millisecond)
-	if focused := ui.Image().RGBAAt(x, y); focused == rest {
-		t.Fatal("composer focus has no visible border feedback")
-	}
-	if got, _ := ui.Find("消息编辑器"); got != r {
-		t.Fatal("focus changed the composer geometry")
+func TestComposerHoverAndFocusKeepItsBorder(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, home := range []bool{false, true} {
+			m := layoutModel()
+			if home {
+				m.SessionID = ""
+			}
+			ui := n.NewTester(New(m, nil, "").View, 1440, 900)
+			ui.SetDark(dark)
+			r, _ := ui.Find("消息编辑器")
+			x, y := int(r.X), int(r.Y+r.H/2)
+			rest := ui.Image().RGBAAt(x, y)
+			ui.Move(r.X+r.W/2, r.Y+8)
+			ui.Advance(180 * time.Millisecond)
+			if hover := ui.Image().RGBAAt(x, y); hover != rest {
+				t.Fatal("composer hover changes border", dark, home, rest, hover)
+			}
+			if err := ui.Click("消息输入"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(180 * time.Millisecond)
+			if focused := ui.Image().RGBAAt(x, y); focused != rest {
+				t.Fatal("composer focus changes border", dark, home, rest, focused)
+			}
+			if !ui.Focused("消息输入") {
+				t.Fatal("composer did not retain keyboard focus")
+			}
+			if got, _ := ui.Find("消息编辑器"); got != r {
+				t.Fatal("focus changed composer geometry")
+			}
+		}
 	}
 }
 

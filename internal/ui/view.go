@@ -37,6 +37,16 @@ type View struct {
 	focusComposer           bool
 	queueBusy               map[string]bool
 	queueDrag               *queuedRowDrag
+	queueSources            map[string]queuedMessageSource
+	queueSourceSession      string
+	queueSourceEpoch        string
+	queueArrivals           map[string]*queuedArrivalMotion
+	queueDisplay            domain.QueueState
+	composerHeightKey       string
+	composerInputHeight     float32
+	composerNaturalHeight   float32
+	composerEditID          string
+	composerHeightUntil     time.Time
 	inputBounds             n.Rect
 	reduceMotion            bool
 	draftBindings           map[string]*editBinding
@@ -139,6 +149,7 @@ func (v *View) View(c *n.Context) {
 		}
 	}
 drained:
+	v.syncQueuedMotions()
 	v.syncSendMotion()
 	v.syncSessionEntry()
 	if v.selected != m.SessionID {
@@ -396,6 +407,8 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 							n.Column(c).Width(10).AlignItems(n.Center).AlignSelf(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Success) })
 						} else if s.Status == "completed" {
 							inlineSymbol(c, check, s.Title, n.Font{Family: "system-ui", Size: 13, Weight: 400}, 10, t.Success)
+						} else if s.Status == "interrupted" {
+							inlineSymbol(c, check, s.Title, n.Font{Family: "system-ui", Size: 13, Weight: 400}, 10, t.TextMuted).Label("已停止")
 						} else {
 							glyph := "Ⅱ"
 							label := "已暂停"
@@ -406,9 +419,6 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 							if s.Status == "unknown" {
 								glyph = "?"
 								label = "执行状态待核实"
-							}
-							if s.Status == "interrupted" {
-								label = "已停止"
 							}
 							n.Text(c, glyph).Width(10).FontSize(11).TextColor(t.TextMuted).Label(label)
 						}
@@ -572,98 +582,153 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	stack := n.Column(c.Key("composer-stack:" + key)).Label("消息编辑区").FillWidth().MaxWidth(maxWidth).Gap(0).Children(func() {
 		v.queueDisclosure(c, t)
 		binding = textBinding(v.draftBindings, key, m.Drafts[key])
-		topRadius := float32(16)
-		if len(m.Queue().Items) > 0 {
-			topRadius = 0
+
+		editID := m.QueueEdits[m.SessionID].ID
+		if v.composerHeightKey != key {
+			v.composerHeightKey, v.composerNaturalHeight, v.composerEditID = key, 0, editID
+			v.composerHeightUntil = time.Time{}
+			v.composerInputHeight = inputHeight
 		}
-		composer := n.Column(c.Key("composer:"+key)).Label("消息编辑器").FillWidth().Padding(10, 14, 8, 6).Gap(4).Background(bg).Border(1, t.Border).Radius(topRadius, topRadius, 16, 16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04)).Children(func() {
-			v.queueEditBar(c, t)
-			binding = textBinding(v.draftBindings, key, m.Drafts[key])
-			v.branchStrip(c, t, home)
-			input := n.TextAreaBase(c.Key("input"), &binding.Text).Label("消息输入").Placeholder("描述任务…").PlaceholderColor(subtle(t)).Padding(0, 9).FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(inputSize).FixedLineHeight(inputLeading).OnTextKey(func(k n.TextKey) bool {
-				if k.Key == n.KeyEnter && (k.Mods == 0 || k.Mods == n.Cmd) {
-					m.Drafts[key] = k.Text()
-					if strings.TrimSpace(k.Text()) != "" {
-						v.sendMessage(k.Mods == n.Cmd)
+		if v.composerEditID != editID {
+			v.composerEditID = editID
+			v.composerHeightUntil = c.Now().Add(360 * time.Millisecond)
+		}
+		heightFrame := n.Column(c.Key("composer-height:"+key)).Label("消息编辑器").FillWidth().Clip().Background(bg).Border(1, t.Border).Radius(16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04))
+		resize := c.Now().Before(v.composerHeightUntil) || editID != ""
+		shownHeight := v.composerNaturalHeight
+		if v.composerNaturalHeight > 0 {
+			if resize {
+				shownHeight = heightFrame.AnimateTo("composer-height", v.composerNaturalHeight, n.Animation{Duration: 360 * time.Millisecond, Ease: composerDescentEase})
+				heightFrame.Height(shownHeight)
+			} else {
+				heightFrame.Jump("composer-height", v.composerNaturalHeight)
+			}
+		}
+		heightFrame.Children(func() {
+			var input n.Element
+			composer := n.Column(c.Key("composer:"+key)).FillWidth().Padding(10, 14, 8, 6).Gap(4).Children(func() {
+				if m.QueueEdits[m.SessionID].ID != "" {
+					n.Column(c).Height(28)
+				}
+				binding = textBinding(v.draftBindings, key, m.Drafts[key])
+				v.branchStrip(c, t, home)
+				n.Column(c.Key("composer-input-space")).Height(v.composerInputHeight).Shrink(0)
+				// A zero-height origin fixed above the footer keeps outgoing editor
+				// snapshots still while the composer changes its natural height.
+				n.Column(c.Key("composer-input-anchor")).Absolute().Left(6).Right(14).Bottom(40).Height(0).Children(func() {
+					inputKey := "input"
+					if editID != "" {
+						inputKey += ":edit:" + editID
 					}
-					return true
-				}
-				return false
-			})
-			if v.focusComposer {
-				input.Focus()
-				v.focusComposer = false
-			}
-			input.Changed()
-			v.inputBounds = input.Bounds()
-			if s := v.sent; s != nil && s.source.W > 0 && s.session == m.SessionID && !home && !c.Preferences().ReduceMotion {
-				input.PlaceholderColor(subtle(t).Alpha(v.sendProgress(c)))
-			}
-			if s := v.sent; s != nil && s.origin == "" && s.session == m.SessionID && !home && !s.focused {
-				if v.composerHadFocus {
-					input.Focus()
-				}
-				s.focused = true
-			}
-			draft = binding.Text
-			m.Drafts[key] = draft
-			binding.LastModel = draft
-			n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
-				iconButton(c, plus, "添加附件（当前 Codex 适配器暂不支持）").Size(28, 28).Disabled(true)
-				permission := control(c).Height(28).PaddingX(6).Radius(6).Label("Permission").Children(func() {
-					inlineIconText(c, shieldIcon, permissionLabel(cfg.Permission), n.Font{Family: "system-ui", Size: 12, Weight: 400}, 13, 6, t.TextMuted)
+					input = n.TextAreaBase(c.Key(inputKey), &binding.Text).Absolute().Left(0).Right(0).Bottom(0).Label("消息输入").Placeholder("描述任务…").PlaceholderColor(subtle(t)).Padding(0, 9).FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(inputSize).FixedLineHeight(inputLeading).OnTextKey(func(k n.TextKey) bool {
+						if k.Key == n.KeyEnter && (k.Mods == 0 || k.Mods == n.Cmd) {
+							m.Drafts[key] = k.Text()
+							if strings.TrimSpace(k.Text()) != "" {
+								v.sendMessage(k.Mods == n.Cmd)
+							}
+							return true
+						}
+						return false
+					})
+					input.Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 180*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
+
+					if v.focusComposer {
+						input.Focus()
+						v.focusComposer = false
+					}
+					input.Changed()
+					v.inputBounds = input.Bounds()
+					if s := v.sent; s != nil && s.source.W > 0 && s.session == m.SessionID && !s.queued && !home && !c.Preferences().ReduceMotion {
+						input.PlaceholderColor(subtle(t).Alpha(v.sendProgress(c)))
+					}
+					if s := v.sent; s != nil && s.origin == "" && s.session == m.SessionID && !home && !s.focused {
+						if v.composerHadFocus {
+							input.Focus()
+						}
+						s.focused = true
+					}
+					draft = binding.Text
+					m.Drafts[key] = draft
+					binding.LastModel = draft
 				})
-				choices := []menuChoice{}
-				for _, id := range m.Readiness.Permissions {
-					id := id
-					detail := map[string]string{"read-only": "仅查看", "default": "按需请求批准", "auto-approve": "沙盒内自动批准", "yolo": "不限制沙盒或批准"}[id]
-					choices = append(choices, menuChoice{id: id, name: permissionLabel(id), detail: detail, checked: cfg.Permission == id, choose: func() { cfg.Permission = id; m.Configs[key] = cfg }})
-				}
-				v.choiceMenu(c, t, "permission:"+key, permission, choices)
-				n.Spacer(c).Grow(1)
-				v.runControl(c, t, key, cfg)
-				empty := strings.TrimSpace(draft) == ""
-				icon := arrow
-				label := "发送"
-				editing := m.QueueEdits[m.SessionID].ID != ""
-				queuing := running || len(m.Queue().Items) > 0
-				disabled := !m.Connected || m.Readiness.State != "ready" || empty
-				if queuing {
-					icon = queueAddIcon
-					label = "加入队列"
-					disabled = disabled || m.WorkerMinor < 2
-				}
-				if editing {
-					icon = check
-					label = "保存编辑"
-					disabled = disabled || v.queueBusy[m.SessionID]
-				}
-				if running && empty && !editing {
-					icon = stop
-					label = "停止当前轮"
-					disabled = !m.Connected
-				}
-				fill := t.Accent
-				if disabled {
-					fill = subtle(t)
-				}
-				send := controlFeedback(c, n.ButtonBase(c), 14, true).Size(28, 28).Radius(14).Background(fill).TextColor(t.AccentText).Label(label).Disabled(disabled).Children(func() {
-					n.Icon(c.Key("primary-icon:"+label), icon).Size(20, 20).Transition(n.ElementTransition{Duration: motionAnimation(c, 120*time.Millisecond).Duration, Ease: n.EaseOut, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
-				})
-				if send.Clicked() {
+				n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
+					iconButton(c, plus, "添加附件（当前 Codex 适配器暂不支持）").Size(28, 28).Disabled(true)
+					permission := control(c).Height(28).PaddingX(6).Radius(6).Label("Permission").Children(func() {
+						inlineIconText(c, shieldIcon, permissionLabel(cfg.Permission), n.Font{Family: "system-ui", Size: 12, Weight: 400}, 13, 6, t.TextMuted)
+					})
+					choices := []menuChoice{}
+					for _, id := range m.Readiness.Permissions {
+						id := id
+						detail := map[string]string{"read-only": "仅查看", "default": "按需请求批准", "auto-approve": "沙盒内自动批准", "yolo": "不限制沙盒或批准"}[id]
+						choices = append(choices, menuChoice{id: id, name: permissionLabel(id), detail: detail, checked: cfg.Permission == id, choose: func() { cfg.Permission = id; m.Configs[key] = cfg }})
+					}
+					v.choiceMenu(c, t, "permission:"+key, permission, choices)
+					n.Spacer(c).Grow(1)
+					v.runControl(c, t, key, cfg)
+					empty := strings.TrimSpace(draft) == ""
+					icon := arrow
+					label := "发送"
+					editing := m.QueueEdits[m.SessionID].ID != ""
+					queuing := running || len(m.Queue().Items) > 0
+					disabled := !m.Connected || m.Readiness.State != "ready" || empty
+					if queuing {
+						icon = queueAddIcon
+						label = "加入队列"
+						disabled = disabled || m.WorkerMinor < 2
+					}
+					if editing {
+						icon = check
+						label = "保存编辑"
+						disabled = disabled || v.queueBusy[m.SessionID]
+					}
 					if running && empty && !editing {
-						v.interrupt()
-					} else {
-						m.Drafts[key] = draft
-						v.submit()
+						icon = stop
+						label = "停止当前轮"
+						disabled = !m.Connected
+					}
+					fill := t.Accent
+					if disabled {
+						fill = subtle(t)
+					}
+					send := controlFeedback(c, n.ButtonBase(c), 14, true).Size(28, 28).Radius(14).Background(fill).TextColor(t.AccentText).Label(label).Disabled(disabled).Children(func() {
+						n.Icon(c.Key("primary-icon:"+label), icon).Size(20, 20).Transition(n.ElementTransition{Duration: motionAnimation(c, 120*time.Millisecond).Duration, Ease: n.EaseOut, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
+					})
+					if send.Clicked() {
+						if running && empty && !editing {
+							v.interrupt()
+						} else {
+							m.Drafts[key] = draft
+							v.submit()
+						}
+					}
+				})
+			})
+
+			if v.composerNaturalHeight > 0 && resize {
+				composer.Absolute().Left(0).Right(0).Bottom(0)
+			}
+			invalidate := c.Services().Invalidate
+			composer.DrawOver(func(_ *n.Painter, r n.Rect) {
+				// Measure from the live editor's layout even at zero opacity;
+				// outgoing editor snapshots must never feed the dock's height.
+				if input.Valid() {
+					bounds := input.LayoutBounds()
+					if bounds.H > 0 && math.Abs(float64(v.composerInputHeight-bounds.H)) > .5 {
+						v.composerInputHeight = bounds.H
+						invalidate()
 					}
 				}
-				if running && !editing {
-					v.sendActions(c, t, empty)
+				if v.composerHeightKey == key && math.Abs(float64(v.composerNaturalHeight-r.H-2)) > .5 {
+					v.composerNaturalHeight = r.H + 2
+					invalidate()
 				}
 			})
+			if editID != "" {
+				// Keep expanding editor contents below the pinned edit controls.
+				n.Column(c.Key("queue-edit-header-surface")).Absolute().Left(1).Right(1).Top(1).Height(37).Radius(15, 15, 0, 0).Background(bg).IgnoreInput(true)
+			}
+			v.queueEditBar(c, t)
 		})
-		fieldFeedback(c, composer)
 	})
 	v.composerSendTransition(c, stack, home)
 	v.composerHadFocus = stack.FocusWithin()
