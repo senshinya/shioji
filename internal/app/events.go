@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"net"
-	"path/filepath"
 	"time"
 
 	"shioji/internal/protocol"
@@ -29,7 +27,7 @@ func (c *Controller) observeEvents(ctx context.Context, device, generation strin
 				return false
 			}
 		}
-		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(c.Directory, "worker.sock"))
+		conn, err := c.dial(ctx)
 		if err != nil {
 			send(eventResult{err: err})
 			return

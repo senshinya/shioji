@@ -35,11 +35,15 @@ func run() error {
 	if err = model.Load(*state); err != nil {
 		model.Error = "无法读取草稿：" + err.Error()
 	}
-	controller := app.NewController(*dir)
-	controller.ExpectedDeviceID = model.KnownDeviceID
+	restored := map[string][]string{}
 	for id := range model.Pending {
-		controller.RestoreOperations = append(controller.RestoreOperations, id)
+		key := model.PendingDevices[id]
+		if key == "" {
+			key = "local"
+		}
+		restored[key] = append(restored[key], id)
 	}
+	controller := app.NewDeviceController(*dir, model.LocalDeviceID, model.Connections, *workerBin, restored)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {

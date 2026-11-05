@@ -20,7 +20,7 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 		width, _ := c.Size()
 		panel.Width(min(560, width-40)).Padding(10).Radius(10).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
 			textField(c.Key("search-input"), &v.searchText).FillWidth().Height(32).Label("搜索会话").Placeholder("搜索会话与对话内容…").FontSize(13).Changed()
-			if v.Controller != nil && v.Model.Connected && v.searchSent != v.searchText {
+			if v.Controller != nil && (v.Model.Connected || len(v.Model.DeviceStates) > 0) && v.searchSent != v.searchText {
 				query := v.searchText
 				accepted := v.do(app.Job{Method: "session.search", Input: protocol.SearchQuery{Query: query}, Apply: func(m *app.Model, b json.RawMessage, err error) {
 					if query != v.searchText {
@@ -52,16 +52,17 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 			v.searchList.Key = func(i int) any { return results[i].SessionID }
 			n.List(c, &v.searchList, len(results), func(i int) {
 				r := results[i]
-				workspace := ""
+				workspace, device := "", ""
 				for _, w := range v.Model.Snapshot.Workspaces {
 					if w.ID == r.WorkspaceID {
 						workspace = w.Name
+						device = v.Model.DeviceName(w.DeviceID)
 					}
 				}
 				row := control(c).FillWidth().Padding(8).Radius(6).Label("搜索结果：" + r.Title + "，" + workspace).Children(func() {
 					n.Column(c).FillWidth().Gap(4).Children(func() {
 						n.Text(c, r.Title).SingleLine().FontSize(13)
-						n.Text(c, workspace+" · 这台 Mac").FontSize(11).TextColor(t.TextMuted)
+						n.Text(c, workspace+" · "+device).FontSize(11).TextColor(t.TextMuted)
 						if r.Snippet != "" {
 							n.Text(c, r.Snippet).SingleLine().FontSize(12).TextColor(t.TextMuted)
 						}

@@ -6,11 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
 	"shioji/internal/app"
@@ -24,63 +22,74 @@ type editBinding struct {
 }
 
 type View struct {
-	replyStreams            map[string]*replyStream
-	replySession            string
-	replyEpoch              string
-	replyFrame              uint64
-	toolMotions             map[string]*toolDisclosureMotion
-	frameTime               time.Time
-	toolsAnimating          bool
-	sent                    *sentMessageMotion
-	sessionEntry            *sessionEntryMotion
-	composerHadFocus        bool
-	focusComposer           bool
-	queueBusy               map[string]bool
-	queueDrag               *queuedRowDrag
-	queueSources            map[string]queuedMessageSource
-	queueSourceSession      string
-	queueSourceEpoch        string
-	queueArrivals           map[string]*queuedArrivalMotion
-	queueDisplay            domain.QueueState
-	composerHeightKey       string
-	composerInputHeight     float32
-	composerNaturalHeight   float32
-	composerEditID          string
-	composerHeightUntil     time.Time
-	inputBounds             n.Rect
-	reduceMotion            bool
-	draftBindings           map[string]*editBinding
-	answerBindings          map[string]*editBinding
-	customBindings          map[string]*editBinding
-	Saver                   *app.StateWriter
-	lastQueued              []byte
-	lastState               []byte
-	Model                   *app.Model
-	Controller              *app.Controller
-	StatePath               string
-	lists                   map[string]*n.ListState
-	nav                     n.ListState
-	md                      markdown.Options
-	runOpen, permissionOpen bool
-	runPage                 string
-	devices                 bool
-	selected                string
-	collapsedWorkspaces     map[string]bool
-	dockHeight              float32
-	searchOpen              bool
-	searchText, searchSent  string
-	searchResults           []domain.SearchResult
-	searchList              n.ListState
-	branchOpen              bool
-	branchSearch            string
-	branchList              n.ListState
-	switchingBranch         bool
-	gitLoaded               map[string]string
-	gitPending              map[string]bool
-	resizingInspector       bool
-	changes                 map[string]*changesState
-	menuOpen                map[string]bool
-	menuContext             string
+	replyStreams                                                                                                    map[string]*replyStream
+	replySession                                                                                                    string
+	replyEpoch                                                                                                      string
+	replyFrame                                                                                                      uint64
+	toolMotions                                                                                                     map[string]*toolDisclosureMotion
+	frameTime                                                                                                       time.Time
+	toolsAnimating                                                                                                  bool
+	sent                                                                                                            *sentMessageMotion
+	sessionEntry                                                                                                    *sessionEntryMotion
+	composerHadFocus                                                                                                bool
+	focusComposer                                                                                                   bool
+	queueBusy                                                                                                       map[string]bool
+	queueDrag                                                                                                       *queuedRowDrag
+	queueSources                                                                                                    map[string]queuedMessageSource
+	queueSourceSession                                                                                              string
+	queueSourceEpoch                                                                                                string
+	queueArrivals                                                                                                   map[string]*queuedArrivalMotion
+	queueDisplay                                                                                                    domain.QueueState
+	composerHeightKey                                                                                               string
+	composerInputHeight                                                                                             float32
+	composerNaturalHeight                                                                                           float32
+	composerEditID                                                                                                  string
+	composerHeightUntil                                                                                             time.Time
+	inputBounds                                                                                                     n.Rect
+	reduceMotion                                                                                                    bool
+	draftBindings                                                                                                   map[string]*editBinding
+	answerBindings                                                                                                  map[string]*editBinding
+	customBindings                                                                                                  map[string]*editBinding
+	Saver                                                                                                           *app.StateWriter
+	lastQueued                                                                                                      []byte
+	lastState                                                                                                       []byte
+	Model                                                                                                           *app.Model
+	Controller                                                                                                      *app.Controller
+	StatePath                                                                                                       string
+	lists                                                                                                           map[string]*n.ListState
+	nav                                                                                                             n.ListState
+	md                                                                                                              markdown.Options
+	runOpen, permissionOpen                                                                                         bool
+	runPage                                                                                                         string
+	devices                                                                                                         bool
+	selected                                                                                                        string
+	selectedDevice                                                                                                  string
+	deviceSelected                                                                                                  string
+	deviceList                                                                                                      bool
+	deviceSearch                                                                                                    string
+	sshOpen                                                                                                         bool
+	sshName, sshTarget, sshPort, sshError, sshRequest                                                               string
+	checkingSSH                                                                                                     bool
+	remoteWorkspaceOpen                                                                                             bool
+	remoteWorkspaceConnection, remoteWorkspaceName, remoteWorkspacePath, remoteWorkspaceExtra, remoteWorkspaceError string
+	remoteWorkspaceRequest                                                                                          string
+	remoteWorkspaceBusy                                                                                             bool
+	collapsedWorkspaces                                                                                             map[string]bool
+	dockHeight                                                                                                      float32
+	searchOpen                                                                                                      bool
+	searchText, searchSent                                                                                          string
+	searchResults                                                                                                   []domain.SearchResult
+	searchList                                                                                                      n.ListState
+	branchOpen                                                                                                      bool
+	branchSearch                                                                                                    string
+	branchList                                                                                                      n.ListState
+	switchingBranch                                                                                                 bool
+	gitLoaded                                                                                                       map[string]string
+	gitPending                                                                                                      map[string]bool
+	resizingInspector                                                                                               bool
+	changes                                                                                                         map[string]*changesState
+	menuOpen                                                                                                        map[string]bool
+	menuContext                                                                                                     string
 }
 
 func New(model *app.Model, controller *app.Controller, path string) *View {
@@ -150,14 +159,16 @@ func (v *View) View(c *n.Context) {
 		}
 	}
 drained:
+	m.RefreshDevices()
 	v.syncQueuedMotions()
 	v.syncSendMotion()
 	v.syncSessionEntry()
-	if v.selected != m.SessionID {
+	if v.selected != m.SessionID || v.selectedDevice != m.ConnectionID() {
 		v.selected = m.SessionID
+		v.selectedDevice = m.ConnectionID()
 		m.FoldToolHistory[m.SessionID] = true
 		if v.Controller != nil {
-			v.Controller.Select(m.SessionID)
+			v.Controller.SelectDevice(m.ConnectionID(), m.SessionID)
 		}
 	}
 	t := *c.Theme()
@@ -283,14 +294,16 @@ drained:
 			}
 		}
 	})
-	if v.selected != m.SessionID {
+	if v.selected != m.SessionID || v.selectedDevice != m.ConnectionID() {
 		v.selected = m.SessionID
+		v.selectedDevice = m.ConnectionID()
 		m.FoldToolHistory[m.SessionID] = true
 		if v.Controller != nil {
-			v.Controller.Select(m.SessionID)
+			v.Controller.SelectDevice(m.ConnectionID(), m.SessionID)
 		}
 		c.After(0)
 	}
+	v.deviceDialogs(c, &t)
 }
 
 func (v *View) home() {
@@ -396,7 +409,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 						}).Clicked() {
 							v.collapsedWorkspaces[w.ID] = !v.collapsedWorkspaces[w.ID]
 						}
-						n.Text(c, "这台 Mac").FontSize(11).TextColor(t.TextMuted).PaddingX(6)
+						n.Text(c, m.DeviceName(w.DeviceID)).FontSize(11).TextColor(t.TextMuted).PaddingX(6)
 					})
 					return
 				}
@@ -474,6 +487,9 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 	n.Row(c).Height(48).FillWidth().Padding(0, rightInset, 0, 24).Gap(6).AlignItems(n.Center).DragWindow().Label("会话工具栏").Children(func() {
 		if v.devices {
 			n.Text(c, "设备").FontSize(13).Grow(1)
+			add := iconButton(c, plus, "添加设备")
+			v.choiceMenu(c, t, "add-device", add, []menuChoice{{id: "ssh", name: "直接 SSH", choose: func() { v.sshOpen = true; v.sshError = "" }}, {id: "tailnet", name: "从 Tailnet 添加", disabled: true}})
+			return
 		} else if m.SessionID != "" {
 			heading := n.Row(c.Key("session-heading:" + m.SessionID)).Grow(1).Gap(6).AlignItems(n.Center).Label("会话名称")
 			if progress := v.sessionEntryProgress(c, m.SessionID, true); progress < 1 {
@@ -500,15 +516,15 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 				}
 				n.Column(c).Size(4, 4).Radius(2).Background(color).AlignSelf(n.Center)
 				font := n.Font{Family: "system-ui", Size: 11, Weight: 400}
-				inlineIconText(c, monitor, "这台 Mac", font, 14, 6, t.TextMuted)
-				inlineSymbol(c, chevron, "这台 Mac", font, 12, t.TextMuted)
+				inlineIconText(c, monitor, m.CurrentDeviceName(), font, 14, 6, t.TextMuted)
+				inlineSymbol(c, chevron, m.CurrentDeviceName(), font, 12, t.TextMuted)
 			})
 		})
 		status := "已连接"
 		if !m.Connected {
 			status = "未连接"
 		}
-		v.choiceMenu(c, t, "current-device", device, []menuChoice{{id: "connectivity", name: status, disabled: true}, {id: "runtime", name: "Codex · " + m.Readiness.State, disabled: true}, {id: "details", name: "设备详情", choose: func() { v.devices = true }}})
+		v.choiceMenu(c, t, "current-device", device, []menuChoice{{id: "connectivity", name: status, disabled: true}, {id: "runtime", name: "Codex · " + m.Readiness.State, disabled: true}, {id: "details", name: "设备详情", choose: func() { v.deviceSelected = m.ConnectionID(); v.deviceList = false; v.devices = true }}})
 		if m.SessionID != "" && !v.devices {
 			if plan := m.Details[m.SessionID].Plan; plan != nil && len(plan.Steps) > 0 {
 				if iconButton(c, tasksIcon, "查看任务").Clicked() {
@@ -554,7 +570,7 @@ func (v *View) homeView(c *n.Context, t *n.Theme) {
 				choices := []menuChoice{}
 				for _, w := range v.Model.Snapshot.Workspaces {
 					w := w
-					choices = append(choices, menuChoice{id: w.ID, name: w.Name, detail: "这台 Mac", checked: w.ID == v.Model.WorkspaceID, choose: func() { v.Model.WorkspaceID = w.ID }})
+					choices = append(choices, menuChoice{id: w.ID, name: w.Name, detail: v.Model.DeviceName(w.DeviceID), checked: w.ID == v.Model.WorkspaceID, choose: func() { v.Model.WorkspaceID = w.ID }})
 				}
 				v.choiceMenu(c, t, "home-workspace", picker, choices)
 				n.Text(c, "做些什么？").FixedLineHeight(48).FontSize(32).TextColor(t.TextMuted)
@@ -1035,6 +1051,10 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 	}
 }
 func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
+	if turn.Status == "running" && !v.Model.Connected {
+		n.Text(c, "连接已断开，执行状态待核对").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+		return
+	}
 	n.Row(c).Label("回复信息").FillWidth().Wrap().Gap(12).MinHeight(24).AlignItems(n.Baseline).Children(func() {
 		label := turn.Status
 		switch turn.Status {
@@ -1358,30 +1378,8 @@ func (v *View) interrupt() {
 		}
 	}
 }
-func (v *View) createWorkspace() {
-	if v.Controller == nil {
-		return
-	}
-	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "选择工作区目录", Directory: true, Multiple: true})
-	if err != nil {
-		v.Model.Error = err.Error()
-		return
-	}
-	if len(paths) == 0 {
-		return
-	}
-	v.do(app.Job{Method: "workspace.create", Input: protocol.WorkspaceInput{Name: filepath.Base(paths[0]), Folders: paths}, Apply: func(m *app.Model, b json.RawMessage, err error) {
-		if err != nil {
-			m.Error = err.Error()
-			return
-		}
-		var w domain.Workspace
-		if json.Unmarshal(b, &w) == nil {
-			m.WorkspaceID = w.ID
-			m.SessionID = ""
-		}
-	}})
-}
+func (v *View) createWorkspace() { v.beginWorkspace(v.Model.ConnectionID()) }
+
 func (v *View) nextAttention() {
 	for _, s := range v.Model.Snapshot.Sessions {
 		if v.pendingCount(s.ID) > 0 {
@@ -1395,39 +1393,17 @@ func (v *View) nextAttention() {
 	}
 	v.Model.Error = "暂无待处理事项"
 }
-func (v *View) deviceView(c *n.Context, t *n.Theme) {
-	m := v.Model
-	n.Row(c).Fill().Children(func() {
-		n.Column(c).Width(200).FillHeight().Padding(12).Background(t.Surface).Children(func() {
-			n.Text(c, "设备").FontSize(13).Padding(8)
-			ghost(c, "这台 Mac").FillWidth().TextAlign(n.Start).Background(t.SurfacePressed)
-		})
-		n.Column(c).Grow(1).FillHeight().Padding(32).Gap(16).Children(func() {
-			n.Text(c, "这台 Mac").FontSize(24)
-			state := "未连接"
-			if m.Connected {
-				state = "已连接"
-			}
-			n.Text(c, state)
-			n.Text(c, "Codex · "+m.Readiness.State).TextColor(t.TextMuted)
-			if m.Readiness.Error != "" {
-				n.Text(c, m.Readiness.Error).MaxWidth(560)
-			}
-			for _, w := range m.Snapshot.Workspaces {
-				if ghost(c, w.Name).Clicked() {
-					m.WorkspaceID = w.ID
-					v.home()
-				}
-			}
-		})
-	})
-}
-
 func (v *View) do(job app.Job) bool {
 	if v.Controller == nil {
 		return false
 	}
+	if job.ConnectionID == "" {
+		job.ConnectionID = v.Model.ConnectionID()
+	}
 	job.ConnectionEpoch = v.Model.ConnectionEpoch
+	if state := v.Model.DeviceStates[job.ConnectionID]; state != nil {
+		job.ConnectionEpoch = state.ConnectionEpoch
+	}
 	return v.Controller.Do(job)
 }
 

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -16,6 +15,7 @@ import (
 
 type Update func(*Model)
 type Job struct {
+	ConnectionID    string
 	ConnectionEpoch string
 	Method          string
 	Input           any
@@ -24,9 +24,11 @@ type Job struct {
 	epoch           string
 }
 type Controller struct {
+	fleet             *deviceFleet
 	ExpectedDeviceID  string
 	RestoreOperations []string
 	Directory         string
+	Dial              func(context.Context) (net.Conn, error)
 	Jobs              chan Job
 	Updates           chan Update
 	mu                sync.Mutex
@@ -187,6 +189,10 @@ func hydrateSession(ctx context.Context, client *protocol.Client, id string, gen
 	return all, nil
 }
 func (c *Controller) Run(ctx context.Context) {
+	if c.fleet != nil {
+		c.runDevices(ctx)
+		return
+	}
 	var client *protocol.Client
 	var generation string
 	var sequence int64
@@ -293,6 +299,11 @@ func (c *Controller) Run(ctx context.Context) {
 				disconnected()
 			}
 		case job := <-c.Jobs:
+			if job.Method == "$reconnect" {
+				disconnected()
+				lastAttempt = time.Time{}
+				continue
+			}
 			if job.Method == "$select" {
 				selected = job.Input.(string)
 				opening = selected != ""
@@ -332,8 +343,11 @@ func (c *Controller) Run(ctx context.Context) {
 					continue
 				}
 				lastAttempt = time.Now()
-				conn, err := net.DialTimeout("unix", filepath.Join(c.Directory, "worker.sock"), time.Second)
+				conn, err := c.dial(ctx)
 				if err != nil {
+					if c.Dial != nil {
+						c.post(func(m *Model) { m.Error = err.Error() })
+					}
 					continue
 				}
 				client, err = protocol.Connect(ctx, conn, c.ExpectedDeviceID)
@@ -349,7 +363,12 @@ func (c *Controller) Run(ctx context.Context) {
 					disconnected()
 					continue
 				}
-				c.ExpectedDeviceID = snapshot.DeviceID
+				if snapshot.DeviceID != client.DeviceID {
+					c.post(func(m *Model) { m.Error = "worker snapshot identity mismatch" })
+					disconnected()
+					continue
+				}
+				c.ExpectedDeviceID = client.DeviceID
 				generation = snapshot.Generation
 				sequence = snapshot.Sequence
 				c.mu.Lock()
@@ -374,13 +393,15 @@ func (c *Controller) Run(ctx context.Context) {
 				}
 			}
 			if time.Since(lastReadiness) > 5*time.Second {
+				started := time.Now()
 				var ready domain.Readiness
 				if err := client.Call(ctx, "readiness", nil, &ready); err != nil {
 					disconnected()
 					continue
 				}
 				lastReadiness = time.Now()
-				c.post(func(m *Model) { m.Readiness = ready })
+				sample := &DeviceTiming{Milliseconds: float64(time.Since(started)) / float64(time.Millisecond), ObservedAt: time.Now()}
+				c.post(func(m *Model) { m.Readiness = ready; m.ConnectionTiming = sample })
 			}
 			// Older workers retain their existing polling path until upgraded.
 			if eventResults == nil {

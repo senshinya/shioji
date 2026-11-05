@@ -20,22 +20,29 @@ type InspectorLayout struct {
 }
 
 type Model struct {
-	WorkerMinor     int
-	QueueExpanded   map[string]bool
-	QueueEdits      map[string]QueueEdit
-	ConnectionEpoch string
-	KnownDeviceID   string
-	Snapshot        domain.Snapshot
-	Sequence        int64
-	Connected       bool
-	Readiness       domain.Readiness
-	WorkspaceID     string
-	SessionID       string
-	Drafts          map[string]string
-	Configs         map[string]domain.RunConfig
-	Answers         map[string]string
-	Pager           map[string]int
-	Collapsed       map[string]bool
+	sourceConnection string
+	ConnectionTiming *DeviceTiming
+	Connections      []DeviceConnection
+	ActiveConnection string
+	LocalDeviceID    string
+	DeviceStates     map[string]*DeviceState
+	PendingDevices   map[string]string
+	WorkerMinor      int
+	QueueExpanded    map[string]bool
+	QueueEdits       map[string]QueueEdit
+	ConnectionEpoch  string
+	KnownDeviceID    string
+	Snapshot         domain.Snapshot
+	Sequence         int64
+	Connected        bool
+	Readiness        domain.Readiness
+	WorkspaceID      string
+	SessionID        string
+	Drafts           map[string]string
+	Configs          map[string]domain.RunConfig
+	Answers          map[string]string
+	Pager            map[string]int
+	Collapsed        map[string]bool
 	// Transient: each visit starts with its hydrated tool history collapsed.
 	FoldToolHistory      map[string]bool
 	Pending              map[string]domain.Submission
@@ -53,7 +60,7 @@ type Model struct {
 }
 
 func NewModel() *Model {
-	return &Model{QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {
@@ -162,6 +169,7 @@ func (m *Model) beginSubmission(allowRunning bool) (domain.Submission, error) {
 		in.Git = m.GitDrafts[workspace]
 	}
 	m.Pending[in.OperationID] = in
+	m.PendingDevices[in.OperationID] = m.ConnectionID()
 	return in, nil
 }
 func (m *Model) Accepted(in domain.Submission, op domain.Operation) {
@@ -172,8 +180,16 @@ func (m *Model) Accepted(in domain.Submission, op domain.Operation) {
 	m.ApplyOperation(op)
 }
 func (m *Model) ApplyOperation(op domain.Operation) {
+	if m.sourceConnection != "" && op.SessionID != "" && !m.ownsSession(op.SessionID) {
+		m.scopeFailure(errors.New("设备提交回执不属于本设备"))
+		return
+	}
 	in, ok := m.Pending[op.ID]
 	if !ok {
+		return
+	}
+	if m.sourceConnection != "" && (!m.ownsWorkspace(in.WorkspaceID) || in.SessionID != "" && !m.ownsSession(in.SessionID) || op.SessionID != "" && in.SessionID != "" && op.SessionID != in.SessionID) {
+		m.scopeFailure(errors.New("提交回执与本设备的原始请求不一致"))
 		return
 	}
 	if op.State == "confirmed" {
@@ -189,10 +205,12 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 			m.SessionID = op.SessionID
 		}
 		delete(m.Pending, op.ID)
+		delete(m.PendingDevices, op.ID)
 		m.Resolved[op.ID] = true
 		m.Error = ""
 	} else if op.State == "rejected" {
 		delete(m.Pending, op.ID)
+		delete(m.PendingDevices, op.ID)
 		m.Resolved[op.ID] = true
 		m.Error = op.Error
 	} else if op.State == "indeterminate" {
@@ -203,6 +221,12 @@ func (m *Model) Reject(in domain.Submission, message string) {
 	m.ApplyOperation(domain.Operation{ID: in.OperationID, State: "rejected", Error: message})
 }
 func (m *Model) ApplySnapshot(snapshot domain.Snapshot) {
+	if m.sourceConnection != "" {
+		if err := m.validateDeviceSnapshot(m.sourceConnection, snapshot); err != nil {
+			m.scopeFailure(err)
+			return
+		}
+	}
 	if m.Snapshot.Generation != "" && m.Snapshot.Generation != snapshot.Generation {
 		m.Details = map[string]domain.SessionDetail{}
 	}
@@ -231,6 +255,11 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 	}
 	if e.Sequence != m.Sequence+1 {
 		return errors.New("event gap: snapshot required")
+	}
+	if m.sourceConnection != "" {
+		if err := m.validateDeviceEvent(e); err != nil {
+			return err
+		}
 	}
 	m.Sequence = e.Sequence
 	m.Snapshot.Sequence = e.Sequence
@@ -332,6 +361,10 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 }
 
 type savedState struct {
+	DeviceCache          map[string]cachedDevice      `json:"deviceCache,omitempty"`
+	Connections          []DeviceConnection           `json:"connections,omitempty"`
+	ActiveConnection     string                       `json:"activeConnection,omitempty"`
+	PendingDevices       map[string]string            `json:"pendingDevices,omitempty"`
 	QueueExpanded        map[string]bool              `json:"queueExpanded,omitempty"`
 	QueueEdits           map[string]QueueEdit         `json:"queueEdits,omitempty"`
 	DeviceID             string                       `json:"deviceId"`
@@ -394,6 +427,29 @@ func (m *Model) Load(path string) error {
 		m.GitRepositories = saved.GitRepositories
 	}
 	m.KnownDeviceID = saved.DeviceID
+	m.LocalDeviceID = saved.DeviceID
+	m.Connections = saved.Connections
+	for key, cache := range saved.DeviceCache {
+		if key != "local" {
+			found := false
+			for _, c := range m.Connections {
+				if c.ID == key {
+					found = true
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+		if m.validateDeviceSnapshot(key, cache.Snapshot) != nil {
+			continue
+		}
+		m.DeviceStates[key] = &DeviceState{Snapshot: cache.Snapshot, Sequence: cache.Snapshot.Sequence, Readiness: cache.Readiness}
+	}
+	m.ActiveConnection = saved.ActiveConnection
+	if saved.PendingDevices != nil {
+		m.PendingDevices = saved.PendingDevices
+	}
 	m.WorkspaceID = saved.WorkspaceID
 	if saved.Drafts != nil {
 		m.Drafts = saved.Drafts
