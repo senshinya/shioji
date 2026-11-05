@@ -17,15 +17,24 @@ type replyStream struct {
 	live      bool
 	fresh     bool
 	changedAt time.Time
+	revealing bool
+	seen      uint64
 }
 
 func (v *View) syncReplyStreams(detail domain.SessionDetail) {
 	m := v.Model
+	v.replyFrame++
 	opening := m.FoldToolHistory[m.SessionID] && detail.Session.ID != ""
 	reset := v.replyStreams == nil || v.replySession != m.SessionID || v.replyEpoch != m.ConnectionEpoch || opening
 	if reset {
 		v.replySession, v.replyEpoch = m.SessionID, m.ConnectionEpoch
 		v.replyStreams = make(map[string]*replyStream)
+	}
+	for _, stream := range v.replyStreams {
+		// An unmounted virtual row has no animation to wait for.
+		if stream.seen+1 != v.replyFrame || v.reduceMotion {
+			stream.revealing = false
+		}
 	}
 	for _, item := range detail.Items {
 		if item.Kind != "assistant" {
@@ -33,10 +42,11 @@ func (v *View) syncReplyStreams(detail domain.SessionDetail) {
 		}
 		stream := v.replyStreams[item.ID]
 		if stream == nil {
-			v.replyStreams[item.ID] = &replyStream{text: item.Text, live: !reset, fresh: !reset, changedAt: v.frameTime}
+			v.replyStreams[item.ID] = &replyStream{text: item.Text, live: !reset, fresh: !reset, changedAt: v.frameTime, revealing: !reset && !v.reduceMotion && item.Text != ""}
 		} else if stream.text != item.Text {
 			stream.live = strings.HasPrefix(item.Text, stream.text)
 			stream.text, stream.changedAt = item.Text, v.frameTime
+			stream.revealing = stream.live && !v.reduceMotion && item.Text != ""
 		}
 	}
 }
@@ -58,6 +68,16 @@ func (v *View) assistantReply(c *n.Context, item domain.Item) {
 		stream.fresh = false
 	}
 	*initialized = true
+	v.md.OnRevealState = nil
+	if stream != nil {
+		stream.seen = v.replyFrame
+		v.md.OnRevealState = func(active bool) {
+			if stream.revealing != active {
+				stream.revealing = active
+				c.AnimationFrame()
+			}
+		}
+	}
 	v.md.Reveal = &markdown.Reveal{Unit: markdown.ByCharacter, Fade: 180 * time.Millisecond, Smooth: true}
 	if v.reduceMotion || stream == nil || !stream.live {
 		v.md.Reveal = &markdown.Reveal{Unit: markdown.AtOnce, Fade: -1}
@@ -69,4 +89,16 @@ func (v *View) assistantReply(c *n.Context, item domain.Item) {
 			markdown.View(c.Key("body"), item.Text, &v.md).FillWidth().FontSize(14)
 		}
 	})
+}
+
+func (v *View) visibleOutputAnimating() bool {
+	if v.devices || v.reduceMotion || v.replySession != v.Model.SessionID {
+		return false
+	}
+	for _, stream := range v.replyStreams {
+		if stream.revealing {
+			return true
+		}
+	}
+	return false
 }

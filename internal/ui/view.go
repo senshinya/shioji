@@ -27,10 +27,12 @@ type View struct {
 	replyStreams            map[string]*replyStream
 	replySession            string
 	replyEpoch              string
+	replyFrame              uint64
 	toolMotions             map[string]*toolDisclosureMotion
 	frameTime               time.Time
 	toolsAnimating          bool
 	sent                    *sentMessageMotion
+	sessionEntry            *sessionEntryMotion
 	composerHadFocus        bool
 	inputBounds             n.Rect
 	reduceMotion            bool
@@ -135,6 +137,7 @@ func (v *View) View(c *n.Context) {
 	}
 drained:
 	v.syncSendMotion()
+	v.syncSessionEntry()
 	if v.selected != m.SessionID {
 		v.selected = m.SessionID
 		m.FoldToolHistory[m.SessionID] = true
@@ -213,6 +216,9 @@ drained:
 	}
 	if c.Shortcut(n.Cmd, n.KeyN) {
 		v.home()
+	}
+	if m.SessionID != "" && !v.devices {
+		v.syncReplyStreams(m.Details[m.SessionID])
 	}
 	n.Row(c).Fill().Background(t.Background).Children(func() {
 		v.sidebar(c, &t)
@@ -336,6 +342,14 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 				}
 				return "s:" + rows[i].session.ID
 			}
+			v.nav.Reveals = v.nav.Reveals[:0]
+			for i, r := range rows {
+				if r.session != nil {
+					if progress := v.sessionEntryProgress(c, r.session.ID, false); progress < 1 {
+						v.nav.Reveals = append(v.nav.Reveals, n.ListReveal{First: i, End: i + 1, Progress: progress})
+					}
+				}
+			}
 			n.List(c, &v.nav, len(rows), func(i int) {
 				r := rows[i]
 				if r.workspace != nil {
@@ -360,7 +374,14 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 				}
 				s := r.session
 				selected := s.ID == m.SessionID && !v.devices
+				finishingOutput := selected && s.Status == "completed" && v.visibleOutputAnimating()
+				if finishingOutput {
+					c.AnimationFrame()
+				}
 				row := control(c, 8).FillWidth().Height(28).MarginY(1).Padding(4, 8, 4, 20).Radius(8).Label(s.Title)
+				if progress := v.sessionEntryProgress(c, s.ID, false); progress < 1 {
+					row.Opacity(progress).Transform(n.Translation(-6*(1-progress), 0))
+				}
 				if selected {
 					row.Background(t.SurfacePressed)
 				}
@@ -368,7 +389,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 					n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
 						if v.pendingCount(s.ID) > 0 {
 							n.Column(c).Width(10).AlignItems(n.Center).AlignSelf(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Warning) })
-						} else if s.Status == "running" || s.Status == "starting" {
+						} else if s.Status == "running" || s.Status == "starting" || finishingOutput {
 							n.Column(c).Width(10).AlignItems(n.Center).AlignSelf(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Success) })
 						} else if s.Status == "completed" {
 							inlineSymbol(c, check, s.Title, n.Font{Family: "system-ui", Size: 13, Weight: 400}, 10, t.Success)
@@ -427,13 +448,19 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		if v.devices {
 			n.Text(c, "设备").FontSize(13).Grow(1)
 		} else if m.SessionID != "" {
-			for _, s := range m.Snapshot.Sessions {
-				if s.ID == m.SessionID {
-					n.Text(c, v.workspaceName()).SingleLine().MaxWidth(150).FontSize(12).TextColor(t.TextMuted)
-					n.Column(c).Size(1, 14).Background(t.Border).MarginX(8)
-					n.Text(c, s.Title).SingleLine().Grow(1).FontSize(13).FontWeight(400)
-				}
+			heading := n.Row(c.Key("session-heading:" + m.SessionID)).Grow(1).Gap(6).AlignItems(n.Center).Label("会话名称")
+			if progress := v.sessionEntryProgress(c, m.SessionID, true); progress < 1 {
+				heading.Opacity(progress).Transform(n.Translation(0, 4*(1-progress)))
 			}
+			heading.Children(func() {
+				for _, s := range m.Snapshot.Sessions {
+					if s.ID == m.SessionID {
+						n.Text(c, v.workspaceName()).SingleLine().MaxWidth(150).FontSize(12).TextColor(t.TextMuted)
+						n.Column(c).Size(1, 14).Background(t.Border).MarginX(8)
+						n.Text(c, s.Title).SingleLine().Grow(1).FontSize(13).FontWeight(400)
+					}
+				}
+			})
 		} else {
 			n.Spacer(c).Grow(1)
 		}
@@ -724,7 +751,6 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	if m.FoldToolHistory[m.SessionID] {
 		state.ReleaseRow()
 	}
-	v.syncReplyStreams(detail)
 	rows := v.transcriptRows(detail.Items)
 	turns := make(map[string]domain.Turn, len(detail.Turns))
 	for _, turn := range detail.Turns {
@@ -888,7 +914,7 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 		case "completed":
 			label = "本轮完成"
 		case "running":
-			label = "工作中"
+			label = "进行中"
 		case "interrupted":
 			label = "已停止"
 		case "failed":
@@ -898,6 +924,11 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 		}
 		if turn.Status == "completed" {
 			inlineIconText(c, check, label, n.Font{Family: "system-ui", Size: 11, Weight: 400}, 12, 7, t.TextMuted)
+		} else if turn.Status == "running" {
+			n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
+				activityDot(c, t.Success)
+				n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+			})
 		} else {
 			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 		}
@@ -1128,6 +1159,9 @@ func (v *View) submit() {
 		}
 		if v.sent == sent {
 			sent.session = op.SessionID
+			if sent.origin == "" && op.SessionID != "" {
+				v.sessionEntry = &sessionEntryMotion{session: op.SessionID, operation: in.OperationID, workspace: in.WorkspaceID, epoch: sent.epoch}
+			}
 		}
 	}}) {
 		if v.sent == sent {

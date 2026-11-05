@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"time"
 
 	n "github.com/egoist/mygo/ui"
@@ -128,4 +129,21 @@ func fieldFeedback(c *n.Context, e n.Element) n.Element {
 func textField(c *n.Context, value *string) n.Element {
 	t := c.Theme()
 	return fieldFeedback(c, n.TextInputBase(c, value).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Radius).Background(t.Surface).Border(1, t.Border))
+}
+
+type activityPulseKey struct{}
+
+func activityDot(c *n.Context, color n.Color) {
+	dot := n.Column(c).Size(6, 6).Label("回复进行中")
+	started := *n.Local(dot, activityPulseKey{}, func() time.Time { return c.Now() })
+	reduce := c.Preferences().ReduceMotion
+	dot.Draw(func(p *n.Painter, r n.Rect) {
+		alpha := float32(1)
+		if !reduce {
+			phase := p.Now().Sub(started).Seconds() / 1.4
+			alpha = .4 + .6*float32((1-math.Cos(2*math.Pi*phase))/2)
+			p.AnimationFrameRate(30)
+		}
+		p.Fill(r, color.Alpha(alpha), 3)
+	})
 }

@@ -126,3 +126,69 @@ func (v *View) composerSendTransition(c *n.Context, composer n.Element, home boo
 	}
 	composer.Transition(t)
 }
+
+// The new session's navigation context may arrive after its first message.
+// Keep this short entrance independent of the message's hydration timing.
+type sessionEntryMotion struct {
+	session, operation, workspace, epoch string
+	rowAt, headingAt                     time.Time
+	entered                              bool
+}
+
+const sessionEntryDuration = 320 * time.Millisecond
+
+func (v *View) syncSessionEntry() {
+	s := v.sessionEntry
+	if s == nil {
+		return
+	}
+	m := v.Model
+	home := m.SessionID == "" && m.WorkspaceID == s.workspace && !s.entered
+	if (!home && m.SessionID != s.session) || m.ConnectionEpoch != s.epoch || v.devices || v.reduceMotion {
+		v.sessionEntry = nil
+		return
+	}
+	if home && m.Resolved[s.operation] {
+		// A confirmation on this home selects the new session. A resolved
+		// operation that left it here was rejected; do not replay it later.
+		v.sessionEntry = nil
+		return
+	}
+	if m.SessionID == s.session {
+		s.entered = true
+	}
+	for _, session := range m.Snapshot.Sessions {
+		if session.ID != s.session {
+			continue
+		}
+		if s.rowAt.IsZero() {
+			s.rowAt = v.frameTime
+		}
+		if s.entered && s.headingAt.IsZero() {
+			s.headingAt = v.frameTime
+		}
+		break
+	}
+	if !s.rowAt.IsZero() && !s.headingAt.IsZero() && v.frameTime.Sub(s.rowAt) >= sessionEntryDuration && v.frameTime.Sub(s.headingAt) >= sessionEntryDuration {
+		v.sessionEntry = nil
+	}
+}
+
+func (v *View) sessionEntryProgress(c *n.Context, session string, heading bool) float32 {
+	s := v.sessionEntry
+	if s == nil || s.session != session {
+		return 1
+	}
+	at := s.rowAt
+	if heading {
+		at = s.headingAt
+	}
+	if at.IsZero() {
+		return 1
+	}
+	p := min(max(float32(c.Now().Sub(at))/float32(sessionEntryDuration), 0), 1)
+	if p < 1 {
+		c.AnimationFrame()
+	}
+	return composerDescentEase(p)
+}

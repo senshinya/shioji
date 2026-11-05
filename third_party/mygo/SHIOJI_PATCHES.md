@@ -26,6 +26,9 @@ not expose the following appearance settings required by the frozen design:
   position across structural changes, without disabling virtualization. User
   scrolling and explicit scroll requests release the anchor; collapsing may
   retain trailing reading space instead of jumping the clicked heading.
+- `ui/markdown.Options.OnRevealState`: report native buffered-text and fade
+  activity so the visible conversation can defer its sidebar check until output
+  settles, independently of authoritative execution completion.
 - `ui.ElementTransition.From` / `Lift`: retain a source rectangle through
   asynchronous acceptance and move sent text out of the editor into history.
   Lift only the moving message above ordinary content, below popovers, keeping

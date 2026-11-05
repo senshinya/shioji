@@ -69,6 +69,9 @@ type Options struct {
 
 	// Reveal is how Stream shows text as it comes: DefaultReveal when nil.
 	Reveal *Reveal
+	// OnRevealState reports buffered text or text still fading in after each
+	// build. It describes presentation only, independently of model execution.
+	OnRevealState func(active bool)
 	// ShareSelection leaves the selection to a Selectable container around
 	// the view, as one across a chat's messages, rather than giving the
 	// view one of its own.
@@ -217,8 +220,12 @@ func build(c *ui.Context, src string, o *Options, streaming bool) ui.Element {
 		st.blocks(c, 0, false, spanStyle{})
 		st.footnotes(c)
 	})
-	if revealing || st.reveal.fading() {
+	active := revealing || st.reveal.fading()
+	if active {
 		c.AnimationFrame()
+	}
+	if o.OnRevealState != nil {
+		o.OnRevealState(active)
 	}
 	return root
 }

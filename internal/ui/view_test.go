@@ -52,7 +52,7 @@ func TestUnknownExecutionIsNotShownAsRunningOrCompleted(t *testing.T) {
 	m.Details["s"] = domain.SessionDetail{Session: s, Items: []domain.Item{{ID: "i", TurnID: "t", Kind: "assistant", Text: "Partial"}}, Turns: []domain.Turn{{ID: "t", Status: "unknown"}}}
 	v := New(m, nil, "")
 	test := native.NewTester(v.View, 1000, 700)
-	if test.HasText("工作中") || test.HasText("本轮完成") {
+	if test.HasText("工作中") || test.HasText("进行中") || test.HasText("本轮完成") {
 		t.Fatal("unknown execution has a definitive running/completed label")
 	}
 	if !test.HasText("执行状态待核实") {
