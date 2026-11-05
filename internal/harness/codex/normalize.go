@@ -48,10 +48,13 @@ func (n *Normalizer) Bind(thread, session string, fresh bool) {
 func sourceKey(thread string, id json.RawMessage) string { return thread + ":" + string(id) }
 func itemKey(turn, item string) string                   { return turn + "/" + item }
 func bounded(s string) string {
-	if len(s) <= 128<<10 {
+	return boundedTo(s, 128<<10)
+}
+func boundedTo(s string, limit int) string {
+	if len(s) <= limit {
 		return s
 	}
-	return strings.ToValidUTF8(s[:128<<10], "�") + "\n[Output limited]"
+	return strings.ToValidUTF8(s[:limit], "�") + "\n[Output limited]"
 }
 func stamp(v *int64) *time.Time {
 	if v == nil {
@@ -139,6 +142,33 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		return nil, nil, nil
 	}
 	switch m.Method {
+	case "thread/name/updated":
+		if p.ThreadName == nil || strings.TrimSpace(*p.ThreadName) == "" {
+			return nil, nil, nil
+		}
+		event.Type, event.Text = "session.title", boundedTo(strings.TrimSpace(*p.ThreadName), 4<<10)
+		return emit(event)
+	case "turn/plan/updated":
+		plan := domain.Plan{TurnID: p.TurnID, Explanation: boundedTo(p.Explanation, 8<<10), Steps: []domain.PlanStep{}, Truncated: len(p.Explanation) > 8<<10}
+		encoded, _ := json.Marshal(plan)
+		used := len(encoded)
+		for _, step := range p.Plan {
+			status := step.Status
+			if status == "inProgress" {
+				status = "running"
+			}
+			next := domain.PlanStep{Text: boundedTo(step.Step, 8<<10), Status: status}
+			encoded, _ = json.Marshal(next)
+			if used+len(encoded)+1 > (128<<10)-64 {
+				plan.Truncated = true
+				break
+			}
+			used += len(encoded) + 1
+			plan.Truncated = plan.Truncated || len(step.Step) > 8<<10
+			plan.Steps = append(plan.Steps, next)
+		}
+		event.Type, event.Plan = "plan", &plan
+		return emit(event)
 	case "turn/started", "turn/completed":
 		t := n.turns[p.Turn.ID]
 		t.ID = p.Turn.ID

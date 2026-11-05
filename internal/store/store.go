@@ -55,8 +55,8 @@ func Open(path string) (*Store, error) {
 	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return fail(err)
 	}
-	if version > 2 {
-		return fail(fmt.Errorf("database schema %d is newer than supported schema 2", version))
+	if version > 3 {
+		return fail(fmt.Errorf("database schema %d is newer than supported schema 3", version))
 	}
 	tx, err := db.Begin()
 	if err != nil {
@@ -73,7 +73,8 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS turns (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
  CREATE TABLE IF NOT EXISTS journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS queues (session_id TEXT PRIMARY KEY REFERENCES sessions(id), body BLOB NOT NULL);
- PRAGMA user_version=2;`)
+ CREATE TABLE IF NOT EXISTS plans (session_id TEXT PRIMARY KEY REFERENCES sessions(id), body BLOB NOT NULL);
+ PRAGMA user_version=3;`)
 	if err != nil {
 		tx.Rollback()
 		return fail(err)
@@ -414,13 +415,27 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		return e, err
 	}
 	switch e.Type {
+	case "session.title":
+		if strings.TrimSpace(e.Text) == "" {
+			return e, errors.New("empty session title")
+		}
+		session.Title = e.Text
+	case "plan":
+		if e.Plan == nil || e.Plan.TurnID == "" {
+			return e, errors.New("missing plan or turn identity")
+		}
+		if _, err = tx.Exec("INSERT INTO plans VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET body=excluded.body", sid, blob(e.Plan)); err != nil {
+			return e, err
+		}
 	case "session":
 		if e.Session == nil || e.Session.ID != sid {
 			return e, errors.New("invalid session event")
 		}
 		revision := session.Revision
+		title := session.Title
 		branch, head, changed := session.GitBranch, session.GitHead, session.ContextChanged
 		session = *e.Session
+		session.Title = title
 		session.GitBranch, session.GitHead, session.ContextChanged = branch, head, changed
 		if session.Revision < revision {
 			session.Revision = revision
@@ -540,6 +555,13 @@ func (s *Store) Session(id string, after int64, limit int) (domain.SessionDetail
 	}
 	if out.Queue, err = s.queueLocked(id); err != nil {
 		return out, err
+	}
+	plan, planErr := load[domain.Plan](s.db.QueryRow("SELECT body FROM plans WHERE session_id=?", id))
+	if planErr != nil && !errors.Is(planErr, sql.ErrNoRows) {
+		return out, planErr
+	}
+	if planErr == nil {
+		out.Plan = &plan
 	}
 	if out.Items, err = rowsOf[domain.Item](s.db, "SELECT body FROM items WHERE session_id=? AND position>? AND json_extract(body,'$.kind')!='queued' ORDER BY position LIMIT ?", id, after, limit+1); err != nil {
 		return out, err

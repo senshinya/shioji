@@ -889,11 +889,12 @@ func (rt *engine) repaintFrame(w, h, scale float32) {
 	start := time.Now()
 	rt.c.now = rt.frameTime()
 	rt.text.BeginFrame()
+	untracked := rt.untracked
 	rt.repainting, rt.repaintAt = false, time.Time{}
 	rt.repaintRate, rt.repaintFull, rt.untracked = 0, false, false
 	root := rt.c.root
 	rt.repose()
-	if !rt.repaintParts() {
+	if untracked || !rt.repaintParts() {
 		rt.paint(root, w, h, scale)
 	}
 	for try := 0; try < 2 && rt.text.Full(); try++ {

@@ -121,7 +121,7 @@ func TestFooterGreenDotBreathesWithoutRebuildingReply(t *testing.T) {
 	if !ui.HasText("进行中") {
 		t.Fatal("running footer is missing")
 	}
-	dot, ok := ui.Find("回复进行中")
+	dot, ok := ui.Find("进行中状态")
 	if !ok {
 		t.Fatal("running footer has no green indicator")
 	}
@@ -142,7 +142,7 @@ func TestFooterGreenDotRespectsReducedMotion(t *testing.T) {
 	v := liveCompletionModel()
 	ui := n.NewTester(v.View, 1200, 820)
 	ui.SetPreferences(n.Preferences{ReduceMotion: true})
-	dot, ok := ui.Find("回复进行中")
+	dot, ok := ui.Find("进行中状态")
 	if !ok {
 		t.Fatal("Reduce Motion hides the status dot")
 	}

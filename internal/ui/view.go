@@ -510,6 +510,14 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		}
 		v.choiceMenu(c, t, "current-device", device, []menuChoice{{id: "connectivity", name: status, disabled: true}, {id: "runtime", name: "Codex · " + m.Readiness.State, disabled: true}, {id: "details", name: "设备详情", choose: func() { v.devices = true }}})
 		if m.SessionID != "" && !v.devices {
+			if plan := m.Details[m.SessionID].Plan; plan != nil && len(plan.Steps) > 0 {
+				if iconButton(c, tasksIcon, "查看任务").Clicked() {
+					m.Inspectors[m.SessionID] = true
+					if m.InspectorLayout.Joined {
+						m.InspectorLayout.Selected = "tasks"
+					}
+				}
+			}
 			label := "展开更改侧栏"
 			if m.Inspectors[m.SessionID] {
 				label = "收起更改侧栏"
@@ -1079,9 +1087,10 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 			}
 			n.Text(c, duration).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 		} else if turn.Status == "running" {
-			n.Row(c).Gap(6).AlignItems(n.Center).Children(func() {
-				activityDot(c, t.Success)
-				n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+			n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
+				statusDot(c, label, n.Font{Family: "system-ui", Size: 11, Weight: 400}, t.Success, true)
+				text := n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+				shimmer(c, text, t.TextMuted, t.Text)
 			})
 		} else {
 			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)

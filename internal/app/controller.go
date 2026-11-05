@@ -127,6 +127,7 @@ func hydrateSession(ctx context.Context, client *protocol.Client, id string, gen
 		}
 		all.Session = page.Session
 		all.Queue = page.Queue
+		all.Plan = page.Plan
 		all.Sequence = page.Sequence
 		all.Items = append(all.Items, page.Items...)
 		for _, t := range page.Turns {

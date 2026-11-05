@@ -43,6 +43,12 @@ type Counters struct {
 	Cached *int64 `json:"cachedInputTokens"`
 }
 type Params struct {
+	ThreadName  *string `json:"threadName"`
+	Explanation string  `json:"explanation"`
+	Plan        []struct {
+		Step   string `json:"step"`
+		Status string `json:"status"`
+	} `json:"plan"`
 	ThreadID  string          `json:"threadId"`
 	TurnID    string          `json:"turnId"`
 	ItemID    string          `json:"itemId"`

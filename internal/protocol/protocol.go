@@ -17,8 +17,8 @@ import (
 
 const Major = 1
 
-// Minor 2 adds durable queued turns and guarded same-turn steering.
-const Minor = 2
+// Minor 3 adds durable structured execution plans to session details and events.
+const Minor = 3
 const MaxFrame = 1 << 20
 
 type Frame struct {

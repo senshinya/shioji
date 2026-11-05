@@ -336,7 +336,8 @@ func (r *Runtime) Create(ctx context.Context, s domain.Session) (string, error) 
 	sandbox, approval, kind := permissionPolicy(s.Config.Permission)
 	var out struct {
 		Thread struct {
-			ID string `json:"id"`
+			ID   string  `json:"id"`
+			Name *string `json:"name"`
 		} `json:"thread"`
 		CWD     string `json:"cwd"`
 		Model   string `json:"model"`
@@ -351,7 +352,9 @@ func (r *Runtime) Create(ctx context.Context, s domain.Session) (string, error) 
 	if out.Thread.ID == "" || out.CWD != s.Context.CWD || out.Model != s.Config.Model || out.Sandbox.Type != kind {
 		return "", errors.New("Codex did not accept the requested execution context")
 	}
-	r.normalizer.Bind(out.Thread.ID, s.ID, true)
+	if err := r.bindThread(out.Thread.ID, s.ID, true, out.Thread.Name); err != nil {
+		return "", err
+	}
 	return out.Thread.ID, nil
 }
 func (r *Runtime) Resume(ctx context.Context, s domain.Session) error {
@@ -360,7 +363,8 @@ func (r *Runtime) Resume(ctx context.Context, s domain.Session) error {
 	}
 	var out struct {
 		Thread struct {
-			ID string `json:"id"`
+			ID   string  `json:"id"`
+			Name *string `json:"name"`
 		} `json:"thread"`
 		CWD string `json:"cwd"`
 	}
@@ -370,8 +374,17 @@ func (r *Runtime) Resume(ctx context.Context, s domain.Session) error {
 	if out.CWD != s.Context.CWD || out.Thread.ID != s.ThreadID {
 		return errors.New("restored thread execution context differs")
 	}
-	r.normalizer.Bind(s.ThreadID, s.ID, false)
-	return nil
+	return r.bindThread(s.ThreadID, s.ID, false, out.Thread.Name)
+}
+func (r *Runtime) bindThread(thread, session string, fresh bool, name *string) error {
+	// Response metadata precedes notifications handled after this binding.
+	r.eventMu.Lock()
+	defer r.eventMu.Unlock()
+	r.normalizer.Bind(thread, session, fresh)
+	if name == nil || strings.TrimSpace(*name) == "" {
+		return nil
+	}
+	return r.emit([]domain.Event{{SessionID: session, Type: "session.title", Text: boundedTo(strings.TrimSpace(*name), 4<<10)}})
 }
 func (r *Runtime) Submit(ctx context.Context, s domain.Session, operationID, text string) (string, error) {
 	if err := r.Validate(s.Config); err != nil {

@@ -47,11 +47,16 @@ not expose the following appearance settings required by the frozen design:
 - Native Markdown code blocks apply the stream reveal clock to highlighted
   source spans as well as prose. Newly appended code fades without replaying
   existing lines, retokenizing on animation frames, or changing copied code.
+- Preserve the previous frame's untracked-paint flag before resetting the
+  repaint bookkeeping. A time-varying shader effect must repaint its layer even
+  when another tracked Draw callback (such as the activity dot) also animates;
+  partial replay alone would leave that effect frozen. Covered by Shioji's
+  active-task/footer shimmer regression, including Reduce Motion.
 
 Changes are confined to ui/theme.go, ui/paint.go, ui/editor/editor.go and
 ui/editor/theme.go, plus ui/glyphs.go, internal/text/layout.go and
 internal/text/coretext_darwin.go, ui/layout.go, ui/transition.go, ui/list.go,
-ui/list_reveal.go, ui/markdown/code.go, ui/markdown/reveal.go,
+ui/list_reveal.go, ui/runtime.go, ui/markdown/code.go, ui/markdown/reveal.go,
 ui/markdown/smooth.go and the
 regression tests. The popup and list changes are covered by Shioji's native
 component interaction regressions; streaming code is covered by the native

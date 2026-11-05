@@ -12,6 +12,13 @@ import (
 	"shioji/internal/domain"
 )
 
+// InspectorLayout describes the two built-in views in the client's one sidebar.
+type InspectorLayout struct {
+	Joined   bool   `json:"joined,omitempty"`
+	First    string `json:"first,omitempty"`
+	Selected string `json:"selected,omitempty"`
+}
+
 type Model struct {
 	WorkerMinor     int
 	QueueExpanded   map[string]bool
@@ -30,17 +37,19 @@ type Model struct {
 	Pager           map[string]int
 	Collapsed       map[string]bool
 	// Transient: each visit starts with its hydrated tool history collapsed.
-	FoldToolHistory map[string]bool
-	Pending         map[string]domain.Submission
-	Details         map[string]domain.SessionDetail
-	Resolved        map[string]bool
-	GitDrafts       map[string]domain.GitChoice
-	GitRepositories map[string]string
-	GitStatuses     map[string]domain.GitStatus
-	GitEpochs       map[string]string
-	Inspectors      map[string]bool
-	InspectorWidth  float32
-	Error           string
+	FoldToolHistory      map[string]bool
+	Pending              map[string]domain.Submission
+	Details              map[string]domain.SessionDetail
+	Resolved             map[string]bool
+	GitDrafts            map[string]domain.GitChoice
+	GitRepositories      map[string]string
+	GitStatuses          map[string]domain.GitStatus
+	GitEpochs            map[string]string
+	Inspectors           map[string]bool
+	InspectorLayout      InspectorLayout
+	InspectorSplitHeight float32
+	InspectorWidth       float32
+	Error                string
 }
 
 func NewModel() *Model {
@@ -263,6 +272,9 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 		m.Details[e.SessionID] = domain.SessionDetail{}
 	}
 	if detail, ok := m.Details[e.SessionID]; ok && e.Sequence > detail.Sequence {
+		if e.Plan != nil {
+			detail.Plan = e.Plan
+		}
 		if e.Session != nil {
 			detail.Session = *e.Session
 		}
@@ -320,20 +332,22 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 }
 
 type savedState struct {
-	QueueExpanded   map[string]bool              `json:"queueExpanded,omitempty"`
-	QueueEdits      map[string]QueueEdit         `json:"queueEdits,omitempty"`
-	DeviceID        string                       `json:"deviceId"`
-	WorkspaceID     string                       `json:"workspaceId"`
-	Drafts          map[string]string            `json:"drafts"`
-	Configs         map[string]domain.RunConfig  `json:"configs"`
-	Answers         map[string]string            `json:"answers"`
-	Pager           map[string]int               `json:"pager"`
-	Collapsed       map[string]bool              `json:"collapsed"`
-	Pending         map[string]domain.Submission `json:"pending"`
-	GitDrafts       map[string]domain.GitChoice  `json:"gitDrafts,omitempty"`
-	GitRepositories map[string]string            `json:"gitRepositories,omitempty"`
-	Inspectors      map[string]bool              `json:"inspectors,omitempty"`
-	InspectorWidth  float32                      `json:"inspectorWidth,omitempty"`
+	QueueExpanded        map[string]bool              `json:"queueExpanded,omitempty"`
+	QueueEdits           map[string]QueueEdit         `json:"queueEdits,omitempty"`
+	DeviceID             string                       `json:"deviceId"`
+	WorkspaceID          string                       `json:"workspaceId"`
+	Drafts               map[string]string            `json:"drafts"`
+	Configs              map[string]domain.RunConfig  `json:"configs"`
+	Answers              map[string]string            `json:"answers"`
+	Pager                map[string]int               `json:"pager"`
+	Collapsed            map[string]bool              `json:"collapsed"`
+	Pending              map[string]domain.Submission `json:"pending"`
+	GitDrafts            map[string]domain.GitChoice  `json:"gitDrafts,omitempty"`
+	GitRepositories      map[string]string            `json:"gitRepositories,omitempty"`
+	Inspectors           map[string]bool              `json:"inspectors,omitempty"`
+	InspectorLayout      InspectorLayout              `json:"inspectorLayout,omitempty"`
+	InspectorSplitHeight float32                      `json:"inspectorSplitHeight,omitempty"`
+	InspectorWidth       float32                      `json:"inspectorWidth,omitempty"`
 }
 
 func (m *Model) Save(path string) error {
@@ -362,6 +376,14 @@ func (m *Model) Load(path string) error {
 		m.QueueEdits = saved.QueueEdits
 	}
 	m.InspectorWidth = saved.InspectorWidth
+	m.InspectorSplitHeight = saved.InspectorSplitHeight
+	m.InspectorLayout = saved.InspectorLayout
+	if m.InspectorLayout.First != "changes" && m.InspectorLayout.First != "tasks" {
+		m.InspectorLayout.First = ""
+	}
+	if m.InspectorLayout.Selected != "changes" && m.InspectorLayout.Selected != "tasks" {
+		m.InspectorLayout.Selected = ""
+	}
 	if saved.Inspectors != nil {
 		m.Inspectors = saved.Inspectors
 	}

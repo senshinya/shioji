@@ -136,7 +136,18 @@ type Turn struct {
 	CachedInputTokens *int64     `json:"cachedInputTokens,omitempty"`
 	Error             string     `json:"error,omitempty"`
 }
+type PlanStep struct {
+	Text   string `json:"text"`
+	Status string `json:"status"`
+}
+type Plan struct {
+	Truncated   bool       `json:"truncated,omitempty"`
+	TurnID      string     `json:"turnId"`
+	Explanation string     `json:"explanation,omitempty"`
+	Steps       []PlanStep `json:"steps"`
+}
 type Event struct {
+	Plan      *Plan           `json:"plan,omitempty"`
 	Queue     *QueueState     `json:"queue,omitempty"`
 	Sequence  int64           `json:"sequence"`
 	SessionID string          `json:"sessionId,omitempty"`
@@ -160,6 +171,7 @@ type Snapshot struct {
 	Operations      []Operation      `json:"operations"`
 }
 type SessionDetail struct {
+	Plan     *Plan            `json:"plan,omitempty"`
 	Queue    QueueState       `json:"queue"`
 	Session  Session          `json:"session"`
 	Items    []Item           `json:"items"`
