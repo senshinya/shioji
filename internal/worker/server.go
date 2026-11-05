@@ -34,6 +34,7 @@ type Server struct {
 	runtime    *codex.Runtime
 	readiness  domain.Readiness
 	dispatchMu sync.Mutex
+	queueWake  chan struct{}
 	bound      map[string]bool
 	mu         sync.Mutex
 	conns      map[net.Conn]bool
@@ -65,7 +66,7 @@ func New(ctx context.Context, config Config) (*Server, error) {
 		return nil, err
 	}
 	workerCtx, cancel := context.WithCancel(context.Background())
-	s := &Server{config: config, owner: owner, listener: listener, store: db, ctx: workerCtx, cancel: cancel, bound: map[string]bool{}, conns: map[net.Conn]bool{}}
+	s := &Server{config: config, owner: owner, listener: listener, store: db, ctx: workerCtx, cancel: cancel, queueWake: make(chan struct{}, 1), bound: map[string]bool{}, conns: map[net.Conn]bool{}}
 	startup, cancelStartup := context.WithTimeout(ctx, 20*time.Second)
 	defer cancelStartup()
 	if err = checkPreviousProcess(config.Directory); err == nil {
@@ -79,6 +80,8 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	if err != nil {
 		s.readiness = domain.Readiness{State: "unavailable", Error: err.Error()}
 	}
+	s.wg.Add(1)
+	go s.queueLoop()
 	s.wg.Add(1)
 	go s.monitorGit()
 	return s, nil
@@ -271,6 +274,24 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 		s.dispatchMu.Lock()
 		defer s.dispatchMu.Unlock()
 		return s.fileVersions(q)
+	case "turn.enqueue":
+		in, err := decode[domain.Submission](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.enqueue(in)
+	case "turn.steer":
+		in, err := decode[protocol.SteerInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.steer(in)
+	case "queue.edit", "queue.remove", "queue.continue", "queue.send", "queue.reorder":
+		in, err := decode[protocol.QueueInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.changeQueue(method, in)
 	case "session.submit":
 		in, err := decode[domain.Submission](body)
 		if err != nil {
@@ -303,6 +324,8 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		s.dispatchMu.Lock()
+		defer s.dispatchMu.Unlock()
 		if s.runtime == nil {
 			return nil, errors.New("runtime unavailable")
 		}
@@ -312,6 +335,9 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 		}
 		for _, turn := range detail.Turns {
 			if turn.ID == in.TurnID && turn.Status == "running" {
+				if _, err = s.store.PauseQueue(in.SessionID, "stopped"); err != nil {
+					return nil, err
+				}
 				ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 				defer cancel()
 				return nil, s.runtime.Interrupt(ctx, detail.Session, in.TurnID)
@@ -362,9 +388,15 @@ func (s *Server) submit(in domain.Submission) (domain.Operation, error) {
 	}
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
+	return s.submitLocked(in, 0, false)
+}
+func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immediate bool) (domain.Operation, error) {
 	existing, err := s.store.Operation(in.OperationID)
 	if err == nil {
 		_ = existing
+		if queueRevision > 0 {
+			return s.store.AcceptQueued(in, queueRevision)
+		}
 		return s.store.Accept(in)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -403,6 +435,29 @@ func (s *Server) submit(in domain.Submission) (domain.Operation, error) {
 		if d.Session.Status != "idle" && d.Session.Status != "completed" && d.Session.Status != "interrupted" && d.Session.Status != "failed" {
 			return domain.Operation{}, errors.New("session is unavailable for a new turn")
 		}
+		if queueRevision == 0 {
+			q, e := s.store.Queue(in.SessionID)
+			if e != nil {
+				return domain.Operation{}, e
+			}
+			if len(q.Items) > 0 {
+				return domain.Operation{}, errors.New("session has queued messages")
+			}
+		}
+		if queueRevision > 0 {
+			for _, req := range d.Requests {
+				if req.State == "pending" || req.State == "submitting" {
+					return domain.Operation{}, errors.New("session has pending requests")
+				}
+			}
+			busy, e := s.store.HasUnsettledOperation(in.SessionID)
+			if e != nil {
+				return domain.Operation{}, e
+			}
+			if busy {
+				return domain.Operation{}, errors.New("session has unsettled input")
+			}
+		}
 		paths = append([]string{d.Session.Context.CWD}, d.Session.Context.AdditionalDirectories...)
 	}
 	validated, err := validateFolders(paths)
@@ -417,7 +472,14 @@ func (s *Server) submit(in domain.Submission) (domain.Operation, error) {
 	if err != nil {
 		return domain.Operation{}, err
 	}
-	op, err := s.store.Accept(in, launch)
+	var op domain.Operation
+	if queueRevision > 0 && immediate {
+		op, err = s.store.AcceptQueuedNow(in, queueRevision)
+	} else if queueRevision > 0 {
+		op, err = s.store.AcceptQueued(in, queueRevision)
+	} else {
+		op, err = s.store.Accept(in, launch)
+	}
 	if err != nil {
 		if in.Git.NewWorktree {
 			if _, lookup := s.store.Operation(in.OperationID); errors.Is(lookup, sql.ErrNoRows) {
@@ -431,6 +493,7 @@ func (s *Server) submit(in domain.Submission) (domain.Operation, error) {
 	return op, nil
 }
 func (s *Server) dispatch(in domain.Submission, op domain.Operation) {
+	defer s.wakeQueue()
 	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
 	defer cancel()
 	if err := s.store.SetOperation(op.ID, "dispatched", ""); err != nil {
@@ -464,6 +527,10 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation) {
 	state := "confirmed"
 	delivery := "sent"
 	if err != nil {
+		if _, e := s.store.PauseQueue(session.ID, err.Error()); e != nil {
+			s.cancel()
+			return
+		}
 		state = "rejected"
 		delivery = "failed"
 		if codex.IsUncertain(err) {
@@ -486,6 +553,18 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation) {
 	if err = s.store.SetOperation(op.ID, state, message); err != nil {
 		return
 	}
+	// Queue failures retain their original input outside sent history.
+	if state != "confirmed" {
+		q, e := s.store.Queue(session.ID)
+		if e != nil {
+			return
+		}
+		for _, item := range q.Items {
+			if item.Input.OperationID == op.ID {
+				return
+			}
+		}
+	}
 	// Update the existing accepted input; a wire userMessage never creates a duplicate.
 	_, err = s.store.Apply(session.ID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: turnID, Kind: "user", Text: in.Text, Final: true, Status: delivery}})
 	if err != nil {
@@ -496,7 +575,8 @@ func (s *Server) onEvent(e domain.Event) error {
 	if e.SessionID == "" {
 		return nil
 	}
-	if e.Type == "runtime.lost" {
+	lost := e.Type == "runtime.lost"
+	if lost {
 		detail, err := s.store.Session(e.SessionID, 0, 1)
 		if err != nil {
 			return err
@@ -519,7 +599,15 @@ func (s *Server) onEvent(e domain.Event) error {
 		e.Type = "session"
 		e.Session = &session
 	}
+	if (e.Turn != nil && e.Turn.Status != "running" && e.Turn.Status != "completed") || lost || (e.Session != nil && e.Session.ContextChanged) {
+		if _, err := s.store.PauseQueue(e.SessionID, "execution needs confirmation"); err != nil {
+			return err
+		}
+	}
 	_, err := s.store.Apply(e.SessionID, e)
+	if err == nil && (e.Turn != nil || e.Type == "request.resolve") {
+		s.wakeQueue()
+	}
 	return err
 }
 func (s *Server) Close() error {

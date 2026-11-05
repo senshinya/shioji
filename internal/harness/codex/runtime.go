@@ -409,6 +409,26 @@ func (r *Runtime) Submit(ctx context.Context, s domain.Session, operationID, tex
 	}
 	return out.Turn.ID, nil
 }
+
+// Steer uses the pinned app-server schema's active-turn precondition.
+func (r *Runtime) Steer(ctx context.Context, s domain.Session, turnID, operationID, text string) error {
+	params := struct {
+		ThreadID            string       `json:"threadId"`
+		ExpectedTurnID      string       `json:"expectedTurnId"`
+		ClientUserMessageID string       `json:"clientUserMessageId"`
+		Input               []wire.Input `json:"input"`
+	}{s.ThreadID, turnID, "input:" + operationID, []wire.Input{{Type: "text", Text: text}}}
+	var out struct {
+		TurnID string `json:"turnId"`
+	}
+	if err := r.call(ctx, "turn/steer", params, &out); err != nil {
+		return err
+	}
+	if out.TurnID != turnID {
+		return &CallError{Uncertain: true, Message: "steer response omitted or changed the active turn identity"}
+	}
+	return nil
+}
 func (r *Runtime) Respond(answer domain.Answer) error {
 	r.eventMu.Lock()
 	defer r.eventMu.Unlock()

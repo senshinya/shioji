@@ -7,7 +7,7 @@ import (
 )
 
 func (m *Model) EncodeState() ([]byte, error) {
-	return json.Marshal(savedState{WorkspaceID: m.WorkspaceID, Drafts: m.Drafts, Configs: m.Configs, Answers: m.Answers, Pager: m.Pager, Collapsed: m.Collapsed, Pending: m.Pending, DeviceID: m.KnownDeviceID, GitDrafts: m.GitDrafts, GitRepositories: m.GitRepositories, Inspectors: m.Inspectors})
+	return json.Marshal(savedState{QueueExpanded: m.QueueExpanded, QueueEdits: m.QueueEdits, WorkspaceID: m.WorkspaceID, Drafts: m.Drafts, Configs: m.Configs, Answers: m.Answers, Pager: m.Pager, Collapsed: m.Collapsed, Pending: m.Pending, DeviceID: m.KnownDeviceID, GitDrafts: m.GitDrafts, GitRepositories: m.GitRepositories, Inspectors: m.Inspectors})
 }
 func WriteState(path string, b []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {

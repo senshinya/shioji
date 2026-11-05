@@ -17,8 +17,8 @@ import (
 
 const Major = 1
 
-// Minor 1 adds cursor-based event watches on a separate connection.
-const Minor = 1
+// Minor 2 adds durable queued turns and guarded same-turn steering.
+const Minor = 2
 const MaxFrame = 1 << 20
 
 type Frame struct {

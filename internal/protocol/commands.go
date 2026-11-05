@@ -46,3 +46,17 @@ type FileQuery struct {
 type SearchQuery struct {
 	Query string `json:"query"`
 }
+
+// QueueInput applies a revision-checked mutation to the owning worker's queue.
+type QueueInput struct {
+	BeforeID  string `json:"beforeId,omitempty"`
+	TurnID    string `json:"turnId,omitempty"`
+	SessionID string `json:"sessionId"`
+	ID        string `json:"id,omitempty"`
+	Revision  int64  `json:"revision"`
+	Text      string `json:"text,omitempty"`
+}
+type SteerInput struct {
+	Input  domain.Submission `json:"input"`
+	TurnID string            `json:"turnId"`
+}

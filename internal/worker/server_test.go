@@ -387,3 +387,209 @@ func canonicalTestPath(t *testing.T, path string) string {
 	}
 	return p
 }
+
+func TestDurableQueueDispatchesFIFOAfterRealCompletion(t *testing.T) {
+	_, c, p := startServer(t)
+	var w domain.Workspace
+	call(t, c, "workspace.create", protocol.WorkspaceInput{Name: "queue", Folders: []string{t.TempDir()}}, &w)
+	var ready domain.Readiness
+	call(t, c, "readiness", nil, &ready)
+	cfg := domain.RunConfig{Model: ready.Models[0].ID, Permission: "read-only"}
+	var op domain.Operation
+	call(t, c, "session.submit", domain.Submission{OperationID: "first", WorkspaceID: w.ID, Text: "SHIOJI_SLOW", Config: cfg}, &op)
+	select {
+	case <-p.Started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("not running")
+	}
+	for _, text := range []string{"second", "third"} {
+		var queued domain.Operation
+		call(t, c, "turn.enqueue", domain.Submission{OperationID: text, WorkspaceID: w.ID, SessionID: op.SessionID, Text: text, Config: cfg}, &queued)
+	}
+	var d domain.SessionDetail
+	call(t, c, "session", protocol.SessionQuery{ID: op.SessionID}, &d)
+	if len(d.Queue.Items) != 2 {
+		t.Fatal(d.Queue)
+	}
+	for _, item := range d.Items {
+		if item.Kind == "user" && item.Text != "SHIOJI_SLOW" {
+			t.Fatal("queued input in history")
+		}
+	}
+	close(p.Release)
+	wait(t, func() bool {
+		call(t, c, "session", protocol.SessionQuery{ID: op.SessionID}, &d)
+		return d.Session.Status == "completed" && len(d.Queue.Items) == 0 && len(p.Inputs()) == 3
+	})
+	var texts []string
+	for _, item := range d.Items {
+		if item.Kind == "user" {
+			texts = append(texts, item.Text)
+		}
+	}
+	if strings.Join(texts, ",") != "SHIOJI_SLOW,second,third" {
+		t.Fatal(texts)
+	}
+}
+
+func TestRealSteerUsesActiveTurnAndLeavesQueueIntact(t *testing.T) {
+	_, c, p := startServer(t)
+	var w domain.Workspace
+	call(t, c, "workspace.create", protocol.WorkspaceInput{Name: "steer", Folders: []string{t.TempDir()}}, &w)
+	var ready domain.Readiness
+	call(t, c, "readiness", nil, &ready)
+	cfg := domain.RunConfig{Model: ready.Models[0].ID, Permission: "read-only"}
+	var op domain.Operation
+	call(t, c, "session.submit", domain.Submission{OperationID: "initial", WorkspaceID: w.ID, Text: "SHIOJI_SLOW", Config: cfg}, &op)
+	select {
+	case <-p.Started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("not running")
+	}
+	var d domain.SessionDetail
+	call(t, c, "session", protocol.SessionQuery{ID: op.SessionID}, &d)
+	turn := ""
+	for _, v := range d.Turns {
+		if v.Status == "running" {
+			turn = v.ID
+		}
+	}
+	if turn == "" {
+		t.Fatal("no turn")
+	}
+	var steered domain.Operation
+	call(t, c, "turn.steer", protocol.SteerInput{TurnID: turn, Input: domain.Submission{OperationID: "steering", WorkspaceID: w.ID, SessionID: op.SessionID, Text: "explain briefly", Config: cfg}}, &steered)
+	wait(t, func() bool {
+		call(t, c, "operation", map[string]string{"id": "steering"}, &steered)
+		return steered.State == "confirmed" || steered.State == "rejected"
+	})
+	if steered.State != "confirmed" {
+		t.Fatal(steered)
+	}
+	close(p.Release)
+	wait(t, func() bool {
+		call(t, c, "session", protocol.SessionQuery{ID: op.SessionID}, &d)
+		return d.Session.Status == "completed"
+	})
+	turns := map[string]bool{}
+	for _, item := range d.Items {
+		if item.Kind == "user" {
+			turns[item.TurnID] = true
+		}
+	}
+	if len(turns) != 1 || !turns[turn] {
+		t.Fatal("steer created another turn", turns)
+	}
+}
+
+func TestStopPreservesQueueUntilExplicitContinue(t *testing.T) {
+	_, c, p := startServer(t)
+	var w domain.Workspace
+	call(t, c, "workspace.create", protocol.WorkspaceInput{Name: "stop", Folders: []string{t.TempDir()}}, &w)
+	var ready domain.Readiness
+	call(t, c, "readiness", nil, &ready)
+	cfg := domain.RunConfig{Model: ready.Models[0].ID, Permission: "read-only"}
+	var op domain.Operation
+	call(t, c, "session.submit", domain.Submission{OperationID: "first", WorkspaceID: w.ID, Text: "SHIOJI_SLOW", Config: cfg}, &op)
+	select {
+	case <-p.Started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("not running")
+	}
+	var queued domain.Operation
+	call(t, c, "turn.enqueue", domain.Submission{OperationID: "next", WorkspaceID: w.ID, SessionID: op.SessionID, Text: "retained next", Config: cfg}, &queued)
+	var d domain.SessionDetail
+	call(t, c, "session", protocol.SessionQuery{ID: op.SessionID}, &d)
+	turn := ""
+	for _, v := range d.Turns {
+		if v.Status == "running" {
+			turn = v.ID
+		}
+	}
+	call(t, c, "turn.interrupt", map[string]string{"sessionId": op.SessionID, "turnId": turn}, nil)
+	wait(t, func() bool {
+		call(t, c, "session", protocol.SessionQuery{ID: op.SessionID}, &d)
+		return d.Session.Status == "interrupted"
+	})
+	if !d.Queue.Paused || len(d.Queue.Items) != 1 || len(p.Inputs()) != 1 {
+		t.Fatal("Stop dispatched or deleted queue", d.Queue, p.Inputs())
+	}
+	close(p.Release)
+	call(t, c, "queue.continue", protocol.QueueInput{SessionID: op.SessionID, Revision: d.Queue.Revision}, &d.Queue)
+	wait(t, func() bool {
+		call(t, c, "session", protocol.SessionQuery{ID: op.SessionID}, &d)
+		return d.Session.Status == "completed" && len(d.Queue.Items) == 0
+	})
+	if len(p.Inputs()) != 2 {
+		t.Fatal("continue delivered more than once", p.Inputs())
+	}
+}
+
+func TestQueuedInputDoesNotResolvePendingQuestion(t *testing.T) {
+	_, c, _ := startServer(t)
+	var w domain.Workspace
+	call(t, c, "workspace.create", protocol.WorkspaceInput{Name: "questions", Folders: []string{t.TempDir()}}, &w)
+	var ready domain.Readiness
+	call(t, c, "readiness", nil, &ready)
+	cfg := domain.RunConfig{Model: ready.Models[0].ID, Permission: "read-only", Plan: true}
+	var op domain.Operation
+	call(t, c, "session.submit", domain.Submission{OperationID: "first", WorkspaceID: w.ID, Text: "SHIOJI_QUESTION", Config: cfg}, &op)
+	var d domain.SessionDetail
+	wait(t, func() bool {
+		call(t, c, "session", protocol.SessionQuery{ID: op.SessionID}, &d)
+		return len(d.Requests) > 0
+	})
+	r := d.Requests[0]
+	var queued domain.Operation
+	call(t, c, "turn.enqueue", domain.Submission{OperationID: "queued", WorkspaceID: w.ID, SessionID: op.SessionID, Text: "after answer", Config: cfg}, &queued)
+	call(t, c, "session", protocol.SessionQuery{ID: op.SessionID}, &d)
+	if len(d.Queue.Items) != 1 || d.Requests[0].State != "pending" {
+		t.Fatal("ordinary queued input resolved question", d)
+	}
+	call(t, c, "request.respond", protocol.AnswerInput{SessionID: op.SessionID, Answer: domain.Answer{RequestID: r.ID, Revision: r.Revision, Answers: map[string][]string{"q": {"Yes"}}}}, nil)
+	wait(t, func() bool {
+		call(t, c, "session", protocol.SessionQuery{ID: op.SessionID}, &d)
+		return d.Session.Status == "completed" && len(d.Queue.Items) == 0
+	})
+}
+
+func TestQueueReorderChangesRealDispatchOrder(t *testing.T) {
+	_, c, p := startServer(t)
+	var w domain.Workspace
+	call(t, c, "workspace.create", protocol.WorkspaceInput{Name: "reorder", Folders: []string{t.TempDir()}}, &w)
+	var ready domain.Readiness
+	call(t, c, "readiness", nil, &ready)
+	cfg := domain.RunConfig{Model: ready.Models[0].ID, Permission: "read-only"}
+	var op domain.Operation
+	call(t, c, "session.submit", domain.Submission{OperationID: "initial", WorkspaceID: w.ID, Text: "SHIOJI_SLOW", Config: cfg}, &op)
+	select {
+	case <-p.Started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("not running")
+	}
+	for _, id := range []string{"one", "two"} {
+		var queued domain.Operation
+		call(t, c, "turn.enqueue", domain.Submission{OperationID: id, SessionID: op.SessionID, WorkspaceID: w.ID, Text: id, Config: cfg}, &queued)
+	}
+	var d domain.SessionDetail
+	call(t, c, "session", protocol.SessionQuery{ID: op.SessionID}, &d)
+	var q domain.QueueState
+	call(t, c, "queue.reorder", protocol.QueueInput{SessionID: op.SessionID, ID: "two", BeforeID: "one", Revision: d.Queue.Revision}, &q)
+	if q.Items[0].ID != "two" {
+		t.Fatal(q)
+	}
+	close(p.Release)
+	wait(t, func() bool {
+		call(t, c, "session", protocol.SessionQuery{ID: op.SessionID}, &d)
+		return d.Session.Status == "completed" && len(d.Queue.Items) == 0 && len(p.Inputs()) == 3
+	})
+	var texts []string
+	for _, item := range d.Items {
+		if item.Kind == "user" {
+			texts = append(texts, item.Text)
+		}
+	}
+	if strings.Join(texts, ",") != "SHIOJI_SLOW,two,one" {
+		t.Fatal("runtime ignored saved order", texts)
+	}
+}

@@ -1,0 +1,176 @@
+package worker
+
+import (
+	"context"
+	"errors"
+	"shioji/internal/domain"
+	"shioji/internal/harness/codex"
+	"shioji/internal/protocol"
+	"time"
+)
+
+func (s *Server) wakeQueue() {
+	select {
+	case s.queueWake <- struct{}{}:
+	default:
+	}
+}
+func (s *Server) queueLoop() {
+	defer s.wg.Done()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-s.queueWake:
+		}
+		s.dispatchMu.Lock()
+		snapshot, err := s.store.Snapshot()
+		if err == nil && s.runtime != nil && s.ctx.Err() == nil {
+			for _, session := range snapshot.Sessions {
+				if session.Status != "completed" && session.Status != "idle" && session.Status != "interrupted" && session.Status != "failed" {
+					continue
+				}
+				q, e := s.store.Queue(session.ID)
+				if e != nil || q.Paused || len(q.Items) == 0 {
+					continue
+				}
+				d, e := s.store.Session(session.ID, 0, 1)
+				if e != nil {
+					continue
+				}
+				blocked := false
+				for _, req := range d.Requests {
+					if req.State == "pending" || req.State == "submitting" {
+						blocked = true
+					}
+				}
+				unsettled, e := s.store.HasUnsettledOperation(session.ID)
+				if e != nil || unsettled || blocked {
+					continue
+				}
+				if _, e = s.submitLocked(q.Items[0].Input, q.Revision, false); e != nil {
+					s.store.PauseQueue(session.ID, e.Error())
+				}
+			}
+		}
+		s.dispatchMu.Unlock()
+	}
+}
+func (s *Server) enqueue(in domain.Submission) (domain.Operation, error) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	if s.runtime == nil || s.ctx.Err() != nil {
+		return domain.Operation{}, errors.New("runtime unavailable")
+	}
+	if err := s.runtime.Validate(in.Config); err != nil {
+		return domain.Operation{}, err
+	}
+	op, err := s.store.Enqueue(in)
+	if err == nil {
+		s.wakeQueue()
+	}
+	return op, err
+}
+func (s *Server) changeQueue(method string, in protocol.QueueInput) (domain.QueueState, error) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	switch method {
+	case "queue.send":
+		q, err := s.store.Queue(in.SessionID)
+		if err != nil {
+			return q, err
+		}
+		if q.Revision != in.Revision {
+			return q, errors.New("queue changed")
+		}
+		for _, item := range q.Items {
+			if item.ID == in.ID {
+				if in.TurnID == "" {
+					if _, err = s.submitLocked(item.Input, q.Revision, true); err != nil {
+						return q, err
+					}
+					return s.store.Queue(in.SessionID)
+				}
+				if _, err = s.steerLocked(protocol.SteerInput{Input: item.Input, TurnID: in.TurnID}, q.Revision); err != nil {
+					return q, err
+				}
+				return s.store.Queue(in.SessionID)
+			}
+		}
+		return q, errors.New("queued message no longer exists")
+	case "queue.reorder":
+		return s.store.ReorderQueue(in.SessionID, in.ID, in.BeforeID, in.Revision)
+	case "queue.edit":
+		return s.store.EditQueue(in.SessionID, in.ID, in.Revision, in.Text)
+	case "queue.remove":
+		return s.store.RemoveQueue(in.SessionID, in.ID, in.Revision)
+	case "queue.continue":
+		d, err := s.store.Session(in.SessionID, 0, 1)
+		if err != nil {
+			return domain.QueueState{}, err
+		}
+		if s.runtime == nil || s.ctx.Err() != nil || d.Session.ContextChanged || d.Session.Status == "unknown" {
+			return domain.QueueState{}, errors.New("reconcile execution context before continuing")
+		}
+		q, err := s.store.ContinueQueue(in.SessionID, in.Revision)
+		if err == nil {
+			s.wakeQueue()
+		}
+		return q, err
+	}
+	return domain.QueueState{}, errors.New("unknown queue command")
+}
+func (s *Server) steer(in protocol.SteerInput) (domain.Operation, error) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	return s.steerLocked(in, 0)
+}
+func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Operation, error) {
+	if s.runtime == nil || s.ctx.Err() != nil {
+		return domain.Operation{}, errors.New("runtime unavailable")
+	}
+	if _, err := s.store.Operation(in.Input.OperationID); err == nil {
+		return s.store.AcceptSteer(in.Input, in.TurnID)
+	}
+	var op domain.Operation
+	var err error
+	if revision > 0 {
+		op, err = s.store.AcceptQueuedSteer(in.Input, in.TurnID, revision)
+	} else {
+		op, err = s.store.AcceptSteer(in.Input, in.TurnID)
+	}
+	if err != nil {
+		return op, err
+	}
+	d, err := s.store.Session(op.SessionID, 0, 1)
+	if err != nil {
+		return op, err
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		defer s.wakeQueue()
+		if s.store.SetOperation(op.ID, "dispatched", "") != nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
+		defer cancel()
+		err := s.runtime.Steer(ctx, d.Session, in.TurnID, op.ID, in.Input.Text)
+		state, status, message := "confirmed", "sent", ""
+		if err != nil {
+			state, status, message = "rejected", "failed", err.Error()
+			if codex.IsUncertain(err) {
+				state, status = "indeterminate", "unknown"
+				s.store.PauseQueue(op.SessionID, "steer delivery is unknown")
+			}
+		}
+		if s.store.SetOperation(op.ID, state, message) != nil {
+			return
+		}
+		if state != "confirmed" && revision > 0 {
+			return
+		}
+		s.store.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: in.TurnID, Kind: "user", Text: in.Input.Text, Final: true, Status: status}})
+	}()
+	return op, nil
+}

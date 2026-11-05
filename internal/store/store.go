@@ -55,8 +55,8 @@ func Open(path string) (*Store, error) {
 	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return fail(err)
 	}
-	if version > 1 {
-		return fail(fmt.Errorf("database schema %d is newer than supported schema 1", version))
+	if version > 2 {
+		return fail(fmt.Errorf("database schema %d is newer than supported schema 2", version))
 	}
 	tx, err := db.Begin()
 	if err != nil {
@@ -72,7 +72,8 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS requests (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
  CREATE TABLE IF NOT EXISTS turns (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
  CREATE TABLE IF NOT EXISTS journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, body BLOB NOT NULL);
- PRAGMA user_version=1;`)
+ CREATE TABLE IF NOT EXISTS queues (session_id TEXT PRIMARY KEY REFERENCES sessions(id), body BLOB NOT NULL);
+ PRAGMA user_version=2;`)
 	if err != nil {
 		tx.Rollback()
 		return fail(err)
@@ -241,6 +242,9 @@ func (s *Store) Operation(id string) (domain.Operation, error) {
 func (s *Store) Accept(in domain.Submission, launch ...domain.LaunchContext) (domain.Operation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.acceptLocked(in, 0, false, launch...)
+}
+func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediate bool, launch ...domain.LaunchContext) (domain.Operation, error) {
 	var none domain.Operation
 	if strings.TrimSpace(in.Text) == "" || in.OperationID == "" || len(in.Text) > 128<<10 {
 		return none, errors.New("submission requires an operation ID and 1–131072 bytes of text")
@@ -257,6 +261,29 @@ func (s *Store) Accept(in domain.Submission, launch ...domain.LaunchContext) (do
 	if !errors.Is(err, sql.ErrNoRows) {
 		return none, err
 	}
+	var queued, emptyQueue *domain.QueueState
+	if queueRevision > 0 {
+		q, e := s.queueLocked(in.SessionID)
+		if e != nil {
+			return none, e
+		}
+		index := 0
+		if immediate {
+			index = -1
+			for i, item := range q.Items {
+				if item.Input.OperationID == in.OperationID {
+					index = i
+					break
+				}
+			}
+		}
+		if q.Revision != queueRevision || (q.Paused && !immediate) || index < 0 || index >= len(q.Items) || q.Items[index].State != "" || string(blob(q.Items[index].Input)) != string(blob(in)) {
+			return none, errors.New("queue changed or unavailable")
+		}
+		q.Items[index].State = "dispatching"
+		q.Revision++
+		queued = &q
+	}
 	w, err := load[domain.Workspace](s.db.QueryRow("SELECT body FROM workspaces WHERE id=?", in.WorkspaceID))
 	if err != nil {
 		return none, err
@@ -269,6 +296,18 @@ func (s *Store) Accept(in domain.Submission, launch ...domain.LaunchContext) (do
 		}
 		if session.WorkspaceID != in.WorkspaceID || !(session.Status == "idle" || session.Status == "completed" || session.Status == "interrupted" || session.Status == "failed") {
 			return none, errors.New("session is unavailable for a new turn")
+		}
+		if queued == nil {
+			q, e := s.queueLocked(session.ID)
+			if e != nil {
+				return none, e
+			}
+			if q.Paused && len(q.Items) == 0 {
+				q.Paused = false
+				q.Reason = ""
+				q.Revision++
+				emptyQueue = &q
+			}
 		}
 		session.Config = in.Config
 		session.Status = "starting"
@@ -297,12 +336,28 @@ func (s *Store) Accept(in domain.Submission, launch ...domain.LaunchContext) (do
 	if _, err = tx.Exec("INSERT INTO operations(id,session_id,state,digest) VALUES(?,?,?,?)", op.ID, op.SessionID, op.State, digest); err != nil {
 		return none, err
 	}
-	item := domain.Item{ID: "input:" + op.ID, Kind: "user", Text: in.Text, Final: true, Status: "dispatching"}
-	if err = putItem(tx, session.ID, &item); err != nil {
+	var item *domain.Item
+	if queued == nil {
+		item = &domain.Item{ID: "input:" + op.ID, Kind: "user", Text: in.Text, Final: true, Status: "dispatching"}
+		if err = putItem(tx, session.ID, item); err != nil {
+			return none, err
+		}
+	}
+	if _, err = journal(tx, domain.Event{Type: "submission", SessionID: session.ID, Session: &session, Operation: &op, Item: item}); err != nil {
 		return none, err
 	}
-	if _, err = journal(tx, domain.Event{Type: "submission", SessionID: session.ID, Session: &session, Operation: &op, Item: &item}); err != nil {
-		return none, err
+	if queued != nil {
+		if err = putItem(tx, session.ID, &domain.Item{ID: "input:" + op.ID, Kind: "queued", Text: in.Text, Final: true}); err != nil {
+			return none, err
+		}
+		if err = putQueue(tx, *queued); err != nil {
+			return none, err
+		}
+	}
+	if emptyQueue != nil {
+		if err = putQueue(tx, *emptyQueue); err != nil {
+			return none, err
+		}
 	}
 	return op, s.commit(tx)
 }
@@ -321,6 +376,9 @@ func (s *Store) SetOperation(id, state, message string) error {
 	}
 	defer tx.Rollback()
 	if _, err = tx.Exec("UPDATE operations SET state=?,error=? WHERE id=?", state, message, id); err != nil {
+		return err
+	}
+	if err = queueOutcome(tx, op); err != nil {
 		return err
 	}
 	if _, err = journal(tx, domain.Event{Type: "operation", SessionID: op.SessionID, Operation: &op}); err != nil {
@@ -480,7 +538,10 @@ func (s *Store) Session(id string, after int64, limit int) (domain.SessionDetail
 	if out.Session, err = load[domain.Session](s.db.QueryRow("SELECT body FROM sessions WHERE id=?", id)); err != nil {
 		return out, err
 	}
-	if out.Items, err = rowsOf[domain.Item](s.db, "SELECT body FROM items WHERE session_id=? AND position>? ORDER BY position LIMIT ?", id, after, limit+1); err != nil {
+	if out.Queue, err = s.queueLocked(id); err != nil {
+		return out, err
+	}
+	if out.Items, err = rowsOf[domain.Item](s.db, "SELECT body FROM items WHERE session_id=? AND position>? AND json_extract(body,'$.kind')!='queued' ORDER BY position LIMIT ?", id, after, limit+1); err != nil {
 		return out, err
 	}
 	if len(out.Items) > limit {
@@ -622,6 +683,9 @@ func (s *Store) Recover() error {
 		}
 	}
 	for _, session := range snapshot.Sessions {
+		if _, err = s.PauseQueue(session.ID, "worker restarted"); err != nil {
+			return err
+		}
 		if session.Status == "running" || session.Status == "starting" {
 			detail, e := s.Session(session.ID, 0, 1)
 			if e != nil {

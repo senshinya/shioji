@@ -126,6 +126,7 @@ func hydrateSession(ctx context.Context, client *protocol.Client, id string, gen
 			first = page.Sequence
 		}
 		all.Session = page.Session
+		all.Queue = page.Queue
 		all.Sequence = page.Sequence
 		all.Items = append(all.Items, page.Items...)
 		for _, t := range page.Turns {
@@ -303,6 +304,10 @@ func (c *Controller) Run(ctx context.Context) {
 				continue
 			}
 			var opID string
+			if in, ok := job.Input.(protocol.SteerInput); ok {
+				opID = in.Input.OperationID
+				unconfirmed[opID] = true
+			}
 			if in, ok := job.Input.(domain.Submission); ok {
 				opID = in.OperationID
 				unconfirmed[opID] = true
@@ -349,8 +354,10 @@ func (c *Controller) Run(ctx context.Context) {
 				c.mu.Lock()
 				c.epoch = client.Epoch
 				c.mu.Unlock()
+				minor := client.Minor
 				epoch := client.Epoch
 				c.post(func(m *Model) {
+					m.WorkerMinor = minor
 					m.Connected = true
 					m.ConnectionEpoch = epoch
 					m.Readiness = ready

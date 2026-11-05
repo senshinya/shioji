@@ -13,6 +13,9 @@ import (
 )
 
 type Model struct {
+	WorkerMinor     int
+	QueueExpanded   map[string]bool
+	QueueEdits      map[string]QueueEdit
 	ConnectionEpoch string
 	KnownDeviceID   string
 	Snapshot        domain.Snapshot
@@ -40,7 +43,7 @@ type Model struct {
 }
 
 func NewModel() *Model {
-	return &Model{FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {
@@ -97,7 +100,8 @@ func (m *Model) Config() domain.RunConfig {
 	m.Configs[key] = c
 	return c
 }
-func (m *Model) BeginSubmission() (domain.Submission, error) {
+func (m *Model) BeginSubmission() (domain.Submission, error) { return m.beginSubmission(false) }
+func (m *Model) beginSubmission(allowRunning bool) (domain.Submission, error) {
 	key := m.DraftKey()
 	for _, in := range m.Pending {
 		inKey := "home"
@@ -122,7 +126,7 @@ func (m *Model) BeginSubmission() (domain.Submission, error) {
 				if s.ContextChanged {
 					return domain.Submission{}, errors.New("执行分支已改变，请先在分支选择中确认")
 				}
-				if s.Status == "running" || s.Status == "starting" || s.Status == "unknown" {
+				if s.Status == "unknown" || (!allowRunning && (s.Status == "running" || s.Status == "starting")) {
 					return domain.Submission{}, errors.New("current turn is still active or needs reconciliation")
 				}
 			}
@@ -251,6 +255,9 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 	if e.Operation != nil {
 		m.ApplyOperation(*e.Operation)
 	}
+	if e.Queue != nil {
+		m.SetQueue(*e.Queue)
+	}
 	if _, ok := m.Details[e.SessionID]; !ok && e.Request != nil {
 		m.Details[e.SessionID] = domain.SessionDetail{}
 	}
@@ -268,7 +275,16 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 				}
 			}
 			if !found {
-				detail.Items = append(detail.Items, *e.Item)
+				position := len(detail.Items)
+				if e.Item.Order > 0 {
+					for i, item := range detail.Items {
+						if item.Order > e.Item.Order {
+							position = i
+							break
+						}
+					}
+				}
+				detail.Items = slices.Insert(detail.Items, position, *e.Item)
 			}
 		}
 		if e.Request != nil {
@@ -303,6 +319,8 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 }
 
 type savedState struct {
+	QueueExpanded   map[string]bool              `json:"queueExpanded,omitempty"`
+	QueueEdits      map[string]QueueEdit         `json:"queueEdits,omitempty"`
 	DeviceID        string                       `json:"deviceId"`
 	WorkspaceID     string                       `json:"workspaceId"`
 	Drafts          map[string]string            `json:"drafts"`
@@ -334,6 +352,12 @@ func (m *Model) Load(path string) error {
 	var saved savedState
 	if err = json.Unmarshal(b, &saved); err != nil {
 		return err
+	}
+	if saved.QueueExpanded != nil {
+		m.QueueExpanded = saved.QueueExpanded
+	}
+	if saved.QueueEdits != nil {
+		m.QueueEdits = saved.QueueEdits
 	}
 	if saved.Inspectors != nil {
 		m.Inspectors = saved.Inspectors

@@ -63,6 +63,20 @@ type Submission struct {
 	Config      RunConfig `json:"config"`
 	Git         GitChoice `json:"git,omitempty,omitzero"`
 }
+
+// QueueState is device-owned. Queued inputs are not sent conversation items.
+type QueueState struct {
+	SessionID string      `json:"sessionId"`
+	Revision  int64       `json:"revision"`
+	Paused    bool        `json:"paused"`
+	Reason    string      `json:"reason,omitempty"`
+	Items     []QueueItem `json:"items"`
+}
+type QueueItem struct {
+	State string     `json:"state,omitempty"`
+	ID    string     `json:"id"`
+	Input Submission `json:"input"`
+}
 type Operation struct {
 	ID        string `json:"id"`
 	SessionID string `json:"sessionId"`
@@ -123,6 +137,7 @@ type Turn struct {
 	Error             string     `json:"error,omitempty"`
 }
 type Event struct {
+	Queue     *QueueState     `json:"queue,omitempty"`
 	Sequence  int64           `json:"sequence"`
 	SessionID string          `json:"sessionId,omitempty"`
 	Type      string          `json:"type"`
@@ -145,6 +160,7 @@ type Snapshot struct {
 	Operations      []Operation      `json:"operations"`
 }
 type SessionDetail struct {
+	Queue    QueueState       `json:"queue"`
 	Session  Session          `json:"session"`
 	Items    []Item           `json:"items"`
 	Requests []PendingRequest `json:"requests"`

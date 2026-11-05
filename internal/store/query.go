@@ -14,7 +14,7 @@ func (s *Store) Search(query string) ([]domain.SearchResult, error) {
 	query = strings.TrimSpace(query)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT id, json_extract(body,'$.workspaceId'), json_extract(body,'$.title'), COALESCE((SELECT substr(json_extract(i.body,'$.text'),1,240) FROM items i WHERE i.session_id=sessions.id AND instr(lower(json_extract(i.body,'$.text')),lower(?))>0 ORDER BY position LIMIT 1),'') FROM sessions WHERE ?='' OR instr(lower(json_extract(body,'$.title')),lower(?))>0 OR EXISTS(SELECT 1 FROM items i WHERE i.session_id=sessions.id AND instr(lower(json_extract(i.body,'$.text')),lower(?))>0) ORDER BY rowid DESC LIMIT 50`, query, query, query, query)
+	rows, err := s.db.Query(`SELECT id, json_extract(body,'$.workspaceId'), json_extract(body,'$.title'), COALESCE((SELECT substr(json_extract(i.body,'$.text'),1,240) FROM items i WHERE i.session_id=sessions.id AND json_extract(i.body,'$.kind')!='queued' AND instr(lower(json_extract(i.body,'$.text')),lower(?))>0 ORDER BY position LIMIT 1),'') FROM sessions WHERE ?='' OR instr(lower(json_extract(body,'$.title')),lower(?))>0 OR EXISTS(SELECT 1 FROM items i WHERE i.session_id=sessions.id AND json_extract(i.body,'$.kind')!='queued' AND instr(lower(json_extract(i.body,'$.text')),lower(?))>0) ORDER BY rowid DESC LIMIT 50`, query, query, query, query)
 	if err != nil {
 		return nil, err
 	}

@@ -34,6 +34,9 @@ type View struct {
 	sent                    *sentMessageMotion
 	sessionEntry            *sessionEntryMotion
 	composerHadFocus        bool
+	focusComposer           bool
+	queueBusy               map[string]bool
+	queueDrag               *queuedRowDrag
 	inputBounds             n.Rect
 	reduceMotion            bool
 	draftBindings           map[string]*editBinding
@@ -566,73 +569,104 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 		inputHeight = 72
 		inputSize, inputLeading = 15, 26
 	}
-	composer := n.Column(c.Key("composer:"+key)).Label("消息编辑器").FillWidth().MaxWidth(maxWidth).Padding(10, 14, 8, 6).Gap(4).Background(bg).Border(1, t.Border).Radius(16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04)).Children(func() {
-		v.branchStrip(c, t, home)
-		input := n.TextAreaBase(c.Key("input"), &binding.Text).Label("消息输入").Placeholder("描述任务…").PlaceholderColor(subtle(t)).Padding(0, 9).FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(inputSize).FixedLineHeight(inputLeading).OnTextKey(func(k n.TextKey) bool {
-			if k.Key == n.KeyEnter && (k.Mods == 0 || k.Mods == n.Cmd) {
-				m.Drafts[key] = k.Text()
-				if strings.TrimSpace(k.Text()) != "" {
-					v.submit()
+	stack := n.Column(c.Key("composer-stack:" + key)).Label("消息编辑区").FillWidth().MaxWidth(maxWidth).Gap(0).Children(func() {
+		v.queueDisclosure(c, t)
+		binding = textBinding(v.draftBindings, key, m.Drafts[key])
+		topRadius := float32(16)
+		if len(m.Queue().Items) > 0 {
+			topRadius = 0
+		}
+		composer := n.Column(c.Key("composer:"+key)).Label("消息编辑器").FillWidth().Padding(10, 14, 8, 6).Gap(4).Background(bg).Border(1, t.Border).Radius(topRadius, topRadius, 16, 16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04)).Children(func() {
+			v.queueEditBar(c, t)
+			binding = textBinding(v.draftBindings, key, m.Drafts[key])
+			v.branchStrip(c, t, home)
+			input := n.TextAreaBase(c.Key("input"), &binding.Text).Label("消息输入").Placeholder("描述任务…").PlaceholderColor(subtle(t)).Padding(0, 9).FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(inputSize).FixedLineHeight(inputLeading).OnTextKey(func(k n.TextKey) bool {
+				if k.Key == n.KeyEnter && (k.Mods == 0 || k.Mods == n.Cmd) {
+					m.Drafts[key] = k.Text()
+					if strings.TrimSpace(k.Text()) != "" {
+						v.sendMessage(k.Mods == n.Cmd)
+					}
+					return true
 				}
-				return true
-			}
-			return false
-		})
-		input.Changed()
-		v.inputBounds = input.Bounds()
-		if s := v.sent; s != nil && s.source.W > 0 && s.session == m.SessionID && !home && !c.Preferences().ReduceMotion {
-			input.PlaceholderColor(subtle(t).Alpha(v.sendProgress(c)))
-		}
-		if s := v.sent; s != nil && s.origin == "" && s.session == m.SessionID && !home && !s.focused {
-			if v.composerHadFocus {
-				input.Focus()
-			}
-			s.focused = true
-		}
-		draft = binding.Text
-		m.Drafts[key] = draft
-		binding.LastModel = draft
-		n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
-			iconButton(c, plus, "添加附件（当前 Codex 适配器暂不支持）").Size(28, 28).Disabled(true)
-			permission := control(c).Height(28).PaddingX(6).Radius(6).Label("Permission").Children(func() {
-				inlineIconText(c, shieldIcon, permissionLabel(cfg.Permission), n.Font{Family: "system-ui", Size: 12, Weight: 400}, 13, 6, t.TextMuted)
+				return false
 			})
-			choices := []menuChoice{}
-			for _, id := range m.Readiness.Permissions {
-				id := id
-				detail := map[string]string{"read-only": "仅查看", "default": "按需请求批准", "auto-approve": "沙盒内自动批准", "yolo": "不限制沙盒或批准"}[id]
-				choices = append(choices, menuChoice{id: id, name: permissionLabel(id), detail: detail, checked: cfg.Permission == id, choose: func() { cfg.Permission = id; m.Configs[key] = cfg }})
+			if v.focusComposer {
+				input.Focus()
+				v.focusComposer = false
 			}
-			v.choiceMenu(c, t, "permission:"+key, permission, choices)
-			n.Spacer(c).Grow(1)
-			v.runControl(c, t, key, cfg)
-			empty := strings.TrimSpace(draft) == ""
-			icon := arrow
-			label := "发送"
-			disabled := !m.Connected || m.Readiness.State != "ready" || empty || running
-			if running && empty {
-				icon = stop
-				label = "停止当前轮"
-				disabled = !m.Connected
+			input.Changed()
+			v.inputBounds = input.Bounds()
+			if s := v.sent; s != nil && s.source.W > 0 && s.session == m.SessionID && !home && !c.Preferences().ReduceMotion {
+				input.PlaceholderColor(subtle(t).Alpha(v.sendProgress(c)))
 			}
-			fill := t.Accent
-			if disabled {
-				fill = subtle(t)
-			}
-			send := controlFeedback(c, n.ButtonBase(c), 14, true).Size(28, 28).Radius(14).Background(fill).TextColor(t.AccentText).Label(label).Disabled(disabled).Children(func() { n.Icon(c, icon).Size(20, 20) })
-			if send.Clicked() {
-				if running && empty {
-					v.interrupt()
-				} else {
-					m.Drafts[key] = draft
-					v.submit()
+			if s := v.sent; s != nil && s.origin == "" && s.session == m.SessionID && !home && !s.focused {
+				if v.composerHadFocus {
+					input.Focus()
 				}
+				s.focused = true
 			}
+			draft = binding.Text
+			m.Drafts[key] = draft
+			binding.LastModel = draft
+			n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
+				iconButton(c, plus, "添加附件（当前 Codex 适配器暂不支持）").Size(28, 28).Disabled(true)
+				permission := control(c).Height(28).PaddingX(6).Radius(6).Label("Permission").Children(func() {
+					inlineIconText(c, shieldIcon, permissionLabel(cfg.Permission), n.Font{Family: "system-ui", Size: 12, Weight: 400}, 13, 6, t.TextMuted)
+				})
+				choices := []menuChoice{}
+				for _, id := range m.Readiness.Permissions {
+					id := id
+					detail := map[string]string{"read-only": "仅查看", "default": "按需请求批准", "auto-approve": "沙盒内自动批准", "yolo": "不限制沙盒或批准"}[id]
+					choices = append(choices, menuChoice{id: id, name: permissionLabel(id), detail: detail, checked: cfg.Permission == id, choose: func() { cfg.Permission = id; m.Configs[key] = cfg }})
+				}
+				v.choiceMenu(c, t, "permission:"+key, permission, choices)
+				n.Spacer(c).Grow(1)
+				v.runControl(c, t, key, cfg)
+				empty := strings.TrimSpace(draft) == ""
+				icon := arrow
+				label := "发送"
+				editing := m.QueueEdits[m.SessionID].ID != ""
+				queuing := running || len(m.Queue().Items) > 0
+				disabled := !m.Connected || m.Readiness.State != "ready" || empty
+				if queuing {
+					icon = queueAddIcon
+					label = "加入队列"
+					disabled = disabled || m.WorkerMinor < 2
+				}
+				if editing {
+					icon = check
+					label = "保存编辑"
+					disabled = disabled || v.queueBusy[m.SessionID]
+				}
+				if running && empty && !editing {
+					icon = stop
+					label = "停止当前轮"
+					disabled = !m.Connected
+				}
+				fill := t.Accent
+				if disabled {
+					fill = subtle(t)
+				}
+				send := controlFeedback(c, n.ButtonBase(c), 14, true).Size(28, 28).Radius(14).Background(fill).TextColor(t.AccentText).Label(label).Disabled(disabled).Children(func() {
+					n.Icon(c.Key("primary-icon:"+label), icon).Size(20, 20).Transition(n.ElementTransition{Duration: motionAnimation(c, 120*time.Millisecond).Duration, Ease: n.EaseOut, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
+				})
+				if send.Clicked() {
+					if running && empty && !editing {
+						v.interrupt()
+					} else {
+						m.Drafts[key] = draft
+						v.submit()
+					}
+				}
+				if running && !editing {
+					v.sendActions(c, t, empty)
+				}
+			})
 		})
+		fieldFeedback(c, composer)
 	})
-	fieldFeedback(c, composer)
-	v.composerSendTransition(c, composer, home)
-	v.composerHadFocus = composer.FocusWithin()
+	v.composerSendTransition(c, stack, home)
+	v.composerHadFocus = stack.FocusWithin()
 }
 func permissionLabel(id string) string {
 	switch id {
@@ -1116,9 +1150,14 @@ func (v *View) respond(r domain.PendingRequest, answer domain.Answer) {
 		}
 	}})
 }
-func (v *View) submit() {
+func (v *View) submit() { v.sendMessage(false) }
+func (v *View) sendMessage(steer bool) {
+	if v.Model.QueueEdits[v.Model.SessionID].ID != "" {
+		v.saveQueued()
+		return
+	}
 	key, _ := v.gitQuery()
-	if v.gitPending[key] {
+	if v.gitPending[key] && !v.Model.Active() && len(v.Model.Queue().Items) == 0 {
 		v.Model.Error = "正在核对设备上的分支，请稍后提交"
 		return
 	}
@@ -1126,9 +1165,13 @@ func (v *View) submit() {
 		return
 	}
 	m := v.Model
-	in, err := m.BeginSubmission()
+	in, method, turn, err := m.BeginMessage(steer)
 	if err != nil {
 		m.Error = err.Error()
+		return
+	}
+	if method != "session.submit" {
+		v.submitActive(in, method, turn)
 		return
 	}
 	sent := v.beginSendMotion(in)
