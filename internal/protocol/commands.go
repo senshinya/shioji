@@ -14,6 +14,7 @@ type SessionQuery struct {
 type EventsQuery struct {
 	After      int64  `json:"after"`
 	Generation string `json:"generation"`
+	WaitMS     int    `json:"waitMs,omitempty"`
 }
 type EventPage struct {
 	Generation string         `json:"generation"`

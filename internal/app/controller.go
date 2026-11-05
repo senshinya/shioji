@@ -191,11 +191,16 @@ func (c *Controller) Run(ctx context.Context) {
 	var selected, loaded string
 	var opening bool
 	var lastReadiness time.Time
+	var eventResults <-chan eventResult
+	var stopEvents context.CancelFunc
 	unconfirmed := map[string]bool{}
 	for _, id := range c.RestoreOperations {
 		unconfirmed[id] = true
 	}
 	defer func() {
+		if stopEvents != nil {
+			stopEvents()
+		}
 		if client != nil {
 			client.Close()
 		}
@@ -204,6 +209,11 @@ func (c *Controller) Run(ctx context.Context) {
 	defer ticker.Stop()
 	lastAttempt := time.Time{}
 	disconnected := func() {
+		if stopEvents != nil {
+			stopEvents()
+			stopEvents = nil
+		}
+		eventResults = nil
 		if client != nil {
 			client.Close()
 		}
@@ -248,10 +258,38 @@ func (c *Controller) Run(ctx context.Context) {
 		})
 		return nil
 	}
+	applyPage := func(page protocol.EventPage) bool {
+		if page.Generation != generation {
+			return false
+		}
+		if len(page.Events) == 0 {
+			return true
+		}
+		events := page.Events
+		sequence = events[len(events)-1].Sequence
+		for _, e := range events {
+			if e.Operation != nil && (e.Operation.State == "confirmed" || e.Operation.State == "rejected" || e.Operation.State == "indeterminate") {
+				delete(unconfirmed, e.Operation.ID)
+			}
+		}
+		c.post(func(m *Model) {
+			for _, e := range events {
+				if err := m.ApplyEvent(e); err != nil {
+					m.Error, m.Connected, m.ConnectionEpoch = err.Error(), false, ""
+					return
+				}
+			}
+		})
+		return true
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case result := <-eventResults:
+			if result.err != nil || !applyPage(result.page) {
+				disconnected()
+			}
 		case job := <-c.Jobs:
 			if job.Method == "$select" {
 				selected = job.Input.(string)
@@ -323,6 +361,9 @@ func (c *Controller) Run(ctx context.Context) {
 					disconnected()
 					continue
 				}
+				if client.Minor >= 1 {
+					eventResults, stopEvents = c.observeEvents(ctx, snapshot.DeviceID, generation, sequence)
+				}
 			}
 			if time.Since(lastReadiness) > 5*time.Second {
 				var ready domain.Readiness
@@ -333,33 +374,13 @@ func (c *Controller) Run(ctx context.Context) {
 				lastReadiness = time.Now()
 				c.post(func(m *Model) { m.Readiness = ready })
 			}
-			var page protocol.EventPage
-			if err := client.Call(ctx, "events", protocol.EventsQuery{After: sequence, Generation: generation}, &page); err != nil {
-				disconnected()
-				continue
-			}
-			if page.Generation != generation {
-				disconnected()
-				continue
-			}
-			if len(page.Events) > 0 {
-				events := page.Events
-				sequence = events[len(events)-1].Sequence
-				for _, e := range events {
-					if e.Operation != nil && (e.Operation.State == "confirmed" || e.Operation.State == "rejected" || e.Operation.State == "indeterminate") {
-						delete(unconfirmed, e.Operation.ID)
-					}
+			// Older workers retain their existing polling path until upgraded.
+			if eventResults == nil {
+				var page protocol.EventPage
+				if err := client.Call(ctx, "events", protocol.EventsQuery{After: sequence, Generation: generation}, &page); err != nil || !applyPage(page) {
+					disconnected()
+					continue
 				}
-				c.post(func(m *Model) {
-					for _, e := range events {
-						if err := m.ApplyEvent(e); err != nil {
-							m.Error = err.Error()
-							m.Connected = false
-							m.ConnectionEpoch = ""
-							return
-						}
-					}
-				})
 			}
 			if err := fetchDetail(); err != nil {
 				disconnected()

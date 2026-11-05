@@ -12,11 +12,73 @@ import (
 	"time"
 
 	n "github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/markdown"
 	"shioji/internal/domain"
 	"shioji/internal/harness/codex"
 )
 
 const replyBurst = "First words. " + "这是一段逐步出现的中文回复。" + " The answer continues with more detail instead of appearing all at once. Stream tail."
+
+func TestAdaptiveMarkdownResetsWhenUnrevealedTailIsReplaced(t *testing.T) {
+	text := strings.Repeat("A", 1000)
+	options := markdown.Options{Reveal: &markdown.Reveal{Smooth: true, Fade: -1}}
+	ui := n.NewTester(func(c *n.Context) { markdown.Stream(c.Key("reply"), text, &options).FillWidth() }, 1100, 800)
+	text = strings.Repeat("A", 100) + " changed tail"
+	ui.Frame()
+	if !ui.HasText(text) || ui.FramePending() {
+		t.Fatal("replacing an unrevealed suffix retains the old stream backlog")
+	}
+}
+
+// If each batch is drained immediately, a regular four-character/100 ms
+// stream alternates rapid growth with visible pauses. Measure content growth,
+// independently of whether the fade animation is still drawing frames.
+func TestLiveReplyAbsorbsRegularInputBatches(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Items = nil
+	m.Details["s"] = d
+	ui := n.NewTester(New(m, nil, "").View, 1440, 900)
+	source := []rune(strings.Repeat("甲乙丙丁戊己庚辛壬癸", 10))
+	lastLength, lastGrowth := 0, time.Duration(0)
+	var maxGap time.Duration
+	for frame := 0; frame < 120; frame++ {
+		elapsed := time.Duration(frame) * time.Second / 60
+		if frame%6 == 0 {
+			d.Items = []domain.Item{{ID: "live", Kind: "assistant", Text: string(source[:4*(frame/6+1)])}}
+			m.Details["s"] = d
+			ui.Frame()
+		}
+		ui.Advance(time.Second / 60)
+		length := 0
+		for _, text := range ui.Texts() {
+			if strings.HasPrefix(text, "甲") {
+				length = len([]rune(text))
+				break
+			}
+		}
+		if length != lastLength {
+			if elapsed > 400*time.Millisecond {
+				maxGap = max(maxGap, elapsed-lastGrowth)
+			}
+			lastLength, lastGrowth = length, elapsed
+		}
+	}
+	t.Logf("maximum content-growth gap: %s", maxGap)
+	if maxGap > 50*time.Millisecond {
+		t.Fatalf("content pauses between batches: maximum growth gap %s", maxGap)
+	}
+	if lastLength < 68 || lastLength > 80 {
+		t.Fatalf("display fell behind or invented text: %d of 80", lastLength)
+	}
+	d.Items[0].Final = true
+	m.Details["s"] = d
+	ui.Frame()
+	ui.Advance(700 * time.Millisecond)
+	if !ui.HasText(string(source[:80])) || ui.FramePending() {
+		t.Fatal("completion leaves a delayed or animating tail")
+	}
+}
 
 func TestLiveReplyRevealsBurstAndDrainsAfterCompletion(t *testing.T) {
 	m := layoutModel()
@@ -169,10 +231,10 @@ func TestNewReplyInkFadesInWithoutFadingExistingText(t *testing.T) {
 		ui.SetDark(dark)
 		old, _ := ui.Find("Stable preceding text.")
 		before := copyFrame(ui)
-		d.Items = append(d.Items, domain.Item{ID: "live", Kind: "assistant", Text: "Fade"})
+		d.Items = append(d.Items, domain.Item{ID: "live", Kind: "assistant", Text: "F"})
 		m.Details["s"] = d
 		ui.Frame()
-		r, ok := ui.Find("Fade")
+		r, ok := ui.Find("F")
 		if !ok {
 			t.Fatal("short new reply did not start revealing")
 		}
@@ -338,10 +400,16 @@ func TestCodeAddedToAnOpenFenceFadesWithoutReplayingPreviousLines(t *testing.T) 
 		ui := n.NewTester(New(m, nil, "").View, 1440, 900)
 		ui.SetDark(dark)
 		ui.Advance(300 * time.Millisecond)
-		d.Items[0].Text += "return"
+		d.Items[0].Text += "r"
 		m.Details["s"] = d
 		ui.Frame()
-		r, ok := ui.Find("// Stable\nreturn")
+		// Wait for the first buffered code character, then measure its ink
+		// independently of the content-release delay.
+		r, ok := ui.Find("// Stable\nr")
+		for frame := 0; !ok && frame < 20; frame++ {
+			ui.Advance(time.Second / 60)
+			r, ok = ui.Find("// Stable\nr")
+		}
 		if !ok {
 			t.Fatalf("new code did not render inside the existing fence: %v", ui.Texts())
 		}
@@ -368,7 +436,7 @@ func TestCodeAddedToAnOpenFenceFadesWithoutReplayingPreviousLines(t *testing.T) 
 		if changes(first, settled, int(r.Y), line) != 0 {
 			t.Fatal("new code fades the already visible preceding line")
 		}
-		d.Items[0].Text += "\n```"
+		d.Items[0].Text += "eturn\n```"
 		d.Items[0].Final = true
 		m.Details["s"] = d
 		ui.Frame()

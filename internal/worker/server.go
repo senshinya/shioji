@@ -176,23 +176,34 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 			return nil, err
 		}
 		return s.store.Operation(q.ID)
-	case "events":
+	case "events", "events.watch":
 		q, err := decode[EventsQuery](body)
 		if err != nil {
 			return nil, err
 		}
-		snap, err := s.store.Snapshot()
-		if err != nil {
+		var wait time.Duration
+		if method == "events.watch" {
+			wait = time.Duration(max(1, min(q.WaitMS, 15_000))) * time.Millisecond
+		}
+		if err := s.store.WaitEvents(s.ctx, q.After, q.Generation, wait); err != nil {
 			return nil, err
 		}
-		if q.Generation != snap.Generation || q.After > snap.Sequence {
-			return nil, errors.New("snapshot required: generation or cursor changed")
+		if method == "events.watch" {
+			// Coalesce token bursts for one native display frame. This wait uses
+			// the observation connection; commands remain independently available.
+			timer := time.NewTimer(12 * time.Millisecond)
+			select {
+			case <-s.ctx.Done():
+				timer.Stop()
+				return nil, s.ctx.Err()
+			case <-timer.C:
+			}
 		}
 		events, err := s.store.Events(q.After, 100)
 		if err != nil {
 			return nil, err
 		}
-		page := EventPage{Generation: snap.Generation}
+		page := EventPage{Generation: q.Generation}
 		size := 0
 		for _, e := range events {
 			b, _ := json.Marshal(e)

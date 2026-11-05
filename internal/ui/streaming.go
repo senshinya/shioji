@@ -58,7 +58,7 @@ func (v *View) assistantReply(c *n.Context, item domain.Item) {
 		stream.fresh = false
 	}
 	*initialized = true
-	v.md.Reveal = &markdown.Reveal{Fade: 180 * time.Millisecond}
+	v.md.Reveal = &markdown.Reveal{Unit: markdown.ByCharacter, Fade: 180 * time.Millisecond, Smooth: true}
 	if v.reduceMotion || stream == nil || !stream.live {
 		v.md.Reveal = &markdown.Reveal{Unit: markdown.AtOnce, Fade: -1}
 	}

@@ -60,6 +60,58 @@ func wait(t *testing.T, fn func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// A parked event read must wake on a committed change, without occupying the
+// command connection or depending on the client's periodic housekeeping tick.
+func TestEventWatchWakesOnCommitWithoutBlockingCommands(t *testing.T) {
+	server, command, _ := startServer(t)
+	watch := connect(t, server.Directory())
+	var snapshot domain.Snapshot
+	call(t, command, "snapshot", nil, &snapshot)
+	type receipt struct {
+		page protocol.EventPage
+		err  error
+	}
+	received := make(chan receipt, 1)
+	go func() {
+		var page protocol.EventPage
+		err := watch.Call(context.Background(), "events.watch", map[string]any{"after": snapshot.Sequence, "generation": snapshot.Generation, "waitMs": 1000}, &page)
+		received <- receipt{page, err}
+	}()
+	var workspace domain.Workspace
+	call(t, command, "workspace.create", worker.WorkspaceInput{Name: "Wake", Folders: []string{t.TempDir()}}, &workspace)
+	select {
+	case got := <-received:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if got.page.Generation != snapshot.Generation || len(got.page.Events) != 1 || got.page.Events[0].Workspace.ID != workspace.ID {
+			t.Fatalf("watch lost the committed workspace: %+v", got.page)
+		}
+	case <-time.After(150 * time.Millisecond):
+		t.Fatal("committed events still wait for a polling interval")
+	}
+}
+
+func TestEventWatchWaitsWhenIdleAndRejectsInvalidCursor(t *testing.T) {
+	_, client, _ := startServer(t)
+	var snapshot domain.Snapshot
+	call(t, client, "snapshot", nil, &snapshot)
+	start := time.Now()
+	var page protocol.EventPage
+	call(t, client, "events.watch", map[string]any{"after": snapshot.Sequence, "generation": snapshot.Generation, "waitMs": 60}, &page)
+	if time.Since(start) < 50*time.Millisecond || len(page.Events) != 0 {
+		t.Fatal("idle watch spins instead of waiting")
+	}
+	for _, q := range []map[string]any{
+		{"after": snapshot.Sequence + 1, "generation": snapshot.Generation, "waitMs": 1000},
+		{"after": snapshot.Sequence, "generation": "replaced", "waitMs": 1000},
+	} {
+		if err := client.Call(context.Background(), "events.watch", q, &page); err == nil {
+			t.Fatal("invalid cursor was accepted")
+		}
+	}
+}
 func TestWorkerDisconnectDoesNotStopParallelSessions(t *testing.T) {
 	server, c, p := startServer(t)
 	_ = server

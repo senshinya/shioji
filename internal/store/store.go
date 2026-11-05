@@ -2,6 +2,7 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
@@ -22,6 +24,7 @@ type Store struct {
 	mu                   sync.Mutex
 	db                   *sql.DB
 	deviceID, generation string
+	changed              chan struct{}
 }
 
 func Open(path string) (*Store, error) {
@@ -82,7 +85,7 @@ func Open(path string) (*Store, error) {
 	if err = tx.Commit(); err != nil {
 		return fail(err)
 	}
-	s := &Store{db: db}
+	s := &Store{db: db, changed: make(chan struct{})}
 	if err = db.QueryRow("SELECT device_id,generation FROM metadata WHERE id=1").Scan(&s.deviceID, &s.generation); err != nil {
 		return fail(err)
 	}
@@ -90,6 +93,48 @@ func Open(path string) (*Store, error) {
 }
 func (s *Store) Close() error     { return s.db.Close() }
 func (s *Store) DeviceID() string { return s.deviceID }
+
+// commit publishes a wake only after the journal and its projection are durable.
+// Callers hold mu, so registering a waiter cannot miss a concurrent commit.
+func (s *Store) commit(tx *sql.Tx) error {
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	close(s.changed)
+	s.changed = make(chan struct{})
+	return nil
+}
+
+// WaitEvents waits for journal progress without holding the database connection.
+// The journal cursor remains authoritative; the channel is only a wake-up hint.
+func (s *Store) WaitEvents(ctx context.Context, after int64, generation string, wait time.Duration) error {
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	for {
+		s.mu.Lock()
+		changed := s.changed
+		var sequence int64
+		err := s.db.QueryRow("SELECT COALESCE(MAX(sequence),0) FROM journal").Scan(&sequence)
+		valid := generation == s.generation && after >= 0 && after <= sequence
+		s.mu.Unlock()
+		if err != nil {
+			return err
+		}
+		if !valid {
+			return errors.New("snapshot required: generation or cursor changed")
+		}
+		if sequence > after {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return nil
+		case <-changed:
+		}
+	}
+}
 func blob(v any) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -154,7 +199,7 @@ func (s *Store) CreateWorkspace(name string, folders []string) (domain.Workspace
 	if _, err = journal(tx, domain.Event{Type: "workspace", Workspace: &w}); err != nil {
 		return w, err
 	}
-	return w, tx.Commit()
+	return w, s.commit(tx)
 }
 func (s *Store) UpdateWorkspace(w domain.Workspace) (domain.Workspace, error) {
 	s.mu.Lock()
@@ -181,7 +226,7 @@ func (s *Store) UpdateWorkspace(w domain.Workspace) (domain.Workspace, error) {
 	if _, err = journal(tx, domain.Event{Type: "workspace", Workspace: &w}); err != nil {
 		return w, err
 	}
-	return w, tx.Commit()
+	return w, s.commit(tx)
 }
 func operation(q interface{ QueryRow(string, ...any) *sql.Row }, id string) (domain.Operation, error) {
 	var op domain.Operation
@@ -259,7 +304,7 @@ func (s *Store) Accept(in domain.Submission, launch ...domain.LaunchContext) (do
 	if _, err = journal(tx, domain.Event{Type: "submission", SessionID: session.ID, Session: &session, Operation: &op, Item: &item}); err != nil {
 		return none, err
 	}
-	return op, tx.Commit()
+	return op, s.commit(tx)
 }
 func (s *Store) SetOperation(id, state, message string) error {
 	s.mu.Lock()
@@ -281,7 +326,7 @@ func (s *Store) SetOperation(id, state, message string) error {
 	if _, err = journal(tx, domain.Event{Type: "operation", SessionID: op.SessionID, Operation: &op}); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return s.commit(tx)
 }
 func putItem(tx *sql.Tx, sid string, item *domain.Item) error {
 	var pos int64
@@ -390,7 +435,7 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 	if err != nil {
 		return e, err
 	}
-	return e, tx.Commit()
+	return e, s.commit(tx)
 }
 func (s *Store) Snapshot() (domain.Snapshot, error) {
 	s.mu.Lock()

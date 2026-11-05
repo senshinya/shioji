@@ -5,12 +5,120 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 )
+
+func TestControllerObservesEventsWhileWatchLeavesCommandsAvailable(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "swatch-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	listener, err := net.Listen("unix", filepath.Join(dir, "worker.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	watching, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				stop := context.AfterFunc(ctx, func() { conn.Close() })
+				defer stop()
+				codec, _, err := protocol.Welcome(conn, "device")
+				if err != nil {
+					return
+				}
+				for {
+					var f protocol.Frame
+					if codec.Read(&f) != nil {
+						return
+					}
+					switch f.Method {
+					case "snapshot":
+						result(codec, f, domain.Snapshot{DeviceID: "device", Generation: "g"})
+					case "readiness":
+						result(codec, f, domain.Readiness{State: "ready"})
+					case "events.watch":
+						var q protocol.EventsQuery
+						json.Unmarshal(f.Body, &q)
+						if q.After > 0 {
+							<-ctx.Done()
+							return
+						}
+						once.Do(func() { close(watching) })
+						select {
+						case <-ctx.Done():
+							return
+						case <-release:
+						}
+						result(codec, f, protocol.EventPage{Generation: "g", Events: []domain.Event{{Sequence: 1, Type: "workspace", Workspace: &domain.Workspace{ID: "live", Revision: 1}}}})
+					case "probe":
+						result(codec, f, "accepted")
+					case "events":
+						result(codec, f, protocol.EventPage{Generation: "g"})
+					}
+				}
+			}()
+		}
+	}()
+	c := NewController(dir)
+	done := make(chan struct{})
+	go func() { c.Run(ctx); close(done) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("controller did not cancel its watch")
+		}
+	}()
+	select {
+	case <-watching:
+	case <-time.After(2 * time.Second):
+		t.Fatal("controller never established an event watch")
+	}
+	accepted := false
+	c.Do(Job{Method: "probe", Apply: func(_ *Model, body json.RawMessage, err error) { accepted = err == nil && string(body) == `"accepted"` }})
+	m := NewModel()
+	deadline := time.After(150 * time.Millisecond)
+	for !accepted {
+		select {
+		case update := <-c.Updates:
+			update(m)
+		case <-deadline:
+			t.Fatal("event watch blocked a command")
+		}
+	}
+	close(release)
+	deadline = time.After(100 * time.Millisecond)
+	for len(m.Snapshot.Workspaces) == 0 {
+		select {
+		case update := <-c.Updates:
+			update(m)
+		case <-deadline:
+			t.Fatal("event delivery still waits for the housekeeping tick")
+		}
+	}
+	if m.Snapshot.Workspaces[0].ID != "live" {
+		t.Fatal("wrong event projection")
+	}
+}
 
 func peer(t *testing.T, serve func(*protocol.Codec, string)) *protocol.Client {
 	t.Helper()

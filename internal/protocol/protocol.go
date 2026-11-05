@@ -16,6 +16,9 @@ import (
 )
 
 const Major = 1
+
+// Minor 1 adds cursor-based event watches on a separate connection.
+const Minor = 1
 const MaxFrame = 1 << 20
 
 type Frame struct {
@@ -92,6 +95,7 @@ type Client struct {
 	conn            net.Conn
 	codec           *Codec
 	DeviceID, Epoch string
+	Minor           int
 }
 
 func Connect(ctx context.Context, conn net.Conn, target string) (*Client, error) {
@@ -114,6 +118,7 @@ func Connect(ctx context.Context, conn net.Conn, target string) (*Client, error)
 	}
 	client.DeviceID = f.DeviceID
 	client.Epoch = f.Epoch
+	client.Minor = f.Minor
 	return client, nil
 }
 func (c *Client) Close() error { return c.conn.Close() }
@@ -171,6 +176,6 @@ func Welcome(conn net.Conn, deviceID string) (*Codec, string, error) {
 		return nil, "", errors.New("handshake rejected")
 	}
 	epoch := domain.NewID()
-	err := c.Write(Frame{Type: "welcome", Major: Major, Nonce: hello.Nonce, DeviceID: deviceID, Epoch: epoch})
+	err := c.Write(Frame{Type: "welcome", Major: Major, Minor: Minor, Nonce: hello.Nonce, DeviceID: deviceID, Epoch: epoch})
 	return c, epoch, err
 }

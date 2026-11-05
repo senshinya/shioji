@@ -22,6 +22,9 @@ type Reveal struct {
 	// Fade is how long text takes to fade in: 300 ms when zero, none when
 	// negative, nor when the desktop asks for less motion.
 	Fade time.Duration
+	// Smooth absorbs uneven input batches using their observed character rate.
+	// It keeps a short live buffer and drains the remaining tail on completion.
+	Smooth bool
 }
 
 // RevealUnit is what Reveal shows at a time.
@@ -62,6 +65,7 @@ type revealState struct {
 	last      time.Time
 	marks     []revealMark
 	fade      time.Duration
+	cadence   revealCadence
 }
 
 // revealMark notes that the source from at on showed at time t.
@@ -79,14 +83,21 @@ func (rs *revealState) step(c *ui.Context, src string, streaming bool, r *Reveal
 	now := c.Now()
 	// Text a stream left to reveal still comes in once it is done; other
 	// text a finished view is given shows at once, as does an edit.
-	edited := rs.shown > len(src) || !strings.HasPrefix(src, rs.src[:rs.shown])
+	edited := !strings.HasPrefix(src, rs.src)
 	pending := rs.revealing && rs.shown < len(rs.src) && !edited
 	rs.src = src
 	if !streaming && !pending || r.Unit == AtOnce || edited {
 		rs.shown, rs.last, rs.revealing = len(src), now, streaming
+		rs.cadence = revealCadence{}
+		if edited || r.Unit == AtOnce {
+			rs.marks = nil
+		}
 		return rs.shown, false
 	}
 	rs.revealing = true
+	if r.Smooth {
+		return rs.smoothStep(now, src, streaming)
+	}
 	target := len(src)
 	if streaming && r.Unit != ByWord && r.Unit != ByCharacter {
 		// Only complete sentences, lines or paragraphs, while more is
