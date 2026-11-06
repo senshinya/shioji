@@ -561,10 +561,12 @@ func coreLocal[T any](e *node, key any, init func() T) *T {
 
 // state is what the runtime keeps about an element from frame to frame.
 type state struct {
-	rt            *engine
-	pendingSubmit bool
-	pendingChange bool
-	noticeQueued  bool
+	virtualTextSource func(string) (string, bool)
+	logicalTextKey    string
+	rt                *engine
+	pendingSubmit     bool
+	pendingChange     bool
+	noticeQueued      bool
 
 	// rowPressed marks a row of a list the pointer pressed, until the
 	// release; pressChose, that the press chose it, so that its click does

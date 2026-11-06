@@ -29,6 +29,8 @@ func (v *View) syncReplyStreams(detail domain.SessionDetail) {
 	if reset {
 		v.replySession, v.replyEpoch = m.SessionID, m.ConnectionEpoch
 		v.replyStreams = make(map[string]*replyStream)
+		v.activityPatches = nil
+		v.replyLatestOrder = 0
 	}
 	for _, stream := range v.replyStreams {
 		// An unmounted virtual row has no animation to wait for.
@@ -36,13 +38,19 @@ func (v *View) syncReplyStreams(detail domain.SessionDetail) {
 			stream.revealing = false
 		}
 	}
+	previousOrder := v.replyLatestOrder
 	for _, item := range detail.Items {
-		if item.Kind != "assistant" {
+		v.replyLatestOrder = max(v.replyLatestOrder, item.Order)
+		if item.Kind != "assistant" && item.Kind != "request" && item.Kind != "request_result" {
 			continue
 		}
 		stream := v.replyStreams[item.ID]
 		if stream == nil {
-			v.replyStreams[item.ID] = &replyStream{text: item.Text, live: !reset, fresh: !reset, changedAt: v.frameTime, revealing: !reset && !v.reduceMotion && item.Text != ""}
+			live := !reset
+			if item.Kind == "request_result" && item.Order > 0 && item.Order <= previousOrder {
+				live = false
+			}
+			v.replyStreams[item.ID] = &replyStream{text: item.Text, live: live, fresh: live, changedAt: v.frameTime, revealing: live && !v.reduceMotion && item.Text != ""}
 		} else if stream.text != item.Text {
 			stream.live = strings.HasPrefix(item.Text, stream.text)
 			stream.text, stream.changedAt = item.Text, v.frameTime
@@ -52,6 +60,43 @@ func (v *View) syncReplyStreams(detail domain.SessionDetail) {
 }
 
 type replyMountKey struct{}
+
+// Source titles share Markdown's reveal clock, but remain literal metadata.
+func (v *View) requestSourceLabel(c *n.Context, t *n.Theme, item domain.Item, label string) {
+	root := n.Column(c.Key("source-label")).MinHeight(20)
+	options := n.Local(root, "markdown", func() markdown.Options { return markdown.Options{ShareSelection: true} })
+	options.Theme = &markdown.Theme{Font: "system-ui", FontSize: 11, LineHeight: 20.0 / 11, Text: t.TextMuted}
+	options.Reveal = &markdown.Reveal{Unit: markdown.ByCharacter, Fade: 180 * time.Millisecond, Smooth: true}
+	stream := v.replyStreams[item.ID]
+	fresh := stream != nil && stream.live && stream.fresh
+	if v.reduceMotion || stream == nil || !stream.live {
+		options.Reveal = &markdown.Reveal{Unit: markdown.AtOnce, Fade: -1}
+	}
+	options.OnRevealState = nil
+	if stream != nil {
+		stream.fresh, stream.seen = false, v.replyFrame
+		options.OnRevealState = func(active bool) {
+			if stream.revealing != active {
+				stream.revealing = active
+				c.AnimationFrame()
+			}
+		}
+	}
+	var literal strings.Builder
+	for _, ch := range label {
+		if strings.ContainsRune("\\`*_{}[]()#+-.!<>|~&", ch) {
+			literal.WriteByte('\\')
+		}
+		literal.WriteRune(ch)
+	}
+	root.Children(func() {
+		if fresh {
+			markdown.Stream(c.Key("text"), literal.String(), options)
+		} else {
+			markdown.View(c.Key("text"), literal.String(), options)
+		}
+	})
+}
 
 func (v *View) assistantReply(c *n.Context, item domain.Item) {
 	root := n.Column(c.Key(item.ID)).FillWidth()

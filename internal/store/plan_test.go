@@ -52,6 +52,43 @@ func TestLatestPlanSurvivesRestartAndStaysOutsideTranscript(t *testing.T) {
 	}
 }
 
+func TestNarrativeAndStructuredPlanMergeOnlyWithinSameTurn(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "worker.sqlite")
+	s, err := store.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := workspace(t, s)
+	op, _ := s.Accept(domain.Submission{OperationID: "narrative", WorkspaceID: w.ID, Text: "work"})
+	for _, raw := range []string{
+		`{"type":"plan.text","text":"独立方案正文","plan":{"turnId":"t"}}`,
+		`{"type":"plan","plan":{"turnId":"t","steps":[{"text":"真实步骤","status":"pending"}]}}`,
+	} {
+		var e domain.Event
+		json.Unmarshal([]byte(raw), &e)
+		if _, err = s.Apply(op.SessionID, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+	s, err = store.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	d, _ := s.Session(op.SessionID, 0, 100)
+	b, _ := json.Marshal(d.Plan)
+	if !strings.Contains(string(b), "独立方案正文") || !strings.Contains(string(b), "真实步骤") {
+		t.Fatal("narrative and steps overwrote each other", string(b))
+	}
+	s.Apply(op.SessionID, domain.Event{Type: "plan", Plan: &domain.Plan{TurnID: "next", Steps: []domain.PlanStep{}}})
+	d, _ = s.Session(op.SessionID, 0, 100)
+	b, _ = json.Marshal(d.Plan)
+	if strings.Contains(string(b), "独立方案正文") {
+		t.Fatal("old narrative leaked into next turn")
+	}
+}
+
 func TestPlanSchemaMigrationPreservesExistingWorkerState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "worker.sqlite")
 	s, err := store.Open(path)

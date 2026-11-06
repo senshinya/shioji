@@ -196,8 +196,10 @@ func (c *Controller) Run(ctx context.Context) {
 	var client *protocol.Client
 	var generation string
 	var sequence int64
-	var selected, loaded string
-	var opening bool
+	var selected string
+	loaded := map[string]bool{}
+	opening := map[string]bool{}
+	visible := []string{}
 	var lastReadiness time.Time
 	var eventResults <-chan eventResult
 	var stopEvents context.CancelFunc
@@ -226,7 +228,7 @@ func (c *Controller) Run(ctx context.Context) {
 			client.Close()
 		}
 		client = nil
-		loaded = ""
+		clear(loaded)
 		c.mu.Lock()
 		c.epoch = ""
 		c.mu.Unlock()
@@ -236,36 +238,39 @@ func (c *Controller) Run(ctx context.Context) {
 		})
 	}
 	fetchDetail := func() error {
-		if selected == "" || selected == loaded {
-			return nil
-		}
-		all, err := hydrateSession(ctx, client, selected, generation)
-		if err != nil {
-			var remote *protocol.RemoteError
-			if errors.As(err, &remote) {
-				loaded = selected
-				c.post(func(m *Model) { m.Error = err.Error() })
-				return nil
+		ids := append([]string{selected}, visible...)
+		for _, id := range ids {
+			if id == "" || loaded[id] {
+				continue
 			}
-			return err
-		}
-		loaded = selected
-		id := selected
-		collapseHistory := opening
-		opening = false
-		c.post(func(m *Model) {
-			m.Details[id] = all
-			if collapseHistory {
-				m.FoldToolHistory[id] = true
-			}
-			for i, s := range m.Snapshot.Sessions {
-				if s.ID == all.Session.ID && s.Revision <= all.Session.Revision {
-					m.Snapshot.Sessions[i] = all.Session
+			all, err := hydrateSession(ctx, client, id, generation)
+			if err != nil {
+				var remote *protocol.RemoteError
+				if errors.As(err, &remote) {
+					loaded[id] = true
+					c.post(func(m *Model) { m.Error = err.Error() })
+					continue
 				}
+				return err
 			}
-		})
+			loaded[id] = true
+			collapseHistory := opening[id]
+			delete(opening, id)
+			c.post(func(m *Model) {
+				m.Details[id] = all
+				if collapseHistory {
+					m.FoldToolHistory[id] = true
+				}
+				for i, s := range m.Snapshot.Sessions {
+					if s.ID == all.Session.ID && s.Revision <= all.Session.Revision {
+						m.Snapshot.Sessions[i] = all.Session
+					}
+				}
+			})
+		}
 		return nil
 	}
+
 	applyPage := func(page protocol.EventPage) bool {
 		if page.Generation != generation {
 			return false
@@ -304,10 +309,29 @@ func (c *Controller) Run(ctx context.Context) {
 				lastAttempt = time.Time{}
 				continue
 			}
+			if job.Method == "$visible" {
+				previous := map[string]bool{}
+				for _, id := range visible {
+					previous[id] = true
+				}
+				visible = append([]string(nil), job.Input.([]string)...)
+				for _, id := range visible {
+					if !previous[id] {
+						delete(loaded, id)
+						opening[id] = true
+					}
+				}
+				if client != nil {
+					if err := fetchDetail(); err != nil {
+						disconnected()
+					}
+				}
+				continue
+			}
 			if job.Method == "$select" {
 				selected = job.Input.(string)
-				opening = selected != ""
-				loaded = ""
+				opening[selected] = selected != ""
+				delete(loaded, selected)
 				if client != nil {
 					if err := fetchDetail(); err != nil {
 						disconnected()
@@ -383,7 +407,7 @@ func (c *Controller) Run(ctx context.Context) {
 					m.Readiness = ready
 					m.ApplySnapshot(snapshot)
 				})
-				loaded = ""
+				clear(loaded)
 				if err := reconcileOperations(ctx, client, unconfirmed, c.post); err != nil {
 					disconnected()
 					continue

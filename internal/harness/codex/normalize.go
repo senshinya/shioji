@@ -13,10 +13,12 @@ import (
 )
 
 type pending struct {
-	request   domain.PendingRequest
-	sourceID  json.RawMessage
-	thread    string
-	responded bool
+	request     domain.PendingRequest
+	sourceID    json.RawMessage
+	thread      string
+	responded   bool
+	decisions   map[string]json.RawMessage
+	permissions json.RawMessage
 }
 type Normalizer struct {
 	mu             sync.Mutex
@@ -88,51 +90,24 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		return []domain.Event{e}, nil, nil
 	}
 	if len(m.ID) > 0 && string(m.ID) != "null" {
-		req := domain.PendingRequest{ID: domain.NewID(), SessionID: sid, TurnID: p.TurnID, ItemID: itemKey(p.TurnID, p.ItemID), State: "pending", Revision: 1}
-		switch m.Method {
-		case "item/tool/requestUserInput":
-			req.Kind = "questions"
-			req.Title = "需要回答"
-			for _, q := range p.Questions {
-				if q.IsSecret {
-					return nil, unsupported(m.ID, "Secret question forms are not enabled in stage 1"), nil
-				}
-				question := domain.Question{ID: q.ID, Header: q.Header, Text: bounded(q.Question), Custom: q.IsOther}
-				for _, o := range q.Options {
-					question.Options = append(question.Options, domain.Option{Label: o.Label, Description: o.Description})
-				}
-				req.Questions = append(req.Questions, question)
-			}
-			if len(req.Questions) == 0 {
-				return nil, unsupported(m.ID, "Empty question set"), nil
-			}
-		case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
-			req.Kind = "approval"
-			req.Title = "执行审批"
-			req.Text = bounded(p.Command)
-			if req.Text == "" {
-				req.Text = bounded(p.Reason)
-			}
-			if m.Method == "item/fileChange/requestApproval" {
-				req.Title = "文件改动审批"
-			}
-		default:
-			return nil, unsupported(m.ID, "Unsupported server request"), nil
+		if _, seen := n.sourceRequests[sourceKey(p.ThreadID, m.ID)]; seen {
+			return nil, nil, nil
 		}
+		entry, buildErr := makeRequest(m.Method, m.Params, p)
+		if buildErr != nil {
+			return nil, unsupported(m.ID, buildErr.Error()), nil
+		}
+		req := entry.request
+		req.SessionID = sid
 		if sid == "" {
 			return nil, unsupported(m.ID, "No bound session"), nil
 		}
 		encoded, _ := json.Marshal(req)
-		active := 0
-		for _, entry := range n.requests {
-			if entry.thread == p.ThreadID && (entry.request.State == "pending" || entry.request.State == "submitting") {
-				active++
-			}
-		}
-		if len(encoded) > 16<<10 || active >= 4 {
+		if len(encoded) > 16<<10 {
 			return nil, unsupported(m.ID, "Question/approval resource limit exceeded"), nil
 		}
-		n.requests[req.ID] = &pending{request: req, sourceID: append(json.RawMessage(nil), m.ID...), thread: p.ThreadID}
+		entry.request, entry.sourceID, entry.thread = req, append(json.RawMessage(nil), m.ID...), p.ThreadID
+		n.requests[req.ID] = entry
 		n.sourceRequests[sourceKey(p.ThreadID, m.ID)] = req.ID
 		event.Type = "request.open"
 		event.Request = &req
@@ -207,26 +182,39 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		if old.Final && m.Method == "item/started" {
 			return nil, nil, nil
 		}
-		i := domain.Item{ID: key, TurnID: p.TurnID, Final: m.Method == "item/completed", Status: p.Item.Status}
-		switch p.Item.Type {
-		case "agentMessage":
-			i.Kind = "assistant"
-			i.Text = bounded(p.Item.Text)
-		case "commandExecution":
-			i.Kind = "tool"
-			i.Name = bounded(p.Item.Command)
-			i.Text = bounded(p.Item.AggregatedOutput)
-			i.ExitCode = p.Item.ExitCode
-		case "reasoning":
-			return nil, nil, nil
-		default:
-			i.Kind = "unsupported"
-			i.Name = p.Item.Type
-			i.Text = "暂不支持的内容：" + p.Item.Type
+		if p.Item.Type == "plan" {
+			event.Type, event.Text = "plan.text", boundedJSONText(p.Item.Text, 128<<10)
+			event.Plan = &domain.Plan{TurnID: p.TurnID}
+			n.items[key] = domain.Item{ID: key, Text: event.Text, Final: m.Method == "item/completed"}
+			return emit(event)
 		}
+		i := normalizeItem(p.Item, m.Method == "item/completed")
+		i.ID, i.TurnID = key, p.TurnID
 		n.items[key] = i
 		event.Type = "item.upsert"
 		event.Item = &i
+		return emit(event)
+	case "item/plan/delta":
+		key := itemKey(p.TurnID, p.ItemID)
+		i, ok := n.items[key]
+		if !ok || i.Final {
+			return nil, nil, nil
+		}
+		i.Text = boundedJSONText(i.Text+p.Delta, 128<<10)
+		n.items[key] = i
+		event.Type, event.Text, event.Plan = "plan.text", i.Text, &domain.Plan{TurnID: p.TurnID}
+		return emit(event)
+	case "item/mcpToolCall/progress":
+		key := itemKey(p.TurnID, p.ItemID)
+		i, ok := n.items[key]
+		if !ok || i.Final {
+			return nil, nil, nil
+		}
+		var progress struct{ Message string }
+		json.Unmarshal(m.Params, &progress)
+		i.Text = boundedTo(progress.Message, 8<<10)
+		n.items[key] = i
+		event.Type, event.Item = "item.upsert", &i
 		return emit(event)
 	case "item/agentMessage/delta", "item/commandExecution/outputDelta":
 		key := itemKey(p.TurnID, p.ItemID)
@@ -238,6 +226,7 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 			return nil, nil, nil
 		}
 		i.Text = bounded(i.Text + p.Delta)
+		limitItem(&i)
 		n.items[key] = i
 		event.Type = "item.upsert"
 		event.Item = &i
@@ -261,7 +250,21 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		pending.request = r
 		event.Type = "request.resolve"
 		event.Request = &r
-		return emit(event)
+		events, _, _ := emit(event)
+		if r.State == "answered" {
+			result := domain.Item{ID: "request-result:" + r.ID, TurnID: r.TurnID, Kind: "request_result", Presentation: r.Kind, Name: r.Title, Text: "请求结果", Status: "answered", Final: true, Parts: append([]domain.ContentPart(nil), r.Receipt...)}
+			switch r.Kind {
+			case "questions":
+				result.Text = "已提交回答"
+			case "form":
+				result.Text = "表单结果"
+			case "approval", "permissions":
+				result.Text = "审批结果"
+			}
+			limitItem(&result)
+			events = append(events, domain.Event{Type: "item.upsert", SessionID: sid, Item: &result})
+		}
+		return events, nil, nil
 	}
 	return nil, nil, nil
 }
@@ -279,12 +282,44 @@ func (n *Normalizer) Response(answer domain.Answer) ([]byte, error) {
 	var result any
 	switch p.request.Kind {
 	case "approval":
-		if answer.Decision != "accept" && answer.Decision != "decline" {
-			return nil, errors.New("expected one-time accept or decline")
+		decision, ok := p.decisions[answer.Decision]
+		if !ok {
+			return nil, errors.New("decision is not offered by this request")
 		}
 		result = struct {
-			Decision string `json:"decision"`
-		}{answer.Decision}
+			Decision json.RawMessage `json:"decision"`
+		}{decision}
+	case "permissions":
+		if answer.Decision != "turn" && answer.Decision != "session" && answer.Decision != "decline" {
+			return nil, errors.New("invalid permission scope")
+		}
+		selected := answer.Answers["permissions"]
+		scope := answer.Decision
+		if scope == "decline" {
+			selected = nil
+			scope = "turn"
+		}
+		grant, err := permissionGrant(p.permissions, selected)
+		if err != nil {
+			return nil, err
+		}
+		result = map[string]any{"permissions": grant, "scope": scope}
+	case "form", "external":
+		if answer.Decision != "accept" && answer.Decision != "decline" && answer.Decision != "cancel" {
+			return nil, errors.New("invalid elicitation action")
+		}
+		var content any
+		if answer.Decision == "accept" {
+			if p.request.Kind == "external" {
+				return nil, errors.New("external requests complete through their external flow")
+			}
+			value, err := domain.FormContent(p.request.Fields, answer.Answers)
+			if err != nil {
+				return nil, err
+			}
+			content = value
+		}
+		result = map[string]any{"action": answer.Decision, "content": content, "_meta": nil}
 	case "questions":
 		if len(answer.Answers) != len(p.request.Questions) {
 			return nil, errors.New("answer every question in this request")
@@ -328,6 +363,7 @@ func (n *Normalizer) Response(answer domain.Answer) ([]byte, error) {
 	}
 	p.responded = true
 	p.request.State = "submitting"
+	p.request.Receipt = requestReceipt(p.request, answer)
 	return out, nil
 }
 func (n *Normalizer) Pending(key string) (domain.PendingRequest, bool) {

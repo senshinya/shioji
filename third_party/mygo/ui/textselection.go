@@ -163,11 +163,21 @@ func (rt *engine) syncTextSelection() {
 		}
 	}
 	if rt.selection.scope == 0 {
+		if rt.virtualText != nil {
+			rt.virtualText.clear()
+		}
 		return
 	}
 	if rt.textPointIndex(rt.selection.anchor) < 0 || rt.textPointIndex(rt.selection.caret) < 0 {
+		if rt.virtualText != nil && rt.virtualText.keepMissing() {
+			return
+		}
 		// An endpoint was removed, hidden, disabled, or moved to another
 		// container. Never let a recycled state inherit the selection.
+		rt.selection = textSelection{}
+		return
+	}
+	if rt.virtualText != nil && !rt.virtualText.restore() {
 		rt.selection = textSelection{}
 		return
 	}
@@ -189,6 +199,9 @@ func (rt *engine) syncTextSelection() {
 			to = min(b.at, to)
 		}
 		s.editor.anchor, s.editor.caret = from, to
+	}
+	if rt.virtualText != nil {
+		rt.virtualText.remember()
 	}
 }
 

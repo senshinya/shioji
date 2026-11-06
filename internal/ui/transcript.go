@@ -185,7 +185,7 @@ var toolFailedIcon = svg("M18 10a8 8 0 1 1-16 0a8 8 0 0 1 16 0M7 7l6 6M13 7l-6 6
 var toolDeclinedIcon = svg("M18 10a8 8 0 1 1-16 0a8 8 0 0 1 16 0M6 10h8")
 
 func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow) {
-	icon := terminalIcon
+	icon := activityIcon(row.item.Presentation)
 	if row.toolResult == "" {
 		v.item(c, t, row.item)
 	} else {

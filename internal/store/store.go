@@ -55,8 +55,8 @@ func Open(path string) (*Store, error) {
 	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return fail(err)
 	}
-	if version > 3 {
-		return fail(fmt.Errorf("database schema %d is newer than supported schema 3", version))
+	if version > 5 {
+		return fail(fmt.Errorf("database schema %d is newer than supported schema 5", version))
 	}
 	tx, err := db.Begin()
 	if err != nil {
@@ -74,7 +74,7 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS queues (session_id TEXT PRIMARY KEY REFERENCES sessions(id), body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS plans (session_id TEXT PRIMARY KEY REFERENCES sessions(id), body BLOB NOT NULL);
- PRAGMA user_version=3;`)
+ PRAGMA user_version=5;`)
 	if err != nil {
 		tx.Rollback()
 		return fail(err)
@@ -176,7 +176,16 @@ func rowsOf[T any](q interface {
 	return out, rows.Err()
 }
 func journal(tx *sql.Tx, e domain.Event) (domain.Event, error) {
-	r, err := tx.Exec("INSERT INTO journal(body) VALUES(?)", blob(e))
+	encoded, err := json.Marshal(e)
+	if err != nil {
+		return e, err
+	}
+	// Leave room for page framing and source session metadata. Reject inside
+	// the transaction so an unpageable event never blocks every later cursor.
+	if len(encoded) > 512<<10 {
+		return e, errors.New("event exceeds recoverable page budget")
+	}
+	r, err := tx.Exec("INSERT INTO journal(body) VALUES(?)", encoded)
 	if err != nil {
 		return e, err
 	}
@@ -213,6 +222,9 @@ func (s *Store) UpdateWorkspace(w domain.Workspace) (domain.Workspace, error) {
 	if w.Revision != old.Revision {
 		return w, errors.New("workspace revision conflict")
 	}
+	if w.Archived != old.Archived {
+		return w, errors.New("use the archive action to change workspace archive state")
+	}
 	if w.Name == "" || len(w.Folders) == 0 || w.DeviceID != s.deviceID {
 		return w, errors.New("invalid workspace")
 	}
@@ -247,7 +259,7 @@ func (s *Store) Accept(in domain.Submission, launch ...domain.LaunchContext) (do
 }
 func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediate bool, launch ...domain.LaunchContext) (domain.Operation, error) {
 	var none domain.Operation
-	if strings.TrimSpace(in.Text) == "" || in.OperationID == "" || len(in.Text) > 128<<10 {
+	if in.ValidateContent() != nil || in.OperationID == "" {
 		return none, errors.New("submission requires an operation ID and 1–131072 bytes of text")
 	}
 	h := sha256.Sum256(blob(in))
@@ -289,11 +301,17 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 	if err != nil {
 		return none, err
 	}
+	if w.Archived {
+		return none, errors.New("restore the workspace before sending")
+	}
 	var session domain.Session
 	if in.SessionID != "" {
 		session, err = load[domain.Session](s.db.QueryRow("SELECT body FROM sessions WHERE id=?", in.SessionID))
 		if err != nil {
 			return none, err
+		}
+		if session.Archived {
+			return none, errors.New("restore the session before sending")
 		}
 		if session.WorkspaceID != in.WorkspaceID || !(session.Status == "idle" || session.Status == "completed" || session.Status == "interrupted" || session.Status == "failed") {
 			return none, errors.New("session is unavailable for a new turn")
@@ -315,6 +333,9 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		session.Revision++
 	} else {
 		title := strings.SplitN(strings.TrimSpace(in.Text), "\n", 2)[0]
+		if title == "" && len(in.Attachments) > 0 {
+			title = in.Attachments[0].Name
+		}
 		if utf8.RuneCountInString(title) > 60 {
 			title = string([]rune(title)[:60])
 		}
@@ -339,7 +360,7 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 	}
 	var item *domain.Item
 	if queued == nil {
-		item = &domain.Item{ID: "input:" + op.ID, Kind: "user", Text: in.Text, Final: true, Status: "dispatching"}
+		item = &domain.Item{ID: "input:" + op.ID, Kind: "user", Attachments: in.Attachments, Text: in.Text, Final: true, Status: "dispatching"}
 		if err = putItem(tx, session.ID, item); err != nil {
 			return none, err
 		}
@@ -348,7 +369,7 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		return none, err
 	}
 	if queued != nil {
-		if err = putItem(tx, session.ID, &domain.Item{ID: "input:" + op.ID, Kind: "queued", Text: in.Text, Final: true}); err != nil {
+		if err = putItem(tx, session.ID, &domain.Item{ID: "input:" + op.ID, Kind: "queued", Attachments: in.Attachments, Text: in.Text, Final: true}); err != nil {
 			return none, err
 		}
 		if err = putQueue(tx, *queued); err != nil {
@@ -419,10 +440,27 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		if strings.TrimSpace(e.Text) == "" {
 			return e, errors.New("empty session title")
 		}
-		session.Title = e.Text
-	case "plan":
+		session.SourceTitle = e.Text
+		if !session.TitleOverride {
+			if session.Title != e.Text {
+				session.TitleRevision++
+			}
+			session.Title = e.Text
+		}
+	case "plan", "plan.text":
 		if e.Plan == nil || e.Plan.TurnID == "" {
 			return e, errors.New("missing plan or turn identity")
+		}
+		previous, _ := load[domain.Plan](tx.QueryRow("SELECT body FROM plans WHERE session_id=?", sid))
+		if e.Type == "plan.text" {
+			if previous.TurnID != e.Plan.TurnID {
+				previous = domain.Plan{TurnID: e.Plan.TurnID}
+			}
+			previous.Narrative = e.Text
+			e.Plan = &previous
+			e.Type, e.Text = "plan", ""
+		} else if previous.TurnID == e.Plan.TurnID {
+			e.Plan.Narrative = previous.Narrative
 		}
 		if _, err = tx.Exec("INSERT INTO plans VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET body=excluded.body", sid, blob(e.Plan)); err != nil {
 			return e, err
@@ -434,8 +472,11 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		revision := session.Revision
 		title := session.Title
 		branch, head, changed := session.GitBranch, session.GitHead, session.ContextChanged
+		archived, override, sourceTitle, titleRevision := session.Archived, session.TitleOverride, session.SourceTitle, session.TitleRevision
 		session = *e.Session
 		session.Title = title
+		session.Archived, session.TitleOverride, session.SourceTitle = archived, override, sourceTitle
+		session.TitleRevision = titleRevision
 		session.GitBranch, session.GitHead, session.ContextChanged = branch, head, changed
 		if session.Revision < revision {
 			session.Revision = revision

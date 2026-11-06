@@ -28,7 +28,7 @@ func NewProvider(t *testing.T) *Provider {
 	p := &Provider{Home: t.TempDir(), Release: make(chan struct{}), Started: make(chan struct{}, 16), counts: map[string]int{}}
 	p.server = httptest.NewServer(http.HandlerFunc(p.serve))
 	t.Cleanup(p.server.Close)
-	config := fmt.Sprintf("model=\"fixture-model\"\nmodel_provider=\"fixture\"\n[model_providers.fixture]\nname=\"Fixture\"\nbase_url=\"%s/v1\"\nwire_api=\"responses\"\nrequires_openai_auth=false\nsupports_websockets=false\nrequest_max_retries=0\nstream_max_retries=0\n", p.server.URL)
+	config := fmt.Sprintf("model=\"fixture-model\"\nmodel_provider=\"fixture\"\n[model_providers.fixture]\nname=\"Fixture\"\nbase_url=\"%s/v1\"\nwire_api=\"responses\"\nrequires_openai_auth=false\nsupports_websockets=false\nrequest_max_retries=0\nstream_max_retries=0\n[features]\nplugins=false\n", p.server.URL)
 	if err := os.WriteFile(filepath.Join(p.Home, "config.toml"), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}

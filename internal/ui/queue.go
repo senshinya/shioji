@@ -284,6 +284,12 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 										preview = m.Drafts["session:"+sid]
 									}
 									text := strings.ReplaceAll(strings.TrimSpace(preview), "\n", " ")
+									if len(item.Input.Attachments) > 0 {
+										if text != "" {
+											text += " · "
+										}
+										text += fmt.Sprintf("%d 个附件", len(item.Input.Attachments))
+									}
 									queuedText := n.Text(c, text).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").FontSize(14).FixedLineHeight(20).TextColor(t.Text.Alpha(.86)).Tooltip(preview)
 									queuedText.DrawOver(func(_ *n.Painter, r n.Rect) {
 										if present {
@@ -400,11 +406,16 @@ func (v *View) saveQueued() {
 	sid := m.SessionID
 	edit := m.QueueEdits[sid]
 	text := m.Drafts[m.DraftKey()]
-	if edit.ID == "" || v.queueBusy[sid] || !m.Connected || strings.TrimSpace(text) == "" {
+	if edit.ID == "" || v.queueBusy[sid] || !m.Connected || (strings.TrimSpace(text) == "" && len(m.Attachments[m.DraftKey()]) == 0) {
 		return
 	}
-	v.queueCommand("queue.edit", protocol.QueueInput{SessionID: sid, ID: edit.ID, Revision: edit.Revision, Text: text}, func(q domain.QueueState) {
-		m.FinishQueueEdit(sid, edit.ID, text, q)
+	refs, err := m.SubmissionAttachments(m.WorkspaceID)
+	if err != nil {
+		m.Error = err.Error()
+		return
+	}
+	v.queueCommand("queue.edit", protocol.QueueInput{Attachments: refs, SessionID: sid, ID: edit.ID, Revision: edit.Revision, Text: text}, func(q domain.QueueState) {
+		m.FinishQueueEdit(sid, edit.ID, text, q, refs)
 		if m.SessionID == sid {
 			v.focusComposer = true
 		}
@@ -424,7 +435,7 @@ func (v *View) submitActive(in domain.Submission, method, turn string) {
 	}
 	var prepare func() error
 	if v.Saver != nil {
-		state, _ := m.EncodeState()
+		state, _ := v.persistenceModel().EncodeState()
 		v.Saver.Queue(state)
 		v.lastQueued = state
 		prepare = v.Saver.FlushLatest

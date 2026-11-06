@@ -282,6 +282,7 @@ type engine struct {
 	// of one Selectable container (textselection.go).
 	texts        []*state
 	selection    textSelection
+	virtualText  *virtualTextHooks
 	focusVisible bool
 	// keys are the keys pressed since the last frame, for its shortcuts;
 	// retried, keys no shortcut of the frame they came to took, which the
@@ -1131,6 +1132,8 @@ func (rt *engine) commit(root *node, w, h float32) {
 }
 
 func (rt *engine) commitElement(e *node, clip Rect, hidden bool) {
+	e.st.virtualTextSource = e.virtualTextSource
+	e.st.logicalTextKey = e.logicalTextKey
 	inline := e.isInline()
 	if e.kind == kindText && e.first != nil && !inline {
 		placeInline(e, e, 0)
@@ -1168,7 +1171,8 @@ func (rt *engine) commitElement(e *node, clip Rect, hidden bool) {
 	if e.popover != nil {
 		s.anchor = e.popover.id
 	}
-	if e.parent != nil && e.parent.st.flags&flagDisabled != 0 {
+	if e.flags&flagInert != 0 || e.parent != nil && e.parent.st.flags&flagDisabled != 0 {
+		// Inert views retain their paint but reject stale accessibility actions.
 		// Disabled with the element around it, which may have been
 		// disabled after building it, as a Fieldset.
 		s.flags |= flagDisabled

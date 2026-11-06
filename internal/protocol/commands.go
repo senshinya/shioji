@@ -6,6 +6,18 @@ type WorkspaceInput struct {
 	Name    string   `json:"name"`
 	Folders []string `json:"folders"`
 }
+type SessionChangeInput struct {
+	TitleRevision int64  `json:"titleRevision"`
+	SessionID     string `json:"sessionId"`
+	Revision      int64  `json:"revision"`
+	Title         string `json:"title,omitempty"`
+	Archived      bool   `json:"archived"`
+}
+type WorkspaceArchiveInput struct {
+	WorkspaceID string `json:"workspaceId"`
+	Revision    int64  `json:"revision"`
+	Archived    bool   `json:"archived"`
+}
 type SessionQuery struct {
 	ID    string `json:"id"`
 	After int64  `json:"after"`
@@ -49,12 +61,24 @@ type SearchQuery struct {
 
 // QueueInput applies a revision-checked mutation to the owning worker's queue.
 type QueueInput struct {
-	BeforeID  string `json:"beforeId,omitempty"`
-	TurnID    string `json:"turnId,omitempty"`
-	SessionID string `json:"sessionId"`
-	ID        string `json:"id,omitempty"`
-	Revision  int64  `json:"revision"`
-	Text      string `json:"text,omitempty"`
+	Attachments []domain.Attachment `json:"attachments,omitempty"`
+	BeforeID    string              `json:"beforeId,omitempty"`
+	TurnID      string              `json:"turnId,omitempty"`
+	SessionID   string              `json:"sessionId"`
+	ID          string              `json:"id,omitempty"`
+	Revision    int64               `json:"revision"`
+	Text        string              `json:"text,omitempty"`
+}
+type AttachmentPut struct {
+	WorkspaceID string            `json:"workspaceId"`
+	Attachment  domain.Attachment `json:"attachment"`
+	Offset      int64             `json:"offset"`
+	Data        []byte            `json:"data"`
+}
+type AttachmentGet struct {
+	WorkspaceID string `json:"workspaceId"`
+	ID          string `json:"id"`
+	Offset      int64  `json:"offset"`
 }
 type SteerInput struct {
 	Input  domain.Submission `json:"input"`

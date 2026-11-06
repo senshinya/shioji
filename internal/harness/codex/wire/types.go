@@ -15,18 +15,25 @@ type RPCError struct {
 	Message string `json:"message"`
 }
 type Item struct {
-	ID               string `json:"id"`
-	Type             string `json:"type"`
-	Text             string `json:"text"`
-	Command          string `json:"command"`
-	AggregatedOutput string `json:"aggregatedOutput"`
-	Status           string `json:"status"`
-	ExitCode         *int   `json:"exitCode"`
-	Content          []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"content"`
+	Fields           map[string]json.RawMessage `json:"-"`
+	ID               string                     `json:"id"`
+	Type             string                     `json:"type"`
+	Text             string                     `json:"text"`
+	Command          string                     `json:"command"`
+	AggregatedOutput string                     `json:"aggregatedOutput"`
+	Status           string                     `json:"status"`
+	ExitCode         *int                       `json:"exitCode"`
+	Content          json.RawMessage            `json:"content"`
 }
+
+func (i *Item) UnmarshalJSON(data []byte) error {
+	type plain Item
+	if err := json.Unmarshal(data, (*plain)(i)); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, &i.Fields)
+}
+
 type Turn struct {
 	ID          string `json:"id"`
 	Status      string `json:"status"`
@@ -96,8 +103,9 @@ type ThreadParams struct {
 	Config                map[string]any `json:"config,omitempty"`
 }
 type Input struct {
+	Path string `json:"path,omitempty"`
 	Type string `json:"type"`
-	Text string `json:"text"`
+	Text string `json:"text,omitempty"`
 }
 type SandboxPolicy struct {
 	Type          string   `json:"type"`

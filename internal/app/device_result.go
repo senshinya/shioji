@@ -48,6 +48,40 @@ func (m *Model) validateDeviceReply(key string, job Job, body json.RawMessage) e
 		return errors.New("设备连接已改变，请重新核对操作")
 	}
 	fail := errors.New("设备回执与请求的工作区、会话或操作不一致")
+	if in, ok := job.Input.(protocol.SessionChangeInput); ok {
+		var session domain.Session
+		if err := json.Unmarshal(body, &session); err != nil {
+			return err
+		}
+		if session.ID != in.SessionID || m.sessionOnOtherDevice(key, session.ID) {
+			return fail
+		}
+		owned := false
+		for _, old := range state.Snapshot.Sessions {
+			if old.ID == session.ID && old.WorkspaceID == session.WorkspaceID {
+				owned = true
+			}
+		}
+		if !owned {
+			return fail
+		}
+	}
+	if job.Method == "workspace.update" || job.Method == "workspace.archive" {
+		var w domain.Workspace
+		if err := json.Unmarshal(body, &w); err != nil {
+			return err
+		}
+		expected := ""
+		switch in := job.Input.(type) {
+		case domain.Workspace:
+			expected = in.ID
+		case protocol.WorkspaceArchiveInput:
+			expected = in.WorkspaceID
+		}
+		if w.ID != expected || w.DeviceID != state.Snapshot.DeviceID {
+			return fail
+		}
+	}
 	var submission *domain.Submission
 	switch in := job.Input.(type) {
 	case domain.Submission:

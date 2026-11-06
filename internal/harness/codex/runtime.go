@@ -386,7 +386,7 @@ func (r *Runtime) bindThread(thread, session string, fresh bool, name *string) e
 	}
 	return r.emit([]domain.Event{{SessionID: session, Type: "session.title", Text: boundedTo(strings.TrimSpace(*name), 4<<10)}})
 }
-func (r *Runtime) Submit(ctx context.Context, s domain.Session, operationID, text string) (string, error) {
+func (r *Runtime) Submit(ctx context.Context, s domain.Session, operationID, text string, attachments ...AttachmentInput) (string, error) {
 	if err := r.Validate(s.Config); err != nil {
 		return "", err
 	}
@@ -395,7 +395,11 @@ func (r *Runtime) Submit(ctx context.Context, s domain.Session, operationID, tex
 	if kind == "workspaceWrite" {
 		policy.WritableRoots = append([]string{s.Context.CWD}, s.Context.AdditionalDirectories...)
 	}
-	params := wire.TurnParams{ThreadID: s.ThreadID, Input: []wire.Input{{Type: "text", Text: text}}, ClientUserMessageID: "input:" + operationID, Model: s.Config.Model, Effort: s.Config.Effort, ApprovalPolicy: approval, SandboxPolicy: policy}
+	input, err := attachmentInputs(text, attachments)
+	if err != nil {
+		return "", err
+	}
+	params := wire.TurnParams{ThreadID: s.ThreadID, Input: input, ClientUserMessageID: "input:" + operationID, Model: s.Config.Model, Effort: s.Config.Effort, ApprovalPolicy: approval, SandboxPolicy: policy}
 	if s.Config.Fast {
 		fast := "fast"
 		params.ServiceTier = &fast
@@ -424,13 +428,17 @@ func (r *Runtime) Submit(ctx context.Context, s domain.Session, operationID, tex
 }
 
 // Steer uses the pinned app-server schema's active-turn precondition.
-func (r *Runtime) Steer(ctx context.Context, s domain.Session, turnID, operationID, text string) error {
+func (r *Runtime) Steer(ctx context.Context, s domain.Session, turnID, operationID, text string, attachments ...AttachmentInput) error {
+	input, err := attachmentInputs(text, attachments)
+	if err != nil {
+		return err
+	}
 	params := struct {
 		ThreadID            string       `json:"threadId"`
 		ExpectedTurnID      string       `json:"expectedTurnId"`
 		ClientUserMessageID string       `json:"clientUserMessageId"`
 		Input               []wire.Input `json:"input"`
-	}{s.ThreadID, turnID, "input:" + operationID, []wire.Input{{Type: "text", Text: text}}}
+	}{s.ThreadID, turnID, "input:" + operationID, input}
 	var out struct {
 		TurnID string `json:"turnId"`
 	}

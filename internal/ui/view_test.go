@@ -615,7 +615,7 @@ func TestHomeAndConversationShareComposerLeadingEdge(t *testing.T) {
 			m.GitDrafts["w"] = domain.GitChoice{Branch: "main"}
 			test := native.NewTester(New(m, nil, "").View, 1440, 900)
 			branch, bok := test.Find("选择分支")
-			attach, aok := test.Find("添加附件（当前 Codex 适配器暂不支持）")
+			attach, aok := test.Find("添加附件")
 			if err := test.Click("消息输入"); err != nil {
 				t.Fatal(err)
 			}

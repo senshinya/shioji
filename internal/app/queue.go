@@ -6,9 +6,11 @@ import (
 )
 
 type QueueEdit struct {
-	ID        string `json:"id"`
-	Revision  int64  `json:"revision"`
-	Displaced string `json:"displaced"`
+	Token                string            `json:"token,omitempty"`
+	DisplacedAttachments []DraftAttachment `json:"displacedAttachments,omitempty"`
+	ID                   string            `json:"id"`
+	Revision             int64             `json:"revision"`
+	Displaced            string            `json:"displaced"`
 }
 
 func (m *Model) Queue() domain.QueueState { return m.Details[m.SessionID].Queue }
@@ -64,8 +66,12 @@ func (m *Model) EditQueued(id string) error {
 	q := m.Queue()
 	for _, item := range q.Items {
 		if item.ID == id {
-			m.QueueEdits[m.SessionID] = QueueEdit{ID: id, Revision: q.Revision, Displaced: m.Drafts[m.DraftKey()]}
+			m.QueueEdits[m.SessionID] = QueueEdit{Token: domain.NewID(), ID: id, Revision: q.Revision, DisplacedAttachments: m.Attachments[m.DraftKey()], Displaced: m.Drafts[m.DraftKey()]}
 			m.Drafts[m.DraftKey()] = item.Input.Text
+			m.Attachments[m.DraftKey()] = nil
+			for _, a := range item.Input.Attachments {
+				m.Attachments[m.DraftKey()] = append(m.Attachments[m.DraftKey()], DraftAttachment{Attachment: a, DeviceID: m.workspaceDevice(item.Input.WorkspaceID), WorkspaceID: item.Input.WorkspaceID, Ready: true})
+			}
 			return nil
 		}
 	}
@@ -74,6 +80,7 @@ func (m *Model) EditQueued(id string) error {
 func (m *Model) CancelQueueEdit(sid string) {
 	if edit := m.QueueEdits[sid]; edit.ID != "" {
 		m.Drafts["session:"+sid] = edit.Displaced
+		m.Attachments["session:"+sid] = edit.DisplacedAttachments
 		delete(m.QueueEdits, sid)
 	}
 }
@@ -84,13 +91,26 @@ func (m *Model) SetQueue(q domain.QueueState) {
 		m.Details[q.SessionID] = d
 	}
 }
-func (m *Model) FinishQueueEdit(sid, id, text string, q domain.QueueState) {
+func (m *Model) FinishQueueEdit(sid, id, text string, q domain.QueueState, attachments ...[]domain.Attachment) {
 	m.SetQueue(q)
 	edit := m.QueueEdits[sid]
 	if edit.ID != id {
 		return
 	}
-	if m.Drafts["session:"+sid] == text {
+	sameAttachments := true
+	if len(attachments) > 0 {
+		current := m.Attachments["session:"+sid]
+		sameAttachments = len(current) == len(attachments[0])
+		if sameAttachments {
+			for i, a := range current {
+				if a.Attachment != attachments[0][i] {
+					sameAttachments = false
+					break
+				}
+			}
+		}
+	}
+	if m.Drafts["session:"+sid] == text && sameAttachments {
 		m.CancelQueueEdit(sid)
 	} else {
 		edit.Revision = q.Revision

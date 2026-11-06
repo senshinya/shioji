@@ -43,7 +43,13 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 				results = nil
 				for i := len(v.Model.Snapshot.Sessions) - 1; i >= 0; i-- {
 					s := v.Model.Snapshot.Sessions[i]
-					results = append(results, domain.SearchResult{SessionID: s.ID, WorkspaceID: s.WorkspaceID, Title: s.Title})
+					archived := s.Archived
+					for _, w := range v.Model.Snapshot.Workspaces {
+						if w.ID == s.WorkspaceID {
+							archived = archived || w.Archived
+						}
+					}
+					results = append(results, domain.SearchResult{SessionID: s.ID, WorkspaceID: s.WorkspaceID, Title: s.Title, Archived: archived})
 				}
 			}
 			if len(results) == 0 {
@@ -62,16 +68,19 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 				row := control(c).FillWidth().Padding(8).Radius(6).Label("搜索结果：" + r.Title + "，" + workspace).Children(func() {
 					n.Column(c).FillWidth().Gap(4).Children(func() {
 						n.Text(c, r.Title).SingleLine().FontSize(13)
-						n.Text(c, workspace+" · "+device).FontSize(11).TextColor(t.TextMuted)
+						metadata := workspace + " · " + device
+						if r.Archived {
+							metadata += " · 已归档"
+						}
+						n.Text(c, metadata).FontSize(11).TextColor(t.TextMuted)
 						if r.Snippet != "" {
 							n.Text(c, r.Snippet).SingleLine().FontSize(12).TextColor(t.TextMuted)
 						}
 					})
 				})
 				if row.Clicked() {
-					v.Model.WorkspaceID = r.WorkspaceID
-					v.Model.SessionID = r.SessionID
-					v.Model.FoldToolHistory[r.SessionID] = true
+					v.workspaceEditor = nil
+					v.navigateSession(r.SessionID, r.WorkspaceID)
 					v.devices = false
 					v.searchOpen = false
 					v.branchOpen = false

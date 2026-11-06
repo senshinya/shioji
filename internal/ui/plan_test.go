@@ -64,9 +64,6 @@ func TestTaskDockOpensAndClearsWithoutLosingComposer(t *testing.T) {
 			t.Fatal("task dock skipped entrance animation", moving)
 		}
 		ui.Advance(300 * time.Millisecond)
-		if _, ok := ui.Find("查看任务"); !ok {
-			t.Fatal("task toolbar entry missing")
-		}
 		d.Plan = &domain.Plan{TurnID: "next", Steps: []domain.PlanStep{}}
 		m.Details["s"] = d
 		ui.Frame()

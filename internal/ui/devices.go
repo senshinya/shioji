@@ -205,7 +205,7 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 							for _, w := range m.Snapshot.Workspaces {
 								if w.DeviceID == deviceID || (key == "local" && w.DeviceID == "") {
 									count++
-									entry := control(c, 6).FillWidth().MinHeight(48).Padding(6, 8).Radius(6).Label("打开工作区：" + w.Name).Children(func() {
+									entry := control(c, 6).FillWidth().MinHeight(48).Padding(6, 8).Radius(6).Label("打开工作区：" + w.Name).ContextMenu(func(menu *n.Menu) { v.workspaceMenu(menu, w) }).Children(func() {
 										n.Row(c).FillWidth().Gap(12).AlignItems(n.Center).Children(func() {
 											n.Icon(c, workspaceIcon).Size(18, 18).TextColor(t.TextMuted)
 											n.Column(c).Grow(1).Gap(3).Children(func() {

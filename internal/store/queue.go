@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"shioji/internal/domain"
-	"strings"
 	"unicode/utf8"
 )
 
@@ -31,7 +30,7 @@ func putQueue(tx *sql.Tx, q domain.QueueState) error {
 }
 func inputDigest(v any) string { h := sha256.Sum256(blob(v)); return hex.EncodeToString(h[:]) }
 func validInput(in domain.Submission) bool {
-	return in.OperationID != "" && len(in.OperationID) <= 256 && in.SessionID != "" && utf8.ValidString(in.Text) && strings.TrimSpace(in.Text) != "" && len(in.Text) <= 128<<10
+	return in.OperationID != "" && len(in.OperationID) <= 256 && in.SessionID != "" && in.ValidateContent() == nil
 }
 func (s *Store) Enqueue(in domain.Submission) (domain.Operation, error) {
 	s.mu.Lock()
@@ -60,6 +59,13 @@ func (s *Store) Enqueue(in domain.Submission) (domain.Operation, error) {
 	}
 	if session.WorkspaceID != in.WorkspaceID || session.ContextChanged || session.Status == "unknown" {
 		return none, errors.New("session context unavailable")
+	}
+	workspace, err := load[domain.Workspace](s.db.QueryRow("SELECT body FROM workspaces WHERE id=?", session.WorkspaceID))
+	if err != nil {
+		return none, err
+	}
+	if session.Archived || workspace.Archived {
+		return none, errors.New("restore the session and workspace before queueing")
 	}
 	q, err := s.queueLocked(in.SessionID)
 	if err != nil {
@@ -120,9 +126,9 @@ func (s *Store) changeQueue(sid string, revision int64, change func(*domain.Queu
 	}
 	return q, s.commit(tx)
 }
-func (s *Store) EditQueue(sid, id string, revision int64, text string) (domain.QueueState, error) {
+func (s *Store) EditQueue(sid, id string, revision int64, text string, attachments ...[]domain.Attachment) (domain.QueueState, error) {
 	return s.changeQueue(sid, revision, func(q *domain.QueueState) error {
-		if !utf8.ValidString(text) || strings.TrimSpace(text) == "" || len(text) > 128<<10 {
+		if !utf8.ValidString(text) || len(text) > 128<<10 {
 			return errors.New("invalid queued text")
 		}
 		for i := range q.Items {
@@ -130,7 +136,15 @@ func (s *Store) EditQueue(sid, id string, revision int64, text string) (domain.Q
 				if q.Items[i].State == "dispatching" || q.Items[i].State == "unknown" {
 					return errors.New("queued delivery is in flight or unknown")
 				}
-				q.Items[i].Input.Text = text
+				input := q.Items[i].Input
+				input.Text = text
+				if len(attachments) > 0 {
+					input.Attachments = attachments[0]
+				}
+				if err := input.ValidateContent(); err != nil {
+					return err
+				}
+				q.Items[i].Input = input
 				return nil
 			}
 		}
@@ -275,12 +289,12 @@ func (s *Store) acceptSteerLocked(in domain.Submission, turn string, revision in
 	}
 	var item *domain.Item
 	if queued == nil {
-		item = &domain.Item{ID: "input:" + op.ID, TurnID: turn, Kind: "user", Text: in.Text, Status: "dispatching", Final: true}
+		item = &domain.Item{ID: "input:" + op.ID, TurnID: turn, Kind: "user", Attachments: in.Attachments, Text: in.Text, Status: "dispatching", Final: true}
 		if err = putItem(tx, op.SessionID, item); err != nil {
 			return none, err
 		}
 	} else {
-		if err = putItem(tx, op.SessionID, &domain.Item{ID: "input:" + op.ID, TurnID: turn, Kind: "queued", Text: in.Text, Final: true}); err != nil {
+		if err = putItem(tx, op.SessionID, &domain.Item{ID: "input:" + op.ID, TurnID: turn, Kind: "queued", Attachments: in.Attachments, Text: in.Text, Final: true}); err != nil {
 			return none, err
 		}
 		if err = putQueue(tx, *queued); err != nil {

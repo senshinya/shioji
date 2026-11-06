@@ -123,12 +123,12 @@ func TestInspectorDragEscapeAndOutsideReleaseKeepLayout(t *testing.T) {
 	}
 }
 
-func TestInspectorTaskEntrySelectsMergedTaskTab(t *testing.T) {
+func TestInspectorMergedTabSelectsTasks(t *testing.T) {
 	_, ui := dockingUI(t)
 	mergeTaskTab(t, ui)
 	ui.Click("文件更改")
 	ui.Advance(300 * time.Millisecond)
-	ui.Click("查看任务")
+	ui.Click("任务")
 	ui.Advance(300 * time.Millisecond)
 	if tasks, ok := ui.Find("任务面板"); !ok || tasks.H != 900 {
 		t.Fatal("task entry leaves merged Diff selected", tasks)

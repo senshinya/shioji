@@ -71,6 +71,11 @@ func motionAnimation(c *n.Context, duration time.Duration) n.Animation {
 	return n.Animation{Duration: duration, Ease: n.EaseOut}
 }
 
+func fadeMotion(c *n.Context, duration time.Duration) n.ElementTransition {
+	a := motionAnimation(c, duration)
+	return n.ElementTransition{Duration: a.Duration, Ease: a.Ease, Colors: true, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}}
+}
+
 func popupMotion(c *n.Context) n.ElementTransition {
 	a := motionAnimation(c, 120*time.Millisecond)
 	enter, exit := n.Motion{Scale: .92}, n.Motion{Scale: .96}

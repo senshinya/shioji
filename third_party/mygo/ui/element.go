@@ -257,19 +257,21 @@ type layoutStyle struct {
 // Common input queries return false or zero for nil or cleared elements;
 // this does not make references to reused storage safe.
 type node struct {
-	epoch      uint64
-	key        any
-	valueInput func(*node)
-	c          *context
-	id         uint64
-	flags      uint32
-	parent     *node
-	first      *node
-	last       *node
-	next       *node
-	nchild     int
-	depth      int
-	st         *state
+	virtualTextSource func(string) (string, bool)
+	logicalTextKey    string
+	epoch             uint64
+	key               any
+	valueInput        func(*node)
+	c                 *context
+	id                uint64
+	flags             uint32
+	parent            *node
+	first             *node
+	last              *node
+	next              *node
+	nchild            int
+	depth             int
+	st                *state
 	// track is the ScrollState of a scroll container (TrackScroll).
 	track *ScrollState
 

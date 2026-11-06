@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"shioji/internal/attachments"
 	"shioji/internal/domain"
 	"shioji/internal/harness/codex"
 	"shioji/internal/protocol"
@@ -27,21 +28,22 @@ type EventsQuery = protocol.EventsQuery
 type EventPage = protocol.EventPage
 type AnswerInput = protocol.AnswerInput
 type Server struct {
-	config     Config
-	owner      *Owner
-	listener   net.Listener
-	store      *store.Store
-	runtime    *codex.Runtime
-	readiness  domain.Readiness
-	dispatchMu sync.Mutex
-	queueWake  chan struct{}
-	bound      map[string]bool
-	mu         sync.Mutex
-	conns      map[net.Conn]bool
-	wg         sync.WaitGroup
-	once       sync.Once
-	ctx        context.Context
-	cancel     context.CancelFunc
+	attachments *attachments.Repository
+	config      Config
+	owner       *Owner
+	listener    net.Listener
+	store       *store.Store
+	runtime     *codex.Runtime
+	readiness   domain.Readiness
+	dispatchMu  sync.Mutex
+	queueWake   chan struct{}
+	bound       map[string]bool
+	mu          sync.Mutex
+	conns       map[net.Conn]bool
+	wg          sync.WaitGroup
+	once        sync.Once
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 func New(ctx context.Context, config Config) (*Server, error) {
@@ -66,7 +68,7 @@ func New(ctx context.Context, config Config) (*Server, error) {
 		return nil, err
 	}
 	workerCtx, cancel := context.WithCancel(context.Background())
-	s := &Server{config: config, owner: owner, listener: listener, store: db, ctx: workerCtx, cancel: cancel, queueWake: make(chan struct{}, 1), bound: map[string]bool{}, conns: map[net.Conn]bool{}}
+	s := &Server{attachments: attachments.New(filepath.Join(config.Directory, "attachments")), config: config, owner: owner, listener: listener, store: db, ctx: workerCtx, cancel: cancel, queueWake: make(chan struct{}, 1), bound: map[string]bool{}, conns: map[net.Conn]bool{}}
 	startup, cancelStartup := context.WithTimeout(ctx, 20*time.Second)
 	defer cancelStartup()
 	if err = checkPreviousProcess(config.Directory); err == nil {
@@ -158,6 +160,27 @@ func (s *Server) serveConnection(conn net.Conn) {
 func decode[T any](body []byte) (T, error) { var v T; err := json.Unmarshal(body, &v); return v, err }
 func (s *Server) handle(method string, body []byte) (any, error) {
 	switch method {
+	case "attachment.put", "attachment.get":
+		return s.attachmentCommand(method, body)
+	case "session.rename", "session.reset-title", "session.archive":
+		in, err := decode[protocol.SessionChangeInput](body)
+		if err != nil {
+			return nil, err
+		}
+		s.dispatchMu.Lock()
+		defer s.dispatchMu.Unlock()
+		if method == "session.archive" {
+			return s.store.SetSessionArchived(in.SessionID, in.Revision, in.Archived)
+		}
+		return s.store.RenameSession(in.SessionID, in.Title, in.TitleRevision, method == "session.reset-title")
+	case "workspace.archive":
+		in, err := decode[protocol.WorkspaceArchiveInput](body)
+		if err != nil {
+			return nil, err
+		}
+		s.dispatchMu.Lock()
+		defer s.dispatchMu.Unlock()
+		return s.store.SetWorkspaceArchived(in.WorkspaceID, in.Revision, in.Archived)
 	case "snapshot":
 		return s.store.Snapshot()
 	case "readiness":
@@ -232,6 +255,8 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		s.dispatchMu.Lock()
+		defer s.dispatchMu.Unlock()
 		folders, err := validateFolders(in.Folders)
 		if err != nil {
 			return nil, err
@@ -383,7 +408,7 @@ func validateFolders(paths []string) ([]string, error) {
 	return out, nil
 }
 func (s *Server) submit(in domain.Submission) (domain.Operation, error) {
-	if in.OperationID == "" || len(in.OperationID) > 256 || strings.TrimSpace(in.Text) == "" || len(in.Text) > 128<<10 {
+	if in.OperationID == "" || len(in.OperationID) > 256 || in.ValidateContent() != nil {
 		return domain.Operation{}, errors.New("submission requires an operation ID and nonempty bounded text")
 	}
 	s.dispatchMu.Lock()
@@ -402,6 +427,9 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 	if !errors.Is(err, sql.ErrNoRows) {
 		return domain.Operation{}, err
 	}
+	if _, err = s.attachmentInputs(in); err != nil {
+		return domain.Operation{}, err
+	}
 	if s.ctx.Err() != nil || s.runtime == nil {
 		return domain.Operation{}, errors.New("runtime unavailable")
 	}
@@ -416,6 +444,9 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 	found := false
 	for _, w := range snapshot.Workspaces {
 		if w.ID == in.WorkspaceID {
+			if w.Archived {
+				return domain.Operation{}, errors.New("请先恢复工作区")
+			}
 			paths = w.Folders
 			found = true
 			break
@@ -431,6 +462,9 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 		}
 		if d.Session.WorkspaceID != in.WorkspaceID {
 			return domain.Operation{}, errors.New("session is not in this workspace")
+		}
+		if d.Session.Archived {
+			return domain.Operation{}, errors.New("请先恢复会话")
 		}
 		if d.Session.Status != "idle" && d.Session.Status != "completed" && d.Session.Status != "interrupted" && d.Session.Status != "failed" {
 			return domain.Operation{}, errors.New("session is unavailable for a new turn")
@@ -522,7 +556,11 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation) {
 		s.mu.Lock()
 		s.bound[session.ID] = true
 		s.mu.Unlock()
-		turnID, err = s.runtime.Submit(ctx, session, op.ID, in.Text)
+		var inputs []codex.AttachmentInput
+		inputs, err = s.attachmentInputs(in)
+		if err == nil {
+			turnID, err = s.runtime.Submit(ctx, session, op.ID, in.Text, inputs...)
+		}
 	}
 	state := "confirmed"
 	delivery := "sent"
@@ -566,7 +604,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation) {
 		}
 	}
 	// Update the existing accepted input; a wire userMessage never creates a duplicate.
-	_, err = s.store.Apply(session.ID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: turnID, Kind: "user", Text: in.Text, Final: true, Status: delivery}})
+	_, err = s.store.Apply(session.ID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: turnID, Kind: "user", Attachments: in.Attachments, Text: in.Text, Final: true, Status: delivery}})
 	if err != nil {
 		s.cancel()
 	}

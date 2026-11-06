@@ -62,6 +62,9 @@ func (s *Server) enqueue(in domain.Submission) (domain.Operation, error) {
 	if s.runtime == nil || s.ctx.Err() != nil {
 		return domain.Operation{}, errors.New("runtime unavailable")
 	}
+	if _, err := s.attachmentInputs(in); err != nil {
+		return domain.Operation{}, err
+	}
 	if err := s.runtime.Validate(in.Config); err != nil {
 		return domain.Operation{}, err
 	}
@@ -101,7 +104,14 @@ func (s *Server) changeQueue(method string, in protocol.QueueInput) (domain.Queu
 	case "queue.reorder":
 		return s.store.ReorderQueue(in.SessionID, in.ID, in.BeforeID, in.Revision)
 	case "queue.edit":
-		return s.store.EditQueue(in.SessionID, in.ID, in.Revision, in.Text)
+		d, err := s.store.Session(in.SessionID, 0, 1)
+		if err != nil {
+			return domain.QueueState{}, err
+		}
+		if _, err = s.attachmentInputs(domain.Submission{WorkspaceID: d.Session.WorkspaceID, Text: in.Text, Attachments: in.Attachments}); err != nil {
+			return domain.QueueState{}, err
+		}
+		return s.store.EditQueue(in.SessionID, in.ID, in.Revision, in.Text, in.Attachments)
 	case "queue.remove":
 		return s.store.RemoveQueue(in.SessionID, in.ID, in.Revision)
 	case "queue.continue":
@@ -132,6 +142,9 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 	if _, err := s.store.Operation(in.Input.OperationID); err == nil {
 		return s.store.AcceptSteer(in.Input, in.TurnID)
 	}
+	if _, err := s.attachmentInputs(in.Input); err != nil {
+		return domain.Operation{}, err
+	}
 	var op domain.Operation
 	var err error
 	if revision > 0 {
@@ -155,7 +168,10 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 		}
 		ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 		defer cancel()
-		err := s.runtime.Steer(ctx, d.Session, in.TurnID, op.ID, in.Input.Text)
+		inputs, err := s.attachmentInputs(in.Input)
+		if err == nil {
+			err = s.runtime.Steer(ctx, d.Session, in.TurnID, op.ID, in.Input.Text, inputs...)
+		}
 		state, status, message := "confirmed", "sent", ""
 		if err != nil {
 			state, status, message = "rejected", "failed", err.Error()
@@ -170,7 +186,7 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 		if state != "confirmed" && revision > 0 {
 			return
 		}
-		s.store.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: in.TurnID, Kind: "user", Text: in.Input.Text, Final: true, Status: status}})
+		s.store.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: in.TurnID, Kind: "user", Attachments: in.Input.Attachments, Text: in.Input.Text, Final: true, Status: status}})
 	}()
 	return op, nil
 }

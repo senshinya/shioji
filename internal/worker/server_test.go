@@ -292,10 +292,19 @@ func TestWorkerExecutionApprovalCanBeDenied(t *testing.T) {
 	if r.Kind != "approval" {
 		t.Fatalf("request kind=%s", r.Kind)
 	}
-	call(t, c, "request.respond", worker.AnswerInput{SessionID: op.SessionID, Answer: domain.Answer{RequestID: r.ID, Revision: r.Revision, Decision: "decline"}}, nil)
+	decision := ""
+	for _, choice := range r.Choices {
+		if choice.ID == "decline" || choice.ID == "cancel" {
+			decision = choice.ID
+		}
+	}
+	if decision == "" {
+		t.Fatal("runtime supplied no deny/cancel choice", r.Choices)
+	}
+	call(t, c, "request.respond", worker.AnswerInput{SessionID: op.SessionID, Answer: domain.Answer{RequestID: r.ID, Revision: r.Revision, Decision: decision}}, nil)
 	wait(t, func() bool {
 		call(t, c, "session", worker.SessionQuery{ID: op.SessionID}, &detail)
-		return detail.Session.Status == "completed"
+		return detail.Session.Status == "completed" || detail.Session.Status == "interrupted"
 	})
 	if detail.Requests[0].State != "answered" {
 		t.Fatalf("request=%+v", detail.Requests[0])

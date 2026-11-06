@@ -374,6 +374,13 @@ func (s *ListState) AtEnd() bool {
 	return s.atEnd
 }
 
+// FollowingEnd distinguishes automatic bottom following (including the initial
+// layout or a sent-message glide) from a reader who has left the latest output.
+func (s *ListState) FollowingEnd() bool {
+	s.read = true
+	return s.FollowEnd && (!s.started || s.following || s.pinned && s.pinSent)
+}
+
 // Focused reports whether the List, Table or Outline using s has
 // the keyboard focus. Call it from the view, after building the list or
 // while building its rows. It returns false when s was not built in the
@@ -548,7 +555,11 @@ func buildList(c *context, e, owner *node, s *ListState, n int, row func(i int),
 		// top is built where the others are.
 		focus, ok := s.focusedRow(e, n)
 		if ok && (focus < first || focus >= last) {
-			f.build(focus)
+			if rt.virtualText != nil && rt.virtualText.releaseFocusRow(e) {
+				rt.focused = e.id
+			} else {
+				f.build(focus)
+			}
 		}
 		// So does the row a drag choosing rows began on, which holds the
 		// press as the list scrolls it away.

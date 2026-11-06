@@ -19,6 +19,7 @@ func NewID() string {
 }
 
 type Workspace struct {
+	Archived bool     `json:"archived,omitempty"`
 	ID       string   `json:"id"`
 	DeviceID string   `json:"deviceId"`
 	Name     string   `json:"name"`
@@ -41,6 +42,10 @@ type LaunchContext struct {
 	Head                  string   `json:"head,omitempty"`
 }
 type Session struct {
+	Archived       bool          `json:"archived,omitempty"`
+	TitleOverride  bool          `json:"titleOverride,omitempty"`
+	TitleRevision  int64         `json:"titleRevision"`
+	SourceTitle    string        `json:"sourceTitle,omitempty"`
 	ID             string        `json:"id"`
 	WorkspaceID    string        `json:"workspaceId"`
 	Title          string        `json:"title"`
@@ -56,12 +61,13 @@ type Session struct {
 	Error          string        `json:"error,omitempty"`
 }
 type Submission struct {
-	OperationID string    `json:"operationId"`
-	WorkspaceID string    `json:"workspaceId"`
-	SessionID   string    `json:"sessionId,omitempty"`
-	Text        string    `json:"text"`
-	Config      RunConfig `json:"config"`
-	Git         GitChoice `json:"git,omitempty,omitzero"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+	OperationID string       `json:"operationId"`
+	WorkspaceID string       `json:"workspaceId"`
+	SessionID   string       `json:"sessionId,omitempty"`
+	Text        string       `json:"text"`
+	Config      RunConfig    `json:"config"`
+	Git         GitChoice    `json:"git,omitempty,omitzero"`
 }
 
 // QueueState is device-owned. Queued inputs are not sent conversation items.
@@ -85,15 +91,38 @@ type Operation struct {
 	Error     string `json:"error,omitempty"`
 }
 type Item struct {
-	ID       string `json:"id"`
-	TurnID   string `json:"turnId,omitempty"`
-	Kind     string `json:"kind"`
-	Text     string `json:"text"`
-	Name     string `json:"name,omitempty"`
-	Status   string `json:"status,omitempty"`
-	ExitCode *int   `json:"exitCode,omitempty"`
-	Final    bool   `json:"final"`
-	Order    int64  `json:"order"`
+	Attachments  []Attachment    `json:"attachments,omitempty"`
+	Presentation string          `json:"presentation,omitempty"`
+	Parts        []ContentPart   `json:"parts,omitempty"`
+	Files        []FileChange    `json:"files,omitempty"`
+	Agents       []AgentActivity `json:"agents,omitempty"`
+	Truncated    bool            `json:"truncated,omitempty"`
+	ID           string          `json:"id"`
+	TurnID       string          `json:"turnId,omitempty"`
+	Kind         string          `json:"kind"`
+	Text         string          `json:"text"`
+	Name         string          `json:"name,omitempty"`
+	Status       string          `json:"status,omitempty"`
+	ExitCode     *int            `json:"exitCode,omitempty"`
+	Final        bool            `json:"final"`
+	Order        int64           `json:"order"`
+}
+
+type ContentPart struct {
+	Kind  string `json:"kind"`
+	Label string `json:"label,omitempty"`
+	Text  string `json:"text"`
+}
+type FileChange struct {
+	Path        string `json:"path"`
+	Destination string `json:"destination,omitempty"`
+	Kind        string `json:"kind"`
+	Patch       string `json:"patch"`
+}
+type AgentActivity struct {
+	ID      string `json:"id"`
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
 }
 type Question struct {
 	ID      string   `json:"id"`
@@ -108,16 +137,46 @@ type Option struct {
 	Description string `json:"description"`
 }
 type PendingRequest struct {
-	ID        string     `json:"id"`
-	SessionID string     `json:"sessionId"`
-	TurnID    string     `json:"turnId"`
-	ItemID    string     `json:"itemId"`
-	Kind      string     `json:"kind"`
-	Title     string     `json:"title"`
-	Text      string     `json:"text"`
-	Questions []Question `json:"questions,omitempty"`
-	State     string     `json:"state"`
-	Revision  int64      `json:"revision"`
+	Choices   []RequestChoice `json:"choices,omitempty"`
+	Fields    []FormField     `json:"fields,omitempty"`
+	URL       string          `json:"url,omitempty"`
+	Notice    string          `json:"notice,omitempty"`
+	Receipt   []ContentPart   `json:"receipt,omitempty"`
+	ID        string          `json:"id"`
+	SessionID string          `json:"sessionId"`
+	TurnID    string          `json:"turnId"`
+	ItemID    string          `json:"itemId"`
+	Kind      string          `json:"kind"`
+	Title     string          `json:"title"`
+	Text      string          `json:"text"`
+	Questions []Question      `json:"questions,omitempty"`
+	State     string          `json:"state"`
+	Revision  int64           `json:"revision"`
+}
+type RequestChoice struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Restriction bool   `json:"restriction,omitempty"`
+}
+type FormOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+type FormField struct {
+	ID          string       `json:"id"`
+	Title       string       `json:"title"`
+	Description string       `json:"description,omitempty"`
+	Type        string       `json:"type"`
+	Required    bool         `json:"required"`
+	Options     []FormOption `json:"options,omitempty"`
+	Default     []string     `json:"default,omitempty"`
+	Format      string       `json:"format,omitempty"`
+	MinLength   *int         `json:"minLength,omitempty"`
+	MaxLength   *int         `json:"maxLength,omitempty"`
+	Minimum     *float64     `json:"minimum,omitempty"`
+	Maximum     *float64     `json:"maximum,omitempty"`
+	MinItems    *int         `json:"minItems,omitempty"`
+	MaxItems    *int         `json:"maxItems,omitempty"`
 }
 type Answer struct {
 	RequestID string              `json:"requestId"`
@@ -141,6 +200,7 @@ type PlanStep struct {
 	Status string `json:"status"`
 }
 type Plan struct {
+	Narrative   string     `json:"narrative,omitempty"`
 	Truncated   bool       `json:"truncated,omitempty"`
 	TurnID      string     `json:"turnId"`
 	Explanation string     `json:"explanation,omitempty"`
@@ -223,6 +283,7 @@ type FileVersions struct {
 	New  string `json:"new"`
 }
 type SearchResult struct {
+	Archived    bool   `json:"archived,omitempty"`
 	SessionID   string `json:"sessionId"`
 	WorkspaceID string `json:"workspaceId"`
 	Title       string `json:"title"`

@@ -12,6 +12,7 @@ import (
 	n "github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
 	"shioji/internal/app"
+	"shioji/internal/attachments"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 )
@@ -22,10 +23,29 @@ type editBinding struct {
 }
 
 type View struct {
+	paneFocusVersion                                                                                                uint64
+	outline                                                                                                         *conversationOutline
+	parent, secondary                                                                                               *View
+	visibleSessions                                                                                                 map[string]string
+	attachmentStore                                                                                                 *attachments.Repository
+	attachmentImages                                                                                                map[string]*attachmentImage
+	attachmentUploading                                                                                             map[string]bool
+	attachmentPreparing                                                                                             map[string]int
+	attachmentPreview                                                                                               *attachmentPreview
+	navVisibility                                                                                                   map[string]*navVisibility
+	workspaceEditor                                                                                                 *workspaceEditor
+	rename                                                                                                          *sessionRename
+	showArchived                                                                                                    bool
+	currentTranscriptRow                                                                                            int
+	activityMarkdown                                                                                                markdown.Options
+	secretAnswers                                                                                                   map[string]string
+	secretBindings                                                                                                  map[string]*editBinding
+	activityPatches                                                                                                 map[string]*activityPatch
 	replyStreams                                                                                                    map[string]*replyStream
 	replySession                                                                                                    string
 	replyEpoch                                                                                                      string
 	replyFrame                                                                                                      uint64
+	replyLatestOrder                                                                                                int64
 	toolMotions                                                                                                     map[string]*toolDisclosureMotion
 	frameTime                                                                                                       time.Time
 	toolsAnimating                                                                                                  bool
@@ -99,7 +119,7 @@ func New(model *app.Model, controller *app.Controller, path string) *View {
 	}
 	return v
 }
-func (v *View) Flush() error {
+func (v *View) collectBindings() {
 	for key, b := range v.draftBindings {
 		if b.Text != b.LastModel {
 			v.Model.Drafts[key] = b.Text
@@ -120,14 +140,21 @@ func (v *View) Flush() error {
 		}
 	}
 
-	if v.Saver == nil {
+}
+func (v *View) Flush() error {
+	root := v.splitRoot()
+	root.collectBindings()
+	if root.secondary != nil {
+		root.secondary.collectBindings()
+	}
+	if root.Saver == nil {
 		return nil
 	}
-	data, err := v.Model.EncodeState()
+	data, err := root.Model.EncodeState()
 	if err != nil {
 		return err
 	}
-	return v.Saver.Flush(data)
+	return root.Saver.Flush(data)
 }
 
 func svg(path string) *n.SVG {
@@ -236,6 +263,7 @@ drained:
 		clear(v.menuOpen)
 		v.menuContext = menuContext
 	}
+	v.prepareSecondary()
 	v.requestGit(false)
 	if c.Shortcut(n.Cmd, n.KeyK) {
 		v.searchOpen = !v.searchOpen
@@ -246,10 +274,12 @@ drained:
 	if m.SessionID != "" && !v.devices {
 		v.syncReplyStreams(m.Details[m.SessionID])
 	}
+	owner := v
 	n.Row(c).Fill().Background(t.Background).Children(func() {
 		v.sidebar(c, &t)
 		width, _ := c.Size()
-		open := m.SessionID != "" && !v.devices && m.Inspectors[m.SessionID]
+		owner = v.focusedView()
+		open := owner.Model.SessionID != "" && !v.devices && v.workspaceEditor == nil && m.Inspectors[owner.Model.SessionID] && (!m.FocusSecondary || m.SecondarySessionID == owner.Model.SessionID)
 		inline := width > 1160
 		if !open {
 			v.resizingInspector = false
@@ -275,22 +305,25 @@ drained:
 			if v.devices {
 				v.toolbar(c, &t)
 				v.deviceView(c, &t)
+			} else if v.workspaceEditor != nil {
+				v.toolbar(c, &t)
+				v.workspaceSettingsView(c, &t)
 			} else if m.SessionID == "" {
 				v.toolbar(c, &t)
 				v.homeView(c, &t)
 			} else {
-				v.conversation(c, &t)
+				v.parallelConversation(c, &t)
 			}
 		})
 		if open {
 			if inline {
-				column := n.Column(c.Key("review-column:" + m.SessionID)).FillHeight().Shrink(0).Clip()
+				column := n.Column(c.Key("review-column")).FillHeight().Shrink(0).Clip()
 				if !v.resizingInspector {
 					column.Transition(columnMotion(c, panelWidth))
 				}
-				column.Children(func() { v.inspector(c, &t, false, panelWidth, limit) })
+				column.Children(func() { owner.inspector(c, &t, false, panelWidth, limit) })
 			} else {
-				v.inspector(c, &t, true, panelWidth, limit)
+				owner.inspector(c, &t, true, panelWidth, limit)
 			}
 		}
 	})
@@ -303,11 +336,22 @@ drained:
 		}
 		c.After(0)
 	}
+	if owner != v {
+		m.InspectorWidth = owner.Model.InspectorWidth
+		m.InspectorLayout = owner.Model.InspectorLayout
+		m.InspectorSplitHeight = owner.Model.InspectorSplitHeight
+	}
+	v.updateVisibleSessions()
+	v.pruneHistoryCaches()
 	v.deviceDialogs(c, &t)
+	v.managementDialogs(c, &t)
+	v.attachmentDialog(c, &t)
 }
 
 func (v *View) home() {
+	v.workspaceEditor = nil
 	v.Model.SessionID = ""
+	v.Model.FocusSecondary = false
 	v.devices = false
 	v.runOpen = false
 	v.permissionOpen = false
@@ -356,25 +400,40 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 			}
 			n.Row(c).Height(32).Padding(8, 2, 0, 8).AlignItems(n.Center).Children(func() {
 				n.Text(c, "工作区").FontSize(11).FixedLineHeight(16).TextColor(t.TextMuted).Grow(1)
+				iconButton(c, moreActionsIcon, "工作区菜单").Size(24, 24).Menu(func(menu *n.Menu) {
+					if menu.Item("显示已归档").Checked(v.showArchived).Chosen() {
+						v.showArchived = !v.showArchived
+					}
+				})
 				if iconButton(c, plus, "创建工作区").Size(24, 24).Disabled(!m.Connected).Clicked() {
 					v.createWorkspace()
 				}
 			})
 			type navRow struct {
+				presence  float32
 				workspace *domain.Workspace
 				session   *domain.Session
 			}
 			rows := []navRow{}
 			for i := range m.Snapshot.Workspaces {
 				w := &m.Snapshot.Workspaces[i]
-				rows = append(rows, navRow{workspace: w})
-				if !v.collapsedWorkspaces[w.ID] {
-					for j := range m.Snapshot.Sessions {
-						s := &m.Snapshot.Sessions[j]
-						if s.WorkspaceID == w.ID {
-							rows = append(rows, navRow{session: s})
+				presence := v.navigationPresence(c, "workspace:"+w.ID, !w.Archived || v.showArchived)
+				children := []navRow{}
+				for j := range m.Snapshot.Sessions {
+					s := &m.Snapshot.Sessions[j]
+					if s.WorkspaceID == w.ID {
+						childPresence := v.navigationPresence(c, "session:"+s.ID, (!w.Archived && !s.Archived) || v.showArchived)
+						if childPresence > 0 {
+							children = append(children, navRow{session: s, presence: min(presence, childPresence)})
 						}
 					}
+				}
+				if presence <= 0 {
+					continue
+				}
+				rows = append(rows, navRow{workspace: w, presence: presence})
+				if !v.collapsedWorkspaces[w.ID] {
+					rows = append(rows, children...)
 				}
 			}
 			v.nav.Key = func(i int) any {
@@ -385,17 +444,19 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 			}
 			v.nav.Reveals = v.nav.Reveals[:0]
 			for i, r := range rows {
+				progress := r.presence
 				if r.session != nil {
-					if progress := v.sessionEntryProgress(c, r.session.ID, false); progress < 1 {
-						v.nav.Reveals = append(v.nav.Reveals, n.ListReveal{First: i, End: i + 1, Progress: progress})
-					}
+					progress = min(progress, v.sessionEntryProgress(c, r.session.ID, false))
+				}
+				if progress < 1 {
+					v.nav.Reveals = append(v.nav.Reveals, n.ListReveal{First: i, End: i + 1, Progress: progress})
 				}
 			}
 			n.List(c, &v.nav, len(rows), func(i int) {
 				r := rows[i]
 				if r.workspace != nil {
 					w := r.workspace
-					workspaceRow := n.Row(c).Height(30).Gap(3).AlignItems(n.Center)
+					workspaceRow := n.Row(c).Height(30).Gap(3).AlignItems(n.Center).Opacity(r.presence)
 					workspaceRow.Children(func() {
 						if control(c.Key("workspace:" + w.ID)).Height(24).Grow(1).Justify(n.Start).Label(w.Name).Children(func() {
 							n.Row(c).FillWidth().Gap(3).AlignItems(n.Baseline).Children(func() {
@@ -406,7 +467,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 								inlineSymbol(c, disclosureDown, w.Name, n.Font{Family: "system-ui", Size: 12, Weight: 500}, 11, t.TextMuted, angle).Width(20).TextAlign(n.Center)
 								n.Text(c, w.Name).SingleLine().Grow(1).FontSize(12).FontWeight(500).FixedLineHeight(20).Tooltip(w.Name)
 							})
-						}).Clicked() {
+						}).ContextMenu(func(menu *n.Menu) { v.workspaceMenu(menu, *w) }).Clicked() {
 							v.collapsedWorkspaces[w.ID] = !v.collapsedWorkspaces[w.ID]
 						}
 						n.Text(c, m.DeviceName(w.DeviceID)).FontSize(11).TextColor(t.TextMuted).PaddingX(6)
@@ -414,18 +475,19 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 					return
 				}
 				s := r.session
-				selected := s.ID == m.SessionID && !v.devices
-				finishingOutput := selected && s.Status == "completed" && v.visibleOutputAnimating()
+				selected := s.ID == v.focusedSessionID() && !v.devices && v.workspaceEditor == nil
+				finishingOutput := s.Status == "completed" && v.sessionOutputAnimating(s.ID)
 				if finishingOutput {
 					c.AnimationFrame()
 				}
 				row := control(c, 8).FillWidth().Height(28).MarginY(1).Padding(4, 8, 4, 20).Radius(8).Label(s.Title)
-				if progress := v.sessionEntryProgress(c, s.ID, false); progress < 1 {
+				if progress := min(r.presence, v.sessionEntryProgress(c, s.ID, false)); progress < 1 {
 					row.Opacity(progress).Transform(n.Translation(-6*(1-progress), 0))
 				}
 				if selected {
 					row.Background(t.SurfacePressed)
 				}
+				row.ContextMenu(func(menu *n.Menu) { v.sessionMenu(menu, *s) })
 				row.Children(func() {
 					n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
 						if v.pendingCount(s.ID) > 0 {
@@ -460,10 +522,12 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 						}
 					})
 				})
+				if v.canManage(m.WorkspaceConnection(s.WorkspaceID)) && (row.DoubleClicked() || row.Focused() && c.Shortcut(0, n.KeyF2)) {
+					v.rename = &sessionRename{Session: *s, Title: s.Title, Connection: m.WorkspaceConnection(s.WorkspaceID), Open: true}
+				}
 				if row.Clicked() {
-					m.SessionID = s.ID
-					m.FoldToolHistory[s.ID] = true
-					m.WorkspaceID = s.WorkspaceID
+					v.workspaceEditor = nil
+					v.navigateSession(s.ID, s.WorkspaceID)
 					v.devices = false
 				}
 			}).Grow(1).FillHeight().Label("工作区与会话")
@@ -485,20 +549,26 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		rightInset = 10
 	}
 	n.Row(c).Height(48).FillWidth().Padding(0, rightInset, 0, 24).Gap(6).AlignItems(n.Center).DragWindow().Label("会话工具栏").Children(func() {
-		if v.devices {
+		if v.workspaceEditor != nil && !v.devices {
+			if ghost(c, "返回").Clicked() {
+				v.workspaceEditor = nil
+			}
+			n.Text(c, "工作区设置").FontSize(13).Grow(1)
+			return
+		} else if v.devices {
 			n.Text(c, "设备").FontSize(13).Grow(1)
 			add := iconButton(c, plus, "添加设备")
 			v.choiceMenu(c, t, "add-device", add, []menuChoice{{id: "ssh", name: "直接 SSH", choose: func() { v.sshOpen = true; v.sshError = "" }}, {id: "tailnet", name: "从 Tailnet 添加", disabled: true}})
 			return
 		} else if m.SessionID != "" {
-			heading := n.Row(c.Key("session-heading:" + m.SessionID)).Grow(1).Gap(6).AlignItems(n.Center).Label("会话名称")
+			heading := n.Row(c.Key("session-heading:" + m.SessionID)).Grow(1).MinWidth(0).Gap(6).AlignItems(n.Center).Label("会话名称")
 			if progress := v.sessionEntryProgress(c, m.SessionID, true); progress < 1 {
 				heading.Opacity(progress).Transform(n.Translation(0, 4*(1-progress)))
 			}
 			heading.Children(func() {
 				for _, s := range m.Snapshot.Sessions {
 					if s.ID == m.SessionID {
-						n.Text(c, v.workspaceName()).SingleLine().MaxWidth(150).FontSize(12).TextColor(t.TextMuted)
+						v.toolbarWorkspace(c, t)
 						n.Column(c).Size(1, 14).Background(t.Border).MarginX(8)
 						n.Text(c, s.Title).SingleLine().Grow(1).FontSize(13).FontWeight(400)
 					}
@@ -526,14 +596,6 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		}
 		v.choiceMenu(c, t, "current-device", device, []menuChoice{{id: "connectivity", name: status, disabled: true}, {id: "runtime", name: "Codex · " + m.Readiness.State, disabled: true}, {id: "details", name: "设备详情", choose: func() { v.deviceSelected = m.ConnectionID(); v.deviceList = false; v.devices = true }}})
 		if m.SessionID != "" && !v.devices {
-			if plan := m.Details[m.SessionID].Plan; plan != nil && len(plan.Steps) > 0 {
-				if iconButton(c, tasksIcon, "查看任务").Clicked() {
-					m.Inspectors[m.SessionID] = true
-					if m.InspectorLayout.Joined {
-						m.InspectorLayout.Selected = "tasks"
-					}
-				}
-			}
 			label := "展开更改侧栏"
 			if m.Inspectors[m.SessionID] {
 				label = "收起更改侧栏"
@@ -569,9 +631,13 @@ func (v *View) homeView(c *n.Context, t *n.Theme) {
 				})
 				choices := []menuChoice{}
 				for _, w := range v.Model.Snapshot.Workspaces {
+					if w.Archived {
+						continue
+					}
 					w := w
 					choices = append(choices, menuChoice{id: w.ID, name: w.Name, detail: v.Model.DeviceName(w.DeviceID), checked: w.ID == v.Model.WorkspaceID, choose: func() { v.Model.WorkspaceID = w.ID }})
 				}
+
 				v.choiceMenu(c, t, "home-workspace", picker, choices)
 				n.Text(c, "做些什么？").FixedLineHeight(48).FontSize(32).TextColor(t.TextMuted)
 			})
@@ -582,6 +648,7 @@ func (v *View) homeView(c *n.Context, t *n.Theme) {
 	})
 }
 func (v *View) notice(c *n.Context, t *n.Theme) {
+	v.archivedNotice(c, t)
 	message := v.Model.Error
 	if message == "" && !v.Model.Connected {
 		message = "连接执行服务中…"
@@ -650,6 +717,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 				}
 				binding = textBinding(v.draftBindings, key, m.Drafts[key])
 				v.branchStrip(c, t, home)
+				v.draftAttachmentStrip(c, t)
 				n.Column(c.Key("composer-input-space")).Height(v.composerInputHeight).Shrink(0)
 				// A zero-height origin fixed above the footer keeps outgoing editor
 				// snapshots still while the composer changes its natural height.
@@ -658,16 +726,17 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					if editID != "" {
 						inputKey += ":edit:" + editID
 					}
-					input = n.TextAreaBase(c.Key(inputKey), &binding.Text).Absolute().Left(0).Right(0).Bottom(0).Label("消息输入").Placeholder("描述任务…").PlaceholderColor(subtle(t)).Padding(0, 9).FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(inputSize).FixedLineHeight(inputLeading).OnTextKey(func(k n.TextKey) bool {
+					input = n.TextAreaBase(c.Key(inputKey), &binding.Text).Absolute().Left(0).Right(0).Bottom(0).Label(v.composerLabel()).Placeholder("描述任务…").PlaceholderColor(subtle(t)).Padding(0, 9).FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(inputSize).FixedLineHeight(inputLeading).OnTextKey(func(k n.TextKey) bool {
 						if k.Key == n.KeyEnter && (k.Mods == 0 || k.Mods == n.Cmd) {
 							m.Drafts[key] = k.Text()
-							if strings.TrimSpace(k.Text()) != "" {
+							if strings.TrimSpace(k.Text()) != "" || len(m.Attachments[key]) > 0 {
 								v.sendMessage(k.Mods == n.Cmd)
 							}
 							return true
 						}
 						return false
 					})
+					input.OnPaste(func(text string) bool { return v.pasteAttachments(key, text) })
 					input.Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 180*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 
 					if v.focusComposer {
@@ -690,7 +759,9 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					binding.LastModel = draft
 				})
 				n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
-					iconButton(c, plus, "添加附件（当前 Codex 适配器暂不支持）").Size(28, 28).Disabled(true)
+					if iconButton(c, plus, "添加附件").Size(28, 28).Disabled(v.Controller == nil || v.StatePath == "" || m.WorkerMinor < 6 || v.preparingAttachments(m.DraftKey())).Clicked() {
+						v.pickAttachments()
+					}
 					permission := control(c).Height(28).PaddingX(6).Radius(6).Label("Permission").Children(func() {
 						inlineIconText(c, shieldIcon, permissionLabel(cfg.Permission), n.Font{Family: "system-ui", Size: 12, Weight: 400}, 13, 6, t.TextMuted)
 					})
@@ -703,12 +774,12 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					v.choiceMenu(c, t, "permission:"+key, permission, choices)
 					n.Spacer(c).Grow(1)
 					v.runControl(c, t, key, cfg)
-					empty := strings.TrimSpace(draft) == ""
+					empty := strings.TrimSpace(draft) == "" && len(m.Attachments[key]) == 0
 					icon := arrow
 					label := "发送"
 					editing := m.QueueEdits[m.SessionID].ID != ""
 					queuing := running || len(m.Queue().Items) > 0
-					disabled := !m.Connected || m.Readiness.State != "ready" || empty
+					disabled := !m.Connected || m.Readiness.State != "ready" || empty || m.ArchivedContext() != "" || v.preparingAttachments(m.DraftKey())
 					if queuing {
 						icon = queueAddIcon
 						label = "加入队列"
@@ -768,6 +839,9 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 			v.queueEditBar(c, t)
 		})
 	})
+	if files := stack.DroppedFiles(); len(files) > 0 {
+		v.addAttachmentFiles(key, files)
+	}
 	v.composerSendTransition(c, stack, home)
 	v.composerHadFocus = stack.FocusWithin()
 }
@@ -924,7 +998,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	if reserve == 0 {
 		reserve = 108
 	}
-	n.List(c.Key("history:"+m.SessionID), state, len(rows)+2, func(row int) {
+	history := n.List(c.Key("history:"+m.SessionID), state, len(rows)+2, func(row int) {
 		if row == 0 {
 			n.Column(c).Height(80)
 			return
@@ -934,6 +1008,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			return
 		}
 		entry := rows[row-1]
+		v.currentTranscriptRow = row
 		i := entry.end
 		item := entry.item
 		bottom := float32(8)
@@ -951,6 +1026,9 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		}
 		n.Column(c).FillWidth().PaddingX(18).AlignItems(n.Center).Children(func() {
 			content := n.Column(c).FillWidth().MaxWidth(768).Gap(8).Padding(0, 0, bottom, 0).Selectable()
+			if entry.footer == "" && entry.group == "" && (item.Kind == "user" || item.Kind == "assistant") {
+				n.SelectionItem(content, item.ID)
+			}
 			v.sentMessagePose(c, content, item)
 			if entry.toolParent != "" {
 				content.Padding(0, 0, bottom, 24).Draw(func(p *n.Painter, r n.Rect) {
@@ -978,6 +1056,16 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			})
 		})
 	}).Absolute().Left(0).Right(0).Top(0).Bottom(0).Label("对话记录")
+	n.VirtualTextSelection(history, func(key string) (string, bool) {
+		for _, item := range v.Model.Details[v.Model.SessionID].Items {
+			if item.ID == key {
+				return item.Text, true
+			}
+		}
+		return "", false
+	})
+	v.conversationOutline(c, t, state, rows)
+	v.returnToLatest(c, t, state)
 	n.Column(c).Absolute().Left(0).Right(8).Top(0).Height(48).Background(t.Background).Children(func() { v.toolbar(c, t) })
 	dock := n.Column(c.Key("conversation-dock")).Absolute().Left(0).Right(0).Bottom(8).PaddingX(18).AlignItems(n.Center).Gap(8).Label("会话底部面板")
 	// Native wrapping and question disclosure determine the complete dock height.
@@ -995,12 +1083,42 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 	switch item.Kind {
 	case "user":
 		n.Row(c).FillWidth().Justify(n.End).Children(func() {
-			bubble := n.Text(c, item.Text).MaxWidth(676).Padding(12, 16).Background(userBubble(t)).Radius(14).FontSize(14).FixedLineHeight(24).Selectable()
+			bubble := n.Column(c).MaxWidth(676).Padding(12, 16).Gap(8).Background(userBubble(t)).Radius(14).Children(func() {
+				if item.Text != "" {
+					n.Text(c, item.Text).FontSize(14).FixedLineHeight(24).Selectable()
+				}
+				if len(item.Attachments) > 0 {
+					n.Row(c).Wrap().Gap(8).Children(func() {
+						for _, a := range item.Attachments {
+							var source n.Rect
+							button := control(c.Key(a.ID)).Height(64).MaxWidth(220).Padding(6, 8).Radius(7).Background(codeSurface(t)).Label("预览附件：" + a.Name).Children(func() {
+								n.Row(c).Gap(8).AlignItems(n.Center).Children(func() {
+									source = v.attachmentThumbnail(c, t, a, v.Model.WorkspaceID, 48).Bounds()
+									n.Column(c).Gap(3).Children(func() {
+										n.Text(c, a.Name).FontSize(12).SingleLine().MaxWidth(140)
+										n.Text(c, attachmentSize(a.Size)).FontSize(11).TextColor(t.TextMuted)
+									})
+								})
+							})
+							if button.Clicked() {
+								if !strings.HasPrefix(a.MIME, "image/") {
+									source = button.Bounds()
+								}
+								v.openAttachment(a, v.Model.WorkspaceID, source)
+							}
+						}
+					})
+				}
+			})
 			v.sentMessageBubble(c, t, bubble, item)
 		})
 	case "assistant":
 		v.assistantReply(c, item)
 	case "tool":
+		if item.Presentation != "" && item.Presentation != "command" {
+			v.activityItem(c, t, item)
+			return
+		}
 		label := item.Name
 		if label == "" {
 			label = "工具活动"
@@ -1015,6 +1133,10 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 				n.Text(c, item.Text).FillWidth().Padding(8, 10).Background(codeSurface(t)).Radius(6).Font("Menlo").FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Selectable()
 			})
 		}
+	case "activity":
+		v.activityItem(c, t, item)
+	case "request_result":
+		v.requestResult(c, t, item)
 	case "request":
 		label := item.Text
 		switch item.Status {
@@ -1029,22 +1151,30 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 		}
 		icon := questionIcon
 		for _, request := range v.Model.Details[v.Model.SessionID].Requests {
-			if item.ID == "request:"+request.ID && request.Kind == "approval" {
+			if item.ID == "request:"+request.ID && (request.Kind == "approval" || request.Kind == "permissions") {
 				icon = shieldIcon
 				break
 			}
 		}
-		if control(c).FillWidth().MinHeight(28).Justify(n.Start).Label(label).Children(func() {
+		active := item.Status == "pending" || item.Status == "submitting"
+		var source n.Element
+		if active {
+			source = control(c).AlignSelf(n.Start).MinHeight(20).Justify(n.Start).Label(label)
+		} else {
+			source = n.Row(c).FillWidth().MinHeight(20).Label(label)
+		}
+		source.Children(func() {
 			n.Row(c).Gap(7).AlignItems(n.Baseline).Children(func() {
 				font := n.Font{Family: "system-ui", Size: 11, Weight: 400}
 				inlineSymbol(c, icon, label, font, 12, subtle(t))
-				n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+				v.requestSourceLabel(c, t, item, label)
 				if item.Status == "pending" || item.Status == "submitting" {
 					inlineSymbol(c, disclosureRight, label, font, 10, subtle(t))
 				}
 			})
-		}).Clicked() {
-			v.Model.Collapsed[v.Model.SessionID] = false
+		})
+		if active && source.Clicked() {
+			v.openSourceRequest(item)
 		}
 	default:
 		n.Text(c, item.Text).TextColor(t.TextMuted).FontSize(12)
@@ -1161,128 +1291,6 @@ func (v *View) pendingCount(session string) int {
 
 const requestRadius = 8
 
-func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
-	type page struct {
-		request  domain.PendingRequest
-		question int
-	}
-	pages := []page{}
-	for _, r := range detail.Requests {
-		if r.State != "pending" && r.State != "submitting" {
-			continue
-		}
-		if len(r.Questions) == 0 {
-			pages = append(pages, page{r, -1})
-		} else {
-			for i := range r.Questions {
-				pages = append(pages, page{r, i})
-			}
-		}
-	}
-	if len(pages) == 0 {
-		return
-	}
-	m := v.Model
-	index := m.Pager[m.SessionID]
-	if index >= len(pages) {
-		index = len(pages) - 1
-	}
-	m.Pager[m.SessionID] = index
-	current := pages[index]
-	r := current.request
-	n.Column(c.Key("pending")).Transition(disclosureMotion(c, 160*time.Millisecond)).FillWidth().MaxWidth(768).Padding(12, 14).Gap(8).Radius(requestRadius).Background(t.Surface).Border(1, t.Border).Children(func() {
-		n.Row(c).FillWidth().AlignItems(n.Center).Children(func() {
-			title := control(c, requestRadius).Height(24).Grow(1).Radius(requestRadius).Justify(n.Start).Label(r.Title).Children(func() {
-				n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
-					icon := questionIcon
-					if r.Kind == "approval" {
-						icon = shieldIcon
-					}
-					font := n.Font{Family: "system-ui", Size: 12, Weight: 500}
-					inlineSymbol(c, icon, r.Title, font, 14, t.TextMuted)
-					n.Text(c, r.Title).FontSize(12).FontWeight(500).FixedLineHeight(20)
-					angle := float32(0)
-					if m.Collapsed[m.SessionID] {
-						angle = -90
-					}
-					inlineSymbol(c, disclosureDown, r.Title, font, 11, t.TextMuted, angle)
-				})
-			})
-			if title.Clicked() {
-				m.Collapsed[m.SessionID] = !m.Collapsed[m.SessionID]
-			}
-			if len(pages) > 1 {
-				if ghost(c, "‹", requestRadius).Label("上一个请求").Disabled(index == 0).Clicked() {
-					m.Pager[m.SessionID]--
-				}
-				n.Text(c, fmt.Sprintf("%d / %d", index+1, len(pages))).FontSize(11)
-				if ghost(c, "›", requestRadius).Label("下一个请求").Disabled(index == len(pages)-1).Clicked() {
-					m.Pager[m.SessionID]++
-				}
-			}
-		})
-		if m.Collapsed[m.SessionID] {
-			return
-		}
-		n.Column(c.Key("request-body")).FillWidth().Gap(8).Transition(disclosureMotion(c, 160*time.Millisecond)).Children(func() {
-			n.Scroll(c.Key(r.ID)).FillWidth().MaxHeight(questionBodyHeight(c)).Children(func() {
-				n.Column(c).FillWidth().Gap(8).Children(func() {
-					if current.question < 0 {
-						n.Text(c, r.Text).Font("Menlo").FontSize(12).Selectable()
-						return
-					}
-					q := r.Questions[current.question]
-					key := m.SessionID + "/" + r.ID + "/" + q.ID
-					n.Text(c, q.Text).FontSize(12).FixedLineHeight(20)
-					selected := textBinding(v.answerBindings, key, m.Answers[key])
-					if len(q.Options) > 0 {
-						n.Column(c).FillWidth().Padding(0, 8).Gap(2).Radius(requestRadius).Background(raised(t)).Children(func() {
-							for _, option := range q.Options {
-								controlFeedback(c, n.Radio(c.Key(option.Label), &selected.Text, option.Label, option.Label).FillWidth().MinHeight(28).FontSize(12).Tooltip(option.Description), 4).Changed()
-							}
-						})
-					}
-					m.Answers[key] = selected.Text
-					selected.LastModel = selected.Text
-					if q.Custom || len(q.Options) == 0 {
-						custom := textBinding(v.customBindings, key, m.Answers["custom:"+key])
-						input := n.TextAreaBase(c.Key("answer:"+key), &custom.Text).FillWidth().Lines(1, 4).MinHeight(32).MaxHeight(96).Padding(5, 8).FontSize(12).FixedLineHeight(20).Background(raised(t)).Border(1, t.Border).Radius(requestRadius).Label("自定义答案").Placeholder("输入答案…").PlaceholderColor(subtle(t))
-						fieldFeedback(c, input)
-						if input.Changed() {
-							m.Answers["custom:"+key] = custom.Text
-							m.Answers[key] = custom.Text
-							custom.LastModel = custom.Text
-						}
-					}
-				})
-			})
-			n.Row(c).Gap(8).Children(func() {
-				disabled := !m.Connected || r.State != "pending"
-				if r.Kind == "approval" {
-					if controlFeedback(c, n.PrimaryButton(c, "允许本轮").Radius(requestRadius).Height(28).FontSize(12).Disabled(disabled), requestRadius, true).Clicked() {
-						v.respond(r, domain.Answer{RequestID: r.ID, Revision: r.Revision, Decision: "accept"})
-					}
-					if ghost(c, "拒绝", requestRadius).Disabled(disabled).Clicked() {
-						v.respond(r, domain.Answer{RequestID: r.ID, Revision: r.Revision, Decision: "decline"})
-					}
-				} else {
-					answers := map[string][]string{}
-					complete := true
-					for _, q := range r.Questions {
-						answer := m.Answers[m.SessionID+"/"+r.ID+"/"+q.ID]
-						if strings.TrimSpace(answer) == "" {
-							complete = false
-						}
-						answers[q.ID] = []string{answer}
-					}
-					if controlFeedback(c, n.PrimaryButton(c, "提交答案").Radius(requestRadius).Height(28).FontSize(12).Disabled(disabled || !complete), requestRadius, true).Clicked() {
-						v.respond(r, domain.Answer{RequestID: r.ID, Revision: r.Revision, Answers: answers})
-					}
-				}
-			})
-		})
-	})
-}
 func (v *View) respond(r domain.PendingRequest, answer domain.Answer) {
 	if v.Controller == nil {
 		return
@@ -1295,6 +1303,13 @@ func (v *View) respond(r domain.PendingRequest, answer domain.Answer) {
 }
 func (v *View) submit() { v.sendMessage(false) }
 func (v *View) sendMessage(steer bool) {
+	if v.parent != nil && v.parent.Model.SecondarySessionID != v.Model.SessionID {
+		return
+	}
+	if v.preparingAttachments(v.Model.DraftKey()) {
+		v.Model.Error = "正在准备附件，请稍候"
+		return
+	}
 	if v.Model.QueueEdits[v.Model.SessionID].ID != "" {
 		v.saveQueued()
 		return
@@ -1320,7 +1335,7 @@ func (v *View) sendMessage(steer bool) {
 	sent := v.beginSendMotion(in)
 	var prepare func() error
 	if v.Saver != nil {
-		state, _ := m.EncodeState()
+		state, _ := v.persistenceModel().EncodeState()
 		v.Saver.Queue(state)
 		v.lastQueued = state
 		prepare = v.Saver.FlushLatest
@@ -1383,9 +1398,8 @@ func (v *View) createWorkspace() { v.beginWorkspace(v.Model.ConnectionID()) }
 func (v *View) nextAttention() {
 	for _, s := range v.Model.Snapshot.Sessions {
 		if v.pendingCount(s.ID) > 0 {
-			v.Model.SessionID = s.ID
-			v.Model.FoldToolHistory[s.ID] = true
-			v.Model.WorkspaceID = s.WorkspaceID
+			v.navigateSession(s.ID, s.WorkspaceID)
+			v.collapsedWorkspaces[s.WorkspaceID] = false
 			v.Model.Collapsed[s.ID] = false
 			v.devices = false
 			return
@@ -1394,6 +1408,9 @@ func (v *View) nextAttention() {
 	v.Model.Error = "暂无待处理事项"
 }
 func (v *View) do(job app.Job) bool {
+	if v.parent != nil && v.parent.Model.SecondarySessionID != v.Model.SessionID {
+		return false
+	}
 	if v.Controller == nil {
 		return false
 	}
@@ -1403,6 +1420,19 @@ func (v *View) do(job app.Job) bool {
 	job.ConnectionEpoch = v.Model.ConnectionEpoch
 	if state := v.Model.DeviceStates[job.ConnectionID]; state != nil {
 		job.ConnectionEpoch = state.ConnectionEpoch
+	}
+	if v.parent != nil && job.Apply != nil {
+		apply := job.Apply
+		session := v.Model.SessionID
+		job.Apply = func(model *app.Model, body json.RawMessage, err error) {
+			previous := model.Error
+			model.Error = ""
+			apply(model, body, err)
+			if v.Model.SessionID == session {
+				v.Model.Error = model.Error
+			}
+			model.Error = previous
+		}
 	}
 	return v.Controller.Do(job)
 }

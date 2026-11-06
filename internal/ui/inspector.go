@@ -102,7 +102,7 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool, width, limit flo
 	id := v.Model.SessionID
 	state := v.changesFor(id)
 	plan := v.Model.Details[id].Plan
-	hasTasks := plan != nil && len(plan.Steps) > 0
+	hasTasks := plan != nil && (len(plan.Steps) > 0 || plan.Narrative != "")
 	v.requestChanges(false)
 	c.After(3 * time.Second)
 	_, height := c.Size()
@@ -132,7 +132,7 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool, width, limit flo
 	panel := n.Column(c.Key("changes-inspector:" + id)).Width(width).Shrink(0).FillHeight().Clip().Background(t.Background).Label("更改侧栏")
 	if drawer {
 		panel.Absolute().Right(0).Top(0).Bottom(0).Shadow(-4, 0, 14, 0, n.RGBA(0, 0, 0, .12))
-		if !v.resizingInspector {
+		if !v.splitRoot().resizingInspector {
 			panel.Transition(drawerMotion(c))
 		}
 	}
@@ -208,7 +208,7 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool, width, limit flo
 		n.Column(c).Width(1).Absolute().Left(0).Top(0).Bottom(0).Background(t.Border).PassThrough()
 		grip := n.Column(c.Key("inspector-resize")).Absolute().Left(0).Top(0).Bottom(0).Width(6).Cursor(n.CursorResizeEW).Focusable().Role(n.RoleSplitter).Label("调整右侧栏宽度")
 		dx, _, held := grip.Dragged()
-		v.resizingInspector = held
+		v.splitRoot().resizingInspector = held
 		change := float32(0)
 		if held {
 			change = -dx
@@ -332,7 +332,7 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 
 func (v *View) inspectorTaskList(c *n.Context, t *n.Theme, state *changesState, plan *domain.Plan) {
 	start := 0
-	if plan.Explanation != "" {
+	if plan.Explanation != "" || plan.Narrative != "" {
 		start = 1
 	}
 	state.Tasks.Key = func(i int) any {
@@ -354,7 +354,14 @@ func (v *View) inspectorTaskList(c *n.Context, t *n.Theme, state *changesState, 
 			return
 		}
 		if i < start {
-			n.Text(c, plan.Explanation).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Padding(8, 12)
+			n.Column(c).FillWidth().Padding(8, 12).Gap(8).Children(func() {
+				if plan.Narrative != "" {
+					n.Text(c, plan.Narrative).FontSize(12).FixedLineHeight(20).Selectable()
+				}
+				if plan.Explanation != "" {
+					n.Text(c, plan.Explanation).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+				}
+			})
 			return
 		}
 		i -= start

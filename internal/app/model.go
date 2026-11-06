@@ -20,29 +20,35 @@ type InspectorLayout struct {
 }
 
 type Model struct {
-	sourceConnection string
-	ConnectionTiming *DeviceTiming
-	Connections      []DeviceConnection
-	ActiveConnection string
-	LocalDeviceID    string
-	DeviceStates     map[string]*DeviceState
-	PendingDevices   map[string]string
-	WorkerMinor      int
-	QueueExpanded    map[string]bool
-	QueueEdits       map[string]QueueEdit
-	ConnectionEpoch  string
-	KnownDeviceID    string
-	Snapshot         domain.Snapshot
-	Sequence         int64
-	Connected        bool
-	Readiness        domain.Readiness
-	WorkspaceID      string
-	SessionID        string
-	Drafts           map[string]string
-	Configs          map[string]domain.RunConfig
-	Answers          map[string]string
-	Pager            map[string]int
-	Collapsed        map[string]bool
+	SecondaryWorkspaceID string
+	historyVisits        map[string]uint64
+	historyClock         uint64
+	SecondarySessionID   string
+	FocusSecondary       bool
+	Attachments          map[string][]DraftAttachment
+	sourceConnection     string
+	ConnectionTiming     *DeviceTiming
+	Connections          []DeviceConnection
+	ActiveConnection     string
+	LocalDeviceID        string
+	DeviceStates         map[string]*DeviceState
+	PendingDevices       map[string]string
+	WorkerMinor          int
+	QueueExpanded        map[string]bool
+	QueueEdits           map[string]QueueEdit
+	ConnectionEpoch      string
+	KnownDeviceID        string
+	Snapshot             domain.Snapshot
+	Sequence             int64
+	Connected            bool
+	Readiness            domain.Readiness
+	WorkspaceID          string
+	SessionID            string
+	Drafts               map[string]string
+	Configs              map[string]domain.RunConfig
+	Answers              map[string]string
+	Pager                map[string]int
+	Collapsed            map[string]bool
 	// Transient: each visit starts with its hydrated tool history collapsed.
 	FoldToolHistory      map[string]bool
 	Pending              map[string]domain.Submission
@@ -60,7 +66,7 @@ type Model struct {
 }
 
 func NewModel() *Model {
-	return &Model{DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {
@@ -119,6 +125,9 @@ func (m *Model) Config() domain.RunConfig {
 }
 func (m *Model) BeginSubmission() (domain.Submission, error) { return m.beginSubmission(false) }
 func (m *Model) beginSubmission(allowRunning bool) (domain.Submission, error) {
+	if kind := m.ArchivedContext(); kind != "" {
+		return domain.Submission{}, errors.New("请先恢复" + kind)
+	}
 	key := m.DraftKey()
 	for _, in := range m.Pending {
 		inKey := "home"
@@ -132,7 +141,7 @@ func (m *Model) beginSubmission(allowRunning bool) (domain.Submission, error) {
 	if !m.Connected || m.Readiness.State != "ready" {
 		return domain.Submission{}, errors.New("connect to a ready execution device")
 	}
-	if strings.TrimSpace(m.Drafts[key]) == "" {
+	if strings.TrimSpace(m.Drafts[key]) == "" && len(m.Attachments[key]) == 0 {
 		return domain.Submission{}, errors.New("enter a message")
 	}
 	workspace := m.WorkspaceID
@@ -158,7 +167,11 @@ func (m *Model) beginSubmission(allowRunning bool) (domain.Submission, error) {
 	if !found {
 		return domain.Submission{}, errors.New("select a workspace")
 	}
-	in := domain.Submission{OperationID: domain.NewID(), WorkspaceID: workspace, SessionID: m.SessionID, Text: m.Drafts[key], Config: m.Config()}
+	refs, err := m.SubmissionAttachments(workspace)
+	if err != nil {
+		return domain.Submission{}, err
+	}
+	in := domain.Submission{Attachments: refs, OperationID: domain.NewID(), WorkspaceID: workspace, SessionID: m.SessionID, Text: m.Drafts[key], Config: m.Config()}
 	if m.SessionID == "" {
 		choice := m.GitDrafts[workspace]
 		if (choice.Branch != "" || choice.NewWorktree) && m.GitEpochs["workspace:"+workspace] != m.ConnectionEpoch {
@@ -167,6 +180,9 @@ func (m *Model) beginSubmission(allowRunning bool) (domain.Submission, error) {
 	}
 	if m.SessionID == "" && m.GitStatuses["workspace:"+workspace].Applicable {
 		in.Git = m.GitDrafts[workspace]
+	}
+	if err := in.ValidateContent(); err != nil {
+		return domain.Submission{}, err
 	}
 	m.Pending[in.OperationID] = in
 	m.PendingDevices[in.OperationID] = m.ConnectionID()
@@ -200,6 +216,7 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		if m.Drafts[key] == in.Text {
 			m.Drafts[key] = ""
 		}
+		m.clearAcceptedAttachments(key, in.Attachments)
 		m.Configs["session:"+op.SessionID] = in.Config
 		if in.SessionID == "" && m.SessionID == "" && m.WorkspaceID == in.WorkspaceID {
 			m.SessionID = op.SessionID
@@ -361,6 +378,10 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 }
 
 type savedState struct {
+	SecondaryWorkspaceID string                       `json:"secondaryWorkspaceId,omitempty"`
+	SecondarySessionID   string                       `json:"secondarySessionId,omitempty"`
+	FocusSecondary       bool                         `json:"focusSecondary,omitempty"`
+	Attachments          map[string][]DraftAttachment `json:"attachments,omitempty"`
 	DeviceCache          map[string]cachedDevice      `json:"deviceCache,omitempty"`
 	Connections          []DeviceConnection           `json:"connections,omitempty"`
 	ActiveConnection     string                       `json:"activeConnection,omitempty"`
@@ -401,6 +422,12 @@ func (m *Model) Load(path string) error {
 	var saved savedState
 	if err = json.Unmarshal(b, &saved); err != nil {
 		return err
+	}
+	m.SecondaryWorkspaceID = saved.SecondaryWorkspaceID
+	m.SecondarySessionID = saved.SecondarySessionID
+	m.FocusSecondary = saved.FocusSecondary
+	if saved.Attachments != nil {
+		m.Attachments = saved.Attachments
 	}
 	if saved.QueueExpanded != nil {
 		m.QueueExpanded = saved.QueueExpanded

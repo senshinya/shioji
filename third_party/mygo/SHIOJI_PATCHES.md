@@ -53,12 +53,34 @@ not expose the following appearance settings required by the frozen design:
   partial replay alone would leave that effect frozen. Covered by Shioji's
   active-task/footer shimmer regression, including Reduce Motion.
 
+- `ui.Inert`: retain an outgoing pane's exact paint while removing pointer,
+  keyboard and accessibility interaction. Reuse the renderer's existing inert
+  flag; propagate disabled input state without Disabled's 50% paint dimming,
+  including stale accessibility references. Covered by pane interaction and
+  Shioji question-card light/dark pixel regressions.
+- `ui.PointerPressedWithin`: observe descendant/popup presses without turning a
+  pane into a clickable container or stealing text-input focus.
+- `ui.ListState.FollowingEnd`: distinguish automatic initial/end positioning
+  from explicit history reading when showing the return-to-latest control.
+- `ui.VirtualTextSelection` / `SelectionItem`: opt-in retention of a message's
+  selected paragraphs and rune offsets across real virtual-row unmounts. Stable
+  model keys and current source text invalidate removed/replaced content; remount
+  restores the selection, while another editor retains its own focus and Copy.
+  The list releases the selected focus row instead of keeping its UI mounted.
+  Optional retention code is registered through lightweight hooks, and is absent
+  from linker dependencies when unused. The vendored checkout omits upstream
+  examples, so equivalent minimal native/webview probes were built against HEAD
+  and the modified tree: native 9,390,034 → 9,390,210 bytes (+176 bytes of hook
+  plumbing), webview 7,011,490 → 7,011,490 bytes. The full retention implementation
+  is excluded without opting in (`-dumpdep` checked).
+
 Changes are confined to ui/theme.go, ui/paint.go, ui/editor/editor.go and
 ui/editor/theme.go, plus ui/glyphs.go, internal/text/layout.go and
 internal/text/coretext_darwin.go, ui/layout.go, ui/transition.go, ui/list.go,
 ui/list_reveal.go, ui/runtime.go, ui/markdown/code.go, ui/markdown/reveal.go,
 ui/markdown/smooth.go and the
-regression tests. The popup and list changes are covered by Shioji's native
+regression tests, plus ui/pane.go, ui/virtual_textselection*.go and their
+ui/context.go, ui/element.go, ui/input.go and ui/textselection.go hooks. The popup and list changes are covered by Shioji's native
 component interaction regressions; streaming code is covered by the native
 reply regressions in internal/ui/streaming_test.go. Remove the replacement when an
 upstream release exposes equivalent controls. This remains a native renderer;

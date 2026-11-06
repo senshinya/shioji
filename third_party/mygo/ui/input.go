@@ -709,6 +709,9 @@ func (rt *engine) keyDownPhysical(mods Modifiers, key, physical Key, repeat bool
 		return true
 	}
 	k := keyEvent{mods, key}
+	if mods == Cmd && key == KeyC && rt.virtualText != nil && rt.virtualText.copy() {
+		return true
+	}
 	if key == KeyEscape && mods == 0 && rt.dragCancel() {
 		return true
 	}
@@ -984,6 +987,9 @@ func (rt *engine) shortcut(id uint64, mods Modifiers, key Key) bool {
 }
 
 func (rt *engine) editEvent(ev editEvent) {
+	if ev.kind == editCommand && ev.text == "copy" && rt.virtualText != nil && rt.virtualText.copy() {
+		return
+	}
 	if s := rt.states[rt.focused]; s != nil && s.textClient != nil && rt.windowFocus() && s.flags&flagDisabled == 0 && (s.editor == nil || !s.editor.readOnly) {
 		if ev.kind == editInsert || ev.kind == editCompose {
 			var r *TextInputRange
@@ -1060,6 +1066,9 @@ func (rt *engine) commandKey(ev editEvent, ed *editor) bool {
 // commandEnabled reports whether the edit command name would act where
 // editEvent takes it, for the Edit menu to enable its item.
 func (rt *engine) commandEnabled(name string) bool {
+	if name == "copy" && rt.virtualText != nil && rt.virtualText.copyAllowed() {
+		return true
+	}
 	s := rt.states[rt.focused]
 	// As focusHandler, without windowFocus, which would have the next
 	// change of the window's focus draw a frame.

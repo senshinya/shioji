@@ -17,8 +17,8 @@ import (
 
 const Major = 1
 
-// Minor 3 adds durable structured execution plans to session details and events.
-const Minor = 3
+// Minor 6 adds workspace-scoped attachment transfer and structured message inputs.
+const Minor = 6
 const MaxFrame = 1 << 20
 
 type Frame struct {
