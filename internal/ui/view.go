@@ -777,22 +777,24 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					v.runControl(c, t, key, cfg)
 					empty := strings.TrimSpace(draft) == "" && len(m.Attachments[key]) == 0
 					icon := arrow
+					iconSize := float32(28.0 * 14 / 24)
+					iconKey := "primary-send-icon"
 					label := "发送"
 					editing := m.QueueEdits[m.SessionID].ID != ""
 					queuing := running || len(m.Queue().Items) > 0
 					disabled := !m.Connected || m.Readiness.State != "ready" || empty || m.ArchivedContext() != "" || v.preparingAttachments(m.DraftKey())
 					if queuing {
-						icon = queueAddIcon
 						label = "加入队列"
 						disabled = disabled || m.WorkerMinor < 2
 					}
 					if editing {
-						icon = check
 						label = "保存编辑"
 						disabled = disabled || v.queueBusy[m.SessionID]
 					}
 					if running && empty && !editing {
 						icon = stop
+						iconSize = 18
+						iconKey = "primary-stop-icon"
 						label = "停止当前轮"
 						disabled = !m.Connected
 					}
@@ -801,7 +803,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 						fill = subtle(t)
 					}
 					send := controlFeedback(c, n.ButtonBase(c), 14, true).Size(28, 28).Radius(14).Background(fill).TextColor(t.AccentText).Label(label).Disabled(disabled).Children(func() {
-						n.Icon(c.Key("primary-icon:"+label), icon).Size(20, 20).Transition(n.ElementTransition{Duration: motionAnimation(c, 120*time.Millisecond).Duration, Ease: n.EaseOut, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
+						n.Icon(c.Key(iconKey), icon).Size(iconSize, iconSize).Transition(n.ElementTransition{Duration: motionAnimation(c, 120*time.Millisecond).Duration, Ease: n.EaseOut, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 					})
 					if send.Clicked() {
 						if running && empty && !editing {

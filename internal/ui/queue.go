@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-var queueAddIcon = svg("M3 5h11M3 10h6M3 15h6M14 10v8M10 14h8")
 var queueEditIcon = svg("M13 3l4 4M4 13l-1 5 5-1L18 6l-4-4L4 13z")
 var queueRemoveIcon = svg("M5 5l10 10M15 5L5 15")
 
@@ -202,14 +201,13 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 				}
 			})
 			trigger.Children(func() {
-				n.Row(c).Gap(3).AlignItems(n.Center).Children(func() {
+				font := n.Font{Family: "system-ui", Size: 12, Weight: 500}
+				n.Row(c).Gap(3).AlignItems(n.Baseline).Transform(n.Translation(0, inlineCenterOffset("待发送", font))).Children(func() {
 					angle := float32(-90)
 					if m.QueueExpanded[sid] {
 						angle = 0
 					}
-					n.Column(c).Size(16, 18).AlignItems(n.Center).Justify(n.Center).Children(func() {
-						n.Icon(c, chevron).Size(14, 14).TextColor(subtle(t)).Transform(n.Rotation(trigger.AnimateTo("queue-chevron", angle, motionAnimation(c, 160*time.Millisecond))))
-					})
+					inlineSymbol(c.Key("queue-chevron"), chevron, "待发送", font, 14, subtle(t), angle).Width(16)
 					n.Text(c, "待发送").FontSize(12).FontWeight(500).FixedLineHeight(18).TextColor(color)
 					n.Text(c, fmt.Sprint(len(q.Items))).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
 				})
@@ -218,10 +216,13 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 				m.QueueExpanded[sid] = !m.QueueExpanded[sid]
 			}
 			if q.Paused {
-				n.Text(c, "已暂停").FontSize(11).TextColor(t.TextMuted).Tooltip(q.Reason)
-				if ghost(c, "继续队列").Font("system-ui").FontSize(12).FixedLineHeight(18).Height(26).Disabled(!m.Connected || v.queueBusy[sid]).Clicked() && present {
-					v.queueCommand("queue.continue", protocol.QueueInput{SessionID: sid, Revision: q.Revision}, nil)
-				}
+				font := n.Font{Family: "system-ui", Size: 11, Weight: 400}
+				n.Row(c).Height(26).Gap(8).AlignItems(n.Baseline).Transform(n.Translation(0, inlineCenterOffset("已暂停", font))).Children(func() {
+					n.Text(c, "已暂停").FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Tooltip(q.Reason)
+					if ghost(c, "继续队列").Font("system-ui").FontSize(11).FixedLineHeight(18).Height(26).Disabled(!m.Connected || v.queueBusy[sid]).Clicked() && present {
+						v.queueCommand("queue.continue", protocol.QueueInput{SessionID: sid, Revision: q.Revision}, nil)
+					}
+				})
 			}
 		})
 		_, windowHeight := c.Size()

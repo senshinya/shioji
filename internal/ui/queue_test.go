@@ -1192,3 +1192,171 @@ func TestRapidEnqueueRowsDoNotOverlapWhileQueueGrows(t *testing.T) {
 		}
 	}
 }
+
+func TestCollapsedQueueChevronAlignsToChineseInk(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		v, _ := nativeQueueFixture()
+		ui := n.NewTester(func(c *n.Context) { theme := *c.Theme(); theme.Dark = dark; c.SetTheme(&theme); v.View(c) }, 1200, 820)
+		ui.Advance(time.Second)
+		heading, _ := ui.Find("待发送")
+		trigger, _ := ui.Find("待发送 2")
+		inkCenter := func(r n.Rect) float32 {
+			im := ui.Image()
+			bg := im.RGBAAt(int(r.X+r.W/2), int(r.Y+1))
+			top, bottom := im.Bounds().Max.Y, -1
+			for y := int(r.Y); y < int(r.Y+r.H); y++ {
+				for x := int(r.X); x < int(r.X+r.W); x++ {
+					p := im.RGBAAt(x, y)
+					d := int(p.R) - int(bg.R)
+					if d > 30 || d < -30 {
+						top = min(top, y)
+						bottom = max(bottom, y)
+					}
+				}
+			}
+			if bottom < 0 {
+				t.Fatal("missing queue header ink", r)
+			}
+			return float32(top+bottom) / 2
+		}
+		icon := n.Rect{X: trigger.X, Y: trigger.Y, W: 16, H: trigger.H}
+		if delta := inkCenter(icon) - inkCenter(heading); math.Abs(float64(delta)) > .5 {
+			t.Fatal("queue chevron does not align to Chinese ink", dark, delta, icon, heading)
+		}
+	}
+}
+
+func TestContinueQueueMatchesSecondaryCaptionFont(t *testing.T) {
+	v, _ := nativeQueueFixture()
+	q := v.Model.Queue()
+	q.Paused = true
+	v.Model.SetQueue(q)
+	var captionWidth float32
+	ui := n.NewTester(func(c *n.Context) {
+		captionWidth, _ = c.MeasureText(0, n.Span{Text: "继续队列", Font: "system-ui", Size: 11, Weight: 400})
+		v.View(c)
+	}, 1200, 820)
+	ui.Advance(time.Second)
+	button, ok := ui.Find("继续队列")
+	if !ok {
+		t.Fatal("missing continue queue action")
+	}
+	if math.Abs(float64(button.W-captionWidth)) > .1 || button.H != 18 {
+		t.Fatal("continue queue does not match secondary caption typography", button, captionWidth)
+	}
+}
+
+func TestQueueHeaderUsesOneOpticalCenter(t *testing.T) {
+	v, _ := nativeQueueFixture()
+	q := v.Model.Queue()
+	q.Paused = true
+	v.Model.SetQueue(q)
+	ui := n.NewTester(v.View, 1200, 820)
+	ui.Advance(time.Second)
+	header, _ := ui.Find("待发送 2")
+	center := header.Y + header.H/2
+	for _, entry := range []struct {
+		label  string
+		size   float32
+		weight int
+	}{{"待发送", 12, 500}, {"已暂停", 11, 400}, {"继续队列", 11, 400}} {
+		r, ok := ui.Find(entry.label)
+		if !ok {
+			t.Fatal("missing header caption", entry.label)
+		}
+		font := n.Font{Family: "system-ui", Size: entry.size, Weight: entry.weight}
+		m := inlineFontMetrics(entry.label, font)
+		baseline := r.Y + (r.H-m.ascent-m.descent)/2 + m.ascent
+		actual := baseline - m.center
+		if math.Abs(float64(actual-center)) > .5 {
+			t.Error("queue caption does not share header optical center", entry.label, actual-center)
+		}
+	}
+}
+
+func TestSendGlyphStaysAnUpArrowAtHomeInQueuesAndWhileEditing(t *testing.T) {
+	var expected []uint32
+	for _, mode := range []string{"idle", "home", "running", "queued", "editing"} {
+		t.Run(mode, func(t *testing.T) {
+			v, _ := nativeQueueFixture()
+			m := v.Model
+			d := m.Details["s"]
+			m.Snapshot.Sessions[0].Status = "completed"
+			d.Session.Status = "completed"
+			d.Turns = nil
+			originalQueue := d.Queue
+			d.Queue = domain.QueueState{SessionID: "s"}
+			m.Details["s"] = d
+			m.Drafts["session:s"] = "next message"
+			label := "发送"
+			switch mode {
+			case "home":
+				m.SessionID = ""
+				m.Drafts["home"] = "next message"
+			case "running":
+				m.Snapshot.Sessions[0].Status = "running"
+				label = "加入队列"
+			case "queued", "editing":
+				m.SetQueue(originalQueue)
+				label = "加入队列"
+				if mode == "editing" {
+					if err := m.EditQueued("one"); err != nil {
+						t.Fatal(err)
+					}
+					label = "保存编辑"
+				}
+			}
+			ui := n.NewTester(v.View, 1200, 820)
+			ui.Advance(time.Second)
+			r, ok := ui.Find(label)
+			if !ok {
+				t.Fatal("missing primary send action", mode)
+			}
+			im := ui.Image()
+			var pixels []uint32
+			for y := int(r.Y + 4); y < int(r.Y+24); y++ {
+				for x := int(r.X + 4); x < int(r.X+24); x++ {
+					p := im.RGBAAt(x, y)
+					pixels = append(pixels, uint32(p.R)<<24|uint32(p.G)<<16|uint32(p.B)<<8|uint32(p.A))
+				}
+			}
+			if expected == nil {
+				expected = pixels
+				return
+			}
+			for i, pixel := range pixels {
+				if pixel != expected[i] {
+					t.Fatal("primary send glyph changed from the up arrow", mode)
+				}
+			}
+		})
+	}
+}
+
+func TestSendButtonRestoresOriginalFaceAndHitTarget(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		v, _ := nativeQueueFixture()
+		v.Model.Drafts["session:s"] = "next message"
+		ui := n.NewTester(func(c *n.Context) { theme := *c.Theme(); theme.Dark = dark; c.SetTheme(&theme); v.View(c) }, 1200, 820)
+		ui.Advance(time.Second)
+		r, ok := ui.Find("加入队列")
+		if !ok || r.W != 28 || r.H != 28 {
+			t.Fatal("primary action lost its hit target", r)
+		}
+		for _, hover := range []bool{false, true} {
+			if hover {
+				ui.Move(r.X+r.W/2, r.Y+r.H/2)
+				ui.Advance(200 * time.Millisecond)
+			}
+			im := ui.Image()
+			y := int(r.Y + 14)
+			outside := im.RGBAAt(int(r.X-2), y)
+			if im.RGBAAt(int(r.X+1), y) == outside || im.RGBAAt(int(r.X+26), y) == outside {
+				t.Fatal("send face has not restored its original diameter", dark, hover)
+			}
+			if im.RGBAAt(int(r.X+3), y) == outside {
+				t.Fatal("send face is missing", dark, hover)
+			}
+		}
+	}
+}

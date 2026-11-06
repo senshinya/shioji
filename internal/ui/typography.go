@@ -39,6 +39,13 @@ func inlineFontMetrics(label string, font n.Font) iconFontMetrics {
 	return center.(iconFontMetrics)
 }
 
+// Center the visible reference glyph rather than the line's ascent/descent box.
+// Leading stays symmetric, so the correction is independent of line height.
+func inlineCenterOffset(label string, font n.Font) float32 {
+	m := inlineFontMetrics(label, font)
+	return m.center - (m.ascent-m.descent)/2
+}
+
 func inlineIconSpan(label string, font n.Font, size, gap float32) n.Span {
 	above := size/2 + inlineFontMetrics(label, font).center
 	return n.Span{Text: "\uFFFC", ObjectWidth: size + gap, ObjectHeight: above, ObjectDescent: size - above}
