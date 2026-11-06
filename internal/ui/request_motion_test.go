@@ -616,3 +616,108 @@ func TestAnswerReceiptHistoryAndReducedMotionAppearWithoutReplay(t *testing.T) {
 		}
 	}
 }
+
+func TestFollowingReplyWaitsForReceiptEntrance(t *testing.T) {
+	for _, arrival := range []string{"together", "during-entrance"} {
+		t.Run(arrival, func(t *testing.T) {
+			v := requestMotionModel()
+			d := v.Model.Details["s"]
+			d.Requests, d.Items = nil, nil
+			v.Model.Details["s"] = d
+			ui := n.NewTester(v.View, 1440, 900)
+			ui.Advance(time.Second)
+			ui.Click("消息输入")
+			d.Items = []domain.Item{{ID: "receipt", Kind: "request_result", Text: "已提交回答", Final: true, Order: 1, Parts: []domain.ContentPart{{Label: "选择哪一种？", Text: "逐项检查"}}}}
+			if arrival == "together" {
+				d.Items = append(d.Items, domain.Item{ID: "after", Kind: "assistant", Text: "后续正文第一段，", Order: 2})
+			}
+			v.Model.Details["s"] = d
+			ui.Frame()
+			start, _ := ui.Find("回答结果")
+			ui.Advance(50 * time.Millisecond)
+			if arrival == "during-entrance" {
+				d.Items = append(d.Items, domain.Item{ID: "after", Kind: "assistant", Text: "后续正文第一段，", Order: 2})
+			}
+			d.Items[1].Text += "第二段继续抵达。"
+			d.Items[1].Final = true
+			v.Model.Details["s"] = d
+			ui.Frame()
+			for i := 0; i < 7; i++ {
+				ui.Advance(time.Second / 60)
+				for _, text := range ui.Texts() {
+					if strings.HasPrefix(text, "后") {
+						t.Fatalf("following prose reveals before the receipt settles: %q", text)
+					}
+				}
+			}
+			middle, _ := ui.Find("回答结果")
+			ui.Advance(100 * time.Millisecond)
+			settled, _ := ui.Find("回答结果")
+			if !(start.Y > middle.Y && middle.Y > settled.Y) {
+				t.Fatal("test did not cover the receipt's actual moving interval", start, middle, settled)
+			}
+			if !ui.HasText("后") || ui.HasText("第二段继续抵达。") {
+				t.Fatal("following reply does not begin progressively after the receipt", ui.Texts())
+			}
+			ui.Advance(time.Second)
+			if !ui.HasText("后续正文第一段，第二段继续抵达。") || v.visibleOutputAnimating() {
+				t.Fatal("waiting loses received chunks or leaves a reveal pending", ui.Texts())
+			}
+			if !ui.Focused("消息输入") || v.Model.Drafts["session:s"] != "ordinary draft" {
+				t.Fatal("receipt/reply handoff changes the composer")
+			}
+		})
+	}
+}
+
+func TestReceiptHandoffDoesNotDelayHistoryOrReducedMotion(t *testing.T) {
+	for _, mode := range []string{"history", "reconnect", "reduce"} {
+		t.Run(mode, func(t *testing.T) {
+			v := requestMotionModel()
+			d := v.Model.Details["s"]
+			d.Requests, d.Items = nil, nil
+			items := []domain.Item{
+				{ID: "receipt", Kind: "request_result", Text: "已提交回答", Final: true, Order: 1, Parts: []domain.ContentPart{{Text: "逐项检查"}}},
+				{ID: "after", Kind: "assistant", Text: "已确认的完整正文。", Final: true, Order: 2},
+			}
+			if mode == "history" {
+				d.Items = items
+			}
+			v.Model.Details["s"] = d
+			ui := n.NewTester(v.View, 1440, 900)
+			if mode == "reduce" {
+				ui.SetPreferences(n.Preferences{ReduceMotion: true})
+			}
+			if mode != "history" {
+				d.Items = items
+				v.Model.Details["s"] = d
+				if mode == "reconnect" {
+					v.Model.ConnectionEpoch = "reconnected"
+				}
+				ui.Frame()
+			}
+			if !ui.HasText("已确认的完整正文。") || v.visibleOutputAnimating() {
+				t.Fatal("history/reduced motion waits for a receipt or replays prose", ui.Texts())
+			}
+		})
+	}
+}
+
+func TestReplyArrivingAfterReceiptSettlesStartsImmediately(t *testing.T) {
+	v := requestMotionModel()
+	d := v.Model.Details["s"]
+	d.Requests, d.Items = nil, nil
+	v.Model.Details["s"] = d
+	ui := n.NewTester(v.View, 1440, 900)
+	d.Items = []domain.Item{{ID: "receipt", Kind: "request_result", Text: "已提交回答", Final: true, Order: 1, Parts: []domain.ContentPart{{Text: "逐项检查"}}}}
+	v.Model.Details["s"] = d
+	ui.Frame()
+	ui.Advance(300 * time.Millisecond)
+	d.Items = append(d.Items, domain.Item{ID: "after", Kind: "assistant", Text: "后续正文继续抵达。", Final: true, Order: 2})
+	v.Model.Details["s"] = d
+	ui.Frame()
+	ui.Advance(40 * time.Millisecond)
+	if !ui.HasText("后") {
+		t.Fatal("late prose waits again after the receipt is already settled", ui.Texts())
+	}
+}

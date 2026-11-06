@@ -13,13 +13,16 @@ import (
 // Native Markdown owns the reveal clock and buffered tail; this only separates
 // live additions from opening/recovering history and remounting virtual rows.
 type replyStream struct {
-	text      string
-	live      bool
-	fresh     bool
-	changedAt time.Time
-	revealing bool
-	seen      uint64
+	text        string
+	live        bool
+	fresh       bool
+	changedAt   time.Time
+	revealAfter time.Time
+	revealing   bool
+	seen        uint64
 }
+
+const receiptEntranceDuration = 200 * time.Millisecond
 
 func (v *View) syncReplyStreams(detail domain.SessionDetail) {
 	m := v.Model
@@ -39,6 +42,7 @@ func (v *View) syncReplyStreams(detail domain.SessionDetail) {
 		}
 	}
 	previousOrder := v.replyLatestOrder
+	var receiptUntil time.Time
 	for _, item := range detail.Items {
 		v.replyLatestOrder = max(v.replyLatestOrder, item.Order)
 		if item.Kind != "assistant" && item.Kind != "request" && item.Kind != "request_result" {
@@ -50,11 +54,18 @@ func (v *View) syncReplyStreams(detail domain.SessionDetail) {
 			if item.Kind == "request_result" && item.Order > 0 && item.Order <= previousOrder {
 				live = false
 			}
-			v.replyStreams[item.ID] = &replyStream{text: item.Text, live: live, fresh: live, changedAt: v.frameTime, revealing: live && !v.reduceMotion && item.Text != ""}
+			stream = &replyStream{text: item.Text, live: live, fresh: live, changedAt: v.frameTime, revealing: live && !v.reduceMotion && item.Text != ""}
+			if item.Kind == "assistant" && live && v.frameTime.Before(receiptUntil) {
+				stream.revealAfter = receiptUntil
+			}
+			v.replyStreams[item.ID] = stream
 		} else if stream.text != item.Text {
 			stream.live = strings.HasPrefix(item.Text, stream.text)
 			stream.text, stream.changedAt = item.Text, v.frameTime
 			stream.revealing = stream.live && !v.reduceMotion && item.Text != ""
+		}
+		if item.Kind == "request_result" && stream.live {
+			receiptUntil = stream.changedAt.Add(receiptEntranceDuration)
 		}
 	}
 }
@@ -100,13 +111,20 @@ func (v *View) requestSourceLabel(c *n.Context, t *n.Theme, item domain.Item, la
 
 func (v *View) assistantReply(c *n.Context, item domain.Item) {
 	root := n.Column(c.Key(item.ID)).FillWidth()
-	initialized := n.Local(root, replyMountKey{}, func() bool { return false })
 	stream := v.replyStreams[item.ID]
+	// Receive all deltas normally, but let the preceding receipt finish its
+	// entrance before mounting Markdown and starting its own reveal clock.
+	if stream != nil && stream.live && !v.reduceMotion && c.Now().Before(stream.revealAfter) {
+		stream.seen, stream.revealing = v.replyFrame, true
+		c.AnimationFrame()
+		return
+	}
+	initialized := n.Local(root, replyMountKey{}, func() bool { return false })
 	streaming := false
 	if stream != nil {
 		// The final payload can append text too. Feed that frame through Stream
 		// before View takes over and lets Markdown drain the buffered tail.
-		streaming = stream.live && (!item.Final || stream.changedAt.Equal(v.frameTime))
+		streaming = stream.live && (!item.Final || stream.changedAt.Equal(v.frameTime) || stream.fresh && !stream.revealAfter.IsZero())
 		if !*initialized && !stream.fresh {
 			streaming = false
 		}

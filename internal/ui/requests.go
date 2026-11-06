@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"shioji/internal/domain"
 	"strings"
-	"time"
 )
 
 func requestKey(r domain.PendingRequest, id string) string {
@@ -315,7 +314,7 @@ func (v *View) requestResult(c *n.Context, t *n.Theme, item domain.Item) {
 	progress := float32(1)
 	if stream := v.replyStreams[item.ID]; stream != nil {
 		if stream.live && !c.Preferences().ReduceMotion {
-			progress = n.EaseOut(min(1, max(0, float32(c.Now().Sub(stream.changedAt))/float32(200*time.Millisecond))))
+			progress = n.EaseOut(min(1, max(0, float32(c.Now().Sub(stream.changedAt))/float32(receiptEntranceDuration))))
 		}
 		stream.fresh, stream.seen, stream.revealing = false, v.replyFrame, progress < 1
 		if stream.revealing {
