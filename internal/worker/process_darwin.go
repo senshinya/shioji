@@ -73,6 +73,11 @@ func checkPreviousProcess(dir string) error {
 		return errors.New("previous runtime launch was unconfirmed; manual reconciliation required")
 	}
 	proc, err := unix.SysctlKinfoProc("kern.proc.pid", record.PID)
+	// An empty Darwin sysctl result is reported as EIO by SysctlKinfoProc.
+	// Clear it only when a separate, read-only signal probe confirms no PID.
+	if errors.Is(err, unix.EIO) && errors.Is(unix.Kill(record.PID, 0), unix.ESRCH) {
+		err = unix.ESRCH
+	}
 	if err != nil && !errors.Is(err, unix.ESRCH) && !errors.Is(err, unix.ENOENT) {
 		return fmt.Errorf("cannot verify previous runtime ownership: %w", err)
 	}

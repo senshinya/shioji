@@ -219,7 +219,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 			}
 			if q.Paused {
 				n.Text(c, "已暂停").FontSize(11).TextColor(t.TextMuted).Tooltip(q.Reason)
-				if ghost(c, "继续队列").Height(26).Disabled(!m.Connected || v.queueBusy[sid]).Clicked() && present {
+				if ghost(c, "继续队列").Font("system-ui").FontSize(12).FixedLineHeight(18).Height(26).Disabled(!m.Connected || v.queueBusy[sid]).Clicked() && present {
 					v.queueCommand("queue.continue", protocol.QueueInput{SessionID: sid, Revision: q.Revision}, nil)
 				}
 			}

@@ -721,3 +721,58 @@ func TestReplyArrivingAfterReceiptSettlesStartsImmediately(t *testing.T) {
 		t.Fatal("late prose waits again after the receipt is already settled", ui.Texts())
 	}
 }
+
+func TestFirstLiveRequestRespectsReaderAndComposer(t *testing.T) {
+	for _, mode := range []string{"reading", "writing", "following-empty", "previously-collapsed"} {
+		t.Run(mode, func(t *testing.T) {
+			v := requestMotionModel()
+			d := v.Model.Details["s"]
+			requests := d.Requests
+			d.Requests, d.Items = nil, nil
+			for i := 0; i < 35; i++ {
+				d.Items = append(d.Items, domain.Item{ID: fmt.Sprint("old-", i), Kind: "assistant", Text: strings.Repeat("Earlier conversation. ", 8), Final: true})
+			}
+			v.Model.Details["s"] = d
+			v.Model.Drafts["session:s"] = ""
+			v.Model.Collapsed["s"] = mode == "previously-collapsed"
+			ui := n.NewTester(v.View, 1440, 900)
+			ui.Advance(time.Second)
+			if mode == "reading" {
+				ui.Scroll(900, 350, 0, -800)
+				ui.Frame()
+				if v.lists["s"].FollowingEnd() {
+					t.Fatal("test did not leave bottom following")
+				}
+			}
+			if mode == "writing" || mode == "following-empty" {
+				ui.Click("消息输入")
+				if mode == "writing" {
+					ui.Type("这条普通消息还没写完")
+				}
+			}
+			first, _ := v.lists["s"].Visible()
+			d.Requests = requests[:1]
+			v.Model.Details["s"] = d
+			ui.Frame()
+			ui.Advance(500 * time.Millisecond)
+			body, _ := ui.Find("请求内容区域")
+			wantCollapsed := mode != "following-empty"
+			if (body.H == 0) != wantCollapsed {
+				t.Fatal("first question overrides reading/composing or the retained disclosure", mode, body)
+			}
+			if mode == "reading" {
+				if after, _ := v.lists["s"].Visible(); after != first {
+					t.Fatal("question arrival moves the history reader", first, after)
+				}
+				ui.Click("需要回答")
+				ui.Advance(300 * time.Millisecond)
+				if opened, _ := ui.Find("请求内容区域"); opened.H == 0 {
+					t.Fatal("reader cannot explicitly open the question")
+				}
+			}
+			if mode == "writing" && (!ui.Focused("消息输入") || v.Model.Drafts["session:s"] != "这条普通消息还没写完") {
+				t.Fatal("question arrival changes the ordinary draft or focus")
+			}
+		})
+	}
+}

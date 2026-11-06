@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	n "github.com/egoist/mygo/ui"
@@ -166,6 +167,15 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 		return requestCardMotion{known: known, unread: map[string]bool{}, active: len(pages) > 0}
 	})
 	active := len(pages) > 0
+	if active && !state.active {
+		list := v.lists[m.SessionID]
+		composing := v.composerHadFocus && (strings.TrimSpace(m.Drafts[m.DraftKey()]) != "" || len(m.Attachments[m.DraftKey()]) > 0)
+		// New requests remain available without opening over history reading
+		// or an ordinary draft. Empty, bottom-following composers may open.
+		if composing || list != nil && !list.FollowingEnd() {
+			m.Collapsed[m.SessionID] = true
+		}
+	}
 	if active {
 		index := min(max(0, m.Pager[m.SessionID]), len(pages)-1)
 		// Removal of an earlier request must not move the reader to a different
