@@ -57,6 +57,13 @@ func (v *View) closeParallel() {
 func (v *View) navigateSession(id, workspace string) {
 	root := v.splitRoot()
 	m := root.Model
+	current, currentWorkspace := m.SessionID, m.WorkspaceID
+	if m.FocusSecondary && m.SecondarySessionID != "" {
+		current, currentWorkspace = m.SecondarySessionID, m.SecondaryWorkspaceID
+	}
+	if current != "" && current != id {
+		root.previousSession, root.previousWorkspace = current, currentWorkspace
+	}
 	root.workspaceEditor = nil
 	root.devices = false
 	if id == m.SessionID {

@@ -45,7 +45,7 @@ func (v *View) choiceMenu(c *n.Context, t *n.Theme, key string, trigger n.Elemen
 								} else {
 									name.Grow(1)
 								}
-								inlineSymbol(c, check, choice.name, n.Font{Family: "system-ui", Size: 13, Weight: 400}, 12, t.Text).Opacity(func() float32 {
+								inlineSymbol(c, check, choice.name, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 12, t.Text).Opacity(func() float32 {
 									if choice.checked {
 										return 1
 									}

@@ -2,6 +2,7 @@ package ui
 
 import (
 	_ "embed"
+	"github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
 )
 
@@ -29,6 +30,9 @@ var copyReplyIcon = svg("M7 3h9a1 1 0 0 1 1 1v10M4 6h9a1 1 0 0 1 1 1v10H3V7a1 1 
 var closeIcon = svg("M5 5l10 10M15 5L5 15")
 var branchIcon = designIcon("M6 3v12a4 4 0 0 0 8 0V8M6 5a2 2 0 1 0 0 .01M14 5a2 2 0 1 0 0 .01M6 18a2 2 0 1 0 0 .01")
 
+// WindowTrafficLightPosition is shared by the main and preference windows.
+func WindowTrafficLightPosition() *mygo.Point { return &mygo.Point{X: 22, Y: 21} }
+
 func navButton(c *n.Context, icon *n.SVG, label string) n.Element {
 	color, size := c.Theme().TextMuted, float32(13)
 	if label == "新建会话" {
@@ -38,6 +42,6 @@ func navButton(c *n.Context, icon *n.SVG, label string) n.Element {
 		size = 12
 	}
 	return control(c, 8).FillWidth().Height(28).PaddingX(8).Justify(n.Start).Radius(8).Label(label).Children(func() {
-		inlineIconText(c, icon, label, n.Font{Family: "system-ui", Size: size, Weight: 400}, 16, 8, color)
+		inlineIconText(c, icon, label, n.Font{Family: c.Theme().Font, Size: size, Weight: 400}, 16, 8, color)
 	})
 }

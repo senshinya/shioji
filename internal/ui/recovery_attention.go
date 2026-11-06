@@ -51,7 +51,7 @@ func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d 
 	content.Padding(12, 14).Gap(8).Radius(requestRadius).Background(t.Surface).Border(1, t.Border)
 	content.Children(func() {
 		n.Row(c).Gap(7).AlignItems(n.Baseline).Children(func() {
-			inlineSymbol(c, recoveryIcon, title, n.Font{Family: "system-ui", Size: 13, Weight: 400}, 14, t.TextMuted)
+			inlineSymbol(c, recoveryIcon, title, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 14, t.TextMuted)
 			n.Text(c, title).FontSize(13).FixedLineHeight(20)
 		})
 		n.Text(c, message).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
@@ -150,7 +150,7 @@ func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d 
 								if task.ProcessCommand != "" {
 									command = task.ProcessCommand
 								}
-								n.Text(c, command).FillWidth().Font("Menlo").FontSize(11).FixedLineHeight(18).Selectable()
+								n.Text(c, command).FillWidth().Font(v.Model.Preferences.CodeFont).FontSize(11).FixedLineHeight(18).Selectable()
 								if task.PID > 0 && task.State == "running" && task.ProcessCommand != "" && v.Model.WorkerMinor >= 8 && info != nil && info.CanStopTasks {
 									checked := state.Selected[task.ID]
 									if controlFeedback(c, n.Checkbox(c.Key(task.ID+"/select"), &checked, "停止此进程组").MinHeight(26).FontSize(12).Label(fmt.Sprintf("选择进程 %d", task.PID)).Disabled(disabled || state.Confirm != ""), 4).Changed() {

@@ -86,6 +86,14 @@ Avoid unnecessary secondary labels and descriptions. Let the layout do the expla
 - 核对亮暗模式、中文、英文、混排与多行的真实原生截图，检查笔画而非只看布局框；同组可见高度、中心和首行对齐误差控制在 1 逻辑像素（DIP）内，并保留相关原生回归检查。
 - 参考：[Apple SF Symbols 的字体尺度与光学对齐](https://developer.apple.com/design/human-interface-guidelines/sf-symbols)、[Apple 自定义符号的基线和字高导引](https://developer.apple.com/documentation/uikit/creating-custom-symbol-images-for-your-app)、[W3C 对拉丁与表意文字基线度量的说明（工作草案）](https://www.w3.org/TR/css-inline-3/#baseline-metrics)。借鉴其排版原则，原生界面仍使用 MyGo，不引入 CSS/WebView。
 
+### 设置
+
+- 设置使用独立原生窗口，分为外观、消息输入、通知、快捷键和关于。分类切换不加动画；内容顶部不重复“设置”总标题、分栏或“当前 Mac”。
+- 设置与主窗口共用红绿灯位置和 8 px 侧栏内缩。侧栏图标与文字左对齐，搜索紧接窗控区域。设置行以水平分隔线组织，不加整组外框或底色；选择器右端、开关右端和分隔线右端对齐。
+- 开关采用无阴影灰阶胶囊，系统通知总开关使用相同样式。主题选择保留正常文字颜色，仅用中性边框和对勾表示选中，不依赖原生 Selected 覆盖文字颜色。
+- 外观预览使用真实 Markdown 与当前文字配置；消息输入页不重复静态输入框示意。设置即时持久化，当前设置窗口必须显示保存失败。快捷键保持原生输入、选区和 IME 行为，并拒绝冲突。
+- 前台通知默认开启，保留用户明确关闭的选择。系统通知须经 macOS 授权，按真实生命周期事件发送；历史重放、停止和补到的用量事件不产生完成通知。通知处理不依赖窗口可见或重新绘制，保留对象与去重记录须有界。
+
 ### 界面行为
 
 - Target the confirmed workflow: individual developer workflow, one focused session with background agents, optional two-session viewing, light/dark system appearance, keyboard-first interaction, next-attention navigation, and this Mac as a local execution target.

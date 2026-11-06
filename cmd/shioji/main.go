@@ -55,9 +55,23 @@ func run() error {
 		controller.Run(ctx)
 	}()
 	mygo.App.SetName("Shioji")
+	mygo.Theme.SetSource(mygo.ThemeSource(model.Preferences.Appearance))
 	mygo.App.WhenReady(func() {
 		view := presentation.New(model, controller, *state)
-		window := mygo.NewWindow(mygo.WindowOptions{Title: "Shioji", Width: 1240, Height: 820, MinWidth: 850, MinHeight: 600, TitleBarStyle: mygo.TitleBarHidden, TrafficLightPosition: &mygo.Point{X: 22, Y: 21}, Content: n.View(view.View)})
+		settings := presentation.NewSettings(view)
+		view.OpenSettings = settings.Show
+		window := mygo.NewWindow(mygo.WindowOptions{Title: "Shioji", Width: 1240, Height: 820, MinWidth: 850, MinHeight: 600, TitleBarStyle: mygo.TitleBarHidden, TrafficLightPosition: presentation.WindowTrafficLightPosition(), Content: n.View(view.View)})
+		view.AttachWindow(window, settings)
+		menu := mygo.NewMenu([]*mygo.MenuItem{
+			{Label: "Shioji", Submenu: []*mygo.MenuItem{
+				{Label: "关于 Shioji", Click: func(*mygo.MenuItem, *mygo.Window) { settings.OpenAbout() }},
+				mygo.Separator(),
+				{Label: "设置…", Accelerator: "Cmd+,", Click: func(*mygo.MenuItem, *mygo.Window) { settings.Show() }},
+				mygo.Separator(), {Role: mygo.RoleServices}, {Role: mygo.RoleHide}, {Role: mygo.RoleHideOthers}, {Role: mygo.RoleUnhide}, mygo.Separator(), {Role: mygo.RoleQuit},
+			}},
+			{Role: mygo.RoleFileMenu}, {Role: mygo.RoleEditMenu}, {Role: mygo.RoleViewMenu}, {Role: mygo.RoleWindowMenu},
+		})
+		mygo.App.SetMenu(menu)
 		window.OnClose(func(e *mygo.CloseEvent) {
 			if err := view.Flush(); err != nil {
 				e.PreventDefault()
@@ -71,6 +85,7 @@ func run() error {
 			}
 		})
 		window.OnClosed(func() {
+			settings.Close()
 			if view.Saver != nil {
 				view.Saver.Close()
 			}

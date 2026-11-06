@@ -528,7 +528,9 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 				} else if p.Image != nil {
 					n.Image(c, p.Image).FillWidth().Height(min(580, h-160)).Fit(n.Contain)
 				} else {
-					n.Scroll(c).FillWidth().MaxHeight(h - 160).Children(func() { n.Text(c, p.Text).Font("Menlo").FontSize(12).FixedLineHeight(20).Selectable() })
+					n.Scroll(c).FillWidth().MaxHeight(h - 160).Children(func() {
+						n.Text(c, p.Text).Font(v.Model.Preferences.CodeFont).FontSize(12).FixedLineHeight(20).Selectable()
+					})
 				}
 			})
 		})

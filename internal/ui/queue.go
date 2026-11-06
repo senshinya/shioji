@@ -201,7 +201,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 				}
 			})
 			trigger.Children(func() {
-				font := n.Font{Family: "system-ui", Size: 12, Weight: 500}
+				font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 500}
 				n.Row(c).Gap(3).AlignItems(n.Baseline).Transform(n.Translation(0, inlineCenterOffset("待发送", font))).Children(func() {
 					angle := float32(-90)
 					if m.QueueExpanded[sid] {
@@ -216,10 +216,10 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 				m.QueueExpanded[sid] = !m.QueueExpanded[sid]
 			}
 			if q.Paused {
-				font := n.Font{Family: "system-ui", Size: 11, Weight: 400}
+				font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}
 				n.Row(c).Height(26).Gap(8).AlignItems(n.Baseline).Transform(n.Translation(0, inlineCenterOffset("已暂停", font))).Children(func() {
 					n.Text(c, "已暂停").FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Tooltip(q.Reason)
-					if ghost(c, "继续队列").Font("system-ui").FontSize(11).FixedLineHeight(18).Height(26).Disabled(!m.Connected || v.queueBusy[sid]).Clicked() && present {
+					if ghost(c, "继续队列").Font(c.Theme().Font).FontSize(11).FixedLineHeight(18).Height(26).Disabled(!m.Connected || v.queueBusy[sid]).Clicked() && present {
 						v.queueCommand("queue.continue", protocol.QueueInput{SessionID: sid, Revision: q.Revision}, nil)
 					}
 				})

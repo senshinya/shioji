@@ -178,7 +178,7 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 						n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
 							n.Text(c, name).Grow(1).FontSize(13).FixedLineHeight(20)
 							if name == branch {
-								inlineSymbol(c, check, name, n.Font{Family: "system-ui", Size: 13, Weight: 400}, 14, t.Text)
+								inlineSymbol(c, check, name, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 14, t.Text)
 							}
 						})
 					})

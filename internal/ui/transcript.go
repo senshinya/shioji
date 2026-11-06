@@ -136,7 +136,7 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 			if v.Model.Collapsed[row.group] {
 				angle = -90
 			}
-			font := n.Font{Family: "system-ui", Size: 11, Weight: 400}
+			font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}
 			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(color)
 			inlineSymbol(c, chevron, label, font, 10, subtle(t), angle)
 		})

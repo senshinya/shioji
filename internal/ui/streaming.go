@@ -147,9 +147,9 @@ func (v *View) assistantReply(c *n.Context, item domain.Item) {
 	}
 	root.Children(func() {
 		if streaming {
-			markdown.Stream(c.Key("body"), item.Text, &v.md).FillWidth().FontSize(14)
+			markdown.Stream(c.Key("body"), item.Text, &v.md).FillWidth().FontSize(float32(v.Model.Preferences.ReplySize))
 		} else {
-			markdown.View(c.Key("body"), item.Text, &v.md).FillWidth().FontSize(14)
+			markdown.View(c.Key("body"), item.Text, &v.md).FillWidth().FontSize(float32(v.Model.Preferences.ReplySize))
 		}
 	})
 }

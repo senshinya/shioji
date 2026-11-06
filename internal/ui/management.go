@@ -84,7 +84,7 @@ func (v *View) toolbarWorkspace(c *n.Context, t *n.Theme) {
 				n.Column(c).FillWidth().Gap(0).Children(func() {
 					for i, folder := range workspace.Folders {
 						n.Row(c.Key(folder)).FillWidth().Height(26).PaddingX(7).Gap(7).AlignItems(n.Baseline).Tooltip(folder).Children(func() {
-							font := n.Font{Family: "system-ui", Size: 13, Weight: 400}
+							font := n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}
 							inlineSymbol(c, workspaceIcon, folder, font, 14, t.TextMuted)
 							n.Text(c, path.Base(folder)).SingleLine().FontSize(13).FixedLineHeight(20).Grow(1)
 							if i == 0 {

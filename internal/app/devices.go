@@ -174,6 +174,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	}
 	current := m.ConnectionID()
 	p := *m
+	p.Notifications = nil
 	p.sourceConnection = key
 	p.Pending = map[string]domain.Submission{}
 	p.PendingDevices = map[string]string{}
@@ -258,6 +259,8 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	} else {
 		m.WorkspaceID, m.SessionID = workspace, session
 	}
+	m.Notifications = append(m.Notifications, p.Notifications...)
+	m.notificationSeen = p.notificationSeen
 	m.RefreshDevices()
 }
 

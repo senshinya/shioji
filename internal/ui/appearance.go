@@ -1,6 +1,9 @@
 package ui
 
-import n "github.com/egoist/mygo/ui"
+import (
+	n "github.com/egoist/mygo/ui"
+	"shioji/internal/app"
+)
 
 // Frozen semantic colors; keep each appearance independent.
 func subtle(t *n.Theme) n.Color {
@@ -26,4 +29,51 @@ func gitColors(t *n.Theme) (added, deleted, addedFill, deletedFill n.Color) {
 		return n.Hex("#99ada0"), n.Hex("#c39b94"), n.Hex("#252e28"), n.Hex("#332928")
 	}
 	return n.Hex("#45634f"), n.Hex("#90564f"), n.Hex("#f0f5f1"), n.Hex("#faf1ef")
+}
+
+func applyAppearance(c *n.Context, prefs app.ClientPreferences) *n.Theme {
+	t := *c.Theme()
+	if prefs.Appearance != "system" {
+		t.Dark = prefs.Appearance == "dark"
+	}
+	t.FontSize = 13
+	t.Font = prefs.InterfaceFont
+	t.FontAntialiased = true
+	t.Spacing = 3
+	t.Radius = 6
+	if t.Dark {
+		t.Background = n.Hex("#101010")
+		t.Surface = n.Hex("#202020")
+		t.SurfaceHover = n.Hex("#292929")
+		t.SurfacePressed = n.Hex("#292929")
+		t.Border = n.Hex("#343434")
+		t.Text = n.Hex("#e9e9e9")
+		t.TextMuted = n.Hex("#ababab")
+		t.Accent = n.Hex("#e5e5e5")
+		t.AccentText = n.Hex("#181818")
+		t.Selection = n.Hex("#292929")
+		t.Focus = n.Hex("#8c8c90")
+		t.Success = n.Hex("#32d769")
+		t.Warning = n.Hex("#ff9f0a")
+		t.Danger = n.Hex("#ff6257")
+	} else {
+		t.Background = n.Hex("#ffffff")
+		t.Surface = n.Hex("#f4f4f4")
+		t.SurfaceHover = n.Hex("#eeeeee")
+		t.SurfacePressed = n.Hex("#e7e7e7")
+		t.Border = n.Hex("#e3e3e3")
+		t.Text = n.Hex("#1c1c1c")
+		t.TextMuted = n.Hex("#666666")
+		t.Accent = n.Hex("#262626")
+		t.AccentText = n.Hex("#ffffff")
+		t.Selection = n.Hex("#e7e7e7")
+		t.Focus = n.Hex("#97979b")
+		t.Success = n.Hex("#138a43")
+		t.Warning = n.Hex("#c66a00")
+		t.Danger = n.Hex("#d92d20")
+	}
+	t.AccentHover = t.Accent
+	t.AccentPressed = t.Accent
+	c.SetTheme(&t)
+	return &t
 }

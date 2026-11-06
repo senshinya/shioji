@@ -428,6 +428,17 @@ func (_handle *Context) ReadClipboard() string {
 	return _ctx.ReadClipboard()
 }
 
+// ReduceMotion asks native controls and animation to use less motion during
+// this frame. It never overrides a desktop request for reduced motion.
+// Call it at the start of each view; omitting it restores desktop behavior.
+func (_handle *Context) ReduceMotion(reduce bool) {
+	_ctx := _handle.build()
+	if _ctx == nil {
+		return
+	}
+	_ctx.ReduceMotion(reduce)
+}
+
 // Region returns the user's regional formats (mygo.App.Region): the
 // locale of the formats, the first day of the week and the hour cycle,
 // which dates and times follow. A frame follows their changes.

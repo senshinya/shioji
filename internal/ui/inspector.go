@@ -257,7 +257,7 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 				} else if draggable {
 					n.Text(c, "更改").Label("更改标题").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 				} else {
-					inlineIconText(c, changesIcon, "更改", n.Font{Family: "system-ui", Size: 12, Weight: 400}, 16, 8, t.TextMuted).Grow(1)
+					inlineIconText(c, changesIcon, "更改", n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}, 16, 8, t.TextMuted).Grow(1)
 				}
 			})
 		}
@@ -373,7 +373,7 @@ func (v *View) inspectorTaskList(c *n.Context, t *n.Theme, state *changesState, 
 		case "running":
 			status, color = "进行中", t.Text
 		}
-		font := n.Font{Family: "system-ui", Size: 12, Weight: 400}
+		font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
 		n.Row(c).FillWidth().Padding(8, 12).Gap(8).AlignItems(n.Baseline).Label(status + "：" + step.Text).Children(func() {
 			switch step.Status {
 			case "running":
@@ -400,7 +400,7 @@ func (v *View) diffBody(c *n.Context, t *n.Theme, state *changesState) {
 		return
 	}
 	added, deleted, addedFill, deletedFill := gitColors(t)
-	state.Diff.Font = n.Font{Family: "Menlo", Size: 11, Weight: 400, Antialiased: true}
+	state.Diff.Font = n.Font{Family: v.Model.Preferences.CodeFont, Size: 11, Weight: 400, Antialiased: true}
 	state.Diff.LineHeight = 23.0 / 11
 	state.Diff.Inline = editor.DiffInlineNone
 	state.Diff.Indicators = editor.DiffClassic

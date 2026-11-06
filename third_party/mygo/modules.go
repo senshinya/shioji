@@ -951,13 +951,10 @@ func (n *Notification) ShowContext(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	notifications.Lock()
-	if notifications.byID == nil {
-		notifications.byID = map[string]*Notification{}
+	previous, shown, err := registerNotification(ctx, n)
+	if err != nil {
+		return err
 	}
-	previous, shown := notifications.byID[n.id]
-	notifications.byID[n.id] = n
-	notifications.Unlock()
 	ch := make(chan error, 1)
 	var completeOnce sync.Once
 	canceled := false
@@ -1006,7 +1003,7 @@ func (n *Notification) ShowContext(ctx context.Context) error {
 	} else if !postMain(show) {
 		complete(errLoopStopped, false)
 	}
-	err := await(ch)
+	err = await(ch)
 	if err != nil {
 		// Nothing will be clicked.
 		notifications.Lock()
@@ -1020,6 +1017,23 @@ func (n *Notification) ShowContext(ctx context.Context) error {
 		notifications.Unlock()
 	}
 	return err
+}
+
+// Registration and Close share this lock, so retirement can cancel a pending
+// notification without a later registration resurrecting its callback.
+func registerNotification(ctx context.Context, n *Notification) (*Notification, bool, error) {
+	notifications.Lock()
+	if err := ctx.Err(); err != nil {
+		notifications.Unlock()
+		return nil, false, err
+	}
+	if notifications.byID == nil {
+		notifications.byID = map[string]*Notification{}
+	}
+	previous, shown := notifications.byID[n.id]
+	notifications.byID[n.id] = n
+	notifications.Unlock()
+	return previous, shown, nil
 }
 
 // Close removes the notification.

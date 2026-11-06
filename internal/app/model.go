@@ -20,6 +20,9 @@ type InspectorLayout struct {
 }
 
 type Model struct {
+	Preferences          ClientPreferences
+	Notifications        []SessionNotification
+	notificationSeen     []string
 	SecondaryWorkspaceID string
 	historyVisits        map[string]uint64
 	historyClock         uint64
@@ -66,7 +69,7 @@ type Model struct {
 }
 
 func NewModel() *Model {
-	return &Model{Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{Preferences: (ClientPreferences{}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {
@@ -280,6 +283,7 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 	}
 	m.Sequence = e.Sequence
 	m.Snapshot.Sequence = e.Sequence
+	notice := m.notificationForEvent(e)
 	if e.Workspace != nil {
 		found := false
 		for i, w := range m.Snapshot.Workspaces {
@@ -374,10 +378,18 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 		}
 		m.Details[e.SessionID] = detail
 	}
+	if notice != nil {
+		m.Notifications = append(m.Notifications, *notice)
+		m.notificationSeen = append(slices.Clone(m.notificationSeen), notice.ID)
+		if len(m.notificationSeen) > 256 {
+			m.notificationSeen = m.notificationSeen[len(m.notificationSeen)-256:]
+		}
+	}
 	return nil
 }
 
 type savedState struct {
+	Preferences          ClientPreferences            `json:"preferences"`
 	SecondaryWorkspaceID string                       `json:"secondaryWorkspaceId,omitempty"`
 	SecondarySessionID   string                       `json:"secondarySessionId,omitempty"`
 	FocusSecondary       bool                         `json:"focusSecondary,omitempty"`
@@ -423,6 +435,7 @@ func (m *Model) Load(path string) error {
 	if err = json.Unmarshal(b, &saved); err != nil {
 		return err
 	}
+	m.Preferences = saved.Preferences.Normalized()
 	m.SecondaryWorkspaceID = saved.SecondaryWorkspaceID
 	m.SecondarySessionID = saved.SecondarySessionID
 	m.FocusSecondary = saved.FocusSecondary

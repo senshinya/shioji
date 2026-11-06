@@ -278,7 +278,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 						if r.Kind == "approval" || r.Kind == "permissions" {
 							icon = shieldIcon
 						}
-						font := n.Font{Family: "system-ui", Size: 12, Weight: 500}
+						font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 500}
 						inlineSymbol(c, icon, r.Title, font, 14, t.TextMuted)
 						n.Text(c, titleText).FontSize(12).FontWeight(500).FixedLineHeight(20)
 						angle := float32(0)

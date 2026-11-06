@@ -56,7 +56,7 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 						}
 						button.Children(func() {
 							n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-								inlineSymbol(c, monitor, name, n.Font{Family: "system-ui", Size: 13, Weight: 400}, 16, t.TextMuted)
+								inlineSymbol(c, monitor, name, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 16, t.TextMuted)
 								n.Text(c, name).SingleLine().FontSize(13).FixedLineHeight(20).Grow(1)
 								running := 0
 								for _, s := range state.Snapshot.Sessions {

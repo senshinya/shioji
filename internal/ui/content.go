@@ -61,7 +61,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item) {
 	color := textHoverColor(c, button, t.TextMuted)
 	button.Children(func() {
 		n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
-			font := n.Font{Family: "system-ui", Size: 12, Weight: 400}
+			font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
 			if item.Kind == "activity" {
 				inlineSymbol(c, activityIcon(item.Presentation), label, font, 14, color)
 			}
@@ -117,7 +117,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item) {
 				switch part.Kind {
 				case "code":
 					n.Scroll(c).FillWidth().MaxHeight(180).Children(func() {
-						n.Text(c, part.Text).FillWidth().Font("Menlo").FontSize(11).FixedLineHeight(18).Padding(8, 10).Radius(6).Background(codeSurface(t)).Selectable()
+						n.Text(c, part.Text).FillWidth().Font(v.Model.Preferences.CodeFont).FontSize(11).FixedLineHeight(18).Padding(8, 10).Radius(6).Background(codeSurface(t)).Selectable()
 					})
 				case "markdown":
 					v.activityMarkdown.Theme = v.md.Theme
@@ -132,7 +132,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item) {
 		for _, agent := range item.Agents {
 			n.Column(c.Key(agent.ID)).FillWidth().Gap(4).Children(func() {
 				n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-					font := n.Font{Family: "system-ui", Size: 12, Weight: 400}
+					font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
 					statusDot(c, agent.ID, font, t.TextMuted, false)
 					n.Text(c, agent.ID).FontSize(12).Grow(1)
 					n.Text(c, activityStatus(agent.Status)).FontSize(11).TextColor(t.TextMuted)
@@ -170,7 +170,7 @@ func (v *View) activityDiff(c *n.Context, t *n.Theme, key string, file domain.Fi
 		} else if files, err := editor.ParsePatch(patch); err == nil && len(files) > 0 {
 			state.State.SetPatch(files[0])
 		} else {
-			n.Text(c, patch).Font("Menlo").FontSize(11).Selectable()
+			n.Text(c, patch).Font(v.Model.Preferences.CodeFont).FontSize(11).Selectable()
 			return
 		}
 		v.activityPatches[key] = state

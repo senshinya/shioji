@@ -28,6 +28,11 @@ type Preferences struct {
 // A frame follows their changes.
 func (c *context) Preferences() Preferences { return c.rt.preferences() }
 
+// ReduceMotion asks native controls and animation to use less motion during
+// this frame. It never overrides a desktop request for reduced motion.
+// Call it at the start of each view; omitting it restores desktop behavior.
+func (c *context) ReduceMotion(reduce bool) { c.rt.viewReduceMotion = reduce }
+
 // preferences returns the desktop's settings, read once until they change.
 func (rt *engine) preferences() Preferences {
 	if !rt.prefsKnown {
@@ -43,7 +48,9 @@ func (rt *engine) preferences() Preferences {
 		}
 		rt.prefsKnown = true
 	}
-	return rt.prefs
+	p := rt.prefs
+	p.ReduceMotion = p.ReduceMotion || rt.viewReduceMotion
+	return p
 }
 
 // follow makes the theme follow the desktop's settings.

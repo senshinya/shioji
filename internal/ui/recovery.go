@@ -101,7 +101,7 @@ func (v *View) recovery(c *n.Context, t *n.Theme, d domain.SessionDetail) {
 					if !m.Connected {
 						text = "连接设备后自动恢复会话"
 					}
-					inlineSymbol(c, recoveryIcon, text, n.Font{Family: "system-ui", Size: 12, Weight: 400}, 12, t.TextMuted)
+					inlineSymbol(c, recoveryIcon, text, n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}, 12, t.TextMuted)
 					status := n.Text(c, text).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 					if m.Connected {
 						shimmer(c, status, t.TextMuted, t.Text)
@@ -116,7 +116,7 @@ func (v *View) recovery(c *n.Context, t *n.Theme, d domain.SessionDetail) {
 						label = "上次回复已中断"
 					}
 					n.Row(c).Gap(7).AlignItems(n.Baseline).Grow(1).Children(func() {
-						inlineSymbol(c, recoveryIcon, label, n.Font{Family: "system-ui", Size: 12, Weight: 400}, 14, t.TextMuted)
+						inlineSymbol(c, recoveryIcon, label, n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}, 14, t.TextMuted)
 						n.Text(c, label).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 					})
 					button := ghost(c, "继续原会话").Height(28).FontSize(12).PaddingX(10).Disabled(disabled || m.Readiness.State != "ready" || v.continuationPending(d.Session.ID))

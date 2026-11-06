@@ -121,6 +121,7 @@ func (c *context) reset(now time.Time, w, h float32) {
 	c.used = 0
 	c.now = now
 	c.w, c.h = w, h
+	c.rt.viewReduceMotion = false
 	c.theme = c.rt.defaultTheme()
 	c.window = c.theme
 	c.rt.lang = c.rt.host.locale()

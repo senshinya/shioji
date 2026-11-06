@@ -3,8 +3,10 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/egoist/mygo"
 	"math"
 	"strings"
 	"time"
@@ -23,6 +25,15 @@ type editBinding struct {
 }
 
 type View struct {
+	notificationDeliveries                                                                                          []nativeNotificationDelivery
+	nativeWindow                                                                                                    *mygo.Window
+	settings                                                                                                        *Settings
+	notificationContext                                                                                             context.Context
+	cancelNotifications                                                                                             context.CancelFunc
+	viewportWidth                                                                                                   float32
+	previousSession, previousWorkspace                                                                              string
+	OpenSettings                                                                                                    func()
+	services                                                                                                        n.Services
 	recoveries                                                                                                      map[string]*recoveryState
 	paneFocusVersion                                                                                                uint64
 	outline                                                                                                         *conversationOutline
@@ -158,6 +169,23 @@ func (v *View) Flush() error {
 	return root.Saver.Flush(data)
 }
 
+func (v *View) queueState() {
+	data, err := v.Model.EncodeState()
+	if err == nil && !bytes.Equal(data, v.lastQueued) {
+		v.Saver.Queue(data)
+		v.lastQueued = data
+	}
+}
+
+func (v *View) watchStateWriter() {
+	mainServices := v.services
+	settingsServices := n.Services{}
+	if v.settings != nil {
+		settingsServices = v.settings.services
+	}
+	v.Saver.SetInvalidate(func() { mainServices.Invalidate(); settingsServices.Invalidate() })
+}
+
 func svg(path string) *n.SVG {
 	return n.MustParseSVG([]byte(`<svg viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path d="` + path + `" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 }
@@ -174,19 +202,15 @@ var questionIcon = svg("M17.5 13.3h-10l-5 4.2v-15h15z")
 
 func (v *View) View(c *n.Context) {
 	m := v.Model
+	m.Preferences = m.Preferences.Normalized()
+	c.ReduceMotion(m.Preferences.ReduceMotion)
+	v.services = c.Services()
+	v.viewportWidth, _ = c.Size()
 	v.frameTime, v.reduceMotion = c.Now(), c.Preferences().ReduceMotion
-	if v.Controller != nil {
+	if v.Controller != nil && v.nativeWindow == nil {
 		v.Controller.SetInvalidate(c.Services().Invalidate)
-		for {
-			select {
-			case update := <-v.Controller.Updates:
-				update(m)
-			default:
-				goto drained
-			}
-		}
 	}
-drained:
+	v.pumpUpdates()
 	m.RefreshDevices()
 	v.syncQueuedMotions()
 	v.syncSendMotion()
@@ -199,64 +223,19 @@ drained:
 			v.Controller.SelectDevice(m.ConnectionID(), m.SessionID)
 		}
 	}
-	t := *c.Theme()
-	t.FontSize = 13
-	t.Font = "system-ui"
-	t.FontAntialiased = true
-	t.Spacing = 3
-	t.Radius = 6
-	if t.Dark {
-		t.Background = n.Hex("#101010")
-		t.Surface = n.Hex("#202020")
-		t.SurfaceHover = n.Hex("#292929")
-		t.SurfacePressed = n.Hex("#292929")
-		t.Border = n.Hex("#343434")
-		t.Text = n.Hex("#e9e9e9")
-		t.TextMuted = n.Hex("#ababab")
-		t.Accent = n.Hex("#e5e5e5")
-		t.AccentText = n.Hex("#181818")
-		t.Selection = n.Hex("#292929")
-		t.Focus = n.Hex("#8c8c90")
-		t.Success = n.Hex("#32d769")
-		t.Warning = n.Hex("#ff9f0a")
-		t.Danger = n.Hex("#ff6257")
-	} else {
-		t.Background = n.Hex("#ffffff")
-		t.Surface = n.Hex("#f4f4f4")
-		t.SurfaceHover = n.Hex("#eeeeee")
-		t.SurfacePressed = n.Hex("#e7e7e7")
-		t.Border = n.Hex("#e3e3e3")
-		t.Text = n.Hex("#1c1c1c")
-		t.TextMuted = n.Hex("#666666")
-		t.Accent = n.Hex("#262626")
-		t.AccentText = n.Hex("#ffffff")
-		t.Selection = n.Hex("#e7e7e7")
-		t.Focus = n.Hex("#97979b")
-		t.Success = n.Hex("#138a43")
-		t.Warning = n.Hex("#c66a00")
-		t.Danger = n.Hex("#d92d20")
-	}
-	t.AccentHover = t.Accent
-	t.AccentPressed = t.Accent
-	c.SetTheme(&t)
+	t := *applyAppearance(c, m.Preferences)
 	// Keep the overlay parent alive so popup entrance and exit both have a
 	// persistent parent, even when no popup is currently open.
 	n.Overlay(c, func() {})
-	v.md.Theme = &markdown.Theme{FontSize: 14, LineHeight: 24.0 / 14, BlockSpacing: 8.0 / 14}
+	v.md.Theme = replyTheme(m.Preferences)
 	if v.Saver != nil {
-		v.Saver.SetInvalidate(c.Services().Invalidate)
+		v.watchStateWriter()
 		saved, err := v.Saver.Result()
 		v.lastState = saved
 		if err != nil {
 			m.Error = "无法保存草稿：" + err.Error()
 		}
-		defer func() {
-			data, err := m.EncodeState()
-			if err == nil && !bytes.Equal(data, v.lastQueued) {
-				v.Saver.Queue(data)
-				v.lastQueued = data
-			}
-		}()
+		defer v.queueState()
 	}
 
 	menuContext := fmt.Sprintf("%s/%s/%t", m.DraftKey(), m.WorkspaceID, v.devices)
@@ -271,6 +250,15 @@ drained:
 	}
 	if c.Shortcut(n.Cmd, n.KeyN) {
 		v.home()
+	}
+	if c.Shortcut(n.Cmd, n.KeyComma) && v.OpenSettings != nil {
+		v.OpenSettings()
+	}
+	if c.Shortcut(n.Cmd|n.Shift, n.KeyJ) {
+		v.nextAttention()
+	}
+	if c.Shortcut(n.Cmd|n.Shift, n.KeyH) && v.previousSession != "" {
+		v.navigateSession(v.previousSession, v.previousWorkspace)
 	}
 	if m.SessionID != "" && !v.devices {
 		v.syncReplyStreams(m.Details[m.SessionID])
@@ -350,6 +338,9 @@ drained:
 }
 
 func (v *View) home() {
+	if v.Model.SessionID != "" {
+		v.previousSession, v.previousWorkspace = v.Model.SessionID, v.Model.WorkspaceID
+	}
 	v.workspaceEditor = nil
 	v.Model.SessionID = ""
 	v.Model.FocusSecondary = false
@@ -465,7 +456,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 								if v.collapsedWorkspaces[w.ID] {
 									angle = -90
 								}
-								inlineSymbol(c, disclosureDown, w.Name, n.Font{Family: "system-ui", Size: 12, Weight: 500}, 11, t.TextMuted, angle).Width(20).TextAlign(n.Center)
+								inlineSymbol(c, disclosureDown, w.Name, n.Font{Family: c.Theme().Font, Size: 12, Weight: 500}, 11, t.TextMuted, angle).Width(20).TextAlign(n.Center)
 								n.Text(c, w.Name).SingleLine().Grow(1).FontSize(12).FontWeight(500).FixedLineHeight(20).Tooltip(w.Name)
 							})
 						}).ContextMenu(func(menu *n.Menu) { v.workspaceMenu(menu, *w) }).Clicked() {
@@ -496,9 +487,9 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 						} else if s.Status == "running" || s.Status == "starting" || finishingOutput {
 							n.Column(c).Width(10).AlignItems(n.Center).AlignSelf(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Success) })
 						} else if s.Status == "completed" {
-							inlineSymbol(c, check, s.Title, n.Font{Family: "system-ui", Size: 13, Weight: 400}, 10, t.Success)
+							inlineSymbol(c, check, s.Title, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 10, t.Success)
 						} else if s.Status == "interrupted" || s.Status == "abandoned" {
-							inlineSymbol(c, check, s.Title, n.Font{Family: "system-ui", Size: 13, Weight: 400}, 10, t.TextMuted).Label("已停止")
+							inlineSymbol(c, check, s.Title, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 10, t.TextMuted).Label("已停止")
 						} else {
 							glyph := "Ⅱ"
 							label := "已暂停"
@@ -537,7 +528,9 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 				if navButton(c, monitor, "设备").Grow(1).Clicked() {
 					v.devices = true
 				}
-				iconButton(c, settingsIcon, "设置").Disabled(true)
+				if iconButton(c, settingsIcon, "设置").Clicked() && v.OpenSettings != nil {
+					v.OpenSettings()
+				}
 			})
 		})
 	})
@@ -586,7 +579,7 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 					color = t.Success
 				}
 				n.Column(c).Size(4, 4).Radius(2).Background(color).AlignSelf(n.Center)
-				font := n.Font{Family: "system-ui", Size: 11, Weight: 400}
+				font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}
 				inlineIconText(c, monitor, m.CurrentDeviceName(), font, 14, 6, t.TextMuted)
 				inlineSymbol(c, chevron, m.CurrentDeviceName(), font, 12, t.TextMuted)
 			})
@@ -728,10 +721,17 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 						inputKey += ":edit:" + editID
 					}
 					input = n.TextAreaBase(c.Key(inputKey), &binding.Text).Absolute().Left(0).Right(0).Bottom(0).Label(v.composerLabel()).Placeholder("描述任务…").PlaceholderColor(subtle(t)).Padding(0, 9).FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(inputSize).FixedLineHeight(inputLeading).OnTextKey(func(k n.TextKey) bool {
-						if k.Key == n.KeyEnter && (k.Mods == 0 || k.Mods == n.Cmd) {
+						if k.Key == n.KeyEnter {
+							bind := composerBinding(k.Mods)
+							if bind == m.Preferences.Shortcuts.Newline {
+								return false
+							}
+							if bind != m.Preferences.Shortcuts.Send && bind != m.Preferences.Shortcuts.Steer {
+								return true
+							}
 							m.Drafts[key] = k.Text()
 							if strings.TrimSpace(k.Text()) != "" || len(m.Attachments[key]) > 0 {
-								v.sendMessage(k.Mods == n.Cmd)
+								v.sendMessage(bind == m.Preferences.Shortcuts.Steer)
 							}
 							return true
 						}
@@ -764,7 +764,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 						v.pickAttachments()
 					}
 					permission := control(c).Height(28).PaddingX(6).Radius(6).Label("Permission").Children(func() {
-						inlineIconText(c, shieldIcon, permissionLabel(cfg.Permission), n.Font{Family: "system-ui", Size: 12, Weight: 400}, 13, 6, t.TextMuted)
+						inlineIconText(c, shieldIcon, permissionLabel(cfg.Permission), n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}, 13, 6, t.TextMuted)
 					})
 					choices := []menuChoice{}
 					for _, id := range m.Readiness.Permissions {
@@ -872,7 +872,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 		summary += " · Fast"
 	}
 	trigger := control(c).Height(28).MaxWidth(390).MinWidth(0).PaddingX(6).Radius(6).Label("运行配置").Tooltip("Codex · " + summary).Children(func() {
-		inlineIconText(c, openAIBlossom, summary, n.Font{Family: "system-ui", Size: 12, Weight: 400}, 20, 3, t.TextMuted)
+		inlineIconText(c, openAIBlossom, summary, n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}, 20, 3, t.TextMuted)
 	})
 	if trigger.Clicked() {
 		v.runOpen = !v.runOpen
@@ -1133,7 +1133,7 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 		}
 		if !v.Model.Collapsed["tool:"+item.ID] && item.Text != "" {
 			n.Scroll(c.Key("output:" + item.ID)).FillWidth().MaxHeight(160).Children(func() {
-				n.Text(c, item.Text).FillWidth().Padding(8, 10).Background(codeSurface(t)).Radius(6).Font("Menlo").FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Selectable()
+				n.Text(c, item.Text).FillWidth().Padding(8, 10).Background(codeSurface(t)).Radius(6).Font(v.Model.Preferences.CodeFont).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Selectable()
 			})
 		}
 	case "activity":
@@ -1168,7 +1168,7 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 		}
 		source.Children(func() {
 			n.Row(c).Gap(7).AlignItems(n.Baseline).Children(func() {
-				font := n.Font{Family: "system-ui", Size: 11, Weight: 400}
+				font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}
 				inlineSymbol(c, icon, label, font, 12, subtle(t))
 				v.requestSourceLabel(c, t, item, label)
 				if item.Status == "pending" || item.Status == "submitting" {
@@ -1225,7 +1225,7 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 			copy.Tooltip(tooltip)
 			color := textHoverColor(c, copy, t.TextMuted)
 			copy.Children(func() {
-				inlineSymbol(c.Key(glyphKey), glyph, "回复", n.Font{Family: "system-ui", Size: 11, Weight: 400}, 12, color).
+				inlineSymbol(c.Key(glyphKey), glyph, "回复", n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}, 12, color).
 					Label(tooltip).Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 100*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 			})
 			ended, exact := "—", "结束时间未知"
@@ -1243,7 +1243,7 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 			n.Text(c, duration).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 		} else if turn.Status == "running" {
 			n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
-				statusDot(c, label, n.Font{Family: "system-ui", Size: 11, Weight: 400}, t.Success, true)
+				statusDot(c, label, n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}, t.Success, true)
 				text := n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 				shimmer(c, text, t.TextMuted, t.Text)
 			})

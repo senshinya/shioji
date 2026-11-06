@@ -1,6 +1,14 @@
 # MyGo native presentation extensions
 
 Upstream: `github.com/egoist/mygo` v0.7.4. The upstream LICENSE is retained.
+
+Client settings additionally use `ui.Context.ReduceMotion` to request less
+motion for the current frame, including native scrolling and Markdown. It
+preserves the desktop preference and cannot disable system Reduce Motion.
+
+Notification registration rechecks cancellation while holding the registry
+lock. This prevents a canceled delivery from restoring its callback after
+the client retires it; covered by `notification_registration_test.go`.
 This local module contains the upstream runtime source and embedded resources;
 examples, website, JavaScript tooling, CI, upstream tests and testdata are omitted.
 The upstream architecture guide is retained for maintenance.
