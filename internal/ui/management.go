@@ -140,6 +140,18 @@ func (v *View) workspaceMenu(menu *n.Menu, w domain.Workspace) {
 	}
 }
 func (v *View) sessionMenu(menu *n.Menu, s domain.Session) {
+	if menu.Item("分叉会话").Disabled(!v.historyReady(s) || v.historyBusy[s.ID]).Chosen() {
+		v.forkSession(s, "")
+	}
+	if s.ForkedFrom != "" && menu.Item("查看来源会话").Chosen() {
+		for _, origin := range v.Model.Snapshot.Sessions {
+			if origin.ID == s.ForkedFrom {
+				v.navigateSession(origin.ID, origin.WorkspaceID)
+				break
+			}
+		}
+	}
+	menu.Separator()
 	key := v.Model.WorkspaceConnection(s.WorkspaceID)
 	ready := v.canManage(key)
 	if menu.Item("重命名").Disabled(!ready).Chosen() {

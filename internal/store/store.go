@@ -55,8 +55,8 @@ func Open(path string) (*Store, error) {
 	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return fail(err)
 	}
-	if version > 5 {
-		return fail(fmt.Errorf("database schema %d is newer than supported schema 5", version))
+	if version > 6 {
+		return fail(fmt.Errorf("database schema %d is newer than supported schema 6", version))
 	}
 	tx, err := db.Begin()
 	if err != nil {
@@ -74,10 +74,17 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS queues (session_id TEXT PRIMARY KEY REFERENCES sessions(id), body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS plans (session_id TEXT PRIMARY KEY REFERENCES sessions(id), body BLOB NOT NULL);
- PRAGMA user_version=5;`)
+ CREATE TABLE IF NOT EXISTS history_operations (id TEXT PRIMARY KEY, body BLOB NOT NULL);
+ PRAGMA user_version=6;`)
 	if err != nil {
 		tx.Rollback()
 		return fail(err)
+	}
+	if version < 6 {
+		if _, err = tx.Exec(`WITH ranked AS(SELECT session_id,id,row_number() OVER(PARTITION BY session_id ORDER BY rowid) AS n FROM turns) UPDATE turns SET body=json_set(body,'$.order',(SELECT n FROM ranked WHERE ranked.session_id=turns.session_id AND ranked.id=turns.id))`); err != nil {
+			tx.Rollback()
+			return fail(err)
+		}
 	}
 	_, err = tx.Exec("INSERT OR IGNORE INTO metadata VALUES(1,?,?)", domain.NewID(), domain.NewID())
 	if err != nil {
@@ -361,7 +368,8 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 	}
 	var item *domain.Item
 	if queued == nil {
-		item = &domain.Item{ID: "input:" + op.ID, Kind: "user", Attachments: in.Attachments, Text: in.Text, Final: true, Status: "dispatching"}
+		now := time.Now()
+		item = &domain.Item{ID: "input:" + op.ID, Kind: "user", Attachments: in.Attachments, Text: in.Text, Final: true, Status: "dispatching", SentAt: &now}
 		if err = putItem(tx, session.ID, item); err != nil {
 			return none, err
 		}
@@ -427,13 +435,29 @@ func (s *Store) SetOperation(id, state, message string) error {
 }
 func putItem(tx *sql.Tx, sid string, item *domain.Item) error {
 	var pos int64
-	err := tx.QueryRow("SELECT position FROM items WHERE session_id=? AND id=?", sid, item.ID).Scan(&pos)
+	var body []byte
+	var err error
+	if item.Kind == "user" && item.SentAt == nil {
+		err = tx.QueryRow("SELECT position,body FROM items WHERE session_id=? AND id=?", sid, item.ID).Scan(&pos, &body)
+	} else {
+		err = tx.QueryRow("SELECT position FROM items WHERE session_id=? AND id=?", sid, item.ID).Scan(&pos)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		if err = tx.QueryRow("SELECT COALESCE(MAX(position),0)+1 FROM items WHERE session_id=?", sid).Scan(&pos); err != nil {
 			return err
 		}
 	} else if err != nil {
 		return err
+	} else if len(body) > 0 {
+		var previous domain.Item
+		if err := json.Unmarshal(body, &previous); err != nil {
+			return err
+		}
+		item.SentAt = previous.SentAt
+		if previous.Kind == "queued" && item.Kind == "user" {
+			now := time.Now()
+			item.SentAt = &now
+		}
 	}
 	item.Order = pos
 	_, err = tx.Exec("INSERT INTO items VALUES(?,?,?,?) ON CONFLICT(session_id,id) DO UPDATE SET body=excluded.body", sid, item.ID, pos, blob(item))
@@ -556,7 +580,7 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		if e.Turn == nil {
 			return e, errors.New("missing turn")
 		}
-		if _, err = tx.Exec("INSERT INTO turns VALUES(?,?,?) ON CONFLICT(session_id,id) DO UPDATE SET body=excluded.body", sid, e.Turn.ID, blob(e.Turn)); err != nil {
+		if err = putTurn(tx, sid, e.Turn); err != nil {
 			return e, err
 		}
 		if session.ExecutionGuard == "" {
@@ -754,6 +778,10 @@ func (s *Store) Recover() error {
 		return err
 	}
 	s.mu.Lock()
+	if _, err = s.db.Exec(`UPDATE history_operations SET body=json_set(body,'$.state','failed','$.error','操作在确认分叉前中断，原会话保持不变，可重新尝试') WHERE json_extract(body,'$.state')='prepared'`); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	rows, err := s.db.Query("SELECT id FROM operations WHERE state IN ('accepted','dispatched')")
 	if err != nil {
 		s.mu.Unlock()

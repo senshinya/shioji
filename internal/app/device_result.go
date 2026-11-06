@@ -48,6 +48,36 @@ func (m *Model) validateDeviceReply(key string, job Job, body json.RawMessage) e
 		return errors.New("设备连接已改变，请重新核对操作")
 	}
 	fail := errors.New("设备回执与请求的工作区、会话或操作不一致")
+	if job.Method == "session.fork" || job.Method == "session.restart" || job.Method == "session.history-operation" || job.Method == "session.cancel-history" {
+		var id, sid string
+		switch in := job.Input.(type) {
+		case domain.HistoryChange:
+			id, sid = in.OperationID, in.SessionID
+		case protocol.HistoryOperationQuery:
+			id, sid = in.ID, in.SessionID
+		default:
+			return fail
+		}
+		var op domain.HistoryOperation
+		if err := json.Unmarshal(body, &op); err != nil {
+			return err
+		}
+		if op.ID != id || op.Source.ID != sid || op.Input.SessionID != sid || op.Session.ID == "" || op.Source.Context.DeviceID != state.Snapshot.DeviceID || op.Session.Context.DeviceID != state.Snapshot.DeviceID || op.Session.WorkspaceID != op.Source.WorkspaceID || m.sessionOnOtherDevice(key, op.Session.ID) {
+			return fail
+		}
+		owned := false
+		for _, source := range state.Snapshot.Sessions {
+			if source.ID == sid && source.WorkspaceID == op.Source.WorkspaceID {
+				owned = true
+			}
+		}
+		if !owned || op.Input.Restart && op.Session.ID != sid || !op.Input.Restart && (op.Session.ID == sid || op.Session.ForkedFrom != sid) {
+			return fail
+		}
+		if in, ok := job.Input.(domain.HistoryChange); ok && op.Input != in {
+			return fail
+		}
+	}
 	if in, ok := job.Input.(protocol.RecoveryInput); ok {
 		var result protocol.RecoveryResult
 		if err := json.Unmarshal(body, &result); err != nil {

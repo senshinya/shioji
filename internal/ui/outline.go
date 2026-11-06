@@ -137,7 +137,7 @@ func abs(n int) int {
 	return n
 }
 func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState) {
-	if state.AtEnd() || state.FollowingEnd() {
+	if state.AtEnd() || state.FollowingEnd() || v.Model.HistoryEdits[v.Model.SessionID].ItemID != "" {
 		return
 	}
 	if iconButton(c, latestIcon, "回到最新").Absolute().Right(28).Bottom(v.dockHeight+20).Size(28, 28).Radius(14).Background(raised(t)).Border(1, t.Border).Shadow(0, 2, 8, 0, n.RGBA(0, 0, 0, .08)).Transition(popupMotion(c)).Clicked() {

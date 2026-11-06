@@ -103,3 +103,8 @@ type RecoveryResult struct {
 	NeedsStop    bool                  `json:"needsStop,omitempty"`
 	Readiness    domain.Readiness      `json:"readiness"`
 }
+
+type HistoryOperationQuery struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
+}

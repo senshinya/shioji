@@ -63,6 +63,9 @@ func (v *View) navigateSession(id, workspace string) {
 	}
 	if current != "" && current != id {
 		root.previousSession, root.previousWorkspace = current, currentWorkspace
+		if state := root.focusedView().lists[id]; state != nil {
+			state.ReleaseRow()
+		}
 	}
 	root.workspaceEditor = nil
 	root.devices = false
@@ -103,11 +106,19 @@ func (v *View) prepareSecondary() {
 		clone := *m
 		v.secondary = New(&clone, v.Controller, "")
 		v.secondary.parent = v
+		v.secondary.historyBusy = v.historyBusy
+		v.secondary.historyChecked = v.historyChecked
+		v.secondary.historyForked = v.historyForked
 		v.secondary.StatePath = v.StatePath
 		v.secondary.Saver = v.Saver
 		v.secondary.attachmentStore = v.staging()
 	}
 	pane := v.secondary
+	if pane.Model.SessionID != session.ID {
+		if state := pane.lists[session.ID]; state != nil {
+			state.ReleaseRow()
+		}
+	}
 	previousError := pane.Model.Error
 	*pane.Model = *m
 	pane.Model.SessionID = session.ID

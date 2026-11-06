@@ -352,6 +352,9 @@ func (c *Controller) Run(ctx context.Context) {
 			if job.Method == "session.reconcile" {
 				timeout = 25 * time.Second
 			}
+			if job.Method == "session.fork" || job.Method == "session.restart" {
+				timeout = 45 * time.Second
+			}
 			callCtx, cancel := context.WithTimeout(ctx, timeout)
 			out, err := executeJob(callCtx, client, job)
 			cancel()

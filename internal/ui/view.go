@@ -25,6 +25,12 @@ type editBinding struct {
 }
 
 type View struct {
+	historyRowBounds                                                                                                map[string]n.Rect
+	historyExit                                                                                                     *historyRestartMotion
+	historyFocus                                                                                                    string
+	historyForked                                                                                                   map[string]bool
+	historyChecked                                                                                                  map[string]string
+	historyBusy                                                                                                     map[string]bool
 	notificationDeliveries                                                                                          []nativeNotificationDelivery
 	nativeWindow                                                                                                    *mygo.Window
 	settings                                                                                                        *Settings
@@ -125,7 +131,7 @@ type View struct {
 }
 
 func New(model *app.Model, controller *app.Controller, path string) *View {
-	v := &View{draftBindings: map[string]*editBinding{}, answerBindings: map[string]*editBinding{}, customBindings: map[string]*editBinding{}, Model: model, Controller: controller, StatePath: path, lists: map[string]*n.ListState{}, collapsedWorkspaces: map[string]bool{}, md: markdown.Options{ShareSelection: true, WrapCode: true}}
+	v := &View{historyForked: map[string]bool{}, historyChecked: map[string]string{}, historyBusy: map[string]bool{}, draftBindings: map[string]*editBinding{}, answerBindings: map[string]*editBinding{}, customBindings: map[string]*editBinding{}, Model: model, Controller: controller, StatePath: path, lists: map[string]*n.ListState{}, collapsedWorkspaces: map[string]bool{}, md: markdown.Options{ShareSelection: true, WrapCode: true}}
 	if path != "" {
 		v.Saver = app.NewStateWriter(path)
 	}
@@ -212,12 +218,23 @@ func (v *View) View(c *n.Context) {
 	}
 	v.pumpUpdates()
 	m.RefreshDevices()
+	m.SyncHistoryEdits()
+	v.syncHistoryExit(c)
+	if pane := v.secondary; pane != nil {
+		// A confirmed action must finish even if the split was hidden or closed.
+		pane.reduceMotion = v.reduceMotion
+		pane.syncHistoryExit(c)
+	}
+	v.syncHistoryActions()
 	v.syncQueuedMotions()
 	v.syncSendMotion()
 	v.syncSessionEntry()
 	if v.selected != m.SessionID || v.selectedDevice != m.ConnectionID() {
 		v.selected = m.SessionID
 		v.selectedDevice = m.ConnectionID()
+		if state := v.lists[m.SessionID]; state != nil {
+			state.ReleaseRow()
+		}
 		m.FoldToolHistory[m.SessionID] = true
 		if v.Controller != nil {
 			v.Controller.SelectDevice(m.ConnectionID(), m.SessionID)
@@ -319,6 +336,9 @@ func (v *View) View(c *n.Context) {
 	if v.selected != m.SessionID || v.selectedDevice != m.ConnectionID() {
 		v.selected = m.SessionID
 		v.selectedDevice = m.ConnectionID()
+		if state := v.lists[m.SessionID]; state != nil {
+			state.ReleaseRow()
+		}
 		m.FoldToolHistory[m.SessionID] = true
 		if v.Controller != nil {
 			v.Controller.SelectDevice(m.ConnectionID(), m.SessionID)
@@ -642,6 +662,7 @@ func (v *View) homeView(c *n.Context, t *n.Theme) {
 	})
 }
 func (v *View) notice(c *n.Context, t *n.Theme) {
+	v.historyOperationNotice(c, t)
 	v.archivedNotice(c, t)
 	message := v.Model.Error
 	if message == "" && !v.Model.Connected {
@@ -657,6 +678,10 @@ func (v *View) notice(c *n.Context, t *n.Theme) {
 func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	m := v.Model
 	key := m.DraftKey()
+	stackKey := key
+	if m.SessionID != "" {
+		stackKey = "session:" + m.SessionID
+	}
 	binding := textBinding(v.draftBindings, key, m.Drafts[key])
 	draft := binding.Text
 	cfg := m.Config()
@@ -678,13 +703,13 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 		inputHeight = 72
 		inputSize, inputLeading = 15, 26
 	}
-	stack := n.Column(c.Key("composer-stack:" + key)).Label("消息编辑区").FillWidth().MaxWidth(maxWidth).Gap(0).Children(func() {
+	stack := n.Column(c.Key("composer-stack:" + stackKey)).Label("消息编辑区").FillWidth().MaxWidth(maxWidth).Gap(0).Children(func() {
 		v.queueDisclosure(c, t)
 		binding = textBinding(v.draftBindings, key, m.Drafts[key])
 
 		editID := m.QueueEdits[m.SessionID].ID
-		if v.composerHeightKey != key {
-			v.composerHeightKey, v.composerNaturalHeight, v.composerEditID = key, 0, editID
+		if v.composerHeightKey != stackKey {
+			v.composerHeightKey, v.composerNaturalHeight, v.composerEditID = stackKey, 0, editID
 			v.composerHeightUntil = time.Time{}
 			v.composerInputHeight = inputHeight
 		}
@@ -692,7 +717,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 			v.composerEditID = editID
 			v.composerHeightUntil = c.Now().Add(360 * time.Millisecond)
 		}
-		heightFrame := n.Column(c.Key("composer-height:"+key)).Label("消息编辑器").FillWidth().Clip().Background(bg).Border(1, t.Border).Radius(16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04))
+		heightFrame := n.Column(c.Key("composer-height:"+stackKey)).Label("消息编辑器").FillWidth().Clip().Background(bg).Border(1, t.Border).Radius(16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04))
 		resize := c.Now().Before(v.composerHeightUntil) || editID != ""
 		shownHeight := v.composerNaturalHeight
 		if v.composerNaturalHeight > 0 {
@@ -705,7 +730,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 		}
 		heightFrame.Children(func() {
 			var input n.Element
-			composer := n.Column(c.Key("composer:"+key)).FillWidth().Padding(10, 14, 8, 6).Gap(4).Children(func() {
+			composer := n.Column(c.Key("composer:"+stackKey)).FillWidth().Padding(10, 14, 8, 6).Gap(4).Children(func() {
 				if m.QueueEdits[m.SessionID].ID != "" {
 					n.Column(c).Height(28)
 				}
@@ -737,7 +762,9 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 						}
 						return false
 					})
-					input.OnPaste(func(text string) bool { return v.pasteAttachments(key, text) })
+					input.OnPaste(func(text string) bool {
+						return v.pasteAttachments(key, text)
+					})
 					input.Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 180*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 
 					if v.focusComposer {
@@ -830,12 +857,12 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 						invalidate()
 					}
 				}
-				if v.composerHeightKey == key && math.Abs(float64(v.composerNaturalHeight-r.H-2)) > .5 {
+				if v.composerHeightKey == stackKey && math.Abs(float64(v.composerNaturalHeight-r.H-2)) > .5 {
 					v.composerNaturalHeight = r.H + 2
 					invalidate()
 				}
 			})
-			if editID != "" {
+			if m.QueueEdits[m.SessionID].ID != "" {
 				// Keep expanding editor contents below the pinned edit controls.
 				n.Column(c.Key("queue-edit-header-surface")).Absolute().Left(1).Right(1).Top(1).Height(37).Radius(15, 15, 0, 0).Background(bg).IgnoreInput(true)
 			}
@@ -962,22 +989,20 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		state = &n.ListState{FollowEnd: true}
 		v.lists[m.SessionID] = state
 	}
-	if m.FoldToolHistory[m.SessionID] {
-		state.ReleaseRow()
-	}
 	rows := v.transcriptRows(detail.Items)
 	turns := make(map[string]domain.Turn, len(detail.Turns))
 	for _, turn := range detail.Turns {
 		turns[turn.ID] = turn
 	}
 	rows = withTurnFooters(rows, detail.Items, turns)
+	rows = v.historyBridgeRows(rows)
 	if v.toolsAnimating {
 		c.AnimationFrame()
 	}
 	state.Reveals = state.Reveals[:0]
 	if !v.reduceMotion {
 		for i, row := range rows {
-			if row.toolParent == "" || row.opacity >= 1 {
+			if row.toolParent == "" || row.opacity >= 1 || v.historySuffixRow(row) {
 				continue
 			}
 			if len(state.Reveals) > 0 && i > 0 && rows[i-1].toolParent == row.toolParent {
@@ -987,6 +1012,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			}
 		}
 	}
+	v.historySuffixReveals(c, state, rows)
 	state.Key = func(i int) any {
 		if i == 0 {
 			return "history-top"
@@ -996,11 +1022,13 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		}
 		return rows[i-1].key
 	}
+	v.anchorHistoryRows(state, rows)
 	v.anchorSentMessage(c, state, rows)
 	reserve := v.dockHeight
 	if reserve == 0 {
 		reserve = 108
 	}
+	rowBounds := map[string]n.Rect{}
 	history := n.List(c.Key("history:"+m.SessionID), state, len(rows)+2, func(row int) {
 		if row == 0 {
 			n.Column(c).Height(80)
@@ -1046,6 +1074,8 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 					content.Transform(n.Translation(0, -4*(1-entry.opacity)))
 				}
 			}
+			content.DrawOver(func(_ *n.Painter, r n.Rect) { rowBounds[entry.key] = r })
+			v.historySuffixPose(c, content, entry)
 			content.Children(func() {
 				if entry.footer != "" {
 					v.turnFooter(c, t, turns[entry.footer])
@@ -1059,6 +1089,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			})
 		})
 	}).Absolute().Left(0).Right(0).Top(0).Bottom(0).Label("对话记录")
+	history.DrawOver(func(_ *n.Painter, _ n.Rect) { v.historyRowBounds = rowBounds })
 	n.VirtualTextSelection(history, func(key string) (string, bool) {
 		for _, item := range v.Model.Details[v.Model.SessionID].Items {
 			if item.ID == key {
@@ -1085,36 +1116,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 	switch item.Kind {
 	case "user":
-		n.Row(c).FillWidth().Justify(n.End).Children(func() {
-			bubble := n.Column(c).MaxWidth(676).Padding(12, 16).Gap(8).Background(userBubble(t)).Radius(14).Children(func() {
-				if item.Text != "" {
-					n.Text(c, item.Text).FontSize(14).FixedLineHeight(24).Selectable()
-				}
-				if len(item.Attachments) > 0 {
-					n.Row(c).Wrap().Gap(8).Children(func() {
-						for _, a := range item.Attachments {
-							var source n.Rect
-							button := control(c.Key(a.ID)).Height(64).MaxWidth(220).Padding(6, 8).Radius(7).Background(codeSurface(t)).Label("预览附件：" + a.Name).Children(func() {
-								n.Row(c).Gap(8).AlignItems(n.Center).Children(func() {
-									source = v.attachmentThumbnail(c, t, a, v.Model.WorkspaceID, 48).Bounds()
-									n.Column(c).Gap(3).Children(func() {
-										n.Text(c, a.Name).FontSize(12).SingleLine().MaxWidth(140)
-										n.Text(c, attachmentSize(a.Size)).FontSize(11).TextColor(t.TextMuted)
-									})
-								})
-							})
-							if button.Clicked() {
-								if !strings.HasPrefix(a.MIME, "image/") {
-									source = button.Bounds()
-								}
-								v.openAttachment(a, v.Model.WorkspaceID, source)
-							}
-						}
-					})
-				}
-			})
-			v.sentMessageBubble(c, t, bubble, item)
-		})
+		v.historyUserMessage(c, t, item)
 	case "assistant":
 		v.assistantReply(c, item)
 	case "tool":
@@ -1228,6 +1230,14 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 				inlineSymbol(c.Key(glyphKey), glyph, "回复", n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}, 12, color).
 					Label(tooltip).Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 100*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 			})
+			fork := n.ButtonBase(c.Key("fork:"+turn.ID)).Size(20, 24).Label("从这里分叉").Tooltip("从这里分叉").Disabled(!v.historyReady(v.Model.Details[v.Model.SessionID].Session) || v.historyBusy[v.Model.SessionID])
+			forkColor := textHoverColor(c, fork, t.TextMuted)
+			fork.Children(func() {
+				inlineSymbol(c, forkIcon, "回复", n.Font{Family: t.Font, Size: 11, Weight: 400}, 13, forkColor)
+			})
+			if fork.Clicked() {
+				v.forkSession(v.Model.Details[v.Model.SessionID].Session, turn.ID)
+			}
 			ended, exact := "—", "结束时间未知"
 			if turn.CompletedAt != nil {
 				local := turn.CompletedAt.Local()

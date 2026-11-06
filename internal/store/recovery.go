@@ -192,7 +192,7 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 		}
 		// Source history does not carry per-turn usage. Keep confirmed local counters.
 		turn.InputTokens, turn.OutputTokens, turn.CachedInputTokens = old.InputTokens, old.OutputTokens, old.CachedInputTokens
-		if _, err = tx.Exec("INSERT INTO turns VALUES(?,?,?) ON CONFLICT(session_id,id) DO UPDATE SET body=excluded.body", id, turn.ID, blob(turn)); err != nil {
+		if err = putTurn(tx, id, &turn); err != nil {
 			return none, err
 		}
 		if _, err = journal(tx, domain.Event{Type: "turn", SessionID: id, Turn: &turn}); err != nil {

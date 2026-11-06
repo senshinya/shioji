@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"shioji/internal/domain"
+	"time"
 	"unicode/utf8"
 )
 
@@ -289,7 +290,8 @@ func (s *Store) acceptSteerLocked(in domain.Submission, turn string, revision in
 	}
 	var item *domain.Item
 	if queued == nil {
-		item = &domain.Item{ID: "input:" + op.ID, TurnID: turn, Kind: "user", Attachments: in.Attachments, Text: in.Text, Status: "dispatching", Final: true}
+		now := time.Now()
+		item = &domain.Item{ID: "input:" + op.ID, TurnID: turn, Kind: "user", Attachments: in.Attachments, Text: in.Text, Status: "dispatching", Final: true, SentAt: &now}
 		if err = putItem(tx, op.SessionID, item); err != nil {
 			return none, err
 		}
@@ -328,6 +330,10 @@ func queueOutcome(tx *sql.Tx, op domain.Operation) error {
 				}
 				history.Kind = "user"
 				history.Status = "sent"
+				if history.SentAt == nil {
+					now := time.Now()
+					history.SentAt = &now
+				}
 				if e = putItem(tx, op.SessionID, &history); e != nil {
 					return e
 				}

@@ -375,6 +375,33 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 			return nil, err
 		}
 		return s.changeQueue(method, in)
+	case "session.fork", "session.restart":
+		in, err := decode[domain.HistoryChange](body)
+		if err != nil {
+			return nil, err
+		}
+		if in.Restart != (method == "session.restart") {
+			return nil, errors.New("历史操作类型不一致")
+		}
+		return s.changeHistory(in)
+	case "session.cancel-history":
+		in, err := decode[protocol.HistoryOperationQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		s.dispatchMu.Lock()
+		defer s.dispatchMu.Unlock()
+		return s.store.CancelHistory(in.ID, in.SessionID)
+	case "session.history-operation":
+		in, err := decode[protocol.HistoryOperationQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		op, err := s.store.HistoryOperation(in.ID)
+		if err == nil && op.Input.SessionID != in.SessionID {
+			return nil, errors.New("历史操作不属于此会话")
+		}
+		return op, err
 	case "session.submit":
 		in, err := decode[domain.Submission](body)
 		if err != nil {

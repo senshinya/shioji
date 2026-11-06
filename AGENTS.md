@@ -94,6 +94,14 @@ Avoid unnecessary secondary labels and descriptions. Let the layout do the expla
 - 外观预览使用真实 Markdown 与当前文字配置；消息输入页不重复静态输入框示意。设置即时持久化，当前设置窗口必须显示保存失败。快捷键保持原生输入、选区和 IME 行为，并拒绝冲突。
 - 前台通知默认开启，保留用户明确关闭的选择。系统通知须经 macOS 授权，按真实生命周期事件发送；历史重放、停止和补到的用量事件不产生完成通知。通知处理不依赖窗口可见或重新绘制，保留对象与去重记录须有界。
 
+### 会话分叉与历史修改
+
+- 分叉创建独立会话；修改历史用户消息则在原 SessionID 重新开始，替换该消息及后续对话。保留原普通草稿、名称、启动目录和暂停的待发队列，不自动回滚文件或创建 Git worktree。
+- 用户消息下方右对齐排列编辑、复制和发送时间，复用回复 footer 的灰色文字、图标与间距；操作行不进入正文选区，发送时间使用 worker 持久化的接纳时间，历史缺失则显示未知。历史消息在原位展开独立编辑框，保留附件；底部 composer 与普通草稿保持独立可用。展开和收起使用真实高度动画，保持编辑消息的阅读位置。原位编辑底部仅保留取消与回车图标确认按钮，不展示说明文案。确认后编辑框立即以真实宽高动画收回为修订消息气泡，与后续消息的清晰刚性碎片退场同时开始；后续内容末段消失，再收拢高度并提交重开；减少动态效果跳过碎散。历史 reset 与新输入到达之间保留本地修订消息气泡，新消息承接原消息的阅读锚点。分叉放在回复底部复制右侧、时间与用量之前；所选回复之后的内容先渐隐，分叉视图承接同一回复的位置，避免空视图和默认滚动到末尾。新分叉的预填内容只能来自与 worker 确认的源 ThreadID／revision 对应的不可变历史前缀，并由正常权威加载更新。发送待确认时锁定历史编辑区，失败恢复原内容和编辑草稿。源协议只有轮次边界，轮次内的 Steer 追加消息不能冒充可单独截断的消息。
+- 所有历史操作由所属 worker 接纳，持久化稳定操作标识，重连只查询，不重发未知输入。每次实际提交历史替换（含已保存 fork 的继续完成）都重新核对 revision、执行目录、Git、配置及附件；旧线程迟到事件不能恢复被替换内容。
+- 保留历史按 worker 拥有的轮次顺序与归属确定，不按消息落盘位置截断，以保留前轮迟到输出。历史替换事件必须同步清理各客户端关联的 items、turns、requests 与 plan。
+- 工具历史默认折叠与滚动位置重置分开处理。后台初次／再次加载历史不得释放当前阅读锚点；仅实际切换会话时重置旧滚动状态，分叉和历史修改再交接到指定消息位置。
+
 ### 界面行为
 
 - Target the confirmed workflow: individual developer workflow, one focused session with background agents, optional two-session viewing, light/dark system appearance, keyboard-first interaction, next-attention navigation, and this Mac as a local execution target.

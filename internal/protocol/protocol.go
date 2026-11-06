@@ -15,10 +15,11 @@ import (
 	"shioji/internal/domain"
 )
 
-const Major = 1
+// Major 2 requires clients to understand authoritative history replacement.
+const Major = 2
 
-// Minor 8 adds verified recovery task inspection and explicit task stopping.
-const Minor = 8
+// Minor 9 adds explicit conversation forking and historical message restart.
+const Minor = 9
 const MaxFrame = 1 << 20
 
 type Frame struct {

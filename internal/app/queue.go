@@ -57,6 +57,9 @@ func (m *Model) HasPendingInput() bool {
 	return false
 }
 func (m *Model) EditQueued(id string) error {
+	if m.HistoryEdits[m.SessionID].ItemID != "" {
+		return errors.New("请先结束历史消息编辑")
+	}
 	if m.HasPendingInput() {
 		return errors.New("请等待消息投递确认后再编辑队列")
 	}

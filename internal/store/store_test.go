@@ -8,6 +8,7 @@ import (
 	"shioji/internal/store"
 	"strings"
 	"testing"
+	"time"
 )
 
 func open(t *testing.T) *store.Store {
@@ -42,6 +43,43 @@ func TestIdentitySurvivesRestart(t *testing.T) {
 	defer s.Close()
 	if id == "" || s.DeviceID() != id {
 		t.Fatalf("device identity changed: %q -> %q", id, s.DeviceID())
+	}
+}
+
+func TestUserSentTimeSurvivesHarnessUpdatesAndReload(t *testing.T) {
+	s := open(t)
+	w := workspace(t, s)
+	before := time.Now()
+	op, err := s.Accept(domain.Submission{OperationID: "timed-input", WorkspaceID: w.ID, Text: "hello", Config: domain.RunConfig{Model: "test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sentAt := func() time.Time {
+		d, err := s.Session(op.SessionID, 0, 100)
+		if err != nil || len(d.Items) != 1 {
+			t.Fatal("missing input", d, err)
+		}
+		body, _ := json.Marshal(d.Items[0])
+		var stamped struct {
+			SentAt *time.Time `json:"sentAt"`
+		}
+		json.Unmarshal(body, &stamped)
+		if stamped.SentAt == nil {
+			t.Fatal("worker accepted input without its sent time")
+		}
+		return *stamped.SentAt
+	}
+	first := sentAt()
+	if first.Before(before) || first.After(time.Now()) {
+		t.Fatal("sent time is not the worker's acceptance time", first)
+	}
+	event, err := s.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, Kind: "user", Text: "hello", Status: "sent", Final: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(event.Item)
+	if !strings.Contains(string(body), "sentAt") || !sentAt().Equal(first) {
+		t.Fatal("harness update erased the persisted and journaled sent time", string(body))
 	}
 }
 func TestSubmissionDeduplicatesWithoutCreatingAnotherSession(t *testing.T) {

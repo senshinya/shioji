@@ -205,7 +205,7 @@ func TestWrongDeviceAndOldEpochCannotMutateWorker(t *testing.T) {
 	defer conn.Close()
 	codec := protocol.NewCodec(conn, conn)
 	nonce := "nonce"
-	codec.Write(protocol.Frame{Type: "hello", Major: 1, Nonce: nonce})
+	codec.Write(protocol.Frame{Type: "hello", Major: protocol.Major, Nonce: nonce})
 	var welcome protocol.Frame
 	if err = codec.Read(&welcome); err != nil {
 		t.Fatal(err)

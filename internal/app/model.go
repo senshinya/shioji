@@ -20,6 +20,8 @@ type InspectorLayout struct {
 }
 
 type Model struct {
+	HistoryActions       map[string]domain.HistoryChange
+	HistoryEdits         map[string]HistoryEdit
 	Preferences          ClientPreferences
 	Notifications        []SessionNotification
 	notificationSeen     []string
@@ -69,7 +71,7 @@ type Model struct {
 }
 
 func NewModel() *Model {
-	return &Model{Preferences: (ClientPreferences{}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {
@@ -203,6 +205,7 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		m.scopeFailure(errors.New("设备提交回执不属于本设备"))
 		return
 	}
+	m.confirmHistoryOperation(op)
 	in, ok := m.Pending[op.ID]
 	if !ok {
 		return
@@ -322,6 +325,18 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 		m.Details[e.SessionID] = domain.SessionDetail{}
 	}
 	if detail, ok := m.Details[e.SessionID]; ok && e.Sequence > detail.Sequence {
+		if e.Type == "history.reset" && e.HistoryTurnOrder != nil {
+			retained := map[string]bool{}
+			for _, turn := range detail.Turns {
+				if turn.Order <= *e.HistoryTurnOrder {
+					retained[turn.ID] = true
+				}
+			}
+			detail.Items = slices.DeleteFunc(detail.Items, func(item domain.Item) bool { return !retained[item.TurnID] })
+			detail.Turns = slices.DeleteFunc(detail.Turns, func(turn domain.Turn) bool { return !retained[turn.ID] })
+			detail.Requests = slices.DeleteFunc(detail.Requests, func(req domain.PendingRequest) bool { return !retained[req.TurnID] })
+			detail.Plan = nil
+		}
 		if e.Plan != nil {
 			detail.Plan = e.Plan
 		}
@@ -389,31 +404,33 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 }
 
 type savedState struct {
-	Preferences          ClientPreferences            `json:"preferences"`
-	SecondaryWorkspaceID string                       `json:"secondaryWorkspaceId,omitempty"`
-	SecondarySessionID   string                       `json:"secondarySessionId,omitempty"`
-	FocusSecondary       bool                         `json:"focusSecondary,omitempty"`
-	Attachments          map[string][]DraftAttachment `json:"attachments,omitempty"`
-	DeviceCache          map[string]cachedDevice      `json:"deviceCache,omitempty"`
-	Connections          []DeviceConnection           `json:"connections,omitempty"`
-	ActiveConnection     string                       `json:"activeConnection,omitempty"`
-	PendingDevices       map[string]string            `json:"pendingDevices,omitempty"`
-	QueueExpanded        map[string]bool              `json:"queueExpanded,omitempty"`
-	QueueEdits           map[string]QueueEdit         `json:"queueEdits,omitempty"`
-	DeviceID             string                       `json:"deviceId"`
-	WorkspaceID          string                       `json:"workspaceId"`
-	Drafts               map[string]string            `json:"drafts"`
-	Configs              map[string]domain.RunConfig  `json:"configs"`
-	Answers              map[string]string            `json:"answers"`
-	Pager                map[string]int               `json:"pager"`
-	Collapsed            map[string]bool              `json:"collapsed"`
-	Pending              map[string]domain.Submission `json:"pending"`
-	GitDrafts            map[string]domain.GitChoice  `json:"gitDrafts,omitempty"`
-	GitRepositories      map[string]string            `json:"gitRepositories,omitempty"`
-	Inspectors           map[string]bool              `json:"inspectors,omitempty"`
-	InspectorLayout      InspectorLayout              `json:"inspectorLayout,omitempty"`
-	InspectorSplitHeight float32                      `json:"inspectorSplitHeight,omitempty"`
-	InspectorWidth       float32                      `json:"inspectorWidth,omitempty"`
+	HistoryActions       map[string]domain.HistoryChange `json:"historyActions,omitempty"`
+	HistoryEdits         map[string]HistoryEdit          `json:"historyEdits,omitempty"`
+	Preferences          ClientPreferences               `json:"preferences"`
+	SecondaryWorkspaceID string                          `json:"secondaryWorkspaceId,omitempty"`
+	SecondarySessionID   string                          `json:"secondarySessionId,omitempty"`
+	FocusSecondary       bool                            `json:"focusSecondary,omitempty"`
+	Attachments          map[string][]DraftAttachment    `json:"attachments,omitempty"`
+	DeviceCache          map[string]cachedDevice         `json:"deviceCache,omitempty"`
+	Connections          []DeviceConnection              `json:"connections,omitempty"`
+	ActiveConnection     string                          `json:"activeConnection,omitempty"`
+	PendingDevices       map[string]string               `json:"pendingDevices,omitempty"`
+	QueueExpanded        map[string]bool                 `json:"queueExpanded,omitempty"`
+	QueueEdits           map[string]QueueEdit            `json:"queueEdits,omitempty"`
+	DeviceID             string                          `json:"deviceId"`
+	WorkspaceID          string                          `json:"workspaceId"`
+	Drafts               map[string]string               `json:"drafts"`
+	Configs              map[string]domain.RunConfig     `json:"configs"`
+	Answers              map[string]string               `json:"answers"`
+	Pager                map[string]int                  `json:"pager"`
+	Collapsed            map[string]bool                 `json:"collapsed"`
+	Pending              map[string]domain.Submission    `json:"pending"`
+	GitDrafts            map[string]domain.GitChoice     `json:"gitDrafts,omitempty"`
+	GitRepositories      map[string]string               `json:"gitRepositories,omitempty"`
+	Inspectors           map[string]bool                 `json:"inspectors,omitempty"`
+	InspectorLayout      InspectorLayout                 `json:"inspectorLayout,omitempty"`
+	InspectorSplitHeight float32                         `json:"inspectorSplitHeight,omitempty"`
+	InspectorWidth       float32                         `json:"inspectorWidth,omitempty"`
 }
 
 func (m *Model) Save(path string) error {
@@ -436,6 +453,12 @@ func (m *Model) Load(path string) error {
 		return err
 	}
 	m.Preferences = saved.Preferences.Normalized()
+	if saved.HistoryActions != nil {
+		m.HistoryActions = saved.HistoryActions
+	}
+	if saved.HistoryEdits != nil {
+		m.HistoryEdits = saved.HistoryEdits
+	}
 	m.SecondaryWorkspaceID = saved.SecondaryWorkspaceID
 	m.SecondarySessionID = saved.SecondarySessionID
 	m.FocusSecondary = saved.FocusSecondary

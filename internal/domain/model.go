@@ -42,6 +42,8 @@ type LaunchContext struct {
 	Head                  string   `json:"head,omitempty"`
 }
 type Session struct {
+	ForkedFrom     string           `json:"forkedFrom,omitempty"`
+	ForkedTurn     string           `json:"forkedTurn,omitempty"`
 	ExecutionGuard string           `json:"executionGuard,omitempty"`
 	Recovery       *SessionRecovery `json:"recovery,omitempty"`
 	Archived       bool             `json:"archived,omitempty"`
@@ -94,6 +96,7 @@ type Operation struct {
 	Error     string `json:"error,omitempty"`
 }
 type Item struct {
+	SentAt       *time.Time      `json:"sentAt,omitempty"`
 	Attachments  []Attachment    `json:"attachments,omitempty"`
 	Presentation string          `json:"presentation,omitempty"`
 	Parts        []ContentPart   `json:"parts,omitempty"`
@@ -188,6 +191,7 @@ type Answer struct {
 	Answers   map[string][]string `json:"answers,omitempty"`
 }
 type Turn struct {
+	Order             int64      `json:"order"`
 	ID                string     `json:"id"`
 	Status            string     `json:"status"`
 	StartedAt         *time.Time `json:"startedAt,omitempty"`
@@ -210,19 +214,20 @@ type Plan struct {
 	Steps       []PlanStep `json:"steps"`
 }
 type Event struct {
-	Plan      *Plan           `json:"plan,omitempty"`
-	Queue     *QueueState     `json:"queue,omitempty"`
-	Sequence  int64           `json:"sequence"`
-	SessionID string          `json:"sessionId,omitempty"`
-	Type      string          `json:"type"`
-	ItemID    string          `json:"itemId,omitempty"`
-	Text      string          `json:"text,omitempty"`
-	Workspace *Workspace      `json:"workspace,omitempty"`
-	Session   *Session        `json:"session,omitempty"`
-	Operation *Operation      `json:"operation,omitempty"`
-	Item      *Item           `json:"item,omitempty"`
-	Request   *PendingRequest `json:"request,omitempty"`
-	Turn      *Turn           `json:"turn,omitempty"`
+	HistoryTurnOrder *int64          `json:"historyTurnOrder,omitempty"`
+	Plan             *Plan           `json:"plan,omitempty"`
+	Queue            *QueueState     `json:"queue,omitempty"`
+	Sequence         int64           `json:"sequence"`
+	SessionID        string          `json:"sessionId,omitempty"`
+	Type             string          `json:"type"`
+	ItemID           string          `json:"itemId,omitempty"`
+	Text             string          `json:"text,omitempty"`
+	Workspace        *Workspace      `json:"workspace,omitempty"`
+	Session          *Session        `json:"session,omitempty"`
+	Operation        *Operation      `json:"operation,omitempty"`
+	Item             *Item           `json:"item,omitempty"`
+	Request          *PendingRequest `json:"request,omitempty"`
+	Turn             *Turn           `json:"turn,omitempty"`
 }
 type Snapshot struct {
 	PendingRequests []PendingRequest `json:"pendingRequests,omitempty"`
