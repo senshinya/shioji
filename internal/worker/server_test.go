@@ -223,7 +223,7 @@ func TestWrongDeviceAndOldEpochCannotMutateWorker(t *testing.T) {
 	}
 }
 
-func TestAppServerDeathMarksExecutionUnknownWithoutReplayingInput(t *testing.T) {
+func TestSessionAppServerDeathRecoversManagedExecutionWithoutReplayingInput(t *testing.T) {
 	server, c, p := startServer(t)
 	var ready domain.Readiness
 	call(t, c, "readiness", nil, &ready)
@@ -236,7 +236,7 @@ func TestAppServerDeathMarksExecutionUnknownWithoutReplayingInput(t *testing.T) 
 	case <-time.After(10 * time.Second):
 		t.Fatal("turn not dispatched")
 	}
-	b, err := os.ReadFile(filepath.Join(server.Directory(), "runtime-process.json"))
+	b, err := os.ReadFile(filepath.Join(server.Directory(), "runtimes", op.SessionID, "runtime-process.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestAppServerDeathMarksExecutionUnknownWithoutReplayingInput(t *testing.T) 
 	var detail domain.SessionDetail
 	wait(t, func() bool {
 		call(t, c, "session", worker.SessionQuery{ID: op.SessionID}, &detail)
-		return detail.Session.Status == "unknown"
+		return detail.Session.Status == "interrupted" && detail.Session.Recovery != nil && detail.Session.Recovery.CanContinue
 	})
 	for _, turn := range detail.Turns {
 		if turn.Status == "running" {

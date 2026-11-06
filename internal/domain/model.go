@@ -42,25 +42,28 @@ type LaunchContext struct {
 	Head                  string   `json:"head,omitempty"`
 }
 type Session struct {
-	Archived       bool          `json:"archived,omitempty"`
-	TitleOverride  bool          `json:"titleOverride,omitempty"`
-	TitleRevision  int64         `json:"titleRevision"`
-	SourceTitle    string        `json:"sourceTitle,omitempty"`
-	ID             string        `json:"id"`
-	WorkspaceID    string        `json:"workspaceId"`
-	Title          string        `json:"title"`
-	HarnessID      string        `json:"harnessId"`
-	ThreadID       string        `json:"threadId,omitempty"` // Opaque source reference.
-	Context        LaunchContext `json:"context"`
-	Config         RunConfig     `json:"config"`
-	Status         string        `json:"status"`
-	GitHead        string        `json:"gitHead,omitempty"`
-	GitBranch      string        `json:"gitBranch,omitempty"`
-	ContextChanged bool          `json:"contextChanged,omitempty"`
-	Revision       int64         `json:"revision"`
-	Error          string        `json:"error,omitempty"`
+	ExecutionGuard string           `json:"executionGuard,omitempty"`
+	Recovery       *SessionRecovery `json:"recovery,omitempty"`
+	Archived       bool             `json:"archived,omitempty"`
+	TitleOverride  bool             `json:"titleOverride,omitempty"`
+	TitleRevision  int64            `json:"titleRevision"`
+	SourceTitle    string           `json:"sourceTitle,omitempty"`
+	ID             string           `json:"id"`
+	WorkspaceID    string           `json:"workspaceId"`
+	Title          string           `json:"title"`
+	HarnessID      string           `json:"harnessId"`
+	ThreadID       string           `json:"threadId,omitempty"` // Opaque source reference.
+	Context        LaunchContext    `json:"context"`
+	Config         RunConfig        `json:"config"`
+	Status         string           `json:"status"`
+	GitHead        string           `json:"gitHead,omitempty"`
+	GitBranch      string           `json:"gitBranch,omitempty"`
+	ContextChanged bool             `json:"contextChanged,omitempty"`
+	Revision       int64            `json:"revision"`
+	Error          string           `json:"error,omitempty"`
 }
 type Submission struct {
+	Continue    bool         `json:"continue,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 	OperationID string       `json:"operationId"`
 	WorkspaceID string       `json:"workspaceId"`

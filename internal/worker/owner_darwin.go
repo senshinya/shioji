@@ -29,7 +29,7 @@ func Acquire(dir string) (*Owner, error) {
 	if !info.IsDir() || !ok || st.Uid != uint32(os.Getuid()) || info.Mode().Perm() != 0700 {
 		return nil, errors.New("worker directory must be owned by this user with mode 0700")
 	}
-	fd, err := unix.Open(filepath.Join(dir, "owner.lock"), unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW, 0600)
+	fd, err := unix.Open(filepath.Join(dir, "owner.lock"), unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
 	if err != nil {
 		return nil, err
 	}

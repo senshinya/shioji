@@ -54,7 +54,7 @@ func (s *Store) saveSessionMetadataLocked(session domain.Session) (domain.Sessio
 }
 func (s *Store) archivableLocked(session domain.Session) error {
 	switch session.Status {
-	case "idle", "completed", "interrupted", "failed":
+	case "idle", "completed", "interrupted", "failed", "abandoned":
 	default:
 		return errors.New("会话仍在运行或执行状态待核对，请先处理")
 	}

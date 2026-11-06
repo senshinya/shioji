@@ -101,7 +101,7 @@ func reconcileOperations(ctx context.Context, client *protocol.Client, ids map[s
 			return err
 		}
 		emit(func(m *Model) { m.ApplyOperation(op) })
-		if op.State == "confirmed" || op.State == "rejected" || op.State == "indeterminate" {
+		if op.State == "confirmed" || op.State == "rejected" || op.State == "indeterminate" || op.State == "abandoned" {
 			delete(ids, id)
 		}
 	}
@@ -281,7 +281,7 @@ func (c *Controller) Run(ctx context.Context) {
 		events := page.Events
 		sequence = events[len(events)-1].Sequence
 		for _, e := range events {
-			if e.Operation != nil && (e.Operation.State == "confirmed" || e.Operation.State == "rejected" || e.Operation.State == "indeterminate") {
+			if e.Operation != nil && (e.Operation.State == "confirmed" || e.Operation.State == "rejected" || e.Operation.State == "indeterminate" || e.Operation.State == "abandoned") {
 				delete(unconfirmed, e.Operation.ID)
 			}
 		}
@@ -348,7 +348,11 @@ func (c *Controller) Run(ctx context.Context) {
 				opID = in.OperationID
 				unconfirmed[opID] = true
 			}
-			callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			timeout := 10 * time.Second
+			if job.Method == "session.reconcile" {
+				timeout = 25 * time.Second
+			}
+			callCtx, cancel := context.WithTimeout(ctx, timeout)
 			out, err := executeJob(callCtx, client, job)
 			cancel()
 			var remote *protocol.RemoteError

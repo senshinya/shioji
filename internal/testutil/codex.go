@@ -14,13 +14,15 @@ import (
 )
 
 type Provider struct {
-	Home    string
-	Release chan struct{}
-	Started chan struct{}
-	server  *httptest.Server
-	mu      sync.Mutex
-	counts  map[string]int
-	inputs  []string
+	Home        string
+	Release     chan struct{}
+	Started     chan struct{}
+	server      *httptest.Server
+	mu          sync.Mutex
+	counts      map[string]int
+	inputs      []string
+	execCommand string
+	execTTY     bool
 }
 
 func NewProvider(t *testing.T) *Provider {
@@ -45,6 +47,12 @@ func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(string(encoded), "SHIOJI_SLOW") {
 		kind = "slow"
 	}
+	if strings.Contains(string(encoded), "SHIOJI_RECOVERY_EXEC") {
+		kind = "recovery_exec"
+	}
+	if strings.Contains(string(encoded), "SHIOJI_RECOVERY_EXEC_SECOND") {
+		kind = "recovery_exec_second"
+	}
 	if strings.Contains(string(encoded), "SHIOJI_APPROVAL") {
 		kind = "approval"
 	}
@@ -55,6 +63,7 @@ func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
 	recorded, _ := json.Marshal(body)
 	p.inputs = append(p.inputs, string(recorded))
 	count := p.counts[kind]
+	command, tty := p.execCommand, p.execTTY
 	p.counts[kind]++
 	p.mu.Unlock()
 	if kind == "slow" {
@@ -73,6 +82,14 @@ func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
 		args := `{"questions":[{"id":"q","header":"Choice","question":"Continue?","options":[{"label":"Yes","description":"Continue"},{"label":"No","description":"Decline"}]}]}`
 		item = map[string]any{"type": "function_call", "call_id": "question_call", "name": "request_user_input", "arguments": args}
 	}
+	if (kind == "recovery_exec" || kind == "recovery_exec_second") && count == 0 {
+		args := `{"cmd":"printf '%s' $$ > .shioji-recovery-tool-pid; sleep 60","login":false,"tty":false,"yield_time_ms":10000}`
+		if command != "" {
+			b, _ := json.Marshal(map[string]any{"cmd": command, "login": false, "tty": tty, "yield_time_ms": 10000})
+			args = string(b)
+		}
+		item = map[string]any{"type": "function_call", "call_id": "recovery_exec_call", "name": "exec_command", "arguments": args}
+	}
 	if kind == "approval" && count == 0 {
 		args := `{"cmd":"printf SHIOJI_DENIED_COMMAND","login":false,"sandbox_permissions":"require_escalated","justification":"Disposable integration check; the client will deny"}`
 		item = map[string]any{"type": "function_call", "call_id": "approval_call", "name": "exec_command", "arguments": args}
@@ -82,6 +99,12 @@ func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(e)
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e["type"], b)
 	}
+}
+
+func (p *Provider) SetCommand(command string, tty bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.execCommand, p.execTTY = command, tty
 }
 
 func (p *Provider) Inputs() []string {

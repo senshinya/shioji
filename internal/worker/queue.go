@@ -25,9 +25,9 @@ func (s *Server) queueLoop() {
 		}
 		s.dispatchMu.Lock()
 		snapshot, err := s.store.Snapshot()
-		if err == nil && s.runtime != nil && s.ctx.Err() == nil {
+		if err == nil && s.currentRuntime() != nil && s.ctx.Err() == nil {
 			for _, session := range snapshot.Sessions {
-				if session.Status != "completed" && session.Status != "idle" && session.Status != "interrupted" && session.Status != "failed" {
+				if session.Status != "completed" && session.Status != "idle" && session.Status != "interrupted" && session.Status != "failed" && session.Status != "abandoned" {
 					continue
 				}
 				q, e := s.store.Queue(session.ID)
@@ -59,13 +59,13 @@ func (s *Server) queueLoop() {
 func (s *Server) enqueue(in domain.Submission) (domain.Operation, error) {
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
-	if s.runtime == nil || s.ctx.Err() != nil {
+	if s.currentRuntime() == nil || s.ctx.Err() != nil {
 		return domain.Operation{}, errors.New("runtime unavailable")
 	}
 	if _, err := s.attachmentInputs(in); err != nil {
 		return domain.Operation{}, err
 	}
-	if err := s.runtime.Validate(in.Config); err != nil {
+	if err := s.currentRuntime().Validate(in.Config); err != nil {
 		return domain.Operation{}, err
 	}
 	op, err := s.store.Enqueue(in)
@@ -119,7 +119,7 @@ func (s *Server) changeQueue(method string, in protocol.QueueInput) (domain.Queu
 		if err != nil {
 			return domain.QueueState{}, err
 		}
-		if s.runtime == nil || s.ctx.Err() != nil || d.Session.ContextChanged || d.Session.Status == "unknown" {
+		if s.currentRuntime() == nil || s.ctx.Err() != nil || d.Session.ContextChanged || d.Session.Status == "unknown" {
 			return domain.QueueState{}, errors.New("reconcile execution context before continuing")
 		}
 		q, err := s.store.ContinueQueue(in.SessionID, in.Revision)
@@ -136,7 +136,7 @@ func (s *Server) steer(in protocol.SteerInput) (domain.Operation, error) {
 	return s.steerLocked(in, 0)
 }
 func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Operation, error) {
-	if s.runtime == nil || s.ctx.Err() != nil {
+	if s.currentRuntime(in.Input.SessionID) == nil || s.ctx.Err() != nil {
 		return domain.Operation{}, errors.New("runtime unavailable")
 	}
 	if _, err := s.store.Operation(in.Input.OperationID); err == nil {
@@ -159,18 +159,27 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 	if err != nil {
 		return op, err
 	}
+	runtime := s.currentRuntime(in.Input.SessionID)
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		defer s.wakeQueue()
+		s.dispatchMu.Lock()
+		defer s.dispatchMu.Unlock()
+		if !s.dispatchReserved(op, runtime) {
+			return
+		}
 		if s.store.SetOperation(op.ID, "dispatched", "") != nil {
 			return
 		}
 		ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 		defer cancel()
 		inputs, err := s.attachmentInputs(in.Input)
+		if err == nil && runtime.ManagedCoverage() {
+			err = s.coverOperation(op.SessionID, op.ID)
+		}
 		if err == nil {
-			err = s.runtime.Steer(ctx, d.Session, in.TurnID, op.ID, in.Input.Text, inputs...)
+			err = runtime.Steer(ctx, d.Session, in.TurnID, op.ID, in.Input.Text, inputs...)
 		}
 		state, status, message := "confirmed", "sent", ""
 		if err != nil {
@@ -183,6 +192,10 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 		if s.store.SetOperation(op.ID, state, message) != nil {
 			return
 		}
+		if state == "indeterminate" {
+			defer s.wakeRecovery()
+		}
+
 		if state != "confirmed" && revision > 0 {
 			return
 		}

@@ -17,25 +17,31 @@ import (
 
 	"shioji/internal/domain"
 	"shioji/internal/harness/codex/wire"
+	"shioji/internal/managedexec"
 )
 
 type Options struct {
 	OnStart          func(int) error
 	Executable, Home string
 	OnEvent          func(domain.Event) error
+	Scope            *managedexec.Scope
+	Executor         *Executor
 }
 type Runtime struct {
-	cmd        *exec.Cmd
-	stdin      io.WriteCloser
-	writeMu    sync.Mutex
-	mu         sync.Mutex
-	eventMu    sync.Mutex
-	pending    map[string]chan wire.Message
-	done       chan struct{}
-	normalizer *Normalizer
-	onEvent    func(domain.Event) error
-	ready      domain.Readiness
-	err        error
+	cmd             *exec.Cmd
+	stdin           io.WriteCloser
+	writeMu         sync.Mutex
+	mu              sync.Mutex
+	eventMu         sync.Mutex
+	pending         map[string]chan wire.Message
+	done            chan struct{}
+	normalizer      *Normalizer
+	onEvent         func(domain.Event) error
+	ready           domain.Readiness
+	err             error
+	scope           *managedexec.Scope
+	executor        *Executor
+	managedCoverage bool
 }
 
 // CallError distinguishes explicit rejection from an unconfirmed external send.
@@ -58,7 +64,11 @@ func Start(ctx context.Context, opts Options) (*Runtime, error) {
 	if strings.TrimSpace(string(v)) != "codex-cli 0.166.0" {
 		return nil, errors.New("incompatible Codex; tested version is 0.166.0")
 	}
-	cmd := exec.Command(binary, "app-server", "--listen", "stdio://")
+	argv := []string{binary, "app-server", "--listen", "stdio://"}
+	if opts.Executor != nil {
+		argv = append(argv, "-c", "features.shell_snapshot=false", "-c", "features.shell_snapshot_v2=false")
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stderr = io.Discard
 	if opts.Home != "" {
@@ -72,7 +82,27 @@ func Start(ctx context.Context, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &Runtime{cmd: cmd, stdin: stdin, pending: map[string]chan wire.Message{}, done: make(chan struct{}), normalizer: NewNormalizer(), onEvent: opts.OnEvent}
+	if opts.Scope != nil {
+		stdin.Close()
+		stdout.Close()
+		env := os.Environ()
+		if opts.Home != "" {
+			env = append(env, "CODEX_HOME="+opts.Home)
+		}
+		resolved, resolveErr := exec.LookPath(binary)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		argv[0] = resolved
+		var ownedOut io.Reader
+		cmd, stdin, ownedOut, err = opts.Scope.StartOwned(ctx, "agent-runtime", argv, env, opts.OnStart)
+		if err != nil {
+			return nil, err
+		}
+		stdoutReader := ownedOut
+		r := &Runtime{cmd: cmd, stdin: stdin, pending: map[string]chan wire.Message{}, done: make(chan struct{}), normalizer: NewNormalizer(), onEvent: opts.OnEvent, scope: opts.Scope, executor: opts.Executor}
+		return initializeRuntime(ctx, r, stdoutReader)
+	}
 	if err = cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -84,11 +114,20 @@ func Start(ctx context.Context, opts Options) (*Runtime, error) {
 			return nil, err
 		}
 	}
+	r := &Runtime{cmd: cmd, stdin: stdin, pending: map[string]chan wire.Message{}, done: make(chan struct{}), normalizer: NewNormalizer(), onEvent: opts.OnEvent}
+	return initializeRuntime(ctx, r, stdout)
+}
+func initializeRuntime(ctx context.Context, r *Runtime, stdout io.Reader) (*Runtime, error) {
 	go r.read(stdout)
 	var init json.RawMessage
-	err = r.call(ctx, "initialize", map[string]any{"clientInfo": map[string]string{"name": "shioji", "version": "0.1.0"}, "capabilities": map[string]bool{"experimentalApi": true}}, &init)
+	err := r.call(ctx, "initialize", map[string]any{"clientInfo": map[string]string{"name": "shioji", "version": "0.1.0"}, "capabilities": map[string]bool{"experimentalApi": true}}, &init)
 	if err == nil {
 		err = r.send(wire.Message{Method: "initialized", Params: json.RawMessage(`{}`)})
+	}
+	if err == nil {
+		if r.executor != nil {
+			err = r.call(ctx, "environment/add", map[string]any{"environmentId": r.executionEnvironmentID(), "execServerUrl": r.executor.URL(), "authBearerToken": r.executor.Token()}, &init)
+		}
 	}
 	if err == nil {
 		err = r.catalog(ctx)
@@ -346,10 +385,16 @@ func (r *Runtime) Create(ctx context.Context, s domain.Session) (string, error) 
 		} `json:"sandbox"`
 	}
 	params := wire.ThreadParams{CWD: s.Context.CWD, Model: s.Config.Model, ApprovalPolicy: approval, Sandbox: sandbox, RuntimeWorkspaceRoots: append([]string{s.Context.CWD}, s.Context.AdditionalDirectories...)}
+	configuration, err := r.executionConfig(ctx, s)
+	if err != nil {
+		return "", err
+	}
+	params.Config = configuration
+	params.Environments = r.executionEnvironment(s)
 	if err := r.call(ctx, "thread/start", params, &out); err != nil {
 		return "", err
 	}
-	if out.Thread.ID == "" || out.CWD != s.Context.CWD || out.Model != s.Config.Model || out.Sandbox.Type != kind {
+	if out.Thread.ID == "" || sourceExecutionPath(out.CWD) != s.Context.CWD || out.Model != s.Config.Model || out.Sandbox.Type != kind {
 		return "", errors.New("Codex did not accept the requested execution context")
 	}
 	if err := r.bindThread(out.Thread.ID, s.ID, true, out.Thread.Name); err != nil {
@@ -368,10 +413,14 @@ func (r *Runtime) Resume(ctx context.Context, s domain.Session) error {
 		} `json:"thread"`
 		CWD string `json:"cwd"`
 	}
-	if err := r.call(ctx, "thread/resume", map[string]any{"threadId": s.ThreadID}, &out); err != nil {
+	configuration, err := r.executionConfig(ctx, s)
+	if err != nil {
 		return err
 	}
-	if out.CWD != s.Context.CWD || out.Thread.ID != s.ThreadID {
+	if err := r.call(ctx, "thread/resume", map[string]any{"threadId": s.ThreadID, "excludeTurns": true, "config": configuration}, &out); err != nil {
+		return err
+	}
+	if sourceExecutionPath(out.CWD) != s.Context.CWD || out.Thread.ID != s.ThreadID {
 		return errors.New("restored thread execution context differs")
 	}
 	return r.bindThread(s.ThreadID, s.ID, false, out.Thread.Name)
@@ -400,6 +449,7 @@ func (r *Runtime) Submit(ctx context.Context, s domain.Session, operationID, tex
 		return "", err
 	}
 	params := wire.TurnParams{ThreadID: s.ThreadID, Input: input, ClientUserMessageID: "input:" + operationID, Model: s.Config.Model, Effort: s.Config.Effort, ApprovalPolicy: approval, SandboxPolicy: policy}
+	params.Environments = r.executionEnvironment(s)
 	if s.Config.Fast {
 		fast := "fast"
 		params.ServiceTier = &fast

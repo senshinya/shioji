@@ -84,3 +84,22 @@ type SteerInput struct {
 	Input  domain.Submission `json:"input"`
 	TurnID string            `json:"turnId"`
 }
+
+// RecoveryInput is revision checked on the session's owning device.
+type RecoveryInput struct {
+	Targets   []string `json:"targets,omitempty"`
+	SessionID string   `json:"sessionId"`
+	Revision  int64    `json:"revision"`
+	Action    string   `json:"action,omitempty"` // check, end, interrupt, stop-runtime, stop-tasks
+}
+type RecoveryResult struct {
+	Tasks        []domain.RecoveryTask `json:"tasks,omitempty"`
+	CanStopTasks bool                  `json:"canStopTasks,omitempty"`
+	CanContinue  bool                  `json:"canContinue,omitempty"`
+	SessionID    string                `json:"sessionId"`
+	Status       string                `json:"status"`
+	Message      string                `json:"message"`
+	CanEnd       bool                  `json:"canEnd,omitempty"`
+	NeedsStop    bool                  `json:"needsStop,omitempty"`
+	Readiness    domain.Readiness      `json:"readiness"`
+}

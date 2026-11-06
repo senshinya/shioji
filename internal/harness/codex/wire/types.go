@@ -95,12 +95,13 @@ type Model struct {
 	} `json:"serviceTiers"`
 }
 type ThreadParams struct {
-	RuntimeWorkspaceRoots []string       `json:"runtimeWorkspaceRoots,omitempty"`
-	CWD                   string         `json:"cwd"`
-	Model                 string         `json:"model"`
-	ApprovalPolicy        string         `json:"approvalPolicy"`
-	Sandbox               string         `json:"sandbox"`
-	Config                map[string]any `json:"config,omitempty"`
+	Environments          []ExecutionEnvironment `json:"environments,omitempty"`
+	RuntimeWorkspaceRoots []string               `json:"runtimeWorkspaceRoots,omitempty"`
+	CWD                   string                 `json:"cwd"`
+	Model                 string                 `json:"model"`
+	ApprovalPolicy        string                 `json:"approvalPolicy"`
+	Sandbox               string                 `json:"sandbox"`
+	Config                map[string]any         `json:"config,omitempty"`
 }
 type Input struct {
 	Path string `json:"path,omitempty"`
@@ -113,15 +114,22 @@ type SandboxPolicy struct {
 	NetworkAccess bool     `json:"networkAccess,omitempty"`
 }
 type TurnParams struct {
-	ThreadID            string             `json:"threadId"`
-	Input               []Input            `json:"input"`
-	ClientUserMessageID string             `json:"clientUserMessageId"`
-	Model               string             `json:"model"`
-	Effort              string             `json:"effort,omitempty"`
-	ApprovalPolicy      string             `json:"approvalPolicy"`
-	SandboxPolicy       SandboxPolicy      `json:"sandboxPolicy"`
-	ServiceTier         *string            `json:"serviceTier"`
-	CollaborationMode   *CollaborationMode `json:"collaborationMode,omitempty"`
+	Environments        []ExecutionEnvironment `json:"environments,omitempty"`
+	ThreadID            string                 `json:"threadId"`
+	Input               []Input                `json:"input"`
+	ClientUserMessageID string                 `json:"clientUserMessageId"`
+	Model               string                 `json:"model"`
+	Effort              string                 `json:"effort,omitempty"`
+	ApprovalPolicy      string                 `json:"approvalPolicy"`
+	SandboxPolicy       SandboxPolicy          `json:"sandboxPolicy"`
+	ServiceTier         *string                `json:"serviceTier"`
+	CollaborationMode   *CollaborationMode     `json:"collaborationMode,omitempty"`
+}
+
+type ExecutionEnvironment struct {
+	EnvironmentID         string   `json:"environmentId"`
+	CWD                   string   `json:"cwd"`
+	RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots,omitempty"`
 }
 type CollaborationMode struct {
 	Mode     string       `json:"mode"`

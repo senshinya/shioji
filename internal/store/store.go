@@ -313,7 +313,7 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		if session.Archived {
 			return none, errors.New("restore the session before sending")
 		}
-		if session.WorkspaceID != in.WorkspaceID || !(session.Status == "idle" || session.Status == "completed" || session.Status == "interrupted" || session.Status == "failed") {
+		if session.WorkspaceID != in.WorkspaceID || !(session.Status == "idle" || session.Status == "completed" || session.Status == "interrupted" || session.Status == "failed" || session.Status == "abandoned") {
 			return none, errors.New("session is unavailable for a new turn")
 		}
 		if queued == nil {
@@ -321,7 +321,7 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 			if e != nil {
 				return none, e
 			}
-			if q.Paused && len(q.Items) == 0 {
+			if q.Paused && len(q.Items) == 0 && !in.Continue {
 				q.Paused = false
 				q.Reason = ""
 				q.Revision++
@@ -329,6 +329,7 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 			}
 		}
 		session.Config = in.Config
+		session.Recovery = nil
 		session.Status = "starting"
 		session.Revision++
 	} else {
@@ -400,6 +401,22 @@ func (s *Store) SetOperation(id, state, message string) error {
 	if _, err = tx.Exec("UPDATE operations SET state=?,error=? WHERE id=?", state, message, id); err != nil {
 		return err
 	}
+	if state == "indeterminate" {
+		session, e := load[domain.Session](tx.QueryRow("SELECT body FROM sessions WHERE id=?", op.SessionID))
+		if e != nil {
+			return e
+		}
+		session.Status = "unknown"
+		session.Error = "有消息的送达结果尚待核对"
+		session.Recovery = nil
+		session.Revision++
+		if _, err = tx.Exec("UPDATE sessions SET body=? WHERE id=?", blob(session), session.ID); err != nil {
+			return err
+		}
+		if _, err = journal(tx, domain.Event{Type: "session", SessionID: session.ID, Session: &session}); err != nil {
+			return err
+		}
+	}
 	if err = queueOutcome(tx, op); err != nil {
 		return err
 	}
@@ -469,11 +486,18 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		if e.Session == nil || e.Session.ID != sid {
 			return e, errors.New("invalid session event")
 		}
+		recovery := session.Recovery
+		guard, guardedError := session.ExecutionGuard, session.Error
 		revision := session.Revision
 		title := session.Title
 		branch, head, changed := session.GitBranch, session.GitHead, session.ContextChanged
 		archived, override, sourceTitle, titleRevision := session.Archived, session.TitleOverride, session.SourceTitle, session.TitleRevision
 		session = *e.Session
+		session.Recovery = recovery
+		session.ExecutionGuard = guard
+		if guard != "" {
+			session.Status, session.Error = "unknown", guardedError
+		}
 		session.Title = title
 		session.Archived, session.TitleOverride, session.SourceTitle = archived, override, sourceTitle
 		session.TitleRevision = titleRevision
@@ -535,8 +559,19 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		if _, err = tx.Exec("INSERT INTO turns VALUES(?,?,?) ON CONFLICT(session_id,id) DO UPDATE SET body=excluded.body", sid, e.Turn.ID, blob(e.Turn)); err != nil {
 			return e, err
 		}
-		session.Status = e.Turn.Status
-		session.Error = e.Turn.Error
+		if session.ExecutionGuard == "" {
+			session.Status = e.Turn.Status
+			session.Recovery = nil
+			session.Error = e.Turn.Error
+		}
+		var uncertain bool
+		if err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM operations WHERE session_id=? AND state='indeterminate')", sid).Scan(&uncertain); err != nil {
+			return e, err
+		}
+		if uncertain {
+			session.Status = "unknown"
+			session.Error = "有消息的送达结果尚待核对"
+		}
 	default:
 		return e, fmt.Errorf("unknown domain event: %s", e.Type)
 	}
@@ -749,7 +784,14 @@ func (s *Store) Recover() error {
 		if _, err = s.PauseQueue(session.ID, "worker restarted"); err != nil {
 			return err
 		}
-		if session.Status == "running" || session.Status == "starting" {
+		unsettled, e := s.HasUnsettledOperation(session.ID)
+		if e != nil {
+			return e
+		}
+		if session.Status == "running" || session.Status == "starting" || unsettled {
+			if _, e = s.SetRecovery(session.ID, nil); e != nil {
+				return e
+			}
 			detail, e := s.Session(session.ID, 0, 1)
 			if e != nil {
 				return e

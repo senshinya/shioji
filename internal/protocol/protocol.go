@@ -17,8 +17,8 @@ import (
 
 const Major = 1
 
-// Minor 6 adds workspace-scoped attachment transfer and structured message inputs.
-const Minor = 6
+// Minor 8 adds verified recovery task inspection and explicit task stopping.
+const Minor = 8
 const MaxFrame = 1 << 20
 
 type Frame struct {

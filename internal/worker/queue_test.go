@@ -67,9 +67,14 @@ func TestRejectedInitialDispatchPausesMessagesEnqueuedWhileStarting(t *testing.T
 	d.Session.ThreadID = "missing-thread"
 	db.Apply(op.SessionID, domain.Event{Type: "session", Session: &d.Session})
 	db.Enqueue(domain.Submission{OperationID: "later", WorkspaceID: w.ID, SessionID: op.SessionID, Text: "retain", Config: in.Config})
-	s.dispatch(in, op)
+	s.runtimes = map[string]*codex.Runtime{op.SessionID: s.runtime}
+	s.dispatch(in, op, s.currentRuntime(op.SessionID))
 	q, _ := db.Queue(op.SessionID)
 	if !q.Paused || len(q.Items) != 1 {
 		t.Fatal("failed initial dispatch advances later input", q)
+	}
+	receipt, _ := db.Operation(op.ID)
+	if receipt.State != "rejected" {
+		t.Fatal("test did not reach the rejected thread resume", receipt)
 	}
 }

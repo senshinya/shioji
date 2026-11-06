@@ -12,41 +12,63 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"shioji/internal/attachments"
 	"shioji/internal/domain"
 	"shioji/internal/harness/codex"
+	"shioji/internal/managedexec"
 	"shioji/internal/protocol"
 	"shioji/internal/store"
 )
 
-type Config struct{ Directory, CodexExecutable, CodexHome string }
+type Config struct{ Directory, CodexExecutable, CodexHome, LauncherExecutable string }
 type WorkspaceInput = protocol.WorkspaceInput
 type SessionQuery = protocol.SessionQuery
 type EventsQuery = protocol.EventsQuery
 type EventPage = protocol.EventPage
 type AnswerInput = protocol.AnswerInput
 type Server struct {
-	attachments *attachments.Repository
-	config      Config
-	owner       *Owner
-	listener    net.Listener
-	store       *store.Store
-	runtime     *codex.Runtime
-	readiness   domain.Readiness
-	dispatchMu  sync.Mutex
-	queueWake   chan struct{}
-	bound       map[string]bool
-	mu          sync.Mutex
-	conns       map[net.Conn]bool
-	wg          sync.WaitGroup
-	once        sync.Once
-	ctx         context.Context
-	cancel      context.CancelFunc
+	runtimeMu       sync.RWMutex
+	toolMu          sync.Mutex
+	tools           map[string]recoveryToolProcess
+	attachments     *attachments.Repository
+	config          Config
+	owner           *Owner
+	listener        net.Listener
+	store           *store.Store
+	runtime         *codex.Runtime
+	runtimes        map[string]*codex.Runtime
+	executors       map[string]*codex.Executor
+	executions      *managedexec.Manager
+	readiness       domain.Readiness
+	dispatchMu      sync.Mutex
+	queueWake       chan struct{}
+	recoveryWake    chan struct{}
+	recoveryChecked map[string]recoveryAttempt
+	recoveryRefresh atomic.Uint64
+	bound           map[string]bool
+	mu              sync.Mutex
+	conns           map[net.Conn]bool
+	wg              sync.WaitGroup
+	once            sync.Once
+	ctx             context.Context
+	cancel          context.CancelFunc
 }
 
 func New(ctx context.Context, config Config) (*Server, error) {
+	if config.LauncherExecutable == "" {
+		var err error
+		config.LauncherExecutable, err = os.Executable()
+		if err != nil {
+			return nil, err
+		}
+	}
+	manager, err := managedexec.New(filepath.Join(config.Directory, "executions"), config.LauncherExecutable)
+	if err != nil {
+		return nil, err
+	}
 	owner, err := Acquire(config.Directory)
 	if err != nil {
 		return nil, err
@@ -68,7 +90,25 @@ func New(ctx context.Context, config Config) (*Server, error) {
 		return nil, err
 	}
 	workerCtx, cancel := context.WithCancel(context.Background())
-	s := &Server{attachments: attachments.New(filepath.Join(config.Directory, "attachments")), config: config, owner: owner, listener: listener, store: db, ctx: workerCtx, cancel: cancel, queueWake: make(chan struct{}, 1), bound: map[string]bool{}, conns: map[net.Conn]bool{}}
+	s := &Server{attachments: attachments.New(filepath.Join(config.Directory, "attachments")), config: config, owner: owner, listener: listener, store: db, ctx: workerCtx, cancel: cancel, queueWake: make(chan struct{}, 1), recoveryWake: make(chan struct{}, 1), recoveryChecked: map[string]recoveryAttempt{}, bound: map[string]bool{}, conns: map[net.Conn]bool{}}
+	s.tools = map[string]recoveryToolProcess{}
+	s.runtimes = map[string]*codex.Runtime{}
+	s.executors = map[string]*codex.Executor{}
+	s.executions = manager
+	cleanupCtx, cancelCleanup := context.WithTimeout(ctx, 20*time.Second)
+	cleanupErr := s.recoverManagedScopes(cleanupCtx)
+	cancelCleanup()
+	if cleanupErr != nil {
+		s.cancel()
+		listener.Close()
+		db.Close()
+		owner.Close()
+		return nil, cleanupErr
+	}
+	s.wg.Add(1)
+	go s.reapExecutions()
+	s.wg.Add(1)
+	go s.watchRecoveryTools()
 	startup, cancelStartup := context.WithTimeout(ctx, 20*time.Second)
 	defer cancelStartup()
 	if err = checkPreviousProcess(config.Directory); err == nil {
@@ -86,6 +126,11 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	go s.queueLoop()
 	s.wg.Add(1)
 	go s.monitorGit()
+	s.wg.Add(1)
+	go s.recoveryLoop()
+	if s.runtime != nil {
+		s.watchRuntime(s.runtime)
+	}
 	return s, nil
 }
 func (s *Server) Directory() string { return s.config.Directory }
@@ -123,6 +168,7 @@ func (s *Server) serveConnection(conn net.Conn) {
 	if err != nil {
 		return
 	}
+	requestedRecovery := false
 	for {
 		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		var f protocol.Frame
@@ -131,6 +177,11 @@ func (s *Server) serveConnection(conn net.Conn) {
 		}
 		if f.Type != "command" || f.Epoch != epoch || f.DeviceID != s.store.DeviceID() || f.ID == "" {
 			return
+		}
+		if f.Method == "snapshot" && !requestedRecovery {
+			s.recoveryRefresh.Add(1)
+			s.wakeRecovery()
+			requestedRecovery = true
 		}
 		out, callErr := s.handle(f.Method, f.Body)
 		result := protocol.Frame{Type: "result", ID: f.ID, Epoch: epoch, DeviceID: s.store.DeviceID()}
@@ -160,6 +211,12 @@ func (s *Server) serveConnection(conn net.Conn) {
 func decode[T any](body []byte) (T, error) { var v T; err := json.Unmarshal(body, &v); return v, err }
 func (s *Server) handle(method string, body []byte) (any, error) {
 	switch method {
+	case "session.reconcile":
+		in, err := decode[protocol.RecoveryInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.reconcile(in)
 	case "attachment.put", "attachment.get":
 		return s.attachmentCommand(method, body)
 	case "session.rename", "session.reset-title", "session.archive":
@@ -182,12 +239,13 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 		defer s.dispatchMu.Unlock()
 		return s.store.SetWorkspaceArchived(in.WorkspaceID, in.Revision, in.Archived)
 	case "snapshot":
+		s.wakeRecovery()
 		return s.store.Snapshot()
 	case "readiness":
-		if s.runtime == nil {
+		if s.currentRuntime() == nil {
 			return s.readiness, nil
 		}
-		return s.runtime.Readiness(), nil
+		return s.currentRuntime().Readiness(), nil
 	case "session":
 		q, err := decode[SessionQuery](body)
 		if err != nil {
@@ -328,7 +386,7 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		if s.runtime == nil {
+		if s.currentRuntime(in.SessionID) == nil {
 			return nil, errors.New("runtime unavailable")
 		}
 		detail, err := s.store.Session(in.SessionID, 0, 1)
@@ -337,7 +395,7 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 		}
 		for _, req := range detail.Requests {
 			if req.ID == in.Answer.RequestID {
-				return nil, s.runtime.Respond(in.Answer)
+				return nil, s.currentRuntime(in.SessionID).Respond(in.Answer)
 			}
 		}
 		return nil, errors.New("request does not belong to this session")
@@ -351,7 +409,7 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 		}
 		s.dispatchMu.Lock()
 		defer s.dispatchMu.Unlock()
-		if s.runtime == nil {
+		if s.currentRuntime(in.SessionID) == nil {
 			return nil, errors.New("runtime unavailable")
 		}
 		detail, err := s.store.Session(in.SessionID, 0, 1)
@@ -365,7 +423,7 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 				}
 				ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 				defer cancel()
-				return nil, s.runtime.Interrupt(ctx, detail.Session, in.TurnID)
+				return nil, s.currentRuntime(in.SessionID).Interrupt(ctx, detail.Session, in.TurnID)
 			}
 		}
 		return nil, errors.New("turn is not active")
@@ -430,10 +488,10 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 	if _, err = s.attachmentInputs(in); err != nil {
 		return domain.Operation{}, err
 	}
-	if s.ctx.Err() != nil || s.runtime == nil {
+	if s.ctx.Err() != nil || s.currentRuntime() == nil {
 		return domain.Operation{}, errors.New("runtime unavailable")
 	}
-	if err = s.runtime.Validate(in.Config); err != nil {
+	if err = s.currentRuntime().Validate(in.Config); err != nil {
 		return domain.Operation{}, err
 	}
 	snapshot, err := s.store.Snapshot()
@@ -455,6 +513,9 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 	if !found {
 		return domain.Operation{}, errors.New("workspace unavailable")
 	}
+	if in.Continue && in.SessionID == "" {
+		return domain.Operation{}, errors.New("继续需要原会话标识")
+	}
 	if in.SessionID != "" {
 		d, err := s.store.Session(in.SessionID, 0, 1)
 		if err != nil {
@@ -466,10 +527,15 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 		if d.Session.Archived {
 			return domain.Operation{}, errors.New("请先恢复会话")
 		}
-		if d.Session.Status != "idle" && d.Session.Status != "completed" && d.Session.Status != "interrupted" && d.Session.Status != "failed" {
+		if d.Session.Status != "idle" && d.Session.Status != "completed" && d.Session.Status != "interrupted" && d.Session.Status != "failed" && d.Session.Status != "abandoned" {
 			return domain.Operation{}, errors.New("session is unavailable for a new turn")
 		}
-		if queueRevision == 0 {
+		if in.Continue {
+			if d.Session.ThreadID == "" || d.Session.Recovery == nil || !d.Session.Recovery.CanContinue {
+				return domain.Operation{}, errors.New("原线程尚不能继续，请重新核对")
+			}
+		}
+		if queueRevision == 0 && !in.Continue {
 			q, e := s.store.Queue(in.SessionID)
 			if e != nil {
 				return domain.Operation{}, e
@@ -478,7 +544,7 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 				return domain.Operation{}, errors.New("session has queued messages")
 			}
 		}
-		if queueRevision > 0 {
+		if queueRevision > 0 || in.Continue {
 			for _, req := range d.Requests {
 				if req.State == "pending" || req.State == "submitting" {
 					return domain.Operation{}, errors.New("session has pending requests")
@@ -523,10 +589,33 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 		return op, err
 	}
 	s.wg.Add(1)
-	go func() { defer s.wg.Done(); s.dispatch(in, op) }()
+	go func() {
+		defer s.wg.Done()
+		s.dispatchMu.Lock()
+		current, err := s.store.Operation(op.ID)
+		if err != nil || current.State != "accepted" || s.ctx.Err() != nil {
+			s.dispatchMu.Unlock()
+			return
+		}
+		ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
+		runtime, startErr := s.sessionRuntime(ctx, op.SessionID)
+		cancel()
+		if startErr != nil {
+			s.failRuntimeLaunch(op, in, startErr)
+		}
+		s.dispatchMu.Unlock()
+		if startErr == nil {
+			s.dispatch(in, op, runtime)
+		}
+	}()
 	return op, nil
 }
-func (s *Server) dispatch(in domain.Submission, op domain.Operation) {
+func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime *codex.Runtime) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	if !s.dispatchReserved(op, runtime) {
+		return
+	}
 	defer s.wakeQueue()
 	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
 	defer cancel()
@@ -540,7 +629,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation) {
 	session := detail.Session
 	var turnID string
 	if session.ThreadID == "" {
-		session.ThreadID, err = s.runtime.Create(ctx, session)
+		session.ThreadID, err = runtime.Create(ctx, session)
 		if err == nil {
 			_, err = s.store.Apply(session.ID, domain.Event{Type: "session", Session: &session})
 		}
@@ -549,7 +638,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation) {
 		bound := s.bound[session.ID]
 		s.mu.Unlock()
 		if !bound {
-			err = s.runtime.Resume(ctx, session)
+			err = runtime.Resume(ctx, session)
 		}
 	}
 	if err == nil {
@@ -558,8 +647,11 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation) {
 		s.mu.Unlock()
 		var inputs []codex.AttachmentInput
 		inputs, err = s.attachmentInputs(in)
+		if err == nil && runtime.ManagedCoverage() {
+			err = s.coverOperation(session.ID, op.ID)
+		}
 		if err == nil {
-			turnID, err = s.runtime.Submit(ctx, session, op.ID, in.Text, inputs...)
+			turnID, err = runtime.Submit(ctx, session, op.ID, in.Text, inputs...)
 		}
 	}
 	state := "confirmed"
@@ -578,6 +670,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation) {
 		session.Status = "failed"
 		if state == "indeterminate" {
 			session.Status = "unknown"
+			defer s.wakeRecovery()
 		}
 		session.Error = err.Error()
 		if _, writeErr := s.store.Apply(session.ID, domain.Event{Type: "session", Session: &session}); writeErr != nil {
@@ -613,8 +706,12 @@ func (s *Server) onEvent(e domain.Event) error {
 	if e.SessionID == "" {
 		return nil
 	}
+	s.trackRecoveryTool(e)
 	lost := e.Type == "runtime.lost"
 	if lost {
+		if err := s.guardManagedExecution(e.SessionID); err != nil {
+			return err
+		}
 		detail, err := s.store.Session(e.SessionID, 0, 1)
 		if err != nil {
 			return err
@@ -644,6 +741,7 @@ func (s *Server) onEvent(e domain.Event) error {
 	}
 	_, err := s.store.Apply(e.SessionID, e)
 	if err == nil && (e.Turn != nil || e.Type == "request.resolve") {
+		s.wakeRecovery()
 		s.wakeQueue()
 	}
 	return err
@@ -658,12 +756,28 @@ func (s *Server) Close() error {
 			conn.Close()
 		}
 		s.mu.Unlock()
-		if s.runtime != nil {
-			s.runtime.Close()
+		s.dispatchMu.Lock()
+		s.runtimeMu.RLock()
+		owned := make(map[string]*codex.Runtime, len(s.runtimes))
+		for id, r := range s.runtimes {
+			owned[id] = r
+		}
+		s.runtimeMu.RUnlock()
+		for id, r := range owned {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := s.cleanManagedExecution(ctx, id); err != nil {
+				result = errors.Join(result, err)
+			}
+			cancel()
+			r.Close()
+		}
+		if s.currentRuntime() != nil {
+			s.currentRuntime().Close()
 			os.Remove(filepath.Join(s.config.Directory, "runtime-process.json"))
 		}
+		s.dispatchMu.Unlock()
 		s.wg.Wait()
-		result = s.store.Close()
+		result = errors.Join(result, s.store.Close())
 		s.owner.Close()
 	})
 	return result

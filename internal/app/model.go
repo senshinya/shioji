@@ -213,7 +213,7 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		if in.SessionID != "" {
 			key = "session:" + in.SessionID
 		}
-		if m.Drafts[key] == in.Text {
+		if !in.Continue && m.Drafts[key] == in.Text {
 			m.Drafts[key] = ""
 		}
 		m.clearAcceptedAttachments(key, in.Attachments)
@@ -225,7 +225,7 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		delete(m.PendingDevices, op.ID)
 		m.Resolved[op.ID] = true
 		m.Error = ""
-	} else if op.State == "rejected" {
+	} else if op.State == "rejected" || op.State == "abandoned" {
 		delete(m.Pending, op.ID)
 		delete(m.PendingDevices, op.ID)
 		m.Resolved[op.ID] = true

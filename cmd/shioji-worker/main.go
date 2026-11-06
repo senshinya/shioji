@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"shioji/internal/managedexec"
 	"shioji/internal/transport"
 	"shioji/internal/worker"
 	"syscall"
@@ -19,6 +20,9 @@ func main() {
 	}
 }
 func run() error {
+	if handled, err := managedexec.ChildMain(os.Args[1:]); handled {
+		return err
+	}
 	dir, err := worker.DefaultDirectory()
 	if err != nil {
 		return err

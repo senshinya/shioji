@@ -23,6 +23,7 @@ type editBinding struct {
 }
 
 type View struct {
+	recoveries                                                                                                      map[string]*recoveryState
 	paneFocusVersion                                                                                                uint64
 	outline                                                                                                         *conversationOutline
 	parent, secondary                                                                                               *View
@@ -496,7 +497,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 							n.Column(c).Width(10).AlignItems(n.Center).AlignSelf(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Success) })
 						} else if s.Status == "completed" {
 							inlineSymbol(c, check, s.Title, n.Font{Family: "system-ui", Size: 13, Weight: 400}, 10, t.Success)
-						} else if s.Status == "interrupted" {
+						} else if s.Status == "interrupted" || s.Status == "abandoned" {
 							inlineSymbol(c, check, s.Title, n.Font{Family: "system-ui", Size: 13, Weight: 400}, 10, t.TextMuted).Label("已停止")
 						} else {
 							glyph := "Ⅱ"
@@ -1076,7 +1077,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			invalidate()
 		}
 	})
-	dock.Children(func() { v.pending(c, t, detail); v.composer(c, t, false); v.notice(c, t) })
+	dock.Children(func() { v.recovery(c, t, detail); v.pending(c, t, detail); v.composer(c, t, false); v.notice(c, t) })
 }
 
 func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
@@ -1194,6 +1195,8 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 			label = "已停止"
 		case "failed":
 			label = "执行失败"
+		case "abandoned":
+			label = "已手动结束 · 结果未确认"
 		case "unknown":
 			label = "执行状态待核实"
 		}
