@@ -5951,6 +5951,19 @@ func (_handle Element) TextColor(c Color) Element {
 	return wrapElement(_node.TextColor(c))
 }
 
+// TextRangeRects returns the window-space rectangles of a Text or RichText
+// range, in rune offsets. Read it while drawing, after layout. It does not
+// change text selection or focus; wrapped and bidi ranges may have several boxes.
+func (_handle Element) TextRangeRects(start int, end int) []Rect {
+	_node := _handle.node()
+	if _node == nil {
+		return nil
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.TextRangeRects(start, end)
+}
+
 // TextRanges styles runs of a text input's text, in the frames that call
 // it. Ranges may overlap and nest, as the attributes of an attributed
 // string do: where they do, each of Color and Weight is that of the last

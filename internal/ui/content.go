@@ -89,7 +89,8 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item) {
 	}
 	n.Column(c.Key("activity-body")).FillWidth().Gap(8).Transition(disclosureMotion(c, 160*time.Millisecond)).Children(func() {
 		if item.Text != "" {
-			n.Text(c, item.Text).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+			text := n.Text(c, item.Text).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+			v.decoratePlainFind(c, text, item, nil)
 		}
 		for i, file := range item.Files {
 			n.Column(c.Key(fmt.Sprint("file:", i))).FillWidth().Gap(6).Children(func() {

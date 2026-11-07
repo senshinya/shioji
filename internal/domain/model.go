@@ -291,6 +291,9 @@ type FileVersions struct {
 	New  string `json:"new"`
 }
 type SearchResult struct {
+	ItemID      string `json:"itemId,omitempty"`
+	MatchStart  int    `json:"matchStart,omitempty"`
+	MatchEnd    int    `json:"matchEnd,omitempty"`
 	Archived    bool   `json:"archived,omitempty"`
 	SessionID   string `json:"sessionId"`
 	WorkspaceID string `json:"workspaceId"`

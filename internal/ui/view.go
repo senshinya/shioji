@@ -25,6 +25,8 @@ type editBinding struct {
 }
 
 type View struct {
+	finds                                                                                                           map[string]*conversationFind
+	searchResultsQuery                                                                                              string
 	historyRowBounds                                                                                                map[string]n.Rect
 	historyExit                                                                                                     *historyRestartMotion
 	historyFocus                                                                                                    string
@@ -264,6 +266,19 @@ func (v *View) View(c *n.Context) {
 	v.requestGit(false)
 	if c.Shortcut(n.Cmd, n.KeyK) {
 		v.searchOpen = !v.searchOpen
+	}
+	if c.Shortcut(n.Cmd, n.KeyF) {
+		v.focusedView().openConversationFind()
+	}
+	if c.Shortcut(n.Cmd, n.KeyG) {
+		if pane := v.focusedView(); pane.findState().open {
+			pane.stepConversationFind(1)
+		}
+	}
+	if c.Shortcut(n.Cmd|n.Shift, n.KeyG) {
+		if pane := v.focusedView(); pane.findState().open {
+			pane.stepConversationFind(-1)
+		}
 	}
 	if c.Shortcut(n.Cmd, n.KeyN) {
 		v.home()
@@ -981,6 +996,7 @@ func settingRow(c *n.Context, name, value string) n.Element {
 }
 func (v *View) conversation(c *n.Context, t *n.Theme) {
 	m := v.Model
+	v.refreshConversationFind()
 	// An empty detail keeps the dock mounted through first-turn hydration.
 	// Its zero Session.ID also keeps the history-fold barrier unconsumed.
 	detail := m.Details[m.SessionID]
@@ -989,7 +1005,9 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		state = &n.ListState{FollowEnd: true}
 		v.lists[m.SessionID] = state
 	}
+	reopening := m.FoldToolHistory[m.SessionID]
 	rows := v.transcriptRows(detail.Items)
+	rows = v.revealFindTarget(rows, reopening)
 	turns := make(map[string]domain.Turn, len(detail.Turns))
 	for _, turn := range detail.Turns {
 		turns[turn.ID] = turn
@@ -1024,6 +1042,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	}
 	v.anchorHistoryRows(state, rows)
 	v.anchorSentMessage(c, state, rows)
+	v.positionFind(c, state, rows)
 	reserve := v.dockHeight
 	if reserve == 0 {
 		reserve = 108
@@ -1101,6 +1120,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	v.conversationOutline(c, t, state, rows)
 	v.returnToLatest(c, t, state)
 	n.Column(c).Absolute().Left(0).Right(8).Top(0).Height(48).Background(t.Background).Children(func() { v.toolbar(c, t) })
+	v.conversationFindBar(c, t, state.Bounds(c).W)
 	dock := n.Column(c.Key("conversation-dock")).Absolute().Left(0).Right(0).Bottom(8).PaddingX(18).AlignItems(n.Center).Gap(8).Label("会话底部面板")
 	// Native wrapping and question disclosure determine the complete dock height.
 	invalidate := c.Services().Invalidate
@@ -1134,8 +1154,11 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 			v.Model.Collapsed["tool:"+item.ID] = !v.Model.Collapsed["tool:"+item.ID]
 		}
 		if !v.Model.Collapsed["tool:"+item.ID] && item.Text != "" {
-			n.Scroll(c.Key("output:" + item.ID)).FillWidth().MaxHeight(160).Children(func() {
-				n.Text(c, item.Text).FillWidth().Padding(8, 10).Background(codeSurface(t)).Radius(6).Font(v.Model.Preferences.CodeFont).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Selectable()
+			output := n.Scroll(c.Key("output:" + item.ID)).FillWidth().MaxHeight(160)
+			scroll := n.Local(output, "output-scroll", func() n.ScrollState { return n.ScrollState{} })
+			output.TrackScroll(scroll).Children(func() {
+				text := n.Text(c, item.Text).FillWidth().Padding(8, 10).Background(codeSurface(t)).Radius(6).Font(v.Model.Preferences.CodeFont).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Selectable()
+				v.decoratePlainFind(c, text, item, scroll)
 			})
 		}
 	case "activity":

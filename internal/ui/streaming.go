@@ -110,6 +110,7 @@ func (v *View) requestSourceLabel(c *n.Context, t *n.Theme, item domain.Item, la
 }
 
 func (v *View) assistantReply(c *n.Context, item domain.Item) {
+	v.md.DecorateRange = v.findDecoration(item, c.Theme().Dark)
 	root := n.Column(c.Key(item.ID)).FillWidth()
 	stream := v.replyStreams[item.ID]
 	// Receive all deltas normally, but let the preceding receipt finish its

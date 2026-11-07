@@ -186,6 +186,7 @@ type ListState struct {
 	pinKey            any
 	pinY              float64
 	pinStart, pinSent bool
+	pinAnimated       bool
 	pinTarget         float64
 	pinAnimation      Animation
 	pinGlide          channel
@@ -336,7 +337,7 @@ func (s *ListState) ScrollToEnd() {
 // collapsing content. User scrolling or a scroll request releases the anchor.
 func (s *ListState) KeepRow(row int, y float32) {
 	s.pinned, s.pinRow, s.pinY, s.pinKey = true, row, float64(y), nil
-	s.pinStart, s.pinSent, s.pinGlide = false, false, channel{}
+	s.pinStart, s.pinSent, s.pinAnimated, s.pinGlide = false, false, false, channel{}
 	s.followPaused = false
 	if s.Key != nil {
 		s.pinKey = s.Key(row)
@@ -350,6 +351,15 @@ func (s *ListState) KeepRow(row int, y float32) {
 func (s *ListState) AnchorRow(row int, y float32, animation Animation) {
 	s.KeepRow(row, y)
 	s.pinStart, s.pinSent, s.pinTarget, s.pinAnimation = true, true, float64(y), animation
+	s.pinAnimated = true
+}
+
+// ScrollToRow glides a reading anchor to y DIPs below the viewport's top.
+// It keeps that position through content updates, without resuming end following.
+// Manual scrolling or another scroll request interrupts it as for KeepRow.
+func (s *ListState) ScrollToRow(row int, y float32, animation Animation) {
+	s.KeepRow(row, y)
+	s.pinStart, s.pinAnimated, s.pinTarget, s.pinAnimation = true, true, float64(y), animation
 }
 
 // ReleaseRow resumes ordinary list anchoring without moving to another row.
@@ -717,6 +727,15 @@ func (s *ListState) plan(e *node, n int) (a, first, last int) {
 	switch r := s.req; {
 	case s.pinned:
 		a, y = max(0, min(s.pinRow, n-1)), s.pinY
+		if s.pinAnimated && !s.pinSent {
+			offset := s.wroteY
+			if !s.pinStart {
+				glide := s.pinGlide
+				glide.advance(e.c.now)
+				offset = s.padTop + hs.top(a, gap) - glide.value
+			}
+			a, y = s.anchorAt(offset)
+		}
 	case r.set && r.offset:
 		a, y = s.anchorAt(r.y)
 		if r.hint {
@@ -1461,11 +1480,13 @@ func (e *node) layoutList(w, h float32) {
 	case s.pinned:
 		a = max(0, min(s.pinRow, n-1))
 		ensure(a)
-		if s.pinSent {
+		if s.pinAnimated {
 			target := min(s.pinTarget, padTop+hs.top(a, gap))
 			if s.pinStart {
 				from := padTop + hs.top(a, gap) - s.wroteY
-				from = min(max(from, target-H), target+H)
+				if s.pinSent {
+					from = min(max(from, target-H), target+H)
+				}
 				s.pinGlide = channel{value: from, target: from, at: e.c.now}
 				if e.c.rt.preferences().ReduceMotion {
 					s.pinGlide.value, s.pinGlide.target = target, target
@@ -1484,7 +1505,7 @@ func (e *node) layoutList(w, h float32) {
 			}
 			// Natural content, excluding the temporary reading space, has
 			// reached the viewport bottom. Resume ordinary bottom following.
-			if !s.pinGlide.moving && !s.pinGlide.pending && padTop+padBottom+hs.top(n, gap)-gap >= max(0, padTop+hs.top(a, gap)-target)+H {
+			if s.pinSent && !s.pinGlide.moving && !s.pinGlide.pending && padTop+padBottom+hs.top(n, gap)-gap >= max(0, padTop+hs.top(a, gap)-target)+H {
 				s.pinned, s.following = false, s.FollowEnd
 				a = n - 1
 				ensure(a)
@@ -1492,6 +1513,12 @@ func (e *node) layoutList(w, h float32) {
 			}
 		}
 		ya = s.pinY
+		if s.pinAnimated && !s.pinSent {
+			// Keep only the viewport along a reading glide mounted, even
+			// when its destination is many screens away.
+			a, ya = s.anchorAt(padTop + hs.top(a, gap) - ya)
+			ensure(a)
+		}
 	case req.end || s.following && !req.set:
 		a = n - 1
 		ensure(a)

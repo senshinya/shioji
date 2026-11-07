@@ -92,7 +92,8 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 			}
 			bubble := n.Column(c.Key("user-surface:"+item.ID)).MaxWidth(676).Padding(12, 16).Gap(8).Background(userBubble(t)).Radius(14).Label("用户消息气泡").Children(func() {
 				if item.Text != "" {
-					n.Text(c, item.Text).FontSize(14).FixedLineHeight(24).Selectable()
+					text := n.Text(c, item.Text).FontSize(14).FixedLineHeight(24).Selectable()
+					v.decoratePlainFind(c, text, item, nil)
 				}
 				v.historyAttachments(c, t, item)
 			})

@@ -15,6 +15,9 @@ import (
 // the app's state and give it to every view of a kind, as the messages of
 // a chat.
 type Options struct {
+	// DecorateRange paints a source byte range behind the shaped text, without
+	// altering its formatting, selection or layout. Nil leaves it undecorated.
+	DecorateRange *RangeDecoration
 	// Theme is the look: DefaultTheme of the window's theme when nil,
 	// whose values those the theme leaves zero take.
 	Theme *Theme
@@ -448,6 +451,7 @@ func (st *viewState) paragraph(c *ui.Context, i int, base spanStyle) ui.Element 
 		})
 	}
 	st.note(el.ID(), i, -1)
+	st.decorate(c, el, i, -1, p.runes)
 	return el
 }
 

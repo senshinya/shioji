@@ -31,6 +31,7 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 						return
 					}
 					json.Unmarshal(b, &v.searchResults)
+					v.searchResultsQuery = query
 				}})
 				if accepted {
 					v.searchSent = query
@@ -84,6 +85,14 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 					v.devices = false
 					v.searchOpen = false
 					v.branchOpen = false
+					if r.ItemID != "" {
+						v.splitRoot().prepareSecondary()
+						pane := v.focusedView()
+						s := pane.findState()
+						s.open, s.focus, s.transient = false, false, true
+						s.query, s.pending, s.target = v.searchResultsQuery, &r, findTarget{}
+						pane.focusComposer = true
+					}
 				}
 			}).FillWidth().Height(min(360, float32(len(results))*74))
 		})

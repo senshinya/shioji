@@ -173,6 +173,9 @@ func (b *CodeBlockView) Body(c *ui.Context) ui.Element {
 					el.NoWrap()
 				}
 				st.note(el.ID(), b.Index, k*chunkLines)
+				if st.o.DecorateRange != nil {
+					st.decorate(c, el, b.Index, k*chunkLines, spanRunes(ch.spans))
+				}
 			}
 		})
 	})
