@@ -99,17 +99,16 @@ type View struct {
 	lists                                                                                                           map[string]*n.ListState
 	nav                                                                                                             n.ListState
 	md                                                                                                              markdown.Options
-	runOpen, permissionOpen                                                                                         bool
-	runPage                                                                                                         string
+	permissionOpen                                                                                                  bool
+	runMenu                                                                                                         runMenuPhase
 	devices                                                                                                         bool
 	selected                                                                                                        string
 	selectedDevice                                                                                                  string
 	deviceSelected                                                                                                  string
 	deviceList                                                                                                      bool
 	deviceSearch                                                                                                    string
-	sshOpen                                                                                                         bool
+	sshCheck                                                                                                        sshCheckPhase
 	sshName, sshTarget, sshPort, sshError, sshRequest                                                               string
-	checkingSSH                                                                                                     bool
 	remoteWorkspaceOpen                                                                                             bool
 	remoteWorkspaceConnection, remoteWorkspaceName, remoteWorkspacePath, remoteWorkspaceExtra, remoteWorkspaceError string
 	remoteWorkspaceRequest                                                                                          string
@@ -124,8 +123,7 @@ type View struct {
 	branchSearch                                                                                                    string
 	branchList                                                                                                      n.ListState
 	switchingBranch                                                                                                 bool
-	gitLoaded                                                                                                       map[string]string
-	gitPending                                                                                                      map[string]bool
+	gitLoads                                                                                                        map[string]*gitLoadState
 	resizingInspector                                                                                               bool
 	changes                                                                                                         map[string]*changesState
 	menuOpen                                                                                                        map[string]bool
@@ -271,12 +269,12 @@ func (v *View) View(c *n.Context) {
 		v.focusedView().openConversationFind()
 	}
 	if c.Shortcut(n.Cmd, n.KeyG) {
-		if pane := v.focusedView(); pane.findState().open {
+		if pane := v.focusedView(); pane.findState().mode == findLocal {
 			pane.stepConversationFind(1)
 		}
 	}
 	if c.Shortcut(n.Cmd|n.Shift, n.KeyG) {
-		if pane := v.focusedView(); pane.findState().open {
+		if pane := v.focusedView(); pane.findState().mode == findLocal {
 			pane.stepConversationFind(-1)
 		}
 	}
@@ -380,7 +378,7 @@ func (v *View) home() {
 	v.Model.SessionID = ""
 	v.Model.FocusSecondary = false
 	v.devices = false
-	v.runOpen = false
+	v.runMenu = runMenuClosed
 	v.permissionOpen = false
 	v.branchOpen = false
 	v.searchOpen = false
@@ -519,7 +517,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 					n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
 						if v.pendingCount(s.ID) > 0 {
 							n.Column(c).Width(10).AlignItems(n.Center).AlignSelf(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Warning) })
-						} else if s.Status == "running" || s.Status == "starting" || finishingOutput {
+						} else if s.Status.Active() || finishingOutput {
 							n.Column(c).Width(10).AlignItems(n.Center).AlignSelf(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Success) })
 						} else if s.Status == "completed" {
 							inlineSymbol(c, check, s.Title, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 10, t.Success)
@@ -587,7 +585,7 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		} else if v.devices {
 			n.Text(c, "设备").FontSize(13).Grow(1)
 			add := iconButton(c, plus, "添加设备")
-			v.choiceMenu(c, t, "add-device", add, []menuChoice{{id: "ssh", name: "直接 SSH", choose: func() { v.sshOpen = true; v.sshError = "" }}, {id: "tailnet", name: "从 Tailnet 添加", disabled: true}})
+			v.choiceMenu(c, t, "add-device", add, []menuChoice{{id: "ssh", name: "直接 SSH", choose: func() { v.sshCheck = v.sshCheck.show(); v.sshError = "" }}, {id: "tailnet", name: "从 Tailnet 添加", disabled: true}})
 			return
 		} else if m.SessionID != "" {
 			heading := n.Row(c.Key("session-heading:" + m.SessionID)).Grow(1).MinWidth(0).Gap(6).AlignItems(n.Center).Label("会话名称")
@@ -623,7 +621,7 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		if !m.Connected {
 			status = "未连接"
 		}
-		v.choiceMenu(c, t, "current-device", device, []menuChoice{{id: "connectivity", name: status, disabled: true}, {id: "runtime", name: "Codex · " + m.Readiness.State, disabled: true}, {id: "details", name: "设备详情", choose: func() { v.deviceSelected = m.ConnectionID(); v.deviceList = false; v.devices = true }}})
+		v.choiceMenu(c, t, "current-device", device, []menuChoice{{id: "connectivity", name: status, disabled: true}, {id: "runtime", name: "Codex · " + string(m.Readiness.State), disabled: true}, {id: "details", name: "设备详情", choose: func() { v.deviceSelected = m.ConnectionID(); v.deviceList = false; v.devices = true }}})
 		if m.SessionID != "" && !v.devices {
 			label := "展开更改侧栏"
 			if m.Inspectors[m.SessionID] {
@@ -703,7 +701,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	running := false
 	for _, s := range m.Snapshot.Sessions {
 		if s.ID == m.SessionID {
-			running = s.Status == "running" || s.Status == "starting"
+			running = s.Status.Active()
 		}
 	}
 	bg := t.Background
@@ -917,17 +915,21 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 		inlineIconText(c, openAIBlossom, summary, n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}, 20, 3, t.TextMuted)
 	})
 	if trigger.Clicked() {
-		v.runOpen = !v.runOpen
-		v.runPage = ""
+		if v.runMenu == runMenuClosed {
+			v.runMenu = runMenuMain
+		} else {
+			v.runMenu = runMenuClosed
+		}
 	}
-	popover(c.Key("run-panel:"+key), trigger, &v.runOpen, func(panel n.Element) {
+	open := v.runMenu != runMenuClosed
+	popover(c.Key("run-panel:"+key), trigger, &open, func(panel n.Element) {
 		panel.Width(240).Padding(4).Radius(9).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
-			if v.runPage != "" {
+			if v.runMenu != runMenuMain {
 				if ghost(c, "‹  返回").FillWidth().TextAlign(n.Start).Clicked() {
-					v.runPage = ""
+					v.runMenu = runMenuMain
 				}
 				n.Scroll(c).MaxHeight(300).FillWidth().Children(func() {
-					if v.runPage == "model" {
+					if v.runMenu == runMenuModels {
 						for _, model := range v.Model.Readiness.Models {
 							label := model.Name
 							if label == "" {
@@ -937,7 +939,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 								cfg.Model = model.ID
 								v.Model.Configs[key] = cfg
 								v.Model.Config()
-								v.runPage = ""
+								v.runMenu = runMenuMain
 							}
 						}
 					} else {
@@ -947,7 +949,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 									if ghost(c, effort).FillWidth().TextAlign(n.Start).Clicked() {
 										cfg.Effort = effort
 										v.Model.Configs[key] = cfg
-										v.runPage = ""
+										v.runMenu = runMenuMain
 									}
 								}
 							}
@@ -958,10 +960,10 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 			}
 			n.Row(c).Height(28).PaddingX(8).AlignItems(n.Center).Children(func() { n.Text(c, "Agent").Grow(1); n.Text(c, "Codex") })
 			if settingRow(c, "模型", cfg.Model+" ›").Clicked() {
-				v.runPage = "model"
+				v.runMenu = runMenuModels
 			}
 			if settingRow(c, "推理强度", cfg.Effort+" ›").Clicked() {
-				v.runPage = "effort"
+				v.runMenu = runMenuEfforts
 			}
 			n.Column(c).Height(1).FillWidth().Background(t.Border).MarginY(4)
 			plan := cfg.Plan
@@ -984,6 +986,9 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 			}
 		})
 	})
+	if !open {
+		v.runMenu = runMenuClosed
+	}
 }
 func settingRow(c *n.Context, name, value string) n.Element {
 	return control(c, 5).FillWidth().Height(28).PaddingX(8).Radius(5).Label(name).Children(func() {
@@ -1214,7 +1219,7 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 		return
 	}
 	n.Row(c).Label("回复信息").FillWidth().Wrap().Gap(12).MinHeight(24).AlignItems(n.Baseline).Children(func() {
-		label := turn.Status
+		label := string(turn.Status)
 		switch turn.Status {
 		case "running":
 			label = "进行中"
@@ -1320,7 +1325,7 @@ func count(value *int64) string {
 func (v *View) pendingCount(session string) int {
 	count := 0
 	for _, r := range v.Model.Details[session].Requests {
-		if r.State == "pending" || r.State == "submitting" {
+		if r.State.AwaitingResolution() {
 			count++
 		}
 	}
@@ -1353,7 +1358,7 @@ func (v *View) sendMessage(steer bool) {
 		return
 	}
 	key, _ := v.gitQuery()
-	if v.gitPending[key] && !v.Model.Active() && len(v.Model.Queue().Items) == 0 {
+	if v.gitLoading(key) && !v.Model.Active() && len(v.Model.Queue().Items) == 0 {
 		v.Model.Error = "正在核对设备上的分支，请稍后提交"
 		return
 	}

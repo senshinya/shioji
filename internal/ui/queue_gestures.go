@@ -11,8 +11,16 @@ type queuedRowDrag struct {
 	revision           int64
 	grabY              float32
 	to                 int
-	moving, saving     bool
+	phase              queueDragPhase
 }
+
+type queueDragPhase uint8
+
+const (
+	queueDragArmed queueDragPhase = iota
+	queueDragging
+	queueDragSaving
+)
 
 func (v *View) editQueued(id string) {
 	if err := v.Model.EditQueued(id); err != nil {
@@ -29,10 +37,10 @@ func (v *View) previewQueueRows(c *n.Context, list n.Element, q domain.QueueStat
 	dropped, hasDrop := n.Drop[queuedRowDrag](list)
 	_, y, over := list.PointerPosition()
 	d := v.queueDrag
-	if d == nil || d.session != q.SessionID || d.epoch != v.Model.ConnectionEpoch || d.revision != q.Revision || (!d.moving && !d.saving) {
+	if d == nil || d.session != q.SessionID || d.epoch != v.Model.ConnectionEpoch || d.revision != q.Revision || d.phase == queueDragArmed {
 		return q.Items
 	}
-	if d.moving {
+	if d.phase == queueDragging {
 		if over {
 			d.to = max(0, min(len(q.Items)-1, int((y-d.grabY+16)/32)))
 		}
@@ -56,8 +64,7 @@ func (v *View) previewQueueRows(c *n.Context, list n.Element, q domain.QueueStat
 			}
 			index++
 		}
-		d.saving = true
-		d.moving = false
+		d.phase = queueDragSaving
 		v.queueCommand("queue.reorder", protocol.QueueInput{SessionID: q.SessionID, ID: d.id, BeforeID: before, Revision: d.revision}, nil)
 	}
 	if from < 0 || from == d.to {
@@ -80,17 +87,20 @@ func (v *View) queueRowGestures(c *n.Context, row n.Element, q domain.QueueState
 	m := v.Model
 	pressed, dragging := row.Pressed(), row.Dragging()
 	d := v.queueDrag
-	if d != nil && d.session == q.SessionID && d.id == item.ID && !d.saving && d.moving != dragging {
-		d.moving = dragging
+	if d != nil && d.session == q.SessionID && d.id == item.ID && d.phase != queueDragSaving && (d.phase == queueDragging) != dragging {
+		d.phase = queueDragArmed
+		if dragging {
+			d.phase = queueDragging
+		}
 		c.AnimationFrame()
 	}
 	unlocked := m.Connected && !v.queueBusy[q.SessionID] && m.QueueEdits[q.SessionID].ID == ""
-	if row.DoubleClicked() && unlocked && !m.HasPendingInput() && item.State != "dispatching" && item.State != "unknown" {
+	if row.DoubleClicked() && unlocked && !m.HasPendingInput() && !item.State.Reserved() {
 		v.editQueued(item.ID)
 	}
 	reorder := unlocked && len(q.Items) > 1
 	for _, queued := range q.Items {
-		if queued.State == "dispatching" || queued.State == "unknown" {
+		if queued.State.Reserved() {
 			reorder = false
 		}
 	}

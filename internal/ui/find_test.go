@@ -38,7 +38,7 @@ func TestGlobalSearchLocatesTheExactMessageAfterHistoryArrives(t *testing.T) {
 	ui.Advance(900 * time.Millisecond)
 	text, ok := ui.Find("Target needle")
 	if !ok || text.Y < 95 || text.Y > 200 || ui.HasText("在会话中查找") || !ui.Focused("消息输入") || m.Drafts["session:s"] != "普通草稿保留" {
-		t.Fatal("late history did not locate the actual match", text, v.findState().target, v.findState().geometry, v.findState().positioned, v.historyRowBounds["target"])
+		t.Fatal("late history did not locate the actual match", text, v.findState().target, v.findState().geometry, v.findState().placement, v.historyRowBounds["target"])
 	}
 	ui.Key(0, n.KeyEscape)
 	ui.Advance(200 * time.Millisecond)
@@ -179,7 +179,7 @@ func TestFindTrimsQueryConsistentlyForCountingAndLocating(t *testing.T) {
 	ui.Key(n.Cmd, n.KeyF)
 	ui.Type(" needle ")
 	ui.Advance(600 * time.Millisecond)
-	if !ui.HasText("1/1") || v.findState().target.id != "space" || !v.findState().positioned {
+	if !ui.HasText("1/1") || v.findState().target.id != "space" || v.findState().placement != findPositioned {
 		t.Fatal("counted a trimmed query without locating it", v.findState().target)
 	}
 }
@@ -195,7 +195,7 @@ func TestFindRevealsDeepCommandOutputInsideItsScrollport(t *testing.T) {
 	ui.Key(n.Cmd, n.KeyF)
 	ui.Type("needle")
 	ui.Advance(1200 * time.Millisecond)
-	if !v.findState().positioned || v.findState().geometry.H == 0 {
+	if v.findState().placement != findPositioned || v.findState().geometry.H == 0 {
 		t.Fatal("command output did not expose match geometry", v.findState().target)
 	}
 	count := 0

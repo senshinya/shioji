@@ -17,7 +17,7 @@ func TestFileDiffReplacesListInsideSingleInspector(t *testing.T) {
 	m.Inspectors["s"] = true
 	v := New(m, app.NewController(""), "")
 	state := v.changesFor("s")
-	state.Loaded = true
+	state.load = changesLoaded
 	state.Updated = time.Now()
 	state.Files = []domain.ChangedFile{{Path: "main.go"}}
 	ui := n.NewTester(v.View, 1440, 900)
@@ -69,7 +69,7 @@ func TestFileDiffSlidesFromRightWithoutMovingInspector(t *testing.T) {
 		m.InspectorWidth = 500
 		v := New(m, nil, "")
 		state := v.changesFor("s")
-		state.Loaded = true
+		state.load = changesLoaded
 		state.Files = []domain.ChangedFile{{Path: "main.go"}, {Path: "README.md"}}
 		state.Versions = domain.FileVersions{Path: "file.go", Old: "old\n", New: "new\n"}
 		state.Diff = editor.DiffState{Old: editor.NewBuffer("old\n"), New: editor.NewBuffer("new\n"), Layout: editor.DiffUnified}
@@ -79,7 +79,7 @@ func TestFileDiffSlidesFromRightWithoutMovingInspector(t *testing.T) {
 		refresh, _ := ui.Find("刷新更改")
 		close, _ := ui.Find("关闭更改侧栏")
 		list, _ := ui.Find("查看文件:main.go")
-		state.Path = "file.go"
+		state.selectFile("file.go")
 		ui.Frame()
 		ui.Advance(80 * time.Millisecond)
 		diff, ok := ui.Find("原生文件差异")
@@ -180,7 +180,7 @@ func TestInspectorResizeBoundsInListAndFileViews(t *testing.T) {
 			m.Inspectors["s"] = true
 			v := New(m, nil, "")
 			if file {
-				v.changesFor("s").Path = "main.go"
+				v.changesFor("s").selectFile("main.go")
 			}
 			ui := n.NewTester(v.View, width, 900)
 			grip, _ := ui.Find("调整右侧栏宽度")

@@ -16,7 +16,6 @@ type pending struct {
 	request     domain.PendingRequest
 	sourceID    json.RawMessage
 	thread      string
-	responded   bool
 	decisions   map[string]json.RawMessage
 	permissions json.RawMessage
 }
@@ -28,12 +27,25 @@ type Normalizer struct {
 	items          map[string]domain.Item
 	turns          map[string]domain.Turn
 	totals         map[string]wire.Counters
-	baselines      map[string]wire.Counters
-	usageObserved  map[string]bool
+	usage          map[string]turnUsage
+}
+
+// Missing usage and a reported zero are different observations. Baseline
+// capture does not erase a usage event received before turn/started.
+type usagePhase uint8
+
+const (
+	usageUnobserved usagePhase = iota
+	usageObserved
+)
+
+type turnUsage struct {
+	baseline wire.Counters
+	phase    usagePhase
 }
 
 func NewNormalizer() *Normalizer {
-	return &Normalizer{usageObserved: map[string]bool{}, sessions: map[string]string{}, requests: map[string]*pending{}, sourceRequests: map[string]string{}, items: map[string]domain.Item{}, turns: map[string]domain.Turn{}, totals: map[string]wire.Counters{}, baselines: map[string]wire.Counters{}}
+	return &Normalizer{sessions: map[string]string{}, requests: map[string]*pending{}, sourceRequests: map[string]string{}, items: map[string]domain.Item{}, turns: map[string]domain.Turn{}, totals: map[string]wire.Counters{}, usage: map[string]turnUsage{}}
 }
 func (n *Normalizer) Bind(thread, session string, fresh bool) {
 	n.mu.Lock()
@@ -150,16 +162,18 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		t.StartedAt = stamp(p.Turn.StartedAt)
 		t.CompletedAt = stamp(p.Turn.CompletedAt)
 		t.DurationMS = p.Turn.DurationMS
-		t.Status = p.Turn.Status
+		t.Status = domain.ExecutionState(p.Turn.Status)
 		if t.Status == "inProgress" {
 			t.Status = "running"
-			n.baselines[t.ID] = n.totals[p.ThreadID]
+			usage := n.usage[t.ID]
+			usage.baseline = n.totals[p.ThreadID]
+			n.usage[t.ID] = usage
 		}
 		if p.Turn.Error != nil {
 			t.Error = bounded(p.Turn.Error.Message)
 		}
-		if m.Method == "turn/completed" && n.usageObserved[p.Turn.ID] {
-			base := n.baselines[t.ID]
+		if m.Method == "turn/completed" && n.usage[p.Turn.ID].phase == usageObserved {
+			base := n.usage[t.ID].baseline
 			total := n.totals[p.ThreadID]
 			t.InputTokens = difference(total.Input, base.Input)
 			t.OutputTokens = difference(total.Output, base.Output)
@@ -171,7 +185,9 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		return emit(event)
 	case "thread/tokenUsage/updated":
 		n.totals[p.ThreadID] = p.TokenUsage.Total
-		n.usageObserved[p.TurnID] = true
+		usage := n.usage[p.TurnID]
+		usage.phase = usageObserved
+		n.usage[p.TurnID] = usage
 		return nil, nil, nil
 	case "item/started", "item/completed":
 		if p.Item.Type == "userMessage" {
@@ -238,10 +254,10 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 			return nil, nil, nil
 		}
 		r := pending.request
-		if r.State != "pending" && r.State != "submitting" {
+		if !r.State.AwaitingResolution() {
 			return nil, nil, nil
 		}
-		if pending.responded {
+		if r.State == domain.RequestSubmitting {
 			r.State = "answered"
 		} else {
 			r.State = "resolved"
@@ -276,7 +292,7 @@ func (n *Normalizer) Response(answer domain.Answer) ([]byte, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	p := n.requests[answer.RequestID]
-	if p == nil || p.request.State != "pending" || p.responded || answer.Revision != p.request.Revision {
+	if p == nil || p.request.State != "pending" || answer.Revision != p.request.Revision {
 		return nil, errors.New("request no longer pending or revision conflict")
 	}
 	var result any
@@ -361,7 +377,6 @@ func (n *Normalizer) Response(answer domain.Answer) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	p.responded = true
 	p.request.State = "submitting"
 	p.request.Receipt = requestReceipt(p.request, answer)
 	return out, nil
@@ -380,7 +395,7 @@ func (n *Normalizer) Invalidate() []domain.Event {
 	defer n.mu.Unlock()
 	out := []domain.Event{}
 	for _, p := range n.requests {
-		if p.request.State == "pending" || p.request.State == "submitting" {
+		if p.request.State.AwaitingResolution() {
 			r := p.request
 			r.State = "invalidated"
 			r.Revision++

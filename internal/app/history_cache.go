@@ -92,7 +92,7 @@ func historyBytes(d domain.SessionDetail) int {
 func pendingHistoryRequests(requests []domain.PendingRequest) []domain.PendingRequest {
 	var pending []domain.PendingRequest
 	for _, r := range requests {
-		if r.State == "pending" || r.State == "submitting" {
+		if r.State.AwaitingResolution() {
 			pending = append(pending, r)
 		}
 	}

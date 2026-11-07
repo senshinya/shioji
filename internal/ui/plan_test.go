@@ -16,7 +16,7 @@ func TestTaskDockStaysBelowDiffDuringFileNavigation(t *testing.T) {
 	d.Plan = &domain.Plan{TurnID: "t", Steps: []domain.PlanStep{{Text: "接入任务事件", Status: "running"}}}
 	m.Details["s"] = d
 	v := New(m, nil, "")
-	v.changesFor("s").Path = "main.go"
+	v.changesFor("s").selectFile("main.go")
 	ui := n.NewTester(v.View, 1440, 900)
 	panel, _ := ui.Find("更改侧栏")
 	tasks, ok := ui.Find("任务面板")

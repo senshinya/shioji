@@ -27,7 +27,50 @@ const queueArrivalDuration = 360 * time.Millisecond
 type queuedArrivalMotion struct {
 	session, epoch string
 	started        time.Time
-	ready, seen    bool
+	phase          queueArrivalPhase
+}
+
+type queueArrivalPhase uint8
+
+const (
+	queueAwaitingBoth queueArrivalPhase = iota
+	queueAwaitingReceipt
+	queueAwaitingRow
+	queueArriving
+)
+
+func newQueuedArrival(accepted bool) queuedArrivalMotion {
+	a := queuedArrivalMotion{}
+	if accepted {
+		a.phase = queueAwaitingRow
+	}
+	return a
+}
+func (a *queuedArrivalMotion) accepted() bool {
+	return a.phase == queueAwaitingRow || a.phase == queueArriving
+}
+func (a *queuedArrivalMotion) observe(receipt, row bool, now time.Time) {
+	switch a.phase {
+	case queueAwaitingBoth:
+		if receipt && row {
+			a.phase = queueArriving
+		} else if receipt {
+			a.phase = queueAwaitingRow
+		} else if row {
+			a.phase = queueAwaitingReceipt
+		}
+	case queueAwaitingReceipt:
+		if receipt {
+			a.phase = queueArriving
+		}
+	case queueAwaitingRow:
+		if row {
+			a.phase = queueArriving
+		}
+	}
+	if a.phase == queueArriving && a.started.IsZero() {
+		a.started = now
+	}
 }
 
 func (v *View) beginQueueArrival(id string, ready bool) *queuedArrivalMotion {
@@ -37,7 +80,9 @@ func (v *View) beginQueueArrival(id string, ready bool) *queuedArrivalMotion {
 	if v.queueArrivals == nil {
 		v.queueArrivals = map[string]*queuedArrivalMotion{}
 	}
-	a := &queuedArrivalMotion{session: v.Model.SessionID, epoch: v.Model.ConnectionEpoch, ready: ready}
+	arrival := newQueuedArrival(ready)
+	a := &arrival
+	a.session, a.epoch = v.Model.SessionID, v.Model.ConnectionEpoch
 	v.queueArrivals[id] = a
 	return a
 }
@@ -49,7 +94,7 @@ func (v *View) queueArrivalProgress(c *n.Context, id string) float32 {
 	if a == nil {
 		return 1
 	}
-	if !a.ready || a.started.IsZero() {
+	if a.phase != queueArriving {
 		return 0
 	}
 	p := min(max(float32(c.Now().Sub(a.started))/float32(queueArrivalDuration), 0), 1)
@@ -91,17 +136,16 @@ func (v *View) syncQueuedMotions() {
 			delete(v.queueArrivals, id)
 			continue
 		}
-		if m.Resolved[id] {
-			a.ready = true
-		}
+		seen := false
 		for _, item := range m.Queue().Items {
 			if item.ID == id {
-				a.seen = true
+				seen = true
 				break
 			}
 		}
-		if a.ready && a.seen && a.started.IsZero() {
-			a.started = v.frameTime
+		previous := a.phase
+		a.observe(m.Resolved[id], seen, v.frameTime)
+		if previous != queueArriving && a.phase == queueArriving {
 			v.composerHeightUntil = v.frameTime.Add(queueArrivalDuration)
 		}
 	}
@@ -172,7 +216,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 		rowHeight += 32 * v.queueArrivalProgress(c, item.ID)
 		a := v.queueArrivals[item.ID]
 		arriving = arriving || a != nil
-		accepted = accepted || a == nil || a.ready
+		accepted = accepted || a == nil || a.accepted()
 	}
 	targetPresence := float32(0)
 	if present && accepted {
@@ -298,7 +342,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 										}
 									})
 									if item.State != "" {
-										n.Text(c, map[string]string{"dispatching": "发送中", "failed": "未发送", "unknown": "待核实"}[item.State]).FontSize(11).TextColor(subtle(t))
+										n.Text(c, map[string]string{"dispatching": "发送中", "failed": "未发送", "unknown": "待核实"}[string(item.State)]).FontSize(11).TextColor(subtle(t))
 									}
 									visible := float32(0)
 									width, _ := c.Size()
@@ -306,7 +350,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 										visible = 1
 									}
 									n.Row(c).Gap(1).Opacity(row.AnimateTo("queue-actions", visible, motionAnimation(c, 120*time.Millisecond))).Children(func() {
-										locked := !m.Connected || v.queueBusy[sid] || item.State == "dispatching" || item.State == "unknown"
+										locked := !m.Connected || v.queueBusy[sid] || item.State.Reserved()
 										for _, action := range []struct {
 											label    string
 											icon     *n.SVG
@@ -334,7 +378,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 						end := n.Column(c.Key("queue-end")).Height(4).Shrink(0)
 						if m.QueueExpanded[sid] {
 							for _, item := range q.Items {
-								if a := v.queueArrivals[item.ID]; a != nil && a.ready {
+								if a := v.queueArrivals[item.ID]; a != nil && a.accepted() {
 									end.ScrollIntoView()
 									break
 								}
@@ -345,7 +389,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 			})
 		})
 	})
-	if !held && v.queueDrag != nil && !v.queueDrag.saving {
+	if !held && v.queueDrag != nil && v.queueDrag.phase != queueDragSaving {
 		v.queueDrag = nil
 		c.AnimationFrame()
 	}

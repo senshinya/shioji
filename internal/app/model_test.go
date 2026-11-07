@@ -36,7 +36,7 @@ func TestRejectedAndUnknownSubmissionsRetainDraft(t *testing.T) {
 		m := model()
 		m.Drafts["home"] = "hello"
 		in, _ := m.BeginSubmission()
-		m.Accepted(in, domain.Operation{ID: in.OperationID, SessionID: "s", State: state})
+		m.Accepted(in, domain.Operation{ID: in.OperationID, SessionID: "s", State: domain.OperationState(state)})
 		if m.Drafts["home"] != "hello" {
 			t.Fatal("lost draft on " + state)
 		}

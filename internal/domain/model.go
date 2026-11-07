@@ -57,7 +57,7 @@ type Session struct {
 	ThreadID       string           `json:"threadId,omitempty"` // Opaque source reference.
 	Context        LaunchContext    `json:"context"`
 	Config         RunConfig        `json:"config"`
-	Status         string           `json:"status"`
+	Status         ExecutionState   `json:"status"`
 	GitHead        string           `json:"gitHead,omitempty"`
 	GitBranch      string           `json:"gitBranch,omitempty"`
 	ContextChanged bool             `json:"contextChanged,omitempty"`
@@ -84,16 +84,16 @@ type QueueState struct {
 	Items     []QueueItem `json:"items"`
 }
 type QueueItem struct {
-	State string     `json:"state,omitempty"`
-	ID    string     `json:"id"`
-	Input Submission `json:"input"`
+	State QueueItemState `json:"state,omitempty"`
+	ID    string         `json:"id"`
+	Input Submission     `json:"input"`
 }
 type Operation struct {
-	ID        string `json:"id"`
-	SessionID string `json:"sessionId"`
-	State     string `json:"state"`
-	Digest    string `json:"-"`
-	Error     string `json:"error,omitempty"`
+	ID        string         `json:"id"`
+	SessionID string         `json:"sessionId"`
+	State     OperationState `json:"state"`
+	Digest    string         `json:"-"`
+	Error     string         `json:"error,omitempty"`
 }
 type Item struct {
 	SentAt       *time.Time      `json:"sentAt,omitempty"`
@@ -156,7 +156,7 @@ type PendingRequest struct {
 	Title     string          `json:"title"`
 	Text      string          `json:"text"`
 	Questions []Question      `json:"questions,omitempty"`
-	State     string          `json:"state"`
+	State     RequestState    `json:"state"`
 	Revision  int64           `json:"revision"`
 }
 type RequestChoice struct {
@@ -191,16 +191,16 @@ type Answer struct {
 	Answers   map[string][]string `json:"answers,omitempty"`
 }
 type Turn struct {
-	Order             int64      `json:"order"`
-	ID                string     `json:"id"`
-	Status            string     `json:"status"`
-	StartedAt         *time.Time `json:"startedAt,omitempty"`
-	CompletedAt       *time.Time `json:"completedAt,omitempty"`
-	DurationMS        *int64     `json:"durationMs,omitempty"`
-	InputTokens       *int64     `json:"inputTokens,omitempty"`
-	OutputTokens      *int64     `json:"outputTokens,omitempty"`
-	CachedInputTokens *int64     `json:"cachedInputTokens,omitempty"`
-	Error             string     `json:"error,omitempty"`
+	Order             int64          `json:"order"`
+	ID                string         `json:"id"`
+	Status            ExecutionState `json:"status"`
+	StartedAt         *time.Time     `json:"startedAt,omitempty"`
+	CompletedAt       *time.Time     `json:"completedAt,omitempty"`
+	DurationMS        *int64         `json:"durationMs,omitempty"`
+	InputTokens       *int64         `json:"inputTokens,omitempty"`
+	OutputTokens      *int64         `json:"outputTokens,omitempty"`
+	CachedInputTokens *int64         `json:"cachedInputTokens,omitempty"`
+	Error             string         `json:"error,omitempty"`
 }
 type PlanStep struct {
 	Text   string `json:"text"`
@@ -257,11 +257,11 @@ type Model struct {
 	Fast          bool     `json:"fast"`
 }
 type Readiness struct {
-	Permissions []string `json:"permissions,omitempty"`
-	State       string   `json:"state"`
-	Error       string   `json:"error,omitempty"`
-	Models      []Model  `json:"models,omitempty"`
-	Plan        bool     `json:"plan"`
+	Permissions []string       `json:"permissions,omitempty"`
+	State       ReadinessState `json:"state"`
+	Error       string         `json:"error,omitempty"`
+	Models      []Model        `json:"models,omitempty"`
+	Plan        bool           `json:"plan"`
 }
 
 // GitChoice is draft intent, validated on the owning device at acceptance.

@@ -16,6 +16,44 @@ import (
 	"shioji/internal/transport"
 )
 
+// Closing cancels presentation immediately; the in-flight check retains its
+// own completion until the controller acknowledges cancellation or returns.
+type sshCheckPhase uint8
+
+const (
+	sshClosed sshCheckPhase = iota
+	sshEditing
+	sshChecking
+	sshCanceledCheck
+)
+
+func (s sshCheckPhase) open() bool { return s == sshEditing || s == sshChecking }
+func (s sshCheckPhase) busy() bool { return s == sshChecking || s == sshCanceledCheck }
+func (s sshCheckPhase) show() sshCheckPhase {
+	if s.busy() {
+		return sshChecking
+	}
+	return sshEditing
+}
+func (s sshCheckPhase) begin() sshCheckPhase {
+	if s.open() {
+		return sshChecking
+	}
+	return sshCanceledCheck
+}
+func (s sshCheckPhase) finish() sshCheckPhase {
+	if s.open() {
+		return sshEditing
+	}
+	return sshClosed
+}
+func (s sshCheckPhase) close() sshCheckPhase {
+	if s.busy() {
+		return sshCanceledCheck
+	}
+	return sshClosed
+}
+
 var workspaceIcon = svg("M2 5h6l2 2h8v10H2z")
 
 func (v *View) deviceState(key string) *app.DeviceState {
@@ -60,7 +98,7 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 								n.Text(c, name).SingleLine().FontSize(13).FixedLineHeight(20).Grow(1)
 								running := 0
 								for _, s := range state.Snapshot.Sessions {
-									if s.Status == "running" || s.Status == "starting" {
+									if s.Status.Active() {
 										running++
 									}
 								}
@@ -241,11 +279,12 @@ func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 			panel.Width(min(420, width-48)).Padding(20).Gap(12).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c)).Children(body)
 		})
 	}
-	sshDialog := dialog(&v.sshOpen, "add-ssh-dialog", func() {
+	sshOpen := v.sshCheck.open()
+	sshDialog := dialog(&sshOpen, "add-ssh-dialog", func() {
 		n.Text(c, "添加 SSH 设备").FontSize(14).FontWeight(500)
 		field := func(label, placeholder string, value *string) {
 			n.Text(c, label).FontSize(12).TextColor(t.TextMuted)
-			textField(c.Key(label), value).FillWidth().Height(32).FontSize(13).Label(label).Placeholder(placeholder).Disabled(v.checkingSSH)
+			textField(c.Key(label), value).FillWidth().Height(32).FontSize(13).Label(label).Placeholder(placeholder).Disabled(v.sshCheck.busy())
 		}
 		field("设备名称", "可选", &v.sshName)
 		field("SSH 地址", "用户名@主机或 SSH 别名", &v.sshTarget)
@@ -258,10 +297,10 @@ func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 				v.cancelSSHCheck()
 			}
 			label := "连接"
-			if v.checkingSSH {
+			if v.sshCheck.busy() {
 				label = "检查中…"
 			}
-			if n.PrimaryButton(c, label).Height(28).Radius(6).FontSize(13).Disabled(v.checkingSSH || strings.TrimSpace(v.sshTarget) == "" || v.Controller == nil).Clicked() {
+			if n.PrimaryButton(c, label).Height(28).Radius(6).FontSize(13).Disabled(v.sshCheck.busy() || strings.TrimSpace(v.sshTarget) == "" || v.Controller == nil).Clicked() {
 				v.checkSSHDevice()
 			}
 		})
@@ -291,9 +330,9 @@ func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 	})
 }
 func (v *View) cancelSSHCheck() {
-	v.sshOpen = false
+	v.sshCheck = v.sshCheck.close()
 	v.sshRequest = ""
-	if v.checkingSSH && v.Controller != nil {
+	if v.sshCheck.busy() && v.Controller != nil {
 		v.Controller.Do(app.Job{Method: "$device.cancel"})
 	}
 }
@@ -314,15 +353,15 @@ func (v *View) checkSSHDevice() {
 	}
 	request := domain.NewID()
 	v.sshRequest = request
-	v.checkingSSH = true
+	v.sshCheck = v.sshCheck.begin()
 	v.sshError = ""
 	name := strings.TrimSpace(v.sshName)
 	if name == "" {
 		name = ssh.Target
 	}
 	if !v.Controller.Do(app.Job{Method: "$device.check", Input: app.CheckSSHDevice{Name: name, SSH: ssh}, Apply: func(m *app.Model, b json.RawMessage, err error) {
-		v.checkingSSH = false
-		if v.sshRequest != request || !v.sshOpen {
+		v.sshCheck = v.sshCheck.finish()
+		if v.sshRequest != request || !v.sshCheck.open() {
 			return
 		}
 		if err != nil {
@@ -362,9 +401,9 @@ func (v *View) checkSSHDevice() {
 		v.deviceSelected = connection.ID
 		v.deviceList = false
 		v.devices = true
-		v.sshOpen = false
+		v.sshCheck = v.sshCheck.close()
 	}}) {
-		v.checkingSSH = false
+		v.sshCheck = v.sshCheck.finish()
 		v.sshError = "操作繁忙，请重试"
 	}
 }

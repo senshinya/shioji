@@ -444,7 +444,7 @@ func TestRecoveredFailedAndInterruptedSessionsCanPrepareNewSessionDrafts(t *test
 		m := layoutModel()
 		m.WorkerMinor = 7
 		d := m.Details["s"]
-		d.Session.Status = status
+		d.Session.Status = domain.ExecutionState(status)
 		d.Session.Recovery = &domain.SessionRecovery{Phase: "ready", CanContinue: true}
 		m.Details["s"] = d
 		m.Snapshot.Sessions[0] = d.Session

@@ -19,20 +19,65 @@ import (
 
 type attachmentPreview struct {
 	Attachment             domain.Attachment
-	Open, Loading          bool
+	presence               previewPresence
+	Loading                bool
 	Image                  n.ImageSource
 	Thumbnail, LoadedImage n.ImageSource
 	Text, Error            string
 	NaturalHeight          float32
 	Source                 n.Rect
-	Visible, MotionReady   bool
 }
+
+// Presence owns the close snapshot until the native size interpolation ends.
+// Closing before first measurement still needs the same initial geometry.
+type previewPresence uint8
+
+const (
+	previewHidden previewPresence = iota
+	previewOpening
+	previewShown
+	previewClosingUnmeasured
+	previewClosing
+)
+
+func (p *attachmentPreview) open() bool {
+	return p.presence == previewOpening || p.presence == previewShown
+}
+func (p *attachmentPreview) visible() bool { return p.presence != previewHidden }
+func (p *attachmentPreview) motionReady() bool {
+	return p.presence != previewOpening && p.presence != previewClosingUnmeasured
+}
+func (p *attachmentPreview) measured() {
+	switch p.presence {
+	case previewOpening:
+		p.presence = previewShown
+	case previewClosingUnmeasured:
+		p.presence = previewClosing
+	}
+}
+func (p *attachmentPreview) close() {
+	switch p.presence {
+	case previewOpening:
+		p.presence = previewClosingUnmeasured
+	case previewShown:
+		p.presence = previewClosing
+	}
+}
+
 type attachmentImage struct {
-	Image   n.ImageSource
-	Loading bool
-	Error   string
-	Used    uint64
+	Image n.ImageSource
+	phase attachmentImagePhase
+	Error string
+	Used  uint64
 }
+
+type attachmentImagePhase uint8
+
+const (
+	attachmentImageReady attachmentImagePhase = iota
+	attachmentImageLoading
+	attachmentImageFailed
+)
 
 var fileAttachmentIcon = svg("M5 2h7l4 4v12H5zM12 2v5h4M8 10h5M8 13h5")
 
@@ -332,7 +377,7 @@ func (v *View) attachmentThumbnail(c *n.Context, t *n.Theme, a domain.Attachment
 			old := ""
 			var oldest uint64 = ^uint64(0)
 			for id, e := range v.attachmentImages {
-				if !e.Loading && e.Used < oldest {
+				if e.phase != attachmentImageLoading && e.Used < oldest {
 					old, oldest = id, e.Used
 				}
 			}
@@ -342,7 +387,7 @@ func (v *View) attachmentThumbnail(c *n.Context, t *n.Theme, a domain.Attachment
 				return n.Column(c).Size(size, size).Radius(5).Background(t.Border.Alpha(.35))
 			}
 		}
-		cached = &attachmentImage{Loading: true}
+		cached = &attachmentImage{phase: attachmentImageLoading}
 		v.attachmentImages[a.ID] = cached
 		target, err := v.Model.AttachmentTarget(v.Controller.Directory, workspace)
 		store := v.staging()
@@ -359,10 +404,11 @@ func (v *View) attachmentThumbnail(c *n.Context, t *n.Theme, a domain.Attachment
 				}
 			}
 			return func(*app.Model) {
-				entry.Loading = false
+				entry.phase = attachmentImageReady
 				entry.Image = img
 				if err != nil {
 					entry.Error = err.Error()
+					entry.phase = attachmentImageFailed
 				}
 			}
 		})
@@ -380,7 +426,7 @@ func (v *View) openAttachment(a domain.Attachment, workspace string, source n.Re
 	if v.Controller == nil || v.StatePath == "" {
 		return
 	}
-	p := &attachmentPreview{Attachment: a, Open: true, Visible: true, Loading: true, Source: source}
+	p := &attachmentPreview{Attachment: a, presence: previewOpening, Loading: true, Source: source}
 	if cached := v.attachmentImages[a.ID]; cached != nil {
 		p.Image = cached.Image
 		p.Thumbnail = cached.Image
@@ -421,16 +467,15 @@ func (v *View) openAttachment(a domain.Attachment, workspace string, source n.Re
 }
 func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 	p := v.attachmentPreview
-	if p == nil || (!p.Open && !p.Visible) {
+	if p == nil || !p.visible() {
 		return
 	}
-	p.Visible = true
 	isImage := strings.HasPrefix(p.Attachment.MIME, "image/")
 	reduce := c.Preferences().ReduceMotion
 	morph := isImage && !reduce && p.Source.W > 0 && p.Source.H > 0
 	visible := true
 	if reduce || (isImage && !morph) {
-		visible = p.Open
+		visible = p.open()
 	}
 	dialog := n.DialogBase(c.Key("attachment-preview:"+p.Attachment.ID), &visible, func(backdrop, panel n.Element) {
 		w, h := c.Size()
@@ -445,23 +490,23 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 		}
 		panelHeight = panel.AnimateTo("preview-height", panelHeight, motionAnimation(c, 180*time.Millisecond))
 		panel.Width(panelWidth).Height(panelHeight).MaxHeight(h-64).Padding(14).Radius(10).Clip().Background(raised(t)).Border(1, t.Border).Label("附件预览")
-		if !p.MotionReady {
+		if !p.motionReady() {
 			panel.Jump("preview-open", 0)
-			p.MotionReady = true
+			p.measured()
 		}
 		target := float32(0)
-		if p.Open {
+		if p.open() {
 			target = 1
 		}
 		animation := motionAnimation(c, 280*time.Millisecond)
 		animation.Ease = composerDescentEase
 		progress := panel.AnimateTo("preview-open", target, animation)
-		if p.Open && progress >= 1 && p.LoadedImage != nil {
+		if p.open() && progress >= 1 && p.LoadedImage != nil {
 			p.Image = p.LoadedImage
 			p.LoadedImage = nil
 		}
-		if !p.Open && progress <= 0 {
-			p.Visible = false
+		if !p.open() && progress <= 0 {
+			p.presence = previewHidden
 			if p.Thumbnail != nil {
 				p.Image = p.Thumbnail
 			}
@@ -487,7 +532,7 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 				panel.Opacity(progress)
 			}
 		}
-		if !p.Open {
+		if !p.open() {
 			panel.IgnoreInput(true)
 		}
 		panel.Children(func() {
@@ -503,7 +548,7 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 				n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
 					n.Text(c, p.Attachment.Name).FontSize(13).Grow(1).SingleLine()
 					if iconButton(c, queueRemoveIcon, "关闭附件预览").Size(24, 24).Clicked() {
-						p.Open = false
+						p.close()
 					}
 				})
 				if isImage && imageAvailable {
@@ -544,11 +589,11 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 		}
 	})
 	if dialog.Dismissed() {
-		p.Open = false
+		p.close()
 		c.Services().Invalidate()
 	}
-	if reduce && !p.Open {
-		p.Visible = false
+	if reduce && !p.open() {
+		p.presence = previewHidden
 	}
 }
 

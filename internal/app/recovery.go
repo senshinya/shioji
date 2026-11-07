@@ -86,7 +86,7 @@ func (m *Model) BeginContinuation() (domain.Submission, error) {
 		return none, errors.New("请先确认原会话的工作目录与分支")
 	}
 	for _, request := range d.Requests {
-		if request.State == "pending" || request.State == "submitting" {
+		if request.State.AwaitingResolution() {
 			return none, errors.New("请先处理原会话的待办请求")
 		}
 	}

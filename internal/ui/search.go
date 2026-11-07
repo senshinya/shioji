@@ -89,8 +89,8 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 						v.splitRoot().prepareSecondary()
 						pane := v.focusedView()
 						s := pane.findState()
-						s.open, s.focus, s.transient = false, false, true
-						s.query, s.pending, s.target = v.searchResultsQuery, &r, findTarget{}
+						s.mode, s.focus, s.placement = findPassive, false, findAwaitingHistory
+						s.query, s.result, s.target = v.searchResultsQuery, r, findTarget{}
 						pane.focusComposer = true
 					}
 				}

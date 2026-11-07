@@ -26,8 +26,16 @@ type Ticket struct {
 	Parent        Identity
 	Root, Anchor  Identity
 	Group         int
-	State         string
+	State         LaunchState
 }
+type LaunchState string
+
+const (
+	LaunchPrepared   LaunchState = "prepared"
+	LaunchRegistered LaunchState = "registered"
+	LaunchStopped    LaunchState = "stopped"
+)
+
 type scopeState struct {
 	Generation string
 	Active     bool
@@ -177,7 +185,7 @@ func (s *Scope) Prepare(kind, ref string) (Ticket, error) {
 	if !state.Active || !ok {
 		return Ticket{}, errors.New("managed launch owner is unavailable")
 	}
-	t := Ticket{ID: nonce(), Kind: kind, Ref: ref, Parent: parent, State: "prepared"}
+	t := Ticket{ID: nonce(), Kind: kind, Ref: ref, Parent: parent, State: LaunchPrepared}
 	if err = writeJSON(s.launchPath(t.ID), t); err != nil {
 		return Ticket{}, err
 	}
@@ -232,17 +240,17 @@ func (s *Scope) Register(packet Registration) error {
 	if !owned {
 		return errors.New("launch does not descend from its recorded session owner")
 	}
-	if t.State == "registered" {
+	if t.State == LaunchRegistered {
 		if t.Root == identity(*root) && t.Anchor == identity(*anchor) {
 			state.Launches[t.ID] = true
 			return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
 		}
 		return errors.New("launch identity changed")
 	}
-	if t.State != "prepared" {
+	if t.State != LaunchPrepared {
 		return errors.New("launch was already retired")
 	}
-	t.Root, t.Anchor, t.Group, t.State = identity(*root), identity(*anchor), packet.Root, "registered"
+	t.Root, t.Anchor, t.Group, t.State = identity(*root), identity(*anchor), packet.Root, LaunchRegistered
 	if err = writeJSON(s.launchPath(t.ID), t); err != nil {
 		return err
 	}
@@ -331,7 +339,7 @@ func (m *Manager) Reap(ctx context.Context) error {
 				}
 			}
 		}
-		t.State = "stopped"
+		t.State = LaunchStopped
 		if err = writeJSON(s.launchPath(t.ID), t); err != nil {
 			return err
 		}
@@ -365,8 +373,8 @@ func (s *Scope) tickets() ([]Ticket, error) {
 		if err = readJSON(path, &t); err != nil {
 			return nil, err
 		}
-		if t.State == "registered" || t.State == "stopped" {
-			if t.State == "registered" {
+		if t.State == LaunchRegistered || t.State == LaunchStopped {
+			if t.State == LaunchRegistered {
 				records = append(records, t)
 			}
 			seen[t.ID] = true
@@ -499,7 +507,7 @@ func (s *Scope) Stop(ctx context.Context) error {
 			case <-time.After(10 * time.Millisecond):
 			}
 		}
-		t.State = "stopped"
+		t.State = LaunchStopped
 		if err = writeJSON(s.launchPath(t.ID), t); err != nil {
 			return err
 		}

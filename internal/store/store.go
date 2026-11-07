@@ -320,7 +320,7 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		if session.Archived {
 			return none, errors.New("restore the session before sending")
 		}
-		if session.WorkspaceID != in.WorkspaceID || !(session.Status == "idle" || session.Status == "completed" || session.Status == "interrupted" || session.Status == "failed" || session.Status == "abandoned") {
+		if session.WorkspaceID != in.WorkspaceID || !(session.Status.CanSubmit()) {
 			return none, errors.New("session is unavailable for a new turn")
 		}
 		if queued == nil {
@@ -392,7 +392,7 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 	}
 	return op, s.commit(tx)
 }
-func (s *Store) SetOperation(id, state, message string) error {
+func (s *Store) SetOperation(id string, state domain.OperationState, message string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	op, err := operation(s.db, id)
@@ -571,7 +571,7 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		if _, err = tx.Exec("INSERT INTO requests VALUES(?,?,?) ON CONFLICT(session_id,id) DO UPDATE SET body=excluded.body", sid, e.Request.ID, blob(e.Request)); err != nil {
 			return e, err
 		}
-		anchor := domain.Item{ID: "request:" + e.Request.ID, TurnID: e.Request.TurnID, Kind: "request", Text: e.Request.Title, Status: e.Request.State, Final: e.Request.State != "pending"}
+		anchor := domain.Item{ID: "request:" + e.Request.ID, TurnID: e.Request.TurnID, Kind: "request", Text: e.Request.Title, Status: string(e.Request.State), Final: e.Request.State != "pending"}
 		if err = putItem(tx, sid, &anchor); err != nil {
 			return e, err
 		}
@@ -721,7 +721,7 @@ func (s *Store) Session(id string, after int64, limit int) (domain.SessionDetail
 		out.Requests = nil
 		out.Turns = nil
 		for _, r := range requests {
-			if requestSet[r.ID] || r.State == "pending" || r.State == "submitting" {
+			if requestSet[r.ID] || r.State.AwaitingResolution() {
 				out.Requests = append(out.Requests, r)
 			}
 		}
@@ -816,7 +816,7 @@ func (s *Store) Recover() error {
 		if e != nil {
 			return e
 		}
-		if session.Status == "running" || session.Status == "starting" || unsettled {
+		if session.Status.Active() || unsettled {
 			if _, e = s.SetRecovery(session.ID, nil); e != nil {
 				return e
 			}

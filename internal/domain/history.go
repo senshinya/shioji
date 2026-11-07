@@ -20,7 +20,7 @@ type HistoryOperation struct {
 	Session    Session       `json:"session"`
 	TurnID     string        `json:"turnId"`
 	ThreadID   string        `json:"threadId,omitempty"`
-	State      string        `json:"state"`
+	State      HistoryPhase  `json:"state"`
 	Error      string        `json:"error,omitempty"`
 	Submission Submission    `json:"submission"`
 }

@@ -157,7 +157,7 @@ func (m *Model) beginSubmission(allowRunning bool) (domain.Submission, error) {
 				if s.ContextChanged {
 					return domain.Submission{}, errors.New("执行分支已改变，请先在分支选择中确认")
 				}
-				if s.Status == "unknown" || (!allowRunning && (s.Status == "running" || s.Status == "starting")) {
+				if s.Status == "unknown" || (!allowRunning && (s.Status.Active())) {
 					return domain.Submission{}, errors.New("current turn is still active or needs reconciliation")
 				}
 			}

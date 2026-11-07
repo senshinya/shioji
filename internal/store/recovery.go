@@ -160,7 +160,7 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 		}
 	}
 	found := map[string]bool{}
-	status := ""
+	status := domain.ExecutionState("")
 	unresolved := false
 	toolUnconfirmed := false
 	for _, turn := range source.Turns {
@@ -351,7 +351,7 @@ func (s *Store) SetRecovery(id string, info *domain.SessionRecovery) (domain.Ses
 	if err != nil {
 		return session, err
 	}
-	if session.Status != "unknown" && session.Status != "abandoned" && session.Status != "interrupted" && session.Status != "failed" {
+	if !session.Status.NeedsRecovery() && session.Status != "interrupted" && session.Status != "failed" {
 		info = nil
 	}
 	if reflect.DeepEqual(session.Recovery, info) {

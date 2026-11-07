@@ -20,7 +20,7 @@ func (v *View) pruneSecretAnswers(detail domain.SessionDetail) {
 	for key := range v.secretAnswers {
 		keep := false
 		for _, r := range detail.Requests {
-			if (r.State == "pending" || r.State == "submitting") && strings.HasPrefix(key, r.SessionID+"/"+r.ID+"/") {
+			if (r.State.AwaitingResolution()) && strings.HasPrefix(key, r.SessionID+"/"+r.ID+"/") {
 				keep = true
 				break
 			}
@@ -299,13 +299,13 @@ func (v *View) openSourceRequest(item domain.Item) {
 	page := 0
 	for _, r := range v.Model.Details[v.Model.SessionID].Requests {
 		if item.ID == "request:"+r.ID {
-			if r.State == "pending" || r.State == "submitting" {
+			if r.State.AwaitingResolution() {
 				v.Model.Pager[v.Model.SessionID] = page
 				v.Model.Collapsed[v.Model.SessionID] = false
 			}
 			return
 		}
-		if r.State == "pending" || r.State == "submitting" {
+		if r.State.AwaitingResolution() {
 			page += max(1, len(r.Questions))
 		}
 	}
@@ -313,10 +313,11 @@ func (v *View) openSourceRequest(item domain.Item) {
 func (v *View) requestResult(c *n.Context, t *n.Theme, item domain.Item) {
 	progress := float32(1)
 	if stream := v.replyStreams[item.ID]; stream != nil {
-		if stream.live && !c.Preferences().ReduceMotion {
+		if stream.live() && !c.Preferences().ReduceMotion {
 			progress = n.EaseOut(min(1, max(0, float32(c.Now().Sub(stream.changedAt))/float32(receiptEntranceDuration))))
 		}
-		stream.fresh, stream.seen, stream.revealing = false, v.replyFrame, progress < 1
+		stream.mount()
+		stream.seen, stream.revealing = v.replyFrame, progress < 1
 		if stream.revealing {
 			c.AnimationFrame()
 		}

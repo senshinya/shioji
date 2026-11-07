@@ -24,8 +24,16 @@ type sentMessageMotion struct {
 	input, origin, session, epoch, workspace string
 	started                                  time.Time
 	source                                   n.Rect
-	anchored, focused, departed, queued      bool
+	phase                                    sentMotionPhase
+	focused, departed, queued                bool
 }
+
+type sentMotionPhase uint8
+
+const (
+	sentAwaitingRow sentMotionPhase = iota
+	sentAnimating
+)
 
 func (v *View) beginSendMotion(in domain.Submission) *sentMessageMotion {
 	s := &sentMessageMotion{input: "input:" + in.OperationID, origin: in.SessionID, epoch: v.Model.ConnectionEpoch, workspace: in.WorkspaceID}
@@ -55,21 +63,21 @@ func (v *View) syncSendMotion() {
 		v.sent = nil
 		return
 	}
-	if !s.started.IsZero() && v.frameTime.Sub(s.started) >= sentScrollDuration+60*time.Millisecond {
+	if s.phase == sentAnimating && v.frameTime.Sub(s.started) >= sentScrollDuration+60*time.Millisecond {
 		v.sent = nil
 	}
 }
 
 func (v *View) anchorSentMessage(c *n.Context, state *n.ListState, rows []transcriptRow) {
 	s := v.sent
-	if s == nil || s.session != v.Model.SessionID || s.anchored {
+	if s == nil || s.session != v.Model.SessionID || s.phase == sentAnimating {
 		return
 	}
 	for i, row := range rows {
 		if row.key != s.input {
 			continue
 		}
-		s.started, s.anchored = c.Now(), true
+		s.started, s.phase = c.Now(), sentAnimating
 		// Automatic queue dispatch must not pull a reader away from history.
 		if !s.queued || state.AtEnd() {
 			state.AnchorRow(i+1, 100, n.Animation{Duration: sentScrollDuration, Ease: sentScrollEase})
@@ -81,7 +89,7 @@ func (v *View) anchorSentMessage(c *n.Context, state *n.ListState, rows []transc
 
 func (v *View) sentMessagePose(c *n.Context, content n.Element, item domain.Item) {
 	s := v.sent
-	if s == nil || item.ID != s.input || s.started.IsZero() || c.Preferences().ReduceMotion || s.source.W > 0 {
+	if s == nil || item.ID != s.input || s.phase != sentAnimating || c.Preferences().ReduceMotion || s.source.W > 0 {
 		return
 	}
 	p := min(float32(c.Now().Sub(s.started))/float32(sentFadeDuration), 1)
@@ -105,7 +113,7 @@ func (v *View) sentMessageBubble(c *n.Context, t *n.Theme, bubble n.Element, ite
 
 func (v *View) sendProgress(c *n.Context) float32 {
 	s := v.sent
-	if s == nil || s.started.IsZero() {
+	if s == nil || s.phase != sentAnimating {
 		return 0
 	}
 	p := min(max(float32(c.Now().Sub(s.started))/float32(sentScrollDuration), 0), 1)

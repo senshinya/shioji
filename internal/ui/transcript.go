@@ -82,17 +82,18 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			break
 		}
 		key := "tool-group:" + v.Model.SessionID + "/" + item.ID
-		seen := key + ":prose"
+		disclosure := v.Model.ToolDisclosure(key)
 		if collapseHistory {
-			v.Model.Collapsed[key] = true
+			disclosure = disclosure.OpenHistory()
+			v.Model.SetToolDisclosure(key, disclosure)
 			delete(v.toolMotions, key)
 		}
-		if laterProse[end] && !v.Model.Collapsed[seen] {
-			v.Model.Collapsed[key] = true
-			v.Model.Collapsed[seen] = true
+		if laterProse[end] && !disclosure.SawProse() {
+			disclosure = disclosure.ObserveProse()
+			v.Model.SetToolDisclosure(key, disclosure)
 			delete(v.toolMotions, key)
 		}
-		opacity, show := float32(1), !v.Model.Collapsed[key]
+		opacity, show := float32(1), !disclosure.Closed()
 		if motion := v.toolMotions[key]; motion != nil {
 			if v.reduceMotion {
 				motion.duration = min(motion.duration, 60*time.Millisecond)
@@ -133,7 +134,7 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 	if button.Children(func() {
 		n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
 			angle := float32(0)
-			if v.Model.Collapsed[row.group] {
+			if v.Model.ToolDisclosure(row.group).Closed() {
 				angle = -90
 			}
 			font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}
@@ -144,7 +145,7 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 		list := v.lists[v.Model.SessionID]
 		list.KeepRow(index, button.Bounds().Y-list.Bounds(c).Y)
 		from, to := float32(1), float32(0)
-		if v.Model.Collapsed[row.group] {
+		if v.Model.ToolDisclosure(row.group).Closed() {
 			from, to = 0, 1
 		}
 		if motion := v.toolMotions[row.group]; motion != nil {
@@ -154,7 +155,7 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 			v.toolMotions = map[string]*toolDisclosureMotion{}
 		}
 		v.toolMotions[row.group] = &toolDisclosureMotion{from: from, to: to, start: c.Now(), duration: motionAnimation(c, 160*time.Millisecond).Duration}
-		v.Model.Collapsed[row.group] = !v.Model.Collapsed[row.group]
+		v.Model.SetToolDisclosure(row.group, v.Model.ToolDisclosure(row.group).Toggle())
 		c.AnimationFrame()
 	}
 }

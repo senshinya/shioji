@@ -45,7 +45,7 @@ func (s *Server) guardManagedExecution(id string) error {
 	if err != nil || scope == nil {
 		return err
 	}
-	if d.Session.Status != "running" && d.Session.Status != "starting" && d.Session.Status != "unknown" && !scope.Admitting() {
+	if !d.Session.Status.BlocksCheckout() && !scope.Admitting() {
 		return nil
 	}
 	return s.store.GuardExecution(id, scope.Generation)

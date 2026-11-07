@@ -20,10 +20,10 @@ func dockingUI(t *testing.T) (*View, *n.Tester) {
 	m.Details["s"] = d
 	v := New(m, nil, "")
 	s := v.changesFor("s")
-	s.Loaded = true
-	s.Path = "main.go"
+	s.load = changesLoaded
+	s.selectFile("main.go")
 	s.Files = []domain.ChangedFile{{Path: "main.go"}}
-	s.Versions = domain.FileVersions{Path: "main.go", Old: "old\n", New: "new\n"}
+	s.receiveFile(domain.FileVersions{Path: "main.go", Old: "old\n", New: "new\n"})
 	s.Diff = editor.DiffState{Old: editor.NewBuffer("old\n"), New: editor.NewBuffer("new\n"), Layout: editor.DiffUnified}
 	return v, n.NewTester(v.View, 1440, 900)
 }

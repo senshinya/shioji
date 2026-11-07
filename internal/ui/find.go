@@ -8,6 +8,7 @@ import (
 
 	n "github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
+	"shioji/internal/app"
 	"shioji/internal/domain"
 )
 
@@ -19,20 +20,49 @@ type findTarget struct {
 	id         string
 	start, end int
 }
+
+type findMode uint8
+
+const (
+	findClosed findMode = iota
+	findLocal
+	findPassive
+)
+
+type findPlacement uint8
+
+const (
+	findNeedsGeometry findPlacement = iota
+	findNeedsReveal
+	findPositioned
+	findAwaitingHistory
+)
+
 type conversationFind struct {
-	open, focus        bool
-	transient          bool
-	query, compiled    string
-	needle             string
-	cache              map[string]findEntry
-	entries            []findEntry
-	total, current     int
-	target             findTarget
-	pending            *domain.SearchResult
-	locate, positioned bool
-	geometry           n.Rect
-	version            uint64
-	settle, started    time.Time
+	mode            findMode
+	placement       findPlacement
+	focus           bool // One-shot focus effect, not the search lifecycle.
+	query, compiled string
+	needle          string
+	cache           map[string]findEntry
+	entries         []findEntry
+	total, current  int
+	target          findTarget
+	result          domain.SearchResult
+	geometry        n.Rect
+	version         uint64
+	settle, started time.Time
+}
+
+func (s *conversationFind) rearm() {
+	s.placement, s.started, s.geometry = findNeedsReveal, time.Time{}, n.Rect{}
+	s.version++
+}
+
+func (s *conversationFind) cancelPending() {
+	if s.placement == findAwaitingHistory {
+		s.placement = findNeedsGeometry
+	}
 }
 
 func (v *View) findState() *conversationFind {
@@ -51,17 +81,15 @@ func (v *View) openConversationFind() {
 		return
 	}
 	s := v.findState()
-	s.open, s.focus = true, true
-	s.transient = false
+	s.mode, s.focus = findLocal, true
 	if s.target.id != "" {
-		s.locate, s.positioned, s.started, s.geometry = true, false, time.Time{}, n.Rect{}
-		s.version++
+		s.rearm()
 	}
 }
 
 func (v *View) closeConversationFind() {
 	s := v.findState()
-	s.open, s.transient = false, false
+	s.mode = findClosed
 	s.version++
 	v.focusComposer = true
 }
@@ -73,10 +101,10 @@ func (v *View) refreshConversationFind() {
 		}
 	}
 	s := v.findState()
-	if s.transient && !s.started.IsZero() && v.frameTime.Sub(s.started) >= 2580*time.Millisecond {
-		s.transient = false
+	if s.mode == findPassive && !s.started.IsZero() && v.frameTime.Sub(s.started) >= 2580*time.Millisecond {
+		s.mode = findClosed
 	}
-	if !s.open && !s.transient {
+	if s.mode == findClosed {
 		return
 	}
 	query := strings.TrimSpace(s.query)
@@ -112,7 +140,7 @@ func (v *View) refreshConversationFind() {
 		changed = true
 	}
 	s.cache = cache
-	if !changed && s.pending == nil {
+	if !changed && s.placement != findAwaitingHistory {
 		return
 	}
 	s.entries, s.total = entries, 0
@@ -124,8 +152,8 @@ func (v *View) refreshConversationFind() {
 		index = -1
 	}
 	wanted := s.target
-	if s.pending != nil {
-		wanted = findTarget{id: s.pending.ItemID, start: s.pending.MatchStart, end: s.pending.MatchEnd}
+	if s.placement == findAwaitingHistory {
+		wanted = findTarget{id: s.result.ItemID, start: s.result.MatchStart, end: s.result.MatchEnd}
 	}
 	if queryChanged && wanted.id == "" {
 		index = 0
@@ -135,14 +163,14 @@ func (v *View) refreshConversationFind() {
 		if e.id == wanted.id {
 			prefix := e.text[:min(max(wanted.start, 0), len(e.text))]
 			index = before + min(strings.Count(strings.ToLower(prefix), s.needle), e.count-1)
-			if s.pending != nil {
-				s.pending = nil
+			if s.placement == findAwaitingHistory {
+				s.cancelPending()
 			}
 			break
 		}
 		before += e.count
 	}
-	if s.pending != nil {
+	if s.placement == findAwaitingHistory {
 		return
 	} // A selected result may still be hydrating.
 	if s.total == 0 {
@@ -175,8 +203,7 @@ func (v *View) selectFindMatch(index int) {
 		target := findTarget{id: entry.id, start: start, end: end}
 		if target != s.target {
 			s.target = target
-			s.locate, s.positioned, s.started, s.geometry = true, false, time.Time{}, n.Rect{}
-			s.version++
+			s.rearm()
 		}
 		return
 	}
@@ -184,7 +211,7 @@ func (v *View) selectFindMatch(index int) {
 
 func (v *View) stepConversationFind(direction int) {
 	s := v.findState()
-	s.pending = nil
+	s.cancelPending()
 	old := s.target
 	index := s.current + direction
 	if s.current < 0 && direction < 0 {
@@ -192,31 +219,30 @@ func (v *View) stepConversationFind(direction int) {
 	}
 	v.selectFindMatch(index)
 	if s.target.id != "" && s.target == old {
-		s.locate, s.positioned, s.started, s.geometry = true, false, time.Time{}, n.Rect{}
-		s.version++
+		s.rearm()
 	}
 }
 
 func (v *View) positionFind(c *n.Context, state *n.ListState, rows []transcriptRow) {
 	s := v.findState()
-	if (!s.open && !s.transient) || s.target.id == "" {
+	if s.mode == findClosed || s.target.id == "" {
 		return
 	}
 	for i, row := range rows {
 		if row.key != s.target.id {
 			continue
 		}
-		if s.locate {
+		if s.placement == findNeedsReveal {
 			if _, visible := v.historyRowBounds[row.key]; !visible {
 				state.ScrollToRow(i+1, 112, motionAnimation(c, 240*time.Millisecond))
 			}
-			s.locate = false
+			s.placement = findNeedsGeometry
 		}
-		if !s.positioned && s.geometry.H > 0 {
+		if s.placement != findPositioned && s.geometry.H > 0 {
 			if bounds, ok := v.historyRowBounds[row.key]; ok && bounds.H > 0 {
 				y := float32(112) - (s.geometry.Y - bounds.Y)
 				state.ScrollToRow(i+1, y, motionAnimation(c, 240*time.Millisecond))
-				s.positioned, s.settle = true, c.Now().Add(260*time.Millisecond)
+				s.placement, s.settle = findPositioned, c.Now().Add(260*time.Millisecond)
 				c.AnimationFrame()
 			}
 		}
@@ -226,7 +252,7 @@ func (v *View) positionFind(c *n.Context, state *n.ListState, rows []transcriptR
 
 func (v *View) revealFindTarget(rows []transcriptRow, reopening bool) []transcriptRow {
 	s := v.findState()
-	if (!s.open && !s.transient) || s.target.id == "" || !s.locate && !reopening {
+	if s.mode == findClosed || s.target.id == "" || s.placement != findNeedsReveal && !reopening {
 		return rows
 	}
 	items := v.Model.Details[v.Model.SessionID].Items
@@ -258,7 +284,7 @@ func (v *View) revealFindTarget(rows []transcriptRow, reopening bool) []transcri
 			}
 		}
 		if start >= 0 && start <= target {
-			v.Model.Collapsed[row.group], v.Model.Collapsed[row.group+":prose"] = false, true
+			v.Model.SetToolDisclosure(row.group, app.ToolOpenedAfterProse)
 			delete(v.toolMotions, row.group)
 			return v.transcriptRows(items)
 		}
@@ -268,7 +294,7 @@ func (v *View) revealFindTarget(rows []transcriptRow, reopening bool) []transcri
 
 func (v *View) findDecoration(item domain.Item, dark bool) *markdown.RangeDecoration {
 	s := v.findState()
-	if (!s.open && !s.transient) || s.target.id != item.ID || s.target.end > len(item.Text) || s.target.start < 0 || !s.open && !s.started.IsZero() && v.frameTime.Sub(s.started) >= 2580*time.Millisecond {
+	if s.mode == findClosed || s.target.id != item.ID || s.target.end > len(item.Text) || s.target.start < 0 || s.mode != findLocal && !s.started.IsZero() && v.frameTime.Sub(s.started) >= 2580*time.Millisecond {
 		return nil
 	}
 	version := s.version
@@ -277,12 +303,12 @@ func (v *View) findDecoration(item domain.Item, dark bool) *markdown.RangeDecora
 		if s.version != version {
 			return
 		}
-		if !s.positioned && s.geometry.H == 0 {
+		if s.placement != findPositioned && s.geometry.H == 0 {
 			s.geometry = box
 			invalidate()
 			return
 		}
-		if !s.positioned {
+		if s.placement != findPositioned {
 			return
 		}
 		if p.Now().Before(s.settle) {
@@ -293,7 +319,7 @@ func (v *View) findDecoration(item domain.Item, dark bool) *markdown.RangeDecora
 			s.started = p.Now()
 		}
 		alpha := float32(1)
-		if !s.open {
+		if s.mode != findLocal {
 			elapsed := p.Now().Sub(s.started)
 			if elapsed < 2180*time.Millisecond {
 				p.After(2180*time.Millisecond - elapsed)
@@ -360,7 +386,7 @@ func (v *View) decoratePlainFind(c *n.Context, el n.Element, item domain.Item, s
 
 func (v *View) conversationFindBar(c *n.Context, t *n.Theme, width float32) {
 	s := v.findState()
-	if !s.open {
+	if s.mode != findLocal {
 		return
 	}
 	bar := n.Row(c.Key("conversation-find")).Absolute().Right(24).Top(56).Width(min(352, max(200, width-36))).Height(36).Padding(4, 6).Gap(6).AlignItems(n.Center).Radius(8).Background(raised(t)).Border(1, t.Border).Shadow(0, 3, 10, 0, n.RGBA(0, 0, 0, .1)).Label("会话内查找").Transition(n.ElementTransition{Duration: 180 * time.Millisecond, Enter: &n.Motion{Y: -6, Opacity: 1}, Exit: &n.Motion{Y: -6, Opacity: 1}})
@@ -387,7 +413,7 @@ func (v *View) conversationFindBar(c *n.Context, t *n.Theme, width float32) {
 			return false
 		})
 		if field.Changed() {
-			s.pending = nil
+			s.cancelPending()
 		}
 		count := ""
 		if s.query != "" {

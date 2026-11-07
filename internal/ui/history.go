@@ -67,7 +67,7 @@ func (v *View) restartHistory() {
 	m := v.Model
 	sid := m.SessionID
 	edit := m.HistoryEdits[sid]
-	if edit.ItemID == "" || v.historyBusy[sid] || v.historyExit != nil && !v.historyExit.dispatched || !m.Connected {
+	if edit.ItemID == "" || v.historyBusy[sid] || v.historyExit != nil && v.historyExit.phase != historyDispatched || !m.Connected {
 		return
 	}
 	if edit.OperationID != "" {
@@ -275,7 +275,7 @@ func (v *View) syncHistoryActions() {
 
 func (v *View) historyOperationNotice(c *n.Context, t *n.Theme) {
 	sid := v.Model.SessionID
-	if motion := v.historyExit; motion != nil && motion.in.SessionID == sid && (!motion.dispatched || v.historyBusy[sid]) {
+	if motion := v.historyExit; motion != nil && motion.in.SessionID == sid && (motion.phase != historyDispatched || v.historyBusy[sid]) {
 		return
 	}
 	in, ok := v.Model.HistoryActions[sid]

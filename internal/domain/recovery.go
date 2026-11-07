@@ -19,7 +19,7 @@ type RecoveryHistory struct {
 type SessionRecovery struct {
 	Tasks        []RecoveryTask `json:"tasks,omitempty"`
 	CanStopTasks bool           `json:"canStopTasks,omitempty"`
-	Phase        string         `json:"phase"` // checking, attention, ready
+	Phase        RecoveryPhase  `json:"phase"`
 	Message      string         `json:"message,omitempty"`
 	CanContinue  bool           `json:"canContinue,omitempty"`
 	CanEnd       bool           `json:"canEnd,omitempty"`

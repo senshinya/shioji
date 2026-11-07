@@ -27,7 +27,7 @@ func TestPreviewImageReplacementDoesNotFlashDuringMotion(t *testing.T) {
 	v := New(layoutModel(), nil, "")
 	ui := n.NewTester(v.View, 1440, 900)
 	ui.Advance(time.Second)
-	v.attachmentPreview = &attachmentPreview{Attachment: domain.Attachment{ID: "color", Name: "image.png", MIME: "image/png"}, Open: true, Loading: true, Source: n.Rect{X: 500, Y: 700, W: 36, H: 36}, Image: red(64)}
+	v.attachmentPreview = &attachmentPreview{Attachment: domain.Attachment{ID: "color", Name: "image.png", MIME: "image/png"}, presence: previewOpening, Loading: true, Source: n.Rect{X: 500, Y: 700, W: 36, H: 36}, Image: red(64)}
 	ui.Frame()
 	ui.Advance(70 * time.Millisecond)
 	v.attachmentPreview.Image = red(256)
@@ -86,7 +86,7 @@ func TestReducedMotionImagePreviewDoesNotZoomOrFade(t *testing.T) {
 	ui.SetPreferences(n.Preferences{ReduceMotion: true})
 	ui.Advance(time.Second)
 	rest := ui.Image().RGBAAt(1300, 500)
-	v.attachmentPreview = &attachmentPreview{Attachment: domain.Attachment{ID: "reduced", Name: "image.png", MIME: "image/png"}, Open: true, Source: n.Rect{X: 500, Y: 700, W: 36, H: 36}, Image: n.NewBitmap(image.NewRGBA(image.Rect(0, 0, 60, 60)))}
+	v.attachmentPreview = &attachmentPreview{Attachment: domain.Attachment{ID: "reduced", Name: "image.png", MIME: "image/png"}, presence: previewOpening, Source: n.Rect{X: 500, Y: 700, W: 36, H: 36}, Image: n.NewBitmap(image.NewRGBA(image.Rect(0, 0, 60, 60)))}
 	ui.Frame()
 	ui.Advance(20 * time.Millisecond)
 	entering := ui.Image().RGBAAt(1300, 500)
@@ -99,7 +99,7 @@ func TestReducedMotionImagePreviewDoesNotZoomOrFade(t *testing.T) {
 	if entering == rest || entering != open {
 		t.Fatal("reduced-motion image preview still fades")
 	}
-	v.attachmentPreview.Open = false
+	v.attachmentPreview.close()
 	ui.Frame()
 	ui.Advance(20 * time.Millisecond)
 	exiting := ui.Image().RGBAAt(1300, 500)
@@ -114,12 +114,12 @@ func TestClosingPreviewDuringItsEntranceContinuesFromTheCurrentBox(t *testing.T)
 	v := New(layoutModel(), nil, "")
 	ui := n.NewTester(v.View, 1440, 900)
 	ui.Advance(time.Second)
-	v.attachmentPreview = &attachmentPreview{Attachment: domain.Attachment{ID: "reverse", Name: "image.png", MIME: "image/png"}, Open: true, Source: n.Rect{X: 500, Y: 700, W: 36, H: 36}, Image: n.NewBitmap(image.NewRGBA(image.Rect(0, 0, 60, 60)))}
+	v.attachmentPreview = &attachmentPreview{Attachment: domain.Attachment{ID: "reverse", Name: "image.png", MIME: "image/png"}, presence: previewOpening, Source: n.Rect{X: 500, Y: 700, W: 36, H: 36}, Image: n.NewBitmap(image.NewRGBA(image.Rect(0, 0, 60, 60)))}
 	ui.Frame()
 	ui.Advance(70 * time.Millisecond)
 	ui.Frame()
 	before, _ := ui.Find("图片预览内容")
-	v.attachmentPreview.Open = false
+	v.attachmentPreview.close()
 	ui.Frame()
 	after, _ := ui.Find("图片预览内容")
 	if math.Abs(float64(before.X-after.X))+math.Abs(float64(before.Y-after.Y))+math.Abs(float64(before.W-after.W)) > 1 {
@@ -247,7 +247,7 @@ func TestPreparingAttachmentCannotSubmitIncompleteMessage(t *testing.T) {
 func TestThumbnailQueueStaysBoundedWhileEarlierImagesLoad(t *testing.T) {
 	v := &View{Model: layoutModel(), Controller: app.NewController(t.TempDir()), StatePath: filepath.Join(t.TempDir(), "client.json"), attachmentImages: map[string]*attachmentImage{}}
 	for i := 0; i < 32; i++ {
-		v.attachmentImages[domain.NewID()] = &attachmentImage{Loading: true}
+		v.attachmentImages[domain.NewID()] = &attachmentImage{phase: attachmentImageLoading}
 	}
 	a := domain.Attachment{ID: domain.NewID(), Name: "image.png", MIME: "image/png", Size: 1, SHA256: strings.Repeat("a", 64)}
 	n.NewTester(func(c *n.Context) { v.attachmentThumbnail(c, c.Theme(), a, "w", 36) }, 200, 100)

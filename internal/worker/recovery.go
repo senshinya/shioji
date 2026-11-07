@@ -74,8 +74,8 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	if !check && (d.Session.Revision != in.Revision || d.Session.Status != "unknown") {
 		return result, errors.New("会话状态已改变，请重新核对")
 	}
-	if d.Session.Status != "unknown" && d.Session.Status != "abandoned" {
-		result.Status = d.Session.Status
+	if !d.Session.Status.NeedsRecovery() {
+		result.Status = string(d.Session.Status)
 		result.Readiness = s.runtimeReadiness()
 		if d.Session.Recovery != nil {
 			result.CanContinue = d.Session.Recovery.CanContinue
@@ -93,9 +93,9 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	}
 	d.Session = session
 	finish := func() (protocol.RecoveryResult, error) {
-		phase := "attention"
+		phase := domain.RecoveryAttention
 		if result.Status != "unknown" && result.Status != "active" {
-			phase = "ready"
+			phase = domain.RecoveryReady
 		}
 		updated, e := s.store.SetRecovery(in.SessionID, &domain.SessionRecovery{Phase: phase, Message: result.Message, CanContinue: result.CanContinue, CanEnd: result.CanEnd, NeedsStop: result.NeedsStop, Tasks: result.Tasks, CanStopTasks: result.CanStopTasks})
 		if e == nil {
@@ -249,11 +249,11 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		if e != nil {
 			return result, e
 		}
-		result.Status = latest.Session.Status
+		result.Status = string(latest.Session.Status)
 		result.Message = "状态已更新，请重新核对"
 		return finish()
 	}
-	result.Status = updated.Status
+	result.Status = string(updated.Status)
 	result.CanEnd = updated.Status == "unknown"
 	result.Message = updated.Error
 	if updated.Recovery != nil {

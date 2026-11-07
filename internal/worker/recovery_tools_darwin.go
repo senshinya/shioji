@@ -272,7 +272,7 @@ func (s *Server) watchRecoveryTools() {
 		}
 		active := ""
 		for _, session := range activeSessions {
-			if session.Status == "running" || session.Status == "starting" {
+			if session.Status.Active() {
 				if active != "" {
 					active = "ambiguous"
 					break

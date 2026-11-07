@@ -134,7 +134,7 @@ func (s *Store) EditQueue(sid, id string, revision int64, text string, attachmen
 		}
 		for i := range q.Items {
 			if q.Items[i].ID == id {
-				if q.Items[i].State == "dispatching" || q.Items[i].State == "unknown" {
+				if q.Items[i].State.Reserved() {
 					return errors.New("queued delivery is in flight or unknown")
 				}
 				input := q.Items[i].Input
@@ -189,7 +189,7 @@ func (s *Store) PauseQueue(sid, reason string) (domain.QueueState, error) {
 func (s *Store) ContinueQueue(sid string, revision int64) (domain.QueueState, error) {
 	return s.changeQueue(sid, revision, func(q *domain.QueueState) error {
 		for i := range q.Items {
-			if q.Items[i].State == "unknown" || q.Items[i].State == "dispatching" {
+			if q.Items[i].State.Reserved() {
 				return errors.New("queued delivery needs reconciliation")
 			}
 			if q.Items[i].State == "failed" {
@@ -364,7 +364,7 @@ func (s *Store) ReorderQueue(sid, id, before string, revision int64) (domain.Que
 			to = -1
 		}
 		for i, item := range q.Items {
-			if item.State == "dispatching" || item.State == "unknown" {
+			if item.State.Reserved() {
 				return errors.New("queued delivery is in flight or unknown")
 			}
 			if item.ID == id {

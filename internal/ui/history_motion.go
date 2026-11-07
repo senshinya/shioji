@@ -13,18 +13,57 @@ const historyCollapseDuration = 200 * time.Millisecond
 const historyForkFadeDuration = 220 * time.Millisecond
 
 type historyRestartMotion struct {
-	in                             domain.HistoryChange
-	started                        time.Time
-	epoch                          string
-	turns                          map[string]bool
-	dispatched                     bool
-	targetSession                  string
-	targetThread                   string
-	anchorKey                      string
-	anchorY                        float32
-	anchorValid, pinned, handedOff bool
-	item                           domain.Item
-	source                         domain.SessionDetail
+	in            domain.HistoryChange
+	started       time.Time
+	epoch         string
+	turns         map[string]bool
+	phase         historyExitPhase
+	targetSession string
+	targetThread  string
+	anchorKey     string
+	anchorY       *float32
+	anchor        historyAnchorPhase
+	item          domain.Item
+	source        domain.SessionDetail
+}
+
+type historyExitPhase uint8
+
+const (
+	historyExiting historyExitPhase = iota
+	historyDispatched
+)
+
+// The target may hydrate before the source row has been pinned. Retain both
+// orderings instead of assuming that navigation always supplies source first.
+type historyAnchorPhase uint8
+
+const (
+	historyAnchorUnbound historyAnchorPhase = iota
+	historyAnchorSource
+	historyAnchorTarget
+	historyAnchorBoth
+)
+
+func (m *historyRestartMotion) sourcePinned() bool {
+	return m.anchor == historyAnchorSource || m.anchor == historyAnchorBoth
+}
+func (m *historyRestartMotion) targetAnchored() bool {
+	return m.anchor == historyAnchorTarget || m.anchor == historyAnchorBoth
+}
+func (m *historyRestartMotion) pinSource() {
+	if m.targetAnchored() {
+		m.anchor = historyAnchorBoth
+	} else {
+		m.anchor = historyAnchorSource
+	}
+}
+func (m *historyRestartMotion) handOff() {
+	if m.sourcePinned() {
+		m.anchor = historyAnchorBoth
+	} else {
+		m.anchor = historyAnchorTarget
+	}
 }
 
 func newHistoryRestartMotion(in domain.HistoryChange, d domain.SessionDetail, now time.Time, epoch string) *historyRestartMotion {
@@ -75,7 +114,8 @@ func newHistoryRestartMotion(in domain.HistoryChange, d domain.SessionDetail, no
 func (v *View) beginHistoryMotion(in domain.HistoryChange) {
 	motion := newHistoryRestartMotion(in, v.Model.Details[in.SessionID], v.frameTime, v.Model.ConnectionEpoch)
 	if r, ok := v.historyRowBounds[motion.anchorKey]; ok && r.H > 0 {
-		motion.anchorY, motion.anchorValid = r.Y, true
+		y := r.Y
+		motion.anchorY = &y
 	}
 	v.historyExit = motion
 	if v.reduceMotion {
@@ -89,7 +129,7 @@ func (v *View) beginHistoryMotion(in domain.HistoryChange) {
 // only the local revised bubble between them, never resurrect old replies.
 func (v *View) historyBridgeRows(rows []transcriptRow) []transcriptRow {
 	m := v.historyExit
-	if m == nil || !m.in.Restart || !m.dispatched || v.Model.SessionID != m.in.SessionID {
+	if m == nil || !m.in.Restart || m.phase != historyDispatched || v.Model.SessionID != m.in.SessionID {
 		return rows
 	}
 	for _, row := range rows {
@@ -112,17 +152,17 @@ func (v *View) anchorHistoryRows(state *n.ListState, rows []transcriptRow) {
 	}
 	for i, row := range rows {
 		if sid == m.targetSession && row.key == target {
-			if !m.handedOff && m.anchorValid {
-				state.KeepRow(i+1, m.anchorY)
+			if !m.targetAnchored() && m.anchorY != nil {
+				state.KeepRow(i+1, *m.anchorY)
 			}
-			m.handedOff = true
+			m.handOff()
 			return
 		}
-		if sid == m.in.SessionID && row.key == m.anchorKey && !m.pinned {
-			if m.anchorValid {
-				state.KeepRow(i+1, m.anchorY)
+		if sid == m.in.SessionID && row.key == m.anchorKey && !m.sourcePinned() {
+			if m.anchorY != nil {
+				state.KeepRow(i+1, *m.anchorY)
 			}
-			m.pinned = true
+			m.pinSource()
 		}
 	}
 }
@@ -161,7 +201,7 @@ func (v *View) seedHistoryFork(op domain.HistoryOperation) {
 		}
 	}
 	for _, request := range source.Requests {
-		if kept[request.TurnID] && request.State != "pending" && request.State != "submitting" {
+		if kept[request.TurnID] && !request.State.AwaitingResolution() {
 			request.SessionID = op.Session.ID
 			detail.Requests = append(detail.Requests, request)
 		}
@@ -174,7 +214,7 @@ func (v *View) syncHistoryExit(c *n.Context) {
 	if motion == nil {
 		return
 	}
-	if motion.dispatched {
+	if motion.phase == historyDispatched {
 		if !motion.in.Restart && motion.targetThread != "" {
 			current := v.persistenceModel().Details[motion.targetSession].Session.ThreadID
 			if current != "" && current != motion.targetThread {
@@ -183,7 +223,7 @@ func (v *View) syncHistoryExit(c *n.Context) {
 			}
 		}
 		finished := !motion.in.Restart || v.persistenceModel().HistoryEdits[motion.in.SessionID].OperationID == ""
-		if finished && (motion.handedOff || v.Model.SessionID != motion.in.SessionID && v.Model.SessionID != motion.targetSession) {
+		if finished && (motion.targetAnchored() || v.Model.SessionID != motion.in.SessionID && v.Model.SessionID != motion.targetSession) {
 			v.historyExit = nil
 		}
 		return
@@ -201,7 +241,7 @@ func (v *View) syncHistoryExit(c *n.Context) {
 
 func (v *View) dispatchHistoryRestart() {
 	motion := v.historyExit
-	if motion == nil || motion.dispatched {
+	if motion == nil || motion.phase == historyDispatched {
 		return
 	}
 	in, m := motion.in, v.persistenceModel()
@@ -218,7 +258,7 @@ func (v *View) dispatchHistoryRestart() {
 		v.historyExit = nil
 		return
 	}
-	motion.dispatched = true
+	motion.phase = historyDispatched
 	if in.Restart {
 		edit.OperationID, edit.SubmittedText = in.OperationID, in.Text
 		m.HistoryEdits[in.SessionID] = edit

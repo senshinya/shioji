@@ -52,7 +52,7 @@ func (s *Server) recoveryLoop() {
 		s.dispatchMu.Unlock()
 		cancel()
 		for _, session := range snapshot.Sessions {
-			if session.Archived || session.Status != "unknown" && session.Status != "abandoned" {
+			if session.Archived || !session.Status.NeedsRecovery() {
 				continue
 			}
 			ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)

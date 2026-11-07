@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"shioji/internal/domain"
+	"shioji/internal/harness/codex/wire"
 	"slices"
 	"time"
 )
@@ -84,7 +85,10 @@ func (r *Runtime) SwitchHistory(oldThread, newThread, session string, commit fun
 	r.normalizer.mu.Lock()
 	delete(r.normalizer.sessions, oldThread)
 	delete(r.normalizer.totals, oldThread)
-	delete(r.normalizer.baselines, oldThread)
+	if usage, ok := r.normalizer.usage[oldThread]; ok {
+		usage.baseline = wire.Counters{}
+		r.normalizer.usage[oldThread] = usage
+	}
 	r.normalizer.mu.Unlock()
 	r.normalizer.Bind(newThread, session, false)
 	return nil

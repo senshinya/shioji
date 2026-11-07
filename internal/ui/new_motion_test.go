@@ -161,7 +161,7 @@ func TestWorkspaceDirectoryRemovalMovesFollowingRowsAndActionsTogether(t *testin
 
 func TestAttachmentPreviewGrowsWhenTheImageFinishesLoading(t *testing.T) {
 	v := New(layoutModel(), nil, "")
-	v.attachmentPreview = &attachmentPreview{Attachment: domain.Attachment{ID: "image", Name: "image.png"}, Open: true, Loading: true}
+	v.attachmentPreview = &attachmentPreview{Attachment: domain.Attachment{ID: "image", Name: "image.png"}, presence: previewOpening, Loading: true}
 	ui := n.NewTester(v.View, 1440, 900)
 	ui.Advance(time.Second)
 	before, _ := ui.Find("关闭附件预览")

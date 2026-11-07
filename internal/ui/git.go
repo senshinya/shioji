@@ -10,6 +10,39 @@ import (
 	"strings"
 )
 
+type gitLoadPhase uint8
+
+const (
+	gitUnrequested gitLoadPhase = iota
+	gitRequesting
+	gitReady
+	gitRefreshing
+)
+
+type gitLoadState struct {
+	phase gitLoadPhase
+	tag   string
+}
+
+func (v *View) gitLoading(key string) bool {
+	s := v.gitLoads[key]
+	return s != nil && (s.phase == gitRequesting || s.phase == gitRefreshing)
+}
+func (s *gitLoadState) begin() {
+	if s.phase == gitReady {
+		s.phase = gitRefreshing
+	} else {
+		s.phase = gitRequesting
+	}
+}
+func (s *gitLoadState) finish() {
+	if s.phase == gitRefreshing {
+		s.phase = gitReady
+	} else {
+		s.phase = gitUnrequested
+	}
+}
+
 func (v *View) gitQuery() (string, protocol.GitQuery) {
 	m := v.Model
 	q := protocol.GitQuery{WorkspaceID: m.WorkspaceID, SessionID: m.SessionID}
@@ -31,9 +64,13 @@ func (v *View) requestGit(force bool) {
 	if q.WorkspaceID == "" {
 		return
 	}
-	if v.gitLoaded == nil {
-		v.gitLoaded = map[string]string{}
-		v.gitPending = map[string]bool{}
+	if v.gitLoads == nil {
+		v.gitLoads = map[string]*gitLoadState{}
+	}
+	state := v.gitLoads[key]
+	if state == nil {
+		state = &gitLoadState{}
+		v.gitLoads[key] = state
 	}
 	revision := int64(0)
 	for _, w := range v.Model.Snapshot.Workspaces {
@@ -42,13 +79,13 @@ func (v *View) requestGit(force bool) {
 		}
 	}
 	tag := fmt.Sprintf("%s:%d", v.Model.ConnectionEpoch, revision)
-	if v.gitPending[key] || (!force && v.gitLoaded[key] == tag) {
+	if v.gitLoading(key) || (!force && state.tag == tag) {
 		return
 	}
-	v.gitPending[key] = true
+	state.begin()
 	epoch := v.Model.ConnectionEpoch
 	accepted := v.do(app.Job{Method: "git.status", Input: q, Apply: func(m *app.Model, b json.RawMessage, err error) {
-		delete(v.gitPending, key)
+		state.finish()
 		if m.ConnectionEpoch != epoch {
 			return
 		}
@@ -61,26 +98,26 @@ func (v *View) requestGit(force bool) {
 			m.Error = err.Error()
 			return
 		}
-		v.gitLoaded[key] = tag
+		state.phase, state.tag = gitReady, tag
 		m.SetGitStatus(key, status)
 	}})
 	if !accepted {
-		delete(v.gitPending, key)
+		state.finish()
 	}
 }
 func (v *View) canSwitchBranch() bool {
 	m := v.Model
 	key, _ := v.gitQuery()
-	if !m.Connected || m.GitEpochs[key] != m.ConnectionEpoch || v.gitPending[key] {
+	if !m.Connected || m.GitEpochs[key] != m.ConnectionEpoch || v.gitLoading(key) {
 		return false
 	}
 	for _, s := range m.Snapshot.Sessions {
-		if s.ID == m.SessionID && (s.Status == "running" || s.Status == "starting" || s.Status == "unknown") {
+		if s.ID == m.SessionID && (s.Status.BlocksCheckout()) {
 			return false
 		}
 	}
 	for _, r := range m.Details[m.SessionID].Requests {
-		if r.State == "pending" || r.State == "submitting" {
+		if r.State.AwaitingResolution() {
 			return false
 		}
 	}

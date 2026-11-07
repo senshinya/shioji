@@ -101,7 +101,7 @@ func reconcileOperations(ctx context.Context, client *protocol.Client, ids map[s
 			return err
 		}
 		emit(func(m *Model) { m.ApplyOperation(op) })
-		if op.State == "confirmed" || op.State == "rejected" || op.State == "indeterminate" || op.State == "abandoned" {
+		if op.State.ReceiptObserved() {
 			delete(ids, id)
 		}
 	}
@@ -197,8 +197,7 @@ func (c *Controller) Run(ctx context.Context) {
 	var generation string
 	var sequence int64
 	var selected string
-	loaded := map[string]bool{}
-	opening := map[string]bool{}
+	history := map[string]historyLoadPhase{}
 	visible := []string{}
 	var lastReadiness time.Time
 	var eventResults <-chan eventResult
@@ -228,7 +227,9 @@ func (c *Controller) Run(ctx context.Context) {
 			client.Close()
 		}
 		client = nil
-		clear(loaded)
+		for id, phase := range history {
+			history[id] = phase.invalidated()
+		}
 		c.mu.Lock()
 		c.epoch = ""
 		c.mu.Unlock()
@@ -240,22 +241,21 @@ func (c *Controller) Run(ctx context.Context) {
 	fetchDetail := func() error {
 		ids := append([]string{selected}, visible...)
 		for _, id := range ids {
-			if id == "" || loaded[id] {
+			if id == "" || history[id].loaded() {
 				continue
 			}
 			all, err := hydrateSession(ctx, client, id, generation)
 			if err != nil {
 				var remote *protocol.RemoteError
 				if errors.As(err, &remote) {
-					loaded[id] = true
+					history[id] = history[id].failed()
 					c.post(func(m *Model) { m.Error = err.Error() })
 					continue
 				}
 				return err
 			}
-			loaded[id] = true
-			collapseHistory := opening[id]
-			delete(opening, id)
+			collapseHistory := history[id].opening()
+			history[id] = historyLoaded
 			c.post(func(m *Model) {
 				m.Details[id] = all
 				if collapseHistory {
@@ -281,7 +281,7 @@ func (c *Controller) Run(ctx context.Context) {
 		events := page.Events
 		sequence = events[len(events)-1].Sequence
 		for _, e := range events {
-			if e.Operation != nil && (e.Operation.State == "confirmed" || e.Operation.State == "rejected" || e.Operation.State == "indeterminate" || e.Operation.State == "abandoned") {
+			if e.Operation != nil && (e.Operation.State.ReceiptObserved()) {
 				delete(unconfirmed, e.Operation.ID)
 			}
 		}
@@ -317,8 +317,7 @@ func (c *Controller) Run(ctx context.Context) {
 				visible = append([]string(nil), job.Input.([]string)...)
 				for _, id := range visible {
 					if !previous[id] {
-						delete(loaded, id)
-						opening[id] = true
+						history[id] = historyOpening
 					}
 				}
 				if client != nil {
@@ -330,8 +329,10 @@ func (c *Controller) Run(ctx context.Context) {
 			}
 			if job.Method == "$select" {
 				selected = job.Input.(string)
-				opening[selected] = selected != ""
-				delete(loaded, selected)
+				history[selected] = historyUnloaded
+				if selected != "" {
+					history[selected] = historyOpening
+				}
 				if client != nil {
 					if err := fetchDetail(); err != nil {
 						disconnected()
@@ -414,7 +415,9 @@ func (c *Controller) Run(ctx context.Context) {
 					m.Readiness = ready
 					m.ApplySnapshot(snapshot)
 				})
-				clear(loaded)
+				for id, phase := range history {
+					history[id] = phase.invalidated()
+				}
 				if err := reconcileOperations(ctx, client, unconfirmed, c.post); err != nil {
 					disconnected()
 					continue

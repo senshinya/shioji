@@ -14,10 +14,32 @@ type recoveryState struct {
 	Result       protocol.RecoveryResult
 	Busy         bool
 	Confirm      string
-	CheckStarted time.Time
+	check        recoveryCheckPhase
+	checkStarted time.Time
 	Details      bool
 	Advanced     bool
 	Selected     map[string]bool
+}
+
+type recoveryCheckPhase uint8
+
+const (
+	recoveryCheckIdle recoveryCheckPhase = iota
+	recoveryCheckWaiting
+	recoveryCheckVisible
+)
+
+func (s *recoveryState) observeCheck(pending bool, now time.Time) {
+	if !pending {
+		s.check, s.checkStarted = recoveryCheckIdle, time.Time{}
+		return
+	}
+	if s.check == recoveryCheckIdle {
+		s.check, s.checkStarted = recoveryCheckWaiting, now
+	}
+	if now.Sub(s.checkStarted) >= 300*time.Millisecond {
+		s.check = recoveryCheckVisible
+	}
 }
 
 var recoveryIcon = svg("M16 6a7 7 0 1 0 1 7M16 2v5h-5")
@@ -35,19 +57,15 @@ func (v *View) recovery(c *n.Context, t *n.Theme, d domain.SessionDetail) {
 	}
 	info := d.Session.Recovery
 	canContinue := info != nil && info.CanContinue && (d.Session.Status == "abandoned" || d.Session.Status == "interrupted" || d.Session.Status == "failed")
-	needsRecovery := d.Session.Status == "unknown" || d.Session.Status == "abandoned"
+	needsRecovery := d.Session.Status.NeedsRecovery()
 	pending := needsRecovery && m.WorkerMinor >= 7 && (info == nil || info.Phase == "checking")
-	if pending && state.CheckStarted.IsZero() {
-		state.CheckStarted = c.Now()
-	}
-	if !pending {
-		state.CheckStarted = time.Time{}
-	}
+	state.observeCheck(pending, c.Now())
+
 	expanded := needsRecovery && !pending && !canContinue
 	active := expanded || canContinue
 	if pending {
-		remaining := 300*time.Millisecond - c.Now().Sub(state.CheckStarted)
-		if remaining > 0 {
+		remaining := 300*time.Millisecond - c.Now().Sub(state.checkStarted)
+		if state.check == recoveryCheckWaiting {
 			c.After(remaining)
 		} else {
 			active = true
@@ -56,15 +74,15 @@ func (v *View) recovery(c *n.Context, t *n.Theme, d domain.SessionDetail) {
 	card := n.Column(c.Key("session-recovery:" + key)).FillWidth().MaxWidth(768).Clip().Label("执行恢复")
 	height := n.Local(card, "natural-height", func() float32 { return 26 })
 	retained := n.Local(card, "session", func() domain.Session { return d.Session })
-	mode := n.Local(card, "mode", func() string { return "checking" })
+	mode := n.Local(card, "mode", func() domain.RecoveryPhase { return domain.RecoveryChecking })
 	if active {
 		*retained = d.Session
-		*mode = "checking"
+		*mode = domain.RecoveryChecking
 		if expanded {
-			*mode = "attention"
+			*mode = domain.RecoveryAttention
 		}
 		if canContinue {
-			*mode = "ready"
+			*mode = domain.RecoveryReady
 		}
 	}
 	target := float32(0)

@@ -27,7 +27,7 @@ func (s *Server) queueLoop() {
 		snapshot, err := s.store.Snapshot()
 		if err == nil && s.currentRuntime() != nil && s.ctx.Err() == nil {
 			for _, session := range snapshot.Sessions {
-				if session.Status != "completed" && session.Status != "idle" && session.Status != "interrupted" && session.Status != "failed" && session.Status != "abandoned" {
+				if !session.Status.CanSubmit() {
 					continue
 				}
 				q, e := s.store.Queue(session.ID)
@@ -40,7 +40,7 @@ func (s *Server) queueLoop() {
 				}
 				blocked := false
 				for _, req := range d.Requests {
-					if req.State == "pending" || req.State == "submitting" {
+					if req.State.AwaitingResolution() {
 						blocked = true
 					}
 				}
@@ -181,11 +181,11 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 		if err == nil {
 			err = runtime.Steer(ctx, d.Session, in.TurnID, op.ID, in.Input.Text, inputs...)
 		}
-		state, status, message := "confirmed", "sent", ""
+		outcome := domain.DeliveryOutcome(err != nil, codex.IsUncertain(err))
+		state, status, message := outcome.Operation, outcome.Input, ""
 		if err != nil {
-			state, status, message = "rejected", "failed", err.Error()
-			if codex.IsUncertain(err) {
-				state, status = "indeterminate", "unknown"
+			message = err.Error()
+			if state == domain.OperationIndeterminate {
 				s.store.PauseQueue(op.SessionID, "steer delivery is unknown")
 			}
 		}

@@ -24,14 +24,40 @@ func (p requestPage) key() string {
 
 type requestPageMotion struct {
 	current   requestPage
-	previous  *requestPage
+	previous  requestPage
+	phase     requestPagePhase
 	index     int
 	height    float32
-	measured  bool
 	started   time.Time
 	direction float32
 	immediate bool
 }
+type requestPagePhase uint8
+
+const (
+	pageMeasuring requestPagePhase = iota
+	pageSettled
+	pageMeasuringSwitch
+	pageReadyToSlide
+	pageSliding
+)
+
+func (s *requestPageMotion) hasPrevious() bool {
+	return s.phase == pageMeasuringSwitch || s.phase == pageReadyToSlide || s.phase == pageSliding
+}
+func (s *requestPageMotion) measured() bool {
+	return s.phase != pageMeasuring && s.phase != pageMeasuringSwitch
+}
+func (s *requestPageMotion) acceptMeasurement(height float32) {
+	s.height = height
+	switch s.phase {
+	case pageMeasuring:
+		s.phase = pageSettled
+	case pageMeasuringSwitch:
+		s.phase = pageReadyToSlide
+	}
+}
+
 type requestPageMotionKey struct{}
 
 func (v *View) pendingBody(c *n.Context, t *n.Theme, current requestPage, index int, collapsed, entering bool) float32 {
@@ -41,24 +67,25 @@ func (v *View) pendingBody(c *n.Context, t *n.Theme, current requestPage, index 
 	})
 	if state.current.key() != current.key() {
 		old := state.current
-		state.previous = &old
+		state.previous = old
 		state.direction = 1
 		if index < state.index {
 			state.direction = -1
 		}
 		state.current, state.index = current, index
-		state.measured = false
+		state.phase = pageMeasuringSwitch
 		state.started = time.Time{}
 	}
 	state.current = current
 	animation := motionAnimation(c, 240*time.Millisecond)
 	progress := float32(1)
-	if state.previous != nil {
-		if !state.measured {
+	if state.hasPrevious() {
+		if !state.measured() {
 			progress = 0
 		} else {
-			if state.started.IsZero() {
+			if state.phase == pageReadyToSlide {
 				state.started = c.Now()
+				state.phase = pageSliding
 			}
 			progress = min(1, float32(c.Now().Sub(state.started))/float32(animation.Duration))
 			if c.Preferences().ReduceMotion {
@@ -67,7 +94,8 @@ func (v *View) pendingBody(c *n.Context, t *n.Theme, current requestPage, index 
 			progress = animation.Ease(max(0, progress))
 		}
 		if progress >= 1 {
-			state.previous = nil
+			state.previous = requestPage{}
+			state.phase = pageSettled
 		} else {
 			c.AnimationFrame()
 		}
@@ -90,7 +118,7 @@ func (v *View) pendingBody(c *n.Context, t *n.Theme, current requestPage, index 
 		content := n.Column(c.Key(key)).FillWidth().Shrink(0).Padding(8, 0, 0, 0).Gap(8)
 		if old {
 			content.Absolute().Left(0).Right(0).Top(0).IgnoreInput(true).Disabled(true).Transform(n.Translation(-distance*progress, 0))
-		} else if state.previous != nil {
+		} else if state.hasPrevious() {
 			content.Transform(n.Translation(distance*(1-progress), 0))
 		}
 		content.Children(func() {
@@ -106,13 +134,13 @@ func (v *View) pendingBody(c *n.Context, t *n.Theme, current requestPage, index 
 		// transition, this actual height participates in the dock's layout.
 		height := content.LayoutBounds().H
 		if height > 0 {
-			if !state.measured || math.Abs(float64(height-state.height)) > .5 {
+			if !state.measured() || math.Abs(float64(height-state.height)) > .5 {
 				if state.immediate && state.height == 0 && !collapsed {
 					frame.Jump("request-height", height)
 					shown = height
 					frame.Height(shown)
 				}
-				state.height, state.measured = height, true
+				state.acceptMeasurement(height)
 				c.Services().Invalidate()
 			}
 		} else {
@@ -120,8 +148,8 @@ func (v *View) pendingBody(c *n.Context, t *n.Theme, current requestPage, index 
 		}
 	}
 	frame.Children(func() {
-		if state.previous != nil {
-			build(*state.previous, true)
+		if state.hasPrevious() {
+			build(state.previous, true)
 		}
 		build(current, false)
 	})
@@ -135,18 +163,26 @@ type requestCardMotion struct {
 	index       int
 	known       map[string]bool
 	unread      map[string]bool
-	active      bool
+	presence    requestCardPhase
 	noticeUntil time.Time
 	noticeCount int
 	noticeKind  string
 }
+type requestCardPhase uint8
+
+const (
+	requestCardHidden requestCardPhase = iota
+	requestCardActive
+	requestCardClosing
+)
+
 type requestCardMotionKey struct{}
 
 func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 	v.pruneSecretAnswers(detail)
 	var pages []requestPage
 	for _, r := range detail.Requests {
-		if r.State != "pending" && r.State != "submitting" {
+		if !r.State.AwaitingResolution() {
 			continue
 		}
 		if len(r.Questions) == 0 {
@@ -164,10 +200,14 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 		for _, page := range pages {
 			known[page.key()] = true
 		}
-		return requestCardMotion{known: known, unread: map[string]bool{}, active: len(pages) > 0}
+		state := requestCardMotion{known: known, unread: map[string]bool{}}
+		if len(pages) > 0 {
+			state.presence = requestCardActive
+		}
+		return state
 	})
 	active := len(pages) > 0
-	if active && !state.active {
+	if active && state.presence != requestCardActive {
 		list := v.lists[m.SessionID]
 		composing := v.composerHadFocus && (strings.TrimSpace(m.Drafts[m.DraftKey()]) != "" || len(m.Attachments[m.DraftKey()]) > 0)
 		// New requests remain available without opening over history reading
@@ -192,7 +232,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 		for _, page := range pages {
 			key := page.key()
 			known[key] = true
-			if state.active && !state.known[key] {
+			if state.presence == requestCardActive && !state.known[key] {
 				state.unread[key] = true
 				state.noticeUntil = c.Now().Add(4 * time.Second)
 			}
@@ -211,7 +251,11 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 		clear(state.unread)
 		clear(state.known)
 	}
-	state.active = active
+	if active {
+		state.presence = requestCardActive
+	} else if state.presence == requestCardActive {
+		state.presence = requestCardClosing
+	}
 	target := float32(0)
 	if active {
 		target = 1
@@ -225,6 +269,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 	card.Margin(0, 0, -8*(1-presence), 0).Hidden(presence == 0)
 	if len(state.pages) == 0 || (!active && presence == 0) {
 		state.pages = nil
+		state.presence = requestCardHidden
 		card.Height(0)
 		return
 	}

@@ -17,7 +17,7 @@ func (m *Model) Queue() domain.QueueState { return m.Details[m.SessionID].Queue 
 func (m *Model) Active() bool {
 	for _, s := range m.Snapshot.Sessions {
 		if s.ID == m.SessionID {
-			return s.Status == "running" || s.Status == "starting"
+			return s.Status.Active()
 		}
 	}
 	return false

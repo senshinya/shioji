@@ -35,7 +35,7 @@ func (m *Model) notificationForEvent(e domain.Event) *SessionNotification {
 				return nil
 			}
 		}
-		notice.Kind = e.Turn.Status
+		notice.Kind = string(e.Turn.Status)
 		if notice.Kind == "completed" {
 			if !p.Completed {
 				return nil

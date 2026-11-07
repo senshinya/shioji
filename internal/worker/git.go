@@ -196,9 +196,9 @@ func (s *Server) checkoutGuard(status domain.GitStatus, own string) error {
 		if !sameCheckout(s.ctx, session.Context.CWD, status.Checkout) {
 			continue
 		}
-		busy := session.Status == "running" || session.Status == "starting" || session.Status == "unknown"
+		busy := session.Status.BlocksCheckout()
 		for _, r := range snap.PendingRequests {
-			if r.SessionID == session.ID && (r.State == "pending" || r.State == "submitting") {
+			if r.SessionID == session.ID && (r.State.AwaitingResolution()) {
 				busy = true
 			}
 		}
@@ -229,11 +229,11 @@ func (s *Server) checkout(in protocol.CheckoutInput) (domain.GitStatus, error) {
 	if err != nil {
 		return status, err
 	}
-	if d.Session.Status == "running" || d.Session.Status == "starting" || d.Session.Status == "unknown" {
+	if d.Session.Status.BlocksCheckout() {
 		return status, errors.New("session must be idle")
 	}
 	for _, r := range d.Requests {
-		if r.State == "pending" || r.State == "submitting" {
+		if r.State.AwaitingResolution() {
 			return status, errors.New("resolve pending requests before switching branches")
 		}
 	}

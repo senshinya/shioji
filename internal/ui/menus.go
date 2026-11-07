@@ -2,6 +2,15 @@ package ui
 
 import n "github.com/egoist/mygo/ui"
 
+type runMenuPhase uint8
+
+const (
+	runMenuClosed runMenuPhase = iota
+	runMenuMain
+	runMenuModels
+	runMenuEfforts
+)
+
 type menuChoice struct {
 	id, name, detail  string
 	checked, disabled bool

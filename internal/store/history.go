@@ -280,7 +280,7 @@ func HistoryPending(op domain.HistoryOperation) error {
 	if op.State == "failed" {
 		return errors.New(op.Error)
 	}
-	return fmt.Errorf("历史操作%s，原输入不会自动重发", strings.NewReplacer("prepared", "结果待核对", "forked", "等待完成").Replace(op.State))
+	return fmt.Errorf("历史操作%s，原输入不会自动重发", strings.NewReplacer("prepared", "结果待核对", "forked", "等待完成").Replace(string(op.State)))
 }
 
 func putTurn(tx *sql.Tx, sid string, turn *domain.Turn) error {

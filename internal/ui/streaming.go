@@ -14,13 +14,40 @@ import (
 // live additions from opening/recovering history and remounting virtual rows.
 type replyStream struct {
 	text        string
-	live        bool
-	fresh       bool
+	phase       replyPhase
 	changedAt   time.Time
 	revealAfter time.Time
 	revealing   bool
 	seen        uint64
 }
+
+// A replacement can arrive before the row's first mount. Retain that fact
+// separately from history so a later prefix update preserves the old behavior.
+type replyPhase uint8
+
+const (
+	replyHistorical replyPhase = iota
+	replyFresh
+	replyLive
+	replyReplacedFresh
+)
+
+func replyPhaseFor(live, fresh bool) replyPhase {
+	if live {
+		if fresh {
+			return replyFresh
+		}
+		return replyLive
+	}
+	if fresh {
+		return replyReplacedFresh
+	}
+	return replyHistorical
+}
+func (s *replyStream) live() bool          { return s.phase == replyFresh || s.phase == replyLive }
+func (s *replyStream) fresh() bool         { return s.phase == replyFresh || s.phase == replyReplacedFresh }
+func (s *replyStream) mount()              { s.phase = replyPhaseFor(s.live(), false) }
+func (s *replyStream) replace(prefix bool) { s.phase = replyPhaseFor(prefix, s.fresh()) }
 
 const receiptEntranceDuration = 200 * time.Millisecond
 
@@ -54,17 +81,17 @@ func (v *View) syncReplyStreams(detail domain.SessionDetail) {
 			if item.Kind == "request_result" && item.Order > 0 && item.Order <= previousOrder {
 				live = false
 			}
-			stream = &replyStream{text: item.Text, live: live, fresh: live, changedAt: v.frameTime, revealing: live && !v.reduceMotion && item.Text != ""}
+			stream = &replyStream{text: item.Text, phase: replyPhaseFor(live, live), changedAt: v.frameTime, revealing: live && !v.reduceMotion && item.Text != ""}
 			if item.Kind == "assistant" && live && v.frameTime.Before(receiptUntil) {
 				stream.revealAfter = receiptUntil
 			}
 			v.replyStreams[item.ID] = stream
 		} else if stream.text != item.Text {
-			stream.live = strings.HasPrefix(item.Text, stream.text)
+			stream.replace(strings.HasPrefix(item.Text, stream.text))
 			stream.text, stream.changedAt = item.Text, v.frameTime
-			stream.revealing = stream.live && !v.reduceMotion && item.Text != ""
+			stream.revealing = stream.live() && !v.reduceMotion && item.Text != ""
 		}
-		if item.Kind == "request_result" && stream.live {
+		if item.Kind == "request_result" && stream.live() {
 			receiptUntil = stream.changedAt.Add(receiptEntranceDuration)
 		}
 	}
@@ -79,13 +106,14 @@ func (v *View) requestSourceLabel(c *n.Context, t *n.Theme, item domain.Item, la
 	options.Theme = &markdown.Theme{Font: "system-ui", FontSize: 11, LineHeight: 20.0 / 11, Text: t.TextMuted}
 	options.Reveal = &markdown.Reveal{Unit: markdown.ByCharacter, Fade: 180 * time.Millisecond, Smooth: true}
 	stream := v.replyStreams[item.ID]
-	fresh := stream != nil && stream.live && stream.fresh
-	if v.reduceMotion || stream == nil || !stream.live {
+	fresh := stream != nil && stream.live() && stream.fresh()
+	if v.reduceMotion || stream == nil || !stream.live() {
 		options.Reveal = &markdown.Reveal{Unit: markdown.AtOnce, Fade: -1}
 	}
 	options.OnRevealState = nil
 	if stream != nil {
-		stream.fresh, stream.seen = false, v.replyFrame
+		stream.mount()
+		stream.seen = v.replyFrame
 		options.OnRevealState = func(active bool) {
 			if stream.revealing != active {
 				stream.revealing = active
@@ -115,7 +143,7 @@ func (v *View) assistantReply(c *n.Context, item domain.Item) {
 	stream := v.replyStreams[item.ID]
 	// Receive all deltas normally, but let the preceding receipt finish its
 	// entrance before mounting Markdown and starting its own reveal clock.
-	if stream != nil && stream.live && !v.reduceMotion && c.Now().Before(stream.revealAfter) {
+	if stream != nil && stream.live() && !v.reduceMotion && c.Now().Before(stream.revealAfter) {
 		stream.seen, stream.revealing = v.replyFrame, true
 		c.AnimationFrame()
 		return
@@ -125,11 +153,11 @@ func (v *View) assistantReply(c *n.Context, item domain.Item) {
 	if stream != nil {
 		// The final payload can append text too. Feed that frame through Stream
 		// before View takes over and lets Markdown drain the buffered tail.
-		streaming = stream.live && (!item.Final || stream.changedAt.Equal(v.frameTime) || stream.fresh && !stream.revealAfter.IsZero())
-		if !*initialized && !stream.fresh {
+		streaming = stream.live() && (!item.Final || stream.changedAt.Equal(v.frameTime) || stream.fresh() && !stream.revealAfter.IsZero())
+		if !*initialized && !stream.fresh() {
 			streaming = false
 		}
-		stream.fresh = false
+		stream.mount()
 	}
 	*initialized = true
 	v.md.OnRevealState = nil
@@ -143,7 +171,7 @@ func (v *View) assistantReply(c *n.Context, item domain.Item) {
 		}
 	}
 	v.md.Reveal = &markdown.Reveal{Unit: markdown.ByCharacter, Fade: 180 * time.Millisecond, Smooth: true}
-	if v.reduceMotion || stream == nil || !stream.live {
+	if v.reduceMotion || stream == nil || !stream.live() {
 		v.md.Reveal = &markdown.Reveal{Unit: markdown.AtOnce, Fade: -1}
 	}
 	root.Children(func() {

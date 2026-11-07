@@ -60,7 +60,7 @@ func (r *Runtime) Inspect(ctx context.Context, s domain.Session) (domain.Recover
 			if src.ID == "" || (src.ItemsView != "" && src.ItemsView != "full") {
 				return domain.RecoveryHistory{}, errors.New("Codex 恢复历史不完整")
 			}
-			turn := domain.Turn{ID: src.ID, Status: src.Status, StartedAt: stamp(src.StartedAt), CompletedAt: stamp(src.CompletedAt), DurationMS: src.DurationMS}
+			turn := domain.Turn{ID: src.ID, Status: domain.ExecutionState(src.Status), StartedAt: stamp(src.StartedAt), CompletedAt: stamp(src.CompletedAt), DurationMS: src.DurationMS}
 			switch turn.Status {
 			case "inProgress":
 				turn.Status = "running"

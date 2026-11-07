@@ -26,7 +26,7 @@ func nativeQueueFixture() (*View, *n.Tester) {
 	m.Details["s"] = d
 	v := New(m, app.NewController(""), "")
 	ui := n.NewTester(v.View, 1200, 820)
-	v.gitPending = map[string]bool{}
+	v.gitLoads = map[string]*gitLoadState{}
 	for len(v.Controller.Jobs) > 0 {
 		<-v.Controller.Jobs
 	}

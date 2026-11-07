@@ -13,16 +13,79 @@ import (
 
 type changesState struct {
 	Files    []domain.ChangedFile
-	Loaded   bool
-	Loading  bool
+	load     changesLoadPhase
 	Error    string
 	Updated  time.Time
 	Path     string
+	file     fileDiffPhase
 	Versions domain.FileVersions
 	Diff     editor.DiffState
 	List     n.ListState
 	Tasks    n.ListState
 }
+
+type changesLoadPhase uint8
+
+const (
+	changesUnloaded changesLoadPhase = iota
+	changesLoading
+	changesLoaded
+	changesRefreshing
+)
+
+func (s *changesState) loading() bool { return s.load == changesLoading || s.load == changesRefreshing }
+func (s *changesState) loaded() bool  { return s.load == changesLoaded || s.load == changesRefreshing }
+func (s *changesState) beginLoad() {
+	if s.loaded() {
+		s.load = changesRefreshing
+	} else {
+		s.load = changesLoading
+	}
+}
+func (s *changesState) endLoad(success bool) {
+	if success || s.loaded() {
+		s.load = changesLoaded
+	} else {
+		s.load = changesUnloaded
+	}
+}
+
+type fileDiffPhase uint8
+
+const (
+	fileUnselected fileDiffPhase = iota
+	fileAwaiting
+	fileAvailable
+	fileRefreshing
+	fileFailed
+	fileFailedWithCache
+)
+
+func (s *changesState) fileAvailable() bool {
+	return s.file == fileAvailable || s.file == fileRefreshing || s.file == fileFailedWithCache
+}
+func (s *changesState) selectFile(path string) {
+	s.Path = path
+	s.file = fileAwaiting
+	if s.Versions.Path == path {
+		s.file = fileRefreshing
+	}
+}
+func (s *changesState) failFile() {
+	if s.Versions.Path == s.Path {
+		s.file = fileFailedWithCache
+	} else {
+		s.file = fileFailed
+	}
+}
+func (s *changesState) receiveFile(versions domain.FileVersions) {
+	s.Versions = versions
+	s.file = fileAwaiting
+	if versions.Path == s.Path {
+		s.file = fileAvailable
+	}
+}
+func (s *changesState) closeFile() { s.Path, s.file = "", fileUnselected }
 
 var refreshIcon = svg("M16 7a7 7 0 1 0 1 5M16 3v4h-4")
 var changesIcon = svg("M3 7h14M10 4v6M3 16h14")
@@ -45,13 +108,13 @@ func (v *View) requestChanges(force bool) {
 		return
 	}
 	state := v.changesFor(m.SessionID)
-	if state.Loading || (!force && time.Since(state.Updated) < 3*time.Second) {
+	if state.loading() || (!force && time.Since(state.Updated) < 3*time.Second) {
 		return
 	}
-	state.Loading = true
+	state.beginLoad()
 	_, q := v.gitQuery()
 	if !v.do(app.Job{Method: "git.changes", Input: q, Apply: func(m *app.Model, b json.RawMessage, err error) {
-		state.Loading = false
+		state.endLoad(false)
 		state.Updated = time.Now()
 		if err != nil {
 			state.Error = err.Error()
@@ -62,9 +125,9 @@ func (v *View) requestChanges(force bool) {
 			state.Error = err.Error()
 			return
 		}
-		state.Loaded = true
+		state.endLoad(true)
 	}}) {
-		state.Loading = false
+		state.endLoad(false)
 	}
 }
 func (v *View) openChangedFile(path string) {
@@ -72,7 +135,7 @@ func (v *View) openChangedFile(path string) {
 		return
 	}
 	state := v.changesFor(v.Model.SessionID)
-	state.Path = path
+	state.selectFile(path)
 	state.Error = ""
 	_, q := v.gitQuery()
 	v.do(app.Job{Method: "git.file", Input: protocol.FileQuery{GitQuery: q, Path: path}, Apply: func(m *app.Model, b json.RawMessage, err error) {
@@ -81,15 +144,17 @@ func (v *View) openChangedFile(path string) {
 		}
 		if err != nil {
 			state.Error = err.Error()
+			state.failFile()
 			return
 		}
 		var versions domain.FileVersions
 		if err = json.Unmarshal(b, &versions); err != nil {
 			state.Error = err.Error()
+			state.failFile()
 			return
 		}
 		previousPath := state.Versions.Path
-		state.Versions = versions
+		state.receiveFile(versions)
 		if state.Diff.Old == nil || previousPath != versions.Path {
 			state.Diff = editor.DiffState{Old: editor.NewBuffer(versions.Old), New: editor.NewBuffer(versions.New), Layout: editor.DiffUnified, Wrap: true}
 		} else {
@@ -278,7 +343,7 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 				if state.Error != "" {
 					n.Text(c, state.Error).FontSize(12).TextColor(t.TextMuted).Padding(12)
 				}
-				if !state.Loaded {
+				if !state.loaded() {
 					n.Text(c, "读取更改…").FontSize(12).TextColor(t.TextMuted).Padding(12)
 				} else if len(state.Files) == 0 {
 					n.Text(c, "没有文件更改").FontSize(12).TextColor(t.TextMuted).Padding(12)
@@ -324,7 +389,7 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 				})
 			})
 			if goBack {
-				state.Path = ""
+				state.closeFile()
 			}
 		})
 	})
@@ -395,7 +460,7 @@ func (v *View) diffBody(c *n.Context, t *n.Theme, state *changesState) {
 		n.Text(c, state.Error).FontSize(12).TextColor(t.TextMuted).Padding(14)
 		return
 	}
-	if state.Versions.Path != state.Path {
+	if !state.fileAvailable() {
 		n.Text(c, "读取文件…").FontSize(12).TextColor(t.TextMuted).Padding(14)
 		return
 	}

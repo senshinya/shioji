@@ -554,7 +554,7 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 		if d.Session.Archived {
 			return domain.Operation{}, errors.New("请先恢复会话")
 		}
-		if d.Session.Status != "idle" && d.Session.Status != "completed" && d.Session.Status != "interrupted" && d.Session.Status != "failed" && d.Session.Status != "abandoned" {
+		if !d.Session.Status.CanSubmit() {
 			return domain.Operation{}, errors.New("session is unavailable for a new turn")
 		}
 		if in.Continue {
@@ -573,7 +573,7 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 		}
 		if queueRevision > 0 || in.Continue {
 			for _, req := range d.Requests {
-				if req.State == "pending" || req.State == "submitting" {
+				if req.State.AwaitingResolution() {
 					return domain.Operation{}, errors.New("session has pending requests")
 				}
 			}
@@ -681,22 +681,15 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime *co
 			turnID, err = runtime.Submit(ctx, session, op.ID, in.Text, inputs...)
 		}
 	}
-	state := "confirmed"
-	delivery := "sent"
+	outcome := domain.DeliveryOutcome(err != nil, codex.IsUncertain(err))
+	state, delivery := outcome.Operation, outcome.Input
 	if err != nil {
 		if _, e := s.store.PauseQueue(session.ID, err.Error()); e != nil {
 			s.cancel()
 			return
 		}
-		state = "rejected"
-		delivery = "failed"
-		if codex.IsUncertain(err) {
-			state = "indeterminate"
-			delivery = "unknown"
-		}
-		session.Status = "failed"
+		session.Status = outcome.Execution
 		if state == "indeterminate" {
-			session.Status = "unknown"
 			defer s.wakeRecovery()
 		}
 		session.Error = err.Error()
@@ -744,7 +737,7 @@ func (s *Server) onEvent(e domain.Event) error {
 			return err
 		}
 		session := detail.Session
-		if session.Status != "running" && session.Status != "starting" {
+		if !session.Status.Active() {
 			return nil
 		}
 		for _, turn := range detail.Turns {
