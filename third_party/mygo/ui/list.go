@@ -43,6 +43,8 @@ const (
 	listAnchorReading
 	listAnchorSendingPending
 	listAnchorSending
+	listAnchorEndPending
+	listAnchorEnd
 )
 
 func (s *ListState) anchored() bool { return s.anchorMode != listAnchorNone }
@@ -50,10 +52,13 @@ func (s *ListState) sentAnchor() bool {
 	return s.anchorMode == listAnchorSendingPending || s.anchorMode == listAnchorSending
 }
 func (s *ListState) animatedAnchor() bool {
-	return s.sentAnchor() || s.anchorMode == listAnchorReadingPending || s.anchorMode == listAnchorReading
+	return s.sentAnchor() || s.endAnchor() || s.anchorMode == listAnchorReadingPending || s.anchorMode == listAnchorReading
+}
+func (s *ListState) endAnchor() bool {
+	return s.anchorMode == listAnchorEndPending || s.anchorMode == listAnchorEnd
 }
 func (s *ListState) anchorPending() bool {
-	return s.anchorMode == listAnchorReadingPending || s.anchorMode == listAnchorSendingPending
+	return s.anchorMode == listAnchorReadingPending || s.anchorMode == listAnchorSendingPending || s.anchorMode == listAnchorEndPending
 }
 func (s *ListState) beginAnchor() {
 	switch s.anchorMode {
@@ -61,6 +66,8 @@ func (s *ListState) beginAnchor() {
 		s.anchorMode = listAnchorReading
 	case listAnchorSendingPending:
 		s.anchorMode = listAnchorSending
+	case listAnchorEndPending:
+		s.anchorMode = listAnchorEnd
 	}
 }
 
@@ -225,6 +232,7 @@ type ListState struct {
 	pinAnimation     Animation
 	pinGlide         channel
 	pinWithinContent bool
+	pinEndTop        float64
 	// A reader who leaves a sent-message anchor stays in reading mode even
 	// when removing its temporary end space makes all current rows fit.
 	followPaused bool
@@ -360,8 +368,15 @@ func (s *ListState) ScrollIntoView(row int) {
 }
 
 // ScrollToEnd scrolls the list to its end, where FollowEnd follows it
-// again.
-func (s *ListState) ScrollToEnd() {
+// again. An optional animation glides from the current place, keeping rows
+// virtual and following additions to the end. User scrolling interrupts it.
+func (s *ListState) ScrollToEnd(animation ...Animation) {
+	if len(animation) > 0 {
+		s.KeepRow(max(0, s.heights.n-1), 0)
+		s.pinKey, s.pinWithinContent = nil, true
+		s.anchorMode, s.pinAnimation = listAnchorEndPending, animation[0]
+		return
+	}
 	s.anchorMode = listAnchorNone
 	s.followPaused = false
 	s.req = listRequest{set: true, end: true}
@@ -651,6 +666,8 @@ func (s *ListState) sync(e *node, n int) {
 				s.followPaused = true
 			}
 			s.anchorMode = listAnchorNone
+		} else if s.endAnchor() {
+			s.pinRow = max(0, n-1)
 		} else if s.pinKey != nil {
 			row, ok := s.find(s.pinKey, s.pinRow, n)
 			if !ok {
@@ -1533,6 +1550,9 @@ func (e *node) layoutList(w, h float32) {
 		a = max(0, min(s.pinRow, n-1))
 		ensure(a)
 		if s.animatedAnchor() {
+			if s.endAnchor() {
+				s.pinTarget = H - padBottom - ht(a)
+			}
 			target := min(s.pinTarget, padTop+hs.top(a, gap))
 			if s.anchorPending() {
 				from := padTop + hs.top(a, gap) - s.wroteY
@@ -1546,6 +1566,18 @@ func (e *node) layoutList(w, h float32) {
 					headFor(&s.pinGlide, target, s.pinAnimation, e.c.now)
 				}
 				s.beginAnchor()
+			} else if s.endAnchor() {
+				// Content appended during the glide moves the last row. Keep
+				// the current viewport still, then head for its updated end.
+				s.pinGlide.advance(e.c.now)
+				delta := padTop + hs.top(a, gap) - s.pinEndTop
+				if math.Abs(delta) > .5 || math.Abs(target-s.pinGlide.target) > .5 {
+					s.pinGlide.value += delta
+					headFor(&s.pinGlide, target, s.pinAnimation, e.c.now)
+				}
+			}
+			if s.endAnchor() {
+				s.pinEndTop = padTop + hs.top(a, gap)
 			}
 			if e.c.rt.preferences().ReduceMotion {
 				s.pinGlide = channel{value: target, target: target, at: e.c.now}
@@ -1554,6 +1586,9 @@ func (e *node) layoutList(w, h float32) {
 			s.pinY = s.pinGlide.value
 			if s.pinGlide.moving || s.pinGlide.pending {
 				e.c.rt.animating = true
+			}
+			if s.endAnchor() && !s.pinGlide.moving && !s.pinGlide.pending {
+				s.anchorMode, s.following = listAnchorNone, s.FollowEnd
 			}
 			// Natural content, excluding the temporary reading space, has
 			// reached the viewport bottom. Resume ordinary bottom following.

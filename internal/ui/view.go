@@ -1197,7 +1197,6 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		return "", false
 	})
 	v.conversationOutline(c, t, state, rows)
-	v.returnToLatest(c, t, state)
 	n.Column(c).Absolute().Left(0).Right(conversationScrollbarGutter).Top(0).Height(48).Background(t.Background).Children(func() { v.toolbar(c, t) })
 	v.conversationFindBar(c, t, state.Bounds(c).W)
 	dock := n.Column(c.Key("conversation-dock")).Absolute().Left(0).Right(0).Bottom(8).PaddingX(18).AlignItems(n.Center).Gap(8).Label("会话底部面板")
@@ -1210,6 +1209,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		}
 	})
 	dock.Children(func() { v.recovery(c, t, detail); v.pending(c, t, detail); v.composer(c, t, false); v.notice(c, t) })
+	v.returnToLatest(c, t, state, dock)
 }
 
 func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {

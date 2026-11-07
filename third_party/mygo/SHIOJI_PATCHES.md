@@ -41,6 +41,11 @@ not expose the following appearance settings required by the frozen design:
   additionally clamps disclosure anchors to the natural content boundaries:
   a shrinking section can move its heading to avoid trailing blank space.
   Unbounded reading/sent-message anchors retain their temporary reading space.
+- `ui.ListState.ScrollToEnd`: accepts an optional animation for an interruptible
+  glide from the current reading position to the measured end, without mounting
+  intervening history. Appended rows retarget it without moving the current
+  viewport; completion resumes ordinary end following. The no-argument form
+  retains its immediate behavior. Covered by `ui/list_reading_motion_test.go`.
 - `ui/markdown.Options.OnRevealState`: report native buffered-text and fade
   activity so the visible conversation can defer its sidebar check until output
   settles, independently of authoritative execution completion.

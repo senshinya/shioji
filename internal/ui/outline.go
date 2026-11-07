@@ -19,7 +19,7 @@ type outlineEntry struct {
 	Row               int
 }
 
-var latestIcon = svg("M10 3v14M4 11l6 6 6-6")
+var latestIcon = svg("M5 7.5l5 5 5-5")
 
 func outlineEntries(rows []transcriptRow) []outlineEntry {
 	entries := []outlineEntry{}
@@ -136,13 +136,27 @@ func abs(n int) int {
 	}
 	return n
 }
-func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState) {
+func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock n.Element) {
 	if state.AtEnd() || state.FollowingEnd() || v.Model.HistoryEdits[v.Model.SessionID].ItemID != "" {
 		return
 	}
-	if iconButton(c, latestIcon, "回到最新").Absolute().Right(28).Bottom(v.dockHeight+20).Size(28, 28).Radius(14).Background(raised(t)).Border(1, t.Border).Shadow(0, 2, 8, 0, n.RGBA(0, 0, 0, .08)).Transition(popupMotion(c)).Clicked() {
-		state.ScrollToEnd()
-		v.focusComposer = v.composerHadFocus
+	motion := fadeMotion(c, 160*time.Millisecond)
+	if !c.Preferences().ReduceMotion {
+		motion.Enter.Y, motion.Exit.Y = 4, 4
+	}
+	button := control(c, 14).KeepFocus().Height(28).PaddingX(10).Radius(14).Background(raised(t)).Border(1, t.Border.Alpha(.65)).
+		Label("回到最新").Tooltip("回到最新消息").AttachTo(dock, n.AnchorTop, n.AnchorBottom).Margin(0, 0, 12, 0).Transition(motion)
+	color := textHoverColor(c, button, t.TextMuted)
+	button.Children(func() {
+		font := n.Font{Family: t.Font, Size: 12, Weight: 400}
+		inlineIconText(c, latestIcon, "最新消息", font, 14, 5, color)
+	})
+	if button.Clicked() {
+		if c.Preferences().ReduceMotion {
+			state.ScrollToEnd()
+		} else {
+			state.ScrollToEnd(n.Animation{Duration: 320 * time.Millisecond, Ease: composerDescentEase})
+		}
 	}
 }
 
