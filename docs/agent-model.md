@@ -1,10 +1,10 @@
-# Agent 中间模型与 Codex 适配边界
+# Harness 中立模型与适配边界
 
-状态：2026-11-03 技术草案。用户要求中间结构能够支持后续 agent；本文中的字段和接口是建议，尚未实现。初始事实依据为 [Codex 0.166.0 schema](../design/protocol/codex-0.166.0/inventory.json) 和[官方 App Server 文档](https://developers.openai.com/codex/app-server/)。
+状态：2026-11-07 已实现首轮 harness 中立边界。生产仍只注册 Codex；独立内存驱动仅用于多 harness 契约测试。本文“当前实现”列出实际接口和兼容行为，后续详细内容模型与接口草图仍是设计建议，不能作为已支持能力的清单。最初研究依据为 [Codex 0.166.0 schema](../design/protocol/codex-0.166.0/inventory.json) 和[官方 App Server 文档](https://developers.openai.com/codex/app-server/)。
 
 运行边界已由用户确定：采用自有完整 worker，取消 herdr-core 依赖。Codex adapter 位于 owning device 的 worker 内；客户端通过版本化 worker 协议接收中间结构，不自行持有远端 app-server 连接。
 
-首期执行设备限定为 macOS。最新可行性实验见 [macOS worker 技术验证](macos-worker-research-2026-11-03.md)；这些研究夹具尚未实现本文件的生产中间协议。
+首期执行设备限定为 macOS。最新可行性实验见 [macOS worker 技术验证](macos-worker-research-2026-11-03.md)；研究夹具与当前生产实现分别验证。
 
 ## 目标
 
@@ -18,6 +18,67 @@
 4. 操作与能力：当前 harness／模型／环境实际允许什么，以及用户操作是否被接受。
 
 这些不是一个 `role + text` 消息数组，也不是让 UI 对 `map[string]any` 自行判断 Codex 类型。
+
+## 已确认的依赖边界
+
+```text
+原生 UI／应用层
+        ↕ Shioji 的版本化命令、事件、快照与能力描述
+Worker 编排／通用领域模型
+        ↕ harness 中立的接口
+具体 Harness Adapter（双向翻译）
+        ↕ 该 harness 的协议、配置、错误与进程接入
+Codex app-server／后续 harness
+```
+
+中间层定义产品语义：提交输入、引导当前执行、中断、处理请求、计划、用量、历史分叉与恢复等。它不以某个 harness 的 RPC 方法、枚举或对象形状作为自己的定义。执行、连接、投递、请求和呈现状态继续独立；上一轮显式状态重构不表示 harness 解耦也已经完成。
+
+翻译层属于具体 adapter，必须双向工作：
+
+- 出站：把中立输入、附件引用、权限意图和选项映射成该 harness 实际支持的命令；保留提交结果未知与明确拒绝的区别。
+- 入站：把该 harness 的事件、请求、结果、用量与错误转换为中立语义；原生 request ID、响应编码和专有状态机留在 adapter 内。
+- 生命周期：把该 harness 的启动、连接、执行代理、历史操作及恢复机制封装在 adapter 后面。Worker 继续拥有设备端的接纳、队列、持久化、进程所有权与安全边界，不能把这些权威责任下放给 UI 或外部进程。
+
+组合／注册入口可以选择具体 adapter；共享编排仅依赖中立契约。仅增加一个包住 `codex.Runtime` 的接口还不够：如果签名依然传递 Codex 的附件、错误或执行代理类型，或调用方仍须识别 Codex 状态与请求格式，边界仍未成立。
+
+能力是差异的明确表达，不要求所有 harness 实现相同功能。引导、中断、计划、分叉、原位重开、恢复及模型选项分别按实际支持情况声明。不支持的操作明确禁用或返回中立的“不支持”错误；不得把引导实现成取消后重发，也不得把分叉能力冒充原会话重开能力。
+
+模型、推理配置、速度偏好和权限控制使用中立语义或有类型的选项描述。具体可选值及映射由 adapter 提供，不让通用模型固定携带 Codex 的 `serviceTier`、`SandboxPolicy` 或 `collaborationMode` 结构。没有对应能力的 harness 不显示这些选项。名称、图标、型号等目录数据可以包含具体 harness 的内容；共享 UI 通过相同结构展示，不硬编码产品名称或按名称切换协议逻辑。
+
+不透明来源标识只用于关联和交还对应 adapter。共享代码不解析其格式，也不把完整原生 payload 放进 `any`、任意 JSON 或 `harnessOptions` 来规避隔离。受限诊断材料与中间事件分开保存，不供普通 UI 或业务状态机解释。
+
+## 当前实现与验证
+
+| 职责 | 实现边界 |
+| --- | --- |
+| 设备侧中立接口 | `internal/harness/harness.go` 定义 Adapter、Runtime、中立附件、历史准备／激活、投递错误与不支持错误；不导入具体实现 |
+| 通用目录与能力 | `domain.HarnessInfo` 分别携带模型、权限选项、Plan 和执行／历史能力；不合并不同 harness 的选项 |
+| Codex 双向翻译 | `internal/harness/codex/adapter.go` 封装 app-server 和 Executor，协议状态、审批原始决策及来源响应保留在该包 |
+| Worker 组合入口 | CLI 和 `internal/worker/defaults.go` 注册实际 adapter；共享编排只依赖中立契约 |
+| 会话路由 | 创建时持久化 HarnessID；后续提交、队列、恢复、分叉和重开按该身份路由，未知或缺失实现明确失败，不使用设备默认实现替代 |
+| 生命周期与安全 | Worker 继续拥有接纳、幂等、队列、进程归属、停止证明和持久化；adapter 只报告允许的会话事件，不能更新 Worker 的工作区／会话身份 |
+| 历史操作 | Worker 持久化准备结果并原子接纳激活；Codex 内部执行 fork、释放和切换。Restart 与 Fork 独立声明，不强制其他实现使用新来源 ID |
+| 原生呈现 | 运行菜单和设备信息从目录展示名称、图标及选项；已有会话固定 Agent；不支持的操作禁用或隐藏 |
+
+`RunConfig` 中 Plan、Fast、effort 和权限 ID 表达 Shioji 的产品选项；具体目录及原生映射由 adapter 决定。不支持这些配置的驱动不显示对应控件。PermissionChoice 的名称和说明来自 adapter，原生沙盒结构不进入通用配置。内存驱动使用与 Codex 不同的模型／权限并省略 effort、Fast 和 Plan，以检验这一约束。
+
+兼容规则：
+
+- Worker 协议为 **major 2 / minor 10**。保留顶层默认目录投影供旧客户端读取，新客户端按 HarnessID 选择独立目录；旧 worker 的能力兼容限于已协商的 minor <= 9 单运行时协议。
+- 已保存的 `ThreadID` 继续是不透明来源引用，不因改名重写数据库。历史阶段名 `forked` 保留既有存储含义，表示已有可重试的准备结果，不要求其他 harness 真正创建 fork。
+- 旧提交的空 HarnessID 不改变其操作摘要；Worker 将默认身份作为接纳元数据写入新会话。已有会话身份不会随首页或设备默认变化。
+- 根目录 catalog 的归属保存在 `catalog-owner`，与当前默认选择独立。无归属文件但存在旧根进程记录时，由组合入口明确识别旧单 Codex 布局。
+- 首页按工作区和 harness 保存运行配置；离线首帧、目录暂不可用或应用重启不清空已选配置、普通草稿与附件。
+- 每个启动实例提供独有且稳定的 Done channel，Worker 用它识别生命周期，避免对接口实现值施加 Go 可比较性要求。
+
+验证包括：
+
+1. `internal/architecture` 的 AST 依赖检查禁止 domain、protocol、app、ui、共享 worker 以及中立 harness 包导入具体 adapter，组合入口除外。
+2. 独立内存驱动覆盖多目录／会话路由、未知身份、能力拒绝、未知投递保留输入与暂停队列、越界事件、不可比较的实现值、独立启动超时、稳定进程归属，以及仅支持原会话重开的实现。
+3. 应用测试覆盖配置独立性、保存／重载、首次离线渲染、目录到达与草稿保留；原生 UI 测试覆盖实际目录菜单和能力对应控件。
+4. Codex 保留协议测试及真实 app-server／Worker 集成测试。集成测试使用本机 Codex 二进制与测试模型服务，不等同于第二个真实 harness 或真实模型端到端验收。
+
+本轮不包含第二个真实 harness、动态插件装载或通用工作流引擎。下文建议结构与当前 Go API 不一致时，以实现及上述边界为准。
 
 ## 身份与运行上下文
 

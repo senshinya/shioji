@@ -32,7 +32,18 @@ func (m *Model) PrepareRecoveryDraft(id string) error {
 	}
 	m.Drafts["home"] = text
 	m.Attachments["home"] = append(m.Attachments["home"], m.Attachments["session:"+id]...)
+	if m.homeConfigContext != "" {
+		if m.HarnessConfigs == nil {
+			m.HarnessConfigs = map[string]domain.RunConfig{}
+		}
+		m.HarnessConfigs[m.homeConfigContext] = m.Configs["home"]
+	}
+	m.homeConfigContext = d.Session.WorkspaceID + "/" + d.Session.HarnessID
 	m.Configs["home"] = d.Session.Config
+	if m.HomeHarnesses == nil {
+		m.HomeHarnesses = map[string]string{}
+	}
+	m.HomeHarnesses[d.Session.WorkspaceID] = d.Session.HarnessID
 	m.WorkspaceID = d.Session.WorkspaceID
 	m.SessionID = ""
 	return nil
@@ -75,7 +86,7 @@ func recoveryExcerpt(items []domain.Item) string {
 // not consume the ordinary draft, attachments, or the saved queue.
 func (m *Model) BeginContinuation() (domain.Submission, error) {
 	var none domain.Submission
-	if !m.Connected || m.Readiness.State != "ready" || m.WorkerMinor < 7 {
+	if !m.Connected || m.RunReadiness().State != "ready" || m.WorkerMinor < 7 {
 		return none, errors.New("请先连接就绪的执行设备")
 	}
 	d, ok := m.Details[m.SessionID]
@@ -95,7 +106,10 @@ func (m *Model) BeginContinuation() (domain.Submission, error) {
 			return none, errors.New("已有提交等待确认")
 		}
 	}
-	in := domain.Submission{OperationID: domain.NewID(), SessionID: d.Session.ID, WorkspaceID: d.Session.WorkspaceID, Config: m.Config(), Text: domain.ContinuationPrompt, Continue: true}
+	if !m.RunReadiness().Capabilities.Continue {
+		return none, errors.New("此 Agent 不支持继续原会话")
+	}
+	in := domain.Submission{HarnessID: d.Session.HarnessID, OperationID: domain.NewID(), SessionID: d.Session.ID, WorkspaceID: d.Session.WorkspaceID, Config: m.Config(), Text: domain.ContinuationPrompt, Continue: true}
 	m.Pending[in.OperationID] = in
 	m.PendingDevices[in.OperationID] = m.ConnectionID()
 	return in, nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"shioji/internal/domain"
+	"shioji/internal/harness"
 	"shioji/internal/harness/codex"
 	"shioji/internal/store"
 	"shioji/internal/testutil"
@@ -18,7 +19,7 @@ func TestQueueCompletionAndStopPreservePendingInput(t *testing.T) {
 	}
 	defer db.Close()
 	w, _ := db.CreateWorkspace("test", []string{t.TempDir()})
-	op, _ := db.Accept(domain.Submission{OperationID: "first", WorkspaceID: w.ID, Text: "first"})
+	op, _ := db.Accept(domain.Submission{HarnessID: "codex", OperationID: "first", WorkspaceID: w.ID, Text: "first"})
 	db.Enqueue(domain.Submission{OperationID: "second", SessionID: op.SessionID, WorkspaceID: w.ID, Text: "next"})
 	s := &Server{store: db, ctx: context.Background(), queueWake: make(chan struct{}, 1)}
 	if err = s.onEvent(domain.Event{SessionID: op.SessionID, Type: "turn", Turn: &domain.Turn{ID: "turn", Status: "completed"}}); err != nil {
@@ -52,11 +53,11 @@ func TestRejectedInitialDispatchPausesMessagesEnqueuedWhileStarting(t *testing.T
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	s := &Server{store: db, ctx: ctx, queueWake: make(chan struct{}, 1), bound: map[string]bool{}}
-	s.runtime, err = codex.Start(ctx, codex.Options{Home: p.Home, OnEvent: s.onEvent})
+	s.runtime, err = (codex.Adapter{Home: p.Home}).Start(ctx, harness.StartOptions{OnEvent: s.onEvent})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.runtime.Close()
+	defer s.runtime.Close(context.Background())
 	w, _ := db.CreateWorkspace("test", []string{t.TempDir()})
 	in := domain.Submission{OperationID: "first", WorkspaceID: w.ID, Text: "initial", Config: domain.RunConfig{Model: s.runtime.Readiness().Models[0].ID, Permission: "read-only"}}
 	op, err := db.Accept(in)
@@ -67,7 +68,7 @@ func TestRejectedInitialDispatchPausesMessagesEnqueuedWhileStarting(t *testing.T
 	d.Session.ThreadID = "missing-thread"
 	db.Apply(op.SessionID, domain.Event{Type: "session", Session: &d.Session})
 	db.Enqueue(domain.Submission{OperationID: "later", WorkspaceID: w.ID, SessionID: op.SessionID, Text: "retain", Config: in.Config})
-	s.runtimes = map[string]*codex.Runtime{op.SessionID: s.runtime}
+	s.runtimes = map[string]harness.Runtime{op.SessionID: s.runtime}
 	s.dispatch(in, op, s.currentRuntime(op.SessionID))
 	q, _ := db.Queue(op.SessionID)
 	if !q.Paused || len(q.Items) != 1 {

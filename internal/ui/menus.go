@@ -9,6 +9,7 @@ const (
 	runMenuMain
 	runMenuModels
 	runMenuEfforts
+	runMenuHarnesses
 )
 
 type menuChoice struct {

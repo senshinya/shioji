@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"shioji/internal/domain"
-	"shioji/internal/harness/codex"
+	"shioji/internal/harness"
 	"shioji/internal/protocol"
 	"time"
 )
@@ -25,7 +25,7 @@ func (s *Server) queueLoop() {
 		}
 		s.dispatchMu.Lock()
 		snapshot, err := s.store.Snapshot()
-		if err == nil && s.currentRuntime() != nil && s.ctx.Err() == nil {
+		if err == nil && s.ctx.Err() == nil {
 			for _, session := range snapshot.Sessions {
 				if !session.Status.CanSubmit() {
 					continue
@@ -59,13 +59,14 @@ func (s *Server) queueLoop() {
 func (s *Server) enqueue(in domain.Submission) (domain.Operation, error) {
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
-	if s.currentRuntime() == nil || s.ctx.Err() != nil {
-		return domain.Operation{}, errors.New("runtime unavailable")
+	runtime, err := s.inputRuntime(in)
+	if err != nil {
+		return domain.Operation{}, err
 	}
 	if _, err := s.attachmentInputs(in); err != nil {
 		return domain.Operation{}, err
 	}
-	if err := s.currentRuntime().Validate(in.Config); err != nil {
+	if err := runtime.Validate(in.Config); err != nil {
 		return domain.Operation{}, err
 	}
 	op, err := s.store.Enqueue(in)
@@ -119,7 +120,7 @@ func (s *Server) changeQueue(method string, in protocol.QueueInput) (domain.Queu
 		if err != nil {
 			return domain.QueueState{}, err
 		}
-		if s.currentRuntime() == nil || s.ctx.Err() != nil || d.Session.ContextChanged || d.Session.Status == "unknown" {
+		if s.catalogRuntime(d.Session.HarnessID) == nil || s.ctx.Err() != nil || d.Session.ContextChanged || d.Session.Status == "unknown" {
 			return domain.QueueState{}, errors.New("reconcile execution context before continuing")
 		}
 		q, err := s.store.ContinueQueue(in.SessionID, in.Revision)
@@ -138,6 +139,12 @@ func (s *Server) steer(in protocol.SteerInput) (domain.Operation, error) {
 func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Operation, error) {
 	if s.currentRuntime(in.Input.SessionID) == nil || s.ctx.Err() != nil {
 		return domain.Operation{}, errors.New("runtime unavailable")
+	}
+	if _, err := s.inputHarness(in.Input); err != nil {
+		return domain.Operation{}, err
+	}
+	if !s.currentRuntime(in.Input.SessionID).Readiness().Capabilities.Steer {
+		return domain.Operation{}, harness.Unsupported("steer")
 	}
 	if _, err := s.store.Operation(in.Input.OperationID); err == nil {
 		return s.store.AcceptSteer(in.Input, in.TurnID)
@@ -181,7 +188,7 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 		if err == nil {
 			err = runtime.Steer(ctx, d.Session, in.TurnID, op.ID, in.Input.Text, inputs...)
 		}
-		outcome := domain.DeliveryOutcome(err != nil, codex.IsUncertain(err))
+		outcome := domain.DeliveryOutcome(err != nil, harness.IsUncertain(err))
 		state, status, message := outcome.Operation, outcome.Input, ""
 		if err != nil {
 			message = err.Error()

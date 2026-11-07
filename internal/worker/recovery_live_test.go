@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"shioji/internal/domain"
+	"shioji/internal/harness"
+	"shioji/internal/harness/codex"
 	"shioji/internal/protocol"
 	"shioji/internal/testutil"
 	"testing"
@@ -18,7 +20,7 @@ func TestReconcileReattachesAnObservedLiveTurnWithoutInterruptingOrResending(t *
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	s, err := New(context.Background(), Config{Directory: dir, CodexHome: p.Home})
+	s, err := New(context.Background(), Config{Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Home: p.Home}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +89,7 @@ func TestDelayedDispatchCannotResurrectAnAbandonedInputOnReplacementRuntime(t *t
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	s, err := New(context.Background(), Config{Directory: dir, CodexHome: p.Home})
+	s, err := New(context.Background(), Config{Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Home: p.Home}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +123,7 @@ func TestDelayedDispatchCannotResurrectAnAbandonedInputOnReplacementRuntime(t *t
 	}
 	s.store.Enqueue(domain.Submission{OperationID: "saved-queue", WorkspaceID: w.ID, SessionID: first.SessionID, Text: "keep waiting", Config: config})
 	old = s.currentRuntime(first.SessionID)
-	old.Close()
+	old.Close(context.Background())
 	s.dispatchMu.Lock()
 	d, _ := s.store.Session(first.SessionID, 0, 100)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -153,7 +155,7 @@ func TestExplicitContinuationKeepsOriginalNativeThreadAndPausedQueue(t *testing.
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	s, err := New(context.Background(), Config{Directory: dir, CodexHome: p.Home})
+	s, err := New(context.Background(), Config{Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Home: p.Home}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,9 +178,11 @@ func TestExplicitContinuationKeepsOriginalNativeThreadAndPausedQueue(t *testing.
 	s.store.Enqueue(domain.Submission{OperationID: "waiting", SessionID: op.SessionID, WorkspaceID: w.ID, Text: "keep waiting", Config: config})
 	s.dispatchMu.Unlock()
 	r = s.currentRuntime(op.SessionID)
-	r.Close()
-	close(p.Release)
+	// Serialize this explicit recovery action with automatic recovery. Closing
+	// the adapter now also retires its owned auxiliary processes.
 	s.dispatchMu.Lock()
+	r.Close(context.Background())
+	close(p.Release)
 	d, _ := s.store.Session(op.SessionID, 0, 100)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	result, err := s.reconcileLocked(ctx, protocol.RecoveryInput{SessionID: op.SessionID, Revision: d.Session.Revision, Action: "end"})

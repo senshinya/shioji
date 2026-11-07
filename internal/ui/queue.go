@@ -357,7 +357,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 											disabled bool
 											run      func()
 										}{
-											{fmt.Sprintf("立即发送待发消息 %d", i+1), arrow, locked || (m.Active() && m.ActiveTurn() == "") || item.State != "", func() {
+											{fmt.Sprintf("立即发送待发消息 %d", i+1), arrow, locked || (m.Active() && (m.ActiveTurn() == "" || !m.RunReadiness().Capabilities.Steer)) || item.State != "", func() {
 												v.queueCommand("queue.send", protocol.QueueInput{SessionID: sid, ID: item.ID, Revision: q.Revision, TurnID: m.ActiveTurn()}, nil)
 											}},
 											{fmt.Sprintf("编辑待发消息 %d", i+1), queueEditIcon, locked || edit.ID != "" || m.HasPendingInput(), func() {

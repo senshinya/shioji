@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"shioji/internal/domain"
+	"shioji/internal/harness"
+	"shioji/internal/harness/codex"
 	"shioji/internal/testutil"
 	"strings"
 	"testing"
@@ -18,7 +20,7 @@ func TestWorkerHistoryForkAndRestartUseOwningRuntimeAndNeverReplay(t *testing.T)
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	s, err := New(context.Background(), Config{Directory: dir, CodexHome: p.Home})
+	s, err := New(context.Background(), Config{Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Home: p.Home}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +112,7 @@ func TestForkedRestartRevalidatesDirectoryBeforeRemovingHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	s, err := New(context.Background(), Config{Directory: dir, CodexHome: p.Home})
+	s, err := New(context.Background(), Config{Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Home: p.Home}}})
 	if err != nil {
 		t.Fatal(err)
 	}

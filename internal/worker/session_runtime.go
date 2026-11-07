@@ -7,20 +7,24 @@ import (
 	"os"
 	"path/filepath"
 	"shioji/internal/domain"
-	"shioji/internal/harness/codex"
+	"shioji/internal/harness"
 )
 
 // All callers that create/replace a session runtime hold dispatchMu. The catalog
 // adapter never starts/resumes an execution thread.
-func (s *Server) sessionRuntime(ctx context.Context, id string) (*codex.Runtime, error) {
-	if r := s.currentRuntime(id); r != nil && !r.Stopped() {
-		s.runtimeMu.RLock()
-		executor := s.executors[id]
-		s.runtimeMu.RUnlock()
-		if scope, err := s.executions.Existing(id); err == nil && scope != nil && scope.Admitting() && executor != nil && !executor.Stopped() {
-			return r, nil
-		}
+func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime, error) {
+	if r := s.currentRuntime(id); r != nil && r.ExecutionReady() {
+		return r, nil
 	}
+	d, err := s.store.Session(id, 0, 1)
+	if err != nil {
+		return nil, err
+	}
+	adapter := s.adapters[d.Session.HarnessID]
+	if adapter == nil {
+		return nil, errors.New("session harness unavailable")
+	}
+
 	dir := s.sessionRuntimeDirectory(id)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
@@ -38,7 +42,7 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (*codex.Runtime,
 	if err = scope.Bind("worker", os.Getpid()); err != nil {
 		return nil, err
 	}
-	executor, err := codex.StartExecutor(ctx, codex.ExecutorOptions{Executable: s.config.CodexExecutable, Home: s.config.CodexHome, Scope: scope, OnLost: func() error {
+	r, err := adapter.Start(ctx, harness.StartOptions{Scope: scope, OnEvent: func(e domain.Event) error { return s.onHarnessEvent(d.Session.HarnessID, id, e) }, OnStart: func(pid int) error { return recordSessionProcess(dir, id, pid) }, OnLost: func() error {
 		if err := s.guardManagedExecution(id); err != nil {
 			s.cancel()
 			return err
@@ -47,18 +51,9 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (*codex.Runtime,
 		return nil
 	}})
 	if err != nil {
-		cleanup := scope.Stop(ctx)
-		return nil, errors.Join(err, cleanup)
-	}
-	s.runtimeMu.Lock()
-	s.executors[id] = executor
-	s.runtimeMu.Unlock()
-	r, err := codex.Start(ctx, codex.Options{Executable: s.config.CodexExecutable, Home: s.config.CodexHome, Scope: scope, Executor: executor, OnEvent: s.onEvent, OnStart: func(pid int) error {
-		return recordSessionProcess(dir, id, pid)
-	}})
-	if err != nil {
 		return nil, errors.Join(err, s.cleanManagedExecution(ctx, id))
 	}
+
 	s.runtimeMu.Lock()
 	s.runtimes[id] = r
 	s.runtimeMu.Unlock()

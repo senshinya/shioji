@@ -37,7 +37,18 @@ func (r *Runtime) Inspect(ctx context.Context, s domain.Session) (domain.Recover
 	if meta.Thread.ID != s.ThreadID || sourceExecutionPath(meta.Thread.CWD) != s.Context.CWD {
 		return out, errors.New("Codex 线程与会话的执行目录不一致")
 	}
-	out.State = meta.Thread.Status.Type
+	switch meta.Thread.Status.Type {
+	case "active":
+		out.State = domain.SourceActive
+	case "idle":
+		out.State = domain.SourceIdle
+	case "systemError":
+		out.State = domain.SourceFailed
+	case "notLoaded":
+		out.State = domain.SourceUnavailable
+	default:
+		return out, errors.New("Codex returned unknown thread state")
+	}
 	cursor := ""
 	seen := map[string]bool{}
 	for {

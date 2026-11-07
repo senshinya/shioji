@@ -137,7 +137,7 @@ func (v *View) recovery(c *n.Context, t *n.Theme, d domain.SessionDetail) {
 						inlineSymbol(c, recoveryIcon, label, n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}, 14, t.TextMuted)
 						n.Text(c, label).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 					})
-					button := ghost(c, "继续原会话").Height(28).FontSize(12).PaddingX(10).Disabled(disabled || m.Readiness.State != "ready" || v.continuationPending(d.Session.ID))
+					button := ghost(c, "继续原会话").Height(28).FontSize(12).PaddingX(10).Disabled(disabled || m.RunReadiness().State != "ready" || v.continuationPending(d.Session.ID))
 					if button.Clicked() {
 						v.continueSession(button.Bounds())
 					}

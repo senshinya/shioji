@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"shioji/internal/domain"
+	"shioji/internal/harness"
+	"shioji/internal/harness/codex"
 	"shioji/internal/protocol"
 	"shioji/internal/store"
 	"shioji/internal/testutil"
@@ -31,7 +33,7 @@ func TestNewConnectionChecksAgainAfterOldProcessExits(t *testing.T) {
 		t.Fatal(err)
 	}
 	w, _ := db.CreateWorkspace("Reconnect", []string{folder})
-	op, _ := db.Accept(domain.Submission{OperationID: "lost", WorkspaceID: w.ID, Text: "do not replay"})
+	op, _ := db.Accept(domain.Submission{HarnessID: "codex", OperationID: "lost", WorkspaceID: w.ID, Text: "do not replay"})
 	db.Close()
 	old := exec.Command("/bin/sleep", "60")
 	old.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -42,7 +44,7 @@ func TestNewConnectionChecksAgainAfterOldProcessExits(t *testing.T) {
 	if err = recordProcess(dir, old.Process.Pid); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(context.Background(), Config{Directory: dir, CodexHome: p.Home})
+	s, err := New(context.Background(), Config{Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Home: p.Home}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,13 +112,13 @@ func TestExitedIdleRuntimeIsRestartedWithoutSendingAnyInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	s, err := New(context.Background(), Config{Directory: dir, CodexHome: p.Home})
+	s, err := New(context.Background(), Config{Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Home: p.Home}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
 	old := s.currentRuntime()
-	old.Close()
+	old.Close(context.Background())
 	until := time.Now().Add(5 * time.Second)
 	for {
 		r := s.currentRuntime()

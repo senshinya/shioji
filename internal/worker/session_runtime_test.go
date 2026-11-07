@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"shioji/internal/domain"
+	"shioji/internal/harness"
+	"shioji/internal/harness/codex"
 	"shioji/internal/managedexec"
 	"shioji/internal/protocol"
 	"shioji/internal/testutil"
@@ -27,7 +29,7 @@ func TestSessionRuntimeCrashIsIsolatedAndRecoversManagedExecution(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	s, err := New(context.Background(), Config{Directory: dir, CodexHome: p.Home})
+	s, err := New(context.Background(), Config{Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Home: p.Home}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,8 +126,8 @@ func TestWorkerCrashKeepsBothSessionHistoriesAndDoesNotReplayTools(t *testing.T)
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	cfg := Config{Directory: dir, CodexHome: p.Home}
-	raw, _ := json.Marshal(cfg)
+	cfg := Config{Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Home: p.Home}}}
+	raw, _ := json.Marshal(struct{ Directory, Home string }{Directory: dir, Home: p.Home})
 	child := exec.Command(os.Args[0], "-test.run=^TestSessionWorkerCrashHelper$")
 	child.Env = append(os.Environ(), "SHIOJI_RECOVERY_TEST_CONFIG="+string(raw))
 	if err = child.Start(); err != nil {
@@ -260,11 +262,11 @@ func TestSessionWorkerCrashHelper(t *testing.T) {
 	if raw == "" {
 		return
 	}
-	var cfg Config
-	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+	var launch struct{ Directory, Home string }
+	if err := json.Unmarshal([]byte(raw), &launch); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(context.Background(), cfg)
+	s, err := New(context.Background(), Config{Directory: launch.Directory, Harnesses: []harness.Adapter{codex.Adapter{Home: launch.Home}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +283,7 @@ func TestRecoveryStopsOnlyItsOwnRuntimeWhenThreadBindingIsMissing(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	s, err := New(context.Background(), Config{Directory: dir, CodexHome: p.Home})
+	s, err := New(context.Background(), Config{Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Home: p.Home}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +339,7 @@ func TestKnownSessionLaunchFailurePreservesInputAndAllowsExplicitRetry(t *testin
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	s, err := New(context.Background(), Config{Directory: dir, CodexHome: p.Home})
+	s, err := New(context.Background(), Config{Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Home: p.Home}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +348,7 @@ func TestKnownSessionLaunchFailurePreservesInputAndAllowsExplicitRetry(t *testin
 	w, _ := s.store.CreateWorkspace("retry", []string{folder})
 	cfg := domain.RunConfig{Model: s.currentRuntime().Readiness().Models[0].ID, Permission: "read-only"}
 	s.dispatchMu.Lock()
-	s.config.CodexExecutable = filepath.Join(dir, "not-installed")
+	s.adapters[s.config.DefaultHarnessID] = codex.Adapter{Home: p.Home, Executable: filepath.Join(dir, "not-installed")}
 	s.dispatchMu.Unlock()
 	op, err := s.submit(domain.Submission{OperationID: "failed-launch", WorkspaceID: w.ID, Text: "preserve original text", Config: cfg})
 	if err != nil {
@@ -371,7 +373,7 @@ func TestKnownSessionLaunchFailurePreservesInputAndAllowsExplicitRetry(t *testin
 		t.Fatal("known unsent input was not rejected", receipt)
 	}
 	s.dispatchMu.Lock()
-	s.config.CodexExecutable = ""
+	s.adapters[s.config.DefaultHarnessID] = codex.Adapter{Home: p.Home}
 	s.dispatchMu.Unlock()
 	_, err = s.submit(domain.Submission{OperationID: "explicit-retry", SessionID: op.SessionID, WorkspaceID: w.ID, Text: "new explicit input", Config: cfg})
 	if err != nil {
@@ -400,7 +402,7 @@ func TestParallelIdenticalToolsAreAssociatedWithTheirOwnSessionRoots(t *testing.
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	s, err := New(context.Background(), Config{Directory: dir, CodexHome: p.Home})
+	s, err := New(context.Background(), Config{Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Home: p.Home}}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -53,7 +53,7 @@ func gitTestCall(s *Server, method string, in any) (map[string]any, error) {
 }
 func gitTestSession(t *testing.T, s *Server, w domain.Workspace, branch, status string) string {
 	t.Helper()
-	op, err := s.store.Accept(domain.Submission{OperationID: domain.NewID(), WorkspaceID: w.ID, Text: "test"})
+	op, err := s.store.Accept(domain.Submission{HarnessID: "codex", OperationID: domain.NewID(), WorkspaceID: w.ID, Text: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}

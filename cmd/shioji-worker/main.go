@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"shioji/internal/harness"
+	"shioji/internal/harness/codex"
 	"shioji/internal/managedexec"
 	"shioji/internal/transport"
 	"shioji/internal/worker"
@@ -48,7 +50,7 @@ func run() error {
 	if *bridge {
 		return worker.Bridge(ctx, dir, os.Stdin, os.Stdout)
 	}
-	s, err := worker.New(ctx, worker.Config{Directory: dir, CodexExecutable: *binary})
+	s, err := worker.New(ctx, worker.Config{Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Executable: *binary}}})
 	if err != nil {
 		return err
 	}

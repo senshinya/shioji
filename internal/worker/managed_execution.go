@@ -89,23 +89,11 @@ func (s *Server) cleanManagedExecution(ctx context.Context, id string) error {
 	if err != nil || scope == nil {
 		return err
 	}
-	s.runtimeMu.RLock()
-	executor := s.executors[id]
-	s.runtimeMu.RUnlock()
-	if executor != nil {
-		if err = executor.Fence(); err != nil {
-			return err
-		}
-	} else if err = scope.Fence(); err != nil {
+	if err = scope.Fence(); err != nil {
 		return err
 	}
 	if runtime := s.currentRuntime(id); runtime != nil {
-		runtime.Close()
-	}
-	if executor != nil {
-		// Stopping the owned executor group below also retires accepted helpers.
-		// A vanished protocol response is not a reason to leave that group alive.
-		executor.Close(ctx)
+		runtime.Close(ctx)
 	}
 	return scope.Stop(ctx)
 }

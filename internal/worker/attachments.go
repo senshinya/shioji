@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"shioji/internal/domain"
-	"shioji/internal/harness/codex"
+	"shioji/internal/harness"
 	"shioji/internal/protocol"
 )
 
@@ -32,17 +32,17 @@ func (s *Server) attachmentCommand(method string, body []byte) (any, error) {
 	}
 	return s.attachments.Get(in.WorkspaceID, in.ID, in.Offset)
 }
-func (s *Server) attachmentInputs(in domain.Submission) ([]codex.AttachmentInput, error) {
+func (s *Server) attachmentInputs(in domain.Submission) ([]harness.AttachmentInput, error) {
 	if err := in.ValidateContent(); err != nil {
 		return nil, err
 	}
-	var out []codex.AttachmentInput
+	var out []harness.AttachmentInput
 	for _, a := range in.Attachments {
 		path, err := s.attachments.Path(in.WorkspaceID, a)
 		if err != nil {
 			return nil, errors.New("附件尚未上传完成或不属于当前工作区")
 		}
-		out = append(out, codex.AttachmentInput{Attachment: a, Path: path})
+		out = append(out, harness.AttachmentInput{Attachment: a, Path: path})
 	}
 	return out, nil
 }

@@ -140,8 +140,11 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		encoded, _ := json.Marshal(plan)
 		used := len(encoded)
 		for _, step := range p.Plan {
-			status := step.Status
-			if status == "inProgress" {
+			status := "unknown"
+			switch step.Status {
+			case "pending", "completed":
+				status = step.Status
+			case "inProgress":
 				status = "running"
 			}
 			next := domain.PlanStep{Text: boundedTo(step.Step, 8<<10), Status: status}
@@ -162,9 +165,8 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		t.StartedAt = stamp(p.Turn.StartedAt)
 		t.CompletedAt = stamp(p.Turn.CompletedAt)
 		t.DurationMS = p.Turn.DurationMS
-		t.Status = domain.ExecutionState(p.Turn.Status)
-		if t.Status == "inProgress" {
-			t.Status = "running"
+		t.Status = normalizedTurnStatus(p.Turn.Status)
+		if t.Status == "running" {
 			usage := n.usage[t.ID]
 			usage.baseline = n.totals[p.ThreadID]
 			n.usage[t.ID] = usage
@@ -408,4 +410,15 @@ func (n *Normalizer) Invalidate() []domain.Event {
 		out = append(out, domain.Event{Type: "runtime.lost", SessionID: sid})
 	}
 	return out
+}
+
+func normalizedTurnStatus(status string) domain.ExecutionState {
+	switch status {
+	case "inProgress":
+		return domain.ExecutionRunning
+	case "completed", "interrupted", "failed":
+		return domain.ExecutionState(status)
+	default:
+		return domain.ExecutionUnknown
+	}
 }

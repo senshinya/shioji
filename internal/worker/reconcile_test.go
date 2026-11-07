@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"shioji/internal/domain"
+	"shioji/internal/harness"
+	"shioji/internal/harness/codex"
 	"shioji/internal/protocol"
 	"shioji/internal/store"
 	"shioji/internal/worker"
@@ -51,7 +53,7 @@ func TestReconcileRepairsHistoryWithoutReplayingInputOrQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
-	recovered, err := worker.New(context.Background(), worker.Config{Directory: dir, CodexHome: p.Home})
+	recovered, err := worker.New(context.Background(), worker.Config{Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Home: p.Home}}})
 	if err != nil {
 		t.Fatal(err)
 	}

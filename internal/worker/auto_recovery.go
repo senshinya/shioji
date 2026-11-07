@@ -3,7 +3,7 @@ package worker
 import (
 	"context"
 	"shioji/internal/domain"
-	"shioji/internal/harness/codex"
+	"shioji/internal/harness"
 	"shioji/internal/protocol"
 	"time"
 )
@@ -19,7 +19,7 @@ func (s *Server) wakeRecovery() {
 	default:
 	}
 }
-func (s *Server) watchRuntime(r *codex.Runtime) {
+func (s *Server) watchRuntime(r harness.Runtime) {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -44,13 +44,16 @@ func (s *Server) recoveryLoop() {
 			continue
 		}
 
-		// Prepare one runtime per pass. This also recovers an exited idle runtime,
+		// Prepare each harness independently. This also recovers an exited idle runtime,
 		// while a launch failure is shared by all affected sessions.
-		ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
 		s.dispatchMu.Lock()
-		_, prepareErr := s.recoveryRuntime(ctx, false)
+		prepareErrors := map[string]error{}
+		for _, id := range s.adapterOrder {
+			ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
+			_, prepareErrors[id] = s.recoveryRuntime(ctx, false, id)
+			cancel()
+		}
 		s.dispatchMu.Unlock()
-		cancel()
 		for _, session := range snapshot.Sessions {
 			if session.Archived || !session.Status.NeedsRecovery() {
 				continue
@@ -59,8 +62,8 @@ func (s *Server) recoveryLoop() {
 			s.dispatchMu.Lock()
 			latest, e := s.store.Session(session.ID, 0, 1)
 			if e == nil && ctx.Err() == nil && (s.recoveryChecked[session.ID].Revision != latest.Session.Revision || s.recoveryChecked[session.ID].Generation < s.recoveryRefresh.Load()) {
-				if own := s.currentRuntime(session.ID); prepareErr != nil && (own == nil || own.Stopped()) {
-					updated, writeErr := s.store.SetRecovery(session.ID, &domain.SessionRecovery{Phase: "attention", Message: "暂时无法核对执行状态", NeedsStop: ownedProcessPresent(s.config.Directory)})
+				if own := s.currentRuntime(session.ID); prepareErrors[session.HarnessID] != nil && (own == nil || own.Stopped()) {
+					updated, writeErr := s.store.SetRecovery(session.ID, &domain.SessionRecovery{Phase: "attention", Message: "暂时无法核对执行状态", NeedsStop: ownedProcessPresent(s.catalogDirectory(session.HarnessID))})
 					if writeErr == nil {
 						s.recoveryChecked[session.ID] = recoveryAttempt{Revision: updated.Revision, Generation: s.recoveryRefresh.Load()}
 					}

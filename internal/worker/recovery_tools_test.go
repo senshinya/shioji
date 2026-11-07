@@ -55,7 +55,7 @@ func TestRecoveryDisplaysTheLiveMemberAfterItsGroupLeaderExits(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	op, e := db.Accept(domain.Submission{OperationID: "member", WorkspaceID: w.ID, Text: "wait"})
+	op, e := db.Accept(domain.Submission{HarnessID: "codex", OperationID: "member", WorkspaceID: w.ID, Text: "wait"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -123,7 +123,7 @@ func TestRecoveryTasksIncludesUnknownTurnsBeyondTheVisibleHistoryPage(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	op, err := db.Accept(domain.Submission{OperationID: "history", WorkspaceID: w.ID, Text: "start"})
+	op, err := db.Accept(domain.Submission{HarnessID: "codex", OperationID: "history", WorkspaceID: w.ID, Text: "start"})
 	if err != nil {
 		t.Fatal(err)
 	}

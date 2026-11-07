@@ -26,6 +26,11 @@ func normalizeItem(source wire.Item, final bool) domain.Item {
 			item.Status = "running"
 		}
 	}
+	switch item.Status {
+	case "running", "completed", "failed", "declined", "interrupted", "pending":
+	default:
+		item.Status = "unknown"
+	}
 	remaining := 96 << 10
 	text := func(s string) string {
 		limit := min(16<<10, remaining)
@@ -192,7 +197,7 @@ func normalizeItem(source wire.Item, final bool) domain.Item {
 				break
 			}
 			a := agents[id]
-			item.Agents = append(item.Agents, domain.AgentActivity{ID: text(id), Status: text(a.Status), Message: text(a.Message)})
+			item.Agents = append(item.Agents, domain.AgentActivity{ID: text(id), Status: normalizedAgentStatus(a.Status), Message: text(a.Message)})
 		}
 	case "webSearch":
 		item.Presentation = "search"
@@ -334,4 +339,19 @@ func firstNonempty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func normalizedAgentStatus(status string) string {
+	switch status {
+	case "pendingInit":
+		return "starting"
+	case "running", "completed", "interrupted":
+		return status
+	case "errored":
+		return "failed"
+	case "shutdown":
+		return "stopped"
+	default:
+		return "unknown"
+	}
 }

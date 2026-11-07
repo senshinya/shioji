@@ -20,6 +20,9 @@ type InspectorLayout struct {
 }
 
 type Model struct {
+	homeConfigContext    string
+	HomeHarnesses        map[string]string
+	HarnessConfigs       map[string]domain.RunConfig
 	HistoryActions       map[string]domain.HistoryChange
 	HistoryEdits         map[string]HistoryEdit
 	Preferences          ClientPreferences
@@ -80,7 +83,11 @@ func (m *Model) DraftKey() string {
 	return "session:" + m.SessionID
 }
 func (m *Model) Config() domain.RunConfig {
+	if m.SessionID == "" {
+		m.syncHomeConfiguration()
+	}
 	key := m.DraftKey()
+	ready := m.RunReadiness()
 	c, configured := m.Configs[key]
 	if !configured && m.SessionID != "" {
 		for _, session := range m.Snapshot.Sessions {
@@ -90,21 +97,27 @@ func (m *Model) Config() domain.RunConfig {
 			}
 		}
 	}
+	if ready.State != domain.RuntimeReady && len(ready.Models) == 0 {
+		if c.Permission == "" {
+			c.Permission = "default"
+		}
+		return c
+	}
 	var model *domain.Model
-	for i := range m.Readiness.Models {
-		if m.Readiness.Models[i].ID == c.Model {
-			model = &m.Readiness.Models[i]
+	for i := range ready.Models {
+		if ready.Models[i].ID == c.Model {
+			model = &ready.Models[i]
 		}
 	}
 	if model == nil {
-		for i := range m.Readiness.Models {
-			if m.Readiness.Models[i].Default {
-				model = &m.Readiness.Models[i]
+		for i := range ready.Models {
+			if ready.Models[i].Default {
+				model = &ready.Models[i]
 				break
 			}
 		}
-		if model == nil && len(m.Readiness.Models) > 0 {
-			model = &m.Readiness.Models[0]
+		if model == nil && len(ready.Models) > 0 {
+			model = &ready.Models[0]
 		}
 	}
 	if model != nil {
@@ -116,13 +129,16 @@ func (m *Model) Config() domain.RunConfig {
 			c.Fast = false
 		}
 	}
-	if !m.Readiness.Plan {
+	if !ready.Plan {
 		c.Plan = false
 	}
-	if !slices.Contains(m.Readiness.Permissions, c.Permission) {
+	if model != nil && len(model.Efforts) == 0 {
+		c.Effort = ""
+	}
+	if !slices.Contains(ready.Permissions, c.Permission) {
 		c.Permission = "default"
-		if !slices.Contains(m.Readiness.Permissions, c.Permission) && len(m.Readiness.Permissions) > 0 {
-			c.Permission = m.Readiness.Permissions[0]
+		if !slices.Contains(ready.Permissions, c.Permission) && len(ready.Permissions) > 0 {
+			c.Permission = ready.Permissions[0]
 		}
 	}
 	m.Configs[key] = c
@@ -143,7 +159,7 @@ func (m *Model) beginSubmission(allowRunning bool) (domain.Submission, error) {
 			return domain.Submission{}, errors.New("previous submission is still awaiting confirmation")
 		}
 	}
-	if !m.Connected || m.Readiness.State != "ready" {
+	if !m.Connected || m.RunReadiness().State != "ready" {
 		return domain.Submission{}, errors.New("connect to a ready execution device")
 	}
 	if strings.TrimSpace(m.Drafts[key]) == "" && len(m.Attachments[key]) == 0 {
@@ -176,7 +192,7 @@ func (m *Model) beginSubmission(allowRunning bool) (domain.Submission, error) {
 	if err != nil {
 		return domain.Submission{}, err
 	}
-	in := domain.Submission{Attachments: refs, OperationID: domain.NewID(), WorkspaceID: workspace, SessionID: m.SessionID, Text: m.Drafts[key], Config: m.Config()}
+	in := domain.Submission{HarnessID: m.HarnessID(), Attachments: refs, OperationID: domain.NewID(), WorkspaceID: workspace, SessionID: m.SessionID, Text: m.Drafts[key], Config: m.Config()}
 	if m.SessionID == "" {
 		choice := m.GitDrafts[workspace]
 		if (choice.Branch != "" || choice.NewWorktree) && m.GitEpochs["workspace:"+workspace] != m.ConnectionEpoch {
@@ -404,6 +420,9 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 }
 
 type savedState struct {
+	HomeConfigContext    string                          `json:"homeConfigContext,omitempty"`
+	HomeHarnesses        map[string]string               `json:"homeHarnesses,omitempty"`
+	HarnessConfigs       map[string]domain.RunConfig     `json:"harnessConfigs,omitempty"`
 	HistoryActions       map[string]domain.HistoryChange `json:"historyActions,omitempty"`
 	HistoryEdits         map[string]HistoryEdit          `json:"historyEdits,omitempty"`
 	Preferences          ClientPreferences               `json:"preferences"`
@@ -453,6 +472,9 @@ func (m *Model) Load(path string) error {
 		return err
 	}
 	m.Preferences = saved.Preferences.Normalized()
+	m.homeConfigContext = saved.HomeConfigContext
+	m.HomeHarnesses = saved.HomeHarnesses
+	m.HarnessConfigs = saved.HarnessConfigs
 	if saved.HistoryActions != nil {
 		m.HistoryActions = saved.HistoryActions
 	}

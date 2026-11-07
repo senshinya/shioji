@@ -33,7 +33,7 @@ func (v *View) historyReady(s domain.Session) bool {
 	return false
 }
 func (v *View) beginHistoryEdit(item domain.Item) {
-	if v.historyExit != nil || v.historyBusy[v.Model.SessionID] {
+	if !v.Model.RunReadiness().Capabilities.Restart || v.historyExit != nil || v.historyBusy[v.Model.SessionID] {
 		return
 	}
 	v.collectBindings()
@@ -49,7 +49,7 @@ func (v *View) forkSession(source domain.Session, turn string) {
 		root.secondary.forkSession(source, turn)
 		return
 	}
-	if !v.historyReady(source) || v.historyBusy[source.ID] || v.historyExit != nil && v.historyExit.in.SessionID == source.ID {
+	if !v.historyReady(source) || !v.persistenceModel().SessionReadiness(source).Capabilities.Fork || v.historyBusy[source.ID] || v.historyExit != nil && v.historyExit.in.SessionID == source.ID {
 		return
 	}
 	if pending, ok := v.Model.HistoryActions[source.ID]; ok {

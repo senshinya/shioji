@@ -39,6 +39,9 @@ func (m *Model) BeginMessage(steer bool) (domain.Submission, string, string, err
 		method = "turn.enqueue"
 	}
 	if steer && m.Active() {
+		if !m.RunReadiness().Capabilities.Steer {
+			return domain.Submission{}, "", "", errors.New("此 Agent 不支持引导当前执行")
+		}
 		method = "turn.steer"
 		turn = m.ActiveTurn()
 		if turn == "" {

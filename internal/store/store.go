@@ -262,9 +262,14 @@ func (s *Store) Operation(id string) (domain.Operation, error) {
 func (s *Store) Accept(in domain.Submission, launch ...domain.LaunchContext) (domain.Operation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.acceptLocked(in, 0, false, launch...)
+	return s.acceptLocked(in, 0, false, "", launch...)
 }
-func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediate bool, launch ...domain.LaunchContext) (domain.Operation, error) {
+func (s *Store) AcceptForHarness(in domain.Submission, harnessID string, launch domain.LaunchContext) (domain.Operation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.acceptLocked(in, 0, false, harnessID, launch)
+}
+func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediate bool, acceptedHarness string, launch ...domain.LaunchContext) (domain.Operation, error) {
 	var none domain.Operation
 	if in.ValidateContent() != nil || in.OperationID == "" {
 		return none, errors.New("submission requires an operation ID and 1–131072 bytes of text")
@@ -347,7 +352,10 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		if utf8.RuneCountInString(title) > 60 {
 			title = string([]rune(title)[:60])
 		}
-		session = domain.Session{ID: domain.NewID(), WorkspaceID: w.ID, Title: title, HarnessID: "codex", Status: "starting", Revision: 1, Config: in.Config, Context: domain.LaunchContext{DeviceID: s.deviceID, CWD: w.Folders[0], AdditionalDirectories: append([]string(nil), w.Folders[1:]...)}}
+		session = domain.Session{ID: domain.NewID(), WorkspaceID: w.ID, Title: title, HarnessID: in.HarnessID, Status: "starting", Revision: 1, Config: in.Config, Context: domain.LaunchContext{DeviceID: s.deviceID, CWD: w.Folders[0], AdditionalDirectories: append([]string(nil), w.Folders[1:]...)}}
+	}
+	if in.SessionID == "" && acceptedHarness != "" {
+		session.HarnessID = acceptedHarness
 	}
 	if in.SessionID == "" && len(launch) > 0 {
 		session.Context = launch[0]

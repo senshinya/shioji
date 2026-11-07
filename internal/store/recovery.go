@@ -100,7 +100,7 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 	if session.ExecutionGuard != "" && session.ExecutionGuard != source.StoppedGeneration {
 		return none, errors.New("旧执行尚未确认清理完成")
 	}
-	if source.State == "active" && !source.Attached || source.State == "systemError" {
+	if source.State == "active" && !source.Attached || source.State == "failed" {
 		return none, errors.New("旧轮仍在执行或无法确认停止，请先停止后重新核对")
 	}
 	targets := map[string]bool{}

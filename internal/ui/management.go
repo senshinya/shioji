@@ -140,7 +140,7 @@ func (v *View) workspaceMenu(menu *n.Menu, w domain.Workspace) {
 	}
 }
 func (v *View) sessionMenu(menu *n.Menu, s domain.Session) {
-	if menu.Item("分叉会话").Disabled(!v.historyReady(s) || v.historyBusy[s.ID]).Chosen() {
+	if menu.Item("分叉会话").Disabled(!v.historyReady(s) || !v.persistenceModel().SessionReadiness(s).Capabilities.Fork || v.historyBusy[s.ID]).Chosen() {
 		v.forkSession(s, "")
 	}
 	if s.ForkedFrom != "" && menu.Item("查看来源会话").Chosen() {
@@ -158,7 +158,7 @@ func (v *View) sessionMenu(menu *n.Menu, s domain.Session) {
 		v.rename = &sessionRename{Session: s, Title: s.Title, Connection: key, Open: true}
 	}
 	if s.TitleOverride && s.SourceTitle != "" {
-		if menu.Item("使用 Codex 名称").Disabled(!ready).Chosen() {
+		if menu.Item("使用来源名称").Disabled(!ready).Chosen() {
 			v.sessionChange("session.reset-title", s, "")
 		}
 	}

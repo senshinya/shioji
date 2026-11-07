@@ -4,15 +4,12 @@ import (
 	"errors"
 	"io"
 	"os"
-	"shioji/internal/domain"
+	"shioji/internal/harness"
 	"shioji/internal/harness/codex/wire"
 	"strings"
 )
 
-type AttachmentInput struct {
-	Attachment domain.Attachment
-	Path       string
-}
+type AttachmentInput = harness.AttachmentInput
 
 func attachmentInputs(text string, attachments []AttachmentInput) ([]wire.Input, error) {
 	inputs := []wire.Input{}

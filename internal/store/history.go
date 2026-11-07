@@ -135,8 +135,8 @@ func (s *Store) SetHistoryThread(id, thread string) error {
 	if err != nil {
 		return err
 	}
-	if op.State != "prepared" || thread == "" || thread == op.Source.ThreadID {
-		return errors.New("分叉结果与历史操作不一致")
+	if op.State != "prepared" || thread == "" || (!op.Input.Restart && thread == op.Source.ThreadID) {
+		return errors.New("来源结果与历史操作不一致")
 	}
 	op.ThreadID = thread
 	op.State = "forked"

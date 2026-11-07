@@ -3,6 +3,7 @@ package codex
 import (
 	"encoding/json"
 	"os"
+	"shioji/internal/harness/codex/wire"
 	"strings"
 	"testing"
 )
@@ -113,5 +114,31 @@ func TestEscapedContentCannotExceedSerializedItemBudget(t *testing.T) {
 	b, _ := json.Marshal(events)
 	if len(b) > 192<<10 {
 		t.Fatal("JSON escaping bypassed activity budget", len(b))
+	}
+}
+
+func TestAgentStatusIsTranslatedBeforeLeavingAdapter(t *testing.T) {
+	item := normalizeItem(wire.Item{Type: "collabAgentToolCall", Fields: map[string]json.RawMessage{"agentsStates": json.RawMessage(`{"child":{"status":"pendingInit","message":"working"}}`)}}, false)
+	if len(item.Agents) != 1 || item.Agents[0].Status != "starting" {
+		t.Fatalf("native agent state escaped translation: %+v", item.Agents)
+	}
+}
+
+func TestUnknownNativeStatusNeverBecomesSharedState(t *testing.T) {
+	n := NewNormalizer()
+	n.Bind("t", "s", true)
+	for _, source := range []string{
+		`{"method":"turn/started","params":{"threadId":"t","turn":{"id":"u","status":"futureNativeState"}}}`,
+		`{"method":"turn/plan/updated","params":{"threadId":"t","turnId":"u","plan":[{"step":"work","status":"futureNativeState"}]}}`,
+		`{"method":"item/started","params":{"threadId":"t","turnId":"u","item":{"id":"i","type":"mcpToolCall","status":"futureNativeState"}}}`,
+	} {
+		events, _, err := n.Feed([]byte(source))
+		if err != nil || len(events) != 1 {
+			t.Fatal(err, events)
+		}
+		data, _ := json.Marshal(events)
+		if strings.Contains(string(data), "futureNativeState") || !strings.Contains(string(data), `"status":"unknown"`) {
+			t.Fatal("native state escaped adapter", string(data))
+		}
 	}
 }

@@ -621,7 +621,7 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		if !m.Connected {
 			status = "未连接"
 		}
-		v.choiceMenu(c, t, "current-device", device, []menuChoice{{id: "connectivity", name: status, disabled: true}, {id: "runtime", name: "Codex · " + string(m.Readiness.State), disabled: true}, {id: "details", name: "设备详情", choose: func() { v.deviceSelected = m.ConnectionID(); v.deviceList = false; v.devices = true }}})
+		v.choiceMenu(c, t, "current-device", device, []menuChoice{{id: "connectivity", name: status, disabled: true}, {id: "runtime", name: m.RunReadiness().Descriptor().Name + " · " + string(m.RunReadiness().State), disabled: true}, {id: "details", name: "设备详情", choose: func() { v.deviceSelected = m.ConnectionID(); v.deviceList = false; v.devices = true }}})
 		if m.SessionID != "" && !v.devices {
 			label := "展开更改侧栏"
 			if m.Inspectors[m.SessionID] {
@@ -681,8 +681,8 @@ func (v *View) notice(c *n.Context, t *n.Theme) {
 	if message == "" && !v.Model.Connected {
 		message = "连接执行服务中…"
 	}
-	if message == "" && v.Model.Readiness.State != "ready" {
-		message = v.Model.Readiness.Error
+	if message == "" && v.Model.RunReadiness().State != "ready" {
+		message = v.Model.RunReadiness().Error
 	}
 	if message != "" {
 		n.Text(c, message).FontSize(12).TextColor(t.TextMuted).MaxWidth(736).Margin(10, 0, 0, 0)
@@ -804,13 +804,13 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 						v.pickAttachments()
 					}
 					permission := control(c).Height(28).PaddingX(6).Radius(6).Label("Permission").Children(func() {
-						inlineIconText(c, shieldIcon, permissionLabel(cfg.Permission), n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}, 13, 6, t.TextMuted)
+						inlineIconText(c, shieldIcon, m.PermissionName(cfg.Permission), n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}, 13, 6, t.TextMuted)
 					})
 					choices := []menuChoice{}
-					for _, id := range m.Readiness.Permissions {
+					for _, id := range m.RunReadiness().Permissions {
 						id := id
-						detail := map[string]string{"read-only": "仅查看", "default": "按需请求批准", "auto-approve": "沙盒内自动批准", "yolo": "不限制沙盒或批准"}[id]
-						choices = append(choices, menuChoice{id: id, name: permissionLabel(id), detail: detail, checked: cfg.Permission == id, choose: func() { cfg.Permission = id; m.Configs[key] = cfg }})
+						detail := m.PermissionDescription(id)
+						choices = append(choices, menuChoice{id: id, name: m.PermissionName(id), detail: detail, checked: cfg.Permission == id, choose: func() { cfg.Permission = id; m.Configs[key] = cfg }})
 					}
 					v.choiceMenu(c, t, "permission:"+key, permission, choices)
 					n.Spacer(c).Grow(1)
@@ -822,7 +822,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					label := "发送"
 					editing := m.QueueEdits[m.SessionID].ID != ""
 					queuing := running || len(m.Queue().Items) > 0
-					disabled := !m.Connected || m.Readiness.State != "ready" || empty || m.ArchivedContext() != "" || v.preparingAttachments(m.DraftKey())
+					disabled := !m.Connected || m.RunReadiness().State != "ready" || empty || m.ArchivedContext() != "" || v.preparingAttachments(m.DraftKey())
 					if queuing {
 						label = "加入队列"
 						disabled = disabled || m.WorkerMinor < 2
@@ -836,7 +836,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 						iconSize = 18
 						iconKey = "primary-stop-icon"
 						label = "停止当前轮"
-						disabled = !m.Connected
+						disabled = !m.Connected || !m.RunReadiness().Capabilities.Interrupt
 					}
 					fill := t.Accent
 					if disabled {
@@ -888,19 +888,9 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	v.composerSendTransition(c, stack, home)
 	v.composerHadFocus = stack.FocusWithin()
 }
-func permissionLabel(id string) string {
-	switch id {
-	case "read-only":
-		return "只读"
-	case "auto-approve":
-		return "自动批准"
-	case "yolo":
-		return "YOLO"
-	default:
-		return "默认权限"
-	}
-}
 func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunConfig) {
+	ready := v.Model.RunReadiness()
+	descriptor := ready.Descriptor()
 	summary := cfg.Model
 	if cfg.Effort != "" {
 		summary += " · " + cfg.Effort
@@ -911,8 +901,8 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 	if cfg.Fast {
 		summary += " · Fast"
 	}
-	trigger := control(c).Height(28).MaxWidth(390).MinWidth(0).PaddingX(6).Radius(6).Label("运行配置").Tooltip("Codex · " + summary).Children(func() {
-		inlineIconText(c, openAIBlossom, summary, n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}, 20, 3, t.TextMuted)
+	trigger := control(c).Height(28).MaxWidth(390).MinWidth(0).PaddingX(6).Radius(6).Label("运行配置").Tooltip(descriptor.Name + " · " + summary).Children(func() {
+		inlineIconText(c, harnessIcon(descriptor), summary, n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}, 20, 3, t.TextMuted)
 	})
 	if trigger.Clicked() {
 		if v.runMenu == runMenuClosed {
@@ -929,8 +919,17 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 					v.runMenu = runMenuMain
 				}
 				n.Scroll(c).MaxHeight(300).FillWidth().Children(func() {
-					if v.runMenu == runMenuModels {
-						for _, model := range v.Model.Readiness.Models {
+					if v.runMenu == runMenuHarnesses {
+						for _, info := range v.Model.Readiness.Harnesses {
+							if ghost(c, info.Name).FillWidth().TextAlign(n.Start).Label(info.Name).Clicked() {
+								if err := v.Model.SelectHarness(info.ID); err != nil {
+									v.Model.Error = err.Error()
+								}
+								v.runMenu = runMenuMain
+							}
+						}
+					} else if v.runMenu == runMenuModels {
+						for _, model := range ready.Models {
 							label := model.Name
 							if label == "" {
 								label = model.ID
@@ -943,7 +942,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 							}
 						}
 					} else {
-						for _, model := range v.Model.Readiness.Models {
+						for _, model := range ready.Models {
 							if model.ID == cfg.Model {
 								for _, effort := range model.Efforts {
 									if ghost(c, effort).FillWidth().TextAlign(n.Start).Clicked() {
@@ -958,21 +957,38 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 				})
 				return
 			}
-			n.Row(c).Height(28).PaddingX(8).AlignItems(n.Center).Children(func() { n.Text(c, "Agent").Grow(1); n.Text(c, "Codex") })
+			if v.Model.SessionID == "" && len(v.Model.Readiness.Harnesses) > 1 {
+				if settingRow(c, "Agent", descriptor.Name+" ›").Disabled(v.Model.HasPendingInput()).Clicked() {
+					v.runMenu = runMenuHarnesses
+				}
+			} else {
+				n.Row(c).Height(28).PaddingX(8).AlignItems(n.Center).Children(func() { n.Text(c, "Agent").Grow(1); n.Text(c, descriptor.Name) })
+			}
 			if settingRow(c, "模型", cfg.Model+" ›").Clicked() {
 				v.runMenu = runMenuModels
 			}
-			if settingRow(c, "推理强度", cfg.Effort+" ›").Clicked() {
-				v.runMenu = runMenuEfforts
+			effortsAvailable := false
+			for _, model := range ready.Models {
+				if model.ID == cfg.Model {
+					effortsAvailable = len(model.Efforts) > 0
+				}
 			}
+			if effortsAvailable {
+				if settingRow(c, "推理强度", cfg.Effort+" ›").Clicked() {
+					v.runMenu = runMenuEfforts
+				}
+			}
+
 			n.Column(c).Height(1).FillWidth().Background(t.Border).MarginY(4)
 			plan := cfg.Plan
-			if controlFeedback(c, n.Checkbox(c, &plan, "Plan").Height(28).Disabled(!v.Model.Readiness.Plan), 4).Changed() {
-				cfg.Plan = plan
-				v.Model.Configs[key] = cfg
+			if ready.Plan {
+				if controlFeedback(c, n.Checkbox(c, &plan, "Plan").Height(28).Disabled(!ready.Plan), 4).Changed() {
+					cfg.Plan = plan
+					v.Model.Configs[key] = cfg
+				}
 			}
 			fastAvailable := false
-			for _, model := range v.Model.Readiness.Models {
+			for _, model := range ready.Models {
 				if model.ID == cfg.Model {
 					fastAvailable = model.Fast
 				}
@@ -1258,7 +1274,7 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 				inlineSymbol(c.Key(glyphKey), glyph, "回复", n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}, 12, color).
 					Label(tooltip).Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 100*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 			})
-			fork := n.ButtonBase(c.Key("fork:"+turn.ID)).Size(20, 24).Label("从这里分叉").Tooltip("从这里分叉").Disabled(!v.historyReady(v.Model.Details[v.Model.SessionID].Session) || v.historyBusy[v.Model.SessionID])
+			fork := n.ButtonBase(c.Key("fork:"+turn.ID)).Size(20, 24).Label("从这里分叉").Tooltip("从这里分叉").Disabled(!v.historyReady(v.Model.Details[v.Model.SessionID].Session) || !v.Model.RunReadiness().Capabilities.Fork || v.historyBusy[v.Model.SessionID])
 			forkColor := textHoverColor(c, fork, t.TextMuted)
 			fork.Children(func() {
 				inlineSymbol(c, forkIcon, "回复", n.Font{Family: t.Font, Size: 11, Weight: 400}, 13, forkColor)
@@ -1421,6 +1437,9 @@ func (v *View) sendMessage(steer bool) {
 	}
 }
 func (v *View) interrupt() {
+	if !v.Model.RunReadiness().Capabilities.Interrupt {
+		return
+	}
 	if v.Controller == nil {
 		return
 	}

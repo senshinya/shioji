@@ -18,8 +18,8 @@ import (
 // Major 2 requires clients to understand authoritative history replacement.
 const Major = 2
 
-// Minor 9 adds explicit conversation forking and historical message restart.
-const Minor = 9
+// Minor 10 adds harness selection and independent capability/model catalogs.
+const Minor = 10
 const MaxFrame = 1 << 20
 
 type Frame struct {

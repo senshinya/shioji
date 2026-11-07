@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"shioji/internal/domain"
+	"shioji/internal/harness"
 	"shioji/internal/harness/codex/wire"
 	"shioji/internal/managedexec"
 )
@@ -45,13 +46,9 @@ type Runtime struct {
 }
 
 // CallError distinguishes explicit rejection from an unconfirmed external send.
-type CallError struct {
-	Uncertain bool
-	Message   string
-}
+type CallError = harness.DeliveryError
 
-func (e *CallError) Error() string { return e.Message }
-func IsUncertain(err error) bool   { var e *CallError; return errors.As(err, &e) && e.Uncertain }
+func IsUncertain(err error) bool { return harness.IsUncertain(err) }
 func Start(ctx context.Context, opts Options) (*Runtime, error) {
 	binary := opts.Executable
 	if binary == "" {

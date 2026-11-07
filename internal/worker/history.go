@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"shioji/internal/domain"
+	"shioji/internal/harness"
 	"shioji/internal/store"
 	"strings"
 	"time"
@@ -45,7 +46,7 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 			}
 		}
 		ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
-		thread, e := s.currentRuntime().Fork(ctx, op.Source, op.TurnID, in.Restart)
+		thread, e := s.catalogRuntime(op.Source.HarnessID).PrepareHistory(ctx, op.Source, harness.HistoryBoundary{TurnID: op.TurnID, Restart: in.Restart})
 		cancel()
 		if thread != "" {
 			if saveErr := s.store.SetHistoryThread(op.ID, thread); saveErr != nil {
@@ -70,7 +71,7 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 		}
 	}
 	releaseCtx, cancelRelease := context.WithTimeout(s.ctx, 5*time.Second)
-	releaseErr := s.currentRuntime().ReleaseFork(releaseCtx, op.ThreadID)
+	_, releaseErr := s.catalogRuntime(op.Source.HarnessID).PrepareHistory(releaseCtx, op.Source, harness.HistoryBoundary{TurnID: op.TurnID, Restart: in.Restart, PreparedRef: op.ThreadID})
 	cancelRelease()
 	if releaseErr != nil {
 		return op, releaseErr
@@ -84,7 +85,9 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 	if err != nil {
 		return op, err
 	}
-	err = runtime.SwitchHistory(op.Source.ThreadID, op.ThreadID, op.Source.ID, func() error { var e error; op, e = s.store.CommitHistory(op.ID); return e })
+	activationCtx, cancelActivation := context.WithTimeout(s.ctx, 20*time.Second)
+	err = runtime.ActivateHistory(activationCtx, op.Source, op.ThreadID, func() error { var e error; op, e = s.store.CommitHistory(op.ID); return e })
+	cancelActivation()
 	if err != nil {
 		return op, err
 	}
@@ -110,8 +113,16 @@ func (s *Server) historyPreflight(in domain.HistoryChange) error {
 	if d.Session.Revision != in.Revision {
 		return errors.New("会话已改变，请重新载入后再试")
 	}
-	if s.currentRuntime() == nil || s.ctx.Err() != nil {
+	runtime := s.catalogRuntime(d.Session.HarnessID)
+	if runtime == nil || s.ctx.Err() != nil {
 		return errors.New("执行服务未就绪")
+	}
+	caps := runtime.Readiness().Capabilities
+	if in.Restart && !caps.Restart {
+		return harness.Unsupported("restart")
+	}
+	if !in.Restart && !caps.Fork {
+		return harness.Unsupported("fork")
 	}
 	paths := append([]string{d.Session.Context.CWD}, d.Session.Context.AdditionalDirectories...)
 	valid, err := validateFolders(paths)
@@ -125,7 +136,7 @@ func (s *Server) historyPreflight(in domain.HistoryChange) error {
 		return err
 	}
 	if in.Restart {
-		return s.currentRuntime().Validate(in.Config)
+		return runtime.Validate(in.Config)
 	}
 	return nil
 }

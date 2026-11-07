@@ -204,3 +204,39 @@ func TestOversizedRequestStillReturnsAnExplicitError(t *testing.T) {
 		t.Fatal("oversized request was accepted or silently discarded", events, string(reply), err)
 	}
 }
+
+func TestApprovalPolicyIsTranslatedToSummaryAndBackToNativeDecision(t *testing.T) {
+	n := NewNormalizer()
+	n.Bind("t", "s", true)
+	r := requestFor(t, n, `{"id":7,"method":"item/commandExecution/requestApproval","params":{"threadId":"t","turnId":"u","itemId":"i","command":"git status","availableDecisions":[{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["git","status"]}},"decline"]}}`)
+	if strings.Contains(r.Text, "execpolicy") || strings.Contains(r.Text, "acceptWith") || !strings.Contains(r.Text, `允许命令前缀："git" "status"`) {
+		t.Fatal("native policy object escaped into shared content", r.Text)
+	}
+	response, err := n.Response(domain.Answer{RequestID: r.ID, Revision: r.Revision, Decision: r.Choices[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Result struct{ Decision json.RawMessage }
+	}
+	if err = json.Unmarshal(response, &out); err != nil {
+		t.Fatal(err)
+	}
+	if string(out.Result.Decision) != `{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["git","status"]}}` {
+		t.Fatal("translation changed offered approval scope", string(response))
+	}
+}
+
+func TestApprovalPrefixSummaryPreservesArgumentBoundaries(t *testing.T) {
+	summaries := map[string]bool{}
+	for _, prefix := range []string{`["tool","a b"]`, `["tool","a","b"]`, `["tool",""]`, `["tool","\"quoted\""]`} {
+		n := NewNormalizer()
+		n.Bind("t", "s", true)
+		raw := `{"id":"p","method":"item/commandExecution/requestApproval","params":{"threadId":"t","command":"tool","availableDecisions":[{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":` + prefix + `}}]}}`
+		r := requestFor(t, n, raw)
+		if summaries[r.Text] {
+			t.Fatal("ambiguous authorization prefix", r.Text)
+		}
+		summaries[r.Text] = true
+	}
+}

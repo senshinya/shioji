@@ -25,7 +25,7 @@ func (s *Store) RenameSession(id, title string, revision int64, useSource bool) 
 	}
 	if useSource {
 		if session.SourceTitle == "" {
-			return session, errors.New("Codex 尚未提供会话名称")
+			return session, errors.New("Agent 尚未提供会话名称")
 		}
 		title = session.SourceTitle
 	}

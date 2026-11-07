@@ -33,8 +33,14 @@ func activityIcon(kind string) *n.SVG {
 }
 func activityStatus(status string) string {
 	switch status {
-	case "running", "inProgress":
+	case "running":
 		return "进行中"
+	case "starting":
+		return "正在启动"
+	case "stopped":
+		return "已停止"
+	case "unknown":
+		return "状态未知"
 	case "failed":
 		return "失败"
 	case "declined":

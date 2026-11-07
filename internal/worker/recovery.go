@@ -3,15 +3,13 @@ package worker
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"shioji/internal/domain"
-	"shioji/internal/harness/codex"
+	"shioji/internal/harness"
 	"shioji/internal/protocol"
 	"time"
 )
 
-func (s *Server) currentRuntime(session ...string) *codex.Runtime {
+func (s *Server) currentRuntime(session ...string) harness.Runtime {
 	s.runtimeMu.RLock()
 	defer s.runtimeMu.RUnlock()
 	if len(session) > 0 {
@@ -20,35 +18,28 @@ func (s *Server) currentRuntime(session ...string) *codex.Runtime {
 	return s.runtime
 }
 
-// Caller holds dispatchMu. An exited app-server can be replaced, but a recorded
-// live predecessor must first be stopped by an explicit user action.
-func (s *Server) recoveryRuntime(ctx context.Context, stop bool) (*codex.Runtime, error) {
-	r := s.currentRuntime()
-	if r != nil && !r.Stopped() {
-		return r, nil
-	}
-	if stop {
-		if err := stopPreviousProcess(ctx, s.config.Directory); err != nil {
-			return nil, err
+func recoveryRunning(h domain.RecoveryHistory) bool {
+	for _, t := range h.Turns {
+		if t.Status == "running" {
+			return true
 		}
 	}
-	if err := checkPreviousProcess(s.config.Directory); err != nil {
-		return nil, err
+	return false
+}
+
+// Caller holds dispatchMu. An exited app-server can be replaced, but a recorded
+// live predecessor must first be stopped by an explicit user action.
+func (s *Server) recoveryRuntime(ctx context.Context, stop bool, selected ...string) (harness.Runtime, error) {
+	id := s.config.DefaultHarnessID
+	if len(selected) > 0 {
+		id = selected[0]
 	}
-	if err := recordProcess(s.config.Directory, 0); err != nil {
-		return nil, err
+	previous := s.catalogRuntime(id)
+	next, err := s.openCatalog(ctx, id, stop)
+	if err == nil && (previous == nil || next.Done() != previous.Done()) {
+		s.recoveryChecked = map[string]recoveryAttempt{}
 	}
-	next, err := codex.Start(ctx, codex.Options{Executable: s.config.CodexExecutable, Home: s.config.CodexHome, OnEvent: s.onEvent, OnStart: func(pid int) error { return recordProcess(s.config.Directory, pid) }})
-	if err != nil {
-		os.Remove(filepath.Join(s.config.Directory, "runtime-process.json"))
-		return nil, err
-	}
-	s.runtimeMu.Lock()
-	s.runtime = next
-	s.runtimeMu.Unlock()
-	s.recoveryChecked = map[string]recoveryAttempt{}
-	s.watchRuntime(next)
-	return next, nil
+	return next, err
 }
 func (s *Server) reconcile(in protocol.RecoveryInput) (protocol.RecoveryResult, error) {
 	ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
@@ -62,7 +53,7 @@ func (s *Server) reconcile(in protocol.RecoveryInput) (protocol.RecoveryResult, 
 }
 func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput) (protocol.RecoveryResult, error) {
 	generation := s.recoveryRefresh.Load()
-	result := protocol.RecoveryResult{SessionID: in.SessionID, Status: "unknown"}
+	result := protocol.RecoveryResult{SessionID: in.SessionID, Status: "unknown", Readiness: s.runtimeReadiness()}
 	check := in.Action == "" || in.Action == "check"
 	if !check && in.Action != "end" && in.Action != "interrupt" && in.Action != "stop-runtime" && in.Action != "stop-tasks" {
 		return result, errors.New("未知的恢复操作")
@@ -82,6 +73,12 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		}
 		return result, nil
 	}
+	if in.Action == "interrupt" {
+		catalog := s.catalogRuntime(d.Session.HarnessID)
+		if catalog != nil && !catalog.Readiness().Capabilities.Interrupt {
+			return result, harness.Unsupported("interrupt")
+		}
+	}
 	info := domain.SessionRecovery{Phase: "checking"}
 	if old := d.Session.Recovery; old != nil {
 		info = *old
@@ -93,6 +90,7 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	}
 	d.Session = session
 	finish := func() (protocol.RecoveryResult, error) {
+		result.Readiness = s.runtimeReadiness()
 		phase := domain.RecoveryAttention
 		if result.Status != "unknown" && result.Status != "active" {
 			phase = domain.RecoveryReady
@@ -102,6 +100,11 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 			s.recoveryChecked[in.SessionID] = recoveryAttempt{Revision: updated.Revision, Generation: generation}
 		}
 		return result, e
+	}
+	catalog := s.catalogRuntime(d.Session.HarnessID)
+	if catalog != nil && !catalog.Readiness().Capabilities.Recovery {
+		result.Message = "此 Agent 暂不支持核对执行状态"
+		return finish()
 	}
 	runtime := s.currentRuntime(in.SessionID)
 	managed, managedErr := s.executions.Existing(in.SessionID)
@@ -118,26 +121,29 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	if in.Action == "stop-runtime" && runtime != nil && !runtime.Stopped() {
 		// The explicit action targets this session's adapter, never the catalog
 		// or another session. Descendant execution remains unknown after exit.
-		runtime.Close()
+		runtime.Close(ctx)
 	}
 	if runtime == nil || runtime.Stopped() || d.Session.ExecutionGuard != "" {
 		if cleanupErr := s.cleanSessionRuntime(ctx, in.SessionID); cleanupErr != nil {
 			result.Message = "会话进程归属记录尚未确认，未启动新的 Agent"
-			result.Readiness = domain.Readiness{State: "unavailable", Error: cleanupErr.Error()}
 			return finish()
 		}
-		runtime, err = s.recoveryRuntime(ctx, in.Action == "stop-runtime")
+		runtime, err = s.recoveryRuntime(ctx, in.Action == "stop-runtime", d.Session.HarnessID)
 		if latest, e := s.store.Session(in.SessionID, 0, 1); e == nil {
 			d.Session = latest.Session
 		}
 	}
 	if err != nil {
 		result.Message = "暂时无法核对执行状态"
-		result.NeedsStop = ownedProcessPresent(s.config.Directory)
-		result.Readiness = domain.Readiness{State: "unavailable", Error: err.Error()}
+		result.NeedsStop = ownedProcessPresent(s.catalogDirectory(d.Session.HarnessID))
 		return finish()
 	}
-	result.Readiness = runtime.Readiness()
+	if in.Action == "interrupt" && !runtime.Readiness().Capabilities.Interrupt {
+		result.Message = "此 Agent 不支持中断执行"
+		result, finishErr := finish()
+		return result, errors.Join(harness.Unsupported("interrupt"), finishErr)
+	}
+	result.Readiness = s.runtimeReadiness()
 	source, err := runtime.Inspect(ctx, d.Session)
 	if !runtime.Observes(d.Session) {
 		if proofErr := s.managedStopProof(in.SessionID, &source); proofErr != nil {
@@ -170,7 +176,7 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	}
 	if d.Session.Status == "abandoned" {
 		result.Status = "abandoned"
-		if err == nil && source.State != "active" && source.State != "systemError" && !recoveryRunning(source) {
+		if err == nil && source.State != "active" && source.State != "failed" && !recoveryRunning(source) {
 			result.CanContinue, err = s.store.CanContinue(in.SessionID, source)
 		}
 		result.Message = "暂时无法恢复原线程，可重新核对或在新会话接续"
@@ -188,7 +194,7 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		if in.Action != "end" || !result.CanEnd {
 			return finish()
 		}
-		source = domain.RecoveryHistory{State: "notLoaded", Inputs: map[string]string{}}
+		source = domain.RecoveryHistory{State: domain.SourceUnavailable, Inputs: map[string]string{}}
 	}
 	source.Attached = runtime.Observes(d.Session)
 	if (source.State == "active" || recoveryRunning(source)) && !source.Attached {
@@ -196,7 +202,7 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		result.Message = "旧轮仍在执行，暂时无法接回"
 		return finish()
 	}
-	if source.State == "systemError" {
+	if source.State == "failed" {
 		result.Message = "暂时无法确认线程状态，请稍后重新核对"
 		return finish()
 	}
@@ -264,30 +270,15 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	}
 	return finish()
 }
-func (s *Server) runtimeReadiness() domain.Readiness {
-	if r := s.currentRuntime(); r != nil {
-		return r.Readiness()
-	}
-	return s.readiness
-}
-
-func recoveryRunning(h domain.RecoveryHistory) bool {
-	for _, t := range h.Turns {
-		if t.Status == "running" {
-			return true
-		}
-	}
-	return false
-}
 
 // Caller holds dispatchMu, shared with reconciliation. Accepted work belongs to
 // the runtime it reserved; a delayed goroutine never adopts a replacement.
-func (s *Server) dispatchReserved(op domain.Operation, runtime *codex.Runtime) bool {
+func (s *Server) dispatchReserved(op domain.Operation, runtime harness.Runtime) bool {
 	current, err := s.store.Operation(op.ID)
 	if err != nil || current.State != "accepted" {
 		return false
 	}
-	if runtime != nil && runtime == s.currentRuntime(op.SessionID) && !runtime.Stopped() && s.ctx.Err() == nil {
+	if runtime != nil && s.currentRuntime(op.SessionID) != nil && runtime.Done() == s.currentRuntime(op.SessionID).Done() && !runtime.Stopped() && s.ctx.Err() == nil {
 		return true
 	}
 	defer s.wakeRecovery()

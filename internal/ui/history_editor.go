@@ -101,7 +101,7 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 				bubble.Transition(n.ElementTransition{Position: true, Size: true, Colors: true, Duration: 280 * time.Millisecond, Ease: composerDescentEase})
 			}
 			bubble.ContextMenu(func(menu *n.Menu) {
-				if menu.Item("修改并重新开始").Disabled(item.Status != "sent" || item.TurnID == "").Chosen() {
+				if menu.Item("修改并重新开始").Disabled(item.Status != "sent" || item.TurnID == "" || !v.Model.RunReadiness().Capabilities.Restart).Chosen() {
 					begin()
 				}
 			})
@@ -115,7 +115,7 @@ func (v *View) historyMessageActions(c *n.Context, t *n.Theme, item domain.Item,
 	n.Row(c.Key("user-actions:" + item.ID)).Gap(12).Height(24).AlignItems(n.Center).Unselectable().Label("用户消息操作").Children(func() {
 		font := n.Font{Family: t.Font, Size: 11, Weight: 400}
 		if (item.Status == "sent" || preview) && item.TurnID != "" {
-			edit := n.ButtonBase(c.Key("edit")).Size(20, 24).Label("修改并重新开始").Tooltip("修改并重新开始").Disabled(preview || v.historyBusy[v.Model.SessionID])
+			edit := n.ButtonBase(c.Key("edit")).Size(20, 24).Label("修改并重新开始").Tooltip("修改并重新开始").Disabled(preview || v.historyBusy[v.Model.SessionID] || !v.Model.RunReadiness().Capabilities.Restart)
 			color := textHoverColor(c, edit, t.TextMuted)
 			edit.Children(func() { inlineSymbol(c, queueEditIcon, "消息", font, 13, color) })
 			if edit.Clicked() {

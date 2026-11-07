@@ -17,13 +17,16 @@ import (
 
 	"shioji/internal/attachments"
 	"shioji/internal/domain"
-	"shioji/internal/harness/codex"
+	"shioji/internal/harness"
 	"shioji/internal/managedexec"
 	"shioji/internal/protocol"
 	"shioji/internal/store"
 )
 
-type Config struct{ Directory, CodexExecutable, CodexHome, LauncherExecutable string }
+type Config struct {
+	Directory, LauncherExecutable, DefaultHarnessID string
+	Harnesses                                       []harness.Adapter `json:"-"`
+}
 type WorkspaceInput = protocol.WorkspaceInput
 type SessionQuery = protocol.SessionQuery
 type EventsQuery = protocol.EventsQuery
@@ -38,9 +41,13 @@ type Server struct {
 	owner           *Owner
 	listener        net.Listener
 	store           *store.Store
-	runtime         *codex.Runtime
-	runtimes        map[string]*codex.Runtime
-	executors       map[string]*codex.Executor
+	runtime         harness.Runtime
+	runtimes        map[string]harness.Runtime
+	adapters        map[string]harness.Adapter
+	adapterOrder    []string
+	catalogs        map[string]harness.Runtime
+	catalogErrors   map[string]error
+	rootCatalogID   string
 	executions      *managedexec.Manager
 	readiness       domain.Readiness
 	dispatchMu      sync.Mutex
@@ -92,8 +99,13 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	workerCtx, cancel := context.WithCancel(context.Background())
 	s := &Server{attachments: attachments.New(filepath.Join(config.Directory, "attachments")), config: config, owner: owner, listener: listener, store: db, ctx: workerCtx, cancel: cancel, queueWake: make(chan struct{}, 1), recoveryWake: make(chan struct{}, 1), recoveryChecked: map[string]recoveryAttempt{}, bound: map[string]bool{}, conns: map[net.Conn]bool{}}
 	s.tools = map[string]recoveryToolProcess{}
-	s.runtimes = map[string]*codex.Runtime{}
-	s.executors = map[string]*codex.Executor{}
+	s.runtimes = map[string]harness.Runtime{}
+	if err = s.configureAdapters(); err != nil {
+		listener.Close()
+		db.Close()
+		owner.Close()
+		return nil, err
+	}
 	s.executions = manager
 	cleanupCtx, cancelCleanup := context.WithTimeout(ctx, 20*time.Second)
 	cleanupErr := s.recoverManagedScopes(cleanupCtx)
@@ -109,28 +121,19 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	go s.reapExecutions()
 	s.wg.Add(1)
 	go s.watchRecoveryTools()
-	startup, cancelStartup := context.WithTimeout(ctx, 20*time.Second)
-	defer cancelStartup()
-	if err = checkPreviousProcess(config.Directory); err == nil {
-		if err = recordProcess(config.Directory, 0); err == nil {
-			s.runtime, err = codex.Start(startup, codex.Options{Executable: config.CodexExecutable, Home: config.CodexHome, OnEvent: s.onEvent, OnStart: func(pid int) error { return recordProcess(config.Directory, pid) }})
-			if err != nil {
-				os.Remove(filepath.Join(config.Directory, "runtime-process.json"))
-			}
-		}
+	for _, id := range s.adapterOrder {
+		startup, cancelStartup := context.WithTimeout(ctx, 20*time.Second)
+		_, _ = s.openCatalog(startup, id, false)
+		cancelStartup()
 	}
-	if err != nil {
-		s.readiness = domain.Readiness{State: "unavailable", Error: err.Error()}
-	}
+
+	s.readiness = s.runtimeReadiness()
 	s.wg.Add(1)
 	go s.queueLoop()
 	s.wg.Add(1)
 	go s.monitorGit()
 	s.wg.Add(1)
 	go s.recoveryLoop()
-	if s.runtime != nil {
-		s.watchRuntime(s.runtime)
-	}
 	return s, nil
 }
 func (s *Server) Directory() string { return s.config.Directory }
@@ -187,6 +190,10 @@ func (s *Server) serveConnection(conn net.Conn) {
 		result := protocol.Frame{Type: "result", ID: f.ID, Epoch: epoch, DeviceID: s.store.DeviceID()}
 		if callErr != nil {
 			result.Error = callErr.Error()
+			var unsupported *harness.UnsupportedError
+			if errors.As(callErr, &unsupported) {
+				result.ErrorCode = "unsupportedCapability"
+			}
 			if errors.Is(callErr, sql.ErrNoRows) {
 				result.ErrorCode = "notFound"
 			}
@@ -242,10 +249,7 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 		s.wakeRecovery()
 		return s.store.Snapshot()
 	case "readiness":
-		if s.currentRuntime() == nil {
-			return s.readiness, nil
-		}
-		return s.currentRuntime().Readiness(), nil
+		return s.runtimeReadiness(), nil
 	case "session":
 		q, err := decode[SessionQuery](body)
 		if err != nil {
@@ -439,6 +443,9 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 		if s.currentRuntime(in.SessionID) == nil {
 			return nil, errors.New("runtime unavailable")
 		}
+		if !s.currentRuntime(in.SessionID).Readiness().Capabilities.Interrupt {
+			return nil, harness.Unsupported("interrupt")
+		}
 		detail, err := s.store.Session(in.SessionID, 0, 1)
 		if err != nil {
 			return nil, err
@@ -515,11 +522,15 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 	if _, err = s.attachmentInputs(in); err != nil {
 		return domain.Operation{}, err
 	}
-	if s.ctx.Err() != nil || s.currentRuntime() == nil {
-		return domain.Operation{}, errors.New("runtime unavailable")
-	}
-	if err = s.currentRuntime().Validate(in.Config); err != nil {
+	catalog, err := s.inputRuntime(in)
+	if err != nil {
 		return domain.Operation{}, err
+	}
+	if err = catalog.Validate(in.Config); err != nil {
+		return domain.Operation{}, err
+	}
+	if in.Continue && !catalog.Readiness().Capabilities.Continue {
+		return domain.Operation{}, harness.Unsupported("continue")
 	}
 	snapshot, err := s.store.Snapshot()
 	if err != nil {
@@ -605,7 +616,11 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 	} else if queueRevision > 0 {
 		op, err = s.store.AcceptQueued(in, queueRevision)
 	} else {
-		op, err = s.store.Accept(in, launch)
+		id, e := s.inputHarness(in)
+		if e != nil {
+			return domain.Operation{}, e
+		}
+		op, err = s.store.AcceptForHarness(in, id, launch)
 	}
 	if err != nil {
 		if in.Git.NewWorktree {
@@ -637,7 +652,7 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 	}()
 	return op, nil
 }
-func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime *codex.Runtime) {
+func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime harness.Runtime) {
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
 	if !s.dispatchReserved(op, runtime) {
@@ -672,7 +687,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime *co
 		s.mu.Lock()
 		s.bound[session.ID] = true
 		s.mu.Unlock()
-		var inputs []codex.AttachmentInput
+		var inputs []harness.AttachmentInput
 		inputs, err = s.attachmentInputs(in)
 		if err == nil && runtime.ManagedCoverage() {
 			err = s.coverOperation(session.ID, op.ID)
@@ -681,7 +696,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime *co
 			turnID, err = runtime.Submit(ctx, session, op.ID, in.Text, inputs...)
 		}
 	}
-	outcome := domain.DeliveryOutcome(err != nil, codex.IsUncertain(err))
+	outcome := domain.DeliveryOutcome(err != nil, harness.IsUncertain(err))
 	state, delivery := outcome.Operation, outcome.Input
 	if err != nil {
 		if _, e := s.store.PauseQueue(session.ID, err.Error()); e != nil {
@@ -743,14 +758,14 @@ func (s *Server) onEvent(e domain.Event) error {
 		for _, turn := range detail.Turns {
 			if turn.Status == "running" {
 				turn.Status = "unknown"
-				turn.Error = "Codex process stopped; the in-flight turn needs reconciliation"
+				turn.Error = "Agent process stopped; the in-flight turn needs reconciliation"
 				if _, err := s.store.Apply(e.SessionID, domain.Event{Type: "turn", Turn: &turn}); err != nil {
 					return err
 				}
 			}
 		}
 		session.Status = "unknown"
-		session.Error = "Codex process stopped; the in-flight turn needs reconciliation"
+		session.Error = "Agent process stopped; the in-flight turn needs reconciliation"
 		e.Type = "session"
 		e.Session = &session
 	}
@@ -778,7 +793,7 @@ func (s *Server) Close() error {
 		s.mu.Unlock()
 		s.dispatchMu.Lock()
 		s.runtimeMu.RLock()
-		owned := make(map[string]*codex.Runtime, len(s.runtimes))
+		owned := make(map[string]harness.Runtime, len(s.runtimes))
 		for id, r := range s.runtimes {
 			owned[id] = r
 		}
@@ -789,11 +804,13 @@ func (s *Server) Close() error {
 				result = errors.Join(result, err)
 			}
 			cancel()
-			r.Close()
+			r.Close(context.Background())
 		}
-		if s.currentRuntime() != nil {
-			s.currentRuntime().Close()
-			os.Remove(filepath.Join(s.config.Directory, "runtime-process.json"))
+		for _, id := range s.adapterOrder {
+			if r := s.catalogRuntime(id); r != nil {
+				r.Close(context.Background())
+				os.Remove(filepath.Join(s.catalogDirectory(id), "runtime-process.json"))
+			}
 		}
 		s.dispatchMu.Unlock()
 		s.wg.Wait()

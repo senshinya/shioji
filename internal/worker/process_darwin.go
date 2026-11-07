@@ -89,7 +89,7 @@ func checkPreviousProcess(dir string) error {
 		return fmt.Errorf("cannot verify previous runtime ownership: %w", err)
 	}
 	if err == nil && proc.Proc.P_starttime.Sec == record.StartedSec && proc.Proc.P_starttime.Usec == record.StartedUsec {
-		return fmt.Errorf("previous Codex process %d is still present; reconcile it before starting another runtime", record.PID)
+		return fmt.Errorf("previous Agent process %d is still present; reconcile it before starting another runtime", record.PID)
 	}
 	return os.Remove(path)
 }
@@ -132,7 +132,7 @@ func stopPreviousProcess(ctx context.Context, dir string) error {
 		return err
 	}
 	if group != record.PID || record.PID == os.Getpid() {
-		return errors.New("旧进程不属于独立的 Codex 进程组，无法安全停止")
+		return errors.New("旧进程不属于独立的 Agent 进程组，无法安全停止")
 	}
 	if err = unix.Kill(-record.PID, unix.SIGTERM); err != nil && !errors.Is(err, unix.ESRCH) {
 		return err

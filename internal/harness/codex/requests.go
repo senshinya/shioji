@@ -66,20 +66,47 @@ func makeRequest(method string, raw json.RawMessage, p wire.Params) (*pending, e
 			json.Unmarshal(d, &value)
 			label := map[string]string{"accept": "允许这一次", "acceptForSession": "本会话允许", "decline": "拒绝", "cancel": "取消"}[value]
 			id := value
+			restriction := false
 			if value == "" {
 				var object map[string]json.RawMessage
 				json.Unmarshal(d, &object)
-				if _, ok := object["acceptWithExecpolicyAmendment"]; ok {
+				if raw, ok := object["acceptWithExecpolicyAmendment"]; ok {
 					label = "始终允许此命令"
+					var policy struct {
+						Prefix []string `json:"execpolicy_amendment"`
+					}
+					if err := json.Unmarshal(raw, &policy); err != nil {
+						return nil, err
+					}
+					quoted := make([]string, len(policy.Prefix))
+					for i, arg := range policy.Prefix {
+						quoted[i] = strconv.Quote(arg)
+					}
+					r.Text += "\n允许命令前缀：" + strings.Join(quoted, " ")
 				}
-				if _, ok := object["applyNetworkPolicyAmendment"]; ok {
-					label = "应用此网络策略"
+				if raw, ok := object["applyNetworkPolicyAmendment"]; ok {
+					label = "拒绝此网络访问"
+					restriction = true
+					var policy struct {
+						Rule struct{ Host, Action string } `json:"network_policy_amendment"`
+					}
+					if err := json.Unmarshal(raw, &policy); err != nil {
+						return nil, err
+					}
+					action := "拒绝网络访问："
+					if policy.Rule.Action == "allow" {
+						action = "允许网络访问："
+						label = "允许此网络访问"
+						restriction = false
+					} else if policy.Rule.Action != "deny" {
+						return nil, errors.New("unsupported network policy action")
+					}
+					r.Text += "\n" + action + policy.Rule.Host
 				}
 				id = "decision:" + strconv.Itoa(i)
-				r.Text += "\n" + string(d)
 			}
 			if label != "" {
-				r.Choices = append(r.Choices, domain.RequestChoice{ID: id, Label: label})
+				r.Choices = append(r.Choices, domain.RequestChoice{ID: id, Label: label, Restriction: restriction})
 				entry.decisions[id] = d
 			}
 		}

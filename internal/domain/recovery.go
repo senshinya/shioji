@@ -8,7 +8,7 @@ type RecoveryHistory struct {
 	// Attached means the adapter still owns this thread and receives live events.
 	Available bool
 	Attached  bool
-	State     string
+	State     SourceState
 	Turns     []Turn
 	Items     []Item
 	Inputs    map[string]string
@@ -37,3 +37,13 @@ type RecoveryTask struct {
 }
 
 const ContinuationPrompt = "继续上一轮未完成的任务。先核对已有结果和仍在运行的工作，避免重复执行已生效的操作；无法确认时先说明情况。"
+
+// SourceState is normalized evidence, independent of the harness connection.
+type SourceState string
+
+const (
+	SourceIdle        SourceState = "idle"
+	SourceActive      SourceState = "active"
+	SourceFailed      SourceState = "failed"
+	SourceUnavailable SourceState = "unavailable"
+)

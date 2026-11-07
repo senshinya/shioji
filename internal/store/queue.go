@@ -205,13 +205,13 @@ func (s *Store) ContinueQueue(sid string, revision int64) (domain.QueueState, er
 func (s *Store) AcceptQueued(in domain.Submission, revision int64) (domain.Operation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.acceptLocked(in, revision, false)
+	return s.acceptLocked(in, revision, false, "")
 }
 
 func (s *Store) AcceptQueuedNow(in domain.Submission, revision int64) (domain.Operation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.acceptLocked(in, revision, true)
+	return s.acceptLocked(in, revision, true, "")
 }
 
 // AcceptSteer journals intent before the harness pipe is touched. Reusing an ID

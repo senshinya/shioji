@@ -227,7 +227,20 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 									runtime = "上次已就绪"
 								}
 							}
-							meta("Codex app-server", runtime)
+							if len(state.Readiness.Harnesses) > 0 {
+								for _, info := range state.Readiness.Harnesses {
+									status := "未就绪"
+									if info.State == domain.RuntimeReady {
+										status = "已就绪"
+										if !state.Connected {
+											status = "上次已就绪"
+										}
+									}
+									meta(info.Name, status)
+								}
+							} else {
+								meta(state.Readiness.Descriptor().Name, runtime)
+							}
 							if state.Readiness.Error != "" {
 								n.Text(c, state.Readiness.Error).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 							}
