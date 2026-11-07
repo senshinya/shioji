@@ -20,7 +20,7 @@ var agentActivityIcon = svg("M3 4h6v5H3zM11 11h6v5h-6zM6 9v5h5")
 
 func activityIcon(kind string) *n.SVG {
 	switch kind {
-	case "files", "context":
+	case "files", "context", "compaction":
 		return fileActivityIcon
 	case "search", "review":
 		return searchIcon

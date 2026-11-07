@@ -341,6 +341,12 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 				emptyQueue = &q
 			}
 		}
+		if session.Config.Model != in.Config.Model {
+			session.ContextUsage = nil
+			if err = s.db.QueryRow("SELECT COALESCE(MAX(json_extract(body,'$.order')),0) FROM turns WHERE session_id=?", session.ID).Scan(&session.ContextUsageAfterTurnOrder); err != nil {
+				return none, err
+			}
+		}
 		session.Config = in.Config
 		session.Recovery = nil
 		session.Status = "starting"
@@ -495,6 +501,29 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		return e, err
 	}
 	switch e.Type {
+	case "context.usage":
+		if e.ContextUsage == nil || e.ContextUsage.TurnID == "" || e.ContextUsage.UsedTokens != nil && *e.ContextUsage.UsedTokens < 0 || e.ContextUsage.LimitTokens != nil && *e.ContextUsage.LimitTokens <= 0 {
+			return e, errors.New("invalid context usage")
+		}
+		newer := true
+		if session.ContextUsageAfterTurnOrder > 0 {
+			var order int64
+			if err = tx.QueryRow("SELECT COALESCE((SELECT json_extract(body,'$.order') FROM turns WHERE session_id=? AND id=?),0)", sid, e.ContextUsage.TurnID).Scan(&order); err != nil {
+				return e, err
+			}
+			newer = order > session.ContextUsageAfterTurnOrder
+		}
+		if previous := session.ContextUsage; previous != nil && previous.TurnID != e.ContextUsage.TurnID {
+			var before, after int64
+			if err = tx.QueryRow(`SELECT COALESCE((SELECT json_extract(body,'$.order') FROM turns WHERE session_id=? AND id=?),0), COALESCE((SELECT json_extract(body,'$.order') FROM turns WHERE session_id=? AND id=?),0)`, sid, previous.TurnID, sid, e.ContextUsage.TurnID).Scan(&before, &after); err != nil {
+				return e, err
+			}
+			newer = newer && (before == 0 || after == 0 || after >= before)
+		}
+		if newer {
+			session.ContextUsage = e.ContextUsage
+		}
+		e.ContextUsage = session.ContextUsage
 	case "session.title":
 		if strings.TrimSpace(e.Text) == "" {
 			return e, errors.New("empty session title")
@@ -534,7 +563,14 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		title := session.Title
 		branch, head, changed := session.GitBranch, session.GitHead, session.ContextChanged
 		archived, override, sourceTitle, titleRevision := session.Archived, session.TitleOverride, session.SourceTitle, session.TitleRevision
+		contextUsage := session.ContextUsage
+		contextUsageAfter := session.ContextUsageAfterTurnOrder
+		if session.ThreadID != e.Session.ThreadID || session.Config.Model != e.Session.Config.Model {
+			contextUsage = nil
+		}
 		session = *e.Session
+		session.ContextUsage = contextUsage
+		session.ContextUsageAfterTurnOrder = contextUsageAfter
 		session.Recovery = recovery
 		session.ExecutionGuard = guard
 		if guard != "" {

@@ -194,10 +194,14 @@ func (s *Store) CommitHistory(id string) (domain.HistoryOperation, error) {
 		return op, err
 	}
 	target := op.Session
+	target.ContextUsage = nil
+	target.ContextUsageAfterTurnOrder = 0
 	target.ThreadID = op.ThreadID
 	if op.Input.Restart {
 		// Keep metadata edits and accepted launch context authoritative.
 		target = source
+		target.ContextUsage = nil
+		target.ContextUsageAfterTurnOrder = 0
 		target.ThreadID = op.ThreadID
 		target.Status = "starting"
 		target.Error = ""

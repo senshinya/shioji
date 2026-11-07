@@ -210,6 +210,15 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		n.totals[p.ThreadID] = p.TokenUsage.Total
 		usage.phase = usageObserved
 		n.usage[p.TurnID] = usage
+		if used := p.TokenUsage.Last.Tokens; used != nil && *used >= 0 {
+			limit := p.TokenUsage.ModelContextWindow
+			if limit != nil && *limit <= 0 {
+				limit = nil
+			}
+			event.Type = "context.usage"
+			event.ContextUsage = &domain.ContextUsage{TurnID: p.TurnID, UsedTokens: used, LimitTokens: limit, UpdatedAt: time.Now().UTC()}
+			return emit(event)
+		}
 		return nil, nil, nil
 	case "item/started", "item/completed":
 		if p.Item.Type == "userMessage" {

@@ -838,6 +838,9 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					}
 					v.choiceMenu(c, t, "permission:"+key, permission, choices)
 					n.Spacer(c).Grow(1)
+					if !home {
+						v.contextMeter(c, t)
+					}
 					v.runControl(c, t, key, cfg)
 					empty := strings.TrimSpace(draft) == "" && len(m.Attachments[key]) == 0 && len(m.DraftSkills[key]) == 0
 					icon := arrow

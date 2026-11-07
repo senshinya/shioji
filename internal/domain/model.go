@@ -42,6 +42,7 @@ type LaunchContext struct {
 	Head                  string   `json:"head,omitempty"`
 }
 type Session struct {
+	ContextUsage   *ContextUsage    `json:"contextUsage,omitempty"`
 	ForkedFrom     string           `json:"forkedFrom,omitempty"`
 	ForkedTurn     string           `json:"forkedTurn,omitempty"`
 	ExecutionGuard string           `json:"executionGuard,omitempty"`
@@ -63,6 +64,9 @@ type Session struct {
 	ContextChanged bool             `json:"contextChanged,omitempty"`
 	Revision       int64            `json:"revision"`
 	Error          string           `json:"error,omitempty"`
+
+	// ContextUsageAfterTurnOrder excludes reports from before a model change.
+	ContextUsageAfterTurnOrder int64 `json:"contextUsageAfterTurnOrder,omitempty"`
 }
 type Submission struct {
 	ReferencePositions []ReferencePosition `json:"referencePositions,omitempty"`
@@ -219,6 +223,7 @@ type Plan struct {
 	Steps       []PlanStep `json:"steps"`
 }
 type Event struct {
+	ContextUsage     *ContextUsage   `json:"contextUsage,omitempty"`
 	HistoryTurnOrder *int64          `json:"historyTurnOrder,omitempty"`
 	Plan             *Plan           `json:"plan,omitempty"`
 	Queue            *QueueState     `json:"queue,omitempty"`

@@ -268,10 +268,17 @@ func normalizeItem(source wire.Item, final bool) domain.Item {
 		part("markdown", "", field("review"))
 	case "contextCompaction":
 		item.Kind = "activity"
-		item.Presentation = "context"
+		item.Presentation = "compaction"
 		item.Name = "正在压缩上下文"
 		if final {
-			item.Name = "上下文已压缩"
+			switch item.Status {
+			case "completed":
+				item.Name = "上下文已压缩"
+			case "failed":
+				item.Name = "上下文压缩失败"
+			default:
+				item.Name = "上下文压缩已停止"
+			}
 		}
 	default:
 		item.Kind = "unsupported"

@@ -45,6 +45,7 @@ type Turn struct {
 	} `json:"error"`
 }
 type Counters struct {
+	Tokens *int64 `json:"totalTokens"`
 	Input  *int64 `json:"inputTokens"`
 	Output *int64 `json:"outputTokens"`
 	Cached *int64 `json:"cachedInputTokens"`
@@ -78,8 +79,9 @@ type Params struct {
 		} `json:"options"`
 	} `json:"questions"`
 	TokenUsage struct {
-		Total Counters `json:"total"`
-		Last  Counters `json:"last"`
+		ModelContextWindow *int64   `json:"modelContextWindow"`
+		Total              Counters `json:"total"`
+		Last               Counters `json:"last"`
 	} `json:"tokenUsage"`
 }
 type Model struct {
