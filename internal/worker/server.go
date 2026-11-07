@@ -52,6 +52,7 @@ type Server struct {
 	readiness       domain.Readiness
 	dispatchMu      sync.Mutex
 	queueWake       chan struct{}
+	titleWake       chan struct{}
 	recoveryWake    chan struct{}
 	recoveryChecked map[string]recoveryAttempt
 	recoveryRefresh atomic.Uint64
@@ -99,6 +100,7 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	workerCtx, cancel := context.WithCancel(context.Background())
 	s := &Server{attachments: attachments.New(filepath.Join(config.Directory, "attachments")), config: config, owner: owner, listener: listener, store: db, ctx: workerCtx, cancel: cancel, queueWake: make(chan struct{}, 1), recoveryWake: make(chan struct{}, 1), recoveryChecked: map[string]recoveryAttempt{}, bound: map[string]bool{}, conns: map[net.Conn]bool{}}
 	s.tools = map[string]recoveryToolProcess{}
+	s.titleWake = make(chan struct{}, 1)
 	s.runtimes = map[string]harness.Runtime{}
 	if err = s.configureAdapters(); err != nil {
 		listener.Close()
@@ -134,6 +136,8 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	go s.monitorGit()
 	s.wg.Add(1)
 	go s.recoveryLoop()
+	s.wg.Add(1)
+	go s.titleLoop()
 	return s, nil
 }
 func (s *Server) Directory() string { return s.config.Directory }
@@ -647,6 +651,12 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 			}
 		}
 		return op, err
+	}
+	if in.SessionID == "" {
+		select {
+		case s.titleWake <- struct{}{}:
+		default:
+		}
 	}
 	s.wg.Add(1)
 	go func() {

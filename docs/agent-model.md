@@ -8,6 +8,8 @@
 
 ## 目标
 
+自动会话命名使用可选 `harness.TitleGenerator`，由 owning worker 保存任务并接纳标题结果；具体模型选择、辅助进程与认证留在 adapter。当前实现和验证边界见 [自动会话命名](session-titles.md)。
+
 让原生 UI 渲染稳定的会话内容、操作状态、变更和待处理请求；Codex 的 JSON RPC 方法、wire union、数字／字符串 request ID 及响应编码保留在 Codex adapter 中。接第二个 harness 时增加 adapter 和必要能力，不复制 Codex 的整个协议做“通用协议”。
 
 中间层分成四项：

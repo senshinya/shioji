@@ -56,6 +56,14 @@ func acceptSend(t *testing.T, v *View, job app.Job, hydrate bool) string {
 		id = "created"
 	}
 	session := domain.Session{ID: id, WorkspaceID: "w", Status: "running", Title: "New turn", Config: in.Config}
+	if in.SessionID != "" {
+		for _, existing := range m.Snapshot.Sessions {
+			if existing.ID == id {
+				session.Title = existing.Title
+				break
+			}
+		}
+	}
 	op := domain.Operation{ID: in.OperationID, SessionID: id, State: "confirmed"}
 	body, _ := json.Marshal(op)
 	job.Apply(m, body, nil)

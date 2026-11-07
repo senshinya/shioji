@@ -411,6 +411,7 @@ func ghost(c *n.Context, label string, radius ...float32) n.Element {
 	return controlFeedback(c, n.Button(c, label).Radius(r), r).FontWeight(400).Justify(n.Start).Background(n.Transparent).Border(0, n.Transparent).Height(28)
 }
 func (v *View) sidebar(c *n.Context, t *n.Theme) {
+	titleAnimation := motionAnimation(c, 160*time.Millisecond)
 	m := v.Model
 	width, _ := c.Size()
 	sidebarWidth := float32(256)
@@ -553,7 +554,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 							}
 							n.Text(c, glyph).Width(10).FontSize(11).TextColor(t.TextMuted).Label(label)
 						}
-						n.Text(c, s.Title).SingleLine().Grow(1).FontSize(13).FixedLineHeight(20).TextColor(func() n.Color {
+						n.Text(c, s.Title).SingleLine().Grow(1).FontSize(13).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: &titleAnimation}).TextColor(func() n.Color {
 							if selected {
 								return t.Text
 							}
@@ -586,6 +587,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 	})
 }
 func (v *View) toolbar(c *n.Context, t *n.Theme) {
+	titleAnimation := motionAnimation(c, 160*time.Millisecond)
 	m := v.Model
 	rightInset := float32(24)
 	if m.SessionID != "" && !v.devices {
@@ -614,7 +616,7 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 					if s.ID == m.SessionID {
 						v.toolbarWorkspace(c, t)
 						n.Column(c).Size(1, 14).Background(t.Border).MarginX(8)
-						n.Text(c, s.Title).SingleLine().Grow(1).FontSize(13).FontWeight(400)
+						n.Text(c, s.Title).SingleLine().Grow(1).FontSize(13).FontWeight(400).ContentTransition(n.ContentTransition{Animation: &titleAnimation})
 					}
 				}
 			})

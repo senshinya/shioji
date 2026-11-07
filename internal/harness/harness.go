@@ -36,6 +36,17 @@ type SkillProvider interface {
 	Skills(context.Context, domain.LaunchContext) (domain.SkillCatalog, error)
 }
 
+// TitleGenerator is an optional, independent auxiliary capability. The adapter
+// owns its model selection, authentication and isolated execution mechanics.
+// It must not append a turn to the user's conversation or run workspace tools.
+type TitleGenerator interface {
+	GenerateTitle(context.Context, TitleInput) (string, error)
+}
+type TitleInput struct {
+	Prompt string
+	Scope  *managedexec.Scope
+}
+
 // IncomingMessage is a host callback translated by an adapter. SourceRef is an
 // opaque reference to the bound history, not a protocol payload.
 type IncomingMessage struct {

@@ -34,15 +34,16 @@ func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.
 		}
 		return nil, err
 	}
-	return &adapterRuntime{Runtime: r, executor: executor, descriptor: a.Descriptor()}, nil
+	return &adapterRuntime{Runtime: r, executor: executor, descriptor: a.Descriptor(), titleAdapter: a}, nil
 }
 
 type adapterRuntime struct {
 	*Runtime
-	executor   *Executor
-	descriptor domain.HarnessDescriptor
-	closeOnce  sync.Once
-	closeErr   error
+	executor     *Executor
+	descriptor   domain.HarnessDescriptor
+	titleAdapter Adapter
+	closeOnce    sync.Once
+	closeErr     error
 }
 
 func (r *adapterRuntime) Readiness() domain.Readiness {

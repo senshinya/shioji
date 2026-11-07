@@ -55,8 +55,8 @@ func Open(path string) (*Store, error) {
 	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return fail(err)
 	}
-	if version > 6 {
-		return fail(fmt.Errorf("database schema %d is newer than supported schema 6", version))
+	if version > 7 {
+		return fail(fmt.Errorf("database schema %d is newer than supported schema 7", version))
 	}
 	tx, err := db.Begin()
 	if err != nil {
@@ -75,7 +75,8 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS queues (session_id TEXT PRIMARY KEY REFERENCES sessions(id), body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS plans (session_id TEXT PRIMARY KEY REFERENCES sessions(id), body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS history_operations (id TEXT PRIMARY KEY, body BLOB NOT NULL);
- PRAGMA user_version=6;`)
+ CREATE TABLE IF NOT EXISTS title_jobs (session_id TEXT PRIMARY KEY REFERENCES sessions(id), state TEXT NOT NULL, body BLOB NOT NULL);
+ PRAGMA user_version=7;`)
 	if err != nil {
 		tx.Rollback()
 		return fail(err)
@@ -373,6 +374,12 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 	defer tx.Rollback()
 	if _, err = tx.Exec("INSERT INTO sessions VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body", session.ID, blob(session)); err != nil {
 		return none, err
+	}
+	if in.SessionID == "" {
+		job := TitleJob{Session: session, Prompt: in.Text, InputID: "input:" + op.ID}
+		if _, err = tx.Exec("INSERT INTO title_jobs VALUES(?,?,?)", session.ID, titlePending, blob(job)); err != nil {
+			return none, err
+		}
 	}
 	if _, err = tx.Exec("INSERT INTO operations(id,session_id,state,digest) VALUES(?,?,?,?)", op.ID, op.SessionID, op.State, digest); err != nil {
 		return none, err
@@ -784,6 +791,14 @@ func (s *Store) Events(after int64, limit int) ([]domain.Event, error) {
 
 // Recover never dispatches saved input. An old dispatch may already have caused an external effect.
 func (s *Store) Recover() error {
+	// A title-only model request interrupted by worker death is not replayed.
+	// Pending requests remain safe to start; a running one retains its fallback.
+	s.mu.Lock()
+	_, titleErr := s.db.Exec("UPDATE title_jobs SET state=? WHERE state=?", titleFailed, titleRunning)
+	s.mu.Unlock()
+	if titleErr != nil {
+		return titleErr
+	}
 	snapshot, err := s.Snapshot()
 	if err != nil {
 		return err

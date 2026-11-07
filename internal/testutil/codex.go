@@ -21,6 +21,7 @@ type Provider struct {
 	mu          sync.Mutex
 	counts      map[string]int
 	inputs      []string
+	titleInputs []string
 	execCommand string
 	execTTY     bool
 }
@@ -44,6 +45,11 @@ func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	encoded, _ := json.Marshal(body["input"])
 	kind := "fast"
+	textFormat, _ := body["text"].(map[string]any)
+	format, _ := textFormat["format"].(map[string]any)
+	schema, _ := format["schema"].(map[string]any)
+	properties, _ := schema["properties"].(map[string]any)
+	_, titleRequest := properties["title"]
 	if strings.Contains(string(encoded), "SHIOJI_SLOW") {
 		kind = "slow"
 	}
@@ -59,9 +65,16 @@ func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(string(encoded), "SHIOJI_QUESTION") {
 		kind = "question"
 	}
+	if titleRequest {
+		kind = "title"
+	}
 	p.mu.Lock()
 	recorded, _ := json.Marshal(body)
-	p.inputs = append(p.inputs, string(recorded))
+	if titleRequest {
+		p.titleInputs = append(p.titleInputs, string(recorded))
+	} else {
+		p.inputs = append(p.inputs, string(recorded))
+	}
 	count := p.counts[kind]
 	command, tty := p.execCommand, p.execTTY
 	p.counts[kind]++
@@ -78,6 +91,9 @@ func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	item := map[string]any{"type": "message", "id": "message_" + kind + fmt.Sprint(count), "role": "assistant", "content": []any{map[string]string{"type": "output_text", "text": "SHIOJI_" + strings.ToUpper(kind) + "_DONE"}}}
+	if titleRequest {
+		item["content"] = []any{map[string]string{"type": "output_text", "text": "{\"title\":\"夹具会话标题\"}"}}
+	}
 	if kind == "question" && count == 0 {
 		args := `{"questions":[{"id":"q","header":"Choice","question":"Continue?","options":[{"label":"Yes","description":"Continue"},{"label":"No","description":"Decline"}]}]}`
 		item = map[string]any{"type": "function_call", "call_id": "question_call", "name": "request_user_input", "arguments": args}
@@ -111,4 +127,12 @@ func (p *Provider) Inputs() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]string(nil), p.inputs...)
+}
+
+// TitleInputs keeps auxiliary requests separate from conversation delivery,
+// so recovery/queue tests count accepted user turns rather than background work.
+func (p *Provider) TitleInputs() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.titleInputs...)
 }
