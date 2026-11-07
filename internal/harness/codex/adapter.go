@@ -24,7 +24,7 @@ func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.
 			return nil, errors.Join(err, opts.Scope.Stop(ctx))
 		}
 	}
-	r, err := Start(ctx, Options{Executable: a.Executable, Home: a.Home, Scope: opts.Scope, Executor: executor, OnStart: opts.OnStart, OnEvent: opts.OnEvent, OnMessage: opts.OnMessage})
+	r, err := Start(ctx, Options{Executable: a.Executable, Home: a.Home, Scope: opts.Scope, Executor: executor, OnStart: opts.OnStart, OnEvent: opts.OnEvent, OnMessage: opts.OnMessage, ImportImage: opts.ImportImage})
 	if err != nil {
 		if executor != nil {
 			executor.Close(ctx)

@@ -124,9 +124,10 @@ type Item struct {
 }
 
 type ContentPart struct {
-	Kind  string `json:"kind"`
-	Label string `json:"label,omitempty"`
-	Text  string `json:"text"`
+	Attachment *Attachment `json:"attachment,omitempty"`
+	Kind       string      `json:"kind"`
+	Label      string      `json:"label,omitempty"`
+	Text       string      `json:"text"`
 }
 type FileChange struct {
 	Path        string `json:"path"`

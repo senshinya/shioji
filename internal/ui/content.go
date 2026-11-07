@@ -147,6 +147,10 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item) {
 		}
 		for i, part := range item.Parts {
 			n.Column(c.Key(fmt.Sprint("part:", i))).FillWidth().Gap(4).Children(func() {
+				if part.Kind == "image" && part.Attachment != nil {
+					v.outputImage(c, t, *part.Attachment)
+					return
+				}
 				if part.Label != "" {
 					n.Text(c, part.Label).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
 				}

@@ -384,6 +384,17 @@ func (v *View) attachmentThumbnail(c *n.Context, t *n.Theme, a domain.Attachment
 	if !strings.HasPrefix(a.MIME, "image/") {
 		return n.Column(c).Size(size, size).AlignItems(n.Center).Justify(n.Center).Children(func() { n.Icon(c, fileAttachmentIcon).Size(22, 22).TextColor(t.TextMuted) })
 	}
+	cached := v.loadAttachmentImage(a, workspace, 256)
+	return n.Column(c.Key("thumbnail:"+a.ID)).Size(size, size).Radius(5).Clip().Background(t.Border.Alpha(.35)).Children(func() {
+		if cached != nil {
+			cached.Used = v.replyFrame
+			if cached.Image != nil {
+				n.Image(c.Key("loaded-image"), cached.Image).Size(size, size).Fit(n.Cover).Radius(5).Transition(fadeMotion(c, 160*time.Millisecond))
+			}
+		}
+	})
+}
+func (v *View) loadAttachmentImage(a domain.Attachment, workspace string, maximum int) *attachmentImage {
 	if v.attachmentImages == nil {
 		v.attachmentImages = map[string]*attachmentImage{}
 	}
@@ -400,7 +411,7 @@ func (v *View) attachmentThumbnail(c *n.Context, t *n.Theme, a domain.Attachment
 			if old != "" {
 				delete(v.attachmentImages, old)
 			} else {
-				return n.Column(c).Size(size, size).Radius(5).Background(t.Border.Alpha(.35))
+				return nil
 			}
 		}
 		cached = &attachmentImage{phase: attachmentImageLoading}
@@ -416,7 +427,7 @@ func (v *View) attachmentThumbnail(c *n.Context, t *n.Theme, a domain.Attachment
 				var path string
 				path, err = target.Download(ctx, store, a)
 				if err == nil {
-					img, err = decodeAttachmentImage(path, 256)
+					img, err = decodeAttachmentImage(path, maximum)
 				}
 			}
 			return func(*app.Model) {
@@ -429,14 +440,7 @@ func (v *View) attachmentThumbnail(c *n.Context, t *n.Theme, a domain.Attachment
 			}
 		})
 	}
-	return n.Column(c.Key("thumbnail:"+a.ID)).Size(size, size).Radius(5).Clip().Background(t.Border.Alpha(.35)).Children(func() {
-		if cached != nil {
-			cached.Used = v.replyFrame
-			if cached.Image != nil {
-				n.Image(c.Key("loaded-image"), cached.Image).Size(size, size).Fit(n.Cover).Radius(5).Transition(fadeMotion(c, 160*time.Millisecond))
-			}
-		}
-	})
+	return cached
 }
 func (v *View) openAttachment(a domain.Attachment, workspace string, source n.Rect) {
 	if v.Controller == nil || v.StatePath == "" {
@@ -531,8 +535,17 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 		if isImage {
 			// Image pixels stay opaque. Only their crop and geometry change.
 			backdrop.Background(n.RGBA(0, 0, 0, .2))
-			if morph && progress < 1 {
-				panel.Opacity(0).IgnoreInput(true)
+			if morph {
+				// The surface grows from the same thumbnail with the same clock.
+				// Hiding a full-sized panel until progress == 1 causes a late pop.
+				sx := p.Source.W/panelWidth + (1-p.Source.W/panelWidth)*progress
+				sy := p.Source.H/panelHeight + (1-p.Source.H/panelHeight)*progress
+				x := (p.Source.X + p.Source.W/2 - w/2) * (1 - progress)
+				y := (p.Source.Y + p.Source.H/2 - h/2) * (1 - progress)
+				panel.Transform(n.Scaling(sx, sy).Then(n.Translation(x, y)))
+				if progress < 1 {
+					panel.IgnoreInput(true)
+				}
 			}
 		} else {
 			backdrop.Background(n.RGBA(0, 0, 0, .2*progress))

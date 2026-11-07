@@ -80,6 +80,43 @@ func TestAttachmentPreviewZoomsFromItsClickedSourceAndReturns(t *testing.T) {
 	}
 }
 
+func TestImagePreviewSurfaceGrowsAndShrinksWithItsImage(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		v := New(layoutModel(), nil, "")
+		ui := n.NewTester(v.View, 1440, 900)
+		ui.SetDark(dark)
+		ui.Advance(time.Second)
+		bitmap := image.NewRGBA(image.Rect(0, 0, 64, 32))
+		for y := 0; y < 32; y++ {
+			for x := 0; x < 64; x++ {
+				bitmap.SetRGBA(x, y, color.RGBA{R: 180, G: 30, B: 40, A: 255})
+			}
+		}
+		v.attachmentPreview = &attachmentPreview{Attachment: domain.Attachment{ID: "surface", Name: "image.png", MIME: "image/png"}, presence: previewOpening, Source: n.Rect{X: 500, Y: 700, W: 100, H: 50}, Image: n.NewBitmap(bitmap)}
+		ui.Frame()
+		ui.Advance(80 * time.Millisecond)
+		moving, _ := ui.Find("附件预览")
+		sample := func(r n.Rect) color.RGBA { return ui.Image().RGBAAt(int(r.X+r.W*.65), int(r.Y+8)) }
+		entering := sample(moving)
+		ui.Advance(500 * time.Millisecond)
+		settled, _ := ui.Find("附件预览")
+		surface := sample(settled)
+		if moving.W >= settled.W-10 || moving.H >= settled.H-10 {
+			t.Fatal("image moves while its window remains at final size", dark, moving, settled)
+		}
+		if entering != surface {
+			t.Fatal("preview window only becomes visible at the end", dark, entering, surface)
+		}
+		v.attachmentPreview.close()
+		ui.Frame()
+		ui.Advance(80 * time.Millisecond)
+		closing, ok := ui.Find("附件预览")
+		if !ok || closing.W >= settled.W-10 || sample(closing) != surface {
+			t.Fatal("preview window disappears instead of shrinking with image", dark, closing)
+		}
+	}
+}
+
 func TestReducedMotionImagePreviewDoesNotZoomOrFade(t *testing.T) {
 	v := New(layoutModel(), nil, "")
 	ui := n.NewTester(v.View, 1440, 900)

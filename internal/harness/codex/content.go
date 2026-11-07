@@ -2,19 +2,38 @@ package codex
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"path"
 	"sort"
 	"strings"
 
 	"shioji/internal/domain"
+	"shioji/internal/harness"
 	"shioji/internal/harness/codex/wire"
 )
 
 // Only normalized, bounded presentation data leaves the adapter. Media bytes,
 // encrypted payloads and private MCP metadata are never persisted as prose.
 func normalizeItem(source wire.Item, final bool) domain.Item {
+	return normalizeItemWithImages(source, final, nil)
+}
+
+func (n *Normalizer) normalizeImageItem(sessionID, itemID string, source wire.Item, final bool) domain.Item {
+	if n.importImage == nil {
+		return normalizeItem(source, final)
+	}
+	return normalizeItemWithImages(source, final, func(image harness.OutputImage) (domain.Attachment, error) {
+		image.SessionID = sessionID
+		image.ItemID = itemID
+		return n.importImage(image)
+	})
+}
+
+func normalizeItemWithImages(source wire.Item, final bool, save func(harness.OutputImage) (domain.Attachment, error)) domain.Item {
 	item := domain.Item{Kind: "tool", Final: final, Status: source.Status}
 	if item.Status == "inProgress" || item.Status == "in_progress" {
 		item.Status = "running"
@@ -46,6 +65,42 @@ func normalizeItem(source wire.Item, final bool) domain.Item {
 			item.Parts = append(item.Parts, domain.ContentPart{Kind: kind, Label: text(boundedTo(label, 1024)), Text: text(value)})
 		}
 	}
+	images := 0
+	imagePart := func(label, path, encoded string) {
+		if len(item.Parts) >= 64 || remaining <= 0 {
+			item.Truncated = true
+			return
+		}
+		if !final {
+			return
+		}
+		if save == nil {
+			part("image", label, firstNonempty(path, "图片预览不可用，请更新执行服务"))
+			return
+		}
+		image := harness.OutputImage{Name: label, Path: path, Index: images}
+		images++
+		var err error
+		if encoded != "" {
+			if len(encoded) > base64.StdEncoding.EncodedLen(8<<20) {
+				err = errors.New("图片超过 8 MiB")
+			} else {
+				image.Data, err = base64.StdEncoding.DecodeString(encoded)
+			}
+		}
+		if images > 8 {
+			err = errors.New("本次工具的图片超过预览上限")
+		}
+		var ref domain.Attachment
+		if err == nil {
+			ref, err = save(image)
+		}
+		if err != nil {
+			part("image", label, "图片无法预览："+err.Error())
+			return
+		}
+		item.Parts = append(item.Parts, domain.ContentPart{Kind: "image", Label: text(boundedTo(label, 1024)), Text: ref.Name, Attachment: &ref})
+	}
 	field := func(key string) string { var value string; json.Unmarshal(source.Fields[key], &value); return value }
 	pretty := func(raw json.RawMessage) string {
 		if len(raw) == 0 || string(raw) == "null" {
@@ -73,10 +128,10 @@ func normalizeItem(source wire.Item, final bool) domain.Item {
 				break
 			}
 			var b struct {
-				Type, Text, Name, URI, MimeType, URL, Path, ImageURL, AudioURL string
-				ImageSnake                                                     string `json:"image_url"`
-				AudioSnake                                                     string `json:"audio_url"`
-				Resource                                                       *struct{ URI, MimeType, Text string }
+				Type, Text, Name, URI, MimeType, URL, Path, Data, ImageURL, AudioURL string
+				ImageSnake                                                           string `json:"image_url"`
+				AudioSnake                                                           string `json:"audio_url"`
+				Resource                                                             *struct{ URI, MimeType, Text, Blob string }
 			}
 			json.Unmarshal(block, &b)
 			switch b.Type {
@@ -93,6 +148,36 @@ func normalizeItem(source wire.Item, final bool) domain.Item {
 						uri = candidate
 					}
 				}
+				if kind == "image" {
+					encoded := b.Data
+					if strings.HasPrefix(uri, "data:") {
+						prefix, payload, ok := strings.Cut(uri, ",")
+						if ok && strings.HasSuffix(prefix, ";base64") {
+							encoded = payload
+						} else {
+							encoded = "!invalid"
+						}
+						uri = ""
+					}
+					if encoded != "" {
+						imagePart("工具图片", "", encoded)
+						continue
+					}
+					if strings.HasPrefix(uri, "file:") {
+						parsed, err := url.Parse(uri)
+						if err == nil && (parsed.Host == "" || parsed.Host == "localhost") {
+							imagePart("设备图片", parsed.Path, "")
+							continue
+						}
+					}
+					if b.Path != "" {
+						imagePart("设备图片", b.Path, "")
+						continue
+					}
+					images++
+					part("image", "图片链接", firstNonempty(uri, "图片没有可预览的资源"))
+					continue
+				}
 				if strings.HasPrefix(uri, "data:") {
 					uri = ""
 				}
@@ -105,6 +190,10 @@ func normalizeItem(source wire.Item, final bool) domain.Item {
 				part("resource", firstNonempty(b.Name, b.MimeType), b.URI)
 			case "resource":
 				if b.Resource != nil {
+					if strings.HasPrefix(b.Resource.MimeType, "image/") && b.Resource.Blob != "" {
+						imagePart("资源图片", "", b.Resource.Blob)
+						continue
+					}
 					part("resource", b.Resource.MimeType, b.Resource.URI)
 					part("text", "", b.Resource.Text)
 				}
@@ -219,12 +308,16 @@ func normalizeItem(source wire.Item, final bool) domain.Item {
 	case "imageView":
 		item.Presentation = "image"
 		item.Name = "查看 " + path.Base(field("path"))
-		part("image", "设备图片", field("path"))
+		imagePart("设备图片", field("path"), "")
 	case "imageGeneration":
 		item.Presentation = "image"
 		item.Name = "生成图片"
 		part("text", "提示词", field("revisedPrompt"))
-		part("image", "设备图片", field("savedPath"))
+		if saved := field("savedPath"); saved != "" {
+			imagePart("生成图片", saved, "")
+		} else if result := field("result"); result != "" {
+			imagePart("生成图片", "", result)
+		}
 		part("resource", "文件 ID", field("fileId"))
 		var failure struct{ Message string }
 		json.Unmarshal(source.Fields["failure"], &failure)

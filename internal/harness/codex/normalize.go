@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"shioji/internal/domain"
+	"shioji/internal/harness"
 	"shioji/internal/harness/codex/wire"
 )
 
@@ -20,6 +21,7 @@ type pending struct {
 	permissions json.RawMessage
 }
 type Normalizer struct {
+	importImage    func(harness.OutputImage) (domain.Attachment, error)
 	mu             sync.Mutex
 	sessions       map[string]string
 	requests       map[string]*pending
@@ -235,7 +237,7 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 			n.items[key] = domain.Item{ID: key, Text: event.Text, Final: m.Method == "item/completed"}
 			return emit(event)
 		}
-		i := normalizeItem(p.Item, m.Method == "item/completed")
+		i := n.normalizeImageItem(sid, key, p.Item, m.Method == "item/completed")
 		i.ID, i.TurnID = key, p.TurnID
 		n.items[key] = i
 		event.Type = "item.upsert"

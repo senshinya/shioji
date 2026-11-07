@@ -54,11 +54,24 @@ type IncomingMessage struct {
 }
 
 type StartOptions struct {
-	OnMessage func(context.Context, IncomingMessage) error
-	Scope     *managedexec.Scope
-	OnEvent   func(domain.Event) error
-	OnStart   func(int) error
-	OnLost    func() error
+	// ImportImage snapshots device-local or inline image bytes in worker storage.
+	// Adapters translate source encodings before calling this; journals carry only
+	// the returned immutable reference, never bytes or a runtime storage path.
+	ImportImage func(OutputImage) (domain.Attachment, error)
+	OnMessage   func(context.Context, IncomingMessage) error
+	Scope       *managedexec.Scope
+	OnEvent     func(domain.Event) error
+	OnStart     func(int) error
+	OnLost      func() error
+}
+
+type OutputImage struct {
+	SessionID string
+	ItemID    string
+	Index     int
+	Name      string
+	Path      string
+	Data      []byte
 }
 
 type Adapter interface {

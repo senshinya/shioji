@@ -42,7 +42,9 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 	if err = scope.Bind("worker", os.Getpid()); err != nil {
 		return nil, err
 	}
-	r, err := adapter.Start(ctx, harness.StartOptions{Scope: scope, OnMessage: func(ctx context.Context, input harness.IncomingMessage) error {
+	r, err := adapter.Start(ctx, harness.StartOptions{Scope: scope, ImportImage: func(image harness.OutputImage) (domain.Attachment, error) {
+		return s.importOutputImage(d.Session.HarnessID, id, image)
+	}, OnMessage: func(ctx context.Context, input harness.IncomingMessage) error {
 		return s.receiveHarnessMessage(ctx, d.Session.HarnessID, id, scope.Generation, input)
 	}, OnEvent: func(e domain.Event) error { return s.onHarnessEvent(d.Session.HarnessID, id, e) }, OnStart: func(pid int) error { return recordSessionProcess(dir, id, pid) }, OnLost: func() error {
 		if err := s.guardManagedExecution(id); err != nil {

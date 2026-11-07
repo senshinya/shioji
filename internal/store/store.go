@@ -104,6 +104,12 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error     { return s.db.Close() }
 func (s *Store) DeviceID() string { return s.deviceID }
 
+func (s *Store) Item(sessionID, itemID string) (domain.Item, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return load[domain.Item](s.db.QueryRow("SELECT body FROM items WHERE session_id=? AND id=?", sessionID, itemID))
+}
+
 // commit publishes a wake only after the journal and its projection are durable.
 // Callers hold mu, so registering a waiter cannot miss a concurrent commit.
 func (s *Store) commit(tx *sql.Tx) error {

@@ -119,7 +119,9 @@ func (s *Server) openCatalog(ctx context.Context, id string, stop bool) (runtime
 	if err := recordProcess(dir, 0); err != nil {
 		return nil, err
 	}
-	next, err := a.Start(ctx, harness.StartOptions{OnEvent: func(e domain.Event) error { return s.onHarnessEvent(id, "", e) }, OnStart: func(pid int) error { return recordProcess(dir, pid) }})
+	next, err := a.Start(ctx, harness.StartOptions{ImportImage: func(image harness.OutputImage) (domain.Attachment, error) {
+		return s.importOutputImage(id, "", image)
+	}, OnEvent: func(e domain.Event) error { return s.onHarnessEvent(id, "", e) }, OnStart: func(pid int) error { return recordProcess(dir, pid) }})
 	if err != nil {
 		os.Remove(filepath.Join(dir, "runtime-process.json"))
 		return nil, err
