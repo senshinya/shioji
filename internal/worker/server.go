@@ -750,7 +750,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 		}
 	}
 	// Update the existing accepted input; a wire userMessage never creates a duplicate.
-	_, err = s.store.Apply(session.ID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: turnID, Kind: "user", Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Final: true, Status: delivery}})
+	_, err = s.store.Apply(session.ID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: turnID, Kind: "user", ReferencePositions: in.ReferencePositions, Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Final: true, Status: delivery}})
 	if err != nil {
 		s.cancel()
 	}

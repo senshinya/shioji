@@ -647,9 +647,11 @@ type state struct {
 	barInset [4]float32
 	barWidth float32
 	// barsShown reports whether the last frame painted the element's
-	// scroll bars: they show only while it is hovered or a bar is
-	// dragged.
+	// scroll bars: after actual movement, or while a thumb is dragged.
 	barsShown, hideScrollbars bool
+	barPosition               [2]float64
+	barsPlaced                bool
+	barsMovedAt               time.Time
 	// track is the ScrollState of the last frame's element, which events
 	// that scroll it update (scrollTo).
 	track *ScrollState

@@ -301,12 +301,12 @@ func (s *Store) acceptSteerLocked(in domain.Submission, turn string, revision in
 	var item *domain.Item
 	if queued == nil {
 		now := time.Now()
-		item = &domain.Item{ID: "input:" + op.ID, TurnID: turn, Kind: "user", Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Status: "dispatching", Final: true, SentAt: &now}
+		item = &domain.Item{ID: "input:" + op.ID, TurnID: turn, Kind: "user", ReferencePositions: in.ReferencePositions, Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Status: "dispatching", Final: true, SentAt: &now}
 		if err = putItem(tx, op.SessionID, item); err != nil {
 			return none, err
 		}
 	} else {
-		if err = putItem(tx, op.SessionID, &domain.Item{ID: "input:" + op.ID, TurnID: turn, Kind: "queued", Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Final: true}); err != nil {
+		if err = putItem(tx, op.SessionID, &domain.Item{ID: "input:" + op.ID, TurnID: turn, Kind: "queued", ReferencePositions: in.ReferencePositions, Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Final: true}); err != nil {
 			return none, err
 		}
 		if err = putQueue(tx, *queued); err != nil {

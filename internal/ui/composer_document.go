@@ -11,7 +11,7 @@ import (
 	"shioji/internal/app"
 )
 
-// Reference positions belong to editable client drafts, never to a harness's
+// Reference positions belong to Shioji input presentation, never to a harness's
 // wire input. The native document owns atomic selection and undo, including
 // the typed reference metadata carried by each attachment.
 type composerReference struct {
@@ -91,7 +91,9 @@ func (v *View) composerDocument(c *n.Context, key string) *composerDocument {
 		v.composerDocuments = map[string]*composerDocument{}
 	}
 	identity := key
-	if edit := v.Model.QueueEdits[v.Model.SessionID]; edit.ID != "" {
+	editToken := ""
+	if edit := v.Model.QueueEdits[v.Model.SessionID]; edit.ID != "" && key == v.Model.DraftKey() {
+		editToken = edit.Token
 		identity += ":edit:" + edit.Token
 	}
 	for id, b := range v.composerDocuments {
@@ -102,30 +104,11 @@ func (v *View) composerDocument(c *n.Context, key string) *composerDocument {
 	b := v.composerDocuments[identity]
 	content := v.composerContent(key)
 	if b == nil {
-		b = &composerDocument{doc: richtext.NewDocument(richtext.NewText("")), key: key, editToken: v.Model.QueueEdits[v.Model.SessionID].Token}
+		b = &composerDocument{doc: richtext.NewDocument(richtext.NewText("")), key: key, editToken: editToken}
 		v.composerDocuments[identity] = b
 	}
 	if b.version == 0 || !content.equal(b.last) {
-		text := richtext.NewText(content.text)
-		var refs []composerReference
-		for _, file := range content.files {
-			if file.Attachment.SourcePath != "" {
-				refs = append(refs, composerReference{file: file})
-			}
-		}
-		for _, skill := range content.skills {
-			refs = append(refs, composerReference{skill: skill})
-		}
-		sort.SliceStable(refs, func(i, j int) bool { return refs[i].position() < refs[j].position() })
-		for _, ref := range refs {
-			at := ref.position() - 1
-			if at < 0 {
-				at = text.Len()
-			}
-			at = min(at, text.Len())
-			text = text.ReplaceString(at, at, string(richtext.ObjectReplacement), richtext.Attributes{Attachment: v.referenceAttachment(c, ref)})
-		}
-		b.doc.SetText(text)
+		b.doc.SetText(v.referenceText(c, content))
 		b.last, b.version = content, b.doc.Version()
 	}
 	return b
@@ -201,7 +184,7 @@ func (v *View) insertReference(c *n.Context, b *composerDocument, state *fileMen
 		e.ReplaceString(state.start, state.end, string(richtext.ObjectReplacement), richtext.Attributes{Attachment: v.referenceAttachment(c, ref)})
 		e.Select(adjust(anchor), adjust(caret))
 	})
-	v.publishComposer(v.Model.DraftKey(), b)
+	v.publishComposer(b.key, b)
 	return true
 }
 
@@ -253,4 +236,52 @@ func fileOrSkillIcon(ref composerReference) *n.SVG {
 		return skillIcon
 	}
 	return fileAttachmentIcon
+}
+
+// The same attributed content feeds both editable drafts and selectable sent
+// messages. One object rune retains each reference's original text position.
+func referenceDocumentText(content composerContent) richtext.Text {
+	text := richtext.NewText(content.text)
+	var refs []composerReference
+	for _, file := range content.files {
+		if file.Attachment.SourcePath != "" {
+			refs = append(refs, composerReference{file: file})
+		}
+	}
+	for _, skill := range content.skills {
+		refs = append(refs, composerReference{skill: skill})
+	}
+	sort.SliceStable(refs, func(i, j int) bool { return refs[i].position() < refs[j].position() })
+	for _, ref := range refs {
+		at := ref.position() - 1
+		if at < 0 {
+			at = text.Len()
+		}
+		at = min(at, text.Len())
+		text = text.ReplaceString(at, at, string(richtext.ObjectReplacement), richtext.Attributes{Attachment: &richtext.Attachment{Name: ref.name(), Data: ref}})
+	}
+	return text
+}
+func (v *View) referenceText(c *n.Context, content composerContent) richtext.Text {
+	text := referenceDocumentText(content)
+	out := richtext.NewText("")
+	for _, run := range text.Runs(0, text.Len()) {
+		attrs := run.Attributes
+		if a := attrs.Attachment; a != nil {
+			attrs.Attachment = v.referenceAttachment(c, a.Data.(composerReference))
+		}
+		out = out.Append(run.Text, attrs)
+	}
+	return out
+}
+func referencePlainText(text richtext.Text) string {
+	var out strings.Builder
+	for _, run := range text.Runs(0, text.Len()) {
+		if a := run.Attributes.Attachment; a != nil {
+			out.WriteString(a.Name)
+		} else {
+			out.WriteString(run.Text)
+		}
+	}
+	return out.String()
 }

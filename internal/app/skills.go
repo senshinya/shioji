@@ -16,12 +16,15 @@ type DraftSkill struct {
 }
 
 func (m *Model) SubmissionSkills() ([]domain.SkillReference, error) {
+	return m.submissionSkills(m.DraftKey(), m.WorkspaceID, m.HarnessID())
+}
+func (m *Model) submissionSkills(key, workspace, harness string) ([]domain.SkillReference, error) {
 	var out []domain.SkillReference
-	for _, skill := range m.DraftSkills[m.DraftKey()] {
+	for _, skill := range m.DraftSkills[key] {
 		if m.WorkerMinor < 11 || !m.RunReadiness().Capabilities.Skills {
 			return nil, errors.New("当前 Agent 不支持 Skill 引用")
 		}
-		if skill.WorkspaceID != m.WorkspaceID || skill.DeviceID != m.workspaceDevice(m.WorkspaceID) || skill.HarnessID != m.HarnessID() {
+		if skill.WorkspaceID != workspace || skill.DeviceID != m.workspaceDevice(workspace) || skill.HarnessID != harness {
 			return nil, errors.New("Skill 属于其他工作区或 Agent，请移除后重新选择")
 		}
 		out = append(out, skill.Reference)

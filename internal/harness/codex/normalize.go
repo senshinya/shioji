@@ -168,7 +168,9 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		t.Status = normalizedTurnStatus(p.Turn.Status)
 		if t.Status == "running" {
 			usage := n.usage[t.ID]
-			usage.baseline = n.totals[p.ThreadID]
+			if usage.phase == usageUnobserved {
+				usage.baseline = n.totals[p.ThreadID]
+			}
 			n.usage[t.ID] = usage
 		}
 		if p.Turn.Error != nil {
@@ -186,8 +188,26 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		event.Turn = &t
 		return emit(event)
 	case "thread/tokenUsage/updated":
-		n.totals[p.ThreadID] = p.TokenUsage.Total
 		usage := n.usage[p.TurnID]
+		if usage.phase == usageUnobserved {
+			// On resume/fork there may be no observed thread total yet. Only
+			// the first request can establish a missing turn baseline: later
+			// `last` values cover just that request, not the entire turn.
+			baseline := func(known, previous, total, last *int64) *int64 {
+				if known != nil {
+					return known
+				}
+				if previous != nil {
+					return previous
+				}
+				return difference(total, last)
+			}
+			previous := n.totals[p.ThreadID]
+			usage.baseline.Input = baseline(usage.baseline.Input, previous.Input, p.TokenUsage.Total.Input, p.TokenUsage.Last.Input)
+			usage.baseline.Output = baseline(usage.baseline.Output, previous.Output, p.TokenUsage.Total.Output, p.TokenUsage.Last.Output)
+			usage.baseline.Cached = baseline(usage.baseline.Cached, previous.Cached, p.TokenUsage.Total.Cached, p.TokenUsage.Last.Cached)
+		}
+		n.totals[p.ThreadID] = p.TokenUsage.Total
 		usage.phase = usageObserved
 		n.usage[p.TurnID] = usage
 		return nil, nil, nil

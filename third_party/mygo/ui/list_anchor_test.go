@@ -27,6 +27,10 @@ func TestListAnchorModes(t *testing.T) {
 	if s.anchorPending() || !s.sentAnchor() {
 		t.Fatal("sent anchor lost its mode")
 	}
+	s.AnchorRow(11, 120)
+	if !s.sentAnchor() || s.anchorPending() || s.pinGlide.value != 120 || s.pinGlide.moving {
+		t.Fatal("settled row adoption starts another glide")
+	}
 	s.ReleaseRow()
 	if s.anchored() {
 		t.Fatal("released anchor remains active")

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"slices"
 	"time"
 
@@ -8,30 +9,37 @@ import (
 	"shioji/internal/domain"
 )
 
-const historyShatterDuration = 520 * time.Millisecond
+const historyShatterDuration = 1150 * time.Millisecond
 const historyCollapseDuration = 200 * time.Millisecond
 const historyForkFadeDuration = 220 * time.Millisecond
 
 type historyRestartMotion struct {
-	in            domain.HistoryChange
-	started       time.Time
-	epoch         string
-	turns         map[string]bool
-	phase         historyExitPhase
-	targetSession string
-	targetThread  string
-	anchorKey     string
-	anchorY       *float32
-	anchor        historyAnchorPhase
-	item          domain.Item
-	source        domain.SessionDetail
+	in              domain.HistoryChange
+	started         time.Time
+	runningShown    time.Time
+	collapseStarted time.Time
+	epoch           string
+	turns           map[string]bool
+	phase           historyExitPhase
+	targetSession   string
+	targetThread    string
+	anchorKey       string
+	anchorY         *float32
+	anchor          historyAnchorPhase
+	item            domain.Item
+	source          domain.SessionDetail
 }
 
 type historyExitPhase uint8
 
 const (
 	historyExiting historyExitPhase = iota
+	// Keep the running footer in one laid-out frame before reclaiming space.
+	historyShowingRunning
+	historyCollapsing
 	historyDispatched
+	// The RPC succeeded; keep its preview until the watch supplies the input.
+	historyConfirmed
 )
 
 // The target may hydrate before the source row has been pinned. Retain both
@@ -41,12 +49,13 @@ type historyAnchorPhase uint8
 const (
 	historyAnchorUnbound historyAnchorPhase = iota
 	historyAnchorSource
+	historyAnchorSourceBounded
 	historyAnchorTarget
 	historyAnchorBoth
 )
 
 func (m *historyRestartMotion) sourcePinned() bool {
-	return m.anchor == historyAnchorSource || m.anchor == historyAnchorBoth
+	return m.anchor == historyAnchorSource || m.anchor == historyAnchorSourceBounded || m.anchor == historyAnchorBoth
 }
 func (m *historyRestartMotion) targetAnchored() bool {
 	return m.anchor == historyAnchorTarget || m.anchor == historyAnchorBoth
@@ -98,9 +107,8 @@ func newHistoryRestartMotion(in domain.HistoryChange, d domain.SessionDetail, no
 		}
 	}
 	for _, turn := range d.Turns {
-		if in.Restart && turn.Order >= order || !in.Restart && turn.Order > order {
-			m.turns[turn.ID] = true
-		}
+		// Presence records the original turns; the value marks the exiting suffix.
+		m.turns[turn.ID] = in.Restart && turn.Order >= order || !in.Restart && turn.Order > order
 	}
 	if in.Restart {
 		m.targetSession = in.SessionID
@@ -129,7 +137,7 @@ func (v *View) beginHistoryMotion(in domain.HistoryChange) {
 // only the local revised bubble between them, never resurrect old replies.
 func (v *View) historyBridgeRows(rows []transcriptRow) []transcriptRow {
 	m := v.historyExit
-	if m == nil || !m.in.Restart || m.phase != historyDispatched || v.Model.SessionID != m.in.SessionID {
+	if m == nil || !m.in.Restart || m.phase < historyDispatched || v.Model.SessionID != m.in.SessionID {
 		return rows
 	}
 	for _, row := range rows {
@@ -138,6 +146,29 @@ func (v *View) historyBridgeRows(rows []transcriptRow) []transcriptRow {
 		}
 	}
 	return append(rows, transcriptRow{key: m.in.ItemID, item: m.item, end: -1})
+}
+
+// The local exit precedes worker acceptance and turn creation. Show the same
+// running footer through that gap without manufacturing an authoritative turn.
+func (v *View) historyRunningRows(rows []transcriptRow) []transcriptRow {
+	m := v.historyExit
+	if m == nil || !m.in.Restart || v.Model.SessionID != m.in.SessionID || m.phase == historyExiting {
+		return rows
+	}
+	for _, row := range rows {
+		if row.footer != "" {
+			if _, original := m.turns[row.footer]; !original {
+				return rows
+			}
+		}
+	}
+	for i, row := range rows {
+		if row.key == m.in.ItemID || row.key == "input:"+m.in.OperationID {
+			pending := transcriptRow{key: "history-running:" + m.in.OperationID, restarting: true, end: -1}
+			return slices.Insert(rows, i+1, pending)
+		}
+	}
+	return rows
 }
 
 func (v *View) anchorHistoryRows(state *n.ListState, rows []transcriptRow) {
@@ -153,16 +184,42 @@ func (v *View) anchorHistoryRows(state *n.ListState, rows []transcriptRow) {
 	for i, row := range rows {
 		if sid == m.targetSession && row.key == target {
 			if !m.targetAnchored() && m.anchorY != nil {
-				state.KeepRow(i+1, *m.anchorY)
+				if m.in.Restart {
+					// This only replaces the local row's identity. Its position is
+					// already settled; replaying a send glide from estimated prefix
+					// heights makes it move away and back during confirmation.
+					// Keep the sending anchor's eventual end-following behavior.
+					state.AnchorRow(i+1, *m.anchorY)
+				} else {
+					state.KeepRow(i+1, *m.anchorY)
+				}
 			}
 			m.handOff()
 			return
 		}
-		if sid == m.in.SessionID && row.key == m.anchorKey && !m.sourcePinned() {
-			if m.anchorY != nil {
-				state.KeepRow(i+1, *m.anchorY)
+		if sid == m.in.SessionID && row.key == m.anchorKey {
+			if !m.sourcePinned() {
+				if m.anchorY != nil {
+					if m.in.Restart && v.reduceMotion {
+						state.KeepRowWithinContent(i+1, *m.anchorY)
+					} else {
+						state.KeepRow(i+1, *m.anchorY)
+					}
+				}
+				m.pinSource()
+			} else if m.in.Restart && !m.targetAnchored() && m.anchorY != nil {
+				// Hand the replacement the position after end clamping, rather
+				// than restoring the blank space removed with the old suffix.
+				if bounds, ok := v.historyRowBounds[row.key]; ok {
+					*m.anchorY = bounds.Y
+				}
 			}
-			m.pinSource()
+			if m.in.Restart && m.phase >= historyCollapsing && m.anchor == historyAnchorSource {
+				if m.anchorY != nil {
+					state.KeepRowWithinContent(i+1, *m.anchorY)
+				}
+				m.anchor = historyAnchorSourceBounded
+			}
 		}
 	}
 }
@@ -214,7 +271,7 @@ func (v *View) syncHistoryExit(c *n.Context) {
 	if motion == nil {
 		return
 	}
-	if motion.phase == historyDispatched {
+	if motion.phase >= historyDispatched {
 		if !motion.in.Restart && motion.targetThread != "" {
 			current := v.persistenceModel().Details[motion.targetSession].Session.ThreadID
 			if current != "" && current != motion.targetThread {
@@ -222,26 +279,81 @@ func (v *View) syncHistoryExit(c *n.Context) {
 				return
 			}
 		}
+		detail := v.Model.Details[motion.in.SessionID]
+		if motion.in.Restart {
+			for _, op := range v.persistenceModel().Snapshot.Operations {
+				if op.ID == motion.in.OperationID && (op.State == "indeterminate" || op.State == "rejected" || op.State == "abandoned") {
+					v.historyExit = nil
+					return
+				}
+			}
+			for _, item := range detail.Items {
+				if item.ID == "input:"+motion.in.OperationID && (item.Status == "unknown" || item.Status == "failed" || detail.Session.Status == "unknown" || detail.Session.Status == "failed" || detail.Session.Status == "abandoned") {
+					v.historyExit = nil
+					return
+				}
+			}
+		}
 		finished := !motion.in.Restart || v.persistenceModel().HistoryEdits[motion.in.SessionID].OperationID == ""
+		if finished && motion.in.Restart && v.Model.SessionID == motion.in.SessionID {
+			// Submission retires the edit before the harness supplies a turn.
+			// The first real footer can belong to an assistant item before the
+			// accepted user item receives its turn ID from the Submit receipt.
+			finished = false
+			for _, turn := range detail.Turns {
+				if _, original := motion.turns[turn.ID]; original {
+					continue
+				}
+				for _, item := range detail.Items {
+					if item.TurnID == turn.ID && !emptyTranscriptItem(item) {
+						finished = true
+						break
+					}
+				}
+				if finished {
+					break
+				}
+			}
+		}
 		if finished && (motion.targetAnchored() || v.Model.SessionID != motion.in.SessionID && v.Model.SessionID != motion.targetSession) {
 			v.historyExit = nil
 		}
 		return
 	}
-	duration := historyShatterDuration + historyCollapseDuration
-	if !motion.in.Restart {
-		duration = historyForkFadeDuration
-	}
-	if v.reduceMotion || c.Now().Sub(motion.started) >= duration {
+	if v.reduceMotion {
 		v.dispatchHistoryRestart()
-	} else {
+		return
+	}
+	if !motion.in.Restart {
+		if c.Now().Sub(motion.started) >= historyForkFadeDuration {
+			v.dispatchHistoryRestart()
+		} else {
+			c.AnimationFrame()
+		}
+		return
+	}
+	switch motion.phase {
+	case historyExiting:
+		if c.Now().Sub(motion.started) >= historyShatterDuration {
+			motion.phase, motion.runningShown = historyShowingRunning, c.Now()
+		}
+	case historyShowingRunning:
+		if c.Now().After(motion.runningShown) {
+			motion.phase, motion.collapseStarted = historyCollapsing, c.Now()
+		}
+	case historyCollapsing:
+		if c.Now().Sub(motion.collapseStarted) >= historyCollapseDuration {
+			v.dispatchHistoryRestart()
+		}
+	}
+	if motion.phase < historyDispatched {
 		c.AnimationFrame()
 	}
 }
 
 func (v *View) dispatchHistoryRestart() {
 	motion := v.historyExit
-	if motion == nil || motion.phase == historyDispatched {
+	if motion == nil || motion.phase >= historyDispatched {
 		return
 	}
 	in, m := motion.in, v.persistenceModel()
@@ -260,7 +372,7 @@ func (v *View) dispatchHistoryRestart() {
 	}
 	motion.phase = historyDispatched
 	if in.Restart {
-		edit.OperationID, edit.SubmittedText = in.OperationID, in.Text
+		edit.OperationID, edit.SubmittedText, edit.SubmittedReferences = in.OperationID, in.Text, in.References
 		m.HistoryEdits[in.SessionID] = edit
 	}
 	v.historyCommand(in, false)
@@ -307,7 +419,10 @@ func (v *View) historySuffixReveals(c *n.Context, state *n.ListState, rows []tra
 	if v.historyExit == nil || !v.historyExit.in.Restart || v.historyExit.in.SessionID != v.Model.SessionID {
 		return
 	}
-	p := float32(c.Now().Sub(v.historyExit.started)-historyShatterDuration) / float32(historyCollapseDuration)
+	if v.historyExit.phase < historyCollapsing && !v.reduceMotion {
+		return
+	}
+	p := float32(c.Now().Sub(v.historyExit.collapseStarted)) / float32(historyCollapseDuration)
 	if v.reduceMotion {
 		p = 1
 	}
@@ -326,40 +441,48 @@ func (v *View) historySuffixReveals(c *n.Context, state *n.ListState, rows []tra
 	}
 }
 
-// Break the actual native rendered content into small pieces on the GPU.
-// There is no screenshot readback and no per-frame random noise: every piece
-// follows a stable path. The ordinary transcript remains virtualized.
+// Erode the actual native content into fine grains, carried to the right.
+// Sampling stays on the GPU; there is no screenshot readback or whole-row blur.
 type historyShatter struct {
 	progress float32
 	seed     uint32
 }
 
-func (historyShatter) EffectMargin() n.Point { return n.Point{X: 96, Y: 96} }
-
+func (historyShatter) EffectMargin() n.Point { return n.Point{X: 160, Y: 160} }
 func (fx historyShatter) PaintEffect(p *n.Painter, box n.Rect, content *n.Bitmap, inset n.Point) {
 	w, h := content.Size()
-	sx, sy := float32(w)/(box.W+192), float32(h)/(box.H+192)
-	for y, iy := float32(0), uint32(0); y < box.H; y, iy = y+8, iy+1 {
-		for x, ix := float32(0), uint32(0); x < box.W; x, ix = x+8, ix+1 {
+	sx, sy := float32(w)/(box.W+320), float32(h)/(box.H+320)
+	const grain = float32(2.4)
+	for y, iy := float32(0), uint32(0); y < box.H; y, iy = y+grain, iy+1 {
+		for x, ix := float32(0), uint32(0); x < box.W; x, ix = x+grain, ix+1 {
 			hash := (ix*374761393 + iy*668265263) ^ fx.seed
-			hash = (hash ^ hash>>13) * 1274126177
-			u, v := float32(hash&255)/255, float32((hash>>8)&255)/255
-			delay := .08 * u
-			k := max(0, min(1, (fx.progress-delay)/(1-delay)))
-			alpha := min(float32(1), (1-k)/.22)
-			if alpha <= 0 {
+			hash = (hash ^ (hash >> 13)) * 1274126177
+			u, v := float32(hash&65535)/65535, float32((hash>>16)&65535)/65535
+			delay := .48*(x/box.W) + .12*u
+			age := (fx.progress - delay) / .40
+			if age >= 1 {
 				continue
 			}
-			dst := n.Rect{X: box.X + x, Y: box.Y + y, W: min(8, box.W-x), H: min(8, box.H-y)}
-			src := n.Rect{X: inset.X + x*sx, Y: inset.Y + y*sy, W: dst.W * sx, H: dst.H * sy}
-			direction := float32(1)
-			if u < .5 {
-				direction = -1
+			k := max(float32(0), age)
+			alpha := float32(1)
+			if k > .58 {
+				q := (k - .58) / .42
+				alpha = 1 - q*q*(3-2*q)
 			}
-			pose := n.Rotation((u - .5) * 130 * k).Then(n.Translation(direction*(18+48*v)*k, -24*k+(40+42*u)*k*k))
-			p.Transform(pose, dst.X+dst.W/2, dst.Y+dst.H/2, func() {
-				p.ImageRegion(content, src, dst, n.ImageOptions{Tint: n.RGBA(1, 1, 1, alpha)})
-			})
+			dx, dy := float32(0), float32(0)
+			if k > 0 {
+				curl := float32(math.Sin(float64(k*8 + u*6.28)))
+				dx = (58+88*u)*k + curl*8*k
+				dy = (v-.64)*46*k - 18*k*k
+			}
+			gw, gh := min(grain, box.W-x), min(grain, box.H-y)
+			scale := float32(1)
+			if k > 0 {
+				scale = max(.30, 1-.65*k)
+			}
+			src := n.Rect{X: inset.X + x*sx, Y: inset.Y + y*sy, W: gw * sx, H: gh * sy}
+			dst := n.Rect{X: box.X + x + dx + gw*(1-scale)/2, Y: box.Y + y + dy + gh*(1-scale)/2, W: gw * scale, H: gh * scale}
+			p.ImageRegion(content, src, dst, n.ImageOptions{Tint: n.RGBA(255, 255, 255, alpha)})
 		}
 	}
 }

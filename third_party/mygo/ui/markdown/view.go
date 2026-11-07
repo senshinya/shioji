@@ -563,7 +563,7 @@ func (st *viewState) list(c *ui.Context, i int, base spanStyle) ui.Element {
 	width := th.em(th.ListIndent)
 	if b.Ordered {
 		last := b.Number + max(0, st.countChildren(i)-1)
-		w, _ := c.MeasureText(0, ui.Span{Text: itoa(last) + string(b.Marker), Font: th.Font, Size: th.FontSize})
+		w, _ := c.MeasureText(0, ui.Span{Text: itoa(last) + string(b.Marker), Font: th.Font, Size: th.FontSize, Features: "tnum"})
 		width = max(width, w+th.em(0.5))
 	}
 	col := ui.Column(c).Role(ui.RoleList)

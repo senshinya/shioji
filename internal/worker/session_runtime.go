@@ -42,7 +42,9 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 	if err = scope.Bind("worker", os.Getpid()); err != nil {
 		return nil, err
 	}
-	r, err := adapter.Start(ctx, harness.StartOptions{Scope: scope, OnEvent: func(e domain.Event) error { return s.onHarnessEvent(d.Session.HarnessID, id, e) }, OnStart: func(pid int) error { return recordSessionProcess(dir, id, pid) }, OnLost: func() error {
+	r, err := adapter.Start(ctx, harness.StartOptions{Scope: scope, OnMessage: func(ctx context.Context, input harness.IncomingMessage) error {
+		return s.receiveHarnessMessage(ctx, d.Session.HarnessID, id, scope.Generation, input)
+	}, OnEvent: func(e domain.Event) error { return s.onHarnessEvent(d.Session.HarnessID, id, e) }, OnStart: func(pid int) error { return recordSessionProcess(dir, id, pid) }, OnLost: func() error {
 		if err := s.guardManagedExecution(id); err != nil {
 			s.cancel()
 			return err
@@ -95,7 +97,7 @@ func (s *Server) failRuntimeLaunch(op domain.Operation, in domain.Submission, ca
 		s.cancel()
 		return
 	}
-	if _, err = s.store.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, Kind: "user", Text: in.Text, Skills: in.Skills, Attachments: in.Attachments, Status: "failed", Final: true}}); err != nil {
+	if _, err = s.store.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, Kind: "user", Text: in.Text, ReferencePositions: in.ReferencePositions, Skills: in.Skills, Attachments: in.Attachments, Status: "failed", Final: true}}); err != nil {
 		s.cancel()
 	}
 }

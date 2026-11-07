@@ -59,6 +59,9 @@ func (s *Server) queueLoop() {
 func (s *Server) enqueue(in domain.Submission) (domain.Operation, error) {
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
+	return s.enqueueLocked(in)
+}
+func (s *Server) enqueueLocked(in domain.Submission) (domain.Operation, error) {
 	runtime, err := s.inputRuntime(in)
 	if err != nil {
 		return domain.Operation{}, err
@@ -219,7 +222,7 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 		if state != "confirmed" && revision > 0 {
 			return
 		}
-		s.store.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: in.TurnID, Kind: "user", Skills: in.Input.Skills, Attachments: in.Input.Attachments, Text: in.Input.Text, Final: true, Status: status}})
+		s.store.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: in.TurnID, Kind: "user", ReferencePositions: in.Input.ReferencePositions, Skills: in.Input.Skills, Attachments: in.Input.Attachments, Text: in.Input.Text, Final: true, Status: status}})
 	}()
 	return op, nil
 }

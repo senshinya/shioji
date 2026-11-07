@@ -25,6 +25,7 @@ const (
 
 type fileMention struct {
 	context, text, query string
+	key                  string
 	start, end           int
 	phase                mentionPhase
 	results              domain.FileSearchResult
@@ -59,14 +60,23 @@ func mentionToken(text string, start, end int) (from, to int, query string, ok b
 			return
 		}
 	}
-	to = start
-	for to < len(runes) && !unicode.IsSpace(runes[to]) {
-		to++
-	}
-	return from, to, string(runes[from+1 : start]), true
+	// Only the trigger and query before the caret belong to this completion.
+	// Text already following an insertion point is not part of the query,
+	// even when no whitespace separates it from the newly typed trigger.
+	return from, start, string(runes[from+1 : start]), true
 }
-func (v *View) mentionContext() string {
-	return v.Model.ConnectionID() + "/" + v.Model.WorkspaceID + "/" + v.Model.HarnessID() + "/" + v.attachmentPreparationKey(v.Model.DraftKey())
+func (v *View) referenceEditorActive(key string) bool {
+	if key == v.Model.DraftKey() {
+		return true
+	}
+	edit := v.Model.HistoryEdits[v.Model.SessionID]
+	return edit.ItemID != "" && edit.OperationID == "" && key == v.Model.HistoryDraftKey() && v.historyExit == nil
+}
+func (v *View) mentionContext(key string) string {
+	if !v.referenceEditorActive(key) {
+		return "inactive:" + key
+	}
+	return v.Model.ConnectionID() + "/" + v.Model.WorkspaceID + "/" + v.Model.HarnessID() + "/" + v.attachmentPreparationKey(key)
 }
 func (v *View) clearMention() {
 	if v.fileMention != nil && v.fileMention.cancel != nil {
@@ -76,11 +86,21 @@ func (v *View) clearMention() {
 }
 func (v *View) syncMention(c *n.Context, input composerInput, text string) {
 	m := v.Model
+	key := input.binding.key
+	if v.fileMention != nil && !v.referenceEditorActive(v.fileMention.key) {
+		v.clearMention()
+	}
+	if v.fileMention != nil && v.fileMention.key != key && !input.Focused() {
+		return
+	}
+	if !v.referenceEditorActive(key) || strings.HasPrefix(key, "history:") && m.WorkerMinor < 12 {
+		return
+	}
 	if v.Controller == nil || !m.Connected || m.WorkerMinor < 11 || m.WorkspaceID == "" {
 		v.clearMention()
 		return
 	}
-	context := v.mentionContext()
+	context := v.mentionContext(key)
 	if v.fileMention != nil && v.fileMention.context != context {
 		v.clearMention()
 	}
@@ -118,7 +138,7 @@ func (v *View) syncMention(c *n.Context, input composerInput, text string) {
 		}
 		if state == nil || state.start != from || state.trigger != trigger {
 			v.clearMention()
-			state = &fileMention{context: context, start: from, trigger: trigger}
+			state = &fileMention{key: key, context: context, start: from, trigger: trigger}
 			v.fileMention = state
 		} else if state.cancel != nil {
 			state.cancel()
@@ -187,7 +207,15 @@ func (v *View) searchMention(state *fileMention) {
 	})
 }
 func (v *View) mentionKey(k composerKey) bool {
+	key := k.binding.key
+	if !v.referenceEditorActive(key) || strings.HasPrefix(key, "history:") && v.Model.WorkerMinor < 12 {
+		return false
+	}
 	state := v.fileMention
+	if state != nil && state.key != key {
+		v.clearMention()
+		state = nil
+	}
 	a, b := k.Selection()
 	from, to, query, token := mentionToken(k.Text(), a, b)
 	if !token {
@@ -197,7 +225,7 @@ func (v *View) mentionKey(k composerKey) bool {
 		return false
 	}
 	if state == nil && (k.Key == n.KeyEnter || k.Key == n.KeyTab) && k.Mods == 0 && v.Controller != nil && v.Model.Connected && v.Model.WorkerMinor >= 11 {
-		state = &fileMention{context: v.mentionContext(), text: k.Text(), query: query, start: from, end: to, trigger: []rune(k.Text())[from], phase: mentionWaiting, due: v.frameTime}
+		state = &fileMention{key: key, context: v.mentionContext(key), text: k.Text(), query: query, start: from, end: to, trigger: []rune(k.Text())[from], phase: mentionWaiting, due: v.frameTime}
 		v.fileMention = state
 		return true
 	}
@@ -243,7 +271,7 @@ func (v *View) captureMention(state *fileMention) {
 		return
 	}
 	m := v.Model
-	key := m.DraftKey()
+	key := state.key
 	token := v.attachmentPreparationKey(key)
 	workspace := m.WorkspaceID
 	session := m.SessionID
@@ -268,7 +296,7 @@ func (v *View) captureMention(state *fileMention) {
 		a, err := target.SnapshotFile(ctx, session, file)
 		return func(model *app.Model) {
 			v.attachmentPreparing[token]--
-			if v.fileMention != state || state.phase == mentionDismissed || v.mentionContext() != state.context || v.attachmentPreparationKey(key) != token {
+			if v.fileMention != state || state.phase == mentionDismissed || v.mentionContext(state.key) != state.context || v.attachmentPreparationKey(key) != token {
 				return
 			}
 			if err != nil {
@@ -286,6 +314,9 @@ func (v *View) captureMention(state *fileMention) {
 }
 func (v *View) mentionPopup(c *n.Context, t *n.Theme, anchor n.Element, input composerInput) {
 	state := v.fileMention
+	if state != nil && state.key != input.binding.key {
+		return
+	}
 	open := state != nil && state.phase != mentionDismissed && (state.present || state.phase != mentionWaiting)
 	panel := popover(c.Key("file-mention-popup"), anchor, &open, func(panel n.Element) {
 		count := min(8, state.count())
@@ -295,7 +326,18 @@ func (v *View) mentionPopup(c *n.Context, t *n.Theme, anchor n.Element, input co
 		}
 		windowW, windowH := c.Size()
 		height = min(height, max(32, windowH-80))
-		panel.AttachTo(anchor, n.AnchorTopStart, n.AnchorBottomStart).Margin(0, 0, 8, 0).Width(min(380, windowW-40)).Height(panel.AnimateTo("height", height, motionAnimation(c, 180*time.Millisecond))).Clip().Padding(3).Radius(9).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Label(state.title()).Children(func() {
+		// Fit the expanded list before the short loading row appears. Using
+		// the animated height would flip the popup when results arrive.
+		bounds := anchor.Bounds()
+		above, below := max(float32(0), bounds.Y-12), max(float32(0), windowH-bounds.Y-bounds.H-12)
+		if above < min(float32(8*26+6), max(32, windowH-80)) && below > above {
+			panel.AttachTo(anchor, n.AnchorBottomStart, n.AnchorTopStart).Margin(8, 0, 0, 0)
+			height = min(height, max(32, below))
+		} else {
+			panel.AttachTo(anchor, n.AnchorTopStart, n.AnchorBottomStart).Margin(0, 0, 8, 0)
+			height = min(height, max(32, above))
+		}
+		panel.Width(min(380, windowW-40)).Height(panel.AnimateTo("height", height, motionAnimation(c, 180*time.Millisecond))).Clip().Padding(3).Radius(9).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Label(state.title()).Children(func() {
 			message := ""
 			if (state.phase == mentionSearching || state.phase == mentionWaiting) && state.count() == 0 {
 				message = "正在查找文件…"
@@ -394,11 +436,11 @@ func (s *fileMention) title() string {
 	return "引用工作区文件"
 }
 func (v *View) selectSkill(state *fileMention) {
-	if len(v.Model.DraftSkills[v.Model.DraftKey()]) >= 8 {
+	if len(v.Model.DraftSkills[state.key]) >= 8 {
 		state.err = "最多引用 8 个 Skill"
 		return
 	}
-	for _, ref := range v.Model.DraftSkills[v.Model.DraftKey()] {
+	for _, ref := range v.Model.DraftSkills[state.key] {
 		if ref.Reference == state.skills[state.selected].SkillReference && ref.HarnessID == v.Model.HarnessID() {
 			state.err = "已引用此 Skill"
 			return
@@ -420,7 +462,7 @@ func (v *View) applySelectedSkill(c *n.Context, b *composerDocument, state *file
 // Apply network results on the native frame, after the editor has published
 // current text and selection. Never restore focus from a network callback.
 func (v *View) applyCapturedMention(c *n.Context, input composerInput, text string, state *fileMention) {
-	if err := v.validateAddedAttachments(v.Model.DraftKey(), []app.DraftAttachment{state.captured}); err != nil {
+	if err := v.validateAddedAttachments(state.key, []app.DraftAttachment{state.captured}); err != nil {
 		state.phase = mentionShowing
 		state.err = err.Error()
 		v.Model.Error = err.Error()

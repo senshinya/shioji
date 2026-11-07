@@ -7,6 +7,10 @@ import (
 	n "github.com/egoist/mygo/ui"
 )
 
+// A non-bouncing spring preserves velocity as streamed layout keeps growing.
+// Keep it shorter than message navigation, so following does not trail behind.
+var conversationFollowAnimation = n.Animation{Spring: n.SpringOptions{Duration: 240 * time.Millisecond}}
+
 type toolDisclosureMotion struct {
 	from, to float32
 	start    time.Time

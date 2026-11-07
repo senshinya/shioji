@@ -70,6 +70,7 @@ type View struct {
 	replyFrame                                                                                                      uint64
 	replyLatestOrder                                                                                                int64
 	toolMotions                                                                                                     map[string]*toolDisclosureMotion
+	toolArrivals                                                                                                    *toolArrivalState
 	frameTime                                                                                                       time.Time
 	toolsAnimating                                                                                                  bool
 	sent                                                                                                            *sentMessageMotion
@@ -214,6 +215,9 @@ var arrow = n.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" xmlns="http://www.w3
 var stop = n.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><rect x="6" y="5" width="12" height="14" rx="2" fill="currentColor"/></svg>`))
 var terminalIcon = svg("M4 6l4 4-4 4M11 14h5")
 var questionIcon = svg("M17.5 13.3h-10l-5 4.2v-15h15z")
+
+// Native thumb: 6 px, 2 px wider while dragged, and 3 px from the edge.
+const conversationScrollbarGutter = 11
 
 func (v *View) View(c *n.Context) {
 	m := v.Model
@@ -496,8 +500,8 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 					w := r.workspace
 					workspaceRow := n.Row(c).Height(30).Gap(3).AlignItems(n.Center).Opacity(r.presence)
 					workspaceRow.Children(func() {
-						if control(c.Key("workspace:" + w.ID)).Height(24).Grow(1).Justify(n.Start).Label(w.Name).Children(func() {
-							n.Row(c).FillWidth().Gap(3).AlignItems(n.Baseline).Children(func() {
+						if control(c.Key("workspace:" + w.ID)).Height(24).Grow(1).Gap(3).Justify(n.Start).Label(w.Name).Children(func() {
+							n.Row(c).Grow(1).Gap(3).AlignItems(n.Baseline).Children(func() {
 								angle := float32(0)
 								if v.collapsedWorkspaces[w.ID] {
 									angle = -90
@@ -505,10 +509,10 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 								inlineSymbol(c, disclosureDown, w.Name, n.Font{Family: c.Theme().Font, Size: 12, Weight: 500}, 11, t.TextMuted, angle).Width(20).TextAlign(n.Center)
 								n.Text(c, w.Name).SingleLine().Grow(1).FontSize(12).FontWeight(500).FixedLineHeight(20).Tooltip(w.Name)
 							})
+							n.Text(c, m.DeviceName(w.DeviceID)).FontSize(11).TextColor(t.TextMuted).PaddingX(6)
 						}).ContextMenu(func(menu *n.Menu) { v.workspaceMenu(menu, *w) }).Clicked() {
 							v.collapsedWorkspaces[w.ID] = !v.collapsedWorkspaces[w.ID]
 						}
-						n.Text(c, m.DeviceName(w.DeviceID)).FontSize(11).TextColor(t.TextMuted).PaddingX(6)
 					})
 					return
 				}
@@ -586,7 +590,7 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 	rightInset := float32(24)
 	if m.SessionID != "" && !v.devices {
 		// The scrollbar gutter and icon inset complete the visible right margin.
-		rightInset = 10
+		rightInset = 18 - conversationScrollbarGutter
 	}
 	n.Row(c).Height(48).FillWidth().Padding(0, rightInset, 0, 24).Gap(6).AlignItems(n.Center).DragWindow().Label("会话工具栏").Children(func() {
 		if v.workspaceEditor != nil && !v.devices {
@@ -1044,7 +1048,15 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		state = &n.ListState{FollowEnd: true}
 		v.lists[m.SessionID] = state
 	}
+	// Follow measured layout, including the reveal tail after execution ends.
+	// ListState owns interruption/reading anchors and stops itself when settled;
+	// authoritative turn completion must not cut off an in-progress glide.
 	reopening := m.FoldToolHistory[m.SessionID]
+	if !v.reduceMotion && !reopening && v.historyExit == nil {
+		state.FollowAnimation = &conversationFollowAnimation
+	} else {
+		state.FollowAnimation = nil
+	}
 	rows := v.transcriptRows(detail.Items)
 	rows = v.revealFindTarget(rows, reopening)
 	turns := make(map[string]domain.Turn, len(detail.Turns))
@@ -1053,16 +1065,28 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	}
 	rows = withTurnFooters(rows, detail.Items, turns)
 	rows = v.historyBridgeRows(rows)
+	rows = v.historyRunningRows(rows)
 	if v.toolsAnimating {
 		c.AnimationFrame()
 	}
 	state.Reveals = state.Reveals[:0]
 	if !v.reduceMotion {
 		for i, row := range rows {
-			if row.toolParent == "" || row.opacity >= 1 || v.historySuffixRow(row) {
+			if row.toolParent == "" && row.group == "" || row.opacity >= 1 || v.historySuffixRow(row) {
 				continue
 			}
-			if len(state.Reveals) > 0 && i > 0 && rows[i-1].toolParent == row.toolParent {
+			owner := row.toolParent
+			if owner == "" {
+				owner = row.group
+			}
+			previousOwner := ""
+			if i > 0 {
+				previousOwner = rows[i-1].toolParent
+				if previousOwner == "" {
+					previousOwner = rows[i-1].group
+				}
+			}
+			if len(state.Reveals) > 0 && owner == previousOwner && rows[i-1].opacity == row.opacity {
 				state.Reveals[len(state.Reveals)-1].End = i + 2
 			} else {
 				state.Reveals = append(state.Reveals, n.ListReveal{First: i + 1, End: i + 2, Progress: row.opacity})
@@ -1086,6 +1110,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	if reserve == 0 {
 		reserve = 108
 	}
+	state.FollowInset = reserve
 	rowBounds := map[string]n.Rect{}
 	history := n.List(c.Key("history:"+m.SessionID), state, len(rows)+2, func(row int) {
 		if row == 0 {
@@ -1101,16 +1126,23 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		i := entry.end
 		item := entry.item
 		bottom := float32(8)
-		if item.Kind == "user" {
-			bottom = 32
-		}
 		if i >= 0 && (i == len(detail.Items)-1 || (item.TurnID != "" && detail.Items[i+1].TurnID != item.TurnID)) {
 			bottom = 32
 			if _, ok := turns[item.TurnID]; ok {
 				bottom = 8
 			}
 		}
-		if entry.footer != "" {
+		// Receipt spacing follows the rendered next row, including the local
+		// waiting receipt before the accepted input receives its turn identity.
+		if row < len(rows) && (rows[row].footer != "" || rows[row].restarting) {
+			bottom = 8
+		}
+		// Waiting is the first output slot. Keep the same user-to-output gap
+		// when the status line gives way to real prose, tools or a request.
+		if item.Kind == "user" {
+			bottom = 32
+		}
+		if entry.footer != "" || entry.restarting {
 			bottom = 32
 		}
 		n.Column(c).FillWidth().PaddingX(18).AlignItems(n.Center).Children(func() {
@@ -1122,7 +1154,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			if entry.toolParent != "" {
 				content.Padding(0, 0, bottom, 24).Draw(func(p *n.Painter, r n.Rect) {
 					height := r.H
-					if entry.toolResult != "" {
+					if row == len(rows) || rows[row].toolParent != entry.toolParent {
 						height = 10
 					}
 					p.Fill(n.Rect{X: r.X + 7.5, Y: r.Y, W: 1, H: height}, t.Border, 0)
@@ -1132,10 +1164,15 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 					content.Transform(n.Translation(0, -4*(1-entry.opacity)))
 				}
 			}
+			if entry.group != "" {
+				content.Opacity(entry.opacity)
+			}
 			content.DrawOver(func(_ *n.Painter, r n.Rect) { rowBounds[entry.key] = r })
 			v.historySuffixPose(c, content, entry)
 			content.Children(func() {
-				if entry.footer != "" {
+				if entry.restarting {
+					v.turnFooter(c, t, domain.Turn{Status: "running"})
+				} else if entry.footer != "" {
 					v.turnFooter(c, t, turns[entry.footer])
 				} else if entry.group != "" {
 					v.toolGroup(c, t, entry, row)
@@ -1146,11 +1183,14 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 				}
 			})
 		})
-	}).Absolute().Left(0).Right(0).Top(0).Bottom(0).Label("对话记录")
+	}).Absolute().Left(0).Right(0).Top(0).Bottom(0).ScrollbarInsets(8, 0, 8, 0).Label("对话记录")
 	history.DrawOver(func(_ *n.Painter, _ n.Rect) { v.historyRowBounds = rowBounds })
 	n.VirtualTextSelection(history, func(key string) (string, bool) {
 		for _, item := range v.Model.Details[v.Model.SessionID].Items {
 			if item.ID == key {
+				if item.Kind == "user" {
+					return v.messageCopyText(item), true
+				}
 				return item.Text, true
 			}
 		}
@@ -1158,7 +1198,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	})
 	v.conversationOutline(c, t, state, rows)
 	v.returnToLatest(c, t, state)
-	n.Column(c).Absolute().Left(0).Right(8).Top(0).Height(48).Background(t.Background).Children(func() { v.toolbar(c, t) })
+	n.Column(c).Absolute().Left(0).Right(conversationScrollbarGutter).Top(0).Height(48).Background(t.Background).Children(func() { v.toolbar(c, t) })
 	v.conversationFindBar(c, t, state.Bounds(c).W)
 	dock := n.Column(c.Key("conversation-dock")).Absolute().Left(0).Right(0).Bottom(8).PaddingX(18).AlignItems(n.Center).Gap(8).Label("会话底部面板")
 	// Native wrapping and question disclosure determine the complete dock height.
@@ -1187,19 +1227,19 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 		if label == "" {
 			label = "工具活动"
 		}
-		if control(c).FillWidth().MinHeight(20).Justify(n.Start).Label(label).Children(func() {
-			n.Text(c, label).Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+		heading := control(c).FillWidth().MinHeight(20).Justify(n.Start).Label(label)
+		if heading.Children(func() {
+			n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
+				n.Text(c, label).Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Grow(1)
+				if issue := toolIssueLabel(item); issue != "" {
+					n.Text(c.Key("command-issue"), issue).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
+						Transition(fadeMotion(c, 160*time.Millisecond))
+				}
+			})
 		}).Clicked() {
 			v.Model.Collapsed["tool:"+item.ID] = !v.Model.Collapsed["tool:"+item.ID]
 		}
-		if !v.Model.Collapsed["tool:"+item.ID] && item.Text != "" {
-			output := n.Scroll(c.Key("output:" + item.ID)).FillWidth().MaxHeight(160)
-			scroll := n.Local(output, "output-scroll", func() n.ScrollState { return n.ScrollState{} })
-			output.TrackScroll(scroll).Children(func() {
-				text := n.Text(c, item.Text).FillWidth().Padding(8, 10).Background(codeSurface(t)).Radius(6).Font(v.Model.Preferences.CodeFont).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Selectable()
-				v.decoratePlainFind(c, text, item, scroll)
-			})
-		}
+		v.commandOutput(c, t, item, heading)
 	case "activity":
 		v.activityItem(c, t, item)
 	case "request_result":
@@ -1252,7 +1292,7 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 		n.Text(c, "连接已断开，执行状态待核对").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 		return
 	}
-	n.Row(c).Label("回复信息").FillWidth().Wrap().Gap(12).MinHeight(24).AlignItems(n.Baseline).Children(func() {
+	n.Row(c).Label("回复信息").FillWidth().Wrap().Gap(messageFooterGap).MinHeight(24).AlignItems(n.Baseline).Children(func() {
 		label := string(turn.Status)
 		switch turn.Status {
 		case "running":
@@ -1260,14 +1300,14 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 		case "interrupted":
 			label = "已停止"
 		case "failed":
-			label = "执行失败"
+			label = "本轮失败"
 		case "abandoned":
 			label = "已手动结束 · 结果未确认"
 		case "unknown":
 			label = "执行状态待核实"
 		}
 		if turn.Status == "completed" {
-			copy := n.ButtonBase(c.Key("copy-reply:"+turn.ID)).Size(20, 24).Justify(n.Start).Label("复制回复")
+			copy := n.ButtonBase(c.Key("copy-reply:"+turn.ID)).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("复制回复")
 			copiedUntil := n.Local(copy, "copied-until", func() time.Time { return time.Time{} })
 			if copy.Clicked() {
 				var parts []string
@@ -1292,7 +1332,7 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 				inlineSymbol(c.Key(glyphKey), glyph, "回复", n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}, 12, color).
 					Label(tooltip).Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 100*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 			})
-			fork := n.ButtonBase(c.Key("fork:"+turn.ID)).Size(20, 24).Label("从这里分叉").Tooltip("从这里分叉").Disabled(!v.historyReady(v.Model.Details[v.Model.SessionID].Session) || !v.Model.RunReadiness().Capabilities.Fork || v.historyBusy[v.Model.SessionID])
+			fork := n.ButtonBase(c.Key("fork:"+turn.ID)).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("从这里分叉").Tooltip("从这里分叉").Disabled(!v.historyReady(v.Model.Details[v.Model.SessionID].Session) || !v.Model.RunReadiness().Capabilities.Fork || v.historyBusy[v.Model.SessionID])
 			forkColor := textHoverColor(c, fork, t.TextMuted)
 			fork.Children(func() {
 				inlineSymbol(c, forkIcon, "回复", n.Font{Family: t.Font, Size: 11, Weight: 400}, 13, forkColor)
@@ -1320,7 +1360,12 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 				shimmer(c, text, t.TextMuted, t.Text)
 			})
 		} else {
-			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+			animation := motionAnimation(c, 160*time.Millisecond)
+			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: &animation})
+			if turn.Status == domain.ExecutionFailed && turn.Error != "" {
+				n.Text(c, turn.Error).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine().MaxWidth(480).Tooltip(turn.Error).
+					Transition(fadeMotion(c, 160*time.Millisecond))
+			}
 		}
 		if turn.Status != "completed" && turn.DurationMS != nil {
 			n.Text(c, fmt.Sprintf("%.1f 秒", float64(*turn.DurationMS)/1000)).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)

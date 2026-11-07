@@ -17,9 +17,9 @@ func TestCompletedFooterShowsCopyEndTimeDurationAndUsageInOrder(t *testing.T) {
 	m.Details["s"] = d
 	ui := n.NewTester(New(m, nil, "").View, 1440, 900)
 	var right float32
-	for _, label := range []string{"复制回复", "结束时间：23:34", "用时 2分5秒", "本轮用量"} {
+	for _, label := range []string{"复制回复", "从这里分叉", "结束时间：23:34", "用时 2分5秒", "本轮用量"} {
 		r, ok := ui.Find(label)
-		if !ok || right > 0 && r.X-right < 11.5 {
+		if !ok || right > 0 && r.X-right < 7.5 {
 			t.Fatalf("footer field missing or out of order: %s %+v", label, r)
 		}
 		right = r.X + r.W

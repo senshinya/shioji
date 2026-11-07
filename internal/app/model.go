@@ -197,6 +197,9 @@ func (m *Model) beginSubmission(allowRunning bool) (domain.Submission, error) {
 	if err != nil {
 		return domain.Submission{}, err
 	}
+	if m.WorkerMinor < 12 && len(m.DraftReferencePositions(key)) > 0 {
+		return domain.Submission{}, errors.New("请先升级执行服务以保留行内引用的位置")
+	}
 	in := domain.Submission{ReferencePositions: m.DraftReferencePositions(key), Skills: skills, HarnessID: m.HarnessID(), Attachments: refs, OperationID: domain.NewID(), WorkspaceID: workspace, SessionID: m.SessionID, Text: m.Drafts[key], Config: m.Config()}
 	if m.SessionID == "" {
 		choice := m.GitDrafts[workspace]

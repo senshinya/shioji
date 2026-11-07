@@ -1153,21 +1153,35 @@ func (p *Painter) scrollbars(e *node) {
 	st := e.st
 	rt := e.c.rt
 	theme := p.Theme()
-	hovered := false
-	for _, id := range rt.hover {
-		if id == e.id {
-			hovered = true
-			break
+	dragging := rt.scrollDrag.st == st
+	position := [2]float64{st.scrollX, st.scrollY}
+	if dragging || st.barsPlaced && position != st.barPosition {
+		st.barsMovedAt = p.Now()
+	}
+	st.barsPlaced, st.barPosition = true, position
+	// Hover is not scrolling. Initial placement/hydration also establishes a
+	// baseline without flashing a bar. Real movement refreshes the idle timer.
+	alpha := float32(0)
+	if !st.barsMovedAt.IsZero() {
+		elapsed := p.Now().Sub(st.barsMovedAt)
+		const hold, fade = 700 * time.Millisecond, 200 * time.Millisecond
+		if dragging || elapsed < hold {
+			alpha = 1
+			if !dragging {
+				p.After(hold - elapsed)
+			}
+		} else if elapsed < hold+fade {
+			alpha = 1 - float32(elapsed-hold)/float32(fade)
+			p.AnimationFrame()
 		}
 	}
-	dragging := rt.scrollDrag.st == st
 	// A press takes the bars only where the window shows them
 	// (scrollbarPress).
-	st.barsShown = !e.hideScrollbars && (hovered || dragging)
+	st.barsShown = !e.hideScrollbars && alpha > 0
 	if !st.barsShown {
 		return
 	}
-	color := theme.Scrollbar
+	color := theme.Scrollbar.Alpha(alpha)
 	w, h := e.contentW, e.contentH
 	x, y := st.scrollX, st.scrollY
 	if dragging {

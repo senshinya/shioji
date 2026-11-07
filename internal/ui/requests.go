@@ -232,7 +232,7 @@ func (v *View) formAnswers(r domain.PendingRequest) map[string][]string {
 }
 func (v *View) requestActions(c *n.Context, t *n.Theme, r domain.PendingRequest) {
 	disabled := !v.Model.Connected || r.State != "pending"
-	n.Row(c).FillWidth().Wrap().Gap(8).Children(func() {
+	n.Row(c).FillWidth().Wrap().Gap(messageFooterGap).Children(func() {
 		action := func(label, decision string, primary bool, answers map[string][]string, extraDisabled bool) {
 			var button n.Element
 			if primary {

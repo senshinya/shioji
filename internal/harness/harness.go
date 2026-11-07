@@ -36,11 +36,18 @@ type SkillProvider interface {
 	Skills(context.Context, domain.LaunchContext) (domain.SkillCatalog, error)
 }
 
+// IncomingMessage is a host callback translated by an adapter. SourceRef is an
+// opaque reference to the bound history, not a protocol payload.
+type IncomingMessage struct {
+	OperationID, SessionID, SourceRef, Text string
+}
+
 type StartOptions struct {
-	Scope   *managedexec.Scope
-	OnEvent func(domain.Event) error
-	OnStart func(int) error
-	OnLost  func() error
+	OnMessage func(context.Context, IncomingMessage) error
+	Scope     *managedexec.Scope
+	OnEvent   func(domain.Event) error
+	OnStart   func(int) error
+	OnLost    func() error
 }
 
 type Adapter interface {

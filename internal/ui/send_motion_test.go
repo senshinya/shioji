@@ -344,6 +344,52 @@ func TestSentAnchorReleasesForReadingAndResumesFollowingWhenFull(t *testing.T) {
 	}
 }
 
+func TestSendFromDisclosedToolHistoryTakesOverItsReadingAnchor(t *testing.T) {
+	for _, eventFirst := range []bool{false, true} {
+		t.Run(fmt.Sprint(eventFirst), func(t *testing.T) {
+			v, ui, job := sendFixture(t, false)
+			d := v.Model.Details["s"]
+			d.Items = toolHistoryModelItems()
+			v.Model.Details["s"] = d
+			ui.Frame()
+			ui.Advance(time.Second)
+			if err := ui.Click("8 次工具调用"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			if v.lists["s"].FollowingEnd() {
+				t.Fatal("fixture did not acquire a disclosure reading anchor")
+			}
+			if eventFirst {
+				in := job.Input.(domain.Submission)
+				op := domain.Operation{ID: in.OperationID, SessionID: "s", State: "confirmed"}
+				v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "submission", SessionID: "s", Operation: &op, Item: &domain.Item{ID: "input:" + in.OperationID, TurnID: "new", Kind: "user", Text: in.Text, Final: true}})
+				ui.Frame()
+				ui.Advance(700 * time.Millisecond)
+				acceptSend(t, v, job, false)
+			} else {
+				acceptSend(t, v, job, true)
+			}
+			ui.Frame()
+			ui.Advance(time.Second)
+			message, ok := ui.Find("Explain a tree rotation.")
+			if !ok || message.Y < 80 || message.Y > 125 || !v.lists["s"].FollowingEnd() {
+				t.Fatal("new send keeps the old disclosure anchor", message, ok)
+			}
+			d = v.Model.Details["s"]
+			for i := 0; i < 32; i++ {
+				d.Items = append(d.Items, domain.Item{ID: fmt.Sprint("after-send-", i), Kind: "activity", Name: fmt.Sprint("new send progress ", i), Final: true})
+			}
+			v.Model.Details["s"] = d
+			ui.Frame()
+			ui.Advance(time.Second)
+			if !ui.HasText("new send progress 31") || !v.lists["s"].FollowingEnd() {
+				t.Fatal("new output loses following after sending from disclosed history")
+			}
+		})
+	}
+}
+
 func TestHomeWorkspaceSwitchCancelsPendingSendMotion(t *testing.T) {
 	v, ui, job := sendFixture(t, true)
 	v.Model.Snapshot.Workspaces = append(v.Model.Snapshot.Workspaces, domain.Workspace{ID: "other", Name: "Other"})

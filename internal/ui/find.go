@@ -338,9 +338,12 @@ func (v *View) findDecoration(item domain.Item, dark bool) *markdown.RangeDecora
 	}}
 }
 
-func (v *View) decoratePlainFind(c *n.Context, el n.Element, item domain.Item, scroll *n.ScrollState) {
+func (v *View) decoratePlainFind(c *n.Context, el n.Element, item domain.Item, scroll *n.ScrollState, mapOffset ...func(int, bool) int) {
 	if decoration := v.findDecoration(item, c.Theme().Dark); decoration != nil {
 		start, end := utf8.RuneCountInString(item.Text[:decoration.Start]), utf8.RuneCountInString(item.Text[:decoration.End])
+		if len(mapOffset) > 0 {
+			start, end = mapOffset[0](start, false), mapOffset[0](end, true)
+		}
 		handle := n.Local(el, "find-text-handle", func() n.Handle { return n.Handle{} })
 		el.Bind(handle)
 		s := v.findState()

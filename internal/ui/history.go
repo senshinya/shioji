@@ -7,7 +7,6 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
-	"strings"
 	"time"
 )
 
@@ -83,21 +82,22 @@ func (v *View) restartHistory() {
 		m.Error = "请先停止当前轮次并处理待答问题或执行状态"
 		return
 	}
-	text := m.Drafts[m.HistoryDraftKey()]
-	if strings.TrimSpace(text) == "" && !v.historyHasAttachments() {
+	key := m.HistoryDraftKey()
+	if v.preparingAttachments(key) {
+		m.Error = "请等待引用准备完成"
 		return
 	}
-	in := domain.HistoryChange{OperationID: domain.NewID(), SessionID: sid, Revision: source.Revision, ItemID: edit.ItemID, Restart: true, Text: text, Config: m.Config()}
-	v.beginHistoryMotion(in)
-}
-func (v *View) historyHasAttachments() bool {
-	edit := v.Model.HistoryEdits[v.Model.SessionID]
-	for _, item := range v.Model.Details[v.Model.SessionID].Items {
-		if item.ID == edit.ItemID {
-			return len(item.Attachments) > 0 || len(item.Skills) > 0
-		}
+	text := m.Drafts[key]
+	if !m.HasDraftContent(key) {
+		return
 	}
-	return false
+	refs, err := m.HistoryReferences()
+	if err != nil {
+		m.Error = err.Error()
+		return
+	}
+	in := domain.HistoryChange{References: refs, OperationID: domain.NewID(), SessionID: sid, Revision: source.Revision, ItemID: edit.ItemID, Restart: true, Text: text, Config: m.Config()}
+	v.beginHistoryMotion(in)
 }
 func (v *View) historyCommand(in domain.HistoryChange, query bool) {
 	m := v.persistenceModel()
@@ -197,6 +197,9 @@ func (v *View) historyCommand(in domain.HistoryChange, query bool) {
 		}
 		delete(v.historyForked, in.SessionID)
 		if op.Input.Restart {
+			if motion := v.historyExit; motion != nil && motion.in.OperationID == op.ID {
+				motion.phase = historyConfirmed
+			}
 			model.Error = ""
 			return // Confirmed ordinary operation events retire the edit draft.
 		}
@@ -289,14 +292,17 @@ func (v *View) historyOperationNotice(c *n.Context, t *n.Theme) {
 			copy := ghost(c, "复制修改稿").FontSize(12).Height(28)
 			copied := n.Local(copy, "copied", func() time.Time { return time.Time{} })
 			if copy.Clicked() {
-				c.WriteClipboard(v.Model.Drafts[v.Model.HistoryDraftKey()])
+				c.WriteClipboard(referencePlainText(referenceDocumentText(v.composerContent(v.Model.HistoryDraftKey()))))
 				*copied = c.Now().Add(2 * time.Second)
 			}
 			if c.Now().Before(*copied) {
 				copy.Tooltip("已复制")
 			}
 			if ghost(c, "放弃编辑").Label("放弃历史编辑").FontSize(12).Height(28).Clicked() {
-				delete(v.Model.Drafts, v.Model.HistoryDraftKey())
+				key := v.Model.HistoryDraftKey()
+				delete(v.Model.Drafts, key)
+				delete(v.Model.Attachments, key)
+				delete(v.Model.DraftSkills, key)
 				v.Model.CancelHistoryEdit()
 			}
 		})

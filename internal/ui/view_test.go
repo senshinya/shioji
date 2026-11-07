@@ -375,6 +375,7 @@ func TestToolGroupClosesOnceOnAgentProseAndKeepsExplicitReopen(t *testing.T) {
 	d.Items = append(d.Items, domain.Item{ID: "answer", Kind: "assistant", Text: "Nonempty agent prose"})
 	m.Details["s"] = d
 	test.Frame()
+	test.Advance(180 * time.Millisecond)
 	if test.HasText("command one") {
 		t.Fatal("agent prose did not collapse the preceding tools")
 	}
@@ -622,6 +623,60 @@ func TestHomeAndConversationShareComposerLeadingEdge(t *testing.T) {
 			caret, cok := test.TextCaret()
 			if !bok || !aok || !cok || math.Abs(float64(branch.X-attach.X)) > 1 || math.Abs(float64(caret.X-attach.X-9)) > 1 {
 				t.Fatalf("composer leading edges differ: branch=%+v attachment=%+v caret=%+v", branch, attach, caret)
+			}
+		})
+	}
+}
+
+func TestLiveToolGroupAutoCollapseAnimatesFollowingReply(t *testing.T) {
+	for _, reduced := range []bool{false, true} {
+		t.Run(fmt.Sprint("reduce-motion=", reduced), func(t *testing.T) {
+			m := layoutModel()
+			d := m.Details["s"]
+			d.Items = nil
+			m.Details["s"] = d
+			v := New(m, nil, "")
+			ui := native.NewTester(v.View, 1440, 900)
+			ui.SetPreferences(native.Preferences{ReduceMotion: reduced})
+			d.Items = []domain.Item{
+				{ID: "a", Kind: "tool", TurnID: "t", Name: "first tool", Text: "one\ntwo\nthree"},
+				{ID: "b", Kind: "tool", TurnID: "t", Name: "second tool", Text: "one\ntwo\nthree"},
+			}
+			m.Details["s"] = d
+			ui.Frame()
+			ui.Advance(time.Second)
+			if !ui.HasText("first tool") {
+				t.Fatal("fixture did not display live tools")
+			}
+			heading, _ := ui.Find("2 次工具调用")
+			for i := range d.Items {
+				d.Items[i].Final, d.Items[i].Status = true, "completed"
+			}
+			m.Details["s"] = d
+			ui.Frame()
+			d.Items = append(d.Items, domain.Item{ID: "reply", Kind: "assistant", TurnID: "t", Text: "Following completed tools"})
+			m.Details["s"] = d
+			ui.Frame()
+			initial, ok := v.historyRowBounds["reply"]
+			if !ok {
+				t.Fatal("following reply row is absent")
+			}
+			if !reduced && !ui.HasText("first tool") {
+				t.Fatal("automatic collapse removes tool content before animating")
+			}
+			ui.Advance(40 * time.Millisecond)
+			middle := v.historyRowBounds["reply"]
+			ui.Advance(200 * time.Millisecond)
+			closed := v.historyRowBounds["reply"]
+			if !reduced && !(initial.Y > middle.Y+.5 && middle.Y > closed.Y+.5) {
+				t.Fatalf("automatic collapse jumps instead of shrinking: initial=%v middle=%v closed=%v", initial.Y, middle.Y, closed.Y)
+			}
+			if ui.HasText("first tool") || ui.HasText("second tool") {
+				t.Fatal("automatic collapse retains completed tool content")
+			}
+			after, _ := ui.Find("2 次工具调用")
+			if math.Abs(float64(after.Y-heading.Y)) > .5 {
+				t.Fatal("automatic collapse moves the group heading")
 			}
 		})
 	}

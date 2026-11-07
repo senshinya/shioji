@@ -58,9 +58,14 @@ Codex app-server／后续 harness
 | 会话路由 | 创建时持久化 HarnessID；后续提交、队列、恢复、分叉和重开按该身份路由，未知或缺失实现明确失败，不使用设备默认实现替代 |
 | 生命周期与安全 | Worker 继续拥有接纳、幂等、队列、进程归属、停止证明和持久化；adapter 只报告允许的会话事件，不能更新 Worker 的工作区／会话身份 |
 | 历史操作 | Worker 持久化准备结果并原子接纳激活；Codex 内部执行 fork、释放和切换。Restart 与 Fork 独立声明，不强制其他实现使用新来源 ID |
+| 宿主消息回传 | Adapter 将宿主 IPC 转为 `IncomingMessage`；worker 校验当前执行代次、会话和 opaque 历史来源后接纳到持久队列，不绕过暂停、权限或执行管理 |
 | 原生呈现 | 运行菜单和设备信息从目录展示名称、图标及选项；已有会话固定 Agent；不支持的操作禁用或隐藏 |
 
 `RunConfig` 中 Plan、Fast、effort 和权限 ID 表达 Shioji 的产品选项；具体目录及原生映射由 adapter 决定。不支持这些配置的驱动不显示对应控件。PermissionChoice 的名称和说明来自 adapter，原生沙盒结构不进入通用配置。内存驱动使用与 Codex 不同的模型／权限并省略 effort、Fast 和 Plan，以检验这一约束。
+
+Codex adapter 为所属运行实例提供私有 Unix socket，兼容 Ryugi 1.58.0 已使用的桌面 IPC（`tools/list` 与 `send_message_to_thread`）。仅该子进程获得宿主连接环境；App Server 继续使用独占 stdio。Ryugi 的源码、安装内容和配置保持不变。环境需要 Ryugi 原本依赖的 Node；没有 Node 时仍可正常使用 Codex。此 IPC 是版本固定的兼容接口，不是通用插件框架，也不开放 App Server API。退出关闭 socket；旧历史／旧执行代次的回调被拒绝。回执在队列持久化后返回，同一 call ID 的重试复用已接纳操作；Ryugi 另起 call ID 的重试不具有端到端恰好一次保证。暂停队列保持暂停。
+
+验证原版 watcher 可运行 `SHIOJI_RYUGI_ROOT=/absolute/path/to/installed/ryugi go test ./internal/worker -run TestInstalledRyugiWatcher -count=1`；测试只在独立 `CODEX_HOME` 和临时项目中信任并执行已安装脚本，使用本地模型服务，不修改用户或插件配置。
 
 兼容规则：
 
@@ -144,6 +149,8 @@ ToolActivity 保留 command、MCP、client tool、web search、delegation、medi
 UI 消费 projection patch，渲染由各自稳定 ID 定位的可见项。adapter 处理 wire 乱序、重复 final、历史 hydration 和未知事件；应用 reducer 保持确定性。最终状态到达后若 delta 又来，按 source revision／生命周期规则忽略过期数据或报告诊断，不重开已完成 item。
 
 工具组是投影层派生结构：连续工具构成一组，最新组保持展开；后续非空 agent prose 首次出现时只自动折叠前组一次。tool completion、late output、用户草稿不触发折叠。用户显式展开状态独立于自动折叠标记，导航和 rerender 不反复关闭历史组。
+
+工具失败属于具体调用，不能推导整轮失败。命令旁原位显示非零退出码；没有退出码的失败、拒绝和中断显示对应状态，展开查看实际输出。折叠组以“Ｎ 项未成功”保留轻量提示，不显示整组“执行失败”。当前调用全部结束不意味着工具组封口；只有后续非空正文或确认的终止轮次，才允许在全部调用已结束时显示收尾。全成功显示“已完成”，包含未成功或未知结果显示中性的“调用结束”。整轮由 harness 明确报告 failed 时，回复 footer 显示“本轮失败”及实际原因；单条调用的重试不抹除之前的退出信息。
 
 建议用以下独立状态描述界面，而不是单一 `SessionStatus`：
 

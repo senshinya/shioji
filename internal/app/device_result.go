@@ -74,7 +74,7 @@ func (m *Model) validateDeviceReply(key string, job Job, body json.RawMessage) e
 		if !owned || op.Input.Restart && op.Session.ID != sid || !op.Input.Restart && (op.Session.ID == sid || op.Session.ForkedFrom != sid) {
 			return fail
 		}
-		if in, ok := job.Input.(domain.HistoryChange); ok && op.Input != in {
+		if in, ok := job.Input.(domain.HistoryChange); ok && !op.Input.Equal(in) {
 			return fail
 		}
 	}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ import (
 )
 
 type Options struct {
+	OnMessage        func(context.Context, harness.IncomingMessage) error
 	OnStart          func(int) error
 	Executable, Home string
 	OnEvent          func(domain.Event) error
@@ -29,6 +31,7 @@ type Options struct {
 	Executor         *Executor
 }
 type Runtime struct {
+	desktop         *desktopBridge
 	cmd             *exec.Cmd
 	stdin           io.WriteCloser
 	writeMu         sync.Mutex
@@ -65,12 +68,40 @@ func Start(ctx context.Context, opts Options) (*Runtime, error) {
 	if opts.Executor != nil {
 		argv = append(argv, "-c", "features.shell_snapshot=false", "-c", "features.shell_snapshot_v2=false")
 	}
+	r := &Runtime{pending: map[string]chan wire.Message{}, done: make(chan struct{}), normalizer: NewNormalizer(), onEvent: opts.OnEvent, scope: opts.Scope, executor: opts.Executor}
+	env := os.Environ()
+	if opts.Home != "" {
+		env = append(env, "CODEX_HOME="+opts.Home)
+	}
+	if opts.OnMessage != nil {
+		node, nodeErr := exec.LookPath("node")
+		if nodeErr == nil {
+			node, err = filepath.Abs(node)
+			if err != nil {
+				return nil, err
+			}
+			r.desktop, err = newDesktopBridge(func(ctx context.Context, thread, callID, text string) error {
+				return r.receiveDesktopMessage(ctx, thread, callID, text, opts.OnMessage)
+			})
+			if err != nil {
+				return nil, err
+			}
+			defer func() {
+				if r.cmd == nil {
+					r.desktop.close()
+				}
+			}()
+			env = desktopEnvironment(env, r.desktop, node)
+		} else {
+			env = desktopEnvironment(env, nil, "")
+		}
+	} else {
+		env = desktopEnvironment(env, nil, "")
+	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stderr = io.Discard
-	if opts.Home != "" {
-		cmd.Env = append(os.Environ(), "CODEX_HOME="+opts.Home)
-	}
+	cmd.Env = env
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -82,10 +113,6 @@ func Start(ctx context.Context, opts Options) (*Runtime, error) {
 	if opts.Scope != nil {
 		stdin.Close()
 		stdout.Close()
-		env := os.Environ()
-		if opts.Home != "" {
-			env = append(env, "CODEX_HOME="+opts.Home)
-		}
 		resolved, resolveErr := exec.LookPath(binary)
 		if resolveErr != nil {
 			return nil, resolveErr
@@ -97,7 +124,7 @@ func Start(ctx context.Context, opts Options) (*Runtime, error) {
 			return nil, err
 		}
 		stdoutReader := ownedOut
-		r := &Runtime{cmd: cmd, stdin: stdin, pending: map[string]chan wire.Message{}, done: make(chan struct{}), normalizer: NewNormalizer(), onEvent: opts.OnEvent, scope: opts.Scope, executor: opts.Executor}
+		r.cmd, r.stdin = cmd, stdin
 		return initializeRuntime(ctx, r, stdoutReader)
 	}
 	if err = cmd.Start(); err != nil {
@@ -111,7 +138,7 @@ func Start(ctx context.Context, opts Options) (*Runtime, error) {
 			return nil, err
 		}
 	}
-	r := &Runtime{cmd: cmd, stdin: stdin, pending: map[string]chan wire.Message{}, done: make(chan struct{}), normalizer: NewNormalizer(), onEvent: opts.OnEvent}
+	r.cmd, r.stdin = cmd, stdin
 	return initializeRuntime(ctx, r, stdout)
 }
 func initializeRuntime(ctx context.Context, r *Runtime, stdout io.Reader) (*Runtime, error) {
@@ -136,6 +163,9 @@ func initializeRuntime(ctx context.Context, r *Runtime, stdout io.Reader) (*Runt
 	return r, nil
 }
 func (r *Runtime) read(stdout io.Reader) {
+	if r.desktop != nil {
+		defer r.desktop.close()
+	}
 	scan := bufio.NewScanner(stdout)
 	scan.Buffer(make([]byte, 64<<10), 16<<20)
 	for scan.Scan() {
@@ -525,6 +555,9 @@ func (r *Runtime) Interrupt(ctx context.Context, s domain.Session, turnID string
 	return r.call(ctx, "turn/interrupt", map[string]string{"threadId": s.ThreadID, "turnId": turnID}, nil)
 }
 func (r *Runtime) Close() error {
+	if r.desktop != nil {
+		r.desktop.close()
+	}
 	r.stdin.Close()
 	select {
 	case <-r.done:

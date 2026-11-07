@@ -363,6 +363,10 @@ func (v *view) key(key ui.Key, mods ui.Modifiers) bool {
 	st := v.para(p).style
 	ps := v.shown.paraStart(p)
 	switch key {
+	case ui.KeySpace:
+		// Text arrives separately through InputText. Keep the physical key
+		// from also paging an ancestor scroll container while editing.
+		return m == 0
 	case ui.KeyBackspace:
 		switch {
 		case a != z:

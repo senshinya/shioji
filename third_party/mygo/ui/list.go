@@ -95,6 +95,10 @@ type ListState struct {
 	// goes on from where it is as more comes, and the user scrolling stops
 	// it. It shows the end at once where the desktop asks for less motion.
 	FollowAnimation *Animation
+	// FollowInset is trailing layout space already animated by its owner, such
+	// as a docked composer. Its height changes position rows directly instead
+	// of receiving a second FollowAnimation. Include it in the list's content.
+	FollowInset float32
 	// Reveals animate the allocated height of contiguous row ranges without
 	// changing their natural measurements or mounting their hidden suffixes.
 	Reveals []ListReveal
@@ -213,13 +217,14 @@ type ListState struct {
 	following bool
 	started   bool
 	// A disclosure may keep its clicked row at a fixed viewport position.
-	anchorMode   listAnchorMode
-	pinRow       int
-	pinKey       any
-	pinY         float64
-	pinTarget    float64
-	pinAnimation Animation
-	pinGlide     channel
+	anchorMode       listAnchorMode
+	pinRow           int
+	pinKey           any
+	pinY             float64
+	pinTarget        float64
+	pinAnimation     Animation
+	pinGlide         channel
+	pinWithinContent bool
 	// A reader who leaves a sent-message anchor stays in reading mode even
 	// when removing its temporary end space makes all current rows fit.
 	followPaused bool
@@ -318,8 +323,8 @@ type listRowID struct {
 	key any
 }
 
-// followMark is a list following its end as a layout left it: its last
-// row (row, with key), how much content was from that row's top to the
+// followMark is a list following its end as a layout left it: its first
+// laid-out row (row, with key), how much content was from that row's top to the
 // end (below), how tall the content was, padding included, and the list,
 // and how wide its rows were. More content below that row, as it grows or
 // rows come after it, is the end moving down. hugs tells that the list is
@@ -331,6 +336,7 @@ type followMark struct {
 	key            any
 	below, content float64
 	height         float64
+	inset          float32
 	width          float32
 	hugs           bool
 }
@@ -367,6 +373,7 @@ func (s *ListState) ScrollToEnd() {
 // collapsing content. User scrolling or a scroll request releases the anchor.
 func (s *ListState) KeepRow(row int, y float32) {
 	s.anchorMode, s.pinRow, s.pinY, s.pinKey = listAnchorFixed, row, float64(y), nil
+	s.pinWithinContent = false
 	s.pinGlide = channel{}
 	s.followPaused = false
 	if s.Key != nil {
@@ -375,12 +382,25 @@ func (s *ListState) KeepRow(row int, y float32) {
 	s.following, s.followLag, s.scrolled = false, channel{}, true
 }
 
-// AnchorRow glides a newly sent row to y below the viewport's top, reserving
-// reading space below it. Once growing content fills that space, FollowEnd
-// resumes. User scrolling and explicit scroll requests interrupt the glide.
-func (s *ListState) AnchorRow(row int, y float32, animation Animation) {
+// KeepRowWithinContent keeps a disclosure's position unless that would expose
+// space past the content's ends. The viewport then moves with the changing height.
+func (s *ListState) KeepRowWithinContent(row int, y float32) {
 	s.KeepRow(row, y)
-	s.anchorMode, s.pinTarget, s.pinAnimation = listAnchorSendingPending, float64(y), animation
+	s.pinWithinContent = true
+}
+
+// AnchorRow places a newly sent row at y below the viewport's top, reserving
+// reading space below it. An optional animation glides there from the current
+// scroll offset; omitting it adopts an already-settled row without a glide.
+// Once growing content fills that space, FollowEnd resumes. User scrolling
+// and explicit scroll requests interrupt the anchor.
+func (s *ListState) AnchorRow(row int, y float32, animation ...Animation) {
+	s.KeepRow(row, y)
+	s.anchorMode, s.pinTarget = listAnchorSending, float64(y)
+	s.pinGlide = channel{value: float64(y), target: float64(y)}
+	if len(animation) > 0 {
+		s.anchorMode, s.pinAnimation = listAnchorSendingPending, animation[0]
+	}
 }
 
 // ScrollToRow glides a reading anchor to y DIPs below the viewport's top.
@@ -1629,7 +1649,8 @@ func (e *node) layoutList(w, h float32) {
 	// Keep the content's ends at the list's: the end may show above the
 	// bottom after rows went away, the start below the top after rows
 	// above turned out shorter than estimated.
-	for k := 0; !s.anchored() && k < 4 && !(lo == 0 && hi == n-1); k++ {
+	bounded := !s.anchored() || s.pinWithinContent
+	for k := 0; bounded && k < 4 && !(lo == 0 && hi == n-1); k++ {
 		if hi == n-1 && end() < H {
 			shift(H - end())
 		} else if lo == 0 && yLo > padTop {
@@ -1639,7 +1660,7 @@ func (e *node) layoutList(w, h float32) {
 		}
 		cover()
 	}
-	if !s.anchored() && lo == 0 && hi == n-1 {
+	if bounded && lo == 0 && hi == n-1 {
 		switch start := yLo - padTop; {
 		case end()-start <= H:
 			// The rows fit: Justify places them.
@@ -1679,7 +1700,7 @@ func (e *node) layoutList(w, h float32) {
 	// shows.
 	content := max(padTop+padBottom+hs.top(n, gap)-gap, H)
 	scroll := max(0, min(padTop+hs.top(lo, gap)-yLo, content-H))
-	if s.anchored() {
+	if s.anchored() && !s.pinWithinContent {
 		scroll = max(0, padTop+hs.top(lo, gap)-yLo)
 		content = max(content, scroll+H)
 	}
@@ -1787,9 +1808,9 @@ func (s *ListState) glideToEnd(e *node, n, lo, hi int, H, C float64, shift func(
 	}
 	hugs := H-C < 0.5 && C-H < 0.5
 	if p := s.followWas; p.seen && s.width == p.width {
-		// The row last at the end: as much as what changed below it moves
-		// the rows that stay, they show where they were, and go on to
-		// their place.
+		// Track growth below a visible keyed row. A fixed trailing footer or
+		// composer spacer must not hide growth in the message before it.
+		// History inserted above this row leaves its distance to the end alone.
 		prev, ok := p.row, p.row < n
 		if s.Key != nil && p.key != nil {
 			prev, ok = s.find(p.key, p.row, n)
@@ -1797,7 +1818,7 @@ func (s *ListState) glideToEnd(e *node, n, lo, hi int, H, C float64, shift func(
 		if !ok {
 			*ch = channel{at: now}
 		} else {
-			d := below(prev) - p.below
+			d := below(prev) - p.below - float64(s.FollowInset-p.inset)
 			if d < 0.5 && d > -0.5 {
 				d = 0
 			}
@@ -1819,9 +1840,9 @@ func (s *ListState) glideToEnd(e *node, n, lo, hi int, H, C float64, shift func(
 			hugs = hugs || p.hugs && (d != 0 || follows)
 		}
 	}
-	s.follow = followMark{seen: true, row: n - 1, below: below(n - 1), content: C, height: H, width: s.width, hugs: hugs}
+	s.follow = followMark{seen: true, row: lo, below: below(lo), content: C, height: H, inset: s.FollowInset, width: s.width, hugs: hugs}
 	if s.Key != nil {
-		s.follow.key = s.Key(n - 1)
+		s.follow.key = s.Key(lo)
 	}
 	if ch.moving || ch.pending {
 		rt.animating = true

@@ -256,8 +256,10 @@ func (v *View) uploadDraft(key string, index int) {
 	})
 }
 func (v *View) draftAttachmentStrip(c *n.Context, t *n.Theme) {
+	v.draftAttachmentStripFor(c, t, v.Model.DraftKey())
+}
+func (v *View) draftAttachmentStripFor(c *n.Context, t *n.Theme, key string) {
 	m := v.Model
-	key := m.DraftKey()
 	drafts := m.Attachments[key]
 	regular := 0
 	for _, a := range drafts {
@@ -265,7 +267,7 @@ func (v *View) draftAttachmentStrip(c *n.Context, t *n.Theme) {
 			regular++
 		}
 	}
-	preparing := v.preparingAttachments(key) && (v.fileMention == nil || v.fileMention.phase != mentionCapturing)
+	preparing := v.preparingAttachments(key) && (v.fileMention == nil || v.fileMention.key != key || v.fileMention.phase != mentionCapturing)
 	strip := n.ScrollHorizontal(c.Key("draft-attachments:" + key)).FillWidth().MarginX(9)
 	target := float32(0)
 	if regular > 0 || preparing {

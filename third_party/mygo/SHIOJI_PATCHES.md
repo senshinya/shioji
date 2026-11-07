@@ -13,6 +13,11 @@ This local module contains the upstream runtime source and embedded resources;
 examples, website, JavaScript tooling, CI, upstream tests and testdata are omitted.
 The upstream architecture guide is retained for maintenance.
 
+Scroll containers show their overlay thumbs only after the offset actually
+changes or while a thumb is dragged. Hover and initial history placement do not
+reveal them; after 700 ms without movement they fade over 200 ms. Geometry and
+the gutter remain unchanged. Covered by `ui/scrollbar_activity_test.go`.
+
 Shioji uses this local replacement because the public native text/diff API does
 not expose the following appearance settings required by the frozen design:
 
@@ -32,8 +37,10 @@ not expose the following appearance settings required by the frozen design:
   trigger's actual center after viewport fitting, including flipped popups.
 - `ui.ListState.KeepRow` / `ReleaseRow`: preserve a clicked disclosure's viewport
   position across structural changes, without disabling virtualization. User
-  scrolling and explicit scroll requests release the anchor; collapsing may
-  retain trailing reading space instead of jumping the clicked heading.
+  scrolling and explicit scroll requests release the anchor. `KeepRowWithinContent`
+  additionally clamps disclosure anchors to the natural content boundaries:
+  a shrinking section can move its heading to avoid trailing blank space.
+  Unbounded reading/sent-message anchors retain their temporary reading space.
 - `ui/markdown.Options.OnRevealState`: report native buffered-text and fade
   activity so the visible conversation can defer its sidebar check until output
   settles, independently of authoritative execution completion.
@@ -44,6 +51,9 @@ not expose the following appearance settings required by the frozen design:
 - `ui.ListState.AnchorRow`: move a just-sent message into reading position with
   an interruptible native scroll animation and temporary reply space. Filled
   space resumes end following; a reader who scrolls away keeps their position.
+  Omitting its optional animation adopts an already-positioned row directly.
+  History replacement uses that form when the accepted input replaces the local
+  preview, so prefix remeasurement cannot replay the send glide.
 - `ui.ListState.Reveals` / `ListReveal`: allocate the changing height of a
   contiguous virtualized section. Content retains its natural layout, its
   exposed prefix clips at the animated boundary, and hidden suffix rows are
@@ -55,6 +65,11 @@ not expose the following appearance settings required by the frozen design:
 - Native Markdown code blocks apply the stream reveal clock to highlighted
   source spans as well as prose. Newly appended code fades without replaying
   existing lines, retokenizing on animation frames, or changing copied code.
+- Ordered Markdown lists measure their marker column with the same `tnum`
+  font feature used to paint it. Proportional-digit measurements otherwise
+  wrap the punctuation of two-digit markers during streaming, until a wider
+  final number happens to enlarge the column. Covered by Shioji's streamed
+  ordered-list regression in both appearances.
 - Preserve the previous frame's untracked-paint flag before resetting the
   repaint bookkeeping. A time-varying shader effect must repaint its layer even
   when another tracked Draw callback (such as the activity dot) also animates;
@@ -70,6 +85,12 @@ not expose the following appearance settings required by the frozen design:
   pane into a clickable container or stealing text-input focus.
 - `ui.ListState.FollowingEnd`: distinguish automatic initial/end positioning
   from explicit history reading when showing the return-to-latest control.
+- `ui.ListState.FollowAnimation` measures growth below a visible keyed row,
+  including content above fixed trailing footers. `FollowInset` excludes
+  independently animated composer/request space from that glide, keeping the
+  followed progress above the dock throughout its height animation. Prepended
+  history does not replay unchanged content. Covered by `list_follow_growth_test.go`
+  and Shioji's live-follow, reader-interruption and history-reopening regressions.
 - `ui.VirtualTextSelection` / `SelectionItem`: opt-in retention of a message's
   selected paragraphs and rune offsets across real virtual-row unmounts. Stable
   model keys and current source text invalidate removed/replaced content; remount
@@ -82,6 +103,9 @@ not expose the following appearance settings required by the frozen design:
   plumbing), webview 7,011,490 → 7,011,490 bytes. The full retention implementation
   is excluded without opting in (`-dumpdep` checked).
 
+- `ui/richtext/input.go`: editable fields consume plain/Shift Space keydown
+  before ancestor page scrolling; the separate text event inserts the space
+  exactly once. Covered by Shioji's history editor regression test.
 - `ui/richtext.EditorOptions`: plain composer mode with pre-key/paste hooks,
   bounded content height and fixed line advance. Native attributed attachments
   retain selection, IME, wrapping and undo metadata; optional descent aligns

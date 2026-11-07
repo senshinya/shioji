@@ -324,3 +324,44 @@ func TestUnequalToolHeightsDoNotReverseFollowingTextDuringExpansion(t *testing.T
 		previous = current
 	}
 }
+
+func TestToolCollapseAfterScrollingToEndDoesNotLeaveReadingSpace(t *testing.T) {
+	for _, scrollBack := range []float32{0, -40} {
+		for _, reduced := range []bool{false, true} {
+			t.Run(fmt.Sprint(reduced, "/", scrollBack), func(t *testing.T) {
+				m := layoutModel()
+				d := m.Details["s"]
+				d.Items = toolHistoryModelItems()[:26]
+				d.Items = append(d.Items, domain.Item{ID: "reply", TurnID: "t", Kind: "assistant", Text: "Final reply"})
+				m.Details["s"] = d
+				v := New(m, nil, "")
+				ui := n.NewTester(v.View, 1440, 900)
+				ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
+				ui.Advance(time.Second)
+				closed, _ := ui.Find("Final reply")
+				if err := ui.Click("2 次工具调用"); err != nil {
+					t.Fatal(err)
+				}
+				ui.Advance(time.Second)
+				ui.Scroll(1300, 400, 0, 2000)
+				ui.Frame()
+				ui.Advance(time.Second)
+				if !v.lists["s"].FollowingEnd() {
+					t.Fatal("fixture did not reach the end")
+				}
+				if scrollBack != 0 {
+					ui.Scroll(1300, 400, 0, scrollBack)
+					ui.Frame()
+				}
+				if err := ui.Click("2 次工具调用"); err != nil {
+					t.Fatal(err)
+				}
+				ui.Advance(time.Second)
+				after, ok := ui.Find("Final reply")
+				if !ok || math.Abs(float64(after.Y-closed.Y)) > 1 {
+					t.Fatalf("collapse leaves trailing reading space instead of retaining the latest reply: before=%+v after=%+v", closed, after)
+				}
+			})
+		}
+	}
+}

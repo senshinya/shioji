@@ -58,6 +58,45 @@ func TestHistoryEditorKeepsOrdinaryDraftAndRestoresOnCancel(t *testing.T) {
 	if v.Model.DraftKey() != "session:s" || v.Model.Drafts["session:s"] != "ordinary unsent draft" {
 		t.Fatal("cancel lost ordinary draft", v.Model.DraftKey(), v.Model.Drafts, v.Model.HistoryEdits)
 	}
+	v.beginHistoryEdit(item)
+	ui.Frame()
+	ui.Advance(400 * time.Millisecond)
+	binding := v.composerDocuments[v.Model.HistoryDraftKey()]
+	if binding == nil || binding.doc.Text().String() != item.Text || v.Model.Drafts[v.Model.HistoryDraftKey()] != item.Text {
+		t.Fatal("reopening a canceled edit restores its discarded text", v.Model.Drafts)
+	}
+}
+
+func TestHistoryEditorSpaceDoesNotPageTheConversation(t *testing.T) {
+	for _, mods := range []n.Modifiers{0, n.Shift} {
+		v, ui, item := historyFixture()
+		d := v.Model.Details["s"]
+		d.Items = append(d.Items, domain.Item{ID: "long-reply", TurnID: "turn", Kind: "assistant", Text: strings.Repeat("A retained paragraph below the edited message.\n\n", 45), Final: true})
+		v.Model.Details["s"] = d
+		v.beginHistoryEdit(item)
+		v.lists["s"].KeepRow(1, 100)
+		ui.Frame()
+		ui.Advance(time.Second)
+		if err := ui.Click("编辑历史消息"); err != nil {
+			t.Fatal(err)
+		}
+		before, ok := ui.Find("编辑历史消息")
+		if !ok || before.Y < 48 || before.Y > 500 {
+			t.Fatal("editor is not visible before typing", before)
+		}
+		ui.Key(mods, n.KeySpace)
+		ui.Type(" ")
+		for frame := 0; frame < 30; frame++ {
+			ui.Advance(time.Second / 60)
+			after, ok := ui.Find("编辑历史消息")
+			if !ok || math.Abs(float64(after.Y-before.Y)) > 1 {
+				t.Fatalf("space pages the transcript while editing (mods=%v): %+v -> %+v", mods, before, after)
+			}
+		}
+		if text := v.Model.Drafts[v.Model.HistoryDraftKey()]; strings.Count(text, " ") != strings.Count(item.Text, " ")+1 {
+			t.Fatal("space is not inserted exactly once", text)
+		}
+	}
 }
 
 func TestUserMessageActionsSitBelowTheBubbleAndCopyItsText(t *testing.T) {
@@ -107,7 +146,7 @@ func TestHistoryPreviewKeepsUncertainResultActionAccessible(t *testing.T) {
 	v, ui, item := historyFixture()
 	v.beginHistoryEdit(item)
 	v.restartHistory()
-	ui.Advance(time.Second)
+	ui.Advance(historyShatterDuration + historyCollapseDuration + 100*time.Millisecond)
 	for len(v.Controller.Jobs) > 0 {
 		job := <-v.Controller.Jobs
 		if job.Method == "session.restart" {
@@ -149,7 +188,7 @@ func TestHistoryTimestampSurvivesPreviewAndRollsOnConfirmedReplacement(t *testin
 			if !ok || !editOK || stamp.X != before.X || edit.X != editBefore.X {
 				t.Fatal("local preview lost its confirmed time or action slots", before, stamp, editBefore, edit)
 			}
-			ui.Advance(time.Second)
+			ui.Advance(historyShatterDuration + historyCollapseDuration + 100*time.Millisecond)
 			id := v.Model.HistoryEdits["s"].OperationID
 			keep := int64(-1)
 			v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "history.reset", SessionID: "s", HistoryTurnOrder: &keep})
@@ -192,7 +231,7 @@ func TestHistoryEditorSendsOnlyPinnedRestartAndRetriesByQuery(t *testing.T) {
 	v.Model.Drafts[v.Model.HistoryDraftKey()] = "revised"
 	ui.Frame()
 	v.restartHistory()
-	ui.Advance(time.Second)
+	ui.Advance(historyShatterDuration + historyCollapseDuration + 100*time.Millisecond)
 	var change domain.HistoryChange
 	for len(v.Controller.Jobs) > 0 {
 		j := <-v.Controller.Jobs
@@ -281,7 +320,7 @@ func TestSavedForkCanExplicitlyFinishWithSameOperation(t *testing.T) {
 	v, ui, item := historyFixture()
 	v.beginHistoryEdit(item)
 	v.restartHistory()
-	ui.Advance(time.Second)
+	ui.Advance(historyShatterDuration + historyCollapseDuration + 100*time.Millisecond)
 	var sent app.Job
 	for len(v.Controller.Jobs) > 0 {
 		j := <-v.Controller.Jobs
@@ -312,7 +351,7 @@ func TestPendingHistoryEditorIsReadOnly(t *testing.T) {
 	v.Model.Drafts[v.Model.HistoryDraftKey()] = "submitted"
 	ui.Frame()
 	v.restartHistory()
-	ui.Advance(time.Second)
+	ui.Advance(historyShatterDuration + historyCollapseDuration + 100*time.Millisecond)
 	key := v.Model.HistoryDraftKey()
 	ui.Click("编辑历史消息")
 	ui.Type("unexpected")
@@ -377,7 +416,7 @@ func TestHistoryRestartWaitsForSuffixExitBeforeDispatch(t *testing.T) {
 			t.Fatal("restart began while the previous messages were still exiting")
 		}
 	}
-	ui.Advance(time.Second)
+	ui.Advance(historyShatterDuration + historyCollapseDuration + 100*time.Millisecond)
 	for len(v.Controller.Jobs) > 0 {
 		if j := <-v.Controller.Jobs; j.Method == "session.restart" {
 			if in := j.Input.(domain.HistoryChange); in.Text != "revised" {
@@ -398,7 +437,7 @@ func TestHistoryExitRestoresEditorWhenSourceChangesBeforeDispatch(t *testing.T) 
 	d := v.Model.Details["s"]
 	d.Session.Revision++
 	v.Model.Details["s"] = d
-	ui.Advance(time.Second)
+	ui.Advance(historyShatterDuration + historyCollapseDuration + 100*time.Millisecond)
 	for len(v.Controller.Jobs) > 0 {
 		if j := <-v.Controller.Jobs; j.Method == "session.restart" {
 			t.Fatal("restart ignored a source change during its exit")
@@ -447,7 +486,7 @@ func TestSecondaryHistoryRestartDispatchesAfterExitEvenWhenPaneCloses(t *testing
 	ui.Frame()
 	// Closing the pane must not strand an already confirmed local action.
 	v.closeParallel()
-	ui.Advance(time.Second)
+	ui.Advance(historyShatterDuration + historyCollapseDuration + 100*time.Millisecond)
 	for len(v.Controller.Jobs) > 0 {
 		j := <-v.Controller.Jobs
 		if j.Method == "session.restart" && j.Input.(domain.HistoryChange).SessionID == "other" {
@@ -501,7 +540,7 @@ func TestInlineEditorStaysAboveTheDockInNarrowWindow(t *testing.T) {
 	}
 }
 
-func TestHistoryReplacementPreservesTheEditedMessagePosition(t *testing.T) {
+func TestHistoryReplacementPreservesTheConstrainedMessagePosition(t *testing.T) {
 	v, ui, item := historyFixture()
 	d := v.Model.Details["s"]
 	d.Items = append([]domain.Item{{ID: "prefix", TurnID: "prefix-turn", Kind: "assistant", Text: strings.Repeat("Earlier context\n\n", 12), Final: true}}, d.Items...)
@@ -516,22 +555,26 @@ func TestHistoryReplacementPreservesTheEditedMessagePosition(t *testing.T) {
 	before, _ := ui.Find("历史消息编辑器")
 	v.Model.Drafts["history:s:user"] = "revised prompt"
 	v.restartHistory()
-	ui.Advance(time.Second)
+	ui.Advance(historyShatterDuration + historyCollapseDuration + 100*time.Millisecond)
+	constrained, ok := ui.Find("用户消息气泡")
+	if !ok || constrained.Y < before.Y {
+		t.Fatal("collapsed suffix lost the edited message", before, constrained)
+	}
 	id := v.Model.HistoryEdits["s"].OperationID
 	keep := int64(-1)
 	v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "history.reset", SessionID: "s", HistoryTurnOrder: &keep})
 	ui.Frame()
 	bridge, ok := ui.Find("用户消息气泡")
-	if !ok || !ui.HasText("revised prompt") || ui.HasText("编辑历史消息") || math.Abs(float64(bridge.Y-before.Y)) > 1 {
-		t.Fatal("reset dropped the inline anchor before the replacement arrived", before, bridge)
+	if !ok || !ui.HasText("revised prompt") || ui.HasText("编辑历史消息") || math.Abs(float64(bridge.Y-constrained.Y)) > 1 {
+		t.Fatal("reset dropped the inline anchor before the replacement arrived", constrained, bridge)
 	}
 	newItem := domain.Item{ID: "input:" + id, Kind: "user", Text: "revised prompt", Status: "sent", TurnID: "new-turn", Order: 3, Final: true}
 	v.Model.ApplyEvent(domain.Event{Sequence: 2, Type: "submission", SessionID: "s", Item: &newItem, Operation: &domain.Operation{ID: id, SessionID: "s", State: "confirmed"}})
 	ui.Frame()
 	ui.Advance(300 * time.Millisecond)
 	after, ok := ui.Find("revised prompt")
-	if !ok || math.Abs(float64(after.Y-before.Y-12)) > 1 {
-		t.Fatal("replacement jumped after the old row identity disappeared", before, after)
+	if !ok || math.Abs(float64(after.Y-constrained.Y-12)) > 1 {
+		t.Fatal("replacement jumped after the old row identity disappeared", constrained, after)
 	}
 }
 
@@ -676,5 +719,318 @@ func TestConfirmedSecondaryForkSurvivesBeforeTheDeviceWatchEvent(t *testing.T) {
 	ui.Advance(300 * time.Millisecond)
 	if v.Model.SecondarySessionID != "branch" || v.secondary.Model.SessionID != "branch" {
 		t.Fatal("device aggregation dropped the confirmed branch before watch caught up", v.Model.SecondarySessionID, v.secondary.Model.SessionID)
+	}
+}
+
+func TestConfirmedHistoryReceiptDoesNotFlashUncertainStatus(t *testing.T) {
+	v, ui, item := historyFixture()
+	v.beginHistoryEdit(item)
+	ui.Frame()
+	ui.Advance(time.Second)
+	v.Model.Drafts[v.Model.HistoryDraftKey()] = "revised question"
+	ui.Frame()
+	v.restartHistory()
+	ui.Advance(historyShatterDuration + historyCollapseDuration + 100*time.Millisecond)
+	for len(v.Controller.Jobs) > 0 {
+		job := <-v.Controller.Jobs
+		if job.Method != "session.restart" {
+			continue
+		}
+		in := job.Input.(domain.HistoryChange)
+		source := v.Model.Details["s"].Session
+		// The RPC can confirm before the independent watch delivers reset
+		// and accepted input. This is a known success, not uncertainty.
+		op := domain.HistoryOperation{ID: in.OperationID, Input: in, Source: source, Session: source, State: "complete"}
+		payload, err := json.Marshal(op)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before, _ := ui.Find("消息编辑区")
+		job.Apply(v.Model, payload, nil)
+		ui.Frame()
+		ui.Advance(100 * time.Millisecond)
+		if ui.HasText("会话操作结果待核对") || ui.HasText("原消息已被替换，修改稿已保留") {
+			t.Fatal("confirmed edit flashes a recovery strip while waiting for the watch stream", ui.Texts())
+		}
+		if !ui.HasText("revised question") || v.Model.Drafts["session:s"] != "ordinary unsent draft" {
+			t.Fatal("confirmed edit lost its preview or independent draft")
+		}
+		after, _ := ui.Find("消息编辑区")
+		if math.Abs(float64(after.Y-before.Y)) > .5 || after.H != before.H {
+			t.Fatal("confirmed receipt changes the ordinary composer geometry", before, after)
+		}
+		keep := int64(-1)
+		v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "history.reset", SessionID: "s", HistoryTurnOrder: &keep})
+		ui.Frame()
+		if !ui.HasText("revised question") || ui.HasText("会话操作结果待核对") {
+			t.Fatal("known success lost its preview across reset")
+		}
+		replacement := domain.Item{ID: "input:" + in.OperationID, Kind: "user", TurnID: "new-turn", Status: "sent", Text: "revised question", Final: true}
+		v.Model.ApplyEvent(domain.Event{Sequence: 2, Type: "submission", SessionID: "s", Item: &replacement, Operation: &domain.Operation{ID: in.OperationID, SessionID: "s", State: "confirmed"}})
+		ui.Frame()
+		ui.Frame()
+		if v.historyExit == nil || !ui.HasText("进行中") || ui.HasText("会话操作结果待核对") {
+			t.Fatal("confirmed history transition lost its pending turn receipt")
+		}
+		return
+	}
+	t.Fatal("history restart was not dispatched")
+}
+
+func TestHistoryRestartShowsRunningAfterShatterBeforeCollapse(t *testing.T) {
+	for _, reduced := range []bool{false, true} {
+		t.Run(fmt.Sprint("reduced=", reduced), func(t *testing.T) {
+			v, ui, item := historyFixture()
+			ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
+			v.beginHistoryEdit(item)
+			ui.Frame()
+			ui.Advance(time.Second)
+			v.Model.Drafts[v.Model.HistoryDraftKey()] = "revised question"
+			ui.Frame()
+			v.restartHistory()
+			ui.Frame()
+			if !reduced {
+				ui.Advance(1000 * time.Millisecond)
+				if ui.HasText("进行中") {
+					t.Fatal("running overlaps visible old reply fragments")
+				}
+				ui.Advance(300 * time.Millisecond)
+				if !ui.HasText("进行中") {
+					t.Fatal("suffix collapses before the running receipt appears")
+				}
+				for len(v.Controller.Jobs) > 0 {
+					if job := <-v.Controller.Jobs; job.Method == "session.restart" {
+						t.Fatal("runtime dispatched before the exit completed")
+					}
+				}
+				ui.Advance(100 * time.Millisecond)
+			}
+			if !ui.HasText("进行中") || !ui.HasText("revised question") {
+				t.Fatal("fragments vanished without a running receipt", ui.Texts())
+			}
+			ui.Advance(time.Second)
+			in := v.historyExit.in
+			keep := int64(-1)
+			v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "history.reset", SessionID: "s", HistoryTurnOrder: &keep})
+			ui.Frame()
+			if !ui.HasText("进行中") {
+				t.Fatal("reset lost local running receipt")
+			}
+			replacement := domain.Item{ID: "input:" + in.OperationID, Kind: "user", Text: "revised question", Status: "dispatching", Final: true}
+			v.Model.ApplyEvent(domain.Event{Sequence: 2, Type: "submission", SessionID: "s", Item: &replacement, Operation: &domain.Operation{ID: in.OperationID, SessionID: "s", State: "confirmed"}})
+			ui.Frame()
+			ui.Frame()
+			if !ui.HasText("进行中") {
+				t.Fatal("accepted input lost running receipt before turn start", ui.Texts())
+			}
+			turn := domain.Turn{ID: "new-turn", Status: "running"}
+			v.Model.ApplyEvent(domain.Event{Sequence: 3, Type: "turn", SessionID: "s", Turn: &turn})
+			ui.Frame()
+			if !ui.HasText("进行中") {
+				t.Fatal("turn start before input binding lost running receipt")
+			}
+			reply := domain.Item{ID: "reply-new", TurnID: "new-turn", Kind: "assistant", Text: "已开始", Final: false}
+			v.Model.ApplyEvent(domain.Event{Sequence: 4, Type: "item.upsert", SessionID: "s", Item: &reply})
+			ui.Frame()
+			ui.Frame()
+			count := 0
+			for _, text := range ui.Texts() {
+				if text == "进行中" {
+					count++
+				}
+			}
+			if count != 1 || v.historyExit != nil {
+				t.Fatal("running receipt handoff duplicated or retained local preview", ui.Texts(), v.historyExit)
+			}
+		})
+	}
+}
+
+func TestHistoryRunningHandsOffUncertainDeliveryToRecovery(t *testing.T) {
+	v, ui, item := historyFixture()
+	v.beginHistoryEdit(item)
+	ui.Frame()
+	ui.Advance(time.Second)
+	v.restartHistory()
+	ui.Advance(historyShatterDuration + historyCollapseDuration + 100*time.Millisecond)
+	in := v.historyExit.in
+	for len(v.Controller.Jobs) > 0 {
+		job := <-v.Controller.Jobs
+		if job.Method == "session.restart" {
+			source := v.Model.Details["s"].Session
+			payload, _ := json.Marshal(domain.HistoryOperation{ID: in.OperationID, Input: in, Source: source, Session: source, State: "complete"})
+			job.Apply(v.Model, payload, nil)
+		}
+	}
+	keep := int64(-1)
+	v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "history.reset", SessionID: "s", HistoryTurnOrder: &keep})
+	replacement := domain.Item{ID: "input:" + in.OperationID, Kind: "user", Text: in.Text, Status: "dispatching", Final: true}
+	v.Model.ApplyEvent(domain.Event{Sequence: 2, Type: "submission", SessionID: "s", Item: &replacement, Operation: &domain.Operation{ID: in.OperationID, SessionID: "s", State: "accepted"}})
+	ui.Frame()
+	if !ui.HasText("进行中") {
+		t.Fatal("accepted submission lost waiting state")
+	}
+	v.Model.ApplyEvent(domain.Event{Sequence: 3, Type: "operation", SessionID: "s", Operation: &domain.Operation{ID: in.OperationID, SessionID: "s", State: "indeterminate", Error: "lost acceptance reply"}})
+	replacement.Status = "unknown"
+	v.Model.ApplyEvent(domain.Event{Sequence: 4, Type: "item.upsert", SessionID: "s", Item: &replacement})
+	ui.Frame()
+	ui.Advance(300 * time.Millisecond)
+	if ui.HasText("进行中") || v.historyExit != nil || !ui.HasText("核对结果") || v.Model.Drafts["session:s"] != "ordinary unsent draft" {
+		t.Fatal("uncertain delivery remains falsely running or hides recovery", ui.Texts(), v.historyExit)
+	}
+}
+
+func TestHistoryRunningFooterKeepsPositionWhenInputGetsItsTurn(t *testing.T) {
+	v, ui, item := historyFixture()
+	v.beginHistoryEdit(item)
+	ui.Frame()
+	ui.Advance(time.Second)
+	v.Model.Drafts[v.Model.HistoryDraftKey()] = "revised question"
+	ui.Frame()
+	v.restartHistory()
+	ui.Advance(historyShatterDuration + historyCollapseDuration + 100*time.Millisecond)
+	local, ok := ui.Find("进行中")
+	if !ok {
+		t.Fatal("no local running footer")
+	}
+	in := v.historyExit.in
+	keep := int64(-1)
+	v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "history.reset", SessionID: "s", HistoryTurnOrder: &keep})
+	ui.Frame()
+	reset, _ := ui.Find("进行中")
+	replacement := domain.Item{ID: "input:" + in.OperationID, Kind: "user", Text: "revised question", Status: "dispatching", Final: true}
+	v.Model.ApplyEvent(domain.Event{Sequence: 2, Type: "submission", SessionID: "s", Item: &replacement, Operation: &domain.Operation{ID: in.OperationID, SessionID: "s", State: "confirmed"}})
+	ui.Frame()
+	ui.Frame()
+	accepted, _ := ui.Find("进行中")
+	turn := domain.Turn{ID: "new-turn", Status: "running"}
+	v.Model.ApplyEvent(domain.Event{Sequence: 3, Type: "turn", SessionID: "s", Turn: &turn})
+	ui.Frame()
+	replacement.TurnID, replacement.Status = "new-turn", "sent"
+	v.Model.ApplyEvent(domain.Event{Sequence: 4, Type: "item.upsert", SessionID: "s", Item: &replacement})
+	ui.Frame()
+	firstFrame, _ := ui.Find("进行中")
+	ui.Frame()
+	real, ok := ui.Find("进行中")
+	if !ok || v.historyExit != nil {
+		t.Fatal("real running footer did not take over")
+	}
+	for _, r := range []n.Rect{reset, accepted, firstFrame, real} {
+		if math.Abs(float64(r.X-local.X)) > .5 || math.Abs(float64(r.Y-local.Y)) > .5 || math.Abs(float64(r.H-local.H)) > .5 {
+			t.Fatal("metadata-only handoff moves the running label", local, reset, accepted, real)
+		}
+	}
+	v.Model.ApplyEvent(domain.Event{Sequence: 5, Type: "item.upsert", SessionID: "s", Item: &domain.Item{ID: "first-reply", TurnID: "new-turn", Kind: "assistant", Text: "重开后的首行回复。"}})
+	ui.Frame()
+	ui.Advance(time.Second)
+	firstReply, ok := ui.Find("重开后的首行回复。")
+	if !ok || math.Abs(float64(firstReply.Y-real.Y)) > 1 {
+		t.Fatal("first restarted reply misses the waiting position", real, firstReply)
+	}
+}
+
+func TestHistorySuffixCollapseKeepsTheTranscriptAtItsNaturalEnd(t *testing.T) {
+	for _, coalesced := range []bool{false, true} {
+		t.Run(fmt.Sprint("coalesced=", coalesced), func(t *testing.T) {
+			v, ui, item := historyFixture()
+			d := v.Model.Details["s"]
+			var prefix []domain.Item
+			for i := 0; i < 30; i++ {
+				prefix = append(prefix, domain.Item{ID: fmt.Sprint("earlier-", i), TurnID: "earlier", Kind: "assistant", Text: "Earlier conversation paragraph", Final: true})
+			}
+			d.Items = append(prefix, d.Items...)
+			d.Turns = append([]domain.Turn{{ID: "earlier", Order: -1, Status: "completed"}}, d.Turns...)
+			v.Model.Details["s"] = d
+			ui.Frame()
+			ui.Advance(time.Second)
+			v.beginHistoryEdit(item)
+			ui.Frame()
+			ui.Advance(time.Second)
+			revision := "仅测试：一次性运行 printf \"锚点批量检查 %02d\\n\" {1..32}，然后单独执行 sleep 20。不要读取或修改文件，不要提前输出说明，最后回复“检查完成”。"
+			v.Model.Drafts[v.Model.HistoryDraftKey()] = revision
+			ui.Frame()
+			v.restartHistory()
+			before := v.historyRowBounds[item.ID]
+			runningBefore := ui.HasText("进行中")
+			for frame := 0; frame < 110; frame++ {
+				ui.Advance(time.Second / 60)
+				after := v.historyRowBounds[item.ID]
+				runningNow := ui.HasText("进行中")
+				if runningBefore && !runningNow {
+					t.Fatalf("running receipt flashes away during collapse at frame %d", frame)
+				}
+				if math.Abs(float64(after.Y-before.Y)) > 1 && !runningBefore {
+					t.Fatalf("blank-space correction precedes the running receipt at frame %d: %+v -> %+v", frame, before, after)
+				}
+				if math.Abs(float64(after.Y-before.Y)) > 12 {
+					t.Fatalf("receipt/layout handoff jumps instead of tracking the collapsing height at frame %d: %+v -> %+v", frame, before, after)
+				}
+				before = after
+				runningBefore = runningNow
+			}
+			ui.Advance(time.Second)
+			if !ui.HasText("进行中") {
+				t.Fatal("missing local running receipt")
+			}
+			footer, ok := ui.Find("进行中")
+			dock, _ := ui.Find("会话底部面板")
+			if !ok || dock.Y-footer.Y-footer.H > 80 {
+				t.Fatal("removed replies leave a large trailing gap", footer, dock)
+			}
+			assertHandoff := func(stage string) {
+				t.Helper()
+				for frame := 0; frame < 2; frame++ {
+					ui.Advance(time.Second / 60)
+					current, visible := ui.Find("进行中")
+					if !visible || math.Abs(float64(current.Y-footer.Y)) > 1 {
+						t.Fatalf("%s scrolls an unchanged running receipt at frame %d: %+v -> %+v", stage, frame, footer, current)
+					}
+				}
+			}
+			in := v.historyExit.in
+			keep := int64(-1)
+			v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "history.reset", SessionID: "s", HistoryTurnOrder: &keep})
+			if !coalesced {
+				ui.Frame()
+				assertHandoff("history reset")
+			} else {
+				// A history refresh can finish measuring retained prose in the
+				// same frame that the accepted input takes the local row's place.
+				detail := v.Model.Details["s"]
+				detail.Items[len(detail.Items)-1].Text = "Refreshed retained context.\n\nRetained context measured during confirmation.\n\nAdditional retained context."
+				v.Model.Details["s"] = detail
+			}
+			replacement := domain.Item{ID: "input:" + in.OperationID, Kind: "user", Text: revision, Status: "dispatching", Final: true}
+			v.Model.ApplyEvent(domain.Event{Sequence: 2, Type: "submission", SessionID: "s", Item: &replacement, Operation: &domain.Operation{ID: in.OperationID, SessionID: "s", State: "confirmed"}})
+			if !coalesced {
+				ui.Frame()
+				assertHandoff("accepted input")
+			}
+			turn := domain.Turn{ID: "new-turn", Status: "running", Order: 1}
+			v.Model.ApplyEvent(domain.Event{Sequence: 3, Type: "turn", SessionID: "s", Turn: &turn})
+			if !coalesced {
+				ui.Frame()
+				assertHandoff("turn start")
+			}
+			replacement.TurnID, replacement.Status = "new-turn", "sent"
+			v.Model.ApplyEvent(domain.Event{Sequence: 4, Type: "item.upsert", SessionID: "s", Item: &replacement})
+			ui.Frame()
+			assertHandoff("authoritative running receipt")
+			previous := v.historyRowBounds[replacement.ID]
+			for frame := 0; frame < 60; frame++ {
+				if frame < 4 {
+					text := []string{"", "正在", "正在执行", "正在执行。"}[frame]
+					reply := domain.Item{ID: "new-prose", TurnID: "new-turn", Kind: "assistant", Text: text, Final: frame == 3}
+					v.Model.ApplyEvent(domain.Event{Sequence: int64(5 + frame), Type: "item.upsert", SessionID: "s", Item: &reply})
+					ui.Frame()
+				}
+				ui.Advance(time.Second / 60)
+				current := v.historyRowBounds[replacement.ID]
+				if current.Y > previous.Y+.5 {
+					t.Fatalf("first real prose scrolls down before returning at frame %d: %+v -> %+v", frame, previous, current)
+				}
+				previous = current
+			}
+		})
 	}
 }

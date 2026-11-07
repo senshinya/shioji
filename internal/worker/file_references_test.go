@@ -2,6 +2,7 @@ package worker
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,5 +115,83 @@ func TestFileSearchRespectsGitIgnoreAndSnapshotRejectsBinary(t *testing.T) {
 	}
 	if _, err = fileCommand(t, s, "file.snapshot", map[string]any{"workspaceId": w.ID, "root": root, "path": "binary.bin"}); err == nil {
 		t.Fatal("binary file accepted as textual context")
+	}
+}
+
+func TestHistoryReferenceReplacementUsesOwningSnapshotsAndPersistsPositions(t *testing.T) {
+	s, w := memoryWorker(t, memoryHarness{id: "alpha", restart: true})
+	root := w.Folders[0]
+	snapshot := func(name string) domain.Attachment {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), []byte("package tree\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := fileCommand(t, s, "file.snapshot", map[string]any{"workspaceId": w.ID, "root": root, "path": name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var a domain.Attachment
+		if err = json.Unmarshal(raw, &a); err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	old, next := snapshot("old.go"), snapshot("next.go")
+	cfg := domain.RunConfig{Model: "alpha-model", Permission: "limited"}
+	first, err := s.submit(domain.Submission{OperationID: "original-inline", WorkspaceID: w.ID, Text: "检查 ", Attachments: []domain.Attachment{old}, ReferencePositions: []domain.ReferencePosition{{AttachmentID: old.ID, Position: 4}}, Config: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitReceipt(t, s, first.ID)
+	s.dispatchMu.Lock()
+	before, err := s.store.Session(first.SessionID, 0, 100)
+	s.dispatchMu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before.Items[0].ReferencePositions) != 1 {
+		t.Fatal("dispatch dropped accepted positions", before.Items)
+	}
+	refs := &domain.HistoryReferences{Attachments: []domain.Attachment{next}, ReferencePositions: []domain.ReferencePosition{{AttachmentID: next.ID, Position: 1}}}
+	change := domain.HistoryChange{OperationID: "replace-inline", SessionID: first.SessionID, Revision: before.Session.Revision, ItemID: "input:original-inline", Restart: true, Text: "讲解", Config: cfg, References: refs}
+	result, err := s.changeHistory(change)
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitReceipt(t, s, change.OperationID)
+	s.dispatchMu.Lock()
+	after, err := s.store.Session(first.SessionID, 0, 100)
+	s.dispatchMu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Session.ID != first.SessionID || len(after.Items[0].Attachments) != 1 || after.Items[0].Attachments[0].ID != next.ID || len(after.Items[0].ReferencePositions) != 1 || after.Items[0].ReferencePositions[0].Position != 1 {
+		t.Fatal("restarted history lost changed references", after.Items)
+	}
+	// A retried request is decoded into a new References pointer. Idempotency
+	// compares its values and never submits the replacement again.
+	raw, _ := json.Marshal(change)
+	var retry domain.HistoryChange
+	json.Unmarshal(raw, &retry)
+	again, err := s.changeHistory(retry)
+	if err != nil || again.ID != result.ID {
+		t.Fatal("decoded retry was not idempotent", again, err)
+	}
+}
+
+func TestRuntimeLaunchFailureKeepsInlineReferencePositions(t *testing.T) {
+	s, w := memoryWorker(t, memoryHarness{id: "alpha"})
+	in := domain.Submission{OperationID: "failed-inline", WorkspaceID: w.ID, HarnessID: "alpha", Text: "检查", Skills: []domain.SkillReference{{ID: "skill", Name: "check"}}, ReferencePositions: []domain.ReferencePosition{{SkillID: "skill", Position: 1}}}
+	op, err := s.store.Accept(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.failRuntimeLaunch(op, in, errors.New("launcher unavailable"))
+	d, err := s.store.Session(op.SessionID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Items) == 0 || d.Items[0].Status != "failed" || len(d.Items[0].ReferencePositions) != 1 || d.Items[0].ReferencePositions[0] != in.ReferencePositions[0] {
+		t.Fatal("launch failure dropped inline positions", d.Items)
 	}
 }

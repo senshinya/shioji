@@ -117,6 +117,47 @@ func TestFileMentionCompletesWithoutSendingAndPreservesDraft(t *testing.T) {
 		t.Fatal("removal changed ordinary draft")
 	}
 }
+
+func TestFileMentionInsertedBeforeExistingTextKeepsTheSuffix(t *testing.T) {
+	v, ui := referenceComposer(t)
+	ui.Click("消息输入")
+	ui.Type("请检查边界条件")
+	for range len([]rune("边界条件")) {
+		ui.Key(0, n.KeyLeft)
+	}
+	ui.Type(" @rot")
+	waitNative(t, ui, func() bool { return ui.HasText("rotate.go") })
+	ui.Key(0, n.KeyEnter)
+	waitNative(t, ui, func() bool { return len(v.Model.Attachments["home"]) == 1 })
+	b := v.composerDocuments["home"]
+	if got := b.doc.Text().String(); got != "请检查 \uFFFC边界条件" {
+		t.Fatal("reference consumed existing text after the caret", got)
+	}
+	ui.Key(n.Cmd, n.KeyZ)
+	if got := b.doc.Text().String(); got != "请检查 @rot边界条件" || len(v.Model.Attachments["home"]) != 0 {
+		t.Fatal("undo did not restore the query and suffix", got)
+	}
+	ui.Key(n.Cmd|n.Shift, n.KeyZ)
+	if got := b.doc.Text().String(); got != "请检查 \uFFFC边界条件" || len(v.Model.Attachments["home"]) != 1 {
+		t.Fatal("redo damaged the suffix", got)
+	}
+}
+
+func TestMentionReplacementRangeStopsAtTheCaret(t *testing.T) {
+	for _, test := range []struct{ prefix, suffix string }{
+		{"请检查 @", "边界条件"},
+		{"请检查 @rot", "边界条件"},
+		{"check @rot", "boundaryConditions"},
+		{"检查 @rot", "\uFFFC边界条件"},
+		{"/review", "后续说明"},
+	} {
+		caret := len([]rune(test.prefix))
+		_, end, _, ok := mentionToken(test.prefix+test.suffix, caret, caret)
+		if !ok || end != caret {
+			t.Errorf("completion includes untouched suffix: %q, end=%d caret=%d", test.prefix+test.suffix, end, caret)
+		}
+	}
+}
 func TestFileMentionDismissAndEmailDoNotOpenOrSend(t *testing.T) {
 	_, ui := referenceComposer(t)
 	ui.Click("消息输入")
@@ -547,5 +588,48 @@ func TestQueuedReferencesReturnToOriginalInlinePositions(t *testing.T) {
 	ui.Frame()
 	if m.Drafts["session:"+sid] != "" || len(m.Attachments["session:"+sid]) != 0 || len(m.DraftSkills["session:"+sid]) != 0 {
 		t.Fatal("queue edit leaked references into displaced draft")
+	}
+}
+
+func TestReferencePopupChoosesItsSideBeforeSearchResultsArrive(t *testing.T) {
+	for _, trigger := range []rune{'@', '/'} {
+		t.Run(string(trigger), func(t *testing.T) {
+			v := New(layoutModel(), nil, "")
+			binding := &composerDocument{key: "history:s"}
+			ui := n.NewTester(func(c *n.Context) {
+				n.Overlay(c, func() {})
+				n.Column(c.Key("root")).Fill().Children(func() {
+					n.Column(c).Height(80)
+					anchor := n.Column(c.Key("editor")).Height(100).Width(500).Label("inline editor")
+					v.mentionPopup(c, c.Theme(), anchor, composerInput{binding: binding})
+				})
+			}, 800, 600)
+			state := &fileMention{key: binding.key, trigger: trigger, phase: mentionSearching, present: true}
+			v.fileMention = state
+			ui.Frame()
+			assertBelow := func() {
+				t.Helper()
+				anchor, _ := ui.Find("inline editor")
+				if anchor.Y != 80 {
+					t.Fatal("fixture is not near the viewport top", anchor)
+				}
+				r, ok := ui.Find(state.title())
+				if !ok || r.Y < 180 {
+					t.Fatal("picker starts above the editor before flipping below it", r, ok)
+				}
+			}
+			assertBelow()
+			ui.Advance(120 * time.Millisecond)
+			assertBelow()
+			for i := 0; i < 8; i++ {
+				state.results.Files = append(state.results.Files, domain.WorkspaceFile{Root: "/project", Path: "file" + string(rune('a'+i)) + ".go"})
+				state.skills = append(state.skills, domain.Skill{SkillReference: domain.SkillReference{ID: string(rune('a' + i)), Name: "skill" + string(rune('a'+i))}})
+			}
+			state.phase = mentionShowing
+			for frame := 0; frame < 20; frame++ {
+				ui.Advance(time.Second / 60)
+				assertBelow()
+			}
+		})
 	}
 }

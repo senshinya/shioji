@@ -94,3 +94,15 @@ func TestRejectedRestartReleasesHistoryEditingWithoutLosingEitherDraft(t *testin
 		t.Fatal("rejected restart stranded editing or lost a draft", m.HistoryEdits, m.HistoryActions, m.Drafts, m.Error)
 	}
 }
+
+func TestClosingSubmittedHistoryEditKeepsItsRecoveryDraft(t *testing.T) {
+	m := NewModel()
+	m.SessionID = "s"
+	m.HistoryEdits["s"] = HistoryEdit{ItemID: "old", OperationID: "restart"}
+	m.Drafts["history:s:old"] = "submitted revision"
+	m.HistoryActions["s"] = domain.HistoryChange{OperationID: "restart", SessionID: "s", Restart: true}
+	m.CancelHistoryEdit()
+	if m.Drafts["history:s:old"] != "submitted revision" || m.HistoryActions["s"].OperationID != "restart" {
+		t.Fatal("closing a submitted edit discarded its recovery state")
+	}
+}

@@ -18,8 +18,8 @@ import (
 // Major 2 requires clients to understand authoritative history replacement.
 const Major = 2
 
-// Minor 11 adds device-side workspace file search and immutable references.
-const Minor = 11
+// Minor 12 retains sent inline positions and supports editing history references.
+const Minor = 12
 const MaxFrame = 1 << 20
 
 type Frame struct {

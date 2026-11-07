@@ -99,23 +99,24 @@ type Operation struct {
 	Error     string         `json:"error,omitempty"`
 }
 type Item struct {
-	Skills       []SkillReference `json:"skills,omitempty"`
-	SentAt       *time.Time       `json:"sentAt,omitempty"`
-	Attachments  []Attachment     `json:"attachments,omitempty"`
-	Presentation string           `json:"presentation,omitempty"`
-	Parts        []ContentPart    `json:"parts,omitempty"`
-	Files        []FileChange     `json:"files,omitempty"`
-	Agents       []AgentActivity  `json:"agents,omitempty"`
-	Truncated    bool             `json:"truncated,omitempty"`
-	ID           string           `json:"id"`
-	TurnID       string           `json:"turnId,omitempty"`
-	Kind         string           `json:"kind"`
-	Text         string           `json:"text"`
-	Name         string           `json:"name,omitempty"`
-	Status       string           `json:"status,omitempty"`
-	ExitCode     *int             `json:"exitCode,omitempty"`
-	Final        bool             `json:"final"`
-	Order        int64            `json:"order"`
+	ReferencePositions []ReferencePosition `json:"referencePositions,omitempty"`
+	Skills             []SkillReference    `json:"skills,omitempty"`
+	SentAt             *time.Time          `json:"sentAt,omitempty"`
+	Attachments        []Attachment        `json:"attachments,omitempty"`
+	Presentation       string              `json:"presentation,omitempty"`
+	Parts              []ContentPart       `json:"parts,omitempty"`
+	Files              []FileChange        `json:"files,omitempty"`
+	Agents             []AgentActivity     `json:"agents,omitempty"`
+	Truncated          bool                `json:"truncated,omitempty"`
+	ID                 string              `json:"id"`
+	TurnID             string              `json:"turnId,omitempty"`
+	Kind               string              `json:"kind"`
+	Text               string              `json:"text"`
+	Name               string              `json:"name,omitempty"`
+	Status             string              `json:"status,omitempty"`
+	ExitCode           *int                `json:"exitCode,omitempty"`
+	Final              bool                `json:"final"`
+	Order              int64               `json:"order"`
 }
 
 type ContentPart struct {

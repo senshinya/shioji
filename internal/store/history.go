@@ -121,6 +121,13 @@ func (s *Store) PrepareHistory(in domain.HistoryChange) (domain.HistoryOperation
 	op := domain.HistoryOperation{KeepOrder: keepOrder, ID: in.OperationID, Input: in, Source: source, Session: target, TurnID: turn, State: "prepared"}
 	if in.Restart {
 		op.Submission = domain.Submission{OperationID: in.OperationID, WorkspaceID: source.WorkspaceID, SessionID: source.ID, Text: in.Text, Config: in.Config, Attachments: selected.Attachments, Skills: selected.Skills}
+		if in.References != nil {
+			op.Submission.Attachments = in.References.Attachments
+			op.Submission.Skills = in.References.Skills
+			op.Submission.ReferencePositions = in.References.ReferencePositions
+		} else if in.Text == selected.Text {
+			op.Submission.ReferencePositions = selected.ReferencePositions
+		}
 		if err = op.Submission.ValidateContent(); err != nil {
 			return zero, err
 		}
@@ -254,7 +261,7 @@ func (s *Store) CommitHistory(id string) (domain.HistoryOperation, error) {
 			return op, err
 		}
 		now := time.Now()
-		item := domain.Item{ID: "input:" + op.ID, Kind: "user", Text: op.Submission.Text, Skills: op.Submission.Skills, Attachments: op.Submission.Attachments, Status: "dispatching", Final: true, SentAt: &now}
+		item := domain.Item{ID: "input:" + op.ID, Kind: "user", Text: op.Submission.Text, ReferencePositions: op.Submission.ReferencePositions, Skills: op.Submission.Skills, Attachments: op.Submission.Attachments, Status: "dispatching", Final: true, SentAt: &now}
 		if err = putItem(tx, target.ID, &item); err != nil {
 			return op, err
 		}

@@ -8,6 +8,9 @@ import (
 	n "github.com/egoist/mygo/ui"
 )
 
+const messageFooterGap = 8
+const messageFooterActionWidth = 16
+
 type iconReference struct {
 	font n.Font
 	text string

@@ -17,7 +17,7 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 	var op domain.HistoryOperation
 	existing, err := s.store.HistoryOperation(in.OperationID)
 	if err == nil {
-		if existing.Input != in {
+		if !existing.Input.Equal(in) {
 			return op, errors.New("操作标识已被其他输入使用")
 		}
 		if existing.State == "complete" {

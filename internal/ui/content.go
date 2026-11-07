@@ -53,12 +53,35 @@ func activityStatus(status string) string {
 	return status
 }
 
+func activityHasBody(item domain.Item) bool {
+	return item.Text != "" || len(item.Parts) > 0 || len(item.Files) > 0 || len(item.Agents) > 0
+}
+
+// Exit codes describe the call, not the outcome of the agent's whole turn.
+func toolIssueLabel(item domain.Item) string {
+	if !item.Final {
+		return ""
+	}
+	if item.ExitCode != nil && *item.ExitCode != 0 {
+		return fmt.Sprintf("退出码 %d", *item.ExitCode)
+	}
+	switch item.Status {
+	case "failed":
+		return "调用失败"
+	case "declined":
+		return "已拒绝"
+	case "interrupted":
+		return "已中断"
+	}
+	return ""
+}
+
 func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item) {
 	key := "activity:" + v.Model.SessionID + "/" + item.ID
 	if _, seen := v.Model.Collapsed[key]; !seen {
 		v.Model.Collapsed[key] = item.Kind == "activity"
 	}
-	hasBody := item.Text != "" || len(item.Parts) > 0 || len(item.Files) > 0 || len(item.Agents) > 0
+	hasBody := activityHasBody(item)
 	label := item.Name
 	if label == "" {
 		label = "工具活动"
@@ -73,7 +96,13 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item) {
 			}
 			n.Text(c, label).FontSize(12).FixedLineHeight(20).TextColor(color).Grow(1)
 			if item.Status != "" {
-				n.Text(c, activityStatus(item.Status)).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+				status := activityStatus(item.Status)
+				if issue := toolIssueLabel(item); issue != "" {
+					status = issue
+				}
+				animation := motionAnimation(c, 160*time.Millisecond)
+				n.Text(c.Key("activity-status"), status).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
+					ContentTransition(n.ContentTransition{Animation: &animation})
 			}
 			if hasBody {
 				angle := float32(0)

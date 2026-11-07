@@ -380,7 +380,7 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 	var item *domain.Item
 	if queued == nil {
 		now := time.Now()
-		item = &domain.Item{ID: "input:" + op.ID, Kind: "user", Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Final: true, Status: "dispatching", SentAt: &now}
+		item = &domain.Item{ID: "input:" + op.ID, Kind: "user", ReferencePositions: in.ReferencePositions, Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Final: true, Status: "dispatching", SentAt: &now}
 		if err = putItem(tx, session.ID, item); err != nil {
 			return none, err
 		}
@@ -389,7 +389,7 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		return none, err
 	}
 	if queued != nil {
-		if err = putItem(tx, session.ID, &domain.Item{ID: "input:" + op.ID, Kind: "queued", Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Final: true}); err != nil {
+		if err = putItem(tx, session.ID, &domain.Item{ID: "input:" + op.ID, Kind: "queued", ReferencePositions: in.ReferencePositions, Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Final: true}); err != nil {
 			return none, err
 		}
 		if err = putQueue(tx, *queued); err != nil {

@@ -1,6 +1,8 @@
 package app
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"shioji/internal/domain"
 	"strings"
@@ -162,5 +164,91 @@ func TestRecoveryDraftDeduplicatesSameScopedSkill(t *testing.T) {
 	}
 	if m.DraftSkills["home"][0].InlinePosition != 0 || m.DraftSkills["session:s"][0].InlinePosition != 5 {
 		t.Fatal("recovery reused stale positions or mutated original draft")
+	}
+}
+
+func TestHistoryEditRestoresInlineReferencesAndKeepsOrdinaryDraft(t *testing.T) {
+	m := harnessModel()
+	m.WorkerMinor = 12
+	m.SessionID = "s"
+	m.Details["s"] = domain.SessionDetail{Session: domain.Session{ID: "s", WorkspaceID: "w", HarnessID: "alpha"}}
+	m.Drafts["session:s"] = "ordinary"
+	item := domain.Item{ID: "i", TurnID: "t", Kind: "user", Status: "sent", Text: "检查 ", Skills: []domain.SkillReference{{ID: "check", Name: "check"}}, Attachments: []domain.Attachment{{ID: "file", Name: "main.go", SourcePath: "/remote/main.go"}}, ReferencePositions: []domain.ReferencePosition{{Position: 1, SkillID: "check"}, {Position: 5, AttachmentID: "file"}}}
+	if err := m.BeginHistoryEdit(item); err != nil {
+		t.Fatal(err)
+	}
+	key := m.HistoryDraftKey()
+	if len(m.DraftSkills[key]) != 1 || len(m.Attachments[key]) != 1 || m.DraftSkills[key][0].InlinePosition != 1 || m.Attachments[key][0].InlinePosition != 5 {
+		t.Fatal("history draft dropped references or positions", m.DraftSkills[key], m.Attachments[key])
+	}
+	m.DraftSkills[key] = nil
+	m.Attachments[key] = nil
+	m.CancelHistoryEdit()
+	if err := m.BeginHistoryEdit(item); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.DraftSkills[key]) != 1 || len(m.Attachments[key]) != 1 || m.DraftSkills[key][0].InlinePosition != 1 || m.Attachments[key][0].InlinePosition != 5 {
+		t.Fatal("reopening a canceled edit did not restore the message's original references")
+	}
+	if m.Drafts["session:s"] != "ordinary" {
+		t.Fatal("history edit changed ordinary draft")
+	}
+}
+
+func TestOldWorkerCannotSilentlyDropNewInlinePositions(t *testing.T) {
+	m := harnessModel()
+	m.WorkerMinor = 11
+	m.Readiness.Harnesses[0].Capabilities.Skills = true
+	m.Drafts["home"] = "task"
+	m.DraftSkills["home"] = []DraftSkill{{Reference: domain.SkillReference{ID: "check", Name: "check"}, WorkspaceID: "w", HarnessID: "alpha", InlinePosition: 1}}
+	if _, err := m.BeginSubmission(); err == nil {
+		t.Fatal("old worker accepted positions it cannot retain in sent history")
+	}
+	if len(m.Pending) != 0 || len(m.DraftSkills["home"]) != 1 {
+		t.Fatal("upgrade requirement consumed reference draft")
+	}
+}
+
+func TestLegacyHistoryDraftCancelRestoresOriginalReferencesAfterReload(t *testing.T) {
+	for _, active := range []bool{false, true} {
+		t.Run(fmt.Sprint(active), func(t *testing.T) {
+			m := harnessModel()
+			m.WorkerMinor = 12
+			m.SessionID = "s"
+			item := domain.Item{ID: "i", Kind: "user", Status: "sent", TurnID: "t", Text: "old", Skills: []domain.SkillReference{{ID: "check", Name: "check"}}}
+			m.Details["s"] = domain.SessionDetail{Session: domain.Session{ID: "s", WorkspaceID: "w", HarnessID: "alpha"}, Items: []domain.Item{item}}
+			key := "history:s:i"
+			m.Drafts[key] = "legacy revised draft"
+			if active {
+				m.HistoryEdits["s"] = HistoryEdit{ItemID: "i"}
+				m.SyncHistoryEdits()
+			} else if err := m.BeginHistoryEdit(item); err != nil {
+				t.Fatal(err)
+			}
+			if len(m.DraftSkills[key]) != 1 || m.Drafts[key] != "legacy revised draft" {
+				t.Fatal("legacy draft cleared original references", m.DraftSkills[key])
+			}
+			m.DraftSkills[key] = nil
+			m.Attachments[key] = nil
+			m.CancelHistoryEdit()
+			data, err := m.EncodeState()
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "state.json")
+			os.WriteFile(path, data, 0600)
+			restored := harnessModel()
+			if err = restored.Load(path); err != nil {
+				t.Fatal(err)
+			}
+			restored.Details["s"] = m.Details["s"]
+			restored.SessionID = "s"
+			if err = restored.BeginHistoryEdit(item); err != nil {
+				t.Fatal(err)
+			}
+			if len(restored.DraftSkills[key]) != 1 || restored.Drafts[key] != "old" {
+				t.Fatal("canceled legacy edit survived reload instead of restoring the original message")
+			}
+		})
 	}
 }

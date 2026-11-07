@@ -14,10 +14,20 @@ type transcriptRow struct {
 	end        int // original event index; -1 for an expanded group heading
 	group      string
 	count      int
+	issues     int
 	toolParent string
 	opacity    float32
 	footer     string
+	restarting bool
 	toolResult string
+}
+
+// Keep arrival identity outside virtual rows: scrolling an existing call back
+// into view must not replay its entrance. A new visit/hydration is a baseline.
+type toolArrivalState struct {
+	session string
+	seen    map[string]bool
+	motions map[string]*toolDisclosureMotion
 }
 
 // A turn receipt is its own stable row below a disclosure, so it follows the
@@ -38,6 +48,10 @@ func withTurnFooters(rows []transcriptRow, items []domain.Item, turns map[string
 	return result
 }
 
+func emptyTranscriptItem(item domain.Item) bool {
+	return item.Kind == "assistant" && strings.TrimSpace(item.Text) == "" || item.Kind == "activity" && item.Presentation == "reasoning" && !activityHasBody(item)
+}
+
 // Project groups into the outer virtual list so expanded tool history still
 // unmounts normally. While viewing, only nonempty agent prose auto-closes a group.
 func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
@@ -49,14 +63,51 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 	if collapseHistory {
 		delete(v.Model.FoldToolHistory, v.Model.SessionID)
 	}
+	if v.toolArrivals == nil || v.toolArrivals.session != v.Model.SessionID || collapseHistory {
+		v.toolArrivals = &toolArrivalState{session: v.Model.SessionID, motions: map[string]*toolDisclosureMotion{}}
+	}
+	arrivals := v.toolArrivals
+	seen := map[string]bool{}
+	arrival := func(key string) float32 {
+		seen[key] = true
+		if arrivals.seen != nil && !arrivals.seen[key] && !v.reduceMotion {
+			if arrivals.motions[key] == nil {
+				arrivals.motions[key] = &toolDisclosureMotion{to: 1, start: v.frameTime, duration: 200 * time.Millisecond}
+			}
+		}
+		if motion := arrivals.motions[key]; motion != nil {
+			progress, active := motion.sample(v.frameTime)
+			if active && !v.reduceMotion {
+				v.toolsAnimating = true
+				return progress
+			}
+			delete(arrivals.motions, key)
+		}
+		return 1
+	}
+	defer func() {
+		arrivals.seen = seen
+		for key := range arrivals.motions {
+			if !seen[key] {
+				delete(arrivals.motions, key)
+			}
+		}
+	}()
 	laterProse := make([]bool, len(items)+1)
 	for i := len(items) - 1; i >= 0; i-- {
 		laterProse[i] = laterProse[i+1] || items[i].Kind == "assistant" && strings.TrimSpace(items[i].Text) != ""
 	}
+	endedTurns := map[string]bool{}
+	for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
+		switch turn.Status {
+		case domain.ExecutionCompleted, domain.ExecutionFailed, domain.ExecutionInterrupted, domain.ExecutionAbandoned:
+			endedTurns[turn.ID] = true
+		}
+	}
 	rows := make([]transcriptRow, 0, len(items))
 	for i := 0; i < len(items); {
 		item := items[i]
-		if item.Kind == "assistant" && strings.TrimSpace(item.Text) == "" {
+		if emptyTranscriptItem(item) {
 			if len(rows) > 0 {
 				rows[len(rows)-1].end = i
 			}
@@ -75,7 +126,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 				end++
 				continue
 			}
-			if items[end].Kind == "assistant" && strings.TrimSpace(items[end].Text) == "" {
+			if emptyTranscriptItem(items[end]) {
 				end++
 				continue
 			}
@@ -89,9 +140,24 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			delete(v.toolMotions, key)
 		}
 		if laterProse[end] && !disclosure.SawProse() {
+			// Only previously displayed content exits. Hydrated history starts
+			// folded without briefly mounting all of its tools.
+			_, visible := v.historyRowBounds[key]
+			for j := i; !visible && j < end; j++ {
+				_, visible = v.historyRowBounds[items[j].ID]
+			}
+			if visible && !disclosure.Closed() && !v.reduceMotion {
+				from := float32(1)
+				if motion := v.toolMotions[key]; motion != nil {
+					from, _ = motion.sample(v.frameTime)
+				}
+				if v.toolMotions == nil {
+					v.toolMotions = map[string]*toolDisclosureMotion{}
+				}
+				v.toolMotions[key] = &toolDisclosureMotion{from: from, to: 0, start: v.frameTime, duration: 160 * time.Millisecond}
+			}
 			disclosure = disclosure.ObserveProse()
 			v.Model.SetToolDisclosure(key, disclosure)
-			delete(v.toolMotions, key)
 		}
 		opacity, show := float32(1), !disclosure.Closed()
 		if motion := v.toolMotions[key]; motion != nil {
@@ -106,21 +172,32 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 				delete(v.toolMotions, key)
 			}
 		}
-		row := transcriptRow{key: key, item: item, end: -1, group: key, count: count}
+		row := transcriptRow{key: key, item: item, end: -1, group: key, count: count, opacity: arrival(key)}
+		for _, call := range items[i:end] {
+			if call.Kind == "tool" && toolIssueLabel(call) != "" {
+				row.issues++
+			}
+		}
 		if !show {
 			row.end = end - 1
 		}
 		rows = append(rows, row)
-		if show {
-			for j := i; j < end; j++ {
-				if items[j].Kind == "tool" {
-					rows = append(rows, transcriptRow{key: items[j].ID, item: items[j], end: j, toolParent: key, opacity: opacity})
-				} else if len(rows) > 0 {
-					rows[len(rows)-1].end = j
+		for j := i; j < end; j++ {
+			if items[j].Kind == "tool" {
+				progress := min(opacity, arrival(items[j].ID))
+				if show {
+					rows = append(rows, transcriptRow{key: items[j].ID, item: items[j], end: j, toolParent: key, opacity: progress})
 				}
+			} else if show && len(rows) > 0 {
+				rows[len(rows)-1].end = j
 			}
-			if result := toolGroupResult(items[i:end]); result != "" {
-				rows = append(rows, transcriptRow{key: key + ":result", item: item, end: end - 1, toolParent: key, toolResult: result, opacity: opacity})
+		}
+		// A quiet gap between calls is not a group boundary: another call
+		// may still join. Only prose or a confirmed turn end seals the group.
+		if result := toolGroupResult(items[i:end]); result != "" && (laterProse[end] || endedTurns[item.TurnID]) {
+			progress := min(opacity, arrival(key+":result"))
+			if show {
+				rows = append(rows, transcriptRow{key: key + ":result", item: item, end: end - 1, toolParent: key, toolResult: result, opacity: progress})
 			}
 		}
 		i = end
@@ -139,11 +216,17 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 			}
 			font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}
 			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(color)
-			inlineSymbol(c, chevron, label, font, 10, subtle(t), angle)
+			if row.issues > 0 && v.Model.ToolDisclosure(row.group).Closed() {
+				animation := motionAnimation(c, 160*time.Millisecond)
+				n.Text(c.Key("issues"), fmt.Sprintf("%d 项未成功", row.issues)).FontSize(11).FixedLineHeight(20).TextColor(color).
+					Transition(disclosureMotion(c, 160*time.Millisecond)).ContentTransition(n.ContentTransition{Numeric: true, Animation: &animation})
+			}
+			inlineSymbol(c, chevron, label, font, 10, subtle(t), angle).
+				Transition(n.ElementTransition{Position: true, Duration: motionAnimation(c, 160*time.Millisecond).Duration, Ease: n.EaseOut})
 		})
 	}).Clicked() {
 		list := v.lists[v.Model.SessionID]
-		list.KeepRow(index, button.Bounds().Y-list.Bounds(c).Y)
+		list.KeepRowWithinContent(index, button.Bounds().Y-list.Bounds(c).Y)
 		from, to := float32(1), float32(0)
 		if v.Model.ToolDisclosure(row.group).Closed() {
 			from, to = 0, 1
@@ -172,18 +255,15 @@ func toolGroupResult(items []domain.Item) string {
 		if !item.Final {
 			return ""
 		}
-		if item.Status == "failed" || item.ExitCode != nil && *item.ExitCode != 0 {
-			result = "failed"
-		} else if item.Status == "declined" && result != "failed" {
-			result = "declined"
+		if toolIssueLabel(item) != "" || item.Status == "unknown" {
+			result = "ended"
 		}
 	}
 	return result
 }
 
 var toolCompleteIcon = svg("M18 10a8 8 0 1 1-16 0a8 8 0 0 1 16 0M6 10l3 3 5-6")
-var toolFailedIcon = svg("M18 10a8 8 0 1 1-16 0a8 8 0 0 1 16 0M7 7l6 6M13 7l-6 6")
-var toolDeclinedIcon = svg("M18 10a8 8 0 1 1-16 0a8 8 0 0 1 16 0M6 10h8")
+var toolEndedIcon = svg("M18 10a8 8 0 1 1-16 0a8 8 0 0 1 16 0M6 10h8")
 
 func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow) {
 	icon := activityIcon(row.item.Presentation)
@@ -192,11 +272,8 @@ func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow) {
 	} else {
 		label := "已完成"
 		icon = toolCompleteIcon
-		if row.toolResult == "failed" {
-			label, icon = "执行失败", toolFailedIcon
-		}
-		if row.toolResult == "declined" {
-			label, icon = "已拒绝", toolDeclinedIcon
+		if row.toolResult == "ended" {
+			label, icon = "调用结束", toolEndedIcon
 		}
 		n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 	}

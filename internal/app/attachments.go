@@ -24,8 +24,11 @@ func (m *Model) workspaceDevice(workspace string) string {
 	return ""
 }
 func (m *Model) SubmissionAttachments(workspace string) ([]domain.Attachment, error) {
+	return m.submissionAttachments(m.DraftKey(), workspace)
+}
+func (m *Model) submissionAttachments(key, workspace string) ([]domain.Attachment, error) {
 	var out []domain.Attachment
-	for _, draft := range m.Attachments[m.DraftKey()] {
+	for _, draft := range m.Attachments[key] {
 		if m.WorkerMinor < 6 {
 			return nil, errors.New("请先升级执行服务以发送附件")
 		}

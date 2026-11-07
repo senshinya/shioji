@@ -3,6 +3,7 @@ package codex
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"shioji/internal/domain"
 	"strings"
@@ -180,5 +181,46 @@ func TestNoUsageObservationDoesNotInventZeroConsumption(t *testing.T) {
 	turn := events[0].Turn
 	if turn.InputTokens != nil || turn.OutputTokens != nil || turn.CachedInputTokens != nil {
 		t.Fatal("absent usage became zero")
+	}
+}
+
+// A resumed/forked thread has no local cumulative baseline. Its first request's
+// total/last pair establishes that baseline, then later requests add to the turn.
+func TestResumedTurnUsageIncludesEveryRequest(t *testing.T) {
+	for _, beforeStart := range []bool{false, true} {
+		t.Run(fmt.Sprint("usage-before-start=", beforeStart), func(t *testing.T) {
+			n := NewNormalizer()
+			n.Bind("t", "s", false)
+			first := `{"method":"thread/tokenUsage/updated","params":{"threadId":"t","turnId":"u","tokenUsage":{"total":{"inputTokens":1100,"outputTokens":205,"cachedInputTokens":900},"last":{"inputTokens":100,"outputTokens":5,"cachedInputTokens":80}}}}`
+			if beforeStart {
+				n.Feed([]byte(first))
+			}
+			n.Feed([]byte(`{"method":"turn/started","params":{"threadId":"t","turn":{"id":"u","status":"inProgress"}}}`))
+			if !beforeStart {
+				n.Feed([]byte(first))
+			}
+			n.Feed([]byte(first)) // delivery duplicates must not rebase this turn
+			n.Feed([]byte(`{"method":"thread/tokenUsage/updated","params":{"threadId":"t","turnId":"u","tokenUsage":{"total":{"inputTokens":1230,"outputTokens":298,"cachedInputTokens":990},"last":{"inputTokens":130,"outputTokens":93,"cachedInputTokens":90}}}}`))
+			events, _, err := n.Feed([]byte(`{"method":"turn/completed","params":{"threadId":"t","turn":{"id":"u","status":"completed"}}}`))
+			if err != nil || len(events) != 1 {
+				t.Fatalf("completed: %v %v", events, err)
+			}
+			turn := events[0].Turn
+			if turn.InputTokens == nil || *turn.InputTokens != 230 || turn.OutputTokens == nil || *turn.OutputTokens != 98 || turn.CachedInputTokens == nil || *turn.CachedInputTokens != 170 {
+				t.Fatalf("lost multi-request resumed usage: %+v", turn)
+			}
+		})
+	}
+}
+
+func TestResumedUsageDoesNotInventMissingOrInvalidCounters(t *testing.T) {
+	n := NewNormalizer()
+	n.Bind("t", "s", false)
+	n.Feed([]byte(`{"method":"turn/started","params":{"threadId":"t","turn":{"id":"u","status":"inProgress"}}}`))
+	n.Feed([]byte(`{"method":"thread/tokenUsage/updated","params":{"threadId":"t","turnId":"u","tokenUsage":{"total":{"inputTokens":10,"outputTokens":20,"cachedInputTokens":5},"last":{"inputTokens":11,"outputTokens":4}}}}`))
+	events, _, _ := n.Feed([]byte(`{"method":"turn/completed","params":{"threadId":"t","turn":{"id":"u","status":"completed"}}}`))
+	turn := events[0].Turn
+	if turn.InputTokens != nil || turn.CachedInputTokens != nil || turn.OutputTokens == nil || *turn.OutputTokens != 4 {
+		t.Fatalf("invalid counters became known: %+v", turn)
 	}
 }

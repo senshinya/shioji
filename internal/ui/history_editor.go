@@ -1,10 +1,10 @@
 package ui
 
 import (
+	"github.com/egoist/mygo/ui/richtext"
 	"math"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/domain"
@@ -31,6 +31,9 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 	preview := v.historyExit != nil && v.historyExit.in.Restart && v.historyExit.in.SessionID == m.SessionID && v.historyExit.in.ItemID == item.ID
 	if preview {
 		item.Text = v.historyExit.in.Text
+		if refs := v.historyExit.in.References; refs != nil {
+			item.Attachments, item.Skills, item.ReferencePositions = refs.Attachments, refs.Skills, refs.ReferencePositions
+		}
 		// Retain the original confirmed time until the replacement is accepted.
 		item.Status = "dispatching"
 		editing = false
@@ -91,7 +94,9 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 				return
 			}
 			bubble := n.Column(c.Key("user-surface:"+item.ID)).MaxWidth(676).Padding(12, 16).Gap(8).Background(userBubble(t)).Radius(14).Label("用户消息气泡").Children(func() {
-				if item.Text != "" {
+				if len(item.Skills) > 0 || hasInlineFiles(item.Attachments) {
+					v.messageReferenceBody(c, t, item)
+				} else if item.Text != "" {
 					text := n.Text(c, item.Text).FontSize(14).FixedLineHeight(24).Selectable()
 					v.decoratePlainFind(c, text, item, nil)
 				}
@@ -112,20 +117,20 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 }
 
 func (v *View) historyMessageActions(c *n.Context, t *n.Theme, item domain.Item, preview bool, begin func()) {
-	n.Row(c.Key("user-actions:" + item.ID)).Gap(12).Height(24).AlignItems(n.Center).Unselectable().Label("用户消息操作").Children(func() {
+	n.Row(c.Key("user-actions:" + item.ID)).Gap(messageFooterGap).Height(24).AlignItems(n.Center).Unselectable().Label("用户消息操作").Children(func() {
 		font := n.Font{Family: t.Font, Size: 11, Weight: 400}
 		if (item.Status == "sent" || preview) && item.TurnID != "" {
-			edit := n.ButtonBase(c.Key("edit")).Size(20, 24).Label("修改并重新开始").Tooltip("修改并重新开始").Disabled(preview || v.historyBusy[v.Model.SessionID] || !v.Model.RunReadiness().Capabilities.Restart)
+			edit := n.ButtonBase(c.Key("edit")).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("修改并重新开始").Tooltip("修改并重新开始").Disabled(preview || v.historyBusy[v.Model.SessionID] || !v.Model.RunReadiness().Capabilities.Restart)
 			color := textHoverColor(c, edit, t.TextMuted)
 			edit.Children(func() { inlineSymbol(c, queueEditIcon, "消息", font, 13, color) })
 			if edit.Clicked() {
 				begin()
 			}
 		}
-		copy := n.ButtonBase(c.Key("copy")).Size(20, 24).Label("复制消息").Tooltip("复制消息")
+		copy := n.ButtonBase(c.Key("copy")).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("复制消息").Tooltip("复制消息")
 		until := n.Local(copy, "copied-until", func() time.Time { return time.Time{} })
 		if copy.Clicked() {
-			c.WriteClipboard(item.Text)
+			c.WriteClipboard(v.messageCopyText(item))
 			*until = c.Now().Add(2 * time.Second)
 		}
 		glyph, label := copyReplyIcon, "复制消息"
@@ -176,7 +181,7 @@ func (v *View) historyMessageActions(c *n.Context, t *n.Theme, item domain.Item,
 func (v *View) historyEditor(c *n.Context, t *n.Theme, item domain.Item) {
 	m, sid := v.Model, v.Model.SessionID
 	key := m.HistoryDraftKey()
-	binding := textBinding(v.draftBindings, key, m.Drafts[key])
+	binding := v.composerDocument(c, key)
 	edit := m.HistoryEdits[sid]
 	exiting := v.historyExit != nil && v.historyExit.in.SessionID == sid
 	locked := edit.OperationID != "" || exiting
@@ -184,29 +189,57 @@ func (v *View) historyEditor(c *n.Context, t *n.Theme, item domain.Item) {
 	if t.Dark {
 		bg = t.Surface
 	}
-	n.Column(c.Key("user-surface:"+item.ID)).FillWidth().MaxWidth(676).Padding(12, 16).Gap(10).Radius(14).Background(bg).Border(1, t.Border).Label("历史消息编辑器").Transition(n.ElementTransition{Position: true, Size: true, Colors: true, Duration: 280 * time.Millisecond, Ease: composerDescentEase}).Children(func() {
-		v.historyAttachments(c, t, item)
-		input := n.TextAreaBase(c.Key("text"), &binding.Text).FillWidth().Lines(1, 12).MaxHeight(320).Padding(0).FontSize(14).FixedLineHeight(24).Label("编辑历史消息").ReadOnly(locked)
-		input.OnTextKey(func(k n.TextKey) bool {
-			if k.Key == n.KeyEscape && !locked {
-				m.Drafts[key] = k.Text()
+	// Keep the bubble's content inset while its surface widens: the editor's
+	// one-pixel border must not steal text width or move its first baseline.
+	panel := n.Column(c.Key("user-surface:"+item.ID)).FillWidth().MaxWidth(676).Padding(11, 15).Gap(10).Radius(14).Background(bg).Border(1, t.Border).Label("历史消息编辑器").Transition(n.ElementTransition{Position: true, Size: true, Colors: true, Duration: 280 * time.Millisecond, Ease: composerDescentEase})
+	panel.Children(func() {
+		if !locked {
+			v.draftAttachmentStripFor(c, t, key)
+		} else {
+			preview := item
+			preview.Skills = nil
+			preview.Attachments = nil
+			for _, a := range m.Attachments[key] {
+				preview.Attachments = append(preview.Attachments, a.Attachment)
+			}
+			v.historyAttachments(c, t, preview)
+		}
+		options := richtext.EditorOptions{Label: "编辑历史消息", Font: n.Font{Family: t.Font, Size: 14, Weight: 400}, ReadOnly: locked, PlainText: true, NoMarkdown: true, MaxLines: 12, LineHeight: 24}
+		options.OnKey = func(keyCode n.Key, mods n.Modifiers) bool {
+			v.publishComposer(key, binding)
+			if locked {
+				return false
+			}
+			if v.mentionKey(composerKey{Key: keyCode, Mods: mods, binding: binding}) {
+				return true
+			}
+			if keyCode == n.KeyEscape {
 				m.CancelHistoryEdit()
 				return true
 			}
-			if k.Key == n.KeyEnter && k.Mods == n.Cmd {
-				m.Drafts[key] = k.Text()
+			if keyCode == n.KeyEnter && mods == n.Cmd {
 				v.restartHistory()
 				return true
 			}
 			return false
-		})
+		}
+		if !locked {
+			options.OnPaste = func(text string) bool { return v.pasteAttachments(key, text) }
+		}
+		input := composerInput{Element: richtext.EditorBase(c.Key("text"), binding.doc, options).FillWidth().MinHeight(24).MaxHeight(320), binding: binding}
 		if v.historyFocus == item.ID {
-			input.Focus().SetTextSelection(utf8.RuneCountInString(binding.Text), utf8.RuneCountInString(binding.Text))
+			input.Focus()
+			binding.doc.SetSelection(binding.doc.Text().Len(), binding.doc.Text().Len())
 			v.historyFocus = ""
 		}
 		input.Changed()
-		m.Drafts[key], binding.LastModel = binding.Text, binding.Text
-		n.Row(c).FillWidth().Gap(12).AlignItems(n.Center).Children(func() {
+		v.publishComposer(key, binding)
+		if !locked {
+			v.syncMention(c, input, binding.doc.Text().String())
+			v.mentionPopup(c, t, panel, input)
+		}
+
+		n.Row(c).FillWidth().Gap(messageFooterGap).AlignItems(n.Center).Children(func() {
 			n.Spacer(c).Grow(1)
 			cancelText := "取消"
 			if edit.OperationID != "" {
@@ -217,7 +250,7 @@ func (v *View) historyEditor(c *n.Context, t *n.Theme, item domain.Item) {
 				m.CancelHistoryEdit()
 			}
 			label := "保存并重新开始"
-			disabled := !v.historyReady(m.Details[sid].Session) || strings.TrimSpace(binding.Text) == "" && len(item.Attachments) == 0 && len(item.Skills) == 0
+			disabled := !v.historyReady(m.Details[sid].Session) || !m.HasDraftContent(key) || v.preparingAttachments(key)
 			if edit.OperationID != "" {
 				label = "核对重开结果"
 				if v.historyForked[sid] {
@@ -226,11 +259,19 @@ func (v *View) historyEditor(c *n.Context, t *n.Theme, item domain.Item) {
 				disabled = !m.Connected
 			}
 			disabled = disabled || exiting || v.historyBusy[sid]
+			_, referenceErr := m.HistoryReferences()
+			if edit.OperationID == "" && referenceErr != nil {
+				disabled = true
+			}
 			fill := t.Accent
 			if disabled {
 				fill = subtle(t)
 			}
-			if controlFeedback(c, n.ButtonBase(c), 14, true).Size(28, 28).Radius(14).Background(fill).TextColor(t.AccentText).Label(label).Tooltip(label).Disabled(disabled).Children(func() {
+			tip := label
+			if referenceErr != nil && edit.OperationID == "" {
+				tip = referenceErr.Error()
+			}
+			if controlFeedback(c, n.ButtonBase(c), 14, true).Size(28, 28).Radius(14).Background(fill).TextColor(t.AccentText).Label(label).Tooltip(tip).Disabled(disabled).Children(func() {
 				n.Icon(c, historyReturnIcon).Size(28.0*14/24, 28.0*14/24)
 			}).Clicked() {
 				v.collectBindings()
@@ -241,14 +282,18 @@ func (v *View) historyEditor(c *n.Context, t *n.Theme, item domain.Item) {
 }
 
 func (v *View) historyAttachments(c *n.Context, t *n.Theme, item domain.Item) {
-	if len(item.Attachments) == 0 && len(item.Skills) == 0 {
+	regular := false
+	for _, a := range item.Attachments {
+		regular = regular || a.SourcePath == ""
+	}
+	if !regular {
 		return
 	}
 	n.Row(c).Wrap().Gap(8).Children(func() {
-		for _, skill := range item.Skills {
-			n.Text(c, "/"+skill.Name).FontSize(12).TextColor(t.TextMuted).Padding(3, 7).Radius(5).Background(codeSurface(t))
-		}
 		for _, a := range item.Attachments {
+			if a.SourcePath != "" {
+				continue
+			}
 			var source n.Rect
 			button := control(c.Key(a.ID)).Height(64).MaxWidth(220).Padding(6, 8).Radius(7).Background(codeSurface(t)).Label("预览附件：" + a.Name).Children(func() {
 				n.Row(c).Gap(8).AlignItems(n.Center).Children(func() {
@@ -267,4 +312,13 @@ func (v *View) historyAttachments(c *n.Context, t *n.Theme, item domain.Item) {
 			}
 		}
 	})
+}
+
+func hasInlineFiles(files []domain.Attachment) bool {
+	for _, file := range files {
+		if file.SourcePath != "" {
+			return true
+		}
+	}
+	return false
 }

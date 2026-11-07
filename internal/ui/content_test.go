@@ -90,3 +90,48 @@ func TestActivityDisclosureKeepsClickedHeadingAtReadingPosition(t *testing.T) {
 		t.Fatal("clicked heading moved during disclosure", before, after)
 	}
 }
+
+func TestEmptyReasoningDoesNotCreateAnUnexpandableRow(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Items = []domain.Item{
+		{ID: "a", TurnID: "t", Kind: "assistant", Text: "好", Final: true},
+		{ID: "empty", TurnID: "t", Kind: "activity", Presentation: "reasoning", Name: "思考摘要", Final: true},
+		{ID: "b", TurnID: "t", Kind: "assistant", Text: "好", Final: true},
+		{ID: "trailing", TurnID: "t", Kind: "activity", Presentation: "reasoning", Name: "思考摘要", Final: true},
+	}
+	d.Turns = []domain.Turn{{ID: "t", Status: "completed"}}
+	m.Details["s"] = d
+	v := New(m, nil, "")
+	ui := n.NewTester(v.View, 1200, 820)
+	rows := v.transcriptRows(d.Items)
+	if ui.HasText("思考摘要") || len(rows) != 2 || rows[0].item.ID != "a" || rows[1].item.ID != "b" {
+		t.Fatal("empty summary rendered or actual distinct messages deduplicated", ui.Texts(), rows)
+	}
+	rows = withTurnFooters(rows, d.Items, map[string]domain.Turn{"t": d.Turns[0]})
+	if len(rows) != 3 || rows[2].footer != "t" {
+		t.Fatal("hiding trailing empty reasoning lost the receipt", rows)
+	}
+}
+
+func TestEmptyReasoningDoesNotSplitConsecutiveTools(t *testing.T) {
+	m := layoutModel()
+	v := New(m, nil, "")
+	rows := v.transcriptRows([]domain.Item{
+		{ID: "a", TurnID: "t", Kind: "tool", Final: true},
+		{ID: "empty", TurnID: "t", Kind: "activity", Presentation: "reasoning", Final: true},
+		{ID: "b", TurnID: "t", Kind: "tool", Final: true},
+	})
+	groups := 0
+	for _, row := range rows {
+		if row.group != "" {
+			groups++
+			if row.count != 2 {
+				t.Fatal("invisible reasoning split the tool group", rows)
+			}
+		}
+	}
+	if groups != 1 {
+		t.Fatal("tools did not stay in a single group", rows)
+	}
+}
