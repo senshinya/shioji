@@ -7,6 +7,7 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"slices"
 	"strings"
 	"time"
 )
@@ -335,6 +336,17 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 										}
 										text += fmt.Sprintf("%d 个附件", len(item.Input.Attachments))
 									}
+									if len(item.Input.Skills) > 0 {
+										if text != "" {
+											text += " · "
+										}
+										for i, skill := range item.Input.Skills {
+											if i > 0 {
+												text += ", "
+											}
+											text += "/" + skill.Name
+										}
+									}
 									queuedText := n.Text(c, text).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").FontSize(14).FixedLineHeight(20).TextColor(t.Text.Alpha(.86)).Tooltip(preview)
 									queuedText.DrawOver(func(_ *n.Painter, r n.Rect) {
 										if present {
@@ -451,7 +463,7 @@ func (v *View) saveQueued() {
 	sid := m.SessionID
 	edit := m.QueueEdits[sid]
 	text := m.Drafts[m.DraftKey()]
-	if edit.ID == "" || v.queueBusy[sid] || !m.Connected || (strings.TrimSpace(text) == "" && len(m.Attachments[m.DraftKey()]) == 0) {
+	if edit.ID == "" || v.queueBusy[sid] || !m.Connected || !m.HasDraftContent(m.DraftKey()) {
 		return
 	}
 	refs, err := m.SubmissionAttachments(m.WorkspaceID)
@@ -459,8 +471,30 @@ func (v *View) saveQueued() {
 		m.Error = err.Error()
 		return
 	}
-	v.queueCommand("queue.edit", protocol.QueueInput{Attachments: refs, SessionID: sid, ID: edit.ID, Revision: edit.Revision, Text: text}, func(q domain.QueueState) {
-		m.FinishQueueEdit(sid, edit.ID, text, q, refs)
+	skills, err := m.SubmissionSkills()
+	if err != nil {
+		m.Error = err.Error()
+		return
+	}
+	if skills == nil {
+		skills = []domain.SkillReference{}
+	}
+	positions := m.DraftReferencePositions(m.DraftKey())
+	v.queueCommand("queue.edit", protocol.QueueInput{ReferencePositions: positions, Skills: skills, Attachments: refs, SessionID: sid, ID: edit.ID, Revision: edit.Revision, Text: text}, func(q domain.QueueState) {
+		sameSkills := len(m.DraftSkills["session:"+sid]) == len(skills)
+		if sameSkills {
+			for i, draft := range m.DraftSkills["session:"+sid] {
+				if draft.Reference != skills[i] {
+					sameSkills = false
+					break
+				}
+			}
+		}
+		if sameSkills && slices.Equal(positions, m.DraftReferencePositions("session:"+sid)) {
+			m.FinishQueueEdit(sid, edit.ID, text, q, refs)
+		} else {
+			m.SetQueue(q)
+		}
 		if m.SessionID == sid {
 			v.focusComposer = true
 		}

@@ -16,6 +16,20 @@ import (
 
 // EditorOptions configure an Editor.
 type EditorOptions struct {
+	// PlainText disables formatting commands and rich clipboard conversion while
+	// retaining atomic attachments inserted by the application.
+	PlainText bool
+	// OnKey handles a key before native editing, outside IME composition. The
+	// document's selection is current, and document edits are taken immediately.
+	OnKey func(ui.Key, ui.Modifiers) bool
+	// OnPaste lets applications consume file/image clipboard data.
+	OnPaste func(string) bool
+	// MaxLines grows the editor to its content, bounded by this many lines.
+	// Zero keeps the ordinary externally sized, scrolling editor.
+	MaxLines int
+	// LineHeight fixes the line advance in DIPs, zero uses the font metrics.
+	LineHeight float32
+
 	// Label names the editor to assistive technology; "Rich text" when
 	// empty.
 	Label string
@@ -84,8 +98,12 @@ func EditorBase(c *ui.Context, doc *Document, options ...EditorOptions) ui.Eleme
 // document, the layouts of its paragraphs, where it is scrolled to, the
 // selection and an input method's composition.
 type view struct {
-	doc  *Document
-	opts EditorOptions
+	hoverAttachment     *Attachment
+	pressAttachment     *Attachment
+	pressAttachmentRect ui.Rect
+	pressX, pressY      float32
+	doc                 *Document
+	opts                EditorOptions
 	// shown is the text laid out, of the document's version and
 	// selVersion.
 	shown      Text
@@ -241,6 +259,29 @@ func build(c *ui.Context, doc *Document, options []EditorOptions, styled bool) u
 	e.Cursor(v.cursor)
 	e.Draw(v.paint)
 	e.ContextMenu(v.menu)
+	if v.hoverAttachment != nil && e.Hovered() {
+		label := v.hoverAttachment.Tooltip
+		if label == "" {
+			label = v.hoverAttachment.Name
+		}
+		e.Tooltip(label)
+	}
+	if v.opts.MaxLines > 0 {
+		width := e.LayoutBounds().W
+		if width <= 0 {
+			width, _ = c.Size()
+		}
+		v.layout(max(1, width-2*v.padX), float32(v.opts.MaxLines)*max(v.opts.LineHeight, v.base.Size))
+		limit := float32(v.opts.MaxLines) * max(v.opts.LineHeight, v.base.Size)
+		h := float32(0)
+		for i := range v.paras {
+			h += v.paraLayout(i).h
+			if h >= limit {
+				break
+			}
+		}
+		e.Height(min(max(h, v.base.Size), limit) + 2*v.padY)
+	}
 	if styled {
 		e.FocusRing(false)
 	}
@@ -404,13 +445,14 @@ func (v *view) paraFont(st ParagraphStyle) ui.Font {
 
 // lookKey is what of the look the layouts of paragraphs are made of.
 type lookKey struct {
-	base  ui.Font
-	theme Theme
-	tags  bool
+	base       ui.Font
+	theme      Theme
+	tags       bool
+	lineHeight float32
 }
 
 func (v *view) lookKey() lookKey {
-	return lookKey{base: v.base, theme: v.look.Theme, tags: v.look.tagStyle != nil}
+	return lookKey{base: v.base, theme: v.look.Theme, tags: v.look.tagStyle != nil, lineHeight: v.opts.LineHeight}
 }
 
 // heading returns the style of headings of level, from 1.
@@ -536,7 +578,9 @@ func (look *look) span(text string, a Attributes, st ParagraphStyle) ui.Span {
 		if look.width > 0 && w > look.width {
 			w, h = look.width, h*look.width/w
 		}
-		s.ObjectWidth, s.ObjectHeight = w, h
+		_, naturalHeight := at.size()
+		descent := min(h, max(0, at.Descent*h/naturalHeight))
+		s.ObjectWidth, s.ObjectHeight, s.ObjectDescent = w, h-descent, descent
 	}
 	return s
 }
@@ -614,7 +658,7 @@ func (v *view) paraLayout(p int) *paraView {
 	}
 	// The indent is on the side the paragraph starts at, the right of one
 	// reading right to left.
-	shape := ui.TextShape{Width: v.look.width, Align: para.style.Align, Indent: indent}
+	shape := ui.TextShape{Width: v.look.width, Align: para.style.Align, Indent: indent, LineHeight: v.opts.LineHeight}
 	l := ui.ShapeRichTextWith(spans, v.paraFont(para.style), shape)
 	units := pv.units[:0]
 	units = append(units, 0)

@@ -95,7 +95,7 @@ func (s *Server) failRuntimeLaunch(op domain.Operation, in domain.Submission, ca
 		s.cancel()
 		return
 	}
-	if _, err = s.store.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, Kind: "user", Text: in.Text, Attachments: in.Attachments, Status: "failed", Final: true}}); err != nil {
+	if _, err = s.store.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, Kind: "user", Text: in.Text, Skills: in.Skills, Attachments: in.Attachments, Status: "failed", Final: true}}); err != nil {
 		s.cancel()
 	}
 }

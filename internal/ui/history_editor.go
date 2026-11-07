@@ -217,7 +217,7 @@ func (v *View) historyEditor(c *n.Context, t *n.Theme, item domain.Item) {
 				m.CancelHistoryEdit()
 			}
 			label := "保存并重新开始"
-			disabled := !v.historyReady(m.Details[sid].Session) || strings.TrimSpace(binding.Text) == "" && len(item.Attachments) == 0
+			disabled := !v.historyReady(m.Details[sid].Session) || strings.TrimSpace(binding.Text) == "" && len(item.Attachments) == 0 && len(item.Skills) == 0
 			if edit.OperationID != "" {
 				label = "核对重开结果"
 				if v.historyForked[sid] {
@@ -241,10 +241,13 @@ func (v *View) historyEditor(c *n.Context, t *n.Theme, item domain.Item) {
 }
 
 func (v *View) historyAttachments(c *n.Context, t *n.Theme, item domain.Item) {
-	if len(item.Attachments) == 0 {
+	if len(item.Attachments) == 0 && len(item.Skills) == 0 {
 		return
 	}
 	n.Row(c).Wrap().Gap(8).Children(func() {
+		for _, skill := range item.Skills {
+			n.Text(c, "/"+skill.Name).FontSize(12).TextColor(t.TextMuted).Padding(3, 7).Radius(5).Background(codeSurface(t))
+		}
 		for _, a := range item.Attachments {
 			var source n.Rect
 			button := control(c.Key(a.ID)).Height(64).MaxWidth(220).Padding(6, 8).Radius(7).Background(codeSurface(t)).Label("预览附件：" + a.Name).Children(func() {

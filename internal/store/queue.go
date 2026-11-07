@@ -128,6 +128,12 @@ func (s *Store) changeQueue(sid string, revision int64, change func(*domain.Queu
 	return q, s.commit(tx)
 }
 func (s *Store) EditQueue(sid, id string, revision int64, text string, attachments ...[]domain.Attachment) (domain.QueueState, error) {
+	return s.editQueue(sid, id, revision, text, attachments, nil, false, nil)
+}
+func (s *Store) EditQueueContent(sid, id string, revision int64, text string, attachments []domain.Attachment, skills []domain.SkillReference, positions []domain.ReferencePosition) (domain.QueueState, error) {
+	return s.editQueue(sid, id, revision, text, [][]domain.Attachment{attachments}, skills, skills != nil, positions)
+}
+func (s *Store) editQueue(sid, id string, revision int64, text string, attachments [][]domain.Attachment, skills []domain.SkillReference, replaceSkills bool, positions []domain.ReferencePosition) (domain.QueueState, error) {
 	return s.changeQueue(sid, revision, func(q *domain.QueueState) error {
 		if !utf8.ValidString(text) || len(text) > 128<<10 {
 			return errors.New("invalid queued text")
@@ -139,6 +145,10 @@ func (s *Store) EditQueue(sid, id string, revision int64, text string, attachmen
 				}
 				input := q.Items[i].Input
 				input.Text = text
+				input.ReferencePositions = positions
+				if replaceSkills {
+					input.Skills = skills
+				}
 				if len(attachments) > 0 {
 					input.Attachments = attachments[0]
 				}
@@ -291,12 +301,12 @@ func (s *Store) acceptSteerLocked(in domain.Submission, turn string, revision in
 	var item *domain.Item
 	if queued == nil {
 		now := time.Now()
-		item = &domain.Item{ID: "input:" + op.ID, TurnID: turn, Kind: "user", Attachments: in.Attachments, Text: in.Text, Status: "dispatching", Final: true, SentAt: &now}
+		item = &domain.Item{ID: "input:" + op.ID, TurnID: turn, Kind: "user", Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Status: "dispatching", Final: true, SentAt: &now}
 		if err = putItem(tx, op.SessionID, item); err != nil {
 			return none, err
 		}
 	} else {
-		if err = putItem(tx, op.SessionID, &domain.Item{ID: "input:" + op.ID, TurnID: turn, Kind: "queued", Attachments: in.Attachments, Text: in.Text, Final: true}); err != nil {
+		if err = putItem(tx, op.SessionID, &domain.Item{ID: "input:" + op.ID, TurnID: turn, Kind: "queued", Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Final: true}); err != nil {
 			return none, err
 		}
 		if err = putQueue(tx, *queued); err != nil {

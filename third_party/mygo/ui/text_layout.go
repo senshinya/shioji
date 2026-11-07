@@ -95,6 +95,8 @@ func ShapeRichText(spans []Span, font Font, width float32) *TextLayout {
 
 // TextShape is how ShapeRichTextWith lays text out.
 type TextShape struct {
+	// LineHeight fixes the line advance in DIPs; zero uses font metrics.
+	LineHeight float32
 	// Width wraps lines at it, in DIPs; zero only breaks at newlines.
 	Width float32
 	// Align aligns the lines within Width: Start (the default, the right
@@ -153,6 +155,9 @@ func shapeTextAligned(s string, font Font, shape TextShape, spans []Span) *TextL
 		params.Align = text.Right
 	case shape.Align == End:
 		params.Align = text.End
+	}
+	if shape.LineHeight > 0 {
+		params.Style.LineHeight = shape.LineHeight / params.Style.FontSize()
 	}
 	l := text.Shared().Shape(params)
 	t := &TextLayout{l: l, units: make([]int, len(l.Runes)+1), spans: spans}

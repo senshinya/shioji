@@ -64,7 +64,7 @@ Codex app-server／后续 harness
 
 兼容规则：
 
-- Worker 协议为 **major 2 / minor 10**。保留顶层默认目录投影供旧客户端读取，新客户端按 HarnessID 选择独立目录；旧 worker 的能力兼容限于已协商的 minor <= 9 单运行时协议。
+- Worker 协议为 **major 2 / minor 11**。minor 10 增加多 harness 目录，minor 11 增加文件引用和 typed Skill 目录／输入（见 [输入框引用](composer-references.md)）。保留顶层默认目录投影供旧客户端读取，新客户端按 HarnessID 选择独立目录；旧 worker 的能力兼容限于已协商的 minor <= 9 单运行时协议。
 - 已保存的 `ThreadID` 继续是不透明来源引用，不因改名重写数据库。历史阶段名 `forked` 保留既有存储含义，表示已有可重试的准备结果，不要求其他 harness 真正创建 fork。
 - 旧提交的空 HarnessID 不改变其操作摘要；Worker 将默认身份作为接纳元数据写入新会话。已有会话身份不会随首页或设备默认变化。
 - 根目录 catalog 的归属保存在 `catalog-owner`，与当前默认选择独立。无归属文件但存在旧根进程记录时，由组合入口明确识别旧单 Codex 布局。

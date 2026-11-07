@@ -17,7 +17,7 @@ func (v *view) paint(p *ui.Painter, r ui.Rect) {
 	ox, oy := r.X+v.padX, r.Y+v.padY
 	look := &v.look
 	if v.shown.Len() == 0 && v.compose == "" && v.opts.Placeholder != "" {
-		pl := ui.ShapeRichTextWith([]ui.Span{{Text: v.opts.Placeholder}}, v.paraFont(v.para(0).style), ui.TextShape{Width: w})
+		pl := ui.ShapeRichTextWith([]ui.Span{{Text: v.opts.Placeholder}}, v.paraFont(v.para(0).style), ui.TextShape{Width: w, LineHeight: v.opts.LineHeight})
 		p.TextLayout(pl, ox, oy, look.Muted)
 	}
 	a, z := v.selection()

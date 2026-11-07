@@ -104,6 +104,7 @@ type ThreadParams struct {
 	Config                map[string]any         `json:"config,omitempty"`
 }
 type Input struct {
+	Name string `json:"name,omitempty"`
 	Path string `json:"path,omitempty"`
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`

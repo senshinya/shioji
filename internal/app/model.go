@@ -20,6 +20,7 @@ type InspectorLayout struct {
 }
 
 type Model struct {
+	DraftSkills          map[string][]DraftSkill
 	homeConfigContext    string
 	HomeHarnesses        map[string]string
 	HarnessConfigs       map[string]domain.RunConfig
@@ -74,7 +75,7 @@ type Model struct {
 }
 
 func NewModel() *Model {
-	return &Model{HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {
@@ -162,7 +163,7 @@ func (m *Model) beginSubmission(allowRunning bool) (domain.Submission, error) {
 	if !m.Connected || m.RunReadiness().State != "ready" {
 		return domain.Submission{}, errors.New("connect to a ready execution device")
 	}
-	if strings.TrimSpace(m.Drafts[key]) == "" && len(m.Attachments[key]) == 0 {
+	if !m.HasDraftContent(key) {
 		return domain.Submission{}, errors.New("enter a message")
 	}
 	workspace := m.WorkspaceID
@@ -192,7 +193,11 @@ func (m *Model) beginSubmission(allowRunning bool) (domain.Submission, error) {
 	if err != nil {
 		return domain.Submission{}, err
 	}
-	in := domain.Submission{HarnessID: m.HarnessID(), Attachments: refs, OperationID: domain.NewID(), WorkspaceID: workspace, SessionID: m.SessionID, Text: m.Drafts[key], Config: m.Config()}
+	skills, err := m.SubmissionSkills()
+	if err != nil {
+		return domain.Submission{}, err
+	}
+	in := domain.Submission{ReferencePositions: m.DraftReferencePositions(key), Skills: skills, HarnessID: m.HarnessID(), Attachments: refs, OperationID: domain.NewID(), WorkspaceID: workspace, SessionID: m.SessionID, Text: m.Drafts[key], Config: m.Config()}
 	if m.SessionID == "" {
 		choice := m.GitDrafts[workspace]
 		if (choice.Branch != "" || choice.NewWorktree) && m.GitEpochs["workspace:"+workspace] != m.ConnectionEpoch {
@@ -239,6 +244,7 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 			m.Drafts[key] = ""
 		}
 		m.clearAcceptedAttachments(key, in.Attachments)
+		m.clearAcceptedSkills(key, in)
 		m.Configs["session:"+op.SessionID] = in.Config
 		if in.SessionID == "" && m.SessionID == "" && m.WorkspaceID == in.WorkspaceID {
 			m.SessionID = op.SessionID
@@ -420,6 +426,7 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 }
 
 type savedState struct {
+	DraftSkills          map[string][]DraftSkill         `json:"draftSkills,omitempty"`
 	HomeConfigContext    string                          `json:"homeConfigContext,omitempty"`
 	HomeHarnesses        map[string]string               `json:"homeHarnesses,omitempty"`
 	HarnessConfigs       map[string]domain.RunConfig     `json:"harnessConfigs,omitempty"`
@@ -470,6 +477,9 @@ func (m *Model) Load(path string) error {
 	var saved savedState
 	if err = json.Unmarshal(b, &saved); err != nil {
 		return err
+	}
+	if saved.DraftSkills != nil {
+		m.DraftSkills = saved.DraftSkills
 	}
 	m.Preferences = saved.Preferences.Normalized()
 	m.homeConfigContext = saved.HomeConfigContext

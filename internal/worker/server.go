@@ -218,6 +218,24 @@ func (s *Server) serveConnection(conn net.Conn) {
 func decode[T any](body []byte) (T, error) { var v T; err := json.Unmarshal(body, &v); return v, err }
 func (s *Server) handle(method string, body []byte) (any, error) {
 	switch method {
+	case "skills.list":
+		q, err := decode[protocol.SkillQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.listSkills(q)
+	case "file.search":
+		q, err := decode[protocol.FileSearchQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.searchFiles(q)
+	case "file.snapshot":
+		q, err := decode[protocol.FileSnapshotQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.snapshotFile(q)
 	case "session.reconcile":
 		in, err := decode[protocol.RecoveryInput](body)
 		if err != nil {
@@ -693,7 +711,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 			err = s.coverOperation(session.ID, op.ID)
 		}
 		if err == nil {
-			turnID, err = runtime.Submit(ctx, session, op.ID, in.Text, inputs...)
+			turnID, err = runtime.Submit(ctx, session, op.ID, harness.TurnInput{Text: in.Text, Attachments: inputs, Skills: in.Skills})
 		}
 	}
 	outcome := domain.DeliveryOutcome(err != nil, harness.IsUncertain(err))
@@ -732,7 +750,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 		}
 	}
 	// Update the existing accepted input; a wire userMessage never creates a duplicate.
-	_, err = s.store.Apply(session.ID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: turnID, Kind: "user", Attachments: in.Attachments, Text: in.Text, Final: true, Status: delivery}})
+	_, err = s.store.Apply(session.ID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: turnID, Kind: "user", Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Final: true, Status: delivery}})
 	if err != nil {
 		s.cancel()
 	}

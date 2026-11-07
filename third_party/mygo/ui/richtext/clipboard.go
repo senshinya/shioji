@@ -56,10 +56,11 @@ type clipAttributes struct {
 }
 
 type clipAttachment struct {
-	Name   string  `json:"name,omitempty"`
-	URL    string  `json:"url,omitempty"`
-	Width  float32 `json:"width,omitempty"`
-	Height float32 `json:"height,omitempty"`
+	Name    string  `json:"name,omitempty"`
+	URL     string  `json:"url,omitempty"`
+	Width   float32 `json:"width,omitempty"`
+	Height  float32 `json:"height,omitempty"`
+	Descent float32 `json:"descent,omitempty"`
 }
 
 // copies keeps the last text copied in this process, by the name its
@@ -126,7 +127,7 @@ func clipOf(t Text) clipText {
 			}
 			if at := a.Attachment; at != nil {
 				w, h := at.size()
-				cr.Attachment = &clipAttachment{Name: at.Name, URL: at.URL, Width: w, Height: h}
+				cr.Attachment = &clipAttachment{Name: at.Name, URL: at.URL, Width: w, Height: h, Descent: at.Descent}
 			}
 			cp.Runs = append(cp.Runs, cr)
 		}
@@ -166,7 +167,7 @@ func (c clipText) text() Text {
 			a.Color, _ = parseCSSColor(cr.Attributes.Color)
 			a.Background, _ = parseCSSColor(cr.Attributes.Background)
 			if at := cr.Attachment; at != nil {
-				a.Attachment = &Attachment{Name: at.Name, URL: at.URL, Width: side(at.Width), Height: side(at.Height)}
+				a.Attachment = &Attachment{Name: at.Name, URL: at.URL, Width: side(at.Width), Height: side(at.Height), Descent: min(side(at.Height), side(at.Descent))}
 			}
 			p.Runs = append(p.Runs, Run{Text: cr.Text, Attributes: a})
 		}
@@ -199,6 +200,18 @@ func (v *view) copySelection() {
 	if a == z {
 		return
 	}
+	if v.opts.PlainText {
+		var out strings.Builder
+		for _, run := range v.shown.Runs(a, z) {
+			if attachment := run.Attributes.Attachment; attachment != nil {
+				out.WriteString(attachment.Name)
+			} else {
+				out.WriteString(run.Text)
+			}
+		}
+		v.services.WriteClipboard(out.String())
+		return
+	}
 	v.services.WriteClipboardData(clipboardData(v.shown.Slice(a, z)))
 }
 
@@ -206,6 +219,12 @@ func (v *view) copySelection() {
 // format the editor reads, or its plain text in the typing attributes when
 // matching the style.
 func (v *view) paste(matchStyle bool) {
+	if v.opts.OnPaste != nil && v.opts.OnPaste(v.services.ReadClipboard()) {
+		return
+	}
+	if v.opts.PlainText {
+		matchStyle = true
+	}
 	var t Text
 	ok := false
 	if !matchStyle {

@@ -349,6 +349,9 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		if title == "" && len(in.Attachments) > 0 {
 			title = in.Attachments[0].Name
 		}
+		if title == "" && len(in.Skills) > 0 {
+			title = in.Skills[0].Name
+		}
 		if utf8.RuneCountInString(title) > 60 {
 			title = string([]rune(title)[:60])
 		}
@@ -377,7 +380,7 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 	var item *domain.Item
 	if queued == nil {
 		now := time.Now()
-		item = &domain.Item{ID: "input:" + op.ID, Kind: "user", Attachments: in.Attachments, Text: in.Text, Final: true, Status: "dispatching", SentAt: &now}
+		item = &domain.Item{ID: "input:" + op.ID, Kind: "user", Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Final: true, Status: "dispatching", SentAt: &now}
 		if err = putItem(tx, session.ID, item); err != nil {
 			return none, err
 		}
@@ -386,7 +389,7 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		return none, err
 	}
 	if queued != nil {
-		if err = putItem(tx, session.ID, &domain.Item{ID: "input:" + op.ID, Kind: "queued", Attachments: in.Attachments, Text: in.Text, Final: true}); err != nil {
+		if err = putItem(tx, session.ID, &domain.Item{ID: "input:" + op.ID, Kind: "queued", Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Final: true}); err != nil {
 			return none, err
 		}
 		if err = putQueue(tx, *queued); err != nil {

@@ -31,7 +31,21 @@ func (m *Model) PrepareRecoveryDraft(id string) error {
 		return errors.New("接续内容超过输入上限，请先整理草稿")
 	}
 	m.Drafts["home"] = text
-	m.Attachments["home"] = append(m.Attachments["home"], m.Attachments["session:"+id]...)
+	seenSkills := map[DraftSkill]bool{}
+	combined := []DraftSkill{}
+	for _, skill := range append(append([]DraftSkill(nil), m.DraftSkills["home"]...), m.DraftSkills["session:"+id]...) {
+		// Recovery creates a new summary, rather than the original text layout.
+		skill.InlinePosition = 0
+		if !seenSkills[skill] {
+			seenSkills[skill] = true
+			combined = append(combined, skill)
+		}
+	}
+	m.DraftSkills["home"] = combined
+	m.Attachments["home"] = append(append([]DraftAttachment(nil), m.Attachments["home"]...), m.Attachments["session:"+id]...)
+	for i := range m.Attachments["home"] {
+		m.Attachments["home"][i].InlinePosition = 0
+	}
 	if m.homeConfigContext != "" {
 		if m.HarnessConfigs == nil {
 			m.HarnessConfigs = map[string]domain.RunConfig{}

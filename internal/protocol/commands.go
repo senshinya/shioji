@@ -61,13 +61,15 @@ type SearchQuery struct {
 
 // QueueInput applies a revision-checked mutation to the owning worker's queue.
 type QueueInput struct {
-	Attachments []domain.Attachment `json:"attachments,omitempty"`
-	BeforeID    string              `json:"beforeId,omitempty"`
-	TurnID      string              `json:"turnId,omitempty"`
-	SessionID   string              `json:"sessionId"`
-	ID          string              `json:"id,omitempty"`
-	Revision    int64               `json:"revision"`
-	Text        string              `json:"text,omitempty"`
+	ReferencePositions []domain.ReferencePosition `json:"referencePositions"`
+	Skills             []domain.SkillReference    `json:"skills"`
+	Attachments        []domain.Attachment        `json:"attachments,omitempty"`
+	BeforeID           string                     `json:"beforeId,omitempty"`
+	TurnID             string                     `json:"turnId,omitempty"`
+	SessionID          string                     `json:"sessionId"`
+	ID                 string                     `json:"id,omitempty"`
+	Revision           int64                      `json:"revision"`
+	Text               string                     `json:"text,omitempty"`
 }
 type AttachmentPut struct {
 	WorkspaceID string            `json:"workspaceId"`
@@ -107,4 +109,19 @@ type RecoveryResult struct {
 type HistoryOperationQuery struct {
 	ID        string `json:"id"`
 	SessionID string `json:"sessionId"`
+}
+
+type FileSearchQuery struct {
+	GitQuery
+	Query string `json:"query"`
+}
+type FileSnapshotQuery struct {
+	GitQuery
+	Root string `json:"root"`
+	Path string `json:"path"`
+}
+
+type SkillQuery struct {
+	GitQuery
+	HarnessID string `json:"harnessId,omitempty"`
 }

@@ -18,8 +18,8 @@ import (
 // Major 2 requires clients to understand authoritative history replacement.
 const Major = 2
 
-// Minor 10 adds harness selection and independent capability/model catalogs.
-const Minor = 10
+// Minor 11 adds device-side workspace file search and immutable references.
+const Minor = 11
 const MaxFrame = 1 << 20
 
 type Frame struct {

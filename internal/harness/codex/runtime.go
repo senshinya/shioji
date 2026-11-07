@@ -433,6 +433,9 @@ func (r *Runtime) bindThread(thread, session string, fresh bool, name *string) e
 	return r.emit([]domain.Event{{SessionID: session, Type: "session.title", Text: boundedTo(strings.TrimSpace(*name), 4<<10)}})
 }
 func (r *Runtime) Submit(ctx context.Context, s domain.Session, operationID, text string, attachments ...AttachmentInput) (string, error) {
+	return r.submit(ctx, s, operationID, text, attachments, nil)
+}
+func (r *Runtime) submit(ctx context.Context, s domain.Session, operationID, text string, attachments []AttachmentInput, skills []domain.SkillReference) (string, error) {
 	if err := r.Validate(s.Config); err != nil {
 		return "", err
 	}
@@ -442,6 +445,7 @@ func (r *Runtime) Submit(ctx context.Context, s domain.Session, operationID, tex
 		policy.WritableRoots = append([]string{s.Context.CWD}, s.Context.AdditionalDirectories...)
 	}
 	input, err := attachmentInputs(text, attachments)
+	input = append(input, skillInputs(skills)...)
 	if err != nil {
 		return "", err
 	}
@@ -476,7 +480,11 @@ func (r *Runtime) Submit(ctx context.Context, s domain.Session, operationID, tex
 
 // Steer uses the pinned app-server schema's active-turn precondition.
 func (r *Runtime) Steer(ctx context.Context, s domain.Session, turnID, operationID, text string, attachments ...AttachmentInput) error {
+	return r.steer(ctx, s, turnID, operationID, text, attachments, nil)
+}
+func (r *Runtime) steer(ctx context.Context, s domain.Session, turnID, operationID, text string, attachments []AttachmentInput, skills []domain.SkillReference) error {
 	input, err := attachmentInputs(text, attachments)
+	input = append(input, skillInputs(skills)...)
 	if err != nil {
 		return err
 	}

@@ -32,3 +32,34 @@ func TestImageOnlyMessageAndQueueKeepImmutableAttachments(t *testing.T) {
 		t.Fatal("image-only queue edit failed", err)
 	}
 }
+
+func TestLegacyQueueEditRetainsSkillUnlessExplicitlyRemoved(t *testing.T) {
+	s := open(t)
+	w := workspace(t, s)
+	first, err := s.Accept(domain.Submission{OperationID: "first", WorkspaceID: w.ID, Text: "initial"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetOperation(first.ID, "confirmed", "")
+	s.Apply(first.SessionID, domain.Event{Type: "turn", Turn: &domain.Turn{ID: "t", Status: "running"}})
+	ref := domain.SkillReference{ID: "opaque", Name: "review"}
+	_, err = s.Enqueue(domain.Submission{OperationID: "queued", WorkspaceID: w.ID, SessionID: first.SessionID, Text: "queued", Skills: []domain.SkillReference{ref}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, _ := s.Queue(first.SessionID)
+	q, err = s.EditQueueContent(first.SessionID, q.Items[0].ID, q.Revision, "legacy edit", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(q.Items[0].Input.Skills) != 1 {
+		t.Fatal("missing old-client field removed Skill")
+	}
+	q, err = s.EditQueueContent(first.SessionID, q.Items[0].ID, q.Revision, "explicit removal", nil, []domain.SkillReference{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(q.Items[0].Input.Skills) != 0 {
+		t.Fatal("explicit empty list did not remove Skill")
+	}
+}

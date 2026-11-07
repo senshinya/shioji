@@ -13,6 +13,7 @@ import (
 
 	n "github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
+	"github.com/egoist/mygo/ui/richtext"
 	"shioji/internal/app"
 	"shioji/internal/attachments"
 	"shioji/internal/domain"
@@ -25,6 +26,8 @@ type editBinding struct {
 }
 
 type View struct {
+	composerDocuments                                                                                               map[string]*composerDocument
+	fileMention                                                                                                     *fileMention
 	finds                                                                                                           map[string]*conversationFind
 	searchResultsQuery                                                                                              string
 	historyRowBounds                                                                                                map[string]n.Rect
@@ -138,6 +141,12 @@ func New(model *app.Model, controller *app.Controller, path string) *View {
 	return v
 }
 func (v *View) collectBindings() {
+	for _, b := range v.composerDocuments {
+		edit := v.Model.QueueEdits[strings.TrimPrefix(b.key, "session:")]
+		if b.editToken == edit.Token {
+			v.publishComposer(b.key, b)
+		}
+	}
 	for key, b := range v.draftBindings {
 		if b.Text != b.LastModel {
 			v.Model.Drafts[key] = b.Text
@@ -215,6 +224,10 @@ func (v *View) View(c *n.Context) {
 	v.frameTime, v.reduceMotion = c.Now(), c.Preferences().ReduceMotion
 	if v.Controller != nil && v.nativeWindow == nil {
 		v.Controller.SetInvalidate(c.Services().Invalidate)
+	}
+	v.collectBindings()
+	if v.secondary != nil {
+		v.secondary.collectBindings()
 	}
 	v.pumpUpdates()
 	m.RefreshDevices()
@@ -695,8 +708,8 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	if m.SessionID != "" {
 		stackKey = "session:" + m.SessionID
 	}
-	binding := textBinding(v.draftBindings, key, m.Drafts[key])
-	draft := binding.Text
+	binding := v.composerDocument(c, key)
+	draft := m.Drafts[key]
 	cfg := m.Config()
 	running := false
 	for _, s := range m.Snapshot.Sessions {
@@ -718,7 +731,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	}
 	stack := n.Column(c.Key("composer-stack:" + stackKey)).Label("消息编辑区").FillWidth().MaxWidth(maxWidth).Gap(0).Children(func() {
 		v.queueDisclosure(c, t)
-		binding = textBinding(v.draftBindings, key, m.Drafts[key])
+		binding = v.composerDocument(c, key)
 
 		editID := m.QueueEdits[m.SessionID].ID
 		if v.composerHeightKey != stackKey {
@@ -742,12 +755,12 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 			}
 		}
 		heightFrame.Children(func() {
-			var input n.Element
+			var input composerInput
 			composer := n.Column(c.Key("composer:"+stackKey)).FillWidth().Padding(10, 14, 8, 6).Gap(4).Children(func() {
 				if m.QueueEdits[m.SessionID].ID != "" {
 					n.Column(c).Height(28)
 				}
-				binding = textBinding(v.draftBindings, key, m.Drafts[key])
+				binding = v.composerDocument(c, key)
 				v.branchStrip(c, t, home)
 				v.draftAttachmentStrip(c, t)
 				n.Column(c.Key("composer-input-space")).Height(v.composerInputHeight).Shrink(0)
@@ -758,26 +771,33 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					if editID != "" {
 						inputKey += ":edit:" + editID
 					}
-					input = n.TextAreaBase(c.Key(inputKey), &binding.Text).Absolute().Left(0).Right(0).Bottom(0).Label(v.composerLabel()).Placeholder("描述任务…").PlaceholderColor(subtle(t)).Padding(0, 9).FillWidth().Lines(1, 7).MinHeight(inputHeight).FontSize(inputSize).FixedLineHeight(inputLeading).OnTextKey(func(k n.TextKey) bool {
-						if k.Key == n.KeyEnter {
-							bind := composerBinding(k.Mods)
-							if bind == m.Preferences.Shortcuts.Newline {
-								return false
-							}
-							if bind != m.Preferences.Shortcuts.Send && bind != m.Preferences.Shortcuts.Steer {
-								return true
-							}
-							m.Drafts[key] = k.Text()
-							if strings.TrimSpace(k.Text()) != "" || len(m.Attachments[key]) > 0 {
-								v.sendMessage(bind == m.Preferences.Shortcuts.Steer)
-							}
+					options := richtext.EditorOptions{Label: v.composerLabel(), Placeholder: "描述任务…", Font: n.Font{Family: t.Font, Size: inputSize, Weight: 400}, NoMarkdown: true, PlainText: true, MaxLines: 7, LineHeight: inputLeading, Theme: &richtext.Theme{Muted: subtle(t)}}
+					options.OnKey = func(keyCode n.Key, mods n.Modifiers) bool {
+						k := composerKey{Key: keyCode, Mods: mods, binding: binding}
+						v.publishComposer(key, binding)
+						if v.mentionKey(k) {
 							return true
 						}
-						return false
-					})
-					input.OnPaste(func(text string) bool {
-						return v.pasteAttachments(key, text)
-					})
+						if keyCode != n.KeyEnter {
+							return false
+						}
+						bind := composerBinding(mods)
+						if bind == m.Preferences.Shortcuts.Newline {
+							return false
+						}
+						if bind == m.Preferences.Shortcuts.Send || bind == m.Preferences.Shortcuts.Steer {
+							if m.HasDraftContent(key) {
+								v.sendMessage(bind == m.Preferences.Shortcuts.Steer)
+							}
+						}
+						return true
+					}
+					options.OnPaste = func(text string) bool { return v.pasteAttachments(key, text) }
+					if s := v.sent; s != nil && s.source.W > 0 && s.session == m.SessionID && !s.queued && !home && !c.Preferences().ReduceMotion {
+						options.Theme.Muted = subtle(t).Alpha(v.sendProgress(c))
+					}
+					input = composerInput{Element: richtext.EditorBase(c.Key(inputKey), binding.doc, options).Absolute().Left(9).Right(9).Bottom(0).FillWidth().MinHeight(inputHeight), binding: binding}
+
 					input.Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 180*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 
 					if v.focusComposer {
@@ -786,18 +806,16 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					}
 					input.Changed()
 					v.inputBounds = input.Bounds()
-					if s := v.sent; s != nil && s.source.W > 0 && s.session == m.SessionID && !s.queued && !home && !c.Preferences().ReduceMotion {
-						input.PlaceholderColor(subtle(t).Alpha(v.sendProgress(c)))
-					}
 					if s := v.sent; s != nil && s.origin == "" && s.session == m.SessionID && !home && !s.focused {
 						if v.composerHadFocus {
 							input.Focus()
 						}
 						s.focused = true
 					}
-					draft = binding.Text
-					m.Drafts[key] = draft
-					binding.LastModel = draft
+					v.publishComposer(key, binding)
+					draft = m.Drafts[key]
+					v.syncMention(c, input, binding.doc.Text().String())
+					v.mentionPopup(c, t, heightFrame, input)
 				})
 				n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
 					if iconButton(c, plus, "添加附件").Size(28, 28).Disabled(v.Controller == nil || v.StatePath == "" || m.WorkerMinor < 6 || v.preparingAttachments(m.DraftKey())).Clicked() {
@@ -815,7 +833,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					v.choiceMenu(c, t, "permission:"+key, permission, choices)
 					n.Spacer(c).Grow(1)
 					v.runControl(c, t, key, cfg)
-					empty := strings.TrimSpace(draft) == "" && len(m.Attachments[key]) == 0
+					empty := strings.TrimSpace(draft) == "" && len(m.Attachments[key]) == 0 && len(m.DraftSkills[key]) == 0
 					icon := arrow
 					iconSize := float32(28.0 * 14 / 24)
 					iconKey := "primary-send-icon"

@@ -6,6 +6,7 @@ import (
 )
 
 type QueueEdit struct {
+	DisplacedSkills      []DraftSkill      `json:"displacedSkills,omitempty"`
 	Token                string            `json:"token,omitempty"`
 	DisplacedAttachments []DraftAttachment `json:"displacedAttachments,omitempty"`
 	ID                   string            `json:"id"`
@@ -72,12 +73,17 @@ func (m *Model) EditQueued(id string) error {
 	q := m.Queue()
 	for _, item := range q.Items {
 		if item.ID == id {
-			m.QueueEdits[m.SessionID] = QueueEdit{Token: domain.NewID(), ID: id, Revision: q.Revision, DisplacedAttachments: m.Attachments[m.DraftKey()], Displaced: m.Drafts[m.DraftKey()]}
+			m.QueueEdits[m.SessionID] = QueueEdit{DisplacedSkills: m.DraftSkills[m.DraftKey()], Token: domain.NewID(), ID: id, Revision: q.Revision, DisplacedAttachments: m.Attachments[m.DraftKey()], Displaced: m.Drafts[m.DraftKey()]}
 			m.Drafts[m.DraftKey()] = item.Input.Text
+			m.DraftSkills[m.DraftKey()] = nil
+			for _, ref := range item.Input.Skills {
+				m.DraftSkills[m.DraftKey()] = append(m.DraftSkills[m.DraftKey()], DraftSkill{Reference: ref, WorkspaceID: item.Input.WorkspaceID, DeviceID: m.workspaceDevice(item.Input.WorkspaceID), HarnessID: m.HarnessID()})
+			}
 			m.Attachments[m.DraftKey()] = nil
 			for _, a := range item.Input.Attachments {
 				m.Attachments[m.DraftKey()] = append(m.Attachments[m.DraftKey()], DraftAttachment{Attachment: a, DeviceID: m.workspaceDevice(item.Input.WorkspaceID), WorkspaceID: item.Input.WorkspaceID, Ready: true})
 			}
+			m.restoreReferencePositions(m.DraftKey(), item.Input.ReferencePositions)
 			return nil
 		}
 	}
@@ -86,6 +92,7 @@ func (m *Model) EditQueued(id string) error {
 func (m *Model) CancelQueueEdit(sid string) {
 	if edit := m.QueueEdits[sid]; edit.ID != "" {
 		m.Drafts["session:"+sid] = edit.Displaced
+		m.DraftSkills["session:"+sid] = edit.DisplacedSkills
 		m.Attachments["session:"+sid] = edit.DisplacedAttachments
 		delete(m.QueueEdits, sid)
 	}
@@ -116,7 +123,23 @@ func (m *Model) FinishQueueEdit(sid, id, text string, q domain.QueueState, attac
 			}
 		}
 	}
-	if m.Drafts["session:"+sid] == text && sameAttachments {
+	sameSkills := true
+	for _, item := range q.Items {
+		if item.ID == id {
+			current := m.DraftSkills["session:"+sid]
+			sameSkills = len(current) == len(item.Input.Skills)
+			if sameSkills {
+				for i, ref := range current {
+					if ref.Reference != item.Input.Skills[i] {
+						sameSkills = false
+						break
+					}
+				}
+			}
+			break
+		}
+	}
+	if m.Drafts["session:"+sid] == text && sameAttachments && sameSkills {
 		m.CancelQueueEdit(sid)
 	} else {
 		edit.Revision = q.Revision

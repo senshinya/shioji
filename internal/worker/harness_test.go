@@ -54,7 +54,7 @@ func (r *memoryRuntime) Create(_ context.Context, s domain.Session) (string, err
 	return "opaque/" + r.adapter.id + "/" + s.ID, nil
 }
 func (r *memoryRuntime) Resume(context.Context, domain.Session) error { return nil }
-func (r *memoryRuntime) Submit(_ context.Context, s domain.Session, op, text string, attachments ...harness.AttachmentInput) (string, error) {
+func (r *memoryRuntime) Submit(_ context.Context, s domain.Session, op string, input harness.TurnInput) (string, error) {
 	if r.adapter.uncertain {
 		return "", &harness.DeliveryError{Uncertain: true, Message: "delivery unconfirmed"}
 	}
@@ -63,7 +63,7 @@ func (r *memoryRuntime) Submit(_ context.Context, s domain.Session, op, text str
 		return "", err
 	}
 	if !r.adapter.hold {
-		if err := r.options.OnEvent(domain.Event{SessionID: s.ID, Type: "item.upsert", Item: &domain.Item{ID: "reply/" + op, TurnID: turn, Kind: "assistant", Text: "from " + r.adapter.id + ": " + text, Final: true}}); err != nil {
+		if err := r.options.OnEvent(domain.Event{SessionID: s.ID, Type: "item.upsert", Item: &domain.Item{ID: "reply/" + op, TurnID: turn, Kind: "assistant", Text: "from " + r.adapter.id + ": " + input.Text, Final: true}}); err != nil {
 			return "", err
 		}
 		if err := r.options.OnEvent(domain.Event{SessionID: s.ID, Type: "turn", Turn: &domain.Turn{ID: turn, Status: "completed"}}); err != nil {
@@ -72,7 +72,7 @@ func (r *memoryRuntime) Submit(_ context.Context, s domain.Session, op, text str
 	}
 	return turn, nil
 }
-func (r *memoryRuntime) Steer(context.Context, domain.Session, string, string, string, ...harness.AttachmentInput) error {
+func (r *memoryRuntime) Steer(context.Context, domain.Session, string, string, harness.TurnInput) error {
 	return harness.Unsupported("steer")
 }
 func (r *memoryRuntime) Respond(domain.Answer) error                             { return harness.Unsupported("answer") }
@@ -310,9 +310,17 @@ func TestRestartOnlyHarnessDoesNotNeedToImplementFork(t *testing.T) {
 		t.Fatal(e)
 	}
 	awaitReceipt(t, s, "original")
+	// A receipt acknowledges delivery before dispatch finishes updating the
+	// input's turn/status metadata. Wait for that existing critical section
+	// before choosing the revision for this separate history operation.
+	s.dispatchMu.Lock()
 	d, e := s.store.Session(op.SessionID, 0, 100)
+	s.dispatchMu.Unlock()
 	if e != nil {
 		t.Fatal(e)
+	}
+	if len(d.Items) == 0 || d.Items[0].Status != "sent" || d.Items[0].TurnID == "" {
+		t.Fatal("history fixture read unfinished dispatch metadata", d.Items)
 	}
 	result, e := s.changeHistory(domain.HistoryChange{OperationID: "restart", SessionID: op.SessionID, Revision: d.Session.Revision, ItemID: "input:original", Restart: true, Text: "new", Config: cfg})
 	if e != nil {

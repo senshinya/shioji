@@ -6,11 +6,13 @@ import (
 )
 
 type DraftAttachment struct {
-	Attachment  domain.Attachment `json:"attachment"`
-	DeviceID    string            `json:"deviceId,omitempty"`
-	WorkspaceID string            `json:"workspaceId,omitempty"`
-	Ready       bool              `json:"ready,omitempty"`
-	Error       string            `json:"error,omitempty"`
+	// InlinePosition is a one-based rune offset in the client composer.
+	InlinePosition int               `json:"inlinePosition,omitempty"`
+	Attachment     domain.Attachment `json:"attachment"`
+	DeviceID       string            `json:"deviceId,omitempty"`
+	WorkspaceID    string            `json:"workspaceId,omitempty"`
+	Ready          bool              `json:"ready,omitempty"`
+	Error          string            `json:"error,omitempty"`
 }
 
 func (m *Model) workspaceDevice(workspace string) string {

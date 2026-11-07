@@ -497,3 +497,12 @@ func (d *Document) BreakUndoCoalescing() {
 	defer d.mu.Unlock()
 	d.coalesce = false
 }
+
+// Composing reports whether this document's current editor has marked IME text.
+// Like the UI it describes, call it on the UI thread.
+func (d *Document) Composing() bool {
+	d.lock()
+	defer d.mu.Unlock()
+	v := d.shownIn.Value()
+	return v != nil && (v.composing || v.compose != "")
+}

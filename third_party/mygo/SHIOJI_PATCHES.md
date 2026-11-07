@@ -82,13 +82,23 @@ not expose the following appearance settings required by the frozen design:
   plumbing), webview 7,011,490 → 7,011,490 bytes. The full retention implementation
   is excluded without opting in (`-dumpdep` checked).
 
+- `ui/richtext.EditorOptions`: plain composer mode with pre-key/paste hooks,
+  bounded content height and fixed line advance. Native attributed attachments
+  retain selection, IME, wrapping and undo metadata; optional descent aligns
+  compact inline labels, and attachment click/tooltip use shaped object bounds.
+  `ui.TextShape.LineHeight` exposes the same fixed leading to retained layouts.
+  Covered by Shioji's file/Skill completion, atomic editing/undo, copy, reload,
+  queue-position, attachment-update and delayed-result regressions.
+
 Changes are confined to ui/theme.go, ui/paint.go, ui/editor/editor.go and
 ui/editor/theme.go, plus ui/glyphs.go, internal/text/layout.go and
 internal/text/coretext_darwin.go, ui/layout.go, ui/transition.go, ui/list.go,
 ui/list_reveal.go, ui/runtime.go, ui/markdown/code.go, ui/markdown/reveal.go,
 ui/markdown/smooth.go and the
 regression tests, plus ui/pane.go, ui/virtual_textselection*.go and their
-ui/context.go, ui/element.go, ui/input.go and ui/textselection.go hooks. The popup and list changes are covered by Shioji's native
+ui/context.go, ui/element.go, ui/input.go and ui/textselection.go hooks, plus
+ui/richtext/{view,input,document,text,clipboard,paint}.go and ui/text_layout.go
+for native composer attachments. The popup and list changes are covered by Shioji's native
 component interaction regressions; streaming code is covered by the native
 reply regressions in internal/ui/streaming_test.go. Remove the replacement when an
 upstream release exposes equivalent controls. This remains a native renderer;

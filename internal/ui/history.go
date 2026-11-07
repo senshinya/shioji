@@ -94,7 +94,7 @@ func (v *View) historyHasAttachments() bool {
 	edit := v.Model.HistoryEdits[v.Model.SessionID]
 	for _, item := range v.Model.Details[v.Model.SessionID].Items {
 		if item.ID == edit.ItemID {
-			return len(item.Attachments) > 0
+			return len(item.Attachments) > 0 || len(item.Skills) > 0
 		}
 	}
 	return false

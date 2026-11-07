@@ -48,7 +48,7 @@ type adapterRuntime struct {
 func (r *adapterRuntime) Readiness() domain.Readiness {
 	ready := r.Runtime.Readiness()
 	ready.HarnessID = r.descriptor.ID
-	ready.Capabilities = domain.HarnessCapabilities{Steer: true, Interrupt: true, Recovery: true, Continue: true, Fork: true, Restart: true}
+	ready.Capabilities = domain.HarnessCapabilities{Skills: true, Steer: true, Interrupt: true, Recovery: true, Continue: true, Fork: true, Restart: true}
 	ready.PermissionChoices = []domain.OptionChoice{{ID: "read-only", Name: "只读", Description: "仅查看"}, {ID: "default", Name: "默认权限", Description: "按需请求批准"}, {ID: "auto-approve", Name: "自动批准", Description: "沙盒内自动批准"}, {ID: "yolo", Name: "YOLO", Description: "不限制沙盒或批准"}}
 	ready.Harnesses = []domain.HarnessInfo{{ID: r.descriptor.ID, Name: r.descriptor.Name, Icon: r.descriptor.Icon, State: ready.State, Error: ready.Error, Models: ready.Models, Permissions: ready.Permissions, PermissionChoices: ready.PermissionChoices, Plan: ready.Plan, Capabilities: ready.Capabilities}}
 	return ready
@@ -80,4 +80,11 @@ func (r *adapterRuntime) ActivateHistory(ctx context.Context, source domain.Sess
 		return err
 	}
 	return r.SwitchHistory(source.ThreadID, prepared, source.ID, commit)
+}
+
+func (r *adapterRuntime) Submit(ctx context.Context, s domain.Session, operation string, input harness.TurnInput) (string, error) {
+	return r.submit(ctx, s, operation, input.Text, input.Attachments, input.Skills)
+}
+func (r *adapterRuntime) Steer(ctx context.Context, s domain.Session, turn, operation string, input harness.TurnInput) error {
+	return r.steer(ctx, s, turn, operation, input.Text, input.Attachments, input.Skills)
 }

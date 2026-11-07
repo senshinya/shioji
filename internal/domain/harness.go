@@ -3,6 +3,7 @@ package domain
 // These are Shioji operations. Adapters report actual support; absent support
 // never authorizes a substitute operation or a guessed configuration.
 type HarnessCapabilities struct {
+	Skills    bool `json:"skills,omitempty"`
 	Steer     bool `json:"steer"`
 	Interrupt bool `json:"interrupt"`
 	Recovery  bool `json:"recovery"`

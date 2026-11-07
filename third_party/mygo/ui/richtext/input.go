@@ -17,6 +17,13 @@ func (v *view) input(ev ui.InputEvent) bool {
 	defer v.publish()
 	switch ev.Kind {
 	case ui.InputKeyDown:
+		if v.opts.OnKey != nil && !v.composing && v.compose == "" {
+			v.publish()
+			if v.opts.OnKey(ev.Key, ev.Mods) {
+				v.sync()
+				return true
+			}
+		}
 		if v.key(ev.Key, ev.Mods) {
 			v.blinkStart = ev.Time
 			return true
@@ -190,7 +197,7 @@ var emacsKeys = map[ui.Key]ui.Key{ui.KeyB: ui.KeyLeft, ui.KeyF: ui.KeyRight, ui.
 
 // key handles a key pressed, and reports whether it took it.
 func (v *view) key(key ui.Key, mods ui.Modifiers) bool {
-	if cmd, ok := shortcut(key, mods); ok {
+	if cmd, ok := shortcut(key, mods); ok && !v.opts.PlainText {
 		return v.run(cmd)
 	}
 	mac := runtime.GOOS == "darwin"
@@ -522,6 +529,8 @@ func (v *view) press(ev ui.InputEvent) bool {
 	}
 	v.pressMods = ev.Mods
 	v.pressLink = ""
+	v.pressAttachment, v.pressAttachmentRect = v.attachmentAt(ev.X, ev.Y)
+	v.pressX, v.pressY = ev.X, ev.Y
 	if v.overScrollbar(ev.X) {
 		v.thumb = true
 		top, size := v.thumbBox()
@@ -569,7 +578,11 @@ func (v *view) move(ev ui.InputEvent) bool {
 	}
 	x, y := v.contentPoint(ev.X, ev.Y)
 	if !v.dragging {
+		v.hoverAttachment, _ = v.attachmentAt(ev.X, ev.Y)
 		cursor := ui.CursorText
+		if v.hoverAttachment != nil && v.hoverAttachment.OnClick != nil {
+			cursor = ui.CursorPointer
+		}
 		if _, box := v.taskBox(x, y); box || v.overScrollbar(ev.X) {
 			cursor = ui.CursorDefault
 		} else if i, _ := v.positionAt(x, y); i < v.shown.Len() && v.shown.AttributesAt(i).Link != "" {
@@ -623,6 +636,14 @@ func (v *view) release(ev ui.InputEvent) bool {
 		return false
 	}
 	v.dragging = false
+	attachment := v.pressAttachment
+	v.pressAttachment = nil
+	if attachment != nil && attachment.OnClick != nil && ev.X-v.pressX < 4 && v.pressX-ev.X < 4 && ev.Y-v.pressY < 4 && v.pressY-ev.Y < 4 {
+		if at, _ := v.attachmentAt(ev.X, ev.Y); at == attachment {
+			attachment.OnClick(v.pressAttachmentRect)
+			return true
+		}
+	}
 	link := v.pressLink
 	v.pressLink = ""
 	if link != "" && v.caret == v.selAnchor {
@@ -677,4 +698,25 @@ func (v *view) dragThumb(y float32) {
 // menu builds the editor's context menu.
 func (v *view) menu(m *ui.Menu) {
 	m.EditItems()
+}
+
+// attachmentAt uses the shaped object rectangles, including wrapped lines.
+func (v *view) attachmentAt(x, y float32) (*Attachment, ui.Rect) {
+	cx, cy := v.contentPoint(x, y)
+	if len(v.paras) == 0 {
+		return nil, ui.Rect{}
+	}
+	index := v.hs.at(cy)
+	pv := v.paraLayout(index)
+	ox, oy := v.origin(index)
+	for _, object := range pv.layout.Objects() {
+		r := object.Rect
+		if cx >= ox+r.X && cx < ox+r.X+r.W && cy >= oy+float64(r.Y) && cy < oy+float64(r.Y+r.H) {
+			at := v.shown.AttributesAt(v.global(index, pv.runeOfUnit(object.Index))).Attachment
+			r.X += v.rect.X + v.padX + ox
+			r.Y += v.rect.Y + v.padY + float32(oy-v.scroll)
+			return at, r
+		}
+	}
+	return nil, ui.Rect{}
 }

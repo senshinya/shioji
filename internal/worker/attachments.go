@@ -36,6 +36,9 @@ func (s *Server) attachmentInputs(in domain.Submission) ([]harness.AttachmentInp
 	if err := in.ValidateContent(); err != nil {
 		return nil, err
 	}
+	if err := s.validateSkills(in); err != nil {
+		return nil, err
+	}
 	var out []harness.AttachmentInput
 	for _, a := range in.Attachments {
 		path, err := s.attachments.Path(in.WorkspaceID, a)

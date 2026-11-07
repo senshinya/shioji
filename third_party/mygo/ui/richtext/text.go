@@ -84,9 +84,13 @@ type Attachment struct {
 	// Width and Height are the size of the box in DIPs; zero takes the
 	// image's size. A box wider than the editor is scaled down to fit.
 	Width, Height float32
+	// Descent is the portion below the text baseline, for inline labels.
+	Descent float32
 	// Name describes the attachment to assistive technology, and stands
 	// for it in plain text: an image's alternative text, a file's name.
 	Name string
+	// Tooltip optionally shows a full path while Name stays concise for copy.
+	Tooltip string
 	// URL is where the attachment comes from, as a file's or an image's,
 	// which HTML and Markdown write for it.
 	URL string
@@ -95,6 +99,9 @@ type Attachment struct {
 	Draw func(p *ui.Painter, r ui.Rect)
 	// Data is the app's.
 	Data any
+	// OnClick handles an ordinary click on the inline object. Drag selection
+	// and keyboard editing retain their normal behavior.
+	OnClick func(ui.Rect)
 }
 
 // size returns the size of the box of the attachment.

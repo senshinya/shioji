@@ -109,10 +109,23 @@ func (s *Server) changeQueue(method string, in protocol.QueueInput) (domain.Queu
 		if err != nil {
 			return domain.QueueState{}, err
 		}
-		if _, err = s.attachmentInputs(domain.Submission{WorkspaceID: d.Session.WorkspaceID, Text: in.Text, Attachments: in.Attachments}); err != nil {
+		validationSkills := in.Skills
+		if validationSkills == nil {
+			q, e := s.store.Queue(in.SessionID)
+			if e != nil {
+				return domain.QueueState{}, e
+			}
+			for _, item := range q.Items {
+				if item.ID == in.ID {
+					validationSkills = item.Input.Skills
+					break
+				}
+			}
+		}
+		if _, err = s.attachmentInputs(domain.Submission{WorkspaceID: d.Session.WorkspaceID, SessionID: in.SessionID, Text: in.Text, Attachments: in.Attachments, Skills: validationSkills, ReferencePositions: in.ReferencePositions}); err != nil {
 			return domain.QueueState{}, err
 		}
-		return s.store.EditQueue(in.SessionID, in.ID, in.Revision, in.Text, in.Attachments)
+		return s.store.EditQueueContent(in.SessionID, in.ID, in.Revision, in.Text, in.Attachments, in.Skills, in.ReferencePositions)
 	case "queue.remove":
 		return s.store.RemoveQueue(in.SessionID, in.ID, in.Revision)
 	case "queue.continue":
@@ -186,7 +199,7 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 			err = s.coverOperation(op.SessionID, op.ID)
 		}
 		if err == nil {
-			err = runtime.Steer(ctx, d.Session, in.TurnID, op.ID, in.Input.Text, inputs...)
+			err = runtime.Steer(ctx, d.Session, in.TurnID, op.ID, harness.TurnInput{Text: in.Input.Text, Attachments: inputs, Skills: in.Input.Skills})
 		}
 		outcome := domain.DeliveryOutcome(err != nil, harness.IsUncertain(err))
 		state, status, message := outcome.Operation, outcome.Input, ""
@@ -206,7 +219,7 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 		if state != "confirmed" && revision > 0 {
 			return
 		}
-		s.store.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: in.TurnID, Kind: "user", Attachments: in.Input.Attachments, Text: in.Input.Text, Final: true, Status: status}})
+		s.store.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: in.TurnID, Kind: "user", Skills: in.Input.Skills, Attachments: in.Input.Attachments, Text: in.Input.Text, Final: true, Status: status}})
 	}()
 	return op, nil
 }

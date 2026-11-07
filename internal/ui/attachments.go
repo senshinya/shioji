@@ -155,18 +155,22 @@ func (v *View) addAttachmentFiles(key string, paths []string) {
 		}
 	})
 }
-func (v *View) appendAttachments(key string, added []app.DraftAttachment) {
-	m := v.Model
-	all := append(append([]app.DraftAttachment(nil), m.Attachments[key]...), added...)
+func (v *View) validateAddedAttachments(key string, added []app.DraftAttachment) error {
 	refs := []domain.Attachment{}
-	for _, a := range all {
+	for _, a := range v.Model.Attachments[key] {
 		refs = append(refs, a.Attachment)
 	}
-	if err := (domain.Submission{Text: m.Drafts[key], Attachments: refs}).ValidateContent(); err != nil {
-		m.Error = err.Error()
+	for _, a := range added {
+		refs = append(refs, a.Attachment)
+	}
+	return (domain.Submission{Text: v.Model.Drafts[key], Attachments: refs}).ValidateContent()
+}
+func (v *View) appendAttachments(key string, added []app.DraftAttachment) {
+	if err := v.validateAddedAttachments(key, added); err != nil {
+		v.Model.Error = err.Error()
 		return
 	}
-	m.Attachments[key] = all
+	v.Model.Attachments[key] = append(v.Model.Attachments[key], added...)
 }
 func (v *View) pasteAttachments(key, text string) bool {
 	if v.Controller == nil || v.StatePath == "" {
@@ -255,9 +259,16 @@ func (v *View) draftAttachmentStrip(c *n.Context, t *n.Theme) {
 	m := v.Model
 	key := m.DraftKey()
 	drafts := m.Attachments[key]
+	regular := 0
+	for _, a := range drafts {
+		if a.Attachment.SourcePath == "" {
+			regular++
+		}
+	}
+	preparing := v.preparingAttachments(key) && (v.fileMention == nil || v.fileMention.phase != mentionCapturing)
 	strip := n.ScrollHorizontal(c.Key("draft-attachments:" + key)).FillWidth().MarginX(9)
 	target := float32(0)
-	if len(drafts) > 0 || v.preparingAttachments(key) {
+	if regular > 0 || preparing {
 		target = 1
 	}
 	presence := strip.AnimateTo("presence", target, n.Animation{Duration: 360 * time.Millisecond, Ease: composerDescentEase})
@@ -265,6 +276,9 @@ func (v *View) draftAttachmentStrip(c *n.Context, t *n.Theme) {
 	strip.Height(76 * presence).Clip().Hidden(presence == 0).Children(func() {
 		n.Row(c).Gap(8).AlignItems(n.Center).Children(func() {
 			for i, a := range drafts {
+				if a.Attachment.SourcePath != "" {
+					continue
+				}
 				ready := a.Ready && a.WorkspaceID == m.WorkspaceID
 				if target, err := m.AttachmentTarget(v.ControllerDirectory(), m.WorkspaceID); err == nil {
 					ready = ready && a.DeviceID == target.DeviceID
@@ -309,7 +323,7 @@ func (v *View) draftAttachmentStrip(c *n.Context, t *n.Theme) {
 					}
 				}
 			}
-			if v.preparingAttachments(key) {
+			if preparing {
 				n.Text(c, "准备附件…").FontSize(12).TextColor(t.TextMuted)
 			}
 		})

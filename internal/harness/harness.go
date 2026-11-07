@@ -27,6 +27,15 @@ type HistoryBoundary struct {
 	PreparedRef string
 }
 
+type TurnInput struct {
+	Text        string
+	Attachments []AttachmentInput
+	Skills      []domain.SkillReference
+}
+type SkillProvider interface {
+	Skills(context.Context, domain.LaunchContext) (domain.SkillCatalog, error)
+}
+
 type StartOptions struct {
 	Scope   *managedexec.Scope
 	OnEvent func(domain.Event) error
@@ -46,8 +55,8 @@ type Runtime interface {
 	Validate(domain.RunConfig) error
 	Create(context.Context, domain.Session) (string, error)
 	Resume(context.Context, domain.Session) error
-	Submit(context.Context, domain.Session, string, string, ...AttachmentInput) (string, error)
-	Steer(context.Context, domain.Session, string, string, string, ...AttachmentInput) error
+	Submit(context.Context, domain.Session, string, TurnInput) (string, error)
+	Steer(context.Context, domain.Session, string, string, TurnInput) error
 	Respond(domain.Answer) error
 	Interrupt(context.Context, domain.Session, string) error
 	Inspect(context.Context, domain.Session) (domain.RecoveryHistory, error)

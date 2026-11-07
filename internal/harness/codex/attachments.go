@@ -36,7 +36,11 @@ func attachmentInputs(text string, attachments []AttachmentInput) ([]wire.Input,
 		if len(data) > 128<<10 {
 			return nil, errors.New("text attachment exceeds 128 KiB")
 		}
-		inputs = append(inputs, wire.Input{Type: "text", Text: "Attachment: " + a.Attachment.Name + "\n\n" + string(data)})
+		label := "Attachment: " + a.Attachment.Name
+		if a.Attachment.SourcePath != "" {
+			label = "Workspace file: " + a.Attachment.SourcePath
+		}
+		inputs = append(inputs, wire.Input{Type: "text", Text: label + "\n\n" + string(data)})
 	}
 	return inputs, nil
 }

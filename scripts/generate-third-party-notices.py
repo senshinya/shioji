@@ -26,6 +26,8 @@ for name, module in sorted(modules.items()):
         raise SystemExit(f'Missing license for {name} in {directory}')
     text = '\n\n'.join(p.name + '\n\n' + p.read_text() for p in files)
     notices.append({'module': name, 'version': module.get('Version', ''), 'text': text})
+# Static assets are not part of Go's module dependency graph.
+notices.append({'module': 'Lucide icons (book-open)', 'version': '0.468.0', 'text': (root / 'third_party/lucide/LICENSE').read_text()})
 text = json.dumps(notices, ensure_ascii=False, indent=2) + '\n'
 target = root / 'internal/ui/third_party_notices.json'
 if args.check:
@@ -33,4 +35,4 @@ if args.check:
         raise SystemExit('Third-party notices are stale; run scripts/generate-third-party-notices.py')
 else:
     target.write_text(text)
-print(f'PASS: {len(notices)} module notices match app and worker dependencies')
+print(f'PASS: {len(notices)} component notices match app and worker dependencies')

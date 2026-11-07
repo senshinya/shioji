@@ -86,7 +86,7 @@ Avoid unnecessary secondary labels and descriptions. Let the layout do the expla
 ### 图标与中英文对齐
 
 - 图标按钮的命中区域、图形槽位和实际笔画边界分开处理。本项目紧凑按钮为 28 px，图形槽位为 16 px；同组图标统一线宽、实际可见高度和视觉中心，不能仅凭相同 SVG viewBox 或元素宽高判定已对齐。
-- 图标紧邻文字时采用共同的文字基线及字体度量，不用整行盒子的几何中心代替字形中心。拉丁文参考大写字高（`H`），中文参考实际系统回退字体的汉字可见字面（`国`）；中英混排按汉字字面校准，保留文字原有基线与行距。这里的 `H` / `国` 是本项目的测量策略，不是外部规范指定的固定字形。
+- 图标紧邻文字时采用共同的文字基线及字体度量，不用整行盒子的几何中心代替字形中心。拉丁文参考大写字高（`H`），中文参考实际系统回退字体的汉字可见字面（`国`）；中英混排按汉字字面校准，保留文字原有基线与行距。这里的 `H` / `国` 是本项目的测量策略，不是外部规范指定的固定字形。文件／Skill 候选行的图标可按实际名称的 `Font.InkBounds` 校正字面中心。行内标签的文字必须使用稳定基线：拉丁字母统一按包含大写字高与下伸部的 `Hg` 字面留白，中文按 `国`；不得按每个名称的笔画包围盒上下移动文字，否则 `check` 与 `design` 会因是否有 `g/p/y` 而错位。图标保留共同槽位，并用实际名称验证。
 - 多行任务、菜单与工具行的图标/状态点对齐第一行文字，不对齐整段高度。复用 `internal/ui/typography.go` 的 `inlineFontMetrics`、`inlineSymbol`、`inlineIconText` 和使用同一度量的 `statusDot`；使用原生 `Font.InkBounds`，不按单个文案堆叠 padding 或 `translateY` 魔数。
 - 独立图标在按钮内居中，文字旁的图标按字面光学校准；同组需要的光学修正统一写入图标路径或公共排版计算，不因 hover、选中、状态变化或 Shimmer 改变位置。
 - 核对亮暗模式、中文、英文、混排与多行的真实原生截图，检查笔画而非只看布局框；同组可见高度、中心和首行对齐误差控制在 1 逻辑像素（DIP）内，并保留相关原生回归检查。
@@ -107,6 +107,14 @@ Avoid unnecessary secondary labels and descriptions. Let the layout do the expla
 - 所有历史操作由所属 worker 接纳，持久化稳定操作标识，重连只查询，不重发未知输入。每次实际提交历史替换（含已保存 fork 的继续完成）都重新核对 revision、执行目录、Git、配置及附件；旧线程迟到事件不能恢复被替换内容。
 - 保留历史按 worker 拥有的轮次顺序与归属确定，不按消息落盘位置截断，以保留前轮迟到输出。历史替换事件必须同步清理各客户端关联的 items、turns、requests 与 plan。
 - 工具历史默认折叠与滚动位置重置分开处理。后台初次／再次加载历史不得释放当前阅读锚点；仅实际切换会话时重置旧滚动状态，分叉和历史修改再交接到指定消息位置。
+
+### 输入框引用
+
+- `@` 在当前工作区所属设备搜索文件；已有会话只使用其已接纳目录。读取和预览由 owning worker 处理，不在控制 Mac 解析远端路径。选择后保存不可变快照，发送与队列保留选定内容；不得因目录变化扩大既有会话的访问范围。
+- `/` 是跨 harness 一致的 Skill 菜单入口。目录与实际支持情况由所选 harness 提供，选中后保存 typed SkillReference 与所属设备／工作区／harness；具体命令语法和原生 skill 输入由 adapter 翻译，不拼入共享正文或解析 opaque ID。
+- 文件与 Skill 选中后在触发位置形成“图标＋名称”行内标签，参与原生光标、整块删除、换行和撤销；不另起输入框上方的引用条。草稿和队列编辑保留引用位置，位置属于中立的输入展示数据，不传给 harness。
+- 候选列表过滤时保留同一弹窗与既有结果，异步刷新不反复播放开合动画；旧查询回调不能覆盖新查询或重新打开已关闭弹窗。
+- 候选列表保留输入框焦点，Enter／Tab 选择、方向键导航、Esc 关闭，IME 组合不触发选择或发送。异步文件／Skill 结果不得污染其他会话或抢回用户后来转移的焦点。标签与弹层复用既有灰阶密度和实际高度动效，尊重减少动态效果。详见 `docs/composer-references.md`。
 
 ### 界面行为
 
@@ -174,7 +182,7 @@ Avoid unnecessary secondary labels and descriptions. Let the layout do the expla
 
 - Prototype fixtures are illustrative rather than live runtime evidence. Candidate component styles require user selection before adoption; freezing reference materials does not approve every historical variant.
 - Use the pinned Codex contract in `design/protocol/codex-0.166.0/`, accounting for all item, request and notification types. Schema presence does not establish feature enablement or stability; adapters must follow the actual device runtime version and negotiated capabilities.
-- Render Skill and file references as compact neutral capsules. Skill references use a visible Skill marker and the skill name, with no dollar sign; file references use the file glyph and filename. Align their height and radius, group consecutive references on one wrapping row, truncate long names and expose the complete name/path on hover.
+- Render Skill and file references as compact neutral capsules. Skill references use a visible Skill marker and the skill name, with no dollar sign; file references use the file glyph and filename. Align their height and radius, keep references at their native inline insertion positions with ordinary text, truncate long names and expose the complete name/path on hover.
 - Keep Markdown rendering, tool grouping, diff statistics and state aggregation distinct from protocol item types. Deltas update their existing item, and final item/completed payloads are authoritative; do not render both raw and normalized responses as duplicate messages.
 - For this snapshot, ordinary tool/requestUserInput questions have no explicit multi-select field. Use MCP array/enum forms for the protocol-backed multi-select example. Respect isBlocking for agent execution while leaving the ordinary composer available, and use serverRequest/resolved for request invalidation. Async agentMessage questions have no JSON-RPC requestId and need a separate answer path.
 - In permission requests, keep the permission subset choices separate from grant lifetime. Use the actions 允许本轮 and 允许本会话 to choose response scope turn/session; do not present lifetime as another permission checkbox. Preserve the selected subset and emit only granted permissions in response previews. Keep radio and checkbox geometry isolated from generic text-input styles.
