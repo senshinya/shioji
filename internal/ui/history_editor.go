@@ -120,7 +120,7 @@ func (v *View) historyMessageActions(c *n.Context, t *n.Theme, item domain.Item,
 	n.Row(c.Key("user-actions:" + item.ID)).Gap(messageFooterGap).Height(24).AlignItems(n.Center).Unselectable().Label("用户消息操作").Children(func() {
 		font := n.Font{Family: t.Font, Size: 11, Weight: 400}
 		if (item.Status == "sent" || preview) && item.TurnID != "" {
-			edit := n.ButtonBase(c.Key("edit")).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("修改并重新开始").Tooltip("修改并重新开始").Disabled(preview || v.historyBusy[v.Model.SessionID] || !v.Model.RunReadiness().Capabilities.Restart)
+			edit := n.ButtonBase(c.Key("edit")).Transition(fadeMotion(c, 180*time.Millisecond)).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("修改并重新开始").Tooltip("修改并重新开始").Disabled(preview || v.historyBusy[v.Model.SessionID] || !v.Model.RunReadiness().Capabilities.Restart)
 			color := textHoverColor(c, edit, t.TextMuted)
 			edit.Children(func() { inlineSymbol(c, queueEditIcon, "消息", font, 13, color) })
 			if edit.Clicked() {
@@ -139,7 +139,9 @@ func (v *View) historyMessageActions(c *n.Context, t *n.Theme, item domain.Item,
 			c.After(until.Sub(c.Now()))
 		}
 		color := textHoverColor(c, copy, t.TextMuted)
-		copy.Tooltip(label).Children(func() { inlineSymbol(c, glyph, "消息", font, 12, color).Label(label) })
+		copy.Tooltip(label).Children(func() {
+			inlineSymbol(c.Key(label), glyph, "消息", font, 12, color).Label(label).Transition(fadeMotion(c, 120*time.Millisecond))
+		})
 		stamp, exact := "—", "发送时间未知"
 		if item.SentAt != nil {
 			local := item.SentAt.Local()
@@ -296,22 +298,33 @@ func (v *View) historyAttachments(c *n.Context, t *n.Theme, item domain.Item) {
 			}
 			var source n.Rect
 			button := control(c.Key(a.ID)).Height(64).MaxWidth(220).Padding(6, 8).Radius(7).Background(codeSurface(t)).Label("预览附件：" + a.Name).Children(func() {
-				n.Row(c).Gap(8).AlignItems(n.Center).Children(func() {
-					source = v.attachmentThumbnail(c, t, a, v.Model.WorkspaceID, 48).Bounds()
-					n.Column(c).Gap(3).Children(func() {
-						n.Text(c, a.Name).FontSize(12).SingleLine().MaxWidth(140)
-						n.Text(c, attachmentSize(a.Size)).FontSize(11).TextColor(t.TextMuted)
-					})
-				})
+				source = v.historyAttachmentContents(c, t, a, v.Model.WorkspaceID).Bounds()
 			})
 			if button.Clicked() {
+				origin := attachmentPreviewOrigin{Radius: 5}
 				if !strings.HasPrefix(a.MIME, "image/") {
 					source = button.Bounds()
+					theme, workspace := *t, v.Model.WorkspaceID
+					origin = attachmentPreviewOrigin{Surface: codeSurface(t), Radius: 7, Content: func(c *n.Context) {
+						n.Column(c).Fill().Padding(6, 8).Children(func() { v.historyAttachmentContents(c, &theme, a, workspace) })
+					}}
 				}
-				v.openAttachment(a, v.Model.WorkspaceID, source)
+				v.openAttachment(a, v.Model.WorkspaceID, source, origin)
 			}
 		}
 	})
+}
+
+func (v *View) historyAttachmentContents(c *n.Context, t *n.Theme, a domain.Attachment, workspace string) n.Element {
+	var thumbnail n.Element
+	n.Row(c).Gap(8).AlignItems(n.Center).Children(func() {
+		thumbnail = v.attachmentThumbnail(c, t, a, workspace, 48)
+		n.Column(c).Gap(3).Children(func() {
+			n.Text(c, a.Name).FontSize(12).SingleLine().MaxWidth(140)
+			n.Text(c, attachmentSize(a.Size)).FontSize(11).TextColor(t.TextMuted)
+		})
+	})
+	return thumbnail
 }
 
 func hasInlineFiles(files []domain.Attachment) bool {

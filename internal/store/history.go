@@ -194,6 +194,7 @@ func (s *Store) CommitHistory(id string) (domain.HistoryOperation, error) {
 		return op, err
 	}
 	target := op.Session
+	retitle := false
 	target.ContextUsage = nil
 	target.ContextUsageAfterTurnOrder = 0
 	target.ThreadID = op.ThreadID
@@ -210,6 +211,17 @@ func (s *Store) CommitHistory(id string) (domain.HistoryOperation, error) {
 		target.Revision++
 		if _, err = tx.Exec(`DELETE FROM items WHERE session_id=? AND json_extract(body,'$.kind')!='queued' AND COALESCE(json_extract(body,'$.turnId'),'') NOT IN(SELECT id FROM turns WHERE session_id=? AND json_extract(body,'$.order')<=?)`, source.ID, source.ID, op.KeepOrder); err != nil {
 			return op, err
+		}
+		if !target.TitleOverride {
+			var hasEarlierInput bool
+			if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM items WHERE session_id=? AND json_extract(body,'$.kind')='user')`, target.ID).Scan(&hasEarlierInput); err != nil {
+				return op, err
+			}
+			if !hasEarlierInput {
+				retitle = true
+				target.SourceTitle = ""
+				target.TitleRevision++
+			}
 		}
 	} else {
 		if _, err = tx.Exec("INSERT INTO sessions VALUES(?,?)", target.ID, blob(target)); err != nil {
@@ -268,6 +280,12 @@ func (s *Store) CommitHistory(id string) (domain.HistoryOperation, error) {
 		item := domain.Item{ID: "input:" + op.ID, Kind: "user", Text: op.Submission.Text, ReferencePositions: op.Submission.ReferencePositions, Skills: op.Submission.Skills, Attachments: op.Submission.Attachments, Status: "dispatching", Final: true, SentAt: &now}
 		if err = putItem(tx, target.ID, &item); err != nil {
 			return op, err
+		}
+		if retitle {
+			job := TitleJob{Session: target, Prompt: item.Text, InputID: item.ID}
+			if _, err = tx.Exec("INSERT INTO title_jobs VALUES(?,?,?) ON CONFLICT(session_id) DO UPDATE SET state=excluded.state,body=excluded.body", target.ID, titlePending, blob(job)); err != nil {
+				return op, err
+			}
 		}
 		if _, err = journal(tx, domain.Event{Type: "submission", SessionID: target.ID, Session: &target, Operation: &accepted, Item: &item}); err != nil {
 			return op, err

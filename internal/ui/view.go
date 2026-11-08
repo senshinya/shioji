@@ -703,9 +703,20 @@ func (v *View) notice(c *n.Context, t *n.Theme) {
 	if message == "" && v.Model.RunReadiness().State != "ready" {
 		message = v.Model.RunReadiness().Error
 	}
-	if message != "" {
-		n.Text(c, message).FontSize(12).TextColor(t.TextMuted).MaxWidth(736).Margin(10, 0, 0, 0)
+	gap := float32(0)
+	if v.Model.SessionID != "" {
+		gap = 8
 	}
+	frame := n.Column(c.Key("conversation-notice:"+v.Model.SessionID)).FillWidth().MaxWidth(736).Clip().Margin(-gap, 0, 0, 0)
+	retained := n.Local(frame, "message", func() string { return message })
+	if message != "" {
+		*retained = message
+	}
+	animatedContentHeight(c, frame, message != "", 180*time.Millisecond, func() float32 {
+		n.Text(c.Key("message"), *retained).FontSize(12).TextColor(t.TextMuted).Padding(10+gap, 0, 0, 0).
+			Transition(fadeMotion(c, 180*time.Millisecond)).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+		return 0
+	})
 }
 func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	m := v.Model
@@ -839,7 +850,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					v.choiceMenu(c, t, "permission:"+key, permission, choices)
 					n.Spacer(c).Grow(1)
 					if !home {
-						v.contextMeter(c, t)
+						v.contextMeter(c, t, cfg)
 					}
 					v.runControl(c, t, key, cfg)
 					empty := strings.TrimSpace(draft) == "" && len(m.Attachments[key]) == 0 && len(m.DraftSkills[key]) == 0
@@ -1069,6 +1080,13 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		turns[turn.ID] = turn
 	}
 	rows = withTurnFooters(rows, detail.Items, turns)
+	for i := range rows {
+		if rows[i].footer != "" {
+			if motion := v.toolArrivals.motions[rows[i].key]; motion != nil && !v.reduceMotion {
+				rows[i].opacity, _ = motion.sample(v.frameTime)
+			}
+		}
+	}
 	rows = v.historyBridgeRows(rows)
 	rows = v.historyRunningRows(rows)
 	if v.toolsAnimating {
@@ -1077,12 +1095,15 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	state.Reveals = state.Reveals[:0]
 	if !v.reduceMotion {
 		for i, row := range rows {
-			if row.toolParent == "" && row.group == "" || row.opacity >= 1 || v.historySuffixRow(row) {
+			if row.opacity >= 1 || row.restarting || v.historySuffixRow(row) {
 				continue
 			}
 			owner := row.toolParent
 			if owner == "" {
 				owner = row.group
+			}
+			if owner == "" {
+				owner = row.key
 			}
 			previousOwner := ""
 			if i > 0 {
@@ -1106,7 +1127,11 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		if i == len(rows)+1 {
 			return "history-bottom"
 		}
-		return rows[i-1].key
+		row := rows[i-1]
+		if key := v.toolArrivals.footerKeys[row.footer]; row.footer != "" && key != "" {
+			return key
+		}
+		return row.key
 	}
 	v.anchorHistoryRows(state, rows)
 	v.anchorSentMessage(c, state, rows)
@@ -1169,7 +1194,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 					content.Transform(n.Translation(0, -4*(1-entry.opacity)))
 				}
 			}
-			if entry.group != "" {
+			if entry.group != "" || entry.toolParent == "" && !entry.restarting && entry.opacity < 1 {
 				content.Opacity(entry.opacity)
 			}
 			content.DrawOver(func(_ *n.Painter, r n.Rect) { rowBounds[entry.key] = r })
@@ -1235,7 +1260,7 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 		heading := control(c).FillWidth().MinHeight(20).Justify(n.Start).Label(label)
 		if heading.Children(func() {
 			n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-				n.Text(c, label).Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Grow(1)
+				n.Text(c, label).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Grow(1)
 				if issue := toolIssueLabel(item); issue != "" {
 					n.Text(c.Key("command-issue"), issue).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
 						Transition(fadeMotion(c, 160*time.Millisecond))
@@ -1281,7 +1306,7 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 				inlineSymbol(c, icon, label, font, 12, subtle(t))
 				v.requestSourceLabel(c, t, item, label)
 				if item.Status == "pending" || item.Status == "submitting" {
-					inlineSymbol(c, disclosureRight, label, font, 10, subtle(t))
+					inlineSymbol(c.Key("pending-disclosure"), disclosureRight, label, font, 10, subtle(t)).Transition(fadeMotion(c, 180*time.Millisecond))
 				}
 			})
 		})
@@ -1289,114 +1314,123 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 			v.openSourceRequest(item)
 		}
 	default:
-		n.Text(c, item.Text).TextColor(t.TextMuted).FontSize(12)
+		n.Text(c, item.Text).TextColor(t.TextMuted).FontSize(12).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
 	}
 }
 func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
+	frame := n.Column(c.Key("reply-footer")).Label("回复信息").FillWidth().MinHeight(24).Clip()
+	state := string(turn.Status)
 	if turn.Status == "running" && !v.Model.Connected {
-		n.Text(c, "连接已断开，执行状态待核对").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-		return
+		state = "disconnected"
 	}
-	n.Row(c).Label("回复信息").FillWidth().Wrap().Gap(messageFooterGap).MinHeight(24).AlignItems(n.Baseline).Children(func() {
-		label := string(turn.Status)
-		switch turn.Status {
-		case "running":
-			label = "进行中"
-		case "interrupted":
-			label = "已停止"
-		case "failed":
-			label = "本轮失败"
-		case "abandoned":
-			label = "已手动结束 · 结果未确认"
-		case "unknown":
-			label = "执行状态待核实"
-		}
-		if turn.Status == "completed" {
-			copy := n.ButtonBase(c.Key("copy-reply:"+turn.ID)).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("复制回复")
-			copiedUntil := n.Local(copy, "copied-until", func() time.Time { return time.Time{} })
-			if copy.Clicked() {
-				var parts []string
-				for _, item := range v.Model.Details[v.Model.SessionID].Items {
-					if item.TurnID == turn.ID && item.Kind == "assistant" && strings.TrimSpace(item.Text) != "" {
-						parts = append(parts, item.Text)
+	animatedContentHeight(c, frame, true, 180*time.Millisecond, func() float32 {
+		n.Row(c.Key("state:" + state)).FillWidth().Wrap().Gap(messageFooterGap).MinHeight(24).AlignItems(n.Baseline).Transition(fadeMotion(c, 180*time.Millisecond)).Children(func() {
+			if state == "disconnected" {
+				n.Text(c, "连接已断开，执行状态待核对").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+				return
+			}
+			label := string(turn.Status)
+			switch turn.Status {
+			case "running":
+				label = "进行中"
+			case "interrupted":
+				label = "已停止"
+			case "failed":
+				label = "本轮失败"
+			case "abandoned":
+				label = "已手动结束 · 结果未确认"
+			case "unknown":
+				label = "执行状态待核实"
+			}
+			if turn.Status == "completed" {
+				copy := n.ButtonBase(c.Key("copy-reply:"+turn.ID)).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("复制回复")
+				copiedUntil := n.Local(copy, "copied-until", func() time.Time { return time.Time{} })
+				if copy.Clicked() {
+					var parts []string
+					for _, item := range v.Model.Details[v.Model.SessionID].Items {
+						if item.TurnID == turn.ID && item.Kind == "assistant" && strings.TrimSpace(item.Text) != "" {
+							parts = append(parts, item.Text)
+						}
+					}
+					if len(parts) > 0 {
+						c.WriteClipboard(strings.Join(parts, "\n\n"))
+						*copiedUntil = c.Now().Add(2 * time.Second)
 					}
 				}
-				if len(parts) > 0 {
-					c.WriteClipboard(strings.Join(parts, "\n\n"))
-					*copiedUntil = c.Now().Add(2 * time.Second)
+				glyph, glyphKey, tooltip := copyReplyIcon, "copy-icon", "复制回复"
+				if c.Now().Before(*copiedUntil) {
+					glyph, glyphKey, tooltip = check, "copied-icon", "已复制"
+					c.After(copiedUntil.Sub(c.Now()))
+				}
+				copy.Tooltip(tooltip)
+				color := textHoverColor(c, copy, t.TextMuted)
+				copy.Children(func() {
+					inlineSymbol(c.Key(glyphKey), glyph, "回复", n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}, 12, color).
+						Label(tooltip).Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 100*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
+				})
+				fork := n.ButtonBase(c.Key("fork:"+turn.ID)).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("从这里分叉").Tooltip("从这里分叉").Disabled(!v.historyReady(v.Model.Details[v.Model.SessionID].Session) || !v.Model.RunReadiness().Capabilities.Fork || v.historyBusy[v.Model.SessionID])
+				forkColor := textHoverColor(c, fork, t.TextMuted)
+				fork.Children(func() {
+					inlineSymbol(c, forkIcon, "回复", n.Font{Family: t.Font, Size: 11, Weight: 400}, 13, forkColor)
+				})
+				if fork.Clicked() {
+					v.forkSession(v.Model.Details[v.Model.SessionID].Session, turn.ID)
+				}
+				ended, exact := "—", "结束时间未知"
+				if turn.CompletedAt != nil {
+					local := turn.CompletedAt.Local()
+					ended = local.Format("15:04")
+					exact = local.Format("2006-01-02 15:04:05")
+				}
+				n.Text(c, ended).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)}).Label("结束时间：" + ended).Tooltip(exact).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+				duration := "用时 —"
+				if turn.DurationMS != nil {
+					seconds := *turn.DurationMS / 1000
+					duration = fmt.Sprintf("用时 %d分%d秒", seconds/60, seconds%60)
+				}
+				n.Text(c, duration).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)}).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+			} else if turn.Status == "running" {
+				n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
+					statusDot(c, label, n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}, t.Success, true)
+					text := n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+					shimmer(c, text, t.TextMuted, t.Text)
+				})
+			} else {
+				animation := motionAnimation(c, 160*time.Millisecond)
+				n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: &animation})
+				if turn.Status == domain.ExecutionFailed && turn.Error != "" {
+					n.Text(c, turn.Error).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine().MaxWidth(480).Tooltip(turn.Error).
+						Transition(fadeMotion(c, 160*time.Millisecond))
 				}
 			}
-			glyph, glyphKey, tooltip := copyReplyIcon, "copy-icon", "复制回复"
-			if c.Now().Before(*copiedUntil) {
-				glyph, glyphKey, tooltip = check, "copied-icon", "已复制"
-				c.After(copiedUntil.Sub(c.Now()))
+			if turn.Status != "completed" && turn.DurationMS != nil {
+				n.Text(c, fmt.Sprintf("%.1f 秒", float64(*turn.DurationMS)/1000)).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 			}
-			copy.Tooltip(tooltip)
-			color := textHoverColor(c, copy, t.TextMuted)
-			copy.Children(func() {
-				inlineSymbol(c.Key(glyphKey), glyph, "回复", n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}, 12, color).
-					Label(tooltip).Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 100*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
-			})
-			fork := n.ButtonBase(c.Key("fork:"+turn.ID)).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("从这里分叉").Tooltip("从这里分叉").Disabled(!v.historyReady(v.Model.Details[v.Model.SessionID].Session) || !v.Model.RunReadiness().Capabilities.Fork || v.historyBusy[v.Model.SessionID])
-			forkColor := textHoverColor(c, fork, t.TextMuted)
-			fork.Children(func() {
-				inlineSymbol(c, forkIcon, "回复", n.Font{Family: t.Font, Size: 11, Weight: 400}, 13, forkColor)
-			})
-			if fork.Clicked() {
-				v.forkSession(v.Model.Details[v.Model.SessionID].Session, turn.ID)
-			}
-			ended, exact := "—", "结束时间未知"
-			if turn.CompletedAt != nil {
-				local := turn.CompletedAt.Local()
-				ended = local.Format("15:04")
-				exact = local.Format("2006-01-02 15:04:05")
-			}
-			n.Text(c, ended).Label("结束时间：" + ended).Tooltip(exact).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-			duration := "用时 —"
-			if turn.DurationMS != nil {
-				seconds := *turn.DurationMS / 1000
-				duration = fmt.Sprintf("用时 %d分%d秒", seconds/60, seconds%60)
-			}
-			n.Text(c, duration).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-		} else if turn.Status == "running" {
-			n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
-				statusDot(c, label, n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}, t.Success, true)
-				text := n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-				shimmer(c, text, t.TextMuted, t.Text)
-			})
-		} else {
-			animation := motionAnimation(c, 160*time.Millisecond)
-			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: &animation})
-			if turn.Status == domain.ExecutionFailed && turn.Error != "" {
-				n.Text(c, turn.Error).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine().MaxWidth(480).Tooltip(turn.Error).
-					Transition(fadeMotion(c, 160*time.Millisecond))
-			}
-		}
-		if turn.Status != "completed" && turn.DurationMS != nil {
-			n.Text(c, fmt.Sprintf("%.1f 秒", float64(*turn.DurationMS)/1000)).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-		}
-		if turn.Status == "completed" {
-			usage := n.ButtonBase(c).MinHeight(24).Label("本轮用量")
-			color := textHoverColor(c, usage, t.TextMuted)
-			usage.Children(func() {
-				n.Text(c, fmt.Sprintf("输入 %s · 输出 %s · 缓存 %s", count(turn.InputTokens), count(turn.OutputTokens), count(turn.CachedInputTokens))).
-					FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(color)
-			})
-			choices := []menuChoice{}
-			for _, field := range []struct {
-				name  string
-				value *int64
-			}{{"输入", turn.InputTokens}, {"输出", turn.OutputTokens}, {"缓存", turn.CachedInputTokens}} {
-				value := "—"
-				if field.value != nil {
-					value = fmt.Sprint(*field.value)
+			if turn.Status == "completed" {
+				usage := n.ButtonBase(c).MinHeight(24).Label("本轮用量")
+				color := textHoverColor(c, usage, t.TextMuted)
+				usage.Children(func() {
+					n.Text(c, fmt.Sprintf("输入 %s · 输出 %s · 缓存 %s", count(turn.InputTokens), count(turn.OutputTokens), count(turn.CachedInputTokens))).
+						FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
+				})
+				choices := []menuChoice{}
+				for _, field := range []struct {
+					name  string
+					value *int64
+				}{{"输入", turn.InputTokens}, {"输出", turn.OutputTokens}, {"缓存", turn.CachedInputTokens}} {
+					value := "—"
+					if field.value != nil {
+						value = fmt.Sprint(*field.value)
+					}
+					choices = append(choices, menuChoice{id: field.name, name: field.name + " " + value, disabled: true})
 				}
-				choices = append(choices, menuChoice{id: field.name, name: field.name + " " + value, disabled: true})
+				v.choiceMenu(c, t, "usage:"+turn.ID, usage, choices)
 			}
-			v.choiceMenu(c, t, "usage:"+turn.ID, usage, choices)
-		}
+		})
+		return 0
 	})
 }
+
 func count(value *int64) string {
 	if value == nil {
 		return "—"

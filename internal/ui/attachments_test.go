@@ -80,6 +80,31 @@ func TestAttachmentPreviewZoomsFromItsClickedSourceAndReturns(t *testing.T) {
 	}
 }
 
+func TestFilePreviewStartsAndEndsAtTheWholeSourceCard(t *testing.T) {
+	for _, source := range []n.Rect{
+		{X: 400, Y: 650, W: 360, H: 36},
+		{X: 310, Y: 480, W: 136, H: 64},
+	} {
+		v := New(layoutModel(), nil, "")
+		ui := n.NewTester(v.View, 1240, 820)
+		ui.Advance(time.Second)
+		v.attachmentPreview = &attachmentPreview{Attachment: domain.Attachment{ID: "file-shape", Name: "example.go", MIME: "text/plain"}, presence: previewOpening, Source: source, Text: "package example\n"}
+		ui.Frame()
+		start, ok := ui.Find("附件预览")
+		if !ok || math.Abs(float64(start.W-source.W)) > 1 || math.Abs(float64(start.H-source.H)) > 1 || math.Abs(float64(start.X-source.X)) > 1 || math.Abs(float64(start.Y-source.Y)) > 1 {
+			t.Fatal("file preview starts from a narrow point instead of the complete card", start, source)
+		}
+		ui.Advance(500 * time.Millisecond)
+		v.attachmentPreview.close()
+		ui.Frame()
+		ui.Advance(280 * time.Millisecond)
+		end, ok := ui.Find("附件预览")
+		if !ok || math.Abs(float64(end.W-source.W)) > 1 || math.Abs(float64(end.H-source.H)) > 1 || math.Abs(float64(end.X-source.X)) > 1 || math.Abs(float64(end.Y-source.Y)) > 1 {
+			t.Fatal("file preview does not return to the complete card", end, source)
+		}
+	}
+}
+
 func TestImagePreviewSurfaceGrowsAndShrinksWithItsImage(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		v := New(layoutModel(), nil, "")
@@ -98,20 +123,21 @@ func TestImagePreviewSurfaceGrowsAndShrinksWithItsImage(t *testing.T) {
 		moving, _ := ui.Find("附件预览")
 		sample := func(r n.Rect) color.RGBA { return ui.Image().RGBAAt(int(r.X+r.W*.65), int(r.Y+8)) }
 		entering := sample(moving)
+		enterBackdrop := ui.Image().RGBAAt(1350, 400)
 		ui.Advance(500 * time.Millisecond)
 		settled, _ := ui.Find("附件预览")
 		surface := sample(settled)
 		if moving.W >= settled.W-10 || moving.H >= settled.H-10 {
 			t.Fatal("image moves while its window remains at final size", dark, moving, settled)
 		}
-		if entering != surface {
+		if entering == enterBackdrop || entering == surface {
 			t.Fatal("preview window only becomes visible at the end", dark, entering, surface)
 		}
 		v.attachmentPreview.close()
 		ui.Frame()
 		ui.Advance(80 * time.Millisecond)
 		closing, ok := ui.Find("附件预览")
-		if !ok || closing.W >= settled.W-10 || sample(closing) != surface {
+		if !ok || closing.W >= settled.W-10 || sample(closing) == surface {
 			t.Fatal("preview window disappears instead of shrinking with image", dark, closing)
 		}
 	}
@@ -144,6 +170,50 @@ func TestReducedMotionImagePreviewDoesNotZoomOrFade(t *testing.T) {
 	closed := ui.Image().RGBAAt(1300, 500)
 	if exiting != closed || closed != rest {
 		t.Fatal("reduced-motion image close still fades")
+	}
+}
+
+func TestImageBackdropTransitionsBeforeTheThumbnailReturns(t *testing.T) {
+	v := New(layoutModel(), nil, "")
+	ui := n.NewTester(v.View, 1440, 900)
+	ui.Advance(time.Second)
+	rest := ui.Image().RGBAAt(1350, 400)
+	v.attachmentPreview = &attachmentPreview{Attachment: domain.Attachment{ID: "backdrop", Name: "image.png", MIME: "image/png"}, presence: previewOpening, Source: n.Rect{X: 500, Y: 700, W: 100, H: 50}, Image: n.NewBitmap(image.NewRGBA(image.Rect(0, 0, 64, 32)))}
+	ui.Frame()
+	first := ui.Image().RGBAAt(1350, 400)
+	if first != rest {
+		t.Fatal("image backdrop switches on at the first frame", first, rest)
+	}
+	ui.Advance(80 * time.Millisecond)
+	middle := ui.Image().RGBAAt(1350, 400)
+	ui.Advance(500 * time.Millisecond)
+	open := ui.Image().RGBAAt(1350, 400)
+	if middle == rest || middle == open {
+		t.Fatal("image backdrop has no intermediate style", rest, middle, open)
+	}
+	v.attachmentPreview.close()
+	ui.Frame()
+	ui.Advance(230 * time.Millisecond)
+	closing := ui.Image().RGBAAt(1350, 400)
+	if closing == open {
+		t.Fatal("image backdrop stays fully dim until the thumbnail returns")
+	}
+}
+
+func TestInlineImagePreviewRetainsItsTagWhileClosing(t *testing.T) {
+	v := New(layoutModel(), nil, "")
+	v.attachmentPreview = &attachmentPreview{Attachment: domain.Attachment{ID: "inline-image", Name: "image.png", MIME: "image/png"}, presence: previewOpening, Source: n.Rect{X: 500, Y: 700, W: 100, H: 20}, Image: n.NewBitmap(image.NewRGBA(image.Rect(0, 0, 100, 200))), Origin: &attachmentPreviewOrigin{Radius: 5, Surface: n.Hex("#f5f5f5"), Content: func(c *n.Context) { n.Text(c, "image.png").FontSize(12) }}}
+	ui := n.NewTester(v.View, 1440, 900)
+	ui.Advance(time.Second)
+	v.attachmentPreview.close()
+	ui.Frame()
+	ui.Advance(70 * time.Millisecond)
+	if _, ok := ui.Find("附件预览"); !ok {
+		t.Fatal("inline image unmounted before its tag returned")
+	}
+	ui.Advance(500 * time.Millisecond)
+	if v.attachmentPreview.visible() {
+		t.Fatal("inline image close never reached hidden")
 	}
 }
 

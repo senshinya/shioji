@@ -56,6 +56,13 @@ func (s *Store) FinishTitleGeneration(job TitleJob, title string) error {
 	if state != titleRunning {
 		return nil
 	}
+	current, err := load[TitleJob](tx.QueryRow("SELECT body FROM title_jobs WHERE session_id=?", job.Session.ID))
+	if err != nil {
+		return err
+	}
+	if current.InputID != job.InputID || current.Session.TitleRevision != job.Session.TitleRevision {
+		return nil
+	}
 	state = titleCompleted
 	if title == "" {
 		state = titleFailed

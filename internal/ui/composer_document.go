@@ -191,6 +191,7 @@ func (v *View) insertReference(c *n.Context, b *composerDocument, state *fileMen
 func (v *View) referenceAttachment(c *n.Context, ref composerReference) *richtext.Attachment {
 	name := ref.name()
 	font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
+	surface := codeSurface(c.Theme())
 	layout := n.ShapeText(name, font, 0)
 	width, _ := layout.Size()
 	width = min(width, 180)
@@ -212,7 +213,8 @@ func (v *View) referenceAttachment(c *n.Context, ref composerReference) *richtex
 		a.Tooltip = ref.file.Attachment.SourcePath
 		a.OnClick = func(r n.Rect) {
 			if ref.file.Ready && ref.file.DeviceID == v.referenceDeviceID() && ref.file.WorkspaceID == v.Model.WorkspaceID {
-				v.openAttachment(ref.file.Attachment, ref.file.WorkspaceID, r)
+				paint := a.Draw
+				v.openAttachment(ref.file.Attachment, ref.file.WorkspaceID, r, attachmentPreviewOrigin{Surface: surface, Radius: 5, Content: func(c *n.Context) { n.Column(c).Fill().Draw(paint) }})
 			}
 		}
 	}

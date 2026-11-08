@@ -16,10 +16,10 @@ import (
 	"shioji/internal/harness"
 )
 
-func (s *Server) importOutputImage(harnessID, sessionID string, source harness.OutputImage) (domain.Attachment, error) {
+func (s *Server) importOutputResource(harnessID, sessionID string, source harness.OutputResource) (domain.Attachment, error) {
 	var none domain.Attachment
-	if source.SessionID == "" || source.ItemID == "" || source.Index < 0 || source.Index >= 8 || sessionID != "" && source.SessionID != sessionID {
-		return none, errors.New("图片不属于当前会话")
+	if (source.Kind != "image" && source.Kind != "file") || source.SessionID == "" || source.ItemID == "" || source.Index < 0 || source.Index >= 8 || sessionID != "" && source.SessionID != sessionID {
+		return none, errors.New("资源不属于当前会话")
 	}
 	detail, err := s.store.Session(source.SessionID, 0, 1)
 	if err != nil {
@@ -27,7 +27,7 @@ func (s *Server) importOutputImage(harnessID, sessionID string, source harness.O
 	}
 	session := detail.Session
 	if session.HarnessID != harnessID {
-		return none, errors.New("图片不属于当前 Agent")
+		return none, errors.New("资源不属于当前 Agent")
 	}
 	old, err := s.store.Item(source.SessionID, source.ItemID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -36,7 +36,7 @@ func (s *Server) importOutputImage(harnessID, sessionID string, source harness.O
 	if err == nil {
 		index := 0
 		for _, part := range old.Parts {
-			if part.Kind != "image" {
+			if part.Kind != source.Kind {
 				continue
 			}
 			if index == source.Index && part.Attachment != nil {
@@ -49,7 +49,7 @@ func (s *Server) importOutputImage(harnessID, sessionID string, source harness.O
 	name := source.Name
 	if source.Path != "" {
 		if len(data) != 0 {
-			return none, errors.New("图片来源不明确")
+			return none, errors.New("资源来源不明确")
 		}
 		path := source.Path
 		if !filepath.IsAbs(path) {
@@ -77,7 +77,7 @@ func (s *Server) importOutputImage(harnessID, sessionID string, source harness.O
 			}
 			info, e := file.Stat()
 			if e == nil && (!info.Mode().IsRegular() || info.Size() > 8<<20) {
-				e = errors.New("图片必须是 8 MiB 以内的普通文件")
+				e = errors.New("资源必须是 8 MiB 以内的普通文件")
 			}
 			if e == nil {
 				data, e = io.ReadAll(io.LimitReader(file, (8<<20)+1))
@@ -91,18 +91,21 @@ func (s *Server) importOutputImage(harnessID, sessionID string, source harness.O
 			break
 		}
 		if !allowed {
-			return none, errors.New("图片不在本会话的已接纳目录中")
+			return none, errors.New("资源不在本会话的已接纳目录中")
 		}
 	}
 	if name == "" {
-		name = "工具图片"
+		name = "工具结果"
 	}
 	a, err := attachments.Describe(name, data)
 	if err != nil {
 		return none, err
 	}
-	if !strings.HasPrefix(a.MIME, "image/") {
+	if source.Kind == "image" && !strings.HasPrefix(a.MIME, "image/") {
 		return none, errors.New("工具结果不是支持的图片")
+	}
+	if source.Kind == "file" && a.MIME != "text/plain" {
+		return none, errors.New("文件结果仅支持 UTF-8 文本或代码")
 	}
 	// Content-addressed UUIDv8 identity makes duplicate events/history imports
 	// reuse the same bytes without putting a source path in the resource record.

@@ -10,7 +10,7 @@
 
 自动会话命名使用可选 `harness.TitleGenerator`，由 owning worker 保存任务并接纳标题结果；具体模型选择、辅助进程与认证留在 adapter。当前实现和验证边界见 [自动会话命名](session-titles.md)。
 
-工具图片通过可选的 `StartOptions.ImportImage` 回调导入 owning worker 的资源仓库；adapter 翻译编码与源图片身份，共享事件只携带不可变附件引用。文件路径范围、快照保存与独立传输由 worker 负责，详见[工具图片结果](tool-image-results.md)。
+工具图片与文本文件通过可选的 `StartOptions.ImportResource` 回调导入 owning worker 的资源仓库；adapter 翻译编码与源资源身份，共享事件只携带不可变附件引用。文件路径范围、快照保存与独立传输由 worker 负责，详见[工具图片结果](tool-image-results.md)与[工具文件结果](tool-file-results.md)。
 
 让原生 UI 渲染稳定的会话内容、操作状态、变更和待处理请求；Codex 的 JSON RPC 方法、wire union、数字／字符串 request ID 及响应编码保留在 Codex adapter 中。接第二个 harness 时增加 adapter 和必要能力，不复制 Codex 的整个协议做“通用协议”。
 

@@ -1,6 +1,17 @@
 package ui
 
-import n "github.com/egoist/mygo/ui"
+import (
+	"time"
+
+	n "github.com/egoist/mygo/ui"
+)
+
+func menuSelectionSurface(t *n.Theme) n.Color {
+	if t.Dark {
+		return raised(t).Mix(t.Text, .12)
+	}
+	return t.SurfaceHover
+}
 
 type runMenuPhase uint8
 
@@ -39,21 +50,20 @@ func (v *View) choiceMenu(c *n.Context, t *n.Theme, key string, trigger n.Elemen
 							continue
 						}
 						row := control(c.Key(choice.id), 4).FillWidth().MinHeight(26).PaddingX(7).Radius(4).Label(choice.name).Disabled(choice.disabled)
+						background := raised(t)
 						if row.FocusVisible() {
-							row.Background(t.SurfaceHover)
+							background = menuSelectionSurface(t)
 						}
+						row.Background(row.AnimateColor("menu-selection", background, motionAnimation(c, 120*time.Millisecond)))
 						if first {
 							row.AutoFocus()
 							first = false
 						}
 						row.Children(func() {
 							n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
-								name := n.Text(c, choice.name).FontSize(13).FixedLineHeight(18)
+								n.Text(c, choice.name).FontSize(13).FixedLineHeight(18).Grow(1).MinWidth(0).SingleLine().Ellipsis("…")
 								if choice.detail != "" {
-									name.Width(96)
-									n.Text(c, choice.detail).FontSize(11).TextColor(t.TextMuted).Grow(1)
-								} else {
-									name.Grow(1)
+									n.Text(c, choice.detail).FontSize(11).TextColor(t.TextMuted).MaxWidth(120).Shrink(0).SingleLine().Ellipsis("…").TextAlign(n.End).Tooltip(choice.detail)
 								}
 								inlineSymbol(c, check, choice.name, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 12, t.Text).Opacity(func() float32 {
 									if choice.checked {

@@ -202,7 +202,9 @@ func TestFileMentionKeyboardSelectionPreviewAndUnicodeCaret(t *testing.T) {
 		t.Fatal("inline reference is missing")
 	}
 	ui.ClickAt(box.X+box.W/2, box.Y+box.H/2)
-	waitNative(t, ui, func() bool { return ui.HasText("package tree\n") || ui.HasText("package tree") })
+	waitNative(t, ui, func() bool {
+		return v.attachmentPreview != nil && v.attachmentPreview.Reader != nil && v.attachmentPreview.Reader.Buffer.String() == "package tree\n"
+	})
 	if !ui.HasText("rotate_test.go") {
 		t.Fatal("preview lost reference name")
 	}

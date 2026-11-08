@@ -91,6 +91,10 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 	if err != nil {
 		return op, err
 	}
+	select {
+	case s.titleWake <- struct{}{}:
+	default:
+	}
 	s.mu.Lock()
 	delete(s.bound, op.Session.ID)
 	s.mu.Unlock()

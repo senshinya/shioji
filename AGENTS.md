@@ -102,7 +102,7 @@ Avoid unnecessary secondary labels and descriptions. Let the layout do the expla
 
 ### 会话分叉与历史修改
 
-- 分叉创建独立会话；修改历史用户消息则在原 SessionID 重新开始，替换该消息及后续对话。保留原普通草稿、名称、启动目录和暂停的待发队列，不自动回滚文件或创建 Git worktree。
+- 分叉创建独立会话；修改历史用户消息则在原 SessionID 重新开始，替换该消息及后续对话。保留原普通草稿、手动名称、启动目录和暂停的待发队列，不自动回滚文件或创建 Git worktree。修改首条已发送消息后重新生成自动标题，后续消息修改不触发命名；新标题返回前保留旧名称，并沿用既有标题切换动画。
 - 用户消息下方右对齐排列编辑、复制和发送时间，复用回复 footer 的灰色文字、图标与间距；操作行不进入正文选区，发送时间使用 worker 持久化的接纳时间，历史缺失则显示未知。历史消息在原位展开独立编辑框，保留附件；底部 composer 与普通草稿保持独立可用。展开和收起使用真实高度动画，保持编辑消息的阅读位置。原位编辑底部仅保留取消与回车图标确认按钮，不展示说明文案。确认后编辑框立即以真实宽高动画收回为修订消息气泡，与后续消息的顺风散沙退场同时开始；原生内容从左向右风化为细颗粒并向右飘散，不做整块模糊或水晕。最后颗粒退场后再收拢高度，完整退场结束时显示“进行中”并提交重开；减少动态效果跳过碎散。历史 reset 与新输入到达之间保留本地修订消息气泡，新消息承接原消息的阅读锚点。分叉放在回复底部复制右侧、时间与用量之前；所选回复之后的内容先渐隐，分叉视图承接同一回复的位置，避免空视图和默认滚动到末尾。新分叉的预填内容只能来自与 worker 确认的源 ThreadID／revision 对应的不可变历史前缀，并由正常权威加载更新。发送待确认时锁定历史编辑区，失败恢复原内容和编辑草稿。源协议只有轮次边界，轮次内的 Steer 追加消息不能冒充可单独截断的消息。
 - 所有历史操作由所属 worker 接纳，持久化稳定操作标识，重连只查询，不重发未知输入。每次实际提交历史替换（含已保存 fork 的继续完成）都重新核对 revision、执行目录、Git、配置及附件；旧线程迟到事件不能恢复被替换内容。
 - 保留历史按 worker 拥有的轮次顺序与归属确定，不按消息落盘位置截断，以保留前轮迟到输出。历史替换事件必须同步清理各客户端关联的 items、turns、requests 与 plan。
@@ -166,6 +166,7 @@ Avoid unnecessary secondary labels and descriptions. Let the layout do the expla
 - Preserve logical text selection across virtualized row unmounts using stable item IDs and text offsets. Extend the native component interface where needed; do not keep the entire history mounted as a workaround. Constrain each native list’s height so virtualization remains effective.
 - Use standard macOS keyboard navigation, focus behavior, menus, text selection, copy/paste, and accessibility semantics.
 - 动画必须流畅自然、有迹可循：通过连贯的空间关系与状态过渡，让用户看清内容从哪里来、发生了什么变化、将去往哪里。保持焦点、阅读位置和操作响应稳定，尊重系统“减少动态效果”设置；不以装饰性动画干扰阅读或掩盖真实执行状态。
+- 消息区动态元素的出现、消失及状态替换必须有连贯过渡，覆盖已有消息内部追加的文件、图片、补丁、工具结果、请求回执和底栏信息；不能仅依赖整条消息的入场动画。高度变化必须参与真实布局，与后文及滚动同步；子元素已有高度动画时不得再叠加外层缓动。既有文本不随增量重新渐显，历史加载、重连水合及虚拟列表重新挂载不重播入场，减少动态效果沿用简化过渡。检查清单与回归见 `docs/message-area-motion.md`。
 - Keep repeated work lists compact: single-line 32 px desktop device rows. Put collection controls in the window toolbar rather than repeating a large page heading. Stack each complete question above a full-width answer or vertical option list, with submission in the card's bottom action area. Do not squeeze questions and answers into separate columns or turn long choices into narrow chips. Keep short fields compact; long answers grow to a bounded height and scroll. For large option sets, offer explicit expansion and preserve the selected option when collapsed.
 - Align navigation counts in one right-aligned column with shared font metrics and tabular figures. Use stable columns for file addition/deletion counts, including an invisible empty deletion slot when it is zero.
 - Keep status indicators at their original compact size (4 px in the session list); do not enlarge them to improve visibility. Keep session status indicators saturated and legible against both the normal and selected sidebar surfaces. Use distinct light/dark semantic colors rather than muted decorative tints; keep surface and selection colors neutral. Distinguish completed and paused sessions with simple shapes, without pulsing or glow.

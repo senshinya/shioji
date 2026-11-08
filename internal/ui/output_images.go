@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func (v *View) outputImage(c *n.Context, t *n.Theme, a domain.Attachment) {
+func (v *View) outputImage(c *n.Context, t *n.Theme, a domain.Attachment) float32 {
 	cached := v.loadAttachmentImage(a, v.Model.WorkspaceID, 512)
 	height := float32(80)
 	if cached != nil {
@@ -19,7 +19,8 @@ func (v *View) outputImage(c *n.Context, t *n.Theme, a domain.Attachment) {
 		}
 	}
 	frame := n.Column(c.Key("output-image:" + a.ID)).FillWidth().MaxWidth(224).Clip().Radius(8).Background(codeSurface(t))
-	frame.Height(frame.AnimateTo("height", height, motionAnimation(c, 180*time.Millisecond)))
+	shown := frame.AnimateTo("height", height, motionAnimation(c, 180*time.Millisecond))
+	frame.Height(shown)
 	var source n.Rect
 	var button n.Element
 	frame.Children(func() {
@@ -32,20 +33,24 @@ func (v *View) outputImage(c *n.Context, t *n.Theme, a domain.Attachment) {
 				if cached != nil && cached.phase == attachmentImageFailed {
 					label = "图片加载失败"
 				}
-				n.Text(c, label).FontSize(11).TextColor(t.TextMuted)
+				n.Text(c.Key("placeholder"), label).FontSize(11).TextColor(t.TextMuted).Transition(fadeMotion(c, 160*time.Millisecond)).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 			}
 		})
 		source = button.Bounds()
 	})
 	if button.Clicked() {
-		v.openAttachment(a, v.Model.WorkspaceID, source)
+		v.openAttachment(a, v.Model.WorkspaceID, source, attachmentPreviewOrigin{Radius: 8})
 	}
-	n.Row(c).FillWidth().MaxWidth(224).Gap(6).AlignItems(n.Baseline).Children(func() {
+	n.Row(c.Key("caption")).FillWidth().MaxWidth(224).Gap(6).AlignItems(n.Baseline).Children(func() {
 		n.Text(c, a.Name).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").FontSize(11).TextColor(t.TextMuted)
 		if cached != nil && cached.phase == attachmentImageFailed {
-			if ghost(c, "重试图片").FontSize(11).Tooltip(cached.Error).Clicked() {
+			if ghost(c.Key("retry"), "重试图片").Transition(fadeMotion(c, 160*time.Millisecond)).FontSize(11).Tooltip(cached.Error).Clicked() {
 				delete(v.attachmentImages, a.ID)
 			}
 		}
 	})
+	if previous := frame.LayoutBounds(); previous.W > 0 {
+		return shown - previous.H
+	}
+	return 0
 }

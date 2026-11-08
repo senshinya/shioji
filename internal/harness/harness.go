@@ -54,18 +54,19 @@ type IncomingMessage struct {
 }
 
 type StartOptions struct {
-	// ImportImage snapshots device-local or inline image bytes in worker storage.
+	// ImportResource snapshots device-local or inline image/text bytes in worker storage.
 	// Adapters translate source encodings before calling this; journals carry only
 	// the returned immutable reference, never bytes or a runtime storage path.
-	ImportImage func(OutputImage) (domain.Attachment, error)
-	OnMessage   func(context.Context, IncomingMessage) error
-	Scope       *managedexec.Scope
-	OnEvent     func(domain.Event) error
-	OnStart     func(int) error
-	OnLost      func() error
+	ImportResource func(OutputResource) (domain.Attachment, error)
+	OnMessage      func(context.Context, IncomingMessage) error
+	Scope          *managedexec.Scope
+	OnEvent        func(domain.Event) error
+	OnStart        func(int) error
+	OnLost         func() error
 }
 
-type OutputImage struct {
+type OutputResource struct {
+	Kind      string // image or file; Index is scoped to this kind within the item.
 	SessionID string
 	ItemID    string
 	Index     int

@@ -374,9 +374,11 @@ func (v *View) mentionPopup(c *n.Context, t *n.Theme, anchor n.Element, input co
 							accessible = "引用文件：" + file.Path
 						}
 						row := control(c.Key(identity)).FillWidth().Height(26).PaddingX(7).Radius(4).Label(accessible).Tooltip(detail).Disabled(state.phase != mentionShowing)
+						background := raised(t)
 						if i == state.selected {
-							row.Background(t.SurfaceHover)
+							background = menuSelectionSurface(t)
 						}
+						row.Background(row.AnimateColor("reference-selection", background, motionAnimation(c, 120*time.Millisecond)))
 						row.Children(func() {
 							n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
 								icon := fileAttachmentIcon

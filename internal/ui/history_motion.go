@@ -145,7 +145,7 @@ func (v *View) historyBridgeRows(rows []transcriptRow) []transcriptRow {
 			return rows
 		}
 	}
-	return append(rows, transcriptRow{key: m.in.ItemID, item: m.item, end: -1})
+	return append(rows, transcriptRow{key: m.in.ItemID, item: m.item, end: -1, opacity: 1})
 }
 
 // The local exit precedes worker acceptance and turn creation. Show the same
@@ -155,20 +155,37 @@ func (v *View) historyRunningRows(rows []transcriptRow) []transcriptRow {
 	if m == nil || !m.in.Restart || v.Model.SessionID != m.in.SessionID || m.phase == historyExiting {
 		return rows
 	}
+	key := "history-running:" + m.in.OperationID
 	for _, row := range rows {
 		if row.footer != "" {
 			if _, original := m.turns[row.footer]; !original {
+				v.retainHistoryRunningFooter(m, row.footer)
 				return rows
 			}
 		}
 	}
 	for i, row := range rows {
 		if row.key == m.in.ItemID || row.key == "input:"+m.in.OperationID {
-			pending := transcriptRow{key: "history-running:" + m.in.OperationID, restarting: true, end: -1}
+			pending := transcriptRow{key: key, restarting: true, end: -1}
 			return slices.Insert(rows, i+1, pending)
 		}
 	}
 	return rows
+}
+
+// syncHistoryExit runs before transcript projection. Transfer identity there
+// too, before it retires the local motion and ordinary arrival tracking resumes.
+func (v *View) retainHistoryRunningFooter(m *historyRestartMotion, turn string) {
+	arrivals := v.toolArrivals
+	if arrivals == nil || arrivals.session != m.in.SessionID {
+		return
+	}
+	if arrivals.footerKeys == nil {
+		arrivals.footerKeys = map[string]string{}
+	}
+	arrivals.footerKeys[turn] = "history-running:" + m.in.OperationID
+	arrivals.seen["turn-footer:"+turn] = true
+	delete(arrivals.motions, "turn-footer:"+turn)
 }
 
 func (v *View) anchorHistoryRows(state *n.ListState, rows []transcriptRow) {
@@ -306,6 +323,7 @@ func (v *View) syncHistoryExit(c *n.Context) {
 				}
 				for _, item := range detail.Items {
 					if item.TurnID == turn.ID && !emptyTranscriptItem(item) {
+						v.retainHistoryRunningFooter(motion, turn.ID)
 						finished = true
 						break
 					}

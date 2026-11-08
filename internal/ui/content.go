@@ -94,7 +94,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item) {
 			if item.Kind == "activity" {
 				inlineSymbol(c, activityIcon(item.Presentation), label, font, 14, color)
 			}
-			n.Text(c, label).FontSize(12).FixedLineHeight(20).TextColor(color).Grow(1)
+			n.Text(c, label).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(12).FixedLineHeight(20).TextColor(color).Grow(1)
 			if item.Status != "" {
 				status := activityStatus(item.Status)
 				if issue := toolIssueLabel(item); issue != "" {
@@ -102,14 +102,14 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item) {
 				}
 				animation := motionAnimation(c, 160*time.Millisecond)
 				n.Text(c.Key("activity-status"), status).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
-					ContentTransition(n.ContentTransition{Animation: &animation})
+					ContentTransition(n.ContentTransition{Animation: &animation}).Transition(fadeMotion(c, 180*time.Millisecond))
 			}
 			if hasBody {
 				angle := float32(0)
 				if v.Model.Collapsed[key] {
 					angle = -90
 				}
-				inlineSymbol(c, chevron, label, font, 10, color, angle)
+				inlineSymbol(c.Key("activity-chevron"), chevron, label, font, 10, color, angle).Transition(fadeMotion(c, 180*time.Millisecond))
 			}
 		})
 	})
@@ -119,73 +119,166 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item) {
 		}
 		v.Model.Collapsed[key] = !v.Model.Collapsed[key]
 	}
-	if !hasBody || v.Model.Collapsed[key] {
-		return
+	// Keep the measured stack in layout while it closes. Element exit
+	// snapshots alone do not reserve height for the transcript that follows.
+	frame := n.Column(c.Key("activity-body")).FillWidth().Clip().Margin(-8, 0, 0, 0)
+	retained := n.Local(frame, "item", func() domain.Item { return item })
+	open := hasBody && !v.Model.Collapsed[key]
+	if open {
+		*retained = item
 	}
-	n.Column(c.Key("activity-body")).FillWidth().Gap(8).Transition(disclosureMotion(c, 160*time.Millisecond)).Children(func() {
-		if item.Text != "" {
-			text := n.Text(c, item.Text).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
-			v.decoratePlainFind(c, text, item, nil)
-		}
-		for i, file := range item.Files {
-			n.Column(c.Key(fmt.Sprint("file:", i))).FillWidth().Gap(6).Children(func() {
-				n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-					n.Text(c, file.Path).FontSize(11).FixedLineHeight(20).Grow(1).Selectable()
-					kind := map[string]string{"add": "新增", "delete": "删除", "update": "修改"}[file.Kind]
-					if file.Destination != "" {
-						kind = "移动"
-					}
-					n.Text(c, kind).FontSize(11).TextColor(t.TextMuted)
-				})
-				if file.Destination != "" {
-					n.Text(c, "→ "+file.Destination).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-				}
-				if file.Patch != "" {
-					v.activityDiff(c, t, key+fmt.Sprint(i), file)
-				}
-			})
-		}
-		for i, part := range item.Parts {
-			n.Column(c.Key(fmt.Sprint("part:", i))).FillWidth().Gap(4).Children(func() {
-				if part.Kind == "image" && part.Attachment != nil {
-					v.outputImage(c, t, *part.Attachment)
-					return
-				}
-				if part.Label != "" {
-					n.Text(c, part.Label).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
-				}
-				switch part.Kind {
-				case "code":
-					n.Scroll(c).FillWidth().MaxHeight(180).Children(func() {
-						n.Text(c, part.Text).FillWidth().Font(v.Model.Preferences.CodeFont).FontSize(11).FixedLineHeight(18).Padding(8, 10).Radius(6).Background(codeSurface(t)).Selectable()
+	animatedContentHeight(c, frame, open, 180*time.Millisecond, func() float32 {
+		innerHeightDelta := float32(0)
+		item := *retained
+		n.Column(c.Key("result-stack")).FillWidth().Padding(8, 0, 0, 0).Gap(8).Children(func() {
+			if item.Text != "" {
+				resultText(c.Key("summary"), item.Text, t.TextMuted, func(text n.Element) { v.decoratePlainFind(c, text, item, nil) }).
+					Transition(resultBlockMotion(c)).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+			}
+			for _, file := range item.Files {
+				n.Column(c.Key("file:" + file.Path)).FillWidth().Gap(6).Transition(resultBlockMotion(c)).Children(func() {
+					n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
+						n.Text(c, file.Path).FontSize(11).FixedLineHeight(20).Grow(1).Selectable()
+						kind := map[string]string{"add": "新增", "delete": "删除", "update": "修改"}[file.Kind]
+						if file.Destination != "" {
+							kind = "移动"
+						}
+						n.Text(c, kind).FontSize(11).TextColor(t.TextMuted)
 					})
-				case "markdown":
-					v.activityMarkdown.Theme = v.md.Theme
-					v.activityMarkdown.ShareSelection = true
-					v.activityMarkdown.WrapCode = true
-					markdown.View(c, part.Text, &v.activityMarkdown).FillWidth().FontSize(12)
-				default:
-					n.Text(c, part.Text).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
-				}
-			})
-		}
-		for _, agent := range item.Agents {
-			n.Column(c.Key(agent.ID)).FillWidth().Gap(4).Children(func() {
-				n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-					font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
-					statusDot(c, agent.ID, font, t.TextMuted, false)
-					n.Text(c, agent.ID).FontSize(12).Grow(1)
-					n.Text(c, activityStatus(agent.Status)).FontSize(11).TextColor(t.TextMuted)
+					if file.Destination != "" {
+						n.Text(c.Key("destination"), "→ "+file.Destination).Transition(resultBlockMotion(c)).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+					}
+					if file.Patch != "" {
+						v.activityDiff(c, t, key+"/"+file.Path, file)
+					}
 				})
-				if agent.Message != "" {
-					n.Text(c, agent.Message).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).PaddingX(18)
-				}
-			})
+			}
+			occurrences := map[string]int{}
+			for i, part := range item.Parts {
+				identity := resultPartKey(part, i)
+				occurrence := occurrences[identity]
+				occurrences[identity]++
+				n.Column(c.Key(fmt.Sprintf("%s:%d", identity, occurrence))).FillWidth().Gap(4).Transition(resultBlockMotion(c)).Children(func() {
+					if part.Kind == "image" && part.Attachment != nil {
+						innerHeightDelta += v.outputImage(c, t, *part.Attachment)
+						return
+					}
+					if part.Kind == "file" && part.Attachment != nil {
+						v.outputFile(c, t, *part.Attachment)
+						return
+					}
+					if part.Label != "" {
+						n.Text(c.Key("label"), part.Label).Transition(resultBlockMotion(c)).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+					}
+					switch part.Kind {
+					case "code":
+						n.Scroll(c).FillWidth().MaxHeight(180).Children(func() {
+							resultText(c.Key("code-text"), part.Text, t.Text).FillWidth().Font(v.Model.Preferences.CodeFont).FontSize(11).FixedLineHeight(18).Padding(8, 10).Radius(6).Background(codeSurface(t)).Selectable()
+						})
+					case "markdown":
+						v.activityMarkdown.Theme = v.md.Theme
+						v.activityMarkdown.ShareSelection = true
+						v.activityMarkdown.WrapCode = true
+						v.activityMarkdown.Reveal = &markdown.Reveal{Unit: markdown.ByCharacter, Fade: 180 * time.Millisecond, Smooth: true}
+						root := n.Column(c.Key("markdown")).FillWidth()
+						mounted := n.Local(root, "mounted", func() bool { return false })
+						root.Children(func() {
+							if *mounted && !item.Final && !c.Preferences().ReduceMotion {
+								markdown.Stream(c, part.Text, &v.activityMarkdown).FillWidth().FontSize(12)
+							} else {
+								markdown.View(c, part.Text, &v.activityMarkdown).FillWidth().FontSize(12)
+							}
+						})
+						*mounted = true
+					default:
+						resultText(c.Key("part-text"), part.Text, t.TextMuted).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+					}
+				})
+			}
+			for _, agent := range item.Agents {
+				n.Column(c.Key("agent:" + agent.ID)).FillWidth().Gap(4).Transition(resultBlockMotion(c)).Children(func() {
+					n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
+						font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
+						statusDot(c, agent.ID, font, t.TextMuted, false)
+						n.Text(c, agent.ID).FontSize(12).Grow(1)
+						n.Text(c.Key("status"), activityStatus(agent.Status)).FontSize(11).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+					})
+					if agent.Message != "" {
+						n.Text(c.Key("message"), agent.Message).Transition(resultBlockMotion(c)).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).PaddingX(18)
+					}
+				})
+			}
+			if item.Truncated {
+				n.Text(c.Key("truncated"), "内容过长，已截断显示").Transition(resultBlockMotion(c)).FontSize(11).TextColor(t.TextMuted)
+			}
+		})
+		return innerHeightDelta
+	})
+}
+
+// Fade received suffixes in place. Earlier bytes keep their original ink;
+// do not crossfade a whole tool result every time another delta arrives.
+type resultTextState struct {
+	text    string
+	appends []commandOutputAppend
+}
+
+func resultText(c *n.Context, text string, color n.Color, decorate ...func(n.Element)) n.Element {
+	root := n.Column(c).FillWidth()
+	state := n.Local(root, "appends", func() resultTextState { return resultTextState{text: text} })
+	if text != state.text {
+		if strings.HasPrefix(text, state.text) && !c.Preferences().ReduceMotion {
+			state.appends = append(state.appends, commandOutputAppend{len(state.text), len(text), c.Now()})
+		} else {
+			state.appends = nil
 		}
-		if item.Truncated {
-			n.Text(c, "内容过长，已截断显示").FontSize(11).TextColor(t.TextMuted)
+		state.text = text
+	}
+	spans := []n.Span{}
+	from := 0
+	active := state.appends[:0]
+	for _, addition := range state.appends {
+		progress := min(1, float32(c.Now().Sub(addition.at))/float32(180*time.Millisecond))
+		if progress >= 1 || c.Preferences().ReduceMotion {
+			continue
+		}
+		active = append(active, addition)
+		if from < addition.start {
+			spans = append(spans, n.Span{Text: text[from:addition.start]})
+		}
+		spans = append(spans, n.Span{Text: text[addition.start:addition.end], Color: color.Alpha(n.EaseOut(max(0, progress)))})
+		from = addition.end
+		c.AnimationFrame()
+	}
+	state.appends = active
+	if from < len(text) {
+		spans = append(spans, n.Span{Text: text[from:]})
+	}
+	root.Children(func() {
+		e := n.RichText(c, spans...).FillWidth().TextColor(color)
+		for _, apply := range decorate {
+			apply(e)
+		}
+		if len(active) == 0 {
+			e.ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
 		}
 	})
+	return root
+}
+
+// Resource identity survives an authoritative result replacing/reordering parts.
+// Plain segments have no source ID; their position within the item is stable.
+func resultPartKey(part domain.ContentPart, index int) string {
+	if part.Attachment != nil {
+		return "part:" + part.Kind + ":" + part.Attachment.ID
+	}
+	return fmt.Sprintf("part:%s:%d", part.Kind, index)
+}
+
+func resultBlockMotion(c *n.Context) n.ElementTransition {
+	motion := fadeMotion(c, 180*time.Millisecond)
+	motion.Position = !c.Preferences().ReduceMotion
+	return motion
 }
 
 func (v *View) activityDiff(c *n.Context, t *n.Theme, key string, file domain.FileChange) {
@@ -220,5 +313,5 @@ func (v *View) activityDiff(c *n.Context, t *n.Theme, key string, file domain.Fi
 	state.State.LineHeight = 20.0 / 11
 	state.State.Indicators = editor.DiffClassic
 	state.State.Theme = &editor.Theme{Background: codeSurface(t), Text: t.Text, LineNumber: subtle(t), Added: added, Deleted: deleted, AddedBackground: addFill, DeletedBackground: delFill}
-	editor.DiffView(c.Key(key), &state.State).FillWidth().Height(min(220, float32(strings.Count(file.Patch, "\n")+3)*20)).Label("文件补丁：" + file.Path)
+	editor.DiffView(c.Key(key), &state.State).Transition(resultBlockMotion(c)).FillWidth().Height(min(220, float32(strings.Count(file.Patch, "\n")+3)*20)).Label("文件补丁：" + file.Path)
 }

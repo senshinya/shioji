@@ -25,9 +25,11 @@ type transcriptRow struct {
 // Keep arrival identity outside virtual rows: scrolling an existing call back
 // into view must not replay its entrance. A new visit/hydration is a baseline.
 type toolArrivalState struct {
-	session string
-	seen    map[string]bool
-	motions map[string]*toolDisclosureMotion
+	session    string
+	epoch      string
+	seen       map[string]bool
+	motions    map[string]*toolDisclosureMotion
+	footerKeys map[string]string // Restart waiting rows retain their native animation state.
 }
 
 // A turn receipt is its own stable row below a disclosure, so it follows the
@@ -41,7 +43,7 @@ func withTurnFooters(rows []transcriptRow, items []domain.Item, turns map[string
 		}
 		if row.end >= 0 && row.item.TurnID != "" && (row.end == len(items)-1 || items[row.end+1].TurnID != row.item.TurnID) {
 			if _, ok := turns[row.item.TurnID]; ok {
-				result = append(result, transcriptRow{key: "turn-footer:" + row.item.TurnID, footer: row.item.TurnID, end: -1})
+				result = append(result, transcriptRow{key: "turn-footer:" + row.item.TurnID, footer: row.item.TurnID, end: -1, opacity: 1})
 			}
 		}
 	}
@@ -63,10 +65,22 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 	if collapseHistory {
 		delete(v.Model.FoldToolHistory, v.Model.SessionID)
 	}
-	if v.toolArrivals == nil || v.toolArrivals.session != v.Model.SessionID || collapseHistory {
-		v.toolArrivals = &toolArrivalState{session: v.Model.SessionID, motions: map[string]*toolDisclosureMotion{}}
+	if v.toolArrivals == nil || v.toolArrivals.session != v.Model.SessionID || v.toolArrivals.epoch != v.Model.ConnectionEpoch || collapseHistory {
+		v.toolArrivals = &toolArrivalState{session: v.Model.SessionID, epoch: v.Model.ConnectionEpoch, motions: map[string]*toolDisclosureMotion{}}
 	}
 	arrivals := v.toolArrivals
+	for turn := range arrivals.footerKeys {
+		present := false
+		for _, current := range v.Model.Details[v.Model.SessionID].Turns {
+			if current.ID == turn {
+				present = true
+				break
+			}
+		}
+		if !present {
+			delete(arrivals.footerKeys, turn)
+		}
+	}
 	seen := map[string]bool{}
 	arrival := func(key string) float32 {
 		seen[key] = true
@@ -115,7 +129,11 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			continue
 		}
 		if item.Kind != "tool" {
-			rows = append(rows, transcriptRow{key: item.ID, item: item, end: i})
+			progress := float32(1)
+			if item.Kind != "user" && item.Kind != "assistant" && item.Kind != "request" && item.Kind != "request_result" {
+				progress = arrival(item.ID)
+			}
+			rows = append(rows, transcriptRow{key: item.ID, item: item, end: i, opacity: progress})
 			i++
 			continue
 		}
@@ -202,6 +220,19 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		}
 		i = end
 	}
+	for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
+		key := "turn-footer:" + turn.ID
+		// Restart's local waiting line already occupies this slot. Acceptance
+		// replaces its identity, rather than introducing another visible element.
+		if m := v.historyExit; m != nil && m.in.Restart && m.in.SessionID == v.Model.SessionID && m.phase != historyExiting {
+			if _, old := m.turns[turn.ID]; !old {
+				seen[key] = true
+				delete(arrivals.motions, key)
+				continue
+			}
+		}
+		arrival(key)
+	}
 	return rows
 }
 func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int) {
@@ -215,7 +246,7 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 				angle = -90
 			}
 			font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}
-			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(color)
+			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
 			if row.issues > 0 && v.Model.ToolDisclosure(row.group).Closed() {
 				animation := motionAnimation(c, 160*time.Millisecond)
 				n.Text(c.Key("issues"), fmt.Sprintf("%d 项未成功", row.issues)).FontSize(11).FixedLineHeight(20).TextColor(color).

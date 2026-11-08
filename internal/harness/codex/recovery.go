@@ -99,7 +99,7 @@ func (r *Runtime) Inspect(ctx context.Context, s domain.Session) (domain.Recover
 				if item.Type == "plan" {
 					continue
 				}
-				normalized := r.normalizer.normalizeImageItem(s.ID, itemKey(src.ID, item.ID), item, turn.Status != "running")
+				normalized := r.normalizer.normalizeResourceItem(s.ID, itemKey(src.ID, item.ID), item, turn.Status != "running")
 				normalized.ID, normalized.TurnID = itemKey(src.ID, item.ID), src.ID
 				out.Items = append(out.Items, normalized)
 			}

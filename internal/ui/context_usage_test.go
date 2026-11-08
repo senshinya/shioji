@@ -2,8 +2,10 @@ package ui
 
 import (
 	"bytes"
+	"fmt"
 	n "github.com/egoist/mygo/ui"
 	"image"
+	"math"
 	"shioji/internal/domain"
 	"testing"
 	"time"
@@ -248,7 +250,7 @@ func TestContextRingStaysCompactAcrossStates(t *testing.T) {
 			}
 			ring, _ := ui.Find("上下文圆环")
 			trigger, _ := ui.Find("上下文用量")
-			if trigger.W != 28 || ring.W != 18 {
+			if trigger.W != 28 || ring.W != 16 {
 				t.Fatal("context trigger is not a compact icon button", trigger, ring)
 			}
 			if i > 0 && (ring != previousRing || send != previousSend) {
@@ -266,6 +268,52 @@ func TestContextRingStaysCompactAcrossStates(t *testing.T) {
 			}
 			ui.Key(0, n.KeyEscape)
 			ui.Advance(time.Second)
+		}
+	}
+}
+
+// Catch the ring using different font metrics from the neighboring run control,
+// or painting an oversized glyph inside an otherwise compact trigger.
+func TestContextRingInkAlignsWithRunControl(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, model := range []string{"gpt-6.1-sol", "中文模型"} {
+			t.Run(fmt.Sprintf("%v/%s", dark, model), func(t *testing.T) {
+				m := layoutModel()
+				m.Snapshot.Sessions[0].ContextUsage = contextReport(100, 100)
+				m.Readiness.Models = []domain.Model{{ID: model, Default: true}}
+				m.Configs[m.DraftKey()] = domain.RunConfig{Model: model, Effort: "medium"}
+				ui := n.NewTester(New(m, nil, "").View, 1240, 820)
+				ui.SetDark(dark)
+				ui.Advance(time.Second)
+				ring, _ := ui.Find("上下文圆环")
+				run, _ := ui.Find("运行配置")
+				ink := func(r n.Rect) image.Rectangle {
+					im := ui.Image()
+					bg := im.RGBAAt(int(r.X), int(r.Y))
+					bounds := image.Rectangle{}
+					for y := int(r.Y); y < int(r.Y+r.H); y++ {
+						for x := int(r.X); x < int(r.X+r.W); x++ {
+							p := im.RGBAAt(x, y)
+							if math.Abs(float64(int(p.R)-int(bg.R))) > 40 {
+								bounds = bounds.Union(image.Rect(x, y, x+1, y+1))
+							}
+						}
+					}
+					if bounds.Empty() {
+						t.Fatal("missing painted glyph", r)
+					}
+					return bounds
+				}
+				r := ink(ring)
+				icon := ink(n.Rect{X: run.X + 6, Y: run.Y, W: 20, H: run.H})
+				// A 14 DIP circle can cover 15 raster pixels at fractional origins.
+				if r.Dx() > 15 || r.Dy() > 15 {
+					t.Errorf("context ring is oversized: %v", r.Size())
+				}
+				if math.Abs(float64(r.Min.Y+r.Max.Y-icon.Min.Y-icon.Max.Y)/2) > 1 {
+					t.Errorf("ring and run glyph have different visual centers: ring=%v run=%v", r, icon)
+				}
+			})
 		}
 	}
 }

@@ -1034,3 +1034,56 @@ func TestHistorySuffixCollapseKeepsTheTranscriptAtItsNaturalEnd(t *testing.T) {
 		})
 	}
 }
+
+func TestHistoryRunningHandoffPreservesPaintAndAnimationPhase(t *testing.T) {
+	for _, replyFirst := range []bool{false, true} {
+		for _, dark := range []bool{false, true} {
+			t.Run(fmt.Sprint("dark=", dark, "/reply-first=", replyFirst), func(t *testing.T) {
+				v, ui, item := historyFixture()
+				ui.SetDark(dark)
+				v.beginHistoryEdit(item)
+				ui.Frame()
+				ui.Advance(time.Second)
+				v.Model.Drafts[v.Model.HistoryDraftKey()] = "revised question"
+				ui.Frame()
+				v.restartHistory()
+				ui.Advance(historyShatterDuration + historyCollapseDuration + 500*time.Millisecond)
+				in := v.historyExit.in
+				keep := int64(-1)
+				v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "history.reset", SessionID: "s", HistoryTurnOrder: &keep})
+				replacement := domain.Item{ID: "input:" + in.OperationID, Kind: "user", Text: "revised question", Status: "dispatching", Final: true}
+				v.Model.ApplyEvent(domain.Event{Sequence: 2, Type: "submission", SessionID: "s", Item: &replacement, Operation: &domain.Operation{ID: in.OperationID, SessionID: "s", State: "confirmed"}})
+				ui.Frame()
+				ui.Advance(370 * time.Millisecond)
+				ui.Frame() // Paint at Now(), after Advance may stop between display frames.
+				region := func() n.Rect {
+					r, ok := ui.Find("进行中")
+					if !ok {
+						t.Fatal("missing running footer")
+					}
+					r.X -= 12
+					r.W += 12
+					return r
+				}
+				before := contextPixels(ui, region())
+				turn := domain.Turn{ID: "new-turn", Status: "running"}
+				v.Model.ApplyEvent(domain.Event{Sequence: 3, Type: "turn", SessionID: "s", Turn: &turn})
+				if replyFirst {
+					v.Model.ApplyEvent(domain.Event{Sequence: 4, Type: "item.upsert", SessionID: "s", Item: &domain.Item{ID: "new-prose", TurnID: "new-turn", Kind: "assistant", Text: "新的回复"}})
+				} else {
+					replacement.TurnID, replacement.Status = "new-turn", "sent"
+					v.Model.ApplyEvent(domain.Event{Sequence: 4, Type: "item.upsert", SessionID: "s", Item: &replacement})
+				}
+				for frame := 0; frame < 3; frame++ {
+					ui.Frame() // Same clock: a metadata handoff must paint identically.
+					if !bytes.Equal(before, contextPixels(ui, region())) {
+						t.Fatalf("handoff flashes or restarts pulse/shimmer at frame %d", frame)
+					}
+				}
+				if v.historyExit != nil {
+					t.Fatal("handoff kept the local history motion alive")
+				}
+			})
+		}
+	}
+}

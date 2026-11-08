@@ -18,16 +18,18 @@ import (
 
 type imageHarness struct {
 	memoryHarness
-	data []byte
+	data       []byte
+	kind, name string
 }
 
 func (a imageHarness) Start(_ context.Context, o harness.StartOptions) (harness.Runtime, error) {
-	return &imageRuntime{memoryRuntime: &memoryRuntime{adapter: a.memoryHarness, options: o, done: make(chan struct{})}, data: a.data}, nil
+	return &imageRuntime{memoryRuntime: &memoryRuntime{adapter: a.memoryHarness, options: o, done: make(chan struct{})}, data: a.data, kind: a.kind, name: a.name}, nil
 }
 
 type imageRuntime struct {
 	*memoryRuntime
-	data []byte
+	data       []byte
+	kind, name string
 }
 
 func (r *imageRuntime) Submit(_ context.Context, s domain.Session, op string, _ harness.TurnInput) (string, error) {
@@ -35,17 +37,21 @@ func (r *imageRuntime) Submit(_ context.Context, s domain.Session, op string, _ 
 	if err := r.options.OnEvent(domain.Event{SessionID: s.ID, Type: "turn", Turn: &domain.Turn{ID: turn, Status: "running"}}); err != nil {
 		return "", err
 	}
-	ref, err := r.options.ImportImage(harness.OutputImage{SessionID: s.ID, ItemID: turn + "/image", Name: "diagram.png", Data: r.data})
+	kind, name := r.kind, r.name
+	if kind == "" {
+		kind, name = "image", "diagram.png"
+	}
+	ref, err := r.options.ImportResource(harness.OutputResource{Kind: kind, SessionID: s.ID, ItemID: turn + "/image", Name: name, Data: r.data})
 	if err != nil {
 		return "", err
 	}
-	if err = r.options.OnEvent(domain.Event{SessionID: s.ID, Type: "item.upsert", Item: &domain.Item{ID: turn + "/image", TurnID: turn, Kind: "tool", Presentation: "image", Name: "生成图片", Final: true, Parts: []domain.ContentPart{{Kind: "image", Attachment: &ref}}}}); err != nil {
+	if err = r.options.OnEvent(domain.Event{SessionID: s.ID, Type: "item.upsert", Item: &domain.Item{ID: turn + "/image", TurnID: turn, Kind: "tool", Presentation: kind, Name: "生成文件", Final: true, Parts: []domain.ContentPart{{Kind: kind, Attachment: &ref}}}}); err != nil {
 		return "", err
 	}
 	return turn, r.options.OnEvent(domain.Event{SessionID: s.ID, Type: "turn", Turn: &domain.Turn{ID: turn, Status: "completed"}})
 }
 
-func TestOutputImageCanBeDownloadedByAnotherClientAfterHistoryLoad(t *testing.T) {
+func TestOutputResourceCanBeDownloadedByAnotherClientAfterHistoryLoad(t *testing.T) {
 	var data bytes.Buffer
 	png.Encode(&data, image.NewRGBA(image.Rect(0, 0, 30, 20)))
 	s, w := memoryWorker(t, imageHarness{memoryHarness: memoryHarness{id: "images"}, data: data.Bytes()})
@@ -83,7 +89,7 @@ func TestOutputImageCanBeDownloadedByAnotherClientAfterHistoryLoad(t *testing.T)
 	}
 }
 
-func TestOutputImageSnapshotIsImmutableScopedAndIdempotent(t *testing.T) {
+func TestOutputResourceSnapshotIsImmutableScopedAndIdempotent(t *testing.T) {
 	dir, _ := filepath.EvalSymlinks(t.TempDir())
 	db, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -103,12 +109,12 @@ func TestOutputImageSnapshotIsImmutableScopedAndIdempotent(t *testing.T) {
 	png.Encode(&data, image.NewRGBA(image.Rect(0, 0, 20, 10)))
 	path := filepath.Join(dir, "result.png")
 	os.WriteFile(path, data.Bytes(), 0600)
-	source := harness.OutputImage{SessionID: op.SessionID, ItemID: "turn/render", Path: path}
-	a, err := s.importOutputImage("test", op.SessionID, source)
+	source := harness.OutputResource{Kind: "image", SessionID: op.SessionID, ItemID: "turn/render", Path: path}
+	a, err := s.importOutputResource("test", op.SessionID, source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := s.importOutputImage("test", op.SessionID, source)
+	b, err := s.importOutputResource("test", op.SessionID, source)
 	if err != nil || a != b {
 		t.Fatal("duplicate output created another resource", a, b, err)
 	}
@@ -116,7 +122,7 @@ func TestOutputImageSnapshotIsImmutableScopedAndIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.WriteFile(path, []byte("replaced"), 0600)
-	b, err = s.importOutputImage("test", op.SessionID, source)
+	b, err = s.importOutputResource("test", op.SessionID, source)
 	if err != nil || a != b {
 		t.Fatal("history refresh reread a mutable image", err)
 	}
@@ -131,17 +137,17 @@ func TestOutputImageSnapshotIsImmutableScopedAndIdempotent(t *testing.T) {
 	os.WriteFile(outside, data.Bytes(), 0600)
 	link := filepath.Join(dir, "escaped.png")
 	os.Symlink(outside, link)
-	for _, bad := range []harness.OutputImage{
-		{SessionID: op.SessionID, ItemID: "outside", Path: outside},
-		{SessionID: op.SessionID, ItemID: "link", Path: link},
-		{SessionID: domain.NewID(), ItemID: "foreign", Data: data.Bytes()},
-		{SessionID: op.SessionID, ItemID: "inline", Data: []byte("not an image")},
+	for _, bad := range []harness.OutputResource{
+		{Kind: "image", SessionID: op.SessionID, ItemID: "outside", Path: outside},
+		{Kind: "image", SessionID: op.SessionID, ItemID: "link", Path: link},
+		{Kind: "image", SessionID: domain.NewID(), ItemID: "foreign", Data: data.Bytes()},
+		{Kind: "image", SessionID: op.SessionID, ItemID: "inline", Data: []byte("not an image")},
 	} {
-		if _, err = s.importOutputImage("test", op.SessionID, bad); err == nil {
+		if _, err = s.importOutputResource("test", op.SessionID, bad); err == nil {
 			t.Fatal("invalid output imported", bad.Path)
 		}
 	}
-	if _, err = s.importOutputImage("other", op.SessionID, harness.OutputImage{SessionID: op.SessionID, ItemID: "inline", Data: data.Bytes()}); err == nil {
+	if _, err = s.importOutputResource("other", op.SessionID, harness.OutputResource{Kind: "image", SessionID: op.SessionID, ItemID: "inline", Data: data.Bytes()}); err == nil {
 		t.Fatal("foreign harness imported image")
 	}
 }

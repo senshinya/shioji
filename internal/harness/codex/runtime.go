@@ -23,7 +23,7 @@ import (
 )
 
 type Options struct {
-	ImportImage      func(harness.OutputImage) (domain.Attachment, error)
+	ImportResource   func(harness.OutputResource) (domain.Attachment, error)
 	OnMessage        func(context.Context, harness.IncomingMessage) error
 	OnStart          func(int) error
 	Executable, Home string
@@ -70,7 +70,7 @@ func Start(ctx context.Context, opts Options) (*Runtime, error) {
 		argv = append(argv, "-c", "features.shell_snapshot=false", "-c", "features.shell_snapshot_v2=false")
 	}
 	r := &Runtime{pending: map[string]chan wire.Message{}, done: make(chan struct{}), normalizer: NewNormalizer(), onEvent: opts.OnEvent, scope: opts.Scope, executor: opts.Executor}
-	r.normalizer.importImage = opts.ImportImage
+	r.normalizer.importResource = opts.ImportResource
 	env := os.Environ()
 	if opts.Home != "" {
 		env = append(env, "CODEX_HOME="+opts.Home)

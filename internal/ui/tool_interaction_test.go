@@ -120,6 +120,9 @@ func TestPopoverActuallyExpandsFromItsTrigger(t *testing.T) {
 	if entering.W >= settled.W-.5 {
 		t.Fatalf("popover has no expansion: entering=%+v settled=%+v", entering, settled)
 	}
+	if math.Abs(float64(entering.W/settled.W-entering.H/settled.H)) > .01 {
+		t.Fatal("popover is squeezed into a different shape on entrance", entering, settled)
+	}
 	ex, ey := entering.X+entering.W/2, entering.Y+entering.H/2
 	sx, sy := settled.X+settled.W/2, settled.Y+settled.H/2
 	tx, ty := trigger.X+trigger.W/2, trigger.Y+trigger.H/2

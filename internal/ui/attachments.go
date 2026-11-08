@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/editor"
 	"golang.org/x/image/draw"
 	"image"
 	"io"
@@ -19,6 +20,7 @@ import (
 
 type attachmentPreview struct {
 	Attachment             domain.Attachment
+	WorkspaceID            string
 	presence               previewPresence
 	Loading                bool
 	Image                  n.ImageSource
@@ -26,6 +28,18 @@ type attachmentPreview struct {
 	Text, Error            string
 	NaturalHeight          float32
 	Source                 n.Rect
+	Reader                 *editor.State
+	Saving                 bool
+	SaveError              string
+	Origin                 *attachmentPreviewOrigin
+}
+
+// Retain the actual compact presentation while the reader comes and goes.
+// Content captures immutable values, never a frame's Context or Element.
+type attachmentPreviewOrigin struct {
+	Surface             n.Color
+	Radius, BorderWidth float32
+	Content             func(*n.Context)
 }
 
 // Presence owns the close snapshot until the native size interpolation ends.
@@ -293,26 +307,26 @@ func (v *View) draftAttachmentStripFor(c *n.Context, t *n.Theme, key string) {
 				tile := n.Column(c.Key(a.Attachment.ID)).Size(136, 64).Radius(8).Background(codeSurface(t)).Border(1, t.Border).Transition(motion)
 				tile.Children(func() {
 					var source n.Rect
+					label := attachmentSize(a.Attachment.Size)
+					if a.Error != "" {
+						label = "上传失败"
+					} else if !ready {
+						label = "准备中…"
+					}
 					button := control(c).Fill().Padding(7).Label("预览附件：" + a.Attachment.Name).Tooltip(a.Attachment.Name).Children(func() {
-						n.Row(c).FillWidth().Gap(7).AlignItems(n.Center).Children(func() {
-							source = v.attachmentThumbnail(c, t, a.Attachment, m.WorkspaceID, 36).Bounds()
-							n.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
-								n.Text(c, a.Attachment.Name).SingleLine().Ellipsis("…").FontSize(12)
-								label := attachmentSize(a.Attachment.Size)
-								if a.Error != "" {
-									label = "上传失败"
-								} else if !ready {
-									label = "准备中…"
-								}
-								n.Text(c, label).FontSize(11).TextColor(t.TextMuted)
-							})
-						})
+						source = v.draftAttachmentContents(c, t, a.Attachment, m.WorkspaceID, label).Bounds()
 					})
 					if button.Clicked() {
+						origin := attachmentPreviewOrigin{Radius: 5}
 						if !strings.HasPrefix(a.Attachment.MIME, "image/") {
 							source = button.Bounds()
+							theme, attachment, workspace := *t, a.Attachment, m.WorkspaceID
+							origin = attachmentPreviewOrigin{Surface: codeSurface(t), Radius: 8, BorderWidth: 1, Content: func(c *n.Context) {
+								n.Column(c).Fill().Padding(7).Children(func() { v.draftAttachmentContents(c, &theme, attachment, workspace, label) })
+								n.Column(c).Absolute().Right(1).Top(1).Size(18, 18).Radius(9).Background(raised(&theme)).AlignItems(n.Center).Justify(n.Center).Children(func() { n.Icon(c, queueRemoveIcon).Size(16, 16).TextColor(theme.TextMuted) })
+							}}
 						}
-						v.openAttachment(a.Attachment, m.WorkspaceID, source)
+						v.openAttachment(a.Attachment, m.WorkspaceID, source, origin)
 					}
 					if iconButton(c, queueRemoveIcon, "移除附件："+a.Attachment.Name).Absolute().Right(1).Top(1).Size(18, 18).Radius(9).Background(raised(t)).Clicked() {
 						removeID = a.Attachment.ID
@@ -339,6 +353,18 @@ func (v *View) draftAttachmentStripFor(c *n.Context, t *n.Theme, key string) {
 		}
 		m.Attachments[key] = kept
 	}
+}
+
+func (v *View) draftAttachmentContents(c *n.Context, t *n.Theme, a domain.Attachment, workspace, label string) n.Element {
+	var thumbnail n.Element
+	n.Row(c).FillWidth().Gap(7).AlignItems(n.Center).Children(func() {
+		thumbnail = v.attachmentThumbnail(c, t, a, workspace, 36)
+		n.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
+			n.Text(c, a.Name).SingleLine().Ellipsis("…").FontSize(12)
+			n.Text(c, label).FontSize(11).TextColor(t.TextMuted)
+		})
+	})
+	return thumbnail
 }
 func attachmentSize(size int64) string {
 	if size < 1024 {
@@ -442,11 +468,15 @@ func (v *View) loadAttachmentImage(a domain.Attachment, workspace string, maximu
 	}
 	return cached
 }
-func (v *View) openAttachment(a domain.Attachment, workspace string, source n.Rect) {
+func (v *View) openAttachment(a domain.Attachment, workspace string, source n.Rect, origin ...attachmentPreviewOrigin) {
 	if v.Controller == nil || v.StatePath == "" {
 		return
 	}
-	p := &attachmentPreview{Attachment: a, presence: previewOpening, Loading: true, Source: source}
+	p := &attachmentPreview{Attachment: a, WorkspaceID: workspace, presence: previewOpening, Loading: true, Source: source}
+	if len(origin) > 0 {
+		snapshot := origin[0]
+		p.Origin = &snapshot
+	}
 	if cached := v.attachmentImages[a.ID]; cached != nil {
 		p.Image = cached.Image
 		p.Thumbnail = cached.Image
@@ -492,18 +522,24 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 	}
 	isImage := strings.HasPrefix(p.Attachment.MIME, "image/")
 	reduce := c.Preferences().ReduceMotion
-	morph := isImage && !reduce && p.Source.W > 0 && p.Source.H > 0
+	hasSource := p.Source.W > 0 && p.Source.H > 0
+	cardMorph := !reduce && hasSource && p.Origin != nil && p.Origin.Content != nil
+	morph := isImage && !reduce && hasSource && !cardMorph
 	visible := true
-	if reduce || (isImage && !morph) {
+	if reduce || (isImage && !morph && !cardMorph) {
 		visible = p.open()
 	}
 	dialog := n.DialogBase(c.Key("attachment-preview:"+p.Attachment.ID), &visible, func(backdrop, panel n.Element) {
 		w, h := c.Size()
 		panelWidth := min(float32(840), w-48)
 		panelHeight := float32(86)
+		fileHeight := min(min(float32(580), h-160), max(float32(120), float32(strings.Count(p.Text, "\n")+1)*18+16))
 		imageAvailable := p.Loading || p.Image != nil || p.LoadedImage != nil
 		if isImage && imageAvailable {
 			panelHeight = min(580, h-160) + 66
+		}
+		if !isImage && !p.Loading && p.Error == "" {
+			panelHeight = fileHeight + 66
 		}
 		if p.NaturalHeight > 0 {
 			panelHeight = p.NaturalHeight + 30
@@ -534,86 +570,121 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 		}
 		if isImage {
 			// Image pixels stay opaque. Only their crop and geometry change.
-			backdrop.Background(n.RGBA(0, 0, 0, .2))
+			alpha := float32(.2)
+			if !reduce {
+				alpha *= progress
+			}
+			backdrop.Background(n.RGBA(0, 0, 0, alpha))
 			if morph {
-				// The surface grows from the same thumbnail with the same clock.
-				// Hiding a full-sized panel until progress == 1 causes a late pop.
-				sx := p.Source.W/panelWidth + (1-p.Source.W/panelWidth)*progress
-				sy := p.Source.H/panelHeight + (1-p.Source.H/panelHeight)*progress
-				x := (p.Source.X + p.Source.W/2 - w/2) * (1 - progress)
-				y := (p.Source.Y + p.Source.H/2 - h/2) * (1 - progress)
-				panel.Transform(n.Scaling(sx, sy).Then(n.Translation(x, y)))
-				if progress < 1 {
-					panel.IgnoreInput(true)
-				}
+				panel.Opacity(progress)
 			}
 		} else {
 			backdrop.Background(n.RGBA(0, 0, 0, .2*progress))
 			if reduce {
 				backdrop.Background(n.RGBA(0, 0, 0, .2)).Transition(fadeMotion(c, 60*time.Millisecond))
-			} else if p.Source.W > 0 && p.Source.H > 0 {
-				scale := min(1, min(p.Source.W/panelWidth, p.Source.H/panelHeight))
-				scale += (1 - scale) * progress
-				x := (p.Source.X + p.Source.W/2 - w/2) * (1 - progress)
-				y := (p.Source.Y + p.Source.H/2 - h/2) * (1 - progress)
-				panel.Transform(n.Scaling(scale, scale).Then(n.Translation(x, y)))
-			} else {
+			} else if p.Source.W <= 0 || p.Source.H <= 0 {
 				panel.Opacity(progress)
+			}
+		}
+		if !reduce && hasSource {
+			// Both endpoints match the whole originating card/thumbnail. A
+			// uniform fit loses most of a wide file row and looks like a point.
+			sx := p.Source.W/panelWidth + (1-p.Source.W/panelWidth)*progress
+			sy := p.Source.H/panelHeight + (1-p.Source.H/panelHeight)*progress
+			x := (p.Source.X + p.Source.W/2 - w/2) * (1 - progress)
+			y := (p.Source.Y + p.Source.H/2 - h/2) * (1 - progress)
+			if cardMorph {
+				panel.Width(p.Source.W+(panelWidth-p.Source.W)*progress).Height(p.Source.H+(panelHeight-p.Source.H)*progress).Padding(0).
+					Transform(n.Translation(x, y)).Background(p.Origin.Surface.Mix(raised(t), progress)).
+					Radius(p.Origin.Radius+(10-p.Origin.Radius)*progress).Border(p.Origin.BorderWidth+(1-p.Origin.BorderWidth)*progress, t.Border)
+			} else {
+				panel.Transform(n.Scaling(sx, sy).Then(n.Translation(x, y)))
+			}
+			if isImage && progress < 1 {
+				panel.IgnoreInput(true)
 			}
 		}
 		if !p.open() {
 			panel.IgnoreInput(true)
 		}
+		var imageSlot n.Element
 		panel.Children(func() {
-			content := n.Column(c.Key("preview-content")).FillWidth().Shrink(0).Gap(12)
-			invalidate := c.Services().Invalidate
-			content.DrawOver(func(_ *n.Painter, r n.Rect) {
-				if content.Valid() && p.NaturalHeight != r.H {
-					p.NaturalHeight = r.H
-					invalidate()
-				}
-			})
-			content.Children(func() {
-				n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
-					n.Text(c, p.Attachment.Name).FontSize(13).Grow(1).SingleLine()
-					if iconButton(c, queueRemoveIcon, "关闭附件预览").Size(24, 24).Clicked() {
-						p.close()
+			if cardMorph && progress < 1 {
+				n.Column(c.Key("preview-compact")).Absolute().Left(0).Top(0).Width(p.Source.W).Height(p.Source.H).Opacity(1 - progress).Clip().IgnoreInput(true).Label("预览缩略内容").Children(func() { p.Origin.Content(c) })
+			}
+			expanded := n.Column(c.Key("preview-expanded")).FillWidth()
+			if cardMorph {
+				expanded.Absolute().Left(14).Top(14).Width(panelWidth - 28).Opacity(progress)
+			}
+			expanded.Children(func() {
+				content := n.Column(c.Key("preview-content")).FillWidth().Shrink(0).Gap(12)
+				invalidate := c.Services().Invalidate
+				content.DrawOver(func(_ *n.Painter, r n.Rect) {
+					if content.Valid() && p.NaturalHeight != r.H {
+						p.NaturalHeight = r.H
+						invalidate()
 					}
 				})
-				if isImage && imageAvailable {
-					n.Column(c.Key("image-slot")).FillWidth().Height(min(580, h-160)).Children(func() {
-						if !morph {
-							if p.Image != nil {
-								n.Image(c.Key("image"), p.Image).Fill().Fit(n.Contain).Label("图片预览内容")
-							} else if p.LoadedImage != nil {
-								n.Image(c.Key("image"), p.LoadedImage).Fill().Fit(n.Contain).Label("图片预览内容")
-							} else {
-								n.Text(c, "加载中…").FontSize(12).TextColor(t.TextMuted)
+				content.Children(func() {
+					n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
+						n.Text(c, p.Attachment.Name).FontSize(13).Grow(1).SingleLine()
+						if iconButton(c, saveAttachmentIcon, "另存到本机").Disabled(p.Saving).Clicked() {
+							v.saveAttachment(p)
+						}
+						if iconButton(c, queueRemoveIcon, "关闭附件预览").Clicked() {
+							p.close()
+						}
+					})
+					if p.SaveError != "" {
+						n.Text(c, p.SaveError).FontSize(12).TextColor(t.TextMuted)
+					}
+					if isImage && imageAvailable {
+						imageSlot = n.Column(c.Key("image-slot")).FillWidth().Height(min(580, h-160)).Children(func() {
+							if !morph {
+								if p.Image != nil {
+									n.Image(c.Key("image"), p.Image).Fill().Fit(n.Contain).Label("图片预览内容")
+								} else if p.LoadedImage != nil {
+									n.Image(c.Key("image"), p.LoadedImage).Fill().Fit(n.Contain).Label("图片预览内容")
+								} else {
+									n.Text(c, "加载中…").FontSize(12).TextColor(t.TextMuted)
+								}
 							}
+							if p.Error != "" {
+								n.Text(c, p.Error).FontSize(12).TextColor(t.TextMuted)
+							}
+						})
+					} else if p.Loading {
+						n.Text(c, "加载中…").FontSize(12).TextColor(t.TextMuted)
+					} else if p.Error != "" {
+						n.Text(c, p.Error).FontSize(12)
+					} else if p.Image != nil {
+						n.Image(c, p.Image).FillWidth().Height(min(580, h-160)).Fit(n.Contain)
+					} else {
+						if p.Reader == nil {
+							p.Reader = &editor.State{Buffer: editor.NewBuffer(p.Text), ReadOnly: true, SoftWrap: true, NoActiveLine: true, NoScrollPastEnd: true, NoIndentGuides: true, Label: "文件内容：" + p.Attachment.Name}
+							p.Reader.Buffer.SetLanguage(editor.LanguageFor(p.Attachment.Name))
 						}
-						if p.Error != "" {
-							n.Text(c, p.Error).FontSize(12).TextColor(t.TextMuted)
-						}
-					})
-				} else if p.Loading {
-					n.Text(c, "加载中…").FontSize(12).TextColor(t.TextMuted)
-				} else if p.Error != "" {
-					n.Text(c, p.Error).FontSize(12)
-				} else if p.Image != nil {
-					n.Image(c, p.Image).FillWidth().Height(min(580, h-160)).Fit(n.Contain)
-				} else {
-					n.Scroll(c).FillWidth().MaxHeight(h - 160).Children(func() {
-						n.Text(c, p.Text).Font(v.Model.Preferences.CodeFont).FontSize(12).FixedLineHeight(20).Selectable()
-					})
-				}
+						p.Reader.Font = n.Font{Family: v.Model.Preferences.CodeFont, Size: 12}
+						p.Reader.Theme = editor.DefaultTheme(t)
+						p.Reader.Theme.Background = raised(t)
+						editor.View(c.Key("file-reader"), p.Reader).FillWidth().Height(fileHeight)
+					}
+				})
 			})
 		})
 		if morph && p.Image != nil {
-			destination := n.Rect{X: (w-panelWidth)/2 + 15, Y: (h-panelHeight)/2 + 51, W: panelWidth - 30, H: min(580, h-160)}
+			destination := imageSlot.LayoutBounds()
+			if destination.W <= 0 {
+				destination = n.Rect{X: (w-panelWidth)/2 + 15, Y: (h-panelHeight)/2 + 55, W: panelWidth - 30, H: min(580, h-160)}
+			}
 			clip, draw := previewImageGeometry(p.Source, destination, p.Image, progress)
 			image := p.Image
 			n.Overlay(c.Key("preview-image-layer"), func() {
-				n.Column(c).Absolute().Left(clip.X).Top(clip.Y).Width(clip.W).Height(clip.H).Radius(5 * (1 - progress)).Clip().IgnoreInput(true).Role(n.RoleImage).Label("图片预览内容").Draw(func(painter *n.Painter, _ n.Rect) { painter.Image(image, draw, n.Contain) })
+				radius := float32(5)
+				if p.Origin != nil {
+					radius = p.Origin.Radius
+				}
+				n.Column(c).Absolute().Left(clip.X).Top(clip.Y).Width(clip.W).Height(clip.H).Radius(radius * (1 - progress)).Clip().IgnoreInput(true).Role(n.RoleImage).Label("图片预览内容").Draw(func(painter *n.Painter, _ n.Rect) { painter.Image(image, draw, n.Contain) })
 			})
 		}
 	})

@@ -108,7 +108,7 @@ func (v *View) recovery(c *n.Context, t *n.Theme, d domain.SessionDetail) {
 	busy := state.Busy || m.Connected && info != nil && info.Phase == "checking"
 	disabled := busy || !m.Connected || m.WorkerMinor < 7
 	card.Children(func() {
-		content := n.Column(c.Key("recovery-content")).FillWidth().Shrink(0)
+		content := n.Column(c.Key("recovery-content:" + string(*mode))).FillWidth().Shrink(0).Transition(fadeMotion(c, 180*time.Millisecond))
 		if !c.Preferences().ReduceMotion {
 			content.Transform(n.Translation(0, 8*(1-presence)))
 		}

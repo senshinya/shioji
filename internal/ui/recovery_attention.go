@@ -4,6 +4,7 @@ import (
 	"fmt"
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/domain"
+	"time"
 )
 
 func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d domain.SessionDetail, state *recoveryState, info *domain.SessionRecovery, disabled, busy bool) {
@@ -54,7 +55,7 @@ func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d 
 			inlineSymbol(c, recoveryIcon, title, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 14, t.TextMuted)
 			n.Text(c, title).FontSize(13).FixedLineHeight(20)
 		})
-		n.Text(c, message).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
+		n.Text(c, message).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
 		n.Row(c).Gap(8).AlignItems(n.Center).Children(func() {
 			label, command := "重试恢复", "check"
 			if state.Details && info != nil && info.CanStopTasks && v.Model.WorkerMinor >= 8 {
@@ -115,7 +116,7 @@ func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d 
 		if !state.Details {
 			return
 		}
-		n.Column(c.Key("recovery-details")).FillWidth().Gap(8).Children(func() {
+		n.Column(c.Key("recovery-details")).FillWidth().Gap(8).Transition(disclosureMotion(c, 240*time.Millisecond)).Children(func() {
 			n.Text(c, "执行设备 · "+v.Model.CurrentDeviceName()).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
 			if d.Session.Context.CWD != "" {
 				n.Text(c, d.Session.Context.CWD).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Selectable()
@@ -134,7 +135,7 @@ func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d 
 				n.Scroll(c.Key("recovery-task-list")).FillWidth().MaxHeight(132).Children(func() {
 					n.Column(c).FillWidth().Gap(8).Padding(8, 10).Radius(6).Background(codeSurface(t)).Children(func() {
 						for _, task := range tasks {
-							n.Column(c.Key(task.ID + task.Command)).FillWidth().Gap(4).Children(func() {
+							n.Column(c.Key(task.ID + task.Command)).FillWidth().Gap(4).Transition(resultBlockMotion(c)).Children(func() {
 								label := "运行状态未确认"
 								if task.State == "running" {
 									label = fmt.Sprintf("可能相关 · PID %d", task.PID)
@@ -145,7 +146,7 @@ func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d 
 								if task.State == "stopped" {
 									label = "已停止"
 								}
-								n.Text(c, label).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+								n.Text(c, label).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
 								command := task.Command
 								if task.ProcessCommand != "" {
 									command = task.ProcessCommand

@@ -28,7 +28,7 @@ func TestToolImagesBecomeImmutableReferencesWithoutWireBytes(t *testing.T) {
 		n := NewNormalizer()
 		n.Bind("thread", "session", true)
 		repo := attachments.New(t.TempDir())
-		n.importImage = func(image harness.OutputImage) (domain.Attachment, error) {
+		n.importResource = func(image harness.OutputResource) (domain.Attachment, error) {
 			if image.SessionID != "session" {
 				t.Fatal("image lost owning session", image.SessionID)
 			}
@@ -68,7 +68,7 @@ func TestToolImagesBecomeImmutableReferencesWithoutWireBytes(t *testing.T) {
 func TestUnsupportedImageLinkKeepsFollowingImageSlotAndRejectsMalformedBytes(t *testing.T) {
 	n := NewNormalizer()
 	n.Bind("thread", "session", true)
-	n.importImage = func(image harness.OutputImage) (domain.Attachment, error) {
+	n.importResource = func(image harness.OutputResource) (domain.Attachment, error) {
 		if image.ItemID != "turn/image" || image.Index != 1 {
 			t.Fatal("image slots no longer match persisted parts", image.ItemID, image.Index)
 		}

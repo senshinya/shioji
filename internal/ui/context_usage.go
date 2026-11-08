@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func (v *View) contextMeter(c *n.Context, t *n.Theme) {
+func (v *View) contextMeter(c *n.Context, t *n.Theme, cfg domain.RunConfig) {
 	var session domain.Session
 	for _, s := range v.Model.Snapshot.Sessions {
 		if s.ID == v.Model.SessionID {
@@ -52,10 +52,9 @@ func (v *View) contextMeter(c *n.Context, t *n.Theme) {
 		label = "压缩中"
 	}
 	trigger := control(c.Key("context-meter:" + session.ID)).Width(28).Height(28).PaddingX(4).Radius(6).Label("上下文用量").Children(func() {
-		font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+		font := n.Font{Family: t.Font, Size: 12, Weight: 400}
 		n.Row(c).FillWidth().Justify(n.Center).AlignItems(n.Baseline).Children(func() {
-			metrics := inlineFontMetrics("上下文", font)
-			ring := n.RichText(c.Key("ring"), n.Span{Text: "\uFFFC", ObjectWidth: 18, ObjectHeight: metrics.ascent, ObjectDescent: metrics.descent}).Font(t.Font).FontSize(11).FixedLineHeight(20).Label("上下文圆环").Role(n.RoleNone)
+			ring := n.RichText(c.Key("ring"), inlineIconSpan(cfg.Model, font, 16, 0)).Font(t.Font).FontSize(12).FixedLineHeight(20).Label("上下文圆环").Role(n.RoleNone)
 			progress := ring.AnimateTo("used", fraction, motionAnimation(c, 500*time.Millisecond))
 			mix := float32(0)
 			if compacting {
@@ -65,16 +64,16 @@ func (v *View) contextMeter(c *n.Context, t *n.Theme) {
 			started := *n.Local(ring, "spin-start", func() time.Time { return c.Now() })
 			reduce := c.Preferences().ReduceMotion
 			ring.DrawObjects(func(p *n.Painter, _ int, r n.Rect) {
-				cx, cy := r.X+9, r.Y+metrics.ascent-metrics.center
+				cx, cy := r.X+r.W/2, r.Y+r.H/2
 				var track n.Path
-				track.Circle(cx, cy, 7.25)
+				track.Circle(cx, cy, 6.25)
 				p.StrokePath(&track, 1.5, t.TextMuted.Alpha(.2))
 				arc := func(from, to float32, alpha float32) {
 					if to <= from || alpha <= 0 {
 						return
 					}
 					var path n.Path
-					path.Circle(cx, cy, 7.25).Trim(from, to)
+					path.Circle(cx, cy, 6.25).Trim(from, to)
 					p.Transform(n.Rotation(-90), cx, cy, func() { p.StrokePath(&path, 1.5, t.TextMuted.Alpha(alpha)) })
 				}
 				arc(0, progress, 1-mix)
