@@ -20,6 +20,7 @@ type InspectorLayout struct {
 }
 
 type Model struct {
+	FirstRun             bool
 	ModelMenus           map[string]map[string]ModelMenuPreferences
 	WorkerService        *WorkerService
 	DraftSkills          map[string][]DraftSkill
@@ -452,6 +453,7 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 }
 
 type savedState struct {
+	SetupCompleted       *bool                                      `json:"setupCompleted,omitempty"`
 	ModelMenus           map[string]map[string]ModelMenuPreferences `json:"modelMenus,omitempty"`
 	DraftSkills          map[string][]DraftSkill                    `json:"draftSkills,omitempty"`
 	HomeConfigContext    string                                     `json:"homeConfigContext,omitempty"`
@@ -497,6 +499,7 @@ func (m *Model) Save(path string) error {
 func (m *Model) Load(path string) error {
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
+		m.FirstRun = true
 		return nil
 	}
 	if err != nil {
@@ -506,6 +509,7 @@ func (m *Model) Load(path string) error {
 	if err = json.Unmarshal(b, &saved); err != nil {
 		return err
 	}
+	m.FirstRun = saved.SetupCompleted != nil && !*saved.SetupCompleted
 	if saved.DraftSkills != nil {
 		m.DraftSkills = saved.DraftSkills
 	}

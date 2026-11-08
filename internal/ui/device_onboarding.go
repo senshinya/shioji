@@ -9,58 +9,25 @@ import (
 	"shioji/internal/transport"
 	"strconv"
 	"strings"
-	"time"
 )
 
 func (v *View) sshDeviceForm(c *n.Context, t *n.Theme) {
-	n.Row(c).FillWidth().Height(40).AlignItems(n.Center).Children(func() {
-		n.Text(c, "添加设备").FontSize(20).FontWeight(500).Grow(1)
-		if deviceAction(c, "取消").Label("取消添加设备").Clicked() {
-			v.cancelSSHCheck()
-		}
-	})
-	field := func(label, placeholder string, value *string) {
-		n.Column(c.Key(label)).FillWidth().Gap(8).Children(func() {
-			n.Text(c, label).FontSize(12).TextColor(t.TextMuted)
-			textField(c, value).FillWidth().Height(30).FontSize(13).Label(label).Placeholder(placeholder).Disabled(v.sshCheck.busy() || v.sshCheck == sshSelecting)
-		})
+	f := v.setupFlow()
+	f.width = 432
+	if f.step == welcomeDevice {
+		f.step = welcomeSSH
+		f.key = ""
 	}
-	n.Column(c).FillWidth().Gap(16).Children(func() {
-		field("设备名称", "例如 MacBook Air", &v.sshName)
-		field("SSH 地址", "用户名@主机或别名", &v.sshTarget)
-		field("SSH 端口", "使用 SSH 配置", &v.sshPort)
-	})
-	if v.sshCheck == sshSelecting || v.sshCheck == sshSaving {
-		e := v.sshAgents
-		n.Column(c).FillWidth().Gap(4).Transition(disclosureMotion(c, 180*time.Millisecond)).Children(func() {
-			deviceHeading(c, "Agent", nil)
-			if e != nil {
-				v.agentRows(c.Key("agents"), t, "", true, e, true, func() {})
+	n.Column(c).FillWidth().Children(func() {
+		n.Row(c).FillWidth().Height(28).AlignItems(n.Center).Margin(0, 0, 20).Children(func() {
+			n.Text(c, "添加设备").FontSize(20).FontWeight(400).Grow(1)
+			if iconButton(c, closeIcon, "取消添加设备").Clicked() {
+				v.cancelSSHCheck()
+				v.welcome = nil
 			}
 		})
-	}
-	if v.sshError != "" {
-		n.Text(c, v.sshError).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-	}
-	n.Row(c).FillWidth().Justify(n.End).Gap(6).Children(func() {
-		selecting := v.sshCheck == sshSelecting || v.sshCheck == sshSaving
-		if selecting && deviceAction(c, "返回").Disabled(v.sshCheck.busy()).Clicked() {
-			v.sshCheck = sshEditing
-		}
-		label := "检查连接"
-		if selecting {
-			label = "检查并添加"
-		}
-		if v.sshCheck.busy() {
-			label = "正在检查…"
-		}
-		if deviceAction(c, label).Disabled(v.sshCheck.busy() || v.Controller == nil || strings.TrimSpace(v.sshTarget) == "").Clicked() {
-			if selecting {
-				v.completeSSHDevice()
-			} else {
-				v.checkSSHDevice()
-			}
-		}
+		_, height := c.Size()
+		n.Scroll(c.Key("ssh-body")).Width(448).MarginX(-8).PaddingX(8).MaxHeight(max(160, height-144)).Label("SSH 设置内容").Children(func() { v.welcomeSteps(c, t, f, true); v.welcomeStage(c, t, f, true) })
 	})
 }
 func (v *View) completeSSHDevice() {
@@ -103,6 +70,7 @@ func (v *View) completeSSHDevice() {
 		}
 		if !result.Ready {
 			v.sshError = result.Error
+			v.sshAgents.refresh(result.Catalog)
 			return
 		}
 		name := strings.TrimSpace(v.sshName)
@@ -134,6 +102,14 @@ func (v *View) completeSSHDevice() {
 			v.deviceList = false
 		}
 		v.sshCheck = sshClosed
+		if f := v.welcome; f != nil && f.key == "" {
+			if m.FirstRun {
+				f.key = connection.ID
+				v.welcomeStep(welcomeWorkspace, 1)
+			} else {
+				v.welcome = nil
+			}
+		}
 	}}) {
 		v.sshCheck = sshSelecting
 		v.sshAgents.busy = false

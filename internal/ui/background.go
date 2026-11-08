@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func (v *View) backgroundSwitch(c *n.Context, t *n.Theme, key string, state *app.DeviceState) {
+func (v *View) backgroundSwitch(c *n.Context, t *n.Theme, key string, state *app.DeviceState, setup ...bool) {
 	var service *domain.BackgroundService
 	if state.WorkerService != nil {
 		service = state.WorkerService.Background
@@ -19,7 +19,11 @@ func (v *View) backgroundSwitch(c *n.Context, t *n.Theme, key string, state *app
 		busy = service.State == "enabling" || service.State == "disabling"
 		unavailable = service.State == "unsupported" || service.State == "unavailable"
 	}
-	deviceConfigRow(c, "登录后启动服务", func() {
+	row := deviceConfigRow
+	if len(setup) > 0 && setup[0] {
+		row = setupRow
+	}
+	row(c, "登录后启动服务", func() {
 		n.Row(c).FillWidth().Justify(n.End).Children(func() {
 			tooltip := "登录后启动服务"
 			if service != nil && service.Message != "" {

@@ -125,92 +125,129 @@ func (e *deviceAgentEditor) edit(info domain.HarnessInfo) {
 }
 func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connected bool, e *deviceAgentEditor, info domain.HarnessInfo, onboarding bool, save func()) {
 	install := info.Installation
+	row := deviceConfigRow
+	if e.setup {
+		row = setupRow
+	}
+	minor := v.deviceState(key).WorkerMinor
+	if e.setup {
+		minor = e.workerMinor
+	}
+	background := t.Surface
+	if e.setup {
+		background = t.Background
+	}
+	sectionInset := float32(24)
+	if e.setup {
+		sectionInset = 0
+	}
 	disabled := e.readOnly || e.busy || e.loading || !connected
 	n.Column(c).FillWidth().Gap(0).Children(func() {
-		deviceConfigTitle(c, "常规")
-		deviceConfigRow(c, "账号", func() {
-			label, status := "登录状态未报告", ""
-			if account := info.Account; account != nil {
-				label = account.Label
-				if account.State == "authenticated" {
-					status = account.Subscription
+		if !e.setup || e.tab == "常规" {
+			if !e.setup {
+				deviceConfigTitle(c, "常规")
+			}
+			row(c, "账号", func() {
+				label, status := "登录状态未报告", ""
+				if account := info.Account; account != nil {
+					label = account.Label
+					if account.State == "authenticated" {
+						status = account.Subscription
+					}
 				}
-			}
-			if install != nil && (install.Issue == domain.RuntimeSignInRequired || install.Issue == domain.RuntimeAuthenticationExpired) {
-				label = runtimeSetupLabel(info, connected)
-			}
-			trigger := control(c.Key("account"), 5).FillWidth().Height(28).PaddingX(8).Radius(5).Label("管理账号").Disabled(install == nil || len(install.SignInCommand) == 0 || info.Account != nil && info.Account.State == "notRequired").Children(func() {
-				n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-					n.Text(c, label).FontSize(12).FixedLineHeight(20).SingleLine().Shrink(1)
-					if status != "" {
-						n.Text(c, status).SingleLine().MaxWidth(120).Tooltip(status).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-					}
-					n.Spacer(c).Grow(1)
-					angle := float32(-90)
-					if e.draft.login {
-						angle = 0
-					}
-					inlineSymbol(c, chevron, label, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted, angle)
-				})
-			})
-			if trigger.Clicked() {
-				e.draft.login = !e.draft.login
-			}
-		})
-		frame := n.Column(c.Key("login")).FillWidth().Clip()
-		animatedContentHeight(c, frame, e.draft.login, 240*time.Millisecond, func() float32 {
-			deviceConfigRow(c, "", func() {
-				n.Column(c).FillWidth().Padding(4, 0, 8, 8).Children(func() {
-					n.Row(c).FillWidth().Height(28).Gap(8).AlignItems(n.Center).Children(func() {
-						if info.Account != nil && info.Account.Identity != "" {
-							identity := info.Account.Identity
-							if at := strings.Index(identity, "@"); at > 1 {
-								identity = string([]rune(identity[:at])[:1]) + "…" + identity[at:]
+				if install != nil && (install.Issue == domain.RuntimeSignInRequired || install.Issue == domain.RuntimeAuthenticationExpired) {
+					label = runtimeSetupLabel(info, connected)
+				}
+				trigger := control(c.Key("account"), 5).FillWidth().Height(28).PaddingX(8).Radius(5).Label("管理账号").Disabled(install == nil || len(install.SignInCommand) == 0 || info.Account != nil && info.Account.State == "notRequired").Children(func() {
+					n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
+						n.Text(c, label).FontSize(12).FixedLineHeight(20).SingleLine().Shrink(1).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+						if status != "" {
+							size := float32(11)
+							if e.setup {
+								size = 12
 							}
-							n.Text(c, identity).MinWidth(0).Grow(1).SingleLine().Tooltip(identity).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
-						} else {
-							n.Spacer(c).Grow(1)
+							n.Text(c, status).SingleLine().MaxWidth(120).Tooltip(status).FontSize(size).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 						}
-
-						copyLabel := "复制登录命令"
-						if c.Now().Before(e.draft.copiedUntil) {
-							copyLabel = "已复制"
-							c.AnimationFrame()
+						n.Spacer(c).Grow(1)
+						angle := float32(-90)
+						if e.draft.login {
+							angle = 0
 						}
-						copy := control(c.Key("copy-login"), 6).Width(88).Height(28).PaddingX(8).Label("复制登录命令").Disabled(install == nil || len(install.SignInCommand) == 0).Children(func() {
-							n.Text(c, copyLabel).FontSize(12).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-						})
-						if copy.Clicked() {
-							c.WriteClipboard(v.agentLoginCommand(key, install.SignInCommand))
-							e.draft.copiedUntil = c.Now().Add(2 * time.Second)
-						}
-						if deviceAction(c, "重新检测").Disabled(disabled || v.Controller == nil).Clicked() {
-							v.recheckAgent(key, info.ID)
-						}
+						inlineSymbol(c, chevron, label, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted, angle)
 					})
 				})
+				if trigger.Clicked() {
+					e.draft.login = !e.draft.login
+				}
 			})
-			return 0
-		})
+			frame := n.Column(c.Key("login")).FillWidth().Clip()
+			animatedContentHeight(c, frame, e.draft.login, 240*time.Millisecond, func() float32 {
+				row(c, "", func() {
+					top, bottom := float32(4), float32(8)
+					if e.setup {
+						top, bottom = 0, 0
+					}
+					n.Column(c).FillWidth().Padding(top, 0, bottom, 8).Children(func() {
+						n.Row(c).FillWidth().Height(28).Gap(8).AlignItems(n.Center).Children(func() {
+							if info.Account != nil && info.Account.Identity != "" {
+								identity := info.Account.Identity
+								if at := strings.Index(identity, "@"); at > 1 {
+									identity = string([]rune(identity[:at])[:1]) + "…" + identity[at:]
+								}
+								n.Text(c, identity).MinWidth(0).Grow(1).SingleLine().Tooltip(identity).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+							} else {
+								n.Spacer(c).Grow(1)
+							}
 
-		deviceConfigRow(c, "可执行文件", func() {
-			placeholder := "自动检测"
-			if install != nil && install.Executable != "" {
-				placeholder = install.Executable
-			}
-			textField(c.Key("executable"), &e.path).Background(t.Background).FillWidth().Height(28).FontSize(12).Label(info.Name + " 可执行文件").Placeholder(placeholder).Tooltip("留空时在所属设备自动检测").Disabled(disabled)
-		})
-		if install != nil && install.Issue != "" && !e.draft.login {
-			n.Column(c).FillWidth().PaddingY(8).Children(func() {
-				n.Text(c, install.Guide).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
-				v.agentGuidance(c, key, info)
+							copyLabel := "复制登录命令"
+							if c.Now().Before(e.draft.copiedUntil) {
+								copyLabel = "已复制"
+								c.AnimationFrame()
+							}
+							copy := control(c.Key("copy-login"), 6).Width(88).Height(28).PaddingX(8).Label("复制登录命令").Disabled(install == nil || len(install.SignInCommand) == 0).Children(func() {
+								n.Text(c, copyLabel).FontSize(12).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+							})
+							if copy.Clicked() {
+								c.WriteClipboard(v.agentLoginCommand(key, install.SignInCommand))
+								e.draft.copiedUntil = c.Now().Add(2 * time.Second)
+							}
+							if deviceAction(c, "重新检测").Disabled(disabled || v.Controller == nil).Clicked() {
+								if e.setup {
+									v.recheckWelcomeAgent(key, info.ID)
+								} else {
+									v.recheckAgent(key, info.ID)
+								}
+							}
+						})
+					})
+				})
+				return 0
 			})
+
+			row(c, "可执行文件", func() {
+				placeholder := "自动检测"
+				if install != nil && install.Executable != "" {
+					placeholder = install.Executable
+				}
+				field := textField(c.Key("executable"), &e.path).Background(t.Background).FillWidth().Height(28).FontSize(12).Label(info.Name + " 可执行文件").Placeholder(placeholder).Tooltip("留空时在所属设备自动检测").Disabled(disabled)
+				if e.setup {
+					field.Padding(4, 8).Background(t.Background)
+				}
+			})
+			if install != nil && install.Issue != "" && !e.draft.login {
+				n.Column(c).FillWidth().PaddingY(8).Children(func() {
+					n.Text(c, install.Guide).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+					v.agentGuidance(c, key, info)
+				})
+			}
 		}
-		if !onboarding && len(info.Models) > 0 {
-			n.Column(c).FillWidth().Padding(24, 0, 0).Children(func() {
-				v.deviceModels(c.Key("models"), t, key, info)
-				if install != nil && install.OptionsSupported.TitleModel && v.deviceState(key).WorkerMinor >= 18 {
-					deviceConfigRow(c, "标题生成", func() {
+		if (!onboarding || e.setup) && (!e.setup || e.tab == "模型") && len(info.Models) > 0 {
+			n.Column(c).FillWidth().Padding(sectionInset, 0, 0).Children(func() {
+				if !e.setup {
+					v.deviceModels(c.Key("models"), t, key, info)
+				}
+				if install != nil && install.OptionsSupported.TitleModel && minor >= 18 {
+					row(c, "标题生成", func() {
 						name := "自动"
 						for _, model := range info.Models {
 							if model.ID == e.draft.titleModel {
@@ -222,7 +259,7 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 						}
 						trigger := control(c, 5).FillWidth().Height(28).PaddingX(8).Radius(5).Border(1, t.Border).Label("标题生成").Disabled(disabled).Children(func() {
 							n.Row(c).FillWidth().AlignItems(n.Baseline).Children(func() {
-								n.Text(c, name).SingleLine().FontSize(12).FixedLineHeight(20).Grow(1)
+								n.Text(c, name).SingleLine().FontSize(12).FixedLineHeight(20).Grow(1).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 								inlineSymbol(c, chevron, name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted)
 							})
 						})
@@ -233,52 +270,78 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 						v.choiceMenu(c, t, "title-model:"+key+":"+info.ID, trigger, choices)
 					})
 				}
+				if e.setup {
+					deviceID := v.Model.ConnectionDeviceID(key)
+					if key == "" {
+						deviceID = v.sshSetup.Info.DeviceID
+					}
+					v.deviceModels(c.Key("models"), t, key, info, deviceID)
+				}
 			})
 		}
 		supported := domain.RuntimeOptionSupport{}
 		if install != nil {
 			supported = install.OptionsSupported
 		}
-		if v.deviceState(key).WorkerMinor >= 18 && (supported.Arguments || supported.Directory || supported.Environment || supported.Instructions) {
-			n.Column(c).FillWidth().Padding(24, 0, 0).Children(func() {
-				heading := control(c.Key("advanced-toggle"), 5).FillWidth().Height(28).Label("高级").Children(func() {
-					n.Row(c).FillWidth().AlignItems(n.Baseline).Children(func() {
-						n.Text(c, "高级").FontSize(14).FontWeight(500).FixedLineHeight(20).Grow(1)
-						angle := float32(-90)
-						if e.draft.advanced {
-							angle = 0
-						}
-						inlineSymbol(c, chevron, "高级", n.Font{Family: t.Font, Size: 14, Weight: 500}, 12, t.TextMuted, angle)
+		if (!e.setup || e.tab == "高级") && minor >= 18 && (supported.Arguments || supported.Directory || supported.Environment || supported.Instructions) {
+			n.Column(c).FillWidth().Padding(sectionInset, 0, 0).Children(func() {
+				if !e.setup {
+					heading := control(c.Key("advanced-toggle"), 5).FillWidth().Height(28).Label("高级").Children(func() {
+						n.Row(c).FillWidth().AlignItems(n.Baseline).Children(func() {
+							n.Text(c, "高级").FontSize(14).FontWeight(500).FixedLineHeight(20).Grow(1)
+							angle := float32(-90)
+							if e.draft.advanced {
+								angle = 0
+							}
+							inlineSymbol(c, chevron, "高级", n.Font{Family: t.Font, Size: 14, Weight: 500}, 12, t.TextMuted, angle)
+						})
 					})
-				})
-				if heading.Clicked() {
-					e.draft.advanced = !e.draft.advanced
+					if heading.Clicked() {
+						e.draft.advanced = !e.draft.advanced
+					}
 				}
 				body := n.Column(c.Key("advanced-body")).FillWidth().Clip()
-				animatedContentHeight(c, body, e.draft.advanced, 240*time.Millisecond, func() float32 {
-					n.Column(c).FillWidth().Padding(8, 0, 0).Children(func() {
+				animatedContentHeight(c, body, e.setup || e.draft.advanced, 240*time.Millisecond, func() float32 {
+					padding := float32(8)
+					if e.setup {
+						padding = 0
+					}
+					n.Column(c).FillWidth().Padding(padding, 0, 0).Children(func() {
 						if supported.Arguments {
-							deviceConfigRow(c, "启动参数", func() {
-								textField(c.Key("arguments"), &e.draft.arguments).FillWidth().Height(28).FontSize(12).Label("启动参数").Placeholder("默认").Disabled(disabled)
+							row(c, "启动参数", func() {
+								label := "启动参数"
+								if e.setup {
+									label = "启动参数输入"
+								}
+								field := textField(c.Key("arguments"), &e.draft.arguments).FillWidth().Height(28).FontSize(12).Label(label).Placeholder("默认").Disabled(disabled)
+								if e.setup {
+									field.Padding(4, 8).Background(t.Background)
+								}
 							})
 						}
 						if supported.Directory {
-							deviceConfigRow(c, "配置目录", func() {
-								textField(c.Key("config-directory"), &e.draft.directory).FillWidth().Height(28).FontSize(12).Label("配置目录").Placeholder("默认").Disabled(disabled)
+							row(c, "配置目录", func() {
+								field := textField(c.Key("config-directory"), &e.draft.directory).FillWidth().Height(28).FontSize(12).Label("配置目录").Placeholder("默认").Disabled(disabled)
+								if e.setup {
+									field.Padding(4, 8).Background(t.Background)
+								}
 							})
 						}
 						if supported.Environment {
-							deviceConfigRow(c, "环境变量", func() { v.runtimeEnvironmentFields(c, t, e, disabled) })
+							row(c, "环境变量", func() { v.runtimeEnvironmentFields(c, t, e, disabled) })
 						}
 						if supported.Instructions {
-							deviceConfigRow(c, "自定义提示词", func() {
-								n.TextAreaBase(c.Key("instructions"), &e.draft.instructions).FillWidth().Lines(3, 6).FontSize(12).FixedLineHeight(18).Padding(6, 9).Radius(5).Background(t.Surface).Border(1, t.Border).Label("自定义提示词").Placeholder("可选的默认提示词").Disabled(disabled)
+							row(c, "自定义提示词", func() {
+								n.TextAreaBase(c.Key("instructions"), &e.draft.instructions).FillWidth().Lines(3, 6).FontSize(12).FixedLineHeight(18).Padding(6, 9).Radius(5).Background(background).Border(1, t.Border).Label("自定义提示词").Placeholder("可选的默认提示词").Disabled(disabled)
 							})
 						}
 					})
 					return 0
 				})
 			})
+		}
+		if e.setup {
+			return
 		}
 		changed := e.path != e.paths[info.ID]
 		options, err := e.draft.options()
@@ -300,7 +363,7 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 						return
 					}
 					e.paths[info.ID] = e.path
-					if install != nil && v.deviceState(key).WorkerMinor >= 18 {
+					if install != nil && minor >= 18 {
 						e.options[info.ID] = options
 					}
 					if onboarding {
@@ -336,6 +399,12 @@ func runtimeOptionsEqual(a, b domain.RuntimeOptions) bool {
 }
 
 func (v *View) runtimeEnvironmentFields(c *n.Context, t *n.Theme, e *deviceAgentEditor, disabled bool) {
+	fontSize := float32(11)
+	background := t.Surface
+	if e.setup {
+		fontSize = 12
+		background = t.Background
+	}
 	n.Column(c).FillWidth().Children(func() {
 		n.Row(c).FillWidth().Justify(n.End).Children(func() {
 			if deviceAction(c, "添加变量").PaddingX(0).Disabled(disabled).Clicked() {
@@ -361,8 +430,8 @@ func (v *View) runtimeEnvironmentFields(c *n.Context, t *n.Theme, e *deviceAgent
 			n.Inert(frame, !entry.removed.IsZero())
 			frame.Children(func() {
 				n.Row(c).Absolute().Top(0).Left(0).Right(0).Height(36).Gap(4).AlignItems(n.Center).Children(func() {
-					textField(c, &entry.Name).MinWidth(0).Grow(1).Height(28).FontSize(11).Label("环境变量名").Placeholder("变量名").Disabled(disabled)
-					value := textField(c, &entry.Value).MinWidth(0).Grow(1).Height(28).FontSize(11).Label("环境变量值").Placeholder("值").Disabled(disabled)
+					textField(c, &entry.Name).MinWidth(0).Grow(1).Height(28).FontSize(fontSize).Background(background).Label("环境变量名").Placeholder("变量名").Disabled(disabled)
+					value := textField(c, &entry.Value).MinWidth(0).Grow(1).Height(28).FontSize(fontSize).Background(background).Label("环境变量值").Placeholder("值").Disabled(disabled)
 					if !entry.reveal {
 						value.Password()
 					}

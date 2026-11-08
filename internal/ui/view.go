@@ -26,6 +26,7 @@ type editBinding struct {
 }
 
 type View struct {
+	welcome                                                                                                         *welcomeFlow
 	composerDocuments                                                                                               map[string]*composerDocument
 	fileMention                                                                                                     *fileMention
 	finds                                                                                                           map[string]*conversationFind
@@ -275,6 +276,11 @@ func (v *View) View(c *n.Context) {
 		defer v.queueState()
 	}
 
+	if m.FirstRun {
+		v.welcomeView(c, &t)
+		return
+	}
+
 	menuContext := fmt.Sprintf("%s/%s/%t", m.DraftKey(), m.WorkspaceID, v.devices)
 	if menuContext != v.menuContext {
 		clear(v.menuOpen)
@@ -314,7 +320,20 @@ func (v *View) View(c *n.Context) {
 		v.syncReplyStreams(m.Details[m.SessionID])
 	}
 	owner := v
-	n.Row(c).Fill().Background(t.Background).Children(func() {
+	main := n.Row(c.Key("main-view")).Fill().Background(t.Background)
+	if f := v.welcome; f != nil && f.step == welcomeDone {
+		distance, _ := c.Size()
+		duration := 260 * time.Millisecond
+		if c.Preferences().ReduceMotion {
+			distance = 0
+			duration = 0
+		}
+		main.Transition(n.ElementTransition{Duration: duration, Ease: n.EaseOut, Enter: &n.Motion{X: distance, Opacity: 1}})
+		if c.Now().Sub(f.changed) > 260*time.Millisecond {
+			v.welcome = nil
+		}
+	}
+	main.Children(func() {
 		if v.devices {
 			v.deviceView(c, &t)
 			return

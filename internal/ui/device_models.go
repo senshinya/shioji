@@ -40,98 +40,121 @@ func modelName(m domain.Model) string {
 	return m.ID
 }
 
-func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.HarnessInfo) {
+func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.HarnessInfo, setupDevice ...string) {
 	device := v.Model.ConnectionDeviceID(key)
+	if len(setupDevice) > 0 {
+		device = setupDevice[0]
+	}
 	pref := v.Model.ModelPreference(device, info.ID)
 	// Management retains manual order; only the send menu groups favorites.
 	ordering := pref
 	models := ordering.Ordered(info.Models, false)
-	n.Row(c).FillWidth().Height(36).AlignItems(n.Start).Children(func() {
-		n.Text(c, "模型").FontSize(14).FontWeight(500).FixedLineHeight(28).Grow(1)
-		if deviceAction(c, "刷新").Disabled(v.Controller == nil || !v.deviceState(key).Connected).Clicked() {
-			v.recheckAgent(key, info.ID)
+	header := n.Row(c).FillWidth().Height(36).AlignItems(n.Start)
+	if len(setupDevice) > 0 {
+		header.Height(32).AlignItems(n.Center).Margin(16, 0, 0)
+	}
+	header.Children(func() {
+		size, line, weight := float32(14), float32(28), 500
+		if len(setupDevice) > 0 {
+			size, line, weight = 13, 20, 400
+		}
+		n.Text(c, "模型").FontSize(size).FontWeight(weight).FixedLineHeight(line).Grow(1)
+		if deviceAction(c, "刷新").Disabled(v.Controller == nil || len(setupDevice) == 0 && !v.deviceState(key).Connected).Clicked() {
+			if len(setupDevice) > 0 {
+				v.recheckWelcomeAgent(key, info.ID)
+			} else {
+				v.recheckAgent(key, info.ID)
+			}
 		}
 	})
-	list := n.Column(c.Key("model-list")).FillWidth().Label("模型列表")
-	dragged, over := n.DragOver[deviceModelDrag](list)
-	dropped, released := n.Drop[deviceModelDrag](list)
-	preview := n.Local(list, "preview", func() []string { return nil })
-	valid := over && dragged.device == device && dragged.harness == info.ID
-	if valid {
-		_, y, _ := list.PointerPosition()
-		*preview = modelOrderAt(models, dragged.id, int(y/40))
-		models = (app.ModelMenuPreferences{Order: *preview}).Ordered(info.Models, false)
-	} else if released && dropped.device == device && dropped.harness == info.ID {
-		_, y, _ := list.PointerPosition()
-		pref.Order = modelOrderAt(models, dropped.id, int(y/40))
-		for _, id := range ordering.Order {
-			if !slices.Contains(pref.Order, id) {
-				pref.Order = append(pref.Order, id)
-			}
-		}
-		v.Model.SetModelPreferences(device, info.ID, pref)
-		*preview = nil
-		c.AnimationFrame()
-	} else {
-		*preview = nil
+	viewport := n.Scroll(c.Key("model-list-scroll")).FillWidth().Label("模型列表滚动区")
+	height := min(float32(140), float32(len(models))*40)
+	if !c.Preferences().ReduceMotion {
+		height = viewport.AnimateTo("catalog-height", height, motionAnimation(c, 180*time.Millisecond))
 	}
-	list.Children(func() {
-		for index, model := range models {
-			row := n.Row(c.Key(model.ID)).FillWidth().Height(40).Gap(8).AlignItems(n.Center).Radius(5).Label("模型：" + modelName(model)).Transition(n.ElementTransition{Position: true, Duration: motionAnimation(c, 160*time.Millisecond).Duration, Ease: n.EaseOut})
-			if row.Hovered() || row.FocusWithin() {
-				row.Background(t.Text.Alpha(.035))
+	viewport.Height(height).Children(func() {
+		list := n.Column(c.Key("model-list")).FillWidth().Label("模型列表")
+		dragged, over := n.DragOver[deviceModelDrag](list)
+		dropped, released := n.Drop[deviceModelDrag](list)
+		preview := n.Local(list, "preview", func() []string { return nil })
+		valid := over && dragged.device == device && dragged.harness == info.ID
+		if valid {
+			_, y, _ := list.PointerPosition()
+			*preview = modelOrderAt(models, dragged.id, int(y/40))
+			models = (app.ModelMenuPreferences{Order: *preview}).Ordered(info.Models, false)
+		} else if released && dropped.device == device && dropped.harness == info.ID {
+			_, y, _ := list.PointerPosition()
+			pref.Order = modelOrderAt(models, dropped.id, int(y/40))
+			for _, id := range ordering.Order {
+				if !slices.Contains(pref.Order, id) {
+					pref.Order = append(pref.Order, id)
+				}
 			}
-			row.Children(func() {
-				starred := slices.Contains(pref.Favorites, model.ID)
-				icon := modelStar
-				if starred {
-					icon = modelStarFilled
-				}
-				if iconButton(c, icon, "收藏 "+modelName(model)).TextColor(func() n.Color {
-					if starred {
-						return t.Text
-					}
-					return t.TextMuted
-				}()).Clicked() {
-					pref.Favorites = toggleModelValue(pref.Favorites, model.ID)
-					v.Model.SetModelPreferences(device, info.ID, pref)
-				}
-				n.Text(c, modelName(model)).FontSize(12).FixedLineHeight(20).SingleLine().Grow(1).Tooltip(model.ID).TextColor(func() n.Color {
-					if slices.Contains(pref.Hidden, model.ID) {
-						return t.TextMuted
-					}
-					return t.Text
-				}())
-				grip := iconButton(c, modelGrip, "调整 "+modelName(model)+" 顺序").Cursor(n.CursorGrab).Drag(deviceModelDrag{device, info.ID, model.ID}).Tooltip("拖动排序，或使用上下方向键")
-				if !row.Hovered() && !row.FocusWithin() && !grip.Dragging() {
-					grip.Opacity(0)
-				}
-				target := index
-				if grip.Shortcut(0, n.KeyUp) {
-					target--
-				}
-				if grip.Shortcut(0, n.KeyDown) {
-					target++
-				}
-				if target != index && target >= 0 && target < len(models) {
-					pref.Order = modelOrderAt(models, model.ID, target)
-					for _, id := range ordering.Order {
-						if !slices.Contains(pref.Order, id) {
-							pref.Order = append(pref.Order, id)
-						}
-					}
-					v.Model.SetModelPreferences(device, info.ID, pref)
-					c.AnimationFrame()
-				}
-				shown := !slices.Contains(pref.Hidden, model.ID)
-				if settingsSwitch(c, &shown).Label("在模型菜单显示 " + modelName(model)).Tooltip("在模型菜单显示").Changed() {
-					pref.Hidden = toggleModelValue(pref.Hidden, model.ID)
-					v.Model.SetModelPreferences(device, info.ID, pref)
-				}
-			})
+			v.Model.SetModelPreferences(device, info.ID, pref)
+			*preview = nil
+			c.AnimationFrame()
+		} else {
+			*preview = nil
 		}
+		list.Children(func() {
+			for index, model := range models {
+				row := n.Row(c.Key(model.ID)).FillWidth().Height(40).Gap(8).AlignItems(n.Center).Radius(5).Label("模型：" + modelName(model)).Transition(n.ElementTransition{Position: true, Duration: motionAnimation(c, 160*time.Millisecond).Duration, Ease: n.EaseOut, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
+				if row.Hovered() || row.FocusWithin() {
+					row.Background(t.Text.Alpha(.035))
+				}
+				row.Children(func() {
+					starred := slices.Contains(pref.Favorites, model.ID)
+					icon := modelStar
+					if starred {
+						icon = modelStarFilled
+					}
+					if iconButton(c, icon, "收藏 "+modelName(model)).TextColor(func() n.Color {
+						if starred {
+							return t.Text
+						}
+						return t.TextMuted
+					}()).Clicked() {
+						pref.Favorites = toggleModelValue(pref.Favorites, model.ID)
+						v.Model.SetModelPreferences(device, info.ID, pref)
+					}
+					n.Text(c, modelName(model)).FontSize(12).FixedLineHeight(20).SingleLine().Grow(1).Tooltip(model.ID).TextColor(func() n.Color {
+						if slices.Contains(pref.Hidden, model.ID) {
+							return t.TextMuted
+						}
+						return t.Text
+					}())
+					grip := iconButton(c, modelGrip, "调整 "+modelName(model)+" 顺序").Cursor(n.CursorGrab).Drag(deviceModelDrag{device, info.ID, model.ID}).Tooltip("拖动排序，或使用上下方向键")
+					if !row.Hovered() && !row.FocusWithin() && !grip.Dragging() {
+						grip.Opacity(0)
+					}
+					target := index
+					if grip.Shortcut(0, n.KeyUp) {
+						target--
+					}
+					if grip.Shortcut(0, n.KeyDown) {
+						target++
+					}
+					if target != index && target >= 0 && target < len(models) {
+						pref.Order = modelOrderAt(models, model.ID, target)
+						for _, id := range ordering.Order {
+							if !slices.Contains(pref.Order, id) {
+								pref.Order = append(pref.Order, id)
+							}
+						}
+						v.Model.SetModelPreferences(device, info.ID, pref)
+						c.AnimationFrame()
+					}
+					shown := !slices.Contains(pref.Hidden, model.ID)
+					if settingsSwitch(c, &shown).Label("在模型菜单显示 " + modelName(model)).Tooltip("在模型菜单显示").Changed() {
+						pref.Hidden = toggleModelValue(pref.Hidden, model.ID)
+						v.Model.SetModelPreferences(device, info.ID, pref)
+					}
+				})
+			}
+		})
 	})
 }
+
 func (v *View) recheckAgent(key, id string) {
 	epoch := v.deviceState(key).ConnectionEpoch
 	v.do(app.Job{ConnectionID: key, Method: "runtime.check", Input: protocol.RuntimeConfiguration{HarnessID: id}, Apply: func(m *app.Model, b json.RawMessage, err error) {

@@ -10,6 +10,9 @@ import (
 )
 
 type deviceAgentEditor struct {
+	setup                   bool
+	tab                     string
+	workerMinor             int
 	options                 map[string]domain.RuntimeOptions
 	optionSupport           map[string]bool
 	draft                   runtimeOptionDraft
@@ -268,5 +271,31 @@ func (v *View) saveDisabledAgentSettings(key string, e *deviceAgentEditor, id st
 	}}) {
 		e.busy = false
 		e.error = "设备操作繁忙，请重试"
+	}
+}
+
+// Refresh public metadata/capabilities without replacing the user's unsaved configuration.
+func (e *deviceAgentEditor) refresh(catalog []domain.HarnessInfo) {
+	for _, info := range catalog {
+		found := false
+		for i, old := range e.catalog {
+			if old.ID == info.ID {
+				info.Configured = old.Configured
+				e.catalog[i] = info
+				found = true
+				break
+			}
+		}
+		if !found {
+			e.catalog = append(e.catalog, info)
+			if info.Installation != nil {
+				e.paths[info.ID] = info.Installation.Override
+				e.options[info.ID] = info.Installation.Options
+			}
+		}
+		if info.Installation != nil {
+			s := info.Installation.OptionsSupported
+			e.optionSupport[info.ID] = s.Arguments || s.Directory || s.Environment || s.Instructions || s.TitleModel
+		}
 	}
 }

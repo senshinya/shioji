@@ -156,16 +156,7 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 		}
 		if !narrow || !v.deviceList {
 			n.Column(c.Key("device-pane")).FillHeight().Grow(1).Children(func() {
-				if v.sshCheck.open() {
-					n.Row(c).Height(56).PaddingX(32).DragWindow().Children(func() {
-						if deviceAction(c, "返回设备").Clicked() {
-							v.cancelSSHCheck()
-						}
-					})
-					n.Scroll(c).FillWidth().Grow(1).Padding(0, 32, 24).Children(func() { v.sshDeviceForm(c.Key("ssh-onboarding"), t) })
-				} else {
-					v.deviceDetail(c.Key("device-detail:"+v.deviceSelected), t, v.deviceSelected)
-				}
+				v.deviceDetail(c.Key("device-detail:"+v.deviceSelected), t, v.deviceSelected)
 			})
 		}
 	})
@@ -175,11 +166,23 @@ func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 	dialog := func(open *bool, key string, body func()) n.Element {
 		return n.DialogBase(c.Key(key), open, func(backdrop, panel n.Element) {
 			backdrop.Background(n.RGBA(0, 0, 0, .16))
-			width, _ := c.Size()
-			panel.Width(min(420, width-48)).Padding(20).Gap(12).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c)).Children(body)
+			width, height := c.Size()
+			panelWidth, inset := float32(420), float32(20)
+			if key == "ssh-setup-dialog" {
+				panelWidth, inset = 480, 24
+			}
+			panel.Width(min(panelWidth, width-48)).MaxHeight(height-48).Padding(inset).Gap(12).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c)).Children(body)
 		})
 	}
 
+	if !v.Model.FirstRun {
+		open := v.sshCheck.open()
+		panel := dialog(&open, "ssh-setup-dialog", func() { v.sshDeviceForm(c.Key("ssh-setup"), t) })
+		if panel.Dismissed() || !open && v.sshCheck.open() {
+			v.cancelSSHCheck()
+			v.welcome = nil
+		}
+	}
 	dialog(&v.remoteWorkspaceOpen, "remote-workspace-dialog", func() {
 		n.Text(c, "新建远程工作区").FontSize(14).FontWeight(500)
 		n.Text(c, "主目录").FontSize(12).TextColor(t.TextMuted)
@@ -252,6 +255,11 @@ func (v *View) checkSSHDevice() {
 		v.sshSetup = result
 		v.sshAgents = agentEditor(result.Catalog)
 		v.sshCheck = sshSelecting
+		if f := v.welcome; f != nil && f.key == "" {
+			f.agents = v.sshAgents
+			f.agents.workerMinor = result.Info.Minor
+			v.welcomeStep(welcomeAgents, 1)
+		}
 
 	}}) {
 		v.sshCheck = v.sshCheck.finish()
