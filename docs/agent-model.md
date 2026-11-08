@@ -284,3 +284,11 @@ Go 实现建议在 adapter 内手写最小 transport／RPC dispatcher，按固�
 - 未知 item 可读兜底，未知 server request 不默认允许；敏感参数不进入持久 raw log。
 
 原始 wire payload 只在需要诊断或恢复的受限存储中保留，按类型脱敏并限额；不把账户 token、私钥、登录 URL 与秘密答案放进通用事件日志。中间结构自身带 schema version；新增字段可兼容读取，改语义时迁移 snapshot／journal，不能让新 adapter 用不同含义解释旧事件。
+
+### Device runtime defaults and account presentation
+
+Runtime options are typed Shioji launch defaults (`RuntimeOptions`), owned and atomically persisted by the device worker. Adapters declare the supported fields and translate arguments, configuration directories, environment variables, initial instructions and auxiliary title-model choices. Existing execution runtimes retain their accepted adapter; changing defaults does not stop their processes. The Codex adapter validates its allowed CLI options and reserves transport and ownership variables. Options are version-gated for older workers.
+
+Account presentation uses a small public `RuntimeAccount` projection (authentication label, subscription label, identity and actual state). Credentials and native authentication response structures do not enter shared events or UI state. Login guidance and commands come from the adapter and are scoped to the selected device; unknown authentication state is never reported as logged in.
+
+Model visibility, favorites and order are client menu preferences scoped by stable DeviceID and harness. They do not remove models from the authoritative catalog, modify accepted session configurations or turn a hidden model into an unavailable one.

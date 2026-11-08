@@ -171,19 +171,28 @@ func (v *View) insertReference(c *n.Context, b *composerDocument, state *fileMen
 		return false
 	}
 	anchor, caret := b.doc.Selection()
+	addSpace := state.end == len(current) || current[state.end] != ' '
+	inserted := 1
+	if addSpace {
+		inserted++
+	}
 	adjust := func(p int) int {
 		if p <= state.start {
 			return p
 		}
-		if p >= state.end {
-			return p - (state.end - state.start) + 1
+		if p <= state.end {
+			return state.start + 2
 		}
-		return state.start + 1
+		return p - (state.end - state.start) + inserted
 	}
 	b.doc.Edit(func(e *richtext.Edit) {
 		e.ReplaceString(state.start, state.end, string(richtext.ObjectReplacement), richtext.Attributes{Attachment: v.referenceAttachment(c, ref)})
+		if addSpace {
+			e.ReplaceString(state.start+1, state.start+1, " ", richtext.Attributes{})
+		}
 		e.Select(adjust(anchor), adjust(caret))
 	})
+
 	v.publishComposer(b.key, b)
 	return true
 }

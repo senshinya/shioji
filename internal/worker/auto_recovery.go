@@ -49,6 +49,9 @@ func (s *Server) recoveryLoop() {
 		s.dispatchMu.Lock()
 		prepareErrors := map[string]error{}
 		for _, id := range s.adapterOrder {
+			if !s.agentEnabled(id) {
+				continue
+			}
 			ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
 			_, prepareErrors[id] = s.recoveryRuntime(ctx, false, id)
 			cancel()

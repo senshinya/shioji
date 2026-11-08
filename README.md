@@ -2,6 +2,10 @@
 
 Native Apple Silicon macOS controller for device-owned coding-agent workspaces.
 The developer build runs a self-contained local Go worker and an installed Codex CLI.
+Device management supports application display names for both this Mac and SSH
+devices, and device-owned Agent selection/executable configuration. Adding an SSH
+device checks its selected Agents before saving the connection. It never changes
+OS hostnames or installs/signs into a third-party Agent.
 The adapter checks the installed App Server protocol and exposes its supported capabilities rather than requiring one exact CLI version. The recorded protocol baseline remains 0.166.0; the current adapter also passes live tests with 0.167.0.
 It uses MyGo native UI and SQLite; no WebView or herdr-core runtime is required.
 
@@ -25,8 +29,11 @@ env -u GOROOT go run ./cmd/shioji --no-start-worker
 
 The app bundle contains separately built GUI/worker executables. The development
 launcher starts its worker independently of the window. Closing the GUI does not
-stop it. This ad-hoc signed developer bundle is not a release, login item, installer,
-or notarized distribution. The toolchain's macOS 13 build target does not establish
+stop it. The bundled Shioji Runtime.app can register a user background service
+through the device page’s 登录后保持运行 switch; macOS may require approval.
+Turning it off waits for authoritative idle admission, then reconnects with an
+independent worker. This ad-hoc signed developer bundle is not a notarized release
+or a general installer. The toolchain's macOS 13 build target does not establish
 a minimum supported OS; product support remains undecided.
 
 Device state: `~/Library/Application Support/Shioji/worker/` (0700 directory).

@@ -20,6 +20,7 @@ type InspectorLayout struct {
 }
 
 type Model struct {
+	ModelMenus           map[string]map[string]ModelMenuPreferences
 	WorkerService        *WorkerService
 	DraftSkills          map[string][]DraftSkill
 	homeConfigContext    string
@@ -40,6 +41,7 @@ type Model struct {
 	ConnectionTiming     *DeviceTiming
 	Connections          []DeviceConnection
 	ActiveConnection     string
+	LocalDeviceName      string
 	LocalDeviceID        string
 	DeviceStates         map[string]*DeviceState
 	PendingDevices       map[string]string
@@ -450,37 +452,39 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 }
 
 type savedState struct {
-	DraftSkills          map[string][]DraftSkill         `json:"draftSkills,omitempty"`
-	HomeConfigContext    string                          `json:"homeConfigContext,omitempty"`
-	HomeHarnesses        map[string]string               `json:"homeHarnesses,omitempty"`
-	HarnessConfigs       map[string]domain.RunConfig     `json:"harnessConfigs,omitempty"`
-	HistoryActions       map[string]domain.HistoryChange `json:"historyActions,omitempty"`
-	HistoryEdits         map[string]HistoryEdit          `json:"historyEdits,omitempty"`
-	Preferences          ClientPreferences               `json:"preferences"`
-	SecondaryWorkspaceID string                          `json:"secondaryWorkspaceId,omitempty"`
-	SecondarySessionID   string                          `json:"secondarySessionId,omitempty"`
-	FocusSecondary       bool                            `json:"focusSecondary,omitempty"`
-	Attachments          map[string][]DraftAttachment    `json:"attachments,omitempty"`
-	DeviceCache          map[string]cachedDevice         `json:"deviceCache,omitempty"`
-	Connections          []DeviceConnection              `json:"connections,omitempty"`
-	ActiveConnection     string                          `json:"activeConnection,omitempty"`
-	PendingDevices       map[string]string               `json:"pendingDevices,omitempty"`
-	QueueExpanded        map[string]bool                 `json:"queueExpanded,omitempty"`
-	QueueEdits           map[string]QueueEdit            `json:"queueEdits,omitempty"`
-	DeviceID             string                          `json:"deviceId"`
-	WorkspaceID          string                          `json:"workspaceId"`
-	Drafts               map[string]string               `json:"drafts"`
-	Configs              map[string]domain.RunConfig     `json:"configs"`
-	Answers              map[string]string               `json:"answers"`
-	Pager                map[string]int                  `json:"pager"`
-	Collapsed            map[string]bool                 `json:"collapsed"`
-	Pending              map[string]domain.Submission    `json:"pending"`
-	GitDrafts            map[string]domain.GitChoice     `json:"gitDrafts,omitempty"`
-	GitRepositories      map[string]string               `json:"gitRepositories,omitempty"`
-	Inspectors           map[string]bool                 `json:"inspectors,omitempty"`
-	InspectorLayout      InspectorLayout                 `json:"inspectorLayout,omitempty"`
-	InspectorSplitHeight float32                         `json:"inspectorSplitHeight,omitempty"`
-	InspectorWidth       float32                         `json:"inspectorWidth,omitempty"`
+	ModelMenus           map[string]map[string]ModelMenuPreferences `json:"modelMenus,omitempty"`
+	DraftSkills          map[string][]DraftSkill                    `json:"draftSkills,omitempty"`
+	HomeConfigContext    string                                     `json:"homeConfigContext,omitempty"`
+	HomeHarnesses        map[string]string                          `json:"homeHarnesses,omitempty"`
+	HarnessConfigs       map[string]domain.RunConfig                `json:"harnessConfigs,omitempty"`
+	HistoryActions       map[string]domain.HistoryChange            `json:"historyActions,omitempty"`
+	HistoryEdits         map[string]HistoryEdit                     `json:"historyEdits,omitempty"`
+	Preferences          ClientPreferences                          `json:"preferences"`
+	SecondaryWorkspaceID string                                     `json:"secondaryWorkspaceId,omitempty"`
+	SecondarySessionID   string                                     `json:"secondarySessionId,omitempty"`
+	FocusSecondary       bool                                       `json:"focusSecondary,omitempty"`
+	Attachments          map[string][]DraftAttachment               `json:"attachments,omitempty"`
+	DeviceCache          map[string]cachedDevice                    `json:"deviceCache,omitempty"`
+	LocalDeviceName      string                                     `json:"localDeviceName,omitempty"`
+	Connections          []DeviceConnection                         `json:"connections,omitempty"`
+	ActiveConnection     string                                     `json:"activeConnection,omitempty"`
+	PendingDevices       map[string]string                          `json:"pendingDevices,omitempty"`
+	QueueExpanded        map[string]bool                            `json:"queueExpanded,omitempty"`
+	QueueEdits           map[string]QueueEdit                       `json:"queueEdits,omitempty"`
+	DeviceID             string                                     `json:"deviceId"`
+	WorkspaceID          string                                     `json:"workspaceId"`
+	Drafts               map[string]string                          `json:"drafts"`
+	Configs              map[string]domain.RunConfig                `json:"configs"`
+	Answers              map[string]string                          `json:"answers"`
+	Pager                map[string]int                             `json:"pager"`
+	Collapsed            map[string]bool                            `json:"collapsed"`
+	Pending              map[string]domain.Submission               `json:"pending"`
+	GitDrafts            map[string]domain.GitChoice                `json:"gitDrafts,omitempty"`
+	GitRepositories      map[string]string                          `json:"gitRepositories,omitempty"`
+	Inspectors           map[string]bool                            `json:"inspectors,omitempty"`
+	InspectorLayout      InspectorLayout                            `json:"inspectorLayout,omitempty"`
+	InspectorSplitHeight float32                                    `json:"inspectorSplitHeight,omitempty"`
+	InspectorWidth       float32                                    `json:"inspectorWidth,omitempty"`
 }
 
 func (m *Model) Save(path string) error {
@@ -527,6 +531,7 @@ func (m *Model) Load(path string) error {
 	if saved.QueueEdits != nil {
 		m.QueueEdits = saved.QueueEdits
 	}
+	m.ModelMenus = saved.ModelMenus
 	m.InspectorWidth = saved.InspectorWidth
 	m.InspectorSplitHeight = saved.InspectorSplitHeight
 	m.InspectorLayout = saved.InspectorLayout
@@ -547,6 +552,7 @@ func (m *Model) Load(path string) error {
 	}
 	m.KnownDeviceID = saved.DeviceID
 	m.LocalDeviceID = saved.DeviceID
+	m.LocalDeviceName = saved.LocalDeviceName
 	m.Connections = saved.Connections
 	for key, cache := range saved.DeviceCache {
 		if key != "local" {

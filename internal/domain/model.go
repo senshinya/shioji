@@ -268,6 +268,7 @@ type Model struct {
 	Fast          bool     `json:"fast"`
 }
 type Readiness struct {
+	Account           *RuntimeAccount        `json:"account,omitempty"`
 	Sessions          map[string]HarnessInfo `json:"sessions,omitempty"`
 	HarnessID         string                 `json:"harnessId,omitempty"`
 	Harnesses         []HarnessInfo          `json:"harnesses,omitempty"`

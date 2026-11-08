@@ -86,7 +86,7 @@ func selectReadiness(ready domain.Readiness, id string, minor int) domain.Readin
 	if selected, ok := ready.ForHarness(id); ok {
 		return selected
 	}
-	return domain.Readiness{HarnessID: id, State: domain.RuntimeUnavailable, Error: "所选 Agent 暂不可用，草稿已保留"}
+	return domain.Readiness{Sessions: ready.Sessions, HarnessID: id, State: domain.RuntimeUnavailable, Error: "所选 Agent 暂不可用，草稿已保留"}
 }
 func (m *Model) SelectHarness(id string) error {
 	if m.SessionID != "" {

@@ -46,7 +46,7 @@ func (s *Server) configureAdapters() error {
 	for _, id := range s.adapterOrder {
 		s.catalogGates[id] = &sync.RWMutex{}
 	}
-	return nil
+	return s.loadRuntimeSettings()
 }
 func (s *Server) catalogDirectory(id string) string {
 	if id == s.rootCatalogID {
@@ -79,7 +79,7 @@ func (s *Server) inputHarness(in domain.Submission) (string, error) {
 	} else if id == "" {
 		id = s.config.DefaultHarnessID
 	}
-	if s.adapters[id] == nil {
+	if s.adapter(id) == nil {
 		return "", fmt.Errorf("harness %q is unavailable", id)
 	}
 	return id, nil
@@ -93,6 +93,9 @@ func (s *Server) inputRuntime(in domain.Submission) (harness.Runtime, error) {
 		if own := s.currentRuntime(in.SessionID); own != nil && !own.Stopped() {
 			return own, nil
 		}
+	}
+	if !s.agentEnabled(id) {
+		return nil, errors.New("Agent 未启用")
 	}
 	r := s.catalogRuntime(id)
 	s.runtimeMu.RLock()
@@ -128,12 +131,20 @@ func (s *Server) openCatalog(ctx context.Context, id string, stop bool) (harness
 	return s.startCatalog(ctx, id, stop, revision)
 }
 func (s *Server) runtimeReadiness(sessions ...string) domain.Readiness {
+	return s.runtimeProfiles(sessions, false)
+}
+func (s *Server) runtimeProfiles(sessions []string, allAdapters bool) domain.Readiness {
 	var all []domain.HarnessInfo
 	for _, id := range s.adapterOrder {
-		descriptor := s.adapters[id].Descriptor()
-		info := domain.HarnessInfo{ID: id, Name: descriptor.Name, Icon: descriptor.Icon, State: domain.RuntimeUnavailable}
+		enabled := s.agentEnabled(id)
+		if !allAdapters && !enabled {
+			continue
+		}
+		descriptor := s.adapter(id).Descriptor()
+		info := domain.HarnessInfo{Configured: enabled, ID: id, Name: descriptor.Name, Icon: descriptor.Icon, State: domain.RuntimeUnavailable}
 		if r := s.catalogRuntime(id); r != nil {
 			ready := r.Readiness()
+			info.Account = ready.Account
 			info.State, info.Error, info.Models, info.Permissions, info.PermissionChoices, info.Plan, info.Capabilities = ready.State, ready.Error, ready.Models, ready.Permissions, ready.PermissionChoices, ready.Plan, ready.Capabilities
 		} else {
 			s.runtimeMu.RLock()
@@ -156,16 +167,37 @@ func (s *Server) runtimeReadiness(sessions ...string) domain.Readiness {
 				info.Error = err.Error()
 			}
 		}
+		if provider, ok := s.adapter(id).(harness.InstallationProvider); ok {
+			installation := provider.Installation()
+			s.runtimeMu.RLock()
+			if failure := s.runtimeSettingErrors[id]; failure != nil {
+				installation.Options = s.runtimeOptions[id]
+				installation.Override = s.runtimeSettings[id]
+				installation.Guide = "请修正该设备上的 Agent 配置后保存：" + failure.Error()
+				installation.SignInCommand = nil
+			}
+			s.runtimeMu.RUnlock()
+			if err != nil {
+				var setup *harness.SetupError
+				if errors.As(err, &setup) {
+					installation.Issue = setup.Issue
+				} else {
+					installation.Issue = domain.RuntimeUnavailableIssue
+				}
+			}
+			info.Installation = &installation
+		}
 		all = append(all, info)
 	}
-	if len(all) == 0 {
-		if r := s.currentRuntime(); r != nil {
-			return r.Readiness()
-		}
-		return s.readiness
-	}
 	result := domain.Readiness{HarnessID: s.config.DefaultHarnessID, Harnesses: all}
-	selected, _ := result.ForHarness(s.config.DefaultHarnessID)
+	selected := domain.Readiness{State: domain.RuntimeUnavailable, Error: "请在设备详情启用 Agent"}
+	if len(all) > 0 {
+		var ok bool
+		selected, ok = result.ForHarness(s.config.DefaultHarnessID)
+		if !ok {
+			selected, _ = result.ForHarness(all[0].ID)
+		}
+	}
 	for _, id := range sessions {
 		if r := s.currentRuntime(id); r != nil && !r.Stopped() {
 			ready := r.Readiness()

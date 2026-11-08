@@ -21,7 +21,10 @@ type catalogState struct {
 }
 
 func (s *Server) catalogSourceVersion(id string) (string, error) {
-	if source, ok := s.adapters[id].(harness.CatalogVersion); ok {
+	if err := s.runtimeSettingError(id); err != nil {
+		return "", err
+	}
+	if source, ok := s.adapter(id).(harness.CatalogVersion); ok {
 		return source.CatalogVersion()
 	}
 	return "", nil
@@ -79,13 +82,16 @@ func (s *Server) startCatalog(ctx context.Context, id string, stop bool, revisio
 		s.catalogStates[id] = state
 		s.catalogErrors[id] = err
 	}()
+	if err = s.runtimeSettingError(id); err != nil {
+		return nil, err
+	}
 	if previous != nil {
 		if err = previous.Close(ctx); err != nil {
 			return nil, err
 		}
 		os.Remove(filepath.Join(s.catalogDirectory(id), "runtime-process.json"))
 	}
-	a := s.adapters[id]
+	a := s.adapter(id)
 	if a == nil {
 		return nil, errors.New("harness unavailable")
 	}
@@ -135,6 +141,10 @@ func (s *Server) borrowCatalog(id string) (harness.Runtime, func(), error) {
 	s.runtimeMu.RLock()
 	state := s.catalogStates[id]
 	s.runtimeMu.RUnlock()
+	if !s.agentEnabled(id) {
+		gate.RUnlock()
+		return nil, nil, errors.New("Agent 未启用")
+	}
 	if state.phase == domain.RuntimeRefreshing {
 		gate.RUnlock()
 		return nil, nil, errCatalogRefreshing
@@ -175,7 +185,10 @@ func (s *Server) catalogLoop() {
 		case <-s.catalogWake:
 		}
 		for _, id := range s.adapterOrder {
-			if _, ok := s.adapters[id].(harness.CatalogVersion); !ok {
+			if !s.agentEnabled(id) {
+				continue
+			}
+			if _, ok := s.adapter(id).(harness.CatalogVersion); !ok {
 				continue
 			}
 			r := s.catalogRuntime(id)

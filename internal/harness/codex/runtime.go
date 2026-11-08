@@ -27,11 +27,15 @@ type Options struct {
 	OnMessage        func(context.Context, harness.IncomingMessage) error
 	OnStart          func(int) error
 	Executable, Home string
+	Arguments        []string
+	Environment      []domain.EnvironmentVariable
+	Instructions     string
 	OnEvent          func(domain.Event) error
 	Scope            *managedexec.Scope
 	Executor         *Executor
 }
 type Runtime struct {
+	account         *domain.RuntimeAccount
 	desktop         *desktopBridge
 	cmd             *exec.Cmd
 	stdin           io.WriteCloser
@@ -59,16 +63,18 @@ func Start(ctx context.Context, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	argv := []string{binary, "app-server", "--listen", "stdio://"}
+	argv := append([]string{binary}, opts.Arguments...)
+	if opts.Instructions != "" {
+		encoded, _ := json.Marshal(opts.Instructions)
+		argv = append(argv, "-c", "developer_instructions="+string(encoded))
+	}
+	argv = append(argv, "app-server", "--listen", "stdio://")
 	if opts.Executor != nil {
 		argv = append(argv, "-c", "features.shell_snapshot=false", "-c", "features.shell_snapshot_v2=false")
 	}
 	r := &Runtime{protocol: support, pending: map[string]chan wire.Message{}, done: make(chan struct{}), normalizer: NewNormalizer(), onEvent: opts.OnEvent, scope: opts.Scope, executor: opts.Executor}
 	r.normalizer.importResource = opts.ImportResource
-	env := os.Environ()
-	if opts.Home != "" {
-		env = append(env, "CODEX_HOME="+opts.Home)
-	}
+	env := runtimeEnvironment(os.Environ(), opts.Home, opts.Environment)
 	if opts.OnMessage != nil {
 		node, nodeErr := exec.LookPath("node")
 		if nodeErr == nil {
@@ -257,6 +263,9 @@ func (r *Runtime) call(ctx context.Context, method string, params, out any) erro
 	select {
 	case m := <-ch:
 		if m.Error != nil {
+			if issue := authenticationIssue(m.Error.Code, m.Error.Message); issue != "" {
+				return &harness.SetupError{Issue: issue, Message: "登录已失效，请在该设备重新登录"}
+			}
 			return &CallError{Message: fmt.Sprintf("Codex rejected %s (code %d)", method, m.Error.Code)}
 		}
 		if out != nil {
@@ -270,7 +279,10 @@ func (r *Runtime) call(ctx context.Context, method string, params, out any) erro
 	}
 }
 func (r *Runtime) catalog(ctx context.Context) error {
-	ready := domain.Readiness{State: "ready"}
+	if err := r.checkAuthentication(ctx); err != nil {
+		return err
+	}
+	ready := domain.Readiness{State: "ready", Account: r.account}
 	var cursor *string
 	for {
 		var result struct {

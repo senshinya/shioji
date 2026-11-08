@@ -17,16 +17,19 @@ type HarnessDescriptor struct {
 	Icon string `json:"icon,omitempty"`
 }
 type HarnessInfo struct {
-	ID                string              `json:"id"`
-	Name              string              `json:"name"`
-	Icon              string              `json:"icon,omitempty"`
-	State             ReadinessState      `json:"state"`
-	Error             string              `json:"error,omitempty"`
-	Models            []Model             `json:"models,omitempty"`
-	Permissions       []string            `json:"permissions,omitempty"`
-	PermissionChoices []OptionChoice      `json:"permissionChoices,omitempty"`
-	Plan              bool                `json:"plan"`
-	Capabilities      HarnessCapabilities `json:"capabilities"`
+	Account           *RuntimeAccount      `json:"account,omitempty"`
+	Configured        bool                 `json:"configured"`
+	Installation      *RuntimeInstallation `json:"installation,omitempty"`
+	ID                string               `json:"id"`
+	Name              string               `json:"name"`
+	Icon              string               `json:"icon,omitempty"`
+	State             ReadinessState       `json:"state"`
+	Error             string               `json:"error,omitempty"`
+	Models            []Model              `json:"models,omitempty"`
+	Permissions       []string             `json:"permissions,omitempty"`
+	PermissionChoices []OptionChoice       `json:"permissionChoices,omitempty"`
+	Plan              bool                 `json:"plan"`
+	Capabilities      HarnessCapabilities  `json:"capabilities"`
 }
 type OptionChoice struct {
 	ID          string `json:"id"`
@@ -45,7 +48,7 @@ func (r Readiness) ForHarness(id string) (Readiness, bool) {
 	}
 	for _, h := range r.Harnesses {
 		if h.ID == id {
-			return Readiness{Sessions: r.Sessions, HarnessID: h.ID, Harnesses: r.Harnesses, State: h.State, Error: h.Error, Models: h.Models, Permissions: h.Permissions, PermissionChoices: h.PermissionChoices, Plan: h.Plan, Capabilities: h.Capabilities}, true
+			return Readiness{Account: h.Account, Sessions: r.Sessions, HarnessID: h.ID, Harnesses: r.Harnesses, State: h.State, Error: h.Error, Models: h.Models, Permissions: h.Permissions, PermissionChoices: h.PermissionChoices, Plan: h.Plan, Capabilities: h.Capabilities}, true
 		}
 	}
 	return Readiness{}, false

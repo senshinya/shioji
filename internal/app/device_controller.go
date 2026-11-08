@@ -29,6 +29,60 @@ type CheckSSHDevice struct {
 	SSH  transport.SSH
 }
 
+type DeviceSetupCheck struct {
+	Info    transport.WorkerInfo
+	Catalog []domain.HarnessInfo
+}
+type CompleteSSHDevice struct {
+	SSH      transport.SSH
+	DeviceID string
+	Agents   protocol.DeviceAgents
+}
+
+func inspectSSHSetup(ctx context.Context, ssh transport.SSH, info transport.WorkerInfo) (DeviceSetupCheck, error) {
+	result := DeviceSetupCheck{Info: info}
+	ssh.Worker = info.Worker
+	ssh.StateDirectory = info.Directory
+	conn, err := ssh.Dial(ctx)
+	if err != nil {
+		return result, err
+	}
+	client, err := protocol.Connect(ctx, conn, info.DeviceID)
+	if err != nil {
+		conn.Close()
+		return result, err
+	}
+	defer client.Close()
+	if client.Minor < 16 {
+		return result, errors.New("设备的执行服务需要先更新，才能配置 Agent")
+	}
+	var ready domain.Readiness
+	err = client.Call(ctx, "runtime.catalog", nil, &ready)
+	result.Catalog = ready.Harnesses
+	return result, err
+}
+func completeSSHSetup(ctx context.Context, in CompleteSSHDevice) (protocol.AgentSetupResult, error) {
+	var result protocol.AgentSetupResult
+	if len(in.Agents.Agents) == 0 {
+		return result, errors.New("请至少选择一个 Agent")
+	}
+	conn, err := in.SSH.Dial(ctx)
+	if err != nil {
+		return result, err
+	}
+	client, err := protocol.Connect(ctx, conn, in.DeviceID)
+	if err != nil {
+		conn.Close()
+		return result, err
+	}
+	defer client.Close()
+	if client.Minor < 16 {
+		return result, errors.New("请先更新设备的执行服务")
+	}
+	err = client.Call(ctx, "runtime.agents", in.Agents, &result)
+	return result, err
+}
+
 func NewDeviceController(directory, localDeviceID string, connections []DeviceConnection, workerBinary string, restored map[string][]string) *Controller {
 	root := NewController(directory)
 	root.fleet = &deviceFleet{sources: map[string]*deviceSource{}, workerBinary: workerBinary}
@@ -42,13 +96,15 @@ func NewDeviceController(directory, localDeviceID string, connections []DeviceCo
 		if connection.ID == "" || connection.ID == "local" {
 			continue
 		}
-		child := sshController(connection, restored[connection.ID])
+		child := sshController(connection, restored[connection.ID], workerBinary)
 		root.fleet.sources[connection.ID] = &deviceSource{connection: connection, controller: child}
 	}
 	return root
 }
-func sshController(connection DeviceConnection, pending []string) *Controller {
+func sshController(connection DeviceConnection, pending []string, binary string) *Controller {
 	c := NewController("")
+	c.WorkerBinary = binary
+	c.WorkerSSH = &connection.SSH
 	c.ExpectedDeviceID = connection.DeviceID
 	c.Dial = connection.SSH.Dial
 	c.RestoreOperations = pending
@@ -121,7 +177,7 @@ func (c *Controller) runDevices(ctx context.Context) {
 	apply := func(job Job, body json.RawMessage, err error) {
 		if job.Apply != nil {
 			c.postContext(ctx, func(m *Model) {
-				if err == nil && job.Method != "$device.check" {
+				if err == nil && job.Method != "$device.check" && job.Method != "$device.complete" {
 					key := job.ConnectionID
 					if key == "" {
 						key = "local"
@@ -151,13 +207,14 @@ func (c *Controller) runDevices(ctx context.Context) {
 				}
 				continue
 			}
-			if job.Method == "$device.check" {
+			if job.Method == "$device.check" || job.Method == "$device.complete" {
 				if checking {
 					apply(job, nil, errors.New("设备检查正在进行"))
 					continue
 				}
-				input, ok := job.Input.(CheckSSHDevice)
-				if !ok {
+				input, checkOK := job.Input.(CheckSSHDevice)
+				complete, completeOK := job.Input.(CompleteSSHDevice)
+				if job.Method == "$device.check" && !checkOK || job.Method == "$device.complete" && !completeOK {
 					apply(job, nil, errors.New("invalid SSH device request"))
 					continue
 				}
@@ -166,8 +223,21 @@ func (c *Controller) runDevices(ctx context.Context) {
 				checkCancel = cancel
 				go func() {
 					defer cancel()
-					info, err := input.SSH.Bootstrap(callCtx, c.fleet.workerBinary)
-					body, _ := json.Marshal(info)
+					var body json.RawMessage
+					var err error
+					if job.Method == "$device.complete" {
+						var result protocol.AgentSetupResult
+						result, err = completeSSHSetup(callCtx, complete)
+						body, _ = json.Marshal(result)
+					} else {
+						var info transport.WorkerInfo
+						info, err = input.SSH.Bootstrap(callCtx, c.fleet.workerBinary)
+						if err == nil {
+							var result DeviceSetupCheck
+							result, err = inspectSSHSetup(callCtx, input.SSH, info)
+							body, _ = json.Marshal(result)
+						}
+					}
 					select {
 					case checked <- struct {
 						job  Job
@@ -189,7 +259,7 @@ func (c *Controller) runDevices(ctx context.Context) {
 				if previous := c.fleet.sources[key]; previous != nil {
 					previous.cancel()
 				}
-				source := &deviceSource{connection: input.Connection, controller: sshController(input.Connection, input.Pending)}
+				source := &deviceSource{connection: input.Connection, controller: sshController(input.Connection, input.Pending, c.fleet.workerBinary)}
 				c.fleet.sources[key] = source
 				c.startDevice(ctx, key, source)
 				continue

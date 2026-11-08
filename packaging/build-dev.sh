@@ -27,6 +27,41 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>NSLocalNetworkUsageDescription</key><string>连接你选择的开发设备。</string>
 </dict></plist>
 PLIST
+runtime_bundle="$app/Contents/Resources/Shioji Runtime.app"
+mkdir -p "$runtime_bundle/Contents/MacOS" "$runtime_bundle/Contents/Library/LaunchAgents"
+env -u GOROOT CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o "$runtime_bundle/Contents/MacOS/shioji-runtime" ./cmd/shioji-runtime
+cp "$app/Contents/MacOS/shioji-worker" "$runtime_bundle/Contents/MacOS/shioji-worker"
+cat > "$runtime_bundle/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>dev.shioji.runtime</string>
+<key>CFBundleName</key><string>Shioji Runtime</string>
+<key>CFBundleExecutable</key><string>shioji-runtime</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>LSUIElement</key><true/>
+<key>LSMinimumSystemVersion</key><string>13.0</string>
+</dict></plist>
+PLIST
+cat > "$runtime_bundle/Contents/Library/LaunchAgents/dev.shioji.runtime.agent.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>dev.shioji.runtime.agent</string>
+<key>BundleProgram</key><string>Contents/MacOS/shioji-runtime</string>
+<key>ProgramArguments</key><array><string>shioji-runtime</string><string>--serve</string></array>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+<key>ThrottleInterval</key><integer>10</integer>
+<key>LimitLoadToSessionType</key><string>Aqua</string>
+<key>ProcessType</key><string>Background</string>
+</dict></plist>
+PLIST
+codesign --force --sign - "$runtime_bundle/Contents/MacOS/shioji-worker"
+codesign --force --sign - "$runtime_bundle/Contents/MacOS/shioji-runtime"
+codesign --force --sign - "$runtime_bundle"
+codesign --verify --deep --strict "$runtime_bundle"
 codesign --force --sign - "$app/Contents/MacOS/shioji-worker"
 codesign --force --sign - "$app"
 codesign --verify --strict "$app"

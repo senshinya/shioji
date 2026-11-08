@@ -18,10 +18,11 @@ const (
 )
 
 type WorkerService struct {
-	Build     *domain.WorkerBuild
-	Available *domain.WorkerBuild
-	Phase     WorkerUpdatePhase
-	Message   string
+	Background *domain.BackgroundService
+	Build      *domain.WorkerBuild
+	Available  *domain.WorkerBuild
+	Phase      WorkerUpdatePhase
+	Message    string
 }
 
 func newWorkerService(current, available *domain.WorkerBuild) *WorkerService {
@@ -85,3 +86,13 @@ func WorkerBuildLabel(b *domain.WorkerBuild) string {
 	}
 	return label
 }
+
+// Requested updates may wait safely, or have an unconfirmed send. Reconnection
+// must never turn an unconfirmed send back into permission to dispatch it.
+type workerUpdateIntent uint8
+
+const (
+	updateNotRequested workerUpdateIntent = iota
+	updateWaitingForIdle
+	updateAwaitingReceipt
+)

@@ -107,3 +107,36 @@ func TestDeviceProjectionRejectsCrossDeviceWorkspaceIdentity(t *testing.T) {
 		t.Fatal("remote snapshot overwrites local device scope", m.Snapshot)
 	}
 }
+
+func TestDeviceDisplayNamesPersistWithoutChangingIdentityOrDrafts(t *testing.T) {
+	m := NewModel()
+	m.LocalDeviceID = "A"
+	m.Connections = []DeviceConnection{{ID: "air", Name: "Air", DeviceID: "B"}}
+	m.Drafts["home"] = "keep draft"
+	if err := m.RenameDevice("local", "  工作 Mac  "); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RenameDevice("air", "旅行电脑"); err != nil {
+		t.Fatal(err)
+	}
+	if m.DeviceName("A") != "工作 Mac" || m.DeviceName("B") != "旅行电脑" || m.CurrentDeviceName() != "工作 Mac" {
+		t.Fatal("display names not applied")
+	}
+	file := t.TempDir() + "/client.json"
+	if err := m.Save(file); err != nil {
+		t.Fatal(err)
+	}
+	restored := NewModel()
+	if err := restored.Load(file); err != nil {
+		t.Fatal(err)
+	}
+	if restored.DeviceName("A") != "工作 Mac" || restored.DeviceName("B") != "旅行电脑" || restored.LocalDeviceID != "A" || restored.Drafts["home"] != "keep draft" {
+		t.Fatal("rename lost state")
+	}
+	if err := m.RenameDevice("local", " \n "); err == nil {
+		t.Fatal("empty name accepted")
+	}
+	if err := m.RenameDevice("unknown", "Other"); err == nil {
+		t.Fatal("unknown device accepted")
+	}
+}

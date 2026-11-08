@@ -110,8 +110,11 @@ type View struct {
 	selectedDevice                                                                                                  string
 	deviceSelected                                                                                                  string
 	deviceList                                                                                                      bool
+	deviceTab                                                                                                       string
 	deviceSearch                                                                                                    string
 	sshCheck                                                                                                        sshCheckPhase
+	sshSetup                                                                                                        app.DeviceSetupCheck
+	sshAgents                                                                                                       *deviceAgentEditor
 	sshName, sshTarget, sshPort, sshError, sshRequest                                                               string
 	remoteWorkspaceOpen                                                                                             bool
 	remoteWorkspaceConnection, remoteWorkspaceName, remoteWorkspacePath, remoteWorkspaceExtra, remoteWorkspaceError string
@@ -312,6 +315,10 @@ func (v *View) View(c *n.Context) {
 	}
 	owner := v
 	n.Row(c).Fill().Background(t.Background).Children(func() {
+		if v.devices {
+			v.deviceView(c, &t)
+			return
+		}
 		v.sidebar(c, &t)
 		width, _ := c.Size()
 		owner = v.focusedView()
@@ -993,7 +1000,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 							}
 						}
 					} else if v.runMenu == runMenuModels {
-						for _, model := range ready.Models {
+						for _, model := range v.Model.ModelsForMenu(v.Model.ConnectionDeviceID(v.Model.ConnectionID()), ready.HarnessID, ready.Models) {
 							label := model.Name
 							if label == "" {
 								label = model.ID

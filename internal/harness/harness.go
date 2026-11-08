@@ -126,3 +126,21 @@ func (e *UnsupportedError) Error() string {
 	return fmt.Sprintf("harness does not support %s", e.Capability)
 }
 func Unsupported(capability string) error { return &UnsupportedError{Capability: capability} }
+
+// InstallationProvider describes only the device-local executable and setup
+// guidance. Native authentication and configuration encoding stay in adapters.
+type InstallationProvider interface {
+	Installation() domain.RuntimeInstallation
+	WithExecutable(string) (Adapter, error)
+}
+type SetupError struct {
+	Issue   domain.RuntimeIssue
+	Message string
+}
+
+func (e *SetupError) Error() string { return e.Message }
+
+// RuntimeOptionsProvider translates neutral launch defaults into an immutable adapter.
+type RuntimeOptionsProvider interface {
+	WithRuntimeOptions(domain.RuntimeOptions) (Adapter, error)
+}

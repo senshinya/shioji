@@ -1,8 +1,12 @@
 package app
 
 import (
+	"context"
+	"errors"
+	"net"
 	"shioji/internal/domain"
 	"testing"
+	"time"
 )
 
 func TestWorkerServiceDoesNotAutomaticallyDowngradeOrGuessLegacySafety(t *testing.T) {
@@ -36,5 +40,29 @@ func TestWorkerServiceProjectionStaysOnOwningDevice(t *testing.T) {
 	})
 	if m.WorkerService == nil || m.WorkerService.Phase != WorkerCurrent || m.DeviceStates["local"].WorkerService.Message != "local busy" {
 		t.Fatal("local update polluted remote device", m.WorkerService)
+	}
+}
+func TestOfflineBackgroundStatusDoesNotDependOnWorkerConnection(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := NewController(t.TempDir())
+	c.WorkerBinary = "/missing-bundle-worker"
+	c.Dial = func(context.Context) (net.Conn, error) { return nil, errors.New("worker offline") }
+	go c.Run(ctx)
+	deadline := time.After(2 * time.Second)
+	m := NewModel()
+	for {
+		select {
+		case update := <-c.Updates:
+			update(m)
+			if m.WorkerService != nil && m.WorkerService.Background != nil {
+				if m.Connected {
+					t.Fatal("offline status pretended connected")
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("background recovery hidden behind unavailable worker")
+		}
 	}
 }

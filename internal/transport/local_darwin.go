@@ -62,6 +62,21 @@ func EnsureLocalWorker(ctx context.Context, directory, binary, codex string) (Wo
 	if exists, err := probe(); exists {
 		return info, err
 	}
+	selected, err := ActiveWorkerBuild(directory)
+	if err != nil {
+		return info, err
+	}
+	if selected != "" {
+		verify, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		if _, err = VerifyStagedWorker(verify, directory, selected); err != nil {
+			return info, err
+		}
+		binary, err = StagedWorkerPath(directory, selected)
+		if err != nil {
+			return info, err
+		}
+	}
 	if binary == "" {
 		return info, errors.New("本机执行服务未启动")
 	}
@@ -107,6 +122,29 @@ func EnsureLocalWorker(ctx context.Context, directory, binary, codex string) (Wo
 			if exists, err := probe(); exists {
 				return info, err
 			}
+		}
+	}
+}
+
+// WaitLocalWorker observes an approved launchd service without spawning a second
+// detached owner or bypassing a revoked background authorization.
+func WaitLocalWorker(ctx context.Context, directory string) error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		conn, err := (&net.Dialer{Timeout: 200 * time.Millisecond}).DialContext(ctx, "unix", filepath.Join(directory, "worker.sock"))
+		if err == nil {
+			client, e := protocol.Connect(ctx, conn, "")
+			if e == nil {
+				client.Close()
+				return nil
+			}
+			conn.Close()
+		}
+		select {
+		case <-ctx.Done():
+			return errors.New("后台服务尚未启动，请检查系统后台项目设置")
+		case <-ticker.C:
 		}
 	}
 }

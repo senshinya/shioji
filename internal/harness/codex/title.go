@@ -18,6 +18,16 @@ import (
 
 func (r *adapterRuntime) GenerateTitle(ctx context.Context, input harness.TitleInput) (string, error) {
 	model, err := titleModel(r.Readiness().Models)
+	if chosen := r.titleAdapter.runtimeOptions.TitleModel; chosen != "" {
+		err = errors.New("标题模型已不可用，请重新选择")
+		for _, candidate := range r.Readiness().Models {
+			if candidate.ID == chosen {
+				model = candidate
+				err = nil
+				break
+			}
+		}
+	}
 	if err != nil {
 		return "", err
 	}
@@ -50,7 +60,8 @@ func (r *adapterRuntime) GenerateTitle(ctx context.Context, input harness.TitleI
 	if err != nil {
 		return "", err
 	}
-	args := []string{binary, "exec", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--cd", dir, "--model", model.ID, "--output-schema", schema, "--output-last-message", output, "--color", "never"}
+	args := append([]string{binary}, r.titleAdapter.runtimeOptions.Arguments...)
+	args = append(args, "exec", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--cd", dir, "--model", model.ID, "--output-schema", schema, "--output-last-message", output, "--color", "never")
 	// The auxiliary task keeps provider/auth configuration, but cannot inherit
 	// user automation, workspace instructions, host callbacks or external tools.
 	// Codex's global user instructions remain owned by its normal auth/home.
@@ -71,7 +82,7 @@ func (r *adapterRuntime) GenerateTitle(ctx context.Context, input harness.TitleI
 		args = append(args, "--config", "mcp_servers={"+strings.Join(disabledServers, ",")+"}")
 	}
 	args = append(args, "-")
-	env := desktopEnvironment(os.Environ(), nil, "")
+	env := desktopEnvironment(runtimeEnvironment(os.Environ(), r.titleAdapter.Home, r.titleAdapter.runtimeOptions.Environment), nil, "")
 	env = slices.DeleteFunc(env, func(value string) bool {
 		return strings.HasPrefix(value, "CODEX_THREAD_ID=") || strings.HasPrefix(value, "CODEX_TOOL_CALL_ID=") || r.titleAdapter.Home != "" && strings.HasPrefix(value, "CODEX_HOME=")
 	})

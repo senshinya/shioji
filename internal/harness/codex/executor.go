@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"shioji/internal/domain"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ import (
 
 type ExecutorOptions struct {
 	Executable, Home string
+	Environment      []domain.EnvironmentVariable
 	Scope            *managedexec.Scope
 	OnStart          func(int) error
 	OnLost           func() error
@@ -89,10 +91,7 @@ func StartExecutor(ctx context.Context, opts ExecutorOptions) (*Executor, error)
 	if err != nil {
 		return nil, err
 	}
-	env := os.Environ()
-	if opts.Home != "" {
-		env = append(env, "CODEX_HOME="+opts.Home)
-	}
+	env := runtimeEnvironment(os.Environ(), opts.Home, opts.Environment)
 	ownerCtx, cancel := context.WithCancel(context.Background())
 	e := &Executor{scope: opts.Scope, ctx: ownerCtx, cancel: cancel, done: make(chan struct{}), token: randomExecutorID() + randomExecutorID(), baseEnv: map[string]string{}, pending: map[string]chan wire.Message{}, requests: map[string]executorRequest{}, boots: map[string]*executorBootstrap{}}
 	e.onLost = opts.OnLost

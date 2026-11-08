@@ -18,8 +18,8 @@ import (
 // Major 2 requires clients to understand authoritative history replacement.
 const Major = 2
 
-// Minor 14 reports session-specific runtime capabilities during catalog refresh.
-const Minor = 14
+// Minor 17 adds authoritative idle admission before unregistering a managed worker.
+const Minor = 18
 const MaxFrame = 1 << 20
 
 type Frame struct {
@@ -191,4 +191,22 @@ func Welcome(conn net.Conn, deviceID string, build ...domain.WorkerBuild) (*Code
 // ReadinessQuery scopes live runtime profiles to the client's two visible sessions.
 type ReadinessQuery struct {
 	SessionIDs []string `json:"sessionIds,omitempty"`
+}
+
+// Empty Executable restores automatic discovery on the owning device.
+type RuntimeConfiguration struct {
+	Options    *domain.RuntimeOptions `json:"options,omitempty"`
+	HarnessID  string                 `json:"harnessId"`
+	Executable string                 `json:"executable"`
+}
+
+// DeviceAgents is the complete set selected for one owning device.
+type DeviceAgents struct {
+	Agents []RuntimeConfiguration `json:"agents"`
+}
+type AgentSetupResult struct {
+	Readiness domain.Readiness     `json:"readiness"`
+	Catalog   []domain.HarnessInfo `json:"catalog"`
+	Ready     bool                 `json:"ready"`
+	Error     string               `json:"error,omitempty"`
 }

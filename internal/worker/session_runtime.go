@@ -21,7 +21,7 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 	if err != nil {
 		return nil, err
 	}
-	adapter := s.adapters[d.Session.HarnessID]
+	adapter := s.adapter(d.Session.HarnessID)
 	if adapter == nil {
 		return nil, errors.New("session harness unavailable")
 	}
@@ -58,6 +58,9 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 		upgrading = true
 	}
 
+	if err := s.runtimeSettingError(d.Session.HarnessID); err != nil {
+		return nil, err
+	}
 	dir := s.sessionRuntimeDirectory(id)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
@@ -104,6 +107,10 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 	accepting.Store(true)
 	s.runtimeMu.Lock()
 	s.runtimeEvents[id] = accepting
+	s.runtimeCatalogs[id] = s.catalogs[d.Session.HarnessID]
+	if d.Session.HarnessID == s.config.DefaultHarnessID {
+		s.runtimeCatalogs[id] = s.runtime
+	}
 	s.runtimeMu.Unlock()
 	r, err := adapter.Start(ctx, harness.StartOptions{Scope: scope, ImportResource: func(image harness.OutputResource) (domain.Attachment, error) {
 		return s.importOutputResource(d.Session.HarnessID, id, image)

@@ -11,6 +11,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var ErrOwned = errors.New("worker already owned by another process")
+
 type Owner struct {
 	dir      string
 	lock     *os.File
@@ -36,7 +38,7 @@ func Acquire(dir string) (*Owner, error) {
 	f := os.NewFile(uintptr(fd), "owner.lock")
 	if err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		f.Close()
-		return nil, errors.New("worker already owned by another process")
+		return nil, ErrOwned
 	}
 	return &Owner{dir: dir, lock: f}, nil
 }

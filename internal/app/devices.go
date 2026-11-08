@@ -6,7 +6,9 @@ import (
 	"shioji/internal/transport"
 	"slices"
 	"sort"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type DeviceConnection struct {
@@ -142,7 +144,7 @@ func (m *Model) CurrentDeviceName() string {
 			return c.Name
 		}
 	}
-	return "这台 Mac"
+	return m.LocalName()
 }
 func (m *Model) DeviceName(device string) string {
 	for _, c := range m.Connections {
@@ -150,7 +152,7 @@ func (m *Model) DeviceName(device string) string {
 			return c.Name
 		}
 	}
-	return "这台 Mac"
+	return m.LocalName()
 }
 func (m *Model) localIdentity() string {
 	if m.LocalDeviceID != "" {
@@ -306,4 +308,29 @@ func (m *Model) RefreshDevices() {
 		m.WorkerService = nil
 	}
 	m.Snapshot = all
+}
+
+// Names are application display aliases, independent of OS hostnames and device IDs.
+func (m *Model) LocalName() string {
+	if m.LocalDeviceName != "" {
+		return m.LocalDeviceName
+	}
+	return "这台 Mac"
+}
+func (m *Model) RenameDevice(key, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || utf8.RuneCountInString(name) > 80 || strings.ContainsAny(name, "\x00\r\n") {
+		return fmt.Errorf("请输入 1–80 个字符的设备名称")
+	}
+	if key == "local" {
+		m.LocalDeviceName = name
+		return nil
+	}
+	for i := range m.Connections {
+		if m.Connections[i].ID == key {
+			m.Connections[i].Name = name
+			return nil
+		}
+	}
+	return fmt.Errorf("设备不存在")
 }

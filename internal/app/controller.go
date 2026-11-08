@@ -26,6 +26,7 @@ type Job struct {
 	epoch           string
 }
 type Controller struct {
+	WorkerSSH         *transport.SSH
 	WorkerBinary      string
 	WorkerAutoUpdate  bool
 	fleet             *deviceFleet
@@ -237,12 +238,99 @@ func (c *Controller) Run(ctx context.Context) {
 	var candidateChecked bool
 	var candidateError error
 	var service *WorkerService
+	var background *domain.BackgroundService
 	var lastUpdateAttempt, updateStarted time.Time
+	var lastBackgroundCheck time.Time
+	updateIntent := updateNotRequested
 	publishService := func(state *WorkerService) {
+		state.Background = background
 		service = state
 		copy := *state
 		c.post(func(m *Model) { m.WorkerService = &copy })
 	}
+	type backgroundResult struct {
+		state  domain.BackgroundService
+		err    error
+		epoch  string
+		action string
+	}
+	backgroundResults := make(chan backgroundResult, 1)
+	backgroundBusy := false
+	var pendingBackground *struct{ action, epoch string }
+	checkBackground := func(action string) {
+		if c.WorkerBinary == "" {
+			return
+		}
+		epoch := ""
+		if client != nil {
+			epoch = client.Epoch
+		}
+		if backgroundBusy {
+			if action != "status" {
+				pendingBackground = &struct{ action, epoch string }{action, epoch}
+			}
+			return
+		}
+		backgroundBusy = true
+		lastBackgroundCheck = time.Now()
+		if action != "status" && service != nil {
+			label, phase := "正在启用后台服务", "enabling"
+			if action == "unregister" {
+				label, phase = "正在关闭后台服务", "disabling"
+			}
+			background = &domain.BackgroundService{Format: 1, State: phase, Message: label}
+			copy := *service
+			publishService(&copy)
+		}
+		target := client
+		go func() {
+			callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			var state domain.BackgroundService
+			var err error
+			managed := target != nil && target.Worker != nil && target.Worker.Managed
+			if action == "unregister" && managed {
+				if target.Minor < 17 {
+					err = errors.New("请先更新执行服务，再关闭后台运行")
+				} else {
+					err = target.Call(callCtx, "worker.background.disable", nil, &state)
+					if err != nil { // Unregister closes the old IPC owner; query status, never resend it.
+						cause := err
+						if c.WorkerSSH != nil {
+							state, err = c.WorkerSSH.RuntimeService(callCtx, c.WorkerBinary, false)
+						} else {
+							state, err = transport.RuntimeService(callCtx, c.Directory, c.WorkerBinary, false)
+						}
+						if err == nil && state.State != "notRegistered" && state.State != "notInstalled" {
+							state.Message = cause.Error()
+						}
+					}
+					if err == nil && (state.State == "notRegistered" || state.State == "notInstalled") {
+						err = transport.EnsureDetachedWorker(callCtx, c.Directory, c.WorkerBinary, target.DeviceID, c.WorkerSSH)
+					}
+				}
+			} else {
+				if c.WorkerSSH != nil {
+					if action == "unregister" {
+						state, err = c.WorkerSSH.DisableRuntimeService(callCtx, c.WorkerBinary)
+					} else {
+						state, err = c.WorkerSSH.RuntimeService(callCtx, c.WorkerBinary, action == "register")
+					}
+				} else {
+					if action == "unregister" {
+						state, err = transport.DisableRuntimeService(callCtx, c.Directory, c.WorkerBinary)
+					} else {
+						state, err = transport.RuntimeService(callCtx, c.Directory, c.WorkerBinary, action == "register")
+					}
+				}
+			}
+			select {
+			case backgroundResults <- backgroundResult{state, err, epoch, action}:
+			case <-ctx.Done():
+			}
+		}()
+	}
+
 	stageCandidate := func(force bool) {
 		if c.WorkerBinary == "" || candidateChecked && !force {
 			return
@@ -250,7 +338,16 @@ func (c *Controller) Run(ctx context.Context) {
 		candidateChecked = true
 		stageCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
-		info, err := transport.StageWorker(stageCtx, c.Directory, c.WorkerBinary)
+		var info domain.WorkerBuild
+		var err error
+		if c.WorkerSSH != nil {
+			info, err = transport.InspectWorker(stageCtx, c.WorkerBinary)
+			if force && err == nil {
+				info, err = c.WorkerSSH.StageWorker(stageCtx, c.WorkerBinary)
+			}
+		} else {
+			info, err = transport.StageWorker(stageCtx, c.Directory, c.WorkerBinary)
+		}
 		candidateError = err
 		if err == nil {
 			candidate = &info
@@ -261,6 +358,10 @@ func (c *Controller) Run(ctx context.Context) {
 			return false, nil
 		}
 		if explicit {
+			if c.WorkerSSH != nil && (client == nil || client.DeviceID != c.ExpectedDeviceID) {
+				return false, errors.New("请先重新连接并确认设备身份，再更新执行服务")
+			}
+			updateIntent = updateWaitingForIdle
 			stageCandidate(true)
 		}
 		if candidateError != nil {
@@ -274,7 +375,7 @@ func (c *Controller) Run(ctx context.Context) {
 			return false, nil
 		}
 		if client == nil {
-			if explicit && candidate != nil {
+			if explicit && candidate != nil && c.WorkerSSH == nil && (background == nil || background.State != "enabled" && background.State != "requiresApproval") {
 				path, err := transport.StagedWorkerPath(c.Directory, candidate.BuildID)
 				if err == nil {
 					_, err = transport.EnsureLocalWorker(ctx, c.Directory, path, "")
@@ -293,13 +394,14 @@ func (c *Controller) Run(ctx context.Context) {
 			publishService(state)
 			return false, nil
 		}
-		if !explicit && !state.Automatic() {
+		if !explicit && updateIntent == updateNotRequested && !state.Automatic() {
 			return false, nil
 		}
 		lastUpdateAttempt = time.Now()
 		updateCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		var result domain.WorkerUpdateResult
+		updateIntent = updateAwaitingReceipt
 		err := client.Call(updateCtx, "worker.update", domain.WorkerReplacement{ExpectedBuildID: state.Build.BuildID, BuildID: state.Available.BuildID}, &result)
 		if err != nil {
 			state.Phase = WorkerUpdateFailed
@@ -308,6 +410,7 @@ func (c *Controller) Run(ctx context.Context) {
 			return false, err
 		}
 		if !result.Ready {
+			updateIntent = updateWaitingForIdle
 			state.Phase = WorkerWaiting
 			state.Message = result.Reason
 			publishService(state)
@@ -397,15 +500,84 @@ func (c *Controller) Run(ctx context.Context) {
 		})
 		return true
 	}
+	checkBackground("status")
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case result := <-backgroundResults:
+			backgroundBusy = false
+			epoch := ""
+			if client != nil {
+				epoch = client.Epoch
+			}
+			if result.epoch != epoch {
+				checkBackground("status")
+				continue
+			}
+			if result.err != nil {
+				result.state.Format = 1
+				result.state.State = "failed"
+				result.state.Message = result.err.Error()
+			}
+			background = &result.state
+			state := newWorkerService(nil, candidate)
+			if service != nil {
+				copy := *service
+				state = &copy
+			}
+			publishService(state)
+			if pendingBackground != nil {
+				requested := pendingBackground
+				pendingBackground = nil
+				if requested.epoch == epoch {
+					checkBackground(requested.action)
+				}
+			}
 		case result := <-eventResults:
 			if result.err != nil || !applyPage(result.page) {
 				disconnected()
 			}
 		case job := <-c.Jobs:
+			if job.Method == "$background.status" || job.Method == "$background.enable" || job.Method == "$background.disable" {
+				if job.Method != "$background.status" && (client == nil || job.epoch == "" || job.epoch != client.Epoch) {
+					continue
+				}
+				action := "status"
+				if job.Method == "$background.enable" {
+					action = "register"
+				}
+				if job.Method == "$background.disable" {
+					action = "unregister"
+				}
+				checkBackground(action)
+				continue
+			}
+			if job.Method == "$worker.check" {
+				if client == nil || job.epoch != client.Epoch {
+					continue
+				}
+				if service != nil && service.Phase == WorkerUpdating {
+					continue
+				}
+				candidateChecked = false
+				stageCandidate(false)
+				callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				var current domain.WorkerBuild
+				err := client.Call(callCtx, "worker.info", nil, &current)
+				cancel()
+				next := newWorkerService(&current, candidate)
+				if err != nil {
+					next.Phase = WorkerUpdateFailed
+					next.Message = err.Error()
+				}
+				if candidateError != nil {
+					next.Phase = WorkerUpdateFailed
+					next.Message = candidateError.Error()
+				}
+				publishService(next)
+				continue
+			}
 			if job.Method == "$worker.update" {
 				if service != nil && service.Phase == WorkerUpdating {
 					continue
@@ -533,11 +705,23 @@ func (c *Controller) Run(ctx context.Context) {
 				minor := client.Minor
 				stageCandidate(false)
 				state := newWorkerService(client.Worker, candidate)
+				if state.Phase == WorkerCurrent {
+					updateIntent = updateNotRequested
+				}
+				if state.Phase == WorkerAvailable && updateIntent == updateWaitingForIdle {
+					state.Phase = WorkerWaiting
+					state.Message = "等待空闲后更新，会话和队列已保留"
+				}
+				if state.Phase == WorkerAvailable && updateIntent == updateAwaitingReceipt {
+					state.Phase = WorkerUpdateFailed
+					state.Message = "上次更新回执未确认，请重新检查后再决定是否重试"
+				}
 				if candidateError != nil {
 					state.Phase = WorkerUpdateFailed
 					state.Message = candidateError.Error()
 				}
 				publishService(state)
+				checkBackground("status")
 				updateStarted = time.Time{}
 				epoch := client.Epoch
 				c.post(func(m *Model) {
@@ -558,6 +742,9 @@ func (c *Controller) Run(ctx context.Context) {
 					eventResults, stopEvents = c.observeEvents(ctx, snapshot.DeviceID, generation, sequence)
 				}
 			}
+			if time.Since(lastBackgroundCheck) > 30*time.Second {
+				checkBackground("status")
+			}
 			if time.Since(lastReadiness) > 5*time.Second {
 				started := time.Now()
 				var ready domain.Readiness
@@ -569,7 +756,7 @@ func (c *Controller) Run(ctx context.Context) {
 				sample := &DeviceTiming{Milliseconds: float64(time.Since(started)) / float64(time.Millisecond), ObservedAt: time.Now()}
 				c.post(func(m *Model) { m.Readiness = ready; m.ConnectionTiming = sample })
 			}
-			if c.WorkerAutoUpdate && service.Automatic() && time.Since(lastUpdateAttempt) > 5*time.Second {
+			if (c.WorkerAutoUpdate && service.Automatic() || updateIntent == updateWaitingForIdle && service != nil && service.Phase == WorkerWaiting) && time.Since(lastUpdateAttempt) > 5*time.Second {
 				restart, err := tryWorkerUpdate(false)
 				if restart || err != nil {
 					disconnected()

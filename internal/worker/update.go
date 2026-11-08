@@ -79,6 +79,9 @@ func (s *Server) prepareWorkerUpdate(in domain.WorkerReplacement) (result domain
 }
 
 func (s *Server) updateAdmission() error {
+	if s.backgroundStopping.Load() {
+		return &protocol.RemoteError{Code: "notSent", Message: "后台服务正在关闭，草稿已保留"}
+	}
 	if s.updating.Load() {
 		return &protocol.RemoteError{Code: "notSent", Message: "执行服务正在更新，操作未发送；草稿已保留"}
 	}

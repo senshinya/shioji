@@ -99,7 +99,7 @@ func TestFileMentionCompletesWithoutSendingAndPreservesDraft(t *testing.T) {
 	}
 	ui.Key(0, n.KeyEnter)
 	waitNative(t, ui, func() bool { return len(v.Model.Attachments["home"]) == 1 })
-	if v.Model.Drafts["home"] != "请检查 " || len(v.Model.Pending) != 0 {
+	if v.Model.Drafts["home"] != "请检查  " || len(v.Model.Pending) != 0 {
 		t.Fatal("completion submitted or damaged draft", v.Model.Drafts, v.Model.Pending)
 	}
 	a := v.Model.Attachments["home"][0]
@@ -111,6 +111,7 @@ func TestFileMentionCompletesWithoutSendingAndPreservesDraft(t *testing.T) {
 	if !ok || chip.H > 30 {
 		t.Fatal("reference is not a compact tag", chip)
 	}
+	ui.Key(0, n.KeyBackspace) // Remove the inserted typing space first.
 	ui.Key(0, n.KeyBackspace)
 	ui.Advance(400 * time.Millisecond)
 	if len(v.Model.Attachments["home"]) != 0 || v.Model.Drafts["home"] != "请检查 " {
@@ -130,7 +131,7 @@ func TestFileMentionInsertedBeforeExistingTextKeepsTheSuffix(t *testing.T) {
 	ui.Key(0, n.KeyEnter)
 	waitNative(t, ui, func() bool { return len(v.Model.Attachments["home"]) == 1 })
 	b := v.composerDocuments["home"]
-	if got := b.doc.Text().String(); got != "请检查 \uFFFC边界条件" {
+	if got := b.doc.Text().String(); got != "请检查 \uFFFC 边界条件" {
 		t.Fatal("reference consumed existing text after the caret", got)
 	}
 	ui.Key(n.Cmd, n.KeyZ)
@@ -138,7 +139,7 @@ func TestFileMentionInsertedBeforeExistingTextKeepsTheSuffix(t *testing.T) {
 		t.Fatal("undo did not restore the query and suffix", got)
 	}
 	ui.Key(n.Cmd|n.Shift, n.KeyZ)
-	if got := b.doc.Text().String(); got != "请检查 \uFFFC边界条件" || len(v.Model.Attachments["home"]) != 1 {
+	if got := b.doc.Text().String(); got != "请检查 \uFFFC 边界条件" || len(v.Model.Attachments["home"]) != 1 {
 		t.Fatal("redo damaged the suffix", got)
 	}
 }
@@ -217,7 +218,7 @@ func TestSlashSkillMenuUsesStructuredReferenceAndKeepsOrdinaryText(t *testing.T)
 	waitNative(t, ui, func() bool { return ui.HasText("review-tree") })
 	ui.Key(0, n.KeyEnter)
 	waitNative(t, ui, func() bool { return len(v.Model.DraftSkills["home"]) == 1 })
-	if v.Model.Drafts["home"] != "" || len(v.Model.Pending) != 0 {
+	if v.Model.Drafts["home"] != " " || len(v.Model.Pending) != 0 {
 		t.Fatal("skill selection sent text instead of preparing a reference", v.Model.Drafts)
 	}
 	if !ui.Focused("消息输入") {
@@ -229,7 +230,7 @@ func TestSlashSkillMenuUsesStructuredReferenceAndKeepsOrdinaryText(t *testing.T)
 		t.Fatal(err)
 	}
 	data, _ := json.Marshal(in)
-	if !strings.Contains(string(data), `"skills"`) || strings.Contains(in.Text, "$review-tree") || in.Text != "检查旋转" {
+	if !strings.Contains(string(data), `"skills"`) || strings.Contains(in.Text, "$review-tree") || in.Text != " 检查旋转" {
 		t.Fatal("native syntax leaked into ordinary prompt", string(data))
 	}
 }
@@ -391,13 +392,14 @@ func TestReferenceIsAtomicInlineTokenWithUndo(t *testing.T) {
 	ui.Key(0, n.KeyEnter)
 	waitNative(t, ui, func() bool { return len(v.Model.Attachments["home"]) == 1 })
 	ui.Type("继续")
-	if v.Model.Drafts["home"] != "检查 继续 后续" {
+	if v.Model.Drafts["home"] != "检查  继续后续" {
 		t.Fatal("typing did not continue at insertion point", v.Model.Drafts["home"])
 	}
 	ui.Key(0, n.KeyBackspace)
 	ui.Key(0, n.KeyBackspace)
 	ui.Key(0, n.KeyBackspace)
-	if len(v.Model.Attachments["home"]) != 0 || v.Model.Drafts["home"] != "检查  后续" {
+	ui.Key(0, n.KeyBackspace)
+	if len(v.Model.Attachments["home"]) != 0 || v.Model.Drafts["home"] != "检查 后续" {
 		t.Fatal("backspace did not delete exactly the inline token", v.Model.Drafts["home"], v.Model.Attachments["home"])
 	}
 	ui.Key(n.Cmd, n.KeyZ)
@@ -417,7 +419,7 @@ func TestInlineReferenceCopyIncludesVisibleName(t *testing.T) {
 	waitNative(t, ui, func() bool { return ui.HasText("review-tree") })
 	ui.Key(0, n.KeyEnter)
 	waitNative(t, ui, func() bool { return len(v.Model.DraftSkills["home"]) == 1 })
-	ui.Type(" 检查")
+	ui.Type("检查")
 	ui.Key(n.Cmd, n.KeyA)
 	ui.Key(n.Cmd, n.KeyC)
 	if got := ui.Clipboard(); got != "review-tree 检查" {
@@ -633,5 +635,52 @@ func TestReferencePopupChoosesItsSideBeforeSearchResultsArrive(t *testing.T) {
 				assertBelow()
 			}
 		})
+	}
+}
+
+func TestReferenceCompletionAddsTypingSpaceAndKeepsSuffixAndUndo(t *testing.T) {
+	for _, kind := range []string{"file", "skill"} {
+		for _, suffix := range []string{"边界条件", " 后续", ""} {
+			t.Run(kind+suffix, func(t *testing.T) {
+				original := "查 @ref" + suffix
+				m := app.NewModel()
+				m.Drafts["home"] = original
+				v := New(m, nil, "")
+				var b *composerDocument
+				insert := false
+				ref := composerReference{skill: app.DraftSkill{Reference: domain.SkillReference{ID: "ref", Name: "check"}}}
+				if kind == "file" {
+					ref = composerReference{file: app.DraftAttachment{Attachment: domain.Attachment{ID: "ref", Name: "file.go", SourcePath: "/file.go"}}}
+				}
+				ui := n.NewTester(func(c *n.Context) {
+					b = v.composerDocument(c, "home")
+					if insert {
+						if !v.insertReference(c, b, &fileMention{start: 2, end: 6, text: original}, ref) {
+							t.Fatal("completion rejected")
+						}
+						insert = false
+					}
+				}, 500, 200)
+				b.doc.SetSelection(6, 6)
+				insert = true
+				ui.Frame()
+				want := "查 \uFFFC " + strings.TrimPrefix(suffix, " ")
+				if got := b.doc.Text().String(); got != want {
+					t.Fatal("missing separator or suffix damaged", got, want)
+				}
+				anchor, caret := b.doc.Selection()
+				if anchor != 4 || caret != 4 {
+					t.Fatal("caret not ready after separator", anchor, caret)
+				}
+				b.doc.Undo()
+				if got := b.doc.Text().String(); got != original {
+					t.Fatal("reference and space are not one undo", got)
+				}
+				b.doc.Redo()
+				if got := b.doc.Text().String(); got != want {
+					t.Fatal("redo damaged suffix", got)
+				}
+			})
+		}
 	}
 }

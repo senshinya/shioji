@@ -25,7 +25,10 @@ import (
 )
 
 type Config struct {
-	ReplaceWorker                                   func(domain.WorkerReplacement) error `json:"-"`
+	CheckStartupBuild                               func() error `json:"-"`
+	BackgroundManaged                               bool
+	DisableBackground                               func(context.Context) (domain.BackgroundService, error) `json:"-"`
+	ReplaceWorker                                   func(domain.WorkerReplacement) error                    `json:"-"`
 	Directory, LauncherExecutable, DefaultHarnessID string
 	Harnesses                                       []harness.Adapter `json:"-"`
 }
@@ -35,44 +38,50 @@ type EventsQuery = protocol.EventsQuery
 type EventPage = protocol.EventPage
 type AnswerInput = protocol.AnswerInput
 type Server struct {
-	build           domain.WorkerBuild
-	maintenance     sync.RWMutex
-	updating        atomic.Bool
-	runtimeMu       sync.RWMutex
-	toolMu          sync.Mutex
-	tools           map[string]recoveryToolProcess
-	attachments     *attachments.Repository
-	config          Config
-	owner           *Owner
-	listener        net.Listener
-	store           *store.Store
-	runtime         harness.Runtime
-	runtimes        map[string]harness.Runtime
-	runtimeEvents   map[string]*atomic.Bool
-	adapters        map[string]harness.Adapter
-	adapterOrder    []string
-	catalogs        map[string]harness.Runtime
-	catalogErrors   map[string]error
-	catalogGates    map[string]*sync.RWMutex
-	catalogStates   map[string]catalogState
-	catalogWake     chan struct{}
-	rootCatalogID   string
-	executions      *managedexec.Manager
-	readiness       domain.Readiness
-	dispatchMu      sync.Mutex
-	queueWake       chan struct{}
-	titleWake       chan struct{}
-	recoveryWake    chan struct{}
-	recoveryChecked map[string]recoveryAttempt
-	recoveryRefresh atomic.Uint64
-	bound           map[string]bool
-	mu              sync.Mutex
-	conns           map[net.Conn]bool
-	wg              sync.WaitGroup
-	once            sync.Once
-	closeErr        error
-	ctx             context.Context
-	cancel          context.CancelFunc
+	build                domain.WorkerBuild
+	maintenance          sync.RWMutex
+	updating             atomic.Bool
+	backgroundStopping   atomic.Bool
+	runtimeMu            sync.RWMutex
+	toolMu               sync.Mutex
+	tools                map[string]recoveryToolProcess
+	attachments          *attachments.Repository
+	config               Config
+	owner                *Owner
+	listener             net.Listener
+	store                *store.Store
+	runtime              harness.Runtime
+	runtimes             map[string]harness.Runtime
+	runtimeCatalogs      map[string]harness.Runtime
+	runtimeEvents        map[string]*atomic.Bool
+	adapters             map[string]harness.Adapter
+	adapterOrder         []string
+	catalogs             map[string]harness.Runtime
+	catalogErrors        map[string]error
+	catalogGates         map[string]*sync.RWMutex
+	catalogStates        map[string]catalogState
+	catalogWake          chan struct{}
+	runtimeSettingErrors map[string]error
+	runtimeSettings      map[string]string
+	runtimeOptions       map[string]domain.RuntimeOptions
+	selectedHarnesses    []string
+	rootCatalogID        string
+	executions           *managedexec.Manager
+	readiness            domain.Readiness
+	dispatchMu           sync.Mutex
+	queueWake            chan struct{}
+	titleWake            chan struct{}
+	recoveryWake         chan struct{}
+	recoveryChecked      map[string]recoveryAttempt
+	recoveryRefresh      atomic.Uint64
+	bound                map[string]bool
+	mu                   sync.Mutex
+	conns                map[net.Conn]bool
+	wg                   sync.WaitGroup
+	once                 sync.Once
+	closeErr             error
+	ctx                  context.Context
+	cancel               context.CancelFunc
 }
 
 func New(ctx context.Context, config Config) (*Server, error) {
@@ -90,6 +99,12 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	owner, err := Acquire(config.Directory)
 	if err != nil {
 		return nil, err
+	}
+	if config.CheckStartupBuild != nil {
+		if err = config.CheckStartupBuild(); err != nil {
+			owner.Close()
+			return nil, err
+		}
 	}
 	db, err := store.Open(filepath.Join(config.Directory, "state.sqlite"))
 	if err != nil {
@@ -118,12 +133,14 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	s.titleWake = make(chan struct{}, 1)
 	s.runtimes = map[string]harness.Runtime{}
 	s.runtimeEvents = map[string]*atomic.Bool{}
+	s.runtimeCatalogs = map[string]harness.Runtime{}
 	if err = s.configureAdapters(); err != nil {
 		listener.Close()
 		db.Close()
 		owner.Close()
 		return nil, err
 	}
+	s.build.Managed = config.BackgroundManaged
 	s.executions = manager
 	cleanupCtx, cancelCleanup := context.WithTimeout(ctx, 20*time.Second)
 	cleanupErr := s.recoverManagedScopes(cleanupCtx)
@@ -140,6 +157,9 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	s.wg.Add(1)
 	go s.watchRecoveryTools()
 	for _, id := range s.adapterOrder {
+		if !s.agentEnabled(id) {
+			continue
+		}
 		startup, cancelStartup := context.WithTimeout(ctx, 20*time.Second)
 		_, _ = s.openCatalog(startup, id, false)
 		cancelStartup()
@@ -254,6 +274,9 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 	if method == "worker.info" {
 		return s.build, nil
 	}
+	if method == "worker.background.disable" {
+		return s.disableBackground()
+	}
 	if method == "worker.update" {
 		in, err := decode[domain.WorkerReplacement](body)
 		if err != nil {
@@ -271,6 +294,26 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 	}
 
 	switch method {
+	case "runtime.catalog":
+		return s.runtimeProfiles(nil, true), nil
+	case "runtime.agents":
+		in, err := decode[protocol.DeviceAgents](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.configureAgents(in)
+	case "runtime.configure":
+		in, err := decode[protocol.RuntimeConfiguration](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.configureRuntime(in)
+	case "runtime.check":
+		in, err := decode[protocol.RuntimeConfiguration](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.recheckRuntime(in.HarnessID)
 	case "skills.list":
 		q, err := decode[protocol.SkillQuery](body)
 		if err != nil {
@@ -794,6 +837,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 	outcome := domain.DeliveryOutcome(err != nil, harness.IsUncertain(err))
 	state, delivery := outcome.Operation, outcome.Input
 	if err != nil {
+		s.reportRuntimeSetup(session.ID, runtime, err)
 		if _, e := s.store.PauseQueue(session.ID, err.Error()); e != nil {
 			s.cancel()
 			return

@@ -10,7 +10,14 @@ import (
 
 // Adapter is configured at composition time. Codex settings never enter the
 // worker contract or the generic run configuration.
-type Adapter struct{ Executable, Home string }
+type Adapter struct {
+	Executable, Home  string
+	defaultExecutable string
+	override          string
+	defaultHome       string
+	hasDefaultHome    bool
+	runtimeOptions    domain.RuntimeOptions
+}
 
 func (a Adapter) Descriptor() domain.HarnessDescriptor {
 	return domain.HarnessDescriptor{ID: "codex", Name: "Codex", Icon: "openai"}
@@ -23,17 +30,21 @@ func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.
 	}
 	resolved, _, err := compatibleExecutable(ctx, image.path)
 	if err != nil {
-		return nil, err
+		var setup *harness.SetupError
+		if errors.As(err, &setup) {
+			return nil, err
+		}
+		return nil, &harness.SetupError{Issue: domain.RuntimeIncompatible, Message: "该可执行文件未提供兼容的 Agent 协议，请检查路径或更新安装"}
 	}
 	a.Executable = resolved
 	var executor *Executor
 	if opts.Scope != nil {
-		executor, err = StartExecutor(ctx, ExecutorOptions{Executable: a.Executable, Home: a.Home, Scope: opts.Scope, OnLost: opts.OnLost})
+		executor, err = StartExecutor(ctx, ExecutorOptions{Executable: a.Executable, Home: a.Home, Environment: a.runtimeOptions.Environment, Scope: opts.Scope, OnLost: opts.OnLost})
 		if err != nil {
 			return nil, errors.Join(err, opts.Scope.Stop(ctx))
 		}
 	}
-	r, err := Start(ctx, Options{Executable: a.Executable, Home: a.Home, Scope: opts.Scope, Executor: executor, OnStart: opts.OnStart, OnEvent: opts.OnEvent, OnMessage: opts.OnMessage, ImportResource: opts.ImportResource})
+	r, err := Start(ctx, Options{Executable: a.Executable, Home: a.Home, Environment: a.runtimeOptions.Environment, Arguments: a.runtimeOptions.Arguments, Instructions: a.runtimeOptions.Instructions, Scope: opts.Scope, Executor: executor, OnStart: opts.OnStart, OnEvent: opts.OnEvent, OnMessage: opts.OnMessage, ImportResource: opts.ImportResource})
 	if err != nil {
 		if executor != nil {
 			executor.Close(ctx)
@@ -77,7 +88,7 @@ func (r *adapterRuntime) Readiness() domain.Readiness {
 	fork := history && r.supports("thread/fork") && r.supports("thread/unsubscribe") && r.supports("thread/loaded/list")
 	ready.Capabilities = domain.HarnessCapabilities{Skills: r.supports("skills/list"), Steer: r.supports("turn/steer"), Interrupt: r.supports("turn/interrupt"), Recovery: history, Continue: history, Fork: fork, Restart: fork}
 	ready.PermissionChoices = []domain.OptionChoice{{ID: "read-only", Name: "只读", Description: "仅查看"}, {ID: "default", Name: "默认权限", Description: "按需请求批准"}, {ID: "auto-approve", Name: "自动批准", Description: "沙盒内自动批准"}, {ID: "yolo", Name: "YOLO", Description: "不限制沙盒或批准"}}
-	ready.Harnesses = []domain.HarnessInfo{{ID: r.descriptor.ID, Name: r.descriptor.Name, Icon: r.descriptor.Icon, State: ready.State, Error: ready.Error, Models: ready.Models, Permissions: ready.Permissions, PermissionChoices: ready.PermissionChoices, Plan: ready.Plan, Capabilities: ready.Capabilities}}
+	ready.Harnesses = []domain.HarnessInfo{{Account: ready.Account, ID: r.descriptor.ID, Name: r.descriptor.Name, Icon: r.descriptor.Icon, State: ready.State, Error: ready.Error, Models: ready.Models, Permissions: ready.Permissions, PermissionChoices: ready.PermissionChoices, Plan: ready.Plan, Capabilities: ready.Capabilities}}
 	return ready
 }
 func (r *adapterRuntime) ExecutionReady() bool {

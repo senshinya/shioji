@@ -148,10 +148,10 @@ func TestHistoryPickersEditOwnInlineDraftAndSubmitReferences(t *testing.T) {
 	waitNative(t, ui, func() bool { return ui.HasText("rotate.go") })
 	ui.Key(0, n.KeyEnter)
 	waitNative(t, ui, func() bool { return len(m.Attachments[key]) == 1 })
-	if got := m.Drafts[key]; got != "请检查 边界条件" {
+	if got := m.Drafts[key]; got != " 请检查  边界条件" {
 		t.Fatal("history reference consumed the original suffix", got)
 	}
-	if got := v.composerDocuments[key].doc.Text().String(); got != "\uFFFC请检查 \uFFFC边界条件" {
+	if got := v.composerDocuments[key].doc.Text().String(); got != "\uFFFC 请检查 \uFFFC 边界条件" {
 		t.Fatal("history reference did not stay at the insertion point", got)
 	}
 	if m.Drafts[m.DraftKey()] != "ordinary draft stays" || len(m.DraftSkills[m.DraftKey()]) != 0 || len(m.Attachments[m.DraftKey()]) != 0 {

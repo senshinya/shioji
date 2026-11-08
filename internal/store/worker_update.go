@@ -14,6 +14,49 @@ const SchemaVersion = 7
 func (s *Store) PrepareWorkerUpdate(backup string) (domain.WorkerUpdateResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	result, err := s.prepareWorkerStop("执行服务更新，队列已保留")
+	if err != nil || !result.Ready {
+		return result, err
+	}
+	f, err := os.OpenFile(backup, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return domain.WorkerUpdateResult{}, err
+	}
+	f.Close()
+	if _, err = s.db.Exec("VACUUM INTO ?", backup); err != nil {
+		os.Remove(backup)
+		return domain.WorkerUpdateResult{}, err
+	}
+	file, err := os.OpenFile(backup, os.O_RDWR, 0600)
+	if err != nil {
+		return domain.WorkerUpdateResult{}, err
+	}
+	err = file.Sync()
+	closeErr := file.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return domain.WorkerUpdateResult{}, err
+	}
+	dir, err := os.Open(filepath.Dir(backup))
+	if err != nil {
+		return domain.WorkerUpdateResult{}, err
+	}
+	err = dir.Sync()
+	dir.Close()
+	if err != nil {
+		return domain.WorkerUpdateResult{}, err
+	}
+	return domain.WorkerUpdateResult{Ready: true, Backup: backup}, nil
+}
+
+func (s *Store) PrepareWorkerStop(reason string) (domain.WorkerUpdateResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.prepareWorkerStop(reason)
+}
+func (s *Store) prepareWorkerStop(reason string) (domain.WorkerUpdateResult, error) {
 	var blocked bool
 	err := s.db.QueryRow(`SELECT
  EXISTS(SELECT 1 FROM sessions WHERE COALESCE(json_extract(body,'$.status'),'') NOT IN ('idle','completed','interrupted','failed','abandoned') OR COALESCE(json_extract(body,'$.executionGuard'),'')!='')
@@ -25,7 +68,7 @@ func (s *Store) PrepareWorkerUpdate(backup string) (domain.WorkerUpdateResult, e
 		return domain.WorkerUpdateResult{}, err
 	}
 	if blocked {
-		return domain.WorkerUpdateResult{Reason: "有任务、待处理请求或执行状态尚未确认，空闲后更新"}, nil
+		return domain.WorkerUpdateResult{Reason: "有任务、待处理请求或执行状态尚未确认，请空闲后再试"}, nil
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -59,7 +102,7 @@ func (s *Store) PrepareWorkerUpdate(backup string) (domain.WorkerUpdateResult, e
 	}
 	for _, q := range queues {
 		q.Paused = true
-		q.Reason = "执行服务更新，队列已保留"
+		q.Reason = reason
 		q.Revision++
 		if err = putQueue(tx, q); err != nil {
 			return domain.WorkerUpdateResult{}, err
@@ -68,35 +111,5 @@ func (s *Store) PrepareWorkerUpdate(backup string) (domain.WorkerUpdateResult, e
 	if err = s.commit(tx); err != nil {
 		return domain.WorkerUpdateResult{}, err
 	}
-	f, err := os.OpenFile(backup, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return domain.WorkerUpdateResult{}, err
-	}
-	f.Close()
-	if _, err = s.db.Exec("VACUUM INTO ?", backup); err != nil {
-		os.Remove(backup)
-		return domain.WorkerUpdateResult{}, err
-	}
-	file, err := os.OpenFile(backup, os.O_RDWR, 0600)
-	if err != nil {
-		return domain.WorkerUpdateResult{}, err
-	}
-	err = file.Sync()
-	closeErr := file.Close()
-	if err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return domain.WorkerUpdateResult{}, err
-	}
-	dir, err := os.Open(filepath.Dir(backup))
-	if err != nil {
-		return domain.WorkerUpdateResult{}, err
-	}
-	err = dir.Sync()
-	dir.Close()
-	if err != nil {
-		return domain.WorkerUpdateResult{}, err
-	}
-	return domain.WorkerUpdateResult{Ready: true, Backup: backup}, nil
+	return domain.WorkerUpdateResult{Ready: true}, nil
 }

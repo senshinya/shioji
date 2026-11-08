@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"shioji/internal/domain"
+	"shioji/internal/harness"
 	"strings"
 	"sync"
 	"syscall"
@@ -38,6 +40,7 @@ var requestContracts = map[string][]string{
 	"initialize":              {"clientInfo", "capabilities"},
 	"model/list":              {"cursor", "limit", "includeHidden"},
 	"config/read":             {"cwd", "includeLayers"},
+	"account/read":            {"refreshToken"},
 	"configRequirements/read": {},
 	"environment/add":         {"environmentId", "execServerUrl", "authBearerToken"},
 	"thread/start":            {"cwd", "model", "approvalPolicy", "sandbox", "config", "runtimeWorkspaceRoots", "environments"},
@@ -107,7 +110,7 @@ func protocolFromSchema(data []byte) (*protocolSupport, error) {
 	}
 	for _, method := range requiredMethods {
 		if !support.methods[method] {
-			return nil, fmt.Errorf("Codex 协议缺少兼容的 %s，无法安全接入", method)
+			return nil, &harness.SetupError{Issue: domain.RuntimeIncompatible, Message: fmt.Sprintf("Codex 协议缺少兼容的 %s，无法安全接入", method)}
 		}
 	}
 	return support, nil
@@ -121,7 +124,7 @@ func installedExecutable(binary string) (executableImage, error) {
 	}
 	path, err := exec.LookPath(binary)
 	if err != nil {
-		return executableImage{}, errors.New("Codex 不可用，请安装并登录 Codex")
+		return executableImage{}, &harness.SetupError{Issue: domain.RuntimeMissing, Message: "未找到 Codex，请配置可执行文件或在该设备安装"}
 	}
 	path, err = filepath.EvalSymlinks(path)
 	if err != nil {

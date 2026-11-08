@@ -39,6 +39,7 @@ func run() error {
 	describe := flag.Bool("describe", false, "Print worker build metadata without opening state")
 	ensure := flag.Bool("ensure", false, "Start or reuse the developer worker and print connection metadata")
 	bridge := flag.Bool("bridge", false, "Forward stdio to this user’s existing private worker")
+	managed := flag.Bool("managed-service", false, "Wait for and own the per-user worker under launchd")
 	binary := flag.String("codex", "codex", "Compatible Codex executable")
 	flag.Parse()
 	build := runtimebuild.Current()
@@ -66,7 +67,28 @@ func run() error {
 		return worker.Bridge(ctx, dir, os.Stdin, os.Stdout)
 	}
 	replacement := make(chan string, 1)
-	s, err := worker.New(ctx, worker.Config{Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Executable: *binary}}, ReplaceWorker: func(in domain.WorkerReplacement) error {
+	config := worker.Config{CheckStartupBuild: func() error {
+		selected, err := transport.ActiveWorkerBuild(dir)
+		if err != nil {
+			return err
+		}
+		if selected == "" || selected == build.BuildID {
+			return nil
+		}
+		verify, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		if _, err = transport.VerifyStagedWorker(verify, dir, selected); err != nil {
+			return err
+		}
+		path, err := transport.StagedWorkerPath(dir, selected)
+		if err != nil {
+			return err
+		}
+		return &selectedWorker{path: path}
+	}, BackgroundManaged: *managed, DisableBackground: func(callCtx context.Context) (domain.BackgroundService, error) {
+		exe, _ := os.Executable()
+		return transport.DisableRuntimeService(callCtx, dir, exe)
+	}, Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Executable: *binary}}, ReplaceWorker: func(in domain.WorkerReplacement) error {
 		verifyCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 		candidate, err := transport.VerifyStagedWorker(verifyCtx, dir, in.BuildID)
@@ -80,13 +102,37 @@ func run() error {
 		if err != nil {
 			return err
 		}
+		if err = transport.SaveActiveWorker(dir, in.BuildID); err != nil {
+			return err
+		}
 		select {
 		case replacement <- path:
 			return nil
 		default:
 			return errors.New("已有更新正在进行")
 		}
-	}})
+	}}
+	var s *worker.Server
+	for {
+		s, err = worker.New(ctx, config)
+		if !*managed || !errors.Is(err, worker.ErrOwned) {
+			break
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil
+		case <-timer.C:
+		}
+	}
+	var selected *selectedWorker
+	if errors.As(err, &selected) {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return syscall.Exec(selected.path, append([]string{selected.path}, os.Args[1:]...), os.Environ())
+	}
 	if err != nil {
 		return err
 	}
@@ -110,3 +156,7 @@ func run() error {
 		return nil
 	}
 }
+
+type selectedWorker struct{ path string }
+
+func (e *selectedWorker) Error() string { return "已接纳的执行服务版本已改变" }
