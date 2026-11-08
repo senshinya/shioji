@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -111,35 +113,46 @@ func protocolFromSchema(data []byte) (*protocolSupport, error) {
 	return support, nil
 }
 
-var installedProtocol struct {
-	sync.Mutex
-	path     string
-	size     int64
-	modified time.Time
-	support  *protocolSupport
-}
+type executableImage struct{ path, version string }
 
-// Resolve once per adapter start so the executor and app-server use the same
-// installed image even if Homebrew changes its public symlink during startup.
-func compatibleExecutable(ctx context.Context, binary string) (string, *protocolSupport, error) {
+func installedExecutable(binary string) (executableImage, error) {
 	if binary == "" {
 		binary = "codex"
 	}
 	path, err := exec.LookPath(binary)
 	if err != nil {
-		return "", nil, errors.New("Codex 不可用，请安装并登录 Codex")
+		return executableImage{}, errors.New("Codex 不可用，请安装并登录 Codex")
 	}
 	path, err = filepath.EvalSymlinks(path)
 	if err != nil {
-		return "", nil, err
+		return executableImage{}, err
 	}
 	st, err := os.Stat(path)
 	if err != nil {
+		return executableImage{}, err
+	}
+	stat := st.Sys().(*syscall.Stat_t)
+	identity := fmt.Sprintf("%s\x00%d:%d:%d:%d:%d", path, stat.Dev, stat.Ino, st.Size(), st.ModTime().UnixNano(), st.Mode())
+	return executableImage{path: path, version: fmt.Sprintf("%x", sha256.Sum256([]byte(identity)))}, nil
+}
+
+var installedProtocol struct {
+	sync.Mutex
+	version string
+	support *protocolSupport
+}
+
+// Resolve once per adapter start so the executor and app-server use the same
+// installed image even if Homebrew changes its public symlink during startup.
+func compatibleExecutable(ctx context.Context, binary string) (string, *protocolSupport, error) {
+	image, err := installedExecutable(binary)
+	if err != nil {
 		return "", nil, err
 	}
+	path := image.path
 	installedProtocol.Lock()
 	defer installedProtocol.Unlock()
-	if installedProtocol.path == path && installedProtocol.size == st.Size() && installedProtocol.modified.Equal(st.ModTime()) && installedProtocol.support != nil {
+	if installedProtocol.version == image.version && installedProtocol.support != nil {
 		return path, installedProtocol.support, nil
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -169,7 +182,11 @@ func compatibleExecutable(ctx context.Context, binary string) (string, *protocol
 	if err != nil {
 		return "", nil, err
 	}
-	installedProtocol.path, installedProtocol.size, installedProtocol.modified, installedProtocol.support = path, st.Size(), st.ModTime(), support
+	after, err := installedExecutable(path)
+	if err != nil || after.version != image.version {
+		return "", nil, errors.New("Codex 安装正在变化，请稍后重试")
+	}
+	installedProtocol.version, installedProtocol.support = image.version, support
 	return path, support, nil
 }
 func (r *Runtime) supports(method string) bool {

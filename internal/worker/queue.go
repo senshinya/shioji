@@ -48,7 +48,7 @@ func (s *Server) queueLoop() {
 				if e != nil || unsettled || blocked {
 					continue
 				}
-				if _, e = s.submitLocked(q.Items[0].Input, q.Revision, false); e != nil {
+				if _, e = s.submitLocked(q.Items[0].Input, q.Revision, false); e != nil && !errors.Is(e, errCatalogRefreshing) {
 					s.store.PauseQueue(session.ID, e.Error())
 				}
 			}
@@ -62,14 +62,19 @@ func (s *Server) enqueue(in domain.Submission) (domain.Operation, error) {
 	return s.enqueueLocked(in)
 }
 func (s *Server) enqueueLocked(in domain.Submission) (domain.Operation, error) {
-	runtime, err := s.inputRuntime(in)
+	id, err := s.inputHarness(in)
 	if err != nil {
 		return domain.Operation{}, err
 	}
+	runtime, release, err := s.borrowCatalog(id)
+	if err != nil {
+		return domain.Operation{}, err
+	}
+	defer release()
 	if _, err := s.attachmentInputs(in); err != nil {
 		return domain.Operation{}, err
 	}
-	if err := runtime.Validate(in.Config); err != nil {
+	if err := validateAvailableConfiguration(runtime, in.Config); err != nil {
 		return domain.Operation{}, err
 	}
 	op, err := s.store.Enqueue(in)

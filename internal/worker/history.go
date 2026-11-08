@@ -14,6 +14,15 @@ import (
 func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation, error) {
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
+	// Completed receipts do not depend on whether a catalog is refreshing.
+	if saved, e := s.store.HistoryOperation(in.OperationID); e == nil && saved.State == "complete" && saved.Input.Equal(in) {
+		return saved, nil
+	}
+	runtime, release, err := s.borrowInputRuntime(domain.Submission{SessionID: in.SessionID})
+	if err != nil {
+		return domain.HistoryOperation{}, err
+	}
+	defer release()
 	var op domain.HistoryOperation
 	existing, err := s.store.HistoryOperation(in.OperationID)
 	if err == nil {
@@ -46,7 +55,7 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 			}
 		}
 		ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
-		thread, e := s.catalogRuntime(op.Source.HarnessID).PrepareHistory(ctx, op.Source, harness.HistoryBoundary{TurnID: op.TurnID, Restart: in.Restart})
+		thread, e := runtime.PrepareHistory(ctx, op.Source, harness.HistoryBoundary{TurnID: op.TurnID, Restart: in.Restart})
 		cancel()
 		if thread != "" {
 			if saveErr := s.store.SetHistoryThread(op.ID, thread); saveErr != nil {
@@ -71,7 +80,7 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 		}
 	}
 	releaseCtx, cancelRelease := context.WithTimeout(s.ctx, 5*time.Second)
-	_, releaseErr := s.catalogRuntime(op.Source.HarnessID).PrepareHistory(releaseCtx, op.Source, harness.HistoryBoundary{TurnID: op.TurnID, Restart: in.Restart, PreparedRef: op.ThreadID})
+	_, releaseErr := runtime.PrepareHistory(releaseCtx, op.Source, harness.HistoryBoundary{TurnID: op.TurnID, Restart: in.Restart, PreparedRef: op.ThreadID})
 	cancelRelease()
 	if releaseErr != nil {
 		return op, releaseErr
@@ -80,9 +89,15 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 		return s.store.CommitHistory(op.ID)
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
-	runtime, err := s.sessionRuntime(ctx, op.Source.ID)
+	runtime, err = s.sessionRuntime(ctx, op.Source.ID)
 	cancel()
 	if err != nil {
+		return op, err
+	}
+	if !runtime.Readiness().Capabilities.Restart {
+		return op, harness.Unsupported("restart")
+	}
+	if err = runtime.Validate(op.Submission.Config); err != nil {
 		return op, err
 	}
 	activationCtx, cancelActivation := context.WithTimeout(s.ctx, 20*time.Second)
@@ -117,8 +132,8 @@ func (s *Server) historyPreflight(in domain.HistoryChange) error {
 	if d.Session.Revision != in.Revision {
 		return errors.New("会话已改变，请重新载入后再试")
 	}
-	runtime := s.catalogRuntime(d.Session.HarnessID)
-	if runtime == nil || s.ctx.Err() != nil {
+	runtime, runtimeErr := s.inputRuntime(domain.Submission{SessionID: in.SessionID})
+	if runtimeErr != nil || runtime == nil || s.ctx.Err() != nil {
 		return errors.New("执行服务未就绪")
 	}
 	caps := runtime.Readiness().Capabilities
@@ -140,7 +155,15 @@ func (s *Server) historyPreflight(in domain.HistoryChange) error {
 		return err
 	}
 	if in.Restart {
-		return runtime.Validate(in.Config)
+		target, release, e := s.borrowCatalog(d.Session.HarnessID)
+		if e != nil {
+			return e
+		}
+		defer release()
+		if !target.Readiness().Capabilities.Restart {
+			return harness.Unsupported("restart")
+		}
+		return validateAvailableConfiguration(target, in.Config)
 	}
 	return nil
 }

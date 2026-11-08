@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/managedexec"
 	"shioji/internal/store"
@@ -79,7 +80,30 @@ func (s *Server) generateTitle(manager *managedexec.Manager, job store.TitleJob)
 	if err != nil || current.Session.TitleOverride || current.Session.SourceTitle != "" || current.Session.TitleRevision != job.Session.TitleRevision {
 		return ""
 	}
-	runtime := s.catalogRuntime(job.Session.HarnessID)
+	ctx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
+	defer cancel()
+	var runtime harness.Runtime
+	var release func()
+	for {
+		runtime, release, err = s.borrowCatalog(job.Session.HarnessID)
+		if err == nil {
+			break
+		}
+		s.runtimeMu.RLock()
+		refreshing := s.catalogStates[job.Session.HarnessID].phase == domain.RuntimeRefreshing
+		s.runtimeMu.RUnlock()
+		if !refreshing {
+			return ""
+		}
+		timer := time.NewTimer(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ""
+		case <-timer.C:
+		}
+	}
+	defer release()
 	generator, ok := runtime.(harness.TitleGenerator)
 	if !ok || job.Session.TitleOverride || job.Session.SourceTitle != "" {
 		return ""
@@ -105,8 +129,6 @@ func (s *Server) generateTitle(manager *managedexec.Manager, job store.TitleJob)
 	if err = scope.Bind("worker", os.Getpid()); err != nil {
 		return ""
 	}
-	ctx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
-	defer cancel()
 	title, err := generator.GenerateTitle(ctx, harness.TitleInput{Prompt: prompt, Scope: scope})
 	if err != nil {
 		return ""

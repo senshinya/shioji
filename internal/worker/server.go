@@ -48,10 +48,14 @@ type Server struct {
 	store           *store.Store
 	runtime         harness.Runtime
 	runtimes        map[string]harness.Runtime
+	runtimeEvents   map[string]*atomic.Bool
 	adapters        map[string]harness.Adapter
 	adapterOrder    []string
 	catalogs        map[string]harness.Runtime
 	catalogErrors   map[string]error
+	catalogGates    map[string]*sync.RWMutex
+	catalogStates   map[string]catalogState
+	catalogWake     chan struct{}
 	rootCatalogID   string
 	executions      *managedexec.Manager
 	readiness       domain.Readiness
@@ -113,6 +117,7 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	s.tools = map[string]recoveryToolProcess{}
 	s.titleWake = make(chan struct{}, 1)
 	s.runtimes = map[string]harness.Runtime{}
+	s.runtimeEvents = map[string]*atomic.Bool{}
 	if err = s.configureAdapters(); err != nil {
 		listener.Close()
 		db.Close()
@@ -141,6 +146,9 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	}
 
 	s.readiness = s.runtimeReadiness()
+	s.catalogWake = make(chan struct{}, 1)
+	s.wg.Add(1)
+	go s.catalogLoop()
 	s.wg.Add(1)
 	go s.queueLoop()
 	s.wg.Add(1)
@@ -312,7 +320,17 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 		s.wakeRecovery()
 		return s.store.Snapshot()
 	case "readiness":
-		return s.runtimeReadiness(), nil
+		var query protocol.ReadinessQuery
+		if len(body) > 0 {
+			if err := json.Unmarshal(body, &query); err != nil {
+				return nil, err
+			}
+		}
+		if len(query.SessionIDs) > 2 {
+			return nil, errors.New("最多同时查看两个会话的运行能力")
+		}
+		s.wakeCatalog()
+		return s.runtimeReadiness(query.SessionIDs...), nil
 	case "session":
 		q, err := decode[SessionQuery](body)
 		if err != nil {
@@ -588,11 +606,16 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 	if _, err = s.attachmentInputs(in); err != nil {
 		return domain.Operation{}, err
 	}
-	catalog, err := s.inputRuntime(in)
+	id, err := s.inputHarness(in)
 	if err != nil {
 		return domain.Operation{}, err
 	}
-	if err = catalog.Validate(in.Config); err != nil {
+	catalog, release, err := s.borrowCatalog(id)
+	if err != nil {
+		return domain.Operation{}, err
+	}
+	defer release()
+	if err = validateAvailableConfiguration(catalog, in.Config); err != nil {
 		return domain.Operation{}, err
 	}
 	if in.Continue && !catalog.Readiness().Capabilities.Continue {

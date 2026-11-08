@@ -697,6 +697,9 @@ func (v *View) notice(c *n.Context, t *n.Theme) {
 	v.historyOperationNotice(c, t)
 	v.archivedNotice(c, t)
 	message := v.Model.Error
+	if message == app.ModelUnavailableMessage {
+		message = ""
+	}
 	if message == "" && !v.Model.Connected {
 		message = "连接执行服务中…"
 	}
@@ -860,7 +863,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					label := "发送"
 					editing := m.QueueEdits[m.SessionID].ID != ""
 					queuing := running || len(m.Queue().Items) > 0
-					disabled := !m.Connected || m.RunReadiness().State != "ready" || empty || m.ArchivedContext() != "" || v.preparingAttachments(m.DraftKey())
+					disabled := !m.Connected || m.RunReadiness().State != "ready" || m.ModelUnavailable() || empty || m.ArchivedContext() != "" || v.preparingAttachments(m.DraftKey())
 					if queuing {
 						label = "加入队列"
 						disabled = disabled || m.WorkerMinor < 2
@@ -939,12 +942,35 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 	if cfg.Fast {
 		summary += " · Fast"
 	}
-	trigger := control(c).Height(28).MaxWidth(390).MinWidth(0).PaddingX(6).Radius(6).Label("运行配置").Tooltip(descriptor.Name + " · " + summary).Children(func() {
-		inlineIconText(c, harnessIcon(descriptor), summary, n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}, 20, 3, t.TextMuted)
+	missing := v.Model.ModelUnavailable()
+	tip := descriptor.Name + " · " + summary
+	if missing {
+		tip = cfg.Model + " 已不可用，请更换模型"
+	}
+	trigger := control(c).Height(28).MaxWidth(390).MinWidth(0).PaddingX(6).Radius(6).Label("运行配置").Tooltip(tip)
+	modelColor := t.TextMuted
+	if missing {
+		modelColor = t.Danger
+	}
+	modelColor = trigger.AnimateColor("model-availability", modelColor, motionAnimation(c, 180*time.Millisecond))
+	trigger.Children(func() {
+		font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
+		n.RichText(c,
+			inlineIconSpan(summary, font, 20, 3),
+			n.Span{Text: cfg.Model, Color: modelColor},
+			n.Span{Text: strings.TrimPrefix(summary, cfg.Model)},
+		).Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).SingleLine().TextColor(t.TextMuted).Label(summary).
+			DrawObjects(func(p *n.Painter, _ int, r n.Rect) {
+				r.W = 20
+				p.Icon(harnessIcon(descriptor), r, t.TextMuted)
+			})
 	})
 	if trigger.Clicked() {
 		if v.runMenu == runMenuClosed {
 			v.runMenu = runMenuMain
+			if missing {
+				v.runMenu = runMenuModels
+			}
 		} else {
 			v.runMenu = runMenuClosed
 		}
@@ -974,6 +1000,9 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 							}
 							if ghost(c, label).FillWidth().TextAlign(n.Start).Tooltip(model.ID).Clicked() {
 								cfg.Model = model.ID
+								if v.Model.Error == app.ModelUnavailableMessage {
+									v.Model.Error = ""
+								}
 								v.Model.Configs[key] = cfg
 								v.Model.Config()
 								v.runMenu = runMenuMain

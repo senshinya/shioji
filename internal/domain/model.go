@@ -268,15 +268,16 @@ type Model struct {
 	Fast          bool     `json:"fast"`
 }
 type Readiness struct {
-	HarnessID         string              `json:"harnessId,omitempty"`
-	Harnesses         []HarnessInfo       `json:"harnesses,omitempty"`
-	Capabilities      HarnessCapabilities `json:"capabilities,omitempty,omitzero"`
-	PermissionChoices []OptionChoice      `json:"permissionChoices,omitempty"`
-	Permissions       []string            `json:"permissions,omitempty"`
-	State             ReadinessState      `json:"state"`
-	Error             string              `json:"error,omitempty"`
-	Models            []Model             `json:"models,omitempty"`
-	Plan              bool                `json:"plan"`
+	Sessions          map[string]HarnessInfo `json:"sessions,omitempty"`
+	HarnessID         string                 `json:"harnessId,omitempty"`
+	Harnesses         []HarnessInfo          `json:"harnesses,omitempty"`
+	Capabilities      HarnessCapabilities    `json:"capabilities,omitempty,omitzero"`
+	PermissionChoices []OptionChoice         `json:"permissionChoices,omitempty"`
+	Permissions       []string               `json:"permissions,omitempty"`
+	State             ReadinessState         `json:"state"`
+	Error             string                 `json:"error,omitempty"`
+	Models            []Model                `json:"models,omitempty"`
+	Plan              bool                   `json:"plan"`
 }
 
 // GitChoice is draft intent, validated on the owning device at acceptance.

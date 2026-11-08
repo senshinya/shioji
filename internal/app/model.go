@@ -111,6 +111,9 @@ func (m *Model) Config() domain.RunConfig {
 			model = &ready.Models[i]
 		}
 	}
+	if model == nil && c.Model != "" {
+		return c
+	}
 	if model == nil {
 		for i := range ready.Models {
 			if ready.Models[i].Default {
@@ -146,8 +149,10 @@ func (m *Model) Config() domain.RunConfig {
 	m.Configs[key] = c
 	return c
 }
-func (m *Model) BeginSubmission() (domain.Submission, error) { return m.beginSubmission(false) }
-func (m *Model) beginSubmission(allowRunning bool) (domain.Submission, error) {
+func (m *Model) BeginSubmission() (domain.Submission, error) {
+	return m.beginSubmission("session.submit")
+}
+func (m *Model) beginSubmission(method string) (domain.Submission, error) {
 	if kind := m.ArchivedContext(); kind != "" {
 		return domain.Submission{}, errors.New("请先恢复" + kind)
 	}
@@ -161,8 +166,23 @@ func (m *Model) beginSubmission(allowRunning bool) (domain.Submission, error) {
 			return domain.Submission{}, errors.New("previous submission is still awaiting confirmation")
 		}
 	}
-	if !m.Connected || m.RunReadiness().State != "ready" {
+	steering := method == "turn.steer"
+	ready := m.RunReadiness()
+	if steering {
+		if own, ok := ready.Sessions[m.SessionID]; ok && own.ID == m.HarnessID() {
+			ready.State = own.State
+		}
+		for _, session := range m.Snapshot.Sessions {
+			if session.ID == m.SessionID && session.Config.Model != "" && m.Config().Model != session.Config.Model {
+				return domain.Submission{}, errors.New("更换后的模型将在下一轮使用，请加入待发送队列")
+			}
+		}
+	}
+	if !m.Connected || ready.State != "ready" {
 		return domain.Submission{}, errors.New("connect to a ready execution device")
+	}
+	if !steering && m.ModelUnavailable() {
+		return domain.Submission{}, errors.New(ModelUnavailableMessage)
 	}
 	if !m.HasDraftContent(key) {
 		return domain.Submission{}, errors.New("enter a message")
@@ -175,7 +195,7 @@ func (m *Model) beginSubmission(allowRunning bool) (domain.Submission, error) {
 				if s.ContextChanged {
 					return domain.Submission{}, errors.New("执行分支已改变，请先在分支选择中确认")
 				}
-				if s.Status == "unknown" || (!allowRunning && (s.Status.Active())) {
+				if s.Status == "unknown" || (method == "session.submit" && s.Status.Active()) {
 					return domain.Submission{}, errors.New("current turn is still active or needs reconciliation")
 				}
 			}

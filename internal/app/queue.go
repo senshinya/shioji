@@ -49,7 +49,7 @@ func (m *Model) BeginMessage(steer bool) (domain.Submission, string, string, err
 			return domain.Submission{}, "", "", errors.New("正在等待当前轮次确认")
 		}
 	}
-	in, err := m.beginSubmission(method != "session.submit")
+	in, err := m.beginSubmission(method)
 	return in, method, turn, err
 }
 func (m *Model) HasPendingInput() bool {

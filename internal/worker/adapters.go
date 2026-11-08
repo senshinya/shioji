@@ -9,6 +9,8 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"strings"
+	"sync"
+	"time"
 )
 
 func (s *Server) configureAdapters() error {
@@ -39,6 +41,11 @@ func (s *Server) configureAdapters() error {
 	}
 	s.catalogs = map[string]harness.Runtime{}
 	s.catalogErrors = map[string]error{}
+	s.catalogStates = map[string]catalogState{}
+	s.catalogGates = map[string]*sync.RWMutex{}
+	for _, id := range s.adapterOrder {
+		s.catalogGates[id] = &sync.RWMutex{}
+	}
 	return nil
 }
 func (s *Server) catalogDirectory(id string) string {
@@ -82,60 +89,45 @@ func (s *Server) inputRuntime(in domain.Submission) (harness.Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	if in.SessionID != "" {
+		if own := s.currentRuntime(in.SessionID); own != nil && !own.Stopped() {
+			return own, nil
+		}
+	}
 	r := s.catalogRuntime(id)
-	if r == nil || s.ctx.Err() != nil {
+	s.runtimeMu.RLock()
+	state := s.catalogStates[id]
+	s.runtimeMu.RUnlock()
+	if r == nil || r.Stopped() || state.phase == domain.RuntimeRefreshing || state.phase == domain.RuntimeUnavailable || s.ctx.Err() != nil {
 		return nil, errors.New("runtime unavailable")
 	}
 	return r, nil
 }
-func (s *Server) openCatalog(ctx context.Context, id string, stop bool) (runtime harness.Runtime, startErr error) {
-	defer func() {
-		s.runtimeMu.Lock()
-		if s.catalogErrors == nil {
-			s.catalogErrors = map[string]error{}
-		}
-		s.catalogErrors[id] = startErr
-		s.runtimeMu.Unlock()
-	}()
+func (s *Server) openCatalog(ctx context.Context, id string, stop bool) (harness.Runtime, error) {
 	if r := s.catalogRuntime(id); r != nil && !r.Stopped() {
 		return r, nil
 	}
-	a := s.adapters[id]
-	if a == nil {
-		return nil, errors.New("harness unavailable")
+	gate := s.catalogGates[id]
+	if gate == nil || !gate.TryLock() {
+		return nil, errCatalogRefreshing
 	}
-	dir := s.catalogDirectory(id)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return nil, err
-	}
-	if stop {
-		if err := stopPreviousProcess(ctx, dir); err != nil {
-			return nil, err
-		}
-	}
-	if err := checkPreviousProcess(dir); err != nil {
-		return nil, err
-	}
-	if err := recordProcess(dir, 0); err != nil {
-		return nil, err
-	}
-	next, err := a.Start(ctx, harness.StartOptions{ImportResource: func(image harness.OutputResource) (domain.Attachment, error) {
-		return s.importOutputResource(id, "", image)
-	}, OnEvent: func(e domain.Event) error { return s.onHarnessEvent(id, "", e) }, OnStart: func(pid int) error { return recordProcess(dir, pid) }})
+	defer gate.Unlock()
+	revision, err := s.catalogSourceVersion(id)
 	if err != nil {
-		os.Remove(filepath.Join(dir, "runtime-process.json"))
 		return nil, err
 	}
-	s.runtimeMu.Lock()
-	s.catalogs[id] = next
-	if id == s.config.DefaultHarnessID {
-		s.runtime = next
+	s.runtimeMu.RLock()
+	state := s.catalogStates[id]
+	s.runtimeMu.RUnlock()
+	if !stop && state.phase == domain.RuntimeUnavailable && state.revision == revision && time.Now().Before(state.retryAt) {
+		return nil, s.catalogFailure(id)
 	}
-	s.runtimeMu.Unlock()
-	s.watchRuntime(next)
-	return next, nil
+	if err := s.markCatalogRefreshing(id, revision); err != nil {
+		return nil, err
+	}
+	return s.startCatalog(ctx, id, stop, revision)
 }
-func (s *Server) runtimeReadiness() domain.Readiness {
+func (s *Server) runtimeReadiness(sessions ...string) domain.Readiness {
 	var all []domain.HarnessInfo
 	for _, id := range s.adapterOrder {
 		descriptor := s.adapters[id].Descriptor()
@@ -151,6 +143,19 @@ func (s *Server) runtimeReadiness() domain.Readiness {
 				info.Error = err.Error()
 			}
 		}
+		s.runtimeMu.RLock()
+		state := s.catalogStates[id]
+		err := s.catalogErrors[id]
+		s.runtimeMu.RUnlock()
+		if state.phase == domain.RuntimeRefreshing || state.phase == domain.RuntimeUnavailable {
+			if len(state.previous.Models) > 0 {
+				info.Models, info.Permissions, info.PermissionChoices, info.Plan, info.Capabilities = state.previous.Models, state.previous.Permissions, state.previous.PermissionChoices, state.previous.Plan, state.previous.Capabilities
+			}
+			info.State = state.phase
+			if err != nil {
+				info.Error = err.Error()
+			}
+		}
 		all = append(all, info)
 	}
 	if len(all) == 0 {
@@ -161,6 +166,20 @@ func (s *Server) runtimeReadiness() domain.Readiness {
 	}
 	result := domain.Readiness{HarnessID: s.config.DefaultHarnessID, Harnesses: all}
 	selected, _ := result.ForHarness(s.config.DefaultHarnessID)
+	for _, id := range sessions {
+		if r := s.currentRuntime(id); r != nil && !r.Stopped() {
+			ready := r.Readiness()
+			profile, ok := ready.ForHarness(ready.HarnessID)
+			if !ok {
+				continue
+			}
+			if selected.Sessions == nil {
+				selected.Sessions = map[string]domain.HarnessInfo{}
+			}
+			d := ready.Descriptor()
+			selected.Sessions[id] = domain.HarnessInfo{ID: profile.HarnessID, Name: d.Name, Icon: d.Icon, State: profile.State, Error: profile.Error, Models: profile.Models, Permissions: profile.Permissions, PermissionChoices: profile.PermissionChoices, Plan: profile.Plan, Capabilities: profile.Capabilities}
+		}
+	}
 	return selected
 }
 

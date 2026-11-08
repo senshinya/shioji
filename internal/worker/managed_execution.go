@@ -93,6 +93,14 @@ func (s *Server) cleanManagedExecution(ctx context.Context, id string) error {
 		return err
 	}
 	if runtime := s.currentRuntime(id); runtime != nil {
+		// This instance is being deliberately retired after admission is fenced.
+		// Its final invalidation must not guard the next accepted generation.
+		s.runtimeMu.RLock()
+		events := s.runtimeEvents[id]
+		s.runtimeMu.RUnlock()
+		if events != nil {
+			events.Store(false)
+		}
 		runtime.Close(ctx)
 	}
 	return scope.Stop(ctx)

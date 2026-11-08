@@ -56,7 +56,7 @@ func (s *Server) reconcile(in protocol.RecoveryInput) (protocol.RecoveryResult, 
 }
 func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput) (protocol.RecoveryResult, error) {
 	generation := s.recoveryRefresh.Load()
-	result := protocol.RecoveryResult{SessionID: in.SessionID, Status: "unknown", Readiness: s.runtimeReadiness()}
+	result := protocol.RecoveryResult{SessionID: in.SessionID, Status: "unknown", Readiness: s.runtimeReadiness(in.SessionID)}
 	check := in.Action == "" || in.Action == "check"
 	if !check && in.Action != "end" && in.Action != "interrupt" && in.Action != "stop-runtime" && in.Action != "stop-tasks" {
 		return result, errors.New("未知的恢复操作")
@@ -70,18 +70,13 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	}
 	if !d.Session.Status.NeedsRecovery() {
 		result.Status = string(d.Session.Status)
-		result.Readiness = s.runtimeReadiness()
+		result.Readiness = s.runtimeReadiness(in.SessionID)
 		if d.Session.Recovery != nil {
 			result.CanContinue = d.Session.Recovery.CanContinue
 		}
 		return result, nil
 	}
-	if in.Action == "interrupt" {
-		catalog := s.catalogRuntime(d.Session.HarnessID)
-		if catalog != nil && !catalog.Readiness().Capabilities.Interrupt {
-			return result, harness.Unsupported("interrupt")
-		}
-	}
+
 	info := domain.SessionRecovery{Phase: "checking"}
 	if old := d.Session.Recovery; old != nil {
 		info = *old
@@ -93,7 +88,7 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	}
 	d.Session = session
 	finish := func() (protocol.RecoveryResult, error) {
-		result.Readiness = s.runtimeReadiness()
+		result.Readiness = s.runtimeReadiness(in.SessionID)
 		phase := domain.RecoveryAttention
 		if result.Status != "unknown" && result.Status != "active" {
 			phase = domain.RecoveryReady
@@ -104,11 +99,7 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		}
 		return result, e
 	}
-	catalog := s.catalogRuntime(d.Session.HarnessID)
-	if catalog != nil && !catalog.Readiness().Capabilities.Recovery {
-		result.Message = "此 Agent 暂不支持核对执行状态"
-		return finish()
-	}
+
 	runtime := s.currentRuntime(in.SessionID)
 	managed, managedErr := s.executions.Existing(in.SessionID)
 	if managedErr != nil {
@@ -141,12 +132,25 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		result.NeedsStop = ownedProcessPresent(s.catalogDirectory(d.Session.HarnessID))
 		return finish()
 	}
+	if runtime == s.catalogRuntime(d.Session.HarnessID) {
+		var release func()
+		runtime, release, err = s.borrowCatalog(d.Session.HarnessID)
+		if err != nil {
+			result.Message = "正在更新运行环境，稍后自动核对"
+			return finish()
+		}
+		defer release()
+	}
+	if !runtime.Readiness().Capabilities.Recovery {
+		result.Message = "此 Agent 暂不支持核对执行状态"
+		return finish()
+	}
 	if in.Action == "interrupt" && !runtime.Readiness().Capabilities.Interrupt {
 		result.Message = "此 Agent 不支持中断执行"
 		result, finishErr := finish()
 		return result, errors.Join(harness.Unsupported("interrupt"), finishErr)
 	}
-	result.Readiness = s.runtimeReadiness()
+	result.Readiness = s.runtimeReadiness(in.SessionID)
 	source, err := runtime.Inspect(ctx, d.Session)
 	if !runtime.Observes(d.Session) {
 		if proofErr := s.managedStopProof(in.SessionID, &source); proofErr != nil {

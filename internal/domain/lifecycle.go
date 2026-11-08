@@ -95,6 +95,7 @@ type ReadinessState string
 
 const (
 	RuntimeReady       ReadinessState = "ready"
+	RuntimeRefreshing  ReadinessState = "refreshing"
 	RuntimeUnavailable ReadinessState = "unavailable"
 )
 

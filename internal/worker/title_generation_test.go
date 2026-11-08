@@ -10,6 +10,7 @@ import (
 	"shioji/internal/harness"
 	"shioji/internal/managedexec"
 	"shioji/internal/store"
+	"sync"
 	"testing"
 	"time"
 )
@@ -44,8 +45,8 @@ func TestTitleTasksRetireOwnedProcessRecords(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	r := &processNamingRuntime{}
-	s := &Server{ctx: ctx, store: db, runtime: r, config: Config{DefaultHarnessID: "other"}}
+	r := &processNamingRuntime{Runtime: &memoryRuntime{adapter: memoryHarness{id: "other"}, done: make(chan struct{})}}
+	s := &Server{ctx: ctx, store: db, runtime: r, config: Config{DefaultHarnessID: "other"}, catalogGates: map[string]*sync.RWMutex{"other": {}}}
 	manager, err := managedexec.New(t.TempDir(), os.Args[0])
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +90,7 @@ func TestBrokenOldTitleScopeDoesNotDisableNamingOtherSessions(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	started, release := make(chan string, 1), make(chan string, 1)
-	s := &Server{ctx: ctx, store: db, runtime: &namingRuntime{started: started, release: release}, config: Config{Directory: dir, LauncherExecutable: os.Args[0], DefaultHarnessID: "other"}, titleWake: make(chan struct{}, 1)}
+	s := &Server{ctx: ctx, store: db, catalogGates: map[string]*sync.RWMutex{"other": {}}, runtime: &namingRuntime{Runtime: &memoryRuntime{adapter: memoryHarness{id: "other"}, done: make(chan struct{})}, started: started, release: release}, config: Config{Directory: dir, LauncherExecutable: os.Args[0], DefaultHarnessID: "other"}, titleWake: make(chan struct{}, 1)}
 	s.wg.Add(1)
 	done := make(chan struct{})
 	go func() { s.titleLoop(); close(done) }()

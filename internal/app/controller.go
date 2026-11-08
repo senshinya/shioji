@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -217,6 +218,18 @@ func (c *Controller) Run(ctx context.Context) {
 			client.Close()
 		}
 	}()
+	readinessQuery := func() protocol.ReadinessQuery {
+		var ids []string
+		for _, id := range append([]string{selected}, visible...) {
+			if id != "" && !slices.Contains(ids, id) {
+				ids = append(ids, id)
+			}
+			if len(ids) == 2 {
+				break
+			}
+		}
+		return protocol.ReadinessQuery{SessionIDs: ids}
+	}
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	lastAttempt := time.Time{}
@@ -418,6 +431,7 @@ func (c *Controller) Run(ctx context.Context) {
 					previous[id] = true
 				}
 				visible = append([]string(nil), job.Input.([]string)...)
+				lastReadiness = time.Time{}
 				for _, id := range visible {
 					if !previous[id] {
 						history[id] = historyOpening
@@ -432,6 +446,7 @@ func (c *Controller) Run(ctx context.Context) {
 			}
 			if job.Method == "$select" {
 				selected = job.Input.(string)
+				lastReadiness = time.Time{}
 				history[selected] = historyUnloaded
 				if selected != "" {
 					history[selected] = historyOpening
@@ -500,7 +515,7 @@ func (c *Controller) Run(ctx context.Context) {
 				}
 				var snapshot domain.Snapshot
 				var ready domain.Readiness
-				if client.Call(ctx, "snapshot", nil, &snapshot) != nil || client.Call(ctx, "readiness", nil, &ready) != nil {
+				if client.Call(ctx, "snapshot", nil, &snapshot) != nil || client.Call(ctx, "readiness", readinessQuery(), &ready) != nil {
 					disconnected()
 					continue
 				}
@@ -546,7 +561,7 @@ func (c *Controller) Run(ctx context.Context) {
 			if time.Since(lastReadiness) > 5*time.Second {
 				started := time.Now()
 				var ready domain.Readiness
-				if err := client.Call(ctx, "readiness", nil, &ready); err != nil {
+				if err := client.Call(ctx, "readiness", readinessQuery(), &ready); err != nil {
 					disconnected()
 					continue
 				}

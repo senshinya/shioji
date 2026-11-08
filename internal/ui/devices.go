@@ -236,6 +236,9 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 							if len(state.Readiness.Harnesses) > 0 {
 								for _, info := range state.Readiness.Harnesses {
 									status := "未就绪"
+									if info.State == domain.RuntimeRefreshing {
+										status = "正在刷新"
+									}
 									if info.State == domain.RuntimeReady {
 										status = "已就绪"
 										if !state.Connected {
@@ -247,9 +250,15 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 							} else {
 								meta(state.Readiness.Descriptor().Name, runtime)
 							}
+							frame := n.Column(c.Key("runtime-status-details")).FillWidth().Clip().Margin(-8, 0, 0, 0)
+							message := n.Local(frame, "message", func() string { return state.Readiness.Error })
 							if state.Readiness.Error != "" {
-								n.Text(c, state.Readiness.Error).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+								*message = state.Readiness.Error
 							}
+							animatedContentHeight(c, frame, state.Readiness.Error != "", 180*time.Millisecond, func() float32 {
+								n.Text(c, *message).FillWidth().Padding(8, 0, 0, 0).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+								return 0
+							})
 						})
 						n.Column(c).FillWidth().Gap(8).Children(func() {
 							n.Row(c).FillWidth().AlignItems(n.Center).Children(func() {

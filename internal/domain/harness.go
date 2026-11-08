@@ -45,7 +45,7 @@ func (r Readiness) ForHarness(id string) (Readiness, bool) {
 	}
 	for _, h := range r.Harnesses {
 		if h.ID == id {
-			return Readiness{HarnessID: h.ID, Harnesses: r.Harnesses, State: h.State, Error: h.Error, Models: h.Models, Permissions: h.Permissions, PermissionChoices: h.PermissionChoices, Plan: h.Plan, Capabilities: h.Capabilities}, true
+			return Readiness{Sessions: r.Sessions, HarnessID: h.ID, Harnesses: r.Harnesses, State: h.State, Error: h.Error, Models: h.Models, Permissions: h.Permissions, PermissionChoices: h.PermissionChoices, Plan: h.Plan, Capabilities: h.Capabilities}, true
 		}
 	}
 	return Readiness{}, false
@@ -58,3 +58,5 @@ func (r Readiness) Descriptor() HarnessDescriptor {
 	}
 	return HarnessDescriptor{ID: r.HarnessID, Name: "Agent"}
 }
+
+const ModelUnavailableMessage = "当前模型已不可用，请更换模型"

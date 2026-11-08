@@ -18,8 +18,8 @@ import (
 // Major 2 requires clients to understand authoritative history replacement.
 const Major = 2
 
-// Minor 13 reports the actual worker build and supports idle service updates.
-const Minor = 13
+// Minor 14 reports session-specific runtime capabilities during catalog refresh.
+const Minor = 14
 const MaxFrame = 1 << 20
 
 type Frame struct {
@@ -186,4 +186,9 @@ func Welcome(conn net.Conn, deviceID string, build ...domain.WorkerBuild) (*Code
 	}
 	err := c.Write(welcome)
 	return c, epoch, err
+}
+
+// ReadinessQuery scopes live runtime profiles to the client's two visible sessions.
+type ReadinessQuery struct {
+	SessionIDs []string `json:"sessionIds,omitempty"`
 }

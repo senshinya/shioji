@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"shioji/internal/domain"
 	"shioji/internal/harness"
+	"sync/atomic"
 )
 
 // All callers that create/replace a session runtime hold dispatchMu. The catalog
@@ -15,9 +16,6 @@ import (
 func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime, error) {
 	if err := s.updateAdmission(); err != nil {
 		return nil, err
-	}
-	if r := s.currentRuntime(id); r != nil && r.ExecutionReady() {
-		return r, nil
 	}
 	d, err := s.store.Session(id, 0, 1)
 	if err != nil {
@@ -27,13 +25,70 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 	if adapter == nil {
 		return nil, errors.New("session harness unavailable")
 	}
+	upgrading := false
+	if r := s.currentRuntime(id); r != nil && r.ExecutionReady() {
+		source, tracked := adapter.(harness.CatalogVersion)
+		running, captured := r.(harness.CatalogVersion)
+		if !tracked || !captured {
+			return r, nil
+		}
+		installed, e := source.CatalogVersion()
+		if e != nil {
+			return nil, e
+		}
+		version, e := running.CatalogVersion()
+		if e != nil {
+			return nil, e
+		}
+		if installed == version {
+			return r, nil
+		}
+		// A new accepted turn may adopt the new installation, but live turns and
+		// pending forms retain the process that owns their protocol lifecycle.
+		for _, turn := range d.Turns {
+			if turn.Status.Active() {
+				return r, nil
+			}
+		}
+		for _, request := range d.Requests {
+			if request.State.AwaitingResolution() {
+				return r, nil
+			}
+		}
+		upgrading = true
+	}
 
 	dir := s.sessionRuntimeDirectory(id)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
+	var undo func() error
+	if upgrading {
+		scope, e := s.executions.Existing(id)
+		if e != nil {
+			return nil, e
+		}
+		if scope != nil {
+			undo, e = scope.FenceIfIdle()
+			if e != nil {
+				return nil, e
+			}
+		}
+	}
 	if err := s.cleanSessionRuntime(ctx, id); err != nil {
+		if undo != nil {
+			err = errors.Join(err, undo())
+		}
 		return nil, err
+	}
+	// Close drains callbacks already admitted before retirement. An unexpected
+	// loss during that drain must be reconciled before a new generation exists.
+	latest, err := s.store.Session(id, 0, 1)
+	if err != nil {
+		return nil, err
+	}
+	if latest.Session.ExecutionGuard != "" {
+		return nil, errors.New("执行状态发生变化，正在重新核对；本次输入未发送")
 	}
 	if err := recordSessionProcess(dir, id, 0); err != nil {
 		return nil, err
@@ -45,11 +100,27 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 	if err = scope.Bind("worker", os.Getpid()); err != nil {
 		return nil, err
 	}
+	accepting := &atomic.Bool{}
+	accepting.Store(true)
+	s.runtimeMu.Lock()
+	s.runtimeEvents[id] = accepting
+	s.runtimeMu.Unlock()
 	r, err := adapter.Start(ctx, harness.StartOptions{Scope: scope, ImportResource: func(image harness.OutputResource) (domain.Attachment, error) {
 		return s.importOutputResource(d.Session.HarnessID, id, image)
 	}, OnMessage: func(ctx context.Context, input harness.IncomingMessage) error {
+		if !accepting.Load() {
+			return errors.New("旧运行环境已退休，消息未接纳")
+		}
 		return s.receiveHarnessMessage(ctx, d.Session.HarnessID, id, scope.Generation, input)
-	}, OnEvent: func(e domain.Event) error { return s.onHarnessEvent(d.Session.HarnessID, id, e) }, OnStart: func(pid int) error { return recordSessionProcess(dir, id, pid) }, OnLost: func() error {
+	}, OnEvent: func(e domain.Event) error {
+		if !accepting.Load() {
+			return nil
+		}
+		return s.onHarnessEvent(d.Session.HarnessID, id, e)
+	}, OnStart: func(pid int) error { return recordSessionProcess(dir, id, pid) }, OnLost: func() error {
+		if !accepting.Load() {
+			return nil
+		}
 		if err := s.guardManagedExecution(id); err != nil {
 			s.cancel()
 			return err
@@ -93,6 +164,10 @@ func (s *Server) failRuntimeLaunch(op domain.Operation, in domain.Submission, ca
 		return
 	}
 	d.Session.Status = "failed"
+	if d.Session.ExecutionGuard != "" {
+		d.Session.Status = "unknown"
+		defer s.wakeRecovery()
+	}
 	d.Session.Error = cause.Error()
 	if _, err = s.store.Apply(op.SessionID, domain.Event{Type: "session", Session: &d.Session}); err != nil {
 		s.cancel()

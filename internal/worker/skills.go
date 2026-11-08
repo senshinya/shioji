@@ -11,10 +11,11 @@ import (
 
 func (s *Server) listSkills(in protocol.SkillQuery) (domain.SkillCatalog, error) {
 	var out domain.SkillCatalog
-	runtime, err := s.inputRuntime(domain.Submission{WorkspaceID: in.WorkspaceID, SessionID: in.SessionID, HarnessID: in.HarnessID})
+	runtime, release, err := s.borrowInputRuntime(domain.Submission{WorkspaceID: in.WorkspaceID, SessionID: in.SessionID, HarnessID: in.HarnessID})
 	if err != nil {
 		return out, err
 	}
+	defer release()
 	provider, ok := runtime.(harness.SkillProvider)
 	if !ok || !runtime.Readiness().Capabilities.Skills {
 		return out, harness.Unsupported("skills")

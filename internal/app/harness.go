@@ -31,9 +31,48 @@ func (m *Model) SessionReadiness(s domain.Session) domain.Readiness {
 	if state := m.DeviceStates[m.WorkspaceConnection(s.WorkspaceID)]; state != nil {
 		minor = state.WorkerMinor
 	}
-	return selectReadiness(ready, s.HarnessID, minor)
+	selected := selectReadiness(ready, s.HarnessID, minor)
+	// Next-turn model choices follow current availability; live control actions
+	// belong to the process actually executing this session.
+	if own, ok := ready.Sessions[s.ID]; ok && own.ID == s.HarnessID && own.State == domain.RuntimeReady {
+		live := own.Capabilities
+		live.Skills = live.Skills && selected.Capabilities.Skills
+		live.Fork = live.Fork && selected.Capabilities.Fork
+		live.Restart = live.Restart && selected.Capabilities.Restart
+		live.Continue = live.Continue && selected.Capabilities.Continue
+		selected.Capabilities = live
+	}
+	return selected
 }
-func (m *Model) RunReadiness() domain.Readiness { return m.selectReadiness(m.Readiness, m.HarnessID()) }
+func (m *Model) RunReadiness() domain.Readiness {
+	if m.SessionID != "" {
+		if d := m.Details[m.SessionID]; d.Session.ID != "" {
+			return m.SessionReadiness(d.Session)
+		}
+		for _, s := range m.Snapshot.Sessions {
+			if s.ID == m.SessionID {
+				return m.SessionReadiness(s)
+			}
+		}
+	}
+	return m.selectReadiness(m.Readiness, m.HarnessID())
+}
+
+const ModelUnavailableMessage = domain.ModelUnavailableMessage
+
+func (m *Model) ModelUnavailable() bool {
+	ready := m.RunReadiness()
+	config := m.Config()
+	if ready.State != domain.RuntimeReady || config.Model == "" {
+		return false
+	}
+	for _, model := range ready.Models {
+		if model.ID == config.Model {
+			return false
+		}
+	}
+	return true
+}
 func (m *Model) selectReadiness(ready domain.Readiness, id string) domain.Readiness {
 	return selectReadiness(ready, id, m.WorkerMinor)
 }

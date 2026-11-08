@@ -75,6 +75,13 @@ type OutputResource struct {
 	Data      []byte
 }
 
+// CatalogVersion is optional. An adapter reports the currently installed image;
+// its runtime reports the immutable image captured at startup. Values are opaque
+// to the worker, which only compares them before refreshing an idle catalog.
+type CatalogVersion interface {
+	CatalogVersion() (string, error)
+}
+
 type Adapter interface {
 	Descriptor() domain.HarnessDescriptor
 	Start(context.Context, StartOptions) (Runtime, error)

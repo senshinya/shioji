@@ -77,6 +77,10 @@ func (v *View) restartHistory() {
 		v.historyCommand(pending, !v.historyForked[sid])
 		return
 	}
+	if m.ModelUnavailable() {
+		m.Error = app.ModelUnavailableMessage
+		return
+	}
 	source := m.Details[sid].Session
 	if !v.historyReady(source) {
 		m.Error = "请先停止当前轮次并处理待答问题或执行状态"

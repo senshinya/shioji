@@ -17,7 +17,11 @@ func (a Adapter) Descriptor() domain.HarnessDescriptor {
 }
 func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.Runtime, error) {
 	titleAdapter := a
-	resolved, _, err := compatibleExecutable(ctx, a.Executable)
+	image, err := installedExecutable(a.Executable)
+	if err != nil {
+		return nil, err
+	}
+	resolved, _, err := compatibleExecutable(ctx, image.path)
 	if err != nil {
 		return nil, err
 	}
@@ -39,10 +43,25 @@ func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.
 		}
 		return nil, err
 	}
-	return &adapterRuntime{Runtime: r, executor: executor, descriptor: a.Descriptor(), titleAdapter: titleAdapter}, nil
+	after, identityErr := installedExecutable(image.path)
+	if identityErr != nil || after.version != image.version {
+		r.Close()
+		if executor != nil {
+			executor.Close(ctx)
+		}
+		return nil, errors.New("Codex 安装正在变化，请稍后重试")
+	}
+	return &adapterRuntime{version: image.version, Runtime: r, executor: executor, descriptor: a.Descriptor(), titleAdapter: titleAdapter}, nil
 }
 
+func (a Adapter) CatalogVersion() (string, error) {
+	image, err := installedExecutable(a.Executable)
+	return image.version, err
+}
+func (r *adapterRuntime) CatalogVersion() (string, error) { return r.version, nil }
+
 type adapterRuntime struct {
+	version string
 	*Runtime
 	executor     *Executor
 	descriptor   domain.HarnessDescriptor
