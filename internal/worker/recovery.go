@@ -30,6 +30,9 @@ func recoveryRunning(h domain.RecoveryHistory) bool {
 // Caller holds dispatchMu. An exited app-server can be replaced, but a recorded
 // live predecessor must first be stopped by an explicit user action.
 func (s *Server) recoveryRuntime(ctx context.Context, stop bool, selected ...string) (harness.Runtime, error) {
+	if err := s.updateAdmission(); err != nil {
+		return nil, err
+	}
 	id := s.config.DefaultHarnessID
 	if len(selected) > 0 {
 		id = selected[0]

@@ -10,16 +10,18 @@ import (
 	"syscall"
 	"time"
 
+	"shioji/internal/domain"
 	"shioji/internal/protocol"
 )
 
 type WorkerInfo struct {
-	Home      string `json:"home"`
-	Directory string `json:"directory"`
-	Worker    string `json:"worker"`
-	DeviceID  string `json:"deviceId"`
-	Minor     int    `json:"minor"`
-	Started   bool   `json:"started"`
+	Build     *domain.WorkerBuild `json:"build,omitempty"`
+	Home      string              `json:"home"`
+	Directory string              `json:"directory"`
+	Worker    string              `json:"worker"`
+	DeviceID  string              `json:"deviceId"`
+	Minor     int                 `json:"minor"`
+	Started   bool                `json:"started"`
 }
 
 func ExistingCodex() string {
@@ -54,6 +56,7 @@ func EnsureLocalWorker(ctx context.Context, directory, binary, codex string) (Wo
 			return true, err
 		}
 		info.DeviceID, info.Minor = client.DeviceID, client.Minor
+		info.Build = client.Worker
 		return true, nil
 	}
 	if exists, err := probe(); exists {

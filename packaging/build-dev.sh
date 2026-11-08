@@ -6,9 +6,10 @@ if [[ "$(uname -s)" != Darwin || "$(uname -m)" != arm64 ]]; then
   exit 1
 fi
 app=build/Shioji.app
+worker_build_time=$(date -u +%s)
 mkdir -p "$app/Contents/MacOS"
-env -u GOROOT CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o "$app/Contents/MacOS/shioji" ./cmd/shioji
-env -u GOROOT CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o "$app/Contents/MacOS/shioji-worker" ./cmd/shioji-worker
+env -u GOROOT CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "-X shioji/internal/runtimebuild.BuiltAt=$worker_build_time" -o "$app/Contents/MacOS/shioji" ./cmd/shioji
+env -u GOROOT CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "-X shioji/internal/runtimebuild.BuiltAt=$worker_build_time" -o "$app/Contents/MacOS/shioji-worker" ./cmd/shioji-worker
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

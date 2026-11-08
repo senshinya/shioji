@@ -43,6 +43,7 @@ type Runtime struct {
 	normalizer      *Normalizer
 	onEvent         func(domain.Event) error
 	ready           domain.Readiness
+	protocol        *protocolSupport
 	err             error
 	scope           *managedexec.Scope
 	executor        *Executor
@@ -54,22 +55,15 @@ type CallError = harness.DeliveryError
 
 func IsUncertain(err error) bool { return harness.IsUncertain(err) }
 func Start(ctx context.Context, opts Options) (*Runtime, error) {
-	binary := opts.Executable
-	if binary == "" {
-		binary = "codex"
-	}
-	v, err := exec.CommandContext(ctx, binary, "--version").Output()
+	binary, support, err := compatibleExecutable(ctx, opts.Executable)
 	if err != nil {
-		return nil, errors.New("Codex unavailable; install and authenticate Codex 0.166.0")
-	}
-	if strings.TrimSpace(string(v)) != "codex-cli 0.166.0" {
-		return nil, errors.New("incompatible Codex; tested version is 0.166.0")
+		return nil, err
 	}
 	argv := []string{binary, "app-server", "--listen", "stdio://"}
 	if opts.Executor != nil {
 		argv = append(argv, "-c", "features.shell_snapshot=false", "-c", "features.shell_snapshot_v2=false")
 	}
-	r := &Runtime{pending: map[string]chan wire.Message{}, done: make(chan struct{}), normalizer: NewNormalizer(), onEvent: opts.OnEvent, scope: opts.Scope, executor: opts.Executor}
+	r := &Runtime{protocol: support, pending: map[string]chan wire.Message{}, done: make(chan struct{}), normalizer: NewNormalizer(), onEvent: opts.OnEvent, scope: opts.Scope, executor: opts.Executor}
 	r.normalizer.importResource = opts.ImportResource
 	env := os.Environ()
 	if opts.Home != "" {
@@ -292,7 +286,7 @@ func (r *Runtime) catalog(ctx context.Context) error {
 				model.Efforts = append(model.Efforts, e.ReasoningEffort)
 			}
 			for _, tier := range m.ServiceTiers {
-				if tier.ID == "fast" {
+				if tier.ID == "fast" && r.protocol.serviceTier {
 					model.Fast = true
 				}
 			}
@@ -314,8 +308,10 @@ func (r *Runtime) catalog(ctx context.Context) error {
 			Mode string `json:"mode"`
 		} `json:"data"`
 	}
-	if err := r.call(ctx, "collaborationMode/list", struct{}{}, &modes); err != nil {
-		return err
+	if r.supports("collaborationMode/list") && r.protocol.collaborationMode {
+		if err := r.call(ctx, "collaborationMode/list", struct{}{}, &modes); err != nil {
+			return err
+		}
 	}
 	for _, m := range modes.Data {
 		if m.Mode == "plan" {
@@ -344,8 +340,10 @@ func (r *Runtime) catalog(ctx context.Context) error {
 	}
 	// Discover named profiles without silently mapping them onto the four prototype presets.
 	var profiles json.RawMessage
-	if err := r.call(ctx, "permissionProfile/list", map[string]any{"limit": 100}, &profiles); err != nil {
-		return err
+	if r.supports("permissionProfile/list") {
+		if err := r.call(ctx, "permissionProfile/list", map[string]any{"limit": 100}, &profiles); err != nil {
+			return err
+		}
 	}
 	if len(ready.Permissions) == 0 {
 		return errors.New("managed permission profiles require a supported explicit mapping")
@@ -476,6 +474,9 @@ func (r *Runtime) submit(ctx context.Context, s domain.Session, operationID, tex
 	if kind == "workspaceWrite" {
 		policy.WritableRoots = append([]string{s.Context.CWD}, s.Context.AdditionalDirectories...)
 	}
+	if len(skills) > 0 && !r.supports("skills/list") {
+		return "", harness.Unsupported("skills")
+	}
 	input, err := attachmentInputs(text, attachments)
 	input = append(input, skillInputs(skills)...)
 	if err != nil {
@@ -487,7 +488,7 @@ func (r *Runtime) submit(ctx context.Context, s domain.Session, operationID, tex
 		fast := "fast"
 		params.ServiceTier = &fast
 	}
-	{
+	if r.protocol.collaborationMode {
 		mode := "default"
 		if s.Config.Plan {
 			mode = "plan"
@@ -515,6 +516,12 @@ func (r *Runtime) Steer(ctx context.Context, s domain.Session, turnID, operation
 	return r.steer(ctx, s, turnID, operationID, text, attachments, nil)
 }
 func (r *Runtime) steer(ctx context.Context, s domain.Session, turnID, operationID, text string, attachments []AttachmentInput, skills []domain.SkillReference) error {
+	if !r.supports("turn/steer") {
+		return harness.Unsupported("steer")
+	}
+	if len(skills) > 0 && !r.supports("skills/list") {
+		return harness.Unsupported("skills")
+	}
 	input, err := attachmentInputs(text, attachments)
 	input = append(input, skillInputs(skills)...)
 	if err != nil {

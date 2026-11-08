@@ -18,22 +18,23 @@ import (
 // Major 2 requires clients to understand authoritative history replacement.
 const Major = 2
 
-// Minor 12 retains sent inline positions and supports editing history references.
-const Minor = 12
+// Minor 13 reports the actual worker build and supports idle service updates.
+const Minor = 13
 const MaxFrame = 1 << 20
 
 type Frame struct {
-	Type      string          `json:"type"`
-	Major     int             `json:"major,omitempty"`
-	Minor     int             `json:"minor,omitempty"`
-	Nonce     string          `json:"nonce,omitempty"`
-	DeviceID  string          `json:"deviceId,omitempty"`
-	Epoch     string          `json:"epoch,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Method    string          `json:"method,omitempty"`
-	Body      json.RawMessage `json:"body,omitempty"`
-	ErrorCode string          `json:"errorCode,omitempty"`
-	Error     string          `json:"error,omitempty"`
+	Worker    *domain.WorkerBuild `json:"worker,omitempty"`
+	Type      string              `json:"type"`
+	Major     int                 `json:"major,omitempty"`
+	Minor     int                 `json:"minor,omitempty"`
+	Nonce     string              `json:"nonce,omitempty"`
+	DeviceID  string              `json:"deviceId,omitempty"`
+	Epoch     string              `json:"epoch,omitempty"`
+	ID        string              `json:"id,omitempty"`
+	Method    string              `json:"method,omitempty"`
+	Body      json.RawMessage     `json:"body,omitempty"`
+	ErrorCode string              `json:"errorCode,omitempty"`
+	Error     string              `json:"error,omitempty"`
 }
 type Codec struct {
 	r io.Reader
@@ -92,6 +93,7 @@ func writeAll(w io.Writer, b []byte) error {
 }
 
 type Client struct {
+	Worker          *domain.WorkerBuild
 	mu              sync.Mutex
 	conn            net.Conn
 	codec           *Codec
@@ -120,6 +122,7 @@ func Connect(ctx context.Context, conn net.Conn, target string) (*Client, error)
 	client.DeviceID = f.DeviceID
 	client.Epoch = f.Epoch
 	client.Minor = f.Minor
+	client.Worker = f.Worker
 	return client, nil
 }
 func (c *Client) Close() error { return c.conn.Close() }
@@ -165,7 +168,7 @@ func (c *Client) Call(ctx context.Context, method string, in, out any) error {
 }
 
 // Welcome verifies a fresh connection. Authorization of the underlying transport precedes this.
-func Welcome(conn net.Conn, deviceID string) (*Codec, string, error) {
+func Welcome(conn net.Conn, deviceID string, build ...domain.WorkerBuild) (*Codec, string, error) {
 	conn.SetDeadline(time.Now().Add(10 * time.Second))
 	defer conn.SetDeadline(time.Time{})
 	c := NewCodec(conn, conn)
@@ -177,6 +180,10 @@ func Welcome(conn net.Conn, deviceID string) (*Codec, string, error) {
 		return nil, "", errors.New("handshake rejected")
 	}
 	epoch := domain.NewID()
-	err := c.Write(Frame{Type: "welcome", Major: Major, Minor: Minor, Nonce: hello.Nonce, DeviceID: deviceID, Epoch: epoch})
+	welcome := Frame{Type: "welcome", Major: Major, Minor: Minor, Nonce: hello.Nonce, DeviceID: deviceID, Epoch: epoch}
+	if len(build) > 0 {
+		welcome.Worker = &build[0]
+	}
+	err := c.Write(welcome)
 	return c, epoch, err
 }

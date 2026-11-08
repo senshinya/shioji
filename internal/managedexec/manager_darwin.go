@@ -37,10 +37,11 @@ const (
 )
 
 type scopeState struct {
-	Generation string
-	Active     bool
-	Parents    map[string]Identity
-	Launches   map[string]bool
+	Generation  string
+	Active      bool
+	Maintenance bool
+	Parents     map[string]Identity
+	Launches    map[string]bool
 }
 type Manager struct {
 	Directory, Executable string
@@ -161,7 +162,7 @@ func (s *Scope) Bind(kind string, pid int) error {
 	if err != nil {
 		return err
 	}
-	if !state.Active {
+	if !state.Active || state.Maintenance {
 		return errors.New("managed generation is fenced")
 	}
 	p, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
@@ -182,7 +183,7 @@ func (s *Scope) Prepare(kind, ref string) (Ticket, error) {
 		return Ticket{}, err
 	}
 	parent, ok := state.Parents[kind]
-	if !state.Active || !ok {
+	if !state.Active || state.Maintenance || !ok {
 		return Ticket{}, errors.New("managed launch owner is unavailable")
 	}
 	t := Ticket{ID: nonce(), Kind: kind, Ref: ref, Parent: parent, State: LaunchPrepared}
@@ -199,7 +200,7 @@ func (s *Scope) Register(packet Registration) error {
 	if err != nil {
 		return err
 	}
-	if !state.Active {
+	if !state.Active || state.Maintenance {
 		return errors.New("managed generation is fenced")
 	}
 	if !safeID(packet.ID) {
@@ -355,6 +356,7 @@ func (s *Scope) Fence() error {
 		return err
 	}
 	state.Active = false
+	state.Maintenance = false
 	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
 }
 func (s *Scope) tickets() ([]Ticket, error) {
@@ -535,7 +537,7 @@ func (s *Scope) Admitting() bool {
 	s.manager.mu.Lock()
 	defer s.manager.mu.Unlock()
 	state, err := s.load()
-	return err == nil && state.Active
+	return err == nil && state.Active && !state.Maintenance
 }
 func (s *Scope) Cover(operation string) error {
 	s.manager.mu.Lock()
@@ -544,7 +546,7 @@ func (s *Scope) Cover(operation string) error {
 	if err != nil {
 		return err
 	}
-	if !state.Active || operation == "" {
+	if !state.Active || state.Maintenance || operation == "" {
 		return errors.New("managed operation is not admissible")
 	}
 	return writeJSON(s.operationPath(operation), map[string]string{"generation": s.Generation})
@@ -602,4 +604,73 @@ func readJSON(path string, value any) error {
 		return fmt.Errorf("unreadable managed execution record: %w", err)
 	}
 	return nil
+}
+
+// FenceIfIdle closes launch admission only after every known lifetime is idle.
+// Trusted worker infrastructure may remain; commands and unknown descendants
+// must not be terminated merely because the conversation reports completion.
+func (s *Scope) FenceIfIdle() (func() error, error) {
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	state, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	if !state.Active {
+		return nil, s.verifyStopped()
+	}
+	if state.Maintenance {
+		return nil, errors.New("执行服务已在维护中")
+	}
+	for _, registered := range state.Launches {
+		if !registered {
+			return nil, errors.New("工具启动结果尚未确认")
+		}
+	}
+	tickets, err := s.tickets()
+	if err != nil {
+		return nil, err
+	}
+	for _, ticket := range tickets {
+		if err = knownMemberStayedInGroup(ticket); err != nil {
+			return nil, err
+		}
+		members, e := groupMembers(ticket.Group)
+		if e != nil {
+			return nil, e
+		}
+		if len(members) == 0 {
+			continue
+		}
+		if ticket.Kind != "worker" || !anchorPresent(ticket, members) {
+			return nil, errors.New("仍有后台工具或进程归属尚未确认")
+		}
+		for _, p := range members {
+			if identity(p) != ticket.Root && identity(p) != ticket.Anchor {
+				return nil, errors.New("仍有后台进程，结束后更新")
+			}
+		}
+	}
+	// Keep lifetime monitoring active; only new launch admission is suspended.
+	// Permanent retirement remains the separate Active=false transition.
+	state.Maintenance = true
+	if err = writeJSON(filepath.Join(s.Directory, "scope.json"), state); err != nil {
+		return nil, err
+	}
+	return func() error {
+		s.manager.mu.Lock()
+		defer s.manager.mu.Unlock()
+		current, err := s.load()
+		if err != nil {
+			return err
+		}
+		if !current.Active {
+			return errors.New("执行进程已停止，不能重新开放准入")
+		}
+		current.Maintenance = false
+		if err = writeJSON(filepath.Join(s.Directory, "scope.json"), current); err != nil {
+			return err
+		}
+		return nil
+	}, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"shioji/internal/domain"
+	"shioji/internal/harness"
 	"shioji/internal/harness/codex/wire"
 	"slices"
 	"time"
@@ -12,6 +13,9 @@ import (
 // Fork copies a persisted source prefix without binding or starting a turn.
 // The owning worker binds the returned thread only after its local transaction.
 func (r *Runtime) Fork(ctx context.Context, source domain.Session, turn string, before bool) (string, error) {
+	if !r.supports("thread/read") || !r.supports("thread/turns/list") || !r.supports("thread/fork") || !r.supports("thread/unsubscribe") || !r.supports("thread/loaded/list") {
+		return "", harness.Unsupported("history")
+	}
 	if source.ThreadID == "" || turn == "" {
 		return "", errors.New("缺少分叉的源线程或轮次")
 	}
@@ -47,6 +51,9 @@ func (r *Runtime) Fork(ctx context.Context, source domain.Session, turn string, 
 // ReleaseFork hands a persisted fork to the destination runtime. It is safe to
 // repeat for a saved result, including after the creating app-server restarted.
 func (r *Runtime) ReleaseFork(ctx context.Context, thread string) error {
+	if !r.supports("thread/unsubscribe") || !r.supports("thread/loaded/list") {
+		return harness.Unsupported("history")
+	}
 	if err := r.call(ctx, "thread/unsubscribe", map[string]any{"threadId": thread}, nil); err != nil {
 		return err
 	}

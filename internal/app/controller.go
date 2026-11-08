@@ -11,6 +11,7 @@ import (
 
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"shioji/internal/transport"
 )
 
 type Update func(*Model)
@@ -24,6 +25,8 @@ type Job struct {
 	epoch           string
 }
 type Controller struct {
+	WorkerBinary      string
+	WorkerAutoUpdate  bool
 	fleet             *deviceFleet
 	ExpectedDeviceID  string
 	RestoreOperations []string
@@ -217,6 +220,92 @@ func (c *Controller) Run(ctx context.Context) {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	lastAttempt := time.Time{}
+	var candidate *domain.WorkerBuild
+	var candidateChecked bool
+	var candidateError error
+	var service *WorkerService
+	var lastUpdateAttempt, updateStarted time.Time
+	publishService := func(state *WorkerService) {
+		service = state
+		copy := *state
+		c.post(func(m *Model) { m.WorkerService = &copy })
+	}
+	stageCandidate := func(force bool) {
+		if c.WorkerBinary == "" || candidateChecked && !force {
+			return
+		}
+		candidateChecked = true
+		stageCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		info, err := transport.StageWorker(stageCtx, c.Directory, c.WorkerBinary)
+		candidateError = err
+		if err == nil {
+			candidate = &info
+		}
+	}
+	tryWorkerUpdate := func(explicit bool) (bool, error) {
+		if c.WorkerBinary == "" {
+			return false, nil
+		}
+		if explicit {
+			stageCandidate(true)
+		}
+		if candidateError != nil {
+			state := newWorkerService(nil, candidate)
+			if client != nil {
+				state.Build = client.Worker
+			}
+			state.Phase = WorkerUpdateFailed
+			state.Message = candidateError.Error()
+			publishService(state)
+			return false, nil
+		}
+		if client == nil {
+			if explicit && candidate != nil {
+				path, err := transport.StagedWorkerPath(c.Directory, candidate.BuildID)
+				if err == nil {
+					_, err = transport.EnsureLocalWorker(ctx, c.Directory, path, "")
+				}
+				if err != nil {
+					state := newWorkerService(nil, candidate)
+					state.Phase = WorkerUpdateFailed
+					state.Message = err.Error()
+					publishService(state)
+				}
+			}
+			return false, nil
+		}
+		state := newWorkerService(client.Worker, candidate)
+		if state.Phase != WorkerAvailable {
+			publishService(state)
+			return false, nil
+		}
+		if !explicit && !state.Automatic() {
+			return false, nil
+		}
+		lastUpdateAttempt = time.Now()
+		updateCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		var result domain.WorkerUpdateResult
+		err := client.Call(updateCtx, "worker.update", domain.WorkerReplacement{ExpectedBuildID: state.Build.BuildID, BuildID: state.Available.BuildID}, &result)
+		if err != nil {
+			state.Phase = WorkerUpdateFailed
+			state.Message = err.Error()
+			publishService(state)
+			return false, err
+		}
+		if !result.Ready {
+			state.Phase = WorkerWaiting
+			state.Message = result.Reason
+			publishService(state)
+			return false, nil
+		}
+		state.Phase = WorkerUpdating
+		state.Message = "正在更新并重新连接，会话和草稿已保留"
+		updateStarted = time.Now()
+		publishService(state)
+		return true, nil
+	}
 	disconnected := func() {
 		if stopEvents != nil {
 			stopEvents()
@@ -304,6 +393,20 @@ func (c *Controller) Run(ctx context.Context) {
 				disconnected()
 			}
 		case job := <-c.Jobs:
+			if job.Method == "$worker.update" {
+				if service != nil && service.Phase == WorkerUpdating {
+					continue
+				}
+				if client != nil && job.epoch != "" && job.epoch != client.Epoch {
+					continue
+				}
+				restart, err := tryWorkerUpdate(true)
+				if restart || err != nil {
+					disconnected()
+					lastAttempt = time.Time{}
+				}
+				continue
+			}
 			if job.Method == "$reconnect" {
 				disconnected()
 				lastAttempt = time.Time{}
@@ -371,6 +474,12 @@ func (c *Controller) Run(ctx context.Context) {
 			}
 		case <-ticker.C:
 			if client == nil {
+				if service != nil && service.Phase == WorkerUpdating && !updateStarted.IsZero() && time.Since(updateStarted) > 35*time.Second {
+					state := *service
+					state.Phase = WorkerUpdateFailed
+					state.Message = "更新后未能重新连接，可重试启动；原数据和更新前备份已保留"
+					publishService(&state)
+				}
 				if time.Since(lastAttempt) < time.Second {
 					continue
 				}
@@ -407,6 +516,14 @@ func (c *Controller) Run(ctx context.Context) {
 				c.epoch = client.Epoch
 				c.mu.Unlock()
 				minor := client.Minor
+				stageCandidate(false)
+				state := newWorkerService(client.Worker, candidate)
+				if candidateError != nil {
+					state.Phase = WorkerUpdateFailed
+					state.Message = candidateError.Error()
+				}
+				publishService(state)
+				updateStarted = time.Time{}
 				epoch := client.Epoch
 				c.post(func(m *Model) {
 					m.WorkerMinor = minor
@@ -436,6 +553,14 @@ func (c *Controller) Run(ctx context.Context) {
 				lastReadiness = time.Now()
 				sample := &DeviceTiming{Milliseconds: float64(time.Since(started)) / float64(time.Millisecond), ObservedAt: time.Now()}
 				c.post(func(m *Model) { m.Readiness = ready; m.ConnectionTiming = sample })
+			}
+			if c.WorkerAutoUpdate && service.Automatic() && time.Since(lastUpdateAttempt) > 5*time.Second {
+				restart, err := tryWorkerUpdate(false)
+				if restart || err != nil {
+					disconnected()
+					lastAttempt = time.Time{}
+					continue
+				}
 			}
 			// Older workers retain their existing polling path until upgraded.
 			if eventResults == nil {

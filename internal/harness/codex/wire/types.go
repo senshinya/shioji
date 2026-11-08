@@ -1,4 +1,5 @@
-// Package wire is private to the Codex adapter's pinned 0.166.0 protocol.
+// Package wire is private to the Codex adapter. Shapes originate from the
+// recorded 0.166.0 baseline and are checked against the installed protocol.
 package wire
 
 import "encoding/json"

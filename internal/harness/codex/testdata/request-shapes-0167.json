@@ -1,0 +1,413 @@
+{
+  "oneOf": [
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "initialize"
+          ]
+        },
+        "params": {
+          "properties": {
+            "capabilities": {},
+            "clientInfo": {}
+          },
+          "required": [
+            "clientInfo"
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/start"
+          ]
+        },
+        "params": {
+          "properties": {
+            "allowProviderModelFallback": {},
+            "approvalPolicy": {},
+            "approvalsReviewer": {},
+            "baseInstructions": {},
+            "config": {},
+            "cwd": {},
+            "daybreakEnabled": {},
+            "developerInstructions": {},
+            "dynamicTools": {},
+            "environments": {},
+            "ephemeral": {},
+            "experimentalRawEvents": {},
+            "historyMode": {},
+            "mockExperimentalField": {},
+            "model": {},
+            "modelProvider": {},
+            "multiAgentMode": {},
+            "permissions": {},
+            "personality": {},
+            "projectId": {},
+            "runtimeWorkspaceRoots": {},
+            "sandbox": {},
+            "selectedCapabilityRoots": {},
+            "serviceName": {},
+            "serviceTier": {},
+            "sessionStartSource": {},
+            "threadSource": {}
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/resume"
+          ]
+        },
+        "params": {
+          "properties": {
+            "approvalPolicy": {},
+            "approvalsReviewer": {},
+            "baseInstructions": {},
+            "config": {},
+            "cwd": {},
+            "developerInstructions": {},
+            "excludeTurns": {},
+            "history": {},
+            "initialTurnsPage": {},
+            "model": {},
+            "modelProvider": {},
+            "path": {},
+            "permissions": {},
+            "personality": {},
+            "runtimeWorkspaceRoots": {},
+            "sandbox": {},
+            "serviceTier": {},
+            "threadId": {}
+          },
+          "required": [
+            "threadId"
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/fork"
+          ]
+        },
+        "params": {
+          "properties": {
+            "approvalPolicy": {},
+            "approvalsReviewer": {},
+            "attachToSource": {},
+            "baseInstructions": {},
+            "beforeTurnId": {},
+            "config": {},
+            "cwd": {},
+            "deferGoalContinuation": {},
+            "developerInstructions": {},
+            "ephemeral": {},
+            "excludeTurns": {},
+            "experimentalDisablePredictionMcp": {},
+            "experimentalPredictionMode": {},
+            "lastTurnId": {},
+            "model": {},
+            "modelProvider": {},
+            "path": {},
+            "permissions": {},
+            "runtimeWorkspaceRoots": {},
+            "sandbox": {},
+            "serviceTier": {},
+            "threadId": {},
+            "threadSource": {}
+          },
+          "required": [
+            "threadId"
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/unsubscribe"
+          ]
+        },
+        "params": {
+          "properties": {
+            "threadId": {}
+          },
+          "required": [
+            "threadId"
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/loaded/list"
+          ]
+        },
+        "params": {
+          "properties": {
+            "cursor": {},
+            "limit": {}
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/read"
+          ]
+        },
+        "params": {
+          "properties": {
+            "includeTurns": {},
+            "threadId": {}
+          },
+          "required": [
+            "threadId"
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/turns/list"
+          ]
+        },
+        "params": {
+          "properties": {
+            "cursor": {},
+            "itemsView": {},
+            "limit": {},
+            "sortDirection": {},
+            "threadId": {}
+          },
+          "required": [
+            "threadId"
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "skills/list"
+          ]
+        },
+        "params": {
+          "properties": {
+            "cwds": {},
+            "forceReload": {}
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "turn/start"
+          ]
+        },
+        "params": {
+          "properties": {
+            "additionalContext": {},
+            "approvalPolicy": {},
+            "approvalsReviewer": {},
+            "clientUserMessageId": {},
+            "collaborationMode": {},
+            "cwd": {},
+            "cyberAccessProgram": {},
+            "disabledPluginIds": {},
+            "effort": {},
+            "environments": {},
+            "input": {},
+            "model": {},
+            "multiAgentMode": {},
+            "outputSchema": {},
+            "parentTurnId": {},
+            "permissions": {},
+            "personality": {},
+            "responsesapiClientMetadata": {},
+            "responsesapiClientMetadataPatch": {},
+            "rootTurnId": {},
+            "runtimeWorkspaceRoots": {},
+            "sandboxPolicy": {},
+            "serviceTier": {},
+            "serviceTierForTurn": {},
+            "summary": {},
+            "threadId": {},
+            "toolOutput": {},
+            "turnTrigger": {}
+          },
+          "required": [
+            "input",
+            "threadId"
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "turn/steer"
+          ]
+        },
+        "params": {
+          "properties": {
+            "additionalContext": {},
+            "clientUserMessageId": {},
+            "expectedTurnId": {},
+            "input": {},
+            "responsesapiClientMetadata": {},
+            "responsesapiClientMetadataPatch": {},
+            "threadId": {}
+          },
+          "required": [
+            "expectedTurnId",
+            "input",
+            "threadId"
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "turn/interrupt"
+          ]
+        },
+        "params": {
+          "properties": {
+            "threadId": {},
+            "turnId": {}
+          },
+          "required": [
+            "threadId",
+            "turnId"
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "model/list"
+          ]
+        },
+        "params": {
+          "properties": {
+            "cursor": {},
+            "includeHidden": {},
+            "limit": {}
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "permissionProfile/list"
+          ]
+        },
+        "params": {
+          "properties": {
+            "cursor": {},
+            "cwd": {},
+            "limit": {}
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "collaborationMode/list"
+          ]
+        },
+        "params": {
+          "properties": {},
+          "required": []
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "environment/add"
+          ]
+        },
+        "params": {
+          "properties": {
+            "authBearerToken": {},
+            "connectTimeoutMs": {},
+            "environmentId": {},
+            "execServerUrl": {},
+            "skills": {},
+            "websocketRequestId": {}
+          },
+          "required": [
+            "environmentId",
+            "execServerUrl"
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "config/read"
+          ]
+        },
+        "params": {
+          "properties": {
+            "cwd": {},
+            "includeLayers": {}
+          },
+          "required": []
+        }
+      }
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "configRequirements/read"
+          ]
+        },
+        "params": {
+          "properties": {},
+          "required": []
+        }
+      }
+    }
+  ],
+  "definitions": {}
+}

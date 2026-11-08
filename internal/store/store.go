@@ -55,7 +55,7 @@ func Open(path string) (*Store, error) {
 	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return fail(err)
 	}
-	if version > 7 {
+	if version > SchemaVersion {
 		return fail(fmt.Errorf("database schema %d is newer than supported schema 7", version))
 	}
 	tx, err := db.Begin()

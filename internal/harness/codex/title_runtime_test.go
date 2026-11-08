@@ -12,6 +12,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/managedexec"
+	"shioji/internal/testutil"
 	"strings"
 	"testing"
 	"time"
@@ -89,5 +90,43 @@ func TestRealCodexTitleRequestIsEphemeralReadOnlyAndDoesNotLoadWorkspaceTools(t 
 	entries, _ := filepath.Glob(filepath.Join(home, "sessions", "*", "*", "*", "*.jsonl"))
 	if len(entries) > 0 {
 		t.Fatal("auxiliary title was saved as a conversation", entries)
+	}
+}
+
+func TestAdapterRetainsUpgradeableAliasForFutureTitleTasks(t *testing.T) {
+	binary, err := exec.LookPath("codex")
+	if err != nil {
+		t.Skip("Codex unavailable")
+	}
+	p := testutil.NewProvider(t)
+	dir := t.TempDir()
+	old := filepath.Join(dir, "old-codex")
+	next := filepath.Join(dir, "new-codex")
+	alias := filepath.Join(dir, "codex")
+	wrapper := []byte("#!/bin/sh\nexec '" + strings.ReplaceAll(binary, "'", "'\\''") + "' \"$@\"\n")
+	for _, path := range []string{old, next} {
+		if err = os.WriteFile(path, wrapper, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = os.Symlink(old, alias); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	started, err := (Adapter{Executable: alias, Home: p.Home}).Start(ctx, harness.StartOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer started.Close(context.Background())
+	r := started.(*adapterRuntime)
+	os.Remove(alias)
+	os.Symlink(next, alias)
+	os.Remove(old)
+	if r.titleAdapter.Executable != alias {
+		t.Fatal("future title task pinned to removed image", r.titleAdapter.Executable)
+	}
+	if _, err = exec.LookPath(r.titleAdapter.Executable); err != nil {
+		t.Fatal("upgraded executable unavailable", err)
 	}
 }

@@ -47,7 +47,13 @@ func (s *Server) titleLoop() {
 		}
 	}
 	for s.ctx.Err() == nil {
+		s.maintenance.RLock()
+		if s.updating.Load() {
+			s.maintenance.RUnlock()
+			return
+		}
 		job, err := s.store.ClaimTitleGeneration()
+		s.maintenance.RUnlock()
 		if errors.Is(err, sql.ErrNoRows) {
 			select {
 			case <-s.ctx.Done():

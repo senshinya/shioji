@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"shioji/internal/domain"
+	"shioji/internal/harness"
 	"shioji/internal/harness/codex/wire"
 	"sort"
 	"strings"
 )
 
 func (r *adapterRuntime) Skills(ctx context.Context, launch domain.LaunchContext) (domain.SkillCatalog, error) {
+	if !r.supports("skills/list") {
+		return domain.SkillCatalog{}, harness.Unsupported("skills")
+	}
 	var response struct {
 		Data []struct {
 			CWD    string

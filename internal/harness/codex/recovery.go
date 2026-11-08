@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"shioji/internal/domain"
+	"shioji/internal/harness"
 	"shioji/internal/harness/codex/wire"
 )
 
@@ -20,6 +21,9 @@ func (r *Runtime) Stopped() bool {
 // Inspect does not resume a thread or start a turn. Read/list can also expose
 // persisted interrupted tails after a previous app-server has exited.
 func (r *Runtime) Inspect(ctx context.Context, s domain.Session) (domain.RecoveryHistory, error) {
+	if !r.supports("thread/read") || !r.supports("thread/turns/list") {
+		return domain.RecoveryHistory{}, harness.Unsupported("recovery")
+	}
 	out := domain.RecoveryHistory{Inputs: map[string]string{}}
 	var meta struct {
 		Thread struct {

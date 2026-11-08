@@ -20,6 +20,7 @@ type InspectorLayout struct {
 }
 
 type Model struct {
+	WorkerService        *WorkerService
 	DraftSkills          map[string][]DraftSkill
 	homeConfigContext    string
 	HomeHarnesses        map[string]string

@@ -1,7 +1,8 @@
 # Shioji
 
 Native Apple Silicon macOS controller for device-owned coding-agent workspaces.
-The first developer build runs a self-contained local Go worker and Codex 0.166.0.
+The developer build runs a self-contained local Go worker and an installed Codex CLI.
+The adapter checks the installed App Server protocol and exposes its supported capabilities rather than requiring one exact CLI version. The recorded protocol baseline remains 0.166.0; the current adapter also passes live tests with 0.167.0.
 It uses MyGo native UI and SQLite; no WebView or herdr-core runtime is required.
 
 ```sh

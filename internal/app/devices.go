@@ -23,6 +23,7 @@ type DeviceTiming struct {
 }
 
 type DeviceState struct {
+	WorkerService   *WorkerService
 	Timing          *DeviceTiming
 	sourceToken     string
 	Snapshot        domain.Snapshot
@@ -197,6 +198,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	p.Snapshot.PendingRequests = slices.Clone(state.Snapshot.PendingRequests)
 	p.Connected, p.ConnectionEpoch = state.Connected, state.ConnectionEpoch
 	p.Readiness, p.WorkerMinor, p.Error = state.Readiness, state.WorkerMinor, state.Error
+	p.WorkerService = state.WorkerService
 	p.KnownDeviceID = state.Snapshot.DeviceID
 	p.ConnectionTiming = state.Timing
 	p.Details = map[string]domain.SessionDetail{}
@@ -244,6 +246,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	state.Timing = p.ConnectionTiming
 	state.Connected, state.ConnectionEpoch = p.Connected, p.ConnectionEpoch
 	state.Readiness, state.WorkerMinor, state.Error = p.Readiness, p.WorkerMinor, p.Error
+	state.WorkerService = p.WorkerService
 	for id := range owned {
 		delete(m.Details, id)
 	}
@@ -292,6 +295,7 @@ func (m *Model) RefreshDevices() {
 			m.Sequence, m.KnownDeviceID = state.Sequence, s.DeviceID
 			m.Connected, m.ConnectionEpoch = state.Connected, state.ConnectionEpoch
 			m.Readiness, m.WorkerMinor = state.Readiness, state.WorkerMinor
+			m.WorkerService = state.WorkerService
 			m.ConnectionTiming = state.Timing
 		}
 	}
@@ -299,6 +303,7 @@ func (m *Model) RefreshDevices() {
 		m.Connected = false
 		m.ConnectionEpoch = ""
 		m.Readiness = domain.Readiness{State: "unavailable"}
+		m.WorkerService = nil
 	}
 	m.Snapshot = all
 }

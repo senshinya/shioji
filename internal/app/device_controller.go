@@ -33,6 +33,8 @@ func NewDeviceController(directory, localDeviceID string, connections []DeviceCo
 	root := NewController(directory)
 	root.fleet = &deviceFleet{sources: map[string]*deviceSource{}, workerBinary: workerBinary}
 	local := NewController(directory)
+	local.WorkerBinary = workerBinary
+	local.WorkerAutoUpdate = true
 	local.ExpectedDeviceID = localDeviceID
 	local.RestoreOperations = restored["local"]
 	root.fleet.sources["local"] = &deviceSource{controller: local}
@@ -209,5 +211,14 @@ func (c *Controller) runDevices(ctx context.Context) {
 				apply(job, nil, fmt.Errorf("设备操作队列繁忙，请重试"))
 			}
 		}
+	}
+}
+
+// The developer no-start mode also leaves lifecycle management to its caller.
+func (c *Controller) SetWorkerAutoUpdate(enabled bool) {
+	if c.fleet != nil {
+		c.fleet.sources["local"].controller.WorkerAutoUpdate = enabled
+	} else {
+		c.WorkerAutoUpdate = enabled
 	}
 }

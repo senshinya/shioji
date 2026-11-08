@@ -1,0 +1,102 @@
+package store
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"shioji/internal/domain"
+)
+
+const SchemaVersion = 7
+
+// The caller fences dispatch and commands before this final database check.
+// VACUUM INTO reads SQLite's committed snapshot, including its WAL.
+func (s *Store) PrepareWorkerUpdate(backup string) (domain.WorkerUpdateResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var blocked bool
+	err := s.db.QueryRow(`SELECT
+ EXISTS(SELECT 1 FROM sessions WHERE COALESCE(json_extract(body,'$.status'),'') NOT IN ('idle','completed','interrupted','failed','abandoned') OR COALESCE(json_extract(body,'$.executionGuard'),'')!='')
+ OR EXISTS(SELECT 1 FROM operations WHERE state IN ('accepted','dispatched','indeterminate'))
+ OR EXISTS(SELECT 1 FROM requests WHERE json_extract(body,'$.state') IN ('pending','submitting'))
+ OR EXISTS(SELECT 1 FROM history_operations WHERE json_extract(body,'$.state') IN ('prepared','forked'))
+ OR EXISTS(SELECT 1 FROM title_jobs WHERE state='running')`).Scan(&blocked)
+	if err != nil {
+		return domain.WorkerUpdateResult{}, err
+	}
+	if blocked {
+		return domain.WorkerUpdateResult{Reason: "有任务、待处理请求或执行状态尚未确认，空闲后更新"}, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return domain.WorkerUpdateResult{}, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query("SELECT body FROM queues")
+	if err != nil {
+		return domain.WorkerUpdateResult{}, err
+	}
+	var queues []domain.QueueState
+	for rows.Next() {
+		var body []byte
+		if err = rows.Scan(&body); err != nil {
+			rows.Close()
+			return domain.WorkerUpdateResult{}, err
+		}
+		var q domain.QueueState
+		if err = json.Unmarshal(body, &q); err != nil {
+			rows.Close()
+			return domain.WorkerUpdateResult{}, err
+		}
+		if len(q.Items) > 0 && !q.Paused {
+			queues = append(queues, q)
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return domain.WorkerUpdateResult{}, err
+	}
+	for _, q := range queues {
+		q.Paused = true
+		q.Reason = "执行服务更新，队列已保留"
+		q.Revision++
+		if err = putQueue(tx, q); err != nil {
+			return domain.WorkerUpdateResult{}, err
+		}
+	}
+	if err = s.commit(tx); err != nil {
+		return domain.WorkerUpdateResult{}, err
+	}
+	f, err := os.OpenFile(backup, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return domain.WorkerUpdateResult{}, err
+	}
+	f.Close()
+	if _, err = s.db.Exec("VACUUM INTO ?", backup); err != nil {
+		os.Remove(backup)
+		return domain.WorkerUpdateResult{}, err
+	}
+	file, err := os.OpenFile(backup, os.O_RDWR, 0600)
+	if err != nil {
+		return domain.WorkerUpdateResult{}, err
+	}
+	err = file.Sync()
+	closeErr := file.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return domain.WorkerUpdateResult{}, err
+	}
+	dir, err := os.Open(filepath.Dir(backup))
+	if err != nil {
+		return domain.WorkerUpdateResult{}, err
+	}
+	err = dir.Sync()
+	dir.Close()
+	if err != nil {
+		return domain.WorkerUpdateResult{}, err
+	}
+	return domain.WorkerUpdateResult{Ready: true, Backup: backup}, nil
+}

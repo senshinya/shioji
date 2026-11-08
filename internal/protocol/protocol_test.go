@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"net"
 	"shioji/internal/protocol"
 	"strings"
@@ -102,5 +103,37 @@ func TestCodecRejectsOversizedWrites(t *testing.T) {
 	err := protocol.NewCodec(&out, &out).Write(protocol.Frame{Type: strings.Repeat("x", protocol.MaxFrame)})
 	if err == nil || out.Len() != 0 {
 		t.Fatal("oversized write reached transport")
+	}
+}
+
+func TestWelcomeRetainsActualWorkerBuildWithoutRequiringLegacyMetadata(t *testing.T) {
+	for _, metadata := range []bool{false, true} {
+		a, b := net.Pipe()
+		go func() {
+			defer b.Close()
+			codec := protocol.NewCodec(b, b)
+			var hello protocol.Frame
+			if codec.Read(&hello) != nil {
+				return
+			}
+			f := map[string]any{"type": "welcome", "major": protocol.Major, "minor": protocol.Minor, "nonce": hello.Nonce, "deviceId": "device", "epoch": "epoch"}
+			if metadata {
+				f["worker"] = map[string]any{"buildId": "running-build", "revision": "revision", "builtAt": 123, "safeUpdate": true}
+			}
+			data, _ := json.Marshal(f)
+			binary.Write(b, binary.BigEndian, uint32(len(data)))
+			b.Write(data)
+		}()
+		client, err := protocol.Connect(context.Background(), a, "device")
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := json.Marshal(client)
+		var fields map[string]json.RawMessage
+		json.Unmarshal(data, &fields)
+		if metadata && !bytes.Contains(fields["Worker"], []byte("running-build")) {
+			t.Fatal("welcome lost the actual worker build", string(data))
+		}
+		client.Close()
 	}
 }

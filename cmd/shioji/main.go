@@ -44,6 +44,7 @@ func run() error {
 		restored[key] = append(restored[key], id)
 	}
 	controller := app.NewDeviceController(*dir, model.LocalDeviceID, model.Connections, *workerBin, restored)
+	controller.SetWorkerAutoUpdate(!*noStart)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {

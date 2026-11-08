@@ -183,7 +183,7 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 								n.Row(c).FillWidth().MinHeight(32).Gap(16).AlignItems(n.Baseline).Children(func() {
 									n.Text(c, label).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).PaddingY(6)
 									n.Spacer(c).Grow(1)
-									n.Text(c, value).FontSize(12).FixedLineHeight(20).TextAlign(n.End).MaxWidth(400).PaddingY(6).Selectable()
+									n.Text(c, value).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)}).FontSize(12).FixedLineHeight(20).TextAlign(n.End).MaxWidth(400).PaddingY(6).Selectable()
 								})
 								n.Column(c).Height(1).FillWidth().Background(t.Border)
 							})
@@ -218,8 +218,14 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 							workerStatus := "未连接"
 							if state.Connected {
 								workerStatus = "已就绪"
+								if state.WorkerService != nil {
+									workerStatus = state.WorkerService.Label()
+								}
+							} else if state.WorkerService != nil && (state.WorkerService.Phase == app.WorkerUpdating || state.WorkerService.Phase == app.WorkerUpdateFailed) {
+								workerStatus = state.WorkerService.Label()
 							}
 							meta("Shioji worker", workerStatus)
+							v.workerUpdateDetails(c, t, key, state, meta)
 							runtime := "未就绪"
 							if state.Readiness.State == "ready" {
 								runtime = "已就绪"

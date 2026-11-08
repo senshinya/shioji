@@ -20,10 +20,12 @@ import (
 	"shioji/internal/harness"
 	"shioji/internal/managedexec"
 	"shioji/internal/protocol"
+	"shioji/internal/runtimebuild"
 	"shioji/internal/store"
 )
 
 type Config struct {
+	ReplaceWorker                                   func(domain.WorkerReplacement) error `json:"-"`
 	Directory, LauncherExecutable, DefaultHarnessID string
 	Harnesses                                       []harness.Adapter `json:"-"`
 }
@@ -33,6 +35,9 @@ type EventsQuery = protocol.EventsQuery
 type EventPage = protocol.EventPage
 type AnswerInput = protocol.AnswerInput
 type Server struct {
+	build           domain.WorkerBuild
+	maintenance     sync.RWMutex
+	updating        atomic.Bool
 	runtimeMu       sync.RWMutex
 	toolMu          sync.Mutex
 	tools           map[string]recoveryToolProcess
@@ -61,6 +66,7 @@ type Server struct {
 	conns           map[net.Conn]bool
 	wg              sync.WaitGroup
 	once            sync.Once
+	closeErr        error
 	ctx             context.Context
 	cancel          context.CancelFunc
 }
@@ -99,6 +105,11 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	}
 	workerCtx, cancel := context.WithCancel(context.Background())
 	s := &Server{attachments: attachments.New(filepath.Join(config.Directory, "attachments")), config: config, owner: owner, listener: listener, store: db, ctx: workerCtx, cancel: cancel, queueWake: make(chan struct{}, 1), recoveryWake: make(chan struct{}, 1), recoveryChecked: map[string]recoveryAttempt{}, bound: map[string]bool{}, conns: map[net.Conn]bool{}}
+	s.build = runtimebuild.Current()
+	s.build.Schema = store.SchemaVersion
+	s.build.SafeUpdate = config.ReplaceWorker != nil
+	s.build.ContextUsage = true
+	s.build.OutputFiles = true
 	s.tools = map[string]recoveryToolProcess{}
 	s.titleWake = make(chan struct{}, 1)
 	s.runtimes = map[string]harness.Runtime{}
@@ -171,7 +182,7 @@ func (s *Server) serveConnection(conn net.Conn) {
 	if authorizeLocal(conn) != nil {
 		return
 	}
-	codec, epoch, err := protocol.Welcome(conn, s.store.DeviceID())
+	codec, epoch, err := protocol.Welcome(conn, s.store.DeviceID(), s.build)
 	if err != nil {
 		return
 	}
@@ -191,9 +202,17 @@ func (s *Server) serveConnection(conn net.Conn) {
 			requestedRecovery = true
 		}
 		out, callErr := s.handle(f.Method, f.Body)
+		stopForUpdate := f.Method == "worker.update" && s.updating.Load()
+		if stopForUpdate {
+			defer func() { s.cancel(); s.listener.Close() }()
+		}
 		result := protocol.Frame{Type: "result", ID: f.ID, Epoch: epoch, DeviceID: s.store.DeviceID()}
 		if callErr != nil {
 			result.Error = callErr.Error()
+			var remote *protocol.RemoteError
+			if errors.As(callErr, &remote) {
+				result.ErrorCode = remote.Code
+			}
 			var unsupported *harness.UnsupportedError
 			if errors.As(callErr, &unsupported) {
 				result.ErrorCode = "unsupportedCapability"
@@ -217,10 +236,32 @@ func (s *Server) serveConnection(conn net.Conn) {
 				return
 			}
 		}
+		if stopForUpdate {
+			return
+		}
 	}
 }
 func decode[T any](body []byte) (T, error) { var v T; err := json.Unmarshal(body, &v); return v, err }
 func (s *Server) handle(method string, body []byte) (any, error) {
+	if method == "worker.info" {
+		return s.build, nil
+	}
+	if method == "worker.update" {
+		in, err := decode[domain.WorkerReplacement](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.prepareWorkerUpdate(in)
+	}
+	// Long polls do not mutate state and must not hold up maintenance admission.
+	if method != "events" && method != "events.watch" {
+		s.maintenance.RLock()
+		defer s.maintenance.RUnlock()
+		if err := s.updateAdmission(); err != nil {
+			return nil, err
+		}
+	}
+
 	switch method {
 	case "skills.list":
 		q, err := decode[protocol.SkillQuery](body)
@@ -530,6 +571,9 @@ func (s *Server) submit(in domain.Submission) (domain.Operation, error) {
 	return s.submitLocked(in, 0, false)
 }
 func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immediate bool) (domain.Operation, error) {
+	if err := s.updateAdmission(); err != nil {
+		return domain.Operation{}, err
+	}
 	existing, err := s.store.Operation(in.OperationID)
 	if err == nil {
 		_ = existing
@@ -810,8 +854,8 @@ func (s *Server) onEvent(e domain.Event) error {
 	return err
 }
 func (s *Server) Close() error {
-	var result error
 	s.once.Do(func() {
+		var result error
 		s.cancel()
 		s.listener.Close()
 		s.mu.Lock()
@@ -844,8 +888,9 @@ func (s *Server) Close() error {
 		s.wg.Wait()
 		result = errors.Join(result, s.store.Close())
 		s.owner.Close()
+		s.closeErr = result
 	})
-	return result
+	return s.closeErr
 }
 func DefaultDirectory() (string, error) {
 	home, err := os.UserHomeDir()

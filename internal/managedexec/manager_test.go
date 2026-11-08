@@ -417,3 +417,117 @@ func TestReapRejectsChangedAnchorIdentity(t *testing.T) {
 	}
 	m.live[ticket.ID] = liveLaunch{s, ticket}
 }
+
+func TestIdleFenceRejectsPendingLaunchAndPreservesItsAdmission(t *testing.T) {
+	manager, err := New(t.TempDir(), os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := manager.Begin("idle-update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope.Bind("executor", os.Getpid())
+	if _, err = scope.Prepare("executor", "pending"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = scope.FenceIfIdle(); err == nil || !scope.Admitting() {
+		t.Fatal("pending launch was fenced", err)
+	}
+}
+
+func TestIdleFenceIsReversibleBeforeWorkerReplacement(t *testing.T) {
+	manager, _ := New(t.TempDir(), os.Args[0])
+	scope, _ := manager.Begin("idle-update")
+	undo, err := scope.FenceIfIdle()
+	if err != nil || undo == nil || scope.Admitting() {
+		t.Fatal("idle generation not fenced", err)
+	}
+	if err = undo(); err != nil || !scope.Admitting() {
+		t.Fatal("failed update could not restore admission", err)
+	}
+}
+
+func TestIdleFenceDoesNotInterruptBackgroundDescendants(t *testing.T) {
+	manager, _ := New(t.TempDir(), os.Args[0])
+	scope, _ := manager.Begin("background-update")
+	scope.Bind("worker", os.Getpid())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd, stdin, stdout, err := scope.StartOwned(ctx, "runtime", []string{"/bin/sh", "-c", "sleep 60 & echo ready; wait"}, []string{"PATH=/usr/bin:/bin"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cmd.Wait()
+	defer scope.Stop(context.Background())
+	defer stdin.Close()
+	if _, err = bufio.NewReader(stdout).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = scope.FenceIfIdle(); err == nil || !scope.Admitting() {
+		t.Fatal("background process was treated as idle", err)
+	}
+	if err = cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatal("idle check interrupted the process", err)
+	}
+}
+
+func TestDeferredUpdateRestoresLiveMonitoringAfterReap(t *testing.T) {
+	manager, _ := New(t.TempDir(), os.Args[0])
+	scope, _ := manager.Begin("deferred-update")
+	scope.Bind("worker", os.Getpid())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd, stdin, _, err := scope.StartOwned(ctx, "runtime", []string{"/bin/sleep", "60"}, []string{"PATH=/bin:/usr/bin"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { scope.Stop(context.Background()); cmd.Wait() }()
+	defer stdin.Close()
+	before := len(manager.live)
+	undo, err := scope.FenceIfIdle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = manager.Reap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = undo(); err != nil {
+		t.Fatal(err)
+	}
+	if before != 1 || len(manager.live) != before {
+		t.Fatal("deferred update lost live ownership monitoring", before, len(manager.live))
+	}
+	// A later ownership failure must still be observable by the normal reaper.
+	for id, launch := range manager.live {
+		launch.ticket.Anchor.Usec++
+		manager.live[id] = launch
+	}
+	if err = manager.Reap(ctx); err == nil {
+		t.Fatal("restored scope no longer detects changed ownership")
+	}
+}
+
+func TestDeferredUpdateCannotReopenAnExplicitlyStoppedGeneration(t *testing.T) {
+	manager, _ := New(t.TempDir(), os.Args[0])
+	scope, _ := manager.Begin("stopped-update")
+	scope.Bind("worker", os.Getpid())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd, stdin, _, err := scope.StartOwned(ctx, "runtime", []string{"/bin/sleep", "60"}, []string{"PATH=/bin:/usr/bin"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cmd.Wait()
+	defer stdin.Close()
+	undo, err := scope.FenceIfIdle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = scope.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = undo(); err == nil || scope.Admitting() {
+		t.Fatal("deferred update reopened a permanently stopped generation", err)
+	}
+}

@@ -16,8 +16,13 @@ func (a Adapter) Descriptor() domain.HarnessDescriptor {
 	return domain.HarnessDescriptor{ID: "codex", Name: "Codex", Icon: "openai"}
 }
 func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.Runtime, error) {
+	titleAdapter := a
+	resolved, _, err := compatibleExecutable(ctx, a.Executable)
+	if err != nil {
+		return nil, err
+	}
+	a.Executable = resolved
 	var executor *Executor
-	var err error
 	if opts.Scope != nil {
 		executor, err = StartExecutor(ctx, ExecutorOptions{Executable: a.Executable, Home: a.Home, Scope: opts.Scope, OnLost: opts.OnLost})
 		if err != nil {
@@ -34,7 +39,7 @@ func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.
 		}
 		return nil, err
 	}
-	return &adapterRuntime{Runtime: r, executor: executor, descriptor: a.Descriptor(), titleAdapter: a}, nil
+	return &adapterRuntime{Runtime: r, executor: executor, descriptor: a.Descriptor(), titleAdapter: titleAdapter}, nil
 }
 
 type adapterRuntime struct {
@@ -49,7 +54,9 @@ type adapterRuntime struct {
 func (r *adapterRuntime) Readiness() domain.Readiness {
 	ready := r.Runtime.Readiness()
 	ready.HarnessID = r.descriptor.ID
-	ready.Capabilities = domain.HarnessCapabilities{Skills: true, Steer: true, Interrupt: true, Recovery: true, Continue: true, Fork: true, Restart: true}
+	history := r.supports("thread/read") && r.supports("thread/turns/list")
+	fork := history && r.supports("thread/fork") && r.supports("thread/unsubscribe") && r.supports("thread/loaded/list")
+	ready.Capabilities = domain.HarnessCapabilities{Skills: r.supports("skills/list"), Steer: r.supports("turn/steer"), Interrupt: r.supports("turn/interrupt"), Recovery: history, Continue: history, Fork: fork, Restart: fork}
 	ready.PermissionChoices = []domain.OptionChoice{{ID: "read-only", Name: "只读", Description: "仅查看"}, {ID: "default", Name: "默认权限", Description: "按需请求批准"}, {ID: "auto-approve", Name: "自动批准", Description: "沙盒内自动批准"}, {ID: "yolo", Name: "YOLO", Description: "不限制沙盒或批准"}}
 	ready.Harnesses = []domain.HarnessInfo{{ID: r.descriptor.ID, Name: r.descriptor.Name, Icon: r.descriptor.Icon, State: ready.State, Error: ready.Error, Models: ready.Models, Permissions: ready.Permissions, PermissionChoices: ready.PermissionChoices, Plan: ready.Plan, Capabilities: ready.Capabilities}}
 	return ready
