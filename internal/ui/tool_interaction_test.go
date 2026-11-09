@@ -44,14 +44,15 @@ func TestToolAndTokenHoverOnlyChangesText(t *testing.T) {
 			before := copyFrame(ui)
 			ui.Move(r.X+r.W/2, r.Y+r.H/2)
 			ui.Advance(180 * time.Millisecond)
+			after := ui.Image()
 			x, y := int(r.X+r.W/2), int(r.Y+2)
-			if before.RGBAAt(x, y) != ui.Image().RGBAAt(x, y) {
+			if before.RGBAAt(x, y) != after.RGBAAt(x, y) {
 				t.Fatalf("%s still paints a hover background (dark=%v)", label, dark)
 			}
 			changed := false
 			for y := int(r.Y + 4); y < int(r.Y+r.H-3); y++ {
 				for x := int(r.X + 20); x < int(r.X+110) && x < int(r.X+r.W-4); x++ {
-					changed = changed || before.RGBAAt(x, y) != ui.Image().RGBAAt(x, y)
+					changed = changed || before.RGBAAt(x, y) != after.RGBAAt(x, y)
 				}
 			}
 			if !changed {

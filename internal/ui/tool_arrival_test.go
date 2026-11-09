@@ -83,9 +83,10 @@ func TestRunningCommandOutputAlwaysShowsItsLastLine(t *testing.T) {
 		t.Helper()
 		container, _ := ui.Find("命令输出检查")
 		ink := 0
+		frame := ui.Image()
 		for y := int(container.Y + container.H - 26); y < int(container.Y+container.H-8); y++ {
 			for x := int(container.X + 10); x < int(container.X+180); x++ {
-				if ui.Image().RGBAAt(x, y).R < 150 {
+				if frame.RGBAAt(x, y).R < 150 {
 					ink++
 				}
 			}
@@ -110,9 +111,10 @@ func TestRunningCommandOutputAlwaysShowsItsLastLine(t *testing.T) {
 	before := copyFrame(ui)
 	ui.Advance(time.Second)
 	// Compare content, excluding the independently fading overlay scrollbar.
+	after := ui.Image()
 	for y := 28; y < 188; y++ {
 		for x := 10; x < 580; x++ {
-			if before.RGBAAt(x, y) != ui.Image().RGBAAt(x, y) {
+			if before.RGBAAt(x, y) != after.RGBAAt(x, y) {
 				t.Fatal("completed output keeps forcing the tail")
 			}
 		}
@@ -192,15 +194,16 @@ func TestCommandAppendKeepsExistingLinesStillWhileTheViewportGrows(t *testing.T)
 	ui.Frame()
 	middleInk := 0
 	for frame := 0; frame < 12; frame++ {
+		current := ui.Image()
 		for y := 36; y < 54; y++ {
 			for x := 10; x < 150; x++ {
-				if before.RGBAAt(x, y) != ui.Image().RGBAAt(x, y) {
+				if before.RGBAAt(x, y) != current.RGBAAt(x, y) {
 					t.Fatal("growing viewport scrolls away and repaints existing output", frame)
 				}
 			}
 		}
 		if frame == 3 {
-			middleInk = toolLabelContrast(ui.Image(), n.Rect{X: 10, Y: 54, W: 150, H: 18}, false)
+			middleInk = toolLabelContrast(current, n.Rect{X: 10, Y: 54, W: 150, H: 18}, false)
 		}
 		ui.Advance(time.Second / 60)
 	}
@@ -226,9 +229,10 @@ func TestCommandAppendAtHeightLimitGlidesInsteadOfJumping(t *testing.T) {
 	before := copyFrame(ui)
 	item.Text += "new final line\n"
 	ui.Frame()
+	firstFrame := ui.Image()
 	for y := 40; y < 120; y++ {
 		for x := 10; x < 180; x++ {
-			if before.RGBAAt(x, y) != ui.Image().RGBAAt(x, y) {
+			if before.RGBAAt(x, y) != firstFrame.RGBAAt(x, y) {
 				t.Fatal("appended output jumps to a new offset on its first frame")
 			}
 		}
@@ -237,9 +241,10 @@ func TestCommandAppendAtHeightLimitGlidesInsteadOfJumping(t *testing.T) {
 	middle := copyFrame(ui)
 	ui.Advance(time.Second)
 	changed := false
+	finalFrame := ui.Image()
 	for y := 40; y < 120; y++ {
 		for x := 10; x < 180; x++ {
-			changed = changed || middle.RGBAAt(x, y) != ui.Image().RGBAAt(x, y)
+			changed = changed || middle.RGBAAt(x, y) != finalFrame.RGBAAt(x, y)
 		}
 	}
 	if !changed {

@@ -27,9 +27,10 @@ func sidebarMark(ui *n.Tester) *image.RGBA { return sidebarMarkFor(ui, "Layout")
 func sidebarMarkFor(ui *n.Tester, label string) *image.RGBA {
 	r, _ := ui.Find(label)
 	im := image.NewRGBA(image.Rect(0, 0, 16, 22))
+	frame := ui.Image()
 	for y := 0; y < 22; y++ {
 		for x := 0; x < 16; x++ {
-			im.SetRGBA(x, y, ui.Image().RGBAAt(int(r.X)+18+x, int(r.Y)+3+y))
+			im.SetRGBA(x, y, frame.RGBAAt(int(r.X)+18+x, int(r.Y)+3+y))
 		}
 	}
 	return im

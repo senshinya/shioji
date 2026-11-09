@@ -111,11 +111,12 @@ func TestFileDiffSlidesFromRightWithoutMovingInspector(t *testing.T) {
 		if got, _ := ui.Find("更改侧栏"); got != panel {
 			t.Fatal("Back moved inspector", got, panel)
 		}
-		movingPixel := ui.Image().RGBAAt(x, y)
+		movingFrame := ui.Image()
+		movingPixel := movingFrame.RGBAAt(x, y)
 		if !reduced {
 			for px := int(panel.X + panel.W - 45); px < int(panel.X+panel.W-10); px++ {
 				for py := int(diff.Y + 5); py < int(diff.Y+18); py++ {
-					if got := ui.Image().RGBAAt(px, py); got != filePixel {
+					if got := movingFrame.RGBAAt(px, py); got != filePixel {
 						t.Fatal("restored list paints over departing diff", px, py, got, filePixel)
 					}
 				}

@@ -450,9 +450,10 @@ func TestAnimatedToolSummaryKeepsSearchHighlight(t *testing.T) {
 		t.Fatal("summary missing")
 	}
 	yellow := 0
+	frame := ui.Image()
 	for y := int(r.Y); y < int(r.Y+r.H); y++ {
 		for x := int(r.X); x < int(r.X+r.W); x++ {
-			p := ui.Image().RGBAAt(x, y)
+			p := frame.RGBAAt(x, y)
 			if p.R > 210 && p.G > 170 && p.B < 140 {
 				yellow++
 			}
