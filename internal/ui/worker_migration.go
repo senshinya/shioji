@@ -352,23 +352,6 @@ func migrationMessage(flow *workerMigrationUI) string {
 	}
 	return ""
 }
-func (v *View) sshMigrationContent(c *n.Context, t *n.Theme) {
-	flow := v.setupMigration()
-	visible := flow != nil && (v.sshCheck == sshLegacyUpgrade || v.sshCheck == sshMigrating)
-	frame := n.Column(c.Key("worker-migration-content")).FillWidth().Clip()
-	animatedContentHeight(c, frame, visible, 240*time.Millisecond, func() float32 {
-		if flow == nil {
-			return 0
-		}
-		n.Column(c).FillWidth().Padding(12, 0, 0).Gap(6).Children(func() {
-			n.Text(c.Key("migration-progress"), migrationCaption(flow)).FontSize(13).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-			if message := migrationMessage(flow); message != "" {
-				n.Text(c, message).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Transition(fadeMotion(c, 160*time.Millisecond))
-			}
-		})
-		return 0
-	})
-}
 func (v *View) syncWorkerMigrations(c *n.Context) {
 	if !v.workerMigrationRestored {
 		v.workerMigrationRestored = true

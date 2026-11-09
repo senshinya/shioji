@@ -27,6 +27,8 @@ type editBinding struct {
 }
 
 type View struct {
+	servicePreparations                                                                                             map[string]*servicePreparationUI
+	servicePreparationRestored                                                                                      bool
 	workerMigrations                                                                                                map[string]*workerMigrationUI
 	workerMigrationRestored                                                                                         bool
 	sshHostKey                                                                                                      *transport.SSHHostKey
@@ -270,6 +272,7 @@ func (v *View) View(c *n.Context) {
 	t := *applyAppearance(c, m.Preferences)
 	v.syncAgentSignIns(c)
 	v.syncWorkerMigrations(c)
+	v.syncServicePreparation(c)
 	// Keep the overlay parent alive so popup entrance and exit both have a
 	// persistent parent, even when no popup is currently open.
 	n.Overlay(c, func() {})

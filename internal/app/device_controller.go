@@ -39,10 +39,11 @@ type SignInSSHDevice struct {
 }
 
 type DeviceSetupCheck struct {
-	HostKey  *transport.SSHHostKey
-	NeedsKey bool
-	Info     transport.WorkerInfo
-	Catalog  []domain.HarnessInfo
+	Preparation *ServicePreparation `json:",omitempty"`
+	HostKey     *transport.SSHHostKey
+	NeedsKey    bool
+	Info        transport.WorkerInfo
+	Catalog     []domain.HarnessInfo
 }
 type CompleteSSHDevice struct {
 	SSH      transport.SSH
@@ -67,6 +68,8 @@ func inspectSSHSetup(ctx context.Context, ssh transport.SSH, info transport.Work
 	if client.Minor < 16 {
 		return result, errors.New("设备的执行服务需要先更新，才能配置 Agent")
 	}
+	result.Info.Build = client.Worker
+	result.Info.Minor = client.Minor
 	var ready domain.Readiness
 	err = client.Call(ctx, "runtime.catalog", nil, &ready)
 	result.Catalog = ready.Harnesses
@@ -210,6 +213,10 @@ func (c *Controller) runDevices(ctx context.Context) {
 			checkCancel = nil
 			apply(result.job, result.body, result.err)
 		case job := <-c.Jobs:
+			if job.Method == "$device.prepare-service" {
+				c.runServicePreparationJob(ctx, job)
+				continue
+			}
 
 			if job.Method == "$worker.migration.inspect" || job.Method == "$worker.migration" {
 				in, ok := job.Input.(WorkerMigrationAction)
@@ -421,6 +428,21 @@ func (c *Controller) prepareSSHDevice(ctx context.Context, in CheckSSHDevice) (D
 	}
 	if info.Legacy != nil || info.Migration != nil {
 		return DeviceSetupCheck{Info: info}, nil
+	}
+	if info.Build != nil && info.Build.SafeUpdate {
+		candidate, e := transport.InspectWorker(ctx, c.fleet.workerBinary)
+		if e != nil {
+			return DeviceSetupCheck{}, e
+		}
+		prep, e := planServicePreparation(info, candidate)
+		if e != nil {
+			return DeviceSetupCheck{}, e
+		}
+		if prep != nil {
+			prep.SSH = in.SSH
+			prep.Name = in.Name
+			return DeviceSetupCheck{Info: info, Preparation: prep}, nil
+		}
 	}
 	return inspectSSHSetup(ctx, in.SSH, info)
 }

@@ -237,7 +237,7 @@ func (v *View) finishWelcome() {
 }
 func (v *View) welcomeSSHFields(c *n.Context, t *n.Theme, f *welcomeFlow) {
 	v.syncSSHSetupTerminal()
-	disabled := v.sshCheck.busy() || v.sshCheck == sshAwaitingTrust || v.sshCheck == sshConfiguring || v.sshCheck == sshLegacyUpgrade || v.sshCheck == sshMigrating
+	disabled := v.sshCheck.busy() || v.sshCheck == sshAwaitingTrust || v.sshCheck == sshConfiguring || v.sshCheck == sshLegacyUpgrade || v.sshCheck == sshMigrating || v.sshCheck == sshPreparing
 	setupRow(c, "SSH 地址", func() { setupField(c, "SSH 地址", &v.sshTarget, "用户名@主机或别名", disabled) })
 	scope := n.Column(c.Key("connection-state"))
 	open := n.Local(scope, "options", func() bool { return false })
@@ -261,7 +261,7 @@ func (v *View) welcomeSSHFields(c *n.Context, t *n.Theme, f *welcomeFlow) {
 		return 0
 	})
 	v.sshSetupContent(c, t)
-	v.sshMigrationContent(c, t)
+	v.sshServiceContent(c, t)
 	v.welcomeError(c, v.sshError)
 	label := "连接并准备服务"
 	if disabled {
@@ -280,12 +280,21 @@ func (v *View) welcomeSSHFields(c *n.Context, t *n.Theme, f *welcomeFlow) {
 	if v.sshCheck == sshLegacyUpgrade || v.sshCheck == sshMigrating {
 		label, migrationDisabled = migrationAction(v.setupMigration())
 	}
+	if v.sshCheck == sshPreparing && v.currentServicePreparation() != nil {
+		label, migrationDisabled = servicePreparationAction(v.currentServicePreparation())
+		if v.preparationUI(v.currentServicePreparation()).pending && v.preparationUI(v.currentServicePreparation()).from == app.ServiceWaiting {
+			label = "等待空闲"
+			migrationDisabled = true
+		}
+	}
 	back := "返回"
 	if !v.Model.FirstRun {
 		back = "取消"
 	}
-	v.welcomeFooter(c, back, label, disabled && v.sshCheck != sshAwaitingTrust && v.sshCheck != sshLegacyUpgrade && v.sshCheck != sshMigrating || migrationDisabled || v.Controller == nil || strings.TrimSpace(v.sshTarget) == "", func() { v.cancelSSHCheck(); f.key = "local"; v.welcomeStep(welcomeDevice, -1) }, func() {
-		if v.sshCheck == sshLegacyUpgrade || v.sshCheck == sshMigrating {
+	v.welcomeFooter(c, back, label, disabled && v.sshCheck != sshAwaitingTrust && v.sshCheck != sshLegacyUpgrade && v.sshCheck != sshMigrating && v.sshCheck != sshPreparing || migrationDisabled || v.Controller == nil || strings.TrimSpace(v.sshTarget) == "", func() { v.cancelSSHCheck(); f.key = "local"; v.welcomeStep(welcomeDevice, -1) }, func() {
+		if v.sshCheck == sshPreparing {
+			v.retryServicePreparation()
+		} else if v.sshCheck == sshLegacyUpgrade || v.sshCheck == sshMigrating {
 			v.performMigrationAction(v.setupMigration())
 		} else if v.sshCheck == sshNeedsKey {
 			v.startSSHKeySetup()

@@ -32,10 +32,11 @@ const (
 	sshConfiguring
 	sshLegacyUpgrade
 	sshMigrating
+	sshPreparing
 )
 
 func (s sshCheckPhase) open() bool {
-	return s == sshEditing || s == sshChecking || s == sshSelecting || s == sshSaving || s == sshAwaitingTrust || s == sshNeedsKey || s == sshConfiguring || s == sshLegacyUpgrade || s == sshMigrating
+	return s == sshEditing || s == sshChecking || s == sshSelecting || s == sshSaving || s == sshAwaitingTrust || s == sshNeedsKey || s == sshConfiguring || s == sshLegacyUpgrade || s == sshMigrating || s == sshPreparing
 }
 func (s sshCheckPhase) busy() bool {
 	return s == sshChecking || s == sshCanceledCheck || s == sshSaving
@@ -210,6 +211,14 @@ func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 	})
 }
 func (v *View) cancelSSHCheck() {
+	v.Model.ServicePreparationDeviceID = ""
+	if p := v.currentServicePreparation(); p != nil && (p.Phase == app.ServiceStaging || p.Phase == app.ServiceReadyToUpdate || p.Phase == app.ServiceWaiting || p.Phase == app.ServiceFailed) {
+		delete(v.Model.ServicePreparations, p.Info.DeviceID)
+		if v.Saver != nil {
+			v.queueState()
+		}
+	}
+
 	v.sshHostKey = nil
 	v.retireSSHSetupTerminal()
 	v.sshCheck = v.sshCheck.close()
@@ -233,6 +242,13 @@ func (v *View) checkSSHDevice() {
 		v.sshError = err.Error()
 		return
 	}
+	if existing := v.currentServicePreparation(); existing != nil && existing.Phase != app.ServiceFailed {
+		if existing.Phase == app.ServiceInterrupted {
+			existing.Phase = app.ServiceObserving
+		}
+		v.acceptServicePreparation(existing)
+		return
+	}
 	trust := v.sshHostKey
 	v.sshHostKey = nil
 	request := domain.NewID()
@@ -244,8 +260,11 @@ func (v *View) checkSSHDevice() {
 		name = ssh.Target
 	}
 	if !v.Controller.Do(app.Job{Method: "$device.check", Input: app.CheckSSHDevice{Name: name, SSH: ssh, Trust: trust}, Apply: func(m *app.Model, b json.RawMessage, err error) {
+		if v.sshRequest != request {
+			return
+		}
 		v.sshCheck = v.sshCheck.finish()
-		if v.sshRequest != request || !v.sshCheck.open() {
+		if !v.sshCheck.open() {
 			return
 		}
 		if err != nil {
@@ -273,7 +292,30 @@ func (v *View) checkSSHDevice() {
 			v.sshError = "这个地址连接的是这台 Mac"
 			return
 		}
+		if existing := m.ServicePreparations[result.Info.DeviceID]; existing != nil && existing.Phase != app.ServiceFailed {
+			if result.Preparation == nil && existing.ReadyAt(result.Info) {
+				delete(m.ServicePreparations, result.Info.DeviceID)
+				if m.ServicePreparationDeviceID == result.Info.DeviceID {
+					m.ServicePreparationDeviceID = ""
+				}
+				if v.Saver != nil {
+					v.queueState()
+				}
+			} else {
+				existing.SSH = ssh
+				existing.Name = name
+				if existing.Phase == app.ServiceInterrupted {
+					existing.Phase = app.ServiceObserving
+				}
+				v.acceptServicePreparation(existing)
+				return
+			}
+		}
 		v.sshSetup = result
+		if result.Preparation != nil {
+			v.acceptServicePreparation(result.Preparation)
+			return
+		}
 		if result.Info.Legacy != nil || result.Info.Migration != nil {
 			v.acceptSSHMigration(result.Info)
 			return
@@ -282,17 +324,21 @@ func (v *View) checkSSHDevice() {
 			delete(m.WorkerMigrations, result.Info.DeviceID)
 			delete(v.workerMigrations, result.Info.DeviceID)
 		}
-		v.sshAgents = agentEditor(result.Catalog)
-		v.sshCheck = sshSelecting
-		if f := v.welcome; f != nil && f.key == "" {
-			f.agents = v.sshAgents
-			f.agents.workerMinor = result.Info.Minor
-			v.welcomeStep(welcomeAgents, 1)
-		}
+		v.finishSSHSetup(result)
 
 	}}) {
 		v.sshCheck = v.sshCheck.finish()
 		v.sshError = "操作繁忙，请重试"
+	}
+}
+
+func (v *View) finishSSHSetup(result app.DeviceSetupCheck) {
+	v.sshAgents = agentEditor(result.Catalog)
+	v.sshCheck = sshSelecting
+	if f := v.welcome; f != nil && f.key == "" {
+		f.agents = v.sshAgents
+		f.agents.workerMinor = result.Info.Minor
+		v.welcomeStep(welcomeAgents, 1)
 	}
 }
 
