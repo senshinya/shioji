@@ -23,6 +23,8 @@ func TestDeviceModelsControlsUpdateMenuWithoutChangingActiveConfiguration(t *tes
 		ui.Click("配置 Custom Agent 路径")
 	}
 	ui.Advance(time.Second)
+	ui.Click("模型")
+	ui.Advance(time.Second)
 	if _, ok := ui.Find("在模型菜单显示 Alpha"); !ok {
 		t.Fatal("model list missing", ui.Texts())
 	}
@@ -47,6 +49,8 @@ func TestKeyboardModelOrderingRetainsUnavailablePreferences(t *testing.T) {
 	ui := n.NewTester(v.View, 1100, 820)
 	ui.Advance(time.Second)
 	ui.Click("配置 Custom Agent 路径")
+	ui.Advance(time.Second)
+	ui.Click("模型")
 	ui.Advance(time.Second)
 	ui.Click("调整 Beta 顺序")
 	ui.Key(0, n.KeyUp)

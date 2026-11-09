@@ -13,9 +13,10 @@ const (
 	configurationSetupForm
 )
 
-func configurationFormRow(c *n.Context, label string, style configurationFormStyle, build func()) {
+func configurationFormRow(c *n.Context, label string, style configurationFormStyle, build func(), top ...bool) {
 	row := n.Row(c.Key(label)).FillWidth().MinHeight(configurationRowHeight).Gap(configurationSectionGap).AlignItems(n.Center)
-	if style == configurationSetupForm {
+	alignTop := style == configurationSetupForm || len(top) > 0 && top[0]
+	if alignTop {
 		row.PaddingY(6).AlignItems(n.Start)
 	}
 	if style == configurationSettingsForm {
@@ -23,7 +24,7 @@ func configurationFormRow(c *n.Context, label string, style configurationFormSty
 	}
 	row.Children(func() {
 		labelView := n.Text(c, label).FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).Grow(1).Transform(n.Translation(0, inlineCenterOffset(label, n.Font{Family: c.Theme().Font, Size: configurationLabelSize, Weight: 400})))
-		if style == configurationSetupForm {
+		if alignTop {
 			labelView.PaddingY(4)
 		}
 		if style == configurationSettingsForm {

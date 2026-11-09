@@ -169,3 +169,9 @@ type ToolServiceRuntime interface {
 	BeginToolServiceAuthorization(context.Context, string) (ToolServiceAuthorization, domain.SignInChallenge, error)
 }
 type ToolServiceAuthorization interface{ Wait(context.Context) error }
+
+// Configuration writes are optional and operate on the owning harness's native
+// settings. The opaque revision protects concurrent edits by other clients.
+type ToolServiceEditor interface {
+	ChangeToolService(context.Context, domain.ToolServiceChange) (domain.ToolServiceChangeResult, error)
+}

@@ -14,6 +14,29 @@ type workerToolAuthorization struct {
 	cancel context.CancelFunc
 }
 
+func (s *Server) changeToolService(in protocol.ToolServiceInput) (domain.ToolServiceChangeResult, error) {
+	if in.Change == nil || len(in.Change.Revision) > 512 || in.HarnessID == "" {
+		return domain.ToolServiceChangeResult{}, errors.New("工具配置请求无效")
+	}
+	s.toolConfigMu.Lock()
+	defer s.toolConfigMu.Unlock()
+	if s.activeToolAuthorization(in.HarnessID) {
+		return domain.ToolServiceChangeResult{}, errors.New("请先完成工具授权")
+	}
+	provider, release, err := s.toolRuntime(in.HarnessID)
+	if err != nil {
+		return domain.ToolServiceChangeResult{}, err
+	}
+	defer release()
+	editor, ok := provider.(harness.ToolServiceEditor)
+	if !ok {
+		return domain.ToolServiceChangeResult{}, harness.Unsupported("tool-service-configuration")
+	}
+	ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
+	defer cancel()
+	return editor.ChangeToolService(ctx, *in.Change)
+}
+
 func (s *Server) toolRuntime(id string) (harness.ToolServiceRuntime, func(), error) {
 	gate := s.catalogGates[id]
 	if gate == nil || !s.agentEnabled(id) {
@@ -88,6 +111,10 @@ func (s *Server) listToolServices(in protocol.ToolServiceInput, refresh bool) (d
 }
 
 func (s *Server) toolAuthorizationCommand(method string, in protocol.ToolServiceInput) (domain.ToolServiceAuthorization, error) {
+	if method == "runtime.tools.auth.start" {
+		s.toolConfigMu.Lock()
+		defer s.toolConfigMu.Unlock()
+	}
 	if in.HarnessID == "" || s.adapter(in.HarnessID) == nil || in.ServiceID == "" || len(in.ServiceID) > 512 || len(in.ID) > 128 {
 		return domain.ToolServiceAuthorization{}, errors.New("工具授权请求无效")
 	}

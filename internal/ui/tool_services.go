@@ -21,6 +21,9 @@ const (
 )
 
 type toolServicesUI struct {
+	draft                       *toolConfigurationDraft
+	saving, saved               bool
+	mutationID, removingID      string
 	key, device, harness, epoch string
 	editor                      *deviceAgentEditor
 	configurationPath           string
@@ -83,7 +86,7 @@ func (v *View) toolServiceVisible(u *toolServicesUI) bool {
 	if u.editor.setup {
 		return false
 	}
-	return v.devices && v.deviceSelected == u.key && v.deviceTab != "设备设置" && u.editor.openID == u.harness && u.open
+	return v.devices && v.deviceSelected == u.key && u.editor.pageID == u.harness && u.editor.tab == "MCP"
 }
 func (v *View) toolServiceJob(u *toolServicesUI, method string, in protocol.ToolServiceInput, apply func(*app.Model, json.RawMessage, error)) bool {
 	if v.Controller == nil {
@@ -111,6 +114,9 @@ func (v *View) queryToolServices(u *toolServicesUI, refresh bool) {
 		if err != nil {
 			u.phase = toolServiceLoadFailed
 			u.message = "无法读取 MCP 服务，请重试"
+			if u.saved {
+				u.message = "配置已保存，连接检查未完成，请刷新核对"
+			}
 			return
 		}
 		var result domain.ToolServiceCatalog
@@ -121,6 +127,12 @@ func (v *View) queryToolServices(u *toolServicesUI, refresh bool) {
 		}
 		u.catalog = result
 		u.phase = toolServiceLoaded
+		if u.saved {
+			u.saved = false
+			u.draft = nil
+			u.removingID = ""
+			u.message = "已保存，下轮生效"
+		}
 		if result.Authorization != nil && result.Authorization.HarnessID == u.harness {
 			v.applyToolAuthorization(u, *result.Authorization)
 		}
@@ -229,105 +241,26 @@ func toolServiceLabel(service domain.ToolService) string {
 }
 func (v *View) agentToolServices(c *n.Context, t *n.Theme, key string, e *deviceAgentEditor, info domain.HarnessInfo, disabled bool) {
 	u := v.toolServicesFor(key, info.ID, e)
-	validDraft := toolServiceDraftCurrent(e, info.ID)
-	disabled = disabled || !validDraft
-	n.Column(c.Key("tool-services")).FillWidth().Children(func() {
-		n.Row(c.Key("tool-services-heading")).FillWidth().Height(configurationSectionHeader).Gap(8).AlignItems(n.Start).Children(func() {
-			toggle := control(c, 5).Height(28).Grow(1).Label("展开 MCP 服务").Children(func() {
-				n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-					n.Text(c, "MCP").FontSize(configurationSectionSize).FontWeight(500).FixedLineHeight(configurationTitleLine).Grow(1)
-					angle := float32(-90)
-					if u.open {
-						angle = 0
-					}
-					inlineSymbol(c, chevron, "MCP", n.Font{Family: t.Font, Size: 14, Weight: 500}, 12, t.TextMuted, angle)
-				})
-			})
-			if toggle.Clicked() {
-				u.open = !u.open
-			}
-			if u.phase == toolServiceLoading {
-				serviceSpinner(c.Key("service-load-spinner"), "刷新", n.Font{Family: t.Font, Size: 12, Weight: 400}, t.TextMuted).FixedLineHeight(configurationControlHeight)
-			}
-			if configurationAction(c, "刷新").Label("刷新 MCP").Disabled(disabled || u.phase == toolServiceLoading || u.authorization != nil && u.authorization.Phase.Active() || v.Controller == nil).Clicked() {
-				u.open = true
-				v.queryToolServices(u, u.catalog.CanRefresh)
-			}
-		})
-		visible := u.open
-		if visible && validDraft && u.phase == toolServiceIdle {
-			v.queryToolServices(u, false)
+	valid := toolServiceDraftCurrent(e, info.ID)
+	if valid && u.phase == toolServiceIdle {
+		v.queryToolServices(u, false)
+	}
+	if !valid {
+		n.Text(c, "保存配置后查看 MCP 服务").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+		return
+	}
+	n.Column(c.Key("tool-services")).FillWidth().FillHeight().Grow(1).Children(func() {
+		page, index := "list", 0
+		if u.draft != nil {
+			page, index = "editor", 1
 		}
-		body := n.Column(c.Key("tool-services-body")).FillWidth().Clip()
-		animatedContentHeight(c, body, visible, 200*time.Millisecond, func() float32 {
-			n.Column(c).FillWidth().Children(func() {
-				if !validDraft {
-					n.Text(c, "保存配置后查看 MCP 服务").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).PaddingY(8)
-				} else {
-					viewport := n.Scroll(c.Key("service-list")).FillWidth().MaxHeight(configurationListHeight).Label("MCP 服务列表")
-					viewport.Children(func() {
-						n.Column(c).FillWidth().Children(func() {
-							for _, service := range u.catalog.Services {
-								row := n.Row(c.Key(service.ID)).FillWidth().Height(configurationRowHeight).PaddingY(6).Gap(12).AlignItems(n.Baseline).Label("MCP 服务：" + service.Name).Transition(n.ElementTransition{Position: true, Duration: motionAnimation(c, 180*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
-								row.Children(func() {
-									n.Text(c, service.Name).FontSize(13).FixedLineHeight(28).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").Tooltip(service.Origin)
-									active := u.authorization != nil && u.authorization.ServiceID == service.ID && u.authorization.Phase.Active()
-									caption := toolServiceLabel(service)
-									if active {
-										caption = "等待授权"
-										if u.authorization.Phase == domain.SignInStarting {
-											caption = "正在准备授权"
-										}
-									}
-									n.Row(c.Key("status")).Gap(6).AlignItems(n.Baseline).Children(func() {
-										if active || service.State == domain.ToolServiceConnecting {
-											serviceSpinner(c.Key("spinner"), caption, n.Font{Family: t.Font, Size: 12, Weight: 400}, t.TextMuted)
-										}
-										n.Text(c.Key("caption"), caption).FontSize(12).FixedLineHeight(28).TextColor(t.TextMuted).SingleLine().ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-									})
-									authBusy := u.authorization != nil && u.authorization.Phase.Active()
-									if active && u.authorization.Challenge.URL != "" {
-										if configurationAction(c, "打开授权页").Disabled(disabled).Clicked() {
-											if openToolServiceLink(u.authorization.Challenge.URL) != nil {
-												u.authorization.Message = "无法打开授权页"
-											}
-										}
-									} else {
-										if service.CanAuthorize && (service.State == domain.ToolServiceAuthorizationRequired || service.State == domain.ToolServiceFailed) {
-											if configurationAction(c, "授权").Label("授权 " + service.Name).Disabled(disabled || authBusy || u.phase == toolServiceLoading || v.Controller == nil).Clicked() {
-												v.startToolAuthorization(u, service)
-											}
-										}
-										if service.State == domain.ToolServiceFailed || service.State == domain.ToolServiceUnknown {
-											if configurationAction(c, "重试").Label("重试 " + service.Name).Disabled(disabled || authBusy || u.phase == toolServiceLoading || v.Controller == nil).Clicked() {
-												v.queryToolServices(u, u.catalog.CanRefresh)
-											}
-										}
-									}
-								})
-							}
-						})
-					})
-					if len(u.catalog.Services) == 0 && u.phase != toolServiceLoading && u.message == "" {
-						n.Text(c, "暂无 MCP 服务").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).PaddingY(8)
-					}
-					message := u.message
-					if u.authorization != nil && u.authorization.Message != "" {
-						message = u.authorization.Message
-					}
-					feedback := n.Column(c.Key("service-feedback")).FillWidth().Clip()
-					last := n.Local(feedback, "message", func() string { return message })
-					if message != "" {
-						*last = message
-					}
-					animatedContentHeight(c, feedback, message != "", 180*time.Millisecond, func() float32 {
-						n.Text(c, *last).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).PaddingY(8)
-						return 0
-					})
-				}
-			})
-			return 0
-		})
+		configurationTabPanel(c.Key("service-page"), page, index, configurationPanelFill, func() {
+			if u.draft != nil {
+				v.toolConfigurationEditor(c, t, u, disabled)
+				return
+			}
+			v.toolServiceList(c, t, u, disabled)
+		}, false)
 	})
 }
 

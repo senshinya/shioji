@@ -32,8 +32,10 @@ func TestToolServicesUseNativeDiscoveryAndPreserveUnknownState(t *testing.T) {
 	if states["docs"] != domain.ToolServiceReady || states["private"] != domain.ToolServiceAuthorizationRequired || states["empty"] != domain.ToolServiceUnknown || states["disabled"] != domain.ToolServiceDisabled {
 		t.Fatal(states)
 	}
-	if catalog.Services[0].Tools != 1 {
-		t.Fatal("tool inventory count lost")
+	for _, service := range catalog.Services {
+		if service.ID == "docs" && service.Tools != 1 {
+			t.Fatal("tool inventory count lost")
+		}
 	}
 }
 func TestToolAuthorizationMatchesEarlySourceCompletionAndLoopback(t *testing.T) {

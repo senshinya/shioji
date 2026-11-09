@@ -21,6 +21,7 @@ type deviceAgentEditor struct {
 	catalog                 []domain.HarnessInfo
 	paths                   map[string]string
 	openID                  string
+	pageID                  string
 	path                    string
 	loading, busy, readOnly bool
 	error                   string
@@ -54,6 +55,26 @@ func (e *deviceAgentEditor) input() protocol.DeviceAgents {
 }
 func (v *View) deviceAgents(c *n.Context, t *n.Theme, key string, state *app.DeviceState, e **deviceAgentEditor) {
 	scope := n.Column(c).FillWidth()
+	v.syncDeviceAgents(key, state, e)
+	editor := *e
+	scope.Children(func() {
+		n.Column(c).FillWidth().Gap(4).Children(func() {
+			v.agentRows(c.Key("rows"), t, key, state.Connected, editor, false, func() { v.saveDeviceAgents(key, state, editor) })
+			if len(editor.catalog) == 0 {
+				label := "暂无 Agent"
+				if editor.loading {
+					label = "正在检测…"
+				}
+				n.Text(c, label).FontSize(12).TextColor(t.TextMuted).PaddingY(8)
+			}
+			if state.WorkerMinor < 16 && state.Connected {
+				n.Text(c, "更新执行服务后可管理 Agent").FontSize(11).TextColor(t.TextMuted)
+			}
+		})
+	})
+}
+
+func (v *View) syncDeviceAgents(key string, state *app.DeviceState, e **deviceAgentEditor) {
 	if state.Connected && state.ConnectionEpoch != (*e).epoch {
 		editor := agentEditor(state.Readiness.Harnesses)
 		editor.epoch = state.ConnectionEpoch
@@ -87,22 +108,6 @@ func (v *View) deviceAgents(c *n.Context, t *n.Theme, key string, state *app.Dev
 		}
 	}
 
-	editor := *e
-	scope.Children(func() {
-		n.Column(c).FillWidth().Gap(4).Children(func() {
-			v.agentRows(c.Key("rows"), t, key, state.Connected, editor, false, func() { v.saveDeviceAgents(key, state, editor) })
-			if len(editor.catalog) == 0 {
-				label := "暂无 Agent"
-				if editor.loading {
-					label = "正在检测…"
-				}
-				n.Text(c, label).FontSize(12).TextColor(t.TextMuted).PaddingY(8)
-			}
-			if state.WorkerMinor < 16 && state.Connected {
-				n.Text(c, "更新执行服务后可管理 Agent").FontSize(11).TextColor(t.TextMuted)
-			}
-		})
-	})
 }
 
 func (v *View) loadDeviceAgents(key string, state *app.DeviceState, e *deviceAgentEditor) {
@@ -129,6 +134,47 @@ func (v *View) loadDeviceAgents(key string, state *app.DeviceState, e *deviceAge
 		e.error = "设备操作繁忙，请重试"
 	}
 }
+
+func (v *View) deviceAgentPage(c *n.Context, t *n.Theme, key, deviceName string, state *app.DeviceState, e *deviceAgentEditor, info domain.HarnessInfo) {
+	header := n.Column(c.Key("agent-header")).FillWidth().Height(104).Padding(24, configurationInset, 12)
+	width, _ := c.Size()
+	if width < 900 {
+		header.Height(88).Padding(8, configurationInset, 12)
+	}
+	header.Children(func() {
+		n.Column(c).FillWidth().MaxWidth(840).Gap(8).Children(func() {
+			back := control(c.Key("back"), 5).Height(28).MaxWidth(400).AlignSelf(n.Start).Justify(n.Start).PaddingX(4).MarginStart(-4).Label("返回 Agent 列表").Tooltip(deviceName).Disabled(e.busy)
+			if width < 900 {
+				back.MarginStart(60)
+			}
+			back.Children(func() {
+				inlineIconText(c, deviceBackIcon, deviceName, n.Font{Family: t.Font, Size: configurationValueSize, Weight: 400}, 12, 4, t.TextMuted).Shrink(1)
+			})
+			if back.Clicked() {
+				e.pageID = ""
+			}
+			n.Row(c).FillWidth().Height(32).Gap(16).AlignItems(n.Baseline).Children(func() {
+				inlineIconText(c, harnessIcon(domain.HarnessDescriptor{ID: info.ID, Name: info.Name, Icon: info.Icon}), info.Name, n.Font{Family: t.Font, Size: configurationTitleSize, Weight: 400}, 24, 8, t.Text).FixedLineHeight(configurationTitleLine).Grow(1).MinWidth(0).Tooltip(info.Name)
+				n.Text(c, runtimeSetupLabel(info, state.Connected)).FontSize(12).FixedLineHeight(20).SingleLine().TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+			})
+		})
+	})
+	n.Column(c.Key("agent-content")).FillWidth().FillHeight().Grow(1).Padding(0, configurationInset, configurationSectionGap).Children(func() {
+		n.Column(c).FillWidth().FillHeight().Grow(1).MaxWidth(840).Children(func() {
+			v.agentConfiguration(c, t, key, state.Connected, e, info, false, func() { v.saveDeviceAgents(key, state, e) })
+			frame := n.Column(c.Key("agent-error")).FillWidth().Clip()
+			message := n.Local(frame, "message", func() string { return e.error })
+			if e.error != "" {
+				*message = e.error
+			}
+			animatedContentHeight(c, frame, e.error != "", 180*time.Millisecond, func() float32 {
+				n.Text(c, *message).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
+				return 0
+			})
+		})
+	})
+}
+
 func (v *View) saveDeviceAgents(key string, state *app.DeviceState, e *deviceAgentEditor) {
 	e.busy = true
 	e.error = ""
@@ -178,11 +224,10 @@ func (v *View) agentRows(c *n.Context, t *n.Theme, key string, connected bool, e
 			controlFeedback(c, header, 6)
 			header.Children(func() {
 				toggle := func() {
-					if e.openID == info.ID {
-						e.openID = ""
-					} else {
+					if e.openID != info.ID {
 						e.edit(*info)
 					}
+					e.pageID = info.ID
 				}
 				button := n.ButtonBase(c).Background(n.Transparent).Grow(1).Height(56).Padding(10, 0).Label("配置 " + info.Name + " 路径").Disabled(info.Installation == nil).Children(func() {
 					n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
@@ -213,19 +258,10 @@ func (v *View) agentRows(c *n.Context, t *n.Theme, key string, connected bool, e
 						save()
 					}
 				}
-				icon := disclosureRight
-				if e.openID == info.ID {
-					icon = chevron
-				}
-				arrow := n.ButtonBase(c).Size(28, 28).AlignItems(n.Center).Justify(n.Center).Label("展开或收起 " + info.Name + " 配置").Disabled(info.Installation == nil).Children(func() { n.Icon(c, icon).Size(16, 16).TextColor(t.TextMuted) })
+				arrow := n.ButtonBase(c).Size(28, 28).AlignItems(n.Center).Justify(n.Center).Label("打开 " + info.Name + " 配置").Disabled(info.Installation == nil).Children(func() { n.Icon(c, disclosureRight).Size(16, 16).TextColor(t.TextMuted) })
 				if arrow.Clicked() {
 					toggle()
 				}
-			})
-			frame := n.Column(c.Key("configuration")).FillWidth().Clip()
-			animatedContentHeight(c, frame, e.openID == info.ID, 240*time.Millisecond, func() float32 {
-				n.Column(c).FillWidth().Padding(8, 0, 12, 40).Children(func() { v.agentConfiguration(c, t, key, connected, e, *info, onboarding, save) })
-				return 0
 			})
 			deviceDivider(c)
 		})

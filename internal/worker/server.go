@@ -41,6 +41,7 @@ type EventsQuery = protocol.EventsQuery
 type EventPage = protocol.EventPage
 type AnswerInput = protocol.AnswerInput
 type Server struct {
+	toolConfigMu         sync.Mutex
 	toolAuthMu           sync.Mutex
 	toolAuth             map[string]*workerToolAuthorization
 	signInMu             sync.Mutex
@@ -329,6 +330,12 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 	}
 
 	switch method {
+	case "runtime.tools.change":
+		in, err := decode[protocol.ToolServiceInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.changeToolService(in)
 	case "device.directories":
 		in, err := decode[protocol.DirectoryQuery](body)
 		if err != nil {

@@ -19,17 +19,56 @@ const (
 )
 
 type ToolService struct {
-	ID           string           `json:"id"`
-	Name         string           `json:"name"`
-	Origin       string           `json:"origin,omitempty"`
-	State        ToolServiceState `json:"state"`
-	Tools        int              `json:"tools"`
-	CanAuthorize bool             `json:"canAuthorize"`
+	Transport      string                    `json:"transport,omitempty"`
+	Editable       bool                      `json:"editable,omitempty"`
+	ReadOnlyReason string                    `json:"readOnlyReason,omitempty"`
+	Configuration  *ToolServiceConfiguration `json:"configuration,omitempty"`
+	ID             string                    `json:"id"`
+	Name           string                    `json:"name"`
+	Origin         string                    `json:"origin,omitempty"`
+	State          ToolServiceState          `json:"state"`
+	Tools          int                       `json:"tools"`
+	CanAuthorize   bool                      `json:"canAuthorize"`
 }
 type ToolServiceCatalog struct {
+	CanAdd        bool                      `json:"canAdd,omitempty"`
+	Revision      string                    `json:"revision,omitempty"`
 	Services      []ToolService             `json:"services"`
 	CanRefresh    bool                      `json:"canRefresh"`
 	Authorization *ToolServiceAuthorization `json:"authorization,omitempty"`
+}
+
+// Retained values are opaque existing secrets. An unchanged row refers back to
+// its owning adapter; catalog reads never send the secret to another device.
+type ToolServiceValue struct {
+	Name     string `json:"name"`
+	Value    string `json:"value,omitempty"`
+	Retained bool   `json:"retained,omitempty"`
+}
+type ToolServiceConfiguration struct {
+	Name                 string             `json:"name"`
+	Transport            string             `json:"transport"`
+	Enabled              bool               `json:"enabled"`
+	Command              string             `json:"command,omitempty"`
+	Arguments            []string           `json:"arguments,omitempty"`
+	Environment          []ToolServiceValue `json:"environment,omitempty"`
+	InheritedEnvironment []string           `json:"inheritedEnvironment,omitempty"`
+	Directory            string             `json:"directory,omitempty"`
+	URL                  string             `json:"url,omitempty"`
+	TokenEnvironment     string             `json:"tokenEnvironment,omitempty"`
+	Headers              []ToolServiceValue `json:"headers,omitempty"`
+	StartupSeconds       float64            `json:"startupSeconds,omitempty"`
+}
+type ToolServiceChange struct {
+	ServiceID     string                    `json:"serviceId,omitempty"`
+	Revision      string                    `json:"revision"`
+	Action        string                    `json:"action"` // save, delete, or setEnabled
+	Enabled       bool                      `json:"enabled,omitempty"`
+	Configuration *ToolServiceConfiguration `json:"configuration,omitempty"`
+}
+type ToolServiceChangeResult struct {
+	ServiceID string `json:"serviceId,omitempty"`
+	Saved     bool   `json:"saved"`
 }
 
 // Authorization challenges are transient, like primary account challenges.

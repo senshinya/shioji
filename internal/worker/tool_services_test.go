@@ -118,3 +118,41 @@ func TestWorkerReleasesToolAuthorizationWhenCancelledDuringStart(t *testing.T) {
 		t.Fatal("cancelled start is not expired", entry.status)
 	}
 }
+
+type editableServiceHarness struct {
+	serviceHarness
+	writes *atomic.Int32
+}
+
+func (a editableServiceHarness) Start(ctx context.Context, o harness.StartOptions) (harness.Runtime, error) {
+	r, err := a.serviceHarness.Start(ctx, o)
+	if err != nil {
+		return nil, err
+	}
+	return &editableServiceRuntime{serviceRuntime: r.(*serviceRuntime), writes: a.writes}, nil
+}
+
+type editableServiceRuntime struct {
+	*serviceRuntime
+	writes *atomic.Int32
+}
+
+func (r *editableServiceRuntime) ChangeToolService(_ context.Context, in domain.ToolServiceChange) (domain.ToolServiceChangeResult, error) {
+	r.writes.Add(1)
+	return domain.ToolServiceChangeResult{Saved: true, ServiceID: in.ServiceID}, nil
+}
+func TestWorkerToolConfigurationCannotRaceAnAuthorization(t *testing.T) {
+	writes := &atomic.Int32{}
+	a := editableServiceHarness{serviceHarness: serviceHarness{memoryHarness: memoryHarness{id: "custom"}, starts: &atomic.Int32{}, finish: make(chan struct{})}, writes: writes}
+	s, _ := memoryWorker(t, a)
+	in := protocol.ToolServiceInput{HarnessID: "custom", Change: &domain.ToolServiceChange{Action: "setEnabled", ServiceID: "opaque/service", Revision: "one"}}
+	s.toolAuth = map[string]*workerToolAuthorization{"custom": {status: domain.ToolServiceAuthorization{Phase: domain.SignInWaiting}, cancel: func() {}}}
+	if _, err := s.changeToolService(in); err == nil || writes.Load() != 0 {
+		t.Fatal("configuration modified an authorizing service")
+	}
+	s.toolAuth["custom"].status.Phase = domain.SignInCompleted
+	result, err := s.changeToolService(in)
+	if err != nil || !result.Saved || result.ServiceID != "opaque/service" || writes.Load() != 1 {
+		t.Fatal("owning harness did not receive the explicit mutation", result, err)
+	}
+}

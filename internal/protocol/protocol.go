@@ -22,7 +22,8 @@ const Major = 2
 // Minor 20 adds explicit loopback callback metadata for remote browser authorization.
 // Minor 22 adds owning-device tool service discovery and authorization.
 // Minor 23 adds device-owned directory browsing before workspace creation.
-const Minor = 23
+// Minor 24 adds revision-checked native tool service configuration writes.
+const Minor = 24
 const MaxFrame = 1 << 20
 
 type Frame struct {
@@ -276,7 +277,8 @@ type AgentSetupResult struct {
 // ToolServiceInput selects an opaque owning-harness service. ID identifies one
 // explicit authorization attempt and is never used to replay a lost start.
 type ToolServiceInput struct {
-	HarnessID string `json:"harnessId"`
-	ServiceID string `json:"serviceId,omitempty"`
-	ID        string `json:"id,omitempty"`
+	Change    *domain.ToolServiceChange `json:"change,omitempty"`
+	HarnessID string                    `json:"harnessId"`
+	ServiceID string                    `json:"serviceId,omitempty"`
+	ID        string                    `json:"id,omitempty"`
 }

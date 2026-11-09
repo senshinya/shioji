@@ -114,11 +114,12 @@ func deviceConfigTitle(c *n.Context, title string) {
 }
 func (e *deviceAgentEditor) edit(info domain.HarnessInfo) {
 	e.openID = info.ID
+	e.pageID = info.ID
 	e.path = e.paths[info.ID]
 	e.draft = newRuntimeOptionDraft(e.options[info.ID])
 	e.error = ""
 }
-func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connected bool, e *deviceAgentEditor, info domain.HarnessInfo, onboarding bool, save func()) {
+func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, connected bool, e *deviceAgentEditor, info domain.HarnessInfo, onboarding bool, save func()) {
 	info = v.signInProfileInfo(key, e, info)
 	install := info.Installation
 	row := deviceConfigRow
@@ -133,16 +134,13 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 	if e.setup {
 		background = t.Background
 	}
-	sectionInset := float32(24)
+	sectionInset := float32(0)
 	if e.setup {
 		sectionInset = 0
 	}
 	disabled := e.readOnly || e.busy || e.loading || !connected
 	n.Column(c).FillWidth().Gap(0).Children(func() {
-		if !e.setup || e.tab == "常规" {
-			if !e.setup {
-				deviceConfigTitle(c, "常规")
-			}
+		if e.tab == "常规" || e.tab == "" {
 			initial := slices.Contains(v.agentSignInMethods(key, info), domain.SignInAPI)
 			if initial {
 				row(c, "接入方式", func() { v.agentConnectionMode(c, t, key, e, info, disabled) })
@@ -239,11 +237,11 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 						return 0
 					})
 				}
-			})
+			}).Label("Agent 接入内容")
 		}
 		modelPane := n.Column(c.Key("model-configuration")).FillWidth().Clip()
-		animatedContentHeight(c, modelPane, !e.setup || e.tab == "模型", 180*time.Millisecond, func() float32 {
-			if (!onboarding || e.setup) && (!e.setup || e.tab == "模型") && len(info.Models) > 0 {
+		animatedContentHeight(c, modelPane, e.tab == "模型", 180*time.Millisecond, func() float32 {
+			if e.tab == "模型" && len(info.Models) > 0 {
 				n.Column(c).FillWidth().Padding(sectionInset, 0, 0).Children(func() {
 					if !e.setup {
 						v.deviceModels(c.Key("models"), t, key, info)
@@ -303,32 +301,18 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 			}
 			return 0
 		})
-		if info.Capabilities.ToolServices && minor >= 22 && !e.setup {
+		if info.Capabilities.ToolServices && minor >= 22 && !e.setup && e.tab == "MCP" {
 			n.Column(c.Key("tool-service-section")).FillWidth().Padding(sectionInset, 0, 0).Children(func() { v.agentToolServices(c, t, key, e, info, disabled) })
 		}
 		supported := domain.RuntimeOptionSupport{}
 		if install != nil {
 			supported = install.OptionsSupported
 		}
-		if (!e.setup || e.tab == "高级") && minor >= 18 && (supported.Arguments || supported.Directory || supported.Environment || supported.Instructions) {
+		if e.tab == "高级" && minor >= 18 && (supported.Arguments || supported.Directory || supported.Environment || supported.Instructions) {
 			n.Column(c).FillWidth().Padding(sectionInset, 0, 0).Children(func() {
-				if !e.setup {
-					heading := control(c.Key("advanced-toggle"), 5).FillWidth().Height(28).Label("高级").Children(func() {
-						n.Row(c).FillWidth().AlignItems(n.Baseline).Children(func() {
-							n.Text(c, "高级").FontSize(configurationSectionSize).FontWeight(500).FixedLineHeight(configurationTitleLine).Grow(1)
-							angle := float32(-90)
-							if e.draft.advanced {
-								angle = 0
-							}
-							inlineSymbol(c, chevron, "高级", n.Font{Family: t.Font, Size: 14, Weight: 500}, 12, t.TextMuted, angle)
-						})
-					})
-					if heading.Clicked() {
-						e.draft.advanced = !e.draft.advanced
-					}
-				}
+
 				body := n.Column(c.Key("advanced-body")).FillWidth().Clip()
-				animatedContentHeight(c, body, e.setup || e.draft.advanced, 240*time.Millisecond, func() float32 {
+				animatedContentHeight(c, body, true, 240*time.Millisecond, func() float32 {
 					padding := float32(8)
 					if e.setup {
 						padding = 0
@@ -367,45 +351,7 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 				})
 			})
 		}
-		if e.setup {
-			return
-		}
-		changed := e.path != e.paths[info.ID]
-		options, err := e.draft.options()
-		saved := e.options[info.ID]
-		if err != nil || !runtimeOptionsEqual(options, saved) {
-			changed = true
-		}
-		actions := n.Column(c.Key("save-actions")).FillWidth().Clip()
-		animatedContentHeight(c, actions, changed, 180*time.Millisecond, func() float32 {
-			n.Row(c).FillWidth().Height(36).Justify(n.End).Gap(6).Children(func() {
-				if configurationAction(c, "取消").Disabled(e.busy).Clicked() {
-					advanced, login := e.draft.advanced, e.draft.login
-					e.edit(info)
-					e.draft.advanced, e.draft.login = advanced, login
-				}
-				if configurationAction(c, "保存").Label("保存 " + info.Name + " 路径").Disabled(disabled).Clicked() {
-					if err != nil {
-						e.error = err.Error()
-						return
-					}
-					e.paths[info.ID] = e.path
-					if install != nil && minor >= 18 {
-						e.options[info.ID] = options
-					}
-					if onboarding {
-						e.openID = ""
-					} else {
-						if info.Configured {
-							save()
-						} else {
-							v.saveDisabledAgentSettings(key, e, info.ID)
-						}
-					}
-				}
-			})
-			return 0
-		})
+
 	})
 }
 func runtimeOptionsEqual(a, b domain.RuntimeOptions) bool {
@@ -469,5 +415,82 @@ func (v *View) runtimeEnvironmentFields(c *n.Context, t *n.Theme, e *deviceAgent
 				})
 			})
 		}
+	})
+}
+
+func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connected bool, e *deviceAgentEditor, info domain.HarnessInfo, onboarding bool, save func()) {
+	if e.setup {
+		v.agentConfigurationContent(c, t, key, connected, e, info, onboarding, save)
+		return
+	}
+	n.Column(c).FillWidth().FillHeight().Grow(1).Children(func() {
+		tabs := []configurationTabItem{{ID: "常规", Label: "常规"}, {ID: "模型", Label: "模型"}}
+		if info.Capabilities.ToolServices && v.deviceState(key).WorkerMinor >= 22 {
+			tabs = append(tabs, configurationTabItem{ID: "MCP", Label: "MCP"})
+		}
+		if info.Installation != nil {
+			support := info.Installation.OptionsSupported
+			if support.Arguments || support.Directory || support.Environment || support.Instructions {
+				tabs = append(tabs, configurationTabItem{ID: "高级", Label: "高级"})
+			}
+		}
+		if e.tab == "" || !slices.ContainsFunc(tabs, func(i configurationTabItem) bool { return i.ID == e.tab }) {
+			e.tab = "常规"
+		}
+		e.tab = configurationTabs(c.Key("agent-tabs"), e.tab, tabs, configurationUnderline, e.busy)
+		n.Column(c.Key("agent-page")).FillWidth().FillHeight().Grow(1).Padding(12, 0, 0).Children(func() {
+			configurationTabPanel(c.Key("page-motion"), e.tab, configurationTabIndex(tabs, e.tab), configurationPanelFill, func() {
+				if e.tab == "MCP" {
+					v.agentToolServices(c, t, key, e, info, e.readOnly || e.busy || e.loading || !connected)
+					return
+				}
+				n.Scroll(c.Key("configuration-scroll:" + e.tab)).FillWidth().FillHeight().Grow(1).Children(func() { v.agentConfigurationContent(c, t, key, connected, e, info, onboarding, save) })
+			}, false)
+			v.agentConfigurationActions(c, t, key, connected, e, info, onboarding, save)
+		})
+	})
+}
+func (v *View) agentConfigurationActions(c *n.Context, t *n.Theme, key string, connected bool, e *deviceAgentEditor, info domain.HarnessInfo, onboarding bool, save func()) {
+	install := info.Installation
+	minor := v.deviceState(key).WorkerMinor
+	disabled := e.readOnly || e.busy || e.loading || !connected
+	if e.setup {
+		return
+	}
+	changed := e.path != e.paths[info.ID]
+	options, err := e.draft.options()
+	saved := e.options[info.ID]
+	if err != nil || !runtimeOptionsEqual(options, saved) {
+		changed = true
+	}
+	actions := n.Column(c.Key("save-actions")).FillWidth().Clip()
+	animatedContentHeight(c, actions, changed, 180*time.Millisecond, func() float32 {
+		n.Row(c).FillWidth().Height(36).Justify(n.End).Gap(6).Children(func() {
+			if configurationAction(c, "取消").Disabled(e.busy).Clicked() {
+				advanced, login := e.draft.advanced, e.draft.login
+				e.edit(info)
+				e.draft.advanced, e.draft.login = advanced, login
+			}
+			if configurationAction(c, "保存").Label("保存 " + info.Name + " 路径").Disabled(disabled).Clicked() {
+				if err != nil {
+					e.error = err.Error()
+					return
+				}
+				e.paths[info.ID] = e.path
+				if install != nil && minor >= 18 {
+					e.options[info.ID] = options
+				}
+				if onboarding {
+					e.openID = ""
+				} else {
+					if info.Configured {
+						save()
+					} else {
+						v.saveDisabledAgentSettings(key, e, info.ID)
+					}
+				}
+			}
+		})
+		return 0
 	})
 }

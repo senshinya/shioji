@@ -78,6 +78,9 @@ func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.Raw
 	if strings.HasPrefix(job.Method, "runtime.tools.") && client.Minor < 22 {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能管理工具服务"}
 	}
+	if job.Method == "runtime.tools.change" && client.Minor < 24 {
+		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能修改工具服务配置"}
+	}
 	if job.Method == "device.directories" && client.Minor < 23 {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能浏览目录"}
 	}

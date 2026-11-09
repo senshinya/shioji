@@ -19,6 +19,7 @@ func serviceUI(t *testing.T) (*View, *deviceAgentEditor, *n.Tester) {
 	e := agentEditor([]domain.HarnessInfo{info})
 	e.edit(info)
 	e.setup = false
+	e.tab = "MCP"
 	v.devices = true
 	v.deviceSelected = "local"
 	v.toolServicesFor("local", info.ID, e).open = true
@@ -26,7 +27,7 @@ func serviceUI(t *testing.T) (*View, *deviceAgentEditor, *n.Tester) {
 	ui := n.NewTester(func(c *n.Context) {
 		v.frameTime = c.Now()
 		v.syncToolServiceAuthorizations(c)
-		n.Column(c).Width(560).Children(func() { v.agentToolServices(c, c.Theme(), "local", e, e.catalog[0], false) })
+		n.Column(c).Width(560).Height(560).Children(func() { v.agentToolServices(c, c.Theme(), "local", e, e.catalog[0], false) })
 	}, 850, 700)
 	ui.Advance(time.Second)
 	return v, e, ui
@@ -178,8 +179,8 @@ func TestManyToolServicesStayInBoundedScrollableList(t *testing.T) {
 	ui.Frame()
 	ui.Advance(time.Second)
 	viewport, ok := ui.Find("MCP 服务列表")
-	if !ok || viewport.H > 142 {
-		t.Fatal("many MCP servers expand the settings page", viewport)
+	if !ok || viewport.H < 300 || viewport.H > 560 {
+		t.Fatal("MCP list does not use its available tab height", viewport)
 	}
 	ui.Scroll(viewport.X+30, viewport.Y+30, 0, 2000)
 	ui.Advance(time.Second)

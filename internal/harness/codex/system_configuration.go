@@ -18,15 +18,13 @@ import (
 // whitelist projection; neither raw config nor any credential crosses it.
 type nativeConfiguration struct {
 	Config struct {
-		ToolServices map[string]struct {
-			Enabled *bool `json:"enabled"`
-		} `json:"mcp_servers"`
-		CredentialsStore string                    `json:"cli_auth_credentials_store"`
-		ForcedLogin      string                    `json:"forced_login_method"`
-		Provider         string                    `json:"model_provider"`
-		Model            string                    `json:"model"`
-		Endpoint         string                    `json:"openai_base_url"`
-		Providers        map[string]nativeProvider `json:"model_providers"`
+		ToolServices     map[string]json.RawMessage `json:"mcp_servers"`
+		CredentialsStore string                     `json:"cli_auth_credentials_store"`
+		ForcedLogin      string                     `json:"forced_login_method"`
+		Provider         string                     `json:"model_provider"`
+		Model            string                     `json:"model"`
+		Endpoint         string                     `json:"openai_base_url"`
+		Providers        map[string]nativeProvider  `json:"model_providers"`
 	} `json:"config"`
 	Layers []struct {
 		Config json.RawMessage `json:"config"`

@@ -134,7 +134,7 @@ func TestSavingDisabledAgentDoesNotEnableIt(t *testing.T) {
 	e.epoch = state.ConnectionEpoch
 	e.edit(e.catalog[0])
 	ui := n.NewTester(func(c *n.Context) {
-		v.agentRows(c, c.Theme(), "air", true, e, false, func() { v.saveDeviceAgents("air", state, e) })
+		n.Column(c).FillWidth().FillHeight().Children(func() { v.deviceAgentPage(c, c.Theme(), "air", "MacBook Air", state, e, e.catalog[0]) })
 	}, 1100, 820)
 	ui.Advance(time.Second)
 	if err := ui.Click("Custom Agent 可执行文件"); err != nil {

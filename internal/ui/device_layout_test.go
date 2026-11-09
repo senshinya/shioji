@@ -67,7 +67,7 @@ func TestDeviceAgentConfigurationNeverAutomaticallyExpandsOnTabEntry(t *testing.
 	}
 }
 
-func TestDeviceTabsPreserveUnsavedAgentConfiguration(t *testing.T) {
+func TestAgentPageReturnPreservesUnsavedConfiguration(t *testing.T) {
 	m := deviceUIModel()
 	state := m.DeviceStates["local"]
 	state.ConnectionEpoch = ""
@@ -85,9 +85,13 @@ func TestDeviceTabsPreserveUnsavedAgentConfiguration(t *testing.T) {
 	ui.Advance(time.Second)
 	ui.Click("Custom Agent 可执行文件")
 	ui.Type("/tmp/edited-agent")
+	ui.Click("返回 Agent 列表")
+	ui.Advance(time.Second)
 	ui.Click("设备设置")
 	ui.Advance(time.Second)
 	ui.Click("Agent")
+	ui.Advance(time.Second)
+	ui.Click("配置 Custom Agent 路径")
 	ui.Advance(time.Second)
 	if !ui.HasText("Custom Agent 可执行文件") {
 		t.Fatal("tab switch discarded the open configuration")

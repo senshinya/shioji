@@ -335,13 +335,13 @@ func TestAgentSignInDisclosureDoesNotJumpWhenGuidanceMoves(t *testing.T) {
 	ui.Frame()
 	ui.Advance(time.Second)
 	for _, open := range []bool{true, false} {
-		before, ok := ui.Find("模型列表滚动区")
+		before, ok := ui.Find("Custom Agent 可执行文件")
 		if !ok {
-			t.Fatal("missing following model list")
+			t.Fatal("missing following configuration field")
 		}
 		e.draft.login = open
 		ui.Frame()
-		start, _ := ui.Find("模型列表滚动区")
+		start, _ := ui.Find("Custom Agent 可执行文件")
 		if math.Abs(float64(start.Y-before.Y)) > 1 {
 			t.Fatal("login guidance jumps at disclosure boundary", open, before, start)
 		}
@@ -462,15 +462,15 @@ func TestAPIConfigurationEntranceUsesActualHeightAnimation(t *testing.T) {
 	e.catalog[0].Installation.APISetup = true
 	ui.Frame()
 	ui.Advance(time.Second)
-	before, _ := ui.Find("模型")
+	before, _ := ui.Find("Agent 接入内容")
 	if err := ui.Click("自定义 API"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(60 * time.Millisecond)
-	mid, _ := ui.Find("模型")
+	mid, _ := ui.Find("Agent 接入内容")
 	ui.Advance(time.Second)
-	end, _ := ui.Find("模型")
-	if mid.Y <= before.Y+1 || mid.Y >= end.Y-1 {
+	end, _ := ui.Find("Agent 接入内容")
+	if mid.H <= before.H+1 || mid.H >= end.H-1 {
 		t.Fatal("API height jumps", before, mid, end)
 	}
 }

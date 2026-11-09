@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
+	"shioji/internal/domain"
 	"strconv"
 	"strings"
 	"time"
@@ -68,6 +69,7 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 	state := v.deviceState(key)
 	scope := n.Column(c).FillWidth().FillHeight().Grow(1)
 	agentState := n.Local(scope, "agent-editor", func() *deviceAgentEditor { return agentEditor(state.Readiness.Harnesses) })
+	v.syncDeviceAgents(key, state, agentState)
 	rename := n.Local(scope, "name-editor", func() deviceNameEditor { return deviceNameEditor{} })
 	if rename.pending && v.Saver != nil {
 		saved, err := v.Saver.Result()
@@ -99,159 +101,174 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 	}
 
 	scope.Children(func() {
-		width, _ := c.Size()
-		header := n.Column(c).FillWidth().Height(80).Padding(28, configurationInset, 6)
-		if width < 900 {
-			header.Height(88).Padding(8, configurationInset, 6)
-		}
-		header.Children(func() {
-			if width < 900 {
-				if configurationAction(c, "返回设备列表").MarginStart(64).Clicked() {
-					v.deviceList = true
-				}
+		page, depth := "device", 0
+		var selected *domain.HarnessInfo
+		for i := range (*agentState).catalog {
+			if (*agentState).catalog[i].ID == (*agentState).pageID {
+				selected = &(*agentState).catalog[i]
+				page, depth = "agent:"+selected.ID, 1
+				break
 			}
-			n.Row(c).FillWidth().Height(28).Gap(12).AlignItems(n.Baseline).Children(func() {
+		}
+		configurationTabPanel(c.Key("device-navigation"), page, depth, configurationPanelFill, func() {
+			if selected != nil {
+				v.deviceAgentPage(c, t, key, name, state, *agentState, *selected)
+				return
+			}
+			width, _ := c.Size()
+			header := n.Column(c).FillWidth().Height(80).Padding(28, configurationInset, 6)
+			if width < 900 {
+				header.Height(88).Padding(8, configurationInset, 6)
+			}
+			header.Children(func() {
+				if width < 900 {
+					if configurationAction(c, "返回设备列表").MarginStart(64).Clicked() {
+						v.deviceList = true
+					}
+				}
+				n.Row(c).FillWidth().Height(28).Gap(12).AlignItems(n.Baseline).Children(func() {
 
-				n.Row(c).Grow(1).Gap(4).AlignItems(n.Baseline).Children(func() {
-					if rename.open {
-						input := textField(c.Key("name"), &rename.name).Padding(0, 8).Grow(1).MaxWidth(360).Height(28).FixedLineHeight(configurationTitleLine).FontSize(configurationTitleSize).FontWeight(400).Label("设备显示名称").Transition(fadeMotion(c, 140*time.Millisecond))
-						if rename.focus {
-							input.Focus()
-							rename.focus = false
-						}
-						save := iconButton(c, check, "保存设备名称").AlignSelf(n.Center).Clicked() || input.Submitted() && !input.Composing()
-						cancel := iconButton(c, closeIcon, "取消修改设备名称").AlignSelf(n.Center).Clicked() || input.Shortcut(0, n.KeyEscape)
-						if cancel {
-							rename.open = false
-							rename.error = ""
-						}
-						if save {
-							if err := m.RenameDevice(key, rename.name); err != nil {
-								rename.error = err.Error()
-							} else {
+					n.Row(c).Grow(1).Gap(4).AlignItems(n.Baseline).Children(func() {
+						if rename.open {
+							input := textField(c.Key("name"), &rename.name).Padding(0, 8).Grow(1).MaxWidth(360).Height(28).FixedLineHeight(configurationTitleLine).FontSize(configurationTitleSize).FontWeight(400).Label("设备显示名称").Transition(fadeMotion(c, 140*time.Millisecond))
+							if rename.focus {
+								input.Focus()
+								rename.focus = false
+							}
+							save := iconButton(c, check, "保存设备名称").AlignSelf(n.Center).Clicked() || input.Submitted() && !input.Composing()
+							cancel := iconButton(c, closeIcon, "取消修改设备名称").AlignSelf(n.Center).Clicked() || input.Shortcut(0, n.KeyEscape)
+							if cancel {
 								rename.open = false
 								rename.error = ""
-								rename.name = m.DeviceName(deviceID)
-								rename.pending = v.Saver != nil
-								if v.Saver != nil {
-									if data, err := m.EncodeState(); err == nil {
-										v.Saver.Queue(data)
+							}
+							if save {
+								if err := m.RenameDevice(key, rename.name); err != nil {
+									rename.error = err.Error()
+								} else {
+									rename.open = false
+									rename.error = ""
+									rename.name = m.DeviceName(deviceID)
+									rename.pending = v.Saver != nil
+									if v.Saver != nil {
+										if data, err := m.EncodeState(); err == nil {
+											v.Saver.Queue(data)
+										}
+									}
+									if strings.HasPrefix(m.Error, "无法保存草稿：") {
+										m.Error = ""
 									}
 								}
-								if strings.HasPrefix(m.Error, "无法保存草稿：") {
-									m.Error = ""
-								}
 							}
-						}
-					} else {
-						n.Text(c, name).SingleLine().Shrink(1).FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Tooltip(name).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-						if iconButton(c, queueEditIcon, "修改设备名称").AlignSelf(n.Center).Clicked() {
-							rename.open = true
-							rename.name = name
-							rename.error = ""
-							rename.focus = true
-						}
-					}
-				})
-			})
-			if key == "local" {
-				n.Text(c, "这台 Mac · Apple Silicon").FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
-			}
-			if key != "local" {
-				n.Text(c, address).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
-			}
-			errorFrame := n.Column(c.Key("rename-error")).FillWidth().Clip()
-			retained := n.Local(errorFrame, "text", func() string { return rename.error })
-			if rename.error != "" {
-				*retained = rename.error
-			}
-			animatedContentHeight(c, errorFrame, rename.error != "", 180*time.Millisecond, func() float32 {
-				n.Text(c, *retained).FillWidth().Padding(4, 0, 0, 38).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Transition(fadeMotion(c, 140*time.Millisecond))
-				return 0
-			})
-		})
-		tabs := []configurationTabItem{{ID: "", Label: "Agent"}, {ID: "settings", Label: "设备设置"}}
-		n.Column(c).FillWidth().PaddingX(configurationInset).Children(func() { v.deviceTab = configurationTabs(c, v.deviceTab, tabs, configurationUnderline, false) })
-		configurationTabPanel(c.Key("device-tab-panel"), v.deviceTab, configurationTabIndex(tabs, v.deviceTab), configurationPanelFill, func() {
-			n.Scroll(c.Key("device-body:" + v.deviceTab)).FillWidth().Grow(1).Children(func() {
-				n.Column(c).FillWidth().Padding(configurationHeadingGap, configurationInset, configurationSectionGap).AlignItems(n.Start).Children(func() {
-					n.Column(c).FillWidth().MaxWidth(840).Gap(configurationSectionGap).Children(func() {
-						if v.deviceTab == "" {
-							v.deviceAgents(c.Key("agents:"+key), t, key, state, agentState)
-							return
-						}
-
-						n.Column(c).FillWidth().Gap(0).Children(func() {
-							deviceHeading(c, "执行服务", nil)
-							v.deviceWorker(c.Key("worker:"+key), t, key, state)
-						})
-						n.Column(c).FillWidth().Gap(0).Children(func() {
-							deviceHeading(c, "工作区", func() {
-								if iconButton(c, plus, "新建工作区").Disabled(!state.Connected || v.Controller == nil).Clicked() {
-									v.beginWorkspace(key)
-								}
-							})
-							count := 0
-							for _, w := range m.Snapshot.Workspaces {
-								if w.DeviceID != deviceID && !(key == "local" && w.DeviceID == "") {
-									continue
-								}
-								count++
-								entry := control(c.Key(w.ID), 6).FillWidth().Height(40).PaddingX(0).Radius(6).Label("打开工作区：" + w.Name).ContextMenu(func(menu *n.Menu) { v.workspaceMenu(menu, w) }).Children(func() {
-									n.Row(c).FillWidth().Gap(10).AlignItems(n.Baseline).Children(func() {
-
-										n.Text(c, w.Name).SingleLine().FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).Grow(1)
-										label := strconv.Itoa(len(w.Folders)) + " 个目录"
-										n.Text(c, label).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
-										inlineSymbol(c, disclosureRight, label, n.Font{Family: t.Font, Size: 11, Weight: 400}, 12, t.TextMuted)
-									})
-								})
-
-								if entry.Clicked() {
-									m.WorkspaceID = w.ID
-									m.ActiveConnection = key
-									v.home()
-								}
+						} else {
+							n.Text(c, name).SingleLine().Shrink(1).FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Tooltip(name).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+							if iconButton(c, queueEditIcon, "修改设备名称").AlignSelf(n.Center).Clicked() {
+								rename.open = true
+								rename.name = name
+								rename.error = ""
+								rename.focus = true
 							}
-							if count == 0 {
-								n.Row(c).FillWidth().Height(40).AlignItems(n.Center).Children(func() { n.Text(c, "暂无工作区").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted) })
-							}
-						})
-						if key != "local" {
-							n.Column(c).FillWidth().Gap(0).Children(func() {
-								deviceHeading(c, "连接", func() {
-									if configurationAction(c, "重新连接").Disabled(v.Controller == nil).Clicked() {
-										v.do(app.Job{ConnectionID: key, Method: "$reconnect"})
-									}
-								})
-								deviceConfigRow(c, "SSH", func() {
-									n.Row(c).FillWidth().Gap(12).AlignItems(n.Baseline).Children(func() {
-										n.Text(c, address).SingleLine().FontSize(12).FixedLineHeight(20).Grow(1).Tooltip(address)
-										n.Text(c, deviceLatency(state, c.Now())).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-									})
-								})
-
-								owner := n.Column(c).FillWidth()
-								open := n.Local(owner, "connection-details", func() bool { return false })
-								owner.Children(func() {
-									deviceDisclosure(c.Key("connection"), "连接详情", open, func() {
-										deviceMeta(c, "登录身份", user)
-										deviceMeta(c, "端口", port)
-										deviceMeta(c, "设备 ID", deviceID)
-									})
-								})
-							})
-						}
-						if m.Error != "" && m.Error != state.Error {
-							n.Text(c, m.Error).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
-						}
-						if state.Error != "" && v.migrationForConnection(key) == nil {
-							n.Text(c, state.Error).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 						}
 					})
 				})
+				if key == "local" {
+					n.Text(c, "这台 Mac · Apple Silicon").FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
+				}
+				if key != "local" {
+					n.Text(c, address).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
+				}
+				errorFrame := n.Column(c.Key("rename-error")).FillWidth().Clip()
+				retained := n.Local(errorFrame, "text", func() string { return rename.error })
+				if rename.error != "" {
+					*retained = rename.error
+				}
+				animatedContentHeight(c, errorFrame, rename.error != "", 180*time.Millisecond, func() float32 {
+					n.Text(c, *retained).FillWidth().Padding(4, 0, 0, 38).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Transition(fadeMotion(c, 140*time.Millisecond))
+					return 0
+				})
 			})
-		})
+			tabs := []configurationTabItem{{ID: "", Label: "Agent"}, {ID: "settings", Label: "设备设置"}}
+			n.Column(c).FillWidth().PaddingX(configurationInset).Children(func() { v.deviceTab = configurationTabs(c, v.deviceTab, tabs, configurationUnderline, false) })
+			configurationTabPanel(c.Key("device-tab-panel"), v.deviceTab, configurationTabIndex(tabs, v.deviceTab), configurationPanelFill, func() {
+				n.Scroll(c.Key("device-body:" + v.deviceTab)).FillWidth().Grow(1).Children(func() {
+					n.Column(c).FillWidth().Padding(configurationHeadingGap, configurationInset, configurationSectionGap).AlignItems(n.Start).Children(func() {
+						n.Column(c).FillWidth().MaxWidth(840).Gap(configurationSectionGap).Children(func() {
+							if v.deviceTab == "" {
+								v.deviceAgents(c.Key("agents:"+key), t, key, state, agentState)
+								return
+							}
+
+							n.Column(c).FillWidth().Gap(0).Children(func() {
+								deviceHeading(c, "执行服务", nil)
+								v.deviceWorker(c.Key("worker:"+key), t, key, state)
+							})
+							n.Column(c).FillWidth().Gap(0).Children(func() {
+								deviceHeading(c, "工作区", func() {
+									if iconButton(c, plus, "新建工作区").Disabled(!state.Connected || v.Controller == nil).Clicked() {
+										v.beginWorkspace(key)
+									}
+								})
+								count := 0
+								for _, w := range m.Snapshot.Workspaces {
+									if w.DeviceID != deviceID && !(key == "local" && w.DeviceID == "") {
+										continue
+									}
+									count++
+									entry := control(c.Key(w.ID), 6).FillWidth().Height(40).PaddingX(0).Radius(6).Label("打开工作区：" + w.Name).ContextMenu(func(menu *n.Menu) { v.workspaceMenu(menu, w) }).Children(func() {
+										n.Row(c).FillWidth().Gap(10).AlignItems(n.Baseline).Children(func() {
+
+											n.Text(c, w.Name).SingleLine().FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).Grow(1)
+											label := strconv.Itoa(len(w.Folders)) + " 个目录"
+											n.Text(c, label).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+											inlineSymbol(c, disclosureRight, label, n.Font{Family: t.Font, Size: 11, Weight: 400}, 12, t.TextMuted)
+										})
+									})
+
+									if entry.Clicked() {
+										m.WorkspaceID = w.ID
+										m.ActiveConnection = key
+										v.home()
+									}
+								}
+								if count == 0 {
+									n.Row(c).FillWidth().Height(40).AlignItems(n.Center).Children(func() { n.Text(c, "暂无工作区").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted) })
+								}
+							})
+							if key != "local" {
+								n.Column(c).FillWidth().Gap(0).Children(func() {
+									deviceHeading(c, "连接", func() {
+										if configurationAction(c, "重新连接").Disabled(v.Controller == nil).Clicked() {
+											v.do(app.Job{ConnectionID: key, Method: "$reconnect"})
+										}
+									})
+									deviceConfigRow(c, "SSH", func() {
+										n.Row(c).FillWidth().Gap(12).AlignItems(n.Baseline).Children(func() {
+											n.Text(c, address).SingleLine().FontSize(12).FixedLineHeight(20).Grow(1).Tooltip(address)
+											n.Text(c, deviceLatency(state, c.Now())).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+										})
+									})
+
+									owner := n.Column(c).FillWidth()
+									open := n.Local(owner, "connection-details", func() bool { return false })
+									owner.Children(func() {
+										deviceDisclosure(c.Key("connection"), "连接详情", open, func() {
+											deviceMeta(c, "登录身份", user)
+											deviceMeta(c, "端口", port)
+											deviceMeta(c, "设备 ID", deviceID)
+										})
+									})
+								})
+							}
+							if m.Error != "" && m.Error != state.Error {
+								n.Text(c, m.Error).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
+							}
+							if state.Error != "" && v.migrationForConnection(key) == nil {
+								n.Text(c, state.Error).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+							}
+						})
+					})
+				})
+			})
+		}, false)
 	})
 }
 

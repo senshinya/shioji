@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"shioji/internal/domain"
 	"shioji/internal/harness"
+	"sort"
 	"strconv"
 )
 
@@ -19,6 +20,9 @@ func (r *Runtime) ToolServices(ctx context.Context) (domain.ToolServiceCatalog, 
 		return domain.ToolServiceCatalog{}, errors.New("无法读取工具服务配置，请重试")
 	}
 	catalog := domain.ToolServiceCatalog{Services: []domain.ToolService{}, CanRefresh: r.supports("config/mcpServer/reload")}
+	catalog.CanAdd = r.canWriteToolConfiguration(config)
+	catalog.Revision = toolConfigurationRevision(config)
+	listed := map[string]bool{}
 	var cursor *string
 	seen := map[string]bool{}
 	for {
@@ -44,12 +48,15 @@ func (r *Runtime) ToolServices(ctx context.Context) (domain.ToolServiceCatalog, 
 				continue
 			}
 			service := domain.ToolService{ID: source.Name, Name: source.Name, Origin: publicOrigin(source.HTTPOrigin), Tools: len(source.Tools), State: domain.ToolServiceUnknown}
+			listed[source.Name] = true
+			var configured nativeToolService
+			json.Unmarshal(config.Config.ToolServices[source.Name], &configured)
 			if source.Info != nil && source.Info.Title != "" {
 				service.Name = source.Info.Title
 			}
 			service.CanAuthorize = r.supports("mcpServer/oauth/login") && (source.Auth == "notLoggedIn" || source.Auth == "oAuth")
 			switch {
-			case config.Config.ToolServices[source.Name].Enabled != nil && !*config.Config.ToolServices[source.Name].Enabled || source.Runtime == "disabled":
+			case configured.Enabled != nil && !*configured.Enabled || source.Runtime == "disabled":
 				service.State = domain.ToolServiceDisabled
 				service.CanAuthorize = false
 			case source.Runtime == "authenticationRequired":
@@ -66,9 +73,22 @@ func (r *Runtime) ToolServices(ctx context.Context) (domain.ToolServiceCatalog, 
 			case source.Auth == "notLoggedIn":
 				service.State = domain.ToolServiceAuthorizationRequired
 			}
+			r.projectToolConfiguration(config, &service)
 			catalog.Services = append(catalog.Services, service)
 		}
 		if result.Next == nil {
+			for id := range config.Config.ToolServices {
+				if listed[id] {
+					continue
+				}
+				s := domain.ToolService{ID: id, Name: id, State: domain.ToolServiceUnknown}
+				r.projectToolConfiguration(config, &s)
+				if s.Configuration != nil && !s.Configuration.Enabled {
+					s.State = domain.ToolServiceDisabled
+				}
+				catalog.Services = append(catalog.Services, s)
+			}
+			sort.SliceStable(catalog.Services, func(i, j int) bool { return catalog.Services[i].ID < catalog.Services[j].ID })
 			return catalog, nil
 		}
 		if seen[*result.Next] {
