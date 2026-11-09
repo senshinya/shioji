@@ -124,6 +124,7 @@ func (e *deviceAgentEditor) edit(info domain.HarnessInfo) {
 	e.error = ""
 }
 func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connected bool, e *deviceAgentEditor, info domain.HarnessInfo, onboarding bool, save func()) {
+	info = v.signInProfileInfo(key, e, info)
 	install := info.Installation
 	row := deviceConfigRow
 	if e.setup {
@@ -158,7 +159,7 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 				if install != nil && (install.Issue == domain.RuntimeSignInRequired || install.Issue == domain.RuntimeAuthenticationExpired) {
 					label = runtimeSetupLabel(info, connected)
 				}
-				trigger := control(c.Key("account"), 5).FillWidth().Height(28).PaddingX(8).Radius(5).Label("管理账号").Disabled(install == nil || len(install.SignInCommand) == 0 || info.Account != nil && info.Account.State == "notRequired").Children(func() {
+				trigger := control(c.Key("account"), 5).FillWidth().Height(28).PaddingX(8).Radius(5).Label("管理账号").Disabled(install == nil || len(install.SignInCommand) == 0 && len(install.SignInMethods) == 0 || info.Account != nil && info.Account.State == "notRequired").Children(func() {
 					n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
 						n.Text(c, label).FontSize(12).FixedLineHeight(20).SingleLine().Shrink(1).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 						if status != "" {
@@ -188,37 +189,7 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 						top, bottom = 0, 0
 					}
 					n.Column(c).FillWidth().Padding(top, 0, bottom, 8).Children(func() {
-						n.Row(c).FillWidth().Height(28).Gap(8).AlignItems(n.Center).Children(func() {
-							if info.Account != nil && info.Account.Identity != "" {
-								identity := info.Account.Identity
-								if at := strings.Index(identity, "@"); at > 1 {
-									identity = string([]rune(identity[:at])[:1]) + "…" + identity[at:]
-								}
-								n.Text(c, identity).MinWidth(0).Grow(1).SingleLine().Tooltip(identity).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-							} else {
-								n.Spacer(c).Grow(1)
-							}
-
-							copyLabel := "复制登录命令"
-							if c.Now().Before(e.draft.copiedUntil) {
-								copyLabel = "已复制"
-								c.AnimationFrame()
-							}
-							copy := control(c.Key("copy-login"), 6).Width(88).Height(28).PaddingX(8).Label("复制登录命令").Disabled(install == nil || len(install.SignInCommand) == 0).Children(func() {
-								n.Text(c, copyLabel).FontSize(12).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-							})
-							if copy.Clicked() {
-								c.WriteClipboard(v.agentLoginCommand(key, install.SignInCommand))
-								e.draft.copiedUntil = c.Now().Add(2 * time.Second)
-							}
-							if deviceAction(c, "重新检测").Disabled(disabled || v.Controller == nil).Clicked() {
-								if e.setup {
-									v.recheckWelcomeAgent(key, info.ID)
-								} else {
-									v.recheckAgent(key, info.ID)
-								}
-							}
-						})
+						v.agentAuthentication(c, t, key, e, info, disabled)
 					})
 				})
 				return 0
@@ -234,10 +205,29 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 					field.Padding(4, 8).Background(t.Background)
 				}
 			})
-			if install != nil && install.Issue != "" && !e.draft.login {
-				n.Column(c).FillWidth().PaddingY(8).Children(func() {
-					n.Text(c, install.Guide).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
-					v.agentGuidance(c, key, info)
+			if install != nil {
+				guidance := n.Column(c.Key("login-guidance")).FillWidth().Clip()
+				visible := install.Issue != "" && !e.draft.login
+				last := n.Local(guidance, "info", func() domain.HarnessInfo { return info })
+				if visible {
+					*last = info
+				}
+				animatedContentHeight(c, guidance, visible, 240*time.Millisecond, func() float32 {
+					previous := *last
+					installation := previous.Installation
+					if (installation.Issue == domain.RuntimeSignInRequired || installation.Issue == domain.RuntimeAuthenticationExpired) && len(installation.SignInMethods) > 0 && minor >= 19 {
+						n.Row(c).FillWidth().Justify(n.End).PaddingY(8).Children(func() {
+							if deviceAction(c, "登录账号").Disabled(disabled).Clicked() {
+								e.draft.login = true
+							}
+						})
+					} else {
+						n.Column(c).FillWidth().PaddingY(8).Children(func() {
+							n.Text(c, installation.Guide).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+							v.agentGuidance(c, key, previous)
+						})
+					}
+					return 0
 				})
 			}
 		}

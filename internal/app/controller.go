@@ -7,6 +7,7 @@ import (
 	"net"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +27,7 @@ type Job struct {
 	epoch           string
 }
 type Controller struct {
+	signInForwards    signInForwards
 	WorkerSSH         *transport.SSH
 	WorkerBinary      string
 	WorkerAutoUpdate  bool
@@ -72,6 +74,12 @@ func (c *Controller) Select(id string) { c.Do(Job{Method: "$select", Input: id})
 func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.RawMessage, error) {
 	if client == nil || job.epoch == "" || job.epoch != client.Epoch || ctx.Err() != nil {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "连接已改变，操作未发送；请重新提交"}
+	}
+	if strings.HasPrefix(job.Method, "runtime.signin.") && client.Minor < 19 {
+		return nil, errors.New("更新设备的执行服务后才能在应用内登录")
+	}
+	if in, ok := job.Input.(protocol.SignInInput); ok && in.Method == domain.SignInBrowser && job.ConnectionID != "" && job.ConnectionID != "local" && client.Minor < 20 {
+		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能使用远程浏览器登录"}
 	}
 	if job.Prepare != nil {
 		if err := job.Prepare(); err != nil {

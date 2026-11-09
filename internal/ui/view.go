@@ -26,6 +26,7 @@ type editBinding struct {
 }
 
 type View struct {
+	agentSignIns                                                                                                    map[string]*agentSignInUI
 	welcome                                                                                                         *welcomeFlow
 	composerDocuments                                                                                               map[string]*composerDocument
 	fileMention                                                                                                     *fileMention
@@ -262,6 +263,7 @@ func (v *View) View(c *n.Context) {
 		}
 	}
 	t := *applyAppearance(c, m.Preferences)
+	v.syncAgentSignIns(c)
 	// Keep the overlay parent alive so popup entrance and exit both have a
 	// persistent parent, even when no popup is currently open.
 	n.Overlay(c, func() {})

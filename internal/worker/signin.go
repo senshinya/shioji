@@ -1,0 +1,228 @@
+package worker
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
+	"shioji/internal/domain"
+	"shioji/internal/harness"
+	"shioji/internal/protocol"
+	"strings"
+	"time"
+)
+
+type workerSignIn struct {
+	status      domain.SignInStatus
+	fingerprint [32]byte
+	cancel      context.CancelFunc
+	login       harness.SignIn
+}
+
+func (s *Server) signInCommand(method string, in protocol.SignInInput) (domain.SignInStatus, error) {
+	if in.ID == "" || len(in.ID) > 128 || s.adapter(in.HarnessID) == nil {
+		return domain.SignInStatus{}, errors.New("登录请求无效")
+	}
+	s.signInMu.Lock()
+	defer s.signInMu.Unlock()
+	if s.signInClosed || s.ctx.Err() != nil {
+		return domain.SignInStatus{}, errors.New("执行服务正在关闭")
+	}
+	current := s.signIns[in.HarnessID]
+	if method != "runtime.signin.start" {
+		if current == nil || current.status.ID != in.ID {
+			for id, entry := range s.signIns {
+				if entry.status.ID == in.ID && id != in.HarnessID {
+					return domain.SignInStatus{}, errors.New("登录不属于该 Agent")
+				}
+			}
+			return domain.SignInStatus{ID: in.ID, HarnessID: in.HarnessID, Phase: domain.SignInExpired, Message: "登录已过期，请重新登录"}, nil
+		}
+		if method == "runtime.signin.cancel" && current.status.Phase.Active() {
+			current.status.Phase = domain.SignInCanceled
+			current.status.Challenge = domain.SignInChallenge{}
+			// Cancel the exact source authorization before ending its waiting context.
+			if current.login != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				err := current.login.Cancel(ctx)
+				cancel()
+				if err != nil {
+					current.status.Message = "登录已关闭；若已在浏览器授权，请重新检测账号"
+				}
+			}
+			current.cancel()
+		}
+		return current.status, nil
+	}
+	if in.Method != domain.SignInBrowser && in.Method != domain.SignInDeviceCode {
+		return domain.SignInStatus{}, errors.New("登录方式不可用")
+	}
+	encoded, _ := json.Marshal(in)
+	fingerprint := sha256.Sum256(encoded)
+	if current != nil && current.status.ID == in.ID {
+		if current.fingerprint != fingerprint {
+			return domain.SignInStatus{}, errors.New("登录配置已变化，请重新发起登录")
+		}
+		return current.status, nil
+	}
+	if current != nil && current.status.Phase.Active() {
+		return domain.SignInStatus{}, errors.New("该 Agent 已有登录正在进行")
+	}
+	// Different harnesses may not reuse another authorization's operation identity.
+	for _, entry := range s.signIns {
+		if entry.status.ID == in.ID {
+			return domain.SignInStatus{}, errors.New("登录标识已使用")
+		}
+	}
+	if s.signIns == nil {
+		s.signIns = map[string]*workerSignIn{}
+	}
+	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Minute)
+	entry := &workerSignIn{status: domain.SignInStatus{ID: in.ID, HarnessID: in.HarnessID, Phase: domain.SignInStarting}, fingerprint: fingerprint, cancel: cancel}
+	s.signIns[in.HarnessID] = entry
+	s.wg.Add(1)
+	go s.runSignIn(ctx, in, entry)
+	return entry.status, nil
+}
+func (s *Server) signInAdapter(in protocol.SignInInput) (harness.Adapter, error) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	adapter := s.adapter(in.HarnessID)
+	if in.Configuration == nil {
+		if err := s.runtimeSettingError(in.HarnessID); err != nil {
+			return nil, errors.New("请先修正 Agent 配置")
+		}
+		return adapter, nil
+	}
+	config := *in.Configuration
+	if config.HarnessID != in.HarnessID {
+		return nil, errors.New("登录配置不属于该 Agent")
+	}
+	executable := strings.TrimSpace(config.Executable)
+	if executable != "" {
+		st, err := os.Stat(executable)
+		if !filepath.IsAbs(executable) || len(executable) > 4096 || strings.ContainsAny(executable, "\x00\r\n") || err != nil || !st.Mode().IsRegular() || st.Mode().Perm()&0111 == 0 {
+			return nil, errors.New("请检查所属设备上的 Agent 可执行文件")
+		}
+	}
+	provider, ok := adapter.(harness.InstallationProvider)
+	if !ok {
+		return nil, harness.Unsupported("configure-runtime")
+	}
+	next, err := provider.WithExecutable(executable)
+	if err != nil {
+		return nil, err
+	}
+	return s.applyRuntimeOptions(in.HarnessID, next, config.Options)
+}
+func (s *Server) runSignIn(ctx context.Context, in protocol.SignInInput, entry *workerSignIn) {
+	defer s.wg.Done()
+	defer entry.cancel()
+	adapter, err := s.signInAdapter(in)
+	var login harness.SignIn
+	var challenge domain.SignInChallenge
+	if err == nil {
+		provider, ok := adapter.(harness.AuthenticationProvider)
+		if !ok {
+			err = harness.Unsupported("sign-in")
+		} else {
+			startCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+			login, challenge, err = provider.BeginSignIn(startCtx, in.Method)
+			cancel()
+		}
+	}
+	s.signInMu.Lock()
+	if !entry.status.Phase.Active() || ctx.Err() != nil {
+		if entry.status.Phase.Active() {
+			entry.status.Phase = domain.SignInExpired
+			entry.status.Message = "登录已过期，请重新登录"
+		}
+		s.signInMu.Unlock()
+		if login != nil {
+			stop, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			login.Cancel(stop)
+			cancel()
+		}
+		return
+	}
+	if err != nil {
+		entry.status.Phase = domain.SignInFailed
+		entry.status.Message = "无法开始登录，请检查 Agent 配置与设备网络后重试"
+		s.signInMu.Unlock()
+		return
+	}
+	entry.login = login
+	entry.status.Phase = domain.SignInWaiting
+	entry.status.Challenge = challenge
+	s.signInMu.Unlock()
+	ready, err := login.Wait(ctx)
+	if err == nil && ctx.Err() == nil && s.signInUsesSavedConfiguration(in) {
+		_, _ = s.recheckRuntime(in.HarnessID)
+	}
+	s.signInMu.Lock()
+	defer s.signInMu.Unlock()
+	entry.login = nil
+	if !entry.status.Phase.Active() {
+		return
+	}
+	entry.status.Challenge = domain.SignInChallenge{}
+	if ctx.Err() != nil {
+		entry.status.Phase = domain.SignInExpired
+		entry.status.Message = "登录已过期，请重新登录"
+		return
+	}
+	if err != nil {
+		entry.status.Phase = domain.SignInFailed
+		entry.status.Message = "登录未完成，请重试或重新检测账号"
+		return
+	}
+	descriptor := adapter.Descriptor()
+	info := domain.HarnessInfo{ID: in.HarnessID, Name: descriptor.Name, Icon: descriptor.Icon, State: ready.State, Account: ready.Account, Models: ready.Models, Permissions: ready.Permissions, PermissionChoices: ready.PermissionChoices, Plan: ready.Plan, Capabilities: ready.Capabilities}
+	if provider, ok := adapter.(harness.InstallationProvider); ok {
+		installation := provider.Installation()
+		info.Installation = &installation
+	}
+	entry.status.Profile = &info
+	entry.status.Phase = domain.SignInCompleted
+}
+func (s *Server) closeSignIns() {
+	s.signInMu.Lock()
+	s.signInClosed = true
+	var logins []harness.SignIn
+	for _, entry := range s.signIns {
+		entry.cancel()
+		if entry.login != nil {
+			logins = append(logins, entry.login)
+		}
+	}
+	s.signInMu.Unlock()
+	for _, login := range logins {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		login.Cancel(ctx)
+		cancel()
+	}
+}
+
+func (s *Server) signInUsesSavedConfiguration(in protocol.SignInInput) bool {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	if in.Configuration == nil {
+		return true
+	}
+	config := in.Configuration
+	options := s.runtimeOptions[in.HarnessID]
+	return strings.TrimSpace(config.Executable) == s.runtimeSettings[in.HarnessID] && (config.Options == nil || reflect.DeepEqual(*config.Options, options))
+}
+func (s *Server) hasActiveSignIn() bool {
+	s.signInMu.Lock()
+	defer s.signInMu.Unlock()
+	for _, entry := range s.signIns {
+		if entry.status.Phase.Active() {
+			return true
+		}
+	}
+	return false
+}

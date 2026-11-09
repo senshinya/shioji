@@ -22,6 +22,10 @@ func (s *Server) disableBackground() (result domain.BackgroundService, err error
 	if s.backgroundStopping.Load() {
 		return result, errors.New("后台服务正在关闭")
 	}
+	if s.build.Managed && s.hasActiveSignIn() {
+		result.Message = "正在登录 Agent，完成后可关闭后台服务"
+		return result, nil
+	}
 	if s.build.Managed {
 		var undo []func() error
 		defer func() {

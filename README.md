@@ -5,7 +5,9 @@ The developer build runs a self-contained local Go worker and an installed Codex
 Device management supports application display names for both this Mac and SSH
 devices, and device-owned Agent selection/executable configuration. Adding an SSH
 device checks its selected Agents before saving the connection. It never changes
-OS hostnames or installs/signs into a third-party Agent.
+OS hostnames or installs a third-party Agent. Supported Agent sign-in can be
+explicitly started from the account section; authorization and credentials stay
+on the owning device, including for SSH devices.
 The adapter checks the installed App Server protocol and exposes its supported capabilities rather than requiring one exact CLI version. The recorded protocol baseline remains 0.166.0; the current adapter also passes live tests with 0.167.0.
 It uses MyGo native UI and SQLite; no WebView or herdr-core runtime is required.
 
@@ -15,8 +17,8 @@ open build/Shioji.app
 ```
 
 Go 1.27.3 is pinned by `go.mod` and downloaded by Go's toolchain mechanism if needed.
-An existing compatible Codex installation and login are required; Shioji does not
-install, authenticate, or overwrite your Codex. Create a workspace with the native
+An existing compatible Codex installation is required; Shioji does not install
+or overwrite your Codex. Sign in from device configuration when needed. Create a workspace with the native
 folder picker, then submit a nonempty prompt from Home. Cmd+N returns to Home.
 
 For terminal development:

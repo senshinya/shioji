@@ -38,6 +38,9 @@ type EventsQuery = protocol.EventsQuery
 type EventPage = protocol.EventPage
 type AnswerInput = protocol.AnswerInput
 type Server struct {
+	signInMu             sync.Mutex
+	signIns              map[string]*workerSignIn
+	signInClosed         bool
 	build                domain.WorkerBuild
 	maintenance          sync.RWMutex
 	updating             atomic.Bool
@@ -296,6 +299,12 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 	switch method {
 	case "runtime.catalog":
 		return s.runtimeProfiles(nil, true), nil
+	case "runtime.signin.start", "runtime.signin.status", "runtime.signin.cancel":
+		in, err := decode[protocol.SignInInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.signInCommand(method, in)
 	case "runtime.agents":
 		in, err := decode[protocol.DeviceAgents](body)
 		if err != nil {
@@ -924,6 +933,7 @@ func (s *Server) Close() error {
 	s.once.Do(func() {
 		var result error
 		s.cancel()
+		s.closeSignIns()
 		s.listener.Close()
 		s.mu.Lock()
 		for conn := range s.conns {

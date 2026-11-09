@@ -47,6 +47,12 @@ func (m *Model) validateDeviceReply(key string, job Job, body json.RawMessage) e
 	if state == nil {
 		return errors.New("设备连接已改变，请重新核对操作")
 	}
+	if in, ok := job.Input.(protocol.SignInInput); ok {
+		var result domain.SignInStatus
+		if json.Unmarshal(body, &result) != nil || result.ID != in.ID || result.HarnessID != in.HarnessID {
+			return errors.New("登录回执与请求不一致")
+		}
+	}
 	fail := errors.New("设备回执与请求的工作区、会话或操作不一致")
 	if job.Method == "session.fork" || job.Method == "session.restart" || job.Method == "session.history-operation" || job.Method == "session.cancel-history" {
 		var id, sid string

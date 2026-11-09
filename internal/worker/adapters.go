@@ -175,6 +175,7 @@ func (s *Server) runtimeProfiles(sessions []string, allAdapters bool) domain.Rea
 				installation.Override = s.runtimeSettings[id]
 				installation.Guide = "请修正该设备上的 Agent 配置后保存：" + failure.Error()
 				installation.SignInCommand = nil
+				installation.SignInMethods = nil
 			}
 			s.runtimeMu.RUnlock()
 			if err != nil {

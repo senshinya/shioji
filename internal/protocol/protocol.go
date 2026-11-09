@@ -18,8 +18,8 @@ import (
 // Major 2 requires clients to understand authoritative history replacement.
 const Major = 2
 
-// Minor 17 adds authoritative idle admission before unregistering a managed worker.
-const Minor = 18
+// Minor 20 adds explicit loopback callback metadata for remote browser authorization.
+const Minor = 20
 const MaxFrame = 1 << 20
 
 type Frame struct {
@@ -198,6 +198,15 @@ type RuntimeConfiguration struct {
 	Options    *domain.RuntimeOptions `json:"options,omitempty"`
 	HarnessID  string                 `json:"harnessId"`
 	Executable string                 `json:"executable"`
+}
+
+// ID identifies a single explicitly started authorization. Querying an unknown
+// ID must never restart it, including after worker restart or network loss.
+type SignInInput struct {
+	ID            string                `json:"id"`
+	HarnessID     string                `json:"harnessId"`
+	Method        domain.SignInMethod   `json:"method,omitempty"`
+	Configuration *RuntimeConfiguration `json:"configuration,omitempty"`
 }
 
 // DeviceAgents is the complete set selected for one owning device.

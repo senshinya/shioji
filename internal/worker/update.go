@@ -35,6 +35,9 @@ func (s *Server) prepareWorkerUpdate(in domain.WorkerReplacement) (result domain
 	if refreshing {
 		return domain.WorkerUpdateResult{Reason: "正在更新运行环境，完成后更新执行服务"}, nil
 	}
+	if s.hasActiveSignIn() {
+		return domain.WorkerUpdateResult{Reason: "正在登录 Agent，完成后更新执行服务"}, nil
+	}
 	var undo []func() error
 	defer func() {
 		if !s.updating.Load() {

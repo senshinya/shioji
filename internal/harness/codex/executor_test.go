@@ -19,6 +19,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if len(os.Args) == 3 && os.Args[1] == "--fixture-signin" {
+		signInFixture(os.Args[2])
+		os.Exit(0)
+	}
 	if handled, err := managedexec.ChildMain(os.Args[1:]); handled {
 		if err != nil {
 			os.Exit(1)

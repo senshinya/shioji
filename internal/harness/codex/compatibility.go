@@ -19,11 +19,14 @@ import (
 )
 
 type protocolSupport struct {
+	browserLogin      bool
+	deviceLogin       bool
 	collaborationMode bool
 	serviceTier       bool
 	methods           map[string]bool
 }
 type requestShape struct {
+	OneOf      []requestShape             `json:"oneOf,omitempty"`
 	Properties map[string]json.RawMessage `json:"properties"`
 	Required   []string                   `json:"required"`
 	Ref        string                     `json:"$ref"`
@@ -41,6 +44,7 @@ var requestContracts = map[string][]string{
 	"model/list":              {"cursor", "limit", "includeHidden"},
 	"config/read":             {"cwd", "includeLayers"},
 	"account/read":            {"refreshToken"},
+	"account/login/cancel":    {"loginId"},
 	"configRequirements/read": {},
 	"environment/add":         {"environmentId", "execServerUrl", "authBearerToken"},
 	"thread/start":            {"cwd", "model", "approvalPolicy", "sandbox", "config", "runtimeWorkspaceRoots", "environments"},
@@ -70,6 +74,37 @@ func protocolFromSchema(data []byte) (*protocolSupport, error) {
 			Enum []string `json:"enum"`
 		}
 		if json.Unmarshal(variant.Properties["method"], &method) != nil || len(method.Enum) != 1 {
+			continue
+		}
+		if method.Enum[0] == "account/login/start" {
+			var params requestShape
+			json.Unmarshal(variant.Properties["params"], &params)
+			if params.Ref != "" {
+				params = schema.Definitions[strings.TrimPrefix(params.Ref, "#/definitions/")]
+			}
+			for _, choice := range params.OneOf {
+				if choice.Ref != "" {
+					choice = schema.Definitions[strings.TrimPrefix(choice.Ref, "#/definitions/")]
+				}
+				var kind struct {
+					Enum []string `json:"enum"`
+				}
+				json.Unmarshal(choice.Properties["type"], &kind)
+				compatible := len(kind.Enum) == 1
+				for _, required := range choice.Required {
+					if required != "type" {
+						compatible = false
+					}
+				}
+				if compatible {
+					if kind.Enum[0] == "chatgpt" {
+						support.browserLogin = true
+					}
+					if kind.Enum[0] == "chatgptDeviceCode" {
+						support.deviceLogin = true
+					}
+				}
+			}
 			continue
 		}
 		fields, used := requestContracts[method.Enum[0]]
@@ -112,6 +147,9 @@ func protocolFromSchema(data []byte) (*protocolSupport, error) {
 		if !support.methods[method] {
 			return nil, &harness.SetupError{Issue: domain.RuntimeIncompatible, Message: fmt.Sprintf("Codex 协议缺少兼容的 %s，无法安全接入", method)}
 		}
+	}
+	if !support.methods["account/login/cancel"] || !support.methods["account/read"] {
+		support.browserLogin, support.deviceLogin = false, false
 	}
 	return support, nil
 }

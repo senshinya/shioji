@@ -10,6 +10,7 @@ import (
 )
 
 type deviceAgentEditor struct {
+	signInMethod            domain.SignInMethod
 	setup                   bool
 	tab                     string
 	workerMinor             int

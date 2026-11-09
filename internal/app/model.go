@@ -20,6 +20,7 @@ type InspectorLayout struct {
 }
 
 type Model struct {
+	SignInIDs            map[string]map[string]string
 	FirstRun             bool
 	ModelMenus           map[string]map[string]ModelMenuPreferences
 	WorkerService        *WorkerService
@@ -453,6 +454,7 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 }
 
 type savedState struct {
+	SignInIDs            map[string]map[string]string               `json:"signInIds,omitempty"`
 	SetupCompleted       *bool                                      `json:"setupCompleted,omitempty"`
 	ModelMenus           map[string]map[string]ModelMenuPreferences `json:"modelMenus,omitempty"`
 	DraftSkills          map[string][]DraftSkill                    `json:"draftSkills,omitempty"`
@@ -510,6 +512,7 @@ func (m *Model) Load(path string) error {
 		return err
 	}
 	m.FirstRun = saved.SetupCompleted != nil && !*saved.SetupCompleted
+	m.SignInIDs = saved.SignInIDs
 	if saved.DraftSkills != nil {
 		m.DraftSkills = saved.DraftSkills
 	}

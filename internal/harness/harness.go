@@ -133,6 +133,16 @@ type InstallationProvider interface {
 	Installation() domain.RuntimeInstallation
 	WithExecutable(string) (Adapter, error)
 }
+
+// AuthenticationProvider owns the concrete authorization protocol and credential
+// storage. Worker orchestration receives only a transient public challenge.
+type AuthenticationProvider interface {
+	BeginSignIn(context.Context, domain.SignInMethod) (SignIn, domain.SignInChallenge, error)
+}
+type SignIn interface {
+	Wait(context.Context) (domain.Readiness, error)
+	Cancel(context.Context) error
+}
 type SetupError struct {
 	Issue   domain.RuntimeIssue
 	Message string

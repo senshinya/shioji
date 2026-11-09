@@ -35,6 +35,14 @@ func (s SSH) Validate() error {
 }
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 func (s SSH) command(ctx context.Context, remote string) (*exec.Cmd, error) {
+	args, err := s.arguments()
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, "--", s.Target, remote)
+	return exec.CommandContext(ctx, "/usr/bin/ssh", args...), nil
+}
+func (s SSH) arguments() ([]string, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
@@ -42,8 +50,7 @@ func (s SSH) command(ctx context.Context, remote string) (*exec.Cmd, error) {
 	if s.Port != 0 {
 		args = append(args, "-p", strconv.Itoa(s.Port))
 	}
-	args = append(args, "--", s.Target, remote)
-	return exec.CommandContext(ctx, "/usr/bin/ssh", args...), nil
+	return args, nil
 }
 func (s SSH) Dial(ctx context.Context) (net.Conn, error) {
 	if !strings.HasPrefix(s.Worker, "/") || strings.ContainsAny(s.Worker+s.StateDirectory, "\x00\r\n") {

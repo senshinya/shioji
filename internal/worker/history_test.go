@@ -36,7 +36,9 @@ func TestWorkerHistoryForkAndRestartUseOwningRuntimeAndNeverReplay(t *testing.T)
 		deadline := time.Now().Add(15 * time.Second)
 		for {
 			d, e := s.store.Session(id, 0, 100)
-			if e == nil && d.Session.Status == "completed" {
+			// Automatic naming is independent of turn completion. Capture the
+			// fixture's settled title before asserting that history preserves it.
+			if e == nil && d.Session.Status == "completed" && d.Session.SourceTitle != "" {
 				return d
 			}
 			if time.Now().After(deadline) {

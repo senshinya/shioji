@@ -292,3 +292,7 @@ Runtime options are typed Shioji launch defaults (`RuntimeOptions`), owned and a
 Account presentation uses a small public `RuntimeAccount` projection (authentication label, subscription label, identity and actual state). Credentials and native authentication response structures do not enter shared events or UI state. Login guidance and commands come from the adapter and are scoped to the selected device; unknown authentication state is never reported as logged in.
 
 Model visibility, favorites and order are client menu preferences scoped by stable DeviceID and harness. They do not remove models from the authoritative catalog, modify accepted session configurations or turn a hidden model into an unavailable one.
+
+## 应用内认证
+
+2026-11-09 增量：独立可选 `harness.AuthenticationProvider` 提供中立的浏览器／设备验证码授权。worker 持有临时授权状态与稳定操作 ID，adapter 负责具体协议、来源登录 ID 与凭据存储；共享配置、事件与会话状态不携带具体认证结构。认证不借用会话运行时，不隐式退出已有账号，也不改变 Agent 启用选择。账号和模型经真实回读后更新，挑战不进入持久化投影。详见 [Agent 登录](agent-signin.md)。

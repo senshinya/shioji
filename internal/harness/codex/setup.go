@@ -11,6 +11,7 @@ import (
 	"shioji/internal/harness"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -25,7 +26,7 @@ func (a Adapter) Installation() domain.RuntimeInstallation {
 	if a.Home != "" {
 		command = append([]string{"/usr/bin/env", "CODEX_HOME=" + a.Home}, command...)
 	}
-	return domain.RuntimeInstallation{Options: a.runtimeOptions, OptionsSupported: domain.RuntimeOptionSupport{Arguments: true, Directory: true, Environment: true, Instructions: true, TitleModel: true}, Executable: path, Override: a.override, Configurable: true, Guide: "在该设备的终端安装或登录，然后重新检测", Documentation: "https://learn.chatgpt.com/docs/codex/cli", SignInCommand: command}
+	return domain.RuntimeInstallation{SignInMethods: a.signInMethods(), Options: a.runtimeOptions, OptionsSupported: domain.RuntimeOptionSupport{Arguments: true, Directory: true, Environment: true, Instructions: true, TitleModel: true}, Executable: path, Override: a.override, Configurable: true, Guide: "在该设备的终端安装或登录，然后重新检测", Documentation: "https://learn.chatgpt.com/docs/codex/cli", SignInCommand: command}
 }
 func (a Adapter) WithExecutable(path string) (harness.Adapter, error) {
 	if a.defaultExecutable == "" {
@@ -184,4 +185,21 @@ func (a accountStatus) summary() *domain.RuntimeAccount {
 	}
 	return &domain.RuntimeAccount{State: "authenticated", Label: label, Subscription: subscription, Identity: public.Email}
 
+}
+
+func (a Adapter) signInMethods() []domain.SignInMethod {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, support, err := compatibleExecutable(ctx, a.Executable)
+	if err != nil {
+		return nil
+	}
+	var methods []domain.SignInMethod
+	if support.browserLogin {
+		methods = append(methods, domain.SignInBrowser)
+	}
+	if support.deviceLogin {
+		methods = append(methods, domain.SignInDeviceCode)
+	}
+	return methods
 }

@@ -23,6 +23,7 @@ import (
 )
 
 type Options struct {
+	authentication   bool
 	ImportResource   func(harness.OutputResource) (domain.Attachment, error)
 	OnMessage        func(context.Context, harness.IncomingMessage) error
 	OnStart          func(int) error
@@ -35,6 +36,7 @@ type Options struct {
 	Executor         *Executor
 }
 type Runtime struct {
+	loginEvents     chan json.RawMessage
 	account         *domain.RuntimeAccount
 	desktop         *desktopBridge
 	cmd             *exec.Cmd
@@ -74,6 +76,9 @@ func Start(ctx context.Context, opts Options) (*Runtime, error) {
 	}
 	r := &Runtime{protocol: support, pending: map[string]chan wire.Message{}, done: make(chan struct{}), normalizer: NewNormalizer(), onEvent: opts.OnEvent, scope: opts.Scope, executor: opts.Executor}
 	r.normalizer.importResource = opts.ImportResource
+	if opts.authentication {
+		r.loginEvents = make(chan json.RawMessage, 8)
+	}
 	env := runtimeEnvironment(os.Environ(), opts.Home, opts.Environment)
 	if opts.OnMessage != nil {
 		node, nodeErr := exec.LookPath("node")
@@ -155,7 +160,7 @@ func initializeRuntime(ctx context.Context, r *Runtime, stdout io.Reader) (*Runt
 			err = r.call(ctx, "environment/add", map[string]any{"environmentId": r.executionEnvironmentID(), "execServerUrl": r.executor.URL(), "authBearerToken": r.executor.Token()}, &init)
 		}
 	}
-	if err == nil {
+	if err == nil && r.loginEvents == nil {
 		err = r.catalog(ctx)
 	}
 	if err != nil {
@@ -185,6 +190,14 @@ func (r *Runtime) read(stdout io.Reader) {
 				case ch <- m:
 				default:
 				}
+			}
+			continue
+		}
+		if m.Method == "account/login/completed" && r.loginEvents != nil {
+			select {
+			case r.loginEvents <- append(json.RawMessage(nil), m.Params...):
+			default:
+				r.fail(errors.New("authorization notification limit exceeded"))
 			}
 			continue
 		}

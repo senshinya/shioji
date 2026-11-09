@@ -12,6 +12,7 @@ import (
 )
 
 type deviceSource struct {
+	ctx        context.Context
 	connection DeviceConnection
 	controller *Controller
 	cancel     context.CancelFunc
@@ -27,6 +28,13 @@ type ConfigureDevice struct {
 type CheckSSHDevice struct {
 	Name string
 	SSH  transport.SSH
+}
+
+type SignInSSHDevice struct {
+	SSH      transport.SSH
+	DeviceID string
+	Action   string
+	Input    protocol.SignInInput
 }
 
 type DeviceSetupCheck struct {
@@ -130,6 +138,7 @@ func (c *Controller) postContext(ctx context.Context, update Update) bool {
 func (c *Controller) startDevice(ctx context.Context, key string, source *deviceSource) {
 	childCtx, cancel := context.WithCancel(ctx)
 	source.cancel = cancel
+	source.ctx = childCtx
 	token := domain.NewID()
 	c.postContext(ctx, func(m *Model) {
 		if m.DeviceStates[key] == nil {
@@ -159,6 +168,7 @@ func (c *Controller) startDevice(ctx context.Context, key string, source *device
 	}()
 }
 func (c *Controller) runDevices(ctx context.Context) {
+	defer c.signInForwards.Close()
 	for key, source := range c.fleet.sources {
 		c.startDevice(ctx, key, source)
 	}
@@ -197,6 +207,26 @@ func (c *Controller) runDevices(ctx context.Context) {
 			checkCancel = nil
 			apply(result.job, result.body, result.err)
 		case job := <-c.Jobs:
+			if job.Method == "$device.signin" {
+				input, ok := job.Input.(SignInSSHDevice)
+				if !ok {
+					apply(job, nil, errors.New("invalid SSH login request"))
+					continue
+				}
+				go func() {
+					callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+					defer cancel()
+					result, err := signInSSHSetup(callCtx, input)
+					if err == nil {
+						result, err = c.signInForwards.prepare(ctx, input.SSH, input.DeviceID, input.Input, result)
+					}
+					body, _ := json.Marshal(result)
+					if job.Apply != nil {
+						c.postContext(ctx, func(m *Model) { job.Apply(m, body, err) })
+					}
+				}()
+				continue
+			}
 			if job.Method == "session.search" {
 				c.searchDevices(ctx, job)
 				continue
@@ -275,7 +305,9 @@ func (c *Controller) runDevices(ctx context.Context) {
 			}
 			delegated := job
 			if job.Apply != nil {
-				delegated.Apply = func(_ *Model, b json.RawMessage, err error) { apply(job, b, err) }
+				delegated.Apply = func(_ *Model, b json.RawMessage, err error) {
+					c.deliverSignInReply(source.ctx, job, source.connection.SSH, source.controller.ExpectedDeviceID, b, err, apply)
+				}
 			}
 			if !source.controller.Do(delegated) {
 				apply(job, nil, fmt.Errorf("设备操作队列繁忙，请重试"))
@@ -291,4 +323,35 @@ func (c *Controller) SetWorkerAutoUpdate(enabled bool) {
 	} else {
 		c.WorkerAutoUpdate = enabled
 	}
+}
+
+func signInSSHSetup(ctx context.Context, in SignInSSHDevice) (domain.SignInStatus, error) {
+	if in.DeviceID == "" || in.SSH.Worker == "" || in.SSH.StateDirectory == "" {
+		return domain.SignInStatus{}, errors.New("请先检查 SSH 设备")
+	}
+	if in.Action != "start" && in.Action != "status" && in.Action != "cancel" {
+		return domain.SignInStatus{}, errors.New("登录操作无效")
+	}
+	conn, err := in.SSH.Dial(ctx)
+	if err != nil {
+		return domain.SignInStatus{}, err
+	}
+	client, err := protocol.Connect(ctx, conn, in.DeviceID)
+	if err != nil {
+		conn.Close()
+		return domain.SignInStatus{}, err
+	}
+	defer client.Close()
+	if client.Minor < 19 {
+		return domain.SignInStatus{}, errors.New("更新设备的执行服务后才能在应用内登录")
+	}
+	if in.Input.Method == domain.SignInBrowser && client.Minor < 20 {
+		return domain.SignInStatus{}, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能使用远程浏览器登录"}
+	}
+	var result domain.SignInStatus
+	err = client.Call(ctx, "runtime.signin."+in.Action, in.Input, &result)
+	if err == nil && (result.ID != in.Input.ID || result.HarnessID != in.Input.HarnessID) {
+		err = errors.New("登录回执与请求不一致")
+	}
+	return result, err
 }
