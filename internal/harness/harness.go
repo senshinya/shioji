@@ -143,7 +143,12 @@ type SignIn interface {
 	Wait(context.Context) (domain.Readiness, error)
 	Cancel(context.Context) error
 }
+type APIConfigurationProvider interface {
+	ConfigureAPI(context.Context, domain.APIConfiguration) (domain.Readiness, error)
+}
+
 type SetupError struct {
+	Account *domain.RuntimeAccount
 	Issue   domain.RuntimeIssue
 	Message string
 }

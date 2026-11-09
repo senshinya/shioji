@@ -13,6 +13,7 @@ const (
 )
 
 type RuntimeInstallation struct {
+	APISetup         bool                 `json:"apiSetup,omitempty"`
 	SignInMethods    []SignInMethod       `json:"signInMethods,omitempty"`
 	Options          RuntimeOptions       `json:"options"`
 	OptionsSupported RuntimeOptionSupport `json:"optionsSupported"`
@@ -28,6 +29,7 @@ type RuntimeInstallation struct {
 type SignInMethod string
 
 const (
+	SignInAPI        SignInMethod = "api"
 	SignInBrowser    SignInMethod = "browser"
 	SignInDeviceCode SignInMethod = "deviceCode"
 )
@@ -97,8 +99,21 @@ type RuntimeOptionSupport struct {
 
 // RuntimeAccount contains public account metadata only; never credentials.
 type RuntimeAccount struct {
-	Subscription string `json:"subscription,omitempty"`
-	Label        string `json:"label"`
-	Identity     string `json:"identity,omitempty"`
-	State        string `json:"state"`
+	Mode              string `json:"mode,omitempty"`
+	Endpoint          string `json:"endpoint,omitempty"`
+	Model             string `json:"model,omitempty"`
+	Credential        string `json:"credential,omitempty"`
+	ConfigurationFile string `json:"configurationFile,omitempty"`
+	Profile           string `json:"profile,omitempty"`
+	Subscription      string `json:"subscription,omitempty"`
+	Label             string `json:"label"`
+	Identity          string `json:"identity,omitempty"`
+	State             string `json:"state"`
+}
+
+// APIConfiguration is an explicit, transient setup input. Credentials never enter Shioji persistence.
+type APIConfiguration struct {
+	Endpoint   string `json:"endpoint"`
+	Model      string `json:"model"`
+	Credential string `json:"credential"`
 }

@@ -9,6 +9,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"shioji/internal/transport"
+	"strings"
 	"testing"
 	"time"
 )
@@ -401,5 +402,167 @@ func TestAgentSignInPreservesDisclosureAfterStartingAuthorization(t *testing.T) 
 	ui.Advance(350 * time.Millisecond)
 	if !e.draft.login || !ui.HasText("取消登录") {
 		t.Fatal("starting authorization changed the user's account disclosure")
+	}
+}
+
+func TestSystemAPIShowsReadOnlyConfigurationWithoutLoginControls(t *testing.T) {
+	_, _, e, ui := signInUI(t, "local")
+	e.catalog[0].Account = &domain.RuntimeAccount{Mode: "api", State: "authenticated", Label: "Team API", Endpoint: "https://api.example/v1", Model: "custom-model", Credential: "configured"}
+	ui.Frame()
+	ui.Advance(time.Second)
+	for _, text := range []string{"Team API", "https://api.example/v1", "custom-model", "已配置"} {
+		if !ui.HasText(text) {
+			t.Fatal("missing effective setting", text, ui.Texts())
+		}
+	}
+	if _, found := ui.Find("登录账号"); found {
+		t.Fatal("existing system API should not offer account replacement")
+	}
+}
+
+func TestUnconfiguredAPIConnectUsesOwningWorkerWithoutManualModel(t *testing.T) {
+	m, v, e, ui := signInUI(t, "air")
+	m.DeviceStates["air"].WorkerMinor = 21
+	e.catalog[0].Installation.APISetup = true
+	e.draft.apiEndpoint = "https://api.example/v1"
+	e.draft.apiCredential = "transient-secret"
+	ui.Frame()
+	ui.Advance(time.Second)
+	if err := ui.Click("自定义 API"); err != nil {
+		t.Fatal(err, ui.Texts())
+	}
+	ui.Advance(time.Second)
+	if ui.HasText("获取模型") {
+		t.Fatal("manual discovery still required")
+	}
+	if err := ui.Click("连接 API"); err != nil {
+		t.Fatal(err, ui.Texts())
+	}
+	job := welcomeJob(t, v.Controller, "runtime.signin.start")
+	in := job.Input.(protocol.SignInInput)
+	if job.ConnectionID != "air" || in.Method != domain.SignInAPI || in.API == nil || in.API.Model != "" || in.API.Credential != "transient-secret" {
+		t.Fatal("wrong connection request", in)
+	}
+	if e.draft.apiCredential != "transient-secret" {
+		t.Fatal("failed attempts must retain transient editor draft")
+	}
+	body, _ := json.Marshal(domain.SignInStatus{ID: in.ID, HarnessID: in.HarnessID, Phase: domain.SignInCompleted, Profile: &domain.HarnessInfo{ID: in.HarnessID, State: domain.RuntimeReady, Account: &domain.RuntimeAccount{Mode: "api", State: "authenticated"}}})
+	job.Apply(m, body, nil)
+	if e.draft.apiCredential != "" {
+		t.Fatal("confirmed success retained draft secret")
+	}
+	data, _ := json.Marshal(m)
+	if strings.Contains(string(data), "transient-secret") {
+		t.Fatal("secret persisted")
+	}
+}
+func TestAPIConfigurationEntranceUsesActualHeightAnimation(t *testing.T) {
+	m, _, e, ui := signInUI(t, "local")
+	m.DeviceStates["local"].WorkerMinor = 21
+	e.catalog[0].Installation.APISetup = true
+	ui.Frame()
+	ui.Advance(time.Second)
+	before, _ := ui.Find("Custom Agent 可执行文件")
+	if err := ui.Click("自定义 API"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(60 * time.Millisecond)
+	mid, _ := ui.Find("Custom Agent 可执行文件")
+	ui.Advance(time.Second)
+	end, _ := ui.Find("Custom Agent 可执行文件")
+	if mid.Y <= before.Y+1 || mid.Y >= end.Y-1 {
+		t.Fatal("API height jumps", before, mid, end)
+	}
+}
+
+func TestInitialAccountKeepsMethodVisibleWhileWaiting(t *testing.T) {
+	m, v, e, ui := signInUI(t, "local")
+	m.DeviceStates["local"].WorkerMinor = 21
+	e.catalog[0].Installation.APISetup = true
+	ui.Frame()
+	ui.Advance(time.Second)
+	ui.Click("登录账号")
+	job := welcomeJob(t, v.Controller, "runtime.signin.start")
+	in := job.Input.(protocol.SignInInput)
+	data, _ := json.Marshal(domain.SignInStatus{ID: in.ID, HarnessID: in.HarnessID, Phase: domain.SignInWaiting, Challenge: domain.SignInChallenge{URL: "https://example.test/auth"}})
+	job.Apply(m, data, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	if _, ok := ui.Find("选择登录方式"); !ok {
+		t.Fatal("method row replaced on waiting", ui.Texts())
+	}
+	if !ui.HasText("授权方式") {
+		t.Fatal("missing aligned field label", ui.Texts())
+	}
+}
+
+func TestConfiguredAccountWithNoModelsKeepsRetryAndAccount(t *testing.T) {
+	_, v, e, ui := signInUI(t, "local")
+	e.setup = true
+	e.tab = "模型"
+	e.catalog[0].State = domain.RuntimeUnavailable
+	e.catalog[0].Account = &domain.RuntimeAccount{Mode: "account", State: "authenticated", Label: "Profile", Subscription: "Pro"}
+	e.catalog[0].Models = nil
+	e.catalog[0].Error = "模型读取失败"
+	ui.Frame()
+	ui.Advance(time.Second)
+	if !ui.HasText("模型读取失败") {
+		t.Fatal("model failure not shown", ui.Texts())
+	}
+	if err := ui.Click("重新读取模型"); err != nil {
+		t.Fatal(err, ui.Texts())
+	}
+	// A recheck is meaningful only inside setup; its visible retry remains available
+	// without repeating account authorization.
+	_ = v
+}
+
+func TestAPISnapshotDoesNotReplaceActiveConnectionForm(t *testing.T) {
+	m, v, e, ui := signInUI(t, "local")
+	m.DeviceStates["local"].WorkerMinor = 21
+	e.catalog[0].Installation.APISetup = true
+	e.signInMethod = domain.SignInAPI
+	e.draft.apiEndpoint = "https://api.example/v1"
+	ui.Frame()
+	ui.Advance(time.Second)
+	ui.Click("连接 API")
+	welcomeJob(t, v.Controller, "runtime.signin.start")
+	e.catalog[0].Account = &domain.RuntimeAccount{Mode: "api", State: "authenticated", Label: "Custom API", Endpoint: e.draft.apiEndpoint, Model: "actual"}
+	ui.Frame()
+	ui.Advance(time.Second)
+	if !ui.HasText("正在连接") {
+		t.Fatal("snapshot replaced active form before setup completion", ui.Texts())
+	}
+	if _, ok := ui.Find("连接 API"); !ok {
+		t.Fatal("connection action disappeared before completion")
+	}
+}
+
+func TestModelDiscoveryChangesActualConfigurationHeight(t *testing.T) {
+	m := deviceUIModel()
+	v := New(m, nil, "")
+	info := setupCatalog()[0]
+	info.Models = nil
+	e := agentEditor([]domain.HarnessInfo{info})
+	e.edit(info)
+	e.setup = true
+	e.tab = "模型"
+	e.workerMinor = 21
+	ui := n.NewTester(func(c *n.Context) {
+		n.Column(c).Width(560).Children(func() {
+			v.agentConfiguration(c, c.Theme(), "local", true, e, e.catalog[0], true, func() {})
+			n.Text(c, "下方操作")
+		})
+	}, 700, 700)
+	ui.Advance(time.Second)
+	before, _ := ui.Find("下方操作")
+	e.catalog[0].Models = []domain.Model{{ID: "actual-a", Name: "Actual A"}, {ID: "actual-b", Name: "Actual B"}, {ID: "actual-c", Name: "Actual C"}}
+	ui.Frame()
+	ui.Advance(60 * time.Millisecond)
+	mid, _ := ui.Find("下方操作")
+	ui.Advance(time.Second)
+	end, _ := ui.Find("下方操作")
+	if mid.Y <= before.Y+1 || mid.Y >= end.Y-1 {
+		t.Fatal("discovered catalog height jumps", before, mid, end)
 	}
 }

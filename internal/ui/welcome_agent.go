@@ -26,12 +26,17 @@ func (v *View) welcomeAgentOptions(c *n.Context, t *n.Theme, f *welcomeFlow, add
 	if info.ID == "" {
 		return
 	}
-	v.welcomeHeading(c, t, "配置 "+info.Name, f.key, true)
-	n.Row(c).FillWidth().Height(36).Margin(0, 0, 16).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Gap(24).Children(func() {
+	if add {
+		n.Row(c.Key("agent-context")).FillWidth().Height(28).Margin(0, 0, 12).AlignItems(n.Baseline).Gap(16).Children(func() {
+			n.Text(c, info.Name).FontSize(14).FontWeight(500).FixedLineHeight(20).Grow(1)
+			name := v.welcomeDeviceName(f.key)
+			inlineIconText(c, monitor, name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 14, 8, t.TextMuted)
+		})
+	} else {
+		v.welcomeHeading(c, t, "配置 "+info.Name, f.key, true)
+	}
+	n.Row(c).FillWidth().Height(36).Margin(0, 0, 12).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Gap(24).Children(func() {
 		for _, label := range []string{"常规", "模型", "高级"} {
-			if label == "模型" && len(info.Models) == 0 {
-				continue
-			}
 			support := domain.RuntimeOptionSupport{}
 			if info.Installation != nil {
 				support = info.Installation.OptionsSupported
@@ -60,10 +65,10 @@ func (v *View) welcomeAgentOptions(c *n.Context, t *n.Theme, f *welcomeFlow, add
 	_, height := c.Size()
 	top := max(float32(112), min(height/2-208, 256))
 	// Reserve the steps, heading, tabs, footer and bottom window inset.
-	available := height - top - 48 - 64 - 52 - 64 - 24
+	available := height - top - 40 - 48 - 48 - 56 - 24
 	if add {
 		// The SSH dialog also owns a title row and 24 DIP outer insets.
-		available = height - 48 - 48 - 48 - 48 - 64 - 52 - 64
+		available = height - 48 - 48 - 48 - 40 - 40 - 48 - 56
 	}
 	// Let the error's actual animated height shrink the body in the same layout pass.
 	n.Column(c.Key("configuration-region")).FillWidth().MaxHeight(max(96, available)).Children(func() {

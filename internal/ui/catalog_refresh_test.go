@@ -53,3 +53,22 @@ func TestUnavailableModelUsesRunControlWithoutConsumingDraft(t *testing.T) {
 		}
 	}
 }
+
+func TestStaleCatalogCannotChangeRunModel(t *testing.T) {
+	m := layoutModel()
+	m.SessionID = ""
+	m.Config()
+	key := m.DraftKey()
+	original := m.Config().Model
+	m.Readiness.State = domain.RuntimeUnavailable
+	m.Readiness.Models = []domain.Model{{ID: "stale", Name: "旧模型"}}
+	v := New(m, app.NewController(""), "")
+	v.runMenu = runMenuModels
+	ui := n.NewTester(v.View, 1240, 820)
+	ui.Advance(time.Second)
+	ui.Click("旧模型")
+	ui.Frame()
+	if m.Configs[key].Model != original {
+		t.Fatal("stale model remained selectable", m.Configs[key])
+	}
+}

@@ -182,6 +182,7 @@ func (s *Server) runtimeProfiles(sessions []string, allAdapters bool) domain.Rea
 				var setup *harness.SetupError
 				if errors.As(err, &setup) {
 					installation.Issue = setup.Issue
+					info.Account = setup.Account
 				} else {
 					installation.Issue = domain.RuntimeUnavailableIssue
 				}

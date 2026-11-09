@@ -18,8 +18,9 @@ import (
 // Major 2 requires clients to understand authoritative history replacement.
 const Major = 2
 
+// Minor 21 adds system-owned API setup and public connection summaries.
 // Minor 20 adds explicit loopback callback metadata for remote browser authorization.
-const Minor = 20
+const Minor = 21
 const MaxFrame = 1 << 20
 
 type Frame struct {
@@ -246,10 +247,11 @@ type RuntimeConfiguration struct {
 // ID identifies a single explicitly started authorization. Querying an unknown
 // ID must never restart it, including after worker restart or network loss.
 type SignInInput struct {
-	ID            string                `json:"id"`
-	HarnessID     string                `json:"harnessId"`
-	Method        domain.SignInMethod   `json:"method,omitempty"`
-	Configuration *RuntimeConfiguration `json:"configuration,omitempty"`
+	API           *domain.APIConfiguration `json:"api,omitempty"`
+	ID            string                   `json:"id"`
+	HarnessID     string                   `json:"harnessId"`
+	Method        domain.SignInMethod      `json:"method,omitempty"`
+	Configuration *RuntimeConfiguration    `json:"configuration,omitempty"`
 }
 
 // DeviceAgents is the complete set selected for one owning device.

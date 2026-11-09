@@ -291,39 +291,30 @@ func (r *Runtime) call(ctx context.Context, method string, params, out any) erro
 		return &CallError{Uncertain: true, Message: "app-server exited before confirming the request"}
 	}
 }
-func (r *Runtime) catalog(ctx context.Context) error {
+func (r *Runtime) catalog(ctx context.Context) (err error) {
+	defer func() {
+		if err != nil && r.account != nil && (r.account.State == "authenticated" || r.account.State == "configured" || r.account.State == "notRequired") {
+			var setup *harness.SetupError
+			if !errors.As(err, &setup) {
+				err = &harness.SetupError{Issue: domain.RuntimeUnavailableIssue, Account: r.account, Message: "模型或能力读取失败，请重新检测"}
+			}
+		}
+	}()
 	if err := r.checkAuthentication(ctx); err != nil {
 		return err
 	}
 	ready := domain.Readiness{State: "ready", Account: r.account}
-	var cursor *string
-	for {
-		var result struct {
-			Data       []wire.Model `json:"data"`
-			NextCursor *string      `json:"nextCursor"`
+	models, err := r.nativeModels(ctx)
+	if err != nil {
+		return err
+	}
+	ready.Models = models
+	if r.account != nil && r.account.Mode == "api" {
+		models, err := r.availableAPIModels(ctx, ready.Models)
+		if err != nil {
+			return &harness.SetupError{Issue: domain.RuntimeUnavailableIssue, Account: r.account, Message: err.Error()}
 		}
-		if err := r.call(ctx, "model/list", map[string]any{"limit": 100, "includeHidden": false, "cursor": cursor}, &result); err != nil {
-			return err
-		}
-		for _, m := range result.Data {
-			model := domain.Model{ID: m.Model, Name: m.DisplayName, Default: m.IsDefault, DefaultEffort: m.DefaultReasoningEffort}
-			for _, e := range m.SupportedReasoningEfforts {
-				model.Efforts = append(model.Efforts, e.ReasoningEffort)
-			}
-			for _, tier := range m.ServiceTiers {
-				if tier.ID == "fast" && r.protocol.serviceTier {
-					model.Fast = true
-				}
-			}
-			ready.Models = append(ready.Models, model)
-		}
-		if result.NextCursor == nil {
-			break
-		}
-		if cursor != nil && *cursor == *result.NextCursor {
-			return errors.New("model catalog cursor did not advance")
-		}
-		cursor = result.NextCursor
+		ready.Models = models
 	}
 	if len(ready.Models) == 0 {
 		return errors.New("Codex returned no available models")
@@ -607,4 +598,38 @@ func (r *Runtime) Close() error {
 		<-r.done
 		return nil
 	}
+}
+
+func (r *Runtime) nativeModels(ctx context.Context) ([]domain.Model, error) {
+	var models []domain.Model
+	var cursor *string
+	for {
+		var result struct {
+			Data       []wire.Model `json:"data"`
+			NextCursor *string      `json:"nextCursor"`
+		}
+		if err := r.call(ctx, "model/list", map[string]any{"limit": 100, "includeHidden": false, "cursor": cursor}, &result); err != nil {
+			return nil, err
+		}
+		for _, m := range result.Data {
+			model := domain.Model{ID: m.Model, Name: m.DisplayName, Default: m.IsDefault, DefaultEffort: m.DefaultReasoningEffort}
+			for _, e := range m.SupportedReasoningEfforts {
+				model.Efforts = append(model.Efforts, e.ReasoningEffort)
+			}
+			for _, tier := range m.ServiceTiers {
+				if tier.ID == "fast" && r.protocol.serviceTier {
+					model.Fast = true
+				}
+			}
+			models = append(models, model)
+		}
+		if result.NextCursor == nil {
+			break
+		}
+		if cursor != nil && *cursor == *result.NextCursor {
+			return nil, errors.New("model catalog cursor did not advance")
+		}
+		cursor = result.NextCursor
+	}
+	return models, nil
 }

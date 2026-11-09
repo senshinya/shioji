@@ -38,6 +38,11 @@ func NewProvider(t *testing.T) *Provider {
 	return p
 }
 func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":[{"id":"fixture-model"},{"id":"gpt-6-luna"},{"id":"gpt-6.1-sol"}]}`)
+		return
+	}
 	var body map[string]any
 	if json.NewDecoder(r.Body).Decode(&body) != nil {
 		w.WriteHeader(400)

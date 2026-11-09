@@ -21,6 +21,7 @@ type signInMemory struct {
 	configurableMemory
 	starts   *atomic.Int32
 	finish   chan bool
+	failure  error
 	canceled *atomic.Bool
 }
 
@@ -33,17 +34,21 @@ func (a signInMemory) Installation() domain.RuntimeInstallation {
 }
 func (a signInMemory) BeginSignIn(context.Context, domain.SignInMethod) (harness.SignIn, domain.SignInChallenge, error) {
 	a.starts.Add(1)
-	return &memorySignIn{finish: a.finish, canceled: a.canceled}, domain.SignInChallenge{URL: "https://example.test/authorize", Code: "PRIVATE-ONE-TIME"}, nil
+	return &memorySignIn{finish: a.finish, canceled: a.canceled, failure: a.failure}, domain.SignInChallenge{URL: "https://example.test/authorize", Code: "PRIVATE-ONE-TIME"}, nil
 }
 
 type memorySignIn struct {
 	finish   chan bool
+	failure  error
 	canceled *atomic.Bool
 }
 
 func (l *memorySignIn) Wait(ctx context.Context) (domain.Readiness, error) {
 	select {
 	case <-l.finish:
+		if l.failure != nil {
+			return domain.Readiness{}, l.failure
+		}
 		return domain.Readiness{State: domain.RuntimeReady, Account: &domain.RuntimeAccount{State: "authenticated", Label: "Profile", Identity: "dev@example.test"}}, nil
 	case <-ctx.Done():
 		return domain.Readiness{}, ctx.Err()
@@ -186,5 +191,57 @@ func TestWorkerSignInSurvivesRealClientDisconnectAndReconnect(t *testing.T) {
 	}
 	if err := other.Call(context.Background(), "runtime.signin.cancel", in, &result); err != nil || result.Phase != domain.SignInCanceled {
 		t.Fatal("reconnected cancellation failed", result, err)
+	}
+}
+
+type apiSetupMemory struct{ signInMemory }
+
+func (a apiSetupMemory) ConfigureAPI(ctx context.Context, input domain.APIConfiguration) (domain.Readiness, error) {
+	a.starts.Add(1)
+	return domain.Readiness{State: domain.RuntimeReady, Account: &domain.RuntimeAccount{Mode: "api", State: "authenticated", Label: "Custom API", Endpoint: input.Endpoint, Model: input.Model, Credential: "configured"}}, nil
+}
+func TestWorkerAPISetupIsTransientAndNotReplayedByStatus(t *testing.T) {
+	a := apiSetupMemory{signInMemory: signInMemory{configurableMemory: configurableMemory{memoryHarness: memoryHarness{id: "custom", hold: true}}, starts: &atomic.Int32{}}}
+	s, _ := memoryWorker(t, a)
+	input := protocol.SignInInput{ID: "api-setup", HarnessID: "custom", Method: domain.SignInAPI, API: &domain.APIConfiguration{Endpoint: "https://api.example/v1", Model: "custom-model", Credential: "never-persist-this-key"}}
+	if _, err := s.signInCommand("runtime.signin.start", input); err != nil {
+		t.Fatal(err)
+	}
+	status := awaitSignIn(t, s, input.ID, domain.SignInCompleted)
+	if status.Profile == nil || status.Profile.Account.Endpoint != "https://api.example/v1" {
+		t.Fatal("public setup result lost", status)
+	}
+	s.signInCommand("runtime.signin.start", input)
+	s.signInCommand("runtime.signin.status", protocol.SignInInput{ID: "unknown", HarnessID: "custom"})
+	if a.starts.Load() != 1 {
+		t.Fatal("setup replayed")
+	}
+	body, _ := json.Marshal(status)
+	if bytes.Contains(body, []byte("never-persist-this-key")) {
+		t.Fatal("secret in status")
+	}
+	filepath.WalkDir(s.config.Directory, func(path string, entry fs.DirEntry, err error) error {
+		if err == nil && !entry.IsDir() {
+			data, _ := os.ReadFile(path)
+			if bytes.Contains(data, []byte("never-persist-this-key")) {
+				t.Error("secret persisted", path)
+			}
+		}
+		return nil
+	})
+}
+
+func TestCompletedAuthorizationRetainsAccountWhenModelsFail(t *testing.T) {
+	s, a := signInWorker(t)
+	a.failure = &harness.SetupError{Issue: domain.RuntimeUnavailableIssue, Message: "模型读取失败，请重试", Account: &domain.RuntimeAccount{Mode: "account", State: "authenticated", Label: "Profile", Subscription: "Pro"}}
+	in := protocol.SignInInput{ID: "auth-model-failure", HarnessID: "custom", Method: domain.SignInDeviceCode}
+	if _, err := s.signInCommand("runtime.signin.start", in); err != nil {
+		t.Fatal(err)
+	}
+	awaitSignIn(t, s, in.ID, domain.SignInWaiting)
+	close(a.finish)
+	done := awaitSignIn(t, s, in.ID, domain.SignInCompleted)
+	if done.Profile == nil || done.Profile.Account == nil || done.Profile.Account.Subscription != "Pro" || done.Profile.State != domain.RuntimeUnavailable || len(done.Profile.Models) != 0 {
+		t.Fatalf("authorization/model states conflated: %+v", done)
 	}
 }

@@ -24,6 +24,11 @@ func TestRealCodexTitleRequestIsEphemeralReadOnlyAndDoesNotLoadWorkspaceTools(t 
 	}
 	requests := make(chan map[string]any, 4)
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"data":[{"id":"fixture-luna"}]}`)
+			return
+		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)

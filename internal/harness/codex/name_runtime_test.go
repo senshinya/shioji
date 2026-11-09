@@ -19,6 +19,11 @@ func TestRealAppServerNameNotificationAndResume(t *testing.T) {
 		t.Skip("pinned Codex not installed")
 	}
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"data":[{"id":"fixture-model"}]}`)
+			return
+		}
 		t.Error("naming synchronization must not make a model request")
 		w.WriteHeader(500)
 	}))

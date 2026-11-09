@@ -4,6 +4,7 @@ import (
 	"errors"
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/domain"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -13,11 +14,13 @@ import (
 var modelEye = svg("M2 10c4-7 12-7 16 0-4 7-12 7-16 0zM12 10a2 2 0 1 1-4 0 2 2 0 0 1 4 0")
 
 type runtimeOptionDraft struct {
+	apiEndpoint, apiCredential                     string
 	arguments, directory, instructions, titleModel string
 	environment                                    []runtimeEnvironmentDraft
 	nextID                                         int
 	advanced, login                                bool
 	copiedUntil                                    time.Time
+	apiReveal                                      bool
 }
 
 type runtimeEnvironmentDraft struct {
@@ -148,50 +151,66 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 			if !e.setup {
 				deviceConfigTitle(c, "常规")
 			}
-			row(c, "账号", func() {
-				label, status := "登录状态未报告", ""
-				if account := info.Account; account != nil {
-					label = account.Label
-					if account.State == "authenticated" {
-						status = account.Subscription
+			initial := slices.Contains(v.agentSignInMethods(key, info), domain.SignInAPI)
+			if initial {
+				row(c, "接入方式", func() { v.agentConnectionMode(c, t, key, e, info, disabled) })
+			} else {
+				row(c, "账号", func() {
+					label, status := "登录状态未报告", ""
+					if account := info.Account; account != nil {
+						label = account.Label
+						if account.State == "authenticated" {
+							status = account.Subscription
+						}
 					}
-				}
-				if install != nil && (install.Issue == domain.RuntimeSignInRequired || install.Issue == domain.RuntimeAuthenticationExpired) {
-					label = runtimeSetupLabel(info, connected)
-				}
-				trigger := control(c.Key("account"), 5).FillWidth().Height(28).PaddingX(8).Radius(5).Label("管理账号").Disabled(install == nil || len(install.SignInCommand) == 0 && len(install.SignInMethods) == 0 || info.Account != nil && info.Account.State == "notRequired").Children(func() {
-					n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-						n.Text(c, label).FontSize(12).FixedLineHeight(20).SingleLine().Shrink(1).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-						if status != "" {
-							size := float32(11)
-							if e.setup {
-								size = 12
+					if install != nil && (install.Issue == domain.RuntimeSignInRequired || install.Issue == domain.RuntimeAuthenticationExpired) {
+						if info.Account == nil || info.Account.Mode != "api" {
+							label = runtimeSetupLabel(info, connected)
+						}
+					}
+					trigger := control(c.Key("account"), 5).FillWidth().Height(28).PaddingX(8).Radius(5).Label("管理账号").Disabled(install == nil || len(install.SignInCommand) == 0 && len(install.SignInMethods) == 0 || info.Account != nil && info.Account.State == "notRequired" && info.Account.Mode != "api").Children(func() {
+						n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
+							n.Text(c, label).FontSize(12).FixedLineHeight(20).SingleLine().Shrink(1).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+							if status != "" {
+								size := float32(11)
+								if e.setup {
+									size = 12
+								}
+								n.Text(c, status).SingleLine().MaxWidth(120).Tooltip(status).FontSize(size).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 							}
-							n.Text(c, status).SingleLine().MaxWidth(120).Tooltip(status).FontSize(size).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-						}
-						n.Spacer(c).Grow(1)
-						angle := float32(-90)
-						if e.draft.login {
-							angle = 0
-						}
-						inlineSymbol(c, chevron, label, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted, angle)
+							n.Spacer(c).Grow(1)
+							angle := float32(-90)
+							if e.draft.login {
+								angle = 0
+							}
+							inlineSymbol(c, chevron, label, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted, angle)
+						})
 					})
-				})
-				if trigger.Clicked() {
-					e.draft.login = !e.draft.login
-				}
-			})
-			frame := n.Column(c.Key("login")).FillWidth().Clip()
-			animatedContentHeight(c, frame, e.draft.login, 240*time.Millisecond, func() float32 {
-				row(c, "", func() {
-					top, bottom := float32(4), float32(8)
-					if e.setup {
-						top, bottom = 0, 0
+					if trigger.Clicked() {
+						e.draft.login = !e.draft.login
 					}
-					n.Column(c).FillWidth().Padding(top, 0, bottom, 0).Children(func() {
-						v.agentAuthentication(c, t, key, e, info, disabled)
-					})
 				})
+			}
+
+			frame := n.Column(c.Key("login")).FillWidth().Clip()
+			animatedContentHeight(c, frame, initial || e.draft.login, 240*time.Millisecond, func() float32 {
+				if info.Account != nil && info.Account.Mode == "api" || agentSignInMethod(key, e, v.agentSignInMethods(key, info)) == domain.SignInAPI {
+					v.agentAuthentication(c, t, key, e, info, disabled)
+				} else {
+					authLabel := ""
+					if initial {
+						authLabel = "授权方式"
+					}
+					row(c, authLabel, func() {
+						top, bottom := float32(4), float32(8)
+						if e.setup {
+							top, bottom = 0, 0
+						}
+						n.Column(c).FillWidth().Padding(top, 0, bottom, 0).Children(func() {
+							v.agentAuthentication(c, t, key, e, info, disabled)
+						})
+					})
+				}
 				return 0
 			})
 
@@ -224,44 +243,73 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 				})
 			}
 		}
-		if (!onboarding || e.setup) && (!e.setup || e.tab == "模型") && len(info.Models) > 0 {
-			n.Column(c).FillWidth().Padding(sectionInset, 0, 0).Children(func() {
-				if !e.setup {
-					v.deviceModels(c.Key("models"), t, key, info)
-				}
-				if install != nil && install.OptionsSupported.TitleModel && minor >= 18 {
-					row(c, "标题生成", func() {
-						name := "自动"
-						for _, model := range info.Models {
-							if model.ID == e.draft.titleModel {
-								name = modelName(model)
-							}
+		modelPane := n.Column(c.Key("model-configuration")).FillWidth().Clip()
+		animatedContentHeight(c, modelPane, !e.setup || e.tab == "模型", 180*time.Millisecond, func() float32 {
+			if (!onboarding || e.setup) && (!e.setup || e.tab == "模型") && len(info.Models) > 0 {
+				n.Column(c).FillWidth().Padding(sectionInset, 0, 0).Children(func() {
+					if !e.setup {
+						v.deviceModels(c.Key("models"), t, key, info)
+					}
+					if e.setup {
+						deviceID := v.Model.ConnectionDeviceID(key)
+						if key == "" {
+							deviceID = v.sshSetup.Info.DeviceID
 						}
-						if e.draft.titleModel != "" && name == "自动" {
-							name = e.draft.titleModel
+						v.deviceModels(c.Key("models"), t, key, info, deviceID)
+					}
+					if install != nil && install.OptionsSupported.TitleModel && minor >= 18 {
+						titleField := n.Column(c.Key("title-model-field")).FillWidth()
+						if e.setup {
+							titleField.Margin(12, 0, 0)
 						}
-						trigger := control(c, 5).FillWidth().Height(28).PaddingX(8).Radius(5).Border(1, t.Border).Label("标题生成").Disabled(disabled).Children(func() {
-							n.Row(c).FillWidth().AlignItems(n.Baseline).Children(func() {
-								n.Text(c, name).SingleLine().FontSize(12).FixedLineHeight(20).Grow(1).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-								inlineSymbol(c, chevron, name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted)
+						titleField.Children(func() {
+							row(c, "标题生成", func() {
+								name := "自动"
+								for _, model := range info.Models {
+									if model.ID == e.draft.titleModel {
+										name = modelName(model)
+									}
+								}
+								if e.draft.titleModel != "" && name == "自动" {
+									name = e.draft.titleModel
+								}
+								trigger := control(c, 5).FillWidth().Height(28).PaddingX(8).Radius(5).Border(1, t.Border).Label("标题生成").Disabled(disabled || info.State != domain.RuntimeReady).Children(func() {
+									n.Row(c).FillWidth().AlignItems(n.Baseline).Children(func() {
+										n.Text(c, name).SingleLine().FontSize(12).FixedLineHeight(20).Grow(1).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+										inlineSymbol(c, chevron, name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted)
+									})
+								})
+								choices := []menuChoice{{id: "", name: "自动", choose: func() { e.draft.titleModel = "" }}}
+								for _, model := range info.Models {
+									choices = append(choices, menuChoice{id: model.ID, name: modelName(model), choose: func() { e.draft.titleModel = model.ID }})
+								}
+								v.choiceMenu(c, t, "title-model:"+key+":"+info.ID, trigger, choices)
 							})
 						})
-						choices := []menuChoice{{id: "", name: "自动", choose: func() { e.draft.titleModel = "" }}}
-						for _, model := range info.Models {
-							choices = append(choices, menuChoice{id: model.ID, name: modelName(model), choose: func() { e.draft.titleModel = model.ID }})
-						}
-						v.choiceMenu(c, t, "title-model:"+key+":"+info.ID, trigger, choices)
-					})
-				}
-				if e.setup {
-					deviceID := v.Model.ConnectionDeviceID(key)
-					if key == "" {
-						deviceID = v.sshSetup.Info.DeviceID
 					}
-					v.deviceModels(c.Key("models"), t, key, info, deviceID)
-				}
-			})
-		}
+
+				})
+			}
+			if e.setup && e.tab == "模型" && len(info.Models) == 0 {
+				row(c, "模型", func() {
+					n.Row(c).FillWidth().MinHeight(28).AlignItems(n.Baseline).Gap(8).Children(func() {
+						caption := info.Error
+						if caption == "" {
+							caption = "尚未读取模型"
+						}
+						if e.loading {
+							caption = "正在读取模型"
+							serviceSpinner(c.Key("model-spinner"), caption, n.Font{Family: t.Font, Size: 12, Weight: 400}, t.TextMuted)
+						}
+						n.Text(c, caption).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().Tooltip(caption).TextColor(t.TextMuted)
+						if deviceAction(c, "重试").Label("重新读取模型").Disabled(disabled).Clicked() {
+							v.recheckWelcomeAgent(key, info.ID)
+						}
+					})
+				})
+			}
+			return 0
+		})
 		supported := domain.RuntimeOptionSupport{}
 		if install != nil {
 			supported = install.OptionsSupported

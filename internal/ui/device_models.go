@@ -46,12 +46,13 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 		device = setupDevice[0]
 	}
 	pref := v.Model.ModelPreference(device, info.ID)
+	stale := info.State == domain.RuntimeUnavailable || info.State == domain.RuntimeRefreshing
 	// Management retains manual order; only the send menu groups favorites.
 	ordering := pref
 	models := ordering.Ordered(info.Models, false)
 	header := n.Row(c).FillWidth().Height(36).AlignItems(n.Start)
 	if len(setupDevice) > 0 {
-		header.Height(32).AlignItems(n.Center).Margin(16, 0, 0)
+		header.Height(28).AlignItems(n.Baseline)
 	}
 	header.Children(func() {
 		size, line, weight := float32(14), float32(28), 500
@@ -59,6 +60,9 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 			size, line, weight = 13, 20, 400
 		}
 		n.Text(c, "模型").FontSize(size).FontWeight(weight).FixedLineHeight(line).Grow(1)
+		if stale {
+			n.Text(c, "上次读取").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).MarginEnd(8)
+		}
 		if deviceAction(c, "刷新").Disabled(v.Controller == nil || len(setupDevice) == 0 && !v.deviceState(key).Connected).Clicked() {
 			if len(setupDevice) > 0 {
 				v.recheckWelcomeAgent(key, info.ID)
@@ -76,6 +80,10 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 		list := n.Column(c.Key("model-list")).FillWidth().Label("模型列表")
 		dragged, over := n.DragOver[deviceModelDrag](list)
 		dropped, released := n.Drop[deviceModelDrag](list)
+		if stale {
+			over = false
+			released = false
+		}
 		preview := n.Local(list, "preview", func() []string { return nil })
 		valid := over && dragged.device == device && dragged.harness == info.ID
 		if valid {
@@ -108,7 +116,7 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 					if starred {
 						icon = modelStarFilled
 					}
-					if iconButton(c, icon, "收藏 "+modelName(model)).TextColor(func() n.Color {
+					if iconButton(c, icon, "收藏 "+modelName(model)).Disabled(stale).TextColor(func() n.Color {
 						if starred {
 							return t.Text
 						}
@@ -118,12 +126,12 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 						v.Model.SetModelPreferences(device, info.ID, pref)
 					}
 					n.Text(c, modelName(model)).FontSize(12).FixedLineHeight(20).SingleLine().Grow(1).Tooltip(model.ID).TextColor(func() n.Color {
-						if slices.Contains(pref.Hidden, model.ID) {
+						if stale || slices.Contains(pref.Hidden, model.ID) {
 							return t.TextMuted
 						}
 						return t.Text
 					}())
-					grip := iconButton(c, modelGrip, "调整 "+modelName(model)+" 顺序").Cursor(n.CursorGrab).Drag(deviceModelDrag{device, info.ID, model.ID}).Tooltip("拖动排序，或使用上下方向键")
+					grip := iconButton(c, modelGrip, "调整 "+modelName(model)+" 顺序").Disabled(stale).Cursor(n.CursorGrab).Drag(deviceModelDrag{device, info.ID, model.ID}).Tooltip("拖动排序，或使用上下方向键")
 					if !row.Hovered() && !row.FocusWithin() && !grip.Dragging() {
 						grip.Opacity(0)
 					}
@@ -145,7 +153,7 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 						c.AnimationFrame()
 					}
 					shown := !slices.Contains(pref.Hidden, model.ID)
-					if settingsSwitch(c, &shown).Label("在模型菜单显示 " + modelName(model)).Tooltip("在模型菜单显示").Changed() {
+					if settingsSwitch(c, &shown).Disabled(stale).Label("在模型菜单显示 " + modelName(model)).Tooltip("在模型菜单显示").Changed() {
 						pref.Hidden = toggleModelValue(pref.Hidden, model.ID)
 						v.Model.SetModelPreferences(device, info.ID, pref)
 					}

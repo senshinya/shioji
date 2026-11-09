@@ -382,6 +382,9 @@ func signInSSHSetup(ctx context.Context, in SignInSSHDevice) (domain.SignInStatu
 	if client.Minor < 19 {
 		return domain.SignInStatus{}, errors.New("更新设备的执行服务后才能在应用内登录")
 	}
+	if in.Input.Method == domain.SignInAPI && client.Minor < 21 {
+		return domain.SignInStatus{}, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能配置 API"}
+	}
 	if in.Input.Method == domain.SignInBrowser && client.Minor < 20 {
 		return domain.SignInStatus{}, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能使用远程浏览器登录"}
 	}

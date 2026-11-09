@@ -20,6 +20,7 @@ var openAuthorizationURL = mygo.Shell.OpenExternal
 
 type agentSignInUI struct {
 	profileConsumed bool
+	initial         bool
 	config          *protocol.RuntimeConfiguration
 	key, device     string
 	ssh             *transport.SSH
@@ -100,7 +101,7 @@ func (v *View) startAgentSignIn(key string, e *deviceAgentEditor, info domain.Ha
 		e.error = "该 Agent 暂不支持此登录方式"
 		return
 	}
-	u := &agentSignInUI{key: key, device: v.signInDevice(key), editor: e, autoOpen: true, status: domain.SignInStatus{ID: domain.NewID(), HarnessID: info.ID, Phase: domain.SignInStarting}}
+	u := &agentSignInUI{initial: slices.Contains(methods, domain.SignInAPI), key: key, device: v.signInDevice(key), editor: e, autoOpen: true, status: domain.SignInStatus{ID: domain.NewID(), HarnessID: info.ID, Phase: domain.SignInStarting}}
 	if key == "" {
 		port, _ := strconv.Atoi(strings.TrimSpace(v.sshPort))
 		u.ssh = &transport.SSH{Target: strings.TrimSpace(v.sshTarget), Port: port, Worker: v.sshSetup.Info.Worker, StateDirectory: v.sshSetup.Info.Directory}
@@ -124,7 +125,11 @@ func (v *View) startAgentSignIn(key string, e *deviceAgentEditor, info domain.Ha
 	}
 	e.error = ""
 	u.config = &config
-	v.sendSignIn(u, "start", &protocol.SignInInput{ID: u.status.ID, HarnessID: info.ID, Method: method, Configuration: &config})
+	in := &protocol.SignInInput{ID: u.status.ID, HarnessID: info.ID, Method: method, Configuration: &config}
+	if method == domain.SignInAPI {
+		in.API = &domain.APIConfiguration{Endpoint: strings.TrimSpace(e.draft.apiEndpoint), Credential: e.draft.apiCredential}
+	}
+	v.sendSignIn(u, "start", in)
 }
 func (v *View) sendSignIn(u *agentSignInUI, action string, input *protocol.SignInInput) {
 	if u.pending || v.Controller == nil {
@@ -182,6 +187,9 @@ func (v *View) sendSignIn(u *agentSignInUI, action string, input *protocol.SignI
 			}
 		}
 		if status.Phase == domain.SignInCompleted && status.Profile != nil {
+			if u.editor != nil {
+				u.editor.draft.apiCredential = ""
+			}
 			if u.editor != nil && signInConfigurationMatches(u, u.editor) {
 				u.editor.refresh([]domain.HarnessInfo{*status.Profile})
 			}
@@ -214,6 +222,19 @@ func openSignInLink(target string) error {
 }
 func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *deviceAgentEditor, info domain.HarnessInfo, disabled bool) {
 	u := v.agentSignIn(key, info.ID)
+	initialActive := u != nil && u.initial && u.status.Phase.Active()
+	if info.Account != nil && info.Account.Mode == "api" && !initialActive {
+		v.agentSystemAPI(c, t, key, e, info, disabled)
+		return
+	}
+	if agentSignInMethod(key, e, v.agentSignInMethods(key, info)) == domain.SignInAPI {
+		v.agentAPIConfiguration(c, t, key, e, info, disabled)
+		return
+	}
+	if slices.Contains(v.agentSignInMethods(key, info), domain.SignInAPI) {
+		v.agentInitialAccount(c, t, key, e, info, disabled)
+		return
+	}
 	if u != nil {
 		u.editor = e
 	}
@@ -243,6 +264,9 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 			}
 			if active {
 				caption = "正在准备登录"
+				if method == domain.SignInAPI {
+					caption = "正在保存配置"
+				}
 				if u.status.Phase == domain.SignInWaiting {
 					caption = "等待授权"
 				}
@@ -255,6 +279,9 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 				n.Text(c.Key("auth-status"), caption).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Grow(1).MinWidth(0).SingleLine().Tooltip(tooltip).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 			}
 			if active || !supported {
+				if active {
+					serviceSpinner(c.Key("auth-spinner"), caption, n.Font{Family: t.Font, Size: 12, Weight: 400}, t.TextMuted)
+				}
 				status()
 			}
 
@@ -264,16 +291,13 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 						u.status.Message = "无法打开授权页"
 					}
 				}
-				if deviceAction(c.Key("cancel-authorization"), "取消登录").Transition(fadeMotion(c, 160*time.Millisecond)).Disabled(u.pending).Clicked() {
+				if method != domain.SignInAPI && deviceAction(c.Key("cancel-authorization"), "取消登录").Transition(fadeMotion(c, 160*time.Millisecond)).Disabled(u.pending).Clicked() {
 					v.sendSignIn(u, "cancel", nil)
 				}
 			} else {
 				if supported {
 					n.Row(c.Key("sign-in-method-control")).Grow(1).MinWidth(0).Height(28).Gap(8).AlignItems(n.Center).Transition(fadeMotion(c, 160*time.Millisecond)).Children(func() {
-						name := "浏览器授权"
-						if method == domain.SignInDeviceCode {
-							name = "验证码授权"
-						}
+						name := signInMethodLabel(method)
 						if len(methods) > 1 {
 							trigger := control(c.Key("login-method"), 5).Width(112).Height(28).PaddingX(8).Radius(5).Border(1, t.Border).Label("选择登录方式").Disabled(disabled).Children(func() {
 								n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
@@ -284,10 +308,7 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 							var choices []menuChoice
 							for _, value := range []domain.SignInMethod{domain.SignInBrowser, domain.SignInDeviceCode} {
 								if slices.Contains(methods, value) {
-									label := "浏览器授权"
-									if value == domain.SignInDeviceCode {
-										label = "验证码授权"
-									}
+									label := signInMethodLabel(value)
 									choices = append(choices, menuChoice{id: string(value), name: label, checked: method == value, choose: func() { e.signInMethod = value }})
 								}
 							}
@@ -300,7 +321,12 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 						if info.Account != nil && info.Account.State == "authenticated" {
 							label = "重新登录"
 						}
-						if deviceAction(c.Key("begin-authorization"), "").Label("登录账号").Disabled(disabled).Children(func() {
+						actionLabel := "登录账号"
+						if method == domain.SignInAPI {
+							label = "保存"
+							actionLabel = "保存 API 配置"
+						}
+						if deviceAction(c.Key("begin-authorization"), "").Label(actionLabel).Disabled(disabled).Children(func() {
 							n.Text(c, label).SingleLine().ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 						}).Clicked() {
 							v.startAgentSignIn(key, e, info)
@@ -319,11 +345,13 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 						e.draft.copiedUntil = c.Now().Add(2 * time.Second)
 					}
 				}
-				if deviceAction(c.Key("recheck-account"), "重新检测").Transition(fadeMotion(c, 160*time.Millisecond)).Disabled(disabled || v.Controller == nil).Clicked() {
-					if e.setup {
-						v.recheckWelcomeAgent(key, info.ID)
-					} else {
-						v.recheckAgent(key, info.ID)
+				if !slices.Contains(methods, domain.SignInAPI) {
+					if deviceAction(c.Key("recheck-account"), "重新检测").Transition(fadeMotion(c, 160*time.Millisecond)).Disabled(disabled || v.Controller == nil).Clicked() {
+						if e.setup {
+							v.recheckWelcomeAgent(key, info.ID)
+						} else {
+							v.recheckAgent(key, info.ID)
+						}
 					}
 				}
 			}
@@ -393,7 +421,7 @@ func agentSignInMethod(key string, e *deviceAgentEditor, methods []domain.SignIn
 	if slices.Contains(methods, preferred) {
 		return preferred
 	}
-	for _, value := range []domain.SignInMethod{domain.SignInBrowser, domain.SignInDeviceCode} {
+	for _, value := range []domain.SignInMethod{domain.SignInBrowser, domain.SignInDeviceCode, domain.SignInAPI} {
 		if slices.Contains(methods, value) {
 			return value
 		}
@@ -416,5 +444,212 @@ func (v *View) agentSignInMethods(key string, info domain.HarnessInfo) []domain.
 		}
 		methods = append(methods, method)
 	}
+	u := v.agentSignIn(key, info.ID)
+	activeInitial := u != nil && u.initial && u.status.Phase.Active()
+	if minor >= 21 && info.Installation.APISetup && (activeInitial || info.Account == nil && info.Installation.Issue == domain.RuntimeSignInRequired || info.Account != nil && info.Account.State == "required") {
+		methods = append(methods, domain.SignInAPI)
+	}
 	return methods
+}
+
+func signInMethodLabel(method domain.SignInMethod) string {
+	switch method {
+	case domain.SignInDeviceCode:
+		return "验证码授权"
+	case domain.SignInAPI:
+		return "自定义 API"
+	default:
+		return "浏览器授权"
+	}
+}
+func (v *View) agentSystemAPI(c *n.Context, t *n.Theme, key string, e *deviceAgentEditor, info domain.HarnessInfo, disabled bool) {
+	row := deviceConfigRow
+	if e.setup {
+		row = setupRow
+	}
+	account := info.Account
+	credential := map[string]string{"configured": "已配置", "managed": "由系统管理", "missing": "缺少凭据", "notRequired": "无需凭据"}[account.Credential]
+	for _, field := range []struct{ label, value string }{{"服务地址", account.Endpoint}, {"默认模型", account.Model}, {"API Key", credential}} {
+		if field.value == "" {
+			continue
+		}
+		row(c, field.label, func() {
+			n.Text(c, field.value).FillWidth().Padding(4, 8).FontSize(12).FixedLineHeight(20).SingleLine().Tooltip(field.value)
+		})
+	}
+	row(c, "", func() {
+		n.Row(c).FillWidth().AlignItems(n.Baseline).Children(func() {
+			n.Text(c, info.Error).Grow(1).MinWidth(0).SingleLine().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Tooltip(info.Error)
+			if deviceAction(c, "重新检测").Disabled(disabled || v.Controller == nil).Clicked() {
+				if e.setup {
+					v.recheckWelcomeAgent(key, info.ID)
+				} else {
+					v.recheckAgent(key, info.ID)
+				}
+			}
+		})
+	})
+}
+
+func (v *View) agentAPIConfiguration(c *n.Context, t *n.Theme, key string, e *deviceAgentEditor, info domain.HarnessInfo, disabled bool) {
+	row := deviceConfigRow
+	if e.setup {
+		row = setupRow
+	}
+	u := v.agentSignIn(key, info.ID)
+	active := u != nil && u.status.Phase.Active()
+	if u != nil {
+		u.editor = e
+	}
+	row(c, "服务地址", func() {
+		setupField(c, "API 地址", &e.draft.apiEndpoint, "https://api.example.com/v1", disabled || active)
+	})
+	row(c, "API Key", func() {
+		n.Column(c).FillWidth().Height(28).Children(func() {
+			field := textField(c, &e.draft.apiCredential).FillWidth().Height(28).Padding(4, 36, 4, 8).FontSize(12).FixedLineHeight(20).Background(t.Background).Label("API Key").Placeholder("可选").Disabled(disabled || active)
+			if !e.draft.apiReveal {
+				field.Password()
+			}
+			if iconButton(c, modelEye, "显示 API Key").Absolute().Right(0).Top(0).Disabled(disabled || active).Clicked() {
+				e.draft.apiReveal = !e.draft.apiReveal
+			}
+		})
+	})
+	row(c, "", func() {
+		n.Row(c.Key("api-connection-status")).FillWidth().Height(28).AlignItems(n.Baseline).Gap(8).Children(func() {
+			caption := ""
+			if active {
+				caption = "正在连接"
+			}
+			if u != nil && u.status.Message != "" {
+				caption = u.status.Message
+			}
+			if active {
+				serviceSpinner(c.Key("spinner"), caption, n.Font{Family: t.Font, Size: 12, Weight: 400}, t.TextMuted)
+			}
+			n.Text(c.Key("caption"), caption).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().TextColor(t.TextMuted).Tooltip(caption).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+			if deviceAction(c.Key("connect-api"), "连接").Label("连接 API").MinWidth(64).Disabled(disabled || active || strings.TrimSpace(e.draft.apiEndpoint) == "").Clicked() {
+				v.startAgentSignIn(key, e, info)
+			}
+		})
+	})
+}
+
+func (v *View) agentConnectionMode(c *n.Context, t *n.Theme, key string, e *deviceAgentEditor, info domain.HarnessInfo, disabled bool) {
+	method := agentSignInMethod(key, e, v.agentSignInMethods(key, info))
+	u := v.agentSignIn(key, info.ID)
+	active := u != nil && u.status.Phase.Active()
+	n.Row(c).FillWidth().Height(28).Padding(2).Gap(2).Radius(5).Background(t.Text.Alpha(.045)).Children(func() {
+		for _, choice := range []struct {
+			name string
+			api  bool
+		}{{"账号授权", false}, {"自定义 API", true}} {
+			selected := choice.api == (method == domain.SignInAPI)
+			b := n.ButtonBase(c.Key(choice.name)).Grow(1).Height(24).Radius(4).Label(choice.name).Disabled(disabled || active).Children(func() { n.Text(c, choice.name).FontSize(12).FixedLineHeight(20) })
+			if selected {
+				b.Background(t.Background).Border(1, t.Border)
+			} else if b.Hovered() {
+				b.Background(t.Text.Alpha(.035))
+			}
+			if b.Clicked() {
+				if choice.api {
+					e.signInMethod = domain.SignInAPI
+				} else {
+					e.signInMethod = ""
+				}
+				e.draft.login = true
+			}
+		}
+	})
+}
+
+// Initial setup retains its method row while authorization progresses below.
+func (v *View) agentInitialAccount(c *n.Context, t *n.Theme, key string, e *deviceAgentEditor, info domain.HarnessInfo, disabled bool) {
+	methods := v.agentSignInMethods(key, info)
+	method := agentSignInMethod(key, e, methods)
+	u := v.agentSignIn(key, info.ID)
+	if u != nil {
+		u.editor = e
+	}
+	active := u != nil && u.status.Phase.Active()
+	n.Column(c).FillWidth().Children(func() {
+		n.Row(c).FillWidth().Height(28).Gap(8).AlignItems(n.Baseline).Children(func() {
+			name := signInMethodLabel(method)
+			trigger := control(c.Key("login-method"), 5).Width(112).Height(28).PaddingX(8).Radius(5).Border(1, t.Border).Label("选择登录方式").Disabled(disabled || active).Children(func() {
+				n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
+					n.Text(c, name).FontSize(12).FixedLineHeight(20).Grow(1)
+					inlineSymbol(c, chevron, name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted)
+				})
+			})
+			var choices []menuChoice
+			for _, value := range []domain.SignInMethod{domain.SignInBrowser, domain.SignInDeviceCode} {
+				if slices.Contains(methods, value) {
+					choices = append(choices, menuChoice{id: string(value), name: signInMethodLabel(value), checked: value == method, choose: func() { e.signInMethod = value }})
+				}
+			}
+			v.choiceMenu(c, t, "sign-in-method:"+key+":"+info.ID, trigger, choices)
+			n.Spacer(c).Grow(1)
+			if deviceAction(c, "登录").Label("登录账号").Disabled(disabled || active).Clicked() {
+				v.startAgentSignIn(key, e, info)
+			}
+		})
+		body := n.Column(c.Key("initial-auth-progress")).FillWidth().Clip()
+		message := ""
+		if active {
+			message = "正在准备登录"
+			if u.status.Phase == domain.SignInWaiting {
+				message = "等待授权"
+			}
+		}
+		if u != nil && u.status.Message != "" {
+			message = u.status.Message
+		}
+		last := n.Local(body, "message", func() string { return message })
+		if message != "" {
+			*last = message
+		}
+		challenge := domain.SignInChallenge{}
+		if u != nil {
+			challenge = u.status.Challenge
+		}
+		code := n.Local(body, "code", func() string { return challenge.Code })
+		if challenge.Code != "" {
+			*code = challenge.Code
+		}
+		animatedContentHeight(c, body, active || message != "", 180*time.Millisecond, func() float32 {
+			n.Row(c).FillWidth().MinHeight(28).Margin(8, 0, 0).Gap(8).AlignItems(n.Baseline).Children(func() {
+				if active {
+					serviceSpinner(c.Key("spinner"), *last, n.Font{Family: t.Font, Size: 12, Weight: 400}, t.TextMuted)
+				}
+				n.Text(c.Key("caption"), *last).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().Tooltip(*last).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+				if active {
+					if challenge.URL != "" && deviceAction(c, "打开授权页").Disabled(disabled).Clicked() {
+						if openSignInLink(challenge.URL) != nil {
+							u.status.Message = "无法打开授权页"
+						}
+					}
+					if deviceAction(c, "取消登录").Disabled(u.pending).Clicked() {
+						v.sendSignIn(u, "cancel", nil)
+					}
+				}
+			})
+			challengeBody := n.Column(c.Key("initial-auth-code")).FillWidth().Clip()
+			animatedContentHeight(c, challengeBody, active && challenge.Code != "", 180*time.Millisecond, func() float32 {
+				n.Row(c).FillWidth().Height(32).Gap(8).AlignItems(n.Baseline).Children(func() {
+					n.Text(c, *code).Font(v.Model.Preferences.CodeFont).FontSize(13).FixedLineHeight(20).Grow(1).Selectable()
+					caption := "复制"
+					if c.Now().Before(e.draft.copiedUntil) {
+						caption = "已复制"
+						c.AnimationFrame()
+					}
+					if deviceAction(c, caption).Label("复制验证码").Disabled(!active).Clicked() {
+						c.WriteClipboard(challenge.Code)
+						e.draft.copiedUntil = c.Now().Add(2 * time.Second)
+					}
+				})
+				return 0
+			})
+			return 0
+		})
+	})
 }

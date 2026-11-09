@@ -25,6 +25,11 @@ func TestRealAppServerEmitsStructuredPlanUpdates(t *testing.T) {
 	var count atomic.Int32
 	var unsupported atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"data":[{"id":"fixture-model"}]}`)
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		step := count.Add(1)
 		var request struct {

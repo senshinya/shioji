@@ -99,7 +99,7 @@ func (l *accountSignIn) Wait(ctx context.Context) (domain.Readiness, error) {
 			}
 			// Completion is not proof of usable credentials; verify the effective account.
 			if err := l.runtime.catalog(ctx); err != nil {
-				return domain.Readiness{}, errors.New("登录已授权，但账号或模型检测失败，请重新检测")
+				return domain.Readiness{}, err
 			}
 			return l.runtime.ready, nil
 		case <-ctx.Done():

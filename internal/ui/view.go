@@ -1035,7 +1035,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 							if label == "" {
 								label = model.ID
 							}
-							if ghost(c, label).FillWidth().TextAlign(n.Start).Tooltip(model.ID).Clicked() {
+							if ghost(c, label).FillWidth().TextAlign(n.Start).Tooltip(model.ID).Disabled(ready.State != domain.RuntimeReady).Clicked() {
 								cfg.Model = model.ID
 								if v.Model.Error == app.ModelUnavailableMessage {
 									v.Model.Error = ""
@@ -1049,7 +1049,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 						for _, model := range ready.Models {
 							if model.ID == cfg.Model {
 								for _, effort := range model.Efforts {
-									if ghost(c, effort).FillWidth().TextAlign(n.Start).Clicked() {
+									if ghost(c, effort).FillWidth().TextAlign(n.Start).Disabled(ready.State != domain.RuntimeReady).Clicked() {
 										cfg.Effort = effort
 										v.Model.Configs[key] = cfg
 										v.runMenu = runMenuMain

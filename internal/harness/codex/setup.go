@@ -26,7 +26,7 @@ func (a Adapter) Installation() domain.RuntimeInstallation {
 	if a.Home != "" {
 		command = append([]string{"/usr/bin/env", "CODEX_HOME=" + a.Home}, command...)
 	}
-	return domain.RuntimeInstallation{SignInMethods: a.signInMethods(), Options: a.runtimeOptions, OptionsSupported: domain.RuntimeOptionSupport{Arguments: true, Directory: true, Environment: true, Instructions: true, TitleModel: true}, Executable: path, Override: a.override, Configurable: true, Guide: "在该设备的终端安装或登录，然后重新检测", Documentation: "https://learn.chatgpt.com/docs/codex/cli", SignInCommand: command}
+	return domain.RuntimeInstallation{APISetup: a.apiSetupSupported(), SignInMethods: a.signInMethods(), Options: a.runtimeOptions, OptionsSupported: domain.RuntimeOptionSupport{Arguments: true, Directory: true, Environment: true, Instructions: true, TitleModel: true}, Executable: path, Override: a.override, Configurable: true, Guide: "在该设备的终端安装或登录，然后重新检测", Documentation: "https://learn.chatgpt.com/docs/codex/cli", SignInCommand: command}
 }
 func (a Adapter) WithExecutable(path string) (harness.Adapter, error) {
 	if a.defaultExecutable == "" {
@@ -65,8 +65,21 @@ func (r *Runtime) checkAuthentication(ctx context.Context) error {
 		return err
 	}
 	r.account = account.summary()
+	if r.supports("config/read") {
+		config, err := r.systemConfiguration(ctx)
+		if err != nil {
+			return err
+		}
+		r.account = config.summary(account, r.cmd.Env)
+		if r.account.Credential == "missing" {
+			return &harness.SetupError{Issue: domain.RuntimeSignInRequired, Account: r.account, Message: "请检查该设备的 API 凭据"}
+		}
+	}
+	if r.account != nil && r.account.Mode == "api" {
+		return nil
+	}
 	if issue := account.issue(); issue != "" {
-		return &harness.SetupError{Issue: issue, Message: "请先在该设备登录 Codex，再重新检测"}
+		return &harness.SetupError{Issue: issue, Account: r.account, Message: "请先在该设备登录 Codex，再重新检测"}
 	}
 	return nil
 }
@@ -202,4 +215,11 @@ func (a Adapter) signInMethods() []domain.SignInMethod {
 		methods = append(methods, domain.SignInDeviceCode)
 	}
 	return methods
+}
+
+func (a Adapter) apiSetupSupported() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, support, err := compatibleExecutable(ctx, a.Executable)
+	return err == nil && support.methods["config/batchWrite"] && support.methods["account/read"]
 }

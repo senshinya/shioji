@@ -43,6 +43,7 @@ var requestContracts = map[string][]string{
 	"initialize":              {"clientInfo", "capabilities"},
 	"model/list":              {"cursor", "limit", "includeHidden"},
 	"config/read":             {"cwd", "includeLayers"},
+	"config/batchWrite":       {"edits", "filePath", "expectedVersion", "reloadUserConfig"},
 	"account/read":            {"refreshToken"},
 	"account/login/cancel":    {"loginId"},
 	"configRequirements/read": {},

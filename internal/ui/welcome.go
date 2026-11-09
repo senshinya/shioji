@@ -91,7 +91,7 @@ func (v *View) welcomeSteps(c *n.Context, t *n.Theme, f *welcomeFlow, add bool) 
 			index = 1
 		}
 	}
-	n.Row(c).FillWidth().Height(20).Gap(12).AlignItems(n.Baseline).Margin(0, 0, 28).Children(func() {
+	n.Row(c).FillWidth().Height(20).Gap(12).AlignItems(n.Baseline).Margin(0, 0, 20).Children(func() {
 		for i, label := range labels {
 			if i > 0 {
 				inlineSymbol(c, disclosureRight, label, n.Font{Family: t.Font, Size: 12, Weight: 400}, 10, t.TextMuted)
@@ -105,21 +105,10 @@ func (v *View) welcomeSteps(c *n.Context, t *n.Theme, f *welcomeFlow, add bool) 
 	})
 }
 func (v *View) welcomeHeading(c *n.Context, t *n.Theme, title, key string, device bool) {
-	n.Row(c).FillWidth().MinHeight(36).Margin(0, 0, 28).AlignItems(n.Baseline).Gap(16).Children(func() {
-		n.Text(c, title).FontSize(28).FontWeight(400).FixedLineHeight(36).Grow(1)
+	n.Row(c).FillWidth().MinHeight(28).Margin(0, 0, 20).AlignItems(n.Baseline).Gap(16).Children(func() {
+		n.Text(c, title).FontSize(20).FontWeight(400).FixedLineHeight(28).Grow(1)
 		if device {
-			name := v.Model.LocalName()
-			if key != "local" {
-				name = v.sshName
-				if name == "" {
-					name = v.sshTarget
-				}
-				for _, d := range v.Model.Connections {
-					if d.ID == key {
-						name = d.Name
-					}
-				}
-			}
+			name := v.welcomeDeviceName(key)
 			inlineIconText(c, monitor, name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 14, 8, t.TextMuted)
 		}
 	})
@@ -134,7 +123,7 @@ func setupField(c *n.Context, label string, value *string, placeholder string, d
 	return textField(c, value).FillWidth().Height(28).Padding(4, 8).FontSize(12).FixedLineHeight(20).Label(label).Placeholder(placeholder).Background(c.Theme().Background).Disabled(disabled)
 }
 func (v *View) welcomeFooter(c *n.Context, back, next string, disabled bool, onBack, onNext func()) {
-	n.Row(c.Key("welcome-footer")).FillWidth().MinHeight(32).Margin(32, 0, 0).Justify(n.SpaceBetween).AlignItems(n.Center).Children(func() {
+	n.Row(c.Key("welcome-footer")).FillWidth().MinHeight(32).Margin(24, 0, 0).Justify(n.SpaceBetween).AlignItems(n.Center).Children(func() {
 		if back != "" {
 			if deviceAction(c, back).MarginStart(-8).Disabled(v.setupFlow().busy || v.setupFlow().agents != nil && v.setupFlow().agents.busy).Clicked() {
 				onBack()
@@ -440,4 +429,20 @@ func (v *View) welcomeStage(c *n.Context, t *n.Theme, f *welcomeFlow, add bool) 
 		}
 		current.Transition(n.ElementTransition{Duration: motionAnimation(c, 260*time.Millisecond).Duration, Ease: n.EaseOut, Enter: &n.Motion{X: direction * distance, Opacity: 1}, Exit: &n.Motion{X: -direction * distance, Opacity: 1}})
 	})
+}
+
+func (v *View) welcomeDeviceName(key string) string {
+	name := v.Model.LocalName()
+	if key != "local" {
+		name = v.sshName
+		if name == "" {
+			name = v.sshTarget
+		}
+		for _, d := range v.Model.Connections {
+			if d.ID == key {
+				name = d.Name
+			}
+		}
+	}
+	return name
 }

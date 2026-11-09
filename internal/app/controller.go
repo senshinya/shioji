@@ -81,6 +81,15 @@ func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.Raw
 	if in, ok := job.Input.(protocol.SignInInput); ok && in.Method == domain.SignInBrowser && job.ConnectionID != "" && job.ConnectionID != "local" && client.Minor < 20 {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能使用远程浏览器登录"}
 	}
+	if client.Minor < 21 {
+		apiSetup := false
+		if in, ok := job.Input.(protocol.SignInInput); ok && strings.HasPrefix(job.Method, "runtime.signin.") {
+			apiSetup = apiSetup || in.Method == domain.SignInAPI
+		}
+		if apiSetup {
+			return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能配置 API"}
+		}
+	}
 	if job.Prepare != nil {
 		if err := job.Prepare(); err != nil {
 			return nil, &protocol.RemoteError{Code: "notSent", Message: "无法保存草稿，操作未发送：" + err.Error()}

@@ -57,8 +57,11 @@ func (s *Server) signInCommand(method string, in protocol.SignInInput) (domain.S
 		}
 		return current.status, nil
 	}
-	if in.Method != domain.SignInBrowser && in.Method != domain.SignInDeviceCode {
+	if in.Method != domain.SignInBrowser && in.Method != domain.SignInDeviceCode && in.Method != domain.SignInAPI {
 		return domain.SignInStatus{}, errors.New("登录方式不可用")
+	}
+	if (in.Method == domain.SignInAPI) != (in.API != nil) {
+		return domain.SignInStatus{}, errors.New("接入配置无效")
 	}
 	encoded, _ := json.Marshal(in)
 	fingerprint := sha256.Sum256(encoded)
@@ -124,7 +127,16 @@ func (s *Server) runSignIn(ctx context.Context, in protocol.SignInInput, entry *
 	adapter, err := s.signInAdapter(in)
 	var login harness.SignIn
 	var challenge domain.SignInChallenge
-	if err == nil {
+	var ready domain.Readiness
+	if err == nil && in.Method == domain.SignInAPI {
+		provider, ok := adapter.(harness.APIConfigurationProvider)
+		if !ok {
+			err = harness.Unsupported("api-configuration")
+		} else {
+			ready, err = provider.ConfigureAPI(ctx, *in.API)
+		}
+		in.API = nil // The credential has no role in polling, refresh or saved state.
+	} else if err == nil {
 		provider, ok := adapter.(harness.AuthenticationProvider)
 		if !ok {
 			err = harness.Unsupported("sign-in")
@@ -134,6 +146,7 @@ func (s *Server) runSignIn(ctx context.Context, in protocol.SignInInput, entry *
 			cancel()
 		}
 	}
+	ready, err = confirmedSignInReadiness(ready, err)
 	s.signInMu.Lock()
 	if !entry.status.Phase.Active() || ctx.Err() != nil {
 		if entry.status.Phase.Active() {
@@ -151,6 +164,13 @@ func (s *Server) runSignIn(ctx context.Context, in protocol.SignInInput, entry *
 	if err != nil {
 		entry.status.Phase = domain.SignInFailed
 		entry.status.Message = "无法开始登录，请检查 Agent 配置与设备网络后重试"
+		if in.Method == domain.SignInAPI {
+			entry.status.Message = "API 配置未确认，请重新检测系统配置"
+			var setup *harness.SetupError
+			if errors.As(err, &setup) {
+				entry.status.Message = setup.Message
+			}
+		}
 		s.signInMu.Unlock()
 		return
 	}
@@ -158,7 +178,10 @@ func (s *Server) runSignIn(ctx context.Context, in protocol.SignInInput, entry *
 	entry.status.Phase = domain.SignInWaiting
 	entry.status.Challenge = challenge
 	s.signInMu.Unlock()
-	ready, err := login.Wait(ctx)
+	if login != nil {
+		ready, err = login.Wait(ctx)
+	}
+	ready, err = confirmedSignInReadiness(ready, err)
 	if err == nil && ctx.Err() == nil && s.signInUsesSavedConfiguration(in) {
 		_, _ = s.recheckRuntime(in.HarnessID)
 	}
@@ -180,7 +203,7 @@ func (s *Server) runSignIn(ctx context.Context, in protocol.SignInInput, entry *
 		return
 	}
 	descriptor := adapter.Descriptor()
-	info := domain.HarnessInfo{ID: in.HarnessID, Name: descriptor.Name, Icon: descriptor.Icon, State: ready.State, Account: ready.Account, Models: ready.Models, Permissions: ready.Permissions, PermissionChoices: ready.PermissionChoices, Plan: ready.Plan, Capabilities: ready.Capabilities}
+	info := domain.HarnessInfo{ID: in.HarnessID, Name: descriptor.Name, Icon: descriptor.Icon, State: ready.State, Error: ready.Error, Account: ready.Account, Models: ready.Models, Permissions: ready.Permissions, PermissionChoices: ready.PermissionChoices, Plan: ready.Plan, Capabilities: ready.Capabilities}
 	if provider, ok := adapter.(harness.InstallationProvider); ok {
 		installation := provider.Installation()
 		info.Installation = &installation
@@ -225,4 +248,17 @@ func (s *Server) hasActiveSignIn() bool {
 		}
 	}
 	return false
+}
+
+// Authentication and catalog readiness are independent. A verified account is
+// kept even when model discovery fails, without inventing selectable models.
+func confirmedSignInReadiness(ready domain.Readiness, err error) (domain.Readiness, error) {
+	var setup *harness.SetupError
+	if errors.As(err, &setup) && setup.Account != nil {
+		state := setup.Account.State
+		if state == "authenticated" || state == "configured" || state == "notRequired" {
+			return domain.Readiness{State: domain.RuntimeUnavailable, Account: setup.Account, Error: setup.Message}, nil
+		}
+	}
+	return ready, err
 }
