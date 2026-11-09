@@ -101,6 +101,49 @@ type Client struct {
 	Minor           int
 }
 
+// LegacyWorkerError identifies an authenticated endpoint which predates the
+// current protocol. Its diagnostic probe never sends execution or update commands.
+type LegacyWorkerError struct {
+	Major, Minor int
+	DeviceID     string
+}
+
+func (e *LegacyWorkerError) Error() string {
+	return fmt.Sprintf("设备执行服务版本过旧（协议 %d.%d），无法安全自动更新。请先停止旧版服务，再重试连接", e.Major, e.Minor)
+}
+
+// Dial owns failed connections. A v1 probe after a closed handshake is diagnostic
+// only: it cannot turn an incompatible worker into an executable client.
+func Dial(ctx context.Context, dial func(context.Context) (net.Conn, error), target string) (*Client, error) {
+	conn, err := dial(ctx)
+	if err != nil {
+		return nil, err
+	}
+	client, err := Connect(ctx, conn, target)
+	if err == nil {
+		return client, nil
+	}
+	conn.Close()
+	if errors.Is(err, io.EOF) && ctx.Err() == nil {
+		if old, probeErr := dial(ctx); probeErr == nil {
+			defer old.Close()
+			reset := deadline(ctx, old)
+			defer reset()
+			codec, nonce := NewCodec(old, old), domain.NewID()
+			if codec.Write(Frame{Type: "hello", Major: 1, Nonce: nonce, DeviceID: target}) == nil {
+				var welcome Frame
+				if codec.Read(&welcome) == nil && welcome.Type == "welcome" && welcome.Major == 1 && welcome.Nonce == nonce && welcome.DeviceID != "" && welcome.Epoch != "" {
+					if target != "" && welcome.DeviceID != target {
+						return nil, errors.New("设备身份与已保存记录不一致")
+					}
+					return nil, &LegacyWorkerError{Major: welcome.Major, Minor: welcome.Minor, DeviceID: welcome.DeviceID}
+				}
+			}
+		}
+	}
+	return nil, fmt.Errorf("执行服务连接或握手失败：%w", err)
+}
+
 func Connect(ctx context.Context, conn net.Conn, target string) (*Client, error) {
 	client := &Client{conn: conn, codec: NewCodec(conn, conn)}
 	reset := deadline(ctx, conn)

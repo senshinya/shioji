@@ -27,10 +27,15 @@ const (
 	sshCanceledCheck
 	sshSelecting
 	sshSaving
+	sshAwaitingTrust
+	sshNeedsKey
+	sshConfiguring
+	sshLegacyUpgrade
+	sshMigrating
 )
 
 func (s sshCheckPhase) open() bool {
-	return s == sshEditing || s == sshChecking || s == sshSelecting || s == sshSaving
+	return s == sshEditing || s == sshChecking || s == sshSelecting || s == sshSaving || s == sshAwaitingTrust || s == sshNeedsKey || s == sshConfiguring || s == sshLegacyUpgrade || s == sshMigrating
 }
 func (s sshCheckPhase) busy() bool {
 	return s == sshChecking || s == sshCanceledCheck || s == sshSaving
@@ -205,6 +210,8 @@ func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 	})
 }
 func (v *View) cancelSSHCheck() {
+	v.sshHostKey = nil
+	v.retireSSHSetupTerminal()
 	v.sshCheck = v.sshCheck.close()
 	v.sshRequest = ""
 	if v.sshCheck.busy() && v.Controller != nil {
@@ -226,6 +233,8 @@ func (v *View) checkSSHDevice() {
 		v.sshError = err.Error()
 		return
 	}
+	trust := v.sshHostKey
+	v.sshHostKey = nil
 	request := domain.NewID()
 	v.sshRequest = request
 	v.sshCheck = v.sshCheck.begin()
@@ -234,13 +243,13 @@ func (v *View) checkSSHDevice() {
 	if name == "" {
 		name = ssh.Target
 	}
-	if !v.Controller.Do(app.Job{Method: "$device.check", Input: app.CheckSSHDevice{Name: name, SSH: ssh}, Apply: func(m *app.Model, b json.RawMessage, err error) {
+	if !v.Controller.Do(app.Job{Method: "$device.check", Input: app.CheckSSHDevice{Name: name, SSH: ssh, Trust: trust}, Apply: func(m *app.Model, b json.RawMessage, err error) {
 		v.sshCheck = v.sshCheck.finish()
 		if v.sshRequest != request || !v.sshCheck.open() {
 			return
 		}
 		if err != nil {
-			v.sshError = err.Error() + "；请确认已在终端核对主机指纹并可免交互登录"
+			v.sshError = err.Error()
 			return
 		}
 		var result app.DeviceSetupCheck
@@ -248,11 +257,31 @@ func (v *View) checkSSHDevice() {
 			v.sshError = err.Error()
 			return
 		}
+		if result.HostKey != nil {
+			v.sshHostKey = result.HostKey
+			v.sshCheck = sshAwaitingTrust
+			return
+		}
+		if result.NeedsKey {
+			v.sshCheck = sshNeedsKey
+			if trust != nil {
+				v.startSSHKeySetup()
+			}
+			return
+		}
 		if result.Info.DeviceID == m.LocalDeviceID {
 			v.sshError = "这个地址连接的是这台 Mac"
 			return
 		}
 		v.sshSetup = result
+		if result.Info.Legacy != nil || result.Info.Migration != nil {
+			v.acceptSSHMigration(result.Info)
+			return
+		}
+		if flow := v.setupMigration(); flow != nil && flow.target.Status != nil && flow.target.Status.Phase == domain.MigrationCompleted {
+			delete(m.WorkerMigrations, result.Info.DeviceID)
+			delete(v.workerMigrations, result.Info.DeviceID)
+		}
 		v.sshAgents = agentEditor(result.Catalog)
 		v.sshCheck = sshSelecting
 		if f := v.welcome; f != nil && f.key == "" {

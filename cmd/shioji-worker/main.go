@@ -41,6 +41,10 @@ func run() error {
 	bridge := flag.Bool("bridge", false, "Forward stdio to this user’s existing private worker")
 	managed := flag.Bool("managed-service", false, "Wait for and own the per-user worker under launchd")
 	binary := flag.String("codex", "codex", "Compatible Codex executable")
+	migration := flag.String("legacy-migration", "", "Inspect an explicitly authorized legacy migration")
+	migrationID := flag.String("migration-id", "", "Stable legacy migration operation")
+	migrationDevice := flag.String("migration-device", "", "Expected migration device")
+	migrationOwner := flag.String("migration-owner", "", "Expected opaque legacy owner")
 	flag.Parse()
 	build := runtimebuild.Current()
 	build.Schema = store.SchemaVersion
@@ -52,6 +56,52 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if *migration == "inspect" {
+		exe, e := os.Executable()
+		if e != nil {
+			return e
+		}
+		info, e := transport.InspectWorkerInfo(ctx, dir, exe, *migrationDevice)
+		if e != nil {
+			return e
+		}
+		if info.Migration != nil {
+			progress, e := worker.LegacyMigrationStatus(dir, info.Migration.ID)
+			if e != nil {
+				return e
+			}
+			info.Migration = &progress
+		}
+		return json.NewEncoder(os.Stdout).Encode(info)
+	}
+	if *migration != "" && *migration != "run" {
+		var result domain.WorkerMigrationStatus
+		switch *migration {
+		case "start":
+			exe, e := os.Executable()
+			if e != nil {
+				return e
+			}
+			result, err = worker.StartLegacyMigration(ctx, dir, exe, domain.WorkerMigrationInput{ID: *migrationID, DeviceID: *migrationDevice, OwnerRef: *migrationOwner})
+		case "status":
+			result, err = worker.LegacyMigrationStatus(dir, *migrationID)
+		case "resume":
+			result, err = worker.ResumeLegacyMigration(ctx, dir, domain.WorkerMigrationInput{ID: *migrationID, DeviceID: *migrationDevice, OwnerRef: *migrationOwner})
+		default:
+			return errors.New("未知的迁移操作")
+		}
+		if err != nil {
+			code := "migrationError"
+			if errors.Is(err, os.ErrNotExist) {
+				code = "notFound"
+			}
+			return json.NewEncoder(os.Stdout).Encode(protocol.Frame{Type: "worker-migration-error", ID: *migrationID, DeviceID: *migrationDevice, ErrorCode: code, Error: err.Error()})
+		}
+		if result.DeviceID != *migrationDevice {
+			return errors.New("迁移不属于指定设备")
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
+	}
 	if *ensure {
 		exe, e := os.Executable()
 		if e != nil {
@@ -59,7 +109,23 @@ func run() error {
 		}
 		info, e := transport.EnsureLocalWorker(ctx, dir, exe, "")
 		if e != nil {
+			var legacy *protocol.LegacyWorkerError
+			if errors.As(e, &legacy) {
+				inspection, inspectErr := transport.InspectLegacyWorker(ctx, dir, legacy.DeviceID)
+				if inspectErr != nil {
+					return inspectErr
+				}
+				info.DeviceID, info.Legacy = inspection.Info.DeviceID, &inspection.Info
+				return json.NewEncoder(os.Stdout).Encode(info)
+			}
 			return e
+		}
+		if info.Migration != nil {
+			progress, e := worker.LegacyMigrationStatus(dir, info.Migration.ID)
+			if e != nil {
+				return e
+			}
+			info.Migration = &progress
 		}
 		return json.NewEncoder(os.Stdout).Encode(info)
 	}
@@ -113,8 +179,24 @@ func run() error {
 		}
 	}}
 	var s *worker.Server
+	workerArgs := os.Args[1:]
+	if *migration == "run" {
+		// Future replacements must enter the ordinary service path rather than
+		// replay this one-time migration operation.
+		workerArgs = []string{"--state-dir", dir, "--codex", *binary}
+		if *managed {
+			workerArgs = append(workerArgs, "--managed-service")
+		}
+	}
 	for {
-		s, err = worker.New(ctx, config)
+		if *migration == "run" {
+			s, err = worker.RunLegacyMigration(ctx, config, *migrationID)
+			if err == nil && s == nil {
+				return nil
+			}
+		} else {
+			s, err = worker.New(ctx, config)
+		}
 		if !*managed || !errors.Is(err, worker.ErrOwned) {
 			break
 		}
@@ -131,7 +213,7 @@ func run() error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		return syscall.Exec(selected.path, append([]string{selected.path}, os.Args[1:]...), os.Environ())
+		return syscall.Exec(selected.path, append([]string{selected.path}, workerArgs...), os.Environ())
 	}
 	if err != nil {
 		return err
@@ -151,7 +233,7 @@ func run() error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		return syscall.Exec(path, append([]string{path}, os.Args[1:]...), os.Environ())
+		return syscall.Exec(path, append([]string{path}, workerArgs...), os.Environ())
 	default:
 		return nil
 	}

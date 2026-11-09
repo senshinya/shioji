@@ -264,7 +264,7 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 					if m.Error != "" && m.Error != state.Error {
 						n.Text(c, m.Error).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
 					}
-					if state.Error != "" {
+					if state.Error != "" && v.migrationForConnection(key) == nil {
 						n.Text(c, state.Error).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 					}
 				})
@@ -275,6 +275,7 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 
 func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.DeviceState) {
 	service := state.WorkerService
+	flow := v.migrationForConnection(key)
 	label := "服务未运行"
 	if key != "local" {
 		label = "未连接"
@@ -303,6 +304,18 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 			disabled = true
 		}
 	}
+	if !state.Connected && (service == nil || service.Phase != app.WorkerUpdating && service.Phase != app.WorkerWaiting) {
+		action, method, disabled = "检查服务", "$worker.migration.inspect", v.Controller == nil
+	}
+	if flow != nil {
+		label = migrationCaption(flow)
+		action, disabled = migrationAction(flow)
+		disabled = disabled || v.Controller == nil
+	} else if service != nil && service.Legacy != nil {
+		label = "需要更新设备服务"
+		action, disabled = "准备更新", v.Controller == nil
+		method = "$worker.migration.inspect"
+	}
 	n.Row(c).FillWidth().Height(40).Gap(8).AlignItems(n.Center).Children(func() {
 		n.Row(c).Gap(8).AlignItems(n.Baseline).Children(func() {
 			n.Text(c, "Shioji worker").FontSize(12).FixedLineHeight(20).TextColor(t.Text).SingleLine()
@@ -310,12 +323,27 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 		})
 		n.Spacer(c).Grow(1)
 		if deviceAction(c, action).Label(func() string {
+			if flow != nil {
+				return action
+			}
+			if method == "$worker.migration.inspect" {
+				if service != nil && service.Legacy != nil {
+					return "准备更新执行服务"
+				}
+				return "检查设备服务"
+			}
 			if method == "$worker.update" {
 				return "更新执行服务"
 			}
 			return "检查执行服务更新"
 		}()).Disabled(disabled).Clicked() {
-			v.do(app.Job{ConnectionID: key, Method: method})
+			if flow != nil {
+				v.performMigrationAction(flow)
+			} else if method == "$worker.migration.inspect" {
+				v.beginNormalMigration(key)
+			} else {
+				v.do(app.Job{ConnectionID: key, Method: method})
+			}
 		}
 	})
 
@@ -348,6 +376,9 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 	message := ""
 	if service != nil {
 		message = service.Message
+	}
+	if flow != nil {
+		message = migrationMessage(flow)
 	}
 	frame := n.Column(c.Key("worker-message")).FillWidth().Clip().Label("执行服务版本详情")
 	retained := n.Local(frame, "message", func() string { return message })

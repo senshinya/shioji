@@ -15,13 +15,15 @@ import (
 )
 
 type WorkerInfo struct {
-	Build     *domain.WorkerBuild `json:"build,omitempty"`
-	Home      string              `json:"home"`
-	Directory string              `json:"directory"`
-	Worker    string              `json:"worker"`
-	DeviceID  string              `json:"deviceId"`
-	Minor     int                 `json:"minor"`
-	Started   bool                `json:"started"`
+	Migration *domain.WorkerMigrationStatus `json:"migration,omitempty"`
+	Legacy    *domain.LegacyWorkerInfo      `json:"legacy,omitempty"`
+	Build     *domain.WorkerBuild           `json:"build,omitempty"`
+	Home      string                        `json:"home"`
+	Directory string                        `json:"directory"`
+	Worker    string                        `json:"worker"`
+	DeviceID  string                        `json:"deviceId"`
+	Minor     int                           `json:"minor"`
+	Started   bool                          `json:"started"`
 }
 
 func ExistingCodex() string {
@@ -45,16 +47,26 @@ func EnsureLocalWorker(ctx context.Context, directory, binary, codex string) (Wo
 		return WorkerInfo{}, err
 	}
 	info := WorkerInfo{Home: home, Directory: directory, Worker: binary}
+	if pending, e := PendingWorkerMigration(directory); e != nil {
+		return info, e
+	} else if pending != nil {
+		info.DeviceID = pending.DeviceID
+		info.Migration = pending
+		return info, nil
+	}
 	probe := func() (bool, error) {
-		conn, err := (&net.Dialer{Timeout: 200 * time.Millisecond}).DialContext(ctx, "unix", filepath.Join(directory, "worker.sock"))
+		reachable := false
+		client, err := protocol.Dial(ctx, func(ctx context.Context) (net.Conn, error) {
+			conn, err := (&net.Dialer{Timeout: 200 * time.Millisecond}).DialContext(ctx, "unix", filepath.Join(directory, "worker.sock"))
+			if err == nil {
+				reachable = true
+			}
+			return conn, err
+		}, "")
 		if err != nil {
-			return false, nil
+			return reachable, err
 		}
-		defer conn.Close()
-		client, err := protocol.Connect(ctx, conn, "")
-		if err != nil {
-			return true, err
-		}
+		defer client.Close()
 		info.DeviceID, info.Minor = client.DeviceID, client.Minor
 		info.Build = client.Worker
 		return true, nil

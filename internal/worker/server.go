@@ -22,9 +22,12 @@ import (
 	"shioji/internal/protocol"
 	"shioji/internal/runtimebuild"
 	"shioji/internal/store"
+	"shioji/internal/transport"
 )
 
 type Config struct {
+	legacyOwner                                     *Owner
+	legacyExpected                                  *legacyMigrationRecord
 	CheckStartupBuild                               func() error `json:"-"`
 	BackgroundManaged                               bool
 	DisableBackground                               func(context.Context) (domain.BackgroundService, error) `json:"-"`
@@ -99,9 +102,25 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	owner, err := Acquire(config.Directory)
-	if err != nil {
-		return nil, err
+	owner := config.legacyOwner
+	if owner == nil {
+		owner, err = Acquire(config.Directory)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// Recheck under ownership: a managed service may already have been waiting
+	// for the old process to exit when the migration was authorized.
+	if config.legacyExpected == nil {
+		pending, e := transport.PendingWorkerMigration(config.Directory)
+		if e != nil {
+			owner.Close()
+			return nil, e
+		}
+		if pending != nil {
+			owner.Close()
+			return nil, errors.New("设备迁移尚未完成，请继续同一次服务准备")
+		}
 	}
 	if config.CheckStartupBuild != nil {
 		if err = config.CheckStartupBuild(); err != nil {
@@ -113,6 +132,17 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	if err != nil {
 		owner.Close()
 		return nil, err
+	}
+	if config.legacyExpected != nil {
+		snapshot, e := db.Snapshot()
+		if e == nil {
+			e = verifyLegacyCatalog(*config.legacyExpected, snapshot)
+		}
+		if e != nil {
+			db.Close()
+			owner.Close()
+			return nil, e
+		}
 	}
 	if err = db.Recover(); err != nil {
 		db.Close()

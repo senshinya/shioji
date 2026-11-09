@@ -236,7 +236,8 @@ func (v *View) finishWelcome() {
 	v.focusComposer = true
 }
 func (v *View) welcomeSSHFields(c *n.Context, t *n.Theme, f *welcomeFlow) {
-	disabled := v.sshCheck.busy()
+	v.syncSSHSetupTerminal()
+	disabled := v.sshCheck.busy() || v.sshCheck == sshAwaitingTrust || v.sshCheck == sshConfiguring || v.sshCheck == sshLegacyUpgrade || v.sshCheck == sshMigrating
 	setupRow(c, "SSH 地址", func() { setupField(c, "SSH 地址", &v.sshTarget, "用户名@主机或别名", disabled) })
 	scope := n.Column(c.Key("connection-state"))
 	open := n.Local(scope, "options", func() bool { return false })
@@ -259,16 +260,42 @@ func (v *View) welcomeSSHFields(c *n.Context, t *n.Theme, f *welcomeFlow) {
 		setupRow(c, "SSH 端口", func() { setupField(c, "SSH 端口", &v.sshPort, "默认", disabled) })
 		return 0
 	})
+	v.sshSetupContent(c, t)
+	v.sshMigrationContent(c, t)
 	v.welcomeError(c, v.sshError)
 	label := "连接并准备服务"
 	if disabled {
 		label = "正在连接"
 	}
+	if v.sshCheck == sshAwaitingTrust {
+		label = "信任并继续"
+	}
+	if v.sshCheck == sshNeedsKey {
+		label = "设置 SSH 密钥"
+	}
+	if v.sshCheck == sshConfiguring {
+		label = "正在设置密钥"
+	}
+	migrationDisabled := false
+	if v.sshCheck == sshLegacyUpgrade || v.sshCheck == sshMigrating {
+		label, migrationDisabled = migrationAction(v.setupMigration())
+	}
 	back := "返回"
 	if !v.Model.FirstRun {
 		back = "取消"
 	}
-	v.welcomeFooter(c, back, label, disabled || v.Controller == nil || strings.TrimSpace(v.sshTarget) == "", func() { v.cancelSSHCheck(); f.key = "local"; v.welcomeStep(welcomeDevice, -1) }, func() { v.checkSSHDevice() })
+	v.welcomeFooter(c, back, label, disabled && v.sshCheck != sshAwaitingTrust && v.sshCheck != sshLegacyUpgrade && v.sshCheck != sshMigrating || migrationDisabled || v.Controller == nil || strings.TrimSpace(v.sshTarget) == "", func() { v.cancelSSHCheck(); f.key = "local"; v.welcomeStep(welcomeDevice, -1) }, func() {
+		if v.sshCheck == sshLegacyUpgrade || v.sshCheck == sshMigrating {
+			v.performMigrationAction(v.setupMigration())
+		} else if v.sshCheck == sshNeedsKey {
+			v.startSSHKeySetup()
+		} else {
+			v.checkSSHDevice()
+		}
+		if v.sshCheck.busy() || v.sshCheck == sshConfiguring {
+			*open = false
+		}
+	})
 }
 func (v *View) welcomeAgents(c *n.Context, t *n.Theme, f *welcomeFlow, add bool) {
 	e := f.agents

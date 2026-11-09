@@ -251,7 +251,12 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 				caption = u.status.Message
 				tooltip = u.status.Message
 			}
-			n.Text(c.Key("auth-status"), caption).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Grow(1).MinWidth(0).SingleLine().Tooltip(tooltip).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+			status := func() {
+				n.Text(c.Key("auth-status"), caption).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Grow(1).MinWidth(0).SingleLine().Tooltip(tooltip).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+			}
+			if active || !supported {
+				status()
+			}
 
 			if active {
 				if u.status.Challenge.URL != "" && deviceAction(c.Key("open-authorization"), "打开授权页").Transition(fadeMotion(c, 160*time.Millisecond)).Disabled(disabled).Clicked() {
@@ -264,7 +269,7 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 				}
 			} else {
 				if supported {
-					n.Row(c.Key("sign-in-method-control")).Height(28).Gap(8).AlignItems(n.Center).Transition(fadeMotion(c, 160*time.Millisecond)).Children(func() {
+					n.Row(c.Key("sign-in-method-control")).Grow(1).MinWidth(0).Height(28).Gap(8).AlignItems(n.Center).Transition(fadeMotion(c, 160*time.Millisecond)).Children(func() {
 						name := "浏览器授权"
 						if method == domain.SignInDeviceCode {
 							name = "验证码授权"
@@ -290,6 +295,7 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 						} else {
 							n.Text(c, name).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 						}
+						status()
 						label := "登录"
 						if info.Account != nil && info.Account.State == "authenticated" {
 							label = "重新登录"

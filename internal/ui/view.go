@@ -18,6 +18,7 @@ import (
 	"shioji/internal/attachments"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"shioji/internal/transport"
 )
 
 type editBinding struct {
@@ -26,6 +27,10 @@ type editBinding struct {
 }
 
 type View struct {
+	workerMigrations                                                                                                map[string]*workerMigrationUI
+	workerMigrationRestored                                                                                         bool
+	sshHostKey                                                                                                      *transport.SSHHostKey
+	sshTerminal                                                                                                     *sshSetupTerminal
 	agentSignIns                                                                                                    map[string]*agentSignInUI
 	welcome                                                                                                         *welcomeFlow
 	composerDocuments                                                                                               map[string]*composerDocument
@@ -264,6 +269,7 @@ func (v *View) View(c *n.Context) {
 	}
 	t := *applyAppearance(c, m.Preferences)
 	v.syncAgentSignIns(c)
+	v.syncWorkerMigrations(c)
 	// Keep the overlay parent alive so popup entrance and exit both have a
 	// persistent parent, even when no popup is currently open.
 	n.Overlay(c, func() {})

@@ -679,17 +679,18 @@ func (c *Controller) Run(ctx context.Context) {
 					continue
 				}
 				lastAttempt = time.Now()
-				conn, err := c.dial(ctx)
+				var err error
+				client, err = protocol.Dial(ctx, c.dial, c.ExpectedDeviceID)
 				if err != nil {
-					if c.Dial != nil {
-						c.post(func(m *Model) { m.Error = err.Error() })
-					}
-					continue
-				}
-				client, err = protocol.Connect(ctx, conn, c.ExpectedDeviceID)
-				if err != nil {
-					conn.Close()
 					client = nil
+					var network *net.OpError
+					if c.Dial == nil && errors.As(err, &network) && network.Op == "dial" {
+						continue
+					}
+					var legacy *protocol.LegacyWorkerError
+					if errors.As(err, &legacy) {
+						publishService(&WorkerService{Phase: WorkerLegacy, Message: err.Error(), Legacy: &domain.LegacyWorkerInfo{DeviceID: legacy.DeviceID, Major: legacy.Major, Minor: legacy.Minor}})
+					}
 					c.post(func(m *Model) { m.Error = err.Error() })
 					continue
 				}

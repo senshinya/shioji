@@ -101,6 +101,7 @@ func (v *View) completeSSHDevice() {
 			v.deviceSelected = connection.ID
 			v.deviceList = false
 		}
+		v.retireSSHSetupTerminal()
 		v.sshCheck = sshClosed
 		if f := v.welcome; f != nil && f.key == "" {
 			if m.FirstRun {

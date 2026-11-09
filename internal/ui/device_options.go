@@ -188,7 +188,7 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 					if e.setup {
 						top, bottom = 0, 0
 					}
-					n.Column(c).FillWidth().Padding(top, 0, bottom, 8).Children(func() {
+					n.Column(c).FillWidth().Padding(top, 0, bottom, 0).Children(func() {
 						v.agentAuthentication(c, t, key, e, info, disabled)
 					})
 				})
@@ -207,7 +207,8 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 			})
 			if install != nil {
 				guidance := n.Column(c.Key("login-guidance")).FillWidth().Clip()
-				visible := install.Issue != "" && !e.draft.login
+				inlineSignIn := (install.Issue == domain.RuntimeSignInRequired || install.Issue == domain.RuntimeAuthenticationExpired) && len(install.SignInMethods) > 0 && minor >= 19
+				visible := install.Issue != "" && !e.draft.login && !inlineSignIn
 				last := n.Local(guidance, "info", func() domain.HarnessInfo { return info })
 				if visible {
 					*last = info
@@ -215,18 +216,10 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 				animatedContentHeight(c, guidance, visible, 240*time.Millisecond, func() float32 {
 					previous := *last
 					installation := previous.Installation
-					if (installation.Issue == domain.RuntimeSignInRequired || installation.Issue == domain.RuntimeAuthenticationExpired) && len(installation.SignInMethods) > 0 && minor >= 19 {
-						n.Row(c).FillWidth().Justify(n.End).PaddingY(8).Children(func() {
-							if deviceAction(c, "登录账号").Disabled(disabled).Clicked() {
-								e.draft.login = true
-							}
-						})
-					} else {
-						n.Column(c).FillWidth().PaddingY(8).Children(func() {
-							n.Text(c, installation.Guide).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
-							v.agentGuidance(c, key, previous)
-						})
-					}
+					n.Column(c).FillWidth().PaddingY(8).Children(func() {
+						n.Text(c, installation.Guide).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+						v.agentGuidance(c, key, previous)
+					})
 					return 0
 				})
 			}

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"shioji/internal/protocol"
 	"strings"
 )
 
@@ -67,6 +68,10 @@ exec "$dest/shioji-worker" --ensure
 		return WorkerInfo{}, fmt.Errorf("设备检查／开发 worker 部署失败：%s (%w)", strings.TrimSpace(diagnostic.String()), err)
 	}
 	var info WorkerInfo
+	var status protocol.Frame
+	if json.Unmarshal(output.Bytes(), &status) == nil && status.Type == "worker-legacy" && status.Major == 1 && status.DeviceID != "" {
+		return info, &protocol.LegacyWorkerError{Major: status.Major, Minor: status.Minor, DeviceID: status.DeviceID}
+	}
 	if err = json.Unmarshal(output.Bytes(), &info); err != nil {
 		return info, errors.New("设备未返回有效的 worker 信息；请检查 SSH 启动输出")
 	}

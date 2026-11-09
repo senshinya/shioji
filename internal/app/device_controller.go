@@ -26,8 +26,9 @@ type ConfigureDevice struct {
 	Pending    []string
 }
 type CheckSSHDevice struct {
-	Name string
-	SSH  transport.SSH
+	Trust *transport.SSHHostKey
+	Name  string
+	SSH   transport.SSH
 }
 
 type SignInSSHDevice struct {
@@ -38,8 +39,10 @@ type SignInSSHDevice struct {
 }
 
 type DeviceSetupCheck struct {
-	Info    transport.WorkerInfo
-	Catalog []domain.HarnessInfo
+	HostKey  *transport.SSHHostKey
+	NeedsKey bool
+	Info     transport.WorkerInfo
+	Catalog  []domain.HarnessInfo
 }
 type CompleteSSHDevice struct {
 	SSH      transport.SSH
@@ -207,6 +210,37 @@ func (c *Controller) runDevices(ctx context.Context) {
 			checkCancel = nil
 			apply(result.job, result.body, result.err)
 		case job := <-c.Jobs:
+
+			if job.Method == "$worker.migration.inspect" || job.Method == "$worker.migration" {
+				in, ok := job.Input.(WorkerMigrationAction)
+				if !ok {
+					apply(job, nil, errors.New("invalid migration request"))
+					continue
+				}
+				go func() {
+					callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+					defer cancel()
+					var out any
+					var err error
+					if job.Prepare != nil {
+						if saveErr := job.Prepare(); saveErr != nil {
+							err = &protocol.RemoteError{Code: "notSent", Message: "无法保存准备进度，操作未发送：" + saveErr.Error()}
+						}
+					}
+					if err == nil {
+						if job.Method == "$worker.migration.inspect" {
+							out, err = c.inspectWorkerMigration(callCtx, in.Target)
+						} else {
+							out, err = c.runWorkerMigration(callCtx, in)
+						}
+					}
+					body, _ := json.Marshal(out)
+					if job.Apply != nil {
+						c.postContext(ctx, func(m *Model) { job.Apply(m, body, err) })
+					}
+				}()
+				continue
+			}
 			if job.Method == "$device.signin" {
 				input, ok := job.Input.(SignInSSHDevice)
 				if !ok {
@@ -260,13 +294,9 @@ func (c *Controller) runDevices(ctx context.Context) {
 						result, err = completeSSHSetup(callCtx, complete)
 						body, _ = json.Marshal(result)
 					} else {
-						var info transport.WorkerInfo
-						info, err = input.SSH.Bootstrap(callCtx, c.fleet.workerBinary)
-						if err == nil {
-							var result DeviceSetupCheck
-							result, err = inspectSSHSetup(callCtx, input.SSH, info)
-							body, _ = json.Marshal(result)
-						}
+						var result DeviceSetupCheck
+						result, err = c.prepareSSHDevice(callCtx, input)
+						body, _ = json.Marshal(result)
 					}
 					select {
 					case checked <- struct {
@@ -354,4 +384,43 @@ func signInSSHSetup(ctx context.Context, in SignInSSHDevice) (domain.SignInStatu
 		err = errors.New("登录回执与请求不一致")
 	}
 	return result, err
+}
+
+func (c *Controller) prepareSSHDevice(ctx context.Context, in CheckSSHDevice) (DeviceSetupCheck, error) {
+	if in.Trust != nil {
+		if in.Trust.Target != in.SSH.Target || in.Trust.Port != in.SSH.Port {
+			return DeviceSetupCheck{}, errors.New("连接地址已改变，请重新核对指纹")
+		}
+		if err := in.Trust.Trust(ctx); err != nil {
+			return DeviceSetupCheck{}, err
+		}
+	}
+	// OpenSSH verifies the host before account authentication. Existing trusted
+	// configurations need no custom known_hosts parsing or extra scan.
+	if err := in.SSH.CheckAuthentication(ctx); err != nil {
+		var authentication *transport.SSHAuthenticationRequired
+		if errors.As(err, &authentication) {
+			return DeviceSetupCheck{NeedsKey: true}, nil
+		}
+		var verification *transport.SSHHostVerificationRequired
+		if !errors.As(err, &verification) {
+			return DeviceSetupCheck{}, err
+		}
+		key, err := in.SSH.InspectHostKey(ctx)
+		if err != nil {
+			return DeviceSetupCheck{}, err
+		}
+		if key == nil {
+			return DeviceSetupCheck{}, errors.New("主机记录已改变，请重新连接")
+		}
+		return DeviceSetupCheck{HostKey: key}, nil
+	}
+	info, err := in.SSH.Bootstrap(ctx, c.fleet.workerBinary)
+	if err != nil {
+		return DeviceSetupCheck{}, err
+	}
+	if info.Legacy != nil || info.Migration != nil {
+		return DeviceSetupCheck{Info: info}, nil
+	}
+	return inspectSSHSetup(ctx, in.SSH, info)
 }

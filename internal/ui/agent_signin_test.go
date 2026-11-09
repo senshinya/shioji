@@ -347,3 +347,59 @@ func TestAgentSignInDisclosureDoesNotJumpWhenGuidanceMoves(t *testing.T) {
 		ui.Advance(350 * time.Millisecond)
 	}
 }
+
+func TestAgentSignInMethodAlignsWithConfigurationControlEdge(t *testing.T) {
+	for _, setup := range []bool{false, true} {
+		t.Run(fmt.Sprint("setup=", setup), func(t *testing.T) {
+			_, _, e, ui := signInUI(t, "local")
+			e.setup = setup
+			e.tab = "常规"
+			ui.Frame()
+			ui.Advance(time.Second)
+			method, ok := ui.Find("选择登录方式")
+			if !ok {
+				t.Fatal("missing authorization selector")
+			}
+			executable, ok := ui.Find(e.catalog[0].Name + " 可执行文件")
+			if !ok {
+				t.Fatal("missing executable field")
+			}
+			if math.Abs(float64(method.X-executable.X)) > 1 {
+				t.Fatalf("authorization selector left edge %v differs from executable field %v", method.X, executable.X)
+			}
+		})
+	}
+}
+
+func TestAgentSignInHasNoDuplicateGuidanceButton(t *testing.T) {
+	for _, issue := range []domain.RuntimeIssue{domain.RuntimeSignInRequired, domain.RuntimeAuthenticationExpired} {
+		t.Run(string(issue), func(t *testing.T) {
+			_, _, e, ui := signInUI(t, "local")
+			e.catalog[0].Installation.Issue = issue
+			e.draft.login = false
+			ui.Frame()
+			ui.Advance(time.Second)
+			if _, ok := ui.Find("登录账号"); ok {
+				t.Fatal("duplicate login entry below configuration fields")
+			}
+			if err := ui.Click("管理账号"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			if _, ok := ui.Find("选择登录方式"); !ok {
+				t.Fatal("account disclosure lost the authorization selector")
+			}
+		})
+	}
+}
+
+func TestAgentSignInPreservesDisclosureAfterStartingAuthorization(t *testing.T) {
+	_, _, e, ui := signInUI(t, "local")
+	if err := ui.Click("登录账号"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(350 * time.Millisecond)
+	if !e.draft.login || !ui.HasText("取消登录") {
+		t.Fatal("starting authorization changed the user's account disclosure")
+	}
+}

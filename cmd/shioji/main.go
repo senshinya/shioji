@@ -86,6 +86,7 @@ func run() error {
 			}
 		})
 		window.OnClosed(func() {
+			view.CloseTransient()
 			settings.Close()
 			if view.Saver != nil {
 				view.Saver.Close()

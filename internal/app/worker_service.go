@@ -18,6 +18,7 @@ const (
 )
 
 type WorkerService struct {
+	Legacy     *domain.LegacyWorkerInfo
 	Background *domain.BackgroundService
 	Build      *domain.WorkerBuild
 	Available  *domain.WorkerBuild

@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net"
 	"shioji/internal/protocol"
 	"strings"
@@ -135,5 +137,51 @@ func TestWelcomeRetainsActualWorkerBuildWithoutRequiringLegacyMetadata(t *testin
 			t.Fatal("welcome lost the actual worker build", string(data))
 		}
 		client.Close()
+	}
+}
+
+func TestDialReportsLegacyWorkerWithoutSendingCommands(t *testing.T) {
+	for _, wrongIdentity := range []bool{false, true} {
+		t.Run(fmt.Sprint(wrongIdentity), func(t *testing.T) {
+			attempt := 0
+			dial := func(context.Context) (net.Conn, error) {
+				attempt++
+				a, b := net.Pipe()
+				go func() {
+					defer b.Close()
+					codec := protocol.NewCodec(b, b)
+					var hello protocol.Frame
+					if codec.Read(&hello) != nil || hello.Major != 1 {
+						return
+					}
+					id := "device"
+					if wrongIdentity {
+						id = "other-device"
+					}
+					codec.Write(protocol.Frame{Type: "welcome", Major: 1, Minor: 3, Nonce: hello.Nonce, DeviceID: id, Epoch: "old-epoch"})
+					var command protocol.Frame
+					if codec.Read(&command) == nil {
+						t.Error("compatibility probe sent an operation to the legacy worker")
+					}
+				}()
+				return a, nil
+			}
+			client, err := protocol.Dial(context.Background(), dial, "device")
+			if client != nil {
+				client.Close()
+				t.Fatal("accepted a legacy worker as current")
+			}
+			var legacy *protocol.LegacyWorkerError
+			if wrongIdentity {
+				if errors.As(err, &legacy) {
+					t.Fatal("accepted another device's legacy identity")
+				}
+			} else if !errors.As(err, &legacy) || legacy.Minor != 3 || legacy.DeviceID != "device" || strings.Contains(err.Error(), "EOF") {
+				t.Fatalf("missing actionable compatibility diagnosis: %v", err)
+			}
+			if attempt != 2 {
+				t.Fatal("unexpected retry count", attempt)
+			}
+		})
 	}
 }
