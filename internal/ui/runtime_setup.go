@@ -39,12 +39,12 @@ func (v *View) agentGuidance(c *n.Context, key string, info domain.HarnessInfo) 
 		return
 	}
 	n.Row(c).Gap(6).Children(func() {
-		if install.Documentation != "" && deviceAction(c, "安装说明").Clicked() {
+		if install.Documentation != "" && configurationAction(c, "安装说明").Clicked() {
 			if err := mygo.Shell.OpenExternal(install.Documentation); err != nil {
 				v.Model.Error = err.Error()
 			}
 		}
-		if len(install.SignInCommand) > 0 && (install.Issue == domain.RuntimeSignInRequired || install.Issue == domain.RuntimeAuthenticationExpired) && deviceAction(c, "复制登录命令").Clicked() {
+		if len(install.SignInCommand) > 0 && (install.Issue == domain.RuntimeSignInRequired || install.Issue == domain.RuntimeAuthenticationExpired) && configurationAction(c, "复制登录命令").Clicked() {
 			command := v.agentLoginCommand(key, install.SignInCommand)
 			c.WriteClipboard(command)
 		}

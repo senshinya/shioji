@@ -41,6 +41,8 @@ type EventsQuery = protocol.EventsQuery
 type EventPage = protocol.EventPage
 type AnswerInput = protocol.AnswerInput
 type Server struct {
+	toolAuthMu           sync.Mutex
+	toolAuth             map[string]*workerToolAuthorization
 	signInMu             sync.Mutex
 	signIns              map[string]*workerSignIn
 	signInClosed         bool
@@ -327,6 +329,24 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 	}
 
 	switch method {
+	case "device.directories":
+		in, err := decode[protocol.DirectoryQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.directories(in)
+	case "runtime.tools.list", "runtime.tools.refresh":
+		in, err := decode[protocol.ToolServiceInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.listToolServices(in, method == "runtime.tools.refresh")
+	case "runtime.tools.auth.start", "runtime.tools.auth.status":
+		in, err := decode[protocol.ToolServiceInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.toolAuthorizationCommand(method, in)
 	case "runtime.catalog":
 		return s.runtimeProfiles(nil, true), nil
 	case "runtime.signin.start", "runtime.signin.status", "runtime.signin.cancel":
@@ -963,6 +983,7 @@ func (s *Server) Close() error {
 	s.once.Do(func() {
 		var result error
 		s.cancel()
+		s.closeToolAuthorizations()
 		s.closeSignIns()
 		s.listener.Close()
 		s.mu.Lock()

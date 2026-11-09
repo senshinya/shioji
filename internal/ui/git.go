@@ -8,6 +8,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"strings"
+	"time"
 )
 
 type gitLoadPhase uint8
@@ -20,8 +21,9 @@ const (
 )
 
 type gitLoadState struct {
-	phase gitLoadPhase
-	tag   string
+	phase    gitLoadPhase
+	tag      string
+	previous *domain.GitStatus
 }
 
 func (v *View) gitLoading(key string) bool {
@@ -70,6 +72,17 @@ func (v *View) requestGit(force bool) {
 	state := v.gitLoads[key]
 	if state == nil {
 		state = &gitLoadState{}
+		// Home already displayed this checkout. Carry its branch row through
+		// the receipt -> session-status handoff without treating it as fresh
+		// permission to switch branches (GitEpochs still comes from the worker).
+		if sent := v.sent; sent != nil && sent.origin == "" && sent.session == q.SessionID && q.SessionID != "" {
+			if previous, ok := v.Model.GitStatuses["workspace:"+sent.workspace]; ok && previous.Applicable {
+				if branch := v.Model.GitDrafts[sent.workspace].Branch; branch != "" {
+					previous.Branch = branch
+				}
+				state.previous = &previous
+			}
+		}
 		v.gitLoads[key] = state
 	}
 	revision := int64(0)
@@ -98,7 +111,7 @@ func (v *View) requestGit(force bool) {
 			m.Error = err.Error()
 			return
 		}
-		state.phase, state.tag = gitReady, tag
+		state.phase, state.tag, state.previous = gitReady, tag, nil
 		m.SetGitStatus(key, status)
 	}})
 	if !accepted {
@@ -160,10 +173,26 @@ func (v *View) chooseBranch(branch string) {
 }
 func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 	key, _ := v.gitQuery()
-	status, known := v.Model.GitStatuses[key]
-	if !known || !status.Applicable {
+	status, known := v.composerGitStatus(key)
+	visible := known && status.Applicable
+	frame := n.Column(c.Key("branch-presence")).FillWidth().Clip().Margin(0, 0, -4, 0)
+	previous := n.Local(frame, "last-status", func() domain.GitStatus { return status })
+	if visible {
+		*previous = status
+	} else {
+		status = *previous
+	}
+	target := float32(0)
+	if visible {
+		target = 30
+	} // The existing 26-DIP row plus its composer gap.
+	height := frame.AnimateTo("height", target, motionAnimation(c, 180*time.Millisecond))
+	frame.Height(height).Opacity(height / 30)
+	n.Inert(frame, !visible)
+	if height == 0 {
 		return
 	}
+
 	branch := status.Branch
 	if home {
 		branch = v.Model.GitDrafts[v.Model.WorkspaceID].Branch
@@ -182,56 +211,81 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 			label += " · " + status.Head[:7]
 		}
 	}
-	n.Row(c.Key("branch-strip")).FillWidth().Height(26).Gap(12).AlignItems(n.Center).Children(func() {
-		trigger := control(c, 5).Height(26).MaxWidth(330).Padding(3, 10).Radius(5).Label("选择分支").Tooltip(label).Disabled(!v.canSwitchBranch()).Children(func() {
-			inlineIconText(c, branchIcon, label, n.Font{Family: "Menlo", Size: 11, Weight: 400}, 12, 5, t.TextMuted)
-		})
-		if trigger.Clicked() {
-			v.branchOpen = !v.branchOpen
-			v.branchSearch = ""
-			v.requestGit(true)
-		}
-		popover(c.Key("branches"), trigger, &v.branchOpen, func(panel n.Element) {
-			panel.Width(260).Padding(4).Radius(8).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
-				textField(c.Key("filter"), &v.branchSearch).FillWidth().Height(28).FontSize(12).Label("搜索分支").Placeholder("搜索分支…").Changed()
-				choices := []string{}
-				for _, name := range status.Branches {
-					if strings.Contains(strings.ToLower(name), strings.ToLower(v.branchSearch)) {
-						choices = append(choices, name)
-					}
-				}
-				if !home {
-					if ghost(c, "确认当前分支").FillWidth().FontSize(12).Clicked() {
-						v.chooseBranch(status.Branch)
-					}
-				}
-				if len(choices) == 0 {
-					n.Text(c, "没有匹配的分支").FontSize(12).TextColor(t.TextMuted).Padding(8)
-				}
-				v.branchList.Key = func(i int) any { return choices[i] }
-				n.List(c, &v.branchList, len(choices), func(i int) {
-					name := choices[i]
-					row := control(c, 4).FillWidth().MinHeight(26).Padding(3, 7).Radius(4).Label("分支:" + name).Children(func() {
-						n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
-							n.Text(c, name).Grow(1).FontSize(13).FixedLineHeight(20)
-							if name == branch {
-								inlineSymbol(c, check, name, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 14, t.Text)
-							}
-						})
-					})
-					if row.Clicked() {
-						v.chooseBranch(name)
-					}
-				}).FillWidth().Height(min(240, float32(len(choices))*28))
+	frame.Children(func() {
+		n.Row(c.Key("branch-strip")).Absolute().Top(0).Left(0).Right(0).FillWidth().Height(26).Gap(12).AlignItems(n.Center).Children(func() {
+			trigger := control(c, 5).Height(26).MaxWidth(330).Padding(3, 10).Radius(5).Label("选择分支").Tooltip(label).Disabled(!v.canSwitchBranch()).Children(func() {
+				inlineIconText(c, branchIcon, label, n.Font{Family: "Menlo", Size: 11, Weight: 400}, 12, 5, t.TextMuted)
 			})
+			if trigger.Clicked() {
+				v.branchOpen = !v.branchOpen
+				v.branchSearch = ""
+				v.requestGit(true)
+			}
+			popover(c.Key("branches"), trigger, &v.branchOpen, func(panel n.Element) {
+				panel.Width(260).Padding(4).Radius(8).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
+					textField(c.Key("filter"), &v.branchSearch).FillWidth().Height(28).FontSize(12).Label("搜索分支").Placeholder("搜索分支…").Changed()
+					choices := []string{}
+					for _, name := range status.Branches {
+						if strings.Contains(strings.ToLower(name), strings.ToLower(v.branchSearch)) {
+							choices = append(choices, name)
+						}
+					}
+					if !home {
+						if ghost(c, "确认当前分支").FillWidth().FontSize(12).Clicked() {
+							v.chooseBranch(status.Branch)
+						}
+					}
+					if len(choices) == 0 {
+						n.Text(c, "没有匹配的分支").FontSize(12).TextColor(t.TextMuted).Padding(8)
+					}
+					v.branchList.Key = func(i int) any { return choices[i] }
+					n.List(c, &v.branchList, len(choices), func(i int) {
+						name := choices[i]
+						row := control(c, 4).FillWidth().MinHeight(26).Padding(3, 7).Radius(4).Label("分支:" + name).Children(func() {
+							n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
+								n.Text(c, name).Grow(1).FontSize(13).FixedLineHeight(20)
+								if name == branch {
+									inlineSymbol(c, check, name, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 14, t.Text)
+								}
+							})
+						})
+						if row.Clicked() {
+							v.chooseBranch(name)
+						}
+					}).FillWidth().Height(min(240, float32(len(choices))*28))
+				})
+			})
+			if home {
+				choice := v.Model.GitDrafts[v.Model.WorkspaceID]
+				isolate := choice.NewWorktree
+				if controlFeedback(c, n.Checkbox(c, &isolate, "新建 worktree").FontSize(11).FixedLineHeight(20).AlignItems(n.Center).Disabled(!v.Model.Connected || status.Head == ""), 4).Changed() {
+					choice.NewWorktree = isolate
+					v.Model.GitDrafts[v.Model.WorkspaceID] = choice
+				}
+			}
 		})
-		if home {
-			choice := v.Model.GitDrafts[v.Model.WorkspaceID]
-			isolate := choice.NewWorktree
-			if controlFeedback(c, n.Checkbox(c, &isolate, "新建 worktree").FontSize(11).FixedLineHeight(20).AlignItems(n.Center).Disabled(!v.Model.Connected || status.Head == ""), 4).Changed() {
-				choice.NewWorktree = isolate
-				v.Model.GitDrafts[v.Model.WorkspaceID] = choice
+	})
+}
+
+// Last accepted metadata keeps geometry stable; only a fresh worker status
+// populates GitEpochs and authorizes checkout or submission.
+func (v *View) composerGitStatus(key string) (domain.GitStatus, bool) {
+	m := v.Model
+	if status, ok := m.GitStatuses[key]; ok {
+		return status, true
+	}
+	if load := v.gitLoads[key]; load != nil && load.previous != nil {
+		return *load.previous, true
+	}
+	if m.SessionID != "" {
+		for _, s := range m.Snapshot.Sessions {
+			if s.ID == m.SessionID {
+				return domain.GitStatus{Applicable: s.Context.Repository != "" || s.GitBranch != "" || s.GitHead != "", Repository: s.Context.Repository, Branch: s.GitBranch, Head: s.GitHead}, true
 			}
 		}
-	})
+	}
+	if repo, ok := m.GitRepositories[m.WorkspaceID]; ok {
+		return domain.GitStatus{Applicable: repo != "", Repository: repo, Branch: m.GitDrafts[m.WorkspaceID].Branch}, true
+	}
+	return domain.GitStatus{}, false
 }

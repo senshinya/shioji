@@ -37,6 +37,7 @@ type Options struct {
 }
 type Runtime struct {
 	loginEvents     chan json.RawMessage
+	toolLogin       *toolServiceLogin
 	account         *domain.RuntimeAccount
 	desktop         *desktopBridge
 	cmd             *exec.Cmd
@@ -191,6 +192,10 @@ func (r *Runtime) read(stdout io.Reader) {
 				default:
 				}
 			}
+			continue
+		}
+		if m.Method == "mcpServer/oauthLogin/completed" {
+			r.receiveToolLogin(m.Params)
 			continue
 		}
 		if m.Method == "account/login/completed" && r.loginEvents != nil {

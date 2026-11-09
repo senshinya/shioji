@@ -159,3 +159,13 @@ func (e *SetupError) Error() string { return e.Message }
 type RuntimeOptionsProvider interface {
 	WithRuntimeOptions(domain.RuntimeOptions) (Adapter, error)
 }
+
+// ToolServiceRuntime manages the harness's effective device-owned services.
+// Refresh never authorizes interrupting active turns; concrete adoption timing
+// remains the adapter's responsibility.
+type ToolServiceRuntime interface {
+	ToolServices(context.Context) (domain.ToolServiceCatalog, error)
+	RefreshToolServices(context.Context) error
+	BeginToolServiceAuthorization(context.Context, string) (ToolServiceAuthorization, domain.SignInChallenge, error)
+}
+type ToolServiceAuthorization interface{ Wait(context.Context) error }

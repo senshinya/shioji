@@ -4,6 +4,7 @@ import (
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 	"testing"
 	"time"
 )
@@ -63,5 +64,40 @@ func TestDeviceAgentConfigurationNeverAutomaticallyExpandsOnTabEntry(t *testing.
 	ui.Advance(time.Second)
 	if _, ok := ui.Find("Custom Agent 可执行文件"); !ok {
 		t.Fatal("manual disclosure unavailable")
+	}
+}
+
+func TestDeviceTabsPreserveUnsavedAgentConfiguration(t *testing.T) {
+	m := deviceUIModel()
+	state := m.DeviceStates["local"]
+	state.ConnectionEpoch = ""
+	state.WorkerMinor = 22
+	state.Readiness.Harnesses = setupCatalog()
+	c := app.NewController("")
+	v := New(m, c, "")
+	v.devices = true
+	v.deviceSelected = "local"
+	ui := n.NewTester(v.View, 1240, 820)
+	ui.Advance(time.Second)
+	if err := ui.Click("配置 Custom Agent 路径"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	ui.Click("Custom Agent 可执行文件")
+	ui.Type("/tmp/edited-agent")
+	ui.Click("设备设置")
+	ui.Advance(time.Second)
+	ui.Click("Agent")
+	ui.Advance(time.Second)
+	if !ui.HasText("Custom Agent 可执行文件") {
+		t.Fatal("tab switch discarded the open configuration")
+	}
+	if err := ui.Click("保存 Custom Agent 路径"); err != nil {
+		t.Fatal(err, ui.Texts())
+	}
+	job := welcomeJob(t, c, "runtime.agents")
+	input := job.Input.(protocol.DeviceAgents)
+	if len(input.Agents) != 1 || input.Agents[0].Executable != "/tmp/edited-agent" {
+		t.Fatal("tab switch lost unsaved draft", input)
 	}
 }

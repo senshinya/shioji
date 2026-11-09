@@ -75,6 +75,12 @@ func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.Raw
 	if client == nil || job.epoch == "" || job.epoch != client.Epoch || ctx.Err() != nil {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "连接已改变，操作未发送；请重新提交"}
 	}
+	if strings.HasPrefix(job.Method, "runtime.tools.") && client.Minor < 22 {
+		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能管理工具服务"}
+	}
+	if job.Method == "device.directories" && client.Minor < 23 {
+		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能浏览目录"}
+	}
 	if strings.HasPrefix(job.Method, "runtime.signin.") && client.Minor < 19 {
 		return nil, errors.New("更新设备的执行服务后才能在应用内登录")
 	}
@@ -657,6 +663,9 @@ func (c *Controller) Run(ctx context.Context) {
 				unconfirmed[opID] = true
 			}
 			timeout := 10 * time.Second
+			if strings.HasPrefix(job.Method, "runtime.tools.") {
+				timeout = 45 * time.Second
+			}
 			if job.Method == "session.reconcile" {
 				timeout = 25 * time.Second
 			}

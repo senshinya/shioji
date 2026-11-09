@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
 	"math"
 	"shioji/internal/app"
@@ -122,6 +123,10 @@ func TestWelcomeDisclosuresAndDirectoryMutationsFollowTheirHeight(t *testing.T) 
 		t.Fatal("SSH disclosure height does not follow", before, mid, end)
 	}
 	v.welcomeStep(welcomeWorkspace, 1)
+	f.key = "local"
+	previousPicker := openWorkspaceDirectoryDialog
+	openWorkspaceDirectoryDialog = func(mygo.OpenDialogOptions) ([]string, error) { return []string{"/Users/local/extra"}, nil }
+	t.Cleanup(func() { openWorkspaceDirectoryDialog = previousPicker })
 	ui.Frame()
 	ui.Advance(time.Second)
 	before, _ = ui.Find("开始使用")

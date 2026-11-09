@@ -22,16 +22,18 @@ func TestRunMenuUsesSelectedHarnessCatalogAndHidesUnsupportedControls(t *testing
 	if err := ui.Click("运行配置"); err != nil {
 		t.Fatal(err)
 	}
+	ui.Advance(300 * time.Millisecond)
 	if !ui.HasText("Alpha Agent") || ui.HasText("Codex") {
 		t.Fatal("menu contains hardcoded harness", ui.Texts())
 	}
 	if err := ui.Click("Agent"); err != nil {
 		t.Fatal(err)
 	}
+	ui.Advance(configurationTabDuration)
 	if err := ui.Click("Beta Agent"); err != nil {
 		t.Fatal(err)
 	}
-	ui.Advance(200 * time.Millisecond)
+	ui.Advance(300 * time.Millisecond)
 	if m.HarnessID() != "beta" || m.Config().Model != "b" || m.Drafts["home"] != "keep draft" {
 		t.Fatal("selection did not bind run configuration")
 	}
@@ -41,7 +43,7 @@ func TestRunMenuUsesSelectedHarnessCatalogAndHidesUnsupportedControls(t *testing
 	if err := ui.Click("运行配置"); err != nil {
 		t.Fatal(err)
 	}
-	ui.Advance(200 * time.Millisecond)
+	ui.Advance(300 * time.Millisecond)
 	if !ui.HasText("先询问") {
 		t.Fatal("permission label did not come from catalog", ui.Texts())
 	}

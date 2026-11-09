@@ -19,8 +19,8 @@ func (v *View) sshDeviceForm(c *n.Context, t *n.Theme) {
 		f.key = ""
 	}
 	n.Column(c).FillWidth().Children(func() {
-		n.Row(c).FillWidth().Height(28).AlignItems(n.Center).Margin(0, 0, 20).Children(func() {
-			n.Text(c, "添加设备").FontSize(20).FontWeight(400).Grow(1)
+		n.Row(c).FillWidth().Height(configurationTitleLine).AlignItems(n.Center).Margin(0, 0, configurationHeadingGap).Children(func() {
+			n.Text(c, "添加设备").FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Grow(1)
 			if iconButton(c, closeIcon, "取消添加设备").Clicked() {
 				v.cancelSSHCheck()
 				v.welcome = nil

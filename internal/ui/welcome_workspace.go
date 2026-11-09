@@ -2,7 +2,6 @@ package ui
 
 import (
 	"encoding/json"
-	"github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
 	"path"
 	"shioji/internal/app"
@@ -18,16 +17,9 @@ func (v *View) welcomeWorkspace(c *n.Context, t *n.Theme, f *welcomeFlow) {
 	setupRow(c, "主目录", func() {
 		n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
 			setupField(c, "工作区主目录", &f.directory, "文件夹路径", f.busy).MinWidth(0).Grow(1)
-			if f.key == "local" && iconButton(c, workspaceIcon, "选择主目录").MarginEnd(-6).Disabled(f.busy).Clicked() {
-				paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "选择工作区主目录", Directory: true})
-				if err != nil {
-					f.error = err.Error()
-				} else if len(paths) > 0 {
-					f.directory = paths[0]
-					if strings.TrimSpace(f.name) == "" {
-						f.name = path.Base(paths[0])
-					}
-				}
+			choose := iconButton(c, workspaceIcon, "选择主目录").MarginEnd(-6).Disabled(f.busy)
+			if choose.Clicked() {
+				v.chooseWelcomeDirectory(f, 0)
 			}
 		})
 	})
@@ -49,8 +41,12 @@ func (v *View) welcomeWorkspace(c *n.Context, t *n.Theme, f *welcomeFlow) {
 			frame.Height(frame.AnimateTo("row-height", target, motionAnimation(c, 180*time.Millisecond)))
 			n.Inert(frame, !entry.removed.IsZero())
 			frame.Children(func() {
-				n.Row(c).Absolute().Top(0).Left(0).Right(0).Height(32).Gap(8).AlignItems(n.Center).Children(func() {
+				n.Row(c).Absolute().Top(0).Left(0).Right(0).Height(32).Gap(8).AlignItems(n.Start).Children(func() {
 					setupField(c, "附加目录路径", &entry.path, "文件夹路径", f.busy).MinWidth(0).Grow(1)
+					choose := iconButton(c, workspaceIcon, "选择附加目录").Disabled(f.busy)
+					if choose.Clicked() {
+						v.chooseWelcomeDirectory(f, entry.id)
+					}
 					if iconButton(c, closeIcon, "移除附加目录").MarginEnd(-6).Disabled(f.busy).Clicked() {
 						entry.removed = c.Now()
 					}
@@ -58,9 +54,9 @@ func (v *View) welcomeWorkspace(c *n.Context, t *n.Theme, f *welcomeFlow) {
 			})
 		}
 		n.Row(c).FillWidth().Justify(n.End).Children(func() {
-			if deviceAction(c, "添加文件夹").MarginEnd(-8).Disabled(f.busy).Clicked() {
-				f.nextDirectory++
-				f.directories = append(f.directories, welcomeDirectory{id: f.nextDirectory, added: true})
+			choose := iconButton(c, plus, "添加文件夹").Tooltip("添加文件夹").MarginEnd(-6).Disabled(f.busy)
+			if choose.Clicked() {
+				v.chooseWelcomeDirectory(f, -1)
 			}
 		})
 	})
@@ -77,6 +73,66 @@ func (v *View) welcomeWorkspace(c *n.Context, t *n.Theme, f *welcomeFlow) {
 	}
 	v.welcomeFooter(c, "返回", label, !valid || f.busy || v.Controller == nil || !v.deviceState(f.key).Connected, func() { v.welcomeStep(welcomeAgents, -1) }, func() { v.submitWelcomeWorkspace(f) })
 }
+
+// The row ID survives appending and removing other directory drafts while a picker is open.
+func (v *View) chooseWelcomeDirectory(f *welcomeFlow, id int) {
+	key := f.key
+	valid := func() bool {
+		if v.welcome != f || f.step != welcomeWorkspace || f.key != key || f.busy {
+			return false
+		}
+		if id > 0 {
+			for _, e := range f.directories {
+				if e.id == id {
+					return e.removed.IsZero()
+				}
+			}
+			return false
+		}
+		return true
+	}
+	title, current := "选择附加目录", f.directory
+	if id == 0 {
+		title = "选择主目录"
+	} else if id > 0 {
+		for _, e := range f.directories {
+			if e.id == id && e.path != "" {
+				current = e.path
+			}
+		}
+	}
+	v.chooseWorkspaceDirectory(key, title, current, id < 0, valid, func(paths []string) {
+		if id == 0 {
+			f.directory = paths[0]
+			if strings.TrimSpace(f.name) == "" {
+				f.name = path.Base(paths[0])
+			}
+			return
+		}
+		if id > 0 {
+			for i := range f.directories {
+				if f.directories[i].id == id {
+					f.directories[i].path = paths[0]
+					return
+				}
+			}
+			return
+		}
+		for _, folder := range paths {
+			duplicate := folder == f.directory
+			for _, entry := range f.directories {
+				if entry.removed.IsZero() && entry.path == folder {
+					duplicate = true
+				}
+			}
+			if !duplicate {
+				f.nextDirectory++
+				f.directories = append(f.directories, welcomeDirectory{id: f.nextDirectory, path: folder, added: true})
+			}
+		}
+	}, func(err error) { f.error = err.Error() })
+}
+
 func (v *View) submitWelcomeWorkspace(f *welcomeFlow) {
 	if f.busy || v.welcome != f || f.step != welcomeWorkspace {
 		return

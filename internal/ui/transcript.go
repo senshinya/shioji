@@ -18,6 +18,7 @@ type transcriptRow struct {
 	toolParent string
 	opacity    float32
 	footer     string
+	preparing  string
 	restarting bool
 	toolResult string
 }

@@ -192,11 +192,39 @@ func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 	dialog(&v.remoteWorkspaceOpen, "remote-workspace-dialog", func() {
 		n.Text(c, "新建远程工作区").FontSize(14).FontWeight(500)
 		n.Text(c, "主目录").FontSize(12).TextColor(t.TextMuted)
-		textField(c.Key("remote-main"), &v.remoteWorkspacePath).FillWidth().Height(32).FontSize(13).Label("远程主目录").Placeholder("该 Mac 上的绝对路径").Disabled(v.remoteWorkspaceBusy)
+		n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
+			textField(c.Key("remote-main"), &v.remoteWorkspacePath).MinWidth(0).Grow(1).Height(32).FontSize(13).Label("远程主目录").Placeholder("该 Mac 上的绝对路径").Disabled(v.remoteWorkspaceBusy)
+			choose := iconButton(c, workspaceIcon, "选择主目录").Disabled(v.remoteWorkspaceBusy)
+			if choose.Clicked() {
+				v.chooseRemoteWorkspaceDirectory(false)
+			}
+		})
 		n.Text(c, "名称").FontSize(12).TextColor(t.TextMuted)
 		textField(c.Key("remote-name"), &v.remoteWorkspaceName).FillWidth().Height(32).FontSize(13).Label("工作区名称").Placeholder("使用目录名称").Disabled(v.remoteWorkspaceBusy)
-		n.Text(c, "附加目录").FontSize(12).TextColor(t.TextMuted)
-		n.TextAreaBase(c.Key("remote-extra"), &v.remoteWorkspaceExtra).FillWidth().Lines(2, 4).Padding(8).Radius(6).Background(t.Surface).Border(1, t.Border).FontSize(12).FixedLineHeight(20).Label("远程附加目录").Placeholder("可选，每行一个绝对路径").Disabled(v.remoteWorkspaceBusy)
+		n.Row(c).FillWidth().AlignItems(n.Center).Children(func() {
+			n.Text(c, "附加目录").FontSize(12).TextColor(t.TextMuted).Grow(1)
+			if iconButton(c, plus, "添加文件夹").Tooltip("添加文件夹").MarginEnd(-6).Disabled(v.remoteWorkspaceBusy).Clicked() {
+				v.chooseRemoteWorkspaceDirectory(true)
+			}
+		})
+		for _, folder := range strings.Split(v.remoteWorkspaceExtra, "\n") {
+			folder = strings.TrimSpace(folder)
+			if folder == "" {
+				continue
+			}
+			n.Row(c.Key("extra:" + folder)).FillWidth().MinHeight(32).Gap(8).AlignItems(n.Center).Transition(disclosureMotion(c, 180*time.Millisecond)).Children(func() {
+				n.Text(c, folder).SingleLine().Grow(1).FontSize(12).Tooltip(folder)
+				if iconButton(c, closeIcon, "移除附加目录："+folder).MarginEnd(-6).Disabled(v.remoteWorkspaceBusy).Clicked() {
+					remaining := []string{}
+					for _, old := range strings.Split(v.remoteWorkspaceExtra, "\n") {
+						if strings.TrimSpace(old) != folder {
+							remaining = append(remaining, old)
+						}
+					}
+					v.remoteWorkspaceExtra = strings.Join(remaining, "\n")
+				}
+			})
+		}
 		if v.remoteWorkspaceError != "" {
 			n.Text(c, v.remoteWorkspaceError).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 		}

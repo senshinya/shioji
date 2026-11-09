@@ -13,7 +13,13 @@ func TestInteractiveControlsFadeTheirHoverFeedback(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, label := range []string{"新建会话", "待我处理", "搜索", "Layout", "当前设备", "Permission", "运行配置"} {
 			t.Run(label+map[bool]string{false: "/light", true: "/dark"}[dark], func(t *testing.T) {
-				ui := n.NewTester(New(layoutModel(), nil, "").View, 1440, 900)
+				m := layoutModel()
+				if label == "待我处理" {
+					d := m.Details["s"]
+					d.Requests = []domain.PendingRequest{{ID: "pending", SessionID: "s", Kind: "question", State: domain.RequestPending}}
+					m.Details["s"] = d
+				}
+				ui := n.NewTester(New(m, nil, "").View, 1440, 900)
 				ui.SetDark(dark)
 				r, ok := ui.Find(label)
 				if !ok {
@@ -154,7 +160,9 @@ func TestRequestDisclosureKeepsDraftsAndComposerPosition(t *testing.T) {
 func TestDisabledControlDoesNotReactToHover(t *testing.T) {
 	ui := n.NewTester(New(layoutModel(), nil, "").View, 1440, 900)
 	r, ok := ui.Find("发送") // The empty composer's send action is disabled.
-	if !ok {t.Fatal("missing disabled send action")}
+	if !ok {
+		t.Fatal("missing disabled send action")
+	}
 	x, y := int(r.X+r.W/2), int(r.Y+3)
 	rest := ui.Image().RGBAAt(x, y)
 	ui.Move(r.X+r.W/2, r.Y+r.H/2)

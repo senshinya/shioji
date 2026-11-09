@@ -286,12 +286,12 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 			}
 
 			if active {
-				if u.status.Challenge.URL != "" && deviceAction(c.Key("open-authorization"), "打开授权页").Transition(fadeMotion(c, 160*time.Millisecond)).Disabled(disabled).Clicked() {
+				if u.status.Challenge.URL != "" && configurationAction(c.Key("open-authorization"), "打开授权页").Transition(fadeMotion(c, 160*time.Millisecond)).Disabled(disabled).Clicked() {
 					if err := openSignInLink(u.status.Challenge.URL); err != nil {
 						u.status.Message = "无法打开授权页"
 					}
 				}
-				if method != domain.SignInAPI && deviceAction(c.Key("cancel-authorization"), "取消登录").Transition(fadeMotion(c, 160*time.Millisecond)).Disabled(u.pending).Clicked() {
+				if method != domain.SignInAPI && configurationAction(c.Key("cancel-authorization"), "取消登录").Transition(fadeMotion(c, 160*time.Millisecond)).Disabled(u.pending).Clicked() {
 					v.sendSignIn(u, "cancel", nil)
 				}
 			} else {
@@ -299,12 +299,7 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 					n.Row(c.Key("sign-in-method-control")).Grow(1).MinWidth(0).Height(28).Gap(8).AlignItems(n.Center).Transition(fadeMotion(c, 160*time.Millisecond)).Children(func() {
 						name := signInMethodLabel(method)
 						if len(methods) > 1 {
-							trigger := control(c.Key("login-method"), 5).Width(112).Height(28).PaddingX(8).Radius(5).Border(1, t.Border).Label("选择登录方式").Disabled(disabled).Children(func() {
-								n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-									n.Text(c, name).FontSize(12).FixedLineHeight(20).Grow(1).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-									inlineSymbol(c, chevron, name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted)
-								})
-							})
+							trigger := configurationChoiceField(c.Key("login-method"), "选择登录方式", name, disabled).Width(112)
 							var choices []menuChoice
 							for _, value := range []domain.SignInMethod{domain.SignInBrowser, domain.SignInDeviceCode} {
 								if slices.Contains(methods, value) {
@@ -326,7 +321,7 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 							label = "保存"
 							actionLabel = "保存 API 配置"
 						}
-						if deviceAction(c.Key("begin-authorization"), "").Label(actionLabel).Disabled(disabled).Children(func() {
+						if configurationAction(c.Key("begin-authorization"), "").Label(actionLabel).Disabled(disabled).Children(func() {
 							n.Text(c, label).SingleLine().ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 						}).Clicked() {
 							v.startAgentSignIn(key, e, info)
@@ -338,7 +333,7 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 						copyLabel = "已复制"
 						c.AnimationFrame()
 					}
-					if deviceAction(c.Key("copy-login-command"), "").Label("复制登录命令").Width(88).Disabled(disabled).Children(func() {
+					if configurationAction(c.Key("copy-login-command"), "").Label("复制登录命令").Width(88).Disabled(disabled).Children(func() {
 						n.Text(c, copyLabel).SingleLine().ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 					}).Clicked() {
 						c.WriteClipboard(v.agentLoginCommand(key, info.Installation.SignInCommand))
@@ -346,7 +341,7 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 					}
 				}
 				if !slices.Contains(methods, domain.SignInAPI) {
-					if deviceAction(c.Key("recheck-account"), "重新检测").Transition(fadeMotion(c, 160*time.Millisecond)).Disabled(disabled || v.Controller == nil).Clicked() {
+					if configurationAction(c.Key("recheck-account"), "重新检测").Transition(fadeMotion(c, 160*time.Millisecond)).Disabled(disabled || v.Controller == nil).Clicked() {
 						if e.setup {
 							v.recheckWelcomeAgent(key, info.ID)
 						} else {
@@ -373,7 +368,7 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 					copyLabel = "已复制"
 					c.AnimationFrame()
 				}
-				if deviceAction(c.Key("copy-login-code"), "").Label("复制验证码").Width(76).Disabled(!active || challenge.Code == "").Children(func() {
+				if configurationAction(c.Key("copy-login-code"), "").Label("复制验证码").Width(76).Disabled(!active || challenge.Code == "").Children(func() {
 					n.Text(c, copyLabel).SingleLine().ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 				}).Clicked() {
 					c.WriteClipboard(challenge.Code)
@@ -480,7 +475,7 @@ func (v *View) agentSystemAPI(c *n.Context, t *n.Theme, key string, e *deviceAge
 	row(c, "", func() {
 		n.Row(c).FillWidth().AlignItems(n.Baseline).Children(func() {
 			n.Text(c, info.Error).Grow(1).MinWidth(0).SingleLine().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Tooltip(info.Error)
-			if deviceAction(c, "重新检测").Disabled(disabled || v.Controller == nil).Clicked() {
+			if configurationAction(c, "重新检测").Disabled(disabled || v.Controller == nil).Clicked() {
 				if e.setup {
 					v.recheckWelcomeAgent(key, info.ID)
 				} else {
@@ -506,7 +501,7 @@ func (v *View) agentAPIConfiguration(c *n.Context, t *n.Theme, key string, e *de
 	})
 	row(c, "API Key", func() {
 		n.Column(c).FillWidth().Height(28).Children(func() {
-			field := textField(c, &e.draft.apiCredential).FillWidth().Height(28).Padding(4, 36, 4, 8).FontSize(12).FixedLineHeight(20).Background(t.Background).Label("API Key").Placeholder("可选").Disabled(disabled || active)
+			field := configurationTextField(c, &e.draft.apiCredential).Padding(4, 36, 4, 8).Label("API Key").Placeholder("可选").Disabled(disabled || active)
 			if !e.draft.apiReveal {
 				field.Password()
 			}
@@ -528,7 +523,7 @@ func (v *View) agentAPIConfiguration(c *n.Context, t *n.Theme, key string, e *de
 				serviceSpinner(c.Key("spinner"), caption, n.Font{Family: t.Font, Size: 12, Weight: 400}, t.TextMuted)
 			}
 			n.Text(c.Key("caption"), caption).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().TextColor(t.TextMuted).Tooltip(caption).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-			if deviceAction(c.Key("connect-api"), "连接").Label("连接 API").MinWidth(64).Disabled(disabled || active || strings.TrimSpace(e.draft.apiEndpoint) == "").Clicked() {
+			if configurationAction(c.Key("connect-api"), "连接").Label("连接 API").MinWidth(64).Disabled(disabled || active || strings.TrimSpace(e.draft.apiEndpoint) == "").Clicked() {
 				v.startAgentSignIn(key, e, info)
 			}
 		})
@@ -539,28 +534,18 @@ func (v *View) agentConnectionMode(c *n.Context, t *n.Theme, key string, e *devi
 	method := agentSignInMethod(key, e, v.agentSignInMethods(key, info))
 	u := v.agentSignIn(key, info.ID)
 	active := u != nil && u.status.Phase.Active()
-	n.Row(c).FillWidth().Height(28).Padding(2).Gap(2).Radius(5).Background(t.Text.Alpha(.045)).Children(func() {
-		for _, choice := range []struct {
-			name string
-			api  bool
-		}{{"账号授权", false}, {"自定义 API", true}} {
-			selected := choice.api == (method == domain.SignInAPI)
-			b := n.ButtonBase(c.Key(choice.name)).Grow(1).Height(24).Radius(4).Label(choice.name).Disabled(disabled || active).Children(func() { n.Text(c, choice.name).FontSize(12).FixedLineHeight(20) })
-			if selected {
-				b.Background(t.Background).Border(1, t.Border)
-			} else if b.Hovered() {
-				b.Background(t.Text.Alpha(.035))
-			}
-			if b.Clicked() {
-				if choice.api {
-					e.signInMethod = domain.SignInAPI
-				} else {
-					e.signInMethod = ""
-				}
-				e.draft.login = true
-			}
+	selected := "account"
+	if method == domain.SignInAPI {
+		selected = "api"
+	}
+	next := configurationTabs(c, selected, []configurationTabItem{{ID: "account", Label: "账号授权"}, {ID: "api", Label: "自定义 API"}}, configurationSegmented, disabled || active)
+	if next != selected {
+		e.signInMethod = ""
+		if next == "api" {
+			e.signInMethod = domain.SignInAPI
 		}
-	})
+		e.draft.login = true
+	}
 }
 
 // Initial setup retains its method row while authorization progresses below.
@@ -575,12 +560,7 @@ func (v *View) agentInitialAccount(c *n.Context, t *n.Theme, key string, e *devi
 	n.Column(c).FillWidth().Children(func() {
 		n.Row(c).FillWidth().Height(28).Gap(8).AlignItems(n.Baseline).Children(func() {
 			name := signInMethodLabel(method)
-			trigger := control(c.Key("login-method"), 5).Width(112).Height(28).PaddingX(8).Radius(5).Border(1, t.Border).Label("选择登录方式").Disabled(disabled || active).Children(func() {
-				n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-					n.Text(c, name).FontSize(12).FixedLineHeight(20).Grow(1)
-					inlineSymbol(c, chevron, name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted)
-				})
-			})
+			trigger := configurationChoiceField(c.Key("login-method"), "选择登录方式", name, disabled || active).Width(112)
 			var choices []menuChoice
 			for _, value := range []domain.SignInMethod{domain.SignInBrowser, domain.SignInDeviceCode} {
 				if slices.Contains(methods, value) {
@@ -589,7 +569,7 @@ func (v *View) agentInitialAccount(c *n.Context, t *n.Theme, key string, e *devi
 			}
 			v.choiceMenu(c, t, "sign-in-method:"+key+":"+info.ID, trigger, choices)
 			n.Spacer(c).Grow(1)
-			if deviceAction(c, "登录").Label("登录账号").Disabled(disabled || active).Clicked() {
+			if configurationAction(c, "登录").Label("登录账号").Disabled(disabled || active).Clicked() {
 				v.startAgentSignIn(key, e, info)
 			}
 		})
@@ -623,12 +603,12 @@ func (v *View) agentInitialAccount(c *n.Context, t *n.Theme, key string, e *devi
 				}
 				n.Text(c.Key("caption"), *last).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().Tooltip(*last).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 				if active {
-					if challenge.URL != "" && deviceAction(c, "打开授权页").Disabled(disabled).Clicked() {
+					if challenge.URL != "" && configurationAction(c, "打开授权页").Disabled(disabled).Clicked() {
 						if openSignInLink(challenge.URL) != nil {
 							u.status.Message = "无法打开授权页"
 						}
 					}
-					if deviceAction(c, "取消登录").Disabled(u.pending).Clicked() {
+					if configurationAction(c, "取消登录").Disabled(u.pending).Clicked() {
 						v.sendSignIn(u, "cancel", nil)
 					}
 				}
@@ -642,7 +622,7 @@ func (v *View) agentInitialAccount(c *n.Context, t *n.Theme, key string, e *devi
 						caption = "已复制"
 						c.AnimationFrame()
 					}
-					if deviceAction(c, caption).Label("复制验证码").Disabled(!active).Clicked() {
+					if configurationAction(c, caption).Label("复制验证码").Disabled(!active).Clicked() {
 						c.WriteClipboard(challenge.Code)
 						e.draft.copiedUntil = c.Now().Add(2 * time.Second)
 					}

@@ -98,7 +98,19 @@ func layoutTree(root *node, w, h float32) {
 	rt.animateLayout(root, w, h)
 	// Reattach overlays to the geometry shown by this frame, after transitions.
 	if ov := root.c.overlay; ov != nil {
-		layoutAbsolute(ov)
+		for e := ov.first; e != nil; e = e.next {
+			if e.popover == nil || e.attach == 0 || e.hidden || e.leaving != 0 {
+				continue
+			}
+			// Only the attachment point follows the animated target. Laying
+			// the overlay out again would erase transitions in its subtree
+			// and reflow the snapshots that are already leaving it.
+			positionAttached(e, ov, e.w, e.h)
+			if r := e.st.trec; r != nil && r.laid == rt.frame {
+				e.x += r.shown.x - r.target.x
+				e.y += r.shown.y - r.target.y
+			}
+		}
 	}
 	if rt.late {
 		// Lists resized by their transitions built rows as they laid out
@@ -1269,17 +1281,28 @@ func attachTo(c, e *node, pw, ph float32) {
 	} else {
 		h = heightAt(c, w, ph)
 	}
+	if c.flags&flagScrollY != 0 {
+		t := laidOutVisualBox(c.popover)
+		at, self := c.attach.anchors()
+		_, ay := at.physical(c.rtl()).fractions()
+		_, sy := self.physical(c.rtl()).fractions()
+		h = min(h, roomAlong(t.Y, t.H, beside(ay, sy), c.m(0)+c.m(2), c.c.h))
+	}
+	positionAttached(c, e, w, h)
+	layoutBox(c, w, h)
+}
+
+// positionAttached updates the anchor without laying out the already animated
+// descendants. Size constraints are resolved by attachTo in the layout pass.
+func positionAttached(c, e *node, w, h float32) {
 	t := laidOutVisualBox(c.popover)
 	at, self := c.attach.anchors()
 	at, self = at.physical(c.rtl()), self.physical(c.rtl())
 	ax, ay := at.fractions()
 	sx, sy := self.fractions()
-	if c.flags&flagScrollY != 0 {
-		h = min(h, roomAlong(t.Y, t.H, beside(ay, sy), c.m(0)+c.m(2), c.c.h))
-	}
 	x := alongTarget(t.X, t.W, ax, sx, w, c.m(3)-c.m(1), c.c.w)
 	y := alongTarget(t.Y, t.H, ay, sy, h, c.m(0)-c.m(2), c.c.h)
-	dx, dy := c.relative(pw, ph)
+	dx, dy := c.relative(e.w-e.border[1]-e.border[3], e.h-e.border[0]-e.border[2])
 	ox, oy := laidOutOrigin(e)
 	c.x, c.y = x+dx-ox, y+dy-oy
 	if tr := c.st.trec; tr != nil && tr.t.AnchorOrigin {
@@ -1287,7 +1310,6 @@ func attachTo(c, e *node, pw, ph float32) {
 		c.originX = (t.X + t.W/2 - x - dx) / max(w, 1)
 		c.originY = (t.Y + t.H/2 - y - dy) / max(h, 1)
 	}
-	layoutBox(c, w, h)
 }
 
 // windowMargin keeps what overlays place apart from the window's edges.

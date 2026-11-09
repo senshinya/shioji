@@ -162,7 +162,7 @@ func (v *View) sshSetupContent(c *n.Context, t *n.Theme) {
 		n.Column(c).FillWidth().Padding(12).Margin(8, 0, 0).Gap(8).Radius(6).Background(t.Surface).Children(func() {
 			n.Row(c).FillWidth().AlignItems(n.Baseline).Children(func() {
 				n.Text(c, "核对主机指纹").FontSize(13).FixedLineHeight(20).Grow(1)
-				if deviceAction(c, "复制核对命令").Tooltip("在目标 Mac 上运行并比对指纹").Clicked() {
+				if configurationAction(c, "复制核对命令").Tooltip("在目标 Mac 上运行并比对指纹").Clicked() {
 					c.WriteClipboard(`for file in /etc/ssh/ssh_host_*_key.pub; do ssh-keygen -lf "$file" -E sha256; done`)
 				}
 			})

@@ -186,6 +186,9 @@ func writeDeviceFile(dir, name string, data []byte) error {
 	return d.Sync()
 }
 func (s *Server) recheckRuntime(id string) (domain.Readiness, error) {
+	if s.activeToolAuthorization(id) {
+		return domain.Readiness{}, errors.New("请先完成工具授权")
+	}
 	if s.adapter(id) == nil {
 		return domain.Readiness{}, errors.New("Agent 不存在")
 	}

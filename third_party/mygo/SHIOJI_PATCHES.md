@@ -119,6 +119,12 @@ not expose the following appearance settings required by the frozen design:
   Covered by Shioji's file/Skill completion, atomic editing/undo, copy, reload,
   queue-position, attachment-update and delayed-result regressions.
 
+- `ui/layout.go`: after element transitions, reposition only overlays attached to
+  moving targets, preserving their animated size/offset and descendants. Do not
+  relayout dialog subtrees or outgoing snapshots after animation has placed them.
+  Covered by Shioji's whole-page dialog/add-device Tab and moving-anchor popup
+  regressions in `internal/ui/configuration_tabs_test.go`.
+
 Changes are confined to ui/theme.go, ui/paint.go, ui/editor/editor.go and
 ui/editor/theme.go, plus ui/glyphs.go, internal/text/layout.go and
 internal/text/coretext_darwin.go, ui/layout.go, ui/transition.go, ui/list.go,

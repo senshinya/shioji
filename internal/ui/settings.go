@@ -155,24 +155,13 @@ func (s *Settings) View(c *n.Context) {
 					n.Icon(c, searchIcon).Size(16, 16).TextColor(t.TextMuted)
 					n.TextInputBase(c.Key("settings-search"), &s.query).Grow(1).MinWidth(0).Height(24).FontSize(12).FixedLineHeight(18).Label("搜索设置").Placeholder("搜索设置").Changed()
 				})
-				n.Column(c).FillWidth().Gap(4).Margin(12, 0, 0, 0).FocusGroup(n.Vertical).Children(func() {
+				n.Column(c).FillWidth().Margin(12, 0, 0, 0).Children(func() {
+					items := make([]configurationTabItem, 0, len(settingsCategories))
 					for _, category := range settingsCategories {
-						selected := category.id == s.page
-						button := control(c.Key(category.id)).FillWidth().Height(32).PaddingX(8).Radius(6).Label(category.title).Checked(selected).Role(n.RoleTab).Justify(n.Start)
-						fill := n.Transparent
-						if selected {
-							fill = t.Selection
-						}
-						button.Background(fill).Children(func() {
-							color := t.TextMuted
-							if selected {
-								color = t.Text
-							}
-							inlineIconText(c, category.icon, category.title, n.Font{Family: t.Font, Size: 13, Weight: 400}, 16, 8, color)
-						})
-						if button.Clicked() {
-							s.selectPage(category.id)
-						}
+						items = append(items, configurationTabItem{ID: category.id, Label: category.title, Icon: category.icon})
+					}
+					if next := configurationTabs(c, s.page, items, configurationSidebar, false); next != s.page {
+						s.selectPage(next)
 					}
 				})
 				n.Spacer(c).Grow(1)
@@ -190,7 +179,7 @@ func (s *Settings) View(c *n.Context) {
 			}
 
 			n.Scroll(c.Key("settings-page:" + key)).Fill().Label("设置内容").Children(func() {
-				n.Column(c).FillWidth().Padding(24, 32, 28, 32).Children(func() {
+				n.Column(c).FillWidth().Padding(configurationSectionGap, configurationInset, configurationSectionGap, configurationInset).Children(func() {
 					if key == "search" {
 						s.search(c, &t)
 						return
@@ -201,7 +190,7 @@ func (s *Settings) View(c *n.Context) {
 							title = category.title
 						}
 					}
-					n.Text(c, title).FontSize(22).FontWeight(500).FixedLineHeight(30).Margin(0, 0, 24, 0)
+					n.Text(c, title).FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Margin(0, 0, configurationHeadingGap, 0)
 					switch s.page {
 					case "appearance":
 						s.appearance(c, &t)
@@ -227,28 +216,17 @@ func (s *Settings) View(c *n.Context) {
 }
 
 func settingsHeading(c *n.Context, t *n.Theme, label string) {
-	n.Text(c, label).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted).Margin(0, 0, 8, 0)
+	configurationSectionTitle(c, label).TextColor(t.Text).Margin(0, 0, 8, 0)
 }
 func settingsGroup(c *n.Context, t *n.Theme, build func()) {
 	n.Column(c).FillWidth().Children(build)
 }
 func settingsRow(c *n.Context, t *n.Theme, label string, build func()) {
-	e := n.Row(c.Key(label)).FillWidth().MinHeight(44).Gap(16).AlignItems(n.Center)
-	e.BorderWidth(0, 0, .5, 0).BorderColor(t.Border)
-	e.Children(func() {
-		n.Text(c, label).FontSize(13).FixedLineHeight(20).Grow(1).Transform(n.Translation(0, inlineCenterOffset(label, n.Font{Family: t.Font, Size: 13, Weight: 400})))
-		build()
-	})
+	configurationFormRow(c, label, configurationSettingsForm, build)
 }
 
 func (s *Settings) picker(c *n.Context, t *n.Theme, label, value string, choices []menuChoice) {
-	button := control(c.Key("picker:" + label)).Width(160).Height(28).PaddingX(8).Background(codeSurface(t)).Radius(6).Label("设置" + label).Children(func() {
-		font := n.Font{Family: t.Font, Size: 12, Weight: 400}
-		n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Transform(n.Translation(0, inlineCenterOffset(value, font))).Children(func() {
-			n.Text(c, value).SingleLine().FontSize(12).FixedLineHeight(18).Grow(1).MinWidth(0).Tooltip(value)
-			inlineSymbol(c, chevron, value, font, 12, t.TextMuted)
-		})
-	})
+	button := configurationChoiceField(c.Key("picker:"+label), "设置"+label, value, false).Width(160).Background(codeSurface(t)).Radius(6).Border(0, n.Transparent)
 	s.menus.choiceMenu(c, t, "settings:"+label, button, choices)
 }
 
@@ -266,8 +244,8 @@ func (s *Settings) appearance(c *n.Context, t *n.Theme) {
 				button.Border(1, t.Text)
 			}
 			button.Children(func() {
-				n.Column(c).FillWidth().Gap(6).Children(func() {
-					n.Column(c).FillWidth().Height(134).Radius(4).Clip().Draw(func(paint *n.Painter, r n.Rect) { drawThemeSample(paint, r, item.id) })
+				n.Column(c).FillWidth().Gap(8).Children(func() {
+					n.Column(c).FillWidth().Height(132).Radius(4).Clip().Draw(func(paint *n.Painter, r n.Rect) { drawThemeSample(paint, r, item.id) })
 					n.Row(c).FillWidth().PaddingX(4).AlignItems(n.Baseline).Children(func() {
 						inlineIconText(c, item.icon, item.label, n.Font{Family: t.Font, Size: 12, Weight: 400}, 14, 6, t.Text).Grow(1)
 						if selected {
@@ -282,7 +260,7 @@ func (s *Settings) appearance(c *n.Context, t *n.Theme) {
 			}
 		}
 	})
-	n.Column(c).FillWidth().Margin(24, 0, 0, 0).Children(func() {
+	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsHeading(c, t, "文字")
 		settingsGroup(c, t, func() {
 			settingsRow(c, t, "界面字体", func() { s.fontPicker(c, t, false) })
@@ -296,7 +274,7 @@ func (s *Settings) appearance(c *n.Context, t *n.Theme) {
 			settingsRow(c, t, "代码字体", func() { s.fontPicker(c, t, true) })
 		})
 	})
-	n.Column(c).FillWidth().Margin(24, 0, 0, 0).Children(func() {
+	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsHeading(c, t, "动态效果")
 		settingsGroup(c, t, func() {
 			settingsRow(c, t, "减少动态效果", func() {
@@ -308,7 +286,7 @@ func (s *Settings) appearance(c *n.Context, t *n.Theme) {
 			})
 		})
 	})
-	n.Column(c).FillWidth().Margin(24, 0, 0, 0).Radius(8).Background(t.Surface).Border(1, t.Border).Clip().Children(func() {
+	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Radius(8).Background(t.Surface).Border(1, t.Border).Clip().Children(func() {
 		n.Row(c).Height(32).PaddingX(14).FillWidth().AlignItems(n.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 			n.Text(c, "对话预览").FontSize(11).TextColor(t.TextMuted).Grow(1)
 			n.Text(c, fmt.Sprintf("%d px · %s 12 px", p.ReplySize, p.CodeFont)).FontSize(11).TextColor(t.TextMuted)
@@ -408,9 +386,9 @@ func bindingLabel(binding string) string {
 
 func (s *Settings) input(c *n.Context, t *n.Theme) {
 	p := &s.owner.Model.Preferences
-	n.Row(c).FillWidth().AlignItems(n.Center).Margin(0, 0, 8, 0).Children(func() {
-		n.Text(c, "按键").FontSize(12).TextColor(t.TextMuted).Grow(1)
-		if ghost(c, "恢复默认按键").FontSize(11).Height(24).Clicked() {
+	n.Row(c).FillWidth().Height(configurationSectionHeader).AlignItems(n.Start).Children(func() {
+		n.Text(c, "按键").FontSize(configurationSectionSize).FontWeight(500).FixedLineHeight(configurationTitleLine).Grow(1)
+		if configurationAction(c, "恢复默认按键").Clicked() {
 			p.Shortcuts = app.DefaultShortcuts()
 			s.changed()
 		}
@@ -443,14 +421,14 @@ func (s *Settings) shortcuts(c *n.Context, t *n.Theme) {
 	settingsGroup(c, t, func() {
 		for _, item := range []struct{ label, key string }{{"新建会话", "⌘ N"}, {"搜索会话", "⌘ K"}, {"下一个待处理", "⌘ ⇧ J"}, {"返回上一个会话", "⌘ ⇧ H"}} {
 			settingsRow(c, t, item.label, func() {
-				n.Text(c, item.key).FontSize(12).Padding(2, 7).Background(codeSurface(t)).Border(1, t.Border).Radius(5)
+				n.Text(c, item.key).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).Padding(2, 8).Background(codeSurface(t)).Border(1, t.Border).Radius(5)
 			})
 		}
 	})
-	n.Column(c).FillWidth().Margin(24, 0, 0, 0).Children(func() {
+	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsHeading(c, t, "消息")
 		settingsGroup(c, t, func() {
-			button := control(c).FillWidth().Height(44).PaddingX(0).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).Label("前往消息输入").Children(func() {
+			button := control(c).FillWidth().Height(configurationRowHeight).PaddingX(0).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).Label("前往消息输入").Children(func() {
 				settingsLinkContent(c, t, "发送、换行与立即介入", "消息输入")
 			})
 			if button.Clicked() {
@@ -474,21 +452,21 @@ func (s *Settings) about(c *n.Context, t *n.Theme) {
 		s.licenseView(c, t)
 		return
 	}
-	n.Text(c, "Shioji").FontSize(32).FontWeight(500).FixedLineHeight(42).Margin(10, 0, 0, 0)
-	n.Text(c, "潮路 / しおじ").FontSize(13).TextColor(t.TextMuted).Margin(3, 0, 0, 0)
+	n.Text(c, "Shioji").FontSize(32).FontWeight(500).FixedLineHeight(40).Margin(8, 0, 0, 0)
+	n.Text(c, "潮路 / しおじ").FontSize(13).FixedLineHeight(configurationTextLine).TextColor(t.TextMuted).Margin(4, 0, 0, 0)
 	version := mygo.App.Version()
 	if version == "" {
 		version = "开发版"
 	}
-	n.Text(c, "版本 "+version).FontSize(11).TextColor(t.TextMuted).Margin(16, 0, 0, 0)
-	n.Column(c).FillWidth().Margin(32, 0, 0, 0).Children(func() {
+	n.Text(c, "版本 "+version).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).TextColor(t.TextMuted).Margin(16, 0, 0, 0)
+	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsGroup(c, t, func() {
 			platform := "macOS · Apple Silicon"
 			if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 				platform = runtime.GOOS + " · " + runtime.GOARCH
 			}
 			settingsRow(c, t, "运行平台", func() { n.Text(c, platform).FontSize(12).TextColor(t.TextMuted) })
-			button := control(c).FillWidth().Height(44).PaddingX(0).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).Label("查看第三方许可").Children(func() {
+			button := control(c).FillWidth().Height(configurationRowHeight).PaddingX(0).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).Label("查看第三方许可").Children(func() {
 				settingsLinkContent(c, t, "第三方许可", "查看")
 			})
 			if button.Clicked() {
@@ -499,7 +477,7 @@ func (s *Settings) about(c *n.Context, t *n.Theme) {
 }
 
 func (s *Settings) search(c *n.Context, t *n.Theme) {
-	n.Text(c, "搜索设置").FontSize(22).FontWeight(500).Margin(0, 0, 24, 0)
+	n.Text(c, "搜索设置").FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Margin(0, 0, configurationHeadingGap, 0)
 	query := strings.ToLower(strings.TrimSpace(s.query))
 	found := false
 	for _, entry := range []struct{ page, label string }{{"appearance", "主题"}, {"appearance", "界面字体"}, {"appearance", "回复字号"}, {"appearance", "代码字体"}, {"appearance", "减少动态效果"}, {"input", "发送或加入队列"}, {"input", "换行"}, {"input", "立即介入当前轮"}, {"notifications", "通知"}, {"notifications", "回复完成"}, {"notifications", "需要回答或授权"}, {"notifications", "执行失败"}, {"notifications", "提示音"}, {"notifications", "前台也通知"}, {"shortcuts", "新建会话"}, {"shortcuts", "搜索会话"}, {"shortcuts", "下一个待处理"}, {"shortcuts", "返回上一个会话"}, {"about", "版本"}, {"about", "第三方许可"}} {
@@ -509,8 +487,8 @@ func (s *Settings) search(c *n.Context, t *n.Theme) {
 		}
 		found = true
 		label := category.title + " · " + entry.label
-		if control(c.Key(label)).FillWidth().Height(36).PaddingX(10).Label(label).Children(func() {
-			inlineIconText(c, category.icon, label, n.Font{Family: t.Font, Size: 13, Weight: 400}, 15, 9, t.Text)
+		if control(c.Key(label)).FillWidth().MarginX(-8).Height(configurationRowHeight).PaddingX(8).Label(label).Children(func() {
+			inlineIconText(c, category.icon, label, n.Font{Family: t.Font, Size: configurationLabelSize, Weight: 400}, 16, 8, t.Text)
 		}).Clicked() {
 			s.selectPage(entry.page)
 		}

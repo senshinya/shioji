@@ -25,7 +25,7 @@ func (s *Settings) licenseView(c *n.Context, t *n.Theme) {
 	if s.license >= 0 {
 		label = "返回第三方许可"
 	}
-	if ghost(c, label).FontSize(12).Height(28).Margin(0, 0, 12, 0).Clicked() {
+	if configurationAction(c, label).PaddingX(0).Margin(0, 0, 12, 0).Clicked() {
 		if s.license >= 0 {
 			s.license = -1
 		} else {
@@ -34,19 +34,21 @@ func (s *Settings) licenseView(c *n.Context, t *n.Theme) {
 	}
 	if s.license >= 0 {
 		notice := bundledNotices[s.license]
-		n.Text(c, notice.Module).FontSize(16).FontWeight(500).Selectable()
-		n.Text(c, notice.Version).FontSize(11).TextColor(t.TextMuted).Margin(4, 0, 16, 0)
+		n.Text(c, notice.Module).FontSize(configurationSectionSize).FontWeight(500).FixedLineHeight(configurationTitleLine).Selectable()
+		n.Text(c, notice.Version).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).TextColor(t.TextMuted).Margin(4, 0, configurationSectionGap, 0)
 		n.Text(c, notice.Text).FontSize(12).FixedLineHeight(20).FillWidth().Selectable()
 		return
 	}
-	n.Text(c, "第三方许可").FontSize(18).FontWeight(500).Margin(0, 0, 16, 0)
+	settingsHeading(c, t, "第三方许可")
 	for i, notice := range bundledNotices {
-		if control(c.Key(notice.Module)).FillWidth().MinHeight(42).Padding(8, 10).Label("许可：" + notice.Module).Children(func() {
-			n.Column(c).Grow(1).MinWidth(0).Children(func() {
-				n.Text(c, notice.Module).FontSize(12)
-				n.Text(c, notice.Version).FontSize(11).TextColor(t.TextMuted)
+		if control(c.Key(notice.Module)).FillWidth().MarginX(-8).Height(56).Padding(8).Label("许可：" + notice.Module).Children(func() {
+			n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
+				n.Column(c).Grow(1).MinWidth(0).Children(func() {
+					n.Text(c, notice.Module).FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).SingleLine().Ellipsis("…").Tooltip(notice.Module)
+					n.Text(c, notice.Version).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).TextColor(t.TextMuted)
+				})
+				inlineSymbol(c, disclosureRight, notice.Module, n.Font{Family: t.Font, Size: configurationLabelSize, Weight: 400}, 12, t.TextMuted)
 			})
-			n.Icon(c, disclosureRight).Size(13, 13).TextColor(t.TextMuted)
 		}).Clicked() {
 			s.license = i
 		}

@@ -35,28 +35,15 @@ func (v *View) welcomeAgentOptions(c *n.Context, t *n.Theme, f *welcomeFlow, add
 	} else {
 		v.welcomeHeading(c, t, "配置 "+info.Name, f.key, true)
 	}
-	n.Row(c).FillWidth().Height(36).Margin(0, 0, 12).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Gap(24).Children(func() {
-		for _, label := range []string{"常规", "模型", "高级"} {
-			support := domain.RuntimeOptionSupport{}
-			if info.Installation != nil {
-				support = info.Installation.OptionsSupported
-			}
-			if label == "高级" && !(support.Arguments || support.Directory || support.Environment || support.Instructions) {
-				continue
-			}
-			color := t.TextMuted
-			if e.tab == label {
-				color = t.Text
-			}
-			button := n.ButtonBase(c).Height(36).Label(label).TextColor(color).Children(func() { n.Text(c, label).FontSize(13).FixedLineHeight(20).PaddingY(8) })
-			if e.tab == label {
-				button.BorderWidth(0, 0, 1, 0).BorderColor(t.Text)
-			}
-			if button.Clicked() {
-				e.tab = label
-			}
-		}
-	})
+	tabs := []configurationTabItem{{ID: "常规", Label: "常规"}, {ID: "模型", Label: "模型"}}
+	support := domain.RuntimeOptionSupport{}
+	if info.Installation != nil {
+		support = info.Installation.OptionsSupported
+	}
+	if support.Arguments || support.Directory || support.Environment || support.Instructions {
+		tabs = append(tabs, configurationTabItem{ID: "高级", Label: "高级"})
+	}
+	n.Column(c).FillWidth().Margin(0, 0, 12).Children(func() { e.tab = configurationTabs(c, e.tab, tabs, configurationUnderline, false) })
 	e.setup = true
 	e.workerMinor = v.deviceState(f.key).WorkerMinor
 	if f.key == "" {
@@ -71,11 +58,13 @@ func (v *View) welcomeAgentOptions(c *n.Context, t *n.Theme, f *welcomeFlow, add
 		available = height - 48 - 48 - 48 - 40 - 40 - 48 - 56
 	}
 	// Let the error's actual animated height shrink the body in the same layout pass.
-	n.Column(c.Key("configuration-region")).FillWidth().MaxHeight(max(96, available)).Children(func() {
-		n.Scroll(c.Key("agent-configuration-scroll:" + e.tab)).Width(f.width + 16).MarginX(-8).PaddingX(8).MinHeight(0).Shrink(1).Label("Agent 配置内容").Children(func() {
-			v.agentConfiguration(c.Key("agent-tab:"+e.tab), t, f.key, true, e, info, true, func() {})
+	configurationTabPanel(c.Key("agent-tab-panel"), e.tab, configurationTabIndex(tabs, e.tab), configurationPanelFit, func() {
+		n.Column(c.Key("configuration-region")).FillWidth().MaxHeight(max(96, available)).Children(func() {
+			n.Scroll(c.Key("agent-configuration-scroll:" + e.tab)).Width(f.width + 16).MarginX(-8).PaddingX(8).MinHeight(0).Shrink(1).Label("Agent 配置内容").Children(func() {
+				v.agentConfiguration(c.Key("agent-tab:"+e.tab), t, f.key, true, e, info, true, func() {})
+			})
+			n.Scroll(c.Key("agent-configuration-error")).FillWidth().MaxHeight(60).Shrink(0).Children(func() { v.welcomeError(c, e.error) })
 		})
-		n.Scroll(c.Key("agent-configuration-error")).FillWidth().MaxHeight(60).Shrink(0).Children(func() { v.welcomeError(c, e.error) })
 	})
 	v.welcomeFooter(c, "取消", "保存", e.busy, func() { e.edit(info); e.openID = ""; v.welcomeStep(welcomeAgents, -1) }, func() {
 		options, err := e.draft.options()

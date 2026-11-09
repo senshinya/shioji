@@ -32,7 +32,7 @@ env -u GOROOT go run ./cmd/shioji --no-start-worker
 The app bundle contains separately built GUI/worker executables. The development
 launcher starts its worker independently of the window. Closing the GUI does not
 stop it. The bundled Shioji Runtime.app can register a user background service
-through the device page’s 登录后保持运行 switch; macOS may require approval.
+through the device page’s 登录后启动服务 switch; macOS may require approval.
 Turning it off waits for authoritative idle admission, then reconnects with an
 independent worker. This ad-hoc signed developer bundle is not a notarized release
 or a general installer. The toolchain's macOS 13 build target does not establish

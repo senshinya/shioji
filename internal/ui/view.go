@@ -27,6 +27,8 @@ type editBinding struct {
 }
 
 type View struct {
+	directoryPicker                                                                                                 *directoryPicker
+	toolServices                                                                                                    map[string]*toolServicesUI
 	servicePreparations                                                                                             map[string]*servicePreparationUI
 	servicePreparationRestored                                                                                      bool
 	workerMigrations                                                                                                map[string]*workerMigrationUI
@@ -82,6 +84,7 @@ type View struct {
 	toolArrivals                                                                                                    *toolArrivalState
 	frameTime                                                                                                       time.Time
 	toolsAnimating                                                                                                  bool
+	homeSend                                                                                                        *homeSendPresentation
 	sent                                                                                                            *sentMessageMotion
 	sessionEntry                                                                                                    *sessionEntryMotion
 	composerHadFocus                                                                                                bool
@@ -98,6 +101,7 @@ type View struct {
 	composerNaturalHeight                                                                                           float32
 	composerEditID                                                                                                  string
 	composerHeightUntil                                                                                             time.Time
+	composerBounds                                                                                                  n.Rect
 	inputBounds                                                                                                     n.Rect
 	reduceMotion                                                                                                    bool
 	draftBindings                                                                                                   map[string]*editBinding
@@ -256,6 +260,7 @@ func (v *View) View(c *n.Context) {
 	}
 	v.syncHistoryActions()
 	v.syncQueuedMotions()
+	v.syncHomeSend()
 	v.syncSendMotion()
 	v.syncSessionEntry()
 	if v.selected != m.SessionID || v.selectedDevice != m.ConnectionID() {
@@ -271,6 +276,7 @@ func (v *View) View(c *n.Context) {
 	}
 	t := *applyAppearance(c, m.Preferences)
 	v.syncAgentSignIns(c)
+	v.syncToolServiceAuthorizations(c)
 	v.syncWorkerMigrations(c)
 	v.syncServicePreparation(c)
 	// Keep the overlay parent alive so popup entrance and exit both have a
@@ -289,6 +295,7 @@ func (v *View) View(c *n.Context) {
 
 	if m.FirstRun {
 		v.welcomeView(c, &t)
+		v.directoryDialog(c, &t)
 		return
 	}
 
@@ -381,7 +388,7 @@ func (v *View) View(c *n.Context) {
 			} else if v.workspaceEditor != nil {
 				v.toolbar(c, &t)
 				v.workspaceSettingsView(c, &t)
-			} else if m.SessionID == "" {
+			} else if m.SessionID == "" && v.homeSend == nil {
 				v.toolbar(c, &t)
 				v.homeView(c, &t)
 			} else {
@@ -422,9 +429,14 @@ func (v *View) View(c *n.Context) {
 	v.deviceDialogs(c, &t)
 	v.managementDialogs(c, &t)
 	v.attachmentDialog(c, &t)
+	v.directoryDialog(c, &t)
 }
 
 func (v *View) home() {
+	if v.homeSend != nil {
+		v.sent = nil
+	}
+	v.clearHomeSend()
 	if v.Model.SessionID != "" {
 		v.previousSession, v.previousWorkspace = v.Model.SessionID, v.Model.WorkspaceID
 	}
@@ -475,9 +487,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 			}()).Clicked() {
 				v.home()
 			}
-			if navButton(c, attentionIcon, "待我处理").Clicked() {
-				v.nextAttention()
-			}
+			v.attentionControl(c, t)
 			n.Row(c).Height(32).Padding(8, 2, 0, 8).AlignItems(n.Center).Children(func() {
 				n.Text(c, "工作区").FontSize(11).FixedLineHeight(16).TextColor(t.TextMuted).Grow(1)
 				iconButton(c, moreActionsIcon, "工作区菜单").Size(24, 24).Menu(func(menu *n.Menu) {
@@ -761,10 +771,15 @@ func (v *View) notice(c *n.Context, t *n.Theme) {
 func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	m := v.Model
 	key := m.DraftKey()
+	waiting := v.homeSend != nil && m.SessionID == ""
+	if waiting {
+		key = "home-send-editor:" + v.homeSend.in.OperationID
+	}
 	stackKey := key
 	if m.SessionID != "" {
 		stackKey = "session:" + m.SessionID
 	}
+	stackKey = v.homeSendKey(stackKey)
 	binding := v.composerDocument(c, key)
 	draft := m.Drafts[key]
 	cfg := m.Config()
@@ -819,7 +834,9 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 				}
 				binding = v.composerDocument(c, key)
 				v.branchStrip(c, t, home)
-				v.draftAttachmentStrip(c, t)
+				if !waiting {
+					v.draftAttachmentStrip(c, t)
+				}
 				n.Column(c.Key("composer-input-space")).Height(v.composerInputHeight).Shrink(0)
 				// A zero-height origin fixed above the footer keeps outgoing editor
 				// snapshots still while the composer changes its natural height.
@@ -829,6 +846,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 						inputKey += ":edit:" + editID
 					}
 					options := richtext.EditorOptions{Label: v.composerLabel(), Placeholder: "描述任务…", Font: n.Font{Family: t.Font, Size: inputSize, Weight: 400}, NoMarkdown: true, PlainText: true, MaxLines: 7, LineHeight: inputLeading, Theme: &richtext.Theme{Muted: subtle(t)}}
+					options.ReadOnly = waiting
 					options.OnKey = func(keyCode n.Key, mods n.Modifiers) bool {
 						k := composerKey{Key: keyCode, Mods: mods, binding: binding}
 						v.publishComposer(key, binding)
@@ -853,7 +871,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					if s := v.sent; s != nil && s.source.W > 0 && s.session == m.SessionID && !s.queued && !home && !c.Preferences().ReduceMotion {
 						options.Theme.Muted = subtle(t).Alpha(v.sendProgress(c))
 					}
-					input = composerInput{Element: richtext.EditorBase(c.Key(inputKey), binding.doc, options).Absolute().Left(9).Right(9).Bottom(0).FillWidth().MinHeight(inputHeight), binding: binding}
+					input = composerInput{Element: richtext.EditorBase(c.Key(inputKey), binding.doc, options).FocusRing(false).Absolute().Left(9).Right(9).Bottom(0).FillWidth().MinHeight(inputHeight), binding: binding}
 
 					input.Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 180*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 
@@ -875,7 +893,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					v.mentionPopup(c, t, heightFrame, input)
 				})
 				n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
-					if iconButton(c, plus, "添加附件").Size(28, 28).Disabled(v.Controller == nil || v.StatePath == "" || m.WorkerMinor < 6 || v.preparingAttachments(m.DraftKey())).Clicked() {
+					if iconButton(c, plus, "添加附件").Size(28, 28).Disabled(v.Controller == nil || v.StatePath == "" || m.WorkerMinor < 6 || waiting || v.preparingAttachments(m.DraftKey())).Clicked() {
 						v.pickAttachments()
 					}
 					permission := control(c).Height(28).PaddingX(6).Radius(6).Label("Permission").Children(func() {
@@ -900,7 +918,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					label := "发送"
 					editing := m.QueueEdits[m.SessionID].ID != ""
 					queuing := running || len(m.Queue().Items) > 0
-					disabled := !m.Connected || m.RunReadiness().State != "ready" || m.ModelUnavailable() || empty || m.ArchivedContext() != "" || v.preparingAttachments(m.DraftKey())
+					disabled := !m.Connected || m.RunReadiness().State != "ready" || m.ModelUnavailable() || empty || m.HasPendingInput() || v.homeSendPending() || m.ArchivedContext() != "" || v.preparingAttachments(m.DraftKey())
 					if queuing {
 						label = "加入队列"
 						disabled = disabled || m.WorkerMinor < 2
@@ -909,7 +927,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 						label = "保存编辑"
 						disabled = disabled || v.queueBusy[m.SessionID]
 					}
-					if running && empty && !editing {
+					if running && empty && !editing && (!v.homeSendPending() || m.ActiveTurn() != "") {
 						icon = stop
 						iconSize = 18
 						iconKey = "primary-stop-icon"
@@ -1014,96 +1032,104 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 	}
 	open := v.runMenu != runMenuClosed
 	popover(c.Key("run-panel:"+key), trigger, &open, func(panel n.Element) {
-		panel.Width(240).Padding(4).Radius(9).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
-			if v.runMenu != runMenuMain {
-				if ghost(c, "‹  返回").FillWidth().TextAlign(n.Start).Clicked() {
-					v.runMenu = runMenuMain
-				}
-				n.Scroll(c).MaxHeight(300).FillWidth().Children(func() {
-					if v.runMenu == runMenuHarnesses {
-						for _, info := range v.Model.Readiness.Harnesses {
-							if ghost(c, info.Name).FillWidth().TextAlign(n.Start).Label(info.Name).Clicked() {
-								if err := v.Model.SelectHarness(info.ID); err != nil {
-									v.Model.Error = err.Error()
+		phase := v.runMenu
+		depth := 1
+		if phase == runMenuMain {
+			depth = 0
+		}
+		panel.AttachTo(trigger, n.AnchorTopEnd, n.AnchorBottomEnd)
+		panel.Label("运行配置菜单").Width(240).Padding(4).Radius(9).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
+			configurationTabPanel(c.Key("run-menu-pages"), fmt.Sprint(phase), depth, configurationPanelFit, func() {
+				if phase != runMenuMain {
+					if ghost(c, "‹  返回").FillWidth().TextAlign(n.Start).Clicked() {
+						v.runMenu = runMenuMain
+					}
+					n.Scroll(c).MaxHeight(300).FillWidth().Children(func() {
+						if phase == runMenuHarnesses {
+							for _, info := range v.Model.Readiness.Harnesses {
+								if ghost(c, info.Name).FillWidth().TextAlign(n.Start).Label(info.Name).Clicked() {
+									if err := v.Model.SelectHarness(info.ID); err != nil {
+										v.Model.Error = err.Error()
+									}
+									v.runMenu = runMenuMain
 								}
-								v.runMenu = runMenuMain
 							}
-						}
-					} else if v.runMenu == runMenuModels {
-						for _, model := range v.Model.ModelsForMenu(v.Model.ConnectionDeviceID(v.Model.ConnectionID()), ready.HarnessID, ready.Models) {
-							label := model.Name
-							if label == "" {
-								label = model.ID
-							}
-							if ghost(c, label).FillWidth().TextAlign(n.Start).Tooltip(model.ID).Disabled(ready.State != domain.RuntimeReady).Clicked() {
-								cfg.Model = model.ID
-								if v.Model.Error == app.ModelUnavailableMessage {
-									v.Model.Error = ""
+						} else if phase == runMenuModels {
+							for _, model := range v.Model.ModelsForMenu(v.Model.ConnectionDeviceID(v.Model.ConnectionID()), ready.HarnessID, ready.Models) {
+								label := model.Name
+								if label == "" {
+									label = model.ID
 								}
-								v.Model.Configs[key] = cfg
-								v.Model.Config()
-								v.runMenu = runMenuMain
+								if ghost(c, label).FillWidth().TextAlign(n.Start).Tooltip(model.ID).Disabled(ready.State != domain.RuntimeReady).Clicked() {
+									cfg.Model = model.ID
+									if v.Model.Error == app.ModelUnavailableMessage {
+										v.Model.Error = ""
+									}
+									v.Model.Configs[key] = cfg
+									v.Model.Config()
+									v.runMenu = runMenuMain
+								}
 							}
-						}
-					} else {
-						for _, model := range ready.Models {
-							if model.ID == cfg.Model {
-								for _, effort := range model.Efforts {
-									if ghost(c, effort).FillWidth().TextAlign(n.Start).Disabled(ready.State != domain.RuntimeReady).Clicked() {
-										cfg.Effort = effort
-										v.Model.Configs[key] = cfg
-										v.runMenu = runMenuMain
+						} else {
+							for _, model := range ready.Models {
+								if model.ID == cfg.Model {
+									for _, effort := range model.Efforts {
+										if ghost(c, effort).FillWidth().TextAlign(n.Start).Disabled(ready.State != domain.RuntimeReady).Clicked() {
+											cfg.Effort = effort
+											v.Model.Configs[key] = cfg
+											v.runMenu = runMenuMain
+										}
 									}
 								}
 							}
 						}
+					})
+					return
+				}
+				if v.Model.SessionID == "" && len(v.Model.Readiness.Harnesses) > 1 {
+					if settingRow(c, "Agent", descriptor.Name+" ›").Disabled(v.Model.HasPendingInput()).Clicked() {
+						v.runMenu = runMenuHarnesses
 					}
-				})
-				return
-			}
-			if v.Model.SessionID == "" && len(v.Model.Readiness.Harnesses) > 1 {
-				if settingRow(c, "Agent", descriptor.Name+" ›").Disabled(v.Model.HasPendingInput()).Clicked() {
-					v.runMenu = runMenuHarnesses
+				} else {
+					n.Row(c).Height(28).PaddingX(8).AlignItems(n.Center).Children(func() { n.Text(c, "Agent").Grow(1); n.Text(c, descriptor.Name) })
 				}
-			} else {
-				n.Row(c).Height(28).PaddingX(8).AlignItems(n.Center).Children(func() { n.Text(c, "Agent").Grow(1); n.Text(c, descriptor.Name) })
-			}
-			if settingRow(c, "模型", cfg.Model+" ›").Clicked() {
-				v.runMenu = runMenuModels
-			}
-			effortsAvailable := false
-			for _, model := range ready.Models {
-				if model.ID == cfg.Model {
-					effortsAvailable = len(model.Efforts) > 0
+				if settingRow(c, "模型", cfg.Model+" ›").Clicked() {
+					v.runMenu = runMenuModels
 				}
-			}
-			if effortsAvailable {
-				if settingRow(c, "推理强度", cfg.Effort+" ›").Clicked() {
-					v.runMenu = runMenuEfforts
+				effortsAvailable := false
+				for _, model := range ready.Models {
+					if model.ID == cfg.Model {
+						effortsAvailable = len(model.Efforts) > 0
+					}
 				}
-			}
+				if effortsAvailable {
+					if settingRow(c, "推理强度", cfg.Effort+" ›").Clicked() {
+						v.runMenu = runMenuEfforts
+					}
+				}
 
-			n.Column(c).Height(1).FillWidth().Background(t.Border).MarginY(4)
-			plan := cfg.Plan
-			if ready.Plan {
-				if controlFeedback(c, n.Checkbox(c, &plan, "Plan").Height(28).Disabled(!ready.Plan), 4).Changed() {
-					cfg.Plan = plan
-					v.Model.Configs[key] = cfg
+				n.Column(c).Height(1).FillWidth().Background(t.Border).MarginY(4)
+				plan := cfg.Plan
+				if ready.Plan {
+					if controlFeedback(c, n.Checkbox(c, &plan, "Plan").Height(28).Disabled(!ready.Plan), 4).Changed() {
+						cfg.Plan = plan
+						v.Model.Configs[key] = cfg
+					}
 				}
-			}
-			fastAvailable := false
-			for _, model := range ready.Models {
-				if model.ID == cfg.Model {
-					fastAvailable = model.Fast
+				fastAvailable := false
+				for _, model := range ready.Models {
+					if model.ID == cfg.Model {
+						fastAvailable = model.Fast
+					}
 				}
-			}
-			if fastAvailable {
-				fast := cfg.Fast
-				if controlFeedback(c, n.Checkbox(c, &fast, "Fast").Height(28), 4).Changed() {
-					cfg.Fast = fast
-					v.Model.Configs[key] = cfg
+				if fastAvailable {
+					fast := cfg.Fast
+					if controlFeedback(c, n.Checkbox(c, &fast, "Fast").Height(28), 4).Changed() {
+						cfg.Fast = fast
+						v.Model.Configs[key] = cfg
+					}
 				}
-			}
+			})
 		})
 	})
 	if !open {
@@ -1124,10 +1150,19 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	v.refreshConversationFind()
 	// An empty detail keeps the dock mounted through first-turn hydration.
 	// Its zero Session.ID also keeps the history-fold barrier unconsumed.
-	detail := m.Details[m.SessionID]
+	detail := v.homeSendDetail(m.Details[m.SessionID])
+	viewKey := v.homeSendKey(m.SessionID)
 	state := v.lists[m.SessionID]
+	if h := v.homeSend; h != nil {
+		if h.list == nil {
+			h.list = &n.ListState{FollowEnd: true}
+		}
+		state = h.list
+	}
 	if state == nil {
 		state = &n.ListState{FollowEnd: true}
+	}
+	if m.SessionID != "" {
 		v.lists[m.SessionID] = state
 	}
 	// Follow measured layout, including the reveal tail after execution ends.
@@ -1155,6 +1190,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	}
 	rows = v.historyBridgeRows(rows)
 	rows = v.historyRunningRows(rows)
+	rows = v.homeSendRows(rows)
 	if v.toolsAnimating {
 		c.AnimationFrame()
 	}
@@ -1208,7 +1244,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	}
 	state.FollowInset = reserve
 	rowBounds := map[string]n.Rect{}
-	history := n.List(c.Key("history:"+m.SessionID), state, len(rows)+2, func(row int) {
+	history := n.List(c.Key("history:"+viewKey), state, len(rows)+2, func(row int) {
 		if row == 0 {
 			n.Column(c).Height(80)
 			return
@@ -1230,7 +1266,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		}
 		// Receipt spacing follows the rendered next row, including the local
 		// waiting receipt before the accepted input receives its turn identity.
-		if row < len(rows) && (rows[row].footer != "" || rows[row].restarting) {
+		if row < len(rows) && (rows[row].footer != "" || rows[row].restarting || rows[row].preparing != "") {
 			bottom = 8
 		}
 		// Waiting is the first output slot. Keep the same user-to-output gap
@@ -1238,7 +1274,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		if item.Kind == "user" {
 			bottom = 32
 		}
-		if entry.footer != "" || entry.restarting {
+		if entry.footer != "" || entry.restarting || entry.preparing != "" {
 			bottom = 32
 		}
 		n.Column(c).FillWidth().PaddingX(18).AlignItems(n.Center).Children(func() {
@@ -1266,7 +1302,9 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			content.DrawOver(func(_ *n.Painter, r n.Rect) { rowBounds[entry.key] = r })
 			v.historySuffixPose(c, content, entry)
 			content.Children(func() {
-				if entry.restarting {
+				if entry.preparing != "" {
+					v.homeSendStatus(c, t, entry.preparing)
+				} else if entry.restarting {
 					v.turnFooter(c, t, domain.Turn{Status: "running"})
 				} else if entry.footer != "" {
 					v.turnFooter(c, t, turns[entry.footer])
@@ -1533,6 +1571,9 @@ func (v *View) sendMessage(steer bool) {
 	if v.parent != nil && v.parent.Model.SecondarySessionID != v.Model.SessionID {
 		return
 	}
+	if v.Model.HasPendingInput() || v.homeSendPending() {
+		return
+	}
 	if v.preparingAttachments(v.Model.DraftKey()) {
 		v.Model.Error = "正在准备附件，请稍候"
 		return
@@ -1560,6 +1601,9 @@ func (v *View) sendMessage(steer bool) {
 		return
 	}
 	sent := v.beginSendMotion(in)
+	if in.SessionID == "" {
+		v.homeSend = &homeSendPresentation{in: in}
+	}
 	var prepare func() error
 	if v.Saver != nil {
 		state, _ := v.persistenceModel().EncodeState()
@@ -1569,10 +1613,12 @@ func (v *View) sendMessage(steer bool) {
 	}
 	if !v.do(app.Job{Prepare: prepare, Method: "session.submit", Input: in, Apply: func(m *app.Model, b json.RawMessage, err error) {
 		if err != nil {
-			if v.sent == sent {
+			m.SubmissionError(in, err)
+			if h := v.homeSend; h != nil && h.in.OperationID == in.OperationID && v.homeSendPending() {
+				h.state = domain.OperationIndeterminate
+			} else if v.sent == sent {
 				v.sent = nil
 			}
-			m.SubmissionError(in, err)
 			return
 		}
 
@@ -1585,6 +1631,7 @@ func (v *View) sendMessage(steer bool) {
 			return
 		}
 		m.Accepted(in, op)
+		v.acceptHomeSend(m, op)
 		if op.State == "rejected" || op.State == "indeterminate" {
 			if v.sent == sent {
 				v.sent = nil
@@ -1593,7 +1640,7 @@ func (v *View) sendMessage(steer bool) {
 		}
 		if v.sent == sent {
 			sent.session = op.SessionID
-			if sent.origin == "" && op.SessionID != "" {
+			if sent.origin == "" && op.SessionID != "" && v.homeSend == nil {
 				v.sessionEntry = &sessionEntryMotion{session: op.SessionID, operation: in.OperationID, workspace: in.WorkspaceID, epoch: sent.epoch}
 			}
 		}
@@ -1635,7 +1682,7 @@ func (v *View) nextAttention() {
 			return
 		}
 	}
-	v.Model.Error = "暂无待处理事项"
+
 }
 func (v *View) do(job app.Job) bool {
 	if v.parent != nil && v.parent.Model.SecondarySessionID != v.Model.SessionID {

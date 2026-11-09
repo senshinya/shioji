@@ -56,7 +56,7 @@ func (s *Settings) notifications(c *n.Context, t *n.Theme) {
 	settingsGroup(c, t, func() {
 		settingsRow(c, t, "系统通知", func() {
 			enabled := p.Enabled || s.notificationPending
-			if settingsSwitch(c, &enabled).Label("启用系统通知").Disabled(s.notificationPending).Changed() {
+			if configurationSwitch(c, &enabled).Label("启用系统通知").Disabled(s.notificationPending).Changed() {
 				if enabled {
 					s.testNotification(c, true)
 				} else {
@@ -66,7 +66,7 @@ func (s *Settings) notifications(c *n.Context, t *n.Theme) {
 			}
 		})
 	})
-	n.Column(c).FillWidth().Margin(24, 0, 0, 0).Children(func() {
+	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsHeading(c, t, "提醒时机")
 		settingsGroup(c, t, func() {
 			for _, item := range []struct {
@@ -74,29 +74,29 @@ func (s *Settings) notifications(c *n.Context, t *n.Theme) {
 				value *bool
 			}{{"回复完成", &p.Completed}, {"需要回答或授权", &p.Attention}, {"执行失败", &p.Failed}} {
 				settingsRow(c, t, item.label, func() {
-					if settingsSwitch(c, item.value).Label("通知：" + item.label).Changed() {
+					if configurationSwitch(c, item.value).Label("通知：" + item.label).Changed() {
 						s.changed()
 					}
 				})
 			}
 		})
 	})
-	n.Column(c).FillWidth().Margin(24, 0, 0, 0).Children(func() {
+	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsHeading(c, t, "显示与声音")
 		settingsGroup(c, t, func() {
 			settingsRow(c, t, "前台也通知", func() {
-				if settingsSwitch(c, &p.Foreground).Label("通知：前台也通知").Tooltip("包含正在前台查看的会话").Changed() {
+				if configurationSwitch(c, &p.Foreground).Label("通知：前台也通知").Tooltip("包含正在前台查看的会话").Changed() {
 					s.changed()
 				}
 			})
 			settingsRow(c, t, "提示音", func() {
-				if settingsSwitch(c, &p.Sound).Label("通知提示音").Changed() {
+				if configurationSwitch(c, &p.Sound).Label("通知提示音").Changed() {
 					s.changed()
 				}
 			})
 		})
 	})
-	n.Row(c).FillWidth().Gap(12).Margin(20, 0, 0, 0).Children(func() {
+	n.Row(c).FillWidth().Gap(12).Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		if ghost(c, "发送测试通知").PaddingX(0).FontSize(12).Disabled(!p.Enabled || s.notificationPending).Clicked() {
 			s.testNotification(c, false)
 		}

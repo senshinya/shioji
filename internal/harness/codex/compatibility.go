@@ -40,6 +40,9 @@ type protocolSchema struct {
 // remain compatible; removed security/context fields or new required inputs do
 // not silently fall back to the source's defaults.
 var requestContracts = map[string][]string{
+	"mcpServerStatus/list":    {"limit", "cursor"},
+	"mcpServer/oauth/login":   {"name", "timeoutSecs"},
+	"config/mcpServer/reload": {},
 	"initialize":              {"clientInfo", "capabilities"},
 	"model/list":              {"cursor", "limit", "includeHidden"},
 	"config/read":             {"cwd", "includeLayers"},

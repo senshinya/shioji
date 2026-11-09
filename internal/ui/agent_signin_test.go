@@ -462,14 +462,14 @@ func TestAPIConfigurationEntranceUsesActualHeightAnimation(t *testing.T) {
 	e.catalog[0].Installation.APISetup = true
 	ui.Frame()
 	ui.Advance(time.Second)
-	before, _ := ui.Find("Custom Agent 可执行文件")
+	before, _ := ui.Find("模型")
 	if err := ui.Click("自定义 API"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(60 * time.Millisecond)
-	mid, _ := ui.Find("Custom Agent 可执行文件")
+	mid, _ := ui.Find("模型")
 	ui.Advance(time.Second)
-	end, _ := ui.Find("Custom Agent 可执行文件")
+	end, _ := ui.Find("模型")
 	if mid.Y <= before.Y+1 || mid.Y >= end.Y-1 {
 		t.Fatal("API height jumps", before, mid, end)
 	}
@@ -564,5 +564,21 @@ func TestModelDiscoveryChangesActualConfigurationHeight(t *testing.T) {
 	end, _ := ui.Find("下方操作")
 	if mid.Y <= before.Y+1 || mid.Y >= end.Y-1 {
 		t.Fatal("discovered catalog height jumps", before, mid, end)
+	}
+}
+
+func TestAPIModeMovesEntireGeneralForm(t *testing.T) {
+	m, _, e, ui := signInUI(t, "local")
+	m.DeviceStates["local"].WorkerMinor = 21
+	e.catalog[0].Installation.APISetup = true
+	ui.Frame()
+	ui.Advance(time.Second)
+	ui.Click("自定义 API")
+	ui.Advance(80 * time.Millisecond)
+	mid, _ := ui.Find("Custom Agent 可执行文件")
+	ui.Advance(time.Second)
+	end, _ := ui.Find("Custom Agent 可执行文件")
+	if mid.X <= end.X+1 {
+		t.Fatal("mode change leaves the rest of the form stationary", mid, end)
 	}
 }

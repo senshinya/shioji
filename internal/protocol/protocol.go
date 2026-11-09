@@ -20,7 +20,9 @@ const Major = 2
 
 // Minor 21 adds system-owned API setup and public connection summaries.
 // Minor 20 adds explicit loopback callback metadata for remote browser authorization.
-const Minor = 21
+// Minor 22 adds owning-device tool service discovery and authorization.
+// Minor 23 adds device-owned directory browsing before workspace creation.
+const Minor = 23
 const MaxFrame = 1 << 20
 
 type Frame struct {
@@ -237,6 +239,12 @@ type ReadinessQuery struct {
 	SessionIDs []string `json:"sessionIds,omitempty"`
 }
 
+type DirectoryQuery struct {
+	Path   string `json:"path"`
+	Offset int    `json:"offset,omitempty"`
+	Hidden bool   `json:"hidden,omitempty"`
+}
+
 // Empty Executable restores automatic discovery on the owning device.
 type RuntimeConfiguration struct {
 	Options    *domain.RuntimeOptions `json:"options,omitempty"`
@@ -263,4 +271,12 @@ type AgentSetupResult struct {
 	Catalog   []domain.HarnessInfo `json:"catalog"`
 	Ready     bool                 `json:"ready"`
 	Error     string               `json:"error,omitempty"`
+}
+
+// ToolServiceInput selects an opaque owning-harness service. ID identifies one
+// explicit authorization attempt and is never used to replay a lost start.
+type ToolServiceInput struct {
+	HarnessID string `json:"harnessId"`
+	ServiceID string `json:"serviceId,omitempty"`
+	ID        string `json:"id,omitempty"`
 }

@@ -7,6 +7,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"shioji/internal/transport"
+	"strings"
 	"sync"
 	"time"
 )
@@ -126,6 +127,18 @@ func (r *signInForwards) Close() {
 	}
 }
 func (c *Controller) deliverSignInReply(ctx context.Context, job Job, ssh transport.SSH, device string, body json.RawMessage, err error, done func(Job, json.RawMessage, error)) {
+	if strings.HasPrefix(job.Method, "runtime.tools.") && err == nil {
+		in, ok := job.Input.(protocol.ToolServiceInput)
+		if !ok {
+			done(job, nil, errors.New("工具服务请求无效"))
+			return
+		}
+		go func() {
+			result, e := c.prepareToolServiceReply(ctx, ssh, device, job.Method, in, body)
+			done(job, result, e)
+		}()
+		return
+	}
 	in, ok := job.Input.(protocol.SignInInput)
 	if !ok || err != nil {
 		done(job, body, err)

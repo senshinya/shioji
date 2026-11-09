@@ -29,7 +29,7 @@ func (v *View) backgroundSwitch(c *n.Context, t *n.Theme, key string, state *app
 			if service != nil && service.Message != "" {
 				tooltip = service.Message
 			}
-			if settingsSwitch(c, &enabled).Tooltip(tooltip).Label("登录后启动服务开关").Disabled(v.Controller == nil || !state.Connected || busy || unavailable).Changed() {
+			if configurationSwitch(c, &enabled).Tooltip(tooltip).Label("登录后启动服务开关").Disabled(v.Controller == nil || !state.Connected || busy || unavailable).Changed() {
 				method := "$background.disable"
 				if enabled {
 					method = "$background.enable"
@@ -60,12 +60,12 @@ func (v *View) backgroundSwitch(c *n.Context, t *n.Theme, key string, state *app
 			n.Text(c, *retained).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 			if service != nil && (service.State == "requiresApproval" || service.State == "failed" || service.State == "notFound") {
 				n.Row(c).Gap(6).Children(func() {
-					if key == "local" && service.State == "requiresApproval" && deviceAction(c, "打开系统设置").Clicked() {
+					if key == "local" && service.State == "requiresApproval" && configurationAction(c, "打开系统设置").Clicked() {
 						if err := mygo.Shell.OpenExternal("x-apple.systempreferences:com.apple.LoginItems-Settings.extension"); err != nil {
 							v.Model.Error = err.Error()
 						}
 					}
-					if deviceAction(c, "重新检测").Label("重新检测后台服务").Disabled(v.Controller == nil).Clicked() {
+					if configurationAction(c, "重新检测").Label("重新检测后台服务").Disabled(v.Controller == nil).Clicked() {
 						v.do(app.Job{ConnectionID: key, Method: "$background.status"})
 					}
 				})

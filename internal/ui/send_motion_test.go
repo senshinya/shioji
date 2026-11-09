@@ -14,7 +14,7 @@ import (
 	"shioji/internal/domain"
 )
 
-func sendFixture(t *testing.T, home bool) (*View, *n.Tester, app.Job) {
+func sendFixture(t *testing.T, home bool, configure ...func(*app.Model)) (*View, *n.Tester, app.Job) {
 	t.Helper()
 	m := layoutModel()
 	m.ConnectionEpoch = "connected"
@@ -30,6 +30,10 @@ func sendFixture(t *testing.T, home bool) (*View, *n.Tester, app.Job) {
 			job.Apply(m, []byte(`{}`), nil)
 		}
 	}
+	for _, configure := range configure {
+		configure(m)
+	}
+	ui.Frame()
 	if err := ui.Click("消息输入"); err != nil {
 		t.Fatal(err)
 	}
@@ -113,20 +117,27 @@ func TestHomeSentMessageLeavesTheDraftTextPosition(t *testing.T) {
 	for _, delayed := range []bool{false, true} {
 		t.Run(fmt.Sprint("delayed-history=", delayed), func(t *testing.T) {
 			v, ui, job := sendFixture(t, true)
-			source, _ := ui.Find("消息输入")
+			source := v.sent.source
+			first, ok := ui.Find("Explain a tree rotation.")
+			if !ok || math.Abs(float64(first.Y-source.Y-12)) > 24 || math.Abs(float64(first.X-source.X-16)) > 24 {
+				t.Fatal("home preview does not leave the draft", source, first)
+			}
 			acceptSend(t, v, job, !delayed)
 			if delayed {
 				ui.Frame()
 				ui.Advance(100 * time.Millisecond)
+				before, _ := ui.Find("Explain a tree rotation.")
 				in := job.Input.(domain.Submission)
 				id := v.Model.SessionID
 				v.Model.Details[id] = domain.SessionDetail{Session: domain.Session{ID: id}, Items: []domain.Item{{ID: "input:" + in.OperationID, Kind: "user", Text: in.Text, Final: true}}}
+				ui.Frame()
+				after, _ := ui.Find("Explain a tree rotation.")
+				if math.Abs(float64(after.Y-before.Y)) > 1 {
+					t.Fatal("history hydration restarts the moving input", before, after)
+				}
 			}
 			ui.Frame()
-			first, ok := ui.Find("Explain a tree rotation.")
-			if !ok || math.Abs(float64(first.Y-source.Y)) > 24 || math.Abs(float64(first.X-source.X)) > 24 {
-				t.Fatalf("home message appears away from its draft: input=%+v message=%+v", source, first)
-			}
+
 			ui.Advance(160 * time.Millisecond)
 			middle, _ := ui.Find("Explain a tree rotation.")
 			ui.Advance(500 * time.Millisecond)
@@ -280,16 +291,16 @@ func TestSentMessageStartsGentlyAndRemainsInMotionAfter300ms(t *testing.T) {
 	}
 }
 
-func TestRejectedSendPreservesHomeDraftAndPosition(t *testing.T) {
+func TestUncertainSendKeepsHomeDraftAndPendingPresentation(t *testing.T) {
 	v, ui, job := sendFixture(t, true)
 	before, _ := ui.Find("消息编辑器")
 	job.Apply(v.Model, nil, errors.New("not accepted"))
 	ui.Frame()
 	ui.Advance(500 * time.Millisecond)
 	after, _ := ui.Find("消息编辑器")
-	// The ordinary error notice takes one line beneath the centered composer;
-	// it must not trigger the descent into the conversation dock.
-	if v.Model.SessionID != "" || v.Model.Drafts["home"] != "Explain a tree rotation." || math.Abs(float64(before.Y-after.Y)) > 24 || before.H != after.H {
+	// Unknown delivery stays visible and never replays the input. Its ordinary
+	// draft remains intact until the worker confirms or rejects the operation.
+	if v.Model.SessionID != "" || v.Model.Drafts["home"] != "Explain a tree rotation." || after.Y <= before.Y || !ui.HasText("发送结果待核实") {
 		t.Fatalf("failed send moves the composer or loses its draft: session=%q draft=%q before=%+v after=%+v", v.Model.SessionID, v.Model.Drafts["home"], before, after)
 	}
 }
@@ -491,5 +502,68 @@ func TestSentAnchorHonorsAnimationDelay(t *testing.T) {
 	end, ok := ui.Find("delay-row-95")
 	if !ok || !(start.Y > middle.Y+20 && middle.Y > end.Y+20) || math.Abs(float64(end.Y-100)) > .5 {
 		t.Fatalf("delayed anchor fails to settle: start=%+v middle=%+v end=%+v", start, middle, end)
+	}
+}
+
+// SSH returns session Git status after its operation receipt. The branch row
+// must survive that handoff so the falling composer's target does not change.
+func TestHomeSendKeepsBranchRowWhileSessionGitLoads(t *testing.T) {
+	v, ui, job := sendFixture(t, true, func(m *app.Model) {
+		m.GitStatuses["workspace:w"] = domain.GitStatus{Applicable: true, Branch: "main"}
+		m.GitDrafts["w"] = domain.GitChoice{Branch: "main"}
+		m.GitEpochs["workspace:w"] = m.ConnectionEpoch
+	})
+	id := acceptSend(t, v, job, true)
+	ui.Frame()
+	ui.Advance(80 * time.Millisecond)
+	if _, ok := ui.Find("选择分支"); !ok {
+		t.Fatal("accepted home branch disappears before session Git hydration")
+	}
+	// The display fallback outlives the entrance animation and does not grant
+	// freshness to branch actions while the owning worker is still loading.
+	ui.Advance(600 * time.Millisecond)
+	if _, ok := ui.Find("选择分支"); !ok {
+		t.Fatal("branch row disappeared when send motion ended")
+	}
+	if v.Model.GitEpochs["session:"+id] != "" {
+		t.Fatal("display fallback promoted stale checkout to fresh state")
+	}
+	before, _ := ui.Find("消息编辑器")
+	v.Model.GitStatuses["session:"+id] = domain.GitStatus{Applicable: true, Branch: "main"}
+	v.Model.GitEpochs["session:"+id] = v.Model.ConnectionEpoch
+	ui.Frame()
+	after, _ := ui.Find("消息编辑器")
+	if before.H != after.H {
+		t.Fatal("session Git hydration changes composer target height during descent", before, after)
+	}
+	ui.Advance(500 * time.Millisecond)
+	if _, ok := ui.Find("选择分支"); !ok {
+		t.Fatal("authoritative session branch was lost")
+	}
+}
+
+func TestPendingSendIgnoresRepeatedSendAtComposerBoundary(t *testing.T) {
+	v, ui, job := sendFixture(t, true)
+	in := job.Input.(domain.Submission)
+	motion := v.sent
+	ui.Click("发送")
+	ui.Click("消息输入")
+	ui.Key(0, n.KeyEnter)
+	v.submit() // A second pointer/keyboard callback before the worker confirms.
+	if v.Model.Error != "" {
+		t.Fatal("duplicate send surfaced an error", v.Model.Error)
+	}
+	if len(v.Model.Pending) != 1 || v.sent != motion {
+		t.Fatal("duplicate send replaced the original operation or motion")
+	}
+	for len(v.Controller.Jobs) > 0 {
+		if next := <-v.Controller.Jobs; next.Method == "session.submit" {
+			t.Fatal("duplicate input reached the worker")
+		}
+	}
+	acceptSend(t, v, job, true)
+	ui.Frame()
+	if _, pending := v.Model.Pending[in.OperationID]; pending {
+		t.Fatal("confirmation did not release the pending send")
 	}
 }

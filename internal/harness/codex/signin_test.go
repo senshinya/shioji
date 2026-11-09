@@ -105,6 +105,22 @@ func signInFixture(mode string) {
 				}
 				result = json.RawMessage(`{"type":"chatgptDeviceCode","loginId":"login-1","verificationUrl":"https://auth.openai.com/codex/device","userCode":"ABCD-EFGH"}`)
 			}
+		case "config/read":
+			result = json.RawMessage(`{"config":{"mcp_servers":{"disabled":{"enabled":false}}}}`)
+		case "mcpServerStatus/list":
+			var p struct{ Cursor *string }
+			json.Unmarshal(m.Params, &p)
+			if p.Cursor == nil {
+				result = json.RawMessage(`{"data":[{"name":"docs","authStatus":"unsupported","tools":{"lookup":{}}},{"name":"private","httpOrigin":"https://private.example","authStatus":"notLoggedIn","tools":{}}],"nextCursor":"next"}`)
+			} else {
+				result = json.RawMessage(`{"data":[{"name":"empty","authStatus":"oAuth","tools":{}},{"name":"disabled","authStatus":"unsupported","tools":{}}]}`)
+			}
+		case "mcpServer/oauth/login":
+			fmt.Println(`{"method":"mcpServer/oauthLogin/completed","params":{"name":"private","loginId":"unrelated","success":false}}`)
+			fmt.Println(`{"method":"mcpServer/oauthLogin/completed","params":{"name":"private","loginId":"service-login","success":true}}`)
+			result = json.RawMessage(`{"authorizationUrl":"https://private.example/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A1459%2Fcallback","loginId":"service-login"}`)
+		case "config/mcpServer/reload":
+			result = json.RawMessage(`{}`)
 		case "model/list":
 			result = json.RawMessage(`{"data":[{"model":"model","displayName":"Model"}]}`)
 		case "configRequirements/read":

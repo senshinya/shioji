@@ -52,9 +52,8 @@ func (e *deviceAgentEditor) input() protocol.DeviceAgents {
 	}
 	return in
 }
-func (v *View) deviceAgents(c *n.Context, t *n.Theme, key string, state *app.DeviceState) {
+func (v *View) deviceAgents(c *n.Context, t *n.Theme, key string, state *app.DeviceState, e **deviceAgentEditor) {
 	scope := n.Column(c).FillWidth()
-	e := n.Local(scope, "agent-editor", func() *deviceAgentEditor { return agentEditor(state.Readiness.Harnesses) })
 	if state.Connected && state.ConnectionEpoch != (*e).epoch {
 		editor := agentEditor(state.Readiness.Harnesses)
 		editor.epoch = state.ConnectionEpoch
@@ -208,7 +207,7 @@ func (v *View) agentRows(c *n.Context, t *n.Theme, key string, connected bool, e
 					toggle()
 				}
 				enabled := info.Configured
-				if settingsSwitch(c, &enabled).Label("启用 " + info.Name).Disabled(e.readOnly || !connected || e.busy || e.loading || v.Controller == nil).Changed() {
+				if configurationSwitch(c, &enabled).Label("启用 " + info.Name).Disabled(e.readOnly || !connected || e.busy || e.loading || v.Controller == nil).Changed() {
 					info.Configured = enabled
 					if !onboarding {
 						save()

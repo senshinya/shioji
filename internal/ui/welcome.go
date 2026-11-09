@@ -26,6 +26,7 @@ type welcomeFlow struct {
 	changed                time.Time
 	step                   welcomeStep
 	direction              float32
+	exits                  map[welcomeStep]*n.Motion
 	key, deviceName, error string
 	agents                 *deviceAgentEditor
 	name, directory        string
@@ -51,6 +52,9 @@ func (v *View) welcomeStep(step welcomeStep, direction float32) {
 	f := v.setupFlow()
 	if f.step == step {
 		return
+	}
+	if exit := f.exits[f.step]; exit != nil {
+		exit.X = -direction * (f.width + 16)
 	}
 	f.step, f.direction, f.changed = step, direction, v.frameTime
 	f.error = ""
@@ -105,8 +109,8 @@ func (v *View) welcomeSteps(c *n.Context, t *n.Theme, f *welcomeFlow, add bool) 
 	})
 }
 func (v *View) welcomeHeading(c *n.Context, t *n.Theme, title, key string, device bool) {
-	n.Row(c).FillWidth().MinHeight(28).Margin(0, 0, 20).AlignItems(n.Baseline).Gap(16).Children(func() {
-		n.Text(c, title).FontSize(20).FontWeight(400).FixedLineHeight(28).Grow(1)
+	n.Row(c).FillWidth().MinHeight(configurationTitleLine).Margin(0, 0, configurationHeadingGap).AlignItems(n.Baseline).Gap(16).Children(func() {
+		n.Text(c, title).FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Grow(1)
 		if device {
 			name := v.welcomeDeviceName(key)
 			inlineIconText(c, monitor, name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 14, 8, t.TextMuted)
@@ -114,18 +118,15 @@ func (v *View) welcomeHeading(c *n.Context, t *n.Theme, title, key string, devic
 	})
 }
 func setupRow(c *n.Context, label string, body func()) {
-	n.Row(c).FillWidth().MinHeight(40).PaddingY(6).Gap(24).AlignItems(n.Start).Children(func() {
-		n.Text(c, label).FontSize(13).FixedLineHeight(20).PaddingY(4).Grow(1)
-		n.Column(c).Width(320).Children(body)
-	})
+	configurationFormRow(c, label, configurationSetupForm, body)
 }
 func setupField(c *n.Context, label string, value *string, placeholder string, disabled bool) n.Element {
-	return textField(c, value).FillWidth().Height(28).Padding(4, 8).FontSize(12).FixedLineHeight(20).Label(label).Placeholder(placeholder).Background(c.Theme().Background).Disabled(disabled)
+	return configurationTextField(c, value).Label(label).Placeholder(placeholder).Background(c.Theme().Background).Disabled(disabled)
 }
 func (v *View) welcomeFooter(c *n.Context, back, next string, disabled bool, onBack, onNext func()) {
-	n.Row(c.Key("welcome-footer")).FillWidth().MinHeight(32).Margin(24, 0, 0).Justify(n.SpaceBetween).AlignItems(n.Center).Children(func() {
+	n.Row(c.Key("welcome-footer")).FillWidth().MinHeight(32).Margin(configurationSectionGap, 0, 0).Justify(n.SpaceBetween).AlignItems(n.Center).Children(func() {
 		if back != "" {
-			if deviceAction(c, back).MarginStart(-8).Disabled(v.setupFlow().busy || v.setupFlow().agents != nil && v.setupFlow().agents.busy).Clicked() {
+			if configurationAction(c, back).MarginStart(-8).Disabled(v.setupFlow().busy || v.setupFlow().agents != nil && v.setupFlow().agents.busy).Clicked() {
 				onBack()
 			}
 		} else {
@@ -139,7 +140,9 @@ func (v *View) welcomeFooter(c *n.Context, back, next string, disabled bool, onB
 				}
 			})
 		})
-		button.Transition(n.ElementTransition{Position: true, Size: true, Duration: motionAnimation(c, 160*time.Millisecond).Duration, Ease: n.EaseOut})
+		// Configuration actions have fixed labels and follow the form's real height.
+		// Navigation actions retain their existing right-anchored label resize.
+		button.Transition(n.ElementTransition{Position: v.setupFlow().step != welcomeAgentOptions, Size: true, Duration: motionAnimation(c, 160*time.Millisecond).Duration, Ease: n.EaseOut})
 		if button.Clicked() {
 			onNext()
 		}
@@ -168,7 +171,7 @@ func (v *View) welcomePage(c *n.Context, t *n.Theme, f *welcomeFlow, step welcom
 					inlineIconText(c, monitor, v.Model.LocalName(), n.Font{Family: t.Font, Size: 14, Weight: 400}, 16, 8, t.Text)
 				})
 				n.Icon(c, check).Size(16, 16).TextColor(t.TextMuted)
-				if deviceAction(c, "配置").Label("配置本机").MarginEnd(-8).Clicked() {
+				if configurationAction(c, "配置").Label("配置本机").MarginEnd(-8).Clicked() {
 					f.deviceName = v.Model.LocalName()
 					v.welcomeStep(welcomeLocal, 1)
 				}
@@ -318,14 +321,14 @@ func (v *View) welcomeAgents(c *n.Context, t *n.Theme, f *welcomeFlow, add bool)
 						label = "正在检测"
 					}
 					n.Text(c.Key("runtime-status"), label).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-					if deviceAction(c, "配置").Label("配置 " + info.Name).Disabled(e.busy || e.loading || info.Installation == nil).Clicked() {
+					if configurationAction(c, "配置").Label("配置 " + info.Name).Disabled(e.busy || e.loading || info.Installation == nil).Clicked() {
 						e.edit(*info)
 						e.setup = true
 						e.tab = "常规"
 						v.welcomeStep(welcomeAgentOptions, 1)
 					}
 					enabled := info.Configured
-					if settingsSwitch(c, &enabled).Label("启用 " + info.Name).Disabled(e.busy || e.loading || !connected).Changed() {
+					if configurationSwitch(c, &enabled).Label("启用 " + info.Name).Disabled(e.busy || e.loading || !connected).Changed() {
 						info.Configured = enabled
 					}
 				})
@@ -406,16 +409,8 @@ func (v *View) admitWelcomeAgents(f *welcomeFlow) {
 func (v *View) welcomeStage(c *n.Context, t *n.Theme, f *welcomeFlow, add bool) {
 	stage := n.Column(c.Key("stage")).Width(f.width + 16).MarginX(-8).Clip()
 	stage.Children(func() {
-		current := n.Column(c.Key(f.step)).FillWidth().PaddingX(8)
-		current.Children(func() {
-			if add && f.step == welcomeSSH {
-				v.welcomeSSHFields(c, t, f)
-			} else if add && f.step == welcomeAgents {
-				v.welcomeAgents(c, t, f, true)
-			} else {
-				v.welcomePage(c, t, f, f.step, add)
-			}
-		})
+		step := f.step
+		current := n.Column(c.Key(step)).FillWidth().PaddingX(8)
 		direction := f.direction
 		if direction == 0 {
 			direction = 1
@@ -427,7 +422,24 @@ func (v *View) welcomeStage(c *n.Context, t *n.Theme, f *welcomeFlow, add bool) 
 		if !f.changed.IsZero() && c.Now().Sub(f.changed) < 260*time.Millisecond {
 			stage.Transition(n.ElementTransition{Size: true, Duration: motionAnimation(c, 260*time.Millisecond).Duration, Ease: n.EaseOut})
 		}
-		current.Transition(n.ElementTransition{Duration: motionAnimation(c, 260*time.Millisecond).Duration, Ease: n.EaseOut, Enter: &n.Motion{X: direction * distance, Opacity: 1}, Exit: &n.Motion{X: -direction * distance, Opacity: 1}})
+		if f.exits == nil {
+			f.exits = map[welcomeStep]*n.Motion{}
+		}
+		exit := f.exits[step]
+		if exit == nil {
+			exit = &n.Motion{Opacity: 1}
+			f.exits[step] = exit
+		}
+		current.Transition(n.ElementTransition{Position: true, Duration: motionAnimation(c, 260*time.Millisecond).Duration, Ease: n.EaseOut, Enter: &n.Motion{X: direction * distance, Opacity: 1}, Exit: exit})
+		current.Children(func() {
+			if add && step == welcomeSSH {
+				v.welcomeSSHFields(c, t, f)
+			} else if add && step == welcomeAgents {
+				v.welcomeAgents(c, t, f, true)
+			} else {
+				v.welcomePage(c, t, f, step, add)
+			}
+		})
 	})
 }
 

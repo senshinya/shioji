@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
+	"time"
 )
 
 // OpenAI brand asset: https://cdn.openai.com/brand/OpenAI-Logos-2025.zip
@@ -44,4 +45,29 @@ func navButton(c *n.Context, icon *n.SVG, label string) n.Element {
 	return control(c, 8).FillWidth().Height(28).PaddingX(8).Justify(n.Start).Radius(8).Label(label).Children(func() {
 		inlineIconText(c, icon, label, n.Font{Family: c.Theme().Font, Size: size, Weight: 400}, 16, 8, color)
 	})
+}
+
+func (v *View) attentionControl(c *n.Context, t *n.Theme) {
+	available := false
+	for _, s := range v.Model.Snapshot.Sessions {
+		if v.pendingCount(s.ID) > 0 {
+			available = true
+			break
+		}
+	}
+	anchor := n.Column(c.Key("attention-entry")).FillWidth()
+	anchor.Children(func() {
+		button := navButton(c, attentionIcon, "待我处理").Disabled(!available)
+		if !available {
+			button.Opacity(.5).Description("无待处理会话")
+		}
+		if button.Clicked() {
+			v.nextAttention()
+		}
+	})
+	if !available && anchor.Hovered() {
+		n.Overlay(c, func() {
+			n.Column(c.Key("empty-attention-hint")).Absolute().AttachTo(anchor, n.AnchorEnd, n.AnchorStart).MarginStart(8).PassThrough().Role(n.RoleTooltip).Padding(6, 10).Radius(6).Background(raised(t)).Border(1, t.Border).Shadow(0, 2, 8, 0, n.RGBA(0, 0, 0, .12)).Transition(fadeMotion(c, 100*time.Millisecond)).Children(func() { n.Text(c, "无待处理会话").FontSize(12).FixedLineHeight(18).TextColor(t.Text) })
+		})
+	}
 }

@@ -6,7 +6,7 @@ import (
 )
 
 // Settings switches use a flat neutral capsule, with a generous hit area.
-func settingsSwitch(c *n.Context, value *bool) n.Element {
+func configurationSwitch(c *n.Context, value *bool) n.Element {
 	t := c.Theme()
 	e := n.SwitchBase(c, value).Size(40, 28)
 	track, thumb := n.Hex("#d1d1d1"), n.Hex("#ffffff")

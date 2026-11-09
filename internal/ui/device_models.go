@@ -50,7 +50,7 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 	// Management retains manual order; only the send menu groups favorites.
 	ordering := pref
 	models := ordering.Ordered(info.Models, false)
-	header := n.Row(c).FillWidth().Height(36).AlignItems(n.Start)
+	header := n.Row(c).FillWidth().Height(configurationSectionHeader).AlignItems(n.Start)
 	if len(setupDevice) > 0 {
 		header.Height(28).AlignItems(n.Baseline)
 	}
@@ -61,9 +61,9 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 		}
 		n.Text(c, "模型").FontSize(size).FontWeight(weight).FixedLineHeight(line).Grow(1)
 		if stale {
-			n.Text(c, "上次读取").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).MarginEnd(8)
+			n.Text(c, "上次读取").FontSize(12).FixedLineHeight(line).TextColor(t.TextMuted).MarginEnd(8)
 		}
-		if deviceAction(c, "刷新").Disabled(v.Controller == nil || len(setupDevice) == 0 && !v.deviceState(key).Connected).Clicked() {
+		if configurationAction(c, "刷新").Disabled(v.Controller == nil || len(setupDevice) == 0 && !v.deviceState(key).Connected).Clicked() {
 			if len(setupDevice) > 0 {
 				v.recheckWelcomeAgent(key, info.ID)
 			} else {
@@ -72,7 +72,7 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 		}
 	})
 	viewport := n.Scroll(c.Key("model-list-scroll")).FillWidth().Label("模型列表滚动区")
-	height := min(float32(140), float32(len(models))*40)
+	height := min(float32(configurationListHeight), float32(len(models))*configurationRowHeight)
 	if !c.Preferences().ReduceMotion {
 		height = viewport.AnimateTo("catalog-height", height, motionAnimation(c, 180*time.Millisecond))
 	}
@@ -153,7 +153,7 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 						c.AnimationFrame()
 					}
 					shown := !slices.Contains(pref.Hidden, model.ID)
-					if settingsSwitch(c, &shown).Disabled(stale).Label("在模型菜单显示 " + modelName(model)).Tooltip("在模型菜单显示").Changed() {
+					if configurationSwitch(c, &shown).Disabled(stale).Label("在模型菜单显示 " + modelName(model)).Tooltip("在模型菜单显示").Changed() {
 						pref.Hidden = toggleModelValue(pref.Hidden, model.ID)
 						v.Model.SetModelPreferences(device, info.ID, pref)
 					}

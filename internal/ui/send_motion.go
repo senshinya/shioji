@@ -4,6 +4,7 @@ import (
 	"time"
 
 	n "github.com/egoist/mygo/ui"
+	"shioji/internal/app"
 	"shioji/internal/domain"
 )
 
@@ -23,7 +24,7 @@ const sentFadeDuration = 300 * time.Millisecond
 type sentMessageMotion struct {
 	input, origin, session, epoch, workspace string
 	started                                  time.Time
-	source                                   n.Rect
+	source, composerSource                   n.Rect
 	phase                                    sentMotionPhase
 	focused, departed, queued                bool
 }
@@ -36,7 +37,7 @@ const (
 )
 
 func (v *View) beginSendMotion(in domain.Submission) *sentMessageMotion {
-	s := &sentMessageMotion{input: "input:" + in.OperationID, origin: in.SessionID, epoch: v.Model.ConnectionEpoch, workspace: in.WorkspaceID}
+	s := &sentMessageMotion{input: "input:" + in.OperationID, origin: in.SessionID, epoch: v.Model.ConnectionEpoch, workspace: in.WorkspaceID, composerSource: v.composerBounds}
 	if v.inputBounds.W > 0 {
 		// Align the bubble text with the draft text, accounting for their
 		// respective 16/12 px bubble and 9/0 px input insets.
@@ -59,7 +60,7 @@ func (v *View) syncSendMotion() {
 	if s.origin == "" && m.SessionID != "" && m.SessionID == s.session {
 		s.departed = true
 	}
-	if (s.departed && m.SessionID == "") || m.ConnectionEpoch != s.epoch || v.devices || (s.origin == "" && m.WorkspaceID != s.workspace) || (m.SessionID != s.origin && m.SessionID != s.session) {
+	if (s.departed && m.SessionID == "") || (m.ConnectionEpoch != s.epoch && v.homeSend == nil) || v.devices || (s.origin == "" && m.WorkspaceID != s.workspace) || (m.SessionID != s.origin && m.SessionID != s.session) {
 		v.sent = nil
 		return
 	}
@@ -124,6 +125,7 @@ func (v *View) sendProgress(c *n.Context) float32 {
 }
 
 func (v *View) composerSendTransition(c *n.Context, composer n.Element, home bool) {
+	composer.DrawOver(func(_ *n.Painter, r n.Rect) { v.composerBounds = r })
 	s := v.sent
 	if s == nil || s.queued {
 		return
@@ -131,6 +133,9 @@ func (v *View) composerSendTransition(c *n.Context, composer n.Element, home boo
 	t := n.ElementTransition{Duration: 360 * time.Millisecond, Ease: n.EaseOut, Size: true}
 	if s.origin == "" {
 		t.Duration, t.Ease = 400*time.Millisecond, composerDescentEase
+		if v.homeSend != nil && !home && s.composerSource.W > 0 {
+			t.From = &s.composerSource
+		}
 	}
 	if s.origin == "" && (home || s.session == v.Model.SessionID) {
 		t.Match = composerSendMatch{s.input}
@@ -202,4 +207,175 @@ func (v *View) sessionEntryProgress(c *n.Context, session string, heading bool) 
 		c.AnimationFrame()
 	}
 	return composerDescentEase(p)
+}
+
+// This is only a view of a client-owned pending operation. No provisional session
+// is inserted into the catalog, selected for RPCs or sent to the worker.
+type homeSendPresentation struct {
+	in       domain.Submission
+	session  string
+	state    domain.OperationState
+	hydrated bool
+	list     *n.ListState
+}
+
+func (v *View) homeSendPending() bool {
+	h := v.homeSend
+	if h == nil {
+		return false
+	}
+	_, ok := v.Model.Pending[h.in.OperationID]
+	return ok
+}
+func (v *View) homeSendKey(fallback string) string {
+	if h := v.homeSend; h != nil {
+		return "home-send:" + h.in.OperationID
+	}
+	return fallback
+}
+func (v *View) syncHomeSend() {
+	h := v.homeSend
+	if h == nil {
+		return
+	}
+	m := v.Model
+	if m.SessionID == "" && h.session != "" && v.selected == h.session {
+		v.clearHomeSend()
+		return
+	}
+	// Command receipts and the event stream may arrive in either order.
+	for _, op := range m.Snapshot.Operations {
+		if op.ID == h.in.OperationID {
+			v.acceptHomeSend(m, op)
+			break
+		}
+	}
+
+	if h.session != "" {
+		v.acceptHomeSend(m, domain.Operation{ID: h.in.OperationID, SessionID: h.session, State: h.state})
+	}
+	if v.devices || v.workspaceEditor != nil || m.WorkspaceID != h.in.WorkspaceID || (m.SessionID != "" && m.SessionID != h.session) {
+		v.clearHomeSend()
+		return
+	}
+	if m.SessionID == "" && m.Resolved[h.in.OperationID] {
+		v.clearHomeSend()
+	}
+}
+func (v *View) homeSendDetail(detail domain.SessionDetail) domain.SessionDetail {
+	h := v.homeSend
+	if h == nil {
+		return detail
+	}
+	if v.Model.SessionID == "" && h.session != "" {
+		detail = v.Model.Details[h.session]
+	}
+	id := "input:" + h.in.OperationID
+	for _, item := range detail.Items {
+		if item.ID == id {
+			h.hydrated = true
+			return detail
+		}
+	}
+	// The pending journal already holds the full immutable input and references.
+	if !h.hydrated {
+		item := domain.Item{ID: id, Kind: "user", Text: h.in.Text, Attachments: h.in.Attachments, Skills: h.in.Skills, ReferencePositions: h.in.ReferencePositions, Status: "dispatching", Final: true}
+		detail.Items = append(append([]domain.Item(nil), detail.Items...), item)
+	}
+	return detail
+}
+func (v *View) homeSendRows(rows []transcriptRow) []transcriptRow {
+	h := v.homeSend
+	if h == nil {
+		return rows
+	}
+	key := "home-send-status:" + h.in.OperationID
+	for _, row := range rows {
+		if row.footer != "" {
+			if v.toolArrivals.footerKeys == nil {
+				v.toolArrivals.footerKeys = map[string]string{}
+			}
+			v.toolArrivals.footerKeys[row.footer] = key
+			return rows
+		}
+	}
+	if !v.homeSendPending() {
+		status := v.Model.Details[v.Model.SessionID].Session.Status
+		if status == domain.ExecutionFailed || status == domain.ExecutionInterrupted || status == domain.ExecutionUnknown || status == domain.ExecutionAbandoned || h.state == domain.OperationRejected || h.state == domain.OperationIndeterminate {
+			return rows
+		}
+	}
+	label := "正在发送"
+	if h.session != "" {
+		label = "正在准备会话"
+	}
+	if h.state == domain.OperationConfirmed || v.Model.Details[v.Model.SessionID].Session.Status == domain.ExecutionRunning {
+		label = "进行中"
+	}
+	if h.state == domain.OperationIndeterminate {
+		label = "发送结果待核实"
+	}
+	if !v.Model.Connected {
+		label = "等待重新连接"
+	}
+	if len(rows) > 0 && rows[len(rows)-1].key == "input:"+h.in.OperationID {
+		rows = append(rows, transcriptRow{key: key, preparing: label, end: -1, opacity: 1})
+	}
+	return rows
+}
+func (v *View) homeSendStatus(c *n.Context, t *n.Theme, label string) {
+	n.Column(c.Key("reply-footer")).Label("回复信息").FillWidth().MinHeight(24).Children(func() {
+		n.Row(c).Gap(6).MinHeight(24).AlignItems(n.Baseline).Transition(fadeMotion(c, 180*time.Millisecond)).Children(func() {
+			color := t.TextMuted
+			if label == "进行中" {
+				color = t.Success
+			}
+			statusDot(c, label, n.Font{Family: t.Font, Size: 11, Weight: 400}, color, label == "进行中")
+			text := n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+			shimmer(c, text, t.TextMuted, t.Text)
+		})
+	})
+}
+
+func (v *View) acceptHomeSend(m *app.Model, op domain.Operation) {
+	h := v.homeSend
+	if h == nil || h.in.OperationID != op.ID {
+		return
+	}
+	if h.state.ReceiptObserved() && !op.State.ReceiptObserved() {
+		return
+	}
+	h.state = op.State
+	if op.SessionID == "" || (op.State != domain.OperationAccepted && op.State != domain.OperationDispatched && op.State != domain.OperationConfirmed) {
+		return
+	}
+	if h.session == "" {
+		h.session = op.SessionID
+		v.sessionEntry = &sessionEntryMotion{session: op.SessionID, operation: op.ID, workspace: h.in.WorkspaceID, epoch: m.ConnectionEpoch}
+	}
+	if m.SessionID == "" && m.WorkspaceID == h.in.WorkspaceID {
+		// The receipt can beat the event catalog. Keep the local preview until
+		// that owning-device session is visible, so selection cannot fetch a
+		// detail that the scoped model would correctly reject as unknown.
+		for _, session := range m.Snapshot.Sessions {
+			if session.ID == op.SessionID && session.WorkspaceID == h.in.WorkspaceID {
+				m.SessionID = op.SessionID
+				m.Configs["session:"+op.SessionID] = h.in.Config
+				break
+			}
+		}
+	}
+	if m.SessionID == op.SessionID {
+		delete(v.composerDocuments, "home-send-editor:"+op.ID)
+	}
+	if sent := v.sent; sent != nil && sent.input == "input:"+op.ID {
+		sent.session = op.SessionID
+	}
+}
+
+func (v *View) clearHomeSend() {
+	if h := v.homeSend; h != nil {
+		delete(v.composerDocuments, "home-send-editor:"+h.in.OperationID)
+	}
+	v.homeSend = nil
 }

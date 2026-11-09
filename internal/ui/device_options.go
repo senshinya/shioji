@@ -107,18 +107,10 @@ func (d runtimeOptionDraft) options() (domain.RuntimeOptions, error) {
 	return domain.RuntimeOptions{Arguments: args, Directory: d.directory, Instructions: d.instructions, TitleModel: d.titleModel, Environment: environment}, err
 }
 func deviceConfigRow(c *n.Context, label string, content func()) {
-	width, _ := c.Size()
-	controlWidth := min(float32(320), (width-296)*.55)
-	if width < 900 {
-		controlWidth = min(320, (width-64)*.55)
-	}
-	n.Row(c).FillWidth().MinHeight(40).Gap(24).AlignItems(n.Center).Children(func() {
-		n.Text(c, label).FontSize(12).FixedLineHeight(20).TextColor(c.Theme().TextMuted).Grow(1)
-		n.Column(c).Width(controlWidth).Children(content)
-	})
+	configurationFormRow(c, label, configurationDeviceForm, content)
 }
 func deviceConfigTitle(c *n.Context, title string) {
-	n.Text(c, title).FontSize(14).FontWeight(500).FixedLineHeight(28).Padding(0, 0, 8)
+	configurationSectionTitle(c, title).Padding(0, 0, 8)
 }
 func (e *deviceAgentEditor) edit(info domain.HarnessInfo) {
 	e.openID = info.ID
@@ -192,56 +184,62 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 				})
 			}
 
-			frame := n.Column(c.Key("login")).FillWidth().Clip()
-			animatedContentHeight(c, frame, initial || e.draft.login, 240*time.Millisecond, func() float32 {
-				if info.Account != nil && info.Account.Mode == "api" || agentSignInMethod(key, e, v.agentSignInMethods(key, info)) == domain.SignInAPI {
-					v.agentAuthentication(c, t, key, e, info, disabled)
-				} else {
-					authLabel := ""
-					if initial {
-						authLabel = "授权方式"
-					}
-					row(c, authLabel, func() {
-						top, bottom := float32(4), float32(8)
-						if e.setup {
-							top, bottom = 0, 0
+			mode, index := "account", 0
+			if agentSignInMethod(key, e, v.agentSignInMethods(key, info)) == domain.SignInAPI {
+				mode, index = "api", 1
+			}
+			configurationTabPanel(c.Key("authentication-tabs"), mode, index, configurationPanelFit, func() {
+				frame := n.Column(c.Key("login")).FillWidth().Clip()
+				animatedContentHeight(c, frame, initial || e.draft.login, configurationTabDuration, func() float32 {
+					if info.Account != nil && info.Account.Mode == "api" || agentSignInMethod(key, e, v.agentSignInMethods(key, info)) == domain.SignInAPI {
+						v.agentAuthentication(c, t, key, e, info, disabled)
+					} else {
+						authLabel := ""
+						if initial {
+							authLabel = "授权方式"
 						}
-						n.Column(c).FillWidth().Padding(top, 0, bottom, 0).Children(func() {
-							v.agentAuthentication(c, t, key, e, info, disabled)
+						row(c, authLabel, func() {
+							top, bottom := float32(4), float32(8)
+							if e.setup {
+								top, bottom = 0, 0
+							}
+							n.Column(c).FillWidth().Padding(top, 0, bottom, 0).Children(func() {
+								v.agentAuthentication(c, t, key, e, info, disabled)
+							})
 						})
-					})
-				}
-				return 0
-			})
-
-			row(c, "可执行文件", func() {
-				placeholder := "自动检测"
-				if install != nil && install.Executable != "" {
-					placeholder = install.Executable
-				}
-				field := textField(c.Key("executable"), &e.path).Background(t.Background).FillWidth().Height(28).FontSize(12).Label(info.Name + " 可执行文件").Placeholder(placeholder).Tooltip("留空时在所属设备自动检测").Disabled(disabled)
-				if e.setup {
-					field.Padding(4, 8).Background(t.Background)
-				}
-			})
-			if install != nil {
-				guidance := n.Column(c.Key("login-guidance")).FillWidth().Clip()
-				inlineSignIn := (install.Issue == domain.RuntimeSignInRequired || install.Issue == domain.RuntimeAuthenticationExpired) && len(install.SignInMethods) > 0 && minor >= 19
-				visible := install.Issue != "" && !e.draft.login && !inlineSignIn
-				last := n.Local(guidance, "info", func() domain.HarnessInfo { return info })
-				if visible {
-					*last = info
-				}
-				animatedContentHeight(c, guidance, visible, 240*time.Millisecond, func() float32 {
-					previous := *last
-					installation := previous.Installation
-					n.Column(c).FillWidth().PaddingY(8).Children(func() {
-						n.Text(c, installation.Guide).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
-						v.agentGuidance(c, key, previous)
-					})
+					}
 					return 0
 				})
-			}
+
+				row(c, "可执行文件", func() {
+					placeholder := "自动检测"
+					if install != nil && install.Executable != "" {
+						placeholder = install.Executable
+					}
+					field := configurationTextField(c.Key("executable"), &e.path).Label(info.Name + " 可执行文件").Placeholder(placeholder).Tooltip("留空时在所属设备自动检测").Disabled(disabled)
+					if e.setup {
+						field.Padding(4, 8).Background(t.Background)
+					}
+				})
+				if install != nil {
+					guidance := n.Column(c.Key("login-guidance")).FillWidth().Clip()
+					inlineSignIn := (install.Issue == domain.RuntimeSignInRequired || install.Issue == domain.RuntimeAuthenticationExpired) && len(install.SignInMethods) > 0 && minor >= 19
+					visible := install.Issue != "" && !e.draft.login && !inlineSignIn
+					last := n.Local(guidance, "info", func() domain.HarnessInfo { return info })
+					if visible {
+						*last = info
+					}
+					animatedContentHeight(c, guidance, visible, 240*time.Millisecond, func() float32 {
+						previous := *last
+						installation := previous.Installation
+						n.Column(c).FillWidth().PaddingY(8).Children(func() {
+							n.Text(c, installation.Guide).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+							v.agentGuidance(c, key, previous)
+						})
+						return 0
+					})
+				}
+			})
 		}
 		modelPane := n.Column(c.Key("model-configuration")).FillWidth().Clip()
 		animatedContentHeight(c, modelPane, !e.setup || e.tab == "模型", 180*time.Millisecond, func() float32 {
@@ -273,12 +271,7 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 								if e.draft.titleModel != "" && name == "自动" {
 									name = e.draft.titleModel
 								}
-								trigger := control(c, 5).FillWidth().Height(28).PaddingX(8).Radius(5).Border(1, t.Border).Label("标题生成").Disabled(disabled || info.State != domain.RuntimeReady).Children(func() {
-									n.Row(c).FillWidth().AlignItems(n.Baseline).Children(func() {
-										n.Text(c, name).SingleLine().FontSize(12).FixedLineHeight(20).Grow(1).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-										inlineSymbol(c, chevron, name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted)
-									})
-								})
+								trigger := configurationChoiceField(c, "标题生成", name, disabled || info.State != domain.RuntimeReady)
 								choices := []menuChoice{{id: "", name: "自动", choose: func() { e.draft.titleModel = "" }}}
 								for _, model := range info.Models {
 									choices = append(choices, menuChoice{id: model.ID, name: modelName(model), choose: func() { e.draft.titleModel = model.ID }})
@@ -302,7 +295,7 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 							serviceSpinner(c.Key("model-spinner"), caption, n.Font{Family: t.Font, Size: 12, Weight: 400}, t.TextMuted)
 						}
 						n.Text(c, caption).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().Tooltip(caption).TextColor(t.TextMuted)
-						if deviceAction(c, "重试").Label("重新读取模型").Disabled(disabled).Clicked() {
+						if configurationAction(c, "重试").Label("重新读取模型").Disabled(disabled).Clicked() {
 							v.recheckWelcomeAgent(key, info.ID)
 						}
 					})
@@ -310,6 +303,9 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 			}
 			return 0
 		})
+		if info.Capabilities.ToolServices && minor >= 22 && !e.setup {
+			n.Column(c.Key("tool-service-section")).FillWidth().Padding(sectionInset, 0, 0).Children(func() { v.agentToolServices(c, t, key, e, info, disabled) })
+		}
 		supported := domain.RuntimeOptionSupport{}
 		if install != nil {
 			supported = install.OptionsSupported
@@ -319,7 +315,7 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 				if !e.setup {
 					heading := control(c.Key("advanced-toggle"), 5).FillWidth().Height(28).Label("高级").Children(func() {
 						n.Row(c).FillWidth().AlignItems(n.Baseline).Children(func() {
-							n.Text(c, "高级").FontSize(14).FontWeight(500).FixedLineHeight(20).Grow(1)
+							n.Text(c, "高级").FontSize(configurationSectionSize).FontWeight(500).FixedLineHeight(configurationTitleLine).Grow(1)
 							angle := float32(-90)
 							if e.draft.advanced {
 								angle = 0
@@ -344,7 +340,7 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 								if e.setup {
 									label = "启动参数输入"
 								}
-								field := textField(c.Key("arguments"), &e.draft.arguments).FillWidth().Height(28).FontSize(12).Label(label).Placeholder("默认").Disabled(disabled)
+								field := configurationTextField(c.Key("arguments"), &e.draft.arguments).Label(label).Placeholder("默认").Disabled(disabled)
 								if e.setup {
 									field.Padding(4, 8).Background(t.Background)
 								}
@@ -352,7 +348,7 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 						}
 						if supported.Directory {
 							row(c, "配置目录", func() {
-								field := textField(c.Key("config-directory"), &e.draft.directory).FillWidth().Height(28).FontSize(12).Label("配置目录").Placeholder("默认").Disabled(disabled)
+								field := configurationTextField(c.Key("config-directory"), &e.draft.directory).Label("配置目录").Placeholder("默认").Disabled(disabled)
 								if e.setup {
 									field.Padding(4, 8).Background(t.Background)
 								}
@@ -363,7 +359,7 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 						}
 						if supported.Instructions {
 							row(c, "自定义提示词", func() {
-								n.TextAreaBase(c.Key("instructions"), &e.draft.instructions).FillWidth().Lines(3, 6).FontSize(12).FixedLineHeight(18).Padding(6, 9).Radius(5).Background(background).Border(1, t.Border).Label("自定义提示词").Placeholder("可选的默认提示词").Disabled(disabled)
+								configurationTextArea(c.Key("instructions"), &e.draft.instructions).Background(background).Label("自定义提示词").Placeholder("可选的默认提示词").Disabled(disabled)
 							})
 						}
 					})
@@ -383,12 +379,12 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 		actions := n.Column(c.Key("save-actions")).FillWidth().Clip()
 		animatedContentHeight(c, actions, changed, 180*time.Millisecond, func() float32 {
 			n.Row(c).FillWidth().Height(36).Justify(n.End).Gap(6).Children(func() {
-				if deviceAction(c, "取消").Disabled(e.busy).Clicked() {
+				if configurationAction(c, "取消").Disabled(e.busy).Clicked() {
 					advanced, login := e.draft.advanced, e.draft.login
 					e.edit(info)
 					e.draft.advanced, e.draft.login = advanced, login
 				}
-				if deviceAction(c, "保存").Label("保存 " + info.Name + " 路径").Disabled(disabled).Clicked() {
+				if configurationAction(c, "保存").Label("保存 " + info.Name + " 路径").Disabled(disabled).Clicked() {
 					if err != nil {
 						e.error = err.Error()
 						return
@@ -430,15 +426,13 @@ func runtimeOptionsEqual(a, b domain.RuntimeOptions) bool {
 }
 
 func (v *View) runtimeEnvironmentFields(c *n.Context, t *n.Theme, e *deviceAgentEditor, disabled bool) {
-	fontSize := float32(11)
 	background := t.Surface
 	if e.setup {
-		fontSize = 12
 		background = t.Background
 	}
 	n.Column(c).FillWidth().Children(func() {
 		n.Row(c).FillWidth().Justify(n.End).Children(func() {
-			if deviceAction(c, "添加变量").PaddingX(0).Disabled(disabled).Clicked() {
+			if configurationAction(c, "添加变量").PaddingX(0).Disabled(disabled).Clicked() {
 				e.draft.nextID++
 				e.draft.environment = append(e.draft.environment, runtimeEnvironmentDraft{id: e.draft.nextID, added: true})
 			}
@@ -461,15 +455,15 @@ func (v *View) runtimeEnvironmentFields(c *n.Context, t *n.Theme, e *deviceAgent
 			n.Inert(frame, !entry.removed.IsZero())
 			frame.Children(func() {
 				n.Row(c).Absolute().Top(0).Left(0).Right(0).Height(36).Gap(4).AlignItems(n.Center).Children(func() {
-					textField(c, &entry.Name).MinWidth(0).Grow(1).Height(28).FontSize(fontSize).Background(background).Label("环境变量名").Placeholder("变量名").Disabled(disabled)
-					value := textField(c, &entry.Value).MinWidth(0).Grow(1).Height(28).FontSize(fontSize).Background(background).Label("环境变量值").Placeholder("值").Disabled(disabled)
+					configurationTextField(c, &entry.Name).MinWidth(0).Grow(1).Background(background).Label("环境变量名").Placeholder("变量名").Disabled(disabled)
+					value := configurationTextField(c, &entry.Value).MinWidth(0).Grow(1).Background(background).Label("环境变量值").Placeholder("值").Disabled(disabled)
 					if !entry.reveal {
 						value.Password()
 					}
-					if iconButton(c, modelEye, "显示环境变量值").Size(24, 28).Disabled(disabled).Clicked() {
+					if iconButton(c, modelEye, "显示环境变量值").Size(configurationControlHeight, configurationControlHeight).Disabled(disabled).Clicked() {
 						entry.reveal = !entry.reveal
 					}
-					if iconButton(c, closeIcon, "删除环境变量").Size(24, 28).Disabled(disabled).Clicked() {
+					if iconButton(c, closeIcon, "删除环境变量").Size(configurationControlHeight, configurationControlHeight).Disabled(disabled).Clicked() {
 						entry.removed = c.Now()
 					}
 				})

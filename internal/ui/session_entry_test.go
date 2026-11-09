@@ -123,7 +123,7 @@ func TestHomeEntryFollowsAcceptedCatalogThenConfirmedEvent(t *testing.T) {
 	m.Snapshot.Sessions = append(m.Snapshot.Sessions, session)
 	ui.Frame()
 	firstRow, _ := ui.Find("Following workspace")
-	if m.SessionID != "" || math.Abs(float64(firstRow.Y-before.Y)) > .5 {
+	if m.SessionID != session.ID || math.Abs(float64(firstRow.Y-before.Y)) > .5 {
 		t.Fatal("accepted catalog inserts the sidebar row without its entrance")
 	}
 	ui.Advance(400 * time.Millisecond)
@@ -142,8 +142,8 @@ func TestHomeEntryFollowsAcceptedCatalogThenConfirmedEvent(t *testing.T) {
 	confirmedRow, _ := ui.Find("Following workspace")
 	ui.Advance(400 * time.Millisecond)
 	endHeading := headingInk(ui.Image())
-	if m.SessionID != session.ID || endHeading < 1000 || firstHeading > endHeading/10 {
-		t.Fatalf("later confirmed event skips heading entrance: first=%d end=%d", firstHeading, endHeading)
+	if m.SessionID != session.ID || endHeading < 1000 || firstHeading != endHeading {
+		t.Fatalf("confirmation replays an already accepted heading: first=%d end=%d", firstHeading, endHeading)
 	}
 	if math.Abs(float64(confirmedRow.Y-fullRow.Y)) > .5 {
 		t.Fatal("confirmation restarts an already visible sidebar entrance")
@@ -162,6 +162,8 @@ func TestRejectedAcceptedSessionDoesNotReplayHeadingLater(t *testing.T) {
 	ui.Advance(100 * time.Millisecond)
 	op.State = "rejected"
 	m.ApplyOperation(op)
+	ui.Frame()
+	v.home()
 	ui.Frame()
 	m.SessionID = "created"
 	ui.Frame()

@@ -111,7 +111,7 @@ func TestWelcomeAgentConfigurationAndAdmissionStayDeviceScoped(t *testing.T) {
 	}
 	ui.Advance(time.Second)
 	ui.Click("高级")
-	ui.Advance(time.Millisecond)
+	ui.Advance(configurationTabDuration)
 	if err := ui.Click("启动参数输入"); err != nil {
 		t.Fatal(err)
 	}

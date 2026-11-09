@@ -18,6 +18,9 @@ import (
 // whitelist projection; neither raw config nor any credential crosses it.
 type nativeConfiguration struct {
 	Config struct {
+		ToolServices map[string]struct {
+			Enabled *bool `json:"enabled"`
+		} `json:"mcp_servers"`
 		CredentialsStore string                    `json:"cli_auth_credentials_store"`
 		ForcedLogin      string                    `json:"forced_login_method"`
 		Provider         string                    `json:"model_provider"`

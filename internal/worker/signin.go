@@ -240,6 +240,9 @@ func (s *Server) signInUsesSavedConfiguration(in protocol.SignInInput) bool {
 	return strings.TrimSpace(config.Executable) == s.runtimeSettings[in.HarnessID] && (config.Options == nil || reflect.DeepEqual(*config.Options, options))
 }
 func (s *Server) hasActiveSignIn() bool {
+	if s.activeToolAuthorization("") {
+		return true
+	}
 	s.signInMu.Lock()
 	defer s.signInMu.Unlock()
 	for _, entry := range s.signIns {

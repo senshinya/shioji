@@ -2,7 +2,6 @@ package ui
 
 import (
 	"encoding/json"
-	"github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
 	"path"
 	"shioji/internal/app"
@@ -13,9 +12,9 @@ import (
 )
 
 type workspaceEditor struct {
-	Workspace                        domain.Workspace
-	Main, AddPath, Connection, Error string
-	Busy                             bool
+	Workspace               domain.Workspace
+	Main, Connection, Error string
+	Busy                    bool
 }
 type sessionRename struct {
 	Session                  domain.Session
@@ -329,28 +328,11 @@ func (v *View) workspaceSettingsView(c *n.Context, t *n.Theme) {
 							}
 						})
 					}
-					if e.Connection != "local" {
-						n.Row(c.Key("add-directory")).FillWidth().Gap(8).AlignItems(n.Center).Transition(positionMotion).Children(func() {
-							textField(c.Key("add-path"), &e.AddPath).FillWidth().Grow(1).Height(30).FontSize(12).Label("添加目录路径").Placeholder("该设备上的绝对路径")
-							if ghost(c, "添加目录").Disabled(e.Busy || strings.TrimSpace(e.AddPath) == "").Clicked() {
-								if !path.IsAbs(strings.TrimSpace(e.AddPath)) {
-									e.Error = "请填写目标设备上的绝对路径"
-								} else {
-									v.addWorkspaceFolders(e, []string{strings.TrimSpace(e.AddPath)})
-									e.AddPath = ""
-								}
-							}
-						})
-					} else {
-						if ghost(c.Key("add-directory"), "添加目录").Transition(positionMotion).Disabled(e.Busy).Clicked() {
-							folders, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "添加工作区目录", Directory: true, Multiple: true})
-							if err != nil {
-								e.Error = err.Error()
-							} else {
-								v.addWorkspaceFolders(e, folders)
-							}
+					n.Row(c.Key("add-directory")).FillWidth().Justify(n.End).Transition(positionMotion).Children(func() {
+						if iconButton(c, plus, "添加目录").Tooltip("添加文件夹").Disabled(e.Busy).Clicked() {
+							v.chooseWorkspaceDirectory(e.Connection, "选择附加目录", e.Main, true, func() bool { return v.workspaceEditor == e && !e.Busy }, func(paths []string) { v.addWorkspaceFolders(e, paths) }, func(err error) { e.Error = err.Error() })
 						}
-					}
+					})
 				})
 				if e.Error != "" {
 					n.Text(c.Key("workspace-error"), e.Error).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Transition(rowMotion)
