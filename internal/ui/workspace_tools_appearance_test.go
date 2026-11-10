@@ -69,10 +69,40 @@ func TestWorkspaceToolsNativeAppearance(t *testing.T) {
 				ui.Advance(100 * time.Millisecond)
 				saveNativeSkillImage(t, ui, name+"-sliding.png")
 				ui.Advance(time.Second)
-				if !ui.HasText("配置文件") {
+				if _, ok := ui.Find("MCP 配置来源路径"); !ok {
 					t.Fatal("detail missing", ui.Texts())
 				}
 				saveNativeSkillImage(t, ui, name+"-detail.png")
+				if err := ui.Click("返回 MCP 列表"); err != nil {
+					t.Fatal(err)
+				}
+				ui.Advance(time.Second)
+				if err := ui.Click("查看 MCP：Context7"); err != nil {
+					t.Fatal(err)
+				}
+				ui.Advance(time.Second)
+				saveNativeSkillImage(t, ui, name+"-http-detail.png")
+				u := v.workspaceToolsFor(v.workspaceEditor, v.workspaceEditor.Harness)
+				u.detailID = "source-notes"
+				for i := range u.catalog.Entries {
+					if u.catalog.Entries[i].EntryID == "source-notes" {
+						u.catalog.Entries[i].Configuration = &domain.ToolServiceConfiguration{Enabled: false}
+					}
+				}
+				ui.Frame()
+				ui.Advance(time.Second)
+				if !ui.HasText("树笔记") || !ui.HasText("已停用") {
+					t.Fatal("partial source screenshot has stale content", ui.Texts())
+				}
+				saveNativeSkillImage(t, ui, name+"-partial-detail.png")
+				u.detailID = "source-project"
+				u.catalog.Entries[0].ConfigurationPath = "/Users/shinya/Projects/红黑树与边界条件/very-long-workspace-directory/another-long-nested-folder/project-configuration/.codex/config.toml"
+				ui.Frame()
+				ui.Advance(time.Second)
+				if !ui.HasText(u.catalog.Entries[0].ConfigurationPath) {
+					t.Fatal("long path screenshot has stale content", ui.Texts())
+				}
+				saveNativeSkillImage(t, ui, name+"-long-path-detail.png")
 			})
 		}
 	}

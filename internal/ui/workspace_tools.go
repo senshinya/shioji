@@ -23,7 +23,6 @@ type workspaceToolsUI struct {
 	request                                                    uint64
 	catalog                                                    domain.ToolServiceInspection
 	listScroll, detailScroll                                   n.ScrollState
-	copiedUntil                                                time.Time
 }
 
 func (v *View) workspaceToolsFor(e *workspaceEditor, harness string) *workspaceToolsUI {
@@ -457,107 +456,117 @@ func (v *View) workspaceToolDetail(c *n.Context, t *n.Theme, u *workspaceToolsUI
 		}
 	}
 	n.Column(c).FillWidth().FillHeight().Grow(1).Children(func() {
-		n.Row(c).FillWidth().Height(28).Margin(0, 0, 20, 0).Gap(8).AlignItems(n.Center).Children(func() {
-			back := control(c.Key("back"), 5).Height(28).Padding(0).Label("返回 MCP 列表").Children(func() { inlineIconText(c, deviceBackIcon, "MCP", n.Font{Family: t.Font, Size: 13}, 14, 6, t.TextMuted) })
-			if back.Clicked() {
-				u.detailID = ""
-			}
-			n.Spacer(c).Grow(1)
+		v.workspaceToolFeedback(c, t, u)
+		n.Scroll(c.Key("detail:" + u.slot)).FillWidth().FillHeight().Grow(1).TrackScroll(&u.detailScroll).Label("MCP 来源详情").Children(func() {
+			name := "MCP"
 			if entry != nil {
-				n.Text(c, workspaceToolScopeName(entry.Scope)).FontSize(11).TextColor(t.TextMuted)
-				if entry.Scope == domain.ToolServiceUser && v.workspaceToolCanManage(u) {
+				name = entry.Name
+			}
+			n.Row(c).FillWidth().MinHeight(28).Gap(8).AlignItems(n.Baseline).Padding(0, 0, 20, 0).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).Margin(0, 0, 20, 0).Children(func() {
+				back := control(c.Key("back"), 5).Size(28, 28).Padding(0).MarginStart(-6).MarginEnd(-6).Label("返回 MCP 列表").Tooltip("返回 MCP 列表").Children(func() {
+					inlineSymbol(c, deviceBackIcon, name, n.Font{Family: t.Font, Size: 16, Weight: 500}, 16, t.TextMuted).FixedLineHeight(28)
+				})
+				if back.Clicked() {
+					u.detailID = ""
+				}
+				n.Text(c, name).FontSize(16).FontWeight(500).FixedLineHeight(28).MinWidth(0).Shrink(1).SingleLine().Ellipsis("…")
+				if entry != nil {
+					n.Text(c, workspaceToolState(u, *entry)).FontSize(12).FixedLineHeight(20).MarginStart(8).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+				}
+				n.Spacer(c).Grow(1)
+				if entry != nil && entry.Scope == domain.ToolServiceUser && v.workspaceToolCanManage(u) {
 					if ghost(c, "在设备设置中管理").Label("在设备设置中管理 MCP").Height(28).Padding(0).FontSize(12).Disabled(!v.deviceState(u.key).Connected).Clicked() {
 						v.openWorkspaceAgentManagement(u.key, u.harness, "MCP")
 					}
 				}
-			}
-		})
-		v.workspaceToolFeedback(c, t, u)
-		n.Scroll(c.Key("detail:" + u.slot)).FillWidth().FillHeight().Grow(1).TrackScroll(&u.detailScroll).Label("MCP 来源详情").Children(func() {
+			})
 			if entry == nil {
 				n.Text(c, "服务已不在当前来源中，请返回列表").FontSize(12).TextColor(t.TextMuted)
 				return
 			}
-			n.Row(c).FillWidth().MinHeight(28).Gap(8).AlignItems(n.Baseline).Margin(0, 0, 24, 0).Children(func() {
-				inlineIconText(c, toolServiceIcon, entry.Name, n.Font{Family: t.Font, Size: 20}, 20, 8, t.Text).Grow(1).MinWidth(0)
-				n.Text(c, workspaceToolState(u, *entry)).FontSize(12).TextColor(t.TextMuted)
-			})
-			field := func(label, value string, copyPath bool) {
-				n.Row(c.Key(label)).FillWidth().MinHeight(48).PaddingY(10).Gap(16).AlignItems(n.Baseline).BorderWidth(.5, 0, 0, 0).BorderColor(t.Border).Children(func() {
-					width, _ := c.Size()
-					column := float32(112)
-					if width < 620 {
-						column = 68
-					}
-					n.Text(c, label).Width(column).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
-					n.Text(c, value).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).Selectable()
-					if copyPath {
+			n.Column(c.Key("metadata")).FillWidth().Gap(4).Children(func() {
+				field := func(key, label, value string, code, copyPath bool) {
+					n.Row(c.Key(key)).FillWidth().MinHeight(36).PaddingY(4).Gap(16).AlignItems(n.Start).Children(func() {
+						n.Text(c, label).Width(88).FontSize(12).FixedLineHeight(28).TextColor(t.TextMuted)
+						text := n.Text(c, value).FontSize(13).FixedLineHeight(28).Grow(1).MinWidth(0).Selectable()
+						if code {
+							text.Font("monospace").FontSize(12)
+						}
+						if !copyPath {
+							n.Spacer(c).Width(28)
+							return
+						}
+						copy := control(c.Key("copy"), 6).Size(28, 28).MarginEnd(-6).Label("复制 MCP 配置路径").Tooltip("复制配置路径")
+						copied := n.Local(copy, "copied-until", func() time.Time { return time.Time{} })
 						glyph := copyReplyIcon
-						if c.Now().Before(u.copiedUntil) {
+						if c.Now().Before(*copied) {
 							glyph = check
-							c.After(u.copiedUntil.Sub(c.Now()))
+							c.After(copied.Sub(c.Now()))
 						}
-						if iconButton(c, glyph, "复制 MCP 配置路径").MarginEnd(-6).Clicked() {
+						copy.Children(func() {
+							inlineSymbol(c, glyph, value, n.Font{Family: "monospace", Size: 12}, 16, t.TextMuted).FixedLineHeight(28)
+						})
+						if copy.Clicked() {
 							c.WriteClipboard(value)
-							u.copiedUntil = c.Now().Add(2500 * time.Millisecond)
+							*copied = c.Now().Add(2500 * time.Millisecond)
+						}
+					})
+				}
+				source := func(item domain.InspectedToolService) {
+					if u.session == "" {
+						field("scope:"+item.EntryID, "来源", workspaceToolScopeName(item.Scope), false, false)
+					}
+					if item.ConfigurationPath != "" {
+						n.Column(c.Key("source:" + item.EntryID)).FillWidth().Label("MCP 配置来源路径").Children(func() {
+							label := "配置文件"
+							if u.session != "" {
+								label = "当前来源"
+							}
+							field("path", label, item.ConfigurationPath, true, true)
+						})
+					}
+				}
+				if u.session == "" {
+					source(*entry)
+				} else {
+					for _, item := range u.catalog.Entries {
+						if item.ID == entry.ID && item.IgnoredReason == "" {
+							source(item)
 						}
 					}
-				})
-			}
-			if u.session == "" {
-				field("配置文件", entry.ConfigurationPath, true)
-			} else {
-				var paths []string
-				for _, source := range u.catalog.Entries {
-					if source.ID == entry.ID && source.ConfigurationPath != "" && source.IgnoredReason == "" {
-						paths = append(paths, source.ConfigurationPath)
+				}
+				if entry.Configuration != nil && u.session == "" {
+					cfg := entry.Configuration
+					switch cfg.Transport {
+					case "command":
+						field("transport", "连接", "stdio", false, false)
+						if entry.CommandHidden {
+							field("command", "命令", "值已隐藏", false, false)
+						} else if cfg.Command != "" {
+							field("command", "命令", cfg.Command, true, false)
+						}
+					case "http":
+						field("transport", "连接", "HTTP", false, false)
+						if cfg.URL != "" {
+							field("url", "地址", cfg.URL, true, false)
+						}
+					}
+					if entry.ArgumentCount > 0 {
+						field("arguments", "参数", strconv.Itoa(entry.ArgumentCount)+" 个（值已隐藏）", false, false)
+					}
+					if cfg.StartupSeconds > 0 {
+						field("timeout", "启动超时", strconv.FormatFloat(cfg.StartupSeconds, 'f', -1, 64)+" 秒", false, false)
 					}
 				}
-				if len(paths) > 0 {
-					field("当前配置来源", strings.Join(paths, "\n"), false)
+				if entry.IgnoredReason != "" {
+					field("ignored", "未加载原因", entry.IgnoredReason, false, false)
 				}
-			}
-			if entry.Configuration != nil && u.session == "" {
-				cfg := entry.Configuration
-				transport := "stdio"
-				endpoint := strings.Join(append([]string{cfg.Command}, cfg.Arguments...), " ")
-				if entry.CommandHidden {
-					endpoint = "值已隐藏"
-				}
-				if cfg.Transport == "http" {
-					transport = "HTTP"
-					endpoint = cfg.URL
-				}
-				if cfg.Transport == "" {
-					transport = "未设置"
-				}
-				field("连接方式", transport, false)
-				if endpoint != "" {
-					field("命令 / 地址", endpoint, false)
-				}
-				if entry.ArgumentCount > 0 {
-					field("参数", strconv.Itoa(entry.ArgumentCount)+" 个（值已隐藏）", false)
-				}
-				label := "已启用"
-				if !cfg.Enabled {
-					label = "已停用"
-				}
-				if !entry.EnabledConfigured {
-					label = "未设置"
-				}
-				field("启用状态", label, false)
-			}
-			if entry.IgnoredReason != "" {
-				field("未加载原因", entry.IgnoredReason, false)
-			}
-			if u.session != "" {
-				field("会话状态", workspaceToolState(u, *entry), false)
-			}
+			})
 			if u.session != "" && u.catalog.RuntimeKnown && u.phase == toolServiceLoaded && entry.State == domain.ToolServiceReady {
-				n.Text(c, "工具 · "+strconv.Itoa(entry.Tools)).FontSize(12).TextColor(t.TextMuted).Margin(28, 0, 8, 0)
+				n.Text(c, "工具 · "+strconv.Itoa(entry.Tools)).FontSize(12).TextColor(t.TextMuted).Margin(24, 0, 8, 0)
 				for _, tool := range entry.Definitions {
-					n.Column(c.Key(tool.Name)).FillWidth().PaddingY(10).Gap(3).BorderWidth(.5, 0, 0, 0).BorderColor(t.Border).Children(func() {
-						n.Text(c, tool.Name).FontSize(12).Selectable()
+					n.Column(c.Key(tool.Name)).FillWidth().PaddingY(8).Gap(4).BorderWidth(.5, 0, 0, 0).BorderColor(t.Border).Children(func() {
+						n.Text(c, tool.Name).Font("monospace").FontSize(12).FixedLineHeight(20).Selectable()
 						if tool.Description != "" {
 							n.Text(c, tool.Description).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
 						}

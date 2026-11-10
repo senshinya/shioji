@@ -64,6 +64,13 @@ func TestWorkspaceToolsNativeStates(t *testing.T) {
 					t.Fatal(ui.Texts())
 				}
 				saveNativeSkillImage(t, ui, "workspace-mcp-"+scenario+map[bool]string{false: "-light", true: "-dark"}[dark]+".png")
+				if scenario == "session" {
+					if err := ui.Click("查看 MCP：filesystem"); err != nil {
+						t.Fatal(err)
+					}
+					ui.Advance(time.Second)
+					saveNativeSkillImage(t, ui, "workspace-mcp-session-detail"+map[bool]string{false: "-light", true: "-dark"}[dark]+".png")
+				}
 			})
 		}
 	}
