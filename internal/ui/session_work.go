@@ -37,6 +37,7 @@ type workDetailUI struct {
 	lastY             float32
 	stopping          bool
 	markdown          markdown.Options
+	markdownTheme     markdown.Theme
 }
 type workPanelUI struct {
 	selected string
@@ -89,21 +90,24 @@ func (v *View) displayedWork(w domain.WorkActivity) domain.WorkActivity {
 	}
 	return w
 }
-func (v *View) workStatus(c *n.Context, t *n.Theme, w domain.WorkActivity, label string) {
-	font := n.Font{Family: t.Font, Size: 12, Weight: 400}
-	if r := v.pendingWorkRequest(w); r != nil {
-		icon := questionIcon
-		if r.Kind == "approval" || r.Kind == "permissions" {
-			icon = shieldIcon
+func (v *View) workStatus(c *n.Context, t *n.Theme, w domain.WorkActivity, label string, font n.Font) {
+	// A shared slot keeps both the first-line text and detail caption stationary
+	// when a small dot is replaced by a question, shield or completion check.
+	n.Row(c.Key("work-status")).Width(14).Height(20).Shrink(0).Justify(n.Center).AlignItems(n.Baseline).Children(func() {
+		if r := v.pendingWorkRequest(w); r != nil {
+			icon := questionIcon
+			if r.Kind == "approval" || r.Kind == "permissions" {
+				icon = shieldIcon
+			}
+			inlineSymbol(c, icon, label, font, 14, t.TextMuted)
+		} else if w.Active() {
+			statusDot(c, label, font, t.Success, true)
+		} else if w.State == "completed" || w.State == "stopped" {
+			inlineSymbol(c, check, label, font, 14, t.TextMuted)
+		} else {
+			statusDot(c, label, font, t.TextMuted, false)
 		}
-		inlineSymbol(c, icon, label, font, 14, t.TextMuted)
-	} else if w.Active() {
-		statusDot(c, label, font, t.Success, true)
-	} else if w.State == "completed" || w.State == "stopped" {
-		inlineSymbol(c, check, label, font, 14, t.TextMuted)
-	} else {
-		statusDot(c, label, font, t.TextMuted, false)
-	}
+	})
 }
 func workDuration(w domain.WorkActivity, now time.Time) string {
 	ms := int64(-1)
@@ -198,11 +202,11 @@ func (v *View) sessionWorkBody(c *n.Context, t *n.Theme, kind string, all []doma
 					c.AnimationFrame()
 				}
 			}
-			row := control(c, 5).FillWidth().Height(60*progress).Opacity(progress).Clip().MarginX(6).Padding(8, 6).Label(name)
+			row := control(c, 5).FillWidth().Height(60*progress).Opacity(progress).Clip().Padding(8, 6).Label(name)
 			row.Children(func() {
 				n.Row(c).FillWidth().Gap(8).AlignItems(n.Start).Children(func() {
-					v.workStatus(c, t, w, w.Title)
-					n.Column(c).Grow(1).Gap(2).Children(func() {
+					v.workStatus(c, t, w, w.Title, n.Font{Family: t.Font, Size: 12, Weight: 400})
+					n.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 						n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
 							title := n.Text(c, w.Title).Grow(1).MinWidth(0).SingleLine().FontSize(12).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
 							if w.Active() && v.pendingWorkRequest(w) == nil {
@@ -223,14 +227,14 @@ func (v *View) sessionWorkBody(c *n.Context, t *n.Theme, kind string, all []doma
 					if duration := workDuration(w, c.Now()); duration != "" {
 						n.Text(c, duration).Font("Menlo").FontSize(10).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
 					}
-					inlineSymbol(c, disclosureRight, w.Title, n.Font{Family: t.Font, Size: 12}, 12, t.TextMuted)
+					inlineSymbol(c, disclosureRight, w.Title, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted).Shrink(0)
 				})
 			})
 			if row.Clicked() {
 				p.selected = w.ID
 				v.readSessionWork(w, p.detail(w.ID), false)
 			}
-		}).FillWidth().FillHeight().Grow(1)
+		}).FillWidth().FillHeight().Grow(1).PaddingX(6)
 	}, false)
 }
 func (v *View) readSessionWork(w domain.WorkActivity, u *workDetailUI, force bool) {
@@ -318,15 +322,23 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 		w.Brief = detail.Work.Brief
 	}
 	n.Row(c.Key("work-detail-header")).FillWidth().Shrink(0).Height(36).PaddingX(12).Gap(6).AlignItems(n.Center).Children(func() {
-		if iconButton(c, workBackIcon, "返回"+inspectorWorkName(kind)+"列表").Clicked() {
+		back := n.ButtonBase(c.Key("work-detail-back")).Height(28).Grow(1).MinWidth(0).Justify(n.Start).Label("返回" + inspectorWorkName(kind) + "列表").Description(w.Title).Tooltip(w.Title)
+		color := textHoverColor(c, back, t.TextMuted)
+		back.Children(func() {
+			inlineIconText(c, workBackIcon, w.Title, n.Font{Family: t.Font, Size: 12, Weight: 400}, 16, 0, color).TextColor(t.Text).MinWidth(0).Grow(1)
+		})
+		if back.Clicked() {
 			p.selected = ""
 		}
-		n.Text(c, w.Title).Grow(1).SingleLine().FontSize(12).Tooltip(w.Title)
-		v.workStatus(c, t, w, v.workLabel(w))
-		label := n.Text(c, v.workLabel(w)).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
-		if w.Active() && v.pendingWorkRequest(w) == nil {
-			shimmer(c, label, t.TextMuted, t.Text)
-		}
+		n.Row(c.Key("work-detail-state")).Height(20).Gap(6).AlignItems(n.Baseline).Children(func() {
+			text := v.workLabel(w)
+			font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+			v.workStatus(c, t, w, text, font)
+			label := n.Text(c, text).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+			if w.Active() && v.pendingWorkRequest(w) == nil {
+				shimmer(c, label, t.TextMuted, t.Text)
+			}
+		})
 	})
 	if u.placed && !u.scroll.Scrolling() && u.scroll.Y != u.lastY {
 		u.following = u.scroll.MaxY-u.scroll.Y < 24
@@ -345,6 +357,13 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 	}
 
 	u.syncStreams(c, detail, v.Model.ConnectionEpoch)
+	u.markdownTheme = *v.md.Theme
+	u.markdownTheme.FontSize = 12
+	u.markdownTheme.LineHeight = 20.0 / 12
+	u.markdownTheme.CodeSize = 11.0 / 12
+	u.markdownTheme.BlockSpacing = 8.0 / 12
+	u.markdown.Theme = &u.markdownTheme
+	u.markdown.WrapCode = true
 	port.Children(func() {
 		n.Column(c).FillWidth().Padding(8, 12, 12, 12).Gap(12).Children(func() {
 			metadata := []string{}
@@ -367,7 +386,7 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 						n.Text(c, w.Brief).Grow(1).MinWidth(0).Font(outputFont).FontSize(11).FixedLineHeight(18).TextColor(outputColor).Selectable()
 					})
 				} else {
-					n.Text(c, w.Brief).AlignSelf(n.Start).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(t.Surface).Selectable()
+					n.Text(c, w.Brief).AlignSelf(n.End).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(userBubble(t)).Selectable()
 				}
 			}
 			if detail.Truncated {
@@ -391,14 +410,7 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 				}
 				n.Column(c.Key("work-item:" + item.ID)).FillWidth().Gap(6).Transition(resultBlockMotion(c)).Children(func() {
 					if item.Kind == "assistant" || item.Kind == "reasoning" {
-						if u.markdown.Theme == nil {
-							u.markdown = markdown.Options{Theme: v.md.Theme, WrapCode: true}
-							u.markdown.OnRevealState = nil
-							u.markdown.Reveal = &markdown.Reveal{Unit: markdown.ByCharacter, Fade: 180 * time.Millisecond, Smooth: true}
-						}
-						if c.Preferences().ReduceMotion {
-							u.markdown.Reveal = &markdown.Reveal{Unit: markdown.AtOnce, Fade: -1}
-						}
+
 						initialized := n.Local(n.Column(c.Key("mount")), "seeded", func() bool { return false })
 						streaming := stream != nil && stream.live() && (!item.Final || stream.changedAt.Equal(c.Now()) || stream.fresh())
 						if !*initialized && (stream == nil || !stream.fresh()) {
@@ -418,6 +430,8 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 						} else {
 							markdown.View(c.Key("body"), item.Text, &u.markdown).FillWidth().FontSize(12)
 						}
+					} else if item.Kind == "user" {
+						n.Text(c, item.Text).AlignSelf(n.End).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(userBubble(t)).Selectable()
 					} else if item.Kind == "request" {
 						v.requestSource(c, t, item, true)
 					} else if item.Kind == "request_result" {

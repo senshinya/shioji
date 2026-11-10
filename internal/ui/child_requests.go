@@ -94,9 +94,11 @@ func (v *View) requestOrigin(c *n.Context, t *n.Theme, r domain.PendingRequest) 
 	source := *saved
 	title := v.requestWork(source.WorkID).Title
 	textWidth, _ := c.MeasureText(0, n.Span{Text: title, Font: t.Font, Size: 11, Weight: 400})
+	const iconSize float32 = 12
+	contentWidth := min(float32(180), textWidth+8+5+iconSize)
 	target := float32(0)
 	if r.WorkID != "" {
-		target = min(float32(180), textWidth+24)
+		target = contentWidth
 	}
 	width := slot.AnimateTo("source-width", target, motionAnimation(c, 180*time.Millisecond))
 	slot.Width(width)
@@ -104,13 +106,13 @@ func (v *View) requestOrigin(c *n.Context, t *n.Theme, r domain.PendingRequest) 
 		if source.WorkID == "" {
 			return
 		}
-		button := n.ButtonBase(c.Key("request-origin")).Width(min(float32(180), textWidth+24)).Height(24).MinWidth(0).Shrink(0).PaddingX(4).Label("查看来源：" + title).Tooltip(title)
+		button := n.ButtonBase(c.Key("request-origin")).Width(contentWidth).Height(24).MinWidth(0).Shrink(0).PaddingX(4).Label("查看来源：" + title).Tooltip(title)
 		n.Inert(button, r.WorkID == "")
 		color := textHoverColor(c, button, t.TextMuted)
 		button.Children(func() {
 			n.Row(c).FillWidth().Gap(5).MinWidth(0).AlignItems(n.Baseline).Children(func() {
-				n.Text(c, title).SingleLine().MinWidth(0).Grow(1).FontSize(11).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
-				inlineSymbol(c, referenceExternalIcon, title, n.Font{Family: t.Font, Size: 11}, 11, color)
+				n.Text(c, title).SingleLine().MinWidth(0).Grow(1).FontSize(11).FontWeight(400).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+				inlineSymbol(c, referenceExternalIcon, title, n.Font{Family: t.Font, Size: 11, Weight: 400}, iconSize, color)
 			})
 		})
 		if button.Clicked() && r.WorkID != "" {
@@ -174,7 +176,7 @@ func (v *View) workRequestLink(c *n.Context, t *n.Theme, w domain.WorkActivity) 
 	button := n.ButtonBase(c).Height(20).Shrink(0).Label("处理子 Agent 请求：" + w.Title).Transition(resultBlockMotion(c))
 	color := textHoverColor(c, button, t.TextMuted)
 	button.Children(func() {
-		n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+		n.Text(c, label).FontSize(11).FontWeight(400).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
 	})
 	if button.Clicked() {
 		v.openSourceRequest(domain.Item{ID: "request:" + r.ID})
@@ -240,7 +242,7 @@ func (u *workDetailUI) syncStreams(c *n.Context, d domain.WorkDetail, epoch stri
 }
 
 // Source links use the same baseline metrics as the existing file-reference UI.
-var referenceExternalIcon = svg("M11 3h6v6M17 3l-8 8M8 4H4v12h12v-4")
+var referenceExternalIcon = svg("M10.5 3.5h6v6M16.5 3.5l-8 8M7.5 4.5h-4v12h12v-4")
 
 // Snapshot hydration is history. Keep only increments actually observed on the
 // client after this read started live, including those merged across the read.
