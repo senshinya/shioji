@@ -662,19 +662,20 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		if s.currentRuntime(in.SessionID) == nil {
+		s.dispatchMu.Lock()
+		defer s.dispatchMu.Unlock()
+		runtime := s.currentRuntime(in.SessionID)
+		if runtime == nil || runtime.Readiness().State != "ready" {
 			return nil, errors.New("runtime unavailable")
 		}
-		detail, err := s.store.Session(in.SessionID, 0, 1)
+		session, err := s.store.ValidateAnswer(in.SessionID, in.Answer)
 		if err != nil {
 			return nil, err
 		}
-		for _, req := range detail.Requests {
-			if req.ID == in.Answer.RequestID {
-				return nil, s.currentRuntime(in.SessionID).Respond(in.Answer)
-			}
+		if !runtime.Observes(session) {
+			return nil, errors.New("请求的运行环境已变化")
 		}
-		return nil, errors.New("request does not belong to this session")
+		return nil, runtime.Respond(in.Answer)
 	case "turn.interrupt":
 		in, err := decode[struct {
 			SessionID string `json:"sessionId"`

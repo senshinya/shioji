@@ -607,7 +607,18 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		if e.Item == nil {
 			return e, errors.New("missing item")
 		}
+		if e.Item.WorkID != "" {
+			if e.Item.Kind != "request_result" {
+				return e, errors.New("unsupported sourced item")
+			}
+			if err = requestWork(tx, session, domain.PendingRequest{WorkID: e.Item.WorkID, TurnID: e.Item.TurnID}); err != nil {
+				return e, err
+			}
+		}
 		if err = putItem(tx, sid, e.Item); err != nil {
+			return e, err
+		}
+		if err = mirrorRequestWork(tx, sid, &e, *e.Item); err != nil {
 			return e, err
 		}
 	case "item.delta":
@@ -633,15 +644,21 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		if e.Request == nil {
 			return e, errors.New("missing request")
 		}
+		if err = validateRequest(tx, session, *e.Request); err != nil {
+			return e, err
+		}
 		e.Request.SessionID = sid
 		if _, err = tx.Exec("INSERT INTO requests VALUES(?,?,?) ON CONFLICT(session_id,id) DO UPDATE SET body=excluded.body", sid, e.Request.ID, blob(e.Request)); err != nil {
 			return e, err
 		}
-		anchor := domain.Item{ID: "request:" + e.Request.ID, TurnID: e.Request.TurnID, Kind: "request", Text: e.Request.Title, Status: string(e.Request.State), Final: e.Request.State != "pending"}
+		anchor := domain.Item{WorkID: e.Request.WorkID, ID: "request:" + e.Request.ID, TurnID: e.Request.TurnID, Kind: "request", Text: e.Request.Title, Status: string(e.Request.State), Final: e.Request.State != "pending"}
 		if err = putItem(tx, sid, &anchor); err != nil {
 			return e, err
 		}
 		e.Item = &anchor
+		if err = mirrorRequestWork(tx, sid, &e, anchor); err != nil {
+			return e, err
+		}
 	case "turn":
 		if e.Turn == nil {
 			return e, errors.New("missing turn")
