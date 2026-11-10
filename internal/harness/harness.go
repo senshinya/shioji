@@ -36,6 +36,13 @@ type SkillProvider interface {
 	Skills(context.Context, domain.LaunchContext) (domain.SkillCatalog, error)
 }
 
+// ContextCompactor changes model context without adding a user message.
+// Inspection is read-only and must never repeat an uncertain request.
+type ContextCompactor interface {
+	Compact(context.Context, domain.Session) error
+	InspectCompaction(context.Context, domain.Session, domain.ContextAction) (domain.ContextObservation, error)
+}
+
 // An empty launch context means device-level Skills only. Concrete adapters
 // resolve discovery roots, file reads, scopes and native enablement policies.
 type SkillManager interface {

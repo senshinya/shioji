@@ -61,6 +61,7 @@ var requestContracts = map[string][]string{
 	"collaborationMode/list":  {},
 	"permissionProfile/list":  {"limit"},
 	"thread/read":             {"threadId"},
+	"thread/compact/start":    {"threadId"},
 	"thread/turns/list":       {"threadId", "limit", "cursor", "sortDirection", "itemsView"},
 	"thread/fork":             {"threadId", "excludeTurns", "deferGoalContinuation", "config", "beforeTurnId", "lastTurnId"},
 	"thread/unsubscribe":      {"threadId"},
