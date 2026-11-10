@@ -24,7 +24,8 @@ const Major = 2
 // Minor 23 adds device-owned directory browsing before workspace creation.
 // Minor 24 adds revision-checked native tool service configuration writes.
 // Minor 25 adds scope-aware owning-device Skill inventory, content and enablement.
-const Minor = 25
+// Minor 26 adds read-only workspace and existing-session tool inspection.
+const Minor = 26
 const MaxFrame = 1 << 20
 
 type Frame struct {
@@ -282,4 +283,11 @@ type ToolServiceInput struct {
 	HarnessID string                    `json:"harnessId"`
 	ServiceID string                    `json:"serviceId,omitempty"`
 	ID        string                    `json:"id,omitempty"`
+}
+
+type ToolInspectionInput struct {
+	WorkspaceID string `json:"workspaceId"`
+	HarnessID   string `json:"harnessId"`
+	Directory   string `json:"directory,omitempty"`
+	SessionID   string `json:"sessionId,omitempty"`
 }

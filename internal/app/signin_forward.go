@@ -127,7 +127,7 @@ func (r *signInForwards) Close() {
 	}
 }
 func (c *Controller) deliverSignInReply(ctx context.Context, job Job, ssh transport.SSH, device string, body json.RawMessage, err error, done func(Job, json.RawMessage, error)) {
-	if strings.HasPrefix(job.Method, "runtime.tools.") && job.Method != "runtime.tools.change" && err == nil {
+	if strings.HasPrefix(job.Method, "runtime.tools.") && job.Method != "runtime.tools.change" && job.Method != "runtime.tools.inspect" && err == nil {
 		in, ok := job.Input.(protocol.ToolServiceInput)
 		if !ok {
 			done(job, nil, errors.New("工具服务请求无效"))
