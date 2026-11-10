@@ -33,6 +33,22 @@ func TestDeviceSearchRejectsAnotherDevicesSession(t *testing.T) {
 	}
 }
 
+func TestWorkMessageReceiptChecksExactDeviceAndInput(t *testing.T) {
+	m := scopedDeviceModel()
+	in := domain.WorkInput{OperationID: "input", SessionID: "sB", WorkID: "child", Mode: "steer", Text: "hello"}
+	job := Job{Method: "session.work.send", Input: in}
+	op := domain.WorkInputOperation{Input: in, State: "confirmed"}
+	b, _ := json.Marshal(op)
+	if err := m.validateDeviceReply("air", job, b); err != nil {
+		t.Fatal(err)
+	}
+	op.Input.WorkID = "other"
+	b, _ = json.Marshal(op)
+	if err := m.validateDeviceReply("air", job, b); err == nil {
+		t.Fatal("foreign child receipt clears another draft")
+	}
+}
+
 func TestHistoryReceiptPreservesReferenceValueIdentityAcrossWire(t *testing.T) {
 	for _, test := range []struct {
 		name string

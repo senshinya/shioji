@@ -459,6 +459,15 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 		}
 		s.wakeCatalog()
 		return s.runtimeReadiness(query.SessionIDs...), nil
+	case "session.work.send", "session.work.operation":
+		in, err := decode[domain.WorkInput](body)
+		if err != nil {
+			return nil, err
+		}
+		if method == "session.work.send" {
+			return s.sendWork(in)
+		}
+		return s.queryWorkInput(in)
 	case "session.work.stop":
 		q, err := decode[protocol.WorkQuery](body)
 		if err != nil {
