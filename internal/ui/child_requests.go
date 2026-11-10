@@ -214,7 +214,7 @@ func (u *workDetailUI) syncStreams(c *n.Context, d domain.WorkDetail, epoch stri
 		known[item.ID] = true
 		stream := u.streams[item.ID]
 		if stream == nil {
-			live := !reset && (item.Order == 0 || item.Order > u.latestOrder)
+			live := !reset && (item.Order == 0 || item.Order > u.latestOrder) || reset && u.phase == workReading && !u.hydrated && entry.Revision > u.readSequence
 			stream = &replyStream{text: item.Text, phase: replyPhaseFor(live, live), changedAt: c.Now()}
 			if live && item.Kind == "assistant" {
 				stream.revealAfter = receiptUntil
@@ -241,3 +241,21 @@ func (u *workDetailUI) syncStreams(c *n.Context, d domain.WorkDetail, epoch stri
 
 // Source links use the same baseline metrics as the existing file-reference UI.
 var referenceExternalIcon = svg("M11 3h6v6M17 3l-8 8M8 4H4v12h12v-4")
+
+// Snapshot hydration is history. Keep only increments actually observed on the
+// client after this read started live, including those merged across the read.
+func (u *workDetailUI) seedHistory(d domain.WorkDetail, observed map[string]bool, epoch string) {
+	if u.streams == nil {
+		u.streams = map[string]*replyStream{}
+	}
+	u.streamEpoch = epoch
+	u.latestOrder = 0
+	for _, entry := range d.Items {
+		item := entry.Item
+		if observed[item.ID] {
+			continue
+		}
+		u.streams[item.ID] = &replyStream{text: item.Text, phase: replyHistorical}
+		u.latestOrder = max(u.latestOrder, item.Order)
+	}
+}

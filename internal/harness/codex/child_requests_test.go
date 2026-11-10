@@ -132,3 +132,20 @@ func TestChildFollowupInvalidatesPriorWorkRequests(t *testing.T) {
 		t.Fatal("new child execution left prior request actionable", got, es)
 	}
 }
+
+func TestInterruptedChildActivityInvalidatesOnlyItsOwnRequests(t *testing.T) {
+	n := childRequestFixture(t)
+	r := childQuestion(t, n, "child", "pending-child")
+	root := requestFor(t, n, `{"id":"root-question","method":"item/tool/requestUserInput","params":{"threadId":"root","turnId":"parent-turn","itemId":"ask-root","questions":[{"id":"q","question":"主问题","isOther":true}]}}`)
+	es := workFeed(t, n, `{"method":"item/started","params":{"threadId":"root","turnId":"parent-turn","item":{"type":"subAgentActivity","id":"activity","agentThreadId":"child","agentPath":"checks/edge","kind":"interrupted"}}}`)
+	got, _ := n.Pending(r.ID)
+	if got.State != "invalidated" {
+		t.Fatal("interrupted activity retains pending child request", got, es)
+	}
+	if got, _ = n.Pending(root.ID); got.State != "pending" {
+		t.Fatal("child interruption resolved unrelated root request", got)
+	}
+	if _, err := n.Response(domain.Answer{RequestID: r.ID, Revision: r.Revision, Answers: map[string][]string{"q": {"yes"}}}); err == nil {
+		t.Fatal("interrupted source accepted an answer")
+	}
+}

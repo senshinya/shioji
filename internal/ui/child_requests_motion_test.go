@@ -1,11 +1,13 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	n "github.com/egoist/mygo/ui"
 	"math"
 	"os"
 	"path/filepath"
+	"shioji/internal/app"
 	"shioji/internal/domain"
 	"strings"
 	"testing"
@@ -189,5 +191,56 @@ func TestRequestOriginWithdrawsWithWidthWhenPagingToRoot(t *testing.T) {
 	after, _ := ui.Find("请求来源区域")
 	if after.W != 0 {
 		t.Fatal("root request retains child origin", after)
+	}
+}
+
+func TestAsyncChildHistorySeedsSettledAndPreservesConcurrentArrival(t *testing.T) {
+	for _, concurrent := range []bool{false, true} {
+		t.Run(fmt.Sprint(concurrent), func(t *testing.T) {
+			v, ui := sessionWorkFixture(t)
+			key := v.Model.WorkKey("s", "agent-a")
+			delete(v.Model.WorkDetails, key)
+			v.Model.Sequence = 10
+			controller := app.NewController("")
+			v.Controller = controller
+			if err := ui.Click("查看子 Agent：检查边界条件"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			var read app.Job
+			for len(controller.Jobs) > 0 {
+				job := <-controller.Jobs
+				if job.Method == "session.work" {
+					read = job
+				}
+			}
+			if read.Apply == nil {
+				t.Fatal("no async child read")
+			}
+			// Observe actual live content while the historical snapshot is in flight.
+			live := domain.Item{ID: "concurrent", Kind: "assistant", Text: "实际并发追加", Order: 11}
+			if concurrent {
+				if err := v.Model.ApplyEvent(domain.Event{Sequence: 11, SessionID: "s", Type: "work.item", WorkID: "agent-a", WorkItem: &live}); err != nil {
+					t.Fatal(err)
+				}
+				ui.Frame()
+			}
+			old := domain.Item{ID: "old", Kind: "assistant", Text: "已经完成的历史正文", Final: true, Order: 2}
+			receipt := domain.Item{ID: "old-receipt", Kind: "request_result", Text: "已提交回答", Final: true, Order: 3, Parts: []domain.ContentPart{{Text: "历史答案"}}}
+			snapshot := domain.WorkDetail{SessionID: "s", Work: v.Model.Details["s"].Works[0], Sequence: 10, Items: []domain.WorkItem{{Item: old, Revision: 2}, {Item: receipt, Revision: 3}}}
+			b, _ := json.Marshal(snapshot)
+			read.Apply(v.Model, b, nil)
+			ui.Frame()
+			state := v.workPanel("agents").detail("agent-a")
+			if state.streams["old"].live() || state.streams["old-receipt"].live() {
+				t.Fatal("asynchronously loaded history is replayed as live content")
+			}
+			if stream := state.streams["concurrent"]; concurrent && (stream == nil || !stream.live()) {
+				t.Fatal("history snapshot suppresses actual concurrent arrival")
+			}
+			if !ui.HasText("已经完成的历史正文") || !ui.HasText("历史答案") {
+				t.Fatal("settled snapshot content is missing")
+			}
+		})
 	}
 }

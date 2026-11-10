@@ -37,4 +37,4 @@ artboard/subagent-requests：proposal 为亮暗提问与授权，flows 为多个
 
 ## 实际运行时验证
 
-Codex 0.167.0 的隔离 App Server 与本地确定性 Responses provider 验证了：子命令授权具有子 thread/turn 来源，主回复完成后仍可独立确认；原始 resolved 产生回执并继续子输出。部分子 request_user_input 被运行时转发为主 thread/turn 请求，未携带子来源，此时按主请求展示，不推断子归属。该行为无法用共享层猜测弥补。真实运行时、测试样例与设计稿数据的证据边界分别保留。
+Codex 0.167.0 的隔离 App Server 与本地确定性 Responses provider 验证了：子命令与文件授权具有子 thread/turn 来源，主回复完成后仍可独立确认；原始 resolved 产生回执并继续子输出。部分子 request_user_input 被运行时转发为主 thread/turn 请求，未携带子来源，此时按主请求展示，不推断子归属。该行为无法用共享层猜测弥补。真实运行时、测试样例与设计稿数据的证据边界分别保留。

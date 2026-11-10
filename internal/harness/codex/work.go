@@ -229,6 +229,9 @@ func (n *Normalizer) observeRootWork(m wire.Message, p wire.Params, event domain
 			}
 			tracker.works[w.ID] = w
 			out = append(out, workEvent(b.session, w))
+			if w.State == "stopped" {
+				out = append(out, n.invalidateChildRequests(b.id, "")...)
+			}
 		}
 	}
 	// A still-running process becomes background work only when structured

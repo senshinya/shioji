@@ -22,6 +22,8 @@ const (
 )
 
 type workDetailUI struct {
+	hydrated          bool
+	readSequence      int64
 	streams           map[string]*replyStream
 	streamEpoch       string
 	latestOrder       int64
@@ -240,6 +242,8 @@ func (v *View) readSessionWork(w domain.WorkActivity, u *workDetailUI, force boo
 	epoch := v.Model.ConnectionEpoch
 	if u.epoch != epoch || u.source != source {
 		u.phase = workUnread
+		u.hydrated = false
+		u.streams = nil
 		u.epoch = epoch
 		u.source = source
 		u.generation++
@@ -249,6 +253,11 @@ func (v *View) readSessionWork(w domain.WorkActivity, u *workDetailUI, force boo
 		return
 	}
 	v.splitRoot().Model.BeginWorkReadKey(v.Model.WorkKey(sid, w.ID))
+	hydrate := !u.hydrated
+	readSequence := v.Model.Sequence
+	if hydrate {
+		u.readSequence = readSequence
+	}
 	u.phase = workReading
 	u.error = ""
 	u.generation++
@@ -273,7 +282,19 @@ func (v *View) readSessionWork(w domain.WorkActivity, u *workDetailUI, force boo
 			u.error = "工作详情不匹配"
 			return
 		}
+		observed := map[string]bool{}
+		if hydrate {
+			for _, entry := range m.WorkDetails[m.WorkKey(sid, w.ID)].Items {
+				if entry.Revision > readSequence {
+					observed[entry.Item.ID] = true
+				}
+			}
+		}
 		m.MergeWorkDetail(detail)
+		if hydrate {
+			u.seedHistory(m.WorkDetails[m.WorkKey(sid, w.ID)], observed, epoch)
+		}
+		u.hydrated = true
 		u.phase = workRead
 	}}) {
 		u.phase = workUnread
