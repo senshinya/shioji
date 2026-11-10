@@ -120,7 +120,7 @@ func (r *Runtime) managedSkills(ctx context.Context, launch domain.LaunchContext
 		}
 		matched = true
 		for _, problem := range result.Errors {
-			if launch.CWD != "" {
+			if launch.CWD != "" || r.globalSkillSource(problem.Path, result.Skills) {
 				out.Warnings = append(out.Warnings, bounded(problem.Path+": "+problem.Message))
 			}
 		}
@@ -247,3 +247,36 @@ func (r *Runtime) ChangeSkill(ctx context.Context, launch domain.LaunchContext, 
 }
 
 var _ harness.SkillManager = (*adapterRuntime)(nil)
+
+// Native error records omit scope. Match them only against device-owned roots
+// or global directories actually returned by this native scan, not project
+// ancestors discovered while querying the user's home directory.
+func (r *Runtime) globalSkillSource(path string, skills []nativeManagedSkill) bool {
+	roots := []string{}
+	home := environmentValue(r.cmd.Env, "HOME")
+	configHome := environmentValue(r.cmd.Env, "CODEX_HOME")
+	if home != "" {
+		roots = append(roots, filepath.Join(home, ".agents", "skills"))
+		if configHome == "" {
+			configHome = filepath.Join(home, ".codex")
+		}
+	}
+	if configHome != "" {
+		roots = append(roots, filepath.Join(configHome, "skills"))
+	}
+	for _, skill := range skills {
+		if skillScope(skill) != domain.SkillProject {
+			roots = append(roots, filepath.Dir(filepath.Dir(skill.Path)))
+		}
+	}
+	for _, root := range roots {
+		if resolved, err := filepath.EvalSymlinks(root); err == nil {
+			root = resolved
+		}
+		relative, err := filepath.Rel(root, path)
+		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative) {
+			return true
+		}
+	}
+	return false
+}

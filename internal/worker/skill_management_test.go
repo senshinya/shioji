@@ -123,3 +123,25 @@ func TestSkillManagementSeparatesDeviceAndProjectAndGuardsChanges(t *testing.T) 
 		}
 	}
 }
+
+func TestDeviceSkillManagementReportsMalformedUserSource(t *testing.T) {
+	_, client, p := startServer(t)
+	path := filepath.Join(p.Home, "skills", "invalid-user-skill", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("---\nname: invalid-user-skill\n---\n\nmissing description"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var result struct{ Warnings []string }
+	call(t, client, "runtime.skills.list", map[string]any{"harnessId": "codex"}, &result)
+	found := false
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning, "invalid-user-skill") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("malformed user source silently disappeared", result)
+	}
+}

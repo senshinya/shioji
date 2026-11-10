@@ -220,3 +220,66 @@ func TestSkillManagementEnableFailurePreservesConfirmedValueUntilRefresh(t *test
 		t.Fatal("confirmed refresh left stale failure")
 	}
 }
+
+func openManagedDetailFixture(t *testing.T) (*View, *n.Tester, []byte) {
+	t.Helper()
+	v, _, ui := skillDeviceUI(t)
+	body, _ := json.Marshal(domain.SkillInventory{Revision: "one", Entries: []domain.ManagedSkill{{SkillReference: domain.SkillReference{ID: "same-path", Name: "check"}, Scope: domain.SkillUser, Directory: "/skills", Enabled: true, CanEnable: true}}})
+	welcomeJob(t, v.Controller, "runtime.skills.list").Apply(v.Model, body, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	ui.Click("查看 Skill：check")
+	ui.Advance(time.Second)
+	doc, _ := json.Marshal(domain.SkillDocument{ID: "same-path", Text: "ORIGINAL_SKILL_BODY"})
+	welcomeJob(t, v.Controller, "runtime.skills.read").Apply(v.Model, doc, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	return v, ui, body
+}
+func TestSkillManagementDetailShowsSaveRecoveryAndOfflineCache(t *testing.T) {
+	v, ui, body := openManagedDetailFixture(t)
+	ui.Click("启停 Skill：check")
+	welcomeJob(t, v.Controller, "runtime.skills.change").Apply(v.Model, nil, errors.New("uncertain save"))
+	ui.Frame()
+	ui.Advance(time.Second)
+	if !ui.HasText("保存未确认，原状态保留。请刷新核对") {
+		t.Fatal("detail save error is invisible", ui.Texts())
+	}
+	if err := ui.Click("刷新 Skills"); err != nil {
+		t.Fatal("detail lacks refresh recovery", err)
+	}
+	welcomeJob(t, v.Controller, "runtime.skills.list").Apply(v.Model, body, nil)
+	ui.Frame()
+	doc, _ := json.Marshal(domain.SkillDocument{ID: "same-path", Text: "CONFIRMED_SKILL_BODY"})
+	welcomeJob(t, v.Controller, "runtime.skills.read").Apply(v.Model, doc, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	v.Model.DeviceStates["local"].Connected = false
+	ui.Frame()
+	ui.Advance(time.Second)
+	if !ui.HasText("设备未连接，显示上次结果") || !ui.HasText("CONFIRMED_SKILL_BODY") {
+		t.Fatal("cached detail is presented as live or lost", ui.Texts())
+	}
+}
+func TestSkillManagementRefreshRevalidatesSamePathAndRemovesUnavailableBody(t *testing.T) {
+	v, ui, body := openManagedDetailFixture(t)
+	v.Model.DeviceStates["local"].ConnectionEpoch = "reconnected"
+	ui.Frame()
+	welcomeJob(t, v.Controller, "runtime.skills.list").Apply(v.Model, body, nil)
+	ui.Frame()
+	doc, _ := json.Marshal(domain.SkillDocument{ID: "same-path", Text: "UPDATED_SKILL_BODY"})
+	welcomeJob(t, v.Controller, "runtime.skills.read").Apply(v.Model, doc, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	if !ui.HasText("UPDATED_SKILL_BODY") || ui.HasText("ORIGINAL_SKILL_BODY") {
+		t.Fatal("same-path content was not revalidated", ui.Texts())
+	}
+	ui.Click("刷新 Skills")
+	empty, _ := json.Marshal(domain.SkillInventory{Revision: "two"})
+	welcomeJob(t, v.Controller, "runtime.skills.list").Apply(v.Model, empty, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	if ui.HasText("UPDATED_SKILL_BODY") {
+		t.Fatal("removed Skill still exposes old cached body")
+	}
+}

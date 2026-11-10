@@ -82,6 +82,8 @@ func (v *View) querySkillInventory(u *skillManagementUI) {
 	}
 	u.phase = skillLoading
 	u.message = ""
+	u.documentRequest++
+	u.detailLoading = false
 	if !v.do(app.Job{ConnectionID: u.key, Method: "runtime.skills.list", Input: protocol.SkillManagementInput{WorkspaceID: u.workspace, HarnessID: u.harness}, Apply: func(_ *app.Model, b json.RawMessage, err error) {
 		if !v.skillManagementCurrent(u) {
 			return
@@ -95,12 +97,25 @@ func (v *View) querySkillInventory(u *skillManagementUI) {
 		}
 		if err != nil {
 			u.phase = skillFailed
-			u.message = "无法读取 Skills，请刷新重试"
+			u.message = "无法读取 Skills，显示上次结果。请刷新重试"
 			return
 		}
 		u.phase = skillLoaded
-		if u.detailID != "" && u.document.ID != u.detailID {
-			v.readManagedSkill(u, u.detailID)
+		if u.detailID != "" {
+			found := false
+			for _, entry := range u.catalog.Entries {
+				if entry.ID == u.detailID {
+					found = true
+					break
+				}
+			}
+			if found {
+				v.readManagedSkill(u, u.detailID)
+			} else {
+				u.document = domain.SkillDocument{}
+				u.detailError = "Skill 已不在当前目录中，请返回列表"
+				u.documentRequest++
+			}
 		}
 	}}) {
 		u.phase = skillFailed
@@ -239,27 +254,46 @@ func (v *View) managedSkillsView(c *n.Context, t *n.Theme, u *skillManagementUI)
 					v.querySkillInventory(u)
 				}
 			})
-			message := u.message
-			if !connected {
-				message = "设备未连接，显示上次结果"
-			} else if u.phase == skillLoading {
-				message = "正在读取 Skills"
-			} else if u.pending != "" {
-				message = "正在保存"
-			}
-			frame := n.Column(c.Key("notice")).FillWidth().Clip()
-			retained := n.Local(frame, "text", func() string { return message })
-			if message != "" {
-				*retained = message
-			}
-			animatedContentHeight(c, frame, message != "", 180*time.Millisecond, func() float32 {
-				n.Text(c, *retained).FontSize(12).FixedLineHeight(20).PaddingY(4).TextColor(t.TextMuted)
-				return 0
-			})
+			v.skillManagementFeedback(c, t, u, false)
 			n.Scroll(c.Key("list:" + u.slot)).FillWidth().FillHeight().Grow(1).TrackScroll(&u.listScroll).Label("Skills 列表").Children(func() { v.managedSkillRows(c, t, u) })
 		})
 	}, false)
 }
+func (v *View) skillManagementFeedback(c *n.Context, t *n.Theme, u *skillManagementUI, detail bool) {
+	message := u.message
+	if detail && u.detailError != "" {
+		message = u.detailError
+	}
+	if !v.deviceState(u.key).Connected {
+		message = "设备未连接，显示上次结果"
+	} else if u.phase == skillLoading {
+		message = "正在读取 Skills"
+	} else if u.pending != "" {
+		message = "正在保存"
+	} else if detail && u.detailLoading {
+		message = "正在读取内容"
+		if u.document.ID == u.detailID {
+			message = "正在更新内容，显示上次结果"
+		}
+	}
+	frame := n.Column(c.Key("notice")).FillWidth().Clip()
+	retained := n.Local(frame, "text", func() string { return message })
+	if message != "" {
+		*retained = message
+	}
+	animatedContentHeight(c, frame, message != "", 180*time.Millisecond, func() float32 {
+		n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
+			n.Text(c, *retained).FontSize(12).FixedLineHeight(20).PaddingY(4).TextColor(t.TextMuted)
+			if detail && u.detailError != "" {
+				if ghost(c, "重试").Disabled(!v.deviceState(u.key).Connected || u.detailLoading).Clicked() {
+					v.querySkillInventory(u)
+				}
+			}
+		})
+		return 0
+	})
+}
+
 func (v *View) managedSkillRows(c *n.Context, t *n.Theme, u *skillManagementUI) {
 	entries := append([]domain.ManagedSkill(nil), u.catalog.Entries...)
 	sort.SliceStable(entries, func(i, j int) bool {
@@ -363,6 +397,9 @@ func (v *View) managedSkillDetail(c *n.Context, t *n.Theme, u *skillManagementUI
 			if entry != nil {
 				n.Text(c, skillScopeName(entry.Scope)).FontSize(12).TextColor(t.TextMuted)
 			}
+			if iconButton(c, refreshIcon, "刷新 Skills").Disabled(!v.deviceState(u.key).Connected || u.phase == skillLoading || u.pending != "").Clicked() {
+				v.querySkillInventory(u)
+			}
 			copyIcon := copyReplyIcon
 			if c.Now().Before(u.copiedUntil) {
 				copyIcon = check
@@ -373,6 +410,7 @@ func (v *View) managedSkillDetail(c *n.Context, t *n.Theme, u *skillManagementUI
 				u.copiedUntil = c.Now().Add(2500 * time.Millisecond)
 			}
 		})
+		v.skillManagementFeedback(c, t, u, true)
 		n.Scroll(c.Key("document:" + u.slot)).FillWidth().FillHeight().Grow(1).TrackScroll(&u.detailScroll).Label("Skill 说明").Children(func() {
 			if entry != nil {
 				n.Row(c).FillWidth().MinHeight(28).Gap(12).AlignItems(n.Baseline).Children(func() {
@@ -390,17 +428,6 @@ func (v *View) managedSkillDetail(c *n.Context, t *n.Theme, u *skillManagementUI
 				})
 				n.Text(c, entry.Description).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Margin(8, 0, 0, 0)
 				n.Text(c, entry.Path).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Margin(8, 0, 0, 0).Selectable()
-			}
-			if u.detailLoading {
-				n.Text(c, "正在读取内容").FontSize(12).TextColor(t.TextMuted).PaddingY(20)
-			}
-			if u.detailError != "" {
-				n.Row(c).FillWidth().Gap(8).Margin(16, 0, 0, 0).Children(func() {
-					n.Text(c, u.detailError).FontSize(12).TextColor(t.TextMuted)
-					if ghost(c, "重试").Disabled(!v.deviceState(u.key).Connected).Clicked() {
-						v.readManagedSkill(u, u.detailID)
-					}
-				})
 			}
 			if u.document.ID == u.detailID {
 				markdown.View(c.Key("body:"+u.document.ID), u.document.Text, &u.markdown).FillWidth().FontSize(13).Margin(24, 0, 0, 0).Transition(disclosureMotion(c, 180*time.Millisecond))
