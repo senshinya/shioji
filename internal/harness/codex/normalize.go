@@ -17,10 +17,12 @@ type pending struct {
 	request     domain.PendingRequest
 	sourceID    json.RawMessage
 	thread      string
+	sourceTurn  string
 	decisions   map[string]json.RawMessage
 	permissions json.RawMessage
 }
 type Normalizer struct {
+	earlyRequests  []*pending
 	work           *workTracker
 	workControl    bool
 	importResource func(harness.OutputResource) (domain.Attachment, error)
@@ -104,38 +106,23 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 	emit := func(e domain.Event) ([]domain.Event, []byte, error) {
 		e.SessionID = sid
 		work := n.observeRootWork(m, p, e)
+		deferred, reply := n.releaseEarlyRequests()
+		work = append(work, deferred...)
 		// Publish continuing execution ownership before releasing its parent turn.
 		if e.Turn != nil && e.Turn.Status != "running" {
-			return append(work, e), nil, nil
+			return append(work, e), reply, nil
 		}
-		return append([]domain.Event{e}, work...), nil, nil
+		return append([]domain.Event{e}, work...), reply, nil
 	}
 	if len(m.ID) > 0 && string(m.ID) != "null" {
-		if _, seen := n.sourceRequests[sourceKey(p.ThreadID, m.ID)]; seen {
-			return nil, nil, nil
-		}
-		entry, buildErr := makeRequest(m.Method, m.Params, p)
-		if buildErr != nil {
-			return nil, unsupported(m.ID, buildErr.Error()), nil
-		}
-		req := entry.request
-		req.SessionID = sid
-		if sid == "" {
-			return nil, unsupported(m.ID, "No bound session"), nil
-		}
-		encoded, _ := json.Marshal(req)
-		if len(encoded) > 16<<10 {
-			return nil, unsupported(m.ID, "Question/approval resource limit exceeded"), nil
-		}
-		entry.request, entry.sourceID, entry.thread = req, append(json.RawMessage(nil), m.ID...), p.ThreadID
-		n.requests[req.ID] = entry
-		n.sourceRequests[sourceKey(p.ThreadID, m.ID)] = req.ID
-		event.Type = "request.open"
-		event.Request = &req
-		return emit(event)
+		return n.receiveRequest(m, p)
+	}
+	if m.Method == "serverRequest/resolved" {
+		return n.resolveRequest(p), nil, nil
 	}
 	if events, handled := n.feedChildWork(m, p); handled {
-		return events, nil, nil
+		deferred, reply := n.releaseEarlyRequests()
+		return append(events, deferred...), reply, nil
 	}
 	if sid == "" {
 		n.rememberEarlyWorkTurn(m, p)
@@ -291,40 +278,7 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		event.Type = "item.upsert"
 		event.Item = &i
 		return emit(event)
-	case "serverRequest/resolved":
-		key := n.sourceRequests[sourceKey(p.ThreadID, p.RequestID)]
-		pending := n.requests[key]
-		if pending == nil {
-			return nil, nil, nil
-		}
-		r := pending.request
-		if !r.State.AwaitingResolution() {
-			return nil, nil, nil
-		}
-		if r.State == domain.RequestSubmitting {
-			r.State = "answered"
-		} else {
-			r.State = "resolved"
-		}
-		r.Revision++
-		pending.request = r
-		event.Type = "request.resolve"
-		event.Request = &r
-		events, _, _ := emit(event)
-		if r.State == "answered" {
-			result := domain.Item{ID: "request-result:" + r.ID, TurnID: r.TurnID, Kind: "request_result", Presentation: r.Kind, Name: r.Title, Text: "请求结果", Status: "answered", Final: true, Parts: append([]domain.ContentPart(nil), r.Receipt...)}
-			switch r.Kind {
-			case "questions":
-				result.Text = "已提交回答"
-			case "form":
-				result.Text = "表单结果"
-			case "approval", "permissions":
-				result.Text = "审批结果"
-			}
-			limitItem(&result)
-			events = append(events, domain.Event{Type: "item.upsert", SessionID: sid, Item: &result})
-		}
-		return events, nil, nil
+
 	}
 	return nil, nil, nil
 }
@@ -336,7 +290,7 @@ func (n *Normalizer) Response(answer domain.Answer) ([]byte, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	p := n.requests[answer.RequestID]
-	if p == nil || p.request.State != "pending" || answer.Revision != p.request.Revision {
+	if p == nil || p.request.State != "pending" || answer.Revision != p.request.Revision || !n.ownsRequest(p) {
 		return nil, errors.New("request no longer pending or revision conflict")
 	}
 	var result any
@@ -438,6 +392,7 @@ func (n *Normalizer) Invalidate() []domain.Event {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	work := n.invalidateWork()
+	n.earlyRequests = nil
 	out := []domain.Event{}
 	for _, p := range n.requests {
 		if p.request.State.AwaitingResolution() {

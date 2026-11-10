@@ -20,6 +20,7 @@ type commandWork struct {
 	promoted                                                     bool
 }
 type workTracker struct {
+	spawns       map[string]bool
 	earlyTurns   map[string]wire.Turn
 	agents       map[string]agentWorkBinding
 	childTurns   map[string]agentWorkBinding
@@ -30,7 +31,7 @@ type workTracker struct {
 
 func (n *Normalizer) workState() *workTracker {
 	if n.work == nil {
-		n.work = &workTracker{earlyTurns: map[string]wire.Turn{}, agents: map[string]agentWorkBinding{}, childTurns: map[string]agentWorkBinding{}, currentTurns: map[string]string{}, works: map[string]domain.WorkActivity{}, commands: map[string]*commandWork{}}
+		n.work = &workTracker{spawns: map[string]bool{}, earlyTurns: map[string]wire.Turn{}, agents: map[string]agentWorkBinding{}, childTurns: map[string]agentWorkBinding{}, currentTurns: map[string]string{}, works: map[string]domain.WorkActivity{}, commands: map[string]*commandWork{}}
 	}
 	return n.work
 }
@@ -119,6 +120,14 @@ func (n *Normalizer) observeDelegation(p wire.Params, sourceItem string) []domai
 	tracker := n.workState()
 	source := p.Item
 	tool := workString(source, "tool")
+	if tool == "spawnAgent" {
+		key := p.ThreadID + "\x00" + sourceItem
+		if workString(source, "status") == "inProgress" {
+			tracker.spawns[key] = true
+		} else {
+			delete(tracker.spawns, key)
+		}
+	}
 	out := []domain.Event{}
 	var states map[string]struct{ Status, Message string }
 	json.Unmarshal(source.Fields["agentsStates"], &states)
@@ -174,6 +183,9 @@ func (n *Normalizer) observeDelegation(p wire.Params, sourceItem string) []domai
 		}
 		tracker.works[w.ID] = w
 		out = append(out, workEvent(binding.session, w))
+		if w.State == "stopped" || w.State == "failed" {
+			out = append(out, n.invalidateChildRequests(binding.id, "")...)
+		}
 	}
 	return out
 }
@@ -299,6 +311,9 @@ func (n *Normalizer) feedChildWork(m wire.Message, p wire.Params) ([]domain.Even
 	switch m.Method {
 	case "turn/started", "turn/completed":
 		if m.Method == "turn/started" {
+			if binding.currentTurn != "" && binding.currentTurn != p.Turn.ID {
+				out = append(out, n.invalidateChildRequests(binding.id, binding.currentTurn)...)
+			}
 			binding.currentTurn = p.Turn.ID
 			tracker.agents[p.ThreadID] = binding
 			tracker.childTurns[p.ThreadID+"\x00"+p.Turn.ID] = binding
@@ -317,11 +332,17 @@ func (n *Normalizer) feedChildWork(m wire.Message, p wire.Params) ([]domain.Even
 		// Its commands may outlive this child. Persist their ownership first.
 		out = append(out, n.observeRootWork(m, p, domain.Event{Turn: &domain.Turn{ID: p.Turn.ID, Status: normalizedTurnStatus(p.Turn.Status)}})...)
 		out = append(out, workEvent(binding.session, w))
+		if w.State == "stopped" || w.State == "failed" {
+			out = append(out, n.invalidateChildRequests(binding.id, "")...)
+		}
 	case "thread/name/updated":
 		if p.ThreadName != nil && strings.TrimSpace(*p.ThreadName) != "" {
 			w.Title = workTitle(*p.ThreadName)
 			tracker.works[w.ID] = w
 			out = append(out, workEvent(binding.session, w))
+			if w.State == "stopped" || w.State == "failed" {
+				out = append(out, n.invalidateChildRequests(binding.id, "")...)
+			}
 		}
 	case "item/started", "item/completed":
 		if p.Item.Type == "userMessage" {

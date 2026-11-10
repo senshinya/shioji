@@ -103,6 +103,7 @@ type Operation struct {
 	Error     string         `json:"error,omitempty"`
 }
 type Item struct {
+	WorkID             string              `json:"workId,omitempty"` // opaque session-owned source work
 	ReferencePositions []ReferencePosition `json:"referencePositions,omitempty"`
 	Skills             []SkillReference    `json:"skills,omitempty"`
 	SentAt             *time.Time          `json:"sentAt,omitempty"`
@@ -153,6 +154,7 @@ type Option struct {
 	Description string `json:"description"`
 }
 type PendingRequest struct {
+	WorkID    string          `json:"workId,omitempty"` // empty for a session-level request
 	Choices   []RequestChoice `json:"choices,omitempty"`
 	Fields    []FormField     `json:"fields,omitempty"`
 	URL       string          `json:"url,omitempty"`
