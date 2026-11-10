@@ -8,6 +8,7 @@ import (
 	"shioji/internal/domain"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWorkspaceToolInspectionSources(t *testing.T) {
@@ -45,6 +46,34 @@ func TestWorkspaceToolInspectionSources(t *testing.T) {
 		if e.ID == "files" && e.IgnoredReason == "" {
 			t.Fatal("ignored config claims adoption")
 		}
+	}
+}
+
+func TestWorkspaceToolInspectionNativeSessionDoesNotRequireAModelTurn(t *testing.T) {
+	peer := localToolService(t, false)
+	r := nativeToolRuntime(t, peer.URL+"/mcp")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cwd := t.TempDir()
+	var created struct{ Thread struct{ ID string } }
+	if err := r.call(ctx, "thread/start", map[string]any{"cwd": cwd, "approvalPolicy": "never", "sandbox": "read-only"}, &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Thread.ID == "" {
+		t.Fatal("native thread reference missing")
+	}
+	out, err := r.InspectToolServices(ctx, domain.LaunchContext{CWD: cwd}, created.Thread.ID)
+	if err != nil || !out.RuntimeKnown {
+		t.Fatal(out, err)
+	}
+	found := false
+	for _, e := range out.Entries {
+		if e.ID == "fixture" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("native session inventory missing", out)
 	}
 }
 
@@ -130,10 +159,64 @@ func TestWorkspaceToolInspectionNeverFallsBackToGlobalStatus(t *testing.T) {
 	found := false
 	for _, e := range out.Entries {
 		if e.ID == "docs" {
-			found = e.State == domain.ToolServiceReady && len(e.Definitions) == 1
+			found = e.State == domain.ToolServiceUnknown && len(e.Definitions) == 1
 		}
 	}
 	if !found {
 		t.Fatal(out)
+	}
+}
+
+func TestWorkspaceToolInspectionKeepsRawSourcesAndHidesLiteralArguments(t *testing.T) {
+	var c nativeConfiguration
+	json.Unmarshal([]byte(`{"config":{"mcp_servers":{"same":{"command":"mcp-server","args":["--api-key","argument-secret"],"enabled":false}}},"layers":[{"name":{"type":"project","dotCodexFolder":"/project/.codex"},"config":{"mcp_servers":{"same":{"enabled":false}}}},{"name":{"type":"user","file":"/user/config.toml"},"config":{"mcp_servers":{"same":{"command":"mcp-server","args":["--api-key","argument-secret"]}}}}]}`), &c)
+	out := toolInspectionSources(c, "/project")
+	if len(out.Entries) != 2 {
+		t.Fatal("same-name lower source disappeared", out)
+	}
+	for _, e := range out.Entries {
+		if e.Scope == domain.ToolServiceProject && (e.Configuration.Command != "" || !e.PrimarySource || !e.EnabledConfigured) {
+			t.Fatal("merged command attributed to project source", e)
+		}
+		if e.Scope == domain.ToolServiceUser && (e.Configuration.Command != "mcp-server" || e.PrimarySource || e.ArgumentCount != 2 || len(e.Configuration.Arguments) != 0 || e.EnabledConfigured) {
+			t.Fatal("raw inherited source not represented", e)
+		}
+	}
+	body, _ := json.Marshal(out)
+	if strings.Contains(string(body), "argument-secret") {
+		t.Fatal("literal secret leaked")
+	}
+	var command nativeConfiguration
+	json.Unmarshal([]byte(`{"config":{},"layers":[{"name":{"type":"user","file":"/user/config.toml"},"config":{"mcp_servers":{"shell":{"command":"sh -c TOKEN=command-secret"}}}}]}`), &command)
+	projected := toolInspectionSources(command, "/project")
+	encoded, _ := json.Marshal(projected)
+	if len(projected.Entries) != 1 || !projected.Entries[0].CommandHidden || strings.Contains(string(encoded), "command-secret") {
+		t.Fatal("shell-style command leaked", string(encoded))
+	}
+}
+
+func TestWorkspaceToolInspectionRequiresExplicitConnectionObservation(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		want domain.ToolServiceState
+	}{{"tools-scoped-connected", domain.ToolServiceReady}, {"tools-scoped-cached", domain.ToolServiceUnknown}} {
+		r := toolPipe(t, tc.mode)
+		r.protocol.scopedToolStatus = true
+		out, err := r.InspectToolServices(context.Background(), domain.LaunchContext{CWD: "/project"}, "opaque-thread")
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, e := range out.Entries {
+			if e.ID == "docs" {
+				found = true
+				if e.State != tc.want {
+					t.Fatal(tc.mode, e.State)
+				}
+			}
+		}
+		if !found {
+			t.Fatal(out)
+		}
 	}
 }

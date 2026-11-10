@@ -52,6 +52,12 @@ const (
 // adapter's opaque service reference. RuntimeKnown requires a session observation.
 type InspectedToolService struct {
 	ToolService
+	// PrimarySource is the highest-precedence enabled source row for this ID.
+	// Lower rows may still contribute inherited fields; none is a merged file.
+	PrimarySource     bool                    `json:"primarySource"`
+	EnabledConfigured bool                    `json:"enabledConfigured"`
+	ArgumentCount     int                     `json:"argumentCount,omitempty"`
+	CommandHidden     bool                    `json:"commandHidden,omitempty"`
 	EntryID           string                  `json:"entryId"`
 	Scope             ToolServiceScope        `json:"scope"`
 	ConfigurationPath string                  `json:"configurationPath,omitempty"`

@@ -24,6 +24,11 @@ func workspaceToolFixture(t *testing.T) (*View, *n.Tester) {
 		if w.ID == "w" {
 			w.Folders = []string{"/owning/project", "/owning/notes"}
 			m.Snapshot.Workspaces[0] = w
+			for i := range state.Snapshot.Workspaces {
+				if state.Snapshot.Workspaces[i].ID == w.ID {
+					state.Snapshot.Workspaces[i] = w
+				}
+			}
 			v.editWorkspace(w)
 		}
 	}
@@ -39,8 +44,8 @@ func workspaceToolFixture(t *testing.T) (*View, *n.Tester) {
 }
 func workspaceToolCatalog() domain.ToolServiceInspection {
 	return domain.ToolServiceInspection{Directory: "/owning/project", Entries: []domain.InspectedToolService{
-		{ToolService: domain.ToolService{ID: "project", Name: "filesystem", State: domain.ToolServiceUnknown, Configuration: &domain.ToolServiceConfiguration{Enabled: true, Transport: "command", Command: "mcp-files"}}, EntryID: "source-project", Scope: domain.ToolServiceProject, ConfigurationPath: "/owning/project/.codex/config.toml"},
-		{ToolService: domain.ToolService{ID: "docs", Name: "Context7", State: domain.ToolServiceUnknown, Configuration: &domain.ToolServiceConfiguration{Enabled: true, Transport: "http", URL: "https://example.test/mcp"}}, EntryID: "source-global", Scope: domain.ToolServiceUser, ConfigurationPath: "/owning/user/config.toml"},
+		{ToolService: domain.ToolService{ID: "project", Name: "filesystem", State: domain.ToolServiceUnknown, Configuration: &domain.ToolServiceConfiguration{Enabled: true, Transport: "command", Command: "mcp-files"}}, EntryID: "source-project", PrimarySource: true, EnabledConfigured: true, Scope: domain.ToolServiceProject, ConfigurationPath: "/owning/project/.codex/config.toml"},
+		{ToolService: domain.ToolService{ID: "docs", Name: "Context7", State: domain.ToolServiceUnknown, Configuration: &domain.ToolServiceConfiguration{Enabled: true, Transport: "http", URL: "https://example.test/mcp"}}, EntryID: "source-global", PrimarySource: true, EnabledConfigured: true, Scope: domain.ToolServiceUser, ConfigurationPath: "/owning/user/config.toml"},
 	}}
 }
 func TestWorkspaceToolsNavigation(t *testing.T) {
@@ -157,5 +162,22 @@ func TestWorkspaceToolsHistoryContextChangeRejectsOldObservation(t *testing.T) {
 		}
 	default:
 		t.Fatal("new source was not inspected")
+	}
+}
+
+func TestWorkspaceToolsManagementRequiresActualTargetCapability(t *testing.T) {
+	v, ui := workspaceToolFixture(t)
+	job := welcomeJob(t, v.Controller, "runtime.tools.inspect")
+	catalog := workspaceToolCatalog()
+	body, _ := json.Marshal(catalog)
+	job.Apply(v.Model, body, nil)
+	v.deviceState("local").Readiness.Harnesses[0].Capabilities.ToolServices = false
+	ui.Frame()
+	ui.Advance(time.Second)
+	if _, ok := ui.Find("在设备设置中管理 MCP"); ok {
+		t.Fatal("unsupported management entry offered")
+	}
+	if v.openWorkspaceAgentManagement("local", "custom", "MCP") {
+		t.Fatal("unsupported MCP management navigation accepted")
 	}
 }

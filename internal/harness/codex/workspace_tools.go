@@ -10,24 +10,37 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"sort"
+	"strings"
+	"unicode"
 )
 
 func toolInspectionSources(c nativeConfiguration, cwd string) domain.ToolServiceInspection {
 	out := domain.ToolServiceInspection{Directory: cwd, Entries: []domain.InspectedToolService{}}
 	seen := map[string]bool{}
-	appendEntry := func(id, path string, scope domain.ToolServiceScope, raw json.RawMessage, ignored string) {
+	appendEntry := func(id, path, sourceKey string, scope domain.ToolServiceScope, raw json.RawMessage, ignored string, primary bool) {
 		projected := c
 		projected.Config.ToolServices = map[string]json.RawMessage{id: raw}
 		service := domain.ToolService{ID: id, Name: id, State: domain.ToolServiceUnknown}
 		(&Runtime{}).projectToolConfiguration(projected, &service)
+		var original nativeToolService
+		json.Unmarshal(raw, &original)
+		// Arbitrary argv may contain literal credentials or shell programs. A
+		// read-only inventory has no reason to export them or guess secret flags.
+		if service.Configuration != nil {
+			service.Configuration.Arguments = nil
+		}
+		commandHidden := strings.IndexFunc(original.Command, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0
+		if commandHidden && service.Configuration != nil {
+			service.Configuration.Command = ""
+		}
 		service.Editable = false
 		service.CanAuthorize = false
 		service.ReadOnlyReason = "只读配置来源"
 		if service.Configuration != nil && !service.Configuration.Enabled {
 			service.State = domain.ToolServiceDisabled
 		}
-		sum := sha256.Sum256([]byte(path + "\x00" + id + "\x00" + ignored))
-		out.Entries = append(out.Entries, domain.InspectedToolService{ToolService: service, EntryID: hex.EncodeToString(sum[:]), Scope: scope, ConfigurationPath: path, IgnoredReason: ignored})
+		sum := sha256.Sum256([]byte(sourceKey + "\x00" + id))
+		out.Entries = append(out.Entries, domain.InspectedToolService{ToolService: service, EntryID: hex.EncodeToString(sum[:]), Scope: scope, ConfigurationPath: path, IgnoredReason: ignored, PrimarySource: primary, EnabledConfigured: original.Enabled != nil, ArgumentCount: len(original.Args), CommandHidden: commandHidden})
 	}
 	for _, layer := range c.Layers {
 		var values struct {
@@ -54,23 +67,19 @@ func toolInspectionSources(c nativeConfiguration, cwd string) domain.ToolService
 			}
 		}
 		for id, raw := range values.Services {
+			key, _ := json.Marshal(layer.Name)
 			if ignored != "" {
-				appendEntry(id, path, scope, raw, ignored)
+				appendEntry(id, path, string(key), scope, raw, ignored, false)
 				continue
 			}
-			if seen[id] {
-				continue
-			}
+			primary := !seen[id]
 			seen[id] = true
-			if effective, ok := c.Config.ToolServices[id]; ok {
-				raw = effective
-			}
-			appendEntry(id, path, scope, raw, "")
+			appendEntry(id, path, string(key), scope, raw, "", primary)
 		}
 	}
 	for id, raw := range c.Config.ToolServices {
 		if !seen[id] {
-			appendEntry(id, "", domain.ToolServiceOther, raw, "")
+			appendEntry(id, "", "effective-unattributed", domain.ToolServiceOther, raw, "", true)
 		}
 	}
 	sort.Slice(out.Entries, func(i, j int) bool {
@@ -153,13 +162,13 @@ func (r *Runtime) InspectToolServices(ctx context.Context, launch domain.LaunchC
 			}
 		}
 		if !found {
-			out.Entries = append(out.Entries, domain.InspectedToolService{ToolService: domain.ToolService{ID: id, Name: id}, EntryID: skillID("runtime\x00" + id), Scope: domain.ToolServiceOther})
+			out.Entries = append(out.Entries, domain.InspectedToolService{ToolService: domain.ToolService{ID: id, Name: id}, EntryID: skillID("runtime\x00" + id), Scope: domain.ToolServiceOther, PrimarySource: true})
 		}
 	}
 	out.RuntimeKnown = true
 	for i := range out.Entries {
 		e := &out.Entries[i]
-		if e.IgnoredReason != "" {
+		if e.IgnoredReason != "" || !e.PrimarySource {
 			continue
 		}
 		s, ok := observed[e.ID]
@@ -170,13 +179,13 @@ func (r *Runtime) InspectToolServices(ctx context.Context, launch domain.LaunchC
 		switch {
 		case s.RuntimeStatus == "disabled":
 			e.State = domain.ToolServiceDisabled
-		case s.RuntimeStatus == "authenticationRequired" || s.AuthStatus == "notLoggedIn":
+		case s.RuntimeStatus == "authenticationRequired":
 			e.State = domain.ToolServiceAuthorizationRequired
 		case s.RuntimeStatus == "starting":
 			e.State = domain.ToolServiceConnecting
-		case s.RuntimeStatus == "failed" || s.ToolsError != nil:
+		case s.RuntimeStatus == "failed":
 			e.State = domain.ToolServiceFailed
-		case s.RuntimeStatus == "connected" || len(s.Tools) > 0:
+		case s.RuntimeStatus == "connected":
 			e.State = domain.ToolServiceReady
 		default:
 			e.State = domain.ToolServiceUnknown

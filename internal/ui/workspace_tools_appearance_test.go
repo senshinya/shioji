@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	n "github.com/egoist/mygo/ui"
+	"shioji/internal/domain"
 	"testing"
 	"time"
 )
@@ -19,9 +20,22 @@ func TestWorkspaceToolsNativeAppearance(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				v, _ := workspaceToolFixture(t)
+				v.workspaceEditor.Workspace.Name = "红黑树"
+				for i := range v.Model.DeviceStates["local"].Snapshot.Workspaces {
+					if v.Model.DeviceStates["local"].Snapshot.Workspaces[i].ID == "w" {
+						v.Model.DeviceStates["local"].Snapshot.Workspaces[i].Name = "红黑树"
+					}
+				}
+				v.Model.DeviceStates["local"].Readiness.Harnesses[0].Name = "Codex"
+				v.Model.DeviceStates["local"].Readiness.Harnesses[0].Icon = "openai"
 				job := welcomeJob(t, v.Controller, "runtime.tools.inspect")
 				catalog := workspaceToolCatalog()
-				for i := 0; i < 9; i++ {
+				catalog.Entries = append(catalog.Entries, domain.InspectedToolService{ToolService: domain.ToolService{ID: "notes", Name: "树笔记", Configuration: &domain.ToolServiceConfiguration{Transport: "command", Command: "mcp-notes", Enabled: false}}, EntryID: "source-notes", Scope: domain.ToolServiceProject, ConfigurationPath: "/owning/project/.codex/config.toml", PrimarySource: true, EnabledConfigured: true})
+				count := 1
+				if width < 900 {
+					count = 9
+				}
+				for i := 0; i < count; i++ {
 					e := catalog.Entries[1]
 					e.EntryID += "-" + string(rune('a'+i))
 					e.Name += " " + string(rune('A'+i))

@@ -455,6 +455,9 @@ func (v *View) openWorkspaceAgentManagement(key, harness, tab string) bool {
 		if info.ID != harness {
 			continue
 		}
+		if tab == "MCP" && !info.Capabilities.ToolServices {
+			return false
+		}
 		e := agentEditor(state.Readiness.Harnesses)
 		e.edit(info)
 		e.pageID, e.tab = info.ID, tab

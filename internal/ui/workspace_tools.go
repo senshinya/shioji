@@ -345,9 +345,25 @@ func toolConnectionLabel(e domain.InspectedToolService) string {
 		return "HTTP · " + cfg.URL
 	}
 	if cfg.Transport == "command" {
-		return "stdio · " + strings.Join(append([]string{cfg.Command}, cfg.Arguments...), " ")
+		label := "stdio · " + cfg.Command
+		if e.CommandHidden {
+			label = "stdio · 命令值已隐藏"
+		}
+		if e.ArgumentCount > 0 {
+			label += " · " + strconv.Itoa(e.ArgumentCount) + " 个参数"
+		}
+		return label
 	}
-	return "连接类型未报告"
+	return "连接方式未设置"
+}
+
+func (v *View) workspaceToolCanManage(u *workspaceToolsUI) bool {
+	for _, info := range v.deviceState(u.key).Readiness.Harnesses {
+		if info.ID == u.harness {
+			return info.Capabilities.ToolServices
+		}
+	}
+	return false
 }
 func (v *View) workspaceToolRows(c *n.Context, t *n.Theme, u *workspaceToolsUI) {
 	entries := append([]domain.InspectedToolService(nil), u.catalog.Entries...)
@@ -357,8 +373,10 @@ func (v *View) workspaceToolRows(c *n.Context, t *n.Theme, u *workspaceToolsUI) 
 			return 0
 		case domain.ToolServiceUser:
 			return 1
-		default:
+		case domain.ToolServiceManaged:
 			return 2
+		default:
+			return 3
 		}
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
@@ -375,6 +393,9 @@ func (v *View) workspaceToolRows(c *n.Context, t *n.Theme, u *workspaceToolsUI) 
 	count := 0
 	query := strings.ToLower(strings.TrimSpace(u.query))
 	for _, entry := range entries {
+		if u.session != "" && !entry.PrimarySource {
+			continue
+		}
 		if !strings.Contains(strings.ToLower(entry.Name+" "+entry.ConfigurationPath+" "+toolConnectionLabel(entry)), query) {
 			continue
 		}
@@ -390,7 +411,7 @@ func (v *View) workspaceToolRows(c *n.Context, t *n.Theme, u *workspaceToolsUI) 
 					name += " · 继承"
 				}
 				n.Text(c, name).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-				if entry.Scope == domain.ToolServiceUser {
+				if entry.Scope == domain.ToolServiceUser && v.workspaceToolCanManage(u) {
 					if ghost(c, "管理").Label("在设备设置中管理 MCP").Height(28).FontSize(11).Padding(0).Disabled(!v.deviceState(u.key).Connected).Clicked() {
 						v.openWorkspaceAgentManagement(u.key, u.harness, "MCP")
 					}
@@ -444,7 +465,7 @@ func (v *View) workspaceToolDetail(c *n.Context, t *n.Theme, u *workspaceToolsUI
 			n.Spacer(c).Grow(1)
 			if entry != nil {
 				n.Text(c, workspaceToolScopeName(entry.Scope)).FontSize(11).TextColor(t.TextMuted)
-				if entry.Scope == domain.ToolServiceUser {
+				if entry.Scope == domain.ToolServiceUser && v.workspaceToolCanManage(u) {
 					if ghost(c, "在设备设置中管理").Label("在设备设置中管理 MCP").Height(28).Padding(0).FontSize(12).Disabled(!v.deviceState(u.key).Connected).Clicked() {
 						v.openWorkspaceAgentManagement(u.key, u.harness, "MCP")
 					}
@@ -483,20 +504,46 @@ func (v *View) workspaceToolDetail(c *n.Context, t *n.Theme, u *workspaceToolsUI
 					}
 				})
 			}
-			field("配置文件", entry.ConfigurationPath, true)
-			if entry.Configuration != nil {
+			if u.session == "" {
+				field("配置文件", entry.ConfigurationPath, true)
+			} else {
+				var paths []string
+				for _, source := range u.catalog.Entries {
+					if source.ID == entry.ID && source.ConfigurationPath != "" && source.IgnoredReason == "" {
+						paths = append(paths, source.ConfigurationPath)
+					}
+				}
+				if len(paths) > 0 {
+					field("当前配置来源", strings.Join(paths, "\n"), false)
+				}
+			}
+			if entry.Configuration != nil && u.session == "" {
 				cfg := entry.Configuration
 				transport := "stdio"
 				endpoint := strings.Join(append([]string{cfg.Command}, cfg.Arguments...), " ")
+				if entry.CommandHidden {
+					endpoint = "值已隐藏"
+				}
 				if cfg.Transport == "http" {
 					transport = "HTTP"
 					endpoint = cfg.URL
 				}
+				if cfg.Transport == "" {
+					transport = "未设置"
+				}
 				field("连接方式", transport, false)
-				field("命令 / 地址", endpoint, false)
+				if endpoint != "" {
+					field("命令 / 地址", endpoint, false)
+				}
+				if entry.ArgumentCount > 0 {
+					field("参数", strconv.Itoa(entry.ArgumentCount)+" 个（值已隐藏）", false)
+				}
 				label := "已启用"
 				if !cfg.Enabled {
 					label = "已停用"
+				}
+				if !entry.EnabledConfigured {
+					label = "未设置"
 				}
 				field("启用状态", label, false)
 			}

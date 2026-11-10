@@ -108,6 +108,14 @@ func signInFixture(mode string) {
 		case "config/read":
 			result = json.RawMessage(`{"config":{"mcp_servers":{"disabled":{"enabled":false}}}}`)
 		case "mcpServerStatus/list":
+			if mode == "tools-scoped-connected" {
+				fmt.Printf("{\"id\":%s,\"result\":{\"data\":[{\"name\":\"docs\",\"authStatus\":\"notLoggedIn\",\"runtimeStatus\":\"connected\",\"tools\":{\"cached\":{}}}]}}\n", m.ID)
+				continue
+			}
+			if mode == "tools-scoped-cached" {
+				fmt.Printf("{\"id\":%s,\"result\":{\"data\":[{\"name\":\"docs\",\"authStatus\":\"unsupported\",\"runtimeStatus\":null,\"tools\":{\"cached\":{}}}]}}\n", m.ID)
+				continue
+			}
 			var p struct {
 				Cursor   *string
 				ThreadID string
