@@ -38,7 +38,7 @@ type skillManagementUI struct {
 type skillManagementReturn struct {
 	workspace *workspaceEditor
 	editor    *deviceAgentEditor
-	info      domain.HarnessInfo
+	harness   string
 	key       string
 }
 
@@ -448,7 +448,7 @@ func (v *View) openSkillDeviceManagement(u *skillManagementUI, id string) {
 		e.edit(info)
 		e.pageID, e.tab = info.ID, "Skills"
 		e.epoch = state.ConnectionEpoch
-		v.skillReturn = &skillManagementReturn{workspace: v.workspaceEditor, editor: e, info: info, key: u.key}
+		v.skillReturn = &skillManagementReturn{workspace: v.workspaceEditor, editor: e, harness: info.ID, key: u.key}
 		v.devices = true
 		v.deviceSelected = u.key
 		target := v.skillManagementFor(u.key, u.harness, "")
@@ -465,7 +465,7 @@ func (v *View) returnSkillWorkspace() {
 	ret := v.skillReturn
 	v.workspaceEditor = ret.workspace
 	v.devices = false
-	u := v.skillManagementFor(ret.key, ret.info.ID, ret.workspace.Workspace.ID)
+	u := v.skillManagementFor(ret.key, ret.harness, ret.workspace.Workspace.ID)
 	u.phase = skillIdle
 	v.querySkillInventory(u)
 }
@@ -535,5 +535,31 @@ func (v *View) workspaceSettingsHeader(c *n.Context, t *n.Theme) {
 				n.Text(c, v.Model.DeviceName(e.Workspace.DeviceID)).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 			})
 		})
+	})
+}
+
+// The workspace return path shares the normal device editor lifecycle. Its
+// navigation record is not an authoritative snapshot of Agent configuration.
+func (v *View) skillDeviceManagementPage(c *n.Context, t *n.Theme, r *skillManagementReturn) {
+	state := v.deviceState(r.key)
+	tab := r.editor.tab
+	v.syncDeviceAgents(r.key, state, &r.editor)
+	for _, info := range r.editor.catalog {
+		if info.ID != r.harness {
+			continue
+		}
+		if r.editor.openID != info.ID {
+			r.editor.edit(info)
+			r.editor.pageID = info.ID
+			r.editor.tab = tab
+		}
+		v.deviceAgentPage(c, t, r.key, v.Model.DeviceName(r.workspace.Workspace.DeviceID), state, r.editor, info)
+		return
+	}
+	n.Column(c).FillWidth().Padding(configurationInset).Gap(12).Children(func() {
+		if ghost(c, "返回工作区 Skills").Clicked() {
+			v.returnSkillWorkspace()
+		}
+		n.Text(c, "此 Agent 已不可用").FontSize(12).TextColor(t.TextMuted)
 	})
 }

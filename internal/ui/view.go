@@ -392,7 +392,7 @@ func (v *View) View(c *n.Context) {
 				configurationTabPanel(c.Key("workspace-navigation"), page, depth, configurationPanelFill, func() {
 					if v.devices && v.skillReturn != nil {
 						r := v.skillReturn
-						v.deviceAgentPage(c, &t, r.key, v.Model.DeviceName(r.workspace.Workspace.DeviceID), v.deviceState(r.key), r.editor, r.info)
+						v.skillDeviceManagementPage(c, &t, r)
 					} else {
 						v.toolbar(c, &t)
 						v.workspaceSettingsView(c, &t)

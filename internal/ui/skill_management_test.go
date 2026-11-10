@@ -283,3 +283,40 @@ func TestSkillManagementRefreshRevalidatesSamePathAndRemovesUnavailableBody(t *t
 		t.Fatal("removed Skill still exposes old cached body")
 	}
 }
+
+func TestSkillManagementDeviceEntrySynchronizesCurrentAgentCatalog(t *testing.T) {
+	m := deviceUIModel()
+	state := m.DeviceStates["local"]
+	state.WorkerMinor = 25
+	info := setupCatalog()[0]
+	info.Capabilities.SkillManagement = true
+	state.Readiness.Harnesses = []domain.HarnessInfo{info}
+	v := New(m, app.NewController(""), "")
+	var w domain.Workspace
+	for _, candidate := range m.Snapshot.Workspaces {
+		if candidate.ID == "w" {
+			w = candidate
+		}
+	}
+	v.editWorkspace(w)
+	v.workspaceEditor.Tab = "Skills"
+	v.workspaceEditor.Harness = info.ID
+	v.openSkillDeviceManagement(v.skillManagementFor("local", info.ID, w.ID), "")
+	ui := n.NewTester(v.View, 1240, 820)
+	ui.Advance(time.Second)
+	if err := ui.Click("模型"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	changed := info
+	changed.Models = []domain.Model{{ID: "new-model", Name: "Model Two"}}
+	state.Readiness.Harnesses = []domain.HarnessInfo{changed}
+	ui.Frame()
+	ui.Advance(time.Second)
+	if !ui.HasText("Model Two") || ui.HasText("Model One") {
+		t.Fatal("scoped device entry retained stale model metadata", ui.Texts())
+	}
+	state.ConnectionEpoch = "reconnected"
+	ui.Frame()
+	welcomeJob(t, v.Controller, "runtime.catalog")
+}
