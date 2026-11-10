@@ -99,6 +99,31 @@ func TestChildInputConnectionLossUnlocksReceiptQueryWithoutResending(t *testing.
 	}
 }
 
+func TestChildInputRestoresUnknownOperationFromOwningDetail(t *testing.T) {
+	v, ui := sessionWorkFixture(t)
+	key := v.Model.WorkKey("s", "agent-a")
+	d := v.Model.WorkDetails[key]
+	in := domain.WorkInput{OperationID: "old-operation", SessionID: "s", WorkID: "agent-a", Mode: "steer", Text: "saved child draft"}
+	d.PendingInput = &domain.WorkInputOperation{Input: in, State: "indeterminate"}
+	v.Model.WorkDetails[key] = d
+	ui.Click("查看子 Agent：检查边界条件")
+	ui.Advance(time.Second)
+	u := v.workPanel("agents").detail("agent-a")
+	if u.input.operation != in || u.input.phase != workInputUnknown || u.input.draft != in.Text {
+		t.Fatal("reopening loses durable input query", u.input)
+	}
+	if _, ok := ui.Find("查询子 Agent 发送状态"); !ok {
+		t.Fatal("restored operation has no query action")
+	}
+	body, _ := json.Marshal(domain.WorkInputOperation{Input: in, State: "confirmed"})
+	u.input.result(in, body, nil, true)
+	ui.Frame()
+	ui.Advance(time.Second)
+	if u.input.operation.OperationID != "" || u.input.draft != "" {
+		t.Fatal("stale detail resurrected a confirmed input", u.input)
+	}
+}
+
 func TestChildInputNativeSendLocksOnlyItsDraftAndCorrelatesRetry(t *testing.T) {
 	v, ui := sessionWorkFixture(t)
 	v.Controller = app.NewController("")

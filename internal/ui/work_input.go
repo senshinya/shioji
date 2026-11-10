@@ -27,6 +27,7 @@ type workInputUI struct {
 	operation   domain.WorkInput
 	error       string
 	epoch       string
+	settledID   string
 	height      float32
 }
 
@@ -38,6 +39,7 @@ func (s *workInputUI) result(in domain.WorkInput, b json.RawMessage, err error, 
 	if err != nil {
 		var remote *protocol.RemoteError
 		if errors.As(err, &remote) && (remote.Code == "notSent" || query && remote.Code == "notFound") {
+			s.settledID = in.OperationID
 			s.phase = workInputReady
 			s.operation = domain.WorkInput{}
 		} else {
@@ -54,6 +56,7 @@ func (s *workInputUI) result(in domain.WorkInput, b json.RawMessage, err error, 
 	}
 	switch op.State {
 	case "confirmed":
+		s.settledID = in.OperationID
 		if s.draft == in.Text {
 			s.draft = ""
 		}
@@ -61,6 +64,7 @@ func (s *workInputUI) result(in domain.WorkInput, b json.RawMessage, err error, 
 		s.operation = domain.WorkInput{}
 		s.error = ""
 	case "rejected":
+		s.settledID = in.OperationID
 		s.phase = workInputReady
 		s.operation = domain.WorkInput{}
 		s.error = op.Error
@@ -101,7 +105,17 @@ func (v *View) sendChildInput(w domain.WorkActivity, u *workDetailUI, query bool
 	if query {
 		method = "session.work.operation"
 	}
-	if !v.do(app.Job{Method: method, Input: in, Apply: func(_ *app.Model, b json.RawMessage, err error) { s.result(in, b, err, query) }}) {
+	key := v.Model.WorkKey(in.SessionID, in.WorkID)
+	if !v.do(app.Job{Method: method, Input: in, Apply: func(model *app.Model, b json.RawMessage, err error) {
+		s.result(in, b, err, query)
+		if s.settledID == in.OperationID {
+			d := model.WorkDetails[key]
+			if d.PendingInput != nil && d.PendingInput.Input.OperationID == in.OperationID {
+				d.PendingInput = nil
+				model.WorkDetails[key] = d
+			}
+		}
+	}}) {
 		if query {
 			s.phase = workInputUnknown
 		} else {
@@ -113,6 +127,18 @@ func (v *View) sendChildInput(w domain.WorkActivity, u *workDetailUI, query bool
 }
 func (v *View) workInput(c *n.Context, t *n.Theme, w domain.WorkActivity, u *workDetailUI) {
 	s := &u.input
+	if pending := v.Model.WorkDetails[v.Model.WorkKey(v.Model.SessionID, w.ID)].PendingInput; pending != nil && s.operation.OperationID == "" && pending.Input.OperationID != s.settledID && pending.Input.SessionID == v.Model.SessionID && pending.Input.WorkID == w.ID {
+		s.operation = pending.Input
+		s.phase = workInputUnknown
+		s.epoch = v.Model.ConnectionEpoch
+		if s.draft == "" {
+			s.draft = pending.Input.Text
+		}
+		s.error = "尚未确认是否接收"
+		if pending.ExecutionStopped {
+			s.error = "旧执行已停止，消息接纳结果未确认"
+		}
+	}
 	if s.operation.OperationID != "" && (s.epoch != v.Model.ConnectionEpoch || !v.Model.Connected) && s.phase != workInputUnknown {
 		s.phase = workInputUnknown
 		s.epoch = v.Model.ConnectionEpoch

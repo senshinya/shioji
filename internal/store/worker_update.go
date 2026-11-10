@@ -61,7 +61,7 @@ func (s *Store) prepareWorkerStop(reason string) (domain.WorkerUpdateResult, err
 	err := s.db.QueryRow(`SELECT
  EXISTS(SELECT 1 FROM sessions WHERE COALESCE(json_extract(body,'$.status'),'') NOT IN ('idle','completed','interrupted','failed','abandoned') OR COALESCE(json_extract(body,'$.executionGuard'),'')!='')
  OR EXISTS(SELECT 1 FROM operations WHERE state IN ('accepted','dispatched','indeterminate'))
- OR EXISTS(SELECT 1 FROM work_inputs WHERE json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate'))
+ OR EXISTS(SELECT 1 FROM work_inputs WHERE json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate') AND COALESCE(json_extract(body,'$.executionStopped'),0)=0)
  OR EXISTS(SELECT 1 FROM requests WHERE json_extract(body,'$.state') IN ('pending','submitting'))
  OR EXISTS(SELECT 1 FROM history_operations WHERE json_extract(body,'$.state') IN ('prepared','forked'))
  OR EXISTS(SELECT 1 FROM works w JOIN sessions s ON w.session_id=s.id WHERE json_extract(w.body,'$.state') IN ('starting','running','waiting') AND (COALESCE(json_extract(w.body,'$.originRef'),'')='' OR json_extract(w.body,'$.originRef')=json_extract(s.body,'$.threadId')))

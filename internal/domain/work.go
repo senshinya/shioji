@@ -39,11 +39,12 @@ type WorkItem struct {
 	Revision int64 `json:"revision"`
 }
 type WorkDetail struct {
-	SessionID string       `json:"sessionId"`
-	Work      WorkActivity `json:"work"`
-	Items     []WorkItem   `json:"items"`
-	Truncated bool         `json:"truncated,omitempty"`
-	Sequence  int64        `json:"sequence"`
+	PendingInput *WorkInputOperation `json:"pendingInput,omitempty"`
+	SessionID    string              `json:"sessionId"`
+	Work         WorkActivity        `json:"work"`
+	Items        []WorkItem          `json:"items"`
+	Truncated    bool                `json:"truncated,omitempty"`
+	Sequence     int64               `json:"sequence"`
 }
 
 // WorkInput targets one observed independent execution. Mode is explicit so a
@@ -57,11 +58,12 @@ type WorkInput struct {
 }
 
 type WorkInputOperation struct {
-	Order  int64          `json:"order"`
-	Input  WorkInput      `json:"input"`
-	State  OperationState `json:"state"`
-	Error  string         `json:"error,omitempty"`
-	SentAt time.Time      `json:"sentAt"`
+	ExecutionStopped bool           `json:"executionStopped,omitempty"`
+	Order            int64          `json:"order"`
+	Input            WorkInput      `json:"input"`
+	State            OperationState `json:"state"`
+	Error            string         `json:"error,omitempty"`
+	SentAt           time.Time      `json:"sentAt"`
 }
 
 // SessionWorks keeps saved, older summary-only agent observations visible.

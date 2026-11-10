@@ -288,6 +288,30 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 		}
 	}
 	session.Status = status
+	if session.ExecutionGuard != "" && session.ExecutionGuard == source.StoppedGeneration {
+		// A generation stop proof releases execution ownership, not uncertainty
+		// about historical input delivery. The same operation can never replay.
+		if _, err = tx.Exec(`UPDATE work_inputs SET body=json_set(body,'$.state','indeterminate','$.executionStopped',json('true')) WHERE session_id=? AND json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate')`, id); err != nil {
+			return none, err
+		}
+		works, e := rowsOf[domain.WorkActivity](tx, `SELECT body FROM works WHERE session_id=? AND (COALESCE(json_extract(body,'$.originRef'),'')='' OR json_extract(body,'$.originRef')=?) AND (json_extract(body,'$.state') IN ('starting','running','waiting') OR json_extract(body,'$.canSteer')=1 OR json_extract(body,'$.canContinue')=1)`, id, session.ThreadID)
+		if e != nil {
+			return none, e
+		}
+		for _, w := range works {
+			if w.Active() {
+				w.State = "stopped"
+			}
+			w.CanStop, w.CanSteer, w.CanContinue = false, false, false
+			event := domain.Event{SessionID: id, Type: "work.upsert", Work: &w}
+			if err = applyWork(tx, id, &event); err != nil {
+				return none, err
+			}
+			if _, err = journal(tx, event); err != nil {
+				return none, err
+			}
+		}
+	}
 	session.ExecutionGuard = ""
 	session.Error = ""
 	if status == "unknown" {

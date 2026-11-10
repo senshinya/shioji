@@ -105,4 +105,37 @@ func TestWorkInputAcceptanceReservesContinueBeforeSourceEvents(t *testing.T) {
 	if d.Work.State != "starting" || d.Work.CanContinue || d.Work.Revision != receipt.Order {
 		t.Fatal("acceptance has no atomic execution reservation", d.Work, receipt)
 	}
+	if d.PendingInput == nil || d.PendingInput.Input != in {
+		t.Fatal("authoritative detail loses the pending operation", d.PendingInput)
+	}
+}
+
+func TestWorkInputStoppedGenerationReleasesExecutionWithoutReplayingDelivery(t *testing.T) {
+	db := open(t)
+	w := workspace(t, db)
+	op, _ := db.Accept(domain.Submission{OperationID: "root", WorkspaceID: w.ID, Text: "root"})
+	db.SetOperation("root", "confirmed", "")
+	db.Apply(op.SessionID, domain.Event{Type: "turn", Turn: &domain.Turn{ID: "t", Status: "completed"}})
+	child := domain.WorkActivity{ID: "child", Kind: "agent", TurnID: "t", State: "completed", CanContinue: true}
+	db.Apply(op.SessionID, domain.Event{Type: "work.upsert", Work: &child})
+	in := domain.WorkInput{OperationID: "uncertain", SessionID: op.SessionID, WorkID: "child", Mode: "continue", Text: "next"}
+	db.AcceptWorkInput(in)
+	db.SetWorkInput(in.OperationID, "indeterminate", "unknown")
+	db.GuardExecution(op.SessionID, "generation")
+	d, _ := db.Session(op.SessionID, 0, 20)
+	source := domain.RecoveryHistory{Available: true, State: "idle", StoppedGeneration: "generation", Turns: []domain.Turn{{ID: "t", Status: "completed"}}}
+	if _, err := db.Reconcile(op.SessionID, d.Session.Revision, source, false); err != nil {
+		t.Fatal(err)
+	}
+	busy, err := db.HasActiveWork(op.SessionID)
+	if err != nil || busy {
+		t.Fatal("verified shutdown retained execution reservation", busy, err)
+	}
+	receipt, fresh, err := db.AcceptWorkInput(in)
+	if err != nil || fresh || receipt.State != "indeterminate" || !receipt.ExecutionStopped {
+		t.Fatal("shutdown discarded or replayed uncertain delivery", receipt, fresh, err)
+	}
+	if ready, err := db.PrepareWorkerStop("upgrade"); err != nil || !ready.Ready {
+		t.Fatal("historical delivery blocks stopped worker maintenance", ready, err)
+	}
 }

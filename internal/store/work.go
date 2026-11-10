@@ -105,6 +105,13 @@ func (s *Store) Work(sid, id string) (domain.WorkDetail, error) {
 	if err = rows.Err(); err != nil {
 		return out, err
 	}
+	rows.Close()
+	pending, lookup := load[domain.WorkInputOperation](s.db.QueryRow("SELECT body FROM work_inputs WHERE session_id=? AND work_id=? AND json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate') ORDER BY rowid DESC LIMIT 1", sid, id))
+	if lookup == nil {
+		out.PendingInput = &pending
+	} else if !errors.Is(lookup, sql.ErrNoRows) {
+		return out, lookup
+	}
 	for i, j := 0, len(out.Items)-1; i < j; i, j = i+1, j-1 {
 		out.Items[i], out.Items[j] = out.Items[j], out.Items[i]
 	}
@@ -166,7 +173,7 @@ func (s *Store) InvalidateWork() error {
 // after a verified process stop they remain readable history, not live work.
 func hasActiveWork(q interface{ QueryRow(string, ...any) *sql.Row }, sid string) (bool, error) {
 	var busy bool
-	err := q.QueryRow(`SELECT EXISTS(SELECT 1 FROM works w JOIN sessions s ON w.session_id=s.id WHERE s.id=? AND json_extract(w.body,'$.state') IN ('starting','running','waiting') AND (COALESCE(json_extract(w.body,'$.originRef'),'')='' OR json_extract(w.body,'$.originRef')=json_extract(s.body,'$.threadId'))) OR EXISTS(SELECT 1 FROM work_inputs WHERE session_id=? AND json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate'))`, sid, sid).Scan(&busy)
+	err := q.QueryRow(`SELECT EXISTS(SELECT 1 FROM works w JOIN sessions s ON w.session_id=s.id WHERE s.id=? AND json_extract(w.body,'$.state') IN ('starting','running','waiting') AND (COALESCE(json_extract(w.body,'$.originRef'),'')='' OR json_extract(w.body,'$.originRef')=json_extract(s.body,'$.threadId'))) OR EXISTS(SELECT 1 FROM work_inputs WHERE session_id=? AND json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate') AND COALESCE(json_extract(body,'$.executionStopped'),0)=0)`, sid, sid).Scan(&busy)
 	return busy, err
 }
 func (s *Store) HasActiveWork(sid string) (bool, error) {
