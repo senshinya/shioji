@@ -77,6 +77,10 @@ func toolIssueLabel(item domain.Item) string {
 }
 
 func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcriptAnchor ...bool) {
+	if item.Presentation == "compaction" {
+		v.contextCompactionItem(c, t, item)
+		return
+	}
 	key := "activity:" + v.Model.SessionID + "/" + item.ID
 	if _, seen := v.Model.Collapsed[key]; !seen {
 		v.Model.Collapsed[key] = item.Kind == "activity"

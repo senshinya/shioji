@@ -7,6 +7,16 @@ import (
 	"testing"
 )
 
+func TestContextActionReceiptRejectsForeignSessionMetadata(t *testing.T) {
+	m := NewModel()
+	m.DeviceStates["local"] = &DeviceState{Snapshot: domain.Snapshot{DeviceID: "device", Sessions: []domain.Session{{ID: "s", WorkspaceID: "w"}}}}
+	job := Job{Method: "session.context.operation", Input: domain.ContextActionRequest{OperationID: "compact", SessionID: "s", Revision: 3}}
+	body := json.RawMessage(`{"operation":{"id":"compact","sessionId":"s","kind":"compact","state":"confirmed"},"session":{"id":"s","workspaceId":"foreign","context":{"deviceId":"device"}}}`)
+	if m.validateDeviceReply("local", job, body) == nil {
+		t.Fatal("foreign context metadata accepted")
+	}
+}
+
 func TestDeviceRepliesRejectForeignWorkspaceSessionAndOperation(t *testing.T) {
 	m := scopedDeviceModel()
 	for _, test := range []struct {

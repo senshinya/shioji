@@ -30,6 +30,9 @@ func (m *Model) notificationForEvent(e domain.Event) *SessionNotification {
 		}
 	}
 	if e.Turn != nil && (e.Turn.Status == "completed" || e.Turn.Status == "failed") {
+		if e.Turn.Presentation == "compaction" {
+			return nil
+		}
 		for _, previous := range m.Details[e.SessionID].Turns {
 			if previous.ID == e.Turn.ID && previous.Status == e.Turn.Status {
 				return nil

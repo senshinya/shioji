@@ -17,6 +17,13 @@ type ContextActionRequest struct {
 	SessionID   string `json:"sessionId"`
 	Revision    int64  `json:"revision"`
 }
+
+// A receipt includes the authoritative session revision so the UI can bridge
+// a successful RPC and its later journal delivery without showing old state.
+type ContextActionResult struct {
+	Operation Operation `json:"operation"`
+	Session   Session   `json:"session"`
+}
 type ContextObservation struct {
 	OperationID string
 	TurnID      string

@@ -43,7 +43,7 @@ func withTurnFooters(rows []transcriptRow, items []domain.Item, turns map[string
 			continue
 		}
 		if row.end >= 0 && row.item.TurnID != "" && (row.end == len(items)-1 || items[row.end+1].TurnID != row.item.TurnID) {
-			if _, ok := turns[row.item.TurnID]; ok {
+			if turn, ok := turns[row.item.TurnID]; ok && turn.Presentation != "compaction" {
 				result = append(result, transcriptRow{key: "turn-footer:" + row.item.TurnID, footer: row.item.TurnID, end: -1, opacity: 1})
 			}
 		}

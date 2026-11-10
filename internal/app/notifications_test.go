@@ -5,6 +5,18 @@ import (
 	"testing"
 )
 
+func TestCompactionDoesNotNotifyAsAnAgentReply(t *testing.T) {
+	m := NewModel()
+	m.Preferences.Notifications.Enabled = true
+	m.ApplySnapshot(domain.Snapshot{Sessions: []domain.Session{{ID: "s", Title: "keep"}}})
+	for i, status := range []domain.ExecutionState{"completed", "failed"} {
+		m.ApplyEvent(domain.Event{Sequence: int64(i + 1), SessionID: "s", Type: "turn", Turn: &domain.Turn{ID: string(status), Status: status, Presentation: "compaction"}})
+	}
+	if len(m.Notifications) != 0 {
+		t.Fatal("context maintenance sent a reply notification", m.Notifications)
+	}
+}
+
 func TestNotificationsUseNewConfirmedEventsNotSnapshotsOrLateUsage(t *testing.T) {
 	m := NewModel()
 	m.Preferences.Notifications.Enabled = true

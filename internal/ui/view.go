@@ -27,6 +27,8 @@ type editBinding struct {
 }
 
 type View struct {
+	contextInputs                                                                                                   map[app.WorkKey]*contextInputUI
+	contextRowKeys                                                                                                  map[app.WorkKey]string
 	requestActionsState                                                                                             map[app.WorkKey]*requestActionState
 	workPanels                                                                                                      map[app.WorkKey]*workPanelUI
 	workspaceTools                                                                                                  map[string]*workspaceToolsUI
@@ -848,6 +850,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 				}
 				binding = v.composerDocument(c, key)
 				v.branchStrip(c, t, home)
+				v.contextCommandNotice(c, t)
 				if !waiting {
 					v.draftAttachmentStrip(c, t)
 				}
@@ -940,6 +943,10 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					if editing {
 						label = "保存编辑"
 						disabled = disabled || v.queueBusy[m.SessionID]
+					}
+					if fields := strings.Fields(draft); !editing && len(fields) > 0 && fields[0] == "/compact" {
+						label = "压缩上下文"
+						disabled = v.compactReason() != ""
 					}
 					if running && empty && !editing && (!v.homeSendPending() || m.ActiveTurn() != "") {
 						icon = stop
@@ -1189,6 +1196,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		state.FollowAnimation = nil
 	}
 	rows := v.transcriptRows(detail.Items)
+	rows = v.contextRows(rows)
 	rows = v.revealFindTarget(rows, reopening)
 	turns := make(map[string]domain.Turn, len(detail.Turns))
 	for _, turn := range detail.Turns {
@@ -1281,6 +1289,11 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		// Receipt spacing follows the rendered next row, including the local
 		// waiting receipt before the accepted input receives its turn identity.
 		if row < len(rows) && (rows[row].footer != "" || rows[row].restarting || rows[row].preparing != "") {
+			bottom = 8
+		}
+		// The local compaction row is already the next transcript element even
+		// before its source item is persisted. Use the same inter-item spacing.
+		if row < len(rows) && rows[row].item.Presentation == "compaction" && rows[row].end < 0 {
 			bottom = 8
 		}
 		// Waiting is the first output slot. Keep the same user-to-output gap
@@ -1555,6 +1568,15 @@ func (v *View) submit() { v.sendMessage(false) }
 func (v *View) sendMessage(steer bool) {
 	if v.parent != nil && v.parent.Model.SecondarySessionID != v.Model.SessionID {
 		return
+	}
+	if v.tryContextCommand() {
+		return
+	}
+	if a := v.contextAction(); a != nil && a.State.Active() {
+		if !v.Model.Active() {
+			return
+		}
+		steer = false
 	}
 	if v.Model.HasPendingInput() || v.homeSendPending() {
 		return

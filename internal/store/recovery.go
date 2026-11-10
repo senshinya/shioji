@@ -27,6 +27,10 @@ func (s *Store) GuardExecution(id, generation string) error {
 	}
 	session.ExecutionGuard = generation
 	session.Status = "unknown"
+	if a := session.ContextAction; a != nil && a.State.Active() {
+		a.State = "unknown"
+		a.Error = "执行实例已断开，压缩结果待核对"
+	}
 	session.Error = "正在确认旧工具已停止"
 	session.Recovery = &domain.SessionRecovery{Phase: "checking"}
 	session.Revision++

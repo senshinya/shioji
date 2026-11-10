@@ -11,6 +11,7 @@ import (
 )
 
 func (v *View) contextMeter(c *n.Context, t *n.Theme, cfg domain.RunConfig) {
+	v.syncContextInput()
 	var session domain.Session
 	for _, s := range v.Model.Snapshot.Sessions {
 		if s.ID == v.Model.SessionID {
@@ -23,6 +24,9 @@ func (v *View) contextMeter(c *n.Context, t *n.Theme, cfg domain.RunConfig) {
 	}
 	usage := session.ContextUsage
 	compacting := false
+	if a := v.contextAction(); a != nil && a.State.Active() {
+		compacting = true
+	}
 	detail := v.Model.Details[session.ID]
 	if session.Status == "running" {
 		for i := len(detail.Items) - 1; i >= 0; i-- {
@@ -147,8 +151,53 @@ func (v *View) contextMeter(c *n.Context, t *n.Theme, cfg domain.RunConfig) {
 				if compacting {
 					status = "正在压缩上下文"
 				}
+				if state := v.contextInput(); state.error != "" {
+					status = state.error
+				}
 				animation := motionAnimation(c, 160*time.Millisecond)
 				n.Text(c.Key("context-status"), status).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: &animation})
+				if v.Model.WorkerMinor >= 29 && v.Model.RunReadiness().Capabilities.Compact {
+					n.Column(c).FillWidth().Height(1).Background(t.Border)
+					state := v.contextInput()
+					label := "压缩上下文"
+					if a := v.contextAction(); a != nil && (a.State == "failed" || a.State == "interrupted") {
+						label = "重试压缩"
+					}
+					reason := v.compactReason()
+					query := state.phase == contextUnknown
+					if compacting {
+						label = "正在压缩"
+					}
+					if query {
+						label = "核对压缩状态"
+					}
+					if state.phase == contextChecking {
+						label = "正在核对"
+					}
+					disabled := reason != ""
+					if query {
+						disabled = !v.Model.Connected || v.Controller == nil
+					}
+					button := control(c.Key("compact-context")).FillWidth().Height(26).PaddingX(0).Radius(4).Disabled(disabled).Tooltip(reason).Label("压缩上下文")
+					button.Children(func() {
+						font := n.Font{Family: t.Font, Size: 12, Weight: 400}
+						if compacting || state.phase == contextChecking {
+							serviceSpinner(c.Key("compact-spinner"), label, font, t.TextMuted)
+						} else {
+							inlineSymbol(c, compactContextIcon, label, font, 14, t.TextMuted)
+						}
+						n.Text(c.Key("compact-label"), label).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).MarginStart(6).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+						n.Spacer(c).Grow(1)
+						n.Text(c, "/compact").FontSize(10).TextColor(t.TextMuted)
+					})
+					if button.Clicked() {
+						if query {
+							v.sendContextOperation(state, true)
+						} else {
+							v.beginContextCompaction(false)
+						}
+					}
+				}
 			})
 		})
 	})

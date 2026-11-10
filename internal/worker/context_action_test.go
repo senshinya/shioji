@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"shioji/internal/domain"
 	"shioji/internal/harness"
+	"shioji/internal/protocol"
 	"testing"
 )
 
@@ -18,6 +19,8 @@ type compactRuntime struct {
 	calls                int
 	before               func(domain.Session)
 	forceResume, resumed bool
+	hold                 bool
+	steers               int
 }
 
 func (r *compactRuntime) Observes(s domain.Session) bool {
@@ -31,6 +34,7 @@ func (r *compactRuntime) Resume(_ context.Context, s domain.Session) error {
 func (r *compactRuntime) Readiness() domain.Readiness {
 	ready := r.Runtime.Readiness()
 	ready.Capabilities.Compact = true
+	ready.Capabilities.Steer = true
 	return ready
 }
 func (r *compactRuntime) Compact(_ context.Context, s domain.Session) error {
@@ -48,11 +52,34 @@ func (r *compactRuntime) Compact(_ context.Context, s domain.Session) error {
 		{SessionID: s.ID, Type: "item.upsert", Item: &domain.Item{ID: "compact-item", TurnID: "compact-turn", Kind: "activity", Presentation: "compaction", Status: "completed", Final: true}},
 		{SessionID: s.ID, Type: "turn", Turn: &domain.Turn{ID: "compact-turn", Status: "completed"}},
 	} {
+		if r.hold && (e.Turn != nil && e.Turn.Status == "completed" || e.Item != nil && e.Item.Final) {
+			continue
+		}
 		if err := source.options.OnEvent(e); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+func (r *compactRuntime) Steer(context.Context, domain.Session, string, string, harness.TurnInput) error {
+	r.steers++
+	return nil
+}
+
+func TestWorkerCannotSteerCompactionAsAUserTurn(t *testing.T) {
+	s, sid, r := compactWorker(t)
+	r.hold = true
+	d, _ := s.store.Session(sid, 0, 1)
+	if _, err := compactCall(s, "session.context.compact", domain.ContextActionRequest{OperationID: "held", SessionID: sid, Revision: d.Session.Revision}); err != nil {
+		t.Fatal(err, d.Session)
+	}
+	_, err := s.steer(protocol.SteerInput{Input: domain.Submission{OperationID: "bad-steer", SessionID: sid, WorkspaceID: d.Session.WorkspaceID, Text: "do not inject", Config: d.Session.Config}, TurnID: "compact-turn"})
+	if err == nil || r.steers != 0 {
+		t.Fatal("steered maintenance turn", err, r.steers)
+	}
+	if _, err = s.store.Operation("bad-steer"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("steer was durably accepted", err)
+	}
 }
 func (r *compactRuntime) InspectCompaction(context.Context, domain.Session, domain.ContextAction) (domain.ContextObservation, error) {
 	return r.observation, nil
@@ -63,7 +90,7 @@ func compactCall(s *Server, method string, in domain.ContextActionRequest) (doma
 	if err != nil {
 		return domain.Operation{}, err
 	}
-	return out.(domain.Operation), nil
+	return out.(domain.ContextActionResult).Operation, nil
 }
 func compactWorker(t *testing.T) (*Server, string, *compactRuntime) {
 	t.Helper()
@@ -73,10 +100,12 @@ func compactWorker(t *testing.T) (*Server, string, *compactRuntime) {
 		t.Fatal(err)
 	}
 	awaitReceipt(t, s, "root")
+	s.dispatchMu.Lock()
 	r := &compactRuntime{Runtime: s.currentRuntime(op.SessionID)}
 	s.runtimeMu.Lock()
 	s.runtimes[op.SessionID] = r
 	s.runtimeMu.Unlock()
+	s.dispatchMu.Unlock()
 	return s, op.SessionID, r
 }
 func TestCompactionCommandReservesBeforeCallingAndNeverAddsUserInput(t *testing.T) {

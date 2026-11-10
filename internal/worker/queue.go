@@ -170,6 +170,11 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 	if _, err := s.store.Operation(in.Input.OperationID); err == nil {
 		return s.store.AcceptSteer(in.Input, in.TurnID)
 	}
+	if d, err := s.store.Session(in.Input.SessionID, 0, 1); err != nil {
+		return domain.Operation{}, err
+	} else if a := d.Session.ContextAction; a != nil && a.SourceRef == d.Session.ThreadID && a.State.Active() {
+		return domain.Operation{}, errors.New("上下文压缩期间请将消息加入待发送队列")
+	}
 	if _, err := s.attachmentInputs(in.Input); err != nil {
 		return domain.Operation{}, err
 	}

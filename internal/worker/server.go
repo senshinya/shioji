@@ -523,10 +523,20 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		var op domain.Operation
 		if method == "session.context.operation" {
-			return s.queryContextOperation(in)
+			op, err = s.queryContextOperation(in)
+		} else {
+			op, err = s.compactContext(in)
 		}
-		return s.compactContext(in)
+		if err != nil {
+			return nil, err
+		}
+		d, err := s.store.Session(in.SessionID, 0, 1)
+		if err != nil {
+			return nil, err
+		}
+		return domain.ContextActionResult{Operation: op, Session: d.Session}, nil
 	case "events", "events.watch":
 		q, err := decode[EventsQuery](body)
 		if err != nil {

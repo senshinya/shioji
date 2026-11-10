@@ -8,6 +8,7 @@ import (
 	"unicode"
 
 	n "github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/richtext"
 	"shioji/internal/app"
 	"shioji/internal/domain"
 )
@@ -33,6 +34,7 @@ type fileMention struct {
 	captured             app.DraftAttachment
 	trigger              rune
 	selected             int
+	compact              bool
 	reveal               bool
 	present              bool
 	revision             uint64
@@ -122,7 +124,7 @@ func (v *View) syncMention(c *n.Context, input composerInput, text string) {
 	}
 	a, b := input.TextSelection()
 	from, to, query, ok := mentionToken(text, a, b)
-	if ok && []rune(text)[from] == '/' && !m.RunReadiness().Capabilities.Skills {
+	if ok && []rune(text)[from] == '/' && !m.RunReadiness().Capabilities.Skills && !v.compactCandidate(key, query) {
 		ok = false
 	}
 	if !ok {
@@ -145,6 +147,10 @@ func (v *View) syncMention(c *n.Context, input composerInput, text string) {
 		}
 		state.revision++
 		state.text, state.query, state.end = text, query, to
+		state.compact = v.compactCandidate(key, query)
+		if state.compact {
+			state.present = true
+		}
 		state.phase, state.err = mentionWaiting, ""
 		state.due = c.Now().Add(120 * time.Millisecond)
 	}
@@ -157,6 +163,11 @@ func (v *View) syncMention(c *n.Context, input composerInput, text string) {
 	}
 }
 func (v *View) searchMention(state *fileMention) {
+	if state.trigger == '/' && !v.Model.RunReadiness().Capabilities.Skills {
+		state.phase = mentionShowing
+		state.present = true
+		return
+	}
 	target, err := v.Model.AttachmentTarget(v.ControllerDirectory(), v.Model.WorkspaceID)
 	if err != nil {
 		state.err = err.Error()
@@ -198,7 +209,7 @@ func (v *View) searchMention(state *fileMention) {
 			state.phase = mentionShowing
 			state.results = results
 			state.skills = skills
-			state.selected = 0
+			state.selected = min(state.selected, max(0, state.count()-1))
 			state.reveal = true
 			if err != nil {
 				state.err = err.Error()
@@ -221,12 +232,16 @@ func (v *View) mentionKey(k composerKey) bool {
 	if !token {
 		return false
 	}
-	if []rune(k.Text())[from] == '/' && !v.Model.RunReadiness().Capabilities.Skills {
+	if []rune(k.Text())[from] == '/' && !v.Model.RunReadiness().Capabilities.Skills && !v.compactCandidate(key, query) {
 		return false
 	}
 	if state == nil && (k.Key == n.KeyEnter || k.Key == n.KeyTab) && k.Mods == 0 && v.Controller != nil && v.Model.Connected && v.Model.WorkerMinor >= 11 {
-		state = &fileMention{key: key, context: v.mentionContext(key), text: k.Text(), query: query, start: from, end: to, trigger: []rune(k.Text())[from], phase: mentionWaiting, due: v.frameTime}
+		state = &fileMention{key: key, context: v.mentionContext(key), text: k.Text(), query: query, start: from, end: to, trigger: []rune(k.Text())[from], phase: mentionWaiting, due: v.frameTime, compact: v.compactCandidate(key, query)}
 		v.fileMention = state
+		if state.compact {
+			v.chooseCompactMention(k, state)
+			return true
+		}
 		return true
 	}
 	if state == nil || state.phase == mentionDismissed {
@@ -254,6 +269,10 @@ func (v *View) mentionKey(k composerKey) bool {
 		state.reveal = true
 		return true
 	case n.KeyEnter, n.KeyTab:
+		if state.compact && state.selected == 0 {
+			v.chooseCompactMention(k, state)
+			return true
+		}
 		// Enter while a lookup is pending belongs to the picker, never to send.
 		if state.phase == mentionShowing && state.err == "" && k.Text() == state.text && from == state.start && to == state.end && query == state.query && state.count() > 0 {
 			v.captureMention(state)
@@ -263,6 +282,17 @@ func (v *View) mentionKey(k composerKey) bool {
 	return false
 }
 func (v *View) captureMention(state *fileMention) {
+	if state.compact && state.selected == 0 {
+		if len([]rune(state.text)) != state.end {
+			s := v.contextInput()
+			s.command = true
+			s.error = "/compact 需要单独输入"
+			return
+		}
+		v.beginContextCompaction(true)
+		state.phase = mentionDismissed
+		return
+	}
 	if state.phase != mentionShowing || state.selected >= state.count() {
 		return
 	}
@@ -321,7 +351,10 @@ func (v *View) mentionPopup(c *n.Context, t *n.Theme, anchor n.Element, input co
 	panel := popover(c.Key("file-mention-popup"), anchor, &open, func(panel n.Element) {
 		count := min(8, state.count())
 		height := float32(count*26 + 6)
-		if count == 0 || state.phase == mentionCapturing || state.err != "" {
+		if state.compact && len(state.skills) > 0 {
+			height += 7
+		}
+		if count == 0 || state.phase == mentionCapturing || state.err != "" && !state.compact {
 			height = 32
 		}
 		windowW, windowH := c.Size()
@@ -343,7 +376,7 @@ func (v *View) mentionPopup(c *n.Context, t *n.Theme, anchor n.Element, input co
 				message = "正在查找文件…"
 			} else if state.phase == mentionCapturing {
 				message = "正在读取文件…"
-			} else if state.err != "" {
+			} else if state.err != "" && !state.compact {
 				message = state.err
 			} else if state.count() == 0 {
 				message = "没有匹配的文件"
@@ -358,10 +391,20 @@ func (v *View) mentionPopup(c *n.Context, t *n.Theme, anchor n.Element, input co
 			n.Scroll(c.Key("files")).Fill().Children(func() {
 				n.Column(c).FillWidth().Children(func() {
 					for i := 0; i < state.count(); i++ {
+						command := state.compact && i == 0
+						if state.compact && i == 1 {
+							n.Column(c).FillWidth().Height(1).Margin(3, 0).Background(t.Border)
+						}
 						var file domain.WorkspaceFile
 						label, detail, identity, accessible := "", "", "", ""
-						if state.trigger == '/' {
-							skill := state.skills[i]
+						if command {
+							label, detail, identity, accessible = "/compact", "压缩上下文", "builtin:compact", "压缩上下文命令"
+						} else if state.trigger == '/' {
+							index := i
+							if state.compact {
+								index--
+							}
+							skill := state.skills[index]
 							label = skill.Name
 							detail = skill.Description
 							identity = skill.ID
@@ -373,7 +416,15 @@ func (v *View) mentionPopup(c *n.Context, t *n.Theme, anchor n.Element, input co
 							identity = file.Root + "/" + file.Path
 							accessible = "引用文件：" + file.Path
 						}
-						row := control(c.Key(identity)).FillWidth().Height(26).PaddingX(7).Radius(4).Label(accessible).Tooltip(detail).Disabled(state.phase != mentionShowing)
+						disabled := state.phase != mentionShowing
+						if command {
+							detail = v.compactReason()
+							disabled = detail != ""
+							if detail == "" {
+								detail = "压缩上下文"
+							}
+						}
+						row := control(c.Key(identity)).FillWidth().Height(26).PaddingX(7).Radius(4).Label(accessible).Tooltip(detail).Disabled(disabled)
 						background := raised(t)
 						if i == state.selected {
 							background = menuSelectionSurface(t)
@@ -384,6 +435,9 @@ func (v *View) mentionPopup(c *n.Context, t *n.Theme, anchor n.Element, input co
 								icon := fileAttachmentIcon
 								if state.trigger == '/' {
 									icon = skillIcon
+								}
+								if command {
+									icon = compactContextIcon
 								}
 								referenceSymbol(c, icon, label, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 14, t.TextMuted)
 								n.Text(c, label).SingleLine().Ellipsis("…").FontSize(13).FixedLineHeight(18).Grow(1).MinWidth(0)
@@ -427,11 +481,42 @@ var skillIcon = n.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" xmlns="http://ww
 
 func (s *fileMention) count() int {
 	if s.trigger == '/' {
+		if s.compact {
+			return len(s.skills) + 1
+		}
 		return len(s.skills)
 	}
 	return len(s.results.Files)
 }
+
+func (v *View) compactCandidate(key, query string) bool {
+	return key == v.Model.DraftKey() && v.Model.QueueEdits[v.Model.SessionID].ID == "" && v.Model.WorkerMinor >= 29 && v.Model.RunReadiness().Capabilities.Compact && strings.HasPrefix("compact", strings.ToLower(query))
+}
+func (s *fileMention) skillIndex() int {
+	if s.compact {
+		return s.selected - 1
+	}
+	return s.selected
+}
+func (v *View) chooseCompactMention(k composerKey, state *fileMention) {
+	if k.Key == n.KeyTab {
+		k.binding.doc.Edit(func(e *richtext.Edit) {
+			e.ReplaceString(state.start, state.end, "/compact", richtext.Attributes{})
+			e.Select(8, 8)
+		})
+		v.publishComposer(state.key, k.binding)
+		state.text = k.Text()
+		state.query = "compact"
+		state.end = 8
+		state.phase = mentionDismissed
+		return
+	}
+	v.captureMention(state)
+}
 func (s *fileMention) title() string {
+	if s.compact {
+		return "命令与 Skill"
+	}
 	if s.trigger == '/' {
 		return "选择 Skill"
 	}
@@ -443,7 +528,7 @@ func (v *View) selectSkill(state *fileMention) {
 		return
 	}
 	for _, ref := range v.Model.DraftSkills[state.key] {
-		if ref.Reference == state.skills[state.selected].SkillReference && ref.HarnessID == v.Model.HarnessID() {
+		if ref.Reference == state.skills[state.skillIndex()].SkillReference && ref.HarnessID == v.Model.HarnessID() {
 			state.err = "已引用此 Skill"
 			return
 		}
@@ -454,7 +539,7 @@ func (v *View) applySelectedSkill(c *n.Context, b *composerDocument, state *file
 	if state.phase != mentionCaptured {
 		return
 	}
-	skill := state.skills[state.selected]
+	skill := state.skills[state.skillIndex()]
 	ref := app.DraftSkill{Reference: skill.SkillReference, WorkspaceID: v.Model.WorkspaceID, DeviceID: v.referenceDeviceID(), HarnessID: v.Model.HarnessID()}
 	v.insertReference(c, b, state, composerReference{skill: ref})
 	v.clearMention()

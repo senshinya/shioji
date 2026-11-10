@@ -407,7 +407,7 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 		if e.Plan != nil {
 			detail.Plan = e.Plan
 		}
-		if e.Session != nil {
+		if e.Session != nil && detail.Session.Revision <= e.Session.Revision {
 			detail.Session = *e.Session
 		}
 		if e.Item != nil {

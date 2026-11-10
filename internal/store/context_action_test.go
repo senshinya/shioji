@@ -93,6 +93,10 @@ func TestConfirmedCompactionCanRecoverAfterRuntimeLossWithoutToolConfirmation(t 
 	}
 	db.SetOperation("compact", "confirmed", "")
 	db.GuardExecution(root.SessionID, "managed-generation")
+	lost, _ := db.Session(root.SessionID, 0, 1)
+	if lost.Session.ContextAction.State != "unknown" {
+		t.Fatal("lost runtime still presents compaction as running", lost.Session.ContextAction)
+	}
 	source := domain.RecoveryHistory{StoppedGeneration: "managed-generation", Available: true, State: "idle", Inputs: map[string]string{"input:root": "root-turn"}, Turns: []domain.Turn{{ID: "root-turn", Status: "completed"}, {ID: "compact-turn", Presentation: "compaction", Status: "interrupted"}}, Items: []domain.Item{{ID: "compact-item", TurnID: "compact-turn", Kind: "activity", Presentation: "compaction", Status: "interrupted", Final: true}}, ContextAction: &domain.ContextObservation{OperationID: "compact", TurnID: "compact-turn", State: "interrupted"}}
 	d, _ = db.Session(root.SessionID, 0, 100)
 	got, err := db.Reconcile(root.SessionID, d.Session.Revision, source, false)

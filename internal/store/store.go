@@ -600,6 +600,10 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		}
 		session = *e.Session
 		session.ContextAction = contextAction
+		if a := session.ContextAction; a != nil && a.State.Active() && session.Status == "unknown" {
+			a.State = "unknown"
+			a.Error = "压缩结果尚未确认"
+		}
 		session.ContextUsage = contextUsage
 		session.ContextUsageAfterTurnOrder = contextUsageAfter
 		session.Recovery = recovery
