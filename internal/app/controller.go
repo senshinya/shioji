@@ -75,6 +75,9 @@ func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.Raw
 	if client == nil || job.epoch == "" || job.epoch != client.Epoch || ctx.Err() != nil {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "连接已改变，操作未发送；请重新提交"}
 	}
+	if strings.HasPrefix(job.Method, "session.work") && client.Minor < 27 {
+		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能读取子 Agent 和后台任务详情"}
+	}
 	if strings.HasPrefix(job.Method, "runtime.tools.") && client.Minor < 22 {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能管理工具服务"}
 	}
@@ -164,6 +167,8 @@ func hydrateSession(ctx context.Context, client *protocol.Client, id string, gen
 		all.Session = page.Session
 		all.Queue = page.Queue
 		all.Plan = page.Plan
+		all.Works = page.Works
+		all.WorksTruncated = page.WorksTruncated
 		all.Sequence = page.Sequence
 		all.Items = append(all.Items, page.Items...)
 		for _, t := range page.Turns {

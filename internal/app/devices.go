@@ -266,6 +266,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	}
 	m.Notifications = append(m.Notifications, p.Notifications...)
 	m.notificationSeen = p.notificationSeen
+	m.WorkDetails, m.workReads = p.WorkDetails, p.workReads
 	m.RefreshDevices()
 }
 

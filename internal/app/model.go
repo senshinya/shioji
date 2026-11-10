@@ -12,14 +12,21 @@ import (
 	"shioji/internal/domain"
 )
 
-// InspectorLayout describes the two built-in views in the client's one sidebar.
+// InspectorLayout keeps the built-in views within one or two sidebar groups.
+type InspectorGroup struct {
+	Views    []string `json:"views"`
+	Selected string   `json:"selected"`
+}
 type InspectorLayout struct {
-	Joined   bool   `json:"joined,omitempty"`
-	First    string `json:"first,omitempty"`
-	Selected string `json:"selected,omitempty"`
+	Groups   []InspectorGroup `json:"groups,omitempty"`
+	Joined   bool             `json:"joined,omitempty"`
+	First    string           `json:"first,omitempty"`
+	Selected string           `json:"selected,omitempty"`
 }
 
 type Model struct {
+	WorkDetails                map[WorkKey]domain.WorkDetail
+	workReads                  []WorkKey
 	ServicePreparations        map[string]*ServicePreparation
 	ServicePreparationDeviceID string
 	WorkerMigrations           map[string]WorkerMigrationTarget
@@ -83,7 +90,7 @@ type Model struct {
 }
 
 func NewModel() *Model {
-	return &Model{DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {
@@ -377,6 +384,7 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 	if _, ok := m.Details[e.SessionID]; !ok && e.Request != nil {
 		m.Details[e.SessionID] = domain.SessionDetail{}
 	}
+	m.applyWorkEvent(e)
 	if detail, ok := m.Details[e.SessionID]; ok && e.Sequence > detail.Sequence {
 		if e.Type == "history.reset" && e.HistoryTurnOrder != nil {
 			retained := map[string]bool{}
@@ -389,6 +397,12 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 			detail.Turns = slices.DeleteFunc(detail.Turns, func(turn domain.Turn) bool { return !retained[turn.ID] })
 			detail.Requests = slices.DeleteFunc(detail.Requests, func(req domain.PendingRequest) bool { return !retained[req.TurnID] })
 			detail.Plan = nil
+			detail.Works = slices.DeleteFunc(detail.Works, func(w domain.WorkActivity) bool { return !retained[w.TurnID] })
+			for key, work := range m.WorkDetails {
+				if key.DeviceID == m.Snapshot.DeviceID && key.SessionID == e.SessionID && !retained[work.Work.TurnID] {
+					delete(m.WorkDetails, key)
+				}
+			}
 		}
 		if e.Plan != nil {
 			detail.Plan = e.Plan
@@ -551,6 +565,7 @@ func (m *Model) Load(path string) error {
 	m.InspectorWidth = saved.InspectorWidth
 	m.InspectorSplitHeight = saved.InspectorSplitHeight
 	m.InspectorLayout = saved.InspectorLayout
+	m.InspectorLayout.Groups = SanitizeInspectorGroups(m.InspectorLayout.Groups)
 	if m.InspectorLayout.First != "changes" && m.InspectorLayout.First != "tasks" {
 		m.InspectorLayout.First = ""
 	}

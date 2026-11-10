@@ -131,3 +131,9 @@ type SkillManagementInput struct {
 	HarnessID   string `json:"harnessId"`
 	domain.SkillChange
 }
+
+// WorkQuery addresses accepted work inside one owning-worker session.
+type WorkQuery struct {
+	SessionID string `json:"sessionId"`
+	ID        string `json:"id"`
+}

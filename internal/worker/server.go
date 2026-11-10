@@ -188,6 +188,13 @@ func New(ctx context.Context, config Config) (*Server, error) {
 		owner.Close()
 		return nil, cleanupErr
 	}
+	if err := s.store.InvalidateWork(); err != nil {
+		s.cancel()
+		listener.Close()
+		db.Close()
+		owner.Close()
+		return nil, err
+	}
 	s.wg.Add(1)
 	go s.reapExecutions()
 	s.wg.Add(1)
@@ -452,6 +459,42 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 		}
 		s.wakeCatalog()
 		return s.runtimeReadiness(query.SessionIDs...), nil
+	case "session.work.stop":
+		q, err := decode[protocol.WorkQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		work, err := s.store.Work(q.SessionID, q.ID)
+		if err != nil {
+			return nil, err
+		}
+		if !work.Work.Active() || !work.Work.CanStop {
+			return nil, harness.Unsupported("independent-work-stop")
+		}
+		detail, err := s.store.Session(q.SessionID, 0, 1)
+		if err != nil {
+			return nil, err
+		}
+		r := s.currentRuntime(q.SessionID)
+		if r == nil || r.Stopped() || !r.Observes(detail.Session) {
+			return nil, errors.New("此任务没有可确认的运行实例")
+		}
+		controller, ok := r.(harness.WorkController)
+		if !ok {
+			return nil, harness.Unsupported("independent-work-stop")
+		}
+		ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
+		defer cancel()
+		return nil, controller.StopWork(ctx, detail.Session, q.ID)
+	case "session.work":
+		q, err := decode[protocol.WorkQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		if q.SessionID == "" || q.ID == "" || len(q.SessionID) > 256 || len(q.ID) > 1024 {
+			return nil, errors.New("无效的任务查询")
+		}
+		return s.store.Work(q.SessionID, q.ID)
 	case "session":
 		q, err := decode[SessionQuery](body)
 		if err != nil {
@@ -897,6 +940,11 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 		s.mu.Unlock()
 		if !bound {
 			err = runtime.Resume(ctx, session)
+			if err == nil {
+				if restorer, ok := runtime.(harness.WorkRestorer); ok {
+					restorer.RestoreWork(session, detail.Works)
+				}
+			}
 		}
 	}
 	if err == nil {

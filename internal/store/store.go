@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 		return fail(err)
 	}
 	if version > SchemaVersion {
-		return fail(fmt.Errorf("database schema %d is newer than supported schema 7", version))
+		return fail(fmt.Errorf("database schema %d is newer than supported schema %d", version, SchemaVersion))
 	}
 	tx, err := db.Begin()
 	if err != nil {
@@ -76,7 +76,9 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS plans (session_id TEXT PRIMARY KEY REFERENCES sessions(id), body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS history_operations (id TEXT PRIMARY KEY, body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS title_jobs (session_id TEXT PRIMARY KEY REFERENCES sessions(id), state TEXT NOT NULL, body BLOB NOT NULL);
- PRAGMA user_version=7;`)
+ CREATE TABLE IF NOT EXISTS works (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
+ CREATE TABLE IF NOT EXISTS work_items (session_id TEXT NOT NULL, work_id TEXT NOT NULL, id TEXT NOT NULL, position INTEGER NOT NULL, revision INTEGER NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,work_id,id), FOREIGN KEY(session_id,work_id) REFERENCES works(session_id,id) ON DELETE CASCADE);
+ PRAGMA user_version=8;`)
 	if err != nil {
 		tx.Rollback()
 		return fail(err)
@@ -597,6 +599,10 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		session.GitHead = e.Session.GitHead
 		session.ContextChanged = e.Session.ContextChanged
 		e.Type = "session"
+	case "work.upsert", "work.item":
+		if err = applyWork(tx, sid, &e); err != nil {
+			return e, err
+		}
 	case "item.upsert":
 		if e.Item == nil {
 			return e, errors.New("missing item")
@@ -723,6 +729,10 @@ func (s *Store) Session(id string, after int64, limit int) (domain.SessionDetail
 	if planErr == nil {
 		out.Plan = &plan
 	}
+	if out.Works, err = rowsOf[domain.WorkActivity](s.db, `SELECT body FROM works WHERE rowid IN(SELECT rowid FROM works WHERE session_id=? ORDER BY CASE WHEN json_extract(body,'$.state') IN('running','starting','waiting') THEN 0 ELSE 1 END,rowid DESC LIMIT 129) ORDER BY rowid`, id); err != nil {
+		return out, err
+	}
+	out.Works, out.WorksTruncated = domain.LimitWorkRoster(out.Works)
 	if out.Items, err = rowsOf[domain.Item](s.db, "SELECT body FROM items WHERE session_id=? AND position>? AND json_extract(body,'$.kind')!='queued' ORDER BY position LIMIT ?", id, after, limit+1); err != nil {
 		return out, err
 	}

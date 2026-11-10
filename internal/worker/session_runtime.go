@@ -43,6 +43,13 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 		if installed == version {
 			return r, nil
 		}
+		busy, e := s.store.HasActiveWork(id)
+		if e != nil {
+			return nil, e
+		}
+		if busy {
+			return r, nil
+		}
 		// A new accepted turn may adopt the new installation, but live turns and
 		// pending forms retain the process that owns their protocol lifecycle.
 		for _, turn := range d.Turns {

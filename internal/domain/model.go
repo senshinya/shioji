@@ -224,6 +224,9 @@ type Plan struct {
 	Steps       []PlanStep `json:"steps"`
 }
 type Event struct {
+	Work             *WorkActivity   `json:"work,omitempty"`
+	WorkID           string          `json:"workId,omitempty"`
+	WorkItem         *Item           `json:"workItem,omitempty"`
 	ContextUsage     *ContextUsage   `json:"contextUsage,omitempty"`
 	HistoryTurnOrder *int64          `json:"historyTurnOrder,omitempty"`
 	Plan             *Plan           `json:"plan,omitempty"`
@@ -250,14 +253,16 @@ type Snapshot struct {
 	Operations      []Operation      `json:"operations"`
 }
 type SessionDetail struct {
-	Plan     *Plan            `json:"plan,omitempty"`
-	Queue    QueueState       `json:"queue"`
-	Session  Session          `json:"session"`
-	Items    []Item           `json:"items"`
-	Requests []PendingRequest `json:"requests"`
-	Turns    []Turn           `json:"turns"`
-	HasMore  bool             `json:"hasMore"`
-	Sequence int64            `json:"sequence"`
+	WorksTruncated bool             `json:"worksTruncated,omitempty"`
+	Works          []WorkActivity   `json:"works,omitempty"`
+	Plan           *Plan            `json:"plan,omitempty"`
+	Queue          QueueState       `json:"queue"`
+	Session        Session          `json:"session"`
+	Items          []Item           `json:"items"`
+	Requests       []PendingRequest `json:"requests"`
+	Turns          []Turn           `json:"turns"`
+	HasMore        bool             `json:"hasMore"`
+	Sequence       int64            `json:"sequence"`
 }
 type Model struct {
 	ID            string   `json:"id"`

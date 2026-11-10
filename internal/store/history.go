@@ -64,6 +64,13 @@ func (s *Store) PrepareHistory(in domain.HistoryChange) (domain.HistoryOperation
 	if err = s.historyAvailable(s.db, source); err != nil {
 		return zero, err
 	}
+	if in.Restart {
+		if busy, e := hasActiveWork(s.db, source.ID); e != nil {
+			return zero, e
+		} else if busy {
+			return zero, errors.New("请先停止仍在运行的子 Agent 或后台任务")
+		}
+	}
 	var first int64
 	turn := in.TurnID
 	if !in.Restart && turn == "" {
@@ -193,6 +200,13 @@ func (s *Store) CommitHistory(id string) (domain.HistoryOperation, error) {
 	if err = s.historyAvailable(tx, source); err != nil {
 		return op, err
 	}
+	if op.Input.Restart {
+		if busy, e := hasActiveWork(tx, source.ID); e != nil {
+			return op, e
+		} else if busy {
+			return op, errors.New("请先停止仍在运行的子 Agent 或后台任务")
+		}
+	}
 	target := op.Session
 	retitle := false
 	target.ContextUsage = nil
@@ -212,6 +226,10 @@ func (s *Store) CommitHistory(id string) (domain.HistoryOperation, error) {
 		if _, err = tx.Exec(`DELETE FROM items WHERE session_id=? AND json_extract(body,'$.kind')!='queued' AND COALESCE(json_extract(body,'$.turnId'),'') NOT IN(SELECT id FROM turns WHERE session_id=? AND json_extract(body,'$.order')<=?)`, source.ID, source.ID, op.KeepOrder); err != nil {
 			return op, err
 		}
+		if _, err = tx.Exec(`DELETE FROM works WHERE session_id=? AND COALESCE(json_extract(body,'$.turnId'),'') NOT IN(SELECT id FROM turns WHERE session_id=? AND json_extract(body,'$.order')<=?)`, source.ID, source.ID, op.KeepOrder); err != nil {
+			return op, err
+		}
+
 		if !target.TitleOverride {
 			var hasEarlierInput bool
 			if err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM items WHERE session_id=? AND json_extract(body,'$.kind')='user')`, target.ID).Scan(&hasEarlierInput); err != nil {
@@ -246,6 +264,12 @@ func (s *Store) CommitHistory(id string) (domain.HistoryOperation, error) {
 		}
 	} else {
 		if _, err = tx.Exec(`INSERT INTO turns SELECT ?,id,body FROM turns WHERE session_id=? AND id IN(SELECT json_extract(body,'$.turnId') FROM items WHERE session_id=?)`, target.ID, source.ID, target.ID); err != nil {
+			return op, err
+		}
+		if _, err = tx.Exec(`INSERT INTO works SELECT ?,id,json_set(body,'$.canStop',json('false'),'$.state',CASE WHEN json_extract(body,'$.state') IN ('running','starting','waiting') THEN 'unknown' ELSE json_extract(body,'$.state') END) FROM works WHERE session_id=? AND json_extract(body,'$.turnId') IN(SELECT id FROM turns WHERE session_id=?)`, target.ID, source.ID, target.ID); err != nil {
+			return op, err
+		}
+		if _, err = tx.Exec(`INSERT INTO work_items SELECT ?,work_id,id,position,revision,body FROM work_items WHERE session_id=? AND work_id IN(SELECT id FROM works WHERE session_id=?)`, target.ID, source.ID, target.ID); err != nil {
 			return op, err
 		}
 		if _, err = tx.Exec(`INSERT INTO requests SELECT ?,id,json_set(body,'$.sessionId',?) FROM requests WHERE session_id=? AND json_extract(body,'$.turnId') IN(SELECT json_extract(body,'$.turnId') FROM items WHERE session_id=?) AND json_extract(body,'$.state') NOT IN('pending','submitting')`, target.ID, target.ID, source.ID, target.ID); err != nil {

@@ -25,7 +25,8 @@ const Major = 2
 // Minor 24 adds revision-checked native tool service configuration writes.
 // Minor 25 adds scope-aware owning-device Skill inventory, content and enablement.
 // Minor 26 adds read-only workspace and existing-session tool inspection.
-const Minor = 26
+// Minor 27 adds independent session work observations and read-only details.
+const Minor = 27
 const MaxFrame = 1 << 20
 
 type Frame struct {

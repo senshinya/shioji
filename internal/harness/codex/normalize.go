@@ -21,6 +21,8 @@ type pending struct {
 	permissions json.RawMessage
 }
 type Normalizer struct {
+	work           *workTracker
+	workControl    bool
 	importResource func(harness.OutputResource) (domain.Attachment, error)
 	mu             sync.Mutex
 	sessions       map[string]string
@@ -101,7 +103,12 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 	event := domain.Event{SessionID: sid}
 	emit := func(e domain.Event) ([]domain.Event, []byte, error) {
 		e.SessionID = sid
-		return []domain.Event{e}, nil, nil
+		work := n.observeRootWork(m, p, e)
+		// Publish continuing execution ownership before releasing its parent turn.
+		if e.Turn != nil && e.Turn.Status != "running" {
+			return append(work, e), nil, nil
+		}
+		return append([]domain.Event{e}, work...), nil, nil
 	}
 	if len(m.ID) > 0 && string(m.ID) != "null" {
 		if _, seen := n.sourceRequests[sourceKey(p.ThreadID, m.ID)]; seen {
@@ -127,7 +134,11 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		event.Request = &req
 		return emit(event)
 	}
+	if events, handled := n.feedChildWork(m, p); handled {
+		return events, nil, nil
+	}
 	if sid == "" {
+		n.rememberEarlyWorkTurn(m, p)
 		return nil, nil, nil
 	}
 	switch m.Method {
@@ -426,6 +437,7 @@ func (n *Normalizer) Pending(key string) (domain.PendingRequest, bool) {
 func (n *Normalizer) Invalidate() []domain.Event {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	work := n.invalidateWork()
 	out := []domain.Event{}
 	for _, p := range n.requests {
 		if p.request.State.AwaitingResolution() {
@@ -440,7 +452,9 @@ func (n *Normalizer) Invalidate() []domain.Event {
 		_ = thread
 		out = append(out, domain.Event{Type: "runtime.lost", SessionID: sid})
 	}
-	return out
+	// Runtime loss establishes the managed-generation guard before independent
+	// work becomes unknown and stops contributing active checkout ownership.
+	return append(out, work...)
 }
 
 func normalizedTurnStatus(status string) domain.ExecutionState {

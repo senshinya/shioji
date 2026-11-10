@@ -76,7 +76,7 @@ func toolIssueLabel(item domain.Item) string {
 	return ""
 }
 
-func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item) {
+func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcriptAnchor ...bool) {
 	key := "activity:" + v.Model.SessionID + "/" + item.ID
 	if _, seen := v.Model.Collapsed[key]; !seen {
 		v.Model.Collapsed[key] = item.Kind == "activity"
@@ -114,7 +114,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item) {
 		})
 	})
 	if button.Clicked() && hasBody {
-		if list := v.lists[v.Model.SessionID]; list != nil {
+		if list := v.lists[v.Model.SessionID]; list != nil && (len(transcriptAnchor) == 0 || transcriptAnchor[0]) {
 			list.KeepRow(v.currentTranscriptRow, button.Bounds().Y-list.Bounds(c).Y)
 		}
 		v.Model.Collapsed[key] = !v.Model.Collapsed[key]

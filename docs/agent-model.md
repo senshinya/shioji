@@ -304,3 +304,11 @@ Model visibility, favorites and order are client menu preferences scoped by stab
 The Codex adapter reads the installed runtime's `skills/list` output including disabled items and source scopes. Content reads revalidate the offered identity and accept bounded regular UTF-8 files only. Enablement is a version-checked native `config/batchWrite` to the user configuration's per-path Skill settings, preserving unrelated entries. This is native user-owned configuration for that offered path, not a synthetic workspace-local policy. Managed/built-in sources and project-inherited entries are read-only. Worker serialization and native expected versions protect concurrent changes; uncertain writes require refresh and are never automatically replayed.
 
 Device settings place Skills before MCP. Workspace settings provide General and Skills tabs, scoped to the saved workspace and selected supported harness. Inherited sources link to the owning device configuration and return to the original workspace draft and reading state. These settings are absent from welcome/add-device setup. Catalog refreshes retain rows, connection/configuration/workspace changes invalidate callbacks, and unavailable configuration remains explicit rather than silently enabling a fallback.
+
+## 会话的独立工作投影（2026-11-10）
+
+`WorkActivity`、`WorkItem` 与 `WorkDetail` 表达子 Agent 和实际后台执行，与父会话的 Item／Turn／用量分开。Adapter 只从已拥有来源的结构化关系确认子工作；`Reference`、`OriginRef` 与 ID 为不透明引用，共享层不解析。主轮结束不结束子工作，观察中断改为 unknown，历史替换只清理被移除根轮次的工作；分叉保留前缀观察，但不继承实时控制权。
+
+Worker 协议 minor 27 新增 `session.work` 只读查询及 `session.work.stop`。查询只读已接纳的 session-owned 数据，不启动或恢复执行。列表最多返回 128 项／96 KiB 摘要，优先活动工作，截断时明确提示；不删除设备端记录。详情最多返回最近 64 个 Item／384 KiB，客户端只保留 32 份详情。可选 `harness.WorkRestorer` 恢复已知关系，`WorkController` 执行独立停止；每项 `CanStop` 还需经过当前运行实例、来源和活动轮次检查。Codex 当前验证支持停止已知子 Agent 的活动轮；后台命令不提供未验证的停止按钮。
+
+真实 Codex 0.167.0 集成测试使用独立 CODEX_HOME 与本地确定性模型服务，覆盖子轮开始先于启动工具返回、父轮完成后后台存活、独立停止子 Agent、命令后续输出与退出。UI 使用同一条右侧栏中的独立列表与详情，不创建应用会话承载子 Agent。

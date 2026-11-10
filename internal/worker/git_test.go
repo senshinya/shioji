@@ -192,3 +192,24 @@ func TestFileReviewRejectsFIFOBeforeItCanBlockDispatch(t *testing.T) {
 		t.Fatalf("dispatch stayed blocked: %v", err)
 	}
 }
+
+func TestCheckoutWaitsForActiveChildOfCompletedParent(t *testing.T) {
+	s, w, dir := gitTestServer(t)
+	id := gitTestSession(t, s, w, "main", "completed")
+	work := domain.WorkActivity{ID: "child", Kind: "agent", TurnID: "t", Title: "child", State: "running"}
+	if _, err := s.store.Apply(id, domain.Event{Type: "work.upsert", Work: &work}); err != nil {
+		t.Fatal(err)
+	}
+	in := map[string]any{"workspaceId": w.ID, "sessionId": id, "branch": "other"}
+	if _, err := gitTestCall(s, "git.checkout", in); err == nil {
+		t.Fatal("active child lost checkout ownership")
+	}
+	if gitTestRun(t, dir, "branch", "--show-current") != "main" {
+		t.Fatal("busy child checkout mutated")
+	}
+	work.State = "completed"
+	s.store.Apply(id, domain.Event{Type: "work.upsert", Work: &work})
+	if _, err := gitTestCall(s, "git.checkout", in); err != nil {
+		t.Fatal("completed work still blocks checkout", err)
+	}
+}

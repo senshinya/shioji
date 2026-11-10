@@ -27,6 +27,12 @@ func TestHistoryRestartAtomicallyReplacesSuffixAndPreservesQueue(t *testing.T) {
 	s.Apply(sid, domain.Event{Type: "session", Session: &d.Session})
 	s.Apply(sid, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "late", TurnID: "t1", Kind: "tool", Text: "late output from first turn", Final: true}})
 	s.Enqueue(domain.Submission{OperationID: "queued", SessionID: sid, WorkspaceID: w.ID, Text: "keep queued"})
+	for _, turn := range []string{"t1", "t2"} {
+		work := domain.WorkActivity{ID: "work-" + turn, Kind: "agent", TurnID: turn, Title: turn, State: "completed"}
+		if _, err := s.Apply(sid, domain.Event{Type: "work.upsert", Work: &work}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	d, _ = s.Session(sid, 0, 100)
 	in := domain.HistoryChange{OperationID: "restart", SessionID: sid, Revision: d.Session.Revision, ItemID: "input:two", Restart: true, Text: "new question", Config: d.Session.Config}
 	op, err := s.PrepareHistory(in)
@@ -47,6 +53,9 @@ func TestHistoryRestartAtomicallyReplacesSuffixAndPreservesQueue(t *testing.T) {
 		t.Fatal("restart changed session identity", result)
 	}
 	d, _ = s.Session(sid, 0, 100)
+	if len(d.Works) != 1 || d.Works[0].TurnID != "t1" {
+		t.Fatal("history reset retained removed work", d.Works)
+	}
 	if len(d.Items) != 4 || d.Items[0].Text != "keep" || d.Items[3].Text != "new question" || len(d.Turns) != 1 || !d.Queue.Paused || len(d.Queue.Items) != 1 {
 		t.Fatal("suffix or queue incorrect", d)
 	}

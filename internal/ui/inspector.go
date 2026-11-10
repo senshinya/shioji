@@ -12,16 +12,18 @@ import (
 )
 
 type changesState struct {
-	Files    []domain.ChangedFile
-	load     changesLoadPhase
-	Error    string
-	Updated  time.Time
-	Path     string
-	file     fileDiffPhase
-	Versions domain.FileVersions
-	Diff     editor.DiffState
-	List     n.ListState
-	Tasks    n.ListState
+	Files      []domain.ChangedFile
+	load       changesLoadPhase
+	Error      string
+	Updated    time.Time
+	Path       string
+	file       fileDiffPhase
+	Versions   domain.FileVersions
+	Diff       editor.DiffState
+	List       n.ListState
+	Tasks      n.ListState
+	DockSeen   bool
+	WorkGroups []app.InspectorGroup
 }
 
 type changesLoadPhase uint8
@@ -166,6 +168,13 @@ func (v *View) openChangedFile(path string) {
 func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool, width, limit float32) {
 	id := v.Model.SessionID
 	state := v.changesFor(id)
+	works := domain.SessionWorks(v.Model.Details[id])
+	prior := state.DockSeen
+	state.DockSeen = true
+	if len(works) > 0 || len(v.Model.InspectorLayout.Groups) > 0 || state.WorkGroups != nil {
+		v.workInspector(c, t, drawer, width, limit, state, works, prior)
+		return
+	}
 	plan := v.Model.Details[id].Plan
 	hasTasks := plan != nil && (len(plan.Steps) > 0 || plan.Narrative != "")
 	v.requestChanges(false)
@@ -299,7 +308,9 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool, width, limit flo
 // group. Their file selection and scroll state remain owned by changesState.
 func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan *domain.Plan, key, kind string, tabs []string, draggable bool, headerHeight, width float32, drop **app.InspectorLayout) {
 	pane := n.Column(c.Key("inspector-pane:" + key)).FillWidth().FillHeight().Grow(1).Clip().Background(t.Background)
-	pane.Transition(n.ElementTransition{Duration: motionAnimation(c, 140*time.Millisecond).Duration, Colors: true, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
+	if headerHeight > 0 {
+		pane.Transition(n.ElementTransition{Duration: motionAnimation(c, 140*time.Millisecond).Duration, Colors: true, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
+	}
 	pane.Children(func() {
 		inset := float32(12)
 		if draggable {
@@ -312,7 +323,14 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 		}
 		goBack := false
 		header := func(file bool) {
-			n.Row(c).FillWidth().Height(headerHeight).Shrink(0).Padding(0, right, 0, inset).Gap(6).AlignItems(n.Center).Children(func() {
+			if headerHeight == 0 && !file {
+				return
+			}
+			height := headerHeight
+			if height == 0 {
+				height = 36
+			}
+			n.Row(c).FillWidth().Height(height).Shrink(0).Padding(0, right, 0, inset).Gap(6).AlignItems(n.Center).Children(func() {
 				if file {
 					back := control(c, 5).Size(24, 26).Label("返回更改列表").Tooltip("返回更改列表").Children(func() { n.Icon(c, disclosureRight).Size(14, 14).Transform(n.Rotation(180)).TextColor(t.TextMuted) })
 					goBack = back.Clicked()
@@ -327,7 +345,11 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 			})
 		}
 		// Each view keeps its own fade snapshot; only the selected view uses live list state.
-		n.Column(c.Key("inspector-view:" + kind)).FillWidth().FillHeight().Grow(1).Background(t.Background).Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 140*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}}).Children(func() {
+		view := n.Column(c.Key("inspector-view:" + kind)).FillWidth().FillHeight().Grow(1).Background(t.Background)
+		if headerHeight > 0 {
+			view.Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 140*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
+		}
+		view.Children(func() {
 			if kind == "tasks" {
 				pane.Label("任务面板")
 				n.Column(c.Key("task-body")).FillWidth().FillHeight().Grow(1).Children(func() {

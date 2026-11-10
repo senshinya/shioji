@@ -77,6 +77,7 @@ func Start(ctx context.Context, opts Options) (*Runtime, error) {
 	}
 	r := &Runtime{protocol: support, pending: map[string]chan wire.Message{}, done: make(chan struct{}), normalizer: NewNormalizer(), onEvent: opts.OnEvent, scope: opts.Scope, executor: opts.Executor}
 	r.normalizer.importResource = opts.ImportResource
+	r.normalizer.workControl = r.supports("turn/interrupt")
 	if opts.authentication {
 		r.loginEvents = make(chan json.RawMessage, 8)
 	}

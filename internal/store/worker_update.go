@@ -7,7 +7,7 @@ import (
 	"shioji/internal/domain"
 )
 
-const SchemaVersion = 7
+const SchemaVersion = 8
 
 // The caller fences dispatch and commands before this final database check.
 // VACUUM INTO reads SQLite's committed snapshot, including its WAL.
@@ -63,6 +63,7 @@ func (s *Store) prepareWorkerStop(reason string) (domain.WorkerUpdateResult, err
  OR EXISTS(SELECT 1 FROM operations WHERE state IN ('accepted','dispatched','indeterminate'))
  OR EXISTS(SELECT 1 FROM requests WHERE json_extract(body,'$.state') IN ('pending','submitting'))
  OR EXISTS(SELECT 1 FROM history_operations WHERE json_extract(body,'$.state') IN ('prepared','forked'))
+ OR EXISTS(SELECT 1 FROM works w JOIN sessions s ON w.session_id=s.id WHERE json_extract(w.body,'$.state') IN ('starting','running','waiting') AND (COALESCE(json_extract(w.body,'$.originRef'),'')='' OR json_extract(w.body,'$.originRef')=json_extract(s.body,'$.threadId')))
  OR EXISTS(SELECT 1 FROM title_jobs WHERE state='running')`).Scan(&blocked)
 	if err != nil {
 		return domain.WorkerUpdateResult{}, err

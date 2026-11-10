@@ -404,3 +404,27 @@ func TestLateLossDuringRetirementCannotStartAnotherGeneration(t *testing.T) {
 		t.Fatal("a new generation started after concurrent execution loss", op)
 	}
 }
+
+func TestRuntimeUpgradeKeepsActiveChildAfterParentCompletes(t *testing.T) {
+	a := &changingCatalog{}
+	a.version.Store(1)
+	s, w := memoryWorker(t, a)
+	op, err := s.submit(domain.Submission{OperationID: "child-upgrade", WorkspaceID: w.ID, HarnessID: "changing", Text: "first", Config: domain.RunConfig{Model: "model-1", Permission: "limited"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitReceipt(t, s, op.ID)
+	old := s.currentRuntime(op.SessionID)
+	d, _ := s.store.Session(op.SessionID, 0, 100)
+	s.store.Apply(op.SessionID, domain.Event{Type: "turn", Turn: &domain.Turn{ID: d.Turns[0].ID, Status: "completed"}})
+	child := domain.WorkActivity{ID: "child", Kind: "agent", TurnID: d.Turns[0].ID, Title: "thinking", State: "running", OriginRef: d.Session.ThreadID}
+	if _, err = s.store.Apply(op.SessionID, domain.Event{Type: "work.upsert", Work: &child}); err != nil {
+		t.Fatal(err)
+	}
+	a.version.Store(2)
+	refreshCatalogByReadiness(t, s, "model-2", domain.RuntimeReady)
+	current, err := s.sessionRuntime(context.Background(), op.SessionID)
+	if err != nil || current != old || old.Stopped() {
+		t.Fatal("runtime upgrade killed independently running child", err)
+	}
+}

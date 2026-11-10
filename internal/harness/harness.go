@@ -189,3 +189,15 @@ type ToolServiceInspector interface {
 type ToolServiceEditor interface {
 	ChangeToolService(context.Context, domain.ToolServiceChange) (domain.ToolServiceChangeResult, error)
 }
+
+// WorkRestorer reinstates opaque observation links after a resumed source is
+// bound. It must not start work or read unrequested history.
+type WorkRestorer interface {
+	RestoreWork(domain.Session, []domain.WorkActivity)
+}
+
+// WorkController addresses a known independent run; it must never substitute
+// interruption of its parent or process identifiers guessed from display text.
+type WorkController interface {
+	StopWork(context.Context, domain.Session, string) error
+}

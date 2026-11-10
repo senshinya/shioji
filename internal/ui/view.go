@@ -27,6 +27,7 @@ type editBinding struct {
 }
 
 type View struct {
+	workPanels                                                                                                      map[app.WorkKey]*workPanelUI
 	workspaceTools                                                                                                  map[string]*workspaceToolsUI
 	skillManagement                                                                                                 map[string]*skillManagementUI
 	skillReturn                                                                                                     *skillManagementReturn

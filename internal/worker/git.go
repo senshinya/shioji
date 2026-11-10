@@ -197,6 +197,11 @@ func (s *Server) checkoutGuard(status domain.GitStatus, own string) error {
 			continue
 		}
 		busy := session.Status.BlocksCheckout()
+		workBusy, e := s.store.HasActiveWork(session.ID)
+		if e != nil {
+			return e
+		}
+		busy = busy || workBusy
 		for _, r := range snap.PendingRequests {
 			if r.SessionID == session.ID && (r.State.AwaitingResolution()) {
 				busy = true
