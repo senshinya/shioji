@@ -98,7 +98,7 @@ func TestShimmerMovesOnlyActiveTextAndHonorsReducedMotion(t *testing.T) {
 				}
 				return pixels
 			}
-			for _, label := range []string{d.Plan.Steps[0].Text, "进行中", d.Plan.Steps[1].Text} {
+			for _, label := range []string{d.Plan.Steps[0].Text, "正在回复", d.Plan.Steps[1].Text} {
 				before := capture(label)
 				changed := false
 				for i := 0; i < 5; i++ {

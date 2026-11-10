@@ -27,6 +27,7 @@ type editBinding struct {
 }
 
 type View struct {
+	runningGroup, activityGroup, activityTurn                                                                       string
 	contextInputs                                                                                                   map[app.WorkKey]*contextInputUI
 	contextRowKeys                                                                                                  map[app.WorkKey]string
 	requestActionsState                                                                                             map[app.WorkKey]*requestActionState
@@ -1198,6 +1199,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	rows := v.transcriptRows(detail.Items)
 	rows = v.contextRows(rows)
 	rows = v.revealFindTarget(rows, reopening)
+	v.syncRunningGroup(rows, detail)
 	turns := make(map[string]domain.Turn, len(detail.Turns))
 	for _, turn := range detail.Turns {
 		turns[turn.ID] = turn
@@ -1414,10 +1416,17 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 	frame := n.Column(c.Key("reply-footer")).Label("回复信息").FillWidth().MinHeight(24).Clip()
 	state := string(turn.Status)
-	if turn.Status == "running" && !v.Model.Connected {
+	if (turn.Status == "running" || turn.Status == "starting") && !v.Model.Connected {
 		state = "disconnected"
 	}
-	animatedContentHeight(c, frame, true, 180*time.Millisecond, func() float32 {
+	delegated := v.runningGroup != "" && v.activityTurn == turn.ID && (turn.Status == "running" || turn.Status == "starting")
+	if turn.Status == "running" || turn.Status == "starting" {
+		frame.MinHeight(0)
+	}
+	if state == "starting" {
+		state = "running"
+	}
+	animatedContentHeight(c, frame, !delegated, 180*time.Millisecond, func() float32 {
 		n.Row(c.Key("state:" + state)).FillWidth().Wrap().Gap(messageFooterGap).MinHeight(24).AlignItems(n.Baseline).Transition(fadeMotion(c, 180*time.Millisecond)).Children(func() {
 			if state == "disconnected" {
 				n.Text(c, "连接已断开，执行状态待核对").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
@@ -1483,12 +1492,8 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 					duration = fmt.Sprintf("用时 %d分%d秒", seconds/60, seconds%60)
 				}
 				n.Text(c, duration).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)}).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-			} else if turn.Status == "running" {
-				n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
-					statusDot(c, label, n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}, t.Success, true)
-					text := n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-					shimmer(c, text, t.TextMuted, t.Text)
-				})
+			} else if turn.Status == "running" || turn.Status == "starting" {
+				v.runningStatus(c, t, turn)
 			} else {
 				animation := motionAnimation(c, 160*time.Millisecond)
 				n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: &animation})
@@ -1497,7 +1502,7 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 						Transition(fadeMotion(c, 160*time.Millisecond))
 				}
 			}
-			if turn.Status != "completed" && turn.DurationMS != nil {
+			if turn.Status != "completed" && !turn.Status.Active() && turn.DurationMS != nil {
 				n.Text(c, fmt.Sprintf("%.1f 秒", float64(*turn.DurationMS)/1000)).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 			}
 			if turn.Status == "completed" {

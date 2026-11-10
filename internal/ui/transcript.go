@@ -240,19 +240,45 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 	label := fmt.Sprintf("%d 次工具调用", row.count)
 	button := n.ButtonBase(c).FillWidth().Height(20).Justify(n.Start).Label(label)
 	color := textHoverColor(c, button, t.TextMuted)
+	live := v.activityGroup == row.group
+	closed := v.runningGroup == row.group
 	if button.Children(func() {
-		n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
+		heading := n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline)
+		if closed {
+			heading.Label("工具组运行状态")
+		}
+		heading.Children(func() {
 			angle := float32(0)
 			if v.Model.ToolDisclosure(row.group).Closed() {
 				angle = -90
 			}
 			font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}
-			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
+			if live {
+				dot := statusDot(c.Key("group-dot"), label, font, t.Success, closed)
+				opacity := float32(0)
+				if closed {
+					opacity = 1
+				} else {
+					dot.Label("")
+				}
+				dot.Opacity(dot.AnimateTo("live-dot-opacity", opacity, motionAnimation(c, 160*time.Millisecond)))
+			}
+			text := n.Text(c.Key("group-label"), label).FontSize(11).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
+			if closed {
+				shimmer(c, text, color, t.Text)
+				for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
+					if turn.ID == row.item.TurnID {
+						runningElapsed(c.Key("group-elapsed"), turn.StartedAt, t.TextMuted)
+						break
+					}
+				}
+			}
 			if row.issues > 0 && v.Model.ToolDisclosure(row.group).Closed() {
 				animation := motionAnimation(c, 160*time.Millisecond)
 				n.Text(c.Key("issues"), fmt.Sprintf("%d 项未成功", row.issues)).FontSize(11).FixedLineHeight(20).TextColor(color).
 					Transition(disclosureMotion(c, 160*time.Millisecond)).ContentTransition(n.ContentTransition{Numeric: true, Animation: &animation})
 			}
+			n.Spacer(c).Grow(1)
 			inlineSymbol(c, chevron, label, font, 10, subtle(t), angle).
 				Transition(n.ElementTransition{Position: true, Duration: motionAnimation(c, 160*time.Millisecond).Duration, Ease: n.EaseOut})
 		})

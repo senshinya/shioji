@@ -45,7 +45,9 @@ func (s *contextInputUI) consumeCommand(m *app.Model) {
 	s.command = false
 }
 
-var compactContextIcon = svg("M7 2v6m-3-3 3 3 3-3M13 18v-6m-3 3 3-3 3 3")
+// Lucide Minimize2, the same inward diagonal arrows used by T3 Code.
+// License: third_party/lucide/LICENSE.
+var compactContextIcon = n.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="m14 10 7-7M20 10h-6V4m-11 17 7-7M4 14h6v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 
 func (v *View) contextSession() domain.Session {
 	for _, s := range v.Model.Snapshot.Sessions {

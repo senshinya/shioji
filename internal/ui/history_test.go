@@ -835,7 +835,7 @@ func TestHistoryRestartShowsRunningAfterShatterBeforeCollapse(t *testing.T) {
 			ui.Frame()
 			count := 0
 			for _, text := range ui.Texts() {
-				if text == "进行中" {
+				if text == "进行中" || text == "正在回复" {
 					count++
 				}
 			}
@@ -1057,6 +1057,15 @@ func TestHistoryRunningHandoffPreservesPaintAndAnimationPhase(t *testing.T) {
 				ui.Advance(370 * time.Millisecond)
 				ui.Frame() // Paint at Now(), after Advance may stop between display frames.
 				region := func() n.Rect {
+					// A real reply changes the activity label intentionally;
+					// only the retained dot must paint identically then.
+					if replyFirst {
+						r, ok := ui.Find("进行中状态")
+						if !ok {
+							t.Fatal("missing live dot")
+						}
+						return r
+					}
 					r, ok := ui.Find("进行中")
 					if !ok {
 						t.Fatal("missing running footer")
