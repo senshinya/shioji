@@ -22,6 +22,9 @@ const (
 )
 
 type workDetailUI struct {
+	streams           map[string]*replyStream
+	streamEpoch       string
+	latestOrder       int64
 	phase             workReadPhase
 	error             string
 	epoch, source     string
@@ -84,9 +87,15 @@ func (v *View) displayedWork(w domain.WorkActivity) domain.WorkActivity {
 	}
 	return w
 }
-func workStatus(c *n.Context, t *n.Theme, w domain.WorkActivity, label string) {
+func (v *View) workStatus(c *n.Context, t *n.Theme, w domain.WorkActivity, label string) {
 	font := n.Font{Family: t.Font, Size: 12, Weight: 400}
-	if w.Active() {
+	if r := v.pendingWorkRequest(w); r != nil {
+		icon := questionIcon
+		if r.Kind == "approval" || r.Kind == "permissions" {
+			icon = shieldIcon
+		}
+		inlineSymbol(c, icon, label, font, 14, t.TextMuted)
+	} else if w.Active() {
 		statusDot(c, label, font, t.Success, true)
 	} else if w.State == "completed" || w.State == "stopped" {
 		inlineSymbol(c, check, label, font, 14, t.TextMuted)
@@ -134,7 +143,15 @@ func (v *View) sessionWorkBody(c *n.Context, t *n.Theme, kind string, all []doma
 		}
 	}
 	if p.selected != "" && selected.ID == "" {
-		p.selected = ""
+		for _, r := range v.Model.Details[v.Model.SessionID].Requests {
+			if r.WorkID == p.selected {
+				selected = v.displayedWork(v.requestWork(p.selected))
+				break
+			}
+		}
+		if selected.ID == "" {
+			p.selected = ""
+		}
 	}
 	index := 0
 	if p.selected != "" {
@@ -182,11 +199,20 @@ func (v *View) sessionWorkBody(c *n.Context, t *n.Theme, kind string, all []doma
 			row := control(c, 5).FillWidth().Height(60*progress).Opacity(progress).Clip().MarginX(6).Padding(8, 6).Label(name)
 			row.Children(func() {
 				n.Row(c).FillWidth().Gap(8).AlignItems(n.Start).Children(func() {
-					workStatus(c, t, w, w.Title)
+					v.workStatus(c, t, w, w.Title)
 					n.Column(c).Grow(1).Gap(2).Children(func() {
-						title := n.Text(c, w.Title).FillWidth().SingleLine().FontSize(12).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
-						if w.Active() {
-							shimmer(c, title, t.TextMuted, t.Text)
+						n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
+							title := n.Text(c, w.Title).Grow(1).MinWidth(0).SingleLine().FontSize(12).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+							if w.Active() && v.pendingWorkRequest(w) == nil {
+								shimmer(c, title, t.TextMuted, t.Text)
+							}
+							v.workRequestLink(c, t, w)
+						})
+						if r := v.pendingWorkRequest(w); r != nil {
+							w.Latest = r.Text
+							if len(r.Questions) > 0 {
+								w.Latest = r.Questions[0].Text
+							}
 						}
 						if w.Latest != "" {
 							n.Text(c, w.Latest).FillWidth().SingleLine().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
@@ -206,7 +232,7 @@ func (v *View) sessionWorkBody(c *n.Context, t *n.Theme, kind string, all []doma
 	}, false)
 }
 func (v *View) readSessionWork(w domain.WorkActivity, u *workDetailUI, force bool) {
-	if w.Revision == 0 || !v.Model.Connected || v.Controller == nil {
+	if w.Revision == 0 && !force || !v.Model.Connected || v.Controller == nil {
 		return
 	}
 	sid := v.Model.SessionID
@@ -275,9 +301,9 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 			p.selected = ""
 		}
 		n.Text(c, w.Title).Grow(1).SingleLine().FontSize(12).Tooltip(w.Title)
-		workStatus(c, t, w, workStateLabel(w))
-		label := n.Text(c, workStateLabel(w)).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
-		if w.Active() {
+		v.workStatus(c, t, w, v.workLabel(w))
+		label := n.Text(c, v.workLabel(w)).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+		if w.Active() && v.pendingWorkRequest(w) == nil {
 			shimmer(c, label, t.TextMuted, t.Text)
 		}
 	})
@@ -297,6 +323,7 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 		outputFont += ", monospace"
 	}
 
+	u.syncStreams(c, detail, v.Model.ConnectionEpoch)
 	port.Children(func() {
 		n.Column(c).FillWidth().Padding(8, 12, 12, 12).Gap(12).Children(func() {
 			metadata := []string{}
@@ -336,6 +363,11 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 			}
 			for _, entry := range detail.Items {
 				item := entry.Item
+				stream := u.streams[item.ID]
+				if item.Kind == "assistant" && stream != nil && stream.live() && !c.Preferences().ReduceMotion && c.Now().Before(stream.revealAfter) {
+					c.AnimationFrame()
+					continue
+				}
 				n.Column(c.Key("work-item:" + item.ID)).FillWidth().Gap(6).Transition(resultBlockMotion(c)).Children(func() {
 					if item.Kind == "assistant" || item.Kind == "reasoning" {
 						if u.markdown.Theme == nil {
@@ -347,12 +379,28 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 							u.markdown.Reveal = &markdown.Reveal{Unit: markdown.AtOnce, Fade: -1}
 						}
 						initialized := n.Local(n.Column(c.Key("mount")), "seeded", func() bool { return false })
-						if !*initialized {
-							markdown.View(c.Key("body"), item.Text, &u.markdown).FillWidth().FontSize(12)
-							*initialized = true
-						} else {
-							markdown.Stream(c.Key("body"), item.Text, &u.markdown).FillWidth().FontSize(12)
+						streaming := stream != nil && stream.live() && (!item.Final || stream.changedAt.Equal(c.Now()) || stream.fresh())
+						if !*initialized && (stream == nil || !stream.fresh()) {
+							streaming = false
 						}
+						*initialized = true
+						if stream != nil {
+							stream.mount()
+						}
+						if c.Preferences().ReduceMotion || stream == nil || !stream.live() {
+							u.markdown.Reveal = &markdown.Reveal{Unit: markdown.AtOnce, Fade: -1}
+						} else {
+							u.markdown.Reveal = &markdown.Reveal{Unit: markdown.ByCharacter, Fade: 180 * time.Millisecond, Smooth: true}
+						}
+						if streaming {
+							markdown.Stream(c.Key("body"), item.Text, &u.markdown).FillWidth().FontSize(12)
+						} else {
+							markdown.View(c.Key("body"), item.Text, &u.markdown).FillWidth().FontSize(12)
+						}
+					} else if item.Kind == "request" {
+						v.requestSource(c, t, item, true)
+					} else if item.Kind == "request_result" {
+						v.requestResultWithStream(c, t, item, stream, false)
 					} else if item.Presentation != "command" {
 						item.ID = w.ID + "\x00" + item.ID
 						v.activityItem(c, t, item, false)

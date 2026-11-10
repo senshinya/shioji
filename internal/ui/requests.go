@@ -231,7 +231,7 @@ func (v *View) formAnswers(r domain.PendingRequest) map[string][]string {
 	return answers
 }
 func (v *View) requestActions(c *n.Context, t *n.Theme, r domain.PendingRequest) {
-	disabled := !v.Model.Connected || r.State != "pending"
+	disabled := !v.Model.Connected || r.State != "pending" || v.requestAction(r).busy
 	n.Row(c).FillWidth().Wrap().Gap(messageFooterGap).Children(func() {
 		action := func(label, decision string, primary bool, answers map[string][]string, extraDisabled bool) {
 			var button n.Element
@@ -311,8 +311,11 @@ func (v *View) openSourceRequest(item domain.Item) {
 	}
 }
 func (v *View) requestResult(c *n.Context, t *n.Theme, item domain.Item) {
+	v.requestResultWithStream(c, t, item, v.replyStreams[item.ID], true)
+}
+func (v *View) requestResultWithStream(c *n.Context, t *n.Theme, item domain.Item, stream *replyStream, origin bool) {
 	progress := float32(1)
-	if stream := v.replyStreams[item.ID]; stream != nil {
+	if stream != nil {
 		if stream.live() && !c.Preferences().ReduceMotion {
 			progress = n.EaseOut(min(1, max(0, float32(c.Now().Sub(stream.changedAt))/float32(receiptEntranceDuration))))
 		}
@@ -328,6 +331,9 @@ func (v *View) requestResult(c *n.Context, t *n.Theme, item domain.Item) {
 	n.Column(c.Key("request-result")).FillWidth().Padding(0, 0, 0, 12).Gap(8).Label("回答结果").Opacity(progress).Transform(n.Translation(0, 6*(1-progress))).Draw(func(p *n.Painter, r n.Rect) {
 		p.Fill(n.Rect{X: r.X, Y: r.Y + 2, W: 1, H: max(0, r.H-4)}, t.Border, 0)
 	}).Children(func() {
+		if origin && item.WorkID != "" {
+			v.requestOrigin(c, t, domain.PendingRequest{WorkID: item.WorkID})
+		}
 		for _, part := range item.Parts {
 			n.Column(c).FillWidth().Gap(2).Children(func() {
 				if part.Label != "" {

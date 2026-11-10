@@ -27,6 +27,7 @@ type editBinding struct {
 }
 
 type View struct {
+	requestActionsState                                                                                             map[app.WorkKey]*requestActionState
 	workPanels                                                                                                      map[app.WorkKey]*workPanelUI
 	workspaceTools                                                                                                  map[string]*workspaceToolsUI
 	skillManagement                                                                                                 map[string]*skillManagementUI
@@ -1392,44 +1393,7 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 	case "request_result":
 		v.requestResult(c, t, item)
 	case "request":
-		label := item.Text
-		switch item.Status {
-		case "answered":
-			label += " · 已处理"
-		case "resolved":
-			label += " · 已结束"
-		case "invalidated":
-			label += " · 已失效"
-		case "submitting":
-			label += " · 提交中"
-		}
-		icon := questionIcon
-		for _, request := range v.Model.Details[v.Model.SessionID].Requests {
-			if item.ID == "request:"+request.ID && (request.Kind == "approval" || request.Kind == "permissions") {
-				icon = shieldIcon
-				break
-			}
-		}
-		active := item.Status == "pending" || item.Status == "submitting"
-		var source n.Element
-		if active {
-			source = control(c).AlignSelf(n.Start).MinHeight(20).Justify(n.Start).Label(label)
-		} else {
-			source = n.Row(c).FillWidth().MinHeight(20).Label(label)
-		}
-		source.Children(func() {
-			n.Row(c).Gap(7).AlignItems(n.Baseline).Children(func() {
-				font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}
-				inlineSymbol(c, icon, label, font, 12, subtle(t))
-				v.requestSourceLabel(c, t, item, label)
-				if item.Status == "pending" || item.Status == "submitting" {
-					inlineSymbol(c.Key("pending-disclosure"), disclosureRight, label, font, 10, subtle(t)).Transition(fadeMotion(c, 180*time.Millisecond))
-				}
-			})
-		})
-		if active && source.Clicked() {
-			v.openSourceRequest(item)
-		}
+		v.requestSource(c, t, item, false)
 	default:
 		n.Text(c, item.Text).TextColor(t.TextMuted).FontSize(12).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
 	}
@@ -1570,14 +1534,22 @@ func (v *View) pendingCount(session string) int {
 const requestRadius = 8
 
 func (v *View) respond(r domain.PendingRequest, answer domain.Answer) {
-	if v.Controller == nil {
+	if v.Controller == nil || !v.Model.Connected || r.State != "pending" {
 		return
 	}
-	v.do(app.Job{Method: "request.respond", Input: protocol.AnswerInput{SessionID: r.SessionID, Answer: answer}, Apply: func(m *app.Model, _ json.RawMessage, err error) {
+	state := v.requestAction(r)
+	if state.busy {
+		return
+	}
+	state.busy, state.err = true, ""
+	if !v.do(app.Job{Method: "request.respond", Input: protocol.AnswerInput{SessionID: r.SessionID, Answer: answer}, Apply: func(_ *app.Model, _ json.RawMessage, err error) {
 		if err != nil {
-			m.Error = err.Error()
+			state.busy = false
+			state.err = err.Error()
 		}
-	}})
+	}}) {
+		state.busy = false
+	}
 }
 func (v *View) submit() { v.sendMessage(false) }
 func (v *View) sendMessage(steer bool) {

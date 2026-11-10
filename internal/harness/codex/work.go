@@ -146,6 +146,9 @@ func (n *Normalizer) observeDelegation(p wire.Params, sourceItem string) []domai
 	for _, child := range children {
 		binding, known := tracker.agents[child]
 		followup := known && (tool == "sendInput" || tool == "resumeAgent" || tool == "followupTask") && binding.rootTurn != p.TurnID
+		if followup {
+			out = append(out, n.invalidateChildRequests(binding.id, "")...)
+		}
 		if tool == "spawnAgent" || followup {
 			var ok bool
 			binding, ok = n.registerAgent(p.ThreadID, p.TurnID, sourceItem, child, workString(source, "prompt"), workString(source, "prompt"), workString(source, "model"), workString(source, "reasoningEffort"))

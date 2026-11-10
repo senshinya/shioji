@@ -122,3 +122,13 @@ func TestRetiredChildAndUnknownThreadCannotReceiveAnswers(t *testing.T) {
 		t.Fatal("unknown request was bound", es, string(reply), err)
 	}
 }
+
+func TestChildFollowupInvalidatesPriorWorkRequests(t *testing.T) {
+	n := childRequestFixture(t)
+	r := childQuestion(t, n, "child", "old-question")
+	es := workFeed(t, n, `{"method":"item/completed","params":{"threadId":"root","turnId":"next-root-turn","item":{"type":"collabAgentToolCall","id":"followup","tool":"sendInput","receiverThreadIds":["child"],"agentsStates":{"child":{"status":"running"}}}}}`)
+	got, _ := n.Pending(r.ID)
+	if got.State != "invalidated" {
+		t.Fatal("new child execution left prior request actionable", got, es)
+	}
+}

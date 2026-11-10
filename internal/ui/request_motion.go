@@ -126,6 +126,9 @@ func (v *View) pendingBody(c *n.Context, t *n.Theme, current requestPage, index 
 				n.Column(c).FillWidth().Gap(8).Children(func() { v.requestBody(c, t, page.request, page.question) })
 			})
 			v.requestActions(c, t, page.request)
+			if message := v.requestAction(page.request).err; message != "" {
+				n.Text(c, message).FontSize(11).TextColor(t.TextMuted).Transition(resultBlockMotion(c))
+			}
 		})
 		if old {
 			return
@@ -180,6 +183,7 @@ type requestCardMotionKey struct{}
 
 func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 	v.pruneSecretAnswers(detail)
+	v.pruneRequestActions(detail)
 	var pages []requestPage
 	for _, r := range detail.Requests {
 		if !r.State.AwaitingResolution() {
@@ -336,6 +340,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 				if title.Clicked() {
 					m.Collapsed[m.SessionID] = !m.Collapsed[m.SessionID]
 				}
+				v.requestOrigin(c, t, r)
 				n.Row(c).Grow(1).MinWidth(0)
 				notice := n.Column(c.Key("request-arrival")).Width(noticeWidth).Height(24).Shrink(0).Clip().Hidden(noticeWidth == 0)
 				n.Inert(notice, unread == 0)
