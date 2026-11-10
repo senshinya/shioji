@@ -16,6 +16,16 @@ worker 验证会话、工作、根轮次、当前执行来源及请求 revision�
 
 当前 Codex 0.167 的子命令授权已通过隔离真实 App Server 集成测试，子文件授权也通过隔离 App Server 探针确认了请求、resolved 与实际文件完成；其部分子提问会被运行时转发到主线程，缺少原始子来源时按主请求展示，不猜测归属。测试 provider 的确定性模型输出与真实模型行为分别看待。
 
+## 手动上下文压缩
+
+可选 `harness.ContextCompactor` 与 `HarnessCapabilities.Compact` 表达真实运行时支持。共享契约只包含操作、状态与不透明来源引用；具体压缩调用和历史识别留在 adapter。Worker 协议 minor 29 增加 `session.context.compact` 与只读 `session.context.operation`，回执包含持久操作和对应 Session revision。
+
+接纳先在 dispatch 序列化边界验证会话、目录、Git、请求和子执行，再持久化独立 `compact` operation 与占用。它没有普通输入，不改配置、草稿、队列暂停或标题。重复操作只返回已有回执；结果未知时只查源历史，不再次发送。独立维护轮次使用 `Turn.Presentation=compaction`，完成后恢复原会话状态，不产生普通回复 footer 或完成通知。执行期间的普通输入排队，不能作为 Steer 注入维护轮次。
+
+当前 Codex adapter 的 `thread/compact/start` 没有客户端幂等键；空 RPC 响应只证明接纳，完成依赖真实轮次和压缩内容事件。重启后按持久操作前的轮次边界、已知源轮次与独立压缩历史核对；不能唯一关联则保持未知。已确认投递仍须核对执行终态，进程停止证明继续沿用现有恢复安全边界。
+
+详见[手动上下文压缩规格与验证](ryugi/specs/2026-11-11-context-compaction.md)。真实 App Server 加本地确定性 provider、worker 完整链路及原生交互测试分别验证；不把测试夹具当作真实模型回复。
+
 ## 目标
 
 自动会话命名使用可选 `harness.TitleGenerator`，由 owning worker 保存任务并接纳标题结果；具体模型选择、辅助进程与认证留在 adapter。当前实现和验证边界见 [自动会话命名](session-titles.md)。
