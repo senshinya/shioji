@@ -79,7 +79,8 @@ func (v *View) toolbarWorkspace(c *n.Context, t *n.Theme) {
 	if trigger.Clicked() {
 		open = !open
 	}
-	popover(c.Key("workspace-directories-popover"), trigger, &open, func(panel n.Element) {
+	panel := n.PopoverBase(c.Key("workspace-directories-popover"), trigger, &open, func(panel n.Element) {
+		panel.Transition(workspacePopupMotion(c))
 		panel.Width(280).Padding(3).Radius(9).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
 			n.Scroll(c).FillWidth().MaxHeight(320).Children(func() {
 				n.Column(c).FillWidth().Gap(0).Children(func() {
@@ -104,6 +105,9 @@ func (v *View) toolbarWorkspace(c *n.Context, t *n.Theme) {
 			})
 		})
 	})
+	if panel.Dismissed() {
+		trigger.Focus()
+	}
 	v.menuOpen["workspace-directories"] = open
 }
 

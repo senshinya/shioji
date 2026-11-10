@@ -100,6 +100,16 @@ func popover(c *n.Context, trigger n.Element, open *bool, build func(n.Element))
 	return panel
 }
 
+// Reveal the directory menu downward from its top edge. Its contents retain
+// their final layout and opacity while the actual panel height opens/closes.
+func workspacePopupMotion(c *n.Context) n.ElementTransition {
+	if c.Preferences().ReduceMotion {
+		return n.ElementTransition{Duration: 0}
+	}
+	pose := n.Motion{Collapse: true, Opacity: 1}
+	return n.ElementTransition{Duration: 180 * time.Millisecond, Ease: n.EaseOut, Size: true, Enter: &pose, Exit: &pose}
+}
+
 func disclosureMotion(c *n.Context, duration time.Duration) n.ElementTransition {
 	a := motionAnimation(c, duration)
 	pose := n.Motion{Collapse: !c.Preferences().ReduceMotion}

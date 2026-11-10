@@ -25,3 +25,9 @@ Worker 保持 major 2；minor 11 增加 `file.search`、`file.snapshot`、`skill
 菜单保留输入焦点，异步结果按设备、工作区、harness、会话与编辑身份隔离。远端快照晚到时不抢回用户随后转移的焦点。弹层从编辑器位置展开／收回，候选区高度同步变化；搜索词更新保留同一弹层与既有结果，不重复播放开合；取消和过期结果不会再次打开弹层。文件与 Skill 在原触发位置显示“图标＋名称”原生附件节点，随正文换行，支持光标、选区、整块删除、撤销／重做及名称复制。草稿、队列和已发送消息使用中立 `ReferencePosition` 保存一基 rune 位置；adapter 不接收这些展示位置。已发送标签在正文中保留原位置，文件点击预览同一份不可变快照；正文选区、虚拟卸载后的复制和整条消息复制都展开标签名称。历史加载和分叉保留同一位置；原位历史编辑复用原生文档及候选菜单，支持引用的新增、整块删除与撤销，独立于底部普通草稿。确认时显式提交当前引用集合，空集合表示全部移除；旧客户端未提供该字段时保留原引用。旧消息未记录位置时将引用放在正文末尾，不推测其原始位置。旧版保留的历史编辑草稿补回源引用；用户已明确删除的引用不会在重开或重载时复活。恢复生成的新摘要显式重置旧位置，将保留的引用放在正文末尾，不把旧位置插进摘要内部。普通附件上传状态不重建编辑文档或清空撤销。遵循减少动态效果。
 
 验证覆盖真实 owning-worker 文件快照、Git ignore、目录扩张与越界拒绝、普通／队列草稿重载、键盘选择／光标／焦点、双会话式独立 pane 菜单、旧队列字段兼容，以及本机真实 Codex app-server 加确定性测试模型服务的 Skill 指令传递。测试服务不代表付费模型端到端验收。
+
+## Skills configuration
+
+Skill references still use the enabled-only catalog and retain their owning device/workspace/harness. Protocol 2.25 adds separate management operations, including disabled entries and bounded read-only Skill documents. Device > Agent > Skills manages user-owned entries, while workspace settings show project entries and inherited sources; inherited entries are read-only in that view and link to their device settings. Disabled references in existing drafts are retained for explicit correction and rejected on actual submission if no longer offered. Native configuration changes do not rewrite already accepted messages or input snapshots.
+
+The conversation toolbar's workspace directory popup opens downward and retracts upward at its trigger with constant opacity; Reduce Motion skips height movement. Its existing folder rows, management entry, keyboard dismissal and focus return are preserved.

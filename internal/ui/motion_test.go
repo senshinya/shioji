@@ -281,3 +281,48 @@ func TestFileDiffNavigationKeepsInspectorWidthAndConversationStable(t *testing.T
 		t.Fatal("Back changes inspector bounds", before, panel)
 	}
 }
+
+func TestWorkspaceDirectoryPopupRevealsDownWithoutFading(t *testing.T) {
+	m := layoutModel()
+	m.Snapshot.Workspaces[0].Folders = []string{"/project/src", "/project/notes"}
+	v := New(m, nil, "")
+	ui := n.NewTester(func(c *n.Context) {
+		n.Overlay(c, func() {})
+		n.Column(c).Fill().Background(n.Hex("#aa0000")).Padding(20).Children(func() { v.toolbarWorkspace(c, c.Theme()) })
+	}, 500, 400)
+	if err := ui.Click("工作区目录"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(50 * time.Millisecond)
+	early := ui.Image()
+	ui.Advance(time.Second)
+	last, ok := ui.Find("工作区设置")
+	if !ok {
+		t.Fatal(ui.Texts())
+	}
+	x := int(last.X + 180)
+	y := int(last.Y + last.H - 5)
+	if pixel := early.RGBAAt(x, y); pixel.G > 12 {
+		t.Fatalf("popup tail is already visible while opening (scaled/faded rather than pulling down): %v", pixel)
+	}
+	// A revealed top section keeps the same opaque surface as the final panel.
+	first, _ := ui.Find("src")
+	topY := int(first.Y + 4)
+	full := ui.Image()
+	if p, q := early.RGBAAt(x, topY), full.RGBAAt(x, topY); math.Abs(float64(p.G)-float64(q.G)) > 3 {
+		t.Fatalf("revealed popup surface fades: %v -> %v", p, q)
+	}
+	ui.Key(0, n.KeyEscape)
+	ui.Advance(50 * time.Millisecond)
+	closing := ui.Image()
+	if pixel := closing.RGBAAt(x, y); pixel.G > 12 {
+		t.Fatal("closing popup tail did not retract", pixel)
+	}
+	ui.Advance(time.Second)
+	ui.SetPreferences(n.Preferences{ReduceMotion: true})
+	ui.Click("工作区目录")
+	ui.Advance(16 * time.Millisecond)
+	if pixel := ui.Image().RGBAAt(x, y); pixel.G < 150 {
+		t.Fatal("Reduce Motion still animates popup height", pixel)
+	}
+}
