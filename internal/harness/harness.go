@@ -178,6 +178,12 @@ type ToolServiceRuntime interface {
 }
 type ToolServiceAuthorization interface{ Wait(context.Context) error }
 
+// Inspection never reloads services or creates/resumes history. A nonempty
+// source reference must query that existing session, without global substitution.
+type ToolServiceInspector interface {
+	InspectToolServices(context.Context, domain.LaunchContext, string) (domain.ToolServiceInspection, error)
+}
+
 // Configuration writes are optional and operate on the owning harness's native
 // settings. The opaque revision protects concurrent edits by other clients.
 type ToolServiceEditor interface {

@@ -108,8 +108,14 @@ func signInFixture(mode string) {
 		case "config/read":
 			result = json.RawMessage(`{"config":{"mcp_servers":{"disabled":{"enabled":false}}}}`)
 		case "mcpServerStatus/list":
-			var p struct{ Cursor *string }
+			var p struct {
+				Cursor   *string
+				ThreadID string
+			}
 			json.Unmarshal(m.Params, &p)
+			if p.ThreadID != "" && p.ThreadID != "opaque-thread" {
+				os.Exit(8)
+			}
 			if p.Cursor == nil {
 				result = json.RawMessage(`{"data":[{"name":"docs","authStatus":"unsupported","tools":{"lookup":{}}},{"name":"private","httpOrigin":"https://private.example","authStatus":"notLoggedIn","tools":{}}],"nextCursor":"next"}`)
 			} else {

@@ -38,6 +38,36 @@ type ToolServiceCatalog struct {
 	Authorization *ToolServiceAuthorization `json:"authorization,omitempty"`
 }
 
+type ToolServiceScope string
+
+const (
+	ToolServiceProject ToolServiceScope = "project"
+	ToolServiceUser    ToolServiceScope = "user"
+	ToolServiceManaged ToolServiceScope = "managed"
+	ToolServiceOther   ToolServiceScope = "other"
+)
+
+// Inspection is read-only. EntryID identifies a source row; ID remains the
+// adapter's opaque service reference. RuntimeKnown requires a session observation.
+type InspectedToolService struct {
+	ToolService
+	EntryID           string                  `json:"entryId"`
+	Scope             ToolServiceScope        `json:"scope"`
+	ConfigurationPath string                  `json:"configurationPath,omitempty"`
+	IgnoredReason     string                  `json:"ignoredReason,omitempty"`
+	Definitions       []ToolServiceDefinition `json:"definitions,omitempty"`
+}
+type ToolServiceDefinition struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+type ToolServiceInspection struct {
+	Directory    string                 `json:"directory"`
+	RuntimeKnown bool                   `json:"runtimeKnown"`
+	Entries      []InspectedToolService `json:"entries"`
+	Warnings     []string               `json:"warnings,omitempty"`
+}
+
 // Retained values are opaque existing secrets. An unchanged row refers back to
 // its owning adapter; catalog reads never send the secret to another device.
 type ToolServiceValue struct {

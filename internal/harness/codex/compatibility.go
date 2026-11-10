@@ -19,6 +19,7 @@ import (
 )
 
 type protocolSupport struct {
+	scopedToolStatus  bool
 	browserLogin      bool
 	deviceLogin       bool
 	collaborationMode bool
@@ -142,6 +143,9 @@ func protocolFromSchema(data []byte) (*protocolSupport, error) {
 			}
 		}
 		support.methods[method.Enum[0]] = compatible
+		if method.Enum[0] == "mcpServerStatus/list" && compatible {
+			_, support.scopedToolStatus = params.Properties["threadId"]
+		}
 		if method.Enum[0] == "turn/start" {
 			_, support.collaborationMode = params.Properties["collaborationMode"]
 			_, support.serviceTier = params.Properties["serviceTier"]

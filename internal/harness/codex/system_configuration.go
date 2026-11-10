@@ -29,9 +29,10 @@ type nativeConfiguration struct {
 	Layers []struct {
 		Config json.RawMessage `json:"config"`
 		Name   struct {
-			Type    string `json:"type"`
-			File    string `json:"file"`
-			Profile string `json:"profile"`
+			Type           string `json:"type"`
+			File           string `json:"file"`
+			Profile        string `json:"profile"`
+			DotCodexFolder string `json:"dotCodexFolder"`
 		} `json:"name"`
 		Version        string  `json:"version"`
 		DisabledReason *string `json:"disabledReason"`
