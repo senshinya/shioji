@@ -36,6 +36,7 @@ type skillManagementUI struct {
 	markdown                                                    markdown.Options
 }
 type skillManagementReturn struct {
+	tab       string
 	workspace *workspaceEditor
 	editor    *deviceAgentEditor
 	harness   string
@@ -436,27 +437,34 @@ func (v *View) managedSkillDetail(c *n.Context, t *n.Theme, u *skillManagementUI
 	})
 }
 func (v *View) openSkillDeviceManagement(u *skillManagementUI, id string) {
-	if v.workspaceEditor == nil {
+	if !v.openWorkspaceAgentManagement(u.key, u.harness, "Skills") {
 		return
 	}
-	state := v.deviceState(u.key)
+	target := v.skillManagementFor(u.key, u.harness, "")
+	target.detailID = id
+	target.phase = skillIdle
+	v.querySkillInventory(target)
+}
+
+func (v *View) openWorkspaceAgentManagement(key, harness, tab string) bool {
+	if v.workspaceEditor == nil {
+		return false
+	}
+	state := v.deviceState(key)
 	for _, info := range state.Readiness.Harnesses {
-		if info.ID != u.harness {
+		if info.ID != harness {
 			continue
 		}
 		e := agentEditor(state.Readiness.Harnesses)
 		e.edit(info)
-		e.pageID, e.tab = info.ID, "Skills"
+		e.pageID, e.tab = info.ID, tab
 		e.epoch = state.ConnectionEpoch
-		v.skillReturn = &skillManagementReturn{workspace: v.workspaceEditor, editor: e, harness: info.ID, key: u.key}
+		v.skillReturn = &skillManagementReturn{workspace: v.workspaceEditor, editor: e, harness: info.ID, key: key, tab: tab}
 		v.devices = true
-		v.deviceSelected = u.key
-		target := v.skillManagementFor(u.key, u.harness, "")
-		target.detailID = id
-		target.phase = skillIdle
-		v.querySkillInventory(target)
-		return
+		v.deviceSelected = key
+		return true
 	}
+	return false
 }
 func (v *View) returnSkillWorkspace() {
 	if v.skillReturn == nil {
@@ -465,6 +473,13 @@ func (v *View) returnSkillWorkspace() {
 	ret := v.skillReturn
 	v.workspaceEditor = ret.workspace
 	v.devices = false
+	if ret.tab == "MCP" {
+		u := v.workspaceToolsFor(ret.workspace, ret.harness)
+		u.request++
+		u.phase = toolServiceIdle
+		v.queryWorkspaceTools(u)
+		return
+	}
 	u := v.skillManagementFor(ret.key, ret.harness, ret.workspace.Workspace.ID)
 	u.phase = skillIdle
 	v.querySkillInventory(u)
@@ -557,7 +572,11 @@ func (v *View) skillDeviceManagementPage(c *n.Context, t *n.Theme, r *skillManag
 		return
 	}
 	n.Column(c).FillWidth().Padding(configurationInset).Gap(12).Children(func() {
-		if ghost(c, "返回工作区 Skills").Clicked() {
+		label := "返回工作区 Skills"
+		if r.tab == "MCP" {
+			label = "返回工作区 MCP"
+		}
+		if ghost(c, label).Clicked() {
 			v.returnSkillWorkspace()
 		}
 		n.Text(c, "此 Agent 已不可用").FontSize(12).TextColor(t.TextMuted)

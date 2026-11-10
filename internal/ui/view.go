@@ -27,6 +27,7 @@ type editBinding struct {
 }
 
 type View struct {
+	workspaceTools                                                                                                  map[string]*workspaceToolsUI
 	skillManagement                                                                                                 map[string]*skillManagementUI
 	skillReturn                                                                                                     *skillManagementReturn
 	directoryPicker                                                                                                 *directoryPicker

@@ -147,6 +147,9 @@ func (v *View) deviceAgentPage(c *n.Context, t *n.Theme, key, deviceName string,
 			if v.skillReturn != nil && v.skillReturn.editor == e {
 				backName = v.skillReturn.workspace.Workspace.Name
 				backLabel = "返回工作区 Skills"
+				if v.skillReturn.tab == "MCP" {
+					backLabel = "返回工作区 MCP"
+				}
 			}
 			back := control(c.Key("back"), 5).Height(28).MaxWidth(400).AlignSelf(n.Start).Justify(n.Start).PaddingX(4).MarginStart(-4).Label(backLabel).Tooltip(backName).Disabled(e.busy)
 			if width < 900 {

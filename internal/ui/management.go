@@ -299,12 +299,14 @@ func (v *View) workspaceSettingsView(c *n.Context, t *n.Theme) {
 	}
 	n.Column(c).FillWidth().FillHeight().Grow(1).Padding(0, 32, 20).Children(func() {
 		n.Column(c).FillWidth().MaxWidth(840).FillHeight().Grow(1).Children(func() {
-			tabs := []configurationTabItem{{ID: "", Label: "常规"}, {ID: "Skills", Label: "Skills"}}
+			tabs := []configurationTabItem{{ID: "", Label: "常规"}, {ID: "Skills", Label: "Skills"}, {ID: "MCP", Label: "MCP"}}
 			e.Tab = configurationTabs(c.Key("workspace-tabs"), e.Tab, tabs, configurationUnderline, e.Busy)
 			n.Column(c).FillWidth().FillHeight().Grow(1).Padding(12, 0, 0).Children(func() {
 				configurationTabPanel(c.Key("workspace-tab-panel"), e.Tab, configurationTabIndex(tabs, e.Tab), configurationPanelFill, func() {
 					if e.Tab == "Skills" {
 						v.workspaceSkills(c, t, e)
+					} else if e.Tab == "MCP" {
+						v.workspaceToolsView(c, t, e)
 					} else {
 						v.workspaceSettingsForm(c, t)
 					}

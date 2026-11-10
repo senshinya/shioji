@@ -89,7 +89,23 @@ func toolInspectionSources(c nativeConfiguration, cwd string) domain.ToolService
 func (r *Runtime) InspectToolServices(ctx context.Context, launch domain.LaunchContext, source string) (domain.ToolServiceInspection, error) {
 	c, err := r.skillConfiguration(ctx, launch.CWD)
 	if err != nil {
-		return domain.ToolServiceInspection{}, errors.New("无法读取此目录的 MCP 配置，请检查项目配置后重试")
+		// Read outside the failed project, without opening or rewriting its file.
+		// Keep only independently owned sources; root-local project config is not
+		// part of this workspace and must never be offered as an inherited source.
+		global, e := r.skillConfiguration(ctx, string(filepath.Separator))
+		if e != nil {
+			return domain.ToolServiceInspection{}, errors.New("无法读取此目录的 MCP 配置，请检查项目配置后重试")
+		}
+		fallback := toolInspectionSources(global, launch.CWD)
+		entries := fallback.Entries[:0]
+		for _, entry := range fallback.Entries {
+			if entry.Scope == domain.ToolServiceUser || entry.Scope == domain.ToolServiceManaged {
+				entries = append(entries, entry)
+			}
+		}
+		fallback.Entries = entries
+		fallback.Warnings = append(fallback.Warnings, "项目配置读取失败，显示可读取的继承配置；会话加载状态尚未核对")
+		return fallback, nil
 	}
 	out := toolInspectionSources(c, launch.CWD)
 	if source == "" {
@@ -148,7 +164,7 @@ func (r *Runtime) InspectToolServices(ctx context.Context, launch domain.LaunchC
 		}
 		s, ok := observed[e.ID]
 		if !ok {
-			e.State = domain.ToolServiceUnknown
+			e.State = domain.ToolServiceNotLoaded
 			continue
 		}
 		switch {

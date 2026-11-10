@@ -90,6 +90,22 @@ enabled=false
 	if !found || out.RuntimeKnown {
 		t.Fatal(out)
 	}
+	if err := os.WriteFile(filepath.Join(root, ".codex/config.toml"), []byte("[mcp_servers.broken\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err = r.InspectToolServices(context.Background(), domain.LaunchContext{CWD: root}, "")
+	if err != nil || len(out.Warnings) == 0 {
+		t.Fatal("bad project configuration hid inherited sources", out, err)
+	}
+	found = false
+	for _, e := range out.Entries {
+		if e.ID == "fixture" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("inherited user service lost", out)
+	}
 }
 
 func strconvQuote(s string) string { b, _ := json.Marshal(s); return string(b) }

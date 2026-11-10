@@ -11,6 +11,7 @@ type ToolServiceState string
 
 const (
 	ToolServiceUnknown               ToolServiceState = "unknown"
+	ToolServiceNotLoaded             ToolServiceState = "notLoaded"
 	ToolServiceConnecting            ToolServiceState = "connecting"
 	ToolServiceReady                 ToolServiceState = "ready"
 	ToolServiceAuthorizationRequired ToolServiceState = "authorizationRequired"
