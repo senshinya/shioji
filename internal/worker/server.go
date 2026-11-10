@@ -518,6 +518,15 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 			return nil, err
 		}
 		return s.store.Operation(q.ID)
+	case "session.context.compact", "session.context.operation":
+		in, err := decode[domain.ContextActionRequest](body)
+		if err != nil {
+			return nil, err
+		}
+		if method == "session.context.operation" {
+			return s.queryContextOperation(in)
+		}
+		return s.compactContext(in)
 	case "events", "events.watch":
 		q, err := decode[EventsQuery](body)
 		if err != nil {
@@ -1044,7 +1053,7 @@ func (s *Server) onEvent(e domain.Event) error {
 		e.Type = "session"
 		e.Session = &session
 	}
-	if (e.Turn != nil && e.Turn.Status != "running" && e.Turn.Status != "completed") || lost || (e.Session != nil && e.Session.ContextChanged) {
+	if (e.Turn != nil && e.Turn.Presentation != "compaction" && e.Turn.Status != "running" && e.Turn.Status != "completed") || lost || (e.Session != nil && e.Session.ContextChanged) {
 		if _, err := s.store.PauseQueue(e.SessionID, "execution needs confirmation"); err != nil {
 			return err
 		}

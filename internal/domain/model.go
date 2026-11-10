@@ -42,6 +42,7 @@ type LaunchContext struct {
 	Head                  string   `json:"head,omitempty"`
 }
 type Session struct {
+	ContextAction  *ContextAction   `json:"contextAction,omitempty"`
 	ContextUsage   *ContextUsage    `json:"contextUsage,omitempty"`
 	ForkedFrom     string           `json:"forkedFrom,omitempty"`
 	ForkedTurn     string           `json:"forkedTurn,omitempty"`
@@ -96,6 +97,7 @@ type QueueItem struct {
 	Input Submission     `json:"input"`
 }
 type Operation struct {
+	Kind      string         `json:"kind,omitempty"`
 	ID        string         `json:"id"`
 	SessionID string         `json:"sessionId"`
 	State     OperationState `json:"state"`
@@ -203,6 +205,7 @@ type Answer struct {
 	Answers   map[string][]string `json:"answers,omitempty"`
 }
 type Turn struct {
+	Presentation      string         `json:"presentation,omitempty"`
 	Order             int64          `json:"order"`
 	ID                string         `json:"id"`
 	Status            ExecutionState `json:"status"`

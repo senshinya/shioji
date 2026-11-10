@@ -87,7 +87,10 @@ func (r *Runtime) Inspect(ctx context.Context, s domain.Session) (domain.Recover
 				turn.Error = bounded(src.Error.Message)
 			}
 			out.Turns = append(out.Turns, turn)
+			standaloneCompaction, hasUser := false, false
 			for _, item := range src.Items {
+				standaloneCompaction = standaloneCompaction || item.Type == "contextCompaction"
+				hasUser = hasUser || item.Type == "userMessage"
 				if item.Type == "userMessage" {
 					var marker string
 					json.Unmarshal(item.Fields["clientId"], &marker)
@@ -106,6 +109,9 @@ func (r *Runtime) Inspect(ctx context.Context, s domain.Session) (domain.Recover
 				normalized := r.normalizer.normalizeResourceItem(s.ID, itemKey(src.ID, item.ID), item, turn.Status != "running")
 				normalized.ID, normalized.TurnID = itemKey(src.ID, item.ID), src.ID
 				out.Items = append(out.Items, normalized)
+			}
+			if standaloneCompaction && !hasUser {
+				out.Turns[len(out.Turns)-1].Presentation = "compaction"
 			}
 		}
 		if page.NextCursor == nil || *page.NextCursor == "" {
@@ -135,6 +141,10 @@ func (r *Runtime) Inspect(ctx context.Context, s domain.Session) (domain.Recover
 	}
 
 	out.Available = true
+	if a := s.ContextAction; a != nil && a.SourceRef == s.ThreadID {
+		observation := compactionObservation(out, *a)
+		out.ContextAction = &observation
+	}
 	return out, nil
 }
 

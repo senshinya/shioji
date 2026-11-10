@@ -137,13 +137,13 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 	}
 	ops := []domain.Operation{}
 	abandoned := map[string]bool{}
-	rows, err = tx.Query("SELECT id,session_id,state,digest,error FROM operations WHERE session_id=? AND state IN ('accepted','dispatched','indeterminate')", id)
+	rows, err = tx.Query("SELECT id,session_id,state,digest,error,kind FROM operations WHERE session_id=? AND state IN ('accepted','dispatched','indeterminate')", id)
 	if err != nil {
 		return none, err
 	}
 	for rows.Next() {
 		var op domain.Operation
-		if err = rows.Scan(&op.ID, &op.SessionID, &op.State, &op.Digest, &op.Error); err != nil {
+		if err = rows.Scan(&op.ID, &op.SessionID, &op.State, &op.Digest, &op.Error, &op.Kind); err != nil {
 			rows.Close()
 			return none, err
 		}
@@ -154,7 +154,22 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 		return none, err
 	}
 	rows.Close()
+	if a := session.ContextAction; a != nil && (a.State.Active() || a.State == "unknown") {
+		op, e := operation(tx, a.OperationID)
+		if e != nil {
+			return none, e
+		}
+		if op.Kind == "compact" && op.State == "confirmed" {
+			ops = append(ops, op)
+		}
+	}
 	for _, op := range ops {
+		if op.Kind == "compact" {
+			if a := source.ContextAction; a != nil && a.OperationID == op.ID && a.TurnID != "" {
+				targets[a.TurnID] = true
+			}
+			continue
+		}
 		if turn := source.Inputs["input:"+op.ID]; turn != "" {
 			targets[turn] = true
 		}
@@ -171,7 +186,7 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 		if turn.Status == "running" && !source.Attached {
 			return none, errors.New("旧轮仍在执行，请先停止后重新核对")
 		}
-		if turn.Status == "interrupted" && !source.Attached && !source.ManagedStoppedTurns[turn.ID] {
+		if turn.Status == "interrupted" && turn.Presentation != "compaction" && !source.Attached && !source.ManagedStoppedTurns[turn.ID] {
 			toolUnconfirmed = true
 			turn.Status = "unknown"
 			turn.Error = "已找回中断历史，设备上的旧工具执行尚待确认"
@@ -218,6 +233,11 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 	}
 	for _, op := range ops {
 		tid := source.Inputs["input:"+op.ID]
+		if op.Kind == "compact" {
+			if a := source.ContextAction; a != nil && a.OperationID == op.ID {
+				tid = a.TurnID
+			}
+		}
 		if tid == "" || !found[tid] {
 			unresolved = true
 			if !end {
@@ -232,6 +252,25 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 		}
 		if _, err = tx.Exec("UPDATE operations SET state=?,error=? WHERE id=?", op.State, op.Error, op.ID); err != nil {
 			return none, err
+		}
+		if op.Kind == "compact" {
+			if a := session.ContextAction; a != nil && a.OperationID == op.ID && a.SourceRef == session.ThreadID {
+				if op.State == "confirmed" {
+					a.TurnID = tid
+					for _, turn := range source.Turns {
+						if turn.ID == tid {
+							a.State, a.Error = turn.Status, turn.Error
+						}
+					}
+				} else if end {
+					a.State = "abandoned"
+					a.Error = op.Error
+				}
+			}
+			if _, err = journal(tx, domain.Event{Type: "operation", SessionID: id, Operation: &op}); err != nil {
+				return none, err
+			}
+			continue
 		}
 		if op.State == "confirmed" {
 			if err = queueOutcome(tx, op); err != nil {
@@ -286,6 +325,9 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 		if end {
 			status = "abandoned"
 		}
+	}
+	if a := session.ContextAction; a != nil && a.SourceRef == session.ThreadID && a.TurnID != "" && !a.State.Active() && a.State != "unknown" && a.State != "abandoned" && !unresolved && status != "unknown" && status != "abandoned" {
+		status = a.PreviousStatus
 	}
 	session.Status = status
 	if session.ExecutionGuard != "" && session.ExecutionGuard == source.StoppedGeneration {

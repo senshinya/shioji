@@ -3,6 +3,7 @@ package domain
 // RecoveryHistory contains normalized source evidence, never harness wire data.
 // Inputs maps the original client message identity to its source turn identity.
 type RecoveryHistory struct {
+	ContextAction       *ContextObservation
 	StoppedGeneration   string
 	ManagedStoppedTurns map[string]bool
 	// Attached means the adapter still owns this thread and receives live events.

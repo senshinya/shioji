@@ -78,6 +78,9 @@ func TestRealManualCompactionUsesOwnTurnWithoutUserInput(t *testing.T) {
 		if e.Item != nil && e.Item.Kind == "user" {
 			t.Fatal("compaction fabricated a user message", e.Item)
 		}
+		if e.Turn != nil && e.Turn.Presentation != "compaction" {
+			t.Fatal("standalone compaction has ordinary reply lifecycle", e.Turn)
+		}
 	}
 	if !found {
 		t.Fatal("source did not expose a compaction item", got)

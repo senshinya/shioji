@@ -27,7 +27,8 @@ const Major = 2
 // Minor 26 adds read-only workspace and existing-session tool inspection.
 // Minor 27 adds independent session work observations and read-only details.
 // Minor 28 adds durable directed child input and receipt inspection.
-const Minor = 28
+// Minor 29 adds durable, explicitly separate context maintenance commands.
+const Minor = 29
 const MaxFrame = 1 << 20
 
 type Frame struct {

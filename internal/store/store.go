@@ -79,13 +79,27 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS works (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
  CREATE TABLE IF NOT EXISTS work_items (session_id TEXT NOT NULL, work_id TEXT NOT NULL, id TEXT NOT NULL, position INTEGER NOT NULL, revision INTEGER NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,work_id,id), FOREIGN KEY(session_id,work_id) REFERENCES works(session_id,id) ON DELETE CASCADE);
  CREATE TABLE IF NOT EXISTS work_inputs (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), work_id TEXT NOT NULL, body BLOB NOT NULL);
- PRAGMA user_version=9;`)
+ PRAGMA user_version=10;`)
 	if err != nil {
 		tx.Rollback()
 		return fail(err)
 	}
 	if version < 6 {
 		if _, err = tx.Exec(`WITH ranked AS(SELECT session_id,id,row_number() OVER(PARTITION BY session_id ORDER BY rowid) AS n FROM turns) UPDATE turns SET body=json_set(body,'$.order',(SELECT n FROM ranked WHERE ranked.session_id=turns.session_id AND ranked.id=turns.id))`); err != nil {
+			tx.Rollback()
+			return fail(err)
+		}
+	}
+	if version < 10 {
+		var present bool
+		if err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM pragma_table_info('operations') WHERE name='kind')").Scan(&present); err != nil {
+			tx.Rollback()
+			return fail(err)
+		}
+		if !present {
+			_, err = tx.Exec("ALTER TABLE operations ADD COLUMN kind TEXT NOT NULL DEFAULT ''")
+		}
+		if err != nil {
 			tx.Rollback()
 			return fail(err)
 		}
@@ -261,7 +275,7 @@ func (s *Store) UpdateWorkspace(w domain.Workspace) (domain.Workspace, error) {
 }
 func operation(q interface{ QueryRow(string, ...any) *sql.Row }, id string) (domain.Operation, error) {
 	var op domain.Operation
-	err := q.QueryRow("SELECT id,session_id,state,digest,error FROM operations WHERE id=?", id).Scan(&op.ID, &op.SessionID, &op.State, &op.Digest, &op.Error)
+	err := q.QueryRow("SELECT id,session_id,state,digest,error,kind FROM operations WHERE id=?", id).Scan(&op.ID, &op.SessionID, &op.State, &op.Digest, &op.Error, &op.Kind)
 	return op, err
 }
 func (s *Store) Operation(id string) (domain.Operation, error) {
@@ -439,10 +453,16 @@ func (s *Store) SetOperation(id string, state domain.OperationState, message str
 		return err
 	}
 	defer tx.Rollback()
+	if op.Kind == "compact" {
+		if err = settleContextAction(tx, &op); err != nil {
+			return err
+		}
+		state, message = op.State, op.Error
+	}
 	if _, err = tx.Exec("UPDATE operations SET state=?,error=? WHERE id=?", state, message, id); err != nil {
 		return err
 	}
-	if state == "indeterminate" {
+	if state == "indeterminate" && op.Kind != "compact" {
 		session, e := load[domain.Session](tx.QueryRow("SELECT body FROM sessions WHERE id=?", op.SessionID))
 		if e != nil {
 			return e
@@ -573,11 +593,13 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		branch, head, changed := session.GitBranch, session.GitHead, session.ContextChanged
 		archived, override, sourceTitle, titleRevision := session.Archived, session.TitleOverride, session.SourceTitle, session.TitleRevision
 		contextUsage := session.ContextUsage
+		contextAction := session.ContextAction
 		contextUsageAfter := session.ContextUsageAfterTurnOrder
 		if session.ThreadID != e.Session.ThreadID || session.Config.Model != e.Session.Config.Model {
 			contextUsage = nil
 		}
 		session = *e.Session
+		session.ContextAction = contextAction
 		session.ContextUsage = contextUsage
 		session.ContextUsageAfterTurnOrder = contextUsageAfter
 		session.Recovery = recovery
@@ -683,6 +705,9 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 	default:
 		return e, fmt.Errorf("unknown domain event: %s", e.Type)
 	}
+	if err = observeContextAction(tx, &session, &e); err != nil {
+		return e, err
+	}
 	session.Revision++
 	if _, err = tx.Exec("UPDATE sessions SET body=? WHERE id=?", blob(session), sid); err != nil {
 		return e, err
@@ -711,7 +736,7 @@ func (s *Store) Snapshot() (domain.Snapshot, error) {
 	if out.PendingRequests, err = rowsOf[domain.PendingRequest](s.db, "SELECT body FROM requests WHERE json_extract(body,'$.state') IN ('pending','submitting')"); err != nil {
 		return out, err
 	}
-	rows, err := s.db.Query("SELECT id,session_id,state,error FROM operations ORDER BY rowid DESC LIMIT 100")
+	rows, err := s.db.Query("SELECT id,session_id,state,error,kind FROM operations ORDER BY rowid DESC LIMIT 100")
 	if err != nil {
 		return out, err
 	}
@@ -719,7 +744,7 @@ func (s *Store) Snapshot() (domain.Snapshot, error) {
 	out.Operations = []domain.Operation{}
 	for rows.Next() {
 		var o domain.Operation
-		if err = rows.Scan(&o.ID, &o.SessionID, &o.State, &o.Error); err != nil {
+		if err = rows.Scan(&o.ID, &o.SessionID, &o.State, &o.Error, &o.Kind); err != nil {
 			return out, err
 		}
 		out.Operations = append(out.Operations, o)

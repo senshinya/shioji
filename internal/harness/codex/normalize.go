@@ -22,20 +22,21 @@ type pending struct {
 	permissions json.RawMessage
 }
 type Normalizer struct {
-	earlyRequests  []*pending
-	work           *workTracker
-	workControl    bool
-	workSteer      bool
-	workContinue   bool
-	importResource func(harness.OutputResource) (domain.Attachment, error)
-	mu             sync.Mutex
-	sessions       map[string]string
-	requests       map[string]*pending
-	sourceRequests map[string]string
-	items          map[string]domain.Item
-	turns          map[string]domain.Turn
-	totals         map[string]wire.Counters
-	usage          map[string]turnUsage
+	manualCompaction map[string]bool
+	earlyRequests    []*pending
+	work             *workTracker
+	workControl      bool
+	workSteer        bool
+	workContinue     bool
+	importResource   func(harness.OutputResource) (domain.Attachment, error)
+	mu               sync.Mutex
+	sessions         map[string]string
+	requests         map[string]*pending
+	sourceRequests   map[string]string
+	items            map[string]domain.Item
+	turns            map[string]domain.Turn
+	totals           map[string]wire.Counters
+	usage            map[string]turnUsage
 }
 
 // Missing usage and a reported zero are different observations. Baseline
@@ -163,6 +164,10 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		return emit(event)
 	case "turn/started", "turn/completed":
 		t := n.turns[p.Turn.ID]
+		if m.Method == "turn/started" && n.manualCompaction[p.ThreadID] {
+			t.Presentation = "compaction"
+			delete(n.manualCompaction, p.ThreadID)
+		}
 		t.ID = p.Turn.ID
 		t.StartedAt = stamp(p.Turn.StartedAt)
 		t.CompletedAt = stamp(p.Turn.CompletedAt)
