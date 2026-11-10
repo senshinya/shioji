@@ -180,6 +180,7 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 	}
 	found := map[string]bool{}
 	status := domain.ExecutionState("")
+	statusTurnID := ""
 	unresolved := false
 	toolUnconfirmed := false
 	for _, turn := range source.Turns {
@@ -218,6 +219,7 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 			return none, err
 		}
 		status = turn.Status
+		statusTurnID = turn.ID
 	}
 	for target := range targets {
 		if !found[target] {
@@ -330,7 +332,7 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 			status = "abandoned"
 		}
 	}
-	if a := session.ContextAction; a != nil && a.SourceRef == session.ThreadID && a.TurnID != "" && !a.State.Active() && a.State != "unknown" && a.State != "abandoned" && !unresolved && status != "unknown" && status != "abandoned" {
+	if a := session.ContextAction; a != nil && a.SourceRef == session.ThreadID && a.TurnID != "" && statusTurnID == a.TurnID && !a.State.Active() && a.State != "unknown" && a.State != "abandoned" && !unresolved && status != "unknown" && status != "abandoned" {
 		status = a.PreviousStatus
 	}
 	session.Status = status

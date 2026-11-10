@@ -26,7 +26,22 @@ type contextInputUI struct {
 	in                                               domain.ContextActionRequest
 	source, epoch, draftKey, draft, error, settledID string
 	command                                          bool
+	draftDocument                                    *composerDocument
+	draftVersion                                     uint64
 	started                                          time.Time
+}
+
+// Acceptance can consume only the captured command, once. Identical text
+// typed later is a new draft even if it happens to have the same characters.
+func (s *contextInputUI) consumeCommand(m *app.Model) {
+	if !s.command {
+		return
+	}
+	unchanged := s.draftDocument == nil || s.draftDocument.doc.Version() == s.draftVersion
+	if unchanged && m.Drafts[s.draftKey] == s.draft && len(m.Attachments[s.draftKey]) == 0 && len(m.DraftSkills[s.draftKey]) == 0 {
+		m.Drafts[s.draftKey] = ""
+	}
+	s.command = false
 }
 
 var compactContextIcon = svg("M7 2v6m-3-3 3 3 3-3M13 18v-6m-3 3 3-3 3 3")
@@ -74,8 +89,8 @@ func (v *View) syncContextInput() {
 		s.phase = contextUnknown
 	}
 	if s.in.OperationID == a.OperationID {
-		if a.TurnID != "" && s.command && v.Model.Drafts[s.draftKey] == s.draft && len(v.Model.Attachments[s.draftKey]) == 0 && len(v.Model.DraftSkills[s.draftKey]) == 0 {
-			v.Model.Drafts[s.draftKey] = ""
+		if a.TurnID != "" {
+			s.consumeCommand(v.Model)
 		}
 		if a.State == "unknown" {
 			if s.phase != contextChecking {
@@ -190,6 +205,10 @@ func (v *View) beginContextCompaction(command bool) {
 	session := v.contextSession()
 	s.in = domain.ContextActionRequest{OperationID: domain.NewID(), SessionID: session.ID, Revision: session.Revision}
 	s.source, s.epoch, s.draftKey, s.draft = session.ThreadID, m.ConnectionEpoch, m.DraftKey(), m.Drafts[m.DraftKey()]
+	s.draftDocument = v.composerDocuments[s.draftKey]
+	if s.draftDocument != nil {
+		s.draftVersion = s.draftDocument.doc.Version()
+	}
 	s.phase, s.error, s.started = contextSending, "", v.frameTime
 	v.sendContextOperation(s, false)
 }
@@ -262,9 +281,7 @@ func (v *View) sendContextOperation(s *contextInputUI, query bool) {
 			}
 			s.error = ""
 			s.settledID = op.ID
-			if s.command && m.Drafts[s.draftKey] == s.draft && len(m.Attachments[s.draftKey]) == 0 && len(m.DraftSkills[s.draftKey]) == 0 {
-				m.Drafts[s.draftKey] = ""
-			}
+			s.consumeCommand(m)
 		case "rejected", "abandoned":
 			s.phase = contextReady
 			s.error = op.Error

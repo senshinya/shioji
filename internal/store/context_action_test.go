@@ -104,3 +104,37 @@ func TestConfirmedCompactionCanRecoverAfterRuntimeLossWithoutToolConfirmation(t 
 		t.Fatal("confirmed maintenance could not recover automatically", got, err)
 	}
 }
+
+func TestCompletedCompactionCannotOverrideLaterRecovery(t *testing.T) {
+	for _, state := range []domain.ExecutionState{"running", "failed"} {
+		t.Run(string(state), func(t *testing.T) {
+			db := open(t)
+			w := workspace(t, db)
+			root, err := db.Accept(domain.Submission{OperationID: "root", WorkspaceID: w.ID, Text: "root"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			db.SetOperation("root", "confirmed", "")
+			d, _ := db.Session(root.SessionID, 0, 100)
+			d.Session.ThreadID = "source"
+			db.Apply(root.SessionID, domain.Event{Type: "session", Session: &d.Session})
+			db.Apply(root.SessionID, domain.Event{Type: "turn", Turn: &domain.Turn{ID: "root-turn", Status: "completed"}})
+			d, _ = db.Session(root.SessionID, 0, 100)
+			in := domain.ContextActionRequest{OperationID: "compact", SessionID: root.SessionID, Revision: d.Session.Revision}
+			if _, err = db.AcceptContextAction(in, in.Revision); err != nil {
+				t.Fatal(err)
+			}
+			db.Apply(root.SessionID, domain.Event{Type: "turn", Turn: &domain.Turn{ID: "compact-turn", Presentation: "compaction", Status: "completed"}})
+			db.Apply(root.SessionID, domain.Event{Type: "turn", Turn: &domain.Turn{ID: "later-user-turn", Status: "unknown"}})
+			d, _ = db.Session(root.SessionID, 0, 100)
+			source := domain.RecoveryHistory{Available: true, Attached: true, State: "active", Turns: []domain.Turn{{ID: "later-user-turn", Status: state}}}
+			got, err := db.Reconcile(root.SessionID, d.Session.Revision, source, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != state {
+				t.Fatalf("later live ordinary turn lost execution reservation: status=%s context=%+v", got.Status, got.ContextAction)
+			}
+		})
+	}
+}

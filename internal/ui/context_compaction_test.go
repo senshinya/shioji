@@ -335,3 +335,65 @@ func TestContextCompactionNativeEvidence(t *testing.T) {
 		saveNativeSkillImage(t, ui, name+"-complete.png")
 	}
 }
+
+func TestSecondCompactCommandSurvivesOldCompactionReceipt(t *testing.T) {
+	v, ui := compactView(t)
+	m := v.Model
+	m.Drafts[m.DraftKey()] = "/compact"
+	v.beginContextCompaction(true)
+	jobs := contextJobs(v)
+	if len(jobs) != 1 {
+		t.Fatal(jobs)
+	}
+	in := jobs[0].Input.(domain.ContextActionRequest)
+	m.Snapshot.Sessions[0].ContextAction = &domain.ContextAction{OperationID: in.OperationID, SourceRef: "source", TurnID: "compact-turn", State: "completed"}
+	v.syncContextInput()
+	if m.Drafts[m.DraftKey()] != "" {
+		t.Fatal("first command was not consumed")
+	}
+	m.Drafts[m.DraftKey()] = "/compact"
+	ui.Frame()
+	if dir := os.Getenv("SHIOJI_COMPACT_CAPTURE"); dir != "" {
+		t.Setenv("SHIOJI_SKILL_SNAPSHOTS", dir)
+		saveNativeSkillImage(t, ui, "repeat-command.png")
+	}
+	if m.Drafts[m.DraftKey()] != "/compact" {
+		t.Fatal("old completed operation erased second command before it was sent")
+	}
+}
+
+func TestLateCompactionAcceptanceKeepsRetypedIdenticalCommand(t *testing.T) {
+	for _, path := range []string{"receipt", "source"} {
+		t.Run(path, func(t *testing.T) {
+			v, ui := compactView(t)
+			m := v.Model
+			ui.Click("消息输入")
+			ui.Type("/compact")
+			ui.Key(0, n.KeyEnter)
+			jobs := contextJobs(v)
+			if len(jobs) != 1 {
+				t.Fatal(jobs)
+			}
+			in := jobs[0].Input.(domain.ContextActionRequest)
+			ui.Key(n.Cmd, n.KeyA)
+			ui.Type("/compact")
+			if m.Drafts[m.DraftKey()] != "/compact" {
+				t.Fatal("could not retype command")
+			}
+			session := v.contextSession()
+			session.Revision++
+			session.ContextAction = &domain.ContextAction{OperationID: in.OperationID, SourceRef: "source", TurnID: "ct", State: "completed"}
+			if path == "receipt" {
+				body, _ := json.Marshal(domain.ContextActionResult{Operation: domain.Operation{ID: in.OperationID, SessionID: in.SessionID, Kind: "compact", State: "confirmed"}, Session: session})
+				jobs[0].Apply(m, body, nil)
+			} else {
+				m.Snapshot.Sessions[0] = session
+				v.syncContextInput()
+			}
+			ui.Frame()
+			if m.Drafts[m.DraftKey()] != "/compact" {
+				t.Fatal("late acceptance erased a newer identical draft")
+			}
+		})
+	}
+}
