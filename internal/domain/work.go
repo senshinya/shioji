@@ -11,6 +11,8 @@ type WorkActivity struct {
 	Reference    string     `json:"reference,omitempty"` // opaque adapter reference
 	OriginRef    string     `json:"originRef,omitempty"` // opaque source execution context
 	CanStop      bool       `json:"canStop,omitempty"`
+	CanSteer     bool       `json:"canSteer,omitempty"`
+	CanContinue  bool       `json:"canContinue,omitempty"`
 	ID           string     `json:"id"`
 	Kind         string     `json:"kind"` // agent or background
 	TurnID       string     `json:"turnId"`
@@ -42,6 +44,24 @@ type WorkDetail struct {
 	Items     []WorkItem   `json:"items"`
 	Truncated bool         `json:"truncated,omitempty"`
 	Sequence  int64        `json:"sequence"`
+}
+
+// WorkInput targets one observed independent execution. Mode is explicit so a
+// finished turn cannot silently turn an intended correction into a new task.
+type WorkInput struct {
+	OperationID string `json:"operationId"`
+	SessionID   string `json:"sessionId"`
+	WorkID      string `json:"workId"`
+	Mode        string `json:"mode"` // steer or continue
+	Text        string `json:"text"`
+}
+
+type WorkInputOperation struct {
+	Order  int64          `json:"order"`
+	Input  WorkInput      `json:"input"`
+	State  OperationState `json:"state"`
+	Error  string         `json:"error,omitempty"`
+	SentAt time.Time      `json:"sentAt"`
 }
 
 // SessionWorks keeps saved, older summary-only agent observations visible.

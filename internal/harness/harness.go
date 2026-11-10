@@ -201,3 +201,10 @@ type WorkRestorer interface {
 type WorkController interface {
 	StopWork(context.Context, domain.Session, string) error
 }
+
+// WorkMessenger preserves independent ownership and the execution's existing
+// configuration. Receipt inspection never sends or resumes an execution.
+type WorkMessenger interface {
+	SendWork(context.Context, domain.Session, domain.WorkInput) error
+	WorkInputReceived(context.Context, domain.Session, domain.WorkInput) (bool, error)
+}

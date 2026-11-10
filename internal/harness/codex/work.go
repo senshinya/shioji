@@ -184,6 +184,7 @@ func (n *Normalizer) observeDelegation(p wire.Params, sourceItem string) []domai
 		if !w.Active() {
 			w.CanStop = false
 		}
+		n.workInputCapabilities(&w, binding)
 		tracker.works[w.ID] = w
 		out = append(out, workEvent(binding.session, w))
 		if w.State == "stopped" || w.State == "failed" {
@@ -334,6 +335,7 @@ func (n *Normalizer) feedChildWork(m wire.Message, p wire.Params) ([]domain.Even
 		w.CompletedAt = stamp(p.Turn.CompletedAt)
 		w.DurationMS = p.Turn.DurationMS
 		w.CanStop = n.workControl && w.Active() && binding.currentTurn != ""
+		n.workInputCapabilities(&w, binding)
 		tracker.works[w.ID] = w
 		// Its commands may outlive this child. Persist their ownership first.
 		out = append(out, n.observeRootWork(m, p, domain.Event{Turn: &domain.Turn{ID: p.Turn.ID, Status: normalizedTurnStatus(p.Turn.Status)}})...)
@@ -406,6 +408,7 @@ func (n *Normalizer) invalidateWork() []domain.Event {
 		}
 		w.State = "unknown"
 		w.CanStop = false
+		w.CanSteer, w.CanContinue = false, false
 		n.work.works[id] = w
 		sid := ""
 		for _, b := range n.work.agents {
@@ -444,6 +447,7 @@ func (r *Runtime) RestoreWork(s domain.Session, works []domain.WorkActivity) {
 			continue
 		}
 		w.CanStop = false
+		w.CanSteer, w.CanContinue = false, false
 		tracker.works[w.ID] = w
 		old, ok := tracker.agents[w.Reference]
 		if ok && tracker.works[old.id].Revision > w.Revision {

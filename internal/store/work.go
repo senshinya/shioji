@@ -115,7 +115,11 @@ func (s *Store) Work(sid, id string) (domain.WorkDetail, error) {
 // database readers. Lost observation is not a task completion.
 func (s *Store) InvalidateWork() error {
 	s.mu.Lock()
-	rows, err := s.db.Query("SELECT session_id,body FROM works WHERE json_extract(body,'$.state') IN ('running','starting','waiting')")
+	if _, err := s.db.Exec("UPDATE work_inputs SET body=json_set(body,'$.state','indeterminate') WHERE json_extract(body,'$.state') IN ('accepted','dispatched')"); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	rows, err := s.db.Query("SELECT session_id,body FROM works WHERE json_extract(body,'$.state') IN ('running','starting','waiting') OR json_extract(body,'$.canSteer')=1 OR json_extract(body,'$.canContinue')=1")
 	if err != nil {
 		s.mu.Unlock()
 		return err
@@ -145,8 +149,11 @@ func (s *Store) InvalidateWork() error {
 		return err
 	}
 	for _, r := range all {
-		r.work.State = "unknown"
+		if r.work.Active() {
+			r.work.State = "unknown"
+		}
 		r.work.CanStop = false
+		r.work.CanSteer, r.work.CanContinue = false, false
 		if _, err = s.Apply(r.session, domain.Event{Type: "work.upsert", Work: &r.work}); err != nil {
 			return err
 		}
@@ -159,7 +166,7 @@ func (s *Store) InvalidateWork() error {
 // after a verified process stop they remain readable history, not live work.
 func hasActiveWork(q interface{ QueryRow(string, ...any) *sql.Row }, sid string) (bool, error) {
 	var busy bool
-	err := q.QueryRow(`SELECT EXISTS(SELECT 1 FROM works w JOIN sessions s ON w.session_id=s.id WHERE s.id=? AND json_extract(w.body,'$.state') IN ('starting','running','waiting') AND (COALESCE(json_extract(w.body,'$.originRef'),'')='' OR json_extract(w.body,'$.originRef')=json_extract(s.body,'$.threadId')))`, sid).Scan(&busy)
+	err := q.QueryRow(`SELECT EXISTS(SELECT 1 FROM works w JOIN sessions s ON w.session_id=s.id WHERE s.id=? AND json_extract(w.body,'$.state') IN ('starting','running','waiting') AND (COALESCE(json_extract(w.body,'$.originRef'),'')='' OR json_extract(w.body,'$.originRef')=json_extract(s.body,'$.threadId'))) OR EXISTS(SELECT 1 FROM work_inputs WHERE session_id=? AND json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate'))`, sid, sid).Scan(&busy)
 	return busy, err
 }
 func (s *Store) HasActiveWork(sid string) (bool, error) {

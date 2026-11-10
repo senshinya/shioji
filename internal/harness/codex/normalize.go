@@ -25,6 +25,8 @@ type Normalizer struct {
 	earlyRequests  []*pending
 	work           *workTracker
 	workControl    bool
+	workSteer      bool
+	workContinue   bool
 	importResource func(harness.OutputResource) (domain.Attachment, error)
 	mu             sync.Mutex
 	sessions       map[string]string
