@@ -198,9 +198,28 @@ func (v *View) insertReference(c *n.Context, b *composerDocument, state *fileMen
 }
 
 func (v *View) referenceAttachment(c *n.Context, ref composerReference) *richtext.Attachment {
-	name := ref.name()
-	font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
+	iconSize := float32(14)
+	// The book has a wider visible footprint than the file glyph.
+	if ref.skill.Reference.ID != "" {
+		iconSize = 12
+	}
+	a := inlineTagAttachment(c, ref.name(), fileOrSkillIcon(ref), iconSize)
+	a.Data = ref
 	surface := codeSurface(c.Theme())
+	if ref.file.Attachment.ID != "" {
+		a.Tooltip = ref.file.Attachment.SourcePath
+		a.OnClick = func(r n.Rect) {
+			if ref.file.Ready && ref.file.DeviceID == v.referenceDeviceID() && ref.file.WorkspaceID == v.Model.WorkspaceID {
+				paint := a.Draw
+				v.openAttachment(ref.file.Attachment, ref.file.WorkspaceID, r, attachmentPreviewOrigin{Surface: surface, Radius: 5, Content: func(c *n.Context) { n.Column(c).Fill().Draw(paint) }})
+			}
+		}
+	}
+	return a
+}
+
+func inlineTagAttachment(c *n.Context, name string, icon *n.SVG, iconSize float32) *richtext.Attachment {
+	font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
 	layout := n.ShapeText(name, font, 0)
 	width, _ := layout.Size()
 	width = min(width, 180)
@@ -217,27 +236,14 @@ func (v *View) referenceAttachment(c *n.Context, ref composerReference) *richtex
 	body := font.InkBounds(reference)
 	textTop := height/2 - (body.Y + body.H/2) - layout.Lines()[0].Ascent
 	outer := inlineFontMetrics(name, n.Font{Family: c.Theme().Font, Size: 14, Weight: 400})
-	a := &richtext.Attachment{Name: name, Width: width + 33, Height: height, Descent: height/2 - outer.center, Data: ref}
-	if ref.file.Attachment.ID != "" {
-		a.Tooltip = ref.file.Attachment.SourcePath
-		a.OnClick = func(r n.Rect) {
-			if ref.file.Ready && ref.file.DeviceID == v.referenceDeviceID() && ref.file.WorkspaceID == v.Model.WorkspaceID {
-				paint := a.Draw
-				v.openAttachment(ref.file.Attachment, ref.file.WorkspaceID, r, attachmentPreviewOrigin{Surface: surface, Radius: 5, Content: func(c *n.Context) { n.Column(c).Fill().Draw(paint) }})
-			}
-		}
-	}
+	a := &richtext.Attachment{Name: name, Width: width + 33, Height: height, Descent: height/2 - outer.center}
+
 	a.Draw = func(p *n.Painter, r n.Rect) {
 		t := p.Theme()
 		p.Fill(r, codeSurface(t), 5)
 		p.Stroke(r, t.Border, 5, 1)
-		// The open book is wider than the file glyph. Its 12px drawing
-		// balances the file's visual footprint inside the same 14px slot.
-		iconSize := float32(14)
-		if ref.skill.Reference.ID != "" {
-			iconSize = 12
-		}
-		p.Icon(fileOrSkillIcon(ref), n.Rect{X: r.X + 6 + (14-iconSize)/2, Y: r.Y + (r.H-iconSize)/2, W: iconSize, H: iconSize}, t.TextMuted)
+
+		p.Icon(icon, n.Rect{X: r.X + 6 + (14-iconSize)/2, Y: r.Y + (r.H-iconSize)/2, W: iconSize, H: iconSize}, t.TextMuted)
 		p.Clip(n.Rect{X: r.X + 25, Y: r.Y, W: max(0, r.W-30), H: r.H}, 0, func() { p.TextLayout(layout, r.X+25, r.Y+textTop, t.Text) })
 	}
 	return a

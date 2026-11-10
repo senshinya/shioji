@@ -398,7 +398,7 @@ func (v *View) mentionPopup(c *n.Context, t *n.Theme, anchor n.Element, input co
 						var file domain.WorkspaceFile
 						label, detail, identity, accessible := "", "", "", ""
 						if command {
-							label, detail, identity, accessible = "/compact", "压缩上下文", "builtin:compact", "压缩上下文命令"
+							label, detail, identity, accessible = "压缩上下文", "/compact", "builtin:compact", "压缩上下文命令"
 						} else if state.trigger == '/' {
 							index := i
 							if state.compact {
@@ -421,7 +421,7 @@ func (v *View) mentionPopup(c *n.Context, t *n.Theme, anchor n.Element, input co
 							detail = v.compactReason()
 							disabled = detail != ""
 							if detail == "" {
-								detail = "压缩上下文"
+								detail = "/compact"
 							}
 						}
 						row := control(c.Key(identity)).FillWidth().Height(26).PaddingX(7).Radius(4).Label(accessible).Tooltip(detail).Disabled(disabled)
@@ -490,7 +490,7 @@ func (s *fileMention) count() int {
 }
 
 func (v *View) compactCandidate(key, query string) bool {
-	return key == v.Model.DraftKey() && v.Model.QueueEdits[v.Model.SessionID].ID == "" && v.Model.WorkerMinor >= 29 && v.Model.RunReadiness().Capabilities.Compact && strings.HasPrefix("compact", strings.ToLower(query))
+	return key == v.Model.DraftKey() && v.Model.QueueEdits[v.Model.SessionID].ID == "" && v.Model.WorkerMinor >= 30 && v.Model.RunReadiness().Capabilities.Compact && strings.HasPrefix("compact", strings.ToLower(query))
 }
 func (s *fileMention) skillIndex() int {
 	if s.compact {

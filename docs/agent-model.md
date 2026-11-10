@@ -18,7 +18,7 @@ worker 验证会话、工作、根轮次、当前执行来源及请求 revision�
 
 ## 手动上下文压缩
 
-可选 `harness.ContextCompactor` 与 `HarnessCapabilities.Compact` 表达真实运行时支持。共享契约只包含操作、状态与不透明来源引用；具体压缩调用和历史识别留在 adapter。Worker 协议 minor 29 增加 `session.context.compact` 与只读 `session.context.operation`，回执包含持久操作和对应 Session revision。
+可选 `harness.ContextCompactor` 与 `HarnessCapabilities.Compact` 表达真实运行时支持。共享契约只包含操作、状态与不透明来源引用；具体压缩调用和历史识别留在 adapter。Worker 协议 minor 29 增加 `session.context.compact` 与只读 `session.context.operation`，回执包含持久操作和对应 Session revision。minor 30 为手动压缩新增持久的用户侧操作标签记录；旧 worker 的压缩入口保持不可提交，避免产生无法保留记录的操作。
 
 接纳先在 dispatch 序列化边界验证会话、目录、Git、请求和子执行，再持久化独立 `compact` operation 与占用。它没有普通输入，不改配置、草稿、队列暂停或标题。重复操作只返回已有回执；结果未知时只查源历史，不再次发送。独立维护轮次使用 `Turn.Presentation=compaction`，完成后恢复原会话状态，不产生普通回复 footer 或完成通知。执行期间的普通输入排队，不能作为 Steer 注入维护轮次。
 

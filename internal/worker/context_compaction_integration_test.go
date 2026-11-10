@@ -36,8 +36,14 @@ func TestRealWorkerCompactionKeepsSessionAndInputHistory(t *testing.T) {
 	if after.Session.Status != "completed" || after.Session.ThreadID != before.Session.ThreadID || !reflect.DeepEqual(after.Session.Config, before.Session.Config) || !reflect.DeepEqual(after.Session.Context, before.Session.Context) {
 		t.Fatal("compaction changed execution context", before.Session, after.Session)
 	}
-	users, compactItems := 0, 0
+	users, compactItems, commands := 0, 0, 0
 	for _, item := range after.Items {
+		if item.Kind == "command" {
+			commands++
+			if item.TurnID != after.Session.ContextAction.TurnID || item.Name != "压缩上下文" {
+				t.Fatal("command lost its source boundary", item)
+			}
+		}
 		if item.Kind == "user" {
 			users++
 			if item.Text != "keep this original input" {
@@ -48,7 +54,7 @@ func TestRealWorkerCompactionKeepsSessionAndInputHistory(t *testing.T) {
 			compactItems++
 		}
 	}
-	if users != 1 || compactItems != 1 || len(after.Turns) != len(before.Turns)+1 || after.Turns[len(after.Turns)-1].Presentation != "compaction" {
+	if users != 1 || compactItems != 1 || commands != 1 || len(after.Turns) != len(before.Turns)+1 || after.Turns[len(after.Turns)-1].Presentation != "compaction" {
 		t.Fatal("real source lifecycle was not preserved", after)
 	}
 	call(t, c, "session.context.compact", in, &result)

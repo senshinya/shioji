@@ -268,6 +268,9 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 							a.State, a.Error = turn.Status, turn.Error
 						}
 					}
+					if err = attachContextCommand(tx, session.ID, *a); err != nil {
+						return none, err
+					}
 				} else if end {
 					a.State = "abandoned"
 					a.Error = op.Error

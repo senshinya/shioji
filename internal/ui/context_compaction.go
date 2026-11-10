@@ -26,6 +26,7 @@ type contextInputUI struct {
 	in                                               domain.ContextActionRequest
 	source, epoch, draftKey, draft, error, settledID string
 	command                                          bool
+	commandSeen                                      bool
 	draftDocument                                    *composerDocument
 	draftVersion                                     uint64
 	started                                          time.Time
@@ -127,7 +128,7 @@ func (v *View) compactReason() string {
 		return "开始会话后可用"
 	case !m.Connected:
 		return "设备已断开"
-	case m.WorkerMinor < 29:
+	case m.WorkerMinor < 30:
 		return "更新执行服务后可用"
 	case s.phase != contextReady:
 		return "正在处理压缩操作"
@@ -210,6 +211,7 @@ func (v *View) beginContextCompaction(command bool) {
 		s.draftVersion = s.draftDocument.doc.Version()
 	}
 	s.phase, s.error, s.started = contextSending, "", v.frameTime
+	s.commandSeen = false
 	v.sendContextOperation(s, false)
 }
 func (v *View) sendContextOperation(s *contextInputUI, query bool) {
@@ -332,6 +334,31 @@ func (v *View) contextRows(rows []transcriptRow) []transcriptRow {
 		if progress < 1 {
 			v.toolsAnimating = true
 		}
+	}
+	commandID := "context-command:" + a.OperationID
+	commandPresent := false
+	for i, row := range rows {
+		if row.item.ID == commandID {
+			commandPresent = true
+			v.contextInput().commandSeen = true
+			if !v.contextInput().started.IsZero() {
+				rows[i].opacity = progress
+			}
+		}
+	}
+	// Keep the same command row while its durable journal event catches up.
+	if s := v.contextInput(); !commandPresent && !s.commandSeen && !s.started.IsZero() && (s.in.OperationID == a.OperationID || s.settledID == a.OperationID) {
+		at := len(rows)
+		for i, row := range rows {
+			if a.TurnID != "" && row.item.TurnID == a.TurnID {
+				at = i
+				break
+			}
+		}
+		command := transcriptRow{key: commandID, item: domain.Item{ID: commandID, Kind: "command", Presentation: "compact", Name: "压缩上下文", Status: "accepted", Final: true}, end: -1, opacity: progress}
+		rows = append(rows, transcriptRow{})
+		copy(rows[at+1:], rows[at:])
+		rows[at] = command
 	}
 	for i, row := range rows {
 		if row.item.Presentation == "compaction" && row.item.TurnID == a.TurnID && a.TurnID != "" {

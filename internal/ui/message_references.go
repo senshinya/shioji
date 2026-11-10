@@ -30,7 +30,19 @@ func (v *View) messageReferenceContent(item domain.Item) composerContent {
 	return content
 }
 func (v *View) messageCopyText(item domain.Item) string {
+	if item.Kind == "command" {
+		return item.Name
+	}
 	return referencePlainText(referenceDocumentText(v.messageReferenceContent(item)))
+}
+
+func (v *View) commandTagBody(c *n.Context, item domain.Item) {
+	a := inlineTagAttachment(c, item.Name, compactContextIcon, 14)
+	n.Column(c).Selectable().CopyData(func([]n.SelectedText) transfer.Data { return transfer.TextData(item.Name) }).Children(func() {
+		n.RichText(c, n.Span{Text: string(richtext.ObjectReplacement), ObjectWidth: a.Width, ObjectHeight: a.Height - a.Descent, ObjectDescent: a.Descent}).
+			FontSize(14).FixedLineHeight(24).Selectable().Label("操作：" + item.Name).
+			DrawObjects(func(p *n.Painter, _ int, r n.Rect) { a.Draw(p, r) })
+	})
 }
 
 func (v *View) messageReferenceBody(c *n.Context, t *n.Theme, item domain.Item) n.Element {

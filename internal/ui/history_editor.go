@@ -94,7 +94,9 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 				return
 			}
 			bubble := n.Column(c.Key("user-surface:"+item.ID)).MaxWidth(676).Padding(12, 16).Gap(8).Background(userBubble(t)).Radius(14).Label("用户消息气泡").Children(func() {
-				if len(item.Skills) > 0 || hasInlineFiles(item.Attachments) {
+				if item.Kind == "command" {
+					v.commandTagBody(c, item)
+				} else if len(item.Skills) > 0 || hasInlineFiles(item.Attachments) {
 					v.messageReferenceBody(c, t, item)
 				} else if item.Text != "" {
 					text := n.Text(c, item.Text).FontSize(14).FixedLineHeight(24).Selectable()
@@ -105,11 +107,13 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 			if v.sent == nil || v.sent.input != item.ID {
 				bubble.Transition(n.ElementTransition{Position: true, Size: true, Colors: true, Duration: 280 * time.Millisecond, Ease: composerDescentEase})
 			}
-			bubble.ContextMenu(func(menu *n.Menu) {
-				if menu.Item("修改并重新开始").Disabled(item.Status != "sent" || item.TurnID == "" || !v.Model.RunReadiness().Capabilities.Restart).Chosen() {
-					begin()
-				}
-			})
+			if item.Kind == "user" {
+				bubble.ContextMenu(func(menu *n.Menu) {
+					if menu.Item("修改并重新开始").Disabled(item.Status != "sent" || item.TurnID == "" || !v.Model.RunReadiness().Capabilities.Restart).Chosen() {
+						begin()
+					}
+				})
+			}
 			v.sentMessageBubble(c, t, bubble, item)
 			v.historyMessageActions(c, t, item, preview, begin)
 		})
@@ -119,7 +123,7 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 func (v *View) historyMessageActions(c *n.Context, t *n.Theme, item domain.Item, preview bool, begin func()) {
 	n.Row(c.Key("user-actions:" + item.ID)).Gap(messageFooterGap).Height(24).AlignItems(n.Center).Unselectable().Label("用户消息操作").Children(func() {
 		font := n.Font{Family: t.Font, Size: 11, Weight: 400}
-		if (item.Status == "sent" || preview) && item.TurnID != "" {
+		if item.Kind == "user" && (item.Status == "sent" || preview) && item.TurnID != "" {
 			edit := n.ButtonBase(c.Key("edit")).Transition(fadeMotion(c, 180*time.Millisecond)).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("修改并重新开始").Tooltip("修改并重新开始").Disabled(preview || v.historyBusy[v.Model.SessionID] || !v.Model.RunReadiness().Capabilities.Restart)
 			color := textHoverColor(c, edit, t.TextMuted)
 			edit.Children(func() { inlineSymbol(c, queueEditIcon, "消息", font, 13, color) })

@@ -1291,14 +1291,14 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		if row < len(rows) && (rows[row].footer != "" || rows[row].restarting || rows[row].preparing != "") {
 			bottom = 8
 		}
-		// The local compaction row is already the next transcript element even
-		// before its source item is persisted. Use the same inter-item spacing.
-		if row < len(rows) && rows[row].item.Presentation == "compaction" && rows[row].end < 0 {
+		// Local compaction rows already occupy their place while the command
+		// and source journal events catch up. Keep the same inter-item spacing.
+		if row < len(rows) && (rows[row].item.Presentation == "compaction" || rows[row].item.Kind == "command") && rows[row].end < 0 {
 			bottom = 8
 		}
 		// Waiting is the first output slot. Keep the same user-to-output gap
 		// when the status line gives way to real prose, tools or a request.
-		if item.Kind == "user" {
+		if item.Kind == "user" || item.Kind == "command" {
 			bottom = 32
 		}
 		if entry.footer != "" || entry.restarting || entry.preparing != "" {
@@ -1306,7 +1306,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		}
 		n.Column(c).FillWidth().PaddingX(18).AlignItems(n.Center).Children(func() {
 			content := n.Column(c).FillWidth().MaxWidth(768).Gap(8).Padding(0, 0, bottom, 0).Selectable()
-			if entry.footer == "" && entry.group == "" && (item.Kind == "user" || item.Kind == "assistant") {
+			if entry.footer == "" && entry.group == "" && (item.Kind == "user" || item.Kind == "assistant" || item.Kind == "command") {
 				n.SelectionItem(content, item.ID)
 			}
 			v.sentMessagePose(c, content, item)
@@ -1349,7 +1349,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	n.VirtualTextSelection(history, func(key string) (string, bool) {
 		for _, item := range v.Model.Details[v.Model.SessionID].Items {
 			if item.ID == key {
-				if item.Kind == "user" {
+				if item.Kind == "user" || item.Kind == "command" {
 					return v.messageCopyText(item), true
 				}
 				return item.Text, true
@@ -1375,7 +1375,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 
 func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 	switch item.Kind {
-	case "user":
+	case "user", "command":
 		v.historyUserMessage(c, t, item)
 	case "assistant":
 		v.assistantReply(c, item)

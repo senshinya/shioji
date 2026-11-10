@@ -14,7 +14,7 @@ import (
 func compactView(t *testing.T) (*View, *n.Tester) {
 	t.Helper()
 	m := layoutModel()
-	m.WorkerMinor = 29
+	m.WorkerMinor = 30
 	m.Readiness.Capabilities.Compact = true
 	m.Snapshot.Sessions[0].ThreadID = "source"
 	m.Snapshot.Sessions[0].Revision = 10
@@ -310,16 +310,22 @@ func TestContextCompactionNativeEvidence(t *testing.T) {
 		ui.Frame()
 		ui.Key(0, n.KeyEnd)
 		ui.Advance(250 * time.Millisecond)
+		if v.fileMention != nil {
+			v.fileMention.skills = []domain.Skill{{SkillReference: domain.SkillReference{ID: "review", Name: "code-review"}, Description: "检查代码变更"}, {SkillReference: domain.SkillReference{ID: "commit", Name: "commit"}, Description: "整理并提交修改"}}
+			ui.Frame()
+			ui.Advance(250 * time.Millisecond)
+		}
 		saveNativeSkillImage(t, ui, name+"-slash.png")
 		m.Drafts[m.DraftKey()] = "继续补齐删除节点的边界条件。"
 		m.Snapshot.Sessions[0].Status = "running"
 		m.Snapshot.Sessions[0].ContextAction = &domain.ContextAction{OperationID: "native", RequestRevision: 10, SourceRef: "source", TurnID: "ct", State: "running", PreviousStatus: "completed"}
 		d.Session = m.Snapshot.Sessions[0]
-		d.Items = append(d.Items, domain.Item{ID: "compact", TurnID: "ct", Kind: "activity", Presentation: "compaction", Name: "正在压缩上下文", Status: "running"})
+		now := time.Now()
+		d.Items = append(d.Items, domain.Item{ID: "context-command:native", TurnID: "ct", Kind: "command", Presentation: "compact", Name: "压缩上下文", Status: "accepted", Final: true, SentAt: &now}, domain.Item{ID: "compact", TurnID: "ct", Kind: "activity", Presentation: "compaction", Name: "正在压缩上下文", Status: "running"})
 		d.Turns = append(d.Turns, domain.Turn{ID: "ct", Presentation: "compaction", Status: "running"})
 		m.Details["s"] = d
 		ui.Frame()
-		ui.Advance(time.Second)
+		ui.Advance(3 * time.Second)
 		saveNativeSkillImage(t, ui, name+"-running.png")
 		m.Snapshot.Sessions[0].Status = "completed"
 		m.Snapshot.Sessions[0].ContextAction.State = "completed"
@@ -395,5 +401,62 @@ func TestLateCompactionAcceptanceKeepsRetypedIdenticalCommand(t *testing.T) {
 				t.Fatal("late acceptance erased a newer identical draft")
 			}
 		})
+	}
+}
+
+func TestCompactionRecordUsesReadonlyRightAlignedTag(t *testing.T) {
+	v, ui := compactView(t)
+	m := v.Model
+	item := domain.Item{ID: "context-command:record", Kind: "command", Presentation: "compact", Name: "压缩上下文", Status: "accepted", Final: true}
+	d := m.Details["s"]
+	d.Items = append(d.Items, item)
+	m.Details["s"] = d
+	ui.Frame()
+	ui.Advance(time.Second)
+	tag, ok := ui.Find("操作：压缩上下文")
+	if !ok || tag.X < 700 {
+		t.Fatal("command is not a right-aligned tag", tag, ui.Texts())
+	}
+	if _, ok := ui.Find("修改并重新开始"); ok {
+		t.Fatal("command has an edit action")
+	}
+	if err := m.BeginHistoryEdit(item); err == nil {
+		t.Fatal("command opened history editor")
+	}
+	if v.messageCopyText(item) != "压缩上下文" {
+		t.Fatal("copy lost the tag label")
+	}
+	if err := ui.Click("复制消息"); err != nil {
+		t.Fatal(err)
+	}
+	if ui.Clipboard() != "压缩上下文" {
+		t.Fatal("native copy lost the command name", ui.Clipboard())
+	}
+}
+
+func TestCompactMenuUsesNamedActionAlongsideSkills(t *testing.T) {
+	v, ui := compactView(t)
+	ui.Click("消息输入")
+	ui.Type("/co")
+	ui.Advance(250 * time.Millisecond)
+	if _, ok := ui.Find("压缩上下文命令"); !ok {
+		t.Fatal("compact action is absent", ui.Texts())
+	}
+	row, _ := ui.Find("压缩上下文命令")
+	name, ok := ui.Find("压缩上下文")
+	if !ok || name.X >= row.X+row.W/2 {
+		t.Fatal("semantic action name is not in the primary label column", name, row)
+	}
+	_ = v
+}
+
+func TestCompactionRequiresWorkerThatPersistsCommandRecords(t *testing.T) {
+	v, _ := compactView(t)
+	m := v.Model
+	m.WorkerMinor = 29
+	m.Drafts[m.DraftKey()] = "/compact"
+	v.submit()
+	if len(contextJobs(v)) != 0 || m.Drafts[m.DraftKey()] != "/compact" {
+		t.Fatal("older worker accepted an action it cannot persist as a command record")
 	}
 }

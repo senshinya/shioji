@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"shioji/internal/domain"
+	"time"
 )
 
 func contextDigest(in domain.ContextActionRequest) string {
@@ -88,6 +89,14 @@ func (s *Store) AcceptContextAction(in domain.ContextActionRequest, revision int
 	if _, err = tx.Exec("UPDATE sessions SET body=? WHERE id=?", blob(session), session.ID); err != nil {
 		return none, err
 	}
+	now := time.Now()
+	item := domain.Item{ID: "context-command:" + op.ID, Kind: "command", Presentation: "compact", Name: "压缩上下文", Status: "accepted", Final: true, SentAt: &now}
+	if err = putItem(tx, session.ID, &item); err != nil {
+		return none, err
+	}
+	if _, err = journal(tx, domain.Event{Type: "item.upsert", SessionID: session.ID, Item: &item}); err != nil {
+		return none, err
+	}
 	if _, err = journal(tx, domain.Event{Type: "operation", SessionID: session.ID, Operation: &op, Session: &session}); err != nil {
 		return none, err
 	}
@@ -158,6 +167,9 @@ func observeContextAction(tx *sql.Tx, session *domain.Session, e *domain.Event) 
 		}
 		return nil
 	}
+	if err := attachContextCommand(tx, session.ID, *a); err != nil {
+		return err
+	}
 	if e.Turn != nil && e.Turn.ID == a.TurnID {
 		a.State = e.Turn.Status
 		a.Error = e.Turn.Error
@@ -189,6 +201,27 @@ func observeContextAction(tx *sql.Tx, session *domain.Session, e *domain.Event) 
 		}
 	}
 	return nil
+}
+
+// The command is a worker-owned record, not harness input. Attach its history
+// boundary only when the adapter has identified the actual maintenance turn.
+func attachContextCommand(tx *sql.Tx, sid string, action domain.ContextAction) error {
+	if action.TurnID == "" {
+		return nil
+	}
+	item, err := load[domain.Item](tx.QueryRow("SELECT body FROM items WHERE session_id=? AND id=?", sid, "context-command:"+action.OperationID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // Older accepted operations did not have a command record.
+	}
+	if err != nil || item.TurnID == action.TurnID {
+		return err
+	}
+	item.TurnID = action.TurnID
+	if err = putItem(tx, sid, &item); err != nil {
+		return err
+	}
+	_, err = journal(tx, domain.Event{Type: "item.upsert", SessionID: sid, Item: &item})
+	return err
 }
 
 // Explicit evidence from the adapter settles uncertainty without issuing work.
