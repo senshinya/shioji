@@ -261,7 +261,7 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 				} else {
 					dot.Label("")
 				}
-				dot.Opacity(dot.AnimateTo("live-dot-opacity", opacity, motionAnimation(c, 160*time.Millisecond)))
+				dot.Opacity(dot.AnimateTo("live-dot-opacity", opacity, motionAnimation(c, 120*time.Millisecond)))
 			}
 			text := n.Text(c.Key("group-label"), label).FontSize(11).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
 			if closed {

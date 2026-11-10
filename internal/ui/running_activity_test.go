@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -166,5 +167,48 @@ func TestActivityLabelChangesRetainBreathingPhaseAndWaitingStopsIt(t *testing.T)
 	b.Advance(time.Second)
 	if !bytes.Equal(before.Pix, b.Image().Pix) || b.FramePending() {
 		t.Fatal("waiting state keeps animating without active work")
+	}
+}
+
+func TestToolActivityHandoffNeverPaintsTwoLiveIndicators(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, reduced := range []bool{false, true} {
+			t.Run(fmt.Sprint(dark, "/", reduced), func(t *testing.T) {
+				v := liveCompletionModel()
+				d := v.Model.Details["s"]
+				d.Items = []domain.Item{{ID: "u", TurnID: "t", Kind: "user", Text: "Run checks", Final: true}, {ID: "a", TurnID: "t", Kind: "tool", Presentation: "command", Name: "command", Status: "running"}}
+				v.Model.Details["s"] = d
+				ui := n.NewTester(v.View, 1240, 820)
+				ui.SetDark(dark)
+				ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
+				ui.Click("1 次工具调用")
+				ui.Advance(time.Second)
+				green := func(label string) bool {
+					r, ok := ui.Find(label)
+					if !ok {
+						return false
+					}
+					im := ui.Image()
+					for y := int(r.Y); y < int(r.Y+r.H); y++ {
+						for x := int(r.X); x < int(r.X+r.W); x++ {
+							p := im.RGBAAt(x, y)
+							if int(p.G)-int(p.R) > 10 && int(p.G)-int(p.B) > 10 {
+								return true
+							}
+						}
+					}
+					return false
+				}
+				for _, action := range []string{"fold", "expand"} {
+					ui.Click("1 次工具调用")
+					for frame := 0; frame < 30; frame++ {
+						ui.Advance(time.Second / 60)
+						if green("1 次工具调用") && green("回复信息") {
+							t.Fatalf("%s paints both header and footer indicators at frame %d", action, frame)
+						}
+					}
+				}
+			})
+		}
 	}
 }

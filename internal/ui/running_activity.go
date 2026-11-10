@@ -130,7 +130,7 @@ func runningElapsed(c *n.Context, started *time.Time, color n.Color) {
 	font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400, Features: "tnum"}
 	m := inlineFontMetrics("秒", font)
 	width, _ := n.ShapeText("9999 分 59 秒", font, 0).Size()
-	clock := n.RichText(c, n.Span{Text: "\uFFFC", ObjectWidth: width, ObjectHeight: m.ascent, ObjectDescent: m.descent}).Font(font.Family).FontSize(11).FontFeatures("tnum").FixedLineHeight(20).TextColor(color).Label("运行时长").Transition(fadeMotion(c, 180*time.Millisecond))
+	clock := n.RichText(c, n.Span{Text: "\uFFFC", ObjectWidth: width, ObjectHeight: m.ascent, ObjectDescent: m.descent}).Font(font.Family).FontSize(11).FontFeatures("tnum").FixedLineHeight(20).TextColor(color).Label("运行时长").Transition(fadeMotion(c, 120*time.Millisecond))
 	var text string
 	var layout *n.TextLayout
 	clock.DrawObjects(func(p *n.Painter, _ int, r n.Rect) {

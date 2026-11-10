@@ -1427,7 +1427,16 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 		state = "running"
 	}
 	animatedContentHeight(c, frame, !delegated, 180*time.Millisecond, func() float32 {
-		n.Row(c.Key("state:" + state)).FillWidth().Wrap().Gap(messageFooterGap).MinHeight(24).AlignItems(n.Baseline).Transition(fadeMotion(c, 180*time.Millisecond)).Children(func() {
+		row := n.Row(c.Key("state:" + state)).FillWidth().Wrap().Gap(messageFooterGap).MinHeight(24).AlignItems(n.Baseline).Transition(fadeMotion(c, 180*time.Millisecond))
+		// Fade the old ink while the tools themselves move. Once folded, only
+		// the empty footer layout exits; the header is then the sole owner.
+		// Opening waits for the old header ink to exit before revealing footer ink.
+		opacity := float32(1)
+		if turn.Status.Active() && v.activityTurn == turn.ID && v.activityGroup != "" && (v.Model.ToolDisclosure(v.activityGroup).Closed() || v.toolMotions[v.activityGroup] != nil) {
+			opacity = 0
+		}
+		row.Opacity(row.AnimateTo("activity-ownership", opacity, motionAnimation(c, 120*time.Millisecond)))
+		row.Children(func() {
 			if state == "disconnected" {
 				n.Text(c, "连接已断开，执行状态待核对").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 				return
