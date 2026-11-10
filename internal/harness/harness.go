@@ -36,6 +36,14 @@ type SkillProvider interface {
 	Skills(context.Context, domain.LaunchContext) (domain.SkillCatalog, error)
 }
 
+// An empty launch context means device-level Skills only. Concrete adapters
+// resolve discovery roots, file reads, scopes and native enablement policies.
+type SkillManager interface {
+	SkillInventory(context.Context, domain.LaunchContext) (domain.SkillInventory, error)
+	ReadSkill(context.Context, domain.LaunchContext, string) (domain.SkillDocument, error)
+	ChangeSkill(context.Context, domain.LaunchContext, domain.SkillChange) (domain.SkillChangeResult, error)
+}
+
 // TitleGenerator is an optional, independent auxiliary capability. The adapter
 // owns its model selection, authentication and isolated execution mechanics.
 // It must not append a turn to the user's conversation or run workspace tools.

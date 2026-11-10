@@ -23,7 +23,8 @@ const Major = 2
 // Minor 22 adds owning-device tool service discovery and authorization.
 // Minor 23 adds device-owned directory browsing before workspace creation.
 // Minor 24 adds revision-checked native tool service configuration writes.
-const Minor = 24
+// Minor 25 adds scope-aware owning-device Skill inventory, content and enablement.
+const Minor = 25
 const MaxFrame = 1 << 20
 
 type Frame struct {

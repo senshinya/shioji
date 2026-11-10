@@ -330,6 +330,12 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 	}
 
 	switch method {
+	case "runtime.skills.list", "runtime.skills.read", "runtime.skills.change":
+		in, err := decode[protocol.SkillManagementInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.manageSkills(method, in)
 	case "runtime.tools.change":
 		in, err := decode[protocol.ToolServiceInput](body)
 		if err != nil {

@@ -125,3 +125,9 @@ type SkillQuery struct {
 	GitQuery
 	HarnessID string `json:"harnessId,omitempty"`
 }
+
+type SkillManagementInput struct {
+	WorkspaceID string `json:"workspaceId,omitempty"`
+	HarnessID   string `json:"harnessId"`
+	domain.SkillChange
+}

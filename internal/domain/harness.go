@@ -3,14 +3,15 @@ package domain
 // These are Shioji operations. Adapters report actual support; absent support
 // never authorizes a substitute operation or a guessed configuration.
 type HarnessCapabilities struct {
-	ToolServices bool `json:"toolServices,omitempty"`
-	Skills       bool `json:"skills,omitempty"`
-	Steer        bool `json:"steer"`
-	Interrupt    bool `json:"interrupt"`
-	Recovery     bool `json:"recovery"`
-	Continue     bool `json:"continue"`
-	Fork         bool `json:"fork"`
-	Restart      bool `json:"restart"`
+	ToolServices    bool `json:"toolServices,omitempty"`
+	Skills          bool `json:"skills,omitempty"`
+	SkillManagement bool `json:"skillManagement,omitempty"`
+	Steer           bool `json:"steer"`
+	Interrupt       bool `json:"interrupt"`
+	Recovery        bool `json:"recovery"`
+	Continue        bool `json:"continue"`
+	Fork            bool `json:"fork"`
+	Restart         bool `json:"restart"`
 }
 type HarnessDescriptor struct {
 	ID   string `json:"id"`
