@@ -143,15 +143,24 @@ func (v *View) deviceAgentPage(c *n.Context, t *n.Theme, key, deviceName string,
 	}
 	header.Children(func() {
 		n.Column(c).FillWidth().MaxWidth(840).Gap(8).Children(func() {
-			back := control(c.Key("back"), 5).Height(28).MaxWidth(400).AlignSelf(n.Start).Justify(n.Start).PaddingX(4).MarginStart(-4).Label("返回 Agent 列表").Tooltip(deviceName).Disabled(e.busy)
+			backName, backLabel := deviceName, "返回 Agent 列表"
+			if v.skillReturn != nil && v.skillReturn.editor == e {
+				backName = v.skillReturn.workspace.Workspace.Name
+				backLabel = "返回工作区 Skills"
+			}
+			back := control(c.Key("back"), 5).Height(28).MaxWidth(400).AlignSelf(n.Start).Justify(n.Start).PaddingX(4).MarginStart(-4).Label(backLabel).Tooltip(backName).Disabled(e.busy)
 			if width < 900 {
 				back.MarginStart(60)
 			}
 			back.Children(func() {
-				inlineIconText(c, deviceBackIcon, deviceName, n.Font{Family: t.Font, Size: configurationValueSize, Weight: 400}, 12, 4, t.TextMuted).Shrink(1)
+				inlineIconText(c, deviceBackIcon, backName, n.Font{Family: t.Font, Size: configurationValueSize, Weight: 400}, 12, 4, t.TextMuted).Shrink(1)
 			})
 			if back.Clicked() {
-				e.pageID = ""
+				if v.skillReturn != nil && v.skillReturn.editor == e {
+					v.returnSkillWorkspace()
+				} else {
+					e.pageID = ""
+				}
 			}
 			n.Row(c).FillWidth().Height(32).Gap(16).AlignItems(n.Baseline).Children(func() {
 				inlineIconText(c, harnessIcon(domain.HarnessDescriptor{ID: info.ID, Name: info.Name, Icon: info.Icon}), info.Name, n.Font{Family: t.Font, Size: configurationTitleSize, Weight: 400}, 24, 8, t.Text).FixedLineHeight(configurationTitleLine).Grow(1).MinWidth(0).Tooltip(info.Name)

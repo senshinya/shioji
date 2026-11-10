@@ -296,3 +296,11 @@ Model visibility, favorites and order are client menu preferences scoped by stab
 ## 应用内认证
 
 2026-11-09 增量：独立可选 `harness.AuthenticationProvider` 提供中立的浏览器／设备验证码授权。worker 持有临时授权状态与稳定操作 ID，adapter 负责具体协议、来源登录 ID 与凭据存储；共享配置、事件与会话状态不携带具体认证结构。认证不借用会话运行时，不隐式退出已有账号，也不改变 Agent 启用选择。账号和模型经真实回读后更新，挑战不进入持久化投影。详见 [Agent 登录](agent-signin.md)。
+
+### Skills management (protocol 2.25)
+
+`runtime.skills.list/read/change` adds a harness-neutral inventory alongside the existing enabled-only `skills.list` reference picker. Device queries have no workspace; project queries carry only a stable workspace ID, resolved by its owning worker to accepted main/additional directories. The adapter reports ownership, display paths, actual enabled state, opaque identities/revisions and write availability. Shared code neither scans directories nor opens display paths.
+
+The Codex adapter reads the installed runtime's `skills/list` output including disabled items and source scopes. Content reads revalidate the offered identity and accept bounded regular UTF-8 files only. Enablement is a version-checked native `config/batchWrite` to the user configuration's per-path Skill settings, preserving unrelated entries. This is native user-owned configuration for that offered path, not a synthetic workspace-local policy. Managed/built-in sources and project-inherited entries are read-only. Worker serialization and native expected versions protect concurrent changes; uncertain writes require refresh and are never automatically replayed.
+
+Device settings place Skills before MCP. Workspace settings provide General and Skills tabs, scoped to the saved workspace and selected supported harness. Inherited sources link to the owning device configuration and return to the original workspace draft and reading state. These settings are absent from welcome/add-device setup. Catalog refreshes retain rows, connection/configuration/workspace changes invalidate callbacks, and unavailable configuration remains explicit rather than silently enabling a fallback.

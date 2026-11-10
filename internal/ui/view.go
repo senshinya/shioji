@@ -27,6 +27,8 @@ type editBinding struct {
 }
 
 type View struct {
+	skillManagement                                                                                                 map[string]*skillManagementUI
+	skillReturn                                                                                                     *skillManagementReturn
 	directoryPicker                                                                                                 *directoryPicker
 	toolServices                                                                                                    map[string]*toolServicesUI
 	servicePreparations                                                                                             map[string]*servicePreparationUI
@@ -352,7 +354,7 @@ func (v *View) View(c *n.Context) {
 		}
 	}
 	main.Children(func() {
-		if v.devices {
+		if v.devices && v.skillReturn == nil {
 			v.deviceView(c, &t)
 			return
 		}
@@ -382,12 +384,20 @@ func (v *View) View(c *n.Context) {
 			conversation.Transition(n.ElementTransition{Duration: motionAnimation(c, 200*time.Millisecond).Duration, Ease: n.EaseOut, Size: true})
 		}
 		conversation.Children(func() {
-			if v.devices {
-				v.toolbar(c, &t)
-				v.deviceView(c, &t)
-			} else if v.workspaceEditor != nil {
-				v.toolbar(c, &t)
-				v.workspaceSettingsView(c, &t)
+			if v.workspaceEditor != nil || v.skillReturn != nil {
+				page, depth := "workspace", 0
+				if v.devices && v.skillReturn != nil {
+					page, depth = "device-skills", 1
+				}
+				configurationTabPanel(c.Key("workspace-navigation"), page, depth, configurationPanelFill, func() {
+					if v.devices && v.skillReturn != nil {
+						r := v.skillReturn
+						v.deviceAgentPage(c, &t, r.key, v.Model.DeviceName(r.workspace.Workspace.DeviceID), v.deviceState(r.key), r.editor, r.info)
+					} else {
+						v.toolbar(c, &t)
+						v.workspaceSettingsView(c, &t)
+					}
+				}, false)
 			} else if m.SessionID == "" && v.homeSend == nil {
 				v.toolbar(c, &t)
 				v.homeView(c, &t)
@@ -441,6 +451,7 @@ func (v *View) home() {
 		v.previousSession, v.previousWorkspace = v.Model.SessionID, v.Model.WorkspaceID
 	}
 	v.workspaceEditor = nil
+	v.skillReturn = nil
 	v.Model.SessionID = ""
 	v.Model.FocusSecondary = false
 	v.devices = false
@@ -617,6 +628,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 				}
 				if row.Clicked() {
 					v.workspaceEditor = nil
+					v.skillReturn = nil
 					v.navigateSession(s.ID, s.WorkspaceID)
 					v.devices = false
 				}
@@ -624,6 +636,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 			n.Column(c).Height(1).FillWidth().Background(t.Border)
 			n.Row(c).Height(32).Children(func() {
 				if navButton(c, monitor, "设备").Grow(1).Clicked() {
+					v.skillReturn = nil
 					v.devices = true
 				}
 				if iconButton(c, settingsIcon, "设置").Clicked() && v.OpenSettings != nil {
@@ -634,6 +647,10 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 	})
 }
 func (v *View) toolbar(c *n.Context, t *n.Theme) {
+	if v.workspaceEditor != nil && !v.devices {
+		v.workspaceSettingsHeader(c, t)
+		return
+	}
 	titleAnimation := motionAnimation(c, 160*time.Millisecond)
 	m := v.Model
 	rightInset := float32(24)
@@ -642,13 +659,7 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		rightInset = 18 - conversationScrollbarGutter
 	}
 	n.Row(c).Height(48).FillWidth().Padding(0, rightInset, 0, 24).Gap(6).AlignItems(n.Center).DragWindow().Label("会话工具栏").Children(func() {
-		if v.workspaceEditor != nil && !v.devices {
-			if ghost(c, "返回").Clicked() {
-				v.workspaceEditor = nil
-			}
-			n.Text(c, "工作区设置").FontSize(13).Grow(1)
-			return
-		} else if v.devices {
+		if v.devices {
 			n.Text(c, "设备").FontSize(13).Grow(1)
 			add := iconButton(c, plus, "添加设备")
 			v.choiceMenu(c, t, "add-device", add, []menuChoice{{id: "ssh", name: "直接 SSH", choose: func() { v.sshCheck = v.sshCheck.show(); v.sshError = "" }}, {id: "tailnet", name: "从 Tailnet 添加", disabled: true}})

@@ -12,6 +12,8 @@ import (
 )
 
 type workspaceEditor struct {
+	Tab, Harness            string
+	GeneralScroll           n.ScrollState
 	Workspace               domain.Workspace
 	Main, Connection, Error string
 	Busy                    bool
@@ -181,6 +183,7 @@ func (v *View) sessionMenu(menu *n.Menu, s domain.Session) {
 	}
 }
 func (v *View) editWorkspace(w domain.Workspace) {
+	v.skillReturn = nil
 	w.Folders = append([]string(nil), w.Folders...)
 	main := ""
 	if len(w.Folders) > 0 {
@@ -290,17 +293,34 @@ func (v *View) workspaceSettingsView(c *n.Context, t *n.Theme) {
 	if e == nil {
 		return
 	}
-	motion := n.ElementTransition{Duration: motionAnimation(c, 180*time.Millisecond).Duration, Ease: n.EaseOut, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}}
-	if !c.Preferences().ReduceMotion {
-		motion.Enter.Y = 4
+	n.Column(c).FillWidth().FillHeight().Grow(1).Padding(0, 32, 20).Children(func() {
+		n.Column(c).FillWidth().MaxWidth(840).FillHeight().Grow(1).Children(func() {
+			tabs := []configurationTabItem{{ID: "", Label: "常规"}, {ID: "Skills", Label: "Skills"}}
+			e.Tab = configurationTabs(c.Key("workspace-tabs"), e.Tab, tabs, configurationUnderline, e.Busy)
+			n.Column(c).FillWidth().FillHeight().Grow(1).Padding(12, 0, 0).Children(func() {
+				configurationTabPanel(c.Key("workspace-tab-panel"), e.Tab, configurationTabIndex(tabs, e.Tab), configurationPanelFill, func() {
+					if e.Tab == "Skills" {
+						v.workspaceSkills(c, t, e)
+					} else {
+						v.workspaceSettingsForm(c, t)
+					}
+				}, false)
+			})
+		})
+	})
+}
+
+func (v *View) workspaceSettingsForm(c *n.Context, t *n.Theme) {
+	e := v.workspaceEditor
+	if e == nil {
+		return
 	}
 	rowMotion := disclosureMotion(c, 180*time.Millisecond)
 	rowMotion.Position = true
 	positionMotion := n.ElementTransition{Position: true, Duration: motionAnimation(c, 180*time.Millisecond).Duration, Ease: n.EaseOut}
-	n.Scroll(c.Key("workspace-settings:" + e.Workspace.ID)).FillWidth().FillHeight().Grow(1).Transition(motion).Children(func() {
-		n.Column(c).FillWidth().Padding(20, 32).AlignItems(n.Center).Children(func() {
-			n.Column(c).FillWidth().MaxWidth(680).Gap(20).Children(func() {
-				n.Text(c, v.Model.DeviceName(e.Workspace.DeviceID)).FontSize(12).TextColor(t.TextMuted)
+	n.Scroll(c.Key("workspace-settings:" + e.Workspace.ID)).FillWidth().FillHeight().Grow(1).TrackScroll(&e.GeneralScroll).Children(func() {
+		n.Column(c).FillWidth().Padding(8, 0).AlignItems(n.Start).Children(func() {
+			n.Column(c).FillWidth().MaxWidth(840).Gap(20).Children(func() {
 				n.Column(c).FillWidth().Gap(6).Children(func() {
 					n.Text(c, "名称").FontSize(12).TextColor(t.TextMuted)
 					textField(c.Key("workspace-name"), &e.Workspace.Name).FillWidth().Height(32).FontSize(13).Label("工作区名称").Disabled(e.Busy)

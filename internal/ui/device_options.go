@@ -425,6 +425,9 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 	}
 	n.Column(c).FillWidth().FillHeight().Grow(1).Children(func() {
 		tabs := []configurationTabItem{{ID: "常规", Label: "常规"}, {ID: "模型", Label: "模型"}}
+		if info.Capabilities.SkillManagement && v.deviceState(key).WorkerMinor >= 25 {
+			tabs = append(tabs, configurationTabItem{ID: "Skills", Label: "Skills"})
+		}
 		if info.Capabilities.ToolServices && v.deviceState(key).WorkerMinor >= 22 {
 			tabs = append(tabs, configurationTabItem{ID: "MCP", Label: "MCP"})
 		}
@@ -440,6 +443,10 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 		e.tab = configurationTabs(c.Key("agent-tabs"), e.tab, tabs, configurationUnderline, e.busy)
 		n.Column(c.Key("agent-page")).FillWidth().FillHeight().Grow(1).Padding(12, 0, 0).Children(func() {
 			configurationTabPanel(c.Key("page-motion"), e.tab, configurationTabIndex(tabs, e.tab), configurationPanelFill, func() {
+				if e.tab == "Skills" {
+					v.agentSkills(c, t, key, e, info)
+					return
+				}
 				if e.tab == "MCP" {
 					v.agentToolServices(c, t, key, e, info, e.readOnly || e.busy || e.loading || !connected)
 					return
