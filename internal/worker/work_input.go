@@ -7,6 +7,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/protocol"
+	"slices"
 	"time"
 )
 
@@ -33,6 +34,23 @@ func (s *Server) sendWork(in domain.WorkInput) (domain.WorkInputOperation, error
 	d, err := s.store.Session(in.SessionID, 0, 1)
 	if err != nil {
 		return none, workNotSent(err)
+	}
+	if in.Mode == "continue" {
+		paths := append([]string{d.Session.Context.CWD}, d.Session.Context.AdditionalDirectories...)
+		validated, err := validateFolders(paths)
+		if err != nil {
+			return none, workNotSent(err)
+		}
+		if !slices.Equal(validated, paths) {
+			return none, workNotSent(errors.New("execution directory identity changed"))
+		}
+		if _, err = s.prepareGit(domain.Submission{SessionID: in.SessionID, WorkspaceID: d.Session.WorkspaceID}, d.Session.Context); err != nil {
+			return none, workNotSent(err)
+		}
+		d, err = s.store.Session(in.SessionID, 0, 1)
+		if err != nil {
+			return none, workNotSent(err)
+		}
 	}
 	work, err := s.store.Work(in.SessionID, in.WorkID)
 	if err != nil {
