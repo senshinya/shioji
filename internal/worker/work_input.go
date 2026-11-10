@@ -71,15 +71,7 @@ func (s *Server) sendWork(in domain.WorkInput) (domain.WorkInputOperation, error
 	// This also protects shared-checkout changes before its first source event.
 	var reservation int64
 	if in.Mode == "continue" {
-		pending := w
-		pending.State = "starting"
-		pending.CanSteer = false
-		pending.CanContinue = false
-		if e, x := s.store.Apply(in.SessionID, domain.Event{Type: "work.upsert", Work: &pending}); x != nil {
-			return op, x
-		} else {
-			reservation = e.Work.Revision
-		}
+		reservation = op.Order
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
 	defer cancel()

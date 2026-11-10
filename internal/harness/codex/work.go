@@ -403,10 +403,12 @@ func (n *Normalizer) invalidateWork() []domain.Event {
 	sort.Strings(ids)
 	for _, id := range ids {
 		w := n.work.works[id]
-		if !w.Active() {
+		if !w.Active() && !w.CanSteer && !w.CanContinue {
 			continue
 		}
-		w.State = "unknown"
+		if w.Active() {
+			w.State = "unknown"
+		}
 		w.CanStop = false
 		w.CanSteer, w.CanContinue = false, false
 		n.work.works[id] = w

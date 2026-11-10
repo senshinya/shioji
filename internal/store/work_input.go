@@ -38,6 +38,9 @@ func (s *Store) AcceptWorkInput(in domain.WorkInput) (domain.WorkInputOperation,
 	if w.Kind != "agent" {
 		return none, false, errors.New("只能向子 Agent 发送消息")
 	}
+	if in.Mode == "steer" && (!w.Active() || !w.CanSteer) || in.Mode == "continue" && (!w.CanContinue || (w.State != "completed" && w.State != "stopped")) {
+		return none, false, errors.New("子 Agent 的执行状态已变化")
+	}
 	var unsettled bool
 	if err = s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM work_inputs WHERE session_id=? AND work_id=? AND json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate'))", in.SessionID, in.WorkID).Scan(&unsettled); err != nil {
 		return none, false, err
@@ -52,6 +55,11 @@ func (s *Store) AcceptWorkInput(in domain.WorkInput) (domain.WorkInputOperation,
 	}
 	defer tx.Rollback()
 	// Reserve transcript order before the adapter can emit a fast reply.
+	if in.Mode == "continue" {
+		w.State = "starting"
+		w.CanContinue = false
+		w.CanSteer = false
+	}
 	event := domain.Event{SessionID: in.SessionID, Type: "work.upsert", Work: &w}
 	if err = applyWork(tx, in.SessionID, &event); err != nil {
 		return none, false, err

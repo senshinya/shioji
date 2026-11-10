@@ -66,6 +66,7 @@ func TestWorkInputReceiptKeepsAcceptanceOrderAndCrashDoesNotResend(t *testing.T)
 	if err := db.SetWorkInput("input", "confirmed", ""); err != nil {
 		t.Fatal(err)
 	}
+	db.Apply(op.SessionID, domain.Event{Type: "work.upsert", Work: &work})
 	d, _ := db.Work(op.SessionID, "child")
 	if len(d.Items) != 2 || d.Items[0].Item.Kind != "user" {
 		t.Fatal("fast child response precedes its input", d.Items)
@@ -86,5 +87,22 @@ func TestWorkInputReceiptKeepsAcceptanceOrderAndCrashDoesNotResend(t *testing.T)
 	p, fresh, err := db.AcceptWorkInput(in)
 	if err != nil || fresh || p.State != "indeterminate" {
 		t.Fatal("crash allowed redispatch", p, fresh, err)
+	}
+}
+
+func TestWorkInputAcceptanceReservesContinueBeforeSourceEvents(t *testing.T) {
+	db := open(t)
+	w := workspace(t, db)
+	op, _ := db.Accept(domain.Submission{OperationID: "root", WorkspaceID: w.ID, Text: "root"})
+	child := domain.WorkActivity{ID: "child", Kind: "agent", TurnID: "t", State: "completed", CanContinue: true}
+	db.Apply(op.SessionID, domain.Event{Type: "work.upsert", Work: &child})
+	in := domain.WorkInput{OperationID: "next", SessionID: op.SessionID, WorkID: "child", Mode: "continue", Text: "next"}
+	receipt, _, err := db.AcceptWorkInput(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, _ := db.Work(op.SessionID, "child")
+	if d.Work.State != "starting" || d.Work.CanContinue || d.Work.Revision != receipt.Order {
+		t.Fatal("acceptance has no atomic execution reservation", d.Work, receipt)
 	}
 }

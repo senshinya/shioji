@@ -22,6 +22,7 @@ const (
 )
 
 type workDetailUI struct {
+	input             workInputUI
 	hydrated          bool
 	readSequence      int64
 	streams           map[string]*replyStream
@@ -84,9 +85,16 @@ func workStateLabel(w domain.WorkActivity) string {
 	return "状态未知"
 }
 func (v *View) displayedWork(w domain.WorkActivity) domain.WorkActivity {
-	if w.Active() && (!v.Model.Connected || w.OriginRef != "" && w.OriginRef != v.Model.Details[v.Model.SessionID].Session.ThreadID) {
-		w.State = "unknown"
+	parent := v.Model.Details[v.Model.SessionID].Session
+	if parent.Archived || parent.ContextChanged || parent.ExecutionGuard != "" {
+		w.CanSteer, w.CanContinue = false, false
+	}
+	if !v.Model.Connected || w.OriginRef != "" && w.OriginRef != v.Model.Details[v.Model.SessionID].Session.ThreadID {
+		if w.Active() {
+			w.State = "unknown"
+		}
 		w.CanStop = false
+		w.CanSteer, w.CanContinue = false, false
 	}
 	return w
 }
@@ -520,6 +528,9 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 			}
 		}
 	})
+	if kind == "agents" {
+		v.workInput(c.Key("child-input:"+w.ID), t, w, u)
+	}
 }
 
 var locateWorkIcon = svg("M10 3v3M10 14v3M3 10h3M14 10h3M10 6a4 4 0 1 0 0 8 4 4 0 0 0 0-8")

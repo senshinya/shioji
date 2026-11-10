@@ -55,6 +55,25 @@ func TestSpawnCompletionDoesNotCompleteChildOrMixItsTranscript(t *testing.T) {
 		t.Fatal("child completion missing", es)
 	}
 }
+
+func TestRuntimeInvalidationWithdrawsFinishedChildInputCapability(t *testing.T) {
+	n := NewNormalizer()
+	n.workContinue = true
+	n.Bind("root", "s", false)
+	workFeed(t, n, `{"method":"item/completed","params":{"threadId":"root","turnId":"t","item":{"type":"collabAgentToolCall","id":"spawn","tool":"spawnAgent","receiverThreadIds":["child"],"agentsStates":{"child":{"status":"completed"}}}}}`)
+	seen := false
+	for _, e := range n.Invalidate() {
+		if e.Work != nil && e.Work.Kind == "agent" {
+			seen = true
+			if e.Work.CanContinue || e.Work.CanSteer || e.Work.State != "completed" {
+				t.Fatal("lost runtime kept control or erased finished state", e.Work)
+			}
+		}
+	}
+	if !seen {
+		t.Fatal("finished child retained a stale send capability")
+	}
+}
 func TestBackgroundCommandRequiresObservedConcurrentProgress(t *testing.T) {
 	n := NewNormalizer()
 	n.Bind("root", "session", false)

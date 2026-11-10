@@ -259,6 +259,9 @@ func (s *Store) CommitHistory(id string) (domain.HistoryOperation, error) {
 				return op, err
 			}
 		}
+		if _, err = tx.Exec(`UPDATE works SET body=json_set(body,'$.canStop',json('false'),'$.canSteer',json('false'),'$.canContinue',json('false')) WHERE session_id=?`, target.ID); err != nil {
+			return op, err
+		}
 		if _, err = tx.Exec("DELETE FROM plans WHERE session_id=?", target.ID); err != nil {
 			return op, err
 		}
@@ -266,7 +269,7 @@ func (s *Store) CommitHistory(id string) (domain.HistoryOperation, error) {
 		if _, err = tx.Exec(`INSERT INTO turns SELECT ?,id,body FROM turns WHERE session_id=? AND id IN(SELECT json_extract(body,'$.turnId') FROM items WHERE session_id=?)`, target.ID, source.ID, target.ID); err != nil {
 			return op, err
 		}
-		if _, err = tx.Exec(`INSERT INTO works SELECT ?,id,json_set(body,'$.canStop',json('false'),'$.state',CASE WHEN json_extract(body,'$.state') IN ('running','starting','waiting') THEN 'unknown' ELSE json_extract(body,'$.state') END) FROM works WHERE session_id=? AND json_extract(body,'$.turnId') IN(SELECT id FROM turns WHERE session_id=?)`, target.ID, source.ID, target.ID); err != nil {
+		if _, err = tx.Exec(`INSERT INTO works SELECT ?,id,json_set(body,'$.canStop',json('false'),'$.canSteer',json('false'),'$.canContinue',json('false'),'$.state',CASE WHEN json_extract(body,'$.state') IN ('running','starting','waiting') THEN 'unknown' ELSE json_extract(body,'$.state') END) FROM works WHERE session_id=? AND json_extract(body,'$.turnId') IN(SELECT id FROM turns WHERE session_id=?)`, target.ID, source.ID, target.ID); err != nil {
 			return op, err
 		}
 		if _, err = tx.Exec(`INSERT INTO work_items SELECT ?,work_id,id,position,revision,body FROM work_items WHERE session_id=? AND work_id IN(SELECT id FROM works WHERE session_id=?)`, target.ID, source.ID, target.ID); err != nil {

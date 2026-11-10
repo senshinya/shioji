@@ -28,7 +28,7 @@ func TestHistoryRestartAtomicallyReplacesSuffixAndPreservesQueue(t *testing.T) {
 	s.Apply(sid, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "late", TurnID: "t1", Kind: "tool", Text: "late output from first turn", Final: true}})
 	s.Enqueue(domain.Submission{OperationID: "queued", SessionID: sid, WorkspaceID: w.ID, Text: "keep queued"})
 	for _, turn := range []string{"t1", "t2"} {
-		work := domain.WorkActivity{ID: "work-" + turn, Kind: "agent", TurnID: turn, Title: turn, State: "completed"}
+		work := domain.WorkActivity{ID: "work-" + turn, Kind: "agent", TurnID: turn, Title: turn, State: "completed", CanContinue: true}
 		if _, err := s.Apply(sid, domain.Event{Type: "work.upsert", Work: &work}); err != nil {
 			t.Fatal(err)
 		}
@@ -55,6 +55,9 @@ func TestHistoryRestartAtomicallyReplacesSuffixAndPreservesQueue(t *testing.T) {
 	d, _ = s.Session(sid, 0, 100)
 	if len(d.Works) != 1 || d.Works[0].TurnID != "t1" {
 		t.Fatal("history reset retained removed work", d.Works)
+	}
+	if d.Works[0].CanContinue {
+		t.Fatal("history replacement retained old source control")
 	}
 	if len(d.Items) != 4 || d.Items[0].Text != "keep" || d.Items[3].Text != "new question" || len(d.Turns) != 1 || !d.Queue.Paused || len(d.Queue.Items) != 1 {
 		t.Fatal("suffix or queue incorrect", d)
@@ -84,6 +87,8 @@ func TestForkCopiesOnlySelectedPrefixAndKeepsSource(t *testing.T) {
 	d, _ := s.Session(op.SessionID, 0, 100)
 	d.Session.ThreadID = "thread"
 	s.Apply(op.SessionID, domain.Event{Type: "session", Session: &d.Session})
+	child := domain.WorkActivity{ID: "child", Reference: "child-ref", OriginRef: "thread", Kind: "agent", TurnID: "t1", State: "completed", CanContinue: true}
+	s.Apply(op.SessionID, domain.Event{Type: "work.upsert", Work: &child})
 	d, _ = s.Session(op.SessionID, 0, 100)
 	in := domain.HistoryChange{OperationID: "fork", SessionID: op.SessionID, Revision: d.Session.Revision, TurnID: "t1"}
 	fork, err := s.PrepareHistory(in)
@@ -100,6 +105,9 @@ func TestForkCopiesOnlySelectedPrefixAndKeepsSource(t *testing.T) {
 	copied, err := s.Session(got.Session.ID, 0, 100)
 	if err != nil || copied.Session.ID == op.SessionID || len(copied.Items) != 1 || copied.Session.ForkedFrom != op.SessionID || len(copied.Queue.Items) > 0 {
 		t.Fatal(copied, err)
+	}
+	if len(copied.Works) != 1 || copied.Works[0].CanContinue {
+		t.Fatal("fork inherited live child input capability", copied.Works)
 	}
 	original, _ := s.Session(op.SessionID, 0, 100)
 	if original.Session.ThreadID != "thread" || len(original.Items) != 1 {

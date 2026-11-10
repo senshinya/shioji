@@ -320,3 +320,7 @@ Device settings place Skills before MCP. Workspace settings provide General and 
 Worker 协议 minor 27 新增 `session.work` 只读查询及 `session.work.stop`。查询只读已接纳的 session-owned 数据，不启动或恢复执行。列表最多返回 128 项／96 KiB 摘要，优先活动工作，截断时明确提示；不删除设备端记录。详情最多返回最近 64 个 Item／384 KiB，客户端只保留 32 份详情。可选 `harness.WorkRestorer` 恢复已知关系，`WorkController` 执行独立停止；每项 `CanStop` 还需经过当前运行实例、来源和活动轮次检查。Codex 当前验证支持停止已知子 Agent 的活动轮；后台命令不提供未验证的停止按钮。
 
 真实 Codex 0.167.0 集成测试使用独立 CODEX_HOME 与本地确定性模型服务，覆盖子轮开始先于启动工具返回、父轮完成后后台存活、独立停止子 Agent、命令后续输出与退出。UI 使用同一条右侧栏中的独立列表与详情，不创建应用会话承载子 Agent。
+
+Minor 28 增加 `WorkInput`、`WorkInputOperation` 和可选 `harness.WorkMessenger`。`CanSteer` 与 `CanContinue` 分别说明当前子执行是否能追加或继续；共享层不解析源标识、不继承父会话的具体配置，也不把子输入替换为父输入。Worker 在调用 adapter 前持久化稳定操作标识并保留接纳顺序，快速输出不抢到用户消息前面；重复操作只返回回执，未知接纳只查询。进程恢复撤销实时能力，将未决发送置为 indeterminate，不自动重发。子输入不改变父消息、轮次或用量；未决输入仍占有执行边界，阻止共享 checkout 切换及服务替换。
+
+原生详情采用 B 方案：默认收起输入入口，点击后以真实高度展开，草稿按设备／会话／子执行保留。发送、失败与查询状态仅影响当前子输入，主输入和共用请求栏保持独立。Codex 转译保留子线程已有配置，仅向已确认绑定的子执行追加或继续；隔离的真实 App Server 测试验证两种操作及回执查找。
