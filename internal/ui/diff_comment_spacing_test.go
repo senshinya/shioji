@@ -156,8 +156,27 @@ func TestDiffCommentControlEdgesAndPaddingAlignInReadingAndEditing(t *testing.T)
 					if editing {
 						last, _ = tester.Find("提交代码评论")
 					}
-					equal("action border/body right", last.X+last.W, body.X+body.W)
-					equal("container left/right padding", badge.X-panel.X, panel.X+panel.W-last.X-last.W)
+					right := last.X + last.W
+					if !editing {
+						// Reading actions have transparent hit slots. Measure the
+						// close symbol's actual stroke instead of counting its blank slot.
+						img := tester.Image()
+						edge := -1
+						for y := int(last.Y * scale); y < int((last.Y+last.H)*scale); y++ {
+							for x := int(last.X * scale); x < int((last.X+last.W)*scale); x++ {
+								p := img.RGBAAt(x, y)
+								if !dark && p.R < 180 || dark && p.R > 85 {
+									edge = max(edge, x)
+								}
+							}
+						}
+						if edge < 0 {
+							t.Fatal("close icon did not paint")
+						}
+						right = float32(edge+1) / scale
+					}
+					equal("visible action/body right", right, body.X+body.W)
+					equal("container visible left/right padding", badge.X-panel.X, panel.X+panel.W-right)
 					bottom := last
 					if !editing {
 						bottom = body

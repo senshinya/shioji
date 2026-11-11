@@ -20,6 +20,10 @@ type commentBubbleMotion struct {
 	initialized         bool
 }
 
+// The close path ends at 15.75/20 including its stroke. Keep icons centered
+// in their hit slots, but align the reading group's visible edge to the grid.
+const commentReadingActionOutset = (22-16)/2.0 + (20-15.75)*16/20
+
 func commentDraftFromRecord(state *changesState, ref app.DraftAttachment, record domain.DiffCommentRecord) *diffCommentDraft {
 	d := &diffCommentDraft{UIKey: ref.Attachment.ID, Original: record.Content.Comment, Text: record.Content.Comment, Snapshot: record.Snapshot, Versions: state.Versions, Editing: ref.Attachment}
 	for _, part := range record.Content.Fragments {
@@ -141,7 +145,7 @@ func (v *View) diffCommentBubble(c *n.Context, t *n.Theme, state *changesState, 
 					v.locateVisibleDiffComment(state, d.Selection.Fragments[0])
 				}
 				n.Spacer(c).Grow(1)
-				n.Row(c.Key("reading-actions")).Width(48).Height(22).Gap(4).Opacity(1 - min(1, g.footer/32)).Children(func() {
+				n.Row(c.Key("reading-actions")).Width(48).Height(22).Gap(4).MarginEnd(-commentReadingActionOutset).Opacity(1 - min(1, g.footer/32)).Children(func() {
 					if iconButton(c, queueEditIcon, "编辑评论").Size(22, 22).Disabled(d.Open || d.Editing.ID == "").Clicked() {
 						v.editDiffComment(state, app.DraftAttachment{Attachment: d.Editing}, domain.DiffCommentRecord{Content: domain.CodeCommentContent{Comment: d.Original}})
 					}
