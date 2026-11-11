@@ -20,6 +20,10 @@ type commentBubbleMotion struct {
 	initialized         bool
 }
 
+// Hit regions extend past the shared text grid. The close symbol's painted
+// right edge is 15.75 in its 20-unit viewBox, inside a 16-DIP icon/22-DIP hit slot.
+const commentIconRightInset = (22-16)/2.0 + (20-15.75)*16/20
+
 func commentDraftFromRecord(state *changesState, ref app.DraftAttachment, record domain.DiffCommentRecord) *diffCommentDraft {
 	d := &diffCommentDraft{UIKey: ref.Attachment.ID, Original: record.Content.Comment, Text: record.Content.Comment, Snapshot: record.Snapshot, Versions: state.Versions, Editing: ref.Attachment}
 	for _, part := range record.Content.Fragments {
@@ -131,7 +135,7 @@ func (v *View) diffCommentBubble(c *n.Context, t *n.Theme, state *changesState, 
 				}
 			}
 			n.Row(c.Key("header")).FillWidth().Height(22).Shrink(0).AlignItems(n.Center).Gap(4).Children(func() {
-				locator := n.ButtonBase(c.Key("reference")).MinWidth(0).Shrink(1).Height(22).Padding(2, 6).Radius(4).Background(t.Surface).Label(location).Tooltip(file + position + " · " + side + " · " + diffEndpointShortDescription(state.Comparison.Base) + " → " + diffEndpointShortDescription(state.Comparison.Target))
+				locator := n.ButtonBase(c.Key("reference")).MinWidth(0).Shrink(1).Height(22).Padding(2, 6).MarginStart(-6).Radius(4).Background(t.Surface).Label(location).Tooltip(file + position + " · " + side + " · " + diffEndpointShortDescription(state.Comparison.Base) + " → " + diffEndpointShortDescription(state.Comparison.Target))
 				color := textHoverColor(c, locator, t.TextMuted)
 				locator.Children(func() {
 					n.Text(c, name).FontSize(11).FixedLineHeight(18).TextColor(color).MinWidth(0).Shrink(1).SingleLine().Ellipsis("…")
@@ -141,7 +145,7 @@ func (v *View) diffCommentBubble(c *n.Context, t *n.Theme, state *changesState, 
 					v.locateVisibleDiffComment(state, d.Selection.Fragments[0])
 				}
 				n.Spacer(c).Grow(1)
-				n.Row(c.Key("reading-actions")).Width(48).Height(22).Gap(4).Opacity(1 - min(1, g.footer/32)).Children(func() {
+				n.Row(c.Key("reading-actions")).Width(48).Height(22).Gap(4).MarginEnd(-commentIconRightInset).Opacity(1 - min(1, g.footer/32)).Children(func() {
 					if iconButton(c, queueEditIcon, "编辑评论").Size(22, 22).Disabled(d.Open || d.Editing.ID == "").Clicked() {
 						v.editDiffComment(state, app.DraftAttachment{Attachment: d.Editing}, domain.DiffCommentRecord{Content: domain.CodeCommentContent{Comment: d.Original}})
 					}
@@ -176,7 +180,7 @@ func (v *View) diffCommentBubble(c *n.Context, t *n.Theme, state *changesState, 
 				})
 				field.Changed()
 			})
-			n.Column(c.Key("footer")).FillWidth().Height(g.footer).Shrink(0).Clip().Opacity(min(1, g.footer/32)).Children(func() {
+			n.Column(c.Key("footer")).FillWidth().Height(g.footer).Shrink(0).ClipY().Opacity(min(1, g.footer/32)).Children(func() {
 				n.Column(c.Key("error")).FillWidth().Height(g.errorHeight).Shrink(0).Clip().Children(func() { n.Text(c, d.Error).FontSize(11).FixedLineHeight(20).Height(24).TextColor(t.Danger) })
 				n.Row(c).FillWidth().Height(32).Padding(4, 0, 0, 0).Gap(6).AlignItems(n.Center).Justify(n.End).Children(func() {
 					if ghost(c, "取消").Height(28).Label("取消评论").Disabled(!d.Open || d.Saving).Clicked() {
@@ -189,7 +193,7 @@ func (v *View) diffCommentBubble(c *n.Context, t *n.Theme, state *changesState, 
 					if d.Saving {
 						label = "保存中…"
 					}
-					if ghost(c, label).Height(28).PaddingX(8).Radius(5).Background(t.Text).TextColor(t.Background).Disabled(!d.Open || d.Saving || d.Retaining || strings.TrimSpace(d.Text) == "" || v.Controller == nil).Clicked() {
+					if ghost(c, label).Label("提交代码评论").Height(28).PaddingX(8).MarginEnd(-8).Radius(5).Background(t.Text).TextColor(t.Background).Disabled(!d.Open || d.Saving || d.Retaining || strings.TrimSpace(d.Text) == "" || v.Controller == nil).Clicked() {
 						v.saveDiffComment(c, state, d)
 					}
 				})
