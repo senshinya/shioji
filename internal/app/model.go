@@ -25,6 +25,7 @@ type InspectorLayout struct {
 }
 
 type Model struct {
+	Navigation                 NavigationPreferences
 	WorkDetails                map[WorkKey]domain.WorkDetail
 	workReads                  []WorkKey
 	ServicePreparations        map[string]*ServicePreparation
@@ -474,6 +475,7 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 }
 
 type savedState struct {
+	Navigation                 NavigationPreferences                      `json:"navigation,omitempty"`
 	ServicePreparations        map[string]*ServicePreparation             `json:"servicePreparations,omitempty"`
 	ServicePreparationDeviceID string                                     `json:"servicePreparationDeviceId,omitempty"`
 	WorkerMigrations           map[string]WorkerMigrationTarget           `json:"workerMigrations,omitempty"`
@@ -543,6 +545,7 @@ func (m *Model) Load(path string) error {
 		m.DraftSkills = saved.DraftSkills
 	}
 	m.Preferences = saved.Preferences.Normalized()
+	m.Navigation = saved.Navigation
 	m.homeConfigContext = saved.HomeConfigContext
 	m.HomeHarnesses = saved.HomeHarnesses
 	m.HarnessConfigs = saved.HarnessConfigs
