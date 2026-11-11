@@ -19,6 +19,9 @@ import (
 
 var diffCommentIcon = svg("M17.5 9.5c0 3.6-3.1 6.5-7 6.5H6l-3.5 1.5v-8C2.5 5.9 5.6 3 9.5 3h1c3.9 0 7 2.9 7 6.5Z")
 
+// Header, version, two input lines and actions, including gaps and border.
+const diffCommentEditorPanelHeight = 20 + 18 + 44 + 28 + 3*4 + 2*6 + 2
+
 type diffCommentKey struct {
 	Comparison domain.DiffComparison
 	Path       string
@@ -66,9 +69,9 @@ func (v *View) configureDiffComments(c *n.Context, t *n.Theme, state *changesSta
 	clock := n.Column(c.Key("diff-comment-height")).Absolute().Size(0, 0).PassThrough()
 	target := float32(0)
 	if draft != nil && draft.Open {
-		target = 188
+		target = diffCommentEditorPanelHeight + 16
 		if draft.Error != "" {
-			target += 22
+			target += 24
 		}
 	}
 	height := clock.AnimateTo("height", target, motionAnimation(c, 220*time.Millisecond))
@@ -86,6 +89,9 @@ func (v *View) configureDiffComments(c *n.Context, t *n.Theme, state *changesSta
 	present := map[string]bool{}
 	for _, ref := range v.Model.Attachments[v.Model.DraftKey()] {
 		if ref.Attachment.Kind != domain.DiffCommentResource || ref.DeviceID != v.referenceDeviceID() || ref.WorkspaceID != v.Model.WorkspaceID {
+			continue
+		}
+		if draft != nil && draft.Open && draft.Editing.ID == ref.Attachment.ID {
 			continue
 		}
 		resource := v.loadCommentResource(ref)
@@ -143,10 +149,12 @@ func (v *View) configureDiffComments(c *n.Context, t *n.Theme, state *changesSta
 			}
 			resource := &diffCommentResource{Record: entry.Record}
 
-			note := n.Row(c).Fill().Clip().Padding(5, 12).Gap(6).AlignItems(n.Baseline).Background(t.Background).Transition(fadeMotion(c, 140*time.Millisecond))
+			// Icon-only actions have no text baseline. Center their hit slots
+			// independently so they cannot push the inline comment text down.
+			note := n.Row(c).Fill().Clip().Padding(5, 12).Gap(6).AlignItems(n.Center).Background(t.Background).Transition(fadeMotion(c, 140*time.Millisecond))
 			note.Children(func() {
-				inlineSymbol(c, diffCommentIcon, resource.Record.Content.Comment, n.Font{Family: t.Font, Size: 12}, 13, t.TextMuted)
-				n.Text(c, resource.Record.Content.Comment).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").Tooltip(resource.Record.Content.Comment)
+				font := n.Font{Family: t.Font, Size: 12, Weight: 400}
+				inlineIconText(c, diffCommentIcon, resource.Record.Content.Comment, font, 13, 6, t.TextMuted).Grow(1).MinWidth(0).TextColor(t.Text).Transform(n.Translation(0, inlineCenterOffset(resource.Record.Content.Comment, font))).Ellipsis("…").Tooltip(resource.Record.Content.Comment)
 				if iconButton(c, queueEditIcon, "编辑评论").Size(22, 22).Clicked() {
 					v.editDiffComment(state, ref, resource.Record)
 				}
@@ -207,12 +215,12 @@ func (v *View) diffCommentEditor(c *n.Context, t *n.Theme, state *changesState, 
 	if draft == nil {
 		return
 	}
-	panelHeight := float32(172)
+	panelHeight := float32(diffCommentEditorPanelHeight)
 	if draft.Error != "" {
-		panelHeight += 22
+		panelHeight += 24
 	}
 	n.Column(c).Fill().Padding(8, 12).Clip().Children(func() {
-		panel := n.Column(c).FillWidth().Height(panelHeight).Shrink(0).Padding(10, 12, 8, 12).Gap(4).Clip().Radius(8).Background(codeSurface(t)).Border(1, t.Border).Label("代码评论编辑器")
+		panel := n.Column(c).FillWidth().Height(panelHeight).Shrink(0).Padding(6, 12).Gap(4).Clip().Radius(8).Background(codeSurface(t)).Border(1, t.Border).Label("代码评论编辑器")
 		panel.Children(func() {
 			name := state.Path
 			if len(draft.Selection.Fragments) > 0 {
@@ -234,7 +242,7 @@ func (v *View) diffCommentEditor(c *n.Context, t *n.Theme, state *changesState, 
 				}
 			}
 			n.Text(c, origin).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).SingleLine().Ellipsis("…").FillWidth()
-			field := n.TextAreaBase(c.Key("comment-text"), &draft.Text).FillWidth().Height(62).Lines(3, 3).FontSize(13).FixedLineHeight(20).Label("代码评论内容").Placeholder("添加评论…").Disabled(draft.Saving).FocusRing(false)
+			field := n.TextAreaBase(c.Key("comment-text"), &draft.Text).FillWidth().Height(44).Lines(2, 2).FontSize(13).FixedLineHeight(20).Label("代码评论内容").Placeholder("添加评论…").Disabled(draft.Saving).FocusRing(false)
 			if draft.Focus {
 				field.Focus()
 				draft.Focus = false
