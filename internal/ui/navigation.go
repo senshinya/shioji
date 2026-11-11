@@ -127,6 +127,17 @@ func (v *View) navigationChange(change func(*app.Model) error) {
 	}
 }
 func (v *View) syncNavigationSave(saved []byte, err error) bool {
+	if pending := v.navigationSave; pending != nil && len(saved) > 0 {
+		var state struct {
+			Navigation app.NavigationPreferences `json:"navigation"`
+		}
+		if json.Unmarshal(saved, &state) == nil {
+			pending.before = state.Navigation.Clone()
+			if err == nil && (reflect.DeepEqual(state.Navigation, pending.after) || reflect.DeepEqual(state.Navigation, v.Model.Navigation)) {
+				v.navigationSave = nil
+			}
+		}
+	}
 	if err != nil && (v.navigationSave != nil || v.navigationSaveError != "") {
 		if pending := v.navigationSave; pending != nil {
 			v.Model.Navigation = pending.before.Clone()
@@ -143,17 +154,7 @@ func (v *View) syncNavigationSave(saved []byte, err error) bool {
 		}
 		v.navigationSaveError = ""
 	}
-	if pending := v.navigationSave; pending != nil && len(saved) > 0 {
-		var state struct {
-			Navigation app.NavigationPreferences `json:"navigation"`
-		}
-		if json.Unmarshal(saved, &state) == nil {
-			pending.before = state.Navigation.Clone()
-			if reflect.DeepEqual(state.Navigation, pending.after) || reflect.DeepEqual(state.Navigation, v.Model.Navigation) {
-				v.navigationSave = nil
-			}
-		}
-	}
+
 	return false
 }
 func (v *View) navigationMove(ref app.SessionLocation, delta int) {
@@ -169,6 +170,7 @@ func (v *View) navigationMove(ref app.SessionLocation, delta int) {
 			}
 		}
 	}
+	items = slices.DeleteFunc(items, func(s domain.Session) bool { return s.Archived })
 	at := -1
 	for i, s := range items {
 		if s.ID == ref.SessionID {

@@ -156,3 +156,92 @@ func TestNavigationWriteFailureRestoresLayoutAndKeepsDrafts(t *testing.T) {
 		t.Fatal("navigation rollback restored unrelated draft state")
 	}
 }
+
+func TestNavigationMoveSkipsArchivedNeighbors(t *testing.T) {
+	for _, direction := range []string{"up", "down"} {
+		t.Run(direction, func(t *testing.T) {
+			m := navigationFixture()
+			m.Snapshot.Sessions = append(m.Snapshot.Sessions[:1], append([]domain.Session{{ID: "archived", WorkspaceID: "w", Title: "Archived", Status: "completed", Archived: true}}, m.Snapshot.Sessions[1:]...)...)
+			v := New(m, nil, "")
+			ui := n.NewTester(v.View, 1280, 800)
+			ui.Advance(time.Second)
+			if ui.HasText("Archived") {
+				t.Fatal("fixture archive should be hidden")
+			}
+			if direction == "up" {
+				if err := ui.RightClick("Other session"); err != nil {
+					t.Fatal(err)
+				}
+				if err := ui.ChooseMenuItem("上移一位"); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				row, _ := ui.Find("Layout")
+				ui.Move(row.X+60, row.Y+14)
+				if err := ui.Click("Layout"); err != nil {
+					t.Fatal(err)
+				}
+				ui.Key(n.Alt, n.KeyDown)
+			}
+			ui.Advance(300 * time.Millisecond)
+			a, _ := ui.Find("Other session")
+			b, _ := ui.Find("Layout")
+			if a.Y >= b.Y {
+				t.Fatal("hidden archive consumed a visible movement", direction, m.Navigation, m.Error)
+			}
+			if !m.Snapshot.Sessions[1].Archived {
+				t.Fatal("reorder changed archive state")
+			}
+		})
+	}
+}
+
+func TestNavigationSaveFailureRestoresLatestSuccessfulUnobservedWrite(t *testing.T) {
+	m := navigationFixture()
+	m.ObserveNavigation()
+	dir := filepath.Join(t.TempDir(), "state")
+	v := New(m, nil, filepath.Join(dir, "client.json"))
+	defer v.Saver.Close()
+	v.navigationChange(func(m *app.Model) error {
+		return m.SetSessionPinned(app.SessionLocation{DeviceID: "A", WorkspaceID: "w", SessionID: "s"}, true)
+	})
+	confirmed := m.Navigation.Clone()
+	data, err := m.EncodeState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Saver.Flush(data); err != nil {
+		t.Fatal(err)
+	}
+	// The UI has not polled the successful first write yet.
+	v.navigationChange(func(m *app.Model) error {
+		return m.SetSessionPinned(app.SessionLocation{DeviceID: "B", WorkspaceID: "remote", SessionID: "remote-session"}, true)
+	})
+	m.Drafts["session:s"] = "a newer ordinary draft"
+	if err := os.Remove(filepath.Join(dir, "client.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir, []byte("block"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	data, err = m.EncodeState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Saver.Flush(data); err == nil {
+		t.Fatal("expected second write failure")
+	}
+	saved, err := v.Saver.Result()
+	if !v.syncNavigationSave(saved, err) {
+		t.Fatal("save error not handled")
+	}
+	if !reflect.DeepEqual(m.Navigation, confirmed) {
+		t.Fatal("rollback lost last successful arrangement", m.Navigation, confirmed)
+	}
+	if m.Drafts["session:s"] != "a newer ordinary draft" {
+		t.Fatal("rollback replaced current draft")
+	}
+}
