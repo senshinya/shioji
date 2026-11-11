@@ -108,8 +108,7 @@ func TestSavedDiffCommentHasBalancedVisibleVerticalInsets(t *testing.T) {
 				if !ok {
 					t.Fatal("shared body absent")
 				}
-				name, _ := tester.Find("file.go")
-				if math.Abs(float64(name.X-body.X)) > 1 || math.Abs(float64(body.Y-header.Y-26)) > 1 {
+				if math.Abs(float64(header.X-body.X)) > 1 || math.Abs(float64(body.Y-header.Y-26)) > 1 {
 					t.Fatal("reference/body alignment or gap differs", header, body)
 				}
 				top, bottom := header.Y-panel.Y, panel.Y+panel.H-body.Y-body.H
@@ -122,7 +121,7 @@ func TestSavedDiffCommentHasBalancedVisibleVerticalInsets(t *testing.T) {
 	}
 }
 
-func TestDiffCommentVisibleContentEdgesAlignInReadingAndEditing(t *testing.T) {
+func TestDiffCommentControlEdgesAndPaddingAlignInReadingAndEditing(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, scale := range []float32{1, 2} {
 			t.Run(fmt.Sprint(dark, "/", scale), func(t *testing.T) {
@@ -138,51 +137,46 @@ func TestDiffCommentVisibleContentEdgesAlignInReadingAndEditing(t *testing.T) {
 				tester.SetDark(dark)
 				tester.SetScale(scale)
 				tester.Advance(time.Second)
-				name, ok := tester.Find("file.go")
-				if !ok {
-					t.Fatal("reference name absent")
-				}
-				body, _ := tester.Find("代码评论内容")
-				if math.Abs(float64(name.X-body.X)) > 1 {
-					t.Fatalf("reference text is inset from body: %.1f vs %.1f", name.X, body.X)
-				}
-				close, _ := tester.Find("移除评论")
-				img := tester.Image()
-				right := -1
-				// Measure the visible neutral icon, not its larger hit target.
-				for y := int(close.Y * scale); y < int((close.Y+close.H)*scale); y++ {
-					for x := int(close.X * scale); x < int((close.X+close.W)*scale); x++ {
-						p := img.RGBAAt(x, y)
-						if (!dark && p.R < 180) || (dark && p.R > 85) {
-							right = max(right, x)
-						}
+				equal := func(label string, a, b float32) {
+					t.Helper()
+					if math.Abs(float64(a-b)) > 1 {
+						t.Fatalf("%s differs: %.1f vs %.1f", label, a, b)
 					}
 				}
-				target := body.X + body.W
-				if right < 0 || math.Abs(float64(float32(right+1)/scale-target)) > 1 {
-					t.Fatalf("remove icon does not meet body right edge: %.1f vs %.1f", float32(right+1)/scale, target)
+				check := func(editing bool) {
+					t.Helper()
+					panel, _ := tester.Find("代码评论编辑器")
+					badge, ok := tester.Find("file.go:1:1–1:10")
+					if !ok {
+						t.Fatal("reference absent")
+					}
+					body, _ := tester.Find("代码评论内容")
+					equal("capsule border/body left", badge.X, body.X)
+					last, _ := tester.Find("移除评论")
+					if editing {
+						last, _ = tester.Find("提交代码评论")
+					}
+					equal("action border/body right", last.X+last.W, body.X+body.W)
+					equal("container left/right padding", badge.X-panel.X, panel.X+panel.W-last.X-last.W)
+					bottom := last
+					if !editing {
+						bottom = body
+					}
+					equal("container top/bottom padding", badge.Y-panel.Y, panel.Y+panel.H-bottom.Y-bottom.H)
+					name, _ := tester.Find("file.go")
+					position, _ := tester.Find(":1:1–1:10")
+					equal("capsule horizontal padding", name.X-badge.X, badge.X+badge.W-position.X-position.W)
+					equal("capsule vertical padding", name.Y-badge.Y, badge.Y+badge.H-name.Y-name.H)
+					if editing {
+						label, _ := tester.Find("保存评论")
+						equal("save horizontal padding", label.X-last.X, last.X+last.W-label.X-label.W)
+						equal("save vertical padding", label.Y-last.Y, last.Y+last.H-label.Y-label.H)
+					}
 				}
+				check(false)
 				tester.Click("编辑评论")
 				tester.Advance(time.Second)
-				action, _ := tester.Find("提交代码评论")
-				if action.X+action.W < target+7 {
-					t.Fatal("save button's right padding/radius is clipped", action, target)
-				}
-				img = tester.Image()
-				right = -1
-				// The center band excludes the button's rounded corners. Its inverted
-				// label must end on the same grid as the reading-state icon.
-				for y := int((action.Y + 6) * scale); y < int((action.Y+action.H-6)*scale); y++ {
-					for x := int(action.X * scale); x < int((action.X+action.W)*scale); x++ {
-						p := img.RGBAAt(x, y)
-						if (!dark && p.R > 210) || (dark && p.R < 60) {
-							right = max(right, x)
-						}
-					}
-				}
-				if right < 0 || math.Abs(float64(float32(right+1)/scale-target)) > 1 {
-					t.Fatalf("save text does not meet body right edge: %.1f vs %.1f", float32(right+1)/scale, target)
-				}
+				check(true)
 			})
 		}
 	}
