@@ -65,6 +65,8 @@ func (v *View) configureDiffComments(c *n.Context, t *n.Theme, state *changesSta
 	state.Diff.FullWidthAnnotations = true
 	state.Diff.OnTextSelection = func(editor.DiffTextSelection) { state.SuppressSelectionAction = false }
 	state.Diff.Annotations = nil
+	state.Diff.TextHighlights = nil
+	var highlighted []domain.CodeSelection
 	draft := state.commentDraft()
 	clock := n.Column(c.Key("diff-comment-height")).Absolute().Size(0, 0).PassThrough()
 	target := float32(0)
@@ -91,11 +93,12 @@ func (v *View) configureDiffComments(c *n.Context, t *n.Theme, state *changesSta
 		if ref.Attachment.Kind != domain.DiffCommentResource || ref.DeviceID != v.referenceDeviceID() || ref.WorkspaceID != v.Model.WorkspaceID {
 			continue
 		}
-		if draft != nil && draft.Open && draft.Editing.ID == ref.Attachment.ID {
-			continue
-		}
 		resource := v.loadCommentResource(ref)
 		if resource.Loading || resource.Error != "" || resource.Record.Content.Comparison != state.Comparison || resource.Record.Content.Path != state.Path || resource.Record.Snapshot.SHA256 != state.Versions.Snapshot.SHA256 {
+			continue
+		}
+		highlighted = append(highlighted, resource.Record.Content.Fragments...)
+		if draft != nil && draft.Open && draft.Editing.ID == ref.Attachment.ID {
 			continue
 		}
 		present[ref.Attachment.ID] = true
@@ -136,6 +139,7 @@ func (v *View) configureDiffComments(c *n.Context, t *n.Theme, state *changesSta
 		state.Diff.Annotations = append(state.Diff.Annotations, editor.DiffAnnotation{Side: side, Line: last.EndLine - 1, Height: height, Key: note.Ref.Attachment.ID})
 	}
 	state.CommentNotes = keep
+	state.Diff.TextHighlights = diffCommentHighlights(highlighted, t.Dark)
 
 	state.Diff.RenderAnnotation = func(c *n.Context, annotation editor.DiffAnnotation) {
 		if annotation.Key == "editor" {

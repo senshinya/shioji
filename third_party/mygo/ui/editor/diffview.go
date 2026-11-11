@@ -61,6 +61,9 @@ type DiffState struct {
 	TextSelection   bool
 	OnTextSelection func(DiffTextSelection)
 	sourceMaps      [2]diffSourceMap
+	// TextHighlights paint exact half-open source-byte ranges independently
+	// of the user's selection. They do not change code or selection state.
+	TextHighlights []DiffTextHighlight
 	// OnGutterButton shows a + on the gutter of the line under the
 	// pointer, as to comment on it, and is called with the line when it
 	// is clicked.
@@ -413,6 +416,11 @@ func (d *DiffState) sideOptions(old bool) options {
 		theme: d.Theme, bindings: d.Bindings, fitContent: d.FitContent, minDigits: digits,
 		renderFindBar: d.RenderFindBar, renderGoToLine: d.RenderGoToLine,
 	}
+	side := DiffNew
+	if old {
+		side = DiffOld
+	}
+	o.textBgs = d.highlightBackgrounds(side)
 	if d.TextSelection && !d.Editable && d.Layout == DiffUnified {
 		o.onInput = func(ev ui.InputEvent) bool { return d.textSelectionInput(&d.eds[1], ev) }
 		for _, f := range d.selectionFragments() {
