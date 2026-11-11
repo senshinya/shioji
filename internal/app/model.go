@@ -25,6 +25,7 @@ type InspectorLayout struct {
 }
 
 type Model struct {
+	CompletedReplies           map[string]CompletedReply
 	Navigation                 NavigationPreferences
 	WorkDetails                map[WorkKey]domain.WorkDetail
 	workReads                  []WorkKey
@@ -314,6 +315,7 @@ func (m *Model) ApplySnapshot(snapshot domain.Snapshot) {
 			return
 		}
 	}
+	m.reconcileCompletedReplies(snapshot)
 	if m.Snapshot.Generation != "" && m.Snapshot.Generation != snapshot.Generation {
 		m.Details = map[string]domain.SessionDetail{}
 	}
@@ -351,6 +353,7 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 	m.Sequence = e.Sequence
 	m.Snapshot.Sequence = e.Sequence
 	notice := m.notificationForEvent(e)
+	m.observeCompletedReply(e)
 	if e.Workspace != nil {
 		found := false
 		for i, w := range m.Snapshot.Workspaces {
@@ -475,6 +478,7 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 }
 
 type savedState struct {
+	CompletedReplies           map[string]CompletedReply                  `json:"completedReplies,omitempty"`
 	Navigation                 NavigationPreferences                      `json:"navigation,omitempty"`
 	ServicePreparations        map[string]*ServicePreparation             `json:"servicePreparations,omitempty"`
 	ServicePreparationDeviceID string                                     `json:"servicePreparationDeviceId,omitempty"`
@@ -545,6 +549,7 @@ func (m *Model) Load(path string) error {
 		m.DraftSkills = saved.DraftSkills
 	}
 	m.Preferences = saved.Preferences.Normalized()
+	m.CompletedReplies = saved.CompletedReplies
 	m.Navigation = saved.Navigation
 	m.homeConfigContext = saved.HomeConfigContext
 	m.HomeHarnesses = saved.HomeHarnesses

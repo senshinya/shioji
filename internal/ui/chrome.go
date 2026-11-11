@@ -48,13 +48,7 @@ func navButton(c *n.Context, icon *n.SVG, label string) n.Element {
 }
 
 func (v *View) attentionControl(c *n.Context, t *n.Theme) {
-	available := false
-	for _, s := range v.Model.Snapshot.Sessions {
-		if v.pendingCount(s.ID) > 0 {
-			available = true
-			break
-		}
-	}
+	_, available := v.attentionSession()
 	anchor := n.Column(c.Key("attention-entry")).FillWidth()
 	anchor.Children(func() {
 		button := navButton(c, attentionIcon, "待我处理").Disabled(!available)

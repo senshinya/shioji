@@ -1561,16 +1561,12 @@ func (v *View) interrupt() {
 func (v *View) createWorkspace() { v.beginWorkspace(v.Model.ConnectionID()) }
 
 func (v *View) nextAttention() {
-	for _, s := range v.Model.Snapshot.Sessions {
-		if v.pendingCount(s.ID) > 0 {
-			v.navigateSession(s.ID, s.WorkspaceID)
-			v.collapsedWorkspaces[s.WorkspaceID] = false
-			v.Model.Collapsed[s.ID] = false
-			v.devices = false
-			return
-		}
+	if s, ok := v.attentionSession(); ok {
+		v.navigateSession(s.ID, s.WorkspaceID)
+		v.collapsedWorkspaces[s.WorkspaceID] = false
+		v.Model.Collapsed[s.ID] = false
+		v.devices = false
 	}
-
 }
 func (v *View) do(job app.Job) bool {
 	if v.parent != nil && v.parent.Model.SecondarySessionID != v.Model.SessionID {
