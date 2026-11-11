@@ -30,6 +30,8 @@ type View struct {
 	navigationSave                                                                                                  *navigationSave
 	navigationSaveError                                                                                             string
 	navigationGeometry                                                                                              navigationGeometry
+	navigationDrag                                                                                                  *navigationDragState
+	navigationScroll                                                                                                n.ScrollState
 	conversationImport                                                                                              *conversationImportUI
 	runningProgress                                                                                                 *runningProgress
 	runningGroup, activityTurn                                                                                      string

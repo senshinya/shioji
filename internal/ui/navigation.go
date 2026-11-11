@@ -50,6 +50,7 @@ type navigationGeometry struct {
 	keys    []navigationKey
 	tops    map[navigationKey]float32
 	offsets map[navigationKey]navigationOffset
+	bounds  map[navigationKey]n.Rect
 }
 
 func navigationRowHeight(r navigationRow) float32 {
@@ -104,6 +105,7 @@ func (v *View) prepareNavigationMotion(c *n.Context, rows []navigationRow) {
 		g.offsets = nil
 	}
 	g.keys, g.tops = keys, tops
+	g.bounds = make(map[navigationKey]n.Rect)
 }
 
 func (v *View) navigationChange(change func(*app.Model) error) {
@@ -205,8 +207,7 @@ func (v *View) navigationMenu(menu *n.Menu, s domain.Session, ref app.SessionLoc
 	menu.Separator()
 }
 func (v *View) navigationRows(c *n.Context) []navigationRow {
-	m := v.Model
-	m.ObserveNavigation()
+	m := v.navigationPreview()
 	workspaces := m.NavigationWorkspaces()
 	byWorkspace := map[string]domain.Workspace{}
 	for _, w := range workspaces {
@@ -306,7 +307,15 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 					v.nav.Reveals = append(v.nav.Reveals, n.ListReveal{First: i, End: i + 1, Progress: p})
 				}
 			}
-			n.List(c, &v.nav, len(rows), func(i int) { v.navigationRow(c, t, rows[i]) }).Grow(1).FillHeight().Label("工作区与会话")
+			list := n.List(c, &v.nav, len(rows), func(i int) {
+				r := rows[i]
+				box := n.Column(c.Key("navigation-row-bounds")).FillWidth()
+				if bounds := box.LayoutBounds(); bounds.H > 0 {
+					v.navigationGeometry.bounds[r.key()] = bounds
+				}
+				box.Children(func() { v.navigationRow(c, t, r) })
+			}).Grow(1).FillHeight().Label("工作区与会话").TrackScroll(&v.navigationScroll)
+			v.navigationListGestures(c, list, rows)
 			n.Column(c).Height(1).FillWidth().Background(t.Border)
 			n.Row(c).Height(32).Children(func() {
 				if navButton(c, monitor, "设备").Grow(1).Clicked() {
@@ -340,7 +349,9 @@ func (v *View) navigationRow(c *n.Context, t *n.Theme, r navigationRow) {
 		})
 	case navigationWorkspace:
 		w := r.workspace
-		n.Row(c).Height(30).Gap(3).AlignItems(n.Center).Opacity(r.presence).Transform(shift).Children(func() {
+		group := n.Row(c).Height(30).Gap(3).AlignItems(n.Center).Opacity(r.presence).Transform(shift)
+		v.navigationDragSource(c, group, r)
+		group.Children(func() {
 			if control(c.Key("workspace:" + w.ID)).Height(24).Grow(1).Gap(3).Justify(n.Start).Label(w.Name).Children(func() {
 				n.Row(c).Grow(1).Gap(3).AlignItems(n.Baseline).Children(func() {
 					angle := float32(0)
@@ -375,6 +386,7 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 	if selected {
 		row.Background(t.SurfacePressed)
 	}
+	moving := v.navigationDragSource(c, row, r)
 	row.ContextMenu(func(menu *n.Menu) { v.sessionMenu(menu, s, r.ref) })
 	row.Children(func() {
 		n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
@@ -406,11 +418,11 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 				n.Text(c, fmt.Sprint(count)).Font("Menlo").FontSize(11).Width(16).TextAlign(n.End)
 			}
 			n.Column(c).Width(28).Height(20).Children(func() {
-				if r.pinned && !row.Hovered() && !row.FocusWithin() {
-					inlineSymbol(c, navigationPinIcon, s.Title, n.Font{Family: t.Font, Size: 13}, 13, t.TextMuted).Width(28).TextAlign(n.Center)
+				if r.pinned && !moving && !row.Hovered() && !row.FocusWithin() {
+					inlineSymbol(c.Key("pin-mark"), navigationPinIcon, s.Title, n.Font{Family: t.Font, Size: 13}, 13, t.TextMuted).Width(28).TextAlign(n.Center).Transition(fadeMotion(c, 120*time.Millisecond))
 				}
-				more := iconButton(c, moreActionsIcon, "会话菜单："+s.Title).Absolute().Top(-4).Size(28, 28).Menu(func(menu *n.Menu) { v.sessionMenu(menu, s, r.ref) })
-				if !row.Hovered() && !row.FocusWithin() {
+				more := iconButton(c.Key("actions"), moreActionsIcon, "会话菜单："+s.Title).Absolute().Top(-4).Size(28, 28).Menu(func(menu *n.Menu) { v.sessionMenu(menu, s, r.ref) })
+				if moving || !row.Hovered() && !row.FocusWithin() {
 					more.Opacity(0)
 				}
 			})
