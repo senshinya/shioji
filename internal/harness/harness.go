@@ -36,6 +36,19 @@ type SkillProvider interface {
 	Skills(context.Context, domain.LaunchContext) (domain.SkillCatalog, error)
 }
 
+// Catalog discovery and preview are read-only; they must not resume or bind a
+// source process. The worker validates folder membership before either call.
+type ConversationReader interface {
+	Conversations(context.Context, []string, string) (domain.ConversationCatalog, error)
+	ReadConversation(context.Context, domain.LaunchContext, string) (domain.ConversationPreview, error)
+}
+
+// PrepareConversation copies the pinned imported prefix into an independent,
+// unbound execution context. It must never take ownership of the original.
+type ConversationContinuation interface {
+	PrepareConversation(context.Context, domain.Session) (string, error)
+}
+
 // ContextCompactor changes model context without adding a user message.
 // Inspection is read-only and must never repeat an uncertain request.
 type ContextCompactor interface {

@@ -42,29 +42,30 @@ type LaunchContext struct {
 	Head                  string   `json:"head,omitempty"`
 }
 type Session struct {
-	ContextAction  *ContextAction   `json:"contextAction,omitempty"`
-	ContextUsage   *ContextUsage    `json:"contextUsage,omitempty"`
-	ForkedFrom     string           `json:"forkedFrom,omitempty"`
-	ForkedTurn     string           `json:"forkedTurn,omitempty"`
-	ExecutionGuard string           `json:"executionGuard,omitempty"`
-	Recovery       *SessionRecovery `json:"recovery,omitempty"`
-	Archived       bool             `json:"archived,omitempty"`
-	TitleOverride  bool             `json:"titleOverride,omitempty"`
-	TitleRevision  int64            `json:"titleRevision"`
-	SourceTitle    string           `json:"sourceTitle,omitempty"`
-	ID             string           `json:"id"`
-	WorkspaceID    string           `json:"workspaceId"`
-	Title          string           `json:"title"`
-	HarnessID      string           `json:"harnessId"`
-	ThreadID       string           `json:"threadId,omitempty"` // Opaque source reference.
-	Context        LaunchContext    `json:"context"`
-	Config         RunConfig        `json:"config"`
-	Status         ExecutionState   `json:"status"`
-	GitHead        string           `json:"gitHead,omitempty"`
-	GitBranch      string           `json:"gitBranch,omitempty"`
-	ContextChanged bool             `json:"contextChanged,omitempty"`
-	Revision       int64            `json:"revision"`
-	Error          string           `json:"error,omitempty"`
+	Origin         *ConversationOrigin `json:"origin,omitempty"`
+	ContextAction  *ContextAction      `json:"contextAction,omitempty"`
+	ContextUsage   *ContextUsage       `json:"contextUsage,omitempty"`
+	ForkedFrom     string              `json:"forkedFrom,omitempty"`
+	ForkedTurn     string              `json:"forkedTurn,omitempty"`
+	ExecutionGuard string              `json:"executionGuard,omitempty"`
+	Recovery       *SessionRecovery    `json:"recovery,omitempty"`
+	Archived       bool                `json:"archived,omitempty"`
+	TitleOverride  bool                `json:"titleOverride,omitempty"`
+	TitleRevision  int64               `json:"titleRevision"`
+	SourceTitle    string              `json:"sourceTitle,omitempty"`
+	ID             string              `json:"id"`
+	WorkspaceID    string              `json:"workspaceId"`
+	Title          string              `json:"title"`
+	HarnessID      string              `json:"harnessId"`
+	ThreadID       string              `json:"threadId,omitempty"` // Opaque source reference.
+	Context        LaunchContext       `json:"context"`
+	Config         RunConfig           `json:"config"`
+	Status         ExecutionState      `json:"status"`
+	GitHead        string              `json:"gitHead,omitempty"`
+	GitBranch      string              `json:"gitBranch,omitempty"`
+	ContextChanged bool                `json:"contextChanged,omitempty"`
+	Revision       int64               `json:"revision"`
+	Error          string              `json:"error,omitempty"`
 
 	// ContextUsageAfterTurnOrder excludes reports from before a model change.
 	ContextUsageAfterTurnOrder int64 `json:"contextUsageAfterTurnOrder,omitempty"`
