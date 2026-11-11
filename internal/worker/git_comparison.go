@@ -231,7 +231,11 @@ func (s *Server) comparisonFile(q protocol.FileQuery) (domain.FileVersions, erro
 	if err != nil {
 		return domain.FileVersions{}, err
 	}
-	return s.readComparisonFile(cmp, q.Path)
+	out, err := s.readComparisonFile(cmp, q.Path)
+	if err == nil && s.attachments != nil {
+		out.Snapshot, err = s.storeDiffSnapshot(q.WorkspaceID, out)
+	}
+	return out, err
 }
 func (s *Server) readComparisonFile(cmp domain.DiffComparison, path string) (domain.FileVersions, error) {
 	out := domain.FileVersions{Path: path, Comparison: cmp}

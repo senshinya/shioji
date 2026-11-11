@@ -69,6 +69,12 @@ type FileQuery struct {
 	GitQuery
 	Path string `json:"path"`
 }
+type DiffCommentInput struct {
+	GitQuery
+	Snapshot  domain.Attachment      `json:"snapshot"`
+	Comment   string                 `json:"comment"`
+	Fragments []domain.CodeSelection `json:"fragments"`
+}
 type SearchQuery struct {
 	Query string `json:"query"`
 }

@@ -639,6 +639,12 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 			return nil, err
 		}
 		return s.checkout(in)
+	case "diff.comment":
+		q, err := decode[protocol.DiffCommentInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.captureDiffComment(q)
 	case "git.compare", "git.refs":
 		q, err := decode[protocol.GitQuery](body)
 		if err != nil {

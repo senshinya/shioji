@@ -290,14 +290,14 @@ func (v *View) historyEditor(c *n.Context, t *n.Theme, item domain.Item) {
 func (v *View) historyAttachments(c *n.Context, t *n.Theme, item domain.Item) {
 	regular := false
 	for _, a := range item.Attachments {
-		regular = regular || a.SourcePath == ""
+		regular = regular || !a.InlineReference()
 	}
 	if !regular {
 		return
 	}
 	n.Row(c).Wrap().Gap(8).Children(func() {
 		for _, a := range item.Attachments {
-			if a.SourcePath != "" {
+			if a.InlineReference() {
 				continue
 			}
 			var source n.Rect
@@ -333,7 +333,7 @@ func (v *View) historyAttachmentContents(c *n.Context, t *n.Theme, a domain.Atta
 
 func hasInlineFiles(files []domain.Attachment) bool {
 	for _, file := range files {
-		if file.SourcePath != "" {
+		if file.InlineReference() {
 			return true
 		}
 	}

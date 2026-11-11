@@ -20,7 +20,7 @@ func (v *View) messageReferenceContent(item domain.Item) composerContent {
 		}
 	}
 	for _, file := range item.Attachments {
-		if file.SourcePath != "" {
+		if file.InlineReference() {
 			content.files = append(content.files, app.DraftAttachment{Attachment: file, Ready: true, DeviceID: v.referenceDeviceID(), WorkspaceID: v.Model.WorkspaceID, InlinePosition: positions["file:"+file.ID]})
 		}
 	}

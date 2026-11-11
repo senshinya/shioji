@@ -5,7 +5,7 @@ import "shioji/internal/domain"
 func (m *Model) DraftReferencePositions(key string) []domain.ReferencePosition {
 	var positions []domain.ReferencePosition
 	for _, file := range m.Attachments[key] {
-		if file.Attachment.SourcePath != "" && file.InlinePosition > 0 {
+		if file.Attachment.InlineReference() && file.InlinePosition > 0 {
 			positions = append(positions, domain.ReferencePosition{Position: file.InlinePosition, AttachmentID: file.Attachment.ID})
 		}
 	}

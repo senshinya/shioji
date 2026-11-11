@@ -128,3 +128,52 @@ func TestHistoryRestartCanReplaceOrClearReferences(t *testing.T) {
 		})
 	}
 }
+
+func TestCommentResourceAndPositionSurviveHistoryRestartAndFork(t *testing.T) {
+	s := open(t)
+	w := workspace(t, s)
+	a := domain.Attachment{ID: domain.NewID(), Kind: domain.DiffCommentResource, Name: "rotation.go:13", MIME: "text/plain", Size: 100, SHA256: strings.Repeat("a", 64)}
+	positions := []domain.ReferencePosition{{AttachmentID: a.ID, Position: 1}}
+	op, err := s.Accept(domain.Submission{OperationID: "comment-source", WorkspaceID: w.ID, Text: "check", Attachments: []domain.Attachment{a}, ReferencePositions: positions})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetOperation(op.ID, "confirmed", "")
+	d, _ := s.Session(op.SessionID, 0, 100)
+	item := d.Items[0]
+	item.TurnID = "turn"
+	item.Status = "sent"
+	s.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &item})
+	s.Apply(op.SessionID, domain.Event{Type: "turn", Turn: &domain.Turn{ID: "turn", Status: "completed"}})
+	d, _ = s.Session(op.SessionID, 0, 100)
+	d.Session.ThreadID = "thread"
+	s.Apply(op.SessionID, domain.Event{Type: "session", Session: &d.Session})
+	d, _ = s.Session(op.SessionID, 0, 100)
+	fork, err := s.PrepareHistory(domain.HistoryChange{OperationID: "fork-comment", SessionID: op.SessionID, Revision: d.Session.Revision, TurnID: "turn"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetHistoryThread(fork.ID, "fork-thread")
+	fork, err = s.CommitHistory(fork.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fd, _ := s.Session(fork.Session.ID, 0, 100)
+	if fd.Items[0].Attachments[0] != a || fd.Items[0].ReferencePositions[0] != positions[0] {
+		t.Fatal("fork changed comment identity")
+	}
+	d, _ = s.Session(op.SessionID, 0, 100)
+	restart, err := s.PrepareHistory(domain.HistoryChange{OperationID: "restart-comment", SessionID: op.SessionID, Revision: d.Session.Revision, ItemID: item.ID, Restart: true, Text: "recheck", Config: d.Session.Config, References: &domain.HistoryReferences{Attachments: []domain.Attachment{a}, ReferencePositions: positions}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetHistoryThread(restart.ID, "restarted-thread")
+	restart, err = s.CommitHistory(restart.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rd, _ := s.Session(op.SessionID, 0, 100)
+	if rd.Items[0].Attachments[0] != a || rd.Items[0].ReferencePositions[0] != positions[0] {
+		t.Fatal("restart changed comment identity")
+	}
+}

@@ -10,12 +10,20 @@ import (
 // SourcePath records a file reference's device-owned origin; resource storage
 // paths and content bytes stay out of journals and queue entries.
 type Attachment struct {
+	Kind       string `json:"kind,omitempty"`
 	SourcePath string `json:"sourcePath,omitempty"`
 	ID         string `json:"id"`
 	Name       string `json:"name"`
 	MIME       string `json:"mime"`
 	Size       int64  `json:"size"`
 	SHA256     string `json:"sha256"`
+}
+
+const DiffCommentResource = "diff-comment"
+const DiffSnapshotResource = "diff-snapshot"
+
+func (a Attachment) InlineReference() bool {
+	return a.SourcePath != "" || a.Kind == DiffCommentResource
 }
 
 func (in Submission) ValidateContent() error {
@@ -32,12 +40,26 @@ func (in Submission) ValidateContent() error {
 		}
 		skillIDs[skill.ID] = true
 	}
-	if len(in.Attachments) > 8 {
+	comments, files := 0, 0
+	for _, a := range in.Attachments {
+		if a.Kind == DiffCommentResource {
+			comments++
+		} else {
+			files++
+		}
+	}
+	if comments > 8 {
+		return errors.New("最多添加 8 条代码评论")
+	}
+	if files > 8 {
 		return errors.New("最多添加 8 个附件")
 	}
 	var total int64
 	seen := map[string]bool{}
 	for _, a := range in.Attachments {
+		if a.Kind != "" && a.Kind != DiffCommentResource && a.Kind != DiffSnapshotResource {
+			return errors.New("invalid reference resource")
+		}
 		if len(a.SourcePath) > 4096 || !utf8.ValidString(a.SourcePath) || strings.ContainsAny(a.SourcePath, "\x00\r\n") || a.ID == "" || seen[a.ID] || len(a.ID) > 64 || !utf8.ValidString(a.Name) || len(a.Name) > 256 || a.Size <= 0 || a.Size > 8<<20 || len(a.SHA256) != 64 || len(a.MIME) > 64 {
 			return errors.New("invalid attachment")
 		}

@@ -147,7 +147,7 @@ func (r *Repository) Put(workspace string, a domain.Attachment, offset int64, da
 		if err != nil {
 			return out, err
 		}
-		actual, err := Describe(a.Name, content)
+		actual, err := describeStoredResource(a, content)
 		if err != nil || actual.MIME != a.MIME || actual.SHA256 != a.SHA256 {
 			f.Close()
 			os.Remove(file)

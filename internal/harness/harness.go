@@ -12,8 +12,10 @@ import (
 )
 
 type AttachmentInput struct {
-	Attachment domain.Attachment
-	Path       string
+	Comment         *domain.CodeCommentContent
+	ExecutionBranch string
+	Attachment      domain.Attachment
+	Path            string
 }
 
 // HistoryBoundary stages a product history operation. PreparedRef resumes an

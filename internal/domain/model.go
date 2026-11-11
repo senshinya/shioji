@@ -314,6 +314,7 @@ type ChangedFile struct {
 	Removed *int   `json:"removed,omitempty"`
 }
 type FileVersions struct {
+	Snapshot   Attachment     `json:"snapshot,omitempty,omitzero"`
 	Comparison DiffComparison `json:"comparison,omitempty,omitzero"`
 	Path       string         `json:"path"`
 	Old        string         `json:"old"`

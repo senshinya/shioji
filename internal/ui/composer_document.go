@@ -41,7 +41,7 @@ type composerContent struct {
 func (v *View) composerContent(key string) composerContent {
 	files := []app.DraftAttachment{}
 	for _, file := range v.Model.Attachments[key] {
-		if file.Attachment.SourcePath != "" {
+		if file.Attachment.InlineReference() {
 			files = append(files, file)
 		}
 	}
@@ -124,7 +124,7 @@ func (v *View) publishComposer(key string, b *composerDocument) {
 	var plain strings.Builder
 	files := []app.DraftAttachment{}
 	for _, file := range v.Model.Attachments[key] {
-		if file.Attachment.SourcePath == "" {
+		if !file.Attachment.InlineReference() {
 			files = append(files, file)
 		}
 	}
@@ -261,7 +261,7 @@ func referenceDocumentText(content composerContent) richtext.Text {
 	text := richtext.NewText(content.text)
 	var refs []composerReference
 	for _, file := range content.files {
-		if file.Attachment.SourcePath != "" {
+		if file.Attachment.InlineReference() {
 			refs = append(refs, composerReference{file: file})
 		}
 	}

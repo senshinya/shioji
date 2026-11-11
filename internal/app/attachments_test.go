@@ -252,3 +252,43 @@ func TestLegacyHistoryDraftCancelRestoresOriginalReferencesAfterReload(t *testin
 		})
 	}
 }
+
+func TestCommentTagRetainsPositionAcrossQueueEditAndRestart(t *testing.T) {
+	m := NewModel()
+	m.WorkspaceID = "w"
+	m.SessionID = "s"
+	a := domain.Attachment{ID: "comment", Kind: domain.DiffCommentResource, Name: "rotation.go:13"}
+	m.Drafts["session:s"] = "ordinary"
+	m.Attachments["session:s"] = []DraftAttachment{{Attachment: a, Ready: true, WorkspaceID: "w", InlinePosition: 3}}
+	queued := a
+	queued.ID = "queued-comment"
+	m.Details["s"] = domain.SessionDetail{Queue: domain.QueueState{SessionID: "s", Revision: 1, Items: []domain.QueueItem{{ID: "q", Input: domain.Submission{WorkspaceID: "w", Text: "queued", Attachments: []domain.Attachment{queued}, ReferencePositions: []domain.ReferencePosition{{AttachmentID: queued.ID, Position: 2}}}}}}}
+	if err := m.EditQueued("q"); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.DraftReferencePositions("session:s"); len(got) != 1 || got[0].Position != 2 {
+		t.Fatal("queued comment lost inline position", got)
+	}
+	data, err := m.EncodeState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err = WriteState(path, data); err != nil {
+		t.Fatal(err)
+	}
+	restored := NewModel()
+	if err = restored.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	restored.CancelQueueEdit("s")
+	got := restored.Attachments["session:s"]
+	if len(got) != 1 || got[0].Attachment != a || got[0].InlinePosition != 3 || restored.Drafts["session:s"] != "ordinary" {
+		t.Fatal("comment draft not restored", got)
+	}
+	restored.WorkerMinor = 32
+	restored.SessionID = "s"
+	if _, err = restored.SubmissionAttachments("w"); err == nil {
+		t.Fatal("legacy worker allowed a comment resource as ordinary code")
+	}
+}

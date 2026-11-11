@@ -287,7 +287,7 @@ func (v *View) draftAttachmentStripFor(c *n.Context, t *n.Theme, key string) {
 	drafts := m.Attachments[key]
 	regular := 0
 	for _, a := range drafts {
-		if a.Attachment.SourcePath == "" {
+		if !a.Attachment.InlineReference() {
 			regular++
 		}
 	}
@@ -302,7 +302,7 @@ func (v *View) draftAttachmentStripFor(c *n.Context, t *n.Theme, key string) {
 	strip.Height(76 * presence).Clip().Hidden(presence == 0).Children(func() {
 		n.Row(c).Gap(8).AlignItems(n.Center).Children(func() {
 			for i, a := range drafts {
-				if a.Attachment.SourcePath != "" {
+				if a.Attachment.InlineReference() {
 					continue
 				}
 				ready := a.Ready && a.WorkspaceID == m.WorkspaceID

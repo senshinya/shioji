@@ -29,6 +29,9 @@ func (m *Model) SubmissionAttachments(workspace string) ([]domain.Attachment, er
 func (m *Model) submissionAttachments(key, workspace string) ([]domain.Attachment, error) {
 	var out []domain.Attachment
 	for _, draft := range m.Attachments[key] {
+		if draft.Attachment.Kind == domain.DiffCommentResource && m.WorkerMinor < 33 {
+			return nil, errors.New("请先升级执行服务以发送代码评论")
+		}
 		if m.WorkerMinor < 6 {
 			return nil, errors.New("请先升级执行服务以发送附件")
 		}

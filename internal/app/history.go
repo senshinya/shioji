@@ -124,13 +124,13 @@ func (m *Model) HistoryReferences() (*domain.HistoryReferences, error) {
 	if m.WorkerMinor < 12 {
 		inline := len(skills) > 0
 		for _, a := range attachments {
-			inline = inline || a.SourcePath != ""
+			inline = inline || a.InlineReference()
 		}
 		for _, item := range m.Details[m.SessionID].Items {
 			if item.ID == m.HistoryEdits[m.SessionID].ItemID {
 				inline = inline || len(item.Skills) > 0
 				for _, a := range item.Attachments {
-					inline = inline || a.SourcePath != ""
+					inline = inline || a.InlineReference()
 				}
 			}
 		}

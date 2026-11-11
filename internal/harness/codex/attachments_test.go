@@ -34,3 +34,22 @@ func TestWorkspaceReferenceCarriesSourceAndCapturedContent(t *testing.T) {
 		t.Fatal("reference source or content missing", inputs)
 	}
 }
+
+func TestCodeCommentAdapterReceivesOnlySelectedCodeAndBranchMetadata(t *testing.T) {
+	comment := domain.CodeCommentContent{Comparison: domain.DiffComparison{Base: domain.DiffEndpoint{Kind: "branch", Name: "main", Commit: strings.Repeat("a", 40)}, Target: domain.DiffEndpoint{Kind: "branch", Name: "feat/rotation", Commit: strings.Repeat("b", 40)}}, Path: "rotation.go", Comment: "先检查空值", Fragments: []domain.CodeSelection{{Side: "target", StartLine: 13, EndLine: 13, StartColumn: 16, EndColumn: 25, Text: "next.Left"}}}
+	inputs, err := attachmentInputs("", []AttachmentInput{{Attachment: domain.Attachment{Kind: domain.DiffCommentResource, Name: "rotation.go:13"}, Comment: &comment, ExecutionBranch: "other", Path: "/must-not-open-ui-snapshot"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inputs) != 1 || inputs[0].Type != "text" {
+		t.Fatalf("comment input %v", inputs)
+	}
+	for _, value := range []string{"main", "feat/rotation", "rotation.go:13", "next.Left", "先检查空值", "other", strings.Repeat("a", 40), strings.Repeat("b", 40)} {
+		if !strings.Contains(inputs[0].Text, value) {
+			t.Fatalf("lost %q in %s", value, inputs[0].Text)
+		}
+	}
+	if strings.Contains(inputs[0].Text, "root.Right =") {
+		t.Fatal("selected text was expanded")
+	}
+}
