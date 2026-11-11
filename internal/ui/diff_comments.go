@@ -31,6 +31,7 @@ type diffCommentDraft struct {
 	Snapshot            domain.Attachment
 	Text, Error         string
 	Open, Saving, Focus bool
+	Retaining           bool
 	Editing             domain.Attachment
 }
 type diffCommentInsertion struct {
@@ -114,7 +115,7 @@ func (v *View) configureDiffComments(c *n.Context, t *n.Theme, state *changesSta
 		}
 		target := float32(0)
 		if present[note.Ref.Attachment.ID] {
-			target = 52
+			target = 32
 		}
 		height := clock.AnimateTo("height", target, motionAnimation(c, 220*time.Millisecond))
 		if height <= 0 && !present[note.Ref.Attachment.ID] {
@@ -142,7 +143,7 @@ func (v *View) configureDiffComments(c *n.Context, t *n.Theme, state *changesSta
 			}
 			resource := &diffCommentResource{Record: entry.Record}
 
-			note := n.Row(c).Fill().Clip().Padding(8, 12).Gap(6).AlignItems(n.Baseline).Background(t.Background).Transition(fadeMotion(c, 140*time.Millisecond))
+			note := n.Row(c).Fill().Clip().Padding(5, 12).Gap(6).AlignItems(n.Baseline).Background(t.Background).Transition(fadeMotion(c, 140*time.Millisecond))
 			note.Children(func() {
 				inlineSymbol(c, diffCommentIcon, resource.Record.Content.Comment, n.Font{Family: t.Font, Size: 12}, 13, t.TextMuted)
 				n.Text(c, resource.Record.Content.Comment).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").Tooltip(resource.Record.Content.Comment)
@@ -196,7 +197,9 @@ func (v *View) diffSelectionAction(c *n.Context, t *n.Theme, state *changesState
 		if button.Clicked() {
 			selection.Fragments = slices.Clone(selection.Fragments)
 			key := diffCommentKey{state.Comparison, state.Path}
-			state.CommentDrafts[key] = &diffCommentDraft{Selection: selection, Snapshot: state.Versions.Snapshot, Versions: state.Versions, Open: true, Focus: true}
+			draft := &diffCommentDraft{Selection: selection, Snapshot: state.Versions.Snapshot, Versions: state.Versions, Open: true, Focus: true}
+			state.CommentDrafts[key] = draft
+			v.retainCommentDraft(state, key, draft)
 		}
 	})
 }
@@ -264,7 +267,7 @@ func (v *View) diffCommentEditor(c *n.Context, t *n.Theme, state *changesState, 
 				if draft.Editing.ID != "" {
 					label = "保存评论"
 				}
-				if ghost(c, label).Height(28).PaddingX(8).Background(t.Text).TextColor(t.Background).Radius(5).Disabled(draft.Saving || strings.TrimSpace(draft.Text) == "" || v.Controller == nil).Clicked() {
+				if ghost(c, label).Height(28).PaddingX(8).Background(t.Text).TextColor(t.Background).Radius(5).Disabled(draft.Saving || draft.Retaining || strings.TrimSpace(draft.Text) == "" || v.Controller == nil).Clicked() {
 					v.saveDiffComment(c, state, draft)
 				}
 			})
@@ -273,8 +276,29 @@ func (v *View) diffCommentEditor(c *n.Context, t *n.Theme, state *changesState, 
 	})
 }
 
+func (v *View) retainCommentDraft(state *changesState, key diffCommentKey, draft *diffCommentDraft) {
+	if v.Controller == nil {
+		return
+	}
+	draft.Retaining = true
+	_, q := v.gitQuery()
+	epoch := v.Model.ConnectionEpoch
+	if !v.do(app.Job{Method: "diff.snapshot.retain", Input: protocol.DiffSnapshotInput{GitQuery: q, Snapshot: draft.Snapshot}, Apply: func(m *app.Model, _ json.RawMessage, err error) {
+		if m.ConnectionEpoch != epoch || state.CommentDrafts[key] != draft {
+			return
+		}
+		draft.Retaining = false
+		if err != nil {
+			draft.Error = err.Error()
+		}
+	}}) {
+		draft.Retaining = false
+		draft.Error = "连接不可用，请重试"
+	}
+}
+
 func (v *View) saveDiffComment(c *n.Context, state *changesState, draft *diffCommentDraft) {
-	if draft.Saving || strings.TrimSpace(draft.Text) == "" || v.Controller == nil {
+	if draft.Saving || draft.Retaining || strings.TrimSpace(draft.Text) == "" || v.Controller == nil {
 		return
 	}
 	count := 0
@@ -530,17 +554,15 @@ func (v *View) locateDiffComment(ref app.DraftAttachment) {
 			state.Error = ""
 			state.Files = []domain.ChangedFile{{Path: versions.Path}}
 			state.Diff.ExpandAll()
-			parts := record.Content.Fragments
-			if len(parts) > 0 {
-				first, last := parts[0], parts[len(parts)-1]
-				side := func(s string) editor.DiffSide {
-					if s == "base" {
-						return editor.DiffOld
-					}
-					return editor.DiffNew
+			parts := make([]editor.DiffTextFragment, 0, len(record.Content.Fragments))
+			for _, part := range record.Content.Fragments {
+				side := editor.DiffNew
+				if part.Side == "base" {
+					side = editor.DiffOld
 				}
-				state.Diff.SetTextSelection(editor.DiffTextPoint{Side: side(first.Side), Offset: first.Start}, editor.DiffTextPoint{Side: side(last.Side), Offset: last.End})
+				parts = append(parts, editor.DiffTextFragment{Side: side, Start: part.Start, End: part.End})
 			}
+			state.Diff.SetTextSelectionFragments(parts)
 			state.Locating = true
 			state.LocateSequence = sequence
 			state.SuppressSelectionAction = true

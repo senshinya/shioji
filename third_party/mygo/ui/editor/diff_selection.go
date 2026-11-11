@@ -2,6 +2,7 @@ package editor
 
 import (
 	"github.com/egoist/mygo/ui"
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -31,6 +32,8 @@ type diffTextSelectionState struct {
 	active, dragging       bool
 	old, new               *Buffer
 	oldVersion, newVersion uint64
+	preferredX             float32
+	hasPreferredX          bool
 }
 type diffTextRow struct {
 	side DiffSide
@@ -43,36 +46,71 @@ func (d *DiffState) selectionBuffer(side DiffSide) *Buffer {
 	}
 	return d.New
 }
-func sourceOffset(b *Buffer, offset int) int {
-	snap := b.Snapshot()
-	offset = max(0, min(offset, snap.Len()))
-	if snap.crlf {
-		return offset + strings.Count(snap.Slice(0, offset), "\n")
-	}
-	return offset
+
+type diffSourceMap struct {
+	buffer  *Buffer
+	version uint64
+	text    string
+	crlf    []int // normalized offsets of CRLF newline characters
 }
-func normalizedOffset(b *Buffer, offset int) int {
-	snap := b.Snapshot()
-	if !snap.crlf {
-		return max(0, min(offset, snap.Len()))
+
+func (d *DiffState) sourceMap(side DiffSide) *diffSourceMap {
+	buffer := d.selectionBuffer(side)
+	text, version := buffer.selectionSource()
+	m := &d.sourceMaps[side]
+	if m.buffer == buffer && m.version == version && m.text == text {
+		return m
 	}
-	used := 0
-	for at, r := range snap.String() {
-		if used >= offset {
-			return at
-		}
-		used += utf8.RuneLen(r)
-		if r == '\n' {
-			used++
+	*m = diffSourceMap{buffer: buffer, version: version, text: text}
+	for i := 0; i+1 < len(text); i++ {
+		if text[i] == '\r' && text[i+1] == '\n' {
+			m.crlf = append(m.crlf, i-len(m.crlf))
+			i++
 		}
 	}
-	return snap.Len()
+	return m
+}
+func (m *diffSourceMap) sourceOffset(offset int) int {
+	return offset + sort.Search(len(m.crlf), func(i int) bool { return m.crlf[i] >= offset })
+}
+func (m *diffSourceMap) normalizedOffset(offset int) int {
+	offset = max(0, min(offset, len(m.text)))
+	return offset - sort.Search(len(m.crlf), func(i int) bool { return m.crlf[i]+i >= offset })
 }
 func (d *DiffState) SetTextSelection(anchor, head DiffTextPoint) {
 	d.ensure()
-	anchor.Offset = normalizedOffset(d.selectionBuffer(anchor.Side), anchor.Offset)
-	head.Offset = normalizedOffset(d.selectionBuffer(head.Side), head.Offset)
+	anchor.Offset = d.sourceMap(anchor.Side).normalizedOffset(anchor.Offset)
+	head.Offset = d.sourceMap(head.Side).normalizedOffset(head.Offset)
 	d.setTextSelection(anchor, head)
+}
+
+// SetTextSelectionFragments restores an exact ordered quote, including gaps
+// hidden when it was captured. Expanding context never enlarges that quote.
+func (d *DiffState) SetTextSelectionFragments(parts []DiffTextFragment) bool {
+	d.ensure()
+	if len(parts) == 0 {
+		d.ClearTextSelection()
+		return false
+	}
+	fragments := make([]DiffTextFragment, 0, len(parts))
+	for _, part := range parts {
+		if part.Side != DiffOld && part.Side != DiffNew {
+			return false
+		}
+		source := d.sourceMap(part.Side)
+		if part.Start < 0 || part.End <= part.Start || part.End > len(source.text) || !utf8.ValidString(source.text[part.Start:part.End]) {
+			return false
+		}
+		part.Start, part.End = source.normalizedOffset(part.Start), source.normalizedOffset(part.End)
+		snap := d.selectionBuffer(part.Side).Snapshot()
+		part.StartLine, part.EndLine = snap.LineOf(part.Start)+1, snap.LineOf(max(part.Start, part.End-1))+1
+		part.Text = ""
+		fragments = append(fragments, part)
+	}
+	first, last := fragments[0], fragments[len(fragments)-1]
+	d.setTextSelection(DiffTextPoint{first.Side, first.Start}, DiffTextPoint{last.Side, last.End})
+	d.textSelection.fragments, d.textSelection.computed = fragments, true
+	return true
 }
 func (d *DiffState) setTextSelection(anchor, head DiffTextPoint) {
 	d.textSelection = diffTextSelectionState{anchor: anchor, head: head, active: true, old: d.Old, new: d.New, oldVersion: d.Old.Version(), newVersion: d.New.Version()}
@@ -168,12 +206,9 @@ func (d *DiffState) selectionFragments() []DiffTextFragment {
 func (d *DiffState) SelectedText() (DiffTextSelection, bool) {
 	var out DiffTextSelection
 	for _, f := range d.selectionFragments() {
-		buffer := d.selectionBuffer(f.Side)
-		f.Text = buffer.Slice(f.Start, f.End)
-		if buffer.Snapshot().crlf {
-			f.Text = strings.ReplaceAll(f.Text, "\n", "\r\n")
-		}
-		f.Start, f.End = sourceOffset(buffer, f.Start), sourceOffset(buffer, f.End)
+		source := d.sourceMap(f.Side)
+		f.Start, f.End = source.sourceOffset(f.Start), source.sourceOffset(f.End)
+		f.Text = source.text[f.Start:f.End]
 		if len(out.Fragments) > 0 && !strings.HasSuffix(out.Text, "\n") {
 			out.Text += "\n"
 		}
@@ -398,20 +433,14 @@ func (d *DiffState) textSelectionInput(ed *editor, ev ui.InputEvent) bool {
 			case ui.KeyEnd:
 				point.Offset = snap.LineEnd(line)
 			default:
-				rows := d.selectionRows()
-				for i, row := range rows {
-					if row.side == point.Side && row.line == line {
-						delta := 1
-						if ev.Key == ui.KeyUp {
-							delta = -1
-						}
-						next := rows[min(max(0, i+delta), len(rows)-1)]
-						column := point.Offset - snap.LineStart(line)
-						target := d.selectionBuffer(next.side).Snapshot()
-						point = DiffTextPoint{next.side, min(target.LineStart(next.line)+column, target.LineEnd(next.line))}
-						break
-					}
+				delta := 1
+				if ev.Key == ui.KeyUp {
+					delta = -1
 				}
+				point = d.verticalTextPoint(point, delta)
+			}
+			if ev.Key != ui.KeyUp && ev.Key != ui.KeyDown {
+				d.textSelection.hasPreferredX = false
 			}
 			// Never place a UTF-8 caret in the middle of a code point.
 			text := d.selectionBuffer(point.Side).Snapshot().String()
@@ -472,4 +501,45 @@ func (d *DiffState) selectAllText() {
 	first, last := rows[0], rows[len(rows)-1]
 	d.setTextSelection(DiffTextPoint{first.side, d.selectionBuffer(first.side).Snapshot().LineStart(first.line)}, DiffTextPoint{last.side, d.selectionBuffer(last.side).Len()})
 	d.notifyTextSelection()
+}
+
+func (d *DiffState) verticalTextPoint(point DiffTextPoint, direction int) DiffTextPoint {
+	rows := d.selectionRows()
+	line := d.selectionBuffer(point.Side).Snapshot().LineOf(point.Offset)
+	viewFor := func(side DiffSide) *view {
+		if side == DiffOld {
+			return &d.oldView
+		}
+		return &d.eds[1].view
+	}
+	for i, sourceRow := range rows {
+		if sourceRow.side != point.Side || sourceRow.line != line {
+			continue
+		}
+		v := viewFor(point.Side)
+		layout := v.line(line)
+		disp := layout.toDisp(point.Offset-layout.start, true)
+		row := layout.rowOf(disp, false)
+		if !d.textSelection.hasPreferredX {
+			d.textSelection.preferredX = v.xOf(layout, &layout.rows[row], disp)
+			d.textSelection.hasPreferredX = true
+		}
+		row += direction
+		if row < 0 || row >= len(layout.rows) {
+			next := i + direction
+			if next < 0 || next >= len(rows) {
+				return point
+			}
+			sourceRow = rows[next]
+			v = viewFor(sourceRow.side)
+			layout = v.line(sourceRow.line)
+			row = 0
+			if direction < 0 {
+				row = len(layout.rows) - 1
+			}
+		}
+		offset := layout.start + layout.fromDisp(v.dispAt(layout, &layout.rows[row], d.textSelection.preferredX))
+		return DiffTextPoint{sourceRow.side, offset}
+	}
+	return point
 }

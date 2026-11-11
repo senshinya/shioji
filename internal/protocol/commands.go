@@ -76,6 +76,10 @@ type DiffCommentInput struct {
 	Comment   string                 `json:"comment"`
 	Fragments []domain.CodeSelection `json:"fragments"`
 }
+type DiffSnapshotInput struct {
+	GitQuery
+	Snapshot domain.Attachment `json:"snapshot"`
+}
 type SearchQuery struct {
 	Query string `json:"query"`
 }

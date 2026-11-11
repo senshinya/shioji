@@ -6,7 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"shioji/internal/domain"
+	"slices"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -57,4 +61,131 @@ func describeStoredResource(a domain.Attachment, data []byte) (domain.Attachment
 		return DescribeDiffResource(a.Kind, a.Name, data)
 	}
 	return Describe(a.Name, data)
+}
+
+// RetainDiffSnapshot follows the existing immutable-input lifecycle: an
+// explicitly started comment keeps its source until the user clears originals.
+// Passive previews alone do not acquire this retention marker.
+func (r *Repository) RetainDiffSnapshot(workspace string, a domain.Attachment) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if a.Kind != domain.DiffSnapshotResource {
+		return errors.New("invalid Diff snapshot")
+	}
+	base, err := r.Path(workspace, a)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(base+".retained", nil, 0600)
+}
+
+// PruneDiffSnapshots bounds passive previews without touching explicit inputs.
+// Put, retain and pruning share the repository lock; a retained source cannot
+// disappear between acceptance of a comment and persistence of its record.
+func (r *Repository) PruneDiffSnapshots(workspace string, latest domain.Attachment) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	base, err := r.base(workspace, latest.ID)
+	if err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(filepath.Dir(base))
+	if err != nil {
+		return err
+	}
+	type candidate struct {
+		path     string
+		size     int64
+		modified int64
+	}
+	var previews []candidate
+	protected := map[string]bool{latest.ID: true}
+	// Recognize records written before retention markers were introduced too.
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(filepath.Dir(base), entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var a domain.Attachment
+		if json.Unmarshal(data, &a) != nil {
+			continue
+		}
+		if a.Kind == domain.DiffCommentResource {
+			data, err := os.ReadFile(strings.TrimSuffix(path, ".json"))
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			var record domain.DiffCommentRecord
+			if json.Unmarshal(data, &record) != nil {
+				return errors.New("invalid stored Diff comment")
+			}
+			protected[record.Snapshot.ID] = true
+		}
+	}
+	var total int64
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(filepath.Dir(base), entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var a domain.Attachment
+		if json.Unmarshal(data, &a) != nil || a.Kind != domain.DiffSnapshotResource {
+			continue
+		}
+		path = strings.TrimSuffix(path, ".json")
+		if protected[a.ID] {
+			continue
+		}
+		if _, err := os.Stat(path + ".retained"); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		info, err := os.Stat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		previews = append(previews, candidate{path, info.Size(), info.ModTime().UnixNano()})
+		total += info.Size()
+	}
+	slices.SortFunc(previews, func(a, b candidate) int {
+		if a.modified < b.modified {
+			return -1
+		}
+		if a.modified > b.modified {
+			return 1
+		}
+		return strings.Compare(a.path, b.path)
+	})
+	// The newest response is protected above; reserve its slot and bytes here.
+	total += latest.Size
+	count := len(previews) + 1
+	for _, preview := range previews {
+		if count <= 64 && total <= 32<<20 {
+			break
+		}
+		if err := os.Remove(preview.path); err != nil {
+			return err
+		}
+		if err := os.Remove(preview.path + ".json"); err != nil {
+			return err
+		}
+		total -= preview.size
+		count--
+	}
+	return nil
 }

@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -235,6 +236,9 @@ func (s *Server) comparisonFile(q protocol.FileQuery) (domain.FileVersions, erro
 		}
 	}
 	out, err := s.readComparisonFile(cmp, q.Path)
+	if err == nil {
+		err = diffPreviewSize(out)
+	}
 	if err == nil && s.attachments != nil {
 		out.Snapshot, err = s.storeDiffSnapshot(q.WorkspaceID, out)
 	}
@@ -315,7 +319,7 @@ func (s *Server) finishComparison(q protocol.GitQuery, out domain.ComparisonResu
 		}
 		if !slices.ContainsFunc(out.Files, func(file domain.ChangedFile) bool { return file.Path == q.ReviewPath }) {
 			out.Versions = &domain.FileVersions{Path: q.ReviewPath, Comparison: out.Comparison, Unchanged: true}
-			return out, nil
+			return out, diffPreviewSize(out)
 		}
 		query := q
 		query.Comparison = &out.Comparison
@@ -325,5 +329,17 @@ func (s *Server) finishComparison(q protocol.GitQuery, out domain.ComparisonResu
 		}
 		out.Versions = &versions
 	}
-	return out, nil
+	return out, diffPreviewSize(out)
+}
+
+func diffPreviewSize(value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	// Leave space for the response envelope and the snapshot descriptor.
+	if len(data) > protocol.MaxFrame-4096 {
+		return errors.New("预览内容超过传输上限，请选择更小的文件或比较范围")
+	}
+	return nil
 }

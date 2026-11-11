@@ -60,6 +60,7 @@ type DiffState struct {
 	// and the original buffer's line endings.
 	TextSelection   bool
 	OnTextSelection func(DiffTextSelection)
+	sourceMaps      [2]diffSourceMap
 	// OnGutterButton shows a + on the gutter of the line under the
 	// pointer, as to comment on it, and is called with the line when it
 	// is clicked.
@@ -407,7 +408,7 @@ func (d *DiffState) sideOptions(old bool) options {
 	// Both gutters as wide, so that both sides wrap alike.
 	digits := max(3, len(strconv.Itoa(max(d.Old.LineCount(), d.New.LineCount()))))
 	o := options{
-		readOnly: old || !d.Editable, font: d.Font, lineHeight: d.LineHeight, tabSize: d.TabSize,
+		readOnly: old || !d.Editable, hideCaret: old || !d.Editable, font: d.Font, lineHeight: d.LineHeight, tabSize: d.TabSize,
 		wrap: d.Wrap, lineNumbers: LineNumbersOn, whitespace: WhitespaceNone, autoClose: true,
 		theme: d.Theme, bindings: d.Bindings, fitContent: d.FitContent, minDigits: digits,
 		renderFindBar: d.RenderFindBar, renderGoToLine: d.RenderGoToLine,

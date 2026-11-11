@@ -24,6 +24,7 @@ type options struct {
 	// names it.
 	diffSide      int8
 	readOnly      bool
+	hideCaret     bool
 	font          ui.Font
 	lineHeight    float32
 	tabSize       int

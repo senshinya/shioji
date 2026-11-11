@@ -48,7 +48,10 @@ type Buffer struct {
 	openTx   *transaction
 	lastEdit time.Time
 	crlf     bool // the text's line endings are \r\n
-	syntax   *syntaxState
+	// Exact input for read-only Diff references; save/edit normalization is unchanged.
+	sourceText    string
+	sourceVersion uint64
+	syntax        *syntaxState
 	// wake are the windows showing the buffer, which a highlighter
 	// working in the background has draw again.
 	wake []ui.Services
@@ -120,7 +123,7 @@ const (
 
 // NewBuffer returns a buffer holding text, which is its saved text.
 func NewBuffer(text string) *Buffer {
-	b := &Buffer{text: rope.New(lf(text)), crlf: strings.Contains(text, "\r\n")}
+	b := &Buffer{text: rope.New(lf(text)), crlf: strings.Contains(text, "\r\n"), sourceText: text}
 	b.saved = b.text
 	return b
 }
@@ -148,6 +151,7 @@ func (b *Buffer) SetLineEnding(ending string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.crlf = ending == "\r\n"
+	b.sourceVersion = ^uint64(0)
 }
 
 // writeText writes t to w with the line ending of crlf.
@@ -262,6 +266,7 @@ func (b *Buffer) Reset(text string) {
 	b.saved = b.text
 	b.undo, b.redo, b.openTx = nil, nil, nil
 	b.record([]change{wholeChange(old, b.text)})
+	b.sourceText, b.sourceVersion = text, b.version
 }
 
 // Set replaces the whole text as one edit, which Undo takes back.
@@ -269,6 +274,20 @@ func (b *Buffer) Set(text string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.edit([]Edit{{Start: 0, End: b.text.Len(), Text: text}}, editOther, nil, nil)
+	b.sourceText, b.sourceVersion = text, b.version
+}
+
+func (b *Buffer) selectionSource() (string, uint64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.sourceVersion == b.version {
+		return b.sourceText, b.version
+	}
+	text := b.text.String()
+	if b.crlf {
+		text = strings.ReplaceAll(text, "\n", "\r\n")
+	}
+	return text, b.version
 }
 
 // Edit applies edits to the text as one step of undo. Their offsets are

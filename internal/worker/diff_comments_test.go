@@ -6,9 +6,98 @@ import (
 	"path/filepath"
 	"shioji/internal/attachments"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestPassiveDiffSnapshotsAreBoundedAndCommentsRetainTheirSource(t *testing.T) {
+	s, w, dir := gitTestServer(t)
+	s.attachments = attachments.New(filepath.Join(t.TempDir(), "resources"))
+	var first domain.Attachment
+	for i := 0; i < 80; i++ {
+		versions := domain.FileVersions{Path: "file.txt", New: strings.Repeat("x", 2048) + strconv.Itoa(i), Comparison: domain.DiffComparison{Repository: dir}}
+		a, err := s.storeDiffSnapshot(w.ID, versions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			first = a
+			_, err = s.captureDiffComment(protocol.DiffCommentInput{GitQuery: protocol.GitQuery{WorkspaceID: w.ID}, Snapshot: a, Comment: "keep", Fragments: []domain.CodeSelection{{Side: "target", Start: 0, End: 1}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := s.attachments.Path(w.ID, first); err != nil {
+		t.Fatal("referenced source was evicted", err)
+	}
+	entries, _ := os.ReadDir(filepath.Join(s.attachments.Directory, w.ID))
+	count := 0
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, _ := os.ReadFile(filepath.Join(s.attachments.Directory, w.ID, e.Name()))
+		var a domain.Attachment
+		json.Unmarshal(data, &a)
+		if a.Kind == domain.DiffSnapshotResource {
+			count++
+		}
+	}
+	if count > 65 {
+		t.Fatalf("passive snapshots are unbounded: %d", count)
+	}
+}
+
+func TestOpeningCommentRetainsDraftSource(t *testing.T) {
+	s, w, dir := gitTestServer(t)
+	s.attachments = attachments.New(filepath.Join(t.TempDir(), "resources"))
+	first, err := s.storeDiffSnapshot(w.ID, domain.FileVersions{Path: "file.txt", New: "draft", Comparison: domain.DiffComparison{Repository: dir}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = gitTestCall(s, "diff.snapshot.retain", map[string]any{"workspaceId": w.ID, "snapshot": first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 80; i++ {
+		_, err = s.storeDiffSnapshot(w.ID, domain.FileVersions{Path: "file.txt", New: strconv.Itoa(i), Comparison: domain.DiffComparison{Repository: dir}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = s.attachments.Path(w.ID, first); err != nil {
+		t.Fatal("open draft source was evicted", err)
+	}
+}
+
+func TestPassiveDiffSnapshotsRespectByteBudget(t *testing.T) {
+	s, w, dir := gitTestServer(t)
+	s.attachments = attachments.New(filepath.Join(t.TempDir(), "resources"))
+	for i := 0; i < 15; i++ {
+		_, err := s.storeDiffSnapshot(w.ID, domain.FileVersions{Path: "file.txt", Old: strings.Repeat("<", 200<<10), New: strings.Repeat(">", 200<<10) + strconv.Itoa(i), Comparison: domain.DiffComparison{Repository: dir}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, _ := os.ReadDir(filepath.Join(s.attachments.Directory, w.ID))
+	var total int64
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		total += info.Size()
+	}
+	if total > 32<<20 {
+		t.Fatalf("passive previews retain %d bytes", total)
+	}
+}
 
 func TestDiffCommentUsesImmutableSelectionWithoutAuxiliaryCode(t *testing.T) {
 	s, w, dir := gitTestServer(t)

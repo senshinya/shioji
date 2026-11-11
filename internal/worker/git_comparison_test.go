@@ -16,6 +16,19 @@ func compareTest(t *testing.T, s *Server, workspace string, base, target map[str
 	}
 	return out
 }
+
+func TestEscapedDiffPreviewReturnsCompactLimitError(t *testing.T) {
+	s, w, dir := gitTestServer(t)
+	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte(strings.Repeat("<", 200<<10)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{"git.file", "git.compare"} {
+		_, err := gitTestCall(s, method, map[string]any{"workspaceId": w.ID, "path": "file.txt", "reviewPath": "file.txt", "comparison": map[string]any{"base": map[string]string{"kind": "head"}, "target": map[string]string{"kind": "worktree"}}})
+		if err == nil || !strings.Contains(err.Error(), "预览内容超过") {
+			t.Fatalf("%s should return a compact preview limit error, got %v", method, err)
+		}
+	}
+}
 func TestComparisonPinsBranchesAndNeverChecksOut(t *testing.T) {
 	s, w, dir := gitTestServer(t)
 	old := gitTestRun(t, dir, "rev-parse", "HEAD")

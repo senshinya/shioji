@@ -39,7 +39,26 @@ func (s *Server) putDiffResource(workspace, kind, name string, value any) (domai
 }
 func (s *Server) storeDiffSnapshot(workspace string, versions domain.FileVersions) (domain.Attachment, error) {
 	versions.Snapshot = domain.Attachment{}
-	return s.putDiffResource(workspace, domain.DiffSnapshotResource, "diff-snapshot.json", versions)
+	a, err := s.putDiffResource(workspace, domain.DiffSnapshotResource, "diff-snapshot.json", versions)
+	if err == nil {
+		err = s.attachments.PruneDiffSnapshots(workspace, a)
+	}
+	return a, err
+}
+
+func (s *Server) retainDiffSnapshot(in protocol.DiffSnapshotInput) error {
+	var versions domain.FileVersions
+	if err := s.readDiffResource(in.WorkspaceID, in.Snapshot, &versions); err != nil {
+		return err
+	}
+	status, err := s.gitStatus(in.GitQuery)
+	if err != nil {
+		return err
+	}
+	if !status.Applicable || versions.Comparison.Repository != status.Checkout || !validReviewPath(versions.Path) {
+		return errors.New("Diff does not belong to this execution directory")
+	}
+	return s.attachments.RetainDiffSnapshot(in.WorkspaceID, in.Snapshot)
 }
 func (s *Server) readDiffResource(workspace string, a domain.Attachment, out any) error {
 	if s.attachments == nil {
@@ -103,6 +122,9 @@ func (s *Server) captureDiffComment(in protocol.DiffCommentInput) (domain.Attach
 	}
 	if !status.Applicable || versions.Comparison.Repository != status.Checkout || !validReviewPath(versions.Path) {
 		return out, errors.New("Diff does not belong to this execution directory")
+	}
+	if err = s.attachments.RetainDiffSnapshot(in.WorkspaceID, in.Snapshot); err != nil {
+		return out, err
 	}
 	content := domain.CodeCommentContent{FileSnapshot: in.Snapshot.SHA256, Comparison: versions.Comparison, Path: versions.Path, Comment: in.Comment}
 	for _, part := range in.Fragments {

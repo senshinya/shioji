@@ -153,10 +153,7 @@ func (v *View) workInspector(c *n.Context, t *n.Theme, drawer bool, width, limit
 		})
 		n.Row(c.Key("inspector-actions")).Absolute().Right(12).Top(10).Height(28).Gap(6).AlignItems(n.Center).Background(t.Background).Children(func() {
 			if iconButton(c, refreshIcon, "刷新更改").Disabled(!v.Model.Connected).Clicked() {
-				v.requestChanges(true)
-				if state.Path != "" {
-					v.openChangedFile(state.Path)
-				}
+				v.refreshChanges()
 				v.refreshSelectedWork()
 			}
 			if iconButton(c, closeIcon, "关闭更改侧栏").Clicked() {

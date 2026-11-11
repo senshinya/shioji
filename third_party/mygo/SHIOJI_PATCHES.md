@@ -138,3 +138,12 @@ component interaction regressions; streaming code is covered by the native
 reply regressions in internal/ui/streaming_test.go. Remove the replacement when an
 upstream release exposes equivalent controls. This remains a native renderer;
 no HTML or WebView is introduced.
+
+Read-only unified Diff additionally supports exact old/new text fragments,
+including deleted blocks and partial lines, native copy, wrapped-row keyboard
+selection, and restoring disjoint quotes after context expansion. Buffer keeps
+the exact last loaded/set source for selection offset mapping; its editable
+and save normalization remains unchanged. Read-only Diff hides insertion
+carets, while editable editors keep theirs. Full-width annotations let Shioji
+place compact inline comments. Regression tests live in
+`ui/editor/diff_selection{,_regression}_test.go`.

@@ -121,13 +121,13 @@ func (ed *editor) paint(p *ui.Painter, r ui.Rect) {
 		p.Fill(r, ct.Background, 0)
 	}
 	ed.prepare(&f)
-	if ed.focused {
+	if ed.focused && !ed.o.hideCaret {
 		phase := ed.frameNow.Sub(ed.blinkStart)
 		f.caretsOn = (phase/blinkInterval)%2 == 0 || ed.gesture.active
 		if !ed.gesture.active {
 			p.After(blinkInterval - phase%blinkInterval)
 		}
-	} else if ed.o.cursorShape == CursorBlock {
+	} else if ed.o.cursorShape == CursorBlock && !ed.o.hideCaret {
 		// Outlined, not blinking, as Vim's and Zed's blocks without the
 		// keyboard.
 		f.caretsOn = true

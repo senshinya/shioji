@@ -126,6 +126,14 @@ func (v *View) changesFor(id string) *changesState {
 	}
 	return state
 }
+func (v *View) refreshChanges() {
+	v.requestChanges(true)
+	if v.Model.WorkerMinor < 33 {
+		if state := v.changesFor(v.Model.SessionID); state.Path != "" {
+			v.openChangedFile(state.Path)
+		}
+	}
+}
 func (v *View) requestChanges(force bool) {
 	m := v.Model
 	if v.Controller == nil || !m.Connected || m.SessionID == "" {
@@ -173,8 +181,13 @@ func (v *View) openChangedFile(path string) {
 	state := v.changesFor(v.Model.SessionID)
 	state.selectFile(path)
 	state.PinnedSnapshot = false
+	if state.PendingComparison != nil && v.Model.WorkerMinor >= 33 {
+		v.requestComparison(state, *state.PendingComparison)
+		return
+	}
 	state.FileSequence++
 	sequence, epoch := state.FileSequence, v.Model.ConnectionEpoch
+	comparisonSequence := state.ComparisonSequence
 	state.Error = ""
 	_, q := v.gitQuery()
 	if v.Model.WorkerMinor >= 33 {
@@ -182,7 +195,7 @@ func (v *View) openChangedFile(path string) {
 		q.Comparison = &pair
 	}
 	v.do(app.Job{Method: "git.file", Input: protocol.FileQuery{GitQuery: q, Path: path}, Apply: func(m *app.Model, b json.RawMessage, err error) {
-		if state.Path != path || state.FileSequence != sequence || m.ConnectionEpoch != epoch {
+		if state.Path != path || state.FileSequence != sequence || state.ComparisonSequence != comparisonSequence || m.ConnectionEpoch != epoch {
 			return
 		}
 		if err != nil {
@@ -288,10 +301,7 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool, width, limit flo
 		})
 		n.Row(c.Key("inspector-actions")).Absolute().Right(12).Top(10).Height(28).Gap(6).AlignItems(n.Center).Background(t.Background).Children(func() {
 			if iconButton(c, refreshIcon, "刷新更改").Disabled(!v.Model.Connected).Clicked() {
-				v.requestChanges(true)
-				if state.Path != "" {
-					v.openChangedFile(state.Path)
-				}
+				v.refreshChanges()
 			}
 			if iconButton(c, closeIcon, "关闭更改侧栏").Clicked() {
 				v.Model.Inspectors[id] = false

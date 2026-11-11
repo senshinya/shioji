@@ -72,7 +72,7 @@ func (v *View) requestComparison(state *changesState, pair domain.DiffComparison
 	q.Comparison = &pair
 	q.ReviewPath = state.Path
 	if !v.do(app.Job{Method: "git.compare", Input: q, Apply: func(m *app.Model, data json.RawMessage, err error) {
-		if sequence != state.ComparisonSequence || epoch != m.ConnectionEpoch {
+		if sequence != state.ComparisonSequence || epoch != m.ConnectionEpoch || state.Path != q.ReviewPath {
 			return
 		}
 		state.PendingComparison = nil

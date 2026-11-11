@@ -639,6 +639,12 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 			return nil, err
 		}
 		return s.checkout(in)
+	case "diff.snapshot.retain":
+		q, err := decode[protocol.DiffSnapshotInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return nil, s.retainDiffSnapshot(q)
 	case "diff.comment":
 		q, err := decode[protocol.DiffCommentInput](body)
 		if err != nil {
