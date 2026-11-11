@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -27,15 +28,9 @@ func (v *View) runningActivity(turn domain.Turn) runningActivity {
 		if r.WorkID != "" || r.TurnID != "" && r.TurnID != turn.ID || !r.State.AwaitingResolution() {
 			continue
 		}
+		// Existing request sources and the dock already describe what is
+		// pending; a second waiting line would repeat the same information.
 		a.waiting = true
-		switch r.Kind {
-		case "approval", "permissions":
-			a.label = "等待授权"
-		case "questions", "form":
-			a.label = "等待回答"
-		default:
-			a.label = "等待确认"
-		}
 		return a
 	}
 	for i := len(d.Items) - 1; i >= 0; i-- {
@@ -73,41 +68,110 @@ func (v *View) runningActivity(turn domain.Turn) runningActivity {
 	return a
 }
 
-// Only the live bottom group can own the status. While disclosure is moving,
-// the footer stays until all child rows have actually left the projection.
-func (v *View) syncRunningGroup(rows []transcriptRow, detail domain.SessionDetail) {
-	v.runningGroup, v.activityGroup, v.activityTurn = "", "", ""
+// Presentation timing only; execution and streamed content keep their own
+// authoritative lifecycle. Both endpoints use this turn's visual clock.
+type runningProgress struct {
+	session, epoch, turn string
+	started              time.Time
+	handoff              *progressHandoff
+}
+
+const (
+	progressFadeDuration    = 140 * time.Millisecond
+	progressReclaimDuration = 180 * time.Millisecond
+)
+
+type progressHandoff struct {
+	group  string
+	fadeAt time.Time
+}
+
+func (p *runningProgress) handoffFraction(now time.Time) float32 {
+	if p.handoff == nil {
+		return 0
+	}
+	return min(1, max(0, float32(now.Sub(p.handoff.fadeAt))/float32(progressFadeDuration)))
+}
+
+// Width reclamation continues the handoff's absolute timeline. It must not
+// start a fresh per-element animation when the faded indicator unmounts.
+func (p *runningProgress) handoffSlotExtent(now time.Time) float32 {
+	if p.handoff == nil {
+		return 1
+	}
+	t := float32(now.Sub(p.handoff.fadeAt.Add(progressFadeDuration))) / float32(progressReclaimDuration)
+	return 1 - n.EaseOut(min(1, max(0, t)))
+}
+
+func (v *View) progressFor(c *n.Context, turn domain.Turn) *runningProgress {
+	p := v.runningProgress
+	if p == nil || p.session != v.Model.SessionID || p.epoch != v.Model.ConnectionEpoch || p.turn != turn.ID {
+		started := c.Now()
+		if turn.StartedAt != nil && !turn.StartedAt.IsZero() {
+			started = *turn.StartedAt
+		}
+		p = &runningProgress{session: v.Model.SessionID, epoch: v.Model.ConnectionEpoch, turn: turn.ID, started: started}
+		v.runningProgress = p
+	}
+	return p
+}
+
+// The live bottom tool group owns progress in both disclosure states. On first
+// prose, use the actual disclosure deadline (no delay for an already folded
+// group), then continue crossfade and slot reclamation on the same timeline.
+func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domain.SessionDetail) {
+	previousGroup, previousTurn := v.runningGroup, v.activityTurn
+	v.runningGroup, v.activityTurn = "", ""
 	if !v.Model.Connected || len(rows) == 0 {
+		v.runningProgress = nil
 		return
+	}
+	var turn domain.Turn
+	for i := len(detail.Turns) - 1; i >= 0; i-- {
+		if detail.Turns[i].Status.Active() {
+			turn = detail.Turns[i]
+			break
+		}
+	}
+	if turn.ID == "" || v.runningActivity(turn).waiting {
+		v.runningProgress = nil
+		return
+	}
+	oldProgress := v.runningProgress
+	p := v.progressFor(c, turn)
+	if p != oldProgress {
+		previousGroup, previousTurn = "", ""
 	}
 	row := rows[len(rows)-1]
-	if row.group == "" {
-		if row.toolParent == "" {
-			return
-		}
-		for _, heading := range rows {
-			if heading.group == row.toolParent {
-				row = heading
-				break
-			}
-		}
+	group := row.group
+	if group == "" {
+		group = row.toolParent
 	}
-	if row.group == "" {
+	if row.item.TurnID != turn.ID {
+		group = ""
+	}
+	if group != "" {
+		p.handoff = nil
+		v.runningGroup, v.activityTurn = group, turn.ID
 		return
 	}
-	for i := len(detail.Turns) - 1; i >= 0; i-- {
-		turn := detail.Turns[i]
-		if turn.Status != domain.ExecutionRunning && turn.Status != domain.ExecutionStarting {
-			continue
+	if p.handoff == nil && previousGroup != "" && previousTurn == turn.ID && row.item.Kind == "assistant" {
+		fadeAt := c.Now()
+		if motion := v.toolMotions[previousGroup]; motion != nil {
+			fadeAt = motion.start.Add(motion.duration)
 		}
-		if turn.ID != row.item.TurnID || v.runningActivity(turn).waiting {
-			return
+		p.handoff = &progressHandoff{group: previousGroup, fadeAt: fadeAt}
+	}
+	if p.handoff != nil {
+		if c.Preferences().ReduceMotion {
+			p.handoff.fadeAt = c.Now().Add(-progressFadeDuration - progressReclaimDuration)
 		}
-		v.activityGroup, v.activityTurn = row.group, turn.ID
-		if row.end >= 0 && v.Model.ToolDisclosure(row.group).Closed() {
-			v.runningGroup = row.group
+		if p.handoffFraction(c.Now()) < 1 {
+			v.runningGroup, v.activityTurn = p.handoff.group, turn.ID
 		}
-		return
+		if c.Now().Before(p.handoff.fadeAt.Add(progressFadeDuration + progressReclaimDuration)) {
+			c.AnimationFrame()
+		}
 	}
 }
 
@@ -119,18 +183,30 @@ func elapsedActivityLabel(started, now time.Time) string {
 	return fmt.Sprintf("%d 分 %d 秒", seconds/60, seconds%60)
 }
 
-// The painter schedules only itself on the next worker-relative second. Text
-// shaping is cached until the displayed second changes; the transcript, list
-// and composer never rebuild because of this clock.
-func runningElapsed(c *n.Context, started *time.Time, color n.Color) {
+// Same-width ticks only repaint the clock on the next worker-relative second.
+// A compact clock refreshes layout only when its text width actually changes
+// (for example when seconds become minutes); shaping is cached between ticks.
+// Compact tool titles expose the natural width to their owning handoff, so
+// width removal has a single animation owner instead of another local clock.
+func runningElapsed(c *n.Context, started *time.Time, color n.Color, compact bool) (n.Element, float32) {
 	if started == nil || started.IsZero() {
-		return
+		return n.Element{}, 0
 	}
 	since := *started
 	font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400, Features: "tnum"}
 	m := inlineFontMetrics("秒", font)
 	width, _ := n.ShapeText("9999 分 59 秒", font, 0).Size()
-	clock := n.RichText(c, n.Span{Text: "\uFFFC", ObjectWidth: width, ObjectHeight: m.ascent, ObjectDescent: m.descent}).Font(font.Family).FontSize(11).FontFeatures("tnum").FixedLineHeight(20).TextColor(color).Label("运行时长").Transition(fadeMotion(c, 120*time.Millisecond))
+	inset := float32(0)
+	if compact {
+		width, _ = n.ShapeText(elapsedActivityLabel(since, c.Now()), font, 0).Size()
+		inset = 6
+		width += inset
+	}
+	clock := n.RichText(c, n.Span{Text: "\uFFFC", ObjectWidth: width, ObjectHeight: m.ascent, ObjectDescent: m.descent}).Font(font.Family).FontSize(11).FontFeatures("tnum").FixedLineHeight(20).TextColor(color).Label("运行时长")
+	if compact {
+		clock.Height(20).Shrink(0).SingleLine().Clip()
+	}
+	invalidate := c.Services().Invalidate
 	var text string
 	var layout *n.TextLayout
 	clock.DrawObjects(func(p *n.Painter, _ int, r n.Rect) {
@@ -139,29 +215,50 @@ func runningElapsed(c *n.Context, started *time.Time, color n.Color) {
 		if value != text {
 			layout = n.ShapeText(value, font, 0)
 			text = value
+			if compact {
+				actual, _ := layout.Size()
+				if math.Abs(float64(actual+inset-width)) > .5 {
+					invalidate()
+				}
+			}
 		}
-		p.TextLayout(layout, r.X, r.Y+m.ascent-layout.Lines()[0].Ascent, color)
+		p.TextLayout(layout, r.X+inset, r.Y+m.ascent-layout.Lines()[0].Ascent, color)
 		elapsed := max(time.Duration(0), now.Sub(since))
 		p.After(time.Second - elapsed%time.Second)
 	})
+	return clock, width
 }
 
 func (v *View) runningStatus(c *n.Context, t *n.Theme, turn domain.Turn) {
 	a := v.runningActivity(turn)
-	n.Row(c.Key("running-status")).Gap(6).AlignItems(n.Baseline).Children(func() {
-		font := n.Font{Family: t.Font, Size: 11, Weight: 400}
-		color := t.Success
-		if a.waiting {
-			color = t.TextMuted
-		}
-		dot := statusDot(c.Key("dot"), a.label, font, color, !a.waiting)
-		if a.waiting {
-			dot.Label(a.label + "状态")
-		}
+	if a.waiting {
+		return
+	}
+	p := v.progressFor(c, turn)
+	row := n.Row(c.Key("running-status")).Gap(6).AlignItems(n.Baseline)
+	if p.handoff != nil {
+		row.Opacity(p.handoffFraction(c.Now()))
+	} else {
+		row.Transition(fadeMotion(c, 120*time.Millisecond))
+	}
+	row.Children(func() {
+		statusDot(c.Key("dot"), a.label, n.Font{Family: t.Font, Size: 11, Weight: 400}, t.Success, true, p.started)
 		text := n.Text(c.Key("activity-label"), a.label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
-		if !a.waiting {
-			shimmer(c, text, t.TextMuted, t.Text)
-			runningElapsed(c.Key("elapsed"), a.started, t.TextMuted)
-		}
+		shimmer(c, text, t.TextMuted, t.Text, p.started)
+		runningElapsed(c.Key("elapsed"), a.started, t.TextMuted, false)
 	})
+}
+
+// Both are nominally separated by 8 DIP. Smaller metadata has less leading
+// above its glyphs, so compensate using the same stable Chinese reference as
+// inline typography, including the actual font fallback and configured size.
+func (v *View) bodyMetadataGap() float32 {
+	prefs := v.Model.Preferences
+	inkTop := func(size, lineHeight float32) float32 {
+		font := n.Font{Family: prefs.InterfaceFont, Size: size, Weight: 400, LineHeight: lineHeight / size}
+		line := n.ShapeText("国", font, 0).Lines()[0]
+		return line.Baseline + font.InkBounds("国").Y
+	}
+	bodySize := float32(prefs.ReplySize)
+	return 8 + max(0, float32(math.Round(float64(inkTop(bodySize, bodySize*24/14)-inkTop(11, 20)))))
 }

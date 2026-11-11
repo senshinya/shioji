@@ -32,10 +32,13 @@ func (fx shimmerEffect) PaintEffect(p *n.Painter, box n.Rect, content *n.Bitmap,
 	p.AnimationFrameRate(60)
 }
 
-func shimmer(c *n.Context, text n.Element, rest, highlight n.Color) {
+func shimmer(c *n.Context, text n.Element, rest, highlight n.Color, phase ...time.Time) {
 	if c.Preferences().ReduceMotion {
 		return
 	}
 	started := *n.Local(text, "shimmer-start", func() time.Time { return c.Now() })
+	if len(phase) > 0 {
+		started = phase[0]
+	}
 	text.Effect(shimmerEffect{started: started, rest: rest, highlight: highlight})
 }

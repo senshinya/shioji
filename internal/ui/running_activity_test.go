@@ -42,13 +42,15 @@ func TestRunningActivityUsesCurrentTurnEvidence(t *testing.T) {
 			}
 			v.Model.Details["s"] = d
 			ui := n.NewTester(func(c *n.Context) { n.Column(c).Fill().Children(func() { v.turnFooter(c, c.Theme(), d.Turns[0]) }) }, 600, 120)
-			if !ui.HasText(tc.want) {
-				t.Fatal("incorrect current activity", tc.want, ui.Texts())
-			}
 			if tc.want == "等待回答" || tc.want == "等待授权" {
+				if ui.HasText(tc.want) {
+					t.Fatal("pending request duplicates its own waiting footer", ui.Texts())
+				}
 				if _, ok := ui.Find("进行中状态"); ok {
 					t.Fatal("waiting user still shows a breathing work dot")
 				}
+			} else if !ui.HasText(tc.want) {
+				t.Fatal("incorrect current activity", tc.want, ui.Texts())
 			}
 		})
 	}
@@ -87,22 +89,35 @@ func TestElapsedActivityPaintsWithoutRebuildingConversation(t *testing.T) {
 	}
 }
 
-func TestFoldedLiveToolsOwnActivityWithoutMovingHeading(t *testing.T) {
+func TestLiveToolTitleOwnsActivityExpandedAndCollapsed(t *testing.T) {
 	v := liveCompletionModel()
 	d := v.Model.Details["s"]
 	d.Items = []domain.Item{{ID: "u", TurnID: "t", Kind: "user", Text: "Run checks", Final: true}, {ID: "a", TurnID: "t", Kind: "tool", Presentation: "command", Name: "first command"}, {ID: "b", TurnID: "t", Kind: "tool", Presentation: "command", Name: "second command"}}
+	started := time.Now().Add(-35 * time.Second)
+	d.Turns[0].StartedAt = &started
 	v.Model.Details["s"] = d
 	ui := n.NewTester(v.View, 1240, 820)
 	ui.Advance(time.Second)
 	ui.Click("2 次工具调用") // Saved history correctly opens folded.
 	ui.Advance(time.Second)
-	if !ui.HasText("正在执行命令") {
-		t.Fatal("expanded tools have no current activity", ui.Texts())
+	if _, ok := ui.Find("工具组运行状态"); !ok {
+		t.Fatal("expanded title lost its running indicator", ui.Texts())
+	}
+	if ui.HasText("正在执行命令") {
+		t.Fatal("expanded tools added a second progress footer")
 	}
 	before, _ := ui.Find("2 次工具调用")
+	clock, ok := ui.Find("运行时长")
+	if !ok || math.Abs(float64(clock.Y-before.Y)) > 1 {
+		t.Fatal("expanded title lost its elapsed clock", before, clock)
+	}
 	ui.Click("2 次工具调用")
 	ui.Advance(time.Second)
 	after, _ := ui.Find("2 次工具调用")
+	clock, ok = ui.Find("运行时长")
+	if !ok || math.Abs(float64(clock.Y-after.Y)) > 1 {
+		t.Fatal("folding moved the elapsed clock out of the title", after, clock)
+	}
 	if math.Abs(float64(before.Y-after.Y)) > 1 {
 		t.Fatal("folding moved the clicked title", before, after)
 	}
@@ -114,8 +129,11 @@ func TestFoldedLiveToolsOwnActivityWithoutMovingHeading(t *testing.T) {
 	}
 	ui.Click("2 次工具调用")
 	ui.Advance(time.Second)
-	if !ui.HasText("正在执行命令") {
-		t.Fatal("expansion did not return activity to footer")
+	if _, ok := ui.Find("工具组运行状态"); !ok {
+		t.Fatal("expansion removed status from the title")
+	}
+	if ui.HasText("正在执行命令") {
+		t.Fatal("expansion duplicated activity below the tools")
 	}
 	d.Turns[0].Status = "completed"
 	d.Session.Status = "completed"
@@ -152,8 +170,8 @@ func TestActivityLabelChangesRetainBreathingPhaseAndWaitingStopsIt(t *testing.T)
 		if !ok {
 			t.Fatal("live dot vanished during label change")
 		}
-		ca := a.Image().RGBAAt(int(ra.X+ra.W/2), int(ra.Y+ra.H/2))
-		cb := b.Image().RGBAAt(int(rb.X+rb.W/2), int(rb.Y+rb.H/2))
+		ca := a.Image().RGBAAt(int(ra.X+3), int(ra.Y+ra.H/2))
+		cb := b.Image().RGBAAt(int(rb.X+3), int(rb.Y+rb.H/2))
 		if ca != cb {
 			t.Fatal("text change restarted the green-dot phase", item.Kind, ca, cb)
 		}
@@ -210,5 +228,301 @@ func TestToolActivityHandoffNeverPaintsTwoLiveIndicators(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// Compare Retina glyph pixels, allowing the project's 1 DIP rasterization tolerance.
+func TestRunningStatusMatchesParagraphInkSpacing(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, size := range []int{14, 18} {
+			t.Run(fmt.Sprint(dark, "/", size), func(t *testing.T) {
+				v := liveCompletionModel()
+				v.Model.Preferences.ReplySize = size
+				d := v.Model.Details["s"]
+				d.Items = []domain.Item{{ID: "body", TurnID: "t", Kind: "assistant", Text: "国国国 A\n\n国国国 B", Final: true}, {ID: "thinking", TurnID: "t", Kind: "activity", Presentation: "reasoning"}}
+				v.Model.Details["s"] = d
+				ui := n.NewTester(v.View, 1240, 820)
+				ui.SetDark(dark)
+				ui.SetScale(2)
+				ui.Advance(time.Second)
+				ink := func(label string) (int, int) {
+					t.Helper()
+					r, ok := ui.Find(label)
+					if !ok {
+						t.Fatal("missing ink target", label)
+					}
+					im := ui.Image()
+					top, bottom := 10000, -1
+					for y := int(r.Y * 2); y < int((r.Y+r.H)*2); y++ {
+						for x := int(r.X * 2); x < int((r.X+r.W)*2); x++ {
+							p := im.RGBAAt(x, y)
+							if (!dark && p.R < 190) || (dark && p.R > 100) {
+								top = min(top, y)
+								bottom = max(bottom, y+1)
+							}
+						}
+					}
+					if bottom < 0 {
+						t.Fatal("no glyph ink", label)
+					}
+					return top, bottom
+				}
+				_, firstBottom := ink("国国国 A")
+				secondTop, secondBottom := ink("国国国 B")
+				statusTop, _ := ink("正在思考")
+				paragraphGap, statusGap := secondTop-firstBottom, statusTop-secondBottom
+				if math.Abs(float64(paragraphGap-statusGap)/2) > 1 {
+					t.Fatalf("visible paragraph/status spacing differs by more than 1 DIP: paragraphs=%.1f, status=%.1f", float64(paragraphGap)/2, float64(statusGap)/2)
+				}
+			})
+		}
+	}
+}
+
+func TestPendingRequestKeepsOnlySourceAndDock(t *testing.T) {
+	for _, kind := range []string{"questions", "approval"} {
+		t.Run(kind, func(t *testing.T) {
+			v := liveCompletionModel()
+			d := v.Model.Details["s"]
+			title, waiting := "需要回答", "等待回答"
+			if kind == "approval" {
+				title, waiting = "需要授权", "等待授权"
+			}
+			request := domain.PendingRequest{ID: "r", SessionID: "s", TurnID: "t", ItemID: "source", Kind: kind, Title: title, State: "pending", Questions: []domain.Question{{ID: "q", Text: "选择一种实现方式", Custom: true}}}
+			d.Items = append(d.Items, domain.Item{ID: "source", TurnID: "t", Kind: "request", Text: title, Status: "pending"})
+			d.Requests = []domain.PendingRequest{request}
+			v.Model.Details["s"] = d
+			ui := n.NewTester(v.View, 1240, 820)
+			ui.Advance(time.Second)
+			if ui.HasText(waiting) {
+				t.Fatal("waiting status duplicates request source and dock", ui.Texts())
+			}
+			if !ui.HasText(title) {
+				t.Fatal("request's existing source or dock was removed")
+			}
+			if v.Model.Details["s"].Requests[0].State != "pending" {
+				t.Fatal("presentation resolved a pending request")
+			}
+		})
+	}
+}
+
+// Keep coverage during the crossfade, then reclaim the dot/timer space with
+// real width animation; the arrow follows its neighboring text throughout.
+func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, expanded := range []bool{false, true} {
+			t.Run(fmt.Sprint(dark, "/", expanded), func(t *testing.T) {
+				v := liveCompletionModel()
+				d := v.Model.Details["s"]
+				d.Items = []domain.Item{{ID: "u", TurnID: "t", Kind: "user", Text: "Run checks", Final: true}, {ID: "a", TurnID: "t", Kind: "tool", Presentation: "command", Name: "go test ./..."}, {ID: "b", TurnID: "t", Kind: "tool", Presentation: "command", Name: "go vet ./..."}}
+				started := time.Now().Add(-35 * time.Second)
+				d.Turns[0].StartedAt = &started
+				v.Model.Details["s"] = d
+				ui := n.NewTester(v.View, 1240, 820)
+				ui.SetDark(dark)
+				ui.Advance(time.Second)
+				if expanded {
+					ui.Click("2 次工具调用")
+					ui.Advance(time.Second)
+				}
+				header, _ := ui.Find("2 次工具调用")
+				titleX := activityTitleInkX(ui, header, dark)
+				font := n.Font{Family: v.Model.Preferences.InterfaceFont, Size: 11, Weight: 400, Features: "tnum"}
+				titleWidth, _ := n.ShapeText("2 次工具调用", font, 0).Size()
+				clockWidth, _ := n.ShapeText("37 秒", font, 0).Size()
+				if right := activityLastInkX(ui, header, dark); right > titleX+titleWidth+clockWidth+28 {
+					t.Fatal("running arrow is detached from elapsed time", titleX, right)
+				}
+				lastTitleX, lastArrowX := titleX, activityLastInkX(ui, header, dark)
+				d.Items[1].Final, d.Items[2].Final = true, true
+				d.Items = append(d.Items, domain.Item{ID: "reply", TurnID: "t", Kind: "assistant", Text: "三个检查均已通过。"})
+				v.Model.Details["s"] = d
+				began := ui.Now()
+				ready := time.Duration(0)
+				if expanded {
+					ready = 160 * time.Millisecond
+				}
+				ui.Frame()
+				firstFooterY := float32(-1)
+				for frame := 0; frame < 36; frame++ {
+					ui.Advance(time.Second / 60)
+					header, _ = ui.Find("2 次工具调用")
+					footer, _ := ui.Find("回复信息")
+					hasOld := activityGreenIn(ui, header)
+					hasNew := activityGreenIn(ui, footer)
+					if !hasOld && !hasNew {
+						t.Fatalf("no visible progress at frame %d", frame)
+					}
+					x, arrowX := activityTitleInkX(ui, header, dark), activityLastInkX(ui, header, dark)
+					elapsed := ui.Now().Sub(began)
+					if elapsed <= ready+140*time.Millisecond && math.Abs(float64(x-titleX)) > 1 {
+						t.Fatalf("title moved before the dot finished fading at frame %d", frame)
+					}
+					if x > lastTitleX+1 || lastTitleX-x > 4 {
+						t.Fatalf("title jumped instead of gliding left: %v -> %v", lastTitleX, x)
+					}
+					if arrowX > lastArrowX+1 || lastArrowX-arrowX > 15 {
+						t.Fatalf("arrow jumped instead of following the timer: %v -> %v", lastArrowX, arrowX)
+					}
+					lastTitleX, lastArrowX = x, arrowX
+					if hasNew {
+						if firstFooterY < 0 {
+							firstFooterY = footer.Y
+						}
+						if math.Abs(float64(footer.Y-firstFooterY)) > 1 {
+							t.Fatalf("visible new progress is moving: %v -> %v at frame %d", firstFooterY, footer.Y, frame)
+						}
+					}
+					if elapsed >= ready+90*time.Millisecond && firstFooterY < 0 {
+						t.Fatal("progress waits after the actual disclosure has settled", elapsed, ready)
+					}
+					if elapsed >= ready+140*time.Millisecond+90*time.Millisecond && titleX-x < 8 {
+						t.Fatal("title recovery restarted its own clock instead of continuing the handoff", elapsed, titleX, x)
+					}
+				}
+				if firstFooterY < 0 || activityGreenIn(ui, header) {
+					t.Fatal("progress never completed its handoff")
+				}
+				if math.Abs(float64(titleX-lastTitleX-12)) > 1 {
+					t.Fatal("title retained the vanished dot's indentation", titleX, lastTitleX)
+				}
+				if lastArrowX > lastTitleX+titleWidth+22 {
+					t.Fatal("idle arrow did not return beside its title", lastTitleX, lastArrowX)
+				}
+			})
+		}
+	}
+}
+
+func activityGreenIn(ui *n.Tester, r n.Rect) bool {
+	im := ui.Image()
+	for y := int(r.Y); y < int(r.Y+r.H); y++ {
+		for x := int(r.X); x < int(r.X+r.W); x++ {
+			p := im.RGBAAt(x, y)
+			if int(p.G)-int(p.R) > 12 && int(p.G)-int(p.B) > 12 {
+				return true
+			}
+		}
+	}
+	return false
+}
+func activityTitleInkX(ui *n.Tester, r n.Rect, dark bool) float32 {
+	im := ui.Image()
+	for x := int(r.X); x < int(r.X+80); x++ {
+		for y := int(r.Y + 3); y < int(r.Y+17); y++ {
+			p := im.RGBAAt(x, y)
+			if abs(int(p.R)-int(p.G)) < 6 && abs(int(p.B)-int(p.G)) < 6 && ((!dark && p.R < 180) || (dark && p.R > 100)) {
+				return float32(x)
+			}
+		}
+	}
+	return -1
+}
+
+func activityLastInkX(ui *n.Tester, r n.Rect, dark bool) float32 {
+	im := ui.Image()
+	for x := int(r.X+r.W) - 1; x >= int(r.X); x-- {
+		for y := int(r.Y + 3); y < int(r.Y+17); y++ {
+			p := im.RGBAAt(x, y)
+			if abs(int(p.R)-int(p.G)) < 6 && abs(int(p.B)-int(p.G)) < 6 && ((!dark && p.R < 180) || (dark && p.R > 100)) {
+				return float32(x)
+			}
+		}
+	}
+	return -1
+}
+
+func TestToolToProseRetainsBreathingClock(t *testing.T) {
+	makeView := func() *View {
+		v := liveCompletionModel()
+		d := v.Model.Details["s"]
+		d.Items = []domain.Item{{ID: "tool", TurnID: "t", Kind: "tool", Presentation: "command", Name: "go test ./..."}}
+		v.Model.Details["s"] = d
+		return v
+	}
+	aView, bView := makeView(), makeView()
+	a, b := n.NewTester(aView.View, 1240, 820), n.NewTester(bView.View, 1240, 820)
+	// Align the two real native animation clocks before applying any turn data.
+	a.Advance(b.Now().Sub(a.Now()))
+	started := a.Now().Add(-35 * time.Second)
+	for _, v := range []*View{aView, bView} {
+		d := v.Model.Details["s"]
+		d.Turns[0].StartedAt = &started
+		v.Model.Details["s"] = d
+	}
+	// Start a distinct turn identity so both presentations consume its start.
+	for _, v := range []*View{aView, bView} {
+		d := v.Model.Details["s"]
+		d.Turns[0].ID = "clock"
+		d.Items[0].TurnID = "clock"
+		v.Model.Details["s"] = d
+	}
+	a.Frame()
+	b.Frame()
+	a.Advance(time.Second)
+	b.Advance(time.Second)
+	d := bView.Model.Details["s"]
+	d.Items[0].Final = true
+	d.Items = append(d.Items, domain.Item{ID: "prose", TurnID: "clock", Kind: "assistant", Text: "All checks passed."})
+	bView.Model.Details["s"] = d
+	b.Frame()
+	a.Advance(400 * time.Millisecond)
+	b.Advance(400 * time.Millisecond)
+	for i := 0; i < 5; i++ {
+		ra, _ := a.Find("进行中状态")
+		rb, ok := b.Find("进行中状态")
+		if !ok {
+			t.Fatal("new progress has no live dot")
+		}
+		ca := a.Image().RGBAAt(int(ra.X+3), int(ra.Y+ra.H/2))
+		cb := b.Image().RGBAAt(int(rb.X+3), int(rb.Y+rb.H/2))
+		if ca != cb {
+			t.Fatal("tool-to-prose handoff restarted its breathing phase", ca, cb)
+		}
+		a.Advance(110 * time.Millisecond)
+		b.Advance(110 * time.Millisecond)
+	}
+}
+
+func TestToolToProseHandoffStopsForTerminalOrPendingState(t *testing.T) {
+	for _, state := range []string{"completed", "interrupted", "pending", "disconnected", "reduced"} {
+		t.Run(state, func(t *testing.T) {
+			v := liveCompletionModel()
+			d := v.Model.Details["s"]
+			d.Items = []domain.Item{{ID: "tool", TurnID: "t", Kind: "tool", Presentation: "command", Name: "go test ./..."}}
+			v.Model.Details["s"] = d
+			ui := n.NewTester(v.View, 1240, 820)
+			ui.Advance(time.Second)
+			d.Items[0].Final = true
+			d.Items = append(d.Items, domain.Item{ID: "reply", TurnID: "t", Kind: "assistant", Text: "All checks passed."})
+			v.Model.Details["s"] = d
+			ui.Frame()
+			ui.Advance(100 * time.Millisecond)
+			switch state {
+			case "completed", "interrupted":
+				d.Turns[0].Status = domain.ExecutionState(state)
+				d.Session.Status = domain.ExecutionState(state)
+			case "pending":
+				d.Requests = []domain.PendingRequest{{ID: "q", SessionID: "s", TurnID: "t", Kind: "questions", State: "pending"}}
+			case "disconnected":
+				v.Model.Connected = false
+			case "reduced":
+				v.Model.Preferences.ReduceMotion = true
+			}
+			v.Model.Details["s"] = d
+			ui.Frame()
+			if state == "reduced" {
+				r, _ := ui.Find("回复信息")
+				if !activityGreenIn(ui, r) {
+					t.Fatal("reduced motion did not finish the handoff immediately")
+				}
+			} else {
+				ui.Advance(time.Second)
+				if _, ok := ui.Find("进行中状态"); ok {
+					t.Fatal("obsolete handoff survived", state)
+				}
+			}
+		})
 	}
 }

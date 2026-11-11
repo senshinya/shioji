@@ -187,10 +187,10 @@ func TestFollowKeepsProgressAboveAnOpeningQuestionDock(t *testing.T) {
 	ui.Frame()
 	for i := 0; i < 30; i++ {
 		ui.Advance(time.Second / 60)
-		receipt, ok := ui.Find("回复信息")
+		receipt, ok := ui.Find("进度 35")
 		dock, dockOK := ui.Find("会话底部面板")
 		if !ok || !dockOK {
-			t.Fatal("fixture lost progress or dock")
+			t.Fatal("fixture lost the latest progress or dock")
 		}
 		if receipt.Y+receipt.H > dock.Y+1 {
 			t.Fatal("opening dock covers the followed progress", i, receipt, dock)

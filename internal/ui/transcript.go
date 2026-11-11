@@ -240,11 +240,10 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 	label := fmt.Sprintf("%d 次工具调用", row.count)
 	button := n.ButtonBase(c).FillWidth().Height(20).Justify(n.Start).Label(label)
 	color := textHoverColor(c, button, t.TextMuted)
-	live := v.activityGroup == row.group
-	closed := v.runningGroup == row.group
+	live := v.runningGroup == row.group
 	if button.Children(func() {
-		heading := n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline)
-		if closed {
+		heading := n.Row(c).FillWidth().Gap(0).AlignItems(n.Baseline)
+		if live {
 			heading.Label("工具组运行状态")
 		}
 		heading.Children(func() {
@@ -253,34 +252,54 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 				angle = -90
 			}
 			font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}
+			width, alpha, phase := float32(0), float32(0), c.Now()
 			if live {
-				dot := statusDot(c.Key("group-dot"), label, font, t.Success, closed)
-				opacity := float32(0)
-				if closed {
-					opacity = 1
-				} else {
-					dot.Label("")
-				}
-				dot.Opacity(dot.AnimateTo("live-dot-opacity", opacity, motionAnimation(c, 120*time.Millisecond)))
+				width, alpha, phase = 12, 1-v.runningProgress.handoffFraction(c.Now()), v.runningProgress.started
 			}
+			// Fade and reclaim use one absolute turn timeline. Native local
+			// width animation is only used for exits outside that handoff.
+			p := v.runningProgress
+			handoff := p != nil && p.handoff != nil && p.handoff.group == row.group
+			extent := float32(0)
+			if live {
+				extent = 1
+			}
+			if handoff {
+				extent = p.handoffSlotExtent(c.Now())
+			}
+			prefix := statusDot(c.Key("group-dot"), label, font, t.Success, live, phase).Opacity(alpha).Shrink(0).SingleLine().Height(20).Clip()
+			if handoff {
+				prefix.Width(prefix.Jump("prefix-width", 12*extent))
+			} else {
+				prefix.Width(prefix.AnimateTo("prefix-width", width, motionAnimation(c, progressReclaimDuration)))
+			}
+			if !live {
+				prefix.Label("")
+			}
+
 			text := n.Text(c.Key("group-label"), label).FontSize(11).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
-			if closed {
-				shimmer(c, text, color, t.Text)
-				for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
-					if turn.ID == row.item.TurnID {
-						runningElapsed(c.Key("group-elapsed"), turn.StartedAt, t.TextMuted)
-						break
+			if live {
+				shimmer(c, text, color, t.Text, v.runningProgress.started)
+			}
+			for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
+				if turn.ID == row.item.TurnID {
+					clock, natural := runningElapsed(c.Key("group-elapsed"), turn.StartedAt, t.TextMuted, true)
+					if handoff {
+						clock.Width(clock.Jump("elapsed-width", natural*extent))
+					} else {
+						clock.Width(clock.AnimateTo("elapsed-width", natural*extent, motionAnimation(c, progressReclaimDuration)))
 					}
+					clock.Opacity(alpha)
+					break
 				}
 			}
+			inlineSymbol(c.Key("group-chevron"), chevron, label, font, 16, color, angle).Margin(0, 0, 0, 6)
+
 			if row.issues > 0 && v.Model.ToolDisclosure(row.group).Closed() {
 				animation := motionAnimation(c, 160*time.Millisecond)
-				n.Text(c.Key("issues"), fmt.Sprintf("%d 项未成功", row.issues)).FontSize(11).FixedLineHeight(20).TextColor(color).
+				n.Text(c.Key("issues"), fmt.Sprintf("%d 项未成功", row.issues)).Margin(0, 0, 0, 6).FontSize(11).FixedLineHeight(20).TextColor(color).
 					Transition(disclosureMotion(c, 160*time.Millisecond)).ContentTransition(n.ContentTransition{Numeric: true, Animation: &animation})
 			}
-			n.Spacer(c).Grow(1)
-			inlineSymbol(c, chevron, label, font, 10, subtle(t), angle).
-				Transition(n.ElementTransition{Position: true, Duration: motionAnimation(c, 160*time.Millisecond).Duration, Ease: n.EaseOut})
 		})
 	}).Clicked() {
 		list := v.lists[v.Model.SessionID]

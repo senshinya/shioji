@@ -25,21 +25,21 @@ func TestNewToolsRevealTheirHeightAndFadeTheirInk(t *testing.T) {
 			ui.SetDark(dark)
 			ui.Advance(time.Second)
 			for i := 0; i < 2; i++ {
-				before, _ := ui.Find("回复信息")
+				before := v.historyRowBounds["turn-footer:turn"]
 				name := fmt.Sprint("stream command ", i)
 				d.Items = append(d.Items, domain.Item{ID: name, TurnID: "turn", Kind: "tool", Presentation: "command", Name: name, Status: "running"})
 				m.Details["s"] = d
 				ui.Frame()
-				first, _ := ui.Find("回复信息")
+				first := v.historyRowBounds["turn-footer:turn"]
 				ui.Advance(60 * time.Millisecond)
-				middle, _ := ui.Find("回复信息")
+				middle := v.historyRowBounds["turn-footer:turn"]
 				label, ok := ui.Find(name)
 				if !ok {
 					t.Fatal("tool label missing during reveal")
 				}
 				ink := toolLabelContrast(ui.Image(), label, dark)
 				ui.Advance(time.Second)
-				end, _ := ui.Find("回复信息")
+				end := v.historyRowBounds["turn-footer:turn"]
 				label, _ = ui.Find(name)
 				finalInk := toolLabelContrast(ui.Image(), label, dark)
 				if math.Abs(float64(first.Y-before.Y)) > 1 || middle.Y <= first.Y+1 || middle.Y >= end.Y-1 {

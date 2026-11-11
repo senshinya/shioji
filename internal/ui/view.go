@@ -27,7 +27,8 @@ type editBinding struct {
 }
 
 type View struct {
-	runningGroup, activityGroup, activityTurn                                                                       string
+	runningProgress                                                                                                 *runningProgress
+	runningGroup, activityTurn                                                                                      string
 	contextInputs                                                                                                   map[app.WorkKey]*contextInputUI
 	contextRowKeys                                                                                                  map[app.WorkKey]string
 	requestActionsState                                                                                             map[app.WorkKey]*requestActionState
@@ -1199,7 +1200,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	rows := v.transcriptRows(detail.Items)
 	rows = v.contextRows(rows)
 	rows = v.revealFindTarget(rows, reopening)
-	v.syncRunningGroup(rows, detail)
+	v.syncRunningGroup(c, rows, detail)
 	turns := make(map[string]domain.Turn, len(detail.Turns))
 	for _, turn := range detail.Turns {
 		turns[turn.ID] = turn
@@ -1297,6 +1298,14 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		// and source journal events catch up. Keep the same inter-item spacing.
 		if row < len(rows) && (rows[row].item.Presentation == "compaction" || rows[row].item.Kind == "command") && rows[row].end < 0 {
 			bottom = 8
+		}
+		// Metadata uses a smaller line box than prose. Match the visible
+		// paragraph gap rather than reusing only its outer 8 DIP padding.
+		if item.Kind == "assistant" && row < len(rows) {
+			next := rows[row]
+			if next.footer != "" || next.restarting || next.preparing != "" || next.group != "" || next.item.Kind == "request" {
+				bottom = v.bodyMetadataGap()
+			}
 		}
 		// Waiting is the first output slot. Keep the same user-to-output gap
 		// when the status line gives way to real prose, tools or a request.
@@ -1420,23 +1429,26 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 		state = "disconnected"
 	}
 	delegated := v.runningGroup != "" && v.activityTurn == turn.ID && (turn.Status == "running" || turn.Status == "starting")
+	waiting := (turn.Status == "running" || turn.Status == "starting") && v.Model.Connected && v.runningActivity(turn).waiting
 	if turn.Status == "running" || turn.Status == "starting" {
 		frame.MinHeight(0)
 	}
 	if state == "starting" {
 		state = "running"
 	}
-	animatedContentHeight(c, frame, !delegated, 180*time.Millisecond, func() float32 {
+	// A tool-to-prose handoff already has its final footer height. A second
+	// entrance/height animation would clip the new dot and move it on screen.
+	if p := v.runningProgress; !waiting && state == "running" && p != nil && p.turn == turn.ID && p.handoff != nil {
+		frame.Height(24).Children(func() { v.runningStatus(c, t, turn) })
+		return
+	}
+	animatedContentHeight(c, frame, !delegated && !waiting, 180*time.Millisecond, func() float32 {
 		row := n.Row(c.Key("state:" + state)).FillWidth().Wrap().Gap(messageFooterGap).MinHeight(24).AlignItems(n.Baseline).Transition(fadeMotion(c, 180*time.Millisecond))
-		// Fade the old ink while the tools themselves move. Once folded, only
-		// the empty footer layout exits; the header is then the sole owner.
-		// Opening waits for the old header ink to exit before revealing footer ink.
-		opacity := float32(1)
-		if turn.Status.Active() && v.activityTurn == turn.ID && v.activityGroup != "" && (v.Model.ToolDisclosure(v.activityGroup).Closed() || v.toolMotions[v.activityGroup] != nil) {
-			opacity = 0
-		}
-		row.Opacity(row.AnimateTo("activity-ownership", opacity, motionAnimation(c, 120*time.Millisecond)))
+
 		row.Children(func() {
+			if delegated || waiting {
+				return
+			}
 			if state == "disconnected" {
 				n.Text(c, "连接已断开，执行状态待核对").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 				return

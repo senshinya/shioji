@@ -152,7 +152,7 @@ func textField(c *n.Context, value *string) n.Element {
 
 type activityPulseKey struct{}
 
-func statusDot(c *n.Context, label string, font n.Font, color n.Color, pulse bool) n.Element {
+func statusDot(c *n.Context, label string, font n.Font, color n.Color, pulse bool, phase ...time.Time) n.Element {
 	m := inlineFontMetrics(label, font)
 	dot := n.RichText(c, n.Span{Text: "\uFFFC", ObjectWidth: 6, ObjectHeight: m.ascent, ObjectDescent: m.descent}).
 		Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).Role(n.RoleNone)
@@ -162,6 +162,9 @@ func statusDot(c *n.Context, label string, font n.Font, color n.Color, pulse boo
 		dot.Label("任务待处理")
 	}
 	started := *n.Local(dot, activityPulseKey{}, func() time.Time { return c.Now() })
+	if len(phase) > 0 {
+		started = phase[0]
+	}
 	reduce := c.Preferences().ReduceMotion
 	dot.DrawObjects(func(p *n.Painter, _ int, r n.Rect) {
 		r.Y += m.ascent - (3 + m.center)

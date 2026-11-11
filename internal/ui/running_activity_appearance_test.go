@@ -74,7 +74,7 @@ func TestRunningActivityNativeEvidence(t *testing.T) {
 		m.Details["s"] = d
 		ui.Frame()
 		ui.Advance(time.Second)
-		save("expanded", "回复信息")
+		save("expanded", "2 次工具调用")
 		ui.Click("2 次工具调用")
 		ui.Advance(time.Second)
 		save("folded", "2 次工具调用")
@@ -83,7 +83,7 @@ func TestRunningActivityNativeEvidence(t *testing.T) {
 		m.Details["s"] = d
 		ui.Frame()
 		ui.Advance(time.Second)
-		save("waiting", "回复信息")
+		save("waiting", "需要回答")
 		d.Requests = nil
 		d.Turns[0].Presentation = "compaction"
 		d.Items = append(append([]domain.Item{}, prefix...), domain.Item{ID: "compact-command", TurnID: "t", Kind: "command", Presentation: "compact", Name: "压缩上下文", Final: true}, domain.Item{ID: "compacting", TurnID: "t", Kind: "activity", Presentation: "compaction", Name: "正在压缩上下文"})
