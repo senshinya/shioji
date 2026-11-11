@@ -155,7 +155,8 @@ func (v *View) workspaceMenu(menu *n.Menu, w domain.Workspace) {
 		menu.Item("需要连接并更新执行服务").Disabled(true)
 	}
 }
-func (v *View) sessionMenu(menu *n.Menu, s domain.Session) {
+func (v *View) sessionMenu(menu *n.Menu, s domain.Session, ref app.SessionLocation) {
+	v.navigationMenu(menu, s, ref)
 	if menu.Item("分叉会话").Disabled(!v.historyReady(s) || !v.persistenceModel().SessionReadiness(s).Capabilities.Fork || v.historyBusy[s.ID]).Chosen() {
 		v.forkSession(s, "")
 	}

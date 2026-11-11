@@ -27,6 +27,9 @@ type editBinding struct {
 }
 
 type View struct {
+	navigationSave                                                                                                  *navigationSave
+	navigationSaveError                                                                                             string
+	navigationGeometry                                                                                              navigationGeometry
 	conversationImport                                                                                              *conversationImportUI
 	runningProgress                                                                                                 *runningProgress
 	runningGroup, activityTurn                                                                                      string
@@ -300,7 +303,7 @@ func (v *View) View(c *n.Context) {
 		v.watchStateWriter()
 		saved, err := v.Saver.Result()
 		v.lastState = saved
-		if err != nil {
+		if !v.syncNavigationSave(saved, err) && err != nil {
 			m.Error = "无法保存草稿：" + err.Error()
 		}
 		defer v.queueState()
@@ -481,182 +484,6 @@ func ghost(c *n.Context, label string, radius ...float32) n.Element {
 		r = radius[0]
 	}
 	return controlFeedback(c, n.Button(c, label).Radius(r), r).FontWeight(400).Justify(n.Start).Background(n.Transparent).Border(0, n.Transparent).Height(28)
-}
-func (v *View) sidebar(c *n.Context, t *n.Theme) {
-	titleAnimation := motionAnimation(c, 160*time.Millisecond)
-	m := v.Model
-	width, _ := c.Size()
-	sidebarWidth := float32(256)
-	if width <= 980 {
-		sidebarWidth = 224
-	} else if width <= 1160 {
-		sidebarWidth = 236
-	}
-	sidebarColor := t.Surface
-	if t.Dark {
-		sidebarColor = n.Hex("#161616")
-	}
-	n.Column(c).Width(sidebarWidth).FillHeight().Padding(8, 0, 8, 8).Children(func() {
-		n.Column(c).Fill().Padding(8).Gap(4).Radius(14).Background(sidebarColor).Border(1, t.Border).Children(func() {
-			n.Row(c).Height(26).AlignItems(n.Start).DragWindow().Children(func() {
-				n.Spacer(c).Grow(1)
-				v.searchControl(c, t)
-			})
-			if navButton(c, plus, "新建会话").Background(func() n.Color {
-				if m.SessionID == "" && !v.devices {
-					return t.SurfacePressed
-				}
-				return n.Transparent
-			}()).Clicked() {
-				v.home()
-			}
-			v.attentionControl(c, t)
-			n.Row(c).Height(32).Padding(8, 2, 0, 8).AlignItems(n.Center).Children(func() {
-				n.Text(c, "工作区").FontSize(11).FixedLineHeight(16).TextColor(t.TextMuted).Grow(1)
-				iconButton(c, moreActionsIcon, "工作区菜单").Size(24, 24).Menu(func(menu *n.Menu) {
-					if menu.Item("显示已归档").Checked(v.showArchived).Chosen() {
-						v.showArchived = !v.showArchived
-					}
-				})
-				if iconButton(c, plus, "创建工作区").Size(24, 24).Disabled(!m.Connected).Clicked() {
-					v.createWorkspace()
-				}
-			})
-			type navRow struct {
-				presence  float32
-				workspace *domain.Workspace
-				session   *domain.Session
-			}
-			rows := []navRow{}
-			for i := range m.Snapshot.Workspaces {
-				w := &m.Snapshot.Workspaces[i]
-				presence := v.navigationPresence(c, "workspace:"+w.ID, !w.Archived || v.showArchived)
-				children := []navRow{}
-				for j := range m.Snapshot.Sessions {
-					s := &m.Snapshot.Sessions[j]
-					if s.WorkspaceID == w.ID {
-						childPresence := v.navigationPresence(c, "session:"+s.ID, (!w.Archived && !s.Archived) || v.showArchived)
-						if childPresence > 0 {
-							children = append(children, navRow{session: s, presence: min(presence, childPresence)})
-						}
-					}
-				}
-				if presence <= 0 {
-					continue
-				}
-				rows = append(rows, navRow{workspace: w, presence: presence})
-				if !v.collapsedWorkspaces[w.ID] {
-					rows = append(rows, children...)
-				}
-			}
-			v.nav.Key = func(i int) any {
-				if rows[i].workspace != nil {
-					return "w:" + rows[i].workspace.ID
-				}
-				return "s:" + rows[i].session.ID
-			}
-			v.nav.Reveals = v.nav.Reveals[:0]
-			for i, r := range rows {
-				progress := r.presence
-				if r.session != nil {
-					progress = min(progress, v.sessionEntryProgress(c, r.session.ID, false))
-				}
-				if progress < 1 {
-					v.nav.Reveals = append(v.nav.Reveals, n.ListReveal{First: i, End: i + 1, Progress: progress})
-				}
-			}
-			n.List(c, &v.nav, len(rows), func(i int) {
-				r := rows[i]
-				if r.workspace != nil {
-					w := r.workspace
-					workspaceRow := n.Row(c).Height(30).Gap(3).AlignItems(n.Center).Opacity(r.presence)
-					workspaceRow.Children(func() {
-						if control(c.Key("workspace:" + w.ID)).Height(24).Grow(1).Gap(3).Justify(n.Start).Label(w.Name).Children(func() {
-							n.Row(c).Grow(1).Gap(3).AlignItems(n.Baseline).Children(func() {
-								angle := float32(0)
-								if v.collapsedWorkspaces[w.ID] {
-									angle = -90
-								}
-								inlineSymbol(c, disclosureDown, w.Name, n.Font{Family: c.Theme().Font, Size: 12, Weight: 500}, 11, t.TextMuted, angle).Width(20).TextAlign(n.Center)
-								n.Text(c, w.Name).SingleLine().Grow(1).FontSize(12).FontWeight(500).FixedLineHeight(20).Tooltip(w.Name)
-							})
-							n.Text(c, m.DeviceName(w.DeviceID)).FontSize(11).TextColor(t.TextMuted).PaddingX(6)
-						}).ContextMenu(func(menu *n.Menu) { v.workspaceMenu(menu, *w) }).Clicked() {
-							v.collapsedWorkspaces[w.ID] = !v.collapsedWorkspaces[w.ID]
-						}
-					})
-					return
-				}
-				s := r.session
-				selected := s.ID == v.focusedSessionID() && !v.devices && v.workspaceEditor == nil
-				finishingOutput := s.Status == "completed" && v.sessionOutputAnimating(s.ID)
-				if finishingOutput {
-					c.AnimationFrame()
-				}
-				row := control(c, 8).FillWidth().Height(28).MarginY(1).Padding(4, 8, 4, 20).Radius(8).Label(s.Title)
-				if progress := min(r.presence, v.sessionEntryProgress(c, s.ID, false)); progress < 1 {
-					row.Opacity(progress).Transform(n.Translation(-6*(1-progress), 0))
-				}
-				if selected {
-					row.Background(t.SurfacePressed)
-				}
-				row.ContextMenu(func(menu *n.Menu) { v.sessionMenu(menu, *s) })
-				row.Children(func() {
-					n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
-						if v.pendingCount(s.ID) > 0 {
-							n.Column(c).Width(10).AlignItems(n.Center).AlignSelf(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Warning) })
-						} else if s.Status.Active() || finishingOutput {
-							n.Column(c).Width(10).AlignItems(n.Center).AlignSelf(n.Center).Children(func() { n.Column(c).Size(4, 4).Radius(2).Background(t.Success) })
-						} else if s.Status == "completed" {
-							inlineSymbol(c, check, s.Title, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 10, t.Success)
-						} else if s.Status == "interrupted" || s.Status == "abandoned" {
-							inlineSymbol(c, check, s.Title, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 10, t.TextMuted).Label("已停止")
-						} else {
-							glyph := "Ⅱ"
-							label := "已暂停"
-							if s.Status == "failed" {
-								glyph = "×"
-								label = "执行失败"
-							}
-							if s.Status == "unknown" {
-								glyph = "?"
-								label = "执行状态待核实"
-							}
-							n.Text(c, glyph).Width(10).FontSize(11).TextColor(t.TextMuted).Label(label)
-						}
-						n.Text(c, s.Title).SingleLine().Grow(1).FontSize(13).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: &titleAnimation}).TextColor(func() n.Color {
-							if selected {
-								return t.Text
-							}
-							return t.TextMuted
-						}())
-						if count := v.pendingCount(s.ID); count > 0 {
-							n.Text(c, fmt.Sprint(count)).Font("Menlo").FontSize(11).Width(20).TextAlign(n.End)
-						}
-					})
-				})
-				if v.canManage(m.WorkspaceConnection(s.WorkspaceID)) && (row.DoubleClicked() || row.Focused() && c.Shortcut(0, n.KeyF2)) {
-					v.rename = &sessionRename{Session: *s, Title: s.Title, Connection: m.WorkspaceConnection(s.WorkspaceID), Open: true}
-				}
-				if row.Clicked() {
-					v.workspaceEditor = nil
-					v.skillReturn = nil
-					v.navigateSession(s.ID, s.WorkspaceID)
-					v.devices = false
-				}
-			}).Grow(1).FillHeight().Label("工作区与会话")
-			n.Column(c).Height(1).FillWidth().Background(t.Border)
-			n.Row(c).Height(32).Children(func() {
-				if navButton(c, monitor, "设备").Grow(1).Clicked() {
-					v.skillReturn = nil
-					v.devices = true
-				}
-				if iconButton(c, settingsIcon, "设置").Clicked() && v.OpenSettings != nil {
-					v.OpenSettings()
-				}
-			})
-		})
-	})
 }
 func (v *View) toolbar(c *n.Context, t *n.Theme) {
 	if v.workspaceEditor != nil && !v.devices {
