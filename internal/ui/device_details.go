@@ -201,6 +201,7 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 								deviceHeading(c, "执行服务", nil)
 								v.deviceWorker(c.Key("worker:"+key), t, key, state)
 							})
+							v.deviceStorage(c.Key("storage:"+key), t, key, state)
 							n.Column(c).FillWidth().Gap(0).Children(func() {
 								deviceHeading(c, "工作区", func() {
 									if iconButton(c, plus, "新建工作区").Disabled(!state.Connected || v.Controller == nil).Clicked() {
@@ -236,7 +237,7 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 							if key != "local" {
 								n.Column(c).FillWidth().Gap(0).Children(func() {
 									deviceHeading(c, "连接", func() {
-										if configurationAction(c, "重新连接").Disabled(v.Controller == nil).Clicked() {
+										if configurationAction(c, "重新连接").MarginEnd(-8).Disabled(v.Controller == nil).Clicked() {
 											v.do(app.Job{ConnectionID: key, Method: "$reconnect"})
 										}
 									})
@@ -321,7 +322,7 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 			n.Text(c, label).FontSize(12).FixedLineHeight(20).SingleLine().TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 		})
 		n.Spacer(c).Grow(1)
-		if configurationAction(c, action).Label(func() string {
+		if configurationAction(c, action).MarginEnd(-8).Label(func() string {
 			if flow != nil {
 				return action
 			}

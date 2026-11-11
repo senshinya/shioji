@@ -17,6 +17,12 @@ func (r *Repository) Export(a domain.Attachment, destination string) error {
 	if err != nil {
 		return err
 	}
+	return ExportFile(a, source, destination)
+}
+
+// ExportFile is also used while a disposable display copy is pinned by its
+// cache owner. It verifies bytes before replacing the selected destination.
+func ExportFile(a domain.Attachment, source, destination string) error {
 	data, err := os.ReadFile(source)
 	if err != nil {
 		return err

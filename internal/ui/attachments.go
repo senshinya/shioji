@@ -101,6 +101,16 @@ func (v *View) staging() *attachments.Repository {
 	}
 	return v.attachmentStore
 }
+
+func (v *View) displayCache() *app.AttachmentCache {
+	if v.parent != nil {
+		return v.parent.displayCache()
+	}
+	if v.attachmentCache == nil {
+		v.attachmentCache = app.NewAttachmentCache(filepath.Join(filepath.Dir(v.StatePath), "cache", "attachments"))
+	}
+	return v.attachmentCache
+}
 func (v *View) pickAttachments() {
 	if v.Controller == nil || v.StatePath == "" {
 		return
@@ -444,17 +454,18 @@ func (v *View) loadAttachmentImage(a domain.Attachment, workspace string, maximu
 		v.attachmentImages[a.ID] = cached
 		target, err := v.Model.AttachmentTarget(v.Controller.Directory, workspace)
 		store := v.staging()
+		cache := v.displayCache()
 		entry := cached
 		v.Controller.AttachmentTask(func() app.Update {
 			var img n.ImageSource
 			if err == nil {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 				defer cancel()
-				var path string
-				path, err = target.Download(ctx, store, a)
-				if err == nil {
-					img, err = decodeAttachmentImage(path, maximum)
-				}
+				err = cache.Read(ctx, target, store, a, func(path string) error {
+					var e error
+					img, e = decodeAttachmentImage(path, maximum)
+					return e
+				})
 			}
 			return func(*app.Model) {
 				entry.phase = attachmentImageReady
@@ -484,23 +495,24 @@ func (v *View) openAttachment(a domain.Attachment, workspace string, source n.Re
 	v.attachmentPreview = p
 	target, err := v.Model.AttachmentTarget(v.Controller.Directory, workspace)
 	store := v.staging()
+	cache := v.displayCache()
 	v.Controller.AttachmentTask(func() app.Update {
 		var img n.ImageSource
 		var text string
 		if err == nil {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
-			var path string
-			path, err = target.Download(ctx, store, a)
-			if err == nil {
+			err = cache.Read(ctx, target, store, a, func(path string) error {
+				var e error
 				if strings.HasPrefix(a.MIME, "image/") {
-					img, err = decodeAttachmentImage(path, 1600)
+					img, e = decodeAttachmentImage(path, 1600)
 				} else {
 					var data []byte
-					data, err = os.ReadFile(path)
+					data, e = os.ReadFile(path)
 					text = string(data)
 				}
-			}
+				return e
+			})
 		}
 		return func(*app.Model) {
 			if v.attachmentPreview != p {

@@ -8,6 +8,7 @@ import (
 	"github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
+	"shioji/internal/attachments"
 	"shioji/internal/domain"
 )
 
@@ -51,6 +52,7 @@ func (v *View) saveAttachment(p *attachmentPreview) {
 	p.Saving, p.SaveError = true, ""
 	target, targetErr := v.Model.AttachmentTarget(v.Controller.Directory, p.WorkspaceID)
 	store, parent := v.staging(), v.nativeWindow
+	cache := v.displayCache()
 	v.Controller.AttachmentTask(func() app.Update {
 		name := p.Attachment.Name
 		if filepath.Ext(name) == "" {
@@ -62,10 +64,9 @@ func (v *View) saveAttachment(p *attachmentPreview) {
 			if err == nil {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 				defer cancel()
-				_, err = target.Download(ctx, store, p.Attachment)
-			}
-			if err == nil {
-				err = store.Export(p.Attachment, destination)
+				err = cache.Read(ctx, target, store, p.Attachment, func(path string) error {
+					return attachments.ExportFile(p.Attachment, path, destination)
+				})
 			}
 		}
 		return func(*app.Model) {

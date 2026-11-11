@@ -71,6 +71,7 @@ type View struct {
 	parent, secondary                                                                                               *View
 	visibleSessions                                                                                                 map[string]string
 	attachmentStore                                                                                                 *attachments.Repository
+	attachmentCache                                                                                                 *app.AttachmentCache
 	attachmentImages                                                                                                map[string]*attachmentImage
 	attachmentUploading                                                                                             map[string]bool
 	attachmentPreparing                                                                                             map[string]int
@@ -134,6 +135,8 @@ type View struct {
 	deviceList                                                                                                      bool
 	deviceTab                                                                                                       string
 	deviceSearch                                                                                                    string
+	deviceStorageStates                                                                                             map[string]*deviceStorageState
+	clientStorageState                                                                                              *deviceStorageState
 	sshCheck                                                                                                        sshCheckPhase
 	sshSetup                                                                                                        app.DeviceSetupCheck
 	sshAgents                                                                                                       *deviceAgentEditor

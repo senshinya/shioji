@@ -90,6 +90,9 @@ func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.Raw
 	if job.Method == "device.directories" && client.Minor < 23 {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能浏览目录"}
 	}
+	if strings.HasPrefix(job.Method, "storage.") && client.Minor < 31 {
+		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能管理存储"}
+	}
 	if strings.HasPrefix(job.Method, "runtime.signin.") && client.Minor < 19 {
 		return nil, errors.New("更新设备的执行服务后才能在应用内登录")
 	}

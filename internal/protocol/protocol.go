@@ -29,7 +29,8 @@ const Major = 2
 // Minor 28 adds durable directed child input and receipt inspection.
 // Minor 29 adds durable, explicitly separate context maintenance commands.
 // Minor 30 persists user-side command records alongside context maintenance.
-const Minor = 30
+// Minor 31 adds device-owned storage measurement and bounded disposable cleanup.
+const Minor = 31
 const MaxFrame = 1 << 20
 
 type Frame struct {

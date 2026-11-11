@@ -41,6 +41,7 @@ type EventsQuery = protocol.EventsQuery
 type EventPage = protocol.EventPage
 type AnswerInput = protocol.AnswerInput
 type Server struct {
+	storageMu            sync.Mutex
 	idleRuntimes         map[string]idleRuntimeObservation
 	toolConfigMu         sync.Mutex
 	toolAuthMu           sync.Mutex
@@ -340,6 +341,8 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 	}
 
 	switch method {
+	case "storage.usage", "storage.clean":
+		return s.storage(method == "storage.clean")
 	case "runtime.tools.inspect":
 		in, err := decode[protocol.ToolInspectionInput](body)
 		if err != nil {
