@@ -2,6 +2,19 @@ package protocol
 
 import "shioji/internal/domain"
 
+type ConversationQuery struct {
+	WorkspaceID string `json:"workspaceId"`
+	Revision    int64  `json:"revision"`
+	HarnessID   string `json:"harnessId"`
+	SourceRef   string `json:"sourceRef,omitempty"`
+	Directory   string `json:"directory,omitempty"`
+	Cursor      string `json:"cursor,omitempty"`
+}
+type ConversationImportInput struct {
+	ConversationQuery
+	Config domain.RunConfig `json:"config"`
+}
+
 type WorkspaceInput struct {
 	Name    string   `json:"name"`
 	Folders []string `json:"folders"`

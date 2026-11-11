@@ -66,6 +66,7 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS metadata (id INTEGER PRIMARY KEY CHECK(id=1), device_id TEXT NOT NULL, generation TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, body BLOB NOT NULL);
+ CREATE UNIQUE INDEX IF NOT EXISTS imported_conversation ON sessions(json_extract(body,'$.workspaceId'),json_extract(body,'$.harnessId'),json_extract(body,'$.origin.sourceRef')) WHERE json_extract(body,'$.origin.sourceRef') IS NOT NULL;
  CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), state TEXT NOT NULL, digest TEXT NOT NULL, error TEXT NOT NULL DEFAULT '');
  CREATE TABLE IF NOT EXISTS items (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, position INTEGER NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
  CREATE INDEX IF NOT EXISTS items_order ON items(session_id,position);
@@ -83,7 +84,7 @@ func Open(path string) (*Store, error) {
  CREATE INDEX IF NOT EXISTS work_inputs_unsettled_session ON work_inputs(session_id) WHERE json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate') AND COALESCE(json_extract(body,'$.executionStopped'),0)=0;
  CREATE INDEX IF NOT EXISTS history_active_source ON history_operations(json_extract(body,'$.source.id')) WHERE json_extract(body,'$.state') IN ('prepared','forked');
  CREATE INDEX IF NOT EXISTS history_active_session ON history_operations(json_extract(body,'$.session.id')) WHERE json_extract(body,'$.state') IN ('prepared','forked');
- PRAGMA user_version=10;`)
+ PRAGMA user_version=11;`)
 	if err != nil {
 		tx.Rollback()
 		return fail(err)
@@ -352,6 +353,9 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		}
 		if session.Archived {
 			return none, errors.New("restore the session before sending")
+		}
+		if session.Origin != nil && session.Origin.ResumeRef == "" && session.ThreadID == "" {
+			return none, errors.New("此导入历史仅可查看")
 		}
 		if session.WorkspaceID != in.WorkspaceID || !(session.Status.CanSubmit()) {
 			return none, errors.New("session is unavailable for a new turn")

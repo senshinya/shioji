@@ -341,6 +341,21 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 	}
 
 	switch method {
+	case "conversation.list", "conversation.preview":
+		in, err := decode[protocol.ConversationQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		if method == "conversation.list" {
+			return s.listConversations(in)
+		}
+		return s.previewConversation(in)
+	case "conversation.import":
+		in, err := decode[protocol.ConversationImportInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.importConversation(in)
 	case "storage.usage", "storage.clean":
 		return s.storage(method == "storage.clean")
 	case "runtime.tools.inspect":
@@ -853,6 +868,9 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 		if d.Session.Archived {
 			return domain.Operation{}, errors.New("请先恢复会话")
 		}
+		if d.Session.Origin != nil && d.Session.Origin.ResumeRef == "" && d.Session.ThreadID == "" {
+			return domain.Operation{}, errors.New("此导入历史仅可查看")
+		}
 		if !d.Session.Status.CanSubmit() {
 			return domain.Operation{}, errors.New("session is unavailable for a new turn")
 		}
@@ -965,9 +983,20 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 	session := detail.Session
 	var turnID string
 	if session.ThreadID == "" {
-		session.ThreadID, err = runtime.Create(ctx, session)
+		if session.Origin != nil {
+			if importer, ok := runtime.(harness.ConversationContinuation); ok {
+				session.ThreadID, err = importer.PrepareConversation(ctx, session)
+			} else {
+				err = harness.Unsupported("imported-conversation-continuation")
+			}
+		} else {
+			session.ThreadID, err = runtime.Create(ctx, session)
+		}
 		if err == nil {
 			_, err = s.store.Apply(session.ID, domain.Event{Type: "session", Session: &session})
+		}
+		if err == nil && session.Origin != nil {
+			err = runtime.Resume(ctx, session)
 		}
 	} else {
 		s.mu.Lock()

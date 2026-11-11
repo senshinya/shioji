@@ -8,6 +8,7 @@ type ConversationCandidate struct {
 	SourceRef         string    `json:"sourceRef"`
 	HarnessID         string    `json:"harnessId"`
 	Title             string    `json:"title"`
+	Model             string    `json:"model,omitempty"`
 	Directory         string    `json:"directory"`
 	UpdatedAt         time.Time `json:"updatedAt"`
 	Active            bool      `json:"active,omitempty"`

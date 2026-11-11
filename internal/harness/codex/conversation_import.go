@@ -20,6 +20,7 @@ import (
 type conversationThread struct {
 	ID, CWD, Preview string
 	Name             *string
+	Model            *string
 	UpdatedAt        int64
 	ParentThreadID   *string
 	Status           struct{ Type string }
@@ -30,7 +31,11 @@ func conversationCandidate(t conversationThread) domain.ConversationCandidate {
 	if t.Name != nil && strings.TrimSpace(*t.Name) != "" {
 		title = *t.Name
 	}
-	return domain.ConversationCandidate{SourceRef: t.ID, HarnessID: "codex", Title: boundedTo(strings.TrimSpace(title), 512), Directory: conversationDirectory(t.CWD), UpdatedAt: time.Unix(t.UpdatedAt, 0).UTC(), Active: t.Status.Type == "active"}
+	model := ""
+	if t.Model != nil {
+		model = *t.Model
+	}
+	return domain.ConversationCandidate{SourceRef: t.ID, HarnessID: "codex", Title: boundedTo(strings.TrimSpace(title), 512), Model: model, Directory: conversationDirectory(t.CWD), UpdatedAt: time.Unix(t.UpdatedAt, 0).UTC(), Active: t.Status.Type == "active"}
 }
 func conversationDirectory(value string) string {
 	value = sourceExecutionPath(value)

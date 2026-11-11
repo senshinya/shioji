@@ -30,7 +30,8 @@ const Major = 2
 // Minor 29 adds durable, explicitly separate context maintenance commands.
 // Minor 30 persists user-side command records alongside context maintenance.
 // Minor 31 adds device-owned storage measurement and bounded disposable cleanup.
-const Minor = 31
+// Minor 32 adds scoped source history discovery, preview and durable import.
+const Minor = 32
 const MaxFrame = 1 << 20
 
 type Frame struct {
