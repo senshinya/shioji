@@ -244,6 +244,9 @@ func (v *View) beginConversationImport(u *conversationImportUI) {
 	}
 	u.total = len(u.queue)
 	u.done = 0
+	// A pending catalog page is unrelated to this immutable selection. Its
+	// eventual reply must not unlock or replace the running batch's state.
+	u.listRequest++
 	u.failures = map[string]string{}
 	u.phase = conversationImporting
 	u.message = ""

@@ -61,7 +61,7 @@ func (v *View) welcomeWorkspace(c *n.Context, t *n.Theme, f *welcomeFlow) {
 			}
 		})
 	})
-	v.welcomeError(c, f.error)
+	v.welcomeWorkspaceFeedback(c, t, f)
 	valid := strings.TrimSpace(f.name) != "" && path.IsAbs(strings.TrimSpace(f.directory))
 	for _, entry := range f.directories {
 		if entry.removed.IsZero() && !path.IsAbs(strings.TrimSpace(entry.path)) {
@@ -160,6 +160,21 @@ func (v *View) submitWelcomeWorkspace(f *welcomeFlow) {
 		return
 	}
 	key, epoch, device := f.key, state.ConnectionEpoch, v.Model.ConnectionDeviceID(f.key)
+	if f.workspace.ID != "" {
+		var current domain.Workspace
+		for _, w := range state.Snapshot.Workspaces {
+			if w.ID == f.workspace.ID && w.DeviceID == device {
+				current = w
+				break
+			}
+		}
+		if f.workspace.DeviceID != device || current.ID == "" {
+			f.workspace = domain.Workspace{}
+		} else if current.Revision != f.workspace.Revision {
+			f.error = "工作区已由其他位置修改，请重新载入"
+			return
+		}
+	}
 	if f.workspace.ID != "" && f.workspace.Name == strings.TrimSpace(f.name) && slices.Equal(f.workspace.Folders, folders) {
 		v.openConversationImport(key, f.workspace, true)
 		v.welcomeStep(welcomeImport, 1)
@@ -214,4 +229,42 @@ func (v *View) submitWelcomeWorkspace(f *welcomeFlow) {
 		f.busy = false
 		f.error = "设备操作繁忙，请重试"
 	}
+}
+
+func (v *View) welcomeWorkspaceFeedback(c *n.Context, t *n.Theme, f *welcomeFlow) {
+	var current domain.Workspace
+	for _, w := range v.deviceState(f.key).Snapshot.Workspaces {
+		if w.ID == f.workspace.ID && w.DeviceID == v.Model.ConnectionDeviceID(f.key) && w.Revision != f.workspace.Revision {
+			current = w
+			break
+		}
+	}
+	box := n.Column(c.Key("workspace-feedback")).FillWidth().Clip()
+	lastText := n.Local(box, "text", func() string { return f.error })
+	lastWorkspace := n.Local(box, "reload", func() domain.Workspace { return current })
+	if f.error != "" {
+		*lastText = f.error
+		*lastWorkspace = current
+	}
+	n.Inert(box, f.error == "")
+	animatedContentHeight(c, box, f.error != "", 180*time.Millisecond, func() float32 {
+		n.Row(c).FillWidth().Gap(12).AlignItems(n.Baseline).PaddingY(8).Children(func() {
+			n.Text(c, *lastText).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Grow(1).MinWidth(0).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+			if lastWorkspace.ID != "" {
+				if configurationAction(c, "重新载入").Label("重新载入工作区").Disabled(f.busy).Clicked() {
+					current := *lastWorkspace
+					f.workspace = current
+					f.name = current.Name
+					f.directory = current.Folders[0]
+					f.directories = nil
+					for _, folder := range current.Folders[1:] {
+						f.nextDirectory++
+						f.directories = append(f.directories, welcomeDirectory{id: f.nextDirectory, path: folder, added: true})
+					}
+					f.error = ""
+				}
+			}
+		})
+		return 0
+	})
 }

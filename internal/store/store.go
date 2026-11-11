@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -359,6 +360,14 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		}
 		if session.WorkspaceID != in.WorkspaceID || !(session.Status.CanSubmit()) {
 			return none, errors.New("session is unavailable for a new turn")
+		}
+		if session.Origin != nil && session.ThreadID == "" && session.Context.Repository == "" && len(launch) > 0 && launch[0].Repository != "" {
+			accepted := launch[0]
+			if accepted.DeviceID != session.Context.DeviceID || accepted.CWD != session.Context.CWD || !slices.Equal(accepted.AdditionalDirectories, session.Context.AdditionalDirectories) {
+				return none, errors.New("imported execution scope changed")
+			}
+			session.Context = accepted
+			session.GitBranch, session.GitHead = accepted.Branch, accepted.Head
 		}
 		if queued == nil {
 			q, e := s.queueLocked(session.ID)

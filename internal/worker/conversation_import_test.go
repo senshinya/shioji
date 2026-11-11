@@ -2,6 +2,9 @@ package worker_test
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,6 +17,15 @@ func TestConversationImportRPCAndFirstInputUseIndependentSourcePrefix(t *testing
 	_, client, provider := startServer(t)
 	var w domain.Workspace
 	call(t, client, "workspace.create", protocol.WorkspaceInput{Name: "Import", Folders: []string{t.TempDir()}}, &w)
+	if err := os.WriteFile(filepath.Join(w.Folders[0], "tree.go"), []byte("package tree\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "-b", "main"}, {"config", "user.name", "Import test"}, {"config", "user.email", "import@example.invalid"}, {"add", "."}, {"commit", "-m", "initial"}} {
+		cmd := exec.Command("git", append([]string{"-C", w.Folders[0]}, args...)...)
+		if b, err := cmd.CombinedOutput(); err != nil {
+			t.Fatal("Git fixture", string(b), err)
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 	done := make(chan struct{}, 4)
@@ -83,7 +95,7 @@ func TestConversationImportRPCAndFirstInputUseIndependentSourcePrefix(t *testing
 		call(t, client, "session", protocol.SessionQuery{ID: imported.ID, Limit: 100}, &detail)
 		return detail.Session.Status == "completed" || detail.Session.Status == "failed"
 	})
-	if detail.Session.Status != "completed" || detail.Session.ThreadID == "" || detail.Session.ThreadID == source.ThreadID || len(provider.Inputs()) != 2 || len(detail.Items) != 4 {
+	if detail.Session.Status != "completed" || detail.Session.ThreadID == "" || detail.Session.ThreadID == source.ThreadID || detail.Session.GitBranch != "main" || detail.Session.Context.Repository != w.Folders[0] || len(provider.Inputs()) != 2 || len(detail.Items) != 4 {
 		t.Fatal("first input failed or took over source", detail.Session, detail.Items)
 	}
 	reader, err := codex.Start(ctx, codex.Options{Home: provider.Home})

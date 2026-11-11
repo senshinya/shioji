@@ -301,11 +301,17 @@ func (s *Server) prepareGit(in domain.Submission, launch domain.LaunchContext) (
 		if in.Git.NewWorktree {
 			return launch, errors.New("existing sessions cannot be relocated")
 		}
-		if d.Session.ContextChanged || (d.Session.GitBranch == "" && d.Session.GitHead == "") {
+		firstImport := d.Session.Origin != nil && d.Session.ThreadID == "" && d.Session.Context.Repository == ""
+		if d.Session.ContextChanged || (d.Session.GitBranch == "" && d.Session.GitHead == "" && !firstImport) {
 			return launch, errors.New("执行分支已改变，请在分支选择中明确确认后继续")
 		}
 		if in.Git.Branch != "" && in.Git.Branch != status.Branch {
 			return launch, errors.New("switch an existing session explicitly before submission")
+		}
+		if firstImport {
+			// History import did not accept execution or claim the source's old
+			// checkout. The first explicit input pins the current owning checkout.
+			launch.Repository, launch.Branch, launch.Head = status.Repository, status.Branch, status.Head
 		}
 		return launch, nil
 	}
