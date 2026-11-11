@@ -41,6 +41,7 @@ type EventsQuery = protocol.EventsQuery
 type EventPage = protocol.EventPage
 type AnswerInput = protocol.AnswerInput
 type Server struct {
+	idleRuntimes         map[string]idleRuntimeObservation
 	toolConfigMu         sync.Mutex
 	toolAuthMu           sync.Mutex
 	toolAuth             map[string]*workerToolAuthorization
@@ -197,6 +198,8 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	}
 	s.wg.Add(1)
 	go s.reapExecutions()
+	s.wg.Add(1)
+	go s.idleRuntimeLoop()
 	s.wg.Add(1)
 	go s.watchRecoveryTools()
 	for _, id := range s.adapterOrder {
