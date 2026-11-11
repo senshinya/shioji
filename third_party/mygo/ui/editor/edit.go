@@ -354,6 +354,9 @@ func (ed *editor) undo(redo bool) bool {
 // whole line, which pastes above the line of a caret alone, as Zed and
 // VS Code do.
 func (ed *editor) copy(cut bool) {
+	if side, ok := ed.o.decor.(*diffSide); ok && side.d.copyTextSelection() {
+		return
+	}
 	r := &ed.view.text
 	var pieces []string
 	var whole []bool

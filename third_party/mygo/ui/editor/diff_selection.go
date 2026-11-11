@@ -1,0 +1,399 @@
+package editor
+
+import (
+	"github.com/egoist/mygo/ui"
+	"strings"
+	"unicode/utf8"
+)
+
+// DiffTextPoint identifies a byte in one original input (before CRLF
+// normalization). DiffTextFragment is half-open and never includes a gutter.
+type DiffTextPoint struct {
+	Side   DiffSide
+	Offset int
+}
+type DiffTextFragment struct {
+	Side               DiffSide
+	Start, End         int
+	StartLine, EndLine int // one-based source lines
+	Text               string
+}
+type DiffTextSelection struct {
+	Fragments []DiffTextFragment
+	Text      string
+	Bounds    ui.Rect // window coordinates, at the selection's reading end
+	Dragging  bool
+}
+type diffTextSelectionState struct {
+	fragments              []DiffTextFragment
+	computed               bool
+	anchor, head           DiffTextPoint // normalized byte offsets, internally
+	active, dragging       bool
+	old, new               *Buffer
+	oldVersion, newVersion uint64
+}
+type diffTextRow struct {
+	side DiffSide
+	line int
+}
+
+func (d *DiffState) selectionBuffer(side DiffSide) *Buffer {
+	if side == DiffOld {
+		return d.Old
+	}
+	return d.New
+}
+func sourceOffset(b *Buffer, offset int) int {
+	snap := b.Snapshot()
+	offset = max(0, min(offset, snap.Len()))
+	if snap.crlf {
+		return offset + strings.Count(snap.Slice(0, offset), "\n")
+	}
+	return offset
+}
+func normalizedOffset(b *Buffer, offset int) int {
+	snap := b.Snapshot()
+	if !snap.crlf {
+		return max(0, min(offset, snap.Len()))
+	}
+	used := 0
+	for at, r := range snap.String() {
+		if used >= offset {
+			return at
+		}
+		used += utf8.RuneLen(r)
+		if r == '\n' {
+			used++
+		}
+	}
+	return snap.Len()
+}
+func (d *DiffState) SetTextSelection(anchor, head DiffTextPoint) {
+	d.ensure()
+	anchor.Offset = normalizedOffset(d.selectionBuffer(anchor.Side), anchor.Offset)
+	head.Offset = normalizedOffset(d.selectionBuffer(head.Side), head.Offset)
+	d.setTextSelection(anchor, head)
+}
+func (d *DiffState) setTextSelection(anchor, head DiffTextPoint) {
+	d.textSelection = diffTextSelectionState{anchor: anchor, head: head, active: true, old: d.Old, new: d.New, oldVersion: d.Old.Version(), newVersion: d.New.Version()}
+}
+func (d *DiffState) ClearTextSelection() { d.textSelection = diffTextSelectionState{} }
+func (d *DiffState) textSelectionValid() bool {
+	s := &d.textSelection
+	if !s.active {
+		return false
+	}
+	if s.old != d.Old || s.new != d.New || s.oldVersion != d.Old.Version() || s.newVersion != d.New.Version() {
+		d.ClearTextSelection()
+		return false
+	}
+	return true
+}
+func (d *DiffState) selectionRows() []diffTextRow {
+	d.ensure()
+	rows := []diffTextRow{}
+	next := 0
+	addNew := func(from, to int) {
+		for line := from; line < to; line++ {
+			if !d.eds[1].view.heights.isHidden(line) {
+				rows = append(rows, diffTextRow{DiffNew, line})
+			}
+		}
+	}
+	for _, h := range d.model.hunks {
+		addNew(next, h.B0)
+		for line := h.A0; line < h.A1; line++ {
+			rows = append(rows, diffTextRow{DiffOld, line})
+		}
+		addNew(h.B0, h.B1)
+		next = h.B1
+	}
+	addNew(next, d.New.LineCount())
+	return rows
+}
+
+// selectionFragments uses normalized offsets internally, retaining visual
+// old/new ordering. Public fragments translate back to original source bytes.
+func (d *DiffState) selectionFragments() []DiffTextFragment {
+	if !d.textSelectionValid() {
+		return nil
+	}
+	if d.textSelection.computed {
+		return d.textSelection.fragments
+	}
+	d.textSelection.computed = true
+	rows := d.selectionRows()
+	anchor, head := d.textSelection.anchor, d.textSelection.head
+	index := func(point DiffTextPoint) int {
+		line := d.selectionBuffer(point.Side).Snapshot().LineOf(point.Offset)
+		for i, row := range rows {
+			if row.side == point.Side && row.line == line {
+				return i
+			}
+		}
+		return -1
+	}
+	a, z := index(anchor), index(head)
+	if a < 0 || z < 0 {
+		return nil
+	}
+	if a > z || a == z && anchor.Offset > head.Offset {
+		a, z = z, a
+		anchor, head = head, anchor
+	}
+	var out []DiffTextFragment
+	for i := a; i <= z; i++ {
+		row := rows[i]
+		snap := d.selectionBuffer(row.side).Snapshot()
+		start, end := snap.LineStart(row.line), min(snap.Len(), snap.LineEnd(row.line)+1)
+		if i == a {
+			start = anchor.Offset
+		}
+		if i == z {
+			end = head.Offset
+		}
+		if end <= start {
+			continue
+		}
+		if len(out) > 0 && out[len(out)-1].Side == row.side && out[len(out)-1].End == start {
+			out[len(out)-1].End = end
+			out[len(out)-1].EndLine = row.line + 1
+			continue
+		}
+		out = append(out, DiffTextFragment{Side: row.side, Start: start, End: end, StartLine: row.line + 1, EndLine: row.line + 1})
+	}
+	d.textSelection.fragments = out
+	return out
+}
+func (d *DiffState) SelectedText() (DiffTextSelection, bool) {
+	var out DiffTextSelection
+	for _, f := range d.selectionFragments() {
+		buffer := d.selectionBuffer(f.Side)
+		f.Text = buffer.Slice(f.Start, f.End)
+		if buffer.Snapshot().crlf {
+			f.Text = strings.ReplaceAll(f.Text, "\n", "\r\n")
+		}
+		f.Start, f.End = sourceOffset(buffer, f.Start), sourceOffset(buffer, f.End)
+		if len(out.Fragments) > 0 && !strings.HasSuffix(out.Text, "\n") {
+			out.Text += "\n"
+		}
+		out.Text += f.Text
+		out.Fragments = append(out.Fragments, f)
+	}
+	out.Dragging = d.textSelection.dragging
+	if len(out.Fragments) == 0 {
+		return out, false
+	}
+	out.Bounds = d.textSelectionBounds()
+	return out, true
+}
+func (d *DiffState) copyTextSelection() bool {
+	selection, ok := d.SelectedText()
+	if !ok {
+		return false
+	}
+	d.editorOf(DiffNew).services.WriteClipboard(selection.Text)
+	return true
+}
+func (d *DiffState) selectionPoint(ed *editor, x, y float32) (DiffTextPoint, bool) {
+	ed.sync()
+	cx, cy := ed.toContent(x, y)
+	if block, r, ok := ed.blockAt(cy); ok {
+		if block.kind != blockDeleted {
+			return DiffTextPoint{}, false
+		}
+		view := &d.oldView
+		top := r.Y
+		for line := block.from; line < block.to; line++ {
+			layout := view.line(line)
+			height := float32(len(layout.rows)) * view.lineHeight
+			if y < top+height || line == block.to-1 {
+				row := min(max(0, int((y-top)/view.lineHeight)), len(layout.rows)-1)
+				display := view.dispAt(layout, &layout.rows[row], cx)
+				return DiffTextPoint{DiffOld, layout.start + layout.fromDisp(display)}, true
+			}
+			top += height + d.annotationHeight(DiffOld, line)
+		}
+	}
+	return DiffTextPoint{DiffNew, ed.offsetAt(cx, cy)}, true
+}
+func (d *DiffState) textSelectionBounds() ui.Rect {
+	fs := d.selectionFragments()
+	if len(fs) == 0 {
+		return ui.Rect{}
+	}
+	f := fs[len(fs)-1]
+	ed := &d.eds[1]
+	if ed.view.lineHeight <= 0 {
+		return ui.Rect{}
+	}
+	offset := max(f.Start, f.End-1)
+	if f.Side == DiffNew {
+		r, ok := ed.caretRect(offset)
+		if !ok {
+			return ui.Rect{}
+		}
+		r.X += ed.r.X + ed.textX - ed.scrollX
+		r.Y += ed.r.Y - float32(ed.scrollY)
+		return r
+	}
+	view := &d.oldView
+	line := view.text.LineOf(offset)
+	layout := view.line(line)
+	disp := layout.toDisp(offset-layout.start, true)
+	row := layout.rowOf(disp, false)
+	for i := range ed.view.heights.blocks {
+		b := &ed.view.heights.blocks[i]
+		if b.kind != blockDeleted || line < b.from || line >= b.to {
+			continue
+		}
+		above, below := ed.view.heights.blocksOf(b.line)
+		geom := ed.view.heights.geometry(b.line)
+		top, blocks := geom.top, above
+		if b.below {
+			top, blocks = geom.below, below
+		}
+		for _, item := range blocks {
+			if item.kind == b.kind && item.from == b.from && item.to == b.to {
+				break
+			}
+			top += float64(item.height)
+		}
+		for l := b.from; l < line; l++ {
+			top += float64(len(view.line(l).rows))*float64(view.lineHeight) + float64(d.annotationHeight(DiffOld, l))
+		}
+		return ui.Rect{X: ed.r.X + ed.textX - ed.scrollX + view.xOf(layout, &layout.rows[row], disp), Y: ed.r.Y + float32(top-ed.scrollY) + float32(row)*view.lineHeight, W: 2, H: view.lineHeight}
+	}
+	return ui.Rect{}
+}
+func (d *DiffState) notifyTextSelection() {
+	if d.OnTextSelection != nil {
+		selection, _ := d.SelectedText()
+		d.OnTextSelection(selection)
+	}
+}
+func (d *DiffState) textSelectionInput(ed *editor, ev ui.InputEvent) bool {
+	switch ev.Kind {
+	case ui.InputPointerDown:
+		if ev.Button != 0 || ed.regionAt(ev.X, ev.Y) != regionText {
+			return false
+		}
+		point, ok := d.selectionPoint(ed, ev.X, ev.Y)
+		if !ok {
+			d.ClearTextSelection()
+			return false
+		}
+		anchor := point
+		if ev.Mods&ui.Shift != 0 && d.textSelectionValid() {
+			anchor = d.textSelection.anchor
+		}
+		d.setTextSelection(anchor, point)
+		d.textSelection.dragging = true
+		ed.gesture.active = false
+		if ev.Clicks == 2 {
+			view := &ed.view
+			if point.Side == DiffOld {
+				view = &d.oldView
+			}
+			a, z := wordAt(view.text, point.Offset, ed.wordChars())
+			d.textSelection.anchor.Offset, d.textSelection.head.Offset = a, z
+		}
+		if ev.Clicks >= 3 {
+			snap := d.selectionBuffer(point.Side).Snapshot()
+			line := snap.LineOf(point.Offset)
+			d.textSelection.anchor.Offset, d.textSelection.head.Offset = snap.LineStart(line), snap.LineEnd(line)
+		}
+		d.notifyTextSelection()
+		return true
+	case ui.InputPointerMove:
+		if !d.textSelection.dragging {
+			return false
+		}
+		if dy := past(ev.Y, 0, ed.viewH); dy != 0 {
+			ed.setScrollShared(ed.scrollY + float64(edgeSpeed(dy)))
+		}
+		if point, ok := d.selectionPoint(ed, ev.X, ev.Y); ok {
+			d.textSelection.head = point
+			d.textSelection.computed = false
+		}
+		d.notifyTextSelection()
+		return true
+	case ui.InputPointerUp:
+		if !d.textSelection.dragging {
+			return false
+		}
+		d.textSelection.dragging = false
+		d.notifyTextSelection()
+		return true
+	case ui.InputCommand:
+		if ev.Text == "copy" {
+			return d.copyTextSelection()
+		}
+	case ui.InputKeyDown:
+		if ev.Mods&ui.Cmd != 0 && ev.Key == ui.KeyA {
+			rows := d.selectionRows()
+			if len(rows) > 0 {
+				first, last := rows[0], rows[len(rows)-1]
+				d.setTextSelection(DiffTextPoint{first.side, 0}, DiffTextPoint{last.side, d.selectionBuffer(last.side).Len()})
+				d.notifyTextSelection()
+			}
+			return true
+		}
+		if ev.Mods&ui.Cmd != 0 && ev.Key == ui.KeyC {
+			return d.copyTextSelection()
+		}
+		if ev.Key == ui.KeyEscape {
+			d.ClearTextSelection()
+			d.notifyTextSelection()
+			return false
+		}
+		if !d.textSelectionValid() {
+			return false
+		}
+		if ev.Key == ui.KeyLeft || ev.Key == ui.KeyRight || ev.Key == ui.KeyUp || ev.Key == ui.KeyDown || ev.Key == ui.KeyHome || ev.Key == ui.KeyEnd {
+			point := d.textSelection.head
+			snap := d.selectionBuffer(point.Side).Snapshot()
+			line := snap.LineOf(point.Offset)
+			switch ev.Key {
+			case ui.KeyLeft:
+				_, size := utf8.DecodeLastRuneInString(snap.Slice(0, point.Offset))
+				point.Offset = max(0, point.Offset-size)
+			case ui.KeyRight:
+				_, size := utf8.DecodeRuneInString(snap.Slice(point.Offset, snap.Len()))
+				point.Offset = min(snap.Len(), point.Offset+size)
+			case ui.KeyHome:
+				point.Offset = snap.LineStart(line)
+			case ui.KeyEnd:
+				point.Offset = snap.LineEnd(line)
+			default:
+				rows := d.selectionRows()
+				for i, row := range rows {
+					if row.side == point.Side && row.line == line {
+						delta := 1
+						if ev.Key == ui.KeyUp {
+							delta = -1
+						}
+						next := rows[min(max(0, i+delta), len(rows)-1)]
+						column := point.Offset - snap.LineStart(line)
+						target := d.selectionBuffer(next.side).Snapshot()
+						point = DiffTextPoint{next.side, min(target.LineStart(next.line)+column, target.LineEnd(next.line))}
+						break
+					}
+				}
+			}
+			// Never place a UTF-8 caret in the middle of a code point.
+			text := d.selectionBuffer(point.Side).Snapshot().String()
+			for point.Offset > 0 && point.Offset < len(text) && !utf8.RuneStart(text[point.Offset]) {
+				point.Offset--
+			}
+			if ev.Mods&ui.Shift == 0 {
+				d.textSelection.anchor = point
+			}
+			d.textSelection.head = point
+			d.textSelection.computed = false
+			d.notifyTextSelection()
+			return true
+		}
+	}
+	return false
+}

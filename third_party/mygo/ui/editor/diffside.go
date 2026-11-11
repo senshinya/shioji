@@ -227,6 +227,15 @@ func (s *diffSide) paintDeleted(p *ui.Painter, ed *editor, b *block, r ui.Rect) 
 						}
 					}
 				}
+				for _, selection := range d.selectionFragments() {
+					if selection.Side != DiffOld || selection.End <= l.start || selection.Start >= l.start+len(l.text) {
+						continue
+					}
+					a, z := max(0, selection.Start-l.start), min(len(l.text), selection.End-l.start)
+					for _, rc := range ov.rangeRects(l, row, l.toDisp(a, false), l.toDisp(z, true), nil) {
+						p.Fill(ui.Rect{X: ox + rc.X, Y: ry, W: rc.W, H: lh}, ed.theme.Selection, 0)
+					}
+				}
 				ov.paintRow(p, l, row, ox, ry, &cc, nil)
 			}
 		}

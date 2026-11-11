@@ -55,6 +55,11 @@ type DiffState struct {
 	// select lines, which OnLineSelection reports.
 	LineSelection   bool
 	OnLineSelection func(DiffLineRange)
+	// TextSelection enables precise read-only text selection across both sides
+	// of a unified diff, including its deleted blocks. Offsets preserve UTF-8
+	// and the original buffer's line endings.
+	TextSelection   bool
+	OnTextSelection func(DiffTextSelection)
 	// OnGutterButton shows a + on the gutter of the line under the
 	// pointer, as to comment on it, and is called with the line when it
 	// is clicked.
@@ -102,10 +107,11 @@ type DiffState struct {
 	// blocksV counts the blocks prepare made, and built is the geometry
 	// the separators and buttons were built for, which a frame changing
 	// it builds again (diffGeom).
-	blocksV int
-	built   diffGeom
-	gapList []diffGap
-	partial *diffPartial
+	blocksV       int
+	built         diffGeom
+	gapList       []diffGap
+	partial       *diffPartial
+	textSelection diffTextSelectionState
 }
 
 // DiffLayout is how a diff viewer lays out its two texts.
@@ -310,6 +316,9 @@ func (d *DiffState) GoToHunk(i int) {
 // its key would, and reports whether it did something: Find opens its
 // find bar, as an app's menu item does.
 func (d *DiffState) Run(cmd Command) bool {
+	if cmd == Copy && d.copyTextSelection() {
+		return true
+	}
 	ed := d.editorOf(d.ActiveSide())
 	return ed.retry(func() bool { return ed.run(cmd) })
 }
@@ -397,6 +406,14 @@ func (d *DiffState) sideOptions(old bool) options {
 		wrap: d.Wrap, lineNumbers: LineNumbersOn, whitespace: WhitespaceNone, autoClose: true,
 		theme: d.Theme, bindings: d.Bindings, fitContent: d.FitContent, minDigits: digits,
 		renderFindBar: d.RenderFindBar, renderGoToLine: d.RenderGoToLine,
+	}
+	if d.TextSelection && !d.Editable && d.Layout == DiffUnified {
+		o.onInput = func(ev ui.InputEvent) bool { return d.textSelectionInput(&d.eds[1], ev) }
+		for _, f := range d.selectionFragments() {
+			if f.Side == DiffNew {
+				o.textBgs = append(o.textBgs, TextBackground{Start: f.Start, End: f.End, Color: d.Theme.resolve(ui.LightTheme()).Selection})
+			}
+		}
 	}
 	if d.NoLineNumbers {
 		o.lineNumbers = LineNumbersOff
