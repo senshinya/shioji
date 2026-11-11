@@ -24,6 +24,11 @@ The confirmed requirements are:
 - Keep the Git baseline focused as described in `docs/research/README.md`. Do not force-add local research archives, screenshots, reference captures, prototype tooling or generated state.
 - Keep credentials, existing user nodes and device permissions intact. Joining a tailnet does not authorize control; additional node enrollment and execution access require the corresponding explicit user action.
 
+## 局域网预览启动顺序
+
+- Ryugi 的 launcher 可能在 `start` 时安装并切换到新版运行时。每次最后一次 `start --no-open` 完成后，运行 `python3 scripts/prepare-lan-preview.py --port <实际端口>`；该脚本按监听进程识别正在提供页面的版本，在主模块前安装 HTTP UUID 兼容补丁，不依赖已知版本的缓存路径。
+- 补丁完成后再以实际局域网 HTTP 地址验证外层页面、嵌入画板、控制台及交互，之后分享链接。验证后不得再调用 `start`；如再次调用，必须重新修补、重新验证。回归检查：`python3 -m unittest scripts/test_lan_preview.py`。
+
 ## Implementation references
 
 - Product and interaction specification: `design/spec.html`; shared menu geometry: `design/menus.css`.
