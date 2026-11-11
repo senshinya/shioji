@@ -254,6 +254,9 @@ func (d *DiffState) selectionPoint(ed *editor, x, y float32) (DiffTextPoint, boo
 }
 func (d *DiffState) textSelectionBounds() ui.Rect {
 	fs := d.selectionFragments()
+	return d.fragmentBounds(fs)
+}
+func (d *DiffState) fragmentBounds(fs []DiffTextFragment) ui.Rect {
 	if len(fs) == 0 {
 		return ui.Rect{}
 	}
@@ -469,6 +472,24 @@ func (d *DiffState) TextSelectionScrollTarget() (float64, bool) {
 		return 0, false
 	}
 	target := ed.scrollY + float64(selection.Bounds.Y-ed.r.Y-ed.r.H*.4)
+	return min(max(0, target), ed.scrollMax()), true
+}
+
+// TextFragmentScrollTarget locates a quote without changing the user's selection.
+// A visible quote leaves scroll position untouched.
+func (d *DiffState) TextFragmentScrollTarget(part DiffTextFragment) (float64, bool) {
+	d.ensure()
+	source := d.sourceMap(part.Side)
+	part.Start, part.End = source.normalizedOffset(part.Start), source.normalizedOffset(part.End)
+	bounds := d.fragmentBounds([]DiffTextFragment{part})
+	ed := &d.eds[1]
+	if bounds.H <= 0 || ed.r.H <= 0 {
+		return 0, false
+	}
+	if bounds.Y >= ed.r.Y && bounds.Y+bounds.H <= ed.r.Y+ed.r.H {
+		return ed.scrollY, true
+	}
+	target := ed.scrollY + float64(bounds.Y-ed.r.Y-ed.r.H*.4)
 	return min(max(0, target), ed.scrollMax()), true
 }
 

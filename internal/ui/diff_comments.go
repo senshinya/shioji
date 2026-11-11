@@ -19,16 +19,18 @@ import (
 
 var diffCommentIcon = svg("M17.5 9.5c0 3.6-3.1 6.5-7 6.5H6l-3.5 1.5v-8C2.5 5.9 5.6 3 9.5 3h1c3.9 0 7 2.9 7 6.5Z")
 
-// Header, version, two input lines and actions, including gaps and border.
-const diffCommentEditorPanelHeight = 20 + 18 + 44 + 28 + 3*4 + 2*6 + 2
-
 type diffCommentKey struct {
 	Comparison domain.DiffComparison
 	Path       string
 }
 type diffCommentDraft struct {
-	Versions domain.FileVersions
-	Closing  bool
+	UIKey, Original              string
+	Location                     string
+	Bubble                       commentBubbleMotion
+	MeasureText                  string
+	MeasureWidth, MeasuredHeight float32
+	Versions                     domain.FileVersions
+	Closing                      bool
 
 	Selection           editor.DiffTextSelection
 	Snapshot            domain.Attachment
@@ -41,8 +43,10 @@ type diffCommentInsertion struct {
 	key, token, session, epoch string
 	ref                        app.DraftAttachment
 	draft                      *diffCommentDraft
+	state                      *changesState
 }
 type diffCommentNote struct {
+	Draft  *diffCommentDraft
 	Ref    app.DraftAttachment
 	Record domain.DiffCommentRecord
 }
@@ -59,119 +63,96 @@ func (s *changesState) commentDraft() *diffCommentDraft {
 	return s.CommentDrafts[diffCommentKey{s.Comparison, s.Path}]
 }
 func (v *View) configureDiffComments(c *n.Context, t *n.Theme, state *changesState) {
+	state.Diff.Annotations = nil
+	state.Diff.TextHighlights = nil
 	if !state.Diff.TextSelection {
 		return
 	}
 	state.Diff.FullWidthAnnotations = true
 	state.Diff.OnTextSelection = func(editor.DiffTextSelection) { state.SuppressSelectionAction = false }
-	state.Diff.Annotations = nil
-	state.Diff.TextHighlights = nil
 	var highlighted []domain.CodeSelection
 	draft := state.commentDraft()
-	clock := n.Column(c.Key("diff-comment-height")).Absolute().Size(0, 0).PassThrough()
-	target := float32(0)
-	if draft != nil && draft.Open {
-		target = diffCommentEditorPanelHeight + 16
-		if draft.Error != "" {
-			target += 24
-		}
-	}
-	height := clock.AnimateTo("height", target, motionAnimation(c, 220*time.Millisecond))
-	if draft != nil && draft.Closing && height == 0 {
-		draft.Closing = false
-		state.PinnedSnapshot = false
-		state.Updated = time.Time{}
-	}
-	if draft != nil && len(draft.Selection.Fragments) > 0 {
-		last := draft.Selection.Fragments[len(draft.Selection.Fragments)-1]
-		if height > 0 {
-			state.Diff.Annotations = append(state.Diff.Annotations, editor.DiffAnnotation{Side: last.Side, Line: last.EndLine - 1, Height: height, Key: "editor"})
-		}
-	}
 	present := map[string]bool{}
 	for _, ref := range v.Model.Attachments[v.Model.DraftKey()] {
 		if ref.Attachment.Kind != domain.DiffCommentResource || ref.DeviceID != v.referenceDeviceID() || ref.WorkspaceID != v.Model.WorkspaceID {
 			continue
 		}
 		resource := v.loadCommentResource(ref)
-		if resource.Loading || resource.Error != "" || resource.Record.Content.Comparison != state.Comparison || resource.Record.Content.Path != state.Path || resource.Record.Snapshot.SHA256 != state.Versions.Snapshot.SHA256 {
+		record := resource.Record
+		if resource.Loading || resource.Error != "" || record.Content.Comparison != state.Comparison || record.Content.Path != state.Path || record.Snapshot.SHA256 != state.Versions.Snapshot.SHA256 {
 			continue
 		}
-		highlighted = append(highlighted, resource.Record.Content.Fragments...)
-		if draft != nil && draft.Open && draft.Editing.ID == ref.Attachment.ID {
-			continue
-		}
+		highlighted = append(highlighted, record.Content.Fragments...)
 		present[ref.Attachment.ID] = true
-		if !slices.ContainsFunc(state.CommentNotes, func(note diffCommentNote) bool { return note.Ref.Attachment.ID == ref.Attachment.ID }) {
-			state.CommentNotes = append(state.CommentNotes, diffCommentNote{ref, resource.Record})
+		found := false
+		for i := range state.CommentNotes {
+			note := &state.CommentNotes[i]
+			if note.Ref.Attachment.ID == ref.Attachment.ID {
+				note.Record = record
+				found = true
+				break
+			}
+		}
+		if !found {
+			d := commentDraftFromRecord(state, ref, record)
+			state.CommentNotes = append(state.CommentNotes, diffCommentNote{Ref: ref, Record: record, Draft: d})
 		}
 	}
+	state.Diff.TextHighlights = diffCommentHighlights(highlighted, t.Dark)
 	keep := state.CommentNotes[:0]
 	for _, note := range state.CommentNotes {
 		if note.Record.Content.Comparison != state.Comparison || note.Record.Content.Path != state.Path {
 			keep = append(keep, note)
 			continue
 		}
-		parts := note.Record.Content.Fragments
-		if len(parts) == 0 {
+		if len(note.Record.Content.Fragments) == 0 {
 			continue
 		}
-		clock := n.Column(c.Key("comment-note-height:"+note.Ref.Attachment.ID)).Absolute().Size(0, 0).PassThrough()
-		initialized := n.Local(clock, "initialized", func() bool { return false })
-		if !*initialized {
-			clock.Jump("height", 0)
-			*initialized = true
+		if note.Draft == nil {
+			note.Draft = commentDraftFromRecord(state, note.Ref, note.Record)
 		}
-		target := float32(0)
-		if present[note.Ref.Attachment.ID] {
-			target = 32
-		}
-		height := clock.AnimateTo("height", target, motionAnimation(c, 220*time.Millisecond))
+		height := diffCommentBubbleHeight(c, t, note.Draft, present[note.Ref.Attachment.ID], state.CommentWidth)
 		if height <= 0 && !present[note.Ref.Attachment.ID] {
 			continue
 		}
 		keep = append(keep, note)
-		last := parts[len(parts)-1]
-		side := editor.DiffNew
-		if last.Side == "base" {
-			side = editor.DiffOld
-		}
-		state.Diff.Annotations = append(state.Diff.Annotations, editor.DiffAnnotation{Side: side, Line: last.EndLine - 1, Height: height, Key: note.Ref.Attachment.ID})
+		appendCommentAnnotation(state, note.Draft, height)
 	}
 	state.CommentNotes = keep
-	state.Diff.TextHighlights = diffCommentHighlights(highlighted, t.Dark)
-
-	state.Diff.RenderAnnotation = func(c *n.Context, annotation editor.DiffAnnotation) {
-		if annotation.Key == "editor" {
+	if draft != nil && draft.Editing.ID == "" && len(draft.Selection.Fragments) > 0 {
+		if draft.UIKey == "" {
+			draft.UIKey = "editor"
+		}
+		height := diffCommentBubbleHeight(c, t, draft, draft.Open, state.CommentWidth)
+		if height > 0 {
+			appendCommentAnnotation(state, draft, height)
+		} else if draft.Closing {
+			draft.Closing = false
+			state.PinnedSnapshot = false
+			state.Updated = time.Time{}
+		}
+	}
+	state.Diff.RenderAnnotation = func(c *n.Context, a editor.DiffAnnotation) {
+		if draft != nil && draft.Editing.ID == "" && a.Key == draft.UIKey {
 			v.diffCommentEditor(c, t, state, draft)
 			return
 		}
-		for _, entry := range state.CommentNotes {
-			ref := entry.Ref
-			if ref.Attachment.ID != annotation.Key {
-				continue
+		for _, note := range state.CommentNotes {
+			if note.Draft != nil && note.Draft.UIKey == a.Key {
+				v.diffCommentEditor(c, t, state, note.Draft)
+				return
 			}
-			resource := &diffCommentResource{Record: entry.Record}
-
-			// Icon-only actions have no text baseline. Center their hit slots
-			// independently so they cannot push the inline comment text down.
-			note := n.Row(c).Fill().Clip().Padding(5, 12).Gap(6).AlignItems(n.Center).Background(t.Background).Transition(fadeMotion(c, 140*time.Millisecond))
-			note.Children(func() {
-				font := n.Font{Family: t.Font, Size: 12, Weight: 400}
-				inlineIconText(c, diffCommentIcon, resource.Record.Content.Comment, font, 13, 6, t.TextMuted).Grow(1).MinWidth(0).TextColor(t.Text).Transform(n.Translation(0, inlineCenterOffset(resource.Record.Content.Comment, font))).Ellipsis("…").Tooltip(resource.Record.Content.Comment)
-				if iconButton(c, queueEditIcon, "编辑评论").Size(22, 22).Clicked() {
-					v.editDiffComment(state, ref, resource.Record)
-				}
-				if iconButton(c, closeIcon, "移除评论").Size(22, 22).Clicked() {
-					v.removeCommentReference(c, ref.Attachment.ID)
-				}
-			})
 		}
 	}
 }
+
 func (v *View) diffSelectionAction(c *n.Context, t *n.Theme, state *changesState, viewer n.Element) {
 	if state.Locating {
-		if target, ok := state.Diff.TextSelectionScrollTarget(); ok {
+		target, ok := state.Diff.TextSelectionScrollTarget()
+		if state.LocateFragment != nil {
+			target, ok = state.Diff.TextFragmentScrollTarget(*state.LocateFragment)
+		}
+		if ok {
 			clock := n.Column(c.Key(fmt.Sprint("locate-comment-", state.LocateSequence))).Absolute().Size(0, 0).PassThrough()
 			initialized := n.Local(clock, "initialized", func() bool { return false })
 			if !*initialized {
@@ -183,6 +164,7 @@ func (v *View) diffSelectionAction(c *n.Context, t *n.Theme, state *changesState
 			state.Diff.SetScrollY(float64(shown))
 			if math.Abs(float64(shown)-target) < .5 {
 				state.Locating = false
+				state.LocateFragment = nil
 			} else {
 				c.AnimationFrame()
 			}
@@ -209,83 +191,16 @@ func (v *View) diffSelectionAction(c *n.Context, t *n.Theme, state *changesState
 		if button.Clicked() {
 			selection.Fragments = slices.Clone(selection.Fragments)
 			key := diffCommentKey{state.Comparison, state.Path}
-			draft := &diffCommentDraft{Selection: selection, Snapshot: state.Versions.Snapshot, Versions: state.Versions, Open: true, Focus: true}
+			draft := &diffCommentDraft{UIKey: domain.NewID(), Selection: selection, Snapshot: state.Versions.Snapshot, Versions: state.Versions, Open: true, Focus: true}
 			state.CommentDrafts[key] = draft
 			v.retainCommentDraft(state, key, draft)
 		}
 	})
 }
 func (v *View) diffCommentEditor(c *n.Context, t *n.Theme, state *changesState, draft *diffCommentDraft) {
-	if draft == nil {
-		return
+	if draft != nil {
+		v.diffCommentBubble(c, t, state, draft)
 	}
-	panelHeight := float32(diffCommentEditorPanelHeight)
-	if draft.Error != "" {
-		panelHeight += 24
-	}
-	n.Column(c).Fill().Padding(8, 12).Clip().Children(func() {
-		panel := n.Column(c).FillWidth().Height(panelHeight).Shrink(0).Padding(6, 12).Gap(4).Clip().Radius(8).Background(codeSurface(t)).Border(1, t.Border).Label("代码评论编辑器")
-		panel.Children(func() {
-			name := state.Path
-			if len(draft.Selection.Fragments) > 0 {
-				part := draft.Selection.Fragments[0]
-				name += fmt.Sprintf(":%d", part.StartLine)
-			}
-			inlineIconText(c, diffCommentIcon, name, n.Font{Family: t.Font, Size: 11}, 13, 6, t.TextMuted).Height(20)
-			endpoint := state.Comparison.Target
-			side := "目标侧"
-			if draft.Selection.Fragments[0].Side == editor.DiffOld {
-				endpoint = state.Comparison.Base
-				side = "基准侧"
-			}
-			origin := side + " · " + diffEndpointShortDescription(endpoint)
-			for _, part := range draft.Selection.Fragments {
-				if part.Side != draft.Selection.Fragments[0].Side {
-					origin = "基准与目标 · " + diffEndpointName(state.Comparison.Base) + " → " + diffEndpointName(state.Comparison.Target)
-					break
-				}
-			}
-			n.Text(c, origin).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).SingleLine().Ellipsis("…").FillWidth()
-			field := n.TextAreaBase(c.Key("comment-text"), &draft.Text).FillWidth().Height(44).Lines(2, 2).FontSize(13).FixedLineHeight(20).Label("代码评论内容").Placeholder("添加评论…").Disabled(draft.Saving).FocusRing(false)
-			if draft.Focus {
-				field.Focus()
-				draft.Focus = false
-			}
-			field.OnTextKey(func(key n.TextKey) bool {
-				if key.Key == n.KeyEscape && !draft.Saving {
-					draft.Open = false
-					draft.Closing = true
-					draft.Text = ""
-					return true
-				}
-				if key.Key == n.KeyEnter && key.Mods == n.Cmd {
-					v.saveDiffComment(c, state, draft)
-					return true
-				}
-				return false
-			})
-			field.Changed()
-			if draft.Error != "" {
-				n.Text(c, draft.Error).FontSize(11).FixedLineHeight(20).TextColor(t.Danger)
-			}
-			n.Row(c).FillWidth().Height(28).Gap(6).AlignItems(n.Center).Justify(n.End).Children(func() {
-				if ghost(c, "取消").Label("取消评论").Height(28).Disabled(draft.Saving).Clicked() {
-					draft.Open = false
-					draft.Closing = true
-					draft.Text = ""
-					draft.Error = ""
-				}
-				label := "加入消息"
-				if draft.Editing.ID != "" {
-					label = "保存评论"
-				}
-				if ghost(c, label).Height(28).PaddingX(8).Background(t.Text).TextColor(t.Background).Radius(5).Disabled(draft.Saving || draft.Retaining || strings.TrimSpace(draft.Text) == "" || v.Controller == nil).Clicked() {
-					v.saveDiffComment(c, state, draft)
-				}
-			})
-		})
-
-	})
 }
 
 func (v *View) retainCommentDraft(state *changesState, key diffCommentKey, draft *diffCommentDraft) {
@@ -312,6 +227,9 @@ func (v *View) retainCommentDraft(state *changesState, key diffCommentKey, draft
 func (v *View) saveDiffComment(c *n.Context, state *changesState, draft *diffCommentDraft) {
 	if draft.Saving || draft.Retaining || strings.TrimSpace(draft.Text) == "" || v.Controller == nil {
 		return
+	}
+	if draft.UIKey == "" {
+		draft.UIKey = domain.NewID()
 	}
 	count := 0
 	for _, ref := range v.Model.Attachments[v.Model.DraftKey()] {
@@ -366,7 +284,7 @@ func (v *View) saveDiffComment(c *n.Context, state *changesState, draft *diffCom
 		}
 		v.commentResources[v.commentResourceKey(ref)] = &diffCommentResource{Record: domain.DiffCommentRecord{Content: content, Snapshot: in.Snapshot}}
 
-		v.pendingCommentInsertions = append(v.pendingCommentInsertions, diffCommentInsertion{key: key, token: token, session: session, epoch: epoch, ref: ref, draft: draft})
+		v.pendingCommentInsertions = append(v.pendingCommentInsertions, diffCommentInsertion{key: key, token: token, session: session, epoch: epoch, ref: ref, draft: draft, state: state})
 
 	}}) {
 		draft.Saving = false
@@ -388,16 +306,33 @@ func (v *View) removeCommentReference(c *n.Context, id string) {
 	}
 }
 func (v *View) editDiffComment(state *changesState, ref app.DraftAttachment, record domain.DiffCommentRecord) {
-	selection := editor.DiffTextSelection{}
-	for _, part := range record.Content.Fragments {
-		side := editor.DiffNew
-		if part.Side == "base" {
-			side = editor.DiffOld
+	if current := state.commentDraft(); current != nil {
+		if current.Saving {
+			return
 		}
-		selection.Fragments = append(selection.Fragments, editor.DiffTextFragment{Side: side, Start: part.Start, End: part.End, StartLine: part.StartLine, EndLine: part.EndLine, Text: part.Text})
+		if current.Open && current.Editing.ID != ref.Attachment.ID {
+			cancelDiffComment(current)
+		}
 	}
-	state.CommentDrafts[diffCommentKey{state.Comparison, state.Path}] = &diffCommentDraft{Selection: selection, Snapshot: record.Snapshot, Versions: state.Versions, Text: record.Content.Comment, Open: true, Focus: true, Editing: ref.Attachment}
+	for _, note := range state.CommentNotes {
+		if note.Ref.Attachment.ID == ref.Attachment.ID && note.Draft != nil {
+			d := note.Draft
+			d.Text = record.Content.Comment
+			d.Original = d.Text
+			d.Open = true
+			d.Closing = false
+			d.Focus = true
+			d.Error = ""
+			state.CommentDrafts[diffCommentKey{state.Comparison, state.Path}] = d
+			return
+		}
+	}
+	d := commentDraftFromRecord(state, ref, record)
+	d.Open = true
+	d.Focus = true
+	state.CommentDrafts[diffCommentKey{state.Comparison, state.Path}] = d
 }
+
 func (v *View) commentResourceKey(ref app.DraftAttachment) string {
 	return ref.DeviceID + ":" + ref.WorkspaceID + ":" + ref.Attachment.ID
 }
@@ -635,11 +570,25 @@ func (v *View) flushDiffCommentInsertions(c *n.Context) {
 			edit.Select(caret+1, caret+1)
 		})
 		v.publishComposer(in.key, binding)
-		v.changesFor(in.session).SuppressSelectionAction = true
+		state := in.state
+		state.SuppressSelectionAction = true
+		updated := false
+		for i := range state.CommentNotes {
+			note := &state.CommentNotes[i]
+			if note.Draft == in.draft {
+				note.Ref = in.ref
+				note.Record = v.commentResources[v.commentResourceKey(in.ref)].Record
+				updated = true
+				break
+			}
+		}
+		if !updated {
+			state.CommentNotes = append(state.CommentNotes, diffCommentNote{Ref: in.ref, Record: v.commentResources[v.commentResourceKey(in.ref)].Record, Draft: in.draft})
+		}
 		in.draft.Open = false
-		in.draft.Closing = true
-		in.draft.Text = ""
+		in.draft.Closing = false
+		in.draft.Original = in.draft.Text
 		in.draft.Error = ""
-		in.draft.Editing = domain.Attachment{}
+		in.draft.Editing = in.ref.Attachment
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"shioji/internal/domain"
 	"strings"
 	"testing"
+	"time"
 )
 
 func bubbleFixtureReference(v *View, s *changesState, id, text string, parts []domain.CodeSelection) (app.DraftAttachment, domain.DiffCommentRecord) {
@@ -17,6 +18,63 @@ func bubbleFixtureReference(v *View, s *changesState, id, text string, parts []d
 	}
 	v.commentResources[v.commentResourceKey(ref)] = &diffCommentResource{Record: record}
 	return ref, record
+}
+
+func TestDiffCommentBubbleKeepsReferenceAndBodyThroughEditAndCancel(t *testing.T) {
+	m := layoutModel()
+	m.WorkerMinor = 33
+	v := New(m, nil, "")
+	s := v.changesFor("s")
+	s.Path = "rotation.go"
+	s.installDiff(domain.FileVersions{Path: s.Path, New: "next.Left\n", Snapshot: domain.Attachment{ID: "snapshot", SHA256: "sha"}, Comparison: s.Comparison})
+	ref, _ := bubbleFixtureReference(v, s, "comment", "原评论", []domain.CodeSelection{{Side: "target", Start: 0, End: 9, StartLine: 1, EndLine: 1, Text: "next.Left"}})
+	m.Attachments[m.DraftKey()] = []app.DraftAttachment{ref}
+	tester := n.NewTester(func(c *n.Context) { v.diffBody(c, c.Theme(), s) }, 420, 300)
+	tester.Advance(time.Second)
+	before, ok := tester.Find("代码评论内容")
+	if !ok {
+		t.Fatal("reading comment must use the shared text control")
+	}
+	key := s.Diff.Annotations[0].Key
+	if err := tester.Click("编辑评论"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Advance(80 * time.Millisecond)
+	mid, _ := tester.Find("代码评论内容")
+	if mid.Y != before.Y {
+		t.Fatal("editing moved first body line", before, mid)
+	}
+	if len(s.Diff.Annotations) != 1 || s.Diff.Annotations[0].Key != key {
+		t.Fatal("editing replaced the stable annotation", s.Diff.Annotations)
+	}
+	tester.Advance(time.Second)
+	s.commentDraft().Text = "未保存修改"
+	tester.Frame()
+	if err := tester.Click("取消评论"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Advance(80 * time.Millisecond)
+	after, _ := tester.Find("代码评论内容")
+	if after.Y != before.Y {
+		t.Fatal("cancel moved first body line", before, after)
+	}
+	tester.Advance(time.Second)
+	if s.CommentNotes[0].Draft.Text != "原评论" {
+		t.Fatal("cancel did not restore immutable original")
+	}
+	if err := tester.Click("编辑评论"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Advance(time.Second)
+	if s.commentDraft().Text != "原评论" {
+		t.Fatal("cancelled text resurfaced")
+	}
+	tester.SetPreferences(n.Preferences{ReduceMotion: true})
+	tester.Click("取消评论")
+	tester.Frame()
+	if len(s.Diff.Annotations) != 1 || s.Diff.Annotations[0].Height != 72 {
+		t.Fatal("reduced-motion close did not finish immediately", s.Diff.Annotations)
+	}
 }
 
 func TestDiffCommentLocationPreservesExactUnicodeColumnsAndGaps(t *testing.T) {
@@ -35,6 +93,59 @@ func TestDiffCommentLocationPreservesExactUnicodeColumnsAndGaps(t *testing.T) {
 		if got != tc.want {
 			t.Fatalf("got %q, want %q", got, tc.want)
 		}
+	}
+}
+
+func TestDiffCommentFailureMovesActionsWithItsHeightAndKeepsDraft(t *testing.T) {
+	v := New(layoutModel(), nil, "")
+	s := v.changesFor("s")
+	s.Path = "rotation.go"
+	d := &diffCommentDraft{UIKey: "failure", Open: true, Text: "保留草稿", Selection: editor.DiffTextSelection{Fragments: []editor.DiffTextFragment{{Side: editor.DiffNew, StartLine: 1, EndLine: 1}}}}
+	tester := n.NewTester(func(c *n.Context) {
+		diffCommentBubbleHeight(c, c.Theme(), d, true, 420)
+		v.diffCommentEditor(c, c.Theme(), s, d)
+	}, 420, 260)
+	tester.Advance(time.Second)
+	before, _ := tester.Find("取消评论")
+	d.Error = "保存失败，请重试"
+	tester.Frame()
+	tester.Advance(80 * time.Millisecond)
+	mid, _ := tester.Find("取消评论")
+	if mid.Y <= before.Y || mid.Y >= before.Y+24 {
+		t.Fatal("error action position jumped instead of following height", before, mid)
+	}
+	tester.Advance(time.Second)
+	if !d.Open || d.Text != "保留草稿" {
+		t.Fatal("save failure discarded edit")
+	}
+}
+
+func TestDiffCommentOverlappingHighlightsAreNotPaintedTwice(t *testing.T) {
+	got := diffCommentHighlights([]domain.CodeSelection{{Side: "target", Start: 1, End: 8}, {Side: "target", Start: 4, End: 10}, {Side: "base", Start: 1, End: 8}}, false)
+	if len(got) != 2 || got[1].Start != 1 || got[1].End != 10 || got[0].Side != editor.DiffOld {
+		t.Fatal("overlapping source highlight blends twice", got)
+	}
+}
+
+func TestDiffCommentSwitchingEditorsRestoresThePreviousOriginal(t *testing.T) {
+	v := New(layoutModel(), nil, "")
+	s := v.changesFor("s")
+	s.Path = "file.go"
+	s.Versions.New = "new"
+	first, r1 := bubbleFixtureReference(v, s, "one", "原评论一", nil)
+	second, r2 := bubbleFixtureReference(v, s, "two", "原评论二", nil)
+	d1, d2 := commentDraftFromRecord(s, first, r1), commentDraftFromRecord(s, second, r2)
+	s.CommentNotes = []diffCommentNote{{Ref: first, Record: r1, Draft: d1}, {Ref: second, Record: r2, Draft: d2}}
+	v.editDiffComment(s, first, r1)
+	d1.Text = "取消的编辑"
+	v.editDiffComment(s, second, r2)
+	if d1.Open || d1.Text != "原评论一" || !d2.Open || s.commentDraft() != d2 {
+		t.Fatal("switching left multiple editors or stale cancelled text", d1, d2)
+	}
+	d2.Saving = true
+	v.editDiffComment(s, first, r1)
+	if d1.Open || s.commentDraft() != d2 {
+		t.Fatal("editor switched while save acceptance pending")
 	}
 }
 

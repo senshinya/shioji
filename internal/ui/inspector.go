@@ -16,8 +16,10 @@ type changesState struct {
 	RefFocusFirst    bool
 
 	CommentNotes []diffCommentNote
+	CommentWidth float32
 
 	Locating                bool
+	LocateFragment          *editor.DiffTextFragment
 	LocateSequence          uint64
 	SuppressSelectionAction bool
 
@@ -568,5 +570,9 @@ func (v *View) diffBody(c *n.Context, t *n.Theme, state *changesState) {
 	state.Diff.TextSelection = v.Model.WorkerMinor >= 33 && state.Versions.Snapshot.ID != ""
 	v.configureDiffComments(c, t, state)
 	viewer := editor.DiffView(c.Key("diff"), state.Diff).FillWidth().FillHeight().Grow(1).Label("原生文件差异").Transition(fadeMotion(c, 180*time.Millisecond))
+	if width := viewer.Bounds().W; width > 0 && width != state.CommentWidth {
+		state.CommentWidth = width
+		c.AnimationFrame()
+	}
 	v.diffSelectionAction(c, t, state, viewer)
 }

@@ -121,7 +121,7 @@ func TestNativeCommentInsertionPreservesDraftAndAddsPreciseReference(t *testing.
 	if !ok || selection.Text != "next.Left" {
 		t.Fatal(selection)
 	}
-	draft := &diffCommentDraft{Selection: selection, Snapshot: state.Versions.Snapshot, Text: "检查空值", Open: true}
+	draft := &diffCommentDraft{Selection: selection, Snapshot: state.Versions.Snapshot, Versions: state.Versions, Text: "检查空值", Open: true}
 	// The actual acceptance callback enqueues insertion into a fresh native
 	// frame, never editing a document under its own Edit lock.
 	v.saveDiffComment(nil, state, draft)
@@ -134,6 +134,23 @@ func TestNativeCommentInsertionPreservesDraftAndAddsPreciseReference(t *testing.
 	}
 	if v.Model.Attachments["home"][0].Attachment.Kind != domain.DiffCommentResource {
 		t.Fatal("comment became an ordinary file")
+	}
+	first := v.Model.Attachments["home"][0]
+	if len(state.CommentNotes) != 1 || state.CommentNotes[0].Draft != draft {
+		t.Fatalf("new comment remounted after save: notes=%+v draft=%p state=%p actual=%p session=%q", state.CommentNotes, draft, state, v.changesFor(v.Model.SessionID), v.Model.SessionID)
+	}
+	stableKey := draft.UIKey
+	v.editDiffComment(state, first, v.commentResources[v.commentResourceKey(first)].Record)
+	draft.Text = "修订后的检查"
+	v.saveDiffComment(nil, state, draft)
+	waitNative(t, ui, func() bool {
+		return len(v.Model.Attachments["home"]) == 1 && v.Model.Attachments["home"][0].Attachment.ID != first.Attachment.ID
+	})
+	if len(state.CommentNotes) != 1 || state.CommentNotes[0].Draft != draft || draft.UIKey != stableKey || draft.Open || draft.Text != "修订后的检查" {
+		t.Fatal("resource replacement lost shared bubble", state.CommentNotes)
+	}
+	if v.Model.Drafts["home"] != "keep ordinary text" {
+		t.Fatal("edit consumed independent composer")
 	}
 }
 

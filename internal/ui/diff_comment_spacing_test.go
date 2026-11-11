@@ -16,12 +16,16 @@ func TestDiffCommentEditorInsetsAreCompactAndSymmetric(t *testing.T) {
 	v := New(layoutModel(), nil, "")
 	state := v.changesFor("s")
 	state.Path = "file.go"
-	draft := &diffCommentDraft{Text: "国 next.Left", Selection: editor.DiffTextSelection{Fragments: []editor.DiffTextFragment{{Side: editor.DiffNew, StartLine: 1, EndLine: 1}}}}
+	draft := &diffCommentDraft{Open: true, Text: "国 next.Left", Selection: editor.DiffTextSelection{Fragments: []editor.DiffTextFragment{{Side: editor.DiffNew, StartLine: 1, EndLine: 1}}}}
 	for _, message := range []string{"", "保存失败，请重试"} {
 		draft.Error = message
-		tester := n.NewTester(func(c *n.Context) { v.diffCommentEditor(c, c.Theme(), state, draft) }, 420, 240)
+		tester := n.NewTester(func(c *n.Context) {
+			diffCommentBubbleHeight(c, c.Theme(), draft, true, 420)
+			v.diffCommentEditor(c, c.Theme(), state, draft)
+		}, 420, 240)
+		tester.Advance(time.Second)
 		panel, panelOK := tester.Find("代码评论编辑器")
-		header, headerOK := tester.Find("file.go:1")
+		header, headerOK := tester.Find("file.go:1:1–1:1")
 		action, actionOK := tester.Find("取消评论")
 		if !panelOK || !headerOK || !actionOK {
 			t.Fatal("comment editor contents absent")
@@ -51,7 +55,7 @@ func TestEditingSavedDiffCommentReplacesItsRowAndCancelRestoresIt(t *testing.T) 
 		t.Fatal(err)
 	}
 	tester.Advance(time.Second)
-	if len(state.Diff.Annotations) != 1 || state.Diff.Annotations[0].Key != "editor" {
+	if len(state.Diff.Annotations) != 1 || state.Diff.Annotations[0].Key != ref.Attachment.ID {
 		t.Fatal("saved comment still appears underneath its editor", state.Diff.Annotations)
 	}
 	state.commentDraft().Text = "未保存修改"
@@ -65,11 +69,11 @@ func TestEditingSavedDiffCommentReplacesItsRowAndCancelRestoresIt(t *testing.T) 
 			restoring = a.Height
 		}
 	}
-	if restoring <= 0 || restoring >= 32 {
+	if restoring <= 72 || restoring >= 124 {
 		t.Fatal("original comment did not restore with a height transition", restoring)
 	}
 	tester.Advance(time.Second)
-	if len(state.Diff.Annotations) != 1 || state.Diff.Annotations[0].Key != ref.Attachment.ID || !tester.HasText("原评论") {
+	if len(state.Diff.Annotations) != 1 || state.Diff.Annotations[0].Key != ref.Attachment.ID || state.CommentNotes[0].Draft.Text != "原评论" {
 		t.Fatal("cancel did not restore only the immutable original", state.Diff.Annotations)
 	}
 }
@@ -88,41 +92,30 @@ func TestSavedDiffCommentHasBalancedVisibleVerticalInsets(t *testing.T) {
 				ref := app.DraftAttachment{Attachment: domain.Attachment{ID: "comment", Kind: domain.DiffCommentResource}, WorkspaceID: m.WorkspaceID, DeviceID: v.referenceDeviceID(), Ready: true}
 				m.Attachments[m.DraftKey()] = []app.DraftAttachment{ref}
 				v.commentResources = map[string]*diffCommentResource{v.commentResourceKey(ref): {Record: domain.DiffCommentRecord{Snapshot: snapshot, Content: domain.CodeCommentContent{Path: state.Path, Comparison: state.Comparison, Comment: "国 next.Left", Fragments: []domain.CodeSelection{{Side: "target", Start: 0, End: 3, StartLine: 1, EndLine: 1}}}}}}
-				var opticalOffset float32
-				tester := n.NewTester(func(c *n.Context) {
-					opticalOffset = inlineCenterOffset("国 next.Left", n.Font{Family: c.Theme().Font, Size: 12, Weight: 400})
-					v.diffBody(c, c.Theme(), state)
-				}, 420, 200)
+				tester := n.NewTester(func(c *n.Context) { v.diffBody(c, c.Theme(), state) }, 420, 240)
 				tester.SetDark(dark)
 				tester.SetScale(scale)
 				tester.Advance(time.Second)
-				button, ok := tester.Find("编辑评论")
+				panel, ok := tester.Find("代码评论编辑器")
 				if !ok {
-					t.Fatal("comment absent")
+					t.Fatal("bubble absent")
 				}
-				// The 22-DIP action is centered inside this 32-DIP row. Measure
-				// painted text, rather than assuming its line box is its ink.
-				top := int((button.Y - 5) * scale)
-				bottom := top + int(32*scale) - 1
-				image := tester.Image()
-				bg := image.RGBAAt(int(4*scale), top+int(2*scale))
-				first, last := bottom+1, top-1
-				for y := top; y <= bottom; y++ {
-					for x := int(32 * scale); x < int((button.X-8)*scale); x++ {
-						pixel := image.RGBAAt(x, y)
-						if abs(int(pixel.R)-int(bg.R)) > 100 {
-							first = min(first, y)
-							last = max(last, y)
-						}
-					}
+				header, ok := tester.Find("file.go:1:1–1:4")
+				if !ok {
+					t.Fatal("precise reference absent")
 				}
-				if last < first {
-					t.Fatal("comment text was not painted")
+				body, ok := tester.Find("代码评论内容")
+				if !ok {
+					t.Fatal("shared body absent")
 				}
-				above, below := float32(first-top)/scale, float32(bottom-last)/scale
-				if math.Abs(float64(above-below)) > 1 {
-					t.Fatalf("visible comment insets differ: top %.1f, bottom %.1f DIP; optical correction %.2f; button %+v", above, below, opticalOffset, button)
+				if math.Abs(float64(header.X-body.X)) > 1 || math.Abs(float64(body.Y-header.Y-26)) > 1 {
+					t.Fatal("reference/body alignment or gap differs", header, body)
 				}
+				top, bottom := header.Y-panel.Y, panel.Y+panel.H-body.Y-body.H
+				if top < 6 || top > 8 || bottom < 6 || bottom > 8 || math.Abs(float64(top-bottom)) > 1 {
+					t.Fatalf("bubble padding differs: top %.1f bottom %.1f", top, bottom)
+				}
+
 			})
 		}
 	}
