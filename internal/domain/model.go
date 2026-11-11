@@ -314,9 +314,10 @@ type ChangedFile struct {
 	Removed *int   `json:"removed,omitempty"`
 }
 type FileVersions struct {
-	Path string `json:"path"`
-	Old  string `json:"old"`
-	New  string `json:"new"`
+	Comparison DiffComparison `json:"comparison,omitempty,omitzero"`
+	Path       string         `json:"path"`
+	Old        string         `json:"old"`
+	New        string         `json:"new"`
 }
 type SearchResult struct {
 	ItemID      string `json:"itemId,omitempty"`

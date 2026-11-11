@@ -426,6 +426,9 @@ func (s *Server) changedFiles(q protocol.GitQuery) ([]domain.ChangedFile, error)
 	return files, nil
 }
 func (s *Server) fileVersions(q protocol.FileQuery) (domain.FileVersions, error) {
+	if q.Comparison != nil {
+		return s.comparisonFile(q)
+	}
 	out := domain.FileVersions{Path: q.Path}
 	if !filepath.IsLocal(q.Path) || q.Path == "." {
 		return out, errors.New("invalid repository path")

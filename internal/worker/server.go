@@ -639,6 +639,15 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 			return nil, err
 		}
 		return s.checkout(in)
+	case "git.compare", "git.refs":
+		q, err := decode[protocol.GitQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		if method == "git.refs" {
+			return s.comparisonRefs(q)
+		}
+		return s.compareGit(q)
 	case "git.changes":
 		q, err := decode[protocol.GitQuery](body)
 		if err != nil {

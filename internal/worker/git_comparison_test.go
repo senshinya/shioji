@@ -1,0 +1,105 @@
+package worker
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func compareTest(t *testing.T, s *Server, workspace string, base, target map[string]string) map[string]any {
+	t.Helper()
+	out, err := gitTestCall(s, "git.compare", map[string]any{"workspaceId": workspace, "comparison": map[string]any{"base": base, "target": target}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+func TestComparisonPinsBranchesAndNeverChecksOut(t *testing.T) {
+	s, w, dir := gitTestServer(t)
+	old := gitTestRun(t, dir, "rev-parse", "HEAD")
+	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("branch\n"), 0600)
+	gitTestRun(t, dir, "add", "file.txt")
+	gitTestRun(t, dir, "commit", "-m", "branch")
+	newer := gitTestRun(t, dir, "rev-parse", "HEAD")
+	gitTestRun(t, dir, "branch", "feat/rotation")
+	gitTestRun(t, dir, "reset", "--hard", old)
+	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("working\n"), 0600)
+	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("untracked\n"), 0600)
+	before := gitTestRun(t, dir, "status", "--porcelain=v1")
+	result := compareTest(t, s, w.ID, map[string]string{"kind": "branch", "name": "main"}, map[string]string{"kind": "branch", "name": "feat/rotation"})
+	cmp := result["comparison"].(map[string]any)
+	if cmp["base"].(map[string]any)["commit"] != old || cmp["target"].(map[string]any)["commit"] != newer {
+		t.Fatalf("unresolved pair %v", cmp)
+	}
+	gitTestRun(t, dir, "branch", "-f", "feat/rotation", old)
+	file, err := gitTestCall(s, "git.file", map[string]any{"workspaceId": w.ID, "path": "file.txt", "comparison": cmp})
+	if err != nil || file["old"] != "original\n" || file["new"] != "branch\n" {
+		t.Fatalf("fixed versions %v %v", file, err)
+	}
+	if gitTestRun(t, dir, "branch", "--show-current") != "main" || gitTestRun(t, dir, "status", "--porcelain=v1") != before {
+		t.Fatal("comparison changed checkout or files")
+	}
+	reverse := map[string]any{"repository": cmp["repository"], "base": cmp["target"], "target": cmp["base"]}
+	file, err = gitTestCall(s, "git.file", map[string]any{"workspaceId": w.ID, "path": "file.txt", "comparison": reverse})
+	if err != nil || file["old"] != "branch\n" || file["new"] != "original\n" {
+		t.Fatalf("reverse %v %v", file, err)
+	}
+}
+func TestComparisonWorktreeEmptyAndRemoteRefs(t *testing.T) {
+	s, w, dir := gitTestServer(t)
+	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("working\n"), 0600)
+	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("untracked\n"), 0600)
+	os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("ignored\n"), 0600)
+	os.WriteFile(filepath.Join(dir, "ignored"), []byte("private\n"), 0600)
+	result := compareTest(t, s, w.ID, map[string]string{"kind": "head"}, map[string]string{"kind": "worktree"})
+	encoded, _ := json.Marshal(result["files"])
+	if !strings.Contains(string(encoded), "new.txt") || strings.Contains(string(encoded), "ignored") {
+		t.Fatalf("files %s", encoded)
+	}
+	same := compareTest(t, s, w.ID, map[string]string{"kind": "branch", "name": "main"}, map[string]string{"kind": "head"})
+	if len(same["files"].([]any)) != 0 {
+		t.Fatalf("same versions %v", same)
+	}
+	gitTestRun(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	refs, err := gitTestCall(s, "git.refs", map[string]any{"workspaceId": w.ID})
+	b, _ := json.Marshal(refs)
+	if err != nil || !strings.Contains(string(b), "origin/main") {
+		t.Fatalf("refs %s %v", b, err)
+	}
+	for _, path := range []string{".git/config", "../file.txt", ":(glob)*"} {
+		if _, err = gitTestCall(s, "git.file", map[string]any{"workspaceId": w.ID, "path": path, "comparison": result["comparison"]}); err == nil {
+			t.Fatalf("invalid path %s", path)
+		}
+	}
+	foreign := result["comparison"].(map[string]any)
+	foreign["repository"] = "/not-this-repository"
+	if _, err = gitTestCall(s, "git.file", map[string]any{"workspaceId": w.ID, "path": "file.txt", "comparison": foreign}); err == nil {
+		t.Fatal("foreign comparison accepted")
+	}
+}
+
+func TestComparisonUnbornAndLiteralPaths(t *testing.T) {
+	s, w, dir := gitTestServer(t)
+	gitTestRun(t, dir, "checkout", "--orphan", "unborn")
+	gitTestRun(t, dir, "rm", "--cached", "file.txt")
+	result := compareTest(t, s, w.ID, map[string]string{"kind": "head"}, map[string]string{"kind": "worktree"})
+	if len(result["files"].([]any)) != 1 {
+		t.Fatalf("unborn %v", result)
+	}
+	file, err := gitTestCall(s, "git.file", map[string]any{"workspaceId": w.ID, "path": "file.txt", "comparison": result["comparison"]})
+	if err != nil || file["old"] != "" || file["new"] != "original\n" {
+		t.Fatalf("unborn contents %v %v", file, err)
+	}
+	os.Remove(filepath.Join(dir, "file.txt"))
+	gitTestRun(t, dir, "checkout", "main")
+	os.WriteFile(filepath.Join(dir, "[glob].go"), []byte("literal\n"), 0600)
+	gitTestRun(t, dir, "add", ".")
+	gitTestRun(t, dir, "commit", "-m", "literal")
+	result = compareTest(t, s, w.ID, map[string]string{"kind": "branch", "name": "other"}, map[string]string{"kind": "head"})
+	file, err = gitTestCall(s, "git.file", map[string]any{"workspaceId": w.ID, "path": "[glob].go", "comparison": result["comparison"]})
+	if err != nil || file["old"] != "" || file["new"] != "literal\n" {
+		t.Fatalf("literal contents %v %v", file, err)
+	}
+}
