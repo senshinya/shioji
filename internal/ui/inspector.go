@@ -12,6 +12,28 @@ import (
 )
 
 type changesState struct {
+	FailedComparison *domain.DiffComparison
+	RefFocusFirst    bool
+
+	CommentNotes []diffCommentNote
+
+	Locating                bool
+	LocateSequence          uint64
+	SuppressSelectionAction bool
+
+	Comparison           domain.DiffComparison
+	PendingComparison    *domain.DiffComparison
+	ComparisonSequence   uint64
+	FileSequence         uint64
+	Refs                 []domain.DiffEndpoint
+	refsLoading          bool
+	refsEpoch            string
+	BaseOpen, TargetOpen bool
+	RefSearch            string
+	RefList              n.ListState
+	CommentDrafts        map[diffCommentKey]*diffCommentDraft
+	PinnedSnapshot       bool
+
 	Files      []domain.ChangedFile
 	load       changesLoadPhase
 	Error      string
@@ -19,7 +41,7 @@ type changesState struct {
 	Path       string
 	file       fileDiffPhase
 	Versions   domain.FileVersions
-	Diff       editor.DiffState
+	Diff       *editor.DiffState
 	List       n.ListState
 	Tasks      n.ListState
 	DockSeen   bool
@@ -99,7 +121,7 @@ func (v *View) changesFor(id string) *changesState {
 	}
 	state := v.changes[id]
 	if state == nil {
-		state = &changesState{}
+		state = &changesState{Comparison: domain.DefaultDiffComparison(), Diff: &editor.DiffState{}}
 		v.changes[id] = state
 	}
 	return state
@@ -110,6 +132,18 @@ func (v *View) requestChanges(force bool) {
 		return
 	}
 	state := v.changesFor(m.SessionID)
+	if m.WorkerMinor >= 33 {
+		draft := state.commentDraft()
+		if state.loading() || state.PinnedSnapshot && !force || draft != nil && (draft.Open || draft.Closing) && !force || !force && time.Since(state.Updated) < 3*time.Second {
+			return
+		}
+		next := state.Comparison
+		if force {
+			next = unpinDiffComparison(next)
+		}
+		v.requestComparison(state, next)
+		return
+	}
 	if state.loading() || (!force && time.Since(state.Updated) < 3*time.Second) {
 		return
 	}
@@ -138,10 +172,17 @@ func (v *View) openChangedFile(path string) {
 	}
 	state := v.changesFor(v.Model.SessionID)
 	state.selectFile(path)
+	state.PinnedSnapshot = false
+	state.FileSequence++
+	sequence, epoch := state.FileSequence, v.Model.ConnectionEpoch
 	state.Error = ""
 	_, q := v.gitQuery()
+	if v.Model.WorkerMinor >= 33 {
+		pair := state.Comparison
+		q.Comparison = &pair
+	}
 	v.do(app.Job{Method: "git.file", Input: protocol.FileQuery{GitQuery: q, Path: path}, Apply: func(m *app.Model, b json.RawMessage, err error) {
-		if state.Path != path {
+		if state.Path != path || state.FileSequence != sequence || m.ConnectionEpoch != epoch {
 			return
 		}
 		if err != nil {
@@ -155,14 +196,7 @@ func (v *View) openChangedFile(path string) {
 			state.failFile()
 			return
 		}
-		previousPath := state.Versions.Path
-		state.receiveFile(versions)
-		if state.Diff.Old == nil || previousPath != versions.Path {
-			state.Diff = editor.DiffState{Old: editor.NewBuffer(versions.Old), New: editor.NewBuffer(versions.New), Layout: editor.DiffUnified, Wrap: true}
-		} else {
-			state.Diff.Old.Set(versions.Old)
-			state.Diff.New.Set(versions.New)
-		}
+		state.acceptComparedFile(versions)
 	}})
 }
 func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool, width, limit float32) {
@@ -327,10 +361,17 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 				return
 			}
 			height := headerHeight
+			if file && v.Model.WorkerMinor >= 33 {
+				height = 36
+			}
 			if height == 0 {
 				height = 36
 			}
-			n.Row(c).FillWidth().Height(height).Shrink(0).Padding(0, right, 0, inset).Gap(6).AlignItems(n.Center).Children(func() {
+			leftInset, rightInset := inset, right
+			if file && v.Model.WorkerMinor >= 33 {
+				leftInset, rightInset = 12, 12
+			}
+			n.Row(c).FillWidth().Height(height).Shrink(0).Padding(0, rightInset, 0, leftInset).Gap(6).AlignItems(n.Center).Children(func() {
 				if file {
 					back := control(c, 5).Size(24, 26).Label("返回更改列表").Tooltip("返回更改列表").Children(func() { n.Icon(c, disclosureRight).Size(14, 14).Transform(n.Rotation(180)).TextColor(t.TextMuted) })
 					goBack = back.Clicked()
@@ -360,8 +401,18 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 			}
 			pane.Label("文件更改区域")
 			fileOpen := state.Path != ""
-			n.Column(c.Key("inspector-list")).FillWidth().FillHeight().IgnoreInput(fileOpen).Children(func() {
+			modern := v.Model.WorkerMinor >= 33
+			fileTop := float32(0)
+			if modern {
 				header(false)
+				v.diffComparisonBar(c, t, state, width)
+				fileTop = headerHeight + 38
+			}
+
+			n.Column(c.Key("inspector-list")).FillWidth().FillHeight().IgnoreInput(fileOpen).Children(func() {
+				if !modern {
+					header(false)
+				}
 				if state.Error != "" {
 					n.Text(c, state.Error).FontSize(12).TextColor(t.TextMuted).Padding(12)
 				}
@@ -396,7 +447,7 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 					}
 				}).FillWidth().FillHeight().Grow(1)
 			})
-			n.Column(c.Key("inspector-file-layer")).Absolute().Left(0).Right(0).Top(0).Bottom(0).Clip().PassThrough().Children(func() {
+			n.Column(c.Key("inspector-file-layer")).Absolute().Left(0).Right(0).Top(fileTop).Bottom(0).Clip().PassThrough().Children(func() {
 				if !fileOpen {
 					return
 				}
@@ -478,12 +529,22 @@ func (v *View) inspectorTaskList(c *n.Context, t *n.Theme, state *changesState, 
 	}).FillWidth().FillHeight().Grow(1).Label("任务列表")
 }
 func (v *View) diffBody(c *n.Context, t *n.Theme, state *changesState) {
-	if state.Error != "" {
+	if state.Error != "" && !state.fileAvailable() {
 		n.Text(c, state.Error).FontSize(12).TextColor(t.TextMuted).Padding(14)
 		return
 	}
 	if !state.fileAvailable() {
 		n.Text(c, "读取文件…").FontSize(12).TextColor(t.TextMuted).Padding(14)
+		return
+	}
+	if state.Versions.Unchanged || state.Versions.Old == state.Versions.New {
+		n.Column(c.Key("diff-unchanged")).Fill().AlignItems(n.Center).Justify(n.Center).Transition(fadeMotion(c, 180*time.Millisecond)).Children(func() {
+			message := "此文件在当前比较中没有差异"
+			if !state.Versions.Unchanged {
+				message = "此文件没有文本差异"
+			}
+			n.Text(c, message).FontSize(12).TextColor(t.TextMuted).Label("当前文件无差异")
+		})
 		return
 	}
 	added, deleted, addedFill, deletedFill := gitColors(t)
@@ -492,5 +553,10 @@ func (v *View) diffBody(c *n.Context, t *n.Theme, state *changesState) {
 	state.Diff.Inline = editor.DiffInlineNone
 	state.Diff.Indicators = editor.DiffClassic
 	state.Diff.Theme = &editor.Theme{Background: t.Background, Text: t.Text, LineNumber: subtle(t), Added: added, Deleted: deleted, AddedBackground: addedFill, DeletedBackground: deletedFill}
-	editor.DiffView(c.Key("diff"), &state.Diff).FillWidth().FillHeight().Grow(1).Label("原生文件差异")
+	state.Diff.Theme.Selection = t.Text.Alpha(.15)
+	state.Diff.Theme.InactiveSelection = t.Text.Alpha(.12)
+	state.Diff.TextSelection = v.Model.WorkerMinor >= 33 && state.Versions.Snapshot.ID != ""
+	v.configureDiffComments(c, t, state)
+	viewer := editor.DiffView(c.Key("diff"), state.Diff).FillWidth().FillHeight().Grow(1).Label("原生文件差异").Transition(fadeMotion(c, 180*time.Millisecond))
+	v.diffSelectionAction(c, t, state, viewer)
 }

@@ -57,6 +57,7 @@ type RemoteError struct {
 func (e *RemoteError) Error() string { return e.Message }
 
 type GitQuery struct {
+	ReviewPath  string                 `json:"reviewPath,omitempty"`
 	WorkspaceID string                 `json:"workspaceId"`
 	SessionID   string                 `json:"sessionId,omitempty"`
 	Comparison  *domain.DiffComparison `json:"comparison,omitempty"`

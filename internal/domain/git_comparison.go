@@ -19,6 +19,7 @@ func DefaultDiffComparison() DiffComparison {
 }
 
 type ComparisonResult struct {
+	Versions   *FileVersions  `json:"versions,omitempty"`
 	Comparison DiffComparison `json:"comparison"`
 	Files      []ChangedFile  `json:"files"`
 }

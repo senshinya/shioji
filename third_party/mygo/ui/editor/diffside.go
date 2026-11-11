@@ -387,8 +387,12 @@ func (s *diffSide) buildBlocks(c *ui.Context, ed *editor) {
 			n := stacked[at]
 			stacked[at] += float64(a.Height)
 			a := a
+			inset := ed.gutterW
+			if d.FullWidthAnnotations {
+				inset = 0
+			}
 			box := ui.Box(c).Key(fmt.Sprint("annotation ", a.Side, " ", a.Line, " ", a.Key, " ", n)).Absolute().
-				Left(ed.gutterW).Top(float32(top - ed.scrollY)).Width(ed.r.W - ed.gutterW).Height(a.Height).HandleInput(shield)
+				Left(inset).Top(float32(top - ed.scrollY)).Width(ed.r.W - inset).Height(a.Height).HandleInput(shield)
 			box.Children(func() { d.RenderAnnotation(c, a) })
 		}
 	}

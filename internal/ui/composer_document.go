@@ -4,11 +4,13 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	n "github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/richtext"
 	"shioji/internal/app"
+	"shioji/internal/domain"
 )
 
 // Reference positions belong to Shioji input presentation, never to a harness's
@@ -203,8 +205,24 @@ func (v *View) referenceAttachment(c *n.Context, ref composerReference) *richtex
 	if ref.skill.Reference.ID != "" {
 		iconSize = 12
 	}
-	a := inlineTagAttachment(c, ref.name(), fileOrSkillIcon(ref), iconSize)
+	entry := []time.Time{}
+	if born, ok := v.commentTagEntries[ref.file.Attachment.ID]; ok {
+		entry = append(entry, born)
+	}
+	a := inlineTagAttachment(c, ref.name(), fileOrSkillIcon(ref), iconSize, entry...)
 	a.Data = ref
+	if ref.file.Attachment.Kind == domain.DiffCommentResource {
+		draw := a.Draw
+		a.Draw = func(p *n.Painter, r n.Rect) {
+			draw(p, r)
+			if v.nextCommentTagBounds == nil {
+				v.nextCommentTagBounds = map[*richtext.Attachment]n.Rect{}
+			}
+			v.nextCommentTagBounds[a] = r
+		}
+		a.OnClick = func(n.Rect) { v.locateDiffComment(ref.file) }
+		return a
+	}
 	surface := codeSurface(c.Theme())
 	if ref.file.Attachment.ID != "" {
 		a.Tooltip = ref.file.Attachment.SourcePath
@@ -218,7 +236,7 @@ func (v *View) referenceAttachment(c *n.Context, ref composerReference) *richtex
 	return a
 }
 
-func inlineTagAttachment(c *n.Context, name string, icon *n.SVG, iconSize float32) *richtext.Attachment {
+func inlineTagAttachment(c *n.Context, name string, icon *n.SVG, iconSize float32, entry ...time.Time) *richtext.Attachment {
 	font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
 	layout := n.ShapeText(name, font, 0)
 	width, _ := layout.Size()
@@ -238,17 +256,28 @@ func inlineTagAttachment(c *n.Context, name string, icon *n.SVG, iconSize float3
 	outer := inlineFontMetrics(name, n.Font{Family: c.Theme().Font, Size: 14, Weight: 400})
 	a := &richtext.Attachment{Name: name, Width: width + 33, Height: height, Descent: height/2 - outer.center}
 
+	animate := len(entry) > 0 && !c.Preferences().ReduceMotion
 	a.Draw = func(p *n.Painter, r n.Rect) {
+		progress := float32(1)
+		if animate {
+			progress = n.EaseOut(min(1, max(0, float32(p.Now().Sub(entry[0]))/float32(180*time.Millisecond))))
+			if progress < 1 {
+				p.AnimationFrame()
+			}
+		}
 		t := p.Theme()
-		p.Fill(r, codeSurface(t), 5)
-		p.Stroke(r, t.Border, 5, 1)
+		p.Fill(r, codeSurface(t).Alpha(progress), 5)
+		p.Stroke(r, t.Border.Alpha(progress), 5, 1)
 
-		p.Icon(icon, n.Rect{X: r.X + 6 + (14-iconSize)/2, Y: r.Y + (r.H-iconSize)/2, W: iconSize, H: iconSize}, t.TextMuted)
-		p.Clip(n.Rect{X: r.X + 25, Y: r.Y, W: max(0, r.W-30), H: r.H}, 0, func() { p.TextLayout(layout, r.X+25, r.Y+textTop, t.Text) })
+		p.Icon(icon, n.Rect{X: r.X + 6 + (14-iconSize)/2, Y: r.Y + (r.H-iconSize)/2, W: iconSize, H: iconSize}, t.TextMuted.Alpha(progress))
+		p.Clip(n.Rect{X: r.X + 25, Y: r.Y, W: max(0, r.W-30), H: r.H}, 0, func() { p.TextLayout(layout, r.X+25, r.Y+textTop, t.Text.Alpha(progress)) })
 	}
 	return a
 }
 func fileOrSkillIcon(ref composerReference) *n.SVG {
+	if ref.file.Attachment.Kind == domain.DiffCommentResource {
+		return diffCommentIcon
+	}
 	if ref.skill.Reference.ID != "" {
 		return skillIcon
 	}

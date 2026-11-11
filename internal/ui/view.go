@@ -27,6 +27,15 @@ type editBinding struct {
 }
 
 type View struct {
+	commentTagEntries map[string]time.Time
+
+	pendingCommentInsertions []diffCommentInsertion
+
+	commentResources     map[string]*diffCommentResource
+	commentTagBounds     map[*richtext.Attachment]n.Rect
+	nextCommentTagBounds map[*richtext.Attachment]n.Rect
+	diffLocateSequence   uint64
+
 	navigationSave                                                                                                  *navigationSave
 	navigationSaveError                                                                                             string
 	navigationGeometry                                                                                              navigationGeometry
@@ -292,7 +301,15 @@ func (v *View) View(c *n.Context) {
 			v.Controller.SelectDevice(m.ConnectionID(), m.SessionID)
 		}
 	}
+	v.commentTagBounds = v.nextCommentTagBounds
+	v.nextCommentTagBounds = map[*richtext.Attachment]n.Rect{}
 	t := *applyAppearance(c, m.Preferences)
+	for id, born := range v.commentTagEntries {
+		if c.Now().Sub(born) >= 180*time.Millisecond {
+			delete(v.commentTagEntries, id)
+		}
+	}
+	v.flushDiffCommentInsertions(c)
 	v.syncAgentSignIns(c)
 	v.syncToolServiceAuthorizations(c)
 	v.syncWorkerMigrations(c)
@@ -742,6 +759,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					}
 					v.publishComposer(key, binding)
 					draft = m.Drafts[key]
+					v.diffCommentInputHover(c, t, input)
 					v.syncMention(c, input, binding.doc.Text().String())
 					v.mentionPopup(c, t, heightFrame, input)
 				})

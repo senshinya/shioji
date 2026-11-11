@@ -75,9 +75,7 @@ func (s *Server) resolveComparison(q protocol.GitQuery) (domain.DiffComparison, 
 		switch e.Kind {
 		case "worktree":
 			e.Name = "工作目录"
-			if !pinned {
-				e.Commit, e.Branch = status.Head, status.Branch
-			}
+			e.Commit, e.Branch = status.Head, status.Branch
 			return e, nil
 		case "empty":
 			if e.Commit != "" {
@@ -145,7 +143,7 @@ func (s *Server) compareGit(q protocol.GitQuery) (domain.ComparisonResult, error
 		return out, err
 	}
 	if cmp.Base == cmp.Target || cmp.Base.Kind != "worktree" && cmp.Target.Kind != "worktree" && cmp.Base.Commit == cmp.Target.Commit {
-		return out, nil
+		return s.finishComparison(q, out)
 	}
 	args := []string{"diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--numstat", "-z"}
 	working := cmp.Base.Kind == "worktree" || cmp.Target.Kind == "worktree"
@@ -215,7 +213,7 @@ func (s *Server) compareGit(q protocol.GitQuery) (domain.ComparisonResult, error
 		return out, errors.New("too many changed files; narrow changes before review")
 	}
 	slices.SortFunc(out.Files, func(a, b domain.ChangedFile) int { return strings.Compare(a.Path, b.Path) })
-	return out, nil
+	return s.finishComparison(q, out)
 }
 func validReviewPath(path string) bool {
 	if !filepath.IsLocal(path) || path == "." || len(path) > 4096 || !utf8.ValidString(path) || strings.ContainsAny(path, "\x00\r\n") || strings.HasPrefix(path, ":") {
@@ -230,6 +228,11 @@ func (s *Server) comparisonFile(q protocol.FileQuery) (domain.FileVersions, erro
 	cmp, err := s.resolveComparison(q.GitQuery)
 	if err != nil {
 		return domain.FileVersions{}, err
+	}
+	if expected := q.Comparison; expected != nil && expected.Repository != "" {
+		if expected.Base.Kind == "worktree" && expected.Base != cmp.Base || expected.Target.Kind == "worktree" && expected.Target != cmp.Target {
+			return domain.FileVersions{}, errors.New("工作目录分支已变化，请刷新比较")
+		}
 	}
 	out, err := s.readComparisonFile(cmp, q.Path)
 	if err == nil && s.attachments != nil {
@@ -303,4 +306,24 @@ func (s *Server) readComparisonFile(cmp domain.DiffComparison, path string) (dom
 	}
 	out.New, err = read(cmp.Target)
 	return out, err
+}
+
+func (s *Server) finishComparison(q protocol.GitQuery, out domain.ComparisonResult) (domain.ComparisonResult, error) {
+	if q.ReviewPath != "" {
+		if !validReviewPath(q.ReviewPath) {
+			return out, errors.New("invalid repository path")
+		}
+		if !slices.ContainsFunc(out.Files, func(file domain.ChangedFile) bool { return file.Path == q.ReviewPath }) {
+			out.Versions = &domain.FileVersions{Path: q.ReviewPath, Comparison: out.Comparison, Unchanged: true}
+			return out, nil
+		}
+		query := q
+		query.Comparison = &out.Comparison
+		versions, err := s.comparisonFile(protocol.FileQuery{GitQuery: query, Path: q.ReviewPath})
+		if err != nil {
+			return out, err
+		}
+		out.Versions = &versions
+	}
+	return out, nil
 }

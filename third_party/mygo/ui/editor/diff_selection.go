@@ -95,7 +95,7 @@ func (d *DiffState) selectionRows() []diffTextRow {
 	next := 0
 	addNew := func(from, to int) {
 		for line := from; line < to; line++ {
-			if !d.eds[1].view.heights.isHidden(line) {
+			if d.ExpandUnchanged || !d.eds[1].view.heights.isHidden(line) {
 				rows = append(rows, diffTextRow{DiffNew, line})
 			}
 		}
@@ -326,19 +326,19 @@ func (d *DiffState) textSelectionInput(ed *editor, ev ui.InputEvent) bool {
 		d.notifyTextSelection()
 		return true
 	case ui.InputCommand:
+		if ev.Text == "selectAll" {
+			d.selectAllText()
+			return true
+		}
 		if ev.Text == "copy" {
 			return d.copyTextSelection()
 		}
 	case ui.InputKeyDown:
 		if ev.Mods&ui.Cmd != 0 && ev.Key == ui.KeyA {
-			rows := d.selectionRows()
-			if len(rows) > 0 {
-				first, last := rows[0], rows[len(rows)-1]
-				d.setTextSelection(DiffTextPoint{first.side, 0}, DiffTextPoint{last.side, d.selectionBuffer(last.side).Len()})
-				d.notifyTextSelection()
-			}
+			d.selectAllText()
 			return true
 		}
+
 		if ev.Mods&ui.Cmd != 0 && ev.Key == ui.KeyC {
 			return d.copyTextSelection()
 		}
@@ -354,13 +354,45 @@ func (d *DiffState) textSelectionInput(ed *editor, ev ui.InputEvent) bool {
 			point := d.textSelection.head
 			snap := d.selectionBuffer(point.Side).Snapshot()
 			line := snap.LineOf(point.Offset)
+			if ev.Mods&(ui.Shift|ui.Alt|ui.Cmd) == 0 && (ev.Key == ui.KeyLeft || ev.Key == ui.KeyRight) {
+				parts := d.selectionFragments()
+				if len(parts) > 0 {
+					part := parts[0]
+					offset := part.Start
+					if ev.Key == ui.KeyRight {
+						part = parts[len(parts)-1]
+						offset = part.End
+					}
+					point = DiffTextPoint{part.Side, offset}
+					d.setTextSelection(point, point)
+					d.notifyTextSelection()
+					return true
+				}
+			}
 			switch ev.Key {
 			case ui.KeyLeft:
-				_, size := utf8.DecodeLastRuneInString(snap.Slice(0, point.Offset))
-				point.Offset = max(0, point.Offset-size)
+				switch {
+				case ev.Mods&ui.Cmd != 0:
+					point.Offset = snap.LineStart(line)
+				case point.Offset == snap.LineStart(line):
+					point = d.adjacentTextRow(point, -1)
+				case ev.Mods&ui.Alt != 0:
+					point.Offset = max(snap.LineStart(line), wordLeft(snap.t, point.Offset, ed.wordChars(), false))
+				default:
+					point.Offset = graphemeLeft(snap.t, point.Offset)
+				}
 			case ui.KeyRight:
-				_, size := utf8.DecodeRuneInString(snap.Slice(point.Offset, snap.Len()))
-				point.Offset = min(snap.Len(), point.Offset+size)
+				switch {
+				case ev.Mods&ui.Cmd != 0:
+					point.Offset = snap.LineEnd(line)
+				case point.Offset == snap.LineEnd(line):
+					point = d.adjacentTextRow(point, 1)
+				case ev.Mods&ui.Alt != 0:
+					point.Offset = min(snap.LineEnd(line), wordRight(snap.t, point.Offset, ed.wordChars(), false))
+				default:
+					point.Offset = graphemeRight(snap.t, point.Offset)
+				}
+
 			case ui.KeyHome:
 				point.Offset = snap.LineStart(line)
 			case ui.KeyEnd:
@@ -396,4 +428,48 @@ func (d *DiffState) textSelectionInput(ed *editor, ev ui.InputEvent) bool {
 		}
 	}
 	return false
+}
+
+// ScrollY and SetScrollY expose the unified viewer's vertical reading position.
+func (d *DiffState) ScrollY() float64     { return d.eds[1].scrollY }
+func (d *DiffState) SetScrollY(y float64) { d.eds[1].setScrollShared(y) }
+func (d *DiffState) TextSelectionScrollTarget() (float64, bool) {
+	selection, ok := d.SelectedText()
+	ed := &d.eds[1]
+	if !ok || selection.Bounds.H <= 0 || ed.r.H <= 0 {
+		return 0, false
+	}
+	target := ed.scrollY + float64(selection.Bounds.Y-ed.r.Y-ed.r.H*.4)
+	return min(max(0, target), ed.scrollMax()), true
+}
+
+func (d *DiffState) adjacentTextRow(point DiffTextPoint, direction int) DiffTextPoint {
+	rows := d.selectionRows()
+	line := d.selectionBuffer(point.Side).Snapshot().LineOf(point.Offset)
+	for i, row := range rows {
+		if row.side == point.Side && row.line == line {
+			next := i + direction
+			if next < 0 || next >= len(rows) {
+				return point
+			}
+			row = rows[next]
+			snap := d.selectionBuffer(row.side).Snapshot()
+			offset := snap.LineStart(row.line)
+			if direction < 0 {
+				offset = snap.LineEnd(row.line)
+			}
+			return DiffTextPoint{row.side, offset}
+		}
+	}
+	return point
+}
+func (d *DiffState) selectAllText() {
+	d.ExpandAll()
+	rows := d.selectionRows()
+	if len(rows) == 0 {
+		return
+	}
+	first, last := rows[0], rows[len(rows)-1]
+	d.setTextSelection(DiffTextPoint{first.side, d.selectionBuffer(first.side).Snapshot().LineStart(first.line)}, DiffTextPoint{last.side, d.selectionBuffer(last.side).Len()})
+	d.notifyTextSelection()
 }

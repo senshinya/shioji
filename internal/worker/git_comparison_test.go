@@ -103,3 +103,45 @@ func TestComparisonUnbornAndLiteralPaths(t *testing.T) {
 		t.Fatalf("literal contents %v %v", file, err)
 	}
 }
+
+func TestComparisonReturnsOpenFileWithItsAcceptedPair(t *testing.T) {
+	s, w, dir := gitTestServer(t)
+	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("working\n"), 0600)
+	out, err := gitTestCall(s, "git.compare", map[string]any{"workspaceId": w.ID, "reviewPath": "file.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, ok := out["versions"].(map[string]any)
+	if !ok || file["old"] != "original\n" || file["new"] != "working\n" {
+		t.Fatal("comparison did not atomically return the visible file", out)
+	}
+}
+
+func TestComparisonKeepsOpenFileAsExplicitNoDiff(t *testing.T) {
+	s, w, _ := gitTestServer(t)
+	out, err := gitTestCall(s, "git.compare", map[string]any{"workspaceId": w.ID, "reviewPath": "file.txt", "comparison": map[string]any{"base": map[string]string{"kind": "branch", "name": "main"}, "target": map[string]string{"kind": "branch", "name": "other"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, ok := out["versions"].(map[string]any)
+	if !ok || file["path"] != "file.txt" || file["unchanged"] != true {
+		t.Fatal("open file has no explicit no-diff result", out)
+	}
+}
+
+func TestWorktreeComparisonReportsActualBranchAndRejectsStaleFileQuery(t *testing.T) {
+	s, w, dir := gitTestServer(t)
+	first := compareTest(t, s, w.ID, map[string]string{"kind": "head"}, map[string]string{"kind": "worktree"})
+	gitTestRun(t, dir, "checkout", "other")
+	if _, err := gitTestCall(s, "git.file", map[string]any{"workspaceId": w.ID, "path": "file.txt", "comparison": first["comparison"]}); err == nil {
+		t.Fatal("file read silently used another working branch")
+	}
+	refreshed, err := gitTestCall(s, "git.compare", map[string]any{"workspaceId": w.ID, "comparison": first["comparison"]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := refreshed["comparison"].(map[string]any)["target"].(map[string]any)
+	if target["branch"] != "other" {
+		t.Fatal("working directory labeled with previous branch", target)
+	}
+}

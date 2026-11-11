@@ -45,3 +45,39 @@ func TestDiffCommentUsesImmutableSelectionWithoutAuxiliaryCode(t *testing.T) {
 		t.Fatal("changed resource kind accepted")
 	}
 }
+
+func TestDiffCommentMixedSelectionLabelsKeepEachSourceSide(t *testing.T) {
+	parts := []domain.CodeSelection{{Side: "target", StartLine: 13, EndLine: 13}, {Side: "base", StartLine: 9, EndLine: 9}}
+	if got := commentLabel("rotation.go", parts); got != "rotation.go:+13 · −9" {
+		t.Fatal("mixed selection mislabeled sources", got)
+	}
+}
+
+func TestRepeatedDiffReadsReuseImmutableSnapshotStorage(t *testing.T) {
+	s, w, dir := gitTestServer(t)
+	s.attachments = attachments.New(filepath.Join(t.TempDir(), "resources"))
+	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("changed\n"), 0600)
+	cmp := compareTest(t, s, w.ID, map[string]string{"kind": "head"}, map[string]string{"kind": "worktree"})
+	query := map[string]any{"workspaceId": w.ID, "path": "file.txt", "comparison": cmp["comparison"]}
+	first, err := gitTestCall(s, "git.file", query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := gitTestCall(s, "git.file", query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := first["snapshot"].(map[string]any)
+	b := second["snapshot"].(map[string]any)
+	if a["id"] != b["id"] {
+		t.Fatal("unchanged refresh created a new retained snapshot", a["id"], b["id"])
+	}
+	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("changed again\n"), 0600)
+	third, err := gitTestCall(s, "git.file", query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third["snapshot"].(map[string]any)["id"] == a["id"] {
+		t.Fatal("changed contents reused an old snapshot")
+	}
+}

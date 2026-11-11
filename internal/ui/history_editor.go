@@ -241,6 +241,7 @@ func (v *View) historyEditor(c *n.Context, t *n.Theme, item domain.Item) {
 		input.Changed()
 		v.publishComposer(key, binding)
 		if !locked {
+			v.diffCommentInputHover(c, t, input)
 			v.syncMention(c, input, binding.doc.Text().String())
 			v.mentionPopup(c, t, panel, input)
 		}

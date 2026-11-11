@@ -305,7 +305,13 @@ func (v *View) captureMention(state *fileMention) {
 	token := v.attachmentPreparationKey(key)
 	workspace := m.WorkspaceID
 	session := m.SessionID
-	if len(m.Attachments[key]) >= 8 {
+	fileCount := 0
+	for _, file := range m.Attachments[key] {
+		if file.Attachment.Kind != domain.DiffCommentResource {
+			fileCount++
+		}
+	}
+	if fileCount >= 8 {
 		state.err = "最多添加 8 个附件"
 		return
 	}

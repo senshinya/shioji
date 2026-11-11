@@ -69,6 +69,9 @@ func (v *View) messageReferenceBody(c *n.Context, t *n.Theme, item domain.Item) 
 				if a.Tooltip != "" {
 					tag.Tooltip(a.Tooltip)
 				}
+				if ref.file.Attachment.Kind == domain.DiffCommentResource && tag.Hovered() {
+					v.diffCommentPopover(c, t, ref.file, tag.Bounds())
+				}
 				if a.OnClick != nil {
 					tag.Cursor(n.CursorPointer).Role(n.RoleButton)
 					if tag.Clicked() {

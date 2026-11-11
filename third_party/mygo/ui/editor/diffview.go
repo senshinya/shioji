@@ -67,8 +67,9 @@ type DiffState struct {
 	// Annotations show what RenderAnnotation builds under lines, as
 	// comments of a review, as high as each asks; the other side of a
 	// split view leaves the room empty.
-	Annotations      []DiffAnnotation
-	RenderAnnotation func(c *ui.Context, a DiffAnnotation)
+	FullWidthAnnotations bool
+	Annotations          []DiffAnnotation
+	RenderAnnotation     func(c *ui.Context, a DiffAnnotation)
 
 	// RenderSeparator, RenderHunkActions and RenderGutterButton build the
 	// viewer's separators, the actions on a change and the gutter's
@@ -316,6 +317,10 @@ func (d *DiffState) GoToHunk(i int) {
 // its key would, and reports whether it did something: Find opens its
 // find bar, as an app's menu item does.
 func (d *DiffState) Run(cmd Command) bool {
+	if cmd == SelectAll && d.TextSelection {
+		d.selectAllText()
+		return true
+	}
 	if cmd == Copy && d.copyTextSelection() {
 		return true
 	}

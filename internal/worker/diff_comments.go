@@ -25,6 +25,11 @@ func (s *Server) putDiffResource(workspace, kind, name string, value any) (domai
 	if err != nil {
 		return a, err
 	}
+	if kind == domain.DiffSnapshotResource {
+		if _, err = s.attachments.Path(workspace, a); err == nil {
+			return a, nil
+		}
+	}
 	for offset := 0; offset < len(data); offset += attachments.ChunkSize {
 		if _, err = s.attachments.Put(workspace, a, int64(offset), data[offset:min(offset+attachments.ChunkSize, len(data))]); err != nil {
 			return domain.Attachment{}, err
@@ -57,6 +62,26 @@ func sourceLocation(text string, offset int) (line, column int) {
 }
 func commentLabel(path string, fragments []domain.CodeSelection) string {
 	first, last := fragments[0], fragments[len(fragments)-1]
+	mixed := false
+	for _, part := range fragments {
+		mixed = mixed || part.Side != first.Side
+	}
+	if mixed {
+		locations := []string{}
+		for _, part := range fragments {
+			sign := "+"
+			if part.Side == "base" {
+				sign = "−"
+			}
+			location := fmt.Sprintf("%s%d", sign, part.StartLine)
+			if part.EndLine != part.StartLine {
+				location += fmt.Sprintf("–%d", part.EndLine)
+			}
+			locations = append(locations, location)
+		}
+		return filepath.Base(path) + ":" + strings.Join(locations, " · ")
+	}
+
 	label := fmt.Sprintf("%s:%d", filepath.Base(path), first.StartLine)
 	if first.StartLine != last.EndLine {
 		label += fmt.Sprintf("–%d", last.EndLine)

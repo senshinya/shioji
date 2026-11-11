@@ -72,7 +72,7 @@ func TestFileDiffSlidesFromRightWithoutMovingInspector(t *testing.T) {
 		state.load = changesLoaded
 		state.Files = []domain.ChangedFile{{Path: "main.go"}, {Path: "README.md"}}
 		state.Versions = domain.FileVersions{Path: "file.go", Old: "old\n", New: "new\n"}
-		state.Diff = editor.DiffState{Old: editor.NewBuffer("old\n"), New: editor.NewBuffer("new\n"), Layout: editor.DiffUnified}
+		state.Diff = &editor.DiffState{Old: editor.NewBuffer("old\n"), New: editor.NewBuffer("new\n"), Layout: editor.DiffUnified}
 		ui := n.NewTester(v.View, 1440, 900)
 		ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
 		panel, _ := ui.Find("更改侧栏")
