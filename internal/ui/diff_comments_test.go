@@ -142,6 +142,7 @@ func TestNativeCommentInsertionPreservesDraftAndAddsPreciseReference(t *testing.
 	stableKey := draft.UIKey
 	v.editDiffComment(state, first, v.commentResources[v.commentResourceKey(first)].Record)
 	draft.Text = "修订后的检查"
+	state.PinnedSnapshot = true
 	v.saveDiffComment(nil, state, draft)
 	waitNative(t, ui, func() bool {
 		return len(v.Model.Attachments["home"]) == 1 && v.Model.Attachments["home"][0].Attachment.ID != first.Attachment.ID
@@ -151,6 +152,18 @@ func TestNativeCommentInsertionPreservesDraftAndAddsPreciseReference(t *testing.
 	}
 	if v.Model.Drafts["home"] != "keep ordinary text" {
 		t.Fatal("edit consumed independent composer")
+	}
+	bubbles := n.NewTester(func(c *n.Context) { v.diffBody(c, c.Theme(), state) }, 420, 300)
+	bubbles.Advance(time.Second)
+	if state.PinnedSnapshot || draft.Closing {
+		t.Fatal("saved edit left snapshot pinned")
+	}
+	changed := state.Versions
+	changed.New += "// changed after save\n"
+	changed.Snapshot.SHA256 = "new-sha"
+	state.acceptComparedFile(changed)
+	if state.Versions.Snapshot.SHA256 != "new-sha" {
+		t.Fatal("completed edit blocked changed file")
 	}
 }
 

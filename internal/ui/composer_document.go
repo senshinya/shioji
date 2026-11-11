@@ -209,7 +209,11 @@ func (v *View) referenceAttachment(c *n.Context, ref composerReference) *richtex
 	if born, ok := v.commentTagEntries[ref.file.Attachment.ID]; ok {
 		entry = append(entry, born)
 	}
-	a := inlineTagAttachment(c, ref.name(), fileOrSkillIcon(ref), iconSize, entry...)
+	display := ref.name()
+	if ref.file.Attachment.Kind == domain.DiffCommentResource {
+		display = compactDiffCommentTag(display, n.Font{Family: c.Theme().Font, Size: 12, Weight: 400})
+	}
+	a := inlineTagAttachmentDisplay(c, ref.name(), display, fileOrSkillIcon(ref), iconSize, entry...)
 	a.Data = ref
 	if ref.file.Attachment.Kind == domain.DiffCommentResource {
 		draw := a.Draw
@@ -237,8 +241,11 @@ func (v *View) referenceAttachment(c *n.Context, ref composerReference) *richtex
 }
 
 func inlineTagAttachment(c *n.Context, name string, icon *n.SVG, iconSize float32, entry ...time.Time) *richtext.Attachment {
+	return inlineTagAttachmentDisplay(c, name, name, icon, iconSize, entry...)
+}
+func inlineTagAttachmentDisplay(c *n.Context, name, display string, icon *n.SVG, iconSize float32, entry ...time.Time) *richtext.Attachment {
 	font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
-	layout := n.ShapeText(name, font, 0)
+	layout := n.ShapeText(display, font, 0)
 	width, _ := layout.Size()
 	width = min(width, 180)
 	height := float32(20)

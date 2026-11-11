@@ -80,33 +80,27 @@ func sourceLocation(text string, offset int) (line, column int) {
 	return line, utf8.RuneCountInString(text[start:offset]) + 1
 }
 func commentLabel(path string, fragments []domain.CodeSelection) string {
-	first, last := fragments[0], fragments[len(fragments)-1]
 	mixed := false
 	for _, part := range fragments {
-		mixed = mixed || part.Side != first.Side
+		mixed = mixed || part.Side != fragments[0].Side
 	}
-	if mixed {
-		locations := []string{}
-		for _, part := range fragments {
-			sign := "+"
+	locations := make([]string, 0, len(fragments))
+	for _, part := range fragments {
+		sign := ""
+		if mixed {
+			sign = "+"
 			if part.Side == "base" {
 				sign = "−"
 			}
-			location := fmt.Sprintf("%s%d", sign, part.StartLine)
-			if part.EndLine != part.StartLine {
-				location += fmt.Sprintf("–%d", part.EndLine)
-			}
-			locations = append(locations, location)
 		}
-		return filepath.Base(path) + ":" + strings.Join(locations, " · ")
+		// EndLine identifies the last quoted line for the annotation. A tag's
+		// exclusive end can instead be the start of the following line.
+		endLine := part.StartLine + strings.Count(part.Text, "\n")
+		locations = append(locations, fmt.Sprintf("%s%d:%d–%d:%d", sign, part.StartLine, part.StartColumn, endLine, part.EndColumn))
 	}
-
-	label := fmt.Sprintf("%s:%d", filepath.Base(path), first.StartLine)
-	if first.StartLine != last.EndLine {
-		label += fmt.Sprintf("–%d", last.EndLine)
-	}
-	return label
+	return filepath.Base(path) + ":" + strings.Join(locations, " · ")
 }
+
 func (s *Server) captureDiffComment(in protocol.DiffCommentInput) (domain.Attachment, error) {
 	var out domain.Attachment
 	if in.Snapshot.Kind != domain.DiffSnapshotResource || !utf8.ValidString(in.Comment) || strings.TrimSpace(in.Comment) == "" || len(in.Comment) > 128<<10 || len(in.Fragments) == 0 || len(in.Fragments) > 256 {

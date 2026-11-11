@@ -159,8 +159,9 @@ func (v *View) diffCommentBubble(c *n.Context, t *n.Theme, state *changesState, 
 					field.Focus()
 					d.Focus = false
 				}
+				composing := field.Composing()
 				field.OnTextKey(func(k n.TextKey) bool {
-					if !d.Open || d.Saving || field.Composing() {
+					if !d.Open || d.Saving || composing {
 						return false
 					}
 					if k.Key == n.KeyEscape {
@@ -216,6 +217,35 @@ func diffCommentLocation(file string, parts []domain.CodeSelection, versions dom
 		ranges = append(ranges, fmt.Sprintf("%d:%d–%d:%d", sl, sc, el, ec))
 	}
 	return path.Base(file) + ":" + strings.Join(ranges, ", ")
+}
+
+func compactDiffCommentTag(name string, font n.Font) string {
+	width := func(s string) float32 { w, _ := n.ShapeText(s, font, 0).Size(); return w }
+	if width(name) <= 180 {
+		return name
+	}
+	at := strings.IndexByte(name, ':')
+	if at < 0 {
+		return name
+	}
+	elide := func(text string, budget float32) string {
+		if width(text) <= budget {
+			return text
+		}
+		runes := []rune(text)
+		lo, hi := 0, len(runes)
+		for lo < hi {
+			mid := (lo + hi + 1) / 2
+			if width(string(runes[:mid])+"…") <= budget {
+				lo = mid
+			} else {
+				hi = mid - 1
+			}
+		}
+		return string(runes[:lo]) + "…"
+	}
+	position := elide(name[at:], 150)
+	return elide(name[:at], 180-width(position)) + position
 }
 
 func diffCommentHighlights(parts []domain.CodeSelection, dark bool) []editor.DiffTextHighlight {

@@ -112,6 +112,11 @@ func (v *View) configureDiffComments(c *n.Context, t *n.Theme, state *changesSta
 			note.Draft = commentDraftFromRecord(state, note.Ref, note.Record)
 		}
 		height := diffCommentBubbleHeight(c, t, note.Draft, present[note.Ref.Attachment.ID], state.CommentWidth)
+		if note.Draft.Closing && !note.Draft.Open && note.Draft.Bubble.shown.footer == 0 {
+			note.Draft.Closing = false
+			state.PinnedSnapshot = false
+			state.Updated = time.Time{}
+		}
 		if height <= 0 && !present[note.Ref.Attachment.ID] {
 			continue
 		}
@@ -586,7 +591,7 @@ func (v *View) flushDiffCommentInsertions(c *n.Context) {
 			state.CommentNotes = append(state.CommentNotes, diffCommentNote{Ref: in.ref, Record: v.commentResources[v.commentResourceKey(in.ref)].Record, Draft: in.draft})
 		}
 		in.draft.Open = false
-		in.draft.Closing = false
+		in.draft.Closing = true
 		in.draft.Original = in.draft.Text
 		in.draft.Error = ""
 		in.draft.Editing = in.ref.Attachment

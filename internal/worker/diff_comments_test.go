@@ -115,6 +115,9 @@ func TestDiffCommentUsesImmutableSelectionWithoutAuxiliaryCode(t *testing.T) {
 	var ref domain.Attachment
 	data, _ := json.Marshal(out)
 	json.Unmarshal(data, &ref)
+	if ref.Name != "file.txt:2:14–2:23" {
+		t.Fatal("comment tag lost column range", ref.Name)
+	}
 	// Changing the checkout after capture cannot change the model's selection.
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("replaced\n"), 0600)
 	inputs, err := s.attachmentInputs(domain.Submission{WorkspaceID: w.ID, Attachments: []domain.Attachment{ref}})
@@ -136,9 +139,20 @@ func TestDiffCommentUsesImmutableSelectionWithoutAuxiliaryCode(t *testing.T) {
 }
 
 func TestDiffCommentMixedSelectionLabelsKeepEachSourceSide(t *testing.T) {
-	parts := []domain.CodeSelection{{Side: "target", StartLine: 13, EndLine: 13}, {Side: "base", StartLine: 9, EndLine: 9}}
-	if got := commentLabel("rotation.go", parts); got != "rotation.go:+13 · −9" {
+	parts := []domain.CodeSelection{{Side: "target", StartLine: 13, StartColumn: 16, EndColumn: 25, Text: "next.Left"}, {Side: "base", StartLine: 9, StartColumn: 3, EndColumn: 7, Text: "next"}}
+	if got := commentLabel("rotation.go", parts); got != "rotation.go:+13:16–13:25 · −9:3–9:7" {
 		t.Fatal("mixed selection mislabeled sources", got)
+	}
+}
+
+func TestDiffCommentTagLabelKeepsExclusiveEndAndDisjointRanges(t *testing.T) {
+	parts := []domain.CodeSelection{{Side: "target", StartLine: 14, StartColumn: 3, EndColumn: 4, Text: "if next.Left != nil {\n    next.Left.Parent = root\n  }"}}
+	if got := commentLabel("internal/rotation.go", parts); got != "rotation.go:14:3–16:4" {
+		t.Fatal(got)
+	}
+	parts = append(parts, domain.CodeSelection{Side: "target", StartLine: 20, StartColumn: 1, EndColumn: 1, Text: "return next\r\n"})
+	if got := commentLabel("rotation.go", parts); got != "rotation.go:14:3–16:4 · 20:1–21:1" {
+		t.Fatal("gaps/end newline changed", got)
 	}
 }
 

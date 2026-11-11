@@ -59,6 +59,9 @@ func TestDiffCommentBubbleKeepsReferenceAndBodyThroughEditAndCancel(t *testing.T
 		t.Fatal("cancel moved first body line", before, after)
 	}
 	tester.Advance(time.Second)
+	if s.commentDraft().Closing {
+		t.Fatal("closed saved comment still blocks diff refresh")
+	}
 	if s.CommentNotes[0].Draft.Text != "原评论" {
 		t.Fatal("cancel did not restore immutable original")
 	}
@@ -146,6 +149,81 @@ func TestDiffCommentSwitchingEditorsRestoresThePreviousOriginal(t *testing.T) {
 	v.editDiffComment(s, first, r1)
 	if d1.Open || s.commentDraft() != d2 {
 		t.Fatal("editor switched while save acceptance pending")
+	}
+}
+
+func TestDiffCommentEscapeUsesLiveKeyboardStateWithoutExpiredElement(t *testing.T) {
+	v := New(layoutModel(), nil, "")
+	s := v.changesFor("s")
+	s.Path = "file.go"
+	d := &diffCommentDraft{UIKey: "keyboard", Original: "原评论", Text: "修改草稿", Open: true, Focus: true, Editing: domain.Attachment{ID: "saved"}}
+	tester := n.NewTester(func(c *n.Context) {
+		diffCommentBubbleHeight(c, c.Theme(), d, true, 420)
+		v.diffCommentEditor(c, c.Theme(), s, d)
+	}, 420, 260)
+	tester.Advance(time.Second)
+	tester.Compose("国", 1)
+	tester.Key(0, n.KeyEscape)
+	if !d.Open {
+		t.Fatal("Escape cancelled comment during IME composition")
+	}
+	tester.Type("输入")
+	tester.Key(0, n.KeyEscape)
+	tester.Advance(time.Second)
+	if d.Open || d.Text != "原评论" {
+		t.Fatal("Escape did not restore original")
+	}
+}
+
+func TestDiffCommentInlineTagElidesFilenameAndPreservesLocationAndCopyName(t *testing.T) {
+	name := "a-very-long-rotation-file-name-for-review.go:14:3–16:4"
+	tester := n.NewTester(func(c *n.Context) {
+		display := compactDiffCommentTag(name, n.Font{Family: c.Theme().Font, Size: 12, Weight: 400})
+		if !strings.Contains(display, "…") || !strings.HasSuffix(display, ":14:3–16:4") {
+			t.Fatal("tag truncated exact location", display)
+		}
+		v := New(layoutModel(), nil, "")
+		a := v.referenceAttachment(c, composerReference{file: app.DraftAttachment{Attachment: domain.Attachment{Kind: domain.DiffCommentResource, Name: name}}})
+		if a.Name != name || a.Width > 213 {
+			t.Fatal("tag lost full copy label or exceeded compact width", a)
+		}
+	}, 420, 100)
+	tester.Frame()
+}
+
+func TestDiffCommentEditingKeepsAllWrappedGlyphs(t *testing.T) {
+	m := layoutModel()
+	m.WorkerMinor = 33
+	v := New(m, nil, "")
+	s := v.changesFor("s")
+	s.Path = "file.go"
+	s.installDiff(domain.FileVersions{Path: s.Path, New: "next.Left\n", Snapshot: domain.Attachment{ID: "snapshot", SHA256: "sha"}, Comparison: s.Comparison})
+	ref, _ := bubbleFixtureReference(v, s, "wrapped", "先判断 next 是否为空，避免读取 next.Left 时崩溃。旋转后还应检查父子指针能否双向对应。", []domain.CodeSelection{{Side: "target", Start: 0, End: 9, StartLine: 1, EndLine: 1, Text: "next.Left"}})
+	m.Attachments[m.DraftKey()] = []app.DraftAttachment{ref}
+	tester := n.NewTester(func(c *n.Context) { v.diffBody(c, c.Theme(), s) }, 472, 300)
+	tester.Advance(time.Second)
+	ink := func() int {
+		r, _ := tester.Find("代码评论内容")
+		img := tester.Image()
+		n := 0
+		for y := int(r.Y + 21); y < int(r.Y+r.H); y++ {
+			for x := int(r.X); x < int(r.X+r.W); x++ {
+				p := img.RGBAAt(x, y)
+				if p.R < 120 && p.G < 120 && p.B < 120 {
+					n++
+				}
+			}
+		}
+		return n
+	}
+	before := ink()
+	if before < 20 {
+		t.Fatal("fixture did not wrap")
+	}
+	tester.Click("编辑评论")
+	tester.Advance(time.Second)
+	if after := ink(); after < before*9/10 {
+		t.Fatal("wrapped glyphs disappeared when editing", before, after)
 	}
 }
 
