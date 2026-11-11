@@ -27,6 +27,7 @@ type editBinding struct {
 }
 
 type View struct {
+	conversationImport                                                                                              *conversationImportUI
 	runningProgress                                                                                                 *runningProgress
 	runningGroup, activityTurn                                                                                      string
 	contextInputs                                                                                                   map[app.WorkKey]*contextInputUI
@@ -450,6 +451,7 @@ func (v *View) View(c *n.Context) {
 	v.managementDialogs(c, &t)
 	v.attachmentDialog(c, &t)
 	v.directoryDialog(c, &t)
+	v.conversationImportDialog(c, &t)
 }
 
 func (v *View) home() {
@@ -940,7 +942,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					label := "发送"
 					editing := m.QueueEdits[m.SessionID].ID != ""
 					queuing := running || len(m.Queue().Items) > 0
-					disabled := !m.Connected || m.RunReadiness().State != "ready" || m.ModelUnavailable() || empty || m.HasPendingInput() || v.homeSendPending() || m.ArchivedContext() != "" || v.preparingAttachments(m.DraftKey())
+					disabled := !m.Connected || m.RunReadiness().State != "ready" || m.ModelUnavailable() || m.ReadOnlyConversationReason() != "" || empty || m.HasPendingInput() || v.homeSendPending() || m.ArchivedContext() != "" || v.preparingAttachments(m.DraftKey())
 					if queuing {
 						label = "加入队列"
 						disabled = disabled || m.WorkerMinor < 2
@@ -967,6 +969,9 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					send := controlFeedback(c, n.ButtonBase(c), 14, true).Size(28, 28).Radius(14).Background(fill).TextColor(t.AccentText).Label(label).Disabled(disabled).Children(func() {
 						n.Icon(c.Key(iconKey), icon).Size(iconSize, iconSize).Transition(n.ElementTransition{Duration: motionAnimation(c, 120*time.Millisecond).Duration, Ease: n.EaseOut, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 					})
+					if reason := m.ReadOnlyConversationReason(); reason != "" {
+						send.Tooltip(reason)
+					}
 					if send.Clicked() {
 						if running && empty && !editing {
 							v.interrupt()

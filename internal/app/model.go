@@ -167,6 +167,9 @@ func (m *Model) BeginSubmission() (domain.Submission, error) {
 	return m.beginSubmission("session.submit")
 }
 func (m *Model) beginSubmission(method string) (domain.Submission, error) {
+	if reason := m.ReadOnlyConversationReason(); reason != "" {
+		return domain.Submission{}, errors.New(reason)
+	}
 	if kind := m.ArchivedContext(); kind != "" {
 		return domain.Submission{}, errors.New("请先恢复" + kind)
 	}

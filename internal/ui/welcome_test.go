@@ -154,7 +154,7 @@ func TestWelcomeWorkspaceWaitsForOwningWorkerAndPreservesDraft(t *testing.T) {
 	f.directories = []welcomeDirectory{{id: 1, path: "/Users/remote/shared"}}
 	ui := n.NewTester(v.View, 1100, 800)
 	ui.Advance(time.Second)
-	if err := ui.Click("开始使用"); err != nil {
+	if err := ui.Click("下一步"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Frame()
@@ -172,12 +172,19 @@ func TestWelcomeWorkspaceWaitsForOwningWorkerAndPreservesDraft(t *testing.T) {
 	if !m.FirstRun || f.directory != "/Users/remote/red-black-tree" || !ui.HasText("路径不可用") {
 		t.Fatal("failed create discarded form")
 	}
-	ui.Click("开始使用")
+	ui.Click("下一步")
 	ui.Frame()
 	job = welcomeJob(t, c, "workspace.create")
 	body, _ := json.Marshal(domain.Workspace{ID: "created", DeviceID: "B", Name: "算法", Folders: in.Folders})
 	job.Apply(m, body, nil)
 	ui.Frame()
+	ui.Advance(time.Second)
+	if !m.FirstRun || !ui.HasText("导入会话") {
+		t.Fatal("workspace admission skipped optional import", ui.Texts())
+	}
+	if err := ui.Click("跳过导入"); err != nil {
+		t.Fatal(err, ui.Texts())
+	}
 	ui.Advance(time.Second)
 	if m.FirstRun || m.WorkspaceID != "created" || m.ConnectionID() != "air" || m.SessionID != "" || m.Drafts["home"] != "保留首页草稿" {
 		t.Fatal("handoff changed draft or ownership", m.WorkspaceID, m.ConnectionID())
@@ -194,7 +201,7 @@ func TestAbandonedWelcomeWorkspaceCannotStealNavigation(t *testing.T) {
 	f.directory = "/Users/local/project"
 	ui := n.NewTester(v.View, 1100, 800)
 	ui.Advance(time.Second)
-	ui.Click("开始使用")
+	ui.Click("下一步")
 	job := welcomeJob(t, c, "workspace.create")
 	v.finishWelcome()
 	m.WorkspaceID = "w"

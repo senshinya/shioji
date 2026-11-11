@@ -101,6 +101,14 @@ func (v *View) toolbarWorkspace(c *n.Context, t *n.Theme) {
 						v.editWorkspace(workspace)
 						open = false
 					}
+					key := v.Model.WorkspaceConnection(workspace.ID)
+					entry := control(c, 4).FillWidth().Height(26).PaddingX(7).Justify(n.Start).Label("导入会话…").Disabled(workspace.ID == "" || workspace.Archived || !v.canImportConversations(key)).Children(func() {
+						inlineIconText(c, conversationImportIcon, "导入会话…", n.Font{Family: t.Font, Size: 13}, 14, 7, t.Text)
+					})
+					if entry.Clicked() {
+						v.openConversationImport(key, workspace, false)
+						open = false
+					}
 				})
 			})
 		})
@@ -130,6 +138,9 @@ func (v *View) workspaceMenu(menu *n.Menu, w domain.Workspace) {
 	}
 	if menu.Item("工作区设置").Chosen() {
 		v.editWorkspace(w)
+	}
+	if menu.Item("导入会话…").Disabled(w.Archived || !v.canImportConversations(key)).Chosen() {
+		v.openConversationImport(key, w, false)
 	}
 	menu.Separator()
 	label := "归档工作区"

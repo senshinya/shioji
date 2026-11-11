@@ -100,3 +100,39 @@ func TestConversationImportRejectsChangedWorkspaceAndReadOnlySubmission(t *testi
 		t.Fatal("failed import left partial session", snap.Sessions)
 	}
 }
+
+func TestForkOfContinuedImportedConversationKeepsOneImportAnchor(t *testing.T) {
+	s := open(t)
+	w := workspace(t, s)
+	p := domain.ConversationPreview{Candidate: domain.ConversationCandidate{SourceRef: "external", HarnessID: "memory", Title: "Imported", Directory: w.Folders[0]}, ResumeRef: "prefix", Turns: []domain.Turn{{ID: "t", Status: "completed"}}, Items: []domain.Item{{ID: "u", Kind: "user", Text: "question", TurnID: "t", Status: "sent", Final: true}, {ID: "a", Kind: "assistant", Text: "answer", TurnID: "t", Final: true}}}
+	imported, err := s.ImportConversation(w, "memory", p, domain.RunConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported.ThreadID = "owned-continuation"
+	if _, err = s.Apply(imported.ID, domain.Event{Type: "session", Session: &imported}); err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.Session(imported.ID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := s.PrepareHistory(domain.HistoryChange{OperationID: "fork-import", SessionID: imported.ID, Revision: d.Session.Revision, TurnID: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetHistoryThread(op.ID, "private-history-fork"); err != nil {
+		t.Fatal(err)
+	}
+	fork, err := s.CommitHistory(op.ID)
+	if err != nil {
+		t.Fatal("import index prevents ordinary history fork", err)
+	}
+	if fork.Session.ID == imported.ID || fork.Session.Origin != nil || fork.Session.ForkedFrom != imported.ID {
+		t.Fatal("history fork acquired import ownership", fork.Session)
+	}
+	again, err := s.ImportConversation(w, "memory", p, domain.RunConfig{})
+	if err != nil || again.ID != imported.ID {
+		t.Fatal("history fork stole source identity", again, err)
+	}
+}

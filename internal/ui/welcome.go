@@ -19,10 +19,13 @@ const (
 	welcomeAgents
 	welcomeAgentOptions
 	welcomeWorkspace
+	welcomeImport
 	welcomeDone
 )
 
 type welcomeFlow struct {
+	workspace              domain.Workspace
+	contentTop             float32
 	changed                time.Time
 	step                   welcomeStep
 	direction              float32
@@ -63,6 +66,9 @@ func (v *View) welcomeView(c *n.Context, t *n.Theme) {
 	f := v.setupFlow()
 	width, height := c.Size()
 	top := max(float32(112), min(height/2-208, 256))
+	if f.step == welcomeImport {
+		top = 112
+	}
 	distance := width
 	duration := 260 * time.Millisecond
 	if c.Preferences().ReduceMotion {
@@ -71,7 +77,14 @@ func (v *View) welcomeView(c *n.Context, t *n.Theme) {
 	}
 	n.Column(c.Key("welcome")).Fill().Background(t.Background).Transition(n.ElementTransition{Duration: duration, Ease: n.EaseOut, Exit: &n.Motion{X: -distance, Opacity: 1}}).Children(func() {
 		n.Row(c).FillWidth().Height(56).DragWindow()
-		n.Scroll(c).FillWidth().Grow(1).Padding(top-56, 0, 24).Children(func() {
+		scroll := n.Scroll(c.Key("welcome-scroll")).FillWidth().Grow(1)
+		if c.Preferences().ReduceMotion {
+			top = scroll.Jump("content-top", top)
+		} else {
+			top = scroll.AnimateTo("content-top", top, motionAnimation(c, configurationTabDuration))
+		}
+		f.contentTop = top
+		scroll.Padding(top-56, 0, 24).Children(func() {
 			n.Column(c).Width(min(560, width-40)).AlignSelf(n.Center).Label("欢迎内容").Children(func() {
 				v.welcomeSteps(c, t, f, false)
 				v.welcomeStage(c, t, f, false)
@@ -88,7 +101,10 @@ func (v *View) welcomeSteps(c *n.Context, t *n.Theme, f *welcomeFlow, add bool) 
 	if f.step == welcomeWorkspace {
 		index = 2
 	}
-	labels := []string{"设备", "Agent", "工作区"}
+	if f.step == welcomeImport {
+		index = 3
+	}
+	labels := []string{"设备", "Agent", "工作区", "导入"}
 	if add {
 		labels = []string{"连接", "Agent"}
 		if v.sshCheck == sshSelecting || v.sshCheck == sshSaving {
@@ -135,7 +151,7 @@ func (v *View) welcomeFooter(c *n.Context, back, next string, disabled bool, onB
 		button := n.PrimaryButton(c, "").Height(32).PaddingX(14).Radius(6).Label(next).Disabled(disabled).Children(func() {
 			n.Row(c).Gap(8).AlignItems(n.Baseline).Children(func() {
 				n.Text(c.Key("action-label"), next).FontSize(13).FontWeight(400).FixedLineHeight(20).SingleLine().ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-				if next == "继续" || next == "开始使用" || next == "连接并准备服务" || next == "添加设备" {
+				if next == "继续" || next == "下一步" || next == "开始使用" || next == "连接并准备服务" || next == "添加设备" {
 					inlineSymbol(c, disclosureRight, next, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 14, c.Theme().AccentText).Transition(fadeMotion(c, 140*time.Millisecond))
 				}
 			})
@@ -217,9 +233,18 @@ func (v *View) welcomePage(c *n.Context, t *n.Theme, f *welcomeFlow, step welcom
 		v.welcomeAgentOptions(c, t, f, add)
 	case welcomeWorkspace:
 		v.welcomeWorkspace(c, t, f)
+	case welcomeImport:
+		v.welcomeHeading(c, t, "导入会话", f.key, true)
+		_, height := c.Size()
+		n.Column(c).FillWidth().Height(max(240, height-f.contentTop-112)).Children(func() {
+			if v.conversationImport != nil {
+				v.conversationImportBody(c, t, v.conversationImport)
+			}
+		})
 	}
 }
 func (v *View) finishWelcome() {
+	v.conversationImport = nil
 	f := v.setupFlow()
 	f.step = welcomeDone
 	f.changed = v.frameTime

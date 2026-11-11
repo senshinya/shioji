@@ -44,7 +44,7 @@ func TestWelcomeBusyActionResizesSmoothlyWithFixedRightEdge(t *testing.T) {
 	f.directory = "/Users/local/project"
 	ui := n.NewTester(v.View, 1100, 800)
 	ui.Advance(time.Second)
-	before, _ := ui.Find("开始使用")
+	before, _ := ui.Find("下一步")
 	f.busy = true
 	ui.Frame()
 	ui.Advance(40 * time.Millisecond)
@@ -129,20 +129,20 @@ func TestWelcomeDisclosuresAndDirectoryMutationsFollowTheirHeight(t *testing.T) 
 	t.Cleanup(func() { openWorkspaceDirectoryDialog = previousPicker })
 	ui.Frame()
 	ui.Advance(time.Second)
-	before, _ = ui.Find("开始使用")
+	before, _ = ui.Find("下一步")
 	ui.Click("添加文件夹")
 	ui.Advance(60 * time.Millisecond)
-	mid, _ = ui.Find("开始使用")
+	mid, _ = ui.Find("下一步")
 	ui.Advance(300 * time.Millisecond)
-	end, _ = ui.Find("开始使用")
+	end, _ = ui.Find("下一步")
 	if mid.Y <= before.Y+1 || mid.Y >= end.Y-1 {
 		t.Fatal("directory insertion height does not follow", before, mid, end)
 	}
 	ui.Click("移除附加目录")
 	ui.Advance(60 * time.Millisecond)
-	mid, _ = ui.Find("开始使用")
+	mid, _ = ui.Find("下一步")
 	ui.Advance(300 * time.Millisecond)
-	last, _ := ui.Find("开始使用")
+	last, _ := ui.Find("下一步")
 	if mid.Y >= end.Y-1 || mid.Y <= last.Y+1 {
 		t.Fatal("directory removal height does not follow", end, mid, last)
 	}

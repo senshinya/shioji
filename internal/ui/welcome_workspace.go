@@ -7,6 +7,7 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"slices"
 	"strings"
 	"time"
 )
@@ -67,7 +68,7 @@ func (v *View) welcomeWorkspace(c *n.Context, t *n.Theme, f *welcomeFlow) {
 			valid = false
 		}
 	}
-	label := "开始使用"
+	label := "下一步"
 	if f.busy {
 		label = "正在创建"
 	}
@@ -159,9 +160,23 @@ func (v *View) submitWelcomeWorkspace(f *welcomeFlow) {
 		return
 	}
 	key, epoch, device := f.key, state.ConnectionEpoch, v.Model.ConnectionDeviceID(f.key)
+	if f.workspace.ID != "" && f.workspace.Name == strings.TrimSpace(f.name) && slices.Equal(f.workspace.Folders, folders) {
+		v.openConversationImport(key, f.workspace, true)
+		v.welcomeStep(welcomeImport, 1)
+		return
+	}
 	f.busy = true
 	f.error = ""
-	if !v.do(app.Job{ConnectionID: key, Method: "workspace.create", Input: protocol.WorkspaceInput{Name: strings.TrimSpace(f.name), Folders: folders}, Apply: func(m *app.Model, b json.RawMessage, err error) {
+	method := "workspace.create"
+	var input any = protocol.WorkspaceInput{Name: strings.TrimSpace(f.name), Folders: folders}
+	if f.workspace.ID != "" {
+		method = "workspace.update"
+		next := f.workspace
+		next.Name = strings.TrimSpace(f.name)
+		next.Folders = folders
+		input = next
+	}
+	if !v.do(app.Job{ConnectionID: key, Method: method, Input: input, Apply: func(m *app.Model, b json.RawMessage, err error) {
 		f.busy = false
 		if v.welcome != f || f.step != welcomeWorkspace || v.deviceState(key).ConnectionEpoch != epoch {
 			return
@@ -171,7 +186,7 @@ func (v *View) submitWelcomeWorkspace(f *welcomeFlow) {
 			return
 		}
 		var w domain.Workspace
-		if json.Unmarshal(b, &w) != nil || w.ID == "" || w.DeviceID != device {
+		if json.Unmarshal(b, &w) != nil || w.ID == "" || w.DeviceID != device || len(w.Folders) == 0 {
 			f.error = "设备返回的工作区无效"
 			return
 		}
@@ -191,7 +206,10 @@ func (v *View) submitWelcomeWorkspace(f *welcomeFlow) {
 		m.SessionID = ""
 		m.ActiveConnection = key
 		m.RefreshDevices()
-		v.finishWelcome()
+		f.workspace = w
+		f.directory = w.Folders[0]
+		v.openConversationImport(key, w, true)
+		v.welcomeStep(welcomeImport, 1)
 	}}) {
 		f.busy = false
 		f.error = "设备操作繁忙，请重试"

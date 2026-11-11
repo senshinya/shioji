@@ -109,6 +109,9 @@ func (s *Store) PrepareHistory(in domain.HistoryChange) (domain.HistoryOperation
 
 	target := source
 	if !in.Restart {
+		// An application fork has its own history provenance; only the original
+		// imported record owns the external-source deduplication anchor.
+		target.Origin = nil
 		target.ID = domain.NewID()
 		target.ForkedFrom = source.ID
 		target.ForkedTurn = turn

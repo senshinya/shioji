@@ -60,6 +60,18 @@ func (m *Model) RunReadiness() domain.Readiness {
 
 const ModelUnavailableMessage = domain.ModelUnavailableMessage
 
+func (m *Model) ReadOnlyConversationReason() string {
+	for _, s := range m.Snapshot.Sessions {
+		if s.ID == m.SessionID && s.Origin != nil && s.Origin.ResumeRef == "" && s.ThreadID == "" {
+			if s.Origin.Reason != "" {
+				return s.Origin.Reason
+			}
+			return "此导入历史仅可查看"
+		}
+	}
+	return ""
+}
+
 func (m *Model) ModelUnavailable() bool {
 	ready := m.RunReadiness()
 	config := m.Config()

@@ -64,3 +64,34 @@ func configurationSectionTitle(c *n.Context, label string) n.Element {
 func configurationAction(c *n.Context, label string) n.Element {
 	return ghost(c, label, 6).Height(configurationControlHeight).PaddingX(8).FontSize(configurationValueSize)
 }
+
+// Native checkbox semantics with the same font-baseline object slot as inline
+// icons. Empty captions can use the neighboring first-line title for its ink.
+func configurationCheckbox(c *n.Context, value *bool, label string, font n.Font, reference ...string) n.Element {
+	ink := label
+	if len(reference) > 0 {
+		ink = reference[0]
+	}
+	t := c.Theme()
+	e := n.CheckboxBase(c, value).Height(configurationTextLine).Gap(8).AlignItems(n.Baseline).Label(label)
+	on := *value
+	focused := e.FocusVisible()
+	e.Children(func() {
+		n.RichText(c, inlineIconSpan(ink, font, 14, 0)).Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(configurationTextLine).DrawObjects(func(p *n.Painter, _ int, r n.Rect) {
+			if on {
+				p.Fill(r, t.Accent, 3)
+				p.Icon(check, r, t.AccentText)
+			} else {
+				p.Fill(r, t.Background, 3)
+				p.Stroke(r, t.Border.Mix(t.Text, .25), 3, 1)
+			}
+			if focused {
+				p.FocusRing(r, [4]float32{3, 3, 3, 3})
+			}
+		})
+		if label != "" {
+			n.Text(c, label).FontSize(font.Size).FixedLineHeight(configurationTextLine).TextColor(t.TextMuted)
+		}
+	})
+	return e
+}
