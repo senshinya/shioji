@@ -53,3 +53,20 @@ func TestCodeCommentAdapterReceivesOnlySelectedCodeAndBranchMetadata(t *testing.
 		t.Fatal("selected text was expanded")
 	}
 }
+
+func TestCodeCommentAdapterUsesExclusiveEndRowForTrailingNewline(t *testing.T) {
+	for _, tc := range []struct {
+		text, want         string
+		endLine, endColumn int
+	}{
+		{"abc\n", "位置：f.go:1:1–2:1（末端不含）", 1, 1},
+		{"abc\r\ndef\r\n", "位置：f.go:1:1–3:1（末端不含）", 2, 1},
+		{"国😀", "位置：f.go:1:1–1:3（末端不含）", 1, 3},
+	} {
+		c := domain.CodeCommentContent{Path: "f.go", Comment: "check", Fragments: []domain.CodeSelection{{Side: "target", StartLine: 1, StartColumn: 1, EndLine: tc.endLine, EndColumn: tc.endColumn, Text: tc.text}}}
+		got := codeCommentText(c, "main")
+		if !strings.Contains(got, tc.want) {
+			t.Fatalf("exclusive coordinate missing: want %q in %s", tc.want, got)
+		}
+	}
+}

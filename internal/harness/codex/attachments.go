@@ -78,11 +78,8 @@ func codeCommentText(comment domain.CodeCommentContent, branch string) string {
 		if part.Side == "base" {
 			side = "基准侧"
 		}
-		fmt.Fprintf(&out, "选中侧：%s\n位置：%s:%d", side, comment.Path, part.StartLine)
-		if part.EndLine != part.StartLine {
-			fmt.Fprintf(&out, "–%d", part.EndLine)
-		}
-		fmt.Fprintf(&out, "，第 %d–%d 列（末端不含）\n选中文字：\n%s\n", part.StartColumn, part.EndColumn, part.Text)
+		endLine := part.StartLine + strings.Count(part.Text, "\n")
+		fmt.Fprintf(&out, "选中侧：%s\n位置：%s:%d:%d–%d:%d（末端不含）\n选中文字：\n%s\n", side, comment.Path, part.StartLine, part.StartColumn, endLine, part.EndColumn, part.Text)
 	}
 	fmt.Fprintf(&out, "评论：%s\n会话工作目录分支：%s", comment.Comment, branch)
 	return out.String()

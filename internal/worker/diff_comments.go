@@ -98,7 +98,23 @@ func commentLabel(path string, fragments []domain.CodeSelection) string {
 		endLine := part.StartLine + strings.Count(part.Text, "\n")
 		locations = append(locations, fmt.Sprintf("%s%d:%d–%d:%d", sign, part.StartLine, part.StartColumn, endLine, part.EndColumn))
 	}
-	return filepath.Base(path) + ":" + strings.Join(locations, " · ")
+	name, suffix := filepath.Base(path), ":"+strings.Join(locations, " · ")
+	// Only the display descriptor is bounded. The typed record keeps the
+	// complete path, every fragment and every original byte unchanged.
+	if len(name)+len(suffix) > 256 {
+		if len(suffix) > 252 {
+			suffix = ":" + locations[0] + " · …"
+		}
+		budget := 256 - len(suffix)
+		if len(name) > budget {
+			end := budget - len("…")
+			for end > 0 && !utf8.RuneStart(name[end]) {
+				end--
+			}
+			name = name[:end] + "…"
+		}
+	}
+	return name + suffix
 }
 
 func (s *Server) captureDiffComment(in protocol.DiffCommentInput) (domain.Attachment, error) {

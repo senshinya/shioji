@@ -2,6 +2,7 @@ package worker
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"shioji/internal/attachments"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestPassiveDiffSnapshotsAreBoundedAndCommentsRetainTheirSource(t *testing.T) {
@@ -153,6 +155,46 @@ func TestDiffCommentTagLabelKeepsExclusiveEndAndDisjointRanges(t *testing.T) {
 	parts = append(parts, domain.CodeSelection{Side: "target", StartLine: 20, StartColumn: 1, EndColumn: 1, Text: "return next\r\n"})
 	if got := commentLabel("rotation.go", parts); got != "rotation.go:14:3–16:4 · 20:1–21:1" {
 		t.Fatal("gaps/end newline changed", got)
+	}
+}
+
+func TestDiffCommentLongLabelsStillStoreAllTypedLocations(t *testing.T) {
+	for _, count := range []int{1, 32} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			s, w, dir := gitTestServer(t)
+			s.attachments = attachments.New(filepath.Join(t.TempDir(), "resources"))
+			name := strings.Repeat("树", 80) + ".test.go"
+			raw := "abc\n"
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(raw), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cmp := compareTest(t, s, w.ID, map[string]string{"kind": "head"}, map[string]string{"kind": "worktree"})
+			file, err := gitTestCall(s, "git.file", map[string]any{"workspaceId": w.ID, "path": name, "comparison": cmp["comparison"]})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var snapshot domain.Attachment
+			data, _ := json.Marshal(file["snapshot"])
+			json.Unmarshal(data, &snapshot)
+			parts := make([]domain.CodeSelection, count)
+			for i := range parts {
+				parts[i] = domain.CodeSelection{Side: "target", Start: 0, End: 4}
+			}
+			ref, err := s.captureDiffComment(protocol.DiffCommentInput{GitQuery: protocol.GitQuery{WorkspaceID: w.ID}, Snapshot: snapshot, Comment: "检查", Fragments: parts})
+			if err != nil {
+				t.Fatal("valid comment rejected by its display label", err)
+			}
+			if len(ref.Name) > 256 || !utf8.ValidString(ref.Name) || !strings.Contains(ref.Name, ":1:1–2:1") {
+				t.Fatal("invalid/truncated first coordinate", ref.Name)
+			}
+			var record domain.DiffCommentRecord
+			if err := s.readDiffResource(w.ID, ref, &record); err != nil {
+				t.Fatal(err)
+			}
+			if record.Content.Path != name || len(record.Content.Fragments) != count || record.Content.Fragments[count-1].Text != raw {
+				t.Fatal("short label changed typed source", record.Content)
+			}
+		})
 	}
 }
 
