@@ -16,6 +16,8 @@ GitHub 仓库：`senshinya/shioji`，本地 remote 为 `upstream`。`origin` 保
 
 工作流使用 GitHub 的 `release` 环境；已创建该环境。凭据输入不经过聊天、源码或提交记录。
 
+最简单的入口：在 Finder 中双击 `packaging/Configure Release.command`，它会依次完成下方两步；在系统窗口确认，在终端隐藏输入专用密码即可。
+
 ### 1. 允许导出这一张开发者签名证书
 
 ```sh
