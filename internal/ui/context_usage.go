@@ -184,7 +184,7 @@ func (v *View) contextMeter(c *n.Context, t *n.Theme, cfg domain.RunConfig) {
 						if query {
 							disabled = !v.Model.Connected || v.Controller == nil
 						}
-						button := control(c.Key("compact-context")).FillWidth().Height(26).PaddingX(0).Radius(4).Disabled(disabled).Tooltip(reason).Label("压缩上下文")
+						button := control(c.Key("compact-context")).AlignSelf(n.Stretch).MarginX(-6).Height(26).PaddingX(6).Radius(4).Disabled(disabled).Tooltip(reason).Label("压缩上下文")
 						button.Children(func() {
 							font := n.Font{Family: t.Font, Size: 12, Weight: 400}
 							if compacting || state.phase == contextChecking {

@@ -83,6 +83,7 @@ Run agent tools against the workspace's owning device. The exact remote app-serv
 - Joining a tailnet does not automatically authorize SSH, deploy the Shioji worker, or install/authenticate Codex on peers. Check device readiness separately.
 - Device discovery must respect the embedded node's actual peer visibility and access policy. Do not require an administrative API token just to connect to a known peer.
 - Persist node identity securely and keep credentials, private keys, and authentication URLs out of logs.
+- Tailnet 节点由本机独立网络后台服务持有，不由 GUI 或执行 worker 持有。关闭窗口、退出 App 或更新 worker 不得停止节点及入站 TCP 转发；App 仅订阅状态、提交明确操作和请求私有 SSH 桥。暂停／退出网络由用户显式控制，恢复原节点身份，不自动重新授权。网络服务与执行服务分别注册，执行服务的“登录后启动服务”开关不控制 Tailnet。
 
 ## Native UI and UX
 
@@ -100,7 +101,7 @@ Avoid unnecessary secondary labels and descriptions. Let the layout do the expla
 ### 设置
 
 - 设置使用独立原生窗口，分为外观、消息输入、通知、快捷键和关于。侧栏分类切换保持即时，不加内容动画或选中底色移动；内容顶部不重复“设置”总标题、分栏或“当前 Mac”。
-- 设置与主窗口共用红绿灯位置和 8 px 侧栏内缩。侧栏图标与文字左对齐，搜索紧接窗控区域。设置行以水平分隔线组织，不加整组外框或底色；选择器右端、开关右端和分隔线右端对齐。
+- 设置与主窗口共用红绿灯位置；设置侧栏贴边铺满窗口高度，采用平面底色和右侧分隔线，不使用内缩的圆角浮动外框。保留控件内缩、图标与文字左对齐，搜索紧接窗控区域。设置行以水平分隔线组织，不加整组外框或底色；选择器右端、开关右端和分隔线右端对齐。
 - 开关采用无阴影灰阶胶囊，系统通知总开关使用相同样式。主题选择保留正常文字颜色，仅用中性边框和对勾表示选中，不依赖原生 Selected 覆盖文字颜色。
 - 外观预览使用真实 Markdown 与当前文字配置；消息输入页不重复静态输入框示意。设置即时持久化，当前设置窗口必须显示保存失败。快捷键保持原生输入、选区和 IME 行为，并拒绝冲突。
 - 前台通知默认开启，保留用户明确关闭的选择。系统通知须经 macOS 授权，按真实生命周期事件发送；历史重放、停止和补到的用量事件不产生完成通知。通知处理不依赖窗口可见或重新绘制，保留对象与去重记录须有界。

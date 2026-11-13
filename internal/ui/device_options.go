@@ -378,7 +378,7 @@ func (v *View) runtimeEnvironmentFields(c *n.Context, t *n.Theme, e *deviceAgent
 	}
 	n.Column(c).FillWidth().Children(func() {
 		n.Row(c).FillWidth().Justify(n.End).Children(func() {
-			if configurationAction(c, "添加变量").PaddingX(0).Disabled(disabled).Clicked() {
+			if configurationAction(c, "添加变量").Disabled(disabled).Clicked() {
 				e.draft.nextID++
 				e.draft.environment = append(e.draft.environment, runtimeEnvironmentDraft{id: e.draft.nextID, added: true})
 			}

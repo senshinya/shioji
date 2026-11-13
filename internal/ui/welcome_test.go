@@ -22,58 +22,23 @@ func welcomeModel() *app.Model {
 	m.DeviceStates["local"].WorkerMinor = 18
 	return m
 }
-func TestWelcomeIsFullPageAndSkipKeepsDraft(t *testing.T) {
+func TestWelcomeEntryIsFullPageAndPreservesDraft(t *testing.T) {
 	m := welcomeModel()
 	v := New(m, nil, "")
 	ui := n.NewTester(v.View, 1100, 800)
 	ui.Advance(time.Second)
-	if !ui.HasText("选择设备") {
-		t.Fatal("first run lacks device step", ui.Texts())
+	if !ui.HasText("选择执行位置") {
+		t.Fatal(ui.Texts())
 	}
 	if _, ok := ui.Find("新建会话"); ok {
-		t.Fatal("empty sidebar occupies welcome")
+		t.Fatal("sidebar occupies welcome")
 	}
 	r, ok := ui.Find("欢迎内容")
 	if !ok || math.Abs(float64(r.X-270)) > 1 || math.Abs(float64(r.Y-192)) > 1 || math.Abs(float64(r.W-560)) > 1 {
-		t.Fatal("welcome differs from approved alignment", r)
+		t.Fatal("welcome alignment", r)
 	}
-	if err := ui.Click("稍后设置"); err != nil {
-		t.Fatal(err)
-	}
-	ui.Advance(time.Second)
-	if m.FirstRun || m.SessionID != "" || m.Drafts["home"] != "保留首页草稿" {
-		t.Fatal("skip creates task or discards draft")
-	}
-	if _, ok := ui.Find("新建会话"); !ok {
-		t.Fatal("skip did not reach home")
-	}
-}
-func TestWelcomeDeviceConfigCancelDiscardsChanges(t *testing.T) {
-	m := welcomeModel()
-	v := New(m, app.NewController(""), "")
-	ui := n.NewTester(v.View, 1100, 800)
-	ui.Advance(time.Second)
-	ui.Click("配置本机")
-	ui.Advance(time.Second)
-	if err := ui.Click("设备显示名称"); err != nil {
-		t.Fatal(err)
-	}
-	ui.Key(n.Cmd, n.KeyA)
-	ui.Type("取消的名称")
-	ui.Click("取消")
-	ui.Advance(time.Second)
-	ui.Click("配置本机")
-	ui.Advance(time.Second)
-	if v.welcome.deviceName != m.LocalName() {
-		t.Fatal("cancelled name restored as draft", v.welcome.deviceName)
-	}
-	ui.Click("设备显示名称")
-	ui.Key(n.Cmd, n.KeyA)
-	ui.Type("开发 Mac")
-	ui.Click("保存")
-	ui.Advance(time.Second)
-	if m.LocalName() != "开发 Mac" {
-		t.Fatal("local alias not saved", m.LocalName())
+	if m.SessionID != "" || m.Drafts["home"] != "保留首页草稿" {
+		t.Fatal("entry consumed draft")
 	}
 }
 func welcomeJob(t *testing.T, c *app.Controller, method string) app.Job {
@@ -96,7 +61,7 @@ func TestWelcomeAgentConfigurationAndAdmissionStayDeviceScoped(t *testing.T) {
 	v := New(m, c, "")
 	ui := n.NewTester(v.View, 1100, 800)
 	ui.Advance(time.Second)
-	ui.Click("继续")
+	ui.Click("这台 Mac")
 	ui.Advance(time.Second)
 	catalog := welcomeJob(t, c, "runtime.catalog")
 	if catalog.ConnectionID != "local" || catalog.ConnectionEpoch != "a" {
@@ -245,22 +210,22 @@ func TestWelcomeNavigationSlidesWithoutFadingAndRespectsReduceMotion(t *testing.
 		v := New(m, nil, "")
 		ui := n.NewTester(v.View, 1100, 800)
 		ui.Advance(time.Second)
-		ui.Click("配置本机")
+		ui.Click("通过 SSH 连接")
 		ui.Advance(80 * time.Millisecond)
-		mid, ok := ui.Find("配置设备")
+		mid, ok := ui.Find("连接设备")
 		if !ok {
 			t.Fatal("incoming page missing")
 		}
 		ui.Advance(time.Second)
-		end, _ := ui.Find("配置设备")
+		end, _ := ui.Find("连接设备")
 		if reduced && math.Abs(float64(mid.X-end.X)) > 1 || !reduced && mid.X <= end.X+1 {
 			t.Fatal("next did not slide left or Reduce Motion moved", reduced, mid, end)
 		}
-		ui.Click("取消")
+		ui.Click("返回")
 		ui.Advance(80 * time.Millisecond)
-		back, _ := ui.Find("选择设备")
+		back, _ := ui.Find("选择执行位置")
 		ui.Advance(time.Second)
-		settled, _ := ui.Find("选择设备")
+		settled, _ := ui.Find("选择执行位置")
 		if !reduced && back.X >= settled.X-1 {
 			t.Fatal("Back did not reverse slide", back, settled)
 		}
@@ -331,9 +296,13 @@ func TestSSHSetupBoundsRetainCloseWithManyEnvironmentVariables(t *testing.T) {
 func TestWelcomeFinishSlidesIntoHome(t *testing.T) {
 	m := welcomeModel()
 	v := New(m, nil, "")
+	v.setupFlow().step = welcomeImport
+	v.openConversationImport("local", domain.Workspace{ID: "w", DeviceID: "A", Name: "Local"}, true)
 	ui := n.NewTester(v.View, 1100, 800)
 	ui.Advance(time.Second)
-	ui.Click("稍后设置")
+	if err := ui.Click("跳过导入"); err != nil {
+		t.Fatal(err)
+	}
 	ui.Advance(80 * time.Millisecond)
 	mid, ok := ui.Find("新建会话")
 	ui.Advance(time.Second)

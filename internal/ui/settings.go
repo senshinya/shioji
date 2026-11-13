@@ -148,10 +148,10 @@ func (s *Settings) View(c *n.Context) {
 		navColor = n.Hex("#111111")
 	}
 	n.Row(c).Fill().Background(t.Background).Children(func() {
-		n.Column(c.Key("settings-navigation")).Width(184).FillHeight().Padding(8, 0, 8, 8).Children(func() {
-			n.Column(c.Key("settings-navigation-card")).Fill().Padding(8, 8, 16, 8).Radius(14).Background(navColor).Border(1, t.Border).Children(func() {
-				n.Row(c).FillWidth().Height(32 - 1).DragWindow()
-				fieldFeedback(c, n.Row(c.Key("settings-search-field")).FillWidth().Height(28).PaddingX(8-1).Gap(8).AlignItems(n.Center).Radius(6).Background(t.Surface)).Children(func() {
+		n.Column(c.Key("settings-navigation")).Width(184).FillHeight().Background(navColor).BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Children(func() {
+			n.Column(c.Key("settings-navigation-content")).Fill().Padding(16, 8, 24, 16).Children(func() {
+				n.Row(c).FillWidth().Height(32).DragWindow()
+				fieldFeedback(c, n.Row(c.Key("settings-search-field")).FillWidth().Height(28).PaddingX(8).Gap(8).AlignItems(n.Center).Radius(6).Background(t.Surface)).Children(func() {
 					n.Icon(c, searchIcon).Size(16, 16).TextColor(t.TextMuted)
 					n.TextInputBase(c.Key("settings-search"), &s.query).Grow(1).MinWidth(0).Height(24).FontSize(12).FixedLineHeight(18).Label("搜索设置").Placeholder("搜索设置").Changed()
 				})
@@ -388,7 +388,7 @@ func (s *Settings) input(c *n.Context, t *n.Theme) {
 	p := &s.owner.Model.Preferences
 	n.Row(c).FillWidth().Height(configurationSectionHeader).AlignItems(n.Start).Children(func() {
 		n.Text(c, "按键").FontSize(configurationSectionSize).FontWeight(500).FixedLineHeight(configurationTitleLine).Grow(1)
-		if configurationAction(c, "恢复默认按键").Clicked() {
+		if configurationAction(c, "恢复默认按键").MarginEnd(-8).Clicked() {
 			p.Shortcuts = app.DefaultShortcuts()
 			s.changed()
 		}
@@ -428,9 +428,10 @@ func (s *Settings) shortcuts(c *n.Context, t *n.Theme) {
 	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsHeading(c, t, "消息")
 		settingsGroup(c, t, func() {
-			button := control(c).FillWidth().Height(configurationRowHeight).PaddingX(0).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).Label("前往消息输入").Children(func() {
+			button := configurationRowControl(c, 6).Height(configurationRowHeight).Label("前往消息输入").Children(func() {
 				settingsLinkContent(c, t, "发送、换行与立即介入", "消息输入")
 			})
+			n.Column(c).FillWidth().Height(.5).Background(t.Border)
 			if button.Clicked() {
 				s.selectPage("input")
 			}
@@ -466,9 +467,10 @@ func (s *Settings) about(c *n.Context, t *n.Theme) {
 				platform = runtime.GOOS + " · " + runtime.GOARCH
 			}
 			settingsRow(c, t, "运行平台", func() { n.Text(c, platform).FontSize(12).TextColor(t.TextMuted) })
-			button := control(c).FillWidth().Height(configurationRowHeight).PaddingX(0).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).Label("查看第三方许可").Children(func() {
+			button := configurationRowControl(c, 6).Height(configurationRowHeight).Label("查看第三方许可").Children(func() {
 				settingsLinkContent(c, t, "第三方许可", "查看")
 			})
+			n.Column(c).FillWidth().Height(.5).Background(t.Border)
 			if button.Clicked() {
 				s.licenses = true
 			}

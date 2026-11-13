@@ -24,6 +24,7 @@ const (
 )
 
 type menuChoice struct {
+	icon              *n.SVG
 	id, name, detail  string
 	checked, disabled bool
 	choose            func()
@@ -61,6 +62,9 @@ func (v *View) choiceMenu(c *n.Context, t *n.Theme, key string, trigger n.Elemen
 						}
 						row.Children(func() {
 							n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
+								if choice.icon != nil {
+									inlineSymbol(c, choice.icon, choice.name, n.Font{Family: t.Font, Size: 13, Weight: 400}, 14, t.TextMuted)
+								}
 								n.Text(c, choice.name).FontSize(13).FixedLineHeight(18).Grow(1).MinWidth(0).SingleLine().Ellipsis("…")
 								if choice.detail != "" {
 									n.Text(c, choice.detail).FontSize(11).TextColor(t.TextMuted).MaxWidth(120).Shrink(0).SingleLine().Ellipsis("…").TextAlign(n.End).Tooltip(choice.detail)

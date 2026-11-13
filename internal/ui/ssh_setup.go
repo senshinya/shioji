@@ -118,7 +118,7 @@ func (v *View) CloseTransient() {
 }
 func (v *View) startSSHKeySetup() {
 	port, _ := strconv.Atoi(strings.TrimSpace(v.sshPort))
-	ssh := transport.SSH{Target: strings.TrimSpace(v.sshTarget), Port: port}
+	ssh := v.setupSSH(port)
 	command, err := ssh.KeySetupCommand()
 	if err != nil {
 		v.sshError = err.Error()

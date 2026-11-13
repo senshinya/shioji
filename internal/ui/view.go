@@ -27,7 +27,12 @@ type editBinding struct {
 }
 
 type View struct {
-	commentTagEntries map[string]time.Time
+	deviceConnectionSave *deviceConnectionSave
+	pathNotice           devicePathNotice
+	sshExpectedDevice    string
+	tailnet              *tailnetUI
+	sshTailnetPeer       string
+	commentTagEntries    map[string]time.Time
 
 	pendingCommentInsertions []diffCommentInsertion
 
@@ -277,6 +282,7 @@ func (v *View) View(c *n.Context) {
 		v.secondary.collectBindings()
 	}
 	v.pumpUpdates()
+	v.syncDeviceConnectionSave()
 	m.RefreshDevices()
 	m.SyncHistoryEdits()
 	v.syncHistoryExit(c)
@@ -310,6 +316,7 @@ func (v *View) View(c *n.Context) {
 		}
 	}
 	v.flushDiffCommentInsertions(c)
+	v.syncTailnet()
 	v.syncAgentSignIns(c)
 	v.syncToolServiceAuthorizations(c)
 	v.syncWorkerMigrations(c)
@@ -331,6 +338,7 @@ func (v *View) View(c *n.Context) {
 	if m.FirstRun {
 		v.welcomeView(c, &t)
 		v.directoryDialog(c, &t)
+		v.devicePathFeedback(c, &t)
 		return
 	}
 
@@ -474,6 +482,7 @@ func (v *View) View(c *n.Context) {
 	v.attachmentDialog(c, &t)
 	v.directoryDialog(c, &t)
 	v.conversationImportDialog(c, &t)
+	v.devicePathFeedback(c, &t)
 }
 
 func (v *View) home() {

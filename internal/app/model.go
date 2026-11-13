@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"shioji/internal/protocol"
+	"shioji/internal/tailnet"
 	"slices"
 	"strings"
 
@@ -25,6 +26,7 @@ type InspectorLayout struct {
 }
 
 type Model struct {
+	Tailnet                    tailnet.Snapshot
 	CompletedReplies           map[string]CompletedReply
 	Navigation                 NavigationPreferences
 	WorkDetails                map[WorkKey]domain.WorkDetail
@@ -53,6 +55,7 @@ type Model struct {
 	Attachments                map[string][]DraftAttachment
 	sourceConnection           string
 	ConnectionTiming           *DeviceTiming
+	DevicePaths                []DevicePathStatus
 	Connections                []DeviceConnection
 	ActiveConnection           string
 	LocalDeviceName            string
@@ -595,7 +598,7 @@ func (m *Model) Load(path string) error {
 	m.KnownDeviceID = saved.DeviceID
 	m.LocalDeviceID = saved.DeviceID
 	m.LocalDeviceName = saved.LocalDeviceName
-	m.Connections = saved.Connections
+	m.Connections = normalizedConnections(saved.Connections)
 	for key, cache := range saved.DeviceCache {
 		if key != "local" {
 			found := false

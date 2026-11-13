@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"net"
 	"time"
 
 	"shioji/internal/protocol"
@@ -18,6 +19,11 @@ type eventResult struct {
 func (c *Controller) observeEvents(ctx context.Context, device, generation string, after int64) (<-chan eventResult, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(ctx)
 	results := make(chan eventResult, 1)
+	dial := c.dial
+	if c.paths != nil {
+		id := c.paths.active()
+		dial = func(ctx context.Context) (net.Conn, error) { return c.paths.dialRoute(ctx, id) }
+	}
 	go func() {
 		send := func(result eventResult) bool {
 			select {
@@ -27,7 +33,7 @@ func (c *Controller) observeEvents(ctx context.Context, device, generation strin
 				return false
 			}
 		}
-		conn, err := c.dial(ctx)
+		conn, err := dial(ctx)
 		if err != nil {
 			send(eventResult{err: err})
 			return

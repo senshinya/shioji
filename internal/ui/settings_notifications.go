@@ -97,10 +97,10 @@ func (s *Settings) notifications(c *n.Context, t *n.Theme) {
 		})
 	})
 	n.Row(c).FillWidth().Gap(12).Margin(configurationSectionGap, 0, 0, 0).Children(func() {
-		if ghost(c, "发送测试通知").PaddingX(0).FontSize(12).Disabled(!p.Enabled || s.notificationPending).Clicked() {
+		if configurationAction(c, "发送测试通知").MarginX(-8).Disabled(!p.Enabled || s.notificationPending).Clicked() {
 			s.testNotification(c, false)
 		}
-		if ghost(c, "系统通知设置…").PaddingX(0).FontSize(12).Clicked() {
+		if configurationAction(c, "系统通知设置…").MarginX(-8).Clicked() {
 			if err := mygo.Shell.OpenExternal("x-apple.systempreferences:com.apple.preference.notifications"); err != nil {
 				s.error = err.Error()
 			}

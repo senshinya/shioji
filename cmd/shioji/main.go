@@ -10,6 +10,7 @@ import (
 	"github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
+	"shioji/internal/transport"
 	presentation "shioji/internal/ui"
 )
 
@@ -30,6 +31,7 @@ func run() error {
 	exe, _ := os.Executable()
 	workerBin := flag.String("worker-bin", filepath.Join(filepath.Dir(exe), "shioji-worker"), "Bundled local worker executable")
 	noStart := flag.Bool("no-start-worker", false, "Connect without starting a worker")
+	networkBin := flag.String("network-bin", "", "Signed network host for an isolated development profile")
 	flag.Parse()
 	model := app.NewModel()
 	if err = model.Load(*state); err != nil {
@@ -45,6 +47,13 @@ func run() error {
 	}
 	controller := app.NewDeviceController(*dir, model.LocalDeviceID, model.Connections, *workerBin, restored)
 	controller.SetWorkerAutoUpdate(!*noStart)
+	nodeDir := filepath.Join(filepath.Dir(*state), "tailnet")
+	clientDone, err := transport.RegisterNetworkClient(nodeDir)
+	if err != nil {
+		return err
+	}
+	defer clientDone()
+	controller.AttachTailnet(transport.NewNetworkClient(nodeDir, *workerBin, *networkBin))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {

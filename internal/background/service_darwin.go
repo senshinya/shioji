@@ -12,6 +12,7 @@ import (
 )
 
 const PlistName = "dev.shioji.runtime.agent.plist"
+const NetworkPlistName = "dev.shioji.network.agent.plist"
 
 func Manage(action, plist string) (domain.BackgroundService, error) {
 	result := domain.BackgroundService{Format: 1, State: "unsupported"}

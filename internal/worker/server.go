@@ -318,6 +318,11 @@ func (s *Server) serveConnection(conn net.Conn) {
 }
 func decode[T any](body []byte) (T, error) { var v T; err := json.Unmarshal(body, &v); return v, err }
 func (s *Server) handle(method string, body []byte) (any, error) {
+	if method == "device.ping" {
+		return struct {
+			DeviceID string `json:"deviceId"`
+		}{s.store.DeviceID()}, nil
+	}
 	if method == "worker.info" {
 		return s.build, nil
 	}

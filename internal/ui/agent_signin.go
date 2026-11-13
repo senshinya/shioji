@@ -104,7 +104,7 @@ func (v *View) startAgentSignIn(key string, e *deviceAgentEditor, info domain.Ha
 	u := &agentSignInUI{initial: slices.Contains(methods, domain.SignInAPI), key: key, device: v.signInDevice(key), editor: e, autoOpen: true, status: domain.SignInStatus{ID: domain.NewID(), HarnessID: info.ID, Phase: domain.SignInStarting}}
 	if key == "" {
 		port, _ := strconv.Atoi(strings.TrimSpace(v.sshPort))
-		u.ssh = &transport.SSH{Target: strings.TrimSpace(v.sshTarget), Port: port, Worker: v.sshSetup.Info.Worker, StateDirectory: v.sshSetup.Info.Directory}
+		u.ssh = setupWorkerSSHPointer(v.setupWorkerSSH(port, v.sshSetup.Info))
 	}
 	if v.agentSignIns == nil {
 		v.agentSignIns = map[string]*agentSignInUI{}

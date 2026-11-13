@@ -155,9 +155,9 @@ func TestWelcomeSlidingPageKeepsItsTextOpaque(t *testing.T) {
 		ui := n.NewTester(v.View, 1100, 800)
 		ui.SetDark(dark)
 		ui.Advance(time.Second)
-		ui.Click("配置本机")
+		ui.Click("通过 SSH 连接")
 		ui.Advance(80 * time.Millisecond)
-		r, _ := ui.Find("配置设备")
+		r, _ := ui.Find("连接设备")
 		sample := func(r n.Rect) int {
 			extreme := 255
 			if dark {
@@ -179,7 +179,7 @@ func TestWelcomeSlidingPageKeepsItsTextOpaque(t *testing.T) {
 		}
 		mid := sample(r)
 		ui.Advance(300 * time.Millisecond)
-		r, _ = ui.Find("配置设备")
+		r, _ = ui.Find("连接设备")
 		end := sample(r)
 		if math.Abs(float64(mid-end)) > 4 {
 			t.Fatal("step slide changes opacity", dark, mid, end)

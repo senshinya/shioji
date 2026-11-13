@@ -12,11 +12,14 @@ import (
 )
 
 type DeviceConnection struct {
-	ID       string        `json:"id"`
-	Home     string        `json:"home,omitempty"`
-	Name     string        `json:"name"`
-	DeviceID string        `json:"deviceId"`
-	SSH      transport.SSH `json:"ssh"`
+	Routes        []DeviceRoute   `json:"routes,omitempty"`
+	ActiveRouteID string          `json:"activeRouteId,omitempty"`
+	OtherSSH      []transport.SSH `json:"otherSSH,omitempty"`
+	ID            string          `json:"id"`
+	Home          string          `json:"home,omitempty"`
+	Name          string          `json:"name"`
+	DeviceID      string          `json:"deviceId"`
+	SSH           transport.SSH   `json:"ssh"`
 }
 
 type DeviceTiming struct {
@@ -25,6 +28,7 @@ type DeviceTiming struct {
 }
 
 type DeviceState struct {
+	Paths           []DevicePathStatus
 	WorkerService   *WorkerService
 	Timing          *DeviceTiming
 	sourceToken     string
@@ -203,6 +207,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	p.WorkerService = state.WorkerService
 	p.KnownDeviceID = state.Snapshot.DeviceID
 	p.ConnectionTiming = state.Timing
+	p.DevicePaths = state.Paths
 	p.Details = map[string]domain.SessionDetail{}
 	owned := map[string]bool{}
 	for _, s := range state.Snapshot.Sessions {
@@ -246,6 +251,17 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	}
 	state.Snapshot, state.Sequence = p.Snapshot, p.Sequence
 	state.Timing = p.ConnectionTiming
+	state.Paths = p.DevicePaths
+	for i := range m.Connections {
+		if m.Connections[i].ID != key {
+			continue
+		}
+		for _, path := range p.DevicePaths {
+			if path.Phase == PathActive {
+				m.Connections[i].ActiveRouteID = path.ID
+			}
+		}
+	}
 	state.Connected, state.ConnectionEpoch = p.Connected, p.ConnectionEpoch
 	state.Readiness, state.WorkerMinor, state.Error = p.Readiness, p.WorkerMinor, p.Error
 	state.WorkerService = p.WorkerService
@@ -301,6 +317,7 @@ func (m *Model) RefreshDevices() {
 			m.Readiness, m.WorkerMinor = state.Readiness, state.WorkerMinor
 			m.WorkerService = state.WorkerService
 			m.ConnectionTiming = state.Timing
+			m.DevicePaths = state.Paths
 		}
 	}
 	if m.DeviceStates[current] == nil {
@@ -335,4 +352,53 @@ func (m *Model) RenameDevice(key, name string) error {
 		}
 	}
 	return fmt.Errorf("设备不存在")
+}
+
+// Keep device identity and display alias when adding another transport route.
+func (m *Model) BindDeviceConnection(connection DeviceConnection) DeviceConnection {
+	connection = connection.Normalized()
+	for i, old := range m.Connections {
+		if old.DeviceID == "" || old.DeviceID != connection.DeviceID {
+			continue
+		}
+		old = old.Normalized()
+		for _, route := range connection.Routes {
+			found := false
+			for j := range old.Routes {
+				if old.Routes[j].ID == route.ID {
+					old.Routes[j] = route
+					found = true
+					break
+				}
+			}
+			if !found {
+				old.Routes = append(old.Routes, route)
+			}
+		}
+		connection.Routes, connection.ActiveRouteID = old.Routes, old.ActiveRouteID
+		connection.ID = old.ID
+		connection.Name = old.Name
+		routes := append(append([]transport.SSH(nil), old.OtherSSH...), old.SSH)
+		connection.OtherSSH = nil
+		for _, route := range routes {
+			if route.Target == connection.SSH.Target && route.Port == connection.SSH.Port && route.TailnetPeer == connection.SSH.TailnetPeer {
+				continue
+			}
+			duplicate := false
+			for _, saved := range connection.OtherSSH {
+				if saved.Target == route.Target && saved.Port == route.Port && saved.TailnetPeer == route.TailnetPeer {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				route.ProxySocket = ""
+				connection.OtherSSH = append(connection.OtherSSH, route)
+			}
+		}
+		m.Connections[i] = connection
+		return connection
+	}
+	m.Connections = append(m.Connections, connection)
+	return connection
 }

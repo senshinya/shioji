@@ -13,7 +13,6 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
-	"shioji/internal/transport"
 )
 
 // Closing cancels presentation immediately; the in-flight check retains its
@@ -108,7 +107,13 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 					n.Row(c).FillWidth().Padding(8, 4).Gap(4).AlignItems(n.Center).Children(func() {
 						textField(c.Key("device-search"), &v.deviceSearch).MinWidth(0).Grow(1).Height(28).FontSize(12).Label("搜索设备").Placeholder("搜索设备").Background(t.Background)
 						add := iconButton(c, plus, "添加设备")
-						v.choiceMenu(c, t, "add-device", add, []menuChoice{{id: "ssh", name: "直接 SSH", choose: func() { v.sshCheck = v.sshCheck.show(); v.sshError = "" }}, {id: "tailnet", name: "从 Tailnet 添加", disabled: true}})
+						v.choiceMenu(c, t, "add-device", add, []menuChoice{{id: "ssh", name: "直接 SSH", choose: func() {
+							v.sshExpectedDevice = ""
+							v.sshTailnetPeer = ""
+							v.welcome = nil
+							v.sshCheck = v.sshCheck.show()
+							v.sshError = ""
+						}}, {id: "tailnet", name: "从 Tailnet 添加", icon: tailscaleMark, choose: func() { v.sshExpectedDevice = ""; v.beginTailnet() }}})
 					})
 					n.Scroll(c).FillWidth().Grow(1).Children(func() {
 						row := func(key, name, address string) {
@@ -132,7 +137,10 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 										n.Row(c).Gap(5).AlignItems(n.Baseline).Children(func() {
 											label := "这台 Mac"
 											if key != "local" {
-												label = "SSH · " + deviceLatency(state, c.Now())
+												label = "直连 SSH · " + deviceLatency(state, c.Now())
+												if _, ok := v.connectionPeer(key); ok {
+													label = "Tailnet · " + deviceLatency(state, c.Now())
+												}
 												color := t.TextMuted
 												if state.Connected {
 													color = t.Success
@@ -152,11 +160,18 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 						}
 						row("local", m.LocalName(), "")
 						for _, connection := range m.Connections {
-							row(connection.ID, connection.Name, connection.SSH.Target)
+							row(connection.ID, connection.Name, connection.ActiveSSH().Target)
 						}
 					})
 					deviceDivider(c)
-					ghost(c, "Tailnet").FillWidth().Height(32).PaddingX(10).FontSize(12).TextColor(t.TextMuted).Disabled(true).Tooltip("尚未配置")
+					if control(c, 6).FillWidth().Height(32).PaddingX(10).Label("Tailnet").Children(func() {
+						n.Row(c).FillWidth().AlignItems(n.Baseline).Children(func() {
+							inlineIconText(c, tailscaleMark, "Tailnet", n.Font{Family: t.Font, Size: 12, Weight: 400}, 14, 8, t.TextMuted)
+						})
+					}).Clicked() {
+						v.deviceSelected = "tailnet"
+						v.deviceList = false
+					}
 				})
 			})
 		}
@@ -194,7 +209,7 @@ func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 		n.Text(c, "主目录").FontSize(12).TextColor(t.TextMuted)
 		n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
 			textField(c.Key("remote-main"), &v.remoteWorkspacePath).MinWidth(0).Grow(1).Height(32).FontSize(13).Label("远程主目录").Placeholder("该 Mac 上的绝对路径").Disabled(v.remoteWorkspaceBusy)
-			choose := iconButton(c, workspaceIcon, "选择主目录").Disabled(v.remoteWorkspaceBusy)
+			choose := iconButton(c, workspaceIcon, "选择主目录").MarginEnd(-6).Disabled(v.remoteWorkspaceBusy)
 			if choose.Clicked() {
 				v.chooseRemoteWorkspaceDirectory(false)
 			}
@@ -265,7 +280,7 @@ func (v *View) checkSSHDevice() {
 		}
 		port = n
 	}
-	ssh := transport.SSH{Target: strings.TrimSpace(v.sshTarget), Port: port}
+	ssh := v.setupSSH(port)
 	if err := ssh.Validate(); err != nil {
 		v.sshError = err.Error()
 		return
@@ -361,9 +376,21 @@ func (v *View) checkSSHDevice() {
 }
 
 func (v *View) finishSSHSetup(result app.DeviceSetupCheck) {
+	if v.mergeKnownDevice(result) {
+		return
+	}
 	v.sshAgents = agentEditor(result.Catalog)
 	v.sshCheck = sshSelecting
 	if f := v.welcome; f != nil && f.key == "" {
+		if v.Model.FirstRun && result.Info.DeviceID != "" {
+			if f.remoteAgents == nil {
+				f.remoteAgents = map[string]*deviceAgentEditor{}
+			}
+			if previous := f.remoteAgents[result.Info.DeviceID]; previous != nil {
+				carryWelcomeAgentSelections(v.sshAgents, previous)
+			}
+			f.remoteAgents[result.Info.DeviceID] = v.sshAgents
+		}
 		f.agents = v.sshAgents
 		f.agents.workerMinor = result.Info.Minor
 		v.welcomeStep(welcomeAgents, 1)
@@ -460,6 +487,14 @@ func (v *View) createWorkspaceOn(key string, input protocol.WorkspaceInput) {
 }
 
 func deviceLatency(state *app.DeviceState, now time.Time) string {
+	if len(state.Paths) > 0 {
+		for _, s := range state.Paths {
+			if s.Phase == app.PathActive && state.Connected {
+				return pathTiming(s, now)
+			}
+		}
+		return "—"
+	}
 	if !state.Connected {
 		return "—"
 	}

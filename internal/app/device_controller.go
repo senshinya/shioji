@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"shioji/internal/tailnet"
 	"shioji/internal/transport"
 	"time"
 )
@@ -116,11 +118,14 @@ func NewDeviceController(directory, localDeviceID string, connections []DeviceCo
 	return root
 }
 func sshController(connection DeviceConnection, pending []string, binary string) *Controller {
+	connection = connection.Normalized()
 	c := NewController("")
 	c.WorkerBinary = binary
-	c.WorkerSSH = &connection.SSH
+	ssh := connection.ActiveSSH()
+	c.WorkerSSH = &ssh
 	c.ExpectedDeviceID = connection.DeviceID
-	c.Dial = connection.SSH.Dial
+	c.paths = newDevicePaths(connection, nil)
+	c.Dial = c.paths.dial
 	c.RestoreOperations = pending
 	return c
 }
@@ -145,6 +150,16 @@ func (c *Controller) startDevice(ctx context.Context, key string, source *device
 	childCtx, cancel := context.WithCancel(ctx)
 	source.cancel = cancel
 	source.ctx = childCtx
+	if source.controller.paths != nil && source.controller.paths.open == nil {
+		source.controller.resolveSSH = c.TailnetSSH
+		source.controller.paths.open = func(ctx context.Context, s transport.SSH) (net.Conn, error) {
+			routed, err := c.TailnetSSH(s)
+			if err != nil {
+				return nil, err
+			}
+			return routed.Dial(ctx)
+		}
+	}
 	token := domain.NewID()
 	c.postContext(ctx, func(m *Model) {
 		if m.DeviceStates[key] == nil {
@@ -174,6 +189,9 @@ func (c *Controller) startDevice(ctx context.Context, key string, source *device
 	}()
 }
 func (c *Controller) runDevices(ctx context.Context) {
+	if c.Tailnet != nil {
+		go c.Tailnet.Run(ctx, func(s tailnet.Snapshot) { c.postContext(ctx, func(m *Model) { m.Tailnet = s }) })
+	}
 	defer c.signInForwards.Close()
 	for key, source := range c.fleet.sources {
 		c.startDevice(ctx, key, source)
@@ -213,6 +231,12 @@ func (c *Controller) runDevices(ctx context.Context) {
 			checkCancel = nil
 			apply(result.job, result.body, result.err)
 		case job := <-c.Jobs:
+			if job.Method == "$tailnet" {
+				if a, ok := job.Input.(tailnet.Action); ok && c.Tailnet != nil {
+					c.Tailnet.Do(a)
+				}
+				continue
+			}
 			if job.Method == "$device.prepare-service" {
 				c.runServicePreparationJob(ctx, job)
 				continue
@@ -257,7 +281,12 @@ func (c *Controller) runDevices(ctx context.Context) {
 				go func() {
 					callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 					defer cancel()
-					result, err := signInSSHSetup(callCtx, input)
+					var result domain.SignInStatus
+					var err error
+					input.SSH, err = c.TailnetSSH(input.SSH)
+					if err == nil {
+						result, err = signInSSHSetup(callCtx, input)
+					}
 					if err == nil {
 						result, err = c.signInForwards.prepare(ctx, input.SSH, input.DeviceID, input.Input, result)
 					}
@@ -298,7 +327,10 @@ func (c *Controller) runDevices(ctx context.Context) {
 					var err error
 					if job.Method == "$device.complete" {
 						var result protocol.AgentSetupResult
-						result, err = completeSSHSetup(callCtx, complete)
+						complete.SSH, err = c.TailnetSSH(complete.SSH)
+						if err == nil {
+							result, err = completeSSHSetup(callCtx, complete)
+						}
 						body, _ = json.Marshal(result)
 					} else {
 						var result DeviceSetupCheck
@@ -322,13 +354,21 @@ func (c *Controller) runDevices(ctx context.Context) {
 					apply(job, nil, errors.New("invalid device binding"))
 					continue
 				}
+				input.Connection = input.Connection.Normalized()
 				key := input.Connection.ID
 				if previous := c.fleet.sources[key]; previous != nil {
+					if previous.connection.DeviceID == input.Connection.DeviceID && previous.controller.paths != nil {
+						previous.connection = input.Connection
+						previous.controller.paths.configure(input.Connection)
+						apply(job, nil, nil)
+						continue
+					}
 					previous.cancel()
 				}
 				source := &deviceSource{connection: input.Connection, controller: sshController(input.Connection, input.Pending, c.fleet.workerBinary)}
 				c.fleet.sources[key] = source
 				c.startDevice(ctx, key, source)
+				apply(job, nil, nil)
 				continue
 			}
 			key := job.ConnectionID
@@ -341,9 +381,14 @@ func (c *Controller) runDevices(ctx context.Context) {
 				continue
 			}
 			delegated := job
+			fallbackSSH := source.connection.ActiveSSH()
 			if job.Apply != nil {
 				delegated.Apply = func(_ *Model, b json.RawMessage, err error) {
-					c.deliverSignInReply(source.ctx, job, source.connection.SSH, source.controller.ExpectedDeviceID, b, err, apply)
+					ssh := fallbackSSH
+					if active := source.controller.currentSSH(); active != nil {
+						ssh = *active
+					}
+					c.deliverSignInReply(source.ctx, job, ssh, source.controller.ExpectedDeviceID, b, err, apply)
 				}
 			}
 			if !source.controller.Do(delegated) {
@@ -397,6 +442,11 @@ func signInSSHSetup(ctx context.Context, in SignInSSHDevice) (domain.SignInStatu
 }
 
 func (c *Controller) prepareSSHDevice(ctx context.Context, in CheckSSHDevice) (DeviceSetupCheck, error) {
+	var routeErr error
+	in.SSH, routeErr = c.TailnetSSH(in.SSH)
+	if routeErr != nil {
+		return DeviceSetupCheck{}, routeErr
+	}
 	if in.Trust != nil {
 		if in.Trust.Target != in.SSH.Target || in.Trust.Port != in.SSH.Port {
 			return DeviceSetupCheck{}, errors.New("连接地址已改变，请重新核对指纹")

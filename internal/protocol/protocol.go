@@ -31,7 +31,8 @@ const Major = 2
 // Minor 30 persists user-side command records alongside context maintenance.
 // Minor 31 adds device-owned storage measurement and bounded disposable cleanup.
 // Minor 32 adds scoped source history discovery, preview and durable import.
-const Minor = 33
+// Minor 34 adds read-only device latency probing without waking runtime work.
+const Minor = 34
 const MaxFrame = 1 << 20
 
 type Frame struct {

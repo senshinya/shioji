@@ -65,6 +65,13 @@ func configurationAction(c *n.Context, label string) n.Element {
 	return ghost(c, label, 6).Height(configurationControlHeight).PaddingX(8).FontSize(configurationValueSize)
 }
 
+// Keep the reading edge with neighboring form rows; the feedback surface has
+// its own inset on both sides. Stretch accounts for negative margins, whereas
+// a fixed FillWidth plus margins would leave one edge short or overflowing.
+func configurationRowControl(c *n.Context, radius float32) n.Element {
+	return control(c, radius).AlignSelf(n.Stretch).MarginX(-configurationHoverInset).PaddingX(configurationHoverInset)
+}
+
 // Native checkbox semantics with the same font-baseline object slot as inline
 // icons. Empty captions can use the neighboring first-line title for its ink.
 func configurationCheckbox(c *n.Context, value *bool, label string, font n.Font, reference ...string) n.Element {

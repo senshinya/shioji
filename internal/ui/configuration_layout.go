@@ -17,4 +17,5 @@ const (
 	configurationTextLine      = 20
 	configurationSectionSize   = 14
 	configurationListHeight    = 140
+	configurationHoverInset    = 8
 )

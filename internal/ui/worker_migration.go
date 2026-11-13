@@ -54,7 +54,7 @@ func (v *View) migrationVisible(flow *workerMigrationUI) bool {
 func migrationPort(value string) int { port, _ := strconv.Atoi(strings.TrimSpace(value)); return port }
 func (v *View) acceptSSHMigration(info transport.WorkerInfo) {
 	port, _ := strconv.Atoi(strings.TrimSpace(v.sshPort))
-	target := app.WorkerMigrationTarget{Setup: true, Name: v.sshName, Info: info, SSH: &transport.SSH{Target: strings.TrimSpace(v.sshTarget), Port: port, Worker: info.Worker, StateDirectory: info.Directory}}
+	target := app.WorkerMigrationTarget{Setup: true, Name: v.sshName, Info: info, SSH: setupWorkerSSHPointer(v.setupWorkerSSH(port, info))}
 	flow := &workerMigrationUI{target: target, phase: migrationViewReady}
 	v.migrationFlows()[info.DeviceID] = flow
 	v.sshCheck = sshLegacyUpgrade

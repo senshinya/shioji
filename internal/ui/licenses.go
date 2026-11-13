@@ -25,7 +25,7 @@ func (s *Settings) licenseView(c *n.Context, t *n.Theme) {
 	if s.license >= 0 {
 		label = "返回第三方许可"
 	}
-	if configurationAction(c, label).PaddingX(0).Margin(0, 0, 12, 0).Clicked() {
+	if configurationAction(c, label).Margin(0, 0, 12, -8).Clicked() {
 		if s.license >= 0 {
 			s.license = -1
 		} else {

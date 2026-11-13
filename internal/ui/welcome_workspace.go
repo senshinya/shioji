@@ -13,12 +13,26 @@ import (
 )
 
 func (v *View) welcomeWorkspace(c *n.Context, t *n.Theme, f *welcomeFlow) {
+	owner := v.Model.ConnectionDeviceID(f.key)
+	if owner != "" && f.workspaceOwner != owner {
+		if f.workspaceOwner != "" {
+			if f.workspaceDrafts == nil {
+				f.workspaceDrafts = map[string]welcomeWorkspaceInput{}
+			}
+			f.workspaceDrafts[f.workspaceOwner] = welcomeWorkspaceInput{f.workspace, f.name, f.directory, append([]welcomeDirectory(nil), f.directories...), f.nextDirectory}
+			draft := f.workspaceDrafts[owner]
+			f.workspace, f.name, f.directory, f.directories, f.nextDirectory = draft.workspace, draft.name, draft.directory, draft.directories, draft.nextDirectory
+		}
+		f.workspaceOwner = owner
+	}
+	c = c.Key(owner)
+	directoryDisabled := f.busy || f.key != "local" && !v.deviceState(f.key).Connected
 	v.welcomeHeading(c, t, "添加工作区", f.key, true)
 	setupRow(c, "名称", func() { setupField(c, "工作区名称", &f.name, "名称", f.busy) })
 	setupRow(c, "主目录", func() {
 		n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
 			setupField(c, "工作区主目录", &f.directory, "文件夹路径", f.busy).MinWidth(0).Grow(1)
-			choose := iconButton(c, workspaceIcon, "选择主目录").MarginEnd(-6).Disabled(f.busy)
+			choose := iconButton(c, workspaceIcon, "选择主目录").MarginEnd(-6).Disabled(directoryDisabled)
 			if choose.Clicked() {
 				v.chooseWelcomeDirectory(f, 0)
 			}
@@ -44,7 +58,7 @@ func (v *View) welcomeWorkspace(c *n.Context, t *n.Theme, f *welcomeFlow) {
 			frame.Children(func() {
 				n.Row(c).Absolute().Top(0).Left(0).Right(0).Height(32).Gap(8).AlignItems(n.Start).Children(func() {
 					setupField(c, "附加目录路径", &entry.path, "文件夹路径", f.busy).MinWidth(0).Grow(1)
-					choose := iconButton(c, workspaceIcon, "选择附加目录").Disabled(f.busy)
+					choose := iconButton(c, workspaceIcon, "选择附加目录").Disabled(directoryDisabled)
 					if choose.Clicked() {
 						v.chooseWelcomeDirectory(f, entry.id)
 					}
@@ -55,7 +69,7 @@ func (v *View) welcomeWorkspace(c *n.Context, t *n.Theme, f *welcomeFlow) {
 			})
 		}
 		n.Row(c).FillWidth().Justify(n.End).Children(func() {
-			choose := iconButton(c, plus, "添加文件夹").Tooltip("添加文件夹").MarginEnd(-6).Disabled(f.busy)
+			choose := iconButton(c, plus, "添加文件夹").Tooltip("添加文件夹").MarginEnd(-6).Disabled(directoryDisabled)
 			if choose.Clicked() {
 				v.chooseWelcomeDirectory(f, -1)
 			}

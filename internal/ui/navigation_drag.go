@@ -55,7 +55,7 @@ func (v *View) navigationDragSource(c *n.Context, row n.Element, r navigationRow
 		return false
 	}
 	payload := navigationDragValue{r.kind, r.ref}
-	row.Drag(payload).Cursor(n.CursorGrab)
+	row.Drag(payload).Cursor(n.CursorPointer)
 	pressed, moving := row.Pressed(), row.Dragging()
 	if v.navigationDrag == nil && (pressed || moving) {
 		v.navigationDrag = &navigationDragState{source: payload, basis: v.Model.Navigation.Clone(), preview: v.Model.Navigation.Clone()}

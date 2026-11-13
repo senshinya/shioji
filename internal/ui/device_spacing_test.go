@@ -37,7 +37,8 @@ func TestDeviceSettingsUseSameFortyPixelRowsAndLeftEdge(t *testing.T) {
 	}
 	background, _ := ui.Find("登录后启动服务")
 	details, _ := ui.Find("服务详情")
-	if math.Abs(float64(worker.X-background.X)) > 1 || math.Abs(float64(worker.X-details.X)) > 1 {
+	// The disclosure's hit surface extends 8 DIP beyond the shared reading edge.
+	if math.Abs(float64(worker.X-background.X)) > 1 || math.Abs(float64(worker.X-(details.X+8))) > 1 {
 		t.Fatal("left edges differ", worker, background, details)
 	}
 	if math.Abs(float64(background.Y-worker.Y-40)) > 1 || math.Abs(float64(details.Y+10-background.Y-40)) > 1 {

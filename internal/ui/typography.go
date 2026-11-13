@@ -67,12 +67,16 @@ func inlineIconText(c *n.Context, icon *n.SVG, label string, font n.Font, size, 
 
 // A separate icon with text-baseline metrics preserves stable layout columns.
 func inlineSymbol(c *n.Context, icon *n.SVG, label string, font n.Font, size float32, color n.Color, rotation ...float32) n.Element {
+	return inlineSymbolWithAnimation(c, icon, label, font, size, color, motionAnimation(c, 160*time.Millisecond), rotation...)
+}
+
+func inlineSymbolWithAnimation(c *n.Context, icon *n.SVG, label string, font n.Font, size float32, color n.Color, animation n.Animation, rotation ...float32) n.Element {
 	m := inlineFontMetrics(label, font)
 	e := n.RichText(c, n.Span{Text: "\uFFFC", ObjectWidth: size, ObjectHeight: m.ascent, ObjectDescent: m.descent}).
 		Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).Role(n.RoleNone)
 	angle := float32(0)
 	if len(rotation) > 0 {
-		angle = e.AnimateTo("disclosure-angle", rotation[0], motionAnimation(c, 160*time.Millisecond))
+		angle = e.AnimateTo("disclosure-angle", rotation[0], animation)
 	}
 	return e.DrawObjects(func(p *n.Painter, _ int, r n.Rect) {
 		r.Y += m.ascent - (size/2 + m.center)

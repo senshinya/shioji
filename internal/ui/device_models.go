@@ -63,7 +63,11 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 		if stale {
 			n.Text(c, "上次读取").FontSize(12).FixedLineHeight(line).TextColor(t.TextMuted).MarginEnd(8)
 		}
-		if configurationAction(c, "刷新").Disabled(v.Controller == nil || len(setupDevice) == 0 && !v.deviceState(key).Connected).Clicked() {
+		connected := v.deviceState(key).Connected
+		if len(setupDevice) > 0 && key == "" {
+			connected = v.sshCheck == sshSelecting || v.sshCheck == sshSaving
+		}
+		if configurationAction(c, "刷新").Disabled(v.Controller == nil || !connected).Clicked() {
 			if len(setupDevice) > 0 {
 				v.recheckWelcomeAgent(key, info.ID)
 			} else {
@@ -106,7 +110,7 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 		}
 		list.Children(func() {
 			for index, model := range models {
-				row := n.Row(c.Key(model.ID)).FillWidth().Height(40).Gap(8).AlignItems(n.Center).Radius(5).Label("模型：" + modelName(model)).Transition(n.ElementTransition{Position: true, Duration: motionAnimation(c, 160*time.Millisecond).Duration, Ease: n.EaseOut, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
+				row := n.Row(c.Key(model.ID)).FillWidth().PaddingX(configurationHoverInset).Height(40).Gap(8).AlignItems(n.Center).Radius(5).Label("模型：" + modelName(model)).Transition(n.ElementTransition{Position: true, Duration: motionAnimation(c, 160*time.Millisecond).Duration, Ease: n.EaseOut, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 				if row.Hovered() || row.FocusWithin() {
 					row.Background(t.Text.Alpha(.035))
 				}

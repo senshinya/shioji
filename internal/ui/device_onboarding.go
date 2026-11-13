@@ -6,7 +6,6 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
-	"shioji/internal/transport"
 	"strconv"
 	"strings"
 )
@@ -20,7 +19,7 @@ func (v *View) sshDeviceForm(c *n.Context, t *n.Theme) {
 	}
 	n.Column(c).FillWidth().Children(func() {
 		n.Row(c).FillWidth().Height(configurationTitleLine).AlignItems(n.Center).Margin(0, 0, configurationHeadingGap).Children(func() {
-			n.Text(c, "添加设备").FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Grow(1)
+			n.Text(c, "添加设备").FontSize(14).FontWeight(400).FixedLineHeight(configurationTitleLine).Grow(1)
 			if iconButton(c, closeIcon, "取消添加设备").Clicked() {
 				v.cancelSSHCheck()
 				v.welcome = nil
@@ -43,7 +42,9 @@ func (v *View) completeSSHDevice() {
 		return
 	}
 	info := v.sshSetup.Info
-	ssh := transport.SSH{Target: strings.TrimSpace(v.sshTarget), Worker: info.Worker, StateDirectory: info.Directory}
+	ssh := v.setupSSH(0)
+	ssh.Worker = info.Worker
+	ssh.StateDirectory = info.Directory
 	// Preserve the already validated port from the first check.
 	ssh.Port, _ = strconv.Atoi(strings.TrimSpace(v.sshPort))
 	request := domain.NewID()
@@ -77,40 +78,7 @@ func (v *View) completeSSHDevice() {
 		if name == "" {
 			name = ssh.Target
 		}
-		connection := app.DeviceConnection{ID: domain.NewID(), Name: name, Home: info.Home, DeviceID: info.DeviceID, SSH: ssh}
-		found := false
-		for i, old := range m.Connections {
-			if old.DeviceID == info.DeviceID {
-				connection.ID = old.ID
-				m.Connections[i] = connection
-				found = true
-				break
-			}
-		}
-		if !found {
-			m.Connections = append(m.Connections, connection)
-		}
-		var pending []string
-		for id, key := range m.PendingDevices {
-			if key == connection.ID {
-				pending = append(pending, id)
-			}
-		}
-		v.Controller.Do(app.Job{Method: "$device.configure", Input: app.ConfigureDevice{Connection: connection, Pending: pending}})
-		if v.devices {
-			v.deviceSelected = connection.ID
-			v.deviceList = false
-		}
-		v.retireSSHSetupTerminal()
-		v.sshCheck = sshClosed
-		if f := v.welcome; f != nil && f.key == "" {
-			if m.FirstRun {
-				f.key = connection.ID
-				v.welcomeStep(welcomeWorkspace, 1)
-			} else {
-				v.welcome = nil
-			}
-		}
+		v.saveDeviceConnection(newDeviceConnection(name, info, ssh), false)
 	}}) {
 		v.sshCheck = sshSelecting
 		v.sshAgents.busy = false

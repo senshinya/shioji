@@ -13,6 +13,7 @@ import (
 
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"shioji/internal/tailnet"
 	"shioji/internal/transport"
 )
 
@@ -27,6 +28,9 @@ type Job struct {
 	epoch           string
 }
 type Controller struct {
+	paths             *devicePaths
+	resolveSSH        func(transport.SSH) (transport.SSH, error)
+	Tailnet           tailnet.Connection
 	signInForwards    signInForwards
 	WorkerSSH         *transport.SSH
 	WorkerBinary      string
@@ -239,6 +243,12 @@ func (c *Controller) Run(ctx context.Context) {
 	var generation string
 	var sequence int64
 	var selected string
+	var logicalEpoch string
+	var pathChanges <-chan struct{}
+	if c.paths != nil {
+		pathChanges = c.paths.changed
+		go c.paths.run(ctx)
+	}
 	history := map[string]historyLoadPhase{}
 	visible := []string{}
 	var lastReadiness time.Time
@@ -320,6 +330,7 @@ func (c *Controller) Run(ctx context.Context) {
 			publishService(&copy)
 		}
 		target := client
+		ssh := c.currentSSH()
 		go func() {
 			callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
@@ -333,8 +344,8 @@ func (c *Controller) Run(ctx context.Context) {
 					err = target.Call(callCtx, "worker.background.disable", nil, &state)
 					if err != nil { // Unregister closes the old IPC owner; query status, never resend it.
 						cause := err
-						if c.WorkerSSH != nil {
-							state, err = c.WorkerSSH.RuntimeService(callCtx, c.WorkerBinary, false)
+						if ssh != nil {
+							state, err = ssh.RuntimeService(callCtx, c.WorkerBinary, false)
 						} else {
 							state, err = transport.RuntimeService(callCtx, c.Directory, c.WorkerBinary, false)
 						}
@@ -343,15 +354,15 @@ func (c *Controller) Run(ctx context.Context) {
 						}
 					}
 					if err == nil && (state.State == "notRegistered" || state.State == "notInstalled") {
-						err = transport.EnsureDetachedWorker(callCtx, c.Directory, c.WorkerBinary, target.DeviceID, c.WorkerSSH)
+						err = transport.EnsureDetachedWorker(callCtx, c.Directory, c.WorkerBinary, target.DeviceID, ssh)
 					}
 				}
 			} else {
-				if c.WorkerSSH != nil {
+				if ssh != nil {
 					if action == "unregister" {
-						state, err = c.WorkerSSH.DisableRuntimeService(callCtx, c.WorkerBinary)
+						state, err = ssh.DisableRuntimeService(callCtx, c.WorkerBinary)
 					} else {
-						state, err = c.WorkerSSH.RuntimeService(callCtx, c.WorkerBinary, action == "register")
+						state, err = ssh.RuntimeService(callCtx, c.WorkerBinary, action == "register")
 					}
 				} else {
 					if action == "unregister" {
@@ -377,10 +388,10 @@ func (c *Controller) Run(ctx context.Context) {
 		defer cancel()
 		var info domain.WorkerBuild
 		var err error
-		if c.WorkerSSH != nil {
+		if c.currentSSH() != nil {
 			info, err = transport.InspectWorker(stageCtx, c.WorkerBinary)
 			if force && err == nil {
-				info, err = c.WorkerSSH.StageWorker(stageCtx, c.WorkerBinary)
+				info, err = c.currentSSH().StageWorker(stageCtx, c.WorkerBinary)
 			}
 		} else {
 			info, err = transport.StageWorker(stageCtx, c.Directory, c.WorkerBinary)
@@ -395,7 +406,7 @@ func (c *Controller) Run(ctx context.Context) {
 			return false, nil
 		}
 		if explicit {
-			if c.WorkerSSH != nil && (client == nil || client.DeviceID != c.ExpectedDeviceID) {
+			if c.currentSSH() != nil && (client == nil || client.DeviceID != c.ExpectedDeviceID) {
 				return false, errors.New("请先重新连接并确认设备身份，再更新执行服务")
 			}
 			updateIntent = updateWaitingForIdle
@@ -412,7 +423,7 @@ func (c *Controller) Run(ctx context.Context) {
 			return false, nil
 		}
 		if client == nil {
-			if explicit && candidate != nil && c.WorkerSSH == nil && (background == nil || background.State != "enabled" && background.State != "requiresApproval") {
+			if explicit && candidate != nil && c.currentSSH() == nil && (background == nil || background.State != "enabled" && background.State != "requiresApproval") {
 				path, err := transport.StagedWorkerPath(c.Directory, candidate.BuildID)
 				if err == nil {
 					_, err = transport.EnsureLocalWorker(ctx, c.Directory, path, "")
@@ -459,7 +470,40 @@ func (c *Controller) Run(ctx context.Context) {
 		publishService(state)
 		return true, nil
 	}
+	observeWorkerBuild := func() {
+		state := newWorkerService(client.Worker, candidate)
+		if state.Phase == WorkerCurrent || state.Phase == WorkerNewer {
+			updateIntent = updateNotRequested
+			updateStarted = time.Time{}
+		}
+		if state.Phase == WorkerAvailable && updateIntent == updateWaitingForIdle {
+			state.Phase = WorkerWaiting
+			state.Message = "等待空闲后更新，会话和队列已保留"
+		}
+		if state.Phase == WorkerAvailable && updateIntent == updateAwaitingReceipt {
+			if service != nil && service.Phase == WorkerUpdating && !updateStarted.IsZero() && time.Since(updateStarted) < 35*time.Second {
+				state.Phase = WorkerUpdating
+				state.Message = "正在更新并重新连接，会话和草稿已保留"
+			} else {
+				state.Phase = WorkerUpdateFailed
+				state.Message = "上次更新回执未确认，请重新检查后再决定是否重试"
+			}
+		}
+		if candidateError != nil {
+			state.Phase = WorkerUpdateFailed
+			state.Message = candidateError.Error()
+		}
+		publishService(state)
+	}
+	var recoverPath func() bool
 	disconnected := func() {
+		if c.paths != nil {
+			c.paths.record(c.paths.active(), 0, time.Now(), net.ErrClosed)
+			c.publishPaths()
+			if recoverPath != nil && recoverPath() {
+				return
+			}
+		}
 		if stopEvents != nil {
 			stopEvents()
 			stopEvents = nil
@@ -473,7 +517,10 @@ func (c *Controller) Run(ctx context.Context) {
 			history[id] = phase.invalidated()
 		}
 		c.mu.Lock()
-		c.epoch = ""
+		if c.paths == nil {
+			logicalEpoch = ""
+			c.epoch = ""
+		}
 		c.mu.Unlock()
 		c.post(func(m *Model) {
 			m.Connected = false
@@ -537,11 +584,81 @@ func (c *Controller) Run(ctx context.Context) {
 		})
 		return true
 	}
+	recoverPath = func() bool {
+		if c.paths == nil || client == nil || backgroundBusy {
+			return false
+		}
+		id := c.paths.preferred(time.Now())
+		if id == "" || id == c.paths.active() {
+			return false
+		}
+		c.paths.preparing(id)
+		c.publishPaths()
+		next, snapshot, ready, gap, err := c.preparePath(ctx, id, generation, sequence, readinessQuery())
+		// Reconcile through the candidate before discarding the old path. Buffer
+		// resulting model updates until the same-generation snapshot is committed.
+		queried := map[string]bool{}
+		for id, pending := range unconfirmed {
+			queried[id] = pending
+		}
+		var receipts []Update
+		if err == nil {
+			call, cancel := context.WithTimeout(ctx, 8*time.Second)
+			err = reconcileOperations(call, next, queried, func(u Update) { receipts = append(receipts, u) })
+			cancel()
+		}
+		if err != nil {
+			if next != nil {
+				next.Close()
+			}
+			c.paths.preparing("")
+			c.paths.record(id, 0, time.Now(), err)
+			c.publishPaths()
+			return false
+		}
+		if stopEvents != nil {
+			stopEvents()
+			stopEvents = nil
+		}
+		eventResults = nil
+		if len(gap) > 0 {
+			applyPage(protocol.EventPage{Generation: generation, Events: gap})
+		}
+		old := client
+		client = next
+		observeWorkerBuild()
+		sequence = snapshot.Sequence
+		unconfirmed = queried
+		c.paths.activate(id, time.Now())
+		c.publishPaths()
+		epoch, minor := logicalEpoch, client.Minor
+		c.post(func(m *Model) {
+			m.Connected = true
+			m.ConnectionEpoch = epoch
+			m.WorkerMinor = minor
+			m.Readiness = ready
+			m.ApplySnapshot(snapshot)
+		})
+		for _, update := range receipts {
+			c.post(update)
+		}
+		old.Close()
+		if client.Minor >= 1 {
+			eventResults, stopEvents = c.observeEvents(ctx, snapshot.DeviceID, generation, sequence)
+		}
+		return true
+	}
 	checkBackground("status")
 	for {
+		jobs := c.Jobs
+		if c.paths != nil && client == nil {
+			jobs = nil
+		}
 		select {
 		case <-ctx.Done():
 			return
+		case <-pathChanges:
+			c.publishPaths()
 		case result := <-backgroundResults:
 			backgroundBusy = false
 			epoch := ""
@@ -575,7 +692,10 @@ func (c *Controller) Run(ctx context.Context) {
 			if result.err != nil || !applyPage(result.page) {
 				disconnected()
 			}
-		case job := <-c.Jobs:
+		case job := <-jobs:
+			if c.paths != nil && client != nil && job.epoch == logicalEpoch {
+				job.epoch = client.Epoch
+			}
 			if job.Method == "$background.status" || job.Method == "$background.enable" || job.Method == "$background.disable" {
 				if job.Method != "$background.status" && (client == nil || job.epoch == "" || job.epoch != client.Epoch) {
 					continue
@@ -690,13 +810,25 @@ func (c *Controller) Run(ctx context.Context) {
 			out, err := executeJob(callCtx, client, job)
 			cancel()
 			var remote *protocol.RemoteError
+			if err != nil && !errors.As(err, &remote) && c.paths != nil && readOnlyPathQuery(job.Method) {
+				epoch := logicalEpoch
+				disconnected()
+				if client != nil && logicalEpoch == epoch {
+					retry := job
+					retry.epoch = client.Epoch
+					retry.Prepare = nil
+					call, done := context.WithTimeout(ctx, timeout)
+					out, err = executeJob(call, client, retry)
+					done()
+				}
+			}
 			if err != nil && errors.As(err, &remote) {
 				delete(unconfirmed, opID)
 			}
 			if job.Apply != nil {
 				c.post(func(m *Model) { job.Apply(m, out, err) })
 			}
-			if err != nil && !errors.As(err, &remote) {
+			if err != nil && !errors.As(err, &remote) && client != nil {
 				disconnected()
 			}
 		case <-ticker.C:
@@ -715,6 +847,9 @@ func (c *Controller) Run(ctx context.Context) {
 				client, err = protocol.Dial(ctx, c.dial, c.ExpectedDeviceID)
 				if err != nil {
 					client = nil
+					if errors.Is(err, errDevicePathsWaiting) {
+						continue
+					}
 					var network *net.OpError
 					if c.Dial == nil && errors.As(err, &network) && network.Op == "dial" {
 						continue
@@ -738,33 +873,19 @@ func (c *Controller) Run(ctx context.Context) {
 					continue
 				}
 				c.ExpectedDeviceID = client.DeviceID
+				if logicalEpoch == "" || generation != snapshot.Generation {
+					logicalEpoch = client.Epoch
+				}
 				generation = snapshot.Generation
 				sequence = snapshot.Sequence
 				c.mu.Lock()
-				c.epoch = client.Epoch
+				c.epoch = logicalEpoch
 				c.mu.Unlock()
 				minor := client.Minor
 				stageCandidate(false)
-				state := newWorkerService(client.Worker, candidate)
-				if state.Phase == WorkerCurrent {
-					updateIntent = updateNotRequested
-				}
-				if state.Phase == WorkerAvailable && updateIntent == updateWaitingForIdle {
-					state.Phase = WorkerWaiting
-					state.Message = "等待空闲后更新，会话和队列已保留"
-				}
-				if state.Phase == WorkerAvailable && updateIntent == updateAwaitingReceipt {
-					state.Phase = WorkerUpdateFailed
-					state.Message = "上次更新回执未确认，请重新检查后再决定是否重试"
-				}
-				if candidateError != nil {
-					state.Phase = WorkerUpdateFailed
-					state.Message = candidateError.Error()
-				}
-				publishService(state)
+				observeWorkerBuild()
 				checkBackground("status")
-				updateStarted = time.Time{}
-				epoch := client.Epoch
+				epoch := logicalEpoch
 				c.post(func(m *Model) {
 					m.WorkerMinor = minor
 					m.Connected = true
@@ -783,6 +904,21 @@ func (c *Controller) Run(ctx context.Context) {
 					eventResults, stopEvents = c.observeEvents(ctx, snapshot.DeviceID, generation, sequence)
 				}
 			}
+			if c.paths != nil && !backgroundBusy {
+				recoverPath()
+			}
+			if service != nil && service.Phase == WorkerUpdating && !updateStarted.IsZero() && time.Since(updateStarted) > 35*time.Second {
+				call, cancel := context.WithTimeout(ctx, 3*time.Second)
+				var build domain.WorkerBuild
+				err := client.Call(call, "worker.info", nil, &build)
+				cancel()
+				if err != nil {
+					disconnected()
+					continue
+				}
+				client.Worker = &build
+				observeWorkerBuild()
+			}
 			if time.Since(lastBackgroundCheck) > 30*time.Second {
 				checkBackground("status")
 			}
@@ -795,7 +931,12 @@ func (c *Controller) Run(ctx context.Context) {
 				}
 				lastReadiness = time.Now()
 				sample := &DeviceTiming{Milliseconds: float64(time.Since(started)) / float64(time.Millisecond), ObservedAt: time.Now()}
-				c.post(func(m *Model) { m.Readiness = ready; m.ConnectionTiming = sample })
+				c.post(func(m *Model) {
+					m.Readiness = ready
+					if c.paths == nil {
+						m.ConnectionTiming = sample
+					}
+				})
 			}
 			if (c.WorkerAutoUpdate && service.Automatic() || updateIntent == updateWaitingForIdle && service != nil && service.Phase == WorkerWaiting) && time.Since(lastUpdateAttempt) > 5*time.Second {
 				restart, err := tryWorkerUpdate(false)

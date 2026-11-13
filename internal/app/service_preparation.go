@@ -127,7 +127,10 @@ func (c *Controller) prepareService(ctx context.Context, in PrepareService) (Ser
 	if p.ID == "" || p.Info.DeviceID == "" || p.Info.Build == nil || p.Info.Build.BuildID == "" || p.Candidate.BuildID == "" {
 		return result, errors.New("设备服务准备记录不完整")
 	}
-	ssh := p.SSH
+	ssh, routeErr := c.TailnetSSH(p.SSH)
+	if routeErr != nil {
+		return result, routeErr
+	}
 	ssh.Worker = p.Info.Worker
 	ssh.StateDirectory = p.Info.Directory
 	conn, err := ssh.Dial(ctx)

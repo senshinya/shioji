@@ -58,6 +58,20 @@ cat > "$runtime_bundle/Contents/Library/LaunchAgents/dev.shioji.runtime.agent.pl
 <key>ProcessType</key><string>Background</string>
 </dict></plist>
 PLIST
+cat > "$runtime_bundle/Contents/Library/LaunchAgents/dev.shioji.network.agent.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>dev.shioji.network.agent</string>
+<key>BundleProgram</key><string>Contents/MacOS/shioji-runtime</string>
+<key>ProgramArguments</key><array><string>shioji-runtime</string><string>--network-serve</string></array>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+<key>ThrottleInterval</key><integer>10</integer>
+<key>LimitLoadToSessionType</key><string>Aqua</string>
+<key>ProcessType</key><string>Background</string>
+</dict></plist>
+PLIST
 codesign --force --sign - "$runtime_bundle/Contents/MacOS/shioji-worker"
 codesign --force --sign - "$runtime_bundle/Contents/MacOS/shioji-runtime"
 codesign --force --sign - "$runtime_bundle"

@@ -340,8 +340,8 @@ func (v *View) managedSkillRows(c *n.Context, t *n.Theme, u *skillManagementUI) 
 				}
 			})
 		}
-		n.Row(c.Key(entry.ID)).FillWidth().Height(56).Padding(6, 8).Gap(12).AlignItems(n.Center).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).Children(func() {
-			open := control(c.Key("open"), 5).Grow(1).MinWidth(0).Height(44).Padding(0).Justify(n.Start).Label("查看 Skill：" + entry.Name)
+		n.Row(c.Key(entry.ID)).FillWidth().Height(56).PaddingY(6).Gap(12).AlignItems(n.Center).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).Children(func() {
+			open := control(c.Key("open"), 5).Grow(1).MinWidth(0).Height(44).Padding(0, configurationHoverInset).Justify(n.Start).Label("查看 Skill：" + entry.Name)
 			open.Children(func() {
 				n.Column(c).FillWidth().MinWidth(0).Children(func() {
 					inlineIconText(c, skillIcon, entry.Name, n.Font{Family: t.Font, Size: 13}, 16, 8, t.Text).FillWidth().Ellipsis("…")
@@ -355,7 +355,7 @@ func (v *View) managedSkillRows(c *n.Context, t *n.Theme, u *skillManagementUI) 
 			}
 			if entry.CanEnable && !inherited {
 				value := entry.Enabled
-				toggle := configurationSwitch(c.Key("enabled"), &value).Label("启停 Skill：" + entry.Name).Disabled(u.phase != skillLoaded || u.pending != "" || !v.deviceState(u.key).Connected)
+				toggle := configurationSwitch(c.Key("enabled"), &value).MarginEnd(configurationHoverInset).Label("启停 Skill：" + entry.Name).Disabled(u.phase != skillLoaded || u.pending != "" || !v.deviceState(u.key).Connected)
 				if toggle.Changed() {
 					v.changeManagedSkill(u, entry)
 				}
@@ -364,7 +364,7 @@ func (v *View) managedSkillRows(c *n.Context, t *n.Theme, u *skillManagementUI) 
 				if entry.Enabled {
 					label = "已启用"
 				}
-				n.Text(c, label).FontSize(11).TextColor(t.TextMuted).Tooltip(entry.ReadOnlyReason)
+				n.Text(c, label).MarginEnd(configurationHoverInset).FontSize(11).TextColor(t.TextMuted).Tooltip(entry.ReadOnlyReason)
 			}
 		})
 	}

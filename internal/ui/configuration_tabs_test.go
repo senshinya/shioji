@@ -403,7 +403,11 @@ func TestWelcomeAgentConfigurationExitsOppositeIncomingPage(t *testing.T) {
 	v := New(welcomeModel(), nil, "")
 	f := v.setupFlow()
 	f.step = welcomeAgents
-	f.agents = agentEditor(setupCatalog())
+	catalog := setupCatalog()
+	// The remaining page ink must still be inside the viewport at the sampled
+	// time. The full-row entry no longer has a separate right-aligned label.
+	catalog[0].Name = "Custom Agent With A Long Configuration Name"
+	f.agents = agentEditor(catalog)
 	ui := n.NewTester(func(c *n.Context) {
 		v.frameTime = c.Now()
 		theme := *c.Theme()
@@ -439,7 +443,7 @@ func TestWelcomeAgentConfigurationExitsOppositeIncomingPage(t *testing.T) {
 		return float64(edge)
 	}
 	old := edge(true)
-	ui.Click("配置 Custom Agent")
+	ui.Click("配置 " + catalog[0].Name)
 	ui.Advance(60 * time.Millisecond)
 	if mid := edge(true); mid >= old-1 {
 		t.Fatal("forward navigation sends old page right", old, mid)

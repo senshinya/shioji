@@ -32,7 +32,10 @@ type WorkerMigrationAction struct {
 
 func (c *Controller) inspectWorkerMigration(ctx context.Context, target WorkerMigrationTarget) (transport.WorkerInfo, error) {
 	if target.SSH != nil {
-		ssh := *target.SSH
+		ssh, routeErr := c.TailnetSSH(*target.SSH)
+		if routeErr != nil {
+			return transport.WorkerInfo{}, routeErr
+		}
 		if target.Info.Worker != "" {
 			ssh.Worker = target.Info.Worker
 			ssh.StateDirectory = target.Info.Directory
@@ -51,7 +54,10 @@ func (c *Controller) runWorkerMigration(ctx context.Context, in WorkerMigrationA
 		return domain.WorkerMigrationStatus{}, errors.New("服务准备设备身份不一致")
 	}
 	if target.SSH != nil {
-		ssh := *target.SSH
+		ssh, routeErr := c.TailnetSSH(*target.SSH)
+		if routeErr != nil {
+			return domain.WorkerMigrationStatus{}, routeErr
+		}
 		ssh.Worker = target.Info.Worker
 		ssh.StateDirectory = target.Info.Directory
 		return ssh.WorkerMigration(ctx, in.Action, target.Input)

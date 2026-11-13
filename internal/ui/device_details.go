@@ -26,7 +26,7 @@ func deviceMeta(c *n.Context, label, value string) {
 }
 
 func deviceDisclosure(c *n.Context, label string, open *bool, body func()) {
-	trigger := control(c.Key("toggle"), 6).FillWidth().Justify(n.Start).PaddingX(0).Height(configurationRowHeight).Label(label).Children(func() {
+	trigger := configurationRowControl(c.Key("toggle"), 6).Justify(n.Start).Height(configurationRowHeight).Label(label).Children(func() {
 		n.Row(c).FillWidth().Height(20).Gap(8).AlignItems(n.Baseline).Children(func() {
 			n.Text(c, label).FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).TextColor(c.Theme().TextMuted).Grow(1)
 			angle := float32(-90)
@@ -52,17 +52,18 @@ type deviceNameEditor struct {
 }
 
 func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
+	if key == "tailnet" {
+		v.tailnetPage(c, t)
+		return
+	}
 	m := v.Model
 	name, address, deviceID := m.LocalName(), "", m.LocalDeviceID
-	user, port := "使用 SSH 配置", "使用 SSH 配置"
 	for _, connection := range m.Connections {
 		if connection.ID == key {
-			name, address, deviceID = connection.Name, connection.SSH.Target, connection.DeviceID
+			ssh := connection.ActiveSSH()
+			name, address, deviceID = connection.Name, ssh.Target, connection.DeviceID
 			if at := strings.LastIndex(address, "@"); at >= 0 {
-				user, address = address[:at], address[at+1:]
-			}
-			if connection.SSH.Port != 0 {
-				port = strconv.Itoa(connection.SSH.Port)
+				address = address[at+1:]
 			}
 		}
 	}
@@ -197,6 +198,9 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 								return
 							}
 
+							if key != "local" {
+								v.devicePathsSection(c.Key("paths:"+key), t, key, state)
+							}
 							n.Column(c).FillWidth().Gap(0).Children(func() {
 								deviceHeading(c, "执行服务", nil)
 								v.deviceWorker(c.Key("worker:"+key), t, key, state)
@@ -214,7 +218,7 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 										continue
 									}
 									count++
-									entry := control(c.Key(w.ID), 6).FillWidth().Height(40).PaddingX(0).Radius(6).Label("打开工作区：" + w.Name).ContextMenu(func(menu *n.Menu) { v.workspaceMenu(menu, w) }).Children(func() {
+									entry := configurationRowControl(c.Key(w.ID), 6).Height(40).Label("打开工作区：" + w.Name).ContextMenu(func(menu *n.Menu) { v.workspaceMenu(menu, w) }).Children(func() {
 										n.Row(c).FillWidth().Gap(10).AlignItems(n.Baseline).Children(func() {
 
 											n.Text(c, w.Name).SingleLine().FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).Grow(1)
@@ -234,31 +238,7 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 									n.Row(c).FillWidth().Height(40).AlignItems(n.Center).Children(func() { n.Text(c, "暂无工作区").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted) })
 								}
 							})
-							if key != "local" {
-								n.Column(c).FillWidth().Gap(0).Children(func() {
-									deviceHeading(c, "连接", func() {
-										if configurationAction(c, "重新连接").MarginEnd(-8).Disabled(v.Controller == nil).Clicked() {
-											v.do(app.Job{ConnectionID: key, Method: "$reconnect"})
-										}
-									})
-									deviceConfigRow(c, "SSH", func() {
-										n.Row(c).FillWidth().Gap(12).AlignItems(n.Baseline).Children(func() {
-											n.Text(c, address).SingleLine().FontSize(12).FixedLineHeight(20).Grow(1).Tooltip(address)
-											n.Text(c, deviceLatency(state, c.Now())).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-										})
-									})
 
-									owner := n.Column(c).FillWidth()
-									open := n.Local(owner, "connection-details", func() bool { return false })
-									owner.Children(func() {
-										deviceDisclosure(c.Key("connection"), "连接详情", open, func() {
-											deviceMeta(c, "登录身份", user)
-											deviceMeta(c, "端口", port)
-											deviceMeta(c, "设备 ID", deviceID)
-										})
-									})
-								})
-							}
 							if m.Error != "" && m.Error != state.Error {
 								n.Text(c, m.Error).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
 							}
@@ -298,7 +278,7 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 			action = "等待空闲"
 			disabled = true
 		case app.WorkerUpdating:
-			action = "更新中…"
+			action = "正在更新"
 			disabled = true
 		case app.WorkerLegacy:
 			disabled = true
@@ -315,6 +295,9 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 		label = "需要更新设备服务"
 		action, disabled = "准备更新", v.Controller == nil
 		method = "$worker.migration.inspect"
+	}
+	if service != nil && service.Phase == app.WorkerUpdating && flow == nil {
+		label = ""
 	}
 	n.Row(c).FillWidth().Height(40).Gap(8).AlignItems(n.Center).Children(func() {
 		n.Row(c).Gap(8).AlignItems(n.Baseline).Children(func() {

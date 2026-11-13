@@ -21,7 +21,7 @@ while output.strip():
 notices = []
 for name, module in sorted(modules.items()):
     directory = Path(module.get('Replace', module)['Dir'])
-    files = sorted(p for p in directory.iterdir() if p.is_file() and p.name.upper().startswith(('LICENSE', 'LICENCE', 'COPYING', 'NOTICE')))
+    files = sorted(p for p in directory.iterdir() if p.is_file() and p.suffix.lower() not in (".go", ".py", ".rs", ".js", ".ts") and p.name.upper().startswith(('LICENSE', 'LICENCE', 'COPYING', 'NOTICE')))
     if not files:
         raise SystemExit(f'Missing license for {name} in {directory}')
     text = '\n\n'.join(p.name + '\n\n' + p.read_text() for p in files)

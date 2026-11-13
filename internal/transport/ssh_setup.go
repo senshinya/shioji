@@ -255,9 +255,14 @@ func (s SSH) KeySetupCommand() ([]string, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
+	route, err := s.proxyArguments()
+	if err != nil {
+		return nil, err
+	}
 	args := []string{"/usr/bin/ssh-copy-id", "-o", "StrictHostKeyChecking=yes", "-o", "BatchMode=no", "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes", "-o", "PermitLocalCommand=no", "-o", "RemoteCommand=none"}
 	if s.Port != 0 {
 		args = append(args, "-p", strconv.Itoa(s.Port))
 	}
+	args = append(args, route...)
 	return append(args, s.Target), nil
 }

@@ -16,6 +16,8 @@ import (
 )
 
 type SSH struct {
+	TailnetPeer    string `json:"tailnetPeer,omitempty"`
+	ProxySocket    string `json:"-"`
 	Target         string `json:"target"`
 	Port           int    `json:"port,omitempty"`
 	Worker         string `json:"worker"`
@@ -46,7 +48,11 @@ func (s SSH) arguments() ([]string, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
-	args := []string{"-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3", "-o", "LogLevel=ERROR"}
+	route, err := s.proxyArguments()
+	if err != nil {
+		return nil, err
+	}
+	args := append(route, []string{"-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3", "-o", "LogLevel=ERROR"}...)
 	if s.Port != 0 {
 		args = append(args, "-p", strconv.Itoa(s.Port))
 	}
@@ -131,4 +137,20 @@ func (w *boundedWriter) Write(p []byte) (int, error) {
 	written, err := w.w.Write(p)
 	w.remaining -= written
 	return n, err
+}
+
+// Tailnet routes fail closed. Multiplexing and jump hosts must never bypass the
+// private proxy, even when present in a user's OpenSSH configuration.
+func (s SSH) proxyArguments() ([]string, error) {
+	if s.TailnetPeer == "" {
+		return nil, nil
+	}
+	if !strings.HasPrefix(s.ProxySocket, "/") || strings.ContainsAny(s.ProxySocket, "\x00\r\n%") {
+		return nil, errors.New("Tailnet 连接尚未准备，请重新连接网络")
+	}
+	port := s.Port
+	if port == 0 {
+		port = 22
+	}
+	return []string{"-o", "Port=" + strconv.Itoa(port), "-o", "ProxyCommand=/usr/bin/nc -U " + shellQuote(s.ProxySocket), "-o", "ProxyJump=none", "-o", "ControlMaster=no", "-o", "ControlPath=none"}, nil
 }

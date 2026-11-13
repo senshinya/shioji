@@ -522,7 +522,7 @@ func (v *View) conversationImportRow(c *n.Context, t *n.Theme, u *conversationIm
 			c.AnimationFrame()
 		}
 	}
-	n.Row(c.Key(s.SourceRef)).FillWidth().Height(60).Opacity(alpha).PaddingY(8).Gap(10).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).AlignItems(n.Start).Children(func() {
+	n.Row(c.Key(s.SourceRef)).FillWidth().Height(60).Opacity(alpha).PaddingY(8).Gap(12).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).AlignItems(n.Start).Children(func() {
 		checked := u.selected[s.SourceRef] || s.ImportedSessionID != ""
 		if configurationCheckbox(c, &checked, "", n.Font{Family: t.Font, Size: 13}, s.Title).Label("选择会话：" + s.Title).Disabled(disabled || s.ImportedSessionID != "").Changed() {
 			if checked {
@@ -531,7 +531,7 @@ func (v *View) conversationImportRow(c *n.Context, t *n.Theme, u *conversationIm
 				delete(u.selected, s.SourceRef)
 			}
 		}
-		trigger := control(c.Key("preview"), 4).Grow(1).MinWidth(0).Height(44).Padding(0).AlignItems(n.Start).Label("预览会话：" + s.Title).Disabled(disabled).Children(func() {
+		trigger := control(c.Key("preview"), 4).Grow(1).MinWidth(0).Height(44).MarginX(-8).Padding(0, 8).AlignItems(n.Start).Label("预览会话：" + s.Title).Disabled(disabled).Children(func() {
 			n.Column(c).FillWidth().Gap(2).Children(func() {
 				n.Text(c, s.Title).FillWidth().SingleLine().FontSize(13).FixedLineHeight(20).Tooltip(s.Title)
 				date := "时间未知"

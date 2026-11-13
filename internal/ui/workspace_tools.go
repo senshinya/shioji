@@ -411,14 +411,14 @@ func (v *View) workspaceToolRows(c *n.Context, t *n.Theme, u *workspaceToolsUI) 
 				}
 				n.Text(c, name).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 				if entry.Scope == domain.ToolServiceUser && v.workspaceToolCanManage(u) {
-					if ghost(c, "管理").Label("在设备设置中管理 MCP").Height(28).FontSize(11).Padding(0).Disabled(!v.deviceState(u.key).Connected).Clicked() {
+					if ghost(c, "管理").Label("在设备设置中管理 MCP").Height(28).FontSize(11).MarginX(-8).Padding(0, 8).Disabled(!v.deviceState(u.key).Connected).Clicked() {
 						v.openWorkspaceAgentManagement(u.key, u.harness, "MCP")
 					}
 				}
 			})
 		}
 		n.Row(c.Key(entry.EntryID)).FillWidth().Height(56).Gap(12).AlignItems(n.Center).BorderWidth(.5, 0, 0, 0).BorderColor(t.Border).Children(func() {
-			open := control(c.Key("open"), 5).Grow(1).MinWidth(0).Height(52).Padding(0).Justify(n.Start).Label("查看 MCP：" + entry.Name)
+			open := control(c.Key("open"), 5).Grow(1).MinWidth(0).Height(52).Padding(0, configurationHoverInset).Justify(n.Start).Label("查看 MCP：" + entry.Name)
 			open.Children(func() {
 				n.Column(c).FillWidth().MinWidth(0).Children(func() {
 					inlineIconText(c, toolServiceIcon, entry.Name, n.Font{Family: t.Font, Size: 13}, 16, 8, t.Text).FillWidth().Ellipsis("…")
@@ -433,7 +433,7 @@ func (v *View) workspaceToolRows(c *n.Context, t *n.Theme, u *workspaceToolsUI) 
 				u.detailID = entry.EntryID
 				u.detailScroll = n.ScrollState{}
 			}
-			n.Text(c, workspaceToolState(u, entry)).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+			n.Text(c, workspaceToolState(u, entry)).MarginEnd(configurationHoverInset).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 		})
 	}
 	if count == 0 && u.phase != toolServiceLoading {
@@ -475,7 +475,7 @@ func (v *View) workspaceToolDetail(c *n.Context, t *n.Theme, u *workspaceToolsUI
 				}
 				n.Spacer(c).Grow(1)
 				if entry != nil && entry.Scope == domain.ToolServiceUser && v.workspaceToolCanManage(u) {
-					if ghost(c, "在设备设置中管理").Label("在设备设置中管理 MCP").Height(28).Padding(0).FontSize(12).Disabled(!v.deviceState(u.key).Connected).Clicked() {
+					if configurationAction(c, "在设备设置中管理").Label("在设备设置中管理 MCP").MarginX(-8).Disabled(!v.deviceState(u.key).Connected).Clicked() {
 						v.openWorkspaceAgentManagement(u.key, u.harness, "MCP")
 					}
 				}
