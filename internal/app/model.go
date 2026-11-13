@@ -59,6 +59,7 @@ type Model struct {
 	Connections                []DeviceConnection
 	ActiveConnection           string
 	LocalDeviceName            string
+	LocalDeviceIcon            DeviceIcon
 	LocalDeviceID              string
 	DeviceStates               map[string]*DeviceState
 	PendingDevices             map[string]string
@@ -502,6 +503,7 @@ type savedState struct {
 	Attachments                map[string][]DraftAttachment               `json:"attachments,omitempty"`
 	DeviceCache                map[string]cachedDevice                    `json:"deviceCache,omitempty"`
 	LocalDeviceName            string                                     `json:"localDeviceName,omitempty"`
+	LocalDeviceIcon            DeviceIcon                                 `json:"localDeviceIcon,omitempty"`
 	Connections                []DeviceConnection                         `json:"connections,omitempty"`
 	ActiveConnection           string                                     `json:"activeConnection,omitempty"`
 	PendingDevices             map[string]string                          `json:"pendingDevices,omitempty"`
@@ -598,6 +600,7 @@ func (m *Model) Load(path string) error {
 	m.KnownDeviceID = saved.DeviceID
 	m.LocalDeviceID = saved.DeviceID
 	m.LocalDeviceName = saved.LocalDeviceName
+	m.LocalDeviceIcon = saved.LocalDeviceIcon
 	m.Connections = normalizedConnections(saved.Connections)
 	for key, cache := range saved.DeviceCache {
 		if key != "local" {

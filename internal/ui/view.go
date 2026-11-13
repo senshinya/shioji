@@ -557,7 +557,7 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 				}
 				n.Column(c).Size(4, 4).Radius(2).Background(color).AlignSelf(n.Center)
 				font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}
-				inlineIconText(c, monitor, m.CurrentDeviceName(), font, 14, 6, t.TextMuted)
+				inlineIconText(c, v.deviceGlyph(m.ConnectionID()), m.CurrentDeviceName(), font, 14, 6, t.TextMuted)
 				inlineSymbol(c, chevron, m.CurrentDeviceName(), font, 12, t.TextMuted)
 			})
 		})

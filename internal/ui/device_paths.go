@@ -62,6 +62,12 @@ func (v *View) saveDeviceConnection(connection app.DeviceConnection, removal boo
 			}
 		}
 	} else {
+		if v.welcome != nil && connection.Icon == app.DeviceIconAuto {
+			connection.Icon = v.welcome.icon
+		}
+		if connection.Icon == app.DeviceIconAuto {
+			connection.Icon = v.deviceDefaultIcon("")
+		}
 		connection = m.BindDeviceConnection(connection)
 	}
 	result := make(chan error, 1)

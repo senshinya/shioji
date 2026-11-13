@@ -18,6 +18,7 @@ type DeviceConnection struct {
 	ID            string          `json:"id"`
 	Home          string          `json:"home,omitempty"`
 	Name          string          `json:"name"`
+	Icon          DeviceIcon      `json:"icon,omitempty"`
 	DeviceID      string          `json:"deviceId"`
 	SSH           transport.SSH   `json:"ssh"`
 }
@@ -378,6 +379,9 @@ func (m *Model) BindDeviceConnection(connection DeviceConnection) DeviceConnecti
 		connection.Routes, connection.ActiveRouteID = old.Routes, old.ActiveRouteID
 		connection.ID = old.ID
 		connection.Name = old.Name
+		if old.Icon != DeviceIconAuto {
+			connection.Icon = old.Icon
+		}
 		routes := append(append([]transport.SSH(nil), old.OtherSSH...), old.SSH)
 		connection.OtherSSH = nil
 		for _, route := range routes {

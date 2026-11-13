@@ -128,7 +128,11 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 					}
 				}
 				n.Row(c).FillWidth().Height(28).Gap(12).AlignItems(n.Baseline).Children(func() {
-
+					v.deviceIconPicker(c, t, "detail:"+key, "设备图标", name, n.Font{Family: t.Font, Size: configurationTitleSize, Weight: 400}, m.DeviceIconChoice(key), v.deviceDefaultIcon(key), func(icon app.DeviceIcon) {
+						if err := m.SetDeviceIcon(key, icon); err != nil {
+							rename.error = err.Error()
+						}
+					}).MarginStart(-configurationHoverInset)
 					n.Row(c).Grow(1).Gap(4).AlignItems(n.Baseline).Children(func() {
 						if rename.open {
 							input := textField(c.Key("name"), &rename.name).Padding(0, 8).Grow(1).MaxWidth(360).Height(28).FixedLineHeight(configurationTitleLine).FontSize(configurationTitleSize).FontWeight(400).Label("设备显示名称").Transition(fadeMotion(c, 140*time.Millisecond))
@@ -178,11 +182,15 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 					n.Text(c, address).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
 				}
 				errorFrame := n.Column(c.Key("rename-error")).FillWidth().Clip()
-				retained := n.Local(errorFrame, "text", func() string { return rename.error })
-				if rename.error != "" {
-					*retained = rename.error
+				errorText := rename.error
+				if errorText == "" && strings.HasPrefix(m.Error, "无法保存草稿：") {
+					errorText = m.Error
 				}
-				animatedContentHeight(c, errorFrame, rename.error != "", 180*time.Millisecond, func() float32 {
+				retained := n.Local(errorFrame, "text", func() string { return errorText })
+				if errorText != "" {
+					*retained = errorText
+				}
+				animatedContentHeight(c, errorFrame, errorText != "", 180*time.Millisecond, func() float32 {
 					n.Text(c, *retained).FillWidth().Padding(4, 0, 0, 38).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Transition(fadeMotion(c, 140*time.Millisecond))
 					return 0
 				})
@@ -192,7 +200,7 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 			configurationTabPanel(c.Key("device-tab-panel"), v.deviceTab, configurationTabIndex(tabs, v.deviceTab), configurationPanelFill, func() {
 				n.Scroll(c.Key("device-body:" + v.deviceTab)).FillWidth().Grow(1).Children(func() {
 					n.Column(c).FillWidth().Padding(configurationHeadingGap, configurationInset, configurationSectionGap).AlignItems(n.Start).Children(func() {
-						n.Column(c).FillWidth().MaxWidth(840).Gap(configurationSectionGap).Children(func() {
+						n.Column(c).FillWidth().Gap(configurationSectionGap).Children(func() {
 							if v.deviceTab == "" {
 								v.deviceAgents(c.Key("agents:"+key), t, key, state, agentState)
 								return

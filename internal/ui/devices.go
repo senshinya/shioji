@@ -127,7 +127,11 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 							}
 							btn.Children(func() {
 								n.Row(c).FillWidth().Gap(10).AlignItems(n.Baseline).Children(func() {
-									inlineSymbol(c, monitor, name, n.Font{Family: t.Font, Size: 13, Weight: 400}, 16, t.TextMuted)
+									v.deviceIconPicker(c, t, "collection:"+key, "设备图标："+name, name, n.Font{Family: t.Font, Size: 13, Weight: 400}, m.DeviceIconChoice(key), v.deviceDefaultIcon(key), func(icon app.DeviceIcon) {
+										if err := m.SetDeviceIcon(key, icon); err != nil {
+											m.Error = err.Error()
+										}
+									}).Margin(-4, -6)
 									n.Column(c).Grow(1).Children(func() {
 										weight := 400
 										if key == v.deviceSelected {

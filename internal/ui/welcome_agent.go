@@ -28,8 +28,7 @@ func (v *View) welcomeAgentOptions(c *n.Context, t *n.Theme, f *welcomeFlow, add
 	if add {
 		n.Row(c.Key("agent-context")).FillWidth().Height(28).Margin(0, 0, 12).AlignItems(n.Baseline).Gap(16).Children(func() {
 			n.Text(c, info.Name).FontSize(14).FontWeight(500).FixedLineHeight(20).Grow(1)
-			name := v.welcomeDeviceName(f.key)
-			inlineIconText(c, monitor, name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 14, 8, t.TextMuted)
+			v.welcomeDeviceIcon(c, t, f.key, "设备图标", true)
 		})
 	} else {
 		n.Row(c).FillWidth().MinHeight(configurationTitleLine).Margin(0, 0, 12).Gap(8).AlignItems(n.Baseline).Children(func() {
@@ -39,8 +38,7 @@ func (v *View) welcomeAgentOptions(c *n.Context, t *n.Theme, f *welcomeFlow, add
 				v.welcomeStep(welcomeAgents, -1)
 			}
 			n.Text(c, info.Name).FontSize(configurationTitleSize).FixedLineHeight(configurationTitleLine).Grow(1)
-			name := v.welcomeDeviceName(f.key)
-			inlineIconText(c, monitor, name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 14, 8, t.TextMuted)
+			v.welcomeDeviceIcon(c, t, f.key, "设备图标", true)
 		})
 	}
 	tabs := []configurationTabItem{{ID: "常规", Label: "常规"}, {ID: "模型", Label: "模型"}}

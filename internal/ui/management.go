@@ -310,7 +310,7 @@ func (v *View) workspaceSettingsView(c *n.Context, t *n.Theme) {
 		return
 	}
 	n.Column(c).FillWidth().FillHeight().Grow(1).Padding(0, 32, 20).Children(func() {
-		n.Column(c).FillWidth().MaxWidth(840).FillHeight().Grow(1).Children(func() {
+		n.Column(c).FillWidth().FillHeight().Grow(1).Children(func() {
 			tabs := []configurationTabItem{{ID: "", Label: "常规"}, {ID: "Skills", Label: "Skills"}, {ID: "MCP", Label: "MCP"}}
 			e.Tab = configurationTabs(c.Key("workspace-tabs"), e.Tab, tabs, configurationUnderline, e.Busy)
 			n.Column(c).FillWidth().FillHeight().Grow(1).Padding(12, 0, 0).Children(func() {
@@ -338,7 +338,7 @@ func (v *View) workspaceSettingsForm(c *n.Context, t *n.Theme) {
 	positionMotion := n.ElementTransition{Position: true, Duration: motionAnimation(c, 180*time.Millisecond).Duration, Ease: n.EaseOut}
 	n.Scroll(c.Key("workspace-settings:" + e.Workspace.ID)).FillWidth().FillHeight().Grow(1).TrackScroll(&e.GeneralScroll).Children(func() {
 		n.Column(c).FillWidth().Padding(8, 0).AlignItems(n.Start).Children(func() {
-			n.Column(c).FillWidth().MaxWidth(840).Gap(20).Children(func() {
+			n.Column(c).FillWidth().Gap(20).Children(func() {
 				n.Column(c).FillWidth().Gap(6).Children(func() {
 					n.Text(c, "名称").FontSize(12).TextColor(t.TextMuted)
 					textField(c.Key("workspace-name"), &e.Workspace.Name).FillWidth().Height(32).FontSize(13).Label("工作区名称").Disabled(e.Busy)

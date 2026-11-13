@@ -34,6 +34,7 @@ const (
 )
 
 type welcomeFlow struct {
+	icon            app.DeviceIcon
 	footer          func()
 	collectFooter   bool
 	workspace       domain.Workspace
@@ -67,6 +68,7 @@ type welcomeAgentInput struct {
 // These are only connection form drafts. Verified host keys, authentication,
 // service preparation and requests remain owned by the shared SSH flow.
 type welcomeSSHInput struct {
+	icon               app.DeviceIcon
 	target, name, port string
 	options            bool
 }
@@ -180,8 +182,7 @@ func (v *View) welcomeHeading(c *n.Context, t *n.Theme, title, key string, devic
 			return configurationTitleSize
 		}()).FontWeight(400).FixedLineHeight(configurationTitleLine).Grow(1)
 		if device {
-			name := v.welcomeDeviceName(key)
-			inlineIconText(c, monitor, name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 14, 8, t.TextMuted)
+			v.welcomeDeviceIcon(c, t, key, "设备图标", true)
 		}
 	})
 }
@@ -243,7 +244,7 @@ func (v *View) welcomePage(c *n.Context, t *n.Theme, f *welcomeFlow, step welcom
 				icon *n.SVG
 				open func()
 			}{
-				{"这台 Mac", monitor, v.beginWelcomeLocal},
+				{"这台 Mac", v.deviceGlyph("local"), v.beginWelcomeLocal},
 				{"通过 SSH 连接", terminalIcon, v.beginWelcomeSSH},
 				{"从 Tailnet 添加", tailscaleMark, v.beginTailnet},
 			} {
@@ -263,7 +264,7 @@ func (v *View) welcomePage(c *n.Context, t *n.Theme, f *welcomeFlow, step welcom
 	case welcomeTailnetPeers:
 		v.tailnetPeerPage(c, t)
 	case welcomeSSH:
-		v.welcomeHeading(c, t, "连接设备", f.key, v.sshTailnetPeer != "")
+		v.welcomeHeading(c, t, "连接设备", f.key, true)
 		v.welcomeSSHFields(c, t, f)
 	case welcomeAgents:
 		v.welcomeHeading(c, t, "选择 Agent", f.key, true)
@@ -404,7 +405,7 @@ func (v *View) openWelcomeAgent(info domain.HarnessInfo) {
 
 func (v *View) saveWelcomeSSHInput() {
 	f := v.setupFlow()
-	draft := welcomeSSHInput{v.sshTarget, v.sshName, v.sshPort, f.sshOptions}
+	draft := welcomeSSHInput{icon: f.icon, target: v.sshTarget, name: v.sshName, port: v.sshPort, options: f.sshOptions}
 	if f.route == welcomeRouteSSH {
 		f.directSSH = draft
 	} else if f.route == welcomeRouteTailnet && v.sshTailnetPeer != "" {
@@ -422,6 +423,7 @@ func (v *View) beginWelcomeSSH() {
 	f.route, f.key = welcomeRouteSSH, ""
 	v.sshTailnetPeer, v.sshError, v.sshCheck = "", "", sshEditing
 	draft := f.directSSH
+	f.icon = draft.icon
 	v.sshTarget, v.sshName, v.sshPort, f.sshOptions = draft.target, draft.name, draft.port, draft.options
 	v.welcomeStep(welcomeSSH, 1)
 }

@@ -142,7 +142,7 @@ func (v *View) deviceAgentPage(c *n.Context, t *n.Theme, key, deviceName string,
 		header.Height(88).Padding(8, configurationInset, 12)
 	}
 	header.Children(func() {
-		n.Column(c).FillWidth().MaxWidth(840).Gap(8).Children(func() {
+		n.Column(c).FillWidth().Gap(8).Children(func() {
 			backName, backLabel := deviceName, "返回 Agent 列表"
 			if v.skillReturn != nil && v.skillReturn.editor == e {
 				backName = v.skillReturn.workspace.Workspace.Name
@@ -172,7 +172,7 @@ func (v *View) deviceAgentPage(c *n.Context, t *n.Theme, key, deviceName string,
 		})
 	})
 	n.Column(c.Key("agent-content")).FillWidth().FillHeight().Grow(1).Padding(0, configurationInset, configurationSectionGap).Children(func() {
-		n.Column(c).FillWidth().FillHeight().Grow(1).MaxWidth(840).Children(func() {
+		n.Column(c).FillWidth().FillHeight().Grow(1).Children(func() {
 			v.agentConfiguration(c, t, key, state.Connected, e, info, false, func() { v.saveDeviceAgents(key, state, e) })
 			frame := n.Column(c.Key("agent-error")).FillWidth().Clip()
 			message := n.Local(frame, "message", func() string { return e.error })

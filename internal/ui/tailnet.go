@@ -125,7 +125,7 @@ func (v *View) tailnetJoinBody(c *n.Context, t *n.Theme) {
 	s := v.Model.Tailnet
 	pending := u.pending(s)
 	tailnetValue(c, "网络服务", "Tailscale")
-	setupRow(c, "节点名称", func() { setupField(c, "Tailnet 节点名称", &u.hostname, "shioji-mac", pending) })
+	setupRow(c, "Tailnet 名称", func() { setupField(c, "Tailnet 节点名称", &u.hostname, "shioji-mac", pending) })
 	n.Row(c.Key("授权方式")).FillWidth().MinHeight(configurationRowHeight).PaddingY(6).Gap(configurationSectionGap).AlignItems(n.Baseline).Children(func() {
 		n.Text(c, "授权方式").FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).Grow(1)
 		n.Row(c.Key("authorization-status")).Width(320).Height(configurationControlHeight).PaddingY(4).Gap(8).AlignItems(n.Baseline).Children(func() {
@@ -192,20 +192,21 @@ func (v *View) tailnetPeerPage(c *n.Context, t *n.Theme) {
 	n.Scroll(c.Key("peers")).Width(v.setupFlow().width+16).MarginX(-8).PaddingX(8).MaxHeight(196).Margin(12, 0, 0).Label("Tailnet 设备列表").Children(func() {
 		count := 0
 		for _, p := range s.Peers {
-			if q := strings.ToLower(strings.TrimSpace(u.query)); q != "" && !strings.Contains(strings.ToLower(p.Name+" "+p.DNSName+" "+p.Address), q) {
+			name := v.tailnetPeerName(p)
+			if q := strings.ToLower(strings.TrimSpace(u.query)); q != "" && !strings.Contains(strings.ToLower(name+" "+p.Name+" "+p.DNSName+" "+p.Address), q) {
 				continue
 			}
 			count++
 			supported := p.OS == "macOS"
-			row := control(c.Key(p.ID), 6).Width(v.setupFlow().width + 16).MarginX(-8).Height(56).Padding(8).Label("选择 Tailnet 设备：" + p.Name).Disabled(!p.Online || !supported)
+			row := control(c.Key(p.ID), 6).Width(v.setupFlow().width + 16).MarginX(-8).Height(56).Padding(8).Label("选择 Tailnet 设备：" + name).Disabled(!p.Online || !supported)
 			if u.selected == p.ID {
 				row.Background(t.SurfacePressed)
 			}
 			row.Children(func() {
 				n.Row(c).FillWidth().Gap(10).AlignItems(n.Baseline).Children(func() {
-					inlineSymbol(c, monitor, p.Name, n.Font{Family: t.Font, Size: 13, Weight: 400}, 16, t.TextMuted)
+					inlineSymbol(c, v.tailnetPeerGlyph(p), name, n.Font{Family: t.Font, Size: 13, Weight: 400}, 16, t.TextMuted)
 					n.Column(c).Grow(1).MinWidth(0).Children(func() {
-						n.Text(c, p.Name).FontSize(13).FixedLineHeight(20).SingleLine()
+						n.Text(c, name).FontSize(13).FixedLineHeight(20).SingleLine()
 						n.Text(c, p.Address).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted).SingleLine()
 					})
 					status := "在线"
@@ -257,8 +258,9 @@ func (v *View) tailnetPeerPage(c *n.Context, t *n.Theme) {
 		f := v.setupFlow()
 		draft, ok := f.tailnetSSH[chosen.ID]
 		if !ok {
-			draft = welcomeSSHInput{target: chosen.Address, name: chosen.Name}
+			draft = welcomeSSHInput{target: chosen.Address, name: v.tailnetPeerName(*chosen)}
 		}
+		f.icon = draft.icon
 		v.sshTarget, v.sshName, v.sshPort, f.sshOptions = draft.target, draft.name, draft.port, draft.options
 		v.sshError = ""
 		v.sshCheck = sshEditing
@@ -326,7 +328,8 @@ func (v *View) tailnetPage(c *n.Context, t *n.Theme) {
 					n.Column(c).Grow(1).MinWidth(0).Children(func() {
 						n.Row(c).FillWidth().Height(28).Gap(14).AlignItems(n.Center).Children(func() {
 							font := n.Font{Family: t.Font, Size: 16, Weight: 500}
-							n.Text(c, s.Hostname).Grow(1).MinWidth(0).FontSize(16).FontWeight(500).FixedLineHeight(24).SingleLine().Ellipsis("…").Tooltip(s.Hostname).Transform(n.Translation(0, inlineCenterOffset(s.Hostname, font)))
+							name := v.Model.LocalName()
+							n.Text(c, name).Grow(1).MinWidth(0).FontSize(16).FontWeight(500).FixedLineHeight(24).SingleLine().Ellipsis("…").Tooltip(name).Transform(n.Translation(0, inlineCenterOffset(name, font)))
 							v.tailnetConnectionStatus(c.Key("status"), t, s)
 							on := s.State != "Stopped"
 							if configurationSwitch(c, &on).Label("Tailnet 连接开关").Disabled(v.Controller == nil).Changed() {
@@ -341,6 +344,7 @@ func (v *View) tailnetPage(c *n.Context, t *n.Theme) {
 					})
 				})
 				n.Column(c).FillWidth().Margin(22, 0, 0).Children(func() {
+					deviceMeta(c, "Tailnet 名称", s.Hostname)
 					deviceConfigRow(c, "Tailnet 地址", func() {
 						n.Row(c).FillWidth().Gap(7).Justify(n.End).AlignItems(n.Center).Children(func() {
 							address := s.Address
@@ -480,17 +484,18 @@ func (v *View) tailnetNetworkPeers(c *n.Context, t *n.Theme, s tailnet.Snapshot)
 			return
 		}
 		for _, p := range s.Peers {
+			name := v.tailnetPeerName(p)
 			if s.State != "Running" {
 				p.Online = false
 			}
 			n.Column(c.Key(p.ID)).FillWidth().Transition(fadeMotion(c, 160*time.Millisecond)).Children(func() {
-				row := configurationRowControl(c.Key("peer"), 6).MinHeight(64).PaddingY(12).Label("查看 Tailnet 设备：" + p.Name)
+				row := configurationRowControl(c.Key("peer"), 6).MinHeight(64).PaddingY(12).Label("查看 Tailnet 设备：" + name)
 				row.Children(func() {
 					n.Row(c).FillWidth().Gap(10).AlignItems(n.Baseline).Children(func() {
 						font := n.Font{Family: t.Font, Size: 13, Weight: 400}
-						inlineSymbol(c, monitor, p.Name, font, 16, t.TextMuted)
+						inlineSymbol(c, v.tailnetPeerGlyph(p), name, font, 16, t.TextMuted)
 						n.Column(c).Grow(1).MinWidth(0).Children(func() {
-							n.Text(c, p.Name).FontSize(13).FixedLineHeight(20).SingleLine().Ellipsis("…").Tooltip(p.Name)
+							n.Text(c, name).FontSize(13).FixedLineHeight(20).SingleLine().Ellipsis("…").Tooltip(name)
 							n.Text(c, p.Address).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine()
 						})
 						label, color := "离线", t.TextMuted
@@ -513,7 +518,7 @@ func (v *View) tailnetNetworkPeers(c *n.Context, t *n.Theme, s tailnet.Snapshot)
 						if c.Preferences().ReduceMotion {
 							animation.Duration = 0
 						}
-						inlineSymbolWithAnimation(c, chevron, p.Name, font, 14, t.TextMuted, animation, angle).MarginStart(12)
+						inlineSymbolWithAnimation(c, chevron, name, font, 14, t.TextMuted, animation, angle).MarginStart(12)
 					})
 				})
 				if row.Clicked() {
@@ -532,7 +537,7 @@ func (v *View) tailnetNetworkPeers(c *n.Context, t *n.Theme, s tailnet.Snapshot)
 								tailnetCopyButton(c, p.Address, "复制 Tailnet 设备地址："+p.Name)
 							})
 						})
-						for _, meta := range [][2]string{{"连接路径", tailnetPathLabel(p, c.Now())}, {"往返延迟", tailnetLatency(p, c.Now())}, {"系统", p.OS}} {
+						for _, meta := range [][2]string{{"Tailnet 名称", p.Name}, {"连接路径", tailnetPathLabel(p, c.Now())}, {"往返延迟", tailnetLatency(p, c.Now())}, {"系统", p.OS}} {
 							tailnetPeerDetail(c, meta[0], func() {
 								n.Text(c, meta[1]).FontSize(12).FixedLineHeight(20).Selectable().Transform(n.Translation(0, inlineCenterOffset(meta[1], n.Font{Family: t.Font, Size: 12, Weight: 400})))
 							})
@@ -636,6 +641,9 @@ func setupWorkerSSHPointer(s transport.SSH) *transport.SSH { return &s }
 func (v *View) tailnetPathDetails(c *n.Context, peerID string) {
 	if peerID != "" {
 		p := v.tailnetPathPeer(peerID)
+		if p.Name != "" {
+			deviceMeta(c, "Tailnet 名称", p.Name)
+		}
 		deviceMeta(c, "往返延迟", tailnetLatency(p, c.Now()))
 		deviceMeta(c, "连接路径", tailnetPathLabel(p, c.Now()))
 	}

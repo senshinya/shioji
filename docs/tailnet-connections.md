@@ -6,6 +6,14 @@ Tailnet is transport, not a second device authorization system. Joining the embe
 
 The application owns an official tsnet node, independent of the system client. Its encrypted persistent state uses a random Keychain-held encryption key. Startup restores only a previously started identity; new enrollment/browser login requires user action. Authorization URLs remain transient and absent from logs/client JSON. Network management has no add-device entry.
 
+## Device names and icons
+
+Shioji's device display name and icon are client preferences. Renaming the display alias does not rename the node registered with Tailscale or change its worker identity. Network rows prefer a saved display alias; their expanded details retain the actual Tailnet name. The local network section also shows the display alias separately from its registered node name.
+
+Clicking a device icon opens a compact palette containing only five icons: display, laptop, tablet, phone and server. No captions or hover tooltips are shown; accessible labels remain available. New devices receive a concrete initial selection using reported peer OS conservatively: display for macOS/Windows or unknown, phone for iOS/Android, tablet for explicit iPadOS, server for Linux. OS alone does not establish hardware form factor. Explicit selections persist and remain attached to the same logical device when a route is added/removed. Unsaved connection drafts keep their own icon selection.
+
+Custom control-server selection is not yet a supported Shioji configuration: the application currently has no Headscale address field or persisted control-server choice. The underlying tsnet ControlURL facility does not by itself establish tested Headscale product support.
+
 ## Background network ownership
 
 The GUI now uses a local network client; a separate `shioji-runtime --network-serve` process owns tsnet, inbound TCP forwarding and peer-specific SSH bridges. GUI/window cancellation closes only its subscription. The worker is a separate process and its update/stop or login-service switch does not control networking. Production uses the independent `dev.shioji.network.agent` user LaunchAgent in a signature-verified Runtime.app installed alongside the execution bundle; the current worker bundle is not overwritten or unregistered. Isolated profiles use a detached, signature-verified host without registering a system service. No before-login or after-logout connectivity is promised.

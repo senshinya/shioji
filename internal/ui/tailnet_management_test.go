@@ -274,14 +274,14 @@ func TestTailnetPeerDetailsShareEvenInkSpacingAndCopyCenter(t *testing.T) {
 			}
 			return float64(lo+hi) / 2
 		}
-		path, latency, system := inkCenter("连接路径"), inkCenter("往返延迟"), inkCenter("系统")
+		registered, path, latency, system := inkCenter("Tailnet 名称"), inkCenter("连接路径"), inkCenter("往返延迟"), inkCenter("系统")
 		copy, ok := ui.Find("复制 Tailnet 设备地址：MacBook Air")
 		if !ok {
 			t.Fatal("copy missing")
 		}
 		address := inkCenter("Tailnet 地址")
 		first := float64(copy.Y + copy.H/2)
-		if math.Abs(address-first) > 1 || math.Abs(path-address-28) > 1 || math.Abs(latency-path-28) > 1 || math.Abs(system-latency-28) > 1 {
+		if math.Abs(address-first) > 1 || math.Abs(registered-address-28) > 1 || math.Abs(path-registered-28) > 1 || math.Abs(latency-path-28) > 1 || math.Abs(system-latency-28) > 1 {
 			t.Errorf("dark=%v uneven detail centers: copy=%v address=%v path=%v latency=%v system=%v", dark, first, address, path, latency, system)
 		}
 	}

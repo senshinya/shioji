@@ -536,7 +536,7 @@ func (v *View) workspaceSettingsHeader(c *n.Context, t *n.Theme) {
 		header.Height(88).Padding(8, configurationInset, 12)
 	}
 	header.Children(func() {
-		n.Column(c).FillWidth().MaxWidth(840).Gap(8).Children(func() {
+		n.Column(c).FillWidth().Gap(8).Children(func() {
 			back := control(c.Key("back"), 5).Height(28).AlignSelf(n.Start).PaddingX(4).MarginStart(-4).Label("返回")
 			if width < 900 {
 				back.MarginStart(60)

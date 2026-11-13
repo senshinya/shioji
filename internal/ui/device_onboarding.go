@@ -16,10 +16,12 @@ func (v *View) sshDeviceForm(c *n.Context, t *n.Theme) {
 	if f.step == welcomeDevice {
 		f.step = welcomeSSH
 		f.key = ""
+		f.route = welcomeRouteSSH
 	}
 	n.Column(c).FillWidth().Children(func() {
 		n.Row(c).FillWidth().Height(configurationTitleLine).AlignItems(n.Center).Margin(0, 0, configurationHeadingGap).Children(func() {
 			n.Text(c, "添加设备").FontSize(14).FontWeight(400).FixedLineHeight(configurationTitleLine).Grow(1)
+			v.welcomeDeviceIcon(c, t, f.key, "添加设备图标", false)
 			if iconButton(c, closeIcon, "取消添加设备").Clicked() {
 				v.cancelSSHCheck()
 				v.welcome = nil
