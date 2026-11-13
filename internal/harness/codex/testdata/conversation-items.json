@@ -1,0 +1,1434 @@
+{
+  "provenance": "Illustrative Codex item packets distilled from the protocol-design catalog. Synthetic fixtures only; no recorded user conversation, credentials or private state.",
+  "entries": [
+    {
+      "id": "agentMessage",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "text",
+          "packet": {
+            "id": "item-agentMessage",
+            "text": "设备断开后，会话本身不会结束。界面保留当前输出和草稿，重连成功后再恢复事件订阅。",
+            "type": "agentMessage",
+            "phase": "commentary"
+          }
+        },
+        {
+          "id": "markdown",
+          "packet": {
+            "id": "item-agentMessage",
+            "text": "## 恢复连接\n\n先恢复设备连接，再订阅原会话。\n\n- 保留原始 session ID\n- 恢复待处理请求\n- 不重复提交用户消息\n\n> 连接断开不代表远端任务已经停止。",
+            "type": "agentMessage",
+            "phase": "final_answer"
+          }
+        },
+        {
+          "id": "code",
+          "packet": {
+            "id": "item-agentMessage",
+            "text": "重连后继续使用原会话：\n\n```go\nfunc (s *Session) Resume(ctx context.Context) error {\n    return s.transport.Subscribe(ctx, s.threadID)\n}\n```\n\n这里保持 `threadID` 不变。",
+            "type": "agentMessage"
+          }
+        },
+        {
+          "id": "table",
+          "packet": {
+            "id": "item-agentMessage",
+            "text": "| 事件 | 界面状态 |\n| --- | --- |\n| 连接中断 | 保留草稿 |\n| 恢复订阅 | 接收后续事件 |\n| 本轮完成 | 显示用量 |",
+            "type": "agentMessage"
+          }
+        },
+        {
+          "id": "partial",
+          "packet": {
+            "id": "item-agentMessage",
+            "text": "已确认传输层能够恢复连接。接下来检查待处理请求是否按 requestId 恢复。",
+            "type": "agentMessage",
+            "phase": "partial_answer"
+          }
+        },
+        {
+          "id": "citation",
+          "packet": {
+            "id": "item-agentMessage",
+            "text": "沿用之前确定的边界：工作区只绑定一个设备。",
+            "type": "agentMessage",
+            "memoryCitation": {
+              "entries": [
+                {
+                  "path": "MEMORY.md",
+                  "lineStart": 12,
+                  "lineEnd": 18,
+                  "note": "工作区与设备的关系"
+                }
+              ],
+              "threadIds": [
+                "thread-previous"
+              ]
+            }
+          }
+        },
+        {
+          "id": "async-choice",
+          "packet": {
+            "id": "item-agentMessage",
+            "text": "我会继续检查持久化层。你可以顺便确定恢复策略。",
+            "type": "agentMessage",
+            "delivery": "async",
+            "questions": [
+              {
+                "title": "断线后是否自动恢复订阅？",
+                "options": [
+                  "自动恢复",
+                  "手动恢复"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "async-text",
+          "packet": {
+            "id": "item-agentMessage",
+            "text": "正在整理可恢复的状态。",
+            "type": "agentMessage",
+            "delivery": "async",
+            "questions": [
+              {
+                "title": "默认的会话保存目录放在哪里？",
+                "options": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "reasoning",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "summary",
+          "packet": {
+            "id": "item-reasoning",
+            "type": "reasoning",
+            "summary": [
+              "先核对会话与设备连接的生命周期。",
+              "再检查重连后的事件去重。"
+            ],
+            "content": []
+          }
+        },
+        {
+          "id": "running",
+          "packet": {
+            "id": "item-reasoning",
+            "type": "reasoning",
+            "summary": [
+              "正在检查状态恢复路径。"
+            ],
+            "content": []
+          }
+        },
+        {
+          "id": "empty",
+          "packet": {
+            "id": "item-reasoning",
+            "type": "reasoning",
+            "summary": [],
+            "content": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "hookPrompt",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "context",
+          "packet": {
+            "fragments": [
+              {
+                "hookRunId": "hook-demo",
+                "text": "当前工作区的恢复测试需要覆盖断线与重复订阅。"
+              }
+            ],
+            "id": "item-hookPrompt",
+            "type": "hookPrompt"
+          }
+        }
+      ]
+    },
+    {
+      "id": "functionCallOutput",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "text",
+          "packet": {
+            "id": "item-functionCallOutput",
+            "name": "connection_check",
+            "output": "远端进程存活，事件订阅可恢复。",
+            "type": "functionCallOutput",
+            "namespace": null
+          }
+        },
+        {
+          "id": "image",
+          "packet": {
+            "id": "item-functionCallOutput",
+            "name": "screenshot",
+            "output": [
+              {
+                "type": "input_image",
+                "image_url": "https://example.invalid/composer.png"
+              }
+            ],
+            "type": "functionCallOutput"
+          }
+        },
+        {
+          "id": "audio",
+          "packet": {
+            "id": "item-functionCallOutput",
+            "name": "recording",
+            "output": [
+              {
+                "type": "input_audio",
+                "audio_url": "https://example.invalid/voice.wav"
+              }
+            ],
+            "type": "functionCallOutput"
+          }
+        },
+        {
+          "id": "structured-text",
+          "packet": {
+            "id": "item-functionCallOutput",
+            "name": "check",
+            "output": [
+              {
+                "type": "input_text",
+                "text": "重连检查通过。"
+              }
+            ],
+            "type": "functionCallOutput"
+          }
+        },
+        {
+          "id": "encrypted",
+          "packet": {
+            "id": "item-functionCallOutput",
+            "name": "secure_result",
+            "output": [
+              {
+                "type": "encrypted_content",
+                "encrypted_content": "opaque-demo-payload"
+              }
+            ],
+            "type": "functionCallOutput"
+          }
+        }
+      ]
+    },
+    {
+      "id": "commandExecution",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "running",
+          "packet": {
+            "command": "go test ./device/... -count=1",
+            "commandActions": [
+              {
+                "type": "unknown",
+                "command": "go test ./device/... -count=1"
+              }
+            ],
+            "cwd": "/fixture/shioji",
+            "id": "item-commandExecution",
+            "status": "inProgress",
+            "type": "commandExecution",
+            "processId": "process-17",
+            "source": "agent",
+            "aggregatedOutput": "=== RUN   TestReconnect\n"
+          }
+        },
+        {
+          "id": "completed",
+          "packet": {
+            "command": "go test ./device/... -count=1",
+            "commandActions": [
+              {
+                "type": "unknown",
+                "command": "go test ./device/... -count=1"
+              }
+            ],
+            "cwd": "/fixture/shioji",
+            "id": "item-commandExecution",
+            "status": "completed",
+            "type": "commandExecution",
+            "processId": "process-17",
+            "source": "agent",
+            "aggregatedOutput": "=== RUN   TestReconnect\n--- PASS: TestReconnect (0.04s)\nPASS\nok  shioji/device  0.187s",
+            "exitCode": 0,
+            "durationMs": 834
+          }
+        },
+        {
+          "id": "failed",
+          "packet": {
+            "command": "go test ./device/... -count=1",
+            "commandActions": [
+              {
+                "type": "unknown",
+                "command": "go test ./device/... -count=1"
+              }
+            ],
+            "cwd": "/fixture/shioji",
+            "id": "item-commandExecution",
+            "status": "failed",
+            "type": "commandExecution",
+            "processId": "process-17",
+            "source": "agent",
+            "aggregatedOutput": "--- FAIL: TestReconnect\n    reconnect_test.go:48: duplicate event received\nFAIL",
+            "exitCode": 1,
+            "durationMs": 621
+          }
+        },
+        {
+          "id": "declined",
+          "packet": {
+            "command": "go test ./device/... -count=1",
+            "commandActions": [
+              {
+                "type": "unknown",
+                "command": "go test ./device/... -count=1"
+              }
+            ],
+            "cwd": "/fixture/shioji",
+            "id": "item-commandExecution",
+            "status": "declined",
+            "type": "commandExecution",
+            "processId": "process-17",
+            "source": "agent",
+            "aggregatedOutput": null,
+            "exitCode": null
+          }
+        },
+        {
+          "id": "read",
+          "packet": {
+            "command": "sed -n \"1,80p\" device/registry.go",
+            "commandActions": [
+              {
+                "type": "read",
+                "command": "sed -n \"1,80p\" device/registry.go",
+                "name": "registry.go",
+                "path": "/fixture/shioji/device/registry.go"
+              }
+            ],
+            "cwd": "/fixture/shioji",
+            "id": "item-commandExecution",
+            "status": "completed",
+            "type": "commandExecution",
+            "aggregatedOutput": "package device\n\ntype Registry struct {\n    devices map[string]*Device\n}",
+            "exitCode": 0
+          }
+        },
+        {
+          "id": "list",
+          "packet": {
+            "command": "rg --files device",
+            "commandActions": [
+              {
+                "type": "listFiles",
+                "command": "rg --files device",
+                "path": "device"
+              }
+            ],
+            "cwd": "/fixture/shioji",
+            "id": "item-commandExecution",
+            "status": "completed",
+            "type": "commandExecution",
+            "aggregatedOutput": "device/registry.go\ndevice/connection.go\ndevice/connection_test.go",
+            "exitCode": 0
+          }
+        },
+        {
+          "id": "search",
+          "packet": {
+            "command": "rg -n \"Subscribe\" device",
+            "commandActions": [
+              {
+                "type": "search",
+                "command": "rg -n \"Subscribe\" device",
+                "query": "Subscribe",
+                "path": "device"
+              }
+            ],
+            "cwd": "/fixture/shioji",
+            "id": "item-commandExecution",
+            "status": "completed",
+            "type": "commandExecution",
+            "aggregatedOutput": "device/connection.go:42: transport.Subscribe(ctx, id)",
+            "exitCode": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "fileChange",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "completed",
+          "packet": {
+            "changes": [
+              {
+                "path": "/fixture/shioji/device/registry.go",
+                "kind": {
+                  "type": "update",
+                  "move_path": null
+                },
+                "diff": "@@ -18,3 +18,4 @@\n func (r *Registry) Add(d Device) error {\n-    r.devices[d.Address] = d\n+    r.devices[d.ID] = d\n+    return r.persist()\n }"
+              }
+            ],
+            "id": "item-fileChange",
+            "status": "completed",
+            "type": "fileChange"
+          }
+        },
+        {
+          "id": "add",
+          "packet": {
+            "changes": [
+              {
+                "path": "/fixture/shioji/device/reconnect_test.go",
+                "kind": {
+                  "type": "add"
+                },
+                "diff": "+package device\n+\n+func TestReconnect(t *testing.T) {}"
+              }
+            ],
+            "id": "item-fileChange",
+            "status": "completed",
+            "type": "fileChange"
+          }
+        },
+        {
+          "id": "delete",
+          "packet": {
+            "changes": [
+              {
+                "path": "/fixture/shioji/device/legacy.go",
+                "kind": {
+                  "type": "delete"
+                },
+                "diff": "-package device\n-// Legacy address-based identity."
+              }
+            ],
+            "id": "item-fileChange",
+            "status": "completed",
+            "type": "fileChange"
+          }
+        },
+        {
+          "id": "move",
+          "packet": {
+            "changes": [
+              {
+                "path": "/fixture/shioji/device/state.go",
+                "kind": {
+                  "type": "update",
+                  "move_path": "/fixture/shioji/device/registry.go"
+                },
+                "diff": "@@ -18,3 +18,4 @@\n func (r *Registry) Add(d Device) error {\n-    r.devices[d.Address] = d\n+    r.devices[d.ID] = d\n+    return r.persist()\n }"
+              }
+            ],
+            "id": "item-fileChange",
+            "status": "completed",
+            "type": "fileChange"
+          }
+        },
+        {
+          "id": "running",
+          "packet": {
+            "changes": [
+              {
+                "path": "/fixture/shioji/device/registry.go",
+                "kind": {
+                  "type": "update",
+                  "move_path": null
+                },
+                "diff": "@@ -18,3 +18,4 @@\n func (r *Registry) Add(d Device) error {\n-    r.devices[d.Address] = d\n+    r.devices[d.ID] = d\n+    return r.persist()\n }"
+              }
+            ],
+            "id": "item-fileChange",
+            "status": "inProgress",
+            "type": "fileChange"
+          }
+        },
+        {
+          "id": "failed",
+          "packet": {
+            "changes": [
+              {
+                "path": "/fixture/shioji/device/registry.go",
+                "kind": {
+                  "type": "update",
+                  "move_path": null
+                },
+                "diff": "@@ -18,3 +18,4 @@\n func (r *Registry) Add(d Device) error {\n-    r.devices[d.Address] = d\n+    r.devices[d.ID] = d\n+    return r.persist()\n }"
+              }
+            ],
+            "id": "item-fileChange",
+            "status": "failed",
+            "type": "fileChange"
+          }
+        },
+        {
+          "id": "declined",
+          "packet": {
+            "changes": [
+              {
+                "path": "/fixture/shioji/device/registry.go",
+                "kind": {
+                  "type": "update",
+                  "move_path": null
+                },
+                "diff": "@@ -18,3 +18,4 @@\n func (r *Registry) Add(d Device) error {\n-    r.devices[d.Address] = d\n+    r.devices[d.ID] = d\n+    return r.persist()\n }"
+              }
+            ],
+            "id": "item-fileChange",
+            "status": "declined",
+            "type": "fileChange"
+          }
+        }
+      ]
+    },
+    {
+      "id": "mcpToolCall",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "running",
+          "packet": {
+            "arguments": {
+              "uri": "project://device/registry.go"
+            },
+            "id": "item-mcpToolCall",
+            "server": "project-files",
+            "status": "inProgress",
+            "tool": "read_resource",
+            "type": "mcpToolCall"
+          }
+        },
+        {
+          "id": "progress",
+          "packet": {
+            "arguments": {
+              "uri": "project://device/registry.go"
+            },
+            "id": "item-mcpToolCall",
+            "server": "project-files",
+            "status": "inProgress",
+            "tool": "read_resource",
+            "type": "mcpToolCall"
+          }
+        },
+        {
+          "id": "text",
+          "packet": {
+            "arguments": {
+              "uri": "project://device/registry.go"
+            },
+            "id": "item-mcpToolCall",
+            "server": "project-files",
+            "status": "completed",
+            "tool": "read_resource",
+            "type": "mcpToolCall",
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "设备使用稳定 ID，地址只用于建立连接。"
+                }
+              ],
+              "structuredContent": null,
+              "_meta": null
+            }
+          }
+        },
+        {
+          "id": "json",
+          "packet": {
+            "arguments": {
+              "uri": "project://device/registry.go"
+            },
+            "id": "item-mcpToolCall",
+            "server": "project-files",
+            "status": "completed",
+            "tool": "read_resource",
+            "type": "mcpToolCall",
+            "result": {
+              "content": [],
+              "structuredContent": {
+                "deviceId": "mini",
+                "rttMs": 12,
+                "path": "direct"
+              },
+              "_meta": null
+            }
+          }
+        },
+        {
+          "id": "image",
+          "packet": {
+            "arguments": {
+              "uri": "project://device/registry.go"
+            },
+            "id": "item-mcpToolCall",
+            "server": "project-files",
+            "status": "completed",
+            "tool": "read_resource",
+            "type": "mcpToolCall",
+            "result": {
+              "content": [
+                {
+                  "type": "image",
+                  "mimeType": "image/png",
+                  "data": "sample-media"
+                }
+              ],
+              "structuredContent": null,
+              "_meta": null
+            }
+          }
+        },
+        {
+          "id": "audio",
+          "packet": {
+            "arguments": {
+              "uri": "project://device/registry.go"
+            },
+            "id": "item-mcpToolCall",
+            "server": "project-files",
+            "status": "completed",
+            "tool": "read_resource",
+            "type": "mcpToolCall",
+            "result": {
+              "content": [
+                {
+                  "type": "audio",
+                  "mimeType": "audio/wav",
+                  "data": "sample-media"
+                }
+              ],
+              "structuredContent": null,
+              "_meta": null
+            }
+          }
+        },
+        {
+          "id": "resource-link",
+          "packet": {
+            "arguments": {
+              "uri": "project://device/registry.go"
+            },
+            "id": "item-mcpToolCall",
+            "server": "project-files",
+            "status": "completed",
+            "tool": "read_resource",
+            "type": "mcpToolCall",
+            "result": {
+              "content": [
+                {
+                  "type": "resource_link",
+                  "uri": "project://architecture.md",
+                  "name": "architecture.md",
+                  "mimeType": "text/markdown"
+                }
+              ],
+              "structuredContent": null,
+              "_meta": null
+            }
+          }
+        },
+        {
+          "id": "resource",
+          "packet": {
+            "arguments": {
+              "uri": "project://device/registry.go"
+            },
+            "id": "item-mcpToolCall",
+            "server": "project-files",
+            "status": "completed",
+            "tool": "read_resource",
+            "type": "mcpToolCall",
+            "result": {
+              "content": [
+                {
+                  "type": "resource",
+                  "resource": {
+                    "uri": "project://status",
+                    "mimeType": "application/json",
+                    "text": "{\"connected\": true}"
+                  }
+                }
+              ],
+              "structuredContent": null,
+              "_meta": null
+            }
+          }
+        },
+        {
+          "id": "binary",
+          "packet": {
+            "arguments": {
+              "uri": "project://device/registry.go"
+            },
+            "id": "item-mcpToolCall",
+            "server": "project-files",
+            "status": "completed",
+            "tool": "read_resource",
+            "type": "mcpToolCall",
+            "result": {
+              "content": [
+                {
+                  "type": "resource",
+                  "resource": {
+                    "uri": "project://report.pdf",
+                    "mimeType": "application/pdf",
+                    "blob": "sample-binary"
+                  }
+                }
+              ],
+              "structuredContent": null,
+              "_meta": null
+            }
+          }
+        },
+        {
+          "id": "app-ui",
+          "packet": {
+            "arguments": {
+              "uri": "project://device/registry.go"
+            },
+            "id": "item-mcpToolCall",
+            "server": "project-files",
+            "status": "completed",
+            "tool": "read_resource",
+            "type": "mcpToolCall",
+            "mcpAppUi": {
+              "resourceUri": "ui://project/device-status",
+              "preferredModelDisplayMode": "inline"
+            },
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "设备概览已准备好。"
+                }
+              ],
+              "structuredContent": null,
+              "_meta": null
+            }
+          }
+        },
+        {
+          "id": "unknown",
+          "packet": {
+            "arguments": {
+              "uri": "project://device/registry.go"
+            },
+            "id": "item-mcpToolCall",
+            "server": "project-files",
+            "status": "completed",
+            "tool": "read_resource",
+            "type": "mcpToolCall",
+            "result": {
+              "content": [
+                {
+                  "type": "custom_vendor_result",
+                  "revision": 3,
+                  "payload": {
+                    "ready": true
+                  }
+                }
+              ],
+              "structuredContent": null,
+              "_meta": null
+            }
+          }
+        },
+        {
+          "id": "error",
+          "packet": {
+            "arguments": {
+              "uri": "project://device/registry.go"
+            },
+            "id": "item-mcpToolCall",
+            "server": "project-files",
+            "status": "failed",
+            "tool": "read_resource",
+            "type": "mcpToolCall",
+            "error": {
+              "message": "资源暂时不可用。"
+            }
+          }
+        },
+        {
+          "id": "primitive",
+          "packet": {
+            "arguments": {
+              "uri": "project://device/registry.go"
+            },
+            "id": "item-mcpToolCall",
+            "server": "project-files",
+            "status": "completed",
+            "tool": "read_resource",
+            "type": "mcpToolCall",
+            "result": {
+              "content": [
+                null,
+                42,
+                "额外的文本值",
+                false
+              ],
+              "structuredContent": null,
+              "_meta": null
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "dynamicToolCall",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "running",
+          "packet": {
+            "arguments": {
+              "deviceId": "mini"
+            },
+            "id": "item-dynamicToolCall",
+            "status": "inProgress",
+            "tool": "device_snapshot",
+            "type": "dynamicToolCall"
+          }
+        },
+        {
+          "id": "text",
+          "packet": {
+            "arguments": {
+              "deviceId": "mini"
+            },
+            "id": "item-dynamicToolCall",
+            "status": "completed",
+            "tool": "device_snapshot",
+            "type": "dynamicToolCall",
+            "contentItems": [
+              {
+                "type": "inputText",
+                "text": "Mac mini 连接正常。"
+              }
+            ],
+            "success": true
+          }
+        },
+        {
+          "id": "image",
+          "packet": {
+            "arguments": {
+              "deviceId": "mini"
+            },
+            "id": "item-dynamicToolCall",
+            "status": "completed",
+            "tool": "device_snapshot",
+            "type": "dynamicToolCall",
+            "contentItems": [
+              {
+                "type": "inputImage",
+                "imageUrl": "https://example.invalid/composer.png"
+              }
+            ],
+            "success": true
+          }
+        },
+        {
+          "id": "audio",
+          "packet": {
+            "arguments": {
+              "deviceId": "mini"
+            },
+            "id": "item-dynamicToolCall",
+            "status": "completed",
+            "tool": "device_snapshot",
+            "type": "dynamicToolCall",
+            "contentItems": [
+              {
+                "type": "inputAudio",
+                "audioUrl": "https://example.invalid/note.wav"
+              }
+            ],
+            "success": true
+          }
+        },
+        {
+          "id": "failed",
+          "packet": {
+            "arguments": {
+              "deviceId": "mini"
+            },
+            "id": "item-dynamicToolCall",
+            "status": "failed",
+            "tool": "device_snapshot",
+            "type": "dynamicToolCall",
+            "contentItems": [
+              {
+                "type": "inputText",
+                "text": "设备断开，无法获取快照。"
+              }
+            ],
+            "success": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "collabAgentToolCall",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "spawnAgent",
+          "packet": {
+            "agentsStates": {
+              "agent-1": {
+                "status": "completed",
+                "message": "去重检查通过。"
+              },
+              "agent-2": {
+                "status": "running",
+                "message": "正在检查请求恢复。"
+              }
+            },
+            "id": "item-collabAgentToolCall",
+            "receiverThreadIds": [
+              "agent-1",
+              "agent-2"
+            ],
+            "senderThreadId": "thread-demo",
+            "status": "completed",
+            "tool": "spawnAgent",
+            "type": "collabAgentToolCall",
+            "prompt": "检查重连去重与状态恢复。"
+          }
+        },
+        {
+          "id": "sendInput",
+          "packet": {
+            "agentsStates": {
+              "agent-1": {
+                "status": "completed",
+                "message": "去重检查通过。"
+              },
+              "agent-2": {
+                "status": "running",
+                "message": "正在检查请求恢复。"
+              }
+            },
+            "id": "item-collabAgentToolCall",
+            "receiverThreadIds": [
+              "agent-1",
+              "agent-2"
+            ],
+            "senderThreadId": "thread-demo",
+            "status": "completed",
+            "tool": "sendInput",
+            "type": "collabAgentToolCall",
+            "prompt": "检查重连去重与状态恢复。"
+          }
+        },
+        {
+          "id": "resumeAgent",
+          "packet": {
+            "agentsStates": {
+              "agent-1": {
+                "status": "completed",
+                "message": "去重检查通过。"
+              },
+              "agent-2": {
+                "status": "running",
+                "message": "正在检查请求恢复。"
+              }
+            },
+            "id": "item-collabAgentToolCall",
+            "receiverThreadIds": [
+              "agent-1",
+              "agent-2"
+            ],
+            "senderThreadId": "thread-demo",
+            "status": "completed",
+            "tool": "resumeAgent",
+            "type": "collabAgentToolCall",
+            "prompt": "检查重连去重与状态恢复。"
+          }
+        },
+        {
+          "id": "wait",
+          "packet": {
+            "agentsStates": {
+              "agent-1": {
+                "status": "completed",
+                "message": "去重检查通过。"
+              },
+              "agent-2": {
+                "status": "running",
+                "message": "正在检查请求恢复。"
+              }
+            },
+            "id": "item-collabAgentToolCall",
+            "receiverThreadIds": [
+              "agent-1",
+              "agent-2"
+            ],
+            "senderThreadId": "thread-demo",
+            "status": "completed",
+            "tool": "wait",
+            "type": "collabAgentToolCall",
+            "prompt": "检查重连去重与状态恢复。"
+          }
+        },
+        {
+          "id": "closeAgent",
+          "packet": {
+            "agentsStates": {
+              "agent-1": {
+                "status": "completed",
+                "message": "去重检查通过。"
+              },
+              "agent-2": {
+                "status": "running",
+                "message": "正在检查请求恢复。"
+              }
+            },
+            "id": "item-collabAgentToolCall",
+            "receiverThreadIds": [
+              "agent-1",
+              "agent-2"
+            ],
+            "senderThreadId": "thread-demo",
+            "status": "completed",
+            "tool": "closeAgent",
+            "type": "collabAgentToolCall",
+            "prompt": "检查重连去重与状态恢复。"
+          }
+        },
+        {
+          "id": "sendMessage",
+          "packet": {
+            "agentsStates": {
+              "agent-1": {
+                "status": "completed",
+                "message": "去重检查通过。"
+              },
+              "agent-2": {
+                "status": "running",
+                "message": "正在检查请求恢复。"
+              }
+            },
+            "id": "item-collabAgentToolCall",
+            "receiverThreadIds": [
+              "agent-1",
+              "agent-2"
+            ],
+            "senderThreadId": "thread-demo",
+            "status": "completed",
+            "tool": "sendMessage",
+            "type": "collabAgentToolCall",
+            "prompt": "检查重连去重与状态恢复。"
+          }
+        },
+        {
+          "id": "followupTask",
+          "packet": {
+            "agentsStates": {
+              "agent-1": {
+                "status": "completed",
+                "message": "去重检查通过。"
+              },
+              "agent-2": {
+                "status": "running",
+                "message": "正在检查请求恢复。"
+              }
+            },
+            "id": "item-collabAgentToolCall",
+            "receiverThreadIds": [
+              "agent-1",
+              "agent-2"
+            ],
+            "senderThreadId": "thread-demo",
+            "status": "completed",
+            "tool": "followupTask",
+            "type": "collabAgentToolCall",
+            "prompt": "检查重连去重与状态恢复。"
+          }
+        },
+        {
+          "id": "interruptAgent",
+          "packet": {
+            "agentsStates": {
+              "agent-1": {
+                "status": "completed",
+                "message": "去重检查通过。"
+              },
+              "agent-2": {
+                "status": "running",
+                "message": "正在检查请求恢复。"
+              }
+            },
+            "id": "item-collabAgentToolCall",
+            "receiverThreadIds": [
+              "agent-1",
+              "agent-2"
+            ],
+            "senderThreadId": "thread-demo",
+            "status": "completed",
+            "tool": "interruptAgent",
+            "type": "collabAgentToolCall",
+            "prompt": "检查重连去重与状态恢复。"
+          }
+        },
+        {
+          "id": "listAgents",
+          "packet": {
+            "agentsStates": {
+              "agent-1": {
+                "status": "completed",
+                "message": "去重检查通过。"
+              },
+              "agent-2": {
+                "status": "running",
+                "message": "正在检查请求恢复。"
+              }
+            },
+            "id": "item-collabAgentToolCall",
+            "receiverThreadIds": [
+              "agent-1",
+              "agent-2"
+            ],
+            "senderThreadId": "thread-demo",
+            "status": "completed",
+            "tool": "listAgents",
+            "type": "collabAgentToolCall",
+            "prompt": "检查重连去重与状态恢复。"
+          }
+        }
+      ]
+    },
+    {
+      "id": "subAgentActivity",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "started",
+          "packet": {
+            "agentPath": "/root/reconnect",
+            "agentThreadId": "agent-1",
+            "id": "item-subAgentActivity",
+            "kind": "started",
+            "type": "subAgentActivity"
+          }
+        },
+        {
+          "id": "interacted",
+          "packet": {
+            "agentPath": "/root/reconnect",
+            "agentThreadId": "agent-1",
+            "id": "item-subAgentActivity",
+            "kind": "interacted",
+            "type": "subAgentActivity"
+          }
+        },
+        {
+          "id": "interrupted",
+          "packet": {
+            "agentPath": "/root/reconnect",
+            "agentThreadId": "agent-1",
+            "id": "item-subAgentActivity",
+            "kind": "interrupted",
+            "type": "subAgentActivity"
+          }
+        },
+        {
+          "id": "completed",
+          "packet": {
+            "agentPath": "/root/reconnect",
+            "agentThreadId": "agent-1",
+            "id": "item-subAgentActivity",
+            "kind": "completed",
+            "type": "subAgentActivity"
+          }
+        }
+      ]
+    },
+    {
+      "id": "webSearch",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "search",
+          "packet": {
+            "id": "item-webSearch",
+            "query": "Codex app-server resume events",
+            "type": "webSearch",
+            "action": {
+              "type": "search",
+              "query": "Codex app-server resume events",
+              "queries": [
+                "Codex app-server resume events"
+              ]
+            },
+            "results": null
+          }
+        },
+        {
+          "id": "open",
+          "packet": {
+            "id": "item-webSearch",
+            "query": "",
+            "type": "webSearch",
+            "action": {
+              "type": "openPage",
+              "url": "https://learn.chatgpt.com/docs/app-server"
+            },
+            "results": null
+          }
+        },
+        {
+          "id": "find",
+          "packet": {
+            "id": "item-webSearch",
+            "query": "serverRequest/resolved",
+            "type": "webSearch",
+            "action": {
+              "type": "findInPage",
+              "url": "https://learn.chatgpt.com/docs/app-server",
+              "pattern": "serverRequest/resolved"
+            },
+            "results": null
+          }
+        },
+        {
+          "id": "other",
+          "packet": {
+            "id": "item-webSearch",
+            "query": "",
+            "type": "webSearch",
+            "action": {
+              "type": "other"
+            },
+            "results": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "imageView",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "preview",
+          "packet": {
+            "id": "item-imageView",
+            "path": "/fixture/shioji/design/menu.png",
+            "type": "imageView"
+          }
+        },
+        {
+          "id": "unavailable",
+          "packet": {
+            "id": "item-imageView",
+            "path": "/remote/design/menu.png",
+            "type": "imageView"
+          }
+        }
+      ]
+    },
+    {
+      "id": "imageGeneration",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "running",
+          "packet": {
+            "fileId": "sample",
+            "id": "item-imageGeneration",
+            "status": "in_progress",
+            "type": "imageGeneration",
+            "result": "",
+            "generationId": "image-demo",
+            "failure": null
+          }
+        },
+        {
+          "id": "completed",
+          "packet": {
+            "fileId": "sample",
+            "id": "item-imageGeneration",
+            "status": "completed",
+            "type": "imageGeneration",
+            "result": "sample-media",
+            "generationId": "image-demo",
+            "failure": null,
+            "savedPath": "/fixture/shioji/output/menu.png",
+            "revisedPrompt": "绘制一个简洁的设置面板。"
+          }
+        },
+        {
+          "id": "file",
+          "packet": {
+            "fileId": "file-demo-image",
+            "id": "item-imageGeneration",
+            "status": "completed",
+            "type": "imageGeneration",
+            "generationId": "image-demo",
+            "failure": null
+          }
+        },
+        {
+          "id": "failed",
+          "packet": {
+            "fileId": "sample",
+            "id": "item-imageGeneration",
+            "status": "failed",
+            "type": "imageGeneration",
+            "result": "",
+            "generationId": null,
+            "failure": {
+              "type": "usageLimitExceeded",
+              "limitId": "images",
+              "resetsAt": 1793653200
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "sleep",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "running",
+          "packet": {
+            "durationMs": 15000,
+            "id": "item-sleep",
+            "type": "sleep"
+          }
+        },
+        {
+          "id": "completed",
+          "packet": {
+            "durationMs": 15000,
+            "id": "item-sleep",
+            "type": "sleep"
+          }
+        }
+      ]
+    },
+    {
+      "id": "enteredReviewMode",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "entered",
+          "packet": {
+            "id": "item-enteredReviewMode",
+            "review": "审阅当前工作区的未提交改动。",
+            "type": "enteredReviewMode"
+          }
+        }
+      ]
+    },
+    {
+      "id": "exitedReviewMode",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "findings",
+          "packet": {
+            "id": "item-exitedReviewMode",
+            "review": "## 发现一处恢复问题\n\n`device/connection.go:48` 在恢复订阅前没有清理旧的 reader，可能导致重复消费。建议先关闭旧订阅，再复用原 thread ID。",
+            "type": "exitedReviewMode"
+          }
+        },
+        {
+          "id": "clean",
+          "packet": {
+            "id": "item-exitedReviewMode",
+            "review": "本次审阅未发现需要修改的问题。",
+            "type": "exitedReviewMode"
+          }
+        }
+      ]
+    },
+    {
+      "id": "contextCompaction",
+      "source": {
+        "kind": "item"
+      },
+      "variants": [
+        {
+          "id": "running",
+          "packet": {
+            "id": "item-contextCompaction",
+            "type": "contextCompaction"
+          }
+        },
+        {
+          "id": "completed",
+          "packet": {
+            "id": "item-contextCompaction",
+            "type": "contextCompaction"
+          }
+        }
+      ]
+    }
+  ]
+}

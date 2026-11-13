@@ -9,7 +9,7 @@ import (
 )
 
 func TestConversationItemsHaveNativePresentations(t *testing.T) {
-	b, err := os.ReadFile("../../../design/session-components.data.json")
+	b, err := os.ReadFile("testdata/conversation-items.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,6 +27,7 @@ func TestConversationItemsHaveNativePresentations(t *testing.T) {
 		t.Fatal(err)
 	}
 	kinds := map[string]string{"agentMessage": "assistant", "commandExecution": "tool", "fileChange": "tool", "mcpToolCall": "tool", "dynamicToolCall": "tool", "collabAgentToolCall": "tool", "functionCallOutput": "tool", "webSearch": "tool", "imageView": "tool", "imageGeneration": "tool", "sleep": "tool", "subAgentActivity": "activity", "reasoning": "activity", "hookPrompt": "activity", "enteredReviewMode": "activity", "exitedReviewMode": "activity", "contextCompaction": "activity"}
+	seen := map[string]bool{}
 	for _, entry := range catalog.Entries {
 		if entry.Source.Kind != "item" {
 			continue
@@ -34,6 +35,9 @@ func TestConversationItemsHaveNativePresentations(t *testing.T) {
 		want, ok := kinds[entry.ID]
 		if !ok {
 			continue
+		}
+		if len(entry.Variants) > 0 {
+			seen[entry.ID] = true
 		}
 		for _, v := range entry.Variants {
 			t.Run(entry.ID+"/"+v.ID, func(t *testing.T) {
@@ -52,6 +56,11 @@ func TestConversationItemsHaveNativePresentations(t *testing.T) {
 					t.Fatal("opaque media/ciphertext stored as visible content")
 				}
 			})
+		}
+	}
+	for kind := range kinds {
+		if !seen[kind] {
+			t.Errorf("missing protocol fixture for %s", kind)
 		}
 	}
 }

@@ -4,17 +4,12 @@ on:
   release:
     types: [published]
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing release tag to build (must match VERSION)
-        required: true
-        default: v0.0.1
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event.release.tag_name || inputs.tag }}
+  group: release-${{ github.event.release.tag_name || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -25,17 +20,29 @@ jobs:
     permissions:
       contents: write
     env:
-      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          ref: ${{ github.event.release.tag_name || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
           cache: true
+      - name: Install Codex integration-test dependency
+        run: npm install --global @openai/codex@0.167.0
+      - name: Resolve and validate release version
+        run: |
+          set -euo pipefail
+          version=$(tr -d '\r\n' < VERSION)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if [[ -z "$RELEASE_TAG" ]]; then
+            printf 'RELEASE_TAG=v%s\n' "$version" >> "$GITHUB_ENV"
+          else
+            test "$RELEASE_TAG" = "v$version"
+          fi
       - name: Verify source and target
         run: |
           set -euo pipefail
@@ -56,7 +63,19 @@ jobs:
         run: bash packaging/ci-signing.sh
       - name: Build, sign, notarize and package
         run: bash packaging/build-release.sh
+      - name: Upload validation DMG
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Shioji-macos-arm64-validation-${{ github.run_id }}
+          path: |
+            build/release/*.dmg
+            build/release/*.dmg.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
       - name: Attach DMG and checksum to release
+        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

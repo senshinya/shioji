@@ -6,8 +6,8 @@
 
 GitHub 仓库：`senshinya/shioji`，本地 remote 为 `upstream`。`origin` 保持原地址。
 
-- CI 在 push / pull request 上运行 Apple Silicon macOS 测试、设计冻结校验、第三方许可校验、源码及完整 Git 历史凭据扫描，并构建开发包。
-- `.github/workflows/release.yml` 在 GitHub Release **published** 时触发。只推 tag 不触发生产发布。手动重跑需要选择已存在的 release tag。
+- CI 在 push / pull request 上运行 Apple Silicon macOS 测试、设计冻结校验、第三方许可校验、源码及完整 Git 历史凭据扫描，并构建开发包。Codex CLI 0.167.0 仅作为 CI 的集成测试依赖安装，不包含在分发包中。
+- `.github/workflows/release.yml` 在 GitHub Release **published** 时触发。只推 tag 不触发生产发布。手动触发会构建所选 commit 的版本，上传到该次 Actions 的临时构建附件；不创建或修改 GitHub Release。
 - Tag 必须与 `VERSION` 对应。生产构建强制要求 Developer ID Application 签名、hardened runtime、Apple 接受公证以及 stapled tickets；没有降级到 ad-hoc / 未公证包的路径。
 - 先公证 App，再生成、公证并 staple DMG。仅将 `Shioji-0.0.1-macos-arm64.dmg` 与 `.dmg.sha256` 上传到原 Release。不创建额外 Release。
 - 两处 worker 使用同一份已签名二进制，打包后 `cmp` 核验，避免安全时间戳引起相同版本的 BuildID 不同。

@@ -19,6 +19,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Install Codex integration-test dependency
+        run: npm install --global @openai/codex@0.167.0
       - run: test "$(uname -m)" = arm64
       - run: python3 scripts/verify-design-freeze.py --repository
       - run: python3 scripts/generate-third-party-notices.py --check
