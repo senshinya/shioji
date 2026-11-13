@@ -1,5 +1,7 @@
 # Shioji
 
+Current release version: **v0.0.1**. See [signed DMG publishing and GitHub setup](docs/releases.md).
+
 Native Apple Silicon macOS controller for device-owned coding-agent workspaces.
 The developer build runs a self-contained local Go worker and an installed Codex CLI.
 Device management supports application display names for both this Mac and SSH

@@ -1,0 +1,3 @@
+# Revoked local-preview access key in a historical design document.
+# Only this exact historical fingerprint is ignored; current/new credentials are scanned.
+7d300653d0013ee7f26713456669fb914187a1e0:docs/ryugi/specs/2026-11-11-diff-comments-design.md:generic-api-key:18

@@ -109,3 +109,6 @@ coverage.out
 /scripts/export-codex-component-schema.py
 /scripts/prepare-ryugi-release.py
 /scripts/serve-design.py
+
+# Intermediate macOS icon sizes; the selected source and final ICNS stay versioned.
+/packaging/assets/*.iconset/

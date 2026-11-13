@@ -15,7 +15,7 @@
 ## 设计稿与原生差距
 
 - Artboard：`artboard/diff-comments`，目录 `.ryugi/artifacts/artboard/diff-comments`。
-- 局域网链接：`http://192.168.7.131:27319/artboard/teMTxtCbirwsECACEDkxT?key=6ead728d7efa4869241fe7ba737006ed7a6dbf216cfbbabd`。
+- 局域网链接：通过本地 Ryugi launcher 获取；不在源码中保存访问凭据。
 - `proposal`：亮暗模式可操作原型；`states`：局部文本选中、编辑、引用、发送、版本变化、窄窗口；`references`：隔离宿主下的上游组件 JSX 实渲，非完整应用截图。
 - 新增 `comparison` 页：基准/目标选择、工作目录与分支、分支与分支、评论分支归属及模型输入。分支名、提交和差异均为样例数据，不是实际仓库的支持证据。
 - 当前 MyGo `DiffState` 只有 `SelectedLines` / `OnLineSelection` 公共接口；底层编辑器的文本偏移使用 UTF-8 字节。统一视图的删除块目前会截获指针输入。实现必须补实际字符级选择，不能用整行回调代替。

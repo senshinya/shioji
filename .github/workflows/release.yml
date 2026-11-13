@@ -1,0 +1,73 @@
+name: Release macOS
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build (must match VERSION)
+        required: true
+        default: v0.0.1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    environment: release
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify source and target
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test "$RELEASE_TAG" = "v$(tr -d '\r\n' < VERSION)"
+          python3 scripts/verify-design-freeze.py --repository
+          python3 scripts/generate-third-party-notices.py --check
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          bash scripts/scan-secrets.sh
+          go test ./...
+      - name: Import signing identity and notarization credentials
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: bash packaging/ci-signing.sh
+      - name: Build, sign, notarize and package
+        run: bash packaging/build-release.sh
+      - name: Attach DMG and checksum to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version=$(tr -d '\r\n' < VERSION)
+          gh release upload "$RELEASE_TAG" "build/release/Shioji-$version-macos-arm64.dmg" "build/release/Shioji-$version-macos-arm64.dmg.sha256" --clobber
+      - name: Remove temporary signing material
+        if: always()
+        run: |
+          if [[ -n "${NOTARY_KEYCHAIN:-}" ]]; then
+            security delete-keychain "$NOTARY_KEYCHAIN"
+          fi
+          rm -f "$RUNNER_TEMP/shioji-certificate.p12"
