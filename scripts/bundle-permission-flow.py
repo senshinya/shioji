@@ -14,6 +14,9 @@ def bundle(contents: Path):
         "--scratch-path", str(root / "build/native/permission-flow"),
         "--configuration", "release", "--product", "ShiojiPermissionFlow",
         "--force-resolved-versions",
+        # The pinned dependency uses isolated deinit, experimental in Swift 6.1.
+        # Global compiler flags reach dependency targets as well as our bridge.
+        "-Xswiftc", "-enable-experimental-feature", "-Xswiftc", "IsolatedDeinit",
     ]
     subprocess.run(command, cwd=root, check=True)
     binary = Path(subprocess.check_output(command + ["--show-bin-path"], cwd=root, text=True).strip())

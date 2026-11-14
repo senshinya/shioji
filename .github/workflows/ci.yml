@@ -30,6 +30,6 @@ jobs:
       - name: Test native updater admission and preferences
         run: cd third_party/mygo && go test . ./plugins/updater ./plugins/updater/native
       - name: Test native permission bridge
-        run: swift test --package-path native/permission-flow --scratch-path build/native/permission-flow
+        run: swift test --package-path native/permission-flow --scratch-path build/native/permission-flow -Xswiftc -enable-experimental-feature -Xswiftc IsolatedDeinit
       - name: Build unsigned development bundle
         run: bash packaging/build-dev.sh
