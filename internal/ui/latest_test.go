@@ -6,8 +6,32 @@ import (
 	"testing"
 	"time"
 
+	n "github.com/egoist/mygo/ui"
 	"shioji/internal/domain"
 )
+
+func TestLatestControlShowsWorkWhileTheOriginalStatusIsVisible(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		v := toolTailFixture(76)
+		ui := n.NewTester(v.View, 1240, 820)
+		ui.SetDark(dark)
+		ui.Advance(time.Second)
+		ui.Scroll(1000, 300, 0, -8)
+		ui.Frame()
+		ui.Advance(time.Second)
+		button, shown := ui.Find("回到最新")
+		if !shown {
+			t.Fatal("reading above the end has no latest control")
+		}
+		status, shown := ui.Find("最新运行状态")
+		if !shown || status.Y < button.Y || status.Y+status.H > button.Y+button.H+1 || ui.HasText("最新消息") {
+			t.Fatal("working latest control still depends on the transcript status leaving the viewport", ui.Texts())
+		}
+		if !ui.HasText("正在执行命令") {
+			t.Fatal("latest control does not describe the active command")
+		}
+	}
+}
 
 func TestLatestControlTracksTheDockAndKeepsTypingFocus(t *testing.T) {
 	for _, dark := range []bool{false, true} {

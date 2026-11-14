@@ -55,11 +55,14 @@ func (v *View) completeSSHDevice() {
 	v.sshError = ""
 	v.sshAgents.busy = true
 	if !v.Controller.Do(app.Job{Method: "$device.complete", Input: app.CompleteSSHDevice{SSH: ssh, DeviceID: info.DeviceID, Agents: input}, Apply: func(m *app.Model, b json.RawMessage, err error) {
+		if v.sshRequest != request {
+			return
+		}
 		v.sshCheck = v.sshCheck.finish()
 		if v.sshAgents != nil {
 			v.sshAgents.busy = false
 		}
-		if v.sshRequest != request || !v.sshCheck.open() {
+		if !v.sshCheck.open() {
 			return
 		}
 		if err != nil {

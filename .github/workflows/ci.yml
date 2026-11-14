@@ -27,5 +27,7 @@ jobs:
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - run: bash scripts/scan-secrets.sh
       - run: go test ./...
+      - name: Test native permission bridge
+        run: swift test --package-path native/permission-flow --scratch-path build/native/permission-flow
       - name: Build unsigned development bundle
         run: bash packaging/build-dev.sh

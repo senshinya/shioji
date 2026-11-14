@@ -342,9 +342,13 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 							row(c, "环境变量", func() { v.runtimeEnvironmentFields(c, t, e, disabled) })
 						}
 						if supported.Instructions {
-							row(c, "自定义提示词", func() {
+							style := configurationDeviceForm
+							if e.setup {
+								style = configurationSetupForm
+							}
+							configurationFormRow(c, "自定义提示词", style, func() {
 								configurationTextArea(c.Key("instructions"), &e.draft.instructions).Background(background).Label("自定义提示词").Placeholder("可选的默认提示词").Disabled(disabled)
-							})
+							}, true)
 						}
 					})
 					return 0

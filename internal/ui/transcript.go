@@ -18,6 +18,7 @@ type transcriptRow struct {
 	issues     int
 	toolParent string
 	toolTitle  bool
+	toolEnded  bool
 	opacity    float32
 	footer     string
 	preparing  string
@@ -261,13 +262,20 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			}
 		}
 		row.end = end - 1
-		// Keep the title's zero-height row while folded: a click on either
-		// end retains its own stable list anchor through the whole transition.
+		// Keep the title's zero-height row while folded so the one-line
+		// summary can hand its stable reading anchor to the expanded title.
 		titleOpacity := min(opacity, arrival(key+":title"))
 		if !show {
 			titleOpacity = 0
 		}
-		rows = append(rows, transcriptRow{key: key + ":title", item: item, end: -1, toolParent: key, toolTitle: true, opacity: titleOpacity})
+		title := transcriptRow{key: key + ":title", item: item, end: -1, toolParent: key, toolTitle: true, opacity: titleOpacity}
+		if endedTurns[item.TurnID] {
+			// Finished history has one count heading in both disclosure states.
+			// It also owns the original event boundary when its body is hidden.
+			title.group, title.count, title.issues = key, count, row.issues
+			title.toolEnded, title.end, title.opacity = true, end-1, arrival(key+":title")
+		}
+		rows = append(rows, title)
 		for j := i; j < end; j++ {
 			if items[j].Kind == "tool" {
 				progress := min(opacity, arrival(items[j].ID))
@@ -286,7 +294,9 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 				rows = append(rows, transcriptRow{key: key + ":result", item: item, end: end - 1, toolParent: key, toolResult: result, opacity: progress})
 			}
 		}
-		rows = append(rows, row)
+		if !title.toolEnded {
+			rows = append(rows, row)
+		}
 		i = end
 	}
 	for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
@@ -306,22 +316,25 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 }
 func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int) {
 	label := fmt.Sprintf("%d 次工具调用", row.count)
-	button := n.ButtonBase(c).FillWidth().Height(20).Justify(n.Start).Label(label)
-	color := textHoverColor(c, button, t.TextMuted)
-	live := v.runningGroup == row.group
-	if live {
-		v.trackLiveStatus(button, v.statusKey("group:"+row.group))
+	// Once folded, this summary takes the title's place as the sole header.
+	// While expanded (including its exit), the trailing status is read-only.
+	folded := v.Model.ToolDisclosure(row.group).Closed() && v.toolMotions[row.group] == nil
+	var heading n.Element
+	color := t.TextMuted
+	if folded {
+		heading = n.ButtonBase(c).Justify(n.Start).Tooltip("展开工具调用")
+		color = textHoverColor(c, heading, color)
+	} else {
+		heading = n.Row(c)
 	}
-	if button.Children(func() {
+	heading.FillWidth().Height(20).Label(label)
+	live := v.runningGroup == row.group
+	heading.Children(func() {
 		heading := n.Row(c).FillWidth().Gap(0).AlignItems(n.Baseline)
 		if live {
 			heading.Label("工具组运行状态")
 		}
 		heading.Children(func() {
-			angle := float32(0)
-			if v.Model.ToolDisclosure(row.group).Closed() {
-				angle = -90
-			}
 			font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}
 			width, alpha, phase := float32(0), float32(0), c.Now()
 			if live {
@@ -377,54 +390,64 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 					break
 				}
 			}
-			inlineSymbol(c.Key("group-chevron"), chevron, label, font, 16, color, angle).Margin(0, 0, 0, 6)
-
 			if row.issues > 0 && v.Model.ToolDisclosure(row.group).Closed() {
 				animation := motionAnimation(c, 160*time.Millisecond)
 				n.Text(c.Key("issues"), fmt.Sprintf("%d 项未成功", row.issues)).Margin(0, 0, 0, 6).FontSize(11).FixedLineHeight(20).TextColor(color).
 					Transition(disclosureMotion(c, 160*time.Millisecond)).ContentTransition(n.ContentTransition{Numeric: true, Animation: &animation})
 			}
+			if folded {
+				inlineSymbol(c.Key("group-chevron"), rightChevron, label, font, 14, color).Margin(0, 0, 0, 6)
+			}
 		})
-	}).Clicked() {
-		v.toggleToolGroup(c, row.group, index, button, true)
+	})
+	if folded && heading.Clicked() {
+		v.toggleToolGroup(c, row.group, index-1, heading)
 	}
 }
 
 func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index int) {
-	button := n.ButtonBase(c).FillWidth().Height(20).Justify(n.Start).Label("执行工具").Tooltip("收起工具调用")
+	label, tooltip, angle := "执行工具", "收起工具调用", float32(0)
+	closed := v.Model.ToolDisclosure(row.toolParent).Closed()
+	if row.toolEnded {
+		label = fmt.Sprintf("%d 次工具调用", row.count)
+		if closed {
+			tooltip, angle = "展开工具调用", -90
+		}
+	}
+	button := n.ButtonBase(c).FillWidth().Height(20).Justify(n.Start).Label(label).Tooltip(tooltip)
 	color := textHoverColor(c, button, t.TextMuted)
 	button.Children(func() {
-		inlineIconText(c, chevron, "执行工具", n.Font{Family: t.Font, Size: 11, Weight: 400}, 14, 6, color)
+		n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
+			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(color)
+			inlineSymbol(c, chevron, label, n.Font{Family: t.Font, Size: 11, Weight: 400}, 14, color, angle)
+			if row.toolEnded && closed && row.issues > 0 {
+				n.Text(c, fmt.Sprintf("%d 项未成功", row.issues)).FontSize(11).FixedLineHeight(20).TextColor(color)
+			}
+		})
 	})
 	if button.Clicked() {
-		v.toggleToolGroup(c, row.toolParent, index, button, false)
+		v.toggleToolGroup(c, row.toolParent, index, button)
 	}
 }
 
-func (v *View) toggleToolGroup(c *n.Context, key string, index int, button n.Element, trailing bool) {
+func (v *View) toggleToolGroup(c *n.Context, key string, index int, button n.Element) {
 	from, to := float32(1), float32(0)
 	opening := v.Model.ToolDisclosure(key).Closed()
-	fromEnd := trailing && !opening
 	if opening {
 		from, to = 0, 1
 	}
 	if motion := v.toolMotions[key]; motion != nil {
 		from, _ = motion.sample(c.Now())
-		fromEnd = motion.fromEnd
 	}
 	if list := v.lists[v.Model.SessionID]; list != nil {
-		// Opening replaces the folded control with the top title in place;
-		// closing keeps whichever end was clicked. The stable zero-height
-		// title survives folding, so neither anchor loses its key.
-		if opening && trailing {
-			index--
-		}
+		// The folded summary hands its position to the top title on opening;
+		// closing uses that same title anchor throughout the transition.
 		list.KeepRowWithinContent(index, button.Bounds().Y-list.Bounds(c).Y)
 	}
 	if v.toolMotions == nil {
 		v.toolMotions = map[string]*toolDisclosureMotion{}
 	}
-	v.toolMotions[key] = &toolDisclosureMotion{from: from, to: to, start: c.Now(), duration: motionAnimation(c, 160*time.Millisecond).Duration, fromEnd: fromEnd}
+	v.toolMotions[key] = &toolDisclosureMotion{from: from, to: to, start: c.Now(), duration: motionAnimation(c, 160*time.Millisecond).Duration}
 	v.Model.SetToolDisclosure(key, v.Model.ToolDisclosure(key).Toggle())
 	c.AnimationFrame()
 }

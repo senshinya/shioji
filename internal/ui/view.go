@@ -49,9 +49,6 @@ type View struct {
 	conversationImport                                                                                              *conversationImportUI
 	runningProgress                                                                                                 *runningProgress
 	runningGroup, activityTurn                                                                                      string
-	liveStatusKey                                                                                                   string
-	liveStatusBounds                                                                                                n.Rect
-	latestActivity                                                                                                  bool
 	contextInputs                                                                                                   map[app.WorkKey]*contextInputUI
 	contextRowKeys                                                                                                  map[app.WorkKey]string
 	requestActionsState                                                                                             map[app.WorkKey]*requestActionState
@@ -499,7 +496,7 @@ func (v *View) home() {
 	}
 	v.workspaceEditor = nil
 	v.skillReturn = nil
-	v.Model.SessionID = ""
+	v.Model.PrepareNewSession()
 	v.Model.FocusSecondary = false
 	v.devices = false
 	v.runMenu = runMenuClosed
@@ -526,7 +523,7 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 	m := v.Model
 	rightInset := float32(24)
 	if m.SessionID != "" && !v.devices {
-		// The scrollbar gutter and icon inset complete the visible right margin.
+		// Controls stop before the native scrollbar's independent gutter.
 		rightInset = 18 - conversationScrollbarGutter
 	}
 	n.Row(c).Height(48).FillWidth().Padding(0, rightInset, 0, 24).Gap(6).AlignItems(n.Center).DragWindow().Label("会话工具栏").Children(func() {
@@ -610,7 +607,7 @@ func (v *View) homeView(c *n.Context, t *n.Theme) {
 						continue
 					}
 					w := w
-					choices = append(choices, menuChoice{id: w.ID, name: w.Name, detail: v.Model.DeviceName(w.DeviceID), checked: w.ID == v.Model.WorkspaceID, choose: func() { v.Model.WorkspaceID = w.ID }})
+					choices = append(choices, menuChoice{id: w.ID, name: w.Name, detail: v.Model.DeviceName(w.DeviceID), checked: w.ID == v.Model.WorkspaceID, choose: func() { v.Model.WorkspaceID = w.ID; v.Model.PrepareNewSession() }})
 				}
 
 				v.choiceMenu(c, t, "home-workspace", picker, choices)
@@ -791,7 +788,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					for _, id := range m.RunReadiness().Permissions {
 						id := id
 						detail := m.PermissionDescription(id)
-						choices = append(choices, menuChoice{id: id, name: m.PermissionName(id), detail: detail, checked: cfg.Permission == id, choose: func() { cfg.Permission = id; m.Configs[key] = cfg }})
+						choices = append(choices, menuChoice{id: id, name: m.PermissionName(id), detail: detail, checked: cfg.Permission == id, choose: func() { cfg.Permission = id; m.SetConfig(key, cfg) }})
 					}
 					v.choiceMenu(c, t, "permission:"+key, permission, choices)
 					n.Spacer(c).Grow(1)
@@ -971,7 +968,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 									if v.Model.Error == app.ModelUnavailableMessage {
 										v.Model.Error = ""
 									}
-									v.Model.Configs[key] = cfg
+									v.Model.SetConfig(key, cfg)
 									v.Model.Config()
 									v.runMenu = runMenuMain
 								}
@@ -982,7 +979,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 									for _, effort := range model.Efforts {
 										if ghost(c, effort).FillWidth().TextAlign(n.Start).Disabled(ready.State != domain.RuntimeReady).Clicked() {
 											cfg.Effort = effort
-											v.Model.Configs[key] = cfg
+											v.Model.SetConfig(key, cfg)
 											v.runMenu = runMenuMain
 										}
 									}
@@ -1019,7 +1016,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 				if ready.Plan {
 					if controlFeedback(c, n.Checkbox(c, &plan, "Plan").Height(28).Disabled(!ready.Plan), 4).Changed() {
 						cfg.Plan = plan
-						v.Model.Configs[key] = cfg
+						v.Model.SetConfig(key, cfg)
 					}
 				}
 				fastAvailable := false
@@ -1032,7 +1029,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 					fast := cfg.Fast
 					if controlFeedback(c, n.Checkbox(c, &fast, "Fast").Height(28), 4).Changed() {
 						cfg.Fast = fast
-						v.Model.Configs[key] = cfg
+						v.Model.SetConfig(key, cfg)
 					}
 				}
 			})
@@ -1084,7 +1081,6 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	rows = v.contextRows(rows)
 	rows = v.revealFindTarget(rows, reopening)
 	v.syncRunningGroup(c, rows, detail)
-	v.prepareLiveStatus()
 	turns := make(map[string]domain.Turn, len(detail.Turns))
 	for _, turn := range detail.Turns {
 		turns[turn.ID] = turn
@@ -1131,7 +1127,6 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 					// Animate the visible prefix rather than racing through the
 					// full natural height of thousands of virtualized calls.
 					reveal.MaxHeight = state.Bounds(c).H
-					reveal.FromEnd = v.toolMotions[owner].fromEnd
 				}
 				state.Reveals = append(state.Reveals, reveal)
 			}
@@ -1212,7 +1207,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			bottom = 32
 		}
 		n.Column(c).FillWidth().PaddingX(18).AlignItems(n.Center).Children(func() {
-			content := n.Column(c).FillWidth().MaxWidth(768).Gap(8).Padding(0, 0, bottom, 0).Selectable()
+			content := n.Column(c).FillWidth().MinWidth(0).MaxWidth(768).Gap(8).Padding(0, 0, bottom, 0).ClipX().Selectable()
 			if entry.footer == "" && entry.group == "" && (item.Kind == "user" || item.Kind == "assistant" || item.Kind == "command") {
 				n.SelectionItem(content, item.ID)
 			}
@@ -1242,10 +1237,10 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 					v.turnFooter(c, t, domain.Turn{Status: "running"})
 				} else if entry.footer != "" {
 					v.turnFooter(c, t, turns[entry.footer])
-				} else if entry.group != "" {
-					v.toolGroup(c, t, entry, row)
 				} else if entry.toolTitle {
 					v.toolGroupTitle(c, t, entry, row)
+				} else if entry.group != "" {
+					v.toolGroup(c, t, entry, row)
 				} else if entry.toolParent != "" {
 					v.toolTimelineItem(c, t, entry)
 				} else {
@@ -1254,16 +1249,8 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			})
 		})
 	}).Absolute().Left(0).Right(0).Top(0).Bottom(0).ScrollbarInsets(8, 0, 8, 0).Label("对话记录")
-	invalidateStatus := c.Services().Invalidate
-	history.Draw(func(_ *n.Painter, _ n.Rect) { v.liveStatusBounds = n.Rect{} })
-	history.DrawOver(func(_ *n.Painter, r n.Rect) {
+	history.DrawOver(func(_ *n.Painter, _ n.Rect) {
 		v.historyRowBounds = rowBounds
-		box := v.liveStatusBounds
-		away := v.liveStatusKey != "" && !(box.H > 0 && box.Y >= r.Y+48 && box.Y+box.H <= r.Y+r.H-reserve+.5)
-		if away != v.latestActivity {
-			v.latestActivity = away
-			invalidateStatus()
-		}
 	})
 	n.VirtualTextSelection(history, func(key string) (string, bool) {
 		for _, item := range v.Model.Details[v.Model.SessionID].Items {
@@ -1277,9 +1264,18 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		return "", false
 	})
 	v.conversationOutline(c, t, state, rows)
-	n.Column(c).Absolute().Left(0).Right(conversationScrollbarGutter).Top(0).Height(48).Background(t.Background).Children(func() { v.toolbar(c, t) })
+	n.Column(c).Absolute().Left(0).Right(0).Top(0).Height(48).Padding(0, conversationScrollbarGutter, 0, 0).Label("会话顶栏").Draw(func(p *n.Painter, r n.Rect) {
+		// History is clipped to its reading column, so the gutter contains
+		// only the pane background and native thumb, never overflowing text.
+		p.Fill(n.Rect{X: r.X, Y: r.Y, W: max(0, r.W-conversationScrollbarGutter), H: r.H}, t.Background, 0)
+	}).Children(func() { v.toolbar(c, t) })
 	v.conversationFindBar(c, t, state.Bounds(c).W)
 	dock := n.Column(c.Key("conversation-dock")).Absolute().Left(0).Right(0).Bottom(8).PaddingX(18).AlignItems(n.Center).Gap(8).Label("会话底部面板")
+	dock.Draw(func(p *n.Painter, r n.Rect) {
+		// Cover the floating cards' corners, gaps and bottom clearance. Leave
+		// the native scrollbar gutter uncovered along the pane's edge.
+		p.Fill(n.Rect{X: r.X, Y: r.Y, W: max(0, r.W-conversationScrollbarGutter), H: r.H + 8}, t.Background, 0)
+	})
 	// Native wrapping and question disclosure determine the complete dock height.
 	invalidate := c.Services().Invalidate
 	dock.DrawOver(func(_ *n.Painter, r n.Rect) {
@@ -1333,9 +1329,6 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 }
 func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 	frame := n.Column(c.Key("reply-footer")).Label("回复信息").FillWidth().MinHeight(24).Clip()
-	if turn.Status.Active() && !v.Model.Connected {
-		v.trackLiveStatus(frame, v.statusKey("turn:"+turn.ID))
-	}
 	state := string(turn.Status)
 	if (turn.Status == "running" || turn.Status == "starting") && !v.Model.Connected {
 		state = "disconnected"

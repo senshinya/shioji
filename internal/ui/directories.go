@@ -216,7 +216,7 @@ func (v *View) directoryDialog(c *n.Context, t *n.Theme) {
 		panel.Width(w).Height(h).Radius(12).Clip().Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Label("远程文件夹选择器")
 		n.Inert(panel, closing)
 		panel.Children(func() {
-			n.Row(c).FillWidth().Height(56).PaddingX(20).Gap(12).AlignItems(n.Center).Children(func() {
+			n.Row(c).FillWidth().Height(56).PaddingX(configurationDialogInset).Gap(12).AlignItems(n.Center).Children(func() {
 				n.Row(c).Grow(1).Gap(12).AlignItems(n.Baseline).Children(func() {
 					n.Text(c, p.title).FontSize(14).FontWeight(500).FixedLineHeight(20).Grow(1)
 					name := v.Model.DeviceName(p.device)
@@ -230,7 +230,7 @@ func (v *View) directoryDialog(c *n.Context, t *n.Theme) {
 			n.Column(c).FillWidth().MinHeight(0).Grow(1).Children(func() {
 				configurationTabPanel(c.Key("directory-page"), strconv.Itoa(p.index), p.index, configurationPanelFill, func() { v.directoryContents(c, t, p) }, false)
 			})
-			n.Row(c).FillWidth().Height(60).Padding(12, 20).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Justify(n.SpaceBetween).AlignItems(n.Center).Children(func() {
+			n.Row(c).FillWidth().Height(60).Padding(12, configurationDialogInset).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Justify(n.SpaceBetween).AlignItems(n.Center).Children(func() {
 				if configurationAction(c, "取消").Label("取消选择目录").MarginStart(-8).Clicked() {
 					v.closeDirectoryPicker(p)
 				}
@@ -269,7 +269,7 @@ func (v *View) directoryDialog(c *n.Context, t *n.Theme) {
 	}
 }
 func (v *View) directoryLocation(c *n.Context, t *n.Theme, p *directoryPicker) {
-	n.Row(c).FillWidth().Height(48).Padding(0, 12, 12, 20).Gap(4).AlignItems(n.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+	n.Row(c).FillWidth().Height(48).Padding(0, 12, 12, configurationDialogInset).Gap(4).AlignItems(n.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 		loading := p.visiblePhase() == directoryLoading
 		if iconButton(c, deviceBackIcon, "返回上一目录").Disabled(len(p.history) == 0 || loading).Clicked() {
 			previous := p.history[len(p.history)-1]
@@ -337,7 +337,7 @@ func (v *View) directoryContents(c *n.Context, t *n.Theme, p *directoryPicker) {
 	n.Scroll(c.Key("folders:"+p.page.Path+strconv.FormatBool(p.loadedHidden))).Fill().Padding(6, 8).Children(func() {
 		n.Column(c).FillWidth().FocusGroup(n.Vertical).Children(func() {
 			for _, entry := range p.page.Entries {
-				row := control(c.Key(entry.Path), 5).FillWidth().Height(32).Radius(5).PaddingX(12).AlignItems(n.Center).Label("文件夹：" + entry.Name).Disabled(p.visiblePhase() == directoryLoading).Transition(fadeMotion(c, 140*time.Millisecond))
+				row := control(c.Key(entry.Path), 5).FillWidth().Height(32).Radius(5).PaddingX(configurationDialogInset-8).AlignItems(n.Center).Label("文件夹：" + entry.Name).Disabled(p.visiblePhase() == directoryLoading).Transition(fadeMotion(c, 140*time.Millisecond))
 				if p.selected == entry.Path {
 					row.Background(t.Selection)
 				}

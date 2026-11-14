@@ -44,7 +44,7 @@ func TestToolTailSummaryFollowsNativeTools(t *testing.T) {
 		if !ok || !clockOK || math.Abs(float64(phase.Y-summary.Y)) > 1 || math.Abs(float64(clock.Y-summary.Y)) > 1 {
 			t.Fatal("trailing summary does not own live phase and elapsed time", summary, phase, clock)
 		}
-		if _, proxy := ui.Find("离屏运行状态"); proxy {
+		if _, proxy := ui.Find("最新运行状态"); proxy {
 			t.Fatal("visible trailing status also shows an offscreen proxy")
 		}
 		if err := ui.Click("执行工具"); err != nil {
@@ -67,13 +67,13 @@ func TestToolTailOffscreenStatusReturnsWithoutTakingFocus(t *testing.T) {
 		ui.Scroll(1000, 300, 0, -8)
 		ui.Frame()
 		ui.Advance(time.Second)
-		if _, proxy := ui.Find("离屏运行状态"); proxy {
-			t.Fatal("scrolling with the original status still visible duplicates it")
+		if _, proxy := ui.Find("最新运行状态"); !proxy {
+			t.Fatal("reading control omits current work while the original status is still visible")
 		}
 		ui.Scroll(1000, 300, 0, -280)
 		ui.Frame()
 		ui.Advance(time.Second)
-		proxy, ok := ui.Find("离屏运行状态")
+		proxy, ok := ui.Find("最新运行状态")
 		latest, buttonOK := ui.Find("回到最新")
 		if !ok || !buttonOK || proxy.Y < latest.Y || proxy.Y+proxy.H > latest.Y+latest.H+1 {
 			t.Fatal("reading tools has no live state in the existing latest control", proxy, latest)
@@ -88,7 +88,7 @@ func TestToolTailOffscreenStatusReturnsWithoutTakingFocus(t *testing.T) {
 		if !v.lists["s"].FollowingEnd() || !ui.Focused("消息输入") {
 			t.Fatal("activity proxy did not resume following while preserving typing focus")
 		}
-		if _, ok := ui.Find("离屏运行状态"); ok {
+		if _, ok := ui.Find("最新运行状态"); ok {
 			t.Fatal("activity proxy remains after returning to visible live summary")
 		}
 	}
@@ -127,7 +127,7 @@ func TestToolTailOffscreenProxyRespectsLifecycle(t *testing.T) {
 			ui.Scroll(1000, 300, 0, -450)
 			ui.Frame()
 			ui.Advance(time.Second)
-			proxy, shown := ui.Find("离屏运行状态")
+			proxy, shown := ui.Find("最新运行状态")
 			if shown != (want != "") || shown && !ui.HasText(want) {
 				t.Fatal("latest status contradicts the authoritative lifecycle", state, shown, ui.Texts())
 			}
@@ -138,7 +138,7 @@ func TestToolTailOffscreenProxyRespectsLifecycle(t *testing.T) {
 	}
 }
 
-func TestToolTailDisclosureAnchorsTheClickedEnd(t *testing.T) {
+func TestToolTailDisclosureAnchorsTheTitle(t *testing.T) {
 	for _, reduced := range []bool{false, true} {
 		v := largeToolDisclosureModel(76)
 		d := v.Model.Details["s"]
@@ -165,33 +165,32 @@ func TestToolTailDisclosureAnchorsTheClickedEnd(t *testing.T) {
 		ui.Click("76 次工具调用")
 		for i := 0; i < 16; i++ {
 			ui.Advance(time.Second / 60)
-			current, ok := ui.Find("执行工具")
+			current, ok := ui.Find("76 次工具调用")
 			if !ok || math.Abs(float64(current.Y-closed.Y)) > 1 {
 				t.Fatal("opening does not hand the clicked place to its top title", closed, current)
 			}
 		}
-		for i, row := range v.transcriptRows(v.Model.Details["s"].Items) {
-			if row.group != "" {
-				v.lists["s"].ScrollToRow(i+1, 300, n.Animation{Duration: 80 * time.Millisecond})
-			}
-		}
-		ui.Frame()
-		ui.Advance(time.Second)
 		before, ok := ui.Find("76 次工具调用")
 		if !ok {
-			t.Fatal("trailing control did not become visible")
+			t.Fatal("expanded title did not remain visible")
 		}
-		ui.Click("76 次工具调用")
+		if err := ui.Click("76 次工具调用"); err != nil {
+			t.Fatal(err)
+		}
 		for i := 0; i < 16; i++ {
 			ui.Advance(time.Second / 60)
-			current, ok := ui.Find("76 次工具调用")
+			label := "76 次工具调用"
+			if v.toolMotions["tool-group:s/call0"] == nil {
+				label = "76 次工具调用"
+			}
+			current, ok := ui.Find(label)
 			if !ok || math.Abs(float64(current.Y-before.Y)) > 1 {
-				t.Fatal("trailing collapse moves its clicked control", before, current)
+				t.Fatal("collapse lost its title anchor", before, current)
 			}
 		}
 		ui.Advance(time.Second)
 		if ui.HasText("large command 75") {
-			t.Fatal("trailing disclosure did not hide its tools")
+			t.Fatal("title disclosure did not hide its tools")
 		}
 	}
 }
@@ -205,7 +204,7 @@ func TestToolTailNativeEvidence(t *testing.T) {
 		ui.SetDark(dark)
 		ui.Advance(time.Second)
 		saveNativeSkillImage(t, ui, fmt.Sprintf("tail-expanded-%v.png", dark))
-		ui.Click("8 次工具调用")
+		ui.Click("执行工具")
 		ui.Advance(time.Second)
 		saveNativeSkillImage(t, ui, fmt.Sprintf("tail-collapsed-%v.png", dark))
 		d := v.Model.Details["s"]
@@ -241,7 +240,7 @@ func TestToolTailNativeRecording(t *testing.T) {
 	for frame := 0; frame < 600; frame++ {
 		switch frame {
 		case 60:
-			if err := ui.Click("8 次工具调用"); err != nil {
+			if err := ui.Click("执行工具"); err != nil {
 				t.Fatal(err)
 			}
 		case 120:
@@ -253,7 +252,7 @@ func TestToolTailNativeRecording(t *testing.T) {
 				t.Fatal(err)
 			}
 		case 240:
-			if err := ui.Click("8 次工具调用"); err != nil {
+			if err := ui.Click("执行工具"); err != nil {
 				t.Fatal(err)
 			}
 		case 300:
@@ -273,7 +272,19 @@ func TestToolTailNativeRecording(t *testing.T) {
 			if err := ui.Click("回到最新"); err != nil {
 				t.Fatal(err)
 			}
-		case 480, 540:
+		case 450:
+			for i, row := range v.transcriptRows(v.Model.Details["s"].Items) {
+				if row.toolTitle {
+					v.lists["s"].ScrollToRow(i+1, 120, n.Animation{Duration: 80 * time.Millisecond})
+					break
+				}
+			}
+			ui.Frame()
+		case 480:
+			if err := ui.Click("执行工具"); err != nil {
+				t.Fatal(err)
+			}
+		case 540:
 			if err := ui.Click("76 次工具调用"); err != nil {
 				t.Fatal(err)
 			}

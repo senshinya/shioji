@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"strconv"
@@ -15,15 +17,14 @@ import (
 	"shioji/internal/protocol"
 )
 
-// Closing cancels presentation immediately; the in-flight check retains its
-// own completion until the controller acknowledges cancellation or returns.
+// A closed setup never retains the presentation of its canceled check.
+// Request identities keep late receipts from changing a reopened setup.
 type sshCheckPhase uint8
 
 const (
 	sshClosed sshCheckPhase = iota
 	sshEditing
 	sshChecking
-	sshCanceledCheck
 	sshSelecting
 	sshSaving
 	sshAwaitingTrust
@@ -38,7 +39,7 @@ func (s sshCheckPhase) open() bool {
 	return s == sshEditing || s == sshChecking || s == sshSelecting || s == sshSaving || s == sshAwaitingTrust || s == sshNeedsKey || s == sshConfiguring || s == sshLegacyUpgrade || s == sshMigrating || s == sshPreparing
 }
 func (s sshCheckPhase) busy() bool {
-	return s == sshChecking || s == sshCanceledCheck || s == sshSaving
+	return s == sshChecking || s == sshSaving
 }
 func (s sshCheckPhase) show() sshCheckPhase {
 	if s.busy() {
@@ -50,7 +51,7 @@ func (s sshCheckPhase) begin() sshCheckPhase {
 	if s.open() {
 		return sshChecking
 	}
-	return sshCanceledCheck
+	return sshClosed
 }
 func (s sshCheckPhase) finish() sshCheckPhase {
 	if s == sshSaving {
@@ -62,9 +63,6 @@ func (s sshCheckPhase) finish() sshCheckPhase {
 	return sshClosed
 }
 func (s sshCheckPhase) close() sshCheckPhase {
-	if s.busy() {
-		return sshCanceledCheck
-	}
 	return sshClosed
 }
 
@@ -192,11 +190,11 @@ func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 		return n.DialogBase(c.Key(key), open, func(backdrop, panel n.Element) {
 			backdrop.Background(n.RGBA(0, 0, 0, .16))
 			width, height := c.Size()
-			panelWidth, inset := float32(420), float32(20)
+			panelWidth := float32(420)
 			if key == "ssh-setup-dialog" {
-				panelWidth, inset = 480, 24
+				panelWidth = 464
 			}
-			panel.Width(min(panelWidth, width-48)).MaxHeight(height-48).Padding(inset).Gap(12).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c)).Children(body)
+			panel.Width(min(panelWidth, width-48)).MaxHeight(height-48).Padding(configurationDialogInset).Gap(12).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c)).Children(body)
 		})
 	}
 
@@ -268,9 +266,13 @@ func (v *View) cancelSSHCheck() {
 
 	v.sshHostKey = nil
 	v.retireSSHSetupTerminal()
+	busy := v.sshCheck.busy()
+	if v.sshCheck == sshSaving && v.sshAgents != nil {
+		v.sshAgents.busy = false
+	}
 	v.sshCheck = v.sshCheck.close()
 	v.sshRequest = ""
-	if v.sshCheck.busy() && v.Controller != nil {
+	if busy && v.Controller != nil {
 		v.Controller.Do(app.Job{Method: "$device.cancel"})
 	}
 }
@@ -315,7 +317,11 @@ func (v *View) checkSSHDevice() {
 			return
 		}
 		if err != nil {
-			v.sshError = err.Error()
+			if errors.Is(err, context.DeadlineExceeded) {
+				v.sshError = "连接超时（10 秒），请检查地址后重试"
+			} else {
+				v.sshError = err.Error()
+			}
 			return
 		}
 		var result app.DeviceSetupCheck

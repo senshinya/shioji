@@ -230,7 +230,7 @@ func (v *View) managementDialogs(c *n.Context, t *n.Theme) {
 	dialog := n.DialogBase(c.Key("rename-session:"+r.Session.ID), &r.Open, func(backdrop, panel n.Element) {
 		backdrop.Background(n.RGBA(0, 0, 0, .16)).Transition(fadeMotion(c, 180*time.Millisecond))
 		width, _ := c.Size()
-		panel.Width(min(380, width-48)).Padding(16).Radius(10).Clip().Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c))
+		panel.Width(min(380, width-48)).Padding(configurationDialogInset).Radius(10).Clip().Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c))
 		if r.NaturalHeight > 0 {
 			panel.Height(panel.AnimateTo("rename-height", r.NaturalHeight+34, motionAnimation(c, 180*time.Millisecond)))
 		}

@@ -421,7 +421,7 @@ func (v *View) tailnetLogoutDialog(c *n.Context, t *n.Theme) {
 	u := v.networkUI()
 	dialog := n.DialogBase(c, &u.logout, func(backdrop, panel n.Element) {
 		backdrop.Background(n.RGBA(0, 0, 0, .16))
-		panel.Width(360).Padding(22).Gap(12).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c)).Children(func() {
+		panel.Width(360).Padding(configurationDialogInset).Gap(12).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c)).Children(func() {
 			n.Text(c, "退出 Tailnet？").FontSize(14).FontWeight(500).FixedLineHeight(20)
 			n.Text(c, "退出后，这台 Mac 将断开 Tailnet。直连 SSH 不受影响。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 			n.Row(c).FillWidth().Justify(n.End).Gap(8).Margin(8, 0, 0).Children(func() {

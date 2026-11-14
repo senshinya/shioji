@@ -15,7 +15,6 @@ type toolDisclosureMotion struct {
 	from, to float32
 	start    time.Time
 	duration time.Duration
-	fromEnd  bool
 }
 
 func (m *toolDisclosureMotion) sample(now time.Time) (float32, bool) {

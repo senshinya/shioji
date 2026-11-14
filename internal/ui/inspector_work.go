@@ -219,12 +219,12 @@ func (v *View) workInspectorPane(c *n.Context, t *n.Theme, state *changesState, 
 			tabs := n.TabsBase(c.Key("work-tabs"), &selected, len(g.views))
 			tabs.List.Gap(2).Children(func() {
 				for i, kind := range g.views {
-					button := controlFeedback(c, tabs.Tab(i), 6).Size(28, 28).AlignItems(n.Center).Justify(n.Center).Radius(6).Label(inspectorWorkName(kind)).Tooltip(inspectorWorkName(kind)).Cursor(n.CursorGrab).Drag(inspectorTabDrag{v.Model.SessionID, kind})
+					button := controlFeedback(c, tabs.Tab(i), 6).Size(28, 28).AlignItems(n.Center).Justify(n.Center).Radius(6).Label(inspectorWorkName(kind)).Tooltip(inspectorWorkName(kind)).Cursor(n.CursorDefault).Drag(inspectorTabDrag{v.Model.SessionID, kind})
 					if kind == g.selected {
 						button.Background(t.SurfacePressed)
 					}
 					if button.Dragging() {
-						button.Opacity(0)
+						button.Opacity(0).Cursor(n.CursorGrabbing)
 					}
 					button.Children(func() { n.Icon(c, inspectorWorkIcon(kind)).Size(16, 16).TextColor(t.TextMuted) })
 				}

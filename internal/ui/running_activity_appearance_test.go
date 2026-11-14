@@ -75,7 +75,7 @@ func TestRunningActivityNativeEvidence(t *testing.T) {
 		ui.Frame()
 		ui.Advance(time.Second)
 		save("expanded", "2 次工具调用")
-		ui.Click("2 次工具调用")
+		ui.Click("执行工具")
 		ui.Advance(time.Second)
 		save("folded", "2 次工具调用")
 		d.Items = append(append([]domain.Item{}, prefix...), domain.Item{ID: "source", TurnID: "t", Kind: "request", Text: "需要回答", Status: "pending"})
@@ -107,7 +107,7 @@ func TestRunningActivityNativeEvidence(t *testing.T) {
 					m.Details["s"] = d
 					ui.Frame()
 				case 55:
-					ui.Click("1 次工具调用")
+					ui.Click("执行工具")
 				case 95:
 					ui.Click("1 次工具调用")
 				case 125:

@@ -3,6 +3,7 @@ package ui
 // Settings, device management and setup use the same native form rhythm.
 // Compact setup tabs retain their own 12-DIP gap above form content.
 const (
+	configurationDialogInset   = 16
 	configurationInset         = 32
 	configurationSectionGap    = 24
 	configurationHeadingGap    = 20

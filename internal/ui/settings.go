@@ -30,19 +30,21 @@ var settingsCategories = []settingsCategory{{"appearance", "外观", settingsSun
 // Settings shares the client model and writer with the conversation window.
 // It owns only its own navigation, popup and native-window presentation state.
 type Settings struct {
-	services            n.Services
-	saveError           string
-	owner               *View
-	window              *mygo.Window
-	page, query, error  string
-	menus               View
-	fonts               []n.FontFamily
-	fontResults         chan []n.FontFamily
-	preview             markdown.Options
-	licenses            bool
-	license             int
-	notificationPending bool
-	notificationMessage string
+	AuthorizeFullDiskAccess    func(background bool) error
+	BackgroundRuntimeAvailable func() bool
+	services                   n.Services
+	saveError                  string
+	owner                      *View
+	window                     *mygo.Window
+	page, query, error         string
+	menus                      View
+	fonts                      []n.FontFamily
+	fontResults                chan []n.FontFamily
+	preview                    markdown.Options
+	licenses                   bool
+	license                    int
+	notificationPending        bool
+	notificationMessage        string
 }
 
 func NewSettings(owner *View) *Settings {
@@ -178,39 +180,53 @@ func (s *Settings) View(c *n.Context) {
 				key = "search"
 			}
 
-			n.Scroll(c.Key("settings-page:" + key)).Fill().Label("设置内容").Children(func() {
-				n.Column(c).FillWidth().Padding(configurationSectionGap, configurationInset, configurationSectionGap, configurationInset).Children(func() {
-					if key == "search" {
-						s.search(c, &t)
-						return
-					}
-					title := ""
-					for _, category := range settingsCategories {
-						if category.id == s.page {
-							title = category.title
+			buildPage := func() {
+				n.Scroll(c.Key("settings-page:" + key)).Fill().Label("设置内容").Children(func() {
+					n.Column(c).FillWidth().Padding(configurationSectionGap, configurationInset, configurationSectionGap, configurationInset).Children(func() {
+						if key == "search" {
+							s.search(c, &t)
+							return
 						}
-					}
-					n.Text(c, title).FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Margin(0, 0, configurationHeadingGap, 0)
-					switch s.page {
-					case "appearance":
-						s.appearance(c, &t)
-					case "input":
-						s.input(c, &t)
-					case "notifications":
-						s.notifications(c, &t)
-					case "shortcuts":
-						s.shortcuts(c, &t)
-					case "about":
-						s.about(c, &t)
-					}
-					if s.saveError != "" {
-						n.Text(c, s.saveError).FillWidth().FontSize(12).TextColor(t.Danger).Margin(12, 0, 0, 0)
-					}
-					if s.error != "" {
-						n.Text(c, s.error).FillWidth().FontSize(12).TextColor(t.Danger).Margin(12, 0, 0, 0).Transition(disclosureMotion(c, 180*time.Millisecond))
-					}
+						title := ""
+						for _, category := range settingsCategories {
+							if category.id == s.page {
+								title = category.title
+							}
+						}
+						n.Text(c, title).FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Margin(0, 0, configurationHeadingGap, 0)
+						switch s.page {
+						case "appearance":
+							s.appearance(c, &t)
+						case "input":
+							s.input(c, &t)
+						case "notifications":
+							s.notifications(c, &t)
+						case "shortcuts":
+							s.shortcuts(c, &t)
+						case "about":
+							s.about(c, &t)
+						}
+						if s.saveError != "" {
+							n.Text(c, s.saveError).FillWidth().FontSize(12).TextColor(t.Danger).Margin(12, 0, 0, 0)
+						}
+						if s.error != "" {
+							n.Text(c, s.error).FillWidth().FontSize(12).TextColor(t.Danger).Margin(12, 0, 0, 0).Transition(disclosureMotion(c, 180*time.Millisecond))
+						}
+					})
 				})
-			})
+			}
+			if key == "about" {
+				page, depth := "about", 0
+				if s.licenses {
+					page, depth = "licenses", 1
+					if s.license >= 0 {
+						page, depth = fmt.Sprintf("license:%d", s.license), 2
+					}
+				}
+				configurationTabPanel(c.Key("about-navigation"), page, depth, configurationPanelFill, buildPage, false)
+			} else {
+				buildPage()
+			}
 		})
 	})
 }
@@ -476,13 +492,16 @@ func (s *Settings) about(c *n.Context, t *n.Theme) {
 			}
 		})
 	})
+	n.Column(c.Key("full-disk-access")).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
+		s.fullDiskAccessSetting(c, t)
+	})
 }
 
 func (s *Settings) search(c *n.Context, t *n.Theme) {
 	n.Text(c, "搜索设置").FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Margin(0, 0, configurationHeadingGap, 0)
 	query := strings.ToLower(strings.TrimSpace(s.query))
 	found := false
-	for _, entry := range []struct{ page, label string }{{"appearance", "主题"}, {"appearance", "界面字体"}, {"appearance", "回复字号"}, {"appearance", "代码字体"}, {"appearance", "减少动态效果"}, {"input", "发送或加入队列"}, {"input", "换行"}, {"input", "立即介入当前轮"}, {"notifications", "通知"}, {"notifications", "回复完成"}, {"notifications", "需要回答或授权"}, {"notifications", "执行失败"}, {"notifications", "提示音"}, {"notifications", "前台也通知"}, {"shortcuts", "新建会话"}, {"shortcuts", "搜索会话"}, {"shortcuts", "下一个待处理"}, {"shortcuts", "返回上一个会话"}, {"about", "版本"}, {"about", "第三方许可"}} {
+	for _, entry := range []struct{ page, label string }{{"appearance", "主题"}, {"appearance", "界面字体"}, {"appearance", "回复字号"}, {"appearance", "代码字体"}, {"appearance", "减少动态效果"}, {"input", "发送或加入队列"}, {"input", "换行"}, {"input", "立即介入当前轮"}, {"notifications", "通知"}, {"notifications", "回复完成"}, {"notifications", "需要回答或授权"}, {"notifications", "执行失败"}, {"notifications", "提示音"}, {"notifications", "前台也通知"}, {"shortcuts", "新建会话"}, {"shortcuts", "搜索会话"}, {"shortcuts", "下一个待处理"}, {"shortcuts", "返回上一个会话"}, {"about", "版本"}, {"about", "第三方许可"}, {"about", "授予完全磁盘访问权限"}} {
 		category := settingsCategories[slices.IndexFunc(settingsCategories, func(x settingsCategory) bool { return x.id == entry.page })]
 		if !strings.Contains(strings.ToLower(entry.label+" "+category.title), query) {
 			continue

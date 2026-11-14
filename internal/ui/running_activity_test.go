@@ -120,7 +120,7 @@ func TestLiveToolSummaryOwnsActivityExpandedAndCollapsed(t *testing.T) {
 	if !ok || math.Abs(float64(clock.Y-before.Y)) > 1 {
 		t.Fatal("expanded title lost its elapsed clock", before, clock)
 	}
-	ui.Click("2 次工具调用")
+	ui.Click("执行工具")
 	ui.Advance(time.Second)
 	after, _ := ui.Find("2 次工具调用")
 	clock, ok = ui.Find("运行时长")
@@ -218,8 +218,8 @@ func TestToolActivityHandoffNeverPaintsTwoLiveIndicators(t *testing.T) {
 					}
 					return false
 				}
-				for _, action := range []string{"fold", "expand"} {
-					ui.Click("1 次工具调用")
+				for _, action := range []string{"执行工具", "1 次工具调用"} {
+					ui.Click(action)
 					for frame := 0; frame < 30; frame++ {
 						ui.Advance(time.Second / 60)
 						if green("1 次工具调用") && green("回复信息") {
@@ -309,7 +309,7 @@ func TestPendingRequestKeepsOnlySourceAndDock(t *testing.T) {
 }
 
 // Keep coverage during the crossfade, then reclaim the dot/timer space with
-// real width animation; the arrow follows its neighboring text throughout.
+// real width animation while the count stays in place until the dot fades.
 func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, expanded := range []bool{false, true} {
@@ -324,7 +324,7 @@ func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 				ui.SetDark(dark)
 				ui.Advance(time.Second)
 				if !expanded {
-					ui.Click("2 次工具调用")
+					ui.Click("执行工具")
 					ui.Advance(time.Second)
 				}
 				if ui.HasText("go test ./...") != expanded {
@@ -337,9 +337,9 @@ func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 				clockWidth, _ := n.ShapeText("37 秒", font, 0).Size()
 				phaseWidth, _ := n.ShapeText("正在执行命令", font, 0).Size()
 				if right := activityLastInkX(ui, header, dark); right > titleX+titleWidth+phaseWidth+clockWidth+34 {
-					t.Fatal("running arrow is detached from elapsed time", titleX, right)
+					t.Fatal("running status extends beyond its elapsed time", titleX, right)
 				}
-				lastTitleX, lastArrowX := titleX, activityLastInkX(ui, header, dark)
+				lastTitleX := titleX
 				d.Items[1].Final, d.Items[2].Final = true, true
 				d.Items = append(d.Items, domain.Item{ID: "reply", TurnID: "t", Kind: "assistant", Text: "三个检查均已通过。"})
 				v.Model.Details["s"] = d
@@ -359,7 +359,7 @@ func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 					if !hasOld && !hasNew {
 						t.Fatalf("no visible progress at frame %d", frame)
 					}
-					x, arrowX := activityTitleInkX(ui, header, dark), activityLastInkX(ui, header, dark)
+					x := activityTitleInkX(ui, header, dark)
 					elapsed := ui.Now().Sub(began)
 					if elapsed <= ready+140*time.Millisecond && math.Abs(float64(x-titleX)) > 1 {
 						t.Fatalf("title moved before the dot finished fading at frame %d", frame)
@@ -367,10 +367,7 @@ func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 					if x > lastTitleX+1 || lastTitleX-x > 4 {
 						t.Fatalf("title jumped instead of gliding left: %v -> %v", lastTitleX, x)
 					}
-					if arrowX > lastArrowX+1 || lastArrowX-arrowX > 40 {
-						t.Fatalf("arrow jumped instead of following the timer: %v -> %v", lastArrowX, arrowX)
-					}
-					lastTitleX, lastArrowX = x, arrowX
+					lastTitleX = x
 					if hasNew {
 						if firstFooterY < 0 {
 							firstFooterY = footer.Y
@@ -392,8 +389,8 @@ func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 				if math.Abs(float64(titleX-lastTitleX-12)) > 1 {
 					t.Fatal("title retained the vanished dot's indentation", titleX, lastTitleX)
 				}
-				if lastArrowX > lastTitleX+titleWidth+22 {
-					t.Fatal("idle arrow did not return beside its title", lastTitleX, lastArrowX)
+				if right := activityLastInkX(ui, header, dark); right <= lastTitleX+titleWidth+6 || right > lastTitleX+titleWidth+22 {
+					t.Fatal("folded summary lost its disclosure cue after handoff", header, right)
 				}
 			})
 		}

@@ -54,42 +54,51 @@ func (v *View) conversationOutline(c *n.Context, t *n.Theme, state *n.ListState,
 	}
 	height := min(float32(len(entries)*10+16), min(640, bounds.H*.7))
 	hovered := -1
-	track := n.Scroll(c.Key("conversation-outline")).Absolute().Left(16).Top((bounds.H - height) / 2).Width(36).Height(height).Label("对话导航").Children(func() {
-		outline.List.Key = func(i int) any { return entries[i].ID }
-		n.List(c, &outline.List, len(entries), func(i int) {
-			entry := entries[i]
-			button := n.ButtonBase(c.Key(entry.ID)).Width(36).Height(10).Justify(n.Start).Label(fmt.Sprintf("跳转到消息 %d", i+1))
-			if button.Hovered() {
-				hovered = i
-				outline.Anchor = button.Bounds()
+	outline.List.Key = func(i int) any { return entries[i].ID }
+	track := n.List(c.Key("conversation-outline"), &outline.List, len(entries), func(i int) {
+		entry := entries[i]
+		// Keep the line pitch while making the existing end padding part
+		// of the edge buttons, so approaching from below keeps the last hit.
+		var top, bottom float32
+		if i == 0 {
+			top = 8
+		}
+		if i == len(entries)-1 {
+			bottom = 8
+		}
+		button := n.ButtonBase(c.Key(entry.ID)).KeepFocus().Width(36).Height(10+top+bottom).Padding(top, 0, bottom, 0).Justify(n.Start).Label(fmt.Sprintf("跳转到消息 %d", i+1))
+		if button.Hovered() {
+			hovered = i
+			outline.Anchor = button.Bounds()
+			outline.Anchor.Y += top
+			outline.Anchor.H = 10
+		}
+		length := float32(6)
+		if outline.Hover >= 0 {
+			widths := [...]float32{26, 20, 14, 10}
+			if distance := abs(i - outline.Hover); distance < len(widths) {
+				length = widths[distance]
 			}
-			length := float32(6)
-			if outline.Hover >= 0 {
-				widths := [...]float32{26, 20, 14, 10}
-				if distance := abs(i - outline.Hover); distance < len(widths) {
-					length = widths[distance]
-				}
-			}
-			opacity := float32(.4)
-			color := t.TextMuted
-			if i == current && outline.Hover < 0 {
-				opacity = .6
-				color = t.Text
-			}
-			if i == outline.Hover {
-				opacity = 1
-				color = t.Text
-			}
-			button.Children(func() {
-				n.Column(c).Width(button.AnimateTo("tick-width", length, motionAnimation(c, 160*time.Millisecond))).Height(2).Background(color.Alpha(opacity))
-			})
-			if button.Clicked() {
-				hadFocus := v.composerHadFocus
-				state.KeepRow(entry.Row, 80)
-				v.focusComposer = hadFocus
-			}
-		}).FillWidth().FillHeight().PaddingY(8)
-	})
+		}
+		opacity := float32(.4)
+		color := t.TextMuted
+		if i == current && outline.Hover < 0 {
+			opacity = .6
+			color = t.Text
+		}
+		if i == outline.Hover {
+			opacity = 1
+			color = t.Text
+		}
+		button.Children(func() {
+			n.Column(c).Width(button.AnimateTo("tick-width", length, motionAnimation(c, 160*time.Millisecond))).Height(2).Background(color.Alpha(opacity))
+		})
+		if button.Clicked() {
+			hadFocus := v.composerHadFocus
+			state.KeepRow(entry.Row, 80)
+			v.focusComposer = hadFocus
+		}
+	}).Absolute().Left(16).Top((bounds.H - height) / 2).Width(36).Height(height).Scrollbars(false).Label("对话导航")
 	if current != outline.Current && !track.Hovered() {
 		outline.List.ScrollIntoView(current)
 		outline.Current = current
@@ -150,11 +159,14 @@ func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock
 	button.Children(func() {
 		font := n.Font{Family: t.Font, Size: 12, Weight: 400}
 		turn, active := v.activeConversationTurn()
-		if !v.latestActivity || !active {
+		var a runningActivity
+		if active {
+			a = v.runningActivity(turn)
+		}
+		if !active || v.Model.Connected && a.waiting {
 			inlineIconText(c, latestIcon, "最新消息", font, 14, 5, color)
 			return
 		}
-		a := v.runningActivity(turn)
 		label, pulse, dotColor := a.label, true, t.Success
 		if !v.Model.Connected {
 			label, pulse, dotColor = "状态待确认", false, t.TextMuted
@@ -162,7 +174,7 @@ func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock
 			label = "正在压缩上下文"
 		}
 		font.Size = 11
-		n.Row(c.Key("latest-activity")).Height(20).AlignItems(n.Baseline).Label("离屏运行状态").Children(func() {
+		n.Row(c.Key("latest-activity")).Height(20).AlignItems(n.Baseline).Label("最新运行状态").Children(func() {
 			phase := c.Now()
 			if turn.StartedAt != nil {
 				phase = *turn.StartedAt

@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -159,23 +160,48 @@ func toolConfigurationFeedback(c *n.Context, t *n.Theme, message string) {
 		return 0
 	})
 }
+
+func toolServiceRefreshButton(c *n.Context, label string, loading, disabled bool) n.Element {
+	button := control(c, 6).Size(28, 28).Radius(6).Label(label).Tooltip(label).TextColor(c.Theme().TextMuted).Disabled(disabled || loading)
+	started := n.Local(button, "refresh-start", func() time.Time { return time.Time{} })
+	if !loading {
+		*started = time.Time{}
+	} else if started.IsZero() {
+		*started = c.Now()
+	}
+	return button.Children(func() {
+		glyph := refreshIcon
+		if loading {
+			glyph = serviceSpinnerIcon
+		}
+		icon := n.Icon(c.Key("glyph"), glyph).Size(16, 16)
+		if loading {
+			icon.Label("MCP 刷新进度")
+			if !c.Preferences().ReduceMotion {
+				icon.Rotate(float32(math.Mod(c.Now().Sub(*started).Seconds()/1.3, 1) * 360))
+				c.After(time.Second / 60)
+			}
+		}
+	})
+}
+
 func (v *View) toolServiceList(c *n.Context, t *n.Theme, u *toolServicesUI, disabled bool) {
 	pending := u.saving || u.phase == toolServiceLoading || u.authorization != nil && u.authorization.Phase.Active()
 	busy := pending || u.saved
 	disabled = disabled || v.Controller == nil
-	n.Row(c).FillWidth().Height(configurationSectionHeader).AlignItems(n.Baseline).Gap(6).Children(func() {
+	n.Row(c).FillWidth().Height(configurationSectionHeader).AlignItems(n.Start).Gap(6).Children(func() {
 		configurationSectionTitle(c, "MCP").Grow(1)
-		if u.phase == toolServiceLoading {
-			serviceSpinner(c.Key("load-spinner"), "刷新", n.Font{Family: t.Font, Size: 12, Weight: 400}, t.TextMuted)
-		}
-		if iconButton(c, refreshIcon, "刷新 MCP").Disabled(disabled || pending).Clicked() {
-			v.queryToolServices(u, u.catalog.CanRefresh)
-		}
-		if u.catalog.CanAdd && v.deviceState(u.key).WorkerMinor >= 24 {
-			if iconButton(c, plus, "添加 MCP 服务").Disabled(disabled || busy).Clicked() {
-				u.editService(nil)
+		font := n.Font{Family: t.Font, Size: configurationSectionSize, Weight: 500}
+		n.Row(c.Key("actions")).Gap(6).Transform(n.Translation(0, -inlineCenterOffset("MCP", font))).Children(func() {
+			if toolServiceRefreshButton(c.Key("refresh"), "刷新 MCP", u.phase == toolServiceLoading, disabled || pending).Clicked() {
+				v.queryToolServices(u, u.catalog.CanRefresh)
 			}
-		}
+			if u.catalog.CanAdd && v.deviceState(u.key).WorkerMinor >= 24 {
+				if iconButton(c, plus, "添加 MCP 服务").Disabled(disabled || busy).Clicked() {
+					u.editService(nil)
+				}
+			}
+		})
 	})
 	n.Scroll(c.Key("service-list")).FillWidth().FillHeight().Grow(1).MinHeight(0).Label("MCP 服务列表").Children(func() {
 		n.Column(c).FillWidth().Children(func() {
@@ -275,7 +301,7 @@ func (v *View) toolConfigurationEditor(c *n.Context, t *n.Theme, u *toolServices
 		}
 		n.Text(c, label).FontSize(14).FontWeight(500).FixedLineHeight(20)
 		n.Spacer(c).Grow(1)
-		if iconButton(c, refreshIcon, "刷新 MCP 配置").Disabled(u.saving || u.phase == toolServiceLoading || authorizing || v.Controller == nil).Clicked() {
+		if toolServiceRefreshButton(c.Key("refresh"), "刷新 MCP 配置", u.phase == toolServiceLoading, u.saving || authorizing || v.Controller == nil).Clicked() {
 			v.queryToolServices(u, u.catalog.CanRefresh)
 		}
 	})

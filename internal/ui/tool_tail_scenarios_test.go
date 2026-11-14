@@ -116,7 +116,7 @@ func TestToolTailScenarioRecordings(t *testing.T) {
 						case 120, 240:
 							tool()
 						case 180:
-							click("3 次工具调用")
+							click("执行工具")
 						case 300:
 							click("4 次工具调用")
 						case 360:
@@ -179,7 +179,9 @@ func TestToolTailScenarioRecordings(t *testing.T) {
 								d.Items[len(d.Items)-1].Final, d.Items[len(d.Items)-1].Status = true, "completed"
 								d.Turns[0].Status, d.Turns[0].CompletedAt, d.Session.Status = "completed", &now, "completed"
 							})
-						case 360, 420:
+						case 360:
+							click("1 次工具调用")
+						case 420:
 							click("1 次工具调用")
 						}
 					case "large":
@@ -198,8 +200,16 @@ func TestToolTailScenarioRecordings(t *testing.T) {
 							tool()
 						case 180, 780:
 							click("回到最新")
+						case 210:
+							for i, row := range v.transcriptRows(v.Model.Details["s"].Items) {
+								if row.toolTitle {
+									v.lists["s"].ScrollToRow(i+1, 120, n.Animation{Duration: 80 * time.Millisecond})
+									break
+								}
+							}
+							ui.Frame()
 						case 240:
-							click("77 次工具调用")
+							click("执行工具")
 						case 360:
 							click("78 次工具调用")
 						case 420:

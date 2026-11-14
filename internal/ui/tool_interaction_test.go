@@ -172,7 +172,7 @@ func TestToolGroupActuallyAnimatesBothDirections(t *testing.T) {
 	if entering.Y >= settled.Y-.5 {
 		t.Fatalf("tools have no content entrance transition: entering=%+v settled=%+v", entering, settled)
 	}
-	if err := ui.Click("8 次工具调用"); err != nil {
+	if err := ui.Click("执行工具"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(40 * time.Millisecond)
@@ -244,7 +244,7 @@ func TestToolDisclosureHeightContinuouslyMovesFollowingText(t *testing.T) {
 	if middle.Y <= closed.Y+.5 || middle.Y >= opened.Y-.5 {
 		t.Fatalf("following text does not track intermediate content height: closed=%v middle=%v open=%v", closed.Y, middle.Y, opened.Y)
 	}
-	ui.Click("2 次工具调用")
+	ui.Click("执行工具")
 	initial, _ = ui.Find("Following reply")
 	if math.Abs(float64(initial.Y-opened.Y)) > .5 {
 		t.Fatal("following text jumps at the start of collapse")
@@ -343,7 +343,7 @@ func TestLargeToolDisclosureAnimatesTheVisibleViewport(t *testing.T) {
 			if !ok || !laterOK || later.Y <= opening.Y+1 {
 				t.Fatal("large expansion skips the visible transition", opening, later)
 			}
-			if err := ui.Click("执行工具"); err != nil {
+			if err := ui.Click(label); err != nil {
 				t.Fatal(err)
 			}
 			reversed, _ := ui.Find("After large group")
@@ -355,9 +355,9 @@ func TestLargeToolDisclosureAnimatesTheVisibleViewport(t *testing.T) {
 			if !ok || back.Y >= reversed.Y-1 {
 				t.Fatal("reversal does not begin shrinking immediately", reversed, back)
 			}
-			ui.Click("执行工具")
+			ui.Click(label)
 			ui.Advance(time.Second)
-			if err := ui.Click("执行工具"); err != nil {
+			if err := ui.Click(label); err != nil {
 				t.Fatal(err)
 			}
 			ui.Advance(60 * time.Millisecond)
@@ -402,7 +402,7 @@ func BenchmarkLargeToolDisclosure(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				ui.Click(label)
 				ui.Advance(180 * time.Millisecond)
-				ui.Click(label)
+				ui.Click("执行工具")
 				ui.Advance(180 * time.Millisecond)
 			}
 		})
@@ -460,7 +460,7 @@ func TestToolCollapseAfterScrollingToEndDoesNotLeaveReadingSpace(t *testing.T) {
 					ui.Scroll(1300, 400, 0, scrollBack)
 					ui.Frame()
 				}
-				if err := ui.Click("2 次工具调用"); err != nil {
+				if err := ui.Click("执行工具"); err != nil {
 					t.Fatal(err)
 				}
 				ui.Advance(time.Second)

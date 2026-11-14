@@ -410,9 +410,6 @@ func (v *View) contextCompactionItem(c *n.Context, t *n.Theme, item domain.Item)
 		label = "正在压缩上下文"
 	}
 	row := n.Row(c.Key("compaction-status")).FillWidth().Gap(6).AlignItems(n.Baseline)
-	if !item.Final {
-		v.trackLiveStatus(row, v.statusKey("item:"+item.ID))
-	}
 	row.Children(func() {
 		font := n.Font{Family: t.Font, Size: 11, Weight: 400}
 		if !item.Final {

@@ -150,7 +150,7 @@ func TestToolIssuesStayWithTheirCallWhileMoreCommandsArrive(t *testing.T) {
 				t.Fatal("current batch completion prematurely ends the open tool group")
 			}
 		}
-		ui.Click("3 次工具调用")
+		ui.Click("执行工具")
 		ui.Advance(200 * time.Millisecond)
 		if !ui.HasText("1 项未成功") || ui.HasText("退出码 1") {
 			t.Fatal("collapsed group loses the issue summary")

@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"shioji/internal/domain"
+	"slices"
 	"strings"
 )
 
@@ -17,10 +18,97 @@ func (m *Model) HarnessID() string {
 			}
 		}
 	}
+	m.initializeHomeDefaults()
 	if selected := m.HomeHarnesses[m.WorkspaceID]; selected != "" {
 		return selected
 	}
 	return m.Readiness.HarnessID
+}
+
+// Snapshots retain the worker's insertion order; metadata updates replace a
+// session in place. Sidebar order and local edits to old sessions are separate.
+func (m *Model) latestDeviceSession() (domain.Session, bool) {
+	device := m.workspaceDevice(m.WorkspaceID)
+	if device == "" {
+		return domain.Session{}, false
+	}
+	workspaces := map[string]bool{}
+	for _, w := range m.Snapshot.Workspaces {
+		if w.DeviceID == device {
+			workspaces[w.ID] = true
+		}
+	}
+	for i := len(m.Snapshot.Sessions) - 1; i >= 0; i-- {
+		if s := m.Snapshot.Sessions[i]; workspaces[s.WorkspaceID] {
+			return s, true
+		}
+	}
+	return domain.Session{}, false
+}
+
+// PrepareNewSession opens the independent home draft, without creating a
+// worker session. Existing input and manual draft choices remain intact.
+func (m *Model) PrepareNewSession() {
+	m.SessionID = ""
+	m.homeDefaultsPending = true
+	m.RefreshDevices()
+}
+
+func (m *Model) initializeHomeDefaults() {
+	if m.SessionID != "" {
+		return
+	}
+	legacy := m.homeConfigContext == "" && m.Configs["home"].Model != ""
+	configured := legacy || strings.HasPrefix(m.homeConfigContext, m.WorkspaceID+"/") || m.HomeHarnesses[m.WorkspaceID] != ""
+	if !m.homeDefaultsPending && configured {
+		return
+	}
+	if configured && (m.HasDraftContent("home") || m.HasPendingInput()) {
+		m.homeDefaultsPending = false
+		return
+	}
+	// Cached catalogs can render while disconnected. Wait for the owning
+	// worker's fresh snapshot before replacing an empty composer's defaults.
+	if !m.Connected || m.workspaceDevice(m.WorkspaceID) == "" {
+		return
+	}
+	m.homeDefaultsPending = false
+	latest, ok := m.latestDeviceSession()
+	if !ok {
+		return
+	}
+	id := latest.HarnessID
+	if id == "" {
+		id = m.Readiness.HarnessID
+	}
+	if m.HomeHarnesses == nil {
+		m.HomeHarnesses = map[string]string{}
+	}
+	m.HomeHarnesses[m.WorkspaceID] = id
+	m.syncHomeContext(id)
+	config := m.Configs["home"]
+	config.Model, config.Effort = latest.Config.Model, latest.Config.Effort
+	if config.Permission == "" {
+		config.Permission = "default"
+		ready := m.selectReadiness(m.Readiness, id)
+		if !slices.Contains(ready.Permissions, config.Permission) && len(ready.Permissions) > 0 {
+			config.Permission = ready.Permissions[0]
+		}
+	}
+	m.Configs["home"] = config
+}
+
+// Explicit choices also freeze an offline draft's defaults while reconnecting.
+func (m *Model) SetConfig(key string, config domain.RunConfig) {
+	if key == "home" && m.SessionID == "" {
+		m.homeDefaultsPending = false
+		id := m.HarnessID()
+		if m.HomeHarnesses == nil {
+			m.HomeHarnesses = map[string]string{}
+		}
+		m.HomeHarnesses[m.WorkspaceID] = id
+	}
+	m.Configs[key] = config
 }
 func (m *Model) SessionReadiness(s domain.Session) domain.Readiness {
 	ready := m.Readiness
@@ -114,11 +202,13 @@ func (m *Model) SelectHarness(id string) error {
 		return errors.New("请等待当前提交确认")
 	}
 	previous := m.HarnessID()
-	if previous == id {
-		return nil
-	}
+	m.homeDefaultsPending = false
 	if m.HomeHarnesses == nil {
 		m.HomeHarnesses = map[string]string{}
+	}
+	if previous == id {
+		m.HomeHarnesses[m.WorkspaceID] = id
+		return nil
 	}
 	if m.HarnessConfigs == nil {
 		m.HarnessConfigs = map[string]domain.RunConfig{}
@@ -151,7 +241,10 @@ func (m *Model) PermissionName(id string) string {
 // Only one home composer is visible, but its run choices belong to the owning
 // workspace and harness. The ordinary prompt remains one independent draft.
 func (m *Model) syncHomeConfiguration() {
-	id := m.HarnessID()
+	m.syncHomeContext(m.HarnessID())
+}
+
+func (m *Model) syncHomeContext(id string) {
 	// A disconnected first frame cannot establish a new configuration owner.
 	if id == "" && strings.HasPrefix(m.homeConfigContext, m.WorkspaceID+"/") {
 		return

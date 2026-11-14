@@ -10,6 +10,7 @@ import (
 	"github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
+	"shioji/internal/permissionflow"
 	"shioji/internal/transport"
 	presentation "shioji/internal/ui"
 )
@@ -69,6 +70,9 @@ func run() error {
 	mygo.App.WhenReady(func() {
 		view := presentation.New(model, controller, *state)
 		settings := presentation.NewSettings(view)
+		permissionGuide := permissionflow.New()
+		settings.AuthorizeFullDiskAccess = permissionGuide.Open
+		settings.BackgroundRuntimeAvailable = permissionGuide.RuntimeAvailable
 		view.OpenSettings = settings.Show
 		window := mygo.NewWindow(mygo.WindowOptions{Title: "Shioji", Width: 1240, Height: 820, MinWidth: 850, MinHeight: 600, TitleBarStyle: mygo.TitleBarHidden, TrafficLightPosition: presentation.WindowTrafficLightPosition(), Content: n.View(view.View)})
 		view.AttachWindow(window, settings)
@@ -92,7 +96,9 @@ func run() error {
 			if err := view.Flush(); err != nil {
 				e.PreventDefault()
 				mygo.Dialog.Error("无法保存草稿", err.Error())
+				return
 			}
+			permissionGuide.Close()
 		})
 		window.OnClosed(func() {
 			view.CloseTransient()

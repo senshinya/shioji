@@ -202,8 +202,15 @@ func (c *Controller) runDevices(ctx context.Context) {
 		}
 	}()
 	checking := false
+	var checkID uint64
 	var checkCancel context.CancelFunc
+	defer func() {
+		if checkCancel != nil {
+			checkCancel()
+		}
+	}()
 	checked := make(chan struct {
+		id   uint64
 		job  Job
 		body json.RawMessage
 		err  error
@@ -227,6 +234,9 @@ func (c *Controller) runDevices(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case result := <-checked:
+			if result.id != checkID {
+				continue
+			}
 			checking = false
 			checkCancel = nil
 			apply(result.job, result.body, result.err)
@@ -305,6 +315,8 @@ func (c *Controller) runDevices(ctx context.Context) {
 				if checkCancel != nil {
 					checkCancel()
 				}
+				checkID++
+				checking, checkCancel = false, nil
 				continue
 			}
 			if job.Method == "$device.check" || job.Method == "$device.complete" {
@@ -319,7 +331,9 @@ func (c *Controller) runDevices(ctx context.Context) {
 					continue
 				}
 				checking = true
-				callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+				checkID++
+				id := checkID
+				callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 				checkCancel = cancel
 				go func() {
 					defer cancel()
@@ -337,12 +351,16 @@ func (c *Controller) runDevices(ctx context.Context) {
 						result, err = c.prepareSSHDevice(callCtx, input)
 						body, _ = json.Marshal(result)
 					}
+					if err != nil && callCtx.Err() != nil {
+						err = callCtx.Err()
+					}
 					select {
 					case checked <- struct {
+						id   uint64
 						job  Job
 						body json.RawMessage
 						err  error
-					}{job, body, err}:
+					}{id, job, body, err}:
 					case <-ctx.Done():
 					}
 				}()

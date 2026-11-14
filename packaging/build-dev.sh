@@ -100,6 +100,10 @@ codesign "${sign_options[@]}" "$runtime_bundle"
 codesign --verify --deep --strict "$runtime_bundle"
 python3 scripts/bundle-terminal.py "$app/Contents/Resources"
 codesign "${sign_options[@]}" "$app/Contents/Resources/libghostty-vt.dylib"
+python3 scripts/bundle-permission-flow.py "$app/Contents"
+for library in "$app/Contents/Frameworks/"*.dylib; do
+  codesign "${sign_options[@]}" "$library"
+done
 codesign "${sign_options[@]}" "$app"
 codesign --verify --deep --strict "$app"
 cmp "$app/Contents/MacOS/shioji-worker" "$runtime_bundle/Contents/MacOS/shioji-worker"

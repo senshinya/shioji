@@ -104,38 +104,6 @@ func (v *View) activeConversationTurn() (domain.Turn, bool) {
 	return domain.Turn{}, false
 }
 
-func (v *View) statusKey(owner string) string { return v.Model.SessionID + "/" + owner }
-
-// Geometry belongs to the actual status control, not its virtual row's padding.
-// Only the current owner may report it; retained exit controls are ignored.
-func (v *View) trackLiveStatus(element n.Element, key string) {
-	element.DrawOver(func(_ *n.Painter, r n.Rect) {
-		if key == v.liveStatusKey {
-			v.liveStatusBounds = r
-		}
-	})
-}
-
-func (v *View) prepareLiveStatus() {
-	key := ""
-	if turn, active := v.activeConversationTurn(); active {
-		a := v.runningActivity(turn)
-		if !v.Model.Connected || !a.waiting {
-			key = v.statusKey("turn:" + turn.ID)
-			if v.Model.Connected {
-				if a.compaction != "" {
-					key = v.statusKey("item:" + a.compaction)
-				} else if v.runningGroup != "" && v.activityTurn == turn.ID {
-					key = v.statusKey("group:" + v.runningGroup)
-				}
-			}
-		}
-	}
-	if key != v.liveStatusKey {
-		v.liveStatusKey, v.latestActivity = key, false
-	}
-}
-
 // This visual clock preserves progress animation phase across insertions.
 // Elapsed labels independently use the latest accepted input's timestamp.
 type runningProgress struct {
@@ -307,7 +275,6 @@ func (v *View) runningStatus(c *n.Context, t *n.Theme, turn domain.Turn) {
 	}
 	p := v.progressFor(c, turn)
 	row := n.Row(c.Key("running-status")).Gap(6).AlignItems(n.Baseline)
-	v.trackLiveStatus(row, v.statusKey("turn:"+turn.ID))
 	if p.handoff != nil {
 		row.Opacity(p.handoffFraction(c.Now()))
 	} else {
