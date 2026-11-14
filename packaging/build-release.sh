@@ -16,6 +16,10 @@ if [[ "$CODE_SIGN_IDENTITY" == - ]]; then
   echo 'CODE_SIGN_IDENTITY cannot be ad-hoc for a release.' >&2
   exit 1
 fi
+: "${SHIOJI_UPDATE_PUBLIC_KEY:?Missing release environment SHIOJI_UPDATE_PUBLIC_KEY variable}"
+: "${SHIOJI_UPDATE_PRIVATE_KEY:?Missing release environment SHIOJI_UPDATE_PRIVATE_KEY secret}"
+: "${APPLE_TEAM_ID:?Missing release environment APPLE_TEAM_ID variable}"
+env -u GOROOT go run ./cmd/shioji-update check-key --public-key "$SHIOJI_UPDATE_PUBLIC_KEY"
 notary_options=(--keychain-profile "$NOTARY_PROFILE")
 if [[ -n "${NOTARY_KEYCHAIN:-}" ]]; then
   notary_options+=(--keychain "$NOTARY_KEYCHAIN")
@@ -27,10 +31,14 @@ fi
 out=build/release
 app="$out/Shioji.app"
 mkdir -p "$out"
-SHIOJI_APP_PATH="$app" bash packaging/build-dev.sh
+SHIOJI_RELEASE_UPDATES=1 SHIOJI_APP_PATH="$app" bash packaging/build-dev.sh
 signature=$(codesign --display --verbose=4 "$app" 2>&1)
 if ! grep -q '^Authority=Developer ID Application:' <<< "$signature" || ! grep -q 'flags=.*runtime' <<< "$signature"; then
   echo 'Release requires a Developer ID Application signature with hardened runtime.' >&2
+  exit 1
+fi
+if ! grep -q "^TeamIdentifier=$APPLE_TEAM_ID$" <<< "$signature"; then
+  echo 'Release signature does not match the embedded update team.' >&2
   exit 1
 fi
 codesign --verify --deep --strict "$app"
@@ -42,6 +50,13 @@ xcrun notarytool submit "$zip" "${notary_options[@]}" --wait --timeout 30m --out
 python3 packaging/verify-notary.py "$out/app-notary.json"
 xcrun stapler staple "$app"
 xcrun stapler validate "$app"
+update_options=()
+if [[ -n "${SHIOJI_RELEASE_NOTES_FILE:-}" ]]; then
+  update_options+=(--notes-file "$SHIOJI_RELEASE_NOTES_FILE")
+fi
+env -u GOROOT go run ./cmd/shioji-update package --app "$app" --version "$version" --out "$out" \
+  --base-url "https://github.com/senshinya/shioji/releases/download/v$version" \
+  --public-key "$SHIOJI_UPDATE_PUBLIC_KEY" "${update_options[@]}"
 stage=$(mktemp -d "$out/dmg-stage.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
 ditto "$app" "$stage/Shioji.app"

@@ -150,6 +150,8 @@ type View struct {
 	Detail string `json:"detail,omitzero"`
 	// Notes are the release notes.
 	Notes []markdown.Block `json:"-"`
+	// NotesMarkdown preserves source for an app-owned native renderer.
+	NotesMarkdown string `json:"-"`
 	// Bar shows a progress bar with Progress, between 0 and 1, or -1 when
 	// the progress is unknown.
 	Bar      bool    `json:"bar,omitzero"`

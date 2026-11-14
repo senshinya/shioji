@@ -310,12 +310,13 @@ func (t *text) availableView(r *release, automaticDownloads bool) view {
 	name := mygo.App.Name()
 	notes := markdown.Parse(r.notes)
 	return view{
-		Release:  len(notes) > 0,
-		Title:    fmt.Sprintf(t.Available, name),
-		Message:  fmt.Sprintf(t.AvailableMessage, name, r.version, appVersion()),
-		Notes:    notes,
-		Checkbox: true,
-		Checked:  automaticDownloads,
+		Release:       len(notes) > 0,
+		Title:         fmt.Sprintf(t.Available, name),
+		Message:       fmt.Sprintf(t.AvailableMessage, name, r.version, appVersion()),
+		Notes:         notes,
+		NotesMarkdown: r.notes,
+		Checkbox:      true,
+		Checked:       automaticDownloads,
 		Buttons: []button{
 			{Action: actionSkip, Label: t.Skip, Aside: true},
 			{Action: actionLater, Label: t.RemindLater, Cancel: true},

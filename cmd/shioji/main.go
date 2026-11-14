@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/updater"
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
+	"shioji/internal/appupdate"
 	"shioji/internal/permissionflow"
 	"shioji/internal/transport"
 	presentation "shioji/internal/ui"
@@ -66,10 +68,13 @@ func run() error {
 		controller.Run(ctx)
 	}()
 	mygo.App.SetName("Shioji")
+	appupdate.Configure(func(session updater.Session) { presentation.OpenAppUpdate(model, session) })
 	mygo.Theme.SetSource(mygo.ThemeSource(model.Preferences.Appearance))
 	mygo.App.WhenReady(func() {
 		view := presentation.New(model, controller, *state)
 		settings := presentation.NewSettings(view)
+		settings.AppUpdates = &presentation.AppUpdateControls{Enabled: mygo.Updater.Enabled, Check: updater.CheckForUpdates, AutomaticChecks: updater.AutomaticChecks, SetAutomaticChecks: updater.SetAutomaticChecks}
+		offUpdates := updater.OnChange(settings.Invalidate)
 		permissionGuide := permissionflow.New()
 		settings.AuthorizeFullDiskAccess = permissionGuide.Open
 		settings.BackgroundRuntimeAvailable = permissionGuide.RuntimeAvailable
@@ -79,6 +84,7 @@ func run() error {
 		menu := mygo.NewMenu([]*mygo.MenuItem{
 			{Label: "Shioji", Submenu: []*mygo.MenuItem{
 				{Label: "关于 Shioji", Click: func(*mygo.MenuItem, *mygo.Window) { settings.OpenAbout() }},
+				updater.MenuItem(),
 				mygo.Separator(),
 				{Label: "设置…", Accelerator: "Cmd+,", Click: func(*mygo.MenuItem, *mygo.Window) { settings.Show() }},
 				mygo.Separator(), {Role: mygo.RoleServices}, {Role: mygo.RoleHide}, {Role: mygo.RoleHideOthers}, {Role: mygo.RoleUnhide}, mygo.Separator(), {Role: mygo.RoleQuit},
@@ -99,6 +105,7 @@ func run() error {
 				return
 			}
 			permissionGuide.Close()
+			offUpdates()
 		})
 		window.OnClosed(func() {
 			view.CloseTransient()

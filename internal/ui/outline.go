@@ -13,6 +13,9 @@ type conversationOutline struct {
 	Hover, Current int
 	Since          time.Time
 	Anchor         n.Rect
+	Entry          string
+	Count          int
+	Height         float32
 }
 type outlineEntry struct {
 	ID, Prompt, Reply string
@@ -55,54 +58,61 @@ func (v *View) conversationOutline(c *n.Context, t *n.Theme, state *n.ListState,
 	height := min(float32(len(entries)*10+16), min(640, bounds.H*.7))
 	hovered := -1
 	outline.List.Key = func(i int) any { return entries[i].ID }
-	track := n.List(c.Key("conversation-outline"), &outline.List, len(entries), func(i int) {
-		entry := entries[i]
-		// Keep the line pitch while making the existing end padding part
-		// of the edge buttons, so approaching from below keeps the last hit.
-		var top, bottom float32
-		if i == 0 {
-			top = 8
-		}
-		if i == len(entries)-1 {
-			bottom = 8
-		}
-		button := n.ButtonBase(c.Key(entry.ID)).KeepFocus().Width(36).Height(10+top+bottom).Padding(top, 0, bottom, 0).Justify(n.Start).Label(fmt.Sprintf("跳转到消息 %d", i+1))
-		if button.Hovered() {
-			hovered = i
-			outline.Anchor = button.Bounds()
-			outline.Anchor.Y += top
-			outline.Anchor.H = 10
-		}
-		length := float32(6)
-		if outline.Hover >= 0 {
-			widths := [...]float32{26, 20, 14, 10}
-			if distance := abs(i - outline.Hover); distance < len(widths) {
-				length = widths[distance]
-			}
-		}
-		opacity := float32(.4)
-		color := t.TextMuted
-		if i == current && outline.Hover < 0 {
-			opacity = .6
-			color = t.Text
-		}
-		if i == outline.Hover {
-			opacity = 1
-			color = t.Text
-		}
-		button.Children(func() {
-			n.Column(c).Width(button.AnimateTo("tick-width", length, motionAnimation(c, 160*time.Millisecond))).Height(2).Background(color.Alpha(opacity))
-		})
-		if button.Clicked() {
-			hadFocus := v.composerHadFocus
-			state.KeepRow(entry.Row, 80)
-			v.focusComposer = hadFocus
-		}
-	}).Absolute().Left(16).Top((bounds.H - height) / 2).Width(36).Height(height).Scrollbars(false).Label("对话导航")
-	if current != outline.Current && !track.Hovered() {
-		outline.List.ScrollIntoView(current)
-		outline.Current = current
+	track := n.Column(c.Key("conversation-outline-rail")).Absolute().Left(16).Top((bounds.H - height) / 2).Width(36).Height(height).Label("对话导航")
+	// Queue the target before building virtual rows, using their stable pitch.
+	// Centering gives measurement corrections room on both sides of the tick.
+	// Keep manual rail browsing independent; catch up once the pointer leaves.
+	if !track.Hovered() && (current != outline.Current || entries[current].ID != outline.Entry || len(entries) != outline.Count || height != outline.Height) {
+		outline.List.ScrollTo(current, n.Center)
+		outline.Current, outline.Entry = current, entries[current].ID
+		outline.Count, outline.Height = len(entries), height
 	}
+	track.Children(func() {
+		n.List(c.Key("conversation-outline"), &outline.List, len(entries), func(i int) {
+			entry := entries[i]
+			// Keep the line pitch while making the existing end padding part
+			// of the edge buttons, so approaching from below keeps the last hit.
+			var top, bottom float32
+			if i == 0 {
+				top = 8
+			}
+			if i == len(entries)-1 {
+				bottom = 8
+			}
+			button := n.ButtonBase(c.Key(entry.ID)).KeepFocus().Width(36).Height(10+top+bottom).Padding(top, 0, bottom, 0).Justify(n.Start).Label(fmt.Sprintf("跳转到消息 %d", i+1))
+			if button.Hovered() {
+				hovered = i
+				outline.Anchor = button.Bounds()
+				outline.Anchor.Y += top
+				outline.Anchor.H = 10
+			}
+			length := float32(6)
+			if outline.Hover >= 0 {
+				widths := [...]float32{26, 20, 14, 10}
+				if distance := abs(i - outline.Hover); distance < len(widths) {
+					length = widths[distance]
+				}
+			}
+			opacity := float32(.4)
+			color := t.TextMuted
+			if i == current && outline.Hover < 0 {
+				opacity = .6
+				color = t.Text
+			}
+			if i == outline.Hover {
+				opacity = 1
+				color = t.Text
+			}
+			button.Children(func() {
+				n.Column(c).Width(button.AnimateTo("tick-width", length, motionAnimation(c, 160*time.Millisecond))).Height(2).Background(color.Alpha(opacity))
+			})
+			if button.Clicked() {
+				hadFocus := v.composerHadFocus
+				state.KeepRow(entry.Row, 80)
+				v.focusComposer = hadFocus
+			}
+		}).Fill().Scrollbars(false)
+	})
 	if hovered != outline.Hover {
 		outline.Hover = hovered
 		outline.Since = c.Now()

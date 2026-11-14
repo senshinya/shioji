@@ -12,7 +12,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("part", choices=["certificate", "notarization"])
+parser.add_argument("part", choices=["certificate", "notarization", "updates"])
 parser.add_argument("--repo", default="senshinya/shioji")
 parser.add_argument("--identity", help="Public SHA-1 fingerprint, only needed if more than one Developer ID identity exists")
 args = parser.parse_args()
@@ -27,7 +27,12 @@ def secret(name, value):
     gh("secret", "set", name, "--repo", args.repo, "--env", "release", value=value)
     print("Configured encrypted release secret:", name)
 
-gh("api", "--method", "PUT", "repos/" + args.repo + "/environments/release", "--silent")
+if args.part == "updates":
+    # Reuse the existing release environment without resetting its protection
+    # rules while adding update credentials.
+    gh("api", "repos/" + args.repo + "/environments/release", "--silent")
+else:
+    gh("api", "--method", "PUT", "repos/" + args.repo + "/environments/release", "--silent")
 if args.part == "certificate":
     identities = subprocess.check_output(["security", "find-identity", "-v", "-p", "codesigning"], text=True)
     matches = re.findall(r'([0-9A-F]{40}) "Developer ID Application:[^\n]+\(([A-Z0-9]{10})\)"', identities)
@@ -53,7 +58,7 @@ if args.part == "certificate":
         secret("P12_PASSWORD", password.encode())
         gh("variable", "set", "APPLE_TEAM_ID", "--repo", args.repo, "--env", "release", "--body", team)
     print("Temporary export removed. The original keychain identity was left intact.")
-else:
+elif args.part == "notarization":
     print("Use the Apple Account enrolled in your Developer Program.")
     print("Generate an app-specific password at https://account.apple.com/account/manage — never enter your normal Apple password here.")
     apple_id = input("Apple ID email: ").strip()
@@ -63,3 +68,9 @@ else:
     secret("APPLE_ID", apple_id.encode())
     secret("APPLE_APP_SPECIFIC_PASSWORD", password.encode())
     print("Notarization credentials configured; the release workflow validates them with Apple before building.")
+else:
+    from update_signing import configure_update_signing
+    directory = Path.home() / "Library/Application Support/Shioji/Release Signing"
+    configure_update_signing(directory, args.repo, gh)
+    print("Update signing configured. Back up this directory securely:", directory)
+    print("Future runs reuse this identity. Never regenerate it after distributing the App.")

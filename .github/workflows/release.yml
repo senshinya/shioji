@@ -21,6 +21,8 @@ jobs:
       contents: write
     env:
       RELEASE_TAG: ${{ github.event.release.tag_name }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      SHIOJI_UPDATE_PUBLIC_KEY: ${{ vars.SHIOJI_UPDATE_PUBLIC_KEY }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -53,6 +55,7 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_*.py'
           bash scripts/scan-secrets.sh
           go test ./...
+          (cd third_party/mygo && go test . ./plugins/updater ./plugins/updater/native)
       - name: Import signing identity and notarization credentials
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
@@ -62,7 +65,18 @@ jobs:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
         run: bash packaging/ci-signing.sh
       - name: Build, sign, notarize and package
-        run: bash packaging/build-release.sh
+        env:
+          SHIOJI_UPDATE_PRIVATE_KEY: ${{ secrets.SHIOJI_UPDATE_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ '${{ github.event_name }}' == release ]]; then
+            mkdir -p build/release
+            gh release view "$RELEASE_TAG" --json body --jq .body > build/release/release-notes.md
+            export SHIOJI_RELEASE_NOTES_FILE="$PWD/build/release/release-notes.md"
+          fi
+          bash packaging/build-release.sh
       - name: Upload validation DMG
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -71,18 +85,19 @@ jobs:
           path: |
             build/release/*.dmg
             build/release/*.dmg.sha256
+            build/release/*-darwin-arm64-*.tar.gz
+            build/release/update-darwin-arm64.json
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
-      - name: Attach DMG and checksum to release
+      - name: Attach release assets and publish update manifest last
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          version=$(tr -d '\r\n' < VERSION)
-          gh release upload "$RELEASE_TAG" "build/release/Shioji-$version-macos-arm64.dmg" "build/release/Shioji-$version-macos-arm64.dmg.sha256" --clobber
+          python3 scripts/publish-app-update.py --repo "$GH_REPO" --tag "$RELEASE_TAG" --directory build/release
       - name: Remove temporary signing material
         if: always()
         run: |

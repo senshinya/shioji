@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"shioji/internal/app"
 	"shioji/internal/domain"
@@ -133,8 +134,14 @@ func (v *View) readClientStorage(s *deviceStorageState, clean bool) {
 	s.request++
 	request := s.request
 	cache := v.displayCache()
+	linkedDirectory := v.linkedFileDirectory()
 	v.Controller.AttachmentTask(func() app.Update {
 		report, err := cache.Storage(clean)
+		linked, linkedErr := app.LinkedFileStorage(linkedDirectory, clean)
+		report.Usage.PreviewBytes += linked.Usage.PreviewBytes
+		report.FreedBytes += linked.FreedBytes
+		report.Failures = append(report.Failures, linked.Failures...)
+		err = errors.Join(err, linkedErr)
 		return func(*app.Model) {
 			if s.request != request {
 				return

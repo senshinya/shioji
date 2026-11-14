@@ -109,8 +109,12 @@ func (v *View) retireSSHSetupTerminal() {
 	}
 }
 
-// CloseTransient closes only UI-owned setup processes when the window exits.
+// CloseTransient releases UI-owned work when the window exits.
 func (v *View) CloseTransient() {
+	v.cancelFileLink()
+	if v.secondary != nil {
+		v.secondary.CloseTransient()
+	}
 	if v.sshTerminal != nil {
 		v.sshTerminal.close()
 		v.sshTerminal = nil

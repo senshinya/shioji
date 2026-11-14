@@ -86,6 +86,9 @@ func (v *View) navigateSession(id, workspace string) {
 }
 func (v *View) prepareSecondary() {
 	m := v.Model
+	if v.secondary != nil && v.secondary.Model.SessionID != m.SecondarySessionID {
+		v.secondary.cancelFileLink()
+	}
 	if m.SecondarySessionID == m.SessionID {
 		m.SecondarySessionID = ""
 		m.FocusSecondary = false
@@ -157,6 +160,7 @@ func (v *View) parallelConversation(c *n.Context, t *n.Theme) {
 		focusVersion := v.paneFocusVersion
 		col.Children(func() {
 			if available {
+				pane.bindMarkdownLinks(c, &pane.md)
 				pane.conversation(c.Key("right-conversation"), t)
 			} else {
 				v.secondaryPlaceholder(c, t)
@@ -201,6 +205,7 @@ func (v *View) parallelConversation(c *n.Context, t *n.Theme) {
 		pane.workspaceEditor = nil
 	}
 	pane.managementDialogs(c.Key("secondary-dialogs"), t)
+	pane.fileLinkDialog(c.Key("secondary-file-link-dialog"), t)
 	pane.attachmentDialog(c.Key("secondary-attachment-dialog"), t)
 }
 func (v *View) updateVisibleSessions() {

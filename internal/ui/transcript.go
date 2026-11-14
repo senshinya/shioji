@@ -214,7 +214,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		disclosure := v.Model.ToolDisclosure(key)
 		if collapseHistory {
 			disclosure = disclosure.OpenHistory()
-			if v.Model.Connected && activeTurn != "" && item.TurnID == activeTurn && latestTool < end && executing && !laterContent[end] {
+			if !v.Model.Preferences.CollapseLatestTools && v.Model.Connected && activeTurn != "" && item.TurnID == activeTurn && latestTool < end && executing && !laterContent[end] {
 				disclosure = app.ToolOpenedBeforeProse
 			}
 			v.Model.SetToolDisclosure(key, disclosure)

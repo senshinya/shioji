@@ -431,6 +431,12 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 			return nil, err
 		}
 		return s.listSkills(q)
+	case "file.resolve", "file.read":
+		q, err := decode[protocol.FileResourceQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.fileResourceCommand(method, q)
 	case "file.search":
 		q, err := decode[protocol.FileSearchQuery](body)
 		if err != nil {

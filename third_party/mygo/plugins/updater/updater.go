@@ -80,6 +80,29 @@ var Plugin = New(Options{})
 // New returns the plugin with options. Use one of them only.
 func New(opts Options) mygo.Plugin { return newPlugin(opts, openWindow) }
 
+// Session and Snapshot let an app draw the update flow with its own native
+// design system while retaining this package's scheduling and lifecycle.
+type Session = frontend.Session
+type Snapshot = frontend.View
+type Action = frontend.Action
+type Button = frontend.Button
+type WindowTexts = frontend.Texts
+
+const (
+	ActionOK       = frontend.OK
+	ActionCancel   = frontend.Cancel
+	ActionSkip     = frontend.Skip
+	ActionLater    = frontend.Later
+	ActionInstall  = frontend.Install
+	ActionRelaunch = frontend.Relaunch
+)
+
+// NewWithWindow uses an app-owned native window. open must create the window
+// with Session.NewWindow and cancel/respond using that same session.
+func NewWithWindow(opts Options, open func(Session)) mygo.Plugin {
+	return newPlugin(opts, func(s *session) { open(s) })
+}
+
 func init() {
 	// Package native shows the window in native UI.
 	frontend.Plugin = func(opts any, open frontend.Open) mygo.Plugin {
@@ -135,11 +158,15 @@ func AutomaticChecks() bool {
 }
 
 // SetAutomaticChecks turns checking for updates in the background on or
-// off, for a preference of the app.
-func SetAutomaticChecks(on bool) {
+// off, for a preference of the app. It reports persistence failures and
+// preserves the previous choice when saving fails.
+func SetAutomaticChecks(on bool) error {
 	u := used()
-	u.update(func(s *state) { s.AutomaticChecks = &on })
+	if err := u.update(func(s *state) { s.AutomaticChecks = &on }); err != nil {
+		return err
+	}
 	u.schedule()
+	return nil
 }
 
 // AutomaticDownloads reports whether updates found in the background are
@@ -220,6 +247,8 @@ type release struct {
 }
 
 func checkRelease(ctx context.Context) (*release, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	up, err := mygo.Updater.Check(ctx)
 	if err != nil || up == nil {
 		return nil, err
@@ -337,13 +366,17 @@ func (u *updater) load() {
 
 // update changes the state, saves it, and calls the functions of OnChange
 // when it changed.
-func (u *updater) update(fn func(*state)) {
+func (u *updater) update(fn func(*state)) error {
 	u.load()
 	u.mu.Lock()
 	before := u.state
 	beforeAvailable := u.available
 	fn(&u.state)
-	u.save()
+	if err := u.save(); err != nil {
+		u.state, u.available = before, beforeAvailable
+		u.mu.Unlock()
+		return err
+	}
 	var changes []*func()
 	if !u.state.same(before) || u.available != beforeAvailable {
 		changes = slices.Clone(u.changes)
@@ -357,20 +390,26 @@ func (u *updater) update(fn func(*state)) {
 			}
 		})
 	}
+	return nil
 }
 
 // save writes the state file. u.mu is held.
-func (u *updater) save() {
+func (u *updater) save() error {
 	if u.file == "" {
-		return
+		return errors.New("updater preferences directory is unavailable")
 	}
 	data, err := json.Marshal(u.state, json.Deterministic(true))
 	if err != nil {
-		return
+		return err
 	}
-	if err := os.WriteFile(u.file+".tmp", data, 0o644); err == nil {
-		_ = os.Rename(u.file+".tmp", u.file)
+	if err := os.MkdirAll(filepath.Dir(u.file), 0700); err != nil {
+		return err
 	}
+	if err := os.WriteFile(u.file+".tmp", data, 0o600); err != nil {
+		return err
+	}
+	defer os.Remove(u.file + ".tmp")
+	return os.Rename(u.file+".tmp", u.file)
 }
 
 func (u *updater) onChange(fn func()) (off func()) {
@@ -546,21 +585,35 @@ func (u *updater) run(s *session) {
 			return
 		}
 	}
-	s.set(t.availableView(r, automatic))
-	s.show()
-	resp := s.wait()
-	if resp.action == actionClose {
-		return
-	}
-	u.update(func(st *state) {
-		st.AutomaticDownloads = resp.automaticDownloads
-		if resp.action == actionSkip {
-			st.SkippedVersion = r.version
-			u.available = ""
+	u.offerRelease(s, r, automatic)
+}
+
+func (u *updater) offerRelease(s *session, r *release, automatic bool) {
+	for {
+		s.set(s.t.availableView(r, automatic))
+		s.show()
+		resp := s.wait()
+		if resp.action == actionClose {
+			return
 		}
-	})
-	if resp.action == actionInstall {
-		u.install(s, r)
+		automatic = resp.automaticDownloads
+		if err := u.update(func(st *state) {
+			st.AutomaticDownloads = automatic
+			if resp.action == actionSkip {
+				st.SkippedVersion = r.version
+				u.available = ""
+			}
+		}); err != nil {
+			s.set(s.t.errorView(s.t.SaveError, err))
+			if s.wait().action == actionClose {
+				return
+			}
+			continue
+		}
+		if resp.action == actionInstall {
+			u.install(s, r)
+		}
+		return
 	}
 }
 

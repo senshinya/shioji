@@ -17,8 +17,17 @@ if [[ "$identity" != - ]]; then
   sign_options+=(--options runtime --timestamp)
 fi
 worker_build_time=$(date -u +%s)
+app_ldflags="-X shioji/internal/runtimebuild.BuiltAt=$worker_build_time"
+# Development bundles have no feed or key and never check for updates.
+if [[ "${SHIOJI_RELEASE_UPDATES:-0}" == 1 ]]; then
+  : "${SHIOJI_UPDATE_PUBLIC_KEY:?Missing update public key}"
+  : "${APPLE_TEAM_ID:?Missing Developer ID team}"
+  [[ "$SHIOJI_UPDATE_PUBLIC_KEY" =~ ^[A-Za-z0-9+/]{43}=$ ]] || { echo 'Invalid update public key.' >&2; exit 1; }
+  [[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || { echo 'Invalid Developer ID team.' >&2; exit 1; }
+  app_ldflags+=" -X github.com/egoist/mygo.production=1 -X github.com/egoist/mygo.packageUpdateFeed=https://github.com/senshinya/shioji/releases/latest/download/update-darwin-arm64.json -X github.com/egoist/mygo.packageUpdateKey=$SHIOJI_UPDATE_PUBLIC_KEY -X shioji/internal/appupdate.TeamID=$APPLE_TEAM_ID"
+fi
 mkdir -p "$app/Contents/MacOS"
-env -u GOROOT CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-X shioji/internal/runtimebuild.BuiltAt=$worker_build_time" -o "$app/Contents/MacOS/shioji" ./cmd/shioji
+env -u GOROOT CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$app_ldflags" -o "$app/Contents/MacOS/shioji" ./cmd/shioji
 env -u GOROOT CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-X shioji/internal/runtimebuild.BuiltAt=$worker_build_time" -o "$app/Contents/MacOS/shioji-worker" ./cmd/shioji-worker
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

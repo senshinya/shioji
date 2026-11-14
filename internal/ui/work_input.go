@@ -163,14 +163,17 @@ func (v *View) workInput(c *n.Context, t *n.Theme, w domain.WorkActivity, u *wor
 		frame.Height(height)
 		editing := s.open || height > 28.5
 		frame.Children(func() {
-			if !editing {
-				label := "发送消息"
-				if w.CanContinue && !w.Active() {
-					label = "继续执行"
+			label, placeholder := "发送消息", "补充指令…"
+			if !w.Active() {
+				placeholder = "继续执行"
+				if w.CanContinue {
+					label = placeholder
 				}
-				trigger := n.ButtonBase(c.Key("open-child-input")).FillWidth().Height(28).PaddingX(8).Radius(8).Justify(n.Start).Label(label)
+			}
+			var field n.Element
+			if !editing {
+				trigger := n.ButtonBase(c.Key("open-child-input")).FillWidth().Height(26).PaddingX(8).Radius(8).Justify(n.Start).Label(label)
 				trigger.Children(func() {
-					n.Text(c, label).FontSize(12).TextColor(t.TextMuted)
 					n.Spacer(c).Grow(1)
 					n.Icon(c, arrow).Size(14, 14).TextColor(t.TextMuted)
 				})
@@ -178,82 +181,98 @@ func (v *View) workInput(c *n.Context, t *n.Theme, w domain.WorkActivity, u *wor
 					s.open = true
 					s.focus = true
 				}
-				return
-			}
-			content := n.Column(c.Key("child-editor-content")).Absolute().Left(0).Right(0).Top(0).Padding(8).Gap(0)
-			n.Inert(content, !s.open)
-			invalidate := c.Services().Invalidate
-			content.DrawOver(func(_ *n.Painter, r n.Rect) {
-				if s.height != r.H {
-					s.height = r.H
-					invalidate()
-				}
-			})
-			content.Children(func() {
-				field := n.TextAreaBase(c.Key("child-message"), &s.draft).FillWidth().Lines(1, 3).MinHeight(32).MaxHeight(72).Padding(0, 2).FontSize(12).FixedLineHeight(20).Label("子 Agent 消息输入").Placeholder("补充指令…").PlaceholderColor(subtle(t)).Disabled(s.locked())
-				if !w.Active() {
-					field.Placeholder("继续这个任务…")
-				}
-				if s.focus && s.open && !s.locked() {
-					field.Focus()
-					s.focus = false
-				}
-				field.OnTextKey(func(k n.TextKey) bool {
-					if k.Key == n.KeyEscape {
-						s.open = false
-						return true
+			} else {
+				content := n.Column(c.Key("child-editor-content")).Absolute().Left(0).Right(0).Top(0).Padding(8).Gap(0)
+				n.Inert(content, !s.open)
+				invalidate := c.Services().Invalidate
+				content.DrawOver(func(_ *n.Painter, r n.Rect) {
+					if s.height != r.H {
+						s.height = r.H
+						invalidate()
 					}
-					if k.Key == n.KeyEnter {
-						bind := composerBinding(k.Mods)
-						if bind == v.Model.Preferences.Shortcuts.Newline {
-							return false
-						}
-						if bind == v.Model.Preferences.Shortcuts.Send || bind == v.Model.Preferences.Shortcuts.Steer {
-							s.draft = k.Text()
-							v.sendChildInput(w, u, false)
+				})
+				content.Children(func() {
+					field = n.TextAreaBase(c.Key("child-message"), &s.draft).FillWidth().Lines(1, 3).MinHeight(32).MaxHeight(72).Padding(0, 2).FontSize(12).FixedLineHeight(20).Label("子 Agent 消息输入").Placeholder(placeholder).PlaceholderColor(n.Transparent).Disabled(s.locked())
+					if s.focus && s.open && !s.locked() {
+						field.Focus()
+						s.focus = false
+					}
+					field.OnTextKey(func(k n.TextKey) bool {
+						if k.Key == n.KeyEscape {
+							s.open = false
 							return true
 						}
-					}
-					return false
-				})
-				n.Row(c.Key("child-input-controls")).FillWidth().Height(28).Gap(6).AlignItems(n.Center).Children(func() {
-					label := "追加指令"
-					if !w.Active() {
-						label = "继续执行"
-					}
-					if s.phase == workInputSending {
-						label = "正在发送"
-					} else if s.phase == workInputChecking {
-						label = "正在查询"
-					} else if s.phase == workInputUnknown {
-						label = "尚未确认"
-					} else if !v.Model.Connected {
-						label = "设备已断开"
-					}
-					if s.phase == workInputSending || s.phase == workInputChecking {
-						n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
-							serviceSpinner(c, label, n.Font{Family: t.Font, Size: 11}, t.TextMuted)
+						if k.Key == n.KeyEnter {
+							bind := composerBinding(k.Mods)
+							if bind == v.Model.Preferences.Shortcuts.Newline {
+								return false
+							}
+							if bind == v.Model.Preferences.Shortcuts.Send || bind == v.Model.Preferences.Shortcuts.Steer {
+								s.draft = k.Text()
+								v.sendChildInput(w, u, false)
+								return true
+							}
+						}
+						return false
+					})
+					n.Row(c.Key("child-input-controls")).FillWidth().Height(28).Gap(6).AlignItems(n.Center).Children(func() {
+						label := "追加指令"
+						if !w.Active() {
+							label = ""
+						}
+						if s.phase == workInputSending {
+							label = "正在发送"
+						} else if s.phase == workInputChecking {
+							label = "正在查询"
+						} else if s.phase == workInputUnknown {
+							label = "尚未确认"
+						} else if !v.Model.Connected {
+							label = "设备已断开"
+						}
+						if s.phase == workInputSending || s.phase == workInputChecking {
+							n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
+								serviceSpinner(c, label, n.Font{Family: t.Font, Size: 11}, t.TextMuted)
+								n.Text(c, label).FontSize(11).TextColor(t.TextMuted)
+							})
+						} else if label != "" {
 							n.Text(c, label).FontSize(11).TextColor(t.TextMuted)
-						})
-					} else {
-						n.Text(c, label).FontSize(11).TextColor(t.TextMuted)
-					}
-					n.Spacer(c).Grow(1)
-					if control(c.Key("close-child-input")).Height(24).PaddingX(4).Label("收起子 Agent 输入").Children(func() { n.Text(c, "收起").FontSize(11).TextColor(t.TextMuted) }).Clicked() {
-						s.open = false
-					}
-					disabled := s.locked() || !available || !v.Model.Connected || v.Controller == nil || strings.TrimSpace(s.draft) == ""
-					fill := t.Accent
-					if disabled {
-						fill = subtle(t)
-					}
-					send := controlFeedback(c, n.ButtonBase(c.Key("send-child-input")), 14, true).Size(28, 28).Radius(14).Background(fill).TextColor(t.AccentText).Disabled(disabled).Label("发送给子 Agent")
-					send.Children(func() { n.Icon(c, arrow).Size(28.0*14/24, 28.0*14/24) })
-					if send.Clicked() {
-						v.sendChildInput(w, u, false)
-					}
+						}
+						n.Spacer(c).Grow(1)
+						if control(c.Key("close-child-input")).Height(24).PaddingX(4).Label("收起子 Agent 输入").Children(func() { n.Text(c, "收起").FontSize(11).TextColor(t.TextMuted) }).Clicked() {
+							s.open = false
+						}
+						disabled := s.locked() || !available || !v.Model.Connected || v.Controller == nil || strings.TrimSpace(s.draft) == ""
+						fill := t.Accent
+						if disabled {
+							fill = subtle(t)
+						}
+						send := controlFeedback(c, n.ButtonBase(c.Key("send-child-input")), 14, true).Size(28, 28).Radius(14).Background(fill).TextColor(t.AccentText).Disabled(disabled).Label("发送给子 Agent")
+						send.Children(func() { n.Icon(c, arrow).Size(28.0*14/24, 28.0*14/24) })
+						if send.Clicked() {
+							v.sendChildInput(w, u, false)
+						}
+					})
 				})
-			})
+			}
+			// The same text stays mounted from the collapsed affordance to the
+			// native field's placeholder, so neither endpoint swaps or duplicates it.
+			promptText := label
+			if editing {
+				promptText = placeholder
+			}
+			prompt := n.Text(c.Key("child-input-prompt"), promptText).Absolute().Right(32).Height(20).SingleLine().Font(t.Font).FontSize(12).FixedLineHeight(20).PassThrough().Role(n.RoleNone).Label("子 Agent 输入提示")
+			font := n.Font{Family: t.Font, Size: 12, Weight: 400}
+			// Center ink in the bordered 26-DIP interior; the open position
+			// matches the editor's 8-DIP inset and 2-DIP horizontal text padding.
+			x, y := float32(8), (float32(28)-2-20)/2+inlineCenterOffset(label, font)
+			color := t.TextMuted
+			if s.open {
+				x, y, color = 10, 8, subtle(t)
+			}
+			prompt.Left(prompt.AnimateTo("x", x, motionAnimation(c, 240*time.Millisecond))).Top(prompt.AnimateTo("y", y, motionAnimation(c, 240*time.Millisecond))).TextColor(prompt.AnimateColor("color", color, motionAnimation(c, 240*time.Millisecond)))
+			if editing && (s.draft != "" || field.Composing()) {
+				prompt.Opacity(0)
+			}
 		})
 		feedback := n.Column(c.Key("child-input-feedback")).FillWidth().Shrink(0).Clip()
 		animatedContentHeight(c, feedback, s.error != "" || s.phase == workInputUnknown, 180*time.Millisecond, func() float32 {

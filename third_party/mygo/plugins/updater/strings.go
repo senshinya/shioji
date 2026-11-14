@@ -43,6 +43,7 @@ type Strings struct {
 	Error        string // "Update Error!"
 	CheckError   string // "An error occurred while checking for updates…"
 	InstallError string // "An error occurred while installing the update…"
+	SaveError    string // "Could not save update preferences. Please try again."
 
 	// Available: the app's name.
 	Available string

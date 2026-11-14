@@ -1,6 +1,15 @@
 # Shioji 发布
 
-当前版本：`v0.0.1`。`VERSION` 保存不带 `v` 的数字版本；两个 App bundle 的版本均由构建脚本写入。`dev.shioji.app`、`dev.shioji.runtime` 与现有服务身份保持不变。
+当前版本：`v0.1.0`。`VERSION` 保存不带 `v` 的数字版本；两个 App bundle 的版本均由构建脚本写入。`dev.shioji.app`、`dev.shioji.runtime` 与现有服务身份保持不变。
+
+## v0.1.0 更新
+
+- 原生 App 更新入口、签名更新包、发布清单与 GitHub 自动发布流程。
+- 会话所属设备的文件链接下载、缓存与图片/代码预览，以及媒体和文档的默认应用打开。
+- 最新工具调用默认展开设置、命令结果收起动画及两行命令标题。
+- 插入消息间距、消息导航自动跟随、子 Agent 侧栏缩放与“继续执行”输入体验。
+
+v0.0.1 需要手动安装本版，此后正式版可通过 App 内更新。远程执行服务仍需明确升级。
 
 ## 自动发布
 
@@ -9,7 +18,7 @@ GitHub 仓库：`senshinya/shioji`，本地 remote 为 `upstream`。`origin` 保
 - CI 在 push / pull request 上运行 Apple Silicon macOS 测试、设计冻结校验、第三方许可校验、源码及完整 Git 历史凭据扫描，并构建开发包。Codex CLI 0.167.0 仅作为 CI 的集成测试依赖安装，不包含在分发包中。
 - `.github/workflows/release.yml` 在 GitHub Release **published** 时触发。只推 tag 不触发生产发布。手动触发会构建所选 commit 的版本，上传到该次 Actions 的临时构建附件；不创建或修改 GitHub Release。
 - Tag 必须与 `VERSION` 对应。生产构建强制要求 Developer ID Application 签名、hardened runtime、Apple 接受公证以及 stapled tickets；没有降级到 ad-hoc / 未公证包的路径。
-- 先公证 App，再生成、公证并 staple DMG。仅将 `Shioji-0.0.1-macos-arm64.dmg` 与 `.dmg.sha256` 上传到原 Release。不创建额外 Release。
+- 先公证并 staple App，再生成全量自动更新归档，然后生成、公证并 staple DMG。正式版本将 DMG、校验文件与 `Shioji-<版本>-darwin-arm64-<SHA256>.tar.gz` 上传到原 Release，全部成功后最后上传 `update-darwin-arm64.json`。归档按内容摘要命名，同一 Release 重跑也保留旧清单对应的归档。不创建额外 Release。预发行仅上传 DMG 与校验文件，不向正式客户端发布更新清单。
 - 两处 worker 使用同一份已签名二进制，打包后 `cmp` 核验，避免安全时间戳引起相同版本的 BuildID 不同。
 
 ## 首次配置 GitHub：只需在这台 Mac 的终端执行
@@ -40,12 +49,30 @@ python3 scripts/configure-github-release.py notarization
 
 全部配置完成、CI 通过后，再在 GitHub 的 Releases 页面发布与 `VERSION` 匹配的 Release。不要提前发布一个缺少签名凭据的正式版本。
 
+### 3. 配置 App 自动更新签名（新增，一次即可）
+
+已有证书和公证配置无需重复操作。在这台 Mac 的终端执行：
+
+```sh
+python3 scripts/configure-github-release.py updates
+```
+
+脚本在 `~/Library/Application Support/Shioji/Release Signing/` 生成独立的 Ed25519 密钥对，私钥权限为 0600；私钥通过标准输入写入 GitHub `release` 环境的 `SHIOJI_UPDATE_PRIVATE_KEY` Secret，公钥写入 `SHIOJI_UPDATE_PUBLIC_KEY` variable。不会打印私钥或把它写入源码。重复执行复用原密钥，并核对 GitHub 已有的公钥；换电脑或丢失本地密钥时，会要求恢复原备份，不生成新身份覆盖远端。请安全备份该目录。**分发首个支持更新的 App 后不得重新生成密钥**，否则已安装客户端无法接受新签名。
+
+首次需要手动安装带更新能力的正式版。之后递增 `VERSION`、使 Release tag 与之匹配，在 GitHub 发布新正式 Release，等待 Release workflow 成功上传清单，客户端便能检查到更新。只推 tag、草稿、失败构建和 Actions 临时附件不会发布更新。更新说明使用该 Release 的正文。代码需要先进入 GitHub 发布所选 tag 对应的提交；仅推送另一个 Git remote 不会更新 GitHub 工作流。
+
+App 菜单和设置「关于」提供检查更新，自动检查默认开启、通常每日一次；下载后由用户选择稍后或立即重启。开发包无更新源；不可写的安装位置无法自动替换。更新包在 HTTPS 下载和 Ed25519 验证后，还核对 Developer ID team、Bundle ID、版本、Apple Silicon 架构与最低 macOS 版本。App 退出仍可被草稿保存失败阻止。
+
+更新 GUI 不停止独立 worker 或 Tailnet 服务；本机 worker 继续按 `docs/local-worker-updates.md` 的安全空闲准入升级，远程 worker 仍需明确操作。首版不发布增量包，也不自动降级。
+
 ## 本机构建
 
 ```sh
 bash packaging/build-dev.sh
 # 指定本机已有 Developer ID identity 和 notarytool profile 后：
-CODE_SIGN_IDENTITY='<证书指纹>' NOTARY_PROFILE='<本机公证配置名称>' RELEASE_TAG=v0.0.1 bash packaging/build-release.sh
+# 另需 APPLE_TEAM_ID、SHIOJI_UPDATE_PUBLIC_KEY 与 SHIOJI_UPDATE_PRIVATE_KEY；
+# 私钥从安全文件/CI Secret 注入环境，不要写在命令参数或 shell 历史中。
+CODE_SIGN_IDENTITY='<证书指纹>' NOTARY_PROFILE='<本机公证配置名称>' RELEASE_TAG=v0.1.0 bash packaging/build-release.sh
 ```
 
 产物位于 `build/release/`。构建不会启动或替换用户正在运行的 GUI、worker 或 Tailnet 节点。

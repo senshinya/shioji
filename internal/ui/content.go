@@ -185,6 +185,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 						})
 					case "markdown":
 						v.activityMarkdown.Theme = v.md.Theme
+						v.bindMarkdownLinks(c, &v.activityMarkdown)
 						v.activityMarkdown.ShareSelection = true
 						v.activityMarkdown.WrapCode = true
 						v.activityMarkdown.Reveal = &markdown.Reveal{Unit: markdown.ByCharacter, Fade: 180 * time.Millisecond, Smooth: true}

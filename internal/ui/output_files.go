@@ -52,6 +52,7 @@ func (v *View) saveAttachment(p *attachmentPreview) {
 	p.Saving, p.SaveError = true, ""
 	target, targetErr := v.Model.AttachmentTarget(v.Controller.Directory, p.WorkspaceID)
 	store, parent := v.staging(), v.nativeWindow
+	localPath := p.LocalPath
 	cache := v.displayCache()
 	v.Controller.AttachmentTask(func() app.Update {
 		name := p.Attachment.Name
@@ -59,7 +60,9 @@ func (v *View) saveAttachment(p *attachmentPreview) {
 			name += map[string]string{"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif"}[p.Attachment.MIME]
 		}
 		destination, err := mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: parent, Title: "另存到本机", DefaultPath: name, CreateDirectories: true})
-		if err == nil && destination != "" {
+		if err == nil && destination != "" && localPath != "" {
+			err = attachments.ExportFile(p.Attachment, localPath, destination)
+		} else if err == nil && destination != "" {
 			err = targetErr
 			if err == nil {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)

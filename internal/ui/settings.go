@@ -30,6 +30,7 @@ var settingsCategories = []settingsCategory{{"appearance", "外观", settingsSun
 // Settings shares the client model and writer with the conversation window.
 // It owns only its own navigation, popup and native-window presentation state.
 type Settings struct {
+	AppUpdates                 *AppUpdateControls
 	AuthorizeFullDiskAccess    func(background bool) error
 	BackgroundRuntimeAvailable func() bool
 	services                   n.Services
@@ -277,6 +278,16 @@ func (s *Settings) appearance(c *n.Context, t *n.Theme) {
 		}
 	})
 	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
+		settingsHeading(c, t, "对话")
+		settingsRow(c, t, "自动展开最新工具调用", func() {
+			expand := !p.CollapseLatestTools
+			if configurationSwitch(c, &expand).Label("自动展开最新工具调用开关").Changed() {
+				p.CollapseLatestTools = !expand
+				s.changed()
+			}
+		})
+	})
+	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsHeading(c, t, "文字")
 		settingsGroup(c, t, func() {
 			settingsRow(c, t, "界面字体", func() { s.fontPicker(c, t, false) })
@@ -476,6 +487,7 @@ func (s *Settings) about(c *n.Context, t *n.Theme) {
 		version = "开发版"
 	}
 	n.Text(c, "版本 "+version).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).TextColor(t.TextMuted).Margin(16, 0, 0, 0)
+	s.appUpdateSettings(c, t)
 	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsGroup(c, t, func() {
 			platform := "macOS · Apple Silicon"
@@ -501,7 +513,7 @@ func (s *Settings) search(c *n.Context, t *n.Theme) {
 	n.Text(c, "搜索设置").FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Margin(0, 0, configurationHeadingGap, 0)
 	query := strings.ToLower(strings.TrimSpace(s.query))
 	found := false
-	for _, entry := range []struct{ page, label string }{{"appearance", "主题"}, {"appearance", "界面字体"}, {"appearance", "回复字号"}, {"appearance", "代码字体"}, {"appearance", "减少动态效果"}, {"input", "发送或加入队列"}, {"input", "换行"}, {"input", "立即介入当前轮"}, {"notifications", "通知"}, {"notifications", "回复完成"}, {"notifications", "需要回答或授权"}, {"notifications", "执行失败"}, {"notifications", "提示音"}, {"notifications", "前台也通知"}, {"shortcuts", "新建会话"}, {"shortcuts", "搜索会话"}, {"shortcuts", "下一个待处理"}, {"shortcuts", "返回上一个会话"}, {"about", "版本"}, {"about", "第三方许可"}, {"about", "授予完全磁盘访问权限"}} {
+	for _, entry := range []struct{ page, label string }{{"appearance", "主题"}, {"appearance", "界面字体"}, {"appearance", "回复字号"}, {"appearance", "代码字体"}, {"appearance", "减少动态效果"}, {"appearance", "自动展开最新工具调用"}, {"input", "发送或加入队列"}, {"input", "换行"}, {"input", "立即介入当前轮"}, {"notifications", "通知"}, {"notifications", "回复完成"}, {"notifications", "需要回答或授权"}, {"notifications", "执行失败"}, {"notifications", "提示音"}, {"notifications", "前台也通知"}, {"shortcuts", "新建会话"}, {"shortcuts", "搜索会话"}, {"shortcuts", "下一个待处理"}, {"shortcuts", "返回上一个会话"}, {"about", "版本"}, {"about", "检查更新"}, {"about", "自动检查更新"}, {"about", "第三方许可"}, {"about", "授予完全磁盘访问权限"}} {
 		category := settingsCategories[slices.IndexFunc(settingsCategories, func(x settingsCategory) bool { return x.id == entry.page })]
 		if !strings.Contains(strings.ToLower(entry.label+" "+category.title), query) {
 			continue

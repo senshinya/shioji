@@ -19,19 +19,20 @@ import (
 )
 
 type attachmentPreview struct {
-	Attachment             domain.Attachment
-	WorkspaceID            string
-	presence               previewPresence
-	Loading                bool
-	Image                  n.ImageSource
-	Thumbnail, LoadedImage n.ImageSource
-	Text, Error            string
-	NaturalHeight          float32
-	Source                 n.Rect
-	Reader                 *editor.State
-	Saving                 bool
-	SaveError              string
-	Origin                 *attachmentPreviewOrigin
+	Attachment                              domain.Attachment
+	WorkspaceID                             string
+	LocalPath, SourceSessionID, SourceEpoch string
+	presence                                previewPresence
+	Loading                                 bool
+	Image                                   n.ImageSource
+	Thumbnail, LoadedImage                  n.ImageSource
+	Text, Error                             string
+	NaturalHeight                           float32
+	Source                                  n.Rect
+	Reader                                  *editor.State
+	Saving                                  bool
+	SaveError                               string
+	Origin                                  *attachmentPreviewOrigin
 }
 
 // Retain the actual compact presentation while the reader comes and goes.
@@ -561,6 +562,10 @@ func (v *View) openAttachment(a domain.Attachment, workspace string, source n.Re
 func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 	p := v.attachmentPreview
 	if p == nil || !p.visible() {
+		return
+	}
+	if p.LocalPath != "" && (v.Model.SessionID != p.SourceSessionID || v.Model.ConnectionEpoch != p.SourceEpoch || v.parent != nil && v.parent.Model.SecondarySessionID != p.SourceSessionID) {
+		p.presence = previewHidden
 		return
 	}
 	isImage := strings.HasPrefix(p.Attachment.MIME, "image/")

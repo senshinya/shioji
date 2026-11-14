@@ -27,6 +27,12 @@ Apps whose windows all show native UI use `native.Plugin` (package
 `github.com/egoist/mygo/plugins/updater/native`) instead: the same window
 drawn in native UI, with no webview.
 
+An app with its own native design system can use `NewWithWindow` instead.
+Its renderer consumes `Session.Current()` snapshots (including the source
+`NotesMarkdown`), creates the window with `Session.NewWindow`, and sends
+button actions through `Session.Respond`; scheduling, cancellation, download
+verification and relaunch remain owned by the updater.
+
 It speaks the user's language (English, Chinese, Dutch, French, German,
 Italian, Japanese, Korean, Polish, Portuguese, Russian, Spanish, Turkish,
 Ukrainian), and `Options.Strings` changes its texts or adds languages.

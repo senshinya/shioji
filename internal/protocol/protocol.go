@@ -32,7 +32,8 @@ const Major = 2
 // Minor 31 adds device-owned storage measurement and bounded disposable cleanup.
 // Minor 32 adds scoped source history discovery, preview and durable import.
 // Minor 34 adds read-only device latency probing without waking runtime work.
-const Minor = 34
+// Minor 35 adds session-scoped read-only file link resolution and chunks.
+const Minor = 35
 const MaxFrame = 1 << 20
 
 type Frame struct {

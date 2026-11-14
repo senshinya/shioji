@@ -225,3 +225,88 @@ func TestConversationOutlineEdgePaddingBelongsToEdgeTicks(t *testing.T) {
 		t.Fatal("bottom-edge navigation took composer focus")
 	}
 }
+
+func TestLongConversationOutlineFollowsReader(t *testing.T) {
+	v, ui := outlineHitUI(120)
+	current := v.outline.Current
+	first, last := v.outline.List.Visible()
+	saveNativeSkillImage(t, ui, "outline-reader-latest.png")
+	if current < 60 || current < first || current >= last {
+		t.Fatalf("latest reader marker %d is outside outline viewport [%d,%d)", current, first, last)
+	}
+	for _, target := range []int{0, 120, 220} {
+		v.lists["s"].ScrollTo(target, n.Start)
+		ui.Frame()
+		ui.Advance(time.Second)
+		current = v.outline.Current
+		first, last = v.outline.List.Visible()
+		if current < first || current >= last {
+			t.Fatalf("reader marker %d is outside outline viewport [%d,%d) after main scroll to %d", current, first, last, target)
+		}
+	}
+}
+
+func TestOutlineResumesPendingFollowAfterHoverAndResize(t *testing.T) {
+	v, ui := outlineHitUI(120)
+	ui.Click("消息输入")
+	track, _ := ui.Find("对话导航")
+	ui.Move(track.X+18, track.Y+track.H/2)
+	ui.Advance(400 * time.Millisecond)
+	v.lists["s"].ScrollTo(0, n.Start)
+	ui.Frame()
+	ui.Advance(time.Second)
+	// Main reading position changes while the user browses the rail. The
+	// rail must defer following, without losing that pending change.
+	ui.Move(900, 200)
+	ui.Advance(time.Second)
+	first, last := v.outline.List.Visible()
+	if v.outline.Current != 0 || first > 0 || last <= 0 {
+		t.Fatal("outline failed to catch up after pointer leave", v.outline.Current, first, last)
+	}
+	v.lists["s"].ScrollTo(120, n.Start)
+	ui.Frame()
+	ui.Advance(time.Second)
+	current := v.outline.Current
+	ui.SetSize(1440, 600)
+	ui.Advance(time.Second)
+	first, last = v.outline.List.Visible()
+	if current < first || current >= last {
+		t.Fatal("resizing hid the unchanged current marker", current, first, last)
+	}
+	if !ui.Focused("消息输入") {
+		t.Fatal("following the reader stole composer focus")
+	}
+}
+
+func TestOutlineManualBrowsingDoesNotMoveConversation(t *testing.T) {
+	v, ui := outlineHitUI(120)
+	track, _ := ui.Find("对话导航")
+	mainBefore, _ := v.lists["s"].Visible()
+	before, _ := v.outline.List.Visible()
+	ui.Move(track.X+18, track.Y+track.H/2)
+	ui.Wheel(track.X+18, track.Y+track.H/2, 0, -180)
+	ui.Advance(time.Second)
+	after, _ := v.outline.List.Visible()
+	mainAfter, _ := v.lists["s"].Visible()
+	if after >= before || mainAfter != mainBefore {
+		t.Fatal("rail wheel did not remain independent", before, after, mainBefore, mainAfter)
+	}
+	ui.Move(900, 200)
+	ui.Advance(time.Second)
+	settled, _ := v.outline.List.Visible()
+	if settled != after {
+		t.Fatal("leaving the rail snapped back during manual browsing", after, settled)
+	}
+}
+
+func TestOutlineReappearsAtReaderPosition(t *testing.T) {
+	v, ui := outlineHitUI(120)
+	ui.SetSize(900, 900)
+	ui.Advance(time.Second)
+	ui.SetSize(1440, 900)
+	ui.Advance(time.Second)
+	first, last := v.outline.List.Visible()
+	if v.outline.Current < first || v.outline.Current >= last {
+		t.Fatal("outline remount lost current reader marker", v.outline.Current, first, last)
+	}
+}

@@ -34,6 +34,7 @@ type workDetailUI struct {
 	error             string
 	epoch, source     string
 	generation        uint64
+	list              n.ListState
 	scroll            n.ScrollState
 	following, placed bool
 	target            float32
@@ -459,10 +460,10 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 			}
 		})
 	})
-	if u.placed && !u.scroll.Scrolling() && u.scroll.Y != u.lastY {
+	if kind == "background" && u.placed && !u.scroll.Scrolling() && u.scroll.Y != u.lastY {
 		u.following = u.scroll.MaxY-u.scroll.Y < 24
 	}
-	port := n.Scroll(c.Key("work-detail-output:" + w.ID)).FillWidth().FillHeight().Grow(1).TrackScroll(&u.scroll).Label(inspectorWorkName(kind) + "内容")
+	var port n.Element
 	terminalTheme := sshTerminalLight
 	if t.Dark {
 		terminalTheme = sshTerminalDark
@@ -470,6 +471,7 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 	outputColor := t.TextMuted
 	outputFont := v.Model.Preferences.CodeFont
 	if kind == "background" {
+		port = n.Scroll(c.Key("work-detail-output:" + w.ID)).FillHeight().Grow(1).TrackScroll(&u.scroll).Label(inspectorWorkName(kind) + "内容")
 		port.Width(width-24).Margin(0, 12).Radius(6).Background(terminalTheme.Background).Border(1, t.Border)
 		outputColor = terminalTheme.Foreground
 		outputFont += ", monospace"
@@ -491,134 +493,215 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 	u.markdownTheme.CodeSize = 11.0 / 12
 	u.markdownTheme.BlockSpacing = 8.0 / 12
 	u.markdown.Theme = &u.markdownTheme
+	v.bindMarkdownLinks(c, &u.markdown)
 	u.markdown.WrapCode = true
-	port.Children(func() {
-		n.Column(c).FillWidth().Padding(8, 12, 12, 12).Gap(12).Children(func() {
-			metadata := []string{}
-			if w.Model != "" {
-				metadata = append(metadata, w.Model)
-			}
-			if w.Effort != "" {
-				metadata = append(metadata, w.Effort)
-			}
-			if duration := workDuration(w, c.Now()); duration != "" {
-				metadata = append(metadata, duration)
-			}
-			if len(metadata) > 0 {
-				n.Text(c, strings.Join(metadata, " · ")).FontSize(11).TextColor(t.TextMuted)
-			}
-			if w.Brief != "" {
-				if kind == "background" {
-					n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-						inlineSymbol(c, commandActivityIcon(w.Brief), w.Brief, n.Font{Family: outputFont, Size: 11}, 14, outputColor)
-						n.Text(c, commandPreview(w.Brief)).Label(w.Brief).Tooltip(w.Brief).ContextMenu(commandCopyMenu(c, w.Brief)).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").Font(outputFont).FontSize(11).FixedLineHeight(18).TextColor(outputColor).Selectable()
-					})
-				} else {
-					n.Text(c, w.Brief).AlignSelf(n.End).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(userBubble(t)).Selectable()
-				}
-			}
-			if detail.Truncated {
-				n.Text(c, "仅显示最近的输出").FontSize(11).TextColor(t.TextMuted)
-			}
-			if !exists || len(detail.Items) == 0 {
-				label := "暂无输出"
-				if w.Revision == 0 {
-					label = "此历史记录仅包含摘要"
-				} else if u.phase == workReading {
-					label = "读取中…"
-				}
-				n.Text(c, label).FontSize(12).TextColor(t.TextMuted)
-			}
-			for _, entry := range detail.Items {
-				item := entry.Item
-				stream := u.streams[item.ID]
-				if item.Kind == "assistant" && stream != nil && stream.live() && !c.Preferences().ReduceMotion && c.Now().Before(stream.revealAfter) {
-					c.AnimationFrame()
-					continue
-				}
-				n.Column(c.Key("work-item:" + item.ID)).FillWidth().Gap(6).Transition(resultBlockMotion(c)).Children(func() {
-					if item.Kind == "assistant" || item.Kind == "reasoning" {
-
-						initialized := n.Local(n.Column(c.Key("mount")), "seeded", func() bool { return false })
-						streaming := stream != nil && stream.live() && (!item.Final || stream.changedAt.Equal(c.Now()) || stream.fresh())
-						if !*initialized && (stream == nil || !stream.fresh()) {
-							streaming = false
-						}
-						*initialized = true
-						if stream != nil {
-							stream.mount()
-						}
-						if c.Preferences().ReduceMotion || stream == nil || !stream.live() {
-							u.markdown.Reveal = &markdown.Reveal{Unit: markdown.AtOnce, Fade: -1}
-						} else {
-							u.markdown.Reveal = &markdown.Reveal{Unit: markdown.ByCharacter, Fade: 180 * time.Millisecond, Smooth: true}
-						}
-						if streaming {
-							markdown.Stream(c.Key("body"), item.Text, &u.markdown).FillWidth().FontSize(12)
-						} else {
-							markdown.View(c.Key("body"), item.Text, &u.markdown).FillWidth().FontSize(12)
-						}
-					} else if item.Kind == "user" {
-						n.Text(c, item.Text).AlignSelf(n.End).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(userBubble(t)).Selectable()
-					} else if item.Kind == "request" {
-						v.requestSource(c, t, item, true)
-					} else if item.Kind == "request_result" {
-						v.requestResultWithStream(c, t, item, stream, false)
-					} else if item.Presentation != "command" {
-						item.ID = w.ID + "\x00" + item.ID
-						v.activityItem(c, t, item, false)
-					} else {
-						key := v.commandOutputKey(item.ID, w.ID)
-						if kind != "background" || w.Brief == "" {
-							label := item.Name
-							if label == "" {
-								label = "命令"
-							}
-							heading := n.ButtonBase(c.Key("command-heading")).FillWidth().Height(20).Justify(n.Start).Label(label).Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
-							heading.Children(func() {
-								inlineIconText(c, commandActivityIcon(item.Name), commandPreview(label), n.Font{Family: t.Font, Size: 12}, 14, 6, t.TextMuted).FillWidth().MinWidth(0).Ellipsis("…")
-							})
-							if heading.Clicked() && kind != "background" {
-								v.Model.Collapsed[key] = !v.Model.Collapsed[key]
-							}
-						}
-						if kind != "background" && v.Model.Collapsed[key] {
-							return
-						}
-						if item.Text != "" {
-							resultText(c.Key("output"), strings.TrimRight(item.Text, "\r\n"), outputColor, func(e n.Element) { e.Font(outputFont).FontSize(11).FixedLineHeight(18).Selectable() })
-						}
-						for i, part := range item.Parts {
-							if part.Text != "" && part.Text != item.Text {
-								resultText(c.Key(fmt.Sprint("part", i)), part.Text, t.TextMuted, func(e n.Element) { e.FontSize(12).Selectable() })
-							}
-						}
-					}
+	header := func() {
+		metadata := []string{}
+		if w.Model != "" {
+			metadata = append(metadata, w.Model)
+		}
+		if w.Effort != "" {
+			metadata = append(metadata, w.Effort)
+		}
+		if duration := workDuration(w, c.Now()); duration != "" {
+			metadata = append(metadata, duration)
+		}
+		if len(metadata) > 0 {
+			n.Text(c, strings.Join(metadata, " · ")).FontSize(11).TextColor(t.TextMuted)
+		}
+		if w.Brief != "" {
+			if kind == "background" {
+				n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
+					inlineSymbol(c, commandActivityIcon(w.Brief), w.Brief, n.Font{Family: outputFont, Size: 11}, 14, outputColor)
+					n.Text(c, commandPreview(w.Brief)).Label(w.Brief).Tooltip(w.Brief).ContextMenu(commandCopyMenu(c, w.Brief)).Grow(1).MinWidth(0).MaxLines(2).Ellipsis("…").Font(outputFont).FontSize(11).FixedLineHeight(18).TextColor(outputColor).Selectable()
 				})
+			} else {
+				n.Text(c, w.Brief).AlignSelf(n.End).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(userBubble(t)).Selectable()
 			}
-			if u.error != "" {
-				n.Text(c, u.error).FontSize(11).TextColor(t.TextMuted)
-				if control(c).Padding(4, 8).Children(func() { n.Text(c, "重试").FontSize(12) }).Clicked() {
-					v.readSessionWork(w, u, true)
-				}
+		}
+		if detail.Truncated {
+			n.Text(c, "仅显示最近的输出").FontSize(11).TextColor(t.TextMuted)
+		}
+		if !exists || len(detail.Items) == 0 {
+			label := "暂无输出"
+			if w.Revision == 0 {
+				label = "此历史记录仅包含摘要"
+			} else if u.phase == workReading {
+				label = "读取中…"
 			}
-		})
-	})
-	animation := motionAnimation(c, 160*time.Millisecond)
-	invalidate := c.Services().Invalidate
-	port.DrawOver(func(_ *n.Painter, _ n.Rect) {
-		u.lastY = u.scroll.Y
-		if !u.following {
+			n.Text(c, label).FontSize(12).TextColor(t.TextMuted)
+		}
+	}
+	entry := func(entry domain.WorkItem) {
+		item := entry.Item
+		stream := u.streams[item.ID]
+		if item.Kind == "assistant" && stream != nil && stream.live() && !c.Preferences().ReduceMotion && c.Now().Before(stream.revealAfter) {
+			c.AnimationFrame()
 			return
 		}
-		target := u.scroll.MaxY
-		if !u.placed || target != u.target {
-			u.placed = true
-			u.target = target
-			u.scroll.ScrollTo(0, target, animation)
-			invalidate()
+		block := n.Column(c.Key("work-item:" + item.ID)).FillWidth().Gap(6)
+		if kind == "background" {
+			block.Transition(resultBlockMotion(c))
 		}
-	})
+		block.Children(func() {
+			if item.Kind == "assistant" || item.Kind == "reasoning" {
+
+				initialized := n.Local(n.Column(c.Key("mount")), "seeded", func() bool { return false })
+				streaming := stream != nil && stream.live() && (!item.Final || stream.changedAt.Equal(c.Now()) || stream.fresh())
+				if !*initialized && (stream == nil || !stream.fresh()) {
+					streaming = false
+				}
+				*initialized = true
+				if stream != nil {
+					stream.mount()
+				}
+				if c.Preferences().ReduceMotion || stream == nil || !stream.live() {
+					u.markdown.Reveal = &markdown.Reveal{Unit: markdown.AtOnce, Fade: -1}
+				} else {
+					u.markdown.Reveal = &markdown.Reveal{Unit: markdown.ByCharacter, Fade: 180 * time.Millisecond, Smooth: true}
+				}
+				if streaming {
+					markdown.Stream(c.Key("body"), item.Text, &u.markdown).FillWidth().FontSize(12)
+				} else {
+					markdown.View(c.Key("body"), item.Text, &u.markdown).FillWidth().FontSize(12)
+				}
+			} else if item.Kind == "user" {
+				n.Text(c, item.Text).AlignSelf(n.End).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(userBubble(t)).Selectable()
+			} else if item.Kind == "request" {
+				v.requestSource(c, t, item, true)
+			} else if item.Kind == "request_result" {
+				v.requestResultWithStream(c, t, item, stream, false)
+			} else if item.Presentation != "command" {
+				item.ID = w.ID + "\x00" + item.ID
+				v.activityItem(c, t, item, false)
+			} else {
+				wrapper := n.Column(c.Key("command-content")).FillWidth()
+				if kind == "background" {
+					wrapper.Gap(6)
+				}
+				wrapper.Children(func() {
+					key := v.commandOutputKey(item.ID, w.ID)
+					if kind != "background" || w.Brief == "" {
+						label := item.Name
+						if label == "" {
+							label = "命令"
+						}
+						heading := n.ButtonBase(c.Key("command-heading")).FillWidth().MinHeight(20).Justify(n.Start).Label(label).Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
+						heading.Children(func() {
+							n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
+								inlineSymbol(c, commandActivityIcon(item.Name), label, n.Font{Family: t.Font, Size: 12}, 14, t.TextMuted).Shrink(0)
+								n.Text(c, commandPreview(label)).Font(t.Font).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).MaxLines(2).Ellipsis("…").TextColor(t.TextMuted)
+							})
+						})
+						if heading.Clicked() && kind != "background" {
+							v.Model.Collapsed[key] = !v.Model.Collapsed[key]
+						}
+					}
+					drawOutput := func(item domain.Item) {
+						n.Column(c).FillWidth().Gap(6).Children(func() {
+
+							if item.Text != "" {
+								resultText(c.Key("output"), strings.TrimRight(item.Text, "\r\n"), outputColor, func(e n.Element) { e.Font(outputFont).FontSize(11).FixedLineHeight(18).Selectable() })
+							}
+							for i, part := range item.Parts {
+								if part.Text != "" && part.Text != item.Text {
+									resultText(c.Key(fmt.Sprint("part", i)), part.Text, t.TextMuted, func(e n.Element) { e.FontSize(12).Selectable() })
+								}
+							}
+						})
+					}
+					if kind == "background" {
+						drawOutput(item)
+						return
+					}
+					frame := n.Column(c.Key("command-output-frame")).FillWidth().Clip()
+					retained := n.Local(frame, "item", func() domain.Item { return item })
+					hasOutput := item.Text != ""
+					for _, part := range item.Parts {
+						hasOutput = hasOutput || part.Text != ""
+					}
+					open := hasOutput && !v.Model.Collapsed[key]
+					if open {
+						*retained = item
+					}
+					animatedContentHeight(c, frame, open, 160*time.Millisecond, func() float32 {
+						n.Column(c).FillWidth().Padding(6, 0, 0, 0).Children(func() { drawOutput(*retained) })
+						return 0
+					})
+				})
+			}
+		})
+	}
+	failure := func() {
+		if u.error != "" {
+			n.Text(c, u.error).FontSize(11).TextColor(t.TextMuted)
+			if control(c).Padding(4, 8).Children(func() { n.Text(c, "重试").FontSize(12) }).Clicked() {
+				v.readSessionWork(w, u, true)
+			}
+		}
+	}
+	if kind == "background" {
+		port.Children(func() {
+			n.Column(c).FillWidth().Padding(8, 12, 12, 12).Gap(12).Children(func() {
+				header()
+				for _, item := range detail.Items {
+					entry(item)
+				}
+				failure()
+			})
+		})
+	} else {
+		// Keep offscreen history out of width reflow, and preserve a reader's
+		// item anchor instead of retargeting an animated pixel offset each frame.
+		u.list.FollowEnd = true
+		u.list.FollowAnimation = nil
+		if !v.splitRoot().resizingInspector {
+			u.list.FollowAnimation = animationPointer(c, 160*time.Millisecond)
+		}
+		u.list.Key = func(row int) any {
+			if row == 0 {
+				return "header"
+			}
+			if row <= len(detail.Items) {
+				return "item:" + detail.Items[row-1].Item.ID
+			}
+			return "failure"
+		}
+		rows := len(detail.Items) + 1
+		if u.error != "" {
+			rows++
+		}
+		port = n.List(c.Key("work-detail-output:"+w.ID), &u.list, rows, func(row int) {
+			n.Column(c).FillWidth().Padding(0, 12, 12, 12).Gap(12).Children(func() {
+				switch {
+				case row == 0:
+					n.Column(c).FillWidth().Padding(8, 0, 0, 0).Gap(12).Children(header)
+				case row <= len(detail.Items):
+					entry(detail.Items[row-1])
+				default:
+					failure()
+				}
+			})
+		}).FillWidth().FillHeight().Grow(1).Label(inspectorWorkName(kind) + "内容")
+		u.following = u.list.FollowingEnd()
+	}
+	animation := motionAnimation(c, 160*time.Millisecond)
+	invalidate := c.Services().Invalidate
+	if kind == "background" {
+		port.DrawOver(func(_ *n.Painter, _ n.Rect) {
+			u.lastY = u.scroll.Y
+			if !u.following {
+				return
+			}
+			target := u.scroll.MaxY
+			if !u.placed || target != u.target {
+				u.placed = true
+				u.target = target
+				u.scroll.ScrollTo(0, target, animation)
+				invalidate()
+			}
+		})
+	}
 	n.Row(c.Key("work-detail-actions")).FillWidth().Shrink(0).Height(36).PaddingX(12).Gap(8).AlignItems(n.Center).Children(func() {
 		if w.SourceItemID != "" {
 			if control(c).Padding(3, 5).Children(func() {
@@ -628,12 +711,15 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 			}
 		}
 		n.Spacer(c).Grow(1)
-		if !u.following && u.scroll.MaxY > 0 {
+		if !u.following && (kind != "background" || u.scroll.MaxY > 0) {
 			if control(c).Padding(3, 5).Label("跟随最新输出").Children(func() {
 				inlineIconText(c, workDownIcon, "最新输出", n.Font{Family: t.Font, Size: 11}, 12, 5, t.TextMuted)
 			}).Clicked() {
 				u.following = true
 				u.target = -1
+				if kind != "background" {
+					u.list.ScrollToEnd(animation)
+				}
 			}
 		}
 		if kind == "background" {

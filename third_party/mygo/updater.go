@@ -55,6 +55,20 @@ type UpdaterModule struct{}
 // Updater installs new versions of the app.
 var Updater = &UpdaterModule{}
 
+// SetValidator installs an optional application-specific check of an unpacked
+// macOS bundle, after archive signature verification and before staging it.
+// The callback must not modify the bundle. Returning an error leaves the
+// installed app untouched. Configure it before checks start; nil removes it.
+func (u *UpdaterModule) SetValidator(fn func(context.Context, string, string) error) {
+	if fn == nil {
+		updateValidator.Store(nil)
+	} else {
+		updateValidator.Store(&fn)
+	}
+}
+
+var updateValidator atomic.Pointer[func(context.Context, string, string) error]
+
 // prereleases is set while Check offers prereleases (SetPrereleases).
 var prereleases atomic.Bool
 
@@ -280,6 +294,24 @@ func installUpdate(ctx context.Context, get update.Getter, m update.Manifest, ke
 	swap := swapFiles
 	if runtime.GOOS == "darwin" {
 		swap = func(dir, target string) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if fn := updateValidator.Load(); fn != nil {
+				entries, err := os.ReadDir(dir)
+				if err != nil {
+					return err
+				}
+				if len(entries) != 1 || !entries[0].IsDir() || !strings.HasSuffix(entries[0].Name(), ".app") {
+					return errors.New("the update holds no app bundle")
+				}
+				if err := (*fn)(ctx, filepath.Join(dir, entries[0].Name()), m.Version); err != nil {
+					return err
+				}
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			err := stageBundle(work, dir, target)
 			staged = err == nil
 			return err
@@ -553,7 +585,17 @@ func httpGet(ctx context.Context, rawURL string) (io.ReadCloser, error) {
 	// answers 400 to a User-Agent with bytes outside ASCII, as 云音乐, for
 	// every file its CDN has not cached yet.
 	req.Header.Set("User-Agent", "mygo-updater")
-	resp, err := (&http.Client{Transport: netproxy.Transport()}).Do(req)
+	allowLoopbackHTTP := u.Scheme == "http" && isLoopback(u.Hostname())
+	client := &http.Client{Transport: netproxy.Transport(), CheckRedirect: func(r *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("too many update redirects")
+		}
+		if r.URL.Scheme != "https" && !(allowLoopbackHTTP && r.URL.Scheme == "http" && isLoopback(r.URL.Hostname())) {
+			return errors.New("updates need HTTPS, including redirects")
+		}
+		return nil
+	}}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

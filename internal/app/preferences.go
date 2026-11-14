@@ -8,13 +8,14 @@ import (
 
 // ClientPreferences are local presentation and input choices, never worker policy.
 type ClientPreferences struct {
-	Appearance    string                   `json:"appearance"`
-	InterfaceFont string                   `json:"interfaceFont"`
-	ReplySize     int                      `json:"replySize"`
-	CodeFont      string                   `json:"codeFont"`
-	ReduceMotion  bool                     `json:"reduceMotion"`
-	Shortcuts     ComposerShortcuts        `json:"shortcuts"`
-	Notifications *NotificationPreferences `json:"notifications,omitempty"`
+	Appearance          string                   `json:"appearance"`
+	InterfaceFont       string                   `json:"interfaceFont"`
+	ReplySize           int                      `json:"replySize"`
+	CodeFont            string                   `json:"codeFont"`
+	ReduceMotion        bool                     `json:"reduceMotion"`
+	CollapseLatestTools bool                     `json:"collapseLatestTools,omitempty"`
+	Shortcuts           ComposerShortcuts        `json:"shortcuts"`
+	Notifications       *NotificationPreferences `json:"notifications,omitempty"`
 }
 
 type NotificationPreferences struct {

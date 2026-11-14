@@ -41,7 +41,8 @@ func (m *Model) ToolDisclosure(key string) ToolDisclosure {
 	if m.Collapsed[key+":prose"] {
 		state = ToolOpenedAfterProse
 	}
-	if m.Collapsed[key] {
+	closed, chosen := m.Collapsed[key]
+	if closed || !chosen && m.Preferences.CollapseLatestTools {
 		state = state.OpenHistory()
 	}
 	return state

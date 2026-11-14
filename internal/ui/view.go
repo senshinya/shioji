@@ -146,6 +146,7 @@ type View struct {
 	StatePath                                                                                                       string
 	lists                                                                                                           map[string]*n.ListState
 	nav                                                                                                             n.ListState
+	fileLink                                                                                                        *fileLinkState
 	md                                                                                                              markdown.Options
 	permissionOpen                                                                                                  bool
 	runMenu                                                                                                         runMenuPhase
@@ -326,6 +327,10 @@ func (v *View) View(c *n.Context) {
 	// persistent parent, even when no popup is currently open.
 	n.Overlay(c, func() {})
 	v.md.Theme = replyTheme(m.Preferences)
+	v.bindMarkdownLinks(c, &v.md)
+	if v.fileLink != nil && !v.fileLinkCurrent(v.fileLink) {
+		v.cancelFileLink()
+	}
 	if v.Saver != nil {
 		v.watchStateWriter()
 		saved, err := v.Saver.Result()
@@ -480,6 +485,7 @@ func (v *View) View(c *n.Context) {
 	v.pruneHistoryCaches()
 	v.deviceDialogs(c, &t)
 	v.managementDialogs(c, &t)
+	v.fileLinkDialog(c, &t)
 	v.attachmentDialog(c, &t)
 	v.directoryDialog(c, &t)
 	v.conversationImportDialog(c, &t)
@@ -1206,6 +1212,11 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		if entry.footer != "" || entry.restarting || entry.preparing != "" {
 			bottom = 32
 		}
+		// A user message begins a new reading block even when steering keeps
+		// the protocol turn identity. Match ordinary turn-to-user spacing.
+		if row < len(rows) && rows[row].item.Kind == "user" {
+			bottom = 32
+		}
 		n.Column(c).FillWidth().PaddingX(18).AlignItems(n.Center).Children(func() {
 			content := n.Column(c).FillWidth().MinWidth(0).MaxWidth(768).Gap(8).Padding(0, 0, bottom, 0).ClipX().Selectable()
 			if entry.footer == "" && entry.group == "" && (item.Kind == "user" || item.Kind == "assistant" || item.Kind == "command") {
@@ -1299,24 +1310,26 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 			v.activityItem(c, t, item)
 			return
 		}
-		label := item.Name
-		if label == "" {
-			label = "工具活动"
-		}
-		heading := control(c).FillWidth().MinHeight(20).Justify(n.Start).Label(label).Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
-		if heading.Children(func() {
-			n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-				n.Text(c, commandPreview(label)).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Grow(1).MinWidth(0).SingleLine().Ellipsis("…")
-				if issue := toolIssueLabel(item); issue != "" {
-					n.Text(c.Key("command-issue"), issue).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
-						Transition(fadeMotion(c, 160*time.Millisecond))
-				}
-			})
-		}).Clicked() {
-			key := v.commandOutputKey(item.ID, "")
-			v.Model.Collapsed[key] = !v.Model.Collapsed[key]
-		}
-		v.commandOutput(c, t, item, heading)
+		n.Column(c).FillWidth().Children(func() {
+			label := item.Name
+			if label == "" {
+				label = "工具活动"
+			}
+			heading := control(c).FillWidth().MinHeight(20).Justify(n.Start).Label(label).Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
+			if heading.Children(func() {
+				n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
+					n.Text(c, commandPreview(label)).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Grow(1).MinWidth(0).MaxLines(2).Ellipsis("…")
+					if issue := toolIssueLabel(item); issue != "" {
+						n.Text(c.Key("command-issue"), issue).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
+							Transition(fadeMotion(c, 160*time.Millisecond))
+					}
+				})
+			}).Clicked() {
+				key := v.commandOutputKey(item.ID, "")
+				v.Model.Collapsed[key] = !v.Model.Collapsed[key]
+			}
+			v.commandOutput(c, t, item, heading)
+		})
 	case "activity":
 		v.activityItem(c, t, item)
 	case "request_result":

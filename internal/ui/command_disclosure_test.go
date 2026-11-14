@@ -69,7 +69,7 @@ func TestNewCommandFoldsOlderOutputAndPreservesManualInspection(t *testing.T) {
 	}
 }
 
-func TestLongCommandHeadingIsOneLineAndCopiesOriginal(t *testing.T) {
+func TestLongCommandHeadingUsesTwoLinesAndCopiesOriginal(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		t.Run(fmt.Sprint(dark), func(t *testing.T) {
 			v := New(layoutModel(), nil, "")
@@ -85,8 +85,8 @@ func TestLongCommandHeadingIsOneLineAndCopiesOriginal(t *testing.T) {
 			saveNativeSkillImage(t, ui, fmt.Sprintf("long-command-dark-%v.png", dark))
 			heading, ok := ui.Find(command)
 			issue, found := ui.Find("退出码 1")
-			if !ok || heading.H > 21 || !found || issue.X+issue.W > 601 {
-				t.Error("long command wraps or displaces its exit status", heading, issue)
+			if !ok || heading.H <= 21 || heading.H > 40.5 || !found || issue.X+issue.W > 601 {
+				t.Error("long command does not use two bounded lines or displaces its exit status", heading, issue)
 			}
 			output, shown := ui.Find("output remains visible")
 			if !shown || output.Y+output.H > 240 {
@@ -123,8 +123,8 @@ func TestChildCommandOutputsAndBackgroundCommandStayCompact(t *testing.T) {
 	ui.Advance(time.Second)
 	saveNativeSkillImage(t, ui, "background-command.png")
 	heading, ok := ui.Find(command)
-	if !ok || heading.H > 20 {
-		t.Error("background command still occupies many lines", heading, ok)
+	if !ok || heading.H <= 19 || heading.H > 36.5 {
+		t.Error("background command does not use at most two lines", heading, ok)
 	}
 }
 
@@ -154,5 +154,31 @@ func TestCommandDisclosureDoesNotLeakAcrossSessions(t *testing.T) {
 	ui.Advance(time.Second)
 	if ui.HasText("A older output") || !ui.HasText("A latest output") || !ui.HasText("B latest output") {
 		t.Fatal("equal opaque command IDs in different sessions share disclosure state", ui.Texts())
+	}
+}
+
+func TestChildLongCommandHeadingUsesTwoLines(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprint(dark), func(t *testing.T) {
+			v, ui := sessionWorkFixture(t)
+			ui.SetDark(dark)
+			command := "/bin/zsh -lc '" + strings.Repeat("检查边界条件并保留原始命令 ", 40) + "'"
+			key := v.Model.WorkKey("s", "agent-a")
+			d := v.Model.WorkDetails[key]
+			d.Items = []domain.WorkItem{{Item: domain.Item{ID: "long-child-command", Kind: "tool", Presentation: "command", Name: command, Text: "child result", Final: true}}}
+			v.Model.WorkDetails[key] = d
+			ui.Click("查看子 Agent：检查边界条件")
+			ui.Advance(time.Second)
+			heading, ok := ui.Find(command)
+			if !ok || heading.H <= 21 || heading.H > 40.5 {
+				t.Error("child command does not use two bounded lines", heading)
+			}
+			if err := ui.RightClick(command); err != nil {
+				t.Fatal(err)
+			}
+			if err := ui.ChooseMenuItem("复制命令"); err != nil || ui.Clipboard() != command {
+				t.Error("two-line child command loses original text", err)
+			}
+		})
 	}
 }

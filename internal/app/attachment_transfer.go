@@ -10,6 +10,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"shioji/internal/transport"
+	"time"
 )
 
 // Transfers get their own authenticated stream so image traffic never queues
@@ -28,7 +29,7 @@ func (m *Model) AttachmentTarget(directory, workspace string) (AttachmentTarget,
 	if key != "local" {
 		for _, c := range m.Connections {
 			if c.ID == key {
-				s := c.SSH
+				s := c.ActiveSSH()
 				target.SSH = &s
 				return target, nil
 			}
@@ -48,7 +49,9 @@ func (t AttachmentTarget) connect(ctx context.Context) (*protocol.Client, error)
 	if err != nil {
 		return nil, err
 	}
-	client, err := protocol.Connect(ctx, conn, t.DeviceID)
+	handshake, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	client, err := protocol.Connect(handshake, conn, t.DeviceID)
 	if err != nil {
 		conn.Close()
 		return nil, err
