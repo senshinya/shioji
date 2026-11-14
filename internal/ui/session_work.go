@@ -510,7 +510,7 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 			if w.Brief != "" {
 				if kind == "background" {
 					n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-						inlineSymbol(c, terminalIcon, w.Brief, n.Font{Family: outputFont, Size: 11}, 14, outputColor)
+						inlineSymbol(c, commandActivityIcon(w.Brief), w.Brief, n.Font{Family: outputFont, Size: 11}, 14, outputColor)
 						n.Text(c, commandPreview(w.Brief)).Label(w.Brief).Tooltip(w.Brief).ContextMenu(commandCopyMenu(c, w.Brief)).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").Font(outputFont).FontSize(11).FixedLineHeight(18).TextColor(outputColor).Selectable()
 					})
 				} else {
@@ -576,7 +576,7 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 							}
 							heading := n.ButtonBase(c.Key("command-heading")).FillWidth().Height(20).Justify(n.Start).Label(label).Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
 							heading.Children(func() {
-								inlineIconText(c, backgroundWorkIcon, commandPreview(label), n.Font{Family: t.Font, Size: 12}, 14, 6, t.TextMuted).FillWidth().MinWidth(0).Ellipsis("…")
+								inlineIconText(c, commandActivityIcon(item.Name), commandPreview(label), n.Font{Family: t.Font, Size: 12}, 14, 6, t.TextMuted).FillWidth().MinWidth(0).Ellipsis("…")
 							})
 							if heading.Clicked() && kind != "background" {
 								v.Model.Collapsed[key] = !v.Model.Collapsed[key]

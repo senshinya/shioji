@@ -476,6 +476,9 @@ var toolEndedIcon = svg("M18 10a8 8 0 1 1-16 0a8 8 0 0 1 16 0M6 10h8")
 
 func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow) {
 	icon := activityIcon(row.item.Presentation)
+	if commandItem(row.item) {
+		icon = commandActivityIcon(row.item.Name)
+	}
 	if row.toolResult == "" {
 		v.item(c, t, row.item)
 	} else {
