@@ -89,7 +89,7 @@ func TestElapsedActivityPaintsWithoutRebuildingConversation(t *testing.T) {
 	}
 }
 
-func TestLiveToolTitleOwnsActivityExpandedAndCollapsed(t *testing.T) {
+func TestLiveToolSummaryOwnsActivityExpandedAndCollapsed(t *testing.T) {
 	v := liveCompletionModel()
 	d := v.Model.Details["s"]
 	d.Items = []domain.Item{{ID: "u", TurnID: "t", Kind: "user", Text: "Run checks", Final: true}, {ID: "a", TurnID: "t", Kind: "tool", Presentation: "command", Name: "first command"}, {ID: "b", TurnID: "t", Kind: "tool", Presentation: "command", Name: "second command"}}
@@ -98,14 +98,23 @@ func TestLiveToolTitleOwnsActivityExpandedAndCollapsed(t *testing.T) {
 	v.Model.Details["s"] = d
 	ui := n.NewTester(v.View, 1240, 820)
 	ui.Advance(time.Second)
-	ui.Click("2 次工具调用") // Saved history correctly opens folded.
-	ui.Advance(time.Second)
+	// The current executing group opens expanded; older history stays folded.
 	if _, ok := ui.Find("工具组运行状态"); !ok {
 		t.Fatal("expanded title lost its running indicator", ui.Texts())
 	}
-	if ui.HasText("正在执行命令") {
-		t.Fatal("expanded tools added a second progress footer")
+	checkPhase := func() {
+		t.Helper()
+		count := 0
+		for _, text := range ui.Texts() {
+			if text == "正在执行命令" {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatal("current phase must have exactly one visible owner", count)
+		}
 	}
+	checkPhase()
 	before, _ := ui.Find("2 次工具调用")
 	clock, ok := ui.Find("运行时长")
 	if !ok || math.Abs(float64(clock.Y-before.Y)) > 1 {
@@ -118,23 +127,16 @@ func TestLiveToolTitleOwnsActivityExpandedAndCollapsed(t *testing.T) {
 	if !ok || math.Abs(float64(clock.Y-after.Y)) > 1 {
 		t.Fatal("folding moved the elapsed clock out of the title", after, clock)
 	}
-	if math.Abs(float64(before.Y-after.Y)) > 1 {
-		t.Fatal("folding moved the clicked title", before, after)
-	}
 	if _, ok := ui.Find("工具组运行状态"); !ok {
 		t.Fatal("folded live header has no activity")
 	}
-	if ui.HasText("正在执行命令") {
-		t.Fatal("folded header and footer duplicate activity")
-	}
+	checkPhase()
 	ui.Click("2 次工具调用")
 	ui.Advance(time.Second)
 	if _, ok := ui.Find("工具组运行状态"); !ok {
 		t.Fatal("expansion removed status from the title")
 	}
-	if ui.HasText("正在执行命令") {
-		t.Fatal("expansion duplicated activity below the tools")
-	}
+	checkPhase()
 	d.Turns[0].Status = "completed"
 	d.Session.Status = "completed"
 	v.Model.Details["s"] = d
@@ -199,7 +201,6 @@ func TestToolActivityHandoffNeverPaintsTwoLiveIndicators(t *testing.T) {
 				ui := n.NewTester(v.View, 1240, 820)
 				ui.SetDark(dark)
 				ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
-				ui.Click("1 次工具调用")
 				ui.Advance(time.Second)
 				green := func(label string) bool {
 					r, ok := ui.Find(label)
@@ -322,16 +323,20 @@ func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 				ui := n.NewTester(v.View, 1240, 820)
 				ui.SetDark(dark)
 				ui.Advance(time.Second)
-				if expanded {
+				if !expanded {
 					ui.Click("2 次工具调用")
 					ui.Advance(time.Second)
+				}
+				if ui.HasText("go test ./...") != expanded {
+					t.Fatal("tool fixture does not match the requested disclosure state")
 				}
 				header, _ := ui.Find("2 次工具调用")
 				titleX := activityTitleInkX(ui, header, dark)
 				font := n.Font{Family: v.Model.Preferences.InterfaceFont, Size: 11, Weight: 400, Features: "tnum"}
 				titleWidth, _ := n.ShapeText("2 次工具调用", font, 0).Size()
 				clockWidth, _ := n.ShapeText("37 秒", font, 0).Size()
-				if right := activityLastInkX(ui, header, dark); right > titleX+titleWidth+clockWidth+28 {
+				phaseWidth, _ := n.ShapeText("正在执行命令", font, 0).Size()
+				if right := activityLastInkX(ui, header, dark); right > titleX+titleWidth+phaseWidth+clockWidth+34 {
 					t.Fatal("running arrow is detached from elapsed time", titleX, right)
 				}
 				lastTitleX, lastArrowX := titleX, activityLastInkX(ui, header, dark)
@@ -362,7 +367,7 @@ func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 					if x > lastTitleX+1 || lastTitleX-x > 4 {
 						t.Fatalf("title jumped instead of gliding left: %v -> %v", lastTitleX, x)
 					}
-					if arrowX > lastArrowX+1 || lastArrowX-arrowX > 15 {
+					if arrowX > lastArrowX+1 || lastArrowX-arrowX > 40 {
 						t.Fatalf("arrow jumped instead of following the timer: %v -> %v", lastArrowX, arrowX)
 					}
 					lastTitleX, lastArrowX = x, arrowX

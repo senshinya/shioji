@@ -7,7 +7,7 @@ import (
 )
 
 func replyTheme(p app.ClientPreferences) *markdown.Theme {
-	return &markdown.Theme{Font: p.InterfaceFont, FontSize: float32(p.ReplySize), CodeFont: p.CodeFont, CodeSize: 12 / float32(p.ReplySize), LineHeight: 24.0 / 14, BlockSpacing: 8 / float32(p.ReplySize)}
+	return &markdown.Theme{Font: p.InterfaceFont, FontSize: float32(p.ReplySize), CodeFont: p.CodeFont, CodeSize: 12 / float32(p.ReplySize), LineHeight: 24.0 / 14, BlockSpacing: 8 / float32(p.ReplySize), LinkWeight: 500, LinkUnderline: true}
 }
 
 func composerBinding(mods n.Modifiers) string {

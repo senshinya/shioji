@@ -149,7 +149,34 @@ func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock
 	color := textHoverColor(c, button, t.TextMuted)
 	button.Children(func() {
 		font := n.Font{Family: t.Font, Size: 12, Weight: 400}
-		inlineIconText(c, latestIcon, "最新消息", font, 14, 5, color)
+		turn, active := v.activeConversationTurn()
+		if !v.latestActivity || !active {
+			inlineIconText(c, latestIcon, "最新消息", font, 14, 5, color)
+			return
+		}
+		a := v.runningActivity(turn)
+		label, pulse, dotColor := a.label, true, t.Success
+		if !v.Model.Connected {
+			label, pulse, dotColor = "状态待确认", false, t.TextMuted
+		} else if a.compaction != "" {
+			label = "正在压缩上下文"
+		}
+		font.Size = 11
+		n.Row(c.Key("latest-activity")).Height(20).AlignItems(n.Baseline).Label("离屏运行状态").Children(func() {
+			phase := c.Now()
+			if turn.StartedAt != nil {
+				phase = *turn.StartedAt
+			}
+			if p := v.runningProgress; p != nil && p.turn == turn.ID {
+				phase = p.started
+			}
+			statusDot(c, label, font, dotColor, pulse, phase).Width(12)
+			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(color)
+			if pulse {
+				runningElapsed(c.Key("elapsed"), a.started, color, true)
+			}
+			inlineSymbol(c, latestIcon, label, font, 14, color).Margin(0, 0, 0, 6)
+		})
 	})
 	if button.Clicked() {
 		if c.Preferences().ReduceMotion {

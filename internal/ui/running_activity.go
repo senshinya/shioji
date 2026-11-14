@@ -13,13 +13,14 @@ import (
 // This is a projection of the current normalized turn, not another execution
 // lifecycle. No phase is inferred from a tool name, source ID or elapsed time.
 type runningActivity struct {
-	label   string
-	waiting bool
-	started *time.Time
+	label      string
+	waiting    bool
+	compaction string
+	started    *time.Time
 }
 
 func (v *View) runningActivity(turn domain.Turn) runningActivity {
-	a := runningActivity{label: "进行中", started: turn.StartedAt}
+	a := runningActivity{label: "进行中", started: v.runningElapsedStart(turn)}
 	if turn.Status == domain.ExecutionStarting {
 		a.label = "正在准备"
 	}
@@ -57,6 +58,12 @@ func (v *View) runningActivity(turn domain.Turn) runningActivity {
 			}
 			return a
 		case "activity":
+			if item.Presentation == "compaction" {
+				if !item.Final {
+					a.compaction = item.ID
+				}
+				return a
+			}
 			if item.Presentation == "reasoning" {
 				if !item.Final {
 					a.label = "正在思考"
@@ -68,10 +75,72 @@ func (v *View) runningActivity(turn domain.Turn) runningActivity {
 	return a
 }
 
-// Presentation timing only; execution and streamed content keep their own
-// authoritative lifecycle. Both endpoints use this turn's visual clock.
+// A same-turn insertion starts a new visible elapsed interval. Worker-owned
+// timestamps keep it stable across clients and history reloads; the original
+// turn start and totals remain intact.
+func (v *View) runningElapsedStart(turn domain.Turn) *time.Time {
+	start := turn.StartedAt
+	items := v.Model.Details[v.Model.SessionID].Items
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if item.Kind != "user" || item.WorkID != "" || item.TurnID != turn.ID || item.SentAt == nil || item.SentAt.IsZero() {
+			continue
+		}
+		if start == nil || item.SentAt.After(*start) {
+			start = item.SentAt
+		}
+		break
+	}
+	return start
+}
+
+func (v *View) activeConversationTurn() (domain.Turn, bool) {
+	turns := v.Model.Details[v.Model.SessionID].Turns
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].Status.Active() {
+			return turns[i], true
+		}
+	}
+	return domain.Turn{}, false
+}
+
+func (v *View) statusKey(owner string) string { return v.Model.SessionID + "/" + owner }
+
+// Geometry belongs to the actual status control, not its virtual row's padding.
+// Only the current owner may report it; retained exit controls are ignored.
+func (v *View) trackLiveStatus(element n.Element, key string) {
+	element.DrawOver(func(_ *n.Painter, r n.Rect) {
+		if key == v.liveStatusKey {
+			v.liveStatusBounds = r
+		}
+	})
+}
+
+func (v *View) prepareLiveStatus() {
+	key := ""
+	if turn, active := v.activeConversationTurn(); active {
+		a := v.runningActivity(turn)
+		if !v.Model.Connected || !a.waiting {
+			key = v.statusKey("turn:" + turn.ID)
+			if v.Model.Connected {
+				if a.compaction != "" {
+					key = v.statusKey("item:" + a.compaction)
+				} else if v.runningGroup != "" && v.activityTurn == turn.ID {
+					key = v.statusKey("group:" + v.runningGroup)
+				}
+			}
+		}
+	}
+	if key != v.liveStatusKey {
+		v.liveStatusKey, v.latestActivity = key, false
+	}
+}
+
+// This visual clock preserves progress animation phase across insertions.
+// Elapsed labels independently use the latest accepted input's timestamp.
 type runningProgress struct {
 	session, epoch, turn string
+	label                string
 	started              time.Time
 	handoff              *progressHandoff
 }
@@ -133,7 +202,8 @@ func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domai
 			break
 		}
 	}
-	if turn.ID == "" || v.runningActivity(turn).waiting {
+	activity := v.runningActivity(turn)
+	if turn.ID == "" || activity.waiting || activity.compaction != "" {
 		v.runningProgress = nil
 		return
 	}
@@ -152,6 +222,7 @@ func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domai
 	}
 	if group != "" {
 		p.handoff = nil
+		p.label = activity.label
 		v.runningGroup, v.activityTurn = group, turn.ID
 		return
 	}
@@ -236,6 +307,7 @@ func (v *View) runningStatus(c *n.Context, t *n.Theme, turn domain.Turn) {
 	}
 	p := v.progressFor(c, turn)
 	row := n.Row(c.Key("running-status")).Gap(6).AlignItems(n.Baseline)
+	v.trackLiveStatus(row, v.statusKey("turn:"+turn.ID))
 	if p.handoff != nil {
 		row.Opacity(p.handoffFraction(c.Now()))
 	} else {

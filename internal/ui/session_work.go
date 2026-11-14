@@ -8,6 +8,7 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"slices"
 	"strings"
 	"time"
 )
@@ -22,6 +23,7 @@ const (
 )
 
 type workDetailUI struct {
+	latestCommand     string
 	input             workInputUI
 	hydrated          bool
 	readSequence      int64
@@ -41,10 +43,10 @@ type workDetailUI struct {
 	markdownTheme     markdown.Theme
 }
 type workPanelUI struct {
-	selected string
-	list     n.ListState
-	arrivals map[string]time.Time
-	details  map[string]*workDetailUI
+	selected, requested, scopeInput, scopeTurn string
+	list                                       n.ListState
+	arrivals                                   map[string]time.Time
+	details                                    map[string]*workDetailUI
 }
 
 func (v *View) workPanel(kind string) *workPanelUI {
@@ -52,12 +54,103 @@ func (v *View) workPanel(kind string) *workPanelUI {
 		v.workPanels = map[app.WorkKey]*workPanelUI{}
 	}
 	key := v.Model.WorkKey(v.Model.SessionID, kind)
+	scope := currentWorkScope(v.Model.Details[v.Model.SessionID])
 	if p := v.workPanels[key]; p != nil {
+		if p.scopeInput != scope.input || p.scopeTurn != scope.turn {
+			p.selected, p.requested = "", ""
+			p.list, p.arrivals = n.ListState{}, nil
+			p.scopeInput, p.scopeTurn = scope.input, scope.turn
+		}
 		return p
 	}
-	p := &workPanelUI{details: map[string]*workDetailUI{}}
+	p := &workPanelUI{details: map[string]*workDetailUI{}, scopeInput: scope.input, scopeTurn: scope.turn}
 	v.workPanels[key] = p
 	return p
+}
+
+type workScope struct {
+	input, turn string
+	position    int
+	inserted    bool
+}
+
+// Presentation follows accepted parent inputs, including same-turn insertions.
+// Drafts, queued inputs and late output do not change this boundary.
+func currentWorkScope(d domain.SessionDetail) workScope {
+	scope := workScope{position: -1}
+	for i := len(d.Items) - 1; i >= 0; i-- {
+		item := d.Items[i]
+		if item.Kind == "user" && item.WorkID == "" {
+			scope.input, scope.turn, scope.position = item.ID, item.TurnID, i
+			break
+		}
+	}
+	if scope.position >= 0 {
+		for _, item := range d.Items[:scope.position] {
+			if item.Kind == "user" && item.WorkID == "" && item.TurnID == scope.turn {
+				scope.inserted = true
+				break
+			}
+		}
+		return scope
+	}
+	// A history page can include the turn receipt before its user item.
+	var latest domain.Turn
+	for _, turn := range d.Turns {
+		if turn.Presentation != "compaction" && turn.Order >= latest.Order {
+			latest = turn
+		}
+	}
+	scope.turn = latest.ID
+	return scope
+}
+
+func visibleSessionWorks(d domain.SessionDetail, all []domain.WorkActivity) []domain.WorkActivity {
+	scope := currentWorkScope(d)
+	if scope.turn == "" {
+		return nil
+	}
+	positions := map[string]int{}
+	referenced := map[string]bool{}
+	for i, item := range d.Items {
+		positions[item.ID] = i
+		if i > scope.position && item.TurnID == scope.turn && item.WorkID == "" {
+			for _, agent := range item.Agents {
+				referenced[agent.ID] = true
+			}
+		}
+	}
+	works := make([]domain.WorkActivity, 0, len(all))
+	order := map[string]int{}
+	for i, w := range all {
+		if w.TurnID != scope.turn {
+			continue
+		}
+		source, known := positions[w.SourceItemID]
+		currentReference := w.Kind == "agent" && referenced[w.Reference]
+		if scope.position >= 0 && !currentReference && (known && source <= scope.position || !known && scope.inserted) {
+			continue
+		}
+		order[w.ID] = i
+		works = append(works, w)
+	}
+	// Source-item chronology is stable while output/revisions keep changing.
+	// Unattributed records retain the worker roster's creation order in reverse.
+	slices.SortStableFunc(works, func(a, b domain.WorkActivity) int {
+		left, found := positions[a.SourceItemID]
+		if !found {
+			left = -1
+		}
+		right, found := positions[b.SourceItemID]
+		if !found {
+			right = -1
+		}
+		if left != right {
+			return right - left
+		}
+		return order[b.ID] - order[a.ID]
+	})
+	return works
 }
 func (p *workPanelUI) detail(id string) *workDetailUI {
 	if d := p.details[id]; d != nil {
@@ -157,8 +250,10 @@ func (v *View) sessionWorkBody(c *n.Context, t *n.Theme, kind string, all []doma
 		}
 	}
 	if p.selected != "" && selected.ID == "" {
+		// An explicit request-origin click can still inspect its source. A
+		// stale selection alone must not restore work cleared by a new input.
 		for _, r := range v.Model.Details[v.Model.SessionID].Requests {
-			if r.WorkID == p.selected {
+			if p.requested == p.selected && r.WorkID == p.selected && r.State.AwaitingResolution() {
 				selected = v.displayedWork(v.requestWork(p.selected))
 				break
 			}
@@ -176,7 +271,7 @@ func (v *View) sessionWorkBody(c *n.Context, t *n.Theme, kind string, all []doma
 			v.sessionWorkDetail(c, t, kind, p, selected, width)
 			return
 		}
-		if v.Model.Details[v.Model.SessionID].WorksTruncated {
+		if len(works) > 0 && v.Model.Details[v.Model.SessionID].WorksTruncated {
 			n.Text(c, "仅显示最近的工作记录").FontSize(11).TextColor(t.TextMuted).Padding(4, 12)
 		}
 		if len(works) == 0 {
@@ -210,7 +305,19 @@ func (v *View) sessionWorkBody(c *n.Context, t *n.Theme, kind string, all []doma
 					c.AnimationFrame()
 				}
 			}
-			row := control(c, 5).FillWidth().Height(60*progress).Opacity(progress).Clip().Padding(8, 6).Label(name)
+			if r := v.pendingWorkRequest(w); r != nil {
+				w.Latest = r.Text
+				if len(r.Questions) > 0 {
+					w.Latest = r.Questions[0].Text
+				}
+			}
+			w.Latest = strings.TrimSpace(w.Latest)
+			height := float32(36)
+			if w.Latest != "" {
+				height = 56
+			}
+			row := control(c, 5).FillWidth().AlignItems(n.Start).Opacity(progress).Clip().Padding(8, 6).Label(name)
+			row.Height(row.AnimateTo("content-height", height, motionAnimation(c, 180*time.Millisecond)) * progress)
 			row.Children(func() {
 				n.Row(c).FillWidth().Gap(8).AlignItems(n.Start).Children(func() {
 					v.workStatus(c, t, w, w.Title, n.Font{Family: t.Font, Size: 12, Weight: 400})
@@ -222,14 +329,8 @@ func (v *View) sessionWorkBody(c *n.Context, t *n.Theme, kind string, all []doma
 							}
 							v.workRequestLink(c, t, w)
 						})
-						if r := v.pendingWorkRequest(w); r != nil {
-							w.Latest = r.Text
-							if len(r.Questions) > 0 {
-								w.Latest = r.Questions[0].Text
-							}
-						}
 						if w.Latest != "" {
-							n.Text(c, w.Latest).FillWidth().SingleLine().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+							n.Text(c, w.Latest).FillWidth().SingleLine().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).Transition(fadeMotion(c, 180*time.Millisecond))
 						}
 					})
 					if duration := workDuration(w, c.Now()); duration != "" {
@@ -240,6 +341,7 @@ func (v *View) sessionWorkBody(c *n.Context, t *n.Theme, kind string, all []doma
 			})
 			if row.Clicked() {
 				p.selected = w.ID
+				p.requested = ""
 				v.readSessionWork(w, p.detail(w.ID), false)
 			}
 		}).FillWidth().FillHeight().Grow(1).PaddingX(6)
@@ -315,8 +417,17 @@ func (v *View) readSessionWork(w domain.WorkActivity, u *workDetailUI, force boo
 func (v *View) refreshSelectedWork() {
 	for _, kind := range []string{"agents", "background"} {
 		p := v.workPanel(kind)
-		for _, w := range domain.SessionWorks(v.Model.Details[v.Model.SessionID]) {
+		d := v.Model.Details[v.Model.SessionID]
+		found := false
+		for _, w := range visibleSessionWorks(d, domain.SessionWorks(d)) {
 			if w.ID == p.selected {
+				found = true
+				v.readSessionWork(w, p.detail(w.ID), true)
+			}
+		}
+		if !found && p.selected != "" && p.requested == p.selected {
+			w := v.requestWork(p.selected)
+			if v.pendingWorkRequest(w) != nil {
 				v.readSessionWork(w, p.detail(w.ID), true)
 			}
 		}
@@ -364,6 +475,15 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 		outputFont += ", monospace"
 	}
 
+	if kind != "background" {
+		commands := []string{}
+		for _, entry := range detail.Items {
+			if commandItem(entry.Item) {
+				commands = append(commands, entry.Item.ID)
+			}
+		}
+		v.syncCommandOutputs(commands, &u.latestCommand, w.ID)
+	}
 	u.syncStreams(c, detail, v.Model.ConnectionEpoch)
 	u.markdownTheme = *v.md.Theme
 	u.markdownTheme.FontSize = 12
@@ -391,7 +511,7 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 				if kind == "background" {
 					n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
 						inlineSymbol(c, terminalIcon, w.Brief, n.Font{Family: outputFont, Size: 11}, 14, outputColor)
-						n.Text(c, w.Brief).Grow(1).MinWidth(0).Font(outputFont).FontSize(11).FixedLineHeight(18).TextColor(outputColor).Selectable()
+						n.Text(c, commandPreview(w.Brief)).Label(w.Brief).Tooltip(w.Brief).ContextMenu(commandCopyMenu(c, w.Brief)).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").Font(outputFont).FontSize(11).FixedLineHeight(18).TextColor(outputColor).Selectable()
 					})
 				} else {
 					n.Text(c, w.Brief).AlignSelf(n.End).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(userBubble(t)).Selectable()
@@ -448,8 +568,22 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 						item.ID = w.ID + "\x00" + item.ID
 						v.activityItem(c, t, item, false)
 					} else {
-						if item.Name != "" && (kind != "background" || w.Brief == "") {
-							inlineIconText(c, backgroundWorkIcon, item.Name, n.Font{Family: t.Font, Size: 12}, 14, 6, t.TextMuted)
+						key := v.commandOutputKey(item.ID, w.ID)
+						if kind != "background" || w.Brief == "" {
+							label := item.Name
+							if label == "" {
+								label = "命令"
+							}
+							heading := n.ButtonBase(c.Key("command-heading")).FillWidth().Height(20).Justify(n.Start).Label(label).Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
+							heading.Children(func() {
+								inlineIconText(c, backgroundWorkIcon, commandPreview(label), n.Font{Family: t.Font, Size: 12}, 14, 6, t.TextMuted).FillWidth().MinWidth(0).Ellipsis("…")
+							})
+							if heading.Clicked() && kind != "background" {
+								v.Model.Collapsed[key] = !v.Model.Collapsed[key]
+							}
+						}
+						if kind != "background" && v.Model.Collapsed[key] {
+							return
 						}
 						if item.Text != "" {
 							resultText(c.Key("output"), strings.TrimRight(item.Text, "\r\n"), outputColor, func(e n.Element) { e.Font(outputFont).FontSize(11).FixedLineHeight(18).Selectable() })

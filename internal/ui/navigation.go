@@ -395,7 +395,7 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 			if v.pendingCount(s.ID) > 0 {
 				statusDotSize(c, s.Title, n.Font{Family: t.Font, Size: 13}, t.Warning, 4, false).Width(10).TextAlign(n.Center).Label("会话等待状态：" + s.ID)
 			} else if s.Status.Active() || finishing {
-				statusDotSize(c, s.Title, n.Font{Family: t.Font, Size: 13}, t.Success, 4, false).Width(10).TextAlign(n.Center).Label("会话运行状态：" + s.ID)
+				statusDotSize(c, s.Title, n.Font{Family: t.Font, Size: 13}, t.Success, 4, true).Width(10).TextAlign(n.Center).Label("会话运行状态：" + s.ID)
 			} else if s.Status == "completed" {
 				inlineSymbol(c, check, s.Title, n.Font{Family: t.Font, Size: 13}, 10, t.Success)
 			} else if s.Status == "interrupted" || s.Status == "abandoned" {
@@ -419,11 +419,15 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 			if count := v.pendingCount(s.ID); count > 0 {
 				n.Text(c, fmt.Sprint(count)).Font("Menlo").FontSize(11).Width(16).TextAlign(n.End)
 			}
-			n.Column(c).Width(28).Height(20).Children(func() {
+			// The action slot has no text baseline when the pin is hidden. Keep
+			// it out of baseline alignment so its bottom cannot lower the title.
+			n.Column(c).Width(28).Height(20).AlignSelf(n.Center).Children(func() {
 				if r.pinned && !moving && !row.Hovered() && !row.FocusWithin() {
 					inlineSymbol(c.Key("pin-mark"), navigationPinIcon, s.Title, n.Font{Family: t.Font, Size: 13}, 13, t.TextMuted).Width(28).TextAlign(n.Center).Transition(fadeMotion(c, 120*time.Millisecond))
 				}
-				more := iconButton(c.Key("actions"), moreActionsIcon, "会话菜单："+s.Title).Absolute().Top(-4).Size(28, 28).Menu(func(menu *n.Menu) { v.sessionMenu(menu, s, r.ref) })
+				// Match the title's visible glyph center while retaining a 28px hit area.
+				top := (float32(20)-28)/2 - inlineCenterOffset(s.Title, n.Font{Family: t.Font, Size: 13})
+				more := iconButton(c.Key("actions"), moreActionsIcon, "会话菜单："+s.Title).Absolute().Top(top).Size(28, 28).Menu(func(menu *n.Menu) { v.sessionMenu(menu, s, r.ref) })
 				if moving || !row.Hovered() && !row.FocusWithin() {
 					more.Opacity(0)
 				}

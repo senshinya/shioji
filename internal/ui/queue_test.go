@@ -481,7 +481,7 @@ func TestConfirmedQueueSendTravelsFromQueueWithoutLosingDraft(t *testing.T) {
 	}
 }
 
-func TestQueueEditCrossfadesAndPreviewsLiveText(t *testing.T) {
+func TestQueueEditDimsContentOverOpaqueSurfaceAndPreviewsLiveText(t *testing.T) {
 	v, _ := nativeQueueFixture()
 	ui := n.NewTester(func(c *n.Context) { theme := *c.Theme(); theme.Dark = true; c.SetTheme(&theme); v.View(c) }, 1200, 820)
 	ui.Click("待发送 2")
@@ -490,17 +490,36 @@ func TestQueueEditCrossfadesAndPreviewsLiveText(t *testing.T) {
 		q, _ := ui.Find("待发送队列")
 		return ui.Image().RGBAAt(int(q.X+q.W/2), int(q.Y+16)).R
 	}
-	normal := queueColor()
+	queueContrast := func() int {
+		label, _ := ui.Find("待发送")
+		background := int(queueColor())
+		contrast := 0
+		im := ui.Image()
+		for y := int(label.Y); y < int(label.Y+label.H); y++ {
+			for x := int(label.X); x < int(label.X+label.W); x++ {
+				contrast = max(contrast, abs(int(im.RGBAAt(x, y).R)-background))
+			}
+		}
+		return contrast
+	}
+	ui.Move(0, 0)
+	ui.Advance(200 * time.Millisecond)
+	background := queueColor()
+	normal := queueContrast()
 	ui.Click("编辑待发消息 1")
 	ui.Frame()
-	first := queueColor()
+	first := queueContrast()
 	if !ui.Focused("消息输入") {
 		t.Fatal("fading editor lost focus")
 	}
 	ui.Advance(60 * time.Millisecond)
-	middle := queueColor()
+	middle := queueContrast()
+	middleBackground := queueColor()
 	ui.Advance(200 * time.Millisecond)
-	dim := queueColor()
+	dim := queueContrast()
+	if queueColor() != background || middleBackground != background {
+		t.Error("editing makes the queue backplate transparent", background, middleBackground, queueColor())
+	}
 	if math.Abs(float64(first)-float64(normal)) > 1 || !(middle < normal-2 && middle > dim+1) || dim >= normal-4 {
 		t.Fatal("queue does not gradually dim for editing", normal, first, middle, dim)
 	}
@@ -514,11 +533,11 @@ func TestQueueEditCrossfadesAndPreviewsLiveText(t *testing.T) {
 	}
 	ui.Click("取消编辑")
 	ui.Frame()
-	closing := queueColor()
+	closing := queueContrast()
 	ui.Advance(60 * time.Millisecond)
-	restoring := queueColor()
+	restoring := queueContrast()
 	ui.Advance(250 * time.Millisecond)
-	restored := queueColor()
+	restored := queueContrast()
 	if math.Abs(float64(closing)-float64(dim)) > 1 || !(restoring > dim+1 && restoring < normal-1) || math.Abs(float64(restored)-float64(normal)) > 1 {
 		t.Fatal("queue does not gradually recover on cancel", dim, closing, restoring, restored)
 	}

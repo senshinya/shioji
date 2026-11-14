@@ -422,7 +422,7 @@
                 "kind": {
                   "type": "add"
                 },
-                "diff": "+package device\n+\n+func TestReconnect(t *testing.T) {}"
+                "diff": "package device\n\nfunc TestReconnect(t *testing.T) {}"
               }
             ],
             "id": "item-fileChange",
@@ -439,7 +439,7 @@
                 "kind": {
                   "type": "delete"
                 },
-                "diff": "-package device\n-// Legacy address-based identity."
+                "diff": "package device\n// Legacy address-based identity."
               }
             ],
             "id": "item-fileChange",

@@ -417,6 +417,13 @@ func TestOpeningSavedSessionCollapsesEveryHistoricalToolGroup(t *testing.T) {
 	if !ui.HasText("last command") {
 		t.Fatal("manual expansion did not reveal the saved call")
 	}
+	if ui.HasText("saved output") {
+		t.Fatal("opening the group also expanded an older command output")
+	}
+	if err := ui.Click("last command"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(180 * time.Millisecond)
 	d.Items[2].Text = "late output"
 	m.Details["s"] = d
 	ui.Frame()
@@ -480,6 +487,10 @@ func TestExpandedToolTimelineSeparatesIconAndTextColumns(t *testing.T) {
 			t.Fatal(err)
 		}
 		ui.Advance(180 * time.Millisecond)
+		if err := ui.Click("first command"); err != nil {
+			t.Fatal(err)
+		}
+		ui.Advance(180 * time.Millisecond)
 		group, _ := ui.Find("2 次工具调用")
 		for _, label := range []string{"first command", "second command"} {
 			child, ok := ui.Find(label)
@@ -500,16 +511,16 @@ func TestExpandedToolTimelineSeparatesIconAndTextColumns(t *testing.T) {
 	}
 }
 
-func TestUserMessageAndEmptyProseDoNotCollapseTools(t *testing.T) {
+func TestDraftAndEmptyProseDoNotCollapseTools(t *testing.T) {
 	m := layoutModel()
 	test := native.NewTester(New(m, nil, "").View, 1440, 900)
 	d := m.Details["s"]
-	d.Items = []domain.Item{{ID: "tool", Kind: "tool", Name: "still live"}, {ID: "empty", Kind: "assistant", Text: "  "}, {ID: "user", Kind: "user", Text: "ordinary followup"}}
+	d.Items = []domain.Item{{ID: "tool", Kind: "tool", Name: "still live"}, {ID: "empty", Kind: "assistant", Text: "  "}}
 	m.Details["s"] = d
 	m.Drafts[m.DraftKey()] = "draft"
 	test.Frame()
 	if !test.HasText("still live") {
-		t.Fatal("user message/draft or empty assistant item collapsed tool group")
+		t.Fatal("unsent draft or empty assistant item collapsed tool group")
 	}
 }
 
@@ -518,7 +529,7 @@ func TestEmptyAssistantEventsKeepToolsInOneVirtualizedGroup(t *testing.T) {
 	v := New(m, nil, "")
 	items := []domain.Item{{ID: "a", Kind: "tool", TurnID: "turn"}, {ID: "empty", Kind: "assistant", TurnID: "turn", Text: " "}, {ID: "b", Kind: "tool", TurnID: "turn"}}
 	rows := v.transcriptRows(items)
-	if len(rows) != 3 || rows[0].count != 2 || rows[1].key != "a" || rows[2].key != "b" {
+	if len(rows) != 4 || !rows[0].toolTitle || rows[1].key != "a" || rows[2].key != "b" || rows[3].count != 2 {
 		t.Fatalf("tool children must stay individual virtual rows under one group: %+v", rows)
 	}
 }
@@ -649,7 +660,7 @@ func TestLiveToolGroupAutoCollapseAnimatesFollowingReply(t *testing.T) {
 			if !ui.HasText("first tool") {
 				t.Fatal("fixture did not display live tools")
 			}
-			heading, _ := ui.Find("2 次工具调用")
+			heading, _ := ui.Find("执行工具")
 			for i := range d.Items {
 				d.Items[i].Final, d.Items[i].Status = true, "completed"
 			}

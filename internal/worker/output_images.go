@@ -61,6 +61,21 @@ func (s *Server) importOutputResource(harnessID, sessionID string, source harnes
 		if e != nil || strings.Join(valid, "\x00") != strings.Join(roots, "\x00") {
 			return none, errors.New("会话目录身份已改变")
 		}
+		if source.Kind == "image" {
+			// Tool images commonly live outside the checkout. Import only an
+			// image snapshot from this device's temporary directories; OpenRoot
+			// below still prevents symlink escapes. Keep both macOS aliases.
+			for _, dir := range []string{"/tmp", os.TempDir()} {
+				if !filepath.IsAbs(dir) {
+					continue
+				}
+				dir = filepath.Clean(dir)
+				roots = append(roots, dir)
+				if real, err := filepath.EvalSymlinks(dir); err == nil && real != dir {
+					roots = append(roots, real)
+				}
+			}
+		}
 		for _, dir := range roots {
 			rel, e := filepath.Rel(dir, path)
 			if e != nil || !filepath.IsLocal(rel) || rel == "." {

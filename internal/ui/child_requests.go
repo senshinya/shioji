@@ -83,6 +83,7 @@ func (v *View) openRequestWork(r domain.PendingRequest) {
 	state.WorkGroups = app.CloneInspectorGroups(groups)
 	p := v.workPanel("agents")
 	p.selected = r.WorkID
+	p.requested = r.WorkID
 	v.readSessionWork(v.requestWork(r.WorkID), p.detail(r.WorkID), true)
 }
 func (v *View) requestOrigin(c *n.Context, t *n.Theme, r domain.PendingRequest) {

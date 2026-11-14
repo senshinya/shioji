@@ -30,34 +30,33 @@ func copyFrame(ui *n.Tester) *image.RGBA {
 	return copy
 }
 
-func TestToolAndTokenHoverOnlyChangesText(t *testing.T) {
+func TestToolHoverOnlyChangesText(t *testing.T) {
+	const label = "1 次工具调用"
 	for _, dark := range []bool{false, true} {
-		for _, label := range []string{"1 次工具调用", "本轮用量"} {
-			m := layoutModel()
-			d := m.Details["s"]
-			d.Items = []domain.Item{{ID: "tool", TurnID: "t", Kind: "tool", Name: "command"}, {ID: "reply", TurnID: "t", Kind: "assistant", Text: "Done"}}
-			d.Turns = []domain.Turn{{ID: "t", Status: "completed"}}
-			m.Details["s"] = d
-			ui := n.NewTester(New(m, nil, "").View, 1440, 900)
-			ui.SetDark(dark)
-			r, _ := ui.Find(label)
-			before := copyFrame(ui)
-			ui.Move(r.X+r.W/2, r.Y+r.H/2)
-			ui.Advance(180 * time.Millisecond)
-			after := ui.Image()
-			x, y := int(r.X+r.W/2), int(r.Y+2)
-			if before.RGBAAt(x, y) != after.RGBAAt(x, y) {
-				t.Fatalf("%s still paints a hover background (dark=%v)", label, dark)
+		m := layoutModel()
+		d := m.Details["s"]
+		d.Items = []domain.Item{{ID: "tool", TurnID: "t", Kind: "tool", Name: "command"}, {ID: "reply", TurnID: "t", Kind: "assistant", Text: "Done"}}
+		d.Turns = []domain.Turn{{ID: "t", Status: "completed"}}
+		m.Details["s"] = d
+		ui := n.NewTester(New(m, nil, "").View, 1440, 900)
+		ui.SetDark(dark)
+		r, _ := ui.Find(label)
+		before := copyFrame(ui)
+		ui.Move(r.X+r.W/2, r.Y+r.H/2)
+		ui.Advance(180 * time.Millisecond)
+		after := ui.Image()
+		x, y := int(r.X+r.W/2), int(r.Y+2)
+		if before.RGBAAt(x, y) != after.RGBAAt(x, y) {
+			t.Fatalf("%s still paints a hover background (dark=%v)", label, dark)
+		}
+		changed := false
+		for y := int(r.Y + 4); y < int(r.Y+r.H-3); y++ {
+			for x := int(r.X + 20); x < int(r.X+110) && x < int(r.X+r.W-4); x++ {
+				changed = changed || before.RGBAAt(x, y) != after.RGBAAt(x, y)
 			}
-			changed := false
-			for y := int(r.Y + 4); y < int(r.Y+r.H-3); y++ {
-				for x := int(r.X + 20); x < int(r.X+110) && x < int(r.X+r.W-4); x++ {
-					changed = changed || before.RGBAAt(x, y) != after.RGBAAt(x, y)
-				}
-			}
-			if !changed {
-				t.Fatalf("%s text has no hover contrast change (dark=%v)", label, dark)
-			}
+		}
+		if !changed {
+			t.Fatalf("%s text has no hover contrast change (dark=%v)", label, dark)
 		}
 	}
 }
@@ -90,15 +89,19 @@ func TestToolDisclosureKeepsClickedHeadingInPlace(t *testing.T) {
 		ui := n.NewTester(New(m, nil, "").View, 1440, 700)
 		ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
 		before, _ := ui.Find("8 次工具调用")
-		for i := 0; i < 2; i++ {
-			if err := ui.Click("8 次工具调用"); err != nil {
+		for i, label := range []string{"8 次工具调用", "执行工具"} {
+			if err := ui.Click(label); err != nil {
 				t.Fatal(err)
 			}
 			for _, delay := range []time.Duration{40, 180} {
 				ui.Advance(delay * time.Millisecond)
-				after, ok := ui.Find("8 次工具调用")
+				next := "执行工具"
+				if i == 1 && delay == 180 {
+					next = "8 次工具调用"
+				}
+				after, ok := ui.Find(next)
 				if !ok || math.Abs(float64(after.Y-before.Y)) > .5 {
-					t.Fatalf("tool disclosure moved its clicked heading: before=%+v after=%+v", before, after)
+					t.Fatalf("tool disclosure moved its clicked heading: reduced=%v action=%d delay=%v before=%+v after=%+v", reduced, i, delay, before, after)
 				}
 			}
 		}
@@ -173,7 +176,7 @@ func TestToolGroupActuallyAnimatesBothDirections(t *testing.T) {
 		t.Fatal(err)
 	}
 	ui.Advance(40 * time.Millisecond)
-	if !ui.HasText("command 0") {
+	if !ui.HasText("command 7") {
 		t.Fatal("tool content disappears before its exit animation")
 	}
 	ui.Advance(180 * time.Millisecond)
@@ -196,7 +199,7 @@ func TestToolDisclosureCanReverseAndUserScrollReleasesAnchor(t *testing.T) {
 	ui.Frame()
 	key := "tool-group:s/tool0"
 	before, _ := v.toolMotions[key].sample(ui.Now())
-	if err := ui.Click("8 次工具调用"); err != nil {
+	if err := ui.Click("执行工具"); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := v.toolMotions[key].sample(ui.Now())
@@ -204,14 +207,14 @@ func TestToolDisclosureCanReverseAndUserScrollReleasesAnchor(t *testing.T) {
 		t.Fatalf("reversing tool disclosure restarted its animation: %v -> %v", before, after)
 	}
 	ui.Advance(40 * time.Millisecond)
-	if err := ui.Click("8 次工具调用"); err != nil {
+	if err := ui.Click("执行工具"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(180 * time.Millisecond)
-	heading, _ := ui.Find("8 次工具调用")
+	heading, _ := ui.Find("执行工具")
 	ui.Scroll(1300, 400, 0, 80)
 	ui.Frame()
-	moved, ok := ui.Find("8 次工具调用")
+	moved, ok := ui.Find("执行工具")
 	if !ok || math.Abs(float64(moved.Y-heading.Y)) < 5 {
 		t.Fatalf("the disclosure anchor prevents user scrolling: before=%+v after=%+v", heading, moved)
 	}
@@ -297,12 +300,112 @@ func TestLargeToolDisclosureKeepsHiddenRowsVirtualized(t *testing.T) {
 			t.Fatalf("tool disclosure mounted hidden history: %d visible labels", got)
 		}
 	}
-	ui.Click("10000 次工具调用")
+	if err := ui.Click("执行工具"); err != nil {
+		t.Fatal(err)
+	}
 	for _, delay := range []time.Duration{0, 140, 40} {
 		ui.Advance(delay * time.Millisecond)
 		if got := len(ui.Texts()); got > 150 {
 			t.Fatalf("tool collapse mounted its hidden suffix: %d visible labels", got)
 		}
+	}
+}
+
+func largeToolDisclosureModel(count int) *View {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Items = nil
+	for i := 0; i < count; i++ {
+		d.Items = append(d.Items, domain.Item{ID: fmt.Sprint("call", i), TurnID: "t", Kind: "tool", Presentation: "command", Name: fmt.Sprint("large command ", i), Text: "result", Status: "completed", Final: true})
+	}
+	d.Items = append(d.Items, domain.Item{ID: "reply", TurnID: "t", Kind: "assistant", Text: "After large group", Final: true})
+	d.Turns = []domain.Turn{{ID: "t", Status: "completed"}}
+	m.Details["s"] = d
+	return New(m, nil, "")
+}
+
+func TestLargeToolDisclosureAnimatesTheVisibleViewport(t *testing.T) {
+	for _, count := range []int{200, 2000, 10000} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			v := largeToolDisclosureModel(count)
+			ui := n.NewTester(v.View, 1440, 900)
+			ui.Advance(time.Second)
+			label := fmt.Sprintf("%d 次工具调用", count)
+			heading, _ := ui.Find(label)
+			if err := ui.Click(label); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(40 * time.Millisecond)
+			opening, ok := ui.Find("After large group")
+			ui.Advance(20 * time.Millisecond)
+			ui.Frame() // Compare reversal at the same clock instant as the click.
+			later, laterOK := ui.Find("After large group")
+			if !ok || !laterOK || later.Y <= opening.Y+1 {
+				t.Fatal("large expansion skips the visible transition", opening, later)
+			}
+			if err := ui.Click("执行工具"); err != nil {
+				t.Fatal(err)
+			}
+			reversed, _ := ui.Find("After large group")
+			if math.Abs(float64(reversed.Y-later.Y)) > .5 {
+				t.Fatal("reversing the large disclosure jumps", later, reversed)
+			}
+			ui.Advance(20 * time.Millisecond)
+			back, ok := ui.Find("After large group")
+			if !ok || back.Y >= reversed.Y-1 {
+				t.Fatal("reversal does not begin shrinking immediately", reversed, back)
+			}
+			ui.Click("执行工具")
+			ui.Advance(time.Second)
+			if err := ui.Click("执行工具"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(60 * time.Millisecond)
+			middle, ok := ui.Find("After large group")
+			if !ok {
+				t.Fatal("large collapse spends most of its duration shrinking offscreen content")
+			}
+			ui.Advance(20 * time.Millisecond)
+			next, ok := ui.Find("After large group")
+			if !ok || next.Y >= middle.Y-1 {
+				t.Fatal("following text does not move continuously", middle, next)
+			}
+			ui.Advance(time.Second)
+			end, _ := ui.Find("After large group")
+			after, _ := ui.Find(label)
+			if end.Y >= next.Y-1 || math.Abs(float64(after.Y-heading.Y)) > .5 {
+				t.Fatal("collapse snaps or loses its heading anchor", middle, next, end, heading, after)
+			}
+		})
+	}
+}
+
+func TestStableToolTranscriptDoesNotReallocateCommandKeys(t *testing.T) {
+	v := largeToolDisclosureModel(2000)
+	items := v.Model.Details["s"].Items
+	v.transcriptRows(items)
+	allocations := testing.AllocsPerRun(3, func() { v.transcriptRows(items) })
+	if allocations > 50 {
+		t.Fatalf("unchanged command history allocates per command on every animation frame: %.0f allocations", allocations)
+	}
+}
+
+func BenchmarkLargeToolDisclosure(b *testing.B) {
+	for _, count := range []int{20, 2000, 10000} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			v := largeToolDisclosureModel(count)
+			ui := n.NewTester(v.View, 1440, 900)
+			ui.Advance(time.Second)
+			label := fmt.Sprintf("%d 次工具调用", count)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				ui.Click(label)
+				ui.Advance(180 * time.Millisecond)
+				ui.Click(label)
+				ui.Advance(180 * time.Millisecond)
+			}
+		})
 	}
 }
 

@@ -431,6 +431,7 @@ func (v *View) managedSkillDetail(c *n.Context, t *n.Theme, u *skillManagementUI
 				n.Text(c, entry.Path).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Margin(8, 0, 0, 0).Selectable()
 			}
 			if u.document.ID == u.detailID {
+				u.markdown.Theme = &markdown.Theme{LinkWeight: 500, LinkUnderline: true}
 				markdown.View(c.Key("body:"+u.document.ID), u.document.Text, &u.markdown).FillWidth().FontSize(13).Margin(24, 0, 0, 0).Transition(disclosureMotion(c, 180*time.Millisecond))
 			}
 		})

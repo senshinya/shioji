@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"shioji/internal/app"
@@ -20,6 +21,101 @@ type imageHarness struct {
 	memoryHarness
 	data       []byte
 	kind, name string
+}
+
+func TestOutputImagesFromDeviceTemporaryDirectories(t *testing.T) {
+	// Isolate the worker's TMPDIR from the workspace and rejected outside file.
+	workspace, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.png")
+	temporary := t.TempDir()
+	t.Setenv("TMPDIR", temporary)
+	public, err := os.MkdirTemp("/tmp", "shioji-output-image-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(public) })
+	db, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	w, err := db.CreateWorkspace("temporary images", []string{workspace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := db.Accept(domain.Submission{OperationID: "temporary-image", WorkspaceID: w.ID, HarnessID: "test", Text: "show image"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{store: db, attachments: attachments.New(t.TempDir())}
+	var data bytes.Buffer
+	if err = png.Encode(&data, image.NewRGBA(image.Rect(0, 0, 20, 10))); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{temporary, public} {
+		if err = os.WriteFile(filepath.Join(dir, "result.png"), data.Bytes(), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for label, dir := range map[string]string{"worker-temp": temporary, "tmp": public} {
+		real, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, root := range []string{dir, real} {
+			source := harness.OutputResource{Kind: "image", SessionID: op.SessionID, ItemID: label, Path: filepath.Join(root, "result.png")}
+			a, err := s.importOutputResource("test", op.SessionID, source)
+			if err != nil {
+				t.Error("device temporary image cannot be previewed", root, err)
+				continue
+			}
+			got, err := s.attachments.Get(w.ID, a.ID, 0)
+			if err != nil || !bytes.Equal(got.Data, data.Bytes()) || a.MIME != "image/png" {
+				t.Error("temporary image was not copied into an immutable workspace resource", a, err)
+			}
+		}
+	}
+	if err = os.WriteFile(outside, data.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	text := filepath.Join(temporary, "not-an-image.png")
+	if err = os.WriteFile(text, []byte("plain text"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(temporary, "escape.png")
+	if err = os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(temporary, "pipe.png")
+	if err = syscall.Mkfifo(fifo, 0600); err != nil {
+		t.Fatal(err)
+	}
+	large := filepath.Join(temporary, "large.png")
+	file, err := os.Create(large)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = file.Truncate((8 << 20) + 1)
+	file.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []harness.OutputResource{
+		{Kind: "image", Path: outside},
+		{Kind: "image", Path: link},
+		{Kind: "image", Path: text},
+		{Kind: "image", Path: fifo},
+		{Kind: "image", Path: large},
+		{Kind: "file", Path: text},
+	} {
+		source.SessionID, source.ItemID = op.SessionID, "rejected"
+		if _, err = s.importOutputResource("test", op.SessionID, source); err == nil {
+			t.Error("temporary image exception permitted a forbidden resource", source.Kind, source.Path)
+		}
+	}
 }
 
 func (a imageHarness) Start(_ context.Context, o harness.StartOptions) (harness.Runtime, error) {
@@ -90,6 +186,9 @@ func TestOutputResourceCanBeDownloadedByAnotherClientAfterHistoryLoad(t *testing
 }
 
 func TestOutputResourceSnapshotIsImmutableScopedAndIdempotent(t *testing.T) {
+	// Keep the rejected file outside the worker's permitted temporary roots.
+	outside := filepath.Join(t.TempDir(), "secret.png")
+	t.Setenv("TMPDIR", t.TempDir())
 	dir, _ := filepath.EvalSymlinks(t.TempDir())
 	db, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -133,7 +232,6 @@ func TestOutputResourceSnapshotIsImmutableScopedAndIdempotent(t *testing.T) {
 	if _, err = s.attachments.Get(domain.NewID(), a.ID, 0); err == nil {
 		t.Fatal("foreign workspace read image")
 	}
-	outside := filepath.Join(t.TempDir(), "secret.png")
 	os.WriteFile(outside, data.Bytes(), 0600)
 	link := filepath.Join(dir, "escaped.png")
 	os.Symlink(outside, link)

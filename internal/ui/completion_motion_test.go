@@ -51,7 +51,6 @@ func sameMark(a, b *image.RGBA) bool {
 func TestVisibleSessionCheckWaitsForNativeTextTailAndFade(t *testing.T) {
 	v := liveCompletionModel()
 	ui := n.NewTester(v.View, 1200, 820)
-	running := sidebarMark(ui)
 	d := v.Model.Details["s"]
 	d.Items[1].Text = "Prefix. Final words."
 	d.Items[1].Final = true
@@ -60,7 +59,7 @@ func TestVisibleSessionCheckWaitsForNativeTextTailAndFade(t *testing.T) {
 	v.Model.Details["s"] = d
 	v.Model.Snapshot.Sessions[0].Status = "completed"
 	ui.Frame()
-	if !sameMark(running, sidebarMark(ui)) {
+	if _, active := ui.Find("会话运行状态：s"); !active {
 		t.Fatal("sidebar shows completed before the native output animation drains")
 	}
 	for i := 0; i < 100 && !ui.HasText("Prefix. Final words."); i++ {
@@ -69,11 +68,11 @@ func TestVisibleSessionCheckWaitsForNativeTextTailAndFade(t *testing.T) {
 	if !ui.HasText("Prefix. Final words.") {
 		t.Fatal("final text never appears")
 	}
-	if !sameMark(running, sidebarMark(ui)) {
+	if _, active := ui.Find("会话运行状态：s"); !active {
 		t.Fatal("sidebar ignores the last text fade after the full source appears")
 	}
 	ui.Advance(600 * time.Millisecond)
-	if sameMark(running, sidebarMark(ui)) || ui.FramePending() {
+	if _, active := ui.Find("会话运行状态：s"); active || ui.FramePending() {
 		t.Fatal("sidebar never becomes a check after all output settles")
 	}
 	if v.Model.Snapshot.Sessions[0].Status != "completed" {
@@ -183,7 +182,6 @@ func TestCompletionDelayAppliesOnlyToTheCurrentlyDisplayedSession(t *testing.T) 
 func TestVisibleSessionCheckWaitsForAllReplyFragments(t *testing.T) {
 	v := liveCompletionModel()
 	ui := n.NewTester(v.View, 1200, 820)
-	running := sidebarMark(ui)
 	d := v.Model.Details["s"]
 	d.Items[1].Text += " " + strings.Repeat("Long reply. ", 120)
 	d.Items[1].Final = true
@@ -194,11 +192,11 @@ func TestVisibleSessionCheckWaitsForAllReplyFragments(t *testing.T) {
 	v.Model.Snapshot.Sessions[0].Status = "completed"
 	ui.Frame()
 	ui.Advance(220 * time.Millisecond)
-	if !sameMark(running, sidebarMark(ui)) {
+	if _, active := ui.Find("会话运行状态：s"); !active {
 		t.Fatal("a short reply fragment marks the session complete before the longer fragment settles")
 	}
 	ui.Advance(1200 * time.Millisecond)
-	if sameMark(running, sidebarMark(ui)) {
+	if _, active := ui.Find("会话运行状态：s"); active {
 		t.Fatal("completed fragments never release the sidebar check")
 	}
 }

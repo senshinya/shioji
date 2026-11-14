@@ -49,6 +49,9 @@ type View struct {
 	conversationImport                                                                                              *conversationImportUI
 	runningProgress                                                                                                 *runningProgress
 	runningGroup, activityTurn                                                                                      string
+	liveStatusKey                                                                                                   string
+	liveStatusBounds                                                                                                n.Rect
+	latestActivity                                                                                                  bool
 	contextInputs                                                                                                   map[app.WorkKey]*contextInputUI
 	contextRowKeys                                                                                                  map[app.WorkKey]string
 	requestActionsState                                                                                             map[app.WorkKey]*requestActionState
@@ -129,6 +132,7 @@ type View struct {
 	composerHeightKey                                                                                               string
 	composerInputHeight                                                                                             float32
 	composerNaturalHeight                                                                                           float32
+	composerBaseHeight                                                                                              float32
 	composerEditID                                                                                                  string
 	composerHeightUntil                                                                                             time.Time
 	composerBounds                                                                                                  n.Rect
@@ -686,6 +690,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 		editID := m.QueueEdits[m.SessionID].ID
 		if v.composerHeightKey != stackKey {
 			v.composerHeightKey, v.composerNaturalHeight, v.composerEditID = stackKey, 0, editID
+			v.composerBaseHeight = 0
 			v.composerHeightUntil = time.Time{}
 			v.composerInputHeight = inputHeight
 		}
@@ -695,15 +700,18 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 		}
 		heightFrame := n.Column(c.Key("composer-height:"+stackKey)).Label("消息编辑器").FillWidth().Clip().Background(bg).Border(1, t.Border).Radius(16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04))
 		resize := c.Now().Before(v.composerHeightUntil) || editID != ""
-		shownHeight := v.composerNaturalHeight
+		// The attachment strip already animates its layout. Animate only the
+		// remaining editor height, then add this frame's strip height directly.
+		baseHeight := v.composerBaseHeight
+		shownHeight := baseHeight
 		if v.composerNaturalHeight > 0 {
 			if resize {
-				shownHeight = heightFrame.AnimateTo("composer-height", v.composerNaturalHeight, n.Animation{Duration: 360 * time.Millisecond, Ease: composerDescentEase})
-				heightFrame.Height(shownHeight)
+				shownHeight = heightFrame.AnimateTo("composer-height", baseHeight, n.Animation{Duration: 360 * time.Millisecond, Ease: composerDescentEase})
 			} else {
-				heightFrame.Jump("composer-height", v.composerNaturalHeight)
+				heightFrame.Jump("composer-height", baseHeight)
 			}
 		}
+		attachmentHeight := float32(0)
 		heightFrame.Children(func() {
 			var input composerInput
 			composer := n.Column(c.Key("composer:"+stackKey)).FillWidth().Padding(10, 14, 8, 6).Gap(4).Children(func() {
@@ -714,7 +722,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 				v.branchStrip(c, t, home)
 				v.contextCommandNotice(c, t)
 				if !waiting {
-					v.draftAttachmentStrip(c, t)
+					attachmentHeight = v.draftAttachmentStrip(c, t)
 				}
 				n.Column(c.Key("composer-input-space")).Height(v.composerInputHeight).Shrink(0)
 				// A zero-height origin fixed above the footer keeps outgoing editor
@@ -853,9 +861,17 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 						invalidate()
 					}
 				}
-				if v.composerHeightKey == stackKey && math.Abs(float64(v.composerNaturalHeight-r.H-2)) > .5 {
+				if v.composerHeightKey == stackKey {
+					changed := math.Abs(float64(v.composerNaturalHeight-r.H-2)) > .5
 					v.composerNaturalHeight = r.H + 2
-					invalidate()
+					base := r.H + 2 - attachmentHeight
+					if math.Abs(float64(v.composerBaseHeight-base)) > .5 {
+						v.composerBaseHeight = base
+						changed = true
+					}
+					if changed {
+						invalidate()
+					}
 				}
 			})
 			if m.QueueEdits[m.SessionID].ID != "" {
@@ -864,6 +880,9 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 			}
 			v.queueEditBar(c, t)
 		})
+		if v.composerNaturalHeight > 0 && resize {
+			heightFrame.Height(shownHeight + attachmentHeight)
+		}
 	})
 	if files := stack.DroppedFiles(); len(files) > 0 {
 		v.addAttachmentFiles(key, files)
@@ -1065,11 +1084,12 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	rows = v.contextRows(rows)
 	rows = v.revealFindTarget(rows, reopening)
 	v.syncRunningGroup(c, rows, detail)
+	v.prepareLiveStatus()
 	turns := make(map[string]domain.Turn, len(detail.Turns))
 	for _, turn := range detail.Turns {
 		turns[turn.ID] = turn
 	}
-	rows = withTurnFooters(rows, detail.Items, turns)
+	rows = withTurnFooters(rows, turns)
 	for i := range rows {
 		if rows[i].footer != "" {
 			if motion := v.toolArrivals.motions[rows[i].key]; motion != nil && !v.reduceMotion {
@@ -1106,7 +1126,14 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			if len(state.Reveals) > 0 && owner == previousOwner && rows[i-1].opacity == row.opacity {
 				state.Reveals[len(state.Reveals)-1].End = i + 2
 			} else {
-				state.Reveals = append(state.Reveals, n.ListReveal{First: i + 1, End: i + 2, Progress: row.opacity})
+				reveal := n.ListReveal{First: i + 1, End: i + 2, Progress: row.opacity}
+				if row.toolParent != "" && v.toolMotions[owner] != nil {
+					// Animate the visible prefix rather than racing through the
+					// full natural height of thousands of virtualized calls.
+					reveal.MaxHeight = state.Bounds(c).H
+					reveal.FromEnd = v.toolMotions[owner].fromEnd
+				}
+				state.Reveals = append(state.Reveals, reveal)
 			}
 		}
 	}
@@ -1139,10 +1166,15 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			return
 		}
 		if row == len(rows)+1 {
-			n.Column(c).Height(reserve + 32)
+			// Message rows already own the clearance above the dock.
+			n.Column(c).Height(reserve)
 			return
 		}
 		entry := rows[row-1]
+		if entry.toolTitle && entry.opacity == 0 {
+			n.Column(c).Height(0)
+			return
+		}
 		v.currentTranscriptRow = row
 		i := entry.end
 		item := entry.item
@@ -1185,7 +1217,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 				n.SelectionItem(content, item.ID)
 			}
 			v.sentMessagePose(c, content, item)
-			if entry.toolParent != "" {
+			if entry.toolParent != "" && !entry.toolTitle {
 				content.Padding(0, 0, bottom, 24).Draw(func(p *n.Painter, r n.Rect) {
 					height := r.H
 					if row == len(rows) || rows[row].toolParent != entry.toolParent {
@@ -1198,7 +1230,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 					content.Transform(n.Translation(0, -4*(1-entry.opacity)))
 				}
 			}
-			if entry.group != "" || entry.toolParent == "" && !entry.restarting && entry.opacity < 1 {
+			if entry.group != "" || entry.toolTitle || entry.toolParent == "" && !entry.restarting && entry.opacity < 1 {
 				content.Opacity(entry.opacity)
 			}
 			content.DrawOver(func(_ *n.Painter, r n.Rect) { rowBounds[entry.key] = r })
@@ -1212,6 +1244,8 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 					v.turnFooter(c, t, turns[entry.footer])
 				} else if entry.group != "" {
 					v.toolGroup(c, t, entry, row)
+				} else if entry.toolTitle {
+					v.toolGroupTitle(c, t, entry, row)
 				} else if entry.toolParent != "" {
 					v.toolTimelineItem(c, t, entry)
 				} else {
@@ -1220,7 +1254,17 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			})
 		})
 	}).Absolute().Left(0).Right(0).Top(0).Bottom(0).ScrollbarInsets(8, 0, 8, 0).Label("对话记录")
-	history.DrawOver(func(_ *n.Painter, _ n.Rect) { v.historyRowBounds = rowBounds })
+	invalidateStatus := c.Services().Invalidate
+	history.Draw(func(_ *n.Painter, _ n.Rect) { v.liveStatusBounds = n.Rect{} })
+	history.DrawOver(func(_ *n.Painter, r n.Rect) {
+		v.historyRowBounds = rowBounds
+		box := v.liveStatusBounds
+		away := v.liveStatusKey != "" && !(box.H > 0 && box.Y >= r.Y+48 && box.Y+box.H <= r.Y+r.H-reserve+.5)
+		if away != v.latestActivity {
+			v.latestActivity = away
+			invalidateStatus()
+		}
+	})
 	n.VirtualTextSelection(history, func(key string) (string, bool) {
 		for _, item := range v.Model.Details[v.Model.SessionID].Items {
 			if item.ID == key {
@@ -1255,7 +1299,7 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 	case "assistant":
 		v.assistantReply(c, item)
 	case "tool":
-		if item.Presentation != "" && item.Presentation != "command" {
+		if !commandItem(item) {
 			v.activityItem(c, t, item)
 			return
 		}
@@ -1263,17 +1307,18 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 		if label == "" {
 			label = "工具活动"
 		}
-		heading := control(c).FillWidth().MinHeight(20).Justify(n.Start).Label(label)
+		heading := control(c).FillWidth().MinHeight(20).Justify(n.Start).Label(label).Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
 		if heading.Children(func() {
 			n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-				n.Text(c, label).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Grow(1)
+				n.Text(c, commandPreview(label)).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Grow(1).MinWidth(0).SingleLine().Ellipsis("…")
 				if issue := toolIssueLabel(item); issue != "" {
 					n.Text(c.Key("command-issue"), issue).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
 						Transition(fadeMotion(c, 160*time.Millisecond))
 				}
 			})
 		}).Clicked() {
-			v.Model.Collapsed["tool:"+item.ID] = !v.Model.Collapsed["tool:"+item.ID]
+			key := v.commandOutputKey(item.ID, "")
+			v.Model.Collapsed[key] = !v.Model.Collapsed[key]
 		}
 		v.commandOutput(c, t, item, heading)
 	case "activity":
@@ -1288,12 +1333,16 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 }
 func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 	frame := n.Column(c.Key("reply-footer")).Label("回复信息").FillWidth().MinHeight(24).Clip()
+	if turn.Status.Active() && !v.Model.Connected {
+		v.trackLiveStatus(frame, v.statusKey("turn:"+turn.ID))
+	}
 	state := string(turn.Status)
 	if (turn.Status == "running" || turn.Status == "starting") && !v.Model.Connected {
 		state = "disconnected"
 	}
-	delegated := v.runningGroup != "" && v.activityTurn == turn.ID && (turn.Status == "running" || turn.Status == "starting")
-	waiting := (turn.Status == "running" || turn.Status == "starting") && v.Model.Connected && v.runningActivity(turn).waiting
+	activity := v.runningActivity(turn)
+	delegated := turn.Status.Active() && (v.runningGroup != "" && v.activityTurn == turn.ID || v.Model.Connected && activity.compaction != "")
+	waiting := turn.Status.Active() && v.Model.Connected && activity.waiting
 	if turn.Status == "running" || turn.Status == "starting" {
 		frame.MinHeight(0)
 	}
@@ -1302,7 +1351,7 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 	}
 	// A tool-to-prose handoff already has its final footer height. A second
 	// entrance/height animation would clip the new dot and move it on screen.
-	if p := v.runningProgress; !waiting && state == "running" && p != nil && p.turn == turn.ID && p.handoff != nil {
+	if p := v.runningProgress; activity.compaction == "" && !waiting && state == "running" && p != nil && p.turn == turn.ID && p.handoff != nil {
 		frame.Height(24).Children(func() { v.runningStatus(c, t, turn) })
 		return
 	}
@@ -1391,24 +1440,11 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 				n.Text(c, fmt.Sprintf("%.1f 秒", float64(*turn.DurationMS)/1000)).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 			}
 			if turn.Status == "completed" {
-				usage := n.ButtonBase(c).MinHeight(24).Label("本轮用量")
-				color := textHoverColor(c, usage, t.TextMuted)
-				usage.Children(func() {
+				n.Column(c).MinHeight(24).Justify(n.Center).Label("本轮用量").Children(func() {
 					n.Text(c, fmt.Sprintf("输入 %s · 输出 %s · 缓存 %s", count(turn.InputTokens), count(turn.OutputTokens), count(turn.CachedInputTokens))).
-						FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
+						FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
+						ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
 				})
-				choices := []menuChoice{}
-				for _, field := range []struct {
-					name  string
-					value *int64
-				}{{"输入", turn.InputTokens}, {"输出", turn.OutputTokens}, {"缓存", turn.CachedInputTokens}} {
-					value := "—"
-					if field.value != nil {
-						value = fmt.Sprint(*field.value)
-					}
-					choices = append(choices, menuChoice{id: field.name, name: field.name + " " + value, disabled: true})
-				}
-				v.choiceMenu(c, t, "usage:"+turn.ID, usage, choices)
 			}
 		})
 		return 0

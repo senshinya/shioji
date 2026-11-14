@@ -27,7 +27,10 @@ func (v *View) outputImage(c *n.Context, t *n.Theme, a domain.Attachment) float3
 		button = n.ButtonBase(c).Fill().Padding(0).Radius(8).Label("预览图片：" + a.Name).Tooltip(a.Name).Disabled(cached == nil || cached.Image == nil)
 		button.Children(func() {
 			if cached != nil && cached.Image != nil {
-				n.Image(c.Key("image"), cached.Image).Fill().Fit(n.Cover).Transition(fadeMotion(c, 160*time.Millisecond))
+				picture := n.Image(c.Key("image"), cached.Image).Fill().Fit(n.Cover).Transition(fadeMotion(c, 160*time.Millisecond))
+				if v.previewOwnsThumbnail(c, a.ID, button.Bounds()) {
+					picture.Opacity(0)
+				}
 			} else {
 				label := "图片加载中…"
 				if cached != nil && cached.phase == attachmentImageFailed {

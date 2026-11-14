@@ -380,7 +380,7 @@ func (v *View) contextRows(rows []transcriptRow) []transcriptRow {
 	if a.State == "unknown" || a.State == "abandoned" {
 		return rows
 	}
-	item := domain.Item{ID: key, Kind: "activity", Presentation: "compaction", Name: "正在压缩上下文", Status: "running"}
+	item := domain.Item{ID: key, TurnID: a.TurnID, Kind: "activity", Presentation: "compaction", Name: "正在压缩上下文", Status: "running"}
 	if !a.State.Active() {
 		item.Status = string(a.State)
 		item.Final = true
@@ -409,8 +409,12 @@ func (v *View) contextCompactionItem(c *n.Context, t *n.Theme, item domain.Item)
 	if label == "" {
 		label = "正在压缩上下文"
 	}
-	n.Row(c.Key("compaction-status")).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
-		font := n.Font{Family: t.Font, Size: 12, Weight: 400}
+	row := n.Row(c.Key("compaction-status")).FillWidth().Gap(6).AlignItems(n.Baseline)
+	if !item.Final {
+		v.trackLiveStatus(row, v.statusKey("item:"+item.ID))
+	}
+	row.Children(func() {
+		font := n.Font{Family: t.Font, Size: 11, Weight: 400}
 		if !item.Final {
 			statusDot(c, label, font, t.Success, true)
 		} else if item.Status == "completed" {
@@ -418,9 +422,17 @@ func (v *View) contextCompactionItem(c *n.Context, t *n.Theme, item domain.Item)
 		} else {
 			inlineSymbol(c, compactContextIcon, label, font, 14, t.TextMuted)
 		}
-		text := n.Text(c.Key("label"), label).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+		text := n.Text(c.Key("label"), label).FontSize(font.Size).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
 		if !item.Final {
 			shimmer(c, text, t.TextMuted, t.Text)
+		}
+		if !item.Final && item.WorkID == "" && item.TurnID != "" && v.Model.Connected {
+			for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
+				if turn.ID == item.TurnID && turn.Status.Active() && (turn.Presentation == "compaction" || v.runningActivity(turn).compaction == item.ID) {
+					runningElapsed(c.Key("elapsed"), v.runningElapsedStart(turn), t.TextMuted, false)
+					break
+				}
+			}
 		}
 		if item.Status == "failed" || item.Status == "interrupted" {
 			if control(c.Key("retry-compact")).Height(26).PaddingX(4).Disabled(v.compactReason() != "").Label("重试压缩").Children(func() { n.Text(c, "重试").FontSize(12).TextColor(t.TextMuted) }).Clicked() {

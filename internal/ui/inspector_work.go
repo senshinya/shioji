@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-var backgroundWorkIcon = svg("M3 5l5 5-5 5M11 15h6")
+var backgroundWorkIcon = svg("M3 4l5 6-5 6M11 16h6")
 
 func inspectorWorkName(kind string) string {
 	switch kind {

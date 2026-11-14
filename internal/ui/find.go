@@ -266,8 +266,8 @@ func (v *View) revealFindTarget(rows []transcriptRow, reopening bool) []transcri
 	if target < 0 {
 		return rows
 	}
-	if items[target].Kind == "tool" {
-		v.Model.Collapsed["tool:"+s.target.id] = false
+	if commandItem(items[target]) {
+		v.Model.Collapsed[v.commandOutputKey(s.target.id, "")] = false
 	}
 	if items[target].Kind == "tool" || items[target].Kind == "activity" {
 		v.Model.Collapsed["activity:"+v.Model.SessionID+"/"+s.target.id] = false

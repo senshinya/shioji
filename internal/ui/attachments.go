@@ -279,10 +279,10 @@ func (v *View) uploadDraft(key string, index int) {
 		}
 	})
 }
-func (v *View) draftAttachmentStrip(c *n.Context, t *n.Theme) {
-	v.draftAttachmentStripFor(c, t, v.Model.DraftKey())
+func (v *View) draftAttachmentStrip(c *n.Context, t *n.Theme) float32 {
+	return v.draftAttachmentStripFor(c, t, v.Model.DraftKey(), 4)
 }
-func (v *View) draftAttachmentStripFor(c *n.Context, t *n.Theme, key string) {
+func (v *View) draftAttachmentStripFor(c *n.Context, t *n.Theme, key string, gap float32) float32 {
 	m := v.Model
 	drafts := m.Attachments[key]
 	regular := 0
@@ -298,8 +298,24 @@ func (v *View) draftAttachmentStripFor(c *n.Context, t *n.Theme, key string) {
 		target = 1
 	}
 	presence := strip.AnimateTo("presence", target, n.Animation{Duration: 360 * time.Millisecond, Ease: composerDescentEase})
+	retained := n.Local(strip, "departing-attachments", func() []app.DraftAttachment { return nil })
+	if regular > 0 {
+		*retained = append((*retained)[:0], drafts...)
+	} else if presence > 0 {
+		drafts = *retained
+	} else {
+		*retained = nil
+	}
+	contentTarget := float32(0)
+	if regular > 0 {
+		contentTarget = 1
+	}
+	contentOpacity := strip.AnimateTo("contents", contentTarget, motionAnimation(c, 180*time.Millisecond))
 	removeID := ""
-	strip.Height(76 * presence).Clip().Hidden(presence == 0).Children(func() {
+	// Include the containing column's gap in the same continuous collapse.
+	strip.Height(76*presence).Margin(0, 9, -gap*(1-presence), 9).Clip().Hidden(presence == 0)
+	n.Inert(strip, regular == 0)
+	strip.Children(func() {
 		n.Row(c).Gap(8).AlignItems(n.Center).Children(func() {
 			for i, a := range drafts {
 				if a.Attachment.InlineReference() {
@@ -309,12 +325,12 @@ func (v *View) draftAttachmentStripFor(c *n.Context, t *n.Theme, key string) {
 				if target, err := m.AttachmentTarget(v.ControllerDirectory(), m.WorkspaceID); err == nil {
 					ready = ready && a.DeviceID == target.DeviceID
 				}
-				if !ready {
+				if !ready && regular > 0 {
 					v.uploadDraft(key, i)
 				}
 				motion := fadeMotion(c, 180*time.Millisecond)
 				motion.Position = true
-				tile := n.Column(c.Key(a.Attachment.ID)).Size(136, 64).Radius(8).Background(codeSurface(t)).Border(1, t.Border).Transition(motion)
+				tile := n.Column(c.Key(a.Attachment.ID)).Size(136, 64).Radius(8).Background(codeSurface(t)).Border(1, t.Border).Opacity(contentOpacity).Transition(motion)
 				tile.Children(func() {
 					var source n.Rect
 					label := attachmentSize(a.Attachment.Size)
@@ -363,6 +379,7 @@ func (v *View) draftAttachmentStripFor(c *n.Context, t *n.Theme, key string) {
 		}
 		m.Attachments[key] = kept
 	}
+	return (76 + gap) * presence
 }
 
 func (v *View) draftAttachmentContents(c *n.Context, t *n.Theme, a domain.Attachment, workspace, label string) n.Element {
@@ -421,15 +438,29 @@ func (v *View) attachmentThumbnail(c *n.Context, t *n.Theme, a domain.Attachment
 		return n.Column(c).Size(size, size).AlignItems(n.Center).Justify(n.Center).Children(func() { n.Icon(c, fileAttachmentIcon).Size(22, 22).TextColor(t.TextMuted) })
 	}
 	cached := v.loadAttachmentImage(a, workspace, 256)
-	return n.Column(c.Key("thumbnail:"+a.ID)).Size(size, size).Radius(5).Clip().Background(t.Border.Alpha(.35)).Children(func() {
+	thumbnail := n.Column(c.Key("thumbnail:"+a.ID)).Size(size, size).Radius(5).Clip().Background(t.Border.Alpha(.35))
+	return thumbnail.Children(func() {
 		if cached != nil {
 			cached.Used = v.replyFrame
 			if cached.Image != nil {
-				n.Image(c.Key("loaded-image"), cached.Image).Size(size, size).Fit(n.Cover).Radius(5).Transition(fadeMotion(c, 160*time.Millisecond))
+				picture := n.Image(c.Key("loaded-image"), cached.Image).Size(size, size).Fit(n.Cover).Radius(5).Transition(fadeMotion(c, 160*time.Millisecond))
+				if v.previewOwnsThumbnail(c, a.ID, thumbnail.Bounds()) {
+					picture.Opacity(0)
+				}
 			}
 		}
 	})
 }
+
+// Keep the source node mounted, but let the opaque moving image own its ink.
+// Match the clicked box too: the same attachment can occur elsewhere on screen.
+func (v *View) previewOwnsThumbnail(c *n.Context, id string, source n.Rect) bool {
+	p := v.attachmentPreview
+	return p != nil && p.visible() && p.Attachment.ID == id && p.Image != nil &&
+		!c.Preferences().ReduceMotion && p.Source.W > 0 && p.Source.H > 0 && p.Source == source &&
+		(p.Origin == nil || p.Origin.Content == nil)
+}
+
 func (v *View) loadAttachmentImage(a domain.Attachment, workspace string, maximum int) *attachmentImage {
 	if v.attachmentImages == nil {
 		v.attachmentImages = map[string]*attachmentImage{}
@@ -639,12 +670,12 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 				})
 				content.Children(func() {
 					n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
+						if iconButton(c, queueRemoveIcon, "关闭附件预览").Clicked() {
+							p.close()
+						}
 						n.Text(c, p.Attachment.Name).FontSize(13).Grow(1).SingleLine()
 						if iconButton(c, saveAttachmentIcon, "另存到本机").Disabled(p.Saving).Clicked() {
 							v.saveAttachment(p)
-						}
-						if iconButton(c, queueRemoveIcon, "关闭附件预览").Clicked() {
-							p.close()
 						}
 					})
 					if p.SaveError != "" {
@@ -696,7 +727,11 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 				if p.Origin != nil {
 					radius = p.Origin.Radius
 				}
-				n.Column(c).Absolute().Left(clip.X).Top(clip.Y).Width(clip.W).Height(clip.H).Radius(radius * (1 - progress)).Clip().IgnoreInput(true).Role(n.RoleImage).Label("图片预览内容").Draw(func(painter *n.Painter, _ n.Rect) { painter.Image(image, draw, n.Contain) })
+				n.Column(c).Absolute().Left(clip.X).Top(clip.Y).Width(clip.W).Height(clip.H).IgnoreInput(true).Role(n.RoleImage).Label("图片预览内容").Draw(func(painter *n.Painter, _ n.Rect) {
+					// Element.Clip clips children, not its own Draw callback.
+					// Apply the interpolated thumbnail crop to the image ink too.
+					painter.Clip(clip, radius*(1-progress), func() { painter.Image(image, draw, n.Contain) })
+				})
 			})
 		}
 	})

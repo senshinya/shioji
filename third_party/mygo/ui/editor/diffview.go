@@ -259,6 +259,22 @@ func (d *DiffState) Stats() (added, deleted int) {
 	return d.model.stats()
 }
 
+// ContentHeight returns the last laid-out visual height, including wrapped
+// lines and diff headers. It is zero before layout; offscreen lines may still
+// use estimated heights. Querying it does not lay out or measure extra lines.
+func (d *DiffState) ContentHeight() float32 {
+	height := func(ed *editor) float32 {
+		if ed.view.heights.n == 0 {
+			return 0
+		}
+		return float32(ed.view.heights.total())
+	}
+	if d.Layout == DiffUnified {
+		return height(&d.eds[1])
+	}
+	return max(height(&d.eds[0]), height(&d.eds[1]))
+}
+
 // Revert puts the old lines of hunk i back in New.
 func (d *DiffState) Revert(i int) {
 	d.ensure()

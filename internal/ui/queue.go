@@ -157,6 +157,16 @@ func (v *View) syncQueuedMotions() {
 				if item.Kind == "user" && item.ID == "input:"+source.item.Input.OperationID {
 					if index > newest {
 						v.sent = &sentMessageMotion{input: item.ID, origin: m.SessionID, session: m.SessionID, epoch: m.ConnectionEpoch, workspace: m.WorkspaceID, source: n.Rect{X: source.bounds.X - 16, Y: source.bounds.Y - 12, W: source.bounds.W + 32, H: source.bounds.H + 24}, queued: true, focused: true}
+						// A queued input belonging to an already-present turn is an
+						// insertion, including when another client initiated it.
+						if item.TurnID != "" {
+							for _, previous := range m.Details[m.SessionID].Items[:index] {
+								if previous.TurnID == item.TurnID {
+									v.sent.steering = true
+									break
+								}
+							}
+						}
 						newest = index
 					}
 					source.delivered = true
@@ -210,7 +220,8 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 	if edit.ID != "" {
 		opacity = .45
 	}
-	root.Opacity(root.AnimateTo("queue-edit-opacity", opacity, motionAnimation(c, 180*time.Millisecond)))
+	// Dim the contents while keeping the backplate opaque over the transcript.
+	contentOpacity := root.AnimateTo("queue-edit-opacity", opacity, motionAnimation(c, 180*time.Millisecond))
 	rowHeight := float32(0)
 	arriving, accepted := false, false
 	for _, item := range q.Items {
@@ -234,7 +245,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 		return
 	}
 	root.IgnoreInput(!present).Children(func() {
-		n.Row(c).FillWidth().Height(32).Shrink(0).PaddingX(14).AlignItems(n.Center).Gap(8).Children(func() {
+		n.Row(c).FillWidth().Height(32).Shrink(0).PaddingX(14).AlignItems(n.Center).Gap(8).Opacity(contentOpacity).Children(func() {
 			label := fmt.Sprintf("待发送 %d", len(q.Items))
 			trigger := n.ButtonBase(c.Key("queue-disclosure")).Height(32).Grow(1).MinWidth(0).Justify(n.Start).Label(label)
 			color := textHoverColor(c, trigger, t.Text.Alpha(.86))
@@ -272,7 +283,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 		})
 		_, windowHeight := c.Size()
 		full := min(rowHeight, min(float32(96), windowHeight*.22)) + 4
-		body := n.Column(c.Key("queue-body")).FillWidth().Gap(0).Shrink(0).Clip()
+		body := n.Column(c.Key("queue-body")).FillWidth().Gap(0).Shrink(0).Clip().Opacity(contentOpacity)
 		extent := full
 		if arriving {
 			body.Jump("queue-content-height", full)
@@ -361,7 +372,12 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 									if row.Hovered() || row.FocusWithin() || width < 720 {
 										visible = 1
 									}
-									n.Row(c).Gap(1).Opacity(row.AnimateTo("queue-actions", visible, motionAnimation(c, 120*time.Millisecond))).Children(func() {
+									shown := row.AnimateTo("queue-actions", visible, motionAnimation(c, 120*time.Millisecond))
+									const actionsWidth = 3*25 + 2
+									// Share one clock for the fade and reserved text width. The
+									// controls keep their original size and right-edge position.
+									n.Column(c.Key("queue-action-space")).Width((actionsWidth+3)*shown).Shrink(0).Margin(0, 0, 0, -3)
+									n.Row(c.Key("queue-actions-group")).Absolute().Right(10).Top(3).Width(actionsWidth).Height(26).Gap(1).Opacity(shown).Children(func() {
 										locked := !m.Connected || v.queueBusy[sid] || item.State.Reserved()
 										for _, action := range []struct {
 											label    string
@@ -510,6 +526,7 @@ func (v *View) submitActive(in domain.Submission, method, turn string) {
 	}
 	if method == "turn.steer" {
 		sent = v.beginSendMotion(in)
+		sent.steering = true
 		payload = protocol.SteerInput{Input: in, TurnID: turn}
 	}
 	var prepare func() error

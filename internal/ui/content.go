@@ -5,14 +5,18 @@ import (
 	n "github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
 	"github.com/egoist/mygo/ui/markdown"
+	"math"
 	"shioji/internal/domain"
 	"strings"
 	"time"
 )
 
 type activityPatch struct {
-	Source string
-	State  editor.DiffState
+	Source, Kind string
+	Headers      int
+	Raw          bool
+	Height       float32
+	State        editor.DiffState
 }
 
 var fileActivityIcon = svg("M5 2h7l4 4v12H5zM12 2v5h4M8 11h5M8 14h5")
@@ -290,32 +294,49 @@ func (v *View) activityDiff(c *n.Context, t *n.Theme, key string, file domain.Fi
 		v.activityPatches = map[string]*activityPatch{}
 	}
 	state := v.activityPatches[key]
-	if state == nil || state.Source != file.Patch {
-		state = &activityPatch{Source: file.Patch, State: editor.DiffState{Layout: editor.DiffUnified, Wrap: true}}
-		patch := file.Patch
-		if !strings.Contains(patch, "@@") {
-			old, new := []string{}, []string{}
-			for _, line := range strings.Split(patch, "\n") {
-				if strings.HasPrefix(line, "-") {
-					old = append(old, line[1:])
-				}
-				if strings.HasPrefix(line, "+") {
-					new = append(new, line[1:])
-				}
+	if state == nil || state.Source != file.Patch || state.Kind != file.Kind {
+		state = &activityPatch{Source: file.Patch, Kind: file.Kind, State: editor.DiffState{Layout: editor.DiffUnified, Wrap: true}}
+		// Added/deleted files carry their full contents; only updates are patches.
+		switch file.Kind {
+		case "add":
+			state.State.Old, state.State.New = editor.NewBuffer(""), editor.NewBuffer(file.Patch)
+		case "delete":
+			state.State.Old, state.State.New = editor.NewBuffer(file.Patch), editor.NewBuffer("")
+		default:
+			if files, err := editor.ParsePatch(file.Patch); err == nil && len(files) > 0 && len(files[0].Hunks) > 0 {
+				state.State.SetPatch(files[0])
+				state.Headers = len(files[0].Hunks)
+			} else {
+				state.Raw = true
 			}
-			state.State.Old, state.State.New = editor.NewBuffer(strings.Join(old, "\n")), editor.NewBuffer(strings.Join(new, "\n"))
-		} else if files, err := editor.ParsePatch(patch); err == nil && len(files) > 0 {
-			state.State.SetPatch(files[0])
-		} else {
-			n.Text(c, patch).Font(v.Model.Preferences.CodeFont).FontSize(11).Selectable()
-			return
 		}
 		v.activityPatches[key] = state
+	}
+	if state.Raw {
+		n.Scroll(c.Key(key)).FillWidth().MaxHeight(220).Label("文件补丁：" + file.Path).Children(func() {
+			n.Text(c, file.Patch).FillWidth().Font(v.Model.Preferences.CodeFont).FontSize(11).FixedLineHeight(20).Padding(8, 10).Background(codeSurface(t)).Selectable()
+		})
+		return
 	}
 	added, deleted, addFill, delFill := gitColors(t)
 	state.State.Font = n.Font{Family: "Menlo", Size: 11, Weight: 400, Antialiased: true}
 	state.State.LineHeight = 20.0 / 11
 	state.State.Indicators = editor.DiffClassic
 	state.State.Theme = &editor.Theme{Background: codeSurface(t), Text: t.Text, LineNumber: subtle(t), Added: added, Deleted: deleted, AddedBackground: addFill, DeletedBackground: delFill}
-	editor.DiffView(c.Key(key), &state.State).Transition(resultBlockMotion(c)).FillWidth().Height(min(220, float32(strings.Count(file.Patch, "\n")+3)*20)).Label("文件补丁：" + file.Path)
+	if state.Height == 0 {
+		_, removedLines := state.State.Stats()
+		state.Height = min(float32(220), float32(state.State.New.LineCount()+removedLines)*20+float32(state.Headers)*32)
+	}
+	// Let the native viewer account for wraps and headers after layout. Keep
+	// its bounded viewport and internal scrolling for large changes.
+	invalidate := c.Services().Invalidate
+	editor.DiffView(c.Key(key), &state.State).Transition(resultBlockMotion(c)).FillWidth().Height(state.Height).Label("文件补丁：" + file.Path).DrawOver(func(_ *n.Painter, _ n.Rect) {
+		if measured := state.State.ContentHeight(); measured > 0 {
+			height := min(float32(220), max(float32(20), measured))
+			if math.Abs(float64(height-state.Height)) > .5 {
+				state.Height = height
+				invalidate()
+			}
+		}
+	})
 }

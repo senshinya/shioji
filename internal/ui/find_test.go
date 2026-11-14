@@ -189,9 +189,9 @@ func TestFindRevealsDeepCommandOutputInsideItsScrollport(t *testing.T) {
 	d := m.Details["s"]
 	d.Items = []domain.Item{{ID: "command", Kind: "tool", Presentation: "command", Name: "Run command", Text: strings.Repeat("Earlier output\n", 80) + "Unique needle", Final: true}, {ID: "reply", Kind: "assistant", Text: "Done", Final: true}}
 	m.Details["s"] = d
-	m.Collapsed["tool:command"] = true
 	v := New(m, nil, "")
 	ui := n.NewTester(v.View, 1200, 820)
+	m.Collapsed[v.commandOutputKey("command", "")] = true
 	ui.Key(n.Cmd, n.KeyF)
 	ui.Type("needle")
 	ui.Advance(1200 * time.Millisecond)

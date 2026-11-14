@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	n "github.com/egoist/mygo/ui"
+	"shioji/internal/app"
 	"shioji/internal/domain"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ type transcriptRow struct {
 	count      int
 	issues     int
 	toolParent string
+	toolTitle  bool
 	opacity    float32
 	footer     string
 	preparing  string
@@ -26,41 +28,64 @@ type transcriptRow struct {
 // Keep arrival identity outside virtual rows: scrolling an existing call back
 // into view must not replay its entrance. A new visit/hydration is a baseline.
 type toolArrivalState struct {
-	session    string
-	epoch      string
-	seen       map[string]bool
-	motions    map[string]*toolDisclosureMotion
-	footerKeys map[string]string // Restart waiting rows retain their native animation state.
+	latestCommand string
+	commands      []string
+	session       string
+	epoch         string
+	seen          map[string]bool
+	motions       map[string]*toolDisclosureMotion
+	footerKeys    map[string]string // Restart waiting rows retain their native animation state.
 }
 
 // A turn receipt is its own stable row below a disclosure, so it follows the
 // group's changing height rather than disappearing inside its clipped body.
-func withTurnFooters(rows []transcriptRow, items []domain.Item, turns map[string]domain.Turn) []transcriptRow {
-	result := make([]transcriptRow, 0, len(rows)+len(turns))
+func withTurnFooters(rows []transcriptRow, turns map[string]domain.Turn) []transcriptRow {
+	last := map[string]int{}
 	for i, row := range rows {
-		result = append(result, row)
-		if i+1 < len(rows) && rows[i+1].toolResult != "" && rows[i+1].toolParent == row.toolParent {
-			continue
-		}
-		if row.end >= 0 && row.item.TurnID != "" && (row.end == len(items)-1 || items[row.end+1].TurnID != row.item.TurnID) {
-			if turn, ok := turns[row.item.TurnID]; ok && turn.Presentation != "compaction" {
-				result = append(result, transcriptRow{key: "turn-footer:" + row.item.TurnID, footer: row.item.TurnID, end: -1, opacity: 1})
-			}
+		if row.end >= 0 && row.item.TurnID != "" {
+			last[row.item.TurnID] = i
 		}
 	}
-	return result
+	footerCount := 0
+	for id := range last {
+		if turn, ok := turns[id]; ok && turn.Presentation != "compaction" {
+			footerCount++
+		}
+	}
+	if footerCount == 0 {
+		return rows
+	}
+	// The projection reserves receipt slots. Insert backwards in that same
+	// buffer instead of copying the entire expanded history every frame.
+	length := len(rows)
+	rows = append(rows, make([]transcriptRow, footerCount)...)
+	to := len(rows) - 1
+	for i := length - 1; i >= 0; i-- {
+		row := rows[i]
+		if row.end >= 0 && row.item.TurnID != "" && last[row.item.TurnID] == i {
+			if turn, ok := turns[row.item.TurnID]; ok && turn.Presentation != "compaction" {
+				rows[to] = transcriptRow{key: "turn-footer:" + row.item.TurnID, footer: row.item.TurnID, end: -1, opacity: 1}
+				to--
+			}
+		}
+		rows[to] = row
+		to--
+	}
+	return rows
 }
 
 func emptyTranscriptItem(item domain.Item) bool {
-	return item.Kind == "assistant" && strings.TrimSpace(item.Text) == "" || item.Kind == "activity" && item.Presentation == "reasoning" && !activityHasBody(item)
+	return item.Kind == "assistant" && strings.TrimSpace(item.Text) == "" ||
+		item.Kind == "activity" && item.Presentation == "reasoning" && !activityHasBody(item) ||
+		item.Kind == "request_result" && len(item.Parts) == 0 && item.WorkID == ""
 }
 
 // Project groups into the outer virtual list so expanded tool history still
-// unmounts normally. While viewing, only nonempty agent prose auto-closes a group.
+// unmounts normally. Any following visible non-tool content auto-closes a group.
 func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 	v.toolsAnimating = false
-	// A cached projection and a freshly hydrated history each start collapsed
-	// when opened. Consume this only after actual session history is available;
+	// Opening folds history except for the latest group still executing.
+	// Consume this only after actual session history is available;
 	// pending-request snapshots can create an empty detail before hydration.
 	collapseHistory := v.Model.FoldToolHistory[v.Model.SessionID] && v.Model.Details[v.Model.SessionID].Session.ID != ""
 	if collapseHistory {
@@ -70,6 +95,20 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		v.toolArrivals = &toolArrivalState{session: v.Model.SessionID, epoch: v.Model.ConnectionEpoch, motions: map[string]*toolDisclosureMotion{}}
 	}
 	arrivals := v.toolArrivals
+	commands := arrivals.commands[:0]
+	commandsChanged := false
+	for _, item := range items {
+		if commandItem(item) {
+			if len(commands) >= len(arrivals.commands) || arrivals.commands[len(commands)] != item.ID {
+				commandsChanged = true
+			}
+			commands = append(commands, item.ID)
+		}
+	}
+	if commandsChanged || len(commands) != len(arrivals.commands) {
+		v.syncCommandOutputs(commands, &arrivals.latestCommand, "")
+	}
+	arrivals.commands = commands
 	for turn := range arrivals.footerKeys {
 		present := false
 		for _, current := range v.Model.Details[v.Model.SessionID].Turns {
@@ -82,7 +121,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			delete(arrivals.footerKeys, turn)
 		}
 	}
-	seen := map[string]bool{}
+	seen := make(map[string]bool, len(items)+len(v.Model.Details[v.Model.SessionID].Turns))
 	arrival := func(key string) float32 {
 		seen[key] = true
 		if arrivals.seen != nil && !arrivals.seen[key] && !v.reduceMotion {
@@ -108,18 +147,35 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			}
 		}
 	}()
-	laterProse := make([]bool, len(items)+1)
+	laterContent := make([]bool, len(items)+1)
+	latestTool := -1
+	groups := 0
+	var nextKind, nextTurn string
 	for i := len(items) - 1; i >= 0; i-- {
-		laterProse[i] = laterProse[i+1] || items[i].Kind == "assistant" && strings.TrimSpace(items[i].Text) != ""
+		laterContent[i] = laterContent[i+1] || items[i].Kind != "tool" && !emptyTranscriptItem(items[i])
+		if !emptyTranscriptItem(items[i]) {
+			if items[i].Kind == "tool" && (nextKind != "tool" || nextTurn != items[i].TurnID) {
+				groups++
+			}
+			nextKind, nextTurn = items[i].Kind, items[i].TurnID
+		}
+		if latestTool < 0 && items[i].Kind == "tool" {
+			latestTool = i
+		}
 	}
 	endedTurns := map[string]bool{}
+	activeTurn := ""
 	for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
 		switch turn.Status {
+		case domain.ExecutionStarting, domain.ExecutionRunning:
+			activeTurn = turn.ID
 		case domain.ExecutionCompleted, domain.ExecutionFailed, domain.ExecutionInterrupted, domain.ExecutionAbandoned:
 			endedTurns[turn.ID] = true
 		}
 	}
-	rows := make([]transcriptRow, 0, len(items))
+	// Each tool run adds a title, trailing summary and optional result.
+	// Without these slots a large run reallocates as its last row is appended.
+	rows := make([]transcriptRow, 0, len(items)+3*groups+len(v.Model.Details[v.Model.SessionID].Turns))
 	for i := 0; i < len(items); {
 		item := items[i]
 		if emptyTranscriptItem(item) {
@@ -139,8 +195,10 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			continue
 		}
 		end, count := i+1, 1
+		executing := !item.Final
 		for end < len(items) && items[end].TurnID == item.TurnID {
 			if items[end].Kind == "tool" {
+				executing = executing || !items[end].Final
 				count++
 				end++
 				continue
@@ -155,10 +213,15 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		disclosure := v.Model.ToolDisclosure(key)
 		if collapseHistory {
 			disclosure = disclosure.OpenHistory()
+			if v.Model.Connected && activeTurn != "" && item.TurnID == activeTurn && latestTool < end && executing && !laterContent[end] {
+				disclosure = app.ToolOpenedBeforeProse
+			}
 			v.Model.SetToolDisclosure(key, disclosure)
 			delete(v.toolMotions, key)
 		}
-		if laterProse[end] && !disclosure.SawProse() {
+		if laterContent[end] && !disclosure.SawProse() {
+			// The persisted prose marker records this one-time boundary for
+			// requests, inserted user messages and other non-tool content too.
 			// Only previously displayed content exits. Hydrated history starts
 			// folded without briefly mounting all of its tools.
 			_, visible := v.historyRowBounds[key]
@@ -197,10 +260,14 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 				row.issues++
 			}
 		}
+		row.end = end - 1
+		// Keep the title's zero-height row while folded: a click on either
+		// end retains its own stable list anchor through the whole transition.
+		titleOpacity := min(opacity, arrival(key+":title"))
 		if !show {
-			row.end = end - 1
+			titleOpacity = 0
 		}
-		rows = append(rows, row)
+		rows = append(rows, transcriptRow{key: key + ":title", item: item, end: -1, toolParent: key, toolTitle: true, opacity: titleOpacity})
 		for j := i; j < end; j++ {
 			if items[j].Kind == "tool" {
 				progress := min(opacity, arrival(items[j].ID))
@@ -212,13 +279,14 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			}
 		}
 		// A quiet gap between calls is not a group boundary: another call
-		// may still join. Only prose or a confirmed turn end seals the group.
-		if result := toolGroupResult(items[i:end]); result != "" && (laterProse[end] || endedTurns[item.TurnID]) {
+		// may still join. Non-tool content or a confirmed turn end seals it.
+		if result := toolGroupResult(items[i:end]); result != "" && (laterContent[end] || endedTurns[item.TurnID]) {
 			progress := min(opacity, arrival(key+":result"))
 			if show {
 				rows = append(rows, transcriptRow{key: key + ":result", item: item, end: end - 1, toolParent: key, toolResult: result, opacity: progress})
 			}
 		}
+		rows = append(rows, row)
 		i = end
 	}
 	for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
@@ -241,6 +309,9 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 	button := n.ButtonBase(c).FillWidth().Height(20).Justify(n.Start).Label(label)
 	color := textHoverColor(c, button, t.TextMuted)
 	live := v.runningGroup == row.group
+	if live {
+		v.trackLiveStatus(button, v.statusKey("group:"+row.group))
+	}
 	if button.Children(func() {
 		heading := n.Row(c).FillWidth().Gap(0).AlignItems(n.Baseline)
 		if live {
@@ -281,9 +352,22 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 			if live {
 				shimmer(c, text, color, t.Text, v.runningProgress.started)
 			}
+			if live || handoff {
+				phase := v.runningProgress.label
+				if phase == "" {
+					phase = "进行中"
+				}
+				w, _ := n.ShapeText(phase, font, 0).Size()
+				caption := n.Text(c.Key("group-phase"), phase).SingleLine().FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Padding(0, 0, 0, 6).Clip().Opacity(alpha)
+				if handoff {
+					caption.Width(caption.Jump("phase-width", (w+6)*extent))
+				} else {
+					caption.Width(caption.AnimateTo("phase-width", (w+6)*extent, motionAnimation(c, progressReclaimDuration)))
+				}
+			}
 			for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
 				if turn.ID == row.item.TurnID {
-					clock, natural := runningElapsed(c.Key("group-elapsed"), turn.StartedAt, t.TextMuted, true)
+					clock, natural := runningElapsed(c.Key("group-elapsed"), v.runningElapsedStart(turn), t.TextMuted, true)
 					if handoff {
 						clock.Width(clock.Jump("elapsed-width", natural*extent))
 					} else {
@@ -302,22 +386,47 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 			}
 		})
 	}).Clicked() {
-		list := v.lists[v.Model.SessionID]
-		list.KeepRowWithinContent(index, button.Bounds().Y-list.Bounds(c).Y)
-		from, to := float32(1), float32(0)
-		if v.Model.ToolDisclosure(row.group).Closed() {
-			from, to = 0, 1
-		}
-		if motion := v.toolMotions[row.group]; motion != nil {
-			from, _ = motion.sample(c.Now())
-		}
-		if v.toolMotions == nil {
-			v.toolMotions = map[string]*toolDisclosureMotion{}
-		}
-		v.toolMotions[row.group] = &toolDisclosureMotion{from: from, to: to, start: c.Now(), duration: motionAnimation(c, 160*time.Millisecond).Duration}
-		v.Model.SetToolDisclosure(row.group, v.Model.ToolDisclosure(row.group).Toggle())
-		c.AnimationFrame()
+		v.toggleToolGroup(c, row.group, index, button, true)
 	}
+}
+
+func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index int) {
+	button := n.ButtonBase(c).FillWidth().Height(20).Justify(n.Start).Label("执行工具").Tooltip("收起工具调用")
+	color := textHoverColor(c, button, t.TextMuted)
+	button.Children(func() {
+		inlineIconText(c, chevron, "执行工具", n.Font{Family: t.Font, Size: 11, Weight: 400}, 14, 6, color)
+	})
+	if button.Clicked() {
+		v.toggleToolGroup(c, row.toolParent, index, button, false)
+	}
+}
+
+func (v *View) toggleToolGroup(c *n.Context, key string, index int, button n.Element, trailing bool) {
+	from, to := float32(1), float32(0)
+	opening := v.Model.ToolDisclosure(key).Closed()
+	fromEnd := trailing && !opening
+	if opening {
+		from, to = 0, 1
+	}
+	if motion := v.toolMotions[key]; motion != nil {
+		from, _ = motion.sample(c.Now())
+		fromEnd = motion.fromEnd
+	}
+	if list := v.lists[v.Model.SessionID]; list != nil {
+		// Opening replaces the folded control with the top title in place;
+		// closing keeps whichever end was clicked. The stable zero-height
+		// title survives folding, so neither anchor loses its key.
+		if opening && trailing {
+			index--
+		}
+		list.KeepRowWithinContent(index, button.Bounds().Y-list.Bounds(c).Y)
+	}
+	if v.toolMotions == nil {
+		v.toolMotions = map[string]*toolDisclosureMotion{}
+	}
+	v.toolMotions[key] = &toolDisclosureMotion{from: from, to: to, start: c.Now(), duration: motionAnimation(c, 160*time.Millisecond).Duration, fromEnd: fromEnd}
+	v.Model.SetToolDisclosure(key, v.Model.ToolDisclosure(key).Toggle())
+	c.AnimationFrame()
 }
 
 var rightChevron = svg("M8 5l5 5-5 5")

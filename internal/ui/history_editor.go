@@ -77,7 +77,7 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 				limit := max(float32(80), height-v.dockHeight-32-*natural)
 				if frame.LayoutBounds().Y > limit {
 					if state := v.lists[m.SessionID]; state != nil {
-						state.AnchorRow(rowIndex, limit, motionAnimation(c, 280*time.Millisecond))
+						state.ScrollToRow(rowIndex, limit, motionAnimation(c, 280*time.Millisecond))
 					}
 				}
 			}
@@ -200,7 +200,7 @@ func (v *View) historyEditor(c *n.Context, t *n.Theme, item domain.Item) {
 	panel := n.Column(c.Key("user-surface:"+item.ID)).FillWidth().MaxWidth(676).Padding(11, 15).Gap(10).Radius(14).Background(bg).Border(1, t.Border).Label("历史消息编辑器").Transition(n.ElementTransition{Position: true, Size: true, Colors: true, Duration: 280 * time.Millisecond, Ease: composerDescentEase})
 	panel.Children(func() {
 		if !locked {
-			v.draftAttachmentStripFor(c, t, key)
+			v.draftAttachmentStripFor(c, t, key, 10)
 		} else {
 			preview := item
 			preview.Skills = nil

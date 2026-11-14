@@ -1533,7 +1533,11 @@ func (e *node) layoutList(w, h float32) {
 	// without constructing the section's offscreen history.
 	for _, reveal := range hs.reveals {
 		measured := float64(0)
-		for i := reveal.First; i < reveal.End && measured < H; i++ {
+		first, end, direction := reveal.First, reveal.End, 1
+		if reveal.FromEnd {
+			first, end, direction = reveal.End-1, reveal.First-1, -1
+		}
+		for i := first; i != end && measured < H; i += direction {
 			if !ensure(i) {
 				break
 			}
@@ -1685,17 +1689,19 @@ func (e *node) layoutList(w, h float32) {
 	// bottom after rows went away, the start below the top after rows
 	// above turned out shorter than estimated.
 	bounded := !s.anchored() || s.pinWithinContent
-	for k := 0; bounded && k < 4 && !(lo == 0 && hi == n-1); k++ {
-		if hi == n-1 && end() < H {
+	atStart := func() bool { return lo == 0 || hs.nextVisible(lo-1, -1) < 0 }
+	atEnd := func() bool { return hi == n-1 || hs.nextVisible(hi+1, 1) >= n }
+	for k := 0; bounded && k < 4 && !(atStart() && atEnd()); k++ {
+		if atEnd() && end() < H {
 			shift(H - end())
-		} else if lo == 0 && yLo > padTop {
+		} else if atStart() && yLo > padTop {
 			shift(padTop - yLo)
 		} else {
 			break
 		}
 		cover()
 	}
-	if bounded && lo == 0 && hi == n-1 {
+	if bounded && atStart() && atEnd() {
 		switch start := yLo - padTop; {
 		case end()-start <= H:
 			// The rows fit: Justify places them.
@@ -1793,6 +1799,11 @@ func (e *node) layoutList(w, h float32) {
 		r.e.x, r.e.y = e.contentX(), float32(r.y)
 		natural, visible := float32(hs.naturalHeight(r.i)), float32(ht(r.i))
 		layoutBox(r.e, cw, natural)
+		if offset := float32(hs.revealOffset(r.i)); offset > 0 {
+			for child := r.e.first; child != nil; child = child.next {
+				child.y -= offset
+			}
+		}
 		if visible < natural {
 			r.e.h = visible
 			r.e.flags |= flagClip

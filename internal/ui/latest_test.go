@@ -21,11 +21,18 @@ func TestLatestControlTracksTheDockAndKeepsTypingFocus(t *testing.T) {
 			t.Helper()
 			button, ok := ui.Find("回到最新")
 			dock, _ := ui.Find("会话底部面板")
-			if !ok || !ui.HasText("最新消息") || button.H != 28 || button.W < 75 || button.W > 120 || math.Abs(float64(button.X+button.W/2-dock.X-dock.W/2)) > .5 || math.Abs(float64(dock.Y-button.Y-button.H-12)) > .5 {
+			if !ok || !(ui.HasText("最新消息") || ui.HasText("进行中")) || button.H != 28 || button.W < 65 || button.W > 160 || math.Abs(float64(button.X+button.W/2-dock.X-dock.W/2)) > .5 || math.Abs(float64(dock.Y-button.Y-button.H-12)) > .5 {
 				t.Fatal("latest control is not a compact pill centered above the dock", button, dock)
 			}
 		}
 		check()
+		// Check the actual Chinese/icon baseline on the ordinary latest pill.
+		// The running variant is covered by the native tail/proxy checks.
+		done := v.Model.Details["s"]
+		done.Turns[0].Status = "completed"
+		v.Model.Details["s"] = done
+		ui.Frame()
+		ui.Advance(time.Second)
 		caption, _ := ui.Find("最新消息")
 		inkCenter := func(left, right float32) float32 {
 			t.Helper()
@@ -102,6 +109,10 @@ func TestLatestControlScrollsSmoothlyAndTheReaderCanInterrupt(t *testing.T) {
 func TestLatestControlFadesInAndOut(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		v, ui := progressFollowFixture()
+		d := v.Model.Details["s"]
+		d.Turns[0].Status = "completed"
+		v.Model.Details["s"] = d
+		ui.Frame()
 		ui.SetDark(dark)
 		ui.Scroll(800, 350, 0, -240)
 		ui.Frame()

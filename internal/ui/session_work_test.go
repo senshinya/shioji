@@ -18,6 +18,7 @@ func sessionWorkFixture(t *testing.T) (*View, *n.Tester) {
 	m.InspectorWidth = 380
 	m.Drafts["session:s"] = "keep draft"
 	d := m.Details["s"]
+	d.Turns = []domain.Turn{{ID: "t", Status: "completed"}}
 	d.Plan = &domain.Plan{TurnID: "t", Steps: []domain.PlanStep{{Text: "保留结构化计划", Status: "running"}}}
 	d.Works = []domain.WorkActivity{{ID: "agent-a", Kind: "agent", Title: "检查边界条件", Brief: "检查根节点与空子树", TurnID: "t", State: "running", Latest: "读取 rotate.go", Revision: 1}, {ID: "command-a", Kind: "background", Title: "运行回归测试", Brief: "go test -race ./...", TurnID: "t", State: "running", Latest: "TestRotateLeft", Revision: 2}}
 	d.Items[0].Text = "旋转实现已检查，子任务仍在独立验证边界与测试。"

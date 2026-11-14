@@ -168,7 +168,7 @@ func TestTypingDuringCompressionQueuesInsteadOfSteeringMaintenance(t *testing.T)
 }
 func TestManualCompactionHasNoOrdinaryReplyFooter(t *testing.T) {
 	rows := []transcriptRow{{key: "compact", item: domain.Item{ID: "compact", TurnID: "ct", Kind: "activity", Presentation: "compaction"}, end: 0}}
-	got := withTurnFooters(rows, []domain.Item{rows[0].item}, map[string]domain.Turn{"ct": {ID: "ct", Presentation: "compaction", Status: "completed"}})
+	got := withTurnFooters(rows, map[string]domain.Turn{"ct": {ID: "ct", Presentation: "compaction", Status: "completed"}})
 	if len(got) != 1 {
 		t.Fatal("maintenance fabricated ordinary reply footer", got)
 	}

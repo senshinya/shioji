@@ -114,7 +114,7 @@ func (s *changesState) receiveFile(versions domain.FileVersions) {
 func (s *changesState) closeFile() { s.Path, s.file = "", fileUnselected }
 
 var refreshIcon = svg("M16 7a7 7 0 1 0 1 5M16 3v4h-4")
-var changesIcon = svg("M3 7h14M10 4v6M3 16h14")
+var changesIcon = svg("M4 3h8l4 4v10H4zM12 3v4h4M7 10h6M10 8v4M7 14.5h6")
 var tasksIcon = svg("M3 4h1M8 4h9M3 10h1M8 10h9M3 16h1M8 16h9")
 
 func (v *View) changesFor(id string) *changesState {
@@ -217,10 +217,12 @@ func (v *View) openChangedFile(path string) {
 func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool, width, limit float32) {
 	id := v.Model.SessionID
 	state := v.changesFor(id)
-	works := domain.SessionWorks(v.Model.Details[id])
+	detail := v.Model.Details[id]
+	all := domain.SessionWorks(detail)
+	works := visibleSessionWorks(detail, all)
 	prior := state.DockSeen
 	state.DockSeen = true
-	if len(works) > 0 || len(v.Model.InspectorLayout.Groups) > 0 || state.WorkGroups != nil {
+	if len(all) > 0 || len(v.Model.InspectorLayout.Groups) > 0 || state.WorkGroups != nil {
 		v.workInspector(c, t, drawer, width, limit, state, works, prior)
 		return
 	}

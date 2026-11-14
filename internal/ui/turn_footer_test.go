@@ -1,11 +1,80 @@
 package ui
 
 import (
+	"fmt"
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/domain"
 	"testing"
 	"time"
 )
+
+func TestTurnUsageIsStaticOnHoverAndClick(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprint(dark), func(t *testing.T) {
+			v := New(layoutModel(), nil, "")
+			input, output, cached := int64(882383), int64(3932), int64(847616)
+			turn := domain.Turn{ID: "t", Status: "completed", InputTokens: &input, OutputTokens: &output, CachedInputTokens: &cached}
+			ui := n.NewTester(func(c *n.Context) {
+				theme := applyAppearance(c, v.Model.Preferences)
+				n.Column(c).Fill().Padding(24).Background(theme.Background).Children(func() { v.turnFooter(c, theme, turn) })
+			}, 680, 220)
+			ui.SetDark(dark)
+			ui.Advance(time.Second)
+			usage, ok := ui.Find("本轮用量")
+			if !ok || !ui.HasText("输入 882.4k · 输出 3.9k · 缓存 847.6k") {
+				t.Fatal("usage summary missing")
+			}
+			before := copyFrame(ui)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("usage-%v-rest.png", dark))
+			ui.Move(usage.X+usage.W/2, usage.Y+usage.H/2)
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("usage-%v-hover.png", dark))
+			unchanged := func(stage string) {
+				t.Helper()
+				after := ui.Image()
+				for y := 0; y < 220; y++ {
+					for x := 0; x < 680; x++ {
+						if before.RGBAAt(x, y) != after.RGBAAt(x, y) {
+							t.Errorf("%s changes static usage pixels", stage)
+							return
+						}
+					}
+				}
+			}
+			unchanged("hover")
+			if ui.Cursor() != n.CursorDefault {
+				t.Error("usage hover still changes the cursor", ui.Cursor())
+			}
+			if err := ui.Click("本轮用量"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("usage-%v-click.png", dark))
+			unchanged("click")
+			if ui.HasText("输入 882383") || ui.HasText("输出 3932") || ui.Focused("本轮用量") {
+				t.Error("usage still exposes an interactive control or details popup")
+			}
+		})
+	}
+}
+
+func TestInterleavedLateOutputHasOneFooterPerTurn(t *testing.T) {
+	v := liveCompletionModel()
+	d := v.Model.Details["s"]
+	d.Items = []domain.Item{{ID: "first", Kind: "assistant", TurnID: "old", Text: "旧轮正文", Final: true}, {ID: "second", Kind: "assistant", TurnID: "t", Text: "当前正文", Final: true}, {ID: "late", Kind: "assistant", TurnID: "old", Text: "旧轮迟到输出", Final: true}, {ID: "tool", Kind: "tool", TurnID: "t", Name: "当前轮工具", Final: true}}
+	turns := map[string]domain.Turn{"old": {ID: "old", Status: "completed"}, "t": {ID: "t", Status: "running"}}
+	v.Model.Details["s"] = d
+	rows := withTurnFooters(v.transcriptRows(d.Items), turns)
+	count := map[string]int{}
+	for _, row := range rows {
+		if row.footer != "" {
+			count[row.footer]++
+		}
+	}
+	if count["old"] != 1 || count["t"] != 1 {
+		t.Fatal("interleaved turns create duplicate native footer identities", count)
+	}
+}
 
 func TestCompletedFooterShowsCopyEndTimeDurationAndUsageInOrder(t *testing.T) {
 	m := layoutModel()

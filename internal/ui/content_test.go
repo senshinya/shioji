@@ -108,7 +108,7 @@ func TestEmptyReasoningDoesNotCreateAnUnexpandableRow(t *testing.T) {
 	if ui.HasText("思考摘要") || len(rows) != 2 || rows[0].item.ID != "a" || rows[1].item.ID != "b" {
 		t.Fatal("empty summary rendered or actual distinct messages deduplicated", ui.Texts(), rows)
 	}
-	rows = withTurnFooters(rows, d.Items, map[string]domain.Turn{"t": d.Turns[0]})
+	rows = withTurnFooters(rows, map[string]domain.Turn{"t": d.Turns[0]})
 	if len(rows) != 3 || rows[2].footer != "t" {
 		t.Fatal("hiding trailing empty reasoning lost the receipt", rows)
 	}
