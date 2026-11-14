@@ -20,6 +20,7 @@ jobs:
     permissions:
       contents: write
     env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       RELEASE_TAG: ${{ github.event.release.tag_name }}
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
       SHIOJI_UPDATE_PUBLIC_KEY: ${{ vars.SHIOJI_UPDATE_PUBLIC_KEY }}
@@ -33,6 +34,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Verify Swift toolchain and permission bridge
+        run: |
+          xcodebuild -version
+          swift --version
+          swift test --package-path native/permission-flow --scratch-path build/native/permission-flow --force-resolved-versions
       - name: Install Codex integration-test dependency
         run: npm install --global @openai/codex@0.167.0
       - name: Resolve and validate release version

@@ -10,6 +10,8 @@ jobs:
   test:
     runs-on: macos-15
     timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -22,6 +24,11 @@ jobs:
       - name: Install Codex integration-test dependency
         run: npm install --global @openai/codex@0.167.0
       - run: test "$(uname -m)" = arm64
+      - name: Test native permission bridge
+        run: |
+          xcodebuild -version
+          swift --version
+          swift test --package-path native/permission-flow --scratch-path build/native/permission-flow --force-resolved-versions
       - run: python3 scripts/verify-design-freeze.py --repository
       - run: python3 scripts/generate-third-party-notices.py --check
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
@@ -29,7 +36,5 @@ jobs:
       - run: go test ./...
       - name: Test native updater admission and preferences
         run: cd third_party/mygo && go test . ./plugins/updater ./plugins/updater/native
-      - name: Test native permission bridge
-        run: swift test --package-path native/permission-flow --scratch-path build/native/permission-flow -Xswiftc -enable-experimental-feature -Xswiftc IsolatedDeinit
       - name: Build unsigned development bundle
         run: bash packaging/build-dev.sh

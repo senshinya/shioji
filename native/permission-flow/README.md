@@ -29,15 +29,15 @@ removes build-machine search paths, and includes the MIT license. The normal
 packaging script signs these libraries before signing the enclosing App.
 Packaged clients never download or compile the dependency at runtime.
 
-Build and test invocations pass `IsolatedDeinit` to every Swift compiler
-invocation, including dependency targets. The pinned upstream source uses
-`isolated deinit`; Swift 6.1 requires this explicit experimental feature flag,
-while newer local compilers may accept it without one.
+The pinned upstream source uses `isolated deinit`, requiring Swift 6.2 or
+newer. CI and releases select the installed Xcode 26.3 toolchain explicitly;
+the macOS 15 runner's default Xcode 16.4 compiler cannot build this dependency.
+Swift tests run before the Go suite to detect toolchain incompatibility early.
 
 Checks, without building the complete App:
 
 ```sh
-swift test --package-path native/permission-flow --scratch-path build/native/permission-flow -Xswiftc -enable-experimental-feature -Xswiftc IsolatedDeinit
+swift test --package-path native/permission-flow --scratch-path build/native/permission-flow
 python3 scripts/bundle-permission-flow.py /tmp/shioji-permissionflow-check/Contents
 env -u GOROOT CGO_ENABLED=0 SHIOJI_PERMISSION_FLOW_TEST_LIBRARY=/tmp/shioji-permissionflow-check/Contents/Frameworks/libShiojiPermissionFlow.dylib go test ./internal/permissionflow -count=1
 env -u GOROOT go test ./...
