@@ -98,6 +98,15 @@ func TestNativeMaintenanceRequiresSelectionAndSeparateForceConfirmation(t *testi
 	if !u.HasText("这些进程将被立即终止") {
 		t.Fatal("force risk missing")
 	}
+	identityCount := 0
+	for _, text := range u.Texts() {
+		if text == "MacBook Air · remote@air" {
+			identityCount++
+		}
+	}
+	if identityCount != 2 {
+		t.Fatal("force confirmation lost device address", u.Texts())
+	}
 	select {
 	case <-c.Jobs:
 		t.Fatal("force sent without separate confirmation")
@@ -132,7 +141,8 @@ func TestWorkerMaintenanceNativeEvidence(t *testing.T) {
 	}
 	t.Setenv("SHIOJI_SKILL_SNAPSHOTS", dir)
 	v, u, c := maintenanceUIFixture(t)
-	_ = c
+	u.Move(600, 650)
+	u.Advance(500 * time.Millisecond)
 	u.SetDark(false)
 	u.Advance(time.Second)
 	saveNativeSkillImage(t, u, "blockers.png")
@@ -199,16 +209,58 @@ func TestWorkerMaintenanceNativeEvidence(t *testing.T) {
 		u.Advance(time.Second / 24)
 		saveNativeSkillImage(t, u, fmt.Sprintf("frame-%04d.png", frame))
 	}
+	// The success sequence is an independent receipt fixture after cancellation.
+	// Apply each phase through the client query path; callbacks replace Operation.
+	op.ID = "successful-operation"
+	publish := func() {
+		t.Helper()
+		client := v.Model.MaintenanceClient("B")
+		client.PendingID = op.ID
+		query, err := v.Model.QueryWorkerMaintenance("air")
+		if err != nil {
+			t.Fatal(err)
+		}
+		op.Revision++
+		data, err := json.Marshal(op)
+		if err != nil {
+			t.Fatal(err)
+		}
+		query.Apply(v.Model, data, nil)
+		v.maintenanceUIFor("air").next = v.frameTime.Add(time.Hour)
+	}
+	op.Phase = domain.WorkerMaintenanceStopping
+	op.Message = "正在强制结束已确认的环境"
+	op.Targets[0].State = "stopping"
+	publish()
+	u.Advance(time.Second)
+	if !u.HasText("正在强制结束已确认的环境") || u.HasText("先正常关闭") {
+		t.Fatal("force progress evidence captured wrong state", u.Texts())
+	}
+	saveNativeSkillImage(t, u, "force-progress.png")
+	op.Message = ""
 	op.Phase = domain.WorkerMaintenanceWaiting
 	op.Targets[0].State = "stopped"
 	op.Targets[0].Processes = nil
+	publish()
 	u.Advance(time.Second)
+	if !u.HasText("所选后台环境已结束") || u.HasText("已取消本次处理") {
+		t.Fatal("waiting evidence captured wrong state", u.Texts())
+	}
 	saveNativeSkillImage(t, u, "waiting.png")
 	op.Phase = domain.WorkerMaintenanceUpdating
+	publish()
 	u.Advance(time.Second)
+	if !u.HasText("正在更新执行服务") || u.HasText("已取消本次处理") {
+		t.Fatal("progress evidence captured wrong state", u.Texts())
+	}
 	saveNativeSkillImage(t, u, "progress.png")
 	op.Phase = domain.WorkerMaintenanceCompleted
+	v.Model.DeviceStates["air"].WorkerService.Build.BuildID = "new"
+	publish()
 	u.Advance(time.Second)
+	if !u.HasText("执行服务已更新") || u.HasText("已取消本次处理") {
+		t.Fatal("completed evidence captured wrong state", u.Texts())
+	}
 	saveNativeSkillImage(t, u, "completed.png")
 	v.Model.MaintenanceClient("B").Operation = nil
 	v.Model.MaintenanceClient("B").Diagnosis.Blockers = []domain.WorkerUpdateBlocker{{ID: "unknown", Kind: domain.WorkerBlockerUnknown, Reason: "后台进程的归属记录不完整，无法安全结束"}}
@@ -240,5 +292,117 @@ func TestUnknownMaintenanceAlwaysOffersCurrentDiagnosticExport(t *testing.T) {
 	text := string(report)
 	if !strings.Contains(text, "运行实例的归属记录已变化") || !strings.Contains(text, "后台环境的运行实例待核对") {
 		t.Fatal("export uses stale preview", text)
+	}
+}
+
+func TestMaintenanceScreenMatchesAvailableRecoveryActions(t *testing.T) {
+	for _, name := range []string{"unknown-preview", "no-blockers", "running-only", "unknown-target", "force-progress"} {
+		t.Run(name, func(t *testing.T) {
+			v, u, _ := maintenanceUIFixture(t)
+			client := v.Model.MaintenanceClient("B")
+			v.maintenanceUIFor("air").next = v.frameTime.Add(time.Hour)
+			switch name {
+			case "unknown-preview":
+				client.Diagnosis.Blockers = []domain.WorkerUpdateBlocker{{ID: "unknown", Kind: domain.WorkerBlockerUnknown, Reason: "无法确认归属"}}
+			case "no-blockers":
+				client.Diagnosis.Blockers = nil
+			case "running-only":
+				client.Diagnosis.Blockers = []domain.WorkerUpdateBlocker{{ID: "running", Kind: domain.WorkerBlockerExecution, SessionName: "继续运行的任务", Status: "running", Reason: "任务仍在运行"}}
+			case "unknown-target":
+				client.Operation = &domain.WorkerMaintenance{ID: "op", DeviceID: "B", Phase: domain.WorkerMaintenanceNeedsForce, Targets: []domain.WorkerMaintenanceResult{{Target: domain.WorkerMaintenanceTarget{SessionID: "s0"}, SessionName: "归属待核对的环境", State: "unknown"}}}
+			case "force-progress":
+				client.Operation = &domain.WorkerMaintenance{ID: "op", DeviceID: "B", Phase: domain.WorkerMaintenanceStopping, Message: "正在强制结束已确认的环境", Targets: []domain.WorkerMaintenanceResult{{Target: domain.WorkerMaintenanceTarget{SessionID: "s0"}, State: "stopping"}}}
+			}
+			u.Frame()
+			switch name {
+			case "unknown-preview", "unknown-target":
+				if !u.HasText("无法确认后台进程的归属") || u.HasText("可以单独确认强制结束") {
+					t.Fatal("ownership failure promises an unavailable action", u.Texts())
+				}
+				if _, ok := u.Find("强制结束所选环境"); ok {
+					t.Fatal("unknown ownership still offers force")
+				}
+				if _, ok := u.Find("导出诊断"); !ok {
+					t.Fatal("unknown ownership has no diagnostic action")
+				}
+			case "no-blockers", "running-only":
+				if u.HasText("选择要结束的后台环境") || u.HasText("会话已经结束，但后台环境仍在运行") {
+					t.Fatal("read-only state falsely asks to stop completed sessions", u.Texts())
+				}
+				if _, ok := u.Find("结束所选环境并更新"); ok {
+					t.Fatal("nonselectable state still offers stopping")
+				}
+			case "force-progress":
+				if !u.HasText("正在强制结束已确认的环境") || u.HasText("先正常关闭") {
+					t.Fatal("force progress regressed to normal shutdown", u.Texts())
+				}
+			}
+		})
+	}
+}
+
+func TestMaintenanceConfirmationDisambiguatesDeviceAndWorkspace(t *testing.T) {
+	v, u, _ := maintenanceUIFixture(t)
+	client := v.Model.MaintenanceClient("B")
+	for i := range client.Diagnosis.Blockers {
+		client.Diagnosis.Blockers[i].SessionName = "同步工作区状态"
+	}
+	client.Diagnosis.Blockers[1].WorkspaceName = "MacNativeGames"
+	for _, b := range client.Diagnosis.Blockers {
+		v.maintenanceUIFor("air").selected[b.SessionID] = true
+	}
+	u.Frame()
+	if err := u.Click("结束所选环境并更新"); err != nil {
+		t.Fatal(err)
+	}
+	u.Advance(time.Second)
+	identityCount := 0
+	workspaces := map[string]bool{}
+	for _, text := range u.Texts() {
+		if text == "MacBook Air · remote@air" {
+			identityCount++
+		}
+		if text == "Shioji" || text == "MacNativeGames" {
+			workspaces[text] = true
+		}
+	}
+	if identityCount < 2 || !workspaces["Shioji"] || !workspaces["MacNativeGames"] {
+		t.Fatal("destructive confirmation omits target ownership", identityCount, workspaces, u.Texts())
+	}
+	if u.HasText("内存变量会丢失") {
+		t.Fatal("same volatile-state warning repeated")
+	}
+	if !u.HasText("尚未写入的内存状态可能丢失") {
+		t.Fatal("volatile-state risk lost")
+	}
+}
+
+func TestMaintenanceCompactRowsKeepDetailsAndFooterStable(t *testing.T) {
+	_, u, _ := maintenanceUIFixture(t)
+	first, _ := u.Find("选择 排查 worker 更新等待")
+	second, _ := u.Find("选择 验证局域网网页预览")
+	if second.Y-first.Y > 96.5 {
+		t.Fatal("collapsed maintenance rows still use form-section density", second.Y-first.Y)
+	}
+	footer, _ := u.Find("结束所选环境并更新")
+	if err := u.Click("进程详情 s0"); err != nil {
+		t.Fatal(err)
+	}
+	u.Advance(time.Second)
+	if !u.HasText("node · PID 18324") {
+		t.Fatal("compact disclosure lost native process details")
+	}
+	after, _ := u.Find("结束所选环境并更新")
+	if after.Y != footer.Y {
+		t.Fatal("details expansion moved fixed footer", footer, after)
+	}
+	if err := u.Click("进程详情 s0"); err != nil {
+		t.Fatal(err)
+	}
+	u.Advance(time.Second)
+	first, _ = u.Find("选择 排查 worker 更新等待")
+	second, _ = u.Find("选择 验证局域网网页预览")
+	if second.Y-first.Y > 96.5 {
+		t.Fatal("closing details did not restore compact row")
 	}
 }
