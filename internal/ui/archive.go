@@ -361,7 +361,7 @@ func (v *View) archiveDialogs(c *n.Context, t *n.Theme) {
 				}
 				n.Text(c, "彻底删除"+kind+"？").FontSize(15).FontWeight(500).FixedLineHeight(22)
 				n.Text(c, message).FontSize(13).FixedLineHeight(22)
-				n.Text(c, "删除 Shioji 保存的记录与附件，项目文件和 Git 仓库不会删除。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+				n.Text(c, "同时移除 Shioji 保存的记录与附件。\n项目文件和 Git 仓库不会删除。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 				if d.error != "" {
 					n.Text(c, d.error).FontSize(12).FixedLineHeight(20).TextColor(t.Danger)
 				}
