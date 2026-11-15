@@ -395,7 +395,9 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 						phase = "进行中"
 					}
 					w, _ := n.ShapeText(phase, font, 0).Size()
-					caption := n.Text(c.Key("group-phase"), phase).SingleLine().FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Padding(0, 0, 0, 6).Clip().Opacity(alpha)
+					// Padding must leave with the slot; native layout cannot
+					// shrink a box below its remaining padding.
+					caption := n.Text(c.Key("group-phase"), phase).SingleLine().FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Padding(0, 0, 0, 6*extent).Clip().Opacity(alpha)
 					if handoff {
 						caption.Width(caption.Jump("phase-width", (w+6)*extent))
 					} else {

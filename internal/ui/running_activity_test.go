@@ -392,6 +392,23 @@ func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 				if right := activityLastInkX(ui, header, dark); right <= lastTitleX+titleWidth+6 || right > lastTitleX+titleWidth+22 {
 					t.Fatal("folded summary lost its disclosure cue after handoff", header, right)
 				}
+				saveNativeSkillImage(t, ui, fmt.Sprintf("handoff-dark-%v-expanded-%v.png", dark, expanded))
+				handoffGap := activityLastInkX(ui, header, dark) - lastTitleX
+				// The same count must leave the disclosure cue in the same
+				// place when the turn changes from prose to completed history.
+				d.Turns[0].Status, d.Session.Status = "completed", "completed"
+				v.Model.Details["s"] = d
+				ui.Frame()
+				ui.Advance(time.Second)
+				header, ok := ui.Find("2 次工具调用")
+				if !ok {
+					t.Fatal("completed history lost the tool summary")
+				}
+				completedGap := activityLastInkX(ui, header, dark) - activityTitleInkX(ui, header, dark)
+				saveNativeSkillImage(t, ui, fmt.Sprintf("completed-dark-%v-expanded-%v.png", dark, expanded))
+				if delta := handoffGap - completedGap; math.Abs(float64(delta)) > 1 {
+					t.Fatalf("hidden activity spacing shifts the disclosure cue by %.1f DIP after handoff", delta)
+				}
 			})
 		}
 	}
