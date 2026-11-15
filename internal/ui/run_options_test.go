@@ -60,30 +60,30 @@ func TestRunOptionRowsUseTheFullMenuWidthAndKeepTheMenuOpen(t *testing.T) {
 	}
 }
 
-func TestHistoryLoadRowsShareTheNormalTranscriptGap(t *testing.T) {
-	v := New(layoutModel(), nil, "")
+func TestHistoryPagingDoesNotAddNormalLoadingRowsOrSpacing(t *testing.T) {
+	v := New(layoutModel(), app.NewController(""), "")
+	v.Model.WorkerMinor = 37
 	d := v.Model.Details["s"]
 	d.History = &domain.HistoryWindow{First: 2, Last: 3, Older: true, Newer: true}
 	d.Items = []domain.Item{{ID: "a", Order: 2, Kind: "assistant", Text: "One message", Final: true}, {ID: "b", Order: 3, Kind: "assistant", Text: "Another message", Final: true}}
 	v.Model.Details["s"] = d
-	// A controller is needed for the native loading controls, without starting a service.
-	v.Controller = app.NewController("")
-	v.Model.WorkerMinor = 37
 	ui := n.NewTester(v.View, 1240, 820)
 	ui.Advance(time.Second)
-	earlier, _ := ui.Find("加载更早消息")
-	later, _ := ui.Find("加载后续消息")
+	for _, label := range []string{"加载更早消息", "加载后续消息", "正在加载历史…"} {
+		if ui.HasText(label) {
+			t.Fatal("normal paging adds a loading row", label)
+		}
+	}
 	one, _ := ui.Find("One message")
 	two, _ := ui.Find("Another message")
-	saveNativeSkillImage(t, ui, "history-spacing.png")
-	if earlier.H != 20 || later.H != 20 {
-		t.Fatal("history controls do not share metadata line height", earlier, later)
-	}
-	if math.Abs(float64((one.Y-earlier.Y-earlier.H)-(two.Y-one.Y-one.H))) > 1 {
-		t.Fatal("earlier history gap differs from normal transcript rhythm", earlier, one, two)
-	}
-	if math.Abs(float64((later.Y-two.Y-two.H)-(two.Y-one.Y-one.H))) > 1 {
-		t.Fatal("later history gap differs from normal transcript rhythm", one, two, later)
+	d.History = nil
+	v.Model.Details["s"] = d
+	ui.Frame()
+	ui.Advance(time.Second)
+	plainOne, _ := ui.Find("One message")
+	plainTwo, _ := ui.Find("Another message")
+	if math.Abs(float64(one.Y-plainOne.Y)) > 1 || math.Abs(float64(two.Y-plainTwo.Y)) > 1 {
+		t.Fatal("normal paging reserves additional space", one, two, plainOne, plainTwo)
 	}
 }
 

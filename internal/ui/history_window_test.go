@@ -7,6 +7,7 @@ import (
 	"math"
 	"shioji/internal/app"
 	"shioji/internal/domain"
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,9 +53,8 @@ func TestPagedHistoryLoadsOlderAndOutlineWithoutFullHydration(t *testing.T) {
 	v.Model.Details["s"] = d
 	ui := n.NewTester(v.View, 1440, 900)
 	ui.Advance(time.Second)
-	if e := ui.Click("加载更早消息"); e != nil {
-		t.Fatal(e)
-	}
+	ui.Scroll(900, 350, 0, -1)
+	ui.Advance(20 * time.Millisecond)
 	var seenOutline, seenPage bool
 	for len(v.Controller.Jobs) > 0 {
 		j := <-v.Controller.Jobs
@@ -225,7 +225,8 @@ func TestPagedHistoryCanceledReplyCannotRepopulateTheSession(t *testing.T) {
 	v.Model.Details["s"] = d
 	ui := n.NewTester(v.View, 1440, 900)
 	ui.Advance(time.Second)
-	ui.Click("加载更早消息")
+	ui.Scroll(900, 350, 0, -1)
+	ui.Advance(20 * time.Millisecond)
 	j := historyJob(t, v, "session.history")
 	v.home()
 	old := d
@@ -307,39 +308,52 @@ func TestPagedHistoryRefreshesOffWindowToolOutcomesWithoutLoadingBodies(t *testi
 }
 
 func TestPrependingHistoryKeepsTheVisibleMessageStationary(t *testing.T) {
-	v := New(layoutModel(), app.NewController(""), "")
-	v.Model.WorkerMinor = 37
-	d := v.Model.Details["s"]
-	d.History = &domain.HistoryWindow{First: 100, Last: 119, Older: true}
-	d.Items = nil
-	for i := 100; i < 120; i++ {
-		d.Items = append(d.Items, domain.Item{ID: fmt.Sprint(i), Order: int64(i), Kind: "user", Text: fmt.Sprint("Question ", i), Final: true})
-	}
-	v.Model.Details["s"] = d
-	ui := n.NewTester(v.View, 1440, 900)
-	ui.Advance(time.Second)
-	v.lists["s"].ScrollToRow(10, 160, n.Animation{Duration: time.Millisecond})
-	ui.Frame()
-	ui.Advance(time.Second)
-	before, ok := ui.Find("Question 109")
-	if !ok {
-		t.Fatal("anchor not visible", ui.Texts())
-	}
-	v.requestHistory(domain.HistoryQuery{Before: 100}, false)
-	j := historyJob(t, v, "session.history")
-	page := d
-	page.History = &domain.HistoryWindow{First: 80, Last: 99, Older: true, Newer: true}
-	page.Items = nil
-	for i := 80; i < 100; i++ {
-		page.Items = append(page.Items, domain.Item{ID: fmt.Sprint(i), Order: int64(i), Kind: "user", Text: fmt.Sprint("Question ", i), Final: true})
-	}
-	b, _ := json.Marshal(page)
-	j.Apply(v.Model, b, nil)
-	ui.Frame()
-	ui.Advance(time.Second)
-	after, ok := ui.Find("Question 109")
-	if !ok || math.Abs(float64(after.Y-before.Y)) > 1 {
-		t.Fatal("prepend moved the reader", before, after, ok)
+	for _, atTop := range []bool{true, false} {
+		t.Run(fmt.Sprint("top=", atTop), func(t *testing.T) {
+			v := New(layoutModel(), app.NewController(""), "")
+			v.Model.WorkerMinor = 37
+			d := v.Model.Details["s"]
+			d.History = &domain.HistoryWindow{First: 100, Last: 119, Older: true}
+			d.Items = nil
+			for i := 100; i < 120; i++ {
+				d.Items = append(d.Items, domain.Item{ID: fmt.Sprint(i), Order: int64(i), Kind: "user", Text: fmt.Sprint("Question ", i), Final: true})
+			}
+			v.Model.Details["s"] = d
+			ui := n.NewTester(v.View, 1440, 900)
+			ui.Advance(time.Second)
+			marker := "Question 109"
+			if atTop {
+				v.lists["s"].ScrollTo(0, n.Start)
+				marker = "Question 100"
+			} else {
+				v.lists["s"].ScrollToRow(10, 160, n.Animation{Duration: time.Millisecond})
+			}
+			ui.Frame()
+			ui.Advance(time.Second)
+			before, ok := ui.Find(marker)
+			if !ok {
+				t.Fatal("anchor not visible", ui.Texts())
+			}
+			saveNativeSkillImage(t, ui, fmt.Sprintf("prepend-top-%v-before.png", atTop))
+			v.requestHistory(domain.HistoryQuery{Before: 100}, false)
+			j := historyJob(t, v, "session.history")
+			page := d
+			page.History = &domain.HistoryWindow{First: 80, Last: 99, Older: true, Newer: true}
+			page.Items = nil
+			for i := 80; i < 100; i++ {
+				page.Items = append(page.Items, domain.Item{ID: fmt.Sprint(i), Order: int64(i), Kind: "user", Text: fmt.Sprint("Question ", i), Final: true})
+			}
+			b, _ := json.Marshal(page)
+			j.Apply(v.Model, b, nil)
+			ui.Frame()
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("prepend-top-%v-after.png", atTop))
+			after, ok := ui.Find(marker)
+			if !ok || math.Abs(float64(after.Y-before.Y)) > 1 {
+				t.Fatal("prepend moved the reader", before, after, ok)
+			}
+
+		})
 	}
 }
 
@@ -377,5 +391,141 @@ func TestDelayedHistorySummaryCannotOverwriteALaterLoadedToolCompletion(t *testi
 	j.Apply(v.Model, b, nil)
 	if v.Model.Details["s"].History.Groups[0].Issues != 2 {
 		t.Fatal("metadata refresh lost a concurrent loaded completion")
+	}
+}
+
+func TestPagedHistoryPrefetchesBeforeReachingTheEdge(t *testing.T) {
+	for _, newer := range []bool{false, true} {
+		t.Run(fmt.Sprint("newer=", newer), func(t *testing.T) {
+			v := New(layoutModel(), app.NewController(""), "")
+			v.Model.WorkerMinor = 37
+			d := v.Model.Details["s"]
+			d.History = &domain.HistoryWindow{First: 100, Last: 139, Older: true, Newer: true}
+			d.Items = nil
+			for i := 100; i < 140; i++ {
+				d.Items = append(d.Items, domain.Item{ID: fmt.Sprint(i), Order: int64(i), Kind: "user", Text: fmt.Sprint("Question ", i), Final: true})
+			}
+			v.Model.Details["s"] = d
+			ui := n.NewTester(v.View, 1440, 900)
+			ui.Advance(time.Second)
+			for _, label := range []string{"加载更早消息", "加载后续消息", "正在加载历史…"} {
+				if ui.HasText(label) {
+					t.Error("normal paging exposes a loading row", label)
+				}
+			}
+			row, dy := 6, float32(-1)
+			if newer {
+				row, dy = 29, 1
+			}
+			v.lists["s"].ScrollTo(row, n.Start)
+			ui.Frame()
+			ui.Advance(time.Second)
+			first, last := v.lists["s"].Visible()
+			if !newer && first <= 2 || newer && last >= 40 {
+				t.Fatal("fixture already reached the page edge", first)
+			}
+			ui.Scroll(1000, 350, 0, dy)
+			ui.Advance(20 * time.Millisecond)
+			j := historyJob(t, v, "session.history")
+			if q := j.Input.(domain.HistoryQuery); !newer && q.Before != 100 || newer && q.After != 139 {
+				t.Fatal("did not prefetch the matching edge", q)
+			}
+			if ui.HasText("正在加载历史…") {
+				t.Fatal("pending prefetch inserts a loading row")
+			}
+
+		})
+	}
+}
+
+func TestAppendingNewerHistoryDoesNotFollowThePageEnd(t *testing.T) {
+	v := New(layoutModel(), app.NewController(""), "")
+	v.Model.WorkerMinor = 37
+	d := v.Model.Details["s"]
+	d.History = &domain.HistoryWindow{First: 100, Last: 119, Older: true, Newer: true}
+	d.Items = nil
+	for i := 100; i < 120; i++ {
+		d.Items = append(d.Items, domain.Item{ID: fmt.Sprint(i), Order: int64(i), Kind: "user", Text: fmt.Sprint("Question ", i), Final: true})
+	}
+	v.Model.Details["s"] = d
+	ui := n.NewTester(v.View, 1440, 900)
+	ui.Advance(time.Second)
+	v.lists["s"].ScrollToEnd()
+	ui.Frame()
+	ui.Advance(time.Second)
+	before, ok := ui.Find("Question 119")
+	if !ok {
+		t.Fatal("missing last message")
+	}
+	v.requestHistory(domain.HistoryQuery{After: 119}, false)
+	j := historyJob(t, v, "session.history")
+	page := d
+	page.History = &domain.HistoryWindow{First: 120, Last: 139, Older: true}
+	page.Items = nil
+	for i := 120; i < 140; i++ {
+		page.Items = append(page.Items, domain.Item{ID: fmt.Sprint(i), Order: int64(i), Kind: "user", Text: fmt.Sprint("Question ", i), Final: true})
+	}
+	b, _ := json.Marshal(page)
+	j.Apply(v.Model, b, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	after, ok := ui.Find("Question 119")
+	if !ok || math.Abs(float64(after.Y-before.Y)) > 1 {
+		t.Fatal("appending a page followed its new end", before, after, ok)
+	}
+}
+
+func TestOpeningShortSessionDoesNotFlashAHistoryLoaderAtTheTop(t *testing.T) {
+	for _, cached := range []bool{false, true} {
+		t.Run(fmt.Sprint("cached=", cached), func(t *testing.T) {
+			m := layoutModel()
+			m.WorkerMinor = 37
+			v := New(m, app.NewController(""), "")
+			d := m.Details["s"]
+			d.Session.ThreadID = "short-source"
+			short := []domain.Item{{ID: "short-question", Order: 1, Kind: "user", Text: "A short question", Final: true}, {ID: "short-answer", Order: 2, Kind: "assistant", Text: "A short answer", Final: true}}
+			d.Items = nil
+			if cached {
+				d.Items = short
+			}
+			d.History = &domain.HistoryWindow{Invalidated: true}
+			m.Details["s"] = d
+			m.HistoryReads["s"] = &app.HistoryRead{Pending: true}
+			ui := n.NewTester(v.View, 1240, 820)
+			assertSilent := func() {
+				t.Helper()
+				for _, text := range ui.Texts() {
+					if strings.Contains(text, "加载历史") || strings.Contains(text, "加载更早") || strings.Contains(text, "加载后续") {
+						t.Fatal("opening a short session exposed a history loader", text)
+					}
+				}
+				if _, ok := ui.Find("消息编辑器"); !ok {
+					t.Fatal("opening history removed the composer")
+				}
+			}
+			for _, dt := range []time.Duration{0, 16 * time.Millisecond, 80 * time.Millisecond, 300 * time.Millisecond} {
+				ui.Frame()
+				ui.Advance(dt)
+				assertSilent()
+				if cached && !ui.HasText("A short question") {
+					t.Fatal("opening cleared cached short history")
+				}
+			}
+			delete(m.HistoryReads, "s")
+			d.Items = short
+			d.History = &domain.HistoryWindow{First: 1, Last: 2, WindowFirst: 1, WindowLast: 2}
+			m.Details["s"] = d
+			m.HistoryOpenings["s"] = true
+			ui.Frame()
+			ui.Advance(time.Second)
+			assertSilent()
+			question, ok := ui.Find("A short question")
+			if !ok || question.Y < 48 || question.Y > 120 {
+				t.Fatal("short history did not remain at its natural top", question, ok)
+			}
+			if _, ok := ui.Find("A short answer"); !ok {
+				t.Fatal("opening never displayed the loaded reply")
+			}
+		})
 	}
 }

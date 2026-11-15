@@ -18,6 +18,7 @@ type conversationHistory struct {
 	read                               *app.HistoryRead
 	cancel                             context.CancelFunc
 	error                              string
+	readNewer                          bool
 	indexBusy, indexDone               bool
 	indexBefore                        int64
 	indexCancel                        context.CancelFunc
@@ -128,6 +129,7 @@ func (v *View) requestHistory(q domain.HistoryQuery, replace bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	p.cancel = cancel
 	p.error = ""
+	p.readNewer = q.After > 0
 	p.direction = 0
 	r := v.Model.BeginHistoryRead(p.session)
 	p.read = r
@@ -252,17 +254,18 @@ func (v *View) historyPageControl(c *n.Context, t *n.Theme, newer bool) {
 	}
 	initial := v.Model.HistoryReads[v.Model.SessionID]
 	if p.read != nil || initial != nil && initial.Pending {
-		n.Text(c, "正在加载历史…").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 		return
 	}
-	label := "加载更早消息"
+	if p.error == "" && (newer || p.indexError == "") {
+		return
+	}
+	if p.error != "" && newer != (p.readNewer && d.History.Newer) {
+		return
+	}
+	label := "重试加载历史"
 	q := domain.HistoryQuery{Before: d.History.First}
 	if newer {
-		label = "加载后续消息"
 		q = domain.HistoryQuery{After: d.History.Last}
-	}
-	if p.error != "" {
-		label = "重试加载历史"
 	}
 	if !newer && p.indexError != "" {
 		if control(c).KeepFocus().Height(20).Label("重试加载提问目录").Tooltip(p.indexError).Children(func() { n.Text(c, "重试加载提问目录").FontSize(11).TextColor(t.TextMuted) }).Clicked() {
@@ -296,7 +299,7 @@ func (v *View) positionHistoryTarget(state *n.ListState, rows []transcriptRow) {
 	}
 }
 
-func (v *View) prefetchHistory(state *n.ListState, rows []transcriptRow) {
+func (v *View) prefetchHistory(c *n.Context, state *n.ListState, rows []transcriptRow) {
 	d := v.Model.Details[v.Model.SessionID]
 	p := v.historyPage
 	if d.History != nil {
@@ -316,10 +319,11 @@ func (v *View) prefetchHistory(state *n.ListState, rows []transcriptRow) {
 	if d.History == nil || p == nil || p.read != nil || p.error != "" || v.historyTarget != "" || v.findState().mode != findClosed || p.direction == 0 || v.frameTime.Sub(p.directionAt) > 350*time.Millisecond {
 		return
 	}
-	first, last := state.Visible()
-	if p.direction < 0 && d.History.Older && first <= 2 {
+	before, after := state.ScrollEdges()
+	threshold := max(float32(240), state.Bounds(c).H*.75)
+	if p.direction < 0 && d.History.Older && before <= threshold {
 		v.requestHistory(domain.HistoryQuery{Before: d.History.First}, false)
-	} else if p.direction > 0 && d.History.Newer && last >= len(rows) {
+	} else if p.direction > 0 && d.History.Newer && after <= threshold {
 		v.requestHistory(domain.HistoryQuery{After: d.History.Last}, false)
 	}
 }
@@ -414,5 +418,5 @@ func (v *View) hasHistoryPageControl() bool {
 		return false
 	}
 	initial := v.Model.HistoryReads[v.Model.SessionID]
-	return d.History.Older || p.error != "" || p.indexError != "" || p.read != nil || initial != nil && initial.Pending
+	return (p.error != "" && (!p.readNewer || !d.History.Newer) || p.indexError != "") && p.read == nil && (initial == nil || !initial.Pending)
 }

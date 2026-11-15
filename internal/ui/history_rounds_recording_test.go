@@ -112,7 +112,8 @@ func TestRoundHistoryNativeRecording(t *testing.T) {
 			ui.Scroll(1000, 300, 0, -20000)
 		case 240:
 			if v.historyPage.read == nil {
-				click("加载更早消息")
+				ui.Scroll(1000, 300, 0, -1)
+				ui.Advance(time.Second / 30)
 			}
 			reply("session.history", page(11, 20))
 		case 300:

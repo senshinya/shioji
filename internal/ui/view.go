@@ -1197,6 +1197,8 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		}
 		return row.key
 	}
+	state.SkipAnchor = func(i int) bool { return i == 0 || i == historyEndRow || hasNewer && i == len(rows)+1 }
+	state.FollowEnd = !hasNewer
 	v.anchorHistoryRows(state, rows)
 	v.anchorSentMessage(c, state, rows)
 	v.positionFind(c, state, rows)
@@ -1221,7 +1223,11 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			return
 		}
 		if hasNewer && row == len(rows)+1 {
-			n.Column(c).FillWidth().Height(20 + 8).AlignItems(n.Center).Children(func() { v.historyPageControl(c, t, true) })
+			height := float32(0)
+			if v.historyPage != nil && v.historyPage.error != "" && v.historyPage.readNewer {
+				height = 20 + 8
+			}
+			n.Column(c).FillWidth().Height(height).AlignItems(n.Center).Children(func() { v.historyPageControl(c, t, true) })
 			return
 		}
 		entry := rows[row-1]
@@ -1270,7 +1276,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		if row < len(rows) && rows[row].item.Kind == "user" {
 			bottom = 32
 		}
-		if hasNewer && row == len(rows) {
+		if hasNewer && row == len(rows) && v.historyPage != nil && v.historyPage.error != "" && v.historyPage.readNewer {
 			bottom = 8
 		}
 		n.Column(c).FillWidth().PaddingX(18).AlignItems(n.Center).Children(func() {
@@ -1332,7 +1338,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		return "", false
 	})
 	v.conversationOutline(c, t, state, rows)
-	v.prefetchHistory(state, rows)
+	v.prefetchHistory(c, state, rows)
 	n.Column(c).Absolute().Left(0).Right(0).Top(0).Height(48).Padding(0, conversationScrollbarGutter, 0, 0).Label("会话顶栏").Draw(func(p *n.Painter, r n.Rect) {
 		// History is clipped to its reading column, so the gutter contains
 		// only the pane background and native thumb, never overflowing text.

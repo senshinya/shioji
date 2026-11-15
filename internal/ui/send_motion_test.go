@@ -577,3 +577,54 @@ func TestPendingSendIgnoresRepeatedSendAtComposerBoundary(t *testing.T) {
 		t.Fatal("confirmation did not release the pending send")
 	}
 }
+
+func TestFirstHomeMessageDoesNotShowHistoryLoadingDuringHydration(t *testing.T) {
+	v, ui, send := sendFixture(t, true, func(m *app.Model) { m.WorkerMinor = 37 })
+	id := acceptSend(t, v, send, false)
+	d := v.Model.Details[id]
+	d.Session = domain.Session{ID: id, WorkspaceID: "w", ThreadID: "new-source", Status: domain.ExecutionRunning, Title: "New turn"}
+	d.History = &domain.HistoryWindow{Invalidated: true}
+	v.Model.Details[id] = d
+	assertSilent := func() {
+		t.Helper()
+		for _, text := range ui.Texts() {
+			if strings.Contains(text, "加载历史") || strings.Contains(text, "加载更早") || strings.Contains(text, "加载后续") {
+				t.Fatal("first submission displays a history loader", text)
+			}
+		}
+		if !ui.HasText("Explain a tree rotation.") {
+			t.Fatal("first message disappeared while hydrating")
+		}
+		if _, ok := ui.Find("消息编辑器"); !ok {
+			t.Fatal("hydration removed the composer")
+		}
+	}
+	// The controller's initial read and a view-owned retry use separate pending paths.
+	v.Model.HistoryReads[id] = &app.HistoryRead{Pending: true}
+	for _, dt := range []time.Duration{0, 16 * time.Millisecond, 80 * time.Millisecond, 300 * time.Millisecond} {
+		ui.Frame()
+		ui.Advance(dt)
+		assertSilent()
+	}
+	delete(v.Model.HistoryReads, id)
+	ui.Frame()
+	ui.Advance(16 * time.Millisecond)
+	assertSilent()
+	pageRead := historyJob(t, v, "session.history")
+	if v.historyPage == nil || v.historyPage.read == nil {
+		t.Fatal("fixture never entered view-owned hydration")
+	}
+	ui.Advance(100 * time.Millisecond)
+	assertSilent()
+	in := send.Input.(domain.Submission)
+	d.Items = []domain.Item{{ID: "input:" + in.OperationID, Order: 1, Kind: "user", Text: in.Text, Final: true}}
+	d.History = &domain.HistoryWindow{First: 1, Last: 1, WindowFirst: 1, WindowLast: 1}
+	body, _ := json.Marshal(d)
+	pageRead.Apply(v.Model, body, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	assertSilent()
+	if v.historyPage.error != "" {
+		t.Fatal(v.historyPage.error)
+	}
+}
