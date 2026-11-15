@@ -19,12 +19,13 @@ func NewID() string {
 }
 
 type Workspace struct {
-	Archived bool     `json:"archived,omitempty"`
-	ID       string   `json:"id"`
-	DeviceID string   `json:"deviceId"`
-	Name     string   `json:"name"`
-	Folders  []string `json:"folders"` // Primary first; paths resolved on the owning device.
-	Revision int64    `json:"revision"`
+	ArchivedAt *time.Time `json:"archivedAt,omitempty"`
+	Archived   bool       `json:"archived,omitempty"`
+	ID         string     `json:"id"`
+	DeviceID   string     `json:"deviceId"`
+	Name       string     `json:"name"`
+	Folders    []string   `json:"folders"` // Primary first; paths resolved on the owning device.
+	Revision   int64      `json:"revision"`
 }
 type RunConfig struct {
 	Model      string `json:"model"`
@@ -42,6 +43,7 @@ type LaunchContext struct {
 	Head                  string   `json:"head,omitempty"`
 }
 type Session struct {
+	ArchivedAt     *time.Time          `json:"archivedAt,omitempty"`
 	Completion     *ReplyCompletion    `json:"completion,omitempty"`
 	Origin         *ConversationOrigin `json:"origin,omitempty"`
 	ContextAction  *ContextAction      `json:"contextAction,omitempty"`
@@ -243,26 +245,29 @@ type Plan struct {
 	Steps       []PlanStep `json:"steps"`
 }
 type Event struct {
-	Work             *WorkActivity   `json:"work,omitempty"`
-	WorkID           string          `json:"workId,omitempty"`
-	WorkItem         *Item           `json:"workItem,omitempty"`
-	ContextUsage     *ContextUsage   `json:"contextUsage,omitempty"`
-	HistoryTurnOrder *int64          `json:"historyTurnOrder,omitempty"`
-	Plan             *Plan           `json:"plan,omitempty"`
-	Queue            *QueueState     `json:"queue,omitempty"`
-	Sequence         int64           `json:"sequence"`
-	SessionID        string          `json:"sessionId,omitempty"`
-	Type             string          `json:"type"`
-	ItemID           string          `json:"itemId,omitempty"`
-	Text             string          `json:"text,omitempty"`
-	Workspace        *Workspace      `json:"workspace,omitempty"`
-	Session          *Session        `json:"session,omitempty"`
-	Operation        *Operation      `json:"operation,omitempty"`
-	Item             *Item           `json:"item,omitempty"`
-	Request          *PendingRequest `json:"request,omitempty"`
-	Turn             *Turn           `json:"turn,omitempty"`
+	ArchivePolicy    *ArchivePolicy   `json:"archivePolicy,omitempty"`
+	Deletion         *ArchiveDeletion `json:"deletion,omitempty"`
+	Work             *WorkActivity    `json:"work,omitempty"`
+	WorkID           string           `json:"workId,omitempty"`
+	WorkItem         *Item            `json:"workItem,omitempty"`
+	ContextUsage     *ContextUsage    `json:"contextUsage,omitempty"`
+	HistoryTurnOrder *int64           `json:"historyTurnOrder,omitempty"`
+	Plan             *Plan            `json:"plan,omitempty"`
+	Queue            *QueueState      `json:"queue,omitempty"`
+	Sequence         int64            `json:"sequence"`
+	SessionID        string           `json:"sessionId,omitempty"`
+	Type             string           `json:"type"`
+	ItemID           string           `json:"itemId,omitempty"`
+	Text             string           `json:"text,omitempty"`
+	Workspace        *Workspace       `json:"workspace,omitempty"`
+	Session          *Session         `json:"session,omitempty"`
+	Operation        *Operation       `json:"operation,omitempty"`
+	Item             *Item            `json:"item,omitempty"`
+	Request          *PendingRequest  `json:"request,omitempty"`
+	Turn             *Turn            `json:"turn,omitempty"`
 }
 type Snapshot struct {
+	ArchivePolicy   *ArchivePolicy   `json:"archivePolicy,omitempty"`
 	ObservedAt      time.Time        `json:"observedAt,omitempty"`
 	PendingRequests []PendingRequest `json:"pendingRequests,omitempty"`
 	DeviceID        string           `json:"deviceId"`

@@ -140,3 +140,31 @@ func TestMaintenanceSurvivesReopenAndRejectsActiveSelection(t *testing.T) {
 		t.Fatal("active turn admitted to cleanup")
 	}
 }
+
+// main's archive-only worker supports schema 12 but has no persisted manual
+// shutdown guard. Its published maximum must not admit maintenance records.
+func TestMaintenanceDatabaseExcludesPreGuardSchema12Worker(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.sqlite")
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	id := maintenanceSession(t, s, "protected")
+	if _, err = s.AcceptWorkerMaintenance(maintenanceOperation(t, s, "maintenance", id)); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacy.Close()
+	var version int
+	if err = legacy.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	const preGuardWorkerMaximum = 12
+	if version <= preGuardWorkerMaximum {
+		t.Fatalf("pre-guard schema-12 worker would admit database containing stop authorization (actual schema %d)", version)
+	}
+}

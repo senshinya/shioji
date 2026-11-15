@@ -17,7 +17,7 @@ func (s *Store) RuntimeIdle(id string) (RuntimeIdleState, error) {
 
 const runtimeIdleQuery = `SELECT json_extract(s.body,'$.revision'),
  COALESCE((SELECT json_extract(body,'$.revision') FROM queues WHERE session_id=s.id),0),
- COALESCE(json_extract(s.body,'$.status'),'') IN ('idle','completed','interrupted','failed')
+ COALESCE(json_extract(s.body,'$.status'),'') IN ('idle','completed','interrupted','failed','abandoned')
  AND COALESCE(json_extract(s.body,'$.executionGuard'),'')=''
  AND COALESCE(json_extract(s.body,'$.contextAction.state'),'') IN ('','completed','interrupted','failed')
  AND NOT EXISTS(SELECT 1 FROM operations WHERE session_id=s.id AND state IN ('accepted','dispatched','indeterminate'))

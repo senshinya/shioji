@@ -4,6 +4,7 @@ import (
 	"errors"
 	"shioji/internal/domain"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -107,6 +108,11 @@ func (s *Store) SetSessionArchived(id string, revision int64, archived bool) (do
 		}
 	}
 	session.Archived = archived
+	session.ArchivedAt = nil
+	if archived {
+		now := time.Now().UTC()
+		session.ArchivedAt = &now
+	}
 	session.Revision++
 	return s.saveSessionMetadataLocked(session)
 }
@@ -135,6 +141,11 @@ func (s *Store) SetWorkspaceArchived(id string, revision int64, archived bool) (
 		}
 	}
 	w.Archived = archived
+	w.ArchivedAt = nil
+	if archived {
+		now := time.Now().UTC()
+		w.ArchivedAt = &now
+	}
 	w.Revision++
 	tx, err := s.db.Begin()
 	if err != nil {
