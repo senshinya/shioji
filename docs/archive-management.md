@@ -25,5 +25,6 @@
 - 局域网 HTTP 的外层画板、嵌入页、UUID v4、7 个交互设计页与原生证据均已实际浏览器检查；4 个录像以原速播放到结束，暂停、跳转与展开截图通过，无浏览器错误。CLI 静态检查无问题或待完成文件；其 runtime 状态仍为 unknown，未当作运行验证结论。
 - 独立审查的三项 Important 已修复并分别 RED→GREEN：拒绝未核实的存活运行时清理；已删除命名任务的迟到完成不停止消费者；回收 Diff 评论依赖快照并保留共享引用。没有延后 Minor。
 - 最后全量 `go test ./...` 尚未全绿：既有 `TestManagedReadOnlyCommandRunsButCannotWrite` 未观察到目标命令输出，`TestManagedAgentCrashStopsOwnedToolAndRecoversWithoutTouchingOtherSession` 等待工具启动超时。后者单独重跑曾通过；前者诊断请求显示命令收到执行会话 ID，但在夹具结束前没有输出。临时诊断改动已撤回，没有放宽安全检查或更改这两个既有测试。此限制仍需继续核对。
+- 随后的串行包回归中 worker 全量通过（138.537 秒）；当前仍未通过的是上述 Codex 沙箱测试。没有将这次结果登记为全量通过。
 
 本轮提交：`f60869b`、`0c59fb8`、`3509da7`、`6acad56`、`04677b2`。验收原生 UI 对应 `6acad56`；后续修复只改变 worker、存储和资源清理。
