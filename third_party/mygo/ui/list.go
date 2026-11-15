@@ -84,6 +84,10 @@ type ListState struct {
 	// follows its item, and the list keeps its place and its choice when
 	// rows are added or removed above them, as when older messages load.
 	Key func(row int) any
+	// SkipAnchor excludes structural rows, such as loading controls or edge
+	// spacers, from the reading anchor. Their focus and visibility are unchanged.
+	// The nearest visible content row keeps its position without a scroll request.
+	SkipAnchor func(row int) bool
 	// KeepOffset keeps a list with a Key where it is scrolled as its rows
 	// move, rather than with the item at its top: for rows sorted again as
 	// they change, as a process monitor's, which the list would otherwise
@@ -248,9 +252,11 @@ type ListState struct {
 	followFrame uint64
 	laidOut     bool
 	// wroteY is the offset the list set, to tell it from scrolling.
-	wroteY  float64
-	req     listRequest
-	heights listHeights
+	wroteY    float64
+	maxScroll float64
+	readEdges bool
+	req       listRequest
+	heights   listHeights
 
 	// scrolled tells that the app asked the list to scroll (ScrollTo,
 	// ScrollIntoView, ScrollToEnd): a mouse wheel's notches on their way
@@ -439,6 +445,14 @@ func (s *ListState) Visible() (first, last int) {
 		return 0, -1
 	}
 	return s.first, s.last
+}
+
+// ScrollEdges returns the distances in DIPs to the start and end of the
+// laid-out content. Unmeasured virtual rows use the list's current estimates.
+// Reading them schedules another frame when scrolling or measurement changes them.
+func (s *ListState) ScrollEdges() (before, after float32) {
+	s.readEdges = true
+	return float32(s.wroteY), float32(max(0, s.maxScroll-s.wroteY))
 }
 
 // AtEnd reports whether the list showed its end in the last frame, as
@@ -1943,17 +1957,31 @@ func (e *node) relayoutList(ch *node, y float64) {
 // for a view that read where it was.
 func (s *ListState) remember(e *node, first, last int, atEnd bool, scroll float64) {
 	f, n := e.list, e.list.n
-	if s.read && (first != s.first || last != s.last || atEnd != s.atEnd) {
+	maxScroll := max(0, e.contentH-float64(e.h))
+	if s.read && (first != s.first || last != s.last || atEnd != s.atEnd) || s.readEdges && (scroll != s.wroteY || maxScroll != s.maxScroll) {
 		e.c.rt.animating = true
 	}
 	s.laidOut, s.wroteY, s.req, s.read = true, scroll, listRequest{}, false
+	s.maxScroll, s.readEdges = maxScroll, false
 	s.first, s.last, s.atEnd = first, last, atEnd
 	s.following = s.FollowEnd && atEnd && !s.anchored() && !s.followPaused
-	s.anchor, s.anchorKey = max(0, first), nil
+	anchor := max(0, first)
+	if s.SkipAnchor != nil {
+		// Rows are sorted for painting above; f.at belongs to the pre-sort
+		// measurement pass, so take the position from the row itself.
+		for _, row := range f.rows {
+			if row.i >= first && row.i <= last && !s.SkipAnchor(row.i) {
+				anchor = row.i
+				s.inset = s.padTop - row.y
+				break
+			}
+		}
+	}
+	s.anchor, s.anchorKey = anchor, nil
 	if n == 0 {
 		s.inset = 0
 	} else if s.Key != nil && !s.KeepOffset {
-		s.anchorKey = s.Key(first)
+		s.anchorKey = s.Key(anchor)
 	}
 	s.selKey, s.pivotKey = nil, nil
 	if sel := s.cursor(); sel != nil {
