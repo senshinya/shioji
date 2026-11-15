@@ -66,8 +66,15 @@ func (v *View) conversationOutline(c *n.Context, t *n.Theme, state *n.ListState,
 	if available < 26 {
 		return
 	}
-	height := min(float32(len(entries)*10+16), min(640, min(bounds.H*.7, available)))
-	top += (available - height) / 2
+	// Center in the window rather than the shorter area above the composer.
+	// Long rails shrink symmetrically to stay clear of the fixed surfaces.
+	center := bounds.H / 2
+	bottom := top + available
+	if center < top+13 || center > bottom-13 {
+		center = (top + bottom) / 2
+	}
+	height := min(float32(len(entries)*10+16), min(640, min(bounds.H*.7, 2*min(center-top, bottom-center))))
+	top = center - height/2
 	hovered := -1
 	outline.List.Key = func(i int) any { return entries[i].ID }
 	track := n.Column(c.Key("conversation-outline-rail")).Absolute().Left(16).Top(top).Width(36).Height(height).Label("对话导航")
@@ -120,7 +127,7 @@ func (v *View) conversationOutline(c *n.Context, t *n.Theme, state *n.ListState,
 			})
 			if button.Clicked() {
 				hadFocus := v.composerHadFocus
-				state.KeepRow(entry.Row, 80)
+				state.KeepRowWithinContent(entry.Row, 80)
 				v.focusComposer = hadFocus
 			}
 		}).Fill().Scrollbars(false)

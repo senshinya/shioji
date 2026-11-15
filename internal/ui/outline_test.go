@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	n "github.com/egoist/mygo/ui"
+	"math"
 	"shioji/internal/domain"
 	"strings"
 	"testing"
@@ -218,7 +219,8 @@ func TestConversationOutlineEdgePaddingBelongsToEdgeTicks(t *testing.T) {
 	ui.ClickAt(track.X+18, track.Y+track.H-1)
 	ui.Advance(time.Second)
 	message, ok := ui.Find("Prompt 8")
-	if !ok || message.H <= 0 || message.Y > 200 {
+	dock, _ := ui.Find("会话底部面板")
+	if !ok || message.H <= 0 || message.Y < 48 || message.Y+message.H > dock.Y || !v.lists["s"].AtEnd() {
 		t.Fatal("clicking the bottom edge did not return to the last prompt", message)
 	}
 	if !ui.Focused("消息输入") {
@@ -357,6 +359,78 @@ func TestLatestOutlineTickIsNotCoveredByTheComposer(t *testing.T) {
 					}
 				})
 			}
+		}
+	}
+}
+
+func TestConversationOutlineCentersInWindow(t *testing.T) {
+	for _, count := range []int{9, 93} {
+		for _, height := range []int{600, 900} {
+			t.Run(fmt.Sprintf("count=%d/height=%d", count, height), func(t *testing.T) {
+				_, ui := outlineHitUI(count)
+				ui.SetDark(false)
+				ui.SetSize(1440, height)
+				ui.Advance(time.Second)
+				rail, ok := ui.Find("对话导航")
+				history, _ := ui.Find("对话记录")
+				dock, _ := ui.Find("会话底部面板")
+				saveNativeSkillImage(t, ui, fmt.Sprintf("center-count-%d-height-%d.png", count, height))
+				if !ok || math.Abs(float64(rail.Y+rail.H/2-history.Y-history.H/2)) > 1 {
+					t.Fatalf("outline is not centered in the window: rail=%+v history=%+v dock=%+v", rail, history, dock)
+				}
+				if rail.Y < history.Y+48 || rail.Y+rail.H > dock.Y {
+					t.Fatal("centered outline overlaps a fixed surface", rail, dock)
+				}
+			})
+		}
+	}
+}
+
+func TestOutlineLastPromptStaysWithinNaturalScrollRange(t *testing.T) {
+	for _, count := range []int{9, 120} {
+		for _, reply := range []string{"", "简短的末尾回复。", strings.Repeat("A readable explanation.\n\n", 24)} {
+			t.Run(fmt.Sprintf("count=%d/reply=%d", count, len(reply)), func(t *testing.T) {
+				v, ui := outlineHitUI(count)
+				ui.SetDark(false)
+				d := v.Model.Details["s"]
+				d.Items[len(d.Items)-1].Text = reply
+				v.Model.Details["s"] = d
+				v.lists["s"].ScrollTo(0, n.Start)
+				ui.Frame()
+				ui.Advance(time.Second)
+				v.outline.List.ScrollToEnd()
+				ui.Frame()
+				frame := 0
+				advance := func(d time.Duration) {
+					if count != 9 || reply != "简短的末尾回复。" {
+						ui.Advance(d)
+						return
+					}
+					for elapsed := time.Duration(0); elapsed < d; elapsed += time.Second / 60 {
+						saveNativeSkillImage(t, ui, fmt.Sprintf("motion-frame-%04d.png", frame))
+						frame++
+						ui.Advance(time.Second / 60)
+					}
+				}
+				advance(time.Second)
+				if e := ui.Click(fmt.Sprintf("跳转到消息 %d", count)); e != nil {
+					t.Fatal(e)
+				}
+				advance(time.Second)
+				marker := fmt.Sprintf("Prompt %d", count-1)
+				before, ok := ui.Find(marker)
+				if !ok {
+					t.Fatal("last prompt was not revealed")
+				}
+				saveNativeSkillImage(t, ui, fmt.Sprintf("last-count-%d-reply-%d.png", count, len(reply)))
+				ui.Scroll(900, 350, 0, -1)
+				advance(time.Second)
+				after, ok := ui.Find(marker)
+				saveNativeSkillImage(t, ui, fmt.Sprintf("wheel-count-%d-reply-%d.png", count, len(reply)))
+				if !ok || math.Abs(float64(after.Y-before.Y)) > 3 {
+					t.Fatalf("a one-pixel scroll repairs an unreachable outline anchor: before=%+v after=%+v", before, after)
+				}
+			})
 		}
 	}
 }
