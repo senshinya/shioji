@@ -32,6 +32,7 @@ var settingsCategories = []settingsCategory{{"appearance", "外观", settingsSun
 type Settings struct {
 	AppUpdates                 *AppUpdateControls
 	AuthorizeFullDiskAccess    func(background bool) error
+	FullDiskAccessGranted      func() bool
 	BackgroundRuntimeAvailable func() bool
 	services                   n.Services
 	saveError                  string
@@ -46,6 +47,7 @@ type Settings struct {
 	license                    int
 	notificationPending        bool
 	notificationMessage        string
+	fullDiskAccessGranted      bool
 }
 
 func NewSettings(owner *View) *Settings {
@@ -55,9 +57,11 @@ func NewSettings(owner *View) *Settings {
 }
 
 func (s *Settings) Show() {
+	s.refreshSystemPermissions()
 	if s.window != nil && !s.window.IsDestroyed() {
 		s.window.Show()
 		s.window.Focus()
+		s.window.Invalidate()
 		return
 	}
 	s.query, s.error = "", ""
@@ -70,6 +74,10 @@ func (s *Settings) Show() {
 		}
 	})
 	s.window.OnClosed(func() { s.window = nil })
+	s.window.OnFocus(func() {
+		s.refreshSystemPermissions()
+		s.window.Invalidate()
+	})
 }
 func (s *Settings) Close() {
 	if s.window != nil {
@@ -104,6 +112,9 @@ func (s *Settings) changed() {
 }
 
 func (s *Settings) selectPage(id string) {
+	if id == "about" {
+		s.refreshSystemPermissions()
+	}
 	s.page, s.query, s.error = id, "", ""
 	s.licenses = false
 	s.license = -1

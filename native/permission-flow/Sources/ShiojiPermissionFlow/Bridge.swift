@@ -1,8 +1,8 @@
 import AppKit
 import PermissionFlow
 
-// Only authorization guidance is imported. No status store or protected-file
-// probes run in Shioji, and this bridge never changes a system permission.
+// This bridge only presents authorization guidance. The Go client checks its
+// own effective access separately; this bridge never changes a system permission.
 func validatedApp(atPath path: String) -> URL? {
     let url = URL(fileURLWithPath: path).standardizedFileURL
     guard url.pathExtension == "app", Bundle(url: url)?.bundleIdentifier != nil else { return nil }

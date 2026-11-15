@@ -7,10 +7,18 @@ at revision `65434c9ae04dba97cf52c1dffbe3e4e62b547c82`; its source is not copied
 reimplemented.
 
 Only `PermissionFlowController` is used, for System Settings navigation and
-its native floating App drag card. No status store or protected-file permission
-probe is invoked. Authorization remains a user action in macOS. Accessibility
+its native floating App drag card. The upstream status store and its broad
+file probes are not used. Authorization remains a user action in macOS. Accessibility
 permission prompts are disabled; upstream uses its window-server tracking
 fallback without requiring another permission.
+
+The Go client checks its own effective Full Disk Access by opening and immediately
+closing the system TCC database, falling back to the current user's TCC database.
+It never reads database contents or permission records. Failure to confirm access
+keeps the authorization action available. Settings refresh on opening, regaining
+focus, and entering About; confirmed access shows “已授予” instead of the action.
+This check does not establish an independently running Runtime's permission.
+Reference: [KnockKnock's protected-database access check](https://github.com/objective-see/KnockKnock/blob/main/utilities.m).
 
 The main App and an installed background Runtime have separate settings
 actions. The Runtime target is the installed bundle at

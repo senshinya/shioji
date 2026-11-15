@@ -18,6 +18,47 @@ func permissionSettingsUI(t *testing.T) (*Settings, *n.Tester) {
 	return s, ui
 }
 
+func TestFullDiskAccessNativeEvidence(t *testing.T) {
+	s, ui := permissionSettingsUI(t)
+	saveNativeSkillImage(t, ui, "full-disk-access-ungranted.png")
+	s.FullDiskAccessGranted = func() bool { return true }
+	s.refreshSystemPermissions()
+	ui.Frame()
+	saveNativeSkillImage(t, ui, "full-disk-access-granted-light.png")
+	ui.SetDark(true)
+	ui.Frame()
+	saveNativeSkillImage(t, ui, "full-disk-access-granted-dark.png")
+}
+
+func TestFullDiskAccessGrantedShowsStatusWithoutAuthorizationAction(t *testing.T) {
+	s, ui := permissionSettingsUI(t)
+	s.FullDiskAccessGranted = func() bool { return true }
+	s.BackgroundRuntimeAvailable = func() bool { return true }
+	s.refreshSystemPermissions()
+	ui.Frame()
+	if !ui.HasText("完全磁盘访问权限") || !ui.HasText("已授予") {
+		t.Fatal("granted local permission has no status", ui.Texts())
+	}
+	if ui.HasText("授予完全磁盘访问权限") || !ui.HasText("为 Shioji Runtime 授权") || len(ui.OpenedURLs()) != 0 {
+		t.Fatal("local grant still offers authorization or is applied to Runtime", ui.Texts())
+	}
+}
+
+func TestFullDiskAccessStatusRefreshesAfterSystemPermissionChanges(t *testing.T) {
+	s, ui := permissionSettingsUI(t)
+	granted := false
+	s.FullDiskAccessGranted = func() bool { return granted }
+	for _, next := range []bool{true, false} {
+		granted = next
+		s.selectPage("appearance")
+		s.selectPage("about")
+		ui.Frame()
+		if ui.HasText("已授予") != next || ui.HasText("授予完全磁盘访问权限") == next {
+			t.Fatal("permission status did not follow the system", next, ui.Texts())
+		}
+	}
+}
+
 func TestFullDiskAccessSettingOpensOnlyItsSystemPage(t *testing.T) {
 	s, ui := permissionSettingsUI(t)
 	if len(ui.OpenedURLs()) != 0 {
@@ -31,7 +72,7 @@ func TestFullDiskAccessSettingOpensOnlyItsSystemPage(t *testing.T) {
 	if !slices.Equal(ui.OpenedURLs(), []string{"x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"}) {
 		t.Fatal("permission action did not open the Full Disk Access page", ui.OpenedURLs())
 	}
-	if s.owner.Model.Preferences != before || len(s.owner.Model.Pending) != 0 || ui.HasText("已授权") {
+	if s.owner.Model.Preferences != before || len(s.owner.Model.Pending) != 0 || ui.HasText("已授予") {
 		t.Fatal("opening system settings changed app preferences or claimed authorization")
 	}
 }

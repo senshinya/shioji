@@ -77,6 +77,7 @@ func run() error {
 		offUpdates := updater.OnChange(settings.Invalidate)
 		permissionGuide := permissionflow.New()
 		settings.AuthorizeFullDiskAccess = permissionGuide.Open
+		settings.FullDiskAccessGranted = permissionflow.FullDiskAccessGranted
 		settings.BackgroundRuntimeAvailable = permissionGuide.RuntimeAvailable
 		view.OpenSettings = settings.Show
 		window := mygo.NewWindow(mygo.WindowOptions{Title: "Shioji", Width: 1240, Height: 820, MinWidth: 850, MinHeight: 600, TitleBarStyle: mygo.TitleBarHidden, TrafficLightPosition: presentation.WindowTrafficLightPosition(), Content: n.View(view.View)})

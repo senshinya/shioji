@@ -1,5 +1,5 @@
 // Package permissionflow loads the bundled Swift PermissionFlow bridge into the
-// client. It only presents local authorization guidance; workers do not use it.
+// client and checks the client's effective Full Disk Access. Workers do not use it.
 package permissionflow
 
 import (

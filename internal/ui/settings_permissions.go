@@ -8,9 +8,19 @@ import (
 
 const fullDiskAccessSettingsURL = "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
 
+func (s *Settings) refreshSystemPermissions() {
+	s.fullDiskAccessGranted = s.FullDiskAccessGranted != nil && s.FullDiskAccessGranted()
+}
+
 func (s *Settings) fullDiskAccessSetting(c *n.Context, t *n.Theme) {
 	settingsHeading(c, t, "系统权限")
-	s.fullDiskAccessAction(c, t, "授予完全磁盘访问权限", false)
+	if s.fullDiskAccessGranted {
+		settingsRow(c, t, "完全磁盘访问权限", func() {
+			n.Text(c, "已授予").FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).TextColor(t.TextMuted)
+		})
+	} else {
+		s.fullDiskAccessAction(c, t, "授予完全磁盘访问权限", false)
+	}
 	if s.BackgroundRuntimeAvailable != nil && s.BackgroundRuntimeAvailable() {
 		s.fullDiskAccessAction(c, t, "为 Shioji Runtime 授权", true)
 	}
