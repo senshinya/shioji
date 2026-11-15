@@ -23,7 +23,7 @@ func TestServicePreparationPlansOnlySafeForwardUpdates(t *testing.T) {
 		update, fail bool
 	}{
 		{"old capabilities", 15, domain.WorkerBuild{BuildID: "old", SafeUpdate: true, Schema: 10}, true, false},
-		{"compatible older", 20, domain.WorkerBuild{BuildID: "old", BuiltAt: 100, SafeUpdate: true}, true, false},
+		{"compatible older", 20, domain.WorkerBuild{BuildID: "old", BuiltAt: 100, SafeUpdate: true}, false, false},
 		{"same", 20, candidate, false, false},
 		{"newer", 20, domain.WorkerBuild{BuildID: "newer", BuiltAt: 300, SafeUpdate: true}, false, false},
 		{"unknown age compatible", 20, domain.WorkerBuild{BuildID: "unknown", SafeUpdate: true}, false, false},

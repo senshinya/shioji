@@ -333,17 +333,19 @@ func (c *Controller) runDevices(ctx context.Context) {
 				checking = true
 				checkID++
 				id := checkID
-				callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				callCtx, cancel := context.WithCancel(ctx)
 				checkCancel = cancel
 				go func() {
 					defer cancel()
 					var body json.RawMessage
 					var err error
 					if job.Method == "$device.complete" {
+						completeCtx, completeCancel := context.WithTimeout(callCtx, 10*time.Second)
+						defer completeCancel()
 						var result protocol.AgentSetupResult
 						complete.SSH, err = c.TailnetSSH(complete.SSH)
 						if err == nil {
-							result, err = completeSSHSetup(callCtx, complete)
+							result, err = completeSSHSetup(completeCtx, complete)
 						}
 						body, _ = json.Marshal(result)
 					} else {
@@ -460,6 +462,8 @@ func signInSSHSetup(ctx context.Context, in SignInSSHDevice) (domain.SignInStatu
 }
 
 func (c *Controller) prepareSSHDevice(ctx context.Context, in CheckSSHDevice) (DeviceSetupCheck, error) {
+	connectCtx, stopConnect := context.WithTimeout(ctx, 10*time.Second)
+	defer stopConnect()
 	var routeErr error
 	in.SSH, routeErr = c.TailnetSSH(in.SSH)
 	if routeErr != nil {
@@ -469,13 +473,16 @@ func (c *Controller) prepareSSHDevice(ctx context.Context, in CheckSSHDevice) (D
 		if in.Trust.Target != in.SSH.Target || in.Trust.Port != in.SSH.Port {
 			return DeviceSetupCheck{}, errors.New("连接地址已改变，请重新核对指纹")
 		}
-		if err := in.Trust.Trust(ctx); err != nil {
+		if err := in.Trust.Trust(connectCtx); err != nil {
 			return DeviceSetupCheck{}, err
 		}
 	}
 	// OpenSSH verifies the host before account authentication. Existing trusted
 	// configurations need no custom known_hosts parsing or extra scan.
-	if err := in.SSH.CheckAuthentication(ctx); err != nil {
+	if err := in.SSH.CheckAuthentication(connectCtx); err != nil {
+		if connectCtx.Err() != nil {
+			return DeviceSetupCheck{}, connectCtx.Err()
+		}
 		var authentication *transport.SSHAuthenticationRequired
 		if errors.As(err, &authentication) {
 			return DeviceSetupCheck{NeedsKey: true}, nil
@@ -484,7 +491,7 @@ func (c *Controller) prepareSSHDevice(ctx context.Context, in CheckSSHDevice) (D
 		if !errors.As(err, &verification) {
 			return DeviceSetupCheck{}, err
 		}
-		key, err := in.SSH.InspectHostKey(ctx)
+		key, err := in.SSH.InspectHostKey(connectCtx)
 		if err != nil {
 			return DeviceSetupCheck{}, err
 		}
@@ -493,6 +500,7 @@ func (c *Controller) prepareSSHDevice(ctx context.Context, in CheckSSHDevice) (D
 		}
 		return DeviceSetupCheck{HostKey: key}, nil
 	}
+	stopConnect()
 	info, err := in.SSH.Bootstrap(ctx, c.fleet.workerBinary)
 	if err != nil {
 		return DeviceSetupCheck{}, err
@@ -500,8 +508,10 @@ func (c *Controller) prepareSSHDevice(ctx context.Context, in CheckSSHDevice) (D
 	if info.Legacy != nil || info.Migration != nil {
 		return DeviceSetupCheck{Info: info}, nil
 	}
-	if info.Build != nil && info.Build.SafeUpdate {
-		candidate, e := transport.InspectWorker(ctx, c.fleet.workerBinary)
+	inspectCtx, stopInspect := context.WithTimeout(ctx, 10*time.Second)
+	defer stopInspect()
+	if info.Minor < 16 && info.Build != nil && info.Build.SafeUpdate {
+		candidate, e := transport.InspectWorker(inspectCtx, c.fleet.workerBinary)
 		if e != nil {
 			return DeviceSetupCheck{}, e
 		}
@@ -515,5 +525,5 @@ func (c *Controller) prepareSSHDevice(ctx context.Context, in CheckSSHDevice) (D
 			return DeviceSetupCheck{Info: info, Preparation: prep}, nil
 		}
 	}
-	return inspectSSHSetup(ctx, in.SSH, info)
+	return inspectSSHSetup(inspectCtx, in.SSH, info)
 }

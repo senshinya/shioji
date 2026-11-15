@@ -58,6 +58,11 @@ func (p ServicePreparation) NextAction() string {
 }
 
 func planServicePreparation(info transport.WorkerInfo, candidate domain.WorkerBuild) (*ServicePreparation, error) {
+	// Adding a compatible device is a connection, not consent to upgrade it.
+	// Optional worker updates remain in the device's explicit update action.
+	if info.Minor >= 16 {
+		return nil, nil
+	}
 	current := info.Build
 	required := info.Minor < 16
 	if current == nil || current.BuildID == "" || !current.SafeUpdate {
