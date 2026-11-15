@@ -206,9 +206,10 @@ func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock
 	if !c.Preferences().ReduceMotion {
 		motion.Enter.Y, motion.Exit.Y = 4, 4
 	}
-	button := control(c, 14).KeepFocus().Height(28).PaddingX(10).Radius(14).Background(raised(t)).Border(1, t.Border.Alpha(.65)).
+	button := control(c, 14).KeepFocus().Height(28).PaddingX(10).Clip().Radius(14).Background(raised(t)).Border(1, t.Border.Alpha(.65)).
 		Label("回到最新").Tooltip("回到最新消息").AttachTo(dock, n.AnchorTop, n.AnchorBottom).Margin(0, 0, 12, 0).Transition(motion)
 	color := textHoverColor(c, button, t.TextMuted)
+	width := float32(20) // Horizontal capsule insets; child glyphs keep natural widths.
 	button.Children(func() {
 		font := n.Font{Family: t.Font, Size: 12, Weight: 400}
 		turn, active := v.activeConversationTurn()
@@ -217,7 +218,9 @@ func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock
 			a = v.runningActivity(turn)
 		}
 		if !active || v.Model.Connected && a.waiting {
-			inlineIconText(c, latestIcon, "最新消息", font, 14, 5, color)
+			textWidth, _ := n.ShapeText("最新消息", font, 0).Size()
+			width += 14 + 5 + textWidth
+			inlineIconText(c.Key("latest-idle"), latestIcon, "最新消息", font, 14, 5, color).Shrink(0).Transition(fadeMotion(c, 160*time.Millisecond))
 			return
 		}
 		label, pulse, dotColor := a.label, true, t.Success
@@ -227,7 +230,9 @@ func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock
 			label = "正在压缩上下文"
 		}
 		font.Size = 11
-		n.Row(c.Key("latest-activity")).Height(20).AlignItems(n.Baseline).Label("最新运行状态").Children(func() {
+		textWidth, _ := n.ShapeText(label, font, 0).Size()
+		width += 12 + textWidth + 6 + 14
+		n.Row(c.Key("latest-activity")).Height(20).Shrink(0).AlignItems(n.Baseline).Label("最新运行状态").Transition(fadeMotion(c, 160*time.Millisecond)).Children(func() {
 			phase := c.Now()
 			if turn.StartedAt != nil {
 				phase = *turn.StartedAt
@@ -236,13 +241,30 @@ func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock
 				phase = p.started
 			}
 			statusDot(c, label, font, dotColor, pulse, phase).Width(12)
-			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(color)
-			if pulse {
-				runningElapsed(c.Key("elapsed"), a.started, color, true)
-			}
+			caption := n.Column(c.Key("caption")).Height(20).Shrink(0).Clip()
+			caption.Width(latestControlWidth(c, caption, textWidth)).Children(func() {
+				n.Text(c.Key("label"), label).FontSize(11).FixedLineHeight(20).SingleLine().Shrink(0).TextColor(color).
+					ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+			})
+			clock := n.Column(c.Key("clock")).Height(20).Shrink(0).Clip()
+			var elapsedWidth float32
+			clock.Children(func() {
+				if pulse {
+					elapsed, naturalWidth := runningElapsed(c.Key("elapsed"), a.started, color, true)
+					elapsedWidth = naturalWidth
+					if elapsed.Valid() {
+						elapsed.Transition(fadeMotion(c, 160*time.Millisecond))
+					}
+				}
+			})
+			clock.Width(latestControlWidth(c, clock, elapsedWidth))
+			width += elapsedWidth
 			inlineSymbol(c, latestIcon, label, font, 14, color).Margin(0, 0, 0, 6)
 		})
 	})
+	// Animate layout width before AttachTo places the capsule, so its center
+	// follows the dock immediately even while the composer changes height.
+	button.Width(latestControlWidth(c, button, width))
 	if button.Clicked() {
 		if newer {
 			v.requestHistory(domain.HistoryQuery{}, true)
@@ -252,6 +274,13 @@ func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock
 			state.ScrollToEnd(n.Animation{Duration: 320 * time.Millisecond, Ease: composerDescentEase})
 		}
 	}
+}
+
+func latestControlWidth(c *n.Context, element n.Element, target float32) float32 {
+	if c.Preferences().ReduceMotion {
+		return element.Jump("width", target)
+	}
+	return element.AnimateTo("width", target, motionAnimation(c, 160*time.Millisecond))
 }
 
 func outlineReplyPreview(text string) string {
