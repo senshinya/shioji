@@ -112,11 +112,13 @@ func (v *View) archivePage(c *n.Context, t *n.Theme) {
 					if scope.ID != "" {
 						title = scope.Name
 					}
-					n.Text(c, title).SingleLine().FontSize(20).FontWeight(500).FixedLineHeight(28).MinWidth(0).TooltipWhenTruncated(title)
-					if scope.ID != "" {
-						n.Text(c, m.DeviceName(scope.DeviceID)).FontSize(12).TextColor(t.TextMuted)
-					}
-					n.Spacer(c).Grow(1)
+					n.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(n.Baseline).Children(func() {
+						n.Text(c, title).SingleLine().Ellipsis("…").FontSize(20).FontWeight(500).FixedLineHeight(28).MinWidth(0).TooltipWhenTruncated(title)
+						if scope.ID != "" {
+							name := m.DeviceName(scope.DeviceID)
+							n.Text(c, name).SingleLine().Ellipsis("…").MaxWidth(120).Shrink(0).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).TooltipWhenTruncated(name)
+						}
+					})
 					label := fmt.Sprintf("保留 %d 天", m.ArchiveDays())
 					if m.ArchiveDays() == 0 {
 						label = "永久保留"

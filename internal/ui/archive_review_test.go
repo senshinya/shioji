@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -129,6 +130,32 @@ func TestArchiveLongWorkspaceHeadingKeepsRetentionInsideWindow(t *testing.T) {
 	r, ok := ui.Find("归档保留设置")
 	if !ok || r.X < 224 || r.X+r.W > 820 || r.W < 70 {
 		t.Fatal("long title displaced retention control", r)
+	}
+}
+
+func TestArchiveWorkspaceHeadingUsesOneTextBaseline(t *testing.T) {
+	v, ui := archiveViewFixture()
+	w := &v.Model.Snapshot.Workspaces[0]
+	w.Name = "Archived workspace"
+	w.Archived = true
+	v.archive.scope = w.ID
+	ui.Frame()
+	ui.Advance(time.Second)
+	title, ok := ui.Find(w.Name)
+	if !ok {
+		t.Fatal("workspace title missing")
+	}
+	deviceName := v.Model.DeviceName(w.DeviceID)
+	device, ok := ui.Find(deviceName)
+	if !ok {
+		t.Fatal("device missing")
+	}
+	baseline := func(r n.Rect, text string, size float32) float32 {
+		l := n.ShapeText(text, n.Font{Family: "system-ui", Size: size}, 0).Lines()[0]
+		return r.Y + (r.H-l.Ascent-l.Descent)/2 + l.Ascent
+	}
+	if d := baseline(title, w.Name, 20) - baseline(device, deviceName, 12); math.Abs(float64(d)) > 1 {
+		t.Fatal("workspace heading and device do not share a baseline", d, title, device)
 	}
 }
 
