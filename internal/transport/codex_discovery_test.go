@@ -33,6 +33,13 @@ func TestBootstrapLetsTheWorkerUseItsEffectiveCodexEnvironment(t *testing.T) {
 	if err = os.Symlink(actual, filepath.Join(child, "codex")); err != nil {
 		t.Fatal(err)
 	}
+	// Keep the real launcher's interpreter in the worker-only PATH too. CI
+	// installs npm Codex; the controller's deliberately wrong Codex stays out.
+	if node, e := exec.LookPath("node"); e == nil {
+		if err = os.Symlink(node, filepath.Join(child, "node")); err != nil {
+			t.Fatal(err)
+		}
+	}
 	t.Setenv("PATH", parent+":/usr/bin:/bin")
 	adapter := codex.Adapter{Executable: transport.ExistingCodex(), Home: testutil.NewProvider(t).Home}
 	configured, err := adapter.WithRuntimeOptions(domain.RuntimeOptions{Environment: []domain.EnvironmentVariable{{Name: "PATH", Value: child + ":/usr/bin:/bin"}}})
