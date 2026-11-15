@@ -39,8 +39,43 @@ func (m *Model) BeginWorkReadKey(key WorkKey) WorkKey {
 	return key
 }
 func (m *Model) MergeWorkDetail(in domain.WorkDetail) {
+	m.mergeWorkDetail(in, false)
+}
+
+// Hidden children keep the bounded recent projection, not browsed pages.
+func (m *Model) ReleaseWorkHistory(key WorkKey) {
+	d, ok := m.WorkDetails[key]
+	if !ok || d.History == nil {
+		return
+	}
+	d.Truncated = d.Truncated || d.History.Older
+	d.History = nil
+	trimWorkDetail(&d)
+	// Dropping a prefix must also release the original large backing array.
+	d.Items = append([]domain.WorkItem(nil), d.Items...)
+	m.WorkDetails[key] = d
+}
+
+func (m *Model) MergeWorkHistoryPage(in domain.WorkDetail) {
+	m.mergeWorkDetail(in, true)
+}
+
+func (m *Model) mergeWorkDetail(in domain.WorkDetail, prepend bool) {
 	key := m.BeginWorkRead(in.SessionID, in.Work.ID)
 	cached := m.WorkDetails[key]
+	if prepend && in.History != nil && cached.History != nil && cached.ThreadID == in.ThreadID {
+		h := *cached.History
+		if in.History.First > 0 && in.History.First < h.First {
+			h.First, h.Older = in.History.First, in.History.Older
+		}
+		in.History = &h
+		if cached.Sequence > in.Sequence {
+			in.PendingInput = cached.PendingInput
+		}
+		for _, item := range cached.Items {
+			mergeWorkItem(&in, item)
+		}
+	}
 	if cached.Work.Revision > in.Work.Revision {
 		in.Work = cached.Work
 	}
@@ -48,6 +83,14 @@ func (m *Model) MergeWorkDetail(in domain.WorkDetail) {
 		if item.Revision > in.Sequence {
 			mergeWorkItem(&in, item)
 		}
+	}
+	if in.History != nil && len(in.Items) > 0 {
+		h := *in.History
+		if h.First == 0 {
+			h.First = in.Items[0].Item.Order
+		}
+		h.Last = max(h.Last, in.Items[len(in.Items)-1].Item.Order)
+		in.History = &h
 	}
 	in.Sequence = max(in.Sequence, cached.Sequence)
 	trimWorkDetail(&in)
@@ -66,6 +109,11 @@ func mergeWorkItem(d *domain.WorkDetail, next domain.WorkItem) {
 	sort.SliceStable(d.Items, func(i, j int) bool { return d.Items[i].Item.Order < d.Items[j].Item.Order })
 }
 func trimWorkDetail(d *domain.WorkDetail) {
+	// Browsed history belongs to the open virtual list. The legacy recent-only
+	// projection keeps its existing bound; it must not trim a loaded round.
+	if d.History != nil {
+		return
+	}
 	size := 0
 	for _, entry := range d.Items {
 		i := entry.Item
@@ -123,6 +171,14 @@ func (m *Model) applyWorkEvent(e domain.Event) {
 		key := m.WorkKey(e.SessionID, e.WorkID)
 		if cached, ok := m.WorkDetails[key]; ok {
 			mergeWorkItem(&cached, domain.WorkItem{Item: *e.WorkItem, Revision: e.Sequence})
+			if cached.History != nil {
+				h := *cached.History
+				if h.First == 0 {
+					h.First = e.WorkItem.Order
+				}
+				h.Last = max(h.Last, e.WorkItem.Order)
+				cached.History = &h
+			}
 			cached.Sequence = e.Sequence
 			trimWorkDetail(&cached)
 			m.WorkDetails[key] = cached

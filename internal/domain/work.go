@@ -39,12 +39,19 @@ type WorkItem struct {
 	Revision int64 `json:"revision"`
 }
 type WorkDetail struct {
+	History      *HistoryWindow      `json:"history,omitempty"`
+	ThreadID     string              `json:"threadId,omitempty"`
 	PendingInput *WorkInputOperation `json:"pendingInput,omitempty"`
 	SessionID    string              `json:"sessionId"`
 	Work         WorkActivity        `json:"work"`
 	Items        []WorkItem          `json:"items"`
 	Truncated    bool                `json:"truncated,omitempty"`
 	Sequence     int64               `json:"sequence"`
+}
+
+type WorkHistoryQuery struct {
+	HistoryQuery
+	ID string `json:"id"`
 }
 
 // WorkInput targets one observed independent execution. Mode is explicit so a

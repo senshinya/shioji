@@ -23,7 +23,7 @@ type HistoryRead struct {
 }
 
 func historyReadMethod(method string) bool {
-	return method == "session.history" || method == "session.outline" || method == "session.matches"
+	return method == "session.history" || method == "session.outline" || method == "session.matches" || method == "session.work.history"
 }
 
 func (c *Controller) queueInitialHistory(parent context.Context, id, epoch, generation string, opening bool) context.CancelFunc {
@@ -188,6 +188,22 @@ func (c *Controller) startHistoryRead(parent context.Context, current *protocol.
 					e := peer.Call(rpc, job.Method, query, &page)
 					return page, e
 				})
+				if err == nil {
+					out, err = json.Marshal(detail)
+				}
+			} else if q, ok := job.Input.(domain.WorkHistoryQuery); ok && job.Method == "session.work.history" {
+				var detail domain.WorkDetail
+				if peer.Minor < 41 {
+					err = errors.New("更新设备执行服务后才能加载子 Agent 历史")
+				} else {
+					detail, err = readWorkHistory(ctx, q, func(ctx context.Context, query domain.WorkHistoryQuery) (domain.WorkDetail, error) {
+						rpc, done := context.WithTimeout(ctx, 10*time.Second)
+						defer done()
+						var page domain.WorkDetail
+						e := peer.Call(rpc, job.Method, query, &page)
+						return page, e
+					})
+				}
 				if err == nil {
 					out, err = json.Marshal(detail)
 				}

@@ -38,7 +38,8 @@ const Major = 2
 // Minor 38 adds device-owned load telemetry and revision-checked idle-sleep control.
 // Minor 39 adds worker-owned reply completion acknowledgements and snapshot time.
 // Minor 40 adds device-owned archive policy and permanent archive deletion.
-const Minor = 40
+// Minor 41 adds round-based, snapshot-coherent child-agent history paging.
+const Minor = 41
 const MaxFrame = 1 << 20
 
 type Frame struct {

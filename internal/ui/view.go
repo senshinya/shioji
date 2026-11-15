@@ -307,6 +307,8 @@ func (v *View) View(c *n.Context) {
 		v.secondary.collectBindings()
 	}
 	v.pumpUpdates()
+	v.beginWorkHistoryFrame()
+	defer v.cancelHiddenWorkHistory()
 	if p := v.historyPage; p != nil && (p.session != m.SessionID || p.epoch != m.ConnectionEpoch || v.devices) {
 		v.cancelPagedHistory()
 	}

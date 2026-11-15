@@ -20,6 +20,16 @@ The worker owns complete conversation history. Loading a display window does not
 
 ## Implementation references
 
+### Child-agent conversations
+
+With worker protocol minor 41 or later, opening a child-agent conversation reads its latest display rounds using the same client-local round preference. Scrolling toward the top loads earlier rounds without changing the reading anchor. Each user message inside that child starts a round; a large single round is never cut at the former 64-record limit. Transport chunks share the authenticated connection's read-only snapshot and are assembled before display.
+
+Only child message history uses this path; the agent roster and background command output retain their existing behavior. The worker reads its saved observations without starting or querying an agent runtime. Summary-only legacy records cannot supply missing bodies. Older workers keep their recent-output endpoint and its visible limitation.
+
+The child cache merges concurrent output by item revision, including bursts longer than 64 records during initial hydration. Browsed pages do not replay arrival animation. Hiding a detail in either pane cancels its outstanding read, releases presentation state and trims its cache to the bounded recent-output projection; active reading retains complete browsed rounds. Failed earlier-page reads offer retry at the upper edge. Reopening from the agent list requests the latest window again.
+
+Regression coverage lives in `internal/store/work_history_test.go`, `internal/worker/work_history_internal_test.go`, `internal/app/work_history_test.go` and `internal/ui/work_history_test.go`. Native recordings use production MyGo components with deterministic worker replies in both appearances; they do not update or restart a live worker or installed App.
+
 This adapts Lody's latest-first directory/body separation and T3 Code's bounded display history, cursor navigation, live-state separation and viewport anchoring. Reference source revisions examined were Lody `8fa28a612f6bf4ff11bf875516a70a677c052ebe` and T3 Code `2cb2fa13855e4348d704f7a887027e1124b79037`. Shioji retains native MyGo rendering and the existing harness-neutral worker contract.
 
 ## Verification

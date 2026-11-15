@@ -23,6 +23,7 @@ const (
 )
 
 type workDetailUI struct {
+	history           *workHistoryUI
 	latestCommand     string
 	input             workInputUI
 	hydrated          bool
@@ -343,12 +344,25 @@ func (v *View) sessionWorkBody(c *n.Context, t *n.Theme, kind string, all []doma
 			if row.Clicked() {
 				p.selected = w.ID
 				p.requested = ""
+				if w.Kind == "agent" && v.Model.WorkerMinor >= 41 {
+					u := p.detail(w.ID)
+					u.cancelHistoryRead()
+					u.phase, u.hydrated, u.streams = workUnread, false, nil
+					u.list.ScrollToEnd()
+				}
 				v.readSessionWork(w, p.detail(w.ID), false)
+				if h := p.detail(w.ID).history; h != nil {
+					h.visible = true
+				}
 			}
 		}).FillWidth().FillHeight().Grow(1).PaddingX(6)
 	}, false)
 }
 func (v *View) readSessionWork(w domain.WorkActivity, u *workDetailUI, force bool) {
+	if w.Kind == "agent" && v.Model.WorkerMinor >= 41 {
+		v.readWorkHistory(w, u, force, 0)
+		return
+	}
 	if w.Revision == 0 && !force || !v.Model.Connected || v.Controller == nil {
 		return
 	}
@@ -437,6 +451,9 @@ func (v *View) refreshSelectedWork() {
 func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workPanelUI, w domain.WorkActivity, width float32) {
 	u := p.detail(w.ID)
 	v.readSessionWork(w, u, false)
+	if u.history != nil {
+		u.history.visible = true
+	}
 	detail, exists := v.Model.WorkDetails[v.Model.WorkKey(v.Model.SessionID, w.ID)]
 	if exists && detail.Work.Brief != "" {
 		w.Brief = detail.Work.Brief
@@ -448,6 +465,7 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 			inlineIconText(c, workBackIcon, w.Title, n.Font{Family: t.Font, Size: 12, Weight: 400}, 16, 0, color).TextColor(t.Text).MinWidth(0).Grow(1).TooltipWhenTruncated(w.Title)
 		})
 		if back.Clicked() {
+			u.cancelHistoryRead()
 			p.selected = ""
 		}
 		n.Row(c.Key("work-detail-state")).Height(20).Gap(6).AlignItems(n.Baseline).Children(func() {
@@ -495,6 +513,7 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 	u.markdown.Theme = &u.markdownTheme
 	v.bindMarkdownLinks(c, &u.markdown)
 	u.markdown.WrapCode = true
+	var failure func()
 	header := func() {
 		metadata := []string{}
 		if w.Model != "" {
@@ -523,8 +542,11 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 				n.Text(c, prompt).AlignSelf(n.End).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(userBubble(t)).Selectable()
 			}
 		}
-		if detail.Truncated {
+		if detail.Truncated && detail.History == nil {
 			n.Text(c, "仅显示最近的输出").FontSize(11).TextColor(t.TextMuted)
+		}
+		if u.history != nil && u.history.before > 0 && failure != nil {
+			failure()
 		}
 		if !exists || len(detail.Items) == 0 {
 			label := "暂无输出"
@@ -643,11 +665,15 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 			}
 		})
 	}
-	failure := func() {
+	failure = func() {
 		if u.error != "" {
 			n.Text(c, u.error).FontSize(11).TextColor(t.TextMuted)
 			if control(c).Padding(4, 8).Children(func() { n.Text(c, "重试").FontSize(12) }).Clicked() {
-				v.readSessionWork(w, u, true)
+				if u.history != nil {
+					v.readWorkHistory(w, u, true, u.history.before)
+				} else {
+					v.readSessionWork(w, u, true)
+				}
 			}
 		}
 	}
@@ -678,8 +704,9 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 			}
 			return "failure"
 		}
+		u.list.SkipAnchor = func(row int) bool { return row == 0 || row > len(detail.Items) }
 		rows := len(detail.Items) + 1
-		if u.error != "" {
+		if u.error != "" && (u.history == nil || u.history.before == 0) {
 			rows++
 		}
 		port = n.List(c.Key("work-detail-output:"+w.ID), &u.list, rows, func(row int) {
@@ -694,6 +721,7 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 				}
 			})
 		}).FillWidth().FillHeight().Grow(1).Label(inspectorWorkName(kind) + "内容")
+		v.workHistoryScroll(c, port, w, u, detail)
 		u.following = u.list.FollowingEnd()
 	}
 	animation := motionAnimation(c, 160*time.Millisecond)

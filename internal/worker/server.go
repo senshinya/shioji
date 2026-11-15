@@ -578,6 +578,15 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 		defer cancel()
 		return nil, controller.StopWork(ctx, detail.Session, q.ID)
+	case "session.work.history":
+		q, err := decode[domain.WorkHistoryQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		if history != nil {
+			return history.Work(q)
+		}
+		return s.store.WorkHistory(q)
 	case "session.work":
 		q, err := decode[protocol.WorkQuery](body)
 		if err != nil {
