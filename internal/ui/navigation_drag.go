@@ -102,7 +102,10 @@ func (v *View) navigationDropAt(rows []navigationRow, d *navigationDragState, y 
 		if r.kind == navigationSession || y > box.Y+15 {
 			before = app.SessionLocation{}
 			for _, next := range rows[at+1:] {
-				if next.kind == navigationWorkspace {
+				// The preview already contains the moving group. Inserting
+				// before itself would restore the basis order on the next
+				// frame and repeatedly reverse the make-room animation.
+				if next.kind == navigationWorkspace && next.ref != d.source.ref {
 					before = next.ref
 					break
 				}

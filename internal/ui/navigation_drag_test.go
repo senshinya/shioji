@@ -11,6 +11,51 @@ import (
 	n "github.com/egoist/mygo/ui"
 )
 
+func TestWorkspaceDragPreviewSettlesWhilePointerIsStationary(t *testing.T) {
+	for _, following := range []bool{false, true} {
+		for _, offset := range []float32{2, 14, 16, 28, 35, 60} {
+			for _, down := range []bool{false, true} {
+				t.Run(fmt.Sprintf("offset=%g/down=%v/following=%v", offset, down, following), func(t *testing.T) {
+					m := navigationFixture()
+					if following {
+						m.Snapshot.Workspaces = append(m.Snapshot.Workspaces, domain.Workspace{ID: "last", DeviceID: "A", Name: "Last workspace"})
+					}
+					v := New(m, nil, "")
+					ui := n.NewTester(v.View, 1280, 800)
+					ui.Advance(time.Second)
+					before := m.Navigation.Clone()
+					from, _ := ui.Find("Remote workspace")
+					to, _ := ui.Find("Example")
+					if down {
+						from, to = to, from
+					}
+					ui.Press(from.X+60, from.Y+14)
+					ui.Move(to.X+60, to.Y+offset)
+					ui.Advance(300 * time.Millisecond)
+					if v.navigationDrag == nil || v.navigationDrag.phase != navigationMoving {
+						t.Fatal("drag did not stay active")
+					}
+					settled := v.navigationDrag.preview.Clone()
+					for frame := 0; frame < 60; frame++ {
+						ui.Advance(16 * time.Millisecond)
+						if !reflect.DeepEqual(settled, v.navigationDrag.preview) {
+							t.Fatalf("stationary pointer changed preview at frame %d: %v -> %v", frame, settled, v.navigationDrag.preview)
+						}
+					}
+					if !reflect.DeepEqual(before, m.Navigation) {
+						t.Fatal("preview was persisted while held")
+					}
+					ui.Release(to.X+60, to.Y+offset)
+					ui.Advance(300 * time.Millisecond)
+					if !reflect.DeepEqual(settled, m.Navigation) {
+						t.Fatal("drop did not commit the settled preview", settled, m.Navigation)
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestNavigationDragUsesVisibleInsertionAfterLongListScroll(t *testing.T) {
 	m := navigationFixture()
 	for i := 0; i < 500; i++ {
