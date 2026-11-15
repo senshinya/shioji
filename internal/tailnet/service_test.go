@@ -327,7 +327,7 @@ func TestMalformedIntentCannotLeaveACommandAcceptingDeadHost(t *testing.T) {
 	}()
 	deadline := time.Now().Add(time.Second)
 	for {
-		if _, err := os.Stat(ServiceSocket(dir)); err == nil {
+		if s, err := os.Stat(ServiceSocket(dir)); err == nil && s.Mode()&os.ModeSocket != 0 && n.Snapshot().State == "Stopped" {
 			break
 		}
 		if time.Now().After(deadline) {

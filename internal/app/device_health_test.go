@@ -6,10 +6,58 @@ import (
 	"net"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"shioji/internal/transport"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestHealthPollingKeepsTransportUntilSubscriptionEnds(t *testing.T) {
+	for _, routed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "direct", true: "routed"}[routed], func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			c := NewController("")
+			dial := func(lifetime context.Context) (net.Conn, error) {
+				client, server := net.Pipe()
+				stop := context.AfterFunc(lifetime, func() { client.Close() })
+				go func() {
+					defer stop()
+					defer server.Close()
+					codec, _, err := protocol.Welcome(server, "device")
+					if err != nil {
+						return
+					}
+					for revision := int64(1); ; revision++ {
+						var frame protocol.Frame
+						if codec.Read(&frame) != nil {
+							return
+						}
+						result(codec, frame, domain.DeviceHealth{DeviceID: "device", ObservedAt: time.Now(), KeepAwake: domain.KeepAwakeState{Revision: revision}})
+					}
+				}()
+				return client, nil
+			}
+			c.Dial = dial
+			if routed {
+				c.paths = newDevicePaths(DeviceConnection{Routes: []DeviceRoute{{ID: "route", SSH: transport.SSH{Target: "host"}}}, ActiveRouteID: "route"}, func(ctx context.Context, _ transport.SSH) (net.Conn, error) { return dial(ctx) })
+			}
+			stop := c.observeDeviceHealth(ctx, "device", "epoch")
+			defer func() { stop(); c.networkWG.Wait() }()
+			m := NewModel()
+			m.Connected, m.ConnectionEpoch = true, "epoch"
+			deadline := time.After(3 * time.Second)
+			for m.DeviceHealth == nil || m.DeviceHealth.KeepAwake.Revision < 2 {
+				select {
+				case update := <-c.Updates:
+					update(m)
+				case <-deadline:
+					t.Fatal("health subscription lost its transport between polls")
+				}
+			}
+		})
+	}
+}
 
 func TestDeviceHealthFollowsOwningWorkspaceWithoutCrossDeviceLeak(t *testing.T) {
 	m := NewModel()

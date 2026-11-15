@@ -21,17 +21,21 @@ func (c *Controller) observeDeviceHealth(ctx context.Context, device, epoch stri
 	go func() {
 		defer c.networkWG.Done()
 		var client *protocol.Client
+		disconnect := func() {}
 		defer func() {
 			if client != nil {
 				client.Close()
 			}
+			disconnect()
 		}()
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for ctx.Err() == nil {
 			call, done := context.WithTimeout(ctx, 2*time.Second)
 			if client == nil {
-				conn, err := dial(call)
+				life, closeTransport := context.WithCancel(ctx)
+				stopOpening := context.AfterFunc(call, closeTransport)
+				conn, err := dial(life)
 				if err == nil {
 					candidate, err := protocol.Connect(call, conn, device)
 					if err != nil {
@@ -40,12 +44,19 @@ func (c *Controller) observeDeviceHealth(ctx context.Context, device, epoch stri
 						client = candidate
 					}
 				}
+				stopOpening()
+				if client == nil {
+					closeTransport()
+				} else {
+					disconnect = closeTransport
+				}
 			}
 			if client != nil {
 				var report domain.DeviceHealth
 				err := client.Call(call, "device.health", nil, &report)
 				if err != nil {
 					client.Close()
+					disconnect()
 					client = nil
 				} else if report.DeviceID == device {
 					received := time.Now()
