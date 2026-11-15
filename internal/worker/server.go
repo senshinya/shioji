@@ -229,6 +229,8 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	go s.recoveryLoop()
 	s.wg.Add(1)
 	go s.titleLoop()
+	s.wg.Add(1)
+	go s.archiveLoop()
 	return s, nil
 }
 func (s *Server) Directory() string { return s.config.Directory }
@@ -361,6 +363,24 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 	}
 
 	switch method {
+	case "archive.policy":
+		return s.store.ArchivePolicy()
+	case "archive.configure":
+		in, err := decode[protocol.ArchivePolicyInput](body)
+		if err != nil {
+			return nil, err
+		}
+		s.dispatchMu.Lock()
+		defer s.dispatchMu.Unlock()
+		return s.store.ConfigureArchive(in.Days, in.Revision)
+	case "session.delete", "workspace.delete":
+		in, err := decode[protocol.ArchiveDeleteInput](body)
+		if err != nil {
+			return nil, err
+		}
+		s.dispatchMu.Lock()
+		defer s.dispatchMu.Unlock()
+		return s.deleteArchive(method, in)
 	case "device.health":
 		return s.deviceHealth(), nil
 	case "device.keepAwake":

@@ -147,6 +147,10 @@ func TestPermanentSessionDeletionRedactsHistoryAndFencesInputReplay(t *testing.T
 	if _, err = s.Accept(domain.Submission{OperationID: "original", WorkspaceID: w.ID, Text: "private archive text", Config: domain.RunConfig{Model: "test"}}); err == nil {
 		t.Fatal("replayed deleted input created new session")
 	}
+	receipt, err := s.Operation("original")
+	if err != nil || receipt.State != "rejected" || receipt.SessionID != session.ID {
+		t.Fatal("reconnecting input owner cannot settle its deleted operation", receipt, err)
+	}
 	if _, err = s.Apply(session.ID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "late", Kind: "assistant", Text: "late"}}); err == nil {
 		t.Fatal("late event resurrected deleted session")
 	}
@@ -269,5 +273,46 @@ func TestArchiveTimestampSurvivesLateRuntimeSnapshot(t *testing.T) {
 	d, err := s.Session(session.ID, 0, 100)
 	if err != nil || d.Session.ArchivedAt == nil || !d.Session.ArchivedAt.Equal(*archived.ArchivedAt) {
 		t.Fatal("runtime snapshot erased worker-owned retention time", d.Session, err)
+	}
+}
+
+func TestArchiveDeletionKeepsSharedAttachmentUntilFinalReferenceIsRemoved(t *testing.T) {
+	s, w, first := archiveFixture(t)
+	second := archiveCompleted(t, s, w.ID, "shared")
+	a := domain.Attachment{ID: domain.NewID(), Name: "shared.txt", MIME: "text/plain", Size: 12, SHA256: strings.Repeat("a", 64)}
+	for _, session := range []domain.Session{first, second} {
+		if _, err := s.Apply(session.ID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "resource", Kind: "user", Text: "shared content", Attachments: []domain.Attachment{a}, Final: true}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, session := range []domain.Session{first, second} {
+		d, _ := s.Session(session.ID, 0, 10)
+		archived, err := s.SetSessionArchived(session.ID, d.Session.Revision, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = s.DeleteArchivedSession(session.ID, archived.Revision); err != nil {
+			t.Fatal(err)
+		}
+		shared, err := s.ArchiveResourceReferenced(a.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if shared != (session.ID == first.ID) {
+			t.Fatal("shared resource reference was lost", shared, session.ID)
+		}
+	}
+	garbage, err := s.ArchiveGarbage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, g := range garbage {
+		if g.AttachmentID == a.ID && g.WorkspaceID == w.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("deleted resource was not queued for crash-safe cleanup", garbage)
 	}
 }

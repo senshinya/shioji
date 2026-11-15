@@ -113,6 +113,7 @@ type QueueItem struct {
 	Input Submission     `json:"input"`
 }
 type Operation struct {
+	Deleted   bool           `json:"deleted,omitempty"`
 	Kind      string         `json:"kind,omitempty"`
 	ID        string         `json:"id"`
 	SessionID string         `json:"sessionId"`

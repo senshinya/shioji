@@ -170,6 +170,9 @@ func (s *Store) deleteArchivedLocked(sessions []domain.Session, workspace string
 		out.SessionIDs = append(out.SessionIDs, session.ID)
 	}
 	if workspace != "" {
+		if _, err = tx.Exec("INSERT OR IGNORE INTO deleted_workspaces(id) VALUES(?)", workspace); err != nil {
+			return out, err
+		}
 		if _, err = tx.Exec("UPDATE journal SET body=? WHERE json_extract(body,'$.workspace.id')=?", blob(domain.Event{Type: "archive.redacted"}), workspace); err != nil {
 			return out, err
 		}
@@ -184,16 +187,23 @@ func (s *Store) deleteArchivedLocked(sessions []domain.Session, workspace string
 }
 
 func deleteSessionRows(tx *sql.Tx, session domain.Session) error {
+	for _, table := range []string{"items", "queues", "work_items", "work_inputs"} {
+		object := "CASE WHEN j.type='object' THEN j.value ELSE '{}' END"
+		query := "INSERT OR IGNORE INTO archive_resources SELECT ?,json_extract(" + object + ",'$.id') FROM " + table + " AS r,json_tree(r.body) AS j WHERE r.session_id=? AND json_type(" + object + ",'$.sha256')='text' AND json_type(" + object + ",'$.id')='text'"
+		if _, err := tx.Exec(query, session.WorkspaceID, session.ID); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.Exec("INSERT OR IGNORE INTO deleted_sessions(id,workspace_id) VALUES(?,?)", session.ID, session.WorkspaceID); err != nil {
 		return err
 	}
 	for _, table := range []string{"operations", "work_inputs"} {
-		if _, err := tx.Exec("INSERT OR IGNORE INTO deleted_operations SELECT id FROM "+table+" WHERE session_id=?", session.ID); err != nil {
+		if _, err := tx.Exec("INSERT OR IGNORE INTO deleted_operations SELECT id,session_id FROM "+table+" WHERE session_id=?", session.ID); err != nil {
 			return err
 		}
 	}
 	historyWhere := "json_extract(body,'$.source.id')=? OR json_extract(body,'$.session.id')=?"
-	if _, err := tx.Exec("INSERT OR IGNORE INTO deleted_operations SELECT id FROM history_operations WHERE "+historyWhere, session.ID, session.ID); err != nil {
+	if _, err := tx.Exec("INSERT OR IGNORE INTO deleted_operations SELECT id,? FROM history_operations WHERE "+historyWhere, session.ID, session.ID, session.ID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec("DELETE FROM history_operations WHERE "+historyWhere, session.ID, session.ID); err != nil {
