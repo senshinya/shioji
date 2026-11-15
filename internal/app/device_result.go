@@ -48,6 +48,12 @@ func (m *Model) validateDeviceReply(key string, job Job, body json.RawMessage) e
 	if state == nil {
 		return errors.New("设备连接已改变，请重新核对操作")
 	}
+	if job.Method == "device.health" || job.Method == "device.keepAwake" {
+		var result domain.DeviceHealth
+		if json.Unmarshal(body, &result) != nil || result.DeviceID != state.Snapshot.DeviceID {
+			return errors.New("设备状态回执不属于当前设备")
+		}
+	}
 	if in, ok := job.Input.(protocol.SignInInput); ok {
 		var result domain.SignInStatus
 		if json.Unmarshal(body, &result) != nil || result.ID != in.ID || result.HarnessID != in.HarnessID {

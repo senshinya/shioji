@@ -61,6 +61,7 @@ type Model struct {
 	FocusSecondary             bool
 	Attachments                map[string][]DraftAttachment
 	sourceConnection           string
+	DeviceHealth               *domain.DeviceHealth
 	ConnectionTiming           *DeviceTiming
 	DevicePaths                []DevicePathStatus
 	Connections                []DeviceConnection

@@ -29,6 +29,7 @@ type DeviceTiming struct {
 }
 
 type DeviceState struct {
+	Health          *domain.DeviceHealth
 	Paths           []DevicePathStatus
 	WorkerService   *WorkerService
 	Timing          *DeviceTiming
@@ -213,6 +214,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	p.WorkerService = state.WorkerService
 	p.KnownDeviceID = state.Snapshot.DeviceID
 	p.ConnectionTiming = state.Timing
+	p.DeviceHealth = state.Health
 	p.DevicePaths = state.Paths
 	p.Details = map[string]domain.SessionDetail{}
 	owned := map[string]bool{}
@@ -257,6 +259,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	}
 	state.Snapshot, state.Sequence = p.Snapshot, p.Sequence
 	state.Timing = p.ConnectionTiming
+	state.Health = p.DeviceHealth
 	state.Paths = p.DevicePaths
 	for i := range m.Connections {
 		if m.Connections[i].ID != key {
@@ -327,6 +330,7 @@ func (m *Model) RefreshDevices() {
 			m.Readiness, m.WorkerMinor = state.Readiness, state.WorkerMinor
 			m.WorkerService = state.WorkerService
 			m.ConnectionTiming = state.Timing
+			m.DeviceHealth = state.Health
 			m.DevicePaths = state.Paths
 		}
 	}
@@ -335,6 +339,7 @@ func (m *Model) RefreshDevices() {
 		m.ConnectionEpoch = ""
 		m.Readiness = domain.Readiness{State: "unavailable"}
 		m.WorkerService = nil
+		m.DeviceHealth = nil
 	}
 	m.Snapshot = all
 }
@@ -414,4 +419,19 @@ func (m *Model) BindDeviceConnection(connection DeviceConnection) DeviceConnecti
 	}
 	m.Connections = append(m.Connections, connection)
 	return connection
+}
+
+// SetDeviceHealth maps worker-relative sample ages to the client's clock. A
+// remote machine's wall-clock skew must not make a fresh chart stale or future.
+func (m *Model) SetDeviceHealth(h domain.DeviceHealth, received time.Time) {
+	if old := m.DeviceHealth; old != nil && old.DeviceID == h.DeviceID && old.KeepAwake.Revision > h.KeepAwake.Revision {
+		h.KeepAwake = old.KeepAwake
+	}
+	offset := received.Sub(h.ObservedAt)
+	h.Samples = append([]domain.DeviceLoad(nil), h.Samples...)
+	for i := range h.Samples {
+		h.Samples[i].At = h.Samples[i].At.Add(offset)
+	}
+	h.ObservedAt = received
+	m.DeviceHealth = &h
 }

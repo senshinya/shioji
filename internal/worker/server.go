@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"shioji/internal/attachments"
+	"shioji/internal/devicehealth"
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/managedexec"
@@ -41,6 +42,7 @@ type EventsQuery = protocol.EventsQuery
 type EventPage = protocol.EventPage
 type AnswerInput = protocol.AnswerInput
 type Server struct {
+	health               *devicehealth.Monitor
 	storageMu            sync.Mutex
 	idleRuntimes         map[string]idleRuntimeObservation
 	toolConfigMu         sync.Mutex
@@ -212,6 +214,9 @@ func New(ctx context.Context, config Config) (*Server, error) {
 		cancelStartup()
 	}
 
+	s.health = devicehealth.New(config.Directory)
+	s.wg.Add(1)
+	go func() { defer s.wg.Done(); s.health.Run(s.ctx) }()
 	s.readiness = s.runtimeReadiness()
 	s.catalogWake = make(chan struct{}, 1)
 	s.wg.Add(1)
@@ -352,6 +357,16 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 	}
 
 	switch method {
+	case "device.health":
+		return s.deviceHealth(), nil
+	case "device.keepAwake":
+		in, err := decode[domain.KeepAwakeInput](body)
+		if err != nil {
+			return nil, err
+		}
+		report, err := s.health.SetKeepAwake(in.Enabled, in.Revision)
+		report.DeviceID = s.store.DeviceID()
+		return report, err
 	case "conversation.list", "conversation.preview":
 		in, err := decode[protocol.ConversationQuery](body)
 		if err != nil {
@@ -1204,6 +1219,9 @@ func (s *Server) Close() error {
 		}
 		s.dispatchMu.Unlock()
 		s.wg.Wait()
+		if s.health != nil {
+			result = errors.Join(result, s.health.Close())
+		}
 		result = errors.Join(result, s.store.Close())
 		s.owner.Close()
 		s.closeErr = result
@@ -1218,3 +1236,9 @@ func DefaultDirectory() (string, error) {
 	return filepath.Join(home, "Library", "Application Support", "Shioji", "worker"), nil
 }
 func (s *Server) String() string { return fmt.Sprintf("Shioji worker %s", s.store.DeviceID()) }
+
+func (s *Server) deviceHealth() domain.DeviceHealth {
+	h := s.health.Snapshot()
+	h.DeviceID = s.store.DeviceID()
+	return h
+}

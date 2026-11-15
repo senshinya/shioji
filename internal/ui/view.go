@@ -28,6 +28,7 @@ type editBinding struct {
 }
 
 type View struct {
+	devicePower                      map[string]*devicePowerUI
 	feedback                         *conversationFeedback
 	feedbackScope                    feedbackSource
 	feedbackSelection                int
@@ -581,24 +582,7 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		} else {
 			n.Spacer(c).Grow(1)
 		}
-		device := control(c).Height(26).PaddingX(6).Radius(6).Label("当前设备")
-		device.Children(func() {
-			n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
-				color := t.TextMuted
-				if m.Connected {
-					color = t.Success
-				}
-				n.Column(c).Size(4, 4).Radius(2).Background(color).AlignSelf(n.Center)
-				font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}
-				inlineIconText(c, v.deviceGlyph(m.ConnectionID()), m.CurrentDeviceName(), font, 14, 6, t.TextMuted)
-				inlineSymbol(c, chevron, m.CurrentDeviceName(), font, 12, t.TextMuted)
-			})
-		})
-		status := "已连接"
-		if !m.Connected {
-			status = "未连接"
-		}
-		v.choiceMenu(c, t, "current-device", device, []menuChoice{{id: "connectivity", name: status, disabled: true}, {id: "runtime", name: m.RunReadiness().Descriptor().Name + " · " + string(m.RunReadiness().State), disabled: true}, {id: "details", name: "设备详情", choose: func() { v.deviceSelected = m.ConnectionID(); v.deviceList = false; v.devices = true }}})
+		v.currentDeviceControl(c, t)
 		v.feedbackButton(c, t)
 		if m.SessionID != "" && !v.devices {
 			label := "展开更改侧栏"

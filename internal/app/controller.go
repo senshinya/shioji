@@ -116,6 +116,9 @@ func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.Raw
 			return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能配置 API"}
 		}
 	}
+	if (job.Method == "device.health" || job.Method == "device.keepAwake") && client.Minor < 38 {
+		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能查看负载和保持唤醒"}
+	}
 	if job.Prepare != nil {
 		if err := job.Prepare(); err != nil {
 			return nil, &protocol.RemoteError{Code: "notSent", Message: "无法保存草稿，操作未发送：" + err.Error()}
@@ -256,6 +259,7 @@ func (c *Controller) Run(ctx context.Context) {
 	history := map[string]historyLoadPhase{}
 	visible := []string{}
 	var lastReadiness time.Time
+	var stopHealth context.CancelFunc
 	var eventResults <-chan eventResult
 	var stopEvents context.CancelFunc
 	unconfirmed := map[string]bool{}
@@ -263,6 +267,9 @@ func (c *Controller) Run(ctx context.Context) {
 		unconfirmed[id] = true
 	}
 	defer func() {
+		if stopHealth != nil {
+			stopHealth()
+		}
 		if stopEvents != nil {
 			stopEvents()
 		}
@@ -512,6 +519,10 @@ func (c *Controller) Run(ctx context.Context) {
 	defer cancelHistory(nil)
 	disconnected := func() {
 		cancelHistory(nil)
+		if stopHealth != nil {
+			stopHealth()
+			stopHealth = nil
+		}
 		if c.paths != nil {
 			c.paths.record(c.paths.active(), 0, time.Now(), net.ErrClosed)
 			c.publishPaths()
@@ -673,6 +684,13 @@ func (c *Controller) Run(ctx context.Context) {
 		old.Close()
 		if client.Minor >= 1 {
 			eventResults, stopEvents = c.observeEvents(ctx, snapshot.DeviceID, generation, sequence)
+			if stopHealth != nil {
+				stopHealth()
+				stopHealth = nil
+			}
+			if client.Minor >= 38 {
+				stopHealth = c.observeDeviceHealth(ctx, snapshot.DeviceID, logicalEpoch)
+			}
 		}
 		return true
 	}
@@ -930,6 +948,7 @@ func (c *Controller) Run(ctx context.Context) {
 				epoch := logicalEpoch
 				c.post(func(m *Model) {
 					m.WorkerMinor = minor
+					m.DeviceHealth = nil
 					m.Connected = true
 					m.ConnectionEpoch = epoch
 					m.Readiness = ready
@@ -944,6 +963,13 @@ func (c *Controller) Run(ctx context.Context) {
 				}
 				if client.Minor >= 1 {
 					eventResults, stopEvents = c.observeEvents(ctx, snapshot.DeviceID, generation, sequence)
+					if stopHealth != nil {
+						stopHealth()
+						stopHealth = nil
+					}
+					if client.Minor >= 38 {
+						stopHealth = c.observeDeviceHealth(ctx, snapshot.DeviceID, logicalEpoch)
+					}
 				}
 			}
 			if c.paths != nil && !backgroundBusy {

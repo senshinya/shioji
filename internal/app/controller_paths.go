@@ -15,7 +15,7 @@ import (
 // are never replayed by the transport coordinator.
 func readOnlyPathQuery(method string) bool {
 	switch method {
-	case "device.directories", "file.search", "file.snapshot", "attachment.get", "git.status", "git.compare", "git.refs", "git.changes", "git.file", "session.search", "runtime.tools.inspect", "runtime.tools.list", "runtime.skills.list", "runtime.skills.read", "storage.usage", "session.work", "session.work.operation", "session.context.operation", "session.history-operation":
+	case "device.health", "device.directories", "file.search", "file.snapshot", "attachment.get", "git.status", "git.compare", "git.refs", "git.changes", "git.file", "session.search", "runtime.tools.inspect", "runtime.tools.list", "runtime.skills.list", "runtime.skills.read", "storage.usage", "session.work", "session.work.operation", "session.context.operation", "session.history-operation":
 		return true
 	}
 	return false
