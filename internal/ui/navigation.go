@@ -444,7 +444,7 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 				// Match the title's visible glyph center while retaining a 28px hit area.
 				top := (float32(20)-28)/2 - inlineCenterOffset(s.Title, n.Font{Family: t.Font, Size: 13})
 				more := iconButton(c.Key("actions"), moreActionsIcon, "会话菜单："+s.Title).Absolute().Top(top).Size(28, 28).Menu(func(menu *n.Menu) { v.sessionMenu(menu, s, r.ref) })
-				if moving || !row.Hovered() && !row.FocusWithin() {
+				if moving || !row.Hovered() && !row.FocusWithin() && !row.MenuOpen() {
 					more.Opacity(0)
 				}
 			})

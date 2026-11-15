@@ -36,6 +36,8 @@ type Point struct{ X, Y float32 }
 // the new marked text. ReplaceText commits and clears preedit; UnmarkText
 // clears marked status, retaining the document's text. Selection is
 // queried again after every mutation, before the next native event.
+// A client may also implement CanEditCommand(string) bool to provide EditItems
+// availability; commands are delivered to its paired HandleInput as InputCommand.
 type TextInputClient interface {
 	TextForRange(TextInputRange) (string, TextInputRange)
 	Selection() TextInputSelection

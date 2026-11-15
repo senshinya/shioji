@@ -104,6 +104,12 @@ func (e *node) Tooltip(s string) *node {
 	t := c.theme
 	fill, text := t.inverse()
 	tooltipBase(c, e, func(tip *node) {
+		if style := t.TooltipStyle; style != nil {
+			tip.MaxWidth(style.MaxWidth).Padding(style.PaddingY, style.PaddingX).Radius(style.Radius).Background(style.Surface).TextColor(style.Text).Border(1, style.Border).FontSize(style.FontSize).FixedLineHeight(style.LineHeight).Shadow(0, 2, 8, 0, RGBA(0, 0, 0, .12))
+			tip.Children(func() { coreText(c, s) })
+			tip.AttachTo(e, AnchorTop, AnchorBottom).Margin(0, 0, style.Gap, 0)
+			return
+		}
 		tip.MaxWidth(t.Space(80)).Padding(t.Space(1.25), t.Space(2)).Radius(t.Space(1.25)).
 			Background(fill).TextColor(text).FontSize(t.FontSize - 1)
 		tip.Shadow(0, 2, 8, 0, RGBA(0, 0, 0, 0.2))
@@ -119,6 +125,10 @@ func (e *node) Tooltip(s string) *node {
 // keyboard, whichever came last.
 func (rt *engine) showTooltip(c *context) uint64 {
 	t := &rt.tips
+	if rt.menu.drawn != nil || rt.menu.asked != 0 {
+		t.shown = 0
+		return 0
+	}
 	if t.frame == rt.frame && t.pass == rt.pass {
 		return t.shown
 	}
@@ -130,7 +140,7 @@ func (rt *engine) showTooltip(c *context) uint64 {
 	}
 	tipped := func(id uint64) bool {
 		s := rt.states[id]
-		return s != nil && s.tip && s.flags&flagDisabled == 0
+		return s != nil && s.tip && (s.flags&flagDisabled == 0 || c.theme.TooltipStyle != nil && c.theme.TooltipStyle.DisabledHints)
 	}
 	var hover uint64
 	for _, id := range rt.hover {

@@ -3,6 +3,7 @@ package ui
 import (
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
+	"time"
 )
 
 // Frozen semantic colors; keep each appearance independent.
@@ -84,6 +85,9 @@ func applyAppearance(c *n.Context, prefs app.ClientPreferences) *n.Theme {
 	}
 	t.AccentHover = t.Accent
 	t.AccentPressed = t.Accent
+	t.MenuStyle = &n.MenuStyle{Surface: raised(&t), Selection: menuSelectionSurface(&t), RowHeight: 26, Inset: 3, Radius: 7, FontSize: 13, SubmenuDelay: 200 * time.Millisecond}
+	t.TooltipStyle = &n.TooltipStyle{Surface: raised(&t), Text: t.Text, Border: t.Border, Radius: 6, PaddingY: 6, PaddingX: 10, FontSize: 12, LineHeight: 18, MaxWidth: 320, Gap: 6, DisabledHints: true}
 	c.SetTheme(&t)
+	c.UsePopoverMenus()
 	return &t
 }

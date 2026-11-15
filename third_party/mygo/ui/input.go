@@ -103,6 +103,10 @@ func (rt *engine) event(ev platform.SurfaceEvent) (taken bool) {
 		rt.focusChanged()
 	case platform.SurfaceBlur:
 		rt.windowFocused = false
+		if rt.menu.drawn != nil {
+			rt.menu.drawn = nil
+			rt.requestFrame()
+		}
 		rt.selection.dragging = false
 		// Keys let go of elsewhere never come back up here.
 		rt.modsChanged(0)
@@ -492,6 +496,19 @@ func (rt *engine) pointerUp(button, clicks int) {
 
 func (rt *engine) scroll(dx, dy float32, mods Modifiers, precise, momentum bool) {
 	chain := rt.appendHitChain(rt.chain[:0], rt.pointerX, rt.pointerY)
+	if rt.menu.drawn != nil {
+		inside := false
+		for _, id := range chain {
+			if s := rt.states[id]; s != nil && s.role == RoleMenu {
+				inside = true
+				break
+			}
+		}
+		if !inside {
+			rt.menu.drawn = nil
+			rt.requestFrame()
+		}
+	}
 	rt.chain = chain[:0]
 	// From the innermost element out, the first handling its input to
 	// take it: one whose handler leaves it passes it on, as it would

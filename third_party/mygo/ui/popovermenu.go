@@ -4,9 +4,25 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo/internal/platform"
 )
+
+// UsePopoverMenus opts this window into themed content menus. Pair it with
+// Theme.MenuStyle. Registering here keeps the renderer out of applications
+// that only use platform menus.
+func (c *Context) UsePopoverMenus() {
+	if raw := c.build(); raw != nil {
+		raw.rt.contentMenu = func(e *node, button bool, build func(*Menu)) *node {
+			if button {
+				return e.PopoverMenuButton(build)
+			}
+			return e.PopoverMenu(build)
+		}
+		raw.rt.textMenuRenderer = (*engine).resolveStyledEditMenu
+	}
+}
 
 // PopoverMenu gives the element a context menu, as ContextMenu does, which
 // MyGo draws in the window with the theme's look, as a popover, rather
@@ -86,7 +102,12 @@ func (e *node) PopoverMenuButton(build func(m *Menu)) *node {
 // drawnMenu is a menu drawn in the window (PopoverMenu, PopoverMenuButton)
 // that shows, of the element id.
 type drawnMenu struct {
-	id uint64
+	edit                  bool
+	source                Rect
+	shown                 *shownMenu
+	hoverLevel, hoverItem int
+	hoverSince            time.Time
+	id                    uint64
 	// below is set for a menu button's menu, which goes below the button;
 	// the others open at a point, dx and dy from the top left corner of the
 	// element's box. text is the text it opened on.
@@ -129,6 +150,7 @@ func (rt *engine) openDrawnMenu(e *node) {
 	// point by as much (#894).
 	b := e.Bounds()
 	d := &drawnMenu{id: e.id, below: mr.below, text: mr.text, opened: rt.frame, dx: mr.x - b.X, dy: mr.y - b.Y, focus: 0}
+	d.source = b
 	d.pointer = [2]float32{rt.pointerX, rt.pointerY}
 	first := 0
 	if mr.key {
@@ -158,13 +180,14 @@ func (rt *engine) drawMenu(e *node, build func(m *Menu)) {
 		return
 	}
 	d.built, d.pass = rt.frame, rt.pass
-	if e.disabled() {
+	if e.disabled() || !rt.windowFocus() || (d.opened != rt.frame && e.Bounds() != d.source) {
 		rt.menu.drawn = nil
 		return
 	}
 	run := &menuRun{collect: true}
 	pm := &platform.Menu{}
 	build(&Menu{run: run, menu: pm, rt: rt, text: rt.states[d.text]})
+	d.shown = &shownMenu{id: d.id, button: d.below, menu: pm, labels: run.labels, commands: run.commands, text: d.text}
 	if !slices.ContainsFunc(pm.Items, func(it *platform.MenuItem) bool { return it.Visible && it.Type != platform.MenuItemSeparator }) {
 		rt.menu.drawn = nil
 		return
@@ -235,6 +258,9 @@ func (md *menuDraw) panel(level int, items []*platform.MenuItem, anchor *node) (
 	// Presses on it stay in it; items past the room the window has scroll.
 	panel.flags |= flagFocusable | flagClickable | flagTypeSelect | flagOwnRing | flagScrollY | flagHover
 	panel.MinWidth(t.Space(45)).Padding(t.Space(1)).Radius(t.Radius+2).Background(t.Background).Border(1, t.Border)
+	if style := t.MenuStyle; style != nil {
+		panel.MinWidth(180).Padding(style.Inset).Radius(style.Radius).Background(style.Surface).FontSize(style.FontSize)
+	}
 	panel.Shadow(0, 6, 20, 0, RGBA(0, 0, 0, 0.18))
 	switch {
 	case level == 0 && d.below:
@@ -272,7 +298,10 @@ func (md *menuDraw) panel(level int, items []*platform.MenuItem, anchor *node) (
 				continue
 			}
 			if it.Type == platform.MenuItemSeparator {
-				coreBox(c).Height(1).Margin(t.Space(1), t.Space(2)).Background(t.Border).Shrink(0)
+				divider := coreBox(c).Height(1).Margin(t.Space(1), t.Space(2)).Background(t.Border).Shrink(0)
+				if t.MenuStyle != nil {
+					divider.Margin(3, 4)
+				}
 				continue
 			}
 			pos++
@@ -312,6 +341,9 @@ func (md *menuDraw) item(level int, it *platform.MenuItem, marks bool) *node {
 	c, d := md.c, md.d
 	t := c.theme
 	row := coreRow(c).AlignItems(Center).Gap(t.Space(2)).Padding(t.Space(1.5), t.Space(2)).Radius(t.Radius).Shrink(0)
+	if style := t.MenuStyle; style != nil {
+		row.Height(style.RowHeight).Padding(3, 7).Radius(4).Gap(8).FontSize(style.FontSize).FixedLineHeight(20)
+	}
 	row.Label(it.Label).Disabled(!it.Enabled)
 	row.flags |= flagClickable | flagHover
 	switch it.Type {
@@ -340,6 +372,10 @@ func (md *menuDraw) item(level int, it *platform.MenuItem, marks bool) *node {
 	case hi:
 		color, muted = t.AccentText, t.AccentText
 		row.Background(t.Accent).TextColor(color)
+		if style := t.MenuStyle; style != nil {
+			color, muted = t.Text, t.TextMuted
+			row.Background(style.Selection).TextColor(color)
+		}
 	}
 	rtl := row.rtl()
 	row.Children(func() {
@@ -378,11 +414,24 @@ func (md *menuDraw) item(level int, it *platform.MenuItem, marks bool) *node {
 		switch {
 		case sub && !open:
 			md.highlight(level, it.ID)
-			md.openSubmenu(level, it, false)
+			if style := t.MenuStyle; style != nil && style.SubmenuDelay > 0 {
+				if d.hoverLevel != level || d.hoverItem != it.ID {
+					d.hoverLevel, d.hoverItem, d.hoverSince = level, it.ID, c.now
+				}
+			} else {
+				md.openSubmenu(level, it, false)
+			}
 		case !sub && (d.levels[level].hi != it.ID || len(d.levels) > level+1):
 			md.highlight(level, it.ID)
 		}
-		d.focus = level
+	}
+	if style := t.MenuStyle; style != nil && sub && !open && row.Hovered() && d.hoverItem == it.ID && d.hoverLevel == level {
+		wait := style.SubmenuDelay - c.now.Sub(d.hoverSince)
+		if wait <= 0 {
+			md.openSubmenu(level, it, false)
+		} else {
+			md.rt.scheduleAt(c.now.Add(wait))
+		}
 	}
 	if row.Clicked() {
 		if sub {
@@ -498,6 +547,7 @@ func (md *menuDraw) keys(level int, panel *node, choices []*platform.MenuItem) {
 func (md *menuDraw) closeLevel(level int) {
 	d := md.d
 	d.levels = d.levels[:level]
+	d.hoverItem = 0 // Escape must not reopen the same hovered submenu.
 	d.focus = level - 1
 	md.rt.consumed = true
 }

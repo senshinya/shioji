@@ -704,6 +704,27 @@ func (v *view) menu(m *ui.Menu) {
 	m.EditItems()
 }
 
+// CanEditCommand keeps menu availability with the editor that owns selection,
+// composition, read-only policy and undo, rather than duplicating its buffer.
+func (v *view) CanEditCommand(name string) bool {
+	a, z := v.selection()
+	switch name {
+	case "copy":
+		return a != z
+	case "selectAll":
+		return v.shown.Len() > 0
+	case "cut", "delete":
+		return !v.opts.ReadOnly && a != z
+	case "paste", "pasteAndMatchStyle":
+		return !v.opts.ReadOnly
+	case "undo":
+		return !v.opts.ReadOnly && v.doc.CanUndo()
+	case "redo":
+		return !v.opts.ReadOnly && v.doc.CanRedo()
+	}
+	return false
+}
+
 // attachmentAt uses the shaped object rectangles, including wrapped lines.
 func (v *view) attachmentAt(x, y float32) (*Attachment, ui.Rect) {
 	cx, cy := v.contentPoint(x, y)

@@ -41,22 +41,18 @@ func (v *View) choiceMenu(c *n.Context, t *n.Theme, key string, trigger n.Elemen
 	}
 	popover(c.Key("choices:"+key), trigger, &open, func(panel n.Element) {
 		_, height := c.Size()
-		panel.Width(264).Padding(3).Radius(9).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
+		panel.Role(n.RoleMenu).Width(264).Padding(3).Radius(7).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
 			n.Scroll(c).FillWidth().MaxHeight(min(360, height-32)).Label("菜单选项").Children(func() {
 				n.Column(c).FillWidth().FocusGroup(n.Vertical).Children(func() {
 					first := true
 					for _, choice := range choices {
-						if choice.disabled {
-							n.Text(c, choice.name).FillWidth().MinHeight(26).Padding(4, 7).FontSize(12).TextColor(t.TextMuted)
-							continue
-						}
-						row := control(c.Key(choice.id), 4).FillWidth().MinHeight(26).PaddingX(7).Radius(4).Label(choice.name).Disabled(choice.disabled)
+						row := n.ButtonBase(c.Key(choice.id)).Role(n.RoleMenuItemRadio).Checked(choice.checked).FillWidth().MinHeight(26).PaddingX(7).Radius(4).Label(choice.name).Disabled(choice.disabled)
 						background := raised(t)
-						if row.FocusVisible() {
+						if !choice.disabled && (row.FocusVisible() || row.Hovered()) {
 							background = menuSelectionSurface(t)
 						}
 						row.Background(row.AnimateColor("menu-selection", background, motionAnimation(c, 120*time.Millisecond)))
-						if first {
+						if first && !choice.disabled {
 							row.AutoFocus()
 							first = false
 						}

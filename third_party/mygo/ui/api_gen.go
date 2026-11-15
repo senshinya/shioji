@@ -359,6 +359,15 @@ func (_handle *Context) MeasureText(width float32, spans ...Span) (float32, floa
 	return _ctx.MeasureText(width, spans...)
 }
 
+// MenuOpen reports whether this window has an open content menu.
+func (_handle *Context) MenuOpen() bool {
+	_ctx := _handle.build()
+	if _ctx == nil {
+		return false
+	}
+	return _ctx.MenuOpen()
+}
+
 // Modifiers returns the modifier keys held now, as the last key, pointer
 // or modifier event said: a view showing each row's shortcut while Cmd is
 // held reads it, and draws again as it changes.
@@ -4880,6 +4889,17 @@ func (_handle Element) Menu(build func(m *Menu)) Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.Menu(build))
+}
+
+// MenuOpen reports whether this element or one of its children owns the menu.
+func (_handle Element) MenuOpen() bool {
+	_node := _handle.node()
+	if _node == nil {
+		return false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.MenuOpen()
 }
 
 func (_handle Element) MinHeight(v float32) Element {

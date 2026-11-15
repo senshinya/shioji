@@ -289,9 +289,11 @@ type engine struct {
 	// shortcuts that frame built take in the next one; unrouted, those
 	// the frame being built gave no shortcut, or gave one the view no
 	// longer asks for (routeKeys, settleKeys).
-	keys, retried []keyEvent
-	unrouted      []shortcutReg
-	menu          menuState
+	keys, retried    []keyEvent
+	unrouted         []shortcutReg
+	menu             menuState
+	contentMenu      func(*node, bool, func(*Menu)) *node
+	textMenuRenderer func(*engine)
 	// windowFocused tells that the window has the keyboard focus, which
 	// windowFocus reads; focusRead, that the last frame read it, so that a
 	// change of it draws a frame.
@@ -619,6 +621,10 @@ func (rt *engine) runFrame() {
 		rt.runActions()
 		rt.prepareSelectable(rt.c.root)
 		rt.resolveMenu()
+		rt.applyFocusRequests()
+		if ov := rt.c.overlay; ov != nil && ov.parent == nil {
+			rt.c.root.add(ov)
+		}
 		rt.endPass()
 		if rt.closing {
 			return // an action closed it

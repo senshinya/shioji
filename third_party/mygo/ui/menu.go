@@ -43,6 +43,9 @@ import (
 //
 // PopoverMenu draws the same menu in the window, with the theme's look.
 func (e *node) ContextMenu(build func(m *Menu)) *node {
+	if render := e.c.rt.contentMenu; render != nil && e.c.theme.MenuStyle != nil {
+		return render(e, false, build)
+	}
 	e.flags |= flagContextMenu
 	e.buildMenu(false, false, build)
 	return e
@@ -66,6 +69,9 @@ func (e *node) ContextMenu(build func(m *Menu)) *node {
 // PopoverMenuButton draws the same menu in the window, with the theme's
 // look.
 func (e *node) Menu(build func(m *Menu)) *node {
+	if render := e.c.rt.contentMenu; render != nil && e.c.theme.MenuStyle != nil {
+		return render(e, true, build)
+	}
 	e.flags |= flagMenuButton | flagClickable | flagFocusable
 	if e.role == RoleAuto || e.role == RoleButton {
 		e.role = RoleMenuButton
@@ -179,7 +185,7 @@ func (m *Menu) add(label string, typ platform.MenuItemType) *MenuItem {
 // its command on the text, without reaching the menu's function. It adds
 // nothing to a menu that opened on no text.
 func (m *Menu) EditItems() {
-	if m.text == nil || m.text.editor == nil {
+	if m.text == nil || m.text.editor == nil && m.text.textClient == nil {
 		return
 	}
 	for _, c := range m.rt.editCommands(m.text) {
@@ -396,9 +402,11 @@ func (rt *engine) menuPress(chain []uint64, x, y float32) bool {
 		}
 	}
 	text := uint64(0)
-	if s.editor != nil {
+	if s.editor != nil || s.textClient != nil {
 		text = s.id
-		s = rt.textMenu(s)
+		if s.editor != nil {
+			s = rt.textMenu(s)
+		}
 	}
 	if runtime.GOOS == "windows" {
 		rt.menu.release, rt.menu.releaseText = s.id, text
@@ -440,6 +448,9 @@ func (rt *engine) menuKey() bool {
 		x += s.vw
 	}
 	text := uint64(0)
+	if s.textClient != nil {
+		text = s.id
+	}
 	if s.flags&(flagEditable|flagSelectable) != 0 && s.editor != nil {
 		r := transformRect(s.world, s.editor.caretRect(s))
 		x, y = r.X, r.Y+r.H
@@ -495,8 +506,12 @@ func (rt *engine) openMenu(id uint64, button bool, pm *platform.Menu, labels, co
 // pass of the view: a text input's, with the editing commands.
 func (rt *engine) resolveMenu() {
 	mr := &rt.menu
+	// Automatic text menus have no explicit builder in the view. Reuse the
+	// editing commands and the same renderer, after selectable text is prepared.
+	if rt.textMenuRenderer != nil && rt.c.theme.MenuStyle != nil {
+		rt.textMenuRenderer(rt)
+	}
 	if d := mr.drawn; d != nil && (d.built != rt.frame || d.pass != rt.pass) {
-		// The element whose menu it is was not built: the menu goes with it.
 		mr.drawn = nil
 	}
 	id := mr.asked
@@ -507,6 +522,59 @@ func (rt *engine) resolveMenu() {
 	if s := rt.states[id]; s != nil && s.seen == rt.frame && s.editor != nil && !mr.button {
 		rt.editMenu(s)
 	}
+}
+
+func (rt *engine) resolveStyledEditMenu() {
+	mr := &rt.menu
+	id := mr.asked
+	if d := mr.drawn; d != nil && d.edit {
+		id = d.id
+	}
+	if id != 0 {
+		var find func(*node) *node
+		find = func(e *node) *node {
+			if e.id == id {
+				return e
+			}
+			for ch := e.first; ch != nil; ch = ch.next {
+				if got := find(ch); got != nil {
+					return got
+				}
+			}
+			return nil
+		}
+		if e := find(rt.c.root); e != nil && e.st.editor != nil && e.flags&flagContextMenu == 0 {
+			if mr.asked == id {
+				mr.text = id
+				rt.openDrawnMenu(e)
+				mr.drawn.edit = true
+				mr.asked = 0
+			}
+			rt.drawMenu(e, func(m *Menu) { m.EditItems() })
+		}
+	}
+}
+
+// MenuOpen reports whether this window has an open content menu.
+func (c *context) MenuOpen() bool { return c.rt.menu.drawn != nil || c.rt.menu.asked != 0 }
+
+// MenuOpen reports whether this element or one of its children owns the menu.
+func (e *node) MenuOpen() bool {
+	id := e.c.rt.menu.asked
+	if d := e.c.rt.menu.drawn; d != nil {
+		id = d.id
+	}
+	for id != 0 {
+		if id == e.id {
+			return true
+		}
+		s := e.c.rt.states[id]
+		if s == nil {
+			break
+		}
+		id = s.parent
+	}
+	return false
 }
 
 // showMenu hands the menu built in the frame to the host, which shows it
@@ -545,6 +613,12 @@ func (rt *engine) menuChosen(p *shownMenu, id int) {
 // menuCommand does the editing command name, chosen from a menu, on the
 // text input or selectable text id.
 func (rt *engine) menuCommand(id uint64, name string) {
+	if s := rt.states[id]; s != nil && s.textClient != nil && s.editor == nil {
+		if rt.editCommandOn(s, name) {
+			rt.deliver(s, InputEvent{Kind: InputCommand, Text: name})
+		}
+		return
+	}
 	if s := rt.states[id]; s != nil && s.editor != nil {
 		if !rt.textSelectionCommand(s, name) {
 			s.editor.queue = append(s.editor.queue, editEvent{kind: editCommand, text: name})
@@ -594,7 +668,7 @@ func (rt *engine) editCommands(s *state) []editItem {
 		commands  []command
 	)
 	switch {
-	case s.editor.readOnly:
+	case s.editor != nil && s.editor.readOnly:
 		commands = []command{copyText, separator, selectAll}
 	case runtime.GOOS == "darwin":
 		commands = []command{cut, copyText, paste, separator, selectAll}
@@ -610,6 +684,15 @@ func (rt *engine) editCommands(s *state) []editItem {
 // text input or selectable text s, as its editor does it.
 func (rt *engine) editCommandOn(s *state, name string) bool {
 	ed := s.editor
+	if ed == nil {
+		if s.flags&flagDisabled != 0 {
+			return false
+		}
+		if client, ok := s.textClient.(interface{ CanEditCommand(string) bool }); ok {
+			return client.CanEditCommand(name)
+		}
+		return false
+	}
 	switch {
 	case s.flags&flagDisabled != 0 && (s.textScope != 0 || s.flags&flagEditable != 0),
 		ed.readOnly && name != "copy" && name != "selectAll",

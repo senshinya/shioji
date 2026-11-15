@@ -1,11 +1,31 @@
 package ui
 
-import "runtime"
+import (
+	"runtime"
+	"time"
+)
+
+// MenuStyle opts content menus (including text editing menus) into the native
+// renderer. Nil keeps platform menus and the framework's existing defaults.
+type MenuStyle struct {
+	Surface, Selection                 Color
+	RowHeight, Inset, Radius, FontSize float32
+	SubmenuDelay                       time.Duration
+}
+
+// TooltipStyle customizes hints without replacing their shared timing policy.
+type TooltipStyle struct {
+	Surface, Text, Border                                           Color
+	Radius, PaddingY, PaddingX, FontSize, LineHeight, MaxWidth, Gap float32
+	DisabledHints                                                   bool
+}
 
 // Theme holds the colors and metrics widgets use. Change a copy of
 // LightTheme or DarkTheme and set it with Context.SetTheme.
 type Theme struct {
-	Dark bool
+	MenuStyle    *MenuStyle
+	TooltipStyle *TooltipStyle
+	Dark         bool
 	// Background fills the window.
 	Background Color
 	// Surface is the face of buttons, inputs and other controls;
