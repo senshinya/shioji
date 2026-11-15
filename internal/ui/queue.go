@@ -195,6 +195,9 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 		return
 	}
 	if present {
+		if _, saved := m.QueueExpanded[sid]; !saved {
+			m.QueueExpanded[sid] = true
+		}
 		v.queueDisplay = q
 	} else if v.queueDisplay.SessionID == sid && len(v.queueDisplay.Items) > 0 {
 		q = v.queueDisplay

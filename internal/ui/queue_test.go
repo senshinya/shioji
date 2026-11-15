@@ -18,6 +18,8 @@ func nativeQueueFixture() (*View, *n.Tester) {
 	m := layoutModel()
 	m.WorkerMinor = 2
 	m.ConnectionEpoch = "connected"
+	// Most gesture tests exercise opening an explicitly collapsed queue.
+	m.QueueExpanded["s"] = false
 	m.Snapshot.Sessions[0].Status = "running"
 	d := m.Details["s"]
 	d.Session = m.Snapshot.Sessions[0]
