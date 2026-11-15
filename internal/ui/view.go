@@ -895,6 +895,13 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 			heightFrame.Height(shownHeight + attachmentHeight)
 		}
 	})
+	if !home {
+		stack.Draw(func(p *n.Painter, r n.Rect) {
+			// Continue the bottom clearance behind the editor's 16 px lower
+			// corners, before its rounded surface and border are painted.
+			p.Fill(n.Rect{X: r.X, Y: r.Y + r.H - 16, W: r.W, H: 16}, t.Background, 0)
+		})
+	}
 	if files := stack.DroppedFiles(); len(files) > 0 {
 		v.addAttachmentFiles(key, files)
 	}
@@ -1334,9 +1341,9 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	v.conversationFindBar(c, t, state.Bounds(c).W)
 	dock := n.Column(c.Key("conversation-dock")).Absolute().Left(0).Right(0).Bottom(8).PaddingX(18).AlignItems(n.Center).Gap(8).Label("会话底部面板")
 	dock.Draw(func(p *n.Painter, r n.Rect) {
-		// Cards paint their own opaque rounded surfaces. Only cover the
-		// bottom clearance, so their outside corners remain open to history
-		// during resizing too. Leave the native scrollbar gutter uncovered.
+		// Cards paint their own opaque rounded surfaces; the composer also
+		// covers its lower corners. Continue that cover to the pane bottom,
+		// leaving the native scrollbar gutter uncovered.
 		p.Fill(n.Rect{X: r.X, Y: r.Y + r.H, W: max(0, r.W-conversationScrollbarGutter), H: 8}, t.Background, 0)
 	})
 	// Native wrapping and question disclosure determine the complete dock height.

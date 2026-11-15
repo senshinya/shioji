@@ -64,7 +64,7 @@ func TestConversationChromeCoversHistoryAtThePaneEdges(t *testing.T) {
 			baseline.SetDark(dark)
 			baseline.Advance(time.Second)
 			a, b := ui.Image(), baseline.Image()
-			region := image.Rect(int(composer.X), 813, int(composer.X+composer.W), 820)
+			region := image.Rect(int(composer.X), int(composer.Y+composer.H)-16, int(composer.X+composer.W), 820)
 			if differentPixels(a, b, region) > 0 {
 				t.Errorf("history is visible below the composer: width=%d dark=%v", width, dark)
 			}
@@ -84,7 +84,7 @@ func differentPixels(a, b *image.RGBA, r image.Rectangle) int {
 	return count
 }
 
-func TestConversationDockPreservesHistoryOutsideRoundedCorners(t *testing.T) {
+func TestConversationDockKeepsUpperCornersOpenAndCoversLowerCorners(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, mode := range []string{"none", "collapsed", "expanded", "editing"} {
 			t.Run(fmt.Sprintf("dark=%v/queue=%s", dark, mode), func(t *testing.T) {
@@ -111,7 +111,6 @@ func TestConversationDockPreservesHistoryOutsideRoundedCorners(t *testing.T) {
 				}
 				_, ui := makeView(true)
 				_, baseline := makeView(false)
-				bottomVisible := [2]bool{}
 				for i := 0; i < 4; i++ {
 					ui.Scroll(800, 300, 0, -float32(90+i*7))
 					ui.Move(0, 0)
@@ -121,36 +120,33 @@ func TestConversationDockPreservesHistoryOutsideRoundedCorners(t *testing.T) {
 					frame, _ := ui.Find("消息编辑区")
 					editor, _ := ui.Find("消息编辑器")
 					saveNativeSkillImage(t, ui, fmt.Sprintf("corners-dark-%v-queue-%s-step-%d.png", dark, mode, i))
-					// Each card paints its own contour. History stays visible
-					// outside both the stack's top and the editor's bottom corners.
+					// Upper corners remain open to scrolling history; lower
+					// corners must continue the opaque clearance below the editor.
 					for edge, y := range []int{int(dock.Y) + 1, int(editor.Y+editor.H) - 3} {
 						for side, x := range []int{int(frame.X) + 1, int(frame.X+frame.W) - 3} {
 							r := image.Rect(x, y, x+2, y+2)
 							count := differentPixels(ui.Image(), baseline.Image(), r)
 							if edge == 1 {
-								// The real list's bottom spacer can still be behind
-								// this corner until we scroll further into history.
-								bottomVisible[side] = bottomVisible[side] || count == 4
+								if count != 0 {
+									t.Errorf("history leaks through lower corner: step=%d side=%d pixels=%d region=%v", i, side, count, r)
+								}
 							} else if count != 4 {
 								t.Errorf("rectangular backplate hides history outside rounded corner: step=%d pixels=%d region=%v", i, count, r)
 							}
 						}
 					}
 					// Check the interior, the queue/editor overlap and all space
-					// below the dock independently of the open corner contours.
+					// below the editor, including both lower corner contours.
 					regions := []image.Rectangle{
 						image.Rect(int(frame.X)+32, int(dock.Y), int(frame.X+frame.W)-32, int(dock.Y+dock.H)),
 						image.Rect(int(frame.X)+2, int(dock.Y)+32, int(frame.X+frame.W)-2, int(editor.Y+editor.H)-32),
-						image.Rect(int(frame.X), int(dock.Y+dock.H), int(frame.X+frame.W), 820),
+						image.Rect(int(frame.X), int(editor.Y+editor.H)-16, int(frame.X+frame.W), 820),
 					}
 					for _, r := range regions {
 						if count := differentPixels(ui.Image(), baseline.Image(), r); count != 0 {
 							t.Errorf("history leaks through queue/editor surface: step=%d pixels=%d region=%v", i, count, r)
 						}
 					}
-				}
-				if !bottomVisible[0] || !bottomVisible[1] {
-					t.Fatal("bottom corner contour is covered by the dock backplate", bottomVisible)
 				}
 			})
 		}
