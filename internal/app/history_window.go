@@ -173,7 +173,9 @@ func (c *Controller) startHistoryRead(parent context.Context, current *protocol.
 		}
 		var out json.RawMessage
 		dialCtx, dialCancel := context.WithTimeout(ctx, 10*time.Second)
-		peer, err := protocol.Dial(dialCtx, dial, device)
+		// The handshake deadline must not own the SSH process. Keep the
+		// transport alive for this read, including every round-window chunk.
+		peer, err := protocol.Dial(dialCtx, func(_ context.Context) (net.Conn, error) { return dial(ctx) }, device)
 		dialCancel()
 		if err == nil {
 			defer peer.Close()
