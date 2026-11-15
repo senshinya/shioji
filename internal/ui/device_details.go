@@ -117,7 +117,15 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 				break
 			}
 		}
+		if v.maintenanceUIFor(key).open {
+			page, depth = "worker-maintenance", 1
+			selected = nil
+		}
 		configurationTabPanel(c.Key("device-navigation"), page, depth, configurationPanelFill, func() {
+			if v.maintenanceUIFor(key).open {
+				v.workerMaintenancePage(c, t, key, name, state)
+				return
+			}
 			if selected != nil {
 				v.deviceAgentPage(c, t, key, name, state, *agentState, *selected)
 				return
@@ -291,6 +299,11 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 		case app.WorkerWaiting:
 			action = "等待空闲"
 			disabled = true
+			if service.Build != nil && service.Build.Maintenance {
+				action = "查看阻塞"
+				method = "$worker.maintenance.inspect"
+				disabled = v.Controller == nil || !state.Connected
+			}
 		case app.WorkerUpdating:
 			action = "正在更新"
 			disabled = true
@@ -329,6 +342,9 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 				}
 				return "检查设备服务"
 			}
+			if method == "$worker.maintenance.inspect" {
+				return "查看更新阻塞"
+			}
 			if method == "$worker.update" {
 				return "更新执行服务"
 			}
@@ -336,6 +352,8 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 		}()).Disabled(disabled).Clicked() {
 			if flow != nil {
 				v.performMigrationAction(flow)
+			} else if method == "$worker.maintenance.inspect" {
+				v.openWorkerMaintenance(key)
 			} else if method == "$worker.migration.inspect" {
 				v.beginNormalMigration(key)
 			} else {
