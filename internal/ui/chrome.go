@@ -61,7 +61,7 @@ func (v *View) attentionControl(c *n.Context, t *n.Theme) {
 			v.nextAttention()
 		}
 	})
-	if !available && anchor.Hovered() {
+	if !available && anchor.Hovered() && !c.MenuOpen() {
 		n.Overlay(c, func() {
 			n.Column(c.Key("empty-attention-hint")).Absolute().AttachTo(anchor, n.AnchorEnd, n.AnchorStart).MarginStart(8).PassThrough().Role(n.RoleTooltip).Padding(6, 10).Radius(6).Background(raised(t)).Border(1, t.Border).Shadow(0, 2, 8, 0, n.RGBA(0, 0, 0, .12)).Transition(fadeMotion(c, 100*time.Millisecond)).Children(func() { n.Text(c, "无待处理会话").FontSize(12).FixedLineHeight(18).TextColor(t.Text) })
 		})

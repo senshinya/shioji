@@ -95,20 +95,12 @@ func (v *View) contextMeter(c *n.Context, t *n.Theme, cfg domain.RunConfig) {
 			})
 		})
 	})
-	open := n.Local(trigger, "open", func() bool { return false })
-	lastInside := n.Local(trigger, "last-inside", func() time.Time { return c.Now() })
-	dismissed := n.Local(trigger, "dismissed", func() bool { return false })
-	inside := trigger.Hovered() || trigger.FocusVisible()
-	if inside && !*dismissed {
-		*open = true
-		*lastInside = c.Now()
-	}
 	hasAction := v.Model.WorkerMinor >= 29 && v.Model.RunReadiness().Capabilities.Compact
 	bottomInset := float32(10)
 	if hasAction {
 		bottomInset = 3
 	}
-	panel := n.PopoverBase(c.Key("context-details:"+session.ID), trigger, open, func(panel n.Element) {
+	hoverCard(c.Key("context-details:"+session.ID), trigger, func(panel n.Element) {
 		panel.Transition(popupMotion(c))
 		panel.AttachTo(trigger, n.AnchorTopEnd, n.AnchorBottomEnd).Margin(0, 0, 6, 0).Label("上下文详情").Width(232).Padding(10, 10, bottomInset, 10).Radius(9).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
 			n.Column(c).FillWidth().Gap(8).Children(func() {
@@ -208,27 +200,6 @@ func (v *View) contextMeter(c *n.Context, t *n.Theme, cfg domain.RunConfig) {
 			})
 		})
 	})
-	if panel.Valid() {
-		if panel.Hovered() || panel.FocusWithin() {
-			inside = true
-			*lastInside = c.Now()
-		}
-		if panel.Dismissed() {
-			*dismissed = true
-		}
-	}
-	if !inside {
-		*dismissed = false
-		if *open {
-			remaining := 180*time.Millisecond - c.Now().Sub(*lastInside)
-			if remaining <= 0 {
-				*open = false
-				c.AnimationFrame()
-			} else {
-				c.After(remaining)
-			}
-		}
-	}
 }
 
 func contextDetailRow(c *n.Context, t *n.Theme, label, value string) {

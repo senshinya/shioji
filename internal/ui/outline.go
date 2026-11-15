@@ -3,20 +3,26 @@ package ui
 import (
 	"fmt"
 	n "github.com/egoist/mygo/ui"
+	"math"
 	"shioji/internal/domain"
 	"strings"
 	"time"
 )
 
 type conversationOutline struct {
-	List           n.ListState
-	Session        string
-	Hover, Current int
-	Since          time.Time
-	Anchor         n.Rect
-	Entry          string
-	Count          int
-	Height         float32
+	Warm, Dismissed bool
+	FocusNext       bool
+	KeyboardIndex   int
+	PreviewEntry    string
+	PreviewHeight   float32
+	List            n.ListState
+	Session         string
+	Hover, Current  int
+	Since           time.Time
+	Anchor          n.Rect
+	Entry           string
+	Count           int
+	Height          float32
 }
 type outlineEntry struct {
 	ID, Prompt, Reply string
@@ -39,6 +45,10 @@ func outlineEntries(rows []transcriptRow) []outlineEntry {
 }
 func (v *View) conversationOutline(c *n.Context, t *n.Theme, state *n.ListState, rows []transcriptRow) {
 	bounds := state.Bounds(c)
+	if bounds.W == 0 {
+		c.AnimationFrame()
+		return
+	}
 	if bounds.W < 880 {
 		return
 	}
@@ -57,7 +67,7 @@ func (v *View) conversationOutline(c *n.Context, t *n.Theme, state *n.ListState,
 		return
 	}
 	if v.outline == nil || v.outline.Session != v.Model.SessionID {
-		v.outline = &conversationOutline{Session: v.Model.SessionID, Hover: -1, Current: -1}
+		v.outline = &conversationOutline{Session: v.Model.SessionID, Hover: -1, Current: -1, KeyboardIndex: -1}
 	}
 	outline := v.outline
 	first, _ := state.Visible()
@@ -99,7 +109,7 @@ func (v *View) conversationOutline(c *n.Context, t *n.Theme, state *n.ListState,
 	// Queue the target before building virtual rows, using their stable pitch.
 	// Centering gives measurement corrections room on both sides of the tick.
 	// Keep manual rail browsing independent; catch up once the pointer leaves.
-	if !track.Hovered() && (current != outline.Current || entries[current].ID != outline.Entry || len(entries) != outline.Count || height != outline.Height) {
+	if !track.Hovered() && !track.FocusWithin() && (current != outline.Current || entries[current].ID != outline.Entry || len(entries) != outline.Count || height != outline.Height) {
 		outline.List.ScrollTo(current, n.Center)
 		outline.Current, outline.Entry = current, entries[current].ID
 		outline.Count, outline.Height = len(entries), height
@@ -117,7 +127,17 @@ func (v *View) conversationOutline(c *n.Context, t *n.Theme, state *n.ListState,
 				bottom = 8
 			}
 			button := n.ButtonBase(c.Key(entry.ID)).KeepFocus().Width(36).Height(10+top+bottom).Padding(top, 0, bottom, 0).Justify(n.Start).Label(fmt.Sprintf("跳转到消息 %d", i+1))
-			if button.Hovered() {
+			if outline.FocusNext && outline.KeyboardIndex == i {
+				if button.FocusVisible() {
+					outline.FocusNext = false
+				} else {
+					button.Focus()
+				}
+			}
+			if button.FocusVisible() && !outline.FocusNext {
+				outline.KeyboardIndex = i
+			}
+			if button.Hovered() || button.FocusVisible() && !track.Hovered() {
 				hovered = i
 				outline.Anchor = button.Bounds()
 				outline.Anchor.Y += top
@@ -154,25 +174,78 @@ func (v *View) conversationOutline(c *n.Context, t *n.Theme, state *n.ListState,
 			}
 		}).Fill().Scrollbars(false)
 	})
+	if track.FocusWithin() {
+		next := outline.KeyboardIndex
+		switch {
+		case c.Shortcut(0, n.KeyDown):
+			next = min(len(entries)-1, next+1)
+		case c.Shortcut(0, n.KeyUp):
+			next = max(0, next-1)
+		case c.Shortcut(0, n.KeyHome):
+			next = 0
+		case c.Shortcut(0, n.KeyEnd):
+			next = len(entries) - 1
+		}
+		if next != outline.KeyboardIndex {
+			outline.KeyboardIndex = next
+			outline.FocusNext = true
+			outline.Dismissed = false
+			outline.List.ScrollTo(next, n.Center)
+			c.AnimationFrame()
+		}
+	}
 	if hovered != outline.Hover {
 		outline.Hover = hovered
 		outline.Since = c.Now()
+		outline.Dismissed = false
+		if hovered < 0 {
+			outline.Warm = false
+		}
 		c.AnimationFrame()
 	}
-	if hovered >= 0 {
-		if c.Now().Sub(outline.Since) < 300*time.Millisecond {
-			c.After(300*time.Millisecond - c.Now().Sub(outline.Since))
+	if hovered >= 0 && !outline.Dismissed && !c.MenuOpen() {
+		if !outline.Warm && c.Now().Sub(outline.Since) < 200*time.Millisecond {
+			c.After(200*time.Millisecond - c.Now().Sub(outline.Since))
 		} else {
+			outline.Warm = true
 			entry := entries[hovered]
 			anchor := outline.Anchor
+			if outline.PreviewEntry != entry.ID {
+				outline.PreviewEntry = entry.ID
+				outline.PreviewHeight = 0
+			}
 			n.Overlay(c.Key("outline-preview"), func() {
-				w, h := c.Size()
-				n.Column(c).Absolute().Left(min(anchor.X+40, w-336)).Top(max(8, min(anchor.Y-24, h-160))).Width(320).Padding(8).Gap(4).Radius(10).Background(raised(t)).Border(1, t.Border).Shadow(0, 4, 20, 0, n.RGBA(0, 0, 0, .12)).IgnoreInput(true).Transition(popupMotion(c)).Children(func() {
+				w, _ := c.Size()
+				readingTop := bounds.Y + 48 + 8
+				readingBottom := bounds.Y + bounds.H - dockHeight - 8
+				y := max(readingTop, min(anchor.Y+anchor.H/2-outline.PreviewHeight/2, readingBottom-outline.PreviewHeight))
+				panel := n.Column(c.Key("preview:"+entry.ID)).Label("对话导航预览").Role(n.RoleTooltip).Absolute().Left(min(anchor.X+40, w-328)).Top(y).Width(320).MaxHeight(max(0, readingBottom-readingTop)).Clip().Padding(8).Gap(4).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 4, 8, 0, n.RGBA(0, 0, 0, .12)).PassThrough()
+				if outline.PreviewHeight == 0 {
+					if h := panel.LayoutBounds().H; h > 0 {
+						outline.PreviewHeight = h
+						panel.Top(max(readingTop, min(anchor.Y+anchor.H/2-h/2, readingBottom-h)))
+					} else {
+						panel.Opacity(0)
+						c.AnimationFrame()
+					}
+				}
+				invalidate := c.Services().Invalidate
+				panel.DrawOver(func(_ *n.Painter, r n.Rect) {
+					if math.Abs(float64(r.H-outline.PreviewHeight)) > .1 {
+						outline.PreviewHeight = r.H
+						invalidate()
+					}
+				})
+				if panel.OverlayShortcut(0, n.KeyEscape) {
+					outline.Dismissed = true
+					c.AnimationFrame()
+				}
+				panel.Children(func() {
 					prompt := strings.TrimSpace(entry.Prompt)
 					if prompt == "" {
 						prompt = "图片与附件"
 					}
-					n.Text(c, prompt).SingleLine().Ellipsis("…").FontSize(13).FontWeight(500)
+					n.Text(c, prompt).Label("预览标题").SingleLine().Ellipsis("…").FontSize(13).FixedLineHeight(20).FontWeight(500)
 					if entry.Reply != "" {
 						n.Column(c).FillWidth().MaxHeight(60).Clip().Children(func() {
 							n.Text(c, outlineReplyPreview(entry.Reply)).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)

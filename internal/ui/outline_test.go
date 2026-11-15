@@ -140,10 +140,12 @@ func TestConversationOutlineHoverFansOutToDifferentLengths(t *testing.T) {
 		// Edge hit boxes extend into the gutter; visible lines retain the
 		// agreed 10 DIP pitch around the unchanged middle tick.
 		x, y := int(line.X), int(center.Y+center.H/2+float32(i-4)*10)
-		background := image.RGBAAt(x+32, y)
+		// The 200ms preview is now visible here; its shadow may shade the
+		// empty gutter. Count the tick's own ink, not every non-background pixel.
+		ink := image.RGBAAt(x, y)
 		length := 0
 		for dx := 0; dx < 30; dx++ {
-			if image.RGBAAt(x+dx, y) != background {
+			if image.RGBAAt(x+dx, y) == ink {
 				length++
 			}
 		}
