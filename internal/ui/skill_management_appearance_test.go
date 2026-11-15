@@ -60,6 +60,10 @@ func TestSkillManagementNativeAppearance(t *testing.T) {
 					welcomeJob(t, v.Controller, "runtime.catalog").Apply(m, catalog, nil)
 					ui.Frame()
 					ui.Advance(time.Second)
+					if err := ui.Click("Agent"); err != nil {
+						t.Fatal(err)
+					}
+					ui.Advance(time.Second)
 					if err := ui.Click("打开 Codex 配置"); err != nil {
 						t.Fatal(err, ui.Texts())
 					}

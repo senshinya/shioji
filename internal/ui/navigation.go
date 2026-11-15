@@ -322,6 +322,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 			n.Row(c).Height(32).Children(func() {
 				if navButton(c, monitor, "设备").Grow(1).Clicked() {
 					v.skillReturn = nil
+					v.deviceTab = ""
 					v.devices = true
 				}
 				if iconButton(c, settingsIcon, "设置").Clicked() && v.OpenSettings != nil {

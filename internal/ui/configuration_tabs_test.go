@@ -50,15 +50,23 @@ func TestDeviceTabsSlideAndVerticalSettingsStayInstant(t *testing.T) {
 		v.deviceSelected = "local"
 		ui := n.NewTester(v.View, 1240, 820)
 		ui.Advance(time.Second)
-		nav, _ := ui.Find("设备设置")
-		ui.Click("设备设置")
+		nav, _ := ui.Find("Agent")
+		ui.Click("Agent")
 		ui.Advance(60 * time.Millisecond)
-		mid, _ := ui.Find("执行服务")
-		stationary, _ := ui.Find("设备设置")
+		mid, _ := ui.Find("暂无 Agent")
+		stationary, _ := ui.Find("Agent")
 		ui.Advance(400 * time.Millisecond)
-		end, _ := ui.Find("执行服务")
+		end, _ := ui.Find("暂无 Agent")
 		if mid.X <= end.X+1 || nav != stationary {
 			t.Fatal("device tab motion missing or navigation moved", mid, end, nav, stationary)
+		}
+		ui.Click("设备设置")
+		ui.Advance(60 * time.Millisecond)
+		mid, _ = ui.Find("执行服务")
+		ui.Advance(400 * time.Millisecond)
+		end, _ = ui.Find("执行服务")
+		if mid.X >= end.X-1 && mid.W >= end.W-1 {
+			t.Fatal("return to the first device tab does not slide from the left", mid, end)
 		}
 	})
 	t.Run("settings", func(t *testing.T) {

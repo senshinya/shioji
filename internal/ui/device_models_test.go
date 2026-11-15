@@ -17,6 +17,7 @@ func TestDeviceModelsControlsUpdateMenuWithoutChangingActiveConfiguration(t *tes
 	v := New(m, nil, "")
 	v.devices = true
 	v.deviceSelected = "local"
+	v.deviceTab = "agents"
 	ui := n.NewTester(v.View, 1100, 820)
 	ui.Advance(time.Second)
 	if _, ok := ui.Find("Custom Agent 可执行文件"); !ok {
@@ -46,6 +47,7 @@ func TestKeyboardModelOrderingRetainsUnavailablePreferences(t *testing.T) {
 	v := New(m, nil, "")
 	v.devices = true
 	v.deviceSelected = "local"
+	v.deviceTab = "agents"
 	ui := n.NewTester(v.View, 1100, 820)
 	ui.Advance(time.Second)
 	ui.Click("配置 Custom Agent 路径")

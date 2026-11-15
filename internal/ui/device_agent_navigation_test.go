@@ -3,7 +3,9 @@ package ui
 import (
 	n "github.com/egoist/mygo/ui"
 	"math"
+	"shioji/internal/app"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 	"testing"
 	"time"
 )
@@ -17,6 +19,7 @@ func TestAgentConfigurationReplacesDevicePageAndSlidesBack(t *testing.T) {
 		m.DeviceStates["local"].Readiness.Harnesses = []domain.HarnessInfo{{ID: "custom", Name: "Custom Agent", Configured: true, State: domain.RuntimeReady, Installation: &domain.RuntimeInstallation{Configurable: true}}}
 		v := New(m, nil, "")
 		v.devices, v.deviceSelected = true, "local"
+		v.deviceTab = "agents"
 		ui := n.NewTester(v.View, width, 820)
 		ui.Advance(time.Second)
 		list, ok := ui.Find("配置 Custom Agent 路径")
@@ -60,5 +63,50 @@ func TestAgentConfigurationReplacesDevicePageAndSlidesBack(t *testing.T) {
 		if !ui.HasText("设备设置") {
 			t.Fatal("device page not restored", ui.Texts())
 		}
+	}
+}
+
+func TestDeviceSidebarSelectionReturnsToSettingsFromAgentConfiguration(t *testing.T) {
+	m := deviceUIModel()
+	m.DeviceStates["local"].ConnectionEpoch = ""
+	m.DeviceStates["local"].WorkerMinor = 24
+	m.DeviceStates["local"].Readiness.Harnesses = []domain.HarnessInfo{{ID: "custom", Name: "Custom Agent", Configured: true, State: domain.RuntimeReady, Installation: &domain.RuntimeInstallation{Configurable: true}}}
+	v := New(m, app.NewController(""), "")
+	v.devices, v.deviceSelected = true, "local"
+	ui := n.NewTester(v.View, 1240, 820)
+	ui.Advance(time.Second)
+	ui.Click("Agent")
+	ui.Advance(time.Second)
+	if err := ui.Click("配置 Custom Agent 路径"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	ui.Click("Custom Agent 可执行文件")
+	ui.Type("/tmp/kept-agent-draft")
+	if err := ui.Click("选择设备：" + m.LocalName()); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if !ui.HasText("执行服务") || ui.HasText("Custom Agent 可执行文件") {
+		t.Fatal("reselecting a device kept the Agent configuration page", ui.Texts())
+	}
+	ui.Click("Agent")
+	ui.Advance(time.Second)
+	ui.Click("配置 Custom Agent 路径")
+	ui.Advance(time.Second)
+	if err := ui.Click("保存 Custom Agent 路径"); err != nil {
+		t.Fatal(err)
+	}
+	job := welcomeJob(t, v.Controller, "runtime.agents")
+	input := job.Input.(protocol.DeviceAgents)
+	if len(input.Agents) != 1 || input.Agents[0].Executable != "/tmp/kept-agent-draft" {
+		t.Fatal("sidebar navigation discarded the unsaved Agent draft", input)
+	}
+	if err := ui.Click("选择设备：MacBook Air"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if !ui.HasText("执行服务") || v.deviceSelected != "air" {
+		t.Fatal("selecting another device kept the Agent tab", v.deviceSelected, ui.Texts())
 	}
 }

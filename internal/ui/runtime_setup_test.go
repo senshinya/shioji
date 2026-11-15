@@ -26,6 +26,7 @@ func TestRuntimeSetupActionsStayOnSelectedDevice(t *testing.T) {
 	v := New(m, controller, "")
 	v.devices = true
 	v.deviceSelected = "air"
+	v.deviceTab = "agents"
 	ui := n.NewTester(v.View, 1240, 900)
 	ui.Advance(time.Second)
 	for len(controller.Jobs) > 0 {
@@ -77,6 +78,7 @@ func TestDeviceAgentStatusUpdatesWithinSameConnectionAndKeepsPathDraft(t *testin
 	v := New(m, controller, "")
 	v.devices = true
 	v.deviceSelected = "air"
+	v.deviceTab = "agents"
 	ui := n.NewTester(v.View, 1240, 900)
 	ui.Advance(time.Second)
 	for len(controller.Jobs) > 0 {
@@ -179,6 +181,7 @@ func TestAgentInstallDocumentationSharesGuidanceRow(t *testing.T) {
 				m.DeviceStates["air"].Readiness = domain.Readiness{State: domain.RuntimeUnavailable, Harnesses: []domain.HarnessInfo{{ID: "custom", Name: "Custom Agent", Configured: true, State: domain.RuntimeUnavailable, Installation: &domain.RuntimeInstallation{Configurable: true, Issue: domain.RuntimeMissing, Guide: guide, Documentation: "https://example.test/install"}}}}
 				v := New(m, nil, "")
 				v.devices, v.deviceSelected = true, "air"
+				v.deviceTab = "agents"
 				ui := n.NewTester(v.View, width, 820)
 				ui.SetDark(dark)
 				ui.SetScale(2)

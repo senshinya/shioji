@@ -77,6 +77,7 @@ func TestWideDevicePagesShareHeaderAndBodyEdges(t *testing.T) {
 				v := New(m, nil, "")
 				v.devices = true
 				v.deviceSelected = "air"
+				v.deviceTab = "agents"
 				ui := n.NewTester(v.View, int(width), 820)
 				ui.SetDark(dark)
 				ui.Advance(time.Second)

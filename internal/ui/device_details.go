@@ -56,6 +56,9 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 		v.tailnetPage(c, t)
 		return
 	}
+	if v.deviceTab == "" {
+		v.deviceTab = "settings"
+	}
 	m := v.Model
 	name, address, deviceID := m.LocalName(), "", m.LocalDeviceID
 	for _, connection := range m.Connections {
@@ -71,6 +74,9 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 	scope := n.Column(c).FillWidth().FillHeight().Grow(1)
 	agentState := n.Local(scope, "agent-editor", func() *deviceAgentEditor { return agentEditor(state.Readiness.Harnesses) })
 	v.syncDeviceAgents(key, state, agentState)
+	if v.deviceTab != "agents" {
+		(*agentState).pageID = ""
+	}
 	rename := n.Local(scope, "name-editor", func() deviceNameEditor { return deviceNameEditor{} })
 	if rename.pending && v.Saver != nil {
 		saved, err := v.Saver.Result()
@@ -195,13 +201,13 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 					return 0
 				})
 			})
-			tabs := []configurationTabItem{{ID: "", Label: "Agent"}, {ID: "settings", Label: "设备设置"}}
+			tabs := []configurationTabItem{{ID: "settings", Label: "设备设置"}, {ID: "agents", Label: "Agent"}}
 			n.Column(c).FillWidth().PaddingX(configurationInset).Children(func() { v.deviceTab = configurationTabs(c, v.deviceTab, tabs, configurationUnderline, false) })
 			configurationTabPanel(c.Key("device-tab-panel"), v.deviceTab, configurationTabIndex(tabs, v.deviceTab), configurationPanelFill, func() {
 				n.Scroll(c.Key("device-body:" + v.deviceTab)).FillWidth().Grow(1).Children(func() {
 					n.Column(c).FillWidth().Padding(configurationHeadingGap, configurationInset, configurationSectionGap).AlignItems(n.Start).Children(func() {
 						n.Column(c).FillWidth().Gap(configurationSectionGap).Children(func() {
-							if v.deviceTab == "" {
+							if v.deviceTab == "agents" {
 								v.deviceAgents(c.Key("agents:"+key), t, key, state, agentState)
 								return
 							}

@@ -54,7 +54,7 @@ func TestDeviceIconPaletteContainsOnlyFiveCompactIcons(t *testing.T) {
 	ui.Advance(time.Second)
 	ui.Click("设备图标")
 	ui.Advance(time.Second)
-	if ui.HasText("自动") {
+	if _, ok := ui.Find("自动"); ok {
 		t.Fatal("automatic choice must not be exposed")
 	}
 	var first n.Rect

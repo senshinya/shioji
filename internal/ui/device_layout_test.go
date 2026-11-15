@@ -26,8 +26,16 @@ func TestDeviceManagementUsesContextualSidebarAndIndependentTabs(t *testing.T) {
 	if _, ok := ui.Find("添加 Agent"); ok {
 		t.Fatal("redundant add Agent")
 	}
+	settings, _ := ui.Find("设备设置")
+	agents, _ := ui.Find("Agent")
+	_, service := ui.Find("执行服务")
+	if settings.X >= agents.X || v.deviceTab != "settings" || !service {
+		t.Fatal("device settings must be the first and default tab", settings, agents, v.deviceTab, ui.Texts())
+	}
+	ui.Click("Agent")
+	ui.Advance(time.Second)
 	if _, ok := ui.Find("执行服务"); ok {
-		t.Fatal("service mixed into agents tab", v.deviceTab, ui.Texts())
+		t.Fatal("service mixed into agents tab", ui.Texts())
 	}
 	ui.Click("设备设置")
 	ui.Frame()
@@ -38,6 +46,32 @@ func TestDeviceManagementUsesContextualSidebarAndIndependentTabs(t *testing.T) {
 	ui.Frame()
 	if v.devices || m.Drafts["home"] != "keep draft" {
 		t.Fatal("navigation lost draft")
+	}
+}
+
+func TestDeviceSidebarDestinationReopensSettings(t *testing.T) {
+	v := New(deviceUIModel(), nil, "")
+	ui := n.NewTester(v.View, 1240, 820)
+	ui.Advance(time.Second)
+	for i := 0; i < 2; i++ {
+		if err := ui.Click("设备"); err != nil {
+			t.Fatal(err)
+		}
+		ui.Advance(time.Second)
+		if v.deviceTab != "settings" || !ui.HasText("执行服务") {
+			t.Fatal("main sidebar device destination did not open settings", ui.Texts())
+		}
+		if err := ui.Click("Agent"); err != nil {
+			t.Fatal(err)
+		}
+		ui.Advance(time.Second)
+		if v.deviceTab != "agents" {
+			t.Fatal("fixture did not enter Agent", v.deviceTab)
+		}
+		if err := ui.Click("返回会话"); err != nil {
+			t.Fatal(err)
+		}
+		ui.Advance(time.Second)
 	}
 }
 
@@ -77,6 +111,7 @@ func TestAgentPageReturnPreservesUnsavedConfiguration(t *testing.T) {
 	v := New(m, c, "")
 	v.devices = true
 	v.deviceSelected = "local"
+	v.deviceTab = "agents"
 	ui := n.NewTester(v.View, 1240, 820)
 	ui.Advance(time.Second)
 	if err := ui.Click("配置 Custom Agent 路径"); err != nil {
