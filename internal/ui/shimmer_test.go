@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"fmt"
 	n "github.com/egoist/mygo/ui"
 	"math"
 	"shioji/internal/domain"
@@ -9,6 +10,77 @@ import (
 	"testing"
 	"time"
 )
+
+// The live tool summary is one sweep, including metadata drawn by the clock.
+// Sampling only the clock's final unit excludes ordinary ticking digits.
+func TestToolSummaryShimmerCoversMetadataWithoutRestarting(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, reduced := range []bool{false, true} {
+			for _, folded := range []bool{false, true} {
+				t.Run(fmt.Sprintf("dark=%v/reduced=%v/folded=%v", dark, reduced, folded), func(t *testing.T) {
+					v := toolTailFixture(9)
+					row := transcriptRow{group: "tools", count: 9, issues: 1, item: domain.Item{TurnID: "t"}}
+					if v.Model.ToolDisclosure(row.group).Closed() != folded {
+						v.Model.SetToolDisclosure(row.group, v.Model.ToolDisclosure(row.group).Toggle())
+					}
+					v.runningGroup = row.group
+					ui := n.NewTester(func(c *n.Context) {
+						if v.runningProgress == nil {
+							v.runningProgress = &runningProgress{started: c.Now(), label: "进行中"}
+						}
+						n.Column(c).Fill().Padding(16).Children(func() { v.toolGroup(c, c.Theme(), row, 0) })
+					}, 640, 56)
+					ui.SetDark(dark)
+					ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
+					ui.Advance(500 * time.Millisecond)
+					labels := []string{"进行中", "运行时长"}
+					if folded {
+						labels = append(labels, "1 项未成功")
+					}
+					regions := make([]n.Rect, len(labels))
+					before := make([][]byte, len(labels))
+					changed := make([]bool, len(labels))
+					for i, label := range labels {
+						r, ok := ui.Find(label)
+						if !ok {
+							t.Fatal("missing summary metadata", label)
+						}
+						if label == "运行时长" {
+							r.X += r.W - 11
+							r.W = 11
+						}
+						regions[i], before[i] = r, contextPixels(ui, r)
+					}
+					for frame := 0; frame < 28; frame++ {
+						saveNativeSkillImage(t, ui, fmt.Sprintf("summary-dark-%v-reduced-%v-folded-%v-%03d.png", dark, reduced, folded, frame))
+						ui.Advance(80 * time.Millisecond)
+						for i, r := range regions {
+							changed[i] = changed[i] || !bytes.Equal(before[i], contextPixels(ui, r))
+						}
+					}
+					for i, label := range labels {
+						if changed[i] == reduced {
+							t.Errorf("metadata shimmer changed=%v, reduced motion=%v: %s", changed[i], reduced, label)
+						}
+					}
+					// Same-width updates leave other text at exactly the same sweep
+					// position; remounting/restarting the effect changes these pixels.
+					ui.Advance(420 * time.Millisecond)
+					ui.Frame()
+					phase, _ := ui.Find("进行中")
+					header, _ := ui.Find("9 次工具调用")
+					header.W = phase.X - header.X
+					pixels := contextPixels(ui, header)
+					v.runningProgress.label = "思考中"
+					ui.Frame()
+					if !bytes.Equal(pixels, contextPixels(ui, header)) {
+						t.Error("phase update restarted the count sweep")
+					}
+				})
+			}
+		}
+	}
+}
 
 func TestInspectorSectionIconsAndDivider(t *testing.T) {
 	for _, dark := range []bool{false, true} {

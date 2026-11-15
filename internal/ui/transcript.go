@@ -381,40 +381,45 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 				prefix.Label("")
 			}
 
-			text := n.Text(c.Key("group-label"), label).FontSize(11).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
+			// One continuous sweep covers the count and its changing metadata.
+			// Keep the turn's phase; text transitions and clock ticks never restart it.
+			summary := n.Row(c.Key("group-summary")).Gap(0).AlignItems(n.Baseline).Shrink(0)
 			if live {
-				shimmer(c, text, color, t.Text, v.runningProgress.started)
+				shimmer(c, summary, color, t.Text, v.runningProgress.started)
 			}
-			if live || handoff {
-				phase := v.runningProgress.label
-				if phase == "" {
-					phase = "进行中"
-				}
-				w, _ := n.ShapeText(phase, font, 0).Size()
-				caption := n.Text(c.Key("group-phase"), phase).SingleLine().FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Padding(0, 0, 0, 6).Clip().Opacity(alpha)
-				if handoff {
-					caption.Width(caption.Jump("phase-width", (w+6)*extent))
-				} else {
-					caption.Width(caption.AnimateTo("phase-width", (w+6)*extent, motionAnimation(c, progressReclaimDuration)))
-				}
-			}
-			for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
-				if turn.ID == row.item.TurnID {
-					clock, natural := runningElapsed(c.Key("group-elapsed"), v.runningElapsedStart(turn), t.TextMuted, true)
-					if handoff {
-						clock.Width(clock.Jump("elapsed-width", natural*extent))
-					} else {
-						clock.Width(clock.AnimateTo("elapsed-width", natural*extent, motionAnimation(c, progressReclaimDuration)))
+			summary.Children(func() {
+				n.Text(c.Key("group-label"), label).FontSize(11).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
+				if live || handoff {
+					phase := v.runningProgress.label
+					if phase == "" {
+						phase = "进行中"
 					}
-					clock.Opacity(alpha)
-					break
+					w, _ := n.ShapeText(phase, font, 0).Size()
+					caption := n.Text(c.Key("group-phase"), phase).SingleLine().FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Padding(0, 0, 0, 6).Clip().Opacity(alpha)
+					if handoff {
+						caption.Width(caption.Jump("phase-width", (w+6)*extent))
+					} else {
+						caption.Width(caption.AnimateTo("phase-width", (w+6)*extent, motionAnimation(c, progressReclaimDuration)))
+					}
 				}
-			}
-			if row.issues > 0 && v.Model.ToolDisclosure(row.group).Closed() {
-				animation := motionAnimation(c, 160*time.Millisecond)
-				n.Text(c.Key("issues"), fmt.Sprintf("%d 项未成功", row.issues)).Margin(0, 0, 0, 6).FontSize(11).FixedLineHeight(20).TextColor(color).
-					Transition(disclosureMotion(c, 160*time.Millisecond)).ContentTransition(n.ContentTransition{Numeric: true, Animation: &animation})
-			}
+				for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
+					if turn.ID == row.item.TurnID {
+						clock, natural := runningElapsed(c.Key("group-elapsed"), v.runningElapsedStart(turn), t.TextMuted, true)
+						if handoff {
+							clock.Width(clock.Jump("elapsed-width", natural*extent))
+						} else {
+							clock.Width(clock.AnimateTo("elapsed-width", natural*extent, motionAnimation(c, progressReclaimDuration)))
+						}
+						clock.Opacity(alpha)
+						break
+					}
+				}
+				if row.issues > 0 && v.Model.ToolDisclosure(row.group).Closed() {
+					animation := motionAnimation(c, 160*time.Millisecond)
+					n.Text(c.Key("issues"), fmt.Sprintf("%d 项未成功", row.issues)).Margin(0, 0, 0, 6).FontSize(11).FixedLineHeight(20).TextColor(color).
+						Transition(disclosureMotion(c, 160*time.Millisecond)).ContentTransition(n.ContentTransition{Numeric: true, Animation: &animation})
+				}
+			})
 			if folded {
 				inlineSymbol(c.Key("group-chevron"), rightChevron, label, font, 14, color).Margin(0, 0, 0, 6)
 			}
