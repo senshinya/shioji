@@ -175,6 +175,11 @@ func TestRequestDisclosureKeepsContentAttachedToItsHeading(t *testing.T) {
 	if !(before.Y > middle.Y && middle.Y > after.Y) {
 		t.Fatal("disclosure height jumps ahead of its contents", before, middle, after)
 	}
+	settledQuestion, _ := ui.Find("简短问题")
+	settledBody, _ := ui.Find("请求内容区域")
+	settledCard, _ := ui.Find("待处理请求卡片")
+	textGap := settledQuestion.Y - after.Y
+	chrome := settledCard.H - settledBody.H - 2*(after.Y-settledCard.Y-1)
 	ui.Click("需要回答")
 	ui.Advance(300 * time.Millisecond)
 	ui.Click("需要回答")
@@ -185,10 +190,10 @@ func TestRequestDisclosureKeepsContentAttachedToItsHeading(t *testing.T) {
 		body, _ := ui.Find("请求内容区域")
 		card, _ := ui.Find("待处理请求卡片")
 		padding := heading.Y - card.Y - 1
-		if math.Abs(float64(card.H-(26+2*padding+body.H))) > 1 {
+		if math.Abs(float64(card.H-(chrome+2*padding+body.H))) > 1 {
 			t.Fatal("disclosure surface does not follow the actual content and padding height", heading, body, card)
 		}
-		if ok && question.H > 1 && math.Abs(float64(question.Y-heading.Y-32)) > 1 {
+		if ok && question.H > 1 && math.Abs(float64(question.Y-heading.Y-textGap)) > 1 {
 			t.Fatal("content and expanding surface use different positions", i, heading, question)
 		}
 	}

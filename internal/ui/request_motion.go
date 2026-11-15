@@ -115,7 +115,7 @@ func (v *View) pendingBody(c *n.Context, t *n.Theme, current requestPage, index 
 		if old {
 			key = "outgoing:" + page.key()
 		}
-		content := n.Column(c.Key(key)).FillWidth().Shrink(0).Padding(8, 0, 0, 0).Gap(8)
+		content := n.Column(c.Key(key)).FillWidth().Shrink(0).Padding(8, 0, 0, processingPanelTextInset).Gap(12)
 		if old {
 			content.Absolute().Left(0).Right(0).Top(0).IgnoreInput(true).Disabled(true).Transform(n.Translation(-distance*progress, 0))
 		} else if state.hasPrevious() {
@@ -198,7 +198,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 		}
 	}
 	m := v.Model
-	card := n.Column(c.Key("pending:"+m.SessionID)).FillWidth().MaxWidth(768).Label("待处理请求卡片").Radius(requestRadius).Background(t.Surface).Border(1, t.Border).Clip()
+	card := processingPanelSurface(n.Column(c.Key("pending:"+m.SessionID)).FillWidth().MaxWidth(768).Label("待处理请求卡片"), t).Clip()
 	state := n.Local(card, requestCardMotionKey{}, func() requestCardMotion {
 		known := map[string]bool{}
 		for _, page := range pages {
@@ -310,7 +310,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 	card.Children(func() {
 		content = n.Column(c.Key("request-card-content")).FillWidth().Shrink(0)
 		content.Children(func() {
-			n.Row(c.Key("request-header")).FillWidth().Height(24).Shrink(0).Gap(4).AlignItems(n.Center).Children(func() {
+			n.Row(c.Key("request-header")).FillWidth().Height(28).Shrink(0).Gap(4).AlignItems(n.Center).Children(func() {
 				titleText, summary := r.Title, ""
 				if m.Collapsed[m.SessionID] {
 					summary = fmt.Sprintf("%d 个问题", len(state.pages))
@@ -322,14 +322,14 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 					}
 				}
 				title := control(c, 4).Height(24).Shrink(0).PaddingX(2).Justify(n.Start).Label(r.Title).Description(titleText + " " + summary).Children(func() {
-					n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
+					n.Row(c).Gap(processingPanelIconGap).AlignItems(n.Baseline).Children(func() {
 						icon := questionIcon
 						if r.Kind == "approval" || r.Kind == "permissions" {
 							icon = shieldIcon
 						}
-						font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 500}
+						font := n.Font{Family: c.Theme().Font, Size: 13, Weight: 500}
 						inlineSymbol(c, icon, r.Title, font, 14, t.TextMuted)
-						n.Text(c, titleText).FontSize(12).FontWeight(500).FixedLineHeight(20)
+						n.Text(c, titleText).FontSize(13).FontWeight(500).FixedLineHeight(20)
 						angle := float32(0)
 						if m.Collapsed[m.SessionID] {
 							angle = -90
@@ -372,8 +372,8 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 		paddingTarget = 4
 	}
 	padding := card.AnimateTo("request-padding", paddingTarget, motionAnimation(c, 240*time.Millisecond))
-	content.Padding(padding, 14)
-	card.Height((26 + 2*padding + bodyHeight) * presence)
+	content.Padding(padding, processingPanelInset)
+	card.Height((30 + 2*padding + bodyHeight) * presence)
 }
 
 // Keep one total glyph mounted while its surrounding words become a pager.

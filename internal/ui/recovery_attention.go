@@ -49,14 +49,14 @@ func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d 
 	if state.Confirm == "end" {
 		message = "请确认没有其他后台任务仍在修改此工作区。继续会结束旧轮记录，不会自动发送待发送消息。"
 	}
-	content.Padding(12, 14).Gap(8).Radius(requestRadius).Background(t.Surface).Border(1, t.Border)
+	processingPanelSurface(content, t).Padding(12, processingPanelInset).Gap(8)
 	content.Children(func() {
-		n.Row(c).Gap(7).AlignItems(n.Baseline).Children(func() {
+		n.Row(c).Gap(processingPanelIconGap).AlignItems(n.Baseline).Children(func() {
 			inlineSymbol(c, recoveryIcon, title, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 14, t.TextMuted)
 			n.Text(c, title).FontSize(13).FixedLineHeight(20)
 		})
-		n.Text(c, message).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
-		n.Row(c).Gap(8).AlignItems(n.Center).Children(func() {
+		n.Text(c, message).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FillWidth().PaddingStart(processingPanelTextInset).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+		n.Row(c).PaddingStart(processingPanelTextInset).Gap(8).AlignItems(n.Center).Children(func() {
 			label, command := "重试恢复", "check"
 			if state.Details && info != nil && info.CanStopTasks && v.Model.WorkerMinor >= 8 {
 				label, command = "停止所选进程", "confirm-tasks"
@@ -116,7 +116,7 @@ func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d 
 		if !state.Details {
 			return
 		}
-		n.Column(c.Key("recovery-details")).FillWidth().Gap(8).Transition(disclosureMotion(c, 240*time.Millisecond)).Children(func() {
+		n.Column(c.Key("recovery-details")).FillWidth().PaddingStart(processingPanelTextInset).Gap(8).Transition(disclosureMotion(c, 240*time.Millisecond)).Children(func() {
 			n.Text(c, "执行设备 · "+v.Model.CurrentDeviceName()).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
 			if d.Session.Context.CWD != "" {
 				n.Text(c, d.Session.Context.CWD).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Selectable()
@@ -133,8 +133,11 @@ func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d 
 					n.Text(c, "以下进程可能与任务相关。核对实际命令后选择要停止的进程，默认不会停止任何进程。").FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
 				}
 				n.Scroll(c.Key("recovery-task-list")).FillWidth().MaxHeight(132).Children(func() {
-					n.Column(c).FillWidth().Gap(8).Padding(8, 10).Radius(6).Background(codeSurface(t)).Children(func() {
-						for _, task := range tasks {
+					n.Column(c).FillWidth().Gap(8).Children(func() {
+						for i, task := range tasks {
+							if i > 0 {
+								processingPanelDivider(c, t)
+							}
 							n.Column(c.Key(task.ID + task.Command)).FillWidth().Gap(4).Transition(resultBlockMotion(c)).Children(func() {
 								label := "运行状态未确认"
 								if task.State == "running" {

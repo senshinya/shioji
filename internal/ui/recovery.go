@@ -131,7 +131,7 @@ func (v *View) recovery(c *n.Context, t *n.Theme, d domain.SessionDetail) {
 			})
 		} else if *mode == "ready" {
 			content.Children(func() {
-				n.Row(c).FillWidth().Height(40).Padding(6, 8, 6, 12).Gap(8).Radius(requestRadius).Background(t.Surface).Border(1, t.Border).Label("会话恢复提示").AlignItems(n.Center).Children(func() {
+				processingPanelSurface(n.Row(c).FillWidth().Height(44).Padding(8, processingPanelInset).Gap(8).Label("会话恢复提示").AlignItems(n.Center), t).Children(func() {
 					label := "上次回复未完成"
 					if retained.Status == "interrupted" {
 						label = "上次回复已中断"

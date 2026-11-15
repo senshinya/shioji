@@ -79,7 +79,7 @@ func (v *View) requestBody(c *n.Context, t *n.Theme, r domain.PendingRequest, qu
 }
 func (v *View) questionField(c *n.Context, t *n.Theme, r domain.PendingRequest, q domain.Question) {
 	key := requestKey(r, q.ID)
-	n.Text(c, q.Text).FontSize(12).FixedLineHeight(20)
+	n.Text(c, q.Text).FontSize(13).FixedLineHeight(20)
 	if q.Secret {
 		binding := textBinding(v.secretBindings, key, v.secretAnswers[key])
 		input := textField(c.Key("secret:"+key), &binding.Text).Password().FillWidth().Height(32).Padding(5, 8).FontSize(12).Label("敏感答案")
@@ -91,9 +91,15 @@ func (v *View) questionField(c *n.Context, t *n.Theme, r domain.PendingRequest, 
 	}
 	selected := textBinding(v.answerBindings, key, v.Model.Answers[key])
 	if len(q.Options) > 0 {
-		n.Column(c).FillWidth().Padding(4).Gap(2).Radius(requestRadius).Background(raised(t)).Children(func() {
-			for _, option := range q.Options {
-				controlFeedback(c, n.Radio(c.Key(option.Label), &selected.Text, option.Label, option.Label).FillWidth().MinHeight(28).PaddingX(4).FontSize(12).Label(option.Label).Tooltip(option.Description), 4).Changed()
+		n.Column(c).FillWidth().Children(func() {
+			for i, option := range q.Options {
+				if i > 0 {
+					processingPanelDivider(c, t)
+				}
+				controlFeedback(c, n.Radio(c.Key(option.Label), &selected.Text, option.Label, option.Label).FillWidth().MinHeight(32).FontSize(12).Label(option.Label).Tooltip(option.Description), 4).Changed()
+				if option.Description != "" {
+					n.Text(c, option.Description).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Padding(0, 0, 6, 22)
+				}
 			}
 		})
 	}
@@ -143,11 +149,14 @@ func (v *View) formField(c *n.Context, t *n.Theme, r domain.PendingRequest, f do
 			return
 		}
 		if len(f.Options) > 0 {
-			n.Column(c).FillWidth().Padding(4).Radius(6).Background(raised(t)).Children(func() {
-				for _, option := range f.Options {
+			n.Column(c).FillWidth().Children(func() {
+				for i, option := range f.Options {
+					if i > 0 {
+						processingPanelDivider(c, t)
+					}
 					if f.Type == "array" {
 						checked := containsSelection(values, option.Value)
-						if controlFeedback(c, n.Checkbox(c.Key(option.Value), &checked, option.Label).FillWidth().MinHeight(28).PaddingX(4).FontSize(12).Label(option.Label), 4).Changed() {
+						if controlFeedback(c, n.Checkbox(c.Key(option.Value), &checked, option.Label).FillWidth().MinHeight(32).FontSize(12).Label(option.Label), 4).Changed() {
 							values = toggleSelection(values, option.Value, checked)
 							v.saveRequestSelection(r, f.ID, values)
 						}
@@ -156,7 +165,7 @@ func (v *View) formField(c *n.Context, t *n.Theme, r domain.PendingRequest, f do
 						if len(values) > 0 {
 							value = values[0]
 						}
-						if controlFeedback(c, n.Radio(c.Key(option.Value), &value, option.Value, option.Label).FillWidth().MinHeight(28).PaddingX(4).FontSize(12).Label(option.Label), 4).Changed() {
+						if controlFeedback(c, n.Radio(c.Key(option.Value), &value, option.Value, option.Label).FillWidth().MinHeight(32).FontSize(12).Label(option.Label), 4).Changed() {
 							values = []string{value}
 							v.saveRequestSelection(r, f.ID, values)
 						}
