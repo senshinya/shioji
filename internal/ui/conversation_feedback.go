@@ -691,24 +691,47 @@ func (v *View) conversationMessageOverlay(c *n.Context, t *n.Theme) {
 					message.dismissed = true
 				}
 			})
-			n.Column(c).FillWidth().PaddingStart(22).Gap(8).Children(func() {
-				if message.Body != "" {
-					n.Text(c, message.Body).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
-				}
-				if message.SessionID != "" && message.SessionID != v.Model.SessionID {
-					if ghost(c, "查看会话").PaddingX(0).FontSize(12).Height(24).Clicked() {
-						v.openFeedbackSource(message.Feedback)
+			canNavigate := message.SessionID != "" && message.SessionID != v.Model.SessionID
+			if message.Body != "" || message.Details != "" || canNavigate {
+				n.Column(c).FillWidth().PaddingStart(22).Gap(8).Children(func() {
+					if message.Body != "" {
+						n.Scroll(c.Key("message-body")).FillWidth().MaxHeight(80).Label("消息说明").Children(func() {
+							n.Text(c, message.Body).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+						})
 					}
-				}
-				if message.Details != "" {
-					if ghost(c, "查看消息详情").PaddingX(0).FontSize(12).Height(24).Clicked() {
-						message.details = !message.details
+					if message.details && message.Details != "" {
+						n.Column(c.Key("message-details")).FillWidth().Transition(disclosureMotion(c, 180*time.Millisecond)).Children(func() {
+							n.Scroll(c).FillWidth().MaxHeight(120).Children(func() {
+								n.Text(c, message.Details).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+							})
+						})
 					}
-					if message.details {
-						n.Scroll(c).FillWidth().MaxHeight(120).Children(func() { n.Text(c, message.Details).FillWidth().FontSize(12).FixedLineHeight(20).Selectable() })
+					if canNavigate || message.Details != "" {
+						n.Row(c).FillWidth().Wrap().Gap(12).AlignItems(n.Center).Children(func() {
+							if canNavigate && ghost(c, "查看会话").Label("查看会话").PaddingX(0).FontSize(12).Height(24).Clicked() {
+								v.openFeedbackSource(message.Feedback)
+							}
+							if message.Details != "" {
+								label, accessibility := "详细信息", "查看消息详情"
+								angle := float32(0)
+								if message.details {
+									label, accessibility, angle = "收起详情", "收起消息详情", 180
+								}
+								disclosure := control(c.Key("message-details-action"), 4).Height(24).Padding(0).Label(accessibility)
+								disclosure.Children(func() {
+									n.Row(c).Gap(4).AlignItems(n.Baseline).Children(func() {
+										n.Text(c, label).FontSize(12).FixedLineHeight(20)
+										inlineSymbol(c, disclosureDown, label, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted, angle)
+									})
+								})
+								if disclosure.Clicked() {
+									message.details = !message.details
+								}
+							}
+						})
 					}
-				}
-			})
+				})
+			}
 		})
 	})
 }
