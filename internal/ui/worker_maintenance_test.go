@@ -156,19 +156,89 @@ func TestWorkerMaintenanceNativeEvidence(t *testing.T) {
 	saveNativeSkillImage(t, u, "narrow.png")
 	u.SetSize(1240, 820)
 	u.SetDark(false)
-	for frame := 0; frame < 120; frame++ {
-		if frame == 20 {
-			if err := u.Click("结束所选环境并更新"); err != nil {
-				t.Fatal(err)
-			}
+	var op domain.WorkerMaintenance
+	click := func(label string) {
+		t.Helper()
+		if err := u.Click(label); err != nil {
+			t.Fatal(err)
 		}
-		if frame == 65 {
-			u.Key(0, n.KeyEscape)
+	}
+	for frame := 0; frame < 240; frame++ {
+		switch frame {
+		case 20:
+			click("结束所选环境并更新")
+		case 60:
+			click("确认正常结束")
+			job := nextMaintenanceUIJob(t, c)
+			in := job.Input.(domain.WorkerMaintenanceInput)
+			op = domain.WorkerMaintenance{ID: in.ID, DeviceID: "B", ExpectedBuildID: "old", BuildID: "new", Revision: 1, Phase: domain.WorkerMaintenanceStopping, Targets: []domain.WorkerMaintenanceResult{{Target: in.Targets[0], SessionName: "排查 worker 更新等待", WorkspaceName: "Shioji", State: "stopping", ProcessRef: "p", Processes: []domain.WorkerProcessSummary{{PID: 18324, Name: "node"}}}}}
+			data, _ := json.Marshal(op)
+			job.Apply(v.Model, data, nil)
+			v.maintenanceUIFor("air").next = v.frameTime.Add(time.Hour)
+		case 90:
+			op.Phase = domain.WorkerMaintenanceNeedsForce
+			op.Revision++
+			op.Targets[0].State = "awaitingForce"
+			v.Model.MaintenanceClient("B").Operation = &op
+		case 120:
+			click("强制结束所选环境")
+		case 140:
+			saveNativeSkillImage(t, u, "force.png")
+		case 165:
+			click("取消强制结束")
+		case 195:
+			click("取消本次处理")
+			job := nextMaintenanceUIJob(t, c)
+			op.Phase = domain.WorkerMaintenanceCancelled
+			op.Revision++
+			data, _ := json.Marshal(op)
+			job.Apply(v.Model, data, nil)
+		case 220:
+			saveNativeSkillImage(t, u, "cancelled.png")
 		}
 		u.Advance(time.Second / 24)
 		saveNativeSkillImage(t, u, fmt.Sprintf("frame-%04d.png", frame))
 	}
+	op.Phase = domain.WorkerMaintenanceWaiting
+	op.Targets[0].State = "stopped"
+	op.Targets[0].Processes = nil
+	u.Advance(time.Second)
+	saveNativeSkillImage(t, u, "waiting.png")
+	op.Phase = domain.WorkerMaintenanceUpdating
+	u.Advance(time.Second)
+	saveNativeSkillImage(t, u, "progress.png")
+	op.Phase = domain.WorkerMaintenanceCompleted
+	u.Advance(time.Second)
+	saveNativeSkillImage(t, u, "completed.png")
+	v.Model.MaintenanceClient("B").Operation = nil
+	v.Model.MaintenanceClient("B").Diagnosis.Blockers = []domain.WorkerUpdateBlocker{{ID: "unknown", Kind: domain.WorkerBlockerUnknown, Reason: "后台进程的归属记录不完整，无法安全结束"}}
+	u.Advance(time.Second)
+	saveNativeSkillImage(t, u, "unknown.png")
+
 	if v.maintenanceUIFor("air").confirm != "" {
 		t.Fatal("Escape did not cancel confirmation")
+	}
+}
+
+func TestUnknownMaintenanceAlwaysOffersCurrentDiagnosticExport(t *testing.T) {
+	v, u, _ := maintenanceUIFixture(t)
+	client := v.Model.MaintenanceClient("B")
+	client.Diagnosis.Blockers = append(client.Diagnosis.Blockers, domain.WorkerUpdateBlocker{ID: "unknown", Kind: domain.WorkerBlockerUnknown, Reason: "进程归属记录不完整"})
+	u.Frame()
+	if _, ok := u.Find("导出诊断"); !ok {
+		t.Fatal("mixed unknown blocker lost diagnostic export")
+	}
+	saveNativeSkillImage(t, u, "mixed-unknown.png")
+	client.Operation = &domain.WorkerMaintenance{ID: "active", DeviceID: "B", Phase: domain.WorkerMaintenanceNeedsForce, Targets: []domain.WorkerMaintenanceResult{{Target: domain.WorkerMaintenanceTarget{SessionID: "s0"}, State: "unknown", SessionName: "后台环境的运行实例待核对", Message: "运行实例的归属记录已变化"}}}
+	v.maintenanceUIFor("air").next = v.frameTime.Add(time.Hour)
+	u.Frame()
+	if _, ok := u.Find("导出诊断"); !ok {
+		t.Fatal("active unknown result lost diagnostic export")
+	}
+	saveNativeSkillImage(t, u, "active-unknown.png")
+	report := maintenanceDiagnostic(client)
+	text := string(report)
+	if !strings.Contains(text, "运行实例的归属记录已变化") || !strings.Contains(text, "后台环境的运行实例待核对") {
+		t.Fatal("export uses stale preview", text)
 	}
 }

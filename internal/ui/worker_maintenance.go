@@ -204,6 +204,21 @@ func (v *View) workerMaintenancePage(c *n.Context, t *n.Theme, key, name string,
 			}
 			n.Text(c, summary).Grow(1).MinWidth(0).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
 			disabled := client.Busy || !state.Connected || v.Controller == nil
+			unknown := false
+			if op != nil {
+				for _, r := range op.Targets {
+					unknown = unknown || r.State == "unknown"
+				}
+			} else if client.Diagnosis != nil {
+				for _, b := range client.Diagnosis.Blockers {
+					unknown = unknown || b.Kind == domain.WorkerBlockerUnknown
+				}
+			}
+			if op != nil && unknown {
+				if configurationAction(c, "导出诊断").Clicked() {
+					v.exportWorkerMaintenance(key, client)
+				}
+			}
 			if op != nil && op.Phase.Active() {
 				if op.Phase != domain.WorkerMaintenanceUpdating {
 					if configurationAction(c, "取消本次处理").Disabled(disabled || client.QueryOnly).Clicked() {
@@ -225,7 +240,7 @@ func (v *View) workerMaintenancePage(c *n.Context, t *n.Theme, key, name string,
 						selectable = selectable || b.Target != nil
 					}
 				}
-				if !selectable {
+				if !selectable || unknown {
 					if configurationAction(c, "导出诊断").Disabled(client.Diagnosis == nil).Clicked() {
 						v.exportWorkerMaintenance(key, client)
 					}
@@ -370,23 +385,11 @@ func (v *View) workerMaintenanceConfirm(c *n.Context, t *n.Theme, key, name stri
 	}
 }
 func (v *View) exportWorkerMaintenance(key string, client *app.WorkerMaintenanceClient) {
-	if v.Controller == nil || client.Diagnosis == nil {
+	if v.Controller == nil {
 		return
 	}
-	// Exclude raw command lines, environment, paths and opaque authorization refs.
-	type record struct {
-		Session, Workspace, Reason string
-		Processes                  []domain.WorkerProcessSummary
-	}
-	report := struct {
-		DeviceID, BuildID string
-		Blockers          []record
-	}{DeviceID: client.Diagnosis.DeviceID, BuildID: client.Diagnosis.BuildID}
-	for _, b := range client.Diagnosis.Blockers {
-		report.Blockers = append(report.Blockers, record{b.SessionName, b.WorkspaceName, b.Reason, b.Processes})
-	}
-	data, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
+	data := maintenanceDiagnostic(client)
+	if len(data) == 0 {
 		return
 	}
 	parent := v.nativeWindow
@@ -405,4 +408,32 @@ func (v *View) exportWorkerMaintenance(key string, client *app.WorkerMaintenance
 
 func maintenancePrimary(c *n.Context, label string) n.Element {
 	return configurationAction(c, label).Background(c.Theme().Accent).TextColor(c.Theme().AccentText)
+}
+
+func maintenanceDiagnostic(client *app.WorkerMaintenanceClient) []byte {
+	type record struct {
+		Session, Workspace, Reason string
+		Processes                  []domain.WorkerProcessSummary
+	}
+	report := struct {
+		DeviceID, BuildID string
+		Blockers          []record
+	}{}
+	if client.Operation != nil {
+		report.DeviceID = client.Operation.DeviceID
+		report.BuildID = client.Operation.ExpectedBuildID
+		for _, r := range client.Operation.Targets {
+			report.Blockers = append(report.Blockers, record{r.SessionName, r.WorkspaceName, r.Message, r.Processes})
+		}
+	} else if client.Diagnosis != nil {
+		report.DeviceID = client.Diagnosis.DeviceID
+		report.BuildID = client.Diagnosis.BuildID
+		for _, b := range client.Diagnosis.Blockers {
+			report.Blockers = append(report.Blockers, record{b.SessionName, b.WorkspaceName, b.Reason, b.Processes})
+		}
+	} else {
+		return nil
+	}
+	data, _ := json.MarshalIndent(report, "", "  ")
+	return data
 }
