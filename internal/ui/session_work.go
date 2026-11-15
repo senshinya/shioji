@@ -509,14 +509,18 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 		if len(metadata) > 0 {
 			n.Text(c, strings.Join(metadata, " · ")).FontSize(11).TextColor(t.TextMuted)
 		}
-		if w.Brief != "" {
+		prompt := w.Brief
+		if prompt == "" && kind == "agents" {
+			prompt = w.Title
+		}
+		if prompt != "" {
 			if kind == "background" {
 				n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
 					inlineSymbol(c, commandActivityIcon(w.Brief), w.Brief, n.Font{Family: outputFont, Size: 11}, 14, outputColor)
 					n.Text(c, commandPreview(w.Brief)).Label(w.Brief).Tooltip(w.Brief).ContextMenu(commandCopyMenu(c, w.Brief)).Grow(1).MinWidth(0).MaxLines(2).Ellipsis("…").Font(outputFont).FontSize(11).FixedLineHeight(18).TextColor(outputColor).Selectable()
 				})
 			} else {
-				n.Text(c, w.Brief).AlignSelf(n.End).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(userBubble(t)).Selectable()
+				n.Text(c, prompt).AlignSelf(n.End).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(userBubble(t)).Selectable()
 			}
 		}
 		if detail.Truncated {

@@ -22,6 +22,7 @@ type commandWork struct {
 type workTracker struct {
 	spawns       map[string]bool
 	earlyTurns   map[string]wire.Turn
+	earlyPrompts map[string]string
 	agents       map[string]agentWorkBinding
 	childTurns   map[string]agentWorkBinding
 	currentTurns map[string]string
@@ -31,7 +32,7 @@ type workTracker struct {
 
 func (n *Normalizer) workState() *workTracker {
 	if n.work == nil {
-		n.work = &workTracker{spawns: map[string]bool{}, earlyTurns: map[string]wire.Turn{}, agents: map[string]agentWorkBinding{}, childTurns: map[string]agentWorkBinding{}, currentTurns: map[string]string{}, works: map[string]domain.WorkActivity{}, commands: map[string]*commandWork{}}
+		n.work = &workTracker{spawns: map[string]bool{}, earlyTurns: map[string]wire.Turn{}, earlyPrompts: map[string]string{}, agents: map[string]agentWorkBinding{}, childTurns: map[string]agentWorkBinding{}, currentTurns: map[string]string{}, works: map[string]domain.WorkActivity{}, commands: map[string]*commandWork{}}
 	}
 	return n.work
 }
@@ -100,6 +101,13 @@ func (n *Normalizer) registerAgent(parentThread, rootTurn, sourceItem, child, ti
 			w.Title = "子 Agent"
 		}
 	}
+	if w.Brief == "" {
+		w.Brief = workBound(brief, 8<<10)
+		if w.Brief == "" {
+			w.Brief = tracker.earlyPrompts[child]
+		}
+	}
+	delete(tracker.earlyPrompts, child)
 	if model != "" {
 		w.Model = boundedTo(model, 128)
 	}
@@ -354,6 +362,13 @@ func (n *Normalizer) feedChildWork(m wire.Message, p wire.Params) ([]domain.Even
 		}
 	case "item/started", "item/completed":
 		if p.Item.Type == "userMessage" {
+			if w.Brief == "" {
+				if prompt := childInitialPrompt(p.Item); prompt != "" {
+					w.Brief = prompt
+					tracker.works[w.ID] = w
+					return []domain.Event{workEvent(binding.session, w)}, true
+				}
+			}
 			return nil, true
 		}
 		key := binding.id + "\x00" + itemKey(p.TurnID, p.Item.ID)
@@ -493,17 +508,47 @@ func (n *Normalizer) ownsWorkThread(thread, sid string) bool {
 // identity. Retain bounded lifecycle observations, but adopt none until the
 // owned structured spawn confirms that exact thread reference.
 func (n *Normalizer) rememberEarlyWorkTurn(m wire.Message, p wire.Params) {
-	if p.ThreadID == "" || (m.Method != "turn/started" && m.Method != "turn/completed") {
+	if p.ThreadID == "" {
 		return
 	}
 	t := n.workState()
 	if _, known := t.agents[p.ThreadID]; known {
 		return
 	}
+	if (m.Method == "item/started" || m.Method == "item/completed") && p.Item.Type == "userMessage" {
+		if len(t.earlyPrompts) < 256 && t.earlyPrompts[p.ThreadID] == "" {
+			if prompt := childInitialPrompt(p.Item); prompt != "" {
+				t.earlyPrompts[p.ThreadID] = prompt
+			}
+		}
+		return
+	}
+	if m.Method != "turn/started" && m.Method != "turn/completed" {
+		return
+	}
 	if _, known := t.earlyTurns[p.ThreadID]; !known && len(t.earlyTurns) >= 256 {
 		return
 	}
 	t.earlyTurns[p.ThreadID] = p.Turn
+}
+
+// Worker-accepted followups already have their own input items. Only the
+// initial unmarked child input supplies the persistent task heading.
+func childInitialPrompt(item wire.Item) string {
+	if workString(item, "clientId") != "" {
+		return ""
+	}
+	var content []wire.Input
+	if json.Unmarshal(item.Content, &content) != nil {
+		return ""
+	}
+	var text []string
+	for _, part := range content {
+		if part.Type == "text" && part.Text != "" {
+			text = append(text, part.Text)
+		}
+	}
+	return workBound(strings.Join(text, "\n"), 8<<10)
 }
 func applyChildTurn(w *domain.WorkActivity, t wire.Turn, control bool) {
 	w.State = string(normalizedTurnStatus(t.Status))

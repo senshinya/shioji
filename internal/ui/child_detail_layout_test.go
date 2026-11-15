@@ -37,6 +37,37 @@ func TestChildDetailUserMessageIsRightAlignedAndReplyIsCompact(t *testing.T) {
 		})
 	}
 }
+
+func TestChildDetailShowsListTaskWhenRuntimeOmitsInitialBody(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprint(dark), func(t *testing.T) {
+			v, ui := sessionWorkFixture(t)
+			d := v.Model.Details["s"]
+			d.Works[0].Brief = ""
+			v.Model.Details["s"] = d
+			key := v.Model.WorkKey("s", "agent-a")
+			child := v.Model.WorkDetails[key]
+			child.Work.Brief = ""
+			v.Model.WorkDetails[key] = child
+			ui.SetDark(dark)
+			ui.Frame()
+			if err := ui.Click("查看子 Agent：检查边界条件"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			count := 0
+			for _, text := range ui.Texts() {
+				if text == "检查边界条件" {
+					count++
+				}
+			}
+			// One occurrence is the navigation title; the other is the task bubble.
+			if count != 2 {
+				t.Fatal("child conversation omits the task displayed in its list", ui.Texts())
+			}
+		})
+	}
+}
 func TestWorkListsKeepTheirTrailingArrowInsideTheReadingInset(t *testing.T) {
 	_, ui := sessionWorkFixture(t)
 	for _, name := range []string{"查看子 Agent：检查边界条件", "查看后台任务：运行回归测试"} {
