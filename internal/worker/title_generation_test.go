@@ -119,6 +119,46 @@ type namingRuntime struct {
 	release chan string
 }
 
+func TestDeletedTitleJobDoesNotStopNamingConsumer(t *testing.T) {
+	started, release := make(chan string, 2), make(chan string, 2)
+	s, w := memoryWorker(t, namingHarness{memoryHarness: memoryHarness{id: "other"}, started: started, release: release})
+	op, err := s.submit(domain.Submission{OperationID: "delete-title", WorkspaceID: w.ID, Text: "first", Config: domain.RunConfig{Model: "other-model", Permission: "limited"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("title never started")
+	}
+	awaitReceipt(t, s, op.ID)
+	d, err := s.store.Session(op.SessionID, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.store.SetSessionArchived(d.Session.ID, d.Session.Revision, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.store.DeleteArchivedSession(a.ID, a.Revision); err != nil {
+		t.Fatal(err)
+	}
+	release <- "deleted title"
+	_, err = s.submit(domain.Submission{OperationID: "next-title", WorkspaceID: w.ID, Text: "second", Config: domain.RunConfig{Model: "other-model", Permission: "limited"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case prompt := <-started:
+		if prompt != "second" {
+			t.Fatal(prompt)
+		}
+		release <- "next title"
+	case <-time.After(3 * time.Second):
+		t.Fatal("deleted title stopped naming subsequent sessions")
+	}
+}
+
 func (r *namingRuntime) GenerateTitle(ctx context.Context, input harness.TitleInput) (string, error) {
 	select {
 	case r.started <- input.Prompt:

@@ -199,6 +199,10 @@ func (v *View) sessionMenu(menu *n.Menu, s domain.Session, ref app.SessionLocati
 	}
 }
 func (v *View) editWorkspace(w domain.Workspace) {
+	if a := v.splitRoot().archive; a != nil {
+		a.open = false
+		a.viewing = ""
+	}
 	v.skillReturn = nil
 	w.Folders = append([]string(nil), w.Folders...)
 	main := ""

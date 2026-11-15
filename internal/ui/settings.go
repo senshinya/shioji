@@ -109,6 +109,7 @@ func (s *Settings) changed() {
 	if source := mygo.ThemeSource(root.Model.Preferences.Appearance); s.window != nil && mygo.Theme.Source() != source {
 		mygo.Theme.SetSource(source)
 	}
+	root.syncArchivePolicies()
 }
 
 func (s *Settings) selectPage(id string) {
@@ -304,6 +305,31 @@ func (s *Settings) appearance(c *n.Context, t *n.Theme) {
 				s.changed()
 			}
 		})
+		settingsRow(c, t, "归档内容保留", func() {
+			choices := []menuChoice{}
+			for _, days := range []int{7, 14, 30, 0} {
+				label := fmt.Sprintf("%d 天", days)
+				if days == 0 {
+					label = "永不"
+				}
+				choices = append(choices, menuChoice{id: fmt.Sprint(days), name: label, checked: s.owner.Model.ArchiveDays() == days, choose: func() {
+					if err := s.owner.Model.SetArchiveRetention(days); err != nil {
+						s.error = err.Error()
+						return
+					}
+					s.changed()
+				}})
+			}
+			value := fmt.Sprintf("%d 天", s.owner.Model.ArchiveDays())
+			if s.owner.Model.ArchiveDays() == 0 {
+				value = "永不"
+			}
+			s.picker(c, t, "归档内容保留", value, choices)
+		})
+		n.Text(c, "会话和工作区从归档之日起计时，到期后彻底删除。\n删除工作区会同时删除其中会话，项目文件不受影响。").FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Margin(8, 0, 0, 0)
+		if status := s.owner.Model.ArchivePolicyStatus(); status != "" {
+			n.Text(c, status).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Margin(8, 0, 0, 0)
+		}
 	})
 	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsHeading(c, t, "文字")
@@ -531,7 +557,7 @@ func (s *Settings) search(c *n.Context, t *n.Theme) {
 	n.Text(c, "搜索设置").FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Margin(0, 0, configurationHeadingGap, 0)
 	query := strings.ToLower(strings.TrimSpace(s.query))
 	found := false
-	for _, entry := range []struct{ page, label string }{{"appearance", "主题"}, {"appearance", "界面字体"}, {"appearance", "回复字号"}, {"appearance", "代码字体"}, {"appearance", "减少动态效果"}, {"appearance", "自动展开最新工具调用"}, {"appearance", "每次加载轮次"}, {"input", "发送或加入队列"}, {"input", "换行"}, {"input", "立即介入当前轮"}, {"notifications", "通知"}, {"notifications", "回复完成"}, {"notifications", "需要回答或授权"}, {"notifications", "执行失败"}, {"notifications", "提示音"}, {"notifications", "前台也通知"}, {"shortcuts", "新建会话"}, {"shortcuts", "搜索会话"}, {"shortcuts", "下一个待处理"}, {"shortcuts", "返回上一个会话"}, {"about", "版本"}, {"about", "检查更新"}, {"about", "自动检查更新"}, {"about", "第三方许可"}, {"about", "授予完全磁盘访问权限"}} {
+	for _, entry := range []struct{ page, label string }{{"appearance", "主题"}, {"appearance", "界面字体"}, {"appearance", "回复字号"}, {"appearance", "代码字体"}, {"appearance", "减少动态效果"}, {"appearance", "自动展开最新工具调用"}, {"appearance", "每次加载轮次"}, {"appearance", "归档内容保留"}, {"input", "发送或加入队列"}, {"input", "换行"}, {"input", "立即介入当前轮"}, {"notifications", "通知"}, {"notifications", "回复完成"}, {"notifications", "需要回答或授权"}, {"notifications", "执行失败"}, {"notifications", "提示音"}, {"notifications", "前台也通知"}, {"shortcuts", "新建会话"}, {"shortcuts", "搜索会话"}, {"shortcuts", "下一个待处理"}, {"shortcuts", "返回上一个会话"}, {"about", "版本"}, {"about", "检查更新"}, {"about", "自动检查更新"}, {"about", "第三方许可"}, {"about", "授予完全磁盘访问权限"}} {
 		category := settingsCategories[slices.IndexFunc(settingsCategories, func(x settingsCategory) bool { return x.id == entry.page })]
 		if !strings.Contains(strings.ToLower(entry.label+" "+category.title), query) {
 			continue
