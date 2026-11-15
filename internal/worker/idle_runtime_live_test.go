@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"syscall"
@@ -22,6 +24,32 @@ import (
 // user credentials/model billing. Only the worker's idle clock is advanced.
 func TestIdleRuntimeRealProcessStopsAndResumesOriginalThread(t *testing.T) {
 	p := testutil.NewProvider(t)
+	python, e := exec.LookPath("python3")
+	if e != nil {
+		t.Fatal(e)
+	}
+	mcp := filepath.Join(p.Home, "idle-mcp.py")
+	if e = os.WriteFile(mcp, []byte(`import sys,json
+for line in sys.stdin:
+    request=json.loads(line)
+    if 'id' not in request: continue
+    result={}
+    if request.get('method')=='initialize':
+        result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'idle-fixture','version':'1'}}
+    if request.get('method')=='tools/list': result={'tools':[]}
+    print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}),flush=True)
+`), 0600); e != nil {
+		t.Fatal(e)
+	}
+	f, e := os.OpenFile(filepath.Join(p.Home, "config.toml"), os.O_APPEND|os.O_WRONLY, 0600)
+	if e != nil {
+		t.Fatal(e)
+	}
+	_, e = fmt.Fprintf(f, "\n[mcp_servers.idle_fixture]\ncommand=%q\nargs=[%q]\n", python, mcp)
+	f.Close()
+	if e != nil {
+		t.Fatal(e)
+	}
 	dir, e := os.MkdirTemp("", "sw-idle-live-")
 	if e != nil {
 		t.Fatal(e)
@@ -55,7 +83,19 @@ func TestIdleRuntimeRealProcessStopsAndResumesOriginalThread(t *testing.T) {
 			s.dispatchMu.Lock()
 			d, err := s.store.Session(op.SessionID, 0, 100)
 			s.dispatchMu.Unlock()
-			if err == nil && d.Session.Status == "completed" {
+			if err == nil && d.Session.Status == "completed" && d.Session.SourceTitle != "" {
+				// Completion can precede the last usage callback and independent
+				// title job. Drain source events before comparing durable history.
+				inspectCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+				_, err = s.currentRuntime(op.SessionID).Inspect(inspectCtx, d.Session)
+				cancel()
+				if err != nil {
+					t.Fatal(err)
+				}
+				d, err = s.store.Session(op.SessionID, 0, 100)
+				if err != nil {
+					t.Fatal(err)
+				}
 				return d
 			}
 			time.Sleep(10 * time.Millisecond)
@@ -110,6 +150,11 @@ func TestIdleRuntimeRealProcessStopsAndResumesOriginalThread(t *testing.T) {
 	}
 	if inputs != 2 {
 		t.Fatal("resuming repeated old input", inputs)
+	}
+	s.config.ReplaceWorker = func(domain.WorkerReplacement) error { return nil }
+	result, e := s.prepareWorkerUpdate(domain.WorkerReplacement{ExpectedBuildID: s.build.BuildID, BuildID: "candidate"})
+	if e != nil || !result.Ready {
+		t.Fatal("idle MCP service prevented worker update", result, e)
 	}
 }
 func identityForIdleTest(p unix.KinfoProc) [3]int64 {

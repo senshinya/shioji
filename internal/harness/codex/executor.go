@@ -2,8 +2,10 @@ package codex
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"shioji/internal/domain"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +43,111 @@ type executorBootstrap struct {
 	once       sync.Once
 	err        error
 	registered bool
+	service    *stdioService
+}
+
+// Codex's private MCP launcher namespace only identifies a candidate. Actual
+// initialization and both directions of JSON-RPC must prove it is idle; the
+// spelling of a source process ID alone never authorizes retirement.
+type stdioService struct {
+	input, output               []byte
+	client, server              map[string]string
+	initialized, ready, invalid bool
+	seenOutput                  bool
+	lastOutput                  uint64
+	writes                      map[string][32]byte
+	writeOrder                  []string
+}
+
+func (s *stdioService) write(id string, chunk []byte) {
+	if id != "" {
+		digest := sha256.Sum256(chunk)
+		if previous, seen := s.writes[id]; seen {
+			if previous != digest {
+				s.invalid = true
+			}
+			return
+		}
+		if s.writes == nil {
+			s.writes = map[string][32]byte{}
+		}
+		if len(s.writeOrder) == 256 {
+			delete(s.writes, s.writeOrder[0])
+			s.writeOrder = s.writeOrder[1:]
+		}
+		s.writes[id] = digest
+		s.writeOrder = append(s.writeOrder, id)
+	}
+	s.observe(chunk, true)
+}
+
+func (s *stdioService) observe(chunk []byte, input bool) {
+	buffer, requests, responses := &s.output, s.server, s.client
+	if input {
+		buffer, requests, responses = &s.input, s.client, s.server
+	}
+	*buffer = append(*buffer, chunk...)
+	if len(*buffer) > 16<<20 {
+		s.invalid = true
+		*buffer = nil
+		return
+	}
+	for !s.invalid {
+		line, rest, ok := bytes.Cut(*buffer, []byte{'\n'})
+		if !ok {
+			break
+		}
+		*buffer = rest
+		var msg struct {
+			Version string          `json:"jsonrpc"`
+			ID      json.RawMessage `json:"id"`
+			Method  string          `json:"method"`
+			Result  json.RawMessage `json:"result"`
+			Error   json.RawMessage `json:"error"`
+		}
+		if json.Unmarshal(line, &msg) != nil || msg.Version != "2.0" {
+			s.invalid = true
+			break
+		}
+		id := string(msg.ID)
+		if id == "" || id == "null" {
+			if msg.Method == "" {
+				s.invalid = true
+			} else if input && msg.Method == "notifications/initialized" && s.initialized {
+				s.ready = true
+			}
+			continue
+		}
+		if msg.Method != "" {
+			if _, exists := requests[id]; exists || len(requests) >= 256 {
+				s.invalid = true
+				break
+			}
+			requests[id] = msg.Method
+			continue
+		}
+		method, exists := responses[id]
+		if !exists || len(msg.Result) == 0 && len(msg.Error) == 0 {
+			s.invalid = true
+			break
+		}
+		delete(responses, id)
+		if !input && method == "initialize" {
+			var result struct {
+				ProtocolVersion string
+				ServerInfo      *struct{ Name string }
+			}
+			if json.Unmarshal(msg.Result, &result) != nil || result.ProtocolVersion == "" || result.ServerInfo == nil {
+				s.invalid = true
+			} else {
+				s.initialized = true
+			}
+		}
+	}
+}
+
+func (s *stdioService) idle() bool {
+	return s.ready && !s.invalid && len(s.input) == 0 && len(s.output) == 0 && len(s.client) == 0 && len(s.server) == 0
 }
 
 func (b *executorBootstrap) finish(err error) {
@@ -227,6 +335,20 @@ func (e *Executor) read(reader io.Reader) {
 			}
 			e.mu.Unlock()
 		}
+		if fromAgent && msg.Method == "" && request.method == "process/write" && msg.Error != nil {
+			e.mu.Lock()
+			b := e.boots[request.process]
+			uncertain := b != nil && b.service != nil
+			if uncertain {
+				b.service.invalid = true
+				e.beginServiceActivity(b)
+				e.scope.SetServiceUnverified(b.id)
+			}
+			e.mu.Unlock()
+			if uncertain {
+				log.Print("shioji: tool service input delivery is unconfirmed; automatic retirement is unavailable")
+			}
+		}
 		if msg.Method == "process/output" {
 			if !e.filterOutput(&msg) {
 				continue
@@ -344,6 +466,13 @@ func (e *Executor) serveAgent(conn *websocket.Conn) {
 				continue
 			}
 		}
+		if msg.Method == "process/write" {
+			if err := e.observeServiceWrite(process, msg.Params); err != nil {
+				e.admit.Unlock()
+				e.reject(conn, msg.ID, err.Error())
+				continue
+			}
+		}
 		e.mu.Lock()
 		if len(msg.ID) > 0 && msg.Method != "" {
 			e.requests[string(msg.ID)] = executorRequest{method: msg.Method, process: process}
@@ -416,6 +545,11 @@ func (e *Executor) prepare(msg *wire.Message) error {
 		argv[0] = *arg0
 	}
 	b := &executorBootstrap{id: ticket.ID, ack: managedexec.Acknowledgement{ID: ticket.ID, Program: program, Argv: argv, Env: env, PipeStdin: pipe || tty}, hidden: map[uint64]bool{}, ready: make(chan struct{})}
+	if suffix, ok := strings.CutPrefix(process, "mcp-stdio-"); ok && pipe && !tty && (len(params["sandbox"]) == 0 || string(params["sandbox"]) == "null") {
+		if n, err := strconv.ParseUint(suffix, 10, 64); err == nil && n > 0 {
+			b.service = &stdioService{client: map[string]string{}, server: map[string]string{}}
+		}
+	}
 	e.mu.Lock()
 	e.boots[process] = b
 	e.mu.Unlock()
@@ -427,6 +561,49 @@ func (e *Executor) prepare(msg *wire.Message) error {
 	msg.Params, err = json.Marshal(params)
 	return err
 }
+
+func (e *Executor) observeServiceWrite(process string, params json.RawMessage) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	b := e.boots[process]
+	if b == nil || b.service == nil {
+		return nil
+	}
+	if err := e.beginServiceActivity(b); err != nil {
+		return err
+	}
+	var input struct {
+		Chunk   []byte `json:"chunk"`
+		WriteID string `json:"writeId"`
+	}
+	if err := json.Unmarshal(params, &input); err != nil {
+		b.service.invalid = true
+		return err
+	}
+	b.service.write(input.WriteID, input.Chunk)
+	if b.service.invalid {
+		return e.scope.SetServiceUnverified(b.id)
+	}
+	return e.scope.SetServiceIdle(b.id, b.service.idle())
+}
+
+// Caller holds mu. Output has not been forwarded yet, so a temporary observation
+// may finish first. Permanent retirement ends this wait without losing a frame
+// on any runtime that will remain available to the caller.
+func (e *Executor) beginServiceActivity(b *executorBootstrap) error {
+	for {
+		err := e.scope.SetServiceIdle(b.id, false)
+		if !errors.Is(err, managedexec.ErrMaintenance) {
+			return err
+		}
+		select {
+		case <-e.ctx.Done():
+			return e.ctx.Err()
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
 func (e *Executor) filterOutput(msg *wire.Message) bool {
 	var output struct {
 		ProcessID string `json:"processId"`
@@ -450,6 +627,29 @@ func (e *Executor) filterOutput(msg *wire.Message) bool {
 		return true
 	}
 	if b.registered {
+		if service := b.service; service != nil && (!service.seenOutput || output.Seq > service.lastOutput) {
+			wasInvalid := service.invalid
+			// A reversible idle observation must delay, never discard, a new
+			// server request. Do not mutate the protocol ledger until it ends.
+			if err := e.beginServiceActivity(b); err != nil {
+				service.invalid = true
+			}
+			service.seenOutput, service.lastOutput = true, output.Seq
+			service.observe(output.Chunk, false)
+			if service.invalid {
+				e.scope.SetServiceUnverified(b.id)
+			} else if err := e.scope.SetServiceIdle(b.id, service.idle()); err != nil {
+				service.invalid = true
+				e.scope.SetServiceUnverified(b.id)
+			}
+			if !wasInvalid && service.invalid {
+				e.mu.Unlock()
+				// Includes malformed or over-limit (>16 MiB) protocol lines.
+				// Report why maintenance is unavailable, preserving actual work.
+				log.Print("shioji: tool service idle evidence is unavailable; automatic retirement is unavailable")
+				return true
+			}
+		}
 		e.mu.Unlock()
 		return true
 	}

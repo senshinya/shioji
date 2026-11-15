@@ -22,13 +22,17 @@ type Identity struct {
 	Usec int32
 }
 type Ticket struct {
-	ID, Kind, Ref string
-	Parent        Identity
-	Root, Anchor  Identity
-	Group         int
-	State         LaunchState
+	ID, Kind, Ref     string
+	Parent            Identity
+	Root, Anchor      Identity
+	Group             int
+	State             LaunchState
+	IdleService       bool `json:",omitempty"`
+	ServiceUnverified bool `json:",omitempty"`
 }
 type LaunchState string
+
+var ErrMaintenance = errors.New("execution admission is temporarily fenced for maintenance")
 
 const (
 	LaunchPrepared   LaunchState = "prepared"
@@ -260,6 +264,63 @@ func (s *Scope) Register(packet Registration) error {
 		return err
 	}
 	s.manager.live[t.ID] = liveLaunch{s, t}
+	return nil
+}
+
+// SetServiceIdle is adapter evidence about a registered protocol service, not
+// a process-name heuristic. Outstanding calls and partial frames must clear it
+// before forwarding any input. Ordinary commands never receive this exemption.
+func (s *Scope) SetServiceIdle(id string, idle bool) error {
+	return s.setServiceState(id, idle, false)
+}
+
+func (s *Scope) SetServiceUnverified(id string) error {
+	return s.setServiceState(id, false, true)
+}
+
+func (s *Scope) setServiceState(id string, idle, unverified bool) error {
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	state, err := s.load()
+	if err != nil {
+		return err
+	}
+	if state.Maintenance {
+		return ErrMaintenance
+	}
+	if !state.Active || !safeID(id) || !state.Launches[id] {
+		return errors.New("service execution is fenced or unconfirmed")
+	}
+	// Revoke in memory before I/O: an unwritable launch journal must never
+	// leave stale positive evidence usable by the next maintenance check.
+	live, tracked := s.manager.live[id]
+	if !tracked || live.scope.Generation != s.Generation {
+		return errors.New("service execution lifetime is not tracked")
+	}
+	if !idle {
+		live.ticket.IdleService = false
+		live.ticket.ServiceUnverified = unverified
+		s.manager.live[id] = live
+	}
+	var ticket Ticket
+	if err = readJSON(s.launchPath(id), &ticket); err != nil {
+		return err
+	}
+	if ticket.State != LaunchRegistered || ticket.Kind != "executor" {
+		return errors.New("service execution is not registered")
+	}
+	if ticket.IdleService == idle && ticket.ServiceUnverified == unverified {
+		live.ticket = ticket
+		s.manager.live[id] = live
+		return nil
+	}
+	ticket.IdleService = idle
+	ticket.ServiceUnverified = unverified
+	if err = writeJSON(s.launchPath(id), ticket); err != nil {
+		return err
+	}
+	live.ticket = ticket
+	s.manager.live[id] = live
 	return nil
 }
 
@@ -642,12 +703,29 @@ func (s *Scope) FenceIfIdle() (func() error, error) {
 		if len(members) == 0 {
 			continue
 		}
-		if ticket.Kind != "worker" || !anchorPresent(ticket, members) {
+		live, tracked := s.manager.live[ticket.ID]
+		idleService := ticket.IdleService && tracked && live.scope.Generation == s.Generation && live.ticket.IdleService
+		if ticket.ServiceUnverified || tracked && live.ticket.ServiceUnverified {
+			return nil, errors.New("工具服务的空闲状态无法确认，请检查相关会话的运行环境后重试")
+		}
+		if (ticket.Kind != "worker" && !idleService) || !anchorPresent(ticket, members) {
 			return nil, errors.New("仍有后台工具或进程归属尚未确认")
 		}
 		for _, p := range members {
 			if identity(p) != ticket.Root && identity(p) != ticket.Anchor {
 				return nil, errors.New("仍有后台进程，结束后更新")
+			}
+		}
+		if idleService {
+			procs, e := unix.SysctlKinfoProcSlice("kern.proc.all")
+			if e != nil {
+				return nil, e
+			}
+			for _, p := range procs {
+				parent := int(p.Eproc.Ppid)
+				if p.Proc.P_stat != 5 && (parent == ticket.Root.PID || parent == ticket.Anchor.PID) && identity(p) != ticket.Anchor {
+					return nil, errors.New("仍有后台进程，结束后更新")
+				}
 			}
 		}
 	}

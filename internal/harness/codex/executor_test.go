@@ -2,12 +2,17 @@ package codex
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
+
+	"golang.org/x/net/websocket"
 	"path/filepath"
 	"shioji/internal/domain"
+	"shioji/internal/harness/codex/wire"
 	"shioji/internal/managedexec"
 	"shioji/internal/testutil"
 	"strings"
@@ -53,6 +58,189 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
+}
+
+func TestStdioServiceRequiresSettledBidirectionalProtocol(t *testing.T) {
+	service := &stdioService{client: map[string]string{}, server: map[string]string{}}
+	input := func(text string) { service.observe([]byte(text), true) }
+	output := func(text string) { service.observe([]byte(text), false) }
+	if service.idle() {
+		t.Fatal("process identity alone proved service idle")
+	}
+	input("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\n")
+	output("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2024-11-05\",\"serverInfo\":{\"name\":\"fixture\"}}}\n")
+	if service.idle() {
+		t.Fatal("service initialization was not confirmed by the client")
+	}
+	input("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n")
+	if !service.idle() {
+		t.Fatal("initialized quiet service was not idle")
+	}
+	input("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\"}\n")
+	if service.idle() {
+		t.Fatal("running service call was treated as idle")
+	}
+	output("{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{}")
+	if service.idle() {
+		t.Fatal("partial response released the service")
+	}
+	output("}\n")
+	if !service.idle() {
+		t.Fatal("completed service call stayed busy")
+	}
+	request := []byte("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\"}\n")
+	service.write("retryable-write", request)
+	service.write("retryable-write", request)
+	output("{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"data\":\"")
+	service.observe(bytes.Repeat([]byte{'x'}, 2<<20), false)
+	if service.idle() {
+		t.Fatal("large incomplete service response was idle")
+	}
+	output("\"}}\n")
+	if !service.idle() {
+		t.Fatal("deduplicated write or legitimate large response prevented idle")
+	}
+	output("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"sampling/createMessage\"}\n")
+	if service.idle() {
+		t.Fatal("server request was ignored")
+	}
+	input("{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":-1}}\n")
+	if !service.idle() {
+		t.Fatal("settled server request stayed busy")
+	}
+	output("not JSON\n")
+	if service.idle() {
+		t.Fatal("unrecognized protocol was treated as idle")
+	}
+}
+
+func TestServiceOutputSurvivesReversibleMaintenance(t *testing.T) {
+	p := testutil.NewProvider(t)
+	f, err := os.OpenFile(filepath.Join(p.Home, "config.toml"), os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(f, "\n[mcp_servers.fixture]\ncommand=%q\nargs=[\"--fixture-mcp\",%q]\n", os.Args[0], filepath.Join(p.Home, "mcp.pid"))
+	f.Close()
+	manager, _ := managedexec.New(t.TempDir(), os.Args[0])
+	scope, _ := manager.Begin("service-output")
+	scope.Bind("worker", os.Getpid())
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	lost := make(chan struct{}, 1)
+	e, err := StartExecutor(ctx, ExecutorOptions{Home: p.Home, Scope: scope, OnLost: func() error {
+		select {
+		case lost <- struct{}{}:
+		default:
+		}
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { e.Close(context.Background()); scope.Stop(context.Background()) }()
+	// Exercise the real executor registration and private output filter without
+	// depending on a model turn or a particular MCP server implementation.
+	cfg, _ := websocket.NewConfig(e.URL(), "http://localhost")
+	cfg.Header = http.Header{"Authorization": []string{"Bearer " + e.Token()}}
+	conn, err := websocket.DialConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
+	params, _ := json.Marshal(map[string]any{"processId": "mcp-stdio-1", "argv": []string{os.Args[0], "--fixture-mcp", filepath.Join(p.Home, "mcp.pid")}, "cwd": "file:///private/tmp", "env": map[string]string{"PATH": "/usr/bin:/bin"}, "tty": false, "pipeStdin": true})
+	if err = websocket.JSON.Send(conn, wire.Message{ID: json.RawMessage(`"start"`), Method: "process/start", Params: params}); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		var result wire.Message
+		if err = websocket.JSON.Receive(conn, &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Error != nil {
+			t.Fatal(result.Error)
+		}
+		if string(result.ID) == `"start"` {
+			break
+		}
+	}
+	for {
+		e.mu.Lock()
+		b := e.boots["mcp-stdio-1"]
+		ready := b != nil && b.registered
+		e.mu.Unlock()
+		if ready {
+			select {
+			case <-b.ready:
+				goto registered
+			default:
+			}
+		}
+		if ctx.Err() != nil {
+			t.Fatal(ctx.Err())
+		}
+		time.Sleep(time.Millisecond)
+	}
+registered:
+	input := func(text string) {
+		t.Helper()
+		params, _ := json.Marshal(map[string]any{"chunk": []byte(text)})
+		if err := e.observeServiceWrite("mcp-stdio-1", params); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output := func(seq uint64, text string) bool {
+		params, _ := json.Marshal(map[string]any{"processId": "mcp-stdio-1", "stream": "stdout", "seq": seq, "chunk": []byte(text)})
+		return e.filterOutput(&wire.Message{Method: "process/output", Params: params})
+	}
+	input("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\n")
+	output(100, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2024-11-05\",\"serverInfo\":{\"name\":\"fixture\"}}}\n")
+	input("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n")
+	undo, err := scope.FenceIfIdle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	forwarded := make(chan bool, 1)
+	go func() {
+		forwarded <- output(101, "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"sampling/createMessage\"}\n")
+	}()
+	select {
+	case <-forwarded:
+		t.Fatal("output was consumed while reversibly fenced")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if err = undo(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ok := <-forwarded:
+		if !ok {
+			t.Fatal("maintenance dropped a valid service request")
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if _, err = scope.FenceIfIdle(); err == nil {
+		t.Fatal("forwarded server request was not retained as busy")
+	}
+	input("{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}\n")
+	undo, err = scope.FenceIfIdle()
+	if err != nil {
+		t.Fatal("settled request still blocked maintenance", err)
+	}
+	if err = undo(); err != nil {
+		t.Fatal(err)
+	}
+	output(102, "unrecognized service output\n")
+	select {
+	case <-lost:
+		t.Fatal("unrecognized output interrupted a live runtime")
+	default:
+	}
+	if _, err = scope.FenceIfIdle(); err == nil || !strings.Contains(err.Error(), "工具服务") {
+		t.Fatal("unrecognized protocol did not explain its unverified idle state", err)
+	}
 }
 
 func TestOwnedExecutorStopsCommandsAndMCPWithoutLeakingBootstrap(t *testing.T) {
