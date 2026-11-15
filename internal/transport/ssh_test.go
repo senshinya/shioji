@@ -55,7 +55,9 @@ func TestProcessTransportCarriesBytesAndCancels(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(time.Second))
+	// Include helper startup on a loaded CI runner; cancellation below still
+	// has to close the transport rather than relying on an expired deadline.
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
 	payload := []byte{0, 255, 1, 10, 13, 0}
 	done := make(chan error, 1)
 	go func() { _, e := conn.Write(payload); done <- e }()
@@ -69,6 +71,7 @@ func TestProcessTransportCarriesBytesAndCancels(t *testing.T) {
 	if !bytes.Equal(reply, payload) {
 		t.Fatal("process transport corrupts protocol", reply)
 	}
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
 	cancel()
 	if _, err := conn.Read(reply); err == nil {
 		t.Fatal("canceled SSH process remains readable")

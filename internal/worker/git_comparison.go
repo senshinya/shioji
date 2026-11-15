@@ -10,7 +10,6 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"unicode/utf8"
@@ -146,7 +145,7 @@ func (s *Server) compareGit(q protocol.GitQuery) (domain.ComparisonResult, error
 	if cmp.Base == cmp.Target || cmp.Base.Kind != "worktree" && cmp.Target.Kind != "worktree" && cmp.Base.Commit == cmp.Target.Commit {
 		return s.finishComparison(q, out)
 	}
-	args := []string{"diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--numstat", "-z"}
+	args := []string{"diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--raw", "--numstat", "-z"}
 	working := cmp.Base.Kind == "worktree" || cmp.Target.Kind == "worktree"
 	if working {
 		endpoint := cmp.Base
@@ -173,19 +172,7 @@ func (s *Server) compareGit(q protocol.GitQuery) (domain.ComparisonResult, error
 	if err != nil {
 		return out, err
 	}
-	for _, line := range strings.Split(text, "\x00") {
-		parts := strings.SplitN(line, "\t", 3)
-		if len(parts) != 3 {
-			continue
-		}
-		f := domain.ChangedFile{Path: parts[2]}
-		a, ae := strconv.Atoi(parts[0])
-		d, de := strconv.Atoi(parts[1])
-		if ae == nil && de == nil {
-			f.Added, f.Removed = &a, &d
-		}
-		out.Files = append(out.Files, f)
-	}
+	out.Files = parseGitChangedFiles(text)
 	if working {
 		text, err = gitRun(s.ctx, cmp.Repository, "ls-files", "--others", "--exclude-standard", "-z")
 		if err != nil {
@@ -197,16 +184,21 @@ func (s *Server) compareGit(q protocol.GitQuery) (domain.ComparisonResult, error
 			}
 			// A path untracked in this checkout can still exist in the compared branch.
 			// Read both actual versions instead of reporting a duplicate add/delete.
+			at := slices.IndexFunc(out.Files, func(f domain.ChangedFile) bool { return f.Path == path })
 			file, e := s.readComparisonFile(cmp, path)
-			if e == nil && file.Old == file.New {
+			if e == nil && file.Old == file.New && at >= 0 {
 				out.Files = slices.DeleteFunc(out.Files, func(f domain.ChangedFile) bool { return f.Path == path })
 				continue
 			}
-			at := slices.IndexFunc(out.Files, func(f domain.ChangedFile) bool { return f.Path == path })
 			if at >= 0 {
 				out.Files[at].Added, out.Files[at].Removed = nil, nil
+				out.Files[at].Kind = "update"
 			} else {
-				out.Files = append(out.Files, domain.ChangedFile{Path: path})
+				kind := "add"
+				if cmp.Base.Kind == "worktree" {
+					kind = "delete"
+				}
+				out.Files = append(out.Files, domain.ChangedFile{Path: path, Kind: kind})
 			}
 		}
 	}

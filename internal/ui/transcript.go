@@ -322,7 +322,7 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 	var heading n.Element
 	color := t.TextMuted
 	if folded {
-		heading = n.ButtonBase(c).Justify(n.Start).Tooltip("展开工具调用")
+		heading = n.ButtonBase(c).Justify(n.Start)
 		color = textHoverColor(c, heading, color)
 	} else {
 		heading = n.Row(c)
@@ -406,15 +406,15 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 }
 
 func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index int) {
-	label, tooltip, angle := "执行工具", "收起工具调用", float32(0)
+	label, angle := "执行工具", float32(0)
 	closed := v.Model.ToolDisclosure(row.toolParent).Closed()
 	if row.toolEnded {
 		label = fmt.Sprintf("%d 次工具调用", row.count)
 		if closed {
-			tooltip, angle = "展开工具调用", -90
+			angle = -90
 		}
 	}
-	button := n.ButtonBase(c).FillWidth().Height(20).Justify(n.Start).Label(label).Tooltip(tooltip)
+	button := n.ButtonBase(c).FillWidth().Height(20).Justify(n.Start).Label(label)
 	color := textHoverColor(c, button, t.TextMuted)
 	button.Children(func() {
 		n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {

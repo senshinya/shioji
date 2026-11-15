@@ -182,6 +182,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	}
 	current := m.ConnectionID()
 	p := *m
+	p.Navigation = m.Navigation.Clone()
 	p.Notifications = nil
 	p.sourceConnection = key
 	p.Pending = map[string]domain.Submission{}
@@ -285,6 +286,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	m.notificationSeen = p.notificationSeen
 	m.CompletedReplies = p.CompletedReplies
 	m.WorkDetails, m.workReads = p.WorkDetails, p.workReads
+	m.Navigation = p.Navigation
 	m.RefreshDevices()
 }
 

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -23,6 +24,49 @@ func navigationFixture() *app.Model {
 	m.Snapshot.Sessions = append(m.Snapshot.Sessions, domain.Session{ID: "other", WorkspaceID: "w", Title: "Other session", Status: "completed"}, domain.Session{ID: "remote-session", WorkspaceID: "remote", Title: "Remote running", Status: "running"})
 	m.Drafts["home"], m.Drafts["session:s"] = "home draft", "ordinary draft"
 	return m
+}
+
+func TestSessionHoverDoesNotDescribeItsWorkspace(t *testing.T) {
+	for _, long := range []bool{false, true} {
+		m := navigationFixture()
+		v := New(m, nil, "")
+		s := m.Snapshot.Sessions[0]
+		s.Title = "Short session"
+		if long {
+			s.Title = strings.Repeat("Long session title ", 8)
+		}
+		r := navigationRow{session: s, workspace: domain.Workspace{Name: "Unhelpful workspace"}, presence: 1}
+		ui := n.NewTester(func(c *n.Context) {
+			n.Column(c).Fill().Padding(40, 20).Background(c.Theme().Background).Children(func() { v.navigationSessionRow(c, c.Theme(), r) })
+		}, 300, 140)
+		ui.Advance(time.Second)
+		countTitle := func() int {
+			count := 0
+			for _, text := range ui.Texts() {
+				if text == s.Title {
+					count++
+				}
+			}
+			return count
+		}
+		before := countTitle()
+		row, _ := ui.Find(s.Title)
+		ui.Move(row.X+55, row.Y+row.H/2)
+		ui.Advance(time.Second)
+		saveNativeSkillImage(t, ui, fmt.Sprintf("session-hover-long-%v.png", long))
+		for _, text := range ui.Texts() {
+			if strings.Contains(text, "Unhelpful workspace") {
+				t.Fatal("session hover repeats workspace metadata", ui.Texts())
+			}
+		}
+		if long {
+			if countTitle() != before+1 {
+				t.Fatal("truncated title has no full-title tooltip", ui.Texts())
+			}
+		} else if countTitle() != before {
+			t.Fatal("fully visible title has a redundant tooltip", ui.Texts())
+		}
+	}
 }
 func TestGlobalPinMenuRetainsSelectionDraftAndWorkspaceFold(t *testing.T) {
 	m := navigationFixture()

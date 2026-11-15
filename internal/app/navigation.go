@@ -56,6 +56,31 @@ func (m *Model) ObserveNavigation() {
 		}
 	}
 }
+
+// New accepted user input overrides only this session's ordinary workspace
+// position. Keep global pins, workspace order and sibling order intact.
+func (m *Model) promoteNavigationSession(id string) {
+	ref, ok := m.NavigationSessionLocation(id)
+	if !ok {
+		return
+	}
+	session, workspace, ok := m.navigationSession(ref)
+	if !ok || session.Archived || workspace.Archived {
+		return
+	}
+	m.ObserveNavigation()
+	for i := range m.Navigation.Workspaces {
+		p := &m.Navigation.Workspaces[i]
+		if p.DeviceID == ref.DeviceID && p.WorkspaceID == ref.WorkspaceID {
+			if len(p.Sessions) > 0 && p.Sessions[0] == id {
+				return
+			}
+			p.Sessions = slices.DeleteFunc(p.Sessions, func(value string) bool { return value == id })
+			p.Sessions = slices.Insert(p.Sessions, 0, id)
+			return
+		}
+	}
+}
 func (m *Model) NavigationSessionLocation(id string) (SessionLocation, bool) {
 	for _, s := range m.Snapshot.Sessions {
 		if s.ID != id {

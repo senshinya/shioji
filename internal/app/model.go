@@ -387,6 +387,9 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 			m.Snapshot.Sessions = append(m.Snapshot.Sessions, *e.Session)
 		}
 	}
+	if e.Type == "submission" && e.Item != nil && e.Item.Kind == "user" {
+		m.promoteNavigationSession(e.SessionID)
+	}
 	if e.Operation != nil {
 		m.ApplyOperation(*e.Operation)
 	}

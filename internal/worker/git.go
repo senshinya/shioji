@@ -378,6 +378,41 @@ func (s *Server) prepareGit(in domain.Submission, launch domain.LaunchContext) (
 	launch.Head = status.Head
 	return launch, nil
 }
+
+// --raw supplies file identity even for empty/binary files; --numstat supplies
+// independent line counts. -z keeps tabs and newlines inside paths unambiguous.
+func parseGitChangedFiles(text string) []domain.ChangedFile {
+	files := []domain.ChangedFile{}
+	kinds := map[string]string{}
+	records := strings.Split(text, "\x00")
+	for i := 0; i < len(records); i++ {
+		record := records[i]
+		if strings.HasPrefix(record, ":") && i+1 < len(records) {
+			fields := strings.Fields(record)
+			i++
+			if len(fields) == 5 && len(fields[4]) > 0 {
+				kinds[records[i]] = map[byte]string{'A': "add", 'D': "delete", 'M': "update", 'T': "update"}[fields[4][0]]
+			}
+			continue
+		}
+		parts := strings.SplitN(record, "\t", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		file := domain.ChangedFile{Path: parts[2]}
+		a, ae := strconv.Atoi(parts[0])
+		d, de := strconv.Atoi(parts[1])
+		if ae == nil && de == nil {
+			file.Added, file.Removed = &a, &d
+		}
+		files = append(files, file)
+	}
+	for i := range files {
+		files[i].Kind = kinds[files[i].Path]
+	}
+	return files
+}
+
 func (s *Server) changedFiles(q protocol.GitQuery) ([]domain.ChangedFile, error) {
 	status, err := s.gitStatus(q)
 	if err != nil || !status.Applicable {
@@ -385,27 +420,11 @@ func (s *Server) changedFiles(q protocol.GitQuery) ([]domain.ChangedFile, error)
 	}
 	files := []domain.ChangedFile{}
 	if status.Head != "" {
-		out, e := gitRun(s.ctx, status.Checkout, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--numstat", "-z", "HEAD", "--")
+		out, e := gitRun(s.ctx, status.Checkout, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--raw", "--numstat", "-z", "HEAD", "--")
 		if e != nil {
 			return nil, e
 		}
-		for _, line := range strings.Split(out, "\x00") {
-			if line == "" {
-				continue
-			}
-			parts := strings.SplitN(line, "\t", 3)
-			if len(parts) != 3 {
-				continue
-			}
-			f := domain.ChangedFile{Path: parts[2]}
-			a, ae := strconv.Atoi(parts[0])
-			d, de := strconv.Atoi(parts[1])
-			if ae == nil && de == nil {
-				f.Added = &a
-				f.Removed = &d
-			}
-			files = append(files, f)
-		}
+		files = parseGitChangedFiles(out)
 	}
 	args := []string{"ls-files", "--others", "--exclude-standard", "-z"}
 	if status.Head == "" {
@@ -417,7 +436,7 @@ func (s *Server) changedFiles(q protocol.GitQuery) ([]domain.ChangedFile, error)
 	}
 	for _, path := range strings.Split(out, "\x00") {
 		if path != "" {
-			files = append(files, domain.ChangedFile{Path: path})
+			files = append(files, domain.ChangedFile{Path: path, Kind: "add"})
 		}
 	}
 	if len(files) > 500 {

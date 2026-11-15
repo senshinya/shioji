@@ -61,6 +61,19 @@ func TestQueueDurableFIFOEditingAndAtomicDispatch(t *testing.T) {
 	if err = s.SetOperation(next.OperationID, "confirmed", ""); err != nil {
 		t.Fatal(err)
 	}
+	events, err := s.Events(0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := 0
+	for _, event := range events {
+		if event.Type == "submission" && event.Item != nil && event.Item.Kind == "user" && event.Item.ID == "input:"+next.OperationID {
+			fresh++
+		}
+	}
+	if fresh != 1 {
+		t.Fatal("queue dispatch needs one fresh user submission event", fresh)
+	}
 	s.Apply(session.ID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + next.OperationID, Kind: "user", Text: next.Text, Status: "sent", Final: true}})
 	q, _ = s.Queue(session.ID)
 	d, _ = s.Session(session.ID, 0, 100)

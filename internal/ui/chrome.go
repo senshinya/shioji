@@ -15,7 +15,9 @@ var openAIBlossomSVG []byte
 var openAIBlossom = n.MustParseSVG(openAIBlossomSVG)
 
 var searchIcon = svg("M14 14l4 4M15 8.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0")
-var settingsIcon = svg("M8 2h4l.6 2.2 2 .9 2-.8 2 3.4-1.7 1.6v2.3l1.7 1.5-2 3.5-2-.8-2 .9L12 18H8l-.6-2.2-2-.9-2 .8-2-3.5 1.7-1.5V8.4L1.4 6.8l2-3.4 2 .8 2-.9zM13 10a3 3 0 1 1-6 0 3 3 0 0 1 6 0")
+
+// Eight equally spaced teeth keep the visible contour square in a 16px slot.
+var settingsIcon = svg("M16.18 8.34 18.12 8.86 18.12 11.14 16.18 11.66 15.54 13.2 16.55 14.94 14.94 16.55 13.2 15.54 11.66 16.18 11.14 18.12 8.86 18.12 8.34 16.18 6.8 15.54 5.06 16.55 3.45 14.94 4.46 13.2 3.82 11.66 1.88 11.14 1.88 8.86 3.82 8.34 4.46 6.8 3.45 5.06 5.06 3.45 6.8 4.46 8.34 3.82 8.86 1.88 11.14 1.88 11.66 3.82 13.2 4.46 14.94 3.45 16.55 5.06 15.54 6.8ZM13 10a3 3 0 1 1-6 0 3 3 0 0 1 6 0")
 
 // Frozen paths retain their original 24px coordinate system.
 func designIcon(path string) *n.SVG {

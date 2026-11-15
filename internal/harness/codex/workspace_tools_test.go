@@ -50,11 +50,13 @@ func TestWorkspaceToolInspectionSources(t *testing.T) {
 }
 
 func TestWorkspaceToolInspectionNativeSessionDoesNotRequireAModelTurn(t *testing.T) {
+	// Register the directory cleanup before the runtime cleanup: Codex can
+	// still populate its project plugin cache until the process has exited.
+	cwd := t.TempDir()
 	peer := localToolService(t, false)
 	r := nativeToolRuntime(t, peer.URL+"/mcp")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cwd := t.TempDir()
 	var created struct{ Thread struct{ ID string } }
 	if err := r.call(ctx, "thread/start", map[string]any{"cwd": cwd, "approvalPolicy": "never", "sandbox": "read-only"}, &created); err != nil {
 		t.Fatal(err)

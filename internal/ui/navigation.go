@@ -338,7 +338,7 @@ func (v *View) navigationRow(c *n.Context, t *n.Theme, r navigationRow) {
 	case navigationPinnedHeading:
 		n.Row(c).Height(28).Padding(8, 8, 0, 8).Opacity(r.presence).Children(func() { n.Text(c, "置顶").FontSize(11).FixedLineHeight(16).TextColor(t.TextMuted) })
 	case navigationWorkspaceHeading:
-		n.Row(c).Height(32).Padding(8, 2, 0, 8).AlignItems(n.Center).Transform(shift).Children(func() {
+		n.Row(c).Height(32).Padding(8, 0, 0, 6).AlignItems(n.Center).Transform(shift).Children(func() {
 			n.Text(c, "工作区").FontSize(11).FixedLineHeight(16).TextColor(t.TextMuted).Grow(1)
 			iconButton(c, moreActionsIcon, "工作区菜单").Size(24, 24).Menu(func(menu *n.Menu) {
 				if menu.Item("显示已归档").Checked(v.showArchived).Chosen() {
@@ -379,7 +379,7 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 	if finishing {
 		c.AnimationFrame()
 	}
-	row := control(c, 8).FillWidth().Height(28).MarginY(1).Padding(4, 0, 4, 20).Radius(8).Label(s.Title).Tooltip(r.workspace.Name + " · " + m.DeviceName(r.ref.DeviceID))
+	row := control(c, 8).FillWidth().Height(28).MarginY(1).Padding(4, 0, 4, 20).Radius(8).Label(s.Title)
 	shift := v.navigationOffset(c, r.key())
 	row.Transform(n.Translation(0, shift))
 	if p := min(r.presence, v.sessionEntryProgress(c, s.ID, false)); p < 1 {
@@ -415,7 +415,13 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 				color = t.Text
 			}
 			animation := motionAnimation(c, 160*time.Millisecond)
-			n.Text(c, s.Title).SingleLine().Grow(1).MinWidth(0).FontSize(13).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: &animation}).TextColor(color)
+			title := n.Text(c, s.Title).SingleLine().Grow(1).MinWidth(0).FontSize(13).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: &animation}).TextColor(color)
+			if title.Hovered() {
+				width, _ := n.ShapeText(s.Title, n.Font{Family: t.Font, Size: 13}, 0).Size()
+				if bounds := title.LayoutBounds(); bounds.W > 0 && width > bounds.W {
+					title.Tooltip(s.Title)
+				}
+			}
 			if count := v.pendingCount(s.ID); count > 0 {
 				n.Text(c, fmt.Sprint(count)).Font("Menlo").FontSize(11).Width(16).TextAlign(n.End)
 			}

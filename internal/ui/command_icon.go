@@ -7,9 +7,8 @@ import (
 	n "github.com/egoist/mygo/ui"
 )
 
-// The two command glyphs share their visible height and center in the 20-DIP
-// viewBox. Other terminal controls retain their existing icon.
-var commandTerminalIcon = svg("M3 3l7 7-7 7M11 17h6")
+// Keep the prompt compact beside its underscore in the 20-DIP viewBox.
+var commandTerminalIcon = svg("M4 5l5 5-5 5M11 15h6")
 var gitCommandIcon = svg("M6 7v6M6 12h2a6 5 0 0 0 6-5M8 5a2 2 0 1 1-4 0a2 2 0 1 1 4 0M16 5a2 2 0 1 1-4 0a2 2 0 1 1 4 0M8 15a2 2 0 1 1-4 0a2 2 0 1 1 4 0")
 
 func commandActivityIcon(command string) *n.SVG {

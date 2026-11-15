@@ -642,7 +642,7 @@ func (v *View) notice(c *n.Context, t *n.Theme) {
 	if v.Model.SessionID != "" {
 		gap = 8
 	}
-	frame := n.Column(c.Key("conversation-notice:"+v.Model.SessionID)).FillWidth().MaxWidth(736).Clip().Margin(-gap, 0, 0, 0)
+	frame := n.Column(c.Key("conversation-notice:"+v.Model.SessionID)).FillWidth().MaxWidth(736).Clip().Background(t.Background).Margin(-gap, 0, 0, 0)
 	retained := n.Local(frame, "message", func() string { return message })
 	if message != "" {
 		*retained = message
@@ -1283,9 +1283,10 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	v.conversationFindBar(c, t, state.Bounds(c).W)
 	dock := n.Column(c.Key("conversation-dock")).Absolute().Left(0).Right(0).Bottom(8).PaddingX(18).AlignItems(n.Center).Gap(8).Label("会话底部面板")
 	dock.Draw(func(p *n.Painter, r n.Rect) {
-		// Cover the floating cards' corners, gaps and bottom clearance. Leave
-		// the native scrollbar gutter uncovered along the pane's edge.
-		p.Fill(n.Rect{X: r.X, Y: r.Y, W: max(0, r.W-conversationScrollbarGutter), H: r.H + 8}, t.Background, 0)
+		// Cards paint their own opaque rounded surfaces. Only cover the
+		// bottom clearance, so their outside corners remain open to history
+		// during resizing too. Leave the native scrollbar gutter uncovered.
+		p.Fill(n.Rect{X: r.X, Y: r.Y + r.H, W: max(0, r.W-conversationScrollbarGutter), H: 8}, t.Background, 0)
 	})
 	// Native wrapping and question disclosure determine the complete dock height.
 	invalidate := c.Services().Invalidate

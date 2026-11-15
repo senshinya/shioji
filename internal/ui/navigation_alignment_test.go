@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"image"
 	"math"
 	"shioji/internal/domain"
 	"testing"
@@ -9,6 +10,66 @@ import (
 
 	n "github.com/egoist/mygo/ui"
 )
+
+func TestWorkspaceHeadingSharesTheWorkspaceRowVisibleEdges(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, scale := range []float32{1, 2} {
+			for _, width := range []int{940, 1280} {
+				for _, device := range []string{"MacMini at Home", "这台 Mac"} {
+					t.Run(fmt.Sprintf("dark=%v/scale=%g/width=%d/device=%s", dark, scale, width, device), func(t *testing.T) {
+						m := navigationFixture()
+						m.LocalDeviceName = device
+						m.Snapshot.Workspaces[0].Name = "shioji"
+						v := New(m, nil, "")
+						ui := n.NewTester(v.View, width, 600)
+						ui.SetDark(dark)
+						ui.SetScale(scale)
+						ui.Advance(time.Second)
+						caption, _ := ui.Find("工作区")
+						workspace, _ := ui.Find("shioji")
+						deviceBox, _ := ui.Find(device)
+						add, _ := ui.Find("创建工作区")
+						list, _ := ui.Find("工作区与会话")
+						im := ui.Image()
+						bg := im.RGBAAt(int((caption.X+caption.W/2)*scale), int((caption.Y+caption.H/2)*scale))
+						ink := func(r n.Rect) image.Rectangle {
+							t.Helper()
+							left, top, right, bottom := im.Bounds().Max.X, im.Bounds().Max.Y, -1, -1
+							for y := int(r.Y * scale); y < int((r.Y+r.H)*scale); y++ {
+								for x := int(r.X * scale); x < int((r.X+r.W)*scale); x++ {
+									p := im.RGBAAt(x, y)
+									if max(absChannel(p.R, bg.R), absChannel(p.G, bg.G), absChannel(p.B, bg.B)) > 30 {
+										left, top, right, bottom = min(left, x), min(top, y), max(right, x), max(bottom, y)
+									}
+								}
+							}
+							if right < left {
+								t.Fatal("missing native ink", r)
+							}
+							return image.Rect(left, top, right+1, bottom+1)
+						}
+						labelInk := ink(caption)
+						arrowInk := ink(n.Rect{X: workspace.X, Y: workspace.Y, W: 20, H: workspace.H})
+						plusInk, deviceInk := ink(add), ink(deviceBox)
+						saveNativeSkillImage(t, ui, fmt.Sprintf("workspace-edges-dark-%v-scale-%g-width-%d-%s.png", dark, scale, width, device))
+						if delta := float64(labelInk.Min.X-arrowInk.Min.X) / float64(scale); math.Abs(delta) > 1 {
+							t.Errorf("heading and disclosure have different visible left edges: %g DIP", delta)
+						}
+						if delta := float64(plusInk.Max.X-deviceInk.Max.X) / float64(scale); math.Abs(delta) > 1 {
+							t.Errorf("plus and device have different visible right edges: %g DIP", delta)
+						}
+						// The list is inset by the panel's 8 DIP padding and 1 DIP border.
+						left := float64(labelInk.Min.X)/float64(scale) - float64(list.X-9)
+						right := float64(list.X+list.W+9) - float64(plusInk.Max.X)/float64(scale)
+						if math.Abs(left-right) > 1 {
+							t.Errorf("heading has unequal visible sidebar margins: left=%g right=%g", left, right)
+						}
+					})
+				}
+			}
+		}
+	}
+}
 
 // An empty trailing action slot must not supply the row's text baseline.
 // Check actual native ink, including hover/pin changes and Retina rendering.

@@ -105,6 +105,9 @@ func (v *View) recovery(c *n.Context, t *n.Theme, d domain.SessionDetail) {
 	if shown == 0 {
 		return
 	}
+	if *mode == domain.RecoveryChecking {
+		card.Background(t.Background)
+	}
 	busy := state.Busy || m.Connected && info != nil && info.Phase == "checking"
 	disabled := busy || !m.Connected || m.WorkerMinor < 7
 	card.Children(func() {

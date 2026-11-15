@@ -423,7 +423,7 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 				fileTop = headerHeight + 38
 			}
 
-			n.Column(c.Key("inspector-list")).FillWidth().FillHeight().IgnoreInput(fileOpen).Children(func() {
+			n.Column(c.Key("inspector-list")).FillWidth().Grow(1).MinHeight(0).IgnoreInput(fileOpen).Children(func() {
 				if !modern {
 					header(false)
 				}
@@ -440,20 +440,33 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 					file := state.Files[i]
 					row := control(c, 0).FillWidth().Height(28).PaddingX(12).Label("查看文件:" + file.Path).Children(func() {
 						n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
-							n.Text(c, file.Path).SingleLine().Grow(1).FontSize(12).Tooltip(file.Path)
+							n.Text(c, file.Path).SingleLine().Grow(1).MinWidth(0).FontSize(12).Tooltip(file.Path)
 							added, deleted, _, _ := gitColors(t)
-							a, d := "—", "—"
-							if file.Added != nil {
-								a = fmt.Sprint(*file.Added)
+							a, d := "", ""
+							if file.Added != nil && *file.Added != 0 {
+								a = fmt.Sprintf("+%d", *file.Added)
 							}
-							if file.Removed != nil {
-								d = fmt.Sprint(*file.Removed)
+							if file.Removed != nil && *file.Removed != 0 {
+								d = fmt.Sprintf("−%d", *file.Removed)
 							}
-							n.Text(c, "+"+a).Font("Menlo").FontSize(11).Width(34).TextAlign(n.End).TextColor(added)
-							removed := n.Text(c, "−"+d).Font("Menlo").FontSize(11).Width(34).TextAlign(n.End).TextColor(deleted)
-							if file.Removed != nil && *file.Removed == 0 {
-								removed.Opacity(0)
+							leftColor, rightColor := added, deleted
+							switch file.Kind {
+							case "add":
+								a, d, rightColor = "新增", "—", added
+								if file.Added != nil {
+									d = fmt.Sprintf("+%d", *file.Added)
+								}
+							case "delete":
+								a, d, leftColor = "删除", "—", deleted
+								if file.Removed != nil {
+									d = fmt.Sprintf("−%d", *file.Removed)
+								}
 							}
+							if a == "" && d == "" {
+								d, rightColor = "—", t.TextMuted
+							}
+							n.Text(c, a).Font("Menlo").FontSize(11).FixedLineHeight(18).Width(34).Shrink(0).TextAlign(n.End).TextColor(leftColor)
+							n.Text(c, d).Font("Menlo").FontSize(11).FixedLineHeight(18).Width(34).Shrink(0).TextAlign(n.End).TextColor(rightColor)
 						})
 					})
 					if row.Clicked() {

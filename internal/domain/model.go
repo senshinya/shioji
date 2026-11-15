@@ -310,6 +310,7 @@ type GitStatus struct {
 }
 type ChangedFile struct {
 	Path    string `json:"path"`
+	Kind    string `json:"kind,omitempty"`
 	Added   *int   `json:"added,omitempty"`
 	Removed *int   `json:"removed,omitempty"`
 }

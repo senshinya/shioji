@@ -347,7 +347,9 @@ func queueOutcome(tx *sql.Tx, op domain.Operation) error {
 				if e = putItem(tx, op.SessionID, &history); e != nil {
 					return e
 				}
-				if _, e = journal(tx, domain.Event{Type: "item.upsert", SessionID: op.SessionID, Item: &history}); e != nil {
+				// This is the queued input's first sent-message event, distinct
+				// from later harness updates to the same historical user item.
+				if _, e = journal(tx, domain.Event{Type: "submission", SessionID: op.SessionID, Item: &history}); e != nil {
 					return e
 				}
 				q.Items = append(q.Items[:i], q.Items[i+1:]...)
