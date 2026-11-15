@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strings"
@@ -88,6 +89,127 @@ func TestRecentFeedbackKeyboardReplaysSelectedRow(t *testing.T) {
 	}
 }
 
+func TestRecentFeedbackClearAllKeepsDraftAndAcceptsNewMessages(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		v, ui, _ := recentFeedbackFixture(t, dark, 1100)
+		if err := ui.Click("清空所有消息"); err != nil {
+			t.Fatal(err)
+		}
+		ui.Advance(400 * time.Millisecond)
+		if !v.feedbackState().open || !ui.HasText("暂无消息") || len(v.feedbackState().messages) != 0 || v.feedbackState().replaying != "" {
+			t.Fatal("clear did not leave the recent list empty and open")
+		}
+		if v.Model.SessionID != "other" || v.Model.Drafts["session:other"] != "right draft" {
+			t.Fatal("clearing messages changed the selected session or draft")
+		}
+		ui.Click("最近消息")
+		ui.Advance(300 * time.Millisecond)
+		ui.Click("最近消息")
+		ui.Advance(300 * time.Millisecond)
+		if !ui.HasText("暂无消息") || ui.HasText(recentOldTitle) || ui.HasText(recentNewTitle) {
+			t.Fatal("cleared messages returned after reopening")
+		}
+		v.Model.ReportFeedback(app.Feedback{ID: "after-clear", Title: "清空后新消息", Kind: app.FeedbackSuccess})
+		ui.Frame()
+		ui.Advance(300 * time.Millisecond)
+		if !ui.HasText("清空后新消息") || ui.HasText("暂无消息") || len(v.feedbackState().messages) != 1 {
+			t.Fatal("clearing prevents new feedback from appearing")
+		}
+	}
+}
+
+func TestRecentFeedbackClearPreservesActiveWait(t *testing.T) {
+	v, ui, _ := recentFeedbackFixture(t, false, 1100)
+	s := v.feedbackState()
+	s.put(app.Feedback{ID: "active-wait", Title: "仍在准备"}, ui.Now(), true)
+	s.replaying = feedbackKey(s.messages[0].Feedback)
+	ui.Frame()
+	if err := ui.Click("清空所有消息"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(400 * time.Millisecond)
+	if len(s.messages) != 1 || !s.messages[0].waiting || s.messages[0].ID != "active-wait" || !ui.HasText("暂无消息") || s.replaying != "" {
+		t.Fatal("clear discarded the active operation or retained history", s.messages)
+	}
+}
+
+func TestRecentFeedbackClearFadesBeforeCollapsing(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		_, ui, _ := recentFeedbackFixture(t, dark, 1100)
+		row, _ := ui.Find(recentOldTitle)
+		if err := ui.Click("清空所有消息"); err != nil {
+			t.Fatal(err)
+		}
+		ui.Move(0, 0)
+		ui.Advance(40 * time.Millisecond)
+		fading := contextPixels(ui, row)
+		first, _ := ui.Find("最近消息列表")
+		ui.Advance(40 * time.Millisecond)
+		if bytes.Equal(fading, contextPixels(ui, row)) {
+			t.Fatal("clearing removes messages before their exit can paint")
+		}
+		ui.Advance(100 * time.Millisecond)
+		middle, _ := ui.Find("最近消息列表")
+		ui.Advance(220 * time.Millisecond)
+		end, _ := ui.Find("最近消息列表")
+		if first.H <= middle.H || middle.H <= end.H || !ui.HasText("暂无消息") {
+			t.Fatal("the list height snaps instead of collapsing after the fade", first, middle, end)
+		}
+	}
+}
+
+func TestRecentFeedbackClearMotionKeepsNewMessageAndDoesNotReplayOnReopen(t *testing.T) {
+	v, ui, _ := recentFeedbackFixture(t, false, 1100)
+	ui.Click("清空所有消息")
+	ui.Advance(40 * time.Millisecond)
+	v.Model.ReportFeedback(app.Feedback{ID: "older", ConnectionID: "local", WorkspaceID: "w", SessionID: "s", Title: "同来源的新结果", Kind: app.FeedbackSuccess})
+	ui.Frame()
+	if !ui.HasText("同来源的新结果") {
+		t.Fatal("new feedback is hidden by an in-flight clear")
+	}
+	ui.Click("最近消息")
+	ui.Advance(30 * time.Millisecond)
+	ui.Click("最近消息")
+	ui.Advance(300 * time.Millisecond)
+	if ui.HasText(recentOldTitle) || ui.HasText(recentNewTitle) || !ui.HasText("同来源的新结果") || len(v.feedbackState().messages) != 1 {
+		t.Fatal("reopening resurrects cleared feedback or removes the new result")
+	}
+}
+
+func TestRecentFeedbackClearReduceMotion(t *testing.T) {
+	_, ui, _ := recentFeedbackFixture(t, false, 1100)
+	ui.SetPreferences(n.Preferences{ReduceMotion: true})
+	ui.Click("清空所有消息")
+	ui.Advance(70 * time.Millisecond)
+	first, _ := ui.Find("最近消息列表")
+	ui.Advance(100 * time.Millisecond)
+	end, _ := ui.Find("最近消息列表")
+	if first.H != end.H || ui.HasText(recentOldTitle) || !ui.HasText("暂无消息") {
+		t.Fatal("Reduce Motion still moves the cleared list", first, end)
+	}
+}
+
+func TestRecentFeedbackClearLongScrolledList(t *testing.T) {
+	v, ui, _ := recentFeedbackFixture(t, false, 1100)
+	for i := 0; i < 20; i++ {
+		v.Model.ReportFeedback(app.Feedback{ID: fmt.Sprint("long-", i), Title: fmt.Sprint("历史消息 ", i)})
+	}
+	ui.Frame()
+	ui.Advance(300 * time.Millisecond)
+	list, _ := ui.Find("最近消息列表")
+	if list.H != 400 {
+		t.Fatal("recent history is not bounded", list)
+	}
+	ui.Scroll(list.X+list.W/2, list.Y+list.H/2, 0, 10000)
+	ui.Advance(300 * time.Millisecond)
+	ui.Click("清空所有消息")
+	ui.Advance(400 * time.Millisecond)
+	list, _ = ui.Find("最近消息列表")
+	if list.H != 36 || !ui.HasText("暂无消息") || len(v.feedbackState().messages) != 0 {
+		t.Fatal("scrolled history does not collapse to the empty state", list)
+	}
+}
+
 func TestRecentFeedbackReplayRestartsExpiredSuccess(t *testing.T) {
 	m := layoutModel()
 	v := New(m, nil, "")
@@ -143,7 +265,7 @@ func TestRecentFeedbackNativeRecording(t *testing.T) {
 			t.Fatal(label, err)
 		}
 	}
-	for frame := 0; frame < 240; frame++ {
+	for frame := 0; frame < 300; frame++ {
 		switch frame {
 		case 30:
 			click(recentOldTitle)
@@ -164,11 +286,21 @@ func TestRecentFeedbackNativeRecording(t *testing.T) {
 			click("关闭消息")
 		case 210:
 			click("最近消息")
+		case 235:
+			click("清空所有消息")
+		case 250:
+			if !ui.HasText("暂无消息") {
+				t.Fatal("recording did not show the cleared list")
+			}
+			saveNativeSkillImage(t, ui, "empty.png")
+		case 265:
+			v.Model.ReportFeedback(app.Feedback{ID: "after-clear", Title: "清空后新消息", Body: "新操作结果仍会正常显示。", Kind: app.FeedbackSuccess})
+			ui.Frame()
 		}
 		ui.Advance(time.Second / 30)
 		saveNativeSkillImage(t, ui, fmt.Sprintf("frame-%04d.png", frame))
 	}
-	if v.Model.SessionID != "other" || v.Model.Drafts["session:other"] != "right draft" || len(v.feedbackState().messages) != 2 {
+	if v.Model.SessionID != "other" || v.Model.Drafts["session:other"] != "right draft" || len(v.feedbackState().messages) != 1 || !ui.HasText("清空后新消息") {
 		t.Fatal("recording changed source, draft, or history")
 	}
 }

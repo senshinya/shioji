@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 
 var feedbackBell = designIcon("M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4")
 var feedbackInfo = designIcon("M12 8h.01M12 12v5M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0")
+var feedbackTrash = designIcon("M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7")
 
 type feedbackSource struct{ connection, workspace, session string }
 
@@ -45,12 +47,14 @@ type feedbackWait struct {
 	attachmentToken, gitKey string
 }
 type conversationFeedback struct {
-	messages    []conversationMessage
-	connections map[string]feedbackConnection
-	waits       map[feedbackSource]feedbackWait
-	open        bool
-	replaying   string
-	focusRecent bool
+	messages     []conversationMessage
+	clearing     []conversationMessage
+	clearStarted time.Time
+	connections  map[string]feedbackConnection
+	waits        map[feedbackSource]feedbackWait
+	open         bool
+	replaying    string
+	focusRecent  bool
 }
 
 func (v *View) feedbackState() *conversationFeedback {
@@ -563,27 +567,68 @@ func (v *View) feedbackButton(c *n.Context, t *n.Theme) {
 		state.open = !state.open
 		state.focusRecent = state.open
 	}
+	const clearFade = 120 * time.Millisecond
+	if !state.open || c.Preferences().ReduceMotion || c.Now().Sub(state.clearStarted) >= clearFade {
+		state.clearing = nil
+	}
 	popover(c.Key("recent-feedback"), button, &state.open, func(panel n.Element) {
 		panel.Width(360).MaxWidth(360).Padding(4).Radius(10).Border(1, t.Border).Background(raised(t)).Children(func() {
-			n.Column(c).FillWidth().Height(28).PaddingX(8).Justify(n.Center).Children(func() {
-				n.Text(c, "最近消息").FontSize(13).FixedLineHeight(20)
+			n.Row(c).FillWidth().Height(28).PaddingStart(8).AlignItems(n.Center).Children(func() {
+				n.Text(c, "最近消息").FontSize(13).FixedLineHeight(20).Grow(1)
+				empty := !slices.ContainsFunc(state.messages, func(message conversationMessage) bool { return !message.waiting })
+				if iconButton(c, feedbackTrash, "清空所有消息").Disabled(empty).Clicked() {
+					if !c.Preferences().ReduceMotion {
+						state.clearing = slices.DeleteFunc(slices.Clone(state.messages), func(message conversationMessage) bool { return message.waiting })
+						state.clearStarted = c.Now()
+					}
+					state.messages = slices.DeleteFunc(state.messages, func(message conversationMessage) bool { return !message.waiting })
+					state.replaying, state.focusRecent = "", false
+				}
 			})
-			n.Scroll(c).FillWidth().MaxHeight(400).Children(func() {
-				n.Column(c).FillWidth().Gap(2).FocusGroup(n.Vertical).Children(func() {
+			// Retain only a noninteractive painting copy during the fade. The
+			// authoritative history is already empty, so new results stay independent.
+			messages := state.messages
+			alpha := float32(1)
+			if len(state.clearing) > 0 {
+				messages = slices.Concat(state.clearing, state.messages)
+				alpha = 1 - n.EaseOut(float32(c.Now().Sub(state.clearStarted))/float32(clearFade))
+				c.AnimationFrame()
+			}
+			count := 0
+			for _, message := range messages {
+				if !message.waiting {
+					count++
+				}
+			}
+			scroll := n.Scroll(c.Key("recent-list")).FillWidth().Label("最近消息列表")
+			animation := motionAnimation(c, 180*time.Millisecond)
+			if c.Preferences().ReduceMotion {
+				animation.Duration = 0
+			}
+			scroll.Height(scroll.AnimateTo("height", float32(min(400, max(36, count*44))), animation)).Children(func() {
+				n.Column(c).FillWidth().Gap(0).FocusGroup(n.Vertical).Children(func() {
 					empty := true
-					for i := len(state.messages) - 1; i >= 0; i-- {
-						message := state.messages[i]
+					for i := len(messages) - 1; i >= 0; i-- {
+						message := messages[i]
 						if message.waiting {
 							continue
 						}
 						key := feedbackKey(message.Feedback)
+						clearing := i < len(state.clearing)
+						if clearing {
+							key = "cleared:" + key
+						}
 						source := root.feedbackScopeLabel(message.Feedback)
 						summary := strings.Join(strings.Fields(message.Body), " ")
 						if summary == "" {
 							summary = source
 						}
-						row := control(c.Key(key), 6).FillWidth().Height(56).Padding(8).Label(message.Title).Description(source).Tooltip(source)
-						if empty && state.focusRecent {
+						row := control(c.Key(key), 6).FillWidth().Height(44).Padding(4, 8).Label(message.Title).Description(source).Tooltip(source)
+						n.Inert(row, clearing)
+						if clearing {
+							row.Opacity(alpha)
+						}
+						if empty && state.focusRecent && !clearing {
 							row.AutoFocus()
 							state.focusRecent = false
 						}
@@ -596,9 +641,9 @@ func (v *View) feedbackButton(c *n.Context, t *n.Theme) {
 										icon = check
 									}
 									inlineSymbol(c, icon, message.Title, n.Font{Family: t.Font, Size: 13, Weight: 400}, 14, t.TextMuted)
-									n.Text(c, message.Title).FontSize(13).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().Ellipsis("…")
+									n.Text(c, message.Title).FontSize(13).FixedLineHeight(18).Grow(1).MinWidth(0).SingleLine().Ellipsis("…")
 								})
-								n.Text(c, summary).FillWidth().PaddingStart(22).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine().Ellipsis("…")
+								n.Text(c, summary).FillWidth().PaddingStart(22).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted).SingleLine().Ellipsis("…")
 							})
 						})
 						if row.Clicked() {
@@ -607,7 +652,7 @@ func (v *View) feedbackButton(c *n.Context, t *n.Theme) {
 						}
 					}
 					if empty {
-						n.Text(c, "暂无消息").Padding(8).FontSize(12).TextColor(t.TextMuted)
+						n.Text(c.Key("empty"), "暂无消息").Padding(8).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Transition(fadeMotion(c, 120*time.Millisecond))
 					}
 				})
 			})
