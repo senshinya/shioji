@@ -1,7 +1,9 @@
 package app
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"shioji/internal/domain"
 	"shioji/internal/transport"
 	"slices"
@@ -29,6 +31,9 @@ type DeviceTiming struct {
 }
 
 type DeviceState struct {
+	// Transient access to independent streams, owned by this device controller.
+	// Saved SSH routes cannot hold a live Tailnet bridge.
+	dialStream      func(context.Context) (net.Conn, error)
 	Health          *domain.DeviceHealth
 	Paths           []DevicePathStatus
 	WorkerService   *WorkerService

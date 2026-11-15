@@ -35,12 +35,7 @@ func (t AttachmentTarget) FetchURL(ctx context.Context, directory, raw string, p
 		if err != nil {
 			return nil, err
 		}
-		return protocol.OpenTCP(call, func(next context.Context) (net.Conn, error) {
-			if t.SSH != nil {
-				return t.SSH.Dial(next)
-			}
-			return (&net.Dialer{}).DialContext(next, "unix", filepath.Join(t.Directory, "worker.sock"))
-		}, t.DeviceID, portforward.Target{Host: host, Port: number})
+		return protocol.OpenTCP(call, t.openStream, t.DeviceID, portforward.Target{Host: host, Port: number})
 	}}
 	defer transport.CloseIdleConnections()
 	return downloadLinkHTTP(ctx, directory, raw, &http.Client{Transport: transport}, progress)

@@ -18,6 +18,7 @@ import (
 type AttachmentTarget struct {
 	Directory, DeviceID, WorkspaceID string
 	SSH                              *transport.SSH
+	dial                             func(context.Context) (net.Conn, error)
 }
 
 func (m *Model) AttachmentTarget(directory, workspace string) (AttachmentTarget, error) {
@@ -27,10 +28,17 @@ func (m *Model) AttachmentTarget(directory, workspace string) (AttachmentTarget,
 		return target, errors.New("附件所属设备不可用")
 	}
 	if key != "local" {
+		if state := m.DeviceStates[key]; state != nil {
+			target.dial = state.dialStream
+		}
 		for _, c := range m.Connections {
 			if c.ID == key {
-				s := c.ActiveSSH()
-				target.SSH = &s
+				// A managed stream owns route selection, including any healthy
+				// fallback. Do not expose a second saved route for UI preflight.
+				if target.dial == nil {
+					s := c.ActiveSSH()
+					target.SSH = &s
+				}
 				return target, nil
 			}
 		}
@@ -38,14 +46,17 @@ func (m *Model) AttachmentTarget(directory, workspace string) (AttachmentTarget,
 	}
 	return target, nil
 }
-func (t AttachmentTarget) connect(ctx context.Context) (*protocol.Client, error) {
-	var conn net.Conn
-	var err error
-	if t.SSH != nil {
-		conn, err = t.SSH.Dial(ctx)
-	} else {
-		conn, err = (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(t.Directory, "worker.sock"))
+func (t AttachmentTarget) openStream(ctx context.Context) (net.Conn, error) {
+	if t.dial != nil {
+		return t.dial(ctx)
 	}
+	if t.SSH != nil {
+		return t.SSH.Dial(ctx)
+	}
+	return (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(t.Directory, "worker.sock"))
+}
+func (t AttachmentTarget) connect(ctx context.Context) (*protocol.Client, error) {
+	conn, err := t.openStream(ctx)
 	if err != nil {
 		return nil, err
 	}

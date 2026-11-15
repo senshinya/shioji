@@ -166,6 +166,9 @@ func (c *Controller) startDevice(ctx context.Context, key string, source *device
 			m.DeviceStates[key] = &DeviceState{}
 		}
 		m.DeviceStates[key].sourceToken = token
+		if source.controller.paths != nil {
+			m.DeviceStates[key].dialStream = source.controller.paths.dialStream
+		}
 		m.DeviceStates[key].Connected = false
 		m.DeviceStates[key].ConnectionEpoch = ""
 		m.RefreshDevices()

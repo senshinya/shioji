@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"net"
 	"shioji/internal/domain"
 	"shioji/internal/transport"
 )
@@ -10,6 +11,7 @@ import (
 type StorageTarget struct {
 	Directory, DeviceID string
 	SSH                 *transport.SSH
+	dial                func(context.Context) (net.Conn, error)
 }
 
 func (m *Model) StorageTarget(directory, key string) (StorageTarget, error) {
@@ -19,10 +21,13 @@ func (m *Model) StorageTarget(directory, key string) (StorageTarget, error) {
 	}
 	t := StorageTarget{Directory: directory, DeviceID: state.Snapshot.DeviceID}
 	if key != "local" {
+		t.dial = state.dialStream
 		for _, c := range m.Connections {
 			if c.ID == key {
-				ssh := c.ActiveSSH()
-				t.SSH = &ssh
+				if t.dial == nil {
+					ssh := c.ActiveSSH()
+					t.SSH = &ssh
+				}
 				t.DeviceID = c.DeviceID
 				return t, nil
 			}
@@ -41,7 +46,7 @@ func (m *Model) StorageTarget(directory, key string) (StorageTarget, error) {
 // result owner, never compared between this stream and its primary connection.
 func (t StorageTarget) Read(ctx context.Context, clean bool) (domain.StorageReport, error) {
 	var out domain.StorageReport
-	c, err := (AttachmentTarget{Directory: t.Directory, DeviceID: t.DeviceID, SSH: t.SSH}).connect(ctx)
+	c, err := (AttachmentTarget{Directory: t.Directory, DeviceID: t.DeviceID, SSH: t.SSH, dial: t.dial}).connect(ctx)
 	if err != nil {
 		return out, err
 	}
