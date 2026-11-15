@@ -44,8 +44,15 @@ func navButton(c *n.Context, icon *n.SVG, label string) n.Element {
 	if label == "设备" {
 		size = 12
 	}
+	return navButtonWithColors(c, icon, label, size, color, color)
+}
+
+func navButtonWithColors(c *n.Context, icon *n.SVG, label string, size float32, textColor, iconColor n.Color) n.Element {
 	return control(c, 8).FillWidth().Height(28).PaddingX(8).Justify(n.Start).Radius(8).Label(label).Children(func() {
-		inlineIconText(c, icon, label, n.Font{Family: c.Theme().Font, Size: size, Weight: 400}, 16, 8, color)
+		inlineIconText(c, icon, label, n.Font{Family: c.Theme().Font, Size: size, Weight: 400}, 16, 8, textColor).DrawObjects(func(p *n.Painter, _ int, r n.Rect) {
+			r.W = 16
+			p.Icon(icon, r, iconColor)
+		})
 	})
 }
 
@@ -53,7 +60,14 @@ func (v *View) attentionControl(c *n.Context, t *n.Theme) {
 	_, available := v.attentionSession()
 	anchor := n.Column(c.Key("attention-entry")).FillWidth()
 	anchor.Children(func() {
-		button := navButton(c, attentionIcon, "待我处理").Disabled(!available)
+		textColor, iconColor := t.TextMuted, t.TextMuted
+		if available {
+			textColor, iconColor = t.Text, n.Hex("#c99700")
+			if t.Dark {
+				iconColor = n.Hex("#c4a30a")
+			}
+		}
+		button := navButtonWithColors(c, attentionIcon, "待我处理", 13, textColor, iconColor).Disabled(!available)
 		if !available {
 			button.Opacity(.5).Description("无待处理会话")
 		}
