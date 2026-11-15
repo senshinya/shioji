@@ -54,6 +54,9 @@ func TestManualNormalStopCannotEscalateAfterReopen(t *testing.T) {
 	if scope.ForceAllowed() {
 		t.Fatal("normal stop granted force")
 	}
+	if err = scope.AcceptManualStop("operation"); err != nil {
+		t.Fatal(err)
+	}
 	if err = scope.Stop(ctx); err == nil {
 		t.Fatal("TERM-ignoring process reported stopped")
 	}

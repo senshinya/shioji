@@ -301,3 +301,37 @@ func TestWorkerMaintenanceRestartObservesAndNeverRepeatsUnknownStop(t *testing.T
 		t.Fatal("cancelled live generation admitted new execution")
 	}
 }
+
+func TestWorkerMaintenancePreparedSelectionRecoveryNeverSignals(t *testing.T) {
+	s, w := memoryWorker(t, maintenanceHarness{})
+	enableMaintenance(s)
+	d := submitIdleFixture(t, s, w, "prepared", "")
+	// Another member of the preview has not yet acquired its per-generation
+	// fence when the worker dies. No DB operation has been accepted.
+	submitIdleFixture(t, s, w, "not-yet-prepared", "")
+	cmd, log := maintenanceTool(t, s, d.Session.ID)
+	in := maintenanceInput(t, s, "before-db-commit")
+	scope, _ := s.executions.Existing(d.Session.ID)
+	if _, err := scope.BeginManualStop(in.ID, in.Targets[0].ProcessRef); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if signals, _ := os.ReadFile(log); len(signals) != 0 {
+		t.Fatal("unaccepted guard sent a shutdown signal", string(signals))
+	}
+	restarted, err := New(context.Background(), s.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	if err = cmd.Process.Signal(unix.Signal(0)); err != nil {
+		t.Fatal("recovery killed prepared scope", err)
+	}
+	if err = restarted.sessionMaintenanceAdmission(d.Session.ID); err == nil {
+		t.Fatal("orphan generation reopened execution")
+	}
+	fresh := maintenanceInput(t, restarted, "fresh-after-orphan")
+	if _, err = restarted.applyWorkerMaintenance(fresh); err != nil {
+		t.Fatal("orphan guard permanently fenced fresh explicit maintenance", err)
+	}
+}

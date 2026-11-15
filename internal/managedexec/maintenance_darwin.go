@@ -16,6 +16,7 @@ import (
 var ErrManualStillRunning = errors.New("后台环境尚未退出，未授权的强制结束不会自动执行")
 
 type manualStopState struct {
+	Accepted    bool `json:",omitempty"`
 	Operation   string
 	NormalSent  bool
 	ForceAction string
@@ -161,6 +162,55 @@ func (s *Scope) BeginManualStop(operation, expectedRef string) (func() error, er
 	}, nil
 }
 
+// AcceptManualStop opens the signal boundary only after the owning worker's
+// transaction has persisted the exact operation and all selected queues.
+func (s *Scope) AcceptManualStop(operation string) error {
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	state, err := s.load()
+	if err != nil {
+		return err
+	}
+	if state.Manual == nil || state.Manual.Operation != operation {
+		return errors.New("停止许可与已接纳操作不一致")
+	}
+	state.Manual.Accepted = true
+	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+}
+func (s *Scope) ManualStopOperation() (string, error) {
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	state, err := s.load()
+	if err != nil {
+		return "", err
+	}
+	if state.Manual == nil {
+		return "", nil
+	}
+	return state.Manual.Operation, nil
+}
+
+// Recovery releases an interrupted preparation fence, never the no-force guard.
+// A crashed generation cannot accept new input; it can be selected afresh.
+func (s *Scope) RecoverManualStop(accepted bool) error {
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	state, err := s.load()
+	if err != nil {
+		return err
+	}
+	if state.Manual == nil {
+		return nil
+	}
+	state.Active = false
+	state.Maintenance = false
+	state.Manual.Accepted = accepted
+	if !state.Manual.ForceSent {
+		state.Manual.ForceAction = ""
+	}
+	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+}
+
 func (s *Scope) ManualStopPending() (bool, error) {
 	s.manager.mu.Lock()
 	defer s.manager.mu.Unlock()
@@ -230,6 +280,7 @@ func (s *Scope) ForceManualStop(operation, action string) error {
 	if state.Manual.ForceAction == action {
 		return nil
 	}
+	state.Manual.Accepted = true
 	state.Manual.ForceAction = action
 	state.Manual.ForceSent = false
 	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
@@ -264,9 +315,9 @@ func (s *Scope) stopManual(ctx context.Context) error {
 		s.manager.mu.Unlock()
 		return err
 	}
-	if state.Manual == nil {
+	if state.Manual == nil || !state.Manual.Accepted {
 		s.manager.mu.Unlock()
-		return errors.New("人工停止记录缺失")
+		return errors.New("人工停止尚未接纳，未发送退出请求")
 	}
 	if _, err = s.inspectMaintenance(); err != nil {
 		s.manager.mu.Unlock()

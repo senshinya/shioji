@@ -184,6 +184,10 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	}
 	s.build.Managed = config.BackgroundManaged
 	s.executions = manager
+	if err = s.recoverManualGuards(); err != nil {
+		s.Close()
+		return nil, err
+	}
 	if err = s.recoverWorkerMaintenance(); err != nil {
 		listener.Close()
 		db.Close()

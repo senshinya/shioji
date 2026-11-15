@@ -236,6 +236,18 @@ func (s *Server) applyWorkerMaintenance(in domain.WorkerMaintenanceInput) (op do
 	}
 	accepted = true
 	for _, target := range op.Targets {
+		scope, e := s.executions.Existing(target.Target.SessionID)
+		if e != nil {
+			return op, e
+		}
+		if scope == nil {
+			return op, errors.New("已接纳环境记录缺失")
+		}
+		if e = scope.AcceptManualStop(op.ID); e != nil {
+			return op, e
+		}
+	}
+	for _, target := range op.Targets {
 		s.suspendMaintenanceEvents(target.Target.SessionID)
 	}
 	s.startMaintenanceTargets(op)
@@ -567,6 +579,45 @@ func (s *Server) releaseMaintenanceRuntime(id string) {
 	s.mu.Lock()
 	delete(s.bound, id)
 	s.mu.Unlock()
+}
+
+func (s *Server) recoverManualGuards() error {
+	entries, err := os.ReadDir(s.executions.Directory)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		scope, e := s.executions.Existing(entry.Name())
+		if e != nil || scope == nil {
+			continue
+		}
+		id, e := scope.ManualStopOperation()
+		if e != nil {
+			return e
+		}
+		if id == "" {
+			continue
+		}
+		op, e := s.store.WorkerMaintenance(id)
+		if e != nil && !errors.Is(e, sql.ErrNoRows) {
+			return e
+		}
+		accepted := false
+		if e == nil {
+			for _, target := range op.Targets {
+				if target.Target.SessionID == entry.Name() && target.Target.Generation == scope.Generation {
+					accepted = true
+				}
+			}
+		}
+		if e = scope.RecoverManualStop(accepted); e != nil {
+			return e
+		}
+	}
+	return nil
 }
 
 func (s *Server) recoverWorkerMaintenance() error {
