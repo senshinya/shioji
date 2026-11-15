@@ -7,7 +7,7 @@ import (
 	"shioji/internal/domain"
 )
 
-const SchemaVersion = 11
+const SchemaVersion = 12
 
 // The caller fences dispatch and commands before this final database check.
 // VACUUM INTO reads SQLite's committed snapshot, including its WAL.
