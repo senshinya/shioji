@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"shioji/internal/domain"
 	"slices"
 )
 
@@ -14,6 +15,7 @@ type ClientPreferences struct {
 	CodeFont            string                   `json:"codeFont"`
 	ReduceMotion        bool                     `json:"reduceMotion"`
 	CollapseLatestTools bool                     `json:"collapseLatestTools"`
+	HistoryPageRounds   int                      `json:"historyPageRounds"`
 	Shortcuts           ComposerShortcuts        `json:"shortcuts"`
 	Notifications       *NotificationPreferences `json:"notifications,omitempty"`
 }
@@ -52,6 +54,9 @@ func DefaultShortcuts() ComposerShortcuts {
 }
 
 func (p ClientPreferences) Normalized() ClientPreferences {
+	if p.HistoryPageRounds < 1 || p.HistoryPageRounds > domain.MaxHistoryRounds {
+		p.HistoryPageRounds = domain.DefaultHistoryRounds
+	}
 	if p.Notifications == nil {
 		p.Notifications = &NotificationPreferences{Foreground: true, Completed: true, Attention: true, Failed: true, Sound: true}
 	}

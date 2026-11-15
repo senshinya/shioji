@@ -1,0 +1,33 @@
+# Bounded conversation history loading
+
+The worker owns complete conversation history. Loading a display window does not truncate harness context or change execution state.
+
+## Behavior
+
+- With worker protocol minor 37 or later, opening a session reads the latest 20 display rounds by default. Each main-conversation user message starts a round, including an inserted/steering message within the same harness TurnID. Tools, replies, compaction and request markers do not count as separate rounds; child-agent user messages and queued drafts do not start main-conversation rounds.
+- Settings → Appearance → Conversation offers 5, 10, 20, 50 or 100 rounds per load. The choice is client-local and persisted, and controls initial reads, earlier/later pages, direct jumps and return-to-latest. Changes apply to subsequent reads without discarding the current reading position or already browsed pages.
+- A round is never cut at an item-count limit. Large windows are transmitted automatically in byte-bounded chunks (each response remains within 768 KiB), then merged into one complete display page. The existing oversized-item preview rule remains; it bounds an individual output body rather than changing round boundaries. Transport chunks are not extra UI pages.
+- Earlier/later loading controls use the normal 20 DIP metadata line box and 8 DIP inter-item gap; they do not inherit the final turn’s extra bottom clearance. The fixed toolbar retains its 48 DIP clearance.
+- Existing conversations open at the natural bottom. Upward scrolling near the beginning loads an earlier page; a short or folded window alone does not trigger a chain of background page reads. Explicit earlier/later controls provide retry and keyboard access.
+- The outline reads paged user-message metadata separately, with snippets capped at 120 characters. It represents unloaded prompts too. Selecting an unloaded prompt reads one window at that stable item ID, without downloading the intervening history. Returning to latest likewise reads the latest window directly.
+- Conversation find asks the owning worker for matching item IDs, counts and byte offsets. Selecting an unloaded match reads its window and uses the existing native text highlighting. The existing oversized-output preview limit remains; a match outside that preview reports a retry tooltip rather than silently waiting forever.
+- Tool groups retain their original identity, full count and issue total across page boundaries. Lightweight summary reads reconcile off-window tool completions without hydrating their bodies. Manual expansion is retained when earlier pages arrive; historical additions do not replay arrival animations.
+- Active turns, approvals/questions, queue, plan and background work are loaded independently of the displayed item range. Queue freshness uses its own revision.
+- Initial reads, index reads, search and page reads use independent authenticated device connections, leaving execution commands available. All chunks of one round window share a connection-owned read-only WAL snapshot and one journal sequence, including the ordered turn/request metadata. The snapshot closes on the last chunk, any error, an unrelated command or disconnection, with a one-minute maximum lifetime. Other display queries retain their five-second SQL deadlines. Connection/each-RPC timeouts remain ten seconds, and switching views cancels the entire read. No query holds the execution writer mutex.
+- Source thread, device generation and owning connection epochs fence responses. Events received while a page is loading bridge its snapshot to the current projection; page reads never advance the authoritative global event cursor. History replacement invalidates outstanding windows. Reconnection preserves the reading anchor; explicit session entry returns to the latest window.
+- The existing recent-history cache also evicts paging metadata. Re-entering a cached session trims its initial display projection back to the newest window. An already visible session may retain pages the user explicitly browsed.
+- Workers older than minor 37 retain the existing complete `session` hydration path; minor 36 record-window requests remain compatible for older clients. Paging requires updating the owning worker as well as the client; this change does not install or restart either service automatically.
+
+## Implementation references
+
+This adapts Lody's latest-first directory/body separation and T3 Code's bounded display history, cursor navigation, live-state separation and viewport anchoring. Reference source revisions examined were Lody `8fa28a612f6bf4ff11bf875516a70a677c052ebe` and T3 Code `2cb2fa13855e4348d704f7a887027e1124b79037`. Shioji retains native MyGo rendering and the existing harness-neutral worker contract.
+
+## Verification
+
+Regression tests cover bounded latest/older/target reads, the byte budget and correct prompt context after trimming, Unicode search, outline pagination, writer-mutex independence, Stop during a stalled initial RPC, cancellation/late replies, concurrent events and history reset, stable tool totals and disclosure, off-window completion summaries, both directions of independent queue revisions, owning-device callback epochs, late outline replies and native prepend anchoring within one DIP.
+
+Round-specific regressions cover 25 inserted user messages sharing one harness turn, latest/older/later/target windows, a single 130-tool round spanning several transport frames, coherent snapshots during concurrent writes, source/cursor rejection, complete cache trimming at user boundaries, preference persistence and native settings/query wiring. A turn with thousands of tool records is still one round; the prior 100-record payload measurement does not represent this policy.
+
+Native evidence uses production MyGo rendering with deterministic worker replies. The round-specific light-mode recording covers the setting, user-message boundaries, an inserted prompt sharing a harness turn, earlier loading and returning to the latest round window. Evidence stays local and ignored under `docs/research/`.
+
+No complete App build, installation, restart, live worker update or preview service is required for these checks.

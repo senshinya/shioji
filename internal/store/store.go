@@ -24,6 +24,8 @@ import (
 type Store struct {
 	mu                   sync.Mutex
 	db                   *sql.DB
+	path                 string
+	historyReader        historyQuerier
 	deviceID, generation string
 	changed              chan struct{}
 }
@@ -118,7 +120,7 @@ func Open(path string) (*Store, error) {
 	if err = tx.Commit(); err != nil {
 		return fail(err)
 	}
-	s := &Store{db: db, changed: make(chan struct{})}
+	s := &Store{db: db, path: path, changed: make(chan struct{})}
 	if err = db.QueryRow("SELECT device_id,generation FROM metadata WHERE id=1").Scan(&s.deviceID, &s.generation); err != nil {
 		return fail(err)
 	}
@@ -775,34 +777,80 @@ func (s *Store) Snapshot() (domain.Snapshot, error) {
 func (s *Store) Session(id string, after int64, limit int) (domain.SessionDetail, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.sessionLocked(id, after, limit, nil)
+}
+
+func (s *Store) sessionLocked(id string, after int64, limit int, window *domain.HistoryQuery) (domain.SessionDetail, error) {
 	out := domain.SessionDetail{}
 	var err error
 	if limit < 1 || limit > 100 {
 		limit = 100
 	}
-	if out.Session, err = load[domain.Session](s.db.QueryRow("SELECT body FROM sessions WHERE id=?", id)); err != nil {
+	if out.Session, err = load[domain.Session](s.historyQueries().QueryRow("SELECT body FROM sessions WHERE id=?", id)); err != nil {
 		return out, err
 	}
 	if out.Queue, err = s.queueLocked(id); err != nil {
 		return out, err
 	}
-	plan, planErr := load[domain.Plan](s.db.QueryRow("SELECT body FROM plans WHERE session_id=?", id))
+	plan, planErr := load[domain.Plan](s.historyQueries().QueryRow("SELECT body FROM plans WHERE session_id=?", id))
 	if planErr != nil && !errors.Is(planErr, sql.ErrNoRows) {
 		return out, planErr
 	}
 	if planErr == nil {
 		out.Plan = &plan
 	}
-	if out.Works, err = rowsOf[domain.WorkActivity](s.db, `SELECT body FROM works WHERE rowid IN(SELECT rowid FROM works WHERE session_id=? ORDER BY CASE WHEN json_extract(body,'$.state') IN('running','starting','waiting') THEN 0 ELSE 1 END,rowid DESC LIMIT 129) ORDER BY rowid`, id); err != nil {
+	if out.Works, err = rowsOf[domain.WorkActivity](s.historyQueries(), `SELECT body FROM works WHERE rowid IN(SELECT rowid FROM works WHERE session_id=? ORDER BY CASE WHEN json_extract(body,'$.state') IN('running','starting','waiting') THEN 0 ELSE 1 END,rowid DESC LIMIT 129) ORDER BY rowid`, id); err != nil {
 		return out, err
 	}
 	out.Works, out.WorksTruncated = domain.LimitWorkRoster(out.Works)
-	if out.Items, err = rowsOf[domain.Item](s.db, "SELECT body FROM items WHERE session_id=? AND position>? AND json_extract(body,'$.kind')!='queued' ORDER BY position LIMIT ?", id, after, limit+1); err != nil {
+	if window != nil && window.ThreadID != "" && window.ThreadID != out.Session.ThreadID {
+		return out, errors.New("会话历史已改变，请重新加载")
+	}
+	queryItems := "SELECT body FROM items WHERE session_id=? AND position>? AND json_extract(body,'$.kind')!='queued' ORDER BY position LIMIT ?"
+	itemArgs := []any{id, after, limit + 1}
+	backwards := false
+	rounds := window != nil && window.Rounds > 0
+	if rounds {
+		q := *window
+		q.WindowFirst, q.WindowLast, err = s.historyRoundRangeLocked(q)
+		if err != nil {
+			return out, err
+		}
+		window = &q
+		queryItems = "SELECT body FROM items WHERE " + historyVisibleSQL + " AND position>=? AND position<=? AND position>? ORDER BY position"
+		itemArgs = []any{id, q.WindowFirst, q.WindowLast, q.After}
+	} else if window != nil {
+		queryItems, itemArgs, backwards, err = s.historyItemsQueryLocked(*window, limit)
+		if err != nil {
+			return out, err
+		}
+	}
+	if rounds {
+		out.Items, err = s.historyRoundChunkLocked(queryItems, itemArgs)
+	} else {
+		out.Items, err = rowsOf[domain.Item](s.historyQueries(), queryItems, itemArgs...)
+	}
+	if err != nil {
 		return out, err
 	}
-	if len(out.Items) > limit {
+	if !rounds && len(out.Items) > limit {
 		out.HasMore = true
 		out.Items = out.Items[:limit]
+	}
+	if backwards {
+		slices.Reverse(out.Items)
+	}
+	contextID := ""
+	if window != nil && len(out.Items) > 0 {
+		first := out.Items[0]
+		context, e := load[domain.Item](s.historyQueries().QueryRow("SELECT body FROM items WHERE session_id=? AND position<=? AND "+historyPromptSQL+" ORDER BY position DESC LIMIT 1", id, first.Order))
+		if e != nil && !errors.Is(e, sql.ErrNoRows) {
+			return out, e
+		}
+		if e == nil && context.ID != first.ID {
+			contextID = context.ID
+			out.Items = append([]domain.Item{context}, out.Items...)
+		}
 	}
 
 	requestIDs := []string{}
@@ -828,12 +876,12 @@ func (s *Store) Session(id string, after int64, limit int) (domain.SessionDetail
 		return "SELECT body FROM " + table + " WHERE session_id=? AND (" + condition + ") ORDER BY rowid", args
 	}
 	query, args := queryIDs("requests", requestIDs, "json_extract(body,'$.state') IN ('pending','submitting')")
-	requests, err := rowsOf[domain.PendingRequest](s.db, query, args...)
+	requests, err := rowsOf[domain.PendingRequest](s.historyQueries(), query, args...)
 	if err != nil {
 		return out, err
 	}
 	query, args = queryIDs("turns", turnIDs, "json_extract(body,'$.status')='running'")
-	turns, err := rowsOf[domain.Turn](s.db, query, args...)
+	turns, err := rowsOf[domain.Turn](s.historyQueries(), query, args...)
 	if err != nil {
 		return out, err
 	}
@@ -864,17 +912,56 @@ func (s *Store) Session(id string, after int64, limit int) (domain.SessionDetail
 				out.Turns = append(out.Turns, t)
 			}
 		}
-		if len(blob(out)) <= 768<<10 {
+		budget := 768 << 10
+		if window != nil {
+			budget -= 4096
+		}
+		if len(blob(out)) <= budget {
 			break
 		}
 		if len(out.Items) <= 1 {
 			return out, errors.New("session metadata exceeds history page budget")
 		}
-		out.Items = out.Items[:len(out.Items)-1]
+		if backwards {
+			at := 0
+			if contextID != "" {
+				at = 1
+			}
+			if out.Items[at].Kind == "user" {
+				if contextID != "" {
+					out.Items = out.Items[1:]
+				}
+				contextID = out.Items[0].ID
+				at = 1
+			}
+			if len(out.Items) <= at+1 {
+				return out, errors.New("session metadata exceeds history page budget")
+			}
+			out.Items = slices.Delete(out.Items, at, at+1)
+		} else {
+			out.Items = out.Items[:len(out.Items)-1]
+		}
 		out.HasMore = true
 	}
+	if window != nil {
+		out.History, err = s.historyWindowLocked(id, out.Items, contextID)
+		if err != nil {
+			return out, err
+		}
+		if rounds && window.WindowFirst > 0 {
+			out.History.WindowFirst, out.History.WindowLast = window.WindowFirst, window.WindowLast
+			if err = s.historyQueries().QueryRow("SELECT EXISTS(SELECT 1 FROM items WHERE "+historyVisibleSQL+" AND position<?), EXISTS(SELECT 1 FROM items WHERE "+historyVisibleSQL+" AND position>?)", id, window.WindowFirst, id, window.WindowLast).Scan(&out.History.Older, &out.History.Newer); err != nil {
+				return out, err
+			}
+		}
+		out.HasMore = out.History.Older
+		// Tool summaries are small, but still belong to the transport budget.
+		if len(blob(out)) > 768<<10 {
+			return out, errors.New("session metadata exceeds history page budget")
+		}
+	}
 
-	err = s.db.QueryRow("SELECT COALESCE(MAX(sequence),0) FROM journal").Scan(&out.Sequence)
+	err = s.historyQueries().QueryRow("SELECT COALESCE(MAX(sequence),0) FROM journal").Scan(&out.Sequence)
 	return out, err
 }
 func (s *Store) Events(after int64, limit int) ([]domain.Event, error) {

@@ -262,6 +262,8 @@ func (s *Server) serveConnection(conn net.Conn) {
 		return
 	}
 	requestedRecovery := false
+	var history connectionHistory
+	defer history.close()
 	for {
 		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		var f protocol.Frame
@@ -276,7 +278,7 @@ func (s *Server) serveConnection(conn net.Conn) {
 			s.wakeRecovery()
 			requestedRecovery = true
 		}
-		out, callErr := s.handle(f.Method, f.Body)
+		out, callErr := history.handle(s, f.Method, f.Body)
 		stopForUpdate := f.Method == "worker.update" && s.updating.Load()
 		if stopForUpdate {
 			defer func() { s.cancel(); s.listener.Close() }()
@@ -318,6 +320,10 @@ func (s *Server) serveConnection(conn net.Conn) {
 }
 func decode[T any](body []byte) (T, error) { var v T; err := json.Unmarshal(body, &v); return v, err }
 func (s *Server) handle(method string, body []byte) (any, error) {
+	return s.handleWithHistory(method, body, nil)
+}
+
+func (s *Server) handleWithHistory(method string, body []byte, history *store.HistorySnapshot) (any, error) {
 	if method == "device.ping" {
 		return struct {
 			DeviceID string `json:"deviceId"`
@@ -542,6 +548,27 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 			return nil, err
 		}
 		return s.store.Session(q.ID, q.After, q.Limit)
+	case "session.history":
+		q, err := decode[domain.HistoryQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		if history != nil {
+			return history.Read(q)
+		}
+		return s.store.SessionHistory(q)
+	case "session.outline":
+		q, err := decode[domain.HistoryQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.store.HistoryOutline(q)
+	case "session.matches":
+		q, err := decode[domain.HistorySearchQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.store.HistoryMatches(q)
 	case "operation":
 		q, err := decode[struct {
 			ID string `json:"id"`

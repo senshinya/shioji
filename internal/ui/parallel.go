@@ -63,6 +63,7 @@ func (v *View) navigateSession(id, workspace string) {
 		current, currentWorkspace = m.SecondarySessionID, m.SecondaryWorkspaceID
 	}
 	if current != "" && current != id {
+		root.focusedView().cancelPagedHistory()
 		root.previousSession, root.previousWorkspace = current, currentWorkspace
 		if state := root.focusedView().lists[id]; state != nil {
 			state.ReleaseRow()
@@ -88,6 +89,7 @@ func (v *View) prepareSecondary() {
 	m := v.Model
 	if v.secondary != nil && v.secondary.Model.SessionID != m.SecondarySessionID {
 		v.secondary.cancelFileLink()
+		v.secondary.cancelPagedHistory()
 	}
 	if m.SecondarySessionID == m.SessionID {
 		m.SecondarySessionID = ""

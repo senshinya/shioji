@@ -19,6 +19,7 @@ import (
 
 type Update func(*Model)
 type Job struct {
+	Context         context.Context
 	ConnectionID    string
 	ConnectionEpoch string
 	Method          string
@@ -78,6 +79,9 @@ func (c *Controller) Select(id string) { c.Do(Job{Method: "$select", Input: id})
 func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.RawMessage, error) {
 	if client == nil || job.epoch == "" || job.epoch != client.Epoch || ctx.Err() != nil {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "连接已改变，操作未发送；请重新提交"}
+	}
+	if historyReadMethod(job.Method) && client.Minor < 37 {
+		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能按需加载历史"}
 	}
 	if strings.HasPrefix(job.Method, "session.work") && client.Minor < 27 {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能读取子 Agent 和后台任务详情"}
@@ -496,7 +500,18 @@ func (c *Controller) Run(ctx context.Context) {
 		publishService(state)
 	}
 	var recoverPath func() bool
+	initialHistory := map[string]context.CancelFunc{}
+	cancelHistory := func(wanted map[string]bool) {
+		for id, cancel := range initialHistory {
+			if !wanted[id] {
+				cancel()
+				delete(initialHistory, id)
+			}
+		}
+	}
+	defer cancelHistory(nil)
 	disconnected := func() {
+		cancelHistory(nil)
 		if c.paths != nil {
 			c.paths.record(c.paths.active(), 0, time.Now(), net.ErrClosed)
 			c.publishPaths()
@@ -531,6 +546,19 @@ func (c *Controller) Run(ctx context.Context) {
 		ids := append([]string{selected}, visible...)
 		for _, id := range ids {
 			if id == "" || history[id].loaded() {
+				continue
+			}
+			if client.Minor >= 37 {
+				if cancel := initialHistory[id]; cancel != nil {
+					cancel()
+				}
+				opening := history[id].opening()
+				history[id] = historyLoaded
+				epoch := logicalEpoch
+				if epoch == "" {
+					epoch = client.Epoch
+				}
+				initialHistory[id] = c.queueInitialHistory(ctx, id, epoch, generation, opening)
 				continue
 			}
 			all, err := hydrateSession(ctx, client, id, generation)
@@ -760,6 +788,11 @@ func (c *Controller) Run(ctx context.Context) {
 					previous[id] = true
 				}
 				visible = append([]string(nil), job.Input.([]string)...)
+				wanted := map[string]bool{selected: true}
+				for _, id := range visible {
+					wanted[id] = true
+				}
+				cancelHistory(wanted)
 				lastReadiness = time.Time{}
 				for _, id := range visible {
 					if !previous[id] {
@@ -775,6 +808,11 @@ func (c *Controller) Run(ctx context.Context) {
 			}
 			if job.Method == "$select" {
 				selected = job.Input.(string)
+				wanted := map[string]bool{selected: true}
+				for _, id := range visible {
+					wanted[id] = true
+				}
+				cancelHistory(wanted)
 				lastReadiness = time.Time{}
 				history[selected] = historyUnloaded
 				if selected != "" {
@@ -785,6 +823,10 @@ func (c *Controller) Run(ctx context.Context) {
 						disconnected()
 					}
 				}
+				continue
+			}
+			if historyReadMethod(job.Method) {
+				c.startHistoryRead(ctx, client, job)
 				continue
 			}
 			var opID string

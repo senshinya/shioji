@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	n "github.com/egoist/mygo/ui"
+	"shioji/internal/domain"
 	"strings"
 	"time"
 )
@@ -20,6 +21,7 @@ type conversationOutline struct {
 type outlineEntry struct {
 	ID, Prompt, Reply string
 	Row               int
+	Order             int64
 }
 
 var latestIcon = svg("M5 7.5l5 5 5-5")
@@ -28,7 +30,7 @@ func outlineEntries(rows []transcriptRow) []outlineEntry {
 	entries := []outlineEntry{}
 	for i, row := range rows {
 		if row.item.Kind == "user" && row.group == "" {
-			entries = append(entries, outlineEntry{ID: row.item.ID, Prompt: row.item.Text, Row: i + 1})
+			entries = append(entries, outlineEntry{ID: row.item.ID, Prompt: row.item.Text, Row: i + 1, Order: row.item.Order})
 		} else if row.item.Kind == "assistant" && len(entries) > 0 && entries[len(entries)-1].Reply == "" {
 			entries[len(entries)-1].Reply = row.item.Text
 		}
@@ -41,6 +43,16 @@ func (v *View) conversationOutline(c *n.Context, t *n.Theme, state *n.ListState,
 		return
 	}
 	entries := outlineEntries(rows)
+	if index, ok := v.Model.HistoryOutlines[v.Model.SessionID]; ok {
+		positions := map[string]int{}
+		for i, row := range rows {
+			positions[row.item.ID] = i + 1
+		}
+		entries = nil
+		for _, p := range index.Prompts {
+			entries = append(entries, outlineEntry{ID: p.ID, Prompt: p.Text, Row: positions[p.ID], Order: p.Order})
+		}
+	}
 	if len(entries) < 4 {
 		return
 	}
@@ -50,8 +62,14 @@ func (v *View) conversationOutline(c *n.Context, t *n.Theme, state *n.ListState,
 	outline := v.outline
 	first, _ := state.Visible()
 	current := 0
+	var order int64
+	for i := 0; i < len(rows) && i < first; i++ {
+		if rows[i].item.Order > 0 {
+			order = rows[i].item.Order
+		}
+	}
 	for i, e := range entries {
-		if e.Row <= first {
+		if e.Row > 0 && e.Row <= first || order > 0 && e.Order <= order {
 			current = i
 		}
 	}
@@ -127,7 +145,11 @@ func (v *View) conversationOutline(c *n.Context, t *n.Theme, state *n.ListState,
 			})
 			if button.Clicked() {
 				hadFocus := v.composerHadFocus
-				state.KeepRowWithinContent(entry.Row, 80)
+				if entry.Row > 0 {
+					state.KeepRowWithinContent(entry.Row, 80)
+				} else {
+					v.requestHistory(domain.HistoryQuery{AroundID: entry.ID}, true)
+				}
 				v.focusComposer = hadFocus
 			}
 		}).Fill().Scrollbars(false)
@@ -175,7 +197,9 @@ func abs(n int) int {
 	return n
 }
 func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock n.Element) {
-	if state.AtEnd() || state.FollowingEnd() || v.Model.HistoryEdits[v.Model.SessionID].ItemID != "" {
+	window := v.Model.Details[v.Model.SessionID].History
+	newer := window != nil && window.Newer
+	if !newer && (state.AtEnd() || state.FollowingEnd()) || v.Model.HistoryEdits[v.Model.SessionID].ItemID != "" {
 		return
 	}
 	motion := fadeMotion(c, 160*time.Millisecond)
@@ -220,7 +244,9 @@ func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock
 		})
 	})
 	if button.Clicked() {
-		if c.Preferences().ReduceMotion {
+		if newer {
+			v.requestHistory(domain.HistoryQuery{}, true)
+		} else if c.Preferences().ReduceMotion {
 			state.ScrollToEnd()
 		} else {
 			state.ScrollToEnd(n.Animation{Duration: 320 * time.Millisecond, Ease: composerDescentEase})

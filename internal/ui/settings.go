@@ -279,6 +279,13 @@ func (s *Settings) appearance(c *n.Context, t *n.Theme) {
 	})
 	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsHeading(c, t, "对话")
+		settingsRow(c, t, "每次加载轮次", func() {
+			choices := []menuChoice{}
+			for _, count := range []int{5, 10, 20, 50, 100} {
+				choices = append(choices, menuChoice{id: fmt.Sprint(count), name: fmt.Sprintf("%d 轮", count), checked: p.HistoryPageRounds == count, choose: func() { p.HistoryPageRounds = count; s.changed() }})
+			}
+			s.picker(c, t, "每次加载轮次", fmt.Sprintf("%d 轮", p.HistoryPageRounds), choices)
+		})
 		settingsRow(c, t, "自动展开最新工具调用", func() {
 			expand := !p.CollapseLatestTools
 			if configurationSwitch(c, &expand).Label("自动展开最新工具调用开关").Changed() {
@@ -513,7 +520,7 @@ func (s *Settings) search(c *n.Context, t *n.Theme) {
 	n.Text(c, "搜索设置").FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Margin(0, 0, configurationHeadingGap, 0)
 	query := strings.ToLower(strings.TrimSpace(s.query))
 	found := false
-	for _, entry := range []struct{ page, label string }{{"appearance", "主题"}, {"appearance", "界面字体"}, {"appearance", "回复字号"}, {"appearance", "代码字体"}, {"appearance", "减少动态效果"}, {"appearance", "自动展开最新工具调用"}, {"input", "发送或加入队列"}, {"input", "换行"}, {"input", "立即介入当前轮"}, {"notifications", "通知"}, {"notifications", "回复完成"}, {"notifications", "需要回答或授权"}, {"notifications", "执行失败"}, {"notifications", "提示音"}, {"notifications", "前台也通知"}, {"shortcuts", "新建会话"}, {"shortcuts", "搜索会话"}, {"shortcuts", "下一个待处理"}, {"shortcuts", "返回上一个会话"}, {"about", "版本"}, {"about", "检查更新"}, {"about", "自动检查更新"}, {"about", "第三方许可"}, {"about", "授予完全磁盘访问权限"}} {
+	for _, entry := range []struct{ page, label string }{{"appearance", "主题"}, {"appearance", "界面字体"}, {"appearance", "回复字号"}, {"appearance", "代码字体"}, {"appearance", "减少动态效果"}, {"appearance", "自动展开最新工具调用"}, {"appearance", "每次加载轮次"}, {"input", "发送或加入队列"}, {"input", "换行"}, {"input", "立即介入当前轮"}, {"notifications", "通知"}, {"notifications", "回复完成"}, {"notifications", "需要回答或授权"}, {"notifications", "执行失败"}, {"notifications", "提示音"}, {"notifications", "前台也通知"}, {"shortcuts", "新建会话"}, {"shortcuts", "搜索会话"}, {"shortcuts", "下一个待处理"}, {"shortcuts", "返回上一个会话"}, {"about", "版本"}, {"about", "检查更新"}, {"about", "自动检查更新"}, {"about", "第三方许可"}, {"about", "授予完全磁盘访问权限"}} {
 		category := settingsCategories[slices.IndexFunc(settingsCategories, func(x settingsCategory) bool { return x.id == entry.page })]
 		if !strings.Contains(strings.ToLower(entry.label+" "+category.title), query) {
 			continue

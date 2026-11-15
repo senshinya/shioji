@@ -259,6 +259,7 @@ type Snapshot struct {
 	Operations      []Operation      `json:"operations"`
 }
 type SessionDetail struct {
+	History        *HistoryWindow   `json:"history,omitempty"`
 	WorksTruncated bool             `json:"worksTruncated,omitempty"`
 	Works          []WorkActivity   `json:"works,omitempty"`
 	Plan           *Plan            `json:"plan,omitempty"`

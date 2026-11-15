@@ -5,7 +5,6 @@ import (
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
 	"shioji/internal/domain"
-	"strings"
 	"time"
 )
 
@@ -76,14 +75,14 @@ func withTurnFooters(rows []transcriptRow, turns map[string]domain.Turn) []trans
 }
 
 func emptyTranscriptItem(item domain.Item) bool {
-	return item.Kind == "assistant" && strings.TrimSpace(item.Text) == "" ||
-		item.Kind == "activity" && item.Presentation == "reasoning" && !activityHasBody(item) ||
-		item.Kind == "request_result" && len(item.Parts) == 0 && item.WorkID == ""
+	return domain.HistorySpacer(item)
 }
 
 // Project groups into the outer virtual list so expanded tool history still
 // unmounts normally. Any following visible non-tool content auto-closes a group.
 func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
+	baseline := v.historyBaseline
+	defer func() { v.historyBaseline = false }()
 	v.toolsAnimating = false
 	// Opening folds history except for the latest group still executing.
 	// Consume this only after actual session history is available;
@@ -211,7 +210,25 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			break
 		}
 		key := "tool-group:" + v.Model.SessionID + "/" + item.ID
+		var summary *domain.HistoryToolGroup
+		if h := v.Model.Details[v.Model.SessionID].History; h != nil {
+			for j := range h.Groups {
+				g := &h.Groups[j]
+				if item.Order >= g.First && item.Order <= g.Last && item.TurnID == g.TurnID {
+					key = "tool-group:" + v.Model.SessionID + "/" + g.ID
+					count = g.Count
+					summary = g
+					break
+				}
+			}
+		}
 		disclosure := v.Model.ToolDisclosure(key)
+		if baseline {
+			if _, known := v.Model.Collapsed[key]; !known {
+				disclosure = disclosure.OpenHistory()
+				v.Model.SetToolDisclosure(key, disclosure)
+			}
+		}
 		if collapseHistory {
 			disclosure = disclosure.OpenHistory()
 			if !v.Model.Preferences.CollapseLatestTools && v.Model.Connected && activeTurn != "" && item.TurnID == activeTurn && latestTool < end && executing && !laterContent[end] {
@@ -260,6 +277,9 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			if call.Kind == "tool" && toolIssueLabel(call) != "" {
 				row.issues++
 			}
+		}
+		if summary != nil {
+			row.issues = summary.Issues
 		}
 		row.end = end - 1
 		// Keep the title's zero-height row while folded so the one-line

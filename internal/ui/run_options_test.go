@@ -5,6 +5,7 @@ import (
 	n "github.com/egoist/mygo/ui"
 	"math"
 	"os"
+	"shioji/internal/app"
 	"shioji/internal/domain"
 	"testing"
 	"time"
@@ -56,6 +57,33 @@ func TestRunOptionRowsUseTheFullMenuWidthAndKeepTheMenuOpen(t *testing.T) {
 			ui.Advance(time.Second)
 			saveNativeSkillImage(t, ui, fmt.Sprintf("run-options-trigger-%v.png", dark))
 		})
+	}
+}
+
+func TestHistoryLoadRowsShareTheNormalTranscriptGap(t *testing.T) {
+	v := New(layoutModel(), nil, "")
+	d := v.Model.Details["s"]
+	d.History = &domain.HistoryWindow{First: 2, Last: 3, Older: true, Newer: true}
+	d.Items = []domain.Item{{ID: "a", Order: 2, Kind: "assistant", Text: "One message", Final: true}, {ID: "b", Order: 3, Kind: "assistant", Text: "Another message", Final: true}}
+	v.Model.Details["s"] = d
+	// A controller is needed for the native loading controls, without starting a service.
+	v.Controller = app.NewController("")
+	v.Model.WorkerMinor = 37
+	ui := n.NewTester(v.View, 1240, 820)
+	ui.Advance(time.Second)
+	earlier, _ := ui.Find("加载更早消息")
+	later, _ := ui.Find("加载后续消息")
+	one, _ := ui.Find("One message")
+	two, _ := ui.Find("Another message")
+	saveNativeSkillImage(t, ui, "history-spacing.png")
+	if earlier.H != 20 || later.H != 20 {
+		t.Fatal("history controls do not share metadata line height", earlier, later)
+	}
+	if math.Abs(float64((one.Y-earlier.Y-earlier.H)-(two.Y-one.Y-one.H))) > 1 {
+		t.Fatal("earlier history gap differs from normal transcript rhythm", earlier, one, two)
+	}
+	if math.Abs(float64((later.Y-two.Y-two.H)-(two.Y-one.Y-one.H))) > 1 {
+		t.Fatal("later history gap differs from normal transcript rhythm", one, two, later)
 	}
 }
 

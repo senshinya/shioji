@@ -11,7 +11,7 @@ import (
 )
 
 func (s *Store) queueLocked(id string) (domain.QueueState, error) {
-	q, err := load[domain.QueueState](s.db.QueryRow("SELECT body FROM queues WHERE session_id=?", id))
+	q, err := load[domain.QueueState](s.historyQueries().QueryRow("SELECT body FROM queues WHERE session_id=?", id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.QueueState{SessionID: id, Items: []domain.QueueItem{}}, nil
 	}

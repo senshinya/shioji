@@ -111,6 +111,7 @@ func (v *View) retireSSHSetupTerminal() {
 
 // CloseTransient releases UI-owned work when the window exits.
 func (v *View) CloseTransient() {
+	v.cancelPagedHistory()
 	v.cancelFileLink()
 	if v.secondary != nil {
 		v.secondary.CloseTransient()

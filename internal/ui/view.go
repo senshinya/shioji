@@ -28,6 +28,9 @@ type editBinding struct {
 }
 
 type View struct {
+	historyPage          *conversationHistory
+	historyBaseline      bool
+	historyTarget        string
 	deviceConnectionSave *deviceConnectionSave
 	pathNotice           devicePathNotice
 	sshExpectedDevice    string
@@ -285,6 +288,9 @@ func (v *View) View(c *n.Context) {
 		v.secondary.collectBindings()
 	}
 	v.pumpUpdates()
+	if p := v.historyPage; p != nil && (p.session != m.SessionID || p.epoch != m.ConnectionEpoch || v.devices) {
+		v.cancelPagedHistory()
+	}
 	v.syncDeviceConnectionSave()
 	m.RefreshDevices()
 	m.SyncHistoryEdits()
@@ -494,6 +500,7 @@ func (v *View) View(c *n.Context) {
 }
 
 func (v *View) home() {
+	v.focusedView().cancelPagedHistory()
 	if v.homeSend != nil {
 		v.sent = nil
 	}
@@ -1077,6 +1084,7 @@ func settingRow(c *n.Context, name, value string) n.Element {
 }
 func (v *View) conversation(c *n.Context, t *n.Theme) {
 	m := v.Model
+	v.syncPagedHistory(c)
 	v.refreshConversationFind()
 	// An empty detail keeps the dock mounted through first-turn hydration.
 	// Its zero Session.ID also keeps the history-fold barrier unconsumed.
@@ -1123,6 +1131,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	rows = v.historyBridgeRows(rows)
 	rows = v.historyRunningRows(rows)
 	rows = v.homeSendRows(rows)
+	v.positionHistoryTarget(state, rows)
 	if v.toolsAnimating {
 		c.AnimationFrame()
 	}
@@ -1160,12 +1169,20 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		}
 	}
 	v.historySuffixReveals(c, state, rows)
+	historyEndRow := len(rows) + 1
+	hasNewer := detail.History != nil && detail.History.Newer
+	if hasNewer {
+		historyEndRow++
+	}
 	state.Key = func(i int) any {
 		if i == 0 {
 			return "history-top"
 		}
-		if i == len(rows)+1 {
+		if i == historyEndRow {
 			return "history-bottom"
+		}
+		if hasNewer && i == len(rows)+1 {
+			return "history-newer"
 		}
 		row := rows[i-1]
 		if key := v.toolArrivals.footerKeys[row.footer]; row.footer != "" && key != "" {
@@ -1182,14 +1199,22 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	}
 	state.FollowInset = reserve
 	rowBounds := map[string]n.Rect{}
-	history := n.List(c.Key("history:"+viewKey), state, len(rows)+2, func(row int) {
+	history := n.List(c.Key("history:"+viewKey), state, historyEndRow+1, func(row int) {
 		if row == 0 {
-			n.Column(c).Height(80)
+			height := float32(80)
+			if v.hasHistoryPageControl() {
+				height = 48 + 20 + 8
+			}
+			n.Column(c).Height(height).Padding(48, 18, 0, 18).AlignItems(n.Center).Children(func() { v.historyPageControl(c, t, false) })
 			return
 		}
-		if row == len(rows)+1 {
+		if row == historyEndRow {
 			// Message rows already own the clearance above the dock.
 			n.Column(c).Height(reserve)
+			return
+		}
+		if hasNewer && row == len(rows)+1 {
+			n.Column(c).FillWidth().Height(20 + 8).AlignItems(n.Center).Children(func() { v.historyPageControl(c, t, true) })
 			return
 		}
 		entry := rows[row-1]
@@ -1238,6 +1263,9 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		if row < len(rows) && rows[row].item.Kind == "user" {
 			bottom = 32
 		}
+		if hasNewer && row == len(rows) {
+			bottom = 8
+		}
 		n.Column(c).FillWidth().PaddingX(18).AlignItems(n.Center).Children(func() {
 			content := n.Column(c).FillWidth().MinWidth(0).MaxWidth(768).Gap(8).Padding(0, 0, bottom, 0).ClipX().Selectable()
 			if entry.footer == "" && entry.group == "" && (item.Kind == "user" || item.Kind == "assistant" || item.Kind == "command") {
@@ -1284,6 +1312,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	history.DrawOver(func(_ *n.Painter, _ n.Rect) {
 		v.historyRowBounds = rowBounds
 	})
+	history.HandleInput(v.historyInput)
 	n.VirtualTextSelection(history, func(key string) (string, bool) {
 		for _, item := range v.Model.Details[v.Model.SessionID].Items {
 			if item.ID == key {
@@ -1296,6 +1325,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		return "", false
 	})
 	v.conversationOutline(c, t, state, rows)
+	v.prefetchHistory(state, rows)
 	n.Column(c).Absolute().Left(0).Right(0).Top(0).Height(48).Padding(0, conversationScrollbarGutter, 0, 0).Label("会话顶栏").Draw(func(p *n.Painter, r n.Rect) {
 		// History is clipped to its reading column, so the gutter contains
 		// only the pane background and native thumb, never overflowing text.

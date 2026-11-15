@@ -39,6 +39,7 @@ const (
 )
 
 type conversationFind struct {
+	remote          *historyFind
 	mode            findMode
 	placement       findPlacement
 	focus           bool // One-shot focus effect, not the search lifecycle.
@@ -89,6 +90,10 @@ func (v *View) openConversationFind() {
 
 func (v *View) closeConversationFind() {
 	s := v.findState()
+	if s.remote != nil && s.remote.cancel != nil {
+		s.remote.cancel()
+	}
+	s.remote = nil
 	s.mode = findClosed
 	s.version++
 	v.focusComposer = true
@@ -105,6 +110,9 @@ func (v *View) refreshConversationFind() {
 		s.mode = findClosed
 	}
 	if s.mode == findClosed {
+		return
+	}
+	if v.refreshHistoryFind() {
 		return
 	}
 	query := strings.TrimSpace(s.query)
@@ -195,6 +203,16 @@ func (v *View) selectFindMatch(index int) {
 		if index >= entry.count {
 			index -= entry.count
 			continue
+		}
+		if s.remote != nil {
+			s.remote.occurrence = index
+			if entry.text == "" {
+				s.target = findTarget{id: entry.id}
+				s.result = domain.SearchResult{ItemID: entry.id}
+				s.rearm()
+				s.placement = findAwaitingHistory
+				return
+			}
 		}
 		start, end := domain.FindLiteral(entry.text, s.compiled, index)
 		if start < 0 {
@@ -392,6 +410,11 @@ func (v *View) conversationFindBar(c *n.Context, t *n.Theme, width float32) {
 	if s.mode != findLocal {
 		return
 	}
+	if r := s.remote; r != nil && r.done && r.query != "" && len(r.query) <= 256 && v.Model.Details[v.Model.SessionID].Session.Revision > r.revision {
+		if remaining := 500*time.Millisecond - c.Now().Sub(r.started); remaining > 0 {
+			c.After(remaining)
+		}
+	}
 	bar := n.Row(c.Key("conversation-find")).Absolute().Right(24).Top(56).Width(min(352, max(200, width-36))).Height(36).Padding(4, 6).Gap(6).AlignItems(n.Center).Radius(8).Background(raised(t)).Border(1, t.Border).Shadow(0, 3, 10, 0, n.RGBA(0, 0, 0, .1)).Label("会话内查找").Transition(n.ElementTransition{Duration: 180 * time.Millisecond, Enter: &n.Motion{Y: -6, Opacity: 1}, Exit: &n.Motion{Y: -6, Opacity: 1}})
 	bar.Children(func() {
 		n.Icon(c, searchIcon).Size(14, 14).TextColor(t.TextMuted)
@@ -422,7 +445,16 @@ func (v *View) conversationFindBar(c *n.Context, t *n.Theme, width float32) {
 		if s.query != "" {
 			count = fmt.Sprintf("%d/%d", s.current+1, s.total)
 		}
+		if r := s.remote; r != nil && (r.loading || !r.done) {
+			count += "…"
+		}
 		n.Text(c, count).FontSize(11).FontFeatures("tnum").FixedLineHeight(20).TextColor(t.TextMuted).Label("匹配位置：" + count)
+		if r := s.remote; r != nil && r.error != "" {
+			if control(c).KeepFocus().Label("重试查找").Tooltip(r.error).Children(func() { n.Text(c, "重试").FontSize(11) }).Clicked() {
+				r.error = ""
+				v.readHistoryMatches(r)
+			}
+		}
 		for _, direction := range []int{-1, 1} {
 			label, angle := "上一个匹配", float32(180)
 			if direction == 1 {

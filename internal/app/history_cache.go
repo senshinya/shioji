@@ -34,6 +34,7 @@ func (m *Model) PruneHistoryCache(visible ...string) {
 			pending := pendingHistoryRequests(d.Requests)
 			if len(pending) == 0 {
 				delete(m.Details, id)
+				m.evictHistoryMetadata(id)
 				delete(m.historyVisits, id)
 			} else {
 				m.Details[id] = domain.SessionDetail{Requests: pending}
@@ -61,6 +62,7 @@ func (m *Model) PruneHistoryCache(visible ...string) {
 		} else {
 			delete(m.Details, e.ID)
 		}
+		m.evictHistoryMetadata(e.ID)
 		delete(m.historyVisits, e.ID)
 		remaining--
 		total -= e.Bytes
@@ -97,4 +99,11 @@ func pendingHistoryRequests(requests []domain.PendingRequest) []domain.PendingRe
 		}
 	}
 	return pending
+}
+
+func (m *Model) evictHistoryMetadata(id string) {
+	delete(m.HistoryReads, id)
+	delete(m.HistoryOutlines, id)
+	delete(m.HistoryAnchors, id)
+	delete(m.HistoryOpenings, id)
 }

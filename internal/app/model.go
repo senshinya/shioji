@@ -26,6 +26,10 @@ type InspectorLayout struct {
 }
 
 type Model struct {
+	HistoryReads               map[string]*HistoryRead
+	HistoryOutlines            map[string]domain.HistoryOutline
+	HistoryAnchors             map[string]string
+	HistoryOpenings            map[string]bool
 	Tailnet                    tailnet.Snapshot
 	CompletedReplies           map[string]CompletedReply
 	Navigation                 NavigationPreferences
@@ -97,7 +101,7 @@ type Model struct {
 }
 
 func NewModel() *Model {
-	return &Model{homeDefaultsPending: true, WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{CollapseLatestTools: true}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{HistoryAnchors: map[string]string{}, HistoryOpenings: map[string]bool{}, HistoryReads: map[string]*HistoryRead{}, HistoryOutlines: map[string]domain.HistoryOutline{}, homeDefaultsPending: true, WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{CollapseLatestTools: true}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {
@@ -322,6 +326,12 @@ func (m *Model) ApplySnapshot(snapshot domain.Snapshot) {
 	}
 	m.reconcileCompletedReplies(snapshot)
 	if m.Snapshot.Generation != "" && m.Snapshot.Generation != snapshot.Generation {
+		for id := range m.Details {
+			delete(m.HistoryReads, id)
+			delete(m.HistoryOutlines, id)
+			delete(m.HistoryAnchors, id)
+			delete(m.HistoryOpenings, id)
+		}
 		m.Details = map[string]domain.SessionDetail{}
 	}
 	for id, detail := range m.Details {
@@ -357,6 +367,23 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 	}
 	m.Sequence = e.Sequence
 	m.Snapshot.Sequence = e.Sequence
+	if r := m.HistoryReads[e.SessionID]; r != nil {
+		r.observe(e)
+	}
+	if e.Item != nil && e.Item.Kind == "user" {
+		if outline, ok := m.HistoryOutlines[e.SessionID]; ok {
+			text := []rune(e.Item.Text)
+			outline.Prompts = slices.Clone(outline.Prompts)
+			p := domain.HistoryPrompt{ID: e.Item.ID, TurnID: e.Item.TurnID, Order: e.Item.Order, Text: string(text[:min(120, len(text))])}
+			at := slices.IndexFunc(outline.Prompts, func(x domain.HistoryPrompt) bool { return x.ID == p.ID })
+			if at >= 0 {
+				outline.Prompts[at] = p
+			} else {
+				outline.Prompts = append(outline.Prompts, p)
+			}
+			m.HistoryOutlines[e.SessionID] = outline
+		}
+	}
 	notice := m.notificationForEvent(e)
 	m.observeCompletedReply(e)
 	if e.Workspace != nil {
@@ -401,7 +428,19 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 	}
 	m.applyWorkEvent(e)
 	if detail, ok := m.Details[e.SessionID]; ok && e.Sequence > detail.Sequence {
+		if detail.History != nil {
+			h := *detail.History
+			h.LiveSequence = e.Sequence
+			h.Groups = slices.Clone(h.Groups)
+			detail.History = &h
+		}
 		if e.Type == "history.reset" && e.HistoryTurnOrder != nil {
+			if detail.History != nil {
+				h := *detail.History
+				h.Invalidated = true
+				detail.History = &h
+			}
+			delete(m.HistoryOutlines, e.SessionID)
 			retained := map[string]bool{}
 			for _, turn := range detail.Turns {
 				if turn.Order <= *e.HistoryTurnOrder {
@@ -425,7 +464,10 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 		if e.Session != nil && detail.Session.Revision <= e.Session.Revision {
 			detail.Session = *e.Session
 		}
-		if e.Item != nil {
+		if e.Item != nil && e.Item.Kind == "tool" && detail.History != nil && len(detail.History.Groups) > 0 && (e.Item.Order < detail.History.First || detail.History.Newer && e.Item.Order > detail.History.Last) {
+			detail.History.SummaryDirty = e.Sequence
+		}
+		if e.Item != nil && historyAcceptsItem(detail, *e.Item) {
 			found := false
 			for i, item := range detail.Items {
 				if item.ID == e.Item.ID {

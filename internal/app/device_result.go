@@ -5,6 +5,7 @@ import (
 	"errors"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"strings"
 )
 
 func (m *Model) sessionOnOtherDevice(key, id string) bool {
@@ -54,6 +55,36 @@ func (m *Model) validateDeviceReply(key string, job Job, body json.RawMessage) e
 		}
 	}
 	fail := errors.New("设备回执与请求的工作区、会话或操作不一致")
+	if in, ok := job.Input.(domain.HistorySearchQuery); ok && job.Method == "session.matches" {
+		owned := false
+		for _, session := range state.Snapshot.Sessions {
+			owned = owned || session.ID == in.SessionID
+		}
+		var result domain.HistoryMatches
+		if !owned || m.sessionOnOtherDevice(key, in.SessionID) || json.Unmarshal(body, &result) != nil || result.SessionID != in.SessionID || result.Query != strings.TrimSpace(in.Query) || in.ThreadID != "" && result.ThreadID != in.ThreadID {
+			return fail
+		}
+	}
+	if in, ok := job.Input.(domain.HistoryQuery); ok && (job.Method == "session.history" || job.Method == "session.outline") {
+		owned := false
+		for _, session := range state.Snapshot.Sessions {
+			owned = owned || session.ID == in.SessionID
+		}
+		if !owned || m.sessionOnOtherDevice(key, in.SessionID) {
+			return fail
+		}
+		if job.Method == "session.history" {
+			var d domain.SessionDetail
+			if json.Unmarshal(body, &d) != nil || d.Session.ID != in.SessionID || d.History == nil || d.Session.Context.DeviceID != state.Snapshot.DeviceID || in.ThreadID != "" && d.Session.ThreadID != in.ThreadID {
+				return fail
+			}
+		} else {
+			var d domain.HistoryOutline
+			if json.Unmarshal(body, &d) != nil || d.SessionID != in.SessionID || in.ThreadID != "" && d.ThreadID != in.ThreadID {
+				return fail
+			}
+		}
+	}
 	if in, ok := job.Input.(domain.ContextActionRequest); ok {
 		var result domain.ContextActionResult
 		if json.Unmarshal(body, &result) != nil || result.Operation.ID != in.OperationID || result.Operation.SessionID != in.SessionID || result.Operation.Kind != "compact" || result.Session.ID != in.SessionID || result.Session.Context.DeviceID != state.Snapshot.DeviceID || m.sessionOnOtherDevice(key, in.SessionID) {
