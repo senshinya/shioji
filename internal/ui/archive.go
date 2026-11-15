@@ -12,8 +12,8 @@ import (
 	n "github.com/egoist/mygo/ui"
 )
 
-const archiveRowHeight float32 = 46
-const archiveActionWidth float32 = 64
+const archiveRowHeight float32 = 40
+const archiveActionWidth float32 = 60 // two 28-DIP targets and their 4-DIP gap
 
 var archiveDeleteIcon = svg("M4 5h12M8 2h4l1 3M5 5l1 13h8l1-13M8 8v7M12 8v7")
 
@@ -22,6 +22,16 @@ type archiveUI struct {
 	tab, scope, query, viewing string
 	lists                      map[string]*n.ListState
 	deletion                   *archiveDeleteUI
+	queries                    map[string]string
+}
+
+func (a *archiveUI) selectList(tab, scope string) {
+	if a.queries == nil {
+		a.queries = map[string]string{}
+	}
+	a.queries[a.tab+":"+a.scope] = a.query
+	a.tab, a.scope = tab, scope
+	a.query = a.queries[tab+":"+scope]
 }
 
 type archiveDeleteUI struct {
@@ -83,26 +93,20 @@ func (v *View) archivePage(c *n.Context, t *n.Theme) {
 			}
 		}
 		if scope.ID == "" {
-			a.scope = ""
-			a.query = ""
+			a.selectList(a.tab, "")
 		}
 	}
 	n.Column(c.Key("archive-page")).FillHeight().Grow(1).MinWidth(0).Children(func() {
-		n.Row(c).FillWidth().Height(48).PaddingX(24).Gap(12).AlignItems(n.Center).DragWindow().Children(func() {
-			n.Text(c, "Shioji").FontSize(12).TextColor(t.TextMuted)
-			n.Column(c).Size(1, 14).Background(t.Border)
-			n.Text(c, "已归档").FontSize(12).TextColor(t.TextMuted)
-		})
+		n.Row(c).FillWidth().Height(48).DragWindow()
 		n.Column(c).Fill().AlignItems(n.Center).Children(func() {
-			inset := float32(40)
+			inset := float32(configurationInset)
 			if v.viewportWidth <= 1000 {
 				inset = 24
 			}
-			n.Column(c.Key("archive-content")).FillWidth().MaxWidth(912).Grow(1).MinHeight(0).Padding(30, inset, 24, inset).Children(func() {
-				n.Row(c).FillWidth().Height(34).Gap(8).AlignItems(n.Center).Margin(0, 0, 18, 0).Children(func() {
+			n.Column(c.Key("archive-content")).FillWidth().MaxWidth(912).Grow(1).MinHeight(0).Padding(24, inset, 24, inset).Children(func() {
+				n.Row(c).FillWidth().Height(32).Gap(8).AlignItems(n.Center).Margin(0, 0, 12, 0).Children(func() {
 					if scope.ID != "" && iconButton(c, conversationBackIcon, "返回已归档工作区").MarginStart(-5).Clicked() {
-						a.scope = ""
-						a.query = ""
+						a.selectList("workspaces", "")
 					}
 					title := "已归档"
 					if scope.ID != "" {
@@ -125,15 +129,14 @@ func (v *View) archivePage(c *n.Context, t *n.Theme) {
 						label = "保留时间"
 						help = status
 					}
-					button := control(c.Key("archive-retention")).Height(28).PaddingX(7).Radius(5).Label("归档保留设置").Tooltip(help).Children(func() { inlineIconText(c, settingsIcon, label, n.Font{Family: t.Font, Size: 12}, 14, 6, t.TextMuted) })
+					button := control(c.Key("archive-retention")).Height(28).PaddingX(8).Radius(6).Label("归档保留设置").Tooltip(help).Children(func() { inlineIconText(c, settingsIcon, label, n.Font{Family: t.Font, Size: 12}, 14, 6, t.TextMuted) })
 					if button.Clicked() {
 						v.archiveSettings()
 					}
 				})
 				if scope.ID == "" {
 					if next := configurationTabs(c.Key("archive-tabs"), a.tab, []configurationTabItem{{ID: "sessions", Label: "会话"}, {ID: "workspaces", Label: "工作区"}}, configurationUnderline, false); next != a.tab {
-						a.tab = next
-						a.query = ""
+						a.selectList(next, "")
 					}
 				} else {
 					n.Row(c).FillWidth().Height(36).Gap(8).AlignItems(n.Center).Children(func() {
@@ -150,7 +153,7 @@ func (v *View) archivePage(c *n.Context, t *n.Theme) {
 				}
 				key := a.tab + ":" + a.scope
 				configurationTabPanel(c.Key("archive-panels"), key, index, configurationPanelFill, func() {
-					n.Column(c).Fill().Margin(20, 0, 0, 0).Children(func() { v.archiveTable(c, t, a, scope, key) })
+					n.Column(c).Fill().Margin(16, 0, 0, 0).Children(func() { v.archiveTable(c, t, a, scope, key) })
 				}, false)
 			})
 		})
@@ -175,30 +178,36 @@ func (v *View) archiveTable(c *n.Context, t *n.Theme, a *archiveUI, scope domain
 		list = &n.ListState{KeepOffset: true}
 		a.lists[key] = list
 	}
-	n.Row(c).FillWidth().Height(30).Gap(14).AlignItems(n.Center).Margin(0, 0, 14, 0).Children(func() {
-		field := fieldFeedback(c, n.Row(c).Grow(1).MaxWidth(300).Height(30).PaddingX(9).Gap(7).AlignItems(n.Center).Radius(6).Border(1, t.Border).Background(t.Background))
+	n.Row(c).FillWidth().Height(28).Gap(12).AlignItems(n.Center).Margin(0, 0, 8, 0).Children(func() {
+		field := fieldFeedback(c, n.Row(c).Grow(1).MaxWidth(300).Height(28).PaddingX(8).Gap(8).AlignItems(n.Center).Radius(6).Border(1, t.Border).Background(t.Background))
 		field.Children(func() {
 			n.Icon(c, searchIcon).Size(14, 14).TextColor(t.TextMuted)
-			if n.TextInputBase(c.Key("archive-search"), &a.query).Grow(1).MinWidth(0).Height(28).FontSize(12).FixedLineHeight(20).Placeholder(placeholder).Label(placeholder).Changed() {
+			input := n.TextInputBase(c.Key("archive-search"), &a.query).Grow(1).MinWidth(0).Height(26).FontSize(12).FixedLineHeight(20).Placeholder(placeholder).Label(placeholder)
+			if input.Changed() {
 				list.ScrollTo(0, n.Start)
+			}
+			if a.query != "" && iconButton(c, closeIcon, "清除归档搜索").Clicked() {
+				a.query = ""
+				list.ScrollTo(0, n.Start)
+				input.Focus()
 			}
 		})
 		n.Spacer(c).Grow(1)
-		n.Text(c, fmt.Sprintf("%d 个%s", count, kind)).FontSize(11).TextColor(t.TextMuted)
+		n.Text(c, fmt.Sprintf("%d 个%s", count, kind)).FontSize(12).FontFeatures("tnum").TextColor(t.TextMuted)
 	})
-	metadataWidth := float32(165)
-	gap := float32(18)
+	metadataWidth := float32(160)
+	gap := float32(16)
 	if v.viewportWidth <= 1000 {
-		metadataWidth = 116
-		gap = 10
+		metadataWidth = 112
+		gap = 8
 	}
-	n.Row(c.Key("archive-table-header")).FillWidth().Height(30).PaddingX(10).Gap(gap).AlignItems(n.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+	n.Row(c.Key("archive-table-header")).FillWidth().Height(28).PaddingX(8).Gap(gap).AlignItems(n.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 		title, metadata := "标题", "Workspace"
 		if workspaceRows {
 			title, metadata = "工作区", "设备"
 		}
-		n.Text(c, title).Grow(1).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-		n.Text(c, metadata).Width(metadataWidth).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+		n.Text(c, title).Grow(1).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+		n.Text(c, metadata).Width(metadataWidth).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 		n.Spacer(c).Width(archiveActionWidth).Grow(0).Shrink(0)
 	})
 	if count == 0 {
@@ -233,7 +242,7 @@ func (v *View) archiveTable(c *n.Context, t *n.Theme, a *archiveUI, scope domain
 }
 
 func (v *View) archiveRow(c *n.Context, t *n.Theme, a *archiveUI, w domain.Workspace, s domain.Session, title, metadata string, metadataWidth, gap float32, isWorkspace bool) {
-	row := n.Row(c).FillWidth().Height(archiveRowHeight).PaddingX(10).Gap(gap).AlignItems(n.Center).BorderWidth(0, 0, .5, 0).BorderColor(t.Border)
+	row := n.Row(c).FillWidth().Height(archiveRowHeight).PaddingX(8).Gap(gap).AlignItems(n.Center).BorderWidth(0, 0, .5, 0).BorderColor(t.Border)
 	show := row.Hovered() || row.FocusWithin()
 	if show {
 		row.Background(t.Surface)
@@ -245,20 +254,28 @@ func (v *View) archiveRow(c *n.Context, t *n.Theme, a *archiveUI, w domain.Works
 		}
 		// Both text columns share one native baseline; actions use the same
 		// measured glyph center while keeping their own 28-DIP hit rectangles.
-		n.Row(c).Grow(1).MinWidth(0).Gap(gap).AlignItems(n.Baseline).Children(func() {
-			button := control(c.Key("archive-title")).Grow(1).MinWidth(0).Height(28).Justify(n.Start).Label(label).Children(func() {
+		button := n.ButtonBase(c.Key("archive-title")).Grow(1).MinWidth(0).Height(archiveRowHeight).Justify(n.Start).Label(label).Children(func() {
+			n.Row(c).FillWidth().Gap(gap).AlignItems(n.Baseline).Children(func() {
 				n.Text(c, title).SingleLine().Ellipsis("…").Grow(1).FontSize(13).FixedLineHeight(20).TooltipWhenTruncated(title)
+				n.Text(c.Key("archive-metadata"), metadata).Width(metadataWidth).SingleLine().Ellipsis("…").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).TooltipWhenTruncated(metadata).Label("归档归属：" + title)
 			})
-			if button.Clicked() {
-				if isWorkspace {
-					a.scope = w.ID
-					a.query = ""
-				} else {
-					v.openArchivedSession(s)
-				}
-			}
-			n.Text(c.Key("archive-metadata"), metadata).Width(metadataWidth).SingleLine().Ellipsis("…").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).TooltipWhenTruncated(metadata).Label("归档归属：" + title)
 		})
+		metadataLabel := "工作区："
+		if isWorkspace {
+			metadataLabel = "设备："
+		}
+		button.Description(metadataLabel + metadata)
+		button.FocusRing(button.FocusVisible())
+		if button.Pressed() {
+			row.Background(t.SurfacePressed)
+		}
+		if button.Clicked() {
+			if isWorkspace {
+				a.selectList("workspaces", w.ID)
+			} else {
+				v.openArchivedSession(s)
+			}
+		}
 		font := n.Font{Family: t.Font, Size: 13}
 		opacity := float32(0)
 		if show {
@@ -277,7 +294,9 @@ func (v *View) archiveRow(c *n.Context, t *n.Theme, a *archiveUI, w domain.Works
 				restoreLabel = "恢复工作区：" + title
 			}
 			restore := iconButton(c, recoveryIcon, restoreLabel).Disabled(!show || !restorable)
-			if !isWorkspace && w.Archived {
+			if !ready {
+				restore.Tooltip("连接所属设备后可恢复")
+			} else if !isWorkspace && w.Archived {
 				restore.Tooltip("请先恢复所属工作区")
 			}
 			if restore.Clicked() {
@@ -291,7 +310,13 @@ func (v *View) archiveRow(c *n.Context, t *n.Theme, a *archiveUI, w domain.Works
 			if isWorkspace {
 				deleteLabel = "彻底删除工作区：" + title
 			}
-			if iconButton(c, archiveDeleteIcon, deleteLabel).Disabled(!show || !ready || !v.canDeleteArchive(connection)).Clicked() {
+			remove := iconButton(c, archiveDeleteIcon, deleteLabel).Disabled(!show || !ready || !v.canDeleteArchive(connection))
+			if !ready {
+				remove.Tooltip("连接所属设备后可彻底删除")
+			} else if !v.canDeleteArchive(connection) {
+				remove.Tooltip("更新所属设备的 worker 后可彻底删除")
+			}
+			if remove.Clicked() {
 				a.deletion = &archiveDeleteUI{connection: connection, workspace: w, session: s, open: true}
 				if isWorkspace {
 					for _, member := range v.Model.Snapshot.Sessions {
@@ -325,33 +350,40 @@ func (v *View) archiveDialogs(c *n.Context, t *n.Theme) {
 	n.DialogBase(c.Key("delete-archive"), &d.open, func(backdrop, panel n.Element) {
 		backdrop.Background(n.RGBA(0, 0, 0, .16)).Transition(fadeMotion(c, 180*time.Millisecond))
 		width, _ := c.Size()
-		panel.Width(min(380, width-48)).Padding(22).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c)).Children(func() {
+		panel.Width(min(380, width-48)).Padding(24).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c)).Children(func() {
 			n.Column(c).FillWidth().Gap(12).Children(func() {
 				kind, title := "会话", d.session.Title
-				message := "“" + title + "”将被彻底删除。"
+				message := "“" + title + "”将无法恢复。"
 				if d.session.ID == "" {
 					kind = "工作区"
 					title = d.workspace.Name
-					message = fmt.Sprintf("“%s”及其中的 %d 个会话将被彻底删除。", title, d.count)
+					message = fmt.Sprintf("“%s”及其中的 %d 个会话将无法恢复。", title, d.count)
 				}
 				n.Text(c, "彻底删除"+kind+"？").FontSize(15).FontWeight(500).FixedLineHeight(22)
 				n.Text(c, message).FontSize(13).FixedLineHeight(22)
-				n.Text(c, "无法恢复。Shioji 保存的会话记录与历史将一并移除。\n设备上的项目文件和 Git 仓库不会删除。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+				n.Text(c, "删除 Shioji 保存的记录与附件，项目文件和 Git 仓库不会删除。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 				if d.error != "" {
-					n.Text(c, d.error).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+					n.Text(c, d.error).FontSize(12).FixedLineHeight(20).TextColor(t.Danger)
 				}
-				n.Row(c).FillWidth().Gap(8).Margin(10, 0, 0, 0).Children(func() {
+				n.Row(c).FillWidth().Gap(8).Margin(12, 0, 0, 0).Children(func() {
 					n.Spacer(c).Grow(1)
 					if configurationAction(c, "取消").Disabled(d.busy).Clicked() {
 						d.open = false
 					}
-					if n.PrimaryButton(c, "彻底删除").Height(28).FontSize(12).Radius(6).Disabled(d.busy || !v.canDeleteArchive(d.connection)).Clicked() {
+					label := "彻底删除"
+					if d.busy {
+						label = "正在删除…"
+					}
+					if n.PrimaryButton(c, label).Height(28).FontSize(12).Radius(6).Disabled(d.busy || !v.canDeleteArchive(d.connection)).Clicked() {
 						v.deleteArchive(d)
 					}
 				})
 			})
 		})
 	})
+	if d.busy {
+		d.open = true
+	}
 	if !d.open && !d.busy {
 		a.deletion = nil
 	}

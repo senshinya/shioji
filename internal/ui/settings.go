@@ -326,7 +326,7 @@ func (s *Settings) appearance(c *n.Context, t *n.Theme) {
 			}
 			s.picker(c, t, "归档内容保留", value, choices)
 		})
-		n.Text(c, "会话和工作区从归档之日起计时，到期后彻底删除。\n删除工作区会同时删除其中会话，项目文件不受影响。").FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Margin(8, 0, 0, 0)
+		n.Text(c, "从归档日起计时，到期彻底删除会话与工作区，项目文件不受影响。").FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Margin(8, 0, 0, 0)
 		if status := s.owner.Model.ArchivePolicyStatus(); status != "" {
 			n.Text(c, status).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Margin(8, 0, 0, 0)
 		}
