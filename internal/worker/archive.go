@@ -95,6 +95,9 @@ func (s *Server) deleteArchive(method string, in protocol.ArchiveDeleteInput) (d
 	}
 	// Validate every member before retiring any idle runtime in a workspace.
 	for _, session := range sessions {
+		if r := s.currentRuntime(session.ID); r != nil && !r.Stopped() && !r.ManagedCoverage() {
+			return zero, errors.New("运行环境仍有未核实的执行活动，请停止并核对后再删除")
+		}
 		state, err := s.store.RuntimeIdle(session.ID)
 		if err != nil {
 			return zero, err
@@ -203,11 +206,25 @@ func (s *Server) cleanArchiveGarbage() error {
 			err = root.RemoveAll(item.SessionID)
 			root.Close()
 		case item.AttachmentID != "":
-			shared, e := s.store.ArchiveResourceReferenced(item.AttachmentID)
+			shared, e := s.store.ArchiveResourceReferenced(item.WorkspaceID, item.AttachmentID)
 			if e != nil {
 				return e
 			}
 			if !shared {
+				shared, e = s.attachments.ArchiveResourceReferenced(item.WorkspaceID, item.AttachmentID)
+				if e != nil {
+					return e
+				}
+			}
+			if !shared {
+				dependencies, e := s.attachments.ArchiveDependencies(item.WorkspaceID, item.AttachmentID)
+				if e != nil {
+					return e
+				}
+				// Persist children before removing their only typed dependency edge.
+				if e = s.store.ScheduleArchiveResources(item.WorkspaceID, dependencies); e != nil {
+					return e
+				}
 				err = s.attachments.DeleteArchived(item.WorkspaceID, item.AttachmentID)
 			}
 		default:

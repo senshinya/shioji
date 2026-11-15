@@ -69,6 +69,11 @@ func (s *Server) titleLoop() {
 		}
 		title := s.generateTitle(manager, job)
 		if err = s.store.FinishTitleGeneration(job, title); err != nil {
+			// An archive may remove the job while its independent generator runs.
+			// Its late result must not retire the queue for other sessions.
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
 			log.Printf("automatic title save failed: %v", err)
 			return
 		}

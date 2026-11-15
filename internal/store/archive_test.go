@@ -294,7 +294,7 @@ func TestArchiveDeletionKeepsSharedAttachmentUntilFinalReferenceIsRemoved(t *tes
 		if _, err = s.DeleteArchivedSession(session.ID, archived.Revision); err != nil {
 			t.Fatal(err)
 		}
-		shared, err := s.ArchiveResourceReferenced(a.ID)
+		shared, err := s.ArchiveResourceReferenced(w.ID, a.ID)
 		if err != nil {
 			t.Fatal(err)
 		}

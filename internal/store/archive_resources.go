@@ -27,12 +27,16 @@ func (s *Store) ArchiveGarbage() ([]ArchiveGarbage, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) ArchiveResourceReferenced(id string) (bool, error) {
+func (s *Store) ArchiveResourceReferenced(workspace, id string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, table := range []string{"items", "queues", "work_items", "work_inputs", "history_operations"} {
 		var found bool
-		if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM "+table+" WHERE instr(CAST(body AS TEXT),?)>0)", id).Scan(&found); err != nil {
+		where := "session_id IN (SELECT id FROM sessions WHERE json_extract(body,'$.workspaceId')=?)"
+		if table == "history_operations" {
+			where = "(json_extract(body,'$.source.workspaceId')=? OR json_extract(body,'$.session.workspaceId')=?1)"
+		}
+		if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM "+table+" WHERE "+where+" AND instr(CAST(body AS TEXT),?2)>0)", workspace, id).Scan(&found); err != nil {
 			return false, err
 		}
 		if found {
@@ -40,6 +44,25 @@ func (s *Store) ArchiveResourceReferenced(id string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func (s *Store) ScheduleArchiveResources(workspace string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, id := range ids {
+		if _, err = tx.Exec("INSERT OR IGNORE INTO archive_resources(workspace_id,attachment_id) VALUES(?,?)", workspace, id); err != nil {
+			return err
+		}
+	}
+	return s.commit(tx)
 }
 
 func (s *Store) FinishArchiveGarbage(item ArchiveGarbage) error {
