@@ -194,7 +194,7 @@ func (a Adapter) ConfigureAPI(ctx context.Context, in domain.APIConfiguration) (
 	if err = r.call(ctx, "account/read", map[string]any{"refreshToken": false}, &account); err != nil {
 		return domain.Readiness{}, apiSetupError("无法读取授权状态，请重新检测")
 	}
-	if !config.canInitialize(account) || environmentValue(r.cmd.Env, "OPENAI_API_KEY") != "" || environmentValue(r.cmd.Env, "OPENAI_BASE_URL") != "" {
+	if !config.canInitialize(account) || environmentValue(r.processEnvironment(), "OPENAI_API_KEY") != "" || environmentValue(r.processEnvironment(), "OPENAI_BASE_URL") != "" {
 		return domain.Readiness{}, apiSetupError("该设备已存在接入配置，请重新检测")
 	}
 	file, version := "", ""

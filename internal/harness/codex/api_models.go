@@ -111,7 +111,7 @@ func (r *Runtime) availableAPIModels(ctx context.Context, known []domain.Model) 
 	if err != nil {
 		return nil, errors.New("无法读取当前模型服务配置")
 	}
-	provider := config.provider(r.cmd.Env)
+	provider := config.provider(r.processEnvironment())
 	endpoint := provider.Endpoint
 	if endpoint == "" {
 		return nil, errors.New("当前服务未提供可读取的模型列表地址")
@@ -121,11 +121,11 @@ func (r *Runtime) availableAPIModels(ctx context.Context, known []domain.Model) 
 		headers.Set(key, value)
 	}
 	for key, name := range provider.EnvHeaders {
-		headers.Set(key, environmentValue(r.cmd.Env, name))
+		headers.Set(key, environmentValue(r.processEnvironment(), name))
 	}
 	token := provider.Token
 	if provider.EnvKey != "" {
-		token = environmentValue(r.cmd.Env, provider.EnvKey)
+		token = environmentValue(r.processEnvironment(), provider.EnvKey)
 	}
 	var account accountStatus
 	if err = r.call(ctx, "account/read", map[string]any{"refreshToken": false}, &account); err != nil {
@@ -141,7 +141,7 @@ func (r *Runtime) availableAPIModels(ctx context.Context, known []domain.Model) 
 			return known, nil
 		}
 		if public.Type != "apiKey" {
-			token = environmentValue(r.cmd.Env, "OPENAI_API_KEY")
+			token = environmentValue(r.processEnvironment(), "OPENAI_API_KEY")
 		}
 		if token == "" {
 			token, err = config.nativeAPIKey(ctx)

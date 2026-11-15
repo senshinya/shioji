@@ -16,8 +16,11 @@ import (
 )
 
 func (a Adapter) Installation() domain.RuntimeInstallation {
+	ctx, cancel := context.WithTimeout(context.Background(), shellEnvironmentTimeout)
+	defer cancel()
+	env, _ := a.environment(ctx)
 	path := a.Executable
-	if image, err := installedExecutable(path); err == nil {
+	if image, err := installedExecutable(path, env); err == nil {
 		path = image.path
 	}
 	command := []string{path}
@@ -35,6 +38,7 @@ func (a Adapter) WithExecutable(path string) (harness.Adapter, error) {
 			a.defaultExecutable = "codex"
 		}
 	}
+	a.launchEnv = nil
 	a.override = path
 	a.Executable = path
 	if path == "" {
@@ -70,7 +74,7 @@ func (r *Runtime) checkAuthentication(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		r.account = config.summary(account, r.cmd.Env)
+		r.account = config.summary(account, r.processEnvironment())
 		if r.account.Credential == "missing" {
 			return &harness.SetupError{Issue: domain.RuntimeSignInRequired, Account: r.account, Message: "请检查该设备的 API 凭据"}
 		}
@@ -154,6 +158,7 @@ func (a Adapter) WithRuntimeOptions(options domain.RuntimeOptions) (harness.Adap
 	}
 	options.Arguments = slices.Clone(options.Arguments)
 	options.Environment = slices.Clone(options.Environment)
+	a.launchEnv = nil
 	a.runtimeOptions = options
 	return a, nil
 }
@@ -203,7 +208,8 @@ func (a accountStatus) summary() *domain.RuntimeAccount {
 func (a Adapter) signInMethods() []domain.SignInMethod {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	_, support, err := compatibleExecutable(ctx, a.Executable)
+	env, _ := a.environment(ctx)
+	_, support, err := compatibleExecutable(ctx, a.Executable, env)
 	if err != nil {
 		return nil
 	}
@@ -220,6 +226,7 @@ func (a Adapter) signInMethods() []domain.SignInMethod {
 func (a Adapter) apiSetupSupported() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	_, support, err := compatibleExecutable(ctx, a.Executable)
+	env, _ := a.environment(ctx)
+	_, support, err := compatibleExecutable(ctx, a.Executable, env)
 	return err == nil && support.methods["config/batchWrite"] && support.methods["account/read"]
 }

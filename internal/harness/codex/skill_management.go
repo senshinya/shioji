@@ -90,7 +90,7 @@ func (r *Runtime) managedSkills(ctx context.Context, launch domain.LaunchContext
 	}
 	cwd := launch.CWD
 	if cwd == "" {
-		cwd = environmentValue(r.cmd.Env, "HOME")
+		cwd = environmentValue(r.processEnvironment(), "HOME")
 		if cwd == "" {
 			return out, nativeConfiguration{}, errors.New("设备未提供用户目录")
 		}
@@ -253,8 +253,8 @@ var _ harness.SkillManager = (*adapterRuntime)(nil)
 // ancestors discovered while querying the user's home directory.
 func (r *Runtime) globalSkillSource(path string, skills []nativeManagedSkill) bool {
 	roots := []string{}
-	home := environmentValue(r.cmd.Env, "HOME")
-	configHome := environmentValue(r.cmd.Env, "CODEX_HOME")
+	home := environmentValue(r.processEnvironment(), "HOME")
+	configHome := environmentValue(r.processEnvironment(), "CODEX_HOME")
 	if home != "" {
 		roots = append(roots, filepath.Join(home, ".agents", "skills"))
 		if configHome == "" {

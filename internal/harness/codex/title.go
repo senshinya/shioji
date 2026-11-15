@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"shioji/internal/domain"
 	"shioji/internal/harness"
@@ -56,7 +55,11 @@ func (r *adapterRuntime) GenerateTitle(ctx context.Context, input harness.TitleI
 	if binary == "" {
 		binary = "codex"
 	}
-	binary, err = exec.LookPath(binary)
+	env, _ := r.titleAdapter.environment(ctx)
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	binary, err = lookPathEnvironment(binary, env)
 	if err != nil {
 		return "", err
 	}
@@ -82,7 +85,7 @@ func (r *adapterRuntime) GenerateTitle(ctx context.Context, input harness.TitleI
 		args = append(args, "--config", "mcp_servers={"+strings.Join(disabledServers, ",")+"}")
 	}
 	args = append(args, "-")
-	env := desktopEnvironment(runtimeEnvironment(os.Environ(), r.titleAdapter.Home, r.titleAdapter.runtimeOptions.Environment), nil, "")
+	env = desktopEnvironment(env, nil, "")
 	env = slices.DeleteFunc(env, func(value string) bool {
 		return strings.HasPrefix(value, "CODEX_THREAD_ID=") || strings.HasPrefix(value, "CODEX_TOOL_CALL_ID=") || r.titleAdapter.Home != "" && strings.HasPrefix(value, "CODEX_HOME=")
 	})

@@ -26,18 +26,9 @@ type WorkerInfo struct {
 	Started   bool                          `json:"started"`
 }
 
-func ExistingCodex() string {
-	if p, err := exec.LookPath("codex"); err == nil {
-		return p
-	}
-	home, _ := os.UserHomeDir()
-	for _, p := range []string{"/opt/homebrew/bin/codex", "/usr/local/bin/codex", filepath.Join(home, ".npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex"), "/Applications/Codex.app/Contents/Resources/codex"} {
-		if s, err := os.Stat(p); err == nil && s.Mode().IsRegular() && s.Mode().Perm()&0111 != 0 {
-			return p
-		}
-	}
-	return "codex"
-}
+// Resolve after the worker has prepared its owning user's launch environment.
+// A GUI PATH must not pin a different installation before that discovery.
+func ExistingCodex() string { return "codex" }
 
 // EnsureLocalWorker is the developer bootstrap shared by local launch and SSH.
 // It reuses the same authoritative state and never replaces a live worker.

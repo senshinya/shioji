@@ -14,7 +14,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"os"
 	"os/exec"
 	"shioji/internal/domain"
 	"strconv"
@@ -28,6 +27,7 @@ import (
 )
 
 type ExecutorOptions struct {
+	launchEnv        []string
 	Executable, Home string
 	Environment      []domain.EnvironmentVariable
 	Scope            *managedexec.Scope
@@ -195,11 +195,17 @@ func StartExecutor(ctx context.Context, opts ExecutorOptions) (*Executor, error)
 	if binary == "" {
 		binary = "codex"
 	}
-	resolved, err := exec.LookPath(binary)
+	env := opts.launchEnv
+	if env == nil {
+		env, _ = codexEnvironment(ctx, opts.Home, opts.Environment)
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	resolved, err := lookPathEnvironment(binary, env)
 	if err != nil {
 		return nil, err
 	}
-	env := runtimeEnvironment(os.Environ(), opts.Home, opts.Environment)
 	ownerCtx, cancel := context.WithCancel(context.Background())
 	e := &Executor{scope: opts.Scope, ctx: ownerCtx, cancel: cancel, done: make(chan struct{}), token: randomExecutorID() + randomExecutorID(), baseEnv: map[string]string{}, pending: map[string]chan wire.Message{}, requests: map[string]executorRequest{}, boots: map[string]*executorBootstrap{}}
 	e.onLost = opts.OnLost

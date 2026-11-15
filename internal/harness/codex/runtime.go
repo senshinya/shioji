@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -23,6 +22,7 @@ import (
 )
 
 type Options struct {
+	launchEnv        []string
 	authentication   bool
 	ImportResource   func(harness.OutputResource) (domain.Attachment, error)
 	OnMessage        func(context.Context, harness.IncomingMessage) error
@@ -36,7 +36,7 @@ type Options struct {
 	Executor         *Executor
 }
 type Runtime struct {
-	fastServiceTiers map[string]string
+	processEnv       []string
 	loginEvents      chan json.RawMessage
 	toolLogin        *toolServiceLogin
 	account          *domain.RuntimeAccount
@@ -51,6 +51,7 @@ type Runtime struct {
 	normalizer       *Normalizer
 	onEvent          func(domain.Event) error
 	ready            domain.Readiness
+	fastServiceTiers map[string]string
 	protocol         *protocolSupport
 	err              error
 	scope            *managedexec.Scope
@@ -63,7 +64,14 @@ type CallError = harness.DeliveryError
 
 func IsUncertain(err error) bool { return harness.IsUncertain(err) }
 func Start(ctx context.Context, opts Options) (*Runtime, error) {
-	binary, support, err := compatibleExecutable(ctx, opts.Executable)
+	env := opts.launchEnv
+	if env == nil {
+		env, _ = codexEnvironment(ctx, opts.Home, opts.Environment)
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	binary, support, err := compatibleExecutable(ctx, opts.Executable, env)
 	if err != nil {
 		return nil, err
 	}
@@ -84,9 +92,8 @@ func Start(ctx context.Context, opts Options) (*Runtime, error) {
 	if opts.authentication {
 		r.loginEvents = make(chan json.RawMessage, 8)
 	}
-	env := runtimeEnvironment(os.Environ(), opts.Home, opts.Environment)
 	if opts.OnMessage != nil {
-		node, nodeErr := exec.LookPath("node")
+		node, nodeErr := lookPathEnvironment("node", env)
 		if nodeErr == nil {
 			node, err = filepath.Abs(node)
 			if err != nil {
@@ -110,6 +117,7 @@ func Start(ctx context.Context, opts Options) (*Runtime, error) {
 	} else {
 		env = desktopEnvironment(env, nil, "")
 	}
+	r.processEnv = slices.Clone(env)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stderr = io.Discard
@@ -125,7 +133,7 @@ func Start(ctx context.Context, opts Options) (*Runtime, error) {
 	if opts.Scope != nil {
 		stdin.Close()
 		stdout.Close()
-		resolved, resolveErr := exec.LookPath(binary)
+		resolved, resolveErr := lookPathEnvironment(binary, env)
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
@@ -659,7 +667,8 @@ func (r *Runtime) nativeModels(ctx context.Context) ([]domain.Model, error) {
 	return models, nil
 }
 
-// Keep native service-tier identifiers inside the Codex adapter.
+// Keep native service-tier identifiers inside the Codex adapter. The current
+// catalog names priority "Fast"; older catalogs advertised fast directly.
 func nativeFastServiceTier(model wire.Model) string {
 	for _, id := range []string{"priority", "fast"} {
 		for _, tier := range model.ServiceTiers {
@@ -672,4 +681,16 @@ func nativeFastServiceTier(model wire.Model) string {
 		return "fast"
 	}
 	return ""
+}
+
+// Cmd.Env describes the clean managed bootstrap when a scope is used. Runtime
+// configuration reads must use the authorized target's immutable environment.
+func (r *Runtime) processEnvironment() []string {
+	if r.processEnv != nil {
+		return r.processEnv
+	}
+	if r.cmd != nil {
+		return r.cmd.Env
+	}
+	return nil
 }

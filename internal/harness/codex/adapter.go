@@ -17,18 +17,25 @@ type Adapter struct {
 	defaultHome       string
 	hasDefaultHome    bool
 	runtimeOptions    domain.RuntimeOptions
+	launchEnv         []string
 }
 
 func (a Adapter) Descriptor() domain.HarnessDescriptor {
 	return domain.HarnessDescriptor{ID: "codex", Name: "Codex", Icon: "openai"}
 }
 func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.Runtime, error) {
+	env, _ := a.environment(ctx)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	a.launchEnv = env
 	titleAdapter := a
-	image, err := installedExecutable(a.Executable)
+	image, err := installedExecutable(a.Executable, env)
 	if err != nil {
 		return nil, err
 	}
-	resolved, _, err := compatibleExecutable(ctx, image.path)
+	titleAdapter.Executable = image.path
+	resolved, _, err := compatibleExecutable(ctx, image.path, env)
 	if err != nil {
 		var setup *harness.SetupError
 		if errors.As(err, &setup) {
@@ -39,12 +46,12 @@ func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.
 	a.Executable = resolved
 	var executor *Executor
 	if opts.Scope != nil {
-		executor, err = StartExecutor(ctx, ExecutorOptions{Executable: a.Executable, Home: a.Home, Environment: a.runtimeOptions.Environment, Scope: opts.Scope, OnLost: opts.OnLost})
+		executor, err = StartExecutor(ctx, ExecutorOptions{launchEnv: env, Executable: a.Executable, Home: a.Home, Environment: a.runtimeOptions.Environment, Scope: opts.Scope, OnLost: opts.OnLost})
 		if err != nil {
 			return nil, errors.Join(err, opts.Scope.Stop(ctx))
 		}
 	}
-	r, err := Start(ctx, Options{Executable: a.Executable, Home: a.Home, Environment: a.runtimeOptions.Environment, Arguments: a.runtimeOptions.Arguments, Instructions: a.runtimeOptions.Instructions, Scope: opts.Scope, Executor: executor, OnStart: opts.OnStart, OnEvent: opts.OnEvent, OnMessage: opts.OnMessage, ImportResource: opts.ImportResource})
+	r, err := Start(ctx, Options{launchEnv: env, Executable: a.Executable, Home: a.Home, Environment: a.runtimeOptions.Environment, Arguments: a.runtimeOptions.Arguments, Instructions: a.runtimeOptions.Instructions, Scope: opts.Scope, Executor: executor, OnStart: opts.OnStart, OnEvent: opts.OnEvent, OnMessage: opts.OnMessage, ImportResource: opts.ImportResource})
 	if err != nil {
 		if executor != nil {
 			executor.Close(ctx)
@@ -54,7 +61,7 @@ func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.
 		}
 		return nil, err
 	}
-	after, identityErr := installedExecutable(image.path)
+	after, identityErr := installedExecutable(image.path, env)
 	if identityErr != nil || after.version != image.version {
 		r.Close()
 		if executor != nil {
@@ -66,7 +73,10 @@ func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.
 }
 
 func (a Adapter) CatalogVersion() (string, error) {
-	image, err := installedExecutable(a.Executable)
+	ctx, cancel := context.WithTimeout(context.Background(), shellEnvironmentTimeout)
+	defer cancel()
+	env, _ := a.environment(ctx)
+	image, err := installedExecutable(a.Executable, env)
 	return image.version, err
 }
 func (r *adapterRuntime) CatalogVersion() (string, error) { return r.version, nil }
@@ -128,4 +138,11 @@ func (r *adapterRuntime) Submit(ctx context.Context, s domain.Session, operation
 }
 func (r *adapterRuntime) Steer(ctx context.Context, s domain.Session, turn, operation string, input harness.TurnInput) error {
 	return r.steer(ctx, s, turn, operation, input.Text, input.Attachments, input.Skills)
+}
+
+func (a Adapter) environment(ctx context.Context) ([]string, error) {
+	if a.launchEnv != nil {
+		return append([]string(nil), a.launchEnv...), nil
+	}
+	return codexEnvironment(ctx, a.Home, a.runtimeOptions.Environment)
 }

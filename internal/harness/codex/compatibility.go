@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"shioji/internal/domain"
 	"shioji/internal/harness"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -19,12 +20,12 @@ import (
 )
 
 type protocolSupport struct {
-	serviceTierForTurn bool
 	scopedToolStatus   bool
 	browserLogin       bool
 	deviceLogin        bool
 	collaborationMode  bool
 	serviceTier        bool
+	serviceTierForTurn bool
 	methods            map[string]bool
 }
 type requestShape struct {
@@ -168,24 +169,48 @@ func protocolFromSchema(data []byte) (*protocolSupport, error) {
 
 type executableImage struct{ path, version string }
 
-func installedExecutable(binary string) (executableImage, error) {
+func installedExecutable(binary string, environments ...[]string) (executableImage, error) {
 	if binary == "" {
 		binary = "codex"
 	}
-	path, err := exec.LookPath(binary)
-	if err != nil {
-		return executableImage{}, &harness.SetupError{Issue: domain.RuntimeMissing, Message: "未找到 Codex，请配置可执行文件或在该设备安装"}
+	env := os.Environ()
+	if len(environments) > 0 {
+		env = environments[0]
 	}
-	path, err = filepath.EvalSymlinks(path)
+	path, err := lookPathEnvironment(binary, env)
+	if err != nil && binary == "codex" {
+		home := environmentValue(env, "HOME")
+		for _, candidate := range []string{"/opt/homebrew/bin/codex", "/usr/local/bin/codex", filepath.Join(home, ".npm-global/bin/codex"), filepath.Join(home, ".npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex"), "/Applications/Codex.app/Contents/Resources/codex"} {
+			if resolved, e := lookPathEnvironment(candidate, env); e == nil {
+				path, err = resolved, nil
+				break
+			}
+		}
+	}
+	if err != nil {
+		return executableImage{}, &harness.SetupError{Issue: domain.RuntimeMissing, Message: "未找到 Codex，请配置可执行文件或检查该设备的 Shell PATH"}
+	}
+	real, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return executableImage{}, err
 	}
-	st, err := os.Stat(path)
+	st, err := os.Stat(real)
 	if err != nil {
 		return executableImage{}, err
 	}
 	stat := st.Sys().(*syscall.Stat_t)
-	identity := fmt.Sprintf("%s\x00%d:%d:%d:%d:%d", path, stat.Dev, stat.Ino, st.Size(), st.ModTime().UnixNano(), st.Mode())
+	identity := fmt.Sprintf("%s\x00%s\x00%d:%d:%d:%d:%d", path, real, stat.Dev, stat.Ino, st.Size(), st.ModTime().UnixNano(), st.Mode())
+	if interpreter := nodeInterpreter(path); interpreter != "" {
+		identity += "\x00node:missing"
+		if node, e := lookPathEnvironment(interpreter, env); e == nil {
+			if realNode, e := filepath.EvalSymlinks(node); e == nil {
+				if info, e := os.Stat(realNode); e == nil {
+					ns := info.Sys().(*syscall.Stat_t)
+					identity += fmt.Sprintf("%s:%d:%d:%d:%d", realNode, ns.Dev, ns.Ino, info.Size(), info.ModTime().UnixNano())
+				}
+			}
+		}
+	}
 	return executableImage{path: path, version: fmt.Sprintf("%x", sha256.Sum256([]byte(identity)))}, nil
 }
 
@@ -195,32 +220,54 @@ var installedProtocol struct {
 	support *protocolSupport
 }
 
-// Resolve once per adapter start so the executor and app-server use the same
-// installed image even if Homebrew changes its public symlink during startup.
-func compatibleExecutable(ctx context.Context, binary string) (string, *protocolSupport, error) {
-	image, err := installedExecutable(binary)
+// Preserve the invoked name for version-manager shims; real-file identity is
+// tracked separately so replacement is still detected across startup.
+func compatibleExecutable(ctx context.Context, binary string, environments ...[]string) (string, *protocolSupport, error) {
+	env := []string(nil)
+	if len(environments) > 0 {
+		env = environments[0]
+	} else {
+		env, _ = codexEnvironment(ctx, "", nil)
+	}
+	if ctx.Err() != nil {
+		return "", nil, ctx.Err()
+	}
+	image, err := installedExecutable(binary, env)
 	if err != nil {
 		return "", nil, err
 	}
 	path := image.path
+	if interpreter := nodeInterpreter(path); interpreter != "" {
+		if _, err := lookPathEnvironment(interpreter, env); err != nil {
+			return "", nil, &harness.SetupError{Issue: domain.RuntimeUnavailableIssue, Message: "已找到 Codex 启动器，但当前环境找不到 Node.js；请检查该设备的 Shell 配置或 Agent PATH"}
+		}
+	}
+	sorted := append([]string(nil), env...)
+	slices.Sort(sorted)
+	key := image.version + fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(sorted, "\x00"))))
 	installedProtocol.Lock()
 	defer installedProtocol.Unlock()
-	if installedProtocol.version == image.version && installedProtocol.support != nil {
+	if installedProtocol.version == key && installedProtocol.support != nil {
 		return path, installedProtocol.support, nil
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	version, err := exec.CommandContext(probeCtx, path, "--version").Output()
-	if err != nil {
-		return "", nil, errors.New("无法读取 Codex 运行信息")
+	if err = runDetectionCommand(probeCtx, path, env, "--version"); err != nil {
+		if probeCtx.Err() != nil {
+			return "", nil, &harness.SetupError{Issue: domain.RuntimeUnavailableIssue, Message: "检测 Codex 版本超时，请检查启动器和 Shell 配置"}
+		}
+		return "", nil, &harness.SetupError{Issue: domain.RuntimeUnavailableIssue, Message: "Codex 启动器无法运行，请检查执行权限、运行依赖或安装完整性"}
 	}
 	dir, err := os.MkdirTemp("", "shioji-protocol-")
 	if err != nil {
 		return "", nil, err
 	}
 	defer os.RemoveAll(dir)
-	if err = exec.CommandContext(probeCtx, path, "app-server", "generate-json-schema", "--experimental", "--out", dir).Run(); err != nil {
-		return "", nil, fmt.Errorf("%s 无法提供可检查的 App Server 协议", strings.TrimSpace(string(version)))
+	if err = runDetectionCommand(probeCtx, path, env, "app-server", "generate-json-schema", "--experimental", "--out", dir); err != nil {
+		if probeCtx.Err() != nil {
+			return "", nil, &harness.SetupError{Issue: domain.RuntimeUnavailableIssue, Message: "读取 Codex 协议超时，请检查启动器和运行依赖"}
+		}
+		return "", nil, &harness.SetupError{Issue: domain.RuntimeIncompatible, Message: "该 Codex 未提供可检查的 App Server 协议，请更新该设备上的安装"}
 	}
 	f, err := os.Open(filepath.Join(dir, "ClientRequest.json"))
 	if err != nil {
@@ -235,13 +282,58 @@ func compatibleExecutable(ctx context.Context, binary string) (string, *protocol
 	if err != nil {
 		return "", nil, err
 	}
-	after, err := installedExecutable(path)
+	after, err := installedExecutable(path, env)
 	if err != nil || after.version != image.version {
 		return "", nil, errors.New("Codex 安装正在变化，请稍后重试")
 	}
-	installedProtocol.version, installedProtocol.support = image.version, support
+	installedProtocol.version, installedProtocol.support = key, support
 	return path, support, nil
 }
 func (r *Runtime) supports(method string) bool {
 	return r.protocol != nil && r.protocol.methods[method]
+}
+
+func nodeInterpreter(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	b := make([]byte, 512)
+	n, _ := f.Read(b)
+	line, _, _ := strings.Cut(string(b[:n]), "\n")
+	if !strings.HasPrefix(line, "#!") {
+		return ""
+	}
+	fields := strings.Fields(strings.TrimPrefix(line, "#!"))
+	if len(fields) == 0 {
+		return ""
+	}
+	if filepath.Base(fields[0]) == "node" {
+		return fields[0]
+	}
+	if filepath.Base(fields[0]) == "env" {
+		for _, field := range fields[1:] {
+			if field == "node" {
+				return field
+			}
+		}
+	}
+	return ""
+}
+
+func runDetectionCommand(ctx context.Context, path string, env []string, args ...string) error {
+	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.Env = env
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 200 * time.Millisecond
+	var out shellOutput
+	cmd.Stdout = &out
+	cmd.Stderr = io.Discard
+	err := cmd.Run()
+	if err == nil && out.overflow {
+		return errors.New("Codex 检测输出过大")
+	}
+	return err
 }
