@@ -21,7 +21,7 @@ func (m *Model) StorageTarget(directory, key string) (StorageTarget, error) {
 	if key != "local" {
 		for _, c := range m.Connections {
 			if c.ID == key {
-				ssh := c.SSH
+				ssh := c.ActiveSSH()
 				t.SSH = &ssh
 				t.DeviceID = c.DeviceID
 				return t, nil

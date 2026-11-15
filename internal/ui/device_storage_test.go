@@ -4,10 +4,43 @@ import (
 	"fmt"
 	n "github.com/egoist/mygo/ui"
 	"math"
+	"shioji/internal/app"
 	"shioji/internal/domain"
+	"shioji/internal/tailnet"
+	"shioji/internal/transport"
 	"testing"
 	"time"
 )
+
+type storageUnavailableNetwork struct{ tailnet.Connection }
+
+func (storageUnavailableNetwork) Route(peer, address string, port int) (string, error) {
+	return "", fmt.Errorf("network route unavailable: %s %s %d", peer, address, port)
+}
+
+func TestDeviceStorageResolvesTailnetBridgeForEveryRequest(t *testing.T) {
+	m := deviceUIModel()
+	m.Connections = []app.DeviceConnection{{ID: "air", DeviceID: "air-worker", SSH: transport.SSH{
+		Target: "user@100.64.0.9", TailnetPeer: "air-peer", Worker: "/worker", Port: 2222,
+	}}}
+	controller := app.NewController("/local-worker")
+	controller.AttachTailnet(storageUnavailableNetwork{})
+	v := New(m, controller, "")
+	s := &deviceStorageState{epoch: m.DeviceStates["air"].ConnectionEpoch}
+	v.deviceStorageStates = map[string]*deviceStorageState{"air": s}
+	for _, clean := range []bool{false, true} {
+		v.readDeviceStorage("air", s, clean)
+		select {
+		case update := <-controller.Updates:
+			update(m)
+		case <-time.After(2 * time.Second):
+			t.Fatal("storage request did not complete")
+		}
+		if s.phase != storageFailed || s.error != "network route unavailable: air-peer 100.64.0.9 2222" {
+			t.Fatalf("clean=%t: storage bypassed the current Tailnet bridge: %q", clean, s.error)
+		}
+	}
+}
 
 func TestDeviceStorageTrailingTextSharesCapacityEdge(t *testing.T) {
 	for _, width := range []int{520, 824} {

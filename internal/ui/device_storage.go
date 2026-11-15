@@ -104,10 +104,19 @@ func (v *View) readDeviceStorage(key string, s *deviceStorageState, clean bool) 
 	s.request++
 	request := s.request
 	epoch := s.epoch
-	v.Controller.AttachmentTask(func() app.Update {
+	controller := v.Controller
+	controller.AttachmentTask(func() app.Update {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		report, err := target.Read(ctx, clean)
+		var report domain.StorageReport
+		var err error
+		if target.SSH != nil {
+			routed, routeErr := controller.TailnetSSH(*target.SSH)
+			target.SSH, err = &routed, routeErr
+		}
+		if err == nil {
+			report, err = target.Read(ctx, clean)
+		}
 		return func(m *app.Model) {
 			v.applyStorageResult(m, key, s, epoch, request, report, err, clean)
 		}
