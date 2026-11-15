@@ -349,7 +349,7 @@ func (v *View) workspaceSettingsForm(c *n.Context, t *n.Theme) {
 						n.Row(c.Key(folder)).FillWidth().MinHeight(32).Gap(8).AlignItems(n.Center).Transition(rowMotion).Children(func() {
 							n.Radio(c, &e.Main, folder, "").Size(18, 20).MarginStart(workspaceDirectoryChoiceInset).MarginEnd(-workspaceDirectoryChoiceInset).Label("设为主目录：" + folder).Disabled(e.Busy)
 							n.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(n.Baseline).Transform(n.Translation(0, inlineCenterOffset(folder, n.Font{Family: t.Font, Size: 12, Weight: 400}))).Children(func() {
-								n.Text(c, folder).SingleLine().Ellipsis("…").MinWidth(0).Grow(1).FontSize(12).Tooltip(folder)
+								n.Text(c, folder).SingleLine().Ellipsis("…").MinWidth(0).Grow(1).FontSize(12).TooltipWhenTruncated(folder)
 								if folder == e.Main {
 									n.Text(c.Key("main-folder"), "主目录").FontSize(11).TextColor(t.TextMuted).Transition(fadeMotion(c, 160*time.Millisecond))
 								}

@@ -989,7 +989,11 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 								if label == "" {
 									label = model.ID
 								}
-								if ghost(c, label).FillWidth().TextAlign(n.Start).Tooltip(model.ID).Disabled(ready.State != domain.RuntimeReady).Clicked() {
+								choice := ghost(c, label).FillWidth().TextAlign(n.Start).Disabled(ready.State != domain.RuntimeReady)
+								if label != model.ID {
+									choice.Tooltip(model.ID)
+								}
+								if choice.Clicked() {
 									cfg.Model = model.ID
 									if v.Model.Error == app.ModelUnavailableMessage {
 										v.Model.Error = ""
@@ -1072,7 +1076,7 @@ func settingRow(c *n.Context, name, value string) n.Element {
 		n.Row(c).FillWidth().AlignItems(n.Center).Children(func() {
 			n.Text(c, name)
 			n.Spacer(c).Grow(1)
-			n.Text(c, value).SingleLine().MaxWidth(160).Tooltip(value)
+			n.Text(c, value).SingleLine().MaxWidth(160).TooltipWhenTruncated(value)
 		})
 	})
 }

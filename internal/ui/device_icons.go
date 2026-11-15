@@ -141,7 +141,7 @@ func (v *View) welcomeDeviceIcon(c *n.Context, t *n.Theme, key, label string, sh
 			}
 		})
 		if showName {
-			n.Text(c, name).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine().Ellipsis("…").MaxWidth(240).Tooltip(name)
+			n.Text(c, name).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine().Ellipsis("…").MaxWidth(240).TooltipWhenTruncated(name)
 		}
 	})
 }

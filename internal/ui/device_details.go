@@ -179,7 +179,7 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 								}
 							}
 						} else {
-							n.Text(c, name).SingleLine().Shrink(1).FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Tooltip(name).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+							n.Text(c, name).SingleLine().Shrink(1).FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).TooltipWhenTruncated(name).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 							if iconButton(c, queueEditIcon, "修改设备名称").AlignSelf(n.Center).Clicked() {
 								rename.open = true
 								rename.name = name

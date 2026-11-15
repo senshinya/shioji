@@ -389,7 +389,7 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 				if file {
 					back := control(c, 5).Size(24, 26).Label("返回更改列表").Tooltip("返回更改列表").Children(func() { n.Icon(c, disclosureRight).Size(14, 14).Transform(n.Rotation(180)).TextColor(t.TextMuted) })
 					goBack = back.Clicked()
-					n.Text(c, state.Path).SingleLine().Grow(1).FontSize(12).Tooltip(state.Path)
+					n.Text(c, state.Path).SingleLine().Grow(1).FontSize(12).TooltipWhenTruncated(state.Path)
 				} else if kind == "tasks" {
 					n.Text(c, "任务").Label("任务标题").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 				} else if draggable {
@@ -440,7 +440,7 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 					file := state.Files[i]
 					row := control(c, 0).FillWidth().Height(28).PaddingX(12).Label("查看文件:" + file.Path).Children(func() {
 						n.Row(c).FillWidth().Gap(6).AlignItems(n.Center).Children(func() {
-							n.Text(c, file.Path).SingleLine().Grow(1).MinWidth(0).FontSize(12).Tooltip(file.Path)
+							n.Text(c, file.Path).SingleLine().Grow(1).MinWidth(0).FontSize(12).TooltipWhenTruncated(file.Path)
 							added, deleted, _, _ := gitColors(t)
 							a, d := "", ""
 							if file.Added != nil && *file.Added != 0 {

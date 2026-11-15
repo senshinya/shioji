@@ -373,7 +373,7 @@ func (v *View) maintenanceProcessDetails(c *n.Context, t *n.Theme, key, id strin
 		if reason != "" {
 			n.Text(c, reason).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Grow(1).MinWidth(0)
 		}
-		trigger := control(c.Key("toggle"), 6).Height(configurationControlHeight).PaddingX(4).Gap(4).Justify(n.Start).Label("进程详情 " + id).Tooltip(fmt.Sprintf("%d 个进程", len(processes)))
+		trigger := control(c.Key("toggle"), 6).Height(configurationControlHeight).PaddingX(4).Gap(4).Justify(n.Start).Label("进程详情 " + id)
 		trigger.Children(func() {
 			n.Row(c).Gap(4).AlignItems(n.Baseline).Children(func() {
 				angle := float32(-90)

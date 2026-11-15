@@ -84,6 +84,16 @@ type SearchQuery struct {
 	Query string `json:"query"`
 }
 
+type ArchivePolicyInput struct {
+	Days     int   `json:"days"`
+	Revision int64 `json:"revision"`
+}
+type ArchiveDeleteInput struct {
+	WorkspaceID string `json:"workspaceId,omitempty"`
+	SessionID   string `json:"sessionId,omitempty"`
+	Revision    int64  `json:"revision"`
+}
+
 // QueueInput applies a revision-checked mutation to the owning worker's queue.
 type QueueInput struct {
 	ReferencePositions []domain.ReferencePosition `json:"referencePositions"`

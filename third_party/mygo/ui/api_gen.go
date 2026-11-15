@@ -6057,6 +6057,22 @@ func (_handle Element) Tooltip(s string) Element {
 	return wrapElement(_node.Tooltip(s))
 }
 
+// TooltipWhenTruncated shows s only when this text element's native layout
+// truncates it. Call it after setting the text's font, padding and line limit.
+// It uses the previous frame's content width, like LayoutBounds, and includes
+// rich-text spans and inline objects in the measurement. Other element kinds
+// have no text layout; attach the hint to their text child instead. When a
+// containing control has keyboard focus, it anchors the hint to that control.
+func (_handle Element) TooltipWhenTruncated(s string) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.TooltipWhenTruncated(s))
+}
+
 // Top, Right, Bottom and Left place an Absolute element. On an element in
 // its parent's layout, they move it from where the layout put it, as CSS's
 // relative positioning does, without moving its siblings.

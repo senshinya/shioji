@@ -85,8 +85,10 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS work_items (session_id TEXT NOT NULL, work_id TEXT NOT NULL, id TEXT NOT NULL, position INTEGER NOT NULL, revision INTEGER NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,work_id,id), FOREIGN KEY(session_id,work_id) REFERENCES works(session_id,id) ON DELETE CASCADE);
  CREATE TABLE IF NOT EXISTS work_inputs (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), work_id TEXT NOT NULL, body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS archive_policy (id INTEGER PRIMARY KEY CHECK(id=1), body BLOB NOT NULL);
- CREATE TABLE IF NOT EXISTS deleted_operations (id TEXT PRIMARY KEY);
+ CREATE TABLE IF NOT EXISTS deleted_operations (id TEXT PRIMARY KEY, session_id TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS deleted_sessions (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, cleaned INTEGER NOT NULL DEFAULT 0);
+ CREATE TABLE IF NOT EXISTS deleted_workspaces (id TEXT PRIMARY KEY, cleaned INTEGER NOT NULL DEFAULT 0);
+ CREATE TABLE IF NOT EXISTS archive_resources (workspace_id TEXT NOT NULL, attachment_id TEXT NOT NULL, PRIMARY KEY(workspace_id,attachment_id));
  CREATE INDEX IF NOT EXISTS operations_session_state ON operations(session_id,state);
  CREATE INDEX IF NOT EXISTS work_inputs_unsettled_session ON work_inputs(session_id) WHERE json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate') AND COALESCE(json_extract(body,'$.executionStopped'),0)=0;
  CREATE INDEX IF NOT EXISTS history_active_source ON history_operations(json_extract(body,'$.source.id')) WHERE json_extract(body,'$.state') IN ('prepared','forked');
@@ -300,14 +302,15 @@ func (s *Store) UpdateWorkspace(w domain.Workspace) (domain.Workspace, error) {
 }
 func operation(q interface{ QueryRow(string, ...any) *sql.Row }, id string) (domain.Operation, error) {
 	var op domain.Operation
-	var deleted bool
-	if err := q.QueryRow("SELECT EXISTS(SELECT 1 FROM deleted_operations WHERE id=?)", id).Scan(&deleted); err != nil {
+	var deletedSession string
+	err := q.QueryRow("SELECT session_id FROM deleted_operations WHERE id=?", id).Scan(&deletedSession)
+	if err == nil {
+		return domain.Operation{ID: id, SessionID: deletedSession, State: "rejected", Deleted: true, Error: "所属会话已彻底删除，不能重放此操作"}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
 		return op, err
 	}
-	if deleted {
-		return op, errors.New("所属会话已彻底删除，不能重放此操作")
-	}
-	err := q.QueryRow("SELECT id,session_id,state,digest,error,kind FROM operations WHERE id=?", id).Scan(&op.ID, &op.SessionID, &op.State, &op.Digest, &op.Error, &op.Kind)
+	err = q.QueryRow("SELECT id,session_id,state,digest,error,kind FROM operations WHERE id=?", id).Scan(&op.ID, &op.SessionID, &op.State, &op.Digest, &op.Error, &op.Kind)
 	return op, err
 }
 func (s *Store) Operation(id string) (domain.Operation, error) {

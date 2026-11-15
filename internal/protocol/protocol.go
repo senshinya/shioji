@@ -37,8 +37,9 @@ const Major = 2
 // Minor 37 adds user-message rounds and coherent byte-chunked read windows.
 // Minor 38 adds device-owned load telemetry and revision-checked idle-sleep control.
 // Minor 39 adds worker-owned reply completion acknowledgements and snapshot time.
+// Minor 40 adds device-owned archive policy and permanent archive deletion.
 // WorkerBuild.Maintenance advertises durable maintenance independently of minor.
-const Minor = 39
+const Minor = 40
 const MaxFrame = 1 << 20
 
 type Frame struct {

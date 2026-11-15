@@ -371,7 +371,7 @@ func (v *View) navigationRow(c *n.Context, t *n.Theme, r navigationRow) {
 						angle = -90
 					}
 					inlineSymbol(c, disclosureDown, w.Name, n.Font{Family: t.Font, Size: 12, Weight: 500}, 11, t.TextMuted, angle).Width(20).TextAlign(n.Center)
-					n.Text(c, w.Name).SingleLine().Grow(1).FontSize(12).FontWeight(500).FixedLineHeight(20).Tooltip(w.Name)
+					n.Text(c, w.Name).SingleLine().Grow(1).FontSize(12).FontWeight(500).FixedLineHeight(20).TooltipWhenTruncated(w.Name)
 				})
 				n.Text(c, m.DeviceName(w.DeviceID)).FontSize(11).TextColor(t.TextMuted).PaddingX(6)
 			}).ContextMenu(func(menu *n.Menu) { v.workspaceMenu(menu, w) }).Clicked() {
@@ -426,12 +426,7 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 			}
 			animation := motionAnimation(c, 160*time.Millisecond)
 			title := n.Text(c, s.Title).SingleLine().Grow(1).MinWidth(0).FontSize(13).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: &animation}).TextColor(color)
-			if title.Hovered() {
-				width, _ := n.ShapeText(s.Title, n.Font{Family: t.Font, Size: 13}, 0).Size()
-				if bounds := title.LayoutBounds(); bounds.W > 0 && width > bounds.W {
-					title.Tooltip(s.Title)
-				}
-			}
+			title.TooltipWhenTruncated(s.Title)
 			if count := v.pendingCount(s.ID); count > 0 {
 				n.Text(c, fmt.Sprint(count)).Font("Menlo").FontSize(11).Width(16).TextAlign(n.End)
 			}

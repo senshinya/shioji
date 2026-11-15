@@ -340,7 +340,7 @@ func (v *View) storageFailures(c *n.Context, t *n.Theme, s *deviceStorageState, 
 				for _, failure := range *retained {
 					n.Row(c).FillWidth().MinHeight(32).Gap(12).AlignItems(n.Baseline).Children(func() {
 						if failure.Name != "" {
-							n.Text(c, failure.Name).SingleLine().MinWidth(0).Grow(1).FontSize(11).Tooltip(failure.Name)
+							n.Text(c, failure.Name).SingleLine().MinWidth(0).Grow(1).FontSize(11).TooltipWhenTruncated(failure.Name)
 						}
 						n.Text(c, failure.Reason).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).MinWidth(0)
 					})

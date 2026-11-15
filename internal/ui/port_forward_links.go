@@ -101,7 +101,7 @@ func (v *View) userMessageLinks(c *n.Context, text string) {
 		if !n.SafeToOpen(raw) {
 			target = ""
 		}
-		link := n.Link(c, raw, target).Underline().TextColor(c.Theme().Text).Tooltip(raw)
+		link := n.Link(c, raw, target).Underline().TextColor(c.Theme().Text)
 		if target == "" && link.Clicked() {
 			if path, err := fileLinkPath(raw); err == nil {
 				v.startFileLink(v.Model.Details[v.Model.SessionID].Session, path, c.Services())

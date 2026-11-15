@@ -208,10 +208,10 @@ func quickRow(c *n.Context, t *n.Theme, label, name, secondary, value string, on
 	n.Column(c).Height(48).FillWidth().Padding(6, 12).Label(label + "，" + state).Tooltip(state).Children(func() {
 		n.Row(c).Height(18).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
 			statusDotSize(c, name, font, color, 4, false).FixedLineHeight(18).Label("连接状态点").Role(n.RoleNone)
-			n.Text(c, name).FontSize(12).FixedLineHeight(18).SingleLine().Ellipsis("…").MinWidth(0).Grow(1).Tooltip(name)
+			n.Text(c, name).FontSize(12).FixedLineHeight(18).SingleLine().Ellipsis("…").MinWidth(0).Grow(1).TooltipWhenTruncated(name)
 			n.Text(c, value).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Shrink(0)
 		})
-		n.Text(c, secondary).FontSize(11).FixedLineHeight(16).PaddingStart(12).FillWidth().SingleLine().Ellipsis("…").TextColor(t.TextMuted).Tooltip(secondary)
+		n.Text(c, secondary).FontSize(11).FixedLineHeight(16).PaddingStart(12).FillWidth().SingleLine().Ellipsis("…").TextColor(t.TextMuted).TooltipWhenTruncated(secondary)
 	})
 }
 func (v *View) quickDevices(c *n.Context, t *n.Theme) {

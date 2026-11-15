@@ -25,8 +25,8 @@ func (v *View) backgroundSwitch(c *n.Context, t *n.Theme, key string, state *app
 	}
 	row(c, "登录后启动服务", func() {
 		n.Row(c).FillWidth().Justify(n.End).Children(func() {
-			tooltip := "登录后启动服务"
-			if service != nil && service.Message != "" {
+			tooltip := ""
+			if unavailable && service != nil {
 				tooltip = service.Message
 			}
 			if configurationSwitch(c, &enabled).Tooltip(tooltip).Label("登录后启动服务开关").Disabled(v.Controller == nil || !state.Connected || busy || unavailable).Changed() {

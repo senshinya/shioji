@@ -135,12 +135,17 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 						pref.Favorites = toggleModelValue(pref.Favorites, model.ID)
 						v.Model.SetModelPreferences(device, info.ID, pref)
 					}
-					n.Text(c, modelName(model)).FontSize(12).FixedLineHeight(20).SingleLine().Grow(1).Tooltip(model.ID).TextColor(func() n.Color {
+					name := n.Text(c, modelName(model)).FontSize(12).FixedLineHeight(20).SingleLine().Grow(1).TextColor(func() n.Color {
 						if stale || slices.Contains(pref.Hidden, model.ID) {
 							return t.TextMuted
 						}
 						return t.Text
 					}())
+					if model.ID != modelName(model) {
+						name.Tooltip(model.ID)
+					} else {
+						name.TooltipWhenTruncated(model.ID)
+					}
 					grip := iconButton(c, modelGrip, "调整 "+modelName(model)+" 顺序").Disabled(stale).Cursor(n.CursorGrab).Drag(deviceModelDrag{device, info.ID, model.ID}).Tooltip("拖动排序，或使用上下方向键")
 					if !row.Hovered() && !row.FocusWithin() && !grip.Dragging() {
 						grip.Opacity(0)

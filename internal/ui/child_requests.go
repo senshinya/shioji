@@ -107,12 +107,12 @@ func (v *View) requestOrigin(c *n.Context, t *n.Theme, r domain.PendingRequest) 
 		if source.WorkID == "" {
 			return
 		}
-		button := n.ButtonBase(c.Key("request-origin")).Width(contentWidth).Height(24).MinWidth(0).Shrink(0).PaddingX(4).Label("查看来源：" + title).Tooltip(title)
+		button := n.ButtonBase(c.Key("request-origin")).Width(contentWidth).Height(24).MinWidth(0).Shrink(0).PaddingX(4).Label("查看来源：" + title)
 		n.Inert(button, r.WorkID == "")
 		color := textHoverColor(c, button, t.TextMuted)
 		button.Children(func() {
 			n.Row(c).FillWidth().Gap(5).MinWidth(0).AlignItems(n.Baseline).Children(func() {
-				n.Text(c, title).SingleLine().MinWidth(0).Grow(1).FontSize(11).FontWeight(400).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+				n.Text(c, title).SingleLine().MinWidth(0).Grow(1).FontSize(11).FontWeight(400).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).TooltipWhenTruncated(title)
 				inlineSymbol(c, referenceExternalIcon, title, n.Font{Family: t.Font, Size: 11, Weight: 400}, iconSize, color)
 			})
 		})

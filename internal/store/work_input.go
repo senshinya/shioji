@@ -31,6 +31,9 @@ func (s *Store) AcceptWorkInput(in domain.WorkInput) (domain.WorkInputOperation,
 	if !errors.Is(err, sql.ErrNoRows) {
 		return none, false, err
 	}
+	if _, err = operation(s.db, in.OperationID); !errors.Is(err, sql.ErrNoRows) {
+		return none, false, errors.New("操作标识已被使用，不能重放已删除会话的输入")
+	}
 	w, err := load[domain.WorkActivity](s.db.QueryRow("SELECT body FROM works WHERE session_id=? AND id=?", in.SessionID, in.WorkID))
 	if err != nil {
 		return none, false, err

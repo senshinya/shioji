@@ -116,7 +116,7 @@ func (v *View) setupSSH(port int) transport.SSH {
 func tailnetValue(c *n.Context, label, text string) {
 	setupRow(c, label, func() {
 		n.Row(c).FillWidth().Height(28).AlignItems(n.Center).Children(func() {
-			n.Text(c, text).FontSize(12).FixedLineHeight(20).Transform(n.Translation(0, inlineCenterOffset(text, n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}))).SingleLine().Ellipsis("…").Tooltip(text)
+			n.Text(c, text).FontSize(12).FixedLineHeight(20).Transform(n.Translation(0, inlineCenterOffset(text, n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}))).SingleLine().Ellipsis("…").TooltipWhenTruncated(text)
 		})
 	})
 }
@@ -327,7 +327,7 @@ func (v *View) tailnetPage(c *n.Context, t *n.Theme) {
 						n.Row(c).FillWidth().Height(28).Gap(14).AlignItems(n.Center).Children(func() {
 							font := n.Font{Family: t.Font, Size: 16, Weight: 500}
 							name := v.Model.LocalName()
-							n.Text(c, name).Grow(1).MinWidth(0).FontSize(16).FontWeight(500).FixedLineHeight(24).SingleLine().Ellipsis("…").Tooltip(name).Transform(n.Translation(0, inlineCenterOffset(name, font)))
+							n.Text(c, name).Grow(1).MinWidth(0).FontSize(16).FontWeight(500).FixedLineHeight(24).SingleLine().Ellipsis("…").TooltipWhenTruncated(name).Transform(n.Translation(0, inlineCenterOffset(name, font)))
 							v.tailnetConnectionStatus(c.Key("status"), t, s)
 							on := s.State != "Stopped"
 							if configurationSwitch(c, &on).Label("Tailnet 连接开关").Disabled(v.Controller == nil).Changed() {
@@ -338,7 +338,7 @@ func (v *View) tailnetPage(c *n.Context, t *n.Theme) {
 								}
 							}
 						})
-						n.Text(c, s.Network).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine().Ellipsis("…").Tooltip(s.Network)
+						n.Text(c, s.Network).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine().Ellipsis("…").TooltipWhenTruncated(s.Network)
 					})
 				})
 				n.Column(c).FillWidth().Margin(22, 0, 0).Children(func() {
@@ -493,7 +493,7 @@ func (v *View) tailnetNetworkPeers(c *n.Context, t *n.Theme, s tailnet.Snapshot)
 						font := n.Font{Family: t.Font, Size: 13, Weight: 400}
 						inlineSymbol(c, v.tailnetPeerGlyph(p), name, font, 16, t.TextMuted)
 						n.Column(c).Grow(1).MinWidth(0).Children(func() {
-							n.Text(c, name).FontSize(13).FixedLineHeight(20).SingleLine().Ellipsis("…").Tooltip(name)
+							n.Text(c, name).FontSize(13).FixedLineHeight(20).SingleLine().Ellipsis("…").TooltipWhenTruncated(name)
 							n.Text(c, p.Address).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine()
 						})
 						label, color := "离线", t.TextMuted

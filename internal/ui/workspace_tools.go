@@ -281,7 +281,7 @@ func (v *View) workspaceToolScope(c *n.Context, t *n.Theme, u *workspaceToolsUI)
 			}
 			v.choiceMenu(c, t, "workspace-tools-directory:"+u.slot, trigger, dirs)
 		} else {
-			n.Text(c, u.catalog.Directory).FontSize(11).TextColor(t.TextMuted).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0).Tooltip(u.catalog.Directory)
+			n.Text(c, u.catalog.Directory).FontSize(11).TextColor(t.TextMuted).SingleLine().Ellipsis("…").Shrink(1).MinWidth(0).TooltipWhenTruncated(u.catalog.Directory)
 		}
 	})
 }
@@ -403,7 +403,7 @@ func (v *View) workspaceToolRows(c *n.Context, t *n.Theme, u *workspaceToolsUI) 
 			group = string(entry.Scope) + entry.ConfigurationPath
 			n.Row(c.Key("group:"+group)).FillWidth().Height(36).Margin(12, 0, 0, 0).Gap(7).AlignItems(n.Baseline).Children(func() {
 				inlineSymbol(c, workspaceIcon, entry.ConfigurationPath, n.Font{Family: t.Font, Size: 11}, 14, t.TextMuted)
-				n.Text(c, entry.ConfigurationPath).FontSize(11).FixedLineHeight(20).MinWidth(0).Shrink(1).SingleLine().Ellipsis("…").Tooltip(entry.ConfigurationPath)
+				n.Text(c, entry.ConfigurationPath).FontSize(11).FixedLineHeight(20).MinWidth(0).Shrink(1).SingleLine().Ellipsis("…").TooltipWhenTruncated(entry.ConfigurationPath)
 				n.Spacer(c).Grow(1)
 				name := workspaceToolScopeName(entry.Scope)
 				if entry.Scope != domain.ToolServiceProject {
@@ -426,7 +426,7 @@ func (v *View) workspaceToolRows(c *n.Context, t *n.Theme, u *workspaceToolsUI) 
 					if u.session != "" && u.catalog.RuntimeKnown && entry.State == domain.ToolServiceReady {
 						detail = strconv.Itoa(entry.Tools) + " 个工具"
 					}
-					n.Text(c, detail).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).SingleLine().Ellipsis("…").PaddingStart(24).Tooltip(detail)
+					n.Text(c, detail).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).SingleLine().Ellipsis("…").PaddingStart(24).TooltipWhenTruncated(detail)
 				})
 			})
 			if open.Clicked() {
