@@ -49,6 +49,8 @@ type Model struct {
 	SignInIDs                  map[string]map[string]string
 	FirstRun                   bool
 	ModelMenus                 map[string]map[string]ModelMenuPreferences
+	WorkerMaintenanceClients   map[string]*WorkerMaintenanceClient
+	WorkerMaintenanceIDs       map[string]string
 	WorkerService              *WorkerService
 	DraftSkills                map[string][]DraftSkill
 	homeDefaultsPending        bool
@@ -550,6 +552,7 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 }
 
 type savedState struct {
+	WorkerMaintenanceIDs       map[string]string                          `json:"workerMaintenanceIDs,omitempty"`
 	Navigation                 NavigationPreferences                      `json:"navigation,omitempty"`
 	ServicePreparations        map[string]*ServicePreparation             `json:"servicePreparations,omitempty"`
 	ServicePreparationDeviceID string                                     `json:"servicePreparationDeviceId,omitempty"`
@@ -615,6 +618,7 @@ func (m *Model) Load(path string) error {
 	m.FirstRun = saved.SetupCompleted != nil && !*saved.SetupCompleted
 	m.ServicePreparations = saved.ServicePreparations
 	m.ServicePreparationDeviceID = saved.ServicePreparationDeviceID
+	m.WorkerMaintenanceIDs = saved.WorkerMaintenanceIDs
 	m.WorkerMigrations = saved.WorkerMigrations
 	m.SignInIDs = saved.SignInIDs
 	if saved.DraftSkills != nil {

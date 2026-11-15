@@ -37,6 +37,7 @@ const Major = 2
 // Minor 37 adds user-message rounds and coherent byte-chunked read windows.
 // Minor 38 adds device-owned load telemetry and revision-checked idle-sleep control.
 // Minor 39 adds worker-owned reply completion acknowledgements and snapshot time.
+// WorkerBuild.Maintenance advertises durable maintenance independently of minor.
 const Minor = 39
 const MaxFrame = 1 << 20
 
@@ -260,6 +261,11 @@ type ReadinessQuery struct {
 type CompletionReadInput struct {
 	SessionID    string `json:"sessionId"`
 	CompletionID string `json:"completionId"`
+}
+
+type WorkerMaintenanceQuery struct {
+	DeviceID string `json:"deviceId"`
+	ID       string `json:"id,omitempty"`
 }
 
 type DirectoryQuery struct {

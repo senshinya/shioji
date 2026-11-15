@@ -102,6 +102,9 @@ func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.Raw
 	if job.Method == "session.completion.read" && client.Minor < 39 {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能同步会话处理状态"}
 	}
+	if (strings.HasPrefix(job.Method, "worker.maintenance.") || job.Method == "worker.update.diagnose") && (client.Worker == nil || !client.Worker.Maintenance) {
+		return nil, &protocol.RemoteError{Code: "notSent", Message: "此执行服务尚不支持后台环境处理"}
+	}
 	if historyReadMethod(job.Method) && client.Minor < 37 {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能按需加载历史"}
 	}
@@ -495,7 +498,7 @@ func (c *Controller) Run(ctx context.Context) {
 		defer cancel()
 		var result domain.WorkerUpdateResult
 		updateIntent = updateAwaitingReceipt
-		err := client.Call(updateCtx, "worker.update", domain.WorkerReplacement{ExpectedBuildID: state.Build.BuildID, BuildID: state.Available.BuildID}, &result)
+		err := client.Call(updateCtx, "worker.update", domain.WorkerReplacement{ExpectedBuildID: state.Build.BuildID, BuildID: state.Available.BuildID, Explicit: explicit}, &result)
 		if err != nil {
 			state.Phase = WorkerUpdateFailed
 			state.Message = err.Error()
@@ -524,6 +527,9 @@ func (c *Controller) Run(ctx context.Context) {
 		if state.Phase == WorkerAvailable && updateIntent == updateWaitingForIdle {
 			state.Phase = WorkerWaiting
 			state.Message = "等待空闲后更新，会话和队列已保留"
+			if service != nil && service.Phase == WorkerWaiting && service.Message != "" {
+				state.Message = service.Message
+			}
 		}
 		if state.Phase == WorkerAvailable && updateIntent == updateAwaitingReceipt {
 			if service != nil && service.Phase == WorkerUpdating && !updateStarted.IsZero() && time.Since(updateStarted) < 35*time.Second {
@@ -792,6 +798,28 @@ func (c *Controller) Run(ctx context.Context) {
 					action = "unregister"
 				}
 				checkBackground(action)
+				continue
+			}
+			if job.Method == "$worker.maintenance.inspect" {
+				var out json.RawMessage
+				var err error
+				if client == nil || job.epoch != client.Epoch || client.Worker == nil || !client.Worker.Maintenance {
+					err = &protocol.RemoteError{Code: "notSent", Message: "请重新连接并检查执行服务能力"}
+				} else {
+					stageCandidate(true)
+					if candidateError != nil {
+						err = &protocol.RemoteError{Code: "notSent", Message: candidateError.Error()}
+					} else {
+						callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+						request := job
+						request.Method = "worker.update.diagnose"
+						out, err = executeJob(callCtx, client, request)
+						cancel()
+					}
+				}
+				if job.Apply != nil {
+					c.post(func(m *Model) { job.Apply(m, out, err) })
+				}
 				continue
 			}
 			if job.Method == "$worker.check" {

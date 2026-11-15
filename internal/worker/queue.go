@@ -62,6 +62,9 @@ func (s *Server) enqueue(in domain.Submission) (domain.Operation, error) {
 	return s.enqueueLocked(in)
 }
 func (s *Server) enqueueLocked(in domain.Submission) (domain.Operation, error) {
+	if err := s.sessionMaintenanceAdmission(in.SessionID); err != nil {
+		return domain.Operation{}, err
+	}
 	id, err := s.inputHarness(in)
 	if err != nil {
 		return domain.Operation{}, err
@@ -137,6 +140,9 @@ func (s *Server) changeQueue(method string, in protocol.QueueInput) (domain.Queu
 	case "queue.remove":
 		return s.store.RemoveQueue(in.SessionID, in.ID, in.Revision)
 	case "queue.continue":
+		if err := s.sessionMaintenanceAdmission(in.SessionID); err != nil {
+			return domain.QueueState{}, err
+		}
 		d, err := s.store.Session(in.SessionID, 0, 1)
 		if err != nil {
 			return domain.QueueState{}, err
@@ -158,6 +164,9 @@ func (s *Server) steer(in protocol.SteerInput) (domain.Operation, error) {
 	return s.steerLocked(in, 0)
 }
 func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Operation, error) {
+	if err := s.sessionMaintenanceAdmission(in.Input.SessionID); err != nil {
+		return domain.Operation{}, err
+	}
 	if s.currentRuntime(in.Input.SessionID) == nil || s.ctx.Err() != nil {
 		return domain.Operation{}, errors.New("runtime unavailable")
 	}

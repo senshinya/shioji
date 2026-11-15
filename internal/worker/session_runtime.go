@@ -14,6 +14,9 @@ import (
 // All callers that create/replace a session runtime hold dispatchMu. The catalog
 // adapter never starts/resumes an execution thread.
 func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime, error) {
+	if err := s.sessionMaintenanceAdmission(id); err != nil {
+		return nil, err
+	}
 	if err := s.updateAdmission(); err != nil {
 		return nil, err
 	}

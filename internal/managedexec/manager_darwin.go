@@ -41,6 +41,7 @@ const (
 )
 
 type scopeState struct {
+	Manual      *manualStopState `json:",omitempty"`
 	Generation  string
 	Active      bool
 	Maintenance bool
@@ -509,6 +510,13 @@ func (s *Scope) VerifyStopped() error {
 	return s.verifyStopped()
 }
 func (s *Scope) Stop(ctx context.Context) error {
+	manual, err := s.ManualStopPending()
+	if err != nil {
+		return err
+	}
+	if manual {
+		return s.stopManual(ctx)
+	}
 	if err := s.Fence(); err != nil {
 		return err
 	}
