@@ -157,16 +157,6 @@ func (v *View) syncQueuedMotions() {
 				if item.Kind == "user" && item.ID == "input:"+source.item.Input.OperationID {
 					if index > newest {
 						v.sent = &sentMessageMotion{input: item.ID, origin: m.SessionID, session: m.SessionID, epoch: m.ConnectionEpoch, workspace: m.WorkspaceID, source: n.Rect{X: source.bounds.X - 16, Y: source.bounds.Y - 12, W: source.bounds.W + 32, H: source.bounds.H + 24}, queued: true, focused: true}
-						// A queued input belonging to an already-present turn is an
-						// insertion, including when another client initiated it.
-						if item.TurnID != "" {
-							for _, previous := range m.Details[m.SessionID].Items[:index] {
-								if previous.TurnID == item.TurnID {
-									v.sent.steering = true
-									break
-								}
-							}
-						}
 						newest = index
 					}
 					source.delivered = true
@@ -526,7 +516,6 @@ func (v *View) submitActive(in domain.Submission, method, turn string) {
 	}
 	if method == "turn.steer" {
 		sent = v.beginSendMotion(in)
-		sent.steering = true
 		payload = protocol.SteerInput{Input: in, TurnID: turn}
 	}
 	var prepare func() error

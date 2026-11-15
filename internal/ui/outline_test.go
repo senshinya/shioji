@@ -310,3 +310,53 @@ func TestOutlineReappearsAtReaderPosition(t *testing.T) {
 		t.Fatal("outline remount lost current reader marker", v.outline.Current, first, last)
 	}
 }
+
+func TestLatestOutlineTickIsNotCoveredByTheComposer(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, height := range []int{600, 820} {
+			for _, queued := range []bool{false, true} {
+				t.Run(fmt.Sprintf("dark=%v/height=%d/queued=%v", dark, height, queued), func(t *testing.T) {
+					v, ui := outlineHitUI(93)
+					ui.SetDark(dark)
+					ui.SetSize(1277, height)
+					if queued {
+						q := domain.QueueState{SessionID: "s", Revision: 1}
+						for i := 0; i < 8; i++ {
+							q.Items = append(q.Items, domain.QueueItem{ID: fmt.Sprint("queued-", i), Input: domain.Submission{OperationID: fmt.Sprint("queued-", i), Text: fmt.Sprint("待发送消息 ", i)}})
+						}
+						v.Model.SetQueue(q)
+						v.Model.QueueExpanded["s"] = true
+					}
+					ui.Frame()
+					ui.Advance(time.Second)
+					v.lists["s"].ScrollToEnd()
+					ui.Advance(time.Second)
+					ui.Click("消息输入")
+					ui.Advance(time.Second)
+					tick, ok := ui.Find("跳转到消息 93")
+					if !ok {
+						t.Fatal("latest message has no outline target")
+					}
+					dock, dockOK := ui.Find("会话底部面板")
+					toolbar, toolbarOK := ui.Find("会话顶栏")
+					rail, railOK := ui.Find("对话导航")
+					saveNativeSkillImage(t, ui, fmt.Sprintf("outline-dock-dark-%v-height-%d-queue-%v.png", dark, height, queued))
+					if !dockOK || !toolbarOK || !railOK {
+						t.Fatal("missing fixed conversation surfaces")
+					}
+					if rail.Y < toolbar.Y+toolbar.H || rail.Y+rail.H > dock.Y || tick.Y+tick.H > dock.Y {
+						t.Fatalf("latest marker is underneath a fixed surface: tick=%+v rail=%+v toolbar=%+v dock=%+v", tick, rail, toolbar, dock)
+					}
+					ui.Move(tick.X+18, tick.Y+tick.H/2)
+					ui.Advance(400 * time.Millisecond)
+					if v.outline.Hover != 92 {
+						t.Fatal("latest marker exists but cannot be hovered", v.outline.Hover)
+					}
+					if !ui.Focused("消息输入") {
+						t.Fatal("outline hover took composer focus")
+					}
+				})
+			}
+		}
+	}
+}

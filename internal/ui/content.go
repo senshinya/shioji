@@ -166,7 +166,12 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 				identity := resultPartKey(part, i)
 				occurrence := occurrences[identity]
 				occurrences[identity]++
-				n.Column(c.Key(fmt.Sprintf("%s:%d", identity, occurrence))).FillWidth().Gap(4).Transition(resultBlockMotion(c)).Children(func() {
+				inline := item.Presentation == "wait" && part.Kind == "text"
+				block := n.Column(c.Key(fmt.Sprintf("%s:%d", identity, occurrence))).FillWidth().Gap(4).Transition(resultBlockMotion(c))
+				if inline {
+					block.Row().Gap(8).AlignItems(n.Baseline)
+				}
+				block.Children(func() {
 					if part.Kind == "image" && part.Attachment != nil {
 						innerHeightDelta += v.outputImage(c, t, *part.Attachment)
 						return
@@ -176,7 +181,10 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 						return
 					}
 					if part.Label != "" {
-						n.Text(c.Key("label"), part.Label).Transition(resultBlockMotion(c)).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+						label := n.Text(c.Key("label"), part.Label).Transition(resultBlockMotion(c)).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+						if inline {
+							label.SingleLine().Shrink(0)
+						}
 					}
 					switch part.Kind {
 					case "code":
@@ -200,7 +208,10 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 						})
 						*mounted = true
 					default:
-						resultText(c.Key("part-text"), part.Text, t.TextMuted).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+						text := resultText(c.Key("part-text"), part.Text, t.TextMuted).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+						if inline {
+							text.Grow(1).MinWidth(0)
+						}
 					}
 				})
 			}

@@ -55,10 +55,22 @@ func (v *View) conversationOutline(c *n.Context, t *n.Theme, state *n.ListState,
 			current = i
 		}
 	}
-	height := min(float32(len(entries)*10+16), min(640, bounds.H*.7))
+	// The toolbar and composer paint over history. Keep navigation inside
+	// the exposed reading area too, including an expanded queue/question dock.
+	top := float32(48)
+	dockHeight := v.dockHeight
+	if dockHeight == 0 {
+		dockHeight = 108
+	}
+	available := max(float32(0), bounds.H-top-dockHeight-16)
+	if available < 26 {
+		return
+	}
+	height := min(float32(len(entries)*10+16), min(640, min(bounds.H*.7, available)))
+	top += (available - height) / 2
 	hovered := -1
 	outline.List.Key = func(i int) any { return entries[i].ID }
-	track := n.Column(c.Key("conversation-outline-rail")).Absolute().Left(16).Top((bounds.H - height) / 2).Width(36).Height(height).Label("对话导航")
+	track := n.Column(c.Key("conversation-outline-rail")).Absolute().Left(16).Top(top).Width(36).Height(height).Label("对话导航")
 	// Queue the target before building virtual rows, using their stable pitch.
 	// Centering gives measurement corrections room on both sides of the tick.
 	// Keep manual rail browsing independent; catch up once the pointer leaves.

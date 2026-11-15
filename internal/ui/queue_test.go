@@ -575,7 +575,8 @@ func TestCollapsedQueueSendStartsAtDisclosure(t *testing.T) {
 	first, _ := ui.Find("Review the rotation code")
 	ui.Advance(650 * time.Millisecond)
 	end, _ := ui.Find("Review the rotation code")
-	if math.Abs(float64(first.Y-source.Y)) > 24 || first.Y < end.Y+100 {
+	dock, _ := ui.Find("会话底部面板")
+	if math.Abs(float64(first.Y-source.Y)) > 24 || end.Y+end.H > dock.Y || !v.lists["s"].AtEnd() {
 		t.Fatal("collapsed queue send has no disclosure origin", source, first, end)
 	}
 }

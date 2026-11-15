@@ -61,7 +61,7 @@ func TestHistoryEditorFitDoesNotBecomeASendingAnchor(t *testing.T) {
 	}
 }
 
-func TestObservedQueuedInputUsesItsAuthoritativeTurnBoundary(t *testing.T) {
+func TestObservedQueuedInputsUseNaturalEndAcrossTurnBoundaries(t *testing.T) {
 	for _, sameTurn := range []bool{false, true} {
 		for _, reduced := range []bool{false, true} {
 			t.Run(fmt.Sprintf("same-turn=%v/reduced=%v", sameTurn, reduced), func(t *testing.T) {
@@ -105,8 +105,8 @@ func TestObservedQueuedInputUsesItsAuthoritativeTurnBoundary(t *testing.T) {
 					}
 				} else {
 					message, ok := ui.Find(input.Text)
-					if !ok || message.Y < 80 || message.Y > 125 {
-						t.Fatal("automatic new turn lost its intended reading position", message, ok)
+					if !ok || message.Y < 200 || !v.lists["s"].AtEnd() {
+						t.Fatal("automatic new turn retained artificial top reading space", message, ok)
 					}
 				}
 			})

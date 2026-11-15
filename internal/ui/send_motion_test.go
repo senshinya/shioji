@@ -229,7 +229,7 @@ func TestReturningHomeInterruptsFirstSendDescent(t *testing.T) {
 	}
 }
 
-func TestAcceptedSendMovesNewMessageIntoReadingPosition(t *testing.T) {
+func TestExistingSendFollowsNewReplyAtNaturalEnd(t *testing.T) {
 	v, ui, job := sendFixture(t, false)
 	d := v.Model.Details["s"]
 	d.Items = nil
@@ -238,6 +238,7 @@ func TestAcceptedSendMovesNewMessageIntoReadingPosition(t *testing.T) {
 	}
 	v.Model.Details["s"] = d
 	ui.Frame()
+	ui.Advance(time.Second)
 	acceptSend(t, v, job, true)
 	ui.Frame()
 	ui.Advance(60 * time.Millisecond)
@@ -249,8 +250,8 @@ func TestAcceptedSendMovesNewMessageIntoReadingPosition(t *testing.T) {
 	middle, _ := ui.Find("Explain a tree rotation.")
 	ui.Advance(500 * time.Millisecond)
 	end, _ := ui.Find("Explain a tree rotation.")
-	if !(first.Y > middle.Y+5 && middle.Y > end.Y+5 && end.Y >= 80 && end.Y <= 125) {
-		t.Fatalf("sent message has no anchored glide: first=%+v middle=%+v end=%+v", first, middle, end)
+	if !(first.Y > middle.Y+5 && middle.Y > end.Y+5 && end.Y > 200 && v.lists["s"].AtEnd()) {
+		t.Fatalf("sent message has no glide to its natural end: first=%+v middle=%+v end=%+v", first, middle, end)
 	}
 	if err := ui.Click("消息输入"); err != nil {
 		t.Fatal(err)
@@ -262,8 +263,8 @@ func TestAcceptedSendMovesNewMessageIntoReadingPosition(t *testing.T) {
 	ui.Frame()
 	ui.Advance(400 * time.Millisecond)
 	held, _ := ui.Find("Explain a tree rotation.")
-	if math.Abs(float64(held.Y-end.Y)) > .5 || v.Model.Drafts["session:s"] != "Next draft" || !ui.Focused("消息输入") {
-		t.Fatal("reply growth moves the sent message or steals the next draft")
+	if held.Y >= end.Y-5 || v.Model.Drafts["session:s"] != "Next draft" || !ui.Focused("消息输入") {
+		t.Fatal("reply growth does not follow its natural end or steals the next draft")
 	}
 }
 
@@ -276,6 +277,7 @@ func TestSentMessageStartsGentlyAndRemainsInMotionAfter300ms(t *testing.T) {
 	}
 	v.Model.Details["s"] = d
 	ui.Frame()
+	ui.Advance(time.Second)
 	acceptSend(t, v, job, true)
 	ui.Frame()
 	start, _ := ui.Find("Explain a tree rotation.")
@@ -325,9 +327,17 @@ func TestReducedMotionSendPositionsWithoutGliding(t *testing.T) {
 	}
 }
 
-func TestSentAnchorReleasesForReadingAndResumesFollowingWhenFull(t *testing.T) {
+func TestExistingSendPreservesReaderInterruptionAndResumesFollowing(t *testing.T) {
 	for _, read := range []bool{false, true} {
 		v, ui, job := sendFixture(t, false)
+		history := v.Model.Details["s"]
+		history.Items = nil
+		for i := 0; i < 28; i++ {
+			history.Items = append(history.Items, domain.Item{ID: fmt.Sprint("reading-history-", i), Kind: "assistant", Text: strings.Repeat("Earlier conversation. ", 8), Final: true})
+		}
+		v.Model.Details["s"] = history
+		ui.Frame()
+		ui.Advance(time.Second)
 		acceptSend(t, v, job, true)
 		ui.Frame()
 		ui.Advance(500 * time.Millisecond)
@@ -392,7 +402,7 @@ func TestSendFromDisclosedToolHistoryTakesOverItsReadingAnchor(t *testing.T) {
 			ui.Frame()
 			ui.Advance(time.Second)
 			message, ok := ui.Find("Explain a tree rotation.")
-			if !ok || message.Y < 80 || message.Y > 125 || !v.lists["s"].FollowingEnd() {
+			if !ok || message.Y < 200 || !v.lists["s"].AtEnd() || !v.lists["s"].FollowingEnd() {
 				t.Fatal("new send keeps the old disclosure anchor", message, ok)
 			}
 			d = v.Model.Details["s"]

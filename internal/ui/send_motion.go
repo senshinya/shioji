@@ -26,7 +26,7 @@ type sentMessageMotion struct {
 	started                                  time.Time
 	source, composerSource                   n.Rect
 	phase                                    sentMotionPhase
-	focused, departed, queued, steering      bool
+	focused, departed, queued                bool
 }
 
 type sentMotionPhase uint8
@@ -82,9 +82,9 @@ func (v *View) anchorSentMessage(c *n.Context, state *n.ListState, rows []transc
 		// Automatic queue dispatch must not pull a reader away from history.
 		if !s.queued || state.AtEnd() {
 			animation := n.Animation{Duration: sentScrollDuration, Ease: sentScrollEase}
-			if s.steering {
-				// An insertion continues the current turn. Settle at its actual
-				// end instead of reserving a new turn's top reading space.
+			if s.origin != "" {
+				// Existing conversations settle at their measured end. Only a
+				// newly created session reserves top reading space on entry.
 				state.ScrollToEnd(animation)
 			} else {
 				state.AnchorRow(i+1, 100, animation)
