@@ -1,15 +1,14 @@
 # Shioji 发布
 
-当前版本：`v0.1.0`。`VERSION` 保存不带 `v` 的数字版本；两个 App bundle 的版本均由构建脚本写入。`dev.shioji.app`、`dev.shioji.runtime` 与现有服务身份保持不变。
+当前版本：`v0.1.1`。`VERSION` 保存不带 `v` 的数字版本；两个 App bundle 的版本均由构建脚本写入。`dev.shioji.app`、`dev.shioji.runtime` 与现有服务身份保持不变。
 
-## v0.1.0 更新
+## 变更记录与发布说明
 
-- 原生 App 更新入口、签名更新包、发布清单与 GitHub 自动发布流程。
-- 会话所属设备的文件链接下载、缓存与图片/代码预览，以及媒体和文档的默认应用打开。
-- 最新工具调用默认展开设置、命令结果收起动画及两行命令标题。
-- 插入消息间距、消息导航自动跟随、子 Agent 侧栏缩放与“继续执行”输入体验。
+完整变更见 [CHANGELOG.md](../CHANGELOG.md)。每次发布前比较上一正式标签与待发布代码的实际差异，核对面向用户的行为、兼容性和升级要求；不能只根据 commit message 生成说明。
 
-v0.0.1 需要手动安装本版，此后正式版可通过 App 内更新。远程执行服务仍需明确升级。
+使用 `Added`、`Changed`、`Deprecated`、`Removed`、`Fixed`、`Security` 分类，只保留有内容的分类；版本标题包含数字版本、UTC 发布日期和源码／比较链接。说明用户影响，排除本地产物、内部重构和纯测试调整。GitHub Release 正文复用对应版本条目，并补充该版安装与更新方式。修改历史说明保留原发布日期，不移动标签或替换已发布二进制。
+
+v0.1.1 改善会话排序、消息导航、自然底部滚动、圆角遮挡和文件变更列表，并允许确认空闲的工具服务随本机执行服务安全退役。v0.1.0 可通过 App 内更新；v0.0.1 没有自动更新入口，需要手动安装新版。远程执行服务仍需明确升级，新文件类型标识和待发消息发出后的排序需配套新版 worker。
 
 ## 自动发布
 
@@ -72,7 +71,7 @@ bash packaging/build-dev.sh
 # 指定本机已有 Developer ID identity 和 notarytool profile 后：
 # 另需 APPLE_TEAM_ID、SHIOJI_UPDATE_PUBLIC_KEY 与 SHIOJI_UPDATE_PRIVATE_KEY；
 # 私钥从安全文件/CI Secret 注入环境，不要写在命令参数或 shell 历史中。
-CODE_SIGN_IDENTITY='<证书指纹>' NOTARY_PROFILE='<本机公证配置名称>' RELEASE_TAG=v0.1.0 bash packaging/build-release.sh
+CODE_SIGN_IDENTITY='<证书指纹>' NOTARY_PROFILE='<本机公证配置名称>' RELEASE_TAG=v0.1.1 bash packaging/build-release.sh
 ```
 
 产物位于 `build/release/`。构建不会启动或替换用户正在运行的 GUI、worker 或 Tailnet 节点。
