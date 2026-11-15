@@ -379,6 +379,7 @@ func TestStateTraceSSHCancelAndReopen(t *testing.T) {
 	check.Apply(v.Model, nil, errors.New("failed at 2026-11-07T12:00:00Z"))
 	ui.Frame()
 	traceNativeFrame(t, "canceled-receipt", v, ui)
+	v.sshTarget = "developer@air.local"
 	v.checkSSHDevice()
 	ui.Frame()
 	for len(v.Controller.Jobs) > 0 {

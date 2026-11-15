@@ -263,15 +263,10 @@ func (v *View) devicePathsSection(c *n.Context, t *n.Theme, key string, state *a
 				n.Text(c, "自动选择").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Transform(n.Translation(0, inlineCenterOffset("自动选择", font)))
 				add := iconButton(c, plus, "添加连接路径").MarginEnd(-6).Disabled(v.Controller == nil || v.deviceConnectionSave != nil)
 				v.choiceMenu(c, t, "add-device-path:"+key, add, []menuChoice{{id: "ssh", name: "直接 SSH", choose: func() {
-					v.sshTailnetPeer = ""
-					v.welcome = nil
+					v.dismissDeviceSetup()
 					v.sshCheck = sshEditing
-					v.sshTarget = ""
-					v.sshPort = ""
-					v.sshName = ""
-					v.sshError = ""
 					v.sshExpectedDevice = connection.DeviceID
-				}}, {id: "tailnet", name: "从 Tailnet 添加", icon: tailscaleMark, choose: func() { v.beginTailnet(); v.sshExpectedDevice = connection.DeviceID }}})
+				}}, {id: "tailnet", name: "从 Tailnet 添加", icon: tailscaleMark, choose: func() { v.dismissDeviceSetup(); v.beginTailnet(); v.sshExpectedDevice = connection.DeviceID }}})
 			})
 		})
 		for index, route := range connection.Routes {

@@ -492,6 +492,10 @@ func (v *View) welcomeSSHFields(c *n.Context, t *n.Theme, f *welcomeFlow) {
 		back = "取消"
 	}
 	v.welcomeFooter(c, back, label, disabled && v.sshCheck != sshAwaitingTrust && v.sshCheck != sshLegacyUpgrade && v.sshCheck != sshMigrating && v.sshCheck != sshPreparing || migrationDisabled || v.Controller == nil || strings.TrimSpace(v.sshTarget) == "", func() {
+		if !v.Model.FirstRun {
+			v.dismissDeviceSetup()
+			return
+		}
 		v.saveWelcomeSSHInput()
 		v.cancelSSHCheck()
 		if f.route == welcomeRouteTailnet || v.sshTailnetPeer != "" {

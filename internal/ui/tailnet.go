@@ -164,8 +164,7 @@ func (v *View) tailnetJoinPage(c *n.Context, t *n.Theme) {
 		} else if v.Model.FirstRun {
 			v.welcomeStep(welcomeDevice, -1)
 		} else {
-			v.cancelSSHCheck()
-			v.welcome = nil
+			v.dismissDeviceSetup()
 		}
 	}, func() {
 		if waiting {
@@ -249,8 +248,7 @@ func (v *View) tailnetPeerPage(c *n.Context, t *n.Theme) {
 		if v.Model.FirstRun {
 			v.welcomeStep(welcomeDevice, -1)
 		} else {
-			v.cancelSSHCheck()
-			v.welcome = nil
+			v.dismissDeviceSetup()
 		}
 	}, func() {
 		v.saveWelcomeSSHInput()

@@ -536,7 +536,7 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		if v.devices {
 			n.Text(c, "设备").FontSize(13).Grow(1)
 			add := iconButton(c, plus, "添加设备")
-			v.choiceMenu(c, t, "add-device", add, []menuChoice{{id: "ssh", name: "直接 SSH", choose: func() { v.sshCheck = v.sshCheck.show(); v.sshError = "" }}, {id: "tailnet", name: "从 Tailnet 添加", disabled: true}})
+			v.choiceMenu(c, t, "add-device", add, []menuChoice{{id: "ssh", name: "直接 SSH", choose: func() { v.dismissDeviceSetup(); v.sshCheck = v.sshCheck.show() }}, {id: "tailnet", name: "从 Tailnet 添加", disabled: true}})
 			return
 		} else if m.SessionID != "" {
 			heading := n.Row(c.Key("session-heading:" + m.SessionID)).Grow(1).MinWidth(0).Gap(6).AlignItems(n.Center).Label("会话名称")

@@ -23,8 +23,7 @@ func (v *View) sshDeviceForm(c *n.Context, t *n.Theme) {
 			n.Text(c, "添加设备").FontSize(14).FontWeight(400).FixedLineHeight(configurationTitleLine).Grow(1)
 			v.welcomeDeviceIcon(c, t, f.key, "添加设备图标", false)
 			if iconButton(c, closeIcon, "取消添加设备").Clicked() {
-				v.cancelSSHCheck()
-				v.welcome = nil
+				v.dismissDeviceSetup()
 			}
 		})
 		_, height := c.Size()

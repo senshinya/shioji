@@ -106,12 +106,9 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 						textField(c.Key("device-search"), &v.deviceSearch).MinWidth(0).Grow(1).Height(28).FontSize(12).Label("搜索设备").Placeholder("搜索设备").Background(t.Background)
 						add := iconButton(c, plus, "添加设备")
 						v.choiceMenu(c, t, "add-device", add, []menuChoice{{id: "ssh", name: "直接 SSH", choose: func() {
-							v.sshExpectedDevice = ""
-							v.sshTailnetPeer = ""
-							v.welcome = nil
+							v.dismissDeviceSetup()
 							v.sshCheck = v.sshCheck.show()
-							v.sshError = ""
-						}}, {id: "tailnet", name: "从 Tailnet 添加", icon: tailscaleMark, choose: func() { v.sshExpectedDevice = ""; v.beginTailnet() }}})
+						}}, {id: "tailnet", name: "从 Tailnet 添加", icon: tailscaleMark, choose: func() { v.dismissDeviceSetup(); v.beginTailnet() }}})
 					})
 					n.Scroll(c).FillWidth().Grow(1).Children(func() {
 						row := func(key, name, address string) {
@@ -202,8 +199,7 @@ func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 		open := v.sshCheck.open()
 		panel := dialog(&open, "ssh-setup-dialog", func() { v.sshDeviceForm(c.Key("ssh-setup"), t) })
 		if panel.Dismissed() || !open && v.sshCheck.open() {
-			v.cancelSSHCheck()
-			v.welcome = nil
+			v.dismissDeviceSetup()
 		}
 	}
 	dialog(&v.remoteWorkspaceOpen, "remote-workspace-dialog", func() {
@@ -254,6 +250,20 @@ func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 			}
 		})
 	})
+}
+
+// Dismissing the add-device flow discards its drafts. Internal back navigation
+// only cancels the connection attempt so the current flow can restore its input.
+func (v *View) dismissDeviceSetup() {
+	v.cancelSSHCheck()
+	v.sshTarget, v.sshName, v.sshPort, v.sshError = "", "", "", ""
+	v.sshTailnetPeer, v.sshExpectedDevice = "", ""
+	v.sshSetup = app.DeviceSetupCheck{}
+	v.sshAgents = nil
+	v.welcome = nil
+	if v.tailnet != nil {
+		v.tailnet.selected, v.tailnet.query = "", ""
+	}
 }
 func (v *View) cancelSSHCheck() {
 	v.Model.ServicePreparationDeviceID = ""
