@@ -36,6 +36,7 @@ type View struct {
 	feedbackPinnedID                 string
 	feedbackStatuses                 []conversationStatus
 	feedbackGitWait                  string
+	feedbackObservedError            string
 	draftSaveError                   string
 	historyPage                      *conversationHistory
 	historyBaseline                  bool
@@ -1723,8 +1724,8 @@ func (v *View) do(job app.Job) bool {
 				if len(model.Feedbacks) == feedbackCount && (!v.feedbackErrorCovered(model, source) || late) {
 					model.ReportFeedback(app.Feedback{ConnectionID: source.connection, SessionID: source.session, WorkspaceID: source.workspace, Title: "操作未完成", Body: "操作未能完成，原有内容已保留。", Details: message})
 				}
-				if !late {
-					v.feedbackState().errors[source.connection] = message
+				if source == v.feedbackSource() {
+					v.feedbackObservedError = message
 				}
 			}
 			if v.parent != nil && v.Model.SessionID == source.session {

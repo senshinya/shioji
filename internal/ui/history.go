@@ -279,6 +279,7 @@ func (v *View) syncHistoryActions() {
 }
 
 func (v *View) cancelHistoryAction(in domain.HistoryChange) {
+	source := v.feedbackSource()
 	v.historyBusy[in.SessionID] = true
 	if !v.do(app.Job{Method: "session.cancel-history", Input: protocol.HistoryOperationQuery{ID: in.OperationID, SessionID: in.SessionID}, Apply: func(m *app.Model, b json.RawMessage, err error) {
 		v.historyBusy[in.SessionID] = false
@@ -299,7 +300,7 @@ func (v *View) cancelHistoryAction(in domain.HistoryChange) {
 		delete(v.historyForked, in.SessionID)
 		if op.State == "complete" {
 			m.Error = ""
-			m.ReportFeedback(app.Feedback{SessionID: in.SessionID, Kind: app.FeedbackInformation, Title: "操作已完成", Body: "已接纳的输入保持原状态。"})
+			m.ReportFeedback(app.Feedback{ID: in.OperationID, ConnectionID: source.connection, WorkspaceID: source.workspace, SessionID: in.SessionID, Kind: app.FeedbackInformation, Title: "操作已完成", Body: "已接纳的输入保持原状态。"})
 			return
 		}
 		edit := m.HistoryEdits[in.SessionID]

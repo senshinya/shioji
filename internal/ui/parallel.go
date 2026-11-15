@@ -111,6 +111,7 @@ func (v *View) prepareSecondary() {
 	m.SecondaryWorkspaceID = session.WorkspaceID // A disconnected device may not have supplied its catalog yet.
 	if v.secondary == nil {
 		clone := *m
+		clone.Error = "" // Operation errors belong to the pane that produced them.
 		v.secondary = New(&clone, v.Controller, "")
 		v.secondary.parent = v
 		v.secondary.historyBusy = v.historyBusy

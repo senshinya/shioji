@@ -6,8 +6,11 @@ import (
 	"fmt"
 	n "github.com/egoist/mygo/ui"
 	"math"
+	"os"
+	"path/filepath"
 	"shioji/internal/app"
 	"shioji/internal/domain"
+	"strings"
 	"testing"
 	"time"
 )
@@ -425,5 +428,115 @@ func TestConversationFeedbackBackgroundHistoryDoesNotHideCurrentFailure(t *testi
 	ui.Advance(time.Second)
 	if !ui.HasText("操作未完成") {
 		t.Fatal("background history state swallowed current feedback")
+	}
+}
+
+func TestConversationFeedbackSplitErrorDismissalSticks(t *testing.T) {
+	m := parallelModel()
+	m.SecondarySessionID = "other"
+	v := New(m, nil, "")
+	ui := n.NewTester(v.View, 1600, 900)
+	ui.Advance(time.Second)
+	v.secondary.Model.Error = ""
+	m.Error = "primary failure"
+	ui.Frame()
+	ui.Advance(time.Second)
+	if err := ui.Click("关闭消息"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 12; i++ {
+		ui.Advance(time.Second / 30)
+	}
+	if ui.HasText("操作未完成") {
+		t.Fatal("dismissed primary error was recreated by the other pane")
+	}
+	if len(v.feedbackState().messages) != 1 {
+		t.Fatal("one failure produced repeated history entries", len(v.feedbackState().messages))
+	}
+}
+
+func TestConversationFeedbackRedactsCommonCredentials(t *testing.T) {
+	for _, raw := range []string{`{"api_key":"example-secret"}`, `{"access_token": "example-secret"}`, `password='example-secret'`, "Authorization: Basic ZXhhbXBsZQ==", "Authorization: Bearer example-secret", `{"Authorization":"Basic ZXhhbXBsZQ=="}`, "authenticate at https://auth.example.test/auth/example-secret?token=other-secret"} {
+		cleaned := feedbackDetails(raw)
+		if strings.Contains(cleaned, "example-secret") || strings.Contains(cleaned, "ZXhhbXBsZQ==") || strings.Contains(cleaned, "other-secret") {
+			t.Errorf("credential survived: %s", cleaned)
+		}
+	}
+}
+
+func TestConversationFeedbackLateCancelKeepsOwningDevice(t *testing.T) {
+	m := layoutModel()
+	v := New(m, app.NewController(""), "")
+	in := domain.HistoryChange{OperationID: "history-1", SessionID: "s"}
+	m.HistoryActions["s"] = in
+	v.cancelHistoryAction(in)
+	job := <-v.Controller.Jobs
+	m.Connections = append(m.Connections, app.DeviceConnection{ID: "air", DeviceID: "remote"})
+	m.Snapshot.Workspaces = append(m.Snapshot.Workspaces, domain.Workspace{ID: "wb", DeviceID: "remote"})
+	m.Snapshot.Sessions = append(m.Snapshot.Sessions, domain.Session{ID: "sb", WorkspaceID: "wb"})
+	m.WorkspaceID, m.SessionID = "wb", "sb"
+	raw, _ := json.Marshal(domain.HistoryOperation{ID: in.OperationID, Input: in, State: "complete"})
+	job.Apply(m, raw, nil)
+	if len(m.Feedbacks) != 1 || m.Feedbacks[0].ConnectionID != "local" || m.Feedbacks[0].WorkspaceID != "w" || m.Feedbacks[0].SessionID != "s" {
+		t.Fatal("late cancellation borrowed selected device", m.Feedbacks)
+	}
+}
+
+func TestConversationFeedbackSaveFailureVisibleInNarrowSecondary(t *testing.T) {
+	m := parallelModel()
+	m.SecondarySessionID = "other"
+	m.FocusSecondary = true
+	v := New(m, nil, "")
+	block := filepath.Join(t.TempDir(), "blocked")
+	if err := os.WriteFile(block, []byte("file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	v.Saver = app.NewStateWriter(filepath.Join(block, "state.json"))
+	defer v.Saver.Close()
+	if err := v.Saver.Flush([]byte(`{}`)); err == nil {
+		t.Fatal("fixture did not fail to persist")
+	}
+	ui := n.NewTester(v.View, 1000, 820)
+	ui.Advance(time.Second)
+	if !ui.HasText("草稿尚未保存") {
+		t.Fatal("focused pane hid the shared save failure")
+	}
+	if err := ui.Click("复制草稿"); err != nil {
+		t.Fatal(err)
+	}
+	if ui.Clipboard() != "right draft" || m.Drafts["session:s"] != "left draft" {
+		t.Fatal("copy used the wrong pane draft", ui.Clipboard())
+	}
+}
+
+func TestConversationFeedbackActionTextSharesBodyColumn(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		m := layoutModel()
+		v := New(m, nil, "")
+		ui := n.NewTester(v.View, 1100, 820)
+		ui.SetDark(dark)
+		m.ReportFeedback(app.Feedback{Title: "操作未完成", Body: "原有内容已保留", Details: "test detail"})
+		ui.Frame()
+		ui.Advance(time.Second)
+		ui.Move(0, 0)
+		card, _ := ui.Find("弹出消息")
+		body, _ := ui.Find("原有内容已保留")
+		action, _ := ui.Find("查看消息详情")
+		inkLeft := func(r n.Rect) int {
+			im := ui.Image()
+			bg := im.RGBAAt(int(card.X+3), int(r.Y+r.H/2))
+			left := im.Bounds().Max.X
+			for y := int(r.Y); y < int(r.Y+r.H); y++ {
+				for x := int(r.X); x < int(r.X+r.W); x++ {
+					if p := im.RGBAAt(x, y); math.Abs(float64(int(p.R)-int(bg.R))) > 25 {
+						left = min(left, x)
+					}
+				}
+			}
+			return left
+		}
+		if delta := inkLeft(action) - inkLeft(body); math.Abs(float64(delta)) > 1 {
+			t.Fatal("action text adds a second left inset", dark, delta)
+		}
 	}
 }

@@ -48,14 +48,13 @@ type conversationFeedback struct {
 	messages    []conversationMessage
 	connections map[string]feedbackConnection
 	waits       map[feedbackSource]feedbackWait
-	errors      map[string]string
 	open        bool
 }
 
 func (v *View) feedbackState() *conversationFeedback {
 	root := v.splitRoot()
 	if root.feedback == nil {
-		root.feedback = &conversationFeedback{connections: map[string]feedbackConnection{}, waits: map[feedbackSource]feedbackWait{}, errors: map[string]string{}}
+		root.feedback = &conversationFeedback{connections: map[string]feedbackConnection{}, waits: map[feedbackSource]feedbackWait{}}
 	}
 	return root.feedback
 }
@@ -114,7 +113,8 @@ func (v *View) reportFeedback(f app.Feedback) {
 // Only known credential-bearing syntax is retained as a redacted diagnostic.
 // Summaries never include arbitrary error strings or authorization URLs.
 var feedbackURL = regexp.MustCompile(`https?://[^\s<>"']+`)
-var feedbackCredential = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*(?:bearer\s+)?|(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|(?:client[_-]?)?secret)\s*[:=]\s*)[^\s,;]+`)
+var feedbackAuthorization = regexp.MustCompile(`(?i)((?:"|')?authorization(?:"|')?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\r\n]+)`)
+var feedbackCredential = regexp.MustCompile(`(?i)((?:"|')?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|(?:client[_-]?)?secret)(?:"|')?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)`)
 
 func feedbackDetails(message string) string {
 	message = feedbackURL.ReplaceAllStringFunc(message, func(raw string) string {
@@ -123,10 +123,13 @@ func feedbackDetails(message string) string {
 			return "[链接已隐藏]"
 		}
 		u.User = nil
+		u.Path = ""
+		u.RawPath = ""
 		u.RawQuery = ""
 		u.Fragment = ""
 		return u.String()
 	})
+	message = feedbackAuthorization.ReplaceAllString(message, "${1}[已隐藏]")
 	return feedbackCredential.ReplaceAllString(message, "${1}[已隐藏]")
 }
 
@@ -158,9 +161,9 @@ func (v *View) syncConversationFeedback(c *n.Context) {
 	m.Feedbacks = nil
 	// Existing error producers are observed once. Asynchronous jobs additionally
 	// capture their actual source at dispatch, rather than the selected pane later.
-	if s.errors[source.connection] != m.Error {
-		s.errors[source.connection] = m.Error
-		if m.Error != "" && m.Error != app.ModelUnavailableMessage && m.Error != v.draftSaveError && !v.conversationErrorHasState() {
+	if v.feedbackObservedError != m.Error {
+		v.feedbackObservedError = m.Error
+		if m.Error != "" && m.Error != app.ModelUnavailableMessage && m.Error != v.splitRoot().draftSaveError && !v.conversationErrorHasState() {
 			v.reportFeedback(app.Feedback{Title: "操作未完成", Body: "操作未能完成，原有内容已保留。", Details: m.Error})
 		}
 	}
@@ -234,7 +237,7 @@ func (v *View) syncConversationFeedback(c *n.Context) {
 func (v *View) conversationErrorHasState() bool {
 	m := v.Model
 	_, hasHistoryAction := m.HistoryActions[m.SessionID]
-	if hasHistoryAction || !m.Connected || m.RunReadiness().State != "ready" || v.draftSaveError != "" || m.ArchivedContext() != "" {
+	if hasHistoryAction || !m.Connected || m.RunReadiness().State != "ready" || v.splitRoot().draftSaveError != "" || m.ArchivedContext() != "" {
 		return true
 	}
 	for _, in := range m.Pending {
@@ -291,8 +294,8 @@ func (v *View) conversationStatuses(now time.Time) []conversationStatus {
 	source := v.feedbackSource()
 	var out []conversationStatus
 	device := statusAction{label: "设备详情", run: func(*n.Context) { v.showFeedbackDevice() }}
-	if v.draftSaveError != "" {
-		out = append(out, conversationStatus{id: "save", title: "草稿尚未保存", body: "本次修改仍保留在当前窗口，请重试保存，或先复制草稿。", details: v.draftSaveError, icon: fileAttachmentIcon, priority: 0, actions: []statusAction{{label: "重试保存", disabled: v.Saver == nil, run: func(*n.Context) { v.lastQueued = nil; v.queueState() }}, {label: "复制草稿", run: func(c *n.Context) {
+	if v.splitRoot().draftSaveError != "" {
+		out = append(out, conversationStatus{id: "save", title: "草稿尚未保存", body: "本次修改仍保留在当前窗口，请重试保存，或先复制草稿。", details: v.splitRoot().draftSaveError, icon: fileAttachmentIcon, priority: 0, actions: []statusAction{{label: "重试保存", disabled: v.splitRoot().Saver == nil, run: func(*n.Context) { root := v.splitRoot(); root.lastQueued = nil; root.queueState() }}, {label: "复制草稿", run: func(c *n.Context) {
 			v.collectBindings()
 			c.WriteClipboard(referencePlainText(referenceDocumentText(v.composerContent(m.DraftKey()))))
 			v.reportFeedback(app.Feedback{Title: "草稿已复制", Kind: app.FeedbackSuccess})
@@ -561,13 +564,13 @@ func (v *View) feedbackButton(c *n.Context, t *n.Theme) {
 								n.Text(c, message.Body).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 							}
 							if message.SessionID != "" {
-								if ghost(c, "查看会话").FontSize(12).Height(28).Clicked() {
+								if ghost(c, "查看会话").PaddingX(0).FontSize(12).Height(28).Clicked() {
 									root.openFeedbackSource(message.Feedback)
 									state.open = false
 								}
 							}
 							if message.Details != "" {
-								if ghost(c, "查看记录详情").FontSize(12).Height(28).Clicked() {
+								if ghost(c, "查看记录详情").PaddingX(0).FontSize(12).Height(28).Clicked() {
 									state.messages[i].details = !state.messages[i].details
 								}
 								if state.messages[i].details {
@@ -654,12 +657,12 @@ func (v *View) conversationMessageOverlay(c *n.Context, t *n.Theme) {
 					n.Text(c, message.Body).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
 				}
 				if message.SessionID != "" && message.SessionID != v.Model.SessionID {
-					if ghost(c, "查看会话").FontSize(12).Height(24).Clicked() {
+					if ghost(c, "查看会话").PaddingX(0).FontSize(12).Height(24).Clicked() {
 						v.openFeedbackSource(message.Feedback)
 					}
 				}
 				if message.Details != "" {
-					if ghost(c, "查看消息详情").FontSize(12).Height(24).Clicked() {
+					if ghost(c, "查看消息详情").PaddingX(0).FontSize(12).Height(24).Clicked() {
 						message.details = !message.details
 					}
 					if message.details {
