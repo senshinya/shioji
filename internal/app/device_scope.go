@@ -28,6 +28,12 @@ func (m *Model) scopeFailure(err error) {
 }
 func (m *Model) validateDeviceEvent(e domain.Event) error {
 	fail := errors.New("设备事件引用了其他设备的会话或工作区")
+	if e.Deletion != nil {
+		return m.validateArchiveDeletion(*e.Deletion)
+	}
+	if e.ArchivePolicy != nil && (e.ArchivePolicy.DeviceID != m.Snapshot.DeviceID || !domain.ValidArchiveDays(e.ArchivePolicy.Days)) {
+		return fail
+	}
 	if e.Workspace != nil && e.Workspace.DeviceID != m.Snapshot.DeviceID {
 		return fail
 	}

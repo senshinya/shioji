@@ -30,7 +30,7 @@ func (c *Controller) queueInitialHistory(parent context.Context, id, epoch, gene
 	ctx, cancel := context.WithCancel(parent)
 	r := &HistoryRead{Pending: true}
 	c.post(func(m *Model) {
-		if ctx.Err() != nil || m.ConnectionEpoch != epoch {
+		if ctx.Err() != nil || m.ConnectionEpoch != epoch || !m.ownsSession(id) {
 			return
 		}
 		m.HistoryReads[id] = r

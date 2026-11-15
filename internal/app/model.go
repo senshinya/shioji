@@ -28,6 +28,7 @@ type InspectorLayout struct {
 }
 
 type Model struct {
+	ArchivePolicyChanges       map[string]ArchivePolicyChange
 	Feedbacks                  []Feedback
 	UncertainSubmissions       map[string]bool
 	PortForwards               []portforward.Mapping
@@ -285,6 +286,20 @@ func (m *Model) Accepted(in domain.Submission, op domain.Operation) {
 	m.ApplyOperation(op)
 }
 func (m *Model) ApplyOperation(op domain.Operation) {
+	if op.Deleted && op.State == "rejected" {
+		if _, ok := m.Pending[op.ID]; !ok {
+			return
+		}
+		if m.sourceConnection != "" && (m.PendingDevices[op.ID] != "" && m.PendingDevices[op.ID] != m.sourceConnection || m.sessionOnOtherDevice(m.sourceConnection, op.SessionID)) {
+			m.scopeFailure(errors.New("删除回执不属于原提交设备"))
+			return
+		}
+		delete(m.Pending, op.ID)
+		delete(m.PendingDevices, op.ID)
+		delete(m.UncertainSubmissions, op.ID)
+		m.Resolved[op.ID] = true
+		return
+	}
 	if m.sourceConnection != "" && op.SessionID != "" && !m.ownsSession(op.SessionID) {
 		m.scopeFailure(errors.New("设备提交回执不属于本设备"))
 		return
@@ -349,6 +364,7 @@ func (m *Model) ApplySnapshot(snapshot domain.Snapshot, requestedAt ...time.Time
 		sampledAt = requestedAt[0]
 	}
 	m.reconcileCompletedReplies(snapshot, sampledAt)
+	m.pruneArchiveSnapshot(snapshot)
 	if m.Snapshot.Generation != "" && m.Snapshot.Generation != snapshot.Generation {
 		for id := range m.Details {
 			delete(m.HistoryReads, id)
@@ -391,6 +407,13 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 	}
 	m.Sequence = e.Sequence
 	m.Snapshot.Sequence = e.Sequence
+	if e.Deletion != nil {
+		m.ApplyArchiveDeletion(*e.Deletion)
+		return nil
+	}
+	if e.ArchivePolicy != nil && (m.Snapshot.ArchivePolicy == nil || e.ArchivePolicy.Revision >= m.Snapshot.ArchivePolicy.Revision) {
+		m.Snapshot.ArchivePolicy = e.ArchivePolicy
+	}
 	if r := m.HistoryReads[e.SessionID]; r != nil {
 		r.observe(e)
 	}
@@ -553,6 +576,7 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 
 type savedState struct {
 	WorkerMaintenanceIDs       map[string]string                          `json:"workerMaintenanceIDs,omitempty"`
+	ArchivePolicyChanges       map[string]ArchivePolicyChange             `json:"archivePolicyChanges,omitempty"`
 	Navigation                 NavigationPreferences                      `json:"navigation,omitempty"`
 	ServicePreparations        map[string]*ServicePreparation             `json:"servicePreparations,omitempty"`
 	ServicePreparationDeviceID string                                     `json:"servicePreparationDeviceId,omitempty"`
@@ -625,6 +649,7 @@ func (m *Model) Load(path string) error {
 		m.DraftSkills = saved.DraftSkills
 	}
 	m.Preferences = saved.Preferences.Normalized()
+	m.ArchivePolicyChanges = saved.ArchivePolicyChanges
 	m.Navigation = saved.Navigation
 	m.homeConfigContext = saved.HomeConfigContext
 	m.HomeHarnesses = saved.HomeHarnesses

@@ -9,15 +9,16 @@ import (
 
 // ClientPreferences are local presentation and input choices, never worker policy.
 type ClientPreferences struct {
-	Appearance          string                   `json:"appearance"`
-	InterfaceFont       string                   `json:"interfaceFont"`
-	ReplySize           int                      `json:"replySize"`
-	CodeFont            string                   `json:"codeFont"`
-	ReduceMotion        bool                     `json:"reduceMotion"`
-	CollapseLatestTools bool                     `json:"collapseLatestTools"`
-	HistoryPageRounds   int                      `json:"historyPageRounds"`
-	Shortcuts           ComposerShortcuts        `json:"shortcuts"`
-	Notifications       *NotificationPreferences `json:"notifications,omitempty"`
+	ArchiveRetentionDays *int                     `json:"archiveRetentionDays,omitempty"`
+	Appearance           string                   `json:"appearance"`
+	InterfaceFont        string                   `json:"interfaceFont"`
+	ReplySize            int                      `json:"replySize"`
+	CodeFont             string                   `json:"codeFont"`
+	ReduceMotion         bool                     `json:"reduceMotion"`
+	CollapseLatestTools  bool                     `json:"collapseLatestTools"`
+	HistoryPageRounds    int                      `json:"historyPageRounds"`
+	Shortcuts            ComposerShortcuts        `json:"shortcuts"`
+	Notifications        *NotificationPreferences `json:"notifications,omitempty"`
 }
 
 type NotificationPreferences struct {
@@ -54,6 +55,10 @@ func DefaultShortcuts() ComposerShortcuts {
 }
 
 func (p ClientPreferences) Normalized() ClientPreferences {
+	if p.ArchiveRetentionDays == nil || !domain.ValidArchiveDays(*p.ArchiveRetentionDays) {
+		days := 30
+		p.ArchiveRetentionDays = &days
+	}
 	if p.HistoryPageRounds < 1 || p.HistoryPageRounds > domain.MaxHistoryRounds {
 		p.HistoryPageRounds = domain.DefaultHistoryRounds
 	}

@@ -66,6 +66,9 @@ func (m *Model) validateDeviceSnapshot(key string, snapshot domain.Snapshot) err
 	if snapshot.DeviceID == "" {
 		return nil
 	}
+	if p := snapshot.ArchivePolicy; p != nil && (p.DeviceID != snapshot.DeviceID || !domain.ValidArchiveDays(p.Days) || p.Revision < 1) {
+		return fmt.Errorf("设备返回了无效的归档保留设置")
+	}
 	expected := m.LocalDeviceID
 	if key != "local" {
 		expected = ""
@@ -294,6 +297,9 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	} else {
 		m.WorkspaceID, m.SessionID = workspace, session
 	}
+	if owned[m.SecondarySessionID] || m.SecondaryWorkspaceID != "" && slices.ContainsFunc(state.Snapshot.Workspaces, func(w domain.Workspace) bool { return w.ID == m.SecondaryWorkspaceID }) {
+		m.SecondarySessionID, m.SecondaryWorkspaceID, m.FocusSecondary = p.SecondarySessionID, p.SecondaryWorkspaceID, p.FocusSecondary
+	}
 	m.Notifications = append(m.Notifications, p.Notifications...)
 	for _, feedback := range p.Feedbacks {
 		m.ReportFeedback(feedback)
@@ -330,6 +336,7 @@ func (m *Model) RefreshDevices() {
 		all.Operations = append(all.Operations, s.Operations...)
 		if key == current {
 			all.DeviceID, all.Generation, all.Sequence = s.DeviceID, s.Generation, s.Sequence
+			all.ArchivePolicy = s.ArchivePolicy
 			m.Sequence, m.KnownDeviceID = state.Sequence, s.DeviceID
 			m.Connected, m.ConnectionEpoch = state.Connected, state.ConnectionEpoch
 			m.Readiness, m.WorkerMinor = state.Readiness, state.WorkerMinor

@@ -2,10 +2,60 @@ package codex
 
 import (
 	"encoding/json"
+	"fmt"
 	"shioji/internal/domain"
 	"strings"
 	"testing"
 )
+
+func TestChildInitialUserMessageFillsActivityBriefWithoutDuplicatingInput(t *testing.T) {
+	for _, early := range []bool{false, true} {
+		t.Run(fmt.Sprint(early), func(t *testing.T) {
+			n := NewNormalizer()
+			n.Bind("root", "s", false)
+			// A worker-accepted message is already persisted separately, even if
+			// its notification arrives before the child's ownership is registered.
+			workFeed(t, n, `{"method":"item/completed","params":{"threadId":"child","turnId":"ct","item":{"type":"userMessage","id":"accepted","clientId":"input:early-operation","content":[{"type":"text","text":"已接纳的追加消息"}]}}}`)
+			user := `{"method":"item/completed","params":{"threadId":"child","turnId":"ct","item":{"type":"userMessage","id":"initial","content":[{"type":"text","text":"检查根节点"},{"type":"text","text":"与空子树"}]}}}`
+			if early {
+				workFeed(t, n, user)
+			}
+			es := workFeed(t, n, `{"method":"item/started","params":{"threadId":"root","turnId":"t","item":{"type":"subAgentActivity","id":"spawn","agentThreadId":"child","agentPath":"/root/check","kind":"started"}}}`)
+			if !early {
+				es = workFeed(t, n, user)
+			}
+			var brief string
+			for _, e := range es {
+				if e.Work != nil {
+					brief = e.Work.Brief
+				}
+				if e.WorkItem != nil {
+					t.Fatal("initial input duplicated in transcript", e)
+				}
+			}
+			if brief != "检查根节点\n与空子树" {
+				t.Fatalf("initial child prompt missing: %q", brief)
+			}
+			workFeed(t, n, `{"method":"item/completed","params":{"threadId":"child","turnId":"ct","item":{"type":"userMessage","id":"follow","clientId":"input:operation","content":[{"type":"text","text":"追加要求"}]}}}`)
+			if n.work.works[n.work.agents["child"].id].Brief != brief {
+				t.Fatal("followup replaced initial task")
+			}
+		})
+	}
+}
+
+func TestSpawnPromptBackfillsEarlierActivityRegistration(t *testing.T) {
+	n := NewNormalizer()
+	n.Bind("root", "s", false)
+	workFeed(t, n, `{"method":"item/started","params":{"threadId":"root","turnId":"t","item":{"type":"subAgentActivity","id":"activity","agentThreadId":"child","agentPath":"/root/check","kind":"started"}}}`)
+	es := workFeed(t, n, `{"method":"item/completed","params":{"threadId":"root","turnId":"t","item":{"type":"collabAgentToolCall","id":"spawn","tool":"spawnAgent","receiverThreadIds":["child"],"prompt":"完整初始任务"}}}`)
+	for _, e := range es {
+		if e.Work != nil && e.Work.Brief == "完整初始任务" {
+			return
+		}
+	}
+	t.Fatal("later spawn metadata did not fill the missing initial task")
+}
 
 func workFeed(t *testing.T, n *Normalizer, raw string) []domain.Event {
 	t.Helper()

@@ -509,14 +509,18 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 		if len(metadata) > 0 {
 			n.Text(c, strings.Join(metadata, " · ")).FontSize(11).TextColor(t.TextMuted)
 		}
-		if w.Brief != "" {
+		prompt := w.Brief
+		if prompt == "" && kind == "agents" {
+			prompt = w.Title
+		}
+		if prompt != "" {
 			if kind == "background" {
 				n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
 					inlineSymbol(c, commandActivityIcon(w.Brief), w.Brief, n.Font{Family: outputFont, Size: 11}, 14, outputColor)
 					n.Text(c, commandPreview(w.Brief)).Label(w.Brief).Tooltip(w.Brief).ContextMenu(commandCopyMenu(c, w.Brief)).Grow(1).MinWidth(0).MaxLines(2).Ellipsis("…").Font(outputFont).FontSize(11).FixedLineHeight(18).TextColor(outputColor).Selectable()
 				})
 			} else {
-				n.Text(c, w.Brief).AlignSelf(n.End).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(userBubble(t)).Selectable()
+				n.Text(c, prompt).AlignSelf(n.End).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(userBubble(t)).Selectable()
 			}
 		}
 		if detail.Truncated {
@@ -764,36 +768,38 @@ var locateWorkIcon = svg("M10 3v3M10 14v3M3 10h3M14 10h3M10 6a4 4 0 1 0 0 8 4 4 
 var workDownIcon = svg("M10 3v13M5 11l5 5 5-5")
 
 func (v *View) locateWorkSource(c *n.Context, id string) {
-	state := v.lists[v.Model.SessionID]
-	if state == nil {
+	v.workSourceTarget = v.Model.WorkKey(v.Model.SessionID, id)
+	c.Services().Invalidate()
+}
+
+func (v *View) positionWorkSource(c *n.Context, state *n.ListState, rows []transcriptRow) {
+	source := v.workSourceTarget
+	if source.ID == "" {
 		return
 	}
-	items := v.Model.Details[v.Model.SessionID].Items
-	target := -1
-	for i, item := range items {
-		if item.ID == id {
-			target = i
-			break
+	v.workSourceTarget = app.WorkKey{}
+	if source != v.Model.WorkKey(v.Model.SessionID, source.ID) {
+		return
+	}
+	// Resolve against the final projection, including turn receipts and local
+	// rows, rather than rebuilding a second transcript with different indices.
+	for i, row := range rows {
+		if row.key == source.ID && row.opacity > 0 {
+			state.ScrollToRowWithinContent(i+1, 112, motionAnimation(c, 240*time.Millisecond))
+			return
 		}
 	}
+	items := v.Model.Details[v.Model.SessionID].Items
+	target := slices.IndexFunc(items, func(item domain.Item) bool { return item.ID == source.ID })
 	if target < 0 {
 		return
 	}
-	for i, row := range v.transcriptRows(items) {
-		if row.item.ID == id {
-			state.ScrollToRow(i+1, 112, motionAnimation(c, 240*time.Millisecond))
-			return
-		}
-		if row.group != "" && row.end >= target {
-			start := -1
-			for j, item := range items {
-				if item.ID == row.item.ID {
-					start = j
-					break
-				}
-			}
+	// A folded tool source is represented by its visible group heading.
+	for i, row := range rows {
+		if row.group != "" && row.opacity > 0 && row.end >= target {
+			start := slices.IndexFunc(items, func(item domain.Item) bool { return item.ID == row.item.ID })
 			if start >= 0 && start <= target {
-				state.ScrollToRow(i+1, 112, motionAnimation(c, 240*time.Millisecond))
+				state.ScrollToRowWithinContent(i+1, 112, motionAnimation(c, 240*time.Millisecond))
 				return
 			}
 		}

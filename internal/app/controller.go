@@ -105,6 +105,9 @@ func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.Raw
 	if (strings.HasPrefix(job.Method, "worker.maintenance.") || job.Method == "worker.update.diagnose") && (client.Worker == nil || !client.Worker.Maintenance) {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "此执行服务尚不支持后台环境处理"}
 	}
+	if (strings.HasPrefix(job.Method, "archive.") || job.Method == "session.delete" || job.Method == "workspace.delete") && client.Minor < 40 {
+		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能管理归档保留时间和彻底删除"}
+	}
 	if historyReadMethod(job.Method) && client.Minor < 37 {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能按需加载历史"}
 	}
@@ -625,6 +628,9 @@ func (c *Controller) Run(ctx context.Context) {
 			collapseHistory := history[id].opening()
 			history[id] = historyLoaded
 			c.post(func(m *Model) {
+				if !m.ownsSession(id) {
+					return
+				}
 				m.Details[id] = all
 				if collapseHistory {
 					m.FoldToolHistory[id] = true

@@ -61,6 +61,29 @@ func (m *Model) validateDeviceReply(key string, job Job, body json.RawMessage) e
 		}
 	}
 	fail := errors.New("设备回执与请求的工作区、会话或操作不一致")
+	if in, ok := job.Input.(protocol.ArchivePolicyInput); ok {
+		var result domain.ArchivePolicy
+		if json.Unmarshal(body, &result) != nil || result.DeviceID != state.Snapshot.DeviceID || result.Days != in.Days || result.Revision < in.Revision {
+			return fail
+		}
+	}
+	if in, ok := job.Input.(protocol.ArchiveDeleteInput); ok {
+		var result domain.ArchiveDeletion
+		if json.Unmarshal(body, &result) != nil || result.DeviceID != state.Snapshot.DeviceID {
+			return fail
+		}
+		if job.Method == "session.delete" && (result.WorkspaceID != "" || len(result.SessionIDs) != 1 || result.SessionIDs[0] != in.SessionID) {
+			return fail
+		}
+		if job.Method == "workspace.delete" && result.WorkspaceID != in.WorkspaceID {
+			return fail
+		}
+		for _, id := range result.SessionIDs {
+			if m.sessionOnOtherDevice(key, id) {
+				return fail
+			}
+		}
+	}
 	if in, ok := job.Input.(protocol.CompletionReadInput); ok {
 		var result domain.Session
 		owned := false
