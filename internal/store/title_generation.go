@@ -27,7 +27,10 @@ const (
 func (s *Store) ClaimTitleGeneration() (TitleJob, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	job, err := load[TitleJob](s.db.QueryRow("SELECT body FROM title_jobs WHERE state=? ORDER BY rowid LIMIT 1", titlePending))
+	job, err := load[TitleJob](s.db.QueryRow(`SELECT body FROM title_jobs j WHERE state=? AND NOT EXISTS(
+ SELECT 1 FROM worker_maintenance m,json_each(m.body,'$.targets') t
+ WHERE json_extract(m.body,'$.phase') IN ('stopping','needsForce','waitingIdle','updating')
+ AND json_extract(t.value,'$.target.sessionId')=j.session_id) ORDER BY rowid LIMIT 1`, titlePending))
 	if err != nil {
 		return job, err
 	}

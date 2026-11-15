@@ -36,6 +36,7 @@ const Major = 2
 // Minor 36 adds bounded display history, prompt indexes and scoped search.
 // Minor 37 adds user-message rounds and coherent byte-chunked read windows.
 // Minor 38 adds device-owned load telemetry and revision-checked idle-sleep control.
+// WorkerBuild.Maintenance advertises durable maintenance independently of minor.
 const Minor = 38
 const MaxFrame = 1 << 20
 
@@ -254,6 +255,11 @@ func Welcome(conn net.Conn, deviceID string, build ...domain.WorkerBuild) (*Code
 // ReadinessQuery scopes live runtime profiles to the client's two visible sessions.
 type ReadinessQuery struct {
 	SessionIDs []string `json:"sessionIds,omitempty"`
+}
+
+type WorkerMaintenanceQuery struct {
+	DeviceID string `json:"deviceId"`
+	ID       string `json:"id,omitempty"`
 }
 
 type DirectoryQuery struct {

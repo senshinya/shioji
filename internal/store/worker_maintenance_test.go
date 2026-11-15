@@ -1,12 +1,25 @@
 package store_test
 
 import (
+	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 
 	"shioji/internal/domain"
 	"shioji/internal/store"
 )
+
+func TestMaintenanceKeepsPendingTitleWorkOutOfRetiringEnvironment(t *testing.T) {
+	s := open(t)
+	id := maintenanceSession(t, s, "selected-title")
+	if _, err := s.AcceptWorkerMaintenance(maintenanceOperation(t, s, "title-maintenance", id)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ClaimTitleGeneration(); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("selected environment started new title work", err)
+	}
+}
 
 func maintenanceSession(t *testing.T, s *store.Store, id string) string {
 	t.Helper()

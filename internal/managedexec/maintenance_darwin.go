@@ -235,6 +235,28 @@ func (s *Scope) ForceManualStop(operation, action string) error {
 	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
 }
 
+// Cancellation revokes unsent force and reopens only a lifetime that has never
+// begun stopping. A partially retired generation keeps its durable guard.
+func (s *Scope) CancelManualStop(operation string) error {
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	state, err := s.load()
+	if err != nil {
+		return err
+	}
+	if state.Manual == nil || state.Manual.Operation != operation {
+		return nil
+	}
+	if !state.Manual.ForceSent {
+		state.Manual.ForceAction = ""
+	}
+	if state.Active && !state.Manual.NormalSent && !state.Manual.ForceSent {
+		state.Manual = nil
+	}
+	state.Maintenance = false
+	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+}
+
 func (s *Scope) stopManual(ctx context.Context) error {
 	s.manager.mu.Lock()
 	state, err := s.load()

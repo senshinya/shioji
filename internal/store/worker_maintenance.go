@@ -133,6 +133,7 @@ func (s *Store) AcceptWorkerMaintenance(op domain.WorkerMaintenance) (domain.Wor
 	op.Revision = 1
 	op.Phase = domain.WorkerMaintenanceStopping
 	op.UpdatedAt = time.Now().UTC()
+	op.StartedAt = op.UpdatedAt
 	if _, err = tx.Exec("INSERT INTO worker_maintenance VALUES(?,?)", op.ID, blob(op)); err != nil {
 		return none, err
 	}

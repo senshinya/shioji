@@ -91,6 +91,7 @@ type WorkerMaintenance struct {
 	Message         string                    `json:"message,omitempty"`
 	Backup          string                    `json:"backup,omitempty"`
 	UpdatedAt       time.Time                 `json:"updatedAt"`
+	StartedAt       time.Time                 `json:"startedAt"`
 }
 
 type WorkerMaintenanceInput struct {
