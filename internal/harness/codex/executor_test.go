@@ -24,6 +24,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if manualShutdownFixture() {
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "--fixture-signin" {
 		signInFixture(os.Args[2])
 		os.Exit(0)

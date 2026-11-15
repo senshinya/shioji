@@ -140,6 +140,12 @@ type Runtime interface {
 	Close(context.Context) error
 }
 
+// ManualShutdownRuntime opts into normal-only teardown backed by the worker's
+// durable managed-generation authorization, including loss and Close paths.
+type ManualShutdownRuntime interface {
+	ManualShutdownSafe() bool
+}
+
 // DeliveryError classifies an external send without confusing unknown delivery
 // with explicit rejection. It is shared semantics, not a native RPC error.
 type DeliveryError struct {

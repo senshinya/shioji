@@ -108,6 +108,17 @@ func (r *adapterRuntime) ExecutionReady() bool {
 	return !r.Stopped() && (r.scope == nil || r.scope.Admitting() && r.executor != nil && !r.executor.Stopped())
 }
 func (r *adapterRuntime) Close(ctx context.Context) error {
+	if r.scope != nil && !r.scope.ForceAllowed() {
+		var err error
+		if r.executor != nil {
+			err = r.executor.Fence()
+		}
+		err = errors.Join(err, r.Runtime.Close())
+		if r.executor != nil {
+			err = errors.Join(err, r.executor.Close(ctx))
+		}
+		return err
+	}
 	r.closeOnce.Do(func() {
 		if r.executor != nil {
 			r.closeErr = r.executor.Fence()
@@ -119,6 +130,8 @@ func (r *adapterRuntime) Close(ctx context.Context) error {
 	})
 	return r.closeErr
 }
+
+func (r *adapterRuntime) ManualShutdownSafe() bool { return r.scope != nil && r.executor != nil }
 
 func (r *adapterRuntime) PrepareHistory(ctx context.Context, source domain.Session, boundary harness.HistoryBoundary) (string, error) {
 	if boundary.PreparedRef != "" {

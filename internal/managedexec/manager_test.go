@@ -17,6 +17,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if manualStopFixture() {
+		return
+	}
 	if handled, err := ChildMain(os.Args[1:]); handled {
 		if err != nil {
 			os.Exit(1)
