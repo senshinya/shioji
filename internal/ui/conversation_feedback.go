@@ -113,8 +113,8 @@ func (v *View) reportFeedback(f app.Feedback) {
 // Only known credential-bearing syntax is retained as a redacted diagnostic.
 // Summaries never include arbitrary error strings or authorization URLs.
 var feedbackURL = regexp.MustCompile(`https?://[^\s<>"']+`)
-var feedbackAuthorization = regexp.MustCompile(`(?i)((?:"|')?authorization(?:"|')?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\r\n]+)`)
-var feedbackCredential = regexp.MustCompile(`(?i)((?:"|')?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|(?:client[_-]?)?secret)(?:"|')?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)`)
+var feedbackAuthorization = regexp.MustCompile(`(?i)((?:"|')?authorization(?:"|')?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\r\n]+)`)
+var feedbackCredential = regexp.MustCompile(`(?i)((?:"|')?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|(?:client[_-]?)?secret)(?:"|')?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)`)
 
 func feedbackDetails(message string) string {
 	message = feedbackURL.ReplaceAllStringFunc(message, func(raw string) string {

@@ -456,7 +456,7 @@ func TestConversationFeedbackSplitErrorDismissalSticks(t *testing.T) {
 }
 
 func TestConversationFeedbackRedactsCommonCredentials(t *testing.T) {
-	for _, raw := range []string{`{"api_key":"example-secret"}`, `{"access_token": "example-secret"}`, `password='example-secret'`, "Authorization: Basic ZXhhbXBsZQ==", "Authorization: Bearer example-secret", `{"Authorization":"Basic ZXhhbXBsZQ=="}`, "authenticate at https://auth.example.test/auth/example-secret?token=other-secret"} {
+	for _, raw := range []string{`{"api_key":"example-secret"}`, `{"password":"prefix\\\"example-secret"}`, `{"access_token": "example-secret"}`, `password='example-secret'`, "Authorization: Basic ZXhhbXBsZQ==", "Authorization: Bearer example-secret", `{"Authorization":"Basic ZXhhbXBsZQ=="}`, "authenticate at https://auth.example.test/auth/example-secret?token=other-secret"} {
 		cleaned := feedbackDetails(raw)
 		if strings.Contains(cleaned, "example-secret") || strings.Contains(cleaned, "ZXhhbXBsZQ==") || strings.Contains(cleaned, "other-secret") {
 			t.Errorf("credential survived: %s", cleaned)
