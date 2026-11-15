@@ -85,6 +85,16 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 		v.contextCompactionItem(c, t, item)
 		return
 	}
+	if item.Kind == "activity" && item.Presentation == "agents" {
+		label := strings.TrimSpace(item.Name + " " + strings.TrimPrefix(item.Text, "代理"))
+		font := n.Font{Family: t.Font, Size: 12, Weight: 400}
+		n.Row(c.Key("agent-event")).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
+			inlineSymbol(c, agentActivityIcon, label, font, 14, t.TextMuted)
+			n.Text(c, label).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable().
+				ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+		})
+		return
+	}
 	key := "activity:" + v.Model.SessionID + "/" + item.ID
 	if _, seen := v.Model.Collapsed[key]; !seen {
 		v.Model.Collapsed[key] = item.Kind == "activity"
