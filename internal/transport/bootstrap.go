@@ -187,7 +187,8 @@ for candidate in "$root"/*/shioji-worker "$directory"/updates/*/shioji-worker; d
   metadata=$("$candidate" --describe)
   kind=$(printf '%s' "$metadata" | /usr/bin/plutil -extract type raw -o - -)
   [ "$kind" = worker-build ]
-  built=$(printf '%s' "$metadata" | /usr/bin/plutil -extract worker.builtAt raw -o - - 2>/dev/null || printf '0')
+  # Discard failed extraction output: older plutil reports errors on stdout.
+  built=$(printf '%s' "$metadata" | /usr/bin/plutil -extract worker.builtAt raw -o - - 2>/dev/null) || built=0
   case "$built" in ''|*[!0-9]*) exit 1;; esac
   if [ "$built" -gt "$newest_time" ]; then newest="$candidate"; newest_time="$built"; fi
 done

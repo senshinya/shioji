@@ -124,7 +124,7 @@ func TestSSHBootstrapDoesNotRedeployAfterExistingWorkerFailure(t *testing.T) {
 }
 
 func TestSSHBootstrapFindsInstalledAndSelectedWorker(t *testing.T) {
-	for _, kind := range []string{"app", "selected", "standalone", "unknown-time"} {
+	for _, kind := range []string{"app", "selected", "standalone", "unknown-time", "unknown-time-stdout-error"} {
 		t.Run(kind, func(t *testing.T) {
 			ssh, root, command, calls := bootstrapFixture(t)
 			data, _ := os.ReadFile(ssh.Worker)
@@ -146,7 +146,7 @@ func TestSSHBootstrapFindsInstalledAndSelectedWorker(t *testing.T) {
 				os.WriteFile(ssh.Worker, data, 0700)
 				os.WriteFile(ssh.Worker+".built-at", []byte("10"), 0600)
 				ssh.Worker = filepath.Join(root, "Library/Application Support/Shioji/Runtime/development/newer", "shioji-worker")
-			case "unknown-time":
+			case "unknown-time", "unknown-time-stdout-error":
 				ssh.Worker = filepath.Join(root, "Library/Application Support/Shioji/Runtime/development/unknown", "shioji-worker")
 			}
 			want := ssh.Worker
@@ -156,10 +156,23 @@ func TestSSHBootstrapFindsInstalledAndSelectedWorker(t *testing.T) {
 			if e := os.WriteFile(want, data, 0700); e != nil {
 				t.Fatal(e)
 			}
-			if kind == "unknown-time" {
+			if strings.HasPrefix(kind, "unknown-time") {
 				os.WriteFile(want+".built-at", []byte("0"), 0600)
 			}
 			ssh.Worker = ""
+			if kind == "unknown-time-stdout-error" {
+				// Older plutil versions can emit extraction errors on stdout.
+				// Exercise that command boundary on newer macOS too.
+				plutil := filepath.Join(root, "plutil")
+				script := "#!/bin/sh\nif [ \"$2\" = worker.builtAt ]; then echo 'Could not extract value'; exit 1; fi\nexec /usr/bin/plutil \"$@\"\n"
+				if err := os.WriteFile(plutil, []byte(script), 0700); err != nil {
+					t.Fatal(err)
+				}
+				original := command
+				command = func(ctx context.Context, remote string) (*exec.Cmd, error) {
+					return original(ctx, strings.ReplaceAll(remote, "/usr/bin/plutil", plutil))
+				}
+			}
 			info, e := ssh.bootstrap(context.Background(), "/no-client-worker", command)
 			if e != nil || info.Worker != want || *calls != 1 {
 				t.Fatal(info, e, *calls)
