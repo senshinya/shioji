@@ -54,7 +54,7 @@ func mentionToken(text string, start, end int) (from, to int, query string, ok b
 	for from > 0 && !unicode.IsSpace(runes[from-1]) {
 		from--
 	}
-	if from >= start || (runes[from] != '@' && !(runes[from] == '/' && from == 0)) {
+	if from >= start || (runes[from] != '@' && runes[from] != '/') {
 		return
 	}
 	for _, r := range runes[from+1 : start] {
@@ -124,7 +124,8 @@ func (v *View) syncMention(c *n.Context, input composerInput, text string) {
 	}
 	a, b := input.TextSelection()
 	from, to, query, ok := mentionToken(text, a, b)
-	if ok && []rune(text)[from] == '/' && !m.RunReadiness().Capabilities.Skills && !v.compactCandidate(key, query) {
+	compact := ok && []rune(text)[from] == '/' && from == 0 && v.compactCandidate(key, query)
+	if ok && []rune(text)[from] == '/' && !m.RunReadiness().Capabilities.Skills && !compact {
 		ok = false
 	}
 	if !ok {
@@ -147,7 +148,7 @@ func (v *View) syncMention(c *n.Context, input composerInput, text string) {
 		}
 		state.revision++
 		state.text, state.query, state.end = text, query, to
-		state.compact = v.compactCandidate(key, query)
+		state.compact = compact
 		if state.compact {
 			state.present = true
 		}
@@ -232,11 +233,12 @@ func (v *View) mentionKey(k composerKey) bool {
 	if !token {
 		return false
 	}
-	if []rune(k.Text())[from] == '/' && !v.Model.RunReadiness().Capabilities.Skills && !v.compactCandidate(key, query) {
+	compact := []rune(k.Text())[from] == '/' && from == 0 && v.compactCandidate(key, query)
+	if []rune(k.Text())[from] == '/' && !v.Model.RunReadiness().Capabilities.Skills && !compact {
 		return false
 	}
 	if state == nil && (k.Key == n.KeyEnter || k.Key == n.KeyTab) && k.Mods == 0 && v.Controller != nil && v.Model.Connected && v.Model.WorkerMinor >= 11 {
-		state = &fileMention{key: key, context: v.mentionContext(key), text: k.Text(), query: query, start: from, end: to, trigger: []rune(k.Text())[from], phase: mentionWaiting, due: v.frameTime, compact: v.compactCandidate(key, query)}
+		state = &fileMention{key: key, context: v.mentionContext(key), text: k.Text(), query: query, start: from, end: to, trigger: []rune(k.Text())[from], phase: mentionWaiting, due: v.frameTime, compact: compact}
 		v.fileMention = state
 		if state.compact {
 			v.chooseCompactMention(k, state)

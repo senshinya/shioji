@@ -12,7 +12,7 @@
 
 ## Skill
 
-- 统一使用 `/` 作为输入框开头的菜单入口。选择后保存结构化引用，用户继续输入普通正文；不向正文拼接 `$name` 或任何 harness 的命令语法。
+- 统一使用 `/` 作为 Skill 菜单入口；消息开头、空白或换行后的词首均可触发，已有引用后可以继续添加其他 Skill。选择后保存结构化引用，用户继续输入普通正文；不向正文拼接 `$name` 或任何 harness 的命令语法。`/compact` 命令仍只在整条消息开头提供。
 - 列表来自工作区所属设备的所选 harness；已有会话固定使用自己的 harness。只有实际声明 Skills 能力且实现中立 SkillProvider 的运行时提供入口。
 - `SkillReference` 只携带名称和 opaque ID。草稿额外记录设备、工作区、harness 归属；Worker 在接纳与实际投递前重新匹配该上下文中仍启用的目录项。目录未知、引用失效或归属不匹配时明确拒绝，保留输入。
 - Codex adapter 使用固定 0.166.0 schema 的 `skills/list`，并将引用翻译为原生 `skill` input。原生路径解释及请求结构留在 adapter；共享 Worker／应用／UI 不解析 ID 或依赖 `$` 表达。
