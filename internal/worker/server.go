@@ -33,6 +33,7 @@ type Config struct {
 	BackgroundManaged                               bool
 	DisableBackground                               func(context.Context) (domain.BackgroundService, error) `json:"-"`
 	ReplaceWorker                                   func(domain.WorkerReplacement) error                    `json:"-"`
+	VerifyReplacement                               func(context.Context, domain.WorkerReplacement) error   `json:"-"`
 	Directory, LauncherExecutable, DefaultHarnessID string
 	Harnesses                                       []harness.Adapter `json:"-"`
 }
@@ -167,6 +168,7 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	s.build = runtimebuild.Current()
 	s.build.Schema = store.SchemaVersion
 	s.build.SafeUpdate = config.ReplaceWorker != nil
+	s.build.Maintenance = config.ReplaceWorker != nil && config.VerifyReplacement != nil
 	s.build.ContextUsage = true
 	s.build.OutputFiles = true
 	s.tools = map[string]recoveryToolProcess{}
@@ -182,6 +184,16 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	}
 	s.build.Managed = config.BackgroundManaged
 	s.executions = manager
+	if err = s.recoverManualGuards(); err != nil {
+		s.Close()
+		return nil, err
+	}
+	if err = s.recoverWorkerMaintenance(); err != nil {
+		listener.Close()
+		db.Close()
+		owner.Close()
+		return nil, err
+	}
 	cleanupCtx, cancelCleanup := context.WithTimeout(ctx, 20*time.Second)
 	cleanupErr := s.recoverManagedScopes(cleanupCtx)
 	cancelCleanup()
@@ -229,6 +241,8 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	go s.recoveryLoop()
 	s.wg.Add(1)
 	go s.titleLoop()
+	s.wg.Add(1)
+	go s.workerMaintenanceLoop()
 	s.wg.Add(1)
 	go s.archiveLoop()
 	return s, nil
@@ -335,6 +349,25 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 }
 
 func (s *Server) handleWithHistory(method string, body []byte, history *store.HistorySnapshot) (any, error) {
+	switch method {
+	case "worker.update.diagnose":
+		return s.diagnoseWorkerUpdate()
+	case "worker.maintenance.apply", "worker.maintenance.cancel":
+		in, err := decode[domain.WorkerMaintenanceInput](body)
+		if err != nil {
+			return nil, err
+		}
+		if method == "worker.maintenance.cancel" {
+			return s.cancelWorkerMaintenance(in)
+		}
+		return s.applyWorkerMaintenance(in)
+	case "worker.maintenance.get":
+		in, err := decode[protocol.WorkerMaintenanceQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.workerMaintenanceStatus(in)
+	}
 	if method == "device.ping" {
 		return struct {
 			DeviceID string `json:"deviceId"`
@@ -928,6 +961,9 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 		return s.store.Accept(in)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
+		return domain.Operation{}, err
+	}
+	if err = s.sessionMaintenanceAdmission(in.SessionID); err != nil {
 		return domain.Operation{}, err
 	}
 	if _, err = s.attachmentInputs(in); err != nil {

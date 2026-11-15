@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/net/websocket"
@@ -365,7 +366,7 @@ func (e *Executor) read(reader io.Reader) {
 		}
 		e.forward(msg)
 	}
-	e.cmd.Process.Kill()
+	e.scope.SignalRoot(e.cmd.Process.Pid, syscall.SIGKILL)
 	e.cmd.Wait()
 	e.cancel()
 	e.admit.Lock()
@@ -754,6 +755,28 @@ func (e *Executor) Fence() error {
 	return e.scope.Fence()
 }
 func (e *Executor) Close(ctx context.Context) error {
+	if !e.scope.ForceAllowed() {
+		result := e.Fence()
+		e.mu.Lock()
+		agent := e.agent
+		e.mu.Unlock()
+		if agent != nil {
+			agent.Close()
+		}
+		e.cancel()
+		e.stdin.Close()
+		if e.server != nil {
+			e.server.Close()
+		}
+		select {
+		case <-e.done:
+			return result
+		case <-ctx.Done():
+			return errors.Join(result, ctx.Err())
+		case <-time.After(3 * time.Second):
+			return errors.Join(result, managedexec.ErrManualStillRunning)
+		}
+	}
 	e.closeOnce.Do(func() {
 		e.closeErr = e.Fence()
 		e.mu.Lock()
@@ -785,7 +808,10 @@ func (e *Executor) Close(ctx context.Context) error {
 		select {
 		case <-e.done:
 		case <-time.After(3 * time.Second):
-			e.cmd.Process.Kill()
+			if err := e.scope.SignalRoot(e.cmd.Process.Pid, syscall.SIGKILL); err != nil {
+				e.closeErr = errors.Join(e.closeErr, err)
+				return
+			}
 			<-e.done
 		}
 	})

@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -14,6 +15,22 @@ func (s *Server) prepareWorkerUpdate(in domain.WorkerReplacement) (result domain
 	defer s.maintenance.Unlock()
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
+	return s.prepareWorkerUpdateLocked(in)
+}
+
+func (s *Server) prepareWorkerUpdateLocked(in domain.WorkerReplacement) (result domain.WorkerUpdateResult, err error) {
+	maintenance, maintenanceErr := s.store.WorkerMaintenance("")
+	if maintenanceErr != nil && !errors.Is(maintenanceErr, sql.ErrNoRows) {
+		return result, maintenanceErr
+	}
+	if maintenanceErr == nil && maintenance.BuildID == in.BuildID {
+		if maintenance.Phase == domain.WorkerMaintenanceCancelled && !in.Explicit {
+			return domain.WorkerUpdateResult{Reason: "本次处理已取消，请明确检查更新后再继续"}, nil
+		}
+		if maintenance.Phase == domain.WorkerMaintenanceStopping || maintenance.Phase == domain.WorkerMaintenanceNeedsForce {
+			return domain.WorkerUpdateResult{Reason: "有后台环境正在等待处理"}, nil
+		}
+	}
 	if s.updating.Load() {
 		return domain.WorkerUpdateResult{Ready: true}, nil
 	}
@@ -74,7 +91,22 @@ func (s *Server) prepareWorkerUpdate(in domain.WorkerReplacement) (result domain
 	if err != nil || !result.Ready {
 		return result, err
 	}
+	if maintenanceErr == nil && maintenance.Phase == domain.WorkerMaintenanceWaiting && maintenance.BuildID == in.BuildID {
+		maintenance.Phase = domain.WorkerMaintenanceUpdating
+		maintenance.Backup = result.Backup
+		maintenance.Message = "正在备份并更新，请等待重新连接"
+		maintenance, err = s.store.SaveWorkerMaintenance(maintenance, maintenance.Revision)
+		if err != nil {
+			return domain.WorkerUpdateResult{}, err
+		}
+	}
 	if err = s.config.ReplaceWorker(in); err != nil {
+		if maintenanceErr == nil && maintenance.Phase == domain.WorkerMaintenanceUpdating {
+			maintenance.Phase = domain.WorkerMaintenanceFailed
+			maintenance.Message = err.Error()
+			_, saveErr := s.store.SaveWorkerMaintenance(maintenance, maintenance.Revision)
+			err = errors.Join(err, saveErr)
+		}
 		return domain.WorkerUpdateResult{}, err
 	}
 	s.updating.Store(true)

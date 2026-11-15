@@ -31,6 +31,9 @@ func (s *Server) sendWork(in domain.WorkInput) (domain.WorkInputOperation, error
 	if !errors.Is(err, sql.ErrNoRows) {
 		return none, workNotSent(err)
 	}
+	if err = s.sessionMaintenanceAdmission(in.SessionID); err != nil {
+		return none, err
+	}
 	d, err := s.store.Session(in.SessionID, 0, 1)
 	if err != nil {
 		return none, workNotSent(err)

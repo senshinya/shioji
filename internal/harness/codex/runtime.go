@@ -235,7 +235,7 @@ func (r *Runtime) read(stdout io.Reader) {
 	if err := scan.Err(); err != nil {
 		r.fail(errors.New("app-server stream failed or exceeded 16 MiB limit"))
 	}
-	r.cmd.Process.Kill()
+	r.signalProcess(syscall.SIGKILL)
 	r.cmd.Wait()
 	r.eventMu.Lock()
 	r.emit(r.normalizer.Invalidate())
@@ -258,7 +258,19 @@ func (r *Runtime) emit(events []domain.Event) error {
 	}
 	return nil
 }
-func (r *Runtime) fail(err error) { r.mu.Lock(); r.err = err; r.mu.Unlock(); r.cmd.Process.Kill() }
+func (r *Runtime) fail(err error) {
+	r.mu.Lock()
+	r.err = err
+	r.mu.Unlock()
+	r.signalProcess(syscall.SIGKILL)
+}
+
+func (r *Runtime) signalProcess(sig syscall.Signal) error {
+	if r.scope != nil {
+		return r.scope.SignalRoot(r.cmd.Process.Pid, sig)
+	}
+	return r.cmd.Process.Signal(sig)
+}
 func (r *Runtime) write(b []byte) error {
 	r.writeMu.Lock()
 	defer r.writeMu.Unlock()
@@ -613,17 +625,35 @@ func (r *Runtime) Close() error {
 		r.desktop.close()
 	}
 	r.stdin.Close()
+	if r.scope != nil && !r.scope.ForceAllowed() {
+		select {
+		case <-r.done:
+			return nil
+		case <-time.After(3 * time.Second):
+			return managedexec.ErrManualStillRunning
+		}
+	}
 	select {
 	case <-r.done:
 		return nil
 	case <-time.After(3 * time.Second):
-		syscall.Kill(-r.cmd.Process.Pid, syscall.SIGTERM)
+		if r.scope != nil {
+			r.signalProcess(syscall.SIGTERM)
+		} else {
+			syscall.Kill(-r.cmd.Process.Pid, syscall.SIGTERM)
+		}
 	}
 	select {
 	case <-r.done:
 		return nil
 	case <-time.After(2 * time.Second):
-		syscall.Kill(-r.cmd.Process.Pid, syscall.SIGKILL)
+		if r.scope != nil {
+			if err := r.signalProcess(syscall.SIGKILL); err != nil {
+				return err
+			}
+		} else {
+			syscall.Kill(-r.cmd.Process.Pid, syscall.SIGKILL)
+		}
 		<-r.done
 		return nil
 	}

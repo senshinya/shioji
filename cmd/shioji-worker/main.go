@@ -49,6 +49,7 @@ func run() error {
 	build := runtimebuild.Current()
 	build.Schema = store.SchemaVersion
 	build.SafeUpdate = true
+	build.Maintenance = true
 	build.ContextUsage = true
 	build.OutputFiles = true
 	if *describe {
@@ -133,7 +134,17 @@ func run() error {
 		return worker.Bridge(ctx, dir, os.Stdin, os.Stdout)
 	}
 	replacement := make(chan string, 1)
-	config := worker.Config{CheckStartupBuild: func() error {
+	verifyReplacement := func(callCtx context.Context, in domain.WorkerReplacement) error {
+		candidate, err := transport.VerifyStagedWorker(callCtx, dir, in.BuildID)
+		if err != nil {
+			return err
+		}
+		if candidate.Schema < store.SchemaVersion {
+			return errors.New("候选执行服务无法读取当前数据库")
+		}
+		return nil
+	}
+	config := worker.Config{VerifyReplacement: verifyReplacement, CheckStartupBuild: func() error {
 		selected, err := transport.ActiveWorkerBuild(dir)
 		if err != nil {
 			return err

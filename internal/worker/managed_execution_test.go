@@ -19,6 +19,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if workerMaintenanceFixture() {
+		return
+	}
 	if handled, err := managedexec.ChildMain(os.Args[1:]); handled {
 		if err != nil {
 			os.Exit(1)

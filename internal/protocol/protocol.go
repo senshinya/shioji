@@ -39,6 +39,7 @@ const Major = 2
 // Minor 39 adds worker-owned reply completion acknowledgements and snapshot time.
 // Minor 40 adds device-owned archive policy and permanent archive deletion.
 // Minor 41 adds round-based, snapshot-coherent child-agent history paging.
+// WorkerBuild.Maintenance advertises durable maintenance independently of minor.
 const Minor = 41
 const MaxFrame = 1 << 20
 
@@ -262,6 +263,11 @@ type ReadinessQuery struct {
 type CompletionReadInput struct {
 	SessionID    string `json:"sessionId"`
 	CompletionID string `json:"completionId"`
+}
+
+type WorkerMaintenanceQuery struct {
+	DeviceID string `json:"deviceId"`
+	ID       string `json:"id,omitempty"`
 }
 
 type DirectoryQuery struct {

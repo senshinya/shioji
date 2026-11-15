@@ -175,6 +175,7 @@ type View struct {
 	deviceList                                                                                                      bool
 	deviceTab                                                                                                       string
 	deviceSearch                                                                                                    string
+	workerMaintenanceStates                                                                                         map[string]*workerMaintenanceUI
 	deviceStorageStates                                                                                             map[string]*deviceStorageState
 	clientStorageState                                                                                              *deviceStorageState
 	sshCheck                                                                                                        sshCheckPhase

@@ -65,6 +65,13 @@ func (s *Server) recoverManagedScopes(ctx context.Context) error {
 		id := entry.Name()
 		scope, scopeErr := s.executions.Existing(id)
 		if scopeErr == nil && scope != nil {
+			manual, e := scope.ManualStopPending()
+			if e != nil {
+				return e
+			}
+			if manual {
+				continue
+			}
 			scopeErr = scope.Stop(ctx)
 		}
 		if scopeErr != nil {

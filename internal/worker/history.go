@@ -18,6 +18,9 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 	if saved, e := s.store.HistoryOperation(in.OperationID); e == nil && saved.State == "complete" && saved.Input.Equal(in) {
 		return saved, nil
 	}
+	if err := s.sessionMaintenanceAdmission(in.SessionID); err != nil {
+		return domain.HistoryOperation{}, err
+	}
 	runtime, release, err := s.borrowInputRuntime(domain.Submission{SessionID: in.SessionID})
 	if err != nil {
 		return domain.HistoryOperation{}, err
