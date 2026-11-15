@@ -2,7 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"image/png"
 	"math"
+	"os"
+	"path/filepath"
+	"shioji/internal/app"
 	"strings"
 	"testing"
 	"time"
@@ -52,5 +56,71 @@ func TestExistingSessionSendSettlesAtNaturalEnd(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestSendingAtBottomDoesNotRewindTheVisibleHistory(t *testing.T) {
+	for _, count := range []int{28, 240, 1200} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			const marker = "发送前一直可见的最后一段回复。"
+			v, ui, job := sendFixture(t, false, func(m *app.Model) {
+				d := m.Details["s"]
+				d.Items = nil
+				for i := 0; i < count; i++ {
+					d.Items = append(d.Items, domain.Item{ID: fmt.Sprint("past-", i), Kind: "assistant", Text: fmt.Sprintf("历史回复 %d。%s", i, strings.Repeat("不同长度的原生回复内容。", 4+i%9)), Final: true})
+				}
+				d.Items = append(d.Items, domain.Item{ID: "stable-tail", Kind: "assistant", Text: marker, Final: true})
+				m.Details["s"] = d
+			})
+			ui.SetDark(false)
+			ui.Advance(time.Second)
+			state := v.lists["s"]
+			before, ok := ui.Find(marker)
+			if !ok || !state.AtEnd() || !state.FollowingEnd() {
+				t.Fatal("fixture is not settled at bottom", before, state.AtEnd(), state.FollowingEnd())
+			}
+			if dir := os.Getenv("SHIOJI_SEND_SCROLL_EVIDENCE"); dir != "" && count == 240 {
+				os.MkdirAll(dir, 0700)
+				f, e := os.Create(filepath.Join(dir, "initial.png"))
+				if e != nil {
+					t.Fatal(e)
+				}
+				e = png.Encode(f, ui.Image())
+				f.Close()
+				if e != nil {
+					t.Fatal(e)
+				}
+			}
+			acceptSend(t, v, job, true)
+			worst := float32(0)
+			for frame := 0; frame < 50; frame++ {
+				ui.Frame()
+				now, visible := ui.Find(marker)
+				if !visible {
+					t.Errorf("frame %d rewound so far that the previously visible tail disappeared", frame)
+					break
+				}
+				worst = max(worst, now.Y-before.Y)
+				if dir := os.Getenv("SHIOJI_SEND_SCROLL_EVIDENCE"); dir != "" && count == 240 {
+					os.MkdirAll(dir, 0700)
+					f, e := os.Create(filepath.Join(dir, fmt.Sprintf("frame-%03d.png", frame)))
+					if e != nil {
+						t.Fatal(e)
+					}
+					e = png.Encode(f, ui.Image())
+					f.Close()
+					if e != nil {
+						t.Fatal(e)
+					}
+				}
+				ui.Advance(time.Second / 60)
+			}
+			if worst > 2 {
+				t.Errorf("sending at the bottom moved existing content down before returning: %g DIP", worst)
+			}
+			if !state.AtEnd() || !state.FollowingEnd() {
+				t.Error("send did not settle at the natural bottom")
+			}
+		})
 	}
 }

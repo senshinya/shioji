@@ -1560,6 +1560,12 @@ func (e *node) layoutList(w, h float32) {
 			target := min(s.pinTarget, padTop+hs.top(a, gap))
 			if s.anchorPending() {
 				from := padTop + hs.top(a, gap) - s.wroteY
+				if s.endAnchor() && !s.KeepOffset {
+					// Measuring the new tail can change every estimated prefix
+					// height. Carry the visible row's place into that coordinate
+					// system instead of replaying the old absolute scroll offset.
+					from = padTop + hs.top(a, gap) - hs.top(s.anchor, gap) - s.inset
+				}
 				if s.sentAnchor() {
 					from = min(max(from, target-H), target+H)
 				}

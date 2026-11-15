@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -77,5 +78,45 @@ func TestAnimatedScrollToEndKeepsItsPlaceAndFollowsNewRows(t *testing.T) {
 	tt.Frame()
 	if !s.AtEnd() || !s.FollowingEnd() {
 		t.Fatal("settled end scroll does not follow subsequent output")
+	}
+}
+
+func TestAnimatedEndScrollKeepsVisibleRowsWhenPrefixEstimatesChange(t *testing.T) {
+	for _, atEnd := range []bool{false, true} {
+		t.Run(fmt.Sprint(atEnd), func(t *testing.T) {
+			count := 1000
+			s := ListState{FollowEnd: true, Key: func(i int) any { return i }}
+			tt := NewTester(func(c *Context) {
+				List(c, &s, count, func(i int) {
+					height := float32(24 + i%5*7)
+					if i == 1000 {
+						height = 180
+					}
+					Text(c, fmt.Sprint("row-", i)).Height(height)
+				}).Fill()
+			}, 400, 400)
+			marker := "row-999"
+			if !atEnd {
+				s.ScrollTo(15, Start)
+				tt.Frame()
+				marker = "row-15"
+			}
+			tt.Advance(time.Second)
+			before, ok := tt.Find(marker)
+			if !ok {
+				t.Fatal("missing initial marker")
+			}
+			count++
+			s.ScrollToEnd(Animation{Duration: 300 * time.Millisecond, Ease: Linear})
+			tt.Frame()
+			first, ok := tt.Find(marker)
+			if !ok || math.Abs(float64(first.Y-before.Y)) > 1 {
+				t.Fatal("new estimates moved the viewport before scrolling began", before, first, ok)
+			}
+			tt.Advance(400 * time.Millisecond)
+			if !s.AtEnd() || !s.FollowingEnd() {
+				t.Fatal("end glide did not settle")
+			}
+		})
 	}
 }
