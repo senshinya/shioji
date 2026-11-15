@@ -6,6 +6,7 @@ import (
 	"time"
 
 	n "github.com/egoist/mygo/ui"
+	"shioji/internal/app"
 	"shioji/internal/domain"
 )
 
@@ -14,7 +15,7 @@ func TestLatestToolDefaultFoldedOnArrivalAndReentry(t *testing.T) {
 		t.Run(fmt.Sprint("reentry=", reentry), func(t *testing.T) {
 			v := toolTailFixture(2)
 			v.Model.Connected = true
-			v.Model.Preferences.CollapseLatestTools = true
+			v.Model.Preferences = app.NewModel().Preferences
 			v.Model.FoldToolHistory["s"] = reentry
 			ui := n.NewTester(v.View, 1240, 820)
 			ui.Advance(time.Second)
@@ -49,6 +50,7 @@ func TestLatestToolDefaultFoldedOnArrivalAndReentry(t *testing.T) {
 
 func TestToolDefaultPreferenceSettingAndSearch(t *testing.T) {
 	v := toolTailFixture(2)
+	v.Model.Preferences = app.NewModel().Preferences
 	s := NewSettings(v)
 	ui := n.NewTester(s.View, 968, 756)
 	ui.Advance(time.Second)
@@ -56,13 +58,13 @@ func TestToolDefaultPreferenceSettingAndSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 	ui.Advance(time.Second)
-	if !v.Model.Preferences.CollapseLatestTools {
-		t.Fatal("setting did not disable auto-expansion")
+	if v.Model.Preferences.CollapseLatestTools {
+		t.Fatal("setting cannot enable auto-expansion")
 	}
 	ui.Click("自动展开最新工具调用开关")
 	ui.Advance(time.Second)
-	if v.Model.Preferences.CollapseLatestTools {
-		t.Fatal("setting cannot re-enable auto-expansion")
+	if !v.Model.Preferences.CollapseLatestTools {
+		t.Fatal("setting cannot disable auto-expansion again")
 	}
 	ui.Click("搜索设置")
 	ui.Type("工具调用")

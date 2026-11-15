@@ -71,3 +71,42 @@ func TestForegroundNotificationsDefaultOnAndPreserveExplicitOptOut(t *testing.T)
 		t.Fatal("explicit opt-out was overwritten by the default")
 	}
 }
+
+func TestLatestToolsDefaultCollapsedAndPreserveSavedChoice(t *testing.T) {
+	if !NewModel().Preferences.CollapseLatestTools {
+		t.Error("new clients should not auto-expand latest tools")
+	}
+	for _, tc := range []struct {
+		name, state string
+		collapsed   bool
+	}{
+		{"no preferences", `{}`, true},
+		{"old preferences", `{"preferences":{"appearance":"dark"}}`, true},
+		{"disabled", `{"preferences":{"collapseLatestTools":true}}`, true},
+		{"enabled", `{"preferences":{"collapseLatestTools":false}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "state.json")
+			if err := os.WriteFile(path, []byte(tc.state), 0600); err != nil {
+				t.Fatal(err)
+			}
+			m := NewModel()
+			if err := m.Load(path); err != nil {
+				t.Fatal(err)
+			}
+			if m.Preferences.CollapseLatestTools != tc.collapsed {
+				t.Fatal("incorrect loaded tool default", m.Preferences.CollapseLatestTools)
+			}
+			if err := m.Save(path); err != nil {
+				t.Fatal(err)
+			}
+			restored := NewModel()
+			if err := restored.Load(path); err != nil {
+				t.Fatal(err)
+			}
+			if restored.Preferences.CollapseLatestTools != tc.collapsed {
+				t.Fatal("saved tool preference lost after restart")
+			}
+		})
+	}
+}

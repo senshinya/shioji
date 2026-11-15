@@ -81,6 +81,8 @@ func TestCloseFlushCapturesNativeTextBeforeNextRender(t *testing.T) {
 
 func layoutModel() *app.Model {
 	m := app.NewModel()
+	// Exercise expanded tool layouts; default-preference tests use NewModel.
+	m.Preferences.CollapseLatestTools = false
 	m.Connected = true
 	m.WorkspaceID = "w"
 	m.SessionID = "s"

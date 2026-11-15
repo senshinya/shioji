@@ -13,7 +13,7 @@ type ClientPreferences struct {
 	ReplySize           int                      `json:"replySize"`
 	CodeFont            string                   `json:"codeFont"`
 	ReduceMotion        bool                     `json:"reduceMotion"`
-	CollapseLatestTools bool                     `json:"collapseLatestTools,omitempty"`
+	CollapseLatestTools bool                     `json:"collapseLatestTools"`
 	Shortcuts           ComposerShortcuts        `json:"shortcuts"`
 	Notifications       *NotificationPreferences `json:"notifications,omitempty"`
 }

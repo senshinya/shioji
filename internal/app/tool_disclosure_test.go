@@ -8,8 +8,12 @@ import (
 func TestToolDisclosureDefaultPreferenceAndExplicitChoiceSurviveRestart(t *testing.T) {
 	m := NewModel()
 	key := "tool-group:s/latest"
+	if !m.ToolDisclosure(key).Closed() {
+		t.Fatal("latest tools should default to collapsed")
+	}
+	m.Preferences.CollapseLatestTools = false
 	if m.ToolDisclosure(key).Closed() {
-		t.Fatal("legacy default changed")
+		t.Fatal("auto-expansion cannot be enabled")
 	}
 	m.Preferences.CollapseLatestTools = true
 	if !m.ToolDisclosure(key).Closed() {

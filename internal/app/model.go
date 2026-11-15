@@ -97,7 +97,7 @@ type Model struct {
 }
 
 func NewModel() *Model {
-	return &Model{homeDefaultsPending: true, WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{homeDefaultsPending: true, WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{CollapseLatestTools: true}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {
@@ -545,7 +545,7 @@ func (m *Model) Load(path string) error {
 	if err != nil {
 		return err
 	}
-	var saved savedState
+	saved := savedState{Preferences: ClientPreferences{CollapseLatestTools: true}}
 	if err = json.Unmarshal(b, &saved); err != nil {
 		return err
 	}
