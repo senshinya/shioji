@@ -35,11 +35,14 @@ func startNetworkTestService(t *testing.T) (*Node, string, context.CancelFunc, <
 	path := ServiceSocket(dir)
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		if s, err := os.Stat(path); err == nil && s.Mode()&os.ModeSocket != 0 {
+		// The control listener is created before the node publishes its
+		// initial paused state. Wait for that publication too, so fixtures
+		// cannot insert a bridge that startup immediately drops as offline.
+		if s, err := os.Stat(path); err == nil && s.Mode()&os.ModeSocket != 0 && n.Snapshot().State == "Stopped" {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("service socket not created")
+			t.Fatal("service did not finish paused startup")
 		}
 		time.Sleep(time.Millisecond)
 	}
