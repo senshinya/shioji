@@ -93,3 +93,22 @@ func TestLocalConversationWebLinksHaveContextActions(t *testing.T) {
 		})
 	}
 }
+
+func TestPlainFileURLNeverOpensRemotePathOnControllingMac(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Items = []domain.Item{{ID: "plain-file", Kind: "user", Text: "file:///device/notes.md", Final: true, Status: "sent"}}
+	m.Details["s"] = d
+	v := New(m, nil, "")
+	ui := n.NewTester(v.View, 1240, 820)
+	ui.Advance(time.Second)
+	if err := ui.Click("file:///device/notes.md"); err != nil {
+		t.Fatal(err)
+	}
+	if len(ui.OpenedURLs()) != 0 {
+		t.Fatal("remote file path sent to local Launch Services", ui.OpenedURLs())
+	}
+	if v.fileLink == nil || v.fileLink.path != "/device/notes.md" || v.fileLink.session != "s" {
+		t.Fatal("file URL did not resolve on its owning worker", v.fileLink)
+	}
+}

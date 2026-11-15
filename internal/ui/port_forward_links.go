@@ -97,7 +97,16 @@ func (v *View) userMessageLinks(c *n.Context, text string) {
 		}
 		end = start + len(raw)
 		n.Text(c, text[at:start])
-		link := n.Link(c, raw, raw).Underline().TextColor(c.Theme().Text).Tooltip(raw)
+		target := raw
+		if !n.SafeToOpen(raw) {
+			target = ""
+		}
+		link := n.Link(c, raw, target).Underline().TextColor(c.Theme().Text).Tooltip(raw)
+		if target == "" && link.Clicked() {
+			if path, err := fileLinkPath(raw); err == nil {
+				v.startFileLink(v.Model.Details[v.Model.SessionID].Session, path, c.Services())
+			}
+		}
 		if menu != nil {
 			link.ContextMenu(func(m *n.Menu) { menu(m, raw) })
 		}

@@ -33,6 +33,18 @@ func TestStyledAutomaticEditingMenuPreservesSelectedText(t *testing.T) {
 	}
 }
 
+func TestStyledVirtualTextEditingMenuUsesSameRenderer(t *testing.T) {
+	var list ListState
+	tt := NewTester(func(c *Context) {
+		popupTestTheme(c)
+		List(c, &list, 100, func(i int) { Text(c, "selectable virtual row").Height(28).Selectable() }).Size(300, 150)
+	}, 400, 240)
+	tt.RightClick("selectable virtual row")
+	if !tt.HasText("Copy") {
+		t.Fatal("virtual text escaped to platform menu", tt.Menu())
+	}
+}
+
 func TestStyledMenuClosesOnBlurAndOutsideScroll(t *testing.T) {
 	tt := NewTester(func(c *Context) {
 		popupTestTheme(c)
