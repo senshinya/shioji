@@ -147,7 +147,7 @@ func fieldFeedback(c *n.Context, e n.Element) n.Element {
 
 func textField(c *n.Context, value *string) n.Element {
 	t := c.Theme()
-	return fieldFeedback(c, n.TextInputBase(c, value).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Radius).Background(t.Surface).Border(1, t.Border))
+	return fieldFeedback(c, n.TextInputBase(c, value).SelectionColor(editorSelection(t)).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Radius).Background(t.Surface).Border(1, t.Border))
 }
 
 type activityPulseKey struct{}

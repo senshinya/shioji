@@ -47,7 +47,7 @@ func configurationTextField(c *n.Context, value *string) n.Element {
 	return textField(c, value).FillWidth().Height(configurationControlHeight).Padding(4, 8).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).Background(c.Theme().Background)
 }
 func configurationTextArea(c *n.Context, value *string) n.Element {
-	return fieldFeedback(c, n.TextAreaBase(c, value).FillWidth().Lines(3, 6).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).Padding(4, 8).Radius(5).Background(c.Theme().Background).Border(1, c.Theme().Border))
+	return fieldFeedback(c, n.TextAreaBase(c, value).SelectionColor(editorSelection(c.Theme())).FillWidth().Lines(3, 6).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).Padding(4, 8).Radius(5).Background(c.Theme().Background).Border(1, c.Theme().Border))
 }
 func configurationChoiceField(c *n.Context, label, value string, disabled bool) n.Element {
 	font := n.Font{Family: c.Theme().Font, Size: configurationValueSize, Weight: 400}

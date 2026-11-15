@@ -743,7 +743,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					if editID != "" {
 						inputKey += ":edit:" + editID
 					}
-					options := richtext.EditorOptions{Label: v.composerLabel(), Placeholder: "描述任务…", Font: n.Font{Family: t.Font, Size: inputSize, Weight: 400}, NoMarkdown: true, PlainText: true, MaxLines: 7, LineHeight: inputLeading, Theme: &richtext.Theme{Muted: subtle(t)}}
+					options := richtext.EditorOptions{Label: v.composerLabel(), Placeholder: "描述任务…", Font: n.Font{Family: t.Font, Size: inputSize, Weight: 400}, NoMarkdown: true, PlainText: true, MaxLines: 7, LineHeight: inputLeading, Theme: &richtext.Theme{Muted: subtle(t), Selection: editorSelection(t)}}
 					options.ReadOnly = waiting
 					options.OnKey = func(keyCode n.Key, mods n.Modifiers) bool {
 						k := composerKey{Key: keyCode, Mods: mods, binding: binding}

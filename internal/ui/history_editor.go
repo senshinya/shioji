@@ -210,7 +210,7 @@ func (v *View) historyEditor(c *n.Context, t *n.Theme, item domain.Item) {
 			}
 			v.historyAttachments(c, t, preview)
 		}
-		options := richtext.EditorOptions{Label: "编辑历史消息", Font: n.Font{Family: t.Font, Size: 14, Weight: 400}, ReadOnly: locked, PlainText: true, NoMarkdown: true, MaxLines: 12, LineHeight: 24}
+		options := richtext.EditorOptions{Label: "编辑历史消息", Font: n.Font{Family: t.Font, Size: 14, Weight: 400}, ReadOnly: locked, PlainText: true, NoMarkdown: true, MaxLines: 12, LineHeight: 24, Theme: &richtext.Theme{Selection: editorSelection(t)}}
 		options.OnKey = func(keyCode n.Key, mods n.Modifiers) bool {
 			v.publishComposer(key, binding)
 			if locked {

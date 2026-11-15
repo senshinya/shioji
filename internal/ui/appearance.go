@@ -18,6 +18,16 @@ func codeSurface(t *n.Theme) n.Color {
 	}
 	return n.Hex("#f5f5f5")
 }
+
+// Text selections need more separation from raised editing surfaces than
+// the subdued background used for selected navigation rows.
+func editorSelection(t *n.Theme) n.Color {
+	if t.Dark {
+		return n.Hex("#505050")
+	}
+	return t.Selection
+}
+
 func userBubble(t *n.Theme) n.Color {
 	if t.Dark {
 		return n.Hex("#1b1b1b")
