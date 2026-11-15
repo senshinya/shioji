@@ -285,7 +285,7 @@ func (v *View) draftAttachmentStrip(c *n.Context, t *n.Theme) float32 {
 }
 func (v *View) draftAttachmentStripFor(c *n.Context, t *n.Theme, key string, gap float32) float32 {
 	m := v.Model
-	drafts := m.Attachments[key]
+	drafts := v.composerAttachments(key, v.composerDocuments[key])
 	regular := 0
 	for _, a := range drafts {
 		if !a.Attachment.InlineReference() {

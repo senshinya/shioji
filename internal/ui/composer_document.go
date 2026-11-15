@@ -49,6 +49,17 @@ func (v *View) composerContent(key string) composerContent {
 	}
 	return composerContent{v.Model.Drafts[key], files, slices.Clone(v.Model.DraftSkills[key])}
 }
+
+func (v *View) composerAttachments(key string, b *composerDocument) []app.DraftAttachment {
+	files := v.Model.Attachments[key]
+	if b == nil || b.departed == "" || b.departedEdited {
+		return files
+	}
+	in := v.Model.Pending[b.departed]
+	return slices.DeleteFunc(slices.Clone(files), func(file app.DraftAttachment) bool {
+		return slices.Contains(in.Attachments, file.Attachment)
+	})
+}
 func (a composerContent) equal(b composerContent) bool {
 	return a.text == b.text && slices.EqualFunc(a.files, b.files, func(a, b app.DraftAttachment) bool {
 		a.Ready, b.Ready = false, false
@@ -62,6 +73,8 @@ type composerDocument struct {
 	last           composerContent
 	version        uint64
 	key, editToken string
+	departed       string
+	departedEdited bool
 }
 type composerInput struct {
 	n.Element
@@ -109,9 +122,35 @@ func (v *View) composerDocument(c *n.Context, key string) *composerDocument {
 		b = &composerDocument{doc: richtext.NewDocument(richtext.NewText("")), key: key, editToken: editToken}
 		v.composerDocuments[identity] = b
 	}
-	if b.version == 0 || !content.equal(b.last) {
+	restore := false
+	if b.departed != "" {
+		if _, pending := v.Model.Pending[b.departed]; !pending {
+			restore = !b.departedEdited
+			b.departed, b.departedEdited = "", false
+		}
+	}
+	if restore || b.version == 0 || !content.equal(b.last) {
 		b.doc.SetText(v.referenceText(c, content))
 		b.last, b.version = content, b.doc.Version()
+		if b.departed != "" {
+			b.departedEdited = true
+		}
+	}
+	if b.departed == "" && key == "session:"+v.Model.SessionID && v.Model.SessionID != "" && editToken == "" {
+		for id, in := range v.Model.Pending {
+			if in.SessionID != v.Model.SessionID || in.Continue || content.text != in.Text || !slices.Equal(v.Model.DraftReferencePositions(key), in.ReferencePositions) {
+				continue
+			}
+			for _, item := range v.Model.Details[in.SessionID].Items {
+				if item.ID == "input:"+id {
+					// The worker's input is already in the transcript. Detach its
+					// editor now; keep the durable draft until delivery resolves.
+					b.doc.SetText(richtext.NewText(""))
+					b.version, b.departed = b.doc.Version(), id
+					break
+				}
+			}
+		}
 	}
 	return b
 }
@@ -125,7 +164,7 @@ func (v *View) publishComposer(key string, b *composerDocument) {
 	text := b.doc.Text()
 	var plain strings.Builder
 	files := []app.DraftAttachment{}
-	for _, file := range v.Model.Attachments[key] {
+	for _, file := range v.composerAttachments(key, b) {
 		if !file.Attachment.InlineReference() {
 			files = append(files, file)
 		}
@@ -164,6 +203,7 @@ func (v *View) publishComposer(key string, b *composerDocument) {
 	v.Model.Attachments[key] = files
 	v.Model.DraftSkills[key] = skills
 	b.last, b.version = v.composerContent(key), b.doc.Version()
+	b.departedEdited = b.departed != ""
 }
 
 func (v *View) insertReference(c *n.Context, b *composerDocument, state *fileMention, ref composerReference) bool {
