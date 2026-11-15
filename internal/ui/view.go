@@ -10,6 +10,7 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	n "github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
@@ -919,15 +920,33 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 	modelColor = trigger.AnimateColor("model-availability", modelColor, motionAnimation(c, 180*time.Millisecond))
 	trigger.Children(func() {
 		font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
-		n.RichText(c,
-			inlineIconSpan(summary, font, 20, 3),
-			n.Span{Text: cfg.Model, Color: modelColor},
-			n.Span{Text: strings.TrimPrefix(summary, cfg.Model)},
-		).Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).SingleLine().TextColor(t.TextMuted).Label(summary).
-			DrawObjects(func(p *n.Painter, _ int, r n.Rect) {
+		text := cfg.Model
+		if cfg.Effort != "" {
+			text += " · " + cfg.Effort
+		}
+		spans := []n.Span{inlineIconSpan(text, font, 20, 3), {Text: cfg.Model, Color: modelColor}, {Text: strings.TrimPrefix(text, cfg.Model)}}
+		icons := map[int]*n.SVG{0: harnessIcon(descriptor)}
+		at := 1 + utf8.RuneCountInString(text)
+		if cfg.Plan {
+			icons[at] = planModeIcon
+			spans = append(spans, inlineIconSpan(text, font, 14, 6))
+			at++
+		}
+		if cfg.Fast {
+			icons[at] = fastModeIcon
+			spans = append(spans, inlineIconSpan(text, font, 14, 6))
+		}
+		n.RichText(c, spans...).Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).SingleLine().TextColor(t.TextMuted).Label(summary).DrawObjects(func(p *n.Painter, at int, r n.Rect) {
+			if at == 0 {
 				r.W = 20
-				p.Icon(harnessIcon(descriptor), r, t.TextMuted)
-			})
+			} else {
+				r.X += 6
+				r.W = 14
+			}
+			if icon := icons[at]; icon != nil {
+				p.Icon(icon, r, t.TextMuted)
+			}
+		})
 	})
 	if trigger.Clicked() {
 		if v.runMenu == runMenuClosed {
@@ -1017,23 +1036,25 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 					}
 				}
 
-				n.Column(c).Height(1).FillWidth().Background(t.Border).MarginY(4)
-				plan := cfg.Plan
-				if ready.Plan {
-					if controlFeedback(c, n.Checkbox(c, &plan, "Plan").Height(28).Disabled(!ready.Plan), 4).Changed() {
-						cfg.Plan = plan
-						v.Model.SetConfig(key, cfg)
-					}
-				}
 				fastAvailable := false
 				for _, model := range ready.Models {
 					if model.ID == cfg.Model {
 						fastAvailable = model.Fast
 					}
 				}
+				if ready.Plan || fastAvailable {
+					n.Column(c).Height(1).FillWidth().Background(t.Border).MarginY(4)
+				}
+				if ready.Plan {
+					plan := cfg.Plan
+					if runOptionToggle(c, "Plan", planModeIcon, &plan).Changed() {
+						cfg.Plan = plan
+						v.Model.SetConfig(key, cfg)
+					}
+				}
 				if fastAvailable {
 					fast := cfg.Fast
-					if controlFeedback(c, n.Checkbox(c, &fast, "Fast").Height(28), 4).Changed() {
+					if runOptionToggle(c, "Fast", fastModeIcon, &fast).Changed() {
 						cfg.Fast = fast
 						v.Model.SetConfig(key, cfg)
 					}

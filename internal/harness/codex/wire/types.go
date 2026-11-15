@@ -86,10 +86,11 @@ type Params struct {
 	} `json:"tokenUsage"`
 }
 type Model struct {
-	Model                     string `json:"model"`
-	DisplayName               string `json:"displayName"`
-	IsDefault                 bool   `json:"isDefault"`
-	DefaultReasoningEffort    string `json:"defaultReasoningEffort"`
+	AdditionalSpeedTiers      []string `json:"additionalSpeedTiers"`
+	Model                     string   `json:"model"`
+	DisplayName               string   `json:"displayName"`
+	IsDefault                 bool     `json:"isDefault"`
+	DefaultReasoningEffort    string   `json:"defaultReasoningEffort"`
 	SupportedReasoningEfforts []struct {
 		ReasoningEffort string `json:"reasoningEffort"`
 	} `json:"supportedReasoningEfforts"`
@@ -126,8 +127,10 @@ type TurnParams struct {
 	Effort              string                 `json:"effort,omitempty"`
 	ApprovalPolicy      string                 `json:"approvalPolicy"`
 	SandboxPolicy       SandboxPolicy          `json:"sandboxPolicy"`
-	ServiceTier         *string                `json:"serviceTier"`
-	CollaborationMode   *CollaborationMode     `json:"collaborationMode,omitempty"`
+	// A nil outer pointer omits the override; an inner nil explicitly clears it.
+	ServiceTier        **string           `json:"serviceTier,omitempty"`
+	ServiceTierForTurn *string            `json:"serviceTierForTurn,omitempty"`
+	CollaborationMode  *CollaborationMode `json:"collaborationMode,omitempty"`
 }
 
 type ExecutionEnvironment struct {

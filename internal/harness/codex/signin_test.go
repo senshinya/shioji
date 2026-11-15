@@ -78,6 +78,7 @@ func loginPipe(t *testing.T, mode string) *Runtime {
 	return r
 }
 func signInFixture(mode string) {
+	threadTier := "default"
 	scan := bufio.NewScanner(os.Stdin)
 	for scan.Scan() {
 		var m wire.Message
@@ -136,7 +137,44 @@ func signInFixture(mode string) {
 		case "config/mcpServer/reload":
 			result = json.RawMessage(`{}`)
 		case "model/list":
-			result = json.RawMessage(`{"data":[{"model":"model","displayName":"Model"}]}`)
+			tier := ""
+			switch mode {
+			case "models-priority", "models-priority-per-turn":
+				tier = `"serviceTiers":[{"id":"priority","name":"Fast"}],`
+			case "models-fast":
+				tier = `"serviceTiers":[{"id":"fast","name":"Fast"}],`
+			case "models-legacy":
+				tier = `"additionalSpeedTiers":["fast"],`
+			case "models-empty-modern":
+				tier = `"serviceTiers":[],"additionalSpeedTiers":["fast"],`
+			case "models-no-fast":
+				tier = `"serviceTiers":[{"id":"flex","name":"Flexible"}],`
+			}
+			result = json.RawMessage(`{"data":[{` + tier + `"model":"model","displayName":"Model"}]}`)
+		case "turn/start":
+			var params struct {
+				ServiceTier        *string `json:"serviceTier"`
+				ServiceTierForTurn *string `json:"serviceTierForTurn"`
+			}
+			json.Unmarshal(m.Params, &params)
+			var fields map[string]json.RawMessage
+			json.Unmarshal(m.Params, &fields)
+			nativeTier, threadChanged := fields["serviceTier"]
+			if threadChanged {
+				if string(nativeTier) == "null" {
+					threadTier = "default"
+				} else {
+					json.Unmarshal(nativeTier, &threadTier)
+				}
+			}
+			tier := threadTier
+			if params.ServiceTierForTurn != nil {
+				tier = "per-turn:" + *params.ServiceTierForTurn
+				if threadChanged {
+					tier = "thread-mutated"
+				}
+			}
+			result = json.RawMessage(`{"turn":{"id":"` + tier + `"}}`)
 		case "configRequirements/read":
 			result = json.RawMessage(`{"requirements":null}`)
 		case "account/read":

@@ -7,14 +7,17 @@ import (
 
 // Settings switches use a flat neutral capsule, with a generous hit area.
 func configurationSwitch(c *n.Context, value *bool) n.Element {
+	return configurationSwitchIndicator(c, n.SwitchBase(c, value).Size(40, 28), *value)
+}
+
+func configurationSwitchIndicator(c *n.Context, e n.Element, on bool) n.Element {
 	t := c.Theme()
-	e := n.SwitchBase(c, value).Size(40, 28)
 	track, thumb := n.Hex("#d1d1d1"), n.Hex("#ffffff")
 	if t.Dark {
 		track, thumb = n.Hex("#393939"), n.Hex("#b0b0b0")
 	}
 	target := float32(0)
-	if *value {
+	if on {
 		target = 14
 		track, thumb = n.Hex("#333333"), n.Hex("#ffffff")
 		if t.Dark {

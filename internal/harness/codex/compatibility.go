@@ -19,12 +19,13 @@ import (
 )
 
 type protocolSupport struct {
-	scopedToolStatus  bool
-	browserLogin      bool
-	deviceLogin       bool
-	collaborationMode bool
-	serviceTier       bool
-	methods           map[string]bool
+	serviceTierForTurn bool
+	scopedToolStatus   bool
+	browserLogin       bool
+	deviceLogin        bool
+	collaborationMode  bool
+	serviceTier        bool
+	methods            map[string]bool
 }
 type requestShape struct {
 	OneOf      []requestShape             `json:"oneOf,omitempty"`
@@ -151,6 +152,7 @@ func protocolFromSchema(data []byte) (*protocolSupport, error) {
 		if method.Enum[0] == "turn/start" {
 			_, support.collaborationMode = params.Properties["collaborationMode"]
 			_, support.serviceTier = params.Properties["serviceTier"]
+			_, support.serviceTierForTurn = params.Properties["serviceTierForTurn"]
 		}
 	}
 	for _, method := range requiredMethods {

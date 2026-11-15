@@ -91,6 +91,10 @@ Codex app-server／后续 harness
 
 `RunConfig` 中 Plan、Fast、effort 和权限 ID 表达 Shioji 的产品选项；具体目录及原生映射由 adapter 决定。不支持这些配置的驱动不显示对应控件。PermissionChoice 的名称和说明来自 adapter，原生沙盒结构不进入通用配置。内存驱动使用与 Codex 不同的模型／权限并省略 effort、Fast 和 Plan，以检验这一约束。
 
+运行配置菜单的 Plan／Fast 采用“左侧图标与名称、右侧灰阶开关”的原生整行开关，点击文字、留白或指示器均可切换，Space 沿用原生开关行为；切换保持菜单展开。两个选项各自独立，模型不支持 Fast 时隐藏并清除该选项，不修改普通草稿。开启后在模型摘要旁显示对应图标，完整状态仍进入 tooltip 和可访问名称。交互参考 [Lody 运行配置菜单](https://github.com/LodyAI/Lody/blob/main/packages/components/src/components/sessions/desktop-run-config-menu.tsx)的整行开关，同时对照 [T3 Code 的速度分段入口](https://github.com/pingdotgg/t3code/blob/main/apps/web/src/components/chat/ComposerModelEffort.tsx)；继续使用本项目已有原生组件与中性色。
+
+Codex 的 Fast 是中立配置的 adapter 映射，不将 `serviceTier` 放入共享领域模型。当前设备目录的 Fast 档位 ID 为 `priority`；兼容目录显式提供的旧 `fast`，仅在现代目录字段缺失时读取旧 `additionalSpeedTiers`，显式空目录不回退。发送优先使用运行时 schema 实际声明的单轮档位，关闭时明确指定标准速度；旧协议的线程档位区分省略、显式 null 清除和字符串设置，避免开关关闭后继承 Fast，也避免单轮选项修改线程默认值。该三态来自 [Codex 的原生协议](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/v2/turn.rs)，由保留线程状态的真实管道 fixture 验证。模型与协议均未声明支持时不开放 Fast。
+
 Codex adapter 为所属运行实例提供私有 Unix socket，兼容 Ryugi 1.58.0 已使用的桌面 IPC（`tools/list` 与 `send_message_to_thread`）。仅该子进程获得宿主连接环境；App Server 继续使用独占 stdio。Ryugi 的源码、安装内容和配置保持不变。环境需要 Ryugi 原本依赖的 Node；没有 Node 时仍可正常使用 Codex。此 IPC 是版本固定的兼容接口，不是通用插件框架，也不开放 App Server API。退出关闭 socket；旧历史／旧执行代次的回调被拒绝。回执在队列持久化后返回，同一 call ID 的重试复用已接纳操作；Ryugi 另起 call ID 的重试不具有端到端恰好一次保证。暂停队列保持暂停。
 
 验证原版 watcher 可运行 `SHIOJI_RYUGI_ROOT=/absolute/path/to/installed/ryugi go test ./internal/worker -run TestInstalledRyugiWatcher -count=1`；测试只在独立 `CODEX_HOME` 和临时项目中信任并执行已安装脚本，使用本地模型服务，不修改用户或插件配置。

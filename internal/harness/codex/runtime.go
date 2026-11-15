@@ -36,25 +36,26 @@ type Options struct {
 	Executor         *Executor
 }
 type Runtime struct {
-	loginEvents     chan json.RawMessage
-	toolLogin       *toolServiceLogin
-	account         *domain.RuntimeAccount
-	desktop         *desktopBridge
-	cmd             *exec.Cmd
-	stdin           io.WriteCloser
-	writeMu         sync.Mutex
-	mu              sync.Mutex
-	eventMu         sync.Mutex
-	pending         map[string]chan wire.Message
-	done            chan struct{}
-	normalizer      *Normalizer
-	onEvent         func(domain.Event) error
-	ready           domain.Readiness
-	protocol        *protocolSupport
-	err             error
-	scope           *managedexec.Scope
-	executor        *Executor
-	managedCoverage bool
+	fastServiceTiers map[string]string
+	loginEvents      chan json.RawMessage
+	toolLogin        *toolServiceLogin
+	account          *domain.RuntimeAccount
+	desktop          *desktopBridge
+	cmd              *exec.Cmd
+	stdin            io.WriteCloser
+	writeMu          sync.Mutex
+	mu               sync.Mutex
+	eventMu          sync.Mutex
+	pending          map[string]chan wire.Message
+	done             chan struct{}
+	normalizer       *Normalizer
+	onEvent          func(domain.Event) error
+	ready            domain.Readiness
+	protocol         *protocolSupport
+	err              error
+	scope            *managedexec.Scope
+	executor         *Executor
+	managedCoverage  bool
 }
 
 // CallError distinguishes explicit rejection from an unconfirmed external send.
@@ -508,9 +509,21 @@ func (r *Runtime) submit(ctx context.Context, s domain.Session, operationID, tex
 	}
 	params := wire.TurnParams{ThreadID: s.ThreadID, Input: input, ClientUserMessageID: "input:" + operationID, Model: s.Config.Model, Effort: s.Config.Effort, ApprovalPolicy: approval, SandboxPolicy: policy}
 	params.Environments = r.executionEnvironment(s)
+	tier := "default"
 	if s.Config.Fast {
-		fast := "fast"
-		params.ServiceTier = &fast
+		tier = r.fastServiceTiers[s.Config.Model]
+		if tier == "" {
+			return "", errors.New("Fast unavailable for this model")
+		}
+	}
+	if r.protocol.serviceTierForTurn {
+		params.ServiceTierForTurn = &tier
+	} else if r.protocol.serviceTier {
+		var threadTier *string
+		if s.Config.Fast {
+			threadTier = &tier
+		}
+		params.ServiceTier = &threadTier
 	}
 	if r.protocol.collaborationMode {
 		mode := "default"
@@ -610,6 +623,7 @@ func (r *Runtime) Close() error {
 
 func (r *Runtime) nativeModels(ctx context.Context) ([]domain.Model, error) {
 	var models []domain.Model
+	fastTiers := map[string]string{}
 	var cursor *string
 	for {
 		var result struct {
@@ -624,9 +638,11 @@ func (r *Runtime) nativeModels(ctx context.Context) ([]domain.Model, error) {
 			for _, e := range m.SupportedReasoningEfforts {
 				model.Efforts = append(model.Efforts, e.ReasoningEffort)
 			}
-			for _, tier := range m.ServiceTiers {
-				if tier.ID == "fast" && r.protocol.serviceTier {
-					model.Fast = true
+			if r.protocol.serviceTier || r.protocol.serviceTierForTurn {
+				tier := nativeFastServiceTier(m)
+				model.Fast = tier != ""
+				if model.Fast {
+					fastTiers[m.Model] = tier
 				}
 			}
 			models = append(models, model)
@@ -639,5 +655,21 @@ func (r *Runtime) nativeModels(ctx context.Context) ([]domain.Model, error) {
 		}
 		cursor = result.NextCursor
 	}
+	r.fastServiceTiers = fastTiers
 	return models, nil
+}
+
+// Keep native service-tier identifiers inside the Codex adapter.
+func nativeFastServiceTier(model wire.Model) string {
+	for _, id := range []string{"priority", "fast"} {
+		for _, tier := range model.ServiceTiers {
+			if tier.ID == id {
+				return id
+			}
+		}
+	}
+	if model.ServiceTiers == nil && slices.Contains(model.AdditionalSpeedTiers, "fast") {
+		return "fast"
+	}
+	return ""
 }
