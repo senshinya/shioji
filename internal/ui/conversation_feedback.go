@@ -49,6 +49,8 @@ type conversationFeedback struct {
 	connections map[string]feedbackConnection
 	waits       map[feedbackSource]feedbackWait
 	open        bool
+	replaying   string
+	focusRecent bool
 }
 
 func (v *View) feedbackState() *conversationFeedback {
@@ -61,16 +63,20 @@ func (v *View) feedbackState() *conversationFeedback {
 func sameFeedback(a, b app.Feedback) bool {
 	return a.ID == b.ID && a.ConnectionID == b.ConnectionID && a.WorkspaceID == b.WorkspaceID && a.SessionID == b.SessionID
 }
+func feedbackLifetime(kind app.FeedbackKind) time.Duration {
+	switch kind {
+	case app.FeedbackSuccess:
+		return 4 * time.Second
+	case app.FeedbackInformation:
+		return 6 * time.Second
+	}
+	return 0
+}
 func (s *conversationFeedback) put(f app.Feedback, now time.Time, waiting bool) {
 	f.Details = feedbackDetails(f.Details)
 	lifetime := time.Duration(0)
 	if !waiting {
-		switch f.Kind {
-		case app.FeedbackSuccess:
-			lifetime = 4 * time.Second
-		case app.FeedbackInformation:
-			lifetime = 6 * time.Second
-		}
+		lifetime = feedbackLifetime(f.Kind)
 	}
 	for i := range s.messages {
 		if sameFeedback(s.messages[i].Feedback, f) {
@@ -85,6 +91,19 @@ func (s *conversationFeedback) put(f app.Feedback, now time.Time, waiting bool) 
 	s.messages = append(s.messages, conversationMessage{Feedback: f, remaining: lifetime, tick: now, waiting: waiting})
 	if len(s.messages) > 30 {
 		s.messages = append([]conversationMessage(nil), s.messages[len(s.messages)-30:]...)
+	}
+}
+
+func (s *conversationFeedback) replay(key string, now time.Time) {
+	for i := range s.messages {
+		entry := &s.messages[i]
+		if entry.waiting || feedbackKey(entry.Feedback) != key {
+			continue
+		}
+		entry.dismissed, entry.details = false, false
+		entry.remaining, entry.tick = feedbackLifetime(entry.Kind), now
+		s.replaying, s.open, s.focusRecent = key, false, false
+		return
 	}
 }
 func (s *conversationFeedback) endWait(id, connection string) {
@@ -542,42 +561,53 @@ func (v *View) feedbackButton(c *n.Context, t *n.Theme) {
 	button := iconButton(c, feedbackBell, "最近消息").Tooltip("最近消息")
 	if button.Clicked() {
 		state.open = !state.open
+		state.focusRecent = state.open
 	}
 	popover(c.Key("recent-feedback"), button, &state.open, func(panel n.Element) {
-		panel.Width(360).MaxWidth(360).Padding(12).Radius(10).Border(1, t.Border).Background(raised(t)).Children(func() {
-			n.Text(c, "最近消息").FontSize(13).FixedLineHeight(20)
+		panel.Width(360).MaxWidth(360).Padding(4).Radius(10).Border(1, t.Border).Background(raised(t)).Children(func() {
+			n.Column(c).FillWidth().Height(28).PaddingX(8).Justify(n.Center).Children(func() {
+				n.Text(c, "最近消息").FontSize(13).FixedLineHeight(20)
+			})
 			n.Scroll(c).FillWidth().MaxHeight(400).Children(func() {
-				n.Column(c).FillWidth().Gap(12).Children(func() {
-					if len(state.messages) == 0 {
-						n.Text(c, "暂无消息").FontSize(12).TextColor(t.TextMuted)
-					}
+				n.Column(c).FillWidth().Gap(2).FocusGroup(n.Vertical).Children(func() {
+					empty := true
 					for i := len(state.messages) - 1; i >= 0; i-- {
 						message := state.messages[i]
 						if message.waiting {
 							continue
 						}
-						n.Column(c.Key(feedbackKey(message.Feedback))).FillWidth().Gap(4).Children(func() {
-							processingPanelDivider(c, t)
-							n.Text(c, root.feedbackScopeLabel(message.Feedback)).FontSize(11).TextColor(t.TextMuted).FillWidth()
-							n.Text(c, message.Title).FontSize(13).FixedLineHeight(20)
-							if message.Body != "" {
-								n.Text(c, message.Body).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
-							}
-							if message.SessionID != "" {
-								if ghost(c, "查看会话").PaddingX(0).FontSize(12).Height(28).Clicked() {
-									root.openFeedbackSource(message.Feedback)
-									state.open = false
-								}
-							}
-							if message.Details != "" {
-								if ghost(c, "查看记录详情").PaddingX(0).FontSize(12).Height(28).Clicked() {
-									state.messages[i].details = !state.messages[i].details
-								}
-								if state.messages[i].details {
-									n.Text(c, message.Details).FillWidth().FontSize(12).FixedLineHeight(20).Selectable()
-								}
-							}
+						key := feedbackKey(message.Feedback)
+						source := root.feedbackScopeLabel(message.Feedback)
+						summary := strings.Join(strings.Fields(message.Body), " ")
+						if summary == "" {
+							summary = source
+						}
+						row := control(c.Key(key), 6).FillWidth().Height(56).Padding(8).Label(message.Title).Description(source).Tooltip(source)
+						if empty && state.focusRecent {
+							row.AutoFocus()
+							state.focusRecent = false
+						}
+						empty = false
+						row.Children(func() {
+							n.Column(c).FillWidth().Children(func() {
+								n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
+									icon := feedbackInfo
+									if message.Kind == app.FeedbackSuccess {
+										icon = check
+									}
+									inlineSymbol(c, icon, message.Title, n.Font{Family: t.Font, Size: 13, Weight: 400}, 14, t.TextMuted)
+									n.Text(c, message.Title).FontSize(13).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().Ellipsis("…")
+								})
+								n.Text(c, summary).FillWidth().PaddingStart(22).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine().Ellipsis("…")
+							})
 						})
+						if row.Clicked() {
+							state.replay(key, c.Now())
+							button.Focus()
+						}
+					}
+					if empty {
+						n.Text(c, "暂无消息").Padding(8).FontSize(12).TextColor(t.TextMuted)
 					}
 				})
 			})
@@ -603,14 +633,23 @@ func (v *View) conversationMessageOverlay(c *n.Context, t *n.Theme) {
 		active := -1
 		for i := len(state.messages) - 1; i >= 0; i-- {
 			if !state.messages[i].dismissed {
-				active = i
-				break
+				if active < 0 {
+					active = i
+				}
+				if feedbackKey(state.messages[i].Feedback) == state.replaying {
+					active = i
+					break
+				}
 			}
 		}
 		if active < 0 {
+			state.replaying = ""
 			return
 		}
 		message := &state.messages[active]
+		if feedbackKey(message.Feedback) != state.replaying {
+			state.replaying = ""
+		}
 		width, _ := c.Size()
 		toast := n.Column(c.Key("toast:"+feedbackKey(message.Feedback))).Absolute().Right(16).Top(56).Width(min(336, width-32)).Padding(8, 12).Radius(10).Background(raised(t)).Border(1, t.Border).Shadow(0, 6, 18, 0, n.RGBA(0, 0, 0, .08)).Gap(8).Label("弹出消息").Transition(fadeMotion(c, 180*time.Millisecond))
 		paused := state.open || toast.Hovered() || toast.FocusWithin()
