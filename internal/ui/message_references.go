@@ -56,7 +56,7 @@ func (v *View) messageReferenceBody(c *n.Context, t *n.Theme, item domain.Item) 
 			for at, run := range text.Runs(0, text.Len()) {
 				a := run.Attributes.Attachment
 				if a == nil {
-					n.Text(c, run.Text)
+					v.userMessageLinks(c, run.Text)
 					continue
 				}
 				objects[at] = a

@@ -99,7 +99,8 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 				} else if len(item.Skills) > 0 || hasInlineFiles(item.Attachments) {
 					v.messageReferenceBody(c, t, item)
 				} else if item.Text != "" {
-					text := n.Text(c, item.Text).FontSize(14).FixedLineHeight(24).Selectable()
+					text := n.RichText(c).FontSize(14).FixedLineHeight(24).Selectable()
+					text.Children(func() { v.userMessageLinks(c, item.Text) })
 					v.decoratePlainFind(c, text, item, nil)
 				}
 				v.historyAttachments(c, t, item)

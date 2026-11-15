@@ -28,6 +28,8 @@ type editBinding struct {
 }
 
 type View struct {
+	globalSidebar                    *quickSidebar
+	portForward                      *portForwardDraft
 	devicePower                      map[string]*devicePowerUI
 	feedback                         *conversationFeedback
 	feedbackScope                    feedbackSource
@@ -286,6 +288,11 @@ const conversationScrollbarGutter = 11
 
 func (v *View) View(c *n.Context) {
 	m := v.Model
+	if v.Controller != nil {
+		if items, ready := v.Controller.ForwardSnapshot(); ready {
+			m.PortForwards = items
+		}
+	}
 	m.Preferences = m.Preferences.Normalized()
 	c.ReduceMotion(m.Preferences.ReduceMotion)
 	v.services = c.Services()
@@ -510,6 +517,7 @@ func (v *View) View(c *n.Context) {
 	v.pruneHistoryCaches()
 	v.deviceDialogs(c, &t)
 	v.managementDialogs(c, &t)
+	v.portForwardDialog(c, &t)
 	v.fileLinkDialog(c, &t)
 	v.attachmentDialog(c, &t)
 	v.directoryDialog(c, &t)

@@ -59,10 +59,15 @@ func run() error {
 	controller.AttachTailnet(transport.NewNetworkClient(nodeDir, *workerBin, *networkBin))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	controllerDone := make(chan struct{})
 	go func() {
+		defer close(controllerDone)
 		if !*noStart {
 			if err := app.EnsureWorker(ctx, *dir, *workerBin); err != nil {
-				controller.Updates <- func(m *app.Model) { m.Error = err.Error() }
+				select {
+				case controller.Updates <- func(m *app.Model) { m.Error = err.Error() }:
+				case <-ctx.Done():
+				}
 			}
 		}
 		controller.Run(ctx)
@@ -93,22 +98,49 @@ func run() error {
 			{Role: mygo.RoleFileMenu}, {Role: mygo.RoleEditMenu}, {Role: mygo.RoleViewMenu}, {Role: mygo.RoleWindowMenu},
 		})
 		mygo.App.SetMenu(menu)
+		quitting := false
+		closed := false
+		var shutdown quitBarrier
+		mygo.App.OnActivate(func(_ bool) {
+			if !quitting && !closed && !window.IsVisible() {
+				window.Show()
+				window.Focus()
+			}
+		})
 		window.OnClose(func(e *mygo.CloseEvent) {
 			if err := view.Flush(); err != nil {
 				e.PreventDefault()
 				model.Error = "无法保存草稿：" + err.Error()
+				quitting = false
+				return
+			}
+			if items, _ := controller.ForwardSnapshot(); !quitting && len(items) > 0 {
+				e.PreventDefault()
+				window.Hide()
 			}
 		})
 		mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
-			if err := view.Flush(); err != nil {
-				e.PreventDefault()
-				mygo.Dialog.Error("无法保存草稿", err.Error())
+			if shutdown.started {
 				return
 			}
+			if !closed {
+				if err := view.Flush(); err != nil {
+					e.PreventDefault()
+					mygo.Dialog.Error("无法保存草稿", err.Error())
+					return
+				}
+			}
+			quitting = true
 			permissionGuide.Close()
 			offUpdates()
 		})
+		mygo.App.OnWillQuit(func(e *mygo.QuitEvent) {
+			if !shutdown.request(cancel, controllerDone, mygo.App.Quit) {
+				e.PreventDefault()
+			}
+		})
 		window.OnClosed(func() {
+			closed = true
 			view.CloseTransient()
 			settings.Close()
 			if view.Saver != nil {
@@ -117,5 +149,8 @@ func run() error {
 			cancel()
 		})
 	})
-	return mygo.App.Run()
+	err = mygo.App.Run()
+	cancel()
+	<-controllerDone
+	return err
 }

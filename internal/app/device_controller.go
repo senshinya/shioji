@@ -170,7 +170,8 @@ func (c *Controller) startDevice(ctx context.Context, key string, source *device
 		m.DeviceStates[key].ConnectionEpoch = ""
 		m.RefreshDevices()
 	})
-	go source.controller.Run(childCtx)
+	c.deviceWG.Add(1)
+	go func() { defer c.deviceWG.Done(); source.controller.Run(childCtx) }()
 	go func() {
 		for {
 			select {
@@ -189,6 +190,7 @@ func (c *Controller) startDevice(ctx context.Context, key string, source *device
 	}()
 }
 func (c *Controller) runDevices(ctx context.Context) {
+	c.initPortForwards(ctx)
 	if c.Tailnet != nil {
 		go c.Tailnet.Run(ctx, func(s tailnet.Snapshot) { c.postContext(ctx, func(m *Model) { m.Tailnet = s }) })
 	}
@@ -200,6 +202,7 @@ func (c *Controller) runDevices(ctx context.Context) {
 		for _, source := range c.fleet.sources {
 			source.cancel()
 		}
+		c.deviceWG.Wait()
 	}()
 	checking := false
 	var checkID uint64
@@ -241,6 +244,10 @@ func (c *Controller) runDevices(ctx context.Context) {
 			checkCancel = nil
 			apply(result.job, result.body, result.err)
 		case job := <-c.Jobs:
+			if isForwardJob(job.Method) {
+				c.runForwardJob(ctx, job)
+				continue
+			}
 			if job.Method == "$tailnet" {
 				if a, ok := job.Input.(tailnet.Action); ok && c.Tailnet != nil {
 					c.Tailnet.Do(a)
@@ -384,6 +391,7 @@ func (c *Controller) runDevices(ctx context.Context) {
 						continue
 					}
 					previous.cancel()
+					go c.forwards.CloseDevice(previous.connection.DeviceID)
 				}
 				source := &deviceSource{connection: input.Connection, controller: sshController(input.Connection, input.Pending, c.fleet.workerBinary)}
 				c.fleet.sources[key] = source

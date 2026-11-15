@@ -49,6 +49,11 @@ not expose the following appearance settings required by the frozen design:
 - `ui/markdown.Options.OnRevealState`: report native buffered-text and fade
   activity so the visible conversation can defer its sidebar check until output
   settles, independently of authoritative execution completion.
+- `ui/markdown.Options.LinkContextMenu`: extend the native context menu of the
+  exact completed link under the pointer, preserving its destination and normal
+  left-click behavior. Shioji uses the hook for device-scoped port forwarding;
+  pending links retain their parent menu. Covered by Shioji's native Markdown
+  link-context regression.
 - `ui.ElementTransition.From` / `Lift`: retain a source rectangle through
   asynchronous acceptance and move sent text out of the editor into history.
   Lift only the moving message above ordinary content, below popovers, keeping

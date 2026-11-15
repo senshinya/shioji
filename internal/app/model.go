@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"shioji/internal/domain"
+	"shioji/internal/portforward"
 )
 
 // InspectorLayout keeps the built-in views within one or two sidebar groups.
@@ -28,6 +29,7 @@ type InspectorLayout struct {
 type Model struct {
 	Feedbacks                  []Feedback
 	UncertainSubmissions       map[string]bool
+	PortForwards               []portforward.Mapping
 	HistoryReads               map[string]*HistoryRead
 	HistoryOutlines            map[string]domain.HistoryOutline
 	HistoryAnchors             map[string]string

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"shioji/internal/domain"
+	"shioji/internal/portforward"
 	"shioji/internal/protocol"
 	"shioji/internal/tailnet"
 	"shioji/internal/transport"
@@ -29,6 +30,9 @@ type Job struct {
 	epoch           string
 }
 type Controller struct {
+	forwardSnapshot   []portforward.Mapping
+	forwardsStarted   bool
+	forwards          *portforward.Manager
 	paths             *devicePaths
 	resolveSSH        func(transport.SSH) (transport.SSH, error)
 	Tailnet           tailnet.Connection
@@ -44,6 +48,9 @@ type Controller struct {
 	Jobs              chan Job
 	Updates           chan Update
 	mu                sync.Mutex
+	runContext        context.Context
+	deviceWG          sync.WaitGroup
+	networkWG         sync.WaitGroup
 	epoch             string
 	invalidate        func()
 }
@@ -53,16 +60,28 @@ func NewController(dir string) *Controller {
 }
 func (c *Controller) SetInvalidate(fn func()) { c.mu.Lock(); c.invalidate = fn; c.mu.Unlock() }
 func (c *Controller) post(update Update) {
-	c.Updates <- update
 	c.mu.Lock()
+	ctx := c.runContext
 	fn := c.invalidate
 	c.mu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case c.Updates <- update:
+	case <-ctx.Done():
+		return
+	}
 	if fn != nil {
 		fn()
 	}
 }
 func (c *Controller) Do(job Job) bool {
 	c.mu.Lock()
+	if c.runContext != nil && c.runContext.Err() != nil {
+		c.mu.Unlock()
+		return false
+	}
 	job.epoch = job.ConnectionEpoch
 	if job.epoch == "" {
 		job.epoch = c.epoch
@@ -242,6 +261,17 @@ func hydrateSession(ctx context.Context, client *protocol.Client, id string, gen
 	return all, nil
 }
 func (c *Controller) Run(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	c.mu.Lock()
+	c.runContext = ctx
+	c.mu.Unlock()
+	defer func() {
+		cancel()
+		c.networkWG.Wait()
+		if c.forwards != nil {
+			c.forwards.Close()
+		}
+	}()
 	if c.fleet != nil {
 		c.runDevices(ctx)
 		return
@@ -254,7 +284,8 @@ func (c *Controller) Run(ctx context.Context) {
 	var pathChanges <-chan struct{}
 	if c.paths != nil {
 		pathChanges = c.paths.changed
-		go c.paths.run(ctx)
+		c.networkWG.Add(1)
+		go func() { defer c.networkWG.Done(); c.paths.run(ctx) }()
 	}
 	history := map[string]historyLoadPhase{}
 	visible := []string{}
@@ -739,6 +770,10 @@ func (c *Controller) Run(ctx context.Context) {
 				disconnected()
 			}
 		case job := <-jobs:
+			if isForwardJob(job.Method) {
+				c.runForwardJob(ctx, job)
+				continue
+			}
 			if c.paths != nil && client != nil && job.epoch == logicalEpoch {
 				job.epoch = client.Epoch
 			}

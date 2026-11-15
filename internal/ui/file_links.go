@@ -56,6 +56,7 @@ func (v *View) fileLinkCurrent(s *fileLinkState) bool {
 func (v *View) bindMarkdownLinks(c *n.Context, options *markdown.Options) {
 	services := c.Services()
 	source := v.Model.Details[v.Model.SessionID].Session
+	options.LinkContextMenu = v.forwardLinkMenu(c, source)
 	options.OnLink = func(dest string) {
 		if n.SafeToOpen(dest) {
 			services.OpenURL(dest)

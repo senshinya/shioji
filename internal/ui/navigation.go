@@ -279,17 +279,20 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 		color = n.Hex("#161616")
 	}
 	n.Column(c).Width(sidebarWidth).FillHeight().Padding(8, 0, 8, 8).Children(func() {
-		n.Column(c).Fill().Padding(8).Gap(4).Radius(14).Background(color).Border(1, t.Border).Children(func() {
-			n.Row(c).Height(26).AlignItems(n.Start).DragWindow().Children(func() { n.Spacer(c).Grow(1); v.searchControl(c, t) })
-			if navButton(c, plus, "新建会话").Background(func() n.Color {
-				if m.SessionID == "" && !v.devices {
-					return t.SurfacePressed
+		card := n.Column(c).Fill().Radius(14).Clip().Background(color).Border(1, t.Border)
+		card.Children(func() {
+			n.Column(c.Key("nav-top")).FillWidth().Padding(8, 8, 0, 8).Gap(4).Children(func() {
+				n.Row(c).Height(26).AlignItems(n.Start).DragWindow().Children(func() { n.Spacer(c).Grow(1); v.searchControl(c, t) })
+				if navButton(c, plus, "新建会话").Background(func() n.Color {
+					if m.SessionID == "" && !v.devices {
+						return t.SurfacePressed
+					}
+					return n.Transparent
+				}()).Clicked() {
+					v.home()
 				}
-				return n.Transparent
-			}()).Clicked() {
-				v.home()
-			}
-			v.attentionControl(c, t)
+				v.attentionControl(c, t)
+			})
 			rows := v.navigationRows(c)
 			for i := range rows {
 				if rows[i].kind == navigationSession {
@@ -316,20 +319,26 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 					v.navigationGeometry.bounds[r.key()] = bounds
 				}
 				box.Children(func() { v.navigationRow(c, t, r) })
-			}).Grow(1).FillHeight().Label("工作区与会话").TrackScroll(&v.navigationScroll)
+			}).Grow(1).FillHeight().MarginX(8).Label("工作区与会话").TrackScroll(&v.navigationScroll)
 			v.navigationListGestures(c, list, rows)
-			n.Column(c).Height(1).FillWidth().Background(t.Border)
-			n.Row(c).Height(32).Children(func() {
-				if navButton(c, monitor, "设备").Grow(1).Clicked() {
-					v.skillReturn = nil
-					v.deviceTab = ""
-					v.devices = true
-				}
-				if iconButton(c, settingsIcon, "设置").Clicked() && v.OpenSettings != nil {
-					v.OpenSettings()
-				}
-			})
+			v.quickFooter(c, t)
+			available := card.LayoutBounds().H
+			if available == 0 {
+				_, available = c.Size()
+				available -= 16
+			}
+			v.quickPanel(c, t, color, available)
+
 		})
+		if v.quickUI().selected != "" && v.portForward == nil {
+			if card.PressedOutside() {
+				v.quickUI().selected = ""
+			}
+			if c.Shortcut(0, n.KeyEscape) {
+				v.quickUI().focus = v.quickUI().selected
+				v.quickUI().selected = ""
+			}
+		}
 	})
 }
 func (v *View) navigationRow(c *n.Context, t *n.Theme, r navigationRow) {

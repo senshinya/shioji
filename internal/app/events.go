@@ -24,7 +24,9 @@ func (c *Controller) observeEvents(ctx context.Context, device, generation strin
 		id := c.paths.active()
 		dial = func(ctx context.Context) (net.Conn, error) { return c.paths.dialRoute(ctx, id) }
 	}
+	c.networkWG.Add(1)
 	go func() {
+		defer c.networkWG.Done()
 		send := func(result eventResult) bool {
 			select {
 			case results <- result:

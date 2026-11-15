@@ -17,7 +17,9 @@ func (c *Controller) observeDeviceHealth(ctx context.Context, device, epoch stri
 		id := c.paths.active()
 		dial = func(ctx context.Context) (net.Conn, error) { return c.paths.dialRoute(ctx, id) }
 	}
+	c.networkWG.Add(1)
 	go func() {
+		defer c.networkWG.Done()
 		var client *protocol.Client
 		defer func() {
 			if client != nil {

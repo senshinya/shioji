@@ -278,6 +278,10 @@ func (s *Server) serveConnection(conn net.Conn) {
 		if f.Type != "command" || f.Epoch != epoch || f.DeviceID != s.store.DeviceID() || f.ID == "" {
 			return
 		}
+		if f.Method == protocol.TCPStreamMethod {
+			s.serveTCP(conn, codec, f)
+			return
+		}
 		if f.Method == "snapshot" && !requestedRecovery {
 			s.recoveryRefresh.Add(1)
 			s.wakeRecovery()

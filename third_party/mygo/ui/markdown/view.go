@@ -30,6 +30,9 @@ type Options struct {
 	// router around the view, a link to #a-heading scrolls to that
 	// heading, and links of other schemes do nothing.
 	OnLink func(url string)
+	// LinkContextMenu builds a menu on the exact completed link under the
+	// pointer. Pending streamed destinations retain the parent text menu.
+	LinkContextMenu func(menu *ui.Menu, url string)
 	// Anchor scrolls to the heading of this slug, with or without its "#",
 	// when the document first shows, when another document replaces it,
 	// and when Anchor changes: a docs reader opens guide.md#install at
@@ -497,6 +500,9 @@ func (st *viewState) link(c *ui.Context, in *parser.Inline, children func()) {
 		l = ui.Link(c, "", dest)
 	default:
 		l = ui.Link(c, "", "")
+	}
+	if !in.Pending && dest != "" && st.o.LinkContextMenu != nil {
+		l.ContextMenu(func(menu *ui.Menu) { st.o.LinkContextMenu(menu, dest) })
 	}
 	l.TextColor(st.th.Link)
 	if st.th.LinkUnderline {

@@ -40,18 +40,19 @@ const Minor = 38
 const MaxFrame = 1 << 20
 
 type Frame struct {
-	Worker    *domain.WorkerBuild `json:"worker,omitempty"`
-	Type      string              `json:"type"`
-	Major     int                 `json:"major,omitempty"`
-	Minor     int                 `json:"minor,omitempty"`
-	Nonce     string              `json:"nonce,omitempty"`
-	DeviceID  string              `json:"deviceId,omitempty"`
-	Epoch     string              `json:"epoch,omitempty"`
-	ID        string              `json:"id,omitempty"`
-	Method    string              `json:"method,omitempty"`
-	Body      json.RawMessage     `json:"body,omitempty"`
-	ErrorCode string              `json:"errorCode,omitempty"`
-	Error     string              `json:"error,omitempty"`
+	TCPStreamVersion int                 `json:"tcpStreamVersion,omitempty"`
+	Worker           *domain.WorkerBuild `json:"worker,omitempty"`
+	Type             string              `json:"type"`
+	Major            int                 `json:"major,omitempty"`
+	Minor            int                 `json:"minor,omitempty"`
+	Nonce            string              `json:"nonce,omitempty"`
+	DeviceID         string              `json:"deviceId,omitempty"`
+	Epoch            string              `json:"epoch,omitempty"`
+	ID               string              `json:"id,omitempty"`
+	Method           string              `json:"method,omitempty"`
+	Body             json.RawMessage     `json:"body,omitempty"`
+	ErrorCode        string              `json:"errorCode,omitempty"`
+	Error            string              `json:"error,omitempty"`
 }
 type Codec struct {
 	r io.Reader
@@ -110,12 +111,13 @@ func writeAll(w io.Writer, b []byte) error {
 }
 
 type Client struct {
-	Worker          *domain.WorkerBuild
-	mu              sync.Mutex
-	conn            net.Conn
-	codec           *Codec
-	DeviceID, Epoch string
-	Minor           int
+	TCPStreamVersion int
+	Worker           *domain.WorkerBuild
+	mu               sync.Mutex
+	conn             net.Conn
+	codec            *Codec
+	DeviceID, Epoch  string
+	Minor            int
 }
 
 // LegacyWorkerError identifies an authenticated endpoint which predates the
@@ -182,6 +184,7 @@ func Connect(ctx context.Context, conn net.Conn, target string) (*Client, error)
 	client.DeviceID = f.DeviceID
 	client.Epoch = f.Epoch
 	client.Minor = f.Minor
+	client.TCPStreamVersion = f.TCPStreamVersion
 	client.Worker = f.Worker
 	return client, nil
 }
@@ -240,7 +243,7 @@ func Welcome(conn net.Conn, deviceID string, build ...domain.WorkerBuild) (*Code
 		return nil, "", errors.New("handshake rejected")
 	}
 	epoch := domain.NewID()
-	welcome := Frame{Type: "welcome", Major: Major, Minor: Minor, Nonce: hello.Nonce, DeviceID: deviceID, Epoch: epoch}
+	welcome := Frame{TCPStreamVersion: TCPStreamVersion, Type: "welcome", Major: Major, Minor: Minor, Nonce: hello.Nonce, DeviceID: deviceID, Epoch: epoch}
 	if len(build) > 0 {
 		welcome.Worker = &build[0]
 	}

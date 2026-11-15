@@ -304,6 +304,29 @@ func (p *devicePaths) dial(ctx context.Context) (net.Conn, error) {
 	return conn, nil
 }
 
+// A separate byte stream may use a healthy fallback, but only the RPC actor
+// may commit a business-path handoff and attribute command errors to it.
+func (p *devicePaths) dialStream(ctx context.Context) (net.Conn, error) {
+	now := time.Now()
+	p.mu.Lock()
+	id := p.activeID
+	if _, _, n := pathMedian(p.health[id], now); n == 0 {
+		id = ""
+		var fastest time.Duration
+		for _, route := range p.config.Routes {
+			elapsed, _, count := pathMedian(p.health[route.ID], now)
+			if count > 0 && (id == "" || elapsed < fastest) {
+				id, fastest = route.ID, elapsed
+			}
+		}
+	}
+	p.mu.Unlock()
+	if id == "" {
+		return nil, errDevicePathsWaiting
+	}
+	return p.dialRoute(ctx, id)
+}
+
 var errDevicePathsWaiting = errors.New("正在检查连接路径")
 
 func (p *devicePaths) probe(ctx context.Context, r DeviceRoute) {

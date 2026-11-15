@@ -445,6 +445,11 @@ func TestOpeningSavedSessionCollapsesEveryHistoricalToolGroup(t *testing.T) {
 	if err := ui.Click("设备"); err != nil {
 		t.Fatal(err)
 	}
+	ui.Advance(300 * time.Millisecond)
+	if err := ui.Click("打开设备页"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(300 * time.Millisecond)
 	ui.Click("返回会话")
 	if err := ui.Click("Layout"); err != nil {
 		t.Fatal(err)

@@ -1,12 +1,15 @@
 package transport
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -75,5 +78,55 @@ func TestProcessTransportCarriesBytesAndCancels(t *testing.T) {
 	cancel()
 	if _, err := conn.Read(reply); err == nil {
 		t.Fatal("canceled SSH process remains readable")
+	}
+}
+
+func TestProcessTransportHalfCloseKeepsFinalResponse(t *testing.T) {
+	conn, err := dialProcess(exec.Command("/bin/sh", "-c", "data=$(/bin/cat); /usr/bin/printf 'reply:%s' \"$data\""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	half, ok := conn.(interface{ CloseWrite() error })
+	if !ok {
+		t.Fatal("SSH process stream loses TCP half-close")
+	}
+	conn.Write([]byte("finished input"))
+	if err := half.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(conn)
+	if err != nil || string(got) != "reply:finished input" {
+		t.Fatalf("%q %v", got, err)
+	}
+}
+
+func TestProcessTransportCloseAlsoStopsOwnedProxyChildren(t *testing.T) {
+	conn, err := dialProcess(exec.Command("/bin/sh", "-c", "/bin/sleep 60 & /usr/bin/printf '%s\\n' \"$!\"; wait"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		conn.Close()
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil {
+		conn.Close()
+		t.Fatal(err)
+	}
+	defer syscall.Kill(pid, syscall.SIGKILL)
+	done := make(chan struct{})
+	go func() { conn.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		syscall.Kill(pid, syscall.SIGKILL)
+		<-done
+		t.Fatal("SSH close waited for an owned proxy child")
+	}
+	if output, _ := exec.Command("/bin/ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output(); strings.TrimSpace(string(output)) != "" && !strings.HasPrefix(strings.TrimSpace(string(output)), "Z") {
+		t.Fatal("owned proxy remains running after close", string(output))
 	}
 }

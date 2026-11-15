@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 )
 
 type SSH struct {
@@ -74,40 +77,55 @@ func (s SSH) Dial(ctx context.Context) (net.Conn, error) {
 }
 
 type processConn struct {
-	net.Conn
-	cmd    *exec.Cmd
-	done   chan struct{}
-	err    error
-	stderr bytes.Buffer
-	once   sync.Once
+	input, output *os.File
+	cmd           *exec.Cmd
+	done          chan struct{}
+	err           error
+	stderr        bytes.Buffer
+	once          sync.Once
 }
 
 func dialProcess(cmd *exec.Cmd) (net.Conn, error) {
-	input, err := cmd.StdinPipe()
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
+	cmd.WaitDelay = 2 * time.Second
+	if cmd.Cancel != nil {
+		cmd.Cancel = func() error {
+			if cmd.Process == nil {
+				return os.ErrProcessDone
+			}
+			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	}
+	input, writer, err := os.Pipe()
 	if err != nil {
 		return nil, err
 	}
-	output, err := cmd.StdoutPipe()
+	reader, output, err := os.Pipe()
 	if err != nil {
 		input.Close()
+		writer.Close()
 		return nil, err
 	}
-	local, peer := net.Pipe()
-	c := &processConn{Conn: local, cmd: cmd, done: make(chan struct{})}
+	c := &processConn{input: writer, output: reader, cmd: cmd, done: make(chan struct{})}
+	cmd.Stdin = input
+	cmd.Stdout = output
 	cmd.Stderr = &boundedWriter{w: &c.stderr, remaining: 8192}
-	if err = cmd.Start(); err != nil {
-		input.Close()
-		output.Close()
-		local.Close()
-		peer.Close()
+	err = cmd.Start()
+	input.Close()
+	output.Close()
+	if err != nil {
+		writer.Close()
+		reader.Close()
 		return nil, err
 	}
-	go func() { io.Copy(input, peer); input.Close() }()
-	go func() { io.Copy(peer, output); c.err = cmd.Wait(); close(c.done); peer.Close() }()
+	go func() { c.err = cmd.Wait(); close(c.done) }()
 	return c, nil
 }
 func (c *processConn) Read(p []byte) (int, error) {
-	n, err := c.Conn.Read(p)
+	n, err := c.output.Read(p)
 	if err != nil {
 		select {
 		case <-c.done:
@@ -119,10 +137,19 @@ func (c *processConn) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
+func (c *processConn) Write(p []byte) (int, error) { return c.input.Write(p) }
+func (c *processConn) CloseWrite() error           { return c.input.Close() }
 func (c *processConn) Close() error {
-	c.once.Do(func() { c.Conn.Close(); c.cmd.Process.Kill() })
+	c.once.Do(func() { c.input.Close(); c.output.Close(); syscall.Kill(-c.cmd.Process.Pid, syscall.SIGKILL); <-c.done })
 	return nil
 }
+func (c *processConn) LocalAddr() net.Addr  { return &net.UnixAddr{Name: "ssh-stdin", Net: "pipe"} }
+func (c *processConn) RemoteAddr() net.Addr { return &net.UnixAddr{Name: "ssh-stdout", Net: "pipe"} }
+func (c *processConn) SetDeadline(t time.Time) error {
+	return errors.Join(c.SetReadDeadline(t), c.SetWriteDeadline(t))
+}
+func (c *processConn) SetReadDeadline(t time.Time) error  { return c.output.SetReadDeadline(t) }
+func (c *processConn) SetWriteDeadline(t time.Time) error { return c.input.SetWriteDeadline(t) }
 
 type boundedWriter struct {
 	w         io.Writer

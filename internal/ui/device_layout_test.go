@@ -57,6 +57,11 @@ func TestDeviceSidebarDestinationReopensSettings(t *testing.T) {
 		if err := ui.Click("设备"); err != nil {
 			t.Fatal(err)
 		}
+		ui.Advance(300 * time.Millisecond)
+		if err := ui.Click("打开设备页"); err != nil {
+			t.Fatal(err)
+		}
+		ui.Advance(300 * time.Millisecond)
 		ui.Advance(time.Second)
 		if v.deviceTab != "settings" || !ui.HasText("执行服务") {
 			t.Fatal("main sidebar device destination did not open settings", ui.Texts())
