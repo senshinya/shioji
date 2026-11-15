@@ -377,6 +377,17 @@ func (rt *engine) menuPress(chain []uint64, x, y float32) bool {
 	if s == nil {
 		return false
 	}
+	// A context menu is an operation on its target, not an instruction to
+	// commit composition in another input. Restore its logical focus before
+	// the frame updates the native text-input client.
+	if rt.contentMenu != nil && rt.c.theme.MenuStyle != nil {
+		focused, visible := rt.focused, rt.focusVisible
+		if input := rt.states[focused]; input != nil && input.textClient != nil {
+			if _, marked := input.textClient.MarkedRange(); marked {
+				defer func() { rt.focused, rt.focusVisible = focused, visible }()
+			}
+		}
+	}
 	if rt.listMenu != nil {
 		rt.listMenu(rt, chain, x, y)
 	}

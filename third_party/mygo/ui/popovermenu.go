@@ -102,6 +102,7 @@ func (e *node) PopoverMenuButton(build func(m *Menu)) *node {
 // drawnMenu is a menu drawn in the window (PopoverMenu, PopoverMenuButton)
 // that shows, of the element id.
 type drawnMenu struct {
+	keepInputFocus        bool
 	edit                  bool
 	source                Rect
 	shown                 *shownMenu
@@ -151,6 +152,9 @@ func (rt *engine) openDrawnMenu(e *node) {
 	b := e.Bounds()
 	d := &drawnMenu{id: e.id, below: mr.below, text: mr.text, opened: rt.frame, dx: mr.x - b.X, dy: mr.y - b.Y, focus: 0}
 	d.source = b
+	if input := rt.states[rt.focused]; input != nil && input.textClient != nil {
+		_, d.keepInputFocus = input.textClient.MarkedRange()
+	}
 	d.pointer = [2]float32{rt.pointerX, rt.pointerY}
 	first := 0
 	if mr.key {
@@ -229,7 +233,9 @@ func (rt *engine) drawMenu(e *node, build func(m *Menu)) {
 		}
 		if f := d.focus; f >= 0 && f < len(md.panels) {
 			// After the overlay noted the focus it came with, to give it back.
-			md.panels[f].Focus()
+			if !d.keepInputFocus {
+				md.panels[f].Focus()
+			}
 			d.focus = -1
 		}
 	}
@@ -257,6 +263,9 @@ func (md *menuDraw) panel(level int, items []*platform.MenuItem, anchor *node) (
 	panel.widget = "PopoverMenu"
 	// Presses on it stay in it; items past the room the window has scroll.
 	panel.flags |= flagFocusable | flagClickable | flagTypeSelect | flagOwnRing | flagScrollY | flagHover
+	if d.keepInputFocus {
+		panel.KeepFocus()
+	}
 	panel.MinWidth(t.Space(45)).Padding(t.Space(1)).Radius(t.Radius+2).Background(t.Background).Border(1, t.Border)
 	if style := t.MenuStyle; style != nil {
 		panel.MinWidth(180).Padding(style.Inset).Radius(style.Radius).Background(style.Surface).FontSize(style.FontSize)
@@ -424,6 +433,7 @@ func (md *menuDraw) item(level int, it *platform.MenuItem, marks bool) *node {
 		case !sub && (d.levels[level].hi != it.ID || len(d.levels) > level+1):
 			md.highlight(level, it.ID)
 		}
+		d.focus = level
 	}
 	if style := t.MenuStyle; style != nil && sub && !open && row.Hovered() && d.hoverItem == it.ID && d.hoverLevel == level {
 		wait := style.SubmenuDelay - c.now.Sub(d.hoverSince)
@@ -470,6 +480,13 @@ func (md *menuDraw) openSubmenu(level int, it *platform.MenuItem, keyboard bool)
 // keys pressed while the panel has the focus.
 func (md *menuDraw) keys(level int, panel *node, choices []*platform.MenuItem) {
 	d := md.d
+	shortcut := panel.Shortcut
+	if d.keepInputFocus {
+		if level < len(d.levels)-1 {
+			return
+		}
+		shortcut = panel.OverlayShortcut
+	}
 	n := len(choices)
 	at := slices.IndexFunc(choices, func(it *platform.MenuItem) bool { return it.ID == d.levels[level].hi })
 	move := func(i int) {
@@ -483,26 +500,26 @@ func (md *menuDraw) keys(level int, panel *node, choices []*platform.MenuItem) {
 		into, out = out, into
 	}
 	switch {
-	case panel.Shortcut(0, KeyDown):
+	case shortcut(0, KeyDown):
 		move(at + 1) // from none, the first
-	case panel.Shortcut(0, KeyUp):
+	case shortcut(0, KeyUp):
 		if at < 0 {
 			at = 0
 		}
 		move(at - 1)
-	case panel.Shortcut(0, KeyHome):
+	case shortcut(0, KeyHome):
 		move(0)
-	case panel.Shortcut(0, KeyEnd):
+	case shortcut(0, KeyEnd):
 		move(n - 1)
-	case panel.Shortcut(0, into):
+	case shortcut(0, into):
 		if at >= 0 && choices[at].Type == platform.MenuItemSubmenu && choices[at].Submenu != nil {
 			md.openSubmenu(level, choices[at], true)
 		}
-	case panel.Shortcut(0, out):
+	case shortcut(0, out):
 		if level > 0 {
 			md.closeLevel(level)
 		}
-	case panel.Shortcut(0, KeyEnter), panel.Shortcut(0, KeySpace):
+	case shortcut(0, KeyEnter), shortcut(0, KeySpace):
 		switch {
 		case at < 0:
 		case choices[at].Type == platform.MenuItemSubmenu:
@@ -512,7 +529,7 @@ func (md *menuDraw) keys(level int, panel *node, choices []*platform.MenuItem) {
 		default:
 			md.chosen, md.closed = choices[at], true
 		}
-	case panel.Shortcut(0, KeyTab), panel.Shortcut(Shift, KeyTab):
+	case shortcut(0, KeyTab), shortcut(Shift, KeyTab):
 		md.closed = true
 	}
 	if s := panel.st; s.typing && s.typed != "" && n > 0 {

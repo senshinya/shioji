@@ -732,6 +732,19 @@ func (rt *engine) keyDownPhysical(mods Modifiers, key, physical Key, repeat bool
 	if key == KeyEscape && mods == 0 && rt.dragCancel() {
 		return true
 	}
+	// A menu may retain a composing input's native client. Its own navigation
+	// shortcuts still take precedence over that editor's caret/commit keys.
+	if d := rt.menu.drawn; d != nil && d.keepInputFocus {
+		for _, r := range rt.regs {
+			if r.overlay && r.mods == mods && r.key == key {
+				if s := rt.states[r.id]; s != nil && s.role == RoleMenu {
+					rt.keys = append(rt.keys, k)
+					rt.requestFrame()
+					return false
+				}
+			}
+		}
+	}
 	if h := rt.focusHandler(); h != nil && !rt.claimed(k) && rt.deliver(h, InputEvent{Kind: InputKeyDown, Key: key, PhysicalKey: physical, Mods: mods, Repeat: repeat}) {
 		rt.blinkStart = rt.now()
 		return true

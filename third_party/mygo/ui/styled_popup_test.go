@@ -109,3 +109,57 @@ func TestStyledTooltipExplainsDisabledWithoutOfferingAction(t *testing.T) {
 		t.Fatal("disabled explanation enabled action")
 	}
 }
+
+func TestSubmenuPointerHandoffRoutesKeysToHoveredLevel(t *testing.T) {
+	chosen := ""
+	tt := NewTester(func(c *Context) {
+		popupTestTheme(c)
+		ButtonBase(c).Label("source").Size(120, 28).ContextMenu(func(m *Menu) {
+			m.Submenu("more", func(m *Menu) {
+				if m.Item("child1").Chosen() {
+					chosen = "child1"
+				}
+				if m.Item("child2").Chosen() {
+					chosen = "child2"
+				}
+			})
+			if m.Item("last").Chosen() {
+				chosen = "last"
+			}
+		})
+	}, 500, 300)
+	tt.RightClick("source")
+	r, _ := tt.Find("more")
+	tt.Move(r.X+8, r.Y+10)
+	tt.Advance(200 * time.Millisecond)
+	child, ok := tt.Find("child1")
+	if !ok {
+		t.Fatal("submenu did not open")
+	}
+	tt.Move(child.X+8, child.Y+10)
+	tt.Key(0, KeyDown)
+	tt.Key(0, KeyEnter)
+	if chosen != "child2" {
+		t.Fatal("keyboard followed parent after pointer entered child", chosen)
+	}
+}
+
+func TestMenuKeyboardNavigationDoesNotCommitPlainInputComposition(t *testing.T) {
+	draft := ""
+	tt := NewTester(func(c *Context) {
+		popupTestTheme(c)
+		Column(c).Children(func() {
+			TextArea(c, &draft).Label("draft").Size(220, 60)
+			ButtonBase(c).Label("object").Size(120, 28).ContextMenu(func(m *Menu) { m.Item("action") })
+		})
+	}, 500, 300)
+	tt.Click("draft")
+	tt.Compose("ni", 2)
+	tt.RightClick("object")
+	tt.Key(0, KeyDown)
+	tt.Key(0, KeyEscape)
+	tt.Compose("", 0)
+	if draft != "" {
+		t.Fatal("menu navigation committed composition", draft)
+	}
+}

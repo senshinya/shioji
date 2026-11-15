@@ -438,7 +438,7 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 			// The action slot has no text baseline when the pin is hidden. Keep
 			// it out of baseline alignment so its bottom cannot lower the title.
 			n.Column(c).Width(28).Height(20).AlignSelf(n.Center).Children(func() {
-				if r.pinned && !moving && !row.Hovered() && !row.FocusWithin() {
+				if r.pinned && !moving && !row.Hovered() && !row.FocusWithin() && !row.MenuOpen() {
 					inlineSymbol(c.Key("pin-mark"), navigationPinIcon, s.Title, n.Font{Family: t.Font, Size: 13}, 13, t.TextMuted).Width(28).TextAlign(n.Center).Transition(fadeMotion(c, 120*time.Millisecond))
 				}
 				// Match the title's visible glyph center while retaining a 28px hit area.
