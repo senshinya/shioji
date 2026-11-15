@@ -75,8 +75,14 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 			}
 		}
 	})
-	viewport := n.Scroll(c.Key("model-list-scroll")).FillWidth().Label("模型列表滚动区")
-	height := min(float32(configurationListHeight), float32(len(models))*configurationRowHeight)
+	var viewport n.Element
+	height := float32(len(models)) * configurationRowHeight
+	if len(setupDevice) > 0 {
+		viewport = n.Scroll(c.Key("model-list-scroll")).FillWidth().Label("模型列表滚动区")
+		height = min(float32(configurationListHeight), height)
+	} else {
+		viewport = n.Column(c.Key("model-list-scroll")).FillWidth().Shrink(0).Clip().Label("模型列表区域")
+	}
 	if !c.Preferences().ReduceMotion {
 		height = viewport.AnimateTo("catalog-height", height, motionAnimation(c, 180*time.Millisecond))
 	}

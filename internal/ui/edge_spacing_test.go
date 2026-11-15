@@ -21,7 +21,7 @@ func TestModelHoverKeepsControlsAwayFromItsEdges(t *testing.T) {
 	row, _ := ui.Find("模型：GPT Sol")
 	star, _ := ui.Find("收藏 GPT Sol")
 	toggle, _ := ui.Find("在模型菜单显示 GPT Sol")
-	viewport, _ := ui.Find("模型列表滚动区")
+	viewport, _ := ui.Find("模型列表区域")
 	clip, _ := ui.Find("配置列表容器")
 	if star.X-max(row.X, clip.X) < 7.5 || min(row.X+row.W, clip.X+clip.W)-toggle.X-toggle.W < 7.5 {
 		t.Fatal("model row hover hugs controls", row, star, toggle)
