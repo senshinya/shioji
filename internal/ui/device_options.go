@@ -166,7 +166,7 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 								if e.setup {
 									size = 12
 								}
-								n.Text(c, status).SingleLine().MaxWidth(120).Tooltip(status).FontSize(size).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+								n.Text(c, status).SingleLine().MaxWidth(120).FontSize(size).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)}).TooltipWhenTruncated(status)
 							}
 							n.Spacer(c).Grow(1)
 							angle := float32(-90)
@@ -290,7 +290,7 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 							caption = "正在读取模型"
 							serviceSpinner(c.Key("model-spinner"), caption, n.Font{Family: t.Font, Size: 12, Weight: 400}, t.TextMuted)
 						}
-						n.Text(c, caption).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().Tooltip(caption).TextColor(t.TextMuted)
+						n.Text(c, caption).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().TooltipWhenTruncated(caption).TextColor(t.TextMuted)
 						if configurationAction(c, "重试").Label("重新读取模型").Disabled(disabled).Clicked() {
 							v.recheckWelcomeAgent(key, info.ID)
 						}

@@ -119,6 +119,39 @@ func (e *node) Tooltip(s string) *node {
 	return e
 }
 
+// TooltipWhenTruncated shows s only when this text element's native layout
+// truncates it. Call it after setting the text's font, padding and line limit.
+// It uses the previous frame's content width, like LayoutBounds, and includes
+// rich-text spans and inline objects in the measurement. Other element kinds
+// have no text layout; attach the hint to their text child instead. When a
+// containing control has keyboard focus, it anchors the hint to that control.
+func (e *node) TooltipWhenTruncated(s string) *node {
+	if s == "" || e.kind != kindText {
+		return e
+	}
+	e.flags |= flagHover
+	anchor := e
+	for parent := e.parent; parent != nil; parent = parent.parent {
+		if parent.FocusVisible() {
+			anchor = parent
+			break
+		}
+	}
+	// A focused control can contain several clipped labels, or already have
+	// a more useful explicit hint. Give that anchor only one tooltip.
+	if anchor != e && anchor.tip {
+		return e
+	}
+	if !slices.Contains(e.c.rt.hover, e.id) && !anchor.FocusVisible() {
+		return e
+	}
+	width := e.LayoutBounds().W - e.padX()
+	if width > 0 && e.textLayout(width).Truncated {
+		anchor.Tooltip(s)
+	}
+	return e
+}
+
 // showTooltip returns the element whose tip shows in the frame, deciding it
 // once: the innermost element with a tip under the pointer once it has
 // rested there long enough, or the one with the keyboard focus from the

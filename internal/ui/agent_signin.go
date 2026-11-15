@@ -276,7 +276,12 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 				tooltip = u.status.Message
 			}
 			status := func() {
-				n.Text(c.Key("auth-status"), caption).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Grow(1).MinWidth(0).SingleLine().Tooltip(tooltip).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+				text := n.Text(c.Key("auth-status"), caption).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Grow(1).MinWidth(0).SingleLine().ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+				if tooltip != caption {
+					text.Tooltip(tooltip)
+				} else {
+					text.TooltipWhenTruncated(caption)
+				}
 			}
 			if active || !supported {
 				if active {
@@ -469,7 +474,7 @@ func (v *View) agentSystemAPI(c *n.Context, t *n.Theme, key string, e *deviceAge
 			continue
 		}
 		row(c, field.label, func() {
-			n.Text(c, field.value).FillWidth().Padding(4, 8).FontSize(12).FixedLineHeight(20).SingleLine().Tooltip(field.value)
+			n.Text(c, field.value).FillWidth().Padding(4, 8).FontSize(12).FixedLineHeight(20).SingleLine().TooltipWhenTruncated(field.value)
 		})
 	}
 	row(c, "", func() {
@@ -522,7 +527,7 @@ func (v *View) agentAPIConfiguration(c *n.Context, t *n.Theme, key string, e *de
 			if active {
 				serviceSpinner(c.Key("spinner"), caption, n.Font{Family: t.Font, Size: 12, Weight: 400}, t.TextMuted)
 			}
-			n.Text(c.Key("caption"), caption).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().TextColor(t.TextMuted).Tooltip(caption).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+			n.Text(c.Key("caption"), caption).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().TextColor(t.TextMuted).TooltipWhenTruncated(caption).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 			if configurationAction(c.Key("connect-api"), "连接").Label("连接 API").MinWidth(64).Disabled(disabled || active || strings.TrimSpace(e.draft.apiEndpoint) == "").Clicked() {
 				v.startAgentSignIn(key, e, info)
 			}
@@ -601,7 +606,7 @@ func (v *View) agentInitialAccount(c *n.Context, t *n.Theme, key string, e *devi
 				if active {
 					serviceSpinner(c.Key("spinner"), *last, n.Font{Family: t.Font, Size: 12, Weight: 400}, t.TextMuted)
 				}
-				n.Text(c.Key("caption"), *last).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().Tooltip(*last).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+				n.Text(c.Key("caption"), *last).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().TooltipWhenTruncated(*last).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 				if active {
 					if challenge.URL != "" && configurationAction(c, "打开授权页").Disabled(disabled).Clicked() {
 						if openSignInLink(challenge.URL) != nil {

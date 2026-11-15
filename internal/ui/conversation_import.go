@@ -432,7 +432,7 @@ func (v *View) conversationImportBody(c *n.Context, t *n.Theme, u *conversationI
 		n.Row(c.Key("import-feedback")).FillWidth().Height(28).AlignItems(n.Baseline).Children(func() {
 			caption := u.message
 			if caption != "" {
-				n.Text(c.Key("message"), caption).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine().Grow(1).Tooltip(caption).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+				n.Text(c.Key("message"), caption).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine().Grow(1).TooltipWhenTruncated(caption).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 			}
 		})
 		v.conversationImportFooter(c, t, u, valid)
@@ -533,7 +533,7 @@ func (v *View) conversationImportRow(c *n.Context, t *n.Theme, u *conversationIm
 		}
 		trigger := control(c.Key("preview"), 4).Grow(1).MinWidth(0).Height(44).MarginX(-8).Padding(0, 8).AlignItems(n.Start).Label("预览会话：" + s.Title).Disabled(disabled).Children(func() {
 			n.Column(c).FillWidth().Gap(2).Children(func() {
-				n.Text(c, s.Title).FillWidth().SingleLine().FontSize(13).FixedLineHeight(20).Tooltip(s.Title)
+				n.Text(c, s.Title).FillWidth().SingleLine().FontSize(13).FixedLineHeight(20).TooltipWhenTruncated(s.Title)
 				date := "时间未知"
 				if !s.UpdatedAt.IsZero() {
 					date = s.UpdatedAt.Local().Format("1 月 2 日 15:04")

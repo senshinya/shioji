@@ -325,7 +325,7 @@ func (v *View) managedSkillRows(c *n.Context, t *n.Theme, u *skillManagementUI) 
 			group = groupID
 			n.Row(c.Key("group:"+groupID)).FillWidth().MinHeight(28).Margin(12, 0, 0, 0).Gap(8).AlignItems(n.Baseline).Children(func() {
 				inlineSymbol(c, workspaceIcon, entry.Directory, n.Font{Family: t.Font, Size: 11}, 14, t.TextMuted)
-				n.Text(c, entry.Directory).FontSize(11).FixedLineHeight(20).Shrink(1).MinWidth(0).SingleLine().Ellipsis("…").Tooltip(entry.Directory)
+				n.Text(c, entry.Directory).FontSize(11).FixedLineHeight(20).Shrink(1).MinWidth(0).SingleLine().Ellipsis("…").TooltipWhenTruncated(entry.Directory)
 				label := skillScopeName(entry.Scope)
 				if inherited {
 					label += " · 继承"
@@ -345,7 +345,7 @@ func (v *View) managedSkillRows(c *n.Context, t *n.Theme, u *skillManagementUI) 
 			open.Children(func() {
 				n.Column(c).FillWidth().MinWidth(0).Children(func() {
 					inlineIconText(c, skillIcon, entry.Name, n.Font{Family: t.Font, Size: 13}, 16, 8, t.Text).FillWidth().Ellipsis("…")
-					n.Text(c, entry.Description).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted).SingleLine().Ellipsis("…").PaddingStart(24).Tooltip(entry.Description)
+					n.Text(c, entry.Description).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted).SingleLine().Ellipsis("…").PaddingStart(24).TooltipWhenTruncated(entry.Description)
 				})
 			})
 			if open.Clicked() {

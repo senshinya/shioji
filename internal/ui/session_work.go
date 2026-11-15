@@ -442,10 +442,10 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 		w.Brief = detail.Work.Brief
 	}
 	n.Row(c.Key("work-detail-header")).FillWidth().Shrink(0).Height(36).PaddingX(12).Gap(6).AlignItems(n.Center).Children(func() {
-		back := n.ButtonBase(c.Key("work-detail-back")).Height(28).Grow(1).MinWidth(0).Justify(n.Start).Label("返回" + inspectorWorkName(kind) + "列表").Description(w.Title).Tooltip(w.Title)
+		back := n.ButtonBase(c.Key("work-detail-back")).Height(28).Grow(1).MinWidth(0).Justify(n.Start).Label("返回" + inspectorWorkName(kind) + "列表").Description(w.Title)
 		color := textHoverColor(c, back, t.TextMuted)
 		back.Children(func() {
-			inlineIconText(c, workBackIcon, w.Title, n.Font{Family: t.Font, Size: 12, Weight: 400}, 16, 0, color).TextColor(t.Text).MinWidth(0).Grow(1)
+			inlineIconText(c, workBackIcon, w.Title, n.Font{Family: t.Font, Size: 12, Weight: 400}, 16, 0, color).TextColor(t.Text).MinWidth(0).Grow(1).TooltipWhenTruncated(w.Title)
 		})
 		if back.Clicked() {
 			p.selected = ""

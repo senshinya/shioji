@@ -116,7 +116,7 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 								return
 							}
 							state := v.deviceState(key)
-							btn := control(c.Key("device:"+key), 6).FillWidth().Height(52).Padding(6, 10).Radius(7).Label("选择设备：" + name).Tooltip(name)
+							btn := control(c.Key("device:"+key), 6).FillWidth().Height(52).Padding(6, 10).Radius(7).Label("选择设备：" + name)
 							if key == v.deviceSelected {
 								btn.Background(t.SurfacePressed)
 							}
@@ -132,7 +132,7 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 										if key == v.deviceSelected {
 											weight = 500
 										}
-										n.Text(c, name).FontSize(13).FontWeight(weight).FixedLineHeight(20).SingleLine()
+										n.Text(c, name).FontSize(13).FontWeight(weight).FixedLineHeight(20).SingleLine().TooltipWhenTruncated(name)
 										n.Row(c).Gap(5).AlignItems(n.Baseline).Children(func() {
 											label := "这台 Mac"
 											if key != "local" {
@@ -226,7 +226,7 @@ func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 				continue
 			}
 			n.Row(c.Key("extra:" + folder)).FillWidth().MinHeight(32).Gap(8).AlignItems(n.Center).Transition(disclosureMotion(c, 180*time.Millisecond)).Children(func() {
-				n.Text(c, folder).SingleLine().Grow(1).FontSize(12).Tooltip(folder)
+				n.Text(c, folder).SingleLine().Grow(1).FontSize(12).TooltipWhenTruncated(folder)
 				if iconButton(c, closeIcon, "移除附加目录："+folder).MarginEnd(-6).Disabled(v.remoteWorkspaceBusy).Clicked() {
 					remaining := []string{}
 					for _, old := range strings.Split(v.remoteWorkspaceExtra, "\n") {

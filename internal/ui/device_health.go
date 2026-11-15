@@ -127,7 +127,7 @@ func (v *View) currentDeviceControl(c *n.Context, t *n.Theme) {
 	if powerError == "" && h != nil {
 		powerError = h.KeepAwake.Error
 	}
-	quick := iconButton(c.Key("keep-awake:"+key), coffeeIcon, "保持设备唤醒").Tooltip("").Disabled(v.Controller == nil || !known || u.pending || u.checking)
+	quick := iconButton(c.Key("keep-awake:"+key), coffeeIcon, "保持设备唤醒").Disabled(v.Controller == nil || !known || u.pending || u.checking)
 	if on {
 		quick.Background(t.SurfacePressed)
 	}

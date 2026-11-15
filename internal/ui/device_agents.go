@@ -151,12 +151,12 @@ func (v *View) deviceAgentPage(c *n.Context, t *n.Theme, key, deviceName string,
 					backLabel = "返回工作区 MCP"
 				}
 			}
-			back := control(c.Key("back"), 5).Height(28).MaxWidth(400).AlignSelf(n.Start).Justify(n.Start).PaddingX(4).MarginStart(-4).Label(backLabel).Tooltip(backName).Disabled(e.busy)
+			back := control(c.Key("back"), 5).Height(28).MaxWidth(400).AlignSelf(n.Start).Justify(n.Start).PaddingX(4).MarginStart(-4).Label(backLabel).Description(backName).Disabled(e.busy)
 			if width < 900 {
 				back.MarginStart(60)
 			}
 			back.Children(func() {
-				inlineIconText(c, deviceBackIcon, backName, n.Font{Family: t.Font, Size: configurationValueSize, Weight: 400}, 12, 4, t.TextMuted).Shrink(1)
+				inlineIconText(c, deviceBackIcon, backName, n.Font{Family: t.Font, Size: configurationValueSize, Weight: 400}, 12, 4, t.TextMuted).Shrink(1).TooltipWhenTruncated(backName)
 			})
 			if back.Clicked() {
 				if v.skillReturn != nil && v.skillReturn.editor == e {
@@ -166,7 +166,7 @@ func (v *View) deviceAgentPage(c *n.Context, t *n.Theme, key, deviceName string,
 				}
 			}
 			n.Row(c).FillWidth().Height(32).Gap(16).AlignItems(n.Baseline).Children(func() {
-				inlineIconText(c, harnessIcon(domain.HarnessDescriptor{ID: info.ID, Name: info.Name, Icon: info.Icon}), info.Name, n.Font{Family: t.Font, Size: configurationTitleSize, Weight: 400}, 24, 8, t.Text).FixedLineHeight(configurationTitleLine).Grow(1).MinWidth(0).Tooltip(info.Name)
+				inlineIconText(c, harnessIcon(domain.HarnessDescriptor{ID: info.ID, Name: info.Name, Icon: info.Icon}), info.Name, n.Font{Family: t.Font, Size: configurationTitleSize, Weight: 400}, 24, 8, t.Text).FixedLineHeight(configurationTitleLine).Grow(1).MinWidth(0).TooltipWhenTruncated(info.Name)
 				n.Text(c, runtimeSetupLabel(info, state.Connected)).FontSize(12).FixedLineHeight(20).SingleLine().TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 			})
 		})

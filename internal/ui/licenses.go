@@ -44,7 +44,7 @@ func (s *Settings) licenseView(c *n.Context, t *n.Theme) {
 		if control(c.Key(notice.Module)).FillWidth().MarginX(-8).Height(56).Padding(8).Label("许可：" + notice.Module).Children(func() {
 			n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
 				n.Column(c).Grow(1).MinWidth(0).Children(func() {
-					n.Text(c, notice.Module).FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).SingleLine().Ellipsis("…").Tooltip(notice.Module)
+					n.Text(c, notice.Module).FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).SingleLine().Ellipsis("…").TooltipWhenTruncated(notice.Module)
 					n.Text(c, notice.Version).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).TextColor(t.TextMuted)
 				})
 				inlineSymbol(c, disclosureRight, notice.Module, n.Font{Family: t.Font, Size: configurationLabelSize, Weight: 400}, 12, t.TextMuted)

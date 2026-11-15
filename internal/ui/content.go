@@ -113,7 +113,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 	if label == "" {
 		label = "工具活动"
 	}
-	button := n.ButtonBase(c.Key("activity-heading")).FillWidth().MinHeight(20).Justify(n.Start).Label(label).Tooltip(label)
+	button := n.ButtonBase(c.Key("activity-heading")).FillWidth().MinHeight(20).Justify(n.Start).Label(label)
 	color := textHoverColor(c, button, t.TextMuted)
 	button.Children(func() {
 		n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
@@ -127,6 +127,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 				title.SingleLine()
 				n.Text(c.Key("wait-duration"), duration).SingleLine().Shrink(0).FontSize(12).FixedLineHeight(20).TextColor(color)
 			}
+			title.TooltipWhenTruncated(label)
 			if item.Status != "" {
 				status := activityStatus(item.Status)
 				if issue := toolIssueLabel(item); issue != "" {

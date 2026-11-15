@@ -15,7 +15,7 @@ import (
 var saveAttachmentIcon = svg("M10 3v9M6 8l4 4 4-4M4 13v4h12v-4")
 
 func (v *View) outputFile(c *n.Context, t *n.Theme, a domain.Attachment) {
-	button := n.ButtonBase(c.Key("file:"+a.ID)).FillWidth().MaxWidth(360).Padding(8, 10).Radius(6).Label("预览文件：" + a.Name).Tooltip(a.Name)
+	button := n.ButtonBase(c.Key("file:"+a.ID)).FillWidth().MaxWidth(360).Padding(8, 10).Radius(6).Label("预览文件：" + a.Name)
 	background := codeSurface(t)
 	if button.Hovered() || button.FocusVisible() {
 		background = t.SurfaceHover
@@ -40,7 +40,7 @@ func fileResultContents(c *n.Context, t *n.Theme, a domain.Attachment) {
 	n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
 		font := n.Font{Family: t.Font, Size: 12, Weight: 400}
 		inlineSymbol(c, fileAttachmentIcon, a.Name, font, 14, t.TextMuted)
-		n.Text(c, a.Name).FontSize(12).SingleLine().Ellipsis("…").MinWidth(0).Grow(1)
+		n.Text(c, a.Name).FontSize(12).SingleLine().Ellipsis("…").MinWidth(0).Grow(1).TooltipWhenTruncated(a.Name)
 		n.Text(c, attachmentSize(a.Size)).FontSize(11).TextColor(t.TextMuted)
 	})
 }

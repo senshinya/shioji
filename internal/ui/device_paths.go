@@ -318,7 +318,7 @@ func (v *View) devicePathsSection(c *n.Context, t *n.Theme, key string, state *a
 								inlineSymbol(c, chevron, name, font, 12, t.TextMuted, angle)
 							})
 							address := devicePathAddress(route.SSH, s.Endpoint)
-							n.Text(c, address).FontSize(11).FixedLineHeight(18).SingleLine().TextColor(t.TextMuted).Tooltip(address).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)}).Label("路径地址:" + route.ID)
+							n.Text(c, address).FontSize(11).FixedLineHeight(18).SingleLine().TextColor(t.TextMuted).TooltipWhenTruncated(address).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)}).Label("路径地址:" + route.ID)
 						})
 						n.Text(c, pathTiming(s, c.Now())).Width(64).TextAlign(n.End).FontSize(12).FixedLineHeight(20).FontFeatures("tnum").TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 260*time.Millisecond)}).Label("路径延迟:" + route.ID)
 						n.Row(c).Width(104).Gap(7).Justify(n.End).AlignItems(n.Baseline).Label("路径状态:" + route.ID).Tooltip(s.Error).Children(func() {

@@ -53,7 +53,7 @@ func configurationChoiceField(c *n.Context, label, value string, disabled bool) 
 	font := n.Font{Family: c.Theme().Font, Size: configurationValueSize, Weight: 400}
 	return control(c, 5).FillWidth().Height(configurationControlHeight).PaddingX(8).Radius(5).Border(1, c.Theme().Border).Label(label).Disabled(disabled).Children(func() {
 		n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Transform(n.Translation(0, inlineCenterOffset(value, font))).Children(func() {
-			n.Text(c, value).SingleLine().FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).Grow(1).MinWidth(0).Tooltip(value).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+			n.Text(c, value).SingleLine().FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).Grow(1).MinWidth(0).TooltipWhenTruncated(value).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 			inlineSymbol(c, chevron, value, font, 12, c.Theme().TextMuted)
 		})
 	})
