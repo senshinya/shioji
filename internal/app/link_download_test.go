@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"shioji/internal/domain"
 	"shioji/internal/portforward"
 	"shioji/internal/protocol"
 	"sync/atomic"
@@ -113,5 +114,39 @@ func TestHTTPDownloadRejectsErrorsAndCancellationWithoutPartialFiles(t *testing.
 	entries, _ = os.ReadDir(dir)
 	if len(entries) != 0 {
 		t.Fatal("cancel left partial file")
+	}
+}
+
+func TestHTTPDownloadRemovesTruncatedAndCancelledBodies(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/short" {
+			w.Header().Set("Content-Length", "100")
+			w.Write([]byte("partial"))
+			return
+		}
+		w.Write([]byte("downloaded bytes"))
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	if _, err := downloadLinkHTTP(context.Background(), dir, server.URL+"/short", http.DefaultClient, nil); err == nil {
+		t.Fatal("accepted truncated response")
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 0 {
+		t.Fatal("truncation left partial file", entries)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err := downloadLinkHTTP(ctx, dir, server.URL, http.DefaultClient, func(_ domain.FileResource, done int64) {
+		if done > 0 {
+			cancel()
+		}
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatal("mid-transfer cancellation ignored", err)
+	}
+	entries, _ = os.ReadDir(dir)
+	if len(entries) != 0 {
+		t.Fatal("cancel left downloaded bytes", entries)
 	}
 }
