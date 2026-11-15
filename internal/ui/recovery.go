@@ -123,7 +123,8 @@ func (v *View) recovery(c *n.Context, t *n.Theme, d domain.SessionDetail) {
 						text = "连接设备后自动恢复会话"
 					}
 					inlineSymbol(c, recoveryIcon, text, n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}, 12, t.TextMuted)
-					status := n.Text(c, text).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+					status := n.Text(c, text).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Grow(1)
+					v.feedbackStatusPager(c, t, len(v.feedbackStatuses), v.feedbackSelection)
 					if m.Connected {
 						shimmer(c, status, t.TextMuted, t.Text)
 					}

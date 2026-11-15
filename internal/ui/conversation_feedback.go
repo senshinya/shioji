@@ -233,7 +233,8 @@ func (v *View) syncConversationFeedback(c *n.Context) {
 
 func (v *View) conversationErrorHasState() bool {
 	m := v.Model
-	if len(m.HistoryActions) > 0 || !m.Connected || m.RunReadiness().State != "ready" || v.draftSaveError != "" || m.ArchivedContext() != "" {
+	_, hasHistoryAction := m.HistoryActions[m.SessionID]
+	if hasHistoryAction || !m.Connected || m.RunReadiness().State != "ready" || v.draftSaveError != "" || m.ArchivedContext() != "" {
 		return true
 	}
 	for _, in := range m.Pending {

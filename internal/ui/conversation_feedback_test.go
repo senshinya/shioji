@@ -342,6 +342,27 @@ func TestConversationFeedbackToastTopInset(t *testing.T) {
 		if math.Abs(float64(icon.Y-source.Y)) > 1 || icon.H != source.H {
 			t.Fatal("source icon and source text do not share a line", icon, source)
 		}
+		inkCenter := func(box n.Rect) float64 {
+			im := ui.Image()
+			bg := im.RGBAAt(int(card.X+3), int(box.Y+box.H/2))
+			lo, hi := im.Bounds().Max.Y, -1
+			for y := int(box.Y); y < int(box.Y+box.H); y++ {
+				for x := int(box.X); x < int(box.X+box.W); x++ {
+					p := im.RGBAAt(x, y)
+					if math.Abs(float64(int(p.R)-int(bg.R))) > 25 {
+						lo = min(lo, y)
+						hi = max(hi, y)
+					}
+				}
+			}
+			if hi < 0 {
+				t.Fatal("missing visible source ink", box)
+			}
+			return float64(lo+hi) / 2
+		}
+		if delta := inkCenter(icon) - inkCenter(source); math.Abs(delta) > 1 {
+			t.Fatal("source icon differs from text ink center", dark, delta)
+		}
 		body, _ := ui.Find("原有内容已保留。")
 		if delta := card.Y + card.H - body.Y - body.H; delta > 9 || delta < 7 {
 			t.Fatal("bottom inset differs from top", card, body)
@@ -366,5 +387,43 @@ func TestConversationFeedbackCompletedCancellationIsInformation(t *testing.T) {
 	job.Apply(m, raw, nil)
 	if len(m.Feedbacks) != 1 || m.Feedbacks[0].Kind != app.FeedbackInformation || m.Error != "" {
 		t.Fatal("completed operation presented as a cancellation failure", m.Feedbacks, m.Error)
+	}
+}
+
+func TestConversationFeedbackRecoveryCheckingKeepsPager(t *testing.T) {
+	m := layoutModel()
+	m.WorkerMinor = 8
+	d := m.Details["s"]
+	d.Session.Status = "unknown"
+	d.Session.Recovery = &domain.SessionRecovery{Phase: "checking"}
+	m.Details["s"] = d
+	m.Snapshot.Sessions[0] = d.Session
+	v := New(m, nil, "")
+	v.draftSaveError = "save failed"
+	ui := n.NewTester(v.View, 1100, 820)
+	ui.Advance(time.Second)
+	if err := ui.Click("下一个状态"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if err := ui.Click("上一个状态"); err != nil {
+		t.Fatal("checking state trapped the status pager", err)
+	}
+	ui.Advance(time.Second)
+	if !ui.HasText("草稿尚未保存") {
+		t.Fatal("could not return to save failure")
+	}
+}
+
+func TestConversationFeedbackBackgroundHistoryDoesNotHideCurrentFailure(t *testing.T) {
+	m := layoutModel()
+	m.HistoryActions["other"] = domain.HistoryChange{OperationID: "background", SessionID: "other"}
+	v := New(m, nil, "")
+	ui := n.NewTester(v.View, 1100, 820)
+	m.Error = "current operation failed"
+	ui.Frame()
+	ui.Advance(time.Second)
+	if !ui.HasText("操作未完成") {
+		t.Fatal("background history state swallowed current feedback")
 	}
 }
