@@ -43,6 +43,10 @@ func (v *View) pumpUpdates() {
 		}
 	}
 drained:
+	v.syncArchivePolicies()
+	if updated && v.settings != nil {
+		v.settings.services.Invalidate()
+	}
 	if v.nativeWindow != nil && !v.nativeWindow.IsDestroyed() {
 		v.deliverNotifications()
 	}
@@ -55,7 +59,7 @@ func (v *View) foregroundNotificationSuppressed(id string, foreground bool) bool
 	if p := v.Model.Preferences.Notifications; p != nil && p.Foreground {
 		return false
 	}
-	if !foreground || v.devices || v.workspaceEditor != nil || v.Model.SessionID == "" {
+	if !foreground || v.devices || v.workspaceEditor != nil || v.Model.SessionID == "" || v.archive != nil && v.archive.open {
 		return false
 	}
 	m := v.Model

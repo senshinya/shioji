@@ -190,10 +190,10 @@ func (m *Model) ArchivePolicyJobs() []Job {
 		epoch := state.ConnectionEpoch
 		jobs = append(jobs, Job{ConnectionID: key, ConnectionEpoch: state.ConnectionEpoch, Method: "archive.configure", Input: input, Apply: func(p *Model, body json.RawMessage, err error) {
 			current, exists := p.ArchivePolicyChanges[id]
-			if !exists || current.ID != change.ID {
-				return
-			}
 			if err != nil {
+				if !exists || current.ID != change.ID {
+					return
+				}
 				current.Error = err.Error()
 				current.FailedEpoch = epoch
 				p.ArchivePolicyChanges[id] = current
@@ -201,6 +201,9 @@ func (m *Model) ArchivePolicyJobs() []Job {
 			}
 			var result domain.ArchivePolicy
 			if json.Unmarshal(body, &result) != nil || result.DeviceID != id || result.Days != input.Days {
+				if !exists || current.ID != change.ID {
+					return
+				}
 				current.Error = "设备的归档设置回执无效"
 				current.FailedEpoch = epoch
 				p.ArchivePolicyChanges[id] = current
@@ -208,6 +211,18 @@ func (m *Model) ArchivePolicyJobs() []Job {
 			}
 			if p.Snapshot.ArchivePolicy == nil || p.Snapshot.ArchivePolicy.Revision <= result.Revision {
 				p.Snapshot.ArchivePolicy = &result
+			}
+			if !exists {
+				return
+			}
+			if current.ID != change.ID {
+				if current.Revision == input.Revision && result.Revision == input.Revision+1 {
+					current.Revision = result.Revision
+					current.Error = ""
+					current.FailedEpoch = ""
+					p.ArchivePolicyChanges[id] = current
+				}
+				return
 			}
 			delete(p.ArchivePolicyChanges, id)
 		}})

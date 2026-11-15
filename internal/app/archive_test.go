@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 	"testing"
 )
 
@@ -121,6 +122,27 @@ func TestDeletedOperationReceiptSettlesAnOfflineClientWithoutResurrectingHistory
 	})
 	if !m.DeviceStates["air"].Connected || len(m.Pending) != 0 || len(m.Details) != 0 || m.Drafts["home"] != "new unrelated draft" {
 		t.Fatal("deleted receipt broke reconnection", m.Pending, m.DeviceStates["air"].Error)
+	}
+}
+
+func TestArchivePolicyOwnReceiptAdvancesPendingNewerLocalChoice(t *testing.T) {
+	m := archiveModel()
+	m.SetArchiveRetention(7)
+	first := m.ArchivePolicyJobs()
+	m.SetArchiveRetention(14)
+	for _, job := range first {
+		id := map[string]string{"local": "A", "air": "B"}[job.ConnectionID]
+		body, _ := json.Marshal(domain.ArchivePolicy{DeviceID: id, Days: 7, Revision: 2})
+		m.ApplyDeviceUpdate(job.ConnectionID, func(p *Model) { job.Apply(p, body, nil) })
+	}
+	jobs := m.ArchivePolicyJobs()
+	if len(jobs) != 2 {
+		t.Fatal("latest local choice lost", len(jobs), m.ArchivePolicyStatus())
+	}
+	for _, job := range jobs {
+		if in := job.Input.(protocol.ArchivePolicyInput); in.Revision != 2 || in.Days != 14 {
+			t.Fatal("newer choice did not follow acknowledged local write", in)
+		}
 	}
 }
 

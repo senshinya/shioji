@@ -224,7 +224,7 @@ func (v *View) navigationRows(c *n.Context) []navigationRow {
 		}
 		ref := app.SessionLocation{DeviceID: w.DeviceID, WorkspaceID: w.ID, SessionID: s.ID}
 		sessions[ref] = s
-		presence[ref] = v.navigationPresence(c, "session:"+s.ID, (!w.Archived && !s.Archived) || v.showArchived)
+		presence[ref] = v.navigationPresence(c, "session:"+s.ID, !w.Archived && !s.Archived)
 	}
 	rows := []navigationRow{}
 	heading := v.navigationPresence(c, "global-pinned-heading", len(m.NavigationPins()) > 0)
@@ -238,7 +238,7 @@ func (v *View) navigationRows(c *n.Context) []navigationRow {
 			continue
 		}
 		w := byWorkspace[s.WorkspaceID]
-		if (s.Archived || w.Archived) && v.showArchived || presence[ref] <= 0 {
+		if presence[ref] <= 0 {
 			continue
 		}
 		global[ref] = true
@@ -246,7 +246,7 @@ func (v *View) navigationRows(c *n.Context) []navigationRow {
 	}
 	rows = append(rows, navigationRow{kind: navigationWorkspaceHeading, presence: 1})
 	for _, w := range workspaces {
-		p := v.navigationPresence(c, "workspace:"+w.ID, !w.Archived || v.showArchived)
+		p := v.navigationPresence(c, "workspace:"+w.ID, !w.Archived)
 		if p <= 0 {
 			continue
 		}
@@ -284,7 +284,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 			n.Column(c.Key("nav-top")).FillWidth().Padding(8, 8, 0, 8).Gap(4).Children(func() {
 				n.Row(c).Height(26).AlignItems(n.Start).DragWindow().Children(func() { n.Spacer(c).Grow(1); v.searchControl(c, t) })
 				if navButton(c, plus, "新建会话").Background(func() n.Color {
-					if m.SessionID == "" && !v.devices {
+					if m.SessionID == "" && !v.devices && (v.archive == nil || !v.archive.open) {
 						return t.SurfacePressed
 					}
 					return n.Transparent
@@ -351,8 +351,8 @@ func (v *View) navigationRow(c *n.Context, t *n.Theme, r navigationRow) {
 		n.Row(c).Height(32).Padding(8, 0, 0, 6).AlignItems(n.Center).Transform(shift).Children(func() {
 			n.Text(c, "工作区").FontSize(11).FixedLineHeight(16).TextColor(t.TextMuted).Grow(1)
 			iconButton(c, moreActionsIcon, "工作区菜单").Size(24, 24).Menu(func(menu *n.Menu) {
-				if menu.Item("显示已归档").Checked(v.showArchived).Chosen() {
-					v.showArchived = !v.showArchived
+				if menu.Item("已归档…").Chosen() {
+					v.openArchive()
 				}
 			})
 			if iconButton(c, plus, "创建工作区").Size(24, 24).Disabled(!m.Connected).Clicked() {

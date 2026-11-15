@@ -117,7 +117,8 @@ type View struct {
 	navVisibility                                                                                                   map[string]*navVisibility
 	workspaceEditor                                                                                                 *workspaceEditor
 	rename                                                                                                          *sessionRename
-	showArchived                                                                                                    bool
+	archive                                                                                                         *archiveUI
+	archivePolicyPending                                                                                            map[string]string
 	currentTranscriptRow                                                                                            int
 	activityMarkdown                                                                                                markdown.Options
 	secretAnswers                                                                                                   map[string]string
@@ -389,7 +390,9 @@ func (v *View) View(c *n.Context) {
 		v.menuContext = menuContext
 	}
 	v.prepareSecondary()
-	v.requestGit(false)
+	if v.archive == nil || !v.archive.open {
+		v.requestGit(false)
+	}
 	if c.Shortcut(n.Cmd, n.KeyK) {
 		v.searchOpen = !v.searchOpen
 	}
@@ -441,6 +444,10 @@ func (v *View) View(c *n.Context) {
 			return
 		}
 		v.sidebar(c, &t)
+		if v.archive != nil && v.archive.open {
+			v.archivePage(c, &t)
+			return
+		}
 		width, _ := c.Size()
 		owner = v.focusedView()
 		open := owner.Model.SessionID != "" && !v.devices && v.workspaceEditor == nil && m.Inspectors[owner.Model.SessionID] && (!m.FocusSecondary || m.SecondarySessionID == owner.Model.SessionID)
@@ -520,6 +527,7 @@ func (v *View) View(c *n.Context) {
 	v.pruneHistoryCaches()
 	v.deviceDialogs(c, &t)
 	v.managementDialogs(c, &t)
+	v.archiveDialogs(c, &t)
 	v.portForwardDialog(c, &t)
 	v.fileLinkDialog(c, &t)
 	v.attachmentDialog(c, &t)
@@ -530,6 +538,10 @@ func (v *View) View(c *n.Context) {
 }
 
 func (v *View) home() {
+	if a := v.splitRoot().archive; a != nil {
+		a.open = false
+		a.viewing = ""
+	}
 	v.focusedView().cancelPagedHistory()
 	if v.homeSend != nil {
 		v.sent = nil
@@ -571,6 +583,11 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		rightInset = 18 - conversationScrollbarGutter
 	}
 	n.Row(c).Height(48).FillWidth().Padding(0, rightInset, 0, 24).Gap(6).AlignItems(n.Center).DragWindow().Label("会话工具栏").Children(func() {
+		if a := v.splitRoot().archive; a != nil && a.viewing == m.SessionID && m.SessionID != "" {
+			if iconButton(c, conversationBackIcon, "返回已归档").Clicked() {
+				v.openArchive()
+			}
+		}
 		if v.devices {
 			n.Text(c, "设备").FontSize(13).Grow(1)
 			add := iconButton(c, plus, "添加设备")
