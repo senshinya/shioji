@@ -83,11 +83,14 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS works (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
  CREATE TABLE IF NOT EXISTS work_items (session_id TEXT NOT NULL, work_id TEXT NOT NULL, id TEXT NOT NULL, position INTEGER NOT NULL, revision INTEGER NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,work_id,id), FOREIGN KEY(session_id,work_id) REFERENCES works(session_id,id) ON DELETE CASCADE);
  CREATE TABLE IF NOT EXISTS work_inputs (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), work_id TEXT NOT NULL, body BLOB NOT NULL);
+ CREATE TABLE IF NOT EXISTS archive_policy (id INTEGER PRIMARY KEY CHECK(id=1), body BLOB NOT NULL);
+ CREATE TABLE IF NOT EXISTS deleted_operations (id TEXT PRIMARY KEY);
+ CREATE TABLE IF NOT EXISTS deleted_sessions (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, cleaned INTEGER NOT NULL DEFAULT 0);
  CREATE INDEX IF NOT EXISTS operations_session_state ON operations(session_id,state);
  CREATE INDEX IF NOT EXISTS work_inputs_unsettled_session ON work_inputs(session_id) WHERE json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate') AND COALESCE(json_extract(body,'$.executionStopped'),0)=0;
  CREATE INDEX IF NOT EXISTS history_active_source ON history_operations(json_extract(body,'$.source.id')) WHERE json_extract(body,'$.state') IN ('prepared','forked');
  CREATE INDEX IF NOT EXISTS history_active_session ON history_operations(json_extract(body,'$.session.id')) WHERE json_extract(body,'$.state') IN ('prepared','forked');
- PRAGMA user_version=11;`)
+ PRAGMA user_version=12;`)
 	if err != nil {
 		tx.Rollback()
 		return fail(err)
@@ -114,6 +117,19 @@ func Open(path string) (*Store, error) {
 	}
 	_, err = tx.Exec("INSERT OR IGNORE INTO metadata VALUES(1,?,?)", domain.NewID(), domain.NewID())
 	if err != nil {
+		tx.Rollback()
+		return fail(err)
+	}
+	// Legacy archives have no reliable age. Start a complete grace period once,
+	// including when an older worker archived an item after a downgrade.
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, table := range []string{"sessions", "workspaces"} {
+		if _, err = tx.Exec("UPDATE "+table+" SET body=json_set(body,'$.archivedAt',?) WHERE json_extract(body,'$.archived')=1 AND json_extract(body,'$.archivedAt') IS NULL", now); err != nil {
+			tx.Rollback()
+			return fail(err)
+		}
+	}
+	if _, err = tx.Exec(`INSERT OR IGNORE INTO archive_policy SELECT 1,json_object('deviceId',device_id,'days',30,'revision',1) FROM metadata WHERE id=1`); err != nil {
 		tx.Rollback()
 		return fail(err)
 	}
@@ -283,6 +299,13 @@ func (s *Store) UpdateWorkspace(w domain.Workspace) (domain.Workspace, error) {
 }
 func operation(q interface{ QueryRow(string, ...any) *sql.Row }, id string) (domain.Operation, error) {
 	var op domain.Operation
+	var deleted bool
+	if err := q.QueryRow("SELECT EXISTS(SELECT 1 FROM deleted_operations WHERE id=?)", id).Scan(&deleted); err != nil {
+		return op, err
+	}
+	if deleted {
+		return op, errors.New("所属会话已彻底删除，不能重放此操作")
+	}
 	err := q.QueryRow("SELECT id,session_id,state,digest,error,kind FROM operations WHERE id=?", id).Scan(&op.ID, &op.SessionID, &op.State, &op.Digest, &op.Error, &op.Kind)
 	return op, err
 }
@@ -615,6 +638,7 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		title := session.Title
 		branch, head, changed := session.GitBranch, session.GitHead, session.ContextChanged
 		archived, override, sourceTitle, titleRevision := session.Archived, session.TitleOverride, session.SourceTitle, session.TitleRevision
+		archivedAt := session.ArchivedAt
 		contextUsage := session.ContextUsage
 		contextAction := session.ContextAction
 		contextUsageAfter := session.ContextUsageAfterTurnOrder
@@ -637,6 +661,7 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		}
 		session.Title = title
 		session.Archived, session.TitleOverride, session.SourceTitle = archived, override, sourceTitle
+		session.ArchivedAt = archivedAt
 		session.TitleRevision = titleRevision
 		session.GitBranch, session.GitHead, session.ContextChanged = branch, head, changed
 		if session.Revision < revision {
@@ -757,6 +782,11 @@ func (s *Store) Snapshot() (domain.Snapshot, error) {
 	defer s.mu.Unlock()
 	out := domain.Snapshot{DeviceID: s.deviceID, Generation: s.generation, ObservedAt: time.Now().UTC()}
 	var err error
+	policy, err := s.archivePolicyLocked()
+	if err != nil {
+		return out, err
+	}
+	out.ArchivePolicy = &policy
 	if err = s.db.QueryRow("SELECT COALESCE(MAX(sequence),0) FROM journal").Scan(&out.Sequence); err != nil {
 		return out, err
 	}
