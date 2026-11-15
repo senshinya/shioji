@@ -258,7 +258,7 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 			if home {
 				choice := v.Model.GitDrafts[v.Model.WorkspaceID]
 				isolate := choice.NewWorktree
-				if controlFeedback(c, n.Checkbox(c, &isolate, "新建 worktree").FontSize(11).FixedLineHeight(20).AlignItems(n.Center).Disabled(!v.Model.Connected || status.Head == ""), 4).Changed() {
+				if controlFeedback(c, n.Checkbox(c, &isolate, "新建 worktree").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).AlignItems(n.Center).Disabled(!v.Model.Connected || status.Head == ""), 4).Changed() {
 					choice.NewWorktree = isolate
 					v.Model.GitDrafts[v.Model.WorkspaceID] = choice
 				}
