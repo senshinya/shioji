@@ -432,6 +432,13 @@ func (s *ListState) ScrollToRow(row int, y float32, animation Animation) {
 	s.anchorMode, s.pinTarget, s.pinAnimation = listAnchorReadingPending, float64(y), animation
 }
 
+// ScrollToRowWithinContent glides to a reading anchor without exposing space
+// past the content's ends. Manual scrolling releases it without a boundary jump.
+func (s *ListState) ScrollToRowWithinContent(row int, y float32, animation Animation) {
+	s.ScrollToRow(row, y, animation)
+	s.pinWithinContent = true
+}
+
 // ReleaseRow resumes ordinary list anchoring without moving to another row.
 func (s *ListState) ReleaseRow() { s.anchorMode = listAnchorNone }
 

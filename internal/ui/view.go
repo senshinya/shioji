@@ -44,6 +44,7 @@ type View struct {
 	historyPage                      *conversationHistory
 	historyBaseline                  bool
 	historyTarget                    string
+	workSourceTarget                 app.WorkKey
 	deviceConnectionSave             *deviceConnectionSave
 	pathNotice                       devicePathNotice
 	sshExpectedDevice                string
@@ -1189,6 +1190,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	}
 	state.SkipAnchor = func(i int) bool { return i == 0 || i == historyEndRow || hasNewer && i == len(rows)+1 }
 	state.FollowEnd = !hasNewer
+	v.positionWorkSource(c, state, rows)
 	v.anchorHistoryRows(state, rows)
 	v.anchorSentMessage(c, state, rows)
 	v.positionFind(c, state, rows)

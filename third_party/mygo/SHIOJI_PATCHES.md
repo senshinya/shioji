@@ -41,6 +41,10 @@ not expose the following appearance settings required by the frozen design:
   additionally clamps disclosure anchors to the natural content boundaries:
   a shrinking section can move its heading to avoid trailing blank space.
   Unbounded reading/sent-message anchors retain their temporary reading space.
+- `ui.ListState.ScrollToRowWithinContent`: animate source navigation within the
+  natural content boundaries, so a subsequent wheel movement cannot remove
+  artificial trailing space and jump. Covered by Shioji's
+  `internal/ui/work_source_scroll_test.go`, including folded tool sources.
 - `ui.ListState.ScrollToEnd`: accepts an optional animation for an interruptible
   glide from the current reading position to the measured end, without mounting
   intervening history. Appended rows retarget it without moving the current
