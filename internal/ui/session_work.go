@@ -581,6 +581,10 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 				}
 				wrapper.Children(func() {
 					key := v.commandOutputKey(item.ID, w.ID)
+					hasOutput := item.Text != ""
+					for _, part := range item.Parts {
+						hasOutput = hasOutput || part.Text != ""
+					}
 					if kind != "background" || w.Brief == "" {
 						label := item.Name
 						if label == "" {
@@ -590,7 +594,14 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 						heading.Children(func() {
 							n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
 								inlineSymbol(c, commandActivityIcon(item.Name), label, n.Font{Family: t.Font, Size: 12}, 14, t.TextMuted).Shrink(0)
-								n.Text(c, commandPreview(label)).Font(t.Font).FontSize(12).FixedLineHeight(20).Grow(1).MinWidth(0).MaxLines(2).Ellipsis("…").TextColor(t.TextMuted)
+								n.Text(c, commandPreview(label)).Font(t.Font).FontSize(12).FixedLineHeight(20).MinWidth(0).MaxLines(2).Ellipsis("…").TextColor(t.TextMuted)
+								if hasOutput && kind != "background" {
+									angle := float32(0)
+									if v.Model.Collapsed[key] {
+										angle = -90
+									}
+									inlineSymbol(c.Key("command-chevron"), chevron, label, n.Font{Family: t.Font, Size: 12}, 14, t.TextMuted, angle).Shrink(0).Transition(resultBlockMotion(c))
+								}
 							})
 						})
 						if heading.Clicked() && kind != "background" {
@@ -616,10 +627,6 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 					}
 					frame := n.Column(c.Key("command-output-frame")).FillWidth().Clip()
 					retained := n.Local(frame, "item", func() domain.Item { return item })
-					hasOutput := item.Text != ""
-					for _, part := range item.Parts {
-						hasOutput = hasOutput || part.Text != ""
-					}
 					open := hasOutput && !v.Model.Collapsed[key]
 					if open {
 						*retained = item

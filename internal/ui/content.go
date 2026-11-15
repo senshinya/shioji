@@ -103,21 +103,19 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 	if label == "" {
 		label = "工具活动"
 	}
-	button := n.ButtonBase(c.Key("activity-heading")).FillWidth().MinHeight(20).Justify(n.Start).Label(label)
+	button := n.ButtonBase(c.Key("activity-heading")).FillWidth().MinHeight(20).Justify(n.Start).Label(label).Tooltip(label)
 	color := textHoverColor(c, button, t.TextMuted)
 	button.Children(func() {
 		n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
 			font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
+			metadataMotion := resultBlockMotion(c)
 			if item.Kind == "activity" {
 				inlineSymbol(c, activityIcon(item.Presentation), label, font, 14, color)
 			}
-			title := n.Text(c, label).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(12).FixedLineHeight(20).TextColor(color)
+			title := n.Text(c, label).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(12).FixedLineHeight(20).TextColor(color).MinWidth(0).MaxLines(2).Ellipsis("…")
 			if duration != "" {
-				title.SingleLine().Shrink(0)
+				title.SingleLine()
 				n.Text(c.Key("wait-duration"), duration).SingleLine().Shrink(0).FontSize(12).FixedLineHeight(20).TextColor(color)
-				n.Spacer(c).Grow(1)
-			} else {
-				title.Grow(1)
 			}
 			if item.Status != "" {
 				status := activityStatus(item.Status)
@@ -125,15 +123,15 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 					status = issue
 				}
 				animation := motionAnimation(c, 160*time.Millisecond)
-				n.Text(c.Key("activity-status"), status).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
-					ContentTransition(n.ContentTransition{Animation: &animation}).Transition(fadeMotion(c, 180*time.Millisecond))
+				n.Text(c.Key("activity-status"), status).SingleLine().Shrink(0).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
+					ContentTransition(n.ContentTransition{Animation: &animation}).Transition(metadataMotion)
 			}
 			if hasBody {
 				angle := float32(0)
 				if v.Model.Collapsed[key] {
 					angle = -90
 				}
-				inlineSymbol(c.Key("activity-chevron"), chevron, label, font, 10, color, angle).Transition(fadeMotion(c, 180*time.Millisecond))
+				inlineSymbol(c.Key("activity-chevron"), chevron, label, font, 14, color, angle).Shrink(0).Transition(metadataMotion)
 			}
 		})
 	})

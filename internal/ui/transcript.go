@@ -444,10 +444,10 @@ func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index
 	button.Children(func() {
 		n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
 			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(color)
-			inlineSymbol(c, chevron, label, n.Font{Family: t.Font, Size: 11, Weight: 400}, 14, color, angle)
 			if row.toolEnded && closed && row.issues > 0 {
 				n.Text(c, fmt.Sprintf("%d 项未成功", row.issues)).FontSize(11).FixedLineHeight(20).TextColor(color)
 			}
+			inlineSymbol(c, chevron, label, n.Font{Family: t.Font, Size: 11, Weight: 400}, 14, color, angle)
 		})
 	})
 	if button.Clicked() {

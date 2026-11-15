@@ -294,9 +294,20 @@ func TestLargeToolDisclosureKeepsHiddenRowsVirtualized(t *testing.T) {
 	m.Details["s"] = d
 	ui := n.NewTester(New(m, nil, "").View, 1440, 900)
 	ui.Click("10000 次工具调用")
+	textLabelCount := func() int {
+		count := 0
+		for _, label := range ui.Texts() {
+			// Inline decorative glyphs are RichText object replacements,
+			// not additional history labels or mounted tool rows.
+			if label != "\uFFFC" {
+				count++
+			}
+		}
+		return count
+	}
 	for _, delay := range []time.Duration{0, 40, 140} {
 		ui.Advance(delay * time.Millisecond)
-		if got := len(ui.Texts()); got > 150 {
+		if got := textLabelCount(); got > 150 {
 			t.Fatalf("tool disclosure mounted hidden history: %d visible labels", got)
 		}
 	}
@@ -305,7 +316,7 @@ func TestLargeToolDisclosureKeepsHiddenRowsVirtualized(t *testing.T) {
 	}
 	for _, delay := range []time.Duration{0, 140, 40} {
 		ui.Advance(delay * time.Millisecond)
-		if got := len(ui.Texts()); got > 150 {
+		if got := textLabelCount(); got > 150 {
 			t.Fatalf("tool collapse mounted its hidden suffix: %d visible labels", got)
 		}
 	}
