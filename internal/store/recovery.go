@@ -215,7 +215,10 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 		if err = putTurn(tx, id, &turn); err != nil {
 			return none, err
 		}
-		if _, err = journal(tx, domain.Event{Type: "turn", SessionID: id, Turn: &turn}); err != nil {
+		observeReplyCompletion(&session, old, turn)
+		// Carry the worker-owned completion on the recovered turn too, so live
+		// observers and the final recovery snapshot use the same identity.
+		if _, err = journal(tx, domain.Event{Type: "turn", SessionID: id, Turn: &turn, Session: &session}); err != nil {
 			return none, err
 		}
 		status = turn.Status

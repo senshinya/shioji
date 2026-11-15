@@ -1,6 +1,22 @@
 package ui
 
-import "shioji/internal/domain"
+import (
+	"errors"
+	"shioji/internal/domain"
+)
+
+func (v *View) readCompletedReply(id string) {
+	root := v.splitRoot()
+	if root.Controller != nil {
+		if job, ok := root.Model.CompletionReadJob(id); ok {
+			if !root.Controller.Do(job) {
+				job.Apply(root.Model, nil, errors.New("操作队列已满，请重试"))
+			}
+			return
+		}
+	}
+	root.Model.ReadCompletedReply(id)
+}
 
 // Questions and approvals remain first, followed by each unread natural reply.
 // Use the same selection for the button's availability and its action.

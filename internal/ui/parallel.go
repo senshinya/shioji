@@ -47,7 +47,7 @@ func (v *View) openParallel(id string) {
 		root.secondary.focusComposer = true
 	}
 	m.FoldToolHistory[id] = true
-	m.ReadCompletedReply(id)
+	root.readCompletedReply(id)
 }
 func (v *View) closeParallel() {
 	root := v.splitRoot()
@@ -83,7 +83,7 @@ func (v *View) navigateSession(id, workspace string) {
 		m.WorkspaceID = workspace
 	}
 	m.FoldToolHistory[id] = true
-	m.ReadCompletedReply(id)
+	root.readCompletedReply(id)
 }
 func (v *View) prepareSecondary() {
 	m := v.Model

@@ -9,6 +9,7 @@ import (
 	"shioji/internal/tailnet"
 	"slices"
 	"strings"
+	"time"
 
 	"shioji/internal/domain"
 	"shioji/internal/portforward"
@@ -36,6 +37,9 @@ type Model struct {
 	HistoryOpenings            map[string]bool
 	Tailnet                    tailnet.Snapshot
 	CompletedReplies           map[string]CompletedReply
+	startedAt                  time.Time
+	completionCutoffs          map[string]time.Time
+	completionReads            map[string]string
 	Navigation                 NavigationPreferences
 	WorkDetails                map[WorkKey]domain.WorkDetail
 	workReads                  []WorkKey
@@ -106,7 +110,7 @@ type Model struct {
 }
 
 func NewModel() *Model {
-	return &Model{HistoryAnchors: map[string]string{}, HistoryOpenings: map[string]bool{}, HistoryReads: map[string]*HistoryRead{}, HistoryOutlines: map[string]domain.HistoryOutline{}, homeDefaultsPending: true, WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{CollapseLatestTools: true}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{startedAt: time.Now(), completionCutoffs: map[string]time.Time{}, completionReads: map[string]string{}, HistoryAnchors: map[string]string{}, HistoryOpenings: map[string]bool{}, HistoryReads: map[string]*HistoryRead{}, HistoryOutlines: map[string]domain.HistoryOutline{}, homeDefaultsPending: true, WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{CollapseLatestTools: true}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {
@@ -331,14 +335,18 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 func (m *Model) Reject(in domain.Submission, message string) {
 	m.ApplyOperation(domain.Operation{ID: in.OperationID, State: "rejected", Error: message})
 }
-func (m *Model) ApplySnapshot(snapshot domain.Snapshot) {
+func (m *Model) ApplySnapshot(snapshot domain.Snapshot, requestedAt ...time.Time) {
 	if m.sourceConnection != "" {
 		if err := m.validateDeviceSnapshot(m.sourceConnection, snapshot); err != nil {
 			m.scopeFailure(err)
 			return
 		}
 	}
-	m.reconcileCompletedReplies(snapshot)
+	sampledAt := time.Now()
+	if len(requestedAt) > 0 {
+		sampledAt = requestedAt[0]
+	}
+	m.reconcileCompletedReplies(snapshot, sampledAt)
 	if m.Snapshot.Generation != "" && m.Snapshot.Generation != snapshot.Generation {
 		for id := range m.Details {
 			delete(m.HistoryReads, id)
@@ -542,7 +550,6 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 }
 
 type savedState struct {
-	CompletedReplies           map[string]CompletedReply                  `json:"completedReplies,omitempty"`
 	Navigation                 NavigationPreferences                      `json:"navigation,omitempty"`
 	ServicePreparations        map[string]*ServicePreparation             `json:"servicePreparations,omitempty"`
 	ServicePreparationDeviceID string                                     `json:"servicePreparationDeviceId,omitempty"`
@@ -614,7 +621,6 @@ func (m *Model) Load(path string) error {
 		m.DraftSkills = saved.DraftSkills
 	}
 	m.Preferences = saved.Preferences.Normalized()
-	m.CompletedReplies = saved.CompletedReplies
 	m.Navigation = saved.Navigation
 	m.homeConfigContext = saved.HomeConfigContext
 	m.HomeHarnesses = saved.HomeHarnesses

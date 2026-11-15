@@ -121,6 +121,7 @@ func (s *Store) PrepareHistory(in domain.HistoryChange) (domain.HistoryOperation
 		target.Revision = 1
 	}
 	target.ThreadID = ""
+	target.Completion = nil
 	target.Status = "idle"
 	if !in.Restart {
 		target.Status = "completed"
@@ -215,9 +216,11 @@ func (s *Store) CommitHistory(id string) (domain.HistoryOperation, error) {
 	target.ContextUsage = nil
 	target.ContextUsageAfterTurnOrder = 0
 	target.ThreadID = op.ThreadID
+	target.Completion = nil
 	if op.Input.Restart {
 		// Keep metadata edits and accepted launch context authoritative.
 		target = source
+		target.Completion = nil
 		target.ContextUsage = nil
 		target.ContextUsageAfterTurnOrder = 0
 		target.ThreadID = op.ThreadID

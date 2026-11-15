@@ -42,6 +42,7 @@ type LaunchContext struct {
 	Head                  string   `json:"head,omitempty"`
 }
 type Session struct {
+	Completion     *ReplyCompletion    `json:"completion,omitempty"`
 	Origin         *ConversationOrigin `json:"origin,omitempty"`
 	ContextAction  *ContextAction      `json:"contextAction,omitempty"`
 	ContextUsage   *ContextUsage       `json:"contextUsage,omitempty"`
@@ -70,6 +71,18 @@ type Session struct {
 	// ContextUsageAfterTurnOrder excludes reports from before a model change.
 	ContextUsageAfterTurnOrder int64 `json:"contextUsageAfterTurnOrder,omitempty"`
 }
+
+// ReplyCompletion is owned by the device worker. ID fences acknowledgements
+// against a newer reply or replacement history independently of source IDs.
+type ReplyCompletion struct {
+	ID          string    `json:"id"`
+	HistoryRef  string    `json:"historyRef,omitempty"`
+	TurnID      string    `json:"turnId"`
+	Order       int64     `json:"order"`
+	CompletedAt time.Time `json:"completedAt"`
+	Unread      bool      `json:"unread"`
+}
+
 type Submission struct {
 	ReferencePositions []ReferencePosition `json:"referencePositions,omitempty"`
 	Skills             []SkillReference    `json:"skills,omitempty"`
@@ -250,6 +263,7 @@ type Event struct {
 	Turn             *Turn           `json:"turn,omitempty"`
 }
 type Snapshot struct {
+	ObservedAt      time.Time        `json:"observedAt,omitempty"`
 	PendingRequests []PendingRequest `json:"pendingRequests,omitempty"`
 	DeviceID        string           `json:"deviceId"`
 	Generation      string           `json:"generation"`

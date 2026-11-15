@@ -36,7 +36,8 @@ const Major = 2
 // Minor 36 adds bounded display history, prompt indexes and scoped search.
 // Minor 37 adds user-message rounds and coherent byte-chunked read windows.
 // Minor 38 adds device-owned load telemetry and revision-checked idle-sleep control.
-const Minor = 38
+// Minor 39 adds worker-owned reply completion acknowledgements and snapshot time.
+const Minor = 39
 const MaxFrame = 1 << 20
 
 type Frame struct {
@@ -254,6 +255,11 @@ func Welcome(conn net.Conn, deviceID string, build ...domain.WorkerBuild) (*Code
 // ReadinessQuery scopes live runtime profiles to the client's two visible sessions.
 type ReadinessQuery struct {
 	SessionIDs []string `json:"sessionIds,omitempty"`
+}
+
+type CompletionReadInput struct {
+	SessionID    string `json:"sessionId"`
+	CompletionID string `json:"completionId"`
 }
 
 type DirectoryQuery struct {

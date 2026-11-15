@@ -99,6 +99,9 @@ func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.Raw
 	if client == nil || job.epoch == "" || job.epoch != client.Epoch || ctx.Err() != nil {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "连接已改变，操作未发送；请重新提交"}
 	}
+	if job.Method == "session.completion.read" && client.Minor < 39 {
+		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能同步会话处理状态"}
+	}
 	if historyReadMethod(job.Method) && client.Minor < 37 {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能按需加载历史"}
 	}
@@ -958,6 +961,7 @@ func (c *Controller) Run(ctx context.Context) {
 				}
 				var snapshot domain.Snapshot
 				var ready domain.Readiness
+				requestedAt := time.Now()
 				if client.Call(ctx, "snapshot", nil, &snapshot) != nil || client.Call(ctx, "readiness", readinessQuery(), &ready) != nil {
 					disconnected()
 					continue
@@ -987,7 +991,7 @@ func (c *Controller) Run(ctx context.Context) {
 					m.Connected = true
 					m.ConnectionEpoch = epoch
 					m.Readiness = ready
-					m.ApplySnapshot(snapshot)
+					m.ApplySnapshot(snapshot, requestedAt)
 				})
 				for id, phase := range history {
 					history[id] = phase.invalidated()

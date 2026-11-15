@@ -1,9 +1,14 @@
 package app
 
 import (
+	"encoding/json"
+	"errors"
+	"os"
 	"path/filepath"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 	"testing"
+	"time"
 )
 
 func TestCompletedReplyAttentionIsReadOncePerTurn(t *testing.T) {
@@ -66,7 +71,7 @@ func TestCompletedReplyAttentionExcludesNonReplies(t *testing.T) {
 	}
 }
 
-func TestCompletedReplyAttentionSurvivesClientRestart(t *testing.T) {
+func TestCompletedReplyAttentionDoesNotSurviveClientRestart(t *testing.T) {
 	m := NewModel()
 	for i, id := range []string{"read", "unread"} {
 		if err := m.ApplyEvent(domain.Event{Sequence: int64(i + 1), SessionID: id, Type: "turn", Turn: &domain.Turn{ID: id, Order: 1, Status: "completed"}}); err != nil {
@@ -82,10 +87,11 @@ func TestCompletedReplyAttentionSurvivesClientRestart(t *testing.T) {
 	if err := restored.Load(path); err != nil {
 		t.Fatal(err)
 	}
-	if !restored.HasCompletedReply("unread") || restored.HasCompletedReply("read") {
-		t.Fatal("restart lost unread replies or resurrected read ones")
+	if restored.HasCompletedReply("unread") || restored.HasCompletedReply("read") {
+		t.Fatal("replies completed before app startup entered attention")
 	}
-	if err := restored.ApplyEvent(domain.Event{Sequence: 1, SessionID: "read", Type: "turn", Turn: &domain.Turn{ID: "read", Order: 1, Status: "completed"}}); err != nil {
+	old := time.Now().Add(-time.Hour)
+	if err := restored.ApplyEvent(domain.Event{Sequence: 1, SessionID: "read", Type: "turn", Turn: &domain.Turn{ID: "read", Order: 1, Status: "completed", CompletedAt: &old}}); err != nil {
 		t.Fatal(err)
 	}
 	if restored.HasCompletedReply("read") {
@@ -161,8 +167,8 @@ func TestCompletedReplyAttentionReconnectAfterAnotherClientRewritesHistory(t *te
 				t.Fatal(err)
 			}
 			restored.ApplySnapshot(domain.Snapshot{Sequence: 10, Sessions: []domain.Session{before}})
-			if restored.HasCompletedReply("s") != unread {
-				t.Fatal("ordinary same-history reconnect changed completion read state")
+			if restored.HasCompletedReply("s") {
+				t.Fatal("restart restored completion attention")
 			}
 			// A bootstrap snapshot skips the reset journal event from client B.
 			replacement := domain.Session{ID: "s", ThreadID: "replacement-history", Status: "running"}
@@ -177,5 +183,186 @@ func TestCompletedReplyAttentionReconnectAfterAnotherClientRewritesHistory(t *te
 				t.Fatal("old history watermark suppressed the replacement reply")
 			}
 		})
+	}
+}
+
+// Decode the public worker projection so these tests also exercise its wire shape.
+func completionSession(t *testing.T, id string, at time.Time, unread bool) domain.Session {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"id": "s", "threadId": "history", "status": "completed", "completion": map[string]any{"id": id, "historyRef": "history", "turnId": id, "order": 1, "completedAt": at, "unread": unread}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var session domain.Session
+	if err = json.Unmarshal(raw, &session); err != nil {
+		t.Fatal(err)
+	}
+	return session
+}
+
+func TestCompletionAttentionUsesWorkerReadStateAndStartupBoundary(t *testing.T) {
+	m := NewModel()
+	old := completionSession(t, "old", time.Now().Add(-time.Hour), true)
+	m.ApplySnapshot(domain.Snapshot{Sessions: []domain.Session{old}})
+	if m.HasCompletedReply("s") {
+		t.Fatal("pre-startup completion entered attention")
+	}
+	live := completionSession(t, "live", time.Now().Add(time.Second), true)
+	m.ApplySnapshot(domain.Snapshot{Sequence: 5, Sessions: []domain.Session{live}})
+	if !m.HasCompletedReply("s") {
+		t.Fatal("completion during connection loss was missed by snapshot")
+	}
+	read := completionSession(t, "live", time.Now().Add(time.Second), false)
+	if err := m.ApplyEvent(domain.Event{Sequence: 6, Type: "session", SessionID: "s", Session: &read}); err != nil {
+		t.Fatal(err)
+	}
+	if m.HasCompletedReply("s") {
+		t.Fatal("another client's read event did not clear attention")
+	}
+	// Late usage/completion hydration cannot resurrect an acknowledged reply.
+	if err := m.ApplyEvent(domain.Event{Sequence: 7, Type: "turn", SessionID: "s", Session: &read, Turn: &domain.Turn{ID: "live", Status: "completed"}}); err != nil {
+		t.Fatal(err)
+	}
+	if m.HasCompletedReply("s") {
+		t.Fatal("late completion resurrected an acknowledged reply")
+	}
+}
+
+func TestCompletionStartupBoundaryUsesEachWorkersClock(t *testing.T) {
+	for _, offset := range []time.Duration{-24 * time.Hour, 24 * time.Hour} {
+		m := NewModel()
+		m.startedAt = time.Now().Add(-time.Minute)
+		now := time.Now().Add(offset)
+		old := completionSession(t, "old", now.Add(-2*time.Minute), true)
+		m.ApplySnapshot(domain.Snapshot{DeviceID: "remote", ObservedAt: now, Sessions: []domain.Session{old}})
+		if m.HasCompletedReply("s") {
+			t.Fatal("worker clock skew included a pre-startup reply", offset)
+		}
+		live := completionSession(t, "live", now.Add(-30*time.Second), true)
+		m.ApplySnapshot(domain.Snapshot{DeviceID: "remote", Sequence: 2, ObservedAt: now, Sessions: []domain.Session{live}})
+		if !m.HasCompletedReply("s") {
+			t.Fatal("worker clock skew excluded a post-startup reply", offset)
+		}
+	}
+}
+
+func TestCompletionStartupBoundaryExcludesReadinessAndUIQueueDelay(t *testing.T) {
+	m := NewModel()
+	now := time.Now()
+	m.startedAt = now.Add(-10 * time.Second)
+	requestedAt := now.Add(-9 * time.Second)
+	workerSnapshotAt := now.Add(-24*time.Hour - 9*time.Second)
+	old := completionSession(t, "old", now.Add(-24*time.Hour-11*time.Second), true)
+	m.ApplySnapshot(domain.Snapshot{DeviceID: "remote", ObservedAt: workerSnapshotAt, Sessions: []domain.Session{old}}, requestedAt)
+	if m.HasCompletedReply("s") {
+		t.Fatal("readiness/UI delay admitted a prelaunch reply")
+	}
+	live := completionSession(t, "live", now.Add(-24*time.Hour-8*time.Second), true)
+	m.ApplySnapshot(domain.Snapshot{DeviceID: "remote", Sequence: 2, ObservedAt: now.Add(-24 * time.Hour), Sessions: []domain.Session{live}}, now)
+	if !m.HasCompletedReply("s") {
+		t.Fatal("later snapshot moved the original launch boundary")
+	}
+}
+
+func TestAuthoritativeSnapshotClearsRemovedCompletionWithoutChangingSourceID(t *testing.T) {
+	m := NewModel()
+	m.WorkerMinor = 39
+	live := completionSession(t, "removed", time.Now().Add(time.Second), true)
+	m.ApplySnapshot(domain.Snapshot{Sessions: []domain.Session{live}})
+	if !m.HasCompletedReply("s") {
+		t.Fatal("fixture completion missing")
+	}
+	live.Completion = nil
+	m.ApplySnapshot(domain.Snapshot{Sequence: 4, Sessions: []domain.Session{live}})
+	if m.HasCompletedReply("s") {
+		t.Fatal("authoritative removal kept stale attention")
+	}
+	if err := m.ApplyEvent(domain.Event{Sequence: 5, SessionID: "s", Type: "turn", Session: &live, Turn: &domain.Turn{ID: "removed", Status: "completed"}}); err != nil {
+		t.Fatal(err)
+	}
+	if m.HasCompletedReply("s") {
+		t.Fatal("source turn bypassed authoritative worker completion state")
+	}
+}
+
+func TestLegacyClientUnreadStateIsIgnoredOnLaunch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "client.json")
+	if err := os.WriteFile(path, []byte(`{"completedReplies":{"s":{"turnId":"old","unread":true}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewModel()
+	if err := m.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	if m.HasCompletedReply("s") {
+		t.Fatal("legacy state restored old completion attention")
+	}
+}
+
+func TestCompletionReadReceiptKeepsNewerReplyAndFailureRestoresAttention(t *testing.T) {
+	m := NewModel()
+	live := completionSession(t, "first", time.Now().Add(time.Second), true)
+	live.WorkspaceID, live.Revision = "w", 1
+	m.ApplySnapshot(domain.Snapshot{Workspaces: []domain.Workspace{{ID: "w"}}, Sessions: []domain.Session{live}})
+	job, ok := m.CompletionReadJob("s")
+	if !ok || job.ConnectionID != "local" || job.Input.(protocol.CompletionReadInput).CompletionID != "first" {
+		t.Fatal("read not routed to owning worker", job)
+	}
+	if m.HasCompletedReply("s") {
+		t.Fatal("opening did not consume local attention")
+	}
+	job.Apply(m, nil, errors.New("offline"))
+	if !m.HasCompletedReply("s") || m.Error == "" {
+		t.Fatal("failed acknowledgement silently lost attention")
+	}
+	job, _ = m.CompletionReadJob("s")
+	newer := completionSession(t, "second", time.Now().Add(2*time.Second), true)
+	newer.WorkspaceID, newer.Revision = "w", 3
+	if err := m.ApplyEvent(domain.Event{Sequence: 1, Type: "session", SessionID: "s", Session: &newer}); err != nil {
+		t.Fatal(err)
+	}
+	live.Completion.Unread, live.Revision = false, 2
+	raw, _ := json.Marshal(live)
+	job.Apply(m, raw, nil)
+	if !m.HasCompletedReply("s") || m.Snapshot.Sessions[0].Completion.ID != "second" {
+		t.Fatal("late acknowledgement consumed a newer reply")
+	}
+}
+
+func TestCompletionReadRejectsReplyFromAnotherDevice(t *testing.T) {
+	m := NewModel()
+	s := completionSession(t, "reply", time.Now(), true)
+	s.WorkspaceID = "w"
+	m.DeviceStates["air"] = &DeviceState{Snapshot: domain.Snapshot{DeviceID: "B", Sessions: []domain.Session{s}}}
+	job := Job{Method: "session.completion.read", Input: protocol.CompletionReadInput{SessionID: "s", CompletionID: "reply"}}
+	wrong := s
+	wrong.Context.DeviceID = "A"
+	body, _ := json.Marshal(wrong)
+	if m.validateDeviceReply("air", job, body) == nil {
+		t.Fatal("accepted another device's completion receipt")
+	}
+}
+
+func TestCompletionReadReceiptUpdatesOwningDeviceWhileAnotherIsSelected(t *testing.T) {
+	m := NewModel()
+	m.Connections = []DeviceConnection{{ID: "air", DeviceID: "B"}}
+	m.ApplyDeviceUpdate("local", func(p *Model) { p.ApplySnapshot(domain.Snapshot{DeviceID: "A"}) })
+	live := completionSession(t, "reply", time.Now().Add(time.Second), true)
+	live.WorkspaceID, live.Revision = "wB", 1
+	m.ApplyDeviceUpdate("air", func(p *Model) {
+		p.ApplySnapshot(domain.Snapshot{DeviceID: "B", Workspaces: []domain.Workspace{{ID: "wB", DeviceID: "B"}}, Sessions: []domain.Session{live}})
+	})
+	job, ok := m.CompletionReadJob("s")
+	if !ok || job.ConnectionID != "air" {
+		t.Fatal("read routed to selected device", job)
+	}
+	readCompletion := *live.Completion
+	live.Completion = &readCompletion
+	live.Completion.Unread, live.Revision = false, 2
+	raw, _ := json.Marshal(live)
+	job.Apply(m, raw, nil)
+	m.RefreshDevices()
+	if m.DeviceStates["air"].Snapshot.Sessions[0].Completion.Unread || m.HasCompletedReply("s") {
+		t.Fatal("read receipt was overwritten by unrelated device refresh")
 	}
 }

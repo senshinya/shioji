@@ -482,6 +482,12 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		return s.reconcile(in)
 	case "attachment.put", "attachment.get":
 		return s.attachmentCommand(method, body)
+	case "session.completion.read":
+		in, err := decode[protocol.CompletionReadInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.store.ReadCompletion(in.SessionID, in.CompletionID)
 	case "session.rename", "session.reset-title", "session.archive":
 		in, err := decode[protocol.SessionChangeInput](body)
 		if err != nil {

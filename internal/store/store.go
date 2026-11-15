@@ -605,6 +605,10 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		if e.Session == nil || e.Session.ID != sid {
 			return e, errors.New("invalid session event")
 		}
+		completion := session.Completion
+		if session.ThreadID != e.Session.ThreadID {
+			completion = nil
+		}
 		recovery := session.Recovery
 		guard, guardedError := session.ExecutionGuard, session.Error
 		revision := session.Revision
@@ -618,6 +622,7 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 			contextUsage = nil
 		}
 		session = *e.Session
+		session.Completion = completion
 		session.ContextAction = contextAction
 		if a := session.ContextAction; a != nil && a.State.Active() && session.Status == "unknown" {
 			a.State = "unknown"
@@ -709,9 +714,14 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		if e.Turn == nil {
 			return e, errors.New("missing turn")
 		}
+		previous, readErr := load[domain.Turn](tx.QueryRow("SELECT body FROM turns WHERE session_id=? AND id=?", sid, e.Turn.ID))
+		if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {
+			return e, readErr
+		}
 		if err = putTurn(tx, sid, e.Turn); err != nil {
 			return e, err
 		}
+		observeReplyCompletion(&session, previous, *e.Turn)
 		if session.ExecutionGuard == "" {
 			session.Status = e.Turn.Status
 			session.Recovery = nil
@@ -745,7 +755,7 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 func (s *Store) Snapshot() (domain.Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := domain.Snapshot{DeviceID: s.deviceID, Generation: s.generation}
+	out := domain.Snapshot{DeviceID: s.deviceID, Generation: s.generation, ObservedAt: time.Now().UTC()}
 	var err error
 	if err = s.db.QueryRow("SELECT COALESCE(MAX(sequence),0) FROM journal").Scan(&out.Sequence); err != nil {
 		return out, err

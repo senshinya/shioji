@@ -1,7 +1,11 @@
 package ui
 
 import (
+	"encoding/json"
+	"fmt"
 	n "github.com/egoist/mygo/ui"
+	"os"
+	"shioji/internal/app"
 	"shioji/internal/domain"
 	"testing"
 	"time"
@@ -26,6 +30,96 @@ func TestAttentionVisitsCompletedRepliesOnceAndPreservesDrafts(t *testing.T) {
 	v.nextAttention()
 	if m.SessionID != "s" {
 		t.Fatal("read completed reply appeared in attention again")
+	}
+}
+
+// Native component recording uses deterministic worker projections. The actual
+// two-client RPC and durable journal are covered in internal/worker.
+func TestCompletionAttentionWorkerReadAndNativeRecording(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark-%v", dark), func(t *testing.T) {
+			m := parallelModel()
+			m.WorkerMinor = 39
+			s := m.Snapshot.Sessions[1]
+			s.Revision = 1
+			s.Completion = &domain.ReplyCompletion{ID: "old", TurnID: "old", Order: 1, CompletedAt: time.Now().Add(-time.Hour), Unread: true}
+			snapshot := m.Snapshot
+			snapshot.Sessions[1] = s
+			m.ApplySnapshot(snapshot)
+			a := parallelModel()
+			rawSnapshot, _ := json.Marshal(snapshot)
+			var separate domain.Snapshot
+			if err := json.Unmarshal(rawSnapshot, &separate); err != nil {
+				t.Fatal(err)
+			}
+			a.ApplySnapshot(separate)
+			controller := app.NewController("")
+			viewA := New(a, controller, "")
+			v := New(m, nil, "")
+			ui := n.NewTester(v.View, 1240, 820)
+			ui.SetDark(dark)
+			frame := 0
+			dir := os.Getenv("SHIOJI_ATTENTION_RECORDING")
+			if dir != "" {
+				t.Setenv("SHIOJI_SKILL_SNAPSHOTS", fmt.Sprintf("%s/dark-%v", dir, dark))
+			}
+			capture := func() {
+				if dir == "" {
+					ui.Advance(time.Second)
+					return
+				}
+				for range 24 {
+					ui.Advance(time.Second / 12)
+					saveNativeSkillImage(t, ui, fmt.Sprintf("frame-%04d.png", frame))
+					frame++
+				}
+			}
+			capture()
+			if _, available := v.attentionSession(); available {
+				t.Fatal("completed before launch was attention")
+			}
+			s.Revision = 2
+			s.Completion = &domain.ReplyCompletion{ID: "new", TurnID: "new", Order: 2, CompletedAt: time.Now().Add(time.Second), Unread: true}
+			if err := m.ApplyEvent(domain.Event{Sequence: 1, SessionID: s.ID, Type: "turn", Session: &s, Turn: &domain.Turn{ID: "new", Order: 2, Status: "completed"}}); err != nil {
+				t.Fatal(err)
+			}
+			capture()
+			if next, available := v.attentionSession(); !available || next.ID != "other" {
+				t.Fatal("new completion absent")
+			}
+			// A's navigation submits an exact-completion acknowledgement.
+			a.ApplySnapshot(domain.Snapshot{Sequence: 1, Workspaces: separate.Workspaces, Sessions: []domain.Session{separate.Sessions[0], s}})
+			viewA.navigateSession(s.ID, s.WorkspaceID)
+			var readJob app.Job
+			for len(controller.Jobs) > 0 {
+				job := <-controller.Jobs
+				if job.Method == "session.completion.read" {
+					readJob = job
+				}
+			}
+			if readJob.Apply == nil {
+				t.Fatal("navigation did not submit worker acknowledgement")
+			}
+			read := s
+			c := *s.Completion
+			read.Completion = &c
+			read.Completion.Unread, read.Revision = false, 3
+			raw, _ := json.Marshal(read)
+			readJob.Apply(a, raw, nil)
+			if !m.HasCompletedReply("other") {
+				t.Fatal("clients share local state before worker event")
+			}
+			capture()
+			// The same persisted worker event arrives at B and removes attention.
+			if err := m.ApplyEvent(domain.Event{Sequence: 2, SessionID: read.ID, Type: "session", Session: &read}); err != nil {
+				t.Fatal(err)
+			}
+			v.nextAttention()
+			capture()
+			if _, available := v.attentionSession(); available || m.SessionID != "s" || m.Drafts["session:s"] != "left draft" {
+				t.Fatal("shared read retained attention or changed current draft")
+			}
+		})
 	}
 }
 
