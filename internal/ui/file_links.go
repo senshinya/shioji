@@ -22,6 +22,7 @@ import (
 )
 
 type fileLinkState struct {
+	action                                 fileLinkAction
 	session, workspace, epoch, path, error string
 	loading, saving, openPending           bool
 	cancel                                 context.CancelFunc
@@ -29,6 +30,14 @@ type fileLinkState struct {
 	result                                 *app.LinkedFile
 	services                               n.Services
 }
+
+type fileLinkAction uint8
+
+const (
+	fileLinkPreview fileLinkAction = iota
+	fileLinkSave
+	fileLinkOpen
+)
 
 var fileLinkLocation = regexp.MustCompile(`:[0-9]+(?::[0-9]+)?$`)
 
@@ -89,8 +98,11 @@ func (v *View) cancelFileLink() {
 	}
 }
 func (v *View) startFileLink(source domain.Session, path string, services n.Services) {
+	v.startLinkResource(source, path, services, fileLinkPreview)
+}
+func (v *View) startLinkResource(source domain.Session, path string, services n.Services, action fileLinkAction) {
 	v.cancelFileLink()
-	s := &fileLinkState{session: source.ID, workspace: source.WorkspaceID, epoch: v.Model.ConnectionEpoch, path: path, loading: true, services: services}
+	s := &fileLinkState{action: action, session: source.ID, workspace: source.WorkspaceID, epoch: v.Model.ConnectionEpoch, path: path, loading: true, services: services}
 	v.fileLink = s
 	if v.Controller == nil || v.StatePath == "" || !v.Model.Connected {
 		s.loading = false
@@ -115,10 +127,15 @@ func (v *View) startFileLink(source domain.Session, path string, services n.Serv
 			target.SSH = &routed
 		}
 		if err == nil {
-			result, err = target.FetchFile(ctx, directory, source.ID, path, func(meta domain.FileResource, done int64) { s.total.Store(meta.Size); s.bytes.Store(done) })
+			progress := func(meta domain.FileResource, done int64) { s.total.Store(meta.Size); s.bytes.Store(done) }
+			if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+				result, err = target.FetchURL(ctx, directory, path, progress)
+			} else {
+				result, err = target.FetchFile(ctx, directory, source.ID, path, progress)
+			}
 		}
 		var preview *attachmentPreview
-		if err == nil && ctx.Err() == nil {
+		if err == nil && ctx.Err() == nil && action == fileLinkPreview {
 			preview, err = prepareLinkedPreview(result, source.WorkspaceID, source.ID, s.epoch)
 		}
 		if err == nil {
@@ -134,6 +151,14 @@ func (v *View) startFileLink(source domain.Session, path string, services n.Serv
 				return
 			}
 			s.result = &result
+			if action == fileLinkSave {
+				v.saveLinkedFile(s)
+				return
+			}
+			if action == fileLinkOpen {
+				v.openLinkedFile(s)
+				return
+			}
 			if preview != nil {
 				v.fileLink = nil
 				v.attachmentPreview = preview
@@ -183,11 +208,24 @@ func systemFilePreview(path string) bool {
 	return strings.HasPrefix(mime, "video/") || strings.HasPrefix(mime, "audio/") || strings.HasPrefix(mime, "image/") || mime == "application/pdf" || mime == "application/rtf" || strings.HasPrefix(mime, "application/vnd.openxmlformats-officedocument.") || strings.HasPrefix(mime, "application/vnd.oasis.opendocument.")
 }
 func (v *View) openLinkedFile(s *fileLinkState) {
-	if !v.fileLinkCurrent(s) || s.result == nil || !systemFilePreview(s.result.Path) {
+	if !v.fileLinkCurrent(s) || s.result == nil || !(systemFilePreview(s.result.Path) || s.action == fileLinkOpen && defaultFileApplication(s.result.Path)) {
 		return
 	}
 	s.openPending = true
 	s.services.Invalidate()
+}
+
+func defaultFileApplication(path string) bool {
+	if systemFilePreview(path) {
+		return true
+	}
+	// Launch Services sees a cached file's extension, not the peer's MIME.
+	// Only explicit document/source types extend left-click's media preview.
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".txt", ".md", ".markdown", ".go", ".rs", ".c", ".h", ".cc", ".cpp", ".hpp", ".swift", ".css", ".html", ".htm", ".json", ".yaml", ".yml", ".toml", ".xml", ".csv", ".tsv", ".log", ".sql", ".tex":
+		return true
+	}
+	return false
 }
 func (v *View) fileLinkDialog(c *n.Context, t *n.Theme) {
 	s := v.fileLink
@@ -233,6 +271,8 @@ func (v *View) fileLinkDialog(c *n.Context, t *n.Theme) {
 				label := "正在连接所属设备…"
 				if total > 0 {
 					label = "已下载 " + storageCapacity(done) + " / " + storageCapacity(total)
+				} else if done > 0 {
+					label = "已下载 " + storageCapacity(done)
 				}
 				n.Text(c, label).FontSize(12).TextColor(t.TextMuted)
 				if total > 0 {
@@ -249,7 +289,7 @@ func (v *View) fileLinkDialog(c *n.Context, t *n.Theme) {
 				if s.result != nil {
 					n.Text(c, storageCapacity(s.result.Resource.Size)).FontSize(11).TextColor(t.TextMuted)
 					n.Row(c).AlignSelf(n.Stretch).MarginX(-8).Justify(n.SpaceBetween).Gap(8).Children(func() {
-						if systemFilePreview(s.result.Path) && configurationAction(c, "用默认应用打开").Clicked() {
+						if (systemFilePreview(s.result.Path) || s.action == fileLinkOpen && defaultFileApplication(s.result.Path)) && configurationAction(c, "用默认应用打开").Clicked() {
 							v.openLinkedFile(s)
 						}
 						if configurationAction(c, "打开所在文件夹").Clicked() {
@@ -265,7 +305,7 @@ func (v *View) fileLinkDialog(c *n.Context, t *n.Theme) {
 						}
 					})
 				} else if configurationAction(c, "重试").Clicked() {
-					v.startFileLink(v.Model.Details[s.session].Session, s.path, c.Services())
+					v.startLinkResource(v.Model.Details[s.session].Session, s.path, c.Services(), s.action)
 				}
 			}
 		})
@@ -281,7 +321,7 @@ func (v *View) saveLinkedFile(s *fileLinkState) {
 	s.saving = true
 	source, name, parent := s.result.Path, s.result.Resource.Name, v.nativeWindow
 	v.Controller.AttachmentTask(func() app.Update {
-		destination, err := mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: parent, Title: "另存到本机", DefaultPath: name, CreateDirectories: true})
+		destination, err := mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: parent, Title: "另存为", DefaultPath: name, CreateDirectories: true})
 		if err == nil && destination != "" {
 			err = copyLinkedFile(source, destination)
 		}
@@ -289,6 +329,8 @@ func (v *View) saveLinkedFile(s *fileLinkState) {
 			s.saving = false
 			if v.fileLinkCurrent(s) && err != nil {
 				s.error = err.Error()
+			} else if v.fileLinkCurrent(s) && s.action == fileLinkSave {
+				v.cancelFileLink()
 			}
 		}
 	})

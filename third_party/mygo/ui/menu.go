@@ -402,6 +402,17 @@ func (rt *engine) menuPress(chain []uint64, x, y float32) bool {
 		}
 	}
 	text := uint64(0)
+	// Inline links own their actions, while their paragraph owns selection.
+	// Supply EditItems from that paragraph without replacing the link target.
+	if s.editor == nil && s.textClient == nil {
+		for _, id := range chain {
+			if p := rt.states[id]; p != nil && p.editor != nil && p.flags&flagSelectable != 0 {
+				text = p.id
+				rt.textSelectionMenu(p, x, y)
+				break
+			}
+		}
+	}
 	if s.editor != nil || s.textClient != nil {
 		text = s.id
 		if s.editor != nil {
