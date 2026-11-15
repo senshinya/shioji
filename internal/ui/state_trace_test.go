@@ -348,7 +348,7 @@ func TestStateTraceSSHCancelAndReopen(t *testing.T) {
 		if err := ui.Click("添加设备"); err != nil {
 			t.Fatal(err)
 		}
-		if err := ui.Click("直接 SSH"); err != nil {
+		if err := ui.Click("通过 SSH"); err != nil {
 			t.Fatal(err)
 		}
 		ui.Advance(200 * time.Millisecond)

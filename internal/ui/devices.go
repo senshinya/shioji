@@ -105,10 +105,10 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 					n.Row(c).FillWidth().Padding(8, 4).Gap(4).AlignItems(n.Center).Children(func() {
 						textField(c.Key("device-search"), &v.deviceSearch).MinWidth(0).Grow(1).Height(28).FontSize(12).Label("搜索设备").Placeholder("搜索设备").Background(t.Background)
 						add := iconButton(c, plus, "添加设备")
-						v.choiceMenu(c, t, "add-device", add, []menuChoice{{id: "ssh", name: "直接 SSH", choose: func() {
+						v.choiceMenu(c, t, "add-device", add, []menuChoice{{id: "ssh", name: "通过 SSH", icon: commandTerminalIcon, choose: func() {
 							v.dismissDeviceSetup()
 							v.sshCheck = v.sshCheck.show()
-						}}, {id: "tailnet", name: "从 Tailnet 添加", icon: tailscaleMark, choose: func() { v.dismissDeviceSetup(); v.beginTailnet() }}})
+						}}, {id: "tailnet", name: "通过 Tailnet", icon: tailscaleMark, choose: func() { v.dismissDeviceSetup(); v.beginTailnet() }}})
 					})
 					n.Scroll(c).FillWidth().Grow(1).Children(func() {
 						row := func(key, name, address string) {
