@@ -13,7 +13,7 @@ import (
 	"shioji/internal/domain"
 )
 
-func TestWaitDurationStaysBesideItsLabel(t *testing.T) {
+func TestWaitDurationStaysBesideHeading(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, width := range []int{280, 768} {
 			for _, final := range []bool{false, true} {
@@ -43,15 +43,19 @@ func TestWaitDurationStaysBesideItsLabel(t *testing.T) {
 						}
 						f.Close()
 					}
-					label, ok := ui.Find("时长")
+					label, ok := ui.Find("等待")
 					if !ok {
-						t.Fatal("missing duration label")
+						t.Fatal("missing wait heading")
+					}
+					if ui.HasText("时长") {
+						t.Fatal("duration still has a separate detail label")
 					}
 					value, ok := ui.Find("45.0 秒")
 					if !ok {
 						t.Fatal("missing duration value")
 					}
-					if value.X < label.X+label.W+4 || math.Abs(float64((value.Y+value.H)-(label.Y+label.H))) > 2 {
+					headingWidth, _ := n.ShapeText("等待", n.Font{Family: v.Model.Preferences.InterfaceFont, Size: 12}, 0).Size()
+					if math.Abs(float64(value.X-(label.X+headingWidth+6))) > 1 || math.Abs(float64((value.Y+value.H)-(label.Y+label.H))) > 1 {
 						t.Fatalf("duration was stacked instead of inline: label=%+v value=%+v", label, value)
 					}
 					if value.X+value.W > float32(width)-19 {
@@ -61,13 +65,16 @@ func TestWaitDurationStaysBesideItsLabel(t *testing.T) {
 						t.Fatal(err)
 					}
 					ui.Advance(time.Second)
-					if ui.HasText("45.0 秒") {
-						t.Fatal("duration ignored disclosure close")
+					if v.Model.Collapsed["activity:"+v.Model.SessionID+"/wait"] {
+						t.Fatal("wait heading still toggles a detail area")
+					}
+					if !ui.HasText("45.0 秒") {
+						t.Fatal("duration disappeared after clicking heading")
 					}
 					ui.Click("等待")
 					ui.Advance(time.Second)
 					if !ui.HasText("45.0 秒") {
-						t.Fatal("duration was lost on reopening")
+						t.Fatal("duration was lost after repeated heading clicks")
 					}
 				})
 			}

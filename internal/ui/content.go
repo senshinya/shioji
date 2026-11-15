@@ -89,7 +89,16 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 	if _, seen := v.Model.Collapsed[key]; !seen {
 		v.Model.Collapsed[key] = item.Kind == "activity"
 	}
-	hasBody := activityHasBody(item)
+	hasBody := item.Presentation != "wait" && activityHasBody(item)
+	duration := ""
+	if item.Presentation == "wait" {
+		for _, part := range item.Parts {
+			if part.Kind == "text" && part.Label == "时长" {
+				duration = part.Text
+				break
+			}
+		}
+	}
 	label := item.Name
 	if label == "" {
 		label = "工具活动"
@@ -102,7 +111,14 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 			if item.Kind == "activity" {
 				inlineSymbol(c, activityIcon(item.Presentation), label, font, 14, color)
 			}
-			n.Text(c, label).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(12).FixedLineHeight(20).TextColor(color).Grow(1)
+			title := n.Text(c, label).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(12).FixedLineHeight(20).TextColor(color)
+			if duration != "" {
+				title.SingleLine().Shrink(0)
+				n.Text(c.Key("wait-duration"), duration).SingleLine().Shrink(0).FontSize(12).FixedLineHeight(20).TextColor(color)
+				n.Spacer(c).Grow(1)
+			} else {
+				title.Grow(1)
+			}
 			if item.Status != "" {
 				status := activityStatus(item.Status)
 				if issue := toolIssueLabel(item); issue != "" {
@@ -126,6 +142,9 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 			list.KeepRow(v.currentTranscriptRow, button.Bounds().Y-list.Bounds(c).Y)
 		}
 		v.Model.Collapsed[key] = !v.Model.Collapsed[key]
+	}
+	if item.Presentation == "wait" {
+		return
 	}
 	// Keep the measured stack in layout while it closes. Element exit
 	// snapshots alone do not reserve height for the transcript that follows.
@@ -166,11 +185,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 				identity := resultPartKey(part, i)
 				occurrence := occurrences[identity]
 				occurrences[identity]++
-				inline := item.Presentation == "wait" && part.Kind == "text"
 				block := n.Column(c.Key(fmt.Sprintf("%s:%d", identity, occurrence))).FillWidth().Gap(4).Transition(resultBlockMotion(c))
-				if inline {
-					block.Row().Gap(8).AlignItems(n.Baseline)
-				}
 				block.Children(func() {
 					if part.Kind == "image" && part.Attachment != nil {
 						innerHeightDelta += v.outputImage(c, t, *part.Attachment)
@@ -181,10 +196,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 						return
 					}
 					if part.Label != "" {
-						label := n.Text(c.Key("label"), part.Label).Transition(resultBlockMotion(c)).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
-						if inline {
-							label.SingleLine().Shrink(0)
-						}
+						n.Text(c.Key("label"), part.Label).Transition(resultBlockMotion(c)).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
 					}
 					switch part.Kind {
 					case "code":
@@ -208,10 +220,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 						})
 						*mounted = true
 					default:
-						text := resultText(c.Key("part-text"), part.Text, t.TextMuted).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
-						if inline {
-							text.Grow(1).MinWidth(0)
-						}
+						resultText(c.Key("part-text"), part.Text, t.TextMuted).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
 					}
 				})
 			}
