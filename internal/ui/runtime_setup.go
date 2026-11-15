@@ -38,15 +38,16 @@ func (v *View) agentGuidance(c *n.Context, key string, info domain.HarnessInfo) 
 	if install == nil {
 		return
 	}
-	n.Row(c).Gap(6).Children(func() {
-		if install.Documentation != "" && configurationAction(c, "安装说明").Clicked() {
+	n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
+		n.Text(c, install.Guide).Grow(1).MinWidth(0).FontSize(11).FixedLineHeight(18).TextColor(c.Theme().TextMuted)
+		if len(install.SignInCommand) > 0 && (install.Issue == domain.RuntimeSignInRequired || install.Issue == domain.RuntimeAuthenticationExpired) && configurationAction(c, "复制登录命令").Shrink(0).Clicked() {
+			command := v.agentLoginCommand(key, install.SignInCommand)
+			c.WriteClipboard(command)
+		}
+		if install.Documentation != "" && configurationAction(c, "安装说明").Shrink(0).Clicked() {
 			if err := mygo.Shell.OpenExternal(install.Documentation); err != nil {
 				v.Model.Error = err.Error()
 			}
-		}
-		if len(install.SignInCommand) > 0 && (install.Issue == domain.RuntimeSignInRequired || install.Issue == domain.RuntimeAuthenticationExpired) && configurationAction(c, "复制登录命令").Clicked() {
-			command := v.agentLoginCommand(key, install.SignInCommand)
-			c.WriteClipboard(command)
 		}
 	})
 }

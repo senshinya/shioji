@@ -2,7 +2,13 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
 	n "github.com/egoist/mygo/ui"
+	"image"
+	"image/png"
+	"math"
+	"os"
+	"path/filepath"
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
@@ -157,5 +163,69 @@ func TestSavingDisabledAgentDoesNotEnableIt(t *testing.T) {
 	}
 	if !configured {
 		t.Fatal("disabled Agent settings not saved", ui.Texts(), m.Error)
+	}
+}
+
+func TestAgentInstallDocumentationSharesGuidanceRow(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, width := range []int{850, 1240} {
+			t.Run(fmt.Sprintf("dark-%v-width-%d", dark, width), func(t *testing.T) {
+				const guide = "在该设备的终端安装或登录，然后重新检测"
+				m := deviceUIModel()
+				m.Preferences.Appearance = "light"
+				if dark {
+					m.Preferences.Appearance = "dark"
+				}
+				m.DeviceStates["air"].Readiness = domain.Readiness{State: domain.RuntimeUnavailable, Harnesses: []domain.HarnessInfo{{ID: "custom", Name: "Custom Agent", Configured: true, State: domain.RuntimeUnavailable, Installation: &domain.RuntimeInstallation{Configurable: true, Issue: domain.RuntimeMissing, Guide: guide, Documentation: "https://example.test/install"}}}}
+				v := New(m, nil, "")
+				v.devices, v.deviceSelected = true, "air"
+				ui := n.NewTester(v.View, width, 820)
+				ui.SetDark(dark)
+				ui.SetScale(2)
+				ui.Advance(time.Second)
+				if e := ui.Click("配置 Custom Agent 路径"); e != nil {
+					t.Fatal(e)
+				}
+				ui.Advance(time.Second)
+				hint, ok := ui.Find(guide)
+				if !ok {
+					t.Fatal("missing guidance", ui.Texts())
+				}
+				button, ok := ui.Find("安装说明")
+				if !ok {
+					t.Fatal("missing documentation action", ui.Texts())
+				}
+				field, ok := ui.Find("Custom Agent 可执行文件")
+				if !ok {
+					t.Fatal("missing executable field")
+				}
+				if dir := os.Getenv("SHIOJI_INSTALL_GUIDANCE_EVIDENCE"); dir != "" {
+					if e := os.MkdirAll(dir, 0700); e != nil {
+						t.Fatal(e)
+					}
+					// Real native pixels, with the account/input rows retained for context.
+					im := ui.Image()
+					r := image.Rect(int((hint.X-12)*2), int((field.Y-48)*2), int((field.X+field.W+12)*2), int((max(hint.Y+hint.H, button.Y+button.H)+16)*2)).Intersect(im.Bounds())
+					f, e := os.Create(filepath.Join(dir, fmt.Sprintf("dark-%v-width-%d.png", dark, width)))
+					if e != nil {
+						t.Fatal(e)
+					}
+					e = png.Encode(f, im.SubImage(r))
+					f.Close()
+					if e != nil {
+						t.Fatal(e)
+					}
+				}
+				if math.Abs(float64(button.Y+button.H/2-hint.Y-9)) > 1.5 {
+					t.Fatal("documentation is not beside the guidance's first line", hint, button)
+				}
+				if math.Abs(float64(button.X+button.W+8-field.X-field.W)) > 1 {
+					t.Fatal("documentation does not share the form's right edge", button, field)
+				}
+				if hint.X+hint.W > button.X-4 {
+					t.Fatal("guidance overlaps documentation", hint, button)
+				}
+			})
+		}
 	}
 }

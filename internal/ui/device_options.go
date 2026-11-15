@@ -229,9 +229,7 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 					}
 					animatedContentHeight(c, guidance, visible, 240*time.Millisecond, func() float32 {
 						previous := *last
-						installation := previous.Installation
 						n.Column(c).FillWidth().PaddingY(8).Children(func() {
-							n.Text(c, installation.Guide).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
 							v.agentGuidance(c, key, previous)
 						})
 						return 0
