@@ -28,15 +28,24 @@ type editBinding struct {
 }
 
 type View struct {
-	historyPage          *conversationHistory
-	historyBaseline      bool
-	historyTarget        string
-	deviceConnectionSave *deviceConnectionSave
-	pathNotice           devicePathNotice
-	sshExpectedDevice    string
-	tailnet              *tailnetUI
-	sshTailnetPeer       string
-	commentTagEntries    map[string]time.Time
+	feedback                         *conversationFeedback
+	feedbackScope                    feedbackSource
+	feedbackSelection                int
+	feedbackDetail, feedbackOriginal bool
+	feedbackStatusID                 string
+	feedbackPinnedID                 string
+	feedbackStatuses                 []conversationStatus
+	feedbackGitWait                  string
+	draftSaveError                   string
+	historyPage                      *conversationHistory
+	historyBaseline                  bool
+	historyTarget                    string
+	deviceConnectionSave             *deviceConnectionSave
+	pathNotice                       devicePathNotice
+	sshExpectedDevice                string
+	tailnet                          *tailnetUI
+	sshTailnetPeer                   string
+	commentTagEntries                map[string]time.Time
 
 	pendingCommentInsertions []diffCommentInsertion
 
@@ -344,8 +353,15 @@ func (v *View) View(c *n.Context) {
 		v.lastState = saved
 		if !v.syncNavigationSave(saved, err) && err != nil {
 			m.Error = "无法保存草稿：" + err.Error()
+			v.draftSaveError = err.Error()
+		}
+		if err == nil {
+			v.draftSaveError = ""
 		}
 		defer v.queueState()
+	}
+	if !m.FirstRun {
+		v.syncConversationFeedback(c)
 	}
 
 	if m.FirstRun {
@@ -497,6 +513,7 @@ func (v *View) View(c *n.Context) {
 	v.directoryDialog(c, &t)
 	v.conversationImportDialog(c, &t)
 	v.devicePathFeedback(c, &t)
+	v.conversationMessageOverlay(c, &t)
 }
 
 func (v *View) home() {
@@ -581,6 +598,7 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 			status = "未连接"
 		}
 		v.choiceMenu(c, t, "current-device", device, []menuChoice{{id: "connectivity", name: status, disabled: true}, {id: "runtime", name: m.RunReadiness().Descriptor().Name + " · " + string(m.RunReadiness().State), disabled: true}, {id: "details", name: "设备详情", choose: func() { v.deviceSelected = m.ConnectionID(); v.deviceList = false; v.devices = true }}})
+		v.feedbackButton(c, t)
 		if m.SessionID != "" && !v.devices {
 			label := "展开更改侧栏"
 			if m.Inspectors[m.SessionID] {
@@ -627,39 +645,14 @@ func (v *View) homeView(c *n.Context, t *n.Theme) {
 				v.choiceMenu(c, t, "home-workspace", picker, choices)
 				n.Text(c, "做些什么？").FixedLineHeight(48).FontSize(32).TextColor(t.TextMuted)
 			})
+			v.notice(c, t)
 			v.composer(c, t, true)
 		}
-		v.notice(c, t)
 		n.Spacer(c).Grow(1.16)
 	})
 }
 func (v *View) notice(c *n.Context, t *n.Theme) {
-	v.historyOperationNotice(c, t)
-	v.archivedNotice(c, t)
-	message := v.Model.Error
-	if message == app.ModelUnavailableMessage {
-		message = ""
-	}
-	if message == "" && !v.Model.Connected {
-		message = "连接执行服务中…"
-	}
-	if message == "" && v.Model.RunReadiness().State != "ready" {
-		message = v.Model.RunReadiness().Error
-	}
-	gap := float32(0)
-	if v.Model.SessionID != "" {
-		gap = 8
-	}
-	frame := n.Column(c.Key("conversation-notice:"+v.Model.SessionID)).FillWidth().MaxWidth(736).Clip().Background(t.Background).Margin(-gap, 0, 0, 0)
-	retained := n.Local(frame, "message", func() string { return message })
-	if message != "" {
-		*retained = message
-	}
-	animatedContentHeight(c, frame, message != "", 180*time.Millisecond, func() float32 {
-		n.Text(c.Key("message"), *retained).FontSize(12).TextColor(t.TextMuted).Padding(10+gap, 0, 0, 0).
-			Transition(fadeMotion(c, 180*time.Millisecond)).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
-		return 0
-	})
+	v.conversationStatusPanel(c, t)
 }
 func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	m := v.Model
@@ -1360,7 +1353,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			invalidate()
 		}
 	})
-	dock.Children(func() { v.recovery(c, t, detail); v.pending(c, t, detail); v.composer(c, t, false); v.notice(c, t) })
+	dock.Children(func() { v.notice(c, t); v.pending(c, t, detail); v.composer(c, t, false) })
 	v.returnToLatest(c, t, state, dock)
 }
 
@@ -1579,7 +1572,6 @@ func (v *View) sendMessage(steer bool) {
 		return
 	}
 	if v.preparingAttachments(v.Model.DraftKey()) {
-		v.Model.Error = "正在准备附件，请稍候"
 		return
 	}
 	if v.Model.QueueEdits[v.Model.SessionID].ID != "" {
@@ -1588,7 +1580,7 @@ func (v *View) sendMessage(steer bool) {
 	}
 	key, _ := v.gitQuery()
 	if v.gitLoading(key) && !v.Model.Active() && len(v.Model.Queue().Items) == 0 {
-		v.Model.Error = "正在核对设备上的分支，请稍后提交"
+		v.feedbackGitWait = key
 		return
 	}
 	if v.Controller == nil {
@@ -1698,17 +1690,49 @@ func (v *View) do(job app.Job) bool {
 	if state := v.Model.DeviceStates[job.ConnectionID]; state != nil {
 		job.ConnectionEpoch = state.ConnectionEpoch
 	}
-	if v.parent != nil && job.Apply != nil {
+	if job.Apply != nil {
 		apply := job.Apply
-		session := v.Model.SessionID
+		source := v.feedbackSource()
+		source.connection = job.ConnectionID
+		switch in := job.Input.(type) {
+		case domain.Submission:
+			source.session, source.workspace = in.SessionID, in.WorkspaceID
+		case domain.HistoryChange:
+			source.session = in.SessionID
+		case protocol.HistoryOperationQuery:
+			source.session = in.SessionID
+		case protocol.AnswerInput:
+			source.session = in.SessionID
+		}
+		for _, s := range v.persistenceModel().Snapshot.Sessions {
+			if s.ID == source.session {
+				source.workspace = s.WorkspaceID
+				break
+			}
+		}
 		job.Apply = func(model *app.Model, body json.RawMessage, err error) {
 			previous := model.Error
-			model.Error = ""
+			if v.parent != nil {
+				model.Error = ""
+			}
+			feedbackCount := len(model.Feedbacks)
 			apply(model, body, err)
-			if v.Model.SessionID == session {
+			message := model.Error
+			late := source.session != model.SessionID || source.workspace != model.WorkspaceID
+			if message != "" && message != app.ModelUnavailableMessage && (message != previous || v.parent != nil) {
+				if len(model.Feedbacks) == feedbackCount && (!v.feedbackErrorCovered(model, source) || late) {
+					model.ReportFeedback(app.Feedback{ConnectionID: source.connection, SessionID: source.session, WorkspaceID: source.workspace, Title: "操作未完成", Body: "操作未能完成，原有内容已保留。", Details: message})
+				}
+				if !late {
+					v.feedbackState().errors[source.connection] = message
+				}
+			}
+			if v.parent != nil && v.Model.SessionID == source.session {
 				v.Model.Error = model.Error
 			}
-			model.Error = previous
+			if v.parent != nil || late {
+				model.Error = previous
+			}
 		}
 	}
 	return v.Controller.Do(job)

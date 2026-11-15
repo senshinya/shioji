@@ -26,6 +26,8 @@ type InspectorLayout struct {
 }
 
 type Model struct {
+	Feedbacks                  []Feedback
+	UncertainSubmissions       map[string]bool
 	HistoryReads               map[string]*HistoryRead
 	HistoryOutlines            map[string]domain.HistoryOutline
 	HistoryAnchors             map[string]string
@@ -288,6 +290,10 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		return
 	}
 	if op.State == "confirmed" {
+		if m.UncertainSubmissions[op.ID] {
+			m.ReportFeedback(Feedback{ID: op.ID, ConnectionID: m.PendingDevices[op.ID], WorkspaceID: in.WorkspaceID, SessionID: in.SessionID, Kind: FeedbackSuccess, Title: "已核对提交结果", Body: "已确认消息已被接纳。"})
+		}
+		delete(m.UncertainSubmissions, op.ID)
 		key := "home"
 		if in.SessionID != "" {
 			key = "session:" + in.SessionID
@@ -306,11 +312,16 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		m.Resolved[op.ID] = true
 		m.Error = ""
 	} else if op.State == "rejected" || op.State == "abandoned" {
+		if m.UncertainSubmissions[op.ID] {
+			m.ReportFeedback(Feedback{ID: op.ID, ConnectionID: m.PendingDevices[op.ID], WorkspaceID: in.WorkspaceID, SessionID: in.SessionID, Title: "本次提交未被接纳", Body: "原文与附件已保留。", Details: op.Error})
+		}
+		delete(m.UncertainSubmissions, op.ID)
 		delete(m.Pending, op.ID)
 		delete(m.PendingDevices, op.ID)
 		m.Resolved[op.ID] = true
 		m.Error = op.Error
 	} else if op.State == "indeterminate" {
+		m.markSubmissionUncertain(in)
 		m.Error = "提交结果待核实，草稿已保留；请勿重复发送"
 	}
 }
@@ -687,6 +698,10 @@ func (m *Model) Load(path string) error {
 	}
 	if saved.Pending != nil {
 		m.Pending = saved.Pending
+		m.UncertainSubmissions = map[string]bool{}
+		for _, in := range saved.Pending {
+			m.markSubmissionUncertain(in)
+		}
 	}
 	return nil
 }
@@ -696,6 +711,7 @@ func (m *Model) SubmissionError(in domain.Submission, err error) {
 	if errors.As(err, &remote) {
 		m.Reject(in, err.Error())
 	} else {
+		m.markSubmissionUncertain(in)
 		m.Error = "提交结果待核实，草稿已保留"
 	}
 }

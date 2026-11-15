@@ -325,7 +325,7 @@ func TestConversationNoticeRetainsItsHeightWhileClosing(t *testing.T) {
 	}, 800, 300)
 	ui.Advance(time.Second)
 	before, _ := ui.Find("After notice")
-	v.Model.Error = "Temporary connection error"
+	v.draftSaveError = "Temporary save error"
 	ui.Frame()
 	first, _ := ui.Find("After notice")
 	ui.Advance(60 * time.Millisecond)
@@ -335,7 +335,7 @@ func TestConversationNoticeRetainsItsHeightWhileClosing(t *testing.T) {
 	if math.Abs(float64(first.Y-before.Y)) > 1 || middle.Y <= first.Y+1 || middle.Y >= end.Y-1 {
 		t.Fatal("notice pops in", before, first, middle, end)
 	}
-	v.Model.Error = ""
+	v.draftSaveError = ""
 	ui.Frame()
 	first, _ = ui.Find("After notice")
 	ui.Advance(60 * time.Millisecond)

@@ -206,8 +206,8 @@ func TestOptionHoverKeepsEqualOuterInsetsAndSpaceBeforeTheControl(t *testing.T) 
 		if left, right, bottom := img.RGBAAt(x-2, y), img.RGBAAt(int(first.X+first.W)+2, y), img.RGBAAt(x+30, int(last.Y+last.H)+2); left != top || right != top || bottom != top {
 			t.Fatal("option outer insets differ", multi, left, top, right, bottom)
 		}
-		if outside := img.RGBAAt(x-6, y); outside == top {
-			t.Fatal("hover left inset is wider than the four-pixel top inset", multi)
+		if outside := img.RGBAAt(x-6, y); outside != top {
+			t.Fatal("options introduced a second surface", multi)
 		}
 		gap := img.RGBAAt(x+2, y)
 		if gap == top || gap != img.RGBAAt(x+int(first.W/2), y) {

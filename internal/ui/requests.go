@@ -96,7 +96,7 @@ func (v *View) questionField(c *n.Context, t *n.Theme, r domain.PendingRequest, 
 				if i > 0 {
 					processingPanelDivider(c, t)
 				}
-				controlFeedback(c, n.Radio(c.Key(option.Label), &selected.Text, option.Label, option.Label).FillWidth().MinHeight(32).FontSize(12).Label(option.Label).Tooltip(option.Description), 4).Changed()
+				controlFeedback(c, n.Radio(c.Key(option.Label), &selected.Text, option.Label, option.Label).FillWidth().MinHeight(32).PaddingX(6).FontSize(12).Label(option.Label).Tooltip(option.Description), 4).Changed()
 				if option.Description != "" {
 					n.Text(c, option.Description).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Padding(0, 0, 6, 22)
 				}
@@ -156,7 +156,7 @@ func (v *View) formField(c *n.Context, t *n.Theme, r domain.PendingRequest, f do
 					}
 					if f.Type == "array" {
 						checked := containsSelection(values, option.Value)
-						if controlFeedback(c, n.Checkbox(c.Key(option.Value), &checked, option.Label).FillWidth().MinHeight(32).FontSize(12).Label(option.Label), 4).Changed() {
+						if controlFeedback(c, n.Checkbox(c.Key(option.Value), &checked, option.Label).FillWidth().MinHeight(32).PaddingX(6).FontSize(12).Label(option.Label), 4).Changed() {
 							values = toggleSelection(values, option.Value, checked)
 							v.saveRequestSelection(r, f.ID, values)
 						}
@@ -165,7 +165,7 @@ func (v *View) formField(c *n.Context, t *n.Theme, r domain.PendingRequest, f do
 						if len(values) > 0 {
 							value = values[0]
 						}
-						if controlFeedback(c, n.Radio(c.Key(option.Value), &value, option.Value, option.Label).FillWidth().MinHeight(32).FontSize(12).Label(option.Label), 4).Changed() {
+						if controlFeedback(c, n.Radio(c.Key(option.Value), &value, option.Value, option.Label).FillWidth().MinHeight(32).PaddingX(6).FontSize(12).Label(option.Label), 4).Changed() {
 							values = []string{value}
 							v.saveRequestSelection(r, f.ID, values)
 						}

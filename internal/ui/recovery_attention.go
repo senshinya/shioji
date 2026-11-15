@@ -53,9 +53,83 @@ func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d 
 	content.Children(func() {
 		n.Row(c).Gap(processingPanelIconGap).AlignItems(n.Baseline).Children(func() {
 			inlineSymbol(c, recoveryIcon, title, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 14, t.TextMuted)
-			n.Text(c, title).FontSize(13).FixedLineHeight(20)
+			n.Text(c, title).FontSize(13).FixedLineHeight(20).Grow(1)
+			v.feedbackStatusPager(c, t, len(v.feedbackStatuses), v.feedbackSelection)
 		})
 		n.Text(c, message).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FillWidth().PaddingStart(processingPanelTextInset).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+
+		if state.Details && state.Confirm == "" {
+			n.Column(c.Key("recovery-details")).FillWidth().PaddingStart(processingPanelTextInset).Gap(8).Transition(disclosureMotion(c, 240*time.Millisecond)).Children(func() {
+				n.Text(c, "执行设备 · "+v.Model.CurrentDeviceName()).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+				if d.Session.Context.CWD != "" {
+					n.Text(c, d.Session.Context.CWD).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Selectable()
+				}
+				if len(tasks) == 0 {
+					for _, item := range d.Items {
+						if item.Kind == "tool" && item.Status != "completed" && item.Status != "failed" {
+							tasks = append(tasks, domain.RecoveryTask{Command: item.Name, State: "unknown"})
+						}
+					}
+				}
+				if len(tasks) > 0 {
+					if info != nil && info.CanStopTasks {
+						n.Text(c, "以下进程可能与任务相关。核对实际命令后选择要停止的进程，默认不会停止任何进程。").FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
+					}
+					n.Scroll(c.Key("recovery-task-list")).FillWidth().MaxHeight(132).Children(func() {
+						n.Column(c).FillWidth().Gap(8).Children(func() {
+							for i, task := range tasks {
+								if i > 0 {
+									processingPanelDivider(c, t)
+								}
+								n.Column(c.Key(task.ID + task.Command)).FillWidth().Gap(4).Transition(resultBlockMotion(c)).Children(func() {
+									label := "运行状态未确认"
+									if task.State == "running" {
+										label = fmt.Sprintf("可能相关 · PID %d", task.PID)
+										if task.ProcessGroup > 0 && task.PID != task.ProcessGroup {
+											label += fmt.Sprintf(" · 进程组 %d", task.ProcessGroup)
+										}
+									}
+									if task.State == "stopped" {
+										label = "已停止"
+									}
+									n.Text(c, label).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+									command := task.Command
+									if task.ProcessCommand != "" {
+										command = task.ProcessCommand
+									}
+									n.Text(c, command).FillWidth().Font(v.Model.Preferences.CodeFont).FontSize(11).FixedLineHeight(18).Selectable()
+									if task.PID > 0 && task.State == "running" && task.ProcessCommand != "" && v.Model.WorkerMinor >= 8 && info != nil && info.CanStopTasks {
+										checked := state.Selected[task.ID]
+										if controlFeedback(c, n.Checkbox(c.Key(task.ID+"/select"), &checked, "停止此进程组").MinHeight(26).FontSize(12).Label(fmt.Sprintf("选择进程 %d", task.PID)).Disabled(disabled || state.Confirm != ""), 4).Changed() {
+											state.Selected[task.ID] = checked
+										}
+									}
+								})
+							}
+						})
+					})
+				}
+				canStop := info != nil && info.CanStopTasks && v.Model.WorkerMinor >= 8
+				if !canStop && !allStopped {
+					n.Text(c, "当前信息不足，无法由 Shioji 安全处理这些任务。可重试恢复，或在设备确认任务已结束后使用高级处理。").FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
+				}
+				if state.Advanced && info != nil && info.Message != "" {
+					n.Text(c, info.Message).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+				}
+				if state.Result.Message != "" && (info == nil || info.Message != state.Result.Message) {
+					n.Text(c, state.Result.Message).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+				}
+				canEnd := info != nil && info.CanEnd || state.Result.CanEnd
+				if canEnd && !canStop && !allStopped {
+					if ghost(c, "高级处理").Height(24).PaddingX(0).FontSize(11).Clicked() {
+						state.Advanced = !state.Advanced
+					}
+					if state.Advanced && ghost(c, "我已在设备上停止这些任务").Height(26).FontSize(12).PaddingX(8).Disabled(disabled).Clicked() {
+						state.Confirm = "end"
+					}
+				}
+			})
+		}
 		n.Row(c).PaddingStart(processingPanelTextInset).Gap(8).AlignItems(n.Center).Children(func() {
 			label, command := "重试恢复", "check"
 			if state.Details && info != nil && info.CanStopTasks && v.Model.WorkerMinor >= 8 {
@@ -110,79 +184,6 @@ func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d 
 				}
 				if d.Session.Status == "abandoned" && ghost(c, "在新会话接续").Height(26).FontSize(12).PaddingX(8).Disabled(busy).Clicked() {
 					v.recoveryDraft(d.Session.ID)
-				}
-			}
-		})
-		if !state.Details {
-			return
-		}
-		n.Column(c.Key("recovery-details")).FillWidth().PaddingStart(processingPanelTextInset).Gap(8).Transition(disclosureMotion(c, 240*time.Millisecond)).Children(func() {
-			n.Text(c, "执行设备 · "+v.Model.CurrentDeviceName()).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
-			if d.Session.Context.CWD != "" {
-				n.Text(c, d.Session.Context.CWD).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Selectable()
-			}
-			if len(tasks) == 0 {
-				for _, item := range d.Items {
-					if item.Kind == "tool" && item.Status != "completed" && item.Status != "failed" {
-						tasks = append(tasks, domain.RecoveryTask{Command: item.Name, State: "unknown"})
-					}
-				}
-			}
-			if len(tasks) > 0 {
-				if info != nil && info.CanStopTasks {
-					n.Text(c, "以下进程可能与任务相关。核对实际命令后选择要停止的进程，默认不会停止任何进程。").FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
-				}
-				n.Scroll(c.Key("recovery-task-list")).FillWidth().MaxHeight(132).Children(func() {
-					n.Column(c).FillWidth().Gap(8).Children(func() {
-						for i, task := range tasks {
-							if i > 0 {
-								processingPanelDivider(c, t)
-							}
-							n.Column(c.Key(task.ID + task.Command)).FillWidth().Gap(4).Transition(resultBlockMotion(c)).Children(func() {
-								label := "运行状态未确认"
-								if task.State == "running" {
-									label = fmt.Sprintf("可能相关 · PID %d", task.PID)
-									if task.ProcessGroup > 0 && task.PID != task.ProcessGroup {
-										label += fmt.Sprintf(" · 进程组 %d", task.ProcessGroup)
-									}
-								}
-								if task.State == "stopped" {
-									label = "已停止"
-								}
-								n.Text(c, label).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
-								command := task.Command
-								if task.ProcessCommand != "" {
-									command = task.ProcessCommand
-								}
-								n.Text(c, command).FillWidth().Font(v.Model.Preferences.CodeFont).FontSize(11).FixedLineHeight(18).Selectable()
-								if task.PID > 0 && task.State == "running" && task.ProcessCommand != "" && v.Model.WorkerMinor >= 8 && info != nil && info.CanStopTasks {
-									checked := state.Selected[task.ID]
-									if controlFeedback(c, n.Checkbox(c.Key(task.ID+"/select"), &checked, "停止此进程组").MinHeight(26).FontSize(12).Label(fmt.Sprintf("选择进程 %d", task.PID)).Disabled(disabled || state.Confirm != ""), 4).Changed() {
-										state.Selected[task.ID] = checked
-									}
-								}
-							})
-						}
-					})
-				})
-			}
-			canStop := info != nil && info.CanStopTasks && v.Model.WorkerMinor >= 8
-			if !canStop && !allStopped {
-				n.Text(c, "当前信息不足，无法由 Shioji 安全处理这些任务。可重试恢复，或在设备确认任务已结束后使用高级处理。").FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
-			}
-			if state.Advanced && info != nil && info.Message != "" {
-				n.Text(c, info.Message).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
-			}
-			if state.Result.Message != "" && (info == nil || info.Message != state.Result.Message) {
-				n.Text(c, state.Result.Message).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
-			}
-			canEnd := info != nil && info.CanEnd || state.Result.CanEnd
-			if canEnd && !canStop && !allStopped {
-				if ghost(c, "高级处理").Height(24).PaddingX(0).FontSize(11).Clicked() {
-					state.Advanced = !state.Advanced
-				}
-				if state.Advanced && ghost(c, "我已在设备上停止这些任务").Height(26).FontSize(12).PaddingX(8).Disabled(disabled).Clicked() {
-					state.Confirm = "end"
 				}
 			}
 		})

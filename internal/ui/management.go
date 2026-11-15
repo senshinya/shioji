@@ -436,30 +436,3 @@ func (v *View) saveWorkspace(e *workspaceEditor) {
 		e.Error = "操作繁忙，请重试"
 	}
 }
-func (v *View) archivedNotice(c *n.Context, t *n.Theme) bool {
-	kind := v.Model.ArchivedContext()
-	if kind == "" {
-		return false
-	}
-	n.Row(c.Key("archived-notice")).FillWidth().MaxWidth(768).Gap(8).AlignItems(n.Center).Transition(disclosureMotion(c, 180*time.Millisecond)).Children(func() {
-		n.Text(c, kind+"已归档").FontSize(12).TextColor(t.TextMuted)
-		if ghost(c, "恢复"+kind).FontSize(12).Disabled(!v.canManage(v.Model.ConnectionID())).Clicked() {
-			if kind == "工作区" {
-				for _, w := range v.Model.Snapshot.Workspaces {
-					if w.ID == v.Model.WorkspaceID {
-						v.archiveWorkspace(w, false)
-						break
-					}
-				}
-			} else {
-				for _, s := range v.Model.Snapshot.Sessions {
-					if s.ID == v.Model.SessionID {
-						v.sessionChange("session.archive", s, "")
-						break
-					}
-				}
-			}
-		}
-	})
-	return true
-}

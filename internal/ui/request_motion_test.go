@@ -489,7 +489,7 @@ func TestCollapsedRequestsShowTotalInACompactCenteredHeading(t *testing.T) {
 	}
 	card, ok := ui.Find("待处理请求卡片")
 	heading, _ := ui.Find("需要回答")
-	if !ok || card.H != 34 || math.Abs(float64((heading.Y-card.Y)-(card.Y+card.H-heading.Y-heading.H))) > .5 {
+	if !ok || card.H != 38 || math.Abs(float64((heading.Y-card.Y)-(card.Y+card.H-heading.Y-heading.H))) > .5 {
 		t.Fatal("collapsed card is too tall or has unequal vertical insets", card, heading)
 	}
 	if heading.W > 220 {
@@ -533,7 +533,7 @@ func TestCollapsedTotalMovesIntoTheExpandedDenominator(t *testing.T) {
 		card, _ := ui.Find("待处理请求卡片")
 		counter, ok := ui.Find("2 个问题")
 		closed, numberOK := ui.Find("待处理总数")
-		if !ok || !numberOK || math.Abs(float64(card.X+card.W-counter.X-counter.W-15)) > .5 {
+		if !ok || !numberOK || math.Abs(float64(card.X+card.W-counter.X-counter.W-17)) > .5 {
 			t.Fatal("collapsed count is not at the right edge", card, counter, closed)
 		}
 		ui.Click("需要回答")

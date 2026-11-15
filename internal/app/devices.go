@@ -181,9 +181,13 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 		m.DeviceStates[key] = state
 	}
 	current := m.ConnectionID()
+	if m.UncertainSubmissions == nil {
+		m.UncertainSubmissions = map[string]bool{}
+	}
 	p := *m
 	p.Navigation = m.Navigation.Clone()
 	p.Notifications = nil
+	p.Feedbacks = nil
 	p.sourceConnection = key
 	p.Pending = map[string]domain.Submission{}
 	p.PendingDevices = map[string]string{}
@@ -283,6 +287,9 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 		m.WorkspaceID, m.SessionID = workspace, session
 	}
 	m.Notifications = append(m.Notifications, p.Notifications...)
+	for _, feedback := range p.Feedbacks {
+		m.ReportFeedback(feedback)
+	}
 	m.notificationSeen = p.notificationSeen
 	m.CompletedReplies = p.CompletedReplies
 	m.WorkDetails, m.workReads = p.WorkDetails, p.workReads

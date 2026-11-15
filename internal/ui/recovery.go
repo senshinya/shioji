@@ -139,6 +139,7 @@ func (v *View) recovery(c *n.Context, t *n.Theme, d domain.SessionDetail) {
 					n.Row(c).Gap(7).AlignItems(n.Baseline).Grow(1).Children(func() {
 						inlineSymbol(c, recoveryIcon, label, n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}, 14, t.TextMuted)
 						n.Text(c, label).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+						v.feedbackStatusPager(c, t, len(v.feedbackStatuses), v.feedbackSelection)
 					})
 					button := ghost(c, "继续原会话").Height(28).FontSize(12).PaddingX(10).Disabled(disabled || m.RunReadiness().State != "ready" || v.continuationPending(d.Session.ID))
 					if button.Clicked() {

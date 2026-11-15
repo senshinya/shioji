@@ -162,7 +162,7 @@ func TestConversationDockPlainStatusStillHasAnOpaqueBackground(t *testing.T) {
 				d.Items = nil
 			}
 			if mode == "notice" {
-				v.Model.Error = "请重新连接设备"
+				v.draftSaveError = "save failed"
 			} else {
 				v.Model.WorkerMinor = 7
 				d.Session.Status = "unknown"
@@ -177,7 +177,7 @@ func TestConversationDockPlainStatusStillHasAnOpaqueBackground(t *testing.T) {
 		ui.Scroll(800, 300, 0, -400)
 		ui.Advance(time.Second)
 		baseline.Advance(time.Second)
-		label := "请重新连接设备"
+		label := "会话状态面板"
 		if mode == "recovery" {
 			label = "执行恢复"
 		}

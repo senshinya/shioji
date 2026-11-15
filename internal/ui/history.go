@@ -3,11 +3,9 @@ package ui
 import (
 	"encoding/json"
 	"errors"
-	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
-	"time"
 )
 
 var forkIcon = svg("M6 6v3a4 4 0 0 0 4 4v1M14 6v3a4 4 0 0 1-4 4M6 2a2 2 0 1 0 0 4a2 2 0 1 0 0-4M14 2a2 2 0 1 0 0 4a2 2 0 1 0 0-4M10 14a2 2 0 1 0 0 4a2 2 0 1 0 0-4")
@@ -280,55 +278,6 @@ func (v *View) syncHistoryActions() {
 	}
 }
 
-func (v *View) historyOperationNotice(c *n.Context, t *n.Theme) {
-	sid := v.Model.SessionID
-	if motion := v.historyExit; motion != nil && motion.in.SessionID == sid && (motion.phase != historyDispatched || v.historyBusy[sid]) {
-		return
-	}
-	in, ok := v.Model.HistoryActions[sid]
-	if v.historyEditorVisible() {
-		return
-	}
-	edit := v.Model.HistoryEdits[sid]
-	if !ok && edit.ItemID != "" && edit.OperationID == "" {
-		n.Row(c.Key("history-detached-draft")).MaxWidth(768).FillWidth().Gap(12).AlignItems(n.Baseline).Transition(disclosureMotion(c, 200*time.Millisecond)).Children(func() {
-			n.Text(c, "原消息已被替换，修改稿已保留").FontSize(12).TextColor(t.TextMuted).Grow(1)
-			copy := ghost(c, "复制修改稿").FontSize(12).Height(28)
-			copied := n.Local(copy, "copied", func() time.Time { return time.Time{} })
-			if copy.Clicked() {
-				c.WriteClipboard(referencePlainText(referenceDocumentText(v.composerContent(v.Model.HistoryDraftKey()))))
-				*copied = c.Now().Add(2 * time.Second)
-			}
-			if c.Now().Before(*copied) {
-				copy.Tooltip("已复制")
-			}
-			if ghost(c, "放弃编辑").Label("放弃历史编辑").FontSize(12).Height(28).Clicked() {
-				key := v.Model.HistoryDraftKey()
-				delete(v.Model.Drafts, key)
-				delete(v.Model.Attachments, key)
-				delete(v.Model.DraftSkills, key)
-				v.Model.CancelHistoryEdit()
-			}
-		})
-		return
-	}
-	if !ok {
-		return
-	}
-	n.Row(c.Key("history-operation-notice")).MaxWidth(768).FillWidth().Gap(12).AlignItems(n.Baseline).Transition(disclosureMotion(c, 200*time.Millisecond)).Children(func() {
-		text, action := "会话操作结果待核对", "核对结果"
-		if v.historyForked[sid] {
-			text, action = "分叉已保存", "继续完成"
-		}
-		n.Text(c, text).FontSize(12).TextColor(t.TextMuted).Grow(1)
-		if ghost(c, action).FontSize(12).Height(28).Disabled(v.historyBusy[sid] || !v.Model.Connected).Clicked() {
-			v.historyCommand(in, !v.historyForked[sid])
-		}
-		if ghost(c, "取消本次操作").FontSize(12).Height(28).Disabled(v.historyBusy[sid] || !v.Model.Connected).Clicked() {
-			v.cancelHistoryAction(in)
-		}
-	})
-}
 func (v *View) cancelHistoryAction(in domain.HistoryChange) {
 	v.historyBusy[in.SessionID] = true
 	if !v.do(app.Job{Method: "session.cancel-history", Input: protocol.HistoryOperationQuery{ID: in.OperationID, SessionID: in.SessionID}, Apply: func(m *app.Model, b json.RawMessage, err error) {
@@ -349,7 +298,8 @@ func (v *View) cancelHistoryAction(in domain.HistoryChange) {
 		delete(m.HistoryActions, in.SessionID)
 		delete(v.historyForked, in.SessionID)
 		if op.State == "complete" {
-			m.Error = "操作已完成，已接纳的输入保持原状态"
+			m.Error = ""
+			m.ReportFeedback(app.Feedback{SessionID: in.SessionID, Kind: app.FeedbackInformation, Title: "操作已完成", Body: "已接纳的输入保持原状态。"})
 			return
 		}
 		edit := m.HistoryEdits[in.SessionID]
