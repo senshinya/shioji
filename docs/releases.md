@@ -1,6 +1,6 @@
 # Shioji 发布
 
-当前版本：`v0.1.1`。`VERSION` 保存不带 `v` 的数字版本；两个 App bundle 的版本均由构建脚本写入。`dev.shioji.app`、`dev.shioji.runtime` 与现有服务身份保持不变。
+当前版本：`v0.1.2`。`VERSION` 保存不带 `v` 的数字版本；两个 App bundle 的版本均由构建脚本写入。`dev.shioji.app`、`dev.shioji.runtime` 与现有服务身份保持不变。
 
 ## 变更记录与发布说明
 
@@ -8,7 +8,7 @@
 
 使用 `Added`、`Changed`、`Deprecated`、`Removed`、`Fixed`、`Security` 分类，只保留有内容的分类；版本标题包含数字版本、UTC 发布日期和源码／比较链接。说明用户影响，排除本地产物、内部重构和纯测试调整。GitHub Release 正文复用对应版本条目，并补充该版安装与更新方式。修改历史说明保留原发布日期，不移动标签或替换已发布二进制。
 
-v0.1.1 改善会话排序、消息导航、自然底部滚动、圆角遮挡和文件变更列表，并允许确认空闲的工具服务随本机执行服务安全退役。v0.1.0 可通过 App 内更新；v0.0.1 没有自动更新入口，需要手动安装新版。远程执行服务仍需明确升级，新文件类型标识和待发消息发出后的排序需配套新版 worker。
+v0.1.2 增加按用户消息轮次加载历史和 Fast 模式，改善 npm Codex 检测、设备配置、消息导航与编辑选区。v0.1.0 及之后版本可通过 App 内更新；v0.0.1 没有自动更新入口，需要手动安装新版。按轮次分页、Fast 能力识别和 npm 启动环境修复需配套更新所属设备的 worker；旧 worker 仍使用完整历史加载。GUI 更新不自动升级远程 worker，也不停止独立执行服务或 Tailnet。
 
 ## 自动发布
 
@@ -71,7 +71,7 @@ bash packaging/build-dev.sh
 # 指定本机已有 Developer ID identity 和 notarytool profile 后：
 # 另需 APPLE_TEAM_ID、SHIOJI_UPDATE_PUBLIC_KEY 与 SHIOJI_UPDATE_PRIVATE_KEY；
 # 私钥从安全文件/CI Secret 注入环境，不要写在命令参数或 shell 历史中。
-CODE_SIGN_IDENTITY='<证书指纹>' NOTARY_PROFILE='<本机公证配置名称>' RELEASE_TAG=v0.1.1 bash packaging/build-release.sh
+CODE_SIGN_IDENTITY='<证书指纹>' NOTARY_PROFILE='<本机公证配置名称>' RELEASE_TAG=v0.1.2 bash packaging/build-release.sh
 ```
 
 产物位于 `build/release/`。构建不会启动或替换用户正在运行的 GUI、worker 或 Tailnet 节点。
