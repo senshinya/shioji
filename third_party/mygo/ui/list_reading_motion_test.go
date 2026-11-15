@@ -56,11 +56,17 @@ func TestAnimatedScrollToEndKeepsItsPlaceAndFollowsNewRows(t *testing.T) {
 	tt.Frame()
 	before := s.wroteY
 	s.ScrollToEnd(Animation{Duration: 300 * time.Millisecond, Ease: Linear})
+	if !s.FollowingEnd() {
+		t.Fatal("pending end scroll is incorrectly reported as history reading")
+	}
 	tt.Frame()
 	if math.Abs(s.wroteY-before) > 1 {
 		t.Fatal("animated end scroll jumps before its first frame", before, s.wroteY)
 	}
 	tt.Advance(100 * time.Millisecond)
+	if !s.FollowingEnd() {
+		t.Fatal("animated end scroll is incorrectly reported as history reading")
+	}
 	if s.wroteY <= before || s.AtEnd() || built > 35 {
 		t.Fatal("end scroll does not interpolate virtual rows", s.wroteY, built)
 	}
@@ -78,6 +84,27 @@ func TestAnimatedScrollToEndKeepsItsPlaceAndFollowsNewRows(t *testing.T) {
 	tt.Frame()
 	if !s.AtEnd() || !s.FollowingEnd() {
 		t.Fatal("settled end scroll does not follow subsequent output")
+	}
+}
+
+func TestReaderInterruptsAnimatedEndFollowing(t *testing.T) {
+	s := ListState{FollowEnd: true}
+	tt := NewTester(func(c *Context) {
+		List(c, &s, 100, func(i int) { Column(c).Height(40) }).Fill()
+	}, 400, 400)
+	s.ScrollTo(10, Start)
+	tt.Frame()
+	s.ScrollToEnd(Animation{Duration: 300 * time.Millisecond, Ease: Linear})
+	tt.Advance(100 * time.Millisecond)
+	if !s.FollowingEnd() {
+		t.Fatal("animated end scroll did not resume following")
+	}
+	tt.Scroll(200, 200, 0, -120)
+	tt.Frame()
+	y := s.wroteY
+	tt.Advance(time.Second)
+	if s.FollowingEnd() || math.Abs(s.wroteY-y) > 1 {
+		t.Fatal("reader scroll did not interrupt animated end following", y, s.wroteY)
 	}
 }
 

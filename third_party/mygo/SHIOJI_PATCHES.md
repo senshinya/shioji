@@ -90,6 +90,10 @@ not expose the following appearance settings required by the frozen design:
   pane into a clickable container or stealing text-input focus.
 - `ui.ListState.FollowingEnd`: distinguish automatic initial/end positioning
   from explicit history reading when showing the return-to-latest control.
+  Pending and active `ScrollToEnd` glides count as following, so an accepted
+  send does not flash the control before reaching the new end. Reader scrolling
+  still interrupts following, covered by `ui/list_reading_motion_test.go` and
+  Shioji's `internal/ui/latest_send_test.go`.
 - `ui.ListState.FollowAnimation` measures growth below a visible keyed row,
   including content above fixed trailing footers. `FollowInset` excludes
   independently animated composer/request space from that glide, keeping the

@@ -466,7 +466,7 @@ func (s *ListState) AtEnd() bool {
 // layout or a sent-message glide) from a reader who has left the latest output.
 func (s *ListState) FollowingEnd() bool {
 	s.read = true
-	return s.FollowEnd && (!s.started || s.following || s.anchored() && s.sentAnchor())
+	return s.FollowEnd && (!s.started || s.following || s.sentAnchor() || s.endAnchor())
 }
 
 // Focused reports whether the List, Table or Outline using s has

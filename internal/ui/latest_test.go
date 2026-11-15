@@ -150,10 +150,8 @@ func TestLatestControlFadesInAndOut(t *testing.T) {
 			t.Fatal("latest caption appears without fading in", dark, entering, settled)
 		}
 		ui.Click("回到最新")
-		for frame := 0; frame < 40 && !v.lists["s"].AtEnd(); frame++ {
-			ui.Advance(time.Second / 60)
-		}
-		ui.Frame()
+		// Starting the end glide resumes following immediately; the control
+		// fades out then, rather than waiting for the viewport to arrive.
 		ui.Advance(50 * time.Millisecond)
 		exiting := toolLabelContrast(ui.Image(), caption, dark)
 		ui.Advance(200 * time.Millisecond)
