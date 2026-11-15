@@ -551,7 +551,10 @@ func (v *View) workspaceSettingsHeader(c *n.Context, t *n.Theme) {
 			}
 			n.Row(c).FillWidth().Height(32).Gap(16).AlignItems(n.Baseline).Children(func() {
 				inlineIconText(c, workspaceIcon, e.Workspace.Name, n.Font{Family: t.Font, Size: 20}, 24, 8, t.Text).Grow(1).MinWidth(0)
-				n.Text(c, v.Model.DeviceName(e.Workspace.DeviceID)).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+				name := v.Model.DeviceName(e.Workspace.DeviceID)
+				titleCenter := inlineFontMetrics(e.Workspace.Name, n.Font{Family: t.Font, Size: 20, Weight: 400}).center
+				deviceCenter := inlineFontMetrics(name, n.Font{Family: t.Font, Size: 12, Weight: 400}).center
+				n.Text(c, name).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Transform(n.Translation(0, deviceCenter-titleCenter))
 			})
 		})
 	})

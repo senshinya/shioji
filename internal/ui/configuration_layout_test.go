@@ -4,6 +4,7 @@ import (
 	"fmt"
 	n "github.com/egoist/mygo/ui"
 	"math"
+	"shioji/internal/app"
 	"shioji/internal/domain"
 	"testing"
 	"time"
@@ -108,13 +109,35 @@ func TestWideDevicePagesShareHeaderAndBodyEdges(t *testing.T) {
 }
 
 func TestWideWorkspaceSettingsUsesAvailableWidth(t *testing.T) {
-	v := New(deviceUIModel(), nil, "")
-	v.editWorkspace(v.Model.Snapshot.Workspaces[0])
-	ui := n.NewTester(v.View, 1800, 820)
-	ui.Advance(time.Second)
-	field, ok := ui.Find("工作区名称")
-	if !ok || math.Abs(float64(1800-configurationInset-field.X-field.W)) > 1 {
-		t.Fatal("workspace settings retains an asymmetric capped column", field)
+	for _, width := range []int{850, 1240, 1800} {
+		for _, dark := range []bool{false, true} {
+			t.Run(fmt.Sprintf("width-%d-dark-%v", width, dark), func(t *testing.T) {
+				m := deviceUIModel()
+				m.LocalDeviceName = "MacMini at Home"
+				m.DeviceStates["local"].WorkerMinor = 5
+				v := New(m, app.NewController(""), "")
+				v.editWorkspace(m.Snapshot.Workspaces[0])
+				v.workspaceEditor.Workspace.Name = "shioji"
+				v.workspaceEditor.Workspace.Folders = []string{"/Users/shinya/Downloads/tahuna", "/Users/shinya/Projects/红黑树与边界条件/very-long-workspace-directory/another-folder"}
+				v.workspaceEditor.Main = v.workspaceEditor.Workspace.Folders[0]
+				ui := n.NewTester(v.View, width, 820)
+				ui.SetDark(dark)
+				ui.Advance(time.Second)
+				field, ok := ui.Find("工作区名称")
+				title, _ := ui.Find("shioji")
+				cancel, _ := ui.Find("取消工作区编辑")
+				add, _ := ui.Find("添加目录")
+				if !ok || math.Abs(float64(float32(width)-configurationInset-field.X-field.W)) > 1 || math.Abs(float64(title.X-field.X)) > 1 || math.Abs(float64(cancel.X-field.X)) > 1 {
+					t.Fatal("workspace settings lost its full width or original shared left edge", title, field, cancel)
+				}
+				for _, path := range v.workspaceEditor.Workspace.Folders {
+					remove, _ := ui.Find("移除目录：" + path)
+					if math.Abs(float64(remove.X+remove.W/2-add.X-add.W/2)) > 1 {
+						t.Error("directory icon buttons do not share one visual center column", remove, add)
+					}
+				}
+				saveNativeSkillImage(t, ui, fmt.Sprintf("workspace-fullwidth-%d-dark-%v.png", width, dark))
+			})
+		}
 	}
-	saveNativeSkillImage(t, ui, "workspace-width-1800.png")
 }

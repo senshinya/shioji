@@ -20,4 +20,5 @@ const (
 	configurationSectionSize        = 14
 	configurationListHeight         = 140
 	configurationHoverInset         = 8
+	workspaceDirectoryChoiceInset   = 4
 )
