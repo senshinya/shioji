@@ -19,15 +19,17 @@ func TestSessionManagementRenamesArchivesAndRestoresWithoutLosingHistory(t *test
 	var d domain.SessionDetail
 	wait(t, func() bool {
 		call(t, c, "session", worker.SessionQuery{ID: op.SessionID}, &d)
-		return d.Session.Status == "completed"
+		// Exercise management after automatic naming has advanced its own
+		// title revision, rather than depending on which background task wins.
+		return d.Session.Status == "completed" && d.Session.SourceTitle != ""
 	})
 	count := len(d.Items)
 	var renamed domain.Session
-	call(t, c, "session.rename", map[string]any{"sessionId": op.SessionID, "revision": d.Session.Revision, "title": "手动会话名称"}, &renamed)
+	call(t, c, "session.rename", map[string]any{"sessionId": op.SessionID, "titleRevision": d.Session.TitleRevision, "title": "手动会话名称"}, &renamed)
 	if renamed.Title != "手动会话名称" {
 		t.Fatal("rename not applied", renamed)
 	}
-	if err := c.Call(context.Background(), "session.rename", map[string]any{"sessionId": op.SessionID, "revision": d.Session.Revision, "title": "stale"}, nil); err == nil {
+	if err := c.Call(context.Background(), "session.rename", map[string]any{"sessionId": op.SessionID, "titleRevision": d.Session.TitleRevision, "title": "stale"}, nil); err == nil {
 		t.Fatal("stale rename overwrote latest title")
 	}
 	var archived domain.Session
