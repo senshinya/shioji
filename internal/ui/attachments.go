@@ -519,7 +519,7 @@ func (v *View) openAttachment(a domain.Attachment, workspace string, source n.Re
 		return
 	}
 	if v.attachmentPreview != nil {
-		v.attachmentPreview.cancelMarkdown()
+		v.attachmentPreview.releaseMarkdown()
 	}
 	p := &attachmentPreview{Attachment: a, WorkspaceID: workspace, SourceSessionID: v.Model.SessionID, SourceEpoch: v.Model.ConnectionEpoch, presence: previewOpening, Loading: true, Source: source}
 	if len(origin) > 0 {
@@ -570,8 +570,8 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 	if p == nil || !p.visible() {
 		return
 	}
-	if (p.LocalPath != "" || p.SourceSessionID != "") && (v.Model.SessionID != p.SourceSessionID || v.Model.ConnectionEpoch != p.SourceEpoch || v.parent != nil && v.parent.Model.SecondarySessionID != p.SourceSessionID) {
-		p.cancelMarkdown()
+	if (p.LocalPath != "" || p.SourceSessionID != "" || p.SourceEpoch != "") && (v.Model.SessionID != p.SourceSessionID || v.Model.ConnectionEpoch != p.SourceEpoch || v.parent != nil && v.parent.Model.SecondarySessionID != p.SourceSessionID) {
+		p.releaseMarkdown()
 		p.presence = previewHidden
 		return
 	}
@@ -755,6 +755,9 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 	}
 	if reduce && !p.open() {
 		p.presence = previewHidden
+	}
+	if p.presence == previewHidden {
+		p.releaseMarkdown()
 	}
 }
 

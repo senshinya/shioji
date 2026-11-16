@@ -114,7 +114,8 @@ func (v *View) CloseTransient() {
 	v.cancelPagedHistory()
 	v.cancelFileLink()
 	if v.attachmentPreview != nil {
-		v.attachmentPreview.cancelMarkdown()
+		v.attachmentPreview.presence = previewHidden
+		v.attachmentPreview.releaseMarkdown()
 	}
 	if v.secondary != nil {
 		v.secondary.CloseTransient()

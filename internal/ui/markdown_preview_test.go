@@ -278,6 +278,39 @@ func TestMarkdownPreviewCancelsResourcesOnConnectionHandoff(t *testing.T) {
 	}
 }
 
+func TestMarkdownPreviewReleasesImageStateAfterExitAndWindowClose(t *testing.T) {
+	for _, action := range []string{"close", "connection", "window"} {
+		t.Run(action, func(t *testing.T) {
+			v := New(layoutModel(), nil, "")
+			v.Model.SessionID = ""
+			v.Model.ConnectionEpoch = "old"
+			p := &attachmentPreview{Attachment: domain.Attachment{ID: "lifecycle", Name: "images.md", MIME: "text/plain"}, SourceEpoch: "old", presence: previewOpening, Text: "![图](image.png)"}
+			v.attachmentPreview = p
+			ui := n.NewTester(v.View, 1240, 820)
+			ui.Advance(time.Second)
+			if p.Markdown == nil {
+				t.Fatal("missing image renderer state")
+			}
+			if action == "close" {
+				ui.Click("关闭附件预览")
+				ui.Advance(50 * time.Millisecond)
+				if p.Markdown == nil {
+					t.Fatal("image state released before exit animation finished")
+				}
+				ui.Advance(time.Second)
+			} else if action == "connection" {
+				v.Model.ConnectionEpoch = "new"
+				ui.Frame()
+			} else {
+				v.CloseTransient()
+			}
+			if p.Markdown != nil {
+				t.Fatal("inactive preview still retains native Markdown image cache", action)
+			}
+		})
+	}
+}
+
 func TestMarkdownPreviewEmptyAndOtherFiles(t *testing.T) {
 	for _, tc := range []struct {
 		name, text string

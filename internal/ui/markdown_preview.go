@@ -101,6 +101,11 @@ func (p *attachmentPreview) cancelMarkdown() {
 	}
 }
 
+func (p *attachmentPreview) releaseMarkdown() {
+	p.cancelMarkdown()
+	p.Markdown = nil
+}
+
 // Paths remain device paths. Only the authenticated worker may open them.
 func (p *attachmentPreview) markdownPath(dest string) (string, error) {
 	path, err := fileLinkPath(dest)
