@@ -456,8 +456,8 @@ func (v *View) drawDeviceScene(p *n.Painter, box n.Rect, t *n.Theme, icon app.De
 	if local {
 		target.X -= 166 * scale
 	}
-	p.Image(deviceSceneTarget(t, icon), target, n.Contain)
 	if local {
+		p.Image(deviceSceneTarget(t, icon), target, n.Contain)
 		return
 	}
 	now := p.Now()
@@ -510,6 +510,8 @@ func (v *View) drawDeviceScene(p *n.Painter, box n.Rect, t *n.Theme, icon app.De
 			}
 		}
 	}
+	// Hardware masks the incoming wire, including the filled input-port center.
+	p.Image(deviceSceneTarget(t, icon), target, n.Contain)
 	if !local {
 		r := n.Rect{X: box.X + 77*scale, Y: box.Y + (deviceScenePortY+(height-210)/2-3)*scale, W: 6 * scale, H: 6 * scale}
 		p.Fill(r, t.Background, 3*scale)
