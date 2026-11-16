@@ -12,7 +12,9 @@ type ConversationQuery struct {
 }
 type ConversationImportInput struct {
 	ConversationQuery
-	Config domain.RunConfig `json:"config"`
+	Config          domain.RunConfig `json:"config"`
+	SessionID       string           `json:"sessionId,omitempty"`
+	SessionRevision int64            `json:"sessionRevision,omitempty"`
 }
 
 type WorkspaceInput struct {

@@ -342,6 +342,9 @@ func (v *View) conversationStatuses(now time.Time) []conversationStatus {
 	if status := v.historyConversationStatus(); status != nil {
 		out = append(out, *status)
 	}
+	if status := v.importedConversationStatus(); status != nil {
+		out = append(out, *status)
+	}
 	d := m.Details[m.SessionID]
 	if d.Session.Status.NeedsRecovery() || d.Session.Recovery != nil && d.Session.Recovery.CanContinue && (d.Session.Status == "abandoned" || d.Session.Status == "interrupted" || d.Session.Status == "failed") {
 		out = append(out, conversationStatus{id: "recovery", priority: 2})

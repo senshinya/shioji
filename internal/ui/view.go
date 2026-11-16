@@ -190,6 +190,7 @@ type View struct {
 	remoteWorkspaceRequest                                                                                          string
 	remoteWorkspaceBusy                                                                                             bool
 	workspaceCreation                                                                                               *workspaceCreation
+	importCompletion                                                                                                *conversationImportCompletion
 	collapsedWorkspaces                                                                                             map[string]bool
 	dockHeight                                                                                                      float32
 	searchOpen                                                                                                      bool

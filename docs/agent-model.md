@@ -10,7 +10,7 @@ Codex adapter 启动时检查当前安装导出的协议形状和实际能力，
 
 ## 子工作来源与待处理请求
 
-已有外部会话通过可选 `ConversationReader` 发现与只读预览；共享的 `ConversationCandidate`、`ConversationPreview`、`ConversationOrigin` 不含具体 harness 结构。`SourceRef` 与 `ResumeRef` 由 adapter 生成并解释。worker 负责范围验证、持久去重和原子导入，首次提交通过 `ConversationContinuation` 准备独立的已导入历史上下文，不恢复外部进程。详见[会话导入](conversation-import.md)。
+已有外部会话通过可选 `ConversationReader` 发现与只读预览，正式导入通过独立的 `ConversationImporter` 读取设备上的完整快照；共享的 `ConversationCandidate`、`ConversationPreview`、`ConversationOrigin` 不含具体 harness 结构。`SourceRef` 与 `ResumeRef` 由 adapter 生成并解释。worker 负责范围验证、持久去重、原子导入及旧部分副本的显式补全，首次提交通过 `ConversationContinuation` 准备独立的已导入历史上下文，不恢复外部进程。详见[会话导入](conversation-import.md)。
 
 `PendingRequest.WorkID` 与请求来源／回执 `Item.WorkID` 是 session 内的不透明工作引用；没有引用就是主会话请求。adapter 只从已确认的结构化子执行关系建立引用，保留原生请求 ID、子线程与子轮次，不交给 UI 推断。快速子请求可以在已知 spawn 执行期间暂存，最多 32 项／256 KiB，归属确认前不进入 UI；不能建立归属则显式拒绝。
 

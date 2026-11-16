@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -8,6 +9,70 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/store"
 )
+
+func TestCompleteConversationImportPersistsBeyondPreviewLimits(t *testing.T) {
+	s := open(t)
+	w := workspace(t, s)
+	p := domain.ConversationPreview{Candidate: domain.ConversationCandidate{SourceRef: "long", HarnessID: "memory", Title: "Long history", Directory: w.Folders[0]}, ResumeRef: "complete-prefix"}
+	for i := range 75 {
+		turn := fmt.Sprintf("turn-%d", i)
+		p.Turns = append(p.Turns, domain.Turn{ID: turn, Status: "completed"})
+		for j, kind := range []string{"user", "tool", "assistant"} {
+			p.Items = append(p.Items, domain.Item{ID: fmt.Sprintf("item-%d-%d", i, j), TurnID: turn, Kind: kind, Text: fmt.Sprintf("history %d %d", i, j), Final: true})
+		}
+	}
+	imported, err := s.ImportConversation(w, "memory", p, domain.RunConfig{})
+	if err != nil {
+		t.Fatal("complete import is still limited by the preview budget", err)
+	}
+	d, err := s.SessionHistory(domain.HistoryQuery{SessionID: imported.ID, Rounds: 5})
+	if err != nil || d.History == nil || !d.History.Older {
+		t.Fatal("full import did not use ordinary paged history", d.History, err)
+	}
+	matches, err := s.HistoryMatches(domain.HistorySearchQuery{SessionID: imported.ID, Query: "history 0 0"})
+	if err != nil || len(matches.Matches) != 1 {
+		t.Fatal("earliest source input was not persisted", matches, err)
+	}
+}
+
+func TestCompleteLegacyImportReplacesHistoryInPlaceAndRejectsStaleRevision(t *testing.T) {
+	s := open(t)
+	w := workspace(t, s)
+	p := domain.ConversationPreview{Candidate: domain.ConversationCandidate{SourceRef: "legacy", HarnessID: "memory", Title: "Source title", Directory: w.Folders[0]}, Truncated: true, Reason: "partial", Turns: []domain.Turn{{ID: "t2", Status: "completed"}}, Items: []domain.Item{{ID: "a2", TurnID: "t2", Kind: "assistant", Text: "tail", Final: true}}}
+	old, err := s.ImportConversation(w, "memory", p, domain.RunConfig{Model: "original-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repair, ok := any(s).(interface {
+		CompleteConversationImport(domain.Workspace, string, domain.ConversationPreview, string, int64) (domain.Session, error)
+	})
+	if !ok {
+		t.Fatal("legacy partial imports have no in-place completion path")
+	}
+	p.ResumeRef, p.Truncated, p.Reason = "full-prefix", false, ""
+	p.Candidate.Title = "Changed source title"
+	p.Turns = append([]domain.Turn{{ID: "t1", Status: "completed"}}, p.Turns...)
+	p.Items = append([]domain.Item{{ID: "u1", TurnID: "t1", Kind: "user", Text: "earliest input", Final: true}}, p.Items...)
+	if _, err = repair.CompleteConversationImport(w, "memory", p, old.ID, old.Revision+1); err == nil {
+		t.Fatal("changed session was overwritten")
+	}
+	current, _ := s.Session(old.ID, 0, 100)
+	if len(current.Items) != 1 || !current.Session.Origin.Truncated {
+		t.Fatal("failed completion changed existing history")
+	}
+	full, err := repair.CompleteConversationImport(w, "memory", p, old.ID, old.Revision)
+	if err != nil || full.ID != old.ID || full.Revision <= old.Revision || full.Title != old.Title || full.Config.Model != "original-model" || full.Origin.Truncated || full.Origin.ResumeRef != "full-prefix" {
+		t.Fatal("completion lost original identity or configuration", full, err)
+	}
+	d, _ := s.Session(old.ID, 0, 100)
+	if len(d.Items) != 2 || len(d.Turns) != 2 || d.Items[0].Text != "earliest input" {
+		t.Fatal("completion did not replace the partial transcript", d)
+	}
+	again, err := repair.CompleteConversationImport(w, "memory", p, old.ID, old.Revision)
+	if err != nil || again.Revision != full.Revision {
+		t.Fatal("retry reapplied completion", again, err)
+	}
+}
 
 func TestConversationImportIsAtomicAndDeduplicatesAcrossReopen(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "worker.sqlite")

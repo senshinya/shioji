@@ -40,7 +40,9 @@ const Major = 2
 // Minor 40 adds device-owned archive policy and permanent archive deletion.
 // Minor 41 adds round-based, snapshot-coherent child-agent history paging.
 // WorkerBuild.Maintenance advertises durable maintenance independently of minor.
-const Minor = 41
+// Minor 42 separates complete conversation imports from bounded previews and
+// adds explicit, revision-checked completion of legacy partial imports.
+const Minor = 42
 const MaxFrame = 1 << 20
 
 type Frame struct {

@@ -112,13 +112,35 @@ func (s *Server) importConversation(in protocol.ConversationImportInput) (domain
 		return domain.Session{}, errors.New("缺少导入来源")
 	}
 	if old, e := s.store.ImportedConversation(w.ID, in.HarnessID, in.SourceRef); e == nil {
-		return old, nil
+		if in.SessionID == "" || old.ID == in.SessionID && old.Origin != nil && old.Origin.ResumeRef != "" && !old.Origin.Truncated {
+			return old, nil
+		}
 	} else if !errors.Is(e, sql.ErrNoRows) {
 		return domain.Session{}, e
 	}
-	p, err := s.previewConversation(in.ConversationQuery)
+	r, release, err := s.borrowCatalog(in.HarnessID)
 	if err != nil {
 		return domain.Session{}, err
+	}
+	defer release()
+	importer, ok := r.(harness.ConversationImporter)
+	if !ok {
+		return domain.Session{}, harness.Unsupported("complete-conversation-import")
+	}
+	ctx, cancel := context.WithTimeout(s.ctx, 45*time.Second)
+	defer cancel()
+	p, err := importer.ImportConversation(ctx, domain.LaunchContext{DeviceID: s.store.DeviceID(), CWD: in.Directory}, in.SourceRef)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	if p.Truncated || p.Candidate.SourceRef != in.SourceRef || p.Candidate.HarnessID != in.HarnessID || p.Candidate.Directory != in.Directory {
+		return domain.Session{}, errors.New("来源历史未完整读取，未写入导入记录")
+	}
+	if _, err = s.conversationScope(in.ConversationQuery); err != nil {
+		return domain.Session{}, err
+	}
+	if in.SessionID != "" {
+		return s.store.CompleteConversationImport(w, in.HarnessID, p, in.SessionID, in.SessionRevision)
 	}
 	return s.store.ImportConversation(w, in.HarnessID, p, in.Config)
 }

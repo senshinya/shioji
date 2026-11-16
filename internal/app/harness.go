@@ -150,7 +150,7 @@ const ModelUnavailableMessage = domain.ModelUnavailableMessage
 
 func (m *Model) ReadOnlyConversationReason() string {
 	for _, s := range m.Snapshot.Sessions {
-		if s.ID == m.SessionID && s.Origin != nil && s.Origin.ResumeRef == "" && s.ThreadID == "" {
+		if s.ID == m.SessionID && s.ReadOnlyHistory() {
 			if s.Origin.Reason != "" {
 				return s.Origin.Reason
 			}

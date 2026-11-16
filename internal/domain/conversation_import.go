@@ -32,3 +32,7 @@ type ConversationOrigin struct {
 	Reason    string `json:"reason,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
 }
+
+func (s Session) ReadOnlyHistory() bool {
+	return s.Origin != nil && s.Origin.ResumeRef == "" && s.ThreadID == ""
+}

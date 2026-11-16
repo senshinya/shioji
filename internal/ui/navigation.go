@@ -400,7 +400,9 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 	row.ContextMenu(func(menu *n.Menu) { v.sessionMenu(menu, s, r.ref) })
 	row.Children(func() {
 		n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
-			if v.pendingCount(s.ID) > 0 {
+			if s.ReadOnlyHistory() {
+				inlineSymbol(c, modelEye, s.Title, n.Font{Family: t.Font, Size: 13}, 10, t.TextMuted).Label("只读会话：" + s.ID).Tooltip("只读会话")
+			} else if v.pendingCount(s.ID) > 0 {
 				statusDotSize(c, s.Title, n.Font{Family: t.Font, Size: 13}, t.Warning, 4, false).Width(10).TextAlign(n.Center).Label("会话等待状态：" + s.ID)
 			} else if s.Status.Active() || finishing {
 				statusDotSize(c, s.Title, n.Font{Family: t.Font, Size: 13}, t.Success, 4, true).Width(10).TextAlign(n.Center).Label("会话运行状态：" + s.ID)

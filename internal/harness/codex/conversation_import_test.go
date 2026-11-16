@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,82 @@ func TestConversationPrefixDetectsChangesBeyondDisplayedText(t *testing.T) {
 	right := []conversationTurn{{Turn: wire.Turn{ID: "t", Status: "completed"}, Items: []wire.Item{b}}}
 	if conversationSourceDigest(left) == conversationSourceDigest(right) {
 		t.Fatal("undisplayed source change was accepted as the imported prefix")
+	}
+}
+
+func TestCompleteImportReadsEverySourcePageAndRejectsUndisplayedChanges(t *testing.T) {
+	changed, forks := false, 0
+	r := &Runtime{protocol: &protocolSupport{methods: map[string]bool{"thread/read": true, "thread/turns/list": true, "thread/fork": true, "thread/unsubscribe": true, "thread/loaded/list": true}}, pending: map[string]chan wire.Message{}, done: make(chan struct{})}
+	r.stdin = workInputWriter{write: func(b []byte) (int, error) {
+		var q wire.Message
+		json.Unmarshal(b, &q)
+		var args struct {
+			Cursor        string
+			SortDirection string
+		}
+		json.Unmarshal(q.Params, &args)
+		var result any
+		switch q.Method {
+		case "thread/read":
+			result = map[string]any{"thread": map[string]any{"id": "source", "cwd": "/project", "preview": "Full history", "status": map[string]any{"type": "idle"}}}
+		case "thread/turns/list":
+			start, _ := strconv.Atoi(args.Cursor)
+			var data []any
+			for i := start; i < min(start+10, 60); i++ {
+				index := i
+				if args.SortDirection == "desc" {
+					index = 59 - i
+				}
+				var items []any
+				for j := range 5 {
+					text := fmt.Sprintf("source-%d-%d ", index, j) + strings.Repeat("x", 4096)
+					if changed && index == 0 && j == 0 {
+						text += "CHANGED"
+					}
+					items = append(items, map[string]any{"id": fmt.Sprintf("i-%d-%d", index, j), "type": "agentMessage", "text": text})
+				}
+				data = append(data, map[string]any{"id": fmt.Sprintf("t-%d", index), "status": "completed", "itemsView": "full", "items": items})
+			}
+			page := map[string]any{"data": data}
+			if start+10 < 60 {
+				page["nextCursor"] = strconv.Itoa(start + 10)
+			}
+			result = page
+		case "thread/fork":
+			forks++
+			result = map[string]any{"thread": map[string]any{"id": "private-copy", "forkedFromId": "source"}, "cwd": "/project"}
+		case "thread/loaded/list":
+			result = map[string]any{"data": []string{}}
+		case "thread/unsubscribe":
+			result = map[string]any{}
+		default:
+			t.Fatalf("unexpected source mutation: %s", q.Method)
+		}
+		encoded, _ := json.Marshal(result)
+		r.mu.Lock()
+		ch := r.pending[string(q.ID)]
+		r.mu.Unlock()
+		ch <- wire.Message{Result: encoded}
+		return len(b), nil
+	}}
+	ctx := context.Background()
+	launch := domain.LaunchContext{CWD: "/project"}
+	preview, err := r.ReadConversation(ctx, launch, "source")
+	if err != nil || !preview.Truncated || len(preview.Items) >= 300 {
+		t.Fatal("preview no longer bounded", err)
+	}
+	full, err := r.ImportConversation(ctx, launch, "source")
+	if err != nil || full.Truncated || full.ResumeRef == "" || len(full.Items) != 300 || len(full.Turns) != 60 || !strings.HasPrefix(full.Items[0].Text, "source-0-0 ") || forks != 0 {
+		t.Fatal("full import lost paged context or executed source", len(full.Items), len(full.Turns), err)
+	}
+	s := domain.Session{Context: launch, Origin: &domain.ConversationOrigin{SourceRef: "source", ResumeRef: full.ResumeRef}}
+	changed = true
+	if _, err = r.PrepareConversation(ctx, s); err == nil || forks != 0 {
+		t.Fatal("undisplayed source mutation was accepted", err)
+	}
+	changed = false
+	if id, err := r.PrepareConversation(ctx, s); err != nil || id != "private-copy" || forks != 1 {
+		t.Fatal("complete source prefix cannot continue", id, err)
 	}
 }
 
@@ -123,6 +200,21 @@ func TestConversationImportKeepsReadableHistoryWhenOneTurnExceedsBudget(t *testi
 	encoded, _ := json.Marshal(p)
 	if len(encoded) > 512<<10 {
 		t.Fatal("preview exceeds worker frame budget", len(encoded))
+	}
+	importer, ok := any(reader).(interface {
+		ImportConversation(context.Context, domain.LaunchContext, string) (domain.ConversationPreview, error)
+	})
+	if !ok {
+		t.Fatal("import still reuses the bounded, read-only preview")
+	}
+	full, err := importer.ImportConversation(ctx, s.Context, s.ThreadID)
+	if err != nil || full.Truncated || full.ResumeRef == "" || len(full.Items) != 2 {
+		t.Fatal("complete source context was lost to the preview budget", full.Reason, err)
+	}
+	s.Origin = &domain.ConversationOrigin{SourceRef: s.ThreadID, ResumeRef: full.ResumeRef}
+	fork, err := reader.PrepareConversation(ctx, s)
+	if err != nil || fork == "" || fork == s.ThreadID {
+		t.Fatal("large source cannot continue independently", fork, err)
 	}
 }
 

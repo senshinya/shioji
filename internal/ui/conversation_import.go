@@ -612,11 +612,16 @@ func (v *View) conversationPreviewView(c *n.Context, t *n.Theme, u *conversation
 		})
 	})
 	caption := "可接续"
+	reason := u.preview.Reason
 	if u.preview.ResumeRef == "" {
 		caption = "仅查看"
 	}
+	if u.preview.Truncated && v.deviceState(u.key).WorkerMinor >= 42 {
+		caption = "导入时完整读取"
+		reason = "当前预览仅显示部分历史；导入时完整读取，并核对来源是否可接续。"
+	}
 	n.Row(c).FillWidth().Height(32).BorderWidth(.5, 0, 0, 0).BorderColor(t.Border).AlignItems(n.Baseline).Children(func() {
-		n.Text(c, caption).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Tooltip(u.preview.Reason)
+		n.Text(c, caption).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Tooltip(reason)
 		n.Spacer(c).Grow(1)
 		if u.preview.Truncated {
 			n.Text(c, "部分历史").FontSize(12).TextColor(t.TextMuted)

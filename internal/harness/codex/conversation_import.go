@@ -88,10 +88,14 @@ type conversationTurn struct {
 }
 
 func (r *Runtime) ReadConversation(ctx context.Context, launch domain.LaunchContext, source string) (domain.ConversationPreview, error) {
-	out, _, err := r.readConversation(ctx, launch, source, "")
+	out, _, err := r.readConversation(ctx, launch, source, "", false)
 	return out, err
 }
-func (r *Runtime) readConversation(ctx context.Context, launch domain.LaunchContext, source, through string) (domain.ConversationPreview, string, error) {
+func (r *Runtime) ImportConversation(ctx context.Context, launch domain.LaunchContext, source string) (domain.ConversationPreview, error) {
+	out, _, err := r.readConversation(ctx, launch, source, "", true)
+	return out, err
+}
+func (r *Runtime) readConversation(ctx context.Context, launch domain.LaunchContext, source, through string, complete bool) (domain.ConversationPreview, string, error) {
 	var out domain.ConversationPreview
 	if !r.supports("thread/read") || !r.supports("thread/turns/list") {
 		return out, "", harness.Unsupported("conversation-import")
@@ -118,7 +122,7 @@ func (r *Runtime) readConversation(ctx context.Context, launch domain.LaunchCont
 			NextCursor *string
 		}
 		direction := "desc"
-		if through != "" {
+		if through != "" || complete {
 			direction = "asc"
 		}
 		args := map[string]any{"threadId": source, "limit": 10, "itemsView": "full", "sortDirection": direction}
@@ -135,7 +139,10 @@ func (r *Runtime) readConversation(ctx context.Context, launch domain.LaunchCont
 			encoded := conversationSourceBytes(t)
 			itemCount += len(t.Items)
 			byteCount += len(encoded)
-			if len(turns) >= 50 || itemCount > 200 || byteCount > 384<<10 {
+			if complete && (len(turns) >= 10000 || itemCount > 100000 || byteCount > 64<<20) {
+				return out, "", errors.New("来源历史超过完整导入容量，原会话保持不变")
+			}
+			if !complete && (len(turns) >= 50 || itemCount > 200 || byteCount > 384<<10) {
 				out.Truncated = true
 				remaining := max(0, 200-(itemCount-len(t.Items)))
 				if len(turns) < 50 && remaining > 0 && len(t.Items) > 0 {
@@ -159,7 +166,7 @@ func (r *Runtime) readConversation(ctx context.Context, launch domain.LaunchCont
 			break
 		}
 		cursor = *page.NextCursor
-		if seen[cursor] || len(seen) >= 50 {
+		if seen[cursor] || !complete && len(seen) >= 50 {
 			return out, "", errors.New("历史分页未前进")
 		}
 		seen[cursor] = true
@@ -167,7 +174,7 @@ func (r *Runtime) readConversation(ctx context.Context, launch domain.LaunchCont
 	if !matched {
 		return out, "", errors.New("已导入的历史边界已变化")
 	}
-	if through == "" {
+	if through == "" && !complete {
 		slices.Reverse(turns)
 	}
 	last := ""
@@ -219,7 +226,9 @@ func (r *Runtime) readConversation(ctx context.Context, launch domain.LaunchCont
 			last = ""
 		}
 	}
-	boundConversationPreview(&out)
+	if !complete {
+		boundConversationPreview(&out)
+	}
 	if out.Truncated {
 		out.Reason = "仅导入部分历史，无法接续原上下文"
 	} else if running {
@@ -307,7 +316,7 @@ func (r *Runtime) PrepareConversation(ctx context.Context, s domain.Session) (st
 	if err != nil || json.Unmarshal(b, &ref) != nil || ref.Source != s.Origin.SourceRef || ref.Directory != s.Context.CWD || ref.Turn == "" || ref.Digest == "" {
 		return "", errors.New("导入历史边界无效")
 	}
-	p, digest, err := r.readConversation(ctx, s.Context, ref.Source, ref.Turn)
+	p, digest, err := r.readConversation(ctx, s.Context, ref.Source, ref.Turn, true)
 	if err != nil {
 		return "", err
 	}

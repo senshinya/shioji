@@ -45,6 +45,12 @@ type ConversationReader interface {
 	ReadConversation(context.Context, domain.LaunchContext, string) (domain.ConversationPreview, error)
 }
 
+// ImportConversation reads the complete source snapshot on the owning device.
+// Unlike the bounded display preview, its result never crosses the client wire.
+type ConversationImporter interface {
+	ImportConversation(context.Context, domain.LaunchContext, string) (domain.ConversationPreview, error)
+}
+
 // PrepareConversation copies the pinned imported prefix into an independent,
 // unbound execution context. It must never take ownership of the original.
 type ConversationContinuation interface {

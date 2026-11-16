@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,7 +45,8 @@ func TestConversationImportRPCAndFirstInputUseIndependentSourcePrefix(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = external.Submit(ctx, source, "external-input", "Explain red-black tree rotations"); err != nil {
+	longInput := "Explain red-black tree rotations. " + strings.Repeat("large source context ", 20000) + " ORIGINAL_CONTEXT_END"
+	if _, err = external.Submit(ctx, source, "external-input", longInput); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -64,7 +66,7 @@ func TestConversationImportRPCAndFirstInputUseIndependentSourcePrefix(t *testing
 	query.SourceRef, query.Directory = list.Items[0].SourceRef, list.Items[0].Directory
 	var preview domain.ConversationPreview
 	call(t, client, "conversation.preview", query, &preview)
-	if len(provider.Inputs()) != 1 || len(preview.Items) != 2 {
+	if len(provider.Inputs()) != 1 || len(preview.Items) != 2 || !preview.Truncated {
 		t.Fatal("preview executed source", preview)
 	}
 	var imported domain.Session
@@ -97,6 +99,9 @@ func TestConversationImportRPCAndFirstInputUseIndependentSourcePrefix(t *testing
 	})
 	if detail.Session.Status != "completed" || detail.Session.ThreadID == "" || detail.Session.ThreadID == source.ThreadID || detail.Session.GitBranch != "main" || detail.Session.Context.Repository != w.Folders[0] || len(provider.Inputs()) != 2 || len(detail.Items) != 4 {
 		t.Fatal("first input failed or took over source", detail.Session, detail.Items)
+	}
+	if !strings.Contains(provider.Inputs()[1], "ORIGINAL_CONTEXT_END") || !strings.Contains(provider.Inputs()[1], "Now explain right rotation") {
+		t.Fatal("continued turn did not receive the undisplayed original context and new input")
 	}
 	reader, err := codex.Start(ctx, codex.Options{Home: provider.Home})
 	if err != nil {

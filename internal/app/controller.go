@@ -946,6 +946,9 @@ func (c *Controller) Run(ctx context.Context) {
 				unconfirmed[opID] = true
 			}
 			timeout := 10 * time.Second
+			if job.Method == "conversation.import" {
+				timeout = 60 * time.Second
+			}
 			if strings.HasPrefix(job.Method, "runtime.tools.") {
 				timeout = 45 * time.Second
 			}

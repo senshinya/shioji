@@ -42,6 +42,85 @@ func importModel() *app.Model {
 	m.RefreshDevices()
 	return m
 }
+
+func TestLegacyPartialImportOffersRevisionCheckedCompletionWithoutLosingDraft(t *testing.T) {
+	v, ui, _ := historyFixture()
+	m := v.Model
+	m.WorkerMinor = 42
+	s := m.Snapshot.Sessions[0]
+	s.ThreadID = ""
+	s.HarnessID = "memory"
+	s.Context.CWD = "/project"
+	s.Origin = &domain.ConversationOrigin{SourceRef: "external", Truncated: true, Reason: "仅导入部分历史，无法接续原上下文"}
+	m.Snapshot.Sessions[0] = s
+	m.Snapshot.Workspaces[0].Revision = 3
+	d := m.Details[s.ID]
+	d.Session = s
+	m.Details[s.ID] = d
+	ui.Frame()
+	ui.Advance(time.Second)
+	if err := ui.Click("补全历史"); err != nil {
+		t.Fatal("legacy imported history has no recovery action", err, ui.Texts())
+	}
+	j := welcomeJob(t, v.Controller, "conversation.import")
+	b, _ := json.Marshal(j.Input)
+	var in struct {
+		SessionID       string `json:"sessionId"`
+		SessionRevision int64  `json:"sessionRevision"`
+		WorkspaceID     string `json:"workspaceId"`
+		Revision        int64  `json:"revision"`
+		SourceRef       string `json:"sourceRef"`
+	}
+	json.Unmarshal(b, &in)
+	if in.SessionID != s.ID || in.SessionRevision != s.Revision || in.WorkspaceID != s.WorkspaceID || in.Revision != 3 || in.SourceRef != "external" {
+		t.Fatal("completion lost its accepted source, workspace or session revision", string(b))
+	}
+	j.Apply(m, nil, errors.New("source unavailable"))
+	ui.Frame()
+	if m.Drafts["session:s"] != "ordinary unsent draft" || m.SessionID != s.ID || m.Snapshot.Sessions[0].Origin.ResumeRef != "" {
+		t.Fatal("failed completion changed the session or draft")
+	}
+}
+
+func TestPartialPreviewDoesNotDescribeFullImportAsReadOnly(t *testing.T) {
+	v, c, ui := showImport(t)
+	v.Model.DeviceStates["local"].WorkerMinor = 42
+	ui.Click("预览会话：旋转测试")
+	j := welcomeJob(t, c, "conversation.preview")
+	b, _ := json.Marshal(domain.ConversationPreview{Candidate: importCatalog().Items[0], Truncated: true, Reason: "仅导入部分历史，无法接续原上下文", Items: []domain.Item{{ID: "a", Kind: "assistant", Text: "Preview"}}})
+	j.Apply(v.Model, b, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	if ui.HasText("仅查看") || !ui.HasText("导入时完整读取") {
+		t.Fatal("preview clipping still marks the full import as read-only", ui.Texts())
+	}
+}
+
+func TestReadOnlyImportedSessionShowsEyeAndReasonInsideConversation(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		t.Run(fmt.Sprint(partial), func(t *testing.T) {
+			v, ui, _ := historyFixture()
+			s := v.Model.Snapshot.Sessions[0]
+			s.ThreadID = ""
+			s.Origin = &domain.ConversationOrigin{SourceRef: "external", Truncated: partial, Reason: "来源仍在运行，仅可查看历史"}
+			v.Model.Snapshot.Sessions[0] = s
+			d := v.Model.Details[s.ID]
+			d.Session = s
+			v.Model.Details[s.ID] = d
+			ui.Frame()
+			ui.Advance(time.Second)
+			if _, ok := ui.Find("只读会话：" + s.ID); !ok {
+				t.Fatal("read-only import still uses a completed status icon", ui.Texts())
+			}
+			if !ui.HasText("只读会话") {
+				t.Fatal("read-only status is absent inside the conversation", ui.Texts())
+			}
+			if !partial && !ui.HasText("来源仍在运行，仅可查看历史") {
+				t.Fatal("read-only reason is hidden", ui.Texts())
+			}
+		})
+	}
+}
 func importCatalog() domain.ConversationCatalog {
 	return domain.ConversationCatalog{Items: []domain.ConversationCandidate{{SourceRef: "one", HarnessID: "memory", Title: "旋转测试", Directory: "/Users/local/project"}, {SourceRef: "two", HarnessID: "memory", Title: "边界测试", Directory: "/Users/local/project"}, {SourceRef: "three", HarnessID: "memory", Title: "已有会话", Directory: "/Users/local/project", ImportedSessionID: "existing"}}}
 }
