@@ -105,27 +105,9 @@ func (s *Server) recoverManagedScopes(ctx context.Context) error {
 	return nil
 }
 
-// Caller holds dispatchMu. Admission is fenced before either protocol is closed.
+// Caller holds dispatchMu while capturing and fencing this generation.
 func (s *Server) cleanManagedExecution(ctx context.Context, id string) error {
-	scope, err := s.executions.Existing(id)
-	if err != nil || scope == nil {
-		return err
-	}
-	if err = scope.Fence(); err != nil {
-		return err
-	}
-	if runtime := s.currentRuntime(id); runtime != nil {
-		// This instance is being deliberately retired after admission is fenced.
-		// Its final invalidation must not guard the next accepted generation.
-		s.runtimeMu.RLock()
-		events := s.runtimeEvents[id]
-		s.runtimeMu.RUnlock()
-		if events != nil {
-			events.Store(false)
-		}
-		runtime.Close(ctx)
-	}
-	return scope.Stop(ctx)
+	return s.retireRuntime(ctx, id, "cleanup", true)
 }
 
 func (s *Server) coverOperation(id, operation string) error {

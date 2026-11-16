@@ -43,6 +43,8 @@ type EventsQuery = protocol.EventsQuery
 type EventPage = protocol.EventPage
 type AnswerInput = protocol.AnswerInput
 type Server struct {
+	retirementMu         sync.Mutex
+	retirements          map[string]*runtimeRetirement
 	health               *devicehealth.Monitor
 	storageMu            sync.Mutex
 	idleRuntimes         map[string]idleRuntimeObservation
@@ -1232,6 +1234,9 @@ func (s *Server) onEvent(e domain.Event) error {
 	}
 	s.trackRecoveryTool(e)
 	lost := e.Type == "runtime.lost"
+	if lost && s.runtimeRetiring(e.SessionID) {
+		return nil
+	}
 	if lost {
 		if err := s.guardManagedExecution(e.SessionID); err != nil {
 			return err
