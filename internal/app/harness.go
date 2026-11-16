@@ -127,6 +127,7 @@ func (m *Model) SessionReadiness(s domain.Session) domain.Readiness {
 		live.Fork = live.Fork && selected.Capabilities.Fork
 		live.Restart = live.Restart && selected.Capabilities.Restart
 		live.Continue = live.Continue && selected.Capabilities.Continue
+		live.Reload = live.Reload && selected.Capabilities.Reload
 		selected.Capabilities = live
 	}
 	return selected

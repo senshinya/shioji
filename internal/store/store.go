@@ -91,6 +91,7 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS deleted_sessions (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, cleaned INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS deleted_workspaces (id TEXT PRIMARY KEY, cleaned INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS archive_resources (workspace_id TEXT NOT NULL, attachment_id TEXT NOT NULL, PRIMARY KEY(workspace_id,attachment_id));
+ CREATE TABLE IF NOT EXISTS session_reloads (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, body BLOB NOT NULL);
  CREATE INDEX IF NOT EXISTS operations_session_state ON operations(session_id,state);
  CREATE INDEX IF NOT EXISTS items_provisional_replies ON items(session_id,json_extract(body,'$.turnId')) WHERE json_extract(body,'$.kind')='assistant' AND COALESCE(json_extract(body,'$.final'),0)=0;
  CREATE INDEX IF NOT EXISTS work_inputs_unsettled_session ON work_inputs(session_id) WHERE json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate') AND COALESCE(json_extract(body,'$.executionStopped'),0)=0;
@@ -1050,6 +1051,12 @@ func (s *Store) Events(after int64, limit int) ([]domain.Event, error) {
 
 // Recover never dispatches saved input. An old dispatch may already have caused an external effect.
 func (s *Store) Recover() error {
+	s.mu.Lock()
+	_, reloadErr := s.db.Exec(`UPDATE session_reloads SET body=json_set(body,'$.state','failed','$.error','重新加载期间执行服务重启；未发送消息，可重新操作') WHERE json_extract(body,'$.state')='running'`)
+	s.mu.Unlock()
+	if reloadErr != nil {
+		return reloadErr
+	}
 	// A title-only model request interrupted by worker death is not replayed.
 	// Pending requests remain safe to start; a running one retains its fallback.
 	s.mu.Lock()

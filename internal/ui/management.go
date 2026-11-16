@@ -160,6 +160,7 @@ func (v *View) sessionMenu(menu *n.Menu, s domain.Session, ref app.SessionLocati
 	if menu.Item("分叉会话").Disabled(!v.historyReady(s) || !v.persistenceModel().SessionReadiness(s).Capabilities.Fork || v.historyBusy[s.ID]).Chosen() {
 		v.forkSession(s, "")
 	}
+	v.sessionReloadMenu(menu, s)
 	if s.ForkedFrom != "" && menu.Item("查看来源会话").Chosen() {
 		for _, origin := range v.Model.Snapshot.Sessions {
 			if origin.ID == s.ForkedFrom {

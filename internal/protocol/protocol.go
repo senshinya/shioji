@@ -44,7 +44,8 @@ const Major = 2
 // adds explicit, revision-checked completion of legacy partial imports.
 // Minor 43 adds explicit force-close previews and independent device recovery.
 // Minor 44 adds explicit normal retirement and forced archive deletion.
-const Minor = 44
+// Minor 45 adds durable session runtime reload without submitting input.
+const Minor = 45
 const MaxFrame = 1 << 20
 
 type Frame struct {

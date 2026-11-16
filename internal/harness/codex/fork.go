@@ -51,6 +51,14 @@ func (r *Runtime) Fork(ctx context.Context, source domain.Session, turn string, 
 // ReleaseFork hands a persisted fork to the destination runtime. It is safe to
 // repeat for a saved result, including after the creating app-server restarted.
 func (r *Runtime) ReleaseFork(ctx context.Context, thread string) error {
+	return r.releaseThread(ctx, thread)
+}
+
+func (r *Runtime) Unload(ctx context.Context, session domain.Session) error {
+	return r.releaseThread(ctx, session.ThreadID)
+}
+
+func (r *Runtime) releaseThread(ctx context.Context, thread string) error {
 	if !r.supports("thread/unsubscribe") || !r.supports("thread/loaded/list") {
 		return harness.Unsupported("history")
 	}
@@ -66,7 +74,7 @@ func (r *Runtime) ReleaseFork(ctx context.Context, thread string) error {
 			return err
 		}
 		if loaded.NextCursor != nil && *loaded.NextCursor != "" {
-			return errors.New("无法确认分叉线程已释放")
+			return errors.New("无法确认会话线程已释放")
 		}
 		if !slices.Contains(loaded.Data, thread) {
 			return nil

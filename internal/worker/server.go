@@ -677,6 +677,12 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 			return nil, err
 		}
 		return s.store.Operation(q.ID)
+	case "session.reload", "session.reload.operation":
+		in, err := decode[domain.SessionReloadRequest](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.reloadSession(in, method == "session.reload.operation")
 	case "session.context.compact", "session.context.operation":
 		in, err := decode[domain.ContextActionRequest](body)
 		if err != nil {

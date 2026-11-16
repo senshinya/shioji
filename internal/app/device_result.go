@@ -61,6 +61,19 @@ func (m *Model) validateDeviceReply(key string, job Job, body json.RawMessage) e
 		}
 	}
 	fail := errors.New("设备回执与请求的工作区、会话或操作不一致")
+	if in, ok := job.Input.(domain.SessionReloadRequest); ok {
+		var result domain.SessionReloadResult
+		if json.Unmarshal(body, &result) != nil || result.Operation.Input != in || result.Session.ID != in.SessionID || result.Session.Context.DeviceID != state.Snapshot.DeviceID || m.sessionOnOtherDevice(key, in.SessionID) {
+			return fail
+		}
+		owned := false
+		for _, s := range state.Snapshot.Sessions {
+			owned = owned || s.ID == in.SessionID && s.WorkspaceID == result.Session.WorkspaceID && s.ThreadID == result.Session.ThreadID
+		}
+		if !owned {
+			return fail
+		}
+	}
 	if in, ok := job.Input.(domain.WorkHistoryQuery); ok {
 		owned := false
 		for _, session := range state.Snapshot.Sessions {

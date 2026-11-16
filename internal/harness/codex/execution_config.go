@@ -71,10 +71,13 @@ func (r *Runtime) executionConfig(ctx context.Context, s domain.Session) (map[st
 		}
 	}
 	r.managedCoverage = coverage
-	if len(overrides) == 0 {
-		return nil, nil
+	// This runtime belongs to one worker-owned session. Explicit unsubscribe
+	// must complete its native SessionEnd hooks before process retirement.
+	configuration := map[string]any{"thread_unload_delay_secs": 0}
+	if len(overrides) > 0 {
+		configuration["mcp_servers"] = overrides
 	}
-	return map[string]any{"mcp_servers": overrides}, nil
+	return configuration, nil
 }
 func (r *Runtime) ManagedCoverage() bool { return r.executor != nil && r.managedCoverage }
 func sourceExecutionPath(value string) string {

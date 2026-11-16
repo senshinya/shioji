@@ -96,6 +96,7 @@ type View struct {
 	historyForked                                                                                                   map[string]bool
 	historyChecked                                                                                                  map[string]string
 	historyBusy                                                                                                     map[string]bool
+	sessionReloads                                                                                                  map[string]*sessionReloadUI
 	notificationDeliveries                                                                                          []nativeNotificationDelivery
 	nativeWindow                                                                                                    *mygo.Window
 	settings                                                                                                        *Settings

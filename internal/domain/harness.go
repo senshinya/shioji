@@ -3,6 +3,7 @@ package domain
 // These are Shioji operations. Adapters report actual support; absent support
 // never authorizes a substitute operation or a guessed configuration.
 type HarnessCapabilities struct {
+	Reload                bool `json:"reload,omitempty"`
 	ConversationImport    bool `json:"conversationImport,omitempty"`
 	Compact               bool `json:"compact,omitempty"`
 	ToolServiceInspection bool `json:"toolServiceInspection,omitempty"`

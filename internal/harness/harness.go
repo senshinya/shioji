@@ -146,6 +146,12 @@ type Runtime interface {
 	Close(context.Context) error
 }
 
+// SessionUnloader runs an adapter's normal session-end lifecycle before the
+// owning worker retires its process. It never submits model input.
+type SessionUnloader interface {
+	Unload(context.Context, domain.Session) error
+}
+
 // ManualShutdownRuntime opts into normal-only teardown backed by the worker's
 // durable managed-generation authorization, including loss and Close paths.
 type ManualShutdownRuntime interface {
