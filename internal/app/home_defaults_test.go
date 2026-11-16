@@ -30,11 +30,32 @@ func TestHomeDefaultsUseNewestSessionOnTheOwningDevice(t *testing.T) {
 	if m.HarnessID() != "beta" || config.Model != "b-pro" || config.Effort != "high" {
 		t.Fatal("new conversation did not inherit the same device's newest session across workspaces", m.HarnessID(), config)
 	}
-	if config.Permission != "ask" || config.Plan || config.Fast {
-		t.Fatal("inheriting model choices copied unrelated execution policies", config)
+	if config.Permission != "yolo" || !config.Plan || !config.Fast {
+		t.Fatal("new conversation did not inherit permission, plan and fast choices", config)
 	}
 	if len(m.Pending) != 0 || len(m.Snapshot.Sessions) != 3 {
 		t.Fatal("choosing defaults created or submitted a session")
+	}
+}
+
+func TestHomeDefaultsReplacePreviousExecutionChoices(t *testing.T) {
+	m := recentSessionModel()
+	m.Config()
+	m.SetConfig("home", domain.RunConfig{Model: "b-pro", Effort: "high", Permission: "yolo", Plan: true, Fast: true})
+	m.Snapshot.Sessions = append(m.Snapshot.Sessions, domain.Session{ID: "newest-a", WorkspaceID: "w", HarnessID: "beta", Config: domain.RunConfig{Model: "b-pro", Effort: "low", Permission: "ask"}})
+	m.PrepareNewSession()
+	if got := m.Config(); got != (domain.RunConfig{Model: "b-pro", Effort: "low", Permission: "ask"}) {
+		t.Fatal("new conversation retained the previous permission or enabled modes", got)
+	}
+}
+
+func TestHomeDefaultsValidateInheritedExecutionChoices(t *testing.T) {
+	m := recentSessionModel()
+	m.Readiness.Harnesses[1].Permissions = []string{"ask"}
+	m.Readiness.Harnesses[1].Plan = false
+	m.Readiness.Harnesses[1].Models[1].Fast = false
+	if got := m.Config(); got != (domain.RunConfig{Model: "b-pro", Effort: "high", Permission: "ask"}) {
+		t.Fatal("new conversation retained unsupported inherited choices", got)
 	}
 }
 
@@ -58,13 +79,15 @@ func TestHomeDefaultsKeepAnExistingDraftChoice(t *testing.T) {
 		m := recentSessionModel()
 		m.HomeHarnesses = map[string]string{"w": "alpha"}
 		m.homeConfigContext = "w/alpha"
-		want := domain.RunConfig{Model: "a-plus", Effort: "high", Permission: "limited"}
+		want := domain.RunConfig{Model: "a-plus", Effort: "high", Permission: "limited", Plan: true, Fast: true}
 		m.Configs["home"] = want
 		if attachmentOnly {
 			m.Attachments["home"] = []DraftAttachment{{Attachment: domain.Attachment{ID: "image"}}}
 		} else {
 			m.Drafts["home"] = "keep my unsent prompt"
 		}
+		m.Readiness.Harnesses[0].Plan = true
+		m.Readiness.Harnesses[0].Models[1].Fast = true
 		if got := m.Config(); m.HarnessID() != "alpha" || got != want {
 			t.Fatal("new defaults overwrote an existing draft", attachmentOnly, m.HarnessID(), got)
 		}
@@ -126,8 +149,8 @@ func TestHomeDefaultsWaitForFreshCatalogAndKeepOfflineManualChoices(t *testing.T
 func TestHomeDefaultsDoNotSilentlyReplaceAnUnavailableModel(t *testing.T) {
 	m := recentSessionModel()
 	m.Readiness.Harnesses[1].Models = m.Readiness.Harnesses[1].Models[:1]
-	if got := m.Config(); got.Model != "b-pro" || !m.ModelUnavailable() || got.Permission != "ask" {
-		t.Fatal("unavailable inherited model was replaced or lost its ordinary permission default", got)
+	if got := m.Config(); got.Model != "b-pro" || !m.ModelUnavailable() || got.Permission != "yolo" {
+		t.Fatal("unavailable inherited model was replaced or lost its inherited permission", got)
 	}
 	m.Drafts["home"] = "keep prompt"
 	if _, err := m.BeginSubmission(); err == nil || len(m.Pending) != 0 || m.Drafts["home"] != "keep prompt" {

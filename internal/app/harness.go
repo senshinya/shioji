@@ -86,8 +86,7 @@ func (m *Model) initializeHomeDefaults() {
 	}
 	m.HomeHarnesses[m.WorkspaceID] = id
 	m.syncHomeContext(id)
-	config := m.Configs["home"]
-	config.Model, config.Effort = latest.Config.Model, latest.Config.Effort
+	config := latest.Config
 	if config.Permission == "" {
 		config.Permission = "default"
 		ready := m.selectReadiness(m.Readiness, id)
