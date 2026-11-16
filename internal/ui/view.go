@@ -1708,7 +1708,7 @@ func (v *View) sendMessage(steer bool) {
 	}
 	sent := v.beginSendMotion(in)
 	if in.SessionID == "" {
-		v.homeSend = &homeSendPresentation{in: in}
+		v.homeSend = &homeSendPresentation{in: in, sentAt: time.Now()}
 	}
 	var prepare func() error
 	if v.Saver != nil {

@@ -124,8 +124,8 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 func (v *View) historyMessageActions(c *n.Context, t *n.Theme, item domain.Item, preview bool, begin func()) {
 	n.Row(c.Key("user-actions:" + item.ID)).Gap(messageFooterGap).Height(24).AlignItems(n.Center).Unselectable().Label("用户消息操作").Children(func() {
 		font := n.Font{Family: t.Font, Size: 11, Weight: 400}
-		if item.Kind == "user" && (item.Status == "sent" || preview) && item.TurnID != "" {
-			edit := n.ButtonBase(c.Key("edit")).Transition(fadeMotion(c, 180*time.Millisecond)).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("修改并重新开始").Tooltip("修改并重新开始").Disabled(preview || v.historyBusy[v.Model.SessionID] || !v.Model.RunReadiness().Capabilities.Restart)
+		if item.Kind == "user" {
+			edit := n.ButtonBase(c.Key("edit")).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("修改并重新开始").Tooltip("修改并重新开始").Disabled(preview || item.Status != "sent" || item.TurnID == "" || v.historyBusy[v.Model.SessionID] || !v.Model.RunReadiness().Capabilities.Restart)
 			color := textHoverColor(c, edit, t.TextMuted)
 			edit.Children(func() { inlineSymbol(c, queueEditIcon, "消息", font, 13, color) })
 			if edit.Clicked() {

@@ -220,6 +220,7 @@ func (v *View) sessionEntryProgress(c *n.Context, session string, heading bool) 
 // is inserted into the catalog, selected for RPCs or sent to the worker.
 type homeSendPresentation struct {
 	in       domain.Submission
+	sentAt   time.Time
 	session  string
 	state    domain.OperationState
 	hydrated bool
@@ -286,7 +287,7 @@ func (v *View) homeSendDetail(detail domain.SessionDetail) domain.SessionDetail 
 	}
 	// The pending journal already holds the full immutable input and references.
 	if !h.hydrated {
-		item := domain.Item{ID: id, Kind: "user", Text: h.in.Text, Attachments: h.in.Attachments, Skills: h.in.Skills, ReferencePositions: h.in.ReferencePositions, Status: "dispatching", Final: true}
+		item := domain.Item{ID: id, Kind: "user", Text: h.in.Text, Attachments: h.in.Attachments, Skills: h.in.Skills, ReferencePositions: h.in.ReferencePositions, Status: "dispatching", SentAt: &h.sentAt, Final: true}
 		detail.Items = append(append([]domain.Item(nil), detail.Items...), item)
 	}
 	return detail

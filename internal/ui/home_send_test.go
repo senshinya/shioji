@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	n "github.com/egoist/mygo/ui"
+	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"strings"
@@ -32,6 +33,89 @@ func TestHomeSendAnimatesBeforeWorkerReceipt(t *testing.T) {
 	}
 	if len(v.Model.Snapshot.Sessions) != 1 {
 		t.Fatal("presentation inserted a fabricated runtime session")
+	}
+}
+
+func TestHomeSendUsesClickTimeUntilAuthoritativeMessageArrives(t *testing.T) {
+	before := time.Now()
+	v, ui, job := sendFixture(t, true)
+	after := time.Now()
+	in := job.Input.(domain.Submission)
+	items := v.homeSendDetail(domain.SessionDetail{}).Items
+	if len(items) != 1 || items[0].SentAt == nil {
+		t.Fatal("pending first message has no send time")
+	}
+	sent := *items[0].SentAt
+	if sent.Before(before) || sent.After(after) {
+		t.Fatal("pending timestamp is not the time of submission", sent, before, after)
+	}
+	ui.Advance(2 * time.Minute)
+	if got := v.homeSendDetail(domain.SessionDetail{}).Items[0].SentAt; got == nil || !got.Equal(sent) {
+		t.Fatal("pending timestamp changed while waiting", got, sent)
+	}
+	if !ui.HasText("发送时间：" + sent.Local().Format("15:04")) {
+		t.Fatal("pending timestamp is not displayed", ui.Texts())
+	}
+	id := acceptSend(t, v, job, false)
+	confirmed := time.Date(2026, 11, 16, 11, 23, 0, 0, time.Local)
+	v.Model.Details[id] = domain.SessionDetail{Session: domain.Session{ID: id}, Items: []domain.Item{{ID: "input:" + in.OperationID, Kind: "user", Text: in.Text, Status: "sent", TurnID: "turn", SentAt: &confirmed, Final: true}}}
+	ui.Frame()
+	ui.Advance(time.Second)
+	if !ui.HasText("发送时间：11:23") {
+		t.Fatal("authoritative send time did not replace click time", ui.Texts())
+	}
+}
+
+func TestHomeSendReceiptKeepsMessageActionSlots(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprint("dark=", dark), func(t *testing.T) {
+			v, ui, job := sendFixture(t, true, func(m *app.Model) {
+				m.WorkerMinor = 12
+				m.Readiness.Capabilities.Restart = true
+			})
+			ui.SetDark(dark)
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("home-send-pending-dark-%v.png", dark))
+			edit, ok := ui.Find("修改并重新开始")
+			if !ok {
+				t.Fatal("pending message hides its edit action")
+			}
+			copy, _ := ui.Find("复制消息")
+			stamp, stampOK := ui.Find("发送时间：" + v.homeSend.sentAt.Local().Format("15:04"))
+			if !stampOK {
+				t.Fatal("pending send time missing")
+			}
+			_ = ui.Click("修改并重新开始")
+			if len(v.Model.HistoryEdits) != 0 || v.Model.Error != "" {
+				t.Fatal("pending edit button is active", v.Model.Error)
+			}
+			if err := ui.Click("复制消息"); err != nil || ui.Clipboard() != job.Input.(domain.Submission).Text {
+				t.Fatal("pending message cannot be copied", err)
+			}
+			id := acceptSend(t, v, job, false)
+			ui.Frame()
+			check := func(stage, stampLabel string) {
+				t.Helper()
+				current, ok := ui.Find("修改并重新开始")
+				currentCopy, copyOK := ui.Find("复制消息")
+				currentStamp, stampOK := ui.Find(stampLabel)
+				if !ok || !copyOK || !stampOK || current != edit || currentCopy != copy || currentStamp != stamp {
+					t.Fatal(stage+" moved the message actions", edit, current, copy, currentCopy)
+				}
+			}
+			check("receipt before history", "发送时间："+v.homeSend.sentAt.Local().Format("15:04"))
+			in := job.Input.(domain.Submission)
+			sent := time.Date(2026, 11, 16, 11, 23, 0, 0, time.Local)
+			v.Model.Details[id] = domain.SessionDetail{Session: domain.Session{ID: id}, Items: []domain.Item{{ID: "input:" + in.OperationID, Kind: "user", Text: in.Text, Status: "sent", TurnID: "turn", SentAt: &sent, Final: true}}}
+			for range 30 {
+				ui.Advance(time.Second / 60)
+				check("authoritative history", "发送时间：11:23")
+			}
+			saveNativeSkillImage(t, ui, fmt.Sprintf("home-send-confirmed-dark-%v.png", dark))
+			if err := ui.Click("修改并重新开始"); err != nil || v.Model.HistoryEdits[id].ItemID != "input:"+in.OperationID {
+				t.Fatal("confirmed edit button did not become available", err, v.Model.Error)
+			}
+		})
 	}
 }
 
