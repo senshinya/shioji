@@ -203,7 +203,7 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 					return 0
 				})
 			})
-			tabs := []configurationTabItem{{ID: "settings", Label: "设备设置"}, {ID: "agents", Label: "Agent"}}
+			tabs := []configurationTabItem{{ID: "settings", Label: "设备设置"}, {ID: "agents", Label: "Agent"}, {ID: "workspaces", Label: "工作区"}}
 			n.Column(c).FillWidth().PaddingX(configurationInset).Children(func() { v.deviceTab = configurationTabs(c, v.deviceTab, tabs, configurationUnderline, false) })
 			configurationTabPanel(c.Key("device-tab-panel"), v.deviceTab, configurationTabIndex(tabs, v.deviceTab), configurationPanelFill, func() {
 				n.Scroll(c.Key("device-body:" + v.deviceTab)).FillWidth().Grow(1).Children(func() {
@@ -214,45 +214,17 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 								return
 							}
 
-							v.deviceStatusScene(c.Key("scene:"+key), t, key, state)
-							n.Column(c).FillWidth().Gap(0).Label("设备工作区区域").Children(func() {
-								deviceHeading(c, "工作区", func() {
-									if iconButton(c, plus, "新建工作区").MarginEnd(-configurationHoverInset).Disabled(!state.Connected || v.Controller == nil).Clicked() {
-										v.beginWorkspace(key)
-									}
+							if v.deviceTab == "workspaces" {
+								v.deviceWorkspaces(c.Key("workspaces:"+key), t, key, deviceID, state)
+							} else {
+								v.deviceStatusScene(c.Key("scene:"+key), t, key, state)
+
+								n.Column(c).FillWidth().Gap(0).Label("设备执行服务区域").Children(func() {
+									deviceHeading(c, "执行服务", nil)
+									v.deviceWorker(c.Key("worker:"+key), t, key, state)
 								})
-								count := 0
-								for _, w := range m.Snapshot.Workspaces {
-									if w.DeviceID != deviceID && !(key == "local" && w.DeviceID == "") {
-										continue
-									}
-									count++
-									entry := configurationRowControl(c.Key(w.ID), 6).Height(40).Label("打开工作区：" + w.Name).ContextMenu(func(menu *n.Menu) { v.workspaceMenu(menu, w) }).Children(func() {
-										n.Row(c).FillWidth().Gap(10).AlignItems(n.Baseline).Children(func() {
-
-											n.Text(c, w.Name).SingleLine().FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).Grow(1)
-											label := strconv.Itoa(len(w.Folders)) + " 个目录"
-											n.Text(c, label).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
-											inlineSymbol(c, disclosureRight, label, n.Font{Family: t.Font, Size: 11, Weight: 400}, 12, t.TextMuted)
-										})
-									})
-
-									if entry.Clicked() {
-										m.WorkspaceID = w.ID
-										m.ActiveConnection = key
-										v.home()
-									}
-								}
-								if count == 0 {
-									n.Row(c).FillWidth().Height(40).AlignItems(n.Center).Children(func() { n.Text(c, "暂无工作区").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted) })
-								}
-							})
-
-							n.Column(c).FillWidth().Gap(0).Label("设备执行服务区域").Children(func() {
-								deviceHeading(c, "执行服务", nil)
-								v.deviceWorker(c.Key("worker:"+key), t, key, state)
-							})
-							v.deviceStorage(c.Key("storage:"+key), t, key, state)
+								v.deviceStorage(c.Key("storage:"+key), t, key, state)
+							}
 							if m.Error != "" && m.Error != state.Error {
 								n.Text(c, m.Error).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
 							}
@@ -264,6 +236,42 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 				})
 			})
 		}, false)
+	})
+}
+
+func (v *View) deviceWorkspaces(c *n.Context, t *n.Theme, key, deviceID string, state *app.DeviceState) {
+	m := v.Model
+	n.Column(c).FillWidth().Gap(0).Label("设备工作区区域").Children(func() {
+		n.Row(c).FillWidth().Height(configurationControlHeight).Justify(n.End).Children(func() {
+			if configurationAction(c, "新建工作区").Label("新建工作区").MarginEnd(-configurationHoverInset).Disabled(!state.Connected || v.Controller == nil).Clicked() {
+				v.beginWorkspace(key)
+			}
+		})
+		count := 0
+		for _, w := range m.Snapshot.Workspaces {
+			if w.DeviceID != deviceID && !(key == "local" && w.DeviceID == "") {
+				continue
+			}
+			count++
+			entry := configurationRowControl(c.Key(w.ID), 6).Height(40).Label("打开工作区：" + w.Name).ContextMenu(func(menu *n.Menu) { v.workspaceMenu(menu, w) }).Children(func() {
+				n.Row(c).FillWidth().Gap(10).AlignItems(n.Baseline).Children(func() {
+
+					n.Text(c, w.Name).SingleLine().FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).Grow(1)
+					label := strconv.Itoa(len(w.Folders)) + " 个目录"
+					n.Text(c, label).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+					inlineSymbol(c, disclosureRight, label, n.Font{Family: t.Font, Size: 11, Weight: 400}, 12, t.TextMuted)
+				})
+			})
+
+			if entry.Clicked() {
+				m.WorkspaceID = w.ID
+				m.ActiveConnection = key
+				v.home()
+			}
+		}
+		if count == 0 {
+			n.Row(c).FillWidth().Height(40).AlignItems(n.Center).Children(func() { n.Text(c, "暂无工作区").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted) })
+		}
 	})
 }
 

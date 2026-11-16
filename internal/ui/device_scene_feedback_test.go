@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -156,6 +157,51 @@ func TestDeviceSceneTargetPortStaysAboveIncomingWire(t *testing.T) {
 			a, b := actual.Image().RGBAAt(345, y), hardware.Image().RGBAAt(345, y)
 			if a != b {
 				t.Fatal("incoming route paints over target port", dark, y, a, b)
+			}
+		}
+	}
+}
+
+func TestDeviceWorkspacesHaveIndependentTabAfterAgent(t *testing.T) {
+	for _, width := range []int{600, 850, 1240} {
+		for _, dark := range []bool{false, true} {
+			v := readyDeviceSceneView()
+			v.Model.Drafts["home"] = "保留未发送的首页草稿"
+			ui := n.NewTester(v.View, width, 1000)
+			ui.SetDark(dark)
+			ui.Advance(time.Second)
+			agent, _ := ui.Find("Agent")
+			workspace, ok := ui.Find("工作区")
+			if !ok || workspace.X <= agent.X+agent.W || math.Abs(float64(workspace.Y-agent.Y)) > 1 {
+				t.Fatal("workspace is not a tab after Agent", width, agent, workspace)
+			}
+			if _, ok := ui.Find("设备工作区区域"); ok {
+				t.Fatal("device settings still contain the workspace list")
+			}
+			ui.Click("工作区")
+			ui.Advance(configurationTabDuration)
+			if _, ok := ui.Find("设备工作区区域"); !ok {
+				t.Fatal("workspace tab has no list", ui.Texts())
+			}
+			if _, ok := ui.Find("设备状态区域"); ok {
+				t.Fatal("workspace tab repeats device settings")
+			}
+			if _, ok := ui.Find("打开工作区：Remote"); !ok {
+				t.Fatal("owning device workspace missing")
+			}
+			if _, ok := ui.Find("打开工作区：Local"); ok {
+				t.Fatal("workspace tab lists another device's workspace")
+			}
+			saveNativeSkillImage(t, ui, fmt.Sprintf("workspace-tab-%d-%v.png", width, dark))
+			if err := ui.Click("新建工作区"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			if v.remoteWorkspaceConnection != "air" {
+				t.Fatal("new workspace escaped selected device", v.remoteWorkspaceConnection)
+			}
+			if v.Model.Drafts["home"] != "保留未发送的首页草稿" {
+				t.Fatal("workspace tab consumed home draft")
 			}
 		}
 	}

@@ -110,7 +110,7 @@ func TestDeviceStatusSceneEdgesAndTargetFollowSelectedIcon(t *testing.T) {
 				if !ok {
 					t.Fatal("status area missing")
 				}
-				heading, _ := ui.Find("工作区")
+				heading, _ := ui.Find("执行服务")
 				if math.Abs(float64(stage.X-heading.X)) > 1 {
 					t.Fatal("section reading edges differ", stage, heading)
 				}
@@ -282,6 +282,10 @@ func TestDeviceSceneNativeRecording(t *testing.T) {
 			})
 			ui.Frame()
 			record(36)
+			ui.Click("工作区")
+			record(24)
+			ui.Click("设备设置")
+			record(24)
 		})
 	}
 }
@@ -295,7 +299,7 @@ func TestDeviceSceneSectionsShareEdgesAndVerticalRhythm(t *testing.T) {
 		if !ok {
 			t.Fatal("scene missing")
 		}
-		for _, label := range []string{"设备工作区区域", "设备执行服务区域", "存储区域"} {
+		for _, label := range []string{"设备执行服务区域", "存储区域"} {
 			rect, ok := ui.Find(label)
 			if !ok {
 				t.Fatal(label)
@@ -308,10 +312,16 @@ func TestDeviceSceneSectionsShareEdgesAndVerticalRhythm(t *testing.T) {
 			}
 			previous = rect
 		}
-		add, _ := ui.Find("添加连接路径")
-		workspace, _ := ui.Find("新建工作区")
-		if math.Abs(float64(add.X+add.W/2-workspace.X-workspace.W/2)) > 1 {
-			t.Fatal("section action glyph columns differ", add, workspace)
+		area, _ := ui.Find("设备状态区域")
+		ui.Click("工作区")
+		ui.Advance(configurationTabDuration)
+		workspace, ok := ui.Find("设备工作区区域")
+		if !ok || math.Abs(float64(area.X-workspace.X)) > 1 || math.Abs(float64(area.X+area.W-workspace.X-workspace.W)) > 1 {
+			t.Fatal("workspace tab reading edges differ", area, workspace)
+		}
+		action, _ := ui.Find("新建工作区")
+		if math.Abs(float64(action.X+action.W-configurationHoverInset-workspace.X-workspace.W)) > 1 {
+			t.Fatal("workspace action does not share form right edge", action, workspace)
 		}
 	}
 }
