@@ -10,6 +10,8 @@ type HarnessCapabilities struct {
 	ToolServices          bool `json:"toolServices,omitempty"`
 	Skills                bool `json:"skills,omitempty"`
 	SkillManagement       bool `json:"skillManagement,omitempty"`
+	HookManagement        bool `json:"hookManagement,omitempty"`
+	HookInspection        bool `json:"hookInspection,omitempty"`
 	Steer                 bool `json:"steer"`
 	Interrupt             bool `json:"interrupt"`
 	Recovery              bool `json:"recovery"`

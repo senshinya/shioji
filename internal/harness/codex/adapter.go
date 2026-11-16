@@ -97,6 +97,8 @@ func (r *adapterRuntime) Readiness() domain.Readiness {
 	fork := history && r.supports("thread/fork") && r.supports("thread/unsubscribe") && r.supports("thread/loaded/list")
 	ready.Capabilities = domain.HarnessCapabilities{ToolServices: r.supports("mcpServerStatus/list"), SkillManagement: r.supports("skills/list"), Skills: r.supports("skills/list"), Steer: r.supports("turn/steer"), Interrupt: r.supports("turn/interrupt"), Recovery: history, Continue: history, Reload: history && r.supports("thread/unsubscribe") && r.supports("thread/loaded/list"), Fork: fork, Restart: fork}
 	ready.Capabilities.ToolServiceInspection = r.supports("config/read")
+	ready.Capabilities.HookManagement = r.supports("hooks/list")
+	ready.Capabilities.HookInspection = r.protocol != nil && r.protocol.scopedHooks
 	ready.Capabilities.ConversationImport = history && r.supports("thread/list")
 	ready.Capabilities.Compact = history && r.supports("thread/compact/start")
 	ready.PermissionChoices = []domain.OptionChoice{{ID: "read-only", Name: "只读", Description: "仅查看"}, {ID: "default", Name: "默认权限", Description: "按需请求批准"}, {ID: "auto-approve", Name: "自动批准", Description: "沙盒内自动批准"}, {ID: "yolo", Name: "YOLO", Description: "不限制沙盒或批准"}}

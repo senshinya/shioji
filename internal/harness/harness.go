@@ -72,6 +72,15 @@ type SkillManager interface {
 	ChangeSkill(context.Context, domain.LaunchContext, domain.SkillChange) (domain.SkillChangeResult, error)
 }
 
+// An empty context inspects global automation only. A nonempty source inspects
+// that existing runtime, without starting or resuming it. The adapter owns
+// definition encoding, native trust and configuration reload semantics.
+type HookProvider interface {
+	Hooks(context.Context, domain.LaunchContext, string) (domain.HookCatalog, error)
+	ChangeHook(context.Context, domain.LaunchContext, domain.HookChange) (domain.HookChangeResult, error)
+	RefreshHooks(context.Context) error
+}
+
 // TitleGenerator is an optional, independent auxiliary capability. The adapter
 // owns its model selection, authentication and isolated execution mechanics.
 // It must not append a turn to the user's conversation or run workspace tools.

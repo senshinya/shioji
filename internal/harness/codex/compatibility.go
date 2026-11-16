@@ -21,6 +21,7 @@ import (
 
 type protocolSupport struct {
 	scopedToolStatus   bool
+	scopedHooks        bool
 	browserLogin       bool
 	deviceLogin        bool
 	collaborationMode  bool
@@ -60,6 +61,7 @@ var requestContracts = map[string][]string{
 	"turn/interrupt":          {"threadId", "turnId"},
 	"turn/steer":              {"threadId", "expectedTurnId", "clientUserMessageId", "input"},
 	"skills/list":             {"cwds", "forceReload"},
+	"hooks/list":              {"cwds"},
 	"collaborationMode/list":  {},
 	"permissionProfile/list":  {"limit"},
 	"thread/read":             {"threadId"},
@@ -149,6 +151,9 @@ func protocolFromSchema(data []byte) (*protocolSupport, error) {
 		support.methods[method.Enum[0]] = compatible
 		if method.Enum[0] == "mcpServerStatus/list" && compatible {
 			_, support.scopedToolStatus = params.Properties["threadId"]
+		}
+		if method.Enum[0] == "hooks/list" && compatible {
+			_, support.scopedHooks = params.Properties["threadId"]
 		}
 		if method.Enum[0] == "turn/start" {
 			_, support.collaborationMode = params.Properties["collaborationMode"]
