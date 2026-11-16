@@ -2,11 +2,30 @@ package worker
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"shioji/internal/protocol"
 	"strings"
 	"testing"
 )
+
+func TestNonRepositoryComparisonReturnsTypedError(t *testing.T) {
+	s, w, dir := gitTestServer(t)
+	if err := os.Rename(filepath.Join(dir, ".git"), filepath.Join(dir, "git-metadata")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.compareGit(protocol.GitQuery{WorkspaceID: w.ID})
+	var remote *protocol.RemoteError
+	if !errors.As(err, &remote) || remote.Code != "notGitRepository" {
+		t.Fatalf("non-Git comparison must identify unavailable review: %v", err)
+	}
+	gitTestRun(t, dir, "init", "-b", "main")
+	result, err := s.compareGit(protocol.GitQuery{WorkspaceID: w.ID})
+	if err != nil || len(result.Files) == 0 {
+		t.Fatalf("initializing Git must restore comparison: %+v %v", result, err)
+	}
+}
 
 func compareTest(t *testing.T, s *Server, workspace string, base, target map[string]string) map[string]any {
 	t.Helper()

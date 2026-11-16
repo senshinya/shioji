@@ -57,7 +57,7 @@ func (s *Server) resolveComparison(q protocol.GitQuery) (domain.DiffComparison, 
 		return domain.DiffComparison{}, err
 	}
 	if !status.Applicable {
-		return domain.DiffComparison{}, errors.New("not a Git repository")
+		return domain.DiffComparison{}, &protocol.RemoteError{Code: "notGitRepository", Message: "not a Git repository"}
 	}
 	cmp := domain.DefaultDiffComparison()
 	if q.Comparison != nil {

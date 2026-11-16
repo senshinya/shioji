@@ -79,13 +79,13 @@ func (v *View) requestComparison(state *changesState, pair domain.DiffComparison
 		state.Updated = time.Now()
 		state.endLoad(false)
 		if err != nil {
-			state.Error = err.Error()
+			state.failChanges(err)
 			state.FailedComparison = &pair
 			return
 		}
 		var result domain.ComparisonResult
 		if err = json.Unmarshal(data, &result); err != nil {
-			state.Error = err.Error()
+			state.failChanges(err)
 			return
 		}
 		state.Error = ""

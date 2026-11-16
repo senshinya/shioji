@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	n "github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
@@ -36,18 +37,19 @@ type changesState struct {
 	CommentDrafts        map[diffCommentKey]*diffCommentDraft
 	PinnedSnapshot       bool
 
-	Files      []domain.ChangedFile
-	load       changesLoadPhase
-	Error      string
-	Updated    time.Time
-	Path       string
-	file       fileDiffPhase
-	Versions   domain.FileVersions
-	Diff       *editor.DiffState
-	List       n.ListState
-	Tasks      n.ListState
-	DockSeen   bool
-	WorkGroups []app.InspectorGroup
+	Files         []domain.ChangedFile
+	load          changesLoadPhase
+	Error         string
+	NonRepository bool
+	Updated       time.Time
+	Path          string
+	file          fileDiffPhase
+	Versions      domain.FileVersions
+	Diff          *editor.DiffState
+	List          n.ListState
+	Tasks         n.ListState
+	DockSeen      bool
+	WorkGroups    []app.InspectorGroup
 }
 
 type changesLoadPhase uint8
@@ -73,6 +75,22 @@ func (s *changesState) endLoad(success bool) {
 		s.load = changesLoaded
 	} else {
 		s.load = changesUnloaded
+	}
+	if success {
+		s.NonRepository = false
+	}
+}
+
+func (s *changesState) failChanges(err error) {
+	s.Error = err.Error()
+	var remote *protocol.RemoteError
+	s.NonRepository = errors.As(err, &remote) && remote.Code == "notGitRepository"
+	// Workers predating the structured error return this fixed diagnostic.
+	s.NonRepository = s.NonRepository || s.Error == "not a Git repository"
+	if s.NonRepository {
+		s.Files, s.Refs = nil, nil
+		s.BaseOpen, s.TargetOpen = false, false
+		s.closeFile()
 	}
 }
 
@@ -163,12 +181,12 @@ func (v *View) requestChanges(force bool) {
 		state.endLoad(false)
 		state.Updated = time.Now()
 		if err != nil {
-			state.Error = err.Error()
+			state.failChanges(err)
 			return
 		}
 		state.Error = ""
 		if err = json.Unmarshal(b, &state.Files); err != nil {
-			state.Error = err.Error()
+			state.failChanges(err)
 			return
 		}
 		state.endLoad(true)
@@ -417,6 +435,14 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 			fileOpen := state.Path != ""
 			modern := v.Model.WorkerMinor >= 33
 			fileTop := float32(0)
+			if state.NonRepository {
+				header(false)
+				n.Column(c.Key("non-git-directory")).FillWidth().FillHeight().Grow(1).Padding(24).Gap(12).AlignItems(n.Center).Justify(n.Center).Children(func() {
+					n.Icon(c, workspaceIcon).Size(24, 24).TextColor(t.TextMuted)
+					n.Text(c, "当前目录不是 Git 仓库").FontSize(12).TextColor(t.TextMuted).TextAlign(n.Center)
+				})
+				return
+			}
 			if modern {
 				header(false)
 				v.diffComparisonBar(c, t, state, width)
@@ -430,9 +456,9 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 				if state.Error != "" {
 					n.Text(c, state.Error).FontSize(12).TextColor(t.TextMuted).Padding(12)
 				}
-				if !state.loaded() {
+				if state.loading() && !state.loaded() {
 					n.Text(c, "读取更改…").FontSize(12).TextColor(t.TextMuted).Padding(12)
-				} else if len(state.Files) == 0 {
+				} else if state.loaded() && len(state.Files) == 0 && state.Error == "" {
 					n.Text(c, "没有文件更改").FontSize(12).TextColor(t.TextMuted).Padding(12)
 				}
 				state.List.Key = func(i int) any { return state.Files[i].Path }
