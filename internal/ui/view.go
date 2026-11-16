@@ -75,6 +75,7 @@ type View struct {
 	requestActionsState                                                                                             map[app.WorkKey]*requestActionState
 	workPanels                                                                                                      map[app.WorkKey]*workPanelUI
 	workspaceTools                                                                                                  map[string]*workspaceToolsUI
+	hookManagement                                                                                                  map[string]*hookManagementUI
 	skillManagement                                                                                                 map[string]*skillManagementUI
 	skillReturn                                                                                                     *skillManagementReturn
 	directoryPicker                                                                                                 *directoryPicker
@@ -1025,8 +1026,28 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 			depth = 0
 		}
 		panel.AttachTo(trigger, n.AnchorTopEnd, n.AnchorBottomEnd)
-		panel.Label("运行配置菜单").Width(240).Padding(4).Radius(9).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
+		panelWidth := float32(240)
+		if phase == runMenuHooks {
+			width, _ := c.Size()
+			panelWidth = min(600, width-32)
+		}
+		panel.Label("运行配置菜单").Width(panelWidth).Padding(4).Radius(9).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
 			configurationTabPanel(c.Key("run-menu-pages"), fmt.Sprint(phase), depth, configurationPanelFit, func() {
+				if phase == runMenuHooks {
+					n.Column(c).Width(panelWidth - 8).Height(460).Padding(8).Children(func() {
+						n.Row(c).FillWidth().Height(28).Margin(0, 0, 8, 0).Children(func() {
+							if ghost(c, "‹ 返回").Height(28).FontSize(12).Label("返回运行配置").Clicked() {
+								v.runMenu = runMenuMain
+							}
+							n.Spacer(c).Grow(1)
+							if iconButton(c, closeIcon, "关闭 Hooks").Clicked() {
+								v.runMenu = runMenuClosed
+							}
+						})
+						v.managedHooksView(c, t, v.composerHooks())
+					})
+					return
+				}
 				if phase != runMenuMain {
 					if ghost(c, "‹  返回").FillWidth().TextAlign(n.Start).Clicked() {
 						v.runMenu = runMenuMain
@@ -1099,6 +1120,19 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 					}
 				}
 
+				if ready.Capabilities.HookManagement && v.deviceState(v.Model.ConnectionID()).WorkerMinor >= 46 {
+					u := v.composerHooks()
+					if u.phase == skillIdle {
+						v.queryHooks(u)
+					}
+					label := "›"
+					if count := hookPendingCount(u); count > 0 {
+						label = fmt.Sprintf("%d 待审核  ›", count)
+					}
+					if settingRow(c, "Hooks", label).Clicked() {
+						v.runMenu = runMenuHooks
+					}
+				}
 				fastAvailable := false
 				for _, model := range ready.Models {
 					if model.ID == cfg.Model {

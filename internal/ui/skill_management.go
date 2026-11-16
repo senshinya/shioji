@@ -36,6 +36,8 @@ type skillManagementUI struct {
 	markdown                                                    markdown.Options
 }
 type skillManagementReturn struct {
+	composer  bool
+	session   string
 	tab       string
 	workspace *workspaceEditor
 	editor    *deviceAgentEditor
@@ -456,6 +458,9 @@ func (v *View) openWorkspaceAgentManagement(key, harness, tab string) bool {
 		if info.ID != harness {
 			continue
 		}
+		if tab == "Hooks" && !info.Capabilities.HookManagement {
+			return false
+		}
 		if tab == "MCP" && !info.Capabilities.ToolServices {
 			return false
 		}
@@ -475,8 +480,24 @@ func (v *View) returnSkillWorkspace() {
 		return
 	}
 	ret := v.skillReturn
+	if ret.composer {
+		v.workspaceEditor = nil
+		v.devices = false
+		v.skillReturn = nil
+		v.runMenu = runMenuHooks
+		u := v.hookManagementFor(ret.key, ret.harness, ret.workspace.Workspace.ID, ret.session)
+		u.phase = skillIdle
+		v.queryHooks(u)
+		return
+	}
 	v.workspaceEditor = ret.workspace
 	v.devices = false
+	if ret.tab == "Hooks" {
+		u := v.hookManagementFor(ret.key, ret.harness, ret.workspace.Workspace.ID, "")
+		u.phase = skillIdle
+		v.queryHooks(u)
+		return
+	}
 	if ret.tab == "MCP" {
 		u := v.workspaceToolsFor(ret.workspace, ret.harness)
 		u.request++
@@ -580,8 +601,11 @@ func (v *View) skillDeviceManagementPage(c *n.Context, t *n.Theme, r *skillManag
 	}
 	n.Column(c).FillWidth().Padding(configurationInset).Gap(12).Children(func() {
 		label := "返回工作区 Skills"
-		if r.tab == "MCP" {
-			label = "返回工作区 MCP"
+		if r.tab != "" {
+			label = "返回工作区 " + r.tab
+		}
+		if r.composer {
+			label = "返回 Hooks"
 		}
 		if ghost(c, label).Clicked() {
 			v.returnSkillWorkspace()

@@ -433,6 +433,9 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 		if info.Capabilities.ToolServices && v.deviceState(key).WorkerMinor >= 22 {
 			tabs = append(tabs, configurationTabItem{ID: "MCP", Label: "MCP"})
 		}
+		if info.Capabilities.HookManagement && v.deviceState(key).WorkerMinor >= 46 {
+			tabs = append(tabs, configurationTabItem{ID: "Hooks", Label: "Hooks"})
+		}
 		if info.Installation != nil {
 			support := info.Installation.OptionsSupported
 			if support.Arguments || support.Directory || support.Environment || support.Instructions {
@@ -445,6 +448,10 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 		e.tab = configurationTabs(c.Key("agent-tabs"), e.tab, tabs, configurationUnderline, e.busy)
 		n.Column(c.Key("agent-page")).FillWidth().FillHeight().Grow(1).Padding(12, 0, 0).Children(func() {
 			configurationTabPanel(c.Key("page-motion"), e.tab, configurationTabIndex(tabs, e.tab), configurationPanelFill, func() {
+				if e.tab == "Hooks" {
+					v.agentHooks(c, t, key, e, info)
+					return
+				}
 				if e.tab == "Skills" {
 					v.agentSkills(c, t, key, e, info)
 					return

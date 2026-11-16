@@ -21,6 +21,7 @@ const (
 	runMenuModels
 	runMenuEfforts
 	runMenuHarnesses
+	runMenuHooks
 )
 
 type menuChoice struct {

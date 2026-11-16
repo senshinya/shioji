@@ -24,3 +24,7 @@ const (
 	configurationHoverInset         = 8
 	workspaceDirectoryChoiceInset   = 4
 )
+
+// Hooks share one stable scroll gutter across the toolbar, list and footer.
+const hookRowHeight float32 = 64
+const hookScrollGutter float32 = 8
