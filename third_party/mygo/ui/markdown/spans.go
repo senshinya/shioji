@@ -304,14 +304,20 @@ func (sb *spanBuilder) inlines(from, to int, s spanStyle) {
 			sb.linkIndex = save
 		case parser.Image:
 			// Images within text show their description; a paragraph of
-			// images alone shows the images (see imagesOnly).
+			// images alone shows the images (see imagesOnly). Keep the
+			// description actionable, without replacing an enclosing link.
 			cs := s
-			cs.color = sb.th.Muted
+			imageLink := link
+			if !s.inLink {
+				cs.inLink, cs.pendingLink = true, n.Pending
+				cs.color = Color{}
+				imageLink = k
+			}
 			alt := parser.PlainText(in[k+1 : n.Next])
 			if alt == "" {
 				alt = "image"
 			}
-			sb.add("["+alt+"]", n.Start, n.End, false, cs, link)
+			sb.add("["+alt+"]", n.Start, n.End, false, cs, imageLink)
 		case parser.HTML:
 			if !sb.inlineHTML(n.Text) {
 				sb.add(n.Text, n.Start, n.End, true, s, link)

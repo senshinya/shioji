@@ -8,6 +8,14 @@ import (
 
 func (v *View) outputImage(c *n.Context, t *n.Theme, a domain.Attachment) float32 {
 	cached := v.loadAttachmentImage(a, v.Model.WorkspaceID, 512)
+	return v.outputImageCard(c, t, a, cached, func(source n.Rect) {
+		v.openAttachment(a, v.Model.WorkspaceID, source, attachmentPreviewOrigin{Radius: 8})
+	}, func() { delete(v.attachmentImages, a.ID) })
+}
+
+// Tool results and Markdown use the same thumbnail geometry and transitions.
+// Their resource ownership and loading remain with their respective sources.
+func (v *View) outputImageCard(c *n.Context, t *n.Theme, a domain.Attachment, cached *attachmentImage, open func(n.Rect), retry func()) float32 {
 	height := float32(80)
 	if cached != nil {
 		cached.Used = v.replyFrame
@@ -42,13 +50,13 @@ func (v *View) outputImage(c *n.Context, t *n.Theme, a domain.Attachment) float3
 		source = button.Bounds()
 	})
 	if button.Clicked() {
-		v.openAttachment(a, v.Model.WorkspaceID, source, attachmentPreviewOrigin{Radius: 8})
+		open(source)
 	}
 	n.Row(c.Key("caption")).FillWidth().MaxWidth(224).Gap(6).AlignItems(n.Baseline).Children(func() {
 		n.Text(c, a.Name).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").FontSize(11).TextColor(t.TextMuted)
 		if cached != nil && cached.phase == attachmentImageFailed {
 			if ghost(c.Key("retry"), "重试图片").Transition(fadeMotion(c, 160*time.Millisecond)).FontSize(11).Tooltip(cached.Error).Clicked() {
-				delete(v.attachmentImages, a.ID)
+				retry()
 			}
 		}
 	})

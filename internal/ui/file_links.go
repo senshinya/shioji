@@ -67,6 +67,7 @@ func (v *View) fileLinkCurrent(s *fileLinkState) bool {
 func (v *View) bindMarkdownLinks(c *n.Context, options *markdown.Options) {
 	services := c.Services()
 	source := v.Model.Details[v.Model.SessionID].Session
+	v.bindMarkdownImages(options, source)
 	options.LinkContextMenu = v.forwardLinkMenu(c, source)
 	options.OnLink = func(dest string) {
 		if n.SafeToOpen(dest) {
@@ -176,6 +177,10 @@ func (v *View) startLinkResource(source domain.Session, path string, services n.
 	})
 }
 func prepareLinkedPreview(result app.LinkedFile, workspace, session, epoch string) (*attachmentPreview, error) {
+	return prepareLinkedPreviewSize(result, workspace, session, epoch, 1600)
+}
+
+func prepareLinkedPreviewSize(result app.LinkedFile, workspace, session, epoch string, imageMaximum int) (*attachmentPreview, error) {
 	meta := result.Resource
 	if systemFilePreview(result.Path) && !strings.HasPrefix(meta.MIME, "image/") {
 		return nil, nil
@@ -201,7 +206,7 @@ func prepareLinkedPreview(result app.LinkedFile, workspace, session, epoch strin
 	}
 	p := &attachmentPreview{Attachment: a, WorkspaceID: workspace, LocalPath: result.Path, SourcePath: meta.Path, SourceSessionID: session, SourceEpoch: epoch, presence: previewOpening}
 	if strings.HasPrefix(a.MIME, "image/") {
-		p.LoadedImage, err = decodeAttachmentImage(result.Path, 1600)
+		p.LoadedImage, err = decodeAttachmentImage(result.Path, imageMaximum)
 	} else {
 		p.Text = string(data)
 	}

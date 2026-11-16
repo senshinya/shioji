@@ -66,6 +66,15 @@ func (st *viewState) image(c *ui.Context, url string) ui.ImageSource {
 	return e.src
 }
 
+func hasCompletedImages(in []parser.Inline) bool {
+	for _, image := range in {
+		if image.Kind == parser.Image && !image.Pending && image.Dest != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // images builds a paragraph of images alone: each as large as it is, at
 // most as wide as the view, its description showing until it loads.
 func (st *viewState) images(c *ui.Context, i int) ui.Element {
@@ -73,37 +82,61 @@ func (st *viewState) images(c *ui.Context, i int) ui.Element {
 	in := st.doc.Inlines(i)
 	row := ui.Row(c).Wrap().Gap(th.em(0.5)).AlignSelf(ui.Stretch)
 	return row.Children(func() {
-		for k := 0; k < len(in); k = in[k].Next {
+		for k := 0; k < len(in); k++ {
 			n := &in[k]
 			if n.Kind != parser.Image {
 				continue
 			}
 			alt := parser.PlainText(in[k+1 : n.Next])
-			src := st.image(c, n.Dest)
-			if src == nil || n.Pending {
-				label := alt
-				if label == "" {
-					label = l10n.In(c.Locale()).Image()
-				}
-				ph := ui.Row(c).Padding(th.em(0.5), th.em(0.75)).Radius(th.em(0.3)).Background(th.CodeBackground)
-				ph.Role(ui.RoleImage).Label(alt)
-				ph.Children(func() { ui.Text(c, label).TextColor(th.Muted).FontSize(th.em(0.875)) })
+			if st.o.Image != nil && !n.Pending && n.Dest != "" {
+				ui.Column(c.Key(k)).MaxWidthPercent(100).Children(func() { st.o.Image(c, n.Dest, alt) })
 				continue
 			}
-			img := ui.Image(c, src).Radius(th.em(0.3)).MaxWidthPercent(100).Label(alt)
-			var w, h float32
-			switch s := src.(type) {
-			case *ui.Bitmap:
-				iw, ih := s.Size()
-				w, h = float32(iw), float32(ih)
-			case *ui.SVG:
-				w, h = s.Size()
+			src := st.image(c, n.Dest)
+			// A Link is an inline text container; images need a box button.
+			build := func() {
+				if src == nil || n.Pending {
+					label := alt
+					if label == "" {
+						label = l10n.In(c.Locale()).Image()
+					}
+					ph := ui.Row(c).Padding(th.em(0.5), th.em(0.75)).Radius(th.em(0.3)).Background(th.CodeBackground)
+					ph.Role(ui.RoleImage).Label(alt)
+					ph.Children(func() {
+						text := ui.Text(c, label).TextColor(th.Muted).FontSize(th.em(0.875))
+						if st.o.OnLink != nil && !n.Pending && n.Dest != "" {
+							text.Underline()
+						}
+					})
+					return
+				}
+				img := ui.Image(c, src).Radius(th.em(0.3)).MaxWidthPercent(100).Label(alt)
+				var w, h float32
+				switch s := src.(type) {
+				case *ui.Bitmap:
+					iw, ih := s.Size()
+					w, h = float32(iw), float32(ih)
+				case *ui.SVG:
+					w, h = s.Size()
+				}
+				if w > 0 && h > 0 {
+					img.AspectRatio(w / h)
+				}
+				if n.Title != "" {
+					img.Tooltip(n.Title)
+				}
 			}
-			if w > 0 && h > 0 {
-				img.AspectRatio(w / h)
+			if st.o.OnLink == nil {
+				build()
+				continue
 			}
-			if n.Title != "" {
-				img.Tooltip(n.Title)
+			button := ui.ButtonBase(c).Padding(0).MaxWidthPercent(100).Label(alt).Tooltip(n.Dest).Disabled(n.Pending || n.Dest == "")
+			button.Children(build)
+			if button.Clicked() {
+				st.o.OnLink(n.Dest)
+			}
+			if !n.Pending && n.Dest != "" && st.o.LinkContextMenu != nil {
+				button.ContextMenu(func(menu *ui.Menu) { st.o.LinkContextMenu(menu, n.Dest) })
 			}
 		}
 	})

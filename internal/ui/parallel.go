@@ -102,6 +102,7 @@ func (v *View) prepareSecondary() {
 	m := v.Model
 	if v.secondary != nil && v.secondary.Model.SessionID != m.SecondarySessionID {
 		v.secondary.cancelFileLink()
+		v.secondary.closeMarkdownImages()
 		v.secondary.cancelPagedHistory()
 	}
 	if m.SecondarySessionID == m.SessionID {

@@ -45,6 +45,10 @@ type Options struct {
 	// views to show; until it has, they show its description. Without
 	// it, images show as their descriptions. FileImages loads files.
 	LoadImage func(url string) (ui.ImageSource, error)
+	// Image builds a completed image in place of the default image view.
+	// Images embedded in prose are also shown below their text paragraph;
+	// their descriptions remain part of native text selection and copying.
+	Image func(c *ui.Context, url, description string)
 
 	// CodeBlock, when set, builds code blocks in place of DefaultCodeBlock,
 	// which it can call to wrap it; Code builds the code blocks of the
@@ -337,6 +341,12 @@ func (st *viewState) defaultBlock(c *ui.Context, i int, tight bool, base spanSty
 	case parser.Paragraph:
 		if imagesOnly(d.Inlines(i)) {
 			return st.images(c, i)
+		}
+		if st.o.Image != nil && hasCompletedImages(d.Inlines(i)) {
+			return ui.Column(c).AlignSelf(ui.Stretch).Gap(th.em(0.5)).Children(func() {
+				st.paragraph(c, i, base)
+				st.images(c, i)
+			})
 		}
 		return st.paragraph(c, i, base)
 	case parser.Heading:

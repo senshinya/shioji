@@ -114,6 +114,7 @@ type View struct {
 	attachmentStore                                                                                                 *attachments.Repository
 	attachmentCache                                                                                                 *app.AttachmentCache
 	attachmentImages                                                                                                map[string]*attachmentImage
+	markdownImages                                                                                                  *markdownImageCache
 	attachmentUploading                                                                                             map[string]bool
 	attachmentPreparing                                                                                             map[string]int
 	attachmentPreview                                                                                               *attachmentPreview
