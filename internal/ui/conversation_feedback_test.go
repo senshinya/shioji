@@ -244,22 +244,21 @@ func TestConversationFeedbackNewStateKeepsQuestionInForeground(t *testing.T) {
 	}
 }
 
-func TestConversationFeedbackErrorUsesUpperRightDetails(t *testing.T) {
+func TestConversationFeedbackErrorShowsRedactedReasonAtUpperRight(t *testing.T) {
 	m := layoutModel()
 	m.Error = "request failed: https://example.test/path?access_token=secret-value"
 	ui := n.NewTester(New(m, nil, "").View, 1100, 820)
 	ui.Advance(time.Second)
-	note, ok := ui.Find("操作未完成")
+	note, ok := ui.Find("request failed: https://example.test")
 	if !ok || note.Y > 100 {
 		t.Fatalf("operation failure is not a compact upper-right message: %v", note)
 	}
 	if ui.HasText(m.Error) {
 		t.Fatal("raw technical error used as a visible notice")
 	}
-	if err := ui.Click("查看消息详情"); err != nil {
-		t.Fatal(err)
+	if ui.HasText("详细信息") {
+		t.Fatal("short redacted reason still requires disclosure")
 	}
-	ui.Advance(time.Second)
 	for _, text := range ui.Texts() {
 		if text == m.Error {
 			t.Fatal("credential leaked in details")
@@ -269,7 +268,7 @@ func TestConversationFeedbackErrorUsesUpperRightDetails(t *testing.T) {
 		t.Fatal(err)
 	}
 	ui.Advance(time.Second)
-	if ui.HasText("操作未完成") {
+	if ui.HasText("request failed: https://example.test") {
 		t.Fatal("dismissed toast remained visible")
 	}
 }
@@ -426,7 +425,7 @@ func TestConversationFeedbackBackgroundHistoryDoesNotHideCurrentFailure(t *testi
 	m.Error = "current operation failed"
 	ui.Frame()
 	ui.Advance(time.Second)
-	if !ui.HasText("操作未完成") {
+	if !ui.HasText("current operation failed") {
 		t.Fatal("background history state swallowed current feedback")
 	}
 }
@@ -447,7 +446,7 @@ func TestConversationFeedbackSplitErrorDismissalSticks(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		ui.Advance(time.Second / 30)
 	}
-	if ui.HasText("操作未完成") {
+	if ui.HasText("primary failure") {
 		t.Fatal("dismissed primary error was recreated by the other pane")
 	}
 	if len(v.feedbackState().messages) != 1 {
@@ -515,12 +514,12 @@ func TestConversationFeedbackActionTextSharesBodyColumn(t *testing.T) {
 		v := New(m, nil, "")
 		ui := n.NewTester(v.View, 1100, 820)
 		ui.SetDark(dark)
-		m.ReportFeedback(app.Feedback{Title: "操作未完成", Body: "原有内容已保留", Details: "test detail"})
+		m.ReportFeedback(app.Feedback{Title: "操作未完成", Body: "原有内容已保留", Details: strings.Repeat("test detail\n", 20)})
 		ui.Frame()
 		ui.Advance(time.Second)
 		ui.Move(0, 0)
 		card, _ := ui.Find("弹出消息")
-		body, _ := ui.Find("原有内容已保留")
+		body, _ := ui.Find("test detail…\n原有内容已保留")
 		action, _ := ui.Find("查看消息详情")
 		inkLeft := func(r n.Rect) int {
 			im := ui.Image()

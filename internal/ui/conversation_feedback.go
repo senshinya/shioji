@@ -133,8 +133,8 @@ func (v *View) reportFeedback(f app.Feedback) {
 	v.feedbackState().put(f, v.frameTime, false)
 }
 
-// Only known credential-bearing syntax is retained as a redacted diagnostic.
-// Summaries never include arbitrary error strings or authorization URLs.
+// Redact diagnostics before they are used in either the visible message or
+// the expandable details.
 var feedbackURL = regexp.MustCompile(`https?://[^\s<>"']+`)
 var feedbackAuthorization = regexp.MustCompile(`(?i)((?:"|')?authorization(?:"|')?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\r\n]+)`)
 var feedbackCredential = regexp.MustCompile(`(?i)((?:"|')?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|(?:client[_-]?)?secret)(?:"|')?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)`)
@@ -154,6 +154,41 @@ func feedbackDetails(message string) string {
 	})
 	message = feedbackAuthorization.ReplaceAllString(message, "${1}[已隐藏]")
 	return feedbackCredential.ReplaceAllString(message, "${1}[已隐藏]")
+}
+
+// Keep the original feedback for identity, updates and replay. Both the popup
+// and recent list use the same reading order: reason, then useful guidance.
+func feedbackCopy(f app.Feedback) (title, body, details string) {
+	title, body, details = f.Title, f.Body, strings.TrimSpace(f.Details)
+	if details == "" || f.Kind == app.FeedbackSuccess || f.Kind == app.FeedbackInformation {
+		return
+	}
+	generic := title == "操作未完成"
+	if generic && body == "操作未能完成，原有内容已保留。" {
+		body = ""
+	}
+	if len([]rune(details)) <= 160 && strings.Count(details, "\n") < 3 {
+		if generic {
+			title = details
+		} else if details != title && details != body {
+			if body == "" {
+				body = details
+			} else {
+				body = details + "\n" + body
+			}
+		}
+		details = ""
+	} else {
+		line, _, _ := strings.Cut(details, "\n")
+		preview := []rune(line)
+		summary := string(preview[:min(160, len(preview))]) + "…"
+		if body == "" {
+			body = summary
+		} else {
+			body = summary + "\n" + body
+		}
+	}
+	return
 }
 
 func (v *View) syncConversationFeedback(c *n.Context) {
@@ -641,11 +676,12 @@ func (v *View) feedbackButton(c *n.Context, t *n.Theme) {
 							key = "cleared:" + key
 						}
 						source := root.feedbackScopeLabel(message.Feedback)
-						summary := strings.Join(strings.Fields(message.Body), " ")
+						title, body, _ := feedbackCopy(message.Feedback)
+						summary := strings.Join(strings.Fields(body), " ")
 						if summary == "" {
 							summary = source
 						}
-						row := control(c.Key(key), 6).FillWidth().Height(44).Padding(4, 8).Label(message.Title).Description(source).Tooltip(source)
+						row := control(c.Key(key), 6).FillWidth().Height(44).Padding(4, 8).Label(title).Description(source).Tooltip(source)
 						n.Inert(row, clearing)
 						if clearing {
 							row.Opacity(alpha)
@@ -662,8 +698,8 @@ func (v *View) feedbackButton(c *n.Context, t *n.Theme) {
 									if message.Kind == app.FeedbackSuccess {
 										icon = check
 									}
-									inlineSymbol(c, icon, message.Title, n.Font{Family: t.Font, Size: 13, Weight: 400}, 14, t.TextMuted)
-									n.Text(c, message.Title).FontSize(13).FixedLineHeight(18).Grow(1).MinWidth(0).SingleLine().Ellipsis("…")
+									inlineSymbol(c, icon, title, n.Font{Family: t.Font, Size: 13, Weight: 400}, 14, t.TextMuted)
+									n.Text(c, title).FontSize(13).FixedLineHeight(18).Grow(1).MinWidth(0).SingleLine().Ellipsis("…")
 								})
 								n.Text(c, summary).FillWidth().PaddingStart(22).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted).SingleLine().Ellipsis("…")
 							})
@@ -714,6 +750,7 @@ func (v *View) conversationMessageOverlay(c *n.Context, t *n.Theme) {
 			return
 		}
 		message := &state.messages[active]
+		title, body, details := feedbackCopy(message.Feedback)
 		if feedbackKey(message.Feedback) != state.replaying {
 			state.replaying = ""
 		}
@@ -752,33 +789,36 @@ func (v *View) conversationMessageOverlay(c *n.Context, t *n.Theme) {
 						inlineSymbol(c, icon, sourceLabel, font, 14, t.TextMuted).Label("消息来源图标")
 						n.Text(c, sourceLabel).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).FillWidth()
 					})
-					n.Text(c, message.Title).PaddingStart(22).FontSize(13).FixedLineHeight(20).FontWeight(500).FillWidth()
+					heading := n.Text(c, title).PaddingStart(22).FontSize(13).FixedLineHeight(20).FontWeight(500).FillWidth()
+					if title != message.Title {
+						heading.Selectable()
+					}
 				})
 				if iconButton(c, closeIcon, "关闭消息").Size(24, 24).Clicked() {
 					message.dismissed = true
 				}
 			})
 			canNavigate := message.SessionID != "" && message.SessionID != v.Model.SessionID
-			if message.Body != "" || message.Details != "" || canNavigate {
+			if body != "" || details != "" || canNavigate {
 				n.Column(c).FillWidth().PaddingStart(22).Gap(8).Children(func() {
-					if message.Body != "" {
+					if body != "" {
 						n.Scroll(c.Key("message-body")).FillWidth().MaxHeight(80).Label("消息说明").Children(func() {
-							n.Text(c, message.Body).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+							n.Text(c, body).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
 						})
 					}
-					if message.details && message.Details != "" {
+					if message.details && details != "" {
 						n.Column(c.Key("message-details")).FillWidth().Transition(disclosureMotion(c, 180*time.Millisecond)).Children(func() {
 							n.Scroll(c).FillWidth().MaxHeight(120).Children(func() {
-								n.Text(c, message.Details).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+								n.Text(c, details).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
 							})
 						})
 					}
-					if canNavigate || message.Details != "" {
+					if canNavigate || details != "" {
 						n.Row(c).FillWidth().Wrap().Gap(12).AlignItems(n.Center).Children(func() {
 							if canNavigate && ghost(c, "查看会话").Label("查看会话").PaddingX(0).FontSize(12).Height(24).Clicked() {
 								v.openFeedbackSource(message.Feedback)
 							}
-							if message.Details != "" {
+							if details != "" {
 								label, accessibility := "详细信息", "查看消息详情"
 								angle := float32(0)
 								if message.details {

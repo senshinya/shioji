@@ -24,7 +24,7 @@ func recentFeedbackFixture(t *testing.T, dark bool, width int) (*View, *n.Tester
 	ui.SetDark(dark)
 	ui.Advance(time.Second)
 	body := "工作目录仍有改动。当前分支与草稿已保留。"
-	m.ReportFeedback(app.Feedback{ID: "older", ConnectionID: "local", WorkspaceID: "w", SessionID: "s", Title: recentOldTitle, Body: body, Details: "本次分支切换未执行。请先检查工作区状态。"})
+	m.ReportFeedback(app.Feedback{ID: "older", ConnectionID: "local", WorkspaceID: "w", SessionID: "s", Title: recentOldTitle, Body: body, Details: "本次分支切换未执行。请先检查工作区状态。\n" + strings.Repeat(" M internal/example.go\n", 12) + "诊断结束"})
 	m.ReportFeedback(app.Feedback{ID: "newer", ConnectionID: "local", WorkspaceID: "w", SessionID: "other", Title: recentNewTitle, Body: "原设备上的会话已重新连接，草稿没有自动发送。", Kind: app.FeedbackInformation})
 	ui.Frame()
 	ui.Advance(300 * time.Millisecond)
@@ -44,7 +44,7 @@ func TestRecentFeedbackListOnlyShowsBriefRows(t *testing.T) {
 		v.Model.ReportFeedback(f)
 		ui.Frame()
 		ui.Advance(300 * time.Millisecond)
-		r, ok := ui.Find(body)
+		r, ok := ui.Find("本次分支切换未执行。请先检查工作区状态。… " + body)
 		if !ok || r.H > 22 {
 			t.Fatal("recent list expands the complete message instead of a brief preview", dark, r)
 		}
