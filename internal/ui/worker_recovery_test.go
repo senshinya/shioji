@@ -7,6 +7,7 @@ import (
 	"os"
 	"shioji/internal/app"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 	"testing"
 	"time"
 )
@@ -271,5 +272,58 @@ func TestNativeNormalCloseUsesExplicitObservation(t *testing.T) {
 	in := nextRecoveryUIJob(t, c).Input.(domain.WorkerMaintenanceInput)
 	if in.Action != "close" || in.Targets[0].ProcessRef != "exact-observation" {
 		t.Fatal(in)
+	}
+}
+
+func TestUnknownSessionCanEndOldRecordWithoutSendingQueuedInput(t *testing.T) {
+	m := layoutModel()
+	m.WorkerMinor = 43
+	d := m.Details["s"]
+	d.Session.Status = "unknown"
+	d.Session.Recovery = &domain.SessionRecovery{Phase: "attention", CanEnd: true}
+	m.Details["s"] = d
+	m.Snapshot.Sessions[0] = d.Session
+	m.Drafts["session:s"] = "保留普通草稿"
+	c := app.NewController("")
+	v := New(m, c, "")
+	u := n.NewTester(v.View, 1240, 820)
+	u.Advance(time.Second)
+	if dir := os.Getenv("SHIOJI_FORCE_RECOVERY_EVIDENCE"); dir != "" {
+		t.Setenv("SHIOJI_SKILL_SNAPSHOTS", dir)
+	}
+	saveNativeSkillImage(t, u, "recovery-record.png")
+	for len(c.Jobs) > 0 {
+		<-c.Jobs
+	}
+	if err := u.Click("结束旧轮记录…"); err != nil {
+		t.Fatal(err)
+	}
+	u.Frame()
+	u.Advance(time.Second)
+	saveNativeSkillImage(t, u, "recovery-record-confirm.png")
+	select {
+	case j := <-c.Jobs:
+		t.Fatal("end sent before confirmation", j)
+	default:
+	}
+	if err := u.Click("确认任务已停止"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case j := <-c.Jobs:
+		in, ok := j.Input.(protocol.RecoveryInput)
+		if j.Method != "session.reconcile" || !ok || in.Action != "end" || in.SessionID != "s" {
+			t.Fatal(j)
+		}
+	default:
+		t.Fatal("explicit end missing")
+	}
+	if m.Drafts["session:s"] != "保留普通草稿" {
+		t.Fatal("draft changed")
+	}
+	select {
+	case j := <-c.Jobs:
+		t.Fatal("unexpected automatic input replay", j)
+	default:
 	}
 }
