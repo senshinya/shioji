@@ -103,6 +103,9 @@ func TestMaintenanceDirectForceClosesActiveDetachedEnvironmentWithoutUpdate(t *t
 		t.Fatal("unregistered environment accepted without risk confirmation")
 	}
 	in.RiskAccepted = true
+	if _, err = s.store.Apply(selected.Session.ID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "streamed-after-preview", Kind: "assistant", Text: "streamed content does not change the execution"}}); err != nil {
+		t.Fatal(err)
+	}
 	op, err := s.applyWorkerMaintenance(in)
 	if err != nil {
 		t.Fatal(err)

@@ -15,14 +15,14 @@ import (
 )
 
 type workerRecoveryUI struct {
-	open, picker, all, update, risk bool
-	selected                        map[string]bool
-	processes                       map[string]bool
-	query, confirm, error, initial  string
-	selection                       app.WorkerCloseSelection
-	deviceInput                     domain.WorkerRecoveryInput
-	names                           []string
-	next                            time.Time
+	open, picker, all, update, risk, restoreUpdate bool
+	selected                                       map[string]bool
+	processes                                      map[string]bool
+	query, confirm, error, initial                 string
+	selection                                      app.WorkerCloseSelection
+	deviceInput                                    domain.WorkerRecoveryInput
+	names                                          []string
+	next                                           time.Time
 }
 
 func (v *View) recoveryUIFor(key string) *workerRecoveryUI {
@@ -362,6 +362,7 @@ func (v *View) workerRecoveryPage(c *n.Context, t *n.Theme, key, name string, s 
 		f.confirm = ""
 	}
 	if f.confirm == "device-preview" && !rc.Busy && rc.Preview != nil && !rc.QueryOnly && (rc.Operation == nil || !rc.Operation.Active()) {
+		f.restoreUpdate = false
 		f.deviceInput = domain.WorkerRecoveryInput{ID: domain.NewID(), ActionID: domain.NewID(), Action: "restart", DeviceID: id, PreviewRef: rc.Preview.Ref}
 		f.names = nil
 		active := 0
@@ -371,7 +372,11 @@ func (v *View) workerRecoveryPage(c *n.Context, t *n.Theme, key, name string, s 
 				active++
 			}
 		}
-		f.names = append([]string{fmt.Sprintf("此设备所有执行会话都会断开；%d 个正在运行或待核对任务将中断", active)}, f.names...)
+		impact := fmt.Sprintf("此设备所有执行会话都会断开；%d 个正在运行或待核对任务将中断", active)
+		if rc.Preview.ScopeUnknown {
+			impact = "任务数量和范围无法核对，确认将关闭此设备全部执行环境"
+		}
+		f.names = append([]string{impact}, f.names...)
 		for _, p := range rc.Preview.Processes {
 			if f.processes[p.Ref] && !p.Protected && p.SessionID == "" {
 				f.deviceInput.ProcessRefs = append(f.deviceInput.ProcessRefs, p.Ref)
@@ -456,6 +461,15 @@ func (v *View) recoveryConfirm(c *n.Context, t *n.Theme, key, name string, mc *a
 			if device {
 				n.Text(c, "Tailnet 与设备 SSH 连接保留。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 			}
+			if device && rc.Preview != nil {
+				if rc.Preview.RestoreBuildID != "" {
+					n.Text(c, "恢复原构建 · "+shortBuildID(rc.Preview.RestoreBuildID)).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+				}
+				if rc.Preview.CandidateBuildID != "" {
+					configurationCheckbox(c, &f.restoreUpdate, "使用当前应用构建恢复执行服务", n.Font{Family: t.Font, Size: 12}, "使用当前应用构建恢复执行服务").Label("使用当前应用构建恢复执行服务")
+				}
+			}
+
 			required := device || f.selection.Force || len(f.selection.ProcessRefs) > 0
 			if required {
 				configurationCheckbox(c, &f.risk, "我已了解强制关闭的影响", n.Font{Family: t.Font, Size: 12}, "我已了解强制关闭的影响").Label("我已了解强制关闭的影响")
@@ -474,6 +488,10 @@ func (v *View) recoveryConfirm(c *n.Context, t *n.Theme, key, name string, mc *a
 				if maintenancePrimary(c, label).Disabled(required && !f.risk || mc.Busy || rc.Busy || v.Controller == nil).Clicked() {
 					if device {
 						f.deviceInput.RiskAccepted = f.risk
+						f.deviceInput.Update = f.restoreUpdate
+						if f.restoreUpdate && rc.Preview != nil {
+							f.deviceInput.BuildID = rc.Preview.CandidateBuildID
+						}
 						job, err := v.Model.WorkerRecoveryJob(key, "start", f.deviceInput)
 						v.recoverySubmit(key, job, err)
 					} else {
@@ -566,4 +584,11 @@ func (v *View) exportRecovery(key string, mc *app.WorkerMaintenanceClient, rc *a
 			}
 		}
 	})
+}
+
+func shortBuildID(value string) string {
+	if len(value) > 12 {
+		return value[:12]
+	}
+	return value
 }

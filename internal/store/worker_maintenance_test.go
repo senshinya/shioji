@@ -199,3 +199,39 @@ func TestExplicitMaintenanceAcceptsActiveSessionAndInvalidatesRequests(t *testin
 		}
 	}
 }
+
+func TestExplicitMaintenanceConsentSurvivesContentButRejectsNewExecution(t *testing.T) {
+	for _, change := range []string{"content", "new-turn", "new-input"} {
+		t.Run(change, func(t *testing.T) {
+			s := open(t)
+			sid := maintenanceSession(t, s, "stream")
+			state, err := s.MaintenanceSessionState(sid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			op := maintenanceOperation(t, s, "force", sid)
+			op.Explicit = true
+			op.Standalone = true
+			op.Targets[0].Target.ExecutionRef = state.ExecutionRef
+			switch change {
+			case "content":
+				_, err = s.Apply(sid, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "streamed", Kind: "assistant", Text: "more output"}})
+			case "new-turn":
+				_, err = s.Apply(sid, domain.Event{Type: "turn", Turn: &domain.Turn{ID: "different-turn", Status: "running"}})
+			case "new-input":
+				d, _ := s.Session(sid, 0, 1)
+				_, err = s.Accept(domain.Submission{OperationID: "new-input", WorkspaceID: d.Session.WorkspaceID, SessionID: sid, Text: "new work"})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = s.AcceptWorkerMaintenance(op)
+			if change == "content" && err != nil {
+				t.Fatal("stream output invalidated the confirmed execution", err)
+			}
+			if change != "content" && err == nil {
+				t.Fatal("new execution inherited old consent")
+			}
+		})
+	}
+}

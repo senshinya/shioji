@@ -84,6 +84,14 @@ func RunWorkerRecovery(ctx context.Context, binary, directory, action string, in
 	if !b.RecoveryHelper {
 		return nil, errors.New("当前应用未携带恢复程序，请更新控制端应用")
 	}
+	if action == "start" && in.Update {
+		if in.BuildID != b.BuildID {
+			return nil, &protocol.RemoteError{Code: "notSent", Message: "恢复构建已变化，请重新检查"}
+		}
+		if _, err = StageWorker(ctx, directory, binary); err != nil {
+			return nil, &protocol.RemoteError{Code: "notSent", Message: "恢复构建暂存未完成"}
+		}
+	}
 	return recoveryCommand(exec.CommandContext(ctx, binary, args...), in)
 }
 

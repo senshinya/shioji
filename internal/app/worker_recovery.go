@@ -231,7 +231,7 @@ func (m *Model) WorkerRecoveryJob(key, action string, in domain.WorkerRecoveryIn
 					current.Preview = &preview
 					current.Operation = nil
 					current.QueryOnly = false
-					if preview.Operation != nil {
+					if preview.Operation != nil && preview.Operation.Active() {
 						current.Operation = preview.Operation
 						current.PendingID = preview.Operation.ID
 						current.QueryOnly = preview.Operation.Active()

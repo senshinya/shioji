@@ -158,7 +158,7 @@ func (s *Server) diagnoseWorkerUpdateLocked() (out domain.WorkerUpdateDiagnosis,
 		if index >= 0 {
 			b = &out.Blockers[index]
 		}
-		b.ForceTarget = &domain.WorkerMaintenanceTarget{SessionID: session.ID, Generation: scope.Generation, ProcessRef: observation.Ref, Revision: state.Session.Revision, QueueRevision: state.Queue.Revision}
+		b.ForceTarget = &domain.WorkerMaintenanceTarget{ExecutionRef: state.ExecutionRef, SessionID: session.ID, Generation: scope.Generation, ProcessRef: observation.Ref, Revision: state.Session.Revision, QueueRevision: state.Queue.Revision}
 		b.Processes = processSummaries(observation)
 		out.Environments = append(out.Environments, *b)
 	}
@@ -258,6 +258,11 @@ func (s *Server) applyWorkerMaintenance(in domain.WorkerMaintenanceInput) (op do
 	}
 	for _, target := range in.Targets {
 		b, ok := eligible[target.SessionID]
+		if ok && explicit && target.ExecutionRef != "" && b.Target.ExecutionRef == target.ExecutionRef {
+			copy := *b.Target
+			copy.Revision = target.Revision
+			b.Target = &copy
+		}
 		if !ok || *b.Target != target {
 			return op, workNotSent(errors.New("会话或后台进程已变化，请重新检查并确认"))
 		}

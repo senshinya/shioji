@@ -66,7 +66,8 @@ func deviceRecoveryFixture() bool {
 		}
 		return true
 	}
-	if arg("--unresponsive") == "yes" {
+	_, serviceHung := os.Stat(filepath.Join(dir, "fixture-hung"))
+	if arg("--unresponsive") == "yes" || arg("--service-fixture") == "yes" && serviceHung == nil {
 		owner, err := Acquire(dir)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)

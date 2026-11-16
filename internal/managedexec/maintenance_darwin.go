@@ -16,13 +16,14 @@ import (
 var ErrManualStillRunning = errors.New("后台环境尚未退出，未授权的强制结束不会自动执行")
 
 type manualStopState struct {
-	Explicit    bool          `json:",omitempty"`
-	Targets     []ProcessInfo `json:",omitempty"`
-	Accepted    bool          `json:",omitempty"`
-	Operation   string
-	NormalSent  bool
-	ForceAction string
-	ForceSent   bool
+	ExitConfirmed bool          `json:",omitempty"`
+	Explicit      bool          `json:",omitempty"`
+	Targets       []ProcessInfo `json:",omitempty"`
+	Accepted      bool          `json:",omitempty"`
+	Operation     string
+	NormalSent    bool
+	ForceAction   string
+	ForceSent     bool
 }
 
 type MaintenanceProcess struct {

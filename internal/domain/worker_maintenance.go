@@ -13,6 +13,7 @@ const (
 
 // ProcessRef and Generation are owning-worker references, never client PIDs.
 type WorkerMaintenanceTarget struct {
+	ExecutionRef  string `json:"executionRef,omitempty"`
 	SessionID     string `json:"sessionId"`
 	Generation    string `json:"generation"`
 	ProcessRef    string `json:"processRef"`

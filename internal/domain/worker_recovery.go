@@ -16,15 +16,18 @@ type WorkerRecoveryProcess struct {
 }
 
 type WorkerRecoveryPreview struct {
-	Operation *WorkerRecoveryOperation `json:"operation,omitempty"`
-	DeviceID  string                   `json:"deviceId"`
-	BuildID   string                   `json:"buildId,omitempty"`
-	Ref       string                   `json:"ref"`
-	CheckedAt time.Time                `json:"checkedAt"`
-	ExpiresAt time.Time                `json:"expiresAt"`
-	Processes []WorkerRecoveryProcess  `json:"processes"`
-	Sessions  []Session                `json:"sessions,omitempty"`
-	Warnings  []string                 `json:"warnings,omitempty"`
+	CandidateBuildID string                   `json:"candidateBuildId,omitempty"`
+	RestoreBuildID   string                   `json:"restoreBuildId,omitempty"`
+	ScopeUnknown     bool                     `json:"scopeUnknown,omitempty"`
+	Operation        *WorkerRecoveryOperation `json:"operation,omitempty"`
+	DeviceID         string                   `json:"deviceId"`
+	BuildID          string                   `json:"buildId,omitempty"`
+	Ref              string                   `json:"ref"`
+	CheckedAt        time.Time                `json:"checkedAt"`
+	ExpiresAt        time.Time                `json:"expiresAt"`
+	Processes        []WorkerRecoveryProcess  `json:"processes"`
+	Sessions         []Session                `json:"sessions,omitempty"`
+	Warnings         []string                 `json:"warnings,omitempty"`
 }
 
 type WorkerRecoveryInput struct {

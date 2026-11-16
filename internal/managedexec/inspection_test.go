@@ -160,3 +160,34 @@ func TestExplicitPreviewDoesNotGrantImplicitForce(t *testing.T) {
 		t.Fatal("preview killed child", err)
 	}
 }
+
+func TestDeviceExitProofCannotReleaseANewGeneration(t *testing.T) {
+	manager, err := New(t.TempDir(), os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := manager.Begin("device-proof")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = old.ConfirmExplicitExit("helper-operation"); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := manager.Existing(old.Session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proven, e := reloaded.ExplicitStopProven(); !proven || e != nil {
+		t.Fatal("device proof not durable", proven, e)
+	}
+	next, err := manager.Begin(old.Session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Generation == old.Generation {
+		t.Fatal("new generation not created")
+	}
+	if proven, e := next.ExplicitStopProven(); proven || e != nil {
+		t.Fatal("old helper proof released a new execution", proven, e)
+	}
+}

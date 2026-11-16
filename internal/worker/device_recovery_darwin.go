@@ -29,22 +29,26 @@ import (
 )
 
 type recoveryPreviewRecord struct {
+	Consent recoveryConsent
 	Preview domain.WorkerRecoveryPreview
 	Owner   managedexec.ProcessInfo
 	Targets map[string]managedexec.ProcessInfo
 }
 type deviceRecoveryRecord struct {
-	Operation        domain.WorkerRecoveryOperation
-	Input            domain.WorkerRecoveryInput
-	Snapshot         recoveryPreviewRecord
-	Runner           managedexec.ProcessInfo
-	Sent             map[string]bool
-	Cancelled        bool
-	Service          string
-	ServiceSuspended bool
-	OwnerPaused      bool
-	SourceBinary     string
-	SourceDigest     string
+	Operation             domain.WorkerRecoveryOperation
+	Input                 domain.WorkerRecoveryInput
+	Snapshot              recoveryPreviewRecord
+	Runner                managedexec.ProcessInfo
+	Sent                  map[string]bool
+	Cancelled             bool
+	ServicePlist          string
+	SourceError           string
+	ServiceSuspendPending bool
+	Service               string
+	ServiceSuspended      bool
+	OwnerPaused           bool
+	SourceBinary          string
+	SourceDigest          string
 }
 
 func recoveryDirectory(dir string) (string, error) {
@@ -248,6 +252,11 @@ func InspectDeviceRecovery(ctx context.Context, dir, expected string) (domain.Wo
 		return domain.WorkerRecoveryPreview{}, err
 	}
 	r := recoveryPreviewRecord{Preview: domain.WorkerRecoveryPreview{DeviceID: id, CheckedAt: time.Now().UTC(), Sessions: sessions, Warnings: warnings}, Targets: map[string]managedexec.ProcessInfo{}}
+	r.Consent, err = captureRecoveryConsent(ctx, dir)
+	if err != nil {
+		r.Preview.ScopeUnknown = true
+		r.Preview.Warnings = append(r.Preview.Warnings, "会话执行范围暂无法核对；确认重启将覆盖此设备全部执行环境")
+	}
 	r.Preview.Ref = domain.NewID()
 	r.Preview.ExpiresAt = r.Preview.CheckedAt.Add(30 * time.Second)
 	r.Owner, err = recoveryOwner(dir)
@@ -301,10 +310,26 @@ func InspectDeviceRecovery(ctx context.Context, dir, expected string) (domain.Wo
 		r.Preview.Processes = append(r.Preview.Processes, summary)
 		r.Targets[summary.Ref] = p
 	}
-	if fence, e := transport.PendingDeviceRecovery(dir); e == nil && fence != nil {
+	if fence, e := recoveryReservation(dir); e == nil && fence != nil {
 		var existing deviceRecoveryRecord
 		if recoveryRead(dir, fence.ID, &existing) == nil && existing.Operation.DeviceID == id {
 			r.Preview.Operation = &existing.Operation
+		}
+	}
+	r.Preview.CandidateBuildID = runtimebuild.Current().BuildID
+	if r.Owner.Identity.PID > 1 {
+		if owner, e := transport.WorkerProcess(r.Owner.Identity.PID); e == nil {
+			r.Preview.BuildID, _ = runtimebuild.Digest(owner.Executable)
+		}
+	}
+	r.Preview.RestoreBuildID = r.Preview.BuildID
+	if fence, e := recoveryReservation(dir); e == nil && fence != nil {
+		var previous deviceRecoveryRecord
+		if recoveryRead(dir, fence.ID, &previous) == nil && previous.Operation.Phase != "completed" && previous.SourceDigest != "" {
+			r.Preview.RestoreBuildID = previous.SourceDigest
+			if previous.SourceError != "" {
+				r.Preview.Warnings = append(r.Preview.Warnings, previous.SourceError)
+			}
 		}
 	}
 	if err = recoveryWrite(dir, "preview-"+r.Preview.Ref, r); err != nil {
@@ -323,7 +348,7 @@ func StartDeviceRecovery(ctx context.Context, dir, binary string, in domain.Work
 		return none, err
 	}
 	defer lock.Close()
-	var r deviceRecoveryRecord
+	var r, prior deviceRecoveryRecord
 	if err = recoveryRead(dir, in.ID, &r); err == nil {
 		if !reflectRecoveryInput(r.Input, in) {
 			return none, errors.New("恢复动作与已接纳范围不一致")
@@ -332,7 +357,7 @@ func StartDeviceRecovery(ctx context.Context, dir, binary string, in domain.Work
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return none, err
 	}
-	if fence, e := transport.PendingDeviceRecovery(dir); e != nil {
+	if fence, e := recoveryReservation(dir); e != nil {
 		return none, e
 	} else if fence != nil {
 		if e = recoveryRead(dir, fence.ID, &r); e != nil {
@@ -342,9 +367,8 @@ func StartDeviceRecovery(ctx context.Context, dir, binary string, in domain.Work
 			r.Operation.Conflict = true
 			return r.Operation, nil
 		}
-		if e = os.Remove(filepath.Join(dir, "worker-recovery", "fence.json")); e != nil {
-			return none, e
-		}
+
+		prior = r
 		r = deviceRecoveryRecord{}
 	}
 	if err = recoveryRead(dir, "preview-"+in.PreviewRef, &r.Snapshot); err != nil {
@@ -352,6 +376,9 @@ func StartDeviceRecovery(ctx context.Context, dir, binary string, in domain.Work
 	}
 	if r.Snapshot.Preview.DeviceID != in.DeviceID || time.Now().After(r.Snapshot.Preview.ExpiresAt) {
 		return none, errors.New("恢复设备或预览已变化，请重新确认")
+	}
+	if err = validateRecoveryConsent(ctx, dir, r.Snapshot); err != nil {
+		return none, err
 	}
 	current, _, _, err := recoveryCatalog(ctx, dir, in.DeviceID)
 	if err != nil || current != in.DeviceID {
@@ -407,6 +434,20 @@ func StartDeviceRecovery(ctx context.Context, dir, binary string, in domain.Work
 	// never persist it in operation or diagnostic records.
 	env := os.Environ()
 	r.SourceBinary = binary
+	if r.Snapshot.Owner.Identity.PID <= 1 && prior.SourceBinary == "" {
+		selected, e := transport.ActiveWorkerBuild(dir)
+		if e != nil {
+			r.SourceError = "原服务版本记录无法读取，请明确选择替换构建"
+		} else if selected != "" {
+			r.SourceBinary, e = transport.StagedWorkerPath(dir, selected)
+			r.SourceDigest = selected
+			if e != nil {
+				r.SourceError = "原服务构建不可用，请明确选择替换构建"
+			}
+		} else if len(r.Snapshot.Consent.Executions) > 0 || r.Snapshot.Preview.ScopeUnknown {
+			r.SourceError = "原服务已离线，无法确认原构建；请明确选择当前应用构建恢复"
+		}
+	}
 	if r.Snapshot.Owner.Identity.PID > 1 {
 		owner, e := transport.WorkerProcess(r.Snapshot.Owner.Identity.PID)
 		if e != nil {
@@ -424,14 +465,22 @@ func StartDeviceRecovery(ctx context.Context, dir, binary string, in domain.Work
 			r.Service = fmt.Sprintf("gui/%d/dev.shioji.runtime.agent", os.Getuid())
 		}
 	}
-	r.SourceDigest, err = runtimebuild.Digest(r.SourceBinary)
-	if err != nil {
-		return none, err
+	inheritRecoveryRestoration(prior, &r)
+	pinRecoverySource(ctx, dir, &r)
+	if r.Service != "" && !r.ServiceSuspended && r.Snapshot.Owner.Identity.PID > 1 {
+		r.ServicePlist, err = inspectRecoveryService(ctx, r.Service, r.Snapshot.Owner, nativeRecoveryServiceCommand)
+		if err != nil {
+			return none, err
+		}
 	}
+
 	if err = recoveryWrite(dir, in.ID, r); err != nil {
 		return none, err
 	}
 	if err = recoveryWrite(dir, "fence", transport.RecoveryFence{ID: in.ID, DeviceID: in.DeviceID}); err != nil {
+		return none, err
+	}
+	if err = recoveryWrite(dir, "active", transport.RecoveryFence{ID: in.ID, DeviceID: in.DeviceID}); err != nil {
 		return none, err
 	}
 	cmd := exec.Command(binary, "--state-dir", dir, "--recovery-helper", "run", "--recovery-id", in.ID, "--recovery-device", in.DeviceID)
@@ -574,6 +623,9 @@ func RunDeviceRecovery(ctx context.Context, config Config, id string) (server *S
 			return nil, err
 		}
 	}
+	if err = validateRecoveryConsent(ctx, dir, r.Snapshot); err != nil {
+		return nil, err
+	}
 	if err = expandRecoveryDescendants(&r); err != nil {
 		return nil, err
 	}
@@ -581,13 +633,27 @@ func RunDeviceRecovery(ctx context.Context, config Config, id string) (server *S
 		return nil, err
 	}
 	if r.Service != "" && !r.ServiceSuspended {
-		// Remove only the execution agent's launchd instance. The independent
-		// network job has a different label and is never unregistered here.
-		if e := exec.CommandContext(ctx, "/bin/launchctl", "bootout", r.Service).Run(); e != nil {
-			return nil, errors.New("无法暂挂执行服务自动启动，请在设备上重试恢复")
+		if r.ServiceSuspendPending && r.Snapshot.Owner.Identity.PID <= 1 {
+			// A prior runner may have exited between successful bootout and journaling.
+			// A live registration requires a new owner preview, never blind label control.
+			if _, e := nativeRecoveryServiceCommand(ctx, "print", r.Service); e == nil {
+				return nil, errors.New("执行注册仍在，请重新检查当前实例")
+			}
+			r.ServiceSuspended = true
+		} else {
+			r.ServiceSuspendPending = true
+			if err = phase("fencing", ""); err != nil {
+				return nil, err
+			}
+			plist, e := suspendRecoveryService(ctx, r.Service, r.Snapshot.Owner, nativeRecoveryServiceCommand)
+			if e != nil {
+				return nil, e
+			}
+			r.ServicePlist = plist
+			r.ServiceSuspended = true
 		}
-		r.ServiceSuspended = true
 	}
+
 	if err = phase("closing", ""); err != nil {
 		return nil, err
 	}
@@ -671,6 +737,9 @@ func RunDeviceRecovery(ctx context.Context, config Config, id string) (server *S
 		return nil, fmt.Errorf("尚未取得独占执行权：%w", err)
 	}
 	defer owner.Close()
+	if err = confirmRecoveryScopes(dir, id, r.Snapshot); err != nil {
+		return nil, err
+	}
 	if err = pauseRecoveryDatabase(ctx, dir, r.Operation.DeviceID); err != nil {
 		return nil, err
 	}
@@ -686,6 +755,14 @@ func RunDeviceRecovery(ctx context.Context, config Config, id string) (server *S
 		// A different candidate must start via its normal --ensure path after
 		// this helper releases the fence and ownership below.
 	}
+	if !r.Input.Update && r.SourceError != "" {
+		return nil, errors.New("环境已关闭；原构建不可用，请重新检查并明确选择当前应用构建恢复")
+	}
+	if !r.Input.Update {
+		if err = transport.SaveActiveWorker(dir, r.SourceDigest); err != nil {
+			return nil, err
+		}
+	}
 	if err = phase("starting", ""); err != nil {
 		return nil, err
 	}
@@ -693,8 +770,10 @@ func RunDeviceRecovery(ctx context.Context, config Config, id string) (server *S
 		return nil, err
 	}
 	if r.ServiceSuspended {
-		home, _ := os.UserHomeDir()
-		plist := filepath.Join(home, "Library", "Application Support", "Shioji", "Runtime", "Shioji Runtime.app", "Contents", "Library", "LaunchAgents", "dev.shioji.runtime.agent.plist")
+		plist := r.ServicePlist
+		if !filepath.IsAbs(plist) || filepath.Ext(plist) != ".plist" {
+			return nil, errors.New("缺少原执行服务注册信息，请在设备上恢复登录服务")
+		}
 		owner.Close()
 		if e := exec.CommandContext(ctx, "/bin/launchctl", "bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), plist).Run(); e != nil {
 			return nil, errors.New("环境已关闭，但执行服务未恢复；请重试启动")
@@ -748,7 +827,7 @@ func expandRecoveryDescendants(r *deviceRecoveryRecord) error {
 		seen[result.Process.Ref] = true
 		exact := r.Snapshot.Targets[result.Process.Ref]
 		for _, p := range procs {
-			if p.Identity == exact.Identity && p.UID == exact.UID {
+			if result.Process.Evidence != "unknown" && p.Identity == exact.Identity && p.UID == exact.UID {
 				owned[p.Identity.PID] = true
 			}
 		}
@@ -801,6 +880,7 @@ func pauseRecoveryDatabase(ctx context.Context, dir, expected string) error {
 		{"requests", `UPDATE requests SET body=json_set(body,'$.state','invalidated','$.revision',COALESCE(json_extract(body,'$.revision'),0)+1) WHERE json_extract(body,'$.state') IN ('pending','submitting')`},
 		{"operations", `UPDATE operations SET state='indeterminate',error='用户恢复执行服务，投递结果待核对' WHERE state IN ('accepted','dispatched')`},
 		{"title_jobs", `UPDATE title_jobs SET state='failed' WHERE state='running'`},
+		{"worker_maintenance", `UPDATE worker_maintenance SET body=json_set(body,'$.phase','cancelled','$.message','设备恢复已替代旧处理；不自动更新','$.revision',COALESCE(json_extract(body,'$.revision'),0)+1) WHERE json_extract(body,'$.phase') NOT IN ('completed','failed','cancelled')`},
 		{"work_inputs", `UPDATE work_inputs SET body=json_set(body,'$.state','indeterminate','$.executionStopped',json('true')) WHERE json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate')`},
 	}
 	for _, q := range queries {
@@ -826,8 +906,11 @@ func verifyRecoveredWorker(ctx context.Context, dir string, r *deviceRecoveryRec
 		cancel()
 		if err == nil {
 			defer c.Close()
-			if c.Worker == nil || r.Input.Update && c.Worker.BuildID != r.Input.BuildID {
-				return errors.New("重连后的执行服务构建不一致")
+			if c.Worker == nil {
+				return errors.New("重连后缺少执行服务版本")
+			}
+			if err = verifyRecoveryBuild(*r, *c.Worker); err != nil {
+				return err
 			}
 			r.Operation.BuildID = c.Worker.BuildID
 			return nil

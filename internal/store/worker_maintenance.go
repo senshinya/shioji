@@ -1,7 +1,10 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"time"
@@ -10,9 +13,10 @@ import (
 )
 
 type MaintenanceSessionState struct {
-	Session domain.Session
-	Queue   domain.QueueState
-	Idle    bool
+	ExecutionRef string
+	Session      domain.Session
+	Queue        domain.QueueState
+	Idle         bool
 }
 
 type maintenanceQuerier interface{ QueryRow(string, ...any) *sql.Row }
@@ -42,6 +46,10 @@ func maintenanceSessionState(q maintenanceQuerier, id string) (out MaintenanceSe
 		out.Queue = domain.QueueState{SessionID: id}
 		err = nil
 	}
+	if err != nil {
+		return
+	}
+	out.ExecutionRef, err = ExecutionConsentRef(q, id)
 	if err != nil {
 		return
 	}
@@ -125,7 +133,7 @@ func (s *Store) AcceptWorkerMaintenance(op domain.WorkerMaintenance) (domain.Wor
 		if err != nil {
 			return none, err
 		}
-		if (!op.Explicit && !state.Idle) || state.Session.Revision != t.Revision || state.Queue.Revision != t.QueueRevision {
+		if (!op.Explicit && !state.Idle) || (op.Explicit && t.ExecutionRef != "" && state.ExecutionRef != t.ExecutionRef) || ((!op.Explicit || t.ExecutionRef == "") && state.Session.Revision != t.Revision) || state.Queue.Revision != t.QueueRevision {
 			return none, errors.New("会话或队列已变化，请重新检查并确认")
 		}
 		state.Queue.Paused = true
@@ -233,4 +241,52 @@ func (s *Store) MaintenanceSessionBlocked(id string) (bool, error) {
 	var blocked bool
 	err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM worker_maintenance m,json_each(m.body,'$.targets') t WHERE json_extract(m.body,'$.phase') IN ('stopping','needsForce') AND json_extract(t.value,'$.target.sessionId')=? AND json_extract(t.value,'$.state')!='stopped')`, id).Scan(&blocked)
 	return blocked, err
+}
+
+// ExecutionConsentRef excludes presentation revisions and delivery-state changes.
+// New inputs, turns, history replacements or launch context require new consent.
+// The SQL reader also supports the independent helper without opening/migrating a Store.
+func ExecutionConsentRef(q interface{ QueryRow(string, ...any) *sql.Row }, id string) (string, error) {
+	var body []byte
+	if err := q.QueryRow("SELECT body FROM sessions WHERE id=?", id).Scan(&body); err != nil {
+		return "", err
+	}
+	var session domain.Session
+	if err := json.Unmarshal(body, &session); err != nil {
+		return "", err
+	}
+	values := []any{session.ID, session.ThreadID, session.HarnessID, session.Context}
+	if session.ContextAction != nil {
+		values = append(values, session.ContextAction.OperationID)
+	}
+	for _, table := range []string{"operations", "turns", "history_operations"} {
+		var exists bool
+		if err := q.QueryRow("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)", table).Scan(&exists); err != nil {
+			return "", err
+		}
+		if !exists {
+			continue
+		}
+		query := "SELECT COALESCE(json_group_array(id),'[]') FROM (SELECT id FROM " + table + " WHERE session_id=? ORDER BY id)"
+		if table == "history_operations" {
+			query = "SELECT COALESCE(json_group_array(id),'[]') FROM (SELECT id FROM history_operations WHERE json_extract(body,'$.source.id')=? OR json_extract(body,'$.session.id')=? ORDER BY id)"
+		}
+		var ids string
+		var err error
+		if table == "history_operations" {
+			err = q.QueryRow(query, id, id).Scan(&ids)
+		} else {
+			err = q.QueryRow(query, id).Scan(&ids)
+		}
+		if err != nil {
+			return "", err
+		}
+		values = append(values, ids)
+	}
+	b, err := json.Marshal(values)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:]), nil
 }

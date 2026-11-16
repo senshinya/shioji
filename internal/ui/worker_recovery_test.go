@@ -228,7 +228,7 @@ func TestForceRecoveryNativeEvidence(t *testing.T) {
 	v.Model.MaintenanceClient("B").Operation = nil
 	click("强制重启执行服务入口")
 	job := nextRecoveryUIJob(t, c)
-	preview := domain.WorkerRecoveryPreview{DeviceID: "B", Ref: "device-preview", Sessions: []domain.Session{{ID: "s1", Title: "核查 B 站视频封面", Status: "running"}}, Warnings: []string{"旧执行服务未响应，使用独立恢复程序"}}
+	preview := domain.WorkerRecoveryPreview{DeviceID: "B", Ref: "device-preview", CandidateBuildID: "current-app-build", RestoreBuildID: "original-worker-build", Sessions: []domain.Session{{ID: "s1", Title: "核查 B 站视频封面", Status: "running"}}, Warnings: []string{"旧执行服务未响应，使用独立恢复程序"}}
 	data, _ := json.Marshal(preview)
 	job.Apply(v.Model, data, nil)
 	u.Frame()
@@ -325,5 +325,36 @@ func TestUnknownSessionCanEndOldRecordWithoutSendingQueuedInput(t *testing.T) {
 	case j := <-c.Jobs:
 		t.Fatal("unexpected automatic input replay", j)
 	default:
+	}
+}
+
+func TestDeviceRecoveryReplacementRequiresSeparateChoice(t *testing.T) {
+	v, u, c := forceRecoveryFixture(t)
+	if err := u.Click("强制重启执行服务入口"); err != nil {
+		t.Fatal(err)
+	}
+	job := nextRecoveryUIJob(t, c)
+	preview := domain.WorkerRecoveryPreview{DeviceID: "B", Ref: "replacement-preview", RestoreBuildID: "old-build", CandidateBuildID: "new-build", ScopeUnknown: true}
+	data, _ := json.Marshal(preview)
+	job.Apply(v.Model, data, nil)
+	u.Frame()
+	u.Advance(time.Second)
+	if !u.HasText("任务数量和范围无法核对，确认将关闭此设备全部执行环境") {
+		t.Fatal("unknown impact shown as zero tasks", u.Texts())
+	}
+	if err := u.Click("使用当前应用构建恢复执行服务"); err != nil {
+		t.Fatal(err)
+	}
+	u.Frame()
+	if err := u.Click("我已了解强制关闭的影响"); err != nil {
+		t.Fatal(err)
+	}
+	u.Frame()
+	if err := u.Click("确认强制重启"); err != nil {
+		t.Fatal(err)
+	}
+	in := nextRecoveryUIJob(t, c).Input.(app.WorkerRecoveryAction).Input
+	if !in.Update || in.BuildID != "new-build" {
+		t.Fatal("explicit replacement intent lost", in)
 	}
 }

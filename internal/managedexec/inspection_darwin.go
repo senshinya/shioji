@@ -358,7 +358,7 @@ func (s *Scope) ExplicitStopProven() (bool, error) {
 	if state.Manual == nil || !state.Manual.Explicit {
 		return false, nil
 	}
-	if state.Active || !state.Manual.Accepted || (!state.Manual.NormalSent && !state.Manual.ForceSent) {
+	if state.Active || !state.Manual.Accepted || (!state.Manual.NormalSent && !state.Manual.ForceSent && !state.Manual.ExitConfirmed) {
 		return false, ErrManualStillRunning
 	}
 	observation, err := s.inspectExplicitMaintenance()
@@ -369,4 +369,30 @@ func (s *Scope) ExplicitStopProven() (bool, error) {
 		return false, ErrManualStillRunning
 	}
 	return true, nil
+}
+
+// ConfirmExplicitExit links a device helper's accepted operation to this exact
+// generation after the caller obtained exclusive worker ownership. It emits no
+// signal; live or newly observed descendants prevent a proof.
+func (s *Scope) ConfirmExplicitExit(operation string) error {
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	if operation == "" {
+		return errors.New("缺少设备恢复操作")
+	}
+	state, err := s.load()
+	if err != nil {
+		return err
+	}
+	observation, err := s.inspectExplicitMaintenance()
+	if err != nil {
+		return err
+	}
+	if len(observation.Processes) > 0 {
+		return ErrManualStillRunning
+	}
+	state.Active = false
+	state.Maintenance = true
+	state.Manual = &manualStopState{Operation: operation, Explicit: true, Accepted: true, ExitConfirmed: true}
+	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
 }
