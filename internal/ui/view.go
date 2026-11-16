@@ -562,6 +562,15 @@ func (v *View) home() {
 	v.workspaceEditor = nil
 	v.skillReturn = nil
 	v.Model.PrepareNewSession()
+	// An empty new-session composer starts from the owning checkout again.
+	// Keep explicit branch intent while an unsent draft or receipt is pending.
+	if !v.Model.HasDraftContent("home") && !v.Model.HasPendingInput() {
+		key, _ := v.gitQuery()
+		delete(v.Model.GitEpochs, key)
+		if state := v.gitLoads[key]; state != nil {
+			state.tag = ""
+		}
+	}
 	v.Model.FocusSecondary = false
 	v.devices = false
 	v.runMenu = runMenuClosed
@@ -661,7 +670,7 @@ func (v *View) homeView(c *n.Context, t *n.Theme) {
 						continue
 					}
 					w := w
-					choices = append(choices, menuChoice{id: w.ID, name: w.Name, detail: v.Model.DeviceName(w.DeviceID), checked: w.ID == v.Model.WorkspaceID, choose: func() { v.Model.WorkspaceID = w.ID; v.Model.PrepareNewSession() }})
+					choices = append(choices, menuChoice{id: w.ID, name: w.Name, detail: v.Model.DeviceName(w.DeviceID), checked: w.ID == v.Model.WorkspaceID, choose: func() { v.Model.WorkspaceID = w.ID; v.home() }})
 				}
 
 				v.choiceMenu(c, t, "home-workspace", picker, choices)

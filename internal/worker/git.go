@@ -256,7 +256,7 @@ func (s *Server) checkout(in protocol.CheckoutInput) (domain.GitStatus, error) {
 			return status, err
 		}
 		if status.Dirty {
-			return status, errors.New("请先处理已修改、暂存和未跟踪文件")
+			return status, dirtyBranchSwitchError(status, in.Branch)
 		}
 		if _, err = gitRun(s.ctx, status.Checkout, "switch", "--no-guess", in.Branch); err != nil {
 			return status, err
@@ -360,7 +360,7 @@ func (s *Server) prepareGit(in domain.Submission, launch domain.LaunchContext) (
 			return launch, err
 		}
 		if status.Dirty {
-			return launch, errors.New("请先处理已修改、暂存和未跟踪文件")
+			return launch, dirtyBranchSwitchError(status, branch)
 		}
 		if _, err = gitRun(s.ctx, status.Checkout, "switch", "--no-guess", branch); err != nil {
 			return launch, err
@@ -377,6 +377,14 @@ func (s *Server) prepareGit(in domain.Submission, launch domain.LaunchContext) (
 	launch.Branch = status.Branch
 	launch.Head = status.Head
 	return launch, nil
+}
+
+func dirtyBranchSwitchError(status domain.GitStatus, target string) error {
+	current := status.Branch
+	if current == "" {
+		current = "分离 HEAD"
+	}
+	return fmt.Errorf("无法从“%s”切换到“%s”：当前目录有未提交的改动或未跟踪文件。选择当前分支“%s”可直接继续；如需切换，请先提交改动并处理未跟踪文件，或在新建会话时勾选“新建 worktree”。", current, target, current)
 }
 
 // --raw supplies file identity even for empty/binary files; --numstat supplies

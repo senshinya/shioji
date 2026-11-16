@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -211,5 +212,42 @@ func TestCheckoutWaitsForActiveChildOfCompletedParent(t *testing.T) {
 	s.store.Apply(id, domain.Event{Type: "work.upsert", Work: &work})
 	if _, err := gitTestCall(s, "git.checkout", in); err != nil {
 		t.Fatal("completed work still blocks checkout", err)
+	}
+}
+
+func TestDirtyBranchSwitchExplainsCheckoutAndPreservesFiles(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(fmt.Sprint("existing=", existing), func(t *testing.T) {
+			s, w, dir := gitTestServer(t)
+			if err := os.WriteFile(filepath.Join(dir, "untracked"), []byte("keep"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			if existing {
+				id := gitTestSession(t, s, w, "main", "completed")
+				_, err = gitTestCall(s, "git.checkout", map[string]any{"workspaceId": w.ID, "sessionId": id, "branch": "other"})
+			} else {
+				_, err = s.prepareGit(domain.Submission{Git: domain.GitChoice{Branch: "other"}}, domain.LaunchContext{CWD: dir})
+			}
+			if err == nil {
+				t.Fatal("dirty branch switch was allowed")
+			}
+			for _, detail := range []string{"main", "other", "未提交", "当前分支", "worktree"} {
+				if !strings.Contains(err.Error(), detail) {
+					t.Fatalf("checkout error omitted %q: %v", detail, err)
+				}
+			}
+			if gitTestRun(t, dir, "branch", "--show-current") != "main" {
+				t.Fatal("rejection switched the checkout")
+			}
+			if b, e := os.ReadFile(filepath.Join(dir, "untracked")); e != nil || string(b) != "keep" {
+				t.Fatal("rejection changed untracked files", e)
+			}
+			if !existing {
+				if _, err = s.prepareGit(domain.Submission{Git: domain.GitChoice{Branch: "main"}}, domain.LaunchContext{CWD: dir}); err != nil {
+					t.Fatal("same-branch session requires a clean checkout", err)
+				}
+			}
+		})
 	}
 }

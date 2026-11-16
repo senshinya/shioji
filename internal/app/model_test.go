@@ -194,3 +194,55 @@ func TestGitIntentPersistsPerWorkspaceWithoutCreatingSession(t *testing.T) {
 		t.Fatal("new main repository kept old base-branch intent")
 	}
 }
+
+func TestHomeGitDefaultsToCurrentCheckoutRatherThanRepositoryDefault(t *testing.T) {
+	for _, saved := range []string{"", "main"} {
+		t.Run("saved="+saved, func(t *testing.T) {
+			m := model()
+			m.ConnectionEpoch = "connected"
+			m.GitRepositories["w"] = "/repo"
+			m.GitDrafts["w"] = domain.GitChoice{Branch: saved, NewWorktree: true}
+			m.SetGitStatus("workspace:w", domain.GitStatus{Applicable: true, Repository: "/repo", Branch: "feature", DefaultBranch: "main", Branches: []string{"main", "feature"}})
+			m.Drafts["home"] = "hello"
+			in, err := m.BeginSubmission()
+			if err != nil || in.Git.Branch != "feature" || !in.Git.NewWorktree {
+				t.Fatal("new session would switch away from the current checkout", in.Git, err)
+			}
+		})
+	}
+}
+
+func TestHomeGitRefreshKeepsDraftIntentAndFollowsUnselectedCheckout(t *testing.T) {
+	m := model()
+	m.ConnectionEpoch = "connected"
+	m.GitRepositories["w"] = "/repo"
+	m.GitDrafts["w"] = domain.GitChoice{Branch: "main"}
+	m.Drafts["home"] = "unsent draft"
+	status := domain.GitStatus{Applicable: true, Repository: "/repo", Branch: "feature", DefaultBranch: "main", Branches: []string{"main", "feature", "next"}}
+	m.SetGitStatus("workspace:w", status)
+	if m.GitDrafts["w"].Branch != "main" {
+		t.Fatal("refresh overwrote the unsent draft's branch")
+	}
+	m.Drafts["home"] = ""
+	m.SetGitStatus("workspace:w", status)
+	if m.GitDrafts["w"].Branch != "main" {
+		t.Fatal("refresh overwrote a manual branch selection")
+	}
+	m.GitDrafts["w"] = domain.GitChoice{Branch: "feature"}
+	status.Branch = "next"
+	m.SetGitStatus("workspace:w", status)
+	if m.GitDrafts["w"].Branch != "next" {
+		t.Fatal("automatic branch selection did not follow the device checkout")
+	}
+}
+
+func TestHomeGitDetachedCheckoutDoesNotSelectMain(t *testing.T) {
+	m := model()
+	m.ConnectionEpoch = "connected"
+	m.SetGitStatus("workspace:w", domain.GitStatus{Applicable: true, Repository: "/repo", Head: "1234567", DefaultBranch: "main", Branches: []string{"main"}})
+	m.Drafts["home"] = "hello"
+	in, err := m.BeginSubmission()
+	if err != nil || in.Git.Branch != "" {
+		t.Fatal("detached checkout would silently switch to main", in.Git, err)
+	}
+}

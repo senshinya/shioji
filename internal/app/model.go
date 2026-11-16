@@ -755,6 +755,8 @@ func (m *Model) SubmissionError(in domain.Submission, err error) {
 }
 
 func (m *Model) SetGitStatus(key string, status domain.GitStatus) {
+	previous, known := m.GitStatuses[key]
+	fresh := m.GitEpochs[key] != "" && m.GitEpochs[key] == m.ConnectionEpoch
 	m.GitStatuses[key] = status
 	m.GitEpochs[key] = m.ConnectionEpoch
 	if !strings.HasPrefix(key, "workspace:") {
@@ -762,8 +764,10 @@ func (m *Model) SetGitStatus(key string, status domain.GitStatus) {
 	}
 	id := strings.TrimPrefix(key, "workspace:")
 	choice := m.GitDrafts[id]
-	if m.GitRepositories[id] != status.Repository || !slices.Contains(status.Branches, choice.Branch) {
-		choice.Branch = status.DefaultBranch
+	emptyDraft := !m.HasDraftContent("home") && !m.HasPendingInput()
+	followCheckout := emptyDraft && (!fresh || known && choice.Branch == previous.Branch)
+	if m.GitRepositories[id] != status.Repository || !slices.Contains(status.Branches, choice.Branch) || followCheckout {
+		choice.Branch = status.Branch
 	}
 	m.GitDrafts[id] = choice
 	m.GitRepositories[id] = status.Repository
