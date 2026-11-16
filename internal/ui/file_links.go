@@ -288,7 +288,7 @@ func (v *View) fileLinkDialog(c *n.Context, t *n.Theme) {
 				if total > 0 {
 					n.Progress(c, float64(done)/float64(total)).FillWidth()
 				}
-				if configurationAction(c, "取消").Label("取消文件下载").Clicked() {
+				if configurationAction(c, "取消").MarginStart(-configurationHoverInset).Label("取消文件下载").Clicked() {
 					v.cancelFileLink()
 				}
 				c.After(80 * time.Millisecond)
@@ -314,7 +314,7 @@ func (v *View) fileLinkDialog(c *n.Context, t *n.Theme) {
 							v.saveLinkedFile(s)
 						}
 					})
-				} else if configurationAction(c, "重试").Clicked() {
+				} else if configurationAction(c, "重试").MarginStart(-configurationHoverInset).Clicked() {
 					v.startLinkResource(v.Model.Details[s.session].Session, s.path, c.Services(), s.action)
 				}
 			}
