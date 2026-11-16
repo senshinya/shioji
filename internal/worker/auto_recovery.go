@@ -41,6 +41,9 @@ func (s *Server) recoveryLoop() {
 			return
 		case <-s.recoveryWake:
 		}
+		if s.updating.Load() || s.backgroundStopping.Load() {
+			continue
+		}
 		snapshot, err := s.store.Snapshot()
 		if err != nil {
 			continue

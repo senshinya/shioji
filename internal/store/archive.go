@@ -97,7 +97,7 @@ func (s *Store) deletableLocked(session domain.Session) error {
 		return err
 	}
 	var activity RuntimeIdleState
-	if err := s.db.QueryRow(runtimeIdleQuery, session.ID).Scan(&activity.Revision, &activity.QueueRevision, &activity.Idle); err != nil {
+	if err := s.db.QueryRow(runtimeIdleQuery, session.ID, false).Scan(&activity.Revision, &activity.QueueRevision, &activity.Idle); err != nil {
 		return err
 	}
 	if !activity.Idle {

@@ -23,10 +23,15 @@ import (
 	"shioji/internal/protocol"
 	"shioji/internal/runtimebuild"
 	"shioji/internal/store"
+	"shioji/internal/supervisor"
 	"shioji/internal/transport"
 )
 
 type Config struct {
+	ServiceOperation                                string
+	ServiceInstance                                 string
+	StartPaused                                     bool
+	RequestUpdate                                   func(domain.WorkerReplacement) (domain.WorkerUpdateResult, error) `json:"-"`
 	legacyOwner                                     *Owner
 	legacyExpected                                  *legacyMigrationRecord
 	CheckStartupBuild                               func() error `json:"-"`
@@ -43,6 +48,10 @@ type EventsQuery = protocol.EventsQuery
 type EventPage = protocol.EventPage
 type AnswerInput = protocol.AnswerInput
 type Server struct {
+	runtimeStarts        map[string]*runtimeStart
+	drainMu              sync.Mutex
+	drainOperation       string
+	archiveWake          chan struct{}
 	retirementMu         sync.Mutex
 	retirements          map[string]*runtimeRetirement
 	health               *devicehealth.Monitor
@@ -119,6 +128,12 @@ func New(ctx context.Context, config Config) (*Server, error) {
 			return nil, err
 		}
 	}
+	if config.ServiceInstance != "" {
+		if err = archiveLegacyRecoveryFence(config.Directory); err != nil {
+			owner.Close()
+			return nil, err
+		}
+	}
 	// Recheck under ownership: a managed service may already have been waiting
 	// for the old process to exit when the migration was authorized.
 	if pending, e := transport.PendingDeviceRecovery(config.Directory); e != nil || pending != nil {
@@ -176,7 +191,11 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	s := &Server{attachments: attachments.New(filepath.Join(config.Directory, "attachments")), config: config, owner: owner, listener: listener, store: db, ctx: workerCtx, cancel: cancel, queueWake: make(chan struct{}, 1), recoveryWake: make(chan struct{}, 1), recoveryChecked: map[string]recoveryAttempt{}, bound: map[string]bool{}, conns: map[net.Conn]bool{}}
 	s.build = runtimebuild.Current()
 	s.build.Schema = store.SchemaVersion
-	s.build.SafeUpdate = config.ReplaceWorker != nil
+	s.updating.Store(config.StartPaused)
+	s.build.SafeUpdate = config.ReplaceWorker != nil || config.RequestUpdate != nil
+	if config.RequestUpdate != nil {
+		s.build.Lifecycle = 1
+	}
 	s.build.Maintenance = config.ReplaceWorker != nil && config.VerifyReplacement != nil
 	s.build.ContextUsage = true
 	s.build.OutputFiles = true
@@ -255,6 +274,7 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	s.wg.Add(1)
 	go s.workerMaintenanceLoop()
 	s.wg.Add(1)
+	s.archiveWake = make(chan struct{}, 1)
 	go s.archiveLoop()
 	return s, nil
 }
@@ -315,7 +335,7 @@ func (s *Server) serveConnection(conn net.Conn) {
 			requestedRecovery = true
 		}
 		out, callErr := history.handle(s, f.Method, f.Body)
-		stopForUpdate := f.Method == "worker.update" && s.updating.Load()
+		stopForUpdate := callErr == nil && s.updating.Load() && (f.Method == "worker.drain" || f.Method == "worker.update" && s.config.RequestUpdate == nil)
 		if stopForUpdate {
 			defer func() { s.cancel(); s.listener.Close() }()
 		}
@@ -360,6 +380,9 @@ func (s *Server) handle(method string, body []byte) (any, error) {
 }
 
 func (s *Server) handleWithHistory(method string, body []byte, history *store.HistorySnapshot) (any, error) {
+	if strings.HasPrefix(method, "worker.local-") || method == "worker.prepare-drain" || method == "worker.drain" || method == "worker.resume" {
+		return s.serviceControl(method, body)
+	}
 	switch method {
 	case "worker.update.diagnose":
 		return s.diagnoseWorkerUpdate()
@@ -385,6 +408,19 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		return struct {
 			DeviceID string `json:"deviceId"`
 		}{s.store.DeviceID()}, nil
+	}
+	if method == "worker.update.status" || method == "worker.update.cancel" {
+		in, err := decode[struct {
+			ID string `json:"id"`
+		}](body)
+		if err != nil {
+			return nil, err
+		}
+		action := "status"
+		if method == "worker.update.cancel" {
+			action = "cancel"
+		}
+		return supervisor.Call(s.ctx, s.config.Directory, supervisor.Request{Action: action, ID: in.ID, DeviceID: s.store.DeviceID()})
 	}
 	if method == "worker.info" {
 		return s.build, nil
@@ -562,7 +598,15 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		s.dispatchMu.Lock()
 		defer s.dispatchMu.Unlock()
 		if method == "session.archive" {
-			return s.store.SetSessionArchived(in.SessionID, in.Revision, in.Archived)
+			gen, err := s.archiveGeneration(in.SessionID)
+			if err != nil {
+				return nil, err
+			}
+			result, err := s.store.SetSessionArchived(in.SessionID, in.Revision, in.Archived, gen)
+			if err == nil && in.Archived {
+				s.wakeArchiveRetirement()
+			}
+			return result, err
 		}
 		return s.store.RenameSession(in.SessionID, in.Title, in.TitleRevision, method == "session.reset-title")
 	case "workspace.archive":
@@ -572,7 +616,25 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		}
 		s.dispatchMu.Lock()
 		defer s.dispatchMu.Unlock()
-		return s.store.SetWorkspaceArchived(in.WorkspaceID, in.Revision, in.Archived)
+		generations := map[string]string{}
+		snapshot, err := s.store.Snapshot()
+		if err != nil {
+			return nil, err
+		}
+		for _, session := range snapshot.Sessions {
+			if session.WorkspaceID == in.WorkspaceID {
+				gen, e := s.archiveGeneration(session.ID)
+				if e != nil {
+					return nil, e
+				}
+				generations[session.ID] = gen
+			}
+		}
+		result, err := s.store.SetWorkspaceArchived(in.WorkspaceID, in.Revision, in.Archived, generations)
+		if err == nil && in.Archived {
+			s.wakeArchiveRetirement()
+		}
+		return result, err
 	case "snapshot":
 		s.wakeRecovery()
 		return s.store.Snapshot()
@@ -898,29 +960,8 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		if err != nil {
 			return nil, err
 		}
-		s.dispatchMu.Lock()
-		defer s.dispatchMu.Unlock()
-		if s.currentRuntime(in.SessionID) == nil {
-			return nil, errors.New("runtime unavailable")
-		}
-		if !s.currentRuntime(in.SessionID).Readiness().Capabilities.Interrupt {
-			return nil, harness.Unsupported("interrupt")
-		}
-		detail, err := s.store.Session(in.SessionID, 0, 1)
-		if err != nil {
-			return nil, err
-		}
-		for _, turn := range detail.Turns {
-			if turn.ID == in.TurnID && turn.Status == "running" {
-				if _, err = s.store.PauseQueue(in.SessionID, "stopped"); err != nil {
-					return nil, err
-				}
-				ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
-				defer cancel()
-				return nil, s.currentRuntime(in.SessionID).Interrupt(ctx, detail.Session, in.TurnID)
-			}
-		}
-		return nil, errors.New("turn is not active")
+		return nil, s.interruptTurn(in.SessionID, in.TurnID)
+
 	default:
 		return nil, errors.New("unsupported worker command")
 	}
@@ -1122,7 +1163,7 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 		ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
 		runtime, startErr := s.sessionRuntime(ctx, op.SessionID)
 		cancel()
-		if startErr != nil {
+		if startErr != nil && !errors.Is(startErr, errRuntimeStartCancelled) {
 			s.failRuntimeLaunch(op, in, startErr)
 		}
 		s.dispatchMu.Unlock()
@@ -1134,7 +1175,12 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 }
 func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime harness.Runtime) {
 	s.dispatchMu.Lock()
-	defer s.dispatchMu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			s.dispatchMu.Unlock()
+		}
+	}()
 	if !s.dispatchReserved(op, runtime) {
 		return
 	}
@@ -1150,6 +1196,8 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 	}
 	session := detail.Session
 	var turnID string
+	s.dispatchMu.Unlock()
+	locked = false
 	if session.ThreadID == "" {
 		if session.Origin != nil {
 			if importer, ok := runtime.(harness.ConversationContinuation); ok {
@@ -1191,6 +1239,11 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 		if err == nil {
 			turnID, err = runtime.Submit(ctx, session, op.ID, harness.TurnInput{Text: in.Text, Attachments: inputs, Skills: in.Skills})
 		}
+	}
+	s.dispatchMu.Lock()
+	locked = true
+	if runtime.Stopped() {
+		err = &harness.DeliveryError{Uncertain: true, Message: "运行环境已结束，输入结果待核对；不会自动重发"}
 	}
 	outcome := domain.DeliveryOutcome(err != nil, harness.IsUncertain(err))
 	state, delivery := outcome.Operation, outcome.Input
@@ -1282,49 +1335,10 @@ func (s *Server) onEvent(e domain.Event) error {
 	return err
 }
 func (s *Server) Close() error {
-	s.once.Do(func() {
-		var result error
-		s.cancel()
-		s.closeToolAuthorizations()
-		s.closeSignIns()
-		s.listener.Close()
-		s.mu.Lock()
-		for conn := range s.conns {
-			conn.Close()
-		}
-		s.mu.Unlock()
-		s.dispatchMu.Lock()
-		s.runtimeMu.RLock()
-		owned := make(map[string]harness.Runtime, len(s.runtimes))
-		for id, r := range s.runtimes {
-			owned[id] = r
-		}
-		s.runtimeMu.RUnlock()
-		for id, r := range owned {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			if err := s.cleanManagedExecution(ctx, id); err != nil {
-				result = errors.Join(result, err)
-			}
-			cancel()
-			r.Close(context.Background())
-		}
-		for _, id := range s.adapterOrder {
-			if r := s.catalogRuntime(id); r != nil {
-				r.Close(context.Background())
-				os.Remove(filepath.Join(s.catalogDirectory(id), "runtime-process.json"))
-			}
-		}
-		s.dispatchMu.Unlock()
-		s.wg.Wait()
-		if s.health != nil {
-			result = errors.Join(result, s.health.Close())
-		}
-		result = errors.Join(result, s.store.Close())
-		s.owner.Close()
-		s.closeErr = result
-	})
+	s.once.Do(func() { s.closeErr = s.shutdown() })
 	return s.closeErr
 }
+
 func DefaultDirectory() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

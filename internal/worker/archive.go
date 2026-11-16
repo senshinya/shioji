@@ -26,6 +26,7 @@ func (s *Server) archiveLoop() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
+		case <-s.archiveWake:
 		}
 	}
 }
@@ -35,6 +36,9 @@ func (s *Server) cleanupArchives(now time.Time) error {
 	defer s.dispatchMu.Unlock()
 	if s.ctx.Err() != nil || s.updating.Load() || s.backgroundStopping.Load() {
 		return nil
+	}
+	if err := s.cleanRuntimeRetirements(""); err != nil {
+		return err
 	}
 	candidates, err := s.store.ArchiveCandidates(now)
 	if err != nil {

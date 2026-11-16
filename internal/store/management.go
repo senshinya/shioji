@@ -39,7 +39,7 @@ func (s *Store) RenameSession(id, title string, revision int64, useSource bool) 
 	session.Revision++
 	return s.saveSessionMetadataLocked(session)
 }
-func (s *Store) saveSessionMetadataLocked(session domain.Session) (domain.Session, error) {
+func (s *Store) saveSessionMetadataLocked(session domain.Session, retirements ...RuntimeRetirement) (domain.Session, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return session, err
@@ -47,6 +47,11 @@ func (s *Store) saveSessionMetadataLocked(session domain.Session) (domain.Sessio
 	defer tx.Rollback()
 	if _, err = tx.Exec("UPDATE sessions SET body=? WHERE id=?", blob(session), session.ID); err != nil {
 		return session, err
+	}
+	for _, retirement := range retirements {
+		if err = putRuntimeRetirement(tx, retirement); err != nil {
+			return session, err
+		}
 	}
 	if _, err = journal(tx, domain.Event{Type: "session", SessionID: session.ID, Session: &session}); err != nil {
 		return session, err
@@ -81,7 +86,7 @@ func (s *Store) archivableLocked(session domain.Session) error {
 	}
 	return nil
 }
-func (s *Store) SetSessionArchived(id string, revision int64, archived bool) (domain.Session, error) {
+func (s *Store) SetSessionArchived(id string, revision int64, archived bool, generation ...string) (domain.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	session, err := load[domain.Session](s.db.QueryRow("SELECT body FROM sessions WHERE id=?", id))
@@ -114,9 +119,16 @@ func (s *Store) SetSessionArchived(id string, revision int64, archived bool) (do
 		session.ArchivedAt = &now
 	}
 	session.Revision++
+	if archived {
+		gen := ""
+		if len(generation) > 0 {
+			gen = generation[0]
+		}
+		return s.saveSessionMetadataLocked(session, RuntimeRetirement{SessionID: id, Generation: gen, Revision: session.Revision, Reason: "archive"})
+	}
 	return s.saveSessionMetadataLocked(session)
 }
-func (s *Store) SetWorkspaceArchived(id string, revision int64, archived bool) (domain.Workspace, error) {
+func (s *Store) SetWorkspaceArchived(id string, revision int64, archived bool, generations ...map[string]string) (domain.Workspace, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w, err := load[domain.Workspace](s.db.QueryRow("SELECT body FROM workspaces WHERE id=?", id))
@@ -129,8 +141,10 @@ func (s *Store) SetWorkspaceArchived(id string, revision int64, archived bool) (
 	if w.Archived == archived {
 		return w, nil
 	}
+	var sessions []domain.Session
 	if archived {
-		sessions, e := rowsOf[domain.Session](s.db, "SELECT body FROM sessions WHERE json_extract(body,'$.workspaceId')=?", id)
+		var e error
+		sessions, e = rowsOf[domain.Session](s.db, "SELECT body FROM sessions WHERE json_extract(body,'$.workspaceId')=?", id)
 		if e != nil {
 			return w, e
 		}
@@ -154,6 +168,17 @@ func (s *Store) SetWorkspaceArchived(id string, revision int64, archived bool) (
 	defer tx.Rollback()
 	if _, err = tx.Exec("UPDATE workspaces SET body=? WHERE id=?", blob(w), id); err != nil {
 		return w, err
+	}
+	if archived {
+		for _, session := range sessions {
+			gen := ""
+			if len(generations) > 0 {
+				gen = generations[0][session.ID]
+			}
+			if err = putRuntimeRetirement(tx, RuntimeRetirement{SessionID: session.ID, Generation: gen, Revision: w.Revision, Reason: "archive"}); err != nil {
+				return w, err
+			}
+		}
 	}
 	if _, err = journal(tx, domain.Event{Type: "workspace", Workspace: &w}); err != nil {
 		return w, err

@@ -1,0 +1,117 @@
+package worker
+
+import (
+	"context"
+	"errors"
+	"shioji/internal/harness"
+	"time"
+)
+
+// An interrupt ACK is only request acceptance. The captured turn and native
+// requests must settle within the same five-second cancellation budget.
+func (s *Server) interruptTurn(id, turn string) error {
+	s.dispatchMu.Lock()
+	r := s.currentRuntime(id)
+	if r == nil {
+		s.runtimeMu.RLock()
+		pending := s.runtimeStarts[id]
+		s.runtimeMu.RUnlock()
+		if pending != nil {
+			err := s.stopInitializing(id, pending)
+			s.dispatchMu.Unlock()
+			return err
+		}
+		s.dispatchMu.Unlock()
+		return errors.New("runtime unavailable")
+	}
+	if !r.Readiness().Capabilities.Interrupt {
+		s.dispatchMu.Unlock()
+		return harness.Unsupported("interrupt")
+	}
+	d, err := s.store.Session(id, 0, 1)
+	active := turn == "" && d.Session.Status.Active()
+	for _, t := range d.Turns {
+		if t.ID == turn && t.Status.Active() {
+			active = true
+		}
+	}
+	if err != nil || !active {
+		s.dispatchMu.Unlock()
+		if err != nil {
+			return err
+		}
+		return errors.New("turn is not active")
+	}
+	_, err = s.store.PauseQueue(id, "stopped")
+	if err == nil {
+		scope, e := s.executions.Existing(id)
+		err = e
+		if scope != nil && err == nil {
+			err = scope.RecordCancellation(turn)
+		}
+	}
+	if err != nil {
+		s.dispatchMu.Unlock()
+		return err
+	}
+	s.wg.Add(1)
+	s.dispatchMu.Unlock()
+	go func() {
+		defer s.wg.Done()
+		ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+		defer cancel()
+		ack := make(chan error, 1)
+		go func() {
+			if turn != "" {
+				ack <- r.Interrupt(ctx, d.Session, turn)
+			}
+		}()
+		tick := time.NewTicker(20 * time.Millisecond)
+		defer tick.Stop()
+		acknowledged := false
+		for {
+			select {
+			case e := <-ack:
+				acknowledged = e == nil
+			case <-tick.C:
+				if !acknowledged {
+					continue
+				}
+				latest, e := s.store.Session(id, 0, 1)
+				if e != nil {
+					continue
+				}
+				finished := true
+				for _, t := range latest.Turns {
+					if t.ID == turn && t.Status.Active() {
+						finished = false
+					}
+				}
+				if pending, ok := r.(harness.PendingRuntime); ok && pending.PendingOperations() != 0 {
+					finished = false
+				}
+				if finished {
+					return
+				}
+			case <-ctx.Done():
+				if s.ctx.Err() != nil {
+					return
+				}
+				s.dispatchMu.Lock()
+				current := s.currentRuntime(id)
+				if current != nil && current.Done() == r.Done() {
+					cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+					_ = s.retireRuntime(cleanup, id, "stop-timeout", true)
+					stop()
+					if scope, e := s.executions.Existing(id); e == nil && scope != nil {
+						_ = s.store.GuardExecution(id, scope.Generation)
+					}
+					s.wakeRecovery()
+				}
+				s.dispatchMu.Unlock()
+				return
+			}
+		}
+	}()
+	return nil
+}

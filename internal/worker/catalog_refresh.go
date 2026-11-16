@@ -184,6 +184,9 @@ func (s *Server) catalogLoop() {
 		case <-ticker.C:
 		case <-s.catalogWake:
 		}
+		if s.updating.Load() || s.backgroundStopping.Load() {
+			continue
+		}
 		for _, id := range s.adapterOrder {
 			if !s.agentEnabled(id) {
 				continue

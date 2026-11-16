@@ -47,6 +47,7 @@ type Runtime struct {
 	mu               sync.Mutex
 	eventMu          sync.Mutex
 	pending          map[string]chan wire.Message
+	pendingActivity  map[string]bool
 	done             chan struct{}
 	normalizer       *Normalizer
 	onEvent          func(domain.Event) error
@@ -293,8 +294,15 @@ func (r *Runtime) call(ctx context.Context, method string, params, out any) erro
 	key := string(id)
 	r.mu.Lock()
 	r.pending[key] = ch
+	switch method {
+	case "turn/start", "turn/steer", "turn/interrupt", "thread/start", "thread/resume", "thread/fork", "thread/compact/start":
+		if r.pendingActivity == nil {
+			r.pendingActivity = map[string]bool{}
+		}
+		r.pendingActivity[key] = true
+	}
 	r.mu.Unlock()
-	defer func() { r.mu.Lock(); delete(r.pending, key); r.mu.Unlock() }()
+	defer func() { r.mu.Lock(); delete(r.pending, key); delete(r.pendingActivity, key); r.mu.Unlock() }()
 	b, err := json.Marshal(params)
 	if err != nil {
 		return err

@@ -176,8 +176,7 @@ type Executor struct {
 	done           chan struct{}
 	admit          sync.Mutex
 	fenced         bool
-	closeOnce      sync.Once
-	closeErr       error
+	closeMu        sync.Mutex
 	onLost         func() error
 }
 
@@ -760,6 +759,8 @@ func (e *Executor) Fence() error {
 	return e.scope.Fence()
 }
 func (e *Executor) Close(ctx context.Context) error {
+	e.closeMu.Lock()
+	defer e.closeMu.Unlock()
 	if !e.scope.ForceAllowed() {
 		result := e.Fence()
 		e.mu.Lock()
@@ -782,43 +783,41 @@ func (e *Executor) Close(ctx context.Context) error {
 			return errors.Join(result, managedexec.ErrManualStillRunning)
 		}
 	}
-	e.closeOnce.Do(func() {
-		e.closeErr = e.Fence()
+	result := e.Fence()
+	e.mu.Lock()
+	agent := e.agent
+	e.mu.Unlock()
+	if agent != nil {
+		agent.Close()
+	}
+	// Admitted filesystem operations finish before the executor is retired.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
 		e.mu.Lock()
-		agent := e.agent
+		pending := len(e.requests)
 		e.mu.Unlock()
-		if agent != nil {
-			agent.Close()
+		if pending == 0 {
+			break
 		}
-		// Admitted filesystem operations finish before the executor is retired.
-		deadline := time.Now().Add(3 * time.Second)
-		for {
-			e.mu.Lock()
-			pending := len(e.requests)
-			e.mu.Unlock()
-			if pending == 0 {
-				break
-			}
-			if time.Now().After(deadline) || ctx.Err() != nil {
-				e.closeErr = errors.New("owned executor requests did not settle")
-				break
-			}
-			time.Sleep(10 * time.Millisecond)
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			result = errors.New("owned executor requests did not settle")
+			break
 		}
-		e.cancel()
-		e.stdin.Close()
-		if e.server != nil {
-			e.server.Close()
+		time.Sleep(10 * time.Millisecond)
+	}
+	e.cancel()
+	e.stdin.Close()
+	if e.server != nil {
+		e.server.Close()
+	}
+	select {
+	case <-e.done:
+	case <-time.After(3 * time.Second):
+		if err := e.scope.SignalRoot(e.cmd.Process.Pid, syscall.SIGKILL); err != nil {
+			result = errors.Join(result, err)
+			return result
 		}
-		select {
-		case <-e.done:
-		case <-time.After(3 * time.Second):
-			if err := e.scope.SignalRoot(e.cmd.Process.Pid, syscall.SIGKILL); err != nil {
-				e.closeErr = errors.Join(e.closeErr, err)
-				return
-			}
-			<-e.done
-		}
-	})
-	return e.closeErr
+		<-e.done
+	}
+	return result
 }

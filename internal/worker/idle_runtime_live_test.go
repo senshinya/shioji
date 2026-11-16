@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"syscall"
 	"testing"
 	"time"
 
@@ -120,7 +119,7 @@ for line in sys.stdin:
 	owner := identityForIdleTest(*info)
 	now := time.Now()
 	sweepIdle(t, s, now)
-	sweepIdle(t, s, now.Add(10*time.Minute))
+	sweepIdle(t, s, now.Add(20*time.Minute))
 	if s.currentRuntime(sid) != nil {
 		t.Fatal("real idle runtime was kept", s.idleRuntimes)
 	}
@@ -161,51 +160,34 @@ func identityForIdleTest(p unix.KinfoProc) [3]int64 {
 	return [3]int64{int64(p.Proc.P_pid), p.Proc.P_starttime.Sec, int64(p.Proc.P_starttime.Usec)}
 }
 
-func TestIdleRuntimeDoesNotStopUnreportedBackgroundDescendants(t *testing.T) {
+func TestIdleRuntimeRetiresRegisteredResidentDescendants(t *testing.T) {
 	s, w := memoryWorker(t, idleHarness{})
 	d := submitIdleFixture(t, s, w, "first", "")
 	scope, e := s.executions.Existing(d.Session.ID)
 	if e != nil {
 		t.Fatal(e)
 	}
-	now := time.Now()
-	sweepIdle(t, s, now)
 	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 	defer cancel()
-	cmd, stdin, stdout, e := scope.StartOwned(ctx, "background", []string{"/bin/sh", "-c", "sleep 3 & echo ready; wait"}, []string{"PATH=/usr/bin:/bin"}, nil)
+	cmd, stdin, stdout, e := scope.StartOwned(ctx, "resident", []string{"/bin/sh", "-c", "sleep 60 & echo ready; wait"}, []string{"PATH=/usr/bin:/bin"}, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() {
-		scope.Stop(context.Background())
-		stdin.Close()
-		if cmd.ProcessState == nil {
-			cmd.Wait()
-		}
-	})
+	t.Cleanup(func() { scope.Stop(context.Background()); stdin.Close(); cmd.Wait() })
 	if _, e = bufio.NewReader(stdout).ReadString('\n'); e != nil {
 		t.Fatal(e)
 	}
-	sweepIdle(t, s, now.Add(5*time.Minute))
+	now := time.Now()
+	sweepIdle(t, s, now)
+	sweepIdle(t, s, now.Add(19*time.Minute+59*time.Second))
 	if r := s.currentRuntime(d.Session.ID); r == nil || r.Stopped() {
-		t.Fatal("an unreported background process was retired")
+		t.Fatal("resident was retired before the idle threshold")
 	}
-	if e = cmd.Process.Signal(syscall.Signal(0)); e != nil {
-		t.Fatal("background process was interrupted", e)
-	}
-	if e = cmd.Wait(); e != nil {
-		t.Fatal(e)
-	}
-	if e = s.executions.Reap(ctx); e != nil {
-		t.Fatal(e)
-	}
-	sweepIdle(t, s, now.Add(6*time.Minute))
-	sweepIdle(t, s, now.Add(10*time.Minute))
-	if s.currentRuntime(d.Session.ID) == nil {
-		t.Fatal("unreported background activity did not restart the idle clock")
-	}
-	sweepIdle(t, s, now.Add(16*time.Minute))
+	sweepIdle(t, s, now.Add(20*time.Minute))
 	if s.currentRuntime(d.Session.ID) != nil {
-		t.Fatal("runtime was not reclaimed after the background process became idle")
+		t.Fatal("registered resident prevented retirement")
+	}
+	if e = scope.VerifyStopped(); e != nil {
+		t.Fatal("resident survived retirement", e)
 	}
 }

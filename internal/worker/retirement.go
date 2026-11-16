@@ -60,7 +60,7 @@ func (s *Server) retireRuntime(ctx context.Context, id, reason string, force boo
 	s.retirementMu.Unlock()
 	// The operation owns its bounded lifetime, independent of RPC disconnection.
 	work, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	if deadline, ok := ctx.Deadline(); ok {
+	if deadline, ok := ctx.Deadline(); ok && deadline.Before(time.Now().Add(5*time.Second)) {
 		cancel()
 		work, cancel = context.WithDeadline(context.WithoutCancel(ctx), deadline)
 	}

@@ -78,11 +78,11 @@ func TestConversationFeedbackNativeRecording(t *testing.T) {
 		case 225:
 			click("查看处理方法")
 		case 250:
-			click("选择进程 2418")
+			click("收起详情")
 		case 275:
-			click("停止所选进程")
+			click("查看处理方法")
 		case 300:
-			click("取消")
+			click("重试恢复")
 		case 325:
 			m.ReportFeedback(app.Feedback{Title: "修改稿已复制", Kind: app.FeedbackSuccess})
 			ui.Frame()

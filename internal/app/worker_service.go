@@ -18,12 +18,13 @@ const (
 )
 
 type WorkerService struct {
-	Legacy     *domain.LegacyWorkerInfo
-	Background *domain.BackgroundService
-	Build      *domain.WorkerBuild
-	Available  *domain.WorkerBuild
-	Phase      WorkerUpdatePhase
-	Message    string
+	OperationID, OperationPhase string
+	Legacy                      *domain.LegacyWorkerInfo
+	Background                  *domain.BackgroundService
+	Build                       *domain.WorkerBuild
+	Available                   *domain.WorkerBuild
+	Phase                       WorkerUpdatePhase
+	Message                     string
 }
 
 func newWorkerService(current, available *domain.WorkerBuild) *WorkerService {

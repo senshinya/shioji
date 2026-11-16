@@ -314,7 +314,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 		if service.Available != nil {
 			build = service.Available.BuildID
 		}
-		m.queueRecoveryNotice(key, "workerWaiting:"+build, "后台环境阻止更新，可选择关闭环境或强制恢复执行服务")
+		m.queueRecoveryNotice(key, "workerWaiting:"+build, "执行服务正在等待实际任务完成，可在设备详情取消更新或选择立即更新")
 	}
 }
 

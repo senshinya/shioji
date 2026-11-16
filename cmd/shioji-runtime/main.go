@@ -136,5 +136,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	return syscall.Exec(path, []string{path, "--state-dir", directory, "--managed-service", "--codex", transport.ExistingCodex()}, append(os.Environ(), "PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return transport.RunWorkerSupervisor(ctx, directory, path, transport.ExistingCodex(), true)
 }

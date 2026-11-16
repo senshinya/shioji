@@ -28,6 +28,7 @@ type editBinding struct {
 }
 
 type View struct {
+	workerUpdateConfirm              *workerUpdateConfirmation
 	interfaceZoomToast               bool
 	globalSidebar                    *quickSidebar
 	portForward                      *portForwardDraft
@@ -182,8 +183,6 @@ type View struct {
 	deviceList                                                                                                      bool
 	deviceTab                                                                                                       string
 	deviceSearch                                                                                                    string
-	workerRecoveryStates                                                                                            map[string]*workerRecoveryUI
-	workerMaintenanceStates                                                                                         map[string]*workerMaintenanceUI
 	deviceStorageStates                                                                                             map[string]*deviceStorageState
 	clientStorageState                                                                                              *deviceStorageState
 	sshCheck                                                                                                        sshCheckPhase
@@ -1813,6 +1812,10 @@ func (v *View) interrupt() {
 			return
 		}
 	}
+	if d.Session.Status == "starting" {
+		v.do(app.Job{Method: "turn.interrupt", Input: map[string]string{"sessionId": d.Session.ID, "turnId": ""}})
+	}
+
 }
 func (v *View) nextAttention() {
 	if s, ok := v.attentionSession(); ok {

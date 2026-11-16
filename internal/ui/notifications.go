@@ -81,7 +81,7 @@ func (v *View) deliverNotifications() {
 	}
 	foreground := v.nativeWindow.IsFocused() && v.nativeWindow.IsVisible() && !v.nativeWindow.IsMinimized()
 	for _, event := range queue {
-		if event.Kind == "recovery" && foreground && v.devices && v.deviceSelected == event.ConnectionID && v.recoveryUIFor(event.ConnectionID).open {
+		if event.Kind == "recovery" && foreground && v.devices && v.deviceSelected == event.ConnectionID {
 			continue
 		}
 		if v.foregroundNotificationSuppressed(event.SessionID, foreground) {
@@ -116,7 +116,8 @@ func (v *View) deliverNotifications() {
 				return
 			}
 			if event.Kind == "recovery" {
-				v.openWorkerRecovery(event.ConnectionID, "", false)
+				v.devices = true
+				v.deviceSelected = event.ConnectionID
 			}
 			for _, session := range v.Model.Snapshot.Sessions {
 				if session.ID == event.SessionID {

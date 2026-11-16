@@ -3,6 +3,7 @@ package domain
 // WorkerBuild identifies the running service independently of harness readiness
 // and protocol compatibility. BuildID is captured before replacing any file.
 type WorkerBuild struct {
+	Lifecycle      int    `json:"lifecycle,omitempty"`
 	RecoveryHelper bool   `json:"recoveryHelper,omitempty"`
 	ForceRecovery  bool   `json:"forceRecovery,omitempty"`
 	Maintenance    bool   `json:"maintenance,omitempty"`
@@ -17,13 +18,17 @@ type WorkerBuild struct {
 }
 
 type WorkerReplacement struct {
+	ID              string `json:"id,omitempty"`
+	Policy          string `json:"policy,omitempty"`
 	Explicit        bool   `json:"explicit,omitempty"`
 	ExpectedBuildID string `json:"expectedBuildId"`
 	BuildID         string `json:"buildId"`
 }
 
 type WorkerUpdateResult struct {
-	Ready  bool   `json:"ready"`
-	Reason string `json:"reason,omitempty"`
-	Backup string `json:"backup,omitempty"`
+	OperationID string `json:"operationId,omitempty"`
+	Phase       string `json:"phase,omitempty"`
+	Ready       bool   `json:"ready"`
+	Reason      string `json:"reason,omitempty"`
+	Backup      string `json:"backup,omitempty"`
 }

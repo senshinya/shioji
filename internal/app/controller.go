@@ -14,6 +14,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/portforward"
 	"shioji/internal/protocol"
+	"shioji/internal/supervisor"
 	"shioji/internal/tailnet"
 	"shioji/internal/transport"
 )
@@ -452,12 +453,12 @@ func (c *Controller) Run(ctx context.Context) {
 			candidate = &info
 		}
 	}
-	tryWorkerUpdate := func(explicit bool) (bool, error) {
+	tryWorkerUpdate := func(explicit bool, policy ...string) (bool, error) {
 		if c.WorkerBinary == "" {
 			return false, nil
 		}
 		if explicit {
-			if c.currentSSH() != nil && (client == nil || client.DeviceID != c.ExpectedDeviceID) {
+			if c.currentSSH() != nil && (c.ExpectedDeviceID == "" || client != nil && client.DeviceID != c.ExpectedDeviceID) {
 				return false, errors.New("请先重新连接并确认设备身份，再更新执行服务")
 			}
 			updateIntent = updateWaitingForIdle
@@ -474,6 +475,22 @@ func (c *Controller) Run(ctx context.Context) {
 			return false, nil
 		}
 		if client == nil {
+			if explicit && candidate != nil && candidate.Lifecycle == 1 && c.ExpectedDeviceID != "" {
+				var known *domain.WorkerBuild
+				if service != nil {
+					known = service.Build
+				}
+				observer := c.upgradeObserver(c.ExpectedDeviceID, known)
+				selectedPolicy := "when-idle"
+				if len(policy) > 0 {
+					selectedPolicy = policy[0]
+				}
+				state, e := observer.update(ctx, nil, candidate, true, selectedPolicy)
+				if state != nil {
+					publishService(state)
+				}
+				return false, e
+			}
 			if explicit && candidate != nil && c.currentSSH() == nil && (background == nil || background.State != "enabled" && background.State != "requiresApproval") {
 				path, err := transport.StagedWorkerPath(c.Directory, candidate.BuildID)
 				if err == nil {
@@ -487,6 +504,35 @@ func (c *Controller) Run(ctx context.Context) {
 				}
 			}
 			return false, nil
+		}
+		if client.Worker != nil && (client.Worker.Lifecycle == 1 || candidate != nil && candidate.Lifecycle == 1) {
+			observer := c.upgradeObserver(client.DeviceID, client.Worker)
+			prior, e := observer.load()
+			if e != nil {
+				return false, e
+			}
+			initial := newWorkerService(client.Worker, candidate)
+			if prior == nil && initial.Phase != WorkerAvailable {
+				publishService(initial)
+				return false, nil
+			}
+			if prior == nil && !explicit && updateIntent == updateNotRequested && !initial.Automatic() {
+				publishService(initial)
+				return false, nil
+			}
+			selectedPolicy := "when-idle"
+			if len(policy) > 0 {
+				selectedPolicy = policy[0]
+			}
+			call, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			state, e := observer.update(call, client, candidate, explicit, selectedPolicy)
+			if state != nil {
+				publishService(state)
+			}
+			lastUpdateAttempt = time.Now()
+			updateIntent = updateAwaitingReceipt
+			return false, e
 		}
 		state := newWorkerService(client.Worker, candidate)
 		if state.Phase != WorkerAvailable {
@@ -522,6 +568,27 @@ func (c *Controller) Run(ctx context.Context) {
 		return true, nil
 	}
 	observeWorkerBuild := func() {
+		if client.Worker != nil && (client.Worker.Lifecycle == 1 || candidate != nil && candidate.Lifecycle == 1) {
+			observer := c.upgradeObserver(client.DeviceID, client.Worker)
+			if prior, e := observer.load(); e != nil {
+				state := newWorkerService(client.Worker, candidate)
+				state.Phase = WorkerUpdateFailed
+				state.Message = e.Error()
+				publishService(state)
+				return
+			} else if prior != nil {
+				call, cancel := context.WithTimeout(ctx, 3*time.Second)
+				state, e := observer.observe(call, client, candidate)
+				cancel()
+				if state != nil {
+					if e != nil {
+						state.Message = e.Error()
+					}
+					publishService(state)
+				}
+				return
+			}
+		}
 		state := newWorkerService(client.Worker, candidate)
 		if state.Phase == WorkerCurrent || state.Phase == WorkerNewer {
 			updateIntent = updateNotRequested
@@ -548,6 +615,40 @@ func (c *Controller) Run(ctx context.Context) {
 			state.Message = candidateError.Error()
 		}
 		publishService(state)
+	}
+	lastDetachedService := time.Time{}
+	observeDetachedService := func() {
+		if time.Since(lastDetachedService) < 3*time.Second {
+			return
+		}
+		lastDetachedService = time.Now()
+		call, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		device := c.ExpectedDeviceID
+		if device == "" && c.currentSSH() == nil {
+			if op, e := supervisor.Query(call, c.Directory, ""); e == nil {
+				device = op.DeviceID
+			}
+		}
+		if device == "" {
+			return
+		}
+		var known *domain.WorkerBuild
+		if service != nil {
+			known = service.Build
+		}
+		observer := c.upgradeObserver(device, known)
+		prior, e := observer.load()
+		if e != nil || prior == nil {
+			return
+		}
+		state, e := observer.observe(call, nil, candidate)
+		if state != nil {
+			if e != nil {
+				state.Message = e.Error()
+			}
+			publishService(state)
+		}
 	}
 	var recoverPath func() bool
 	initialHistory := map[string]context.CancelFunc{}
@@ -851,6 +952,12 @@ func (c *Controller) Run(ctx context.Context) {
 				continue
 			}
 			if job.Method == "$worker.check" {
+				if client == nil {
+					lastDetachedService = time.Time{}
+					observeDetachedService()
+					lastAttempt = time.Time{}
+					continue
+				}
 				if client == nil || job.epoch != client.Epoch {
 					continue
 				}
@@ -875,14 +982,57 @@ func (c *Controller) Run(ctx context.Context) {
 				publishService(next)
 				continue
 			}
-			if job.Method == "$worker.update" {
+			if job.Method == "$worker.update.cancel" {
+				if service != nil && service.OperationID != "" && c.ExpectedDeviceID != "" {
+					observer := c.upgradeObserver(c.ExpectedDeviceID, service.Build)
+					_, err := observer.control(ctx, "cancel", service.OperationID)
+					if err != nil {
+						service.Message = err.Error()
+						publishService(service)
+					} else {
+						if client != nil {
+							observeWorkerBuild()
+						} else {
+							lastDetachedService = time.Time{}
+							observeDetachedService()
+						}
+					}
+				}
+				continue
+			}
+			if job.Method == "$worker.update" || job.Method == "$worker.update.immediate" {
 				if service != nil && service.Phase == WorkerUpdating {
 					continue
 				}
 				if client != nil && job.epoch != "" && job.epoch != client.Epoch {
 					continue
 				}
-				restart, err := tryWorkerUpdate(true)
+				if job.Method == "$worker.update.immediate" && service != nil && service.OperationID != "" && service.OperationPhase == "waiting" {
+					observer := c.upgradeObserver(c.ExpectedDeviceID, service.Build)
+					if _, err := observer.control(ctx, "cancel", service.OperationID); err != nil {
+						service.Message = err.Error()
+						publishService(service)
+						continue
+					}
+					observer = c.upgradeObserver(c.ExpectedDeviceID, service.Build)
+					deadline := time.Now().Add(3 * time.Second)
+					for time.Now().Before(deadline) {
+						state, e := observer.observe(ctx, client, candidate)
+						if e != nil {
+							break
+						}
+						if state.OperationPhase == "failed" {
+							publishService(state)
+							break
+						}
+						time.Sleep(20 * time.Millisecond)
+					}
+				}
+				policy := "when-idle"
+				if job.Method == "$worker.update.immediate" {
+					policy = "immediate"
+				}
+				restart, err := tryWorkerUpdate(true, policy)
 				if restart || err != nil {
 					disconnected()
 					lastAttempt = time.Time{}
@@ -990,6 +1140,7 @@ func (c *Controller) Run(ctx context.Context) {
 			}
 		case <-ticker.C:
 			if client == nil {
+				observeDetachedService()
 				if service != nil && service.Phase == WorkerUpdating && !updateStarted.IsZero() && time.Since(updateStarted) > 35*time.Second {
 					state := *service
 					state.Phase = WorkerUpdateFailed

@@ -248,3 +248,6 @@ type WorkMessenger interface {
 	SendWork(context.Context, domain.Session, domain.WorkInput) error
 	WorkInputReceived(context.Context, domain.Session, domain.WorkInput) (bool, error)
 }
+
+// PendingRuntime exposes only unsettled native requests, without wire IDs.
+type PendingRuntime interface{ PendingOperations() int }

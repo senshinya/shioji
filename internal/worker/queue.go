@@ -207,7 +207,12 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 		defer s.wg.Done()
 		defer s.wakeQueue()
 		s.dispatchMu.Lock()
-		defer s.dispatchMu.Unlock()
+		locked := true
+		defer func() {
+			if locked {
+				s.dispatchMu.Unlock()
+			}
+		}()
 		if !s.dispatchReserved(op, runtime) {
 			return
 		}
@@ -221,7 +226,14 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 			err = s.coverOperation(op.SessionID, op.ID)
 		}
 		if err == nil {
+			s.dispatchMu.Unlock()
+			locked = false
 			err = runtime.Steer(ctx, d.Session, in.TurnID, op.ID, harness.TurnInput{Text: in.Input.Text, Attachments: inputs, Skills: in.Input.Skills})
+			s.dispatchMu.Lock()
+			locked = true
+			if runtime.Stopped() {
+				err = &harness.DeliveryError{Uncertain: true, Message: "运行环境已结束，Steer 结果待核对；不会自动重发"}
+			}
 		}
 		outcome := domain.DeliveryOutcome(err != nil, harness.IsUncertain(err))
 		state, status, message := outcome.Operation, outcome.Input, ""

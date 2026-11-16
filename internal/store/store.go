@@ -79,6 +79,7 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS queues (session_id TEXT PRIMARY KEY REFERENCES sessions(id), body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS plans (session_id TEXT PRIMARY KEY REFERENCES sessions(id), body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS history_operations (id TEXT PRIMARY KEY, body BLOB NOT NULL);
+ CREATE TABLE IF NOT EXISTS runtime_retirements (session_id TEXT NOT NULL, generation TEXT NOT NULL, revision INTEGER NOT NULL, reason TEXT NOT NULL, error TEXT NOT NULL DEFAULT '', PRIMARY KEY(session_id,generation,revision));
  CREATE TABLE IF NOT EXISTS worker_maintenance (id TEXT PRIMARY KEY, body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS title_jobs (session_id TEXT PRIMARY KEY REFERENCES sessions(id), state TEXT NOT NULL, body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS works (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));

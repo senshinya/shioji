@@ -117,22 +117,9 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 				break
 			}
 		}
-		if v.recoveryUIFor(key).open {
-			page, depth = "worker-recovery", 1
-			selected = nil
-		} else if v.maintenanceUIFor(key).open {
-			page, depth = "worker-maintenance", 1
-			selected = nil
-		}
+
 		configurationTabPanel(c.Key("device-navigation"), page, depth, configurationPanelFill, func() {
-			if v.recoveryUIFor(key).open {
-				v.workerRecoveryPage(c, t, key, name, state)
-				return
-			}
-			if v.maintenanceUIFor(key).open {
-				v.workerMaintenancePage(c, t, key, name, state)
-				return
-			}
+
 			if selected != nil {
 				v.deviceAgentPage(c, t, key, name, state, *agentState, *selected)
 				return
@@ -306,11 +293,12 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 		case app.WorkerWaiting:
 			action = "等待空闲"
 			disabled = true
-			if service.Build != nil && (service.Build.Maintenance || service.Build.ForceRecovery) {
-				action = "查看阻塞"
-				method = "$worker.maintenance.inspect"
+			if service.OperationID != "" {
+				action = "取消更新"
+				method = "$worker.update.cancel"
 				disabled = v.Controller == nil || !state.Connected
 			}
+
 		case app.WorkerUpdating:
 			action = "正在更新"
 			disabled = true
@@ -320,6 +308,11 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 	}
 	if !state.Connected && (service == nil || service.Phase != app.WorkerUpdating && service.Phase != app.WorkerWaiting) {
 		action, method, disabled = "检查服务", "$worker.migration.inspect", v.Controller == nil
+	}
+	if !state.Connected && service != nil && service.OperationID != "" && service.Phase == app.WorkerUpdateFailed {
+		action = "重试更新"
+		method = "$worker.update"
+		disabled = v.Controller == nil
 	}
 	if flow != nil {
 		label = migrationCaption(flow)
@@ -349,9 +342,10 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 				}
 				return "检查设备服务"
 			}
-			if method == "$worker.maintenance.inspect" {
-				return "查看更新阻塞"
+			if method == "$worker.update.cancel" {
+				return "取消执行服务更新"
 			}
+
 			if method == "$worker.update" {
 				return "更新执行服务"
 			}
@@ -359,26 +353,26 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 		}()).Disabled(disabled).Clicked() {
 			if flow != nil {
 				v.performMigrationAction(flow)
-			} else if method == "$worker.maintenance.inspect" {
-				if service != nil && service.Build != nil && service.Build.ForceRecovery {
-					v.openWorkerRecovery(key, "", true)
-				} else {
-					v.openWorkerMaintenance(key)
-				}
+
 			} else if method == "$worker.migration.inspect" {
 				v.beginNormalMigration(key)
 			} else {
 				v.do(app.Job{ConnectionID: key, Method: method})
 			}
 		}
-		iconButton(c, moreActionsIcon, "执行服务更多操作").Disabled(v.Controller == nil).Menu(func(menu *n.Menu) {
-			if menu.Item("强制重启执行服务…").Chosen() {
-				v.openWorkerRecovery(key, "", false)
+		if service != nil && service.Phase == app.WorkerWaiting && service.OperationID != "" {
+			if configurationAction(c, "立即更新…").Label("立即更新执行服务").Disabled(disabled).Clicked() {
+				target := ""
+				if service.Available != nil {
+					target = service.Available.BuildID
+				}
+				v.workerUpdateConfirm = &workerUpdateConfirmation{open: true, connection: key, device: state.Snapshot.DeviceID, build: target}
 			}
-		})
+		}
 
 	})
 
+	v.workerUpgradeConfirmation(c, t, key, state)
 	v.backgroundSwitch(c.Key("background"), t, key, state)
 	owner := n.Column(c).FillWidth()
 	open := n.Local(owner, "service-details", func() bool { return false })

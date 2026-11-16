@@ -11,6 +11,9 @@ import (
 )
 
 func (s *Server) prepareWorkerUpdate(in domain.WorkerReplacement) (result domain.WorkerUpdateResult, err error) {
+	if s.config.RequestUpdate != nil {
+		return s.config.RequestUpdate(in)
+	}
 	s.maintenance.Lock()
 	defer s.maintenance.Unlock()
 	s.dispatchMu.Lock()

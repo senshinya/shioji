@@ -9,11 +9,15 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"sync/atomic"
+	"time"
 )
 
 // All callers that create/replace a session runtime hold dispatchMu. The catalog
 // adapter never starts/resumes an execution thread.
 func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime, error) {
+	if err := s.cleanRuntimeRetirements(id); err != nil {
+		return nil, err
+	}
 	if err := s.sessionMaintenanceAdmission(id); err != nil {
 		return nil, err
 	}
@@ -122,7 +126,16 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 		s.runtimeCatalogs[id] = s.runtime
 	}
 	s.runtimeMu.Unlock()
-	r, err := adapter.Start(ctx, harness.StartOptions{Scope: scope, ImportResource: func(image harness.OutputResource) (domain.Attachment, error) {
+	startCtx, startCancel := context.WithCancel(ctx)
+	pending := &runtimeStart{cancel: startCancel, gate: accepting, scope: scope}
+	s.runtimeMu.Lock()
+	if s.runtimeStarts == nil {
+		s.runtimeStarts = map[string]*runtimeStart{}
+	}
+	s.runtimeStarts[id] = pending
+	s.runtimeMu.Unlock()
+	s.dispatchMu.Unlock()
+	r, err := adapter.Start(startCtx, harness.StartOptions{Scope: scope, ImportResource: func(image harness.OutputResource) (domain.Attachment, error) {
 		return s.importOutputResource(d.Session.HarnessID, id, image)
 	}, OnMessage: func(ctx context.Context, input harness.IncomingMessage) error {
 		if !accepting.Load() {
@@ -145,6 +158,26 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 		s.wakeRecovery()
 		return nil
 	}})
+	s.dispatchMu.Lock()
+	s.runtimeMu.Lock()
+	if s.runtimeStarts[id] == pending {
+		delete(s.runtimeStarts, id)
+	}
+	s.runtimeMu.Unlock()
+	cancelled := pending.cancelled.Load() || startCtx.Err() != nil
+	startCancel()
+	if cancelled {
+		accepting.Store(false)
+		go func() {
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = scope.Terminate(cleanup, true)
+			if r != nil {
+				_ = r.Close(cleanup)
+			}
+		}()
+		return nil, errRuntimeStartCancelled
+	}
 	if err != nil {
 		return nil, errors.Join(err, s.cleanManagedExecution(ctx, id))
 	}

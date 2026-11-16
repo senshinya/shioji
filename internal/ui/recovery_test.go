@@ -89,12 +89,12 @@ func TestRecoveryShowsOneNextStepAndExplainsUnownedTools(t *testing.T) {
 	}
 }
 
-func TestRecoveryRequiresSelectingActualProcessesBeforeStopping(t *testing.T) {
+func TestRecoveryRetriesSourceHistoryWithoutProcessSelection(t *testing.T) {
 	m := layoutModel()
 	m.WorkerMinor = 8
 	d := m.Details["s"]
 	d.Session.Status = "unknown"
-	d.Session.Recovery = &domain.SessionRecovery{Phase: "attention", CanEnd: true, CanStopTasks: true, Tasks: []domain.RecoveryTask{{ID: "tool@123:1:0", ItemID: "tool", PID: 123, Command: "sleep 60", ProcessCommand: "/bin/sleep 60", State: "running"}}}
+	d.Session.Recovery = &domain.SessionRecovery{Phase: "attention", CanEnd: true, CanStopTasks: true, Tasks: []domain.RecoveryTask{{ID: "old-process", PID: 123, Command: "sleep 60", State: "running"}}}
 	m.Details["s"] = d
 	m.Snapshot.Sessions[0] = d.Session
 	v := New(m, app.NewController(""), "")
@@ -102,22 +102,22 @@ func TestRecoveryRequiresSelectingActualProcessesBeforeStopping(t *testing.T) {
 	ui.Advance(time.Second)
 	ui.Click("查看处理方法")
 	ui.Advance(400 * time.Millisecond)
-	if err := ui.Click("选择进程 123"); err != nil {
-		t.Fatal("no explicit process selection", err)
+	if _, ok := ui.Find("选择进程 123"); ok {
+		t.Fatal("source recovery still requires choosing OS processes")
 	}
-	ui.Click("停止所选进程")
-	ui.Advance(400 * time.Millisecond)
-	ui.Click("确认停止所选进程")
+	if err := ui.Click("重试恢复"); err != nil {
+		t.Fatal(err)
+	}
 	found := false
 	for len(v.Controller.Jobs) > 0 {
 		j := <-v.Controller.Jobs
 		if j.Method == "session.reconcile" {
 			in := j.Input.(protocol.RecoveryInput)
-			found = in.Action == "stop-tasks" && len(in.Targets) == 1 && in.Targets[0] == "tool@123:1:0"
+			found = in.Action == "check" && len(in.Targets) == 0
 		}
 	}
 	if !found {
-		t.Fatal("stop did not carry the explicitly selected process identity")
+		t.Fatal("recovery did not query source history")
 	}
 }
 

@@ -87,8 +87,7 @@ type adapterRuntime struct {
 	executor     *Executor
 	descriptor   domain.HarnessDescriptor
 	titleAdapter Adapter
-	closeOnce    sync.Once
-	closeErr     error
+	closeMu      sync.Mutex
 }
 
 func (r *adapterRuntime) Readiness() domain.Readiness {
@@ -108,27 +107,17 @@ func (r *adapterRuntime) ExecutionReady() bool {
 	return !r.Stopped() && (r.scope == nil || r.scope.Admitting() && r.executor != nil && !r.executor.Stopped())
 }
 func (r *adapterRuntime) Close(ctx context.Context) error {
-	if r.scope != nil && !r.scope.ForceAllowed() {
-		var err error
-		if r.executor != nil {
-			err = r.executor.Fence()
-		}
-		err = errors.Join(err, r.Runtime.Close())
-		if r.executor != nil {
-			err = errors.Join(err, r.executor.Close(ctx))
-		}
-		return err
+	r.closeMu.Lock()
+	defer r.closeMu.Unlock()
+	var result error
+	if r.executor != nil {
+		result = r.executor.Fence()
 	}
-	r.closeOnce.Do(func() {
-		if r.executor != nil {
-			r.closeErr = r.executor.Fence()
-		}
-		r.closeErr = errors.Join(r.closeErr, r.Runtime.Close())
-		if r.executor != nil {
-			r.closeErr = errors.Join(r.closeErr, r.executor.Close(ctx))
-		}
-	})
-	return r.closeErr
+	result = errors.Join(result, r.Runtime.Close())
+	if r.executor != nil {
+		result = errors.Join(result, r.executor.Close(ctx))
+	}
+	return result
 }
 
 func (r *adapterRuntime) ManualShutdownSafe() bool { return r.scope != nil && r.executor != nil }
@@ -158,4 +147,16 @@ func (a Adapter) environment(ctx context.Context) ([]string, error) {
 		return append([]string(nil), a.launchEnv...), nil
 	}
 	return codexEnvironment(ctx, a.Home, a.runtimeOptions.Environment)
+}
+
+func (r *adapterRuntime) PendingOperations() int {
+	r.Runtime.mu.Lock()
+	n := len(r.Runtime.pendingActivity)
+	r.Runtime.mu.Unlock()
+	if r.executor != nil {
+		r.executor.mu.Lock()
+		n += len(r.executor.requests)
+		r.executor.mu.Unlock()
+	}
+	return n
 }

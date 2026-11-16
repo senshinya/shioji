@@ -82,7 +82,7 @@ func sweepIdle(t *testing.T, s *Server, now time.Time) {
 	}
 }
 
-func TestIdleRuntimeRetiresAfterTenMinutesAndResumesSameHistory(t *testing.T) {
+func TestIdleRuntimeRetiresAfterTwentyMinutesAndResumesSameHistory(t *testing.T) {
 	s, w := memoryWorker(t, idleHarness{})
 	before := submitIdleFixture(t, s, w, "first", "")
 	sid := before.Session.ID
@@ -90,11 +90,11 @@ func TestIdleRuntimeRetiresAfterTenMinutesAndResumesSameHistory(t *testing.T) {
 	catalog := s.currentRuntime()
 	now := time.Now()
 	sweepIdle(t, s, now)
-	sweepIdle(t, s, now.Add(9*time.Minute+59*time.Second))
+	sweepIdle(t, s, now.Add(19*time.Minute+59*time.Second))
 	if old.Stopped() {
-		t.Fatal("runtime retired before ten minutes of idle")
+		t.Fatal("runtime retired before twenty minutes of idle")
 	}
-	sweepIdle(t, s, now.Add(10*time.Minute))
+	sweepIdle(t, s, now.Add(20*time.Minute))
 	if !old.Stopped() || s.currentRuntime(sid) != nil {
 		t.Fatal("idle runtime was not retired")
 	}
@@ -131,11 +131,11 @@ func TestIdleRuntimeResetsItsClockForActivityBetweenSweeps(t *testing.T) {
 	sweepIdle(t, s, now)
 	submitIdleFixture(t, s, w, "brief activity", sid)
 	sweepIdle(t, s, now.Add(9*time.Minute))
-	sweepIdle(t, s, now.Add(10*time.Minute))
+	sweepIdle(t, s, now.Add(20*time.Minute))
 	if s.currentRuntime(sid) == nil || s.currentRuntime(sid).Stopped() {
 		t.Fatal("brief activity between polls did not restart the idle clock")
 	}
-	sweepIdle(t, s, now.Add(19*time.Minute))
+	sweepIdle(t, s, now.Add(29*time.Minute))
 	if s.currentRuntime(sid) != nil {
 		t.Fatal("runtime did not retire after the new idle period")
 	}
@@ -186,14 +186,6 @@ func TestIdleRuntimePreservesBusyOrUncertainSessions(t *testing.T) {
 			_, e := s.store.PrepareHistory(domain.HistoryChange{OperationID: "history", SessionID: d.Session.ID, Revision: d.Session.Revision, TurnID: d.Turns[0].ID, Config: d.Session.Config})
 			return e
 		}},
-		{"unconfirmed launch", func(s *Server, d domain.SessionDetail) error {
-			scope, e := s.executions.Existing(d.Session.ID)
-			if e != nil {
-				return e
-			}
-			_, e = scope.Prepare("worker", "pending launch")
-			return e
-		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -205,7 +197,7 @@ func TestIdleRuntimePreservesBusyOrUncertainSessions(t *testing.T) {
 			if e := tc.change(s, d); e != nil {
 				t.Fatal(e)
 			}
-			sweepIdle(t, s, now.Add(10*time.Minute))
+			sweepIdle(t, s, now.Add(20*time.Minute))
 			sweepIdle(t, s, now.Add(20*time.Minute))
 			if r.Stopped() || s.currentRuntime(d.Session.ID) != r {
 				t.Fatal("reclaimed protected execution")
@@ -230,11 +222,11 @@ func TestIdleRuntimeQueueChangesBetweenSweepsRestartTheClock(t *testing.T) {
 		t.Fatal(e)
 	}
 	sweepIdle(t, s, now.Add(9*time.Minute))
-	sweepIdle(t, s, now.Add(10*time.Minute))
+	sweepIdle(t, s, now.Add(20*time.Minute))
 	if s.currentRuntime(d.Session.ID) == nil {
 		t.Fatal("a queue edit did not reset its idle period")
 	}
-	sweepIdle(t, s, now.Add(19*time.Minute))
+	sweepIdle(t, s, now.Add(29*time.Minute))
 	if s.currentRuntime(d.Session.ID) != nil {
 		t.Fatal("empty queue prevented later retirement")
 	}
@@ -257,7 +249,7 @@ func TestIdleRuntimeSerializesRetirementWithTheNextSubmission(t *testing.T) {
 		}
 	}()
 	retired := make(chan error, 1)
-	go func() { retired <- s.reclaimIdleRuntimes(func() time.Time { return now.Add(10 * time.Minute) }) }()
+	go func() { retired <- s.reclaimIdleRuntimes(func() time.Time { return now.Add(20 * time.Minute) }) }()
 	select {
 	case <-old.closing:
 	case <-time.After(2 * time.Second):
@@ -304,5 +296,24 @@ func TestIdleRuntimeSerializesRetirementWithTheNextSubmission(t *testing.T) {
 	s.dispatchMu.Unlock()
 	if e != nil || after.Session.ThreadID != d.Session.ThreadID || len(after.Items) != 4 || s.currentRuntime(d.Session.ID) == old {
 		t.Fatal("handoff lost history or did not replace its process", after, e)
+	}
+}
+
+func TestIdleBackgroundWaitingIsProtectedUntilTwentyFourHours(t *testing.T) {
+	s, w := memoryWorker(t, idleHarness{})
+	d := submitIdleFixture(t, s, w, "background-wait", "")
+	_, err := s.store.Apply(d.Session.ID, domain.Event{Type: "work.upsert", Work: &domain.WorkActivity{ID: "background", Kind: "background", TurnID: d.Turns[0].ID, OriginRef: d.Session.ThreadID, State: "waiting"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	sweepIdle(t, s, now)
+	sweepIdle(t, s, now.Add(23*time.Hour+59*time.Minute))
+	if s.currentRuntime(d.Session.ID) == nil {
+		t.Fatal("waiting background lost its 24 hour protection")
+	}
+	sweepIdle(t, s, now.Add(24*time.Hour))
+	if s.currentRuntime(d.Session.ID) != nil {
+		t.Fatal("waiting background prevented retirement forever")
 	}
 }

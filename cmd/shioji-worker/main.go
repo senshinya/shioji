@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/harness/codex"
@@ -16,6 +17,7 @@ import (
 	"shioji/internal/protocol"
 	"shioji/internal/runtimebuild"
 	"shioji/internal/store"
+	"shioji/internal/supervisor"
 	"shioji/internal/transport"
 	"shioji/internal/worker"
 	"syscall"
@@ -24,6 +26,10 @@ import (
 
 func main() {
 	if err := run(); err != nil {
+		var drained *serviceDrained
+		if errors.As(err, &drained) {
+			os.Exit(43)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -37,6 +43,12 @@ func run() error {
 		return err
 	}
 	flag.StringVar(&dir, "state-dir", dir, "Private worker state directory")
+	serviceMigration := flag.String("service-migrate", "", "Start or run the signed fixed-service installer relay")
+	serviceControl := flag.String("service-control", "", "Query or cancel a stable fixed-supervisor operation")
+	serviceDevice := flag.String("service-device", "", "Expected authenticated service device")
+	serviceID := flag.String("service-id", "", "Stable service update operation identifier")
+	serviceChild := flag.Bool("service-child", false, "Run only as the fixed supervisor child")
+	probe := flag.Bool("probe", false, "Probe isolated local storage without harnesses or credentials")
 	describe := flag.Bool("describe", false, "Print worker build metadata without opening state")
 	ensure := flag.Bool("ensure", false, "Start or reuse the developer worker and print connection metadata")
 	bridge := flag.Bool("bridge", false, "Forward stdio to this user’s existing private worker")
@@ -53,6 +65,7 @@ func run() error {
 	build := runtimebuild.Current()
 	build.Schema = store.SchemaVersion
 	build.SafeUpdate = true
+	build.Lifecycle = 1
 	build.Maintenance = true
 	build.ContextUsage = true
 	build.OutputFiles = true
@@ -61,8 +74,89 @@ func run() error {
 	if *describe {
 		return json.NewEncoder(os.Stdout).Encode(protocol.Frame{Type: "worker-build", Major: protocol.Major, Minor: protocol.Minor, Worker: &build})
 	}
+	if *probe {
+		owner, e := worker.Acquire(dir)
+		if e != nil {
+			return e
+		}
+		defer owner.Close()
+		db, e := store.Open(filepath.Join(dir, "state.sqlite"))
+		if e != nil {
+			return e
+		}
+		e = db.Close()
+		if e != nil {
+			return e
+		}
+		return json.NewEncoder(os.Stdout).Encode(build)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if *serviceMigration != "" {
+		exe, e := os.Executable()
+		if e != nil {
+			return e
+		}
+		switch *serviceMigration {
+		case "start":
+			var input domain.WorkerReplacement
+			if e = json.NewDecoder(io.LimitReader(os.Stdin, 1<<20)).Decode(&input); e != nil {
+				return e
+			}
+			op, e := worker.StartLegacyUpgrade(ctx, dir, exe, *serviceDevice, input)
+			return serviceReply(op, e)
+		case "run":
+			lease := os.NewFile(3, "installer control lease")
+			if lease == nil {
+				return errors.New("missing installer lease")
+			}
+			defer lease.Close()
+			return worker.RunLegacyUpgrade(ctx, dir, exe, *serviceID, *serviceDevice, lease)
+		default:
+			return errors.New("未知旧服务安装操作")
+		}
+	}
+	if *serviceControl != "" {
+		var op supervisor.Operation
+		var e error
+		switch *serviceControl {
+		case "status":
+			op, e = supervisor.Query(ctx, dir, *serviceID)
+		case "repair":
+			var input domain.WorkerReplacement
+			if e = json.NewDecoder(io.LimitReader(os.Stdin, 1<<20)).Decode(&input); e == nil {
+				op, e = supervisor.Call(ctx, dir, supervisor.Request{Action: "repair", DeviceID: *serviceDevice, Input: input})
+			}
+		case "cancel":
+			op, e = supervisor.Query(ctx, dir, *serviceID)
+			if e == nil {
+				if *serviceDevice == "" || op.DeviceID != *serviceDevice {
+					e = &protocol.RemoteError{Code: "notSent", Message: "服务控制设备身份未确认"}
+				} else {
+					prior := op
+					op, e = supervisor.Call(ctx, dir, supervisor.Request{Action: "cancel", ID: *serviceID, DeviceID: *serviceDevice})
+					if e != nil && prior.Legacy {
+						op, e = supervisor.CancelLegacy(ctx, dir, *serviceID, *serviceDevice)
+					}
+				}
+			}
+		default:
+			return errors.New("未知的服务控制操作")
+		}
+		response := struct {
+			Operation   supervisor.Operation `json:"operation"`
+			Error, Code string
+		}{Operation: op}
+		if e != nil {
+			response.Error = e.Error()
+			response.Code = "receiptUnknown"
+			var remote *protocol.RemoteError
+			if errors.As(e, &remote) {
+				response.Code = remote.Code
+			}
+		}
+		return json.NewEncoder(os.Stdout).Encode(response)
+	}
 	if *recovery != "" && *recovery != "run" {
 		in := domain.WorkerRecoveryInput{ID: *recoveryID, DeviceID: *recoveryDevice}
 		var out any
@@ -186,6 +280,31 @@ func run() error {
 	if *bridge {
 		return worker.Bridge(ctx, dir, os.Stdin, os.Stdout)
 	}
+	if !*serviceChild && *migration == "" && *recovery == "" {
+		exe, e := os.Executable()
+		if e != nil {
+			return e
+		}
+		return transport.RunWorkerSupervisor(ctx, dir, exe, *binary, *managed)
+	}
+	if *serviceChild {
+		parent := os.Getppid()
+		go func() {
+			tick := time.NewTicker(time.Second)
+			defer tick.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-tick.C:
+					if os.Getppid() != parent || parent <= 1 {
+						stop()
+						return
+					}
+				}
+			}
+		}()
+	}
 	replacement := make(chan string, 1)
 	verifyReplacement := func(callCtx context.Context, in domain.WorkerReplacement) error {
 		candidate, err := transport.VerifyStagedWorker(callCtx, dir, in.BuildID)
@@ -242,6 +361,27 @@ func run() error {
 			return errors.New("已有更新正在进行")
 		}
 	}}
+	if *serviceChild {
+		config.CheckStartupBuild = nil
+		config.ServiceInstance = os.Getenv("SHIOJI_WORKER_INSTANCE")
+		config.ServiceOperation = os.Getenv("SHIOJI_SUPERVISOR_OPERATION")
+		config.StartPaused = os.Getenv("SHIOJI_WORKER_PAUSED") == "true"
+		if config.ServiceInstance == "" {
+			return errors.New("missing fixed supervisor instance")
+		}
+		config.RequestUpdate = func(in domain.WorkerReplacement) (domain.WorkerUpdateResult, error) {
+			if in.ID == "" {
+				in.ID = domain.NewID()
+			}
+			if in.Policy == "" {
+				in.Policy = "when-idle"
+			}
+			call, cancel := context.WithTimeout(ctx, 10*time.Minute)
+			defer cancel()
+			op, e := supervisor.Call(call, dir, supervisor.Request{Action: "start", Input: in})
+			return domain.WorkerUpdateResult{Ready: e == nil, OperationID: op.Input.ID, Phase: op.Phase, Reason: op.Error}, e
+		}
+	}
 	var s *worker.Server
 	workerArgs := os.Args[1:]
 	if *migration == "run" {
@@ -267,7 +407,7 @@ func run() error {
 		} else {
 			s, err = worker.New(ctx, config)
 		}
-		if !*managed || !errors.Is(err, worker.ErrOwned) {
+		if (!*managed && !*serviceChild) || !errors.Is(err, worker.ErrOwned) && !errors.Is(err, worker.ErrLegacyRecoveryActive) {
 			break
 		}
 		timer := time.NewTimer(time.Second)
@@ -298,6 +438,15 @@ func run() error {
 	if closeErr != nil {
 		return closeErr
 	}
+	if *serviceChild {
+		if receipt, ok := s.DrainedReceipt(); ok {
+			if err = supervisor.WriteDrained(dir, receipt); err != nil {
+				return err
+			}
+			return &serviceDrained{}
+		}
+		return nil
+	}
 	select {
 	case path := <-replacement:
 		if ctx.Err() != nil {
@@ -312,3 +461,23 @@ func run() error {
 type selectedWorker struct{ path string }
 
 func (e *selectedWorker) Error() string { return "已接纳的执行服务版本已改变" }
+
+type serviceDrained struct{}
+
+func (*serviceDrained) Error() string { return "worker drained" }
+
+func serviceReply(op supervisor.Operation, err error) error {
+	reply := struct {
+		Operation   supervisor.Operation `json:"operation"`
+		Error, Code string
+	}{Operation: op}
+	if err != nil {
+		reply.Error = err.Error()
+		reply.Code = "receiptUnknown"
+		var remote *protocol.RemoteError
+		if errors.As(err, &remote) {
+			reply.Code = remote.Code
+		}
+	}
+	return json.NewEncoder(os.Stdout).Encode(reply)
+}

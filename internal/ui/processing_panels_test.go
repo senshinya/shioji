@@ -61,9 +61,9 @@ func TestProcessingRecoveryTasksUseOneSurface(t *testing.T) {
 		ui.Move(0, 0)
 		ui.Advance(time.Second)
 		panel, _ := ui.Find("执行恢复")
-		row, ok := ui.Find("选择进程 2418")
+		row, ok := ui.Find("go test")
 		if !ok {
-			t.Fatal("no process choice")
+			t.Fatal("no source task detail")
 		}
 		im := ui.Image()
 		y := int(row.Y + row.H/2)

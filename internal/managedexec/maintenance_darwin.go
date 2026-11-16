@@ -236,7 +236,7 @@ func (s *Scope) ForceAllowed() bool {
 	s.manager.mu.Lock()
 	defer s.manager.mu.Unlock()
 	state, err := s.load()
-	return err == nil && (state.Manual == nil || state.Manual.ForceAction != "")
+	return err == nil && (state.Retirement != "" || state.Manual == nil || state.Manual.ForceAction != "")
 }
 
 // Adapter read/close paths must not signal a recycled PID or bypass normal-only

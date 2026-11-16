@@ -19,6 +19,15 @@ func (s *Store) PrepareWorkerUpdate(backup string) (domain.WorkerUpdateResult, e
 	if err != nil || !result.Ready {
 		return result, err
 	}
+	return s.backupWorkerLocked(backup)
+}
+
+func (s *Store) BackupWorker(backup string) (domain.WorkerUpdateResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.backupWorkerLocked(backup)
+}
+func (s *Store) backupWorkerLocked(backup string) (domain.WorkerUpdateResult, error) {
 	f, err := os.OpenFile(backup, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return domain.WorkerUpdateResult{}, err
@@ -59,14 +68,7 @@ func (s *Store) PrepareWorkerStop(reason string) (domain.WorkerUpdateResult, err
 }
 func (s *Store) prepareWorkerStop(reason string) (domain.WorkerUpdateResult, error) {
 	var blocked bool
-	err := s.db.QueryRow(`SELECT
- EXISTS(SELECT 1 FROM sessions WHERE COALESCE(json_extract(body,'$.status'),'') NOT IN ('idle','completed','interrupted','failed','abandoned') OR COALESCE(json_extract(body,'$.executionGuard'),'')!='')
- OR EXISTS(SELECT 1 FROM operations WHERE state IN ('accepted','dispatched','indeterminate'))
- OR EXISTS(SELECT 1 FROM work_inputs WHERE json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate') AND COALESCE(json_extract(body,'$.executionStopped'),0)=0)
- OR EXISTS(SELECT 1 FROM requests WHERE json_extract(body,'$.state') IN ('pending','submitting'))
- OR EXISTS(SELECT 1 FROM history_operations WHERE json_extract(body,'$.state') IN ('prepared','forked'))
- OR EXISTS(SELECT 1 FROM works w JOIN sessions s ON w.session_id=s.id WHERE json_extract(w.body,'$.state') IN ('starting','running','waiting') AND (COALESCE(json_extract(w.body,'$.originRef'),'')='' OR json_extract(w.body,'$.originRef')=json_extract(s.body,'$.threadId')))
- OR EXISTS(SELECT 1 FROM title_jobs WHERE state='running')`).Scan(&blocked)
+	err := s.db.QueryRow(workerStopBlockQuery).Scan(&blocked)
 	if err != nil {
 		return domain.WorkerUpdateResult{}, err
 	}
@@ -115,4 +117,25 @@ func (s *Store) prepareWorkerStop(reason string) (domain.WorkerUpdateResult, err
 		return domain.WorkerUpdateResult{}, err
 	}
 	return domain.WorkerUpdateResult{Ready: true}, nil
+}
+
+const workerStopBlockQuery = `SELECT
+ EXISTS(SELECT 1 FROM sessions WHERE COALESCE(json_extract(body,'$.status'),'') NOT IN ('idle','completed','interrupted','failed','abandoned') OR COALESCE(json_extract(body,'$.executionGuard'),'')!='')
+ OR EXISTS(SELECT 1 FROM operations WHERE state IN ('accepted','dispatched','indeterminate'))
+ OR EXISTS(SELECT 1 FROM work_inputs WHERE json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate') AND COALESCE(json_extract(body,'$.executionStopped'),0)=0)
+ OR EXISTS(SELECT 1 FROM requests WHERE json_extract(body,'$.state') IN ('pending','submitting'))
+ OR EXISTS(SELECT 1 FROM history_operations WHERE json_extract(body,'$.state') IN ('prepared','forked'))
+ OR EXISTS(SELECT 1 FROM works w JOIN sessions s ON w.session_id=s.id WHERE json_extract(w.body,'$.state') IN ('starting','running','waiting') AND (COALESCE(json_extract(w.body,'$.originRef'),'')='' OR json_extract(w.body,'$.originRef')=json_extract(s.body,'$.threadId')))
+ OR EXISTS(SELECT 1 FROM title_jobs WHERE state='running')`
+
+func (s *Store) WorkerStopReady() (domain.WorkerUpdateResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var blocked bool
+	err := s.db.QueryRow(workerStopBlockQuery).Scan(&blocked)
+	result := domain.WorkerUpdateResult{Ready: !blocked}
+	if blocked {
+		result.Reason = "等待实际任务、请求或未决输入完成"
+	}
+	return result, err
 }

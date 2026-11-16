@@ -41,12 +41,14 @@ const (
 )
 
 type scopeState struct {
-	Manual      *manualStopState `json:",omitempty"`
-	Generation  string
-	Active      bool
-	Maintenance bool
-	Parents     map[string]Identity
-	Launches    map[string]bool
+	Retirement    string           `json:",omitempty"`
+	CancelledTurn string           `json:",omitempty"`
+	Manual        *manualStopState `json:",omitempty"`
+	Generation    string
+	Active        bool
+	Maintenance   bool
+	Parents       map[string]Identity
+	Launches      map[string]bool
 }
 type Manager struct {
 	Directory, Executable string

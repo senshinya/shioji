@@ -51,7 +51,12 @@ func (s *Server) titleLoop() {
 		s.maintenance.RLock()
 		if s.updating.Load() || s.backgroundStopping.Load() {
 			s.maintenance.RUnlock()
-			return
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-s.titleWake:
+				continue
+			}
 		}
 		job, err := s.store.ClaimTitleGeneration()
 		s.maintenance.RUnlock()
