@@ -119,7 +119,11 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	}
 	if runtime == nil || runtime.Stopped() || d.Session.ExecutionGuard != "" {
 		if cleanupErr := s.cleanSessionRuntime(ctx, in.SessionID); cleanupErr != nil {
-			result.Message = "会话进程归属记录尚未确认，未启动新的 Agent"
+			if err := s.detachFailedRuntime(in.SessionID, cleanupErr); err != nil {
+				result.Message = "会话进程归属记录尚未确认，未启动新的 Agent"
+				return finish()
+			}
+			result.Status, result.Message = "failed", "旧 Agent 已退休，可使用新的 Agent 继续；原执行结果未确认"
 			return finish()
 		}
 		runtime, err = s.recoveryRuntime(ctx, in.Action == "stop-runtime", d.Session.HarnessID)

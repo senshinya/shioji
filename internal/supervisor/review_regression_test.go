@@ -73,7 +73,7 @@ func regressionOptions(t *testing.T) (string, Options) {
 				}
 			}
 		}
-		schema := 13
+		schema := store.SchemaVersion
 		if data, e := os.ReadFile(filepath.Join(dir, "schema-"+build)); e == nil {
 			fmt.Sscan(string(data), &schema)
 		}
@@ -144,8 +144,9 @@ func fixtureReadyPID(t *testing.T, dir string, previous int) int {
 	return 0
 }
 
-func TestCrashCircuitPersistsAndDoesNotRewriteHistoricalReceipt(t *testing.T) {
+func TestCrashCircuitResetsWithSupervisorAndDoesNotRewriteHistoricalReceipt(t *testing.T) {
 	dir, o := regressionOptions(t)
+	o.RetryMin, o.RetryMax = time.Millisecond, time.Millisecond
 	cancel, done := regressionHost(t, o, "ready")
 	_, err := Call(context.Background(), dir, Request{Action: "start", Input: domain.WorkerReplacement{ID: "completed", ExpectedBuildID: "old", BuildID: "next", Policy: "when-idle"}})
 	if err != nil {
@@ -153,7 +154,7 @@ func TestCrashCircuitPersistsAndDoesNotRewriteHistoricalReceipt(t *testing.T) {
 	}
 	awaitRegressionPhase(t, dir, "completed", "applied")
 	previous := 0
-	for attempt := range 4 {
+	for attempt := range 10 {
 		pid := fixtureReadyPID(t, dir, previous)
 		t.Log("crash", attempt, pid)
 		previous = pid
@@ -171,9 +172,9 @@ func TestCrashCircuitPersistsAndDoesNotRewriteHistoricalReceipt(t *testing.T) {
 	}
 	cancel()
 	<-done
-	regressionHost(t, o, "blocked")
-	if _, err := Call(context.Background(), dir, Request{Action: "start", Input: domain.WorkerReplacement{ID: "bypass", ExpectedBuildID: "next", BuildID: "old", Policy: "when-idle", Explicit: true}}); err == nil {
-		t.Fatal("supervisor restart reset the circuit breaker")
+	regressionHost(t, o, "applied")
+	if op, err := Call(context.Background(), dir, Request{Action: "status", ID: "completed"}); err != nil || op.Phase != "applied" {
+		t.Fatal("supervisor restart rewrote the historical receipt", op, err)
 	}
 }
 
@@ -196,7 +197,7 @@ func TestColdRepairRejectsSchemaChangeWithNoInMemoryChild(t *testing.T) {
 	if err := j.save(prior); err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(dir, "schema-next"), []byte("14"), 0600)
+	os.WriteFile(filepath.Join(dir, "schema-next"), []byte(fmt.Sprint(store.SchemaVersion+1)), 0600)
 	regressionHost(t, o, "blocked")
 	_, err := Call(context.Background(), dir, Request{Action: "repair", DeviceID: "fixture-device", Input: domain.WorkerReplacement{ID: "incompatible-repair", BuildID: "next", Policy: "immediate", Explicit: true}})
 	if err == nil {
@@ -269,7 +270,7 @@ func TestHostPublishesCompleteChildIdentity(t *testing.T) {
 	}
 	done := make(chan launched, 1)
 	go func() {
-		c, err := h.launch(filepath.Join(dir, "fixture-old"), domain.WorkerBuild{BuildID: "old", Schema: 13, Lifecycle: 1}, false, "")
+		c, err := h.launch(filepath.Join(dir, "fixture-old"), domain.WorkerBuild{BuildID: "old", Schema: store.SchemaVersion, Lifecycle: 1}, false, "")
 		done <- launched{c, err}
 	}()
 	partial := false

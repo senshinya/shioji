@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -150,11 +152,74 @@ for line in sys.stdin:
 	if inputs != 2 {
 		t.Fatal("resuming repeated old input", inputs)
 	}
+	// Exercise failed logical Close with real Codex app-server, exec-server and
+	// MCP ownership. Physical termination must not prevent a fresh Agent from
+	// resuming the same history while the retired adapter is retried separately.
+	failed := &failedNativeClose{Runtime: s.currentRuntime(sid)}
+	failed.fail.Store(true)
+	defer failed.fail.Store(false)
+	s.runtimeMu.Lock()
+	s.runtimes[sid] = failed
+	s.runtimeMu.Unlock()
+	sweepIdle(t, s, now.Add(time.Hour))
+	if err := s.reclaimIdleRuntimes(func() time.Time { return now.Add(time.Hour + 20*time.Minute) }); err == nil {
+		t.Fatal("native cleanup fault was hidden")
+	}
+	continued := send("third", sid)
+	if continued.Session.ThreadID != before.Session.ThreadID || s.currentRuntime(sid).Done() == failed.Done() {
+		t.Fatal("failed native Agent was reused or history was replaced")
+	}
+	inputs = 0
+	for _, item := range continued.Items {
+		if item.Kind == "user" {
+			inputs++
+		}
+	}
+	if inputs != 3 {
+		t.Fatal("failed release replayed an old native input", inputs)
+	}
+	failed.fail.Store(false)
+	for deadline := time.Now().Add(7 * time.Second); ; {
+		retired, err := s.executions.Detached()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(retired) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			for _, scope := range retired {
+				t.Log("retained generation", scope.Session, scope.Generation, "physical proof", scope.VerifyStopped())
+			}
+			s.retirementMu.Lock()
+			for generation, pending := range s.detachedRuntimes {
+				t.Log("retained adapter", generation, "running", pending.running, "prior", pending.prior != nil)
+			}
+			s.retirementMu.Unlock()
+			cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			closeErr := failed.Runtime.Close(cleanup)
+			cancel()
+			t.Fatal("native failed adapter cleanup was not retried", closeErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	s.config.ReplaceWorker = func(domain.WorkerReplacement) error { return nil }
 	result, e := s.prepareWorkerUpdate(domain.WorkerReplacement{ExpectedBuildID: s.build.BuildID, BuildID: "candidate"})
 	if e != nil || !result.Ready {
 		t.Fatal("idle MCP service prevented worker update", result, e)
 	}
+}
+
+type failedNativeClose struct {
+	harness.Runtime
+	fail atomic.Bool
+}
+
+func (r *failedNativeClose) Close(ctx context.Context) error {
+	if r.fail.Load() {
+		return errors.New("injected native adapter close failure")
+	}
+	return r.Runtime.Close(ctx)
 }
 func identityForIdleTest(p unix.KinfoProc) [3]int64 {
 	return [3]int64{int64(p.Proc.P_pid), p.Proc.P_starttime.Sec, int64(p.Proc.P_starttime.Usec)}

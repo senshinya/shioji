@@ -233,7 +233,7 @@ func (s *Scope) BeginExplicitStop(operation, ref string, force bool) (func() err
 	for _, p := range observation.Processes {
 		next.Manual.Targets = append(next.Manual.Targets, ProcessInfo{Identity: p.Identity, UID: p.UID, ParentPID: p.ParentPID, Group: p.Group, Name: p.Name, Evidence: p.Evidence, Anchor: p.Anchor})
 	}
-	if err = writeJSON(filepath.Join(s.Directory, "scope.json"), next); err != nil {
+	if err = s.writeState(next); err != nil {
 		return nil, err
 	}
 	return func() error {
@@ -246,7 +246,7 @@ func (s *Scope) BeginExplicitStop(operation, ref string, force bool) (func() err
 		if current.Manual == nil || current.Manual.Operation != operation || current.Manual.Accepted {
 			return errors.New("已接纳的停止不能撤回")
 		}
-		return writeJSON(filepath.Join(s.Directory, "scope.json"), previous)
+		return s.writeState(previous)
 	}, nil
 }
 
@@ -274,7 +274,7 @@ func (s *Scope) StopExplicit(ctx context.Context) error {
 			manual.NormalSent = true
 		}
 		state.Active = false
-		if err = writeJSON(filepath.Join(s.Directory, "scope.json"), state); err != nil {
+		if err = s.writeState(state); err != nil {
 			s.manager.mu.Unlock()
 			return err
 		}
@@ -345,7 +345,7 @@ func (s *Scope) ObserveExplicitStop() error {
 	}
 	state.Active = false
 	state.Maintenance = false
-	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+	return s.writeState(state)
 }
 
 func (s *Scope) ExplicitStopProven() (bool, error) {
@@ -394,5 +394,5 @@ func (s *Scope) ConfirmExplicitExit(operation string) error {
 	state.Active = false
 	state.Maintenance = true
 	state.Manual = &manualStopState{Operation: operation, Explicit: true, Accepted: true, ExitConfirmed: true}
-	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+	return s.writeState(state)
 }

@@ -231,6 +231,9 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 			err = runtime.Steer(ctx, d.Session, in.TurnID, op.ID, harness.TurnInput{Text: in.Input.Text, Attachments: inputs, Skills: in.Input.Skills})
 			s.dispatchMu.Lock()
 			locked = true
+			if current := s.currentRuntime(op.SessionID); current == nil || current.Done() != runtime.Done() {
+				return
+			}
 			if runtime.Stopped() {
 				err = &harness.DeliveryError{Uncertain: true, Message: "运行环境已结束，Steer 结果待核对；不会自动重发"}
 			}

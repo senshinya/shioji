@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"sort"
 	"time"
 
@@ -158,7 +157,7 @@ func (s *Scope) BeginManualStop(operation, expectedRef string) (func() error, er
 	next := previous
 	next.Maintenance = true
 	next.Manual = &manualStopState{Operation: operation}
-	if err = writeJSON(filepath.Join(s.Directory, "scope.json"), next); err != nil {
+	if err = s.writeState(next); err != nil {
 		return nil, err
 	}
 	return func() error {
@@ -171,7 +170,7 @@ func (s *Scope) BeginManualStop(operation, expectedRef string) (func() error, er
 		if current.Manual == nil || current.Manual.Operation != operation || current.Manual.NormalSent || current.Manual.ForceAction != "" {
 			return errors.New("已接纳的停止不能撤回")
 		}
-		return writeJSON(filepath.Join(s.Directory, "scope.json"), previous)
+		return s.writeState(previous)
 	}, nil
 }
 
@@ -188,7 +187,7 @@ func (s *Scope) AcceptManualStop(operation string) error {
 		return errors.New("停止许可与已接纳操作不一致")
 	}
 	state.Manual.Accepted = true
-	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+	return s.writeState(state)
 }
 func (s *Scope) ManualStopOperation() (string, error) {
 	s.manager.mu.Lock()
@@ -221,7 +220,7 @@ func (s *Scope) RecoverManualStop(accepted bool) error {
 	if !state.Manual.ForceSent {
 		state.Manual.ForceAction = ""
 	}
-	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+	return s.writeState(state)
 }
 
 func (s *Scope) ManualStopPending() (bool, error) {
@@ -311,7 +310,7 @@ func (s *Scope) ForceManualStop(operation, action string) error {
 	state.Manual.Accepted = true
 	state.Manual.ForceAction = action
 	state.Manual.ForceSent = false
-	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+	return s.writeState(state)
 }
 
 // Cancellation revokes unsent force and reopens only a lifetime that has never
@@ -333,7 +332,7 @@ func (s *Scope) CancelManualStop(operation string) error {
 		state.Manual = nil
 	}
 	state.Maintenance = false
-	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+	return s.writeState(state)
 }
 
 func (s *Scope) stopManual(ctx context.Context) error {
@@ -371,7 +370,7 @@ func (s *Scope) stopManual(ctx context.Context) error {
 		}
 		// Persist the send boundary first. Recovery observes; it never resends
 		// an uncertain stop merely because its receipt was not delivered.
-		if err = writeJSON(filepath.Join(s.Directory, "scope.json"), state); err != nil {
+		if err = s.writeState(state); err != nil {
 			s.manager.mu.Unlock()
 			return err
 		}
@@ -468,5 +467,5 @@ func (s *Scope) ObserveManualStop() error {
 	}
 	state.Active = false
 	state.Maintenance = false
-	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+	return s.writeState(state)
 }

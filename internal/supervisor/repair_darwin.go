@@ -145,6 +145,8 @@ func (h *host) repair(ctx context.Context, op Operation, writer *os.File) {
 		h.device = op.DeviceID
 		h.readyDone = true
 		h.health = serviceHealth{Phase: "ready", DeviceID: op.DeviceID, BuildID: candidate.build.BuildID, Schema: candidate.build.Schema}
+		h.retry = crashRetry{}
+		candidate.readyAt = time.Now()
 		if e := h.saveHealth(); e != nil {
 			h.blocked = true
 			h.health.Phase, h.health.Error = "blocked", e.Error()
@@ -167,6 +169,15 @@ func (h *host) verifyRepairScopes(ctx context.Context) error {
 		manager, err := managedexec.New(directory, "")
 		if err != nil {
 			return err
+		}
+		retired, err := manager.Detached()
+		if err != nil {
+			return err
+		}
+		for _, scope := range retired {
+			if err = scope.VerifyStopped(); err != nil {
+				return errors.New("旧代次登记进程尚未确认退出，保留原件后重试修复")
+			}
 		}
 		for _, entry := range entries {
 			if err = ctx.Err(); err != nil {

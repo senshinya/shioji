@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"shioji/internal/store"
 	"strings"
 	"sync"
 	"testing"
@@ -29,7 +30,7 @@ func fixtureHost(name string) int {
 	if strings.Contains(name, "next") {
 		buildID = "next"
 	}
-	build := domain.WorkerBuild{BuildID: buildID, Schema: 13, Lifecycle: 1, SafeUpdate: true}
+	build := domain.WorkerBuild{BuildID: buildID, Schema: store.SchemaVersion, Lifecycle: 1, SafeUpdate: true}
 	var dir string
 	probe := false
 	for i, arg := range os.Args {
@@ -180,7 +181,7 @@ func testHost(t *testing.T, oldMode, nextMode string, selectFailure bool) (strin
 		if build == "" {
 			build = selected
 		}
-		return paths[build], domain.WorkerBuild{BuildID: build, Schema: 13, Lifecycle: 1, SafeUpdate: true}, nil
+		return paths[build], domain.WorkerBuild{BuildID: build, Schema: store.SchemaVersion, Lifecycle: 1, SafeUpdate: true}, nil
 	}
 	options.Select = func(build string) error {
 		if selectFailure && build == "next" {

@@ -373,6 +373,15 @@ func (s *Server) cleanArchiveGarbageItem(item store.ArchiveGarbage) error {
 	var err error
 	switch {
 	case item.SessionID != "":
+		retired, e := s.executions.Detached()
+		if e != nil {
+			return e
+		}
+		for _, old := range retired {
+			if old.Session == item.SessionID {
+				return errors.New("旧代次仍在回收，保留登记记录后重试清理")
+			}
+		}
 		scope, e := s.executions.Existing(item.SessionID)
 		if e != nil {
 			return e

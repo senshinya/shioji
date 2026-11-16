@@ -128,14 +128,21 @@ const workerStopBlockQuery = `SELECT
  OR EXISTS(SELECT 1 FROM works w JOIN sessions s ON w.session_id=s.id WHERE json_extract(w.body,'$.state') IN ('starting','running','waiting') AND (COALESCE(json_extract(w.body,'$.originRef'),'')='' OR json_extract(w.body,'$.originRef')=json_extract(s.body,'$.threadId')))
  OR EXISTS(SELECT 1 FROM title_jobs WHERE state='running')`
 
-func (s *Store) WorkerStopReady() (domain.WorkerUpdateResult, error) {
+func (s *Store) WorkerStopReady(liveSessions []string) (domain.WorkerUpdateResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var blocked bool
-	err := s.db.QueryRow(workerStopBlockQuery).Scan(&blocked)
-	result := domain.WorkerUpdateResult{Ready: !blocked}
-	if blocked {
-		result.Reason = "等待实际任务、请求或未决输入完成"
+	// Managed replacement owns cleanup after admission. Only a live turn or
+	// its live initialization reserves admission. Historical records alone do
+	// not represent a lease held by this worker instance.
+	for _, id := range liveSessions {
+		var blocked bool
+		err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sessions WHERE id=? AND json_extract(body,'$.status') IN ('starting','running'))`, id).Scan(&blocked)
+		if err != nil {
+			return domain.WorkerUpdateResult{}, err
+		}
+		if blocked {
+			return domain.WorkerUpdateResult{Reason: "等待正在初始化或执行的会话轮次"}, nil
+		}
 	}
-	return result, err
+	return domain.WorkerUpdateResult{Ready: true}, nil
 }

@@ -9,7 +9,8 @@ import (
 // Service health outlives root restarts without rewriting historical receipts.
 type serviceHealth struct {
 	Phase, DeviceID, BuildID, Error string
-	Schema, Attempts                int
+	Schema                          int
+	CrashLoop                       bool
 }
 
 func (h *host) healthPath() string {
@@ -29,6 +30,7 @@ func (h *host) blockHealth(cause error) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.blocked, h.readyDone = true, false
+	h.health.CrashLoop = false
 	h.health.Phase, h.health.Error = "blocked", cause.Error()
 	if h.device != "" {
 		h.health.DeviceID = h.device

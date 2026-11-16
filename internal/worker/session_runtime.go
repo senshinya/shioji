@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"shioji/internal/domain"
 	"shioji/internal/harness"
-	"sync/atomic"
 	"time"
 )
 
@@ -117,7 +116,7 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 	if err = scope.Bind("worker", os.Getpid()); err != nil {
 		return nil, err
 	}
-	accepting := &atomic.Bool{}
+	accepting := &runtimeEventGate{done: make(chan struct{})}
 	accepting.Store(true)
 	s.runtimeMu.Lock()
 	s.runtimeEvents[id] = accepting
@@ -135,29 +134,52 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 	s.runtimeStarts[id] = pending
 	s.runtimeMu.Unlock()
 	s.dispatchMu.Unlock()
-	r, err := adapter.Start(startCtx, harness.StartOptions{Scope: scope, ImportResource: func(image harness.OutputResource) (domain.Attachment, error) {
-		return s.importOutputResource(d.Session.HarnessID, id, image)
-	}, OnMessage: func(ctx context.Context, input harness.IncomingMessage) error {
-		if !accepting.Load() {
-			return errors.New("旧运行环境已退休，消息未接纳")
-		}
-		return s.receiveHarnessMessage(ctx, d.Session.HarnessID, id, scope.Generation, input)
-	}, OnEvent: func(e domain.Event) error {
-		if !accepting.Load() {
+	started := make(chan runtimeStartResult, 1)
+	go func() {
+		r, err := adapter.Start(startCtx, harness.StartOptions{Scope: scope, ImportResource: func(image harness.OutputResource) (domain.Attachment, error) {
+			return s.importOutputResource(d.Session.HarnessID, id, image)
+		}, OnMessage: func(ctx context.Context, input harness.IncomingMessage) error {
+			if !accepting.Load() {
+				return errors.New("旧运行环境已退休，消息未接纳")
+			}
+			return s.receiveHarnessMessage(ctx, d.Session.HarnessID, id, scope.Generation, input)
+		}, OnEvent: func(e domain.Event) error {
+			accepting.mu.RLock()
+			defer accepting.mu.RUnlock()
+			if !accepting.Load() {
+				return nil
+			}
+			return s.onHarnessEvent(d.Session.HarnessID, id, e)
+		}, OnStart: func(pid int) error {
+			accepting.mu.RLock()
+			defer accepting.mu.RUnlock()
+			if !accepting.Load() {
+				return errRuntimeStartCancelled
+			}
+			return recordSessionProcess(dir, id, pid)
+		}, OnLost: func() error {
+			accepting.mu.RLock()
+			defer accepting.mu.RUnlock()
+			if !accepting.Load() {
+				return nil
+			}
+			if err := s.guardManagedExecution(id); err != nil {
+				s.cancel()
+				return err
+			}
+			s.wakeRecovery()
 			return nil
-		}
-		return s.onHarnessEvent(d.Session.HarnessID, id, e)
-	}, OnStart: func(pid int) error { return recordSessionProcess(dir, id, pid) }, OnLost: func() error {
-		if !accepting.Load() {
-			return nil
-		}
-		if err := s.guardManagedExecution(id); err != nil {
-			s.cancel()
-			return err
-		}
-		s.wakeRecovery()
-		return nil
-	}})
+		}})
+		started <- runtimeStartResult{runtime: r, err: err}
+	}()
+	var r harness.Runtime
+	creationPending := false
+	select {
+	case result := <-started:
+		r, err = result.runtime, result.err
+	case <-startCtx.Done():
+		err, creationPending = startCtx.Err(), true
+	}
 	s.dispatchMu.Lock()
 	s.runtimeMu.Lock()
 	if s.runtimeStarts[id] == pending {
@@ -167,8 +189,12 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 	cancelled := pending.cancelled.Load() || startCtx.Err() != nil
 	startCancel()
 	if cancelled {
-		accepting.Store(false)
+		accepting.deactivate()
 		go func() {
+			if creationPending {
+				late := <-started
+				r = late.runtime
+			}
 			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			_ = scope.Terminate(cleanup, true)
@@ -176,7 +202,10 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 				_ = r.Close(cleanup)
 			}
 		}()
-		return nil, errRuntimeStartCancelled
+		if pending.cancelled.Load() {
+			return nil, errRuntimeStartCancelled
+		}
+		return nil, err
 	}
 	if err != nil {
 		return nil, errors.Join(err, s.cleanManagedExecution(ctx, id))

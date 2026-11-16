@@ -188,6 +188,19 @@ func (s *Server) detectGitContext(status domain.GitStatus) error {
 	return nil
 }
 func (s *Server) checkoutGuard(status domain.GitStatus, own string) error {
+	retired, err := s.executions.Detached()
+	if err != nil {
+		return err
+	}
+	for _, scope := range retired {
+		d, e := s.store.Session(scope.Session, 0, 1)
+		if e != nil {
+			return e
+		}
+		if sameCheckout(s.ctx, d.Session.Context.CWD, status.Checkout) {
+			return fmt.Errorf("%s 的旧执行尚未确认停止；请等待或新建 worktree", d.Session.Title)
+		}
+	}
 	snap, err := s.store.Snapshot()
 	if err != nil {
 		return err

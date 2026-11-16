@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"shioji/internal/domain"
+	"shioji/internal/managedexec"
 	"shioji/internal/store"
 	"strings"
 	"syscall"
@@ -42,7 +43,12 @@ func gitTestServer(t *testing.T) (*Server, domain.Workspace, string) {
 	}
 	t.Cleanup(func() { db.Close() })
 	w, _ := db.CreateWorkspace("Git", []string{dir})
-	return &Server{store: db, ctx: context.Background(), config: Config{Directory: t.TempDir()}}, w, dir
+	stateDir := t.TempDir()
+	manager, err := managedexec.New(filepath.Join(stateDir, "executions"), os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Server{store: db, ctx: context.Background(), executions: manager, config: Config{Directory: stateDir}}, w, dir
 }
 func gitTestCall(s *Server, method string, in any) (map[string]any, error) {
 	body, _ := json.Marshal(in)

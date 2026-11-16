@@ -109,8 +109,7 @@ func (s *Server) reclaimIdleRuntime(id string, now time.Time) (result error) {
 	err = s.cleanManagedExecution(ctx, id)
 	cancel()
 	if err != nil {
-		err = errors.Join(err, s.store.GuardExecution(id, scope.Generation))
-		s.wakeRecovery()
+		err = errors.Join(err, s.detachFailedRuntime(id, err))
 		return err
 	}
 	delete(s.idleRuntimes, id)

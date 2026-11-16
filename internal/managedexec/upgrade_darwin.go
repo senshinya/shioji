@@ -2,7 +2,6 @@ package managedexec
 
 import (
 	"errors"
-	"path/filepath"
 )
 
 // A newly accepted product update supersedes a legacy normal-only environment
@@ -21,5 +20,5 @@ func (s *Scope) AuthorizeRetirement(operation string) error {
 	state.Retirement = operation
 	state.Active = false
 	state.Maintenance = false
-	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+	return s.writeState(state)
 }

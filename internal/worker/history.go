@@ -122,8 +122,9 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 	}
 	// Commit has already accepted exactly one ordinary input. Existing dispatch
 	// owns all uncertainty handling; retrying this history operation never replays.
+	releaseDispatch := s.reserveDispatch(accepted)
 	s.wg.Add(1)
-	go func() { defer s.wg.Done(); s.dispatch(op.Submission, accepted, runtime) }()
+	go func() { defer s.wg.Done(); defer releaseDispatch(); s.dispatch(op.Submission, accepted, runtime) }()
 	return op, nil
 }
 

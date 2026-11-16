@@ -87,6 +87,30 @@ func (s *Server) shutdown() error {
 				}(id, r)
 			}
 		}
+		pending, detachedErr := s.executions.Detached()
+		mu.Lock()
+		failure = errors.Join(failure, detachedErr)
+		mu.Unlock()
+		for _, scope := range pending {
+			s.retirementMu.Lock()
+			retired := s.detachedRuntimes[scope.Generation]
+			if retired == nil {
+				retired = &detachedRuntime{scope: scope}
+			}
+			attempt := *retired
+			s.retirementMu.Unlock()
+			group.Add(1)
+			go func() {
+				defer group.Done()
+				e := closeDetachedRuntime(work, &attempt)
+				if e == nil {
+					e = scope.ResolveDetached()
+				}
+				mu.Lock()
+				failure = errors.Join(failure, e)
+				mu.Unlock()
+			}()
+		}
 		group.Wait()
 		return failure
 	})

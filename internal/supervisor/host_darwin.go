@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"golang.org/x/sys/unix"
 	"io"
+	"math/rand/v2"
 	"net"
 	"os"
 	"os/exec"
@@ -28,6 +29,7 @@ type Options struct {
 	Select                 func(string) error
 	// Internal test clocks; the product uses the defaults below.
 	ReadyTimeout, DrainTimeout, StopGrace, KillWait time.Duration
+	RetryMin, RetryMax                              time.Duration
 }
 type child struct {
 	cmd      *exec.Cmd
@@ -36,9 +38,11 @@ type child struct {
 	build    domain.WorkerBuild
 	done     chan struct{}
 	err      error
+	readyAt  time.Time
 }
 type host struct {
 	health            serviceHealth
+	retry             crashRetry
 	updateID          string
 	readyDone         bool
 	options           Options
@@ -143,7 +147,7 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 
-	h.blocked = recovered.Phase == "blocked" || h.health.Phase == "blocked"
+	h.blocked = recovered.Phase == "blocked" || h.health.Phase == "blocked" && !h.health.CrashLoop
 	go h.serve(listener)
 	if !h.blocked {
 		paused := recovered.Phase == "applied" || recovered.Phase == "rolled-back" || o.LegacyInstall != nil
@@ -185,6 +189,7 @@ func Run(ctx context.Context, o Options) error {
 			h.readyDone = true
 			h.updateID = ""
 			h.health.Phase, h.health.Error = "ready", ""
+			h.health.CrashLoop = false
 			err = h.saveHealth()
 			h.mu.Unlock()
 			if err != nil {
@@ -220,6 +225,11 @@ func Run(ctx context.Context, o Options) error {
 			c = h.child
 			h.mu.Unlock()
 			if c != nil {
+				select {
+				case <-c.done:
+					return nil // A crash is not an unconfirmed update handoff.
+				default:
+				}
 				id := "shutdown-" + domain.NewID()
 				err := h.shutdown(c, id, o.DrainTimeout)
 				if err != nil {
@@ -241,12 +251,12 @@ func Run(ctx context.Context, o Options) error {
 				continue
 			}
 			h.readyDone = false
-			h.health.Attempts++
-			retries := h.health.Attempts
+			attempt, exhausted := h.retry.failed(time.Now(), c.readyAt)
 			h.health.Phase = "restarting"
-			if retries > 3 {
+			if exhausted {
 				h.health.Phase = "blocked"
-				h.health.Error = "执行服务连续异常退出，已停止自动重启；可重试兼容安装"
+				h.health.Error = "执行服务在 5 分钟内异常退出 10 次，已停止自动重启"
+				h.health.CrashLoop = true
 				h.blocked = true
 			}
 			err = h.saveHealth()
@@ -255,10 +265,10 @@ func Run(ctx context.Context, o Options) error {
 				_ = h.blockHealth(err)
 				continue
 			}
-			if retries > 3 {
+			if exhausted {
 				continue
 			}
-			timer := time.NewTimer(time.Duration(1<<uint(retries-1)) * time.Second)
+			timer := time.NewTimer(crashRetryDelay(attempt, o.RetryMin, o.RetryMax, rand.Float64()))
 			select {
 			case <-ctx.Done():
 				timer.Stop()
@@ -513,6 +523,7 @@ func (h *host) startSelected(initial string, paused bool, op string) error {
 	h.mu.Lock()
 	h.child = c
 	h.device = ready.DeviceID
+	c.readyAt = time.Now()
 	h.health.DeviceID, h.health.BuildID, h.health.Schema = ready.DeviceID, b.BuildID, b.Schema
 	h.mu.Unlock()
 	return nil
@@ -738,6 +749,8 @@ waitForIdle:
 	h.cancelUpdate = nil
 	h.readyDone = true
 	h.health = serviceHealth{Phase: "ready", DeviceID: h.device, BuildID: h.child.build.BuildID, Schema: h.child.build.Schema}
+	h.retry = crashRetry{}
+	h.child.readyAt = time.Now()
 	err = h.saveHealth()
 	h.mu.Unlock()
 	if err != nil {

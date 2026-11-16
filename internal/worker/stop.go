@@ -101,12 +101,11 @@ func (s *Server) interruptTurn(id, turn string) error {
 				current := s.currentRuntime(id)
 				if current != nil && current.Done() == r.Done() {
 					cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
-					_ = s.retireRuntime(cleanup, id, "stop-timeout", true)
+					failure := s.retireRuntime(cleanup, id, "stop-timeout", true)
 					stop()
-					if scope, e := s.executions.Existing(id); e == nil && scope != nil {
-						_ = s.store.GuardExecution(id, scope.Generation)
+					if err := s.detachFailedRuntime(id, failure); err != nil {
+						s.cancel()
 					}
-					s.wakeRecovery()
 				}
 				s.dispatchMu.Unlock()
 				return

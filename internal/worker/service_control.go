@@ -133,16 +133,44 @@ func (s *Server) DrainedReceipt() (supervisor.Drained, bool) {
 }
 
 func (s *Server) businessStopReady() (domain.WorkerUpdateResult, error) {
-	result, err := s.store.WorkerStopReady()
-	if err != nil || !result.Ready {
-		return result, err
+	s.mu.Lock()
+	reserved := len(s.dispatchReservations) > 0
+	s.mu.Unlock()
+	if reserved {
+		return domain.WorkerUpdateResult{Reason: "等待已经接纳的会话轮次释放"}, nil
 	}
 	s.runtimeMu.RLock()
-	defer s.runtimeMu.RUnlock()
-	for _, r := range s.runtimes {
+	if len(s.runtimeStarts) > 0 {
+		s.runtimeMu.RUnlock()
+		return domain.WorkerUpdateResult{Reason: "等待会话初始化结束"}, nil
+	}
+	live := make([]string, 0, len(s.runtimes))
+	for id, r := range s.runtimes {
+		if r.Stopped() {
+			continue
+		}
 		if pending, ok := r.(harness.PendingRuntime); ok && pending.PendingOperations() > 0 {
+			s.runtimeMu.RUnlock()
 			return domain.WorkerUpdateResult{Reason: "等待原始执行请求完成"}, nil
 		}
+		live = append(live, id)
 	}
-	return result, nil
+	s.runtimeMu.RUnlock()
+	return s.store.WorkerStopReady(live)
+}
+
+// Reserve synchronously before the first initialization await. Detaching a
+// failed Agent releases its leases even if an old native call never returns.
+func (s *Server) reserveDispatch(op domain.Operation) func() {
+	s.mu.Lock()
+	if s.dispatchReservations == nil {
+		s.dispatchReservations = map[string]string{}
+	}
+	s.dispatchReservations[op.ID] = op.SessionID
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		delete(s.dispatchReservations, op.ID)
+		s.mu.Unlock()
+	}
 }

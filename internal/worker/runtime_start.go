@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"shioji/internal/harness"
 	"shioji/internal/managedexec"
 	"sync/atomic"
 	"time"
@@ -13,8 +14,13 @@ var errRuntimeStartCancelled = errors.New("运行环境初始化已停止，输�
 type runtimeStart struct {
 	cancel    context.CancelFunc
 	cancelled atomic.Bool
-	gate      *atomic.Bool
+	gate      *runtimeEventGate
 	scope     *managedexec.Scope
+}
+
+type runtimeStartResult struct {
+	runtime harness.Runtime
+	err     error
 }
 
 func (s *Server) stopInitializing(id string, start *runtimeStart) error {
@@ -24,15 +30,16 @@ func (s *Server) stopInitializing(id string, start *runtimeStart) error {
 	if err := start.scope.RecordCancellation("initializing"); err != nil {
 		return err
 	}
-	if err := start.scope.Fence(); err != nil {
+	if err := start.scope.Detach(); err != nil {
 		return err
 	}
 	if err := s.store.StopInitializing(id); err != nil {
 		return err
 	}
 	start.cancelled.Store(true)
-	start.gate.Store(false)
+	start.gate.deactivate()
 	start.cancel()
+	s.releaseDispatches(id)
 	s.runtimeMu.Lock()
 	if s.runtimeStarts[id] == start {
 		delete(s.runtimeStarts, id)

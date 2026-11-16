@@ -15,9 +15,11 @@ type runtimeRetirement struct {
 }
 
 func (s *Server) runtimeRetiring(id string) bool {
+	current := s.currentRuntime(id)
 	s.retirementMu.Lock()
 	defer s.retirementMu.Unlock()
-	return s.retirements[id] != nil
+	op := s.retirements[id]
+	return op != nil && op.runtime != nil && current != nil && op.runtime.Done() == current.Done()
 }
 
 // Callers serialize capture with dispatchMu. A late completion may release only
@@ -82,19 +84,20 @@ func (s *Server) retireRuntime(ctx context.Context, id, reason string, force boo
 		// Producers and their synchronous event callbacks have settled. The old
 		// gate is closed now, never before the last output has been persisted.
 		if op.err == nil {
-			s.runtimeMu.Lock()
+			var gate *runtimeEventGate
+			s.runtimeMu.RLock()
 			if current := s.runtimes[id]; current != nil && r != nil && current.Done() == r.Done() {
-				if gate := s.runtimeEvents[id]; gate != nil {
-					gate.Store(false)
-				}
+				gate = s.runtimeEvents[id]
 			}
-			s.runtimeMu.Unlock()
-			s.mu.Lock()
-			delete(s.bound, id)
-			s.mu.Unlock()
+			s.runtimeMu.RUnlock()
+			if gate != nil {
+				gate.deactivate()
+			}
 		}
 		s.retirementMu.Lock()
-		delete(s.retirements, id)
+		if s.retirements[id] == op {
+			delete(s.retirements, id)
+		}
 		close(op.done)
 		s.retirementMu.Unlock()
 	}()

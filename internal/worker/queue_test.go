@@ -69,6 +69,9 @@ func TestRejectedInitialDispatchPausesMessagesEnqueuedWhileStarting(t *testing.T
 	db.Apply(op.SessionID, domain.Event{Type: "session", Session: &d.Session})
 	db.Enqueue(domain.Submission{OperationID: "later", WorkspaceID: w.ID, SessionID: op.SessionID, Text: "retain", Config: in.Config})
 	s.runtimes = map[string]harness.Runtime{op.SessionID: s.runtime}
+	gate := &runtimeEventGate{done: make(chan struct{})}
+	gate.Store(true)
+	s.runtimeEvents = map[string]*runtimeEventGate{op.SessionID: gate}
 	s.dispatch(in, op, s.currentRuntime(op.SessionID))
 	q, _ := db.Queue(op.SessionID)
 	if !q.Paused || len(q.Items) != 1 {

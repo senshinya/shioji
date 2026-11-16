@@ -54,6 +54,7 @@ type Server struct {
 	archiveWake          chan struct{}
 	retirementMu         sync.Mutex
 	retirements          map[string]*runtimeRetirement
+	detachedRuntimes     map[string]*detachedRuntime
 	health               *devicehealth.Monitor
 	storageMu            sync.Mutex
 	idleRuntimes         map[string]idleRuntimeObservation
@@ -78,7 +79,7 @@ type Server struct {
 	runtime              harness.Runtime
 	runtimes             map[string]harness.Runtime
 	runtimeCatalogs      map[string]harness.Runtime
-	runtimeEvents        map[string]*atomic.Bool
+	runtimeEvents        map[string]*runtimeEventGate
 	adapters             map[string]harness.Adapter
 	adapterOrder         []string
 	catalogs             map[string]harness.Runtime
@@ -100,6 +101,7 @@ type Server struct {
 	recoveryChecked      map[string]recoveryAttempt
 	recoveryRefresh      atomic.Uint64
 	bound                map[string]bool
+	dispatchReservations map[string]string
 	mu                   sync.Mutex
 	conns                map[net.Conn]bool
 	wg                   sync.WaitGroup
@@ -204,7 +206,7 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	s.tools = map[string]recoveryToolProcess{}
 	s.titleWake = make(chan struct{}, 1)
 	s.runtimes = map[string]harness.Runtime{}
-	s.runtimeEvents = map[string]*atomic.Bool{}
+	s.runtimeEvents = map[string]*runtimeEventGate{}
 	s.runtimeCatalogs = map[string]harness.Runtime{}
 	if err = s.configureAdapters(); err != nil {
 		listener.Close()
@@ -245,6 +247,8 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	go s.reapExecutions()
 	s.wg.Add(1)
 	go s.idleRuntimeLoop()
+	s.wg.Add(1)
+	go s.detachedRuntimeLoop()
 	s.wg.Add(1)
 	go s.watchRecoveryTools()
 	for _, id := range s.adapterOrder {
@@ -1157,9 +1161,11 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 		default:
 		}
 	}
+	releaseDispatch := s.reserveDispatch(op)
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		defer releaseDispatch()
 		s.dispatchMu.Lock()
 		current, err := s.store.Operation(op.ID)
 		if err != nil || current.State != "accepted" || s.ctx.Err() != nil {
@@ -1201,57 +1207,97 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 		return
 	}
 	session := detail.Session
-	var turnID string
+	s.runtimeMu.RLock()
+	gate := s.runtimeEvents[session.ID]
+	s.runtimeMu.RUnlock()
+	if gate == nil || !gate.Load() {
+		return
+	}
 	s.dispatchMu.Unlock()
 	locked = false
-	// Configuration mutation and the next accepted launch/input share a boundary.
-	// The active model turn never holds this lock.
+	// A retired native call no longer owns the configuration boundary. Its
+	// captured generation stays fenced, and late writes are rejected below.
 	s.toolConfigMu.Lock()
-	if session.ThreadID == "" {
-		if session.Origin != nil {
-			if importer, ok := runtime.(harness.ConversationContinuation); ok {
-				session.ThreadID, err = importer.PrepareConversation(ctx, session)
+	type result struct {
+		session domain.Session
+		turnID  string
+		err     error
+	}
+	settled := make(chan result, 1)
+	go func(session domain.Session) {
+		var turnID string
+		var err error
+		if !gate.Load() {
+			err = errRuntimeRetired
+		} else if session.ThreadID == "" {
+			if session.Origin != nil {
+				if importer, ok := runtime.(harness.ConversationContinuation); ok {
+					session.ThreadID, err = importer.PrepareConversation(ctx, session)
+				} else {
+					err = harness.Unsupported("imported-conversation-continuation")
+				}
 			} else {
-				err = harness.Unsupported("imported-conversation-continuation")
+				session.ThreadID, err = runtime.Create(ctx, session)
+			}
+			if err == nil {
+				err = gate.apply(func() error {
+					_, e := s.store.Apply(session.ID, domain.Event{Type: "session", Session: &session})
+					return e
+				})
+			}
+			if err == nil && session.Origin != nil {
+				err = runtime.Resume(ctx, session)
 			}
 		} else {
-			session.ThreadID, err = runtime.Create(ctx, session)
-		}
-		if err == nil {
-			_, err = s.store.Apply(session.ID, domain.Event{Type: "session", Session: &session})
-		}
-		if err == nil && session.Origin != nil {
-			err = runtime.Resume(ctx, session)
-		}
-	} else {
-		s.mu.Lock()
-		bound := s.bound[session.ID]
-		s.mu.Unlock()
-		if !bound {
-			err = runtime.Resume(ctx, session)
-			if err == nil {
-				if restorer, ok := runtime.(harness.WorkRestorer); ok {
-					restorer.RestoreWork(session, detail.Works)
+			s.mu.Lock()
+			bound := s.bound[session.ID]
+			s.mu.Unlock()
+			if !bound {
+				err = runtime.Resume(ctx, session)
+				if err == nil && gate.Load() {
+					if restorer, ok := runtime.(harness.WorkRestorer); ok {
+						restorer.RestoreWork(session, detail.Works)
+					}
 				}
 			}
 		}
-	}
-	if err == nil {
-		s.mu.Lock()
-		s.bound[session.ID] = true
-		s.mu.Unlock()
-		var inputs []harness.AttachmentInput
-		inputs, err = s.attachmentInputs(in)
-		if err == nil && runtime.ManagedCoverage() {
-			err = s.coverOperation(session.ID, op.ID)
-		}
 		if err == nil {
-			turnID, err = runtime.Submit(ctx, session, op.ID, harness.TurnInput{Text: in.Text, Attachments: inputs, Skills: in.Skills})
+			var inputs []harness.AttachmentInput
+			inputs, err = s.attachmentInputs(in)
+			if err == nil {
+				err = gate.apply(func() error {
+					s.mu.Lock()
+					s.bound[session.ID] = true
+					s.mu.Unlock()
+					if runtime.ManagedCoverage() {
+						return s.coverOperation(session.ID, op.ID)
+					}
+					return nil
+				})
+			}
+			if err == nil {
+				turnID, err = runtime.Submit(ctx, session, op.ID, harness.TurnInput{Text: in.Text, Attachments: inputs, Skills: in.Skills})
+			}
 		}
+		settled <- result{session: session, turnID: turnID, err: err}
+	}(session)
+	var turnID string
+	select {
+	case out := <-settled:
+		session, turnID, err = out.session, out.turnID, out.err
+	case <-gate.done:
+		err = errRuntimeRetired
 	}
 	s.toolConfigMu.Unlock()
+
 	s.dispatchMu.Lock()
 	locked = true
+	if errors.Is(err, errRuntimeRetired) {
+		return
+	}
+	if current := s.currentRuntime(session.ID); current == nil || current.Done() != runtime.Done() {
+		return // The retired owner cannot settle a successor's execution.
+	}
 	if runtime.Stopped() {
 		err = &harness.DeliveryError{Uncertain: true, Message: "运行环境已结束，输入结果待核对；不会自动重发"}
 	}

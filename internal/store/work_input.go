@@ -85,7 +85,7 @@ func (s *Store) SetWorkInput(id string, state domain.OperationState, message str
 	if err != nil {
 		return err
 	}
-	if op.State == "confirmed" || op.State == "rejected" {
+	if op.State == "confirmed" || op.State == "rejected" || op.State == "abandoned" {
 		if op.State == state {
 			return nil
 		}

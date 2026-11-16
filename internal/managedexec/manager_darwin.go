@@ -41,6 +41,7 @@ const (
 )
 
 type scopeState struct {
+	Detached      bool             `json:",omitempty"`
 	Retirement    string           `json:",omitempty"`
 	CancelledTurn string           `json:",omitempty"`
 	Manual        *manualStopState `json:",omitempty"`
@@ -131,8 +132,10 @@ func (m *Manager) Begin(session string) (*Scope, error) {
 		if state.Active {
 			return nil, errors.New("previous managed execution is not fenced")
 		}
-		if err = old.verifyStopped(); err != nil {
-			return nil, err
+		if !state.Detached {
+			if err = old.verifyStopped(); err != nil {
+				return nil, err
+			}
 		}
 		for id, launch := range m.live {
 			if launch.scope.Session == session && launch.scope.Generation == old.Generation {
@@ -155,9 +158,29 @@ func (s *Scope) load() (scopeState, error) {
 	var state scopeState
 	err := readJSON(filepath.Join(s.Directory, "scope.json"), &state)
 	if err == nil && state.Generation != s.Generation {
-		err = errors.New("managed generation changed")
+		state = scopeState{}
+		err = readJSON(filepath.Join(s.Directory, s.Generation, "scope.json"), &state)
+		if err != nil || state.Generation != s.Generation {
+			return scopeState{}, errors.New("managed generation changed")
+		}
 	}
 	return state, err
+}
+
+// The caller holds manager.mu. A detached generation keeps its own state;
+// late cleanup must never overwrite the current generation's admission record.
+func (s *Scope) writeState(state scopeState) error {
+	var current scopeState
+	if err := readJSON(filepath.Join(s.Directory, "scope.json"), &current); err != nil {
+		return err
+	}
+	if current.Generation == s.Generation {
+		return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+	}
+	if _, err := s.load(); err != nil {
+		return err
+	}
+	return writeJSON(filepath.Join(s.Directory, s.Generation, "scope.json"), state)
 }
 func (s *Scope) launchPath(id string) string {
 	return filepath.Join(s.Directory, s.Generation, "launches", id+".json")
@@ -180,7 +203,7 @@ func (s *Scope) Bind(kind string, pid int) error {
 		return errors.New("managed owner replacement requires a new generation")
 	}
 	state.Parents[kind] = identity(*p)
-	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+	return s.writeState(state)
 }
 func (s *Scope) Prepare(kind, ref string) (Ticket, error) {
 	s.manager.mu.Lock()
@@ -198,7 +221,7 @@ func (s *Scope) Prepare(kind, ref string) (Ticket, error) {
 		return Ticket{}, err
 	}
 	state.Launches[t.ID] = false
-	return t, writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+	return t, s.writeState(state)
 }
 func (s *Scope) Register(packet Registration) error {
 	s.manager.mu.Lock()
@@ -251,7 +274,7 @@ func (s *Scope) Register(packet Registration) error {
 	if t.State == LaunchRegistered {
 		if t.Root == identity(*root) && t.Anchor == identity(*anchor) {
 			state.Launches[t.ID] = true
-			return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+			return s.writeState(state)
 		}
 		return errors.New("launch identity changed")
 	}
@@ -263,7 +286,7 @@ func (s *Scope) Register(packet Registration) error {
 		return err
 	}
 	state.Launches[t.ID] = true
-	if err = writeJSON(filepath.Join(s.Directory, "scope.json"), state); err != nil {
+	if err = s.writeState(state); err != nil {
 		return err
 	}
 	s.manager.live[t.ID] = liveLaunch{s, t}
@@ -428,7 +451,7 @@ func (s *Scope) Fence() error {
 	}
 	state.Active = false
 	state.Maintenance = false
-	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+	return s.writeState(state)
 }
 func (s *Scope) tickets() ([]Ticket, error) {
 	state, err := s.load()
@@ -781,7 +804,7 @@ func (s *Scope) FenceIfIdle() (func() error, error) {
 	// Keep lifetime monitoring active; only new launch admission is suspended.
 	// Permanent retirement remains the separate Active=false transition.
 	state.Maintenance = true
-	if err = writeJSON(filepath.Join(s.Directory, "scope.json"), state); err != nil {
+	if err = s.writeState(state); err != nil {
 		return nil, err
 	}
 	return func() error {
@@ -795,7 +818,7 @@ func (s *Scope) FenceIfIdle() (func() error, error) {
 			return errors.New("执行进程已停止，不能重新开放准入")
 		}
 		current.Maintenance = false
-		if err = writeJSON(filepath.Join(s.Directory, "scope.json"), current); err != nil {
+		if err = s.writeState(current); err != nil {
 			return err
 		}
 		return nil

@@ -33,6 +33,22 @@ func TestStopAcknowledgementDoesNotLeaveUnfinishedRuntimeForever(t *testing.T) {
 	case <-time.After(6 * time.Second):
 		t.Fatal("interrupt ACK left unfinished runtime alive")
 	}
+	for deadline := time.Now().Add(time.Second); ; {
+		latest, e := s.store.Session(op.SessionID, 0, 1)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if latest.Session.Status == "interrupted" {
+			if latest.Turns[0].Status != "interrupted" {
+				t.Fatal("confirmed stop lost its interrupted turn", latest.Turns)
+			}
+			break
+		}
+		if latest.Session.Status == "failed" || time.Now().After(deadline) {
+			t.Fatal("confirmed physical stop was reported as failure", latest.Session)
+		}
+		time.Sleep(time.Millisecond)
+	}
 	q, err := s.store.Queue(op.SessionID)
 	if err != nil || !q.Paused {
 		t.Fatal("Stop lost queue pause", q, err)
@@ -156,7 +172,7 @@ func TestStopIsNotBlockedByAnUnsettledSteeringRequest(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Stop blocked behind native steering")
 	}
-	if result := awaitReceipt(t, s, steer.ID); result.State != "indeterminate" {
+	if result := awaitReceipt(t, s, steer.ID); result.State != "indeterminate" && result.State != "abandoned" {
 		t.Fatal("stopped steering was confirmed or replayed", result)
 	}
 }

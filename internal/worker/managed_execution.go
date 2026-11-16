@@ -80,6 +80,13 @@ func (s *Server) recoverManagedScopes(ctx context.Context) error {
 		}
 		scope, scopeErr := s.executions.Existing(id)
 		if scopeErr == nil && scope != nil {
+			if detached, e := scope.IsDetached(); e != nil {
+				return e
+			} else if detached {
+				// Logical release was persisted separately; its original groups are
+				// retried by detachedRuntimeLoop, never restored as the live Agent.
+				continue
+			}
 			manual, e := scope.ManualStopPending()
 			if e != nil {
 				return e

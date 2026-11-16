@@ -498,6 +498,9 @@ func (s *Store) SetOperation(id string, state domain.OperationState, message str
 	if err != nil {
 		return err
 	}
+	if op.State == "abandoned" && state != "abandoned" {
+		return errors.New("执行实例已退休，原结果未确认")
+	}
 	op.State = state
 	op.Error = message
 	tx, err := s.db.Begin()
