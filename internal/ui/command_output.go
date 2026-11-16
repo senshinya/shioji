@@ -29,7 +29,7 @@ func (v *View) commandOutputKey(id, work string) string {
 }
 
 // A new command closes every older output once. Later stdout and renders
-// preserve explicit inspection; newly hydrated older commands start folded.
+// preserve explicit inspection; every newly seen command starts folded.
 func (v *View) syncCommandOutputs(ids []string, previous *string, work string) {
 	latest := ""
 	if len(ids) > 0 {
@@ -39,7 +39,7 @@ func (v *View) syncCommandOutputs(ids []string, previous *string, work string) {
 	for _, id := range ids {
 		key := v.commandOutputKey(id, work)
 		if _, exists := v.Model.Collapsed[key]; changed || !exists {
-			v.Model.Collapsed[key] = id != latest
+			v.Model.Collapsed[key] = true
 		}
 	}
 	*previous = latest

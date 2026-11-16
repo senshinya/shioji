@@ -33,6 +33,8 @@ func commandMotionFixture(t *testing.T, dark, reduce bool) (*View, *n.Tester, *[
 	ui.SetDark(dark)
 	ui.SetPreferences(n.Preferences{ReduceMotion: reduce})
 	ui.Advance(time.Second)
+	ui.Click("first command")
+	ui.Advance(time.Second)
 	return v, ui, &items
 }
 func TestCommandOutputCollapseRetainsHeightUntilAnimationEnds(t *testing.T) {
@@ -100,6 +102,8 @@ func TestChildCommandOutputCollapseMovesFollowingMessageContinuously(t *testing.
 			d.Items = []domain.WorkItem{{Item: domain.Item{ID: "child-command", Kind: "tool", Presentation: "command", Name: "child command", Text: strings.Repeat("retained child output\n", 4), Final: true}}, {Item: domain.Item{ID: "after", Kind: "assistant", Text: "after child output", Final: true}}}
 			v.Model.WorkDetails[key] = d
 			ui.Click("查看子 Agent：检查边界条件")
+			ui.Advance(time.Second)
+			ui.Click("child command")
 			ui.Advance(time.Second)
 			before, ok := ui.Find("after child output")
 			if !ok {

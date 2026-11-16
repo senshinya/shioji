@@ -23,6 +23,8 @@ func TestToolImageLoadsWithContinuousHeightAndUsesNativeZoom(t *testing.T) {
 	ui := n.NewTester(v.View, 1240, 820)
 	ui.Click("1 次工具调用")
 	ui.Advance(300 * time.Millisecond)
+	ui.Click("生成图片")
+	ui.Advance(300 * time.Millisecond)
 	before, ok := ui.Find("预览图片：result.png")
 	if !ok {
 		t.Fatal("tool output has no image preview", ui.Texts())

@@ -17,6 +17,7 @@ func TestToolResultBlocksRevealWithoutReplayingExistingContent(t *testing.T) {
 	for _, kind := range []string{"file", "image", "text", "code", "markdown", "patch", "agent", "truncated"} {
 		t.Run(kind, func(t *testing.T) {
 			v := New(layoutModel(), nil, "")
+			v.Model.Collapsed["activity:s/tool"] = false
 			a := domain.Attachment{ID: "new", Name: "result.go", MIME: "text/plain", Size: 301}
 			if kind == "image" {
 				a.Name = "result.png"
@@ -82,6 +83,7 @@ func TestToolResultBlocksRevealWithoutReplayingExistingContent(t *testing.T) {
 
 func TestRemovingFirstFileKeepsSurvivorAndCollapsesHeight(t *testing.T) {
 	v := New(layoutModel(), nil, "")
+	v.Model.Collapsed["activity:s/tool"] = false
 	a := domain.Attachment{ID: "a", Name: "first.go", MIME: "text/plain", Size: 301}
 	b := a
 	b.ID = "b"
@@ -166,6 +168,7 @@ func samePixels(a, b *image.RGBA) bool {
 
 func TestFirstToolResultExpandsFromAnEmptyBody(t *testing.T) {
 	v := New(layoutModel(), nil, "")
+	v.Model.Collapsed["activity:s/tool"] = false
 	item := domain.Item{ID: "tool", Kind: "tool", Presentation: "mcp", Name: "Waiting"}
 	ui := n.NewTester(func(c *n.Context) {
 		n.Column(c).Fill().Children(func() {
@@ -268,6 +271,7 @@ func TestNestedToolMetadataDoesNotPopIntoExistingBlock(t *testing.T) {
 	for _, kind := range []string{"label", "destination", "patch", "agent-message"} {
 		t.Run(kind, func(t *testing.T) {
 			v := New(layoutModel(), nil, "")
+			v.Model.Collapsed["activity:s/tool"] = false
 			item := domain.Item{ID: "tool", Kind: "tool", Presentation: "mcp", Name: "Result"}
 			switch kind {
 			case "label":
@@ -404,6 +408,7 @@ func TestNewMessageMetadataAnimationsRespectHistoryAndReduceMotion(t *testing.T)
 
 func TestToolTextAppendFadesOnlyTheNewBytes(t *testing.T) {
 	v := New(layoutModel(), nil, "")
+	v.Model.Collapsed["activity:s/tool"] = false
 	item := domain.Item{ID: "tool", Kind: "tool", Presentation: "mcp", Name: "Result", Parts: []domain.ContentPart{{Kind: "text", Label: "Details", Text: "Existing."}}}
 	ui := n.NewTester(func(c *n.Context) {
 		n.Column(c).Fill().Background(c.Theme().Background).Children(func() { n.Column(c).FillWidth().Gap(8).Children(func() { v.item(c, c.Theme(), item) }) })
@@ -466,6 +471,7 @@ func TestAnimatedToolSummaryKeepsSearchHighlight(t *testing.T) {
 
 func TestImageLoadHeightAndFollowingTextUseOneLayoutClock(t *testing.T) {
 	v := New(layoutModel(), nil, "")
+	v.Model.Collapsed["activity:s/tool"] = false
 	a := domain.Attachment{ID: "image", Name: "picture.png", MIME: "image/png"}
 	v.attachmentImages = map[string]*attachmentImage{a.ID: {phase: attachmentImageLoading}}
 	item := domain.Item{ID: "tool", Kind: "tool", Presentation: "mcp", Name: "Result", Parts: []domain.ContentPart{{Kind: "image", Attachment: &a}}}
@@ -493,6 +499,7 @@ func TestImageLoadHeightAndFollowingTextUseOneLayoutClock(t *testing.T) {
 
 func TestRepeatedResourceResultsRemainIndependentRows(t *testing.T) {
 	v := New(layoutModel(), nil, "")
+	v.Model.Collapsed["activity:s/tool"] = false
 	a := domain.Attachment{ID: "same", Name: "shared.go", MIME: "text/plain", Size: 301}
 	item := domain.Item{ID: "tool", Kind: "tool", Presentation: "mcp", Name: "Result", Parts: []domain.ContentPart{{Kind: "file", Attachment: &a}, {Kind: "file", Attachment: &a}}}
 	ui := n.NewTester(func(c *n.Context) { n.Column(c).Fill().Gap(8).Children(func() { v.item(c, c.Theme(), item) }) }, 600, 300)
@@ -552,6 +559,7 @@ func TestToolHeadingChangesRetainTheOldInkBeforeBlending(t *testing.T) {
 
 func TestMovingAnImageResultDoesNotClipItsExistingPixels(t *testing.T) {
 	v := New(layoutModel(), nil, "")
+	v.Model.Collapsed["activity:s/tool"] = false
 	a := domain.Attachment{ID: "file", Name: "before.go", MIME: "text/plain", Size: 301}
 	b := domain.Attachment{ID: "image", Name: "image.png", MIME: "image/png"}
 	im := image.NewRGBA(image.Rect(0, 0, 224, 112))

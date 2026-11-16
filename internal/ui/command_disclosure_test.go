@@ -18,8 +18,8 @@ func TestNewCommandFoldsOlderOutputAndPreservesManualInspection(t *testing.T) {
 	ui := n.NewTester(v.View, 1240, 820)
 	ui.Advance(time.Second)
 	saveNativeSkillImage(t, ui, "commands-initial.png")
-	if ui.HasText("first output") || !ui.HasText("second output") {
-		t.Error("history displays every command output instead of only the latest")
+	if ui.HasText("first output") || ui.HasText("second output") {
+		t.Error("commands do not start with collapsed outputs")
 	}
 	ui.Click("first command")
 	ui.Advance(250 * time.Millisecond)
@@ -46,10 +46,15 @@ func TestNewCommandFoldsOlderOutputAndPreservesManualInspection(t *testing.T) {
 	v.Model.Details["s"] = d
 	ui.Frame()
 	ui.Advance(250 * time.Millisecond)
-	if !ui.HasText("third output") {
-		t.Error("newest command output does not open")
+	if ui.HasText("third output") {
+		t.Error("stdout opened the newest command automatically")
 	}
 	saveNativeSkillImage(t, ui, "commands-latest.png")
+	ui.Click("third command")
+	ui.Advance(250 * time.Millisecond)
+	if !ui.HasText("third output") {
+		t.Fatal("new command cannot be inspected manually")
+	}
 	ui.Click("third command")
 	ui.Advance(250 * time.Millisecond)
 	d.Items[2].Text += "\nmore third output"
@@ -111,8 +116,13 @@ func TestChildCommandOutputsAndBackgroundCommandStayCompact(t *testing.T) {
 	ui.Click("查看子 Agent：检查边界条件")
 	ui.Advance(time.Second)
 	saveNativeSkillImage(t, ui, "child-command-output.png")
-	if ui.HasText("old child output") || !ui.HasText("latest child output") {
-		t.Error("child conversation retains every command output")
+	if ui.HasText("old child output") || ui.HasText("latest child output") {
+		t.Error("child command outputs do not start collapsed")
+	}
+	ui.Click("latest child command")
+	ui.Advance(250 * time.Millisecond)
+	if !ui.HasText("latest child output") {
+		t.Fatal("child command cannot be inspected manually")
 	}
 	command := "python3 - <<'PY'\n" + strings.Repeat("print('keep the original command')\n", 40) + "PY"
 	key = v.Model.WorkKey("s", "command-a")
@@ -151,6 +161,9 @@ func TestCommandDisclosureDoesNotLeakAcrossSessions(t *testing.T) {
 		})
 	}, 800, 300)
 	ui.Frame()
+	ui.Advance(time.Second)
+	ui.Click("A latest")
+	ui.Click("B latest")
 	ui.Advance(time.Second)
 	if ui.HasText("A older output") || !ui.HasText("A latest output") || !ui.HasText("B latest output") {
 		t.Fatal("equal opaque command IDs in different sessions share disclosure state", ui.Texts())

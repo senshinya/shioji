@@ -72,6 +72,10 @@ func TestToolGroupClosesOnFollowingNonToolContent(t *testing.T) {
 					t.Fatal(err)
 				}
 				ui.Advance(200 * time.Millisecond)
+				if err := ui.Click("正在执行的命令"); err != nil {
+					t.Fatal(err)
+				}
+				ui.Advance(200 * time.Millisecond)
 				d.Items[0].Text = "迟到的工具输出"
 				d.Items[0].Final = true
 				d.Items[0].Status = "completed"

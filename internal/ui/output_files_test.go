@@ -22,6 +22,8 @@ func TestToolFileOpensNativeReadOnlyPreviewFromItsOwnRow(t *testing.T) {
 	ui := n.NewTester(v.View, 1240, 820)
 	ui.Click("1 次工具调用")
 	ui.Advance(300 * time.Millisecond)
+	ui.Click("生成示例文件")
+	ui.Advance(300 * time.Millisecond)
 	row, ok := ui.Find("预览文件：hello.go")
 	if !ok {
 		t.Fatal("file result has no preview entry", ui.Texts())
@@ -70,6 +72,8 @@ func TestFilePreviewBlendsItsCardContentsBeforeTheLastFrame(t *testing.T) {
 	defer v.Saver.Close()
 	ui := n.NewTester(v.View, 1240, 820)
 	ui.Click("1 次工具调用")
+	ui.Advance(300 * time.Millisecond)
+	ui.Click("生成文件")
 	ui.Advance(300 * time.Millisecond)
 	ui.Click("预览文件：result.go")
 	cardCopies := func() int {

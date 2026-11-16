@@ -96,8 +96,8 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 		return
 	}
 	key := "activity:" + v.Model.SessionID + "/" + item.ID
-	if _, seen := v.Model.Collapsed[key]; !seen {
-		v.Model.Collapsed[key] = item.Kind == "activity"
+	if _, seen := v.Model.Collapsed[key]; !seen && item.Presentation != "wait" {
+		v.Model.Collapsed[key] = true
 	}
 	hasBody := item.Presentation != "wait" && activityHasBody(item)
 	duration := ""

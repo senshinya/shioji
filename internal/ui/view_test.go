@@ -385,6 +385,10 @@ func TestToolGroupClosesOnceOnAgentProseAndKeepsExplicitReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	test.Advance(180 * time.Millisecond)
+	if err := test.Click("command one"); err != nil {
+		t.Fatal(err)
+	}
+	test.Advance(180 * time.Millisecond)
 	d.Items[1].Text = "late tool output"
 	m.Details["s"] = d
 	test.Frame()

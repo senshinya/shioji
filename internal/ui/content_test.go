@@ -21,6 +21,10 @@ func TestFileActivityShowsPathsAndPatchWithoutReadingLocalFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	ui.Advance(250 * time.Millisecond)
+	if err := ui.Click("编辑 registry.go"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(250 * time.Millisecond)
 	if _, ok := ui.Find("文件补丁：/remote/device/registry.go"); !ok || !ui.HasText("/remote/device/registry.go") {
 		t.Fatal("structured file content lost")
 	}

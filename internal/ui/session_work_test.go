@@ -237,6 +237,8 @@ func TestChildToolResourcesRenderNativeFile(t *testing.T) {
 	v.Model.WorkDetails[key] = d
 	ui.Click("查看子 Agent：检查边界条件")
 	ui.Advance(time.Second)
+	ui.Click("生成审阅文件")
+	ui.Advance(time.Second)
 	if !ui.HasText("review.txt") {
 		t.Fatal("child native file result was lost", ui.Texts())
 	}

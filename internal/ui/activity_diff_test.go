@@ -158,6 +158,10 @@ func TestFileActivityNativeContentAndCompactHeight(t *testing.T) {
 				}, 820, 450)
 				ui.SetDark(dark)
 				ui.Advance(time.Second)
+				if err := ui.Click(item.Name); err != nil {
+					t.Fatal(err)
+				}
+				ui.Advance(time.Second)
 				saveNativeSkillImage(t, ui, fmt.Sprintf("file-dark-%v-lines-%d.png", dark, lines))
 				box, ok := ui.Find("文件补丁：/device/navigation_alignment_test.go")
 				if !ok || box.H > 220 || lines == 1 && box.H > 48 {

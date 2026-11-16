@@ -100,12 +100,13 @@ func TestCommandDisclosureCueRequiresExpandableOutput(t *testing.T) {
 					t.Fatal("command disclosure cue does not match available output", child, output)
 				}
 				if output != "" {
+					wasVisible := ui.HasText(output)
 					if err := ui.Click(item.Name); err != nil {
 						t.Fatal(err)
 					}
 					ui.Advance(time.Second)
-					if ui.HasText(output) {
-						t.Fatal("command disclosure failed to fold output")
+					if ui.HasText(output) == wasVisible {
+						t.Fatal("command disclosure failed to toggle output")
 					}
 				}
 			})
