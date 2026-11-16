@@ -67,9 +67,9 @@ func (v *View) syncPagedHistory(c *n.Context) {
 	}
 	p := v.historyPage
 	if m.HistoryOpenings[m.SessionID] {
-		if state := v.lists[m.SessionID]; state != nil {
-			state.ScrollToEnd()
-		}
+		// Entry already positioned cached history before its first layout.
+		// The list follows newly hydrated rows unless the reader has scrolled;
+		// repeating the request here would override that interruption.
 		delete(m.HistoryOpenings, m.SessionID)
 	}
 	if r := m.HistoryReads[m.SessionID]; r != nil && r != p.read {
