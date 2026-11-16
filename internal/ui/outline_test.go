@@ -63,6 +63,69 @@ func TestConversationOutlineHidesInNarrowPane(t *testing.T) {
 	}
 }
 
+func TestOutlineHighlightsLatestRoundAtEnd(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprint("dark=", dark), func(t *testing.T) {
+			m := layoutModel()
+			d := m.Details["s"]
+			d.Items = nil
+			for i := 0; i < 9; i++ {
+				reply := "简短回复。"
+				if i < 7 {
+					reply = strings.Repeat("前面的较长回复。\n\n", 12)
+				}
+				d.Items = append(d.Items,
+					domain.Item{ID: fmt.Sprint("u", i), Order: int64(i*2 + 1), Kind: "user", Text: fmt.Sprintf("第 %d 轮问题", i+1)},
+					domain.Item{ID: fmt.Sprint("a", i), Order: int64(i*2 + 2), Kind: "assistant", Text: reply})
+			}
+			m.Details["s"] = d
+			m.Drafts["session:s"] = "保留普通草稿"
+			v := New(m, nil, "")
+			ui := n.NewTester(v.View, 1440, 900)
+			ui.SetDark(dark)
+			ui.Advance(time.Second)
+			state := v.lists["s"]
+			state.ScrollToEnd()
+			ui.Advance(time.Second)
+			ui.Click("消息输入")
+			saveNativeSkillImage(t, ui, fmt.Sprintf("latest-round-%v.png", dark))
+			if !state.AtEnd() {
+				t.Fatal("fixture did not reach the bottom")
+			}
+			if v.outline.Current != 8 {
+				t.Errorf("bottom highlights round %d, want latest round 8", v.outline.Current)
+			}
+			// Scrolling away must restore the ordinary top-based reading marker.
+			state.ScrollTo(0, n.Start)
+			ui.Advance(time.Second)
+			if state.AtEnd() || v.outline.Current != 0 {
+				t.Fatal("scrolling away did not restore the first round", v.outline.Current)
+			}
+			ui.Click("回到最新")
+			ui.Advance(time.Second)
+			if !state.AtEnd() || v.outline.Current != 8 {
+				t.Errorf("return to latest did not highlight last round: atEnd=%v current=%d", state.AtEnd(), v.outline.Current)
+			}
+			if !ui.Focused("消息输入") || m.Drafts["session:s"] != "保留普通草稿" {
+				t.Fatal("reader marker changed composer focus or draft")
+			}
+			// A loaded page's end is not the conversation's end.
+			d.History = &domain.HistoryWindow{First: 1, Last: 18, Newer: true}
+			m.Details["s"] = d
+			m.HistoryOutlines["s"] = domain.HistoryOutline{SessionID: "s"}
+			index := m.HistoryOutlines["s"]
+			for i := 0; i < 10; i++ {
+				index.Prompts = append(index.Prompts, domain.HistoryPrompt{ID: fmt.Sprint("u", i), Order: int64(i*2 + 1), Text: "历史问题"})
+			}
+			m.HistoryOutlines["s"] = index
+			ui.Advance(time.Second)
+			if v.outline.Current != 6 {
+				t.Fatal("page end did not retain its top-based reader position", v.outline.Current)
+			}
+		})
+	}
+}
+
 func TestLongConversationSelectionSurvivesVirtualRowUnmount(t *testing.T) {
 	m := layoutModel()
 	d := m.Details["s"]
@@ -235,8 +298,11 @@ func TestLongConversationOutlineFollowsReader(t *testing.T) {
 	current := v.outline.Current
 	first, last := v.outline.List.Visible()
 	saveNativeSkillImage(t, ui, "outline-reader-latest.png")
-	if current < 60 || current < first || current >= last {
-		t.Fatalf("latest reader marker %d is outside outline viewport [%d,%d)", current, first, last)
+	if current != 119 || current < first || current > last {
+		t.Fatalf("latest reader marker %d is outside outline viewport [%d,%d]", current, first, last)
+	}
+	if _, ok := ui.Find("跳转到消息 120"); !ok {
+		t.Fatal("latest reader marker is not rendered")
 	}
 	for _, target := range []int{0, 120, 220} {
 		v.lists["s"].ScrollTo(target, n.Start)
@@ -244,8 +310,8 @@ func TestLongConversationOutlineFollowsReader(t *testing.T) {
 		ui.Advance(time.Second)
 		current = v.outline.Current
 		first, last = v.outline.List.Visible()
-		if current < first || current >= last {
-			t.Fatalf("reader marker %d is outside outline viewport [%d,%d) after main scroll to %d", current, first, last, target)
+		if current < first || current > last {
+			t.Fatalf("reader marker %d is outside outline viewport [%d,%d] after main scroll to %d", current, first, last, target)
 		}
 	}
 }
@@ -274,7 +340,7 @@ func TestOutlineResumesPendingFollowAfterHoverAndResize(t *testing.T) {
 	ui.SetSize(1440, 600)
 	ui.Advance(time.Second)
 	first, last = v.outline.List.Visible()
-	if current < first || current >= last {
+	if current < first || current > last {
 		t.Fatal("resizing hid the unchanged current marker", current, first, last)
 	}
 	if !ui.Focused("消息输入") {
@@ -310,7 +376,7 @@ func TestOutlineReappearsAtReaderPosition(t *testing.T) {
 	ui.SetSize(1440, 900)
 	ui.Advance(time.Second)
 	first, last := v.outline.List.Visible()
-	if v.outline.Current < first || v.outline.Current >= last {
+	if v.outline.Current < first || v.outline.Current > last {
 		t.Fatal("outline remount lost current reader marker", v.outline.Current, first, last)
 	}
 }

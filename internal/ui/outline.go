@@ -83,6 +83,12 @@ func (v *View) conversationOutline(c *n.Context, t *n.Theme, state *n.ListState,
 			current = i
 		}
 	}
+	// Short final rounds cannot reach the top when scrolling is clamped.
+	// Only the conversation's end counts; a history page may have newer rows.
+	window := v.Model.Details[v.Model.SessionID].History
+	if state.AtEnd() && (window == nil || !window.Newer) {
+		current = len(entries) - 1
+	}
 	// The toolbar and composer paint over history. Keep navigation inside
 	// the exposed reading area too, including an expanded queue/question dock.
 	top := float32(48)
