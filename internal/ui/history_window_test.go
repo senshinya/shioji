@@ -415,7 +415,10 @@ func TestPagedHistoryPrefetchesBeforeReachingTheEdge(t *testing.T) {
 			}
 			row, dy := 6, float32(-1)
 			if newer {
-				row, dy = 29, 1
+				// The dock is measured even while its trailing rows are offscreen.
+				// Stay within 3/4 of this 900-DIP viewport's actual scroll end,
+				// rather than relying on an unmeasured spacer's smaller estimate.
+				row, dy = 30, 1
 			}
 			v.lists["s"].ScrollTo(row, n.Start)
 			ui.Frame()
@@ -423,6 +426,10 @@ func TestPagedHistoryPrefetchesBeforeReachingTheEdge(t *testing.T) {
 			first, last := v.lists["s"].Visible()
 			if !newer && first <= 2 || newer && last >= 40 {
 				t.Fatal("fixture already reached the page edge", first)
+			}
+			before, after := v.lists["s"].ScrollEdges()
+			if !newer && before > 675 || newer && after > 675 {
+				t.Fatal("fixture is outside the prefetch threshold", before, after)
 			}
 			ui.Scroll(1000, 350, 0, dy)
 			ui.Advance(20 * time.Millisecond)

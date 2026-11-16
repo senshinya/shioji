@@ -110,6 +110,13 @@ type ListState struct {
 	// as a docked composer. Its height changes position rows directly instead
 	// of receiving a second FollowAnimation. Include it in the list's content.
 	FollowInset float32
+	// EndOverlay reserves the current natural height of a sibling overlay at
+	// the list's full width, in addition to its bottom padding. Assign the
+	// current build's element before layout. It must not contain this list or
+	// depend on its height. Its height is also excluded from FollowAnimation,
+	// independently of FollowInset, so an animated dock moves followed content
+	// without a second scrolling animation. Clear it when removing the overlay.
+	EndOverlay Element
 	// Reveals animate the allocated height of contiguous row ranges without
 	// changing their natural measurements or mounting their hidden suffixes.
 	Reveals []ListReveal
@@ -266,12 +273,13 @@ type ListState struct {
 	// width, gap and padTop are those the rows were placed with: the width
 	// of the rows, the gap between them, and where the first starts below
 	// the list's top. border is its top border.
-	width       float32
-	gap         float64
-	padTop      float64
-	border      float64
-	first, last int
-	atEnd       bool
+	width            float32
+	gap              float64
+	padTop           float64
+	endOverlayHeight float32
+	border           float64
+	first, last      int
+	atEnd            bool
 	// read is set when the view read where the list is, which a frame
 	// that moves it then builds another for.
 	read bool
@@ -1514,6 +1522,11 @@ func (e *node) layoutList(w, h float32) {
 	}
 	gap := float64(max(e.gapY, 0))
 	padTop, padBottom := float64(e.contentY()), float64(e.pad[2]+e.border[2])
+	s.endOverlayHeight = 0
+	if overlay := s.EndOverlay.nodeFor(e.c.rt); overlay != nil {
+		s.endOverlayHeight = heightAt(overlay, w, inf)
+		padBottom += float64(s.endOverlayHeight)
+	}
 	H := float64(h)
 	top, bottom := float64(e.border[0]), H-float64(e.border[2])
 	s.gap, s.padTop, s.border = gap, padTop, top
@@ -1521,7 +1534,7 @@ func (e *node) layoutList(w, h float32) {
 	st.list = s
 	if n == 0 {
 		_, uh := boxLayout(e, cw, inf, true)
-		e.contentW, e.contentH = float64(cw+e.padX()), float64(max(uh, max(h-e.padY(), 0))+e.padY())
+		e.contentW, e.contentH = float64(cw+e.padX()), max(float64(uh)+padTop+padBottom, H)
 		layoutAbsolute(e)
 		e.scrollBase = 0
 		s.remember(e, 0, -1, true, st.scrollY)
@@ -1868,7 +1881,7 @@ func (s *ListState) glideToEnd(e *node, n, lo, hi int, H, C float64, shift func(
 		return 0
 	}
 	hs, gap := &s.heights, s.gap
-	below := func(i int) float64 { return hs.top(n, gap) - hs.top(i, gap) }
+	below := func(i int) float64 { return C - s.padTop - hs.top(i, gap) }
 	ch := &s.followLag
 	if rt.frame != s.followFrame {
 		if ch.at.IsZero() {
@@ -1891,7 +1904,7 @@ func (s *ListState) glideToEnd(e *node, n, lo, hi int, H, C float64, shift func(
 		if !ok {
 			*ch = channel{at: now}
 		} else {
-			d := below(prev) - p.below - float64(s.FollowInset-p.inset)
+			d := below(prev) - p.below - float64(s.FollowInset+s.endOverlayHeight-p.inset)
 			if d < 0.5 && d > -0.5 {
 				d = 0
 			}
@@ -1913,7 +1926,7 @@ func (s *ListState) glideToEnd(e *node, n, lo, hi int, H, C float64, shift func(
 			hugs = hugs || p.hugs && (d != 0 || follows)
 		}
 	}
-	s.follow = followMark{seen: true, row: lo, below: below(lo), content: C, height: H, inset: s.FollowInset, width: s.width, hugs: hugs}
+	s.follow = followMark{seen: true, row: lo, below: below(lo), content: C, height: H, inset: s.FollowInset + s.endOverlayHeight, width: s.width, hugs: hugs}
 	if s.Key != nil {
 		s.follow.key = s.Key(lo)
 	}

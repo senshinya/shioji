@@ -1238,11 +1238,6 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	v.anchorHistoryRows(state, rows)
 	v.anchorSentMessage(c, state, rows)
 	v.positionFind(c, state, rows)
-	reserve := v.dockHeight
-	if reserve == 0 {
-		reserve = 108
-	}
-	state.FollowInset = reserve
 	rowBounds := map[string]n.Rect{}
 	history := n.List(c.Key("history:"+viewKey), state, historyEndRow+1, func(row int) {
 		if row == 0 {
@@ -1254,8 +1249,9 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			return
 		}
 		if row == historyEndRow {
-			// Message rows already own the clearance above the dock.
-			n.Column(c).Height(reserve)
+			// Keep the structural key/index stable; the list measures the dock
+			// into its end padding in this layout, before the first paint.
+			n.Column(c).Height(0)
 			return
 		}
 		if hasNewer && row == len(rows)+1 {
@@ -1411,6 +1407,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		}
 	})
 	dock.Children(func() { v.notice(c, t); v.pending(c, t, detail); v.composer(c, t, false) })
+	state.EndOverlay = dock
 	v.sessionLoadingOverlay(c, t)
 	if !v.loadingBlocksComposer() {
 		v.returnToLatest(c, t, state, dock)
