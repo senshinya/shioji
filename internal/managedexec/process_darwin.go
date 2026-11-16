@@ -19,7 +19,7 @@ func (s *Scope) StartOwned(ctx context.Context, ref string, argv, env []string, 
 		return nil, nil, nil, err
 	}
 	cmd := exec.Command(s.manager.Executable, "--managed-exec", ticket.ID)
-	cmd.Env = []string{"PATH=/usr/bin:/bin"}
+	cmd.Env = BootstrapEnv()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stderr = io.Discard
 	stdin, err := cmd.StdinPipe()

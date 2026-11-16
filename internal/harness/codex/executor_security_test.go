@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +21,60 @@ import (
 	"shioji/internal/managedexec"
 	"shioji/internal/testutil"
 )
+
+func TestManagedBootstrapSuppliesEncodingWithoutLeakingTargetEnvironment(t *testing.T) {
+	m, err := managedexec.New(t.TempDir(), os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := m.Begin("bootstrap-environment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = scope.Bind("executor", os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	e := &Executor{scope: scope, boots: map[string]*executorBootstrap{}, baseEnv: map[string]string{}}
+	params := map[string]any{
+		"processId": "environment",
+		"argv":      []string{"/bin/echo", "ready"},
+		"env": map[string]string{
+			"__CF_USER_TEXT_ENCODING": "target-encoding",
+			"DYLD_INSERT_LIBRARIES":   "/target/loader.dylib",
+			"TARGET_SECRET":           "only-after-registration",
+		},
+	}
+	body, _ := json.Marshal(params)
+	msg := wire.Message{Method: "process/start", Params: body}
+	if err = e.prepare(&msg); err != nil {
+		t.Fatal(err)
+	}
+	var forwarded struct{ Env map[string]string }
+	if err = json.Unmarshal(msg.Params, &forwarded); err != nil {
+		t.Fatal(err)
+	}
+	encoding := strings.Split(forwarded.Env["__CF_USER_TEXT_ENCODING"], ":")
+	if len(encoding) != 3 {
+		t.Fatal("bootstrap lacks a local encoding and would query user services before registration", forwarded.Env)
+	}
+	uid, err := strconv.ParseUint(encoding[0], 0, 64)
+	if err != nil || uid != uint64(os.Getuid()) {
+		t.Fatal("bootstrap encoding does not identify the actual user", encoding[0], err)
+	}
+	if encoding[1] != "0" || encoding[2] != "0" || len(forwarded.Env) != 2 || forwarded.Env["PATH"] != "/usr/bin:/bin" {
+		t.Fatal("bootstrap environment must contain only the local encoding and trusted PATH", forwarded.Env)
+	}
+	ack := e.boots["environment"].ack.Env
+	for _, expected := range []string{"__CF_USER_TEXT_ENCODING=target-encoding", "DYLD_INSERT_LIBRARIES=/target/loader.dylib", "TARGET_SECRET=only-after-registration"} {
+		found := false
+		for _, entry := range ack {
+			found = found || entry == expected
+		}
+		if !found {
+			t.Fatal("target environment was changed instead of being held until registration", expected)
+		}
+	}
+}
 
 func TestManagedReadOnlyCommandRunsButCannotWrite(t *testing.T) {
 	p := testutil.NewProvider(t)
@@ -157,7 +212,8 @@ int main(int argc,char**argv){printf("%s|%s\n",argv[0],getenv("TARGET_VALUE"));p
 			json.Unmarshal(msg.Params, &chunk)
 			output.Write(chunk.Chunk)
 		}
-		if msg.Method == "process/exited" {
+		// Exit status can precede the final pipe output; closed drains both streams.
+		if msg.Method == "process/closed" {
 			break
 		}
 	}

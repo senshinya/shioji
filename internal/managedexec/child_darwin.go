@@ -18,6 +18,13 @@ import (
 
 const RegistrationPrefix = "SHIOJI_LAUNCH "
 
+// BootstrapEnv avoids CoreFoundation's user-service lookup during dyld
+// initialization, before Go can register the process. Derive the encoding from
+// the real UID; target environment and loader settings arrive only in the ACK.
+func BootstrapEnv() []string {
+	return []string{"PATH=/usr/bin:/bin", fmt.Sprintf("__CF_USER_TEXT_ENCODING=0x%X:0:0", os.Getuid())}
+}
+
 type Registration struct {
 	ID           string
 	Root, Anchor int
@@ -107,7 +114,7 @@ func runChild(id string, input *os.File, output io.Writer) error {
 		return err
 	}
 	anchor := exec.Command(binary, "--managed-anchor")
-	anchor.Env = []string{"PATH=/usr/bin:/bin"}
+	anchor.Env = BootstrapEnv()
 	anchor.ExtraFiles = []*os.File{commitRead, readyWrite}
 	if err = anchor.Start(); err != nil {
 		commitRead.Close()

@@ -561,7 +561,12 @@ func (e *Executor) prepare(msg *wire.Message) error {
 	e.boots[process] = b
 	e.mu.Unlock()
 	params["argv"], _ = json.Marshal([]string{e.scope.Executable(), "--managed-exec", ticket.ID})
-	params["env"], _ = json.Marshal(map[string]string{"PATH": "/usr/bin:/bin"})
+	bootstrapEnv := map[string]string{}
+	for _, entry := range managedexec.BootstrapEnv() {
+		name, value, _ := strings.Cut(entry, "=")
+		bootstrapEnv[name] = value
+	}
+	params["env"], _ = json.Marshal(bootstrapEnv)
 	params["envPolicy"] = json.RawMessage(`null`)
 	params["arg0"] = json.RawMessage(`null`)
 	params["pipeStdin"] = json.RawMessage(`true`)
