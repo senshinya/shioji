@@ -238,7 +238,7 @@ func (v *View) deviceStatusScene(c *n.Context, t *n.Theme, key string, state *ap
 					r, g := item, lanes[index]
 					row := n.Column(c.Key("route:" + r.Route.ID)).Absolute().LeftPercent(18).TopPercent(g.HitTop / height * 100).WidthPercent(38).HeightPercent(g.HitHeight / height * 100).Label("连接路径:" + r.Route.ID)
 					row.Children(func() {
-						button := control(c.Key("path-hit"), 6).Fill().Label("展开连接路径:" + r.Route.ID).Description(r.Name + " · " + r.Timing + " · " + r.Phase).Tooltip(devicePathAddress(r.Route.SSH, r.Status.Endpoint) + "\n" + r.Network)
+						button := control(c.Key("path-hit"), 6).Fill().Label("展开连接路径:" + r.Route.ID).Description(r.Name + " · " + r.Timing + " · " + r.Phase).Tooltip(devicePathAddress(r.Route.SSH, r.Status.Endpoint) + "\n" + r.Network + "\n" + r.Status.Error)
 						button.ContextMenu(func(menu *n.Menu) { v.devicePathMenu(menu, projection.Connection, r.Route, state) })
 						if button.Clicked() {
 							ui.open[r.Route.ID] = !ui.open[r.Route.ID]
@@ -316,6 +316,9 @@ func (v *View) refreshDeviceScene(key string, state *app.DeviceState, ui *device
 			ui.error = "设备返回的运行状态无效"
 			return
 		}
+		// Device-only readiness has no requested live session profiles. Keep the
+		// latest owning-device profiles; the controller refreshes those separately.
+		ready.Sessions = m.Readiness.Sessions
 		m.Readiness = ready
 	}}) {
 		ui.pending = false

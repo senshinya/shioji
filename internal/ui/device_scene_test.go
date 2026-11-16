@@ -465,3 +465,37 @@ func TestDeviceSceneRecheckSurvivesOwningDeviceProjection(t *testing.T) {
 		t.Fatal("recheck changed another device")
 	}
 }
+
+func TestDeviceSceneRecheckPreservesLiveSessionCapabilities(t *testing.T) {
+	v := readyDeviceSceneView()
+	state := v.Model.DeviceStates["air"]
+	state.Readiness.Sessions = map[string]domain.HarnessInfo{"running": {ID: "custom", Configured: true, State: domain.RuntimeReady, Capabilities: domain.HarnessCapabilities{Interrupt: false, Steer: false, Recovery: false}}}
+	ui := n.NewTester(v.View, 1240, 1000)
+	ui.Advance(time.Second)
+	ui.Click("重新检测设备")
+	job := welcomeJob(t, v.Controller, "readiness")
+	v.Model.ApplyDeviceUpdate("air", func(m *app.Model) {
+		job.Apply(m, []byte(`{"state":"ready","harnesses":[{"id":"custom","configured":true,"state":"ready","capabilities":{"interrupt":true,"steer":true,"recovery":true}}]}`), nil)
+	})
+	own, ok := v.Model.DeviceStates["air"].Readiness.Sessions["running"]
+	if !ok || own.Capabilities.Interrupt || own.Capabilities.Steer || own.Capabilities.Recovery {
+		t.Fatal("device recheck replaced the live process capability profile", own, ok)
+	}
+}
+
+func TestDeviceSceneFailedBackupRetainsItsOwnDiagnostic(t *testing.T) {
+	v := readyDeviceSceneView()
+	route := v.Model.Connections[0].Routes[1]
+	v.Model.DeviceStates["air"].Paths[1].Phase = app.PathUnavailable
+	v.Model.DeviceStates["air"].Paths[1].Error = "此 SSH 路径的设备身份不匹配，请核对目标设备"
+	ui := n.NewTester(v.View, 1240, 1100)
+	ui.Advance(time.Second)
+	if !ui.HasText("设备已就绪") {
+		t.Fatal("failed backup hid healthy active route")
+	}
+	ui.Click("展开连接路径:" + route.ID)
+	ui.Advance(300 * time.Millisecond)
+	if !ui.HasText("此 SSH 路径的设备身份不匹配，请核对目标设备") {
+		t.Fatal("route diagnostic was discarded", ui.Texts())
+	}
+}

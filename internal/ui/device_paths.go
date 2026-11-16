@@ -290,6 +290,11 @@ func (v *View) deviceScenePathDetails(c *n.Context, t *n.Theme, connection app.D
 		n.Column(c).FillWidth().Label("路径地址:" + route.ID).Role(n.RoleNone).Children(func() {
 			n.Text(c, address).FillWidth().SingleLine().TooltipWhenTruncated(address).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
 		})
+		if status.Error != "" {
+			n.Column(c).FillWidth().Label("路径错误:" + route.ID).Role(n.RoleNone).Children(func() {
+				n.Text(c, status.Error).FillWidth().FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).TextColor(t.TextMuted).Selectable()
+			})
+		}
 		v.devicePathDetails(c, route, status)
 	})
 }

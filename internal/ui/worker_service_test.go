@@ -64,20 +64,20 @@ func TestWorkerVersionDetailsAnimateTheirActualHeight(t *testing.T) {
 	v.deviceSelected = "local"
 	ui := n.NewTester(v.View, 1240, 900)
 	ui.Advance(time.Second)
-	before, _ := ui.Find("新建工作区")
+	before, _ := ui.Find("存储区域")
 	state.WorkerService = &app.WorkerService{Build: build, Available: &domain.WorkerBuild{BuildID: "new-worker"}, Phase: app.WorkerWaiting, Message: "有任务正在运行，空闲后更新"}
 	ui.Frame()
 	ui.Advance(70 * time.Millisecond)
-	moving, _ := ui.Find("新建工作区")
+	moving, _ := ui.Find("存储区域")
 	ui.Advance(500 * time.Millisecond)
-	open, _ := ui.Find("新建工作区")
+	open, _ := ui.Find("存储区域")
 	if moving.Y <= before.Y+1 || moving.Y >= open.Y-1 {
 		t.Fatal("version/message/action area jumped height", before, moving, open)
 	}
 	state.WorkerService = &app.WorkerService{Build: build, Phase: app.WorkerCurrent}
 	ui.Frame()
 	ui.Advance(70 * time.Millisecond)
-	closing, _ := ui.Find("新建工作区")
+	closing, _ := ui.Find("存储区域")
 	if closing.Y <= before.Y+1 || closing.Y >= open.Y-1 {
 		t.Fatal("update details disappeared before height transition", before, closing, open)
 	}
