@@ -52,10 +52,19 @@ func (v *View) previewSource(c *n.Context, t *n.Theme, p *attachmentPreview) n.E
 	if p.Reader == nil {
 		p.Reader = &editor.State{Buffer: editor.NewBuffer(p.Text), ReadOnly: true, SoftWrap: true, NoActiveLine: true, NoScrollPastEnd: true, NoIndentGuides: true, Label: "文件内容：" + p.Attachment.Name}
 		p.Reader.Buffer.SetLanguage(editor.LanguageFor(p.Attachment.Name))
+		if p.Position.Line > 0 {
+			line := min(p.Position.Line-1, p.Reader.Buffer.LineCount()-1)
+			p.Reader.GoTo(editor.Pos{Line: line, Col: max(0, p.Position.Column-1)})
+		}
 	}
 	p.Reader.Font = n.Font{Family: v.Model.Preferences.CodeFont, Size: 12}
 	p.Reader.Theme = editor.DefaultTheme(t)
 	p.Reader.Theme.Background = raised(t)
+	if p.Position.Line > 0 {
+		line := min(p.Position.Line-1, p.Reader.Buffer.LineCount()-1)
+		last := min(max(line, p.Position.LastLine-1), p.Reader.Buffer.LineCount()-1)
+		p.Reader.LineBackgrounds = []editor.LineBackground{{First: line, Last: last, Color: raised(t).Mix(t.Text, .08)}}
+	}
 	return editor.View(c.Key("file-reader"), p.Reader).FillWidth()
 }
 
@@ -112,17 +121,22 @@ func (p *attachmentPreview) releaseMarkdown() {
 
 // Paths remain device paths. Only the authenticated worker may open them.
 func (p *attachmentPreview) markdownPath(dest string) (string, error) {
-	path, err := fileLinkPath(dest)
+	path, _, err := p.markdownTarget(dest)
+	return path, err
+}
+
+func (p *attachmentPreview) markdownTarget(dest string) (string, fileLinkPosition, error) {
+	path, position, err := fileLinkTarget(dest)
 	if err != nil {
-		return "", err
+		return "", position, err
 	}
 	if !filepath.IsAbs(path) {
 		if !filepath.IsAbs(p.SourcePath) {
-			return "", errors.New("附件没有原始目录，无法解析相对路径")
+			return "", position, errors.New("附件没有原始目录，无法解析相对路径")
 		}
 		path = filepath.Join(filepath.Dir(p.SourcePath), path)
 	}
-	return path, nil
+	return path, position, nil
 }
 
 func (v *View) bindPreviewMarkdown(c *n.Context, p *attachmentPreview) {
@@ -141,7 +155,7 @@ func (v *View) bindPreviewMarkdown(c *n.Context, p *attachmentPreview) {
 			services.Invalidate()
 			return
 		}
-		path, err := p.markdownPath(dest)
+		path, position, err := p.markdownTarget(dest)
 		if err == nil && session.ID == "" {
 			err = errors.New("当前文件没有所属会话，无法读取链接")
 		}
@@ -150,7 +164,7 @@ func (v *View) bindPreviewMarkdown(c *n.Context, p *attachmentPreview) {
 			services.Invalidate()
 			return
 		}
-		v.startFileLink(session, path, services)
+		v.startFileLink(session, path, services, position)
 	}
 	menu := v.forwardLinkMenu(c, session)
 	m.options.LinkContextMenu = func(menuView *n.Menu, dest string) {

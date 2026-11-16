@@ -31,6 +31,7 @@ type attachmentPreview struct {
 	NaturalHeight                           float32
 	Source                                  n.Rect
 	Reader                                  *editor.State
+	Position                                fileLinkPosition
 	Markdown                                *markdownPreview
 	Saving                                  bool
 	SaveError                               string

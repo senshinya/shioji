@@ -103,8 +103,8 @@ func (v *View) userMessageLinks(c *n.Context, text string) {
 		}
 		link := n.Link(c, raw, target).Underline().TextColor(c.Theme().Text)
 		if target == "" && link.Clicked() {
-			if path, err := fileLinkPath(raw); err == nil {
-				v.startFileLink(v.Model.Details[v.Model.SessionID].Session, path, c.Services())
+			if path, position, err := fileLinkTarget(raw); err == nil {
+				v.startFileLink(v.Model.Details[v.Model.SessionID].Session, path, c.Services(), position)
 			}
 		}
 		if menu != nil {
