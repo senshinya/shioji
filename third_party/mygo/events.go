@@ -27,6 +27,16 @@ type CloseEvent struct {
 // Preventing it cancels the quit.
 type QuitEvent struct {
 	Preventable
+	retry func()
+}
+
+// Retry starts the original quit or relaunch again through the normal quit
+// sequence. After PreventDefault, asynchronous cleanup can retain this method
+// and call it when ready without turning a requested relaunch into a plain quit.
+func (e *QuitEvent) Retry() {
+	if e.retry != nil {
+		e.retry()
+	}
 }
 
 // NavigateEvent is passed to Page.OnWillNavigate listeners. Preventing it

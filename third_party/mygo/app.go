@@ -221,7 +221,11 @@ func (a *Application) prepareQuit() bool {
 	if a.quitting {
 		return false
 	}
-	before := &QuitEvent{}
+	retry := a.Quit
+	if a.relaunch {
+		retry = a.Relaunch
+	}
+	before := &QuitEvent{retry: retry}
 	fire1(&a.onBeforeQuit, before)
 	if before.prevented {
 		return false
@@ -233,7 +237,7 @@ func (a *Application) prepareQuit() bool {
 			return false
 		}
 	}
-	will := &QuitEvent{}
+	will := &QuitEvent{retry: retry}
 	fire1(&a.onWillQuit, will)
 	if will.prevented {
 		a.quitting = false

@@ -142,7 +142,7 @@ func run() error {
 			offUpdates()
 		})
 		mygo.App.OnWillQuit(func(e *mygo.QuitEvent) {
-			if !shutdown.request(cancel, controllerDone, mygo.App.Quit) {
+			if !shutdown.request(cancel, controllerDone, e.Retry) {
 				e.PreventDefault()
 			}
 		})
