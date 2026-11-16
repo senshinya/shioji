@@ -45,7 +45,8 @@ const Major = 2
 // Minor 43 adds explicit force-close previews and independent device recovery.
 // Minor 44 adds explicit normal retirement and forced archive deletion.
 // Minor 45 adds durable session runtime reload without submitting input.
-const Minor = 45
+// Minor 46 adds scoped Hook management and durable definition-bound receipts.
+const Minor = 46
 const MaxFrame = 1 << 20
 
 type Frame struct {

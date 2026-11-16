@@ -74,3 +74,20 @@ type HookChange struct {
 type HookChangeResult struct {
 	Saved bool `json:"saved"`
 }
+
+// A management context belongs to the owning worker. Empty workspace/session
+// identifiers mean device-global management, not a client-supplied path.
+type HookRequest struct {
+	HarnessID   string `json:"harnessId"`
+	WorkspaceID string `json:"workspaceId,omitempty"`
+	SessionID   string `json:"sessionId,omitempty"`
+	HookChange
+}
+
+type HookOperation struct {
+	Input           HookRequest    `json:"input"`
+	State           OperationState `json:"state"`
+	Saved           bool           `json:"saved"`
+	AdoptionPending bool           `json:"adoptionPending,omitempty"`
+	Message         string         `json:"message,omitempty"`
+}

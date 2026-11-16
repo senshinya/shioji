@@ -502,6 +502,12 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 			return nil, err
 		}
 		return s.manageSkills(method, in)
+	case "runtime.hooks.list", "runtime.hooks.change", "runtime.hooks.operation":
+		in, err := decode[domain.HookRequest](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.manageHooks(method, in)
 	case "runtime.tools.change":
 		in, err := decode[protocol.ToolServiceInput](body)
 		if err != nil {
@@ -1198,6 +1204,9 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 	var turnID string
 	s.dispatchMu.Unlock()
 	locked = false
+	// Configuration mutation and the next accepted launch/input share a boundary.
+	// The active model turn never holds this lock.
+	s.toolConfigMu.Lock()
 	if session.ThreadID == "" {
 		if session.Origin != nil {
 			if importer, ok := runtime.(harness.ConversationContinuation); ok {
@@ -1240,6 +1249,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 			turnID, err = runtime.Submit(ctx, session, op.ID, harness.TurnInput{Text: in.Text, Attachments: inputs, Skills: in.Skills})
 		}
 	}
+	s.toolConfigMu.Unlock()
 	s.dispatchMu.Lock()
 	locked = true
 	if runtime.Stopped() {

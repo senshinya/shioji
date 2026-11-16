@@ -93,12 +93,13 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS deleted_workspaces (id TEXT PRIMARY KEY, cleaned INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS archive_resources (workspace_id TEXT NOT NULL, attachment_id TEXT NOT NULL, PRIMARY KEY(workspace_id,attachment_id));
  CREATE TABLE IF NOT EXISTS session_reloads (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, body BLOB NOT NULL);
+ CREATE TABLE IF NOT EXISTS hook_operations (id TEXT PRIMARY KEY, body BLOB NOT NULL);
  CREATE INDEX IF NOT EXISTS operations_session_state ON operations(session_id,state);
  CREATE INDEX IF NOT EXISTS items_provisional_replies ON items(session_id,json_extract(body,'$.turnId')) WHERE json_extract(body,'$.kind')='assistant' AND COALESCE(json_extract(body,'$.final'),0)=0;
  CREATE INDEX IF NOT EXISTS work_inputs_unsettled_session ON work_inputs(session_id) WHERE json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate') AND COALESCE(json_extract(body,'$.executionStopped'),0)=0;
  CREATE INDEX IF NOT EXISTS history_active_source ON history_operations(json_extract(body,'$.source.id')) WHERE json_extract(body,'$.state') IN ('prepared','forked');
  CREATE INDEX IF NOT EXISTS history_active_session ON history_operations(json_extract(body,'$.session.id')) WHERE json_extract(body,'$.state') IN ('prepared','forked');
- PRAGMA user_version=13;`)
+ PRAGMA user_version=14;`)
 	if err != nil {
 		tx.Rollback()
 		return fail(err)

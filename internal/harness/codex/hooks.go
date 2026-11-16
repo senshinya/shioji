@@ -276,4 +276,15 @@ func (r *Runtime) RefreshHooks(ctx context.Context) error {
 	return nil
 }
 
+func (r *Runtime) refreshHooksBeforeInput(ctx context.Context) error {
+	if r.supports("hooks/list") && r.supports("config/batchWrite") {
+		if err := r.RefreshHooks(ctx); err != nil {
+			// No turn or user input has been sent; uncertainty belongs to the
+			// configuration reload, never to the not-yet-submitted prompt.
+			return errors.New("Hook 配置尚未确认，本轮输入未发送")
+		}
+	}
+	return nil
+}
+
 var _ harness.HookProvider = (*Runtime)(nil)

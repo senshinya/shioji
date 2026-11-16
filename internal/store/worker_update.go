@@ -7,8 +7,8 @@ import (
 	"shioji/internal/domain"
 )
 
-// Schema 13 keeps archive-only schema-12 workers from bypassing manual-stop guards.
-const SchemaVersion = 13
+// Schema 14 retains version-bound hook configuration operation receipts.
+const SchemaVersion = 14
 
 // The caller fences dispatch and commands before this final database check.
 // VACUUM INTO reads SQLite's committed snapshot, including its WAL.

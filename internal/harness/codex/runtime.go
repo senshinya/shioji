@@ -452,6 +452,9 @@ func (r *Runtime) Create(ctx context.Context, s domain.Session) (string, error) 
 	if err := r.Validate(s.Config); err != nil {
 		return "", err
 	}
+	if err := r.refreshHooksBeforeInput(ctx); err != nil {
+		return "", err
+	}
 	sandbox, approval, kind := permissionPolicy(s.Config.Permission)
 	var out struct {
 		Thread struct {
@@ -484,6 +487,9 @@ func (r *Runtime) Create(ctx context.Context, s domain.Session) (string, error) 
 }
 func (r *Runtime) Resume(ctx context.Context, s domain.Session) error {
 	if err := r.Validate(s.Config); err != nil {
+		return err
+	}
+	if err := r.refreshHooksBeforeInput(ctx); err != nil {
 		return err
 	}
 	var out struct {
@@ -520,6 +526,9 @@ func (r *Runtime) Submit(ctx context.Context, s domain.Session, operationID, tex
 }
 func (r *Runtime) submit(ctx context.Context, s domain.Session, operationID, text string, attachments []AttachmentInput, skills []domain.SkillReference) (string, error) {
 	if err := r.Validate(s.Config); err != nil {
+		return "", err
+	}
+	if err := r.refreshHooksBeforeInput(ctx); err != nil {
 		return "", err
 	}
 	_, approval, kind := permissionPolicy(s.Config.Permission)
