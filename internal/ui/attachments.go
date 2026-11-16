@@ -30,6 +30,7 @@ type attachmentPreview struct {
 	NaturalHeight                           float32
 	Source                                  n.Rect
 	Reader                                  *editor.State
+	Markdown                                *markdownPreview
 	Saving                                  bool
 	SaveError                               string
 	Origin                                  *attachmentPreviewOrigin
@@ -569,6 +570,7 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 		return
 	}
 	isImage := strings.HasPrefix(p.Attachment.MIME, "image/")
+	isMarkdown := p.isMarkdown()
 	reduce := c.Preferences().ReduceMotion
 	hasSource := p.Source.W > 0 && p.Source.H > 0
 	cardMorph := !reduce && hasSource && p.Origin != nil && p.Origin.Content != nil
@@ -582,6 +584,9 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 		panelWidth := min(float32(840), w-48)
 		panelHeight := float32(86)
 		fileHeight := min(min(float32(580), h-160), max(float32(120), float32(strings.Count(p.Text, "\n")+1)*18+16))
+		if isMarkdown {
+			fileHeight = min(float32(688), h-96) - 70
+		}
 		imageAvailable := p.Loading || p.Image != nil || p.LoadedImage != nil
 		if isImage && imageAvailable {
 			panelHeight = min(580, h-160) + 66
@@ -679,6 +684,9 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 							p.close()
 						}
 						n.Text(c, p.Attachment.Name).FontSize(13).Grow(1).SingleLine()
+						if isMarkdown {
+							p.markdownTabs(c)
+						}
 						if iconButton(c, saveAttachmentIcon, "另存到本机").Disabled(p.Saving).Clicked() {
 							v.saveAttachment(p)
 						}
@@ -707,15 +715,10 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 						n.Text(c, p.Error).FontSize(12)
 					} else if p.Image != nil {
 						n.Image(c, p.Image).FillWidth().Height(min(580, h-160)).Fit(n.Contain)
+					} else if isMarkdown {
+						v.markdownPreviewContent(c, t, p, fileHeight)
 					} else {
-						if p.Reader == nil {
-							p.Reader = &editor.State{Buffer: editor.NewBuffer(p.Text), ReadOnly: true, SoftWrap: true, NoActiveLine: true, NoScrollPastEnd: true, NoIndentGuides: true, Label: "文件内容：" + p.Attachment.Name}
-							p.Reader.Buffer.SetLanguage(editor.LanguageFor(p.Attachment.Name))
-						}
-						p.Reader.Font = n.Font{Family: v.Model.Preferences.CodeFont, Size: 12}
-						p.Reader.Theme = editor.DefaultTheme(t)
-						p.Reader.Theme.Background = raised(t)
-						editor.View(c.Key("file-reader"), p.Reader).FillWidth().Height(fileHeight)
+						v.previewSource(c, t, p).Height(fileHeight)
 					}
 				})
 			})
