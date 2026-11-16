@@ -88,7 +88,7 @@ func (v *View) commandOutput(c *n.Context, t *n.Theme, item domain.Item, heading
 	frame := n.Column(c.Key("command-output-frame:" + item.ID)).FillWidth().Clip()
 	// Own the spacing inside the animated frame too, so a closed command
 	// leaves just its heading without a last-frame gap jump.
-	animatedContentHeight(c, frame, open, 160*time.Millisecond, func() float32 {
+	v.transcriptContentHeight(c, frame, open, open, 160*time.Millisecond, func() float32 {
 		n.Column(c).FillWidth().Padding(8, 0, 0, 0).Children(func() {
 			output := n.Scroll(c.Key("output:" + item.ID)).FillWidth().MaxHeight(height)
 			if display != state.text {

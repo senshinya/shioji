@@ -182,20 +182,35 @@ func (v *View) assistantReply(c *n.Context, item domain.Item) {
 	// The existing tool-to-prose handoff establishes the first reply's final
 	// slot before fading in its footer; do not add another entrance clock.
 	baseline := !fresh || v.runningProgress != nil && v.runningProgress.handoff != nil
+	v.transcriptContentHeight(c, root, true, baseline, duration, func() float32 {
+		return v.markdownHeightDelta(func() {
+			if streaming {
+				markdown.Stream(c.Key("body"), item.Text, &v.md).FillWidth().FontSize(float32(v.Model.Preferences.ReplySize))
+			} else {
+				markdown.View(c.Key("body"), item.Text, &v.md).FillWidth().FontSize(float32(v.Model.Preferences.ReplySize))
+			}
+		})
+	})
+}
+
+// Markdown embeds may already animate their real height. Pass their current
+// movement through the enclosing reply/tool clip on the same frame.
+func (v *View) markdownHeightDelta(build func()) float32 {
 	if v.mermaid != nil {
 		v.mermaid.heightDelta = 0
 	}
-	animatedContentHeightAtMount(c, root, true, baseline, duration, func() float32 {
-		if streaming {
-			markdown.Stream(c.Key("body"), item.Text, &v.md).FillWidth().FontSize(float32(v.Model.Preferences.ReplySize))
-		} else {
-			markdown.View(c.Key("body"), item.Text, &v.md).FillWidth().FontSize(float32(v.Model.Preferences.ReplySize))
-		}
-		if v.mermaid != nil {
-			return v.mermaid.heightDelta
-		}
-		return 0
-	})
+	if v.markdownImages != nil {
+		v.markdownImages.heightDelta = 0
+	}
+	build()
+	delta := float32(0)
+	if v.markdownImages != nil {
+		delta += v.markdownImages.heightDelta
+	}
+	if v.mermaid != nil {
+		delta += v.mermaid.heightDelta
+	}
+	return delta
 }
 
 func (v *View) visibleOutputAnimating() bool {

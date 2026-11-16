@@ -194,6 +194,17 @@ func animatedContentHeight(c *n.Context, frame n.Element, visible bool, duration
 	animatedContentHeightAtMount(c, frame, visible, visible, duration, build)
 }
 
+// Transcript content owns its height animation. The list must apply that
+// movement directly rather than add a second live-output follow animation.
+func (v *View) transcriptContentHeight(c *n.Context, frame n.Element, visible, initiallyVisible bool, duration time.Duration, build func() float32) {
+	delta := animatedContentHeightAtMount(c, frame, visible, initiallyVisible, duration, build)
+	if delta != 0 {
+		if list := v.lists[v.Model.SessionID]; list != nil {
+			list.FollowAnimation = nil
+		}
+	}
+}
+
 // Live replies enter from zero; history and virtual-row remounts establish
 // their measured baseline without replaying the content's entrance.
 func animatedContentHeightAtMount(c *n.Context, frame n.Element, visible, initiallyVisible bool, duration time.Duration, build func() float32) float32 {

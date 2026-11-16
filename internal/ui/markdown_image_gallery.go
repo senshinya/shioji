@@ -23,11 +23,12 @@ type markdownImageEntry struct {
 // UI-owned, scoped to the accepted session and connection. File reads always
 // go through the owning worker; only verified downloaded copies are decoded.
 type markdownImageCache struct {
-	scope   string
-	ctx     context.Context
-	cancel  context.CancelFunc
-	slots   chan struct{}
-	entries map[string]*markdownImageEntry
+	scope       string
+	ctx         context.Context
+	cancel      context.CancelFunc
+	heightDelta float32
+	slots       chan struct{}
+	entries     map[string]*markdownImageEntry
 }
 
 func (v *View) closeMarkdownImages() {
@@ -61,7 +62,7 @@ func (v *View) bindMarkdownImages(options *markdown.Options, source domain.Sessi
 				thumbnail = &entry.thumbnail
 				a.ID = entry.id
 			}
-			v.outputImageCard(c, c.Theme(), a, thumbnail, func(rect n.Rect) {
+			cache.heightDelta += v.outputImageCard(c, c.Theme(), a, thumbnail, func(rect n.Rect) {
 				if entry == nil || entry.preview == nil || v.markdownImages != cache {
 					return
 				}

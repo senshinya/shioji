@@ -22,6 +22,18 @@
 
 `internal/ui/message_motion_test.go` 检查新内容的中间帧、后文高度同步、既有文字不重新渐显、重复资源、搜索高亮、重连基线和 Reduce Motion。动态效果只影响展示，不改变 worker 的执行和请求状态。
 
+用户录屏 `录屏2026-11-16 23.34.33.mov` 中，历史图片先从 80 DIP 占位展开，会话列表又为同一增长叠加末尾跟随，导致后文先下移再回弹。相同原生夹具在旧代码下测得图片约 54 DIP、Mermaid 约 101 DIP，工具文本、文件卡片与命令输出也可复现。会话正文、工具结果、命令输出与回复底栏现在统一使用 `transcriptContentHeight`：内容已缓动的实际高度直接交给列表；Markdown 图片与 Mermaid 的本帧高度增量同时传给回复及工具外框，避免外层再缓动或短暂裁切。`internal/ui/image_entry_scroll_test.go` 覆盖亮暗模式、减少动态效果、末尾跟随、向上阅读、工具内 Markdown 的裁切边界、草稿与焦点；所有新增行为回归均已对照旧代码确认失败。
+
+提交前复核补上共享工具渲染的归属边界：子 Agent 详情沿用其独立滚动容器的原有高度动画，不修改主会话的末尾跟随动画。`TestChildToolGrowthDoesNotChangeParentFollowAnimation` 在缺少此边界时于增长的第 1 帧失败，加入边界后通过，并确认子工具结果确实完成了高度增长。
+
+同轮补查也修正了上文记录的请求来源交接：尾部 pending 来源的 20 DIP 行与 4 DIP 留白接替旧“进行中”的 24 DIP 占位，旧状态不再与来源行叠加退场。后文仅随独立问题面板的真实高度移动。新增 `TestDeferredRequestSourceKeepsStatusSlot` 的旧代码在正常动画／减少动态效果下分别复现约 22／4 DIP 额外位移。既有旁路审计的 request-source、question-dock、queue-open 和 queue-close 在本轮代码下通过；它们保持向上阅读状态，不重新启用末尾跟随。
+
+本轮亮暗前后视频是生产 View 的 MyGo 原生确定性夹具，以 60 Hz 逐帧核对，媒体首尾增加静帧以便比较；不代表真实 worker 传输、模型执行或 App 实测帧率。局域网验收页为 `artboard/verify-content-loading`，保留在忽略的本地目录，未发布到云端。
+
+最终在隔离提交树运行 `go test -timeout 20m ./...`，全部 21 个有测试的生产包通过（UI 358.026 秒、worker 156.565 秒），另有 5 个无测试包；隔离构建、UI vet 与仓库冻结校验通过。新增回归共 33 组，既有状态／dock 旁路检查的 32 组也通过。首次 `go test -count=1 ./...` 的生产包均通过，但全目录命令因既有 `build/worker-recovery-20261116` 临时程序重复定义 `main`／`ident` 失败，未改动该目录。实际局域网 Chrome 中外层与嵌入画板已完成渲染，视频播放／放大可用，非安全上下文的 UUID v4 补丁有效；控制台可见 postMessage 来源不匹配警告，未见页面异常或 UUID 错误。用户于 2026-11-17 确认本轮验收并要求提交、推送。
+
+提交前共享工作区的并行开发带入了未提交的 `reply_reconciliation_test.go`，其中 `TestCompletedReplyReconcilesDiscardedStreamWithoutDeduplicatingRealMessages`、`TestReplyReconciliationKeepsUnconfirmedOrChangedEvidence` 和 `TestReplyReconciliationFinalizesAnItemConfirmedInHistory` 三项测试失败；相应 worker／store 改动未纳入本次提交，最终全套验证使用隔离提交树。本轮预览进程及其子进程已回收；端口 27319 后由另一个任务的新进程重新使用，保留该新进程及原有 27339 服务。
+
 工具展开时，仅上方“执行工具”标题行可以收起，箭头紧跟文字右侧；明细末尾的次数摘要只展示当前阶段与计时，无箭头、点击或悬停反馈。折叠时不保留额外标题，只展示单行次数、状态与计时；该行接替标题作为展开入口，并在摘要末尾保留向右的展开箭头，完成后同样保留；展开后的底部摘要不显示该箭头。轮次结束后，无论展开或折叠，都直接以“x 次工具调用”作为唯一标题，次数、未成功计数和箭头依次相邻；不再显示“执行工具”及底部重复次数。标题保持同一阅读锚点，调用明细和结束回执位于其下。正文到来后，旧摘要沿现有交接时间线让出运行状态；请求由底部 dock 承接。向上阅读时，只要“回到最新”按钮出现且当前仍在工作，按钮就展示最新状态指示器、阶段文案与计时，不再等待正文状态行完全离屏；阶段直接跟随当前轮次更新，不依赖绘制后的可见性测量。请求等待期间及结束后恢复“最新消息”，断线时显示静态“状态待确认”且不继续计时。返回后按钮随跟随末尾状态消失，不抢输入焦点。展开与收起都保持标题位置，折叠后的单行摘要承接同一锚点；使用虚拟列表的可见裁切范围，不为维持锚点制造额外空白。`internal/ui/tool_tail_test.go` 与 `internal/ui/latest_test.go` 覆盖亮暗主题、标题锚点、减少动态效果、近底部阅读、离屏返回及断线／结束等状态。
 
 普通草稿换行、粘贴多行和缩短时，编辑器的基础高度使用 180 ms EaseOut 真实布局过渡；“回到最新”指示器直接跟随同帧 dock，不另加位置缓动，始终保留 12 DIP 间距。队列编辑沿用原有 360 ms 时间线，附件栏已有的高度动画仍直接相加。首次展示不从零高度展开，减少动态效果直接切换。`internal/ui/latest_position_test.go` 覆盖亮暗主题、展开／收起、快速反向、阅读锚点、草稿与输入焦点；可选原生录制使用 `SHIOJI_LATEST_POSITION_RECORDING` 指定绝对输出目录。验收媒体为生产 View 的 MyGo 原生测试渲染及确定性草稿夹具，不代表真实 worker 执行或 App 实测帧率。

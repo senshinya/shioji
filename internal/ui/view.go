@@ -1337,6 +1337,11 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 				bottom = 24 - 20
 			}
 		}
+		// A pending source takes the running footer's 24 DIP slot. Its
+		// 20 DIP line needs only the remaining clearance, just like compaction.
+		if item.Kind == "request" && row < len(rows) && rows[row].footer == item.TurnID && (item.Status == "pending" || item.Status == "submitting") && v.runningActivity(turns[item.TurnID]).waiting {
+			bottom = 24 - 20
+		}
 		// A user message begins a new reading block even when steering keeps
 		// the protocol turn identity. Match ordinary turn-to-user spacing.
 		if row < len(rows) && rows[row].item.Kind == "user" {
@@ -1516,6 +1521,19 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 		return
 	}
 	replacement := ""
+	if waiting {
+		items := v.Model.Details[v.Model.SessionID].Items
+		for i := len(items) - 1; i >= 0; i-- {
+			item := items[i]
+			if item.TurnID != turn.ID || item.WorkID != "" || emptyTranscriptItem(item) {
+				continue
+			}
+			if item.Kind == "request" && (item.Status == "pending" || item.Status == "submitting") {
+				replacement = item.ID
+			}
+			break
+		}
+	}
 	if delegated && !waiting {
 		if activity.compaction != "" {
 			replacement = activity.compaction
@@ -1540,7 +1558,7 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 		frame.Height(frame.Jump("height", 24*remaining))
 		return
 	}
-	animatedContentHeight(c, frame, !delegated && !waiting, 180*time.Millisecond, func() float32 {
+	v.transcriptContentHeight(c, frame, !delegated && !waiting, !delegated && !waiting, 180*time.Millisecond, func() float32 {
 		row := n.Row(c.Key("state:" + state)).FillWidth().Wrap().Gap(messageFooterGap).MinHeight(24).AlignItems(n.Baseline).Transition(fadeMotion(c, 180*time.Millisecond))
 
 		row.Children(func() {

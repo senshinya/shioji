@@ -163,7 +163,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 	if open {
 		*retained = item
 	}
-	animatedContentHeight(c, frame, open, 180*time.Millisecond, func() float32 {
+	build := func() float32 {
 		innerHeightDelta := float32(0)
 		item := *retained
 		n.Column(c.Key("result-stack")).FillWidth().Padding(8, 0, 0, 0).Gap(8).Children(func() {
@@ -221,11 +221,13 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 						root := n.Column(c.Key("markdown")).FillWidth()
 						mounted := n.Local(root, "mounted", func() bool { return false })
 						root.Children(func() {
-							if *mounted && !item.Final && !c.Preferences().ReduceMotion {
-								markdown.Stream(c, part.Text, &v.activityMarkdown).FillWidth().FontSize(12)
-							} else {
-								markdown.View(c, part.Text, &v.activityMarkdown).FillWidth().FontSize(12)
-							}
+							innerHeightDelta += v.markdownHeightDelta(func() {
+								if *mounted && !item.Final && !c.Preferences().ReduceMotion {
+									markdown.Stream(c, part.Text, &v.activityMarkdown).FillWidth().FontSize(12)
+								} else {
+									markdown.View(c, part.Text, &v.activityMarkdown).FillWidth().FontSize(12)
+								}
+							})
 						})
 						*mounted = true
 					default:
@@ -251,7 +253,14 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 			}
 		})
 		return innerHeightDelta
-	})
+	}
+	if len(transcriptAnchor) > 0 && !transcriptAnchor[0] {
+		// Child work details have their own scroll container. Their height
+		// changes must not reset the main conversation's follow animation.
+		animatedContentHeight(c, frame, open, 180*time.Millisecond, build)
+	} else {
+		v.transcriptContentHeight(c, frame, open, open, 180*time.Millisecond, build)
+	}
 }
 
 // Fade received suffixes in place. Earlier bytes keep their original ink;
