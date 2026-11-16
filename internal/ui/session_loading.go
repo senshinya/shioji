@@ -22,10 +22,11 @@ var sessionLoadingEase = n.CubicBezier(.2, 0, 0, 1)
 type sessionLoading struct {
 	session, connection, epoch string
 	started, ready             time.Time
-	shown, finished            bool
+	finished                   bool
 	error                      string
 	frame, skeleton, content   float32
-	history, progress          float32
+	history, progress, body    float32
+	readyFrame, readyProgress  float32
 }
 
 func loadingFraction(elapsed, duration time.Duration) float32 {
@@ -66,16 +67,31 @@ func (v *View) syncSessionLoading(c *n.Context) {
 		return // Paging and history replacement in this visit stay silent.
 	}
 	if ready {
-		if !s.shown || c.Preferences().ReduceMotion {
+		if s.frame == 0 && s.progress == 0 || c.Preferences().ReduceMotion {
 			s.finish()
 			return
 		}
 		if s.ready.IsZero() {
 			s.ready = c.Now()
+			s.readyFrame, s.readyProgress = s.frame, s.progress
 		}
 		elapsed := c.Now().Sub(s.ready)
-		s.progress = 1 - loadingFraction(elapsed, sessionLoadingFade)
-		s.frame = 1
+		exit := loadingFraction(elapsed, sessionLoadingFade)
+		s.progress = s.readyProgress * (1 - exit)
+		s.body = s.readyFrame * (1 - exit)
+		s.frame = s.readyFrame + (1-s.readyFrame)*exit
+		if s.ready.Sub(s.started) < sessionLoadingDelay {
+			// Fast history appears while the skeleton leaves. Preserve the
+			// skeleton's effective alpha as its enclosing frame fades in.
+			s.skeleton = s.body / s.frame
+			s.history, s.content = exit, exit
+			if elapsed >= sessionLoadingFade {
+				s.finish()
+			} else {
+				c.AnimationFrame()
+			}
+			return
+		}
 		s.skeleton = 1 - loadingFraction(elapsed-sessionLoadingFade, 180*time.Millisecond)
 		s.history = loadingFraction(elapsed-sessionLoadingFade, 120*time.Millisecond)
 		s.content = loadingFraction(elapsed-sessionLoadingFade-20*time.Millisecond, 220*time.Millisecond)
@@ -97,20 +113,26 @@ func (v *View) syncSessionLoading(c *n.Context) {
 	if !m.Connected {
 		s.error = "设备连接已断开"
 	}
-	elapsed := c.Now().Sub(s.started) - sessionLoadingDelay
-	s.frame, s.progress = 0, 0
+	elapsed := c.Now().Sub(s.started)
+	s.frame = loadingFraction(elapsed, sessionLoadingFade)
+	s.body, s.progress = s.frame, 0
 	s.skeleton, s.content, s.history = 1, 0, 0
-	if elapsed < 0 && s.error == "" {
-		c.After(-elapsed)
+	if c.Preferences().ReduceMotion || s.error != "" {
+		s.frame, s.body = 1, 1
+	}
+	if elapsed < sessionLoadingDelay && s.error == "" {
+		if s.frame < 1 {
+			c.AnimationFrame()
+		} else {
+			c.After(sessionLoadingDelay - elapsed)
+		}
 		return
 	}
-	s.shown = true
-	s.frame = loadingFraction(elapsed, sessionLoadingFade)
+	s.progress = loadingFraction(elapsed-sessionLoadingDelay, sessionLoadingFade)
 	if c.Preferences().ReduceMotion || s.error != "" {
-		s.frame = 1
+		s.progress = 1
 	}
-	s.progress = s.frame
-	if s.frame < 1 {
+	if s.frame < 1 || s.progress < 1 {
 		c.AnimationFrame()
 	}
 }
@@ -118,7 +140,7 @@ func (v *View) syncSessionLoading(c *n.Context) {
 func (s *sessionLoading) finish() {
 	s.finished = true
 	s.frame, s.content, s.history = 1, 1, 1
-	s.skeleton, s.progress = 0, 0
+	s.skeleton, s.progress, s.body = 0, 0, 0
 }
 
 func (v *View) loadingHistoryOpacity() float32 {
@@ -146,7 +168,7 @@ func (v *View) loadingComposerContent(content n.Element, home bool) {
 
 func (v *View) loadingComposerSkeleton(c *n.Context, t *n.Theme) {
 	s := v.sessionLoad
-	if s == nil || s.skeleton == 0 || !s.shown {
+	if s == nil || s.skeleton == 0 {
 		return
 	}
 	n.Column(c.Key("opening-composer-skeleton")).Absolute().Left(0).Right(0).Top(0).Bottom(0).IgnoreInput(true).Role(n.RoleNone).Label("发送框加载骨架").Opacity(s.skeleton).Draw(func(p *n.Painter, r n.Rect) {
@@ -175,13 +197,13 @@ func (v *View) loadingComposerSkeleton(c *n.Context, t *n.Theme) {
 
 func (v *View) sessionLoadingOverlay(c *n.Context, t *n.Theme) {
 	s := v.sessionLoad
-	if s == nil || !s.shown || s.progress == 0 {
+	if s == nil || s.body == 0 && s.progress == 0 {
 		return
 	}
 	bottom := max(108, v.dockHeight) + 8
-	n.Column(c.Key("session-loading:" + s.session)).Absolute().Left(18).Right(18).Top(48).Bottom(bottom).Clip().AlignItems(n.Center).Justify(n.Center).Opacity(s.progress).Children(func() {
+	n.Column(c.Key("session-loading:" + s.session)).Absolute().Left(18).Right(18).Top(48).Bottom(bottom).Clip().AlignItems(n.Center).Justify(n.Center).Children(func() {
 		if s.error != "" {
-			n.Column(c).AlignItems(n.Center).Gap(12).Children(func() {
+			n.Column(c).AlignItems(n.Center).Gap(12).Opacity(s.progress).Children(func() {
 				label := "未能读取会话"
 				if !v.Model.Connected {
 					label = "设备连接已断开"
@@ -194,12 +216,17 @@ func (v *View) sessionLoadingOverlay(c *n.Context, t *n.Theme) {
 			return
 		}
 		n.Column(c).FillWidth().MaxWidth(560).AlignItems(n.Center).Gap(24).Children(func() {
-			n.Column(c).AlignItems(n.Center).Gap(8).Children(func() {
+			// Reserve the curve and label before their delayed entrance, so the
+			// immediately visible skeleton keeps the same position throughout.
+			n.Column(c).Height(168 + 8 + 20).AlignItems(n.Center).Gap(8).Opacity(s.progress).Children(func() {
+				if s.progress == 0 {
+					return
+				}
 				v.sessionLoadingCurve(c, t, s)
 				label := n.Text(c, "正在读取会话").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 				shimmer(c, label, t.TextMuted, t.Text, s.started.Add(sessionLoadingDelay))
 			})
-			n.Column(c).FillWidth().PaddingX(8).Gap(12).Role(n.RoleNone).Label("会话正文加载骨架").Children(func() {
+			n.Column(c).FillWidth().PaddingX(8).Gap(12).Role(n.RoleNone).Label("会话正文加载骨架").Opacity(s.body).Children(func() {
 				ink := t.Border.Alpha(.65)
 				if t.Dark {
 					ink = t.Border.Alpha(.5)

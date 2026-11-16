@@ -6,10 +6,12 @@
 
 - 使用 [Math Curve Loaders 的 Rose Curve](https://paidax01.github.io/math-curve-loaders/) 五瓣曲线。图形槽位为 168 DIP，轨迹周期为 6.4 秒；保留参考的 78 粒子渐隐尾迹，旋转与轻微胀缩按相同比例放慢。
 - 视觉组合位于标题栏与底部面板之间，因底部发送框预留而自然偏上。曲线上方不放消息骨架，下方保留少量静态正文骨架。
-- 等待 200 ms 后，曲线、带灰阶扫光的“正在读取会话”、正文骨架与底部发送框骨架同步以 120 ms 原地淡入。
-- 真实内容就绪后，读取组合以 120 ms 原地淡出；正文接替，发送框骨架用 180 ms 淡出，内部内容在随后 240 ms 内原地渐显。所有这些交接均无上下位移。
+- 切换到无历史缓存的会话后，正文骨架与底部发送框骨架立即以 120 ms 原地淡入，使用与加载组合退出相同的缓动。只有曲线与带灰阶扫光的“正在读取会话”延迟 200 ms，再以 120 ms 原地淡入；预留它们的空间，骨架不随曲线出现而移动。
+- 首次读取在 200 ms 内完成时，正文与输入框内容立即开始渐显，骨架从当前透明度同步用 120 ms 淡出，不等待加载组合退出；输入框随内容开始显示即可使用。已有权威历史缓存直接展示。
+- 等待达到 200 ms 的读取在内容就绪后，读取组合以 120 ms 原地淡出；正文接替，发送框骨架用 180 ms 淡出，内部内容在随后 240 ms 内原地渐显。所有这些交接均无上下位移。
+- 若读取在骨架或曲线淡入途中完成，从当前透明度继续退出，不跳到全亮；未出现的曲线与文字不补播。已有权威历史缓存仍直接展示。
 - 发送框沿用真实原生编辑器的测量、背景与边框，骨架只覆盖内容，因此长草稿、附件和队列的实际空间不会因交接而跳动。加载时保留原草稿与编辑器身份，但尚未显示的控件不接纳输入。
-- Reduce Motion 使用静态五瓣曲线与普通文字，不运行粒子、旋转、胀缩或扫光；内容就绪后直接交接。
+- Reduce Motion 立即显示静态骨架，200 ms 后使用静态五瓣曲线与普通文字，不运行粒子、旋转、胀缩或扫光；内容就绪后直接交接。
 
 ## 状态边界
 
@@ -28,6 +30,13 @@ SHIOJI_SESSION_LOADING_CAPTURE="$PWD/docs/research/session-loading-2026-11-16" \
 
 这些本地证据保留在忽略的研究目录中，不替代真实远程设备的网络性能测量，也不会安装或重启现有 App、worker 或 Tailnet 服务。
 
+切换入口的逐帧回归位于 `internal/ui/session_loading_entry_test.go`，覆盖亮暗模式、Reduce Motion、骨架立即渐显、延迟曲线不改变骨架位置、快速返回不等待退出，以及读取在两种入场动画中完成时的像素连续性。以下命令重放生产原生视图：先显示已有会话 250 ms，再切换目标会话，分别在瞬时、约 50、250、1000 ms 返回历史，每段采集 150 帧／2.5 秒：
+
+```sh
+SHIOJI_SESSION_LOADING_ENTRY_CAPTURE="$PWD/docs/research/session-loading-entry/fast-after" \
+  env -u GOROOT go test ./internal/ui -run '^TestSessionLoadingEntryNativeRecording$' -count=1
+```
+
 ## 本轮验证
 
 - `env -u GOROOT go test ./cmd/... ./internal/...`：本轮完整运行通过，包括原生 UI 与 worker。下述后续并行改动不包含在这次编译快照中。
@@ -39,3 +48,26 @@ SHIOJI_SESSION_LOADING_CAPTURE="$PWD/docs/research/session-loading-2026-11-16" \
 - `go test -race ./internal/ui ./internal/app -run '^(TestSessionLoading|TestLegacyHistory|TestLatestHistoryReadUsesOneIndependentCancellableRequest|TestOpeningShortSession)' -count=1 -timeout=5m`：通过；原生加载、旧协议读取、独立历史连接与短历史入口均完成竞态检查。
 - 共享工作区随后出现滚动布局的并行改动：`TestPagedHistoryPrefetchesBeforeReachingTheEdge/newer=true` 在普通及竞态运行中报告缺少 `session.history` 请求。通过 Go overlay 禁用本轮加载接入后仍同样失败，隔离证据保留在 `.ryugi/audits/session-loading/parallel-isolation/`；没有覆盖并行工作的滚动实现。
 - 局域网 HTTP 下已核对外层画板、嵌入内容、两个原生视频的独立播放及失败／Reduce Motion 截图；控制台和 `pageerror` 无错误，HTTP UUID 补丁在当前实际服务版本上重新安装。
+
+## 2026-11-17 入口骨架修订
+
+- 先在旧实现运行新增入口回归，复现切换 40 ms 后没有正文骨架，以及读取在 40／240 ms 完成时发送框透明度跳变；随后修改显示时序。修改前后均通过生产 MyGo 视图及确定性历史回执录制，不是安装中 App 的远程性能测量。
+- 当前合并源码的 `env -u GOROOT go test ./internal/ui -run '^(TestSessionLoading|TestInitialHistoryWaitsForReadDespiteLiveTail)' -count=1` 通过（12.760 s），同范围 `-race -timeout=3m` 通过（65.187 s）。覆盖原有加载边界、新增入口、位置、像素连续性，以及另一项修复的首次历史读取／实时尾部边界；录制和构建也已按该合并源码刷新。
+- `env -u GOROOT go vet ./internal/ui ./internal/app`、`python3 scripts/verify-design-freeze.py --repository` 与 `git diff --check` 通过。
+- `env -u GOROOT go build -o build/session-loading-entry/shioji ./cmd/shioji` 通过；本次验证未覆盖或启动现有 App。
+- 亮暗模式的 60 fps 前后对比保留在 `docs/research/session-loading-entry/comparison-light.mp4` 和 `comparison-dark.mp4`：左侧为修改前，右侧为修改后，依次在约 50、250、600 ms 返回历史。原始逐帧 PNG 位于同目录 `before/` 与 `after/`。
+- 全量 `env -u GOROOT go test ./cmd/... ./internal/...` 已结束：原生 UI 包通过（425.958 s），worker 包通过（239.719 s）；唯一报告失败为 `TestSignedWorkerUpdateKeepsIdentityAndCapturesRunningBuild`（`automatic update did not reconnect`），因此全量退出码为 1。该 worker 升级链路未纳入本次修改。完整输出保留在 `.ryugi/audits/session-loading-entry/tests.log`，不将相关加载回归通过写成全量通过。
+
+## 快速读取与半速录制
+
+- 将 200 ms 内完成的读取从完整退出序列分离：正文和输入框不再等待退出；骨架与真实内容同时交接，120 ms 内完成，保持淡入途中返回时的像素连续性。发送框外框继续渐显时，按其实际透明度计算骨架透明度，避免骨架在退出时反而变亮。
+- `TestSessionLoadingFastReadDoesNotWaitForSkeletonExit` 覆盖瞬时、16、50、150、199 ms 返回后的正文透明度、输入可用性和完成时限；移除快速分支的 Go overlay 在 50／150／199 ms 分支失败，当前实现的 `go test ./internal/ui -run '^TestSessionLoading' -count=1` 通过。
+- 修改前后的生产原生视图帧分别保留在 `docs/research/session-loading-entry/fast-before/` 与 `fast-after/`。当前 App 没有替换，录制使用确定性历史回执，不是远程网络速度测量。
+- `half-speed/instant.mp4`、`fast-50ms.mp4`、`medium-250ms.mp4`、`slow-1000ms.mp4` 均为修改后的 0.5 倍速录制，左亮右暗；每段保留全部 150 帧，以 30 fps 播放 5 秒。已检查帧数、时长并完整解码四段视频。
+- 当前快速分支的加载态相关回归通过（2.273 s）；加载态与首次历史／实时尾部交界的竞态回归通过（72.371 s）。原生客户端构建、`go vet ./internal/ui ./internal/app`、仓库冻结稿校验与本次 diff 检查通过。
+- 本次快速分支修改后的完整 `env -u GOROOT go test ./cmd/... ./internal/...` 已结束：UI 包通过（350.188 s），执行服务命令包通过；worker 包的 `TestSupervisedStartupArchivesHistoricalPartialFenceWithoutLosingReceipt` 失败，报告历史 partial fence 仍阻止固定服务启动，因此全量退出码为 1。该升级迁移链路未在本次修改中调整；输出保留在 `.ryugi/audits/session-loading-fast/tests.log`。本次验证未替换当前 App。
+
+## 提交范围验证
+
+- 干净检出只带入本次加载态实现、入口回归和本文档 3 个文件，未带入共享工作区的 `Uncached` 判断及 worker 升级改造。客户端构建、UI／app 静态检查、冻结稿与依赖声明校验通过。
+- `env -u GOROOT go test -timeout 20m ./...` 已覆盖全部包；首次只有 4 项 Mermaid UI 测试因干净检出未准备图表运行时失败，其余测试通过。按 CI 的 `python3 scripts/bundle-diagram.py` 准备运行时后，`go test ./internal/ui -run '^(TestMermaid|TestSessionLoading)' -count=1` 复验通过（4.877 s）。首次输出与复验输出分别保留在 `.ryugi/audits/session-loading-ship/tests.log`、`targeted-tests.log`，未将首次运行记录改写为全量通过。
