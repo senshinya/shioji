@@ -22,6 +22,7 @@ type attachmentPreview struct {
 	Attachment                              domain.Attachment
 	WorkspaceID                             string
 	LocalPath, SourceSessionID, SourceEpoch string
+	SourcePath                              string
 	presence                                previewPresence
 	Loading                                 bool
 	Image                                   n.ImageSource
@@ -72,6 +73,7 @@ func (p *attachmentPreview) measured() {
 	}
 }
 func (p *attachmentPreview) close() {
+	p.cancelMarkdown()
 	switch p.presence {
 	case previewOpening:
 		p.presence = previewClosingUnmeasured
@@ -516,7 +518,10 @@ func (v *View) openAttachment(a domain.Attachment, workspace string, source n.Re
 	if v.Controller == nil || v.StatePath == "" {
 		return
 	}
-	p := &attachmentPreview{Attachment: a, WorkspaceID: workspace, presence: previewOpening, Loading: true, Source: source}
+	if v.attachmentPreview != nil {
+		v.attachmentPreview.cancelMarkdown()
+	}
+	p := &attachmentPreview{Attachment: a, WorkspaceID: workspace, SourceSessionID: v.Model.SessionID, SourceEpoch: v.Model.ConnectionEpoch, presence: previewOpening, Loading: true, Source: source}
 	if len(origin) > 0 {
 		snapshot := origin[0]
 		p.Origin = &snapshot
@@ -565,7 +570,8 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 	if p == nil || !p.visible() {
 		return
 	}
-	if p.LocalPath != "" && (v.Model.SessionID != p.SourceSessionID || v.Model.ConnectionEpoch != p.SourceEpoch || v.parent != nil && v.parent.Model.SecondarySessionID != p.SourceSessionID) {
+	if (p.LocalPath != "" || p.SourceSessionID != "") && (v.Model.SessionID != p.SourceSessionID || v.Model.ConnectionEpoch != p.SourceEpoch || v.parent != nil && v.parent.Model.SecondarySessionID != p.SourceSessionID) {
+		p.cancelMarkdown()
 		p.presence = previewHidden
 		return
 	}

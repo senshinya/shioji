@@ -2,6 +2,8 @@ package ui
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"mime"
@@ -101,6 +103,9 @@ func (v *View) startFileLink(source domain.Session, path string, services n.Serv
 	v.startLinkResource(source, path, services, fileLinkPreview)
 }
 func (v *View) startLinkResource(source domain.Session, path string, services n.Services, action fileLinkAction) {
+	if v.attachmentPreview != nil {
+		v.attachmentPreview.close()
+	}
 	v.cancelFileLink()
 	s := &fileLinkState{action: action, session: source.ID, workspace: source.WorkspaceID, epoch: v.Model.ConnectionEpoch, path: path, loading: true, services: services}
 	v.fileLink = s
@@ -175,7 +180,7 @@ func prepareLinkedPreview(result app.LinkedFile, workspace, session, epoch strin
 	if systemFilePreview(result.Path) && !strings.HasPrefix(meta.MIME, "image/") {
 		return nil, nil
 	}
-	if meta.Size <= 0 || meta.Size > 8<<20 {
+	if meta.Size < 0 || meta.Size > 8<<20 {
 		return nil, nil
 	}
 	data, err := os.ReadFile(result.Path)
@@ -183,13 +188,18 @@ func prepareLinkedPreview(result app.LinkedFile, workspace, session, epoch strin
 		return nil, err
 	}
 	a, err := attachments.Describe(meta.Name, data)
+	if len(data) == 0 && markdownFileName(meta.Name) {
+		hash := sha256.Sum256(data)
+		a = domain.Attachment{ID: domain.NewID(), Name: meta.Name, MIME: "text/plain", SHA256: hex.EncodeToString(hash[:])}
+		err = nil
+	}
 	if err != nil {
 		return nil, nil
 	}
 	if a.SHA256 != result.SHA256 || a.Size != meta.Size {
 		return nil, errors.New("文件副本已改变，请重新打开")
 	}
-	p := &attachmentPreview{Attachment: a, WorkspaceID: workspace, LocalPath: result.Path, SourceSessionID: session, SourceEpoch: epoch, presence: previewOpening}
+	p := &attachmentPreview{Attachment: a, WorkspaceID: workspace, LocalPath: result.Path, SourcePath: meta.Path, SourceSessionID: session, SourceEpoch: epoch, presence: previewOpening}
 	if strings.HasPrefix(a.MIME, "image/") {
 		p.LoadedImage, err = decodeAttachmentImage(result.Path, 1600)
 	} else {

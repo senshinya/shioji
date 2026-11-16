@@ -113,6 +113,9 @@ func (v *View) retireSSHSetupTerminal() {
 func (v *View) CloseTransient() {
 	v.cancelPagedHistory()
 	v.cancelFileLink()
+	if v.attachmentPreview != nil {
+		v.attachmentPreview.cancelMarkdown()
+	}
 	if v.secondary != nil {
 		v.secondary.CloseTransient()
 	}

@@ -1,8 +1,14 @@
 package ui
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
+
+	"shioji/internal/domain"
 
 	n "github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
@@ -13,13 +19,19 @@ type markdownPreview struct {
 	mode    string
 	options markdown.Options
 	scroll  n.ScrollState
+	error   string
+	cancel  context.CancelFunc
 }
 
 func (p *attachmentPreview) isMarkdown() bool {
 	if strings.HasPrefix(p.Attachment.MIME, "image/") {
 		return false
 	}
-	switch strings.ToLower(filepath.Ext(p.Attachment.Name)) {
+	return markdownFileName(p.Attachment.Name)
+}
+
+func markdownFileName(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
 	case ".md", ".markdown":
 		return true
 	}
@@ -55,6 +67,10 @@ func (v *View) markdownPreviewContent(c *n.Context, t *n.Theme, p *attachmentPre
 	th.Headings[0] = markdown.HeadingStyle{Size: 26.0 / 14, Weight: 600, Top: 0, Bottom: 16.0 / 14}
 	th.Headings[1] = markdown.HeadingStyle{Size: 18.0 / 14, Weight: 600, Top: 2, Bottom: 10.0 / 14}
 	m.options.Theme = th
+	v.bindPreviewMarkdown(c, p)
+	if m.error != "" {
+		n.Text(c, m.error).FontSize(12).TextColor(t.TextMuted)
+	}
 	n.Column(c.Key("markdown-body")).FillWidth().Height(height).Children(func() {
 		index := 0
 		if m.mode == "source" {
@@ -76,4 +92,128 @@ func (v *View) markdownPreviewContent(c *n.Context, t *n.Theme, p *attachmentPre
 			})
 		}, false)
 	})
+}
+
+func (p *attachmentPreview) cancelMarkdown() {
+	if p.Markdown != nil && p.Markdown.cancel != nil {
+		p.Markdown.cancel()
+		p.Markdown.cancel = nil
+	}
+}
+
+// Paths remain device paths. Only the authenticated worker may open them.
+func (p *attachmentPreview) markdownPath(dest string) (string, error) {
+	path, err := fileLinkPath(dest)
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(path) {
+		if !filepath.IsAbs(p.SourcePath) {
+			return "", errors.New("附件没有原始目录，无法解析相对路径")
+		}
+		path = filepath.Join(filepath.Dir(p.SourcePath), path)
+	}
+	return path, nil
+}
+
+func (v *View) bindPreviewMarkdown(c *n.Context, p *attachmentPreview) {
+	m := p.Markdown
+	services := c.Services()
+	session := v.Model.Details[p.SourceSessionID].Session
+	m.options.OnLink = func(dest string) {
+		if n.SafeToOpen(dest) {
+			services.OpenURL(dest)
+			return
+		}
+		if strings.HasPrefix(dest, "#") {
+			m.options.Anchor = dest
+			m.options.AnchorVersion++
+			services.Invalidate()
+			return
+		}
+		path, err := p.markdownPath(dest)
+		if err == nil && session.ID == "" {
+			err = errors.New("当前文件没有所属会话，无法读取链接")
+		}
+		if err != nil {
+			m.error = err.Error()
+			services.Invalidate()
+			return
+		}
+		v.startFileLink(session, path, services)
+	}
+	menu := v.forwardLinkMenu(c, session)
+	m.options.LinkContextMenu = func(menuView *n.Menu, dest string) {
+		if menu == nil {
+			return
+		}
+		if !n.SafeToOpen(dest) && !strings.HasPrefix(dest, "#") {
+			path, err := p.markdownPath(dest)
+			if err != nil {
+				return
+			}
+			dest = path
+		}
+		menu(menuView, dest)
+	}
+	if m.options.LoadImage != nil || v.Controller == nil || v.StatePath == "" || session.ID == "" || !v.Model.Connected {
+		return
+	}
+	target, err := v.Model.AttachmentTarget(v.Controller.Directory, p.WorkspaceID)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancel = cancel
+	controller, directory := v.Controller, v.linkedFileDirectory()
+	// Match the existing preview cache's image count, with two transfers at a
+	// time. Each image is bounded by the attachment size and decoder limits.
+	var mu sync.Mutex
+	count := 0
+	slots := make(chan struct{}, 2)
+	m.options.LoadImage = func(dest string) (n.ImageSource, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		path, err := p.markdownPath(dest)
+		if err != nil {
+			return nil, err
+		}
+		mu.Lock()
+		if count >= 32 {
+			mu.Unlock()
+			return nil, errors.New("图片数量超出预览范围")
+		}
+		count++
+		mu.Unlock()
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		defer func() { <-slots }()
+		call, stop := context.WithTimeout(ctx, time.Minute)
+		defer stop()
+		routed := target
+		if target.SSH != nil {
+			ssh, e := controller.TailnetSSH(*target.SSH)
+			if e != nil {
+				return nil, e
+			}
+			routed.SSH = &ssh
+		}
+		result, err := routed.FetchFile(call, directory, session.ID, path, func(meta domain.FileResource, _ int64) {
+			if meta.Size > 8<<20 {
+				stop()
+			}
+		})
+		if err != nil {
+			return nil, err
+		}
+		image, err := decodeAttachmentImage(result.Path, 1600)
+		if call.Err() != nil {
+			return nil, call.Err()
+		}
+		return image, err
+	}
 }
