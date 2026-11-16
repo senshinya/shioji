@@ -334,7 +334,9 @@ func (v *View) View(c *n.Context) {
 		v.selected = m.SessionID
 		v.selectedDevice = m.ConnectionID()
 		if state := v.lists[m.SessionID]; state != nil {
-			state.ReleaseRow()
+			// Position cached history before its first visible layout. Waiting
+			// for the worker read exposes the previous visit's reading position.
+			state.ScrollToEnd()
 		}
 		m.FoldToolHistory[m.SessionID] = true
 		if v.Controller != nil {
@@ -513,7 +515,7 @@ func (v *View) View(c *n.Context) {
 		v.selected = m.SessionID
 		v.selectedDevice = m.ConnectionID()
 		if state := v.lists[m.SessionID]; state != nil {
-			state.ReleaseRow()
+			state.ScrollToEnd()
 		}
 		m.FoldToolHistory[m.SessionID] = true
 		if v.Controller != nil {
@@ -1285,6 +1287,18 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		if entry.footer != "" || entry.restarting || entry.preparing != "" {
 			bottom = 32
 		}
+		// A folded summary or automatic compaction takes the status's 24 DIP slot.
+		// Its 20 DIP line needs only the remaining leading, rather than an
+		// extra paragraph gap before the now-empty footer's reading clearance.
+		if entry.group != "" && entry.group == v.runningGroup && row < len(rows) && rows[row].footer == v.activityTurn && v.Model.ToolDisclosure(entry.group).Closed() && v.toolMotions[entry.group] == nil {
+			bottom = 24 - 20
+		}
+		if item.Presentation == "compaction" && row < len(rows) && rows[row].footer == item.TurnID && v.Model.Connected {
+			turn := turns[item.TurnID]
+			if turn.Status.Active() && v.runningActivity(turn).compaction == item.ID {
+				bottom = 24 - 20
+			}
+		}
 		// A user message begins a new reading block even when steering keeps
 		// the protocol turn identity. Match ordinary turn-to-user spacing.
 		if row < len(rows) && rows[row].item.Kind == "user" {
@@ -1451,6 +1465,31 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 	// entrance/height animation would clip the new dot and move it on screen.
 	if p := v.runningProgress; activity.compaction == "" && !waiting && state == "running" && p != nil && p.turn == turn.ID && p.handoff != nil {
 		frame.Height(24).Children(func() { v.runningStatus(c, t, turn) })
+		return
+	}
+	replacement := ""
+	if delegated && !waiting {
+		if activity.compaction != "" {
+			replacement = activity.compaction
+			if key := v.contextRowKeys[v.Model.WorkKey(v.Model.SessionID, replacement)]; key != "" {
+				replacement = key
+			}
+		} else if v.runningGroup != "" && v.activityTurn == turn.ID && v.Model.ToolDisclosure(v.runningGroup).Closed() && v.toolMotions[v.runningGroup] == nil {
+			replacement = v.runningGroup
+		}
+	}
+	if replacement != "" {
+		// The replacement summary already reveals its actual height. Give up
+		// the old slot on that same clock, so status ownership alone cannot
+		// change the transcript height or trigger bottom-follow scrolling.
+		remaining := float32(0)
+		if !v.reduceMotion && v.toolArrivals != nil {
+			if arrival := v.toolArrivals.motions[replacement]; arrival != nil {
+				progress, _ := arrival.sample(c.Now())
+				remaining = 1 - progress
+			}
+		}
+		frame.Height(frame.Jump("height", 24*remaining))
 		return
 	}
 	animatedContentHeight(c, frame, !delegated && !waiting, 180*time.Millisecond, func() float32 {
