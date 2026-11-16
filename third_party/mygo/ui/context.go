@@ -117,6 +117,7 @@ func (c *context) reset(now time.Time, w, h float32) {
 	c.rt.building = 0
 	clear(c.rt.actions)
 	c.rt.actions = c.rt.actions[:0]
+	c.rt.windowScroll = nil
 	c.dirty = max(c.dirty, c.used)
 	c.used = 0
 	c.now = now

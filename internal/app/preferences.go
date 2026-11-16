@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"shioji/internal/domain"
 	"slices"
 )
@@ -12,6 +13,7 @@ type ClientPreferences struct {
 	ArchiveRetentionDays *int                     `json:"archiveRetentionDays,omitempty"`
 	Appearance           string                   `json:"appearance"`
 	InterfaceFont        string                   `json:"interfaceFont"`
+	InterfaceZoom        float32                  `json:"interfaceZoom"`
 	ReplySize            int                      `json:"replySize"`
 	CodeFont             string                   `json:"codeFont"`
 	ReduceMotion         bool                     `json:"reduceMotion"`
@@ -55,6 +57,9 @@ func DefaultShortcuts() ComposerShortcuts {
 }
 
 func (p ClientPreferences) Normalized() ClientPreferences {
+	if p.InterfaceZoom < .75 || p.InterfaceZoom > 1.5 || math.IsNaN(float64(p.InterfaceZoom)) {
+		p.InterfaceZoom = 1
+	}
 	if p.ArchiveRetentionDays == nil || !domain.ValidArchiveDays(*p.ArchiveRetentionDays) {
 		days := 30
 		p.ArchiveRetentionDays = &days

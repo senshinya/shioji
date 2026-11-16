@@ -88,6 +88,16 @@ type InputEvent struct {
 	Time time.Time
 }
 
+// OnScroll registers a window-wide scroll handler for this frame. It runs
+// before child handlers and scroll containers, including editors and popups.
+// Returning true consumes the event; false preserves normal scroll routing.
+// Coordinates and precise deltas use the content's zoomed DIPs.
+func (c *Context) OnScroll(fn func(InputEvent) bool) {
+	if raw := c.build(); raw != nil {
+		raw.rt.windowScroll = fn
+	}
+}
+
 // HandleInput has fn take the element's input as it comes, on the main
 // thread, before the next frame is built: keys, text and edit commands
 // while the element has the keyboard focus, the pointer pressed on it,

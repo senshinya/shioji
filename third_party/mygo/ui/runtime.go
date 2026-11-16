@@ -113,6 +113,7 @@ type engine struct {
 	focusFields     map[any]*focusField
 	refs            []*refState
 	actions         []action
+	windowScroll    func(InputEvent) bool
 	textInputClosed bool
 	view            func(*context)
 	host            host
@@ -1092,6 +1093,7 @@ func (rt *engine) close() {
 	rt.public.rt = nil
 	clear(rt.actions)
 	rt.actions = nil
+	rt.windowScroll = nil
 	rt.textInputClosed = true
 	if rt.drag != nil && rt.drag.native {
 		rt.host.cancelDataDrag()

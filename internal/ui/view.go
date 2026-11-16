@@ -28,6 +28,7 @@ type editBinding struct {
 }
 
 type View struct {
+	interfaceZoomToast               bool
 	globalSidebar                    *quickSidebar
 	portForward                      *portForwardDraft
 	devicePower                      map[string]*devicePowerUI
@@ -302,6 +303,7 @@ func (v *View) View(c *n.Context) {
 		}
 	}
 	m.Preferences = m.Preferences.Normalized()
+	v.syncInterfaceZoom(c)
 	c.ReduceMotion(m.Preferences.ReduceMotion)
 	v.services = c.Services()
 	v.viewportWidth, _ = c.Size()
@@ -967,7 +969,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 	if missing {
 		tip = cfg.Model + " 已不可用，请更换模型"
 	}
-	trigger := control(c).Height(28).MaxWidth(390).MinWidth(0).PaddingX(6).Radius(6).Label("运行配置").Tooltip(tip)
+	trigger := control(c).Height(28).MaxWidth(390).MinWidth(0).Shrink(1).PaddingX(6).Radius(6).Label("运行配置").Tooltip(tip)
 	modelColor := t.TextMuted
 	if missing {
 		modelColor = t.Danger
@@ -991,7 +993,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 			icons[at] = fastModeIcon
 			spans = append(spans, inlineIconSpan(text, font, 14, 6))
 		}
-		n.RichText(c, spans...).Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).SingleLine().TextColor(t.TextMuted).Label(summary).DrawObjects(func(p *n.Painter, at int, r n.Rect) {
+		n.RichText(c, spans...).MinWidth(0).FillWidth().Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).SingleLine().TextColor(t.TextMuted).Label(summary).DrawObjects(func(p *n.Painter, at int, r n.Rect) {
 			if at == 0 {
 				r.W = 20
 			} else {

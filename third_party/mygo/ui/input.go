@@ -495,6 +495,10 @@ func (rt *engine) pointerUp(button, clicks int) {
 }
 
 func (rt *engine) scroll(dx, dy float32, mods Modifiers, precise, momentum bool) {
+	if rt.windowScroll != nil && rt.windowScroll(InputEvent{Kind: InputScroll, X: rt.pointerX, Y: rt.pointerY, DX: dx, DY: dy, Mods: mods, Precise: precise, Momentum: momentum, Time: rt.now()}) {
+		rt.requestFrame()
+		return
+	}
 	chain := rt.appendHitChain(rt.chain[:0], rt.pointerX, rt.pointerY)
 	if rt.menu.drawn != nil {
 		inside := false
