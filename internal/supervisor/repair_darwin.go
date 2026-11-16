@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 	"shioji/internal/managedexec"
 	"shioji/internal/protocol"
+	"shioji/internal/store"
 	"time"
 )
 
-// beginRepair is the compatible installer's cold path, not a force-close flow.
-// It refuses a live writer or registered process and retains every old receipt.
-// Caller holds h.mu and the fixed control lease throughout admission.
+// Admission holds h.mu only for binding the operation and acquiring the
+// unchanged writer lease. Candidate I/O runs outside the control mutex.
 func (h *host) beginRepair(req Request) (Operation, error) {
 	refuse := func(message string) (Operation, error) {
 		return Operation{}, &protocol.RemoteError{Code: "notSent", Message: message}
@@ -25,7 +25,11 @@ func (h *host) beginRepair(req Request) (Operation, error) {
 	if err != nil {
 		return Operation{}, err
 	}
-	if req.DeviceID == "" || req.DeviceID != previous.DeviceID || !req.Input.Explicit || !safeID(req.Input.ID) {
+	device := previous.DeviceID
+	if device == "" {
+		device = h.health.DeviceID
+	}
+	if req.DeviceID == "" || req.DeviceID != device || !req.Input.Explicit || !safeID(req.Input.ID) {
 		return refuse("修复操作或设备身份未确认")
 	}
 	if existing, e := h.journal.load(req.Input.ID); e == nil {
@@ -44,100 +48,147 @@ func (h *host) beginRepair(req Request) (Operation, error) {
 		return Operation{}, err
 	}
 	writer := os.NewFile(uintptr(fd), "cold repair writer lease")
-	defer writer.Close()
 	if err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		writer.Close()
 		return refuse("原业务写入者仍在运行，请停止本产品后台服务或重启设备后重试")
 	}
+	op := Operation{Created: time.Now().UTC(), Input: req.Input, Phase: "preparing", Instance: h.instance, DeviceID: device, PreviousBuild: previous.Input.BuildID}
+	if op.PreviousBuild == "" {
+		op.PreviousBuild = h.health.BuildID
+	}
+	if err = h.journal.save(op); err != nil {
+		writer.Close()
+		return op, err
+	}
+	h.updating = true
+	h.updateID = op.Input.ID
+	ctx, cancel := context.WithTimeout(h.ctx, 8*time.Minute)
+	h.cancelUpdate = cancel
+	done := make(chan struct{})
+	h.updateDone = done
+	go func() { defer close(done); defer cancel(); defer writer.Close(); h.repair(ctx, op, writer) }()
+	return op, nil
+}
+
+func (h *host) repair(ctx context.Context, op Operation, writer *os.File) {
+	var candidate *child
+	prepare := func() error {
+		device, schema, err := store.ReadWorkerIdentity(ctx, h.options.Directory)
+		if err != nil {
+			return err
+		}
+		if device != op.DeviceID {
+			return errors.New("原业务库设备身份已变化，保留原件后使用兼容安装器修复")
+		}
+		if err = h.verifyRepairScopes(ctx); err != nil {
+			return err
+		}
+		path, build, err := h.options.Verify(ctx, op.Input.BuildID)
+		if err != nil {
+			return err
+		}
+		if build.BuildID != op.Input.BuildID || build.Lifecycle != 1 || build.Schema != schema {
+			return errors.New("候选与原业务库格式不兼容，请使用对应的兼容安装器")
+		}
+		if err = probeCandidate(ctx, h.options.Directory, path, build); err != nil {
+			return err
+		}
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		if err = SaveDrainIntent(h.options.Directory, DrainIntent{ID: op.Input.ID, Instance: "cold-repair", DeviceID: op.DeviceID}); err != nil {
+			return err
+		}
+		if err = h.phase(&op, "observing"); err != nil {
+			return err
+		}
+		if err = writer.Close(); err != nil {
+			return err
+		}
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		candidate, err = h.launch(path, build, true, op.Input.ID)
+		if err != nil {
+			return err
+		}
+		ready, err := h.ready(ctx, candidate, true)
+		if err != nil {
+			return err
+		}
+		if ready.DeviceID != op.DeviceID {
+			return errors.New("修复候选设备身份与原件不一致")
+		}
+		if err = h.options.Select(build.BuildID); err != nil {
+			return err
+		}
+		if err = h.phase(&op, "applied"); err != nil {
+			return err
+		}
+		return h.resume(ctx, candidate, op.Input.ID)
+	}
+	err := prepare()
+	if err != nil {
+		if candidate != nil {
+			err = errors.Join(err, h.stopExact(candidate, h.options.StopGrace))
+		}
+		op.Error = err.Error()
+		err = errors.Join(err, h.phase(&op, "blocked"))
+		_ = h.blockHealth(err)
+	}
+	h.mu.Lock()
+	h.blocked = err != nil
+	h.updating = false
+	h.updateID = ""
+	h.cancelUpdate = nil
+	if err == nil {
+		h.device = op.DeviceID
+		h.readyDone = true
+		h.health = serviceHealth{Phase: "ready", DeviceID: op.DeviceID, BuildID: candidate.build.BuildID, Schema: candidate.build.Schema}
+		if e := h.saveHealth(); e != nil {
+			h.blocked = true
+			h.health.Phase, h.health.Error = "blocked", e.Error()
+		}
+	}
+	h.mu.Unlock()
+	h.signalWake()
+}
+
+func (h *host) verifyRepairScopes(ctx context.Context) error {
 	for _, namespace := range []string{"executions", "title-executions"} {
 		directory := filepath.Join(h.options.Directory, namespace)
-		entries, e := os.ReadDir(directory)
-		if errors.Is(e, os.ErrNotExist) {
+		entries, err := os.ReadDir(directory)
+		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
-		if e != nil {
-			return Operation{}, e
+		if err != nil {
+			return err
 		}
-		manager, e := managedexec.New(directory, "")
-		if e != nil {
-			return Operation{}, e
+		manager, err := managedexec.New(directory, "")
+		if err != nil {
+			return err
 		}
 		for _, entry := range entries {
+			if err = ctx.Err(); err != nil {
+				return err
+			}
 			if !entry.IsDir() {
 				continue
 			}
 			scope, e := manager.Existing(entry.Name())
 			if e != nil {
-				return refuse("旧进程登记记录不可读取；请保留原件并用兼容安装器恢复一致备份")
+				return errors.New("旧进程登记记录不可读取；请保留原件并用兼容安装器恢复一致备份")
 			}
-			if scope != nil {
-				if e = scope.Fence(); e != nil {
-					return Operation{}, e
-				}
-				if e = scope.VerifyStopped(); e != nil {
-					return refuse("旧登记进程仍未退出，请重启执行设备后重试；不会按名称结束其他进程")
-				}
+			if scope == nil {
+				continue
 			}
-		}
-	}
-	path, build, err := h.options.Verify(h.ctx, req.Input.BuildID)
-	if err != nil {
-		return Operation{}, err
-	}
-	if build.Lifecycle != 1 {
-		return refuse("候选不支持当前固定服务协议")
-	}
-	if h.child != nil && build.Schema != h.child.build.Schema {
-		return refuse("候选存储格式不兼容，请使用对应的兼容安装器")
-	}
-	op := Operation{Created: time.Now().UTC(), Input: req.Input, Phase: "observing", Instance: h.instance, DeviceID: req.DeviceID, PreviousBuild: previous.Input.BuildID}
-	if err = SaveDrainIntent(h.options.Directory, DrainIntent{ID: op.Input.ID, Instance: "cold-repair", DeviceID: op.DeviceID}); err != nil {
-		return Operation{}, err
-	}
-	if err = h.journal.save(op); err != nil {
-		return op, err
-	}
-	if err = writer.Close(); err != nil {
-		return op, err
-	}
-	h.updating = true
-	ctx, cancel := context.WithCancel(h.ctx)
-	h.cancelUpdate = cancel
-	done := make(chan struct{})
-	h.updateDone = done
-	go func() {
-		defer close(done)
-		defer cancel()
-		candidate, e := h.launch(path, build, true, op.Input.ID)
-		if e == nil {
-			var ready Ready
-			ready, e = h.ready(ctx, candidate, true)
-			if e == nil && ready.DeviceID != op.DeviceID {
-				e = errors.New("修复候选设备身份与原件不一致")
+			if e = scope.Fence(); e != nil {
+				return e
+			}
+			if e = scope.VerifyStopped(); e != nil {
+				return errors.New("旧登记进程仍未退出，请重启执行设备后重试；不会按名称结束其他进程")
 			}
 		}
-		if e == nil {
-			e = h.options.Select(build.BuildID)
-		}
-		if e == nil {
-			e = h.phase(&op, "applied")
-		}
-		if e == nil {
-			e = h.resume(ctx, candidate, op.Input.ID)
-		}
-		if e != nil {
-			op.Error = e.Error()
-			_ = h.phase(&op, "blocked")
-		}
-		h.mu.Lock()
-		h.blocked = e != nil
-		h.updating = false
-		h.cancelUpdate = nil
-		if e == nil {
-			h.device = op.DeviceID
-			h.readyDone = true
-		}
-		h.mu.Unlock()
-		h.signalWake()
-	}()
-	return op, nil
+	}
+	return nil
 }

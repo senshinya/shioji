@@ -176,7 +176,11 @@ func (u workerUpgradeClient) observe(ctx context.Context, client *protocol.Clien
 	if err = u.save(r); err != nil {
 		return upgradeService(current, candidate, r), err
 	}
-	return upgradeService(current, candidate, r), nil
+	state := upgradeService(current, candidate, r)
+	if actual, e := query(""); e == nil && actual.DeviceID == u.device && actual.Phase == "blocked" {
+		state.Phase, state.Message = WorkerUpdateFailed, actual.Error
+	}
+	return state, nil
 }
 
 func (c *Controller) upgradeObserver(device string, known *domain.WorkerBuild) workerUpgradeClient {

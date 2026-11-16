@@ -162,6 +162,7 @@ func testHost(t *testing.T, oldMode, nextMode string, selectFailure bool) (strin
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
+	seedFixtureState(t, dir)
 	paths := map[string]string{}
 	for build, mode := range map[string]string{"old": oldMode, "next": nextMode} {
 		path := filepath.Join(dir, "fixture-"+build+mode)

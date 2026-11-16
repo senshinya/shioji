@@ -125,7 +125,17 @@ func run() error {
 		case "repair":
 			var input domain.WorkerReplacement
 			if e = json.NewDecoder(io.LimitReader(os.Stdin, 1<<20)).Decode(&input); e == nil {
-				op, e = supervisor.Call(ctx, dir, supervisor.Request{Action: "repair", DeviceID: *serviceDevice, Input: input})
+				if !input.Explicit {
+					return serviceReply(op, &protocol.RemoteError{Code: "notSent", Message: "冷修复需要明确更新操作"})
+				}
+				exe, executableErr := os.Executable()
+				e = executableErr
+				if e == nil {
+					e = transport.EnsureRepairControl(ctx, dir, exe, *binary, *serviceDevice)
+				}
+				if e == nil {
+					op, e = supervisor.Call(ctx, dir, supervisor.Request{Action: "repair", DeviceID: *serviceDevice, Input: input})
+				}
 			}
 		case "cancel":
 			op, e = supervisor.Query(ctx, dir, *serviceID)

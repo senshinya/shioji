@@ -24,6 +24,29 @@ func TestWaitingUpgradeNoticeUsesCurrentDeviceActions(t *testing.T) {
 	}
 }
 
+func TestDetachedCompletedUpgradeShowsCurrentServiceCircuitFailure(t *testing.T) {
+	u := workerUpgradeClient{directory: t.TempDir(), device: "device", knownBuild: &domain.WorkerBuild{BuildID: "next", Lifecycle: 1}}
+	in := domain.WorkerReplacement{ID: "completed", ExpectedBuildID: "old", BuildID: "next", Policy: "when-idle"}
+	if err := u.save(&workerUpgradeRecord{DeviceID: "device", Input: in}); err != nil {
+		t.Fatal(err)
+	}
+	u.control = func(_ context.Context, action, id string) (supervisor.Operation, error) {
+		op := supervisor.Operation{Input: in, DeviceID: "device", Phase: "applied"}
+		if id == "" {
+			op.Phase, op.Error = "blocked", "执行服务连续异常退出；可重试兼容安装"
+		}
+		return op, nil
+	}
+	state, err := u.observe(context.Background(), nil, &domain.WorkerBuild{BuildID: "next", Lifecycle: 1})
+	if err != nil || state.Phase != WorkerUpdateFailed || !strings.Contains(state.Message, "连续异常退出") {
+		t.Fatal("old completion hides current service failure", state, err)
+	}
+	r, err := u.load()
+	if err != nil || r.Operation.Phase != "applied" {
+		t.Fatal("health overlay rewrote immutable completion", r, err)
+	}
+}
+
 func TestWorkerUpgradeLostReceiptRestartQueriesSameOperation(t *testing.T) {
 	dir := t.TempDir()
 	var accepted domain.WorkerReplacement

@@ -14,6 +14,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/managedexec"
 	"shioji/internal/protocol"
+	"shioji/internal/store"
 	"sync"
 	"syscall"
 	"time"
@@ -37,6 +38,8 @@ type child struct {
 	err      error
 }
 type host struct {
+	health            serviceHealth
+	updateID          string
 	readyDone         bool
 	options           Options
 	journal           journal
@@ -120,6 +123,14 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 	h := &host{options: o, journal: journal{filepath.Join(o.Directory, "supervisor")}, instance: domain.NewID(), wake: make(chan struct{}, 1), ctx: ctx}
+	if err = h.loadHealth(); err != nil {
+		return err
+	}
+	identity, schema, identityErr := store.ReadWorkerIdentity(ctx, o.Directory)
+	if identityErr == nil {
+		h.device = identity
+		h.health.DeviceID, h.health.Schema = identity, schema
+	}
 	var recovered Operation
 	if o.LegacyInstall != nil {
 		recovered = o.LegacyInstall.Operation
@@ -132,7 +143,7 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 
-	h.blocked = recovered.Phase == "blocked"
+	h.blocked = recovered.Phase == "blocked" || h.health.Phase == "blocked"
 	go h.serve(listener)
 	if !h.blocked {
 		paused := recovered.Phase == "applied" || recovered.Phase == "rolled-back" || o.LegacyInstall != nil
@@ -140,6 +151,9 @@ func Run(ctx context.Context, o Options) error {
 		if paused {
 			opID = recovered.Input.ID
 		}
+		h.mu.Lock()
+		h.updateID = opID
+		h.mu.Unlock()
 		err = h.startSelected(o.InitialPath, paused, opID)
 		if err == nil && o.LegacyInstall != nil {
 			if h.device != recovered.DeviceID || h.child.build.BuildID != recovered.Input.BuildID {
@@ -163,21 +177,22 @@ func Run(ctx context.Context, o Options) error {
 			}
 		}
 		if err != nil {
-			if recovered.Input.ID == "" {
-				recovered = Operation{Input: domain.WorkerReplacement{ID: "startup-" + domain.NewID(), Policy: "when-idle"}, Created: time.Now().UTC()}
-			}
-			recovered.Phase = "blocked"
-			recovered.Error = err.Error()
-			h.blocked = true
-			if e := h.journal.save(recovered); e != nil {
+			if e := h.blockHealth(err); e != nil {
 				return errors.Join(err, e)
 			}
 		} else {
+			h.mu.Lock()
 			h.readyDone = true
+			h.updateID = ""
+			h.health.Phase, h.health.Error = "ready", ""
+			err = h.saveHealth()
+			h.mu.Unlock()
+			if err != nil {
+				return err
+			}
 		}
 	}
 
-	retries := 0
 	for {
 		h.mu.Lock()
 		c := h.child
@@ -218,12 +233,29 @@ func Run(ctx context.Context, o Options) error {
 			return nil
 		case <-h.wake:
 		case <-exited:
-			retries++
-			if retries > 3 {
-				h.mu.Lock()
-				h.blocked = true
+			h.mu.Lock()
+			// A source drained by a newly accepted update is an expected exit,
+			// even if this select began before that update was accepted.
+			if h.child != c || h.updating || h.blocked {
 				h.mu.Unlock()
-				fmt.Fprintln(os.Stderr, "shioji: execution service restart limit reached")
+				continue
+			}
+			h.readyDone = false
+			h.health.Attempts++
+			retries := h.health.Attempts
+			h.health.Phase = "restarting"
+			if retries > 3 {
+				h.health.Phase = "blocked"
+				h.health.Error = "执行服务连续异常退出，已停止自动重启；可重试兼容安装"
+				h.blocked = true
+			}
+			err = h.saveHealth()
+			h.mu.Unlock()
+			if err != nil {
+				_ = h.blockHealth(err)
+				continue
+			}
+			if retries > 3 {
 				continue
 			}
 			timer := time.NewTimer(time.Duration(1<<uint(retries-1)) * time.Second)
@@ -235,7 +267,16 @@ func Run(ctx context.Context, o Options) error {
 			}
 			// No unknown prompt is replayed; the worker reconciles accepted records.
 			if err = h.startSelected(o.InitialPath, false, ""); err != nil {
-				return err
+				_ = h.blockHealth(err)
+				continue
+			}
+			h.mu.Lock()
+			h.readyDone = true
+			h.health.Phase, h.health.Error = "ready", ""
+			err = h.saveHealth()
+			h.mu.Unlock()
+			if err != nil {
+				_ = h.blockHealth(err)
 			}
 		}
 	}
@@ -302,9 +343,15 @@ func (h *host) control(req Request) (Operation, error) {
 				op.SourcePID = h.child.cmd.Process.Pid
 			}
 		}
+		if err == nil && req.ID == "" && !h.updating && h.health.Phase == "blocked" {
+			op.Phase, op.Error = "blocked", h.health.Error
+			if op.DeviceID == "" {
+				op.DeviceID = h.health.DeviceID
+			}
+		}
 		// Applied is persisted before resume, but is published as complete only
 		// after the captured candidate actually opens acceptance.
-		if err == nil && (!h.readyDone || h.updating) && (op.Phase == "applied" || op.Phase == "rolled-back") {
+		if err == nil && h.updateID == op.Input.ID && h.updateID != "" && (!h.readyDone || h.updating) && (op.Phase == "applied" || op.Phase == "rolled-back") {
 			op.Phase = "observing"
 		}
 		return op, err
@@ -368,6 +415,7 @@ func (h *host) control(req Request) (Operation, error) {
 			return o, err
 		}
 		h.updating = true
+		h.updateID = o.Input.ID
 		ctx, cancel := context.WithCancel(h.ctx)
 		h.cancelUpdate = cancel
 		old := h.child
@@ -405,9 +453,6 @@ func (h *host) launch(path string, b domain.WorkerBuild, paused bool, op string)
 	if err := c.cmd.Start(); err != nil {
 		return nil, err
 	}
-	h.mu.Lock()
-	h.child = c
-	h.mu.Unlock()
 	list, err := managedexec.Processes()
 	if err == nil {
 		for _, p := range list {
@@ -418,6 +463,9 @@ func (h *host) launch(path string, b domain.WorkerBuild, paused bool, op string)
 		}
 	}
 	go func() { c.err = c.cmd.Wait(); close(c.done) }()
+	h.mu.Lock()
+	h.child = c
+	h.mu.Unlock()
 	if c.identity.Identity.PID == 0 {
 		return c, errors.New("started worker identity could not be observed")
 	}
@@ -465,6 +513,7 @@ func (h *host) startSelected(initial string, paused bool, op string) error {
 	h.mu.Lock()
 	h.child = c
 	h.device = ready.DeviceID
+	h.health.DeviceID, h.health.BuildID, h.health.Schema = ready.DeviceID, b.BuildID, b.Schema
 	h.mu.Unlock()
 	return nil
 }
@@ -545,6 +594,7 @@ func (h *host) update(ctx context.Context, o Operation, old *child) {
 		h.blocked = blocked
 		h.updating = false
 		h.cancelUpdate = nil
+		h.updateID = ""
 		h.mu.Unlock()
 		h.signalWake()
 	}
@@ -554,22 +604,7 @@ func (h *host) update(ctx context.Context, o Operation, old *child) {
 		err = errors.New("候选存储格式不兼容；需使用明确的数据迁移流程")
 	}
 	if err == nil {
-		dir, e := os.MkdirTemp(h.options.Directory, ".probe-")
-		if e != nil {
-			err = e
-		} else {
-			command := exec.CommandContext(prepare, path, "--probe", "--state-dir", dir)
-			command.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + dir, "TMPDIR=" + dir}
-			var data []byte
-			data, err = command.Output()
-			if err == nil {
-				var probe domain.WorkerBuild
-				if e = json.Unmarshal(data, &probe); e != nil || probe.BuildID != b.BuildID {
-					err = errors.New("isolated candidate probe did not match inspected build")
-				}
-			}
-			os.RemoveAll(dir)
-		}
+		err = probeCandidate(prepare, h.options.Directory, path, b)
 	}
 	if err == nil {
 		var backup domain.WorkerUpdateResult
@@ -699,8 +734,15 @@ waitForIdle:
 	}
 	h.mu.Lock()
 	h.updating = false
+	h.updateID = ""
 	h.cancelUpdate = nil
+	h.readyDone = true
+	h.health = serviceHealth{Phase: "ready", DeviceID: h.device, BuildID: h.child.build.BuildID, Schema: h.child.build.Schema}
+	err = h.saveHealth()
 	h.mu.Unlock()
+	if err != nil {
+		_ = h.blockHealth(err)
+	}
 	h.signalWake()
 }
 func (h *host) resume(ctx context.Context, c *child, id string) error {

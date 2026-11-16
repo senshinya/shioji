@@ -48,8 +48,8 @@ func TestWorkerUpgradeNativeRecording(t *testing.T) {
 			state.Message = "正在切换执行服务"
 			ui.Frame()
 		case 155:
-			state.Phase, state.OperationPhase = app.WorkerUpdateFailed, "rolled-back"
-			state.Message = "候选版本未就绪，已恢复原版本，可重试更新"
+			state.Phase, state.OperationPhase = app.WorkerUpdateFailed, "blocked"
+			state.Message = "执行服务连续异常退出，已停止自动重启；可重试兼容安装"
 			ui.Frame()
 		case 180:
 			saveNativeSkillImage(t, ui, "retry.png")

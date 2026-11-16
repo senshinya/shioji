@@ -110,6 +110,18 @@ func Query(ctx context.Context, directory, id string) (Operation, error) {
 	if err != nil {
 		return op, err
 	}
+	if id == "" {
+		var health serviceHealth
+		if e := readJSON(filepath.Join(directory, "supervisor", "health.json"), &health); e == nil && health.Phase == "blocked" {
+			op.Phase, op.Error = "blocked", health.Error
+			if op.DeviceID == "" {
+				op.DeviceID = health.DeviceID
+			}
+			return op, nil
+		} else if e != nil && !errors.Is(e, os.ErrNotExist) {
+			return op, e
+		}
+	}
 	if op.Phase == "applied" || op.Phase == "rolled-back" {
 		op.Phase = "observing"
 		op.Error = "服务控制尚未连接，正在核对是否已开放接纳"
