@@ -134,7 +134,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 					status = issue
 				}
 				animation := motionAnimation(c, 160*time.Millisecond)
-				n.Text(c.Key("activity-status"), status).SingleLine().Shrink(0).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
+				n.Text(c.Key("activity-status"), status).SingleLine().Shrink(0).FontSize(font.Size).FixedLineHeight(20).TextColor(t.TextMuted).
 					ContentTransition(n.ContentTransition{Animation: &animation}).Transition(metadataMotion)
 			}
 			if hasBody {

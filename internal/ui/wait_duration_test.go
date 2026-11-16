@@ -81,3 +81,68 @@ func TestWaitDurationStaysBesideHeading(t *testing.T) {
 		}
 	}
 }
+
+// Catch mixed-size status text and timeline glyphs centered on the line box
+// instead of the first line's visible text, including Retina rounding.
+func TestWaitTimelineUsesAlignedUniformTypography(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, scale := range []float32{1, 2} {
+			for _, name := range []string{"等待", "HHH", "等待 H"} {
+				for _, final := range []bool{false, true} {
+					t.Run(fmt.Sprintf("dark=%v/scale=%g/name=%s/final=%v", dark, scale, name, final), func(t *testing.T) {
+						v := New(layoutModel(), nil, "")
+						status := "running"
+						if final {
+							status = "completed"
+						}
+						item := domain.Item{ID: "wait", Kind: "tool", Presentation: "wait", Name: name, Status: status, Final: final, Parts: []domain.ContentPart{{Kind: "text", Label: "时长", Text: "30.0 秒"}}}
+						ui := n.NewTester(func(c *n.Context) {
+							theme := applyAppearance(c, v.Model.Preferences.Normalized())
+							n.Column(c).Fill().Background(theme.Background).Padding(20).Children(func() {
+								n.Column(c).FillWidth().PaddingStart(24).Children(func() {
+									v.toolTimelineItem(c, theme, transcriptRow{item: item})
+								})
+							})
+						}, 360, 72)
+						ui.SetDark(dark)
+						ui.SetScale(scale)
+						ui.Advance(time.Second)
+						saveNativeSkillImage(t, ui, fmt.Sprintf("wait-alignment-dark-%v-scale-%g-name-%s-final-%v.png", dark, scale, name, final))
+						caption, ok := ui.Find(activityStatus(status))
+						if !ok {
+							t.Fatal("missing wait status")
+						}
+						font := n.Font{Family: v.Model.Preferences.InterfaceFont, Size: 12}
+						width, _ := n.ShapeText(activityStatus(status), font, 0).Size()
+						if math.Abs(float64(caption.W-width)) > .5 {
+							t.Errorf("status does not share the heading's font size: width=%g want=%g", caption.W, width)
+						}
+						im := ui.Image()
+						bg := im.RGBAAt(0, 0)
+						center := func(box n.Rect) float64 {
+							top, bottom := im.Bounds().Max.Y, -1
+							for y := int(box.Y * scale); y < int((box.Y+box.H)*scale); y++ {
+								for x := int(box.X * scale); x < int((box.X+box.W)*scale); x++ {
+									p := im.RGBAAt(x, y)
+									if max(absChannel(p.R, bg.R), absChannel(p.G, bg.G), absChannel(p.B, bg.B)) > 30 {
+										top, bottom = min(top, y), max(bottom, y)
+									}
+								}
+							}
+							if bottom < 0 {
+								t.Fatal("missing native ink", box)
+							}
+							return float64(top+bottom) / (2 * float64(scale))
+						}
+						icon := n.Rect{X: 20, Y: 20, W: 16, H: 20}
+						titleWidth, _ := n.ShapeText(name, font, 0).Size()
+						title := n.Rect{X: 44, Y: 20, W: titleWidth, H: 20}
+						if delta := center(icon) - center(title); math.Abs(delta) > 1 {
+							t.Errorf("timeline icon is offset from title ink by %g DIP", delta)
+						}
+					})
+				}
+			}
+		}
+	}
+}

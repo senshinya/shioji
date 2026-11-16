@@ -536,13 +536,17 @@ var toolEndedIcon = svg("M18 10a8 8 0 1 1-16 0a8 8 0 0 1 16 0M6 10h8")
 
 func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow) {
 	icon := activityIcon(row.item.Presentation)
+	label := row.item.Name
+	font := n.Font{Family: t.Font, Size: 12, Weight: 400}
 	if commandItem(row.item) {
 		icon = commandActivityIcon(row.item.Name)
+		font.Family, font.Size = "Menlo", 11
 	}
 	if row.toolResult == "" {
 		v.item(c, t, row.item)
 	} else {
-		label := "已完成"
+		label = "已完成"
+		font.Family, font.Size = t.Font, 11
 		icon = toolCompleteIcon
 		if row.toolResult == "ended" {
 			label, icon = "调用结束", toolEndedIcon
@@ -550,7 +554,7 @@ func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow) {
 		n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 	}
 	// A small neutral mask interrupts the rail around each native glyph.
-	n.Column(c).Absolute().Left(0).Top(0).Size(16, 20).AlignItems(n.Center).Justify(n.Center).Background(t.Background).Children(func() {
-		n.Icon(c, icon).Size(14, 14).TextColor(t.TextMuted).Role(n.RoleNone)
+	n.Row(c).Absolute().Left(0).Top(0).Size(16, 20).AlignItems(n.Baseline).Justify(n.Center).Background(t.Background).Children(func() {
+		inlineSymbol(c, icon, label, font, 14, t.TextMuted)
 	})
 }
