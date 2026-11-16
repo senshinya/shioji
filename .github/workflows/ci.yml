@@ -20,7 +20,30 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
+      - name: Resolve Go cache directories
+        id: go-cache
+        run: |
+          {
+            echo "build=$(go env GOCACHE)"
+            echo "modules=$(go env GOMODCACHE)"
+            echo "arch=$(go env GOARCH)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Restore rolling Go cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ${{ steps.go-cache.outputs.modules }}
+            ${{ steps.go-cache.outputs.build }}
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/**/go.mod', 'third_party/**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/**/go.mod', 'third_party/**/go.sum') }}-
+            setup-go-${{ runner.os }}-${{ steps.go-cache.outputs.arch }}-
+      - name: Restore Swift permission bridge cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: build/native/permission-flow
+          key: swift-${{ runner.os }}-${{ runner.arch }}-xcode26.3-${{ hashFiles('native/permission-flow/**', 'third_party/permissionflow/**', 'scripts/bundle-permission-flow.py') }}
       - name: Install Codex integration-test dependency
         run: npm install --global @openai/codex@0.167.0
       - run: test "$(uname -m)" = arm64

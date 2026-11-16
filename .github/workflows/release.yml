@@ -19,6 +19,7 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: write
+      actions: read
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       RELEASE_TAG: ${{ github.event.release.tag_name }}
@@ -30,16 +31,46 @@ jobs:
           ref: ${{ github.event.release.tag_name || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Require successful main CI for this exact commit
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/require-successful-ci.py --repo "$GITHUB_REPOSITORY" --commit "$(git rev-parse HEAD)"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
+      - name: Resolve Go cache directories
+        id: go-cache
+        run: |
+          {
+            echo "build=$(go env GOCACHE)"
+            echo "modules=$(go env GOMODCACHE)"
+            echo "arch=$(go env GOARCH)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Restore rolling Go cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ${{ steps.go-cache.outputs.modules }}
+            ${{ steps.go-cache.outputs.build }}
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/**/go.mod', 'third_party/**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'third_party/**/go.mod', 'third_party/**/go.sum') }}-
+            setup-go-${{ runner.os }}-${{ steps.go-cache.outputs.arch }}-
+      - name: Restore Swift permission bridge cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: build/native/permission-flow
+          key: swift-${{ runner.os }}-${{ runner.arch }}-xcode26.3-${{ hashFiles('native/permission-flow/**', 'third_party/permissionflow/**', 'scripts/bundle-permission-flow.py') }}
       - name: Verify Swift toolchain and permission bridge
+        if: github.event_name != 'release'
         run: |
           xcodebuild -version
           swift --version
           swift test --package-path native/permission-flow --scratch-path build/native/permission-flow --force-resolved-versions
       - name: Install Codex integration-test dependency
+        if: github.event_name != 'release'
         run: npm install --global @openai/codex@0.167.0
       - name: Resolve and validate release version
         run: |
@@ -60,6 +91,10 @@ jobs:
           python3 scripts/generate-third-party-notices.py --check
           python3 -m unittest discover -s scripts -p 'test_*.py'
           bash scripts/scan-secrets.sh
+      - name: Run full validation for manual builds
+        if: github.event_name != 'release'
+        run: |
+          set -euo pipefail
           go test ./...
           (cd third_party/mygo && go test . ./plugins/updater ./plugins/updater/native)
       - name: Import signing identity and notarization credentials

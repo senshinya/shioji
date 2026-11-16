@@ -1,6 +1,6 @@
 # Shioji 发布
 
-当前版本：`v0.2.0`。`VERSION` 保存不带 `v` 的数字版本；两个 App bundle 的版本均由构建脚本写入。`dev.shioji.app`、`dev.shioji.runtime` 与现有服务身份保持不变。
+当前版本：`v0.3.0`。`VERSION` 保存不带 `v` 的数字版本；两个 App bundle 的版本均由构建脚本写入。`dev.shioji.app`、`dev.shioji.runtime` 与现有服务身份保持不变。
 
 ## 变更记录与发布说明
 
@@ -8,7 +8,9 @@
 
 使用 `Added`、`Changed`、`Deprecated`、`Removed`、`Fixed`、`Security` 分类，只保留有内容的分类；版本标题包含数字版本、UTC 发布日期和源码／比较链接。说明用户影响，排除本地产物、内部重构和纯测试调整。GitHub Release 正文复用对应版本条目，并补充该版安装与更新方式。修改历史说明保留原发布日期，不移动标签或替换已发布二进制。
 
-v0.2.0 增加设备负载、保持唤醒、全局快捷面板和 TCP 端口转发，并改善会话反馈、历史阅读和原生菜单。v0.1.0 及之后版本可通过 App 内更新；v0.0.1 没有自动更新入口，需要手动安装新版。设备负载、保持唤醒、端口转发与网页链接下载需配套更新所属设备的 worker；旧 worker 不提供这些能力。GUI 更新不自动升级远程 worker，也不停止独立执行服务或 Tailnet。端口转发当前仅传递 TCP 字节，不改写 HTTPS 证书、Host、Origin 或页面内绝对 URL；真实远程 SSH 与 Tailnet 对端的端到端验收仍待完成。
+v0.3.0 增加归档管理与到期清理、执行服务阻塞恢复及子 Agent 消息分页，并同步跨客户端的完成提醒状态。归档保留期默认 30 天，可在“外观 → 对话”设置为永不；到期只删除 Shioji 记录与自有资源，项目文件保留。新功能需配套更新所属设备的 worker；归档和维护保护使用 schema 12／13，不能自动降级到忽略这些保护的旧版。
+
+v0.1.0 及之后版本可通过 App 内更新；v0.0.1 没有自动更新入口，需要手动安装新版。设备负载、保持唤醒、端口转发与网页链接下载需配套更新所属设备的 worker；旧 worker 不提供这些能力。GUI 更新不自动升级远程 worker，也不停止独立执行服务或 Tailnet。端口转发当前仅传递 TCP 字节，不改写 HTTPS 证书、Host、Origin 或页面内绝对 URL；真实远程 SSH 与 Tailnet 对端的端到端验收仍待完成。
 
 ## 自动发布
 
@@ -16,6 +18,7 @@ GitHub 仓库：`senshinya/shioji`，本地 remote 为 `upstream`。`origin` 保
 
 - CI 在 push / pull request 上运行 Apple Silicon macOS 测试、设计冻结校验、第三方许可校验、源码及完整 Git 历史凭据扫描，并构建开发包。Codex CLI 0.167.0 仅作为 CI 的集成测试依赖安装，不包含在分发包中。
 - `.github/workflows/release.yml` 在 GitHub Release **published** 时触发。只推 tag 不触发生产发布。手动触发会构建所选 commit 的版本，上传到该次 Actions 的临时构建附件；不创建或修改 GitHub Release。
+- CI 按提交保存 Go 编译／测试缓存，并复用相同源码和 Xcode 版本的 Swift 权限桥缓存。正式 Release 必须先核对该精确提交在 `main` 上的最新 CI 已成功，才复用完整测试结论；没有通过、失败或查询不可用均停止发布。手动构建仍运行完整测试。Release 保留快速源码校验，重新构建并完成签名、公证和打包。
 - Tag 必须与 `VERSION` 对应。生产构建强制要求 Developer ID Application 签名、hardened runtime、Apple 接受公证以及 stapled tickets；没有降级到 ad-hoc / 未公证包的路径。
 - 先公证并 staple App，再生成全量自动更新归档，然后生成、公证并 staple DMG。正式版本将 DMG、校验文件与 `Shioji-<版本>-darwin-arm64-<SHA256>.tar.gz` 上传到原 Release，全部成功后最后上传 `update-darwin-arm64.json`。归档按内容摘要命名，同一 Release 重跑也保留旧清单对应的归档。不创建额外 Release。预发行仅上传 DMG 与校验文件，不向正式客户端发布更新清单。
 - 两处 worker 使用同一份已签名二进制，打包后 `cmp` 核验，避免安全时间戳引起相同版本的 BuildID 不同。
@@ -71,7 +74,7 @@ bash packaging/build-dev.sh
 # 指定本机已有 Developer ID identity 和 notarytool profile 后：
 # 另需 APPLE_TEAM_ID、SHIOJI_UPDATE_PUBLIC_KEY 与 SHIOJI_UPDATE_PRIVATE_KEY；
 # 私钥从安全文件/CI Secret 注入环境，不要写在命令参数或 shell 历史中。
-CODE_SIGN_IDENTITY='<证书指纹>' NOTARY_PROFILE='<本机公证配置名称>' RELEASE_TAG=v0.2.0 bash packaging/build-release.sh
+CODE_SIGN_IDENTITY='<证书指纹>' NOTARY_PROFILE='<本机公证配置名称>' RELEASE_TAG=v0.3.0 bash packaging/build-release.sh
 ```
 
 产物位于 `build/release/`。构建不会启动或替换用户正在运行的 GUI、worker 或 Tailnet 节点。
