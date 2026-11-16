@@ -342,7 +342,21 @@ func (v *View) progressStatus(c *n.Context, t *n.Theme, a runningActivity, p *ru
 		// Clip the text and its outgoing snapshot together while reclaiming
 		// width, keeping the adjacent clock on the same animation timeline.
 		shimmer(c, caption, t.TextMuted, t.Text, phase)
-		runningElapsed(c.Key("elapsed"), a.started, t.TextMuted, false)
+		clock, _ := runningElapsed(c.Key("elapsed"), a.started, t.TextMuted, false)
+		if clock.Valid() {
+			// A newly available clock enters at the settled caption, rather
+			// than flashing beside the outgoing long preparation label first.
+			// Once visible, phase changes keep moving the existing clock.
+			visible := n.Local(row, "clock-visible", func() bool { return false })
+			if math.Abs(float64(shown-extent.target)) < .5 {
+				*visible = true
+			}
+			alpha := float32(0)
+			if *visible {
+				alpha = 1
+			}
+			clock.Opacity(clock.AnimateTo("entrance", alpha, motionAnimation(c, 120*time.Millisecond)))
+		}
 	})
 }
 

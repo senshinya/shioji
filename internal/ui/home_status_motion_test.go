@@ -62,10 +62,11 @@ func TestHomeStatusHandoffKeepsPaintedStatus(t *testing.T) {
 					ack, _ := json.Marshal(domain.Operation{ID: in.OperationID, SessionID: session.ID, State: domain.OperationAccepted})
 					job.Apply(v.Model, ack, nil)
 				} else {
+					started := ui.Now()
 					session.Status = domain.ExecutionRunning
 					v.Model.Details[session.ID] = domain.SessionDetail{Session: session,
 						Items: []domain.Item{{ID: "input:" + in.OperationID, TurnID: "t", Kind: "user", Text: in.Text, Status: "sent", Final: true}},
-						Turns: []domain.Turn{{ID: "t", Status: domain.ExecutionRunning}}}
+						Turns: []domain.Turn{{ID: "t", Status: domain.ExecutionRunning, StartedAt: &started}}}
 					v.Model.ApplyOperation(domain.Operation{ID: in.OperationID, SessionID: session.ID, State: domain.OperationConfirmed})
 				}
 				ui.Frame()
@@ -91,6 +92,14 @@ func TestHomeStatusHandoffKeepsPaintedStatus(t *testing.T) {
 					t.Errorf("%s → %s replaces painted content immediately: delta=%d before=%d", stage.before, stage.after, delta, inkBefore)
 				}
 				if stage.after == "进行中" && !tt.reduce {
+					clock, ok := ui.Find("运行时长")
+					if !ok {
+						t.Fatal("authoritative running turn has no clock")
+					}
+					clockArea := image.Rect(int(clock.X), int(clock.Y), int(clock.X+clock.W), int(clock.Y+clock.H))
+					if ink := homeStatusInk(paintFirst, clockArea); ink > 100 {
+						t.Errorf("new clock flashes beside the outgoing preparation label: ink=%d", ink)
+					}
 					tail := image.Rect(int(before.X+before.W)-11, area.Min.Y, int(before.X+before.W), area.Max.Y)
 					oldTail := homeStatusInk(paintBefore, tail)
 					// Preserve the outgoing final glyph while the short label fades
@@ -104,6 +113,13 @@ func TestHomeStatusHandoffKeepsPaintedStatus(t *testing.T) {
 					}
 				}
 				settle()
+				if stage.after == "进行中" {
+					clock, ok := ui.Find("运行时长")
+					area := image.Rect(int(clock.X), int(clock.Y), int(clock.X+clock.W), int(clock.Y+clock.H))
+					if !ok || homeStatusInk(ui.Image(), area) < 500 {
+						t.Error("settled running status has no painted clock")
+					}
+				}
 			}
 			if !ui.Focused("消息输入") {
 				t.Fatal("status handoff lost composer focus")
