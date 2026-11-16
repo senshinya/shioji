@@ -251,10 +251,15 @@ func TestNewReplyInkFadesInWithoutFadingExistingText(t *testing.T) {
 		}
 		start := contrast(ui.Image(), r)
 		ui.Advance(40 * time.Millisecond)
-		middle := contrast(ui.Image(), r)
+		// The reply now reveals its actual height as well as its ink. Sample
+		// the current clip, then compare the same pixels after fading settles.
+		middleRect, _ := ui.Find("F")
+		middle := contrast(ui.Image(), middleRect)
 		ui.Advance(200 * time.Millisecond)
-		end := contrast(ui.Image(), r)
-		if !(start < middle && middle < end) {
+		endRect, _ := ui.Find("F")
+		end := contrast(ui.Image(), endRect)
+		settledMiddle := contrast(ui.Image(), middleRect)
+		if !(start < middle && middle < settledMiddle && settledMiddle <= end) {
 			t.Fatalf("new reply ink jumps instead of fading (dark=%v): %d -> %d -> %d", dark, start, middle, end)
 		}
 		if contrast(before, old) != contrast(ui.Image(), old) {

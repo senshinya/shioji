@@ -319,7 +319,9 @@ func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock
 				n.Text(c.Key("label"), label).FontSize(11).FixedLineHeight(20).SingleLine().Shrink(0).TextColor(color).
 					ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 			})
-			clock := n.Column(c.Key("clock")).Height(20).Shrink(0).Clip()
+			// An empty clock has no text baseline: exclude its box-bottom
+			// fallback from the shared text baseline when no time is known.
+			clock := n.Column(c.Key("clock")).Height(20).Shrink(0).AlignSelf(n.Start).Clip()
 			var elapsedWidth float32
 			clock.Children(func() {
 				if pulse {

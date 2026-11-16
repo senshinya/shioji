@@ -721,14 +721,21 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 			v.composerHeightUntil = c.Now().Add(360 * time.Millisecond)
 		}
 		heightFrame := n.Column(c.Key("composer-height:"+stackKey)).Label("消息编辑器").FillWidth().Clip().Background(bg).Border(1, t.Border).Radius(16).Shadow(0, 4, 14, 0, n.RGBA(0, 0, 0, .04))
-		resize := c.Now().Before(v.composerHeightUntil) || editID != ""
+		queueResize := c.Now().Before(v.composerHeightUntil) || editID != ""
+		resize := queueResize || !c.Preferences().ReduceMotion
+		heightAnimation := motionAnimation(c, 180*time.Millisecond)
+		if queueResize {
+			heightAnimation = n.Animation{Duration: 360 * time.Millisecond, Ease: composerDescentEase}
+		}
 		// The attachment strip already animates its layout. Animate only the
 		// remaining editor height, then add this frame's strip height directly.
 		baseHeight := v.composerBaseHeight
 		shownHeight := baseHeight
 		if v.composerNaturalHeight > 0 {
 			if resize {
-				shownHeight = heightFrame.AnimateTo("composer-height", baseHeight, n.Animation{Duration: 360 * time.Millisecond, Ease: composerDescentEase})
+				// Animate the actual editor height so attached controls and dock
+				// contents move together when ordinary drafts wrap or shrink.
+				shownHeight = heightFrame.AnimateTo("composer-height", baseHeight, heightAnimation)
 			} else {
 				heightFrame.Jump("composer-height", baseHeight)
 			}

@@ -310,30 +310,38 @@ func (v *View) progressStatus(c *n.Context, t *n.Theme, a runningActivity, p *ru
 	color = row.AnimateColor("status-color", color, motionAnimation(c, 180*time.Millisecond))
 	row.Children(func() {
 		statusDot(c.Key("dot"), a.label, n.Font{Family: t.Font, Size: 11, Weight: 400}, color, running, phase)
-		text := n.Text(c.Key("activity-label"), a.label).FontSize(11).FixedLineHeight(20).SingleLine().TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
-		// The shimmer raster is bounded by this text box. Shrinking straight
-		// to the new label would clip the outgoing words before they fade.
 		width, _ := n.ShapeText(a.label, n.Font{Family: t.Font, Size: 11, Weight: 400}, 0).Size()
-		animation := motionAnimation(c, 180*time.Millisecond)
-		extent := n.Local(text, "label-extent", func() progressLabelExtent {
+		caption := n.Column(c.Key("activity-caption")).Height(20).Shrink(0).Clip()
+		extent := n.Local(caption, "label-extent", func() progressLabelExtent {
 			return progressLabelExtent{target: width, shown: width}
 		})
 		if extent.target != width {
-			extent.target, extent.release = width, c.Now().Add(animation.Duration)
-			extent.shown = max(extent.shown, width)
-			text.Jump("label-width", extent.shown)
+			extent.target = width
+			extent.release = time.Time{}
+			if width < extent.shown {
+				// Retain the outgoing words' raster until they have faded, then
+				// reclaim the slot. Growth can move the clock immediately.
+				extent.release = c.Now().Add(180 * time.Millisecond)
+			}
 		}
+		shown := width
 		if c.Preferences().ReduceMotion {
-			animation.Duration = 0
-		} else if c.Now().Before(extent.release) {
-			width = extent.shown
-			// Stay on the existing refresh cadence; an exact deadline timer
-			// would shift the shared dot/shimmer paint phase on label changes.
-			c.AnimationFrame()
+			caption.Jump("label-width", width)
+		} else {
+			if c.Now().Before(extent.release) {
+				width = max(width, extent.shown)
+				c.AnimationFrame()
+			}
+			shown = caption.AnimateTo("label-width", width, motionAnimation(c, 180*time.Millisecond))
 		}
-		extent.shown = text.AnimateTo("label-width", width, animation)
-		text.Width(extent.shown)
-		shimmer(c, text, t.TextMuted, t.Text, phase)
+		extent.shown = shown
+		caption.Width(shown).Children(func() {
+			n.Text(c.Key("activity-label"), a.label).FontSize(11).FixedLineHeight(20).SingleLine().Shrink(0).TextColor(t.TextMuted).
+				ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+		})
+		// Clip the text and its outgoing snapshot together while reclaiming
+		// width, keeping the adjacent clock on the same animation timeline.
+		shimmer(c, caption, t.TextMuted, t.Text, phase)
 		runningElapsed(c.Key("elapsed"), a.started, t.TextMuted, false)
 	})
 }

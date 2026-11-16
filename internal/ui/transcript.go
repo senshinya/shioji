@@ -397,7 +397,8 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 					w, _ := n.ShapeText(phase, font, 0).Size()
 					// Padding must leave with the slot; native layout cannot
 					// shrink a box below its remaining padding.
-					caption := n.Text(c.Key("group-phase"), phase).SingleLine().FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Padding(0, 0, 0, 6*extent).Clip().Opacity(alpha)
+					caption := n.Text(c.Key("group-phase"), phase).SingleLine().FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Padding(0, 0, 0, 6*extent).Clip().Opacity(alpha).
+						ContentTransition(n.ContentTransition{Animation: animationPointer(c, progressReclaimDuration)})
 					if handoff {
 						caption.Width(caption.Jump("phase-width", (w+6)*extent))
 					} else {

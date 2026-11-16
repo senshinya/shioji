@@ -144,6 +144,8 @@ func TestBottomDockReservesLatestReplyWithGrowingDraft(t *testing.T) {
 	test := native.NewTester(New(m, nil, "").View, 850, 600)
 	m.Drafts[m.DraftKey()] = strings.Repeat("A growing multiline draft\n", 12)
 	test.Frame()
+	// The editor height and bottom following now animate before settling.
+	test.Advance(2 * time.Second)
 	reply, ok := test.Find("Reply 39")
 	dock, _ := test.Find("会话底部面板")
 	send, sent := test.Find("发送")

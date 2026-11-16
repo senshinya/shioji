@@ -191,8 +191,14 @@ func animationPointer(c *n.Context, duration time.Duration) *n.Animation {
 // Animate the real height, not just painted bounds. Initial history mounts at
 // its measured height; subsequent changes and visibility use that same clock.
 func animatedContentHeight(c *n.Context, frame n.Element, visible bool, duration time.Duration, build func() float32) {
+	animatedContentHeightAtMount(c, frame, visible, visible, duration, build)
+}
+
+// Live replies enter from zero; history and virtual-row remounts establish
+// their measured baseline without replaying the content's entrance.
+func animatedContentHeightAtMount(c *n.Context, frame n.Element, visible, initiallyVisible bool, duration time.Duration, build func() float32) {
 	natural := n.Local(frame, "natural-height", func() float32 { return 0 })
-	baseline := n.Local(frame, "initially-visible", func() bool { return visible })
+	baseline := n.Local(frame, "initially-visible", func() bool { return initiallyVisible })
 	target := float32(0)
 	if visible {
 		target = *natural
@@ -201,7 +207,12 @@ func animatedContentHeight(c *n.Context, frame n.Element, visible bool, duration
 	if c.Preferences().ReduceMotion {
 		animation.Duration = 0
 	}
-	shown := frame.AnimateTo("height", target, animation)
+	shown := target
+	if duration <= 0 || c.Preferences().ReduceMotion {
+		frame.Jump("height", target)
+	} else {
+		shown = frame.AnimateTo("height", target, animation)
+	}
 	if *natural > 0 || !*baseline {
 		frame.Height(shown)
 	}

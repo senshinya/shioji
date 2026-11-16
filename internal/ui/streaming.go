@@ -139,8 +139,9 @@ func (v *View) requestSourceLabel(c *n.Context, t *n.Theme, item domain.Item, la
 
 func (v *View) assistantReply(c *n.Context, item domain.Item) {
 	v.md.DecorateRange = v.findDecoration(item, c.Theme().Dark)
-	root := n.Column(c.Key(item.ID)).FillWidth()
+	root := n.Column(c.Key(item.ID)).FillWidth().Clip()
 	stream := v.replyStreams[item.ID]
+	fresh := stream != nil && stream.live() && stream.fresh()
 	// Receive all deltas normally, but let the preceding receipt finish its
 	// entrance before mounting Markdown and starting its own reveal clock.
 	if stream != nil && stream.live() && !v.reduceMotion && c.Now().Before(stream.revealAfter) {
@@ -174,12 +175,20 @@ func (v *View) assistantReply(c *n.Context, item domain.Item) {
 	if v.reduceMotion || stream == nil || !stream.live() {
 		v.md.Reveal = &markdown.Reveal{Unit: markdown.AtOnce, Fade: -1}
 	}
-	root.Children(func() {
+	duration := 180 * time.Millisecond
+	if stream == nil || !stream.live() {
+		duration = 0
+	}
+	// The existing tool-to-prose handoff establishes the first reply's final
+	// slot before fading in its footer; do not add another entrance clock.
+	baseline := !fresh || v.runningProgress != nil && v.runningProgress.handoff != nil
+	animatedContentHeightAtMount(c, root, true, baseline, duration, func() float32 {
 		if streaming {
 			markdown.Stream(c.Key("body"), item.Text, &v.md).FillWidth().FontSize(float32(v.Model.Preferences.ReplySize))
 		} else {
 			markdown.View(c.Key("body"), item.Text, &v.md).FillWidth().FontSize(float32(v.Model.Preferences.ReplySize))
 		}
+		return 0
 	})
 }
 
