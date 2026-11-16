@@ -43,6 +43,8 @@ type deviceRecoveryRecord struct {
 	Service          string
 	ServiceSuspended bool
 	OwnerPaused      bool
+	SourceBinary     string
+	SourceDigest     string
 }
 
 func recoveryDirectory(dir string) (string, error) {
@@ -397,6 +399,7 @@ func StartDeviceRecovery(ctx context.Context, dir, binary string, in domain.Work
 	// Preserve the old owner's launch context in the child environment only;
 	// never persist it in operation or diagnostic records.
 	env := os.Environ()
+	r.SourceBinary = binary
 	if r.Snapshot.Owner.Identity.PID > 1 {
 		owner, e := transport.WorkerProcess(r.Snapshot.Owner.Identity.PID)
 		if e != nil {
@@ -409,9 +412,14 @@ func StartDeviceRecovery(ctx context.Context, dir, binary string, in domain.Work
 		if err != nil {
 			return none, err
 		}
+		r.SourceBinary = owner.Executable
 		if slices.Contains(owner.Arguments, "--managed-service") {
 			r.Service = fmt.Sprintf("gui/%d/dev.shioji.runtime.agent", os.Getuid())
 		}
+	}
+	r.SourceDigest, err = runtimebuild.Digest(r.SourceBinary)
+	if err != nil {
+		return none, err
 	}
 	if err = recoveryWrite(dir, in.ID, r); err != nil {
 		return none, err
@@ -485,7 +493,6 @@ func CancelDeviceRecovery(dir, id, device string) (domain.WorkerRecoveryOperatio
 // Called by the detached signed executable before the ordinary startup path.
 // It never requires the old worker's dispatcher or database mutex.
 func RunDeviceRecovery(ctx context.Context, config Config, id string) (server *Server, retErr error) {
-	serverCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	dir := config.Directory
@@ -653,25 +660,10 @@ func RunDeviceRecovery(ctx context.Context, config Config, id string) (server *S
 	if err != nil {
 		return nil, fmt.Errorf("尚未取得独占执行权：%w", err)
 	}
-	keep := false
-	defer func() {
-		if !keep {
-			owner.Close()
-		}
-	}()
-	db, err := store.Open(filepath.Join(dir, "state.sqlite"))
-	if err != nil {
+	defer owner.Close()
+	if err = pauseRecoveryDatabase(ctx, dir, r.Operation.DeviceID); err != nil {
 		return nil, err
 	}
-	if db.DeviceID() != r.Operation.DeviceID {
-		db.Close()
-		return nil, errors.New("恢复后的设备身份不一致")
-	}
-	if err = db.Recover(); err != nil {
-		db.Close()
-		return nil, err
-	}
-	db.Close()
 	if r.Input.Update {
 		// A consistent VACUUM INTO backup is made only after the owner exited.
 		r.Operation.Backup, _, err = backupLegacyDatabase(ctx, dir, "recovery-"+id, r.Operation.DeviceID)
@@ -703,33 +695,33 @@ func RunDeviceRecovery(ctx context.Context, config Config, id string) (server *S
 		phase("completed", "执行服务已恢复，待发消息保持暂停")
 		return nil, nil
 	}
-	if r.Input.Update && r.Input.BuildID != runtimebuild.Current().BuildID {
-		owner.Close()
-		binary, e := transport.StagedWorkerPath(dir, r.Input.BuildID)
-		if e != nil {
-			return nil, e
-		}
-		if _, e = transport.EnsureLocalWorker(ctx, dir, binary, ""); e != nil {
-			return nil, e
-		}
-		if err = verifyRecoveredWorker(ctx, dir, &r); err != nil {
+	owner.Close()
+	binary := r.SourceBinary
+	if r.Input.Update {
+		binary, err = transport.StagedWorkerPath(dir, r.Input.BuildID)
+		if err != nil {
 			return nil, err
 		}
-		phase("completed", "执行服务已恢复，待发消息保持暂停")
-		return nil, nil
 	}
-	config.legacyOwner = owner
-	server, err = New(serverCtx, config)
-	if err != nil {
+	if !r.Input.Update {
+		digest, e := runtimebuild.Digest(binary)
+		if e != nil || digest != r.SourceDigest {
+			return nil, errors.New("原执行服务构建已变化，请重新检查并选择恢复版本")
+		}
+		if e = exec.CommandContext(ctx, "/usr/bin/codesign", "--verify", "--strict", binary).Run(); e != nil {
+			return nil, errors.New("原执行服务签名无法验证")
+		}
+	}
+	if _, err = transport.EnsureLocalWorker(ctx, dir, binary, ""); err != nil {
 		return nil, err
 	}
-	keep = true
-	r.Operation.BuildID = server.build.BuildID
+	if err = verifyRecoveredWorker(ctx, dir, &r); err != nil {
+		return nil, err
+	}
 	if err = phase("completed", "执行服务已恢复，待发消息保持暂停"); err != nil {
-		server.Close()
 		return nil, err
 	}
-	return server, nil
+	return nil, nil
 }
 
 // The user authorized this owner and its complete execution environment. Capture
@@ -769,6 +761,50 @@ func expandRecoveryDescendants(r *deviceRecoveryRecord) error {
 		}
 	}
 	return nil
+}
+
+// The original build may predate the current schema. Quarantine only existing
+// neutral rows while holding the owner lease; never run current migrations just
+// to restart that build. Its ordinary startup will hydrate its own snapshots.
+func pauseRecoveryDatabase(ctx context.Context, dir, expected string) error {
+	db, err := sql.Open("sqlite", filepath.Join(dir, "state.sqlite"))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if _, err = db.ExecContext(ctx, "PRAGMA busy_timeout=3000"); err != nil {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var id string
+	if err = tx.QueryRowContext(ctx, "SELECT device_id FROM metadata LIMIT 1").Scan(&id); err != nil || id != expected {
+		return errors.New("恢复后的设备身份不一致")
+	}
+	queries := []struct{ table, query string }{
+		{"queues", `UPDATE queues SET body=json_set(body,'$.paused',json('true'),'$.reason','用户恢复执行服务，待发送消息保持暂停','$.revision',COALESCE(json_extract(body,'$.revision'),0)+1)`},
+		{"sessions", `UPDATE sessions SET body=json_set(body,'$.status','unknown','$.error','原执行服务已关闭，执行结果待核对','$.recovery',json('{"phase":"attention","canEnd":true,"message":"原执行服务已关闭，执行结果待核对"}'),'$.revision',COALESCE(json_extract(body,'$.revision'),0)+1) WHERE json_extract(body,'$.status') IN ('running','starting','unknown')`},
+		{"turns", `UPDATE turns SET body=json_set(body,'$.status','unknown','$.error','原执行服务已关闭，执行结果待核对') WHERE json_extract(body,'$.status')='running'`},
+		{"requests", `UPDATE requests SET body=json_set(body,'$.state','invalidated','$.revision',COALESCE(json_extract(body,'$.revision'),0)+1) WHERE json_extract(body,'$.state') IN ('pending','submitting')`},
+		{"operations", `UPDATE operations SET state='indeterminate',error='用户恢复执行服务，投递结果待核对' WHERE state IN ('accepted','dispatched')`},
+		{"title_jobs", `UPDATE title_jobs SET state='failed' WHERE state='running'`},
+		{"work_inputs", `UPDATE work_inputs SET body=json_set(body,'$.state','indeterminate','$.executionStopped',json('true')) WHERE json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate')`},
+	}
+	for _, q := range queries {
+		var exists bool
+		if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)", q.table).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			if _, err = tx.ExecContext(ctx, q.query); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
 }
 
 func verifyRecoveredWorker(ctx context.Context, dir string, r *deviceRecoveryRecord) error {

@@ -133,6 +133,10 @@ func (s *Server) managedStopProof(id string, source *domain.RecoveryHistory) err
 		return err
 	}
 	source.StoppedGeneration = scope.Generation
+	source.ExplicitlyStopped, err = scope.ExplicitStopProven()
+	if err != nil {
+		return err
+	}
 	source.ManagedStoppedTurns = map[string]bool{}
 	uncovered := map[string]bool{}
 	for marker, turn := range source.Inputs {

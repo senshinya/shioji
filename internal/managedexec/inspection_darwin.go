@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"time"
 
@@ -59,13 +60,15 @@ func ProcessState(p ProcessInfo) string {
 // The caller cannot terminate itself or its controlling chain. The independent
 // device helper additionally protects the actual Tailnet runtime identities.
 func ControlProcess(pid int) bool {
+	return pid <= 1 || controlProcessIDs()[pid]
+}
+func controlProcessIDs() map[int]bool {
+	protected := map[int]bool{}
 	for at, n := os.Getpid(), 0; at > 1 && n < 128; n++ {
-		if at == pid {
-			return true
-		}
+		protected[at] = true
 		p, err := unix.SysctlKinfoProc("kern.proc.pid", at)
 		if err != nil {
-			return false
+			break
 		}
 		next := int(p.Eproc.Ppid)
 		if next == at {
@@ -73,7 +76,7 @@ func ControlProcess(pid int) bool {
 		}
 		at = next
 	}
-	return pid <= 1
+	return protected
 }
 
 func SignalExact(p ProcessInfo, sig unix.Signal) error {
@@ -126,13 +129,14 @@ func (s *Scope) inspectExplicitMaintenance() (out MaintenanceObservation, err er
 		return out, err
 	}
 	owned := map[Identity]ProcessInfo{}
+	protected := controlProcessIDs()
 	var previous []ProcessInfo
 	path := filepath.Join(s.Directory, s.Generation, "observed-processes.json")
 	if err = readJSON(path, &previous); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return out, err
 	}
 	for _, p := range procs {
-		if ControlProcess(p.Identity.PID) {
+		if p.Identity.PID <= 1 || protected[p.Identity.PID] {
 			continue
 		}
 		for _, prior := range previous {
@@ -165,7 +169,7 @@ func (s *Scope) inspectExplicitMaintenance() (out MaintenanceObservation, err er
 	for changed := true; changed; {
 		changed = false
 		for _, p := range procs {
-			if _, ok := owned[p.Identity]; ok || ControlProcess(p.Identity.PID) {
+			if _, ok := owned[p.Identity]; ok || p.Identity.PID <= 1 || protected[p.Identity.PID] {
 				continue
 			}
 			for id := range owned {
@@ -185,8 +189,10 @@ func (s *Scope) inspectExplicitMaintenance() (out MaintenanceObservation, err er
 			out.Processes = append(out.Processes, MaintenanceProcess{Identity: actual.Identity, Name: actual.Name, UID: actual.UID, ParentPID: actual.ParentPID, Group: actual.Group, Evidence: actual.Evidence, Anchor: actual.Anchor})
 		}
 	}
-	if err = writeJSON(path, records); err != nil {
-		return out, err
+	if !slices.Equal(previous, records) {
+		if err = writeJSON(path, records); err != nil {
+			return out, err
+		}
 	}
 	b, _ := json.Marshal(struct {
 		Generation string
@@ -340,4 +346,27 @@ func (s *Scope) ObserveExplicitStop() error {
 	state.Active = false
 	state.Maintenance = false
 	return writeJSON(filepath.Join(s.Directory, "scope.json"), state)
+}
+
+func (s *Scope) ExplicitStopProven() (bool, error) {
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	state, err := s.load()
+	if err != nil {
+		return false, err
+	}
+	if state.Manual == nil || !state.Manual.Explicit {
+		return false, nil
+	}
+	if state.Active || !state.Manual.Accepted || (!state.Manual.NormalSent && !state.Manual.ForceSent) {
+		return false, ErrManualStillRunning
+	}
+	observation, err := s.inspectExplicitMaintenance()
+	if err != nil {
+		return false, err
+	}
+	if len(observation.Processes) > 0 {
+		return false, ErrManualStillRunning
+	}
+	return true, nil
 }

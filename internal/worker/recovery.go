@@ -158,6 +158,7 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 			return finish()
 		}
 	}
+	settleExplicitStoppedHistory(&source, in.Action == "end")
 	result.Tasks, result.CanStopTasks = s.recoveryTasks(d, source)
 	if err == nil && in.Action == "interrupt" {
 		for _, turn := range source.Turns {
@@ -207,11 +208,21 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	if (source.State == "active" || recoveryRunning(source)) && !source.Attached {
 		result.Status = "active"
 		result.Message = "旧轮仍在执行，暂时无法接回"
+		if source.ExplicitlyStopped {
+			result.Status = "unknown"
+			result.CanEnd = true
+			result.Message = "原运行环境已关闭，但源历史仍未确认结束；可确认结束旧轮记录后继续"
+		}
 		return finish()
 	}
 	if source.State == "failed" {
 		result.Message = "暂时无法确认线程状态，请稍后重新核对"
-		return finish()
+		result.CanEnd = source.ExplicitlyStopped
+		if !source.ExplicitlyStopped || in.Action != "end" {
+			return finish()
+		}
+		source.State = domain.SourceUnavailable
+		source.Available = false
 	}
 	if in.Action == "stop-tasks" {
 		if err != nil || !source.Available || source.Attached || source.State == "active" || recoveryRunning(source) || len(in.Targets) == 0 {
@@ -276,6 +287,33 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		result.Message = "已核对执行状态"
 	}
 	return finish()
+}
+
+// Runtime exit proves local execution stopped, never that input was completed.
+// Only covered turns may automatically become interrupted. The end action is
+// separate user consent to abandon an unconfirmed local record.
+func settleExplicitStoppedHistory(source *domain.RecoveryHistory, end bool) {
+	if !source.ExplicitlyStopped || source.Attached {
+		return
+	}
+	active := false
+	for i := range source.Turns {
+		turn := &source.Turns[i]
+		if turn.Status == "running" || turn.Status == "unknown" {
+			if source.ManagedStoppedTurns[turn.ID] {
+				turn.Status = "interrupted"
+				turn.Error = "用户关闭了原运行环境"
+			} else if end {
+				turn.Status = "abandoned"
+				turn.Error = "用户确认结束旧轮记录，原执行结果未确认"
+			} else {
+				active = true
+			}
+		}
+	}
+	if !active && source.State != domain.SourceFailed {
+		source.State = domain.SourceIdle
+	}
 }
 
 // Caller holds dispatchMu, shared with reconciliation. Accepted work belongs to

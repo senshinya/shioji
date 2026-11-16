@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -17,6 +18,8 @@ import (
 	"shioji/internal/protocol"
 	"shioji/internal/runtimebuild"
 	"shioji/internal/store"
+	"shioji/internal/transport"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -98,6 +101,16 @@ func deviceRecoveryFixture() bool {
 			}
 			go func(c net.Conn) { defer c.Close(); time.Sleep(time.Hour) }(c)
 		}
+		return true
+	}
+	if arg("--recovery-helper") == "" {
+		s, err := New(context.Background(), Config{Directory: dir, Harnesses: []harness.Adapter{memoryHarness{id: "memory"}}})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		defer s.Close()
+		s.Serve()
 		return true
 	}
 	return false
@@ -207,6 +220,10 @@ func TestDeviceRecoveryIndependentOfUnresponsiveWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { managedexec.SignalExact(p, unix.SIGKILL) })
+	image, err := transport.WorkerProcess(p.Identity.PID)
+	if err != nil || slices.Contains(image.Arguments, "--recovery-helper") {
+		t.Fatal("one-shot recovery remained the execution owner", image.Arguments, err)
+	}
 }
 
 func TestDeviceRecoveryRefusesRisklessAndStaleSelection(t *testing.T) {
@@ -245,5 +262,30 @@ func TestDeviceRecoveryAbandonedRunnerBecomesExplicitlyRetryable(t *testing.T) {
 	op, err := DeviceRecoveryStatus(dir, "accepted")
 	if err != nil || op.Active() || op.Phase != "partial" {
 		t.Fatal("missing runner left recovery permanently active", op, err)
+	}
+}
+
+func TestDeviceRecoveryDoesNotMigrateSchemaWhenRestartingOriginalBuild(t *testing.T) {
+	dir := t.TempDir()
+	db, err := store.Open(filepath.Join(dir, "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := db.DeviceID()
+	db.Close()
+	raw, err := sql.Open("sqlite", filepath.Join(dir, "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err = raw.Exec("PRAGMA user_version=12"); err != nil {
+		t.Fatal(err)
+	}
+	if err = pauseRecoveryDatabase(context.Background(), dir, id); err != nil {
+		t.Fatal(err)
+	}
+	var version int
+	if err = raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 12 {
+		t.Fatal("standalone restart migrated original worker's database", version, err)
 	}
 }

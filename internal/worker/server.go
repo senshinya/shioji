@@ -178,6 +178,8 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	s.build.Maintenance = config.ReplaceWorker != nil && config.VerifyReplacement != nil
 	s.build.ContextUsage = true
 	s.build.OutputFiles = true
+	s.build.RecoveryHelper = true
+	s.build.ForceRecovery = true
 	s.tools = map[string]recoveryToolProcess{}
 	s.titleWake = make(chan struct{}, 1)
 	s.runtimes = map[string]harness.Runtime{}
@@ -359,6 +361,8 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 	switch method {
 	case "worker.update.diagnose":
 		return s.diagnoseWorkerUpdate()
+	case "worker.processes.inspect":
+		return InspectDeviceRecovery(s.ctx, s.config.Directory, s.store.DeviceID())
 	case "worker.maintenance.apply", "worker.maintenance.cancel":
 		in, err := decode[domain.WorkerMaintenanceInput](body)
 		if err != nil {

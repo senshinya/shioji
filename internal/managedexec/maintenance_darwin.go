@@ -286,8 +286,23 @@ func (s *Scope) ForceManualStop(operation, action string) error {
 	if action == "" || state.Manual == nil || state.Manual.Operation != operation {
 		return errors.New("强制结束不属于已确认的处理范围")
 	}
-	if _, err = s.inspectMaintenance(); err != nil {
+	if state.Manual.Explicit {
+		_, err = s.inspectExplicitMaintenance()
+	} else {
+		_, err = s.inspectMaintenance()
+	}
+	if err != nil {
 		return err
+	}
+	if state.Manual.Explicit {
+		observation, e := s.inspectExplicitMaintenance()
+		if e != nil {
+			return e
+		}
+		state.Manual.Targets = nil
+		for _, p := range observation.Processes {
+			state.Manual.Targets = append(state.Manual.Targets, ProcessInfo{Identity: p.Identity, UID: p.UID, ParentPID: p.ParentPID, Group: p.Group, Name: p.Name, Evidence: p.Evidence, Anchor: p.Anchor})
+		}
 	}
 	if state.Manual.ForceAction == action {
 		return nil

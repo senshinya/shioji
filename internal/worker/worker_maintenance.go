@@ -25,7 +25,7 @@ func processSummaries(observation managedexec.MaintenanceObservation) []domain.W
 	var out []domain.WorkerProcessSummary
 	for _, p := range observation.Processes {
 		if !p.Infrastructure {
-			out = append(out, domain.WorkerProcessSummary{PID: p.Identity.PID, Name: p.Name})
+			out = append(out, domain.WorkerProcessSummary{PID: p.Identity.PID, Name: p.Name, StartedAt: time.Unix(p.Identity.Sec, int64(p.Identity.Usec)*1000).UTC(), Evidence: p.Evidence})
 		}
 	}
 	return out
@@ -131,6 +131,37 @@ func (s *Server) diagnoseWorkerUpdateLocked() (out domain.WorkerUpdateDiagnosis,
 		}
 	}
 	s.runtimeMu.RUnlock()
+	// Explicit process closure is independent of idle eligibility. A real live
+	// generation remains selectable even if it is busy or contains unregistered
+	// descendants; the client must confirm the actual scope before acceptance.
+	for _, session := range snapshot.Sessions {
+		scope, e := s.executions.Existing(session.ID)
+		if e != nil || scope == nil {
+			continue
+		}
+		observation, e := scope.InspectExplicitMaintenance()
+		if e != nil || len(observation.Processes) == 0 {
+			continue
+		}
+		index := -1
+		for i := range out.Blockers {
+			if out.Blockers[i].SessionID == session.ID {
+				index = i
+				break
+			}
+		}
+		state, e := s.store.MaintenanceSessionState(session.ID)
+		if e != nil {
+			continue
+		}
+		b := &domain.WorkerUpdateBlocker{ID: session.ID, Kind: domain.WorkerBlockerEnvironment, SessionID: session.ID, WorkspaceID: session.WorkspaceID, SessionName: session.Title, WorkspaceName: workspaces[session.WorkspaceID], HarnessID: session.HarnessID, Status: session.Status, Reason: "运行环境仍在保留，可明确确认关闭"}
+		if index >= 0 {
+			b = &out.Blockers[index]
+		}
+		b.ForceTarget = &domain.WorkerMaintenanceTarget{SessionID: session.ID, Generation: scope.Generation, ProcessRef: observation.Ref, Revision: state.Session.Revision, QueueRevision: state.Queue.Revision}
+		b.Processes = processSummaries(observation)
+		out.Environments = append(out.Environments, *b)
+	}
 	return out, nil
 }
 
@@ -151,7 +182,7 @@ func maintenanceReceipt(op domain.WorkerMaintenance, in domain.WorkerMaintenance
 	return false, nil
 }
 func validMaintenanceInput(s *Server, in domain.WorkerMaintenanceInput) error {
-	if in.ID == "" || len(in.ID) > 256 || in.ActionID == "" || len(in.ActionID) > 256 || in.DeviceID != s.store.DeviceID() || len(in.Targets) > 32 {
+	if in.ID == "" || len(in.ID) > 256 || in.ActionID == "" || len(in.ActionID) > 256 || in.DeviceID != s.store.DeviceID() || len(in.Targets) > 32 || len(in.ProcessRefs) > 128 {
 		return workNotSent(errors.New("设备或处理标识无效"))
 	}
 	return nil
@@ -178,17 +209,20 @@ func (s *Server) applyWorkerMaintenance(in domain.WorkerMaintenanceInput) (op do
 	} else if !errors.Is(e, sql.ErrNoRows) {
 		return op, e
 	}
-	if in.Action != "stop" || len(in.Targets) == 0 || s.ctx.Err() != nil {
+	explicit := in.Action == "close" || in.Action == "force-close"
+	if (in.Action != "stop" && !explicit) || len(in.Targets)+len(in.ProcessRefs) == 0 || s.ctx.Err() != nil {
 		return op, workNotSent(errors.New("缺少明确的后台环境选择"))
 	}
-	if s.config.VerifyReplacement == nil || s.config.ReplaceWorker == nil {
+	if !in.Standalone && (s.config.VerifyReplacement == nil || s.config.ReplaceWorker == nil) {
 		return op, harness.Unsupported("worker-maintenance")
 	}
-	if in.ExpectedBuildID != s.build.BuildID || in.BuildID == "" || in.BuildID == s.build.BuildID {
+	if in.ExpectedBuildID != s.build.BuildID || (!in.Standalone && (in.BuildID == "" || in.BuildID == s.build.BuildID)) {
 		return op, workNotSent(errors.New("执行服务版本已变化，请重新检查"))
 	}
-	if err = s.config.VerifyReplacement(s.ctx, domain.WorkerReplacement{ExpectedBuildID: in.ExpectedBuildID, BuildID: in.BuildID, Explicit: true}); err != nil {
-		return op, workNotSent(err)
+	if !in.Standalone {
+		if err = s.config.VerifyReplacement(s.ctx, domain.WorkerReplacement{ExpectedBuildID: in.ExpectedBuildID, BuildID: in.BuildID, Explicit: true}); err != nil {
+			return op, workNotSent(err)
+		}
 	}
 	diagnosis, err := s.diagnoseWorkerUpdateLocked()
 	if err != nil {
@@ -196,15 +230,43 @@ func (s *Server) applyWorkerMaintenance(in domain.WorkerMaintenanceInput) (op do
 	}
 	eligible := map[string]domain.WorkerUpdateBlocker{}
 	for _, b := range diagnosis.Blockers {
+		if explicit {
+			b.Target = b.ForceTarget
+		}
 		if b.Target != nil {
 			eligible[b.SessionID] = b
 		}
 	}
-	op = domain.WorkerMaintenance{ID: in.ID, DeviceID: in.DeviceID, ExpectedBuildID: in.ExpectedBuildID, BuildID: in.BuildID, Phase: domain.WorkerMaintenanceStopping, Actions: []domain.WorkerMaintenanceAction{{ID: in.ActionID, Digest: maintenanceDigest(in)}}}
+	if explicit {
+		for _, b := range diagnosis.Environments {
+			if b.ForceTarget != nil {
+				b.Target = b.ForceTarget
+				eligible[b.SessionID] = b
+			}
+		}
+	}
+	op = domain.WorkerMaintenance{Explicit: explicit, Force: in.Action == "force-close", Standalone: in.Standalone, ID: in.ID, DeviceID: in.DeviceID, ExpectedBuildID: in.ExpectedBuildID, BuildID: in.BuildID, Phase: domain.WorkerMaintenanceStopping, Actions: []domain.WorkerMaintenanceAction{{ID: in.ActionID, Digest: maintenanceDigest(in)}}}
+	if len(in.ProcessRefs) > 0 {
+		if !explicit {
+			return op, workNotSent(errors.New("独立进程需要明确关闭确认"))
+		}
+		op.ProcessPreviewRef = in.ProcessPreviewRef
+		op.Processes, err = s.maintenanceProcessSelection(in)
+		if err != nil {
+			return op, workNotSent(err)
+		}
+	}
 	for _, target := range in.Targets {
 		b, ok := eligible[target.SessionID]
 		if !ok || *b.Target != target {
 			return op, workNotSent(errors.New("会话或后台进程已变化，请重新检查并确认"))
+		}
+		if explicit && op.Force && !in.RiskAccepted {
+			for _, p := range b.Processes {
+				if p.Evidence == "observed" || p.Evidence == "recorded" || p.Evidence == "unknown" {
+					return op, workNotSent(errors.New("请确认未完整登记的后台工作可能被中断"))
+				}
+			}
 		}
 		op.Targets = append(op.Targets, domain.WorkerMaintenanceResult{Target: target, SessionName: b.SessionName, WorkspaceName: b.WorkspaceName, State: "stopping", Processes: b.Processes, ProcessRef: target.ProcessRef})
 	}
@@ -225,7 +287,20 @@ func (s *Server) applyWorkerMaintenance(in domain.WorkerMaintenanceInput) (op do
 		if scope == nil || scope.Generation != target.Generation {
 			return op, workNotSent(errors.New("运行环境已变化，请重新检查"))
 		}
-		restore, e := scope.BeginManualStop(in.ID, target.ProcessRef)
+		if explicit && !op.Force {
+			if runtime := s.currentRuntime(target.SessionID); runtime != nil {
+				support, ok := runtime.(harness.ManualShutdownRuntime)
+				if !ok || !support.ManualShutdownSafe() {
+					return op, workNotSent(errors.New("此环境不支持正常关闭，可明确确认强制关闭"))
+				}
+			}
+		}
+		var restore func() error
+		if explicit {
+			restore, e = scope.BeginExplicitStop(in.ID, target.ProcessRef, op.Force)
+		} else {
+			restore, e = scope.BeginManualStop(in.ID, target.ProcessRef)
+		}
 		if e != nil {
 			return op, workNotSent(e)
 		}
@@ -256,14 +331,16 @@ func (s *Server) applyWorkerMaintenance(in domain.WorkerMaintenanceInput) (op do
 }
 
 func (s *Server) forceWorkerMaintenanceLocked(op domain.WorkerMaintenance, in domain.WorkerMaintenanceInput) (domain.WorkerMaintenance, error) {
-	if op.Phase != domain.WorkerMaintenanceNeedsForce || op.Revision != in.Revision || in.DeviceID != op.DeviceID || len(in.Targets) == 0 || len(op.Actions) >= 64 {
+	if op.Phase != domain.WorkerMaintenanceNeedsForce || op.Revision != in.Revision || in.DeviceID != op.DeviceID || len(in.Targets)+len(in.ProcessRefs) == 0 || len(op.Actions) >= 64 {
 		return op, workNotSent(errors.New("处理状态已变化，请重新检查"))
 	}
-	if s.config.VerifyReplacement == nil {
+	if !op.Standalone && s.config.VerifyReplacement == nil {
 		return op, harness.Unsupported("worker-maintenance")
 	}
-	if err := s.config.VerifyReplacement(s.ctx, domain.WorkerReplacement{ExpectedBuildID: op.ExpectedBuildID, BuildID: op.BuildID, Explicit: true}); err != nil {
-		return op, workNotSent(err)
+	if !op.Standalone {
+		if err := s.config.VerifyReplacement(s.ctx, domain.WorkerReplacement{ExpectedBuildID: op.ExpectedBuildID, BuildID: op.BuildID, Explicit: true}); err != nil {
+			return op, workNotSent(err)
+		}
 	}
 	wanted := map[string]bool{}
 	for _, target := range in.Targets {
@@ -280,6 +357,9 @@ func (s *Server) forceWorkerMaintenanceLocked(op domain.WorkerMaintenance, in do
 			return op, workNotSent(errors.New("运行环境已变化"))
 		}
 		observation, err := scope.InspectMaintenance()
+		if op.Explicit {
+			observation, err = scope.InspectExplicitMaintenance()
+		}
 		if err != nil {
 			return op, workNotSent(err)
 		}
@@ -291,6 +371,20 @@ func (s *Server) forceWorkerMaintenanceLocked(op domain.WorkerMaintenance, in do
 	op.Phase = domain.WorkerMaintenanceStopping
 	op.StartedAt = time.Now().UTC()
 	op.Message = "正在强制结束已确认的环境"
+	op.Force = true
+	for _, ref := range in.ProcessRefs {
+		found := false
+		for i := range op.Processes {
+			if op.Processes[i].Process.Ref == ref && op.Processes[i].State == "awaitingForce" {
+				found = true
+				op.Processes[i].State = "stopping"
+				op.Processes[i].Sent = false
+			}
+		}
+		if !found {
+			return op, workNotSent(errors.New("进程状态已变化，请重新确认"))
+		}
+	}
 	for i := range op.Targets {
 		if wanted[op.Targets[i].Target.SessionID] {
 			op.Targets[i].State = "stopping"
@@ -364,6 +458,7 @@ func (s *Server) startMaintenanceTargets(op domain.WorkerMaintenance) {
 				}()
 			}
 		}
+		s.stopMaintenanceProcesses(op.ID)
 	}()
 }
 
@@ -501,6 +596,9 @@ func (s *Server) advanceWorkerMaintenance(now time.Time) error {
 			continue
 		}
 		observation, e := scope.InspectMaintenance()
+		if op.Explicit {
+			observation, e = scope.InspectExplicitMaintenance()
+		}
 		result.Processes = processSummaries(observation)
 		if e != nil {
 			result.State = "unknown"
@@ -511,6 +609,9 @@ func (s *Server) advanceWorkerMaintenance(now time.Time) error {
 		result.Processes = processSummaries(observation)
 		result.ProcessRef = observation.Ref
 		e = scope.ObserveManualStop()
+		if op.Explicit {
+			e = scope.ObserveExplicitStop()
+		}
 		if e == nil {
 			result.State = "stopped"
 			result.Message = ""
@@ -534,9 +635,21 @@ func (s *Server) advanceWorkerMaintenance(now time.Time) error {
 	for _, result := range op.Targets {
 		allStopped = allStopped && result.State == "stopped"
 	}
+	processesStopped, e := s.observeMaintenanceProcesses(&op, now)
+	if e != nil {
+		return e
+	}
+	allStopped = allStopped && processesStopped
+	for _, p := range op.Processes {
+		needsDecision = needsDecision || p.State == "awaitingForce" || p.State == "unknown"
+	}
 	if allStopped {
 		op.Phase = domain.WorkerMaintenanceWaiting
 		op.Message = "所选环境已结束，等待设备空闲后更新"
+		if op.Standalone {
+			op.Phase = domain.WorkerMaintenanceCompleted
+			op.Message = "所选运行环境已关闭，待发消息保持暂停"
+		}
 	} else if needsDecision {
 		op.Phase = domain.WorkerMaintenanceNeedsForce
 		op.Message = "仍有后台环境未退出，请选择下一步"
@@ -581,6 +694,7 @@ func (s *Server) releaseMaintenanceRuntime(id string) {
 	s.mu.Lock()
 	delete(s.bound, id)
 	s.mu.Unlock()
+	s.wakeRecovery()
 }
 
 func (s *Server) recoverManualGuards() error {

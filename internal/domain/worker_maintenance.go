@@ -22,8 +22,10 @@ type WorkerMaintenanceTarget struct {
 
 // Diagnostics deliberately omit argv, environment and executable paths.
 type WorkerProcessSummary struct {
-	PID  int    `json:"pid"`
-	Name string `json:"name"`
+	StartedAt time.Time `json:"startedAt,omitempty"`
+	Evidence  string    `json:"evidence,omitempty"`
+	PID       int       `json:"pid"`
+	Name      string    `json:"name"`
 }
 
 type WorkerUpdateBlocker struct {
@@ -37,15 +39,17 @@ type WorkerUpdateBlocker struct {
 	Status        ExecutionState           `json:"status,omitempty"`
 	Reason        string                   `json:"reason"`
 	Target        *WorkerMaintenanceTarget `json:"target,omitempty"`
+	ForceTarget   *WorkerMaintenanceTarget `json:"forceTarget,omitempty"`
 	Processes     []WorkerProcessSummary   `json:"processes,omitempty"`
 }
 
 type WorkerUpdateDiagnosis struct {
-	DeviceID  string                `json:"deviceId"`
-	BuildID   string                `json:"buildId"`
-	Blockers  []WorkerUpdateBlocker `json:"blockers"`
-	Operation *WorkerMaintenance    `json:"operation,omitempty"`
-	CheckedAt time.Time             `json:"checkedAt"`
+	Environments []WorkerUpdateBlocker `json:"environments,omitempty"`
+	DeviceID     string                `json:"deviceId"`
+	BuildID      string                `json:"buildId"`
+	Blockers     []WorkerUpdateBlocker `json:"blockers"`
+	Operation    *WorkerMaintenance    `json:"operation,omitempty"`
+	CheckedAt    time.Time             `json:"checkedAt"`
 }
 
 type WorkerMaintenancePhase string
@@ -80,27 +84,36 @@ type WorkerMaintenanceAction struct {
 }
 
 type WorkerMaintenance struct {
-	ID              string                    `json:"id"`
-	DeviceID        string                    `json:"deviceId"`
-	ExpectedBuildID string                    `json:"expectedBuildId"`
-	BuildID         string                    `json:"buildId"`
-	Phase           WorkerMaintenancePhase    `json:"phase"`
-	Revision        int64                     `json:"revision"`
-	Targets         []WorkerMaintenanceResult `json:"targets"`
-	Actions         []WorkerMaintenanceAction `json:"actions"`
-	Message         string                    `json:"message,omitempty"`
-	Backup          string                    `json:"backup,omitempty"`
-	UpdatedAt       time.Time                 `json:"updatedAt"`
-	StartedAt       time.Time                 `json:"startedAt"`
+	ProcessPreviewRef string                    `json:"processPreviewRef,omitempty"`
+	Processes         []WorkerRecoveryResult    `json:"processes,omitempty"`
+	Explicit          bool                      `json:"explicit,omitempty"`
+	Force             bool                      `json:"force,omitempty"`
+	Standalone        bool                      `json:"standalone,omitempty"`
+	ID                string                    `json:"id"`
+	DeviceID          string                    `json:"deviceId"`
+	ExpectedBuildID   string                    `json:"expectedBuildId"`
+	BuildID           string                    `json:"buildId"`
+	Phase             WorkerMaintenancePhase    `json:"phase"`
+	Revision          int64                     `json:"revision"`
+	Targets           []WorkerMaintenanceResult `json:"targets"`
+	Actions           []WorkerMaintenanceAction `json:"actions"`
+	Message           string                    `json:"message,omitempty"`
+	Backup            string                    `json:"backup,omitempty"`
+	UpdatedAt         time.Time                 `json:"updatedAt"`
+	StartedAt         time.Time                 `json:"startedAt"`
 }
 
 type WorkerMaintenanceInput struct {
-	ID              string                    `json:"id"`
-	ActionID        string                    `json:"actionId"`
-	Action          string                    `json:"action"`
-	DeviceID        string                    `json:"deviceId"`
-	ExpectedBuildID string                    `json:"expectedBuildId"`
-	BuildID         string                    `json:"buildId"`
-	Revision        int64                     `json:"revision"`
-	Targets         []WorkerMaintenanceTarget `json:"targets"`
+	RiskAccepted      bool                      `json:"riskAccepted,omitempty"`
+	ProcessPreviewRef string                    `json:"processPreviewRef,omitempty"`
+	ProcessRefs       []string                  `json:"processRefs,omitempty"`
+	Standalone        bool                      `json:"standalone,omitempty"`
+	ID                string                    `json:"id"`
+	ActionID          string                    `json:"actionId"`
+	Action            string                    `json:"action"`
+	DeviceID          string                    `json:"deviceId"`
+	ExpectedBuildID   string                    `json:"expectedBuildId"`
+	BuildID           string                    `json:"buildId"`
+	Revision          int64                     `json:"revision"`
+	Targets           []WorkerMaintenanceTarget `json:"targets"`
 }

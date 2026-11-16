@@ -168,3 +168,34 @@ func TestMaintenanceDatabaseExcludesPreGuardSchema12Worker(t *testing.T) {
 		t.Fatalf("pre-guard schema-12 worker would admit database containing stop authorization (actual schema %d)", version)
 	}
 }
+
+func TestExplicitMaintenanceAcceptsActiveSessionAndInvalidatesRequests(t *testing.T) {
+	s := open(t)
+	id := maintenanceSession(t, s, "explicit-active")
+	if _, err := s.Apply(id, domain.Event{Type: "turn", Turn: &domain.Turn{ID: "active", Status: "running"}}); err != nil {
+		t.Fatal(err)
+	}
+	request := domain.PendingRequest{ID: "approval", SessionID: id, State: domain.RequestPending, Revision: 1}
+	if _, err := s.Apply(id, domain.Event{Type: "request.open", Request: &request}); err != nil {
+		t.Fatal(err)
+	}
+	op := maintenanceOperation(t, s, "explicit-close", id)
+	op.Explicit = true
+	op.Standalone = true
+	op.BuildID = ""
+	if _, err := s.AcceptWorkerMaintenance(op); err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.Session(id, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Session.Status != "unknown" || d.Session.ExecutionGuard != "pinned-generation" || !d.Queue.Paused {
+		t.Fatal("active cleanup did not quarantine execution", d)
+	}
+	for _, r := range d.Requests {
+		if r.State.AwaitingResolution() {
+			t.Fatal("dead runtime request remained answerable", r)
+		}
+	}
+}

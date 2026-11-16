@@ -39,6 +39,7 @@ type WorkerRecoveryInput struct {
 }
 
 type WorkerRecoveryResult struct {
+	Sent    bool                  `json:"sent,omitempty"`
 	Process WorkerRecoveryProcess `json:"process"`
 	State   string                `json:"state"`
 	Message string                `json:"message,omitempty"`

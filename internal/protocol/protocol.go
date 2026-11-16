@@ -42,7 +42,8 @@ const Major = 2
 // WorkerBuild.Maintenance advertises durable maintenance independently of minor.
 // Minor 42 separates complete conversation imports from bounded previews and
 // adds explicit, revision-checked completion of legacy partial imports.
-const Minor = 42
+// Minor 43 adds explicit force-close previews and independent device recovery.
+const Minor = 43
 const MaxFrame = 1 << 20
 
 type Frame struct {

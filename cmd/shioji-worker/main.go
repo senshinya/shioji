@@ -57,6 +57,7 @@ func run() error {
 	build.ContextUsage = true
 	build.OutputFiles = true
 	build.RecoveryHelper = true
+	build.ForceRecovery = true
 	if *describe {
 		return json.NewEncoder(os.Stdout).Encode(protocol.Frame{Type: "worker-build", Major: protocol.Major, Minor: protocol.Minor, Worker: &build})
 	}

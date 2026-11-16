@@ -24,6 +24,16 @@ import (
 )
 
 func workerMaintenanceFixture() bool {
+	if len(os.Args) == 2 && os.Args[1] == "--session-detached-fixture" {
+		child := exec.Command("/bin/sleep", "60")
+		child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if child.Start() != nil {
+			os.Exit(1)
+		}
+		fmt.Println(child.Process.Pid)
+		bufio.NewReader(os.Stdin).ReadString('\n')
+		return true
+	}
 	if len(os.Args) != 3 || os.Args[1] != "--worker-maintenance-fixture" {
 		return false
 	}
@@ -38,6 +48,131 @@ func workerMaintenanceFixture() bool {
 		}
 	}
 	return true
+}
+
+func TestMaintenanceDirectForceClosesActiveDetachedEnvironmentWithoutUpdate(t *testing.T) {
+	s, w := memoryWorker(t, maintenanceHarness{})
+	selected := submitIdleFixture(t, s, w, "selected-force", "")
+	other := submitIdleFixture(t, s, w, "unrelated-force", "")
+	for _, d := range []domain.SessionDetail{selected, other} {
+		if _, err := s.store.Apply(d.Session.ID, domain.Event{Type: "turn", Turn: &domain.Turn{ID: "live-" + d.Session.ID, Status: "running"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scope, err := s.executions.Existing(selected.Session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd, stdin, stdout, err := scope.StartOwned(ctx, "detached", []string{os.Args[0], "--session-detached-fixture"}, managedexec.BootstrapEnv(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pid int
+	if _, err = fmt.Fscanln(bufio.NewReader(stdout), &pid); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := managedexec.Processes()
+	var child managedexec.ProcessInfo
+	for _, p := range list {
+		if p.Identity.PID == pid {
+			child = p
+		}
+	}
+	t.Cleanup(func() {
+		managedexec.SignalExact(child, unix.SIGKILL)
+		stdin.Close()
+		scope.Stop(context.Background())
+		cmd.Wait()
+	})
+	diagnosis, err := s.diagnoseWorkerUpdate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := domain.WorkerMaintenanceInput{ID: "direct-force", ActionID: "force-once", Action: "force-close", DeviceID: s.store.DeviceID(), ExpectedBuildID: s.build.BuildID, Standalone: true}
+	for _, b := range diagnosis.Blockers {
+		if b.SessionID == selected.Session.ID && b.ForceTarget != nil {
+			in.Targets = append(in.Targets, *b.ForceTarget)
+		}
+	}
+	if len(in.Targets) != 1 {
+		t.Fatal("active detached environment cannot be selected", diagnosis)
+	}
+	if _, err = s.applyWorkerMaintenance(in); err == nil {
+		t.Fatal("unregistered environment accepted without risk confirmation")
+	}
+	in.RiskAccepted = true
+	op, err := s.applyWorkerMaintenance(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, err := s.applyWorkerMaintenance(in); err != nil || again.ID != op.ID {
+		t.Fatal("repeated force changed operation", again, err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if err = s.advanceWorkerMaintenance(time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		op, _ = s.store.WorkerMaintenance(op.ID)
+		if !op.Phase.Active() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if op.Phase != domain.WorkerMaintenanceCompleted || managedexec.ProcessState(child) == "running" {
+		t.Fatal("standalone force did not complete", op)
+	}
+	d, _ := s.store.Session(selected.Session.ID, 0, 100)
+	untouched, _ := s.store.Session(other.Session.ID, 0, 100)
+	if !d.Queue.Paused || d.Session.Status != "unknown" || len(d.Items) == 0 {
+		t.Fatal("force lost history or pretended completion", d)
+	}
+	if untouched.Session.Status != "running" {
+		t.Fatal("unselected session interrupted", untouched.Session)
+	}
+	if s.updating.Load() {
+		t.Fatal("standalone close initiated an update")
+	}
+}
+
+func TestMaintenanceCanExplicitlyCloseUnassociatedProcess(t *testing.T) {
+	s, _ := memoryWorker(t, maintenanceHarness{})
+	cmd := exec.Command("/bin/sleep", "60")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	preview, err := InspectDeviceRecovery(context.Background(), s.config.Directory, s.store.DeviceID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := domain.WorkerMaintenanceInput{ID: "unassociated", ActionID: "explicit-pid", Action: "force-close", DeviceID: s.store.DeviceID(), ExpectedBuildID: s.build.BuildID, Standalone: true, RiskAccepted: true, ProcessPreviewRef: preview.Ref}
+	for _, p := range preview.Processes {
+		if p.PID == cmd.Process.Pid {
+			in.ProcessRefs = append(in.ProcessRefs, p.Ref)
+		}
+	}
+	if len(in.ProcessRefs) != 1 {
+		t.Fatal("unassociated process not selectable")
+	}
+	op, err := s.applyWorkerMaintenance(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		s.advanceWorkerMaintenance(time.Now())
+		op, _ = s.store.WorkerMaintenance(op.ID)
+		if !op.Phase.Active() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if op.Phase != domain.WorkerMaintenanceCompleted || len(op.Processes) != 1 || op.Processes[0].State != "stopped" {
+		t.Fatal("explicit process close remained blocked", op)
+	}
 }
 
 type maintenanceHarness struct{}
