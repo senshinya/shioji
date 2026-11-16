@@ -214,17 +214,10 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 								return
 							}
 
-							if key != "local" {
-								v.devicePathsSection(c.Key("paths:"+key), t, key, state)
-							}
-							n.Column(c).FillWidth().Gap(0).Children(func() {
-								deviceHeading(c, "执行服务", nil)
-								v.deviceWorker(c.Key("worker:"+key), t, key, state)
-							})
-							v.deviceStorage(c.Key("storage:"+key), t, key, state)
-							n.Column(c).FillWidth().Gap(0).Children(func() {
+							v.deviceStatusScene(c.Key("scene:"+key), t, key, state)
+							n.Column(c).FillWidth().Gap(0).Label("设备工作区区域").Children(func() {
 								deviceHeading(c, "工作区", func() {
-									if iconButton(c, plus, "新建工作区").Disabled(!state.Connected || v.Controller == nil).Clicked() {
+									if iconButton(c, plus, "新建工作区").MarginEnd(-configurationHoverInset).Disabled(!state.Connected || v.Controller == nil).Clicked() {
 										v.beginWorkspace(key)
 									}
 								})
@@ -255,6 +248,11 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 								}
 							})
 
+							n.Column(c).FillWidth().Gap(0).Label("设备执行服务区域").Children(func() {
+								deviceHeading(c, "执行服务", nil)
+								v.deviceWorker(c.Key("worker:"+key), t, key, state)
+							})
+							v.deviceStorage(c.Key("storage:"+key), t, key, state)
 							if m.Error != "" && m.Error != state.Error {
 								n.Text(c, m.Error).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
 							}

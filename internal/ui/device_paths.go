@@ -249,113 +249,48 @@ func pathPhaseLabel(phase app.DevicePathPhase) string {
 	return "连接中"
 }
 
-func (v *View) devicePathsSection(c *n.Context, t *n.Theme, key string, state *app.DeviceState) {
-	var connection app.DeviceConnection
-	for _, saved := range v.Model.Connections {
-		if saved.ID == key {
-			connection = saved.Normalized()
-			break
+func (v *View) deviceAddPath(c *n.Context, t *n.Theme, connection app.DeviceConnection) {
+	add := iconButton(c, plus, "添加连接路径").MarginEnd(-configurationHoverInset).Disabled(v.Controller == nil || v.deviceConnectionSave != nil || connection.ID == "")
+	v.choiceMenu(c, t, "add-device-path:"+connection.ID, add, []menuChoice{{id: "ssh", name: "通过 SSH", icon: commandTerminalIcon, choose: func() {
+		v.dismissDeviceSetup()
+		v.sshCheck = sshEditing
+		v.sshExpectedDevice = connection.DeviceID
+	}}, {id: "tailnet", name: "通过 Tailnet", icon: tailscaleMark, choose: func() {
+		v.dismissDeviceSetup()
+		v.beginTailnet()
+		v.sshExpectedDevice = connection.DeviceID
+	}}})
+}
+
+func (v *View) devicePathMenu(menu *n.Menu, connection app.DeviceConnection, route app.DeviceRoute, state *app.DeviceState) {
+	backup := false
+	for _, other := range state.Paths {
+		if other.ID != route.ID && (other.Phase == app.PathReady || other.Phase == app.PathActive) {
+			backup = true
 		}
 	}
-	if connection.ID == "" {
-		return
+	if menu.Item("移除此连接").Disabled(len(connection.Routes) < 2 || v.deviceConnectionSave != nil || (route.ID == connection.ActiveRouteID && !backup)).Chosen() {
+		v.removeDevicePath(connection, route.ID)
 	}
-	n.Column(c).FillWidth().Children(func() {
-		deviceHeading(c, "连接路径", func() {
-			n.Row(c).Height(28).Gap(8).AlignItems(n.Center).Children(func() {
-				font := n.Font{Family: t.Font, Size: 11, Weight: 400}
-				n.Text(c, "自动选择").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Transform(n.Translation(0, inlineCenterOffset("自动选择", font)))
-				add := iconButton(c, plus, "添加连接路径").MarginEnd(-6).Disabled(v.Controller == nil || v.deviceConnectionSave != nil)
-				v.choiceMenu(c, t, "add-device-path:"+key, add, []menuChoice{{id: "ssh", name: "通过 SSH", icon: commandTerminalIcon, choose: func() {
-					v.dismissDeviceSetup()
-					v.sshCheck = sshEditing
-					v.sshExpectedDevice = connection.DeviceID
-				}}, {id: "tailnet", name: "通过 Tailnet", icon: tailscaleMark, choose: func() { v.dismissDeviceSetup(); v.beginTailnet(); v.sshExpectedDevice = connection.DeviceID }}})
-			})
+}
+
+func (v *View) deviceScenePathDetails(c *n.Context, t *n.Theme, connection app.DeviceConnection, route app.DeviceRoute, status app.DevicePathStatus, state *app.DeviceState, dismiss func()) {
+	name := "直连 SSH"
+	if route.SSH.TailnetPeer != "" {
+		name = "Tailnet SSH"
+	}
+	n.Column(c).FillWidth().ContextMenu(func(menu *n.Menu) { v.devicePathMenu(menu, connection, route, state) }).Children(func() {
+		n.Row(c).FillWidth().Height(28).Gap(8).AlignItems(n.Baseline).Children(func() {
+			n.Text(c, name).FontSize(13).FixedLineHeight(20).Grow(1)
+			if iconButton(c, closeIcon, "收起连接路径:"+route.ID).MarginEnd(-configurationHoverInset).Clicked() {
+				dismiss()
+			}
 		})
-		for index, route := range connection.Routes {
-			s := app.DevicePathStatus{ID: route.ID, Phase: app.PathConnecting}
-			for _, known := range state.Paths {
-				if known.ID == route.ID {
-					s = known
-					break
-				}
-			}
-			name, mark := "直连 SSH", deviceSSHMark
-			if route.SSH.TailnetPeer != "" {
-				name, mark = "Tailnet SSH", tailscaleMark
-			}
-			label := pathPhaseLabel(s.Phase)
-			if !state.Connected && s.Phase == app.PathActive {
-				label = "连接中"
-				s.Phase = app.PathConnecting
-			}
-			row := n.Column(c.Key(route.ID)).FillWidth().Label("连接路径:" + route.ID).Transition(disclosureMotion(c, 180*time.Millisecond))
-			open := n.Local(row, "details", func() bool { return false })
-			row.ContextMenu(func(menu *n.Menu) {
-				backup := false
-				for _, other := range state.Paths {
-					if other.ID != route.ID && (other.Phase == app.PathReady || other.Phase == app.PathActive) {
-						backup = true
-					}
-				}
-				if menu.Item("移除此连接").Disabled(len(connection.Routes) < 2 || v.deviceConnectionSave != nil || (route.ID == connection.ActiveRouteID && !backup)).Chosen() {
-					v.removeDevicePath(connection, route.ID)
-				}
-			})
-			row.Children(func() {
-				if index < len(connection.Routes)-1 {
-					n.Column(c).Absolute().Left(0).Right(0).Bottom(0).Height(1).Background(t.Border)
-				}
-				trigger := configurationRowControl(c.Key("header"), 6).Height(72).PaddingY(16).Label("展开连接路径:" + route.ID)
-				trigger.Children(func() {
-					n.Row(c).FillWidth().Gap(16).AlignItems(n.Baseline).Children(func() {
-						font := n.Font{Family: t.Font, Size: 13, Weight: 400}
-						inlineSymbol(c, mark, name, font, 16, t.TextMuted).Label("路径图标:" + route.ID)
-						n.Column(c).MinWidth(0).Grow(1).Gap(2).Children(func() {
-							n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
-								n.Text(c, name).FontSize(13).FixedLineHeight(20).Label("路径名称:" + route.ID)
-								angle := float32(-90)
-								if *open {
-									angle = 0
-								}
-								inlineSymbol(c, chevron, name, font, 12, t.TextMuted, angle)
-							})
-							address := devicePathAddress(route.SSH, s.Endpoint)
-							n.Text(c, address).FontSize(11).FixedLineHeight(18).SingleLine().TextColor(t.TextMuted).TooltipWhenTruncated(address).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)}).Label("路径地址:" + route.ID)
-						})
-						n.Text(c, pathTiming(s, c.Now())).Width(64).TextAlign(n.End).FontSize(12).FixedLineHeight(20).FontFeatures("tnum").TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 260*time.Millisecond)}).Label("路径延迟:" + route.ID)
-						n.Row(c).Width(104).Gap(7).Justify(n.End).AlignItems(n.Baseline).Label("路径状态:" + route.ID).Tooltip(s.Error).Children(func() {
-							font := n.Font{Family: t.Font, Size: 12, Weight: 400}
-							if s.Phase == app.PathActive {
-								inlineSymbol(c, check, label, font, 14, t.TextMuted).Transition(fadeMotion(c, 160*time.Millisecond))
-							}
-							if s.Phase == app.PathConnecting || s.Phase == app.PathSwitching {
-								serviceSpinner(c.Key("path-spinner"), label, font, t.TextMuted)
-							}
-							n.Text(c.Key("caption"), label).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-						})
-					})
-				})
-				if trigger.Clicked() {
-					*open = !*open
-				}
-				body := n.Column(c.Key("details")).FillWidth().Clip()
-				animatedContentHeight(c, body, *open, 200*time.Millisecond, func() float32 {
-					n.Column(c).FillWidth().Padding(0, 0, 8).Transition(disclosureMotion(c, 160*time.Millisecond)).Children(func() {
-						v.devicePathDetails(c, route, s)
-					})
-					return 0
-				})
-			})
-		}
-		details := n.Column(c).FillWidth()
-		open := n.Local(details, "device-identity", func() bool { return false })
-		details.Children(func() {
-			deviceDisclosure(c, "设备身份", open, func() {
-				deviceMeta(c, "设备 ID", connection.DeviceID)
-			})
+		address := devicePathAddress(route.SSH, status.Endpoint)
+		n.Column(c).FillWidth().Label("路径地址:" + route.ID).Role(n.RoleNone).Children(func() {
+			n.Text(c, address).FillWidth().SingleLine().TooltipWhenTruncated(address).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
 		})
+		v.devicePathDetails(c, route, status)
 	})
 }
 

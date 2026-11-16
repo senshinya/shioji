@@ -215,56 +215,30 @@ func TestDevicePathRowsAlign(t *testing.T) {
 			ui := n.NewTester(v.View, int(width), 820)
 			ui.SetDark(dark)
 			ui.Advance(time.Second)
-			var rights []float32
-			for _, route := range v.Model.Connections[0].Routes {
-				r, ok := ui.Find("路径状态:" + route.ID)
-				if !ok {
-					t.Fatal("route status missing", ui.Texts())
-				}
-				rights = append(rights, r.X+r.W)
-				if os.Getenv("SHIOJI_PATH_GEOMETRY") != "" {
-					add, _ := ui.Find("添加连接路径")
-					t.Log("geometry", width, dark, r, add)
-				}
-				add, _ := ui.Find("添加连接路径")
-				if math.Abs(float64(r.X+r.W-(add.X+add.W-6))) > 1 {
-					t.Fatal("status column not aligned to section right edge", r, add)
-				}
-				name, _ := ui.Find("路径名称:" + route.ID)
-				address, _ := ui.Find("路径地址:" + route.ID)
-				if math.Abs(float64(name.X-address.X)) > 1 {
-					t.Fatal("name and address left edge differ", name, address)
-				}
-				mark, _ := ui.Find("路径图标:" + route.ID)
-				ink := func(r n.Rect) (float64, int) {
-					im := ui.Image()
-					lo, hi := im.Bounds().Max.Y, -1
-					for y := int(r.Y); y < int(r.Y+r.H); y++ {
-						for x := int(r.X); x < int(r.X+r.W); x++ {
-							px := im.RGBAAt(x, y)
-							hit := px.R < 230
-							if dark {
-								hit = px.R > 56
-							}
-							if hit {
-								lo = min(lo, y)
-								hi = max(hi, y)
-							}
-						}
-					}
-					if hi < lo {
-						t.Fatal("missing route ink", r)
-					}
-					return float64(lo+hi) / 2, hi - lo + 1
-				}
-				a, _ := ink(name)
-				b, h := ink(mark)
-				if math.Abs(a-b) > 1 || h < 13 || h > 15 {
-					t.Fatal("route icon ink not aligned or sized consistently", route.ID, a, b, h)
-				}
+			scene, ok := ui.Find("设备连接图")
+			if !ok {
+				t.Fatal("native scene missing")
 			}
-			if math.Abs(float64(rights[0]-rights[1])) > 1 {
-				t.Fatal("status right edges differ", rights)
+			var left, right float32
+			for index, route := range v.Model.Connections[0].Routes {
+				hit, ok := ui.Find("展开连接路径:" + route.ID)
+				if !ok || hit.X < scene.X || hit.X+hit.W > scene.X+scene.W+1 {
+					t.Fatal("route hit bounds detached", hit, scene)
+				}
+				if index == 0 {
+					left, right = hit.X, hit.X+hit.W
+				} else if math.Abs(float64(hit.X-left)) > 1 || math.Abs(float64(hit.X+hit.W-right)) > 1 {
+					t.Fatal("route columns drift", hit, left, right)
+				}
+				for _, label := range []string{"路径名称:", "路径延迟:", "路径状态:"} {
+					text, ok := ui.Find(label + route.ID)
+					if !ok || text.X < hit.X-1 || text.X+text.W > hit.X+hit.W+1 || text.Y < hit.Y || text.Y+text.H > hit.Y+hit.H+1 {
+						t.Fatal("route text escapes its own hit region", label, text, hit)
+					}
+				}
+				if _, ok := ui.Find("路径地址:" + route.ID); ok {
+					t.Fatal("collapsed scene retains old table")
+				}
 			}
 			theme := "light"
 			if dark {
@@ -335,7 +309,7 @@ func TestDevicePathHeadingActionSharesVisibleCenter(t *testing.T) {
 			}
 			return float64(lo+hi) / 2
 		}
-		a, b := ink("自动选择"), ink("添加连接路径")
+		a, b := ink("重新检测"), ink("添加连接路径")
 		if math.Abs(a-b) > 1 {
 			t.Fatal("heading caption and add icon do not share glyph center", a, b)
 		}

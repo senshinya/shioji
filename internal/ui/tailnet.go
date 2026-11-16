@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	n "github.com/egoist/mygo/ui"
+	"math"
 	"net/url"
 	"shioji/internal/app"
 	"shioji/internal/domain"
@@ -558,7 +559,7 @@ func tailnetPeerDetail(c *n.Context, label string, value func()) {
 
 func tailnetPathLabel(p tailnet.Peer, now time.Time) string {
 	path := "尚未确认"
-	if m := p.Measurement; m != nil {
+	if m := p.Measurement; m != nil && !m.ObservedAt.IsZero() && !m.ObservedAt.After(now) {
 		switch m.Path {
 		case "direct":
 			path = "直接连接"
@@ -597,7 +598,7 @@ func tailnetStatus(s tailnet.Snapshot) string {
 }
 func tailnetLatency(p tailnet.Peer, now time.Time) string {
 	m := p.Measurement
-	if m == nil {
+	if m == nil || m.ObservedAt.IsZero() || m.ObservedAt.After(now) || math.IsNaN(m.Milliseconds) || math.IsInf(m.Milliseconds, 0) || m.Milliseconds < 0 {
 		return "尚未测量"
 	}
 	prefix := ""

@@ -90,12 +90,12 @@ func TestConfigurationDisclosureHoverClearsBothContentEdges(t *testing.T) {
 	v := devicePathsView()
 	ui := n.NewTester(v.View, 1240, 820)
 	ui.Advance(time.Second)
-	head, _ := ui.Find("连接路径")
+	head, _ := ui.Find("设备状态区域")
 	path := v.Model.Connections[0].Routes[0].ID
 	hit, _ := ui.Find("展开连接路径:" + path)
-	icon, _ := ui.Find("路径图标:" + path)
+	icon, _ := ui.Find("路径名称:" + path)
 	status, _ := ui.Find("路径状态:" + path)
-	if math.Abs(float64(icon.X-head.X)) > 1 || icon.X-hit.X < 7.5 {
+	if icon.X-hit.X < 7.5 {
 		t.Fatal("path hover hugs icon or shifts section baseline", head, hit, icon)
 	}
 	if hit.X+hit.W-status.X-status.W < 7.5 {

@@ -28,7 +28,7 @@ type deviceAgentEditor struct {
 }
 
 func agentEditor(catalog []domain.HarnessInfo) *deviceAgentEditor {
-	e := &deviceAgentEditor{catalog: catalog, paths: map[string]string{}, options: map[string]domain.RuntimeOptions{}, optionSupport: map[string]bool{}}
+	e := &deviceAgentEditor{catalog: append([]domain.HarnessInfo(nil), catalog...), paths: map[string]string{}, options: map[string]domain.RuntimeOptions{}, optionSupport: map[string]bool{}}
 	for _, info := range catalog {
 		if info.Installation != nil {
 			e.paths[info.ID] = info.Installation.Override

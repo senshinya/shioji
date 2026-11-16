@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 25 600 210" fill="none" stroke-linecap="round" stroke-linejoin="round"><style>
+.device-frame,.controller-case{fill:@case@;stroke:@edge@;stroke-width:1}
+.device-display,.controller-screen{fill:@screen@;stroke:@display@;stroke-width:.7}
+.runtime-panel{fill:@window@;stroke:@inner@;stroke-width:.8}
+.window-divider,.mobile-status-divider{stroke:@inner@;stroke-width:.6}
+.window-button{fill:@display@;stroke:none}
+.window-terminal,.controller-prompt,.screen-prompt,.agent-symbol{stroke:@ink@;stroke-width:1.1}
+.device-camera{fill:@edge@;stroke:none}
+.device-foot{fill:@case@;stroke:@edge@;stroke-width:.8}
+.device-notch{stroke:@edge@;stroke-width:.7}
+.device-ground{stroke:@faint@;stroke-width:1}
+.device-input,.device-stand,.controller-stand,.device-side-button,.tablet-edge-controls{stroke:@edge@;stroke-width:1}
+.device-input-port{stroke:@edge@;stroke-width:1;fill:@background@}
+.hardware-bezel{fill:@bezel@;stroke:@edge@;stroke-width:.6}
+.phone-camera-island,.phone-front-lens{fill:@quiet@;stroke:none}
+.phone-home{stroke:@quiet@;stroke-width:1.6}
+.tablet-front-lens{fill:@edge@;stroke:none}
+.rack-face,.rack-ear{fill:@case@;stroke:@edge@;stroke-width:.8}
+.rack-screw{stroke:@edge@;stroke-width:.6;fill:none}
+.drive-caddy,.ethernet-port{fill:@screen@;stroke:@display@;stroke-width:.7}
+.drive-handle,.rack-vent,.ethernet-teeth{stroke:@edge@;stroke-width:.6}
+.drive-lamp,.rack-status-lamp{fill:@edge@;stroke:none}
+.server-power{stroke:@edge@;fill:none;stroke-width:1}
+.server-power-line{stroke:@ink@;stroke-width:1.2}
+</style><g class="execution-device" data-kind="laptop"><path class="device-input" d="M345 131H345m0 0h5"/><circle class="device-input-port" cx="345" cy="131" r="3"/><rect class="device-frame" x="350" y="55" width="232" height="150" rx="11"/><rect class="device-display" x="355" y="60" width="222" height="140" rx="7"/><circle class="device-camera" cx="466" cy="58" r=".8"/><g class="runtime-window"><rect class="runtime-panel" x="371" y="77" width="190" height="107" rx="6"/><path class="window-divider" d="M371 100h190"/><circle class="window-button" cx="381" cy="88.5" r="2"/><circle class="window-button" cx="389" cy="88.5" r="2"/><circle class="window-button" cx="397" cy="88.5" r="2"/><path class="window-terminal" d="m410 85 3.5 3.5-3.5 3.5m7 0h4"/><g class="service-screen-line"><path class="screen-prompt" d="m384 118 4 4-4 4m8 0h6"/></g><g class="agent-screen-line"><path class="agent-symbol" d="m388 145-4 4 4 4m6-8 4 4-4 4"/></g></g><path class="device-foot" d="M339 205h254c-3 6-8 9-16 9H355c-8 0-13-3-16-9Z"/><path class="device-notch" d="M450 205v1.5h32V205"/><path class="device-ground" d="M364 227h210"/></g></svg>

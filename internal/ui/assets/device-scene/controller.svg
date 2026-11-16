@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 25 600 210" fill="none" stroke-linecap="round" stroke-linejoin="round"><style>
+.device-frame,.controller-case{fill:@case@;stroke:@edge@;stroke-width:1}
+.device-display,.controller-screen{fill:@screen@;stroke:@display@;stroke-width:.7}
+.runtime-panel{fill:@window@;stroke:@inner@;stroke-width:.8}
+.window-divider,.mobile-status-divider{stroke:@inner@;stroke-width:.6}
+.window-button{fill:@display@;stroke:none}
+.window-terminal,.controller-prompt,.screen-prompt,.agent-symbol{stroke:@ink@;stroke-width:1.1}
+.device-camera{fill:@edge@;stroke:none}
+.device-foot{fill:@case@;stroke:@edge@;stroke-width:.8}
+.device-notch{stroke:@edge@;stroke-width:.7}
+.device-ground{stroke:@faint@;stroke-width:1}
+.device-input,.device-stand,.controller-stand,.device-side-button,.tablet-edge-controls{stroke:@edge@;stroke-width:1}
+.device-input-port{stroke:@edge@;stroke-width:1;fill:@background@}
+.hardware-bezel{fill:@bezel@;stroke:@edge@;stroke-width:.6}
+.phone-camera-island,.phone-front-lens{fill:@quiet@;stroke:none}
+.phone-home{stroke:@quiet@;stroke-width:1.6}
+.tablet-front-lens{fill:@edge@;stroke:none}
+.rack-face,.rack-ear{fill:@case@;stroke:@edge@;stroke-width:.8}
+.rack-screw{stroke:@edge@;stroke-width:.6;fill:none}
+.drive-caddy,.ethernet-port{fill:@screen@;stroke:@display@;stroke-width:.7}
+.drive-handle,.rack-vent,.ethernet-teeth{stroke:@edge@;stroke-width:.6}
+.drive-lamp,.rack-status-lamp{fill:@edge@;stroke:none}
+.server-power{stroke:@edge@;fill:none;stroke-width:1}
+.server-power-line{stroke:@ink@;stroke-width:1.2}
+</style><g class="controller" transform="translate(-12,26)">
+    <rect class="controller-case" x="28" y="83" width="64" height="43" rx="5"/>
+    <rect class="controller-screen" x="32" y="87" width="56" height="35" rx="2"/>
+    <path class="controller-stand" d="M55 127v7m10-7v7m-17 1h24"/>
+    <path class="controller-prompt" d="m43 99 5 4-5 4m10 0h9"/>
+    
+  </g></svg>

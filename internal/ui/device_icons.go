@@ -8,9 +8,9 @@ import (
 	n "github.com/egoist/mygo/ui"
 )
 
-var laptopDeviceIcon = svg("M4 3h12v10H4zM2 14h16l-1.5 3h-13z")
-var tabletDeviceIcon = svg("M5 3h10v14H5zM9 15.5h2")
-var phoneDeviceIcon = svg("M6 3h8v14H6zM9 15.5h2")
+var laptopDeviceIcon = svg("M4.2 3.25h11.6a1.2 1.2 0 0 1 1.2 1.2v9.3H3v-9.3a1.2 1.2 0 0 1 1.2-1.2ZM1.5 14.25h17l-1.2 2a1 1 0 0 1-.9.5H3.6a1 1 0 0 1-.9-.5Z")
+var tabletDeviceIcon = svg("M3.35 3.25h13.3a1.6 1.6 0 0 1 1.6 1.6v10.3a1.6 1.6 0 0 1-1.6 1.6H3.35a1.6 1.6 0 0 1-1.6-1.6V4.85a1.6 1.6 0 0 1 1.6-1.6ZM3.75 9.8v.4")
+var phoneDeviceIcon = svg("M8 2.75h4a2 2 0 0 1 2 2v10.5a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4.75a2 2 0 0 1 2-2ZM8.5 4.75h3M8.5 15.25h3")
 var serverDeviceIcon = svg("M3 3h14v6H3zM3 11h14v6H3zM6 6h.1M6 14h.1")
 
 func deviceGlyph(icon app.DeviceIcon) *n.SVG {
