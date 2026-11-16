@@ -337,8 +337,15 @@ func (m *Manager) Reap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	observed := map[string]bool{}
 	for id, launch := range m.live {
 		s, t := launch.scope, launch.ticket
+		if !observed[s.Session] {
+			if _, e := s.inspectExplicitMaintenance(); e != nil {
+				return &OwnershipError{Session: s.Session, Generation: s.Generation, Cause: e}
+			}
+			observed[s.Session] = true
+		}
 		state, err := s.load()
 		if err != nil {
 			return &OwnershipError{Session: s.Session, Generation: s.Generation, Cause: err}
@@ -515,6 +522,15 @@ func (s *Scope) Stop(ctx context.Context) error {
 		return err
 	}
 	if manual {
+		s.manager.mu.Lock()
+		state, e := s.load()
+		s.manager.mu.Unlock()
+		if e != nil {
+			return e
+		}
+		if state.Manual.Explicit {
+			return s.StopExplicit(ctx)
+		}
 		return s.stopManual(ctx)
 	}
 	if err := s.Fence(); err != nil {

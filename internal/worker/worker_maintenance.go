@@ -91,6 +91,7 @@ func (s *Server) diagnoseWorkerUpdateLocked() (out domain.WorkerUpdateDiagnosis,
 			continue
 		}
 		observation, e := scope.InspectMaintenance()
+		blocker.Processes = processSummaries(observation)
 		if e != nil {
 			blocker.Reason = e.Error()
 			out.Blockers = append(out.Blockers, blocker)
@@ -500,6 +501,7 @@ func (s *Server) advanceWorkerMaintenance(now time.Time) error {
 			continue
 		}
 		observation, e := scope.InspectMaintenance()
+		result.Processes = processSummaries(observation)
 		if e != nil {
 			result.State = "unknown"
 			result.Message = e.Error()

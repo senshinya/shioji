@@ -16,7 +16,9 @@ import (
 var ErrManualStillRunning = errors.New("后台环境尚未退出，未授权的强制结束不会自动执行")
 
 type manualStopState struct {
-	Accepted    bool `json:",omitempty"`
+	Explicit    bool          `json:",omitempty"`
+	Targets     []ProcessInfo `json:",omitempty"`
+	Accepted    bool          `json:",omitempty"`
 	Operation   string
 	NormalSent  bool
 	ForceAction string
@@ -24,9 +26,13 @@ type manualStopState struct {
 }
 
 type MaintenanceProcess struct {
-	Identity       Identity
-	Name           string
-	Infrastructure bool
+	Identity         Identity
+	Name             string
+	Infrastructure   bool
+	UID              uint32
+	ParentPID, Group int
+	Evidence         string
+	Anchor           bool
 }
 
 type MaintenanceObservation struct {
@@ -104,10 +110,16 @@ func (s *Scope) inspectMaintenance() (out MaintenanceObservation, err error) {
 	}
 	// A detached group has no verified anchor; naming it a descendant is not
 	// sufficient authority to signal it. Registered sibling groups remain valid.
+	detached := false
 	for _, p := range procs {
 		if p.Proc.P_stat != 5 && owned[int(p.Eproc.Ppid)] && !groups[int(p.Eproc.Pgid)] {
-			return out, errors.New("存在无法确认归属的脱离进程")
+			detached = true
+			out.Processes = append(out.Processes, MaintenanceProcess{Identity: identity(p), Name: unix.ByteSliceToString(p.Proc.P_comm[:]), UID: p.Eproc.Ucred.Uid, ParentPID: int(p.Eproc.Ppid), Group: int(p.Eproc.Pgid), Evidence: "observed"})
 		}
+	}
+	if detached {
+		out.Idle = false
+		return out, errors.New("存在未完整登记的脱离进程，可明确确认强制关闭")
 	}
 	sort.Slice(identities, func(i, j int) bool { return identities[i].PID < identities[j].PID })
 	sort.Slice(out.Processes, func(i, j int) bool { return out.Processes[i].Identity.PID < out.Processes[j].Identity.PID })

@@ -17,6 +17,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if detachedFixture() { return }
 	if manualStopFixture() {
 		return
 	}
