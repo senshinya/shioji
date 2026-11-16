@@ -87,6 +87,9 @@ func (r *Runtime) Inspect(ctx context.Context, s domain.Session) (domain.Recover
 				turn.Error = bounded(src.Error.Message)
 			}
 			out.Turns = append(out.Turns, turn)
+			if turn.Status == "completed" {
+				out.CompleteItemTurns = append(out.CompleteItemTurns, turn.ID)
+			}
 			standaloneCompaction, hasUser := false, false
 			for _, item := range src.Items {
 				standaloneCompaction = standaloneCompaction || item.Type == "contextCompaction"
@@ -127,8 +130,12 @@ func (r *Runtime) Inspect(ctx context.Context, s domain.Session) (domain.Recover
 	// in the adapter are newer than the history RPC's snapshot. Never reopen them.
 	if out.State == "active" && r.Observes(s) {
 		r.normalizer.mu.Lock()
+		liveTurns := map[string]bool{}
+		for _, turn := range out.Turns {
+			liveTurns[turn.ID] = turn.Status == "running"
+		}
 		for i := range out.Items {
-			if current, ok := r.normalizer.items[out.Items[i].ID]; ok {
+			if current, ok := r.normalizer.items[out.Items[i].ID]; ok && liveTurns[out.Items[i].TurnID] {
 				out.Items[i] = current
 			}
 		}

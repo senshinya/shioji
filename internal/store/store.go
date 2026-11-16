@@ -92,6 +92,7 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS deleted_workspaces (id TEXT PRIMARY KEY, cleaned INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS archive_resources (workspace_id TEXT NOT NULL, attachment_id TEXT NOT NULL, PRIMARY KEY(workspace_id,attachment_id));
  CREATE INDEX IF NOT EXISTS operations_session_state ON operations(session_id,state);
+ CREATE INDEX IF NOT EXISTS items_provisional_replies ON items(session_id,json_extract(body,'$.turnId')) WHERE json_extract(body,'$.kind')='assistant' AND COALESCE(json_extract(body,'$.final'),0)=0;
  CREATE INDEX IF NOT EXISTS work_inputs_unsettled_session ON work_inputs(session_id) WHERE json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate') AND COALESCE(json_extract(body,'$.executionStopped'),0)=0;
  CREATE INDEX IF NOT EXISTS history_active_source ON history_operations(json_extract(body,'$.source.id')) WHERE json_extract(body,'$.state') IN ('prepared','forked');
  CREATE INDEX IF NOT EXISTS history_active_session ON history_operations(json_extract(body,'$.session.id')) WHERE json_extract(body,'$.state') IN ('prepared','forked');
@@ -688,6 +689,15 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 	case "item.upsert":
 		if e.Item == nil {
 			return e, errors.New("missing item")
+		}
+		// A delayed delta/start cannot revive a stream that authoritative history
+		// already discarded. A completed source item may still confirm it later.
+		previous, readErr := load[domain.Item](tx.QueryRow("SELECT body FROM items WHERE session_id=? AND id=?", sid, e.Item.ID))
+		if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {
+			return e, readErr
+		}
+		if previous.Status == "superseded" && previous.Final && !e.Item.Final {
+			return e, nil
 		}
 		if e.Item.WorkID != "" {
 			if e.Item.Kind != "request_result" {

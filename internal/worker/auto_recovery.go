@@ -2,6 +2,8 @@ package worker
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/protocol"
@@ -57,6 +59,11 @@ func (s *Server) recoveryLoop() {
 			cancel()
 		}
 		s.dispatchMu.Unlock()
+		// Transcript correction is read-only at the harness boundary and does not
+		// hold dispatch admission while waiting for history RPCs.
+		if err := s.reconcileReplies(); err != nil {
+			fmt.Fprintf(os.Stderr, "shioji: reply history reconciliation: %v\n", err)
+		}
 		for _, session := range snapshot.Sessions {
 			if session.Archived || !session.Status.NeedsRecovery() {
 				continue
@@ -78,4 +85,39 @@ func (s *Server) recoveryLoop() {
 			cancel()
 		}
 	}
+}
+
+func (s *Server) reconcileReplies() error {
+	entries, err := s.store.PendingReplies()
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if s.ctx.Err() != nil {
+			return nil
+		}
+		r := s.currentRuntime(entry.Session.ID)
+		release := func() {}
+		if r == nil || r.Stopped() {
+			r, release, err = s.borrowCatalog(entry.Session.HarnessID)
+			if err != nil {
+				continue
+			}
+		}
+		if !r.Readiness().Capabilities.Recovery {
+			release()
+			continue
+		}
+		ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
+		source, inspectErr := r.Inspect(ctx, entry.Session)
+		cancel()
+		release()
+		if inspectErr != nil {
+			continue
+		} // Preserve provisional output until a later reconnect/event.
+		if err = s.store.ReconcileReplies(entry, source); err != nil {
+			return err
+		}
+	}
+	return nil
 }

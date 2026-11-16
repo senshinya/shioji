@@ -3,6 +3,10 @@ package domain
 // RecoveryHistory contains normalized source evidence, never harness wire data.
 // Inputs maps the original client message identity to its source turn identity.
 type RecoveryHistory struct {
+	// CompleteItemTurns identifies completed source turns whose entire persisted
+	// item set was read in this snapshot. Available or a newer locally merged
+	// terminal state alone does not authorize treating absent items as discarded.
+	CompleteItemTurns   []string
 	ExplicitlyStopped   bool
 	ContextAction       *ContextObservation
 	StoppedGeneration   string
