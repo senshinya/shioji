@@ -1427,6 +1427,12 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 	}
 }
 func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
+	v.replyFooter(c, t, turn, "")
+}
+
+// Receipt and turn status share their full native subtree, so hydration can
+// replace the label without restarting row entrance or content animation.
+func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing string) {
 	frame := n.Column(c.Key("reply-footer")).Label("回复信息").FillWidth().MinHeight(24).Clip()
 	state := string(turn.Status)
 	if (turn.Status == "running" || turn.Status == "starting") && !v.Model.Connected {
@@ -1435,10 +1441,10 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 	activity := v.runningActivity(turn)
 	delegated := turn.Status.Active() && (v.runningGroup != "" && v.activityTurn == turn.ID || v.Model.Connected && activity.compaction != "")
 	waiting := turn.Status.Active() && v.Model.Connected && activity.waiting
-	if turn.Status == "running" || turn.Status == "starting" {
+	if preparing != "" || turn.Status == "running" || turn.Status == "starting" {
 		frame.MinHeight(0)
 	}
-	if state == "starting" {
+	if preparing != "" || state == "starting" {
 		state = "running"
 	}
 	// A tool-to-prose handoff already has its final footer height. A second
@@ -1452,6 +1458,10 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 
 		row.Children(func() {
 			if delegated || waiting {
+				return
+			}
+			if preparing != "" {
+				v.progressStatus(c, t, runningActivity{label: preparing}, nil)
 				return
 			}
 			if state == "disconnected" {

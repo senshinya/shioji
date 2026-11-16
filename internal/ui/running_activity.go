@@ -274,16 +274,66 @@ func (v *View) runningStatus(c *n.Context, t *n.Theme, turn domain.Turn) {
 		return
 	}
 	p := v.progressFor(c, turn)
+	v.progressStatus(c, t, a, p)
+}
+
+type progressLabelExtent struct {
+	target, shown float32
+	release       time.Time
+}
+
+func (v *View) progressStatus(c *n.Context, t *n.Theme, a runningActivity, p *runningProgress) {
 	row := n.Row(c.Key("running-status")).Gap(6).AlignItems(n.Baseline)
-	if p.handoff != nil {
+	if p != nil && p.handoff != nil {
 		row.Opacity(p.handoffFraction(c.Now()))
 	} else {
 		row.Transition(fadeMotion(c, 120*time.Millisecond))
 	}
+	// Keep shimmer phase through the local receipt → authoritative turn
+	// handoff. Elapsed time still comes only from the worker's timestamps.
+	preparation := n.Local(row, "preparation-start", func() time.Time { return time.Time{} })
+	phase := c.Now()
+	if p == nil && preparation.IsZero() {
+		*preparation = phase
+	}
+	if p != nil {
+		phase = p.started
+	}
+	if !preparation.IsZero() {
+		phase = *preparation
+	}
+	running := p != nil || a.label == "进行中"
+	color := t.TextMuted
+	if running {
+		color = t.Success
+	}
+	color = row.AnimateColor("status-color", color, motionAnimation(c, 180*time.Millisecond))
 	row.Children(func() {
-		statusDot(c.Key("dot"), a.label, n.Font{Family: t.Font, Size: 11, Weight: 400}, t.Success, true, p.started)
-		text := n.Text(c.Key("activity-label"), a.label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
-		shimmer(c, text, t.TextMuted, t.Text, p.started)
+		statusDot(c.Key("dot"), a.label, n.Font{Family: t.Font, Size: 11, Weight: 400}, color, running, phase)
+		text := n.Text(c.Key("activity-label"), a.label).FontSize(11).FixedLineHeight(20).SingleLine().TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+		// The shimmer raster is bounded by this text box. Shrinking straight
+		// to the new label would clip the outgoing words before they fade.
+		width, _ := n.ShapeText(a.label, n.Font{Family: t.Font, Size: 11, Weight: 400}, 0).Size()
+		animation := motionAnimation(c, 180*time.Millisecond)
+		extent := n.Local(text, "label-extent", func() progressLabelExtent {
+			return progressLabelExtent{target: width, shown: width}
+		})
+		if extent.target != width {
+			extent.target, extent.release = width, c.Now().Add(animation.Duration)
+			extent.shown = max(extent.shown, width)
+			text.Jump("label-width", extent.shown)
+		}
+		if c.Preferences().ReduceMotion {
+			animation.Duration = 0
+		} else if c.Now().Before(extent.release) {
+			width = extent.shown
+			// Stay on the existing refresh cadence; an exact deadline timer
+			// would shift the shared dot/shimmer paint phase on label changes.
+			c.AnimationFrame()
+		}
+		extent.shown = text.AnimateTo("label-width", width, animation)
+		text.Width(extent.shown)
+		shimmer(c, text, t.TextMuted, t.Text, phase)
 		runningElapsed(c.Key("elapsed"), a.started, t.TextMuted, false)
 	})
 }

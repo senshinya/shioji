@@ -297,12 +297,16 @@ func (v *View) homeSendRows(rows []transcriptRow) []transcriptRow {
 		return rows
 	}
 	key := "home-send-status:" + h.in.OperationID
-	for _, row := range rows {
+	for i, row := range rows {
 		if row.footer != "" {
 			if v.toolArrivals.footerKeys == nil {
 				v.toolArrivals.footerKeys = map[string]string{}
 			}
 			v.toolArrivals.footerKeys[row.footer] = key
+			// The receipt already occupies this output slot. A newly hydrated
+			// turn must not apply a second entrance to the same visible status.
+			rows[i].opacity = 1
+			delete(v.toolArrivals.motions, row.key)
 			return rows
 		}
 	}
@@ -331,17 +335,7 @@ func (v *View) homeSendRows(rows []transcriptRow) []transcriptRow {
 	return rows
 }
 func (v *View) homeSendStatus(c *n.Context, t *n.Theme, label string) {
-	n.Column(c.Key("reply-footer")).Label("回复信息").FillWidth().MinHeight(24).Children(func() {
-		n.Row(c).Gap(6).MinHeight(24).AlignItems(n.Baseline).Transition(fadeMotion(c, 180*time.Millisecond)).Children(func() {
-			color := t.TextMuted
-			if label == "进行中" {
-				color = t.Success
-			}
-			statusDot(c, label, n.Font{Family: t.Font, Size: 11, Weight: 400}, color, label == "进行中")
-			text := n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
-			shimmer(c, text, t.TextMuted, t.Text)
-		})
-	})
+	v.replyFooter(c, t, domain.Turn{}, label)
 }
 
 func (v *View) acceptHomeSend(m *app.Model, op domain.Operation) {
