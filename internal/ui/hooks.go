@@ -19,6 +19,7 @@ type hookManagementUI struct {
 	catalog                                                         domain.HookCatalog
 	query, message, detailID                                        string
 	pending                                                         *domain.HookRequest
+	unconfirmed                                                     []domain.HookRequest
 	checking                                                        bool
 	expanded                                                        bool
 	listScroll, detailScroll                                        n.ScrollState
@@ -66,6 +67,7 @@ func (v *View) hookManagementFor(key, harness, workspace, session string) *hookM
 			next.detailScroll = u.detailScroll
 			next.expanded = u.expanded
 			next.pending = u.pending
+			next.unconfirmed = append([]domain.HookRequest(nil), u.unconfirmed...)
 		}
 		v.hookManagement[slot] = next
 		u = next
@@ -91,6 +93,12 @@ func (v *View) queryHooks(u *hookManagementUI) {
 		v.queryHookOperation(u)
 		return
 	}
+	v.readHookCatalog(u, false)
+}
+func (v *View) readHookCatalog(u *hookManagementUI, reconcile bool) {
+	if u.phase == skillLoading || u.checking || v.Controller == nil || !v.deviceState(u.key).Connected {
+		return
+	}
 	u.phase = skillLoading
 	u.message = ""
 	in := domain.HookRequest{HarnessID: u.harness, WorkspaceID: u.workspace, SessionID: u.session}
@@ -108,6 +116,13 @@ func (v *View) queryHooks(u *hookManagementUI) {
 			return
 		}
 		u.catalog = next
+		if reconcile && u.pending != nil {
+			// Retain the original receipt identity, never replay its approval. A new
+			// operation requires an explicit action against this freshly read catalog.
+			u.unconfirmed = append(u.unconfirmed, *u.pending)
+			u.pending = nil
+			u.message = "上次结果未确认，请核对当前定义"
+		}
 		u.phase = skillLoaded
 	}}) {
 		u.phase = skillFailed
@@ -134,6 +149,9 @@ func (v *View) queryHookOperation(u *hookManagementUI) {
 			return
 		}
 		v.settleHookChange(u, in, b, err)
+		if u.pending != nil && !u.checking {
+			v.readHookCatalog(u, true)
+		}
 	}}) {
 		u.checking = false
 		u.phase = skillFailed
@@ -320,8 +338,17 @@ func (v *View) hookRows(c *n.Context, t *n.Theme, u *hookManagementUI) {
 	entries := append([]domain.HookEntry(nil), u.catalog.Entries...)
 	sort.SliceStable(entries, func(i, j int) bool {
 		a, b := entries[i], entries[j]
-		if (a.Scope == domain.HookProject) != (b.Scope == domain.HookProject) {
-			return a.Scope == domain.HookProject
+		groupOrder := func(scope domain.HookScope) int {
+			if scope == domain.HookProject {
+				return 0
+			}
+			if scope == domain.HookUnknown {
+				return 2
+			}
+			return 1
+		}
+		if groupOrder(a.Scope) != groupOrder(b.Scope) {
+			return groupOrder(a.Scope) < groupOrder(b.Scope)
 		}
 		if a.Event != b.Event {
 			return a.Event < b.Event

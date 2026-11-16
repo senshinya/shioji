@@ -302,3 +302,60 @@ func TestHooksUnknownOwnershipDoesNotClaimGlobalInheritance(t *testing.T) {
 		t.Fatal("ambiguous source routed to global management")
 	}
 }
+
+func TestHooksIndeterminateReceiptAllowsReviewOfChangedDefinition(t *testing.T) {
+	v, ui := hookUIFixture(t, false)
+	applyHookCatalog(t, v, ui, false)
+	ui.Click("查看 Hook：Stop")
+	ui.Advance(time.Second)
+	ui.Click("信任此版本")
+	change := welcomeJob(t, v.Controller, "runtime.hooks.change")
+	in := change.Input.(domain.HookRequest)
+	unknown, _ := json.Marshal(domain.HookOperation{Input: in, State: domain.OperationIndeterminate})
+	change.Apply(v.Model, unknown, nil)
+	ui.Frame()
+	ui.Click("刷新 Hooks")
+	query := welcomeJob(t, v.Controller, "runtime.hooks.operation")
+	query.Apply(v.Model, unknown, nil)
+	ui.Frame()
+	read := welcomeJob(t, v.Controller, "runtime.hooks.list")
+	c := hookUICatalog(false)
+	c.Revision = "catalog-2"
+	c.Entries[0].DefinitionRevision = "changed-definition"
+	c.Entries[0].Command = "echo revised"
+	body, _ := json.Marshal(c)
+	read.Apply(v.Model, body, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	u := v.hookManagementFor("local", "custom", "", "")
+	if len(u.unconfirmed) != 1 || u.unconfirmed[0] != in {
+		t.Fatal("original uncertain receipt identity lost")
+	}
+	if !ui.HasText("echo revised") {
+		t.Fatal("replacement definition cannot be inspected", ui.Texts())
+	}
+	ui.Click("信任此版本")
+	next := welcomeJob(t, v.Controller, "runtime.hooks.change")
+	fresh := next.Input.(domain.HookRequest)
+	if fresh.OperationID == in.OperationID || fresh.DefinitionRevision != "changed-definition" {
+		t.Fatal("fresh review replayed old grant", fresh)
+	}
+}
+func TestHooksOwnershipGroupsHaveUniqueStableHeaders(t *testing.T) {
+	v, ui := hookUIFixture(t, true)
+	catalog := domain.HookCatalog{Revision: "r"}
+	for i, scope := range []domain.HookScope{domain.HookUnknown, domain.HookUser, domain.HookUnknown, domain.HookUser} {
+		catalog.Entries = append(catalog.Entries, domain.HookEntry{ID: fmt.Sprint(i), Event: fmt.Sprint(i), Scope: scope, Source: "fixture", Kind: "command", Command: "true", Trust: domain.HookUntrusted})
+	}
+	body, _ := json.Marshal(catalog)
+	welcomeJob(t, v.Controller, "runtime.hooks.list").Apply(v.Model, body, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	counts := map[string]int{}
+	for _, text := range ui.Texts() {
+		counts[text]++
+	}
+	if counts["其他来源"] != 1 || counts["全局 · 继承"] != 1 {
+		t.Fatal("ownership groups repeat", counts)
+	}
+}

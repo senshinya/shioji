@@ -252,3 +252,36 @@ func TestNativeUnsupportedHookNeverBecomesTrustable(t *testing.T) {
 		t.Fatal("unsupported handler was trusted without review contents")
 	}
 }
+
+func TestNativeMCPHookWithUndisclosedArgumentsCannotBeTrusted(t *testing.T) {
+	_, manager, root, _ := nativeHooksFixture(t)
+	raw := []byte(`{"hooks":{"PreToolUse":[{"hooks":[{"type":"mcp_tool","server":"fixture","tool":"remove","input":{"path":"private-file"}}]}]}}`)
+	if err := os.WriteFile(filepath.Join(root, ".codex/hooks.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := manager.Hooks(context.Background(), domain.LaunchContext{CWD: root}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := hookEntry(t, catalog, "PreToolUse")
+	if h.CanTrust || h.CanEnable {
+		t.Fatal("MCP input is not disclosed but definition is writable", h)
+	}
+	if _, err = manager.ChangeHook(context.Background(), domain.LaunchContext{CWD: root}, domain.HookChange{ID: h.ID, Revision: catalog.Revision, DefinitionRevision: h.DefinitionRevision, Action: domain.HookTrustDefinition}); err == nil {
+		t.Fatal("incomplete MCP definition approved")
+	}
+}
+func TestNativeGlobalHookDiscoveryCannotUseProjectScopedHome(t *testing.T) {
+	_, _, root, home := nativeHooksFixture(t)
+	if err := os.WriteFile(filepath.Join(root, ".codex/config.toml"), []byte("[features]\nhooks=true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Start(context.Background(), Options{Home: home, Environment: []domain.EnvironmentVariable{{Name: "HOME", Value: root}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if _, err = r.Hooks(context.Background(), domain.LaunchContext{}, ""); err == nil {
+		t.Fatal("trusted project HOME accepted as independent global context")
+	}
+}

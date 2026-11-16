@@ -97,11 +97,37 @@ func (r *Runtime) nativeHooks(ctx context.Context, cwd, source string) ([]native
 	return hooks, warnings, nil
 }
 
+// A cwd-scoped inventory cannot establish global provenance if it includes
+// an active project layer. In particular HOME may itself be a trusted project.
+func (r *Runtime) globalHookDirectory(ctx context.Context) (string, error) {
+	cwd := environmentValue(r.processEnvironment(), "HOME")
+	if cwd == "" || !filepath.IsAbs(cwd) {
+		return "", errors.New("设备未提供用户目录")
+	}
+	config, err := r.skillConfiguration(ctx, cwd)
+	if err != nil {
+		return "", errors.New("无法确认全局 Hook 的配置范围")
+	}
+	for _, layer := range config.Layers {
+		if layer.Name.Type == "project" && layer.DisabledReason == nil {
+			return "", errors.New("用户目录包含项目配置，无法独立确认全局 Hooks")
+		}
+	}
+	return cwd, nil
+}
+
 func (r *Runtime) managedHooks(ctx context.Context, launch domain.LaunchContext, source string) (domain.HookCatalog, nativeConfiguration, map[string]nativeHook, error) {
 	out := domain.HookCatalog{Directory: launch.CWD, RuntimeKnown: source != "", Entries: []domain.HookEntry{}}
 	globalCWD := environmentValue(r.processEnvironment(), "HOME")
 	if globalCWD == "" || !filepath.IsAbs(globalCWD) {
 		return out, nativeConfiguration{}, nil, errors.New("设备未提供用户目录")
+	}
+	if launch.CWD == "" {
+		verified, err := r.globalHookDirectory(ctx)
+		if err != nil {
+			return out, nativeConfiguration{}, nil, err
+		}
+		globalCWD = verified
 	}
 	cwd := launch.CWD
 	if cwd == "" {
@@ -128,7 +154,12 @@ func (r *Runtime) managedHooks(ctx context.Context, launch domain.LaunchContext,
 			if h.Source != "plugin" {
 				continue
 			}
-			globals, _, e := r.nativeHooks(ctx, globalCWD, "")
+			verified, e := r.globalHookDirectory(ctx)
+			if e != nil {
+				warnings = append(warnings, "无法独立确认插件的全局来源，相关项目条目只读")
+				break
+			}
+			globals, _, e := r.nativeHooks(ctx, verified, "")
 			if e == nil {
 				for _, g := range globals {
 					if g.Source == "plugin" {
@@ -183,7 +214,9 @@ func (r *Runtime) managedHooks(ctx context.Context, launch domain.LaunchContext,
 		case "managed":
 			entry.Trust = domain.HookPolicy
 		}
-		knownHandler := h.HandlerType == "command" && strings.TrimSpace(h.Command) != "" || h.HandlerType == "mcpTool" && h.Server != "" && h.Tool != ""
+		// The native list omits configured MCP input arguments, so server/tool
+		// alone are insufficient for a version-bound review.
+		knownHandler := h.HandlerType == "command" && strings.TrimSpace(h.Command) != ""
 		owned := launch.CWD == "" && scope != domain.HookProject || launch.CWD != "" && scope == domain.HookProject
 		entry.CanEnable = writable && knownHandler && owned && scope != domain.HookUnknown && !h.IsManaged && entry.Trust != "" && entry.Trust != domain.HookPolicy
 		entry.CanTrust = entry.CanEnable && (entry.Trust == domain.HookUntrusted || entry.Trust == domain.HookModified)
