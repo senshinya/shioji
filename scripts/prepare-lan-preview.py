@@ -24,6 +24,15 @@ if (typeof globalThis.crypto?.randomUUID !== 'function' &&
     }
   });
 }
+// A LAN HTTP request can omit Sec-Fetch-Site. Repair a stale server-supplied
+// parent origin only when the browser proves the actual parent is same-origin.
+// Cross-origin cloud embedding keeps its configured origin and access checks.
+try {
+  if (typeof window !== 'undefined' && window.parent !== window &&
+      window.parent.location.origin === window.location.origin) {
+    document.documentElement.dataset.ryugiEmbedParent = window.location.origin;
+  }
+} catch (_) {}
 </script>'''
 
 

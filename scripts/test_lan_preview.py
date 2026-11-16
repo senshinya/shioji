@@ -42,6 +42,20 @@ const context=vm.createContext({crypto});vm.runInContext(source,context);
 const values=Array.from({length:1000},()=>crypto.randomUUID());assert.equal(new Set(values).size,1000);
 assert(values.every(v=>/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(v)));
 const native=()=> 'native';const secure=vm.createContext({crypto:{randomUUID:native}});vm.runInContext(source,secure);assert.equal(secure.crypto.randomUUID,native);
+// Insecure LAN requests omit Sec-Fetch-Site; a same-origin parent must not
+// inherit a cloud/localhost target from that missing header.
+const origin='http://192.168.7.131:27320';
+const document={documentElement:{dataset:{ryugiEmbedParent:'https://cloud.example'}}};
+const child={location:{origin},parent:{location:{origin}}};
+vm.runInContext(source,vm.createContext({crypto:{randomUUID:native},window:child,document}));
+assert.equal(document.documentElement.dataset.ryugiEmbedParent,origin);
+const foreign={documentElement:{dataset:{ryugiEmbedParent:'https://cloud.example'}}};
+const cross={location:{origin},parent:{get location(){throw Error('cross origin')}}};
+vm.runInContext(source,vm.createContext({crypto:{randomUUID:native},window:cross,document:foreign}));
+assert.equal(foreign.documentElement.dataset.ryugiEmbedParent,'https://cloud.example');
+const top={location:{origin}};top.parent=top;
+vm.runInContext(source,vm.createContext({crypto:{randomUUID:native},window:top,document:foreign}));
+assert.equal(foreign.documentElement.dataset.ryugiEmbedParent,'https://cloud.example');
 """
                     subprocess.run(["node", "-e", probe, json.dumps(bootstrap)], check=True)
                 again = subprocess.run([sys.executable, str(SCRIPT), "--port", port], capture_output=True, text=True)
