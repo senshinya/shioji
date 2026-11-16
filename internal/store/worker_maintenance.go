@@ -259,7 +259,7 @@ func ExecutionConsentRef(q interface{ QueryRow(string, ...any) *sql.Row }, id st
 	if session.ContextAction != nil {
 		values = append(values, session.ContextAction.OperationID)
 	}
-	for _, table := range []string{"operations", "turns", "history_operations"} {
+	for _, table := range []string{"operations", "work_inputs", "turns", "history_operations"} {
 		var exists bool
 		if err := q.QueryRow("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)", table).Scan(&exists); err != nil {
 			return "", err

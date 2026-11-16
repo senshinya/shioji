@@ -549,6 +549,49 @@ func CancelDeviceRecovery(dir, id, device string) (domain.WorkerRecoveryOperatio
 	return r.Operation, err
 }
 
+var errDeviceRecoveryCancelled = errors.New("恢复操作已取消")
+
+// Caller holds recoveryLock. Cancellation before destructive work resumes the
+// exact paused owner and releases only this operation's startup fence. If a
+// service or target already closed, retain its restoration records for retry.
+func finishCancelledDeviceRecovery(ctx context.Context, dir string, r *deviceRecoveryRecord) error {
+	if r.OwnerPaused && managedexec.ProcessState(r.Snapshot.Owner) == "running" {
+		if err := managedexec.SignalExact(r.Snapshot.Owner, unix.SIGCONT); err != nil {
+			return err
+		}
+		r.OwnerPaused = false
+	}
+	if r.ServiceSuspendPending && !r.ServiceSuspended && r.Service != "" {
+		check, cancel := context.WithTimeout(ctx, time.Second)
+		_, err := inspectRecoveryService(check, r.Service, r.Snapshot.Owner, nativeRecoveryServiceCommand)
+		cancel()
+		if err == nil {
+			r.ServiceSuspendPending = false
+		}
+	}
+	started := r.ServiceSuspended || r.ServiceSuspendPending
+	for _, sent := range r.Sent {
+		started = started || sent
+	}
+	r.Operation.Phase = "cancelled"
+	r.Operation.Message = "已取消尚未开始的关闭，已发出的信号无法撤回"
+	r.Operation.Revision++
+	r.Operation.UpdatedAt = time.Now().UTC()
+	if err := recoveryWrite(dir, r.Operation.ID, *r); err != nil {
+		return err
+	}
+	if !started {
+		fence, err := transport.PendingDeviceRecovery(dir)
+		if err != nil {
+			return err
+		}
+		if fence != nil && fence.ID == r.Operation.ID && fence.DeviceID == r.Operation.DeviceID {
+			return os.Remove(filepath.Join(dir, "worker-recovery", "fence.json"))
+		}
+	}
+	return nil
+}
+
 // Called by the detached signed executable before the ordinary startup path.
 // It never requires the old worker's dispatcher or database mutex.
 func RunDeviceRecovery(ctx context.Context, config Config, id string) (server *Server, retErr error) {
@@ -564,13 +607,18 @@ func RunDeviceRecovery(ctx context.Context, config Config, id string) (server *S
 		lock.Close()
 		return nil, err
 	}
+	if r.Operation.Active() && r.Runner.Identity.PID > 1 && managedexec.ProcessState(r.Runner) == "running" {
+		lock.Close()
+		return nil, errors.New("已有恢复程序运行")
+	}
+	if r.Cancelled {
+		err = finishCancelledDeviceRecovery(ctx, dir, &r)
+		lock.Close()
+		return nil, err
+	}
 	if !r.Operation.Active() {
 		lock.Close()
 		return nil, nil
-	}
-	if r.Runner.Identity.PID > 1 && managedexec.ProcessState(r.Runner) == "running" {
-		lock.Close()
-		return nil, errors.New("已有恢复程序运行")
 	}
 	procs, err := managedexec.Processes()
 	if err != nil {
@@ -600,6 +648,10 @@ func RunDeviceRecovery(ctx context.Context, config Config, id string) (server *S
 			return e
 		}
 		r.Cancelled = current.Cancelled
+		if current.Cancelled && value != "cancelled" && value != "partial" {
+			r = current
+			return errDeviceRecoveryCancelled
+		}
 		r.Operation.Phase = value
 		r.Operation.Message = message
 		r.Operation.Revision++
@@ -607,6 +659,22 @@ func RunDeviceRecovery(ctx context.Context, config Config, id string) (server *S
 		return recoveryWrite(dir, id, r)
 	}
 	defer func() {
+		if retErr != nil {
+			f, e := recoveryLock(dir)
+			if e == nil {
+				var current deviceRecoveryRecord
+				e = recoveryRead(dir, id, &current)
+				if e == nil && current.Cancelled {
+					e = finishCancelledDeviceRecovery(ctx, dir, &current)
+					r = current
+					retErr = e
+				}
+				f.Close()
+			}
+			if e != nil && errors.Is(retErr, errDeviceRecoveryCancelled) {
+				retErr = e
+			}
+		}
 		if r.OwnerPaused && managedexec.ProcessState(r.Snapshot.Owner) == "running" {
 			_ = managedexec.SignalExact(r.Snapshot.Owner, unix.SIGCONT)
 		}
@@ -645,7 +713,15 @@ func RunDeviceRecovery(ctx context.Context, config Config, id string) (server *S
 			if err = phase("fencing", ""); err != nil {
 				return nil, err
 			}
-			plist, e := suspendRecoveryService(ctx, r.Service, r.Snapshot.Owner, nativeRecoveryServiceCommand)
+			serviceCommand := func(ctx context.Context, args ...string) ([]byte, error) {
+				if len(args) > 0 && args[0] == "bootout" {
+					if err := phase("fencing", ""); err != nil {
+						return nil, err
+					}
+				}
+				return nativeRecoveryServiceCommand(ctx, args...)
+			}
+			plist, e := suspendRecoveryService(ctx, r.Service, r.Snapshot.Owner, serviceCommand)
 			if e != nil {
 				return nil, e
 			}
@@ -685,8 +761,7 @@ func RunDeviceRecovery(ctx context.Context, config Config, id string) (server *S
 			return nil, e
 		}
 		if r.Cancelled {
-			phase("cancelled", "已取消尚未开始的关闭，已发出的信号无法撤回")
-			return nil, nil
+			return nil, errDeviceRecoveryCancelled
 		}
 		result := &r.Operation.Results[i]
 		p := r.Snapshot.Targets[result.Process.Ref]

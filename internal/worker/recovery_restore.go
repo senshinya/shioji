@@ -55,7 +55,7 @@ func suspendRecoveryService(ctx context.Context, label string, owner managedexec
 		return "", err
 	}
 	if _, err = run(ctx, "bootout", label); err != nil {
-		return "", errors.New("无法暂挂执行服务自动启动，请重新检查")
+		return "", errors.Join(errors.New("无法暂挂执行服务自动启动，请重新检查"), err)
 	}
 	return plist, nil
 }

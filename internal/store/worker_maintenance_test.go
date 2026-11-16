@@ -201,7 +201,7 @@ func TestExplicitMaintenanceAcceptsActiveSessionAndInvalidatesRequests(t *testin
 }
 
 func TestExplicitMaintenanceConsentSurvivesContentButRejectsNewExecution(t *testing.T) {
-	for _, change := range []string{"content", "new-turn", "new-input"} {
+	for _, change := range []string{"content", "new-turn", "new-input", "new-child-input"} {
 		t.Run(change, func(t *testing.T) {
 			s := open(t)
 			sid := maintenanceSession(t, s, "stream")
@@ -221,6 +221,11 @@ func TestExplicitMaintenanceConsentSurvivesContentButRejectsNewExecution(t *test
 			case "new-input":
 				d, _ := s.Session(sid, 0, 1)
 				_, err = s.Accept(domain.Submission{OperationID: "new-input", WorkspaceID: d.Session.WorkspaceID, SessionID: sid, Text: "new work"})
+			case "new-child-input":
+				_, err = s.Apply(sid, domain.Event{Type: "work.upsert", Work: &domain.WorkActivity{ID: "child", Kind: "agent", TurnID: "child-turn", State: "completed", CanContinue: true}})
+				if err == nil {
+					_, _, err = s.AcceptWorkInput(domain.WorkInput{OperationID: "new-child-input", SessionID: sid, WorkID: "child", Mode: "continue", Text: "new child work"})
+				}
 			}
 			if err != nil {
 				t.Fatal(err)
