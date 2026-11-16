@@ -15,7 +15,7 @@ import (
 	"shioji/internal/domain"
 )
 
-func sessionLoadingFixture() (*View, *n.Tester) {
+func sessionLoadingFixture(cached ...bool) (*View, *n.Tester) {
 	m := layoutModel()
 	m.WorkerMinor = 37
 	m.ConnectionEpoch = "opening-device"
@@ -24,8 +24,12 @@ func sessionLoadingFixture() (*View, *n.Tester) {
 	d.Session.ThreadID = "opening-thread"
 	d.Items = nil
 	d.History = &domain.HistoryWindow{Invalidated: true}
+	if len(cached) > 0 && cached[0] {
+		d.Items = []domain.Item{{ID: "cached", Kind: "assistant", Text: "缓存会话正文", Final: true, Order: 1}}
+		d.History = &domain.HistoryWindow{First: 1, Last: 1, Invalidated: true}
+	}
 	m.Details["s"] = d
-	m.HistoryReads["s"] = &app.HistoryRead{Pending: true}
+	m.BeginHistoryRead("s")
 	v := New(m, app.NewController(""), "")
 	return v, n.NewTester(v.View, 1240, 820)
 }
@@ -73,12 +77,8 @@ func TestSessionLoadingDelaysFeedbackAndPreservesDraft(t *testing.T) {
 
 func TestSessionLoadingSkipsFastAndCachedHistory(t *testing.T) {
 	for _, cached := range []bool{false, true} {
-		v, ui := sessionLoadingFixture()
-		if cached {
-			d := v.Model.Details["s"]
-			d.Items = []domain.Item{{ID: "cached", Kind: "assistant", Text: "缓存会话正文", Final: true}}
-			v.Model.Details["s"] = d
-		} else {
+		v, ui := sessionLoadingFixture(cached)
+		if !cached {
 			ui.Advance(80 * time.Millisecond)
 			completeSessionLoading(v)
 		}
@@ -334,5 +334,88 @@ func TestSessionLoadingNativeRecording(t *testing.T) {
 			ui.Advance(400 * time.Millisecond)
 			saveNativeSkillImage(t, ui, "failed.png")
 		})
+	}
+}
+
+func TestInitialHistoryWaitsForReadDespiteLiveTail(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, reduced := range []bool{false, true} {
+			for _, delay := range []time.Duration{0, 80 * time.Millisecond, 300 * time.Millisecond} {
+				t.Run(fmt.Sprintf("dark=%t/reduced=%t/delay=%s", dark, reduced, delay), func(t *testing.T) {
+					checkInitialHistoryLiveTail(t, dark, reduced, delay)
+				})
+			}
+		}
+	}
+}
+
+func checkInitialHistoryLiveTail(t *testing.T, dark, reduced bool, delay time.Duration) {
+	v, ui := sessionLoadingFixture()
+	ui.SetDark(dark)
+	ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
+	ui.Advance(delay)
+	if dir := os.Getenv("SHIOJI_SKILL_SNAPSHOTS"); dir != "" {
+		t.Setenv("SHIOJI_SKILL_SNAPSHOTS", filepath.Join(dir, fmt.Sprintf("%t-%t-%d", dark, reduced, delay)))
+	}
+	frame := 0
+	advance := func() {
+		dir := os.Getenv("SHIOJI_INITIAL_HISTORY_RECORDING")
+		if dir == "" || reduced || delay != 300*time.Millisecond {
+			ui.Advance(time.Second)
+			return
+		}
+		t.Setenv("SHIOJI_SKILL_SNAPSHOTS", filepath.Join(dir, fmt.Sprint(dark)))
+		for range 30 {
+			saveNativeSkillImage(t, ui, fmt.Sprintf("frame-%04d.png", frame))
+			frame++
+			ui.Advance(time.Second / 30)
+		}
+	}
+	d := v.Model.Details["s"]
+	d.Session.Status = domain.ExecutionRunning
+	d.Turns = []domain.Turn{{ID: "active", Status: domain.ExecutionRunning}}
+	v.Model.Details["s"] = d
+	if err := v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "item.upsert", SessionID: "s", Item: &domain.Item{ID: "tail", TurnID: "active", Kind: "assistant", Text: "历史尚未到达时收到的实时回复", Order: 100}}); err != nil {
+		t.Fatal(err)
+	}
+	if delay == 0 {
+		v.sessionLoad = nil
+	} // Event was already queued before the first visible loading frame.
+	ui.Frame()
+	advance()
+	saveNativeSkillImage(t, ui, "pending-history.png")
+	before := v.historyRowBounds["tail"]
+	opacity := v.loadingHistoryOpacity()
+	loader := ui.HasText("正在读取会话")
+	d = v.Model.Details["s"]
+	tail := d.Items
+	d.Items = nil
+	for i := 0; i < 20; i++ {
+		d.Items = append(d.Items, domain.Item{ID: fmt.Sprint("old-", i), Kind: "assistant", Text: "先前的完整对话。\n\n先前的完整对话。", Final: true, Order: int64(i + 1)})
+	}
+	d.Items = append(d.Items, tail...)
+	d.History = &domain.HistoryWindow{First: 1, Last: 100}
+	if err := v.Model.MergeHistoryPage(d, v.Model.HistoryReads["s"], true, domain.HistoryQuery{SessionID: "s"}); err != nil {
+		t.Fatal(err)
+	}
+	v.Model.FoldToolHistory["s"] = true
+	ui.Frame()
+	advance()
+	saveNativeSkillImage(t, ui, "complete-history.png")
+	after := v.historyRowBounds["tail"]
+	t.Logf("pending read: history opacity=%g loader=%t tail=%v; after history=%v", opacity, loader, before, after)
+	if opacity != 0 || !loader {
+		t.Fatal("live event exposed an incomplete initial history before the owning worker read completed")
+	}
+	if v.loadingHistoryOpacity() != 1 || ui.HasText("正在读取会话") || !v.lists["s"].AtEnd() || !ui.HasText("历史尚未到达时收到的实时回复") {
+		t.Fatal("completed history did not enter at its natural latest position")
+	}
+	if v.Model.Drafts["session:s"] != "保留的普通草稿" {
+		t.Fatal("initial read changed the draft")
+	}
+	ui.Scroll(850, 350, 0, -120)
+	ui.Frame()
+	if v.lists["s"].FollowingEnd() {
+		t.Fatal("completed history did not release normal scrolling")
 	}
 }

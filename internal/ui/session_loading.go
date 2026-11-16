@@ -44,7 +44,9 @@ func (v *View) syncSessionLoading(c *n.Context) {
 	}
 	d := m.Details[m.SessionID]
 	ready := len(d.Items) > 0 || d.History != nil && !d.History.Invalidated || m.WorkerMinor < 37 && d.Session.ID != "" && d.History == nil
-	if len(d.Items) == 0 && m.HistoryReads[m.SessionID] != nil {
+	if read := m.HistoryReads[m.SessionID]; read != nil && (len(d.Items) == 0 || read.Uncached) {
+		// Events arriving during an uncached read are only a live tail. They
+		// cannot complete the initial display window, even if they fill Items.
 		ready = false
 	}
 	if v.sessionLoad == nil {

@@ -622,6 +622,7 @@ func (c *Controller) Run(ctx context.Context) {
 			}
 			c.post(func(m *Model) {
 				if m.ConnectionEpoch == epoch && m.ownsSession(id) {
+					read.Uncached = len(m.Details[id].Items) == 0
 					m.HistoryReads[id] = read
 				}
 			})
