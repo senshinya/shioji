@@ -37,6 +37,11 @@ func (v *View) openParallel(id string) {
 		m.FocusSecondary = false
 		return
 	}
+	if id != m.SecondarySessionID && root.secondary != nil {
+		if state := root.secondary.lists[id]; state != nil {
+			state.ScrollToEnd()
+		}
+	}
 	m.SecondarySessionID = id
 	m.SecondaryWorkspaceID = ""
 	for _, s := range m.Snapshot.Sessions {
@@ -73,9 +78,6 @@ func (v *View) navigateSession(id, workspace string) {
 	if current != "" && current != id {
 		root.focusedView().cancelPagedHistory()
 		root.previousSession, root.previousWorkspace = current, currentWorkspace
-		if state := root.focusedView().lists[id]; state != nil {
-			state.ReleaseRow()
-		}
 	}
 	root.workspaceEditor = nil
 	root.devices = false
@@ -132,7 +134,7 @@ func (v *View) prepareSecondary() {
 	pane := v.secondary
 	if pane.Model.SessionID != session.ID {
 		if state := pane.lists[session.ID]; state != nil {
-			state.ReleaseRow()
+			state.ScrollToEnd()
 		}
 	}
 	previousError := pane.Model.Error
