@@ -5,6 +5,26 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-16
+
+### Added
+
+- 新增 `.md`／`.markdown` 文件的原生 Markdown 预览，可在预览与源码之间切换；关联文件与图片由所属设备的 worker 按会话权限读取，相对路径以原文件目录解析。
+- 新建工作区时可选择本机或已添加设备，支持重连离线设备，以及添加设备后继续创建；不同设备的目录草稿独立保留。
+- 会话首次读取较慢时展示原生加载动画及骨架，失败可重试，已知活动轮仍可停止；已有缓存与后续历史分页不重复播放加载动画。
+
+### Changed
+
+- 单个工具与命令结果默认折叠，保留手动展开状态；新命令到来时收起旧命令结果。
+- 空白新会话默认沿用所属目录的当前 Git 分支，保留未发送草稿与手动分支选择；切换分支受未提交改动阻止时，明确说明当前分支及可选操作。
+- 改善发送接纳、运行状态、流式回复与输入框高度变化的动效，减少状态交接时的文字跳动及额外空白。
+
+### Fixed
+
+- 修复重新进入缓存会话时先显示上次阅读位置再跳到底部的问题；历史补齐不再覆盖用户已开始的滚动阅读。
+- 修复首次绘制未准确预留底部输入框和待处理区域高度的问题，避免最新消息被遮挡及后续位置跳变。
+- 修复前台正在查看的已完成回复仍保留未读提醒的问题，并将已读状态同步到所属设备。
+
 ## [0.3.0] - 2026-11-16
 
 ### Added
@@ -146,7 +166,8 @@
 - 新增独立执行 worker 和 Tailnet 网络服务；退出 App 不停止设备端执行或网络连接，运行中状态不明时保留人工核对入口。
 - 提供 Developer ID 签名、经 Apple 公证并附带公证票据的 DMG，以及 SHA-256 校验文件。
 
-[Unreleased]: https://github.com/senshinya/shioji/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/senshinya/shioji/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/senshinya/shioji/compare/v0.3.0...v0.3.2
 [0.3.0]: https://github.com/senshinya/shioji/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/senshinya/shioji/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/senshinya/shioji/compare/v0.1.1...v0.1.2

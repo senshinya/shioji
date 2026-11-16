@@ -1,12 +1,14 @@
 # Shioji 发布
 
-当前版本：`v0.3.0`。`VERSION` 保存不带 `v` 的数字版本；两个 App bundle 的版本均由构建脚本写入。`dev.shioji.app`、`dev.shioji.runtime` 与现有服务身份保持不变。
+当前版本：`v0.3.2`。`VERSION` 保存不带 `v` 的数字版本；两个 App bundle 的版本均由构建脚本写入。`dev.shioji.app`、`dev.shioji.runtime` 与现有服务身份保持不变。
 
 ## 变更记录与发布说明
 
 完整变更见 [CHANGELOG.md](../CHANGELOG.md)。每次发布前比较上一正式标签与待发布代码的实际差异，核对面向用户的行为、兼容性和升级要求；不能只根据 commit message 生成说明。
 
 使用 `Added`、`Changed`、`Deprecated`、`Removed`、`Fixed`、`Security` 分类，只保留有内容的分类；版本标题包含数字版本、UTC 发布日期和源码／比较链接。说明用户影响，排除本地产物、内部重构和纯测试调整。GitHub Release 正文复用对应版本条目，并补充该版安装与更新方式。修改历史说明保留原发布日期，不移动标签或替换已发布二进制。
+
+v0.3.2 增加原生 Markdown 文件预览、按设备创建工作区和会话读取状态，并改善历史阅读、工具折叠与输入框动效。空白新会话默认沿用所属目录的当前 Git 分支；手动选择及未发送草稿继续保留。文件及 Markdown 关联资源仍由所属设备的 worker 按会话权限读取；更新所属设备的 worker 可获得更明确的分支切换错误说明。
 
 v0.3.0 增加归档管理与到期清理、执行服务阻塞恢复及子 Agent 消息分页，并同步跨客户端的完成提醒状态。归档保留期默认 30 天，可在“外观 → 对话”设置为永不；到期只删除 Shioji 记录与自有资源，项目文件保留。新功能需配套更新所属设备的 worker；归档和维护保护使用 schema 12／13，不能自动降级到忽略这些保护的旧版。
 
@@ -74,7 +76,7 @@ bash packaging/build-dev.sh
 # 指定本机已有 Developer ID identity 和 notarytool profile 后：
 # 另需 APPLE_TEAM_ID、SHIOJI_UPDATE_PUBLIC_KEY 与 SHIOJI_UPDATE_PRIVATE_KEY；
 # 私钥从安全文件/CI Secret 注入环境，不要写在命令参数或 shell 历史中。
-CODE_SIGN_IDENTITY='<证书指纹>' NOTARY_PROFILE='<本机公证配置名称>' RELEASE_TAG=v0.3.0 bash packaging/build-release.sh
+CODE_SIGN_IDENTITY='<证书指纹>' NOTARY_PROFILE='<本机公证配置名称>' RELEASE_TAG=v0.3.2 bash packaging/build-release.sh
 ```
 
 产物位于 `build/release/`。构建不会启动或替换用户正在运行的 GUI、worker 或 Tailnet 节点。
