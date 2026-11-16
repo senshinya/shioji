@@ -4,7 +4,59 @@ import (
 	"math"
 	"strconv"
 	"testing"
+	"time"
 )
+
+func TestListRevealDoesNotTreatEmptyRowsAsClippedContent(t *testing.T) {
+	for _, fromEnd := range []bool{false, true} {
+		hs := listHeights{n: 5, def: 20}
+		for i, height := range []float32{20, 0, 0, 20, 40} {
+			hs.set(i, height)
+		}
+		hs.reveals = []ListReveal{{First: 0, End: 5, Progress: .875, FromEnd: fromEnd}}
+		for _, direction := range []int{-1, 1} {
+			if got := hs.nextVisible(2, direction); got != 2 {
+				t.Errorf("fromEnd=%v direction=%d: empty row moved to %d; clipping must not skip visible neighbours", fromEnd, direction, got)
+			}
+		}
+	}
+}
+
+func TestListRevealKeepsEmptyRowsScrollableDuringAnimation(t *testing.T) {
+	s := ListState{}
+	heights := []float32{20, 0, 0, 20, 40}
+	tester := NewTester(func(c *Context) {
+		List(c, &s, len(heights), func(i int) {
+			Column(c).Height(heights[i]).Children(func() {
+				if heights[i] > 0 {
+					Text(c, "row"+strconv.Itoa(i))
+				}
+			})
+		}).Fill()
+	}, 300, 220)
+	// Fail before entering layout on the old implementation, which otherwise
+	// loops forever between rows 3 and 4 while covering the viewport upwards.
+	s.Reveals = []ListReveal{{First: 0, End: 5, Progress: .875}}
+	s.heights.reveals = s.Reveals
+	if got := s.heights.nextVisible(2, -1); got > 2 {
+		t.Fatalf("backward traversal moves forward to row %d", got)
+	}
+	for _, fromEnd := range []bool{false, true} {
+		s.Reveals[0].FromEnd = fromEnd
+		for _, progress := range []float32{.875, .5, 0, .25, 1} {
+			s.Reveals[0].Progress = progress
+			s.ScrollTo(4, End)
+			tester.Advance(20 * time.Millisecond)
+			if progress == 1 {
+				for _, name := range []string{"row0", "row3", "row4"} {
+					if _, ok := tester.Find(name); !ok {
+						t.Fatalf("fromEnd=%v: visible neighbour %s was skipped", fromEnd, name)
+					}
+				}
+			}
+		}
+	}
+}
 
 func TestListTrailingRevealKeepsThePartialRowsBottomContent(t *testing.T) {
 	s := ListState{}

@@ -84,6 +84,11 @@ func (hs *listHeights) step(i int, gap float64) float64 {
 
 // Skip hidden rows rather than mounting a zero-height prefix or suffix.
 func (hs *listHeights) nextVisible(i, direction int) int {
+	// An empty row is not a clipped prefix or suffix. Searching the reveal's
+	// boundary for it can move against direction and trap layout in a cycle.
+	if hs.naturalHeight(i) == 0 {
+		return i
+	}
 	for _, r := range hs.reveals {
 		if i < r.First {
 			break
