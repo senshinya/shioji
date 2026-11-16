@@ -80,11 +80,11 @@ func TestRecoveryShowsOneNextStepAndExplainsUnownedTools(t *testing.T) {
 	if !ui.HasText("sleep 60") || ui.HasText("停止任务并恢复") {
 		t.Fatal("unknown process ownership is hidden or presented as stoppable")
 	}
-	if err := ui.Click("高级处理"); err != nil {
+	if err := ui.Click("结束旧轮记录…"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(400 * time.Millisecond)
-	if !ui.HasText("我已在设备上停止这些任务") {
+	if !ui.HasText("请确认没有其他后台任务仍在修改此工作区。继续会结束旧轮记录，不会自动发送待发送消息。") {
 		t.Fatal("manual fallback has no concrete prerequisite")
 	}
 }

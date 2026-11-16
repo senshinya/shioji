@@ -89,10 +89,24 @@ func run() error {
 			return errors.New("未知的执行恢复操作")
 		}
 		if err != nil {
+			code := "notSent"
+			if *recovery == "status" || *recovery == "cancel" {
+				code = "recoveryError"
+				if errors.Is(err, os.ErrNotExist) {
+					code = "notFound"
+				}
+			}
+			// A start failure may follow journal acceptance; clients must query its ID.
+			if *recovery == "start" {
+				if _, e := worker.DeviceRecoveryStatus(dir, *recoveryID); e == nil {
+					code = "receiptUnknown"
+				}
+			}
 			return json.NewEncoder(os.Stdout).Encode(struct {
-				DeviceID string `json:"deviceId"`
-				Error    string `json:"error"`
-			}{*recoveryDevice, err.Error()})
+				DeviceID  string `json:"deviceId"`
+				Error     string `json:"error"`
+				ErrorCode string `json:"errorCode"`
+			}{*recoveryDevice, err.Error(), code})
 		}
 		return json.NewEncoder(os.Stdout).Encode(out)
 	}

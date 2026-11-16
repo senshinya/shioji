@@ -323,6 +323,9 @@ func (v *View) workerMaintenancePage(c *n.Context, t *n.Theme, key, name string,
 			}
 		})
 	})
+	if configurationAction(c, "强制重启执行服务…").Label("强制重启执行服务入口").Clicked() {
+		v.openWorkerRecovery(key, "", false)
+	}
 	v.workerMaintenanceConfirm(c, t, key, name, state, client)
 }
 func (v *View) maintenanceBlocker(c *n.Context, t *n.Theme, key string, b domain.WorkerUpdateBlocker) {
@@ -392,7 +395,7 @@ func (v *View) maintenanceProcessDetails(c *n.Context, t *n.Theme, key, id strin
 	animatedContentHeight(c, frame, open, 200*time.Millisecond, func() float32 {
 		n.Column(c).FillWidth().Padding(4, 0, 0, 0).Children(func() {
 			for _, p := range processes {
-				n.Text(c, fmt.Sprintf("%s · PID %d", p.Name, p.PID)).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+				n.Text(c, fmt.Sprintf("%s · PID %d · %s · %s", p.Name, p.PID, p.StartedAt.Local().Format("01-02 15:04:05"), p.Evidence)).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 			}
 		})
 		return 0

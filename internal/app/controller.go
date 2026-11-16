@@ -102,7 +102,7 @@ func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.Raw
 	if job.Method == "session.completion.read" && client.Minor < 39 {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能同步会话处理状态"}
 	}
-	if (strings.HasPrefix(job.Method, "worker.maintenance.") || job.Method == "worker.update.diagnose") && (client.Worker == nil || !client.Worker.Maintenance) {
+	if (strings.HasPrefix(job.Method, "worker.maintenance.") || job.Method == "worker.update.diagnose" || job.Method == "worker.processes.inspect") && (client.Worker == nil || (!client.Worker.Maintenance && !client.Worker.ForceRecovery)) {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "此执行服务尚不支持后台环境处理"}
 	}
 	if (strings.HasPrefix(job.Method, "archive.") || job.Method == "session.delete" || job.Method == "workspace.delete") && client.Minor < 40 {
@@ -802,6 +802,10 @@ func (c *Controller) Run(ctx context.Context) {
 				disconnected()
 			}
 		case job := <-jobs:
+			if job.Method == "$worker.recovery" {
+				c.runWorkerRecoveryJob(ctx, job)
+				continue
+			}
 			if isForwardJob(job.Method) {
 				c.runForwardJob(ctx, job)
 				continue

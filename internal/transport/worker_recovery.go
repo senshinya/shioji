@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 	"strings"
 )
 
@@ -53,17 +54,19 @@ func recoveryCommand(cmd *exec.Cmd, in domain.WorkerRecoveryInput) (json.RawMess
 		return nil, fmt.Errorf("设备恢复失败：%s (%w)", strings.TrimSpace(diagnostic.String()), err)
 	}
 	var result struct {
-		DeviceID string `json:"deviceId"`
-		ID       string `json:"id"`
-		Error    string `json:"error"`
+		DeviceID  string `json:"deviceId"`
+		ID        string `json:"id"`
+		Error     string `json:"error"`
+		ErrorCode string `json:"errorCode"`
+		Conflict  bool   `json:"conflict"`
 	}
 	if json.Unmarshal(output.Bytes(), &result) != nil || result.DeviceID != in.DeviceID {
 		return nil, errors.New("恢复回执不属于指定设备")
 	}
 	if result.Error != "" {
-		return nil, errors.New(result.Error)
+		return nil, &protocol.RemoteError{Code: result.ErrorCode, Message: result.Error}
 	}
-	if in.ID != "" && result.ID != in.ID {
+	if in.ID != "" && result.ID != in.ID && !result.Conflict {
 		return nil, errors.New("恢复回执不属于原操作")
 	}
 	return json.RawMessage(append([]byte(nil), output.Bytes()...)), nil
@@ -86,7 +89,7 @@ func RunWorkerRecovery(ctx context.Context, binary, directory, action string, in
 
 // Staging does not touch the live owner and needs no capability from old RPC.
 func (s SSH) WorkerRecovery(ctx context.Context, binary, action string, in domain.WorkerRecoveryInput) (json.RawMessage, error) {
-	b, err := s.StageWorker(ctx, binary)
+	b, err := InspectWorker(ctx, binary)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +99,17 @@ func (s SSH) WorkerRecovery(ctx context.Context, binary, action string, in domai
 	path, err := StagedWorkerPath(s.StateDirectory, b.BuildID)
 	if err != nil {
 		return nil, err
+	}
+	// Polling reuses the immutable helper only after checking its signature and digest.
+	check := "set -eu; root=" + shellQuote(s.StateDirectory) + "; [ -d \"$root\" ] && [ ! -L \"$root\" ]; [ \"$(/usr/bin/stat -f %u \"$root\")\" = \"$(/usr/bin/id -u)\" ]; [ \"$(/usr/bin/stat -f %Lp \"$root\")\" = 700 ]; /usr/bin/codesign --verify --strict " + shellQuote(path) + "; actual=$(/usr/bin/shasum -a 256 " + shellQuote(path) + "); [ \"${actual%% *}\" = " + shellQuote(b.BuildID) + " ]"
+	cached, e := s.command(ctx, "/bin/sh -c "+shellQuote(check))
+	if e != nil {
+		return nil, e
+	}
+	if cached.Run() != nil {
+		if _, err = s.StageWorker(ctx, binary); err != nil {
+			return nil, err
+		}
 	}
 	args, err := recoveryArguments(s.StateDirectory, action, in)
 	if err != nil {

@@ -178,6 +178,7 @@ type View struct {
 	deviceList                                                                                                      bool
 	deviceTab                                                                                                       string
 	deviceSearch                                                                                                    string
+	workerRecoveryStates                                                                                            map[string]*workerRecoveryUI
 	workerMaintenanceStates                                                                                         map[string]*workerMaintenanceUI
 	deviceStorageStates                                                                                             map[string]*deviceStorageState
 	clientStorageState                                                                                              *deviceStorageState

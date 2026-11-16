@@ -23,7 +23,7 @@ func (m *Model) maintenanceDevice(key string) (*DeviceState, error) {
 	if s == nil || !s.Connected || s.ConnectionEpoch == "" || s.Snapshot.DeviceID == "" {
 		return nil, errors.New("请先重新连接设备")
 	}
-	if s.WorkerService == nil || s.WorkerService.Build == nil || !s.WorkerService.Build.Maintenance {
+	if s.WorkerService == nil || s.WorkerService.Build == nil || (!s.WorkerService.Build.Maintenance && !s.WorkerService.Build.ForceRecovery) {
 		return nil, errors.New("此执行服务尚不支持后台环境处理")
 	}
 	return s, nil
@@ -80,7 +80,7 @@ func (m *Model) maintenanceJob(key, method string, input any, mutating bool) (Jo
 					err = errors.New("诊断回执不属于当前设备或构建")
 				} else {
 					current.Diagnosis = &d
-					if method == "$worker.maintenance.inspect" && (d.Operation == nil || !d.Operation.Phase.Active()) {
+					if d.Operation == nil || !d.Operation.Phase.Active() {
 						current.Operation = nil
 						current.PendingID = ""
 						current.QueryOnly = false

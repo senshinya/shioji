@@ -117,11 +117,18 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 				break
 			}
 		}
-		if v.maintenanceUIFor(key).open {
+		if v.recoveryUIFor(key).open {
+			page, depth = "worker-recovery", 1
+			selected = nil
+		} else if v.maintenanceUIFor(key).open {
 			page, depth = "worker-maintenance", 1
 			selected = nil
 		}
 		configurationTabPanel(c.Key("device-navigation"), page, depth, configurationPanelFill, func() {
+			if v.recoveryUIFor(key).open {
+				v.workerRecoveryPage(c, t, key, name, state)
+				return
+			}
 			if v.maintenanceUIFor(key).open {
 				v.workerMaintenancePage(c, t, key, name, state)
 				return
@@ -299,7 +306,7 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 		case app.WorkerWaiting:
 			action = "等待空闲"
 			disabled = true
-			if service.Build != nil && service.Build.Maintenance {
+			if service.Build != nil && (service.Build.Maintenance || service.Build.ForceRecovery) {
 				action = "查看阻塞"
 				method = "$worker.maintenance.inspect"
 				disabled = v.Controller == nil || !state.Connected
@@ -353,13 +360,23 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 			if flow != nil {
 				v.performMigrationAction(flow)
 			} else if method == "$worker.maintenance.inspect" {
-				v.openWorkerMaintenance(key)
+				if service != nil && service.Build != nil && service.Build.ForceRecovery {
+					v.openWorkerRecovery(key, "", true)
+				} else {
+					v.openWorkerMaintenance(key)
+				}
 			} else if method == "$worker.migration.inspect" {
 				v.beginNormalMigration(key)
 			} else {
 				v.do(app.Job{ConnectionID: key, Method: method})
 			}
 		}
+		iconButton(c, moreActionsIcon, "执行服务更多操作").Disabled(v.Controller == nil).Menu(func(menu *n.Menu) {
+			if menu.Item("强制重启执行服务…").Chosen() {
+				v.openWorkerRecovery(key, "", false)
+			}
+		})
+
 	})
 
 	v.backgroundSwitch(c.Key("background"), t, key, state)

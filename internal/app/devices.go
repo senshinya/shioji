@@ -309,6 +309,13 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	m.WorkDetails, m.workReads = p.WorkDetails, p.workReads
 	m.Navigation = p.Navigation
 	m.RefreshDevices()
+	if service := state.WorkerService; service != nil && service.Phase == WorkerWaiting {
+		build := ""
+		if service.Available != nil {
+			build = service.Available.BuildID
+		}
+		m.queueRecoveryNotice(key, "workerWaiting:"+build, "后台环境阻止更新，可选择关闭环境或强制恢复执行服务")
+	}
 }
 
 func (m *Model) RefreshDevices() {

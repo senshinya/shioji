@@ -171,6 +171,9 @@ func (v *View) sessionMenu(menu *n.Menu, s domain.Session, ref app.SessionLocati
 	menu.Separator()
 	key := v.Model.WorkspaceConnection(s.WorkspaceID)
 	ready := v.canManage(key)
+	if menu.Item("强制关闭运行环境…").Chosen() {
+		v.openWorkerRecovery(key, s.ID, false)
+	}
 	if menu.Item("重命名").Disabled(!ready).Chosen() {
 		v.rename = &sessionRename{Session: s, Title: s.Title, Connection: key, Open: true}
 	}

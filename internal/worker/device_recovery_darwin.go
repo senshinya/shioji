@@ -301,6 +301,12 @@ func InspectDeviceRecovery(ctx context.Context, dir, expected string) (domain.Wo
 		r.Preview.Processes = append(r.Preview.Processes, summary)
 		r.Targets[summary.Ref] = p
 	}
+	if fence, e := transport.PendingDeviceRecovery(dir); e == nil && fence != nil {
+		var existing deviceRecoveryRecord
+		if recoveryRead(dir, fence.ID, &existing) == nil && existing.Operation.DeviceID == id {
+			r.Preview.Operation = &existing.Operation
+		}
+	}
 	if err = recoveryWrite(dir, "preview-"+r.Preview.Ref, r); err != nil {
 		return r.Preview, err
 	}
@@ -333,6 +339,7 @@ func StartDeviceRecovery(ctx context.Context, dir, binary string, in domain.Work
 			return none, e
 		}
 		if r.Operation.Active() {
+			r.Operation.Conflict = true
 			return r.Operation, nil
 		}
 		if e = os.Remove(filepath.Join(dir, "worker-recovery", "fence.json")); e != nil {
@@ -482,6 +489,9 @@ func CancelDeviceRecovery(dir, id, device string) (domain.WorkerRecoveryOperatio
 	}
 	if r.Operation.Phase == "starting" || r.Operation.Phase == "verifying" || r.Operation.Phase == "completed" {
 		return r.Operation, errors.New("服务正在启动，请等待原操作结果")
+	}
+	if r.Cancelled {
+		return r.Operation, nil
 	}
 	r.Cancelled = true
 	r.Operation.Revision++

@@ -247,6 +247,10 @@ func (c *Controller) runDevices(ctx context.Context) {
 			checkCancel = nil
 			apply(result.job, result.body, result.err)
 		case job := <-c.Jobs:
+			if job.Method == "$worker.recovery" {
+				c.runWorkerRecoveryJob(ctx, job)
+				continue
+			}
 			if isForwardJob(job.Method) {
 				c.runForwardJob(ctx, job)
 				continue

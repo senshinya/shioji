@@ -111,22 +111,17 @@ func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d 
 				}
 				canStop := info != nil && info.CanStopTasks && v.Model.WorkerMinor >= 8
 				if !canStop && !allStopped {
-					n.Text(c, "当前信息不足，无法由 Shioji 安全处理这些任务。可重试恢复，或在设备确认任务已结束后使用高级处理。").FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
+					n.Text(c, "当前信息不足，无法由 Shioji 安全处理这些任务。可重试恢复、强制关闭运行环境，或在设备确认任务已结束后结束旧轮记录。").FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
 				}
+				if ghost(c, "强制关闭运行环境…").Height(26).FontSize(12).PaddingX(8).AlignSelf(n.Start).Disabled(v.Controller == nil).Clicked() {
+					v.openWorkerRecovery(v.Model.WorkspaceConnection(d.Session.WorkspaceID), d.Session.ID, false)
+				}
+
 				if state.Advanced && info != nil && info.Message != "" {
 					n.Text(c, info.Message).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
 				}
 				if state.Result.Message != "" && (info == nil || info.Message != state.Result.Message) {
 					n.Text(c, state.Result.Message).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
-				}
-				canEnd := info != nil && info.CanEnd || state.Result.CanEnd
-				if canEnd && !canStop && !allStopped {
-					if ghost(c, "高级处理").Height(24).PaddingX(0).FontSize(11).Clicked() {
-						state.Advanced = !state.Advanced
-					}
-					if state.Advanced && ghost(c, "我已在设备上停止这些任务").Height(26).FontSize(12).PaddingX(8).Disabled(disabled).Clicked() {
-						state.Confirm = "end"
-					}
 				}
 			})
 		}
@@ -181,6 +176,9 @@ func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d 
 				}
 				if ghost(c, label).Height(26).PaddingX(8).FontSize(12).Clicked() {
 					state.Details = !state.Details
+				}
+				if (info != nil && info.CanEnd && !info.NeedsStop || state.Result.CanEnd) && ghost(c, "结束旧轮记录…").Height(26).PaddingX(8).FontSize(12).Disabled(disabled).Clicked() {
+					state.Confirm = "end"
 				}
 				if d.Session.Status == "abandoned" && ghost(c, "在新会话接续").Height(26).FontSize(12).PaddingX(8).Disabled(busy).Clicked() {
 					v.recoveryDraft(d.Session.ID)

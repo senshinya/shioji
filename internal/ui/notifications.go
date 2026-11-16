@@ -81,10 +81,13 @@ func (v *View) deliverNotifications() {
 	}
 	foreground := v.nativeWindow.IsFocused() && v.nativeWindow.IsVisible() && !v.nativeWindow.IsMinimized()
 	for _, event := range queue {
+		if event.Kind == "recovery" && foreground && v.devices && v.deviceSelected == event.ConnectionID && v.recoveryUIFor(event.ConnectionID).open {
+			continue
+		}
 		if v.foregroundNotificationSuppressed(event.SessionID, foreground) {
 			continue
 		}
-		if event.Kind == "completed" && !options.Completed || event.Kind == "attention" && !options.Attention || event.Kind == "failed" && !options.Failed {
+		if event.Kind == "completed" && !options.Completed || event.Kind == "attention" && !options.Attention || event.Kind == "failed" && !options.Failed || event.Kind == "recovery" && !options.Attention {
 			continue
 		}
 		if !mygo.NotificationsSupported() {
@@ -111,6 +114,9 @@ func (v *View) deliverNotifications() {
 		note.OnClick(func() {
 			if v.nativeWindow.IsDestroyed() {
 				return
+			}
+			if event.Kind == "recovery" {
+				v.openWorkerRecovery(event.ConnectionID, "", false)
 			}
 			for _, session := range v.Model.Snapshot.Sessions {
 				if session.ID == event.SessionID {
