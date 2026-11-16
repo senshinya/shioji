@@ -1,12 +1,14 @@
 # Shioji 发布
 
-当前版本：`v0.3.2`。`VERSION` 保存不带 `v` 的数字版本；两个 App bundle 的版本均由构建脚本写入。`dev.shioji.app`、`dev.shioji.runtime` 与现有服务身份保持不变。
+当前版本：`v0.3.5`。`VERSION` 保存不带 `v` 的数字版本；两个 App bundle 的版本均由构建脚本写入。`dev.shioji.app`、`dev.shioji.runtime` 与现有服务身份保持不变。
 
 ## 变更记录与发布说明
 
 完整变更见 [CHANGELOG.md](../CHANGELOG.md)。每次发布前比较上一正式标签与待发布代码的实际差异，核对面向用户的行为、兼容性和升级要求；不能只根据 commit message 生成说明。
 
 使用 `Added`、`Changed`、`Deprecated`、`Removed`、`Fixed`、`Security` 分类，只保留有内容的分类；版本标题包含数字版本、UTC 发布日期和源码／比较链接。说明用户影响，排除本地产物、内部重构和纯测试调整。GitHub Release 正文复用对应版本条目，并补充该版安装与更新方式。修改历史说明保留原发布日期，不移动标签或替换已发布二进制。
+
+v0.3.5 增加原生 Mermaid 图表、Markdown 图片缩略图、会话窗口缩放、执行环境强制恢复，以及归档批量删除与带警告的强制删除；同时修复运行配置继承、文件链接定位、非 Git 目录更改视图及会话控件误触。归档运行环境回收与强制删除需要所属设备的新版 worker（协议 minor 44）；旧版或卡死 worker 的恢复可走独立恢复程序，仍需明确确认关闭范围和风险。恢复不自动续答或发送队列，项目文件不会回滚或删除，独立 Tailnet 节点不随执行服务恢复而关闭。
 
 v0.3.2 修复长会话导入后无法接续的问题，正式导入完整历史并按需分页；已有部分副本可在原会话中“补全历史”，保留名称、配置和草稿。完整导入及补全需要更新所属设备的 worker（协议 minor 42）。同时增加原生 Markdown 文件预览、按设备创建工作区和会话读取状态，改善历史阅读、工具折叠与输入框动效。空白新会话默认沿用所属目录的当前 Git 分支；手动选择及未发送草稿继续保留。文件及 Markdown 关联资源仍由所属设备的 worker 按会话权限读取。
 
@@ -76,7 +78,7 @@ bash packaging/build-dev.sh
 # 指定本机已有 Developer ID identity 和 notarytool profile 后：
 # 另需 APPLE_TEAM_ID、SHIOJI_UPDATE_PUBLIC_KEY 与 SHIOJI_UPDATE_PRIVATE_KEY；
 # 私钥从安全文件/CI Secret 注入环境，不要写在命令参数或 shell 历史中。
-CODE_SIGN_IDENTITY='<证书指纹>' NOTARY_PROFILE='<本机公证配置名称>' RELEASE_TAG=v0.3.2 bash packaging/build-release.sh
+CODE_SIGN_IDENTITY='<证书指纹>' NOTARY_PROFILE='<本机公证配置名称>' RELEASE_TAG=v0.3.5 bash packaging/build-release.sh
 ```
 
 产物位于 `build/release/`。构建不会启动或替换用户正在运行的 GUI、worker 或 Tailnet 节点。
