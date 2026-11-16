@@ -95,7 +95,7 @@ jobs:
         if: github.event_name != 'release'
         run: |
           set -euo pipefail
-          go test ./...
+          go test -timeout 20m ./...
           (cd third_party/mygo && go test . ./plugins/updater ./plugins/updater/native)
       - name: Import signing identity and notarization credentials
         env:

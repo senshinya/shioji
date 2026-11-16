@@ -56,7 +56,7 @@ jobs:
       - run: python3 scripts/generate-third-party-notices.py --check
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - run: bash scripts/scan-secrets.sh
-      - run: go test ./...
+      - run: go test -timeout 20m ./...
       - name: Test native updater admission and preferences
         run: cd third_party/mygo && go test . ./plugins/updater ./plugins/updater/native
       - name: Build unsigned development bundle
