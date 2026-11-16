@@ -47,6 +47,15 @@ func TestHooksNativeAppearanceAndRowAlignment(t *testing.T) {
 				t.Fatal(err)
 			}
 			ui.Advance(time.Second)
+			back, backOK := ui.Find("‹ Hooks")
+			heading, _ := ui.Find("PreToolUse")
+			if !backOK || math.Abs(float64(back.X-heading.X)) > 1 {
+				t.Fatal("Hook back label is inset from reading edge", back, heading)
+			}
+			disclosure, disclosureOK := ui.Find("› 详细信息")
+			if !disclosureOK || math.Abs(float64(disclosure.X-heading.X)) > 1 {
+				t.Fatal("Hook disclosure label is inset from reading edge", disclosure, heading)
+			}
 			saveNativeSkillImage(t, ui, fmt.Sprintf("hooks-detail-%v.png", dark))
 			ui.Click("详细信息")
 			ui.Advance(time.Second)
@@ -64,6 +73,11 @@ func TestHooksNativeAppearanceAndRowAlignment(t *testing.T) {
 			ui.Click("在设备设置中管理 Hooks")
 			ui.Advance(time.Second)
 			applyHookCatalog(t, v, ui, false)
+			searchEdge, _ := ui.Find("搜索 Hooks")
+			eventEdge, _ := ui.Find("Stop")
+			if math.Abs(float64(searchEdge.X-eventEdge.X)) > 1 {
+				t.Fatal("global search outline lost reading edge", searchEdge, eventEdge)
+			}
 			saveNativeSkillImage(t, ui, fmt.Sprintf("hooks-global-%v.png", dark))
 		})
 	}

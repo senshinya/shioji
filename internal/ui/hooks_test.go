@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	n "github.com/egoist/mygo/ui"
+	"math"
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
@@ -139,64 +140,76 @@ func TestHooksUnknownSaveQueriesReceiptWithoutReplayingApproval(t *testing.T) {
 }
 
 func TestHooksSessionMenuUsesAcceptedSessionAndReturnsToComposer(t *testing.T) {
-	for _, width := range []int{1240, 850, 640} {
-		t.Run(fmt.Sprint(width), func(t *testing.T) {
-			m := deviceUIModel()
-			m.WorkerMinor = 46
-			m.Readiness.Capabilities.HookManagement = true
-			m.Readiness.Capabilities.HookInspection = true
-			info := setupCatalog()[0]
-			info.Capabilities.HookManagement = true
-			info.Capabilities.HookInspection = true
-			m.Readiness.HarnessID = info.ID
-			m.Readiness.Harnesses = []domain.HarnessInfo{info}
-			m.DeviceStates["local"].Readiness = m.Readiness
-			m.DeviceStates["local"].WorkerMinor = 46
-			s := domain.Session{ID: "s", WorkspaceID: "w", HarnessID: info.ID, ThreadID: "opaque-thread", Context: domain.LaunchContext{CWD: "/accepted/project"}, Status: "completed"}
-			m.Snapshot.Sessions = []domain.Session{s}
-			m.SessionID = "s"
-			m.WorkspaceID = "w"
-			m.Details["s"] = domain.SessionDetail{Session: s}
-			m.Drafts["session:s"] = "keep my draft"
-			v := New(m, app.NewController(""), "")
-			ui := n.NewTester(v.View, width, 820)
-			ui.Advance(time.Second)
-			ui.Click("运行配置")
-			ui.Advance(time.Second)
-			if err := ui.Click("Hooks"); err != nil {
-				t.Fatal("Hooks entry absent", err, ui.Texts())
-			}
-			ui.Advance(time.Second)
-			job := welcomeJob(t, v.Controller, "runtime.hooks.list")
-			in := job.Input.(domain.HookRequest)
-			if in.SessionID != "s" || in.WorkspaceID != "w" {
-				t.Fatal("session hook inspection lost accepted context", in)
-			}
-			c := hookUICatalog(true)
-			body, _ := json.Marshal(c)
-			job.Apply(m, body, nil)
-			ui.Frame()
-			ui.Advance(time.Second)
-			panel, _ := ui.Find("运行配置菜单")
-			if panel.X < 0 || panel.X+panel.W > float32(width) || panel.Y < 0 || panel.Y+panel.H > 820 {
-				t.Fatal("Hooks popover overflows window", panel)
-			}
-			saveNativeSkillImage(t, ui, fmt.Sprintf("hooks-session-%d.png", width))
-			if err := ui.Click("在设备设置中管理 Hooks"); err != nil {
-				t.Fatal(err)
-			}
-			ui.Advance(time.Second)
-			// Actual catalog must offer this harness in order to enter global management.
-			if !v.devices {
-				t.Fatal("session cannot enter global management")
-			}
-			v.returnSkillWorkspace()
-			ui.Frame()
-			ui.Advance(time.Second)
-			if v.workspaceEditor != nil || v.skillReturn != nil || m.SessionID != "s" || m.Drafts["session:s"] != "keep my draft" {
-				t.Fatal("return replaced the session/draft")
-			}
-		})
+	for _, dark := range []bool{false, true} {
+		for _, width := range []int{1240, 850, 640} {
+			t.Run(fmt.Sprintf("%d-dark-%v", width, dark), func(t *testing.T) {
+				m := deviceUIModel()
+				m.WorkerMinor = 46
+				m.Readiness.Capabilities.HookManagement = true
+				m.Readiness.Capabilities.HookInspection = true
+				info := setupCatalog()[0]
+				info.Capabilities.HookManagement = true
+				info.Capabilities.HookInspection = true
+				m.Readiness.HarnessID = info.ID
+				m.Readiness.Harnesses = []domain.HarnessInfo{info}
+				m.DeviceStates["local"].Readiness = m.Readiness
+				m.DeviceStates["local"].WorkerMinor = 46
+				s := domain.Session{ID: "s", WorkspaceID: "w", HarnessID: info.ID, ThreadID: "opaque-thread", Context: domain.LaunchContext{CWD: "/accepted/project"}, Status: "completed"}
+				m.Snapshot.Sessions = []domain.Session{s}
+				m.SessionID = "s"
+				m.WorkspaceID = "w"
+				m.Details["s"] = domain.SessionDetail{Session: s}
+				m.Drafts["session:s"] = "keep my draft"
+				v := New(m, app.NewController(""), "")
+				ui := n.NewTester(v.View, width, 820)
+				ui.SetDark(dark)
+				ui.Advance(time.Second)
+				ui.Click("运行配置")
+				ui.Advance(time.Second)
+				if err := ui.Click("Hooks"); err != nil {
+					t.Fatal("Hooks entry absent", err, ui.Texts())
+				}
+				ui.Advance(time.Second)
+				job := welcomeJob(t, v.Controller, "runtime.hooks.list")
+				in := job.Input.(domain.HookRequest)
+				if in.SessionID != "s" || in.WorkspaceID != "w" {
+					t.Fatal("session hook inspection lost accepted context", in)
+				}
+				c := hookUICatalog(true)
+				body, _ := json.Marshal(c)
+				job.Apply(m, body, nil)
+				ui.Frame()
+				ui.Advance(time.Second)
+				panel, _ := ui.Find("运行配置菜单")
+				if panel.X < 0 || panel.X+panel.W > float32(width) || panel.Y < 0 || panel.Y+panel.H > 820 {
+					t.Fatal("Hooks popover overflows window", panel)
+				}
+				back, backOK := ui.Find("‹ 返回")
+				event, _ := ui.Find("PreToolUse")
+				if !backOK || math.Abs(float64(back.X-event.X)) > 1 {
+					t.Fatal("session back label is inset from reading edge", back, event)
+				}
+				name := fmt.Sprintf("hooks-session-%d.png", width)
+				if dark {
+					name = fmt.Sprintf("hooks-session-%d-dark.png", width)
+				}
+				saveNativeSkillImage(t, ui, name)
+				if err := ui.Click("在设备设置中管理 Hooks"); err != nil {
+					t.Fatal(err)
+				}
+				ui.Advance(time.Second)
+				// Actual catalog must offer this harness in order to enter global management.
+				if !v.devices {
+					t.Fatal("session cannot enter global management")
+				}
+				v.returnSkillWorkspace()
+				ui.Frame()
+				ui.Advance(time.Second)
+				if v.workspaceEditor != nil || v.skillReturn != nil || m.SessionID != "s" || m.Drafts["session:s"] != "keep my draft" {
+					t.Fatal("return replaced the session/draft")
+				}
+			})
+		}
 	}
 }
 func TestHooksMissingReceiptAllowsFreshReviewWithoutResending(t *testing.T) {

@@ -1036,7 +1036,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 				if phase == runMenuHooks {
 					n.Column(c).Width(panelWidth - 8).Height(460).Padding(8).Children(func() {
 						n.Row(c).FillWidth().Height(28).Margin(0, 0, 8, 0).Children(func() {
-							if ghost(c, "‹ 返回").Height(28).FontSize(12).Label("返回运行配置").Clicked() {
+							if ghost(c, "‹ 返回").PaddingX(0).Height(28).FontSize(12).Label("返回运行配置").Clicked() {
 								v.runMenu = runMenuMain
 							}
 							n.Spacer(c).Grow(1)

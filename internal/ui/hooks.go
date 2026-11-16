@@ -452,7 +452,7 @@ func (v *View) hookDetail(c *n.Context, t *n.Theme, u *hookManagementUI) {
 	}
 	n.Column(c).FillWidth().FillHeight().Grow(1).Children(func() {
 		n.Row(c).FillWidth().Height(28).PaddingEnd(8).Margin(0, 0, 16, 0).Gap(8).AlignItems(n.Center).Children(func() {
-			if ghost(c, "‹ Hooks").Height(28).FontSize(13).Label("返回 Hooks 列表").Clicked() {
+			if ghost(c, "‹ Hooks").PaddingX(0).Height(28).FontSize(13).Label("返回 Hooks 列表").Clicked() {
 				u.detailID = ""
 			}
 			n.Spacer(c).Grow(1)
@@ -483,7 +483,7 @@ func (v *View) hookDetail(c *n.Context, t *n.Theme, u *hookManagementUI) {
 				if u.expanded {
 					disclosure = "⌄ 详细信息"
 				}
-				if ghost(c, disclosure).Height(28).AlignSelf(n.Start).FontSize(12).Label("详细信息").Clicked() {
+				if ghost(c, disclosure).PaddingX(0).Height(28).AlignSelf(n.Start).FontSize(12).Label("详细信息").Clicked() {
 					u.expanded = !u.expanded
 				}
 				frame := n.Column(c.Key("metadata")).FillWidth().Clip()
