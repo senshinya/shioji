@@ -44,6 +44,7 @@ func (v *View) pumpUpdates() {
 	}
 drained:
 	v.syncArchivePolicies()
+	v.readVisibleCompletedReplies()
 	if updated && v.settings != nil {
 		v.settings.services.Invalidate()
 	}
@@ -59,7 +60,11 @@ func (v *View) foregroundNotificationSuppressed(id string, foreground bool) bool
 	if p := v.Model.Preferences.Notifications; p != nil && p.Foreground {
 		return false
 	}
-	if !foreground || v.devices || v.workspaceEditor != nil || v.Model.SessionID == "" || v.archive != nil && v.archive.open {
+	return foreground && v.sessionVisible(id)
+}
+
+func (v *View) sessionVisible(id string) bool {
+	if id == "" || v.devices || v.workspaceEditor != nil || v.Model.SessionID == "" || v.archive != nil && v.archive.open {
 		return false
 	}
 	m := v.Model

@@ -2,8 +2,31 @@ package ui
 
 import (
 	"errors"
+	"shioji/internal/app"
 	"shioji/internal/domain"
 )
+
+func (v *View) readVisibleCompletedReplies() {
+	if w := v.nativeWindow; w != nil && (w.IsDestroyed() || !w.IsFocused() || !w.IsVisible() || w.IsMinimized()) {
+		v.visibleCompletions = nil
+		return
+	}
+	visible := map[string]app.CompletedReply{}
+	for id, reply := range v.Model.CompletedReplies {
+		if !v.sessionVisible(id) {
+			continue
+		}
+		unread := reply.Unread
+		reply.Unread = false
+		visible[id] = reply
+		// Try each completion once per visible visit. A failed worker receipt
+		// restores attention and its error without retrying on every frame.
+		if previous, ok := v.visibleCompletions[id]; unread && (!ok || previous != reply) {
+			v.readCompletedReply(id)
+		}
+	}
+	v.visibleCompletions = visible
+}
 
 func (v *View) readCompletedReply(id string) {
 	root := v.splitRoot()

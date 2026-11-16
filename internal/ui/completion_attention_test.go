@@ -2,14 +2,131 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	n "github.com/egoist/mygo/ui"
 	"os"
 	"shioji/internal/app"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 	"testing"
 	"time"
 )
+
+func TestNewCompletedReplyIsReadOnlyInVisibleConversations(t *testing.T) {
+	for _, tt := range []struct {
+		name, session string
+		width         int
+		secondary     bool
+		focusRight    bool
+		page          string
+		wantUnread    bool
+	}{
+		{name: "current", session: "s", width: 1240},
+		{name: "background", session: "other", width: 1240, wantUnread: true},
+		{name: "parallel-left", session: "s", width: 1440, secondary: true, focusRight: true},
+		{name: "parallel-right", session: "other", width: 1440, secondary: true},
+		{name: "narrow-hidden", session: "other", width: 950, secondary: true, wantUnread: true},
+		{name: "narrow-focused", session: "other", width: 950, secondary: true, focusRight: true},
+		{name: "narrow-hidden-left", session: "s", width: 950, secondary: true, focusRight: true, wantUnread: true},
+		{name: "devices", session: "s", width: 1240, page: "devices", wantUnread: true},
+		{name: "workspace-settings", session: "s", width: 1240, page: "workspace", wantUnread: true},
+		{name: "archive", session: "s", width: 1240, page: "archive", wantUnread: true},
+		{name: "home", session: "s", width: 1240, page: "home", wantUnread: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := parallelModel()
+			if tt.secondary {
+				m.SecondarySessionID, m.SecondaryWorkspaceID, m.FocusSecondary = "other", "w", tt.focusRight
+			}
+			v := New(m, nil, "")
+			switch tt.page {
+			case "devices":
+				v.devices = true
+			case "workspace":
+				v.workspaceEditor = &workspaceEditor{Workspace: m.Snapshot.Workspaces[0]}
+			case "archive":
+				v.openArchive()
+			case "home":
+				v.home()
+			}
+			ui := n.NewTester(v.View, tt.width, 820)
+			if err := m.ApplyEvent(domain.Event{Sequence: 1, Type: "turn", SessionID: tt.session, Turn: &domain.Turn{ID: "done", Order: 1, Status: "completed"}}); err != nil {
+				t.Fatal(err)
+			}
+			ui.Frame()
+			if got := m.HasCompletedReply(tt.session); got != tt.wantUnread {
+				t.Fatalf("unread = %v, want %v", got, tt.wantUnread)
+			}
+			if !tt.wantUnread {
+				v.home()
+				ui.Frame()
+				if _, available := v.attentionSession(); available {
+					t.Fatal("reply read while visible returned to attention after leaving")
+				}
+			}
+			if m.Drafts["session:s"] != "left draft" || m.Drafts["session:other"] != "right draft" {
+				t.Fatal("reading a completion changed composer drafts")
+			}
+		})
+	}
+}
+
+func TestVisibleCompletionAcknowledgesWorkerOnceAndKeepsPendingRequests(t *testing.T) {
+	m := parallelModel()
+	m.WorkerMinor = 39
+	c := app.NewController("")
+	v := New(m, c, "")
+	ui := n.NewTester(v.View, 1240, 820)
+	reads := func() []app.Job {
+		var jobs []app.Job
+		for len(c.Jobs) > 0 {
+			if job := <-c.Jobs; job.Method == "session.completion.read" {
+				jobs = append(jobs, job)
+			}
+		}
+		return jobs
+	}
+	reads()
+	s := m.Snapshot.Sessions[0]
+	s.Revision = 1
+	s.Completion = &domain.ReplyCompletion{ID: "first", TurnID: "done", Order: 1, CompletedAt: time.Now().Add(time.Second), Unread: true}
+	c.Updates <- func(m *app.Model) {
+		if err := m.ApplyEvent(domain.Event{Sequence: 1, Type: "session", SessionID: s.ID, Session: &s}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ui.Frame()
+	jobs := reads()
+	if len(jobs) != 1 || jobs[0].ConnectionID != "local" || jobs[0].Input.(protocol.CompletionReadInput).CompletionID != "first" || m.HasCompletedReply("s") {
+		t.Fatalf("visible completion was not acknowledged exactly once: jobs=%v unread=%v", jobs, m.HasCompletedReply("s"))
+	}
+	// Failed read synchronization restores attention without a per-frame retry loop.
+	c.Updates <- func(m *app.Model) { jobs[0].Apply(m, nil, errors.New("offline")) }
+	ui.Frame()
+	ui.Frame()
+	if !m.HasCompletedReply("s") || m.Error == "" || len(reads()) != 0 {
+		t.Fatal("failed acknowledgement lost attention or retried every frame")
+	}
+	s.Revision = 2
+	s.Completion = &domain.ReplyCompletion{ID: "second", TurnID: "done-2", Order: 2, CompletedAt: time.Now().Add(2 * time.Second), Unread: true}
+	if err := m.ApplyEvent(domain.Event{Sequence: 2, Type: "session", SessionID: s.ID, Session: &s}); err != nil {
+		t.Fatal(err)
+	}
+	ui.Frame()
+	jobs = reads()
+	if len(jobs) != 1 || jobs[0].Input.(protocol.CompletionReadInput).CompletionID != "second" || m.HasCompletedReply("s") {
+		t.Fatal("later visible completion was not independently acknowledged")
+	}
+	for _, kind := range []string{"questions", "approval"} {
+		d := m.Details["s"]
+		d.Requests = []domain.PendingRequest{{ID: "pending", SessionID: "s", Kind: kind, State: "pending"}}
+		m.Details["s"] = d
+		if session, available := v.attentionSession(); !available || session.ID != "s" {
+			t.Fatalf("reading a completion hid pending %s", kind)
+		}
+	}
+}
 
 func TestAttentionVisitsCompletedRepliesOnceAndPreservesDrafts(t *testing.T) {
 	m := parallelModel()

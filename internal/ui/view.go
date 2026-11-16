@@ -108,6 +108,7 @@ type View struct {
 	outline                                                                                                         *conversationOutline
 	parent, secondary                                                                                               *View
 	visibleSessions                                                                                                 map[string]string
+	visibleCompletions                                                                                              map[string]app.CompletedReply
 	attachmentStore                                                                                                 *attachments.Repository
 	attachmentCache                                                                                                 *app.AttachmentCache
 	attachmentImages                                                                                                map[string]*attachmentImage
