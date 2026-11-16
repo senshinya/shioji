@@ -410,15 +410,42 @@ func (v *View) renderConversationStatus(c *n.Context, t *n.Theme, s conversation
 	source := v.feedbackSource()
 	foldKey := "feedback:" + source.connection + ":" + source.workspace + ":" + source.session
 	folded := v.Model.Collapsed[foldKey] && !s.compact
-	panel := processingPanelSurface(n.Column(c.Key("status:"+s.id)).FillWidth().Padding(10, processingPanelInset).Gap(6).Label("会话状态面板"), t)
+	padding := float32(12)
+	if folded {
+		padding = 4
+	}
+	panel := processingPanelSurface(n.Column(c.Key("status:"+s.id)).FillWidth().Padding(padding, processingPanelInset).Label("会话状态面板"), t)
 	if s.compact {
 		panel.Height(44).Padding(7, processingPanelInset)
 	}
 	panel.Children(func() {
-		n.Row(c).FillWidth().Height(28).Gap(processingPanelIconGap).AlignItems(n.Baseline).Children(func() {
-			font := n.Font{Family: t.Font, Size: 13, Weight: 500}
-			inlineSymbol(c, s.icon, s.title, font, 14, t.TextMuted)
-			n.Text(c, s.title).FontSize(13).FixedLineHeight(20).FontWeight(500).Grow(1)
+		n.Row(c).FillWidth().Height(28).Gap(4).AlignItems(n.Center).Children(func() {
+			heading := func(disclosure bool) {
+				n.Row(c).Gap(processingPanelIconGap).AlignItems(n.Baseline).Children(func() {
+					font := n.Font{Family: t.Font, Size: 13, Weight: 500}
+					inlineSymbol(c, s.icon, s.title, font, processingPanelIconSize, t.TextMuted)
+					n.Text(c, s.title).FontSize(13).FixedLineHeight(20).FontWeight(500)
+					if disclosure {
+						angle := float32(0)
+						if folded {
+							angle = -90
+						}
+						inlineSymbol(c, disclosureDown, s.title, font, 11, t.TextMuted, angle)
+					}
+				})
+			}
+			if s.compact {
+				heading(false)
+			} else {
+				label := "折叠会话状态"
+				if folded {
+					label = "展开会话状态"
+				}
+				if control(c, 4).Height(24).Shrink(0).PaddingX(2).Justify(n.Start).Label(label).Children(func() { heading(true) }).Clicked() {
+					v.Model.Collapsed[foldKey] = !folded
+				}
+			}
+			n.Row(c).Grow(1).MinWidth(0)
 			v.feedbackStatusPager(c, t, count, index)
 			if s.compact {
 				for _, a := range s.actions {
@@ -426,20 +453,12 @@ func (v *View) renderConversationStatus(c *n.Context, t *n.Theme, s conversation
 						a.run(c)
 					}
 				}
-			} else {
-				label, icon := "折叠会话状态", disclosureDown
-				if folded {
-					label, icon = "展开会话状态", disclosureRight
-				}
-				if iconButton(c, icon, label).Size(28, 28).Clicked() {
-					v.Model.Collapsed[foldKey] = !folded
-				}
 			}
 		})
 		if folded || s.compact {
 			return
 		}
-		n.Column(c).FillWidth().PaddingStart(processingPanelTextInset).Gap(12).Children(func() {
+		n.Column(c).FillWidth().Padding(8, 0, 0, processingPanelTextInset).Gap(12).Children(func() {
 			if s.body != "" {
 				n.Text(c, s.body).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 			}
@@ -450,7 +469,7 @@ func (v *View) renderConversationStatus(c *n.Context, t *n.Theme, s conversation
 						action.Label(a.accessibilityLabel)
 					}
 					if i == 0 {
-						action.Background(t.Accent).TextColor(t.AccentText).PaddingX(10)
+						action.Background(t.Border).PaddingX(10)
 					}
 					if action.Clicked() && source == v.feedbackSource() {
 						a.run(c)
