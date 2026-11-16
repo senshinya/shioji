@@ -11,6 +11,10 @@ import (
 	"shioji/internal/domain"
 )
 
+// Runtime marks use the same native cap/ideographic baseline as their labels.
+var deviceSceneWorkerIcon = svg("M3 3l7 7-7 7M12 17h5")
+var deviceSceneAgentIcon = svg("M7 4 2 10l5 6M13 4l5 6-5 6")
+
 type deviceSceneRoute struct {
 	Route                               app.DeviceRoute
 	Status                              app.DevicePathStatus
@@ -366,10 +370,10 @@ func (v *View) deviceSceneScreen(c *n.Context, t *n.Theme, icon app.DeviceIcon, 
 	case app.DeviceIconMonitor:
 		worker.y, agent.y = 84, 111
 	case app.DeviceIconServer:
-		worker, agent = field{424, 28, 88}, field{424, 51, 88}
+		worker, agent = field{434, 28, 78}, field{434, 51, 78}
 		workerName = "Worker"
 	case app.DeviceIconPhone:
-		worker, agent = field{438, 80, 64}, field{438, 119, 64}
+		worker, agent = field{446, 80, 56}, field{446, 119, 56}
 		workerName = "Worker"
 		mobile = true
 	case app.DeviceIconTablet:
@@ -394,8 +398,10 @@ func (v *View) deviceSceneScreen(c *n.Context, t *n.Theme, icon app.DeviceIcon, 
 		}
 		deviceSceneText(c, label, 427+shift, y+extra, 78, height, 11, t.TextMuted, "", n.Center)
 	}
+	windowWidth, _ := c.Size()
+	compact := icon == app.DeviceIconPhone && windowWidth < 700
 	build := func(key string, f field, name, state string, ready, busy bool) {
-		deviceSceneScreenRow(c.Key(key), t, key, name, state, ready, busy).Absolute().LeftPercent((f.x+shift)/600*100).TopPercent((f.y+extra)/height*100).WidthPercent(f.w/600*100).Margin(-10, 0, 0)
+		deviceSceneScreenRow(c.Key(key), t, key, name, state, ready, busy, compact).Absolute().LeftPercent((f.x+shift)/600*100).TopPercent((f.y+extra)/height*100).WidthPercent(f.w/600*100).Margin(-10, 0, 0)
 		if mobile {
 			deviceSceneText(c, state, f.x+shift, f.y+18+extra, f.w, height, 10, t.TextMuted, "屏幕"+key+"状态", n.Start)
 		}
@@ -403,16 +409,27 @@ func (v *View) deviceSceneScreen(c *n.Context, t *n.Theme, icon app.DeviceIcon, 
 	build("Worker", worker, workerName, p.WorkerStatus, p.WorkerReady, p.Busy && !p.WorkerReady)
 	build("Agent", agent, agentName, p.AgentStatus, p.AgentReady, p.AgentBusy)
 }
-func deviceSceneScreenRow(c *n.Context, t *n.Theme, key, name, state string, ready, busy bool) n.Element {
-	font := n.Font{Family: t.Font, Size: 12, Weight: 400}
-	return n.Row(c).Height(20).Gap(4).AlignItems(n.Baseline).Transform(n.Translation(0, inlineCenterOffset(name, font))).Children(func() {
-		n.Text(c, name).FontSize(12).FixedLineHeight(20).SingleLine().MinWidth(0).Grow(1).TooltipWhenTruncated(name).Label("屏幕" + key + "名称")
+func deviceSceneScreenRow(c *n.Context, t *n.Theme, key, name, state string, ready, busy bool, compact ...bool) n.Element {
+	size, gap := float32(12), float32(4)
+	if len(compact) > 0 && compact[0] {
+		size, gap = 10, 2
+	}
+	font := n.Font{Family: t.Font, Size: size, Weight: 400}
+	mark := deviceSceneAgentIcon
+	if key == "Worker" {
+		mark = deviceSceneWorkerIcon
+	}
+	return n.Row(c).Height(20).Gap(gap).AlignItems(n.Baseline).Transform(n.Translation(0, inlineCenterOffset(name, font))).Children(func() {
+		// Keep the text and readiness edge stable. The leading mark has its own
+		// native slot, independent of illustration scale and label width.
+		inlineSymbol(c, mark, name, font, size, t.TextMuted).Absolute().RightPercent(100).MarginEnd(gap).Label("屏幕" + key + "图标")
+		n.Text(c, name).FontSize(size).FixedLineHeight(20).SingleLine().MinWidth(0).Grow(1).TooltipWhenTruncated(name).Label("屏幕" + key + "名称")
 		if ready {
-			inlineSymbol(c, check, name, font, 12, t.TextMuted).Label("屏幕" + key + "就绪")
+			inlineSymbol(c, check, name, font, size, t.TextMuted).Label("屏幕" + key + "就绪")
 		} else if busy {
 			serviceSpinner(c.Key("spinner"), name, font, t.TextMuted)
 		} else {
-			n.Text(c, "—").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Tooltip(state)
+			n.Text(c, "—").FontSize(size).FixedLineHeight(20).TextColor(t.TextMuted).Tooltip(state)
 		}
 	})
 }

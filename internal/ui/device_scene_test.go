@@ -334,7 +334,11 @@ func TestDeviceSceneScreenStatusUsesNativeCapAlignment(t *testing.T) {
 					if !ok {
 						t.Fatal(kind)
 					}
-					if text.X+text.W+3 > glyph.X || math.Abs(float64(text.Y-glyph.Y)) > 1 {
+					gap := float32(3)
+					if width < 700 && icon == app.DeviceIconPhone {
+						gap = 1.5
+					}
+					if text.X+text.W+gap > glyph.X || math.Abs(float64(text.Y-glyph.Y)) > 1 {
 						t.Fatal("screen label and status collide", icon, text, glyph)
 					}
 

@@ -67,3 +67,76 @@ func TestDeviceSceneSharedTrunksMeetHardwarePortCenter(t *testing.T) {
 		}
 	}
 }
+
+func TestDeviceSceneEveryHardwareScreenIncludesNativeRuntimeIcons(t *testing.T) {
+	screens := map[app.DeviceIcon]n.Rect{
+		app.DeviceIconMonitor: {X: 355, Y: 45, W: 222, H: 140}, app.DeviceIconLaptop: {X: 355, Y: 60, W: 222, H: 140},
+		app.DeviceIconServer: {X: 413, Y: 33, W: 106, H: 63}, app.DeviceIconPhone: {X: 427, Y: 33, W: 78, H: 172}, app.DeviceIconTablet: {X: 377, Y: 56, W: 178, H: 128},
+	}
+	for _, width := range []int{600, 850, 1240} {
+		for _, dark := range []bool{false, true} {
+			for icon, screen := range screens {
+				v := readyDeviceSceneView()
+				v.Model.SetDeviceIcon("air", icon)
+				ui := n.NewTester(v.View, width, 1000)
+				ui.SetDark(dark)
+				ui.Advance(time.Second)
+				diagram, _ := ui.Find("设备连接图")
+				scale := diagram.W / 600
+				physical := n.Rect{X: diagram.X + screen.X*scale, Y: diagram.Y + (screen.Y-25)*scale, W: screen.W * scale, H: screen.H * scale}
+				for _, kind := range []string{"Worker", "Agent"} {
+					glyph, ok := ui.Find("屏幕" + kind + "图标")
+					if !ok {
+						t.Fatal("runtime icon missing", width, dark, icon, kind)
+					}
+					text, _ := ui.Find("屏幕" + kind + "名称")
+					if glyph.X < physical.X || glyph.Y < physical.Y || glyph.X+glyph.W > physical.X+physical.W || glyph.Y+glyph.H > physical.Y+physical.H {
+						t.Fatal("runtime icon escapes physical screen", width, dark, icon, kind, glyph, physical)
+					}
+					if glyph.X+glyph.W+1.5 > text.X || math.Abs(float64(glyph.Y-text.Y)) > 1 {
+						t.Fatal("icon crowds label or changes baseline", width, dark, icon, kind, glyph, text)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestDeviceSceneRuntimeIconsShareNativeCapBaseline(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, kind := range []string{"Worker", "Agent"} {
+			for _, caption := range []string{"H", "国"} {
+				ui := n.NewTester(func(c *n.Context) {
+					n.Column(c).Padding(20).Children(func() { deviceSceneScreenRow(c, c.Theme(), kind, caption, "", true, false).Width(140) })
+				}, 200, 80)
+				ui.SetDark(dark)
+				text, _ := ui.Find("屏幕" + kind + "名称")
+				glyph, ok := ui.Find("屏幕" + kind + "图标")
+				if !ok {
+					t.Fatal("runtime icon missing", kind)
+				}
+				im := ui.Image()
+				bg := im.RGBAAt(10, 10)
+				center := func(r n.Rect) float64 {
+					lo, hi := im.Bounds().Max.Y, -1
+					for y := int(r.Y); y < int(r.Y+r.H); y++ {
+						for x := int(r.X); x < int(r.X+r.W); x++ {
+							p := im.RGBAAt(x, y)
+							if max(absChannel(p.R, bg.R), absChannel(p.G, bg.G), absChannel(p.B, bg.B)) > 30 {
+								lo = min(lo, y)
+								hi = max(hi, y)
+							}
+						}
+					}
+					if hi < lo {
+						t.Fatal("runtime icon has no visible ink", kind)
+					}
+					return float64(lo+hi) / 2
+				}
+				if delta := center(glyph) - center(text); math.Abs(delta) > 1 {
+					t.Fatal("runtime icon ink differs from native cap/ideographic center", dark, kind, caption, delta)
+				}
+			}
+		}
+	}
+}
