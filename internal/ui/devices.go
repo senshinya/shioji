@@ -203,7 +203,13 @@ func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 		}
 	}
 	dialog(&v.remoteWorkspaceOpen, "remote-workspace-dialog", func() {
-		n.Text(c, "新建远程工作区").FontSize(14).FontWeight(500)
+		n.Column(c).FillWidth().Gap(2).Children(func() {
+			n.Text(c, "新建工作区").FontSize(14).FontWeight(500).FixedLineHeight(22)
+			name := v.Model.DeviceName(v.Model.ConnectionDeviceID(v.remoteWorkspaceConnection))
+			n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
+				inlineIconText(c, v.deviceGlyph(v.remoteWorkspaceConnection), name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 13, 6, t.TextMuted)
+			})
+		})
 		n.Text(c, "主目录").FontSize(12).TextColor(t.TextMuted)
 		n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
 			textField(c.Key("remote-main"), &v.remoteWorkspacePath).MinWidth(0).Grow(1).Height(32).FontSize(13).Label("远程主目录").Placeholder("该 Mac 上的绝对路径").Disabled(v.remoteWorkspaceBusy)
@@ -255,6 +261,9 @@ func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 // Dismissing the add-device flow discards its drafts. Internal back navigation
 // only cancels the connection attempt so the current flow can restore its input.
 func (v *View) dismissDeviceSetup() {
+	if f := v.workspaceCreation; f != nil {
+		f.adding = false
+	}
 	v.cancelSSHCheck()
 	v.sshTarget, v.sshName, v.sshPort, v.sshError = "", "", "", ""
 	v.sshTailnetPeer, v.sshExpectedDevice = "", ""
@@ -421,25 +430,45 @@ func (v *View) beginWorkspace(key string) {
 	if v.Controller == nil {
 		return
 	}
+	f := v.workspaceCreationUI()
+	if f.targetDevice != "" {
+		f.drafts[f.targetDevice] = workspaceCreateDraft{v.remoteWorkspaceName, v.remoteWorkspacePath, v.remoteWorkspaceExtra}
+	}
+	f.targetDevice, f.targetEpoch = v.Model.ConnectionDeviceID(key), v.deviceState(key).ConnectionEpoch
+	draft := f.drafts[f.targetDevice]
+	v.remoteWorkspaceName, v.remoteWorkspacePath, v.remoteWorkspaceExtra = draft.name, draft.path, draft.extra
+	v.remoteWorkspaceConnection, v.remoteWorkspaceRequest = key, domain.NewID()
+	v.remoteWorkspaceBusy, v.remoteWorkspaceError = false, ""
+	v.remoteWorkspaceOpen = key != "local"
+	f.localPending = key == "local"
 	if key != "local" {
-		v.remoteWorkspaceConnection = key
-		v.remoteWorkspaceRequest = domain.NewID()
-		v.remoteWorkspaceBusy = false
-		v.remoteWorkspaceOpen = true
-		v.remoteWorkspaceError = ""
 		return
 	}
-	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "选择工作区目录", Directory: true, Multiple: true})
+	paths, err := openWorkspaceDirectoryDialog(mygo.OpenDialogOptions{Parent: v.nativeWindow, Title: "选择工作区目录", Directory: true, Multiple: true})
 	if err != nil {
+		f.localPending = false
 		v.Model.Error = err.Error()
 		return
 	}
 	if len(paths) == 0 {
+		f.localPending = false
+		return
+	}
+	if f.targetDevice != v.Model.ConnectionDeviceID(key) || f.targetEpoch != v.deviceState(key).ConnectionEpoch {
+		f.localPending = false
+		v.Model.Error = "设备连接已改变，请重新选择工作区目录"
 		return
 	}
 	v.createWorkspaceOn(key, protocol.WorkspaceInput{Name: path.Base(paths[0]), Folders: paths})
 }
 func (v *View) submitRemoteWorkspace() {
+	if v.remoteWorkspaceBusy {
+		return
+	}
+	if f := v.workspaceCreation; f != nil && (v.Model.ConnectionDeviceID(v.remoteWorkspaceConnection) != f.targetDevice || v.deviceState(v.remoteWorkspaceConnection).ConnectionEpoch != f.targetEpoch) {
+		v.remoteWorkspaceError = "设备连接已改变，请重新打开创建工作区"
+		return
+	}
 	folders := []string{strings.TrimSpace(v.remoteWorkspacePath)}
 	for _, line := range strings.Split(v.remoteWorkspaceExtra, "\n") {
 		if folder := strings.TrimSpace(line); folder != "" {
@@ -461,8 +490,20 @@ func (v *View) submitRemoteWorkspace() {
 }
 func (v *View) createWorkspaceOn(key string, input protocol.WorkspaceInput) {
 	request := v.remoteWorkspaceRequest
+	device, epoch := v.Model.ConnectionDeviceID(key), v.deviceState(key).ConnectionEpoch
 	if !v.do(app.Job{ConnectionID: key, Method: "workspace.create", Input: input, Apply: func(m *app.Model, b json.RawMessage, err error) {
-		current := key == "local" || v.remoteWorkspaceOpen && v.remoteWorkspaceConnection == key && v.remoteWorkspaceRequest == request
+		current := v.remoteWorkspaceRequest == request && (v.remoteWorkspaceOpen && v.remoteWorkspaceConnection == key || key == "local" && v.workspaceCreation != nil && v.workspaceCreation.localPending)
+		if m.ConnectionDeviceID(key) != device || v.deviceState(key).ConnectionEpoch != epoch {
+			if current {
+				v.remoteWorkspaceBusy = false
+				v.remoteWorkspaceError = "设备连接已改变，请重新打开创建工作区"
+				if key == "local" {
+					v.workspaceCreation.localPending = false
+					m.Error = v.remoteWorkspaceError
+				}
+			}
+			return
+		}
 		if current {
 			v.remoteWorkspaceBusy = false
 		}
@@ -476,7 +517,16 @@ func (v *View) createWorkspaceOn(key string, input protocol.WorkspaceInput) {
 		}
 		var w domain.Workspace
 		if err = json.Unmarshal(b, &w); err != nil {
-			m.Error = fmt.Sprint(err)
+			if current {
+				v.remoteWorkspaceError = "设备返回的工作区无效"
+				m.Error = fmt.Sprint(err)
+			}
+			return
+		}
+		if w.ID == "" || w.DeviceID != device {
+			if current {
+				v.remoteWorkspaceError = "设备返回的工作区无效"
+			}
 			return
 		}
 		if state := m.DeviceStates[key]; state != nil {
@@ -493,12 +543,18 @@ func (v *View) createWorkspaceOn(key string, input protocol.WorkspaceInput) {
 			}
 		}
 		if current {
+			if v.workspaceCreation != nil {
+				delete(v.workspaceCreation.drafts, device)
+				v.workspaceCreation.targetDevice, v.workspaceCreation.localPending = "", false
+			}
+			v.home()
 			m.WorkspaceID = w.ID
 			m.SessionID = ""
 			m.ActiveConnection = key
 			m.RefreshDevices()
 			v.remoteWorkspaceOpen = false
 			v.devices = false
+			v.focusComposer = true
 		}
 	}}) {
 		v.remoteWorkspaceBusy = false

@@ -58,7 +58,7 @@ func TestRemoteWorkspaceInputRoutesOnlyToOwningDevice(t *testing.T) {
 	c := app.NewController("")
 	v := New(m, c, "")
 	ui := n.NewTester(v.View, 1440, 900)
-	v.createWorkspace()
+	v.beginWorkspace("air")
 	ui.Frame()
 	if _, ok := ui.Find("远程主目录"); !ok {
 		t.Fatal("remote workspace opened local folder picker")

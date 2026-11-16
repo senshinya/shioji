@@ -355,9 +355,7 @@ func (v *View) navigationRow(c *n.Context, t *n.Theme, r navigationRow) {
 					v.openArchive()
 				}
 			})
-			if iconButton(c, plus, "创建工作区").Size(24, 24).Disabled(!m.Connected).Clicked() {
-				v.createWorkspace()
-			}
+			v.workspaceCreationMenu(c, t, iconButton(c, plus, "创建工作区").Size(28, 28).MarginEnd(-2))
 		})
 	case navigationWorkspace:
 		w := r.workspace

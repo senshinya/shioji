@@ -67,8 +67,9 @@ func TestWorkspaceHeadingInsetsAndNoPerWorkspacePlus(t *testing.T) {
 	button, _ := ui.Find("创建工作区")
 	ink := (n.Font{Family: "system-ui", Size: 11}).InkBounds("工作区")
 	left := label.X + ink.X - 8
-	// The 16px plus is centered in a 24px target; its SVG stroke ends at 16.75/20.
-	right := float32(256) - (button.X + 4 + 16*16.75/20)
+	// The 16-DIP slot is centered in the 28-DIP hit target. Find reports
+	// its clipped accessible bounds, so its width is not the slot's width.
+	right := float32(256) - (button.X + 6 + 16*16.75/20)
 	if math.Abs(float64(left-right)) > 1 {
 		t.Fatalf("workspace heading has unequal visible insets: left=%v right=%v", left, right)
 	}

@@ -188,6 +188,7 @@ type View struct {
 	remoteWorkspaceConnection, remoteWorkspaceName, remoteWorkspacePath, remoteWorkspaceExtra, remoteWorkspaceError string
 	remoteWorkspaceRequest                                                                                          string
 	remoteWorkspaceBusy                                                                                             bool
+	workspaceCreation                                                                                               *workspaceCreation
 	collapsedWorkspaces                                                                                             map[string]bool
 	dockHeight                                                                                                      float32
 	searchOpen                                                                                                      bool
@@ -639,7 +640,7 @@ func (v *View) homeView(c *n.Context, t *n.Theme) {
 		n.Spacer(c).Grow(.84)
 		if len(v.Model.Snapshot.Workspaces) == 0 {
 			n.Text(c, "从一个工作区开始").FontSize(28)
-			if ghost(c, "创建工作区").Margin(18, 0, 0, 0).Disabled(!v.Model.Connected).Clicked() {
+			if ghost(c, "创建工作区").Margin(18, 0, 0, 0).Disabled(v.Controller == nil).Clicked() {
 				v.createWorkspace()
 			}
 		} else {
@@ -1693,8 +1694,6 @@ func (v *View) interrupt() {
 		}
 	}
 }
-func (v *View) createWorkspace() { v.beginWorkspace(v.Model.ConnectionID()) }
-
 func (v *View) nextAttention() {
 	if s, ok := v.attentionSession(); ok {
 		v.navigateSession(s.ID, s.WorkspaceID)

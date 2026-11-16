@@ -123,6 +123,9 @@ func (v *View) syncDeviceConnectionSave() {
 				break
 			}
 		}
+		if !p.removal && p.request != v.sshRequest {
+			return
+		}
 		v.sshError = "无法保存连接：" + err.Error()
 		if !p.removal {
 			v.sshCheck = sshEditing
@@ -165,6 +168,7 @@ func (v *View) syncDeviceConnectionSave() {
 	v.retireSSHSetupTerminal()
 	v.sshCheck = sshClosed
 	v.sshExpectedDevice = ""
+	v.continueWorkspaceAfterDeviceSave(p.connection)
 	if f := v.welcome; f != nil && f.key == "" {
 		if v.Model.FirstRun {
 			f.key = p.connection.ID
