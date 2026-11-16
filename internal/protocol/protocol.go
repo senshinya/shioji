@@ -43,7 +43,8 @@ const Major = 2
 // Minor 42 separates complete conversation imports from bounded previews and
 // adds explicit, revision-checked completion of legacy partial imports.
 // Minor 43 adds explicit force-close previews and independent device recovery.
-const Minor = 43
+// Minor 44 adds explicit normal retirement and forced archive deletion.
+const Minor = 44
 const MaxFrame = 1 << 20
 
 type Frame struct {

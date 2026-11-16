@@ -15,6 +15,7 @@ func ValidArchiveDays(days int) bool {
 // ArchiveDeletion is the authoritative removal of Shioji-owned catalog/history.
 // WorkspaceID is populated only when the workspace itself was removed.
 type ArchiveDeletion struct {
+	Warning     string   `json:"warning,omitempty"`
 	DeviceID    string   `json:"deviceId"`
 	WorkspaceID string   `json:"workspaceId,omitempty"`
 	SessionIDs  []string `json:"sessionIds"`

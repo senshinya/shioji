@@ -516,6 +516,29 @@ func (s *Scope) VerifyStopped() error {
 	}
 	return s.verifyStopped()
 }
+
+// ForgetStopped releases only this verified generation's in-memory monitoring
+// before its durable cleanup records are removed.
+func (s *Scope) ForgetStopped() error {
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	state, err := s.load()
+	if err != nil {
+		return err
+	}
+	if state.Active {
+		return errors.New("managed generation is not fenced")
+	}
+	if err = s.verifyStopped(); err != nil {
+		return err
+	}
+	for id, live := range s.manager.live {
+		if live.scope.Session == s.Session && live.scope.Generation == s.Generation {
+			delete(s.manager.live, id)
+		}
+	}
+	return nil
+}
 func (s *Scope) Stop(ctx context.Context) error {
 	manual, err := s.ManualStopPending()
 	if err != nil {

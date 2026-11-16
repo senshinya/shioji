@@ -6,6 +6,14 @@ type ArchiveGarbage struct {
 	SessionID, WorkspaceID, AttachmentID string
 }
 
+func (s *Store) SessionDeleted(id string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var deleted bool
+	err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM deleted_sessions WHERE id=?)", id).Scan(&deleted)
+	return deleted, err
+}
+
 func (s *Store) ArchiveGarbage() ([]ArchiveGarbage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

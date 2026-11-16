@@ -91,9 +91,14 @@ type ArchivePolicyInput struct {
 	Revision int64 `json:"revision"`
 }
 type ArchiveDeleteInput struct {
-	WorkspaceID string `json:"workspaceId,omitempty"`
-	SessionID   string `json:"sessionId,omitempty"`
-	Revision    int64  `json:"revision"`
+	// Explicit deletion may normally retire the session-owned environment.
+	// Expiry cleanup and older clients never grant this consent.
+	CloseRuntime bool   `json:"closeRuntime,omitempty"`
+	Force        bool   `json:"force,omitempty"`
+	OperationID  string `json:"operationId,omitempty"`
+	WorkspaceID  string `json:"workspaceId,omitempty"`
+	SessionID    string `json:"sessionId,omitempty"`
+	Revision     int64  `json:"revision"`
 }
 
 // QueueInput applies a revision-checked mutation to the owning worker's queue.

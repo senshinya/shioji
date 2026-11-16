@@ -107,6 +107,14 @@ func (s *Store) deletableLocked(session domain.Session) error {
 }
 
 func (s *Store) DeleteArchivedSession(id string, revision int64) (domain.ArchiveDeletion, error) {
+	return s.deleteArchivedSession(id, revision, false)
+}
+
+func (s *Store) ForceDeleteArchivedSession(id string) (domain.ArchiveDeletion, error) {
+	return s.deleteArchivedSession(id, 0, true)
+}
+
+func (s *Store) deleteArchivedSession(id string, revision int64, force bool) (domain.ArchiveDeletion, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var zero domain.ArchiveDeletion
@@ -114,7 +122,7 @@ func (s *Store) DeleteArchivedSession(id string, revision int64) (domain.Archive
 	if err != nil {
 		return zero, err
 	}
-	if session.Revision != revision {
+	if !force && session.Revision != revision {
 		return zero, errors.New("会话已改变，请重新载入后再试")
 	}
 	w, err := load[domain.Workspace](s.db.QueryRow("SELECT body FROM workspaces WHERE id=?", session.WorkspaceID))
@@ -124,13 +132,23 @@ func (s *Store) DeleteArchivedSession(id string, revision int64) (domain.Archive
 	if !session.Archived && !w.Archived {
 		return zero, errors.New("只能彻底删除已归档会话")
 	}
-	if err = s.deletableLocked(session); err != nil {
-		return zero, err
+	if !force {
+		if err = s.deletableLocked(session); err != nil {
+			return zero, err
+		}
 	}
 	return s.deleteArchivedLocked([]domain.Session{session}, "")
 }
 
 func (s *Store) DeleteArchivedWorkspace(id string, revision int64) (domain.ArchiveDeletion, error) {
+	return s.deleteArchivedWorkspace(id, revision, false)
+}
+
+func (s *Store) ForceDeleteArchivedWorkspace(id string) (domain.ArchiveDeletion, error) {
+	return s.deleteArchivedWorkspace(id, 0, true)
+}
+
+func (s *Store) deleteArchivedWorkspace(id string, revision int64, force bool) (domain.ArchiveDeletion, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var zero domain.ArchiveDeletion
@@ -138,7 +156,7 @@ func (s *Store) DeleteArchivedWorkspace(id string, revision int64) (domain.Archi
 	if err != nil {
 		return zero, err
 	}
-	if w.Revision != revision {
+	if !force && w.Revision != revision {
 		return zero, errors.New("工作区已改变，请重新载入后再试")
 	}
 	if !w.Archived {
@@ -148,9 +166,11 @@ func (s *Store) DeleteArchivedWorkspace(id string, revision int64) (domain.Archi
 	if err != nil {
 		return zero, err
 	}
-	for _, session := range sessions {
-		if err = s.deletableLocked(session); err != nil {
-			return zero, err
+	if !force {
+		for _, session := range sessions {
+			if err = s.deletableLocked(session); err != nil {
+				return zero, err
+			}
 		}
 	}
 	return s.deleteArchivedLocked(sessions, id)

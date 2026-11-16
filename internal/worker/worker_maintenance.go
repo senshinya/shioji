@@ -711,6 +711,16 @@ func (s *Server) recoverManualGuards() error {
 		if !entry.IsDir() {
 			continue
 		}
+		deleted, e := s.store.SessionDeleted(entry.Name())
+		if e != nil {
+			return e
+		}
+		// Archive deletion has its own durable acceptance proof. Let its
+		// outbox resume the captured operation instead of revoking the force
+		// grant because no worker-update maintenance receipt exists.
+		if deleted {
+			continue
+		}
 		scope, e := s.executions.Existing(entry.Name())
 		if e != nil || scope == nil {
 			continue

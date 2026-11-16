@@ -25,10 +25,16 @@ func (s *Server) reapExecutions() {
 			if err := s.executions.Reap(ctx); err != nil {
 				var ownership *managedexec.OwnershipError
 				if errors.As(err, &ownership) {
-					if e := s.store.GuardExecution(ownership.Session, ownership.Generation); e != nil {
+					deleted, e := s.store.SessionDeleted(ownership.Session)
+					if e != nil {
 						s.cancel()
 					}
-					s.wakeRecovery()
+					if !deleted && e == nil {
+						if e := s.store.GuardExecution(ownership.Session, ownership.Generation); e != nil {
+							s.cancel()
+						}
+						s.wakeRecovery()
+					}
 				}
 			}
 			cancel()
@@ -63,6 +69,15 @@ func (s *Server) recoverManagedScopes(ctx context.Context) error {
 			continue
 		}
 		id := entry.Name()
+		deleted, e := s.store.SessionDeleted(id)
+		if e != nil {
+			return e
+		}
+		// Deleted generations belong to the durable archive cleanup outbox;
+		// they must never restore history or prevent worker startup.
+		if deleted {
+			continue
+		}
 		scope, scopeErr := s.executions.Existing(id)
 		if scopeErr == nil && scope != nil {
 			manual, e := scope.ManualStopPending()

@@ -6,6 +6,7 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"slices"
 	"strings"
 	"time"
 
@@ -41,6 +42,18 @@ type archiveDeleteUI struct {
 	count      int
 	open, busy bool
 	error      string
+	operation  string
+	batch      bool
+	workspaces bool
+	force      bool
+	targets    []archiveDeleteTarget
+	failed     []archiveDeleteTarget
+	next       int
+}
+
+type archiveDeleteTarget struct {
+	connection, method, title string
+	input                     protocol.ArchiveDeleteInput
 }
 
 func (v *View) archiveState() *archiveUI {
@@ -196,6 +209,14 @@ func (v *View) archiveTable(c *n.Context, t *n.Theme, a *archiveUI, scope domain
 		})
 		n.Spacer(c).Grow(1)
 		n.Text(c, fmt.Sprintf("%d 个%s", count, kind)).FontSize(12).FontFeatures("tnum").TextColor(t.TextMuted)
+		total := len(m.ArchivedSessions("", a.scope))
+		if workspaceRows {
+			total = len(m.ArchivedWorkspaces(""))
+		}
+		if configurationAction(c, "删除全部").Disabled(total == 0 || a.deletion != nil && a.deletion.busy).Tooltip("删除此列表的全部归档" + kind + "，包含搜索未显示的内容").Clicked() {
+			all := v.archiveDeleteTargets(a)
+			a.deletion = &archiveDeleteUI{batch: true, workspaces: workspaceRows, targets: all, count: len(all), open: true}
+		}
 	})
 	metadataWidth := float32(160)
 	gap := float32(16)
@@ -352,8 +373,8 @@ func (v *View) archiveDialogs(c *n.Context, t *n.Theme) {
 	n.DialogBase(c.Key("delete-archive"), &d.open, func(backdrop, panel n.Element) {
 		backdrop.Background(n.RGBA(0, 0, 0, .16)).Transition(fadeMotion(c, 180*time.Millisecond))
 		width, _ := c.Size()
-		panel.Width(min(380, width-48)).Padding(24).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c)).Children(func() {
-			n.Column(c).FillWidth().Gap(12).Children(func() {
+		panel.Width(min(380, width-32)).Padding(16).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c)).Children(func() {
+			n.Column(c).FillWidth().Gap(10).Children(func() {
 				kind, title := "会话", d.session.Title
 				message := "“" + title + "”将无法恢复。"
 				if d.session.ID == "" {
@@ -361,22 +382,49 @@ func (v *View) archiveDialogs(c *n.Context, t *n.Theme) {
 					title = d.workspace.Name
 					message = fmt.Sprintf("“%s”及其中的 %d 个会话将无法恢复。", title, d.count)
 				}
+				if d.batch {
+					kind = "全部归档会话"
+					message = fmt.Sprintf("全部 %d 个归档会话将无法恢复。", d.count)
+					if d.workspaces {
+						kind = "全部归档工作区"
+						message = fmt.Sprintf("全部 %d 个归档工作区及其中的会话将无法恢复。", d.count)
+					}
+				}
 				n.Text(c, "彻底删除"+kind+"？").FontSize(15).FontWeight(500).FixedLineHeight(22)
 				n.Text(c, message).FontSize(13).FixedLineHeight(22)
-				n.Text(c, "同时移除 Shioji 保存的记录与附件。\n项目文件和 Git 仓库不会删除。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+				n.Text(c, "同时正常关闭会话运行环境，移除记录与附件。\n项目文件和 Git 仓库不会删除。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+				forceAvailable := v.archiveCanCloseRuntime(d.connection)
+				if d.batch {
+					for _, target := range d.targets {
+						if v.archiveCanCloseRuntime(target.connection) {
+							forceAvailable = true
+							break
+						}
+					}
+				}
+				if forceAvailable {
+					n.Text(c, "强制删除会中止任务；无法关闭的进程可能继续运行。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+				}
 				if d.error != "" {
 					n.Text(c, d.error).FontSize(12).FixedLineHeight(20).TextColor(t.Danger)
 				}
-				n.Row(c).FillWidth().Gap(8).Margin(12, 0, 0, 0).Children(func() {
+				n.Row(c).FillWidth().Gap(8).Margin(6, 0, 0, 0).Children(func() {
 					n.Spacer(c).Grow(1)
 					if configurationAction(c, "取消").Disabled(d.busy).Clicked() {
 						d.open = false
 					}
+					if forceAvailable && configurationAction(c, "强制删除").TextColor(t.Danger).Disabled(d.busy).Clicked() {
+						d.force = true
+						v.deleteArchive(d)
+					}
 					label := "彻底删除"
 					if d.busy {
 						label = "正在删除…"
+					} else if d.batch && d.error != "" {
+						label = "重试失败项"
 					}
-					if n.PrimaryButton(c, label).Height(28).FontSize(12).Radius(6).Disabled(d.busy || !v.canDeleteArchive(d.connection)).Clicked() {
+					if n.PrimaryButton(c, label).Height(28).FontSize(12).Radius(6).Disabled(d.busy || !d.batch && !v.canDeleteArchive(d.connection)).Clicked() {
+						d.force = false
 						v.deleteArchive(d)
 					}
 				})
@@ -392,12 +440,23 @@ func (v *View) archiveDialogs(c *n.Context, t *n.Theme) {
 }
 
 func (v *View) deleteArchive(d *archiveDeleteUI) {
+	if d.batch {
+		d.busy, d.error, d.next = true, "", 0
+		d.failed = nil
+		v.deleteNextArchive(d)
+		return
+	}
 	method := "session.delete"
 	input := protocol.ArchiveDeleteInput{SessionID: d.session.ID, Revision: d.session.Revision}
 	if d.session.ID == "" {
 		method = "workspace.delete"
 		input = protocol.ArchiveDeleteInput{WorkspaceID: d.workspace.ID, Revision: d.workspace.Revision}
 	}
+	if d.operation == "" {
+		d.operation = domain.NewID()
+	}
+	input.OperationID, input.CloseRuntime = d.operation, v.archiveCanCloseRuntime(d.connection)
+	input.Force = d.force
 	d.busy = true
 	d.error = ""
 	if !v.do(app.Job{ConnectionID: d.connection, Method: method, Input: input, Apply: func(m *app.Model, body json.RawMessage, err error) {
@@ -414,10 +473,82 @@ func (v *View) deleteArchive(d *archiveDeleteUI) {
 			return
 		}
 		m.ApplyArchiveDeletion(deletion)
+		if deletion.Warning != "" {
+			m.ReportFeedback(app.Feedback{Title: "归档已删除", Body: deletion.Warning})
+		}
 		d.open = false
 	}}) {
 		d.busy = false
 		d.error = "操作队列繁忙，请重试"
+	}
+}
+
+func (v *View) archiveCanCloseRuntime(connection string) bool {
+	if len(v.Model.DeviceStates) == 0 {
+		return v.Model.WorkerMinor >= 44
+	}
+	state := v.Model.DeviceStates[connection]
+	return state != nil && state.WorkerMinor >= 44
+}
+
+func (v *View) archiveDeleteTargets(a *archiveUI) []archiveDeleteTarget {
+	var out []archiveDeleteTarget
+	if a.tab == "workspaces" && a.scope == "" {
+		for _, w := range v.Model.ArchivedWorkspaces("") {
+			out = append(out, archiveDeleteTarget{connection: v.Model.WorkspaceConnection(w.ID), method: "workspace.delete", title: w.Name, input: protocol.ArchiveDeleteInput{WorkspaceID: w.ID, Revision: w.Revision, OperationID: domain.NewID()}})
+		}
+	} else {
+		for _, s := range v.Model.ArchivedSessions("", a.scope) {
+			out = append(out, archiveDeleteTarget{connection: v.Model.WorkspaceConnection(s.Workspace.ID), method: "session.delete", title: s.Session.Title, input: protocol.ArchiveDeleteInput{SessionID: s.Session.ID, Revision: s.Session.Revision, OperationID: domain.NewID()}})
+		}
+	}
+	return out
+}
+
+func (v *View) deleteNextArchive(d *archiveDeleteUI) {
+	for d.next < len(d.targets) {
+		target := d.targets[d.next]
+		d.next++
+		fail := func(message string) {
+			d.failed = append(d.failed, target)
+			if d.error == "" {
+				d.error = target.title + "：" + message
+			}
+		}
+		if !v.canDeleteArchive(target.connection) {
+			fail("请连接所属设备并更新 worker 后重试")
+			continue
+		}
+		target.input.CloseRuntime = v.archiveCanCloseRuntime(target.connection)
+		if d.force && !target.input.CloseRuntime {
+			fail("更新所属设备的 worker 后可强制删除")
+			continue
+		}
+		target.input.Force = d.force
+		if !v.do(app.Job{ConnectionID: target.connection, Method: target.method, Input: target.input, Apply: func(m *app.Model, body json.RawMessage, err error) {
+			var deletion domain.ArchiveDeletion
+			if err != nil {
+				fail(err.Error())
+			} else if json.Unmarshal(body, &deletion) != nil || deletion.DeviceID != m.Snapshot.DeviceID || target.input.SessionID != "" && !slices.Contains(deletion.SessionIDs, target.input.SessionID) || target.input.WorkspaceID != "" && deletion.WorkspaceID != target.input.WorkspaceID {
+				fail("设备返回了无效的删除回执")
+			} else {
+				m.ApplyArchiveDeletion(deletion)
+				if deletion.Warning != "" {
+					m.ReportFeedback(app.Feedback{Title: "归档已删除", Body: deletion.Warning})
+				}
+			}
+			v.deleteNextArchive(d)
+		}}) {
+			fail("操作队列繁忙，请重试")
+			continue
+		}
+		return
+	}
+	d.busy = false
+	d.open = len(d.failed) > 0
+	if d.open {
+		d.error = fmt.Sprintf("%d 项未删除。%s", len(d.failed), d.error)
+		d.targets = d.failed
 	}
 }
 
