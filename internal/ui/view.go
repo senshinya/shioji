@@ -1441,9 +1441,9 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 			if label == "" {
 				label = "工具活动"
 			}
-			heading := control(c).FillWidth().MinHeight(20).Justify(n.Start).Label(label).Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
+			heading := control(c).AlignSelf(n.Start).MinHeight(20).Justify(n.Start).Label(label).Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
 			if heading.Children(func() {
-				n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
+				n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
 					n.Text(c, commandPreview(label)).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).MinWidth(0).MaxLines(2).Ellipsis("…")
 					if issue := toolIssueLabel(item); issue != "" {
 						n.Text(c.Key("command-issue"), issue).SingleLine().Shrink(0).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).

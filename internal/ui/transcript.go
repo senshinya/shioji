@@ -342,15 +342,15 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 	var heading n.Element
 	color := t.TextMuted
 	if folded {
-		heading = n.ButtonBase(c).Justify(n.Start)
+		heading = n.ButtonBase(c).AlignSelf(n.Start).Justify(n.Start)
 		color = textHoverColor(c, heading, color)
 	} else {
-		heading = n.Row(c)
+		heading = n.Row(c).FillWidth()
 	}
-	heading.FillWidth().Height(20).Label(label)
+	heading.Height(20).Label(label)
 	live := v.runningGroup == row.group
 	heading.Children(func() {
-		heading := n.Row(c).FillWidth().Gap(0).AlignItems(n.Baseline)
+		heading := n.Row(c).Gap(0).AlignItems(n.Baseline)
 		if live {
 			heading.Label("工具组运行状态")
 		}
@@ -442,7 +442,7 @@ func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index
 			angle = -90
 		}
 	}
-	button := n.ButtonBase(c).FillWidth().Height(20).Justify(n.Start).Label(label)
+	button := n.ButtonBase(c).AlignSelf(n.Start).Height(20).Justify(n.Start).Label(label)
 	color := textHoverColor(c, button, t.TextMuted)
 	button.Children(func() {
 		n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {

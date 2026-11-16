@@ -239,31 +239,36 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 	}
 	root.IgnoreInput(!present).Children(func() {
 		n.Row(c).FillWidth().Height(32).Shrink(0).PaddingX(14).AlignItems(n.Center).Gap(8).Opacity(contentOpacity).Children(func() {
-			label := fmt.Sprintf("待发送 %d", len(q.Items))
-			trigger := n.ButtonBase(c.Key("queue-disclosure")).Height(32).Grow(1).MinWidth(0).Justify(n.Start).Label(label)
-			color := textHoverColor(c, trigger, t.Text.Alpha(.86))
-			trigger.DrawOver(func(_ *n.Painter, r n.Rect) {
+			// Retain the queue-to-message animation's source width while only
+			// the intrinsic title button handles disclosure clicks.
+			heading := n.Row(c.Key("queue-heading")).Height(32).Grow(1).MinWidth(0)
+			heading.DrawOver(func(_ *n.Painter, r n.Rect) {
 				for _, item := range q.Items {
 					if present && !m.QueueExpanded[sid] {
 						v.rememberQueuedSource(item, n.Rect{X: r.X + 20, Y: r.Y + 6, W: r.W - 20, H: 20})
 					}
 				}
 			})
-			trigger.Children(func() {
-				font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 500}
-				n.Row(c).Gap(3).AlignItems(n.Baseline).Transform(n.Translation(0, inlineCenterOffset("待发送", font))).Children(func() {
-					angle := float32(-90)
-					if m.QueueExpanded[sid] {
-						angle = 0
-					}
-					inlineSymbol(c.Key("queue-chevron"), chevron, "待发送", font, 14, subtle(t), angle).Width(16)
-					n.Text(c, "待发送").FontSize(12).FontWeight(500).FixedLineHeight(18).TextColor(color)
-					n.Text(c, fmt.Sprint(len(q.Items))).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
+			heading.Children(func() {
+				label := fmt.Sprintf("待发送 %d", len(q.Items))
+				trigger := n.ButtonBase(c.Key("queue-disclosure")).Height(32).MinWidth(0).Justify(n.Start).Label(label)
+				color := textHoverColor(c, trigger, t.Text.Alpha(.86))
+				trigger.Children(func() {
+					font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 500}
+					n.Row(c).Gap(3).AlignItems(n.Baseline).Transform(n.Translation(0, inlineCenterOffset("待发送", font))).Children(func() {
+						angle := float32(-90)
+						if m.QueueExpanded[sid] {
+							angle = 0
+						}
+						inlineSymbol(c.Key("queue-chevron"), chevron, "待发送", font, 14, subtle(t), angle).Width(16)
+						n.Text(c, "待发送").FontSize(12).FontWeight(500).FixedLineHeight(18).TextColor(color)
+						n.Text(c, fmt.Sprint(len(q.Items))).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
+					})
 				})
+				if trigger.Clicked() && present {
+					m.QueueExpanded[sid] = !m.QueueExpanded[sid]
+				}
 			})
-			if trigger.Clicked() && present {
-				m.QueueExpanded[sid] = !m.QueueExpanded[sid]
-			}
 			if q.Paused {
 				font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}
 				n.Row(c).Height(26).Gap(8).AlignItems(n.Baseline).Transform(n.Translation(0, inlineCenterOffset("已暂停", font))).Children(func() {

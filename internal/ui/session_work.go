@@ -616,9 +616,9 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 						if label == "" {
 							label = "命令"
 						}
-						heading := n.ButtonBase(c.Key("command-heading")).FillWidth().MinHeight(20).Justify(n.Start).Label(label).Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
+						heading := n.ButtonBase(c.Key("command-heading")).AlignSelf(n.Start).MinHeight(20).Justify(n.Start).Label(label).Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
 						heading.Children(func() {
-							n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
+							n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
 								inlineSymbol(c, commandActivityIcon(item.Name), label, n.Font{Family: t.Font, Size: 12}, 14, t.TextMuted).Shrink(0)
 								n.Text(c, commandPreview(label)).Font(t.Font).FontSize(12).FixedLineHeight(20).MinWidth(0).MaxLines(2).Ellipsis("…").TextColor(t.TextMuted)
 								if hasOutput && kind != "background" {

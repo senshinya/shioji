@@ -113,10 +113,10 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 	if label == "" {
 		label = "工具活动"
 	}
-	button := n.ButtonBase(c.Key("activity-heading")).FillWidth().MinHeight(20).Justify(n.Start).Label(label)
+	button := n.ButtonBase(c.Key("activity-heading")).AlignSelf(n.Start).MinHeight(20).Justify(n.Start).Label(label)
 	color := textHoverColor(c, button, t.TextMuted)
 	button.Children(func() {
-		n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
+		n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
 			font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
 			metadataMotion := resultBlockMotion(c)
 			if item.Kind == "activity" {
