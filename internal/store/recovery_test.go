@@ -6,6 +6,27 @@ import (
 	"testing"
 )
 
+func TestDeviceRecoveryPausesAllQueuesAndPreservesCompletedHistory(t *testing.T) {
+	s := open(t)
+	w := workspace(t, s)
+	op, err := s.Accept(domain.Submission{OperationID: "recover-active", WorkspaceID: w.ID, Text: "keep history"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetOperation(op.ID, "confirmed", "")
+	s.Apply(op.SessionID, domain.Event{Type: "turn", Turn: &domain.Turn{ID: "running", Status: "running"}})
+	if err = s.Recover(); err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.Session(op.SessionID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !d.Queue.Paused || d.Session.Status != "unknown" || len(d.Items) == 0 {
+		t.Fatal("forced recovery lost history or replayed queue", d)
+	}
+}
+
 func TestLateTerminalEventCannotReleaseManagedExecutionGuard(t *testing.T) {
 	s := open(t)
 	w := workspace(t, s)

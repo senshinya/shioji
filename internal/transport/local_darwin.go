@@ -38,6 +38,11 @@ func EnsureLocalWorker(ctx context.Context, directory, binary, codex string) (Wo
 		return WorkerInfo{}, err
 	}
 	info := WorkerInfo{Home: home, Directory: directory, Worker: binary}
+	if pending, e := PendingDeviceRecovery(directory); e != nil {
+		return info, e
+	} else if pending != nil {
+		return info, errors.New("执行服务正在恢复，请查询原操作或重新打开强制恢复")
+	}
 	if pending, e := PendingWorkerMigration(directory); e != nil {
 		return info, e
 	} else if pending != nil {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"shioji/internal/domain"
@@ -39,6 +40,9 @@ func run() error {
 	describe := flag.Bool("describe", false, "Print worker build metadata without opening state")
 	ensure := flag.Bool("ensure", false, "Start or reuse the developer worker and print connection metadata")
 	bridge := flag.Bool("bridge", false, "Forward stdio to this user’s existing private worker")
+	recovery := flag.String("recovery-helper", "", "Independent execution recovery: inspect, start, status, cancel or run")
+	recoveryID := flag.String("recovery-id", "", "Stable recovery operation")
+	recoveryDevice := flag.String("recovery-device", "", "Expected authenticated recovery device")
 	managed := flag.Bool("managed-service", false, "Wait for and own the per-user worker under launchd")
 	binary := flag.String("codex", "codex", "Compatible Codex executable")
 	migration := flag.String("legacy-migration", "", "Inspect an explicitly authorized legacy migration")
@@ -52,11 +56,45 @@ func run() error {
 	build.Maintenance = true
 	build.ContextUsage = true
 	build.OutputFiles = true
+	build.RecoveryHelper = true
 	if *describe {
 		return json.NewEncoder(os.Stdout).Encode(protocol.Frame{Type: "worker-build", Major: protocol.Major, Minor: protocol.Minor, Worker: &build})
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if *recovery != "" && *recovery != "run" {
+		in := domain.WorkerRecoveryInput{ID: *recoveryID, DeviceID: *recoveryDevice}
+		var out any
+		switch *recovery {
+		case "inspect":
+			out, err = worker.InspectDeviceRecovery(ctx, dir, *recoveryDevice)
+		case "start":
+			if e := json.NewDecoder(io.LimitReader(os.Stdin, 1<<20)).Decode(&in); e != nil {
+				return e
+			}
+			if in.DeviceID != *recoveryDevice || in.ID != *recoveryID {
+				return errors.New("恢复参数与目标设备不一致")
+			}
+			exe, e := os.Executable()
+			if e != nil {
+				return e
+			}
+			out, err = worker.StartDeviceRecovery(ctx, dir, exe, in)
+		case "status":
+			out, err = worker.DeviceRecoveryStatus(dir, *recoveryID)
+		case "cancel":
+			out, err = worker.CancelDeviceRecovery(dir, *recoveryID, *recoveryDevice)
+		default:
+			return errors.New("未知的执行恢复操作")
+		}
+		if err != nil {
+			return json.NewEncoder(os.Stdout).Encode(struct {
+				DeviceID string `json:"deviceId"`
+				Error    string `json:"error"`
+			}{*recoveryDevice, err.Error()})
+		}
+		return json.NewEncoder(os.Stdout).Encode(out)
+	}
 	if *migration == "inspect" {
 		exe, e := os.Executable()
 		if e != nil {
@@ -200,7 +238,13 @@ func run() error {
 		}
 	}
 	for {
-		if *migration == "run" {
+		if *recovery == "run" {
+			workerArgs = []string{"--state-dir", dir, "--codex", *binary}
+			s, err = worker.RunDeviceRecovery(ctx, config, *recoveryID)
+			if err == nil && s == nil {
+				return nil
+			}
+		} else if *migration == "run" {
 			s, err = worker.RunLegacyMigration(ctx, config, *migrationID)
 			if err == nil && s == nil {
 				return nil

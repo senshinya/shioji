@@ -119,6 +119,13 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	}
 	// Recheck under ownership: a managed service may already have been waiting
 	// for the old process to exit when the migration was authorized.
+	if pending, e := transport.PendingDeviceRecovery(config.Directory); e != nil || pending != nil {
+		owner.Close()
+		if e != nil {
+			return nil, e
+		}
+		return nil, errors.New("执行服务恢复尚未完成，请查询原恢复操作")
+	}
 	if config.legacyExpected == nil {
 		pending, e := transport.PendingWorkerMigration(config.Directory)
 		if e != nil {

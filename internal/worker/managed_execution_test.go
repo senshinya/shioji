@@ -19,6 +19,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if deviceRecoveryFixture() {
+		return
+	}
 	if workerMaintenanceFixture() {
 		return
 	}
