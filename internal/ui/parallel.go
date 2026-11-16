@@ -61,6 +61,9 @@ func (v *View) openParallel(id string) {
 func (v *View) closeParallel() {
 	root := v.splitRoot()
 	root.Model.SecondarySessionID = ""
+	if root.secondary != nil {
+		root.secondary.sessionLoad = nil
+	}
 	root.setSecondaryFocus(false)
 	root.focusComposer = true
 }

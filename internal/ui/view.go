@@ -42,6 +42,7 @@ type View struct {
 	feedbackObservedError            string
 	draftSaveError                   string
 	historyPage                      *conversationHistory
+	sessionLoad                      *sessionLoading
 	historyBaseline                  bool
 	historyTarget                    string
 	workSourceTarget                 app.WorkKey
@@ -311,6 +312,9 @@ func (v *View) View(c *n.Context) {
 		v.secondary.collectBindings()
 	}
 	v.pumpUpdates()
+	if v.devices || v.workspaceEditor != nil || m.SessionID == "" {
+		v.sessionLoad = nil
+	}
 	v.beginWorkHistoryFrame()
 	defer v.cancelHiddenWorkHistory()
 	if p := v.historyPage; p != nil && (p.session != m.SessionID || p.epoch != m.ConnectionEpoch || v.devices) {
@@ -741,9 +745,14 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 			}
 		}
 		attachmentHeight := float32(0)
+		if !home {
+			v.loadingComposerFrame(heightFrame)
+		}
 		heightFrame.Children(func() {
 			var input composerInput
-			composer := n.Column(c.Key("composer:"+stackKey)).FillWidth().Padding(10, 14, 8, 6).Gap(4).Children(func() {
+			composer := n.Column(c.Key("composer:"+stackKey)).FillWidth().Padding(10, 14, 8, 6).Gap(4)
+			v.loadingComposerContent(composer, home)
+			composer.Children(func() {
 				if m.QueueEdits[m.SessionID].ID != "" {
 					n.Column(c).Height(28)
 				}
@@ -762,7 +771,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 						inputKey += ":edit:" + editID
 					}
 					options := richtext.EditorOptions{Label: v.composerLabel(), Placeholder: "描述任务…", Font: n.Font{Family: t.Font, Size: inputSize, Weight: 400}, NoMarkdown: true, PlainText: true, MaxLines: 7, LineHeight: inputLeading, Theme: &richtext.Theme{Muted: subtle(t), Selection: editorSelection(t)}}
-					options.ReadOnly = waiting
+					options.ReadOnly = waiting || !home && v.loadingBlocksComposer()
 					options.OnKey = func(keyCode n.Key, mods n.Modifiers) bool {
 						k := composerKey{Key: keyCode, Mods: mods, binding: binding}
 						v.publishComposer(key, binding)
@@ -791,7 +800,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 
 					input.Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 180*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 
-					if v.focusComposer {
+					if v.focusComposer && (home || !v.loadingBlocksComposer()) {
 						input.Focus()
 						v.focusComposer = false
 					}
@@ -908,6 +917,9 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 				n.Column(c.Key("queue-edit-header-surface")).Absolute().Left(1).Right(1).Top(1).Height(37).Radius(15, 15, 0, 0).Background(bg).IgnoreInput(true)
 			}
 			v.queueEditBar(c, t)
+			if !home {
+				v.loadingComposerSkeleton(c, t)
+			}
 		})
 		if v.composerNaturalHeight > 0 && resize {
 			heightFrame.Height(shownHeight + attachmentHeight)
@@ -1114,6 +1126,7 @@ func settingRow(c *n.Context, name, value string) n.Element {
 func (v *View) conversation(c *n.Context, t *n.Theme) {
 	m := v.Model
 	v.syncPagedHistory(c)
+	v.syncSessionLoading(c)
 	v.refreshConversationFind()
 	// An empty detail keeps the dock mounted through first-turn hydration.
 	// Its zero Session.ID also keeps the history-fold barrier unconsumed.
@@ -1356,7 +1369,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 				}
 			})
 		})
-	}).Absolute().Left(0).Right(0).Top(0).Bottom(0).ScrollbarInsets(8, 0, 8, 0).Label("对话记录")
+	}).Absolute().Left(0).Right(0).Top(0).Bottom(0).ScrollbarInsets(8, 0, 8, 0).Label("对话记录").Opacity(v.loadingHistoryOpacity()).IgnoreInput(v.loadingBlocksComposer())
 	history.DrawOver(func(_ *n.Painter, _ n.Rect) {
 		v.historyRowBounds = rowBounds
 	})
@@ -1372,7 +1385,9 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		}
 		return "", false
 	})
-	v.conversationOutline(c, t, state, rows)
+	if !v.loadingBlocksComposer() {
+		v.conversationOutline(c, t, state, rows)
+	}
 	v.prefetchHistory(c, state, rows)
 	n.Column(c).Absolute().Left(0).Right(0).Top(0).Height(48).Padding(0, conversationScrollbarGutter, 0, 0).Label("会话顶栏").Draw(func(p *n.Painter, r n.Rect) {
 		// History is clipped to its reading column, so the gutter contains
@@ -1396,7 +1411,10 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		}
 	})
 	dock.Children(func() { v.notice(c, t); v.pending(c, t, detail); v.composer(c, t, false) })
-	v.returnToLatest(c, t, state, dock)
+	v.sessionLoadingOverlay(c, t)
+	if !v.loadingBlocksComposer() {
+		v.returnToLatest(c, t, state, dock)
+	}
 }
 
 func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {

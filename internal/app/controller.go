@@ -615,8 +615,23 @@ func (c *Controller) Run(ctx context.Context) {
 				initialHistory[id] = c.queueInitialHistory(ctx, id, epoch, generation, opening)
 				continue
 			}
+			read := &HistoryRead{Pending: true}
+			epoch := logicalEpoch
+			if epoch == "" {
+				epoch = client.Epoch
+			}
+			c.post(func(m *Model) {
+				if m.ConnectionEpoch == epoch && m.ownsSession(id) {
+					m.HistoryReads[id] = read
+				}
+			})
 			all, err := hydrateSession(ctx, client, id, generation)
 			if err != nil {
+				c.post(func(m *Model) {
+					if m.ConnectionEpoch == epoch && m.ownsSession(id) && m.HistoryReads[id] == read {
+						read.Pending, read.Error = false, err.Error()
+					}
+				})
 				var remote *protocol.RemoteError
 				if errors.As(err, &remote) {
 					history[id] = history[id].failed()
@@ -628,9 +643,11 @@ func (c *Controller) Run(ctx context.Context) {
 			collapseHistory := history[id].opening()
 			history[id] = historyLoaded
 			c.post(func(m *Model) {
-				if !m.ownsSession(id) {
+				if !m.ownsSession(id) || m.ConnectionEpoch != epoch || m.HistoryReads[id] != read {
 					return
 				}
+				read.Pending = false
+				delete(m.HistoryReads, id)
 				m.Details[id] = all
 				if collapseHistory {
 					m.FoldToolHistory[id] = true

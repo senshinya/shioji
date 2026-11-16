@@ -2,6 +2,8 @@
 
 The worker owns complete conversation history. Loading a display window does not truncate harness context or change execution state.
 
+Opening a conversation without displayable history uses the native initial-read presentation described in [会话初次读取](session-loading.md). Cached messages remain visible, and ordinary paging retains its silent behavior below.
+
 ## Behavior
 
 - With worker protocol minor 37 or later, opening a session reads the latest 20 display rounds by default. Each main-conversation user message starts a round, including an inserted/steering message within the same harness TurnID. Tools, replies, compaction and request markers do not count as separate rounds; child-agent user messages and queued drafts do not start main-conversation rounds.
