@@ -3,6 +3,7 @@ package ui
 // Settings, device management and setup use the same native form rhythm.
 // Compact setup tabs retain their own 12-DIP gap above form content.
 const (
+	deviceScenePortY                = 131 - 25 // Hardware connector minus SVG viewBox origin.
 	deviceSceneMaxWidth             = 820
 	deviceSceneDetailsWidth         = 480
 	configurationDialogInset        = 16

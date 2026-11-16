@@ -161,14 +161,14 @@ func deviceSceneGeometry(count int) (float32, []deviceSceneRouteGeometry) {
 		return height, nil
 	}
 	if count == 1 {
-		return height, []deviceSceneRouteGeometry{{105, 86, 124, 74, 64}}
+		return height, []deviceSceneRouteGeometry{{deviceScenePortY, 86, 124, 74, 64}}
 	}
 	if count == 2 {
 		return height, []deviceSceneRouteGeometry{{66, 48, 85, 34, 64}, {144, 166, 185, 132, 68}}
 	}
 	out := make([]deviceSceneRouteGeometry, count)
 	for i := range out {
-		lane := height/2 + (float32(i)-float32(count-1)/2)*64
+		lane := deviceScenePortY + (height-210)/2 + (float32(i)-float32(count-1)/2)*64
 		out[i] = deviceSceneRouteGeometry{lane, lane - 18, lane + 18, lane - 31, 62}
 	}
 	return height, out
@@ -445,50 +445,56 @@ func (v *View) drawDeviceScene(p *n.Painter, box n.Rect, t *n.Theme, icon app.De
 	}
 	now := p.Now()
 	recent := !changed.IsZero() && now.Sub(changed) < 900*time.Millisecond
-	for i, r := range state.Routes {
-		centre, lane := height/2, lanes[i].Lane
-		x := func(value float32) float32 { return box.X + value*scale }
-		y := func(value float32) float32 { return box.Y + value*scale }
-		var path n.Path
-		path.MoveTo(x(80), y(centre)).LineTo(x(98), y(centre))
-		if lane < centre {
-			path.QuadTo(x(110), y(centre), x(110), y(centre-12)).LineTo(x(110), y(lane+12)).QuadTo(x(110), y(lane), x(122), y(lane))
-		} else if lane > centre {
-			path.QuadTo(x(110), y(centre), x(110), y(centre+12)).LineTo(x(110), y(lane-12)).QuadTo(x(110), y(lane), x(122), y(lane))
-		} else {
-			path.LineTo(x(122), y(lane))
-		}
-		path.LineTo(x(320), y(lane))
-		if lane < centre {
-			path.QuadTo(x(332), y(lane), x(332), y(lane+12)).LineTo(x(332), y(centre-12)).QuadTo(x(332), y(centre), x(344), y(centre))
-		} else if lane > centre {
-			path.QuadTo(x(332), y(lane), x(332), y(lane-12)).LineTo(x(332), y(centre+12)).QuadTo(x(332), y(centre), x(344), y(centre))
-		} else {
-			path.LineTo(x(344), y(centre))
-		}
-		path.LineTo(x(350), y(centre))
-		color, width := t.Border, float32(1)
-		if r.Active {
-			color, width = t.TextMuted, 1.4
-		}
-		if r.Status.Phase == app.PathUnavailable {
-			path.Dash(0, 3*scale, 5*scale)
-		}
-		p.StrokePath(&path, width*scale, color)
-		if !reduced && (r.Busy || recent && r.Active) {
-			path.Dash(float32(-math.Mod(float64(now.UnixMilli())/1000, 1.2)/1.2)*300*scale, 8*scale, 292*scale)
-			p.StrokePath(&path, 1.8*scale, t.TextMuted)
-			p.AnimationFrameRate(30)
-		}
-		if r.Relay != "" {
-			rect := n.Rect{X: x(201), Y: y(lane) - 10*scale, W: 42 * scale, H: 20 * scale}
-			p.Fill(rect, t.Background, 4*scale)
-			p.Stroke(rect, t.Border, 4*scale, .8*scale)
-			// Text is a native child at this same lane, below.
+	// Paint the selected route last, so shared trunks retain its full stroke.
+	for _, active := range []bool{false, true} {
+		for i, r := range state.Routes {
+			if r.Active != active {
+				continue
+			}
+			centre, lane := deviceScenePortY+(height-210)/2, lanes[i].Lane
+			x := func(value float32) float32 { return box.X + value*scale }
+			y := func(value float32) float32 { return box.Y + value*scale }
+			var path n.Path
+			path.MoveTo(x(80), y(centre)).LineTo(x(98), y(centre))
+			if lane < centre {
+				path.QuadTo(x(110), y(centre), x(110), y(centre-12)).LineTo(x(110), y(lane+12)).QuadTo(x(110), y(lane), x(122), y(lane))
+			} else if lane > centre {
+				path.QuadTo(x(110), y(centre), x(110), y(centre+12)).LineTo(x(110), y(lane-12)).QuadTo(x(110), y(lane), x(122), y(lane))
+			} else {
+				path.LineTo(x(122), y(lane))
+			}
+			path.LineTo(x(320), y(lane))
+			if lane < centre {
+				path.QuadTo(x(332), y(lane), x(332), y(lane+12)).LineTo(x(332), y(centre-12)).QuadTo(x(332), y(centre), x(344), y(centre))
+			} else if lane > centre {
+				path.QuadTo(x(332), y(lane), x(332), y(lane-12)).LineTo(x(332), y(centre+12)).QuadTo(x(332), y(centre), x(344), y(centre))
+			} else {
+				path.LineTo(x(344), y(centre))
+			}
+			path.LineTo(x(350), y(centre))
+			color, width := t.Border, float32(1)
+			if r.Active {
+				color, width = t.TextMuted, 1.4
+			}
+			if r.Status.Phase == app.PathUnavailable {
+				path.Dash(0, 3*scale, 5*scale)
+			}
+			p.StrokePath(&path, width*scale, color)
+			if !reduced && (r.Busy || recent && r.Active) {
+				path.Dash(float32(-math.Mod(float64(now.UnixMilli())/1000, 1.2)/1.2)*300*scale, 8*scale, 292*scale)
+				p.StrokePath(&path, 1.8*scale, t.TextMuted)
+				p.AnimationFrameRate(30)
+			}
+			if r.Relay != "" {
+				rect := n.Rect{X: x(201), Y: y(lane) - 10*scale, W: 42 * scale, H: 20 * scale}
+				p.Fill(rect, t.Background, 4*scale)
+				p.Stroke(rect, t.Border, 4*scale, .8*scale)
+				// Text is a native child at this same lane, below.
+			}
 		}
 	}
 	if !local {
-		r := n.Rect{X: box.X + 77*scale, Y: box.Y + (height/2-3)*scale, W: 6 * scale, H: 6 * scale}
+		r := n.Rect{X: box.X + 77*scale, Y: box.Y + (deviceScenePortY+(height-210)/2-3)*scale, W: 6 * scale, H: 6 * scale}
 		p.Fill(r, t.Background, 3*scale)
 		p.Stroke(r, t.TextMuted, 3*scale, scale)
 	}
