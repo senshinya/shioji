@@ -217,3 +217,38 @@ func TestNativeHookRefreshAdoptsIndependentProcessWithoutReplayingThread(t *test
 		t.Fatal("refresh started or replayed another thread", loaded)
 	}
 }
+
+func TestNativeUnsupportedHookNeverBecomesTrustable(t *testing.T) {
+	_, manager, root, _ := nativeHooksFixture(t)
+	path := filepath.Join(root, ".codex/hooks.json")
+	raw := []byte(`{"hooks":{"PreToolUse":[{"hooks":[{"type":"prompt","prompt":"inspect only"}]}]}}`)
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := manager.Hooks(context.Background(), domain.LaunchContext{CWD: root}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry *domain.HookEntry
+	for i := range catalog.Entries {
+		if catalog.Entries[i].Scope == domain.HookProject {
+			entry = &catalog.Entries[i]
+			break
+		}
+	}
+	change := domain.HookChange{ID: "unavailable-handler", Revision: catalog.Revision, DefinitionRevision: "unavailable", Action: domain.HookTrustDefinition}
+	if entry == nil {
+		// Current native engines explicitly omit unsupported prompt handlers.
+		if len(catalog.Warnings) == 0 {
+			t.Fatal("unsupported definition disappeared without a warning")
+		}
+	} else {
+		if entry.Kind != "unknown" || entry.CanEnable || entry.CanTrust || entry.ReadOnlyReason == "" {
+			t.Fatal("incomplete definition can be authorized", entry)
+		}
+		change.ID, change.DefinitionRevision = entry.ID, entry.DefinitionRevision
+	}
+	if _, err = manager.ChangeHook(context.Background(), domain.LaunchContext{CWD: root}, change); err == nil {
+		t.Fatal("unsupported handler was trusted without review contents")
+	}
+}

@@ -153,7 +153,14 @@ func (r *Runtime) managedHooks(ctx context.Context, launch domain.LaunchContext,
 		if launch.CWD != "" && scope == domain.HookPlugin && !globalPlugins[id] {
 			scope = domain.HookUnknown
 		}
-		entry := domain.HookEntry{ID: id, DefinitionRevision: h.CurrentHash, Event: hookEventLabel(h.EventName), Kind: h.HandlerType, Command: h.Command, Service: h.Server, Tool: h.Tool, Scope: scope, SourcePath: h.SourcePath, Plugin: h.PluginID, Matcher: h.Matcher, StatusMessage: h.StatusMessage, Fingerprint: h.CurrentHash, TimeoutSeconds: h.TimeoutSec, Async: h.Async, Enabled: h.Enabled}
+		kind := "unknown"
+		switch h.HandlerType {
+		case "command":
+			kind = "command"
+		case "mcpTool":
+			kind = "tool"
+		}
+		entry := domain.HookEntry{ID: id, DefinitionRevision: h.CurrentHash, Event: hookEventLabel(h.EventName), Kind: kind, Command: h.Command, Service: h.Server, Tool: h.Tool, Scope: scope, SourcePath: h.SourcePath, Plugin: h.PluginID, Matcher: h.Matcher, StatusMessage: h.StatusMessage, Fingerprint: h.CurrentHash, TimeoutSeconds: h.TimeoutSec, Async: h.Async, Enabled: h.Enabled}
 		switch scope {
 		case domain.HookProject:
 			entry.Source = "项目"

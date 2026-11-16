@@ -351,3 +351,11 @@ Minor 28 增加 `WorkInput`、`WorkInputOperation` 和可选 `harness.WorkMessen
 原生详情采用 B 方案：默认收起输入入口，点击后以真实高度展开，草稿按设备／会话／子执行保留。发送、失败与查询状态仅影响当前子输入，主输入和共用请求栏保持独立。Codex 转译保留子线程已有配置，仅向已确认绑定的子执行追加或继续；隔离的真实 App Server 测试验证两种操作及回执查找。
 
 `WorkDetail.PendingInput` 恢复未决输入的标识和正文，重开 GUI 或换客户端后仍只能查询，不自动重发。已验证停止的执行代际在同一恢复事务中撤销子执行控制、释放执行占用，并在未决回执中记录 `ExecutionStopped`；历史送达结果仍保留 indeterminate，不误报拒绝，也不永久阻挡目录切换与服务维护。Adapter 在异步调用前后核对不可变归属；查询成功还须匹配源消息的实际正文，不能只相信回显的客户端标识。
+
+### Hooks management (protocol 2.46)
+
+`HookCatalog`, `HookEntry`, `HookChange`, `HookRequest` and `HookOperation` are typed neutral contracts; the optional `harness.HookProvider` owns discovery, exact-definition mutation and process adoption. Source identifiers/revisions remain opaque. Per-entry capabilities keep managed, unknown and inherited definitions read-only. Adapter-specific hook handler names and native configuration paths remain inside the adapter.
+
+The owning worker resolves device-global, workspace-primary and accepted-session contexts. It revalidates scope and catalog/definition revisions before writing, serializes with other native configuration changes and the next input boundary, and persists schema-14 definition-bound operation receipts. Uncertain delivery is reconciled by receipt and authoritative reads, never by resending approval onto a revised definition. Trust and enabled state are independent.
+
+Global and workspace Hooks pages follow Skills navigation. Session run configuration inspects the existing process when supported; unloaded/archived sources remain configuration-only. Configuration refresh does not restart or interrupt an active turn. Every subsequent creation/resume/input confirms native hook configuration before dispatch; inability to confirm rejects that input rather than silently using stale trust. See [Hook management and validation limits](hooks.md).
