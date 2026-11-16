@@ -1494,6 +1494,7 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 // replace the label without restarting row entrance or content animation.
 func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing string) {
 	frame := n.Column(c.Key("reply-footer")).Label("回复信息").FillWidth().MinHeight(24).Clip()
+	replySummary := turn.Status == domain.ExecutionCompleted || turn.Status == domain.ExecutionInterrupted || turn.Status == domain.ExecutionAbandoned
 	state := string(turn.Status)
 	if (turn.Status == "running" || turn.Status == "starting") && !v.Model.Connected {
 		state = "disconnected"
@@ -1566,7 +1567,7 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 			case "unknown":
 				label = "执行状态待核实"
 			}
-			if turn.Status == "completed" {
+			if replySummary {
 				copy := n.ButtonBase(c.Key("copy-reply:"+turn.ID)).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("复制回复")
 				copiedUntil := n.Local(copy, "copied-until", func() time.Time { return time.Time{} })
 				if copy.Clicked() {
@@ -1607,6 +1608,10 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 					exact = local.Format("2006-01-02 15:04:05")
 				}
 				n.Text(c, ended).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)}).Label("结束时间：" + ended).Tooltip(exact).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+				if turn.Status != domain.ExecutionCompleted {
+					animation := motionAnimation(c, 160*time.Millisecond)
+					n.Text(c, label).Label("回复状态：" + label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: &animation})
+				}
 				duration := "用时 —"
 				if turn.DurationMS != nil {
 					seconds := *turn.DurationMS / 1000
@@ -1623,10 +1628,10 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 						Transition(fadeMotion(c, 160*time.Millisecond))
 				}
 			}
-			if turn.Status != "completed" && !turn.Status.Active() && turn.DurationMS != nil {
+			if !replySummary && !turn.Status.Active() && turn.DurationMS != nil {
 				n.Text(c, fmt.Sprintf("%.1f 秒", float64(*turn.DurationMS)/1000)).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 			}
-			if turn.Status == "completed" {
+			if replySummary {
 				n.Column(c).MinHeight(24).Justify(n.Center).Label("本轮用量").Children(func() {
 					n.Text(c, fmt.Sprintf("输入 %s · 输出 %s · 缓存 %s", count(turn.InputTokens), count(turn.OutputTokens), count(turn.CachedInputTokens))).
 						FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
