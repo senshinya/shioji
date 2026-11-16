@@ -111,6 +111,9 @@ func (v *View) retireSSHSetupTerminal() {
 
 // CloseTransient releases UI-owned work when the window exits.
 func (v *View) CloseTransient() {
+	if v.mermaid != nil {
+		v.mermaid.close()
+	}
 	v.cancelPagedHistory()
 	v.cancelFileLink()
 	v.closeMarkdownImages()

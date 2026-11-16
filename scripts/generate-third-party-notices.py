@@ -31,6 +31,8 @@ notices.append({'module': 'Lucide icons (book-open, minimize-2)', 'version': '0.
 permission_flow = json.loads((root / 'native/permission-flow/Package.resolved').read_text())
 revision = next(pin['state']['revision'] for pin in permission_flow['pins'] if pin['identity'] == 'permissionflow')
 notices.append({'module': 'github.com/jaywcjlove/PermissionFlow', 'version': revision, 'text': (root / 'third_party/permissionflow/LICENSE').read_text()})
+notices.append({'module': 'github.com/obsidianmd/pele', 'version': '1.13.0', 'text': (root / 'third_party/pele/LICENSE').read_text()})
+notices.append({'module': 'github.com/linebender/resvg (usvg)', 'version': '0.50.0', 'text': (root / 'third_party/usvg/LICENSE-MIT').read_text()})
 text = json.dumps(notices, ensure_ascii=False, indent=2) + '\n'
 target = root / 'internal/ui/third_party_notices.json'
 if args.check:

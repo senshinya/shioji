@@ -65,6 +65,7 @@ func (v *View) fileLinkCurrent(s *fileLinkState) bool {
 	return v.fileLink == s && v.Model.SessionID == s.session && v.Model.ConnectionEpoch == s.epoch && v.Model.Details[s.session].Session.WorkspaceID == s.workspace
 }
 func (v *View) bindMarkdownLinks(c *n.Context, options *markdown.Options) {
+	bindMermaid(c, options, &v.mermaid, v.Model.SessionID+"|"+v.Model.ConnectionEpoch, true)
 	services := c.Services()
 	source := v.Model.Details[v.Model.SessionID].Session
 	v.bindMarkdownImages(options, source)

@@ -12,6 +12,7 @@ import (
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
 	"shioji/internal/appupdate"
+	"shioji/internal/diagram"
 	"shioji/internal/permissionflow"
 	"shioji/internal/transport"
 	presentation "shioji/internal/ui"
@@ -24,6 +25,12 @@ func main() {
 	}
 }
 func run() error {
+	if diagram.IsHelper(os.Args[1:]) {
+		if len(os.Args) != 3 {
+			return fmt.Errorf("invalid diagram helper arguments")
+		}
+		return diagram.Serve(os.Stdin, os.Stdout, os.Args[2])
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err

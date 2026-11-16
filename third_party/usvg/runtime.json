@@ -1,0 +1,7 @@
+{
+  "version": "0.50.0",
+  "url": "https://github.com/linebender/resvg/releases/download/v0.50.0/usvg-macos-aarch64.zip",
+  "archive_sha256": "88b35b7d0ae41b8fd0581cd2d9cdab180a0742e311aa09ade45ef083fc5e2f2c",
+  "binary_sha256": "794577bbd5e317f2b126bbbc874b19404c4261f2abed95b9b4777dac9b4f41da",
+  "entry": "usvg"
+}

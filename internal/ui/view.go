@@ -171,6 +171,7 @@ type View struct {
 	nav                                                                                                             n.ListState
 	fileLink                                                                                                        *fileLinkState
 	md                                                                                                              markdown.Options
+	mermaid                                                                                                         *mermaidCache
 	permissionOpen                                                                                                  bool
 	runMenu                                                                                                         runMenuPhase
 	devices                                                                                                         bool

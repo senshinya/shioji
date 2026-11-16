@@ -182,11 +182,17 @@ func (v *View) assistantReply(c *n.Context, item domain.Item) {
 	// The existing tool-to-prose handoff establishes the first reply's final
 	// slot before fading in its footer; do not add another entrance clock.
 	baseline := !fresh || v.runningProgress != nil && v.runningProgress.handoff != nil
+	if v.mermaid != nil {
+		v.mermaid.heightDelta = 0
+	}
 	animatedContentHeightAtMount(c, root, true, baseline, duration, func() float32 {
 		if streaming {
 			markdown.Stream(c.Key("body"), item.Text, &v.md).FillWidth().FontSize(float32(v.Model.Preferences.ReplySize))
 		} else {
 			markdown.View(c.Key("body"), item.Text, &v.md).FillWidth().FontSize(float32(v.Model.Preferences.ReplySize))
+		}
+		if v.mermaid != nil {
+			return v.mermaid.heightDelta
 		}
 		return 0
 	})

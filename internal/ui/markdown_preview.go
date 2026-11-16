@@ -16,11 +16,12 @@ import (
 )
 
 type markdownPreview struct {
-	mode    string
-	options markdown.Options
-	scroll  n.ScrollState
-	error   string
-	cancel  context.CancelFunc
+	mode     string
+	options  markdown.Options
+	diagrams *mermaidCache
+	scroll   n.ScrollState
+	error    string
+	cancel   context.CancelFunc
 }
 
 func (p *attachmentPreview) isMarkdown() bool {
@@ -103,6 +104,9 @@ func (p *attachmentPreview) cancelMarkdown() {
 
 func (p *attachmentPreview) releaseMarkdown() {
 	p.cancelMarkdown()
+	if p.Markdown != nil && p.Markdown.diagrams != nil {
+		p.Markdown.diagrams.close()
+	}
 	p.Markdown = nil
 }
 
@@ -123,6 +127,7 @@ func (p *attachmentPreview) markdownPath(dest string) (string, error) {
 
 func (v *View) bindPreviewMarkdown(c *n.Context, p *attachmentPreview) {
 	m := p.Markdown
+	bindMermaid(c, &m.options, &m.diagrams, p.SourceSessionID+"|"+p.SourceEpoch, false)
 	services := c.Services()
 	session := v.Model.Details[p.SourceSessionID].Session
 	m.options.OnLink = func(dest string) {

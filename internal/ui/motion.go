@@ -196,7 +196,7 @@ func animatedContentHeight(c *n.Context, frame n.Element, visible bool, duration
 
 // Live replies enter from zero; history and virtual-row remounts establish
 // their measured baseline without replaying the content's entrance.
-func animatedContentHeightAtMount(c *n.Context, frame n.Element, visible, initiallyVisible bool, duration time.Duration, build func() float32) {
+func animatedContentHeightAtMount(c *n.Context, frame n.Element, visible, initiallyVisible bool, duration time.Duration, build func() float32) float32 {
 	natural := n.Local(frame, "natural-height", func() float32 { return 0 })
 	baseline := n.Local(frame, "initially-visible", func() bool { return initiallyVisible })
 	target := float32(0)
@@ -219,7 +219,7 @@ func animatedContentHeightAtMount(c *n.Context, frame n.Element, visible, initia
 	n.Inert(frame, !visible)
 	if !visible && shown == 0 {
 		frame.Height(0)
-		return
+		return 0
 	}
 	frame.Children(func() {
 		content := n.Column(c.Key("natural-content")).FillWidth().Shrink(0)
@@ -242,7 +242,8 @@ func animatedContentHeightAtMount(c *n.Context, frame n.Element, visible, initia
 		// Apply that frame's delta directly; easing it again would clip captions
 		// and make the following transcript lag behind the image.
 		if visible && *natural > 0 && delta != 0 {
-			frame.Height(frame.Jump("height", max(0, shown+delta)))
+			shown = frame.Jump("height", max(0, shown+delta))
+			frame.Height(shown)
 		}
 		// A zero-height closed clip does not paint its children, but layout still
 		// measures them. Use that measurement on the next frame to start opening.
@@ -253,4 +254,13 @@ func animatedContentHeightAtMount(c *n.Context, frame n.Element, visible, initia
 			c.AnimationFrame()
 		}
 	})
+	previous := n.Local(frame, "reported-height", func() float32 { return -1 })
+	delta := float32(0)
+	if *natural > 0 {
+		if *previous >= 0 {
+			delta = shown - *previous
+		}
+		*previous = shown
+	}
+	return delta
 }
