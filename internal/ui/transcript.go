@@ -18,6 +18,7 @@ type transcriptRow struct {
 	toolParent string
 	toolTitle  bool
 	toolEnded  bool
+	toolGap    bool
 	opacity    float32
 	footer     string
 	preparing  string
@@ -70,6 +71,37 @@ func withTurnFooters(rows []transcriptRow, turns map[string]domain.Turn) []trans
 		}
 		rows[to] = row
 		to--
+	}
+	return rows
+}
+
+// Keep the extra turn-to-user clearance outside the tool body's reveal and
+// outside the message's own bounds, which history navigation uses as anchors.
+func withToolUserGaps(rows []transcriptRow) []transcriptRow {
+	count := 0
+	for i := 1; i < len(rows); i++ {
+		if rows[i-1].item.Kind == "tool" && rows[i].item.Kind == "user" {
+			count++
+		}
+	}
+	if count == 0 {
+		return rows
+	}
+	length := len(rows)
+	rows = append(rows, make([]transcriptRow, count)...)
+	to, nextUser := len(rows)-1, ""
+	for i := length - 1; i >= 0; i-- {
+		row := rows[i]
+		if row.item.Kind == "tool" && nextUser != "" {
+			rows[to] = transcriptRow{key: "tool-user-gap:" + nextUser, toolGap: true, end: -1, opacity: 1}
+			to--
+		}
+		rows[to] = row
+		to--
+		nextUser = ""
+		if row.item.Kind == "user" {
+			nextUser = row.key
+		}
 	}
 	return rows
 }
@@ -173,9 +205,9 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			endedTurns[turn.ID] = true
 		}
 	}
-	// Each tool run adds a title, trailing summary and optional result.
+	// Each tool run adds a title, trailing summary, optional result and gap.
 	// Without these slots a large run reallocates as its last row is appended.
-	rows := make([]transcriptRow, 0, len(items)+3*groups+len(v.Model.Details[v.Model.SessionID].Turns))
+	rows := make([]transcriptRow, 0, len(items)+4*groups+len(v.Model.Details[v.Model.SessionID].Turns))
 	for i := 0; i < len(items); {
 		item := items[i]
 		if emptyTranscriptItem(item) {

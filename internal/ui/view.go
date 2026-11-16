@@ -1186,6 +1186,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	rows = v.historyBridgeRows(rows)
 	rows = v.historyRunningRows(rows)
 	rows = v.homeSendRows(rows)
+	rows = withToolUserGaps(rows)
 	v.positionHistoryTarget(state, rows)
 	if v.toolsAnimating {
 		c.AnimationFrame()
@@ -1245,7 +1246,9 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		}
 		return row.key
 	}
-	state.SkipAnchor = func(i int) bool { return i == 0 || i == historyEndRow || hasNewer && i == len(rows)+1 }
+	state.SkipAnchor = func(i int) bool {
+		return i == 0 || i == historyEndRow || hasNewer && i == len(rows)+1 || i > 0 && i <= len(rows) && rows[i-1].toolGap
+	}
 	state.FollowEnd = !hasNewer
 	v.positionWorkSource(c, state, rows)
 	v.anchorHistoryRows(state, rows)
@@ -1276,6 +1279,10 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			return
 		}
 		entry := rows[row-1]
+		if entry.toolGap {
+			n.Column(c).Height(32 - 8)
+			return
+		}
 		if entry.toolTitle && entry.opacity == 0 {
 			n.Column(c).Height(0)
 			return
@@ -1332,6 +1339,9 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		// the protocol turn identity. Match ordinary turn-to-user spacing.
 		if row < len(rows) && rows[row].item.Kind == "user" {
 			bottom = 32
+		}
+		if row < len(rows) && rows[row].toolGap {
+			bottom = 8
 		}
 		if hasNewer && row == len(rows) && v.historyPage != nil && v.historyPage.error != "" && v.historyPage.readNewer {
 			bottom = 8
