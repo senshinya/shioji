@@ -69,7 +69,9 @@ func TestWorkspaceHeadingInsetsAndNoPerWorkspacePlus(t *testing.T) {
 	left := label.X + ink.X - 8
 	// The 16-DIP slot is centered in the 28-DIP hit target. Find reports
 	// its clipped accessible bounds, so its width is not the slot's width.
-	right := float32(256) - (button.X + 6 + 16*16.75/20)
+	// Exclude the sidebar's extra 8-DIP scrollbar capture gutter from the
+	// content edge; the viewport itself extends to the panel border.
+	right := float32(256-8) - (button.X + 6 + 16*16.75/20)
 	if math.Abs(float64(left-right)) > 1 {
 		t.Fatalf("workspace heading has unequal visible insets: left=%v right=%v", left, right)
 	}

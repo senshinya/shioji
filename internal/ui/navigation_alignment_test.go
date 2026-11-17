@@ -58,9 +58,12 @@ func TestWorkspaceHeadingSharesTheWorkspaceRowVisibleEdges(t *testing.T) {
 						if delta := float64(plusInk.Max.X-deviceInk.Max.X) / float64(scale); math.Abs(delta) > 1 {
 							t.Errorf("plus and device have different visible right edges: %g DIP", delta)
 						}
-						// The list is inset by the panel's 8 DIP padding and 1 DIP border.
+						// The list starts after the panel's 8 DIP inset and 1 DIP
+						// border, but its viewport now reaches the panel's right border.
+						// Compare within the content area, excluding the extra 8 DIP
+						// reserved for scrollbar capture outside navigation row targets.
 						left := float64(labelInk.Min.X)/float64(scale) - float64(list.X-9)
-						right := float64(list.X+list.W+9) - float64(plusInk.Max.X)/float64(scale)
+						right := float64(list.X+list.W+1-8) - float64(plusInk.Max.X)/float64(scale)
 						if math.Abs(left-right) > 1 {
 							t.Errorf("heading has unequal visible sidebar margins: left=%g right=%g", left, right)
 						}
