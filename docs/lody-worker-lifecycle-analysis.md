@@ -2,7 +2,64 @@
 
 核查日期：2026-11-17。结论用于 Shioji 本轮升级改造。用户已决定直接采用 Lody 的机制，接受其未登记进程覆盖范围，不再增加独立会话宿主或完整后代追踪架构。以下参考源码分析在实施前完成；实施现状见下段，三台正式设备没有停止或更新。
 
-> **本轮补齐（2026-11-17）**：修复前复核的四处缺口已实施对齐，并补上最新 Lody 的原生后台工作延期完成机制。最终边界检查另复现并修复了“关闭尝试超时后迟到接纳”和“GC 中断被报成功”两条竞态。实现与定向证据见下节；文末仍保留旧缺口的原始复现，不能将其当作当前未修复状态。三台正式设备没有停止或部署。
+> **补齐后再次核对（2026-11-17）**：当前 Shioji `1687e46` 对照最新 Lody `4f25bd5`，又确认五处尚未对齐的生命周期边界，每处重复复现三次。主要涉及永久删除后的实例收尾、后继 GC、私有控制通道的再次使用，以及关闭后台服务仍残留进程存活门槛。本轮只核对和隔离复现，尚未修复这些新发现；正式设备未变更。
+
+## 2026-11-17 补齐后再核对：五项遗漏
+
+源码基线为 `1687e46`（完整提交见原始 provenance）；Lody 网络 fetch 后为 `4f25bd5`，此前为 `eff59dc`。两者之间新增的七项提交没有改动本次检查的 CLI 升级、停止、GC 与释放实现，不能将以下差异归因于本轮刚新增的上游机制。
+
+本轮使用 Go overlay 增加隔离探针，没有修改 `cmd/`、`internal/`、`go.mod` 或 `go.sum`。Worker 探针使用真实 Server、SQLite、托管组与中立 harness；关闭后台服务的案例还运行真实 Node 父子登记组。控制通道探针使用实际 Unix socketpair 与同一 lifecycleClient/ServeLifecycle。这里不是三台正式设备现场重现，也不是新版部署验收。
+
+### 1. 高：删除会话的旧实例退出可能取消整台设备的 worker
+
+位置：[auto_recovery.go](../internal/worker/auto_recovery.go#L24) 的 `watchRuntime`。永久删除先移除 Session，但旧 runtime 在物理 Close 完成前仍留在 map。其 Done watcher 抢先执行时，当前实例核验仍能通过，`InterruptCompletion` 却因会话已经删除返回 `sql.ErrNoRows`，随后触发全局 `s.cancel()`。
+
+这会停止整个 worker 的后台循环并拒绝后续连接，不只是释放已删会话。CLI 的 Serve 返回后还会进入整个服务的 Close。Lody 的永久删除／归档会先撤销该会话的完成等待、释放该实例，不把已经删除的对象当作设备级持久化故障。
+
+探针让准确旧实例先关闭 Done、稍后才完成 Close，三轮都得到 `exit of deleted runtime canceled the entire owning worker context canceled`。修正应使已提交删除后的准确旧实例退出成为幂等收尾，同时保留真正数据库错误的故障处理。
+
+### 2. 高：永久删除没有释放等待原生调用的 gate，仍可阻塞升级
+
+位置：[archive.go](../internal/worker/archive.go#L172)、[detached_runtime.go](../internal/worker/detached_runtime.go#L21) 与 [server.go](../internal/worker/server.go#L1311)。删除只执行 `gate.Store(false)`，没有关闭 `gate.done`。之后即使调用 deactivate，Swap 已经是 false，也不会再关闭该 channel。
+
+dispatch 正在等不可及时返回的 Create／Submit 时，只监听调用结果和 gate.done；它仍持有 dispatch reservation 和 toolConfig 的读锁。永久删除已经成功，也不能让这段等待退出，when-idle 升级仍会认为存在已接纳执行。Lody 的逻辑释放要求旧实例不再占用轮次／执行所有权，物理失败另行保留重试。
+
+隔离的未及时返回 Create 三轮均为 `eventGate=false dispatchReservations=1`，随后 gate.done 等待未释放。修正要统一完整的 gate 退休语义，不能只禁用后续事件；这不等于伪造原生调用已经物理结束。
+
+### 3. 中：GC 成功后残留 unknown work，会永久否决后继实例的 GC
+
+位置：[idle_runtime.go](../internal/worker/idle_runtime.go#L150)、[runtime_idle.go](../internal/store/runtime_idle.go#L22)。Codex 的 Invalidate 将 waiting 后台工作改成 unknown；`settleReclaimedBackground` 只处理仍为 waiting 的条目，漏掉已被失效事件改写的旧 work。
+
+探针先核对旧登记代次 `VerifyStopped` 成功，再在原会话／原历史创建新 runtime 并完成新轮；此时旧 work 仍为 unknown，`RuntimeGCIdle` 返回 `Idle:false Background:false`。只将已证实停止的旧 work 改为 stopped，资格立即变为 Idle=true。三轮结果相同。Lody 的 GC 读取当前仍存活实例的 native work，移除旧实例／活动跟踪后，旧报告不会永久否决后继实例。
+
+修正应在准确代次物理回收确认后，终结该代次的活动投影，保留历史结果不确定性，不能把它作为新实例一直忙碌的依据。
+
+### 4. 高：私有生命周期通道一次超时后不可再次使用
+
+位置：[lifecycle_darwin.go](../internal/supervisor/lifecycle_darwin.go#L48)。单次 request 的超时回调和读取错误都会 Close 整条继承连接，worker 的 ServeLifecycle 也随之结束。上一轮新增 admitBefore 避免了迟到接纳，却没有恢复此后独立控制的可用性。
+
+三轮中，正常拒绝后第二个请求均成功；只将首次 handler 延迟到超过请求期限，第二次就固定失败为 `use of closed network connection`，handler 只收到一次调用。旧 worker 的生命周期没有结束，但专用通道已失效，只能回退业务 RPC。**若业务 RPC 同时不可用，后续重试无法借这条通道恢复**，这是结合 shutdown 调用链得出的后果；本轮没有把它冒充正式设备升级现场。
+
+Lody 的 shutdown 请求通过进程级 child IPC 发送，单次尝试不以普通应答等待的超时销毁整个 IPC。修正需要分开单次接纳尝试与通道寿命，并保留消息／操作关联、绝对期限及已接纳 intent 的核对。
+
+### 5. 中：关闭后台服务仍要求常驻 Node 先自行退出
+
+位置：[background_stop.go](../internal/worker/background_stop.go#L53)。设备“登录后启动服务”关闭流程仍逐个调用旧 `Scope.FenceIfIdle`；其原进程存活判据尚未移除。当前 managed worker 的正常更新已经通过 RequestUpdate 走新 supervisor；`update.go` 的旧入口属于既定首次迁移边界，本轮不将它重复计为缺口。
+
+真实登记 Node 父子组下，会话 completed、HasActiveWork=false，三轮均返回 `仍有后台进程，结束后更新`，反注册 callback 尚未调用；只先结束这组已知测试进程，对照就能进入 callback。没有执行本机真实系统服务反注册。Lody 的 daemon stop 由准确 Host 请求排空并终止受管范围，不要求 resident Node 自行消失。
+
+修正应保留真实活动轮、登录和准入核验，将无业务活动的健康常驻进程交给 owning worker 的统一退休流程，不额外恢复强制关闭页面。
+
+### 本轮证据与已核对部分
+
+- [Worker 四项探针与三轮原始输出](../.ryugi/audits/lody-mechanism-followup-20261117/worker-probes.txt)：12 次预期失败；源文件与 overlay 在同一目录。
+- [私有通道三轮原始输出](../.ryugi/audits/lody-mechanism-followup-20261117/supervisor-probes.txt)：3 次预期失败，响应及时的对照三轮通过。
+- [86 项相邻检查](../.ryugi/audits/lody-mechanism-followup-20261117/aligned-neighbours.txt)：worker、supervisor、store、app 四包均通过，包含归档、自建 worktree、20 分钟 GC、原私有关闭保护、绝对到期及完成投影。它们没有覆盖上述五个新增断点。
+- [源码与上游版本证据](../.ryugi/audits/lody-mechanism-followup-20261117/source-provenance.txt)：包括各相关文件 SHA 与上游核心链路 diff 为空的输出。
+
+另外核对了父进程消失后 child 自行关闭、切换中断的 blocked 恢复、force 物理回收并行、旧失败代次分离与后台重试、自建 worktree 的备份／共享保护／延迟恢复。此次未发现这些分支新的确定性差异。`docs/runtime-idle-reclamation.md` 仍写旧的 10 分钟／5 秒及 FenceIfIdle，是过时文档，当前代码实际为 20 分钟／30 秒；不将该文档错误冒充运行参数错误。
+
+未登记后代和旧存量迁移手动处理继续按用户决定，不作为新问题；也没有以安全或归属检查为由新增确认页。
 
 ## 2026-11-17 本轮机制补齐
 
