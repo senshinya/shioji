@@ -52,9 +52,9 @@ func (s *Scope) Terminate(ctx context.Context, force bool) error {
 			}
 		}
 	}
-	if result != nil {
-		return result
-	}
+	// Cancellation can race our observations and signals. Keep any earlier
+	// errors until the common deadline, but let a fresh proof that this exact
+	// fenced generation is gone decide success. No unverified group is signalled.
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -70,7 +70,7 @@ func (s *Scope) Terminate(ctx context.Context, force bool) error {
 		}
 		select {
 		case <-ctx.Done():
-			return errors.Join(ctx.Err(), err)
+			return errors.Join(ctx.Err(), result, err)
 		case <-ticker.C:
 		}
 	}
