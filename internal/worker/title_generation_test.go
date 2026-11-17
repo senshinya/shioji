@@ -133,17 +133,24 @@ func TestDeletedTitleJobDoesNotStopNamingConsumer(t *testing.T) {
 		t.Fatal("title never started")
 	}
 	awaitReceipt(t, s, op.ID)
-	d, err := s.store.Session(op.SessionID, 0, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, err := s.store.SetSessionArchived(d.Session.ID, d.Session.Revision, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.store.DeleteArchivedSession(a.ID, a.Revision); err != nil {
-		t.Fatal(err)
-	}
+	// Keep the store-only fixture mutation in the same dispatch boundary as
+	// production archive/delete; otherwise archiveLoop may retire the runtime
+	// and advance the session revision between these two direct store calls.
+	func() {
+		s.dispatchMu.Lock()
+		defer s.dispatchMu.Unlock()
+		d, err := s.store.Session(op.SessionID, 0, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, err := s.store.SetSessionArchived(d.Session.ID, d.Session.Revision, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = s.store.DeleteArchivedSession(a.ID, a.Revision); err != nil {
+			t.Fatal(err)
+		}
+	}()
 	release <- "deleted title"
 	_, err = s.submit(domain.Submission{OperationID: "next-title", WorkspaceID: w.ID, Text: "second", Config: domain.RunConfig{Model: "other-model", Permission: "limited"}})
 	if err != nil {
