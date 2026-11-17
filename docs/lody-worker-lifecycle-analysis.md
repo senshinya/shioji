@@ -1,5 +1,131 @@
 # Lody 执行服务升级、停止与回收源码分析
 
+## 2026-11-17 L／M／N／O 对齐实施与验证
+
+**四类差异已按 Lody 的职责和时序修复，本机隔离验证完成，正式设备未部署。** 产品提交 `8427145`、`4aeda7a`、`a8169dc`、`b6ae113`、`1b4e56e`；`4ba464a` 只改测试夹具的锁与关闭顺序。Lody 依据保持固定 `d6df2f2`，不复制其运行时，也未增加强制处理页或首次旧存量兼容。
+
+| 对齐项 | 最终行为 | 对应证明 |
+| --- | --- | --- |
+| L：外部等待与设备准入分开 | Git 状态、diff、监测、已有／已回收 worktree 状态均释放 dispatch 等待；本 checkout 准备仍串行，跨 checkout 的同分支读取不被其他备份串行化，共享仓库变更串行。子 Agent 发送、回执及审批回复由捕获 runtime/gate 持有原生等待。 | 实际私有 prepare-drain 在等待期间可响应；同目录切分支仍阻止输入越过；迟到 Git 读取不修改继任会话。已回收目录读取不重建目录。 |
+| M：首次准备 await 前预留 | 输入、reload／history／compact 与子输入准备持有私有 reservation；更新／后台停止看得到它。返回后重新核对接纳、source、会话／工作区及旧 owner。 | 默认 drain／后台停止不能越过恢复中的输入；immediate 已封闭后，原提交及附件准备中的 Steer 不再被接纳。 |
+| N：翻译原生后台活动 | 以准确 native thread＋turn 的结构化终态决定 background waiting。父结束不降低仍活跃子 Agent 的 running；迟到输出保留 waiting，未知状态继续保护。 | 实际 Codex Normalizer → Worker／Store → GC 链路，虚拟 23h 保留／24h 回收原环境，原 ThreadID／历史保留；不是现场等待 24h 或真实模型 dev server 验收。 |
+| O：worktree GC 独立调度 | 一个独立消费者、一个合并唤醒、原有按 checkout 退避；加入 worker shutdown 的生产者等待。归档／删除退休不用等待整个 Git sweep，备份／共享引用保护保持。 | 真实 archiveLoop 在另一个目录备份仍等待时完成新归档环境退休；共享目录、脏内容备份、detached ref、失败重试与懒恢复原有回归保持。 |
+
+### 一次整体审阅的四处收尾
+
+独立审阅原件的裁定为 **With fixes**，没有二次派审或将其改写成无问题结论。四项均经 RED→GREEN：
+
+1. native 进程退出后，子输入未结回执改为 indeterminate；已 abandoned 的原回执不被覆盖，查询不重发。
+2. Steer 两次附件等待后分别复核准入与准确 runtime／source／operation；退休后不会调用旧实例或继任实例。
+3. checkoutGuard 的解锁等待后，在实际变更前重验更新准入、原会话、工作区及待处理工作；新建 worktree 同样有最终准入检查。
+4. 已回收 worktree 的原生 ref 查询也释放全局锁，返回后检查源会话、目录存在性和所有权记录。
+
+两个旧直接 guard 夹具按真实生产调用边界取得 dispatch 锁，完整根命令触发的原 fatal 输出保留。竞态模式另发现目录清理早于后台 GC 退出；调整测试资源注册顺序后，相关案例连续 10 次通过。三只属于本轮失败夹具的 anchor 按保存的 PID＋启动时间＋进程组准确回收，确认剩余为零并移除其临时状态；没有按名字清理其他进程。
+
+### 最终验证与来源
+
+- 六个相关包完整 **659 项父测试通过**，其中整个 Worker **357 项**；竞态运行 **63 次父测试调用**通过（count=3，非 63 个独立测试）。vet 与六份冻结设计检查通过。
+- 最终两只严格 ad-hoc 验签 Worker 的历史回放 **12 APPLIED、2 既定 H07 BLOCKED**。成功场景保留原设备／会话／线程／历史与暂停队列，未知输入不重发，显式原线程接续成功。H05 未登记后代仍在接受的覆盖范围之外，H07 不算升级成功。
+- 签名实际嵌入 `1b4e56e+modified`，BuiltAt 5101／5102，协议 2.48、PrivateControl 2、schema 15。构建后的 1006 个源码指纹仅两份测试夹具变化，非测试产品源码零变化；没有用后续测试／文档提交给旧二进制改标。
+- 完整未过滤根命令确实执行：原始 27 个正式包中 25 个通过／编译，Worker 的旧 guard 夹具 fatal 与 UI 两项既有间距断言失败，另有三个本地研究快照编译失败。**两处 guard 夹具修正后，整个 Worker 已在最终测试源码重跑通过**；原根输出不改成全绿。356 个 UI 文件与审计基线一致，UI 两项与研究失败没有作为本轮修复成果。
+- 20 分钟／30 秒、24h 后台保护、未登记后代与首次旧存量手动处理保持；Tailnet、正式设备服务、SMAppService、SSH 凭据与权限均未操作。前轮通用 revision 的已读／改名续期附记仍未修，单列为本项目约定问题。
+
+完整 15 项工程裁定与成本、无 Minor 延期的清单、原始日志和执行 ledger 在 `.ryugi/audits/lody-lmno-repairs-20261117/`；同主题验证报告保留旧 ID。下方“四类尚未修复”是修复前审计原件，当前以本节为准。
+
+证据：[整包](../.ryugi/audits/lody-lmno-repairs-20261117/lifecycle-final-summary.txt)、[竞态](../.ryugi/audits/lody-lmno-repairs-20261117/race-final-summary.txt)、[签名历史回放](../.ryugi/audits/lody-lmno-repairs-20261117/historical-summary.txt)、[构建来源](../.ryugi/audits/lody-lmno-repairs-20261117/source-provenance.txt)、[原根失败范围](../.ryugi/audits/lody-lmno-repairs-20261117/root-summary.txt)、[完整裁定](../.ryugi/audits/lody-lmno-repairs-20261117/rulings.txt)。
+
+## 2026-11-17 修复后的完整复核：四类差异，七个条件已复现（本轮未修）
+
+**整轮对照已完成，仍有四类未对齐机制 L／M／N／O。** 本轮是审计，不是新一轮修复。Shioji `8bc2b19`；重新 fetch 的 Lody 为 `d6df2f2447cf6903d71e864f12cc1519de0c1b2c`。20 份保存的原始源码重新与固定提交逐字节比对，997 个本项目源码／测试指纹均未改变。以前的 H／I／J／K 修复仍成立，以下是不同调用路径上的遗漏。
+
+### L．高：设备全局调度锁仍跨外部 I/O
+
+- [worktree_lifecycle.go:94](../internal/worker/worktree_lifecycle.go#L94)：恢复仍存在的自建目录时，持有 dispatchMu 调用完整 queryGit。普通 `git.status`、`git.changes`、`git.file`、checkout 与提交的 prepareGit 也在同一全局边界调用 Git，并非只有自建目录这个分支。
+- [work_input.go:102](../internal/worker/work_input.go#L102)、[work_input.go:147](../internal/worker/work_input.go#L147)：子 Agent SendWork 与 WorkInputReceived 分别以 30 秒／10 秒预算等待原生 RPC，但不释放全局锁。与已修的普通 Submit／Steer、catalog refresh 做法不同。
+- 审批／问题回复在 [server.go:973](../internal/worker/server.go#L973) 也持锁调用 Respond；Codex 的 [runtime.go:281](../internal/harness/codex/runtime.go#L281) 同步 pipe 写入不接收 context。此条是同类静态调用链，**未做真实 Codex pipe 堵塞现场复现**，不单独计为第八个条件。
+
+Lody 在 [machine-turn-admission.ts:1](https://github.com/LodyAI/Lody/blob/d6df2f2447cf6903d71e864f12cc1519de0c1b2c/apps/cli/src/session/machine-turn-admission.ts#L1) 用短同步 gate 管理全机准入；Git 使用 [worktree-manager.ts:195](https://github.com/LodyAI/Lody/blob/d6df2f2447cf6903d71e864f12cc1519de0c1b2c/apps/cli/src/session/worktree/worktree-manager.ts#L195) 的 per-repo lock。原生等待的所有权与全机准入检查分开。不能只因私有控制传输独立即认定内部不再阻塞。
+
+隔离 Git 包装器仅延迟回复、随后执行真实系统 Git；两个 Git 路径各三次让实际 `worker.prepare-drain` handler 在 200ms 观察窗内等待锁。中立 harness 的两个子 Agent 原生等待各三次得到相同结果，释放回复后控制均恢复。**证明额外等待与全局耦合，不把 200ms 观察窗写成永久死锁。** 单条 Git 子命令现有 10 秒预算；原生 pipe 卡住的后果不能用该预算兜底。
+
+对齐方向：短临界区只捕获／持久准入；外部等待使用原 session／checkout 的 owner 并释放设备锁，返回后复核准确实例及接纳条件。不可仅删锁后保留共享 checkout 的竞态。
+
+### M．高：worktree 恢复之后仍可能接纳已经排空的新输入
+
+[server.go:1155](../internal/worker/server.go#L1155) 在接纳前调用 restoreOwnedWorktrees；缺失目录的 [worktree_lifecycle.go:103](../internal/worker/worktree_lifecycle.go#L103) 会释放锁等待 Git。这时没有 dispatch reservation；真正 reservation 在 [server.go:1199](../internal/worker/server.go#L1199) 的数据库接纳后才创建。恢复返回后没有统一重验 updateAdmission；无内存压力时 admitMemoryPressure 直接成功。
+
+三次真实 owning-worktree 恢复流程中，在 Git add 等待时正常调用 DrainService，得到 `Ready=true`、`updating=true`；释放 Git 后原提交仍返回 accepted，并保存新操作。Lody 的 [session-execution-service.ts:4859](https://github.com/LodyAI/Lody/blob/d6df2f2447cf6903d71e864f12cc1519de0c1b2c/apps/cli/src/session/session-execution-service.ts#L4859) 在 runVisibleSessionTurn 的第一次初始化 await 前同步 reserveMachineTurn，idle drain 无法越过该 reservation。
+
+本轮证明“封闭后仍接纳”，**没有证明历史内容已丢失**；后续可能被初始化拒绝、留作未确认或在退出中被中断，均破坏预期的准入边界。同一恢复 helper 还用于 reload、history、compact、子 Agent continue；这些入口需统一检查，不把此次普通 submit 的复现冒充其他入口均已复现。
+
+对齐方向：第一次执行准备 await 前取得可撤销 reservation，解锁返回后再核对升级／后台停止、session／workspace 与原 owner；过期准备只清理自身，不能提交新输入。
+
+### N．中：真实 Codex 后台命令无法进入已实现的 24 小时回收分支
+
+[codex/work.go:246](../internal/harness/codex/work.go#L246) 在根轮结束／另一个 item 开始后，把仍存活命令提升为 background，但 [work.go:291](../internal/harness/codex/work.go#L291) 仍沿用命令的 running 状态；不会产生 idle GC 例外要求的 `background + waiting`。[store/runtime_idle.go:27](../internal/store/runtime_idle.go#L27) 因此始终判忙，[idle_runtime.go:106](../internal/worker/idle_runtime.go#L106) 的 24 小时分支到不了。现有 waiting 测试是手工写入状态，未覆盖 adapter 到 store 这条链。
+
+Lody 的 [agent-client.ts:2717](https://github.com/LodyAI/Lody/blob/d6df2f2447cf6903d71e864f12cc1519de0c1b2c/apps/cli/src/agent/agent-client.ts#L2717) 区分 native running 与 idle 下的 backgroundTaskCount；[session-gc-manager.ts:839](https://github.com/LodyAI/Lody/blob/d6df2f2447cf6903d71e864f12cc1519de0c1b2c/apps/cli/src/lib/session-gc-manager.ts#L839) 只长期保护真正 running，background 超过上限可回收。能力不支持时 Lody 返回 null，不能声称所有 provider 都必然上报。
+
+三次把实际 Codex Normalizer 的结构化命令／轮次事件送入真实 Worker／Store，虚拟推进 25 小时：`state=running, gcIdle=false, gcBackground=false`，环境仍保留。仅把同一记录改成 waiting 的三个阳性对照在上限后回收。**这是确定性时间推进与协议夹具，不是现场等待了 25 小时，也没有启动真实 Codex dev server。**
+
+对齐方向：在 adapter 明确翻译“前台执行”与“轮次已结束、只等后台任务”的中立状态，保留实际活动子 Agent、未决请求与投递保护；不能把所有 running 工具无条件改成 waiting。
+
+### O．中：worktree 清理与新归档环境退休共用串行消费者
+
+[archive.go:21](../internal/worker/archive.go#L21) 的单个 archiveLoop 先 cleanRuntimeRetirements，再在 [archive.go:56](../internal/worker/archive.go#L56) 同步等待 cleanOwnedWorktrees 完整 sweep。Git I/O 虽释放 dispatchMu，archiveWake 却只能积压到这个 sweep 返回；另一个会话可接纳归档，但不能及时开始退休。这与 K 的“等待维护 gate”是不同根因。
+
+Lody 的 [message-handler.ts:4824](https://github.com/LodyAI/Lody/blob/d6df2f2447cf6903d71e864f12cc1519de0c1b2c/apps/cli/src/lib/message-handler.ts#L4824) 按 session 处理归档释放，完成后 `void worktreeGc.schedule()`；[worktree-gc.ts:118](https://github.com/LodyAI/Lody/blob/d6df2f2447cf6903d71e864f12cc1519de0c1b2c/apps/cli/src/session/worktree/worktree-gc.ts#L118) 独立合并扫描，不占用会话归档消费者。
+
+三次使用真实 archiveLoop：自建目录备份进入延迟的 Git add 后，归档另一 checkout 的会话；归档接纳成功，200ms 内其原 runtime 仍存活。释放 Git 后它才退出。**证明跨会话退休延迟，不是永久死锁，数据备份及共享保护没有失效。**
+
+对齐方向：worktree GC 用独立、可合并且有界重试的现有后台 owner 调度；session 退休不等待整个目录扫描。仍须等准确生产者停止、分支及脏文件备份成功才能移除目录。
+
+### 整轮覆盖与排除项
+
+以下 32 项为实际入口／交接检查；“未发现新增差异”仅表示本轮源码对照与相邻检查未产生新证据，不是未来故障的穷尽证明。
+
+| # | 入口／责任 | 对照重点 | 当前落点 | 结论 |
+| --- | --- | --- | --- | --- |
+| 01 | 独立 Host 与执行 Worker | 停止系统服务由独立 owner 接纳；Worker 不等待自己的注销 | background_darwin.go / background_stop.go | 未发现新增差异 |
+| 02 | 停止意图与崩溃重启 | desiredState／停止标志先于 await；停止中不创建替代实例 | host_darwin.go / background_darwin.go | H 已修，保持 |
+| 03 | 已知未执行的撤销 | 独立预算、准确实例、重试；不重发 native 动作 | background_darwin.go / background_stop.go | I 已修，保持 |
+| 04 | 撤销回复丢失／迟到 | 准确完成 ID 可确认；其他 ID、drain 后拒绝重开 | background_stop.go | 已修，保持 |
+| 05 | 普通崩溃策略 | 5 分钟 10 次、健康重置、指数退避；实际默认 jitter=0 | supervisor/retry.go | 未发现新增差异 |
+| 06 | Host 退出／父丢失 | 生命周期通道与父身份监测，不因 GUI／SSH 生命周期退休会话 | supervisor/host_darwin.go / cmd/shioji-worker | 未发现新增差异 |
+| 07 | 在线准备与候选检查 | 先准备与签名／平台／协议／数据检查，旧服务继续运行 | supervisor/host_darwin.go / probe / stage | 未发现新增差异 |
+| 08 | 切换前输入初始化 | 初始化 await 前同步预留；排空后不得再接纳 | worker/server.go:1155–1199 | M：未对齐 |
+| 09 | 私有排空控制 | 控制传输独立；内部不能被业务外部 I/O 锁挡住 | service_control.go / server.go / work_input.go | L：内部等待残留 |
+| 10 | drained 与 writer | 登记生产者及最后写入结清后才确认，PID 退出不等于排空 | shutdown.go / private_control.go | 未发现新增差异 |
+| 11 | 已提交 resume／状态核对 | 保持 applied，准确候选私有 resume；短暂 ACK 丢失持续核对 | supervisor/host_darwin.go / service_control.go | 已修，保持 |
+| 12 | 候选失败与回滚 | 先退出已捕获候选再恢复兼容旧版；未知交接不盲启第二个 writer | supervisor/host_darwin.go | 未发现新增差异 |
+| 13 | 停止 ACK 与真实完成 | 5 秒核对轮次、原生请求及工作；超时自动退休 | stop.go | 未发现新增差异 |
+| 14 | 初始化停止／迟到 Start | 释放原 reservation、事件 gate、启动槽；晚结果不复用 | runtime_start.go / session_runtime.go | 已修，保持 |
+| 15 | 强制退休与 native close | 登记 scope 与 adapter Close 并行；不先等待原生 close RPC 才发信号 | retirement.go / codex adapter | 未发现新增差异 |
+| 16 | 登记进程／根已退出 | 按捕获身份与进程组；根退出仍观察登记组；失败保留票据 | managedexec/retirement_darwin.go | 接受范围内相符 |
+| 17 | MCP／Node 服务准入 | 服务存活与实际 pending 分开；fence 后禁止新工具启动 | codex/executor.go / managedexec | 未发现新增差异 |
+| 18 | 闲置 GC 资格 | 活动轮、操作、请求、队列、历史、原生工作保护；封闭前复查 | idle_runtime.go / store/runtime_idle.go | 主体相符；N 见后台分类 |
+| 19 | 后台等待与 24h 上限 | Lody 区分 running 与 background；Shioji 真命令一直 running | codex/work.go:246–299 / runtime_idle.go | N：未对齐 |
+| 20 | 内存压力 | WARNING 回收、CRITICAL 拒绝，最多 3 个、共享有界预算 | memory_pressure_darwin.go | 未发现新增差异 |
+| 21 | reload 维护与强制退休 | 维护可撤销；旧 Unload／Resume 不修改继任者 | session_reload.go / session_transition.go | K 已修，保持 |
+| 22 | 嵌套 setup／recovery | 解锁等待后、detach／Begin／发布前核对 owner、runtime、scope | session_runtime.go / recovery.go | J 及审阅收尾已修 |
+| 23 | 历史重开／分叉／压缩 | 准确 revision／opaque 引用；提交前再验证；迟到结果受 owner 约束 | history.go / context_action.go | 未发现新增差异 |
+| 24 | 子 Agent 发送与回执查询 | 原生 I/O 不应占设备全局调度边界；只查询不重放 | work_input.go:102,147 | L：两条原生等待持锁 |
+| 25 | 审批／问题回复 | 准确来源与请求状态；pipe 写入仍在全局锁内 | server.go:973 / codex/runtime.go:648 | L：静态同类路径，未做 pipe 堵塞现场复现 |
+| 26 | 会话／工作区归档接纳 | 先持久归档再异步释放；原生维护不挡强制退休 | archive_retirement.go / session_transition.go | K 已修；O 为调度层差异 |
+| 27 | 永久删除与墓碑 | 接纳后立即移除可见记录、撤销 Start；outbox 持有物理清理 | archive.go / store archive | 未发现新增差异 |
+| 28 | 失败代次后台重试 | 逻辑槽与物理回收分开；准确旧代次不能触碰新代次 | detached_runtime.go | 未发现新增差异 |
+| 29 | worktree 备份与共享保护 | 真实分支、脏内容备份、detached ref；所有使用者退出后清理 | worktree_lifecycle.go | 数据保护相符 |
+| 30 | worktree 懒恢复与本路径互斥 | 已有目录检查仍跨全局锁；缺失目录恢复会解锁但提交未重验准入 | worktree_lifecycle.go:93,103 / server.go | L／M：未对齐 |
+| 31 | worktree GC 与会话退休调度 | Lody 独立 schedule；Shioji 同一 archiveLoop 末尾等待整个 Git sweep | archive.go:21,56 / worktree_lifecycle.go:250 | O：未对齐 |
+| 32 | 旧强制 UI／网络服务边界 | 原生 UI 无旧强制页／按钮接线；旧后端模型／协议仍在；Tailnet 独立 | internal/ui / internal/app / service lifecycle | 未恢复入口；保留代码与已接受存量范围单列 |
+
+- **旧强制页与入口**：internal/ui 没有 CloseWorkerEnvironments／WorkerRecoveryJob／WorkerMaintenance 的生产接线；底层 app model、worker 旧协议及保存的回执代码仍存在。没有把“UI 已删除”扩大为“所有后端代码已删”。本轮不重开已接受的首次旧存量手动处理范围。
+- **空闲时钟附记保留**：通用 Session.Revision 会因改名／已读变化而续期，与本项目“不因查看续期”的约定仍有距离；Lody 的部分历史读取也会 touchSession，不能把它说成新发现的 Lody 升级阻塞差异。本轮没有修这项。
+- **不计为新缺陷**：未登记后代、首次旧存量、真实存储写入失败、不可确认登记身份、未知原生结果继续保留；双方都要求生产者与最后写入结清才可 drained。并行 adapter Close 与 scope.Terminate 已实现；不能仅看 Close 内部串行就说强制信号被它挡住。当前所有正常生产退休 caller 都 force=true，不能用不可达的 normal→force 组合新增一项。
+- **测试范围**：无 overlay 的六个生命周期包 **641 项父测试通过，零失败**；诊断共七个条件各三次（15 次父测试调用、21 个叶条件），均复现当前缺口，**不算产品行为已通过**。冻结设计六文件通过。没有重跑签名历史升级或三台正式设备；沿用的历史证据仅保留为前轮记录。
+
+证据：[本轮复现摘要](../.ryugi/audits/lody-post-repair-full-audit-20261117/probes-summary.txt)、[六包相邻检查](../.ryugi/audits/lody-post-repair-full-audit-20261117/neighbours-summary.txt)、[源码来源与未修改证明](../.ryugi/audits/lody-post-repair-full-audit-20261117/source-provenance.txt)、[overlay 原件](../.ryugi/audits/lody-post-repair-full-audit-20261117/probes.go)。L／M 优先；N／O 同一轮补齐。无需新页面、进程选择或额外兼容框架。
+
 ## 2026-11-17 四处差异修复与最终验证
 
 **H／I／J／K 四处已修复，本机隔离验证完成，正式设备未部署。** 产品提交为 `2b45226`；`9121455` 只修正新增归档测试的 revision 采集时序，不改产品。Lody 依据仍为 `d6df2f2` 的实际入口；保持 20 分钟／30 秒、24 小时 waiting、未登记后代范围与首次旧存量手动处理，不恢复强制关闭／重启页面。
