@@ -44,7 +44,7 @@ func TestBackgroundDisableIdleResidentNode(t *testing.T) {
 			}
 			s.build.Managed = true
 			called := false
-			s.config.DisableBackground = func(context.Context) (domain.BackgroundService, error) {
+			s.config.DisableBackground = func(context.Context, string) (domain.BackgroundService, error) {
 				called = true
 				if scope.Admitting() {
 					t.Error("new tool admission remains open during unregister")

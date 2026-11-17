@@ -390,19 +390,46 @@ func (c *Controller) Run(ctx context.Context) {
 			var err error
 			managed := target != nil && target.Worker != nil && target.Worker.Managed
 			if action == "unregister" && managed {
-				if target.Minor < 17 {
+				if target.Minor < 48 {
 					err = errors.New("请先更新执行服务，再关闭后台运行")
 				} else {
-					err = target.Call(callCtx, "worker.background.disable", nil, &state)
-					if err != nil { // Unregister closes the old IPC owner; query status, never resend it.
-						cause := err
-						if ssh != nil {
-							state, err = ssh.RuntimeService(callCtx, c.WorkerBinary, false)
-						} else {
-							state, err = transport.RuntimeService(callCtx, c.Directory, c.WorkerBinary, false)
-						}
-						if err == nil && state.State != "notRegistered" && state.State != "notInstalled" {
-							state.Message = cause.Error()
+					id := domain.NewID()
+					err = target.Call(callCtx, "worker.background.stop", protocol.BackgroundStopInput{ID: id}, &state)
+					var refused *protocol.RemoteError
+					knownRefusal := errors.As(err, &refused) && refused.Code == "notSent"
+					if state.State == "disabling" || err != nil && !knownRefusal {
+						// The ID is allocated before sending. A lost reply only starts
+						// observation; it never replays unregister through a new owner.
+						for {
+							if ssh != nil {
+								state, err = ssh.BackgroundStopStatus(callCtx, c.WorkerBinary, id, target.DeviceID)
+							} else {
+								state, err = supervisor.BackgroundCall(callCtx, c.Directory, supervisor.Request{Action: "background-status", ID: id, DeviceID: target.DeviceID})
+							}
+							if err != nil {
+								if state.NotStarted {
+									break
+								}
+								cause := err
+								if ssh != nil {
+									state, err = ssh.RuntimeService(callCtx, c.WorkerBinary, false)
+								} else {
+									state, err = transport.RuntimeService(callCtx, c.Directory, c.WorkerBinary, false)
+								}
+								if err == nil && state.State != "notRegistered" && state.State != "notInstalled" {
+									state.State, state.Message = "disabling", cause.Error()
+								}
+							}
+							if err == nil && state.State != "disabling" {
+								break
+							}
+							select {
+							case <-callCtx.Done():
+								err = callCtx.Err()
+							case <-time.After(200 * time.Millisecond):
+								continue
+							}
+							break
 						}
 					}
 					if err == nil && (state.State == "notRegistered" || state.State == "notInstalled") {

@@ -10,7 +10,7 @@ func TestBackgroundDisableRefusesActiveExecutionBeforeSystemUnregister(t *testin
 	s, w := memoryWorker(t, memoryHarness{id: "other", hold: true})
 	called := false
 	s.build.Managed = true
-	s.config.DisableBackground = func(context.Context) (domain.BackgroundService, error) {
+	s.config.DisableBackground = func(context.Context, string) (domain.BackgroundService, error) {
 		called = true
 		return domain.BackgroundService{Format: 1, State: "notRegistered"}, nil
 	}
@@ -30,7 +30,7 @@ func TestBackgroundDisableRefusesActiveExecutionBeforeSystemUnregister(t *testin
 func TestBackgroundDisableFencesNewSubmissionsUntilOwnerExits(t *testing.T) {
 	s, w := memoryWorker(t, memoryHarness{id: "other"})
 	s.build.Managed = true
-	s.config.DisableBackground = func(context.Context) (domain.BackgroundService, error) {
+	s.config.DisableBackground = func(context.Context, string) (domain.BackgroundService, error) {
 		return domain.BackgroundService{Format: 1, State: "notRegistered"}, nil
 	}
 	result, err := s.disableBackground()
@@ -45,7 +45,7 @@ func TestBackgroundDisableFencesNewSubmissionsUntilOwnerExits(t *testing.T) {
 func TestBackgroundDisableKnownUnavailableRestoresAdmission(t *testing.T) {
 	s, w := memoryWorker(t, memoryHarness{id: "other"})
 	s.build.Managed = true
-	s.config.DisableBackground = func(context.Context) (domain.BackgroundService, error) {
+	s.config.DisableBackground = func(context.Context, string) (domain.BackgroundService, error) {
 		return domain.BackgroundService{Format: 1, State: "unavailable", Message: "private directory"}, nil
 	}
 	result, err := s.disableBackground()

@@ -47,7 +47,13 @@ const Major = 2
 // Minor 45 adds durable session runtime reload without submitting input.
 // Minor 46 adds scoped Hook management and durable definition-bound receipts.
 // Minor 47 adds immutable binary uploads used as owning-device path inputs.
-const Minor = 47
+// Minor 48 delegates background unregister to the independent supervisor.
+const Minor = 48
+
+type BackgroundStopInput struct {
+	ID string `json:"id"`
+}
+
 const MaxFrame = 1 << 20
 
 type Frame struct {

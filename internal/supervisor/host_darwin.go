@@ -21,6 +21,7 @@ import (
 )
 
 type Options struct {
+	DisableBackground      func(context.Context) (domain.BackgroundService, error)
 	LegacyInstall          *LegacyInstall
 	Directory, InitialPath string
 	Arguments              []string
@@ -41,6 +42,7 @@ type child struct {
 	startedAt time.Time
 }
 type host struct {
+	background        *backgroundOperation
 	health            serviceHealth
 	retry             crashRetry
 	updateID          string
@@ -181,6 +183,7 @@ func Run(ctx context.Context, o Options) error {
 				}
 			}
 		}
+		committed := false
 		if err == nil && paused {
 			expected := recovered.Input.BuildID
 			if recovered.Phase == "rolled-back" {
@@ -189,14 +192,15 @@ func Run(ctx context.Context, o Options) error {
 			if h.child.build.BuildID != expected {
 				err = errors.New("selected build differs from committed receipt")
 			} else {
-				err = h.resume(ctx, h.child, opID)
+				h.completeCommitted(h.child, opID, h.resume(ctx, h.child, opID))
+				committed = true
 			}
 		}
 		if err != nil {
 			if e := h.blockStartup(err); e != nil {
 				return errors.Join(err, e)
 			}
-		} else {
+		} else if !committed {
 			h.mu.Lock()
 			h.readyDone = true
 			h.updateID = ""
@@ -297,6 +301,7 @@ func Run(ctx context.Context, o Options) error {
 			}
 			h.mu.Lock()
 			h.readyDone = true
+			h.updateID = ""
 			h.health.Phase, h.health.Error = "ready", ""
 			err = h.saveHealth()
 			h.mu.Unlock()
@@ -328,8 +333,14 @@ func (h *host) serve(l *net.UnixListener) {
 			if err := json.NewDecoder(io.LimitReader(conn, 1<<20)).Decode(&req); err != nil {
 				return
 			}
-			out, err := h.control(req)
-			reply := response{Operation: out}
+			var reply response
+			var err error
+			var after func()
+			if req.Action == "background-stop" || req.Action == "background-status" {
+				reply.Background, after, err = h.backgroundControl(req)
+			} else {
+				reply.Operation, err = h.control(req)
+			}
 			if err != nil {
 				reply.Error = err.Error()
 				var remote *protocol.RemoteError
@@ -340,6 +351,11 @@ func (h *host) serve(l *net.UnixListener) {
 				}
 			}
 			_ = json.NewEncoder(conn).Encode(reply)
+			// The request never waits inside the worker being unregistered.
+			// A lost reply is queried by ID; the accepted action is not replayed.
+			if after != nil {
+				go after()
+			}
 		}()
 	}
 }
@@ -376,7 +392,7 @@ func (h *host) control(req Request) (Operation, error) {
 		}
 		// Applied is persisted before resume, but is published as complete only
 		// after the captured candidate actually opens acceptance.
-		if err == nil && h.updateID == op.Input.ID && h.updateID != "" && (!h.readyDone || h.updating) && (op.Phase == "applied" || op.Phase == "rolled-back") {
+		if err == nil && h.updateID == op.Input.ID && h.updateID != "" && (op.Phase == "applied" || op.Phase == "rolled-back") {
 			op.Phase = "observing"
 		}
 		if err == nil && req.ID == "" && !h.updating && h.health.Phase == "reconnecting" {
@@ -427,7 +443,7 @@ func (h *host) control(req Request) (Operation, error) {
 			}
 			return active, nil
 		}
-		if h.updating || !h.readyDone || h.child == nil || h.device == "" {
+		if h.background != nil && !h.background.done || h.updating || h.updateID != "" || !h.readyDone || h.child == nil || h.device == "" {
 			return Operation{}, &protocol.RemoteError{Code: "notSent", Message: "服务尚未就绪或已有不同更新"}
 		}
 		if h.child.build.BuildID != req.Input.ExpectedBuildID || req.Input.BuildID == req.Input.ExpectedBuildID {
@@ -829,13 +845,11 @@ waitForIdle:
 		if e = h.options.Select(o.PreviousBuild); e == nil {
 			e = h.phase(&o, "rolled-back")
 		}
-		if e == nil {
-			e = h.resume(ctx, restored, o.Input.ID)
-		}
 		if e != nil {
 			failed(e, true)
 			return
 		}
+		candidate = restored
 	} else {
 		if err = h.options.Select(b.BuildID); err == nil {
 			err = h.phase(&o, "applied")
@@ -847,19 +861,27 @@ waitForIdle:
 		h.mu.Lock()
 		h.child = candidate
 		h.mu.Unlock()
-		if err = h.resume(ctx, candidate, o.Input.ID); err != nil {
-			failed(err, true)
-			return
-		}
 	}
+	h.completeCommitted(candidate, o.Input.ID, h.resume(h.ctx, candidate, o.Input.ID))
+}
+
+// A committed selection remains applied even if its resume acknowledgement is
+// lost. Monitoring retries the exact candidate; an exit uses normal crash recovery.
+func (h *host) completeCommitted(c *child, id string, resumeErr error) {
 	h.mu.Lock()
+	h.blocked = false
 	h.updating = false
 	h.updateID = ""
 	h.cancelUpdate = nil
 	h.readyDone = true
-	h.health = serviceHealth{Phase: "ready", DeviceID: h.device, BuildID: h.child.build.BuildID, Schema: h.child.build.Schema}
-	h.retry = crashRetry{}
-	err = h.saveHealth()
+	h.health = serviceHealth{Phase: "ready", DeviceID: h.device, BuildID: c.build.BuildID, Schema: c.build.Schema}
+	if resumeErr != nil {
+		h.updateID = id
+		h.health.Phase, h.health.Error = "reconnecting", resumeErr.Error()
+	} else {
+		h.retry = crashRetry{}
+	}
+	err := h.saveHealth()
 	h.mu.Unlock()
 	if err != nil {
 		_ = h.blockHealth(err)
@@ -885,6 +907,13 @@ func (h *host) resume(ctx context.Context, c *child, id string) error {
 		}
 		stop()
 		if err == nil {
+			return nil
+		}
+		probe, endProbe := context.WithTimeout(call, time.Second)
+		var ready Ready
+		probeErr := h.workerCall(probe, c, "worker.local-ready", Control{Instance: c.instance}, &ready)
+		endProbe()
+		if probeErr == nil && ready.PID == c.cmd.Process.Pid && ready.Instance == c.instance && ready.DeviceID == h.device && ready.Build.BuildID == c.build.BuildID && !ready.Paused && managedexec.ProcessState(c.identity) == "running" {
 			return nil
 		}
 		select {

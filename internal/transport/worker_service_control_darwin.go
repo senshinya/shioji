@@ -45,6 +45,37 @@ func (s SSH) WorkerServiceControl(ctx context.Context, binary, action, id, devic
 	return response.Operation, nil
 }
 
+// BackgroundStopStatus queries an accepted action through the independent host;
+// it cannot invoke native unregister a second time.
+func (s SSH) BackgroundStopStatus(ctx context.Context, binary, id, device string) (domain.BackgroundService, error) {
+	path, err := s.workerServiceHelper(ctx, binary)
+	if err != nil {
+		return domain.BackgroundService{}, err
+	}
+	remote := shellQuote(path) + " --state-dir " + shellQuote(s.StateDirectory) + " --service-control background-status --service-id " + shellQuote(id) + " --service-device " + shellQuote(device)
+	cmd, err := s.command(ctx, remote)
+	if err != nil {
+		return domain.BackgroundService{}, err
+	}
+	var output, diagnostic bytes.Buffer
+	cmd.Stdout = &boundedWriter{w: &output, remaining: 1 << 20}
+	cmd.Stderr = &boundedWriter{w: &diagnostic, remaining: 2048}
+	if err = cmd.Run(); err != nil {
+		return domain.BackgroundService{}, fmt.Errorf("后台关闭回执暂不可用：%s (%w)", diagnostic.String(), err)
+	}
+	var out struct {
+		Background domain.BackgroundService `json:"background"`
+		Error      string                   `json:"error"`
+	}
+	if err = json.Unmarshal(output.Bytes(), &out); err != nil {
+		return out.Background, err
+	}
+	if out.Error != "" {
+		return out.Background, errors.New(out.Error)
+	}
+	return out.Background, nil
+}
+
 func (s SSH) workerServiceHelper(ctx context.Context, binary string) (string, error) {
 	build, err := InspectWorker(ctx, binary)
 	if err != nil {

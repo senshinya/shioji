@@ -51,7 +51,9 @@ func RunWorkerSupervisor(ctx context.Context, directory, initial, codex string, 
 	if len(install) > 0 {
 		legacy = install[0]
 	}
-	options := supervisor.Options{LegacyInstall: legacy, Directory: filepath.Clean(directory), InitialPath: path, Arguments: args, Verify: verify, Select: func(build string) error { return SaveActiveWorker(directory, build) }}
+	options := supervisor.Options{DisableBackground: func(callCtx context.Context) (domain.BackgroundService, error) {
+		return DisableRuntimeService(callCtx, directory, initial)
+	}, LegacyInstall: legacy, Directory: filepath.Clean(directory), InitialPath: path, Arguments: args, Verify: verify, Select: func(build string) error { return SaveActiveWorker(directory, build) }}
 	for {
 		err := supervisor.Run(ctx, options)
 		if !managed || !errors.Is(err, supervisor.ErrOwned) {

@@ -124,6 +124,17 @@ func run() error {
 		}
 	}
 	if *serviceControl != "" {
+		if *serviceControl == "background-status" {
+			state, err := supervisor.BackgroundCall(ctx, dir, supervisor.Request{Action: "background-status", ID: *serviceID, DeviceID: *serviceDevice})
+			out := struct {
+				Background domain.BackgroundService `json:"background"`
+				Error      string                   `json:"error,omitempty"`
+			}{Background: state}
+			if err != nil {
+				out.Error = err.Error()
+			}
+			return json.NewEncoder(os.Stdout).Encode(out)
+		}
 		var op supervisor.Operation
 		var e error
 		switch *serviceControl {
@@ -405,9 +416,12 @@ func run() error {
 			return err
 		}
 		return &selectedWorker{path: path}
-	}, BackgroundManaged: *managed, DisableBackground: func(callCtx context.Context) (domain.BackgroundService, error) {
-		exe, _ := os.Executable()
-		return transport.DisableRuntimeService(callCtx, dir, exe)
+	}, BackgroundManaged: *managed, DisableBackground: func(callCtx context.Context, id string) (domain.BackgroundService, error) {
+		device, _, err := store.ReadWorkerIdentity(callCtx, dir)
+		if err != nil {
+			return domain.BackgroundService{NotStarted: true}, err
+		}
+		return supervisor.BackgroundCall(callCtx, dir, supervisor.Request{Action: "background-stop", ID: id, DeviceID: device, Instance: os.Getenv("SHIOJI_WORKER_INSTANCE")})
 	}, Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Executable: *binary}}, ReplaceWorker: func(in domain.WorkerReplacement) error {
 		verifyCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()

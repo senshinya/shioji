@@ -1,5 +1,17 @@
 # Lody 执行服务升级、停止与回收源码分析
 
+> **本轮收尾修复（2026-11-17，本机隔离验证）**：下方 3648cc6 的两个审计条件已修复。已提交升级保留 applied／rolled-back；迟回复核对准确候选，暂时不确定继续观察与重试，候选退出按原崩溃策略恢复已选版本。后台注销交给独立 Host，Worker 只封住同代准入并提交短请求，客户端按稳定 ID 查询，不重放注销。正式设备未部署，真实 SMAppService 未操作；下方“尚未修复”为当时审计原件。
+
+## 2026-11-17 两个收尾条件的修复与验证
+
+- 提交后收尾覆盖正常升级、回滚、已提交启动和冷修复。确认失败不再进入修改升级 journal 的 failed 分支；精确匹配 PID／实例／设备／版本与 Paused=false 可独立证明已开放。确认预算后记 reconnecting，监测继续重试，真实子进程退出仍受原崩溃次数限制。
+- 注销由固定 Host 先应答再异步执行，原生 helper 不由 worker RPC、worker Close 或 Host 的排空等待拥有。Worker 的 maintenance／dispatch 只覆盖准入准备；Host 执行前核对同一操作与实例。明确未启动撤销原 scope 准入，未知结果保持 fence，已接纳 drain 后拒绝迟到取消。
+- 协议 48 增加 typed BackgroundStopInput 和独立后台回执查询；旧同步 RPC 在副作用前拒绝。客户端在发送前分配 ID，丢回复后只查询；Host 消失时核对系统注册状态，不能通过另一个 owner 重放原注销。
+- [恢复回归](../.ryugi/audits/lody-finalization-fixes-20261117/resume-green.txt)、[签名 Worker／Host／模拟 helper](../.ryugi/audits/lody-finalization-fixes-20261117/background-green.txt) 与 [Host 幂等及撤销](../.ryugi/audits/lody-finalization-fixes-20261117/background-control.txt) 均通过。模拟助手等待 Host 退出的分支约 37ms 交出 drained，没有新的 shutdown blocked；这是模拟时序，不是真实系统注销测量。
+- 50 项相邻与 48 项竞态检查通过。最终双签名构建 [历史双轮回放](../.ryugi/audits/lody-finalization-fixes-20261117/historical-summary.txt) 为 12 APPLIED、2 既定 H07 BLOCKED；原线程接续、历史及队列保留，未登记后代边界不变。最终 [993 文件源码快照](../.ryugi/audits/lody-finalization-fixes-20261117/replay-build.json) 与重建 SHA 证明对应关系，355 个 UI 文件未变。
+- 全仓检查的 UI、本地研究与额外一次签名子进程启动超时全部在同主题报告单列；不能把单独复测通过解释为根因修复或全仓全绿。20 分钟／30 秒、24 小时 waiting 与首次旧存量手动处理保持，不增加强制关闭入口。
+
+
 核查日期：2026-11-17。结论用于 Shioji 本轮升级改造。用户已决定直接采用 Lody 的机制，接受其未登记进程覆盖范围，不再增加独立会话宿主或完整后代追踪架构。以下参考源码分析在实施前完成；实施现状见下段，三台正式设备没有停止或更新。
 
 > **修复后继续复核（2026-11-17，两个条件尚未修复）**：3648cc6 对照 Lody 最新 58e33ce，再确认两个控制流程收尾问题：resume 已执行而确认迟到，仍会把已提交升级永久写为 blocked；后台注销 helper 与宿主退出重叠时，worker 持锁及请求等待会妨碍自己的排空。三个失败场景各三次，共 9 次预期失败，另有 6 次正向／诊断对照；37 项既有相邻检查通过。988 个产品文件未改，正式设备未操作。上一轮私有通道、前置失败等五项修复仍保留原适用范围，不能外推为所有异步收尾均已覆盖。

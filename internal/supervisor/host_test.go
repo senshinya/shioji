@@ -110,6 +110,10 @@ func fixtureHost(name string) int {
 							p = !p
 						}
 						out = Ready{PID: os.Getpid(), Instance: instance, DeviceID: "fixture-device", Build: build, Paused: p}
+					case "worker.local-background-ready":
+						out = domain.WorkerUpdateResult{Ready: control.Instance == instance}
+					case "worker.local-background-cancel":
+						_ = os.WriteFile(filepath.Join(dir, "cancel-background"), []byte(control.OperationID), 0600)
 					case "worker.local-backup", "worker.prepare-drain":
 						if f.Method == "worker.prepare-drain" {
 							if _, e := os.Stat(filepath.Join(dir, "hold-prepare-drain")); e == nil {
@@ -124,6 +128,11 @@ func fixtureHost(name string) int {
 						}
 						out = domain.WorkerUpdateResult{Ready: true}
 					case "worker.resume":
+						if _, e := os.Stat(filepath.Join(dir, "reject-resume")); e == nil {
+							_ = os.WriteFile(filepath.Join(dir, "resume-rejected"), []byte(instance), 0600)
+							failure = errors.New("resume temporarily unavailable")
+							break
+						}
 						if strings.Contains(name, "holdresume") {
 							_ = os.WriteFile(filepath.Join(dir, "resume-entered"), []byte("ready"), 0600)
 							for i := 0; i < 300; i++ {

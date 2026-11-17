@@ -21,6 +21,7 @@ func (h *host) monitor() {
 		c := h.child
 		enabled := c != nil && h.readyDone && !h.updating && !h.blocked
 		device := h.device
+		resumeID := h.updateID
 		h.mu.Unlock()
 		if !enabled {
 			observed = nil
@@ -35,7 +36,14 @@ func (h *host) monitor() {
 		var ready Ready
 		err := h.workerCall(ctx, c, "worker.local-ready", Control{Instance: c.instance}, &ready)
 		cancel()
+		if resumeID != "" {
+			err = h.resume(h.ctx, c, resumeID)
+		}
 		known := err == nil && ready.PID == c.cmd.Process.Pid && ready.Instance == c.instance && ready.DeviceID == device && ready.Build.BuildID == c.build.BuildID
+		if known && resumeID != "" {
+			ready.Paused = false
+		}
+		known = known && !ready.Paused
 		if known {
 			misses = 0
 		} else {
@@ -49,6 +57,9 @@ func (h *host) monitor() {
 		if h.child != c || h.updating || h.blocked || !h.readyDone {
 			h.mu.Unlock()
 			continue
+		}
+		if known && h.updateID == resumeID {
+			h.updateID = ""
 		}
 		phase, message := h.health.Phase, h.health.Error
 		if !known && misses >= 3 {

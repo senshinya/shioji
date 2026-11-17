@@ -143,7 +143,7 @@ func TestWorkerSignInBlocksManagedServiceStopAndUpdate(t *testing.T) {
 	s, _ := signInWorker(t)
 	s.build.Managed = true
 	stopped := false
-	s.config.DisableBackground = func(context.Context) (domain.BackgroundService, error) {
+	s.config.DisableBackground = func(context.Context, string) (domain.BackgroundService, error) {
 		stopped = true
 		return domain.BackgroundService{State: "notRegistered"}, nil
 	}

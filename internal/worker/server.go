@@ -36,9 +36,9 @@ type Config struct {
 	legacyExpected                                  *legacyMigrationRecord
 	CheckStartupBuild                               func() error `json:"-"`
 	BackgroundManaged                               bool
-	DisableBackground                               func(context.Context) (domain.BackgroundService, error) `json:"-"`
-	ReplaceWorker                                   func(domain.WorkerReplacement) error                    `json:"-"`
-	VerifyReplacement                               func(context.Context, domain.WorkerReplacement) error   `json:"-"`
+	DisableBackground                               func(context.Context, string) (domain.BackgroundService, error) `json:"-"`
+	ReplaceWorker                                   func(domain.WorkerReplacement) error                            `json:"-"`
+	VerifyReplacement                               func(context.Context, domain.WorkerReplacement) error           `json:"-"`
 	Directory, LauncherExecutable, DefaultHarnessID string
 	Harnesses                                       []harness.Adapter `json:"-"`
 }
@@ -71,6 +71,7 @@ type Server struct {
 	maintenance          sync.RWMutex
 	updating             atomic.Bool
 	backgroundStopping   atomic.Bool
+	backgroundStop       *backgroundStop
 	pressureSample       func() uint32
 	pressureReclaim      chan struct{}
 	runtimeMu            sync.RWMutex
@@ -443,7 +444,14 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		return s.build, nil
 	}
 	if method == "worker.background.disable" {
-		return s.disableBackground()
+		return nil, errors.New("请先更新客户端，再关闭后台运行")
+	}
+	if method == "worker.background.stop" {
+		in, err := decode[protocol.BackgroundStopInput](body)
+		if err != nil || in.ID == "" || filepath.Base(in.ID) != in.ID || len(in.ID) > 128 {
+			return nil, errors.New("invalid background operation")
+		}
+		return s.disableBackground(in.ID)
 	}
 	if method == "worker.update" {
 		in, err := decode[domain.WorkerReplacement](body)

@@ -21,6 +21,12 @@ func (s *Server) serviceControl(method string, body []byte) (any, error) {
 	switch method {
 	case "worker.local-ready":
 		return supervisor.Ready{PID: os.Getpid(), Instance: s.config.ServiceInstance, DeviceID: s.store.DeviceID(), Build: s.build, Paused: s.updating.Load()}, nil
+	case "worker.local-background-ready":
+		s.dispatchMu.Lock()
+		defer s.dispatchMu.Unlock()
+		return domain.WorkerUpdateResult{Ready: s.backgroundStopping.Load() && s.backgroundStop != nil && s.backgroundStop.id == in.OperationID && s.drainOperation == ""}, nil
+	case "worker.local-background-cancel":
+		return nil, s.cancelBackgroundStop(in.OperationID)
 	case "worker.local-backup":
 		if in.OperationID == "" || filepath.Base(in.OperationID) != in.OperationID || len(in.OperationID) > 128 {
 			return nil, errors.New("invalid backup operation")

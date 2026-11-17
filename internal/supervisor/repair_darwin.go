@@ -18,7 +18,7 @@ func (h *host) beginRepair(req Request) (Operation, error) {
 	refuse := func(message string) (Operation, error) {
 		return Operation{}, &protocol.RemoteError{Code: "notSent", Message: message}
 	}
-	if !h.blocked || h.updating {
+	if !h.blocked || h.updating || h.background != nil && !h.background.done {
 		return refuse("当前服务不需要冷修复或仍在切换")
 	}
 	previous, err := h.journal.current()
@@ -125,9 +125,16 @@ func (h *host) repair(ctx context.Context, op Operation, writer *os.File) {
 		if err = h.phase(&op, "applied"); err != nil {
 			return err
 		}
-		return h.resume(ctx, candidate, op.Input.ID)
+		return nil
 	}
 	err := prepare()
+	if err == nil {
+		h.mu.Lock()
+		h.device = op.DeviceID
+		h.mu.Unlock()
+		h.completeCommitted(candidate, op.Input.ID, h.resume(h.ctx, candidate, op.Input.ID))
+		return
+	}
 	if err != nil {
 		if candidate != nil {
 			err = errors.Join(err, h.stopExact(candidate, h.options.StopGrace))

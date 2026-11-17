@@ -15,13 +15,14 @@ import (
 )
 
 type Request struct {
-	Action, ID, DeviceID string
-	Input                domain.WorkerReplacement
+	Action, ID, DeviceID, Instance string
+	Input                          domain.WorkerReplacement
 }
 type response struct {
-	Operation Operation
-	Error     string
-	Code      string
+	Operation  Operation
+	Background domain.BackgroundService
+	Error      string
+	Code       string
 }
 type Ready struct {
 	PID                int
@@ -55,9 +56,19 @@ func WriteDrained(directory string, d Drained) error {
 	return atomicJSON(drainPath(directory, d.OperationID, d.Instance), d)
 }
 func Call(ctx context.Context, directory string, in Request) (Operation, error) {
+	out, err := exchange(ctx, directory, in)
+	return out.Operation, err
+}
+
+func BackgroundCall(ctx context.Context, directory string, in Request) (domain.BackgroundService, error) {
+	out, err := exchange(ctx, directory, in)
+	return out.Background, err
+}
+
+func exchange(ctx context.Context, directory string, in Request) (response, error) {
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(directory, "supervisor.sock"))
 	if err != nil {
-		return Operation{}, err
+		return response{}, err
 	}
 	defer conn.Close()
 	deadline := time.Now().Add(10 * time.Minute)
@@ -68,16 +79,16 @@ func Call(ctx context.Context, directory string, in Request) (Operation, error) 
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
 	if err = json.NewEncoder(conn).Encode(in); err != nil {
-		return Operation{}, err
+		return response{}, err
 	}
 	var out response
 	if err = json.NewDecoder(io.LimitReader(conn, 1<<20)).Decode(&out); err != nil {
-		return Operation{}, err
+		return out, err
 	}
 	if out.Error != "" {
-		return out.Operation, &protocol.RemoteError{Code: out.Code, Message: out.Error}
+		return out, &protocol.RemoteError{Code: out.Code, Message: out.Error}
 	}
-	return out.Operation, nil
+	return out, nil
 }
 func localPrincipal(conn *net.UnixConn) error {
 	raw, err := conn.SyscallConn()

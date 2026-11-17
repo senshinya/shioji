@@ -51,7 +51,7 @@ func TestHandoffKnownBackgroundPreflightFailureRestoresAdmission(t *testing.T) {
 	}
 	s.build.Managed = true
 	calls := 0
-	s.config.DisableBackground = func(ctx context.Context) (domain.BackgroundService, error) {
+	s.config.DisableBackground = func(ctx context.Context, _ string) (domain.BackgroundService, error) {
 		calls++
 		return transport.DisableRuntimeService(ctx, directory, "/nonexistent/test-worker")
 	}
@@ -79,7 +79,7 @@ func TestBackgroundDisableUnknownFailureKeepsAdmissionFenced(t *testing.T) {
 	}
 	s.build.Managed = true
 	calls := 0
-	s.config.DisableBackground = func(context.Context) (domain.BackgroundService, error) {
+	s.config.DisableBackground = func(context.Context, string) (domain.BackgroundService, error) {
 		calls++
 		return domain.BackgroundService{}, errors.New("helper outcome unknown")
 	}

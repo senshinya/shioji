@@ -10,7 +10,32 @@ import (
 
 // System unregister terminates the managed owner. Admission belongs to the
 // worker so another client cannot race a new turn through a UI-only idle check.
-func (s *Server) disableBackground() (result domain.BackgroundService, err error) {
+type backgroundStop struct {
+	id   string
+	undo []func() error
+}
+
+func (s *Server) disableBackground(ids ...string) (result domain.BackgroundService, err error) {
+	id := domain.NewID()
+	if len(ids) > 0 {
+		id = ids[0]
+	}
+	result, err = s.prepareBackgroundStop(id)
+	if err != nil || !s.backgroundStopping.Load() {
+		return result, err
+	}
+	// This callback only asks the independent host to accept the action. Native
+	// unregister never runs in, or holds the lifetime of, this RPC handler.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err = s.config.DisableBackground(ctx, id)
+	if result.NotStarted || err == nil && result.State != "disabling" && result.State != "notRegistered" && result.State != "notInstalled" {
+		err = errors.Join(err, s.cancelBackgroundStop(id))
+	}
+	return result, err
+}
+
+func (s *Server) prepareBackgroundStop(id string) (result domain.BackgroundService, err error) {
 	result = domain.BackgroundService{Format: 1, State: "enabled"}
 	s.maintenance.Lock()
 	defer s.maintenance.Unlock()
@@ -20,7 +45,7 @@ func (s *Server) disableBackground() (result domain.BackgroundService, err error
 		return result, errors.New("执行服务不支持关闭后台运行，请先更新")
 	}
 	if s.backgroundStopping.Load() {
-		return result, errors.New("后台服务正在关闭")
+		return result, errors.New("后台服务正在关闭，请查询已提交操作")
 	}
 	if s.build.Managed && s.hasActiveSignIn() {
 		result.Message = "正在登录 Agent，完成后可关闭后台服务"
@@ -67,14 +92,28 @@ func (s *Server) disableBackground() (result domain.BackgroundService, err error
 			result.Message = idle.Reason
 			return result, nil
 		}
+		s.backgroundStop = &backgroundStop{id: id, undo: undo}
 		s.backgroundStopping.Store(true)
 	}
-	// The helper must finish even when unregister sends SIGTERM to this worker.
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	result, err = s.config.DisableBackground(ctx)
-	if result.NotStarted || err == nil && result.State != "notRegistered" && result.State != "notInstalled" {
-		s.backgroundStopping.Store(false)
+	return result, nil
+}
+
+func (s *Server) cancelBackgroundStop(id string) error {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	if s.backgroundStop == nil || s.backgroundStop.id != id {
+		return errors.New("background operation mismatch")
 	}
-	return result, err
+	if s.drainOperation != "" || s.ctx.Err() != nil {
+		return errors.New("worker drain already accepted")
+	}
+	var err error
+	for i := len(s.backgroundStop.undo) - 1; i >= 0; i-- {
+		err = errors.Join(err, s.backgroundStop.undo[i]())
+	}
+	if err == nil {
+		s.backgroundStopping.Store(false)
+		s.backgroundStop = nil
+	}
+	return err
 }
