@@ -24,6 +24,8 @@ import (
 const ChunkSize = 64 << 10
 const StagingWorkspace = "00000000-0000-4000-8000-000000000000"
 
+var ErrUnsupportedType = errors.New("支持 PNG、JPEG、GIF 图片，以及不超过 128 KiB 的 UTF-8 文本文件")
+
 type Repository struct {
 	Directory string
 	mu        sync.Mutex
@@ -53,8 +55,10 @@ func Describe(name string, data []byte) (domain.Attachment, error) {
 		if format == "jpg" {
 			mime = "image/jpeg"
 		}
-	} else if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 || len(data) > 128<<10 {
-		return a, errors.New("支持 PNG、JPEG、GIF 图片，以及不超过 128 KiB 的 UTF-8 文本文件")
+	} else if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
+		return a, ErrUnsupportedType
+	} else if len(data) > 128<<10 {
+		return a, errors.New("文本附件不能超过 128 KiB")
 	}
 	h := sha256.Sum256(data)
 	return domain.Attachment{ID: domain.NewID(), Name: name, MIME: mime, Size: int64(len(data)), SHA256: hex.EncodeToString(h[:])}, nil

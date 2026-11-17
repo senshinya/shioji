@@ -2,10 +2,12 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
+	"github.com/egoist/mygo/ui/richtext"
 	"golang.org/x/image/draw"
 	"image"
 	"io"
@@ -14,6 +16,7 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/attachments"
 	"shioji/internal/domain"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -122,14 +125,20 @@ func (v *View) pickAttachments() {
 	}
 	key := v.Model.DraftKey()
 	token := v.attachmentPreparationKey(key)
+	workspace := v.Model.WorkspaceID
+	connection := v.Model.WorkspaceConnection(workspace)
+	message := "PNG、JPEG、GIF 图片或 UTF-8 文本文件"
+	if connection == "local" {
+		message += "；不支持的类型将附上路径"
+	}
 	v.Controller.AttachmentTask(func() app.Update {
-		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "添加附件", Multiple: true, Message: "PNG、JPEG、GIF 图片或 UTF-8 文本文件"})
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "添加附件", Multiple: true, Message: message})
 		return func(m *app.Model) {
 			if err != nil {
 				m.Error = err.Error()
 				return
 			}
-			if v.attachmentPreparationKey(key) == token {
+			if v.attachmentPreparationKey(key) == token && m.WorkspaceID == workspace && m.WorkspaceConnection(workspace) == connection {
 				v.addAttachmentFiles(key, paths)
 			}
 		}
@@ -141,12 +150,15 @@ func (v *View) addAttachmentFiles(key string, paths []string) {
 	}
 	store := v.staging()
 	token := v.attachmentPreparationKey(key)
+	workspace := v.Model.WorkspaceID
+	local := v.Model.WorkspaceConnection(workspace) == "local"
 	if v.attachmentPreparing == nil {
 		v.attachmentPreparing = map[string]int{}
 	}
 	v.attachmentPreparing[token]++
 	v.Controller.AttachmentTask(func() app.Update {
 		var added []app.DraftAttachment
+		var pathReferences []string
 		var problems []string
 		for _, path := range paths {
 			file, err := os.Open(path)
@@ -166,6 +178,18 @@ func (v *View) addAttachmentFiles(key string, paths []string) {
 			if err == nil {
 				a, err = store.Save(filepath.Base(path), data)
 			}
+			if errors.Is(err, attachments.ErrUnsupportedType) {
+				if local {
+					absolute, pathErr := filepath.Abs(path)
+					if pathErr == nil {
+						pathReferences = append(pathReferences, strconv.Quote(absolute))
+						continue
+					}
+					err = pathErr
+				} else {
+					err = fmt.Errorf("此类型暂不支持上传；远程设备无法读取本机路径，请先将文件传到远程设备，再提供远程路径")
+				}
+			}
 			if err != nil {
 				problems = append(problems, filepath.Base(path)+"："+err.Error())
 				continue
@@ -177,12 +201,51 @@ func (v *View) addAttachmentFiles(key string, paths []string) {
 			if v.attachmentPreparationKey(key) != token {
 				return
 			}
-			v.appendAttachments(key, added)
+			if len(pathReferences) > 0 && m.WorkspaceID == workspace && m.WorkspaceConnection(workspace) == "local" {
+				if err := v.appendAttachmentPaths(key, pathReferences); err != nil {
+					problems = append(problems, err.Error())
+				}
+			}
+			if len(added) > 0 {
+				v.appendAttachments(key, added)
+			}
 			if len(problems) > 0 {
 				m.Error = strings.Join(problems, "\n")
 			}
 		}
 	})
+}
+
+func (v *View) appendAttachmentPaths(key string, paths []string) error {
+	var binding *composerDocument
+	for _, candidate := range v.composerDocuments {
+		if candidate.key == key && candidate.editToken == v.Model.QueueEdits[strings.TrimPrefix(key, "session:")].Token && candidate.last.equal(v.composerContent(key)) {
+			binding = candidate
+			break
+		}
+	}
+	text := v.Model.Drafts[key]
+	if binding != nil && binding.departed != "" && !binding.departedEdited {
+		text = ""
+	}
+	addition := strings.Join(paths, "\n")
+	if text != "" && !strings.HasSuffix(text, "\n") {
+		addition = "\n" + addition
+	}
+	if err := (domain.Submission{Text: text + addition}).ValidateContent(); err != nil {
+		return err
+	}
+	// Keep insertion in the native document's undo history when it is mounted.
+	if binding != nil {
+		end := binding.doc.Text().Len()
+		binding.doc.Edit(func(e *richtext.Edit) {
+			e.ReplaceString(end, end, addition, richtext.Attributes{})
+		})
+		v.publishComposer(key, binding)
+		return nil
+	}
+	v.Model.Drafts[key] = text + addition
+	return nil
 }
 func (v *View) validateAddedAttachments(key string, added []app.DraftAttachment) error {
 	refs := []domain.Attachment{}
