@@ -134,12 +134,12 @@ func (v *View) pickAttachments() {
 	}
 	v.Controller.AttachmentTask(func() app.Update {
 		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Title: "添加附件", Multiple: true, Message: message})
-		return func(m *app.Model) {
+		return func(_ *app.Model) {
 			if err != nil {
-				m.Error = err.Error()
+				v.Model.Error = err.Error()
 				return
 			}
-			if v.attachmentPreparationKey(key) == token && m.WorkspaceID == workspace && m.WorkspaceConnection(workspace) == connection {
+			if v.attachmentPreparationKey(key) == token && v.Model.WorkspaceID == workspace && v.Model.WorkspaceConnection(workspace) == connection {
 				v.addAttachmentFiles(key, paths)
 			}
 		}
@@ -205,29 +205,31 @@ func (v *View) addAttachmentFiles(key string, paths []string) {
 			}
 			added = append(added, draft)
 		}
-		return func(m *app.Model) {
+		return func(_ *app.Model) {
 			v.attachmentPreparing[token]--
 			if v.attachmentPreparationKey(key) != token {
 				return
 			}
-			if len(pathReferences) > 0 && m.WorkspaceID == workspace && m.WorkspaceConnection(workspace) == "local" {
+			if len(pathReferences) > 0 && v.Model.WorkspaceID == workspace && v.Model.WorkspaceConnection(workspace) == "local" {
 				if err := v.appendAttachmentPaths(key, pathReferences); err != nil {
 					problems = append(problems, err.Error())
 				}
 			}
 			if len(added) > 0 {
 				added = slices.DeleteFunc(added, func(a app.DraftAttachment) bool {
-					return a.Attachment.Kind == domain.PathAttachmentResource && (m.WorkspaceID != workspace || v.referenceDeviceID() != device)
+					return a.Attachment.Kind == domain.PathAttachmentResource && (v.Model.WorkspaceID != workspace || v.referenceDeviceID() != device)
 				})
 				for i := range added {
 					if added[i].Attachment.Kind == domain.PathAttachmentResource {
 						added[i].UploadApproved = v.persistenceModel().RemotePathUploads[device]
 					}
 				}
-				v.appendAttachments(key, added)
+				if len(added) > 0 {
+					v.appendAttachments(key, added)
+				}
 			}
 			if len(problems) > 0 {
-				m.Error = strings.Join(problems, "\n")
+				v.Model.Error = strings.Join(problems, "\n")
 			}
 		}
 	})

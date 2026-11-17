@@ -375,3 +375,84 @@ func TestRemoteAttachmentClosingSnapshotCannotRestartRemovedOrReadyFile(t *testi
 		})
 	}
 }
+
+func TestRemoteAttachmentPreparationUsesOriginatingPane(t *testing.T) {
+	for _, local := range []bool{false, true} {
+		for _, stale := range []bool{false, true} {
+			t.Run(fmt.Sprintf("local=%v-stale=%v", local, stale), func(t *testing.T) {
+				root, key := remoteAttachmentFixture(t)
+				if local {
+					root.Model.Snapshot.Workspaces[0].DeviceID = root.Model.LocalDeviceID
+				}
+				root.Model.Drafts[key] = "right draft"
+				clone := *root.Model
+				root.Model.Snapshot.Workspaces = append(root.Model.Snapshot.Workspaces, domain.Workspace{ID: "left", DeviceID: root.Model.LocalDeviceID})
+				clone.Snapshot = root.Model.Snapshot
+				root.Model.WorkspaceID, root.Model.SessionID = "left", "left-session"
+				pane := New(&clone, root.Controller, "")
+				pane.StatePath, pane.Saver, pane.parent = root.StatePath, root.Saver, root
+				pane.attachmentStore = root.staging()
+				root.secondary = pane
+				file := filepath.Join(t.TempDir(), "right.pdf")
+				if err := os.WriteFile(file, []byte("%PDF-1.7\nASCII PDF"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				pane.addAttachmentFiles(key, []string{file})
+				if stale {
+					pane.Model.WorkspaceID = "left"
+				}
+				select {
+				case update := <-root.Controller.Updates:
+					// This is how the production update pump delivers pane work.
+					update(root.Model)
+				case <-time.After(3 * time.Second):
+					t.Fatal("preparation did not finish")
+				}
+				files, text := root.Model.Attachments[key], root.Model.Drafts[key]
+				if stale {
+					if len(files) != 0 || text != "right draft" || pane.Model.Error != "" {
+						t.Fatal("late result changed switched pane", files, text, pane.Model.Error)
+					}
+				} else if local {
+					if !strings.Contains(text, file) || len(files) != 0 {
+						t.Fatal("local path was discarded because root selects another workspace", text)
+					}
+				} else if len(files) != 1 || files[0].DeviceID != "air-device" || files[0].WorkspaceID != "w" {
+					t.Fatal("right pane file disappeared before confirmation", files)
+				}
+			})
+		}
+	}
+}
+
+func TestRemoteAttachmentNativeConfirmationRecording(t *testing.T) {
+	dir := os.Getenv("SHIOJI_REMOTE_ATTACHMENT_CAPTURE")
+	if dir == "" {
+		t.Skip("opt-in native recording")
+	}
+	t.Setenv("SHIOJI_SKILL_SNAPSHOTS", filepath.Join(dir, "confirmation-frames"))
+	v, key := remoteAttachmentFixture(t)
+	v.Model.Drafts[key] = "参考这份资料，调整侧栏的间距和层级。"
+	stageRemoteAttachment(t, v, key)
+	ui := n.NewTester(v.View, 1280, 820)
+	ui.Advance(time.Second)
+	for frame := range 120 {
+		switch frame {
+		case 30:
+			if err := ui.Click("对此设备不再提示"); err != nil {
+				t.Fatal(err)
+			}
+		case 55:
+			if err := ui.Click("取消远程附件上传"); err != nil {
+				t.Fatal(err)
+			}
+		case 80:
+			stageRemoteAttachment(t, v, key)
+		}
+		ui.Advance(time.Second / 30)
+		saveNativeSkillImage(t, ui, fmt.Sprintf("frame-%04d.png", frame))
+	}
+	if v.Model.RemotePathUploads["air-device"] || v.Model.Drafts[key] != "参考这份资料，调整侧栏的间距和层级。" {
+		t.Fatal("recorded cancellation changed consent or draft")
+	}
+}
