@@ -307,6 +307,8 @@ func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock
 			label, pulse, dotColor = "状态待确认", false, t.TextMuted
 		} else if a.compaction != "" {
 			label = "正在压缩上下文"
+		} else {
+			label = v.progressFor(c, turn).activityCaption(c, label)
 		}
 		font.Size = 11
 		textWidth, _ := n.ShapeText(label, font, 0).Size()

@@ -435,6 +435,9 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 					if phase == "" {
 						phase = "进行中"
 					}
+					if !handoff {
+						phase = v.runningProgress.activityCaption(c, phase)
+					}
 					w, _ := n.ShapeText(phase, font, 0).Size()
 					// Padding must leave with the slot; native layout cannot
 					// shrink a box below its remaining padding.

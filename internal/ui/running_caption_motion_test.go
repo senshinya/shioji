@@ -196,6 +196,7 @@ func TestConversationProgressCaptionCrossfadesAndMovesClockSmoothly(t *testing.T
 			before, _ := ui.Find("运行时长")
 			v.runningProgress.label = "正在执行命令"
 			ui.Frame()
+			ui.Advance(180 * time.Millisecond)
 			first, _ := ui.Find("运行时长")
 			ui.Advance(60 * time.Millisecond)
 			middle, _ := ui.Find("运行时长")
@@ -208,6 +209,7 @@ func TestConversationProgressCaptionCrossfadesAndMovesClockSmoothly(t *testing.T
 			pixels := ui.Image()
 			v.runningProgress.label = "正在执行工具"
 			ui.Frame()
+			ui.Advance(180 * time.Millisecond)
 			firstPixels := latestTextDifference(pixels, ui.Image(), r)
 			ui.Advance(80 * time.Millisecond)
 			middlePixels := ui.Image()

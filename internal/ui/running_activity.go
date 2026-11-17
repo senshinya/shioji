@@ -140,12 +140,43 @@ type runningProgress struct {
 	label                string
 	started              time.Time
 	handoff              *progressHandoff
+	caption              string
+	pendingCaption       string
+	captionSince         time.Time
 }
 
 const (
 	progressFadeDuration    = 140 * time.Millisecond
 	progressReclaimDuration = 180 * time.Millisecond
+	toolCaptionDelay        = 180 * time.Millisecond
 )
+
+// Coalesce brief tool activity before starting a text/width transition. This
+// only filters presentation: completion and other phases still replace the
+// caption immediately, and the worker's execution state is never delayed.
+// Keep it on the turn so disclosure changes and the offscreen proxy share it.
+func (p *runningProgress) activityCaption(c *n.Context, label string) string {
+	if label != "正在执行命令" && label != "正在执行工具" {
+		p.caption, p.pendingCaption = label, ""
+		return label
+	}
+	if p.caption == "" {
+		p.caption = "进行中"
+	}
+	if p.caption == label {
+		p.pendingCaption = ""
+		return label
+	}
+	if p.pendingCaption != label {
+		p.pendingCaption, p.captionSince = label, c.Now()
+	}
+	if c.Now().Sub(p.captionSince) < toolCaptionDelay {
+		c.AnimationFrame()
+		return p.caption
+	}
+	p.caption, p.pendingCaption = label, ""
+	return label
+}
 
 type progressHandoff struct {
 	group  string
@@ -241,6 +272,12 @@ func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domai
 		if motion := v.toolMotions[previousGroup]; motion != nil {
 			fadeAt = motion.start.Add(motion.duration)
 		}
+		// The outgoing group keeps the words it actually presented. The new
+		// footer can resolve its own phase without retargeting that snapshot.
+		if p.caption != "" {
+			p.label = p.caption
+		}
+		p.pendingCaption = ""
 		p.handoff = &progressHandoff{group: previousGroup, fadeAt: fadeAt}
 	}
 	if p.handoff != nil {
@@ -322,6 +359,9 @@ type progressLabelExtent struct {
 }
 
 func (v *View) progressStatus(c *n.Context, t *n.Theme, a runningActivity, p *runningProgress) {
+	if p != nil {
+		a.label = p.activityCaption(c, a.label)
+	}
 	row := n.Row(c.Key("running-status")).Gap(6).AlignItems(n.Baseline)
 	if p == nil || p.handoff == nil {
 		row.Transition(fadeMotion(c, 120*time.Millisecond))

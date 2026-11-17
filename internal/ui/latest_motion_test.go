@@ -229,6 +229,7 @@ func TestLatestControlCrossfadesChangedWords(t *testing.T) {
 	before := ui.Image()
 	latestMotionPhase(v, "tool") // Same width, only the final two words change.
 	ui.Frame()
+	ui.Advance(180 * time.Millisecond)
 	first := latestTextDifference(before, ui.Image(), label)
 	ui.Advance(80 * time.Millisecond)
 	middleImage := ui.Image()
