@@ -422,7 +422,7 @@ func (s *Server) suspendMaintenanceEvents(id string) {
 	events := s.runtimeEvents[id]
 	s.runtimeMu.RUnlock()
 	if events != nil {
-		events.Store(false)
+		events.deactivate()
 	}
 }
 

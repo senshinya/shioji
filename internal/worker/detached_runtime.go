@@ -14,15 +14,15 @@ import (
 
 type runtimeEventGate struct {
 	atomic.Bool
-	mu   sync.RWMutex
-	done chan struct{}
+	mu       sync.RWMutex
+	done     chan struct{}
+	doneOnce sync.Once
 }
 
 func (g *runtimeEventGate) deactivate() {
 	g.mu.Lock()
-	if g.Swap(false) {
-		close(g.done)
-	}
+	g.Store(false)
+	g.doneOnce.Do(func() { close(g.done) })
 	g.mu.Unlock()
 }
 

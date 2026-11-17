@@ -174,7 +174,7 @@ func (s *Server) commitArchiveDeletion(method string, in protocol.ArchiveDeleteI
 		gate := s.runtimeEvents[id]
 		s.runtimeMu.RUnlock()
 		if gate != nil {
-			gate.Store(false)
+			gate.deactivate()
 		}
 		if scope := scopes[id]; scope != nil {
 			op, e := scope.ManualStopOperation()
