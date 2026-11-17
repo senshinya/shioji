@@ -2,6 +2,8 @@
 
 核查日期：2026-11-17。结论用于 Shioji 本轮升级改造。用户已决定直接采用 Lody 的机制，接受其未登记进程覆盖范围，不再增加独立会话宿主或完整后代追踪架构。以下参考源码分析在实施前完成；实施现状见下段，三台正式设备没有停止或更新。
 
+> **最新复核（2026-11-17）**：主体机制已实施，但仍发现四处未对齐，已分别重复复现三次：会话接续新版仍用旧进程空闲闸门、业务 RPC 失效时缺少独立关闭路径、已提交版本恢复被误当成一次性候选、过期意图在空闲返回边界仍可切换。详情见文末“再次边界复核”。本轮为源码检查与隔离探针，没有修复或部署这些新发现。
+
 ## 2026-11-17 实施补充
 
 已按用户追加授权接入自建 worktree 的归档备份、目录回收、保留分支与延迟恢复；多会话共用 checkout 时等最后一个使用者归档，失败按条保留重试。被 Git 忽略的文件不进入备份，与 Lody 相同；原项目与 harness 原生历史不删除。会话永久删除统一为一次确认，应用记录先删除、物理退出由后台处理。
@@ -180,6 +182,49 @@ Agent 安装更新另由 `ManagedRuntimeUpdateCoordinator` 去重、后台准备
 Lody 的通用 GC 有原生后台活动的 24 小时保护，但固定版本 Codex ACP adapter 没有报告这项活动。Shioji 直连 Codex 能观察到真实后台工作，保留这项保护；不能为了复制缺失报告而丢弃已有执行事实。压力回收可提前终止符合条件的等待型后台工作。闲置 20 分钟／扫描 30 秒、未登记进程范围、首次旧版迁移由用户手动处理，均沿用已有决定。Go 没有 V8 heap，不复制 Lody 的 V8 OOM 专用计数；采用 macOS 的实际内核压力等级。
 
 这些对齐消除已重现的实现缺口，不承诺操作系统权限拒绝、持久化失败、不可确认 writer 退出或候选损坏时仍能成功升级。Lody 本身在交接不确定时也会 blocked。不能把删除强制处理页面理解为删除这些真实失败语义。
+
+
+## 2026-11-17 再次边界复核：仍有四项未对齐
+
+检查 Shioji `a3dcd3211f856cb67fc69b85a2860a95b052d00b`，包含上轮并发回收修复 `40087a9`。同时 fetch 并核对 Lody `eff59dca5f6099d158a8ba1c16f256ddbeae6ad8`；原固定基线仍为 `fb05adc…`，Codex adapter 子模块仍是 `f2a140…`。新增差异没有改变下面四项所依据的原升级／终止主体。没有把已有规格或上一轮测试结论代替当前源码。
+
+### 1. 高优先级：接续新版 Agent 仍被闲置 Node 内核卡住
+
+`internal/worker/session_runtime.go:110` 在确认安装版本变化并检查实际轮次／请求后，仍调用 `Scope.FenceIfIdle`。其 `internal/managedexec/manager_darwin.go:783–800` 要求登记组中不能有 root／anchor 以外的成员。这正是历史“仍有后台进程，结束后更新”的进程存活判据；worker 自身升级虽然已经改用业务准入，这条 Agent 安装接续路径还没有改。
+
+探针使用实际 worker 切换函数、中立版本变化 harness 夹具，以及真实登记 Node 父子进程。前置状态为 completed、HasActiveWork=false。三轮都返回“仍有后台进程，结束后更新”；没有该常驻进程的既有升级用例三轮均通过。该证据不冒充真实 Codex 安装器端到端部署。
+
+Lody 在安全轮次边界退休旧 Session 并强制清理其登记范围，再创建后继；不会要求闲置 MCP／Node 先自行消失。修正方向是保留业务活动、请求和准确代次检查，复用已有退休流程，不再把这个旧 OS 后代空闲检查作为版本接续门槛。
+
+### 2. 高优先级：关闭路径与业务 RPC 共用故障面
+
+Lody 的 managed child 在业务 ready 之前已持有 IPC 生命周期通道；普通 supervisor 的 graceful 请求失败还有 TERM fallback，再给退出预算。Shioji `internal/supervisor/host_darwin.go:595–608` 只能请求业务 socket 上的 worker.drain；请求失败后不立即启动其他正常退出路径，而是等同一预算耗尽，再调用 stopExact(c,0)，几乎同时发送 TERM 与 KILL。
+
+隔离真实子进程没有业务 socket，但收到 TERM 后只需 20 毫秒就能完成写入并出具准确 drained。三轮全部被 KILL，均无 drained；同一子进程预先通过独立信号开始正常退出时，三轮全部成功。探针把总预算压到 250 毫秒以验证顺序，生产预算没有改动。
+
+生产 worker 的 DrainedReceipt 还要求 drainOperation 已由 RPC 设置，所以补一个裸 TERM 并不等于完成对齐。需要从启动就可用的私有生命周期通道承载同一操作、实例和策略，并在 owning worker 的准入边界重新核验；不得把 RPC 错误当成越过 when-idle 的结束授权。这条新探针不能直接证明上轮单次 100 毫秒回滚失败也由此引起。
+
+### 3. 高优先级：已提交版本的恢复没有暂时启动重试
+
+Run 会将磁盘已有 applied／rolled-back 操作以 paused=true 重建，等身份核对和 resume 后再开放接纳。但 startSelectedRetry 在 `internal/supervisor/start_retry.go:41` 对任何 paused 直接返回首次错误，连退出码 2／3 的依赖或端点暂时不可用也不再重试，随后持久 blocked。
+
+真实子进程第一次退出 2，80 毫秒后移除模拟依赖故障；paused=true 三轮立即失败，paused=false 三轮能继续重试并 ready。Lody 已提交选择恢复后的普通启动仍保留其 retryable／occupied 重试路径；只有尚未确认的候选与回退保留一次性失败语义。修正方向是区分“已提交但尚未 resume”和“尚未提交候选”，不能继续用 paused 一位同时决定这两种失败策略。
+
+### 4. 中优先级：等待到期没有在切换前再次核验
+
+Lody 持久 expiresAtMs 并在实际处理升级退出时重新比较绝对时间。Shioji 在准备之后才启动 24 小时 timer；等待循环中，worker.prepare-drain 一旦返回 Ready=true 就先 break，只有非 ready 分支才读取 expires.C。切换前只检查取消，未检查到期，因此等待查询跨过到期边界仍可能使用已过期意图切换。
+
+确定性探针只在 Go overlay 中把等待 TTL 从 24 小时压成 20 毫秒，并让原 fixture 的空闲 RPC 等待 70 毫秒；其余生产分支未改。三轮均 applied，而预期应过期失败并保留旧版。这里是压缩时钟的边界证明，没有声称真实等了 24 小时。修正应使用稳定绝对到期时间，并在关闭旧接纳／切换前复核。
+
+### 相邻机制与明确边界
+
+本轮 22 项已有专项通过：归档立即接纳、失败分离、恢复不自启、初始化停止、迟到归档、删除回执不等待 Close、记录修复后重试、最终写入、辅助进程退出、强制回收与归属保护、自建 worktree 备份／共享／删除／失败重试／其他 checkout 不阻塞，以及无 drained 不启动候选等。没有在归档、永久删除和自建 worktree 再发现新的可复现缺口；这不是全仓库验收声明。
+
+参数差异（20 分钟／30 秒）、未登记 detached 后代不兜底、首次旧状态迁移手动处理，以及 Shioji 额外的同 checkout 安全保护均为既定决定，不重复算成遗漏。Tailnet 为独立服务，其上轮偶发启动失败没有因此被认定为 Lody worker 的机制差异。
+
+Lody 新增 `44ac3e3`／`8168e39`：后台 Agent 工作结束后才发布完成／未读；准确实例先退出则发布中断，Stop／归档／删除／新轮次会撤销旧等待。Shioji 当前在父 turn.completed 时记录 ReplyCompletion 并产生“回复已完成”通知，尚无这套延迟发布。这是原基线之后的上游新语义，本轮仅源码确认，未将其算入上述四项遗漏或称为升级阻塞。`776f82b` 的每轮 MCP 选择替换则属于 Lody 的 per-turn 选择功能，不把 Shioji 当前设备原生配置模型冒充同一功能。
+
+原始失败、正向对照、22 项检查、Go overlay 和源码指纹存于同主题验证报告 evidence/mechanism-audit-*。四项探针共 12 次失败；它们是未修复缺口，没有改写成通过。未更改产品实现或三台正式设备。
 
 [runner]: https://github.com/LodyAI/Lody/blob/fb05adc646f02762a62c19cf8e9dadd9f765a3e0/apps/cli/src/commands/daemon-runner.ts#L459
 [start]: https://github.com/LodyAI/Lody/blob/fb05adc646f02762a62c19cf8e9dadd9f765a3e0/apps/cli/src/commands/start.ts#L707
