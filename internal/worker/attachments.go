@@ -72,3 +72,11 @@ func (s *Server) attachmentInputs(in domain.Submission) ([]harness.AttachmentInp
 	}
 	return out, nil
 }
+
+// Admission callers hold dispatchMu; the native/FS reference validation does
+// not. Dispatch itself already runs outside that lock and uses attachmentInputs.
+func (s *Server) attachmentInputsOutsideDispatch(in domain.Submission) ([]harness.AttachmentInput, error) {
+	s.dispatchMu.Unlock()
+	defer s.dispatchMu.Lock()
+	return s.attachmentInputs(in)
+}

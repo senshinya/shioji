@@ -74,7 +74,7 @@ func (s *Server) enqueueLocked(in domain.Submission) (domain.Operation, error) {
 		return domain.Operation{}, err
 	}
 	defer release()
-	if _, err := s.attachmentInputs(in); err != nil {
+	if _, err := s.attachmentInputsOutsideDispatch(in); err != nil {
 		return domain.Operation{}, err
 	}
 	if err := validateAvailableConfiguration(runtime, in.Config); err != nil {
@@ -133,7 +133,7 @@ func (s *Server) changeQueue(method string, in protocol.QueueInput) (domain.Queu
 				}
 			}
 		}
-		if _, err = s.attachmentInputs(domain.Submission{WorkspaceID: d.Session.WorkspaceID, SessionID: in.SessionID, Text: in.Text, Attachments: in.Attachments, Skills: validationSkills, ReferencePositions: in.ReferencePositions}); err != nil {
+		if _, err = s.attachmentInputsOutsideDispatch(domain.Submission{WorkspaceID: d.Session.WorkspaceID, SessionID: in.SessionID, Text: in.Text, Attachments: in.Attachments, Skills: validationSkills, ReferencePositions: in.ReferencePositions}); err != nil {
 			return domain.QueueState{}, err
 		}
 		return s.store.EditQueueContent(in.SessionID, in.ID, in.Revision, in.Text, in.Attachments, in.Skills, in.ReferencePositions)
@@ -184,7 +184,7 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 	} else if a := d.Session.ContextAction; a != nil && a.SourceRef == d.Session.ThreadID && a.State.Active() {
 		return domain.Operation{}, errors.New("上下文压缩期间请将消息加入待发送队列")
 	}
-	if _, err := s.attachmentInputs(in.Input); err != nil {
+	if _, err := s.attachmentInputsOutsideDispatch(in.Input); err != nil {
 		return domain.Operation{}, err
 	}
 	var op domain.Operation
@@ -221,7 +221,7 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 		}
 		ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 		defer cancel()
-		inputs, err := s.attachmentInputs(in.Input)
+		inputs, err := s.attachmentInputsOutsideDispatch(in.Input)
 		if err == nil && runtime.ManagedCoverage() {
 			err = s.coverOperation(op.SessionID, op.ID)
 		}

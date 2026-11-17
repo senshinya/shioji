@@ -224,3 +224,17 @@ func (s *Server) DrainService(in supervisor.Control) (domain.WorkerUpdateResult,
 	s.updating.Store(true)
 	return domain.WorkerUpdateResult{Ready: true, OperationID: in.OperationID, Phase: "switching"}, nil
 }
+
+// A short-lived initialization lease exists before native preparation starts.
+// Its ID is private, so it never collides with a durable user operation or bumps
+// the Stop epoch. Immediate drain can revoke admission while it is waiting.
+func (s *Server) reservePreparation(session string) func() {
+	id := "prepare:" + domain.NewID()
+	s.mu.Lock()
+	if s.dispatchReservations == nil {
+		s.dispatchReservations = map[string]string{}
+	}
+	s.dispatchReservations[id] = session
+	s.mu.Unlock()
+	return func() { s.mu.Lock(); delete(s.dispatchReservations, id); s.mu.Unlock() }
+}

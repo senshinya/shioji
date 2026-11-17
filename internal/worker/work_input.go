@@ -50,7 +50,7 @@ func (s *Server) sendWork(in domain.WorkInput) (domain.WorkInputOperation, error
 		if !slices.Equal(validated, paths) {
 			return none, workNotSent(errors.New("execution directory identity changed"))
 		}
-		if _, err = s.prepareGit(domain.Submission{SessionID: in.SessionID, WorkspaceID: d.Session.WorkspaceID}, d.Session.Context); err != nil {
+		if _, err = s.prepareGitLocked(domain.Submission{SessionID: in.SessionID, WorkspaceID: d.Session.WorkspaceID}, d.Session.Context); err != nil {
 			return none, workNotSent(err)
 		}
 		d, err = s.store.Session(in.SessionID, 0, 1)

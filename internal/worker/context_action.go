@@ -31,6 +31,8 @@ func (s *Server) compactContext(in domain.ContextActionRequest) (domain.Operatio
 	}
 	defer release()
 	transition := s.sessionTransitions[in.SessionID]
+	releasePreparation := s.reservePreparation(in.SessionID)
+	defer releasePreparation()
 	if err := s.admitMemoryPressure(in.SessionID); err != nil {
 		return none, workNotSent(err)
 	}
@@ -61,8 +63,14 @@ func (s *Server) compactContext(in domain.ContextActionRequest) (domain.Operatio
 	if !slices.Equal(paths, validated) {
 		return none, workNotSent(errors.New("execution directory identity changed"))
 	}
-	if _, err = s.prepareGit(domain.Submission{SessionID: in.SessionID, WorkspaceID: d.Session.WorkspaceID}, d.Session.Context); err != nil {
+	if _, err = s.prepareGitLocked(domain.Submission{SessionID: in.SessionID, WorkspaceID: d.Session.WorkspaceID}, d.Session.Context); err != nil {
 		return none, workNotSent(err)
+	}
+	if !transition.active() {
+		return none, errSessionTransitionRetired
+	}
+	if err := s.updateAdmission(); err != nil {
+		return none, err
 	}
 	setup, cancelSetup := context.WithTimeout(transition.ctx, 20*time.Second)
 	defer cancelSetup()

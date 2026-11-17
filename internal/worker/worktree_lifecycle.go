@@ -90,45 +90,58 @@ func (s *Server) restoreOwnedWorktrees(paths []string) error {
 		if err = s.ownedWorktreePath(w); err != nil {
 			return err
 		}
-		if _, e = os.Lstat(w.Path); e == nil {
-			status, e := queryGit(s.ctx, w.Path)
-			if e != nil || status.Checkout != w.Path || status.CommonDir != w.CommonDir {
-				return errors.New("自建 worktree 的目录身份已改变")
-			}
-			continue
-		} else if !os.IsNotExist(e) {
+		common := ""
+		if _, e := os.Lstat(w.Path); os.IsNotExist(e) {
+			common = w.CommonDir
+		}
+		release, e := s.beginGitTransition(w.Path, common)
+		if e != nil {
 			return e
 		}
-		release := s.beginWorktreeTransition(w.Path)
-		s.dispatchMu.Unlock()
-		target := w.Branch
-		if target == "" {
-			target = w.Head
-		}
-		args := []string{"worktree", "add"}
-		if w.Branch == "" {
-			args = append(args, "--detach")
-		}
-		_, e = gitRun(s.ctx, w.CommonDir, append(args, w.Path, target)...)
-		if e == nil {
-			// Git does not preserve empty execution subdirectories.
-			for _, path := range paths {
-				if store.WorktreeContains(w.Path, path) {
-					e = errors.Join(e, os.MkdirAll(path, 0700))
+		e = func() error {
+			defer release()
+			if _, e = os.Lstat(w.Path); e == nil {
+				status, e := s.queryGitOutsideDispatch(s.ctx, w.Path)
+				if e != nil || status.Checkout != w.Path || status.CommonDir != w.CommonDir {
+					return errors.New("自建 worktree 的目录身份已改变")
+				}
+				return s.updateAdmission()
+			} else if !os.IsNotExist(e) {
+				return e
+			}
+			s.dispatchMu.Unlock()
+			target := w.Branch
+			if target == "" {
+				target = w.Head
+			}
+			args := []string{"worktree", "add"}
+			if w.Branch == "" {
+				args = append(args, "--detach")
+			}
+			_, e = gitRun(s.ctx, w.CommonDir, append(args, w.Path, target)...)
+			if e == nil {
+				// Git does not preserve empty execution subdirectories.
+				for _, path := range paths {
+					if store.WorktreeContains(w.Path, path) {
+						e = errors.Join(e, os.MkdirAll(path, 0700))
+					}
 				}
 			}
-		}
-		s.dispatchMu.Lock()
-		if e == nil {
-			w.Removed = false
-			e = s.store.SaveOwnedWorktree(w)
-		}
-		release()
+			s.dispatchMu.Lock()
+			if e == nil {
+				w.Removed = false
+				e = s.store.SaveOwnedWorktree(w)
+			}
+			if e != nil {
+				return fmt.Errorf("恢复自建 worktree：%w", e)
+			}
+			return s.updateAdmission()
+		}()
 		if e != nil {
-			return fmt.Errorf("恢复自建 worktree：%w", e)
+			return e
 		}
 	}
-	return nil
+	return s.updateAdmission()
 }
 
 // A shared checkout is removable only after all independent users are archived
@@ -231,7 +244,7 @@ func (s *Server) cleanOwnedWorktrees(now time.Time) error {
 		if now.Before(s.worktreeRetries[w.Path].next) {
 			continue
 		}
-		if s.worktreeTransitions[w.Path] != nil {
+		if s.worktreeTransitions[w.Path] != nil || s.worktreeTransitions[w.CommonDir] != nil {
 			continue
 		}
 		ready, referenced, e := s.ownedWorktreeCollectable(w)
@@ -246,7 +259,11 @@ func (s *Server) cleanOwnedWorktrees(now time.Time) error {
 			result = errors.Join(result, e)
 			continue
 		}
-		release := s.beginWorktreeTransition(w.Path)
+		release, e := s.beginGitTransition(w.Path, w.CommonDir)
+		if e != nil {
+			result = errors.Join(result, e)
+			continue
+		}
 		s.dispatchMu.Unlock()
 		e = s.archiveOwnedWorktree(w)
 		s.dispatchMu.Lock()

@@ -867,8 +867,6 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		if err != nil {
 			return nil, err
 		}
-		s.dispatchMu.Lock()
-		defer s.dispatchMu.Unlock()
 		return s.gitStatus(q)
 	case "git.checkout":
 		in, err := decode[protocol.CheckoutInput](body)
@@ -902,16 +900,12 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		if err != nil {
 			return nil, err
 		}
-		s.dispatchMu.Lock()
-		defer s.dispatchMu.Unlock()
 		return s.changedFiles(q)
 	case "git.file":
 		q, err := decode[protocol.FileQuery](body)
 		if err != nil {
 			return nil, err
 		}
-		s.dispatchMu.Lock()
-		defer s.dispatchMu.Unlock()
 		return s.fileVersions(q)
 	case "turn.enqueue":
 		in, err := decode[domain.Submission](body)
@@ -1065,7 +1059,18 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 	if err = s.sessionMaintenanceAdmission(in.SessionID); err != nil {
 		return domain.Operation{}, err
 	}
-	if _, err = s.attachmentInputs(in); err != nil {
+	releasePreparation := s.reservePreparation(in.SessionID)
+	defer releasePreparation()
+	var preparation *sessionTransition
+	if in.SessionID != "" {
+		release, err := s.beginSessionTransition(s.ctx, in.SessionID)
+		if err != nil {
+			return domain.Operation{}, err
+		}
+		defer release()
+		preparation = s.sessionTransitions[in.SessionID]
+	}
+	if _, err = s.attachmentInputsOutsideDispatch(in); err != nil {
 		return domain.Operation{}, err
 	}
 	id, err := s.inputHarness(in)
@@ -1166,9 +1171,24 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 		return domain.Operation{}, err
 	}
 	launch := domain.LaunchContext{DeviceID: s.store.DeviceID(), CWD: paths[0], AdditionalDirectories: append([]string(nil), paths[1:]...)}
-	launch, err = s.prepareGit(in, launch)
+	launch, err = s.prepareGitLocked(in, launch)
 	if err != nil {
 		return domain.Operation{}, err
+	}
+	if err := s.updateAdmission(); err != nil {
+		return domain.Operation{}, err
+	}
+	if preparation != nil && !preparation.active() {
+		return domain.Operation{}, errSessionTransitionRetired
+	}
+	if in.SessionID == "" {
+		current, e := s.store.Workspace(in.WorkspaceID)
+		if e != nil {
+			return domain.Operation{}, e
+		}
+		if strings.Join(current.Folders, "\x00") != strings.Join(paths, "\x00") {
+			return domain.Operation{}, errors.New("工作区执行目录已改变，输入未发送")
+		}
 	}
 	var op domain.Operation
 	if queueRevision > 0 && immediate {

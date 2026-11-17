@@ -30,6 +30,8 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 	}
 	defer transition()
 	owner := s.sessionTransitions[in.SessionID]
+	releasePreparation := s.reservePreparation(in.SessionID)
+	defer releasePreparation()
 	if in.Restart {
 		if err := s.admitMemoryPressure(in.SessionID); err != nil {
 			return domain.HistoryOperation{}, err
@@ -70,12 +72,15 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 		if e != nil {
 			return op, e
 		}
+		if !owner.active() {
+			return op, errSessionTransitionRetired
+		}
 		op, e = s.store.PrepareHistory(in)
 		if e != nil {
 			return op, e
 		}
 		if in.Restart {
-			if _, e = s.attachmentInputs(op.Submission); e != nil {
+			if _, e = s.attachmentInputsOutsideDispatch(op.Submission); e != nil {
 				s.store.FailHistory(op.ID, e)
 				return op, e
 			}
@@ -106,7 +111,7 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 		return op, err
 	}
 	if in.Restart {
-		if _, err = s.attachmentInputs(op.Submission); err != nil {
+		if _, err = s.attachmentInputsOutsideDispatch(op.Submission); err != nil {
 			return op, err
 		}
 	}
@@ -171,6 +176,9 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 }
 
 func (s *Server) historyPreflight(in domain.HistoryChange) error {
+	if err := s.updateAdmission(); err != nil {
+		return err
+	}
 	d, err := s.store.Session(in.SessionID, 0, 1)
 	if err != nil {
 		return err
@@ -200,8 +208,14 @@ func (s *Server) historyPreflight(in domain.HistoryChange) error {
 	if strings.Join(paths, "\x00") != strings.Join(valid, "\x00") {
 		return errors.New("执行目录身份已改变")
 	}
-	if _, err = s.prepareGit(domain.Submission{SessionID: d.Session.ID, WorkspaceID: d.Session.WorkspaceID, Config: d.Session.Config}, d.Session.Context); err != nil {
+	if _, err = s.prepareGitLocked(domain.Submission{SessionID: d.Session.ID, WorkspaceID: d.Session.WorkspaceID, Config: d.Session.Config}, d.Session.Context); err != nil {
 		return err
+	}
+	if err := s.updateAdmission(); err != nil {
+		return err
+	}
+	if owner := s.sessionTransitions[in.SessionID]; owner != nil && !owner.active() {
+		return errSessionTransitionRetired
 	}
 	if in.Restart {
 		target, release, e := s.borrowCatalog(d.Session.HarnessID)

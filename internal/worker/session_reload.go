@@ -38,6 +38,8 @@ func (s *Server) reloadSession(in domain.SessionReloadRequest, query bool) (doma
 	}
 	defer release()
 	transition := s.sessionTransitions[in.SessionID]
+	releasePreparation := s.reservePreparation(in.SessionID)
+	defer releasePreparation()
 	if err := s.admitMemoryPressure(in.SessionID); err != nil {
 		return result, workNotSent(err)
 	}
@@ -71,6 +73,12 @@ func (s *Server) reloadSession(in domain.SessionReloadRequest, query bool) (doma
 	}
 	if !slices.Equal(paths, validated) {
 		return result, workNotSent(errors.New("会话执行目录的实际位置已改变"))
+	}
+	if !transition.active() {
+		return result, errSessionTransitionRetired
+	}
+	if err := s.updateAdmission(); err != nil {
+		return result, err
 	}
 	op, err = s.store.AcceptSessionReload(in)
 	if err != nil {

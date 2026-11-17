@@ -151,6 +151,11 @@ func (s *Server) gitDirectory(q protocol.GitQuery) (string, error) {
 	return "", errors.New("workspace unavailable")
 }
 func (s *Server) gitStatus(q protocol.GitQuery) (domain.GitStatus, error) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	return s.gitStatusLocked(q)
+}
+func (s *Server) gitStatusLocked(q protocol.GitQuery) (domain.GitStatus, error) {
 	if status, removed, err := s.removedWorktreeStatus(q); removed || err != nil {
 		return status, err
 	}
@@ -158,9 +163,13 @@ func (s *Server) gitStatus(q protocol.GitQuery) (domain.GitStatus, error) {
 	if err != nil {
 		return domain.GitStatus{}, err
 	}
-	status, err := queryGit(s.ctx, dir)
+	observed, err := s.store.Snapshot()
+	if err != nil {
+		return domain.GitStatus{}, err
+	}
+	status, err := s.queryGitOutsideDispatch(s.ctx, dir)
 	if err == nil && status.Applicable {
-		err = s.detectGitContext(status)
+		err = s.detectGitContext(status, observed.Sessions)
 	}
 	return status, err
 }
@@ -172,17 +181,30 @@ func sameCheckout(ctx context.Context, cwd, checkout string) bool {
 	actual, err := filepath.EvalSymlinks(strings.TrimSpace(top))
 	return err == nil && actual == checkout
 }
-func (s *Server) detectGitContext(status domain.GitStatus) error {
+func (s *Server) detectGitContext(status domain.GitStatus, observed ...[]domain.Session) error {
 	snap, err := s.store.Snapshot()
 	if err != nil {
 		return err
 	}
-	for _, session := range snap.Sessions {
+	sessions := snap.Sessions
+	if len(observed) > 0 {
+		sessions = observed[0]
+	}
+	for _, session := range sessions {
 		if session.ContextChanged || (session.GitBranch == "" && session.GitHead == "") {
 			continue
 		}
 		changed := session.GitBranch != status.Branch || (session.GitBranch == "" && session.GitHead != status.Head)
-		if changed && sameCheckout(s.ctx, session.Context.CWD, status.Checkout) {
+		if changed && s.sameCheckoutOutsideDispatch(session.Context.CWD, status.Checkout) {
+			current, e := s.store.Session(session.ID, 0, 1)
+			if e != nil {
+				continue
+			}
+			fresh := current.Session
+			if fresh.ThreadID != session.ThreadID || fresh.Context.CWD != session.Context.CWD || fresh.GitBranch != session.GitBranch || fresh.GitHead != session.GitHead {
+				continue
+			}
+			session = fresh
 			session.ContextChanged = true
 			if _, err = s.store.Apply(session.ID, domain.Event{Type: "session.git", Session: &session}); err != nil {
 				return err
@@ -201,7 +223,7 @@ func (s *Server) checkoutGuard(status domain.GitStatus, own string) error {
 		if e != nil {
 			return e
 		}
-		if sameCheckout(s.ctx, d.Session.Context.CWD, status.Checkout) {
+		if s.sameCheckoutOutsideDispatch(d.Session.Context.CWD, status.Checkout) {
 			return fmt.Errorf("%s 的旧执行尚未确认停止；请等待或新建 worktree", d.Session.Title)
 		}
 	}
@@ -210,7 +232,7 @@ func (s *Server) checkoutGuard(status domain.GitStatus, own string) error {
 		return err
 	}
 	for _, session := range snap.Sessions {
-		if !sameCheckout(s.ctx, session.Context.CWD, status.Checkout) {
+		if !s.sameCheckoutOutsideDispatch(session.Context.CWD, status.Checkout) {
 			continue
 		}
 		busy := session.Status.BlocksCheckout()
@@ -240,12 +262,24 @@ func (s *Server) checkout(in protocol.CheckoutInput) (domain.GitStatus, error) {
 	if in.SessionID == "" {
 		return domain.GitStatus{}, errors.New("Home branch selection is applied only on submission")
 	}
-	status, err := s.gitStatus(in.GitQuery)
+	status, err := s.gitStatusLocked(in.GitQuery)
 	if err != nil {
 		return status, err
 	}
 	if !status.Applicable {
 		return status, errors.New("not a Git repository")
+	}
+	release, err := s.beginGitTransition(status.Checkout, status.CommonDir)
+	if err != nil {
+		return status, err
+	}
+	defer release()
+	status, err = s.queryGitOutsideDispatch(s.ctx, status.Checkout)
+	if err != nil {
+		return status, err
+	}
+	if err = s.updateAdmission(); err != nil {
+		return status, err
 	}
 	d, err := s.store.Session(in.SessionID, 0, 1)
 	if err != nil {
@@ -275,10 +309,10 @@ func (s *Server) checkout(in protocol.CheckoutInput) (domain.GitStatus, error) {
 		if status.Dirty {
 			return status, dirtyBranchSwitchError(status, in.Branch)
 		}
-		if _, err = gitRun(s.ctx, status.Checkout, "switch", "--no-guess", in.Branch); err != nil {
+		if _, err = s.gitRunOutsideDispatch(s.ctx, status.Checkout, "switch", "--no-guess", in.Branch); err != nil {
 			return status, err
 		}
-		status, err = queryGit(s.ctx, status.Checkout)
+		status, err = s.queryGitOutsideDispatch(s.ctx, status.Checkout)
 		if err != nil {
 			return status, err
 		}
@@ -297,7 +331,44 @@ func (s *Server) checkout(in protocol.CheckoutInput) (domain.GitStatus, error) {
 	return status, err
 }
 func (s *Server) prepareGit(in domain.Submission, launch domain.LaunchContext) (domain.LaunchContext, error) {
-	status, err := queryGit(s.ctx, launch.CWD)
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	return s.prepareGitLocked(in, launch)
+}
+func (s *Server) prepareGitLocked(in domain.Submission, launch domain.LaunchContext) (domain.LaunchContext, error) {
+	owner := s.sessionTransitions[in.SessionID]
+	valid := func() error {
+		if err := s.updateAdmission(); err != nil {
+			return err
+		}
+		if err := s.ctx.Err(); err != nil {
+			return err
+		}
+		if owner != nil && !owner.active() {
+			return errSessionTransitionRetired
+		}
+		if in.WorkspaceID != "" {
+			w, e := s.store.Workspace(in.WorkspaceID)
+			if e != nil {
+				return e
+			}
+			if w.Archived {
+				return errors.New("工作区已归档")
+			}
+		}
+		if in.SessionID != "" {
+			d, e := s.store.Session(in.SessionID, 0, 1)
+			if e != nil {
+				return e
+			}
+			if d.Session.Archived || d.Session.Context.CWD != launch.CWD {
+				return errors.New("会话执行上下文已改变")
+			}
+		}
+		return nil
+	}
+
+	status, err := s.queryGitOutsideDispatch(s.ctx, launch.CWD)
 	if err != nil {
 		return launch, err
 	}
@@ -306,6 +377,35 @@ func (s *Server) prepareGit(in domain.Submission, launch domain.LaunchContext) (
 			return launch, errors.New("Git selection no longer applies to this directory")
 		}
 		return launch, nil
+	}
+
+	var release func()
+	for {
+		common := ""
+		mutating := in.Git.NewWorktree || in.SessionID == "" && in.Git.Branch != "" && in.Git.Branch != status.Branch
+		if mutating {
+			common = status.CommonDir
+		}
+		release, err = s.beginGitTransition(status.Checkout, common)
+		if err != nil {
+			return launch, err
+		}
+		current, e := s.queryGitOutsideDispatch(s.ctx, launch.CWD)
+		if e != nil {
+			release()
+			return launch, e
+		}
+		if !mutating && in.SessionID == "" && in.Git.Branch != "" && in.Git.Branch != current.Branch {
+			release()
+			status = current
+			continue
+		}
+		status = current
+		break
+	}
+	defer release()
+	if err = valid(); err != nil {
+		return launch, err
 	}
 	if err = s.detectGitContext(status); err != nil {
 		return launch, err
@@ -347,7 +447,7 @@ func (s *Server) prepareGit(in domain.Submission, launch domain.LaunchContext) (
 			return launch, err
 		}
 		dest := filepath.Join(base, id)
-		if _, err = gitRun(s.ctx, status.Checkout, "worktree", "add", "-b", "shioji/"+id, dest, branch); err != nil {
+		if _, err = s.gitRunOutsideDispatch(s.ctx, status.Checkout, "worktree", "add", "-b", "shioji/"+id, dest, branch); err != nil {
 			return launch, err
 		}
 		// Preserve a subdirectory execution context within the new checkout.
@@ -364,7 +464,7 @@ func (s *Server) prepareGit(in domain.Submission, launch domain.LaunchContext) (
 			return launch, e
 		}
 		launch.CWD = validated[0]
-		status, err = queryGit(s.ctx, launch.CWD)
+		status, err = s.queryGitOutsideDispatch(s.ctx, launch.CWD)
 		if err != nil {
 			s.removeUnacceptedWorktree(original, in)
 			return launch, err
@@ -383,16 +483,22 @@ func (s *Server) prepareGit(in domain.Submission, launch domain.LaunchContext) (
 		if status.Dirty {
 			return launch, dirtyBranchSwitchError(status, branch)
 		}
-		if _, err = gitRun(s.ctx, status.Checkout, "switch", "--no-guess", branch); err != nil {
+		if err = valid(); err != nil {
 			return launch, err
 		}
-		status, err = queryGit(s.ctx, launch.CWD)
+		if _, err = s.gitRunOutsideDispatch(s.ctx, status.Checkout, "switch", "--no-guess", branch); err != nil {
+			return launch, err
+		}
+		status, err = s.queryGitOutsideDispatch(s.ctx, launch.CWD)
 		if err != nil {
 			return launch, err
 		}
 		if err = s.detectGitContext(status); err != nil {
 			return launch, err
 		}
+	}
+	if err = valid(); err != nil {
+		return launch, err
 	}
 	launch.Repository = status.Checkout
 	launch.Branch = status.Branch
@@ -449,7 +555,7 @@ func (s *Server) changedFiles(q protocol.GitQuery) ([]domain.ChangedFile, error)
 	}
 	files := []domain.ChangedFile{}
 	if status.Head != "" {
-		out, e := gitRun(s.ctx, status.Checkout, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--raw", "--numstat", "-z", "HEAD", "--")
+		out, e := gitRun(s.ctx, status.Checkout, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--raw", "--numstat", "-z", status.Head, "--")
 		if e != nil {
 			return nil, e
 		}
@@ -518,9 +624,9 @@ func (s *Server) fileVersions(q protocol.FileQuery) (domain.FileVersions, error)
 		out.New = string(b)
 	}
 	if status.Head != "" {
-		out.Old, err = gitRun(s.ctx, status.Checkout, "show", "HEAD:"+filepath.ToSlash(q.Path))
+		out.Old, err = gitRun(s.ctx, status.Checkout, "show", status.Head+":"+filepath.ToSlash(q.Path))
 		if err != nil {
-			exists, e := gitRun(s.ctx, status.Checkout, "ls-tree", "--name-only", "HEAD", "--", q.Path)
+			exists, e := gitRun(s.ctx, status.Checkout, "ls-tree", "--name-only", status.Head, "--", q.Path)
 			if e != nil || strings.TrimSpace(exists) != "" {
 				return out, err
 			}
@@ -538,8 +644,8 @@ func (s *Server) removeUnacceptedWorktree(original string, in domain.Submission)
 	id := hex.EncodeToString(sum[:12])
 	dest := filepath.Join(s.config.Directory, "worktrees", id)
 	// No force: unexpected files or another Git user keep the worktree intact.
-	if _, err := gitRun(s.ctx, original, "worktree", "remove", dest); err == nil {
-		_, _ = gitRun(s.ctx, original, "branch", "-d", "shioji/"+id)
+	if _, err := s.gitRunOutsideDispatch(s.ctx, original, "worktree", "remove", dest); err == nil {
+		_, _ = s.gitRunOutsideDispatch(s.ctx, original, "branch", "-d", "shioji/"+id)
 		if canonical, err := filepath.EvalSymlinks(filepath.Dir(dest)); err == nil {
 			_ = s.store.ForgetOwnedWorktree(filepath.Join(canonical, id))
 		}
@@ -566,12 +672,12 @@ func (s *Server) checkGitContexts() error {
 			continue
 		}
 		seen[key] = true
-		status, e := queryGit(s.ctx, session.Context.CWD)
+		status, e := s.queryGitOutsideDispatch(s.ctx, session.Context.CWD)
 		if e != nil {
 			continue
 		}
 		if status.Applicable {
-			if err = s.detectGitContext(status); err != nil {
+			if err = s.detectGitContext(status, snapshot.Sessions); err != nil {
 				return err
 			}
 		}

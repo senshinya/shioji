@@ -52,6 +52,13 @@ func (s *Server) prepareBackgroundStop(id string) (result domain.BackgroundServi
 		return result, nil
 	}
 	if s.build.Managed {
+		s.mu.Lock()
+		reserved := len(s.dispatchReservations) > 0
+		s.mu.Unlock()
+		if reserved {
+			result.Message = "等待已经接纳或正在准备的会话释放"
+			return result, nil
+		}
 		var undo []func() error
 		defer func() {
 			if !s.backgroundStopping.Load() {
