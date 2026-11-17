@@ -37,14 +37,18 @@ func TestPendingActivityDoesNotCountHistoryObservationAsExecution(t *testing.T) 
 		_ = r.call(ctx, "turn/steer", map[string]string{"threadId": "observed"}, nil)
 		finished <- struct{}{}
 	}()
-	<-writer.sent
+	steer := <-writer.sent
 	if adapter.PendingOperations() != 1 {
 		t.Fatal("unsettled steering request not protected")
 	}
 	cancel()
 	<-finished
 	<-finished
+	if adapter.PendingOperations() != 1 {
+		t.Fatal("local cancellation released the unsettled native request")
+	}
+	r.deliverResponse(wire.Message{ID: steer.ID, Result: json.RawMessage(`{}`)})
 	if adapter.PendingOperations() != 0 {
-		t.Fatal("completed/cancelled requests remained busy")
+		t.Fatal("native response did not release ownership")
 	}
 }

@@ -52,7 +52,7 @@ func regressionOptions(t *testing.T) (string, Options) {
 	o.Verify = func(ctx context.Context, build string) (string, domain.WorkerBuild, error) {
 		if build == "" {
 			if _, e := os.Stat(filepath.Join(dir, "fail-start")); e == nil {
-				return "", domain.WorkerBuild{}, errors.New("temporary launch failure")
+				return "", domain.WorkerBuild{}, PermanentStartup(errors.New("invalid selected artifact"))
 			}
 			build = "old"
 			var selected string

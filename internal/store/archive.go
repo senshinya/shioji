@@ -93,7 +93,7 @@ func (s *Store) ArchiveCandidates(now time.Time) ([]ArchiveCandidate, error) {
 // Caller holds the store mutex. The worker also fences process admission before
 // calling these mutations; the database independently rejects pending activity.
 func (s *Store) deletableLocked(session domain.Session) error {
-	if err := s.archivableLocked(session); err != nil {
+	if err := s.deletableStateLocked(session); err != nil {
 		return err
 	}
 	var activity RuntimeIdleState

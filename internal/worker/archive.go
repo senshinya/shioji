@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"shioji/internal/domain"
@@ -103,6 +104,22 @@ func (s *Server) deleteArchive(method string, in protocol.ArchiveDeleteInput) (d
 		}
 		sessions = []domain.Session{d.Session}
 	}
+	// Archival cleanup can be in flight outside device admission. Settle that
+	// exact retirement before deletion inspects groups, then protect only the
+	// selected sessions while physical cleanup runs.
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].ID < sessions[j].ID })
+	for _, session := range sessions {
+		if !in.Force {
+			if err := s.cleanRuntimeRetirements(session.ID); err != nil {
+				return zero, err
+			}
+		}
+		release, err := s.beginSessionTransition(s.ctx, session.ID)
+		if err != nil {
+			return zero, err
+		}
+		defer release()
+	}
 	if in.Force {
 		return s.forceDeleteArchive(method, in, sessions)
 	}
@@ -176,7 +193,7 @@ func (s *Server) deleteArchive(method string, in protocol.ArchiveDeleteInput) (d
 		if scope := scopes[session.ID]; in.CloseRuntime && scope != nil {
 			err = s.closeArchiveEnvironment(ctx, session.ID, scope)
 		} else {
-			err = s.cleanManagedExecution(ctx, session.ID)
+			err = s.cleanManagedExecutionOutsideDispatch(ctx, session.ID)
 		}
 		cancel()
 		if err != nil {
@@ -191,7 +208,9 @@ func (s *Server) deleteArchive(method string, in protocol.ArchiveDeleteInput) (d
 				gate.Store(false)
 			}
 			ctx, cancel = context.WithTimeout(s.ctx, 10*time.Second)
+			s.dispatchMu.Unlock()
 			err = r.Close(ctx)
+			s.dispatchMu.Lock()
 			cancel()
 			if err != nil {
 				return zero, err

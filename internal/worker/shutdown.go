@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"shioji/internal/harness"
 	"shioji/internal/managedexec"
 	"sync"
 	"time"
@@ -39,81 +38,7 @@ func (s *Server) shutdown() error {
 	add(func() error { s.closeToolAuthorizations(); return nil })
 	add(func() error { s.closeSignIns(); return nil })
 	add(func() error { return s.retireAuxiliaryExecutions(work) })
-	// Reserve dispatch before capturing. The timeout path never claims it has
-	// acquired this lock or released a writer while an old producer still runs.
-	add(func() error {
-		s.dispatchMu.Lock()
-		defer s.dispatchMu.Unlock()
-		ids := map[string]bool{}
-		s.runtimeMu.RLock()
-		for id := range s.runtimes {
-			ids[id] = true
-		}
-		s.runtimeMu.RUnlock()
-		entries, err := os.ReadDir(s.executions.Directory)
-		if err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			if entry.IsDir() {
-				ids[entry.Name()] = true
-			}
-		}
-		var group sync.WaitGroup
-		var mu sync.Mutex
-		var failure error
-		for id := range ids {
-			group.Add(1)
-			go func(id string) {
-				defer group.Done()
-				e := s.retireRuntime(work, id, "shutdown", true)
-				mu.Lock()
-				failure = errors.Join(failure, e)
-				mu.Unlock()
-			}(id)
-		}
-		for _, id := range s.adapterOrder {
-			if r := s.catalogRuntime(id); r != nil {
-				group.Add(1)
-				go func(id string, r harness.Runtime) {
-					defer group.Done()
-					e := r.Close(work)
-					if e == nil {
-						os.Remove(filepath.Join(s.catalogDirectory(id), "runtime-process.json"))
-					}
-					mu.Lock()
-					failure = errors.Join(failure, e)
-					mu.Unlock()
-				}(id, r)
-			}
-		}
-		pending, detachedErr := s.executions.Detached()
-		mu.Lock()
-		failure = errors.Join(failure, detachedErr)
-		mu.Unlock()
-		for _, scope := range pending {
-			s.retirementMu.Lock()
-			retired := s.detachedRuntimes[scope.Generation]
-			if retired == nil {
-				retired = &detachedRuntime{scope: scope}
-			}
-			attempt := *retired
-			s.retirementMu.Unlock()
-			group.Add(1)
-			go func() {
-				defer group.Done()
-				e := closeDetachedRuntime(work, &attempt)
-				if e == nil {
-					e = scope.ResolveDetached()
-				}
-				mu.Lock()
-				failure = errors.Join(failure, e)
-				mu.Unlock()
-			}()
-		}
-		group.Wait()
-		return failure
-	})
+	add(func() error { return s.retireRuntimesForShutdown(work) })
 	add(func() error { s.wg.Wait(); return nil })
 	if s.health != nil {
 		add(s.health.Close)
@@ -173,5 +98,74 @@ func (s *Server) retireAuxiliaryExecutions(ctx context.Context) error {
 		}(entry.Name())
 	}
 	wait.Wait()
+	return result
+}
+
+// Capture and fence under admission; callbacks and native cleanup settle after
+// releasing it, so their last messages can finish within the common deadline.
+func (s *Server) retireRuntimesForShutdown(ctx context.Context) error {
+	s.dispatchMu.Lock()
+	ids := map[string]bool{}
+	s.runtimeMu.RLock()
+	for id := range s.runtimes {
+		ids[id] = true
+	}
+	s.runtimeMu.RUnlock()
+	entries, err := os.ReadDir(s.executions.Directory)
+	if err != nil {
+		s.dispatchMu.Unlock()
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			ids[entry.Name()] = true
+		}
+	}
+	var tasks []func() error
+	var result error
+	for id := range ids {
+		op, err := s.beginRuntimeRetirement(ctx, id, "shutdown", true)
+		result = errors.Join(result, err)
+		if op != nil {
+			tasks = append(tasks, func() error { return waitRuntimeRetirement(ctx, op) })
+		}
+	}
+	for _, id := range s.adapterOrder {
+		if r := s.catalogRuntime(id); r != nil {
+			tasks = append(tasks, func() error {
+				err := r.Close(ctx)
+				if err == nil {
+					os.Remove(filepath.Join(s.catalogDirectory(id), "runtime-process.json"))
+				}
+				return err
+			})
+		}
+	}
+	pending, err := s.executions.Detached()
+	result = errors.Join(result, err)
+	for _, scope := range pending {
+		s.retirementMu.Lock()
+		retired := s.detachedRuntimes[scope.Generation]
+		if retired == nil {
+			retired = &detachedRuntime{scope: scope}
+		}
+		attempt := *retired
+		s.retirementMu.Unlock()
+		tasks = append(tasks, func() error {
+			err := closeDetachedRuntime(ctx, &attempt)
+			if err == nil {
+				err = scope.ResolveDetached()
+			}
+			return err
+		})
+	}
+	s.dispatchMu.Unlock()
+	var group sync.WaitGroup
+	var mu sync.Mutex
+	for _, task := range tasks {
+		group.Add(1)
+		go func() { defer group.Done(); err := task(); mu.Lock(); result = errors.Join(result, err); mu.Unlock() }()
+	}
+	group.Wait()
 	return result
 }

@@ -14,8 +14,16 @@ import (
 // All callers that create/replace a session runtime hold dispatchMu. The catalog
 // adapter never starts/resumes an execution thread.
 func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime, error) {
-	if err := s.cleanRuntimeRetirements(id); err != nil {
+	// Callers settle archive retirements before acquiring their session gate.
+	// Never recursively wait for that gate if an archive arrives during setup.
+	pendingRetirements, err := s.store.PendingRuntimeRetirements()
+	if err != nil {
 		return nil, err
+	}
+	for _, pending := range pendingRetirements {
+		if pending.SessionID == id {
+			return nil, errors.New("会话正在归档，输入未发送")
+		}
 	}
 	if err := s.sessionMaintenanceAdmission(id); err != nil {
 		return nil, err
@@ -27,26 +35,40 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 	if err != nil {
 		return nil, err
 	}
+	if d.Session.Archived {
+		return nil, errors.New("会话已归档，输入未发送")
+	}
+	workspace, err := s.store.Workspace(d.Session.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if workspace.Archived {
+		return nil, errors.New("工作区已归档，输入未发送")
+	}
 	adapter := s.adapter(d.Session.HarnessID)
 	if adapter == nil {
 		return nil, errors.New("session harness unavailable")
 	}
 	upgrading := false
 	if r := s.currentRuntime(id); r != nil && r.ExecutionReady() {
+		replace := false
+		if pending, ok := r.(harness.PendingRuntime); ok {
+			replace = pending.PendingOperations() != 0
+		}
 		source, tracked := adapter.(harness.CatalogVersion)
 		running, captured := r.(harness.CatalogVersion)
-		if !tracked || !captured {
-			return r, nil
+		if tracked && captured {
+			installed, e := source.CatalogVersion()
+			if e != nil {
+				return nil, e
+			}
+			version, e := running.CatalogVersion()
+			if e != nil {
+				return nil, e
+			}
+			replace = replace || installed != version
 		}
-		installed, e := source.CatalogVersion()
-		if e != nil {
-			return nil, e
-		}
-		version, e := running.CatalogVersion()
-		if e != nil {
-			return nil, e
-		}
-		if installed == version {
+		if !replace {
 			return r, nil
 		}
 		busy, e := s.store.HasActiveWork(id)
@@ -95,13 +117,25 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 		if undo != nil {
 			err = errors.Join(err, undo())
 		}
-		return nil, err
+		if detach := s.detachRuntimeInstance(id, err, false); detach != nil {
+			return nil, errors.Join(err, detach)
+		}
 	}
 	// Close drains callbacks already admitted before retirement. An unexpected
 	// loss during that drain must be reconciled before a new generation exists.
 	latest, err := s.store.Session(id, 0, 1)
 	if err != nil {
 		return nil, err
+	}
+	if latest.Session.Archived {
+		return nil, errors.New("会话已归档，输入未发送")
+	}
+	workspace, err = s.store.Workspace(latest.Session.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if workspace.Archived {
+		return nil, errors.New("工作区已归档，输入未发送")
 	}
 	if latest.Session.ExecutionGuard != "" {
 		return nil, errors.New("执行状态发生变化，正在重新核对；本次输入未发送")
@@ -163,6 +197,9 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 			if !accepting.Load() {
 				return nil
 			}
+			if s.runtimeRetiring(id) {
+				return nil
+			}
 			if err := s.guardManagedExecution(id); err != nil {
 				s.cancel()
 				return err
@@ -208,7 +245,7 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 		return nil, err
 	}
 	if err != nil {
-		return nil, errors.Join(err, s.cleanManagedExecution(ctx, id))
+		return nil, errors.Join(err, s.cleanManagedExecutionOutsideDispatch(ctx, id))
 	}
 
 	s.runtimeMu.Lock()
@@ -267,7 +304,7 @@ func (s *Server) cleanSessionRuntime(ctx context.Context, id string) error {
 	if scope, err := s.executions.Existing(id); err != nil {
 		return err
 	} else if scope != nil {
-		return s.cleanManagedExecution(ctx, id)
+		return s.cleanManagedExecutionOutsideDispatch(ctx, id)
 	}
 	dir := s.sessionRuntimeDirectory(id)
 	raw, err := os.ReadFile(filepath.Join(dir, "runtime-process.json"))

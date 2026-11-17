@@ -55,6 +55,15 @@ func (s *Server) reconcile(in protocol.RecoveryInput) (protocol.RecoveryResult, 
 	return s.reconcileLocked(ctx, in)
 }
 func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput) (protocol.RecoveryResult, error) {
+	if err := s.cleanRuntimeRetirements(in.SessionID); err != nil {
+		return protocol.RecoveryResult{}, err
+	}
+	release, err := s.beginSessionTransition(ctx, in.SessionID)
+	if err != nil {
+		return protocol.RecoveryResult{}, err
+	}
+	defer release()
+
 	generation := s.recoveryRefresh.Load()
 	result := protocol.RecoveryResult{SessionID: in.SessionID, Status: "unknown", Readiness: s.runtimeReadiness(in.SessionID)}
 	check := in.Action == "" || in.Action == "check"
@@ -77,6 +86,16 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		return result, nil
 	}
 
+	s.mu.Lock()
+	epoch := s.dispatchEpochs[in.SessionID]
+	s.mu.Unlock()
+	stillCurrent := func() bool {
+		s.mu.Lock()
+		unchanged := s.dispatchEpochs[in.SessionID] == epoch
+		s.mu.Unlock()
+		latest, e := s.store.Session(in.SessionID, 0, 1)
+		return unchanged && e == nil && latest.Session.ThreadID == d.Session.ThreadID && latest.Session.Archived == d.Session.Archived && latest.Session.Status.NeedsRecovery()
+	}
 	info := domain.SessionRecovery{Phase: "checking"}
 	if old := d.Session.Recovery; old != nil {
 		info = *old
@@ -88,6 +107,14 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	}
 	d.Session = session
 	finish := func() (protocol.RecoveryResult, error) {
+		if !stillCurrent() {
+			latest, e := s.store.Session(in.SessionID, 0, 1)
+			if e == nil {
+				result.Status = string(latest.Session.Status)
+				result.Readiness = s.runtimeReadiness(in.SessionID)
+			}
+			return result, e
+		}
 		result.Readiness = s.runtimeReadiness(in.SessionID)
 		phase := domain.RecoveryAttention
 		if result.Status != "unknown" && result.Status != "active" {
@@ -107,7 +134,7 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		return finish()
 	}
 	if managed != nil && runtime != nil && !runtime.Observes(d.Session) {
-		if cleanupErr := s.cleanManagedExecution(ctx, in.SessionID); cleanupErr != nil {
+		if cleanupErr := s.cleanManagedExecutionOutsideDispatch(ctx, in.SessionID); cleanupErr != nil {
 			result.Message = "旧工具尚未确认停止，请重新核对"
 			return finish()
 		}
@@ -115,7 +142,9 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	if in.Action == "stop-runtime" && runtime != nil && !runtime.Stopped() {
 		// The explicit action targets this session's adapter, never the catalog
 		// or another session. Descendant execution remains unknown after exit.
+		s.dispatchMu.Unlock()
 		runtime.Close(ctx)
+		s.dispatchMu.Lock()
 	}
 	if runtime == nil || runtime.Stopped() || d.Session.ExecutionGuard != "" {
 		if cleanupErr := s.cleanSessionRuntime(ctx, in.SessionID); cleanupErr != nil {
@@ -155,7 +184,12 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		return result, errors.Join(harness.Unsupported("interrupt"), finishErr)
 	}
 	result.Readiness = s.runtimeReadiness(in.SessionID)
+	s.dispatchMu.Unlock()
 	source, err := runtime.Inspect(ctx, d.Session)
+	s.dispatchMu.Lock()
+	if !stillCurrent() {
+		return finish()
+	}
 	if !runtime.Observes(d.Session) {
 		if proofErr := s.managedStopProof(in.SessionID, &source); proofErr != nil {
 			result.Message = "旧工具尚未确认停止，请重新核对"
@@ -167,20 +201,32 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	if err == nil && in.Action == "interrupt" {
 		for _, turn := range source.Turns {
 			if turn.Status == "running" {
-				if e := runtime.Interrupt(ctx, d.Session, turn.ID); e != nil {
+				s.dispatchMu.Unlock()
+				e := runtime.Interrupt(ctx, d.Session, turn.ID)
+				s.dispatchMu.Lock()
+				if !stillCurrent() {
+					return finish()
+				}
+				if e != nil {
 					result.Message = e.Error()
 					return finish()
 				}
 			}
 		}
 		for source.State == "active" || recoveryRunning(source) {
+			s.dispatchMu.Unlock()
 			select {
 			case <-ctx.Done():
+				s.dispatchMu.Lock()
 				result.Message = "停止结果尚未确认，请重新核对"
 				return finish()
 			case <-time.After(30 * time.Millisecond):
 			}
 			source, err = runtime.Inspect(ctx, d.Session)
+			s.dispatchMu.Lock()
+			if !stillCurrent() {
+				return finish()
+			}
 			if err != nil {
 				break
 			}
@@ -259,7 +305,12 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 			return finish()
 		}
 		for _, r := range records {
+			s.dispatchMu.Unlock()
 			e := stopRecoveryTool(ctx, r)
+			s.dispatchMu.Lock()
+			if !stillCurrent() {
+				return finish()
+			}
 			if e != nil {
 				result.Message = "任务尚未全部停止，请重新检查"
 				result.Tasks, result.CanStopTasks = s.recoveryTasks(d, source)

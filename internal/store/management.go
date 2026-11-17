@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"errors"
 	"shioji/internal/domain"
 	"strings"
@@ -49,6 +50,11 @@ func (s *Store) saveSessionMetadataLocked(session domain.Session, retirements ..
 		return session, err
 	}
 	for _, retirement := range retirements {
+		if retirement.Reason == "archive" {
+			if err = pauseArchiveQueue(tx, retirement.SessionID); err != nil {
+				return session, err
+			}
+		}
 		if err = putRuntimeRetirement(tx, retirement); err != nil {
 			return session, err
 		}
@@ -58,7 +64,7 @@ func (s *Store) saveSessionMetadataLocked(session domain.Session, retirements ..
 	}
 	return session, s.commit(tx)
 }
-func (s *Store) archivableLocked(session domain.Session) error {
+func (s *Store) deletableStateLocked(session domain.Session) error {
 	switch session.Status {
 	case "idle", "completed", "interrupted", "failed", "abandoned":
 	default:
@@ -99,11 +105,7 @@ func (s *Store) SetSessionArchived(id string, revision int64, archived bool, gen
 	if session.Archived == archived {
 		return session, nil
 	}
-	if archived {
-		if err = s.archivableLocked(session); err != nil {
-			return session, err
-		}
-	} else {
+	if !archived {
 		w, e := load[domain.Workspace](s.db.QueryRow("SELECT body FROM workspaces WHERE id=?", session.WorkspaceID))
 		if e != nil {
 			return session, e
@@ -148,11 +150,6 @@ func (s *Store) SetWorkspaceArchived(id string, revision int64, archived bool, g
 		if e != nil {
 			return w, e
 		}
-		for _, session := range sessions {
-			if e = s.archivableLocked(session); e != nil {
-				return w, e
-			}
-		}
 	}
 	w.Archived = archived
 	w.ArchivedAt = nil
@@ -175,6 +172,9 @@ func (s *Store) SetWorkspaceArchived(id string, revision int64, archived bool, g
 			if len(generations) > 0 {
 				gen = generations[0][session.ID]
 			}
+			if err = pauseArchiveQueue(tx, session.ID); err != nil {
+				return w, err
+			}
 			if err = putRuntimeRetirement(tx, RuntimeRetirement{SessionID: session.ID, Generation: gen, Revision: w.Revision, Reason: "archive"}); err != nil {
 				return w, err
 			}
@@ -184,4 +184,17 @@ func (s *Store) SetWorkspaceArchived(id string, revision int64, archived bool, g
 		return w, err
 	}
 	return w, s.commit(tx)
+}
+
+func pauseArchiveQueue(tx *sql.Tx, id string) error {
+	q, err := load[domain.QueueState](tx.QueryRow("SELECT body FROM queues WHERE session_id=?", id))
+	if errors.Is(err, sql.ErrNoRows) {
+		q, err = domain.QueueState{SessionID: id}, nil
+	}
+	if err != nil || q.Paused {
+		return err
+	}
+	q.Paused, q.Reason = true, "archived"
+	q.Revision++
+	return putQueue(tx, q)
 }

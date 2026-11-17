@@ -58,7 +58,7 @@ type Server struct {
 	health               *devicehealth.Monitor
 	storageMu            sync.Mutex
 	idleRuntimes         map[string]idleRuntimeObservation
-	toolConfigMu         sync.Mutex
+	toolConfigMu         sync.RWMutex
 	toolAuthMu           sync.Mutex
 	toolAuth             map[string]*workerToolAuthorization
 	signInMu             sync.Mutex
@@ -68,6 +68,8 @@ type Server struct {
 	maintenance          sync.RWMutex
 	updating             atomic.Bool
 	backgroundStopping   atomic.Bool
+	pressureSample       func() uint32
+	pressureReclaim      chan struct{}
 	runtimeMu            sync.RWMutex
 	toolMu               sync.Mutex
 	tools                map[string]recoveryToolProcess
@@ -95,6 +97,7 @@ type Server struct {
 	executions           *managedexec.Manager
 	readiness            domain.Readiness
 	dispatchMu           sync.Mutex
+	sessionTransitions   map[string]chan struct{}
 	queueWake            chan struct{}
 	titleWake            chan struct{}
 	recoveryWake         chan struct{}
@@ -102,6 +105,7 @@ type Server struct {
 	recoveryRefresh      atomic.Uint64
 	bound                map[string]bool
 	dispatchReservations map[string]string
+	dispatchEpochs       map[string]uint64
 	mu                   sync.Mutex
 	conns                map[net.Conn]bool
 	wg                   sync.WaitGroup
@@ -1019,6 +1023,9 @@ func (s *Server) submit(in domain.Submission) (domain.Operation, error) {
 	return s.submitLocked(in, 0, false)
 }
 func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immediate bool) (domain.Operation, error) {
+	if err := s.waitSessionTransition(s.ctx, in.SessionID); err != nil {
+		return domain.Operation{}, err
+	}
 	if err := s.updateAdmission(); err != nil {
 		return domain.Operation{}, err
 	}
@@ -1032,6 +1039,11 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return domain.Operation{}, err
+	}
+	if in.SessionID != "" {
+		if err = s.cleanRuntimeRetirements(in.SessionID); err != nil {
+			return domain.Operation{}, err
+		}
 	}
 	if err = s.sessionMaintenanceAdmission(in.SessionID); err != nil {
 		return domain.Operation{}, err
@@ -1130,6 +1142,9 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 	if strings.Join(validated, "\x00") != strings.Join(paths, "\x00") {
 		return domain.Operation{}, errors.New("execution directory identity changed")
 	}
+	if err := s.admitMemoryPressure(in.SessionID); err != nil {
+		return domain.Operation{}, err
+	}
 	launch := domain.LaunchContext{DeviceID: s.store.DeviceID(), CWD: paths[0], AdditionalDirectories: append([]string(nil), paths[1:]...)}
 	launch, err = s.prepareGit(in, launch)
 	if err != nil {
@@ -1217,7 +1232,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 	locked = false
 	// A retired native call no longer owns the configuration boundary. Its
 	// captured generation stays fenced, and late writes are rejected below.
-	s.toolConfigMu.Lock()
+	s.toolConfigMu.RLock()
 	type result struct {
 		session domain.Session
 		turnID  string
@@ -1288,7 +1303,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 	case <-gate.done:
 		err = errRuntimeRetired
 	}
-	s.toolConfigMu.Unlock()
+	s.toolConfigMu.RUnlock()
 
 	s.dispatchMu.Lock()
 	locked = true

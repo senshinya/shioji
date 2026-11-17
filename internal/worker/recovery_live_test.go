@@ -127,7 +127,13 @@ func TestDelayedDispatchCannotResurrectAnAbandonedInputOnReplacementRuntime(t *t
 	s.dispatchMu.Lock()
 	d, _ := s.store.Session(first.SessionID, 0, 100)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	result, err := s.reconcileLocked(ctx, protocol.RecoveryInput{SessionID: first.SessionID, Revision: d.Session.Revision, Action: "end"})
+	// Automatic recovery may already own a transition when Close returns.
+	// Query first, then use the authoritative revision for any remaining end.
+	result, err := s.reconcileLocked(ctx, protocol.RecoveryInput{SessionID: first.SessionID, Action: "check"})
+	if err == nil && result.Status == "unknown" {
+		d, _ = s.store.Session(first.SessionID, 0, 100)
+		result, err = s.reconcileLocked(ctx, protocol.RecoveryInput{SessionID: first.SessionID, Revision: d.Session.Revision, Action: "end"})
+	}
 	s.dispatchMu.Unlock()
 	cancel()
 	if err != nil {

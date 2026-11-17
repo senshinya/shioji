@@ -161,6 +161,18 @@ Agent 安装更新另由 `ManagedRuntimeUpdateCoordinator` 去重、后台准备
 
 具体方案以[修订后的升级与回收设计](ryugi/specs/2026-11-16-worker-upgrade-lifecycle-design.md)为准。原先的独立 host、事件 spool、writer epoch 跨宿主切换方案已撤回，不再作为实施前提。
 
+## 2026-11-17 再读与机制对齐
+
+以同一固定源码 `fb05adc646f02762a62c19cf8e9dadd9f765a3e0` 再读实际调用链，初轮实现还有六处可重现缺口：旧 Stop 误关同实例的下一轮、安装接续／归档清理失败仍保留旧实例、回收占设备级派发锁、本地请求取消丢失原始未决计数、暂时启动失败直接 blocked，以及原生 Close 不遵守截止。相应重现和原始输出见 `docs/research/lody-worker-lifecycle-2026-11-17/recheck/`；该目录保留修改前证据，不重写成通过。
+
+本轮实现逐项修正，并补齐内核压力回收／接纳、临时目录探测、持续 supervisor 健康检查与归档接纳。回收和原生查询的慢等待移出设备级锁，以会话交接保护原状态；初始化、失败清理及旧回调仍按准确代次隔离。归档在任何执行状态均可接纳，队列同事务暂停且不删除，清理失败退休旧实例，恢复不会重发。
+
+两项先前描述需要纠正：retry helper 默认的 20% 抖动没有被 Lody 实际 daemon-runner 采用，托管实例默认为零；健康 60 秒从 spawn 计时，而非 ready。Shioji 已按这两个实际调用点对齐。启动退出码 2／3 只等待依赖／端点恢复，不计入普通 5 分钟／10 次熔断；暂时准备错误按普通退避重试，签名／格式／退出归属不明仍不能盲目重试。持续健康探测为 1 秒周期、800 毫秒预算、3 次失联后标记重新连接，不以失联授权结束活进程。
+
+Lody 的通用 GC 有原生后台活动的 24 小时保护，但固定版本 Codex ACP adapter 没有报告这项活动。Shioji 直连 Codex 能观察到真实后台工作，保留这项保护；不能为了复制缺失报告而丢弃已有执行事实。压力回收可提前终止符合条件的等待型后台工作。闲置 20 分钟／扫描 30 秒、未登记进程范围、首次旧版迁移由用户手动处理，均沿用已有决定。Go 没有 V8 heap，不复制 Lody 的 V8 OOM 专用计数；采用 macOS 的实际内核压力等级。
+
+这些对齐消除已重现的实现缺口，不承诺操作系统权限拒绝、持久化失败、不可确认 writer 退出或候选损坏时仍能成功升级。Lody 本身在交接不确定时也会 blocked。不能把删除强制处理页面理解为删除这些真实失败语义。
+
 [runner]: https://github.com/LodyAI/Lody/blob/fb05adc646f02762a62c19cf8e9dadd9f765a3e0/apps/cli/src/commands/daemon-runner.ts#L459
 [start]: https://github.com/LodyAI/Lody/blob/fb05adc646f02762a62c19cf8e9dadd9f765a3e0/apps/cli/src/commands/start.ts#L707
 [session]: https://github.com/LodyAI/Lody/blob/fb05adc646f02762a62c19cf8e9dadd9f765a3e0/apps/cli/src/session/session.ts#L266

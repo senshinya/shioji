@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"golang.org/x/sys/unix"
 	"io"
-	"math/rand/v2"
 	"net"
 	"os"
 	"os/exec"
@@ -32,13 +31,13 @@ type Options struct {
 	RetryMin, RetryMax                              time.Duration
 }
 type child struct {
-	cmd      *exec.Cmd
-	identity managedexec.ProcessInfo
-	instance string
-	build    domain.WorkerBuild
-	done     chan struct{}
-	err      error
-	readyAt  time.Time
+	cmd       *exec.Cmd
+	identity  managedexec.ProcessInfo
+	instance  string
+	build     domain.WorkerBuild
+	done      chan struct{}
+	err       error
+	startedAt time.Time
 }
 type host struct {
 	health            serviceHealth
@@ -149,6 +148,7 @@ func Run(ctx context.Context, o Options) error {
 
 	h.blocked = recovered.Phase == "blocked" || h.health.Phase == "blocked" && !h.health.CrashLoop
 	go h.serve(listener)
+	go h.monitor()
 	if !h.blocked {
 		paused := recovered.Phase == "applied" || recovered.Phase == "rolled-back" || o.LegacyInstall != nil
 		opID := ""
@@ -158,7 +158,10 @@ func Run(ctx context.Context, o Options) error {
 		h.mu.Lock()
 		h.updateID = opID
 		h.mu.Unlock()
-		err = h.startSelected(o.InitialPath, paused, opID)
+		err = h.startSelectedRetry(o.InitialPath, paused, opID)
+		if ctx.Err() != nil {
+			return nil
+		}
 		if err == nil && o.LegacyInstall != nil {
 			if h.device != recovered.DeviceID || h.child.build.BuildID != recovered.Input.BuildID {
 				err = errors.New("installed candidate identity differs from accepted update")
@@ -181,7 +184,7 @@ func Run(ctx context.Context, o Options) error {
 			}
 		}
 		if err != nil {
-			if e := h.blockHealth(err); e != nil {
+			if e := h.blockStartup(err); e != nil {
 				return errors.Join(err, e)
 			}
 		} else {
@@ -251,7 +254,7 @@ func Run(ctx context.Context, o Options) error {
 				continue
 			}
 			h.readyDone = false
-			attempt, exhausted := h.retry.failed(time.Now(), c.readyAt)
+			attempt, exhausted := h.retry.failed(time.Now(), c.startedAt)
 			h.health.Phase = "restarting"
 			if exhausted {
 				h.health.Phase = "blocked"
@@ -268,7 +271,7 @@ func Run(ctx context.Context, o Options) error {
 			if exhausted {
 				continue
 			}
-			timer := time.NewTimer(crashRetryDelay(attempt, o.RetryMin, o.RetryMax, rand.Float64()))
+			timer := time.NewTimer(crashRetryDelay(attempt, o.RetryMin, o.RetryMax, 0))
 			select {
 			case <-ctx.Done():
 				timer.Stop()
@@ -276,8 +279,11 @@ func Run(ctx context.Context, o Options) error {
 			case <-timer.C:
 			}
 			// No unknown prompt is replayed; the worker reconciles accepted records.
-			if err = h.startSelected(o.InitialPath, false, ""); err != nil {
-				_ = h.blockHealth(err)
+			if err = h.startSelectedRetry(o.InitialPath, false, ""); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				_ = h.blockStartup(err)
 				continue
 			}
 			h.mu.Lock()
@@ -364,6 +370,9 @@ func (h *host) control(req Request) (Operation, error) {
 		if err == nil && h.updateID == op.Input.ID && h.updateID != "" && (!h.readyDone || h.updating) && (op.Phase == "applied" || op.Phase == "rolled-back") {
 			op.Phase = "observing"
 		}
+		if err == nil && req.ID == "" && !h.updating && h.health.Phase == "reconnecting" {
+			op.Phase, op.Error = h.health.Phase, h.health.Error
+		}
 		return op, err
 	case "repair":
 		return h.beginRepair(req)
@@ -409,7 +418,7 @@ func (h *host) control(req Request) (Operation, error) {
 			}
 			return active, nil
 		}
-		if h.updating || h.child == nil || h.device == "" {
+		if h.updating || !h.readyDone || h.child == nil || h.device == "" {
 			return Operation{}, &protocol.RemoteError{Code: "notSent", Message: "服务尚未就绪或已有不同更新"}
 		}
 		if h.child.build.BuildID != req.Input.ExpectedBuildID || req.Input.BuildID == req.Input.ExpectedBuildID {
@@ -452,7 +461,7 @@ func (h *host) workerCall(ctx context.Context, c *child, method string, in, out 
 	return client.Call(ctx, method, in, out)
 }
 func (h *host) launch(path string, b domain.WorkerBuild, paused bool, op string) (*child, error) {
-	c := &child{instance: domain.NewID(), build: b, done: make(chan struct{})}
+	c := &child{instance: domain.NewID(), build: b, done: make(chan struct{}), startedAt: time.Now()}
 	args := append([]string{}, h.options.Arguments...)
 	args = append(args, "--service-child")
 	c.cmd = exec.Command(path, args...)
@@ -504,7 +513,9 @@ func (h *host) ready(ctx context.Context, c *child, paused bool) (Ready, error) 
 	}
 }
 func (h *host) startSelected(initial string, paused bool, op string) error {
-	path, b, err := h.options.Verify(h.ctx, "")
+	prepare, cancel := context.WithTimeout(h.ctx, 8*time.Minute)
+	path, b, err := h.options.Verify(prepare, "")
+	cancel()
 	if err != nil {
 		return err
 	}
@@ -513,17 +524,26 @@ func (h *host) startSelected(initial string, paused bool, op string) error {
 	}
 	c, err := h.launch(path, b, paused, op)
 	if err != nil {
+		if c != nil {
+			if stop := h.stopExact(c, h.options.StopGrace); stop != nil {
+				return PermanentStartup(errors.Join(err, stop))
+			}
+		}
+		if c != nil {
+			err = errors.Join(err, c.err)
+		}
 		return err
 	}
 	ready, err := h.ready(h.ctx, c, paused)
 	if err != nil {
-		_ = h.stopExact(c, h.options.StopGrace)
-		return err
+		if stop := h.stopExact(c, h.options.StopGrace); stop != nil {
+			return PermanentStartup(errors.Join(err, stop))
+		}
+		return errors.Join(err, c.err)
 	}
 	h.mu.Lock()
 	h.child = c
 	h.device = ready.DeviceID
-	c.readyAt = time.Now()
 	h.health.DeviceID, h.health.BuildID, h.health.Schema = ready.DeviceID, b.BuildID, b.Schema
 	h.mu.Unlock()
 	return nil
@@ -750,7 +770,6 @@ waitForIdle:
 	h.readyDone = true
 	h.health = serviceHealth{Phase: "ready", DeviceID: h.device, BuildID: h.child.build.BuildID, Schema: h.child.build.Schema}
 	h.retry = crashRetry{}
-	h.child.readyAt = time.Now()
 	err = h.saveHealth()
 	h.mu.Unlock()
 	if err != nil {

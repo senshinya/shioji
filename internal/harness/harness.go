@@ -99,6 +99,10 @@ type IncomingMessage struct {
 }
 
 type StartOptions struct {
+	// CatalogOnly requests a cached catalog controller. Concrete adapters release
+	// discovery processes and acquire short-lived probes for later service calls.
+	// Accepted conversations always use a separate owned execution scope.
+	CatalogOnly bool
 	// ImportResource snapshots device-local or inline image/text bytes in worker storage.
 	// Adapters translate source encodings before calling this; journals carry only
 	// the returned immutable reference, never bytes or a runtime storage path.

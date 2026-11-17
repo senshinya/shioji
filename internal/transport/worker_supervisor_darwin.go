@@ -35,10 +35,10 @@ func RunWorkerSupervisor(ctx context.Context, directory, initial, codex string, 
 		}
 		info, e := VerifyStagedWorker(ctx, directory, build)
 		if e != nil {
-			return "", info, e
+			return "", info, supervisor.PermanentStartup(e)
 		}
 		if info.Lifecycle != 1 {
-			return "", info, errors.New("候选执行服务不支持固定服务控制协议")
+			return "", info, supervisor.PermanentStartup(errors.New("候选执行服务不支持固定服务控制协议"))
 		}
 		path, e := StagedWorkerPath(directory, build)
 		return path, info, e

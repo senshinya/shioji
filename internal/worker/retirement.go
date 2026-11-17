@@ -25,30 +25,54 @@ func (s *Server) runtimeRetiring(id string) bool {
 // Callers serialize capture with dispatchMu. A late completion may release only
 // the instance captured here. Errors are retryable, never cached permanently.
 func (s *Server) retireRuntime(ctx context.Context, id, reason string, force bool) error {
+	op, err := s.beginRuntimeRetirement(ctx, id, reason, force)
+	if err != nil || op == nil {
+		return err
+	}
+	return waitRuntimeRetirement(ctx, op)
+}
+
+// Admission and instance capture stay synchronous; physical cleanup never owns
+// the device-wide dispatch lock. Callers recheck captured identities on return.
+func (s *Server) retireRuntimeOutsideDispatch(ctx context.Context, id, reason string, force bool) error {
+	op, err := s.beginRuntimeRetirement(ctx, id, reason, force)
+	if err != nil || op == nil {
+		return err
+	}
+	s.dispatchMu.Unlock()
+	defer s.dispatchMu.Lock()
+	return waitRuntimeRetirement(ctx, op)
+}
+
+func waitRuntimeRetirement(ctx context.Context, op *runtimeRetirement) error {
+	select {
+	case <-op.done:
+		return op.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Server) beginRuntimeRetirement(ctx context.Context, id, reason string, force bool) (*runtimeRetirement, error) {
 	s.retirementMu.Lock()
 	if prior := s.retirements[id]; prior != nil {
 		s.retirementMu.Unlock()
-		select {
-		case <-prior.done:
-			return prior.err
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		return prior, nil
 	}
 	scope, err := s.executions.Existing(id)
 	if err != nil {
 		s.retirementMu.Unlock()
-		return err
+		return nil, err
 	}
 	r := s.currentRuntime(id)
 	if scope == nil && r == nil {
 		s.retirementMu.Unlock()
-		return nil
+		return nil, nil
 	}
 	if scope != nil {
 		if err = scope.Fence(); err != nil {
 			s.retirementMu.Unlock()
-			return err
+			return nil, err
 		}
 	}
 	op := &runtimeRetirement{runtime: r, reason: reason, done: make(chan struct{})}
@@ -78,8 +102,15 @@ func (s *Server) retireRuntime(ctx context.Context, id, reason string, force boo
 			n++
 			go func() { results <- r.Close(work) }()
 		}
+	collect:
 		for range n {
-			op.err = errors.Join(op.err, <-results)
+			select {
+			case err := <-results:
+				op.err = errors.Join(op.err, err)
+			case <-work.Done():
+				op.err = errors.Join(op.err, work.Err())
+				break collect
+			}
 		}
 		// Producers and their synchronous event callbacks have settled. The old
 		// gate is closed now, never before the last output has been persisted.
@@ -101,10 +132,5 @@ func (s *Server) retireRuntime(ctx context.Context, id, reason string, force boo
 		close(op.done)
 		s.retirementMu.Unlock()
 	}()
-	select {
-	case <-op.done:
-		return op.err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return op, nil
 }

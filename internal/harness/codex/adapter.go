@@ -24,6 +24,13 @@ func (a Adapter) Descriptor() domain.HarnessDescriptor {
 	return domain.HarnessDescriptor{ID: "codex", Name: "Codex", Icon: "openai"}
 }
 func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.Runtime, error) {
+	if opts.CatalogOnly {
+		return a.startCatalog(ctx, opts)
+	}
+	return a.startNative(ctx, opts)
+}
+
+func (a Adapter) startNative(ctx context.Context, opts harness.StartOptions) (*adapterRuntime, error) {
 	env, _ := a.environment(ctx)
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -88,6 +95,12 @@ type adapterRuntime struct {
 	descriptor   domain.HarnessDescriptor
 	titleAdapter Adapter
 	closeMu      sync.Mutex
+	closing      *adapterClose
+}
+
+type adapterClose struct {
+	done chan struct{}
+	err  error
 }
 
 func (r *adapterRuntime) Readiness() domain.Readiness {
@@ -109,13 +122,39 @@ func (r *adapterRuntime) ExecutionReady() bool {
 	return !r.Stopped() && (r.scope == nil || r.scope.Admitting() && r.executor != nil && !r.executor.Stopped())
 }
 func (r *adapterRuntime) Close(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.closeMu.Lock()
-	defer r.closeMu.Unlock()
+	op := r.closing
+	if op == nil {
+		op = &adapterClose{done: make(chan struct{})}
+		r.closing = op
+		go func() {
+			op.err = r.close(ctx)
+			r.closeMu.Lock()
+			if r.closing == op {
+				r.closing = nil
+			}
+			close(op.done)
+			r.closeMu.Unlock()
+		}()
+	}
+	r.closeMu.Unlock()
+	select {
+	case <-op.done:
+		return op.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (r *adapterRuntime) close(ctx context.Context) error {
 	var result error
 	if r.executor != nil {
 		result = r.executor.Fence()
 	}
-	result = errors.Join(result, r.Runtime.Close())
+	result = errors.Join(result, r.Runtime.close(ctx))
 	if r.executor != nil {
 		result = errors.Join(result, r.executor.Close(ctx))
 	}

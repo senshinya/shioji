@@ -31,6 +31,12 @@ func main() {
 			os.Exit(43)
 		}
 		fmt.Fprintln(os.Stderr, err)
+		if errors.Is(err, worker.ErrOwned) {
+			os.Exit(supervisor.ExitAlreadyOwned)
+		}
+		if errors.Is(err, worker.ErrLegacyRecoveryActive) {
+			os.Exit(supervisor.ExitRetryableStartup)
+		}
 		os.Exit(1)
 	}
 }
@@ -417,7 +423,7 @@ func run() error {
 		} else {
 			s, err = worker.New(ctx, config)
 		}
-		if (!*managed && !*serviceChild) || !errors.Is(err, worker.ErrOwned) && !errors.Is(err, worker.ErrLegacyRecoveryActive) {
+		if !*managed || !errors.Is(err, worker.ErrOwned) && !errors.Is(err, worker.ErrLegacyRecoveryActive) {
 			break
 		}
 		timer := time.NewTimer(time.Second)

@@ -54,6 +54,12 @@ func (s *Server) stopInitializing(id string, start *runtimeStart) error {
 			// Never guard a newly started generation with a late old result.
 			s.dispatchMu.Lock()
 			if current, e := s.executions.Existing(id); e == nil && current != nil && current.Generation == start.scope.Generation {
+				detached, readErr := current.IsDetached()
+				if readErr == nil && detached {
+					s.dispatchMu.Unlock()
+					return
+				}
+
 				_ = s.store.GuardExecution(id, current.Generation)
 				s.wakeRecovery()
 			}

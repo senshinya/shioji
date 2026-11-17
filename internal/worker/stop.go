@@ -54,6 +54,9 @@ func (s *Server) interruptTurn(id, turn string) error {
 		s.dispatchMu.Unlock()
 		return err
 	}
+	s.mu.Lock()
+	epoch := s.dispatchEpochs[id]
+	s.mu.Unlock()
 	s.wg.Add(1)
 	s.dispatchMu.Unlock()
 	go func() {
@@ -99,12 +102,29 @@ func (s *Server) interruptTurn(id, turn string) error {
 				}
 				s.dispatchMu.Lock()
 				current := s.currentRuntime(id)
-				if current != nil && current.Done() == r.Done() {
+				s.mu.Lock()
+				unchanged := s.dispatchEpochs[id] == epoch
+				s.mu.Unlock()
+				if current != nil && current.Done() == r.Done() && unchanged {
+					// Keep new input behind this captured timeout while allowing Stop to
+					// preempt an existing native transition.
+					var release func()
+					if s.sessionTransitions[id] == nil {
+						release, _ = s.beginSessionTransition(s.ctx, id)
+					}
 					cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
-					failure := s.retireRuntime(cleanup, id, "stop-timeout", true)
+					failure := s.retireRuntimeOutsideDispatch(cleanup, id, "stop-timeout", true)
 					stop()
-					if err := s.detachFailedRuntime(id, failure); err != nil {
-						s.cancel()
+					if current = s.currentRuntime(id); current != nil && current.Done() == r.Done() {
+						s.mu.Lock()
+						unchanged = s.dispatchEpochs[id] == epoch
+						s.mu.Unlock()
+						if err := s.detachRuntimeInstance(id, failure, unchanged); err != nil {
+							s.cancel()
+						}
+					}
+					if release != nil {
+						release()
 					}
 				}
 				s.dispatchMu.Unlock()

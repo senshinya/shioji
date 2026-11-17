@@ -49,6 +49,10 @@ type detachedRuntime struct {
 // Caller holds dispatchMu. Logical release never reuses the failed Agent and
 // never rewrites its registered process identities as if physical stop succeeded.
 func (s *Server) detachFailedRuntime(id string, cause error) error {
+	return s.detachRuntimeInstance(id, cause, true)
+}
+
+func (s *Server) detachRuntimeInstance(id string, cause error, releaseExecution bool) error {
 	r := s.currentRuntime(id)
 	scope, err := s.executions.Existing(id)
 	if err != nil || scope == nil {
@@ -81,8 +85,10 @@ func (s *Server) detachFailedRuntime(id string, cause error) error {
 	} else {
 		message = "回复已停止，未确认的输入不会自动重发"
 	}
-	if err = s.store.ReleaseRuntime(id, scope.Generation, message, cause == nil); err != nil {
-		return err
+	if releaseExecution {
+		if err = s.store.ReleaseRuntime(id, scope.Generation, message, cause == nil); err != nil {
+			return err
+		}
 	}
 	s.retirementMu.Lock()
 	if s.retirements[id] == retired.prior {
@@ -98,7 +104,9 @@ func (s *Server) detachFailedRuntime(id string, cause error) error {
 	s.mu.Lock()
 	delete(s.bound, id)
 	s.mu.Unlock()
-	s.releaseDispatches(id)
+	if releaseExecution {
+		s.releaseDispatches(id)
+	}
 	return nil
 }
 

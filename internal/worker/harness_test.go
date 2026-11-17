@@ -117,6 +117,11 @@ func memoryWorker(t *testing.T, adapters ...harness.Adapter) (*Server, domain.Wo
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
+	// Pressure-specific tests inject their own verdict; unrelated fixtures must
+	// not depend on the developer Mac's current kernel pressure.
+	s.dispatchMu.Lock()
+	s.pressureSample = func() uint32 { return 1 }
+	s.dispatchMu.Unlock()
 	folder, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

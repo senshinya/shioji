@@ -18,6 +18,19 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 	if saved, e := s.store.HistoryOperation(in.OperationID); e == nil && saved.State == "complete" && saved.Input.Equal(in) {
 		return saved, nil
 	}
+	if err := s.cleanRuntimeRetirements(in.SessionID); err != nil {
+		return domain.HistoryOperation{}, err
+	}
+	transition, err := s.beginSessionTransition(s.ctx, in.SessionID)
+	if err != nil {
+		return domain.HistoryOperation{}, err
+	}
+	defer transition()
+	if in.Restart {
+		if err := s.admitMemoryPressure(in.SessionID); err != nil {
+			return domain.HistoryOperation{}, err
+		}
+	}
 	if err := s.sessionMaintenanceAdmission(in.SessionID); err != nil {
 		return domain.HistoryOperation{}, err
 	}
@@ -58,7 +71,9 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 			}
 		}
 		ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
+		s.dispatchMu.Unlock()
 		thread, e := runtime.PrepareHistory(ctx, op.Source, harness.HistoryBoundary{TurnID: op.TurnID, Restart: in.Restart})
+		s.dispatchMu.Lock()
 		cancel()
 		if thread != "" {
 			if saveErr := s.store.SetHistoryThread(op.ID, thread); saveErr != nil {
@@ -83,13 +98,21 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 		}
 	}
 	releaseCtx, cancelRelease := context.WithTimeout(s.ctx, 5*time.Second)
+	s.dispatchMu.Unlock()
 	_, releaseErr := runtime.PrepareHistory(releaseCtx, op.Source, harness.HistoryBoundary{TurnID: op.TurnID, Restart: in.Restart, PreparedRef: op.ThreadID})
+	s.dispatchMu.Lock()
 	cancelRelease()
 	if releaseErr != nil {
 		return op, releaseErr
 	}
+	if err = s.historyPreflight(in); err != nil {
+		return op, err
+	}
 	if !in.Restart {
 		return s.store.CommitHistory(op.ID)
+	}
+	if err = s.admitMemoryPressure(in.SessionID); err != nil {
+		return op, err
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
 	runtime, err = s.sessionRuntime(ctx, op.Source.ID)

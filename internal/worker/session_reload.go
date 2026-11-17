@@ -26,6 +26,17 @@ func (s *Server) reloadSession(in domain.SessionReloadRequest, query bool) (doma
 	if !errors.Is(err, sql.ErrNoRows) {
 		return result, workNotSent(err)
 	}
+	if err := s.cleanRuntimeRetirements(in.SessionID); err != nil {
+		return result, workNotSent(err)
+	}
+	release, err := s.beginSessionTransition(s.ctx, in.SessionID)
+	if err != nil {
+		return result, workNotSent(err)
+	}
+	defer release()
+	if err := s.admitMemoryPressure(in.SessionID); err != nil {
+		return result, workNotSent(err)
+	}
 	if err := s.updateAdmission(); err != nil {
 		return result, workNotSent(err)
 	}
@@ -63,17 +74,24 @@ func (s *Server) reloadSession(in domain.SessionReloadRequest, query bool) (doma
 	defer cancel()
 	if previous := s.currentRuntime(in.SessionID); previous != nil && !previous.Stopped() {
 		if unloader, ok := previous.(harness.SessionUnloader); ok {
+			s.dispatchMu.Unlock()
 			err = unloader.Unload(ctx, d.Session)
+			s.dispatchMu.Lock()
 		}
 	}
-	if err == nil {
-		err = s.cleanSessionRuntime(ctx, in.SessionID)
+	// A failed unsubscribe cannot keep the captured instance reusable. Physical
+	// cleanup owns the result; a survivor is detached and retried independently.
+	err = s.cleanSessionRuntime(ctx, in.SessionID)
+	if err != nil {
+		err = s.detachRuntimeInstance(in.SessionID, err, false)
 	}
 	if err == nil {
 		var runtime harness.Runtime
 		runtime, err = s.sessionRuntime(ctx, in.SessionID)
 		if err == nil {
+			s.dispatchMu.Unlock()
 			err = runtime.Resume(ctx, d.Session)
+			s.dispatchMu.Lock()
 			if err == nil {
 				if restorer, ok := runtime.(harness.WorkRestorer); ok {
 					restorer.RestoreWork(d.Session, d.Works)

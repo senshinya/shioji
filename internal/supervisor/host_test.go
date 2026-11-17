@@ -45,6 +45,12 @@ func fixtureHost(name string) int {
 		_ = json.NewEncoder(os.Stdout).Encode(build)
 		return 0
 	}
+	if raw, e := os.ReadFile(filepath.Join(dir, "startup-exit")); e == nil {
+		if string(raw) == "3" {
+			return 3
+		}
+		return 2
+	}
 	lease, err := os.OpenFile(filepath.Join(dir, "fixture-owner.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return 1
@@ -91,6 +97,9 @@ func fixtureHost(name string) int {
 					stop := false
 					switch f.Method {
 					case "worker.local-ready":
+						if _, e := os.Stat(filepath.Join(dir, "hide-ready")); e == nil {
+							continue
+						}
 						mu.Lock()
 						p := paused
 						mu.Unlock()

@@ -114,6 +114,9 @@ func (s *Store) ReleaseRuntime(id, generation, message string, stopped bool) err
 		return err
 	}
 	q.Paused, q.Reason = true, "旧执行结果未确认，队列保持暂停"
+	if stopped {
+		q.Reason = "stopped"
+	}
 	q.Revision++
 	if err = putQueue(tx, q); err != nil {
 		return err

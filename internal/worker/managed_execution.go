@@ -117,6 +117,10 @@ func (s *Server) cleanManagedExecution(ctx context.Context, id string) error {
 	return s.retireRuntime(ctx, id, "cleanup", true)
 }
 
+func (s *Server) cleanManagedExecutionOutsideDispatch(ctx context.Context, id string) error {
+	return s.retireRuntimeOutsideDispatch(ctx, id, "cleanup", true)
+}
+
 func (s *Server) coverOperation(id, operation string) error {
 	scope, err := s.executions.Existing(id)
 	if err != nil {

@@ -146,7 +146,6 @@ func (h *host) repair(ctx context.Context, op Operation, writer *os.File) {
 		h.readyDone = true
 		h.health = serviceHealth{Phase: "ready", DeviceID: op.DeviceID, BuildID: candidate.build.BuildID, Schema: candidate.build.Schema}
 		h.retry = crashRetry{}
-		candidate.readyAt = time.Now()
 		if e := h.saveHealth(); e != nil {
 			h.blocked = true
 			h.health.Phase, h.health.Error = "blocked", e.Error()

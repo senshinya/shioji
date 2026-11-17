@@ -55,7 +55,7 @@ func jsonHasTrue(raw []byte, key string) bool {
 	return object[key] == true
 }
 
-func TestWorkspaceArchiveRejectsActiveExecutionAndBlocksNewSessions(t *testing.T) {
+func TestWorkspaceArchiveRetiresActiveExecutionAndBlocksNewSessions(t *testing.T) {
 	_, c, p := startServer(t)
 	var ready domain.Readiness
 	call(t, c, "readiness", nil, &ready)
@@ -64,17 +64,14 @@ func TestWorkspaceArchiveRejectsActiveExecutionAndBlocksNewSessions(t *testing.T
 	var op domain.Operation
 	call(t, c, "session.submit", domain.Submission{OperationID: "active-archive", WorkspaceID: w.ID, Text: "SHIOJI_SLOW", Config: domain.RunConfig{Model: ready.Models[0].ID, Permission: "read-only"}}, &op)
 	<-p.Started
-	if err := c.Call(context.Background(), "workspace.archive", map[string]any{"workspaceId": w.ID, "revision": w.Revision, "archived": true}, nil); err == nil {
-		t.Fatal("active workspace archived")
-	}
+	var archived domain.Workspace
+	call(t, c, "workspace.archive", map[string]any{"workspaceId": w.ID, "revision": w.Revision, "archived": true}, &archived)
 	close(p.Release)
 	var d domain.SessionDetail
 	wait(t, func() bool {
 		call(t, c, "session", worker.SessionQuery{ID: op.SessionID}, &d)
-		return d.Session.Status == "completed"
+		return d.Session.Status.CanSubmit()
 	})
-	var archived domain.Workspace
-	call(t, c, "workspace.archive", map[string]any{"workspaceId": w.ID, "revision": w.Revision, "archived": true}, &archived)
 	if err := c.Call(context.Background(), "session.submit", domain.Submission{OperationID: "new-in-archive", WorkspaceID: w.ID, Text: "must not create", Config: d.Session.Config}, nil); err == nil {
 		t.Fatal("archived workspace accepted new session")
 	}

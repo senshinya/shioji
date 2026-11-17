@@ -196,15 +196,7 @@ func (r *Runtime) read(stdout io.Reader) {
 			break
 		}
 		if m.Method == "" {
-			r.mu.Lock()
-			ch := r.pending[string(m.ID)]
-			r.mu.Unlock()
-			if ch != nil {
-				select {
-				case ch <- m:
-				default:
-				}
-			}
+			r.deliverResponse(m)
 			continue
 		}
 		if m.Method == "mcpServer/oauthLogin/completed" {
@@ -242,12 +234,26 @@ func (r *Runtime) read(stdout io.Reader) {
 	r.emit(r.normalizer.Invalidate())
 	r.eventMu.Unlock()
 	r.mu.Lock()
+	clear(r.pendingActivity)
 	if r.err == nil {
 		r.err = errors.New("app-server exited")
 	}
 	r.mu.Unlock()
 	close(r.done)
 }
+func (r *Runtime) deliverResponse(m wire.Message) {
+	r.mu.Lock()
+	ch := r.pending[string(m.ID)]
+	delete(r.pendingActivity, string(m.ID))
+	r.mu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- m:
+		default:
+		}
+	}
+}
+
 func (r *Runtime) emit(events []domain.Event) error {
 	if r.onEvent == nil {
 		return nil
@@ -289,6 +295,9 @@ func (r *Runtime) send(m wire.Message) error {
 	return r.write(b)
 }
 func (r *Runtime) call(ctx context.Context, method string, params, out any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	id, _ := json.Marshal("shioji:" + domain.NewID())
 	ch := make(chan wire.Message, 1)
 	key := string(id)
@@ -302,16 +311,30 @@ func (r *Runtime) call(ctx context.Context, method string, params, out any) erro
 		r.pendingActivity[key] = true
 	}
 	r.mu.Unlock()
-	defer func() { r.mu.Lock(); delete(r.pending, key); delete(r.pendingActivity, key); r.mu.Unlock() }()
+	attempted := false
+	defer func() {
+		r.mu.Lock()
+		delete(r.pending, key)
+		if !attempted {
+			delete(r.pendingActivity, key)
+		}
+		r.mu.Unlock()
+	}()
 	b, err := json.Marshal(params)
 	if err != nil {
 		return err
 	}
+	attempted = true
 	if err = r.send(wire.Message{ID: id, Method: method, Params: b}); err != nil {
 		return &CallError{Uncertain: true, Message: "app-server send failed; external acceptance is unknown"}
 	}
 	select {
 	case m := <-ch:
+		// The reader normally releases ownership. Keep direct in-process
+		// transports consistent with the same response boundary.
+		r.mu.Lock()
+		delete(r.pendingActivity, key)
+		r.mu.Unlock()
 		if m.Error != nil {
 			if issue := authenticationIssue(m.Error.Code, m.Error.Message); issue != "" {
 				return &harness.SetupError{Issue: issue, Message: "登录已失效，请在该设备重新登录"}
@@ -425,13 +448,17 @@ func permissionPolicy(permission string) (string, string, string) {
 	}
 }
 func (r *Runtime) Validate(config domain.RunConfig) error {
-	if r.Readiness().State != "ready" {
+	return validateCodexConfig(r.Readiness(), config)
+}
+
+func validateCodexConfig(ready domain.Readiness, config domain.RunConfig) error {
+	if ready.State != "ready" {
 		return errors.New("Codex runtime unavailable")
 	}
-	if !slices.Contains(r.ready.Permissions, config.Permission) {
+	if !slices.Contains(ready.Permissions, config.Permission) {
 		return errors.New("permission is unavailable under current policy")
 	}
-	for _, m := range r.ready.Models {
+	for _, m := range ready.Models {
 		if m.ID != config.Model {
 			continue
 		}
@@ -441,7 +468,7 @@ func (r *Runtime) Validate(config domain.RunConfig) error {
 		if config.Fast && !m.Fast {
 			return errors.New("Fast unavailable for this model")
 		}
-		if config.Plan && !r.ready.Plan {
+		if config.Plan && !ready.Plan {
 			return errors.New("Plan mode unavailable")
 		}
 		return nil
@@ -638,6 +665,15 @@ func (r *Runtime) Interrupt(ctx context.Context, s domain.Session, turnID string
 	return r.call(ctx, "turn/interrupt", map[string]string{"threadId": s.ThreadID, "turnId": turnID}, nil)
 }
 func (r *Runtime) Close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return r.close(ctx)
+}
+
+func (r *Runtime) close(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if r.desktop != nil {
 		r.desktop.close()
 	}
@@ -646,24 +682,39 @@ func (r *Runtime) Close() error {
 		select {
 		case <-r.done:
 			return nil
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-time.After(3 * time.Second):
 			return managedexec.ErrManualStillRunning
 		}
 	}
+	// Leave time for TERM, KILL and observing exit inside the caller budget.
+	grace := 3 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		grace = min(grace, max(0, time.Until(deadline)/3))
+	}
 	select {
 	case <-r.done:
 		return nil
-	case <-time.After(3 * time.Second):
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(grace):
 		if r.scope != nil {
 			r.signalProcess(syscall.SIGTERM)
 		} else {
 			syscall.Kill(-r.cmd.Process.Pid, syscall.SIGTERM)
 		}
 	}
+	grace = 2 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		grace = min(grace, max(0, time.Until(deadline)/2))
+	}
 	select {
 	case <-r.done:
 		return nil
-	case <-time.After(2 * time.Second):
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(grace):
 		if r.scope != nil {
 			if err := r.signalProcess(syscall.SIGKILL); err != nil {
 				return err
@@ -671,8 +722,12 @@ func (r *Runtime) Close() error {
 		} else {
 			syscall.Kill(-r.cmd.Process.Pid, syscall.SIGKILL)
 		}
-		<-r.done
-		return nil
+		select {
+		case <-r.done:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 }
 

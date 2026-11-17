@@ -19,6 +19,17 @@ func (s *Server) compactContext(in domain.ContextActionRequest) (domain.Operatio
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return none, workNotSent(err)
 	}
+	if err := s.cleanRuntimeRetirements(in.SessionID); err != nil {
+		return none, workNotSent(err)
+	}
+	release, err := s.beginSessionTransition(s.ctx, in.SessionID)
+	if err != nil {
+		return none, workNotSent(err)
+	}
+	defer release()
+	if err := s.admitMemoryPressure(in.SessionID); err != nil {
+		return none, workNotSent(err)
+	}
 	if err := s.updateAdmission(); err != nil {
 		return none, workNotSent(err)
 	}
@@ -46,7 +57,9 @@ func (s *Server) compactContext(in domain.ContextActionRequest) (domain.Operatio
 	if _, err = s.prepareGit(domain.Submission{SessionID: in.SessionID, WorkspaceID: d.Session.WorkspaceID}, d.Session.Context); err != nil {
 		return none, workNotSent(err)
 	}
-	r, err := s.sessionRuntime(s.ctx, in.SessionID)
+	setup, cancelSetup := context.WithTimeout(s.ctx, 20*time.Second)
+	defer cancelSetup()
+	r, err := s.sessionRuntime(setup, in.SessionID)
 	if err != nil {
 		return none, workNotSent(err)
 	}
@@ -55,7 +68,10 @@ func (s *Server) compactContext(in domain.ContextActionRequest) (domain.Operatio
 		return none, workNotSent(harness.Unsupported("context-compaction"))
 	}
 	if !r.Observes(d.Session) {
-		if err = r.Resume(s.ctx, d.Session); err != nil {
+		s.dispatchMu.Unlock()
+		err = r.Resume(setup, d.Session)
+		s.dispatchMu.Lock()
+		if err != nil {
 			return none, workNotSent(err)
 		}
 	}
@@ -77,7 +93,12 @@ func (s *Server) compactContext(in domain.ContextActionRequest) (domain.Operatio
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
 	defer cancel()
+	s.dispatchMu.Unlock()
 	err = compactor.Compact(ctx, d.Session)
+	s.dispatchMu.Lock()
+	if current, e := s.store.Operation(op.ID); e != nil || current.State != "dispatched" {
+		return current, e
+	}
 	outcome := domain.DeliveryOutcome(err != nil, harness.IsUncertain(err))
 	message := ""
 	if err != nil {
@@ -121,7 +142,9 @@ func (s *Server) queryContextOperation(in domain.ContextActionRequest) (domain.O
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 	defer cancel()
+	s.dispatchMu.Unlock()
 	observation, err := compactor.InspectCompaction(ctx, d.Session, *a)
+	s.dispatchMu.Lock()
 	if err != nil {
 		return op, err
 	}

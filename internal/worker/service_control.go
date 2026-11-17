@@ -167,6 +167,10 @@ func (s *Server) reserveDispatch(op domain.Operation) func() {
 		s.dispatchReservations = map[string]string{}
 	}
 	s.dispatchReservations[op.ID] = op.SessionID
+	if s.dispatchEpochs == nil {
+		s.dispatchEpochs = map[string]uint64{}
+	}
+	s.dispatchEpochs[op.SessionID]++
 	s.mu.Unlock()
 	return func() {
 		s.mu.Lock()

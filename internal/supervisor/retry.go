@@ -23,7 +23,7 @@ func (r *crashRetry) failed(now, healthySince time.Time) (int, bool) {
 	return attempt, len(r.failures) >= 10
 }
 
-func crashRetryDelay(attempt int, minimum, maximum time.Duration, random float64) time.Duration {
+func crashRetryDelay(attempt int, minimum, maximum time.Duration, _ float64) time.Duration {
 	if minimum <= 0 {
 		minimum = time.Second
 	}
@@ -34,6 +34,5 @@ func crashRetryDelay(attempt int, minimum, maximum time.Duration, random float64
 	for i := 0; i < attempt && delay < maximum; i++ {
 		delay = min(delay*2, maximum)
 	}
-	delay = time.Duration(float64(delay) * (0.8 + random*0.4))
 	return min(delay, maximum)
 }

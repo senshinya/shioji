@@ -111,12 +111,23 @@ func (s *Server) startCatalog(ctx context.Context, id string, stop bool, revisio
 		return nil, err
 	}
 	attempted = true
-	next, err = a.Start(ctx, harness.StartOptions{ImportResource: func(image harness.OutputResource) (domain.Attachment, error) {
+	next, err = a.Start(ctx, harness.StartOptions{CatalogOnly: true, ImportResource: func(image harness.OutputResource) (domain.Attachment, error) {
 		return s.importOutputResource(id, "", image)
 	}, OnEvent: func(e domain.Event) error { return s.onHarnessEvent(id, "", e) }, OnStart: func(pid int) error { return recordProcess(dir, pid) }})
 	if err != nil {
-		os.Remove(filepath.Join(dir, "runtime-process.json"))
-		return nil, err
+		if next != nil {
+			// A failed probe can still own cleanup. Retain its exact controller so
+			// retries and shutdown cannot lose the process handles.
+			s.runtimeMu.Lock()
+			s.catalogs[id] = next
+			if id == s.config.DefaultHarnessID {
+				s.runtime = next
+			}
+			s.runtimeMu.Unlock()
+		} else {
+			os.Remove(filepath.Join(dir, "runtime-process.json"))
+		}
+		return next, err
 	}
 	if err = ctx.Err(); err != nil {
 		next.Close(context.Background())

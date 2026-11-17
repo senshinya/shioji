@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/store"
 )
@@ -56,8 +57,12 @@ func (s *Server) reclaimIdleRuntimes(now func() time.Time) error {
 }
 
 // Caller holds dispatchMu, including final state and process ownership checks.
-func (s *Server) reclaimIdleRuntime(id string, now time.Time) (result error) {
-	if s.ctx.Err() != nil || s.updating.Load() || s.backgroundStopping.Load() {
+func (s *Server) reclaimIdleRuntime(id string, now time.Time) error {
+	return s.reclaimRuntime(id, now, false, s.ctx)
+}
+
+func (s *Server) reclaimRuntime(id string, now time.Time, pressure bool, parent context.Context) (result error) {
+	if s.ctx.Err() != nil || s.updating.Load() || s.backgroundStopping.Load() || s.sessionTransitions[id] != nil {
 		return nil
 	}
 	if s.idleRuntimes == nil {
@@ -92,24 +97,38 @@ func (s *Server) reclaimIdleRuntime(id string, now time.Time) (result error) {
 		delete(s.idleRuntimes, id)
 		return err
 	}
-	previous, seen := s.idleRuntimes[id]
-	if !seen || previous.runtime.Done() != r.Done() || previous.activity != activity {
-		s.idleRuntimes[id] = idleRuntimeObservation{runtime: r, activity: activity, since: now}
-		return nil
-	}
-	timeout := sessionRuntimeIdleTimeout
-	if activity.Background {
-		timeout = 24 * time.Hour
-	}
-	if now.Sub(previous.since) < timeout {
-		return nil
+	if !pressure {
+		previous, seen := s.idleRuntimes[id]
+		if !seen || previous.runtime.Done() != r.Done() || previous.activity != activity {
+			s.idleRuntimes[id] = idleRuntimeObservation{runtime: r, activity: activity, since: now}
+			return nil
+		}
+		timeout := sessionRuntimeIdleTimeout
+		if activity.Background {
+			timeout = 24 * time.Hour
+		}
+		if now.Sub(previous.since) < timeout {
+			return nil
+		}
+
 	}
 
-	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
-	err = s.cleanManagedExecution(ctx, id)
-	cancel()
+	release, err := s.beginSessionTransition(parent, id)
 	if err != nil {
-		err = errors.Join(err, s.detachFailedRuntime(id, err))
+		return err
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	err = s.cleanManagedExecutionOutsideDispatch(ctx, id)
+	cancel()
+	if current := s.currentRuntime(id); current == nil || current.Done() != r.Done() {
+		return err
+	}
+	if err != nil {
+		err = errors.Join(err, s.detachRuntimeInstance(id, err, false), s.settleReclaimedBackground(id, false))
+		return err
+	}
+	if err := s.settleReclaimedBackground(id, true); err != nil {
 		return err
 	}
 	delete(s.idleRuntimes, id)
@@ -123,5 +142,28 @@ func (s *Server) reclaimIdleRuntime(id string, now time.Time) (result error) {
 	s.mu.Lock()
 	delete(s.bound, id)
 	s.mu.Unlock()
+	return nil
+}
+
+// Waiting background work belongs to the evicted instance, never its successor.
+// Keep its history while removing controls for a runtime that has been retired.
+func (s *Server) settleReclaimedBackground(id string, stopped bool) error {
+	d, err := s.store.Session(id, 0, 1)
+	if err != nil {
+		return err
+	}
+	for _, work := range d.Works {
+		if work.Kind != "background" || work.State != "waiting" || work.OriginRef != "" && work.OriginRef != d.Session.ThreadID {
+			continue
+		}
+		work.State = "unknown"
+		if stopped {
+			work.State = "stopped"
+		}
+		work.CanStop, work.CanSteer, work.CanContinue = false, false, false
+		if _, err := s.store.Apply(id, domain.Event{Type: "work.upsert", Work: &work}); err != nil {
+			return err
+		}
+	}
 	return nil
 }

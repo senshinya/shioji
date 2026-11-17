@@ -33,14 +33,14 @@ func TestHealthyMinuteResetsCrashWindowAndBackoff(t *testing.T) {
 	}
 }
 
-func TestCrashRetryUsesBoundedExponentialDelayWithJitter(t *testing.T) {
+func TestCrashRetryMatchesManagedRunnerWithoutJitter(t *testing.T) {
 	for _, test := range []struct {
 		attempt int
 		random  float64
 		want    time.Duration
 	}{
-		{0, 0, 800 * time.Millisecond},
-		{0, 1, 1200 * time.Millisecond},
+		{0, 0, time.Second},
+		{0, 1, time.Second},
 		{1, 0.5, 2 * time.Second},
 		{4, 0.5, 16 * time.Second},
 		{9, 1, time.Minute},
