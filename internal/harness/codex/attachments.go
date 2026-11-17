@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/harness/codex/wire"
+	"strconv"
 	"strings"
 )
 
@@ -21,6 +23,13 @@ func attachmentInputs(text string, attachments []AttachmentInput) ([]wire.Input,
 	for _, a := range attachments {
 		if a.Comment != nil {
 			inputs = append(inputs, wire.Input{Type: "text", Text: codeCommentText(*a.Comment, a.ExecutionBranch)})
+			continue
+		}
+		if a.Attachment.Kind == domain.PathAttachmentResource {
+			if !filepath.IsAbs(a.Path) || a.Attachment.SourcePath != "" || a.Attachment.MIME != "application/octet-stream" {
+				return nil, errors.New("invalid owning-device file path")
+			}
+			inputs = append(inputs, wire.Input{Type: "text", Text: "Uploaded file: " + a.Attachment.Name + "\nPath on this device: " + strconv.Quote(a.Path)})
 			continue
 		}
 		if a.Attachment.Kind != "" {

@@ -74,6 +74,11 @@ func (t AttachmentTarget) connect(ctx context.Context) (*protocol.Client, error)
 	return client, nil
 }
 func (t AttachmentTarget) Upload(ctx context.Context, staging *attachments.Repository, a domain.Attachment) error {
+	return t.UploadProgress(ctx, staging, a, nil)
+}
+
+// Progress reports only bytes acknowledged by the owning worker.
+func (t AttachmentTarget) UploadProgress(ctx context.Context, staging *attachments.Repository, a domain.Attachment, progress func(int64)) error {
 	path, err := staging.Path(attachments.StagingWorkspace, a)
 	if err != nil {
 		return errors.New("本机附件副本不可用，请重新添加")
@@ -88,7 +93,13 @@ func (t AttachmentTarget) Upload(ctx context.Context, staging *attachments.Repos
 		return err
 	}
 	defer client.Close()
+	if a.Kind == domain.PathAttachmentResource && client.Minor < 47 {
+		return errors.New("请先升级执行服务以上传路径引用文件")
+	}
 	for offset := int64(0); offset < a.Size; {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		data := make([]byte, min(int64(attachments.ChunkSize), a.Size-offset))
 		if _, err = file.ReadAt(data, offset); err != nil {
 			return err
@@ -101,6 +112,9 @@ func (t AttachmentTarget) Upload(ctx context.Context, staging *attachments.Repos
 			return errors.New("附件上传回执不一致")
 		}
 		offset = out.Offset
+		if progress != nil {
+			progress(offset)
+		}
 	}
 	return nil
 }
@@ -135,4 +149,9 @@ func (c *Controller) AttachmentTask(work func() Update) {
 			c.post(update)
 		}
 	}()
+}
+
+// Transfer updates and completion share the controller's ordered UI channel.
+func (c *Controller) AttachmentTransfer(work func(report func(Update)) Update) {
+	c.AttachmentTask(func() Update { return work(c.post) })
 }

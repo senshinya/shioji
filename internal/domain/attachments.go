@@ -21,9 +21,10 @@ type Attachment struct {
 
 const DiffCommentResource = "diff-comment"
 const DiffSnapshotResource = "diff-snapshot"
+const PathAttachmentResource = "file-path"
 
 func (a Attachment) InlineReference() bool {
-	return a.SourcePath != "" || a.Kind == DiffCommentResource
+	return a.SourcePath != "" || a.Kind == DiffCommentResource || a.Kind == PathAttachmentResource
 }
 
 func (in Submission) ValidateContent() error {
@@ -57,8 +58,11 @@ func (in Submission) ValidateContent() error {
 	var total int64
 	seen := map[string]bool{}
 	for _, a := range in.Attachments {
-		if a.Kind != "" && a.Kind != DiffCommentResource && a.Kind != DiffSnapshotResource {
+		if a.Kind != "" && a.Kind != DiffCommentResource && a.Kind != DiffSnapshotResource && a.Kind != PathAttachmentResource {
 			return errors.New("invalid reference resource")
+		}
+		if a.Kind == PathAttachmentResource && (a.SourcePath != "" || a.MIME != "application/octet-stream") {
+			return errors.New("invalid path attachment")
 		}
 		if len(a.SourcePath) > 4096 || !utf8.ValidString(a.SourcePath) || strings.ContainsAny(a.SourcePath, "\x00\r\n") || a.ID == "" || seen[a.ID] || len(a.ID) > 64 || !utf8.ValidString(a.Name) || len(a.Name) > 256 || a.Size <= 0 || a.Size > 8<<20 || len(a.SHA256) != 64 || len(a.MIME) > 64 {
 			return errors.New("invalid attachment")

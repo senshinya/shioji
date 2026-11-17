@@ -46,7 +46,8 @@ const Major = 2
 // Minor 44 adds explicit normal retirement and forced archive deletion.
 // Minor 45 adds durable session runtime reload without submitting input.
 // Minor 46 adds scoped Hook management and durable definition-bound receipts.
-const Minor = 46
+// Minor 47 adds immutable binary uploads used as owning-device path inputs.
+const Minor = 47
 const MaxFrame = 1 << 20
 
 type Frame struct {

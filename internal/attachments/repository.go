@@ -233,8 +233,12 @@ func (r *Repository) Save(name string, data []byte) (domain.Attachment, error) {
 	if err != nil {
 		return a, err
 	}
+	return r.save(a, data)
+}
+
+func (r *Repository) save(a domain.Attachment, data []byte) (domain.Attachment, error) {
 	for offset := 0; offset < len(data); offset += ChunkSize {
-		if _, err = r.Put(StagingWorkspace, a, int64(offset), data[offset:min(offset+ChunkSize, len(data))]); err != nil {
+		if _, err := r.Put(StagingWorkspace, a, int64(offset), data[offset:min(offset+ChunkSize, len(data))]); err != nil {
 			return domain.Attachment{}, err
 		}
 	}

@@ -14,7 +14,7 @@ func (s *Server) attachmentCommand(method string, body []byte) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		if in.Attachment.Kind != "" {
+		if in.Attachment.Kind != "" && in.Attachment.Kind != domain.PathAttachmentResource {
 			return nil, errors.New("internal references must be created by the owning worker")
 		}
 		w, err := s.store.Workspace(in.WorkspaceID)
