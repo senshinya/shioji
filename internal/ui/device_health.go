@@ -182,7 +182,8 @@ func (v *View) currentDeviceControl(c *n.Context, t *n.Theme) {
 					if powerError != "" {
 						n.Text(c, powerError).FontSize(11).FixedLineHeight(18).FillWidth().TextColor(t.Danger).Label("保持唤醒错误")
 					}
-					action := control(c).AlignSelf(n.Stretch).Height(26).MarginY(1).MarginX(-6).PaddingX(6).Radius(4).Label("设备详情").Children(func() {
+					v.deviceWorkerUpdateAction(c.Key("worker-update"), t, key, open)
+					action := devicePopoverAction(c).Label("设备详情").Children(func() {
 						font := n.Font{Family: t.Font, Size: 12, Weight: 400}
 						inlineIconText(c, v.deviceGlyph(key), "设备详情", font, 14, 6, t.TextMuted)
 						n.Spacer(c).Grow(1)
@@ -198,6 +199,7 @@ func (v *View) currentDeviceControl(c *n.Context, t *n.Theme) {
 			})
 		})
 	})
+	v.workerUpgradeConfirmation(c, t, key, v.deviceState(key))
 }
 func deviceHealthRow(c *n.Context, t *n.Theme, label, value string) {
 	font := n.Font{Family: t.Font, Size: 12, Weight: 400}

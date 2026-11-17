@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var serviceSpinnerIcon = svg("M10 3a7 7 0 1 1-7 7")
+var serviceSpinnerIcon = svg("M10 2a8 8 0 1 1-8 8")
 
 // The element key and clock belong to the loading run, never to its caption.
 // Paint rotates around the actual inline glyph center rather than rotating a

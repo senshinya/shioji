@@ -369,11 +369,7 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 		}
 		if service != nil && service.Phase == app.WorkerWaiting && service.OperationID != "" {
 			if configurationAction(c, "立即更新…").Label("立即更新执行服务").Disabled(disabled).Clicked() {
-				target := ""
-				if service.Available != nil {
-					target = service.Available.BuildID
-				}
-				v.workerUpdateConfirm = &workerUpdateConfirmation{open: true, connection: key, device: state.Snapshot.DeviceID, build: target}
+				v.beginWorkerUpdateConfirmation(key, state, false)
 			}
 		}
 
