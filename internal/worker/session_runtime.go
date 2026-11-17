@@ -49,7 +49,6 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 	if adapter == nil {
 		return nil, errors.New("session harness unavailable")
 	}
-	upgrading := false
 	if r := s.currentRuntime(id); r != nil && r.ExecutionReady() {
 		replace := false
 		if pending, ok := r.(harness.PendingRuntime); ok {
@@ -90,7 +89,6 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 				return r, nil
 			}
 		}
-		upgrading = true
 	}
 
 	if err := s.runtimeSettingError(d.Session.HarnessID); err != nil {
@@ -100,23 +98,7 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	var undo func() error
-	if upgrading {
-		scope, e := s.executions.Existing(id)
-		if e != nil {
-			return nil, e
-		}
-		if scope != nil {
-			undo, e = scope.FenceIfIdle()
-			if e != nil {
-				return nil, e
-			}
-		}
-	}
 	if err := s.cleanSessionRuntime(ctx, id); err != nil {
-		if undo != nil {
-			err = errors.Join(err, undo())
-		}
 		if detach := s.detachRuntimeInstance(id, err, false); detach != nil {
 			return nil, errors.Join(err, detach)
 		}
