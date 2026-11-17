@@ -38,6 +38,22 @@ func privateControlFixture(name string) int {
 		if decode.Decode(&in) != nil {
 			return 1
 		}
+		if name == "fixture-private-control-slow" {
+			time.Sleep(250 * time.Millisecond)
+			if !in.AdmitBefore.IsZero() && !time.Now().Before(in.AdmitBefore) {
+				_ = os.WriteFile(filepath.Join(dir, "admission-rejected"), []byte("expired"), 0600)
+				for {
+					time.Sleep(time.Hour)
+				}
+			}
+			if SaveDrainIntent(dir, DrainIntent{ID: in.OperationID, Instance: in.Instance, DeviceID: "fixture-device", BuildID: "old"}) != nil {
+				return 1
+			}
+			if WriteDrained(dir, Drained{PID: os.Getpid(), Instance: in.Instance, OperationID: in.OperationID, DeviceID: "fixture-device", BuildID: "old"}) != nil {
+				return 1
+			}
+			return 43
+		}
 		out := domain.WorkerUpdateResult{Ready: true}
 		if in.Instance != os.Getenv("SHIOJI_WORKER_INSTANCE") {
 			return 2
@@ -146,5 +162,41 @@ func TestPrivateLifecycleExpiredRequestDoesNotSignalChild(t *testing.T) {
 	}
 	if managedexec.ProcessState(child.identity) != "running" {
 		t.Fatal("expired control signalled captured child", err)
+	}
+}
+
+func TestPrivateLifecycleExpiredAttemptReturnsToWaitingWithoutLateExit(t *testing.T) {
+	dir, options := regressionOptions(t)
+	path := filepath.Join(dir, "fixture-private-control-slow")
+	if err := os.Symlink(os.Args[0], path); err != nil {
+		t.Fatal(err)
+	}
+	h := &host{options: options, ctx: context.Background(), device: "fixture-device"}
+	child, err := h.launch(path, domain.WorkerBuild{BuildID: "old", Schema: store.SchemaVersion, Lifecycle: 1, PrivateControl: 1}, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.stopExact(child, 100*time.Millisecond)
+	err = h.shutdown(child, "late-idle", 600*time.Millisecond, Control{Replacement: domain.WorkerReplacement{Policy: "when-idle"}})
+	if err != errDrainAdmission {
+		t.Fatal("unaccepted timed-out attempt did not return to waiting", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, err = os.Stat(filepath.Join(dir, "admission-rejected")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("late handler was not rejected")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case <-child.done:
+		t.Fatal("old writer exited after rejected attempt", child.err)
+	default:
+	}
+	if _, err = ReadDrainIntent(dir, "late-idle"); err == nil {
+		t.Fatal("rejected attempt left accepted intent")
 	}
 }

@@ -624,6 +624,9 @@ func (h *host) shutdown(c *child, id string, grace time.Duration, controls ...Co
 	// Keep a complete graceful interval after a failed business request. The
 	// private channel is available even while the public socket is unavailable.
 	request, stop := context.WithTimeout(ctx, min(time.Second, grace/4))
+	if control.Replacement.Policy != "immediate" {
+		control.AdmitBefore, _ = request.Deadline()
+	}
 	var ignored domain.WorkerUpdateResult
 	var err error
 	if c.lifecycle != nil {
@@ -646,6 +649,11 @@ func (h *host) shutdown(c *child, id string, grace time.Duration, controls ...Co
 			return errDrainExpired
 		}
 		if !accepted && !(control.Replacement.Policy == "immediate" && control.Replacement.Explicit) {
+			// This attempt can no longer be admitted later. Keep the old writer and
+			// retry from waiting rather than persisting a blocked/offline transition.
+			if !control.AdmitBefore.IsZero() && !time.Now().Before(control.AdmitBefore) {
+				return errDrainAdmission
+			}
 			return err
 		}
 		if managedexec.ProcessState(c.identity) == "running" {

@@ -30,6 +30,8 @@ type Ready struct {
 	Paused             bool
 }
 type Control struct {
+	// AdmitBefore bounds one when-idle delivery attempt, independently of intent TTL.
+	AdmitBefore           time.Time `json:"admitBefore,omitempty"`
 	ExpiresAt             time.Time `json:"expiresAt,omitempty"`
 	Instance, OperationID string
 	Replacement           domain.WorkerReplacement

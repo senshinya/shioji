@@ -173,6 +173,9 @@ func (s *Server) DrainService(in supervisor.Control) (domain.WorkerUpdateResult,
 			return ready, e
 		}
 	}
+	if !in.AdmitBefore.IsZero() && !time.Now().Before(in.AdmitBefore) {
+		return domain.WorkerUpdateResult{}, errors.New("drain admission attempt expired")
+	}
 	if !in.ExpiresAt.IsZero() && !time.Now().Before(in.ExpiresAt) {
 		return domain.WorkerUpdateResult{}, errors.New("prepared update expired")
 	}
@@ -189,6 +192,9 @@ func (s *Server) DrainService(in supervisor.Control) (domain.WorkerUpdateResult,
 		if !q.Paused {
 			intent.Queues = append(intent.Queues, session.ID)
 		}
+	}
+	if !in.AdmitBefore.IsZero() && !time.Now().Before(in.AdmitBefore) {
+		return domain.WorkerUpdateResult{}, errors.New("drain admission attempt expired")
 	}
 	if !in.ExpiresAt.IsZero() && !time.Now().Before(in.ExpiresAt) {
 		return domain.WorkerUpdateResult{}, errors.New("prepared update expired")

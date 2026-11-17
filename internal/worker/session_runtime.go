@@ -180,7 +180,7 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 				return nil
 			}
 			if s.runtimeRetiring(id) {
-				return nil
+				return s.store.InterruptCompletion(id)
 			}
 			if err := s.store.InterruptCompletion(id); err != nil {
 				s.cancel()

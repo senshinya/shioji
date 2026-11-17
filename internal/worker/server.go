@@ -1377,7 +1377,9 @@ func (s *Server) onEvent(e domain.Event) error {
 	s.trackRecoveryTool(e)
 	lost := e.Type == "runtime.lost"
 	if lost && s.runtimeRetiring(e.SessionID) {
-		return nil
+		// The exact instance ended before its invalidated work observations.
+		// Keep the parent state, but publish an interrupted background outcome first.
+		return s.store.InterruptCompletion(e.SessionID)
 	}
 	if lost {
 		if err := s.store.InterruptCompletion(e.SessionID); err != nil {

@@ -339,6 +339,9 @@ func run() error {
 					if in.Instance != os.Getenv("SHIOJI_WORKER_INSTANCE") {
 						return domain.WorkerUpdateResult{}, errors.New("service instance authentication failed")
 					}
+					if !in.AdmitBefore.IsZero() && !time.Now().Before(in.AdmitBefore) {
+						return domain.WorkerUpdateResult{}, errors.New("drain admission attempt expired")
+					}
 					if !in.ExpiresAt.IsZero() && !time.Now().Before(in.ExpiresAt) {
 						return domain.WorkerUpdateResult{}, errors.New("prepared update expired")
 					}
