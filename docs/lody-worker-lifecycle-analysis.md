@@ -2,6 +2,45 @@
 
 核查日期：2026-11-17。结论用于 Shioji 本轮升级改造。用户已决定直接采用 Lody 的机制，接受其未登记进程覆盖范围，不再增加独立会话宿主或完整后代追踪架构。以下参考源码分析在实施前完成；实施现状见下段，三台正式设备没有停止或更新。
 
+> **追加复核（2026-11-17，尚未修复）**：当前 `43ec93f` 对照 Lody 最新 `58e33ce`，又确认三处交接遗漏：永久删除没有撤销 pending Start、成功退休的部分分支没有释放旧 unknown work 所有权、后台关闭在明确的前置失败后仍永久封住准入。五个具体场景各重复三次，共 15 次预期断言失败，另有 124 项既有相邻检查通过。本轮只审计和隔离复现，产品代码及三台正式设备未改动；不能将此前五项修复外推为所有交接路径均已覆盖。
+
+## 2026-11-17 追加复核：三个仍未对齐的交接点
+
+| 优先级 | 遗漏与用户后果 | 根因与最小对齐方向 |
+| --- | --- | --- |
+| 高 | 删除正在初始化的会话后，升级仍等待已接纳轮次；初始化随后失败还会取消整台 worker | 删除只关闭 runtime gate，没有撤销 runtimeStarts、原 Start context 和 dispatch reservation；迟到错误进入 failRuntimeLaunch，对墓碑后的 operation/session 读写失败执行 s.cancel。应像现有 Stop 初始化及 Lody abandonPendingSessionCreate 一样先撤销逻辑所有权，迟到结果按准确实例与墓碑收尾。 |
+| 高 | 关闭后台服务在 helper 启动前就签名校验失败，但之后无法发送，也无法重试关闭 | backgroundStopping 在 callback 前置 true，只有 err=nil 的部分结果会复位。真实 transport 的验签失败明确没有执行 unregister，却被当成未知已投递保留 fence。应区分明确未执行与结果未知，只对后者保持既有保护。 |
+| 中 | 旧实例已成功关闭，归档恢复或换版后的新实例仍被旧 unknown work 永久否决 GC | cleanRuntimeRetirement 的 needsRelease 只计算 starting/running/waiting，成功的普通替换清理也未调用 RetireWork；只接入 GC、失败分离、ReleaseRuntime 的退休标记没有覆盖全部成功关闭路径。应按准确已停止实例统一退休旧工作所有权，保留真正未知的历史结果。 |
+
+### A. 永久删除与 pending Start 的交接
+
+证据位置：[删除事件门](../internal/worker/archive.go#L173)、[初始化收尾](../internal/worker/session_runtime.go#L198)、[失败写回](../internal/worker/session_runtime.go#L249)。隔离中立 harness 暂停原生 Start，提交真实归档及删除事务。删除已落墓碑时仍为 `starts=1 reservations=1`，`businessStopReady` 拒绝；释放原 Start 并让其返回初始化错误后，三轮均取消整台 worker。先通过已有 `stopInitializing` 撤销准确初始化再删除的对照，三轮保持 worker 可用。
+
+这与上轮已修复的「runtime 已创建、卡在 Create」不同：这次卡在更早的 Adapter.Start；上轮墓碑幂等只覆盖 InterruptCompletion，没有覆盖 failRuntimeLaunch 的迟到写回。标准提交的 Start 等待有 20 秒上下文预算，不能将本轮观察夸大成一定无限等待；但墓碑已提交后逻辑租约仍未立即释放，迟到失败取消设备 worker 的后果已经复现。
+
+Lody 参照为 [session-manager.ts:470](https://github.com/LodyAI/Lody/blob/58e33cec245b2f5e7586d0c7beb6a02ce148219c/apps/cli/src/session/session-manager.ts#L470)：从 pending map 移除、取消创建控制器，迟到成功分离并清理准确实例，迟到拒绝不再占用该创建。其 [pending create 终止分支](https://github.com/LodyAI/Lody/blob/58e33cec245b2f5e7586d0c7beb6a02ce148219c/apps/cli/src/session/session-manager.ts#L578) 也有有界等待后移交。这里比较已读的生命周期机制，不声称在 Lody 正式 UI 重现了完全相同的永久删除场景。
+
+### B. 成功退出后的旧工作所有权
+
+证据位置：[归档退休](../internal/worker/archive_retirement.go#L62)、[通用关闭完成](../internal/worker/retirement.go#L121)、[下一代创建](../internal/worker/session_runtime.go#L107)。两种隔离路径都运行真实注册的 cat 进程，取得旧 scope VerifyStopped 成功证明，然后沿同一会话和线程创建新实例、完成新轮次。旧 work 仍为 `State:unknown Retired:false`，GC 返回 `Idle:false`；只对已证明停止的旧工作调用现有 RetireWork，对照立即为 Idle=true。归档／恢复和换版清理各三轮相同。
+
+换版探针为保留准确停止证明，先受控调用与自动换版相同的 cleanSessionRuntime 清理入口，在下一次 Begin 覆盖 scope 记录前核对 VerifyStopped，再走正常接续。不是正式设备安装验收。Lody 的 [detachSession](https://github.com/LodyAI/Lody/blob/58e33cec245b2f5e7586d0c7beb6a02ce148219c/apps/cli/src/session/session-manager.ts#L2074) 会移除准确实例并发出 native work 清空事件，GC 查询当前活实例；旧历史 unknown 不继续替后继实例持有运行时。
+
+### C. 已知未反注册的前置失败
+
+证据位置：[后台关闭](../internal/worker/background_stop.go#L70)、[transport 前置验签](../internal/transport/background_darwin.go#L100)。使用临时 HOME 内的无效 Runtime.app 调用真实 DisableRuntimeService，验签失败发生在 runRuntimeHelper 之前，没有触达正式安装、SMAppService 或真实系统反注册。三轮均留下 `stopping=true scopeAdmitting=false`；后续输入得到「后台服务正在关闭」，再次关闭不会到达 callback（调用数始终为 1）。
+
+上轮恢复的是「unavailable 且 err=nil」的已知非操作；这次是「明确尚未投递但 err!=nil」，不能混用未知结果的 fail-closed 规则。Lody 对照的是 [daemon-runner 的 prepare／校验阶段](https://github.com/LodyAI/Lody/blob/58e33cec245b2f5e7586d0c7beb6a02ce148219c/apps/cli/src/commands/daemon-runner.ts#L470) 与实际排空的分界：准备校验失败不等于已经进入关闭。Lody 没有 Shioji 这一 SMAppService callback；本项是本地停止准入回滚缺陷，不冒充上游有完全同名接口。
+
+### 本轮范围、对照和证据
+
+- [完整失败输出](../.ryugi/audits/lody-mechanism-post-fix-20261117/worker-probes.txt)、[探针源文件](../.ryugi/audits/lody-mechanism-post-fix-20261117/worker_postfix_test.go)、[overlay](../.ryugi/audits/lody-mechanism-post-fix-20261117/worker-overlay.json)：五个失败场景各三次；没有把预期失败计为通过。
+- [审计计数与边界](../.ryugi/audits/lody-mechanism-post-fix-20261117/audit-summary.txt)：15 次失败；初始化先分离的三次对照通过，六次成功退休后的 work 结算对照恢复 Idle=true。
+- [124 项相邻检查](../.ryugi/audits/lody-mechanism-post-fix-20261117/aligned-neighbours.txt)：worker、store、supervisor、managedexec 四包通过，包括停止超时、私有通道半帧／重试、归档 gate、自建 worktree 与原 GC／失败退休路径。它们不包括本轮 overlay 失败探针。
+- [源码与上游版本](../.ryugi/audits/lody-mechanism-post-fix-20261117/source-provenance.txt)：393 个生命周期文件哈希未变化；Lody 4f25bd5→58e33ce 的新增提交未改本次 CLI／supervisor／node 进程核心。没有新增正式运行事件或远程部署证据。
+
+20 分钟／30 秒、24 小时原生 waiting 保护、未登记后代和首次旧存量手动迁移继续按既定决定；Loro Wasm、模拟器、Web 终端和逐轮 MCP selector 的技术栈／功能差异未冒充本项目缺陷。这里确认三处，不承诺没有其他未来环境故障。
+
 > **本轮对齐修复（2026-11-17）**：五处遗漏均已修复，产品提交为 `f3f26d0`、`57e0083`、`0cfc582`、`9e5b33d`、`206b0e8`；验证追加修复 `ee93539` 使 Codex 启动失败返回真正空的 Runtime 接口，避免取消后的清理崩溃。每项均有修复前失败和修复后通过的回归；私有通道还用真实签名 worker 验证一次超时后在公共 socket 缺失时仍可重试并取得准确退出回执。完整验证和历史回放见同主题报告。本轮未停止、更新三台正式设备。
 
 ## 2026-11-17 五处修复的最终机制
