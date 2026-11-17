@@ -685,8 +685,13 @@ func (v *View) homeView(c *n.Context, t *n.Theme) {
 				v.choiceMenu(c, t, "home-workspace", picker, choices)
 				n.Text(c, "做些什么？").FixedLineHeight(48).FontSize(32).TextColor(t.TextMuted)
 			})
-			v.notice(c, t)
-			v.composer(c, t, true)
+			n.Column(c.Key("home-composer")).FillWidth().MaxWidth(768).Children(func() {
+				v.composer(c, t, true)
+				// Status changes must not participate in the centered home layout.
+				n.Column(c.Key("home-notice")).Absolute().Left(0).Right(0).TopPercent(100).Padding(8, 0, 0, 0).Children(func() {
+					v.notice(c, t)
+				})
+			})
 		}
 		n.Spacer(c).Grow(1.16)
 	})
