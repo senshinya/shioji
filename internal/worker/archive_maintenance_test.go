@@ -108,7 +108,15 @@ func TestArchivePreemptsNativeMaintenance(t *testing.T) {
 				t.Fatal("old native maintenance still holds the restored execution slot")
 			}
 			// A new reload must not be vetoed by the retired running receipt.
+			prior, err := s.store.SessionReload(request)
+			if err != nil || prior.State != "failed" {
+				t.Fatal("retired maintenance receipt is still active", prior, err)
+			}
+			// Confirmation precedes dispatch's final turn/revision bookkeeping.
+			// Capture the next maintenance revision after that critical section.
+			s.dispatchMu.Lock()
 			latest, err := s.store.Session(d.Session.ID, 0, 100)
+			s.dispatchMu.Unlock()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -125,7 +133,7 @@ func TestArchivePreemptsNativeMaintenance(t *testing.T) {
 			if successor.Stopped() || s.currentRuntime(d.Session.ID) != successor || !successor.Observes(d.Session) {
 				t.Fatal("late old reload replaced the successor")
 			}
-			prior, err := s.store.SessionReload(request)
+			prior, err = s.store.SessionReload(request)
 			if err != nil || prior.State != "failed" {
 				t.Fatal("old reload was reported successful", prior, err)
 			}
