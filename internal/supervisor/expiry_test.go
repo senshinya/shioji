@@ -35,7 +35,8 @@ func TestExpiredIntentCannotSwitchAfterSlowIdleQuery(t *testing.T) {
 	raw, _ := json.Marshal(op)
 	var body map[string]any
 	json.Unmarshal(raw, &body)
-	body["expiresAt"] = time.Now().Add(200 * time.Millisecond).UTC()
+	expiresAt := time.Now().Add(2 * time.Second).UTC()
+	body["expiresAt"] = expiresAt
 	raw, _ = json.Marshal(body)
 	json.Unmarshal(raw, &op)
 	if err = h.journal.save(op); err != nil {
@@ -46,7 +47,7 @@ func TestExpiredIntentCannotSwitchAfterSlowIdleQuery(t *testing.T) {
 	}
 	done := make(chan struct{})
 	go func() { h.update(ctx, op, old); close(done) }()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(3 * time.Second)
 	for {
 		if _, err = os.Stat(filepath.Join(dir, "prepare-drain-entered")); err == nil {
 			break
@@ -56,7 +57,7 @@ func TestExpiredIntentCannotSwitchAfterSlowIdleQuery(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	time.Sleep(250 * time.Millisecond)
+	time.Sleep(time.Until(expiresAt) + 20*time.Millisecond)
 	os.Remove(filepath.Join(dir, "hold-prepare-drain"))
 	select {
 	case <-done:
