@@ -33,6 +33,9 @@ func TestRealAppServerRunsTwoThreadsAndSurvivesClientContextCancellation(t *test
 	defer server.Close()
 	home := t.TempDir()
 	config := fmt.Sprintf("model=\"fixture-model\"\nmodel_provider=\"fixture\"\n[model_providers.fixture]\nname=\"Fixture\"\nbase_url=\"%s/v1\"\nwire_api=\"responses\"\nrequires_openai_auth=false\nsupports_websockets=false\n", server.URL)
+	// Match NewProvider: this protocol test needs no marketplace clone. An
+	// unrelated plugin bootstrap can otherwise outlive Close and race TempDir.
+	config += "[features]\nplugins=false\n"
 	if err = os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}

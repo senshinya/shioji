@@ -27,7 +27,11 @@ func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.
 	if opts.CatalogOnly {
 		return a.startCatalog(ctx, opts)
 	}
-	return a.startNative(ctx, opts)
+	r, err := a.startNative(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
 }
 
 func (a Adapter) startNative(ctx context.Context, opts harness.StartOptions) (*adapterRuntime, error) {
