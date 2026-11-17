@@ -282,7 +282,6 @@ func (v *View) deviceStatusScene(c *n.Context, t *n.Theme, key string, state *ap
 		if ui.error != "" {
 			n.Text(c, ui.error).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 		}
-		deviceDivider(c)
 	})
 }
 
