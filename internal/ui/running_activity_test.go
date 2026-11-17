@@ -350,6 +350,7 @@ func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 				}
 				ui.Frame()
 				firstFooterY := float32(-1)
+				settledFooterY := float32(-1)
 				for frame := 0; frame < 36; frame++ {
 					ui.Advance(time.Second / 60)
 					header, _ = ui.Find("2 次工具调用")
@@ -358,6 +359,9 @@ func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 					hasNew := activityGreenIn(ui, footer)
 					if !hasOld && !hasNew {
 						t.Fatalf("no visible progress at frame %d", frame)
+					}
+					if hasOld {
+						t.Fatalf("tool progress remains above the new reply at frame %d", frame)
 					}
 					x := activityTitleInkX(ui, header, dark)
 					elapsed := ui.Now().Sub(began)
@@ -372,8 +376,15 @@ func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 						if firstFooterY < 0 {
 							firstFooterY = footer.Y
 						}
-						if math.Abs(float64(footer.Y-firstFooterY)) > 1 {
-							t.Fatalf("visible new progress is moving: %v -> %v at frame %d", firstFooterY, footer.Y, frame)
+						// The unique status follows the content while the old tool
+						// body folds, then keeps its settled endpoint.
+						if elapsed >= ready {
+							if settledFooterY < 0 {
+								settledFooterY = footer.Y
+							}
+							if math.Abs(float64(footer.Y-settledFooterY)) > 1 {
+								t.Fatalf("settled progress is moving: %v -> %v at frame %d", settledFooterY, footer.Y, frame)
+							}
 						}
 					}
 					if elapsed >= ready+90*time.Millisecond && firstFooterY < 0 {

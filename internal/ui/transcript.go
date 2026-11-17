@@ -61,9 +61,18 @@ func withTurnFooters(rows []transcriptRow, turns map[string]domain.Turn) []trans
 	length := len(rows)
 	rows = append(rows, make([]transcriptRow, footerCount)...)
 	to := len(rows) - 1
+	// Late output from an earlier turn can follow the active turn's records.
+	// Its result stays in history; the active status remains the final row.
+	for id, turn := range turns {
+		if _, present := last[id]; present && turn.Status.Active() && turn.Presentation != "compaction" {
+			rows[to] = transcriptRow{key: "turn-footer:" + id, footer: id, end: -1, opacity: 1}
+			to--
+			delete(last, id)
+		}
+	}
 	for i := length - 1; i >= 0; i-- {
 		row := rows[i]
-		if row.end >= 0 && row.item.TurnID != "" && last[row.item.TurnID] == i {
+		if end, present := last[row.item.TurnID]; row.end >= 0 && row.item.TurnID != "" && present && end == i {
 			if turn, ok := turns[row.item.TurnID]; ok && turn.Presentation != "compaction" {
 				rows[to] = transcriptRow{key: "turn-footer:" + row.item.TurnID, footer: row.item.TurnID, end: -1, opacity: 1}
 				to--
@@ -438,6 +447,9 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 					}
 				}
 				for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
+					if !live && !handoff {
+						break
+					}
 					if turn.ID == row.item.TurnID {
 						clock, natural := runningElapsed(c.Key("group-elapsed"), v.runningElapsedStart(turn), t.TextMuted, true)
 						if handoff {

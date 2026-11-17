@@ -1208,6 +1208,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	}
 	rows := v.transcriptRows(detail.Items)
 	rows = v.contextRows(rows)
+	rows = v.bottomActivityRows(rows)
 	rows = v.revealFindTarget(rows, reopening)
 	v.syncRunningGroup(c, rows, detail)
 	turns := make(map[string]domain.Turn, len(detail.Turns))

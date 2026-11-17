@@ -246,6 +246,7 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		i.ID, i.TurnID = key, p.TurnID
 		n.items[key] = i
 		event.Type = "item.upsert"
+		event.ActivityStart = m.Method == "item/started"
 		event.Item = &i
 		return emit(event)
 	case "item/plan/delta":

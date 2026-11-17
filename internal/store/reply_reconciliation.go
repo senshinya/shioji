@@ -120,6 +120,7 @@ func (s *Store) ReconcileReplies(before ReplyReconciliation, source domain.Recov
 				continue
 			}
 			next.Order = old.Order
+			next.ActivityOrder = old.ActivityOrder
 		} else {
 			next = old
 			next.Text, next.Status, next.Final = "", "superseded", true

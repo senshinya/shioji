@@ -23,28 +23,7 @@ func (v *View) contextMeter(c *n.Context, t *n.Theme, cfg domain.RunConfig) {
 		return
 	}
 	usage := session.ContextUsage
-	compacting := false
-	if a := v.contextAction(); a != nil && a.State.Active() {
-		compacting = true
-	}
-	detail := v.Model.Details[session.ID]
-	if session.Status == "running" {
-		for i := len(detail.Items) - 1; i >= 0; i-- {
-			item := detail.Items[i]
-			if item.Presentation != "compaction" {
-				continue
-			}
-			if !item.Final && item.Status == "running" {
-				for _, turn := range detail.Turns {
-					if turn.ID == item.TurnID && turn.Status == "running" {
-						compacting = true
-						break
-					}
-				}
-			}
-			break
-		}
-	}
+	compacting := v.currentCompaction() != ""
 	fraction := float32(0)
 	known := usage != nil && usage.UsedTokens != nil && usage.LimitTokens != nil && *usage.LimitTokens > 0
 	label := "—"

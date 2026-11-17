@@ -14,6 +14,9 @@ import (
 // lifecycle. No phase is inferred from a tool name, source ID or elapsed time.
 type runningActivity struct {
 	label      string
+	item       string
+	kind       string
+	index      int
 	waiting    bool
 	compaction string
 	started    *time.Time
@@ -34,16 +37,25 @@ func (v *View) runningActivity(turn domain.Turn) runningActivity {
 		a.waiting = true
 		return a
 	}
+	var latest *domain.Item
 	for i := len(d.Items) - 1; i >= 0; i-- {
 		item := d.Items[i]
 		if item.TurnID != turn.ID || item.WorkID != "" {
 			continue
 		}
+		eligible := item.Kind == "tool" || item.Kind == "assistant" && (item.ActivityOrder > 0 || strings.TrimSpace(item.Text) != "") || item.Kind == "activity" && (item.Presentation == "compaction" || item.Presentation == "reasoning")
+		if eligible && (latest == nil || item.ActivityOrder > latest.ActivityOrder) {
+			latest = &d.Items[i]
+			a.index = i
+		}
+	}
+	// ActivityOrder records starts, never output delivery. Older workers/history
+	// without this metadata retain their stable display-order fallback.
+	if latest != nil {
+		item := *latest
+		a.item, a.kind = item.ID, item.Kind
 		switch item.Kind {
 		case "assistant":
-			if strings.TrimSpace(item.Text) == "" {
-				continue
-			}
 			if !item.Final {
 				a.label = "正在回复"
 			}
@@ -102,6 +114,23 @@ func (v *View) activeConversationTurn() (domain.Turn, bool) {
 		}
 	}
 	return domain.Turn{}, false
+}
+
+// Live progress is the transcript's tail, even when an older tool delivers
+// output into a later display record. Keep persisted content order untouched.
+func (v *View) bottomActivityRows(rows []transcriptRow) []transcriptRow {
+	id := v.currentCompaction()
+	if id == "" {
+		return rows
+	}
+	for i, row := range rows {
+		if row.item.ID == id && i < len(rows)-1 {
+			copy(rows[i:], rows[i+1:])
+			rows[len(rows)-1] = row
+			break
+		}
+	}
+	return rows
 }
 
 // This visual clock preserves progress animation phase across insertions.
@@ -188,6 +217,19 @@ func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domai
 	if row.item.TurnID != turn.ID {
 		group = ""
 	}
+	if activity.kind != "tool" {
+		group = ""
+	}
+	if group != "" {
+		for first, item := range detail.Items {
+			if item.ID == row.item.ID {
+				if activity.index < first || activity.index > row.end {
+					group = ""
+				}
+				break
+			}
+		}
+	}
 	if group != "" {
 		p.handoff = nil
 		p.label = activity.label
@@ -204,9 +246,6 @@ func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domai
 	if p.handoff != nil {
 		if c.Preferences().ReduceMotion {
 			p.handoff.fadeAt = c.Now().Add(-progressFadeDuration - progressReclaimDuration)
-		}
-		if p.handoffFraction(c.Now()) < 1 {
-			v.runningGroup, v.activityTurn = p.handoff.group, turn.ID
 		}
 		if c.Now().Before(p.handoff.fadeAt.Add(progressFadeDuration + progressReclaimDuration)) {
 			c.AnimationFrame()
@@ -284,9 +323,7 @@ type progressLabelExtent struct {
 
 func (v *View) progressStatus(c *n.Context, t *n.Theme, a runningActivity, p *runningProgress) {
 	row := n.Row(c.Key("running-status")).Gap(6).AlignItems(n.Baseline)
-	if p != nil && p.handoff != nil {
-		row.Opacity(p.handoffFraction(c.Now()))
-	} else {
+	if p == nil || p.handoff == nil {
 		row.Transition(fadeMotion(c, 120*time.Millisecond))
 	}
 	// Keep shimmer phase through the local receipt → authoritative turn

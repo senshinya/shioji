@@ -141,6 +141,9 @@ type Item struct {
 	ExitCode           *int                `json:"exitCode,omitempty"`
 	Final              bool                `json:"final"`
 	Order              int64               `json:"order"`
+	// Worker-owned order of the first observed activity start. Output and
+	// completion updates preserve it; display/history position is independent.
+	ActivityOrder int64 `json:"activityOrder,omitempty"`
 }
 
 type ContentPart struct {
@@ -246,6 +249,7 @@ type Plan struct {
 	Steps       []PlanStep `json:"steps"`
 }
 type Event struct {
+	ActivityStart    bool             `json:"activityStart,omitempty"`
 	ArchivePolicy    *ArchivePolicy   `json:"archivePolicy,omitempty"`
 	Deletion         *ArchiveDeletion `json:"deletion,omitempty"`
 	Work             *WorkActivity    `json:"work,omitempty"`

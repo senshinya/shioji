@@ -706,6 +706,12 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		if previous.Status == "superseded" && previous.Final && !e.Item.Final {
 			return e, nil
 		}
+		e.Item.ActivityOrder = previous.ActivityOrder
+		if e.ActivityStart && !e.Item.Final && errors.Is(readErr, sql.ErrNoRows) {
+			if err = tx.QueryRow("SELECT COALESCE(MAX(sequence),0)+1 FROM journal").Scan(&e.Item.ActivityOrder); err != nil {
+				return e, err
+			}
+		}
 		if e.Item.WorkID != "" {
 			if e.Item.Kind != "request_result" {
 				return e, errors.New("unsupported sourced item")

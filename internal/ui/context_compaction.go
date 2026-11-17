@@ -404,15 +404,45 @@ func contextActionLabel(state domain.ExecutionState) string {
 	}
 	return ""
 }
+
+// All compaction surfaces use the same current activity as tool summaries,
+// the reply footer and the offscreen latest indicator.
+func (v *View) currentCompaction() string {
+	if !v.Model.Connected {
+		return ""
+	}
+	action := v.contextAction()
+	if turn, ok := v.activeConversationTurn(); ok {
+		activity := v.runningActivity(turn)
+		if activity.waiting {
+			return ""
+		}
+		if activity.compaction != "" {
+			return activity.compaction
+		}
+		if activity.item != "" || turn.Presentation != "compaction" || action == nil || action.TurnID != turn.ID {
+			return ""
+		}
+	}
+	if action != nil && action.State.Active() {
+		return "context-compaction:" + action.OperationID
+	}
+	return ""
+}
+
 func (v *View) contextCompactionItem(c *n.Context, t *n.Theme, item domain.Item) {
+	live := !item.Final && item.WorkID == "" && v.currentCompaction() == item.ID
 	label := item.Name
 	if label == "" {
 		label = "正在压缩上下文"
 	}
+	if !item.Final && !live {
+		label = "压缩状态待确认"
+	}
 	row := n.Row(c.Key("compaction-status")).FillWidth().Gap(6).AlignItems(n.Baseline)
 	row.Children(func() {
 		font := n.Font{Family: t.Font, Size: 11, Weight: 400}
-		if !item.Final {
+		if live {
 			statusDot(c, label, font, t.Success, true)
 		} else if item.Status == "completed" {
 			inlineSymbol(c, check, label, font, 14, t.TextMuted)
@@ -420,12 +450,12 @@ func (v *View) contextCompactionItem(c *n.Context, t *n.Theme, item domain.Item)
 			inlineSymbol(c, compactContextIcon, label, font, 14, t.TextMuted)
 		}
 		text := n.Text(c.Key("label"), label).FontSize(font.Size).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
-		if !item.Final {
+		if live {
 			shimmer(c, text, t.TextMuted, t.Text)
 		}
-		if !item.Final && item.WorkID == "" && item.TurnID != "" && v.Model.Connected {
+		if live && item.TurnID != "" {
 			for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
-				if turn.ID == item.TurnID && turn.Status.Active() && (turn.Presentation == "compaction" || v.runningActivity(turn).compaction == item.ID) {
+				if turn.ID == item.TurnID && turn.Status.Active() {
 					runningElapsed(c.Key("elapsed"), v.runningElapsedStart(turn), t.TextMuted, false)
 					break
 				}
