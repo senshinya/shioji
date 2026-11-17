@@ -77,12 +77,15 @@ type Session struct {
 // ReplyCompletion is owned by the device worker. ID fences acknowledgements
 // against a newer reply or replacement history independently of source IDs.
 type ReplyCompletion struct {
-	ID          string    `json:"id"`
-	HistoryRef  string    `json:"historyRef,omitempty"`
-	TurnID      string    `json:"turnId"`
-	Order       int64     `json:"order"`
-	CompletedAt time.Time `json:"completedAt"`
-	Unread      bool      `json:"unread"`
+	// Pending has no publication ID or unread signal until native work settles.
+	Pending     bool           `json:"pending,omitempty"`
+	Outcome     ExecutionState `json:"outcome,omitempty"`
+	ID          string         `json:"id"`
+	HistoryRef  string         `json:"historyRef,omitempty"`
+	TurnID      string         `json:"turnId"`
+	Order       int64          `json:"order"`
+	CompletedAt time.Time      `json:"completedAt"`
+	Unread      bool           `json:"unread"`
 }
 
 type Submission struct {

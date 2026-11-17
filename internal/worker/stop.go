@@ -35,6 +35,12 @@ func (s *Server) interruptTurn(id, turn string) error {
 			active = true
 		}
 	}
+	if c := d.Session.Completion; c != nil && c.Pending && (turn == "" || turn == c.TurnID) {
+		active = true
+		if turn == "" {
+			turn = c.TurnID
+		}
+	}
 	if err != nil || !active {
 		s.dispatchMu.Unlock()
 		if err != nil {
@@ -42,7 +48,10 @@ func (s *Server) interruptTurn(id, turn string) error {
 		}
 		return errors.New("turn is not active")
 	}
-	_, err = s.store.PauseQueue(id, "stopped")
+	err = s.store.WithdrawCompletion(id)
+	if err == nil {
+		_, err = s.store.PauseQueue(id, "stopped")
+	}
 	if err == nil {
 		scope, e := s.executions.Existing(id)
 		err = e
@@ -91,6 +100,9 @@ func (s *Server) interruptTurn(id, turn string) error {
 					}
 				}
 				if pending, ok := r.(harness.PendingRuntime); ok && pending.PendingOperations() != 0 {
+					finished = false
+				}
+				if busy, e := s.store.HasActiveWork(id); e != nil || busy {
 					finished = false
 				}
 				if finished {

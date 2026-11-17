@@ -124,6 +124,9 @@ func (s *Store) ReleaseRuntime(id, generation, message string, stopped bool) err
 	if action := session.ContextAction; action != nil && (action.State.Active() || action.State == "unknown") {
 		action.State, action.Error = "failed", message
 	}
+	if _, err = s.settleReplyCompletion(tx, &session, true); err != nil {
+		return err
+	}
 	session.ExecutionGuard, session.Recovery = "", nil
 	session.Status, session.Error = "failed", message
 	if stopped {

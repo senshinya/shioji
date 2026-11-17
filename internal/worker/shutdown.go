@@ -15,6 +15,7 @@ func (s *Server) shutdown() error {
 	work, cancel := context.WithDeadline(context.Background(), deadline.Add(-time.Second))
 	defer cancel()
 	s.backgroundStopping.Store(true)
+	s.store.SuspendCompletionPublication()
 	s.cancel()
 	s.listener.Close()
 	s.mu.Lock()

@@ -148,6 +148,9 @@ func (s *Server) reclaimRuntime(id string, now time.Time, pressure bool, parent 
 // Waiting background work belongs to the evicted instance, never its successor.
 // Keep its history while removing controls for a runtime that has been retired.
 func (s *Server) settleReclaimedBackground(id string, stopped bool) error {
+	if err := s.store.InterruptCompletion(id); err != nil {
+		return err
+	}
 	d, err := s.store.Session(id, 0, 1)
 	if err != nil {
 		return err

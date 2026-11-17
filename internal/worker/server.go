@@ -1380,6 +1380,9 @@ func (s *Server) onEvent(e domain.Event) error {
 		return nil
 	}
 	if lost {
+		if err := s.store.InterruptCompletion(e.SessionID); err != nil {
+			return err
+		}
 		if err := s.guardManagedExecution(e.SessionID); err != nil {
 			return err
 		}

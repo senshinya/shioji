@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -22,6 +23,7 @@ import (
 )
 
 type Store struct {
+	completionStopping   atomic.Bool
 	mu                   sync.Mutex
 	db                   *sql.DB
 	path                 string
@@ -426,6 +428,7 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		session.Config = in.Config
 		session.Recovery = nil
 		session.Status = "starting"
+		withdrawReplyCompletion(&session)
 		session.Revision++
 	} else {
 		title := strings.SplitN(strings.TrimSpace(in.Text), "\n", 2)[0]
@@ -693,6 +696,9 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		if err = applyWork(tx, sid, &e); err != nil {
 			return e, err
 		}
+		if _, err = s.settleReplyCompletion(tx, &session, false); err != nil {
+			return e, err
+		}
 	case "item.upsert":
 		if e.Item == nil {
 			return e, errors.New("missing item")
@@ -775,7 +781,9 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		if err = putTurn(tx, sid, e.Turn); err != nil {
 			return e, err
 		}
-		observeReplyCompletion(&session, previous, *e.Turn)
+		if err = s.observeReplyCompletion(tx, &session, previous, *e.Turn); err != nil {
+			return e, err
+		}
 		if session.ExecutionGuard == "" {
 			session.Status = e.Turn.Status
 			session.Recovery = nil
@@ -1063,6 +1071,9 @@ func (s *Store) Events(after int64, limit int) ([]domain.Event, error) {
 
 // Recover never dispatches saved input. An old dispatch may already have caused an external effect.
 func (s *Store) Recover() error {
+	if err := s.WithdrawCompletion(""); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	_, reloadErr := s.db.Exec(`UPDATE session_reloads SET body=json_set(body,'$.state','failed','$.error','重新加载期间执行服务重启；未发送消息，可重新操作') WHERE json_extract(body,'$.state')='running'`)
 	s.mu.Unlock()

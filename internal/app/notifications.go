@@ -29,8 +29,32 @@ func (m *Model) notificationForEvent(e domain.Event) *SessionNotification {
 			break
 		}
 	}
-	if e.Turn != nil && (e.Turn.Status == "completed" || e.Turn.Status == "failed") {
-		if e.Turn.Presentation == "compaction" {
+	// Completion publications may arrive on the final work event or runtime-loss
+	// metadata, after the parent turn and its reading cache have already settled.
+	publication := false
+	if e.Session != nil && e.Session.Completion != nil && (e.Type == "turn" || e.Type == "work.upsert" || e.Type == "work.item" || e.Type == "session") {
+		c := e.Session.Completion
+		publication = !c.Pending && c.ID != "" && c.Unread && !c.CompletedAt.Before(m.completionCutoff())
+		for _, old := range m.Snapshot.Sessions {
+			if old.ID == e.SessionID && (old.Revision > e.Session.Revision || old.Completion != nil && old.Completion.ID == c.ID) {
+				publication = false
+			}
+		}
+		if publication {
+			notice.Kind, notice.Title = "completed", "回复已完成"
+			if c.Outcome == "interrupted" {
+				notice.Kind, notice.Title = "failed", "后台工作已中断"
+			}
+			if notice.Kind == "completed" && !p.Completed || notice.Kind == "failed" && !p.Failed {
+				return nil
+			}
+			notice.ID = "completion:" + c.ID
+		}
+	}
+	if publication {
+		// Use the durable publication identity below for cross-cache deduplication.
+	} else if e.Turn != nil && (e.Turn.Status == "completed" || e.Turn.Status == "failed") {
+		if e.Turn.Presentation == "compaction" || e.Turn.Status == "completed" && e.Session != nil && (e.Session.Completion != nil || m.WorkerMinor >= 39) {
 			return nil
 		}
 		for _, previous := range m.Details[e.SessionID].Turns {

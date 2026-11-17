@@ -182,6 +182,10 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 			if s.runtimeRetiring(id) {
 				return nil
 			}
+			if err := s.store.InterruptCompletion(id); err != nil {
+				s.cancel()
+				return err
+			}
 			if err := s.guardManagedExecution(id); err != nil {
 				s.cancel()
 				return err
@@ -236,7 +240,7 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 	s.mu.Lock()
 	delete(s.bound, id)
 	s.mu.Unlock()
-	s.watchRuntime(r)
+	s.watchRuntime(r, id)
 	return r, nil
 }
 func (s *Server) sessionRuntimeDirectory(id string) string {

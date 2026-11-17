@@ -21,13 +21,23 @@ func (s *Server) wakeRecovery() {
 	default:
 	}
 }
-func (s *Server) watchRuntime(r harness.Runtime) {
+func (s *Server) watchRuntime(r harness.Runtime, sessionIDs ...string) {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		select {
 		case <-s.ctx.Done():
 		case <-r.Done():
+			if len(sessionIDs) > 0 {
+				s.dispatchMu.Lock()
+				current := s.currentRuntime(sessionIDs[0])
+				if s.ctx.Err() == nil && !s.backgroundStopping.Load() && current != nil && current.Done() == r.Done() {
+					if err := s.store.InterruptCompletion(sessionIDs[0]); err != nil {
+						s.cancel()
+					}
+				}
+				s.dispatchMu.Unlock()
+			}
 			s.wakeRecovery()
 		}
 	}()

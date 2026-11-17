@@ -92,6 +92,7 @@ func (s *Store) SetSessionArchived(id string, revision int64, archived bool, gen
 	if archived {
 		now := time.Now().UTC()
 		session.ArchivedAt = &now
+		withdrawReplyCompletion(&session)
 	}
 	session.Revision++
 	if archived {
@@ -141,6 +142,12 @@ func (s *Store) SetWorkspaceArchived(id string, revision int64, archived bool, g
 	}
 	if archived {
 		for _, session := range sessions {
+			if session.Completion != nil && session.Completion.Pending {
+				withdrawReplyCompletion(&session)
+				if err = saveCompletionSession(tx, &session); err != nil {
+					return w, err
+				}
+			}
 			gen := ""
 			if len(generations) > 0 {
 				gen = generations[0][session.ID]

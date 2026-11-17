@@ -117,5 +117,18 @@ func (s *Store) SetWorkInput(id string, state domain.OperationState, message str
 			return err
 		}
 	}
+	session, err := load[domain.Session](tx.QueryRow("SELECT body FROM sessions WHERE id=?", op.Input.SessionID))
+	if err != nil {
+		return err
+	}
+	changed, err := s.settleReplyCompletion(tx, &session, false)
+	if err != nil {
+		return err
+	}
+	if changed {
+		if err = saveCompletionSession(tx, &session); err != nil {
+			return err
+		}
+	}
 	return s.commit(tx)
 }

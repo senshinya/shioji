@@ -41,7 +41,7 @@ func (m *Model) completionCutoff() time.Time {
 
 func (m *Model) projectCompletion(session domain.Session, cutoff time.Time) {
 	c := session.Completion
-	if c == nil || c.HistoryRef != session.ThreadID {
+	if c == nil || c.Pending || c.ID == "" || c.HistoryRef != session.ThreadID {
 		m.CompletedReplies = maps.Clone(m.CompletedReplies)
 		delete(m.CompletedReplies, session.ID)
 		return
@@ -138,7 +138,7 @@ func (m *Model) reconcileCompletedReplies(snapshot domain.Snapshot, requestedAt 
 func (m *Model) CompletionReadJob(id string) (Job, bool) {
 	for _, s := range m.Snapshot.Sessions {
 		c := s.Completion
-		if s.ID != id || c == nil || !c.Unread || m.completionReads[id] == c.ID {
+		if s.ID != id || c == nil || c.Pending || c.ID == "" || !c.Unread || m.completionReads[id] == c.ID {
 			continue
 		}
 		key := m.WorkspaceConnection(s.WorkspaceID)

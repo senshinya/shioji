@@ -25,6 +25,16 @@ func (s *Store) RecordShutdownUnknown(ctx context.Context) error {
 	if _, err = tx.ExecContext(ctx, "UPDATE operations SET state='indeterminate', error='执行服务退出未确认；输入不会重发' WHERE state IN ('accepted','dispatched')"); err != nil {
 		return err
 	}
+	pending, err := rowsOf[domain.Session](tx, "SELECT body FROM sessions WHERE json_extract(body,'$.completion.pending')=1")
+	if err != nil {
+		return err
+	}
+	for _, session := range pending {
+		withdrawReplyCompletion(&session)
+		if err = saveCompletionSession(tx, &session); err != nil {
+			return err
+		}
+	}
 	sessions, err := rowsOf[domain.Session](tx, "SELECT body FROM sessions WHERE json_extract(body,'$.status') IN ('running','starting','unknown')")
 	if err != nil {
 		return err
