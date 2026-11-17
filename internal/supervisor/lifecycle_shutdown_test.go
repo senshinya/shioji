@@ -62,10 +62,7 @@ func privateControlFixture(name string) int {
 			out.Ready = false
 			out.Reason = "busy"
 		}
-		reply := struct {
-			Result domain.WorkerUpdateResult `json:"result"`
-			Error  string                    `json:"error,omitempty"`
-		}{Result: out}
+		reply := lifecycleReply{AttemptID: in.AttemptID, Result: out}
 		if !in.ExpiresAt.IsZero() && !time.Now().Before(in.ExpiresAt) {
 			reply.Result.Ready = false
 			reply.Error = "prepared update expired"

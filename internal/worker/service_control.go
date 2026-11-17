@@ -167,17 +167,17 @@ func (s *Server) DrainService(in supervisor.Control) (domain.WorkerUpdateResult,
 		}
 		return domain.WorkerUpdateResult{}, errors.New("another drain already accepted")
 	}
-	if in.Replacement.Policy != "immediate" {
-		ready, e := s.businessStopReady()
-		if e != nil || !ready.Ready {
-			return ready, e
-		}
-	}
 	if !in.AdmitBefore.IsZero() && !time.Now().Before(in.AdmitBefore) {
 		return domain.WorkerUpdateResult{}, errors.New("drain admission attempt expired")
 	}
 	if !in.ExpiresAt.IsZero() && !time.Now().Before(in.ExpiresAt) {
 		return domain.WorkerUpdateResult{}, errors.New("prepared update expired")
+	}
+	if in.Replacement.Policy != "immediate" {
+		ready, e := s.businessStopReady()
+		if e != nil || !ready.Ready {
+			return ready, e
+		}
 	}
 	intent := supervisor.DrainIntent{ID: in.OperationID, Instance: s.config.ServiceInstance, DeviceID: s.store.DeviceID(), BuildID: s.build.BuildID}
 	snapshot, e := s.store.Snapshot()

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"sync"
@@ -17,14 +18,22 @@ const lifecycleFDEnv = "SHIOJI_WORKER_LIFECYCLE_FD"
 const lifecycleFrameLimit = 64 << 10
 
 type lifecycleReply struct {
-	Result domain.WorkerUpdateResult `json:"result"`
-	Error  string                    `json:"error,omitempty"`
+	AttemptID string                    `json:"attemptId,omitempty"`
+	Result    domain.WorkerUpdateResult `json:"result"`
+	Error     string                    `json:"error,omitempty"`
 }
 
 type lifecycleClient struct {
-	conn   net.Conn
-	reader *bufio.Reader
-	mu     sync.Mutex
+	conn      net.Conn
+	reader    *bufio.Reader
+	mu        sync.Mutex
+	calls     chan struct{}
+	writes    chan []byte
+	done      chan struct{}
+	closeOnce sync.Once
+	err       error
+	pendingID string
+	pending   chan lifecycleReply
 }
 
 func lifecyclePair() (*lifecycleClient, *os.File, error) {
@@ -42,32 +51,120 @@ func lifecyclePair() (*lifecycleClient, *os.File, error) {
 		child.Close()
 		return nil, nil, err
 	}
-	return &lifecycleClient{conn: conn, reader: bufio.NewReaderSize(conn, lifecycleFrameLimit)}, child, nil
+	return newLifecycleClient(conn), child, nil
 }
-func (c *lifecycleClient) Close() error { return c.conn.Close() }
-func (c *lifecycleClient) request(ctx context.Context, in Control) (domain.WorkerUpdateResult, error) {
+func newLifecycleClient(conn net.Conn) *lifecycleClient {
+	c := &lifecycleClient{conn: conn, reader: bufio.NewReaderSize(conn, lifecycleFrameLimit), calls: make(chan struct{}, 1), writes: make(chan []byte, 1), done: make(chan struct{})}
+	go c.readReplies()
+	go c.writeRequests()
+	return c
+}
+func (c *lifecycleClient) Close() error { c.fail(net.ErrClosed); return nil }
+func (c *lifecycleClient) fail(err error) {
+	c.closeOnce.Do(func() {
+		c.mu.Lock()
+		c.err = err
+		c.mu.Unlock()
+		c.conn.Close()
+		close(c.done)
+	})
+}
+func (c *lifecycleClient) failure() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.err
+}
+
+// Each child owns one reader and one writer. A canceled caller relinquishes
+// only its reply slot: a partial frame must finish before another is written.
+// The single-slot write queue bounds even a live child that stops reading.
+func (c *lifecycleClient) writeRequests() {
+	for {
+		select {
+		case <-c.done:
+			return
+		case frame := <-c.writes:
+			for len(frame) > 0 {
+				n, err := c.conn.Write(frame)
+				if err == nil && n == 0 {
+					err = io.ErrNoProgress
+				}
+				if err != nil {
+					c.fail(err)
+					return
+				}
+				frame = frame[n:]
+			}
+		}
+	}
+}
+func (c *lifecycleClient) readReplies() {
+	for {
+		raw, err := c.reader.ReadSlice('\n')
+		if err != nil {
+			c.fail(err)
+			return
+		}
+		var reply lifecycleReply
+		if err = json.Unmarshal(raw, &reply); err != nil {
+			c.fail(err)
+			return
+		}
+		c.mu.Lock()
+		if c.pending != nil && reply.AttemptID == c.pendingID {
+			select {
+			case c.pending <- reply:
+			default:
+			}
+		}
+		c.mu.Unlock()
+	}
+}
+func (c *lifecycleClient) request(ctx context.Context, in Control) (domain.WorkerUpdateResult, error) {
+	select {
+	case c.calls <- struct{}{}:
+		defer func() { <-c.calls }()
+	case <-ctx.Done():
+		return domain.WorkerUpdateResult{}, ctx.Err()
+	case <-c.done:
+		return domain.WorkerUpdateResult{}, c.failure()
+	}
 	if err := ctx.Err(); err != nil {
 		return domain.WorkerUpdateResult{}, err
 	}
-	deadline, _ := ctx.Deadline()
-	c.conn.SetDeadline(deadline)
-	stop := context.AfterFunc(ctx, func() { c.conn.Close() })
-	defer stop()
-	if err := json.NewEncoder(c.conn).Encode(in); err != nil {
-		c.conn.Close()
+	in.AttemptID = domain.NewID()
+	raw, err := json.Marshal(in)
+	if err != nil {
 		return domain.WorkerUpdateResult{}, err
 	}
-	raw, err := c.reader.ReadSlice('\n')
-	if err != nil {
-		c.conn.Close()
-		return domain.WorkerUpdateResult{}, err
+	raw = append(raw, '\n')
+	if len(raw) > lifecycleFrameLimit {
+		return domain.WorkerUpdateResult{}, errors.New("lifecycle request exceeds frame limit")
+	}
+	replies := make(chan lifecycleReply, 1)
+	c.mu.Lock()
+	c.pendingID, c.pending = in.AttemptID, replies
+	c.mu.Unlock()
+	defer func() { c.mu.Lock(); c.pendingID, c.pending = "", nil; c.mu.Unlock() }()
+	select {
+	case c.writes <- raw:
+	case <-ctx.Done():
+		return domain.WorkerUpdateResult{}, ctx.Err()
+	case <-c.done:
+		return domain.WorkerUpdateResult{}, c.failure()
 	}
 	var reply lifecycleReply
-	if err = json.Unmarshal(raw, &reply); err != nil {
-		c.conn.Close()
-		return reply.Result, err
+	select {
+	case reply = <-replies:
+	case <-ctx.Done():
+		return domain.WorkerUpdateResult{}, ctx.Err()
+	case <-c.done:
+		// The accepted reply may immediately precede child EOF.
+		select {
+		case reply = <-replies:
+		default:
+			return domain.WorkerUpdateResult{}, c.failure()
+		}
 	}
 	if reply.Error != "" {
 		return reply.Result, errors.New(reply.Error)
@@ -107,7 +204,7 @@ func ServeLifecycle(conn net.Conn, handle func(Control) (domain.WorkerUpdateResu
 			return false, err
 		}
 		result, err := handle(in)
-		reply := lifecycleReply{Result: result}
+		reply := lifecycleReply{AttemptID: in.AttemptID, Result: result}
 		if err != nil {
 			reply.Error = err.Error()
 		}
