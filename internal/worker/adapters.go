@@ -246,6 +246,11 @@ func (s *Server) onHarnessEvent(harnessID, sessionID string, e domain.Event) err
 	default:
 		return errors.New("harness event cannot mutate worker-owned state")
 	}
+	if e.Work != nil {
+		observed := *e.Work
+		observed.Retired = false // runtime ownership is worker metadata, not adapter input
+		e.Work = &observed
+	}
 	return s.onEvent(e)
 }
 

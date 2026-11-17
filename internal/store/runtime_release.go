@@ -65,22 +65,8 @@ func (s *Store) ReleaseRuntime(id, generation, message string, stopped bool) err
 			return err
 		}
 	}
-	works, err := rowsOf[domain.WorkActivity](tx, `SELECT body FROM works WHERE session_id=? AND json_extract(body,'$.state') IN ('starting','running','waiting')`, id)
-	if err != nil {
+	if err = retireWork(tx, id, stopped); err != nil {
 		return err
-	}
-	for _, work := range works {
-		work.State, work.CanStop, work.CanSteer, work.CanContinue = "unknown", false, false, false
-		if stopped {
-			work.State = "stopped"
-		}
-		event := domain.Event{Type: "work.upsert", SessionID: id, Work: &work}
-		if err = applyWork(tx, id, &event); err != nil {
-			return err
-		}
-		if _, err = journal(tx, event); err != nil {
-			return err
-		}
 	}
 	if _, err = tx.Exec(`UPDATE work_inputs SET body=json_set(body,'$.state','abandoned','$.error',?) WHERE session_id=? AND json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate')`, message, id); err != nil {
 		return err

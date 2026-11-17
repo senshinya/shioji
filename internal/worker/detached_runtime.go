@@ -88,6 +88,9 @@ func (s *Server) detachRuntimeInstance(id string, cause error, releaseExecution 
 	if err = s.store.InterruptCompletion(id); err != nil {
 		return err
 	}
+	if err = s.store.RetireWork(id, cause == nil); err != nil {
+		return err
+	}
 	if releaseExecution {
 		if err = s.store.ReleaseRuntime(id, scope.Generation, message, cause == nil); err != nil {
 			return err

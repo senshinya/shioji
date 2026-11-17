@@ -7,7 +7,6 @@ import (
 	"os"
 	"time"
 
-	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/store"
 )
@@ -151,22 +150,5 @@ func (s *Server) settleReclaimedBackground(id string, stopped bool) error {
 	if err := s.store.InterruptCompletion(id); err != nil {
 		return err
 	}
-	d, err := s.store.Session(id, 0, 1)
-	if err != nil {
-		return err
-	}
-	for _, work := range d.Works {
-		if work.Kind != "background" || work.State != "waiting" || work.OriginRef != "" && work.OriginRef != d.Session.ThreadID {
-			continue
-		}
-		work.State = "unknown"
-		if stopped {
-			work.State = "stopped"
-		}
-		work.CanStop, work.CanSteer, work.CanContinue = false, false, false
-		if _, err := s.store.Apply(id, domain.Event{Type: "work.upsert", Work: &work}); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.store.RetireWork(id, stopped)
 }

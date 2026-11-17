@@ -8,6 +8,9 @@ import (
 // WorkActivity is an independently executing child agent or background task.
 // IDs are opaque, session-scoped references supplied by the owning adapter.
 type WorkActivity struct {
+	// Retired releases runtime ownership; State may remain unknown when the
+	// execution result or physical cleanup has not been confirmed.
+	Retired      bool       `json:"retired,omitempty"`
 	Reference    string     `json:"reference,omitempty"` // opaque adapter reference
 	OriginRef    string     `json:"originRef,omitempty"` // opaque source execution context
 	CanStop      bool       `json:"canStop,omitempty"`

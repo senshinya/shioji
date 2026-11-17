@@ -32,6 +32,13 @@ func applyWork(tx *sql.Tx, sid string, e *domain.Event) error {
 			return errors.New("work ownership changed")
 		}
 
+		// A fresh active observation reacquires ownership. Late history-only
+		// observations cannot revive a released runtime's unknown activity.
+		if w.Active() {
+			w.Retired = false
+		} else if old.Retired {
+			w.Retired = true
+		}
 		w.Revision = seq
 		_, err = tx.Exec("INSERT INTO works VALUES(?,?,?) ON CONFLICT(session_id,id) DO UPDATE SET body=excluded.body", sid, w.ID, blob(w))
 		return err
@@ -126,7 +133,7 @@ func (s *Store) InvalidateWork() error {
 		s.mu.Unlock()
 		return err
 	}
-	rows, err := s.db.Query("SELECT session_id,body FROM works WHERE json_extract(body,'$.state') IN ('running','starting','waiting') OR json_extract(body,'$.canSteer')=1 OR json_extract(body,'$.canContinue')=1")
+	rows, err := s.db.Query("SELECT session_id,body FROM works WHERE COALESCE(json_extract(body,'$.retired'),0)=0 AND (json_extract(body,'$.state') IN ('running','starting','waiting','unknown') OR json_extract(body,'$.canStop')=1 OR json_extract(body,'$.canSteer')=1 OR json_extract(body,'$.canContinue')=1)")
 	if err != nil {
 		s.mu.Unlock()
 		return err
@@ -159,6 +166,7 @@ func (s *Store) InvalidateWork() error {
 		if r.work.Active() {
 			r.work.State = "unknown"
 		}
+		r.work.Retired = true
 		r.work.CanStop = false
 		r.work.CanSteer, r.work.CanContinue = false, false
 		if _, err = s.Apply(r.session, domain.Event{Type: "work.upsert", Work: &r.work}); err != nil {
@@ -180,4 +188,45 @@ func (s *Store) HasActiveWork(sid string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return hasActiveWork(s.db, sid)
+}
+
+// RetireWork drops only the current history's released runtime ownership. The
+// worker fences that instance before calling; old execution results stay unknown
+// unless the captured runtime and its registered groups confirmed shutdown.
+func (s *Store) RetireWork(id string, stopped bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = retireWork(tx, id, stopped); err != nil {
+		return err
+	}
+	return s.commit(tx)
+}
+func retireWork(tx *sql.Tx, id string, stopped bool) error {
+	works, err := rowsOf[domain.WorkActivity](tx, `SELECT w.body FROM works w JOIN sessions s ON w.session_id=s.id WHERE s.id=? AND COALESCE(json_extract(w.body,'$.retired'),0)=0 AND (COALESCE(json_extract(w.body,'$.originRef'),'')='' OR json_extract(w.body,'$.originRef')=json_extract(s.body,'$.threadId')) AND (json_extract(w.body,'$.state') IN ('starting','running','waiting','unknown') OR json_extract(w.body,'$.canStop')=1 OR json_extract(w.body,'$.canSteer')=1 OR json_extract(w.body,'$.canContinue')=1)`, id)
+	if err != nil {
+		return err
+	}
+	for _, work := range works {
+		if work.Active() || work.State == "unknown" {
+			work.State = "unknown"
+			if stopped {
+				work.State = "stopped"
+			}
+		}
+		work.Retired = true
+		work.CanStop, work.CanSteer, work.CanContinue = false, false, false
+		event := domain.Event{Type: "work.upsert", SessionID: id, Work: &work}
+		if err = applyWork(tx, id, &event); err != nil {
+			return err
+		}
+		if _, err = journal(tx, event); err != nil {
+			return err
+		}
+	}
+	return nil
 }
