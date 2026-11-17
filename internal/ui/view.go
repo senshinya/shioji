@@ -660,7 +660,7 @@ func (v *View) workspaceName() string {
 	return "工作区"
 }
 func (v *View) homeView(c *n.Context, t *n.Theme) {
-	n.Column(c).Fill().PaddingX(36).AlignItems(n.Center).Children(func() {
+	n.Column(c).Fill().PaddingX(18).AlignItems(n.Center).Children(func() {
 		n.Spacer(c).Grow(.84)
 		if len(v.Model.Snapshot.Workspaces) == 0 {
 			n.Text(c, "从一个工作区开始").FontSize(28)
@@ -719,15 +719,13 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	if t.Dark {
 		bg = t.Surface
 	}
-	maxWidth := float32(768)
 	inputHeight := float32(54)
 	inputSize, inputLeading := float32(14), float32(22)
 	if home {
-		maxWidth = 736
 		inputHeight = 72
 		inputSize, inputLeading = 15, 26
 	}
-	stack := n.Column(c.Key("composer-stack:" + stackKey)).Label("消息编辑区").FillWidth().MaxWidth(maxWidth).Gap(0).Children(func() {
+	stack := n.Column(c.Key("composer-stack:" + stackKey)).Label("消息编辑区").FillWidth().MaxWidth(768).Gap(0).Children(func() {
 		v.queueDisclosure(c, t)
 		v.remoteAttachmentsPanel(c, t, key)
 		binding = v.composerDocument(c, key)

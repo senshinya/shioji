@@ -2,6 +2,8 @@
 
 原生会话底部按状态面板、待处理请求、消息输入框排列；首页的状态也位于输入框上方。输入框下方不再放提示文字。审批、提问、权限、MCP 表单与恢复共用单层中性灰表面，真实输入控件保留边界。恢复的进程列表直接用行和分隔线组织；停止确认替换详情，仍须执行原有 worker 核对。
 
+2026-11-17 用户确认：首页与正常会话的输入框统一最大宽度为 768 DIP，页面左右留白均为 18 DIP；状态面板与输入框左右对齐，窄窗口随同一可用宽度收缩。此修订取代冻结稿中首页内容列最大 736 px 的旧约束，冻结稿保留为历史记录。
+
 | 内容 | 位置与操作 |
 | --- | --- |
 | 提交结果待核对 | 状态分页；只查询原操作 ID，保留原文及附件，不重发 |
@@ -25,6 +27,10 @@
 状态与请求各使用自己的分页，一次各显示一项。手动选定的状态不会因新项目插入而跳页；正在回答时新状态默认收起。普通提交等待回执时不显示“结果待核对”，仅断线、未知结果或重启后未核实的操作进入该状态。
 
 ## 原生验证
+
+2026-11-17 输入框宽度修订：在本机使用生产 `View` 与 MyGo Native Tester，以断线夹具分别渲染首页、普通会话、亮暗主题和 1440／950 DIP 窗口。修改前宽窗口的首页输入框为 736 DIP、状态面板为 768 DIP；修改后两页及状态面板均为 768 DIP，窄窗口均为 690 DIP，左右边界一致。截图为本地原生渲染夹具证据，未部署或替换运行中的 App。
+
+本轮 `go test ./cmd/... ./internal/...` 未全绿：`TestWorkspaceHeadingSharesTheWorkspaceRowVisibleEdges` 与 `TestWorkspaceHeadingInsetsAndNoPerWorkspacePlus` 失败；使用修改前 `HEAD` 的 `view.go` 经 Go overlay 复跑，同样失败，属于既有侧栏问题。`TestBackgroundHostUnregisterDoesNotWaitForWorkerShutdown`、`TestIsolatedNetworkHostRetainsProcessAfterGUIDetaches` 在完整测试中失败，单独复跑均通过。其他正式源码包通过；`go test ./...` 另受 `build/interaction-latency/baseline/internal/{app,ui}` 的不完整临时源码及 `build/worker-recovery-20261116` 的重复声明阻挡。冻结设计仓库校验通过。
 
 `conversation_feedback_test.go` 覆盖位置、作用域、原操作查询、普通提交、延迟连接迁移、等待结束、去重与有界记录、悬停计时、状态分页、草稿与答案保留以及浮层上下间距。请求与恢复沿用既有原生交互回归。`recent_feedback_test.go` 核对缩略行、键盘与鼠标回放、来源及历史保留、重新计时；`feedback_popup_test.go` 核对同排操作、详情顺序、长文滚动时固定操作、空内容等距，并提供展开、收起和快速反向的原生录制。
 
