@@ -29,7 +29,7 @@ func deviceScenePaintFixture(active, count int, dark bool) *n.Tester {
 		height, lanes := deviceSceneGeometry(count)
 		theme := c.Theme()
 		n.Column(c).Fill().Draw(func(painter *n.Painter, box n.Rect) {
-			v.drawDeviceScene(painter, box, theme, app.DeviceIconServer, p, height, lanes, false, time.Time{}, true)
+			v.drawDeviceScene(painter, box, theme, app.DeviceIconServer, p, height, lanes, false, true)
 		})
 	}, 600, 210)
 }
@@ -154,7 +154,7 @@ func TestDeviceSceneTargetPortStaysAboveIncomingWire(t *testing.T) {
 		// The input port's filled center belongs to the hardware, and must not be
 		// crossed by an overpainted wire even when that route is currently active.
 		for _, y := range []int{105, 106} {
-			a, b := actual.Image().RGBAAt(345, y), hardware.Image().RGBAAt(345, y)
+			a, b := actual.Image().RGBAAt(347, y), hardware.Image().RGBAAt(347, y)
 			if a != b {
 				t.Fatal("incoming route paints over target port", dark, y, a, b)
 			}

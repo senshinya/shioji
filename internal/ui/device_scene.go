@@ -19,7 +19,7 @@ type deviceSceneRoute struct {
 	Route                               app.DeviceRoute
 	Status                              app.DevicePathStatus
 	Name, Timing, Phase, Network, Relay string
-	Active, Busy                        bool
+	Active                              bool
 }
 type deviceSceneProjection struct {
 	Connection                               app.DeviceConnection
@@ -28,12 +28,11 @@ type deviceSceneProjection struct {
 	WorkerReady, AgentReady, AgentBusy, Busy bool
 }
 type deviceSceneUI struct {
-	open                    map[string]bool
-	identity                bool
-	pending                 bool
-	epoch, error, signature string
-	request                 uint64
-	changed                 time.Time
+	open         map[string]bool
+	identity     bool
+	pending      bool
+	epoch, error string
+	request      uint64
 }
 
 func deviceSceneTiming(s app.DevicePathStatus, connected bool, now time.Time) string {
@@ -103,10 +102,8 @@ func (v *View) deviceSceneProjection(key string, state *app.DeviceState, now tim
 		}
 		item := deviceSceneRoute{Route: route, Status: status, Name: "直连 SSH", Timing: deviceSceneTiming(status, state.Connected, now), Phase: pathPhaseLabel(status.Phase)}
 		item.Active = state.Connected && status.Phase == app.PathActive
-		item.Busy = status.Phase == app.PathConnecting || status.Phase == app.PathSwitching
 		if !state.Connected && (status.Phase == app.PathActive || status.Phase == app.PathReady) {
 			item.Phase = "未连接"
-			item.Busy = false
 		}
 		if route.SSH.TailnetPeer != "" {
 			item.Name = "Tailnet SSH"
@@ -188,14 +185,7 @@ func (v *View) deviceStatusScene(c *n.Context, t *n.Theme, key string, state *ap
 		ui.request++
 		ui.error = ""
 	}
-	signature := projection.Title
-	for _, r := range projection.Routes {
-		signature += "|" + r.Route.ID + ":" + string(r.Status.Phase)
-	}
-	if ui.signature != "" && ui.signature != signature {
-		ui.changed = c.Now()
-	}
-	ui.signature = signature
+
 	if ui.pending {
 		projection.Title = "正在检测设备"
 		projection.Busy = true
@@ -228,7 +218,7 @@ func (v *View) deviceStatusScene(c *n.Context, t *n.Theme, key string, state *ap
 		local := key == "local"
 		reduced := c.Preferences().ReduceMotion
 		frame.Draw(func(p *n.Painter, box n.Rect) {
-			v.drawDeviceScene(p, box, t, icon, projection, height, lanes, local, ui.changed, reduced)
+			v.drawDeviceScene(p, box, t, icon, projection, height, lanes, local, reduced)
 		})
 		frame.Children(func() {
 			target := n.Column(c).Absolute().LeftPercent(56).TopPercent(0).WidthPercent(44).HeightPercent(100).IgnoreInput(true).Role(n.RoleImage).Label("目标设备:" + string(icon)).Description("执行服务：" + projection.WorkerStatus + "；Agent：" + projection.AgentStatus)
@@ -441,7 +431,18 @@ func iconHeaderY(icon app.DeviceIcon) float32 {
 	return 63
 }
 
-func (v *View) drawDeviceScene(p *n.Painter, box n.Rect, t *n.Theme, icon app.DeviceIcon, state deviceSceneProjection, height float32, lanes []deviceSceneRouteGeometry, local bool, changed time.Time, reduced bool) {
+func deviceSceneInputX(icon app.DeviceIcon) float32 {
+	switch icon {
+	case app.DeviceIconPhone:
+		return 418
+	case app.DeviceIconTablet:
+		return 367
+	default:
+		return 347
+	}
+}
+
+func (v *View) drawDeviceScene(p *n.Painter, box n.Rect, t *n.Theme, icon app.DeviceIcon, state deviceSceneProjection, height float32, lanes []deviceSceneRouteGeometry, local bool, reduced bool) {
 	scale := box.W / 600
 	extra := (height - 210) / 2
 	art := n.Rect{X: box.X, Y: box.Y + extra*scale, W: box.W, H: 210 * scale}
@@ -461,7 +462,6 @@ func (v *View) drawDeviceScene(p *n.Painter, box n.Rect, t *n.Theme, icon app.De
 		return
 	}
 	now := p.Now()
-	recent := !changed.IsZero() && now.Sub(changed) < 900*time.Millisecond
 	// Paint the selected route last, so shared trunks retain its full stroke.
 	for _, active := range []bool{false, true} {
 		for i, r := range state.Routes {
@@ -488,7 +488,7 @@ func (v *View) drawDeviceScene(p *n.Painter, box n.Rect, t *n.Theme, icon app.De
 			} else {
 				path.LineTo(x(344), y(centre))
 			}
-			path.LineTo(x(350), y(centre))
+			path.LineTo(x(deviceSceneInputX(icon)), y(centre))
 			color, width := t.Border, float32(1)
 			if r.Active {
 				color, width = t.TextMuted, 1.4
@@ -497,9 +497,23 @@ func (v *View) drawDeviceScene(p *n.Painter, box n.Rect, t *n.Theme, icon app.De
 				path.Dash(0, 3*scale, 5*scale)
 			}
 			p.StrokePath(&path, width*scale, color)
-			if !reduced && (r.Busy || recent && r.Active) {
-				path.Dash(float32(-math.Mod(float64(now.UnixMilli())/1000, 1.2)/1.2)*300*scale, 8*scale, 292*scale)
-				p.StrokePath(&path, 1.8*scale, t.TextMuted)
+			if !reduced && r.Active {
+				// A restrained trailing packet travels Mac → device. It marks
+				// the selected route, rather than inventing measured traffic.
+				period := float32(360) * scale
+				travel := float32(math.Mod(float64(now.UnixMilli())/1000, 3.2)/3.2) * period
+				for _, signal := range []struct {
+					offset, length float32
+					color          n.Color
+				}{
+					{0, 24, t.TextMuted.Alpha(.22)},
+					{12, 12, t.TextMuted.Mix(t.Text, .3).Alpha(.48)},
+					{20, 4, t.Text.Alpha(.72)},
+				} {
+					length := signal.length * scale
+					path.Dash(-travel-signal.offset*scale, length, period-length)
+					p.StrokePath(&path, 1.9*scale, signal.color)
+				}
 				p.AnimationFrameRate(30)
 			}
 			if r.Relay != "" {
