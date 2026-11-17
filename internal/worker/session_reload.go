@@ -58,6 +58,9 @@ func (s *Server) reloadSession(in domain.SessionReloadRequest, query bool) (doma
 		return result, workNotSent(err)
 	}
 	paths := append([]string{d.Session.Context.CWD}, d.Session.Context.AdditionalDirectories...)
+	if err := s.restoreOwnedWorktrees(paths); err != nil {
+		return result, workNotSent(err)
+	}
 	validated, err := validateFolders(paths)
 	if err != nil {
 		return result, workNotSent(err)

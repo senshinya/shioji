@@ -45,7 +45,6 @@ type archiveDeleteUI struct {
 	operation  string
 	batch      bool
 	workspaces bool
-	force      bool
 	targets    []archiveDeleteTarget
 	failed     []archiveDeleteTarget
 	next       int
@@ -392,19 +391,7 @@ func (v *View) archiveDialogs(c *n.Context, t *n.Theme) {
 				}
 				n.Text(c, "彻底删除"+kind+"？").FontSize(15).FontWeight(500).FixedLineHeight(22)
 				n.Text(c, message).FontSize(13).FixedLineHeight(22)
-				n.Text(c, "同时正常关闭会话运行环境，移除记录与附件。\n项目文件和 Git 仓库不会删除。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
-				forceAvailable := v.archiveCanCloseRuntime(d.connection)
-				if d.batch {
-					for _, target := range d.targets {
-						if v.archiveCanCloseRuntime(target.connection) {
-							forceAvailable = true
-							break
-						}
-					}
-				}
-				if forceAvailable {
-					n.Text(c, "强制删除会中止任务；无法关闭的进程可能继续运行。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
-				}
+				n.Text(c, "中止会话任务，移除记录与附件；未完成的回收在后台重试。\n原项目文件和 Git 仓库不会删除。\n自建 worktree 备份到分支后回收，不备份被忽略的文件。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 				if d.error != "" {
 					n.Text(c, d.error).FontSize(12).FixedLineHeight(20).TextColor(t.Danger)
 				}
@@ -413,10 +400,6 @@ func (v *View) archiveDialogs(c *n.Context, t *n.Theme) {
 					if configurationAction(c, "取消").Disabled(d.busy).Clicked() {
 						d.open = false
 					}
-					if forceAvailable && configurationAction(c, "强制删除").TextColor(t.Danger).Disabled(d.busy).Clicked() {
-						d.force = true
-						v.deleteArchive(d)
-					}
 					label := "彻底删除"
 					if d.busy {
 						label = "正在删除…"
@@ -424,7 +407,6 @@ func (v *View) archiveDialogs(c *n.Context, t *n.Theme) {
 						label = "重试失败项"
 					}
 					if n.PrimaryButton(c, label).Height(28).FontSize(12).Radius(6).Disabled(d.busy || !d.batch && !v.canDeleteArchive(d.connection)).Clicked() {
-						d.force = false
 						v.deleteArchive(d)
 					}
 				})
@@ -456,7 +438,6 @@ func (v *View) deleteArchive(d *archiveDeleteUI) {
 		d.operation = domain.NewID()
 	}
 	input.OperationID, input.CloseRuntime = d.operation, v.archiveCanCloseRuntime(d.connection)
-	input.Force = d.force
 	d.busy = true
 	d.error = ""
 	if !v.do(app.Job{ConnectionID: d.connection, Method: method, Input: input, Apply: func(m *app.Model, body json.RawMessage, err error) {
@@ -520,11 +501,6 @@ func (v *View) deleteNextArchive(d *archiveDeleteUI) {
 			continue
 		}
 		target.input.CloseRuntime = v.archiveCanCloseRuntime(target.connection)
-		if d.force && !target.input.CloseRuntime {
-			fail("更新所属设备的 worker 后可强制删除")
-			continue
-		}
-		target.input.Force = d.force
 		if !v.do(app.Job{ConnectionID: target.connection, Method: target.method, Input: target.input, Apply: func(m *app.Model, body json.RawMessage, err error) {
 			var deletion domain.ArchiveDeletion
 			if err != nil {

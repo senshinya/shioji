@@ -52,6 +52,9 @@ type Server struct {
 	drainMu              sync.Mutex
 	drainOperation       string
 	archiveWake          chan struct{}
+	titleMu              sync.Mutex
+	titleExecutions      *managedexec.Manager
+	titleActive          map[string]bool
 	retirementMu         sync.Mutex
 	retirements          map[string]*runtimeRetirement
 	detachedRuntimes     map[string]*detachedRuntime
@@ -98,6 +101,8 @@ type Server struct {
 	readiness            domain.Readiness
 	dispatchMu           sync.Mutex
 	sessionTransitions   map[string]chan struct{}
+	worktreeTransitions  map[string]chan struct{}
+	worktreeRetries      map[string]worktreeRetry
 	queueWake            chan struct{}
 	titleWake            chan struct{}
 	recoveryWake         chan struct{}
@@ -1134,6 +1139,9 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 			}
 		}
 		paths = append([]string{d.Session.Context.CWD}, d.Session.Context.AdditionalDirectories...)
+	}
+	if err := s.restoreOwnedWorktrees(paths); err != nil {
+		return domain.Operation{}, err
 	}
 	validated, err := validateFolders(paths)
 	if err != nil {

@@ -79,6 +79,7 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS queues (session_id TEXT PRIMARY KEY REFERENCES sessions(id), body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS plans (session_id TEXT PRIMARY KEY REFERENCES sessions(id), body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS history_operations (id TEXT PRIMARY KEY, body BLOB NOT NULL);
+ CREATE TABLE IF NOT EXISTS owned_worktrees (path TEXT PRIMARY KEY, body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS runtime_retirements (session_id TEXT NOT NULL, generation TEXT NOT NULL, revision INTEGER NOT NULL, reason TEXT NOT NULL, error TEXT NOT NULL DEFAULT '', PRIMARY KEY(session_id,generation,revision));
  CREATE TABLE IF NOT EXISTS worker_maintenance (id TEXT PRIMARY KEY, body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS title_jobs (session_id TEXT PRIMARY KEY REFERENCES sessions(id), state TEXT NOT NULL, body BLOB NOT NULL);
@@ -99,7 +100,7 @@ func Open(path string) (*Store, error) {
  CREATE INDEX IF NOT EXISTS work_inputs_unsettled_session ON work_inputs(session_id) WHERE json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate') AND COALESCE(json_extract(body,'$.executionStopped'),0)=0;
  CREATE INDEX IF NOT EXISTS history_active_source ON history_operations(json_extract(body,'$.source.id')) WHERE json_extract(body,'$.state') IN ('prepared','forked');
  CREATE INDEX IF NOT EXISTS history_active_session ON history_operations(json_extract(body,'$.session.id')) WHERE json_extract(body,'$.state') IN ('prepared','forked');
- PRAGMA user_version=14;`)
+ PRAGMA user_version=15;`)
 	if err != nil {
 		tx.Rollback()
 		return fail(err)

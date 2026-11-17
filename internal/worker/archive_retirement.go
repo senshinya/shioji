@@ -46,6 +46,11 @@ func (s *Server) cleanRuntimeRetirement(r store.RuntimeRetirement) error {
 		return err
 	}
 	defer release()
+	// The list may have been selected before another collector acquired the
+	// transition. A completed row has no authority over a restored successor.
+	if pending, err := s.store.RuntimeRetirementPending(r); err != nil || !pending {
+		return err
+	}
 	scope, err := s.executions.Existing(r.SessionID)
 	if err != nil {
 		return errors.Join(err, s.store.CompleteRuntimeRetirement(r, err))
@@ -87,6 +92,11 @@ func (s *Server) cleanRuntimeRetirement(r store.RuntimeRetirement) error {
 	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 	failure := s.retireRuntimeOutsideDispatch(ctx, r.SessionID, r.Reason, true)
 	cancel()
+	deleted, err := s.store.SessionDeleted(r.SessionID)
+	if err != nil {
+		return err
+	}
+	needsRelease = needsRelease && !deleted
 	if current := s.currentRuntime(r.SessionID); old != nil && current != nil && current.Done() != old.Done() {
 		return s.store.CompleteRuntimeRetirement(r, nil)
 	}
@@ -108,6 +118,10 @@ func (s *Server) cleanRuntimeRetirement(r store.RuntimeRetirement) error {
 			delete(s.runtimeEvents, r.SessionID)
 		}
 		s.runtimeMu.Unlock()
+		delete(s.idleRuntimes, r.SessionID)
+		s.mu.Lock()
+		delete(s.bound, r.SessionID)
+		s.mu.Unlock()
 	}
 	return s.store.CompleteRuntimeRetirement(r, nil)
 }

@@ -7,8 +7,8 @@ import (
 	"shioji/internal/domain"
 )
 
-// Schema 14 retains version-bound hook configuration operation receipts.
-const SchemaVersion = 14
+// Schema 15 retains worker-owned worktrees through archive/deletion cleanup.
+const SchemaVersion = 15
 
 // The caller fences dispatch and commands before this final database check.
 // VACUUM INTO reads SQLite's committed snapshot, including its WAL.

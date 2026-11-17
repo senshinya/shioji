@@ -20,6 +20,7 @@ import (
 
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"shioji/internal/store"
 )
 
 // Git output and file bodies share the IPC page budget.
@@ -150,6 +151,9 @@ func (s *Server) gitDirectory(q protocol.GitQuery) (string, error) {
 	return "", errors.New("workspace unavailable")
 }
 func (s *Server) gitStatus(q protocol.GitQuery) (domain.GitStatus, error) {
+	if status, removed, err := s.removedWorktreeStatus(q); removed || err != nil {
+		return status, err
+	}
 	dir, err := s.gitDirectory(q)
 	if err != nil {
 		return domain.GitStatus{}, err
@@ -365,6 +369,10 @@ func (s *Server) prepareGit(in domain.Submission, launch domain.LaunchContext) (
 			s.removeUnacceptedWorktree(original, in)
 			return launch, err
 		}
+		if err = s.store.SaveOwnedWorktree(store.OwnedWorktree{Path: status.Checkout, CommonDir: status.CommonDir, Branch: status.Branch, Head: status.Head}); err != nil {
+			s.removeUnacceptedWorktree(original, in)
+			return launch, err
+		}
 	} else if branch != status.Branch {
 		if !slices.Contains(status.Branches, branch) {
 			return launch, errors.New("branch unavailable")
@@ -532,6 +540,9 @@ func (s *Server) removeUnacceptedWorktree(original string, in domain.Submission)
 	// No force: unexpected files or another Git user keep the worktree intact.
 	if _, err := gitRun(s.ctx, original, "worktree", "remove", dest); err == nil {
 		_, _ = gitRun(s.ctx, original, "branch", "-d", "shioji/"+id)
+		if canonical, err := filepath.EvalSymlinks(filepath.Dir(dest)); err == nil {
+			_ = s.store.ForgetOwnedWorktree(filepath.Join(canonical, id))
+		}
 	}
 }
 

@@ -47,6 +47,9 @@ func (s *Server) compactContext(in domain.ContextActionRequest) (domain.Operatio
 		return none, workNotSent(err)
 	}
 	paths := append([]string{d.Session.Context.CWD}, d.Session.Context.AdditionalDirectories...)
+	if err := s.restoreOwnedWorktrees(paths); err != nil {
+		return none, workNotSent(err)
+	}
 	validated, err := validateFolders(paths)
 	if err != nil {
 		return none, workNotSent(err)

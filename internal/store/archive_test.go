@@ -173,13 +173,12 @@ func TestWorkspaceDeletionIsAtomicAndRetainsOtherWorkspaces(t *testing.T) {
 	if _, err = s.db.Exec("UPDATE sessions SET body=json_set(body,'$.status','running') WHERE id=?", second.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.DeleteArchivedWorkspace(w.ID, archived.Revision); err == nil {
-		t.Fatal("workspace with running session deleted")
+	if _, err = s.DeleteArchivedWorkspace(w.ID, archived.Revision-1); err == nil {
+		t.Fatal("stale workspace deletion accepted")
 	}
 	if _, err = s.Session(first.ID, 0, 100); err != nil {
-		t.Fatal("failed deletion partially removed workspace", err)
+		t.Fatal("rejected delete partially removed data", err)
 	}
-	s.db.Exec("UPDATE sessions SET body=json_set(body,'$.status','completed') WHERE id=?", second.ID)
 	result, err := s.DeleteArchivedWorkspace(w.ID, archived.Revision)
 	if err != nil || len(result.SessionIDs) != 2 || result.WorkspaceID != w.ID {
 		t.Fatal(result, err)

@@ -33,14 +33,7 @@ func (s *Server) admitMemoryPressure(exclude string) error {
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 	defer cancel()
-	if ongoing := s.pressureReclaim; ongoing != nil {
-		s.dispatchMu.Unlock()
-		select {
-		case <-ongoing:
-		case <-ctx.Done():
-		}
-		s.dispatchMu.Lock()
-	} else {
+	if s.pressureReclaim == nil {
 		ongoing := make(chan struct{})
 		s.pressureReclaim = ongoing
 		func() {
@@ -53,7 +46,23 @@ func (s *Server) admitMemoryPressure(exclude string) error {
 				}
 			}
 			s.runtimeMu.RUnlock()
-			sort.Slice(ids, func(i, j int) bool { return s.idleRuntimes[ids[i]].since.Before(s.idleRuntimes[ids[j]].since) })
+			idleSince := map[string]time.Time{}
+			for _, id := range ids {
+				at := s.idleRuntimes[id].since
+				if at.IsZero() {
+					at = time.Now()
+					if d, err := s.store.Session(id, 0, 1); err == nil && d.Session.Completion != nil {
+						at = d.Session.Completion.CompletedAt
+					}
+				}
+				idleSince[id] = at
+			}
+			sort.Slice(ids, func(i, j int) bool {
+				if idleSince[ids[i]].Equal(idleSince[ids[j]]) {
+					return ids[i] < ids[j]
+				}
+				return idleSince[ids[i]].Before(idleSince[ids[j]])
+			})
 			reclaimed := 0
 			for _, id := range ids {
 				if reclaimed >= 3 || ctx.Err() != nil {
@@ -73,8 +82,9 @@ func (s *Server) admitMemoryPressure(exclude string) error {
 				if pending, ok := r.(harness.PendingRuntime); ok && pending.PendingOperations() != 0 {
 					continue
 				}
-				reclaimed++
-				_ = s.reclaimRuntime(id, time.Now(), true, ctx)
+				if err := s.reclaimRuntime(id, time.Now(), true, ctx); err == nil && s.currentRuntime(id) == nil {
+					reclaimed++
+				}
 			}
 		}()
 	}

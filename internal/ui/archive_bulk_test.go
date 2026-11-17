@@ -148,22 +148,22 @@ func TestArchiveDeleteAllDoesNotDispatchOfflineTargets(t *testing.T) {
 	}
 }
 
-func TestArchiveForceDeleteIsAvailableWithWarning(t *testing.T) {
+func TestArchiveDeleteUsesSingleActionAndAcceptsCleanupWarning(t *testing.T) {
 	v, ui := archiveViewFixture()
 	v.Model.WorkerMinor = 44
 	ui.Click("删除全部")
 	ui.Advance(time.Second)
-	if !ui.HasText("无法关闭的进程可能继续运行") {
-		t.Fatal("force deletion warning missing")
+	if ui.HasText("强制删除") {
+		t.Fatal("duplicate force deletion action retained")
 	}
-	if err := ui.Click("强制删除"); err != nil {
+	if err := ui.Click("彻底删除"); err != nil {
 		t.Fatal(err)
 	}
 	j := nextArchiveDelete(t, v)
 	body, _ := json.Marshal(j.Input)
 	var fields map[string]any
 	json.Unmarshal(body, &fields)
-	if fields["force"] != true || fields["closeRuntime"] != true {
+	if fields["force"] == true || fields["closeRuntime"] != true {
 		t.Fatal("force consent not sent", string(body))
 	}
 	body, _ = json.Marshal(domain.ArchiveDeletion{DeviceID: v.Model.Snapshot.DeviceID, SessionIDs: []string{"s"}, Warning: "后台将继续清理"})

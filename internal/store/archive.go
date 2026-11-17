@@ -90,22 +90,6 @@ func (s *Store) ArchiveCandidates(now time.Time) ([]ArchiveCandidate, error) {
 	return out, nil
 }
 
-// Caller holds the store mutex. The worker also fences process admission before
-// calling these mutations; the database independently rejects pending activity.
-func (s *Store) deletableLocked(session domain.Session) error {
-	if err := s.deletableStateLocked(session); err != nil {
-		return err
-	}
-	var activity RuntimeIdleState
-	if err := s.db.QueryRow(runtimeIdleQuery, session.ID, false).Scan(&activity.Revision, &activity.QueueRevision, &activity.Idle); err != nil {
-		return err
-	}
-	if !activity.Idle {
-		return errors.New("会话仍有执行、后台任务或待核对操作，暂时不能彻底删除")
-	}
-	return nil
-}
-
 func (s *Store) DeleteArchivedSession(id string, revision int64) (domain.ArchiveDeletion, error) {
 	return s.deleteArchivedSession(id, revision, false)
 }
@@ -131,11 +115,6 @@ func (s *Store) deleteArchivedSession(id string, revision int64, force bool) (do
 	}
 	if !session.Archived && !w.Archived {
 		return zero, errors.New("只能彻底删除已归档会话")
-	}
-	if !force {
-		if err = s.deletableLocked(session); err != nil {
-			return zero, err
-		}
 	}
 	return s.deleteArchivedLocked([]domain.Session{session}, "")
 }
@@ -165,13 +144,6 @@ func (s *Store) deleteArchivedWorkspace(id string, revision int64, force bool) (
 	sessions, err := rowsOf[domain.Session](s.db, "SELECT body FROM sessions WHERE json_extract(body,'$.workspaceId')=? ORDER BY rowid", id)
 	if err != nil {
 		return zero, err
-	}
-	if !force {
-		for _, session := range sessions {
-			if err = s.deletableLocked(session); err != nil {
-				return zero, err
-			}
-		}
 	}
 	return s.deleteArchivedLocked(sessions, id)
 }
@@ -207,6 +179,18 @@ func (s *Store) deleteArchivedLocked(sessions []domain.Session, workspace string
 }
 
 func deleteSessionRows(tx *sql.Tx, session domain.Session) error {
+	owned, err := rowsOf[OwnedWorktree](tx, "SELECT body FROM owned_worktrees")
+	if err != nil {
+		return err
+	}
+	for _, w := range owned {
+		if WorktreeSession(w, session) {
+			w.DeletedSessions = append(w.DeletedSessions, session.ID)
+			if _, err = tx.Exec("UPDATE owned_worktrees SET body=? WHERE path=?", blob(w), w.Path); err != nil {
+				return err
+			}
+		}
+	}
 	for _, table := range []string{"items", "queues", "work_items", "work_inputs"} {
 		object := "CASE WHEN j.type='object' THEN j.value ELSE '{}' END"
 		query := "INSERT OR IGNORE INTO archive_resources SELECT ?,json_extract(" + object + ",'$.id') FROM " + table + " AS r,json_tree(r.body) AS j WHERE r.session_id=? AND json_type(" + object + ",'$.sha256')='text' AND json_type(" + object + ",'$.id')='text'"
@@ -229,7 +213,9 @@ func deleteSessionRows(tx *sql.Tx, session domain.Session) error {
 	if _, err := tx.Exec("DELETE FROM history_operations WHERE "+historyWhere, session.ID, session.ID); err != nil {
 		return err
 	}
-	for _, table := range []string{"work_inputs", "works", "title_jobs", "plans", "queues", "requests", "turns", "items", "operations"} {
+	// The tombstone takes over runtime cleanup, including a retirement already
+	// selected by a collector. Deleted sessions must never poison that queue.
+	for _, table := range []string{"runtime_retirements", "work_inputs", "works", "title_jobs", "plans", "queues", "requests", "turns", "items", "operations"} {
 		if _, err := tx.Exec("DELETE FROM "+table+" WHERE session_id=?", session.ID); err != nil {
 			return err
 		}
@@ -239,6 +225,6 @@ func deleteSessionRows(tx *sql.Tx, session domain.Session) error {
 	if _, err := tx.Exec("UPDATE journal SET body=? WHERE json_extract(body,'$.sessionId')=? OR json_extract(body,'$.session.id')=? OR json_extract(body,'$.operation.sessionId')=?", blob(domain.Event{Type: "archive.redacted"}), session.ID, session.ID, session.ID); err != nil {
 		return err
 	}
-	_, err := tx.Exec("DELETE FROM sessions WHERE id=?", session.ID)
+	_, err = tx.Exec("DELETE FROM sessions WHERE id=?", session.ID)
 	return err
 }

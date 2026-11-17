@@ -62,6 +62,9 @@ func TestExplicitArchiveDeletionRetiresUncoveredIdleEnvironment(t *testing.T) {
 		if err != nil {
 			t.Fatal("explicit deletion still blocked by configuration coverage", err)
 		}
+		if e := s.cleanupArchives(time.Now()); e != nil {
+			t.Fatal(e)
+		}
 		if !r.Stopped() {
 			t.Fatal("deleted history without retiring its runtime")
 		}
@@ -71,7 +74,7 @@ func TestExplicitArchiveDeletionRetiresUncoveredIdleEnvironment(t *testing.T) {
 	}
 }
 
-func TestExplicitArchiveDeletionStillRefusesActiveWork(t *testing.T) {
+func TestExplicitArchiveDeletionRetiresActiveWork(t *testing.T) {
 	s, w := memoryWorker(t, archiveShutdownHarness{})
 	d := submitIdleFixture(t, s, w, "active-delete", "")
 	r := s.currentRuntime(d.Session.ID)
@@ -90,40 +93,17 @@ func TestExplicitArchiveDeletionStillRefusesActiveWork(t *testing.T) {
 	s.dispatchMu.Lock()
 	_, err = s.deleteArchive("session.delete", protocol.ArchiveDeleteInput{SessionID: a.ID, Revision: a.Revision, CloseRuntime: true, OperationID: "active-delete"})
 	s.dispatchMu.Unlock()
-	if err == nil || r.Stopped() {
-		t.Fatal("deletion interrupted active work", err)
-	}
-}
-
-func TestArchiveNormalShutdownDoesNotForceAnUnresponsiveProcess(t *testing.T) {
-	s, w := memoryWorker(t, archiveShutdownHarness{})
-	d := submitIdleFixture(t, s, w, "refuses-term", "")
-	_, log := maintenanceTool(t, s, d.Session.ID)
-	scope, err := s.executions.Existing(d.Session.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	observation, err := scope.InspectExplicitMaintenance()
-	if err != nil {
-		t.Fatal(err)
+	if e := s.cleanupArchives(time.Now()); e != nil {
+		t.Fatal(e)
 	}
-	if _, err = scope.BeginExplicitStop("delete-normal", observation.Ref, false); err != nil {
-		t.Fatal(err)
+	if !r.Stopped() {
+		t.Fatal("accepted deletion did not retire owned work")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	if err = s.closeArchiveEnvironment(ctx, d.Session.ID, scope); err == nil {
-		t.Fatal("unresponsive process treated as stopped")
-	}
-	if _, err = os.Stat(log); err != nil {
-		t.Fatal("normal shutdown was not requested", err)
-	}
-	if _, err = s.store.Session(d.Session.ID, 0, 1); err != nil {
-		t.Fatal("failed shutdown deleted history", err)
-	}
-	proven, err := scope.ExplicitStopProven()
-	if err == nil && proven {
-		t.Fatal("unresponsive process was force killed")
+	if _, err = s.store.Session(a.ID, 0, 1); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("deleted archive remained", err)
 	}
 }
 
@@ -230,6 +210,9 @@ func TestForceArchiveDeletionClosesAnUnresponsiveOwnedProcess(t *testing.T) {
 	s.dispatchMu.Unlock()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if e := s.cleanupArchives(time.Now()); e != nil {
+		t.Fatal(e)
 	}
 	if err = s.executions.Reap(context.Background()); err != nil {
 		t.Fatal("deleted scope remained in live monitoring", err)
@@ -338,8 +321,12 @@ func TestForceArchiveDeletionWarnsAndRetainsUnverifiableCleanup(t *testing.T) {
 	s.dispatchMu.Lock()
 	result, err = s.deleteArchive("session.delete", protocol.ArchiveDeleteInput{SessionID: archived.ID, Revision: archived.Revision, CloseRuntime: true, Force: true, OperationID: "force-other"})
 	s.dispatchMu.Unlock()
-	if err != nil || result.Warning != "" || s.currentRuntime(archived.ID) != nil {
+	if err != nil || result.Warning != "" {
 		t.Fatal("unrelated pending cleanup blocked another deletion", result, err)
+	}
+	_ = s.cleanupArchives(time.Now())
+	if s.currentRuntime(archived.ID) != nil {
+		t.Fatal("unrelated pending cleanup blocked healthy cleanup")
 	}
 }
 
@@ -376,7 +363,7 @@ func TestForceArchivedWorkspaceDeletionKeepsProjectAndRejectsRestoredSession(t *
 	}
 }
 
-func TestArchiveDeletionRefusesUnverifiedLiveRuntime(t *testing.T) {
+func TestArchiveDeletionRetiresUncoveredRuntimeWithoutExtraAction(t *testing.T) {
 	for _, workspace := range []bool{false, true} {
 		s, w := memoryWorker(t, memoryHarness{id: "idle"})
 		d := submitIdleFixture(t, s, w, "unverified", "")
@@ -396,14 +383,20 @@ func TestArchiveDeletionRefusesUnverifiedLiveRuntime(t *testing.T) {
 		s.dispatchMu.Lock()
 		_, err = s.deleteArchive(method, in)
 		s.dispatchMu.Unlock()
-		if err == nil || r.Stopped() {
-			t.Fatal("deleted unverified execution", err)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e := s.cleanupArchives(time.Now()); e != nil {
+			t.Fatal(e)
+		}
+		if !r.Stopped() {
+			t.Fatal("single deletion did not retire captured runtime")
 		}
 		if err = s.cleanupArchives(a.ArchivedAt.Add(31 * 24 * time.Hour)); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = s.store.Session(a.ID, 0, 1); err != nil || r.Stopped() {
-			t.Fatal("expiry retired unverified execution", err)
+		if _, err = s.store.Session(a.ID, 0, 1); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatal("deleted archive reappeared", err)
 		}
 	}
 }
@@ -452,7 +445,10 @@ func TestArchiveDeletionCleansDiffCommentDependencies(t *testing.T) {
 					t.Fatal(e)
 				}
 				for i := 0; i < 3; i++ {
-					if e = s.cleanArchiveGarbage(); e != nil {
+					s.dispatchMu.Lock()
+					e = s.cleanArchiveGarbage()
+					s.dispatchMu.Unlock()
+					if e != nil {
 						t.Fatal(e)
 					}
 				}
@@ -474,7 +470,7 @@ func TestArchiveDeletionCleansDiffCommentDependencies(t *testing.T) {
 	}
 }
 
-func TestWorkerArchiveCleanupUsesOwningClockAndSkipsLiveWork(t *testing.T) {
+func TestWorkerArchiveCleanupUsesOwningClockAndRetiresExpiredWork(t *testing.T) {
 	s, w := memoryWorker(t, idleHarness{})
 	d := submitIdleFixture(t, s, w, "archive-first", "")
 	runtime := s.currentRuntime(d.Session.ID)
@@ -493,16 +489,6 @@ func TestWorkerArchiveCleanupUsesOwningClockAndSkipsLiveWork(t *testing.T) {
 		t.Fatal("deleted early", err)
 	}
 	_, err = s.store.Apply(archived.ID, domain.Event{Type: "work.upsert", Work: &domain.WorkActivity{ID: "child", Kind: "agent", TurnID: "late", Title: "active child", State: "running"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.cleanupArchives(archived.ArchivedAt.Add(8 * 24 * time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	if runtime.Stopped() {
-		t.Fatal("archive cleanup stopped active work")
-	}
-	_, err = s.store.Apply(archived.ID, domain.Event{Type: "work.upsert", Work: &domain.WorkActivity{ID: "child", Kind: "agent", TurnID: "late", Title: "active child", State: "completed"}})
 	if err != nil {
 		t.Fatal(err)
 	}

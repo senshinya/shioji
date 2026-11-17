@@ -9,6 +9,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/managedexec"
+	"shioji/internal/protocol"
 	"shioji/internal/store"
 	"sync"
 	"testing"
@@ -221,5 +222,50 @@ func TestAutomaticNamingRunsIndependentlyAndPreservesUserRename(t *testing.T) {
 			}
 		}
 		cancel()
+	}
+}
+
+func TestDeletedTitleScopeWaitsForProducerThenReclaimsDirectory(t *testing.T) {
+	started, release := make(chan string, 2), make(chan string, 2)
+	s, w := memoryWorker(t, namingHarness{memoryHarness: memoryHarness{id: "other"}, started: started, release: release})
+	op, e := s.submit(domain.Submission{OperationID: "delete-title-scope", WorkspaceID: w.ID, Text: "first", Config: domain.RunConfig{Model: "other-model", Permission: "limited"}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("title did not start")
+	}
+	awaitReceipt(t, s, op.ID)
+	archiveOwnedFixture(t, s, op.SessionID)
+	d, _ := s.store.Session(op.SessionID, 0, 1)
+	s.dispatchMu.Lock()
+	_, e = s.deleteArchive("session.delete", protocol.ArchiveDeleteInput{SessionID: op.SessionID, Revision: d.Session.Revision})
+	s.dispatchMu.Unlock()
+	if e != nil {
+		t.Fatal(e)
+	}
+	_ = s.cleanupArchives(time.Now())
+	path := filepath.Join(s.config.Directory, "title-executions", op.SessionID)
+	if _, e = os.Stat(path); e != nil {
+		t.Fatal("active title producer lost its ownership directory", e)
+	}
+	release <- "discard late title"
+	_, e = s.submit(domain.Submission{OperationID: "next-after-title-delete", WorkspaceID: w.ID, Text: "second", Config: d.Session.Config})
+	if e != nil {
+		t.Fatal(e)
+	}
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("title consumer stopped")
+	}
+	release <- "next title"
+	if e = s.cleanupArchives(time.Now()); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = os.Stat(path); !os.IsNotExist(e) {
+		t.Fatal("deleted title scope directory remains after producer settled", e)
 	}
 }

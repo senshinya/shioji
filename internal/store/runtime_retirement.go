@@ -39,3 +39,11 @@ func (s *Store) CompleteRuntimeRetirement(r RuntimeRetirement, cause error) erro
 	_, err := s.db.Exec("DELETE FROM runtime_retirements WHERE session_id=? AND generation=? AND revision=?", r.SessionID, r.Generation, r.Revision)
 	return err
 }
+
+func (s *Store) RuntimeRetirementPending(r RuntimeRetirement) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var pending bool
+	err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM runtime_retirements WHERE session_id=? AND generation=? AND revision=?)", r.SessionID, r.Generation, r.Revision).Scan(&pending)
+	return pending, err
+}

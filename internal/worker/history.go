@@ -171,6 +171,9 @@ func (s *Server) historyPreflight(in domain.HistoryChange) error {
 		return harness.Unsupported("fork")
 	}
 	paths := append([]string{d.Session.Context.CWD}, d.Session.Context.AdditionalDirectories...)
+	if err := s.restoreOwnedWorktrees(paths); err != nil {
+		return err
+	}
 	valid, err := validateFolders(paths)
 	if err != nil {
 		return err

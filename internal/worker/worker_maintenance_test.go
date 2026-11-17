@@ -3,6 +3,7 @@ package worker
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -475,7 +476,7 @@ func TestWorkerMaintenancePreparedSelectionRecoveryNeverSignals(t *testing.T) {
 	}
 }
 
-func TestArchiveDeletionCannotBypassUnforcedMaintenance(t *testing.T) {
+func TestArchiveDeletionExplicitlyRetiresPriorMaintenance(t *testing.T) {
 	s, w := memoryWorker(t, maintenanceHarness{})
 	enableMaintenance(s)
 	d := submitIdleFixture(t, s, w, "archived-maintenance", "")
@@ -499,24 +500,20 @@ func TestArchiveDeletionCannotBypassUnforcedMaintenance(t *testing.T) {
 		t.Fatal("normal shutdown was not observed", string(before))
 	}
 	input, _ := json.Marshal(protocol.ArchiveDeleteInput{SessionID: archived.ID, Revision: archived.Revision})
-	if _, err = s.handle("session.delete", input); err == nil {
-		t.Fatal("permanent deletion bypassed a surviving no-force generation")
+	if _, err = s.handle("session.delete", input); err != nil {
+		t.Fatal(err)
 	}
 	if err = s.cleanupArchives(archived.ArchivedAt.Add(31 * 24 * time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.store.Session(archived.ID, 0, 1); err != nil {
-		t.Fatal("retention erased protected session", err)
+	if _, err = s.store.Session(archived.ID, 0, 1); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("explicit deletion retained archive", err)
 	}
-	scope, err := s.executions.Existing(archived.ID)
-	if err != nil || scope == nil || scope.ForceAllowed() {
-		t.Fatal("archive cleanup changed force authorization", err)
-	}
-	if err = cmd.Process.Signal(unix.Signal(0)); err != nil {
-		t.Fatal("archive cleanup killed unforced work", err)
-	}
-	after, _ := os.ReadFile(log)
-	if string(after) != string(before) {
-		t.Fatal("archive cleanup repeated the normal shutdown", string(after))
+	stopped := make(chan error, 1)
+	go func() { stopped <- cmd.Wait() }()
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("explicit deletion left owned process alive")
 	}
 }

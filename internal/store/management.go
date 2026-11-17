@@ -64,34 +64,7 @@ func (s *Store) saveSessionMetadataLocked(session domain.Session, retirements ..
 	}
 	return session, s.commit(tx)
 }
-func (s *Store) deletableStateLocked(session domain.Session) error {
-	switch session.Status {
-	case "idle", "completed", "interrupted", "failed", "abandoned":
-	default:
-		return errors.New("会话仍在运行或执行状态待核对，请先处理")
-	}
-	var pending bool
-	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM requests WHERE session_id=? AND json_extract(body,'$.state') IN ('pending','submitting'))", session.ID).Scan(&pending); err != nil {
-		return err
-	}
-	if pending {
-		return errors.New("会话仍有待处理请求")
-	}
-	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM operations WHERE session_id=? AND state IN ('accepted','dispatched','indeterminate'))", session.ID).Scan(&pending); err != nil {
-		return err
-	}
-	if pending {
-		return errors.New("会话仍有未核实的投递")
-	}
-	q, err := s.queueLocked(session.ID)
-	if err != nil {
-		return err
-	}
-	if len(q.Items) > 0 {
-		return errors.New("会话仍有待发送消息，请先处理队列")
-	}
-	return nil
-}
+
 func (s *Store) SetSessionArchived(id string, revision int64, archived bool, generation ...string) (domain.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

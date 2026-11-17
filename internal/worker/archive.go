@@ -5,11 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sort"
 	"time"
 
 	"shioji/internal/domain"
-	"shioji/internal/harness"
 	"shioji/internal/managedexec"
 	"shioji/internal/protocol"
 	"shioji/internal/store"
@@ -17,7 +15,7 @@ import (
 
 func (s *Server) archiveLoop() {
 	defer s.wg.Done()
-	ticker := time.NewTicker(time.Minute)
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
 		if err := s.cleanupArchives(time.Now()); err != nil {
@@ -38,9 +36,7 @@ func (s *Server) cleanupArchives(now time.Time) error {
 	if s.ctx.Err() != nil || s.updating.Load() || s.backgroundStopping.Load() {
 		return nil
 	}
-	if err := s.cleanRuntimeRetirements(""); err != nil {
-		return err
-	}
+	result := s.cleanRuntimeRetirements("")
 	candidates, err := s.store.ArchiveCandidates(now)
 	if err != nil {
 		return err
@@ -51,18 +47,21 @@ func (s *Server) cleanupArchives(now time.Time) error {
 		if in.WorkspaceID != "" {
 			method = "workspace.delete"
 		}
-		// Active work, pending questions, a restore or an unknown process keep
-		// the archive intact. The next sweep reevaluates authoritative state.
+		// A restore or revision change cancels this expired candidate. Physical
+		// cleanup of an accepted tombstone proceeds independently.
 		if _, err = s.deleteArchive(method, in); err != nil {
 			continue
 		}
 	}
-	return s.cleanArchiveGarbage()
+	return errors.Join(result, s.cleanArchiveGarbage(), s.cleanOwnedWorktrees(now))
 }
 
 // Caller holds dispatchMu, shared with submissions, checkout and restoration.
 func (s *Server) deleteArchive(method string, in protocol.ArchiveDeleteInput) (domain.ArchiveDeletion, error) {
 	var zero domain.ArchiveDeletion
+	if err := s.discoverOwnedWorktrees(in.SessionID, in.WorkspaceID); err != nil {
+		return zero, err
+	}
 	if (in.CloseRuntime || in.Force) && (in.OperationID == "" || len(in.OperationID) > 256) {
 		return zero, errors.New("缺少有效的删除操作标识")
 	}
@@ -104,154 +103,18 @@ func (s *Server) deleteArchive(method string, in protocol.ArchiveDeleteInput) (d
 		}
 		sessions = []domain.Session{d.Session}
 	}
-	// Archival cleanup can be in flight outside device admission. Settle that
-	// exact retirement before deletion inspects groups, then protect only the
-	// selected sessions while physical cleanup runs.
-	sort.Slice(sessions, func(i, j int) bool { return sessions[i].ID < sessions[j].ID })
-	for _, session := range sessions {
-		if !in.Force {
-			if err := s.cleanRuntimeRetirements(session.ID); err != nil {
-				return zero, err
-			}
-		}
-		release, err := s.beginSessionTransition(s.ctx, session.ID)
-		if err != nil {
-			return zero, err
-		}
-		defer release()
+	// Deletion is accepted before physical cleanup. The durable tombstone owns
+	// every retry; paused input and a failed shutdown cannot veto this intent.
+	in.CloseRuntime = true
+	if in.OperationID == "" {
+		in.OperationID = fmt.Sprintf("delete:%s:%s:%d", in.WorkspaceID, in.SessionID, in.Revision)
 	}
-	if in.Force {
-		return s.forceDeleteArchive(method, in, sessions)
-	}
-	// Validate every member before retiring any idle runtime in a workspace.
-	for _, session := range sessions {
-		if r := s.currentRuntime(session.ID); r != nil && !r.Stopped() && !r.ManagedCoverage() {
-			support, ok := r.(harness.ManualShutdownRuntime)
-			if !in.CloseRuntime || !ok || !support.ManualShutdownSafe() {
-				return zero, errors.New("运行环境仍有未核实的执行活动，请停止并核对后再删除")
-			}
-		}
-		state, err := s.store.RuntimeIdle(session.ID)
-		if err != nil {
-			return zero, err
-		}
-		if !state.Idle {
-			return zero, errors.New("仍有运行中或待核对的任务，请处理后再删除")
-		}
-	}
-	var undo []func() error
-	scopes := map[string]*managedexec.Scope{}
-	defer func() {
-		for i := len(undo) - 1; i >= 0; i-- {
-			if undo[i] != nil {
-				_ = undo[i]()
-			}
-		}
-	}()
-	for _, session := range sessions {
-		scope, err := s.executions.Existing(session.ID)
-		if err != nil {
-			return zero, err
-		}
-		if scope != nil {
-			var reopen func() error
-			if in.CloseRuntime {
-				op := in.OperationID + ":" + session.ID
-				previous, e := scope.ManualStopOperation()
-				if e != nil {
-					return zero, e
-				}
-				if previous == "" {
-					observation, e := scope.InspectExplicitMaintenance()
-					if e != nil {
-						return zero, e
-					}
-					reopen, err = scope.BeginExplicitStop(op, observation.Ref, false)
-				} else if previous != op {
-					// A completed earlier shutdown is also sufficient; an active
-					// maintenance operation must finish through its own lifecycle.
-					proven, e := scope.ExplicitStopProven()
-					if e != nil || !proven {
-						return zero, errors.New("运行环境正在处理中，请完成核对后重试")
-					}
-				}
-			} else {
-				reopen, err = scope.FenceIfIdle()
-			}
-			if err != nil {
-				return zero, err
-			}
-			undo = append(undo, reopen)
-			scopes[session.ID] = scope
-		} else if r := s.currentRuntime(session.ID); in.CloseRuntime && r != nil && !r.Stopped() && !r.ManagedCoverage() {
-			return zero, errors.New("运行环境缺少归属记录，请先核对后再删除")
-		}
-	}
-	for _, session := range sessions {
-		ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
-		var err error
-		if scope := scopes[session.ID]; in.CloseRuntime && scope != nil {
-			err = s.closeArchiveEnvironment(ctx, session.ID, scope)
-		} else {
-			err = s.cleanManagedExecutionOutsideDispatch(ctx, session.ID)
-		}
-		cancel()
-		if err != nil {
-			return zero, err
-		}
-		// A harness without a managed scope must also retire its source pipe.
-		if r := s.currentRuntime(session.ID); r != nil && !r.Stopped() {
-			s.runtimeMu.RLock()
-			gate := s.runtimeEvents[session.ID]
-			s.runtimeMu.RUnlock()
-			if gate != nil {
-				gate.Store(false)
-			}
-			ctx, cancel = context.WithTimeout(s.ctx, 10*time.Second)
-			s.dispatchMu.Unlock()
-			err = r.Close(ctx)
-			s.dispatchMu.Lock()
-			cancel()
-			if err != nil {
-				return zero, err
-			}
-		}
-	}
-	var result domain.ArchiveDeletion
-	var err error
-	if method == "workspace.delete" {
-		result, err = s.store.DeleteArchivedWorkspace(in.WorkspaceID, in.Revision)
-	} else {
-		result, err = s.store.DeleteArchivedSession(in.SessionID, in.Revision)
-	}
-	if err != nil {
-		return zero, err
-	}
-	// Admission stays closed for every successfully deleted session.
-	undo = nil
-	for _, id := range result.SessionIDs {
-		s.runtimeMu.Lock()
-		delete(s.runtimes, id)
-		delete(s.runtimeCatalogs, id)
-		delete(s.runtimeEvents, id)
-		s.runtimeMu.Unlock()
-		delete(s.idleRuntimes, id)
-		delete(s.recoveryChecked, id)
-		s.mu.Lock()
-		delete(s.bound, id)
-		s.mu.Unlock()
-	}
-	// The durable outbox retries interrupted filesystem cleanup independently
-	// of the successful deletion receipt, including after a worker restart.
-	if err = s.cleanArchiveGarbage(); err != nil {
-		fmt.Fprintf(os.Stderr, "shioji: archive resources: %v\n", err)
-	}
-	return result, nil
+	return s.commitArchiveDeletion(method, in, sessions)
 }
 
-// Force removes the user-visible archive even when activity cannot be proven
-// idle. Durable cleanup records and scoped process identities survive it.
-func (s *Server) forceDeleteArchive(method string, in protocol.ArchiveDeleteInput, sessions []domain.Session) (domain.ArchiveDeletion, error) {
+// Permanent deletion removes the visible archive first; scoped process records
+// and the durable outbox retain ownership until cleanup is physically proven.
+func (s *Server) commitArchiveDeletion(method string, in protocol.ArchiveDeleteInput, sessions []domain.Session) (domain.ArchiveDeletion, error) {
 	var zero domain.ArchiveDeletion
 	if !in.CloseRuntime {
 		return zero, errors.New("强制删除需要明确确认运行环境风险")
@@ -325,58 +188,16 @@ func (s *Server) forceDeleteArchive(method string, in protocol.ArchiveDeleteInpu
 		delete(s.idleRuntimes, id)
 		delete(s.recoveryChecked, id)
 	}
-	// Cleanup errors cannot veto accepted forced deletion. The same durable
-	// outbox is retried after reconnects/restarts and by the archive sweep.
-	for _, session := range sessions {
-		if err = s.cleanArchiveGarbageItem(store.ArchiveGarbage{SessionID: session.ID, WorkspaceID: session.WorkspaceID}); err != nil {
-			warning = true
-		}
-	}
+	// The receipt follows the tombstone, never native shutdown. The archive
+	// consumer owns cleanup even if this RPC disconnects or the worker restarts.
+	s.wakeArchiveRetirement()
 	if warning {
-		result.Warning = "归档记录已强制删除；部分运行环境尚未确认退出，后台将继续清理。"
+		result.Warning = "归档记录已删除；部分资源尚未完成回收，后台将继续清理。"
 	}
 	return result, nil
 }
 
-// Explicit archive deletion grants normal shutdown only. The durable scope
-// captures process identities before teardown so detached children remain
-// observable after their parent exits. No process-name sweep or force follows.
-func (s *Server) closeArchiveEnvironment(ctx context.Context, id string, scope *managedexec.Scope) error {
-	op, err := scope.ManualStopOperation()
-	if err != nil {
-		return err
-	}
-	if err = scope.AcceptManualStop(op); err != nil {
-		return err
-	}
-	s.runtimeMu.RLock()
-	gate := s.runtimeEvents[id]
-	s.runtimeMu.RUnlock()
-	if gate != nil {
-		gate.Store(false)
-	}
-	r := s.currentRuntime(id)
-	if r != nil {
-		_ = r.Close(ctx)
-	}
-	err = scope.StopExplicit(ctx)
-	for errors.Is(err, managedexec.ErrManualStillRunning) {
-		select {
-		case <-ctx.Done():
-			return errors.New("会话运行环境未正常退出，记录已保留；请在设备详情核对后重试")
-		case <-time.After(20 * time.Millisecond):
-			err = scope.ObserveExplicitStop()
-		}
-	}
-	if err != nil {
-		return err
-	}
-	if r != nil && !r.Stopped() {
-		return errors.New("会话运行环境尚未确认退出，记录已保留")
-	}
-	return nil
-}
-
+// Caller holds dispatchMu; producer waits inside each item release it.
 func (s *Server) cleanArchiveGarbage() error {
 	items, err := s.store.ArchiveGarbage()
 	if err != nil {
@@ -392,6 +213,15 @@ func (s *Server) cleanArchiveGarbageItem(item store.ArchiveGarbage) error {
 	var err error
 	switch {
 	case item.SessionID != "":
+		deleted, e := s.store.SessionDeleted(item.SessionID)
+		if e != nil || !deleted {
+			return errors.Join(e, errors.New("缺少会话删除记录，保留资源"))
+		}
+		release, e := s.beginSessionTransition(s.ctx, item.SessionID)
+		if e != nil {
+			return e
+		}
+		defer release()
 		retired, e := s.executions.Detached()
 		if e != nil {
 			return e
@@ -432,7 +262,22 @@ func (s *Server) cleanArchiveGarbageItem(item store.ArchiveGarbage) error {
 					}
 				}
 				ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+				s.dispatchMu.Unlock()
 				e = scope.Stop(ctx)
+				s.dispatchMu.Lock()
+				cancel()
+				if e != nil {
+					return e
+				}
+			}
+			if !manual {
+				// A prior preparation may have failed before it recorded a manual
+				// operation. Retry retirement of this registered generation using
+				// the durable tombstone, instead of only observing it forever.
+				ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+				s.dispatchMu.Unlock()
+				e = scope.Terminate(ctx, true)
+				s.dispatchMu.Lock()
 				cancel()
 				if e != nil {
 					return e
@@ -444,7 +289,9 @@ func (s *Server) cleanArchiveGarbageItem(item store.ArchiveGarbage) error {
 		}
 		if r := s.currentRuntime(item.SessionID); r != nil && !r.Stopped() {
 			ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+			s.dispatchMu.Unlock()
 			e := r.Close(ctx)
+			s.dispatchMu.Lock()
 			cancel()
 			if e != nil || !r.Stopped() {
 				return errors.New("已删除会话的运行环境仍在退出，稍后重试清理")
@@ -460,6 +307,7 @@ func (s *Server) cleanArchiveGarbageItem(item store.ArchiveGarbage) error {
 		delete(s.runtimeCatalogs, item.SessionID)
 		delete(s.runtimeEvents, item.SessionID)
 		s.runtimeMu.Unlock()
+		delete(s.idleRuntimes, item.SessionID)
 		s.mu.Lock()
 		delete(s.bound, item.SessionID)
 		s.mu.Unlock()
@@ -469,6 +317,12 @@ func (s *Server) cleanArchiveGarbageItem(item store.ArchiveGarbage) error {
 		}
 		err = root.RemoveAll(item.SessionID)
 		root.Close()
+		if err == nil {
+			err = os.RemoveAll(s.sessionRuntimeDirectory(item.SessionID))
+		}
+		if err == nil {
+			err = s.cleanDeletedTitle(item.SessionID)
+		}
 	case item.AttachmentID != "":
 		shared, e := s.store.ArchiveResourceReferenced(item.WorkspaceID, item.AttachmentID)
 		if e != nil {

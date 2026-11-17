@@ -85,15 +85,16 @@ func TestConcurrentMemoryAdmissionsShareReclamation(t *testing.T) {
 	<-entered
 	go send("two", second)
 	select {
-	case <-second:
-		t.Fatal("second admission bypassed in-progress pressure reclamation")
-	case <-time.After(80 * time.Millisecond):
+	case e := <-second:
+		if e != nil {
+			t.Fatal(e)
+		}
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("concurrent warning admission waited for another reclamation")
 	}
 	close(release)
 	if e := <-first; e != nil {
-		t.Fatal(e)
-	}
-	if e := <-second; e != nil {
 		t.Fatal(e)
 	}
 	select {
@@ -129,5 +130,33 @@ func TestMemoryPressureRechecksAfterReclamation(t *testing.T) {
 	submitIdleFixture(t, s, w, "new", "")
 	if !old.Stopped() {
 		t.Fatal("critical pressure started new work before ordered reclamation")
+	}
+}
+
+func TestMemoryPressureEvictsOlderIdleBeforeUnobservedNewcomer(t *testing.T) {
+	s, w := memoryWorker(t, idleHarness{})
+	var old []harness.Runtime
+	for i := 0; i < 3; i++ {
+		d := submitIdleFixture(t, s, w, fmt.Sprint("older-", i), "")
+		r := s.currentRuntime(d.Session.ID)
+		old = append(old, r)
+		s.dispatchMu.Lock()
+		if s.idleRuntimes == nil {
+			s.idleRuntimes = map[string]idleRuntimeObservation{}
+		}
+		s.idleRuntimes[d.Session.ID] = idleRuntimeObservation{runtime: r, since: time.Now().Add(-time.Hour + time.Duration(i)*time.Minute)}
+		s.dispatchMu.Unlock()
+	}
+	fresh := submitIdleFixture(t, s, w, "fresh-unobserved", "")
+	newcomer := s.currentRuntime(fresh.Session.ID)
+	s.pressureSample = func() uint32 { return 2 }
+	submitIdleFixture(t, s, w, "pressure-order", "")
+	if newcomer.Stopped() {
+		t.Fatal("unobserved newcomer sorted ahead of established older idle sessions")
+	}
+	for _, r := range old {
+		if !r.Stopped() {
+			t.Fatal("older eligible session skipped")
+		}
 	}
 }
