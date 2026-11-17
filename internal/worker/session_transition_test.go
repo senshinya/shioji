@@ -5,6 +5,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/protocol"
+	"sync"
 	"testing"
 	"time"
 )
@@ -81,12 +82,13 @@ func TestReloadDoesNotOwnDeviceAdmissionWhileUnloading(t *testing.T) {
 }
 
 type blockingInspectRuntime struct {
+	enteredOnce sync.Once
 	harness.Runtime
 	entered, release chan struct{}
 }
 
 func (r *blockingInspectRuntime) Inspect(ctx context.Context, s domain.Session) (domain.RecoveryHistory, error) {
-	close(r.entered)
+	r.enteredOnce.Do(func() { close(r.entered) })
 	select {
 	case <-r.release:
 		return r.Runtime.Inspect(ctx, s)
@@ -116,5 +118,18 @@ func TestRecoveryDoesNotOwnDeviceAdmissionWhileInspecting(t *testing.T) {
 	assertOtherSessionAdmitted(t, s, w, "idle-model", release)
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Automatic and explicit reconciliation may observe the same instance. The
+// blocking fixture signals its first entry but must allow repeated inspection.
+func TestRecoveryInspectFixtureAllowsRepeatedObservation(t *testing.T) {
+	release := make(chan struct{})
+	close(release)
+	r := &blockingInspectRuntime{Runtime: &memoryRuntime{}, entered: make(chan struct{}), release: release}
+	for range 2 {
+		if _, err := r.Inspect(context.Background(), domain.Session{}); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
