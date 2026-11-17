@@ -1,12 +1,14 @@
 # Shioji 发布
 
-当前版本：`v0.3.5`。`VERSION` 保存不带 `v` 的数字版本；两个 App bundle 的版本均由构建脚本写入。`dev.shioji.app`、`dev.shioji.runtime` 与现有服务身份保持不变。
+当前版本：`v0.4.0`。`VERSION` 保存不带 `v` 的数字版本；两个 App bundle 的版本均由构建脚本写入。`dev.shioji.app`、`dev.shioji.runtime` 与现有服务身份保持不变。
 
 ## 变更记录与发布说明
 
 完整变更见 [CHANGELOG.md](../CHANGELOG.md)。每次发布前比较上一正式标签与待发布代码的实际差异，核对面向用户的行为、兼容性和升级要求；不能只根据 commit message 生成说明。
 
 使用 `Added`、`Changed`、`Deprecated`、`Removed`、`Fixed`、`Security` 分类，只保留有内容的分类；版本标题包含数字版本、UTC 发布日期和源码／比较链接。说明用户影响，排除本地产物、内部重构和纯测试调整。GitHub Release 正文复用对应版本条目，并补充该版安装与更新方式。修改历史说明保留原发布日期，不移动标签或替换已发布二进制。
+
+v0.4.0 引入 Hooks 管理、远程文件上传确认与路径引用、空闲会话重新加载和设备菜单中的 worker 更新。执行服务采用固定 supervisor 与自动环境回收，移除旧强制处理页面；执行闲置20分钟、30秒扫描，等待原生后台任务最多保护24小时。归档释放原环境，自建worktree安全备份后回收并可恢复。新能力需worker协议2.48／schema15；旧存量缺失停止接纳字段仍按明确的手动迁移边界处理，不自动重放未知输入，不自动降级存储格式。
 
 v0.3.5 增加原生 Mermaid 图表、Markdown 图片缩略图、会话窗口缩放、执行环境强制恢复，以及归档批量删除与带警告的强制删除；同时修复运行配置继承、文件链接定位、非 Git 目录更改视图及会话控件误触。归档运行环境回收与强制删除需要所属设备的新版 worker（协议 minor 44）；旧版或卡死 worker 的恢复可走独立恢复程序，仍需明确确认关闭范围和风险。恢复不自动续答或发送队列，项目文件不会回滚或删除，独立 Tailnet 节点不随执行服务恢复而关闭。
 
@@ -78,7 +80,7 @@ bash packaging/build-dev.sh
 # 指定本机已有 Developer ID identity 和 notarytool profile 后：
 # 另需 APPLE_TEAM_ID、SHIOJI_UPDATE_PUBLIC_KEY 与 SHIOJI_UPDATE_PRIVATE_KEY；
 # 私钥从安全文件/CI Secret 注入环境，不要写在命令参数或 shell 历史中。
-CODE_SIGN_IDENTITY='<证书指纹>' NOTARY_PROFILE='<本机公证配置名称>' RELEASE_TAG=v0.3.5 bash packaging/build-release.sh
+CODE_SIGN_IDENTITY='<证书指纹>' NOTARY_PROFILE='<本机公证配置名称>' RELEASE_TAG=v0.4.0 bash packaging/build-release.sh
 ```
 
 产物位于 `build/release/`。构建不会启动或替换用户正在运行的 GUI、worker 或 Tailnet 节点。
