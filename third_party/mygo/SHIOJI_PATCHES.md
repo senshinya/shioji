@@ -13,6 +13,11 @@ This local module contains the upstream runtime source and embedded resources;
 examples, website, JavaScript tooling, CI, upstream tests and testdata are omitted.
 The upstream architecture guide is retained for maintenance.
 
+Rich-text editors explicitly clip their own paint callback to the scroll
+viewport. Element `Clip()` only clips descendants, so a soft-wrapped paragraph
+otherwise paints over composer footer controls. Covered by Shioji's
+`internal/ui/composer_overflow_test.go`.
+
 Scroll containers show their overlay thumbs only after the offset actually
 changes or while a thumb is dragged. Hover and initial history placement do not
 reveal them; after 700 ms without movement they fade over 200 ms. Geometry and

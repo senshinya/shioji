@@ -257,7 +257,11 @@ func build(c *ui.Context, doc *Document, options []EditorOptions, styled bool) u
 	}
 	e.HandleInput(v.input)
 	e.Cursor(v.cursor)
-	e.Draw(v.paint)
+	e.Draw(func(p *ui.Painter, r ui.Rect) {
+		// Element clipping contains children, not its own Draw callback. A
+		// wrapped paragraph can extend past either edge of this scrollport.
+		p.Clip(r, 0, func() { v.paint(p, r) })
+	})
 	e.ContextMenu(v.menu)
 	if v.hoverAttachment != nil && e.Hovered() {
 		label := v.hoverAttachment.Tooltip
