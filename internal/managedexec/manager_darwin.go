@@ -801,10 +801,32 @@ func (s *Scope) FenceIfIdle() (func() error, error) {
 			}
 		}
 	}
+	return s.pauseAdmissionLocked(state)
+}
+
+// PauseAdmission suspends new launches while the worker checks business work.
+// Resident processes remain owned for the subsequent normal shutdown.
+func (s *Scope) PauseAdmission() (func() error, error) {
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	state, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	if !state.Active {
+		return nil, s.verifyStopped()
+	}
+	if state.Maintenance {
+		return nil, errors.New("执行服务已在维护中")
+	}
+	return s.pauseAdmissionLocked(state)
+}
+
+func (s *Scope) pauseAdmissionLocked(state scopeState) (func() error, error) {
 	// Keep lifetime monitoring active; only new launch admission is suspended.
 	// Permanent retirement remains the separate Active=false transition.
 	state.Maintenance = true
-	if err = s.writeState(state); err != nil {
+	if err := s.writeState(state); err != nil {
 		return nil, err
 	}
 	return func() error {

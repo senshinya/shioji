@@ -50,7 +50,7 @@ func (s *Server) disableBackground() (result domain.BackgroundService, err error
 			if scope == nil {
 				continue
 			}
-			restore, e := scope.FenceIfIdle()
+			restore, e := scope.PauseAdmission()
 			if e != nil {
 				result.Message = e.Error()
 				return result, nil
