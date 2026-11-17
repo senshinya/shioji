@@ -26,6 +26,9 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 func fixtureHost(name string) int {
+	if strings.Contains(name, "private-control") {
+		return privateControlFixture(name)
+	}
 	buildID := "old"
 	if strings.Contains(name, "next") {
 		buildID = "next"

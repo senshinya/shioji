@@ -72,6 +72,7 @@ func run() error {
 	build.Schema = store.SchemaVersion
 	build.SafeUpdate = true
 	build.Lifecycle = 1
+	build.PrivateControl = 1
 	build.Maintenance = true
 	build.ContextUsage = true
 	build.OutputFiles = true
@@ -321,6 +322,48 @@ func run() error {
 			}
 		}()
 	}
+	var s *worker.Server
+	startupCtx, cancelStartup := context.WithCancel(ctx)
+	defer cancelStartup()
+	initialized := make(chan struct{})
+	var startupErr error
+	if *serviceChild {
+		lifecycle, e := supervisor.OpenChildLifecycle()
+		if e != nil {
+			return e
+		}
+		if lifecycle != nil {
+			defer lifecycle.Close()
+			go func() {
+				accepted, _ := supervisor.ServeLifecycle(lifecycle, func(in supervisor.Control) (domain.WorkerUpdateResult, error) {
+					if in.Instance != os.Getenv("SHIOJI_WORKER_INSTANCE") {
+						return domain.WorkerUpdateResult{}, errors.New("service instance authentication failed")
+					}
+					if !in.ExpiresAt.IsZero() && !time.Now().Before(in.ExpiresAt) {
+						return domain.WorkerUpdateResult{}, errors.New("prepared update expired")
+					}
+					if in.Replacement.Policy == "immediate" && !in.Replacement.Explicit {
+						return domain.WorkerUpdateResult{}, errors.New("immediate drain requires explicit authority")
+					}
+					// Cancel only read-only startup discovery, not the server lifetime.
+					// Admission remains the owning worker's responsibility once bound.
+					cancelStartup()
+					select {
+					case <-initialized:
+						if s == nil {
+							return domain.WorkerUpdateResult{}, startupErr
+						}
+						return s.DrainService(in)
+					case <-ctx.Done():
+						return domain.WorkerUpdateResult{}, ctx.Err()
+					}
+				})
+				if accepted {
+					stop()
+				}
+			}()
+		}
+	}
 	replacement := make(chan string, 1)
 	verifyReplacement := func(callCtx context.Context, in domain.WorkerReplacement) error {
 		candidate, err := transport.VerifyStagedWorker(callCtx, dir, in.BuildID)
@@ -398,7 +441,6 @@ func run() error {
 			return domain.WorkerUpdateResult{Ready: e == nil, OperationID: op.Input.ID, Phase: op.Phase, Reason: op.Error}, e
 		}
 	}
-	var s *worker.Server
 	workerArgs := os.Args[1:]
 	if *migration == "run" {
 		// Future replacements must enter the ordinary service path rather than
@@ -421,7 +463,7 @@ func run() error {
 				return nil
 			}
 		} else {
-			s, err = worker.New(ctx, config)
+			s, err = worker.New(startupCtx, config)
 		}
 		if !*managed || !errors.Is(err, worker.ErrOwned) && !errors.Is(err, worker.ErrLegacyRecoveryActive) {
 			break
@@ -434,6 +476,8 @@ func run() error {
 		case <-timer.C:
 		}
 	}
+	startupErr = err
+	close(initialized)
 	var selected *selectedWorker
 	if errors.As(err, &selected) {
 		if ctx.Err() != nil {

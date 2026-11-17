@@ -37,48 +37,7 @@ func (s *Server) serviceControl(method string, body []byte) (any, error) {
 		}
 		return s.businessStopReady()
 	case "worker.drain":
-		s.dispatchMu.Lock()
-		defer s.dispatchMu.Unlock()
-		s.drainMu.Lock()
-		defer s.drainMu.Unlock()
-		if s.drainOperation != "" {
-			if s.drainOperation == in.OperationID {
-				return domain.WorkerUpdateResult{Ready: true}, nil
-			}
-			return nil, errors.New("another drain already accepted")
-		}
-		if in.Replacement.Policy != "immediate" {
-			ready, e := s.businessStopReady()
-			if e != nil || !ready.Ready {
-				return ready, e
-			}
-		}
-		if !in.ExpiresAt.IsZero() && !time.Now().Before(in.ExpiresAt) {
-			return nil, errors.New("prepared update expired")
-		}
-		intent := supervisor.DrainIntent{ID: in.OperationID, Instance: s.config.ServiceInstance, DeviceID: s.store.DeviceID(), BuildID: s.build.BuildID}
-		snapshot, e := s.store.Snapshot()
-		if e != nil {
-			return nil, e
-		}
-		for _, session := range snapshot.Sessions {
-			q, e := s.store.Queue(session.ID)
-			if e != nil {
-				return nil, e
-			}
-			if !q.Paused {
-				intent.Queues = append(intent.Queues, session.ID)
-			}
-		}
-		if !in.ExpiresAt.IsZero() && !time.Now().Before(in.ExpiresAt) {
-			return nil, errors.New("prepared update expired")
-		}
-		if err = supervisor.SaveDrainIntent(s.config.Directory, intent); err != nil {
-			return nil, err
-		}
-		s.drainOperation = in.OperationID
-		s.updating.Store(true)
-		return domain.WorkerUpdateResult{Ready: true, OperationID: in.OperationID, Phase: "switching"}, nil
+		return s.DrainService(in)
 	case "worker.resume":
 		s.dispatchMu.Lock()
 		defer s.dispatchMu.Unlock()
@@ -187,4 +146,57 @@ func (s *Server) reserveDispatch(op domain.Operation) func() {
 		delete(s.dispatchReservations, op.ID)
 		s.mu.Unlock()
 	}
+}
+
+// DrainService is shared by private inherited lifecycle control and business
+// RPC. Both use the same identity, policy, expiry and dispatch admission.
+func (s *Server) DrainService(in supervisor.Control) (domain.WorkerUpdateResult, error) {
+	if s.config.ServiceInstance == "" || in.Instance != s.config.ServiceInstance {
+		return domain.WorkerUpdateResult{}, errors.New("service instance authentication failed")
+	}
+	if in.Replacement.Policy == "immediate" && !in.Replacement.Explicit {
+		return domain.WorkerUpdateResult{}, errors.New("immediate drain requires explicit authority")
+	}
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	s.drainMu.Lock()
+	defer s.drainMu.Unlock()
+	if s.drainOperation != "" {
+		if s.drainOperation == in.OperationID {
+			return domain.WorkerUpdateResult{Ready: true}, nil
+		}
+		return domain.WorkerUpdateResult{}, errors.New("another drain already accepted")
+	}
+	if in.Replacement.Policy != "immediate" {
+		ready, e := s.businessStopReady()
+		if e != nil || !ready.Ready {
+			return ready, e
+		}
+	}
+	if !in.ExpiresAt.IsZero() && !time.Now().Before(in.ExpiresAt) {
+		return domain.WorkerUpdateResult{}, errors.New("prepared update expired")
+	}
+	intent := supervisor.DrainIntent{ID: in.OperationID, Instance: s.config.ServiceInstance, DeviceID: s.store.DeviceID(), BuildID: s.build.BuildID}
+	snapshot, e := s.store.Snapshot()
+	if e != nil {
+		return domain.WorkerUpdateResult{}, e
+	}
+	for _, session := range snapshot.Sessions {
+		q, e := s.store.Queue(session.ID)
+		if e != nil {
+			return domain.WorkerUpdateResult{}, e
+		}
+		if !q.Paused {
+			intent.Queues = append(intent.Queues, session.ID)
+		}
+	}
+	if !in.ExpiresAt.IsZero() && !time.Now().Before(in.ExpiresAt) {
+		return domain.WorkerUpdateResult{}, errors.New("prepared update expired")
+	}
+	if err := supervisor.SaveDrainIntent(s.config.Directory, intent); err != nil {
+		return domain.WorkerUpdateResult{}, err
+	}
+	s.drainOperation = in.OperationID
+	s.updating.Store(true)
+	return domain.WorkerUpdateResult{Ready: true, OperationID: in.OperationID, Phase: "switching"}, nil
 }

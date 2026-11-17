@@ -202,6 +202,9 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	s := &Server{attachments: attachments.New(filepath.Join(config.Directory, "attachments")), config: config, owner: owner, listener: listener, store: db, ctx: workerCtx, cancel: cancel, queueWake: make(chan struct{}, 1), recoveryWake: make(chan struct{}, 1), recoveryChecked: map[string]recoveryAttempt{}, bound: map[string]bool{}, conns: map[net.Conn]bool{}}
 	s.build = runtimebuild.Current()
 	s.build.Schema = store.SchemaVersion
+	if config.ServiceInstance != "" {
+		s.build.PrivateControl = 1
+	}
 	s.updating.Store(config.StartPaused)
 	s.build.SafeUpdate = config.ReplaceWorker != nil || config.RequestUpdate != nil
 	if config.RequestUpdate != nil {
@@ -348,7 +351,8 @@ func (s *Server) serveConnection(conn net.Conn) {
 			requestedRecovery = true
 		}
 		out, callErr := history.handle(s, f.Method, f.Body)
-		stopForUpdate := callErr == nil && s.updating.Load() && (f.Method == "worker.drain" || f.Method == "worker.update" && s.config.RequestUpdate == nil)
+		drain, _ := out.(domain.WorkerUpdateResult)
+		stopForUpdate := callErr == nil && s.updating.Load() && (f.Method == "worker.drain" && drain.Ready || f.Method == "worker.update" && s.config.RequestUpdate == nil)
 		if stopForUpdate {
 			defer func() { s.cancel(); s.listener.Close() }()
 		}

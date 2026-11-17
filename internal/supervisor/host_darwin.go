@@ -31,6 +31,7 @@ type Options struct {
 	RetryMin, RetryMax                              time.Duration
 }
 type child struct {
+	lifecycle *lifecycleClient
 	cmd       *exec.Cmd
 	identity  managedexec.ProcessInfo
 	instance  string
@@ -474,10 +475,23 @@ func (h *host) launch(path string, b domain.WorkerBuild, paused bool, op string)
 	args = append(args, "--service-child")
 	c.cmd = exec.Command(path, args...)
 	c.cmd.Env = append(os.Environ(), "SHIOJI_WORKER_INSTANCE="+c.instance, "SHIOJI_SUPERVISOR_OPERATION="+op, fmt.Sprintf("SHIOJI_WORKER_PAUSED=%t", paused))
+	if b.PrivateControl > 0 {
+		control, inherited, err := lifecyclePair()
+		if err != nil {
+			return nil, err
+		}
+		c.lifecycle = control
+		c.cmd.ExtraFiles = []*os.File{inherited}
+		c.cmd.Env = append(c.cmd.Env, lifecycleFDEnv+"=3")
+		defer inherited.Close()
+	}
 	c.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	c.cmd.Stdout = os.Stdout
 	c.cmd.Stderr = os.Stderr
 	if err := c.cmd.Start(); err != nil {
+		if c.lifecycle != nil {
+			c.lifecycle.Close()
+		}
 		return nil, err
 	}
 	list, err := managedexec.Processes()
@@ -489,7 +503,13 @@ func (h *host) launch(path string, b domain.WorkerBuild, paused bool, op string)
 			}
 		}
 	}
-	go func() { c.err = c.cmd.Wait(); close(c.done) }()
+	go func() {
+		c.err = c.cmd.Wait()
+		if c.lifecycle != nil {
+			c.lifecycle.Close()
+		}
+		close(c.done)
+	}()
 	h.mu.Lock()
 	h.child = c
 	h.mu.Unlock()
@@ -591,6 +611,7 @@ func (h *host) stopExact(c *child, grace time.Duration) error {
 }
 
 var errDrainAdmission = errors.New("business became active before drain")
+var errDrainExpired = errors.New("prepared update expired")
 
 func (h *host) shutdown(c *child, id string, grace time.Duration, controls ...Control) error {
 	control := Control{Replacement: domain.WorkerReplacement{Policy: "immediate", Explicit: true}}
@@ -600,10 +621,36 @@ func (h *host) shutdown(c *child, id string, grace time.Duration, controls ...Co
 	control.Instance, control.OperationID = c.instance, id
 	ctx, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()
+	// Keep a complete graceful interval after a failed business request. The
+	// private channel is available even while the public socket is unavailable.
+	request, stop := context.WithTimeout(ctx, min(time.Second, grace/4))
 	var ignored domain.WorkerUpdateResult
-	err := h.workerCall(ctx, c, "worker.drain", control, &ignored)
+	var err error
+	if c.lifecycle != nil {
+		ignored, err = c.lifecycle.request(request, control)
+	} else {
+		err = errors.New("private lifecycle channel unavailable")
+	}
+	if err != nil {
+		err = h.workerCall(request, c, "worker.drain", control, &ignored)
+	}
+	stop()
 	if err == nil && !ignored.Ready {
 		return errDrainAdmission
+	}
+	if err != nil {
+		// Unknown delivery is not authority to interrupt a newly busy session.
+		intent, e := ReadDrainIntent(h.options.Directory, id)
+		accepted := e == nil && intent.Instance == c.instance && intent.DeviceID == h.device && intent.BuildID == c.build.BuildID
+		if !accepted && !control.ExpiresAt.IsZero() && !time.Now().Before(control.ExpiresAt) {
+			return errDrainExpired
+		}
+		if !accepted && !(control.Replacement.Policy == "immediate" && control.Replacement.Explicit) {
+			return err
+		}
+		if managedexec.ProcessState(c.identity) == "running" {
+			_ = managedexec.SignalExact(c.identity, unix.SIGTERM)
+		}
 	}
 	select {
 	case <-c.done:
@@ -716,6 +763,10 @@ waitForIdle:
 		return
 	}
 	if err = h.shutdown(old, o.Input.ID, h.options.DrainTimeout, Control{Replacement: o.Input, ExpiresAt: o.ExpiresAt}); err != nil {
+		if errors.Is(err, errDrainExpired) {
+			failed(err, false)
+			return
+		}
 		if errors.Is(err, errDrainAdmission) {
 			if err = h.phase(&o, "waiting"); err != nil {
 				failed(err, true)

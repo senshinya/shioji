@@ -3,6 +3,7 @@ package domain
 // WorkerBuild identifies the running service independently of harness readiness
 // and protocol compatibility. BuildID is captured before replacing any file.
 type WorkerBuild struct {
+	PrivateControl int    `json:"privateControl,omitempty"`
 	Lifecycle      int    `json:"lifecycle,omitempty"`
 	RecoveryHelper bool   `json:"recoveryHelper,omitempty"`
 	ForceRecovery  bool   `json:"forceRecovery,omitempty"`
