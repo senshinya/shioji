@@ -2,6 +2,38 @@
 
 核查日期：2026-11-17。结论用于 Shioji 本轮升级改造。用户已决定直接采用 Lody 的机制，接受其未登记进程覆盖范围，不再增加独立会话宿主或完整后代追踪架构。以下参考源码分析在实施前完成；实施现状见下段，三台正式设备没有停止或更新。
 
+> **继续深查（2026-11-17，尚未修复）**：在前述三处之外，再确认两处：提交新版后的 resume 仍仅走业务 socket，短暂端点缺失会永久转为 blocked；自动恢复模型目录时仍在原生 Start／Close 期间持有全局 dispatchMu，让闲置排空等待。两种故障各三次复现，签名 worker 与后台目录刷新对照各三次通过，另有 55 项既有相邻检查通过。当前共有五处已确认待修机制，产品代码及正式设备均未改动。
+
+## 2026-11-17 继续深查：再确认两个机制差异
+
+### D. 高：已提交候选的恢复接纳没有接入私有通道
+
+[host_darwin.go:869](../internal/supervisor/host_darwin.go#L869) 的 resume 仍只调用公共 worker.sock。正常更新在选中版本及 applied 都落盘后调用它，一次调用失败便由 [host_darwin.go:850](../internal/supervisor/host_darwin.go#L850) 将操作改写为 blocked；重启恢复已提交版本的分支也只尝试一次 resume。继承的私有控制目前只能 drain，尚不能恢复接纳。
+
+隔离完整 supervisor 流程只在 Select 回调中把已 ready 候选的业务 socket 临时改名：旧 worker 已正常排空，新版已被选中，却得到 selected=next、phase=blocked。恢复同一 socket 后仍 blocked、accepted=false，新的更新也被拒绝。三次一致。不是删除 worker 本身或破坏候选身份。
+
+真实 ad-hoc 签名 worker 对照进一步确认：同一 paused 候选带 PrivateControl=1 启动，缺失公共端点时 resume 失败；恢复端点后同一候选可以 resume，ready 的 paused 变为 false；再次移除公共端点，继承私有通道仍正常完成准确 drain。因此问题是恢复接纳仍依赖业务端点，不能用此前「私有 drain 已脱离业务 socket」的通过结果覆盖。
+
+Lody 的 [daemon-runner.ts:1090](https://github.com/LodyAI/Lody/blob/58e33cec245b2f5e7586d0c7beb6a02ce148219c/apps/cli/src/commands/daemon-runner.ts#L1090) 在保存 selected 与 applied 后，通过已捕获 child 的 IPC 发送 lody/managed-resume；[start.ts:825](https://github.com/LodyAI/Lody/blob/58e33cec245b2f5e7586d0c7beb6a02ce148219c/apps/cli/src/commands/start.ts#L825) 验证 supervisor token 后开放轮次准入。对齐方向是把准确候选的恢复接纳也纳入私有生命周期控制。提交后短暂控制失败的收尾须保留已提交事实并可核对，不能仅凭一次业务端点错误把健康候选封死。Lody 对 IPC send 错误本身只记日志，这里不声称上游保证所有通道故障自动重试或绝不失败。
+
+### E. 中：自动恢复目录仍跨原生 I/O 持有全局调度锁
+
+[auto_recovery.go:64](../internal/worker/auto_recovery.go#L64) 获取 dispatchMu 后，逐个调用 recoveryRuntime → openCatalog → startCatalog；[catalog_refresh.go:65](../internal/worker/catalog_refresh.go#L65) 内有 previous.Close、adapter.Start 等原生等待。[service_control.go:160](../internal/worker/service_control.go#L160) 的私有 drain 和公共 drain 都需同一锁，因此控制通道独立并不能消除这个内部等待。
+
+中立 harness 仅暂停目录 Start，真实 Server／SQLite 的 businessStopReady 已为 Ready=true，DrainService 却不能进入；释放该 Start 后立即完成排空，三次一致。目录任务不是已接纳的业务轮次，也不是 resident Node 本身。相反，现有 catalogLoop 在标记 refreshing 后释放 admission 再做原生 I/O，同样等待时，prepare-drain 可以立即返回；对照三次通过。
+
+Lody 的 [machine-turn-admission.ts](https://github.com/LodyAI/Lody/blob/58e33cec245b2f5e7586d0c7beb6a02ce148219c/apps/cli/src/session/machine-turn-admission.ts) 同步核对轮次 reservation；异步运行时准备由 [managed-runtime-update-coordinator.ts](https://github.com/LodyAI/Lody/blob/58e33cec245b2f5e7586d0c7beb6a02ce148219c/apps/cli/src/agent/managed-runtime-update-coordinator.ts) 独立推进。这是 Shioji 额外目录恢复路径没有贯彻短临界区原则，不冒充上游存在同名 Go catalog。应复用本项目 catalogLoop 的边界，仅在 capture／publish／复查时占锁。
+
+本轮证明的是额外阻塞，不是无限死锁。恢复启动分配 20 秒上下文；没有把故意不遵守取消的假 harness 当作真实 Codex 永久卡死证据，也没有从短探针推导未来故障已被穷尽。
+
+### 继续深查的证据与范围
+
+- 基线 `7c97df8`，新 fetch 的 Lody 仍为 `58e33ce`；[源码范围核对](../.ryugi/audits/lody-mechanism-deep-20261117/source-provenance.txt) 中 393 个生命周期文件哈希未变，所以上一轮三处仍未修复。
+- [原始探针输出](../.ryugi/audits/lody-mechanism-deep-20261117/deep-probes.txt)：两种预期断言失败各三次，签名 worker／后台目录正向对照各三次通过。失败不计作产品通过记录；[计数与边界](../.ryugi/audits/lody-mechanism-deep-20261117/audit-summary.txt) 已逐项核对。
+- [55 项相邻检查](../.ryugi/audits/lody-mechanism-deep-20261117/aligned-neighbours.txt)：supervisor 与 worker，覆盖正常提交、回滚、expiry、公共／私有 drain、目录后台刷新、归档回收、自建 worktree 和删除。没有套用上轮 124 项的旧结果。
+- 本轮还重读了准确实例退休、归档释放、worktree 共享保护与异步 Git 清理、pending Start 取消及历史 Inspect 的锁边界；这些路径在本轮没有确认第三个新的独立根因。前述三个未修交接点继续单列，未把其派生现象重复计数。
+- 没有正式安装、反注册、远程设备操作或新增运行环境入口。20 分钟／30 秒、24 小时等待保护、未登记后代和首次旧存量手动处理仍按既定决定。
+
 > **追加复核（2026-11-17，尚未修复）**：当前 `43ec93f` 对照 Lody 最新 `58e33ce`，又确认三处交接遗漏：永久删除没有撤销 pending Start、成功退休的部分分支没有释放旧 unknown work 所有权、后台关闭在明确的前置失败后仍永久封住准入。五个具体场景各重复三次，共 15 次预期断言失败，另有 124 项既有相邻检查通过。本轮只审计和隔离复现，产品代码及三台正式设备未改动；不能将此前五项修复外推为所有交接路径均已覆盖。
 
 ## 2026-11-17 追加复核：三个仍未对齐的交接点
