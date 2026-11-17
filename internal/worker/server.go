@@ -963,20 +963,7 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		if err != nil {
 			return nil, err
 		}
-		s.dispatchMu.Lock()
-		defer s.dispatchMu.Unlock()
-		runtime := s.currentRuntime(in.SessionID)
-		if runtime == nil || runtime.Readiness().State != "ready" {
-			return nil, errors.New("runtime unavailable")
-		}
-		session, err := s.store.ValidateAnswer(in.SessionID, in.Answer)
-		if err != nil {
-			return nil, err
-		}
-		if !runtime.Observes(session) {
-			return nil, errors.New("请求的运行环境已变化")
-		}
-		return nil, runtime.Respond(in.Answer)
+		return nil, s.respondRequest(in)
 	case "turn.interrupt":
 		in, err := decode[struct {
 			SessionID string `json:"sessionId"`

@@ -38,6 +38,8 @@ func (s *Server) sendWork(in domain.WorkInput) (domain.WorkInputOperation, error
 	if err != nil {
 		return none, workNotSent(err)
 	}
+	releasePreparation := s.reservePreparation(in.SessionID)
+	defer releasePreparation()
 	if in.Mode == "continue" {
 		paths := append([]string{d.Session.Context.CWD}, d.Session.Context.AdditionalDirectories...)
 		if err := s.restoreOwnedWorktrees(paths); err != nil {
@@ -81,6 +83,9 @@ func (s *Server) sendWork(in domain.WorkInput) (domain.WorkInputOperation, error
 	if !ok {
 		return none, workNotSent(harness.Unsupported("independent-work-input"))
 	}
+	if err := s.updateAdmission(); err != nil {
+		return none, err
+	}
 	op, fresh, err := s.store.AcceptWorkInput(in)
 	if err != nil {
 		return none, workNotSent(err)
@@ -99,7 +104,10 @@ func (s *Server) sendWork(in domain.WorkInput) (domain.WorkInputOperation, error
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
 	defer cancel()
-	err = messenger.SendWork(ctx, d.Session, in)
+	_, err = s.runtimeCallOutsideDispatch(ctx, in.SessionID, r, func() (bool, error) { return false, messenger.SendWork(ctx, d.Session, in) })
+	if !s.capturedRuntimeCurrent(in.SessionID, r, d.Session.ThreadID) {
+		return s.store.WorkInput(in.OperationID)
+	}
 	outcome := domain.DeliveryOutcome(err != nil, harness.IsUncertain(err))
 	message := ""
 	if err != nil {
@@ -144,7 +152,10 @@ func (s *Server) queryWorkInput(in domain.WorkInput) (domain.WorkInputOperation,
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 	defer cancel()
-	found, err := messenger.WorkInputReceived(ctx, d.Session, in)
+	found, err := s.runtimeCallOutsideDispatch(ctx, in.SessionID, r, func() (bool, error) { return messenger.WorkInputReceived(ctx, d.Session, in) })
+	if !s.capturedRuntimeCurrent(in.SessionID, r, d.Session.ThreadID) {
+		return s.store.WorkInput(in.OperationID)
+	}
 	if err != nil {
 		return op, err
 	}
