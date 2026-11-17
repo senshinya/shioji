@@ -44,7 +44,7 @@ func TestBackgroundHostUnregisterDoesNotWaitForWorkerShutdown(t *testing.T) {
 	helperBin := filepath.Join(helperDir, "helper")
 	const helperProgram = `package main
 import("os";"path/filepath";"time";"fmt")
-func main(){dir:=os.Getenv("SHIOJI_AUDIT_GATE_DIR");os.WriteFile(filepath.Join(dir,"helper-entered"),[]byte(fmt.Sprint(os.Getpid())),0600);if os.Getenv("SHIOJI_AUDIT_WAIT_FOR_HOST")=="1"{for{if _,err:=os.Stat(filepath.Join(dir,"release-helper"));err==nil{break};if _,err:=os.Stat(dir);os.IsNotExist(err){break};time.Sleep(10*time.Millisecond)}};fmt.Println("{\"format\":1,\"state\":\"notRegistered\"}")}`
+func main(){dir:=os.Getenv("SHIOJI_AUDIT_GATE_DIR");ready:=filepath.Join(dir,"helper-entered");if err:=os.WriteFile(ready+".tmp",[]byte(fmt.Sprint(os.Getpid())),0600);err!=nil{panic(err)};if err:=os.Rename(ready+".tmp",ready);err!=nil{panic(err)};if os.Getenv("SHIOJI_AUDIT_WAIT_FOR_HOST")=="1"{for{if _,err:=os.Stat(filepath.Join(dir,"release-helper"));err==nil{break};if _,err:=os.Stat(dir);os.IsNotExist(err){break};time.Sleep(10*time.Millisecond)}};fmt.Println("{\"format\":1,\"state\":\"notRegistered\"}")}`
 	if err = os.WriteFile(helperSource, []byte(helperProgram), 0600); err != nil {
 		t.Fatal(err)
 	}
