@@ -43,6 +43,9 @@ type composerContent struct {
 func (v *View) composerContent(key string) composerContent {
 	files := []app.DraftAttachment{}
 	for _, file := range v.Model.Attachments[key] {
+		if file.Attachment.Kind == domain.PathAttachmentResource && (!file.Ready || !v.ownsRemoteAttachment(file)) {
+			continue
+		}
 		if file.Attachment.InlineReference() {
 			files = append(files, file)
 		}
@@ -129,6 +132,10 @@ func (v *View) composerDocument(c *n.Context, key string) *composerDocument {
 			b.departed, b.departedEdited = "", false
 		}
 	}
+	if b.version != 0 && !restore {
+		v.insertUploadedReferences(c, b, content)
+		content = v.composerContent(key)
+	}
 	if restore || b.version == 0 || !content.equal(b.last) {
 		b.doc.SetText(v.referenceText(c, content))
 		b.last, b.version = content, b.doc.Version()
@@ -165,7 +172,7 @@ func (v *View) publishComposer(key string, b *composerDocument) {
 	var plain strings.Builder
 	files := []app.DraftAttachment{}
 	for _, file := range v.composerAttachments(key, b) {
-		if !file.Attachment.InlineReference() {
+		if !file.Attachment.InlineReference() || file.Attachment.Kind == domain.PathAttachmentResource && (!file.Ready || !v.ownsRemoteAttachment(file)) {
 			files = append(files, file)
 		}
 	}
@@ -204,6 +211,39 @@ func (v *View) publishComposer(key string, b *composerDocument) {
 	v.Model.DraftSkills[key] = skills
 	b.last, b.version = v.composerContent(key), b.doc.Version()
 	b.departedEdited = b.departed != ""
+}
+
+// Transfer completion joins the mounted native document as one undo step.
+func (v *View) insertUploadedReferences(c *n.Context, b *composerDocument, content composerContent) {
+	base := content
+	base.files = slices.Clone(content.files)
+	var added []app.DraftAttachment
+	base.files = slices.DeleteFunc(base.files, func(file app.DraftAttachment) bool {
+		fresh := file.Attachment.Kind == domain.PathAttachmentResource && file.Ready && file.InlinePosition == 0 && !slices.ContainsFunc(b.last.files, func(old app.DraftAttachment) bool { return old.Attachment.ID == file.Attachment.ID })
+		if fresh {
+			added = append(added, file)
+		}
+		return fresh
+	})
+	if len(added) == 0 || !base.equal(b.last) || b.doc.Version() != b.version {
+		return
+	}
+	end := b.doc.Text().Len()
+	text := b.doc.Text().String()
+	space := end > 0 && !unicode.IsSpace([]rune(text)[end-1])
+	b.last = content
+	b.doc.Edit(func(e *richtext.Edit) {
+		for _, file := range added {
+			if space {
+				e.ReplaceString(end, end, " ", richtext.Attributes{})
+				end++
+			}
+			e.ReplaceString(end, end, string(richtext.ObjectReplacement), richtext.Attributes{Attachment: v.referenceAttachment(c, composerReference{file: file})})
+			end++
+			space = true
+		}
+	})
+	v.publishComposer(b.key, b)
 }
 
 func (v *View) insertReference(c *n.Context, b *composerDocument, state *fileMention, ref composerReference) bool {
@@ -270,6 +310,9 @@ func (v *View) referenceAttachment(c *n.Context, ref composerReference) *richtex
 	surface := codeSurface(c.Theme())
 	if ref.file.Attachment.ID != "" {
 		a.Tooltip = ref.file.Attachment.SourcePath
+		if ref.file.Attachment.Kind == domain.PathAttachmentResource {
+			a.Tooltip = "已上传至 " + v.remoteDeviceName(ref.file.DeviceID) + " · " + ref.file.Attachment.Name
+		}
 		a.OnClick = func(r n.Rect) {
 			if ref.file.Ready && ref.file.DeviceID == v.referenceDeviceID() && ref.file.WorkspaceID == v.Model.WorkspaceID {
 				paint := a.Draw

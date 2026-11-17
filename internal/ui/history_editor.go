@@ -201,6 +201,7 @@ func (v *View) historyEditor(c *n.Context, t *n.Theme, item domain.Item) {
 	panel := n.Column(c.Key("user-surface:"+item.ID)).FillWidth().MaxWidth(676).Padding(11, 15).Gap(10).Radius(14).Background(bg).Border(1, t.Border).Label("历史消息编辑器").Transition(n.ElementTransition{Position: true, Size: true, Colors: true, Duration: 280 * time.Millisecond, Ease: composerDescentEase})
 	panel.Children(func() {
 		if !locked {
+			v.remoteAttachmentsPanel(c, t, key)
 			v.draftAttachmentStripFor(c, t, key, 10)
 		} else {
 			preview := item

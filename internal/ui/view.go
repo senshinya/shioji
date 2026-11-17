@@ -28,6 +28,8 @@ type editBinding struct {
 }
 
 type View struct {
+	remoteUploadJobs                 map[string]*remoteUploadJob
+	remoteUploadRemember             map[string]bool
 	workerUpdateConfirm              *workerUpdateConfirmation
 	interfaceZoomToast               bool
 	globalSidebar                    *quickSidebar
@@ -727,6 +729,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	}
 	stack := n.Column(c.Key("composer-stack:" + stackKey)).Label("消息编辑区").FillWidth().MaxWidth(maxWidth).Gap(0).Children(func() {
 		v.queueDisclosure(c, t)
+		v.remoteAttachmentsPanel(c, t, key)
 		binding = v.composerDocument(c, key)
 
 		editID := m.QueueEdits[m.SessionID].ID

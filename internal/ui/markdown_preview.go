@@ -25,7 +25,7 @@ type markdownPreview struct {
 }
 
 func (p *attachmentPreview) isMarkdown() bool {
-	if strings.HasPrefix(p.Attachment.MIME, "image/") {
+	if strings.HasPrefix(p.Attachment.MIME, "image/") || p.Attachment.Kind == domain.PathAttachmentResource {
 		return false
 	}
 	return markdownFileName(p.Attachment.Name)

@@ -28,6 +28,7 @@ type InspectorLayout struct {
 }
 
 type Model struct {
+	RemotePathUploads          map[string]bool
 	ArchivePolicyChanges       map[string]ArchivePolicyChange
 	Feedbacks                  []Feedback
 	UncertainSubmissions       map[string]bool
@@ -115,7 +116,7 @@ type Model struct {
 }
 
 func NewModel() *Model {
-	return &Model{startedAt: time.Now(), completionCutoffs: map[string]time.Time{}, completionReads: map[string]string{}, HistoryAnchors: map[string]string{}, HistoryOpenings: map[string]bool{}, HistoryReads: map[string]*HistoryRead{}, HistoryOutlines: map[string]domain.HistoryOutline{}, homeDefaultsPending: true, WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{CollapseLatestTools: true}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{RemotePathUploads: map[string]bool{}, startedAt: time.Now(), completionCutoffs: map[string]time.Time{}, completionReads: map[string]string{}, HistoryAnchors: map[string]string{}, HistoryOpenings: map[string]bool{}, HistoryReads: map[string]*HistoryRead{}, HistoryOutlines: map[string]domain.HistoryOutline{}, homeDefaultsPending: true, WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{CollapseLatestTools: true}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {
@@ -577,6 +578,7 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 }
 
 type savedState struct {
+	RemotePathUploads          map[string]bool                            `json:"remotePathUploads,omitempty"`
 	WorkerRecoveryIDs          map[string]string                          `json:"workerRecoveryIDs,omitempty"`
 	WorkerMaintenanceIDs       map[string]string                          `json:"workerMaintenanceIDs,omitempty"`
 	ArchivePolicyChanges       map[string]ArchivePolicyChange             `json:"archivePolicyChanges,omitempty"`
@@ -669,6 +671,17 @@ func (m *Model) Load(path string) error {
 	m.FocusSecondary = saved.FocusSecondary
 	if saved.Attachments != nil {
 		m.Attachments = saved.Attachments
+	}
+	if saved.RemotePathUploads != nil {
+		m.RemotePathUploads = saved.RemotePathUploads
+	}
+	for key, files := range m.Attachments {
+		for i := range files {
+			if files[i].Attachment.Kind == domain.PathAttachmentResource && files[i].UploadApproved && !files[i].Ready {
+				files[i].Error = "上传已中断，请重试"
+			}
+		}
+		m.Attachments[key] = files
 	}
 	if saved.QueueExpanded != nil {
 		m.QueueExpanded = saved.QueueExpanded

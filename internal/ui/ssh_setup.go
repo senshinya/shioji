@@ -111,6 +111,10 @@ func (v *View) retireSSHSetupTerminal() {
 
 // CloseTransient releases UI-owned work when the window exits.
 func (v *View) CloseTransient() {
+	for key, job := range v.remoteUploadJobs {
+		job.cancel()
+		delete(v.remoteUploadJobs, key)
+	}
 	if v.mermaid != nil {
 		v.mermaid.close()
 	}

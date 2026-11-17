@@ -153,5 +153,20 @@ func (c *Controller) AttachmentTask(work func() Update) {
 
 // Transfer updates and completion share the controller's ordered UI channel.
 func (c *Controller) AttachmentTransfer(work func(report func(Update)) Update) {
-	c.AttachmentTask(func() Update { return work(c.post) })
+	c.AttachmentTask(func() Update {
+		return work(func(update Update) {
+			// A hidden or busy UI can skip progress samples. Completion still
+			// uses post, and carries the authoritative final receipt/error.
+			select {
+			case c.Updates <- update:
+				c.mu.Lock()
+				invalidate := c.invalidate
+				c.mu.Unlock()
+				if invalidate != nil {
+					invalidate()
+				}
+			default:
+			}
+		})
+	})
 }

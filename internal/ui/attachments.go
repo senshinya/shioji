@@ -16,6 +16,7 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/attachments"
 	"shioji/internal/domain"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -152,6 +153,8 @@ func (v *View) addAttachmentFiles(key string, paths []string) {
 	token := v.attachmentPreparationKey(key)
 	workspace := v.Model.WorkspaceID
 	local := v.Model.WorkspaceConnection(workspace) == "local"
+	device := v.referenceDeviceID()
+	pathUploads := v.Model.WorkerMinor >= 47 && v.Model.RunReadiness().Capabilities.PathAttachments && device != ""
 	if v.attachmentPreparing == nil {
 		v.attachmentPreparing = map[string]int{}
 	}
@@ -186,15 +189,21 @@ func (v *View) addAttachmentFiles(key string, paths []string) {
 						continue
 					}
 					err = pathErr
+				} else if pathUploads {
+					a, err = store.SavePathResource(filepath.Base(path), data)
 				} else {
-					err = fmt.Errorf("此类型暂不支持上传；远程设备无法读取本机路径，请先将文件传到远程设备，再提供远程路径")
+					err = errors.New("当前执行服务或 Agent 不支持远程路径引用，请升级后重试")
 				}
 			}
 			if err != nil {
 				problems = append(problems, filepath.Base(path)+"："+err.Error())
 				continue
 			}
-			added = append(added, app.DraftAttachment{Attachment: a})
+			draft := app.DraftAttachment{Attachment: a}
+			if a.Kind == domain.PathAttachmentResource {
+				draft.WorkspaceID, draft.DeviceID = workspace, device
+			}
+			added = append(added, draft)
 		}
 		return func(m *app.Model) {
 			v.attachmentPreparing[token]--
@@ -207,6 +216,14 @@ func (v *View) addAttachmentFiles(key string, paths []string) {
 				}
 			}
 			if len(added) > 0 {
+				added = slices.DeleteFunc(added, func(a app.DraftAttachment) bool {
+					return a.Attachment.Kind == domain.PathAttachmentResource && (m.WorkspaceID != workspace || v.referenceDeviceID() != device)
+				})
+				for i := range added {
+					if added[i].Attachment.Kind == domain.PathAttachmentResource {
+						added[i].UploadApproved = v.persistenceModel().RemotePathUploads[device]
+					}
+				}
 				v.appendAttachments(key, added)
 			}
 			if len(problems) > 0 {
@@ -359,7 +376,7 @@ func (v *View) draftAttachmentStripFor(c *n.Context, t *n.Theme, key string, gap
 			regular++
 		}
 	}
-	preparing := v.preparingAttachments(key) && (v.fileMention == nil || v.fileMention.key != key || v.fileMention.phase != mentionCapturing)
+	preparing := v.attachmentPreparing[v.attachmentPreparationKey(key)] > 0 && (v.fileMention == nil || v.fileMention.key != key || v.fileMention.phase != mentionCapturing)
 	strip := n.ScrollHorizontal(c.Key("draft-attachments:" + key)).FillWidth().MarginX(9)
 	target := float32(0)
 	if regular > 0 || preparing {
@@ -595,6 +612,15 @@ func (v *View) openAttachment(a domain.Attachment, workspace string, source n.Re
 		p.Thumbnail = cached.Image
 	}
 	v.attachmentPreview = p
+	if a.Kind == domain.PathAttachmentResource {
+		p.Loading = false
+		device := "远程设备"
+		if target, err := v.Model.AttachmentTarget(v.ControllerDirectory(), workspace); err == nil {
+			device = v.remoteDeviceName(target.DeviceID)
+		}
+		p.Text = remoteUploadMetadata(device, a)
+		return
+	}
 	target, err := v.Model.AttachmentTarget(v.Controller.Directory, workspace)
 	store := v.staging()
 	cache := v.displayCache()
@@ -652,6 +678,9 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 	dialog := n.DialogBase(c.Key("attachment-preview:"+p.Attachment.ID), &visible, func(backdrop, panel n.Element) {
 		w, h := c.Size()
 		panelWidth := min(float32(840), w-48)
+		if p.Attachment.Kind == domain.PathAttachmentResource {
+			panelWidth = min(float32(440), w-48)
+		}
 		panelHeight := float32(86)
 		fileHeight := min(min(float32(580), h-160), max(float32(120), float32(strings.Count(p.Text, "\n")+1)*18+16))
 		if isMarkdown {
@@ -785,6 +814,8 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 						n.Text(c, p.Error).FontSize(12)
 					} else if p.Image != nil {
 						n.Image(c, p.Image).FillWidth().Height(min(580, h-160)).Fit(n.Contain)
+					} else if p.Attachment.Kind == domain.PathAttachmentResource {
+						n.Text(c, p.Text).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
 					} else if isMarkdown {
 						v.markdownPreviewContent(c, t, p, fileHeight)
 					} else {
@@ -837,5 +868,5 @@ func (v *View) attachmentPreparationKey(key string) string {
 	return key + "|" + edit.ID + "|" + edit.Token
 }
 func (v *View) preparingAttachments(key string) bool {
-	return v.attachmentPreparing[v.attachmentPreparationKey(key)] > 0
+	return v.attachmentPreparing[v.attachmentPreparationKey(key)] > 0 || len(v.pendingRemoteAttachments(key)) > 0
 }

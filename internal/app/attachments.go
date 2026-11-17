@@ -13,6 +13,8 @@ type DraftAttachment struct {
 	WorkspaceID    string            `json:"workspaceId,omitempty"`
 	Ready          bool              `json:"ready,omitempty"`
 	Error          string            `json:"error,omitempty"`
+	UploadApproved bool              `json:"uploadApproved,omitempty"`
+	Transferred    int64             `json:"-"`
 }
 
 func (m *Model) workspaceDevice(workspace string) string {
@@ -29,6 +31,9 @@ func (m *Model) SubmissionAttachments(workspace string) ([]domain.Attachment, er
 func (m *Model) submissionAttachments(key, workspace string) ([]domain.Attachment, error) {
 	var out []domain.Attachment
 	for _, draft := range m.Attachments[key] {
+		if draft.Attachment.Kind == domain.PathAttachmentResource && (m.WorkerMinor < 47 || !m.RunReadiness().Capabilities.PathAttachments) {
+			return nil, errors.New("当前执行服务或 Agent 不支持远程路径引用，请升级后重试")
+		}
 		if draft.Attachment.Kind == domain.DiffCommentResource && m.WorkerMinor < 33 {
 			return nil, errors.New("请先升级执行服务以发送代码评论")
 		}

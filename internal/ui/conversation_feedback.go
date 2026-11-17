@@ -263,7 +263,7 @@ func (v *View) syncConversationFeedback(c *n.Context) {
 		}
 	}
 	waitTitle := ""
-	if v.preparingAttachments(m.DraftKey()) {
+	if v.attachmentPreparing[v.attachmentPreparationKey(m.DraftKey())] > 0 {
 		waitTitle = "正在准备附件"
 	} else if key, _ := v.gitQuery(); !v.devices && v.gitLoading(key) && v.feedbackGitWait == key {
 		waitTitle = "正在核对设备上的分支"
