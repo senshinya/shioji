@@ -140,12 +140,6 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		result.Message = "执行归属记录无法读取，请重新核对"
 		return finish()
 	}
-	if managed != nil && runtime != nil && !runtime.Observes(d.Session) {
-		if cleanupErr := s.cleanManagedExecutionOutsideDispatch(ctx, in.SessionID); cleanupErr != nil {
-			result.Message = "旧工具尚未确认停止，请重新核对"
-			return finish()
-		}
-	}
 	if in.Action == "stop-runtime" && runtime != nil && !runtime.Stopped() {
 		// The explicit action targets this session's adapter, never the catalog
 		// or another session. Descendant execution remains unknown after exit.
@@ -153,8 +147,15 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		runtime.Close(ctx)
 		s.dispatchMu.Lock()
 	}
-	if runtime == nil || runtime.Stopped() || d.Session.ExecutionGuard != "" {
-		if cleanupErr := s.cleanSessionRuntime(ctx, in.SessionID); cleanupErr != nil {
+	if runtime == nil || runtime.Stopped() || d.Session.ExecutionGuard != "" || managed != nil && !runtime.Observes(d.Session) {
+		cleanupErr := s.cleanSessionRuntime(ctx, in.SessionID)
+		if !stillCurrent() {
+			return finish()
+		}
+		if current := s.currentRuntime(in.SessionID); runtime != nil && (current == nil || current.Done() != runtime.Done()) {
+			return finish()
+		}
+		if cleanupErr != nil {
 			if err := s.detachFailedRuntime(in.SessionID, cleanupErr); err != nil {
 				result.Message = "会话进程归属记录尚未确认，未启动新的 Agent"
 				return finish()
