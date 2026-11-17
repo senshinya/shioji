@@ -30,6 +30,7 @@ type Ready struct {
 	Paused             bool
 }
 type Control struct {
+	ExpiresAt             time.Time `json:"expiresAt,omitempty"`
 	Instance, OperationID string
 	Replacement           domain.WorkerReplacement
 }

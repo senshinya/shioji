@@ -108,6 +108,17 @@ func fixtureHost(name string) int {
 						}
 						out = Ready{PID: os.Getpid(), Instance: instance, DeviceID: "fixture-device", Build: build, Paused: p}
 					case "worker.local-backup", "worker.prepare-drain":
+						if f.Method == "worker.prepare-drain" {
+							if _, e := os.Stat(filepath.Join(dir, "hold-prepare-drain")); e == nil {
+								_ = os.WriteFile(filepath.Join(dir, "prepare-drain-entered"), []byte("ready"), 0600)
+								for {
+									if _, e = os.Stat(filepath.Join(dir, "hold-prepare-drain")); os.IsNotExist(e) {
+										break
+									}
+									time.Sleep(time.Millisecond)
+								}
+							}
+						}
 						out = domain.WorkerUpdateResult{Ready: true}
 					case "worker.resume":
 						if strings.Contains(name, "holdresume") {

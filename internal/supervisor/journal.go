@@ -17,6 +17,7 @@ type Operation struct {
 	Instance, DeviceID, SourceInstance, PreviousBuild, Error string
 	SourcePID                                                int
 	Created                                                  time.Time
+	ExpiresAt                                                time.Time `json:"expiresAt,omitempty"`
 }
 
 func (o Operation) Terminal() bool {
@@ -128,7 +129,8 @@ func (j journal) accept(in domain.WorkerReplacement, instance, device string) (O
 	} else if current.Input.ID != "" && (!current.Terminal() || current.Phase == "blocked") {
 		return Operation{}, errors.New("previous update remains active or blocked")
 	}
-	o := Operation{Input: in, Phase: "preparing", Instance: instance, DeviceID: device, PreviousBuild: in.ExpectedBuildID, Created: time.Now().UTC()}
+	created := time.Now().UTC()
+	o := Operation{Input: in, Phase: "preparing", Instance: instance, DeviceID: device, PreviousBuild: in.ExpectedBuildID, Created: created, ExpiresAt: created.Add(24 * time.Hour)}
 	return o, j.save(o)
 }
 func (j journal) recover() (Operation, error) {

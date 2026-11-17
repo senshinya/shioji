@@ -592,15 +592,16 @@ func (h *host) stopExact(c *child, grace time.Duration) error {
 
 var errDrainAdmission = errors.New("business became active before drain")
 
-func (h *host) shutdown(c *child, id string, grace time.Duration, replacement ...domain.WorkerReplacement) error {
-	policy := domain.WorkerReplacement{Policy: "immediate", Explicit: true}
-	if len(replacement) > 0 {
-		policy = replacement[0]
+func (h *host) shutdown(c *child, id string, grace time.Duration, controls ...Control) error {
+	control := Control{Replacement: domain.WorkerReplacement{Policy: "immediate", Explicit: true}}
+	if len(controls) > 0 {
+		control = controls[0]
 	}
+	control.Instance, control.OperationID = c.instance, id
 	ctx, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()
 	var ignored domain.WorkerUpdateResult
-	err := h.workerCall(ctx, c, "worker.drain", Control{Instance: c.instance, OperationID: id, Replacement: policy}, &ignored)
+	err := h.workerCall(ctx, c, "worker.drain", control, &ignored)
 	if err == nil && !ignored.Ready {
 		return errDrainAdmission
 	}
@@ -637,6 +638,13 @@ func (h *host) update(ctx context.Context, o Operation, old *child) {
 		h.mu.Unlock()
 		h.signalWake()
 	}
+	if o.ExpiresAt.IsZero() {
+		o.ExpiresAt = o.Created.Add(24 * time.Hour)
+	}
+	if !time.Now().Before(o.ExpiresAt) {
+		failed(errors.New("prepared update expired"), false)
+		return
+	}
 	prepare, cancel := context.WithTimeout(ctx, 8*time.Minute)
 	path, b, err := h.options.Verify(prepare, o.Input.BuildID)
 	if err == nil && b.Schema != old.build.Schema {
@@ -654,17 +662,25 @@ func (h *host) update(ctx context.Context, o Operation, old *child) {
 		failed(err, false)
 		return
 	}
+	if !time.Now().Before(o.ExpiresAt) {
+		failed(errors.New("prepared update expired"), false)
+		return
+	}
 	if err = h.phase(&o, "waiting"); err != nil {
 		failed(err, false)
 		return
 	}
-	expires := time.NewTimer(24 * time.Hour)
+	expires := time.NewTimer(time.Until(o.ExpiresAt))
 	defer expires.Stop()
 waitForIdle:
 	for {
+		if !time.Now().Before(o.ExpiresAt) {
+			failed(errors.New("prepared update expired"), false)
+			return
+		}
 		call, stop := context.WithTimeout(ctx, 10*time.Second)
 		var ready domain.WorkerUpdateResult
-		err = h.workerCall(call, old, "worker.prepare-drain", Control{Instance: old.instance, OperationID: o.Input.ID, Replacement: o.Input}, &ready)
+		err = h.workerCall(call, old, "worker.prepare-drain", Control{Instance: old.instance, OperationID: o.Input.ID, Replacement: o.Input, ExpiresAt: o.ExpiresAt}, &ready)
 		stop()
 		if err == nil && ready.Ready {
 			break
@@ -684,16 +700,22 @@ waitForIdle:
 	}
 	h.mu.Lock()
 	err = ctx.Err()
-	if err == nil {
-		o.Phase = "switching"
-		err = h.journal.save(o)
+	if err == nil && !time.Now().Before(o.ExpiresAt) {
+		err = errors.New("prepared update expired")
 	}
+	if err != nil {
+		h.mu.Unlock()
+		failed(err, false)
+		return
+	}
+	o.Phase = "switching"
+	err = h.journal.save(o)
 	h.mu.Unlock()
 	if err != nil {
 		failed(err, true)
 		return
 	}
-	if err = h.shutdown(old, o.Input.ID, h.options.DrainTimeout, o.Input); err != nil {
+	if err = h.shutdown(old, o.Input.ID, h.options.DrainTimeout, Control{Replacement: o.Input, ExpiresAt: o.ExpiresAt}); err != nil {
 		if errors.Is(err, errDrainAdmission) {
 			if err = h.phase(&o, "waiting"); err != nil {
 				failed(err, true)

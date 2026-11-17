@@ -7,6 +7,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/supervisor"
+	"time"
 )
 
 func (s *Server) serviceControl(method string, body []byte) (any, error) {
@@ -28,6 +29,9 @@ func (s *Server) serviceControl(method string, body []byte) (any, error) {
 	case "worker.prepare-drain":
 		s.dispatchMu.Lock()
 		defer s.dispatchMu.Unlock()
+		if !in.ExpiresAt.IsZero() && !time.Now().Before(in.ExpiresAt) {
+			return nil, errors.New("prepared update expired")
+		}
 		if in.Replacement.Policy == "immediate" && in.Replacement.Explicit {
 			return domain.WorkerUpdateResult{Ready: true}, nil
 		}
@@ -49,6 +53,9 @@ func (s *Server) serviceControl(method string, body []byte) (any, error) {
 				return ready, e
 			}
 		}
+		if !in.ExpiresAt.IsZero() && !time.Now().Before(in.ExpiresAt) {
+			return nil, errors.New("prepared update expired")
+		}
 		intent := supervisor.DrainIntent{ID: in.OperationID, Instance: s.config.ServiceInstance, DeviceID: s.store.DeviceID(), BuildID: s.build.BuildID}
 		snapshot, e := s.store.Snapshot()
 		if e != nil {
@@ -62,6 +69,9 @@ func (s *Server) serviceControl(method string, body []byte) (any, error) {
 			if !q.Paused {
 				intent.Queues = append(intent.Queues, session.ID)
 			}
+		}
+		if !in.ExpiresAt.IsZero() && !time.Now().Before(in.ExpiresAt) {
+			return nil, errors.New("prepared update expired")
 		}
 		if err = supervisor.SaveDrainIntent(s.config.Directory, intent); err != nil {
 			return nil, err
