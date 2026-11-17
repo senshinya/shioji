@@ -1,5 +1,77 @@
 # Lody 执行服务升级、停止与回收源码分析
 
+## 2026-11-18 完整复核与三类收尾修复；下一版建议 0.4.0
+
+**先核对并完成推送，再遍历 43 个生命周期入口／交接；确认的三类遗漏已修复，未在首个发现停止。** 初始本地及 origin/main 均为 `a60d087`；重新 fetch Lody 固定为 `df1abd7fe3a42228a0c3bc8163adb28da2d8fc2e`。相对前轮，52 份生命周期源码逐字节未变，另补存 `worktree-observations.ts`，共 53 份。上游新增的是会话预取／冷打开检查点，不改变本轮执行服务机制。
+
+| 差异 | 修复前可观察结果 | 本轮最终处理与证明 |
+| --- | --- | --- |
+| S：local branch 身份被 tag 歧义改变 | 已有分支与同名 tag 同时存在时，`refname:short` 变成 `heads/…`。分配器漏认已存在分支、连续撞同一名字；归档还会把歧义拼写写成恢复分支。 | 按 Lody 使用 `branch --show-current` 和 `refname:lstrip=2`。当前／默认／已回收目录与新分支分配一致使用实际本地名称。真实 Git 的创建、菜单身份、归档恢复三条 RED→GREEN；原 branch／tag 不变，恢复仍接在原分支及原线程。产品 `fe5c563`。 |
+| T：展示元数据延长执行闲置时钟 | 已读、改名或迟到标题只修改展示元数据，却因 session revision 改变在第19分钟重开20分钟计时；这是前轮已单列但未修的约定问题。 | 运行实例 gate 记录成功接纳的真实原生事件，source title 不计入；结合既有 dispatch epoch、queue revision 和后台分类续期。完整 Store revision 继续用于最终资格检查。四种元数据、迟到输出、原生轮次与已有队列／24h保护回归通过；无新 schema、表、journal 扫描或协议。产品 `36bb52d`。 |
+| U：已回收目录的 Git 读取失败被覆盖 | `removedWorktreeStatus` 的 ref 读取报错，被稍后的 Store 查询覆盖，返回空分支列表且 error=nil。 | 与 Lody 的观察服务一样，失败立即返回，不伪造成功或重建目录。实际 worker endpoint 的故障边界 RED→GREEN；准确源错误和目录缺失保持。产品 `2ca0a38`。 |
+
+同一轮完整测试还捕获 Transport 夹具读取空 PID：原 helper 直接创建目标文件，存在不代表内容写完。`ba27f3d` 仅把本轮隔离 helper 的就绪文件改为临时文件写完后 rename，三轮现有集成检查通过；正式后台注销逻辑未改。原失败和两个探针夹具错误均保留，未计作通过。
+
+### 最终证据与保留边界
+
+- 最终源码七包 **795 项父测试**全部实际执行通过（Worker371，无缓存）；竞态 **60 次父测试调用**通过，`count=3`，没有 DATA RACE。vet、六份冻结设计和 diff 检查通过。完整未过滤 root 的 UI／本地研究失败在报告单列，不称全仓全绿。
+- 新签名 Worker BuiltAt7101／7102，实际嵌入 `2ca0a38+modified`，协议2.48／PrivateControl2／schema15；1960个源码指纹在签名后未变。真实 Worker／Host／Codex 隔离历史回放 **6 APPLIED、1既定H07 BLOCKED**；成功场景保留原设备／会话／线程／历史与暂停队列、未知输入不重发。旧停止接纳缺失仍按用户已确认的手动处理范围，不算升级成功。
+- 一次 fresh-context 整体审阅覆盖上述四个自有提交，无 Critical／Important／Minor，Verdict Yes；12项工程裁定及成本完整记录，无 Minor延期。正式三台设备、SMAppService、Tailnet、SSH凭据和权限未操作。
+- 排除了三个旧疑点和一个新疑点：独立子Agent取消不杀父、已有内存回收进行中时不等待、缺少drain证明时允许阻止回退，均与Lody一致；当前真实Git可移除已初始化子模块的已归档worktree，没有将手动目录回退的静态差异算作故障。
+- 未登记Agent后代、首次旧存量手动处理、未知owner未接纳准备目录保留的边界保持。前轮P／Q／R修复保持；**在本次43项范围及已接受边界内，修复后没有其他已确认的机制差异**，不将本机隔离结果扩大为正式设备验收。
+
+### 下一版版本号
+
+建议 **`0.4.0`**。`VERSION`及GitHub远端最新数字tag均为`0.3.5`；这批变更包含固定supervisor、自动停止／闲置／归档回收、worktree恢复，以及删除旧强制环境操作流程，属于一次机制与交互方式的版本推进。worker协议也从已发布版2.44增加到2.48，使用新的minor版本比继续0.3.x补丁号更清楚。当前只给建议，**没有修改VERSION、创建tag、发布或部署**。仓库生产构建要求纯数字major.minor.patch，不建议直接填入当前脚本不支持的rc后缀；正式发布仍须以精确提交CI和设备验收为依据。
+
+证据目录：`.ryugi/audits/lody-post-pqr-recheck-20261118/`。原始root、race、RED／GREEN、源码指纹、实际签名描述、完整43项矩阵和12项裁定均保存；同主题document／verify保留既有ID和历史证据。
+
+| # | 入口／交接 | Shioji 落点 | Lody 对照 | 本轮结果 |
+| --- | --- | --- | --- | --- |
+| 1 | 独立 Host／Worker | supervisor/host_darwin.go；service_control.go | daemon-runner.ts；start.ts | 本轮完整调用链复核，未确认新增差异 |
+| 2 | 停止意图覆盖崩溃重启 | supervisor/background_darwin.go | daemon-runner.ts；start-shutdown.ts | 本轮完整调用链复核，未确认新增差异 |
+| 3 | 后台注销接纳与准确撤销 | background_stop.go；supervisor/background_darwin.go | daemon-runner.ts 的独立控制／停止所有权 | 本轮完整调用链复核，未确认新增差异 |
+| 4 | 普通崩溃预算、退避与健康重置 | supervisor/retry.go；start_retry.go | daemon-runner.ts／supervisor contract | 本轮完整调用链复核，未确认新增差异 |
+| 5 | 在线准备与旧服务继续运行 | supervisor/host_darwin.go:update | daemon-runner.ts:prepare | 本轮完整调用链复核，未确认新增差异 |
+| 6 | 默认空闲升级准入 | service_control.go:businessStopReady／reserveDispatch | machine-turn-admission.ts:reserveMachineTurn | 本轮完整调用链复核，未确认新增差异 |
+| 7 | immediate 排空与封闭 | service_control.go:DrainService | start.ts:switchWhenIdle | P 修复保持；最终准入／原实例检查仍在 |
+| 8 | 私有控制独立于业务 socket | supervisor/lifecycle_darwin.go；service_control.go | managed-daemon-ipc.ts；daemon-runner.ts | 本轮完整调用链复核，未确认新增差异 |
+| 9 | drained 与最终 writer 释放 | shutdown.go；supervisor/host_darwin.go:shutdown | start-shutdown.ts；start.ts | 本轮完整调用链复核，未确认新增差异 |
+| 10 | 候选失败与一次回退 | supervisor/host_darwin.go:update | daemon-runner.ts:decideExit | 排除疑点：两端缺少已确认 drain 均可阻止回退 |
+| 11 | 已提交结果与 resume 核对 | supervisor/host_darwin.go:completeCommitted／resume | daemon-runner.ts 的 committed／observing 交接 | 本轮完整调用链复核，未确认新增差异 |
+| 12 | 冷修复／未知 writer | supervisor/repair_darwin.go | managed-daemon-release.ts；daemon-runner.ts | 本轮完整调用链复核，未确认新增差异 |
+| 13 | 普通提交第一次准备前预留 | server.go:submitLocked；service_control.go:reservePreparation | session-execution-service.ts:runVisibleSessionTurn | 本轮完整调用链复核，未确认新增差异 |
+| 14 | 队列准入与分发 | queue.go；server.go:submitLocked／dispatch | session-execution-service.ts 的 inbox／owned turn | 本轮完整调用链复核，未确认新增差异 |
+| 15 | Steer 两次附件交接 | queue.go:steerLocked | session-execution-service.ts 的 acknowledged steer／owner | 本轮完整调用链复核，未确认新增差异 |
+| 16 | 子 Agent 发送和回执查询 | work_input.go；native_dispatch.go | agent-client.ts 的 native prompt 所有权 | 本轮完整调用链复核，未确认新增差异 |
+| 17 | 审批／问题回复 | native_dispatch.go:respondRequest；codex/runtime.go:Respond | agent-client.ts 的 pending request 生命周期 | 本轮完整调用链复核，未确认新增差异 |
+| 18 | 压缩的 Resume／初始化交接 | context_action.go:77–118 | session-manager.ts 的 await 后 abort 检查 | P 修复保持；最终准入／原实例检查仍在 |
+| 19 | 历史重开最后启动与截断 | history.go:138–174；session_runtime.go | session-manager.ts 的 await 后 abort 检查 | P 修复保持；最终准入／原实例检查仍在 |
+| 20 | reload 接纳与迟到返回 | session_reload.go；session_transition.go | session-manager.ts:retireSessionForReconfiguration | 本轮完整调用链复核，未确认新增差异 |
+| 21 | 初始化撤销／继任实例 | runtime_start.go；session_runtime.go | session-manager.ts:abandonPendingSessionCreate | P 修复保持；最终准入／原实例检查仍在 |
+| 22 | Stop ACK 与真正停止 | stop.go:interruptTurn | session-execution-service.ts:drainCancelledPrompt | 本轮完整调用链复核，未确认新增差异 |
+| 23 | 独立子 Agent Stop | server.go:session.work.stop；codex/work.go:StopWork | session-execution-service.ts:cancelSession 的 subagentTaskId 分支 | 排除疑点：Lody 独立子 Agent Stop 同样不强杀父实例 |
+| 24 | 强制退休与 native close 并行 | retirement.go:beginRuntimeRetirement | session.ts:terminateOnce／escalateTermination | 本轮完整调用链复核，未确认新增差异 |
+| 25 | 失败退休分离与后台重试 | detached_runtime.go；archive_retirement.go | session-manager.ts:detachSession；session.ts 的失败保留 | 本轮完整调用链复核，未确认新增差异 |
+| 26 | 登记组、根已退出与 MCP／Node | managedexec/process_darwin.go／retirement_darwin.go；codex/executor.go | session.ts；process-tree-registry.ts；shared/node/process.ts | 本轮完整调用链复核，未确认新增差异 |
+| 27 | 真实后台状态与活跃子 Agent | codex/work.go；native_background_test.go | agent-client.ts:getNativeWork；session-gc-manager.ts | 本轮完整调用链复核，未确认新增差异 |
+| 28 | 20min／30s、24h GC 与最终资格 | idle_runtime.go；store/runtime_idle.go | session-gc-manager.ts:checkCleanupEligibility | T：展示元数据曾重置执行闲置时钟；本轮已修复，真实事件／dispatch／queue 续期 |
+| 29 | 内存压力与并发回收 | memory_pressure_darwin.go；memory_pressure_test.go | session-gc-manager.ts:evictForMemoryPressure | 排除疑点：Lody 已有内存回收进行中时同样不让新请求等待 |
+| 30 | 会话和工作区归档 | archive_retirement.go；server.go 的 archive handlers | message-handler.ts:releaseArchivedSessionRuntime | 本轮完整调用链复核，未确认新增差异 |
+| 31 | 永久删除与持久 outbox | archive.go:commitArchiveDeletion／cleanArchiveGarbageItem | message-handler.ts:handleSessionDeleted | 本轮完整调用链复核，未确认新增差异 |
+| 32 | 过期归档与恢复竞态 | archive.go:cleanupArchives；archive_retirement.go | message-handler.ts 的 metadata archive watcher | 本轮完整调用链复核，未确认新增差异 |
+| 33 | worktree GC 独立调度与重试 | worktree_gc.go；worktree_lifecycle.go:cleanOwnedWorktrees | worktree-gc.ts:schedule／sweep | 本轮完整调用链复核，未确认新增差异 |
+| 34 | 备份、真实分支、detached ref | worktree_lifecycle.go:archiveOwnedWorktree | worktree-manager.ts:archiveWorktree | 本轮完整调用链复核，未确认新增差异 |
+| 35 | 共享 checkout 与 repo 变更保护 | git_dispatch.go；git.go:checkoutGuard／prepareGitLocked | worktree-manager.ts:withRepoLock | 本轮完整调用链复核，未确认新增差异 |
+| 36 | 已有／缺失自建目录懒恢复 | worktree_lifecycle.go:restoreOwnedWorktrees | worktree-manager.ts:runWorktreeAddWithPruneRetry | Q 修复保持；S：新增分支与标签同名反例已修复 |
+| 37 | 新建 worktree 的部分完成重试 | git.go:481–506 | worktree-manager.ts:createWorktree／runFreshWorktreeAddWithPruneRetry | Q 修复保持；S：新增分支与标签同名反例已修复 |
+| 38 | Git 取消、期限和输出管道 | git.go:38–60；shutdown.go:wg.Wait | git-execution.ts:WorktreeGitLive；shared/node/process.ts:runCommand | R 修复保持；进程组取消＋WaitDelay 仍有界 |
+| 39 | 安装／目录刷新及 Git 迟到读取 | catalog_refresh.go；runtime_settings.go；git.go；worktree_lifecycle.go:removedWorktreeStatus | managed-runtime-update-coordinator.ts；worktree-manager.ts 的本地恢复 | U：已回收目录读取 refs 错误被覆盖；本轮已修复 |
+| 40 | 强制处理 UI、历史事件及新抽象 | internal/ui（356 文件未改）；domain／harness boundary | Lody 的逻辑退休与进程回收职责分离 | 生产 UI 无旧强制页／入口接线；本轮未改 UI／中立协议 |
+| 41 | 准确 branch namespace 和同名标签 | git.go；worktree_recovery.go；worktree_lifecycle.go | worktree-manager.ts:1281；worktree-observations.ts:108 | S：3 条真实 Git 消费路径 RED→GREEN；既有 refs 保持 |
+| 42 | 展示元数据与执行活动时钟 | idle_runtime.go；runtimeEventGate.activity | session-gc-manager.ts:combineGCSessionSources；message-handler.ts:touchSession | T：已读／改名／source title RED→GREEN，原生轮次／迟到输出对照保持 |
+| 43 | 已回收目录的 ref 读取错误 | removedWorktreeStatus | WorktreeObservationsLive.currentBranchAt；WorktreeGitLive.run | U：真实 endpoint＋故障边界返回 error，不伪造空分支成功 |
+
 ## 2026-11-18 P／Q／R 修复与最终验证
 
 **三类差异及五个审计反例已修复，本机隔离验证完成，正式设备未部署。** 自有产品提交 `a7985dc`、`bf97ff2`、`bbf84ac`；Lody 依据保持固定 `50d8d70`。并发落入的 IME 提交 `9392f5f` 没有混入本轮三提交审阅包；本轮未改 UI、Tailnet、服务注册或凭据。
