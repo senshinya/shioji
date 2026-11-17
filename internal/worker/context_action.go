@@ -81,6 +81,9 @@ func (s *Server) compactContext(in domain.ContextActionRequest) (domain.Operatio
 	if err != nil {
 		return none, workNotSent(err)
 	}
+	if err := s.updateAdmission(); err != nil {
+		return none, workNotSent(err)
+	}
 	compactor, ok := r.(harness.ContextCompactor)
 	if !ok || !r.Readiness().Capabilities.Compact {
 		return none, workNotSent(harness.Unsupported("context-compaction"))
@@ -95,6 +98,12 @@ func (s *Server) compactContext(in domain.ContextActionRequest) (domain.Operatio
 		if err != nil {
 			return none, workNotSent(err)
 		}
+	}
+	if err := s.updateAdmission(); err != nil {
+		return none, workNotSent(err)
+	}
+	if !s.capturedRuntimeCurrent(in.SessionID, r, d.Session.ThreadID) {
+		return none, workNotSent(errRuntimeRetired)
 	}
 	// The caller revision was checked before setup. Resume can publish a title;
 	// admission now rechecks the complete state against that refreshed revision.

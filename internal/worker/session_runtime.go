@@ -127,6 +127,9 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 	if !owner.active() || s.sessionTransitions[id] != owner {
 		return nil, errRuntimeStartCancelled
 	}
+	if err := s.updateAdmission(); err != nil {
+		return nil, err
+	}
 	current := s.currentRuntime(id)
 	if (previous == nil) != (current == nil) || previous != nil && previous.Done() != current.Done() {
 		return nil, errRuntimeStartCancelled
@@ -249,29 +252,36 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 		delete(s.runtimeStarts, id)
 	}
 	s.runtimeMu.Unlock()
-	cancelled := pending.cancelled.Load() || startCtx.Err() != nil || !owner.active() || s.sessionTransitions[id] != owner
+	admissionErr := s.updateAdmission()
+	cancelled := pending.cancelled.Load() || startCtx.Err() != nil || !owner.active() || s.sessionTransitions[id] != owner || admissionErr != nil
 	startCancel()
 	if cancelled {
 		accepting.deactivate()
+		fenceErr := scope.Fence()
 		go func() {
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = scope.Terminate(cleanup, true)
+			cancel()
 			if creationPending {
 				late := <-started
 				r = late.runtime
 			}
-			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = scope.Terminate(cleanup, true)
 			if r != nil {
+				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
 				_ = r.Close(cleanup)
 			}
 		}()
 		if pending.cancelled.Load() {
-			return nil, errRuntimeStartCancelled
+			return nil, errors.Join(errRuntimeStartCancelled, fenceErr)
+		}
+		if admissionErr != nil {
+			return nil, errors.Join(admissionErr, fenceErr)
 		}
 		if err == nil {
 			err = errRuntimeStartCancelled
 		}
-		return nil, err
+		return nil, errors.Join(err, fenceErr)
 	}
 	if err != nil {
 		return nil, errors.Join(err, s.cleanManagedExecutionOutsideDispatch(ctx, id))

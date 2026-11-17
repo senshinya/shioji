@@ -144,6 +144,14 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 	if err != nil {
 		return op, err
 	}
+	// The final runtime startup releases dispatch. Revalidate the complete
+	// preflight again before this operation can replace durable history.
+	if err = s.historyPreflight(in); err != nil {
+		return op, err
+	}
+	if !owner.active() || s.currentRuntime(op.Source.ID) == nil || s.currentRuntime(op.Source.ID).Done() != runtime.Done() {
+		return op, errSessionTransitionRetired
+	}
 	if !runtime.Readiness().Capabilities.Restart {
 		return op, harness.Unsupported("restart")
 	}
@@ -151,7 +159,14 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 		return op, err
 	}
 	activationCtx, cancelActivation := context.WithTimeout(owner.ctx, 20*time.Second)
-	err = runtime.ActivateHistory(activationCtx, op.Source, op.ThreadID, func() error { var e error; op, e = s.store.CommitHistory(op.ID); return e })
+	err = runtime.ActivateHistory(activationCtx, op.Source, op.ThreadID, func() error {
+		if err := s.updateAdmission(); err != nil {
+			return err
+		}
+		var e error
+		op, e = s.store.CommitHistory(op.ID)
+		return e
+	})
 	cancelActivation()
 	if err != nil {
 		return op, err
