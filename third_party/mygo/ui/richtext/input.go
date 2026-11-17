@@ -17,7 +17,9 @@ func (v *view) input(ev ui.InputEvent) bool {
 	defer v.publish()
 	switch ev.Kind {
 	case ui.InputKeyDown:
-		if v.opts.OnKey != nil && !v.composing && v.compose == "" {
+		// composing can outlive marked text to join a native replacement to
+		// its undo step. Only visible preedit owns application shortcut keys.
+		if v.opts.OnKey != nil && v.compose == "" {
 			v.publish()
 			if v.opts.OnKey(ev.Key, ev.Mods) {
 				v.sync()

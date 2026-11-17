@@ -18,6 +18,12 @@ viewport. Element `Clip()` only clips descendants, so a soft-wrapped paragraph
 otherwise paints over composer footer controls. Covered by Shioji's
 `internal/ui/composer_overflow_test.go`.
 
+Rich-text application key hooks and `Document.Composing` use the actual marked
+text, separate from the retained IME undo transaction. Native unmark or empty
+preedit must release Enter back to Shioji's send binding; a following native
+replacement still shares the original undo step. Covered by
+`ui/richtext/ime_test.go` and `internal/ui/composer_enter_test.go`.
+
 Scroll containers show their overlay thumbs only after the offset actually
 changes or while a thumb is dragged. Hover and initial history placement do not
 reveal them; after 700 ms without movement they fade over 200 ms. Geometry and

@@ -504,5 +504,5 @@ func (d *Document) Composing() bool {
 	d.lock()
 	defer d.mu.Unlock()
 	v := d.shownIn.Value()
-	return v != nil && (v.composing || v.compose != "")
+	return v != nil && v.compose != ""
 }

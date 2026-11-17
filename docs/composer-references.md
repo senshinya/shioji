@@ -31,3 +31,15 @@ Worker 保持 major 2；minor 11 增加 `file.search`、`file.snapshot`、`skill
 Skill references still use the enabled-only catalog and retain their owning device/workspace/harness. Protocol 2.25 adds separate management operations, including disabled entries and bounded read-only Skill documents. Device > Agent > Skills manages user-owned entries, while workspace settings show project entries and inherited sources; inherited entries are read-only in that view and link to their device settings. Disabled references in existing drafts are retained for explicit correction and rejected on actual submission if no longer offered. Native configuration changes do not rewrite already accepted messages or input snapshots.
 
 The conversation toolbar's workspace directory popup opens downward and retracts upward at its trigger with constant opacity; Reduce Motion skips height movement. Its existing folder rows, management entry, keyboard dismissal and focus return are preserved.
+
+## 2026-11-17 回车发送回归
+
+MyGo 富文本编辑器用 `composing` 保留输入法撤销事务；原生 `UnmarkText` 或空 preedit 结束可见组合后，这个事务仍可能存在。原先发送按键和 `Document.Composing` 同时检查事务标志，导致 Enter 跳过应用处理并插入换行。现在只以实际 marked text 判断组合状态，原生后续 replacement 仍加入同一步撤销。
+
+`internal/ui/composer_enter_test.go` 覆盖从左侧重新打开已有会话后立即发送，以及无组合、取消组合和提交中文三种路径的亮暗模式；`third_party/mygo/ui/richtext/ime_test.go` 直接覆盖原生 unmark、空 preedit 和后续 replacement 的撤销／重做。仅重新打开会话本身未复现故障，状态残留是已复现的一条原因，不能据此断言已解释所有系统输入法时序。
+
+本机证据保存在忽略的 `build/composer-enter/`：`video-before` 用 Go overlay 恢复修改前两个判断，亮暗回归均因草稿多出 `\n` 失败；`video-after` 使用修复后的生产 View，按键产生 `turn.enqueue`。四段 MP4 均为 1200×820、30 fps、4 秒，已完整解码检查。动作：1.000 秒打开已有会话，1.033 秒输入文字，1.067 秒组合，1.100 秒结束组合，1.133 秒回车。数据与 RPC 使用确定性夹具，原生组件渲染录像不代表已安装 App、系统候选窗或真实 worker 接纳验收；当前运行 App 未替换。独立开发包为 `build/composer-enter/Shioji.app`。
+
+输入框定向回归、对应 UI／richtext race、MyGo `go test ./ui/...` 及 race、UI／richtext vet、设计冻结、开发包构建与签名校验通过。未使用富文本的最小 native／webview 构建前后尺寸分别保持 9,407,282／7,011,506 字节。完整 `go test -timeout 20m ./...` 未通过：旧 `build/interaction-latency/baseline/internal/{app,ui}` 缺失类型，`build/worker-recovery-20261116` 含重复入口；此外 `TestWorkspaceHeadingSharesTheWorkspaceRowVisibleEdges` 与 `TestWorkspaceHeadingInsetsAndNoPerWorkspacePlus` 失败。恢复本次修改前逻辑后，这两项侧栏检查仍以相同的几何值失败（`sidebar-baseline.log`／`sidebar-current.log`）；没有将完整测试集报告为通过。
+
+跨午夜完成的 `go test -timeout 20m ./cmd/... ./internal/...` 排除了旧 build 工具，仍只因上述两项侧栏检查失败（UI 384.674 秒）；其余产品包通过，worker 239.853 秒通过。记录为 `product-tests.log`。未修改正在使用的 App、worker 或 Tailnet 服务，也未启动预览服务。
