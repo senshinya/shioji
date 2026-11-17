@@ -18,7 +18,7 @@ func (h *host) beginRepair(req Request) (Operation, error) {
 	refuse := func(message string) (Operation, error) {
 		return Operation{}, &protocol.RemoteError{Code: "notSent", Message: message}
 	}
-	if !h.blocked || h.updating || h.background != nil && !h.background.done {
+	if !h.blocked || h.updating || h.backgroundStopping() || h.background != nil && !h.background.done {
 		return refuse("当前服务不需要冷修复或仍在切换")
 	}
 	previous, err := h.journal.current()

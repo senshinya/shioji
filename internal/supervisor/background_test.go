@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"shioji/internal/domain"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -97,4 +98,67 @@ func TestBackgroundHostRestoresOnlyKnownUnstartedAction(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A native unregister owns a stop intent even after its callback completes.
+// Restarting a crashed child here could accept work that unregister then kills.
+func TestBackgroundStopSuppressesCrashRestart(t *testing.T) {
+	dir, o := regressionOptions(t)
+	o.RetryMin, o.RetryMax = time.Millisecond, time.Millisecond
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	finish := func() { releaseOnce.Do(func() { close(release) }) }
+	o.DisableBackground = func(context.Context) (domain.BackgroundService, error) {
+		close(entered)
+		<-release
+		return domain.BackgroundService{Format: 1, State: "notRegistered"}, nil
+	}
+	defer finish()
+	regressionHost(t, o, "ready")
+	pid := fixtureReadyPID(t, dir, 0)
+	instance, err := os.ReadFile(filepath.Join(dir, "started-old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := Request{Action: "background-stop", ID: "stop-before-crash", DeviceID: "fixture-device", Instance: string(instance)}
+	if _, err = BackgroundCall(context.Background(), dir, req); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("native stop did not start")
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = p.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	assertNotReplaced := func() {
+		t.Helper()
+		deadline := time.Now().Add(250 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			got, err := os.ReadFile(filepath.Join(dir, "started-old"))
+			if err != nil || string(got) != string(instance) {
+				t.Fatal("stop intent allowed an ordinary replacement", string(got), err)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	assertNotReplaced()
+	finish()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		state, err := BackgroundCall(context.Background(), dir, Request{Action: "background-status", ID: req.ID, DeviceID: req.DeviceID})
+		if err == nil && state.State == "notRegistered" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("native stop did not complete", state, err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	assertNotReplaced()
 }

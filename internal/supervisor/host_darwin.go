@@ -218,7 +218,7 @@ func Run(ctx context.Context, o Options) error {
 		h.mu.Lock()
 		c := h.child
 		var exited <-chan struct{}
-		if c != nil && !h.updating && !h.blocked {
+		if c != nil && !h.updating && !h.blocked && !h.backgroundStopping() {
 			exited = c.done
 		}
 		h.mu.Unlock()
@@ -262,7 +262,7 @@ func Run(ctx context.Context, o Options) error {
 			h.mu.Lock()
 			// A source drained by a newly accepted update is an expected exit,
 			// even if this select began before that update was accepted.
-			if h.child != c || h.updating || h.blocked {
+			if h.child != c || h.updating || h.blocked || h.backgroundStopping() {
 				h.mu.Unlock()
 				continue
 			}
@@ -443,7 +443,7 @@ func (h *host) control(req Request) (Operation, error) {
 			}
 			return active, nil
 		}
-		if h.background != nil && !h.background.done || h.updating || h.updateID != "" || !h.readyDone || h.child == nil || h.device == "" {
+		if h.backgroundStopping() || h.background != nil && !h.background.done || h.updating || h.updateID != "" || !h.readyDone || h.child == nil || h.device == "" {
 			return Operation{}, &protocol.RemoteError{Code: "notSent", Message: "服务尚未就绪或已有不同更新"}
 		}
 		if h.child.build.BuildID != req.Input.ExpectedBuildID || req.Input.BuildID == req.Input.ExpectedBuildID {

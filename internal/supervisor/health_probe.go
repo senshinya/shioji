@@ -19,7 +19,7 @@ func (h *host) monitor() {
 		}
 		h.mu.Lock()
 		c := h.child
-		enabled := c != nil && h.readyDone && !h.updating && !h.blocked
+		enabled := c != nil && h.readyDone && !h.updating && !h.blocked && !h.backgroundStopping()
 		device := h.device
 		resumeID := h.updateID
 		h.mu.Unlock()
@@ -54,7 +54,7 @@ func (h *host) monitor() {
 			h.mu.Unlock()
 			return
 		}
-		if h.child != c || h.updating || h.blocked || !h.readyDone {
+		if h.child != c || h.updating || h.blocked || !h.readyDone || h.backgroundStopping() {
 			h.mu.Unlock()
 			continue
 		}
