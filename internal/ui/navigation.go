@@ -319,7 +319,9 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 					v.navigationGeometry.bounds[r.key()] = bounds
 				}
 				box.Children(func() { v.navigationRow(c, t, r) })
-			}).Grow(1).FillHeight().Margin(0, 8, 12, 8).Label("工作区与会话").TrackScroll(&v.navigationScroll)
+			}).Grow(1).FillHeight().Margin(0, 0, 12, 8).
+				Padding(0, 16, 0, 0).ScrollbarInsets(4, 1, 4, 0).
+				Label("工作区与会话").TrackScroll(&v.navigationScroll)
 			v.navigationListGestures(c, list, rows)
 			v.quickFooter(c, t)
 			available := card.LayoutBounds().H
