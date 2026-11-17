@@ -27,6 +27,7 @@ func (s *Server) compactContext(in domain.ContextActionRequest) (domain.Operatio
 		return none, workNotSent(err)
 	}
 	defer release()
+	transition := s.sessionTransitions[in.SessionID]
 	if err := s.admitMemoryPressure(in.SessionID); err != nil {
 		return none, workNotSent(err)
 	}
@@ -60,9 +61,12 @@ func (s *Server) compactContext(in domain.ContextActionRequest) (domain.Operatio
 	if _, err = s.prepareGit(domain.Submission{SessionID: in.SessionID, WorkspaceID: d.Session.WorkspaceID}, d.Session.Context); err != nil {
 		return none, workNotSent(err)
 	}
-	setup, cancelSetup := context.WithTimeout(s.ctx, 20*time.Second)
+	setup, cancelSetup := context.WithTimeout(transition.ctx, 20*time.Second)
 	defer cancelSetup()
 	r, err := s.sessionRuntime(setup, in.SessionID)
+	if !transition.active() {
+		return none, errSessionTransitionRetired
+	}
 	if err != nil {
 		return none, workNotSent(err)
 	}
@@ -74,6 +78,9 @@ func (s *Server) compactContext(in domain.ContextActionRequest) (domain.Operatio
 		s.dispatchMu.Unlock()
 		err = r.Resume(setup, d.Session)
 		s.dispatchMu.Lock()
+		if !transition.active() {
+			return none, errSessionTransitionRetired
+		}
 		if err != nil {
 			return none, workNotSent(err)
 		}
@@ -94,11 +101,14 @@ func (s *Server) compactContext(in domain.ContextActionRequest) (domain.Operatio
 	if err = s.store.SetOperation(op.ID, "dispatched", ""); err != nil {
 		return op, err
 	}
-	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(transition.ctx, 30*time.Second)
 	defer cancel()
 	s.dispatchMu.Unlock()
 	err = compactor.Compact(ctx, d.Session)
 	s.dispatchMu.Lock()
+	if !transition.active() {
+		return op, errSessionTransitionRetired
+	}
 	if current, e := s.store.Operation(op.ID); e != nil || current.State != "dispatched" {
 		return current, e
 	}

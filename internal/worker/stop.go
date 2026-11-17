@@ -118,11 +118,21 @@ func (s *Server) interruptTurn(id, turn string) error {
 				unchanged := s.dispatchEpochs[id] == epoch
 				s.mu.Unlock()
 				if current != nil && current.Done() == r.Done() && unchanged {
-					// Keep new input behind this captured timeout while allowing Stop to
-					// preempt an existing native transition.
-					var release func()
-					if s.sessionTransitions[id] == nil {
-						release, _ = s.beginSessionTransition(s.ctx, id)
+					// Revoke the captured maintenance owner, including its logical
+					// slot. A late reply cannot retain or replace the next Agent.
+					release, err := s.beginSessionRetirement(s.ctx, id, func() (bool, error) {
+						current := s.currentRuntime(id)
+						s.mu.Lock()
+						unchanged := s.dispatchEpochs[id] == epoch
+						s.mu.Unlock()
+						return current != nil && current.Done() == r.Done() && unchanged, nil
+					})
+					if err != nil || release == nil {
+						if err != nil {
+							s.cancel()
+						}
+						s.dispatchMu.Unlock()
+						return
 					}
 					cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
 					failure := s.retireRuntimeOutsideDispatch(cleanup, id, "stop-timeout", true)
@@ -135,9 +145,7 @@ func (s *Server) interruptTurn(id, turn string) error {
 							s.cancel()
 						}
 					}
-					if release != nil {
-						release()
-					}
+					release()
 				}
 				s.dispatchMu.Unlock()
 				return

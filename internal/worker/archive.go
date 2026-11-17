@@ -221,9 +221,12 @@ func (s *Server) cleanArchiveGarbageItem(item store.ArchiveGarbage) error {
 		if e != nil || !deleted {
 			return errors.Join(e, errors.New("缺少会话删除记录，保留资源"))
 		}
-		release, e := s.beginSessionTransition(s.ctx, item.SessionID)
+		release, e := s.beginSessionRetirement(s.ctx, item.SessionID, func() (bool, error) { return s.store.SessionDeleted(item.SessionID) })
 		if e != nil {
 			return e
+		}
+		if release == nil {
+			return errors.New("会话删除记录已改变，保留资源")
 		}
 		defer release()
 		retired, e := s.executions.Detached()

@@ -63,3 +63,10 @@ func TestDisconnectedRecoveryReleasesFailedRuntime(t *testing.T) {
 		t.Fatal("recovery replayed or lost accepted input", counts)
 	}
 }
+
+func TestRecoveryRejectsMissingSessionBeforeNativeWork(t *testing.T) {
+	s, _ := memoryWorker(t, idleHarness{})
+	if _, err := s.reconcile(protocol.RecoveryInput{}); err == nil {
+		t.Fatal("recovery accepted an empty session target")
+	}
+}

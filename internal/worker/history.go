@@ -26,6 +26,7 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 		return domain.HistoryOperation{}, err
 	}
 	defer transition()
+	owner := s.sessionTransitions[in.SessionID]
 	if in.Restart {
 		if err := s.admitMemoryPressure(in.SessionID); err != nil {
 			return domain.HistoryOperation{}, err
@@ -40,6 +41,12 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 	}
 	defer release()
 	var op domain.HistoryOperation
+	owner.abandon = func() error {
+		if op.ID == "" {
+			return nil
+		}
+		return s.store.FailHistory(op.ID, errSessionTransitionRetired)
+	}
 	existing, err := s.store.HistoryOperation(in.OperationID)
 	if err == nil {
 		if !existing.Input.Equal(in) {
@@ -70,11 +77,14 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 				return op, e
 			}
 		}
-		ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
+		ctx, cancel := context.WithTimeout(owner.ctx, 20*time.Second)
 		s.dispatchMu.Unlock()
 		thread, e := runtime.PrepareHistory(ctx, op.Source, harness.HistoryBoundary{TurnID: op.TurnID, Restart: in.Restart})
 		s.dispatchMu.Lock()
 		cancel()
+		if !owner.active() {
+			return op, errSessionTransitionRetired
+		}
 		if thread != "" {
 			if saveErr := s.store.SetHistoryThread(op.ID, thread); saveErr != nil {
 				return op, saveErr
@@ -97,11 +107,14 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 			return op, err
 		}
 	}
-	releaseCtx, cancelRelease := context.WithTimeout(s.ctx, 5*time.Second)
+	releaseCtx, cancelRelease := context.WithTimeout(owner.ctx, 5*time.Second)
 	s.dispatchMu.Unlock()
 	_, releaseErr := runtime.PrepareHistory(releaseCtx, op.Source, harness.HistoryBoundary{TurnID: op.TurnID, Restart: in.Restart, PreparedRef: op.ThreadID})
 	s.dispatchMu.Lock()
 	cancelRelease()
+	if !owner.active() {
+		return op, errSessionTransitionRetired
+	}
 	if releaseErr != nil {
 		return op, releaseErr
 	}
@@ -114,9 +127,12 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 	if err = s.admitMemoryPressure(in.SessionID); err != nil {
 		return op, err
 	}
-	ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
+	ctx, cancel := context.WithTimeout(owner.ctx, 20*time.Second)
 	runtime, err = s.sessionRuntime(ctx, op.Source.ID)
 	cancel()
+	if !owner.active() {
+		return op, errSessionTransitionRetired
+	}
 	if err != nil {
 		return op, err
 	}
@@ -126,7 +142,7 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 	if err = runtime.Validate(op.Submission.Config); err != nil {
 		return op, err
 	}
-	activationCtx, cancelActivation := context.WithTimeout(s.ctx, 20*time.Second)
+	activationCtx, cancelActivation := context.WithTimeout(owner.ctx, 20*time.Second)
 	err = runtime.ActivateHistory(activationCtx, op.Source, op.ThreadID, func() error { var e error; op, e = s.store.CommitHistory(op.ID); return e })
 	cancelActivation()
 	if err != nil {

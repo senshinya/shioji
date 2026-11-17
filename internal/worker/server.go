@@ -101,7 +101,7 @@ type Server struct {
 	executions           *managedexec.Manager
 	readiness            domain.Readiness
 	dispatchMu           sync.Mutex
-	sessionTransitions   map[string]chan struct{}
+	sessionTransitions   map[string]*sessionTransition
 	worktreeTransitions  map[string]chan struct{}
 	worktreeRetries      map[string]worktreeRetry
 	queueWake            chan struct{}

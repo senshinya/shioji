@@ -41,9 +41,19 @@ func (s *Server) cleanRuntimeRetirements(only string) error {
 }
 
 func (s *Server) cleanRuntimeRetirement(r store.RuntimeRetirement) error {
-	release, err := s.beginSessionTransition(s.ctx, r.SessionID)
+	release, err := s.beginSessionRetirement(s.ctx, r.SessionID, func() (bool, error) {
+		pending, err := s.store.RuntimeRetirementPending(r)
+		if err != nil || !pending {
+			return false, err
+		}
+		scope, err := s.executions.Existing(r.SessionID)
+		return err == nil && (scope == nil || scope.Generation == r.Generation), err
+	})
 	if err != nil {
 		return err
+	}
+	if release == nil {
+		return s.store.CompleteRuntimeRetirement(r, nil)
 	}
 	defer release()
 	// The list may have been selected before another collector acquired the

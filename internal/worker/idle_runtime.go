@@ -112,9 +112,15 @@ func (s *Server) reclaimRuntime(id string, now time.Time, pressure bool, parent 
 
 	}
 
-	release, err := s.beginSessionTransition(parent, id)
+	release, err := s.beginSessionRetirement(parent, id, func() (bool, error) {
+		current := s.currentRuntime(id)
+		return current != nil && current.Done() == r.Done(), nil
+	})
 	if err != nil {
 		return err
+	}
+	if release == nil {
+		return nil
 	}
 	defer release()
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)

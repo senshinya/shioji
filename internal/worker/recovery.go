@@ -70,6 +70,8 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		return protocol.RecoveryResult{}, err
 	}
 	defer release()
+	transition := s.sessionTransitions[in.SessionID]
+	ctx = transition.ctx
 
 	generation := s.recoveryRefresh.Load()
 	result := protocol.RecoveryResult{SessionID: in.SessionID, Status: "unknown", Readiness: s.runtimeReadiness(in.SessionID)}
@@ -101,7 +103,7 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		unchanged := s.dispatchEpochs[in.SessionID] == epoch
 		s.mu.Unlock()
 		latest, e := s.store.Session(in.SessionID, 0, 1)
-		return unchanged && e == nil && latest.Session.ThreadID == d.Session.ThreadID && latest.Session.Archived == d.Session.Archived && latest.Session.Status.NeedsRecovery()
+		return transition.active() && unchanged && e == nil && latest.Session.ThreadID == d.Session.ThreadID && latest.Session.Archived == d.Session.Archived && latest.Session.Status.NeedsRecovery()
 	}
 	info := domain.SessionRecovery{Phase: "checking"}
 	if old := d.Session.Recovery; old != nil {
@@ -146,6 +148,9 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		s.dispatchMu.Unlock()
 		runtime.Close(ctx)
 		s.dispatchMu.Lock()
+		if !stillCurrent() {
+			return finish()
+		}
 	}
 	if runtime == nil || runtime.Stopped() || d.Session.ExecutionGuard != "" || managed != nil && !runtime.Observes(d.Session) {
 		cleanupErr := s.cleanSessionRuntime(ctx, in.SessionID)
@@ -164,6 +169,9 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 			return finish()
 		}
 		runtime, err = s.recoveryRuntime(ctx, in.Action == "stop-runtime", d.Session.HarnessID)
+		if !stillCurrent() {
+			return finish()
+		}
 		if latest, e := s.store.Session(in.SessionID, 0, 1); e == nil {
 			d.Session = latest.Session
 		}
