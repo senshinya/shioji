@@ -48,6 +48,7 @@ venv/
 /go.work
 /go.work.sum
 /bin/
+/shioji
 /build/
 /dist/
 /out/
