@@ -65,8 +65,22 @@ func TestDisconnectedRecoveryReleasesFailedRuntime(t *testing.T) {
 }
 
 func TestRecoveryRejectsMissingSessionBeforeNativeWork(t *testing.T) {
-	s, _ := memoryWorker(t, idleHarness{})
-	if _, err := s.reconcile(protocol.RecoveryInput{}); err == nil {
-		t.Fatal("recovery accepted an empty session target")
+	s, w := memoryWorker(t, idleHarness{})
+	d := submitIdleFixture(t, s, w, "pending-retirement", "")
+	s.dispatchMu.Lock()
+	old := s.currentRuntime(d.Session.ID)
+	gen, err := s.archiveGeneration(d.Session.ID)
+	if err == nil {
+		_, err = s.store.SetSessionArchived(d.Session.ID, d.Session.Revision, true, gen)
+	}
+	if err != nil {
+		s.dispatchMu.Unlock()
+		t.Fatal(err)
+	}
+	_, err = s.reconcileLocked(s.ctx, protocol.RecoveryInput{})
+	stopped := old.Stopped()
+	s.dispatchMu.Unlock()
+	if err == nil || stopped {
+		t.Fatal("empty recovery target performed unrelated retirement", err, stopped)
 	}
 }

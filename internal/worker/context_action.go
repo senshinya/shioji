@@ -11,6 +11,9 @@ import (
 )
 
 func (s *Server) compactContext(in domain.ContextActionRequest) (domain.Operation, error) {
+	if in.SessionID == "" {
+		return domain.Operation{}, errors.New("缺少会话标识")
+	}
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
 	var none domain.Operation

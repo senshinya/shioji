@@ -56,3 +56,37 @@ func TestBackgroundDisableKnownUnavailableRestoresAdmission(t *testing.T) {
 		t.Fatal("known non-operation left worker fenced", err)
 	}
 }
+
+func TestBackgroundCancellationAcknowledgesExactCompletedOperation(t *testing.T) {
+	s, w := memoryWorker(t, idleHarness{})
+	s.build.Managed = true
+	s.config.DisableBackground = func(context.Context, string) (domain.BackgroundService, error) {
+		return domain.BackgroundService{}, nil
+	}
+	if _, err := s.prepareBackgroundStop("cancel-once"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.cancelBackgroundStop("cancel-once"); err != nil {
+		t.Fatal(err)
+	}
+	// The first result was lost. The exact retry must confirm the old undo.
+	if err := s.cancelBackgroundStop("cancel-once"); err != nil {
+		t.Fatal("successful cancellation could not be acknowledged again", err)
+	}
+	if err := s.cancelBackgroundStop("foreign"); err == nil {
+		t.Fatal("unrelated operation acknowledged")
+	}
+	submitIdleFixture(t, s, w, "after-cancel-ack", "")
+	if _, err := s.prepareBackgroundStop("next-stop"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.cancelBackgroundStop("cancel-once"); err == nil || !s.backgroundStopping.Load() {
+		t.Fatal("old undo affected the new stop intent", err)
+	}
+	s.dispatchMu.Lock()
+	s.drainOperation = "accepted-drain"
+	s.dispatchMu.Unlock()
+	if err := s.cancelBackgroundStop("next-stop"); err == nil || !s.backgroundStopping.Load() {
+		t.Fatal("undo reopened a draining worker", err)
+	}
+}

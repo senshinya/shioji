@@ -62,6 +62,9 @@ func (s *Server) reconcile(in protocol.RecoveryInput) (protocol.RecoveryResult, 
 	return s.reconcileLocked(ctx, in)
 }
 func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput) (protocol.RecoveryResult, error) {
+	if in.SessionID == "" {
+		return protocol.RecoveryResult{}, errors.New("缺少会话标识")
+	}
 	if err := s.cleanRuntimeRetirements(in.SessionID); err != nil {
 		return protocol.RecoveryResult{}, err
 	}

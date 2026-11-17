@@ -113,7 +113,9 @@ func (s *Server) cancelBackgroundStop(id string) error {
 	}
 	if err == nil {
 		s.backgroundStopping.Store(false)
-		s.backgroundStop = nil
+		// Retain the exact completed ID so a lost reply can be acknowledged.
+		// The next accepted preparation replaces it; no old scope is retained.
+		s.backgroundStop.undo = nil
 	}
 	return err
 }

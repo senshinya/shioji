@@ -12,6 +12,9 @@ import (
 )
 
 func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation, error) {
+	if in.SessionID == "" {
+		return domain.HistoryOperation{}, errors.New("缺少会话标识")
+	}
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
 	// Completed receipts do not depend on whether a catalog is refreshing.

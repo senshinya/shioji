@@ -12,6 +12,9 @@ import (
 )
 
 func (s *Server) reloadSession(in domain.SessionReloadRequest, query bool) (domain.SessionReloadResult, error) {
+	if in.SessionID == "" {
+		return domain.SessionReloadResult{}, errors.New("缺少会话标识")
+	}
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
 	var result domain.SessionReloadResult

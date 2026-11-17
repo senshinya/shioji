@@ -14,6 +14,9 @@ import (
 // All callers that create/replace a session runtime hold dispatchMu. The catalog
 // adapter never starts/resumes an execution thread.
 func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Callers settle archive retirements before acquiring their session gate.
 	// Never recursively wait for that gate if an archive arrives during setup.
 	pendingRetirements, err := s.store.PendingRuntimeRetirements()
@@ -94,13 +97,50 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 	if err := s.runtimeSettingError(d.Session.HarnessID); err != nil {
 		return nil, err
 	}
+	// Ordinary turn initialization owns the same revocable gate as maintenance.
+	// Healthy runtimes return above; only asynchronous setup needs this owner.
+	owner := s.sessionTransitions[id]
+	if owner == nil {
+		release, err := s.beginSessionTransition(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+		owner = s.sessionTransitions[id]
+		ctx = owner.ctx
+	}
 	dir := s.sessionRuntimeDirectory(id)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	if err := s.cleanSessionRuntime(ctx, id); err != nil {
-		if detach := s.detachRuntimeInstance(id, err, false); detach != nil {
-			return nil, errors.Join(err, detach)
+	previous := s.currentRuntime(id)
+	previousScope, err := s.executions.Existing(id)
+	if err != nil {
+		return nil, err
+	}
+	cleanupErr := s.cleanSessionRuntime(ctx, id)
+	// Cleanup releases dispatchMu. Its cancellation is never authority to
+	// detach whatever now occupies this ID or begin another generation.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !owner.active() || s.sessionTransitions[id] != owner {
+		return nil, errRuntimeStartCancelled
+	}
+	current := s.currentRuntime(id)
+	if (previous == nil) != (current == nil) || previous != nil && previous.Done() != current.Done() {
+		return nil, errRuntimeStartCancelled
+	}
+	currentScope, err := s.executions.Existing(id)
+	if err != nil {
+		return nil, err
+	}
+	if (previousScope == nil) != (currentScope == nil) || previousScope != nil && previousScope.Generation != currentScope.Generation {
+		return nil, errRuntimeStartCancelled
+	}
+	if cleanupErr != nil {
+		if detach := s.detachRuntimeInstance(id, cleanupErr, false); detach != nil {
+			return nil, errors.Join(cleanupErr, detach)
 		}
 	}
 	// Close drains callbacks already admitted before retirement. An unexpected
@@ -209,7 +249,7 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 		delete(s.runtimeStarts, id)
 	}
 	s.runtimeMu.Unlock()
-	cancelled := pending.cancelled.Load() || startCtx.Err() != nil
+	cancelled := pending.cancelled.Load() || startCtx.Err() != nil || !owner.active() || s.sessionTransitions[id] != owner
 	startCancel()
 	if cancelled {
 		accepting.deactivate()
@@ -227,6 +267,9 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 		}()
 		if pending.cancelled.Load() {
 			return nil, errRuntimeStartCancelled
+		}
+		if err == nil {
+			err = errRuntimeStartCancelled
 		}
 		return nil, err
 	}
