@@ -148,10 +148,10 @@ func (v *View) composerDocument(c *n.Context, key string) *composerDocument {
 			if in.SessionID != v.Model.SessionID || in.Continue || content.text != in.Text || !slices.Equal(v.Model.DraftReferencePositions(key), in.ReferencePositions) {
 				continue
 			}
-			for _, item := range v.Model.Details[in.SessionID].Items {
+			for _, item := range v.homeSendDetail(v.Model.Details[in.SessionID]).Items {
 				if item.ID == "input:"+id {
-					// The worker's input is already in the transcript. Detach its
-					// editor now; keep the durable draft until delivery resolves.
+					// The local send preview or worker input owns the transcript
+					// slot. Keep the durable draft until delivery resolves.
 					b.doc.SetText(richtext.NewText(""))
 					b.version, b.departed = b.doc.Version(), id
 					break

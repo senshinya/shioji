@@ -25,6 +25,84 @@ func pendingSendRow(t *testing.T, configure ...func(*app.Model)) (*View, *n.Test
 	return v, ui, in
 }
 
+func TestExistingSendAnimatesBeforeWorkerReceipt(t *testing.T) {
+	v, ui, job := sendFixture(t, false)
+	in := job.Input.(domain.Submission)
+	ui.Advance(100 * time.Millisecond)
+	if !ui.HasText(in.Text) || !ui.HasText("正在发送") {
+		t.Fatal("existing conversation waits for the worker receipt before presenting the send")
+	}
+	if got := v.composerDocuments["session:s"].doc.Text().String(); got != "" {
+		t.Fatalf("outgoing message remains in editor until receipt: %q", got)
+	}
+	if v.sent == nil || v.sent.phase != sentAnimating {
+		t.Fatal("send motion has not started before receipt")
+	}
+	if v.Model.Drafts["session:s"] != in.Text || len(v.Model.Pending) != 1 {
+		t.Fatal("local presentation discarded durable unconfirmed input")
+	}
+	for _, item := range v.Model.Details["s"].Items {
+		if item.ID == "input:"+in.OperationID {
+			t.Fatal("local presentation fabricated authoritative history")
+		}
+	}
+	ui.Advance(2 * time.Second)
+	if !ui.HasText(in.Text) {
+		t.Fatal("local message disappeared while receipt was delayed")
+	}
+	v.Model.Reject(in, "not sent")
+	ui.Frame()
+	if got := v.composerDocuments["session:s"].doc.Text().String(); got != in.Text {
+		t.Fatalf("rejection did not restore original input: %q", got)
+	}
+}
+
+func TestExistingSendWaitingStatusFollowsNewMessage(t *testing.T) {
+	v, ui, job := sendFixture(t, false, func(m *app.Model) {
+		d := m.Details["s"]
+		d.Items[0].TurnID = "earlier-turn"
+		d.Turns = []domain.Turn{{ID: "earlier-turn", Status: domain.ExecutionCompleted}}
+		m.Details["s"] = d
+	})
+	ui.Advance(time.Second)
+	if !ui.HasText("正在发送") {
+		t.Fatal("the previous turn footer swallowed the new send status")
+	}
+	input := job.Input.(domain.Submission)
+	rows := v.transcriptRows(v.homeSendDetail(v.Model.Details["s"]).Items)
+	rows = withTurnFooters(rows, map[string]domain.Turn{"earlier-turn": {ID: "earlier-turn", Status: domain.ExecutionCompleted}})
+	rows = v.homeSendRows(rows)
+	if len(rows) < 2 || rows[len(rows)-2].key != "input:"+input.OperationID || rows[len(rows)-1].preparing != "正在发送" {
+		t.Fatal("waiting status is not directly after its submitted input")
+	}
+	if v.toolArrivals.footerKeys["earlier-turn"] != "" {
+		t.Fatal("new submission took over the previous turn footer identity")
+	}
+}
+
+func TestExistingSendKeepsNextDraftBeforeAnyReceipt(t *testing.T) {
+	for _, rejected := range []bool{false, true} {
+		t.Run(map[bool]string{false: "confirmed", true: "rejected"}[rejected], func(t *testing.T) {
+			v, ui, job := sendFixture(t, false)
+			ui.Click("消息输入")
+			ui.Type("Next independent draft")
+			ui.Key(0, n.KeyEnter)
+			if len(v.Model.Pending) != 1 {
+				t.Fatal("pending send allowed another submission")
+			}
+			if rejected {
+				v.Model.Reject(job.Input.(domain.Submission), "not sent")
+			} else {
+				acceptSend(t, v, job, true)
+			}
+			ui.Frame()
+			if got := v.Model.Drafts["session:s"]; got != "Next independent draft" || !ui.Focused("消息输入") {
+				t.Fatal("receipt replaced or unfocused the independently edited next draft", got)
+			}
+		})
+	}
+}
+
 func TestPendingSendLeavesEditorBeforeHarnessConfirmation(t *testing.T) {
 	v, ui, in := pendingSendRow(t)
 	saveNativeSkillImage(t, ui, "pending-send.png")

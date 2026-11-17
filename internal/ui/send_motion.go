@@ -236,7 +236,7 @@ func (v *View) homeSendPending() bool {
 	return ok
 }
 func (v *View) homeSendKey(fallback string) string {
-	if h := v.homeSend; h != nil {
+	if h := v.homeSend; h != nil && h.in.SessionID == "" {
 		return "home-send:" + h.in.OperationID
 	}
 	return fallback
@@ -269,6 +269,9 @@ func (v *View) syncHomeSend() {
 	if m.SessionID == "" && m.Resolved[h.in.OperationID] {
 		v.clearHomeSend()
 	}
+	if h.in.SessionID != "" && !v.homeSendPending() && m.Resolved[h.in.OperationID] && h.state != domain.OperationConfirmed {
+		v.clearHomeSend()
+	}
 }
 func (v *View) homeSendDetail(detail domain.SessionDetail) domain.SessionDetail {
 	h := v.homeSend
@@ -298,8 +301,15 @@ func (v *View) homeSendRows(rows []transcriptRow) []transcriptRow {
 		return rows
 	}
 	key := "home-send-status:" + h.in.OperationID
+	turnID := ""
+	for _, row := range rows {
+		if row.key == "input:"+h.in.OperationID {
+			turnID = row.item.TurnID
+			break
+		}
+	}
 	for i, row := range rows {
-		if row.footer != "" {
+		if turnID != "" && row.footer == turnID {
 			if v.toolArrivals.footerKeys == nil {
 				v.toolArrivals.footerKeys = map[string]string{}
 			}
@@ -318,7 +328,7 @@ func (v *View) homeSendRows(rows []transcriptRow) []transcriptRow {
 		}
 	}
 	label := "正在发送"
-	if h.session != "" {
+	if h.session != "" && h.in.SessionID == "" {
 		label = "正在准备会话"
 	}
 	if h.state == domain.OperationConfirmed || v.Model.Details[v.Model.SessionID].Session.Status == domain.ExecutionRunning {

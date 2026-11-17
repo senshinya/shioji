@@ -1185,7 +1185,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	detail := v.homeSendDetail(m.Details[m.SessionID])
 	viewKey := v.homeSendKey(m.SessionID)
 	state := v.lists[m.SessionID]
-	if h := v.homeSend; h != nil {
+	if h := v.homeSend; h != nil && h.in.SessionID == "" {
 		if h.list == nil {
 			h.list = &n.ListState{FollowEnd: true}
 		}
@@ -1782,9 +1782,8 @@ func (v *View) sendMessage(steer bool) {
 		return
 	}
 	sent := v.beginSendMotion(in)
-	if in.SessionID == "" {
-		v.homeSend = &homeSendPresentation{in: in, sentAt: time.Now()}
-	}
+	v.homeSend = &homeSendPresentation{in: in, sentAt: time.Now(), session: in.SessionID}
+	sent.session = in.SessionID
 	var prepare func() error
 	if v.Saver != nil {
 		state, _ := v.persistenceModel().EncodeState()

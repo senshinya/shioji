@@ -16,6 +16,12 @@ import (
 
 func sendFixture(t *testing.T, home bool, configure ...func(*app.Model)) (*View, *n.Tester, app.Job) {
 	t.Helper()
+	v, ui := readySendFixture(t, home, configure...)
+	return v, ui, sendFromFixture(t, v, ui)
+}
+
+func readySendFixture(t *testing.T, home bool, configure ...func(*app.Model)) (*View, *n.Tester) {
+	t.Helper()
 	m := layoutModel()
 	m.ConnectionEpoch = "connected"
 	if home {
@@ -34,6 +40,12 @@ func sendFixture(t *testing.T, home bool, configure ...func(*app.Model)) (*View,
 		configure(m)
 	}
 	ui.Frame()
+	ui.Advance(time.Second)
+	return v, ui
+}
+
+func sendFromFixture(t *testing.T, v *View, ui *n.Tester) app.Job {
+	t.Helper()
 	if err := ui.Click("消息输入"); err != nil {
 		t.Fatal(err)
 	}
@@ -41,14 +53,14 @@ func sendFixture(t *testing.T, home bool, configure ...func(*app.Model)) (*View,
 	if err := ui.Click("发送"); err != nil {
 		t.Fatal(err)
 	}
-	for len(c.Jobs) > 0 {
-		job := <-c.Jobs
+	for len(v.Controller.Jobs) > 0 {
+		job := <-v.Controller.Jobs
 		if job.Method == "session.submit" {
-			return v, ui, job
+			return job
 		}
 	}
 	t.Fatal("submission did not reach controller")
-	return nil, nil, app.Job{}
+	return app.Job{}
 }
 
 func acceptSend(t *testing.T, v *View, job app.Job, hydrate bool) string {
@@ -230,16 +242,19 @@ func TestReturningHomeInterruptsFirstSendDescent(t *testing.T) {
 }
 
 func TestExistingSendFollowsNewReplyAtNaturalEnd(t *testing.T) {
-	v, ui, job := sendFixture(t, false)
-	d := v.Model.Details["s"]
-	d.Items = nil
-	for i := 0; i < 28; i++ {
-		d.Items = append(d.Items, domain.Item{ID: fmt.Sprint(i), Kind: "assistant", Text: strings.Repeat("Earlier conversation. ", 8), Final: true})
-	}
-	v.Model.Details["s"] = d
-	ui.Frame()
-	ui.Advance(time.Second)
+	v, ui, job := sendFixture(t, false, func(m *app.Model) {
+		d := m.Details["s"]
+		d.Items = nil
+		for i := 0; i < 28; i++ {
+			d.Items = append(d.Items, domain.Item{ID: fmt.Sprint(i), Kind: "assistant", Text: strings.Repeat("Earlier conversation. ", 8), Final: true})
+		}
+		m.Details["s"] = d
+	})
 	acceptSend(t, v, job, true)
+	d := v.Model.Details["s"]
+	d.Items[len(d.Items)-1].TurnID = "new-turn"
+	d.Turns = []domain.Turn{{ID: "new-turn", Status: domain.ExecutionRunning}}
+	v.Model.Details["s"] = d
 	ui.Frame()
 	ui.Advance(60 * time.Millisecond)
 	first, ok := ui.Find("Explain a tree rotation.")
@@ -258,7 +273,7 @@ func TestExistingSendFollowsNewReplyAtNaturalEnd(t *testing.T) {
 	}
 	ui.Type("Next draft")
 	d = v.Model.Details["s"]
-	d.Items = append(d.Items, domain.Item{ID: "reply", Kind: "assistant", Text: "A small reply.", Final: true})
+	d.Items = append(d.Items, domain.Item{ID: "reply", TurnID: "new-turn", Kind: "assistant", Text: "A small reply.", Final: true})
 	v.Model.Details["s"] = d
 	ui.Frame()
 	ui.Advance(400 * time.Millisecond)
@@ -269,15 +284,14 @@ func TestExistingSendFollowsNewReplyAtNaturalEnd(t *testing.T) {
 }
 
 func TestSentMessageStartsGentlyAndRemainsInMotionAfter300ms(t *testing.T) {
-	v, ui, job := sendFixture(t, false)
-	d := v.Model.Details["s"]
-	d.Items = nil
-	for i := 0; i < 28; i++ {
-		d.Items = append(d.Items, domain.Item{ID: fmt.Sprint(i), Kind: "assistant", Text: strings.Repeat("Earlier conversation. ", 8), Final: true})
-	}
-	v.Model.Details["s"] = d
-	ui.Frame()
-	ui.Advance(time.Second)
+	v, ui, job := sendFixture(t, false, func(m *app.Model) {
+		d := m.Details["s"]
+		d.Items = nil
+		for i := 0; i < 28; i++ {
+			d.Items = append(d.Items, domain.Item{ID: fmt.Sprint(i), Kind: "assistant", Text: strings.Repeat("Earlier conversation. ", 8), Final: true})
+		}
+		m.Details["s"] = d
+	})
 	acceptSend(t, v, job, true)
 	ui.Frame()
 	start, _ := ui.Find("Explain a tree rotation.")
@@ -376,12 +390,11 @@ func TestExistingSendPreservesReaderInterruptionAndResumesFollowing(t *testing.T
 func TestSendFromDisclosedToolHistoryTakesOverItsReadingAnchor(t *testing.T) {
 	for _, eventFirst := range []bool{false, true} {
 		t.Run(fmt.Sprint(eventFirst), func(t *testing.T) {
-			v, ui, job := sendFixture(t, false)
-			d := v.Model.Details["s"]
-			d.Items = toolHistoryModelItems()
-			v.Model.Details["s"] = d
-			ui.Frame()
-			ui.Advance(time.Second)
+			v, ui := readySendFixture(t, false, func(m *app.Model) {
+				d := m.Details["s"]
+				d.Items = toolHistoryModelItems()
+				m.Details["s"] = d
+			})
 			if err := ui.Click("8 次工具调用"); err != nil {
 				t.Fatal(err)
 			}
@@ -389,6 +402,7 @@ func TestSendFromDisclosedToolHistoryTakesOverItsReadingAnchor(t *testing.T) {
 			if v.lists["s"].FollowingEnd() {
 				t.Fatal("fixture did not acquire a disclosure reading anchor")
 			}
+			job := sendFromFixture(t, v, ui)
 			if eventFirst {
 				in := job.Input.(domain.Submission)
 				op := domain.Operation{ID: in.OperationID, SessionID: "s", State: "confirmed"}
@@ -405,7 +419,7 @@ func TestSendFromDisclosedToolHistoryTakesOverItsReadingAnchor(t *testing.T) {
 			if !ok || message.Y < 200 || !v.lists["s"].AtEnd() || !v.lists["s"].FollowingEnd() {
 				t.Fatal("new send keeps the old disclosure anchor", message, ok)
 			}
-			d = v.Model.Details["s"]
+			d := v.Model.Details["s"]
 			for i := 0; i < 32; i++ {
 				d.Items = append(d.Items, domain.Item{ID: fmt.Sprint("after-send-", i), Kind: "activity", Name: fmt.Sprint("new send progress ", i), Final: true})
 			}

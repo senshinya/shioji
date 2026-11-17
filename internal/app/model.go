@@ -28,6 +28,7 @@ type InspectorLayout struct {
 }
 
 type Model struct {
+	stateEncoding              *clientStateEncoding
 	RemotePathUploads          map[string]bool
 	ArchivePolicyChanges       map[string]ArchivePolicyChange
 	Feedbacks                  []Feedback
@@ -468,6 +469,14 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 		m.promoteNavigationSession(e.SessionID)
 	}
 	if e.Operation != nil {
+		// Keep the live receipt available to presentation after confirmation
+		// releases Pending. The command reply and event stream are independent.
+		if i := slices.IndexFunc(m.Snapshot.Operations, func(op domain.Operation) bool { return op.ID == e.Operation.ID }); i >= 0 {
+			m.Snapshot.Operations[i] = *e.Operation
+		} else {
+			m.Snapshot.Operations = append([]domain.Operation{*e.Operation}, m.Snapshot.Operations...)
+			m.Snapshot.Operations = m.Snapshot.Operations[:min(100, len(m.Snapshot.Operations))]
+		}
 		m.ApplyOperation(*e.Operation)
 	}
 	if e.Queue != nil {
@@ -614,7 +623,7 @@ type savedState struct {
 	Configs                    map[string]domain.RunConfig                `json:"configs"`
 	Answers                    map[string]string                          `json:"answers"`
 	Pager                      map[string]int                             `json:"pager"`
-	Collapsed                  map[string]bool                            `json:"collapsed"`
+	Collapsed                  map[string]bool                            `json:"collapsed,omitempty"`
 	Pending                    map[string]domain.Submission               `json:"pending"`
 	GitDrafts                  map[string]domain.GitChoice                `json:"gitDrafts,omitempty"`
 	GitRepositories            map[string]string                          `json:"gitRepositories,omitempty"`
