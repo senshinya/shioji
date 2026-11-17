@@ -1,5 +1,33 @@
 # Lody 执行服务升级、停止与回收源码分析
 
+> **最新复核（2026-11-17，f68aad1，本轮未修复）**：后台关闭还有两个控制交接遗漏：关闭未决时崩溃恢复会重新启动可接纳输入的 Worker；已知未执行的前置步骤耗尽预算时，撤销沿用过期 context，原 Worker 无法自动恢复准入。两处各三次复现，三个即时前置失败对照正常，111 项相邻检查通过。993 个产品／原生文件未改，正式设备未操作。前轮修复不撤回，但不能外推到这两种新时序。
+
+## 2026-11-17 再次复核：关闭意图与撤销生命周期
+
+### H. 高：后台关闭未决时，普通崩溃恢复重新开放准入
+
+[backgroundControl](../internal/supervisor/background_darwin.go#L38) 只在接纳新后台操作、升级和冷修复时检查 pending；[Run 的异常退出分支](../internal/supervisor/host_darwin.go#L263) 不核对后台停止意图，在第 295 行仍调用 startSelectedRetry(..., false, "")。原 Worker 的 backgroundStopping 只属于旧进程，替代实例因此重新接受写入与输入。
+
+[真实签名 Worker 诊断](../.ryugi/audits/lody-finalization-alignment-audit-20261117/crash-probe.txt) 三轮都记录 background=disabling、nativeHelperStillWaiting=true、inputAccepted=true。使用实际 RunWorkerSupervisor、transport 验签与临时签名模拟 helper，旧 Worker 仅在捕获准确 PID／启动身份并确认该隔离状态目录后结束。助手仍等待时，Host 按普通恢复策略启动新 Worker，真实 session.submit 已被接纳；后续注销可能再中断该输入。没有反注册真实 SMAppService。
+
+Lody 的 [CliSupervisor.stop](https://github.com/LodyAI/Lody/blob/58e33cec245b2f5e7586d0c7beb6a02ce148219c/packages/cli-supervisor/src/supervisor.ts#L190) 在排队等待退出前同步设置 desiredState=stopped、推进 generation、清除 retry timer；[daemon-runner 的 Host stop](https://github.com/LodyAI/Lody/blob/58e33cec245b2f5e7586d0c7beb6a02ce148219c/apps/cli/src/commands/daemon-runner.ts#L1144) 进入此路径。最小对齐方向：关闭意图由 Host 持有并覆盖普通恢复的启动门；未决时不生成可接纳替代实例，只有明确未执行且同代恢复已确认后才恢复运行资格。
+
+### I. 高：已知未执行的前置超时，撤销却没有独立预算或重试
+
+[stopBackground](../internal/supervisor/background_darwin.go#L47) 的原生 callback 与第 63 行撤销请求共用 20 秒 ctx。前置步骤耗尽预算后，即使明确 NotStarted=true，context.WithTimeout(ctx,5s) 已过期，取消无法发送；第 70 行仍把操作 done。原 Worker 只能由 [cancelBackgroundStop](../internal/worker/background_stop.go#L101) 的准确操作清除标志，但此调用没有到达，也没有后台重试。
+
+[预算诊断](../.ryugi/audits/lody-finalization-alignment-audit-20261117/deadline-probe.txt) 三轮均为 resultNotStarted=true、inputAccepted=false，真实 Worker 返回“后台服务正在关闭”；三个即时前置失败对照均正常接受输入。这里是实际签名 Worker／真实 Host 的前置故障注入，使用原有 20 秒 context，不启动 native unregister。不是已启动但结果未知的既定 fence 边界。
+
+Lody 停止 owner 和会话退休的清理有独立生命周期；Session.terminate 的 finally 清掉本次 termination，以便失败后重试，不把失败 promise 当作永久终局。Shioji 不存在上游同名的 macOS helper，不能声称直接复制一个对应函数即可。最小修正是在现有 Host 中给准确实例／ID 的撤销独立预算及失败重试，在撤销确认或原实例已退出前保留收尾状态；继续拒绝迟到取消重新开放已排空 Worker。
+
+### 本轮重读与验证范围
+
+- 新 fetch 仍为 Lody 58e33ce；保存并对照 Host lease、supervisor stop/retry、daemon runner、start/drained、Session terminate/pending-create、GC、归档／删除、worktree GC／backup、原生后台完成与退休语义。检出目录的 session-manager 等文件存在较旧版本，已经用 git show origin/main 保存准确当前源码并逐条核对相关差异；没有只拿旧检出版本冒充上游。
+- [111 项相邻检查](../.ryugi/audits/lody-finalization-alignment-audit-20261117/neighbours-summary.txt) 覆盖五包，包含归档／删除、自建 worktree 共享保护、备份失败重试和延迟恢复。本轮没有确认第三个独立根因，不宣称未来条件已穷尽。
+- [完整计数与证据边界](../.ryugi/audits/lody-finalization-alignment-audit-20261117/summary.txt)、[源码与进程范围](../.ryugi/audits/lody-finalization-alignment-audit-20261117/source-provenance.txt)：六次预期故障不算产品通过。原探针的权限枚举和字段拼写错误已修正，最终三轮只计正确夹具。993 文件与前轮签名构建内容一致，构建内 Revision 仍为 ebc90b9+modified；不伪称重新构建版本号。
+- 正式设备、系统注销与 Tailnet 未操作；20 分钟／30 秒、24 小时 waiting、未登记后代及首次旧存量手动处理不变，不增加强制页面。
+
+
 > **本轮收尾修复（2026-11-17，本机隔离验证）**：下方 3648cc6 的两个审计条件已修复。已提交升级保留 applied／rolled-back；迟回复核对准确候选，暂时不确定继续观察与重试，候选退出按原崩溃策略恢复已选版本。后台注销交给独立 Host，Worker 只封住同代准入并提交短请求，客户端按稳定 ID 查询，不重放注销。正式设备未部署，真实 SMAppService 未操作；下方“尚未修复”为当时审计原件。
 
 ## 2026-11-17 两个收尾条件的修复与验证
