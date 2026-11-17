@@ -122,6 +122,29 @@ func TestOwnedWorktreeArchiveRestoresBranchSharedWithTag(t *testing.T) {
 		t.Fatal("restore changed the history or detached the checkout")
 	}
 }
+
+func TestOwnedWorktreeRemovedStatusReportsBranchReadFailure(t *testing.T) {
+	s, _, d := ownedWorktreeFixture(t)
+	archiveOwnedFixture(t, s, d.Session.ID)
+	if err := cleanupWorktreesForTest(s, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	script := "#!/bin/sh\ncase \" $* \" in *\" for-each-ref \"*) echo 'injected branch ref read failure' >&2; exit 128;; esac\nexec /usr/bin/git \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	s.dispatchMu.Lock()
+	_, handled, err := s.removedWorktreeStatus(protocol.GitQuery{SessionID: d.Session.ID, WorkspaceID: d.Session.WorkspaceID})
+	s.dispatchMu.Unlock()
+	if !handled || err == nil || !strings.Contains(err.Error(), "injected branch ref read failure") {
+		t.Fatal("failed Git ref read was published as successful status", handled, err)
+	}
+	if _, err := os.Stat(d.Session.Context.Repository); !os.IsNotExist(err) {
+		t.Fatal("reading removed status recreated the checkout", err)
+	}
+}
 func TestOwnedWorktreeSharedBySessionsWaitsForLastArchive(t *testing.T) {
 	s, w, d := ownedWorktreeFixture(t)
 	path := d.Session.Context.Repository
