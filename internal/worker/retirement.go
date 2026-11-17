@@ -29,7 +29,10 @@ func (s *Server) retireRuntime(ctx context.Context, id, reason string, force boo
 	if err != nil || op == nil {
 		return err
 	}
-	return waitRuntimeRetirement(ctx, op)
+	if err := waitRuntimeRetirement(ctx, op); err != nil {
+		return err
+	}
+	return s.retireStoppedWork(id, op)
 }
 
 // Admission and instance capture stay synchronous; physical cleanup never owns
@@ -40,8 +43,28 @@ func (s *Server) retireRuntimeOutsideDispatch(ctx context.Context, id, reason st
 		return err
 	}
 	s.dispatchMu.Unlock()
-	defer s.dispatchMu.Lock()
-	return waitRuntimeRetirement(ctx, op)
+	err = waitRuntimeRetirement(ctx, op)
+	s.dispatchMu.Lock()
+	if err != nil {
+		return err
+	}
+	return s.retireStoppedWork(id, op)
+}
+
+// Callers hold dispatchMu after the captured producers have stopped. A cleanup
+// which finished late cannot retire work accepted by a successor generation.
+func (s *Server) retireStoppedWork(id string, op *runtimeRetirement) error {
+	if current := s.currentRuntime(id); current != nil && (op.runtime == nil || current.Done() != op.runtime.Done()) {
+		return nil
+	}
+	scope, err := s.executions.Existing(id)
+	if err != nil {
+		return err
+	}
+	if scope != nil && scope.Generation != op.generation {
+		return nil
+	}
+	return s.store.RetireWork(id, true)
 }
 
 func waitRuntimeRetirement(ctx context.Context, op *runtimeRetirement) error {

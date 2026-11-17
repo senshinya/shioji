@@ -73,7 +73,7 @@ func (s *Server) disableBackground() (result domain.BackgroundService, err error
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	result, err = s.config.DisableBackground(ctx)
-	if err == nil && result.State != "notRegistered" && result.State != "notInstalled" {
+	if result.NotStarted || err == nil && result.State != "notRegistered" && result.State != "notInstalled" {
 		s.backgroundStopping.Store(false)
 	}
 	return result, err

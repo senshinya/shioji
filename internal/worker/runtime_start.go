@@ -36,15 +36,7 @@ func (s *Server) stopInitializing(id string, start *runtimeStart) error {
 	if err := s.store.StopInitializing(id); err != nil {
 		return err
 	}
-	start.cancelled.Store(true)
-	start.gate.deactivate()
-	start.cancel()
-	s.releaseDispatches(id)
-	s.runtimeMu.Lock()
-	if s.runtimeStarts[id] == start {
-		delete(s.runtimeStarts, id)
-	}
-	s.runtimeMu.Unlock()
+	s.cancelRuntimeStart(id, start)
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -67,4 +59,19 @@ func (s *Server) stopInitializing(id string, start *runtimeStart) error {
 		}
 	}()
 	return nil
+}
+
+// Caller holds dispatchMu. A committed tombstone can revoke initialization
+// without writing the deleted session again; the captured scope/outbox keeps
+// ownership of physical cleanup and sessionRuntime disposes of late results.
+func (s *Server) cancelRuntimeStart(id string, start *runtimeStart) {
+	start.cancelled.Store(true)
+	start.gate.deactivate()
+	start.cancel()
+	s.releaseDispatches(id)
+	s.runtimeMu.Lock()
+	if s.runtimeStarts[id] == start {
+		delete(s.runtimeStarts, id)
+	}
+	s.runtimeMu.Unlock()
 }

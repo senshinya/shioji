@@ -50,7 +50,7 @@ func DisableRuntimeService(ctx context.Context, directory, workerBinary string) 
 }
 func manageRuntimeService(ctx context.Context, directory, workerBinary, action string) (domain.BackgroundService, error) {
 	enable := action == "register"
-	none := domain.BackgroundService{Format: 1, State: "notInstalled"}
+	none := domain.BackgroundService{Format: 1, State: "notInstalled", NotStarted: true}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return none, err
@@ -108,7 +108,10 @@ func runRuntimeHelper(ctx context.Context, path, action string) (domain.Backgrou
 	var output, diagnostic bytes.Buffer
 	cmd.Stdout = &boundedWriter{w: &output, remaining: 8192}
 	cmd.Stderr = &boundedWriter{w: &diagnostic, remaining: 2048}
-	err := cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return domain.BackgroundService{Format: 1, NotStarted: true}, err
+	}
+	err := cmd.Wait()
 	var result domain.BackgroundService
 	if decodeErr := json.Unmarshal(output.Bytes(), &result); decodeErr != nil {
 		return result, fmt.Errorf("后台宿主未返回有效状态：%s", strings.TrimSpace(diagnostic.String()))

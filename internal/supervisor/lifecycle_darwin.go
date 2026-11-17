@@ -16,6 +16,7 @@ import (
 
 const lifecycleFDEnv = "SHIOJI_WORKER_LIFECYCLE_FD"
 const lifecycleFrameLimit = 64 << 10
+const PrivateControlVersion = 2 // Adds resume without ending the child channel.
 
 type lifecycleReply struct {
 	AttemptID string                    `json:"attemptId,omitempty"`
@@ -208,7 +209,7 @@ func ServeLifecycle(conn net.Conn, handle func(Control) (domain.WorkerUpdateResu
 		if err != nil {
 			reply.Error = err.Error()
 		}
-		accepted := err == nil && result.Ready
+		accepted := err == nil && result.Ready && in.Action != "resume"
 		writeErr := json.NewEncoder(conn).Encode(reply)
 		if writeErr != nil || accepted {
 			return accepted, writeErr

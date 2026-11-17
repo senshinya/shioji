@@ -30,6 +30,8 @@ type Ready struct {
 	Paused             bool
 }
 type Control struct {
+	// Empty means drain, preserving the original private control contract.
+	Action string `json:"action,omitempty"`
 	// AttemptID correlates one private-channel delivery, not durable authority.
 	AttemptID string `json:"attemptId,omitempty"`
 	// AdmitBefore bounds one when-idle delivery attempt, independently of intent TTL.

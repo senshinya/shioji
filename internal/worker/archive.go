@@ -172,7 +172,11 @@ func (s *Server) commitArchiveDeletion(method string, in protocol.ArchiveDeleteI
 	for _, id := range result.SessionIDs {
 		s.runtimeMu.RLock()
 		gate := s.runtimeEvents[id]
+		start := s.runtimeStarts[id]
 		s.runtimeMu.RUnlock()
+		if start != nil {
+			s.cancelRuntimeStart(id, start)
+		}
 		if gate != nil {
 			gate.deactivate()
 		}

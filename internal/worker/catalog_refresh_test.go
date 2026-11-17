@@ -311,7 +311,11 @@ func TestCatalogRecoveryDoesNotReacquireMaintenanceBehindDispatch(t *testing.T) 
 	s.maintenance.Lock()
 	s.catalogRuntime("other").Close(context.Background())
 	done := make(chan error, 1)
-	go func() { _, err := s.openCatalog(context.Background(), "other", false); done <- err }()
+	go func() {
+		_, err := s.recoveryRuntime(context.Background(), false, "other")
+		s.dispatchMu.Unlock()
+		done <- err
+	}()
 	blocked := false
 	select {
 	case err := <-done:
@@ -327,7 +331,6 @@ func TestCatalogRecoveryDoesNotReacquireMaintenanceBehindDispatch(t *testing.T) 
 			t.Error(err)
 		}
 	}
-	s.dispatchMu.Unlock()
 	if blocked {
 		t.Fatal("catalog recovery waits for maintenance while holding dispatch; worker update would deadlock")
 	}

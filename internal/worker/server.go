@@ -203,7 +203,7 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	s.build = runtimebuild.Current()
 	s.build.Schema = store.SchemaVersion
 	if config.ServiceInstance != "" {
-		s.build.PrivateControl = 1
+		s.build.PrivateControl = supervisor.PrivateControlVersion
 	}
 	s.updating.Store(config.StartPaused)
 	s.build.SafeUpdate = config.ReplaceWorker != nil || config.RequestUpdate != nil

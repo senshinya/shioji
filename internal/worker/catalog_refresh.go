@@ -40,9 +40,9 @@ func (s *Server) catalogFailure(id string) error {
 
 var errCatalogRefreshing = errors.New("正在刷新模型和能力列表，草稿已保留")
 
-// The background poll claims maintenance admission before this transition.
-// Recovery callers already hold dispatch; they must never acquire maintenance
-// recursively or after dispatch (worker replacement takes the opposite order).
+// Caller holds dispatchMu. Native discovery runs only after this short phase
+// transition. Recovery can be inside an existing maintenance read admission,
+// so catalog preparation must not recursively acquire that RWMutex.
 func (s *Server) markCatalogRefreshing(id, revision string) error {
 	if err := s.updateAdmission(); err != nil {
 		return err
@@ -61,7 +61,8 @@ func (s *Server) markCatalogRefreshing(id, revision string) error {
 	return nil
 }
 
-// Caller holds the catalog's write gate and has claimed its refreshing phase.
+// Caller holds the catalog's write gate, has claimed its refreshing phase, and
+// does not hold dispatchMu while waiting on native processes.
 func (s *Server) startCatalog(ctx context.Context, id string, stop bool, revision string) (next harness.Runtime, err error) {
 	previous := s.catalogRuntime(id)
 	attempted := false
@@ -83,6 +84,9 @@ func (s *Server) startCatalog(ctx context.Context, id string, stop bool, revisio
 		s.catalogErrors[id] = err
 	}()
 	if err = s.runtimeSettingError(id); err != nil {
+		return nil, err
+	}
+	if err = s.updateAdmission(); err != nil {
 		return nil, err
 	}
 	if previous != nil {
@@ -118,21 +122,23 @@ func (s *Server) startCatalog(ctx context.Context, id string, stop bool, revisio
 		if next != nil {
 			// A failed probe can still own cleanup. Retain its exact controller so
 			// retries and shutdown cannot lose the process handles.
+			s.dispatchMu.Lock()
 			s.runtimeMu.Lock()
 			s.catalogs[id] = next
 			if id == s.config.DefaultHarnessID {
 				s.runtime = next
 			}
 			s.runtimeMu.Unlock()
+			s.dispatchMu.Unlock()
 		} else {
 			os.Remove(filepath.Join(dir, "runtime-process.json"))
 		}
 		return next, err
 	}
-	if err = ctx.Err(); err != nil {
-		next.Close(context.Background())
-		os.Remove(filepath.Join(dir, "runtime-process.json"))
-		return nil, err
+	s.dispatchMu.Lock()
+	err = ctx.Err()
+	if err == nil {
+		err = s.updateAdmission()
 	}
 	s.runtimeMu.Lock()
 	s.catalogs[id] = next
@@ -140,8 +146,27 @@ func (s *Server) startCatalog(ctx context.Context, id string, stop bool, revisio
 		s.runtime = next
 	}
 	s.runtimeMu.Unlock()
+	s.dispatchMu.Unlock()
+	if err != nil {
+		// Keep the exact controller published for shutdown/retry if cleanup fails.
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		closeErr := next.Close(cleanup)
+		cancel()
+		if closeErr == nil {
+			os.Remove(filepath.Join(dir, "runtime-process.json"))
+		}
+		return next, errors.Join(err, closeErr)
+	}
 	s.watchRuntime(next)
 	return next, nil
+}
+
+// Settings callers capture and mark under dispatch, then keep only the
+// per-harness catalog gate while native startup/cleanup is in progress.
+func (s *Server) startCatalogOutsideDispatch(ctx context.Context, id string, stop bool, revision string) (harness.Runtime, error) {
+	s.dispatchMu.Unlock()
+	defer s.dispatchMu.Lock()
+	return s.startCatalog(ctx, id, stop, revision)
 }
 func (s *Server) borrowCatalog(id string) (harness.Runtime, func(), error) {
 	gate := s.catalogGates[id]
@@ -240,7 +265,9 @@ func (s *Server) catalogLoop() {
 				s.runtimeMu.Unlock()
 			} else {
 				s.maintenance.RLock()
+				s.dispatchMu.Lock()
 				err = s.markCatalogRefreshing(id, installed)
+				s.dispatchMu.Unlock()
 				s.maintenance.RUnlock()
 				if err == nil {
 					ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)

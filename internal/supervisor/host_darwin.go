@@ -869,5 +869,30 @@ waitForIdle:
 func (h *host) resume(ctx context.Context, c *child, id string) error {
 	call, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	return h.workerCall(call, c, "worker.resume", Control{Instance: c.instance, OperationID: id}, nil)
+	for {
+		attempt, stop := context.WithTimeout(call, time.Second)
+		in := Control{Action: "resume", Instance: c.instance, OperationID: id}
+		var err error
+		if c.build.PrivateControl >= PrivateControlVersion && c.lifecycle != nil {
+			var result domain.WorkerUpdateResult
+			result, err = c.lifecycle.request(attempt, in)
+			if err == nil && !result.Ready {
+				err = errors.New("candidate has not opened acceptance")
+			}
+		} else {
+			// A compatible rollback can still be the previous protocol version.
+			err = h.workerCall(attempt, c, "worker.resume", in, nil)
+		}
+		stop()
+		if err == nil {
+			return nil
+		}
+		select {
+		case <-c.done:
+			return errors.Join(err, errors.New("committed candidate exited before resume"), c.err)
+		case <-call.Done():
+			return errors.Join(err, call.Err())
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }

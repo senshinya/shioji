@@ -39,57 +39,69 @@ func (s *Server) serviceControl(method string, body []byte) (any, error) {
 	case "worker.drain":
 		return s.DrainService(in)
 	case "worker.resume":
-		s.dispatchMu.Lock()
-		defer s.dispatchMu.Unlock()
-		if in.OperationID == "" || in.OperationID != s.config.ServiceOperation {
-			return nil, errors.New("candidate operation mismatch")
-		}
-		intent, e := supervisor.ReadDrainIntent(s.config.Directory, in.OperationID)
-		if e != nil {
-			return nil, e
-		}
-		if intent.DeviceID != s.store.DeviceID() {
-			return nil, errors.New("drain intent belongs to another device")
-		}
-		for _, id := range intent.Queues {
-			q, e := s.store.Queue(id)
-			if e != nil {
-				return nil, e
-			}
-			if q.Paused && q.Reason == "worker restarted" {
-				detail, e := s.store.Session(id, 0, 1)
-				if e != nil {
-					return nil, e
-				}
-				if detail.Session.ExecutionGuard != "" || detail.Session.Status.BlocksCheckout() {
-					continue
-				}
-				safe := true
-				for _, item := range q.Items {
-					if item.State != "" {
-						safe = false
-					}
-				}
-				if !safe {
-					continue
-				}
-				if _, e = s.store.ContinueQueue(id, q.Revision); e != nil {
-					return nil, e
-				}
-			}
-		}
-		s.updating.Store(false)
-		s.wakeRecovery()
-		s.wakeCatalog()
-		select {
-		case s.titleWake <- struct{}{}:
-		default:
-		}
-		s.wakeQueue()
-		return nil, nil
+		return nil, s.ResumeService(in)
 	default:
 		return nil, errors.New("unknown private service control")
 	}
+}
+
+// ResumeService opens acceptance only for this captured candidate operation.
+// Both public RPC and inherited lifecycle control use the same idempotent path.
+func (s *Server) ResumeService(in supervisor.Control) error {
+	if s.config.ServiceInstance == "" || in.Instance != s.config.ServiceInstance {
+		return errors.New("service instance authentication failed")
+	}
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	if s.drainOperation != "" {
+		return errors.New("worker drain already accepted")
+	}
+	if in.OperationID == "" || in.OperationID != s.config.ServiceOperation {
+		return errors.New("candidate operation mismatch")
+	}
+	intent, e := supervisor.ReadDrainIntent(s.config.Directory, in.OperationID)
+	if e != nil {
+		return e
+	}
+	if intent.DeviceID != s.store.DeviceID() {
+		return errors.New("drain intent belongs to another device")
+	}
+	for _, id := range intent.Queues {
+		q, e := s.store.Queue(id)
+		if e != nil {
+			return e
+		}
+		if q.Paused && q.Reason == "worker restarted" {
+			detail, e := s.store.Session(id, 0, 1)
+			if e != nil {
+				return e
+			}
+			if detail.Session.ExecutionGuard != "" || detail.Session.Status.BlocksCheckout() {
+				continue
+			}
+			safe := true
+			for _, item := range q.Items {
+				if item.State != "" {
+					safe = false
+				}
+			}
+			if !safe {
+				continue
+			}
+			if _, e = s.store.ContinueQueue(id, q.Revision); e != nil {
+				return e
+			}
+		}
+	}
+	s.updating.Store(false)
+	s.wakeRecovery()
+	s.wakeCatalog()
+	select {
+	case s.titleWake <- struct{}{}:
+	default:
+	}
+	s.wakeQueue()
+	return nil
 }
 
 func (s *Server) DrainedReceipt() (supervisor.Drained, bool) {

@@ -153,7 +153,7 @@ func (s *Server) configureRuntime(in protocol.RuntimeConfiguration) (domain.Read
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
 	defer cancel()
-	_, _ = s.startCatalog(ctx, in.HarnessID, false, "")
+	_, _ = s.startCatalogOutsideDispatch(ctx, in.HarnessID, false, "")
 	s.wakeQueue()
 	s.recoveryRefresh.Add(1)
 	s.wakeRecovery()
@@ -205,7 +205,7 @@ func (s *Server) recheckRuntime(id string) (domain.Readiness, error) {
 	}
 	if err == nil {
 		ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
-		_, err = s.startCatalog(ctx, id, false, version)
+		_, err = s.startCatalogOutsideDispatch(ctx, id, false, version)
 		cancel()
 	}
 	s.wakeQueue()
@@ -354,7 +354,7 @@ func (s *Server) configureAgents(in protocol.DeviceAgents) (protocol.AgentSetupR
 		for id := range old {
 			_ = s.markCatalogRefreshing(id, "")
 			ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
-			_, _ = s.startCatalog(ctx, id, false, "")
+			_, _ = s.startCatalogOutsideDispatch(ctx, id, false, "")
 			cancel()
 		}
 	}()
@@ -363,7 +363,7 @@ func (s *Server) configureAgents(in protocol.DeviceAgents) (protocol.AgentSetupR
 			return protocol.AgentSetupResult{}, e
 		}
 		ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
-		_, e := s.startCatalog(ctx, id, false, "")
+		_, e := s.startCatalogOutsideDispatch(ctx, id, false, "")
 		cancel()
 		if e != nil {
 			catalog := s.runtimeProfiles(nil, true)

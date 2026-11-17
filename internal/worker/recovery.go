@@ -38,7 +38,14 @@ func (s *Server) recoveryRuntime(ctx context.Context, stop bool, selected ...str
 		id = selected[0]
 	}
 	previous := s.catalogRuntime(id)
+	// Catalog discovery is read-only native I/O. Its own gate serializes
+	// replacement; device-wide lifecycle admission must remain available.
+	s.dispatchMu.Unlock()
 	next, err := s.openCatalog(ctx, id, stop)
+	s.dispatchMu.Lock()
+	if err == nil {
+		err = s.updateAdmission()
+	}
 	if err == nil && (previous == nil || next.Done() != previous.Done()) {
 		s.recoveryChecked = map[string]recoveryAttempt{}
 	}

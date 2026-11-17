@@ -72,7 +72,7 @@ func run() error {
 	build.Schema = store.SchemaVersion
 	build.SafeUpdate = true
 	build.Lifecycle = 1
-	build.PrivateControl = 1
+	build.PrivateControl = supervisor.PrivateControlVersion
 	build.Maintenance = true
 	build.ContextUsage = true
 	build.OutputFiles = true
@@ -339,6 +339,9 @@ func run() error {
 					if in.Instance != os.Getenv("SHIOJI_WORKER_INSTANCE") {
 						return domain.WorkerUpdateResult{}, errors.New("service instance authentication failed")
 					}
+					if in.Action != "" && in.Action != "drain" && in.Action != "resume" {
+						return domain.WorkerUpdateResult{}, errors.New("unknown lifecycle action")
+					}
 					if !in.AdmitBefore.IsZero() && !time.Now().Before(in.AdmitBefore) {
 						return domain.WorkerUpdateResult{}, errors.New("drain admission attempt expired")
 					}
@@ -350,11 +353,17 @@ func run() error {
 					}
 					// Cancel only read-only startup discovery, not the server lifetime.
 					// Admission remains the owning worker's responsibility once bound.
-					cancelStartup()
+					if in.Action != "resume" {
+						cancelStartup()
+					}
 					select {
 					case <-initialized:
 						if s == nil {
 							return domain.WorkerUpdateResult{}, startupErr
+						}
+						if in.Action == "resume" {
+							err := s.ResumeService(in)
+							return domain.WorkerUpdateResult{Ready: err == nil}, err
 						}
 						return s.DrainService(in)
 					case <-ctx.Done():

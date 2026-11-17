@@ -247,6 +247,14 @@ func (s *Server) sessionRuntimeDirectory(id string) string {
 	return filepath.Join(s.config.Directory, "runtimes", id)
 }
 func (s *Server) failRuntimeLaunch(op domain.Operation, in domain.Submission, cause error) {
+	deleted, err := s.store.SessionDeleted(op.SessionID)
+	if err != nil {
+		s.cancel()
+		return
+	}
+	if deleted {
+		return
+	}
 	if scope, err := s.executions.Existing(op.SessionID); err != nil || scope != nil && scope.VerifyStopped() != nil {
 		if scope != nil {
 			if e := s.store.GuardExecution(op.SessionID, scope.Generation); e != nil {

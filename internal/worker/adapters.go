@@ -125,7 +125,10 @@ func (s *Server) openCatalog(ctx context.Context, id string, stop bool) (harness
 	if !stop && state.phase == domain.RuntimeUnavailable && state.revision == revision && time.Now().Before(state.retryAt) {
 		return nil, s.catalogFailure(id)
 	}
-	if err := s.markCatalogRefreshing(id, revision); err != nil {
+	s.dispatchMu.Lock()
+	err = s.markCatalogRefreshing(id, revision)
+	s.dispatchMu.Unlock()
+	if err != nil {
 		return nil, err
 	}
 	return s.startCatalog(ctx, id, stop, revision)

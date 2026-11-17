@@ -85,7 +85,7 @@ func TestPrivateLifecycleSignedChildDrainsBeforeOrWithoutBusinessSocket(t *testi
 						client, e := protocol.Connect(ctx, conn, "")
 						if e == nil {
 							device = client.DeviceID
-							if client.Worker.PrivateControl != 1 {
+							if client.Worker.PrivateControl != supervisor.PrivateControlVersion {
 								t.Fatal("child did not advertise private control")
 							}
 							client.Close()

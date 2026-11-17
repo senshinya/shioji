@@ -2,6 +2,26 @@
 
 核查日期：2026-11-17。结论用于 Shioji 本轮升级改造。用户已决定直接采用 Lody 的机制，接受其未登记进程覆盖范围，不再增加独立会话宿主或完整后代追踪架构。以下参考源码分析在实施前完成；实施现状见下段，三台正式设备没有停止或更新。
 
+> **五处交接修复（2026-11-17，本机验证，正式设备未部署）**：删除 pending Start、成功退休的旧工作所有权、后台关闭的明确前置失败、私有 resume、目录恢复的全局锁五处均已有修复及回归。38 项并发检查通过；最终签名源码两轮历史重放为 12 次 APPLIED，2 次既定旧状态 BLOCKED，没有把后者算作升级成功。下方“尚未修复”段落为修复前审计原件，当前状态以本节为准。
+
+## 2026-11-17 五处交接修复与验证
+
+| 交接点 | 最终机制 |
+| --- | --- |
+| 永久删除 pending Start | 墓碑提交后撤销准确 Start 的 context、事件 gate、runtimeStarts 与 dispatch reservation；不再写回已删会话。迟到启动失败只为已提交墓碑幂等返回，真实缺失／存储错误仍按原保护处理。原生晚到结果继续由已捕获 scope／outbox 清理。 |
+| 成功退休旧工作 | 通用退休等待成功后，在 dispatch 下复查准确 runtime.Done 与 scope generation，再 RetireWork；覆盖普通换版和归档 needsRelease=false。失败仍保留 unknown，迟到旧退休不能结算继任实例的工作。 |
+| 明确未执行的后台关闭 | BackgroundService.NotStarted 只由 helper 启动前的确定结果声明，含真实验签前置失败与 exec.Start 失败；worker 恢复原准入。helper 已启动但响应无效／未知时继续保持 fence，不重发关闭。 |
+| 已提交候选恢复接纳 | 私有控制升级至版本 2，新增 resume。准确候选的 instance／operation 与 drain intent 设备身份共用校验；resume 幂等且不关闭通道，已接纳 drain 后拒绝迟到 resume。只在原 10 秒预算内重试短暂失败，保留旧协议兼容回滚的公共路径。describe 与实际握手声明一致，避免旧协议误把 resume 当 drain。 |
+| 目录恢复与设置原生 I/O | recoveryRuntime、手动重检及设置刷新在 capture／mark 后释放 dispatch，再等待原生 Close／Start；发布时重新核对更新准入，排空后到达的目录受有界清理且保留准确控制器。保留每个 harness 的 catalog gate；恢复不递归获取已有 maintenance RLock。 |
+
+没有增加强制关闭页面、进程选择入口、独立宿主或全后代扫描。保持 20 分钟／30 秒、24 小时 waiting、未登记后代以及首次旧存量手动处理的既定范围。PrivateControl 版本保护是正常候选／兼容回滚的 wire 边界，不是恢复旧存量迁移兼容。
+
+验证证据保存在 `.ryugi/audits/lody-handoff-fixes-20261117/`：`worker-red.txt`、`helper-red.txt`、`resume-red.txt`、`catalog-red.txt`、`resume-guard-red.txt` 为修复前失败；`lifecycle-race.txt` 的 38 项父测试在 worker、supervisor、transport、shioji-worker 四包通过，包括真实签名子进程、真实 Node 和 SQLite。前置失败测试曾在接纳后立即重试，真实待发输入仍活跃，现明确等待已接纳操作完成后再核对关闭重试，没有放松活动输入保护。
+
+最终两个签名构建的 PrivateControl=2、schema=15；`historical-replay.txt` 与 `historical-summary.txt` 覆盖全部 14 次隔离历史重放，同设备、会话、原线程与历史保持，暂停队列不重放，显式接续成功。H05 未登记后代按已接受范围存活至夹具准确清理；H07 缺失旧接纳证明继续 BLOCKED。本轮没有正式安装、反注册或三台设备部署。988 个产品与测试文件在构建后哈希未变化，详见 `replay-build.json`。
+
+全仓验证：CI 命令 `go test -timeout 20m ./...` 已完整执行。27 个正式包中，26 个通过／编译，UI 包的 `TestWorkspaceHeadingSharesTheWorkspaceRowVisibleEdges` 与 `TestWorkspaceHeadingInsetsAndNoPerWorkspacePlus` 两项既有间距断言失败；全部 355 个 UI 源文件与未改动基线完全相同。根命令还被本地 build 研究快照的未定义类型／重复 main 阻断，详见 `full-suite-summary.txt` 与 `root-suite.txt`。最终六个生命周期相关包全部通过；没有过滤失败项或宣称全仓全绿。首次生命周期整包 CLI 启动检查超时，单独复现又发现实际握手仍声明版本 1；统一至版本 2 后，签名子进程与最终根测试中的 CLI 包通过。
+
 > **继续深查（2026-11-17，尚未修复）**：在前述三处之外，再确认两处：提交新版后的 resume 仍仅走业务 socket，短暂端点缺失会永久转为 blocked；自动恢复模型目录时仍在原生 Start／Close 期间持有全局 dispatchMu，让闲置排空等待。两种故障各三次复现，签名 worker 与后台目录刷新对照各三次通过，另有 55 项既有相邻检查通过。当前共有五处已确认待修机制，产品代码及正式设备均未改动。
 
 ## 2026-11-17 继续深查：再确认两个机制差异
