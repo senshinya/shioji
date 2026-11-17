@@ -1,5 +1,85 @@
 # Lody 执行服务升级、停止与回收源码分析
 
+## 2026-11-17 推送后的整轮复核：3 类差异、5 个条件已复现（本轮未修）
+
+**已推送实现与上一轮文档；完整复核结束，仍有 P／Q／R 三类差异。** 审计产品基线 `ac6a075`，远端 `origin/main` 已核对同一 SHA。重新 fetch 的 Lody 为 `50d8d70791e93acb8b3973f5d86d8eeba9d3b52d`；较 `d6df2f2` 只有定时任务 #2850 变化，52 份保存的源码／测试原件逐字节核对无误。下述检查期间 1006 个产品／测试文件指纹未改；本轮没有修产品、部署正式设备或改变已接受的边界。
+
+### P．高：压缩／历史重开最后一次原生等待后仍漏更新准入
+
+- [context_action.go:77](../internal/worker/context_action.go#L77) 的 sessionRuntime 和 [Resume:90](../internal/worker/context_action.go#L90) 之后只检查 transition／ThreadID，没有在 [AcceptContextAction:108](../internal/worker/context_action.go#L108) 前重新检查 updateAdmission。
+- [history.go:139](../internal/worker/history.go#L139) 最后一次 sessionRuntime 返回后直接 [ActivateHistory／CommitHistory:154](../internal/worker/history.go#L154)，同样只检查 owner 是否 active。DrainService 封闭更新准入并不等于此维护 owner 已被撤销。
+- 隔离真实 Worker／Store、中立 harness 原生等待，各 3 轮：先让 Resume 或新 runtime Start 等待，实际 DrainService 确认 `Ready=true`，再释放。压缩仍 `operation=confirmed, nativeCalls=1`；历史仍 `history=complete`，接纳修订输入，原输入前缀被替换。**证明排空后仍执行／提交历史替换，不宣称已现场造成正式设备会话损失。** 无 drain 的同夹具阳性对照共 6 次通过。
+- Lody 的 [machine gate](https://github.com/LodyAI/Lody/blob/50d8d70791e93acb8b3973f5d86d8eeba9d3b52d/apps/cli/src/session/machine-turn-admission.ts#L1) 与 [start.ts:884](https://github.com/LodyAI/Lody/blob/50d8d70791e93acb8b3973f5d86d8eeba9d3b52d/apps/cli/src/commands/start.ts#L884) 封闭后进入取消所有权；[session-manager.ts:812](https://github.com/LodyAI/Lody/blob/50d8d70791e93acb8b3973f5d86d8eeba9d3b52d/apps/cli/src/session/session-manager.ts#L812)／957 在原生创建返回后核对 abort。对齐应落在最后接纳／截断前，并让 sessionRuntime 发布与同一 update/owner fence 一致；不能只在首次 Git 准备后检查。
+
+### Q．中：worktree 部分完成状态缺少 Lody 的恢复／重试
+
+1. **Q1，目录消失但 Git 登记还在。** [restoreOwnedWorktrees:121](../internal/worker/worktree_lifecycle.go#L121) 直接 worktree add。真实 Git 的 3 轮结果均为 `missing but already registered worktree`；相同元数据和原分支只执行本地 `worktree prune` 后，再次原 owning restore 均成功。Lody [runWorktreeAddWithPruneRetry](https://github.com/LodyAI/Lody/blob/50d8d70791e93acb8b3973f5d86d8eeba9d3b52d/apps/cli/src/session/worktree/worktree-manager.ts#L1184) 识别此类错误后 prune 一次再重试。
+2. **Q2，Git 已创建目录而调用报告失败。** [prepareGitLocked:481](../internal/worker/git.go#L481) 在 add 报错时直接返回，尚未保存 owning record。故障注入让真实系统 Git 完成 add 后返回失败，3 轮均得到 `directoryExists=true, owningRecords=0`；同 OperationID 重试均撞上 `branch already exists`。Lody [createWorktree:1313](https://github.com/LodyAI/Lody/blob/50d8d70791e93acb8b3973f5d86d8eeba9d3b52d/apps/cli/src/session/worktree/worktree-manager.ts#L1313) 先核对已存在目录，另有 [fresh retry:1223](https://github.com/LodyAI/Lody/blob/50d8d70791e93acb8b3973f5d86d8eeba9d3b52d/apps/cli/src/session/worktree/worktree-manager.ts#L1223) 处理该次创建的分支和 stale add。**这是明确标记的完成回复故障注入，不冒称真实机器已发生过同样 Git 错误。**
+
+两者都须按已确认目录／操作归属核对和有限重试，不能删除任意冲突分支或强制接管别人的目录；不需要新增强制环境页面。
+
+### R．中：Git 的 context 期限没有界定输出管道等待
+
+[gitRun:42](../internal/worker/git.go#L42) 使用 CommandContext，但没有 WaitDelay 或同等输出／进程树取消边界。真实 Git clean filter 的后续进程继承管道时，父 Git 被 context 取消并不意味着 Cmd.Run 能返回。Lody 的 [WorktreeGitLive](https://github.com/LodyAI/Lody/blob/50d8d70791e93acb8b3973f5d86d8eeba9d3b52d/apps/cli/src/session/worktree/git-execution.ts#L95) 通过 [runCommand:1208](https://github.com/LodyAI/Lody/blob/50d8d70791e93acb8b3973f5d86d8eeba9d3b52d/packages/shared/src/node/process.ts#L1208) 持有 processGroup，超时中断 scoped 输出收集并按策略结束该命令树。
+
+三个本机隔离真实 Git 案例使用 250ms 父 context，期限后再观察 300ms 仍未返回；仅释放 filter 管道后约 555–562ms 才退出。这里只用了短预算证明“期限不是返回上限”，没有让正式服务永久挂死，也没有冒称真实升级链路现场失败。由于 worktree collector 加入 shutdown 的 wg，静态调用链表明这类等待可能使退出超过预算，进而拿不到 drained 证明。**本项核查 worker 自己启动的 Git 命令与 I/O 期限，不扩展用户排除的未登记 Agent 后代追踪。**
+
+### 整轮结果、排除的疑点与验证边界
+
+- 40 个入口／交接均列在下表，发现 3 类／5 条条件后继续完成余项，未在首个发现停止。
+- 五个新增诊断各 3 轮，共 **15 次预期失败**；它们不计入通过数。两条维护路径无 drain 阳性对照 **6 次通过**；Q1 的 prune 阳性对照 **3 次成功**。
+- 七包原有 **781 项父测试通过**，其中六包为 Go 缓存命中、Store 122 项本轮实际执行；这是相邻回归，不抵消新反例。没有本轮新的签名制品或正式升级回放；上一轮签名证据仅对其实际来源有效。
+- 特意排除了三项候选：内存压力已有回收时不等待与 Lody 当前代码一致；子 Agent 独立取消不强杀父实例，Lody 也如此；候选退出而缺少 drain 证明时，两端都可能阻止回退，不能将所有安全阻止都标成差异。
+- 初始化 probe 初版错误等待整个 Server wg 才 Close，造成诊断夹具超时；修正夹具后重跑。按保存的 scope PID／空 launches／准确 audit-source 与 audit-history 回执，只移除了这一私有临时目录。没有按进程名字清理用户服务。
+- 已接受的 20min／30s、24h、未登记后代、首次旧存量手动处理保持；已读／改名续期仍属单列项目约定。真实 SMAppService、三台正式设备、历史缺失日志与原有 UI／研究测试问题没有被本轮审计消除。
+
+证据目录：`.ryugi/audits/lody-complete-recheck-20261117/`。对应 [原件与来源](../.ryugi/audits/lody-complete-recheck-20261117/source-and-push.txt)、[新增反例](../.ryugi/audits/lody-complete-recheck-20261117/probes-summary.txt)、[无 drain 对照](../.ryugi/audits/lody-complete-recheck-20261117/controls-summary.txt)、[相邻回归](../.ryugi/audits/lody-complete-recheck-20261117/neighbours-summary.txt)。
+
+| # | 入口／交接 | Shioji 落点 | Lody 对照 | 本轮结论 |
+| --- | --- | --- | --- | --- |
+| 1 | 独立 Host／Worker | supervisor/host_darwin.go；service_control.go | daemon-runner.ts；start.ts | 未发现新增差异 |
+| 2 | 停止意图覆盖崩溃重启 | supervisor/background_darwin.go | daemon-runner.ts；start-shutdown.ts | 未发现新增差异 |
+| 3 | 后台注销接纳与准确撤销 | background_stop.go；supervisor/background_darwin.go | daemon-runner.ts 的独立控制／停止所有权 | 未发现新增差异 |
+| 4 | 普通崩溃预算、退避与健康重置 | supervisor/retry.go；start_retry.go | daemon-runner.ts／supervisor contract | 未发现新增差异 |
+| 5 | 在线准备与旧服务继续运行 | supervisor/host_darwin.go:update | daemon-runner.ts:prepare | 未发现新增差异 |
+| 6 | 默认空闲升级准入 | service_control.go:businessStopReady／reserveDispatch | machine-turn-admission.ts:reserveMachineTurn | 未发现新增差异 |
+| 7 | immediate 排空与封闭 | service_control.go:DrainService | start.ts:switchWhenIdle | P：维护末端仍可越过封闭 |
+| 8 | 私有控制独立于业务 socket | supervisor/lifecycle_darwin.go；service_control.go | managed-daemon-ipc.ts；daemon-runner.ts | 未发现新增差异 |
+| 9 | drained 与最终 writer 释放 | shutdown.go；supervisor/host_darwin.go:shutdown | start-shutdown.ts；start.ts | 未发现新增差异；不以 PID 消失替代持久化证明 |
+| 10 | 候选失败与一次回退 | supervisor/host_darwin.go:update | daemon-runner.ts:decideExit | 未发现新增差异；两端都允许未确认 drain 时阻止回退 |
+| 11 | 已提交结果与 resume 核对 | supervisor/host_darwin.go:completeCommitted／resume | daemon-runner.ts 的 committed／observing 交接 | 未发现新增差异 |
+| 12 | 冷修复／未知 writer | supervisor/repair_darwin.go | managed-daemon-release.ts；daemon-runner.ts | 未发现新增差异；真实未知不会无条件启动第二 writer |
+| 13 | 普通提交第一次准备前预留 | server.go:submitLocked；service_control.go:reservePreparation | session-execution-service.ts:runVisibleSessionTurn | 主流程保持；P 的维护末端另列 |
+| 14 | 队列准入与分发 | queue.go；server.go:submitLocked／dispatch | session-execution-service.ts 的 inbox／owned turn | 未发现新增差异 |
+| 15 | Steer 两次附件交接 | queue.go:steerLocked | session-execution-service.ts 的 acknowledged steer／owner | 未发现新增差异 |
+| 16 | 子 Agent 发送和回执查询 | work_input.go；native_dispatch.go | agent-client.ts 的 native prompt 所有权 | 未发现新增差异 |
+| 17 | 审批／问题回复 | native_dispatch.go:respondRequest；codex/runtime.go:Respond | agent-client.ts 的 pending request 生命周期 | 未发现新增差异 |
+| 18 | 压缩的 Resume／初始化交接 | context_action.go:77–118 | session-manager.ts 的 await 后 abort 检查 | P：已复现，排空后仍 confirmed 并调用 Compact |
+| 19 | 历史重开最后启动与截断 | history.go:138–174；session_runtime.go | session-manager.ts 的 await 后 abort 检查 | P：已复现，排空后仍 complete 并替换旧历史 |
+| 20 | reload 接纳与迟到返回 | session_reload.go；session_transition.go | session-manager.ts:retireSessionForReconfiguration | 未发现新增差异；接纳位于原生重载前且有 owner |
+| 21 | 初始化撤销／继任实例 | runtime_start.go；session_runtime.go | session-manager.ts:abandonPendingSessionCreate | 继任保护保持；最终更新准入与 P 共因 |
+| 22 | Stop ACK 与真正停止 | stop.go:interruptTurn | session-execution-service.ts:drainCancelledPrompt | 未发现新增差异 |
+| 23 | 独立子 Agent Stop | server.go:session.work.stop；codex/work.go:StopWork | session-execution-service.ts:cancelSession 的 subagentTaskId 分支 | 排除疑点：Lody 此分支同样直接取消子任务，不强杀父实例 |
+| 24 | 强制退休与 native close 并行 | retirement.go:beginRuntimeRetirement | session.ts:terminateOnce／escalateTermination | 未发现新增差异 |
+| 25 | 失败退休分离与后台重试 | detached_runtime.go；archive_retirement.go | session-manager.ts:detachSession；session.ts 的失败保留 | 未发现新增差异 |
+| 26 | 登记组、根已退出与 MCP／Node | managedexec/process_darwin.go／retirement_darwin.go；codex/executor.go | session.ts；process-tree-registry.ts；shared/node/process.ts | 未发现新增差异；未登记后代仍属用户接受范围 |
+| 27 | 真实后台状态与活跃子 Agent | codex/work.go；native_background_test.go | agent-client.ts:getNativeWork；session-gc-manager.ts | 未发现新增差异 |
+| 28 | 20min／30s、24h GC 与最终资格 | idle_runtime.go；store/runtime_idle.go | session-gc-manager.ts:checkCleanupEligibility | 未发现新增机制差异；已读／改名时钟保留既有附记 |
+| 29 | 内存压力与并发回收 | memory_pressure_darwin.go；memory_pressure_test.go | session-gc-manager.ts:evictForMemoryPressure | 排除疑点：Lody 对已在进行的回收同样不等待；WARNING 回收／CRITICAL 拒绝 |
+| 30 | 会话和工作区归档 | archive_retirement.go；server.go 的 archive handlers | message-handler.ts:releaseArchivedSessionRuntime | 未发现新增差异 |
+| 31 | 永久删除与持久 outbox | archive.go:commitArchiveDeletion／cleanArchiveGarbageItem | message-handler.ts:handleSessionDeleted | 未发现新增差异；迟到事件不恢复已删除会话 |
+| 32 | 过期归档与恢复竞态 | archive.go:cleanupArchives；archive_retirement.go | message-handler.ts 的 metadata archive watcher | 未发现新增差异 |
+| 33 | worktree GC 独立调度与重试 | worktree_gc.go；worktree_lifecycle.go:cleanOwnedWorktrees | worktree-gc.ts:schedule／sweep | 未发现新增差异 |
+| 34 | 备份、真实分支、detached ref | worktree_lifecycle.go:archiveOwnedWorktree | worktree-manager.ts:archiveWorktree | 未发现新增差异 |
+| 35 | 共享 checkout 与 repo 变更保护 | git_dispatch.go；git.go:checkoutGuard／prepareGitLocked | worktree-manager.ts:withRepoLock | 未发现新增差异；本项目保持单 owning worker 的序列化边界 |
+| 36 | 已有／缺失自建目录懒恢复 | worktree_lifecycle.go:restoreOwnedWorktrees | worktree-manager.ts:runWorktreeAddWithPruneRetry | Q1：缺少 stale registration 的 prune-and-retry |
+| 37 | 新建 worktree 的部分完成重试 | git.go:481–506 | worktree-manager.ts:createWorktree／runFreshWorktreeAddWithPruneRetry | Q2：实际目录已建、无 owning record，同一操作撞已有分支 |
+| 38 | Git 取消、期限和输出管道 | git.go:38–60；shutdown.go:wg.Wait | git-execution.ts:WorktreeGitLive；shared/node/process.ts:runCommand | R：context 到期未界定 pipe 等待；已用真实 Git clean filter 复现 |
+| 39 | 安装／目录刷新及 Git 迟到读取 | catalog_refresh.go；runtime_settings.go；git.go；worktree_lifecycle.go:removedWorktreeStatus | managed-runtime-update-coordinator.ts；worktree-manager.ts 的本地恢复 | 未发现新增差异 |
+| 40 | 强制处理 UI、历史事件及新抽象 | internal/ui（356 文件未改）；domain／harness boundary | Lody 的逻辑退休与进程回收职责分离 | 未新增强制页面或入口，未引入迁移／后代追踪框架；旧后台协议不冒称全删 |
+
+
+
 ## 2026-11-17 L／M／N／O 对齐实施与验证
 
 **四类差异已按 Lody 的职责和时序修复，本机隔离验证完成，正式设备未部署。** 产品提交 `8427145`、`4aeda7a`、`a8169dc`、`b6ae113`、`1b4e56e`；`4ba464a` 只改测试夹具的锁与关闭顺序。Lody 依据保持固定 `d6df2f2`，不复制其运行时，也未增加强制处理页或首次旧存量兼容。
