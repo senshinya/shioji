@@ -26,13 +26,14 @@ type workTracker struct {
 	agents       map[string]agentWorkBinding
 	childTurns   map[string]agentWorkBinding
 	currentTurns map[string]string
+	endedTurns   map[string]bool
 	works        map[string]domain.WorkActivity
 	commands     map[string]*commandWork
 }
 
 func (n *Normalizer) workState() *workTracker {
 	if n.work == nil {
-		n.work = &workTracker{spawns: map[string]bool{}, earlyTurns: map[string]wire.Turn{}, earlyPrompts: map[string]string{}, agents: map[string]agentWorkBinding{}, childTurns: map[string]agentWorkBinding{}, currentTurns: map[string]string{}, works: map[string]domain.WorkActivity{}, commands: map[string]*commandWork{}}
+		n.work = &workTracker{spawns: map[string]bool{}, earlyTurns: map[string]wire.Turn{}, earlyPrompts: map[string]string{}, agents: map[string]agentWorkBinding{}, childTurns: map[string]agentWorkBinding{}, currentTurns: map[string]string{}, endedTurns: map[string]bool{}, works: map[string]domain.WorkActivity{}, commands: map[string]*commandWork{}}
 	}
 	return n.work
 }
@@ -215,6 +216,10 @@ func (n *Normalizer) observeRootWork(m wire.Message, p wire.Params, event domain
 	}
 	if event.Turn != nil {
 		tracker.currentTurns[p.ThreadID] = event.Turn.ID
+		switch event.Turn.Status {
+		case "completed", "interrupted", "failed", "abandoned":
+			tracker.endedTurns[p.ThreadID+"\x00"+event.Turn.ID] = true
+		}
 	}
 	out := []domain.Event{}
 	if p.Item.Type == "collabAgentToolCall" {
@@ -253,7 +258,10 @@ func (n *Normalizer) observeRootWork(m wire.Message, p wire.Params, event domain
 		sort.Strings(keys)
 		for _, key := range keys {
 			cmd := tracker.commands[key]
-			if cmd.thread != p.ThreadID || cmd.body.Final || cmd.process == "" || cmd.promoted {
+			if cmd.thread != p.ThreadID || cmd.body.Final || cmd.process == "" {
+				continue
+			}
+			if cmd.promoted && event.Turn == nil {
 				continue
 			}
 			if m.Method == "item/started" && cmd.body.ID == itemKey(p.TurnID, p.Item.ID) {
@@ -263,6 +271,7 @@ func (n *Normalizer) observeRootWork(m wire.Message, p wire.Params, event domain
 				continue
 			}
 			cmd.promoted = true
+			cmd.work.State = tracker.commandState(cmd, cmd.work.State)
 			tracker.works[cmd.work.ID] = cmd.work
 			out = append(out, workEvent(sid, cmd.work), workItemEvent(sid, cmd.work.ID, cmd.body))
 		}
@@ -288,7 +297,11 @@ func (n *Normalizer) observeRootWork(m wire.Message, p wire.Params, event domain
 		}
 		if cmd != nil {
 			cmd.body = *event.Item
-			cmd.work.State = neutralWorkState(event.Item.Status)
+			cmd.work.State = tracker.commandState(cmd, neutralWorkState(event.Item.Status))
+			// The owning turn may have completed before this delayed item arrived.
+			if !cmd.body.Final && tracker.endedTurns[cmd.thread+"\x00"+cmd.turn] {
+				cmd.promoted = true
+			}
 			cmd.work.Latest = latestWorkText(event.Item.Text)
 			if p.Item.Type == "commandExecution" {
 				cmd.work.CompletedAt = itemTime(p.Item, "completedAtMs")
@@ -579,4 +592,11 @@ func neutralWorkState(s string) string {
 		return "waiting"
 	}
 	return "unknown"
+}
+
+func (t *workTracker) commandState(cmd *commandWork, state string) string {
+	if t.endedTurns[cmd.thread+"\x00"+cmd.turn] && (state == "running" || state == "starting") {
+		return "waiting"
+	}
+	return state
 }

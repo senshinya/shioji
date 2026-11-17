@@ -137,7 +137,7 @@ func TestBackgroundCommandRequiresObservedConcurrentProgress(t *testing.T) {
 	es = workFeed(t, n, `{"method":"turn/completed","params":{"threadId":"root","turn":{"id":"t","status":"completed"}}}`)
 	found := false
 	for _, e := range es {
-		found = found || e.Work != nil && e.Work.Kind == "background" && e.Work.State == "running" && e.Work.StartedAt != nil
+		found = found || e.Work != nil && e.Work.Kind == "background" && e.Work.State == "waiting" && e.Work.StartedAt != nil
 	}
 	if !found {
 		t.Fatal("still-running command disappeared with parent completion", es)
