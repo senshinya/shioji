@@ -404,22 +404,44 @@ func (r *noInterruptRuntime) Interrupt(context.Context, domain.Session, string) 
 func TestRecoveredCatalogChecksInterruptBeforeCallingAdapter(t *testing.T) {
 	s, w := memoryWorker(t, noInterruptHarness{memoryHarness{id: "alpha"}})
 	s.dispatchMu.Lock()
-	defer s.dispatchMu.Unlock()
-	session := savedUnknownSession(t, s, w)
-	d, _ := s.store.Session(session.ID, 0, 100)
 	s.runtimeMu.Lock()
 	old := s.runtime
 	s.runtime = nil
 	delete(s.catalogs, "alpha")
 	s.runtimeMu.Unlock()
 	old.Close(context.Background())
-	if err := os.Remove(filepath.Join(s.catalogDirectory("alpha"), "runtime-process.json")); err != nil {
+	err := os.Remove(filepath.Join(s.catalogDirectory("alpha"), "runtime-process.json"))
+	s.dispatchMu.Unlock()
+	if err != nil {
 		t.Fatal(err)
 	}
-	_, e := s.reconcileLocked(context.Background(), protocol.RecoveryInput{SessionID: session.ID, Revision: d.Session.Revision, Action: "interrupt"})
+	// Closing the catalog wakes automatic recovery. Complete that replacement
+	// before creating the unknown session so this tests its recovered capability,
+	// rather than racing the catalog's legitimate refreshing response.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for {
+		recovered, err := s.openCatalog(ctx, "alpha", false)
+		if err == nil && recovered != old && s.runtimeReadiness().State == domain.RuntimeReady {
+			break
+		}
+		if err != nil && !errors.Is(err, errCatalogRefreshing) {
+			t.Fatal(err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("catalog replacement did not finish", ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	session := savedUnknownSession(t, s, w)
+	d, _ := s.store.Session(session.ID, 0, 100)
+	result, e := s.reconcileLocked(context.Background(), protocol.RecoveryInput{SessionID: session.ID, Revision: d.Session.Revision, Action: "interrupt"})
 	var unsupported *harness.UnsupportedError
 	if !errors.As(e, &unsupported) {
-		t.Fatal("recovered adapter capability was not checked", e)
+		t.Fatalf("recovered adapter capability was not checked: result=%+v error=%v", result, e)
 	}
 }
 

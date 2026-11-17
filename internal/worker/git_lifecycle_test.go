@@ -39,7 +39,9 @@ exec /usr/bin/git "$@"
 }
 func awaitLifecycleGit(t *testing.T, gate string) {
 	t.Helper()
-	until := time.Now().Add(4 * time.Second)
+	// Native setup may be delayed on a loaded runner; admission latency is
+	// asserted separately only after Git has reached the controlled gate.
+	until := time.Now().Add(20 * time.Second)
 	for time.Now().Before(until) {
 		if _, e := os.Stat(filepath.Join(gate, "entered")); e == nil {
 			return
