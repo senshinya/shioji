@@ -1,5 +1,31 @@
 # Lody 执行服务升级、停止与回收源码分析
 
+## 2026-11-18 P／Q／R 修复与最终验证
+
+**三类差异及五个审计反例已修复，本机隔离验证完成，正式设备未部署。** 自有产品提交 `a7985dc`、`bf97ff2`、`bbf84ac`；Lody 依据保持固定 `50d8d70`。并发落入的 IME 提交 `9392f5f` 没有混入本轮三提交审阅包；本轮未改 UI、Tailnet、服务注册或凭据。
+
+| 修复 | 现在的行为 | 验证 |
+| --- | --- | --- |
+| P：维护最终接纳 | 压缩在 setup／Resume 返回后重验更新准入和准确 runtime；历史重开在最后启动后重新做完整 preflight，在实际截断回调里检查准入；初始化在旧清理后及发布前检查同一封闭状态。取消时先 fence 已知 scope，迟到控制器只清理自己。 | 两条原反例 RED→GREEN，排空后没有压缩接纳或历史截断，也不发布可复用的新 runtime；正常压缩、历史接续与继任保护相邻回归通过。 |
+| Q：可恢复的自建 worktree | 在变更 Git 前，使用原 owned_worktrees 保存 CreationOperation／CreationBase。stale 登记 prune 后只重试一次；已实际建好的目录按准确操作、common-dir、分支及 HEAD 核对后供原请求重试。冲突引用改分配新名字，跨调用的仅分支状态使用保存 HEAD 切新引用，不接管既有分支。 | Q1／Q2 RED→GREEN；另复现修正 GC 扫掉未接纳准备目录、失败清理误删旧默认分支两处相邻条件。无归属目录、symlink、其他已登记 worktree 和冲突分支保持。 |
+| R：Git 取消及输出收尾 | 每次 Git 有独立进程组，context 取消或输出失败结束本次命令范围；WaitDelay 限制继承管道收尾。没有进程名扫描或扩大到未登记 Agent 后代。 | 真实 Git clean filter 在取消后退出，调用无需先释放测试管道；无关独立进程保持。原 250ms 反例保留，正式回归夹具先观察 filter 已进入再取消，避免负载导致场景尚未开始就过期。 |
+
+**文件保留策略明确：** 未接纳创建没有权威归档／删除 owner 时，准备目录及原件保留供同一操作重试，可能长期占磁盘；它们不持有会话进程或更新 reservation。明确的本地接纳失败只按本次保存的实际分支、Git 身份、回执与引用做无 force 清理。已经接纳的会话／工作区归档及永久删除仍按原机制回收，不因这条未知归属保护变成永久保留。
+
+### 验证与来源
+
+- 未过滤 `go test -json -timeout=10m ./...` 已执行完。七个生命周期相关包共 **789 项父测试通过**，含 Worker **365 项**；三个未改包命中 Go 缓存。全仓仍有 UI 的 `TestWorkspaceHeadingSharesTheWorkspaceRowVisibleEdges`、`TestWorkspaceHeadingInsetsAndNoPerWorkspacePlus`，以及 `build/composer-enter/baseline`、interaction-latency 的 app／ui、worker-recovery-20261116 四个研究快照编译失败；原始命令不改成全绿。
+- 本轮并发检查 **33 次父测试调用通过**（count=3），无 DATA RACE。vet、git diff --check 与六份冻结设计检查通过。
+- 两只新建临时 ad-hoc 签名 Worker 均严格验签通过，实际 Revision 为 `bbf84ac+modified`、BuiltAt 6101／6102、协议 2.48、PrivateControl 2、schema 15。1960 个源码指纹（含 MyGo）在签名后零变化；不以文档提交改标旧二进制。
+- 历史签名回放实际 **7 个场景，6 APPLIED、1 既定 H07 BLOCKED**，count=1。成功项保留设备／会话／线程／历史与暂停队列，未知输入不重发，显式原线程接续成功；H05 未登记后代仍属接受范围，H07 不算成功升级。本轮没有为了扩大数字重复同一通过检查。
+- 一次 fresh-context 独立整体审阅覆盖自有三提交及四项 Review Focus，Critical／Important／Minor 均为 None，Verdict Yes。没有二次派审；这只证明源码审阅，不等于正式部署认证。
+- 20min／30s／24h、未登记后代与首次旧存量手动处理保持。原已读／改名续期附记、真实 SMAppService／三台正式设备、历史缺失日志与既有 UI／研究问题没有被本轮修复冒充解决。
+
+12 项完整工程裁定及成本、Minor None、一次审阅原文、各项 RED／GREEN 与执行 ledger 在 `.ryugi/audits/lody-pqr-repairs-20261118/`；同主题验证报告保留原 P／Q／R IDs，改为相应的通过检查。下方“3 类差异未修”及更早记录为当时审计原件。
+
+证据：[整包](../.ryugi/audits/lody-pqr-repairs-20261118/backend-summary.txt)、[并发](../.ryugi/audits/lody-pqr-repairs-20261118/race-summary.txt)、[签名历史](../.ryugi/audits/lody-pqr-repairs-20261118/historical-summary.txt)、[来源](../.ryugi/audits/lody-pqr-repairs-20261118/source-provenance.txt)、[全仓失败范围](../.ryugi/audits/lody-pqr-repairs-20261118/root-summary.txt)、[审阅](../.ryugi/audits/lody-pqr-repairs-20261118/review.txt)、[裁定](../.ryugi/audits/lody-pqr-repairs-20261118/rulings.txt)。
+
+
 ## 2026-11-17 推送后的整轮复核：3 类差异、5 个条件已复现（本轮未修）
 
 **已推送实现与上一轮文档；完整复核结束，仍有 P／Q／R 三类差异。** 审计产品基线 `ac6a075`，远端 `origin/main` 已核对同一 SHA。重新 fetch 的 Lody 为 `50d8d70791e93acb8b3973f5d86d8eeba9d3b52d`；较 `d6df2f2` 只有定时任务 #2850 变化，52 份保存的源码／测试原件逐字节核对无误。下述检查期间 1006 个产品／测试文件指纹未改；本轮没有修产品、部署正式设备或改变已接受的边界。
