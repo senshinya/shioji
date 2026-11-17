@@ -2,6 +2,36 @@
 
 核查日期：2026-11-17。结论用于 Shioji 本轮升级改造。用户已决定直接采用 Lody 的机制，接受其未登记进程覆盖范围，不再增加独立会话宿主或完整后代追踪架构。以下参考源码分析在实施前完成；实施现状见下段，三台正式设备没有停止或更新。
 
+> **修复后继续复核（2026-11-17，两个条件尚未修复）**：3648cc6 对照 Lody 最新 58e33ce，再确认两个控制流程收尾问题：resume 已执行而确认迟到，仍会把已提交升级永久写为 blocked；后台注销 helper 与宿主退出重叠时，worker 持锁及请求等待会妨碍自己的排空。三个失败场景各三次，共 9 次预期失败，另有 6 次正向／诊断对照；37 项既有相邻检查通过。988 个产品文件未改，正式设备未操作。上一轮私有通道、前置失败等五项修复仍保留原适用范围，不能外推为所有异步收尾均已覆盖。
+
+## 2026-11-17 修复后复核：两个控制流程收尾问题
+
+### F. 高：确认迟到仍能把已提交并接纳的升级封成 blocked
+
+[host_darwin.go:850](../internal/supervisor/host_darwin.go#L850) 在 resume 返回错误后仍执行 failed(err,true)，其闭包将此前 applied／rolled-back 改写为 blocked；[resume](../internal/supervisor/host_darwin.go#L869) 的单次预算为 1 秒、总预算为 10 秒。重试补上了短暂端点缺失，但回复超时仍不能证明恢复接纳没有执行。进入 blocked 后，monitor 不再核对该 child，新更新也被拒绝。
+
+完整 host 隔离流程使用既有 holdresume 进程夹具，让恢复接纳完成后应答延后：三次都观测到 selected=next、phase=blocked、liveCandidatePaused=false、accepted=true。候选确实已经接受工作，控制流程却持久封住后续升级。此整流程夹具走原公共协议 0 的兼容路径，不能说成实际签名版本 2 的慢回复升级验收。另用真实 lifecycleClient／ServeLifecycle 的私有版本 2 注入迟回复，三次都证明 opened=true 与调用超时可以同时成立；该诊断本身通过，不将正确的超时返回单独当作缺陷。缺陷在调用方将未确认当成终局失败；相同 h.update 收尾也用于私有 resume。
+
+Lody 的 [daemon-runner.ts:1090](https://github.com/LodyAI/Lody/blob/58e33cec245b2f5e7586d0c7beb6a02ce148219c/apps/cli/src/commands/daemon-runner.ts#L1090) 先持久保存 selected／applied，再发 child IPC resume；send 错误只记日志，不把已提交事实覆盖成 blocked。这里不声称 Lody 对所有 IPC 故障都会自动重试。对齐应保留提交事实，并按准确候选核对是否已开放接纳，再决定后续观察／重试；没有确认不等于没有执行。
+
+### G. 高：后台注销 helper 与宿主退出重叠，会让新 shutdown 记录进入 blocked
+
+[background_stop.go:15](../internal/worker/background_stop.go#L15) 持 maintenance 与 dispatch，直到 [callback 返回](../internal/worker/background_stop.go#L75)；生产 callback 经 [main.go:408](../cmd/shioji-worker/main.go#L408) 调用独立系统 helper。宿主关闭需要的 DrainService 同样需要 dispatch。与此同时，[shutdown.go:43](../internal/worker/shutdown.go#L43) 等待的请求 goroutine 仍在等 helper；所以只把 callback 移出 dispatch，还不足以消除请求与自身停机的循环等待。
+
+先用真实 cat helper 验证锁边界，三次均为 ownerDrainBlockedByHelper=true。再走实际签名 worker、真实 supervisor.Run、真实 transport 目录／签名／bundle 身份检查，在临时 HOME 内使用自建签名 helper 模拟「服务操作未返回，宿主已经开始退出」。三次都在约 7 秒后得到 worker exited without a drained receipt，持久操作 phase=blocked；同一链路只改为 helper 立即返回，三次均正常退出。新记录为普通 shutdown-*，不是已接受手动处理的 H07 首次旧存量。
+
+该 helper 是隔离测试程序，没有调用 SMAppService。本轮证明的是上述相交时序可以破坏真实 host／worker 排空，不声称每次 macOS unregister 必然等待宿主退出，未验证正式系统注册操作的具体时长。真实 SMAppService 或三台设备的现场操作不在本轮证据中。
+
+Lody 的 [daemon.ts:44](https://github.com/LodyAI/Lody/blob/58e33cec245b2f5e7586d0c7beb6a02ce148219c/apps/cli/src/commands/daemon.ts#L44) 向独立 Host 请求停止；[local-cli-host-lease.cjs:200](https://github.com/LodyAI/Lody/blob/58e33cec245b2f5e7586d0c7beb6a02ce148219c/packages/shared/src/node/local-cli-host-lease.cjs#L200) 先结束接纳应答，再异步触发 Host 关闭。对齐点是把系统服务停止的执行与等待交给独立控制者，worker 只负责接纳、隔离新输入和准确排空；不能让被停止的 worker 同步等自己的终止流程返回，也不需要恢复强制环境页面。
+
+### 本轮证据、排除项与边界
+
+- [最终三轮原件](../.ryugi/audits/lody-post-handoff-audit-20261117/probes.txt)、[计数及夹具边界](../.ryugi/audits/lody-post-handoff-audit-20261117/summary.txt)：两个条件，三个失败场景各三次；私有超时诊断和即时 helper 对照各三次通过。失败不计为产品通过。
+- [37 项相邻检查](../.ryugi/audits/lody-post-handoff-audit-20261117/neighbours-summary.txt)：无 overlay，覆盖现有 Host、私有通道、已提交启动、上一轮五项修复和后台停止；没有把旧全仓结果当成本轮重新执行。
+- [源码与进程范围](../.ryugi/audits/lody-post-handoff-audit-20261117/source-provenance.txt)：当前 988 个产品文件哈希未变化；签名 worker 的 SHA 与上一轮最终构建一致，Lody fresh fetch 仍为 58e33ce。没有修改 cmd／internal／go.mod／go.sum。
+- 已排除：Lody 对 switching／observing 等未完成切换重启也会 blocked，与本项目一致；本项目已监测真实父进程丢失，不将缺少字面 disconnect 回调直接说成宿主崩溃后永久遗留。Lody 独立 subagent cancel 也只等待原生取消请求，未把本项目独立 child ACK 路径冒充新的 Lody 差异。
+- 原有 20 分钟／30 秒、24 小时 waiting、未登记后代、首次旧存量手动迁移保持。测试初版有一只模拟 helper 因临时目录提前删除而漏读释放标记，已按捕获的准确 PID／启动时间／路径清理；最终夹具等待准确 helper 退出再删目录，三轮不需要补杀。此夹具问题未列作产品发现。
+
 > **五处交接修复（2026-11-17，本机验证，正式设备未部署）**：删除 pending Start、成功退休的旧工作所有权、后台关闭的明确前置失败、私有 resume、目录恢复的全局锁五处均已有修复及回归。38 项并发检查通过；最终签名源码两轮历史重放为 12 次 APPLIED，2 次既定旧状态 BLOCKED，没有把后者算作升级成功。下方“尚未修复”段落为修复前审计原件，当前状态以本节为准。
 
 ## 2026-11-17 五处交接修复与验证
