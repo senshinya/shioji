@@ -278,6 +278,52 @@ func TestOrdinaryNavigationConsumesCompletionWithoutChangingScroll(t *testing.T)
 	}
 }
 
+func TestSidebarCompletedCheckFollowsUnreadAttention(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark-%v", dark), func(t *testing.T) {
+			m := parallelModel()
+			v := New(m, nil, "")
+			ui := n.NewTester(v.View, 1240, 820)
+			ui.SetDark(dark)
+			assertCheck := func(stage string, wantGreen bool) {
+				t.Helper()
+				ui.Advance(time.Second)
+				saveNativeSkillImage(t, ui, fmt.Sprintf("completed-check-dark-%v-%s.png", dark, stage))
+				mark := sidebarMarkFor(ui, "Another session")
+				green, ink := false, false
+				bg := mark.RGBAAt(0, 0)
+				for y := 0; y < mark.Bounds().Dy(); y++ {
+					for x := 0; x < mark.Bounds().Dx(); x++ {
+						p := mark.RGBAAt(x, y)
+						ink = ink || max(absChannel(p.R, bg.R), absChannel(p.G, bg.G), absChannel(p.B, bg.B)) > 30
+						green = green || int(p.G) > int(p.R)+20 && int(p.G) > int(p.B)+10
+					}
+				}
+				if !ink || green != wantGreen {
+					t.Errorf("%s: check ink=%v green=%v, want green=%v", stage, ink, green, wantGreen)
+				}
+			}
+			assertCheck("already-read", false)
+			if err := m.ApplyEvent(domain.Event{Sequence: 1, Type: "turn", SessionID: "other", Turn: &domain.Turn{ID: "done", Order: 1, Status: "completed"}}); err != nil {
+				t.Fatal(err)
+			}
+			ui.Frame()
+			if next, ok := v.attentionSession(); !ok || next.ID != "other" {
+				t.Fatal("new completion did not enter attention")
+			}
+			assertCheck("unread", true)
+			if err := ui.Click("Another session"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Frame()
+			if _, ok := v.attentionSession(); ok {
+				t.Fatal("opened completion remained in attention")
+			}
+			assertCheck("opened", false)
+		})
+	}
+}
+
 func TestCompletionAttentionSkipsArchivedAndActiveSessions(t *testing.T) {
 	for _, state := range []string{"archived-session", "archived-workspace", "running"} {
 		t.Run(state, func(t *testing.T) {

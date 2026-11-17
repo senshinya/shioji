@@ -407,7 +407,11 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 			} else if s.Status.Active() || finishing {
 				statusDotSize(c, s.Title, n.Font{Family: t.Font, Size: 13}, t.Success, 4, true).Width(10).TextAlign(n.Center).Label("会话运行状态：" + s.ID)
 			} else if s.Status == "completed" {
-				inlineSymbol(c, check, s.Title, n.Font{Family: t.Font, Size: 13}, 10, t.Success)
+				color := t.TextMuted
+				if m.HasCompletedReply(s.ID) {
+					color = t.Success
+				}
+				inlineSymbol(c, check, s.Title, n.Font{Family: t.Font, Size: 13}, 10, color)
 			} else if s.Status == "interrupted" || s.Status == "abandoned" {
 				inlineSymbol(c, check, s.Title, n.Font{Family: t.Font, Size: 13}, 10, t.TextMuted).Label("已停止")
 			} else {
