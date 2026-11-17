@@ -479,13 +479,21 @@ func (v *View) hookDetail(c *n.Context, t *n.Theme, u *hookManagementUI) {
 				if h.StatusMessage != "" {
 					n.Text(c, h.StatusMessage).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 				}
-				disclosure := "› 详细信息"
-				if u.expanded {
-					disclosure = "⌄ 详细信息"
-				}
-				if ghost(c, disclosure).PaddingX(0).Height(28).AlignSelf(n.Start).FontSize(12).Label("详细信息").Clicked() {
+				disclosure := control(c.Key("disclosure"), 5).Height(28).Padding(0).AlignSelf(n.Start).FontWeight(400).Label("详细信息")
+				disclosure.Children(func() {
+					n.Row(c).Gap(4).AlignItems(n.Baseline).Children(func() {
+						angle := float32(-90)
+						if u.expanded {
+							angle = 0
+						}
+						n.Text(c, "详细信息").FontSize(12).FontWeight(400).FixedLineHeight(20)
+						inlineSymbol(c.Key("arrow"), chevron, "详细信息", n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted, angle)
+					})
+				})
+				if disclosure.Clicked() {
 					u.expanded = !u.expanded
 				}
+
 				frame := n.Column(c.Key("metadata")).FillWidth().Clip()
 				animatedContentHeight(c, frame, u.expanded, 180*time.Millisecond, func() float32 {
 					n.Column(c).FillWidth().Gap(8).Children(func() {

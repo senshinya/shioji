@@ -52,7 +52,7 @@ func TestHooksNativeAppearanceAndRowAlignment(t *testing.T) {
 			if !backOK || math.Abs(float64(back.X-heading.X)) > 1 {
 				t.Fatal("Hook back label is inset from reading edge", back, heading)
 			}
-			disclosure, disclosureOK := ui.Find("› 详细信息")
+			disclosure, disclosureOK := ui.Find("详细信息")
 			if !disclosureOK || math.Abs(float64(disclosure.X-heading.X)) > 1 {
 				t.Fatal("Hook disclosure label is inset from reading edge", disclosure, heading)
 			}
