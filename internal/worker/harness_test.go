@@ -112,6 +112,12 @@ func memoryWorker(t *testing.T, adapters ...harness.Adapter) (*Server, domain.Wo
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
+	// The server may own asynchronous Git producers in this checkout. Register
+	// checkout removal before Close, so LIFO cleanup joins them before deletion.
+	folder, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	s, err := New(context.Background(), Config{Directory: dir, Harnesses: adapters})
 	if err != nil {
 		t.Fatal(err)
@@ -122,10 +128,6 @@ func memoryWorker(t *testing.T, adapters ...harness.Adapter) (*Server, domain.Wo
 	s.dispatchMu.Lock()
 	s.pressureSample = func() uint32 { return 1 }
 	s.dispatchMu.Unlock()
-	folder, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
 	w, err := s.store.CreateWorkspace("test", []string{folder})
 	if err != nil {
 		t.Fatal(err)

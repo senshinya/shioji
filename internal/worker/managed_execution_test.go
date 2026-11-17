@@ -205,7 +205,10 @@ func TestMissingLiveScopeManifestQuarantinesCompletedSession(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if err = s.checkoutGuard(domain.GitStatus{Checkout: folder}, ""); err == nil {
+	s.dispatchMu.Lock()
+	err = s.checkoutGuard(domain.GitStatus{Checkout: folder}, "")
+	s.dispatchMu.Unlock()
+	if err == nil {
 		t.Fatal("record loss released shared checkout")
 	}
 	if len(p.Inputs()) != 1 {
