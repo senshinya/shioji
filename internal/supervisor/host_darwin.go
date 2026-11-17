@@ -158,7 +158,15 @@ func Run(ctx context.Context, o Options) error {
 		h.mu.Lock()
 		h.updateID = opID
 		h.mu.Unlock()
-		err = h.startSelectedRetry(o.InitialPath, paused, opID)
+		if o.LegacyInstall != nil {
+			// This is still an uncommitted candidate. Its first failure must
+			// retain the installation handoff rather than retry another writer.
+			err = h.startSelected(o.InitialPath, paused, opID)
+		} else {
+			// Applied/rolled-back selections may start paused until resume;
+			// they retain ordinary dependency and endpoint retry semantics.
+			err = h.startSelectedRetry(o.InitialPath, paused, opID)
+		}
 		if ctx.Err() != nil {
 			return nil
 		}

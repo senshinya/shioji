@@ -38,7 +38,7 @@ func (h *host) startSelectedRetry(initial string, paused bool, operation string)
 			return err
 		}
 		var permanent *permanentStartup
-		if paused || errors.As(err, &permanent) {
+		if errors.As(err, &permanent) {
 			return err
 		}
 		h.mu.Lock()
