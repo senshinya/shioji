@@ -1,6 +1,69 @@
 # Lody 执行服务升级、停止与回收源码分析
 
-> **最新复核（2026-11-17，f68aad1，本轮未修复）**：后台关闭还有两个控制交接遗漏：关闭未决时崩溃恢复会重新启动可接纳输入的 Worker；已知未执行的前置步骤耗尽预算时，撤销沿用过期 context，原 Worker 无法自动恢复准入。两处各三次复现，三个即时前置失败对照正常，111 项相邻检查通过。993 个产品／原生文件未改，正式设备未操作。前轮修复不撤回，但不能外推到这两种新时序。
+## 2026-11-17 直接对照 Lody：完整入口清单与当前差异
+
+本轮只比较已实现的调用链。Shioji 文档基线 `40c4689`，产品代码仍为 `f68aad1`；重新 fetch 的 Lody 为 `d6df2f2447cf6903d71e864f12cc1519de0c1b2c`。相对上一轮 `58e33ce` 的上游变化只涉及 CI；保存的 15 份相关源码与上一轮生命周期内容一致。不是用较旧工作目录冒充最新上游。
+
+**当前四处会造成阻塞或回收延迟的待对齐项：H、I 为上一轮未修；J、K 为本轮新增。没有修改产品代码。** 267 项原有相邻父测试通过（含子测试共 381 项，五包）；这不能抵消故障探针暴露的缺口。
+
+### J. 高：断连恢复的早返回漏掉现有的逻辑释放
+
+[recovery.go:143](../internal/worker/recovery.go#L143) 在存在 managed scope、旧 runtime 不再观察原会话时，先清理旧环境。失败后只返回“旧工具尚未确认停止”，没有进入第 157 行已有的 `detachFailedRuntime`。因此旧实例仍占会话映射，状态保持 unknown，不能沿新实例继续。Stop、GC、归档失败、重新加载和普通换版已有分离处理；这不是要求重建另一套清理架构。
+
+Lody 的 [releaseVisibleTurn](https://github.com/LodyAI/Lody/blob/d6df2f2447cf6903d71e864f12cc1519de0c1b2c/apps/cli/src/session/session-execution-service.ts#L5928) 在 releaseFailure 时分离准确旧 Session 或 abandoned pending create，提交后台 release recovery 并释放执行槽；物理结果仍未知，不复用旧实例、不重放旧输入。应让本分支同样移交现有后台回收者，按准确原实例保护继任者。
+
+隔离诊断连续三次：registered scope 的真实 `/bin/cat` 已停止，但注入中立 harness Close 错误后，`oldInstanceRetained=true scopeDetached=false status=unknown canContinue=false`。同一实例手动调用现有 detach 的三个对照均释放成功。证明的是实际 worker 分支遗漏，**不是宣称真实签名 Codex 已在现场产生该 Close 故障**。
+
+### K. 中：归档强制退休先排在原生维护之后
+
+[archive_retirement.go:44](../internal/worker/archive_retirement.go#L44) 在 fence／force 前取得通用 `sessionTransition`；[session_reload.go:32](../internal/worker/session_reload.go#L32) 在等待原生 Unload 时一直占有它。归档元数据虽然立即接纳，实际旧环境要等维护回复／预算结束后才开始强制回收。删除清理器也用此 gate；区别是永久删除在接纳墓碑时已经封住 scope，不能把归档探针的 `scopeStillAdmitting=true` 套到删除。
+
+Lody 的 [releaseArchivedSessionRuntime](https://github.com/LodyAI/Lody/blob/d6df2f2447cf6903d71e864f12cc1519de0c1b2c/apps/cli/src/lib/message-handler.ts#L4852) 经历史收尾、终端／预览／子会话释放后，直接 [terminateSessionForRelease](https://github.com/LodyAI/Lody/blob/d6df2f2447cf6903d71e864f12cc1519de0c1b2c/apps/cli/src/lib/message-handler.ts#L5189) → `terminateSession(id,true)`；不取得等待原生维护操作的通用队列。它也会等待历史 flush 等自身资源收尾，不能描述成“归档任何 await 都没有”。Shioji 的 Stop 超时已能越过同一维护 gate，应复用相同的准确实例退休原则；迟到维护结果不能回填归档／已删会话或继任代次。
+
+实际 reload 与 archive 入口连续三次：native Unload 保持未回复 300ms 时，`archiveAccepted=true runtimeStillLive=true scopeStillAdmitting=true`；释放回复后归档收敛。现有 reload 原生预算 30 秒，故本项是**额外维护等待，不是已证实的永久死锁**；没有把中立 harness 的等待冒充真实 Codex 挂起。
+
+### 全链路对照表
+
+表内 Lody 行号均来自固定提交 `d6df2f2` 的保存源码；Shioji 均为本轮未改动产品源码。已对齐指入口责任、准入／退休顺序与失败所有权相符，不代表实现语言、协议或平台资源完全相同。
+
+| 入口 | Lody 实际调用与机制 | Shioji 落点与结果 |
+| --- | --- | --- |
+| 独立停止 owner | `local-cli-host-lease.cjs:200；daemon.ts:44`：应答后异步停止 Host；Worker 不等待自己的注销 | `background_darwin.go／background_stop.go`：已对齐主体；两个收尾缺口见 H／I |
+| 停止意图覆盖重启 | `supervisor.ts:190`：先置 desiredState=stopped、换 generation、清 retry timer | `host_darwin.go:263`：待对齐 H：普通 child.done 仍重建可接纳 Worker |
+| 已知未执行的撤销 | `session.ts:287；supervisor.ts:190`：收尾由独立 owner 持有，失败不永久缓存 termination | `background_darwin.go:47`：待对齐 I：Shioji 原生适配的撤销沿用过期预算且无重试；上游没有同名 macOS helper |
+| 候选在线准备 | `daemon-runner.ts:495`：先准备与验证，失败保留旧 Worker，稳定 ID 不重放 | `host_darwin.go:362／probe.go`：已对齐；Shioji 保留原生签名／协议校验 |
+| 更新绝对到期 | `daemon-runner.ts:733；start.ts:873`：最终切换前再次核对原 expiresAt | `host_darwin.go:712／worker/update.go`：已对齐；同 ID 不续期，迟到 drain 不越权 |
+| when-idle 判定 | `start.ts；session-execution-service.ts`：看实际执行 owner 与 pending create，不等闲置工具自行退出 | `update.go／service_control.go:151`：已对齐；孤立历史状态不单独挡升级 |
+| 父子私有控制 | `daemon-runner.ts:172；start.ts`：独立于业务连接的 drain／resume 与父进程丢失收尾 | `supervisor/lifecycle_darwin.go／cmd/shioji-worker/main.go:353`：已对齐；私有协议 2、准确实例与操作校验 |
+| 强制回收登记进程 | `session.ts:319；process-tree-registry.ts:63`：并行主动结束 agent、active process 与 sandbox；不是先等常驻工具消失 | `retirement.go:79／managedexec`：已对齐；覆盖自有 app-server、exec-server 与登记组 |
+| 失败句柄与重试 | `session.ts:287；process-tree-registry.ts:23`：失败保留准确树／句柄，下次可重试；组长退出不等于组空 | `retirement.go／detached_runtime.go／managedexec`：已对齐；不永久缓存失败结果 |
+| 失败后释放执行槽 | `session-execution-service.ts:5928；session-manager.ts:2074`：detach 原 Session、后台 requestReleaseRecovery，freeTurnSlot | `recovery.go:143／detached_runtime.go:51`：待对齐 J：断连恢复早返回漏走已有 detach；其他入口已走 |
+| 初始化取消与迟到创建 | `session-manager.ts；session-execution-service.ts:5931`：abandonPendingSessionCreate，迟到对象仅清旧实例 | `runtime_start.go／archive.go`：已对齐；Stop／删除撤销准确 Start、gate 与 reservation |
+| 迟到回调代次隔离 | `session-manager.ts:2074；session-execution-service.ts`：只分离同一实例，旧 finalize 不能改继任实例 | `detached_runtime.go:15／work_input.go`：已对齐；不重放旧输入，不清新绑定 |
+| 排空与最后落盘 | `session-manager.ts:1880；start.ts:735`：会话并行退出、尾部回调落盘后，确认登记范围才发 managed-drained | `shutdown.go／lifecycle_darwin.go／host_darwin.go:632`：已对齐；PID 消失、ACK、socket 关闭均不替代 drained |
+| 候选 ready 与提交 | `daemon-runner.ts:887,1056,1096`：实际运行状态探测，先保存 selected／applied 后 resume | `host_darwin.go:537,870／health.go`：已对齐；迟确认不改写提交事实，准确候选继续观察重试 |
+| 普通崩溃恢复 | `supervisor.ts:137,411,592；retry.ts`：1–60 秒退避，5 分钟 10 次，健康 60 秒；实际 jitter=0，计时从 spawn 开始 | `retry.go／start_retry.go`：已对齐普通策略；停止期间资格遗漏归 H |
+| Stop 超时 | `session-execution-service.ts`：取消 ACK 后还等轮次／请求收尾，5 秒后强制释放 | `stop.go:73,120`：已对齐；已显式绕过在途 maintenance transition，归档尚未采用 |
+| GC 业务资格与参数 | `session-gc-manager.ts:196,423`：20 分钟闲置；running 不回收；原生 background 保护 24 小时 | `idle_runtime.go／store/runtime_idle.go`：已对齐；扫描 30 秒为用户指定，Lody 默认 60 秒 |
+| GC 活跃触点 | `message-handler.ts:8477,8508；session-gc-manager.ts`：显式 touchSession；部分历史读取也 touch | `idle_runtime.go:97／store/runtime_idle.go`：实现触点不同，不能声称 Lody 查看历史从不续期；项目自身约定另记 |
+| 内存压力回收 | `session-gc-manager.ts:475`：候选排序、资格重检、失败不占成功额度，真实 running 仍受保护 | `memory_pressure_darwin.go／idle_runtime.go`：已对齐 macOS 所需机制；不引入 Linux／Loro 运行依赖 |
+| 归档释放 | `message-handler.ts:4852,5189`：保存收尾后直接 terminateSession(id,true)，不等通用原生维护队列 | `archive_retirement.go:44／session_reload.go:32`：待对齐 K：进入 force 前先等维护 transition；有预算的额外等待 |
+| 永久删除归档 | `message-handler.ts:4884`：删除事实与资源回收分开；拒绝迟到写回，释放旧资源 | `archive.go:117,216／store/archive.go`：主体已对齐；清理器也使用同一维护 gate，属 K；删除接纳已先 fence |
+| 自有 worktree | `worktree-gc.ts:128；worktree-manager.ts`：核对归档／删除与引用，备份后删除，失败退避，按需恢复 | `worktree_lifecycle.go／store/owned_worktrees.go`：已对齐；包含本产品发现并登记的自建 worktree，不移除外部目录 |
+| 安装与配置换版 | `session-manager.ts:1835；session-execution-service.ts`：空闲且无原生工作才退休旧实例，保持原历史 owner | `session_runtime.go:16／catalog_refresh.go`：已对齐；当前轮用实际进程能力，下一轮验证新目录 |
+| 辅助生产者与目录 | `session-manager.ts:1855；start.ts`：会话、鉴权等辅助资源分别收尾，保留存储至尾部写入完成 | `shutdown.go:67／catalog_refresh.go／worker_maintenance.go`：已对齐职责；慢原生目录 I/O 不持全局 dispatch 锁 |
+
+
+### 排除项、计时附记与证据范围
+
+- 重试工具函数的默认抖动是 0.2，但实际 `CliSupervisor` 构造参数默认传 0；健康计时也由 spawn 路径启动。两项均不能再误报差异。通用退休虽没有在途 normal→force 升级分支，但全部产品调用都传 force=true，没有可达的该组合，不作为当前阻塞。
+- Lody 的业务状态探测也参与 ready；同样要求清理和登记树消失后才能声明 drained。不能以“上游无阻塞”为由弱化真实工作保护或退出证明。
+- 空闲时钟附记：Lody 在 `readSessionHistoryForRpc`／历史长轮询中确有 touchSession。Shioji 则把通用 Session.Revision 纳入 idle 观测；单独诊断显示标记完成已读、改名会重置观测。这偏离本项目“阅读不刷新执行空闲”的较严格约定，另记在 metadata-note.txt，**不算新的 Lody 升级阻塞根因，也不声称 Lody 采用这一约定**。源事件本身会修改 revision，先前“缺少原生活动续期”的疑点已排除。
+- [新增两项三轮原件](../.ryugi/audits/lody-direct-alignment-20261117/probes.txt)、[267 项原有相邻检查](../.ryugi/audits/lody-direct-alignment-20261117/neighbours-summary.txt)、[准确源码与夹具边界](../.ryugi/audits/lody-direct-alignment-20261117/source-provenance.txt)、[24 个入口结构化对照](../.ryugi/audits/lody-direct-alignment-20261117/comparison.json)。六次预期失败只证明缺口，不能计为产品通过。
+- H／I 原始签名证据在下方上一轮章节所列审计目录，本轮不重复执行系统类故障；993 文件哈希逐个一致，前轮签名二进制对应内容没有变化。新探针通过 Go overlay 注入，未修改产品或原有测试文件。未操作正式设备、真实 SMAppService 或 Tailnet。
+- 保持 20 分钟／30 秒、24 小时 waiting、用户接受的未登记后代范围与首次旧存量手动迁移；不增加强制关闭／重启页面。已覆盖本表实际入口，未宣称数学上穷尽所有未来故障。下方各轮记录为历史证据，当前待对齐清单以本节 H／I／J／K 汇总为准。
+
+> **上一轮复核（2026-11-17，f68aad1，本轮未修复）**：后台关闭还有两个控制交接遗漏：关闭未决时崩溃恢复会重新启动可接纳输入的 Worker；已知未执行的前置步骤耗尽预算时，撤销沿用过期 context，原 Worker 无法自动恢复准入。两处各三次复现，三个即时前置失败对照正常，111 项相邻检查通过。993 个产品／原生文件未改，正式设备未操作。前轮修复不撤回，但不能外推到这两种新时序。
 
 ## 2026-11-17 再次复核：关闭意图与撤销生命周期
 
