@@ -157,6 +157,48 @@ func TestWorktreeCreationPreservesConflictingBranch(t *testing.T) {
 	}
 }
 
+func TestWorktreeCreationPreservesAmbiguousBranchRef(t *testing.T) {
+	s, w, d := ownedWorktreeFixture(t)
+	in := domain.Submission{OperationID: "ambiguous-owned-ref", WorkspaceID: w.ID, Text: "new", Git: domain.GitChoice{NewWorktree: true}, Config: d.Session.Config}
+	sum := sha256.Sum256([]byte(in.OperationID))
+	foreign := "shioji/" + fmt.Sprintf("%x", sum[:12])
+	gitTestRun(t, w.Folders[0], "branch", foreign, "main")
+	gitTestRun(t, w.Folders[0], "-c", "tag.gpgsign=false", "tag", foreign, "main")
+	head := gitTestRun(t, w.Folders[0], "rev-parse", "refs/heads/"+foreign)
+	op, err := s.submit(in)
+	if err != nil {
+		t.Fatal("ambiguous existing ref prevented fresh branch allocation", err)
+	}
+	awaitReceipt(t, s, op.ID)
+	created, err := s.store.Session(op.SessionID, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Session.GitBranch != foreign+"-1" {
+		t.Fatal("wrong new branch", created.Session.GitBranch)
+	}
+	for _, ref := range []string{"refs/heads/" + foreign, "refs/tags/" + foreign} {
+		if got := gitTestRun(t, w.Folders[0], "rev-parse", ref); got != head {
+			t.Fatal("foreign ref changed", ref, got)
+		}
+	}
+}
+
+func TestGitBranchNamesRemainExactWhenTagsShareNames(t *testing.T) {
+	s, _, dir := gitTestServer(t)
+	gitTestRun(t, dir, "-c", "tag.gpgsign=false", "tag", "main", "HEAD")
+	status, err := queryGit(s.ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Branch != "main" || status.DefaultBranch != "main" {
+		t.Fatalf("branch/tag ambiguity changed checkout identity: %+v", status)
+	}
+	if len(status.Branches) != 2 || status.Branches[0] != "main" || status.Branches[1] != "other" {
+		t.Fatal("heads namespace was not stripped exactly", status.Branches)
+	}
+}
+
 func TestWorktreeRejectedCreationCleanupPreservesForeignBranch(t *testing.T) {
 	s, w, dir := gitTestServer(t)
 	in := domain.Submission{OperationID: "cleanup-collision", WorkspaceID: w.ID, Git: domain.GitChoice{NewWorktree: true}}

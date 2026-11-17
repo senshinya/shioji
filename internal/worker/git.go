@@ -105,11 +105,11 @@ func queryGit(ctx context.Context, cwd string) (domain.GitStatus, error) {
 	if err != nil {
 		return out, err
 	}
-	branch, _ := gitRun(ctx, cwd, "symbolic-ref", "--quiet", "--short", "HEAD")
+	branch, _ := gitRun(ctx, cwd, "branch", "--show-current")
 	out.Branch = strings.TrimSpace(branch)
 	head, _ := gitRun(ctx, cwd, "rev-parse", "--verify", "HEAD")
 	out.Head = strings.TrimSpace(head)
-	names, err := gitRun(ctx, cwd, "for-each-ref", "--count=2000", "--format=%(refname:short)", "refs/heads/")
+	names, err := gitRun(ctx, cwd, "for-each-ref", "--count=2000", "--format=%(refname:lstrip=2)", "refs/heads/")
 	if err != nil {
 		return out, err
 	}
@@ -121,8 +121,8 @@ func queryGit(ctx context.Context, cwd string) (domain.GitStatus, error) {
 	if out.Branch != "" && !slices.Contains(out.Branches, out.Branch) {
 		out.Branches = append(out.Branches, out.Branch)
 	}
-	defaultRef, _ := gitRun(ctx, cwd, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
-	candidate := strings.TrimPrefix(strings.TrimSpace(defaultRef), "origin/")
+	defaultRef, _ := gitRun(ctx, cwd, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+	candidate := strings.TrimPrefix(strings.TrimSpace(defaultRef), "refs/remotes/origin/")
 	if slices.Contains(out.Branches, candidate) {
 		out.DefaultBranch = candidate
 	} else if out.Branch != "" {

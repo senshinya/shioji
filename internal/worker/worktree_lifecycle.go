@@ -454,7 +454,7 @@ func (s *Server) removedWorktreeStatus(q protocol.GitQuery) (domain.GitStatus, b
 			if _, e := os.Lstat(w.Path); !os.IsNotExist(e) {
 				continue
 			}
-			names, e := s.gitRunOutsideDispatch(s.ctx, w.CommonDir, "for-each-ref", "--count=2000", "--format=%(refname:short)", "refs/heads/")
+			names, e := s.gitRunOutsideDispatch(s.ctx, w.CommonDir, "for-each-ref", "--count=2000", "--format=%(refname:lstrip=2)", "refs/heads/")
 			current, readErr := s.store.Session(q.SessionID, 0, 1)
 			if readErr != nil {
 				return domain.GitStatus{}, true, readErr

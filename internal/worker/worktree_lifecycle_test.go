@@ -96,6 +96,32 @@ func TestOwnedWorktreeArchiveBacksUpAndLazilyRestoresActualBranch(t *testing.T) 
 		t.Fatal("restore lost new file", string(b), e)
 	}
 }
+
+func TestOwnedWorktreeArchiveRestoresBranchSharedWithTag(t *testing.T) {
+	s, w, d := ownedWorktreeFixture(t)
+	path := d.Session.Context.Repository
+	branch := d.Session.GitBranch
+	gitTestRun(t, w.Folders[0], "-c", "tag.gpgsign=false", "tag", branch, "HEAD")
+	archiveOwnedFixture(t, s, d.Session.ID)
+	if err := cleanupWorktreesForTest(s, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	records, err := s.store.OwnedWorktrees()
+	if err != nil || len(records) != 1 || records[0].Branch != branch {
+		t.Fatal("archive saved a disambiguated ref instead of the local branch", records, err)
+	}
+	after, err := s.store.Session(d.Session.ID, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.store.SetSessionArchived(d.Session.ID, after.Session.Revision, false); err != nil {
+		t.Fatal(err)
+	}
+	resumed := submitIdleFixture(t, s, w, "resume-ambiguous-ref", d.Session.ID)
+	if resumed.Session.ThreadID != d.Session.ThreadID || gitTestRun(t, path, "symbolic-ref", "HEAD") != "refs/heads/"+branch {
+		t.Fatal("restore changed the history or detached the checkout")
+	}
+}
 func TestOwnedWorktreeSharedBySessionsWaitsForLastArchive(t *testing.T) {
 	s, w, d := ownedWorktreeFixture(t)
 	path := d.Session.Context.Repository

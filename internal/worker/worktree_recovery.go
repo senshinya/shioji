@@ -17,7 +17,7 @@ import (
 // Caller owns this repository's transition and dispatchMu. Native waits release
 // only dispatchMu; each mutation rechecks the preparation that owns the gate.
 func (s *Server) ownedBranchHeads(common string) (map[string]string, error) {
-	text, err := s.gitRunOutsideDispatch(s.ctx, common, "for-each-ref", "--format=%(refname:short)%09%(objectname)", "refs/heads/")
+	text, err := s.gitRunOutsideDispatch(s.ctx, common, "for-each-ref", "--format=%(refname:lstrip=2)%09%(objectname)", "refs/heads/")
 	if err != nil {
 		return nil, err
 	}
