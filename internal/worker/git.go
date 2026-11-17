@@ -40,6 +40,22 @@ func gitRun(ctx context.Context, dir string, args ...string) (string, error) {
 	defer cancel()
 	argv := append([]string{"--no-optional-locks", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-C", dir}, args...)
 	cmd := exec.CommandContext(ctx, "git", argv...)
+	// Git filters may retain inherited output after the Git leader exits. This
+	// invocation owns a private group; cancellation ends it, while WaitDelay
+	// bounds pipe collection even when a descendant no longer closes its fd.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stop := func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
+	}
+	cmd.Cancel = stop
+	cmd.WaitDelay = 100 * time.Millisecond
 	for _, entry := range os.Environ() {
 		if !strings.HasPrefix(entry, "GIT_") && !strings.HasPrefix(entry, "LC_ALL=") {
 			cmd.Env = append(cmd.Env, entry)
@@ -51,6 +67,9 @@ func gitRun(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd.Stdout = out
 	cmd.Stderr = diagnostic
 	if err := cmd.Run(); err != nil {
+		// Output-limit and inherited-pipe failures abandon this same invocation
+		// too. Never leave its filter running merely because the leader exited.
+		_ = stop()
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
