@@ -106,7 +106,7 @@ func (s *Server) sendWork(in domain.WorkInput) (domain.WorkInputOperation, error
 	defer cancel()
 	_, err = s.runtimeCallOutsideDispatch(ctx, in.SessionID, r, func() (bool, error) { return false, messenger.SendWork(ctx, d.Session, in) })
 	if !s.capturedRuntimeCurrent(in.SessionID, r, d.Session.ThreadID) {
-		return s.store.WorkInput(in.OperationID)
+		return s.uncertainWorkInput(in.OperationID)
 	}
 	outcome := domain.DeliveryOutcome(err != nil, harness.IsUncertain(err))
 	message := ""
@@ -154,7 +154,7 @@ func (s *Server) queryWorkInput(in domain.WorkInput) (domain.WorkInputOperation,
 	defer cancel()
 	found, err := s.runtimeCallOutsideDispatch(ctx, in.SessionID, r, func() (bool, error) { return messenger.WorkInputReceived(ctx, d.Session, in) })
 	if !s.capturedRuntimeCurrent(in.SessionID, r, d.Session.ThreadID) {
-		return s.store.WorkInput(in.OperationID)
+		return s.uncertainWorkInput(in.OperationID)
 	}
 	if err != nil {
 		return op, err
@@ -165,4 +165,18 @@ func (s *Server) queryWorkInput(in domain.WorkInput) (domain.WorkInputOperation,
 		}
 	}
 	return s.store.WorkInput(in.OperationID)
+}
+
+func (s *Server) uncertainWorkInput(id string) (domain.WorkInputOperation, error) {
+	op, err := s.store.WorkInput(id)
+	if err != nil {
+		return op, err
+	}
+	if op.State == "accepted" || op.State == "dispatched" {
+		if err = s.store.SetWorkInput(id, "indeterminate", "原执行环境已结束，消息结果尚未确认；不会自动重发"); err != nil {
+			return op, err
+		}
+		return s.store.WorkInput(id)
+	}
+	return op, nil
 }

@@ -334,7 +334,10 @@ func TestDetachedCleanupGuardsCheckoutEvenAfterProcessesExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.checkoutGuard(status, ""); err == nil {
+	s.dispatchMu.Lock()
+	err = s.checkoutGuard(status, "")
+	s.dispatchMu.Unlock()
+	if err == nil {
 		t.Fatal("unsettled retired cleanup released the shared checkout")
 	}
 }

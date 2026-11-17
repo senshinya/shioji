@@ -16,7 +16,7 @@ func TestImportedConversationCapturesGitAtFirstAdmissionThenDetectsBranchChanges
 		t.Fatal("read-only import already accepted execution branch")
 	}
 	input := domain.Submission{OperationID: "first-continued-input", WorkspaceID: w.ID, SessionID: imported.ID, Text: "continue", Config: domain.RunConfig{Model: "model"}}
-	launch, err := s.prepareGit(input, imported.Context)
+	launch, err := prepareGitForTest(s, input, imported.Context)
 	if err != nil {
 		t.Fatal("Git import cannot continue", err)
 	}
@@ -33,7 +33,7 @@ func TestImportedConversationCapturesGitAtFirstAdmissionThenDetectsBranchChanges
 	}
 	gitTestRun(t, dir, "switch", "other")
 	input.OperationID = "second-continued-input"
-	if _, err = s.prepareGit(input, d.Session.Context); err == nil {
+	if _, err = prepareGitForTest(s, input, d.Session.Context); err == nil {
 		t.Fatal("import bypassed later branch-change protection")
 	}
 	current, _ := s.store.Session(imported.ID, 0, 100)

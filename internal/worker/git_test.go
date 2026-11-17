@@ -233,7 +233,7 @@ func TestDirtyBranchSwitchExplainsCheckoutAndPreservesFiles(t *testing.T) {
 				id := gitTestSession(t, s, w, "main", "completed")
 				_, err = gitTestCall(s, "git.checkout", map[string]any{"workspaceId": w.ID, "sessionId": id, "branch": "other"})
 			} else {
-				_, err = s.prepareGit(domain.Submission{Git: domain.GitChoice{Branch: "other"}}, domain.LaunchContext{CWD: dir})
+				_, err = prepareGitForTest(s, domain.Submission{Git: domain.GitChoice{Branch: "other"}}, domain.LaunchContext{CWD: dir})
 			}
 			if err == nil {
 				t.Fatal("dirty branch switch was allowed")
@@ -250,7 +250,7 @@ func TestDirtyBranchSwitchExplainsCheckoutAndPreservesFiles(t *testing.T) {
 				t.Fatal("rejection changed untracked files", e)
 			}
 			if !existing {
-				if _, err = s.prepareGit(domain.Submission{Git: domain.GitChoice{Branch: "main"}}, domain.LaunchContext{CWD: dir}); err != nil {
+				if _, err = prepareGitForTest(s, domain.Submission{Git: domain.GitChoice{Branch: "main"}}, domain.LaunchContext{CWD: dir}); err != nil {
 					t.Fatal("same-branch session requires a clean checkout", err)
 				}
 			}

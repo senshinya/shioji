@@ -309,6 +309,41 @@ func (s *Server) checkout(in protocol.CheckoutInput) (domain.GitStatus, error) {
 		if status.Dirty {
 			return status, dirtyBranchSwitchError(status, in.Branch)
 		}
+		if err = s.updateAdmission(); err != nil {
+			return status, err
+		}
+		latest, e := s.store.Session(in.SessionID, 0, 1)
+		if e != nil {
+			return status, e
+		}
+		if latest.Session.ThreadID != d.Session.ThreadID || latest.Session.Context.CWD != d.Session.Context.CWD || latest.Session.Archived || latest.Session.Status.BlocksCheckout() || latest.Session.ExecutionGuard != "" {
+			return status, errors.New("会话执行上下文已改变，分支未切换")
+		}
+		for _, req := range latest.Requests {
+			if req.State.AwaitingResolution() {
+				return status, errors.New("请先处理当前会话请求")
+			}
+		}
+		workspace, e := s.store.Workspace(latest.Session.WorkspaceID)
+		if e != nil {
+			return status, e
+		}
+		if workspace.Archived {
+			return status, errors.New("工作区已归档，分支未切换")
+		}
+		if busy, e := s.store.HasActiveWork(in.SessionID); e != nil || busy {
+			if e != nil {
+				return status, e
+			}
+			return status, errors.New("会话仍有活动工作")
+		}
+		if busy, e := s.store.HasUnsettledOperation(in.SessionID); e != nil || busy {
+			if e != nil {
+				return status, e
+			}
+			return status, errors.New("会话输入尚未结清")
+		}
+
 		if _, err = s.gitRunOutsideDispatch(s.ctx, status.Checkout, "switch", "--no-guess", in.Branch); err != nil {
 			return status, err
 		}
@@ -329,11 +364,6 @@ func (s *Server) checkout(in protocol.CheckoutInput) (domain.GitStatus, error) {
 	d.Session.ContextChanged = false
 	_, err = s.store.Apply(d.Session.ID, domain.Event{Type: "session.git", Session: &d.Session})
 	return status, err
-}
-func (s *Server) prepareGit(in domain.Submission, launch domain.LaunchContext) (domain.LaunchContext, error) {
-	s.dispatchMu.Lock()
-	defer s.dispatchMu.Unlock()
-	return s.prepareGitLocked(in, launch)
 }
 func (s *Server) prepareGitLocked(in domain.Submission, launch domain.LaunchContext) (domain.LaunchContext, error) {
 	owner := s.sessionTransitions[in.SessionID]
@@ -447,6 +477,9 @@ func (s *Server) prepareGitLocked(in domain.Submission, launch domain.LaunchCont
 			return launch, err
 		}
 		dest := filepath.Join(base, id)
+		if err = valid(); err != nil {
+			return launch, err
+		}
 		if _, err = s.gitRunOutsideDispatch(s.ctx, status.Checkout, "worktree", "add", "-b", "shioji/"+id, dest, branch); err != nil {
 			return launch, err
 		}

@@ -452,7 +452,29 @@ func (s *Server) removedWorktreeStatus(q protocol.GitQuery) (domain.GitStatus, b
 			if _, e := os.Lstat(w.Path); !os.IsNotExist(e) {
 				continue
 			}
-			names, e := gitRun(s.ctx, w.CommonDir, "for-each-ref", "--count=2000", "--format=%(refname:short)", "refs/heads/")
+			names, e := s.gitRunOutsideDispatch(s.ctx, w.CommonDir, "for-each-ref", "--count=2000", "--format=%(refname:short)", "refs/heads/")
+			current, readErr := s.store.Session(q.SessionID, 0, 1)
+			if readErr != nil {
+				return domain.GitStatus{}, true, readErr
+			}
+			if current.Session.ThreadID != d.Session.ThreadID || current.Session.Context.CWD != d.Session.Context.CWD {
+				return domain.GitStatus{}, true, errors.New("会话执行目录已改变")
+			}
+			if _, err := os.Lstat(w.Path); !os.IsNotExist(err) {
+				return domain.GitStatus{}, false, nil
+			}
+			latest, e := s.store.OwnedWorktrees()
+			if e != nil {
+				return domain.GitStatus{}, true, e
+			}
+			owned := false
+			for _, record := range latest {
+				owned = owned || record.Path == w.Path && record.CommonDir == w.CommonDir && record.Branch == w.Branch && record.Head == w.Head
+			}
+			if !owned {
+				return domain.GitStatus{}, true, errors.New("自建目录归属已改变，请重新读取")
+			}
+
 			status := domain.GitStatus{Applicable: true, Checkout: w.Path, Repository: w.Path, CommonDir: w.CommonDir, Branch: w.Branch, Head: w.Head, DefaultBranch: w.Branch, Branches: strings.Fields(names)}
 			return status, true, e
 		}

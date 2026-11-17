@@ -179,16 +179,29 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 	if _, err := s.store.Operation(in.Input.OperationID); err == nil {
 		return s.store.AcceptSteer(in.Input, in.TurnID)
 	}
-	if d, err := s.store.Session(in.Input.SessionID, 0, 1); err != nil {
+	before, err := s.store.Session(in.Input.SessionID, 0, 1)
+	if err != nil {
 		return domain.Operation{}, err
-	} else if a := d.Session.ContextAction; a != nil && a.SourceRef == d.Session.ThreadID && a.State.Active() {
+	}
+	target := s.currentRuntime(in.Input.SessionID)
+	if a := before.Session.ContextAction; a != nil && a.SourceRef == before.Session.ThreadID && a.State.Active() {
 		return domain.Operation{}, errors.New("上下文压缩期间请将消息加入待发送队列")
 	}
+	if err := s.updateAdmission(); err != nil {
+		return domain.Operation{}, err
+	}
+	releasePreparation := s.reservePreparation(in.Input.SessionID)
+	defer releasePreparation()
 	if _, err := s.attachmentInputsOutsideDispatch(in.Input); err != nil {
 		return domain.Operation{}, err
 	}
+	if err := s.updateAdmission(); err != nil {
+		return domain.Operation{}, err
+	}
+	if !s.capturedRuntimeCurrent(in.Input.SessionID, target, before.Session.ThreadID) {
+		return domain.Operation{}, workNotSent(errRuntimeRetired)
+	}
 	var op domain.Operation
-	var err error
 	if revision > 0 {
 		op, err = s.store.AcceptQueuedSteer(in.Input, in.TurnID, revision)
 	} else {
@@ -222,6 +235,13 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 		ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 		defer cancel()
 		inputs, err := s.attachmentInputsOutsideDispatch(in.Input)
+		current, e := s.store.Operation(op.ID)
+		if e != nil || current.State != "dispatched" || !s.capturedRuntimeCurrent(op.SessionID, runtime, d.Session.ThreadID) {
+			return
+		}
+		if err == nil {
+			err = s.updateAdmission()
+		}
 		if err == nil && runtime.ManagedCoverage() {
 			err = s.coverOperation(op.SessionID, op.ID)
 		}

@@ -293,3 +293,9 @@ func TestPreparingOwnedRestoreReservesBeforeBackgroundStop(t *testing.T) {
 		t.Fatal("refused background stop cancelled preparation", submissionErr)
 	}
 }
+
+func prepareGitForTest(s *Server, in domain.Submission, launch domain.LaunchContext) (domain.LaunchContext, error) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	return s.prepareGitLocked(in, launch)
+}
