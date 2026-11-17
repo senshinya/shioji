@@ -1197,7 +1197,7 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 	if err != nil {
 		if in.Git.NewWorktree {
 			if _, lookup := s.store.Operation(in.OperationID); errors.Is(lookup, sql.ErrNoRows) {
-				s.removeUnacceptedWorktree(paths[0], in)
+				s.removeUnacceptedWorktree(in)
 			}
 		}
 		return op, err

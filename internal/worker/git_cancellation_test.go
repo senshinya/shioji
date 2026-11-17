@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func TestGitDeadlineTerminatesOwnedFilterWithoutWaitingForPipe(t *testing.T) {
+func TestGitCancellationTerminatesOwnedFilterWithoutWaitingForPipe(t *testing.T) {
 	_, w, _ := gitTestServer(t)
 	gate := t.TempDir()
 	filter := filepath.Join(t.TempDir(), "filter")
@@ -38,7 +38,7 @@ exit 0
 		t.Fatal(e)
 	}
 	defer os.WriteFile(filepath.Join(gate, "release"), nil, 0600)
-	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	unrelated := exec.Command("/bin/sleep", "30")
 	unrelated.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -85,6 +85,7 @@ exit 0
 	if child.Identity.PID == 0 {
 		t.Fatal("filter child was not observable")
 	}
+	cancel()
 	<-ctx.Done()
 	exceeded := false
 	select {
@@ -101,7 +102,7 @@ exit 0
 	}
 	if exceeded {
 		e := <-done
-		t.Logf("Git deadline=250ms, returned after pipe release at %v, error=%v", time.Since(start), e)
-		t.Fatal("Git command deadline did not bound waiting on inherited stdout/stderr")
+		t.Logf("Git cancellation returned only after pipe release at %v, error=%v", time.Since(start), e)
+		t.Fatal("Git cancellation did not bound waiting on inherited stdout/stderr")
 	}
 }

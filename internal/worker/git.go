@@ -495,34 +495,31 @@ func (s *Server) prepareGitLocked(in domain.Submission, launch domain.LaunchCont
 		if err = os.MkdirAll(base, 0700); err != nil {
 			return launch, err
 		}
-		dest := filepath.Join(base, id)
-		if err = valid(); err != nil {
+		base, err = filepath.EvalSymlinks(base)
+		if err != nil {
 			return launch, err
 		}
-		if _, err = s.gitRunOutsideDispatch(s.ctx, status.Checkout, "worktree", "add", "-b", "shioji/"+id, dest, branch); err != nil {
+		dest := filepath.Join(base, id)
+		err = s.prepareOwnedWorktree(in, status, dest, branch, "shioji/"+id, valid)
+		if err != nil {
 			return launch, err
 		}
 		// Preserve a subdirectory execution context within the new checkout.
-		original := launch.CWD
 		relative, err := filepath.Rel(status.Checkout, launch.CWD)
 		if err != nil {
-			s.removeUnacceptedWorktree(original, in)
 			return launch, err
 		}
 		launch.CWD = filepath.Join(dest, relative)
 		validated, e := validateFolders([]string{launch.CWD})
 		if e != nil {
-			s.removeUnacceptedWorktree(original, in)
 			return launch, e
 		}
 		launch.CWD = validated[0]
 		status, err = s.queryGitOutsideDispatch(s.ctx, launch.CWD)
 		if err != nil {
-			s.removeUnacceptedWorktree(original, in)
 			return launch, err
 		}
-		if err = s.store.SaveOwnedWorktree(store.OwnedWorktree{Path: status.Checkout, CommonDir: status.CommonDir, Branch: status.Branch, Head: status.Head}); err != nil {
-			s.removeUnacceptedWorktree(original, in)
+		if err = s.store.SaveOwnedWorktree(store.OwnedWorktree{Path: status.Checkout, CommonDir: status.CommonDir, Branch: status.Branch, Head: status.Head, CreationOperation: in.OperationID, CreationBase: branch}); err != nil {
 			return launch, err
 		}
 	} else if branch != status.Branch {
@@ -689,19 +686,6 @@ func (s *Server) fileVersions(q protocol.FileQuery) (domain.FileVersions, error)
 		return out, errors.New("binary files do not have a text preview")
 	}
 	return out, nil
-}
-
-func (s *Server) removeUnacceptedWorktree(original string, in domain.Submission) {
-	sum := sha256.Sum256([]byte(in.OperationID))
-	id := hex.EncodeToString(sum[:12])
-	dest := filepath.Join(s.config.Directory, "worktrees", id)
-	// No force: unexpected files or another Git user keep the worktree intact.
-	if _, err := s.gitRunOutsideDispatch(s.ctx, original, "worktree", "remove", dest); err == nil {
-		_, _ = s.gitRunOutsideDispatch(s.ctx, original, "branch", "-d", "shioji/"+id)
-		if canonical, err := filepath.EvalSymlinks(filepath.Dir(dest)); err == nil {
-			_ = s.store.ForgetOwnedWorktree(filepath.Join(canonical, id))
-		}
-	}
 }
 
 func (s *Server) checkGitContexts() error {

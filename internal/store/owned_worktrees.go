@@ -13,9 +13,10 @@ import (
 // OwnedWorktree records only checkouts created by this worker. It survives
 // session deletion so a failed backup/removal remains retryable after restart.
 type OwnedWorktree struct {
-	Path, CommonDir, Branch, Head string
-	Removed                       bool
-	DeletedSessions               []string
+	Path, CommonDir, Branch, Head   string
+	CreationOperation, CreationBase string
+	Removed                         bool
+	DeletedSessions                 []string
 }
 
 func (s *Store) OwnedWorktrees() ([]OwnedWorktree, error) {

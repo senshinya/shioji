@@ -2,6 +2,7 @@ package worker
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -109,25 +110,17 @@ func (s *Server) restoreOwnedWorktrees(paths []string) error {
 			} else if !os.IsNotExist(e) {
 				return e
 			}
-			s.dispatchMu.Unlock()
-			target := w.Branch
-			if target == "" {
-				target = w.Head
-			}
-			args := []string{"worktree", "add"}
-			if w.Branch == "" {
-				args = append(args, "--detach")
-			}
-			_, e = gitRun(s.ctx, w.CommonDir, append(args, w.Path, target)...)
+			e = s.addOwnedWorktree(w, false, s.updateAdmission)
 			if e == nil {
+				s.dispatchMu.Unlock()
 				// Git does not preserve empty execution subdirectories.
 				for _, path := range paths {
 					if store.WorktreeContains(w.Path, path) {
 						e = errors.Join(e, os.MkdirAll(path, 0700))
 					}
 				}
+				s.dispatchMu.Lock()
 			}
-			s.dispatchMu.Lock()
 			if e == nil {
 				w.Removed = false
 				e = s.store.SaveOwnedWorktree(w)
@@ -215,6 +208,15 @@ func (s *Server) ownedWorktreeCollectable(w store.OwnedWorktree) (bool, bool, er
 	for _, scope := range detached {
 		if owners[scope.Session] {
 			return false, referenced, nil
+		}
+	}
+	// A prepared creation without any accepted/deleted owner is still unknown,
+	// not an archive. Keep its checkout and intent available to an exact retry.
+	if !referenced && len(w.DeletedSessions) == 0 && w.CreationOperation != "" {
+		if _, e := s.store.Operation(w.CreationOperation); errors.Is(e, sql.ErrNoRows) {
+			return false, false, nil
+		} else if e != nil {
+			return false, false, e
 		}
 	}
 	return true, referenced, nil
