@@ -208,7 +208,13 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 			if !accepting.Load() {
 				return nil
 			}
-			return s.onHarnessEvent(d.Session.HarnessID, id, e)
+			if err := s.onHarnessEvent(d.Session.HarnessID, id, e); err != nil {
+				return err
+			}
+			if e.Type != "session.title" {
+				accepting.activity.Add(1)
+			}
+			return nil
 		}, OnStart: func(pid int) error {
 			accepting.mu.RLock()
 			defer accepting.mu.RUnlock()

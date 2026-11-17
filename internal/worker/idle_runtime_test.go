@@ -141,6 +141,74 @@ func TestIdleRuntimeResetsItsClockForActivityBetweenSweeps(t *testing.T) {
 	}
 }
 
+func TestIdleRuntimeMetadataDoesNotRenewExecutionClock(t *testing.T) {
+	for _, kind := range []string{"history read", "completion read", "rename", "source title"} {
+		t.Run(kind, func(t *testing.T) {
+			s, w := memoryWorker(t, idleHarness{})
+			d := submitIdleFixture(t, s, w, "first", "")
+			sid := d.Session.ID
+			r := s.currentRuntime(sid).(*idleTestRuntime)
+			now := time.Now()
+			sweepIdle(t, s, now)
+			var err error
+			switch kind {
+			case "history read":
+				_, err = s.store.Session(sid, 0, 100)
+			case "completion read":
+				if d.Session.Completion == nil || !d.Session.Completion.Unread {
+					t.Fatal("fixture has no unread completion")
+				}
+				_, err = s.store.ReadCompletion(sid, d.Session.Completion.ID)
+			case "rename":
+				_, err = s.store.RenameSession(sid, "my title", d.Session.TitleRevision, false)
+			case "source title":
+				err = r.options.OnEvent(domain.Event{SessionID: sid, Type: "session.title", Text: "source title"})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			sweepIdle(t, s, now.Add(19*time.Minute))
+			sweepIdle(t, s, now.Add(20*time.Minute))
+			if !r.Stopped() || s.currentRuntime(sid) != nil {
+				t.Fatal("presentation metadata prolonged the execution runtime")
+			}
+		})
+	}
+}
+
+func TestIdleRuntimeNativeActivityBetweenSweepsRenewsClock(t *testing.T) {
+	for _, kind := range []string{"late output", "native turn cycle"} {
+		t.Run(kind, func(t *testing.T) {
+			s, w := memoryWorker(t, idleHarness{})
+			d := submitIdleFixture(t, s, w, "first", "")
+			sid := d.Session.ID
+			r := s.currentRuntime(sid).(*idleTestRuntime)
+			now := time.Now()
+			sweepIdle(t, s, now)
+			if kind == "late output" {
+				if err := r.options.OnEvent(domain.Event{SessionID: sid, Type: "item.upsert", Item: &domain.Item{ID: "late-native-output", TurnID: "turn/first", Kind: "tool", Text: "late result", Final: true}}); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				for _, status := range []domain.ExecutionState{"running", "completed"} {
+					if err := r.options.OnEvent(domain.Event{SessionID: sid, Type: "turn", Turn: &domain.Turn{ID: "native-between-sweeps", Status: status}}); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			sweepIdle(t, s, now.Add(19*time.Minute))
+			sweepIdle(t, s, now.Add(20*time.Minute))
+			if r.Stopped() || s.currentRuntime(sid) == nil {
+				t.Fatal("native execution activity did not renew the clock")
+			}
+			sweepIdle(t, s, now.Add(39*time.Minute))
+			if !r.Stopped() || s.currentRuntime(sid) != nil {
+				t.Fatal("runtime remained after the renewed idle deadline")
+			}
+		})
+	}
+}
+
 func TestIdleRuntimePreservesBusyOrUncertainSessions(t *testing.T) {
 	cases := []struct {
 		name   string

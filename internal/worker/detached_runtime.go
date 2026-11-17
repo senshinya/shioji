@@ -14,6 +14,7 @@ import (
 
 type runtimeEventGate struct {
 	atomic.Bool
+	activity atomic.Uint64
 	mu       sync.RWMutex
 	done     chan struct{}
 	doneOnce sync.Once

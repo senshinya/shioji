@@ -15,9 +15,10 @@ const sessionRuntimeIdleTimeout = 20 * time.Minute
 const sessionRuntimeIdleCheck = 30 * time.Second
 
 type idleRuntimeObservation struct {
-	runtime  harness.Runtime
-	activity store.RuntimeIdleState
-	since    time.Time
+	runtime                       harness.Runtime
+	activity                      store.RuntimeIdleState
+	nativeActivity, dispatchEpoch uint64
+	since                         time.Time
 }
 
 func (s *Server) idleRuntimeLoop() {
@@ -97,9 +98,22 @@ func (s *Server) reclaimRuntime(id string, now time.Time, pressure bool, parent 
 		return err
 	}
 	if !pressure {
+		s.runtimeMu.RLock()
+		gate := s.runtimeEvents[id]
+		s.runtimeMu.RUnlock()
+		var nativeActivity uint64
+		if gate != nil {
+			nativeActivity = gate.activity.Load()
+		}
+		s.mu.Lock()
+		epoch := s.dispatchEpochs[id]
+		s.mu.Unlock()
 		previous, seen := s.idleRuntimes[id]
-		if !seen || previous.runtime.Done() != r.Done() || previous.activity != activity {
-			s.idleRuntimes[id] = idleRuntimeObservation{runtime: r, activity: activity, since: now}
+		// Session revisions also change for reads, rename and title metadata.
+		// Only accepted dispatch, queue changes and this instance's native work
+		// renew its clock. The full Store revision still fences eligibility above.
+		if !seen || previous.runtime.Done() != r.Done() || previous.nativeActivity != nativeActivity || previous.dispatchEpoch != epoch || previous.activity.QueueRevision != activity.QueueRevision || previous.activity.Background != activity.Background {
+			s.idleRuntimes[id] = idleRuntimeObservation{runtime: r, activity: activity, nativeActivity: nativeActivity, dispatchEpoch: epoch, since: now}
 			return nil
 		}
 		timeout := sessionRuntimeIdleTimeout
