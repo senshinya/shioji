@@ -113,7 +113,12 @@ func fixtureHost(name string) int {
 					case "worker.local-background-ready":
 						out = domain.WorkerUpdateResult{Ready: control.Instance == instance}
 					case "worker.local-background-cancel":
-						_ = os.WriteFile(filepath.Join(dir, "cancel-background"), []byte(control.OperationID), 0600)
+						_ = os.WriteFile(filepath.Join(dir, "cancel-background-attempt"), []byte(control.OperationID), 0600)
+						if _, e := os.Stat(filepath.Join(dir, "reject-background-cancel")); e == nil {
+							failure = errors.New("background preparation temporarily cannot be restored")
+						} else {
+							_ = os.WriteFile(filepath.Join(dir, "cancel-background"), []byte(control.OperationID), 0600)
+						}
 					case "worker.local-backup", "worker.prepare-drain":
 						if f.Method == "worker.prepare-drain" {
 							if _, e := os.Stat(filepath.Join(dir, "hold-prepare-drain")); e == nil {

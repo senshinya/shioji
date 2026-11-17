@@ -68,19 +68,50 @@ func (h *host) stopBackground(c *child, op *backgroundOperation) {
 	}
 	if result.NotStarted || err == nil && result.State != "notRegistered" && result.State != "notInstalled" {
 		// Only this exact generation's unstarted action may reopen admission.
-		undo, end := context.WithTimeout(ctx, 5*time.Second)
-		cancelErr := h.workerCall(undo, c, "worker.local-background-cancel", Control{Instance: c.instance, OperationID: op.id}, nil)
-		end()
-		err = errors.Join(err, cancelErr)
-		if cancelErr == nil {
-			h.mu.Lock()
-			op.stopping = false
-			h.mu.Unlock()
-			h.signalWake()
+		cancel()
+		if !h.restoreBackgroundStop(c, op) {
+			return // Host is exiting; an unconfirmed undo is not terminal.
 		}
+		h.mu.Lock()
+		op.stopping = false
+		op.result, op.err, op.done = result, err, true
+		h.mu.Unlock()
+		h.signalWake()
+		return
 	}
 	h.mu.Lock()
 	op.result, op.err = result, err
-	op.done = err == nil || result.NotStarted
+	op.done = err == nil
 	h.mu.Unlock()
+}
+
+// Native preflight may consume its entire budget. Undo belongs to the host's
+// lifetime, with a fresh budget for each attempt, never to that expired call.
+// Losing the captured child releases recovery without sending undo to its heir.
+func (h *host) restoreBackgroundStop(c *child, op *backgroundOperation) bool {
+	for {
+		select {
+		case <-c.done:
+			return true
+		case <-h.ctx.Done():
+			return false
+		default:
+		}
+		undo, end := context.WithTimeout(h.ctx, 5*time.Second)
+		err := h.workerCall(undo, c, "worker.local-background-cancel", Control{Instance: c.instance, OperationID: op.id}, nil)
+		end()
+		if err == nil {
+			return true
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-c.done:
+			timer.Stop()
+			return true
+		case <-h.ctx.Done():
+			timer.Stop()
+			return false
+		case <-timer.C:
+		}
+	}
 }
