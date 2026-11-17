@@ -6,6 +6,7 @@ const (
 	deviceScenePortY                = 131 - 25 // Hardware connector minus SVG viewBox origin.
 	deviceSceneMaxWidth             = 820
 	deviceSceneDetailsWidth         = 480
+	deviceSceneContentGap           = 12
 	configurationDialogInset        = 16
 	configurationCompactDialogInset = 10
 	configurationInset              = 32

@@ -94,6 +94,7 @@ func TestDeviceStatusSceneNeverTreatsCachedReadinessAsLive(t *testing.T) {
 			if tc.name != "ready" && ui.HasText("设备已就绪") {
 				t.Fatal("claimed readiness without all prerequisites")
 			}
+			saveNativeSkillImage(t, ui, "readiness-"+tc.name+".png")
 		})
 	}
 }
@@ -307,7 +308,11 @@ func TestDeviceSceneSectionsShareEdgesAndVerticalRhythm(t *testing.T) {
 			if math.Abs(float64(rect.X-previous.X)) > 1 || math.Abs(float64(rect.X+rect.W-previous.X-previous.W)) > 1 {
 				t.Fatal("section edges drift", label, previous, rect)
 			}
-			if math.Abs(float64(rect.Y-previous.Y-previous.H-configurationSectionGap)) > 1 {
+			gap := float32(configurationSectionGap)
+			if label == "设备执行服务区域" {
+				gap = deviceSceneContentGap
+			}
+			if math.Abs(float64(rect.Y-previous.Y-previous.H-gap)) > 1 {
 				t.Fatal("section vertical rhythm drifts", label, previous, rect)
 			}
 			previous = rect

@@ -217,11 +217,12 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 							if v.deviceTab == "workspaces" {
 								v.deviceWorkspaces(c.Key("workspaces:"+key), t, key, deviceID, state)
 							} else {
-								v.deviceStatusScene(c.Key("scene:"+key), t, key, state)
-
-								n.Column(c).FillWidth().Gap(0).Label("设备执行服务区域").Children(func() {
-									deviceHeading(c, "执行服务", nil)
-									v.deviceWorker(c.Key("worker:"+key), t, key, state)
+								n.Column(c).FillWidth().Gap(deviceSceneContentGap).Children(func() {
+									v.deviceStatusScene(c.Key("scene:"+key), t, key, state)
+									n.Column(c).FillWidth().Gap(0).Label("设备执行服务区域").Children(func() {
+										deviceHeading(c, "执行服务", nil)
+										v.deviceWorker(c.Key("worker:"+key), t, key, state)
+									})
 								})
 								v.deviceStorage(c.Key("storage:"+key), t, key, state)
 							}

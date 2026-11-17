@@ -197,7 +197,11 @@ func (v *View) deviceStatusScene(c *n.Context, t *n.Theme, key string, state *ap
 	root.Children(func() {
 		n.Row(c).FillWidth().Height(configurationControlHeight).Gap(8).AlignItems(n.Center).Children(func() {
 			font := n.Font{Family: t.Font, Size: 14, Weight: 500}
-			statusDot(c, projection.Title, font, t.TextMuted, projection.Busy)
+			color := t.TextMuted
+			if projection.WorkerReady && projection.AgentReady && !projection.Busy {
+				color = t.Success
+			}
+			statusDot(c, projection.Title, font, color, projection.Busy)
 			n.Text(c, projection.Title).FontSize(14).FontWeight(500).FixedLineHeight(configurationTextLine).Grow(1).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 			action := "重新检测"
 			if !state.Connected {
