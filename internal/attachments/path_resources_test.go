@@ -4,10 +4,18 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"shioji/internal/domain"
 	"testing"
 )
+
+func TestPathAttachmentPDFCannotBypassConsentAsUTF8Text(t *testing.T) {
+	_, err := Describe("guide.pdf", []byte("%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n"))
+	if !errors.Is(err, ErrUnsupportedType) {
+		t.Fatal("ASCII PDF would be uploaded without path confirmation", err)
+	}
+}
 
 func TestPathAttachmentResourceIsImmutableScopedAndVerified(t *testing.T) {
 	data := bytes.Repeat([]byte{0, 0xff, 4, 5}, 20000)

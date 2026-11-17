@@ -55,7 +55,7 @@ func Describe(name string, data []byte) (domain.Attachment, error) {
 		if format == "jpg" {
 			mime = "image/jpeg"
 		}
-	} else if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
+	} else if bytes.HasPrefix(data, []byte("%PDF-")) || !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
 		return a, ErrUnsupportedType
 	} else if len(data) > 128<<10 {
 		return a, errors.New("文本附件不能超过 128 KiB")

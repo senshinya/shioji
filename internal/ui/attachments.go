@@ -327,6 +327,9 @@ func (v *View) uploadDraft(key string, index int) {
 		v.attachmentUploading = map[string]bool{}
 	}
 	draft := m.Attachments[key][index]
+	if draft.Attachment.Kind == domain.PathAttachmentResource {
+		return // Path resources have their own consent and fixed owner.
+	}
 	workspace := m.WorkspaceID
 	target, err := m.AttachmentTarget(v.Controller.Directory, workspace)
 	if err != nil {

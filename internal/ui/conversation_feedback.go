@@ -393,11 +393,11 @@ func (v *View) conversationStatuses(now time.Time) []conversationStatus {
 		out = append(out, conversationStatus{id: "context", title: title, body: body, details: d.Session.ExecutionGuard, icon: branchIcon, priority: 3, actions: []statusAction{{label: "查看分支", disabled: !m.Connected, run: func(*n.Context) { v.branchOpen = true; v.branchSearch = ""; v.requestGit(true) }}, device}})
 	}
 	for _, a := range m.Attachments[m.DraftKey()] {
-		if a.Error != "" {
+		if a.Error != "" && a.Attachment.Kind != domain.PathAttachmentResource {
 			out = append(out, conversationStatus{id: "attachments", title: "附件暂时无法用于发送", body: "部分附件或引用尚未完成准备，正文和其他附件已保留。", details: a.Error, icon: fileAttachmentIcon, priority: 4, actions: []statusAction{{label: "重试准备", disabled: v.Controller == nil || !m.Connected, run: func(*n.Context) {
 				key := m.DraftKey()
 				for i, a := range m.Attachments[key] {
-					if a.Error != "" {
+					if a.Error != "" && a.Attachment.Kind != domain.PathAttachmentResource {
 						a.Error = ""
 						m.Attachments[key][i] = a
 						v.uploadDraft(key, i)

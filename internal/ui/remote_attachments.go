@@ -19,6 +19,10 @@ func (v *View) remoteUploadKey(key string, a app.DraftAttachment) string {
 	return key + ":" + a.DeviceID + ":" + a.WorkspaceID + ":" + a.Attachment.ID
 }
 
+func (v *View) remoteRememberKey(key string) string {
+	return v.attachmentPreparationKey(key) + ":" + v.Model.WorkspaceID + ":" + v.referenceDeviceID()
+}
+
 func (v *View) ownsRemoteAttachment(a app.DraftAttachment) bool {
 	return a.WorkspaceID == v.Model.WorkspaceID && a.DeviceID != "" && a.DeviceID == v.referenceDeviceID()
 }
@@ -62,7 +66,7 @@ func (v *View) confirmRemoteAttachments(key string, remember bool) {
 			m.RemotePathUploads = root.RemotePathUploads
 		}
 	}
-	delete(v.remoteUploadRemember, v.attachmentPreparationKey(key))
+	delete(v.remoteUploadRemember, v.remoteRememberKey(key))
 }
 
 func (v *View) removeRemoteAttachment(key, id string) {
@@ -84,7 +88,7 @@ func (v *View) cancelRemoteAttachments(key string) {
 	for _, a := range v.pendingRemoteAttachments(key) {
 		v.removeRemoteAttachment(key, a.Attachment.ID)
 	}
-	delete(v.remoteUploadRemember, v.attachmentPreparationKey(key))
+	delete(v.remoteUploadRemember, v.remoteRememberKey(key))
 }
 
 // A job can only update the exact staged resource and edit generation that
@@ -103,6 +107,13 @@ func (v *View) remoteUploadDraft(m *app.Model, jobKey string, job *remoteUploadJ
 
 func (v *View) startRemoteUpload(key string, draft app.DraftAttachment) {
 	m := v.Model
+	index := slices.IndexFunc(m.Attachments[key], func(current app.DraftAttachment) bool {
+		return current.Attachment == draft.Attachment && current.WorkspaceID == draft.WorkspaceID && current.DeviceID == draft.DeviceID
+	})
+	if index < 0 {
+		return
+	}
+	draft = m.Attachments[key][index]
 	if v.Controller == nil || !m.Connected || !draft.UploadApproved || draft.Ready || draft.Error != "" || !v.ownsRemoteAttachment(draft) || m.WorkerMinor < 47 || !m.RunReadiness().Capabilities.PathAttachments {
 		return
 	}
@@ -160,8 +171,18 @@ func (v *View) remoteAttachmentsPanel(c *n.Context, t *n.Theme, key string) {
 	files := v.pendingRemoteAttachments(key)
 	frame := n.Column(c.Key("remote-attachment-panel:" + key)).FillWidth().Clip()
 	retained := n.Local(frame, "files", func() []app.DraftAttachment { return nil })
+	closingAt := n.Local(frame, "closing-at", func() time.Time { return time.Time{} })
 	if len(files) > 0 {
 		*retained = slices.Clone(files)
+		*closingAt = time.Time{}
+	} else if len(*retained) > 0 {
+		if closingAt.IsZero() {
+			*closingAt = c.Now()
+			c.After(240 * time.Millisecond)
+		}
+		if c.Preferences().ReduceMotion || c.Now().Sub(*closingAt) >= 240*time.Millisecond {
+			*retained = nil
+		}
 	}
 	animatedContentHeight(c, frame, len(files) > 0, 240*time.Millisecond, func() float32 {
 		shown := *retained
@@ -192,39 +213,43 @@ func (v *View) remoteAttachmentsPanel(c *n.Context, t *n.Theme, key string) {
 			} else if unapproved {
 				n.Text(c, "将上传文件内容，并将远程路径提供给 Agent。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 			}
-			for _, a := range shown {
-				a := a
-				row := n.Column(c.Key(a.Attachment.ID)).FillWidth().Gap(3)
-				row.Children(func() {
-					n.Row(c).FillWidth().Height(28).Gap(8).AlignItems(n.Center).Children(func() {
-						inlineIconText(c, fileAttachmentIcon, a.Attachment.Name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 14, 8, t.Text).Grow(1).MinWidth(0).Ellipsis("…").Tooltip(a.Attachment.Name)
-						label := attachmentSize(a.Attachment.Size)
-						if a.UploadApproved && !a.Ready && a.Error == "" {
-							label = attachmentSize(a.Transferred) + " / " + label
-						}
-						n.Text(c, label).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).FontFeatures("tnum")
-						if iconButton(c, queueRemoveIcon, "移除远程附件："+a.Attachment.Name).Size(28, 28).Tooltip("取消上传并移除此文件").Clicked() {
-							v.removeRemoteAttachment(key, a.Attachment.ID)
-						}
-					})
-					if a.Error != "" {
-						n.Text(c, "上传失败，请重试").FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Tooltip(a.Error).PaddingStart(22)
-					} else if a.UploadApproved && !foreign {
-						progress := n.Box(c.Key("progress")).FillWidth().Height(2).Margin(0, 0, 5, 22)
-						value := progress.AnimateTo("progress", float32(a.Transferred)/float32(a.Attachment.Size), motionAnimation(c, 240*time.Millisecond))
-						progress.Draw(func(p *n.Painter, r n.Rect) {
-							p.Fill(r, t.Border, 1)
-							r.W *= value
-							p.Fill(r, t.TextMuted, 1)
+			n.Scroll(c.Key("files")).FillWidth().MaxHeight(192).Label("待上传文件列表").Children(func() {
+				n.Column(c).FillWidth().Gap(6).Children(func() {
+					for _, a := range shown {
+						a := a
+						row := n.Column(c.Key(a.Attachment.ID)).FillWidth().Gap(3)
+						row.Children(func() {
+							n.Row(c).FillWidth().Height(28).Gap(8).AlignItems(n.Center).Children(func() {
+								inlineIconText(c, fileAttachmentIcon, a.Attachment.Name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 14, 8, t.Text).Grow(1).MinWidth(0).Ellipsis("…").Tooltip(a.Attachment.Name)
+								label := attachmentSize(a.Attachment.Size)
+								if a.UploadApproved && !a.Ready && a.Error == "" {
+									label = attachmentSize(a.Transferred) + " / " + label
+								}
+								n.Text(c, label).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).FontFeatures("tnum")
+								if iconButton(c, queueRemoveIcon, "移除远程附件："+a.Attachment.Name).Size(28, 28).Tooltip("取消上传并移除此文件").Clicked() {
+									v.removeRemoteAttachment(key, a.Attachment.ID)
+								}
+							})
+							if a.Error != "" {
+								n.Text(c, "上传失败，请重试").FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Tooltip(a.Error).PaddingStart(22)
+							} else if a.UploadApproved && !foreign {
+								progress := n.Box(c.Key("progress")).FillWidth().Height(2).Margin(0, 0, 5, 22)
+								value := progress.AnimateTo("progress", float32(a.Transferred)/float32(a.Attachment.Size), motionAnimation(c, 240*time.Millisecond))
+								progress.Draw(func(p *n.Painter, r n.Rect) {
+									p.Fill(r, t.Border, 1)
+									r.W *= value
+									p.Fill(r, t.TextMuted, 1)
+								})
+							}
 						})
+						if !foreign {
+							v.startRemoteUpload(key, a)
+						}
 					}
 				})
-				if !foreign {
-					v.startRemoteUpload(key, a)
-				}
-			}
+			})
 			n.Row(c).FillWidth().Wrap().Gap(8).AlignItems(n.Center).Children(func() {
-				rememberKey := v.attachmentPreparationKey(key)
+				rememberKey := v.remoteRememberKey(key)
 				if v.remoteUploadRemember == nil {
 					v.remoteUploadRemember = map[string]bool{}
 				}
@@ -258,6 +283,9 @@ func (v *View) remoteAttachmentsPanel(c *n.Context, t *n.Theme, key string) {
 		})
 		return 0
 	})
+	// A zero-height column still contributes its parent's gap. Hide it once
+	// its own exit is complete, including the initial empty history editor.
+	frame.Hidden(len(files) == 0 && len(*retained) == 0)
 }
 
 func remoteUploadMetadata(name string, a domain.Attachment) string {
