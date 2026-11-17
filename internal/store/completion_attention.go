@@ -95,6 +95,17 @@ func (s *Store) InterruptCompletion(id string) error {
 	}
 	defer tx.Rollback()
 	session, err := load[domain.Session](tx.QueryRow("SELECT body FROM sessions WHERE id=?", id))
+	// A committed tombstone already withdrew completion and owns physical cleanup.
+	// A truly missing live session remains an error rather than hiding corruption.
+	if errors.Is(err, sql.ErrNoRows) {
+		var deleted bool
+		if readErr := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM deleted_sessions WHERE id=?)", id).Scan(&deleted); readErr != nil {
+			return readErr
+		}
+		if deleted {
+			return nil
+		}
+	}
 	if err != nil {
 		return err
 	}
