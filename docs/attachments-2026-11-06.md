@@ -40,3 +40,16 @@
 保留单文件 8 MiB、最多 8 个文件及合计 16 MiB；目录、空文件和超限继续报错。旧 worker 或不支持路径引用的 Agent 明确不可用，正常旧版图片／文本流程保留。客户端重启后，已确认但未完成的文件保持可重试状态，不自动发送或补传。取消的临时内容沿用既有资源保留／清理机制；本轮未引入自动删除已完成原始资源的策略。
 
 实现规格：[远程附件上传与路径引用](ryugi/specs/2026-11-17-remote-attachment-upload.md)。自动验证使用真实认证 worker 连接、实际 Codex app-server 加本地确定性模型端点；原生状态截图来自生产 MyGo 渲染器的明确状态样例。正式远程设备升级和真实用户环境的部署验收另行进行，不修改现有设备、权限、凭据或 Tailnet 节点。
+
+本轮源码提交为 `4021878`、`bb79bd7`、`e24aa8d`、`f4ff331`。最终审查发现双会话窗格中附件准备回调错误使用主窗格工作区，已用原始窗格作用域修复；远程／本机及有效／已失效的右窗格回填均有回归检查。审查没有其他 Critical 或 Minor 问题。
+
+最终验证（本机 macOS arm64 共享源码工作区，包含其他任务的修改；2026-11-17）：
+
+- `env -u GOROOT go test -race ./internal/attachments ./internal/app ./internal/ui ./internal/worker ./internal/harness/codex -run 'TestRemoteAttachment|TestPathAttachment|TestAttachmentRejectsBinary|TestHistoryEditorEntryDoesNotRewrapInlineMessageForOneFrame' -count=1` 五个包通过。
+- `env -u GOROOT go test ./internal/worker -run '^TestPathAttachmentActualWorkerAndCodexUseOwningDevicePath$' -v -count=1` 通过（1.860s）。实际认证 worker／Codex 链路验证完整路径输入、拒绝未完成／伪造／跨工作区资源和另一客户端下载字节一致。
+- 生产 MyGo 渲染器生成亮暗、900／1280 DIP 确认、上传、失败和完成截图，并录制确认／勾选／取消／再次添加。原生截图与已选设计 A 的两组对照保存在本机画板，视觉验收尚待用户判断；截图不是物理远程部署证据。
+- `SHIOJI_APP_PATH=build/remote-attachments/Shioji.app CODE_SIGN_IDENTITY=- SHIOJI_RELEASE_UPDATES=0 bash packaging/build-dev.sh` 成功；`codesign --verify --deep --strict --verbose=2 build/remote-attachments/Shioji.app` 通过。独立开发版位于 `build/remote-attachments/Shioji.app`，worker 自述 major 2／minor 47、revision `f4ff331+modified`。未安装或覆盖正式 App。
+- `python3 scripts/verify-design-freeze.py --repository` 通过，6 个冻结文件一致。实际局域网 HTTP 验证报告、外层／嵌入画板、图片与录屏完成渲染／播放，无页面和控制台错误；非安全上下文中生成 1000 个唯一合法 v4 UUID。LAN 补丁回归检查通过。
+- `env -u GOROOT go test -timeout 20m ./cmd/... ./internal/...` 未通过：仅剩 `TestWorkspaceHeadingSharesTheWorkspaceRowVisibleEdges`（16 个子例）与 `TestWorkspaceHeadingInsetsAndNoPerWorkspacePlus` 的导航标题左右间距断言失败。该导航基线在附件实现前的 `923f4e2` 已改动，本轮未修改相关导航。UI 包 381.273s，worker 包 196.206s，其余包通过。首次 `./...` 另包含被忽略的 `build/worker-recovery-20261116` 临时程序重复定义 `main`／`ident`；当轮发现的本任务历史编辑 10 DIP 间距回归已修复，上述最终专项包含其检查。
+
+本机验证报告与原始证据保存在 `.ryugi/artifacts/verify/remote-attachment-upload/`；原生对照及录屏在 `.ryugi/artifacts/artboard/remote-attachment-upload/pages/verify/`。没有发布云端。预览端口 27320 复用已有服务，不因本任务完成停止其他任务的预览；临时无头浏览器已关闭。
