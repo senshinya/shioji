@@ -52,6 +52,8 @@ type Server struct {
 	drainMu              sync.Mutex
 	drainOperation       string
 	archiveWake          chan struct{}
+	worktreeWake         chan struct{}
+	worktreeCollection   *worktreeCollection
 	titleMu              sync.Mutex
 	titleExecutions      *managedexec.Manager
 	titleActive          map[string]bool
@@ -290,6 +292,9 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	go s.titleLoop()
 	s.wg.Add(1)
 	go s.workerMaintenanceLoop()
+	s.worktreeWake = make(chan struct{}, 1)
+	s.wg.Add(1)
+	go s.worktreeLoop()
 	s.wg.Add(1)
 	s.archiveWake = make(chan struct{}, 1)
 	go s.archiveLoop()

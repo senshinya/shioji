@@ -21,6 +21,7 @@ func (s *Server) archiveLoop() {
 		if err := s.cleanupArchives(time.Now()); err != nil {
 			fmt.Fprintf(os.Stderr, "shioji: archive cleanup: %v\n", err)
 		}
+		s.wakeWorktreeGC()
 		select {
 		case <-s.ctx.Done():
 			return
@@ -53,7 +54,7 @@ func (s *Server) cleanupArchives(now time.Time) error {
 			continue
 		}
 	}
-	return errors.Join(result, s.cleanArchiveGarbage(), s.cleanOwnedWorktrees(now))
+	return errors.Join(result, s.cleanArchiveGarbage())
 }
 
 // Caller holds dispatchMu, shared with submissions, checkout and restoration.

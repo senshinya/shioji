@@ -110,7 +110,7 @@ func TestGitWaitDoesNotBlockPrivateDrain(t *testing.T) {
 func TestPreparingOwnedRestoreReservesBeforeAwait(t *testing.T) {
 	s, w, d := ownedWorktreeFixture(t)
 	archiveOwnedFixture(t, s, d.Session.ID)
-	if e := s.cleanupArchives(time.Now()); e != nil {
+	if e := cleanupWorktreesForTest(s, time.Now()); e != nil {
 		t.Fatal(e)
 	}
 	latest, _ := s.store.Session(d.Session.ID, 0, 1)
@@ -153,7 +153,7 @@ func TestPreparingOwnedRestoreReservesBeforeAwait(t *testing.T) {
 func TestImmediateDrainRejectsLateRestoredSubmission(t *testing.T) {
 	s, w, d := ownedWorktreeFixture(t)
 	archiveOwnedFixture(t, s, d.Session.ID)
-	if e := s.cleanupArchives(time.Now()); e != nil {
+	if e := cleanupWorktreesForTest(s, time.Now()); e != nil {
 		t.Fatal(e)
 	}
 	latest, _ := s.store.Session(d.Session.ID, 0, 1)
@@ -263,7 +263,7 @@ func TestLateGitStatusCannotMarkSuccessorContextChanged(t *testing.T) {
 func TestPreparingOwnedRestoreReservesBeforeBackgroundStop(t *testing.T) {
 	s, w, d := ownedWorktreeFixture(t)
 	archiveOwnedFixture(t, s, d.Session.ID)
-	if e := s.cleanupArchives(time.Now()); e != nil {
+	if e := cleanupWorktreesForTest(s, time.Now()); e != nil {
 		t.Fatal(e)
 	}
 	latest, _ := s.store.Session(d.Session.ID, 0, 1)

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,7 +63,7 @@ func TestOwnedWorktreeArchiveBacksUpAndLazilyRestoresActualBranch(t *testing.T) 
 	}
 	gitTestRun(t, path, "branch", "-m", "renamed-session")
 	archiveOwnedFixture(t, s, d.Session.ID)
-	if e := s.cleanupArchives(time.Now()); e != nil {
+	if e := cleanupWorktreesForTest(s, time.Now()); e != nil {
 		t.Fatal(e)
 	}
 	if _, e := os.Stat(path); !os.IsNotExist(e) {
@@ -109,14 +110,14 @@ func TestOwnedWorktreeSharedBySessionsWaitsForLastArchive(t *testing.T) {
 		t.Fatal(e)
 	}
 	archiveOwnedFixture(t, s, d.Session.ID)
-	if e = s.cleanupArchives(time.Now()); e != nil {
+	if e = cleanupWorktreesForTest(s, time.Now()); e != nil {
 		t.Fatal(e)
 	}
 	if _, e = os.Stat(path); e != nil {
 		t.Fatal("archive removed another live session's checkout", e)
 	}
 	archiveOwnedFixture(t, s, op.SessionID)
-	if e = s.cleanupArchives(time.Now()); e != nil {
+	if e = cleanupWorktreesForTest(s, time.Now()); e != nil {
 		t.Fatal(e)
 	}
 	if _, e = os.Stat(path); !os.IsNotExist(e) {
@@ -135,7 +136,7 @@ func TestOwnedWorktreeDeletionKeepsBackupBranchAndOriginalProject(t *testing.T) 
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = s.cleanupArchives(time.Now()); e != nil {
+	if e = cleanupWorktreesForTest(s, time.Now()); e != nil {
 		t.Fatal(e)
 	}
 	if _, e = os.Stat(path); !os.IsNotExist(e) {
@@ -158,24 +159,24 @@ func TestOwnedWorktreeBackupFailureRetainsFilesAndRetries(t *testing.T) {
 	}
 	archiveOwnedFixture(t, s, d.Session.ID)
 	now := time.Now()
-	if e := s.cleanupArchives(now); e == nil {
+	if e := cleanupWorktreesForTest(s, now); e == nil {
 		t.Fatal("backup lock failure was hidden")
 	}
 	if b, e := os.ReadFile(filepath.Join(path, "new.txt")); e != nil || string(b) != "keep" {
 		t.Fatal("failed backup removed files", e)
 	}
 	// First retry after 30 seconds, then double the per-checkout delay.
-	if e := s.cleanupArchives(now.Add(30 * time.Second)); e == nil {
+	if e := cleanupWorktreesForTest(s, now.Add(30*time.Second)); e == nil {
 		t.Fatal("second backup failure was hidden")
 	}
 	os.Remove(index + ".lock")
-	if e := s.cleanupArchives(now.Add(89 * time.Second)); e != nil {
+	if e := cleanupWorktreesForTest(s, now.Add(89*time.Second)); e != nil {
 		t.Fatal(e)
 	}
 	if _, e := os.Stat(path); e != nil {
 		t.Fatal("worktree retry bypassed exponential backoff", e)
 	}
-	if e := s.cleanupArchives(now.Add(90 * time.Second)); e != nil {
+	if e := cleanupWorktreesForTest(s, now.Add(90*time.Second)); e != nil {
 		t.Fatal(e)
 	}
 	if _, e := os.Stat(path); !os.IsNotExist(e) {
@@ -188,7 +189,7 @@ func TestOwnedWorktreeDetachedHeadBackupRemainsReachable(t *testing.T) {
 	gitTestRun(t, path, "checkout", "--detach")
 	os.WriteFile(filepath.Join(path, "new.txt"), []byte("detached"), 0600)
 	archiveOwnedFixture(t, s, d.Session.ID)
-	if e := s.cleanupArchives(time.Now()); e != nil {
+	if e := cleanupWorktreesForTest(s, time.Now()); e != nil {
 		t.Fatal(e)
 	}
 	refs := gitTestRun(t, w.Folders[0], "for-each-ref", "--format=%(refname)", "refs/heads/shioji/")
@@ -219,7 +220,7 @@ func TestOwnedWorktreeFailedRetirementDoesNotBlockOtherCheckout(t *testing.T) {
 	s.runtimeMu.Unlock()
 	archiveOwnedFixture(t, s, first.Session.ID)
 	archiveOwnedFixture(t, s, second.Session.ID)
-	_ = s.cleanupArchives(time.Now())
+	_ = cleanupWorktreesForTest(s, time.Now())
 	if _, e = os.Stat(first.Session.Context.Repository); e != nil {
 		t.Fatal("unsettled producer lost checkout", e)
 	}
@@ -235,7 +236,7 @@ func TestOwnedWorktreeEarlierCreationRecoveredFromAcceptedReceipt(t *testing.T) 
 		t.Fatal(e)
 	}
 	archiveOwnedFixture(t, s, d.Session.ID)
-	if e := s.cleanupArchives(time.Now()); e != nil {
+	if e := cleanupWorktreesForTest(s, time.Now()); e != nil {
 		t.Fatal(e)
 	}
 	if _, e := os.Stat(path); !os.IsNotExist(e) {
@@ -245,7 +246,7 @@ func TestOwnedWorktreeEarlierCreationRecoveredFromAcceptedReceipt(t *testing.T) 
 func TestOwnedWorktreeRemovedStatusCanBeReadWithoutRecreation(t *testing.T) {
 	s, w, d := ownedWorktreeFixture(t)
 	archiveOwnedFixture(t, s, d.Session.ID)
-	if e := s.cleanupArchives(time.Now()); e != nil {
+	if e := cleanupWorktreesForTest(s, time.Now()); e != nil {
 		t.Fatal(e)
 	}
 	status, e := s.gitStatus(protocol.GitQuery{SessionID: d.Session.ID, WorkspaceID: w.ID})
@@ -262,7 +263,7 @@ func TestOwnedWorktreeLifecycleSurvivesWorkerRestart(t *testing.T) {
 	path := d.Session.Context.Repository
 	os.WriteFile(filepath.Join(path, "new.txt"), []byte("restart"), 0600)
 	archiveOwnedFixture(t, s, d.Session.ID)
-	if e := s.cleanupArchives(time.Now()); e != nil {
+	if e := cleanupWorktreesForTest(s, time.Now()); e != nil {
 		t.Fatal(e)
 	}
 	config := s.config
@@ -302,7 +303,7 @@ func TestOwnedWorktreeUnregisteredDirectoryIsNeverAdopted(t *testing.T) {
 	manual.Session.Status = "completed"
 	s.store.Apply(op.SessionID, domain.Event{Type: "session", Session: &manual.Session})
 	archiveOwnedFixture(t, s, op.SessionID)
-	if e = s.cleanupArchives(time.Now()); e != nil {
+	if e = cleanupWorktreesForTest(s, time.Now()); e != nil {
 		t.Fatal(e)
 	}
 	if _, e = os.Stat(foreign); e != nil {
@@ -334,7 +335,7 @@ exec /usr/bin/git "$@"
 	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
 	archiveOwnedFixture(t, s, d.Session.ID)
 	cleaned := make(chan error, 1)
-	go func() { cleaned <- s.cleanupArchives(time.Now()) }()
+	go func() { cleaned <- cleanupWorktreesForTest(s, time.Now()) }()
 	defer os.WriteFile(filepath.Join(gate, "release"), nil, 0600)
 	for until := time.Now().Add(3 * time.Second); ; {
 		if _, e := os.Stat(filepath.Join(gate, "entered")); e == nil {
@@ -413,4 +414,8 @@ func TestOwnedWorktreeBrokenLegacyDiscoveryCannotBlockOtherSubmission(t *testing
 	if _, e = s.submit(domain.Submission{OperationID: "independent-from-broken-discovery", WorkspaceID: w.ID, Text: "other", Config: d.Session.Config}); e != nil {
 		t.Fatal("unrelated work depends on broken legacy checkout discovery", e)
 	}
+}
+
+func cleanupWorktreesForTest(s *Server, now time.Time) error {
+	return errors.Join(s.cleanupArchives(now), s.collectOwnedWorktrees(now))
 }
