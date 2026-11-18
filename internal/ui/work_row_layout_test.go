@@ -40,14 +40,15 @@ func TestWorkRowsDoNotReserveMissingSummarySpace(t *testing.T) {
 					ui.Advance(time.Second)
 					for i, work := range works {
 						row, ok := ui.Find("查看" + inspectorWorkName(kind) + "：" + work.Title)
+						showCaption := i == 3 || i == 2 && source == "agent"
 						want := float32(36)
-						if i >= 2 {
+						if showCaption {
 							want = 56
 						}
 						if !ok || math.Abs(float64(row.H-want)) > .5 {
-							t.Errorf("missing summary leaves an empty second line: %s height=%g want=%g", work.Title, row.H, want)
+							t.Errorf("unexpected row height: %s height=%g want=%g", work.Title, row.H, want)
 						}
-						if i >= 2 {
+						if showCaption {
 							text := work.Latest
 							if i == 3 {
 								text = d.Requests[0].Questions[0].Text
@@ -58,15 +59,18 @@ func TestWorkRowsDoNotReserveMissingSummarySpace(t *testing.T) {
 							}
 						}
 					}
-					// A late result grows only its own row. Clearing it reclaims
-					// the caption again without changing the title's baseline.
+					// A late subagent summary grows its row without moving the title.
 					before, _ := ui.Find(works[0].Title)
 					works[0].Latest = "稍后到达的完成摘要"
 					ui.Frame()
 					ui.Advance(time.Second)
 					grown, _ := ui.Find("查看" + inspectorWorkName(kind) + "：" + works[0].Title)
-					if grown.H != 56 || !ui.HasText(works[0].Latest) {
-						t.Error("late summary is not shown at natural height", grown)
+					wantHeight := float32(36)
+					if source == "agent" {
+						wantHeight = 56
+					}
+					if grown.H != wantHeight || ui.HasText(works[0].Latest) != (source == "agent") {
+						t.Errorf("unexpected late output visibility or row height: %v", grown)
 					}
 					works[0].Latest = ""
 					ui.Frame()
@@ -98,7 +102,13 @@ func TestWorkSummaryHeightChangeKeepsFirstLineStable(t *testing.T) {
 			ui.Advance(time.Second)
 			label := "查看" + inspectorWorkName(kind) + "：" + works[0].Title
 			before, _ := ui.Find(works[0].Title)
-			works[0].Latest = "检查通过，稍后到达摘要"
+			d := v.Model.Details["s"]
+			if source == "background" {
+				d.Requests = []domain.PendingRequest{{ID: "question", WorkID: works[0].ID, Kind: "question", State: "pending", Questions: []domain.Question{{Text: "请选择接下来的检查范围"}}}}
+				v.Model.Details["s"] = d
+			} else {
+				works[0].Latest = "检查通过，稍后到达摘要"
+			}
 			ui.Frame()
 			ui.Advance(60 * time.Millisecond)
 			middle, _ := ui.Find(label)
@@ -107,6 +117,8 @@ func TestWorkSummaryHeightChangeKeepsFirstLineStable(t *testing.T) {
 				t.Fatal("summary addition jumps or moves the first line", middle, before, title)
 			}
 			ui.Advance(200 * time.Millisecond)
+			d.Requests = nil
+			v.Model.Details["s"] = d
 			works[0].Latest = ""
 			ui.Frame()
 			ui.Advance(60 * time.Millisecond)

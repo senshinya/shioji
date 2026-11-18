@@ -40,13 +40,15 @@ func TestWorkListDensityTracksSummaryContent(t *testing.T) {
 			saveNativeSkillImage(t, ui, fmt.Sprintf("work-density-%v.png", dark))
 			for _, kind := range []string{"agent", "background"} {
 				name := "子 Agent"
+				withOutputHeight := float32(56)
 				if kind == "background" {
 					name = "后台任务"
+					withOutputHeight = 36
 				}
 				plain, _ := ui.Find("查看" + name + "：" + title(kind, 0))
 				detail, _ := ui.Find("查看" + name + "：" + title(kind, 1))
-				if math.Abs(float64(plain.H-36)) > .5 || math.Abs(float64(detail.H-56)) > .5 {
-					t.Error("empty summary reserves a second line", plain, detail)
+				if math.Abs(float64(plain.H-36)) > .5 || math.Abs(float64(detail.H-withOutputHeight)) > .5 {
+					t.Errorf("unexpected %s row heights with and without output: %v %v", kind, detail, plain)
 				}
 			}
 			// A real summary arriving/removing changes height continuously, and the

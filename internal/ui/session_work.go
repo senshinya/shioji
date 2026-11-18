@@ -307,15 +307,19 @@ func (v *View) sessionWorkBody(c *n.Context, t *n.Theme, kind string, all []doma
 					c.AnimationFrame()
 				}
 			}
-			if r := v.pendingWorkRequest(w); r != nil {
-				w.Latest = r.Text
-				if len(r.Questions) > 0 {
-					w.Latest = r.Questions[0].Text
+			pending := v.pendingWorkRequest(w)
+			preview := w.Latest
+			if pending != nil {
+				preview = pending.Text
+				if len(pending.Questions) > 0 {
+					preview = pending.Questions[0].Text
 				}
+			} else if w.Kind == "background" {
+				preview = ""
 			}
-			w.Latest = strings.TrimSpace(w.Latest)
+			preview = strings.TrimSpace(preview)
 			height := float32(36)
-			if w.Latest != "" {
+			if preview != "" {
 				height = 56
 			}
 			row := control(c, 5).FillWidth().AlignItems(n.Start).Opacity(progress).Clip().Padding(8, 6).Label(name)
@@ -326,13 +330,13 @@ func (v *View) sessionWorkBody(c *n.Context, t *n.Theme, kind string, all []doma
 					n.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 						n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
 							title := n.Text(c, w.Title).Grow(1).MinWidth(0).SingleLine().FontSize(12).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
-							if w.Active() && v.pendingWorkRequest(w) == nil {
+							if w.Active() && pending == nil {
 								shimmer(c, title, t.TextMuted, t.Text)
 							}
 							v.workRequestLink(c, t, w)
 						})
-						if w.Latest != "" {
-							n.Text(c, w.Latest).FillWidth().SingleLine().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).Transition(fadeMotion(c, 180*time.Millisecond))
+						if preview != "" {
+							n.Text(c, preview).FillWidth().SingleLine().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).Transition(fadeMotion(c, 180*time.Millisecond))
 						}
 					})
 					if duration := workDuration(w, c.Now()); duration != "" {

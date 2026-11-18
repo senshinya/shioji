@@ -112,6 +112,48 @@ func TestSessionWorkNativeAppearance(t *testing.T) {
 	}
 }
 
+func TestBackgroundOutputAppearsOnlyInDetails(t *testing.T) {
+	for _, theme := range []string{"light", "dark"} {
+		t.Run(theme, func(t *testing.T) {
+			v, ui := sessionWorkFixture(t)
+			d := v.Model.Details["s"]
+			work := &d.Works[1]
+			duration := int64(1000)
+			work.Title, work.State, work.DurationMS = `/bin/zsh -lc "cat task-result.json"`, "completed", &duration
+			work.Latest = "processed 12 records"
+			v.Model.Details["s"] = d
+			key := v.Model.WorkKey("s", work.ID)
+			detail := v.Model.WorkDetails[key]
+			output := "loading records\nprocessed 12 records"
+			detail.Work = *work
+			detail.Items[0].Item.Text = output
+			v.Model.WorkDetails[key] = detail
+			ui.SetDark(theme == "dark")
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, "background-"+theme+".png")
+			label := "查看后台任务：" + work.Title
+			for _, state := range []string{"completed", "running", "failed"} {
+				work.State = state
+				ui.Frame()
+				ui.Advance(time.Second)
+				if row, ok := ui.Find(label); !ok || row.H != 36 || ui.HasText(work.Latest) {
+					t.Fatalf("%s task showed output in the list: bounds=%v", state, row)
+				}
+			}
+			if !ui.HasText("读取 rotate.go") {
+				t.Fatal("subagent activity preview disappeared")
+			}
+			if err := ui.Click(label); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			if !ui.HasText(output) {
+				t.Fatal("task detail lost its original output")
+			}
+		})
+	}
+}
+
 func TestSessionWorkDockingAndArrivalKeepSelections(t *testing.T) {
 	v, ui := sessionWorkFixture(t)
 	ui.Click("查看子 Agent：检查边界条件")
