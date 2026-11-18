@@ -31,33 +31,34 @@ type Job struct {
 	epoch           string
 }
 type Controller struct {
-	forwardSnapshot   []portforward.Mapping
-	forwardsStarted   bool
-	forwards          *portforward.Manager
-	paths             *devicePaths
-	resolveSSH        func(transport.SSH) (transport.SSH, error)
-	Tailnet           tailnet.Connection
-	signInForwards    signInForwards
-	WorkerSSH         *transport.SSH
-	WorkerBinary      string
-	WorkerAutoUpdate  bool
-	fleet             *deviceFleet
-	ExpectedDeviceID  string
-	RestoreOperations []string
-	Directory         string
-	Dial              func(context.Context) (net.Conn, error)
-	Jobs              chan Job
-	Updates           chan Update
-	mu                sync.Mutex
-	runContext        context.Context
-	deviceWG          sync.WaitGroup
-	networkWG         sync.WaitGroup
-	epoch             string
-	invalidate        func()
+	forwardSnapshot       []portforward.Mapping
+	forwardsStarted       bool
+	forwards              *portforward.Manager
+	paths                 *devicePaths
+	resolveSSH            func(transport.SSH) (transport.SSH, error)
+	Tailnet               tailnet.Connection
+	signInForwards        signInForwards
+	WorkerSSH             *transport.SSH
+	WorkerBinary          string
+	WorkerAutoUpdate      bool
+	fleet                 *deviceFleet
+	ExpectedDeviceID      string
+	RestoreOperations     []string
+	Directory             string
+	workerUpdateDirectory string
+	Dial                  func(context.Context) (net.Conn, error)
+	Jobs                  chan Job
+	Updates               chan Update
+	mu                    sync.Mutex
+	runContext            context.Context
+	deviceWG              sync.WaitGroup
+	networkWG             sync.WaitGroup
+	epoch                 string
+	invalidate            func()
 }
 
 func NewController(dir string) *Controller {
-	return &Controller{Directory: dir, Jobs: make(chan Job, 16), Updates: make(chan Update, 256)}
+	return &Controller{Directory: dir, workerUpdateDirectory: dir, Jobs: make(chan Job, 16), Updates: make(chan Update, 256)}
 }
 func (c *Controller) SetInvalidate(fn func()) { c.mu.Lock(); c.invalidate = fn; c.mu.Unlock() }
 func (c *Controller) post(update Update) {

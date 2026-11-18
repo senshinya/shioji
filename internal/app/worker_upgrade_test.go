@@ -7,6 +7,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"shioji/internal/supervisor"
+	"shioji/internal/transport"
 	"strings"
 	"testing"
 )
@@ -125,5 +126,27 @@ func TestWorkerUpgradeDefiniteRejectionIsNotKeptAsUnknown(t *testing.T) {
 	state, e := client.update(context.Background(), c, &domain.WorkerBuild{BuildID: "next"}, true, "when-idle")
 	if e == nil || state == nil || state.Phase != WorkerUpdateFailed {
 		t.Fatal("definite refusal became permanent unknown intent", state, e)
+	}
+}
+
+// Remote worker paths are device-owned; update intents must still be durable
+// on the controlling Mac, including after a route or client restart.
+func TestRemoteUpgradeObserverPersistsIntentOnControllingMac(t *testing.T) {
+	directory := t.TempDir()
+	connection := DeviceConnection{ID: "remote", DeviceID: "device-B", SSH: transport.SSH{Target: "peer", Worker: "/remote/worker", StateDirectory: "/remote/state"}}
+	controller := NewDeviceController(directory, "device-A", []DeviceConnection{connection}, "", nil)
+	child := controller.fleet.sources["remote"].controller
+	observer := child.upgradeObserver("device-B", nil)
+	record := &workerUpgradeRecord{DeviceID: "device-B", Input: domain.WorkerReplacement{ID: "saved-update", BuildID: "next", Policy: "when-idle", Explicit: true}}
+	if err := observer.save(record); err != nil {
+		t.Fatal(err)
+	}
+	restarted := NewDeviceController(directory, "device-A", []DeviceConnection{connection}, "", nil)
+	loaded, err := restarted.fleet.sources["remote"].controller.upgradeObserver("device-B", nil).load()
+	if err != nil || loaded == nil || loaded.Input.ID != "saved-update" {
+		t.Fatal("remote update lost its durable local intent", loaded, err)
+	}
+	if child.Directory != "" || child.currentSSH().StateDirectory != "/remote/state" {
+		t.Fatal("local receipt storage changed remote execution paths")
 	}
 }

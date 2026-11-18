@@ -112,14 +112,15 @@ func NewDeviceController(directory, localDeviceID string, connections []DeviceCo
 		if connection.ID == "" || connection.ID == "local" {
 			continue
 		}
-		child := sshController(connection, restored[connection.ID], workerBinary)
+		child := sshController(connection, restored[connection.ID], workerBinary, directory)
 		root.fleet.sources[connection.ID] = &deviceSource{connection: connection, controller: child}
 	}
 	return root
 }
-func sshController(connection DeviceConnection, pending []string, binary string) *Controller {
+func sshController(connection DeviceConnection, pending []string, binary, updateDirectory string) *Controller {
 	connection = connection.Normalized()
 	c := NewController("")
+	c.workerUpdateDirectory = updateDirectory
 	c.WorkerBinary = binary
 	ssh := connection.ActiveSSH()
 	c.WorkerSSH = &ssh
@@ -400,7 +401,7 @@ func (c *Controller) runDevices(ctx context.Context) {
 					previous.cancel()
 					go c.forwards.CloseDevice(previous.connection.DeviceID)
 				}
-				source := &deviceSource{connection: input.Connection, controller: sshController(input.Connection, input.Pending, c.fleet.workerBinary)}
+				source := &deviceSource{connection: input.Connection, controller: sshController(input.Connection, input.Pending, c.fleet.workerBinary, c.workerUpdateDirectory)}
 				c.fleet.sources[key] = source
 				c.startDevice(ctx, key, source)
 				apply(job, nil, nil)

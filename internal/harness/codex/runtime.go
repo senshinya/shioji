@@ -2,6 +2,7 @@ package codex
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -187,11 +188,24 @@ func (r *Runtime) read(stdout io.Reader) {
 	if r.desktop != nil {
 		defer r.desktop.close()
 	}
-	scan := bufio.NewScanner(stdout)
-	scan.Buffer(make([]byte, 64<<10), 16<<20)
-	for scan.Scan() {
+	// Like Lody's LineSplitter, frame on LF only and grow with the actual
+	// message. Turn/item pagination cannot bound a single item's JSON size.
+	// Keep the presentation limits in normalization, after protocol decoding.
+	reader := bufio.NewReaderSize(stdout, 64<<10)
+	for {
+		frame, err := reader.ReadBytes('\n')
+		if err != nil && err != io.EOF {
+			r.fail(errors.New("app-server stream failed"))
+			break
+		}
+		if len(frame) == 0 && err == io.EOF {
+			break
+		}
+		if len(bytes.TrimSpace(frame)) == 0 {
+			continue
+		}
 		var m wire.Message
-		if err := json.Unmarshal(scan.Bytes(), &m); err != nil {
+		if err := json.Unmarshal(frame, &m); err != nil {
 			r.fail(errors.New("malformed app-server frame"))
 			break
 		}
@@ -212,7 +226,7 @@ func (r *Runtime) read(stdout io.Reader) {
 			continue
 		}
 		r.eventMu.Lock()
-		events, reply, err := r.normalizer.Feed(scan.Bytes())
+		events, reply, err := r.normalizer.Feed(frame)
 		if err == nil && reply != nil {
 			err = r.write(reply)
 		}
@@ -224,9 +238,6 @@ func (r *Runtime) read(stdout io.Reader) {
 			r.fail(err)
 			break
 		}
-	}
-	if err := scan.Err(); err != nil {
-		r.fail(errors.New("app-server stream failed or exceeded 16 MiB limit"))
 	}
 	r.signalProcess(syscall.SIGKILL)
 	r.cmd.Wait()

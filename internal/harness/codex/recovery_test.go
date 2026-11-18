@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os/exec"
 	"path/filepath"
 	"shioji/internal/domain"
 	"shioji/internal/harness/codex/wire"
 	"shioji/internal/testutil"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -113,5 +117,76 @@ func TestInspectPagesHistoryPastOneHundredTurnsWithoutCallingModel(t *testing.T)
 	wrong.Context.CWD = "/wrong-device-path"
 	if _, err = r.Inspect(ctx, wrong); err == nil {
 		t.Fatal("foreign execution directory accepted")
+	}
+}
+
+// A long tool-heavy thread can exceed the stream limit when many full turns
+// are fetched at once. Recovery must read every page without losing its reader.
+func TestInspectToolHeavyHistoryStaysWithinFrameLimit(t *testing.T) {
+	cmd := exec.Command("/bin/cat")
+	input, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	r := &Runtime{cmd: cmd, normalizer: NewNormalizer(), protocol: &protocolSupport{methods: map[string]bool{"thread/read": true, "thread/turns/list": true}}, pending: map[string]chan wire.Message{}, done: make(chan struct{})}
+	r.stdin = workInputWriter{write: func(b []byte) (int, error) {
+		var q wire.Message
+		if err := json.Unmarshal(b, &q); err != nil {
+			return 0, err
+		}
+		var value any = map[string]any{"thread": map[string]any{"id": "thread", "cwd": "/device/project", "status": map[string]any{"type": "notLoaded"}}}
+		if q.Method == "thread/turns/list" {
+			var args struct {
+				Limit  int
+				Cursor string
+			}
+			if err := json.Unmarshal(q.Params, &args); err != nil {
+				return 0, err
+			}
+			start, _ := strconv.Atoi(args.Cursor)
+			end := min(start+args.Limit, 24)
+			data := []any{}
+			for i := start; i < end; i++ {
+				data = append(data, map[string]any{"id": fmt.Sprintf("turn-%d", i), "status": "completed", "itemsView": "full", "items": []any{map[string]any{"id": "tool", "type": "commandExecution", "command": "large tool output", "status": "completed", "aggregatedOutput": strings.Repeat("x", 1<<20)}}})
+			}
+			page := map[string]any{"data": data}
+			if end < 24 {
+				page["nextCursor"] = strconv.Itoa(end)
+			}
+			value = page
+		} else if q.Method != "thread/read" {
+			return 0, fmt.Errorf("unexpected history mutation: %s", q.Method)
+		}
+		result, err := json.Marshal(value)
+		if err != nil {
+			return 0, err
+		}
+		frame, err := json.Marshal(wire.Message{ID: q.ID, Result: result})
+		if err != nil {
+			return 0, err
+		}
+		go func() { _, _ = writer.Write(append(frame, '\n')) }()
+		return len(b), nil
+	}}
+	go r.read(reader)
+	defer func() {
+		writer.Close()
+		r.Close()
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	h, err := r.Inspect(ctx, domain.Session{ID: "session", ThreadID: "thread", Context: domain.LaunchContext{CWD: "/device/project"}})
+	if err != nil || len(h.Turns) != 24 || len(h.Items) != 24 {
+		t.Fatalf("long history could not recover: turns=%d items=%d err=%v", len(h.Turns), len(h.Items), err)
+	}
+	if h.Turns[23].ID != "turn-23" || r.Stopped() {
+		t.Fatal("paged recovery lost the tail or its reader")
 	}
 }

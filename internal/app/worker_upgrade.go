@@ -184,7 +184,7 @@ func (u workerUpgradeClient) observe(ctx context.Context, client *protocol.Clien
 }
 
 func (c *Controller) upgradeObserver(device string, known *domain.WorkerBuild) workerUpgradeClient {
-	return workerUpgradeClient{directory: c.Directory, device: device, knownBuild: known, repair: func(ctx context.Context, in domain.WorkerReplacement) (supervisor.Operation, error) {
+	return workerUpgradeClient{directory: c.workerUpdateDirectory, device: device, knownBuild: known, repair: func(ctx context.Context, in domain.WorkerReplacement) (supervisor.Operation, error) {
 		return c.runWorkerInstaller(ctx, device, in, true)
 	}, legacy: func(ctx context.Context, in domain.WorkerReplacement) (supervisor.Operation, error) {
 		return c.startLegacyWorkerUpgrade(ctx, device, in)

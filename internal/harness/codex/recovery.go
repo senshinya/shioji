@@ -64,7 +64,9 @@ func (r *Runtime) Inspect(ctx context.Context, s domain.Session) (domain.Recover
 			}
 			NextCursor *string
 		}
-		args := map[string]any{"threadId": s.ThreadID, "limit": 100, "itemsView": "full", "sortDirection": "asc"}
+		// Match import's small pages to reduce transient allocations. Framing
+		// must still accept large responses: even one item can exceed 16 MiB.
+		args := map[string]any{"threadId": s.ThreadID, "limit": 10, "itemsView": "full", "sortDirection": "asc"}
 		if cursor != "" {
 			args["cursor"] = cursor
 		}
