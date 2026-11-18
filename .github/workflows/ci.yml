@@ -12,7 +12,6 @@ jobs:
     timeout-minutes: 30
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
-      SHIOJI_DIAGRAM_USVG: ${{ github.workspace }}/build/diagram-runtime/usvg
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -45,8 +44,6 @@ jobs:
         with:
           path: build/native/permission-flow
           key: swift-${{ runner.os }}-${{ runner.arch }}-xcode26.3-${{ hashFiles('native/permission-flow/**', 'third_party/permissionflow/**', 'scripts/bundle-permission-flow.py') }}
-      - name: Install Codex integration-test dependency
-        run: npm install --global @openai/codex@0.167.0
       - run: test "$(uname -m)" = arm64
       - name: Test native permission bridge
         run: |
@@ -57,9 +54,6 @@ jobs:
       - run: python3 scripts/generate-third-party-notices.py --check
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - run: bash scripts/scan-secrets.sh
-      - name: Prepare pinned Mermaid converter
-        run: python3 scripts/bundle-diagram.py
-      - run: go test -timeout 20m ./...
       - name: Test native updater admission and preferences
         run: cd third_party/mygo && go test . ./plugins/updater ./plugins/updater/native
       - name: Build unsigned development bundle

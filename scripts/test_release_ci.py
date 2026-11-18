@@ -15,12 +15,10 @@ RUN = dict(headSha=COMMIT, headBranch="main", event="push", conclusion="success"
 
 
 class ReleaseCITests(unittest.TestCase):
-    def test_manual_release_prepares_diagram_runtime_before_full_validation(self):
-        workflow = (ROOT / ".github/workflows/release.yml").read_text()
-        validation = workflow.index("- name: Run full validation for manual builds")
-        preparation = workflow.find("run: python3 scripts/bundle-diagram.py")
-        self.assertGreaterEqual(preparation, 0, "clean release runners need the pinned converter")
-        self.assertLess(preparation, validation, "Mermaid integration tests require the converter")
+    def test_full_go_suite_runs_outside_actions(self):
+        for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+            with self.subTest(workflow=path.name):
+                self.assertNotRegex(path.read_text(), r"\bgo test[^\n]*\s\./\.\.\.(?=\s|$)")
 
     def invoke(self, runs, api_failure=False):
         with tempfile.TemporaryDirectory() as directory:

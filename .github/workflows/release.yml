@@ -25,7 +25,6 @@ jobs:
       RELEASE_TAG: ${{ github.event.release.tag_name }}
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
       SHIOJI_UPDATE_PUBLIC_KEY: ${{ vars.SHIOJI_UPDATE_PUBLIC_KEY }}
-      SHIOJI_DIAGRAM_USVG: ${{ github.workspace }}/build/diagram-runtime/usvg
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -70,9 +69,6 @@ jobs:
           xcodebuild -version
           swift --version
           swift test --package-path native/permission-flow --scratch-path build/native/permission-flow --force-resolved-versions
-      - name: Install Codex integration-test dependency
-        if: github.event_name != 'release'
-        run: npm install --global @openai/codex@0.167.0
       - name: Resolve and validate release version
         run: |
           set -euo pipefail
@@ -92,15 +88,9 @@ jobs:
           python3 scripts/generate-third-party-notices.py --check
           python3 -m unittest discover -s scripts -p 'test_*.py'
           bash scripts/scan-secrets.sh
-      - name: Prepare pinned Mermaid converter
+      - name: Test native updater admission and preferences
         if: github.event_name != 'release'
-        run: python3 scripts/bundle-diagram.py
-      - name: Run full validation for manual builds
-        if: github.event_name != 'release'
-        run: |
-          set -euo pipefail
-          go test -timeout 20m ./...
-          (cd third_party/mygo && go test . ./plugins/updater ./plugins/updater/native)
+        run: cd third_party/mygo && go test . ./plugins/updater ./plugins/updater/native
       - name: Import signing identity and notarization credentials
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}

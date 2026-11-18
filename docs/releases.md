@@ -26,9 +26,9 @@ v0.1.0 及之后版本可通过 App 内更新；v0.0.1 没有自动更新入口�
 
 GitHub 仓库：`senshinya/shioji`，本地 remote 为 `upstream`。`origin` 保持原地址。
 
-- CI 在 push / pull request 上运行 Apple Silicon macOS 测试、设计冻结校验、第三方许可校验、源码及完整 Git 历史凭据扫描，并构建开发包。Codex CLI 0.167.0 仅作为 CI 的集成测试依赖安装，不包含在分发包中。
+- CI 在 Apple Silicon macOS 上测试 Swift 权限桥、MyGo 原生更新器和发布脚本，校验设计冻结与第三方许可，扫描源码及完整 Git 历史中的凭据，并构建开发包。
 - `.github/workflows/release.yml` 在 GitHub Release **published** 时触发。只推 tag 不触发生产发布。手动触发会构建所选 commit 的版本，上传到该次 Actions 的临时构建附件；不创建或修改 GitHub Release。
-- CI 按提交保存 Go 编译／测试缓存，并复用相同源码和 Xcode 版本的 Swift 权限桥缓存。正式 Release 必须先核对该精确提交在 `main` 上的最新 CI 已成功，才复用完整测试结论；没有通过、失败或查询不可用均停止发布。手动构建仍运行完整测试。Release 保留快速源码校验，重新构建并完成签名、公证和打包。
+- CI 按提交保存 Go 编译／测试缓存，并复用相同源码和 Xcode 版本的 Swift 权限桥缓存。正式 Release 要求发布提交在 `main` 上的最新 CI 成功，并重新进行源码校验、构建、签名、公证和打包。全量 Go 测试在发布前本机运行。
 - Tag 必须与 `VERSION` 对应。生产构建强制要求 Developer ID Application 签名、hardened runtime、Apple 接受公证以及 stapled tickets；没有降级到 ad-hoc / 未公证包的路径。
 - 先公证并 staple App，再生成全量自动更新归档，然后生成、公证并 staple DMG。正式版本将 DMG、校验文件与 `Shioji-<版本>-darwin-arm64-<SHA256>.tar.gz` 上传到原 Release，全部成功后最后上传 `update-darwin-arm64.json`。归档按内容摘要命名，同一 Release 重跑也保留旧清单对应的归档。不创建额外 Release。预发行仅上传 DMG 与校验文件，不向正式客户端发布更新清单。
 - 两处 worker 使用同一份已签名二进制，打包后 `cmp` 核验，避免安全时间戳引起相同版本的 BuildID 不同。
@@ -78,6 +78,13 @@ App 菜单和设置「关于」提供检查更新，自动检查默认开启、�
 更新 GUI 不停止独立 worker 或 Tailnet 服务；本机 worker 继续按 `docs/local-worker-updates.md` 的安全空闲准入升级，远程 worker 仍需明确操作。首版不发布增量包，也不自动降级。
 
 ## 本机构建
+
+发布前在 Apple Silicon Mac 上运行 Shioji 的 Go 测试。Codex CLI 需在 `PATH` 中，供真实 app-server 集成用例调用。
+
+```sh
+python3 scripts/bundle-diagram.py
+SHIOJI_DIAGRAM_USVG="$PWD/build/diagram-runtime/usvg" go test -timeout 20m ./cmd/... ./internal/...
+```
 
 ```sh
 bash packaging/build-dev.sh
