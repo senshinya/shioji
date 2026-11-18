@@ -1,5 +1,7 @@
 package store
 
+import "shioji/internal/domain"
+
 // ArchiveGarbage is a durable cleanup outbox. Only worker-owned paths are
 // represented; user repositories and harness-owned source history are excluded.
 type ArchiveGarbage struct {
@@ -12,6 +14,38 @@ func (s *Store) SessionDeleted(id string) (bool, error) {
 	var deleted bool
 	err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM deleted_sessions WHERE id=?)", id).Scan(&deleted)
 	return deleted, err
+}
+
+// ArchiveDeletionReceipt confirms a prior deletion from its durable tombstones.
+// The tombstones outlive cleanup and keep no conversation content.
+func (s *Store) ArchiveDeletionReceipt(sessionID, workspaceID string) (domain.ArchiveDeletion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := domain.ArchiveDeletion{DeviceID: s.deviceID, SessionIDs: []string{}}
+	if workspaceID == "" {
+		var id string
+		if err := s.db.QueryRow("SELECT id FROM deleted_sessions WHERE id=?", sessionID).Scan(&id); err != nil {
+			return out, err
+		}
+		out.SessionIDs = append(out.SessionIDs, id)
+		return out, nil
+	}
+	if err := s.db.QueryRow("SELECT id FROM deleted_workspaces WHERE id=?", workspaceID).Scan(&out.WorkspaceID); err != nil {
+		return out, err
+	}
+	rows, err := s.db.Query("SELECT id FROM deleted_sessions WHERE workspace_id=? ORDER BY rowid", workspaceID)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return out, err
+		}
+		out.SessionIDs = append(out.SessionIDs, id)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) ArchiveGarbage() ([]ArchiveGarbage, error) {

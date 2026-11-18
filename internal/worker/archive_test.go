@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/protocol"
+	"slices"
 	"syscall"
 	"testing"
 	"time"
@@ -506,5 +508,74 @@ func TestWorkerArchiveCleanupUsesOwningClockAndRetiresExpiredWork(t *testing.T) 
 	}
 	if _, err = s.store.Apply(archived.ID, domain.Event{Type: "runtime.lost"}); err == nil {
 		t.Fatal("late callback restored deleted state")
+	}
+}
+
+func TestArchiveDeleteRPCReconcilesTargetsDeletedByExpiry(t *testing.T) {
+	for _, method := range []string{"session.delete", "workspace.delete"} {
+		t.Run(method, func(t *testing.T) {
+			s, w := memoryWorker(t, idleHarness{})
+			d := submitIdleFixture(t, s, w, "archive-before-expiry", "")
+			var in, unknown protocol.ArchiveDeleteInput
+			var wantWorkspace string
+			if method == "session.delete" {
+				archived, err := s.store.SetSessionArchived(d.Session.ID, d.Session.Revision, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				in.SessionID, in.Revision = archived.ID, archived.Revision
+				unknown.SessionID = "unknown-session"
+			} else {
+				archived, err := s.store.SetWorkspaceArchived(w.ID, w.Revision, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				in.WorkspaceID, in.Revision = archived.ID, archived.Revision
+				unknown.WorkspaceID = "unknown-workspace"
+				wantWorkspace = w.ID
+			}
+			in.OperationID, in.CloseRuntime = "delete-from-stale-archive", true
+			if err := s.cleanupArchives(time.Now().Add(31 * 24 * time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			before, err := s.store.Snapshot()
+			if err != nil || len(before.Sessions) != 0 {
+				t.Fatalf("expiry did not delete the fixture session: %+v, %v", before.Sessions, err)
+			}
+
+			go s.Serve()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			conn, err := net.Dial("unix", filepath.Join(s.Directory(), "worker.sock"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			client, err := protocol.Connect(ctx, conn, before.DeviceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			var result domain.ArchiveDeletion
+			if err := client.Call(ctx, method, in, &result); err != nil {
+				t.Fatalf("delete of expired archive should return a receipt: %v", err)
+			}
+			if result.DeviceID != before.DeviceID || result.WorkspaceID != wantWorkspace || !slices.Equal(result.SessionIDs, []string{d.Session.ID}) {
+				t.Fatalf("unexpected receipt: %+v", result)
+			}
+			var remote *protocol.RemoteError
+			if err := client.Call(ctx, method, unknown, nil); !errors.As(err, &remote) || remote.Code != "notFound" || remote.Message == sql.ErrNoRows.Error() {
+				t.Fatalf("unknown archive should return a user-facing notFound error: %v", err)
+			}
+			events, err := s.store.Events(before.Sequence, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, event := range events {
+				if event.Type == "archive.deleted" {
+					t.Fatalf("retry journaled another deletion: %+v", event.Deletion)
+				}
+			}
+		})
 	}
 }

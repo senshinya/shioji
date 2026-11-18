@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -72,6 +73,9 @@ func (s *Server) deleteArchive(method string, in protocol.ArchiveDeleteInput) (d
 			return zero, errors.New("无效的工作区删除请求")
 		}
 		w, err := s.store.Workspace(in.WorkspaceID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return s.archiveDeletionReceipt(in)
+		}
 		if err != nil {
 			return zero, err
 		}
@@ -92,6 +96,9 @@ func (s *Server) deleteArchive(method string, in protocol.ArchiveDeleteInput) (d
 			return zero, errors.New("无效的会话删除请求")
 		}
 		d, err := s.store.Session(in.SessionID, 0, 1)
+		if errors.Is(err, sql.ErrNoRows) {
+			return s.archiveDeletionReceipt(in)
+		}
 		if err != nil {
 			return zero, err
 		}
@@ -111,6 +118,14 @@ func (s *Server) deleteArchive(method string, in protocol.ArchiveDeleteInput) (d
 		in.OperationID = fmt.Sprintf("delete:%s:%s:%d", in.WorkspaceID, in.SessionID, in.Revision)
 	}
 	return s.commitArchiveDeletion(method, in, sessions)
+}
+
+func (s *Server) archiveDeletionReceipt(in protocol.ArchiveDeleteInput) (domain.ArchiveDeletion, error) {
+	out, err := s.store.ArchiveDeletionReceipt(in.SessionID, in.WorkspaceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = &protocol.RemoteError{Code: "notFound", Message: "所属设备找不到此归档，请刷新列表后重试"}
+	}
+	return out, err
 }
 
 // Permanent deletion removes the visible archive first; scoped process records
