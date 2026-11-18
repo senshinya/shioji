@@ -28,6 +28,7 @@ type editBinding struct {
 }
 
 type View struct {
+	schedules                        *schedulePageState
 	remoteUploadJobs                 map[string]*remoteUploadJob
 	remoteUploadRemember             map[string]bool
 	workerUpdateConfirm              *workerUpdateConfirmation
@@ -471,6 +472,10 @@ func (v *View) View(c *n.Context) {
 			return
 		}
 		v.sidebar(c, &t)
+		if v.schedulePageOpen() {
+			v.schedulePage(c, &t)
+			return
+		}
 		if v.archive != nil && v.archive.open {
 			v.archivePage(c, &t)
 			return
@@ -565,6 +570,7 @@ func (v *View) View(c *n.Context) {
 }
 
 func (v *View) home() {
+	v.closeSchedulePage()
 	if a := v.splitRoot().archive; a != nil {
 		a.open = false
 		a.viewing = ""
@@ -619,6 +625,11 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		rightInset = 18 - conversationScrollbarGutter
 	}
 	n.Row(c).Height(48).FillWidth().Padding(0, rightInset, 0, 24).Gap(6).AlignItems(n.Center).DragWindow().Label("会话工具栏").Children(func() {
+		if schedules := v.splitRoot().schedules; schedules != nil && schedules.session != "" && schedules.session == m.SessionID {
+			if iconButton(c, conversationBackIcon, "返回定时任务").Clicked() {
+				v.splitRoot().openSchedulePage()
+			}
+		}
 		if a := v.splitRoot().archive; a != nil && a.viewing == m.SessionID && m.SessionID != "" {
 			if iconButton(c, conversationBackIcon, "返回已归档").Clicked() {
 				v.openArchive()

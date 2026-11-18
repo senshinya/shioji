@@ -150,6 +150,60 @@ func TestAttentionVisitsCompletedRepliesOnceAndPreservesDrafts(t *testing.T) {
 	}
 }
 
+func TestAttentionShowsOneCountPerNavigableSession(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark-%v", dark), func(t *testing.T) {
+			m := parallelModel()
+			m.Snapshot.Sessions[0], m.Snapshot.Sessions[1] = m.Snapshot.Sessions[1], m.Snapshot.Sessions[0]
+			v := New(m, nil, "")
+			ui := n.NewTester(v.View, 950, 700)
+			ui.SetDark(dark)
+			original, _ := ui.Find("待我处理")
+			if ui.HasText("待处理会话数：") {
+				t.Fatal("empty attention should not display a count")
+			}
+			saveNativeSkillImage(t, ui, fmt.Sprintf("attention-empty-dark-%v.png", dark))
+
+			detail := m.Details["s"]
+			detail.Requests = []domain.PendingRequest{
+				{ID: "approval", SessionID: "s", Kind: "approval", State: domain.RequestPending},
+				{ID: "question", SessionID: "s", Kind: "questions", State: domain.RequestSubmitting},
+			}
+			m.Details["s"] = detail
+			if err := m.ApplyEvent(domain.Event{Sequence: 1, Type: "turn", SessionID: "other", Turn: &domain.Turn{ID: "done", Order: 1, Status: "completed"}}); err != nil {
+				t.Fatal(err)
+			}
+			ui.Frame()
+			badge, shown := ui.Find("待处理会话数：2")
+			if !shown {
+				t.Fatalf("two navigable sessions should show 2 exactly once, got %v", ui.Texts())
+			}
+			entry, _ := ui.Find("待我处理")
+			if entry != original || badge.W <= 0 || badge.X+badge.W > entry.X+entry.W || badge.X < entry.X+entry.W-48 {
+				t.Fatalf("count should fit at the end of the unchanged row: entry=%+v count=%+v", entry, badge)
+			}
+			saveNativeSkillImage(t, ui, fmt.Sprintf("attention-count-dark-%v.png", dark))
+			if err := ui.Click("待我处理"); err != nil || m.SessionID != "s" {
+				t.Fatalf("pending requests should take precedence over the earlier unread completion: %s, %v", m.SessionID, err)
+			}
+
+			detail.Requests = nil
+			m.Details["s"] = detail
+			ui.Frame()
+			if _, shown := ui.Find("待处理会话数：1"); !shown {
+				t.Fatal("resolving requests should leave one unread session")
+			}
+			if err := ui.Click("待我处理"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			if ui.HasText("待处理会话数：") || m.SessionID != "other" {
+				t.Fatal("opening the last unread reply should hide the count")
+			}
+		})
+	}
+}
+
 // Native component recording uses deterministic worker projections. The actual
 // two-client RPC and durable journal are covered in internal/worker.
 func TestCompletionAttentionWorkerReadAndNativeRecording(t *testing.T) {

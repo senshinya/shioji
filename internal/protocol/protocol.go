@@ -49,9 +49,11 @@ const Major = 2
 // Minor 47 adds immutable binary uploads used as owning-device path inputs.
 // Minor 48 delegates background unregister to the independent supervisor.
 // Minor 49 adds atomic Hook approval of multiple reviewed definitions.
-const Minor = 49
+// Minor 50 adds device-owned schedules and durable run receipts.
+const Minor = 50
 
 const HookBatchMinor = 49
+const ScheduleMinor = 50
 
 type BackgroundStopInput struct {
 	ID string `json:"id"`

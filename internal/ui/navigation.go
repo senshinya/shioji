@@ -289,7 +289,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 			n.Column(c.Key("nav-top")).FillWidth().Padding(sidebarHeaderTopInset, 8, 0, 8).Gap(sidebarHeaderGap).Children(func() {
 				n.Row(c).Height(sidebarTitlebarHeight).AlignItems(n.Start).DragWindow().Children(func() { n.Spacer(c).Grow(1); v.searchControl(c, t) })
 				if navButton(c, plus, "新建会话").Background(func() n.Color {
-					if m.SessionID == "" && !v.devices && (v.archive == nil || !v.archive.open) {
+					if m.SessionID == "" && !v.devices && !v.schedulePageOpen() && (v.archive == nil || !v.archive.open) {
 						return t.SurfacePressed
 					}
 					return n.Transparent
@@ -297,6 +297,14 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 					v.home()
 				}
 				v.attentionControl(c, t)
+				if navButton(c, scheduleClockIcon, "定时任务").Background(func() n.Color {
+					if v.schedulePageOpen() {
+						return t.SurfacePressed
+					}
+					return n.Transparent
+				}()).Clicked() {
+					v.openSchedulePage()
+				}
 			})
 			rows := v.navigationRows(c)
 			for i := range rows {
@@ -399,7 +407,7 @@ func (v *View) navigationRow(c *n.Context, t *n.Theme, r navigationRow) {
 func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 	m, s := v.Model, r.session
 	archiveOpen := v.archive != nil && v.archive.open
-	selected := !archiveOpen && s.ID == v.focusedSessionID() && !v.devices && v.workspaceEditor == nil
+	selected := !archiveOpen && !v.schedulePageOpen() && s.ID == v.focusedSessionID() && !v.devices && v.workspaceEditor == nil
 	finishing := s.Status == "completed" && v.sessionOutputAnimating(s.ID)
 	if finishing {
 		c.AnimationFrame()

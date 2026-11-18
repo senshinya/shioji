@@ -41,23 +41,39 @@ func (v *View) readCompletedReply(id string) {
 	root.Model.ReadCompletedReply(id)
 }
 
-// Questions and approvals remain first, followed by each unread natural reply.
-// Use the same selection for the button's availability and its action.
 func (v *View) attentionSession() (domain.Session, bool) {
+	session, count := v.attentionSummary()
+	return session, count > 0
+}
+
+// Count each navigable session once. Questions and approvals retain priority
+// over unread natural replies.
+func (v *View) attentionSummary() (domain.Session, int) {
+	var firstRequest, firstReply domain.Session
+	count := 0
 	for _, session := range v.Model.Snapshot.Sessions {
 		if v.pendingCount(session.ID) > 0 {
-			return session, true
+			if firstRequest.ID == "" {
+				firstRequest = session
+			}
+			count++
+			continue
 		}
-	}
-	for _, session := range v.Model.Snapshot.Sessions {
 		if session.Archived || session.Status != "completed" || !v.Model.HasCompletedReply(session.ID) || v.sessionOutputAnimating(session.ID) {
 			continue
 		}
 		for _, workspace := range v.Model.Snapshot.Workspaces {
 			if workspace.ID == session.WorkspaceID && !workspace.Archived {
-				return session, true
+				if firstReply.ID == "" {
+					firstReply = session
+				}
+				count++
+				break
 			}
 		}
 	}
-	return domain.Session{}, false
+	if firstRequest.ID != "" {
+		return firstRequest, count
+	}
+	return firstReply, count
 }

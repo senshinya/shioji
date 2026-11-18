@@ -107,6 +107,7 @@ type Server struct {
 	worktreeTransitions  map[string]chan struct{}
 	worktreeRetries      map[string]worktreeRetry
 	queueWake            chan struct{}
+	scheduleWake         chan struct{}
 	titleWake            chan struct{}
 	recoveryWake         chan struct{}
 	recoveryChecked      map[string]recoveryAttempt
@@ -298,6 +299,9 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	s.wg.Add(1)
 	s.archiveWake = make(chan struct{}, 1)
 	go s.archiveLoop()
+	s.scheduleWake = make(chan struct{}, 1)
+	s.wg.Add(1)
+	go s.scheduleLoop()
 	return s, nil
 }
 func (s *Server) Directory() string { return s.config.Directory }
@@ -674,6 +678,8 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 	case "snapshot":
 		s.wakeRecovery()
 		return s.store.Snapshot()
+	case "schedule.list", "schedule.get", "schedule.zone", "schedule.save", "schedule.delete", "schedule.run":
+		return s.handleSchedule(method, body)
 	case "readiness":
 		var query protocol.ReadinessQuery
 		if len(body) > 0 {
@@ -961,6 +967,9 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		in, err := decode[domain.Submission](body)
 		if err != nil {
 			return nil, err
+		}
+		if strings.HasPrefix(in.OperationID, "scheduled:") {
+			return nil, errors.New("定时运行标识仅供所属设备的调度器使用")
 		}
 		return s.submit(in)
 	case "request.respond":

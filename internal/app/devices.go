@@ -33,32 +33,53 @@ type DeviceTiming struct {
 type DeviceState struct {
 	// Transient access to independent streams, owned by this device controller.
 	// Saved SSH routes cannot hold a live Tailnet bridge.
-	dialStream      func(context.Context) (net.Conn, error)
-	Health          *domain.DeviceHealth
-	Paths           []DevicePathStatus
-	WorkerService   *WorkerService
-	Timing          *DeviceTiming
-	sourceToken     string
-	Snapshot        domain.Snapshot
-	Sequence        int64
-	Connected       bool
-	ConnectionEpoch string
-	WorkerMinor     int
-	Readiness       domain.Readiness
-	Error           string
+	dialStream        func(context.Context) (net.Conn, error)
+	Health            *domain.DeviceHealth
+	Paths             []DevicePathStatus
+	WorkerService     *WorkerService
+	Timing            *DeviceTiming
+	sourceToken       string
+	Snapshot          domain.Snapshot
+	ScheduleSummaries []domain.Schedule
+	Sequence          int64
+	Connected         bool
+	ConnectionEpoch   string
+	WorkerMinor       int
+	Readiness         domain.Readiness
+	Error             string
 }
 
 type cachedDevice struct {
-	Snapshot  domain.Snapshot  `json:"snapshot"`
-	Readiness domain.Readiness `json:"readiness"`
+	Snapshot  domain.Snapshot   `json:"snapshot"`
+	Readiness domain.Readiness  `json:"readiness"`
+	Schedules []domain.Schedule `json:"schedules,omitempty"`
 }
 
 func (m *Model) cachedDevices() map[string]cachedDevice {
 	result := map[string]cachedDevice{}
 	for key, state := range m.DeviceStates {
 		if state.Snapshot.DeviceID != "" {
-			result[key] = cachedDevice{state.Snapshot, state.Readiness}
+			result[key] = cachedDevice{Snapshot: state.Snapshot, Readiness: state.Readiness, Schedules: cachedScheduleSummaries(state.Snapshot, state.ScheduleSummaries)}
 		}
+	}
+	return result
+}
+
+func cachedScheduleSummaries(snapshot domain.Snapshot, tasks []domain.Schedule) []domain.Schedule {
+	var result []domain.Schedule
+	for _, task := range tasks {
+		if task.ID == "" || task.DeviceID != snapshot.DeviceID || !slices.ContainsFunc(snapshot.Workspaces, func(w domain.Workspace) bool {
+			return w.ID == task.WorkspaceID && w.DeviceID == task.DeviceID
+		}) {
+			continue
+		}
+		task.Text = ""
+		if task.Latest != nil {
+			latest := *task.Latest
+			latest.Error = ""
+			task.Latest = &latest
+		}
+		result = append(result, task)
 	}
 	return result
 }

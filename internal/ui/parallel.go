@@ -28,6 +28,7 @@ func (v *View) focusedView() *View {
 }
 func (v *View) openParallel(id string) {
 	root := v.splitRoot()
+	root.closeSchedulePage()
 	if root.archive != nil {
 		root.archive.open = false
 		root.archive.viewing = ""
@@ -69,6 +70,7 @@ func (v *View) closeParallel() {
 }
 func (v *View) navigateSession(id, workspace string) {
 	root := v.splitRoot()
+	root.closeSchedulePage()
 	if root.archive != nil {
 		root.archive.open = false
 		root.archive.viewing = ""
@@ -233,8 +235,10 @@ func (v *View) updateVisibleSessions() {
 	for _, connection := range v.Model.Connections {
 		byDevice[connection.ID] = nil
 	}
+	showConversations := !v.devices && v.workspaceEditor == nil && v.Model.SessionID != "" &&
+		!v.schedulePageOpen() && (v.archive == nil || !v.archive.open)
 	for _, id := range []string{v.Model.SessionID, v.Model.SecondarySessionID} {
-		if id == "" || v.devices || v.workspaceEditor != nil || v.Model.SessionID == "" || v.archive != nil && v.archive.open {
+		if id == "" || !showConversations {
 			continue
 		}
 		for _, s := range v.Model.Snapshot.Sessions {
@@ -246,7 +250,7 @@ func (v *View) updateVisibleSessions() {
 			}
 		}
 	}
-	if v.Model.SecondarySessionID != "" && v.Model.SessionID != "" && !v.devices && v.workspaceEditor == nil && (v.archive == nil || !v.archive.open) {
+	if v.Model.SecondarySessionID != "" && showConversations {
 		found := false
 		for _, ids := range byDevice {
 			for _, id := range ids {

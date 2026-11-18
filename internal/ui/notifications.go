@@ -64,7 +64,8 @@ func (v *View) foregroundNotificationSuppressed(id string, foreground bool) bool
 }
 
 func (v *View) sessionVisible(id string) bool {
-	if id == "" || v.devices || v.workspaceEditor != nil || v.Model.SessionID == "" || v.archive != nil && v.archive.open {
+	if id == "" || v.devices || v.workspaceEditor != nil || v.Model.SessionID == "" ||
+		v.splitRoot().schedulePageOpen() || v.archive != nil && v.archive.open {
 		return false
 	}
 	m := v.Model

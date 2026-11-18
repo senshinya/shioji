@@ -179,3 +179,10 @@ type WorkQuery struct {
 	SessionID string `json:"sessionId"`
 	ID        string `json:"id"`
 }
+
+// ScheduleCommand targets a task on the connected device.
+type ScheduleCommand struct {
+	ID       string `json:"id"`
+	Revision int64  `json:"revision,omitempty"`
+	RunID    string `json:"runId,omitempty"`
+}

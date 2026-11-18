@@ -8,7 +8,7 @@ import (
 )
 
 // Schema 15 retains worker-owned worktrees through archive/deletion cleanup.
-const SchemaVersion = 15
+const SchemaVersion = 16
 
 // The caller fences dispatch and commands before this final database check.
 // VACUUM INTO reads SQLite's committed snapshot, including its WAL.

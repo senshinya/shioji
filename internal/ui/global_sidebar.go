@@ -168,6 +168,7 @@ func (v *View) quickHeading(c *n.Context, t *n.Theme, kind string) {
 			}
 			action := quickHeadingAction(c.Key("manage"), t, quickExternalIcon, label, title, font)
 			if action.Clicked() {
+				v.closeSchedulePage()
 				v.quickUI().selected = ""
 				v.skillReturn = nil
 				v.deviceTab = "settings"

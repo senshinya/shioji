@@ -206,6 +206,7 @@ func (v *View) sessionMenu(menu *n.Menu, s domain.Session, ref app.SessionLocati
 	}
 }
 func (v *View) editWorkspace(w domain.Workspace) {
+	v.splitRoot().closeSchedulePage()
 	if a := v.splitRoot().archive; a != nil {
 		a.open = false
 		a.viewing = ""

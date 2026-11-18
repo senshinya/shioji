@@ -71,6 +71,7 @@ func (v *View) archiveState() *archiveUI {
 
 func (v *View) openArchive() {
 	root := v.splitRoot()
+	root.closeSchedulePage()
 	a := root.archiveState()
 	if !a.open && a.viewing == "" {
 		m := root.Model

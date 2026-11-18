@@ -745,7 +745,8 @@ func (m *Model) Load(path string) error {
 		if m.validateDeviceSnapshot(key, cache.Snapshot) != nil {
 			continue
 		}
-		m.DeviceStates[key] = &DeviceState{Snapshot: cache.Snapshot, Sequence: cache.Snapshot.Sequence, Readiness: cache.Readiness}
+		m.DeviceStates[key] = &DeviceState{Snapshot: cache.Snapshot, Sequence: cache.Snapshot.Sequence, Readiness: cache.Readiness,
+			ScheduleSummaries: cachedScheduleSummaries(cache.Snapshot, cache.Schedules)}
 	}
 	m.ActiveConnection = saved.ActiveConnection
 	if saved.PendingDevices != nil {

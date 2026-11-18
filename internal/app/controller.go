@@ -111,6 +111,9 @@ func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.Raw
 	if (strings.HasPrefix(job.Method, "archive.") || job.Method == "session.delete" || job.Method == "workspace.delete") && client.Minor < 40 {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能管理归档保留时间和彻底删除"}
 	}
+	if strings.HasPrefix(job.Method, "schedule.") && client.Minor < protocol.ScheduleMinor {
+		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能使用定时任务"}
+	}
 	if historyReadMethod(job.Method) && client.Minor < 37 {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能按需加载历史"}
 	}

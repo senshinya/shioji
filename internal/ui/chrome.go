@@ -2,9 +2,11 @@ package ui
 
 import (
 	_ "embed"
+	"strconv"
+	"time"
+
 	"github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
-	"time"
 )
 
 // OpenAI brand asset: https://cdn.openai.com/brand/OpenAI-Logos-2025.zip
@@ -50,32 +52,46 @@ func navButton(c *n.Context, icon *n.SVG, label string) n.Element {
 	if label == "设备" {
 		size = 12
 	}
-	return navButtonWithColors(c, icon, label, size, color, color)
+	return navButtonWithColors(c, icon, label, size, color, color, nil)
 }
 
-func navButtonWithColors(c *n.Context, icon *n.SVG, label string, size float32, textColor, iconColor n.Color) n.Element {
+func navButtonWithColors(c *n.Context, icon *n.SVG, label string, size float32, textColor, iconColor n.Color, trailing func()) n.Element {
 	return control(c, 8).FillWidth().Height(28).PaddingX(8).Justify(n.Start).Radius(8).Label(label).Children(func() {
 		inlineIconText(c, icon, label, n.Font{Family: c.Theme().Font, Size: size, Weight: 400}, 16, 8, textColor).DrawObjects(func(p *n.Painter, _ int, r n.Rect) {
 			r.W = 16
 			p.Icon(icon, r, iconColor)
 		})
+		if trailing != nil {
+			n.Spacer(c).Grow(1)
+			trailing()
+		}
 	})
 }
 
 func (v *View) attentionControl(c *n.Context, t *n.Theme) {
-	_, available := v.attentionSession()
+	_, count := v.attentionSummary()
+	available := count > 0
 	anchor := n.Column(c.Key("attention-entry")).FillWidth()
 	anchor.Children(func() {
 		textColor, iconColor := t.TextMuted, t.TextMuted
+		var trailing func()
+		description := "无待处理会话"
 		if available {
 			textColor, iconColor = t.Text, n.Hex("#c99700")
 			if t.Dark {
 				iconColor = n.Hex("#c4a30a")
 			}
+			value := strconv.Itoa(count)
+			description = value + " 个会话待处理"
+			trailing = func() {
+				n.Text(c, value).Font("Menlo").FontSize(11).FixedLineHeight(20).MinWidth(24).Shrink(0).TextAlign(n.End).
+					TextColor(t.TextMuted).Label("待处理会话数：" + value).Role(n.RoleNone)
+			}
 		}
-		button := navButtonWithColors(c, attentionIcon, "待我处理", 13, textColor, iconColor).Disabled(!available)
+		button := navButtonWithColors(c, attentionIcon, "待我处理", 13, textColor, iconColor, trailing).
+			Description(description).Disabled(!available)
 		if !available {
-			button.Opacity(.5).Description("无待处理会话")
+			button.Opacity(.5)
 		}
 		if button.Clicked() {
 			v.nextAttention()

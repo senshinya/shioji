@@ -182,6 +182,9 @@ func (s *Store) deleteArchivedLocked(sessions []domain.Session, workspace string
 }
 
 func deleteSessionRows(tx *sql.Tx, session domain.Session) error {
+	if err := preserveScheduledRunOutcome(tx, session.ID, time.Now().UTC(), "会话已删除"); err != nil {
+		return err
+	}
 	owned, err := rowsOf[OwnedWorktree](tx, "SELECT body FROM owned_worktrees")
 	if err != nil {
 		return err

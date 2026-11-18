@@ -219,6 +219,9 @@ func (s *Store) CommitHistory(id string) (domain.HistoryOperation, error) {
 	target.Completion = nil
 	if op.Input.Restart {
 		// Keep metadata edits and accepted launch context authoritative.
+		if err = preserveScheduledRunOutcome(tx, source.ID, time.Now().UTC(), "会话历史已替换"); err != nil {
+			return op, err
+		}
 		target = source
 		target.Completion = nil
 		target.ContextUsage = nil
