@@ -7,8 +7,11 @@ import (
 	"shioji/internal/domain"
 )
 
-// Schema 15 retains worker-owned worktrees through archive/deletion cleanup.
 const SchemaVersion = 16
+
+// The worker installer may use Open to upgrade these contiguous schemas after
+// preflighting the signed candidate on a copy. Older stores use legacy paths.
+const WorkerMigrationFrom = 15
 
 // The caller fences dispatch and commands before this final database check.
 // VACUUM INTO reads SQLite's committed snapshot, including its WAL.

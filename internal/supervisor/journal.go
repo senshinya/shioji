@@ -16,6 +16,7 @@ type Operation struct {
 	Phase                                                    string                   `json:"phase"`
 	Instance, DeviceID, SourceInstance, PreviousBuild, Error string
 	SourcePID                                                int
+	SourceSchema, TargetSchema                               int `json:",omitempty"`
 	Created                                                  time.Time
 	ExpiresAt                                                time.Time `json:"expiresAt,omitempty"`
 }
@@ -29,6 +30,8 @@ func (o Operation) Terminal() bool {
 }
 
 type journal struct{ directory string }
+
+const interruptedSwitchError = "服务控制在切换期间中断；保留原数据，请通过兼容安装器修复"
 
 func safeID(id string) bool {
 	return id != "" && id != "." && id != ".." && filepath.Base(id) == id && len(id) <= 128
@@ -104,13 +107,16 @@ func (j journal) current() (Operation, error) {
 	return j.load(p.ID)
 }
 func (j journal) save(o Operation) error {
-	if !safeID(o.Input.ID) {
-		return errors.New("invalid operation ID")
-	}
-	if err := atomicJSON(filepath.Join(j.directory, "operations", o.Input.ID+".json"), o); err != nil {
+	if err := j.saveRecord(o); err != nil {
 		return err
 	}
 	return atomicJSON(filepath.Join(j.directory, "current.json"), struct{ ID string }{o.Input.ID})
+}
+func (j journal) saveRecord(o Operation) error {
+	if !safeID(o.Input.ID) {
+		return errors.New("invalid operation ID")
+	}
+	return atomicJSON(filepath.Join(j.directory, "operations", o.Input.ID+".json"), o)
 }
 func (j journal) accept(in domain.WorkerReplacement, instance, device string) (Operation, error) {
 	if !safeID(in.ID) || (in.Policy != "when-idle" && in.Policy != "immediate") {
@@ -144,7 +150,7 @@ func (j journal) recover() (Operation, error) {
 		o.Error = "服务控制在准备或等待时重启；旧更新不会重放"
 	default:
 		o.Phase = "blocked"
-		o.Error = "服务控制在切换期间中断；保留原数据，请通过兼容安装器修复"
+		o.Error = interruptedSwitchError
 	}
 	return o, j.save(o)
 }

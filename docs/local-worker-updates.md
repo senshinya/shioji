@@ -1,5 +1,12 @@
 # 设备执行服务的版本与更新
 
+## 数据库 schema 升级
+
+- 跨 schema 更新由设备页的「备份并迁移」确认接纳，当前签名候选声明支持 schema 15 → 16。同 schema 安全更新沿用原流程。待处理任务继续执行，更新在 owning worker 接纳排空后开始。
+- 固定服务通过签名候选在 SQLite 一致副本上执行迁移。副本的设备 ID、目标 schema 和完整性检查通过后，持有原 writer 锁完成原子切换。迁移成功后，原库保留在 `schema-migration-<OperationID>/state.sqlite`。新 worker 先暂停业务接纳，本地就绪并持久化所选构建与回执后才恢复接纳。提交前可恢复原库，已提交后的重启使用新库。
+- 首次从旧固定服务迁移时，签名助手复用旧服务绑定的 writer 身份和真实排空回执，确认退出后接管固定服务锁。客户端持续按原操作查询结果，连接状态变化不重发更新。旧固定服务在未提交迁移后重启并报告阻塞时，设备页「重试更新」用原签名候选恢复旧库，重新迁移仍需确认。
+- 发版前用上一版签名 worker 演练迁移。隔离的进程验证可用 `SHIOJI_SCHEMA15_WORKER`、`SHIOJI_MIGRATION_WORKER` 执行 `go test ./internal/worker -run 'TestSigned(Schema15Worker|InterruptedMigration)'`。当旧固定服务与 writer 来自不同构建时，额外通过 `SHIOJI_SCHEMA15_SUPERVISOR` 指定旧固定服务。验证覆盖活动轮结束后的最后一条回复、提交后的新版写入及旧固定服务对未提交迁移的恢复。
+
 2026-11-17 已在源码接入 Lody 的固定 supervisor、在线准备、业务空闲准入、主动排空、候选提交与一次兼容回退。以下说明当前源码行为；不表示已替换本机、MBP at Work 或 MBA at Home 的正式服务。完整依据见[源码分析](lody-worker-lifecycle-analysis.md)与[实施方案](ryugi/specs/2026-11-16-worker-upgrade-lifecycle-design.md)。
 
 2026-11-18 正式设备排查：本机、MBP at Work 与 MBA at Home 均已运行 `f8ecf420`（源码 `380ced6`、协议 2.48／schema 15），升级回执均为 applied。远端设备页的“客户端更新状态目录无效”来自 SSH 子控制器误用空的本机执行目录读取更新回执；源码改为独立传递控制 Mac 的回执目录，保持远端执行路径不变。长会话恢复一次读取 100 轮完整历史可能超过 adapter 的 16 MiB 单帧限制；源码按既有导入方式改为每页 10 轮，不提高帧上限。本轮原会话的 44 轮历史读取成功，用户明确确认后结束最后中断轮，保留原会话／线程、用户消息和暂停队列，未重发输入。

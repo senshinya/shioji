@@ -344,6 +344,7 @@ func (c *Controller) Run(ctx context.Context) {
 	var service *WorkerService
 	var background *domain.BackgroundService
 	var lastUpdateAttempt, updateStarted time.Time
+	var lastUpgradeObservation time.Time
 	var lastBackgroundCheck time.Time
 	updateIntent := updateNotRequested
 	publishService := func(state *WorkerService) {
@@ -485,7 +486,7 @@ func (c *Controller) Run(ctx context.Context) {
 			candidate = &info
 		}
 	}
-	tryWorkerUpdate := func(explicit bool, policy ...string) (bool, error) {
+	tryWorkerUpdate := func(explicit bool, schema *WorkerSchemaConfirmation, policy ...string) (bool, error) {
 		if c.WorkerBinary == "" {
 			return false, nil
 		}
@@ -506,6 +507,17 @@ func (c *Controller) Run(ctx context.Context) {
 			publishService(state)
 			return false, nil
 		}
+		if schema != nil && (client == nil || client.Worker == nil || candidate == nil ||
+			client.Worker.BuildID != schema.SourceBuild || candidate.BuildID != schema.TargetBuild) {
+			var current *domain.WorkerBuild
+			if client != nil {
+				current = client.Worker
+			}
+			state := newWorkerService(current, candidate)
+			state.Phase, state.Message = WorkerUpdateFailed, "更新构建或连接已变化，请重新确认数据库迁移"
+			publishService(state)
+			return false, nil
+		}
 		if client == nil {
 			if explicit && candidate != nil && candidate.Lifecycle == 1 && c.ExpectedDeviceID != "" {
 				var known *domain.WorkerBuild
@@ -517,7 +529,7 @@ func (c *Controller) Run(ctx context.Context) {
 				if len(policy) > 0 {
 					selectedPolicy = policy[0]
 				}
-				state, e := observer.update(ctx, nil, candidate, true, selectedPolicy)
+				state, e := observer.update(ctx, nil, candidate, true, selectedPolicy, false)
 				if state != nil {
 					publishService(state)
 				}
@@ -558,7 +570,7 @@ func (c *Controller) Run(ctx context.Context) {
 			}
 			call, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
-			state, e := observer.update(call, client, candidate, explicit, selectedPolicy)
+			state, e := observer.update(call, client, candidate, explicit, selectedPolicy, schema != nil)
 			if state != nil {
 				publishService(state)
 			}
@@ -600,6 +612,7 @@ func (c *Controller) Run(ctx context.Context) {
 		return true, nil
 	}
 	observeWorkerBuild := func() {
+		lastUpgradeObservation = time.Now()
 		if client.Worker != nil && (client.Worker.Lifecycle == 1 || candidate != nil && candidate.Lifecycle == 1) {
 			observer := c.upgradeObserver(client.DeviceID, client.Worker)
 			if prior, e := observer.load(); e != nil {
@@ -676,6 +689,10 @@ func (c *Controller) Run(ctx context.Context) {
 		}
 		state, e := observer.observe(call, nil, candidate)
 		if state != nil {
+			if state.OperationPhase == "applied" && state.Phase != WorkerUpdateFailed {
+				state.Phase = WorkerUpdating
+				state.Message = "更新已提交，正在重新连接"
+			}
 			if e != nil {
 				state.Message = e.Error()
 			}
@@ -1037,7 +1054,7 @@ func (c *Controller) Run(ctx context.Context) {
 				}
 				continue
 			}
-			if job.Method == "$worker.update" || job.Method == "$worker.update.immediate" {
+			if job.Method == "$worker.update" || job.Method == "$worker.update.immediate" || job.Method == "$worker.update.migrate" {
 				if service != nil && service.Phase == WorkerUpdating {
 					continue
 				}
@@ -1069,7 +1086,15 @@ func (c *Controller) Run(ctx context.Context) {
 				if job.Method == "$worker.update.immediate" {
 					policy = "immediate"
 				}
-				restart, err := tryWorkerUpdate(true, policy)
+				var schema *WorkerSchemaConfirmation
+				if job.Method == "$worker.update.migrate" {
+					confirmed, valid := job.Input.(WorkerSchemaConfirmation)
+					if !valid || !service.RequiresSchemaMigration() {
+						continue
+					}
+					schema = &confirmed
+				}
+				restart, err := tryWorkerUpdate(true, schema, policy)
 				if restart || err != nil {
 					disconnected()
 					lastAttempt = time.Time{}
@@ -1265,6 +1290,11 @@ func (c *Controller) Run(ctx context.Context) {
 			if c.paths != nil && !backgroundBusy {
 				recoverPath()
 			}
+			if service != nil && service.OperationID != "" &&
+				(service.Phase == WorkerUpdating || service.Phase == WorkerWaiting) &&
+				time.Since(lastUpgradeObservation) >= 3*time.Second {
+				observeWorkerBuild()
+			}
 			if service != nil && service.Phase == WorkerUpdating && !updateStarted.IsZero() && time.Since(updateStarted) > 35*time.Second {
 				call, cancel := context.WithTimeout(ctx, 3*time.Second)
 				var build domain.WorkerBuild
@@ -1296,8 +1326,12 @@ func (c *Controller) Run(ctx context.Context) {
 					}
 				})
 			}
-			if (c.WorkerAutoUpdate && service.Automatic() || updateIntent == updateWaitingForIdle && service != nil && service.Phase == WorkerWaiting) && time.Since(lastUpdateAttempt) > 5*time.Second {
-				restart, err := tryWorkerUpdate(false)
+			// Accepted lifecycle operations keep waiting on the device. Their
+			// receipts are queried above, independently of automatic dispatch.
+			legacyWaiting := service != nil && service.OperationID == "" && service.Phase == WorkerWaiting
+			if (c.WorkerAutoUpdate && service.Automatic() && (service.Phase != WorkerWaiting || legacyWaiting) ||
+				updateIntent == updateWaitingForIdle && legacyWaiting) && time.Since(lastUpdateAttempt) > 5*time.Second {
+				restart, err := tryWorkerUpdate(false, nil)
 				if restart || err != nil {
 					disconnected()
 					lastAttempt = time.Time{}

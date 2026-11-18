@@ -7,6 +7,10 @@ import (
 
 type WorkerUpdatePhase string
 
+type WorkerSchemaConfirmation struct {
+	SourceBuild, TargetBuild string
+}
+
 const (
 	WorkerCurrent      WorkerUpdatePhase = "current"
 	WorkerAvailable    WorkerUpdatePhase = "available"
@@ -50,7 +54,11 @@ func newWorkerService(current, available *domain.WorkerBuild) *WorkerService {
 	return s
 }
 func (s *WorkerService) Automatic() bool {
-	return s != nil && (s.Phase == WorkerAvailable || s.Phase == WorkerWaiting) && s.Build != nil && s.Available != nil && s.Build.SafeUpdate && s.Build.BuiltAt > 0 && s.Available.BuiltAt > s.Build.BuiltAt
+	return s != nil && (s.Phase == WorkerAvailable || s.Phase == WorkerWaiting) && s.Build != nil && s.Available != nil && s.Build.Schema == s.Available.Schema && s.Build.SafeUpdate && s.Build.BuiltAt > 0 && s.Available.BuiltAt > s.Build.BuiltAt
+}
+
+func (s *WorkerService) RequiresSchemaMigration() bool {
+	return s != nil && s.Build != nil && s.Available.MigratesSchema(s.Build.Schema)
 }
 func (s *WorkerService) Label() string {
 	if s == nil {

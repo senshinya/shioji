@@ -71,7 +71,7 @@ func TestRemoteUpgradeLostReplyQueriesOriginalOperationAfterRouteAndClientRestar
 	controller := NewDeviceController(directory, "device-A", []DeviceConnection{connection}, "", nil)
 	observer := controller.fleet.sources["remote"].controller.upgradeObserver("device-B", nil)
 	candidate := &domain.WorkerBuild{BuildID: "next", Lifecycle: 1, SafeUpdate: true}
-	if _, err := observer.update(ctx, peer("old", nil), candidate, false, "when-idle"); err == nil {
+	if _, err := observer.update(ctx, peer("old", nil), candidate, false, "when-idle", false); err == nil {
 		t.Fatal("lost update reply was reported as confirmed")
 	}
 	var in domain.WorkerReplacement
@@ -91,7 +91,7 @@ func TestRemoteUpgradeLostReplyQueriesOriginalOperationAfterRouteAndClientRestar
 			t.Error("healthy remote status query incorrectly used the fallback control path")
 			return supervisor.Operation{}, errors.New("unexpected fallback")
 		}
-		state, err := observer.update(ctx, peer("next", &in), candidate, false, "when-idle")
+		state, err := observer.update(ctx, peer("next", &in), candidate, false, "when-idle", false)
 		if err != nil || state == nil || state.Phase != WorkerCurrent || state.OperationID != in.ID {
 			t.Fatal("remote restart did not recover the applied original operation", state, err)
 		}

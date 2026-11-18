@@ -114,7 +114,7 @@ func localPrincipal(conn *net.UnixConn) error {
 func Query(ctx context.Context, directory, id string) (Operation, error) {
 	op, err := Call(ctx, directory, Request{Action: "status", ID: id})
 	if err == nil {
-		return op, nil
+		return checkSchemaBootstrapStatus(directory, hydrateSchemaPlan(directory, op)), nil
 	}
 	if ctx.Err() != nil {
 		return op, ctx.Err()
@@ -144,5 +144,5 @@ func Query(ctx context.Context, directory, id string) (Operation, error) {
 		op.Phase = "observing"
 		op.Error = "服务控制尚未连接，正在核对是否已开放接纳"
 	}
-	return op, nil
+	return checkSchemaBootstrapStatus(directory, hydrateSchemaPlan(directory, op)), nil
 }

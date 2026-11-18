@@ -35,6 +35,8 @@ func deviceWorkerUpdateCaption(state *app.DeviceState) (string, bool) {
 		switch service.OperationPhase {
 		case "preparing":
 			return "正在准备更新…", true
+		case "migrating":
+			return "正在迁移数据库…", true
 		case "applied":
 			return "正在重新连接…", true
 		case "", "observing":
@@ -103,12 +105,19 @@ func (v *View) deviceWorkerUpdateAction(c *n.Context, t *n.Theme, key string, op
 			switch service.Phase {
 			case app.WorkerWaiting:
 				*open = false
+				if service.RequiresSchemaMigration() {
+					v.deviceSelected, v.deviceList, v.devices = key, false, true
+					return
+				}
 				v.beginWorkerUpdateConfirmation(key, state, true)
 			case app.WorkerLegacy:
 				*open = false
 				v.deviceSelected, v.deviceList, v.devices = key, false, true
 			default:
-				v.do(app.Job{ConnectionID: key, Method: "$worker.update"})
+				if service.RequiresSchemaMigration() {
+					*open = false
+				}
+				v.requestWorkerUpdate(key, state)
 			}
 		})
 		return 0

@@ -15,6 +15,10 @@ func probeCandidate(ctx context.Context, directory, path string, build domain.Wo
 		return err
 	}
 	defer os.RemoveAll(dir)
+	return probeWorkerDatabase(ctx, dir, path, build)
+}
+
+func probeWorkerDatabase(ctx context.Context, dir, path string, build domain.WorkerBuild) error {
 	command := exec.CommandContext(ctx, path, "--probe", "--state-dir", dir)
 	command.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + dir, "TMPDIR=" + dir}
 	data, err := command.Output()

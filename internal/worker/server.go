@@ -206,6 +206,7 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	s := &Server{attachments: attachments.New(filepath.Join(config.Directory, "attachments")), config: config, owner: owner, listener: listener, store: db, ctx: workerCtx, cancel: cancel, queueWake: make(chan struct{}, 1), recoveryWake: make(chan struct{}, 1), recoveryChecked: map[string]recoveryAttempt{}, bound: map[string]bool{}, conns: map[net.Conn]bool{}}
 	s.build = runtimebuild.Current()
 	s.build.Schema = store.SchemaVersion
+	s.build.MigrationFrom = store.WorkerMigrationFrom
 	if config.ServiceInstance != "" {
 		s.build.PrivateControl = supervisor.PrivateControlVersion
 	}

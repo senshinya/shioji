@@ -13,6 +13,46 @@ import (
 	"time"
 )
 
+func RecoverInterruptedSchemaControl(ctx context.Context, directory, binary, codex, device string) (bool, error) {
+	prior, recoverable := supervisor.InterruptedSchemaControl(directory)
+	if !recoverable {
+		return false, nil
+	}
+	build, err := InspectWorker(ctx, binary)
+	if err != nil {
+		return false, err
+	}
+	if device == "" || prior.DeviceID != device || build.BuildID != prior.Input.BuildID || !build.MigratesSchema(prior.SourceSchema) {
+		return false, &protocol.RemoteError{Code: "notSent", Message: "数据库恢复需要原迁移的软件包和设备身份"}
+	}
+	if err = supervisor.ReleaseInterruptedSchemaControl(ctx, directory, prior); err != nil {
+		return false, err
+	}
+	if err = EnsureRepairControl(ctx, directory, binary, codex, device); err != nil {
+		return false, err
+	}
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		call, cancel := context.WithTimeout(ctx, time.Second)
+		status, e := supervisor.Call(call, directory, supervisor.Request{Action: "status", ID: prior.Input.ID})
+		cancel()
+		if e == nil && status.DeviceID == device && status.Input == prior.Input {
+			switch status.Phase {
+			case "rolled-back":
+				return true, nil
+			case "blocked":
+				return false, errors.New(status.Error)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-tick.C:
+		}
+	}
+}
+
 // EnsureRepairControl restores only the fixed control entry. Its recovered
 // blocked state opens no business writer; normal repair admission still applies.
 func EnsureRepairControl(ctx context.Context, directory, binary, codex, device string) error {
@@ -33,7 +73,8 @@ func EnsureRepairControl(ctx context.Context, directory, binary, codex, device s
 	if err != nil {
 		return err
 	}
-	if device == "" || actual != device || prior.DeviceID != device || prior.Phase != "blocked" {
+	_, interruptedSchema := supervisor.InterruptedSchemaControl(directory)
+	if device == "" || actual != device || prior.DeviceID != device || prior.Phase != "blocked" && !interruptedSchema {
 		return &protocol.RemoteError{Code: "notSent", Message: "未确认该设备需要冷修复，原件已保留"}
 	}
 	lease, err := supervisor.AcquireLease(directory)

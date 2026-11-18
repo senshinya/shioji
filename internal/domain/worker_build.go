@@ -13,6 +13,7 @@ type WorkerBuild struct {
 	Revision       string `json:"revision,omitempty"`
 	BuiltAt        int64  `json:"builtAt,omitempty"`
 	Schema         int    `json:"schema"`
+	MigrationFrom  int    `json:"migrationFrom,omitempty"`
 	SafeUpdate     bool   `json:"safeUpdate"`
 	ContextUsage   bool   `json:"contextUsage"`
 	OutputFiles    bool   `json:"outputFiles"`
@@ -24,6 +25,11 @@ type WorkerReplacement struct {
 	Explicit        bool   `json:"explicit,omitempty"`
 	ExpectedBuildID string `json:"expectedBuildId"`
 	BuildID         string `json:"buildId"`
+	SchemaMigration bool   `json:"schemaMigration,omitempty"`
+}
+
+func (b *WorkerBuild) MigratesSchema(from int) bool {
+	return b != nil && b.MigrationFrom > 0 && from >= b.MigrationFrom && from < b.Schema
 }
 
 type WorkerUpdateResult struct {

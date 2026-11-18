@@ -308,6 +308,9 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 
 		case app.WorkerUpdating:
 			action = "正在更新"
+			if service.OperationPhase == "migrating" {
+				action = "正在迁移数据库"
+			}
 			disabled = true
 		case app.WorkerLegacy:
 			disabled = true
@@ -363,11 +366,13 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 
 			} else if method == "$worker.migration.inspect" {
 				v.beginNormalMigration(key)
+			} else if method == "$worker.update" {
+				v.requestWorkerUpdate(key, state)
 			} else {
 				v.do(app.Job{ConnectionID: key, Method: method})
 			}
 		}
-		if service != nil && service.Phase == app.WorkerWaiting && service.OperationID != "" {
+		if service != nil && service.Phase == app.WorkerWaiting && service.OperationID != "" && !service.RequiresSchemaMigration() {
 			if configurationAction(c, "立即更新…").Label("立即更新执行服务").Disabled(disabled).Clicked() {
 				v.beginWorkerUpdateConfirmation(key, state, false)
 			}

@@ -50,6 +50,7 @@ func run() error {
 	}
 	flag.StringVar(&dir, "state-dir", dir, "Private worker state directory")
 	serviceMigration := flag.String("service-migrate", "", "Start or run the signed fixed-service installer relay")
+	schemaUpgrade := flag.String("service-schema-upgrade", "", "Start or run an explicitly authorized worker database migration")
 	serviceControl := flag.String("service-control", "", "Query or cancel a stable fixed-supervisor operation")
 	serviceDevice := flag.String("service-device", "", "Expected authenticated service device")
 	serviceID := flag.String("service-id", "", "Stable service update operation identifier")
@@ -70,6 +71,7 @@ func run() error {
 	flag.Parse()
 	build := runtimebuild.Current()
 	build.Schema = store.SchemaVersion
+	build.MigrationFrom = store.WorkerMigrationFrom
 	build.SafeUpdate = true
 	build.Lifecycle = 1
 	build.PrivateControl = supervisor.PrivateControlVersion
@@ -99,6 +101,30 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if *schemaUpgrade != "" {
+		exe, e := os.Executable()
+		if e != nil {
+			return e
+		}
+		switch *schemaUpgrade {
+		case "start":
+			var input domain.WorkerReplacement
+			if e = json.NewDecoder(io.LimitReader(os.Stdin, 1<<20)).Decode(&input); e != nil {
+				return e
+			}
+			op, e := worker.StartSchemaUpgrade(ctx, dir, exe, *serviceDevice, input)
+			return serviceReply(op, e)
+		case "run":
+			lease := os.NewFile(3, "schema bootstrap lease")
+			if lease == nil {
+				return errors.New("missing schema bootstrap lease")
+			}
+			defer lease.Close()
+			return worker.RunSchemaUpgrade(ctx, dir, exe, *serviceID, *serviceDevice, lease)
+		default:
+			return errors.New("未知的数据库迁移操作")
+		}
+	}
 	if *serviceMigration != "" {
 		exe, e := os.Executable()
 		if e != nil {
@@ -149,6 +175,15 @@ func run() error {
 				exe, executableErr := os.Executable()
 				e = executableErr
 				if e == nil {
+					restore, cancel := context.WithTimeout(ctx, 20*time.Second)
+					var recovered bool
+					recovered, e = transport.RecoverInterruptedSchemaControl(restore, dir, exe, *binary, *serviceDevice)
+					cancel()
+					if recovered {
+						e = &protocol.RemoteError{Code: "notSent", Message: "已恢复原数据库。可重新确认迁移"}
+					}
+				}
+				if e == nil {
 					e = transport.EnsureRepairControl(ctx, dir, exe, *binary, *serviceDevice)
 				}
 				if e == nil {
@@ -160,6 +195,8 @@ func run() error {
 			if e == nil {
 				if *serviceDevice == "" || op.DeviceID != *serviceDevice {
 					e = &protocol.RemoteError{Code: "notSent", Message: "服务控制设备身份未确认"}
+				} else if op.Legacy && op.Input.SchemaMigration {
+					op, e = supervisor.CancelLegacy(ctx, dir, *serviceID, *serviceDevice)
 				} else {
 					prior := op
 					op, e = supervisor.Call(ctx, dir, supervisor.Request{Action: "cancel", ID: *serviceID, DeviceID: *serviceDevice})

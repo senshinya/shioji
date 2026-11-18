@@ -34,6 +34,9 @@ func fixtureHost(name string) int {
 		buildID = "next"
 	}
 	build := domain.WorkerBuild{BuildID: buildID, Schema: store.SchemaVersion, Lifecycle: 1, SafeUpdate: true}
+	if strings.Contains(name, "schema15") {
+		build.Schema = 15
+	}
 	var dir string
 	probe := false
 	for i, arg := range os.Args {
@@ -45,6 +48,12 @@ func fixtureHost(name string) int {
 		}
 	}
 	if probe {
+		if strings.Contains(name, "schema16") && strings.HasPrefix(filepath.Base(dir), "schema-migration-") {
+			db, err := store.Open(filepath.Join(dir, "state.sqlite"))
+			if err != nil || db.Close() != nil {
+				return 1
+			}
+		}
 		_ = json.NewEncoder(os.Stdout).Encode(build)
 		return 0
 	}

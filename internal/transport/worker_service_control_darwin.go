@@ -113,7 +113,9 @@ func (s SSH) workerInstallerOperation(ctx context.Context, binary, device string
 		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
 	}
 	mode := " --service-migrate start"
-	if repair {
+	if input.SchemaMigration {
+		mode = " --service-schema-upgrade start"
+	} else if repair {
 		mode = " --service-control repair"
 	}
 	command := shellQuote(path) + " --state-dir " + shellQuote(s.StateDirectory) + mode + " --service-device " + shellQuote(device)

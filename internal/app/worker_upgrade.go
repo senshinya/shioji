@@ -101,18 +101,22 @@ func upgradeService(current, available *domain.WorkerBuild, r *workerUpgradeReco
 	case "waiting":
 		state.Phase = WorkerWaiting
 		state.Message = "等待实际任务完成，空闲工具会自动回收"
+	case "migrating":
+		state.Phase = WorkerUpdating
+		state.Message = "正在备份并迁移设备数据库"
 	case "applied":
-		if current != nil && current.BuildID == op.Input.BuildID {
-			if available == nil || available.BuildID == op.Input.BuildID {
-				state.Phase = WorkerCurrent
-			}
-		} else {
+		// A later update from a different client may have replaced this build.
+		// Preserve the old receipt and compare the current build with the candidate.
+		if current == nil {
 			state.Phase = WorkerUpdating
 			state.Message = "更新已提交，正在重新连接"
 		}
 	case "rolled-back":
 		state.Phase = WorkerUpdateFailed
 		state.Message = "候选版本未就绪，已恢复原版本，可重试更新"
+		if op.Input.SchemaMigration && op.Error != "" {
+			state.Message = "已恢复原数据库。迁移失败：" + op.Error
+		}
 	case "failed", "blocked":
 		state.Phase = WorkerUpdateFailed
 		state.Message = op.Error
@@ -140,6 +144,9 @@ func (u workerUpgradeClient) observe(ctx context.Context, client *protocol.Clien
 	query := func(id string) (supervisor.Operation, error) {
 		var op supervisor.Operation
 		var e error
+		if r.Input.SchemaMigration && u.control != nil {
+			return u.control(ctx, "status", id)
+		}
 		if client != nil {
 			e = client.Call(ctx, "worker.update.status", struct {
 				ID string `json:"id"`
@@ -156,7 +163,7 @@ func (u workerUpgradeClient) observe(ctx context.Context, client *protocol.Clien
 	if err != nil {
 		// A second client may have joined the same target before its reply was
 		// lost. Following an existing matching receipt never resends an update.
-		if active, e := query(""); e == nil && active.Input.ID != "" && active.DeviceID == u.device && active.Input.ExpectedBuildID == r.Input.ExpectedBuildID && active.Input.BuildID == r.Input.BuildID && active.Input.Policy == r.Input.Policy {
+		if active, e := query(""); e == nil && active.Input.ID != "" && active.DeviceID == u.device && active.Input.ExpectedBuildID == r.Input.ExpectedBuildID && active.Input.BuildID == r.Input.BuildID && active.Input.Policy == r.Input.Policy && active.Input.SchemaMigration == r.Input.SchemaMigration {
 			r.JoinedID = active.Input.ID
 			if e = u.save(r); e != nil {
 				return upgradeService(current, candidate, r), e
@@ -195,6 +202,11 @@ func (c *Controller) upgradeObserver(device string, known *domain.WorkerBuild) w
 		if action == "status" {
 			return supervisor.Query(ctx, c.Directory, id)
 		}
+		if action == "cancel" {
+			if prior, err := supervisor.Query(ctx, c.Directory, id); err == nil && prior.Legacy && prior.Input.SchemaMigration {
+				return supervisor.CancelLegacy(ctx, c.Directory, id, device)
+			}
+		}
 		op, e := supervisor.Call(ctx, c.Directory, supervisor.Request{Action: action, ID: id, DeviceID: device})
 		if e != nil && action == "cancel" {
 			if prior, read := supervisor.Query(ctx, c.Directory, id); read == nil && prior.Legacy {
@@ -205,7 +217,7 @@ func (c *Controller) upgradeObserver(device string, known *domain.WorkerBuild) w
 	}}
 }
 
-func (u workerUpgradeClient) update(ctx context.Context, client *protocol.Client, candidate *domain.WorkerBuild, explicit bool, policy string) (*WorkerService, error) {
+func (u workerUpgradeClient) update(ctx context.Context, client *protocol.Client, candidate *domain.WorkerBuild, explicit bool, policy string, migrate bool) (*WorkerService, error) {
 	current := u.knownBuild
 	if client != nil {
 		current = client.Worker
@@ -231,12 +243,25 @@ func (u workerUpgradeClient) update(ctx context.Context, client *protocol.Client
 	if candidate == nil || current == nil && u.legacy == nil {
 		return nil, errors.New("执行服务版本未确认")
 	}
+	if !repairing {
+		crossSchema := current != nil && current.Schema > 0 && candidate.Schema > 0 && current.Schema != candidate.Schema
+		switch {
+		case crossSchema && (!migrate || !explicit || !candidate.MigratesSchema(current.Schema) || policy != "when-idle"):
+			state := newWorkerService(current, candidate)
+			state.Phase, state.Message = WorkerUpdateFailed, "此更新需要确认设备数据库迁移，或使用兼容版本"
+			return state, nil
+		case migrate && !crossSchema:
+			state := newWorkerService(current, candidate)
+			state.Phase, state.Message = WorkerUpdateFailed, "执行服务版本已变化，请重新检查"
+			return state, nil
+		}
+	}
 	r = &workerUpgradeRecord{DeviceID: u.device, Input: domain.WorkerReplacement{ID: domain.NewID(), ExpectedBuildID: func() string {
 		if current != nil {
 			return current.BuildID
 		}
 		return ""
-	}(), BuildID: candidate.BuildID, Explicit: explicit, Policy: policy}}
+	}(), BuildID: candidate.BuildID, Explicit: explicit, Policy: policy, SchemaMigration: migrate}}
 	if err = u.save(r); err != nil {
 		return nil, err
 	}
@@ -245,7 +270,7 @@ func (u workerUpgradeClient) update(ctx context.Context, client *protocol.Client
 		var op supervisor.Operation
 		op, err = u.repair(ctx, r.Input)
 		result = domain.WorkerUpdateResult{Ready: err == nil, OperationID: op.Input.ID, Phase: op.Phase, Reason: op.Error}
-	} else if (client == nil || current.Lifecycle != 1) && u.legacy != nil {
+	} else if (migrate || client == nil || current.Lifecycle != 1) && u.legacy != nil {
 		var op supervisor.Operation
 		op, err = u.legacy(ctx, r.Input)
 		result = domain.WorkerUpdateResult{Ready: err == nil, OperationID: op.Input.ID, Phase: op.Phase, Reason: op.Error}
@@ -274,7 +299,7 @@ func (u workerUpgradeClient) update(ctx context.Context, client *protocol.Client
 		if e != nil {
 			return upgradeService(current, candidate, r), e
 		}
-		if active.DeviceID != u.device || active.Input.ExpectedBuildID != r.Input.ExpectedBuildID || active.Input.BuildID != r.Input.BuildID || active.Input.Policy != r.Input.Policy {
+		if active.DeviceID != u.device || active.Input.ExpectedBuildID != r.Input.ExpectedBuildID || active.Input.BuildID != r.Input.BuildID || active.Input.Policy != r.Input.Policy || active.Input.SchemaMigration != r.Input.SchemaMigration {
 			return upgradeService(current, candidate, r), errors.New("另一个更新与请求目标不一致")
 		}
 		r.JoinedID = active.Input.ID
@@ -311,7 +336,9 @@ func (c *Controller) runWorkerInstaller(ctx context.Context, device string, in d
 	}
 	raw, _ := json.Marshal(in)
 	mode := []string{"--service-migrate", "start"}
-	if repair {
+	if in.SchemaMigration {
+		mode = []string{"--service-schema-upgrade", "start"}
+	} else if repair {
 		mode = []string{"--service-control", "repair"}
 	}
 	args := append([]string{"--state-dir", c.Directory}, mode...)

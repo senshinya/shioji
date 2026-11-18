@@ -142,6 +142,11 @@ func Run(ctx context.Context, o Options) error {
 		recovered = o.LegacyInstall.Operation
 		recovered.Phase = "observing"
 		err = h.journal.save(recovered)
+	} else if current, interrupted := InterruptedSchemaControl(o.Directory); interrupted {
+		recovered, err = h.recoverSchemaMigration(ctx, current)
+		if err == nil && recovered.Phase == "rolled-back" {
+			h.health.Phase, h.health.Error = "reconnecting", ""
+		}
 	} else {
 		recovered, err = h.journal.recover()
 	}
@@ -152,7 +157,9 @@ func Run(ctx context.Context, o Options) error {
 	h.blocked = recovered.Phase == "blocked" || h.health.Phase == "blocked" && !h.health.CrashLoop
 	go h.serve(listener)
 	go h.monitor()
-	if !h.blocked {
+	if o.LegacyInstall != nil && recovered.SourceSchema > 0 {
+		h.finishSchemaBootstrap(ctx, recovered)
+	} else if !h.blocked {
 		paused := recovered.Phase == "applied" || recovered.Phase == "rolled-back" || o.LegacyInstall != nil
 		opID := ""
 		if paused {
@@ -240,6 +247,15 @@ func Run(ctx context.Context, o Options) error {
 			h.mu.Lock()
 			c = h.child
 			h.mu.Unlock()
+			if _, interrupted := InterruptedSchemaControl(o.Directory); interrupted {
+				// The original writer already gave its drain receipt. If a
+				// paused candidate exists, leave the migration receipt intact
+				// for rollback on the next start.
+				if c != nil {
+					return h.stopExact(c, o.StopGrace)
+				}
+				return nil
+			}
 			if c != nil {
 				select {
 				case <-c.done:
@@ -363,6 +379,8 @@ func (h *host) control(req Request) (Operation, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	switch req.Action {
+	case "schema-capability":
+		return Operation{DeviceID: h.device, Phase: "schema-capable"}, nil
 	case "status":
 		var op Operation
 		var err error
@@ -420,6 +438,9 @@ func (h *host) control(req Request) (Operation, error) {
 		}
 		return o, nil
 	case "start":
+		if req.DeviceID != "" && req.DeviceID != h.device {
+			return Operation{}, &protocol.RemoteError{Code: "notSent", Message: "更新不属于所选设备"}
+		}
 		if h.ctx.Err() != nil {
 			return Operation{}, &protocol.RemoteError{Code: "notSent", Message: "服务控制正在关闭"}
 		}
@@ -437,7 +458,8 @@ func (h *host) control(req Request) (Operation, error) {
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return prior, err
 		}
-		if active, e := h.journal.current(); e == nil && active.Input.ID != "" && active.Input.ExpectedBuildID == req.Input.ExpectedBuildID && active.Input.BuildID == req.Input.BuildID && active.Input.Policy == req.Input.Policy && (!active.Terminal() || active.Phase == "applied") {
+		if active, e := h.journal.current(); e == nil && active.Input.ID != "" && active.Input.ExpectedBuildID == req.Input.ExpectedBuildID && active.Input.BuildID == req.Input.BuildID &&
+			active.Input.Policy == req.Input.Policy && active.Input.SchemaMigration == req.Input.SchemaMigration && (!active.Terminal() || active.Phase == "applied") {
 			if h.updating && (active.Phase == "applied" || active.Phase == "rolled-back") {
 				active.Phase = "observing"
 			}
@@ -693,21 +715,8 @@ func (h *host) shutdown(c *child, id string, grace time.Duration, controls ...Co
 	return nil
 }
 func (h *host) update(ctx context.Context, o Operation, old *child) {
-	var candidate *child
 	failed := func(cause error, blocked bool) {
-		o.Error = cause.Error()
-		phase := "failed"
-		if blocked {
-			phase = "blocked"
-		}
-		_ = h.phase(&o, phase)
-		h.mu.Lock()
-		h.blocked = blocked
-		h.updating = false
-		h.cancelUpdate = nil
-		h.updateID = ""
-		h.mu.Unlock()
-		h.signalWake()
+		h.failUpdate(o, cause, blocked)
 	}
 	if o.ExpiresAt.IsZero() {
 		o.ExpiresAt = o.Created.Add(24 * time.Hour)
@@ -719,12 +728,27 @@ func (h *host) update(ctx context.Context, o Operation, old *child) {
 	prepare, cancel := context.WithTimeout(ctx, 8*time.Minute)
 	path, b, err := h.options.Verify(prepare, o.Input.BuildID)
 	if err == nil && b.Schema != old.build.Schema {
-		err = errors.New("候选存储格式不兼容；需使用明确的数据迁移流程")
+		if !o.Input.Explicit || !o.Input.SchemaMigration || o.Input.Policy != "when-idle" || !b.MigratesSchema(old.build.Schema) {
+			err = errors.New("候选存储格式不兼容；需使用明确的数据迁移流程")
+		} else {
+			o.SourceSchema, o.TargetSchema = old.build.Schema, b.Schema
+			actual, e := schemaAt(prepare, h.options.Directory, o.DeviceID)
+			if e != nil {
+				err = e
+			} else if actual != o.SourceSchema {
+				err = errors.New("实际数据库 schema 与原执行服务不一致")
+			} else {
+				err = schemaMigrationSpace(h.options.Directory)
+			}
+			if err == nil {
+				err = saveSchemaPlan(h.options.Directory, o)
+			}
+		}
 	}
 	if err == nil {
 		err = probeCandidate(prepare, h.options.Directory, path, b)
 	}
-	if err == nil {
+	if err == nil && o.SourceSchema == 0 {
 		var backup domain.WorkerUpdateResult
 		err = h.workerCall(prepare, old, "worker.local-backup", Control{Instance: old.instance, OperationID: o.Input.ID}, &backup)
 	}
@@ -805,38 +829,107 @@ waitForIdle:
 		failed(err, true)
 		return
 	}
-	candidate, err = h.launch(path, b, true, o.Input.ID)
+	h.finishUpdate(ctx, o, path, b)
+}
+
+func (h *host) failUpdate(o Operation, cause error, blocked bool) {
+	phase := "failed"
+	if blocked {
+		phase = "blocked"
+	}
+	o.Error = cause.Error()
+	_ = h.phase(&o, phase)
+	h.mu.Lock()
+	h.blocked = blocked
+	h.updating = false
+	h.cancelUpdate = nil
+	h.updateID = ""
+	h.mu.Unlock()
+	h.signalWake()
+}
+
+func (h *host) finishUpdate(ctx context.Context, o Operation, path string, b domain.WorkerBuild) {
+	failed := func(cause error) {
+		if o.SourceSchema > 0 && h.ctx.Err() != nil {
+			return // Keep the precommit phase available to startup recovery.
+		}
+		h.failUpdate(o, cause, true)
+	}
+	var candidate *child
+	var err error
+	if o.SourceSchema > 0 {
+		if err = h.phase(&o, "migrating"); err != nil {
+			failed(err)
+			return
+		}
+		migrate, stop := context.WithTimeout(ctx, 8*time.Minute)
+		err = h.withSchemaLease(func() error {
+			return stageSchemaMigration(migrate, h.options.Directory, o, o.SourceSchema, o.TargetSchema, func(copy string) error {
+				return probeWorkerDatabase(migrate, copy, path, b)
+			})
+		})
+		stop()
+		if err == nil {
+			err = h.phase(&o, "observing")
+		}
+	}
+	if err == nil {
+		candidate, err = h.launch(path, b, true, o.Input.ID)
+	}
 	if err == nil {
 		var ready Ready
 		ready, err = h.ready(ctx, candidate, true)
-		if err == nil && ready.DeviceID != o.DeviceID {
+		if err == nil && (ready.DeviceID != o.DeviceID || o.SourceSchema > 0 && ready.Build.Schema != o.TargetSchema) {
 			err = errors.New("candidate device identity changed")
 		}
 	}
 	if err != nil {
+		if o.SourceSchema > 0 && h.ctx.Err() != nil {
+			return
+		}
 		if candidate != nil {
-			if e := h.shutdown(candidate, o.Input.ID+"-candidate", h.options.StopGrace); e != nil {
-				failed(errors.Join(err, e), true)
+			var e error
+			if o.SourceSchema > 0 {
+				// The candidate has never opened admission. Confirm process exit
+				// and reacquire the data lease before replacing its private copy.
+				e = h.stopExact(candidate, h.options.StopGrace)
+			} else {
+				e = h.shutdown(candidate, o.Input.ID+"-candidate", h.options.StopGrace)
+			}
+			if e != nil {
+				failed(errors.Join(err, e))
 				return
 			}
 		}
 		if e := h.phase(&o, "rollback-stop"); e != nil {
-			failed(e, true)
+			failed(e)
 			return
+		}
+		if o.SourceSchema > 0 {
+			restore, cancel := context.WithTimeout(h.ctx, time.Minute)
+			e := h.withSchemaLease(func() error {
+				return restoreSchemaMigration(restore, h.options.Directory, o, o.SourceSchema, o.TargetSchema)
+			})
+			cancel()
+			if e != nil {
+				failed(errors.Join(err, e))
+				return
+			}
+			o.Error = err.Error()
 		}
 		previous, build, e := h.options.Verify(ctx, o.PreviousBuild)
 		if e != nil {
-			failed(e, true)
+			failed(e)
 			return
 		}
 		restored, e := h.launch(previous, build, true, o.Input.ID)
 		if e != nil {
-			failed(e, true)
+			failed(e)
 			return
 		}
 		ready, e := h.ready(ctx, restored, true)
 		if e != nil || ready.DeviceID != o.DeviceID {
-			failed(errors.New("compatible rollback failed local ready"), true)
+			failed(errors.New("compatible rollback failed local ready"))
 			return
 		}
 		h.mu.Lock()
@@ -846,7 +939,7 @@ waitForIdle:
 			e = h.phase(&o, "rolled-back")
 		}
 		if e != nil {
-			failed(e, true)
+			failed(e)
 			return
 		}
 		candidate = restored
@@ -855,7 +948,7 @@ waitForIdle:
 			err = h.phase(&o, "applied")
 		}
 		if err != nil {
-			failed(err, true)
+			failed(err)
 			return
 		}
 		h.mu.Lock()

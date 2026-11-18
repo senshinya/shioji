@@ -10,7 +10,98 @@ import (
 	"shioji/internal/transport"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestConnectedControllerRefreshesPreparingUpgrade(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	controller := NewController(t.TempDir())
+	controller.ExpectedDeviceID = "device"
+	in := domain.WorkerReplacement{ID: "upgrade", ExpectedBuildID: "old", BuildID: "next", Policy: "when-idle"}
+	if err := controller.upgradeObserver("device", nil).save(&workerUpgradeRecord{DeviceID: "device", Input: in}); err != nil {
+		t.Fatal(err)
+	}
+	controller.Dial = func(ctx context.Context) (net.Conn, error) {
+		a, b := net.Pipe()
+		go func() {
+			defer b.Close()
+			stop := context.AfterFunc(ctx, func() { b.Close() })
+			defer stop()
+			codec, _, err := protocol.Welcome(b, "device", domain.WorkerBuild{BuildID: "old", Lifecycle: 1, SafeUpdate: true})
+			if err != nil {
+				return
+			}
+			queries := 0
+			for {
+				var f protocol.Frame
+				if codec.Read(&f) != nil {
+					return
+				}
+				switch f.Method {
+				case "snapshot":
+					result(codec, f, domain.Snapshot{DeviceID: "device", Generation: "g"})
+				case "readiness":
+					result(codec, f, domain.Readiness{State: "ready"})
+				case "worker.update.status":
+					var query struct{ ID string }
+					if err := json.Unmarshal(f.Body, &query); err != nil {
+						return
+					}
+					op := supervisor.Operation{DeviceID: "device", Input: in, Phase: "preparing"}
+					if query.ID == in.ID {
+						queries++
+						if queries > 1 {
+							op.Phase, op.Error = "failed", "schema mismatch"
+						}
+					}
+					result(codec, f, op)
+				case "events.watch":
+					<-ctx.Done()
+					return
+				case "device.health":
+					result(codec, f, domain.DeviceHealth{})
+				default:
+					return
+				}
+			}
+		}()
+		return a, nil
+	}
+	done := make(chan struct{})
+	go func() { controller.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	model := NewModel()
+	for {
+		select {
+		case update := <-controller.Updates:
+			update(model)
+			if model.Connected && model.WorkerService != nil && model.WorkerService.Phase == WorkerUpdateFailed {
+				if model.WorkerService.Message != "schema mismatch" {
+					t.Fatal("lost actual failure reason", model.WorkerService)
+				}
+				return
+			}
+		case <-ctx.Done():
+			t.Fatal("connected controller did not observe terminal receipt", model.WorkerService)
+		}
+	}
+}
+
+func TestOlderAppliedReceiptDoesNotMaskAvailableWorker(t *testing.T) {
+	receipt := supervisor.Operation{Input: domain.WorkerReplacement{ID: "previous", ExpectedBuildID: "old", BuildID: "previous"}, Phase: "applied"}
+	current := &domain.WorkerBuild{BuildID: "current", SafeUpdate: true, BuiltAt: 20}
+	candidate := &domain.WorkerBuild{BuildID: "next", SafeUpdate: true, BuiltAt: 30}
+	state := upgradeService(current, candidate, &workerUpgradeRecord{Input: receipt.Input, Operation: &receipt})
+	if state.Phase != WorkerAvailable {
+		t.Fatal("older applied receipt masked the upgrade", state)
+	}
+	current.BuildID = "old"
+	state = upgradeService(current, candidate, &workerUpgradeRecord{Input: receipt.Input, Operation: &receipt})
+	if state.Phase != WorkerAvailable {
+		t.Fatal("live build still relies on a historical operation", state)
+	}
+}
 
 func TestWaitingUpgradeNoticeUsesCurrentDeviceActions(t *testing.T) {
 	m := NewModel()
@@ -90,14 +181,14 @@ func TestWorkerUpgradeLostReceiptRestartQueriesSameOperation(t *testing.T) {
 	}
 	candidate := &domain.WorkerBuild{BuildID: "next", Lifecycle: 1, SafeUpdate: true, BuiltAt: 200}
 	first := workerUpgradeClient{directory: dir, device: "device"}
-	if _, err := first.update(context.Background(), peer(false), candidate, true, "when-idle"); err == nil {
+	if _, err := first.update(context.Background(), peer(false), candidate, true, "when-idle", false); err == nil {
 		t.Fatal("lost acceptance was reported as success")
 	}
 	if accepted.ID == "" {
 		t.Fatal("operation ID was not saved before dispatch")
 	}
 	restarted := workerUpgradeClient{directory: dir, device: "device"}
-	service, err := restarted.update(context.Background(), peer(true), candidate, false, "when-idle")
+	service, err := restarted.update(context.Background(), peer(true), candidate, false, "when-idle", false)
 	if err != nil || service.Phase != WorkerWaiting || service.OperationID != accepted.ID {
 		t.Fatal("restart did not observe original waiting operation", service, err)
 	}
@@ -123,7 +214,7 @@ func TestWorkerUpgradeDefiniteRejectionIsNotKeptAsUnknown(t *testing.T) {
 	}
 	defer c.Close()
 	client := workerUpgradeClient{directory: t.TempDir(), device: "device"}
-	state, e := client.update(context.Background(), c, &domain.WorkerBuild{BuildID: "next"}, true, "when-idle")
+	state, e := client.update(context.Background(), c, &domain.WorkerBuild{BuildID: "next"}, true, "when-idle", false)
 	if e == nil || state == nil || state.Phase != WorkerUpdateFailed {
 		t.Fatal("definite refusal became permanent unknown intent", state, e)
 	}
