@@ -222,7 +222,7 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 				v.requestGit(true)
 			}
 			popover(c.Key("branches"), trigger, &v.branchOpen, func(panel n.Element) {
-				panel.Width(260).Padding(4).Radius(8).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
+				compactMenuSurface(panel, t).Width(260).Children(func() {
 					textField(c.Key("filter"), &v.branchSearch).FillWidth().Height(28).FontSize(12).Label("搜索分支").Placeholder("搜索分支…").Changed()
 					choices := []string{}
 					for _, name := range status.Branches {
@@ -241,9 +241,10 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 					v.branchList.Key = func(i int) any { return choices[i] }
 					n.List(c, &v.branchList, len(choices), func(i int) {
 						name := choices[i]
-						row := control(c, 4).FillWidth().MinHeight(26).Padding(3, 7).Radius(4).Label("分支:" + name).Children(func() {
+						row := control(c, compactMenuRowRadius).FillWidth().MinHeight(compactMenuRowHeight).
+							Padding(3, compactMenuRowInset).Radius(compactMenuRowRadius).Label("分支:" + name).Children(func() {
 							n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
-								n.Text(c, name).Grow(1).FontSize(13).FixedLineHeight(20)
+								n.Text(c, name).Grow(1).FontSize(compactMenuFontSize).FixedLineHeight(20)
 								if name == branch {
 									inlineSymbol(c, check, name, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 14, t.Text)
 								}

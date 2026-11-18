@@ -358,7 +358,8 @@ func (v *View) mentionPopup(c *n.Context, t *n.Theme, anchor n.Element, input co
 	open := state != nil && state.phase != mentionDismissed && (state.present || state.phase != mentionWaiting)
 	panel := popover(c.Key("file-mention-popup"), anchor, &open, func(panel n.Element) {
 		count := min(8, state.count())
-		height := float32(count*26 + 6)
+		const expandedHeight = 8*compactMenuRowHeight + 2*compactMenuInset
+		height := float32(count*compactMenuRowHeight + 2*compactMenuInset)
 		if state.compact && len(state.skills) > 0 {
 			height += 7
 		}
@@ -371,14 +372,15 @@ func (v *View) mentionPopup(c *n.Context, t *n.Theme, anchor n.Element, input co
 		// the animated height would flip the popup when results arrive.
 		bounds := anchor.Bounds()
 		above, below := max(float32(0), bounds.Y-12), max(float32(0), windowH-bounds.Y-bounds.H-12)
-		if above < min(float32(8*26+6), max(32, windowH-80)) && below > above {
+		if above < min(expandedHeight, max(32, windowH-80)) && below > above {
 			panel.AttachTo(anchor, n.AnchorBottomStart, n.AnchorTopStart).Margin(8, 0, 0, 0)
 			height = min(height, max(32, below))
 		} else {
 			panel.AttachTo(anchor, n.AnchorTopStart, n.AnchorBottomStart).Margin(0, 0, 8, 0)
 			height = min(height, max(32, above))
 		}
-		panel.Width(min(380, windowW-40)).Height(panel.AnimateTo("height", height, motionAnimation(c, 180*time.Millisecond))).Clip().Padding(3).Radius(9).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Label(state.title()).Children(func() {
+		compactMenuSurface(panel, t).Width(min(380, windowW-40)).
+			Height(panel.AnimateTo("height", height, motionAnimation(c, 180*time.Millisecond))).Clip().Label(state.title()).Children(func() {
 			message := ""
 			if (state.phase == mentionSearching || state.phase == mentionWaiting) && state.count() == 0 {
 				message = "正在查找文件…"
@@ -432,7 +434,8 @@ func (v *View) mentionPopup(c *n.Context, t *n.Theme, anchor n.Element, input co
 								detail = "/compact"
 							}
 						}
-						row := control(c.Key(identity)).FillWidth().Height(26).PaddingX(7).Radius(4).Label(accessible).Tooltip(detail).Disabled(disabled)
+						row := control(c.Key(identity), compactMenuRowRadius).FillWidth().Height(compactMenuRowHeight).
+							PaddingX(compactMenuRowInset).Radius(compactMenuRowRadius).Label(accessible).Tooltip(detail).Disabled(disabled)
 						background := raised(t)
 						if i == state.selected {
 							background = menuSelectionSurface(t)
@@ -447,8 +450,8 @@ func (v *View) mentionPopup(c *n.Context, t *n.Theme, anchor n.Element, input co
 								if command {
 									icon = compactContextIcon
 								}
-								referenceSymbol(c, icon, label, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 14, t.TextMuted)
-								n.Text(c, label).SingleLine().Ellipsis("…").FontSize(13).FixedLineHeight(18).Grow(1).MinWidth(0)
+								referenceSymbol(c, icon, label, n.Font{Family: c.Theme().Font, Size: compactMenuFontSize, Weight: 400}, compactMenuIconSize, t.TextMuted)
+								n.Text(c, label).SingleLine().Ellipsis("…").FontSize(compactMenuFontSize).FixedLineHeight(18).Grow(1).MinWidth(0)
 								n.Text(c, detail).SingleLine().Ellipsis("…").FontSize(11).TextColor(t.TextMuted).MaxWidth(160)
 							})
 						})

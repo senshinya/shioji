@@ -81,14 +81,16 @@ func (v *View) toolbarWorkspace(c *n.Context, t *n.Theme) {
 	}
 	panel := n.PopoverBase(c.Key("workspace-directories-popover"), trigger, &open, func(panel n.Element) {
 		panel.Transition(workspacePopupMotion(c))
-		panel.Width(280).Padding(3).Radius(9).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
+		compactMenuSurface(panel, t).Width(280).Children(func() {
 			n.Scroll(c).FillWidth().MaxHeight(320).Children(func() {
 				n.Column(c).FillWidth().Gap(0).Children(func() {
+					const iconGap = 7
+					font := n.Font{Family: t.Font, Size: compactMenuFontSize, Weight: 400}
 					for i, folder := range workspace.Folders {
-						n.Row(c.Key(folder)).FillWidth().Height(26).PaddingX(7).Gap(7).AlignItems(n.Baseline).Tooltip(folder).Children(func() {
-							font := n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}
-							inlineSymbol(c, workspaceIcon, folder, font, 14, t.TextMuted)
-							n.Text(c, path.Base(folder)).SingleLine().FontSize(13).FixedLineHeight(20).Grow(1)
+						n.Row(c.Key(folder)).FillWidth().Height(compactMenuRowHeight).PaddingX(compactMenuRowInset).
+							Gap(iconGap).AlignItems(n.Baseline).Tooltip(folder).Children(func() {
+							inlineSymbol(c, workspaceIcon, folder, font, compactMenuIconSize, t.TextMuted)
+							n.Text(c, path.Base(folder)).SingleLine().FontSize(compactMenuFontSize).FixedLineHeight(20).Grow(1)
 							if i == 0 {
 								n.Text(c, "主目录").FontSize(11).TextColor(t.TextMuted)
 							}
@@ -97,15 +99,18 @@ func (v *View) toolbarWorkspace(c *n.Context, t *n.Theme) {
 					if len(workspace.Folders) > 0 {
 						n.Column(c).Height(1).FillWidth().Background(t.Border).MarginY(3)
 					}
-					if ghost(c, "工作区设置").FillWidth().Height(26).FontSize(13).PaddingX(7).Justify(n.Start).Disabled(workspace.ID == "").Clicked() {
+					action := func(label string, icon *n.SVG, disabled bool) n.Element {
+						return control(c.Key(label), compactMenuRowRadius).FillWidth().Height(compactMenuRowHeight).
+							PaddingX(compactMenuRowInset).Radius(compactMenuRowRadius).Justify(n.Start).Label(label).Disabled(disabled).Children(func() {
+							inlineIconText(c, icon, label, font, compactMenuIconSize, iconGap, t.Text)
+						})
+					}
+					if action("工作区设置", settingsIcon, workspace.ID == "").Clicked() {
 						v.editWorkspace(workspace)
 						open = false
 					}
 					key := v.Model.WorkspaceConnection(workspace.ID)
-					entry := control(c, 4).FillWidth().Height(26).PaddingX(7).Justify(n.Start).Label("导入会话…").Disabled(workspace.ID == "" || workspace.Archived || !v.canImportConversations(key)).Children(func() {
-						inlineIconText(c, conversationImportIcon, "导入会话…", n.Font{Family: t.Font, Size: 13}, 14, 7, t.Text)
-					})
-					if entry.Clicked() {
+					if action("导入会话…", conversationImportIcon, workspace.ID == "" || workspace.Archived || !v.canImportConversations(key)).Clicked() {
 						v.openConversationImport(key, workspace, false)
 						open = false
 					}

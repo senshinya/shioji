@@ -6,6 +6,22 @@ import (
 	n "github.com/egoist/mygo/ui"
 )
 
+// Shared with MenuStyle and the desktop menu density in design/menus.css.
+const (
+	compactMenuInset     = 3
+	compactMenuRadius    = 7
+	compactMenuRowHeight = 26
+	compactMenuRowInset  = 7
+	compactMenuRowRadius = 4
+	compactMenuIconSize  = 14
+	compactMenuFontSize  = 13
+)
+
+func compactMenuSurface(panel n.Element, t *n.Theme) n.Element {
+	return panel.Padding(compactMenuInset).Radius(compactMenuRadius).Background(raised(t)).
+		Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14))
+}
+
 func menuSelectionSurface(t *n.Theme) n.Color {
 	if t.Dark {
 		return raised(t).Mix(t.Text, .12)
@@ -42,12 +58,14 @@ func (v *View) choiceMenu(c *n.Context, t *n.Theme, key string, trigger n.Elemen
 	}
 	popover(c.Key("choices:"+key), trigger, &open, func(panel n.Element) {
 		_, height := c.Size()
-		panel.Role(n.RoleMenu).Width(264).Padding(3).Radius(7).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
+		compactMenuSurface(panel, t).Role(n.RoleMenu).Width(264).Children(func() {
 			n.Scroll(c).FillWidth().MaxHeight(min(360, height-32)).Label("菜单选项").Children(func() {
 				n.Column(c).FillWidth().FocusGroup(n.Vertical).Children(func() {
 					first := true
 					for _, choice := range choices {
-						row := n.ButtonBase(c.Key(choice.id)).Role(n.RoleMenuItemRadio).Checked(choice.checked).FillWidth().MinHeight(26).PaddingX(7).Radius(4).Label(choice.name).Disabled(choice.disabled)
+						row := n.ButtonBase(c.Key(choice.id)).Role(n.RoleMenuItemRadio).Checked(choice.checked).FillWidth().
+							MinHeight(compactMenuRowHeight).PaddingX(compactMenuRowInset).Radius(compactMenuRowRadius).
+							Label(choice.name).Disabled(choice.disabled)
 						background := raised(t)
 						if !choice.disabled && (row.FocusVisible() || row.Hovered()) {
 							background = menuSelectionSurface(t)
@@ -60,9 +78,9 @@ func (v *View) choiceMenu(c *n.Context, t *n.Theme, key string, trigger n.Elemen
 						row.Children(func() {
 							n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
 								if choice.icon != nil {
-									inlineSymbol(c, choice.icon, choice.name, n.Font{Family: t.Font, Size: 13, Weight: 400}, 14, t.TextMuted)
+									inlineSymbol(c, choice.icon, choice.name, n.Font{Family: t.Font, Size: compactMenuFontSize, Weight: 400}, compactMenuIconSize, t.TextMuted)
 								}
-								n.Text(c, choice.name).FontSize(13).FixedLineHeight(18).Grow(1).MinWidth(0).SingleLine().Ellipsis("…")
+								n.Text(c, choice.name).FontSize(compactMenuFontSize).FixedLineHeight(18).Grow(1).MinWidth(0).SingleLine().Ellipsis("…")
 								if choice.detail != "" {
 									n.Text(c, choice.detail).FontSize(11).TextColor(t.TextMuted).MaxWidth(120).Shrink(0).SingleLine().Ellipsis("…").TextAlign(n.End).TooltipWhenTruncated(choice.detail)
 								}
