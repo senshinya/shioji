@@ -13,6 +13,7 @@ const (
 	configurationInset            = 32
 	configurationSectionGap       = 24
 	configurationHeadingGap       = 20
+	configurationSubpageHeaderGap = 12
 	configurationSectionHeader    = 36
 	configurationTabHeight        = 36
 	configurationRowHeight        = 40
@@ -32,5 +33,9 @@ const (
 )
 
 // Hooks share one stable scroll gutter across the toolbar, list and footer.
-const hookRowHeight float32 = 64
-const hookScrollGutter float32 = 8
+const (
+	hookRowHeight      float32 = 64
+	hookScrollGutter   float32 = 8
+	hookCompactWidth   float32 = 448
+	hookSearchMinWidth float32 = 128
+)

@@ -92,11 +92,16 @@ func TestHooksNativeReviewTrustsOnlySelectedDefinitionsWithoutReload(t *testing.
 				t.Fatal("review must show full owned definitions", ui.Texts())
 			}
 			saveNativeSkillImage(t, ui, "hooks-review-"+name+".png")
+			trustAllBefore, _ := ui.Find("信任全部（3）")
 			if err := ui.Click("选择 Hook：PreToolUse"); err != nil {
 				t.Fatal(err)
 			}
 			if err := ui.Click("选择 Hook：SessionStart"); err != nil {
 				t.Fatal(err)
+			}
+			trustAllAfter, found := ui.Find("信任全部（3）")
+			if !found || math.Abs(float64(trustAllBefore.X-trustAllAfter.X)) > 1 {
+				t.Fatal("changing the selection moved the neighboring trust action", trustAllBefore, trustAllAfter)
 			}
 			saveNativeSkillImage(t, ui, "hooks-review-selected-"+name+".png")
 			if err := ui.Click("信任所选（2）"); err != nil {
@@ -264,79 +269,150 @@ func TestHooksUnknownSaveQueriesReceiptWithoutReplayingApproval(t *testing.T) {
 	}
 }
 
-func TestHooksSessionMenuUsesAcceptedSessionAndReturnsToComposer(t *testing.T) {
+func TestHooksStayOutOfRunMenuAndUseSelectedSession(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, width := range []int{1240, 850, 640} {
 			t.Run(fmt.Sprintf("%d-dark-%v", width, dark), func(t *testing.T) {
 				m := deviceUIModel()
-				m.WorkerMinor = 46
-				m.Readiness.Capabilities.HookManagement = true
-				m.Readiness.Capabilities.HookInspection = true
 				info := setupCatalog()[0]
 				info.Capabilities.HookManagement = true
 				info.Capabilities.HookInspection = true
-				m.Readiness.HarnessID = info.ID
-				m.Readiness.Harnesses = []domain.HarnessInfo{info}
-				m.DeviceStates["local"].Readiness = m.Readiness
-				m.DeviceStates["local"].WorkerMinor = 46
-				s := domain.Session{ID: "s", WorkspaceID: "w", HarnessID: info.ID, ThreadID: "opaque-thread", Context: domain.LaunchContext{CWD: "/accepted/project"}, Status: "completed"}
-				m.Snapshot.Sessions = []domain.Session{s}
-				m.SessionID = "s"
-				m.WorkspaceID = "w"
-				m.Details["s"] = domain.SessionDetail{Session: s}
+				for _, state := range m.DeviceStates {
+					state.WorkerMinor = 46
+					state.Readiness = domain.Readiness{State: domain.RuntimeReady, HarnessID: info.ID, Capabilities: info.Capabilities, Harnesses: []domain.HarnessInfo{info}}
+				}
+				active := domain.Session{ID: "s", WorkspaceID: "w", HarnessID: info.ID, Title: "当前对话", Status: "completed"}
+				target := domain.Session{ID: "target", WorkspaceID: "wb", HarnessID: info.ID, Title: "检查 Git worktree", ThreadID: "opaque-thread", Context: domain.LaunchContext{CWD: "/accepted/project"}, Status: "completed"}
+				m.DeviceStates["local"].Snapshot.Sessions = []domain.Session{active}
+				m.DeviceStates["air"].Snapshot.Sessions = []domain.Session{target}
+				m.RefreshDevices()
+				m.Details["s"] = domain.SessionDetail{Session: active, HistoryLoaded: true}
 				m.Drafts["session:s"] = "keep my draft"
 				v := New(m, app.NewController(""), "")
 				ui := n.NewTester(v.View, width, 820)
 				ui.SetDark(dark)
 				ui.Advance(time.Second)
-				ui.Click("运行配置")
+				if err := ui.Click("运行配置"); err != nil {
+					t.Fatal(err)
+				}
 				ui.Advance(time.Second)
-				if err := ui.Click("Hooks"); err != nil {
-					t.Fatal("Hooks entry absent", err, ui.Texts())
+				if !ui.HasText("模型") || ui.HasText("Hooks") {
+					t.Fatal("run menu should show model choices without Hooks", ui.Texts())
+				}
+				for len(v.Controller.Jobs) > 0 {
+					if j := <-v.Controller.Jobs; j.Method == "runtime.hooks.list" {
+						t.Fatal("opening run configuration read Hooks", j.Input)
+					}
+				}
+				name := fmt.Sprintf("%d-dark-%v.png", width, dark)
+				saveNativeSkillImage(t, ui, "run-menu-"+name)
+				ui.Key(0, n.KeyEscape)
+				row, ok := ui.Find(target.Title)
+				if !ok {
+					t.Fatal("target session is absent from sidebar", ui.Texts())
+				}
+				ui.RightClickAt(row.X+8, row.Y+row.H/2)
+				if err := ui.Click("会话 Hooks"); err != nil {
+					t.Fatal(err, ui.Texts())
 				}
 				ui.Advance(time.Second)
 				job := welcomeJob(t, v.Controller, "runtime.hooks.list")
 				in := job.Input.(domain.HookRequest)
-				if in.SessionID != "s" || in.WorkspaceID != "w" {
-					t.Fatal("session hook inspection lost accepted context", in)
+				if job.ConnectionID != "air" || in.SessionID != "target" || in.WorkspaceID != "wb" || in.HarnessID != "custom" {
+					t.Fatal("session hook inspection lost owning device or accepted context", job.ConnectionID, in)
 				}
 				c := hookUICatalog(true)
 				body, _ := json.Marshal(c)
 				job.Apply(m, body, nil)
 				ui.Frame()
 				ui.Advance(time.Second)
-				panel, _ := ui.Find("运行配置菜单")
-				if panel.X < 0 || panel.X+panel.W > float32(width) || panel.Y < 0 || panel.Y+panel.H > 820 {
-					t.Fatal("Hooks popover overflows window", panel)
+				panel, found := ui.Find("Hooks 列表")
+				if !found || panel.X < row.X+row.W || panel.X+panel.W > float32(width) || panel.Y < 0 || panel.Y+panel.H > 820 {
+					t.Fatal("Hooks list escapes the content pane", row, panel)
 				}
-				back, backOK := ui.Find("‹ 返回")
-				event, _ := ui.Find("PreToolUse")
-				if !backOK || math.Abs(float64(back.X-event.X)) > 1 {
-					t.Fatal("session back label is inset from reading edge", back, event)
-				}
-				name := fmt.Sprintf("hooks-session-%d.png", width)
-				if dark {
-					name = fmt.Sprintf("hooks-session-%d-dark.png", width)
-				}
-				saveNativeSkillImage(t, ui, name)
+				saveNativeSkillImage(t, ui, "session-hooks-"+name)
 				if err := ui.Click("在设备设置中管理 Hooks"); err != nil {
 					t.Fatal(err)
 				}
 				ui.Advance(time.Second)
-				// Actual catalog must offer this harness in order to enter global management.
-				if !v.devices {
-					t.Fatal("session cannot enter global management")
+				global := welcomeJob(t, v.Controller, "runtime.hooks.list")
+				if scope := global.Input.(domain.HookRequest); global.ConnectionID != "air" || scope.WorkspaceID != "" || scope.SessionID != "" {
+					t.Fatal("global Hooks left the selected device or retained the session scope", global.ConnectionID, scope)
 				}
-				v.returnSkillWorkspace()
-				ui.Frame()
+				if err := ui.Click("返回会话 Hooks"); err != nil {
+					t.Fatal(err, ui.Texts())
+				}
 				ui.Advance(time.Second)
-				if v.workspaceEditor != nil || v.skillReturn != nil || m.SessionID != "s" || m.Drafts["session:s"] != "keep my draft" {
+				returned := welcomeJob(t, v.Controller, "runtime.hooks.list")
+				if returned.ConnectionID != "air" || !returned.Input.(domain.HookRequest).Equal(in) {
+					t.Fatal("device management did not return to the original session scope", returned.ConnectionID, returned.Input)
+				}
+				if err := ui.Click("返回"); err != nil {
+					t.Fatal(err, ui.Texts())
+				}
+				ui.Advance(time.Second)
+				if _, visible := ui.Find("消息输入"); !visible || m.SessionID != "s" || m.Drafts["session:s"] != "keep my draft" {
 					t.Fatal("return replaced the session/draft")
+				}
+				ui.Key(n.Cmd, n.KeyN)
+				if err := ui.Click("运行配置"); err != nil {
+					t.Fatal(err)
+				}
+				ui.Advance(time.Second)
+				if !ui.HasText("模型") || ui.HasText("Hooks") {
+					t.Fatal("home run menu should show model choices without Hooks", ui.Texts())
 				}
 			})
 		}
 	}
 }
+
+func TestArchivedConversationCanStillInspectItsHooks(t *testing.T) {
+	m := deviceUIModel()
+	info := setupCatalog()[0]
+	info.Capabilities.HookManagement = true
+	state := m.DeviceStates["local"]
+	state.Readiness.Harnesses = []domain.HarnessInfo{info}
+	state.WorkerMinor = protocol.HookBatchMinor
+	session := domain.Session{ID: "s", WorkspaceID: "w", Title: "归档任务", HarnessID: info.ID, Archived: true, Context: domain.LaunchContext{CWD: "/accepted/project"}}
+	state.Snapshot.Sessions = []domain.Session{session}
+	m.RefreshDevices()
+	m.Details["s"] = domain.SessionDetail{Session: session, HistoryLoaded: true}
+	v := New(m, app.NewController(""), "")
+	v.openArchive()
+	ui := n.NewTester(v.View, 1240, 820)
+	if err := ui.Click("查看归档会话：归档任务"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if err := ui.Click("工作区目录"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if err := ui.Click("会话 Hooks"); err != nil {
+		t.Fatal(err, ui.Texts())
+	}
+	job := welcomeJob(t, v.Controller, "runtime.hooks.list")
+	if in := job.Input.(domain.HookRequest); in.SessionID != "s" || in.WorkspaceID != "w" {
+		t.Fatal("archive inspection lost the accepted session", in)
+	}
+	catalog := hookUICatalog(true)
+	body, _ := json.Marshal(catalog)
+	job.Apply(m, body, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	if _, ok := ui.Find("审核待审批 Hooks"); ok {
+		t.Fatal("archive exposes batch approval")
+	}
+	if err := ui.Click("返回"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if err := ui.Click("返回已归档"); err != nil {
+		t.Fatal("Hooks displaced archive navigation", err, ui.Texts())
+	}
+}
+
 func TestHooksMissingReceiptAllowsFreshReviewWithoutResending(t *testing.T) {
 	v, ui := hookUIFixture(t, false)
 	applyHookCatalog(t, v, ui, false)

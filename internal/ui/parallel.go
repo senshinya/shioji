@@ -85,6 +85,7 @@ func (v *View) navigateSession(id, workspace string) {
 		root.previousSession, root.previousWorkspace = current, currentWorkspace
 	}
 	root.workspaceEditor = nil
+	root.skillReturn = nil
 	root.devices = false
 	if id == m.SessionID {
 		m.FocusSecondary = false

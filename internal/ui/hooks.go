@@ -4,14 +4,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	n "github.com/egoist/mygo/ui"
+	"path"
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"sort"
 	"strings"
 	"time"
+
+	n "github.com/egoist/mygo/ui"
 )
+
+const hookManagementMinor = 46
 
 type hookManagementUI struct {
 	slot, key, device, harness, workspace, session, epoch, identity string
@@ -22,6 +26,7 @@ type hookManagementUI struct {
 	unconfirmed                                                     []domain.HookRequest
 	checking                                                        bool
 	quietRefresh                                                    bool
+	archived                                                        bool
 	review                                                          bool
 	reviewSelection                                                 map[string]bool
 	expanded                                                        bool
@@ -45,9 +50,10 @@ func (v *View) hookManagementFor(key, harness, workspace, session string) *hookM
 	// Configuration, authoritative workspace revision and accepted session context
 	// all invalidate writes and late responses, while preserving reading state.
 	identity := struct {
-		Installation *domain.RuntimeInstallation
-		Revision     int64
-		Session      domain.Session
+		Installation      *domain.RuntimeInstallation
+		Revision          int64
+		Session           domain.Session
+		WorkspaceArchived bool
 	}{}
 	for _, h := range state.Readiness.Harnesses {
 		if h.ID == harness {
@@ -57,6 +63,7 @@ func (v *View) hookManagementFor(key, harness, workspace, session string) *hookM
 	for _, w := range v.Model.Snapshot.Workspaces {
 		if w.ID == workspace {
 			identity.Revision = w.Revision
+			identity.WorkspaceArchived = w.Archived
 		}
 	}
 	for _, s := range v.Model.Snapshot.Sessions {
@@ -67,7 +74,7 @@ func (v *View) hookManagementFor(key, harness, workspace, session string) *hookM
 	b, _ := json.Marshal(identity)
 	u := v.hookManagement[slot]
 	if u == nil || u.key != key || u.epoch != state.ConnectionEpoch || u.identity != string(b) {
-		next := &hookManagementUI{slot: slot, key: key, device: device, harness: harness, workspace: workspace, session: session, epoch: state.ConnectionEpoch, identity: string(b)}
+		next := &hookManagementUI{slot: slot, key: key, device: device, harness: harness, workspace: workspace, session: session, epoch: state.ConnectionEpoch, identity: string(b), archived: identity.WorkspaceArchived || identity.Session.Archived}
 		if u != nil {
 			next.catalog = u.catalog
 			next.catalog.RuntimeKnown = false
@@ -96,7 +103,7 @@ func (v *View) queryHooks(u *hookManagementUI) {
 	if u.phase == skillLoading || u.checking || v.Controller == nil || !v.deviceState(u.key).Connected {
 		return
 	}
-	if v.deviceState(u.key).WorkerMinor < 46 {
+	if v.deviceState(u.key).WorkerMinor < hookManagementMinor {
 		u.phase = skillFailed
 		u.message = "更新设备执行服务后可管理 Hooks"
 		return
@@ -261,7 +268,29 @@ func hookOwned(u *hookManagementUI, h domain.HookEntry) bool {
 	return u.workspace == "" && h.Scope != domain.HookProject || u.workspace != "" && h.Scope == domain.HookProject
 }
 func (v *View) hookWritable(u *hookManagementUI) bool {
-	return u.phase == skillLoaded && u.pending == nil && v.deviceState(u.key).Connected
+	return !u.archived && u.phase == skillLoaded && u.pending == nil && v.deviceState(u.key).Connected
+}
+func (v *View) canInspectSessionHooks(s domain.Session) bool {
+	key := v.Model.WorkspaceConnection(s.WorkspaceID)
+	return v.deviceState(key).WorkerMinor >= hookManagementMinor && v.Model.SessionReadiness(s).Capabilities.HookManagement
+}
+func (v *View) openSessionHooks(s domain.Session) {
+	root := v.splitRoot()
+	for _, w := range root.Model.Snapshot.Workspaces {
+		if w.ID != s.WorkspaceID {
+			continue
+		}
+		if root.schedulePageOpen() {
+			root.closeSchedulePage()
+		}
+		if root.archive != nil {
+			root.archive.open = false
+		}
+		root.workspaceEditor = &workspaceEditor{Workspace: w, Connection: root.Model.WorkspaceConnection(w.ID), HookSession: s}
+		root.skillReturn = nil
+		root.devices = false
+		return
+	}
 }
 func (v *View) agentHooks(c *n.Context, t *n.Theme, key string, e *deviceAgentEditor, info domain.HarnessInfo) {
 	if !toolServiceDraftCurrent(e, info.ID) {
@@ -301,9 +330,6 @@ func (v *View) workspaceHooks(c *n.Context, t *n.Theme, e *workspaceEditor) {
 }
 func (v *View) hookFeedback(c *n.Context, t *n.Theme, u *hookManagementUI) {
 	message := u.message
-	if message == "" && u.session == "" && u.workspace != "" && v.workspaceEditor == nil && v.Model.GitDrafts[u.workspace].NewWorktree {
-		message = "主目录预览 · 提交后核对 worktree"
-	}
 	if !v.deviceState(u.key).Connected {
 		message = "设备未连接，显示上次结果"
 	} else if u.phase == skillLoading && !u.quietRefresh {
@@ -341,38 +367,69 @@ func (v *View) managedHooksView(c *n.Context, t *n.Theme, u *hookManagementUI) {
 			v.hookDetail(c, t, u)
 			return
 		}
-		n.Column(c).FillWidth().FillHeight().Grow(1).Children(func() {
-			n.Row(c).FillWidth().Height(36).Padding(0, 8, 8, 0).Gap(8).AlignItems(n.Center).Children(func() {
-				textField(c.Key("search"), &u.query).Height(28).MaxWidth(300).Grow(1).FontSize(12).Placeholder("搜索 Hooks").Label("搜索 Hooks").Background(t.Background)
-				n.Spacer(c).Grow(1)
-				if u.workspace != "" && u.session == "" && v.workspaceEditor != nil {
-					for _, info := range v.deviceState(u.key).Readiness.Harnesses {
-						if info.ID == u.harness {
-							inlineIconText(c, harnessIcon(domain.HarnessDescriptor{ID: info.ID, Name: info.Name, Icon: info.Icon}), info.Name, n.Font{Family: t.Font, Size: 12}, 14, 6, t.TextMuted)
-							break
-						}
-					}
-				}
-				if v.deviceState(u.key).WorkerMinor >= protocol.HookBatchMinor {
-					if count := len(reviewableHooks(u)); count != 0 {
-						if ghost(c, fmt.Sprintf("待审核（%d）", count)).Height(28).FontSize(12).Label("审核待审批 Hooks").Clicked() {
-							u.review = true
-							u.reviewScroll = n.ScrollState{}
-							u.reviewSelection = make(map[string]bool)
-						}
-					}
-				}
-				if iconButton(c, refreshIcon, "刷新 Hooks").Disabled(!v.deviceState(u.key).Connected || u.phase == skillLoading || u.checking).Clicked() {
-					v.queryHooks(u)
-				}
-			})
+		frame := n.Column(c.Key("hook-list-layout")).FillWidth().FillHeight().Grow(1)
+		compact := n.Local(frame, "compact", func() bool { return false })
+		invalidate := c.Services().Invalidate
+		// Both layouts use the actual content pane width after sidebar and zoom.
+		frame.DrawOver(func(_ *n.Painter, bounds n.Rect) {
+			narrow := bounds.W < hookCompactWidth
+			if frame.Valid() && bounds.W > 0 && *compact != narrow {
+				*compact = narrow
+				invalidate()
+			}
+		})
+		frame.Children(func() {
+			v.hookToolbar(c, t, u, *compact)
 			v.hookFeedback(c, t, u)
-			n.Scroll(c.Key("hook-list:" + u.slot)).FillWidth().FillHeight().Grow(1).TrackScroll(&u.listScroll).PaddingEnd(hookScrollGutter).Label("Hooks 列表").Children(func() { v.hookRows(c, t, u) })
+			n.Scroll(c.Key("hook-list:" + u.slot)).FillWidth().FillHeight().Grow(1).TrackScroll(&u.listScroll).PaddingEnd(hookScrollGutter).Label("Hooks 列表").Children(func() { v.hookRows(c, t, u, *compact) })
 		})
 	}, false)
 }
 
+func (v *View) hookToolbar(c *n.Context, t *n.Theme, u *hookManagementUI, compact bool) {
+	state := v.deviceState(u.key)
+	var agent domain.HarnessDescriptor
+	if u.workspace != "" && u.session == "" {
+		for _, info := range state.Readiness.Harnesses {
+			if info.ID == u.harness {
+				agent = domain.HarnessDescriptor{ID: info.ID, Name: info.Name, Icon: info.Icon}
+				break
+			}
+		}
+	}
+	agentLabel := func() {
+		inlineIconText(c, harnessIcon(agent), agent.Name, n.Font{Family: t.Font, Size: configurationValueSize}, 14, 6, t.TextMuted).
+			MinWidth(0).MaxWidth(160).Shrink(1).Ellipsis("…").TooltipWhenTruncated(agent.Name)
+	}
+	n.Row(c.Key("hook-toolbar")).FillWidth().Height(36).Padding(0, hookScrollGutter, 8, 0).Gap(8).AlignItems(n.Center).Children(func() {
+		textField(c.Key("search"), &u.query).Height(configurationControlHeight).MinWidth(hookSearchMinWidth).MaxWidth(300).Grow(1).
+			FontSize(configurationValueSize).Placeholder("搜索 Hooks").Label("搜索 Hooks").Background(t.Background)
+		n.Spacer(c).Grow(1)
+		if !compact && agent.ID != "" {
+			agentLabel()
+		}
+		if state.WorkerMinor >= protocol.HookBatchMinor {
+			if count := len(reviewableHooks(u)); count != 0 {
+				if configurationAction(c, fmt.Sprintf("待审核（%d）", count)).Label("审核待审批 Hooks").Clicked() {
+					u.review = true
+					u.reviewScroll = n.ScrollState{}
+					u.reviewSelection = make(map[string]bool)
+				}
+			}
+		}
+		if iconButton(c, refreshIcon, "刷新 Hooks").Disabled(!state.Connected || u.phase == skillLoading || u.checking).Clicked() {
+			v.queryHooks(u)
+		}
+	})
+	if compact && agent.ID != "" {
+		n.Row(c).FillWidth().Height(configurationTextLine).PaddingEnd(hookScrollGutter).Justify(n.End).Children(agentLabel)
+	}
+}
+
 func reviewableHooks(u *hookManagementUI) []domain.HookEntry {
+	if u.archived {
+		return nil
+	}
 	var entries []domain.HookEntry
 	for _, h := range u.catalog.Entries {
 		if h.CanTrust && hookOwned(u, h) {
@@ -444,7 +501,12 @@ func (v *View) hookReview(c *n.Context, t *n.Theme, u *hookManagementUI) {
 			if u.checking && u.pending != nil {
 				label = "正在保存…"
 			}
-			if configurationAction(c.Key("trust-selected"), label).Disabled(!writable || len(selected) == 0).Clicked() {
+			font := n.Font{Family: t.Font, Size: configurationValueSize, Weight: 500}
+			countSlot := strings.Repeat("8", len(fmt.Sprint(len(entries))))
+			textWidth, _ := n.ShapeText("信任所选（"+countSlot+"）", font, 0).Size()
+			button := n.PrimaryButton(c.Key("trust-selected"), label).Width(textWidth + 24).Height(configurationControlHeight).
+				PaddingX(12).Radius(6).FontSize(font.Size).FontWeight(font.Weight).Disabled(!writable || len(selected) == 0)
+			if controlFeedback(c, button, 6, true).Clicked() {
 				v.submitHookChange(u, domain.HookChange{Action: domain.HookTrustDefinitions, Definitions: selected})
 			}
 		})
@@ -453,7 +515,7 @@ func (v *View) hookReview(c *n.Context, t *n.Theme, u *hookManagementUI) {
 
 // Stable slots share the first line. The independent 28 DIP switches and arrow
 // buttons occupy that line, never the geometric centre of the two-line row.
-func (v *View) hookRows(c *n.Context, t *n.Theme, u *hookManagementUI) {
+func (v *View) hookRows(c *n.Context, t *n.Theme, u *hookManagementUI, compact bool) {
 	entries := append([]domain.HookEntry(nil), u.catalog.Entries...)
 	sort.SliceStable(entries, func(i, j int) bool {
 		a, b := entries[i], entries[j]
@@ -481,7 +543,9 @@ func (v *View) hookRows(c *n.Context, t *n.Theme, u *hookManagementUI) {
 		if u.workspace == "" && h.Scope == domain.HookProject {
 			continue
 		}
-		if !strings.Contains(strings.ToLower(h.Event+" "+h.Source+" "+h.SourcePath+" "+hookDefinition(h)+" "+hookTrustLabel(h.Trust)), query) {
+		summary := hookRowSummary(h)
+		trust := hookTrustLabel(h.Trust)
+		if query != "" && !strings.Contains(strings.ToLower(h.Event+" "+summary+" "+h.SourcePath+" "+hookDefinition(h)+" "+trust), query) {
 			continue
 		}
 		count++
@@ -500,7 +564,7 @@ func (v *View) hookRows(c *n.Context, t *n.Theme, u *hookManagementUI) {
 					n.Text(c, name).FontSize(11).TextColor(t.TextMuted)
 					n.Spacer(c).Grow(1)
 					if inherited {
-						if ghost(c, "管理").Height(28).FontSize(12).Label("在设备设置中管理 Hooks").Clicked() {
+						if configurationAction(c, "前往设备设置").Label("在设备设置中管理 Hooks").Clicked() {
 							v.openHookDeviceManagement(u, "")
 						}
 					}
@@ -512,11 +576,18 @@ func (v *View) hookRows(c *n.Context, t *n.Theme, u *hookManagementUI) {
 			open.Children(func() {
 				n.Column(c).FillWidth().MinWidth(0).Children(func() {
 					n.Row(c).FillWidth().Height(28).Gap(12).AlignItems(n.Baseline).Children(func() {
-						n.Text(c, h.Event).FontSize(13).FixedLineHeight(20).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").TooltipWhenTruncated(h.Event)
-						hookColumnText(c, t, h.Event, h.Source, 60)
-						hookColumnText(c, t, h.Event, hookTrustLabel(h.Trust), 60)
+						n.Text(c, h.Event).FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").TooltipWhenTruncated(h.Event)
+						if !compact {
+							hookColumnText(c, t, h.Event, trust, 60)
+						}
 					})
-					n.Text(c, hookDefinition(h)).Font("monospace").FontSize(12).FixedLineHeight(20).FillWidth().SingleLine().Ellipsis("…").TextColor(t.TextMuted).TooltipWhenTruncated(hookDefinition(h))
+					n.Row(c).FillWidth().Height(configurationTextLine).Gap(8).AlignItems(n.Baseline).Children(func() {
+						n.Text(c, summary).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).Grow(1).MinWidth(0).
+							SingleLine().Ellipsis("…").TextColor(t.TextMuted).TooltipWhenTruncated(summary)
+						if compact {
+							n.Text(c, trust).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).Shrink(0).TextColor(t.TextMuted)
+						}
+					})
 				})
 			})
 			if open.Clicked() {
@@ -538,7 +609,7 @@ func (v *View) hookRows(c *n.Context, t *n.Theme, u *hookManagementUI) {
 					n.Text(c, label).FontSize(11).TextColor(t.TextMuted).Tooltip(h.ReadOnlyReason)
 				}
 			})
-			if iconButton(c, rightChevron, "审核 Hook："+h.Event).Transform(n.Translation(0, hookFirstLineControlOffset(h.Event, t))).Clicked() {
+			if iconButton(c, rightChevron, "查看 Hook 详情："+h.Event).Transform(n.Translation(0, hookFirstLineControlOffset(h.Event, t))).Clicked() {
 				u.detailID = h.ID
 				u.expanded = false
 				u.detailScroll = n.ScrollState{}
@@ -556,6 +627,23 @@ func (v *View) hookRows(c *n.Context, t *n.Theme, u *hookManagementUI) {
 		n.Text(c.Key(i), warning).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).PaddingY(4)
 	}
 }
+
+func hookRowSummary(h domain.HookEntry) string {
+	name := h.Plugin
+	if h.Kind == "tool" && h.Service != "" && h.Tool != "" {
+		name = hookDefinition(h)
+	} else if name == "" && h.SourcePath != "" {
+		name = path.Base(h.SourcePath)
+	}
+	var parts []string
+	for _, part := range []string{h.Source, h.Matcher, name} {
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, " · ")
+}
+
 func hookColumnText(c *n.Context, t *n.Theme, primary, label string, width float32) {
 	font := n.Font{Family: t.Font, Size: 13, Weight: 400}
 	offset := inlineFontMetrics(label, font).center - inlineFontMetrics(primary, font).center
@@ -563,8 +651,9 @@ func hookColumnText(c *n.Context, t *n.Theme, primary, label string, width float
 }
 
 func (v *View) hookSubpageHeader(c *n.Context, u *hookManagementUI, back func()) {
-	n.Row(c).FillWidth().Height(28).PaddingEnd(8).Margin(0, 0, 16, 0).Gap(8).AlignItems(n.Center).Children(func() {
-		if ghost(c, "‹ Hooks").PaddingX(0).Height(28).FontSize(13).Label("返回 Hooks 列表").Clicked() {
+	n.Row(c).FillWidth().Height(configurationControlHeight).PaddingEnd(hookScrollGutter).
+		Margin(0, 0, configurationSubpageHeaderGap, 0).Gap(8).AlignItems(n.Center).Children(func() {
+		if configurationBackAction(c.Key("back"), "Hooks", "返回 Hooks 列表").Clicked() {
 			back()
 		}
 		n.Spacer(c).Grow(1)
@@ -603,15 +692,20 @@ func (v *View) hookDetail(c *n.Context, t *n.Theme, u *hookManagementUI) {
 				if h.StatusMessage != "" {
 					n.Text(c, h.StatusMessage).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 				}
-				disclosure := control(c.Key("disclosure"), 5).Height(28).Padding(0).AlignSelf(n.Start).FontWeight(400).Label("详细信息")
+				const disclosureLabel = "详细信息"
+				font := n.Font{Family: t.Font, Size: configurationValueSize, Weight: 400}
+				disclosure := n.ButtonBase(c.Key("disclosure")).Height(configurationControlHeight).AlignSelf(n.Start).
+					Justify(n.Start).Radius(4).Label(disclosureLabel).Expanded(u.expanded)
+				color := textHoverColor(c, disclosure, t.TextMuted)
+				disclosure.FocusRing(disclosure.FocusVisible())
 				disclosure.Children(func() {
-					n.Row(c).Gap(4).AlignItems(n.Baseline).Children(func() {
+					n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
 						angle := float32(-90)
 						if u.expanded {
 							angle = 0
 						}
-						n.Text(c, "详细信息").FontSize(12).FontWeight(400).FixedLineHeight(20)
-						inlineSymbol(c.Key("arrow"), chevron, "详细信息", n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted, angle)
+						n.Text(c, disclosureLabel).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(configurationTextLine).TextColor(color)
+						inlineSymbol(c.Key("arrow"), chevron, disclosureLabel, font, 14, color, angle)
 					})
 				})
 				if disclosure.Clicked() {
@@ -655,7 +749,7 @@ func (v *View) hookDetail(c *n.Context, t *n.Theme, u *hookManagementUI) {
 						return
 					}
 					n.Spacer(c).Grow(1)
-					if ghost(c, "在设备设置中管理").Height(28).FontSize(12).Clicked() {
+					if configurationAction(c, "前往设备设置").Label("在设备设置中管理 Hooks").Clicked() {
 						v.openHookDeviceManagement(u, h.ID)
 					}
 					return
@@ -690,55 +784,14 @@ func hookMetadata(c *n.Context, t *n.Theme, label, value string) {
 	})
 }
 func (v *View) openHookDeviceManagement(u *hookManagementUI, id string) {
-	composer := v.workspaceEditor == nil
-	if composer {
-		for _, w := range v.Model.Snapshot.Workspaces {
-			if w.ID == u.workspace {
-				v.workspaceEditor = &workspaceEditor{Workspace: w, Connection: u.key, Harness: u.harness}
-				break
-			}
-		}
-	}
 	if !v.openWorkspaceAgentManagement(u.key, u.harness, "Hooks") {
-		if composer {
-			v.workspaceEditor = nil
-		}
 		return
-	}
-	if composer {
-		v.skillReturn.composer = true
-		v.skillReturn.session = u.session
-		v.workspaceEditor = nil
-		v.runMenu = runMenuClosed
 	}
 	target := v.hookManagementFor(u.key, u.harness, "", "")
 	target.review = false
 	target.detailID = id
 	target.phase = skillIdle
 	v.queryHooks(target)
-}
-
-func (v *View) composerHooks() *hookManagementUI {
-	m := v.Model
-	workspace := m.WorkspaceID
-	if m.SessionID != "" {
-		for _, s := range m.Snapshot.Sessions {
-			if s.ID == m.SessionID {
-				workspace = s.WorkspaceID
-				break
-			}
-		}
-	}
-	return v.hookManagementFor(m.ConnectionID(), m.HarnessID(), workspace, m.SessionID)
-}
-func hookPendingCount(u *hookManagementUI) int {
-	count := 0
-	for _, h := range u.catalog.Entries {
-		if h.Enabled && (h.Trust == domain.HookUntrusted || h.Trust == domain.HookModified) {
-			count++
-		}
-	}
-	return count
 }
 
 // A 20 DIP text line keeps its native baseline. Its optical centre comes from

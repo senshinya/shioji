@@ -15,6 +15,7 @@ type workspaceEditor struct {
 	Tab, Harness            string
 	GeneralScroll           n.ScrollState
 	Workspace               domain.Workspace
+	HookSession             domain.Session
 	Main, Connection, Error string
 	Busy                    bool
 }
@@ -109,6 +110,14 @@ func (v *View) toolbarWorkspace(c *n.Context, t *n.Theme) {
 						v.editWorkspace(workspace)
 						open = false
 					}
+					if v.Model.SessionID != "" && v.Model.ArchivedContext() != "" {
+						for _, s := range v.Model.Snapshot.Sessions {
+							if s.ID == v.Model.SessionID && v.canInspectSessionHooks(s) && action("会话 Hooks", settingsIcon, false).Clicked() {
+								v.openSessionHooks(s)
+								open = false
+							}
+						}
+					}
 					key := v.Model.WorkspaceConnection(workspace.ID)
 					if action("导入会话…", conversationImportIcon, workspace.ID == "" || workspace.Archived || !v.canImportConversations(key)).Clicked() {
 						v.openConversationImport(key, workspace, false)
@@ -178,6 +187,9 @@ func (v *View) sessionMenu(menu *n.Menu, s domain.Session, ref app.SessionLocati
 	key := v.Model.WorkspaceConnection(s.WorkspaceID)
 	ready := v.canManage(key)
 
+	if v.canInspectSessionHooks(s) && menu.Item("会话 Hooks").Chosen() {
+		v.openSessionHooks(s)
+	}
 	if menu.Item("重命名").Disabled(!ready).Chosen() {
 		v.rename = &sessionRename{Session: s, Title: s.Title, Connection: key, Open: true}
 	}
@@ -317,6 +329,10 @@ func (v *View) workspaceSettingsView(c *n.Context, t *n.Theme) {
 		return
 	}
 	n.Column(c).FillWidth().FillHeight().Grow(1).Padding(0, configurationInset, 20).Children(func() {
+		if s := e.HookSession; s.ID != "" {
+			v.managedHooksView(c, t, v.hookManagementFor(e.Connection, s.HarnessID, e.Workspace.ID, s.ID))
+			return
+		}
 		n.Column(c).FillWidth().FillHeight().Grow(1).Children(func() {
 			tabs := []configurationTabItem{{ID: "", Label: "常规"}, {ID: "Skills", Label: "Skills"}, {ID: "MCP", Label: "MCP"}, {ID: "Hooks", Label: "Hooks"}}
 			e.Tab = configurationTabs(c.Key("workspace-tabs"), e.Tab, tabs, configurationUnderline, e.Busy)

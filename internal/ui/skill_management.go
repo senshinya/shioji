@@ -36,13 +36,18 @@ type skillManagementUI struct {
 	markdown                                                    markdown.Options
 }
 type skillManagementReturn struct {
-	composer  bool
-	session   string
 	tab       string
 	workspace *workspaceEditor
 	editor    *deviceAgentEditor
 	harness   string
 	key       string
+}
+
+func (r *skillManagementReturn) backLabel() string {
+	if r.workspace.HookSession.ID != "" {
+		return "返回会话 Hooks"
+	}
+	return "返回工作区 " + r.tab
 }
 
 func (v *View) skillManagementFor(key, harness, workspace string) *skillManagementUI {
@@ -390,7 +395,7 @@ func (v *View) managedSkillDetail(c *n.Context, t *n.Theme, u *skillManagementUI
 		}
 	}
 	n.Column(c).FillWidth().FillHeight().Grow(1).Children(func() {
-		n.Row(c).FillWidth().Height(28).Margin(0, 0, 12, 0).Gap(8).AlignItems(n.Center).Children(func() {
+		n.Row(c).FillWidth().Height(configurationControlHeight).Margin(0, 0, configurationSubpageHeaderGap, 0).Gap(8).AlignItems(n.Center).Children(func() {
 			if ghost(c, "‹ Skills").Label("返回 Skills 列表").Height(28).FontSize(13).Clicked() {
 				u.detailID = ""
 				u.documentRequest++
@@ -480,20 +485,10 @@ func (v *View) returnSkillWorkspace() {
 		return
 	}
 	ret := v.skillReturn
-	if ret.composer {
-		v.workspaceEditor = nil
-		v.devices = false
-		v.skillReturn = nil
-		v.runMenu = runMenuHooks
-		u := v.hookManagementFor(ret.key, ret.harness, ret.workspace.Workspace.ID, ret.session)
-		u.phase = skillIdle
-		v.queryHooks(u)
-		return
-	}
 	v.workspaceEditor = ret.workspace
 	v.devices = false
 	if ret.tab == "Hooks" {
-		u := v.hookManagementFor(ret.key, ret.harness, ret.workspace.Workspace.ID, "")
+		u := v.hookManagementFor(ret.key, ret.harness, ret.workspace.Workspace.ID, ret.workspace.HookSession.ID)
 		u.phase = skillIdle
 		v.queryHooks(u)
 		return
@@ -559,15 +554,18 @@ func (v *View) workspaceSettingsHeader(c *n.Context, t *n.Theme) {
 	}
 	header.Children(func() {
 		n.Column(c).FillWidth().Gap(8).Children(func() {
-			back := control(c.Key("back"), 5).Height(28).AlignSelf(n.Start).PaddingX(4).MarginStart(-4).Label("返回")
-			back.Children(func() {
-				inlineIconText(c, deviceBackIcon, "返回会话", n.Font{Family: t.Font, Size: 12}, 12, 4, t.TextMuted)
-			})
+			back := configurationBackAction(c.Key("back"), "返回会话", "返回")
 			if back.Clicked() {
 				v.workspaceEditor = nil
 				v.skillReturn = nil
 			}
 			n.Row(c).FillWidth().Height(32).Gap(16).AlignItems(n.Baseline).Children(func() {
+				if s := e.HookSession; s.ID != "" {
+					n.Text(c, "会话 Hooks").FontSize(configurationTitleSize).FixedLineHeight(configurationTitleLine).Shrink(0)
+					n.Text(c, s.Title).FontSize(configurationValueSize).TextColor(t.TextMuted).FixedLineHeight(configurationTextLine).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").TooltipWhenTruncated(s.Title)
+					n.Text(c, v.Model.DeviceName(e.Workspace.DeviceID)).FontSize(configurationValueSize).TextColor(t.TextMuted).SingleLine().MaxWidth(120).Shrink(1)
+					return
+				}
 				inlineIconText(c, workspaceIcon, e.Workspace.Name, n.Font{Family: t.Font, Size: 20}, 24, 8, t.Text).Grow(1).MinWidth(0)
 				name := v.Model.DeviceName(e.Workspace.DeviceID)
 				titleCenter := inlineFontMetrics(e.Workspace.Name, n.Font{Family: t.Font, Size: 20, Weight: 400}).center
@@ -597,14 +595,7 @@ func (v *View) skillDeviceManagementPage(c *n.Context, t *n.Theme, r *skillManag
 		return
 	}
 	n.Column(c).FillWidth().Padding(configurationInset).Gap(12).Children(func() {
-		label := "返回工作区 Skills"
-		if r.tab != "" {
-			label = "返回工作区 " + r.tab
-		}
-		if r.composer {
-			label = "返回 Hooks"
-		}
-		if ghost(c, label).Clicked() {
+		if ghost(c, r.backLabel()).Clicked() {
 			v.returnSkillWorkspace()
 		}
 		n.Text(c, "此 Agent 已不可用").FontSize(12).TextColor(t.TextMuted)

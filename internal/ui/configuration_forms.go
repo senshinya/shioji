@@ -69,6 +69,13 @@ func configurationAction(c *n.Context, label string) n.Element {
 	return ghost(c, label, 6).Height(configurationControlHeight).PaddingX(configurationHoverInset).FontSize(configurationValueSize)
 }
 
+func configurationBackAction(c *n.Context, destination, label string) n.Element {
+	t := c.Theme()
+	return control(c, 5).Height(configurationControlHeight).AlignSelf(n.Start).PaddingX(4).MarginStart(-4).Label(label).Children(func() {
+		inlineIconText(c, deviceBackIcon, destination, n.Font{Family: t.Font, Size: configurationValueSize}, 12, 4, t.TextMuted)
+	})
+}
+
 // Keep the reading edge with neighboring form rows; the feedback surface has
 // its own inset on both sides. Stretch accounts for negative margins, whereas
 // a fixed FillWidth plus margins would leave one edge short or overflowing.
