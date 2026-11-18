@@ -223,7 +223,7 @@ func TestScheduleNativeLayoutsAndRunLinks(t *testing.T) {
 			frequency.W, frequency.H = frequency.W-24, frequency.H-8
 			frequencyEdge, _ := inkX(frequency)
 			labels := ui.Texts()
-			preview := slices.IndexFunc(labels, func(label string) bool { return strings.HasPrefix(label, "接下来 ") })
+			preview := slices.IndexFunc(labels, func(label string) bool { return strings.HasSuffix(label, " · Asia/Taipei") })
 			if preview < 0 {
 				t.Fatal("missing next-run preview")
 			}
@@ -257,6 +257,103 @@ func TestScheduleEditorDraftDoesNotAffectInspectorOrAttention(t *testing.T) {
 	v.openParallel("other")
 	if v.schedulePageOpen() || v.Model.SecondarySessionID != "other" {
 		t.Fatal("parallel conversation was obscured by the schedule page")
+	}
+}
+
+func TestNewScheduleEditorKeepsFormAlignedAndActionsVisible(t *testing.T) {
+	for _, layout := range []struct {
+		name          string
+		width, height int
+		dark          bool
+	}{{"wide-light", 1440, 800, false}, {"compact-dark", 850, 600, true}} {
+		t.Run(layout.name, func(t *testing.T) {
+			m := layoutModel()
+			m.Connections = []app.DeviceConnection{{ID: "remote", DeviceID: "mac", Name: "MBA at Home"}}
+			m.Snapshot.DeviceID = "mac"
+			m.Snapshot.Workspaces[0].DeviceID, m.Snapshot.Workspaces[0].Name = "mac", "MacNativeGames"
+			ready := m.Readiness
+			ready.Permissions = []string{"default", "read-only"}
+			ready.Models = []domain.Model{{ID: "gpt-6.2-sol", Name: "GPT-6.2-Sol", Default: true, DefaultEffort: "low", Efforts: []string{"low", "medium"}}}
+			m.DeviceStates["remote"] = &app.DeviceState{Snapshot: m.Snapshot, Connected: true, ConnectionEpoch: "remote", WorkerMinor: protocol.ScheduleMinor, Readiness: ready}
+			v := New(m, nil, "")
+			v.openSchedulePage()
+			ui := n.NewTester(v.View, layout.width, layout.height)
+			ui.SetDark(layout.dark)
+			ui.Advance(time.Second)
+			click := func(label string) {
+				t.Helper()
+				if err := ui.Click(label); err != nil {
+					t.Fatal(err)
+				}
+				ui.Advance(time.Second)
+			}
+			find := func(label string) n.Rect {
+				t.Helper()
+				box, ok := ui.Find(label)
+				if !ok {
+					t.Fatalf("missing %q", label)
+				}
+				return box
+			}
+			click("新建任务")
+			g := v.schedules
+			g.draft.task.Zone = "Asia/Taipei"
+			g.draft.git = domain.GitStatus{Applicable: true, Branches: []string{"main", "release"}}
+			ui.Frame()
+			saveNativeSkillImage(t, ui, "schedule-new-"+layout.name+".png")
+
+			name, workspace, frequency := find("输入任务名称"), find("选择工作区"), find("频率")
+			if name.X != workspace.X || name.X != frequency.X {
+				t.Errorf("form controls have different leading edges: name=%+v workspace=%+v frequency=%+v", name, workspace, frequency)
+			}
+			if workspace.H != frequency.H {
+				t.Errorf("workspace and its device should fit in a single selector row: workspace=%+v frequency=%+v", workspace, frequency)
+			}
+			form, save := find("定时任务设置"), find("保存任务")
+			if form.W > 640 || save.Y < form.Y+form.H || save.Y+save.H > float32(layout.height) {
+				t.Errorf("form should have a readable width and keep save below its scrollport: form=%+v save=%+v", form, save)
+			}
+			if run := find("运行配置"); save.Y-(run.Y+run.H) > 48 {
+				t.Errorf("save action is too far from the editor: run=%+v save=%+v", run, save)
+			}
+			if next, trigger := find("运行预览"), find("触发时间"); next.X != trigger.X || next.Y <= trigger.Y {
+				t.Errorf("next run does not align with its label column: next=%+v trigger=%+v", next, trigger)
+			}
+			ui.ClickAt(workspace.X+workspace.W-56, workspace.Y+workspace.H/2)
+			ui.Advance(time.Second)
+			if !ui.HasText("菜单选项") {
+				t.Fatal("clicking the device name should open the workspace picker")
+			}
+			if menu, ok := ui.AccessByRole(n.RoleMenu, ""); !ok || menu.Bounds.W != workspace.W {
+				t.Errorf("workspace picker and its options should share the same width: workspace=%+v menu=%+v", workspace, menu.Bounds)
+			}
+			saveNativeSkillImage(t, ui, "schedule-workspaces-"+layout.name+".png")
+			ui.Key(0, n.KeyEscape)
+			ui.Advance(time.Second)
+			click("输入任务名称")
+			ui.Type("工作日提交摘要")
+			click("周六")
+			click("每次运行的提示词")
+			ui.Type("汇总今天的提交。\n列出待跟进事项。")
+			click("运行配置")
+			click("推理强度")
+			click("medium")
+			ui.Key(0, n.KeyEscape)
+			ui.Advance(time.Second)
+			click("频率")
+			click("固定间隔")
+			if g.draft.task.Name != "工作日提交摘要" || g.draft.task.Text != "汇总今天的提交。\n列出待跟进事项。" ||
+				!slices.Contains(g.draft.task.Rule.Days, time.Saturday) || g.draft.task.Config.Effort != "medium" || g.draft.rule().Minutes != 60 {
+				t.Fatalf("editor did not retain form values: %+v", g.draft)
+			}
+			if changed := find("保存任务"); changed.X != save.X || changed.Y+changed.H > float32(layout.height) {
+				t.Fatal("save action lost its alignment or visibility when the form changed height")
+			}
+			click("取消")
+			if g.draft != nil || !ui.HasText("新建任务") {
+				t.Fatal("cancel did not return to the task list")
+			}
+		})
 	}
 }
 

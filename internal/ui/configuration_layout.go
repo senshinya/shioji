@@ -39,3 +39,11 @@ const (
 	hookCompactWidth   float32 = 448
 	hookSearchMinWidth float32 = 128
 )
+
+const (
+	scheduleEditorWidth      = 640
+	scheduleEditorFieldWidth = 380
+	scheduleEditorLabelWidth = 80
+	scheduleEditorRowGap     = 12
+	scheduleEditorDetailGap  = 8
+)

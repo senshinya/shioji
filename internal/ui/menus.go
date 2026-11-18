@@ -15,6 +15,7 @@ const (
 	compactMenuRowRadius = 4
 	compactMenuIconSize  = 14
 	compactMenuFontSize  = 13
+	compactChoiceWidth   = 264
 )
 
 func compactMenuSurface(panel n.Element, t *n.Theme) n.Element {
@@ -46,6 +47,14 @@ type menuChoice struct {
 	choose            func()
 }
 
+func compactMenuChoiceText(c *n.Context, t *n.Theme, name, detail string) {
+	n.Text(c, name).FontSize(compactMenuFontSize).FixedLineHeight(18).Grow(1).MinWidth(0).SingleLine().Ellipsis("…")
+	if detail != "" {
+		n.Text(c, detail).FontSize(11).TextColor(t.TextMuted).MaxWidth(120).Shrink(0).
+			SingleLine().Ellipsis("…").TextAlign(n.End).TooltipWhenTruncated(detail)
+	}
+}
+
 // Shared native popup density and neutral keyboard focus match menus.css.
 func (v *View) choiceMenu(c *n.Context, t *n.Theme, key string, trigger n.Element, choices []menuChoice) {
 	if v.menuOpen == nil {
@@ -57,7 +66,7 @@ func (v *View) choiceMenu(c *n.Context, t *n.Theme, key string, trigger n.Elemen
 	}
 	popover(c.Key("choices:"+key), trigger, &open, func(panel n.Element) {
 		_, height := c.Size()
-		compactMenuSurface(panel, t).Role(n.RoleMenu).Width(264).Children(func() {
+		compactMenuSurface(panel, t).Role(n.RoleMenu).Width(compactChoiceWidth).Children(func() {
 			n.Scroll(c).FillWidth().MaxHeight(min(360, height-32)).Label("菜单选项").Children(func() {
 				n.Column(c).FillWidth().FocusGroup(n.Vertical).Children(func() {
 					first := true
@@ -79,10 +88,7 @@ func (v *View) choiceMenu(c *n.Context, t *n.Theme, key string, trigger n.Elemen
 								if choice.icon != nil {
 									inlineSymbol(c, choice.icon, choice.name, n.Font{Family: t.Font, Size: compactMenuFontSize, Weight: 400}, compactMenuIconSize, t.TextMuted)
 								}
-								n.Text(c, choice.name).FontSize(compactMenuFontSize).FixedLineHeight(18).Grow(1).MinWidth(0).SingleLine().Ellipsis("…")
-								if choice.detail != "" {
-									n.Text(c, choice.detail).FontSize(11).TextColor(t.TextMuted).MaxWidth(120).Shrink(0).SingleLine().Ellipsis("…").TextAlign(n.End).TooltipWhenTruncated(choice.detail)
-								}
+								compactMenuChoiceText(c, t, choice.name, choice.detail)
 								inlineSymbol(c, check, choice.name, n.Font{Family: c.Theme().Font, Size: 13, Weight: 400}, 12, t.Text).Opacity(func() float32 {
 									if choice.checked {
 										return 1

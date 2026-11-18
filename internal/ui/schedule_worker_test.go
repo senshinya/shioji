@@ -67,11 +67,9 @@ func TestScheduleNativeWorkerFlow(t *testing.T) {
 	if v.schedules.draft == nil {
 		t.Fatal("editor did not open")
 	}
-	name, ok := ui.Find("任务名称")
-	if !ok {
-		t.Fatal("missing task name field")
+	if err = ui.Click("输入任务名称"); err != nil {
+		t.Fatal(err)
 	}
-	ui.ClickAt(name.X+8, name.Y+name.H+12)
 	ui.Type("原生测试")
 	if err = ui.Click("每次运行的提示词"); err != nil {
 		t.Fatal(err)
