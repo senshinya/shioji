@@ -157,7 +157,7 @@ type View struct {
 	composerHeightKey                                                                                               string
 	composerInputHeight                                                                                             float32
 	composerNaturalHeight                                                                                           float32
-	composerBaseHeight                                                                                              float32
+	composerChromeHeight                                                                                            float32
 	composerEditID                                                                                                  string
 	composerHeightUntil                                                                                             time.Time
 	composerBounds                                                                                                  n.Rect
@@ -747,7 +747,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 		editID := m.QueueEdits[m.SessionID].ID
 		if v.composerHeightKey != stackKey {
 			v.composerHeightKey, v.composerNaturalHeight, v.composerEditID = stackKey, 0, editID
-			v.composerBaseHeight = 0
+			v.composerChromeHeight = 0
 			v.composerHeightUntil = time.Time{}
 			v.composerInputHeight = inputHeight
 		}
@@ -762,17 +762,16 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 		if queueResize {
 			heightAnimation = n.Animation{Duration: 360 * time.Millisecond, Ease: composerDescentEase}
 		}
-		// The attachment strip already animates its layout. Animate only the
-		// remaining editor height, then add this frame's strip height directly.
-		baseHeight := v.composerBaseHeight
-		shownHeight := baseHeight
+		// The editor viewport supplies the same animated height to the dock
+		// and to the text clip. The attachment strip animates its own height.
+		shownInputHeight, shownChromeHeight := v.composerInputHeight, v.composerChromeHeight
 		if v.composerNaturalHeight > 0 {
 			if resize {
-				// Animate the actual editor height so attached controls and dock
-				// contents move together when ordinary drafts wrap or shrink.
-				shownHeight = heightFrame.AnimateTo("composer-height", baseHeight, heightAnimation)
+				shownInputHeight = heightFrame.AnimateTo("input-height", shownInputHeight, heightAnimation)
+				shownChromeHeight = heightFrame.AnimateTo("chrome-height", shownChromeHeight, heightAnimation)
 			} else {
-				heightFrame.Jump("composer-height", baseHeight)
+				heightFrame.Jump("input-height", shownInputHeight)
+				heightFrame.Jump("chrome-height", shownChromeHeight)
 			}
 		}
 		attachmentHeight := float32(0)
@@ -793,7 +792,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 				if !waiting {
 					attachmentHeight = v.draftAttachmentStrip(c, t)
 				}
-				n.Column(c.Key("composer-input-space")).Height(v.composerInputHeight).Shrink(0)
+				n.Column(c.Key("composer-input-space")).Height(shownInputHeight).Shrink(0)
 				// A zero-height origin fixed above the footer keeps outgoing editor
 				// snapshots still while the composer changes its natural height.
 				n.Column(c.Key("composer-input-anchor")).Absolute().Left(6).Right(14).Bottom(40).Height(0).Children(func() {
@@ -827,9 +826,14 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					if s := v.sent; s != nil && s.source.W > 0 && s.session == m.SessionID && !s.queued && !home && !c.Preferences().ReduceMotion {
 						options.Theme.Muted = subtle(t).Alpha(v.sendProgress(c))
 					}
-					input = composerInput{Element: richtext.EditorBase(c.Key(inputKey), binding.doc, options).FocusRing(false).Absolute().Left(9).Right(9).Bottom(0).FillWidth().MinHeight(inputHeight), binding: binding}
-
-					input.Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 180*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
+					// Keep existing lines at the top as the viewport grows or
+					// shrinks. The editor still lays out at its natural height
+					// so transient clipping does not trigger internal scrolling.
+					n.Column(c.Key(inputKey)).Absolute().Left(0).Right(0).Bottom(0).Height(shownInputHeight).Clip().
+						Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 180*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}}).
+						Children(func() {
+							input = composerInput{Element: richtext.EditorBase(c.Key("editor"), binding.doc, options).FocusRing(false).Absolute().Left(9).Right(9).Top(0).FillWidth().MinHeight(inputHeight), binding: binding}
+						})
 
 					if v.focusComposer && (home || !v.loadingBlocksComposer()) {
 						input.Focus()
@@ -921,21 +925,21 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 			}
 			invalidate := c.Services().Invalidate
 			composer.DrawOver(func(_ *n.Painter, r n.Rect) {
-				// Measure from the live editor's layout even at zero opacity;
-				// outgoing editor snapshots must never feed the dock's height.
+				changed := false
 				if input.Valid() {
+					// Measure the live editor even when its viewport clips it
+					// or its entry transition has zero opacity.
 					bounds := input.LayoutBounds()
 					if bounds.H > 0 && math.Abs(float64(v.composerInputHeight-bounds.H)) > .5 {
 						v.composerInputHeight = bounds.H
-						invalidate()
+						changed = true
 					}
 				}
 				if v.composerHeightKey == stackKey {
-					changed := math.Abs(float64(v.composerNaturalHeight-r.H-2)) > .5
-					v.composerNaturalHeight = r.H + 2
-					base := r.H + 2 - attachmentHeight
-					if math.Abs(float64(v.composerBaseHeight-base)) > .5 {
-						v.composerBaseHeight = base
+					chrome := r.H + 2 - shownInputHeight - attachmentHeight
+					v.composerNaturalHeight = chrome + v.composerInputHeight + attachmentHeight
+					if math.Abs(float64(v.composerChromeHeight-chrome)) > .5 {
+						v.composerChromeHeight = chrome
 						changed = true
 					}
 					if changed {
@@ -953,7 +957,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 			}
 		})
 		if v.composerNaturalHeight > 0 && resize {
-			heightFrame.Height(shownHeight + attachmentHeight)
+			heightFrame.Height(shownChromeHeight + shownInputHeight + attachmentHeight)
 		}
 	})
 	if !home {

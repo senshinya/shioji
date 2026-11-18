@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"image"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,6 +44,75 @@ func TestComposerEditorPaintStaysInsideScrollViewport(t *testing.T) {
 		if ink == 0 {
 			t.Fatal("viewport lost its visible text")
 		}
+	}
+}
+
+func TestComposerKeepsFirstLineVisibleWhileResizing(t *testing.T) {
+	for _, home := range []bool{true, false} {
+		t.Run(fmt.Sprintf("home-%v", home), func(t *testing.T) {
+			m := layoutModel()
+			if home {
+				m.SessionID = ""
+			}
+			v := New(m, nil, "")
+			ui := n.NewTester(v.View, 1240, 820)
+			if err := ui.Click("消息输入"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Type("MMMMMMMMMMMMMMMM\n二\n三")
+			ui.Advance(400 * time.Millisecond)
+			before, _ := ui.Find("消息编辑器")
+			input, _ := ui.Find("消息输入")
+			inset := input.Y - before.Y
+			firstLineInk := func(frame n.Rect) int {
+				img := ui.Image()
+				top := int(frame.Y + inset)
+				area := image.Rect(int(input.X)+5, top, int(input.X)+155, top+20)
+				ink := 0
+				for y := area.Min.Y; y < area.Max.Y; y++ {
+					for x := area.Min.X; x < area.Max.X; x++ {
+						if img.RGBAAt(x, y).R < 125 {
+							ink++
+						}
+					}
+				}
+				return ink
+			}
+			wantInk := firstLineInk(before)
+			if wantInk < 100 {
+				t.Fatal("missing first line before resize", wantInk)
+			}
+			capture := func(name string) n.Rect {
+				t.Helper()
+				frame, _ := ui.Find("消息编辑器")
+				saveNativeSkillImage(t, ui, fmt.Sprintf("home-%v-%s.png", home, name))
+				if ink := firstLineInk(frame); ink < wantInk*8/10 {
+					t.Errorf("%s: first line moves out of view while resizing: ink=%d, want near %d, frame=%+v", name, ink, wantInk, frame)
+				}
+				return frame
+			}
+
+			ui.Type("\n四")
+			growStart := capture("grow-start")
+			ui.Advance(60 * time.Millisecond)
+			growMid := capture("grow-mid")
+			ui.Advance(340 * time.Millisecond)
+			grown := capture("grown")
+			if !(growStart.H < growMid.H && growMid.H < grown.H) {
+				t.Error("composer does not grow smoothly", growStart, growMid, grown)
+			}
+
+			ui.Key(0, n.KeyBackspace)
+			ui.Key(0, n.KeyBackspace)
+			shrinkStart := capture("shrink-start")
+			ui.Advance(60 * time.Millisecond)
+			shrinkMid := capture("shrink-mid")
+			ui.Advance(340 * time.Millisecond)
+			shrunk := capture("shrunk")
+			if !(shrinkStart.H > shrinkMid.H && shrinkMid.H > shrunk.H && shrunk.H == before.H) {
+				t.Error("composer does not shrink smoothly", shrinkStart, shrinkMid, shrunk)
+			}
+		})
 	}
 }
 
