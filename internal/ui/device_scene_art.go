@@ -33,16 +33,24 @@ var deviceSceneArtwork = func() [2]map[string]*n.SVG {
 			if err != nil {
 				panic(err)
 			}
-			result[theme][name] = n.MustParseSVG([]byte(replace.Replace(string(source))))
+			art := replace.Replace(string(source))
+			result[theme][name] = n.MustParseSVG([]byte(strings.ReplaceAll(art, "@port-display@", "inline")))
+			if name != "controller" {
+				result[theme][name+"-without-port"] = n.MustParseSVG([]byte(strings.ReplaceAll(art, "@port-display@", "none")))
+			}
 		}
 	}
 	return result
 }()
 
-func deviceSceneTarget(t *n.Theme, icon app.DeviceIcon) *n.SVG {
+func deviceSceneTarget(t *n.Theme, icon app.DeviceIcon, withPort bool) *n.SVG {
 	index := 0
 	if t.Dark {
 		index = 1
 	}
-	return deviceSceneArtwork[index]["target-"+string(icon)]
+	name := "target-" + string(icon)
+	if !withPort {
+		name += "-without-port"
+	}
+	return deviceSceneArtwork[index][name]
 }

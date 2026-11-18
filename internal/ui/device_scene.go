@@ -453,17 +453,12 @@ func (v *View) drawDeviceScene(p *n.Painter, box n.Rect, t *n.Theme, icon app.De
 	if t.Dark {
 		theme = 1
 	}
-	if !local {
-		p.Image(deviceSceneArtwork[theme]["controller"], art, n.Contain)
-	}
-	target := art
 	if local {
-		target.X -= 166 * scale
-	}
-	if local {
-		p.Image(deviceSceneTarget(t, icon), target, n.Contain)
+		art.X -= 166 * scale
+		p.Image(deviceSceneTarget(t, icon, false), art, n.Contain)
 		return
 	}
+	p.Image(deviceSceneArtwork[theme]["controller"], art, n.Contain)
 	now := p.Now()
 	// Paint the selected route last, so shared trunks retain its full stroke.
 	for _, active := range []bool{false, true} {
@@ -528,8 +523,9 @@ func (v *View) drawDeviceScene(p *n.Painter, box n.Rect, t *n.Theme, icon app.De
 		}
 	}
 	// Hardware masks the incoming wire, including the filled input-port center.
-	p.Image(deviceSceneTarget(t, icon), target, n.Contain)
-	if !local {
+	hasRoutes := len(state.Routes) > 0
+	p.Image(deviceSceneTarget(t, icon, hasRoutes), art, n.Contain)
+	if hasRoutes {
 		r := n.Rect{X: box.X + 77*scale, Y: box.Y + (deviceScenePortY+(height-210)/2-3)*scale, W: 6 * scale, H: 6 * scale}
 		p.Fill(r, t.Background, 3*scale)
 		p.Stroke(r, t.TextMuted, 3*scale, scale)

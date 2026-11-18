@@ -148,7 +148,9 @@ func TestDeviceSceneTargetPortStaysAboveIncomingWire(t *testing.T) {
 		actual.SetDark(dark)
 		hardware := n.NewTester(func(c *n.Context) {
 			t := c.Theme()
-			n.Column(c).Fill().Draw(func(p *n.Painter, box n.Rect) { p.Image(deviceSceneTarget(t, app.DeviceIconServer), box, n.Contain) })
+			n.Column(c).Fill().Draw(func(p *n.Painter, box n.Rect) {
+				p.Image(deviceSceneTarget(t, app.DeviceIconServer, true), box, n.Contain)
+			})
 		}, 600, 210)
 		hardware.SetDark(dark)
 		// The input port's filled center belongs to the hardware, and must not be

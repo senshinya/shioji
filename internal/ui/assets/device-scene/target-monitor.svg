@@ -10,7 +10,7 @@
 .device-notch{stroke:@edge@;stroke-width:.7}
 .device-ground{stroke:@faint@;stroke-width:1}
 .device-input,.device-stand,.controller-stand,.device-side-button,.tablet-edge-controls{stroke:@edge@;stroke-width:1}
-.device-input-port{stroke:@edge@;stroke-width:1;fill:@background@}
+.device-input-port{display:@port-display@;stroke:@edge@;stroke-width:1;fill:@background@}
 .hardware-bezel{fill:@bezel@;stroke:@edge@;stroke-width:.6}
 .phone-camera-island,.phone-front-lens{fill:@quiet@;stroke:none}
 .phone-home{stroke:@quiet@;stroke-width:1.6}

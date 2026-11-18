@@ -131,6 +131,57 @@ func TestDeviceStatusSceneEdgesAndTargetFollowSelectedIcon(t *testing.T) {
 	}
 }
 
+func TestDeviceSceneInputPortOnlyAppearsWithRemoteRoutes(t *testing.T) {
+	icons := []app.DeviceIcon{app.DeviceIconLaptop, app.DeviceIconMonitor, app.DeviceIconServer, app.DeviceIconPhone, app.DeviceIconTablet}
+	for _, width := range []int{850, 1240} {
+		for _, dark := range []bool{false, true} {
+			for _, key := range []string{"local", "air"} {
+				t.Run(fmt.Sprintf("%s-%d-dark-%v", key, width, dark), func(t *testing.T) {
+					v := readyDeviceSceneView()
+					v.deviceSelected = key
+					state := v.Model.DeviceStates[key]
+					state.Readiness = v.Model.DeviceStates["air"].Readiness
+					state.WorkerService = &app.WorkerService{Phase: app.WorkerUpdating}
+					ui := n.NewTester(v.View, width, 1000)
+					ui.SetDark(dark)
+					ui.SetPreferences(n.Preferences{ReduceMotion: true})
+					for _, icon := range icons {
+						if err := v.Model.SetDeviceIcon(key, icon); err != nil {
+							t.Fatal(err)
+						}
+						ui.Frame()
+						ui.Advance(300 * time.Millisecond)
+						scene, ok := ui.Find("设备连接图")
+						if !ok || !ui.HasText("执行服务正在更新") {
+							t.Fatal("missing device scene while worker updates")
+						}
+						scale := scene.W / 600
+						x := deviceSceneInputX(icon)
+						if key == "local" {
+							x -= 166
+						}
+						x, y := scene.X+x*scale, scene.Y+deviceScenePortY*scale
+						im := ui.Image()
+						bg := im.RGBAAt(int(x), int(y-7*scale))
+						visible := false
+						// Sample the upper arc above the connecting wire, left of the case.
+						for py := int(y - 3.5*scale); py < int(y-1.5*scale); py++ {
+							for px := int(x - 2*scale); px < int(x+2*scale); px++ {
+								p := im.RGBAAt(px, py)
+								visible = visible || absChannel(p.R, bg.R) > 20
+							}
+						}
+						saveNativeSkillImage(t, ui, fmt.Sprintf("%s-%s-%d-dark-%v.png", key, icon, width, dark))
+						if want := key == "air"; visible != want {
+							t.Errorf("%s input port visible = %t, want %t", icon, visible, want)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestDeviceSceneObservationBoundaries(t *testing.T) {
 	now := time.Now()
 	for _, tc := range []struct {
