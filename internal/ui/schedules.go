@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	n "github.com/egoist/mygo/ui"
@@ -54,6 +55,11 @@ type scheduleSource struct {
 type scheduleConnection struct {
 	key, device, epoch string
 	online             bool
+	minor              int
+}
+
+func (conn scheduleConnection) needsUpgrade() bool {
+	return conn.online && conn.minor < protocol.ScheduleMinor
 }
 
 func scheduleConnections(m *app.Model) []scheduleConnection {
@@ -74,8 +80,10 @@ func scheduleConnections(m *app.Model) []scheduleConnection {
 		src := scheduleConnection{key: key, device: id}
 		if state != nil && state.Snapshot.DeviceID == id {
 			src.epoch, src.online = state.ConnectionEpoch, state.Connected && state.ConnectionEpoch != ""
+			src.minor = state.WorkerMinor
 		} else if key == "local" && len(m.DeviceStates) == 0 && m.Snapshot.DeviceID == id && m.ConnectionID() == key {
 			src.epoch, src.online = m.ConnectionEpoch, m.Connected && m.ConnectionEpoch != ""
+			src.minor = m.WorkerMinor
 		}
 		result = append(result, src)
 	}
@@ -164,7 +172,7 @@ func (v *View) loadSchedules(c *n.Context, g *schedulePageState) {
 	}
 	g.timer = time.AfterFunc(refresh, c.Services().Invalidate)
 	for _, conn := range connections {
-		if !conn.online {
+		if !conn.online || conn.needsUpgrade() {
 			continue
 		}
 		cache := g.sources[conn.key]
@@ -379,25 +387,23 @@ func (v *View) scheduleCatalog(c *n.Context, t *n.Theme, g *schedulePageState, i
 					choices = append(choices, menuChoice{id: state.id, name: state.label, checked: active, choose: func() { g.filter = state.id }})
 				}
 				v.choiceMenu(c, t, "schedule-status-filter", configurationChoiceField(c, "状态筛选", statusLabel, false).Width(102), choices)
-				n.Spacer(c).Grow(1)
-				n.Text(c, fmt.Sprintf("%d 个任务", len(rows))).FontSize(12).TextColor(t.TextMuted)
+				if len(rows) > 0 {
+					n.Spacer(c).Grow(1)
+					n.Text(c, fmt.Sprintf("%d 个任务", len(rows))).FontSize(12).TextColor(t.TextMuted)
+				}
 			})
 			if g.message != "" && g.selected.id == "" {
 				n.Text(c, g.message).FontSize(12).TextColor(t.Danger)
 			}
-			for _, conn := range scheduleConnections(v.Model) {
-				if source := g.sources[conn.key]; source != nil && source.err != "" && conn.online {
-					n.Text(c, v.Model.DeviceName(conn.device)+" · "+source.err).FontSize(12).TextColor(t.TextMuted)
-				}
-			}
+			loading, incomplete := v.scheduleCatalogNotices(c, t, g)
 			if len(rows) == 0 {
 				label := "还没有定时任务"
-				if slices.ContainsFunc(scheduleConnections(v.Model), func(conn scheduleConnection) bool {
-					source := g.sources[conn.key]
-					return conn.online && source != nil && source.busy && source.tasks == nil
-				}) {
+				switch {
+				case loading:
 					label = "正在载入定时任务…"
-				} else if g.workspace != "" || g.filter != "" {
+				case incomplete:
+					return
+				case g.workspace != "" || g.filter != "":
 					label = "此筛选下没有定时任务"
 				}
 				n.Text(c, label).Margin(24, 0, 0, 0).FontSize(13).TextColor(t.TextMuted)
@@ -416,6 +422,62 @@ func (v *View) scheduleCatalog(c *n.Context, t *n.Theme, g *schedulePageState, i
 			}).FillWidth().Grow(1).MinHeight(0).Label("定时任务列表")
 		})
 	})
+}
+
+func (v *View) scheduleCatalogNotices(c *n.Context, t *n.Theme, g *schedulePageState) (loading, incomplete bool) {
+	workspace, _ := scheduleWorkspace(v.Model, g.workspace)
+	var upgrade, failures []string
+	first := ""
+	for _, conn := range scheduleConnections(v.Model) {
+		if !conn.online || (workspace.ID != "" && conn.device != workspace.DeviceID) {
+			continue
+		}
+		name := v.Model.DeviceName(conn.device)
+		if conn.needsUpgrade() {
+			if first == "" {
+				first = conn.key
+			}
+			upgrade = append(upgrade, name)
+			continue
+		}
+		if source := g.sources[conn.key]; source != nil && source.epoch == conn.epoch {
+			if source.err != "" {
+				failures = append(failures, name+" · "+source.err)
+			} else if source.busy && source.tasks == nil {
+				loading = true
+			}
+		}
+	}
+	if len(upgrade) > 0 {
+		names := strings.Join(upgrade, "、")
+		n.Row(c.Key("schedule-service-notice")).FillWidth().Shrink(0).Margin(8, 0, 8, 0).Padding(8, 12).Gap(8).
+			AlignItems(n.Start).Radius(8).Background(t.Surface).Border(1, t.Border).Children(func() {
+			const title = "需更新执行服务"
+			font := n.Font{Family: t.Font, Size: 13, Weight: 500}
+			inlineSymbol(c, workerUpdateIcon, title, font, 14, t.TextMuted).Shrink(0)
+			n.Column(c).Grow(1).MinWidth(0).Children(func() {
+				n.Text(c, title).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20)
+				n.Text(c, names).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted).
+					SingleLine().Ellipsis("…").TooltipWhenTruncated(names)
+			})
+			const action = "查看设备"
+			button := control(c.Key("device-settings")).Height(28).PaddingX(8).Shrink(0).AlignSelf(n.Center).Label(action)
+			button.Children(func() {
+				n.Row(c).Gap(4).AlignItems(n.Baseline).Children(func() {
+					n.Text(c, action).FontSize(12).FixedLineHeight(20)
+					inlineSymbol(c, disclosureRight, action, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted)
+				})
+			})
+			if button.Clicked() {
+				v.deviceSelected, v.deviceTab = first, "settings"
+				v.devices, v.deviceList = true, len(upgrade) > 1
+			}
+		})
+	}
+	for _, message := range failures {
+		n.Text(c, message).FillWidth().Margin(4, 0, 0, 0).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
+	}
+	return loading, len(upgrade) > 0 || len(failures) > 0
 }
 
 func (v *View) scheduleRows(g *schedulePageState) []domain.Schedule {

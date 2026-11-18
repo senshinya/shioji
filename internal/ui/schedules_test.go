@@ -9,7 +9,67 @@ import (
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 )
+
+func TestScheduleCatalogGroupsServiceUpdatesByWorkspace(t *testing.T) {
+	for _, layout := range []struct {
+		name  string
+		width int
+		dark  bool
+	}{{"dark", 850, true}, {"light", 1280, false}} {
+		t.Run(layout.name, func(t *testing.T) {
+			m := layoutModel()
+			m.LocalDeviceID, m.Snapshot.DeviceID = "local", "local"
+			m.Snapshot.Workspaces[0].DeviceID = "local"
+			m.DeviceStates["local"] = &app.DeviceState{Snapshot: m.Snapshot, Connected: true, ConnectionEpoch: "local", WorkerMinor: protocol.ScheduleMinor}
+			v := New(m, nil, "")
+			v.openSchedulePage()
+			g := v.schedules
+			g.sources["local"] = &scheduleSource{device: "local", epoch: "local", tasks: []domain.Schedule{}}
+			for _, conn := range []app.DeviceConnection{
+				{ID: "air", DeviceID: "mba", Name: "MBA at Home"},
+				{ID: "mini", DeviceID: "mini", Name: "MacMini at Home"},
+				{ID: "pro", DeviceID: "mbp", Name: "MBP at Work"},
+			} {
+				m.Connections = append(m.Connections, conn)
+				workspace := domain.Workspace{ID: conn.ID + "-work", DeviceID: conn.DeviceID, Name: conn.Name + " 项目"}
+				m.Snapshot.Workspaces = append(m.Snapshot.Workspaces, workspace)
+				m.DeviceStates[conn.ID] = &app.DeviceState{
+					Snapshot: domain.Snapshot{DeviceID: conn.DeviceID, Workspaces: []domain.Workspace{workspace}}, Connected: true,
+					ConnectionEpoch: conn.ID, WorkerMinor: protocol.ScheduleMinor - 1,
+				}
+			}
+			ui := n.NewTester(v.View, layout.width, 760)
+			ui.SetDark(layout.dark)
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, "schedule-service-"+layout.name+".png")
+			const allDevices = "MBA at Home、MacMini at Home、MBP at Work"
+			if !ui.HasText("需更新执行服务") || !ui.HasText(allDevices) || ui.HasText("还没有定时任务") {
+				t.Fatal("service updates should share one notice and replace the empty state")
+			}
+
+			g.workspace = "w"
+			ui.Frame()
+			if ui.HasText("需更新执行服务") || !ui.HasText("此筛选下没有定时任务") {
+				t.Fatal("supported workspace displayed notices for other devices")
+			}
+
+			g.workspace = "mini-work"
+			ui.Frame()
+			if ui.HasText(allDevices) || !ui.HasText("需更新执行服务") || ui.HasText("此筛选下没有定时任务") {
+				t.Fatal("selected workspace did not scope the service notice to its device")
+			}
+			if err := ui.Click("查看设备"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Frame()
+			if !v.devices || v.deviceSelected != "mini" || !ui.HasText("执行服务") {
+				t.Fatal("the notice did not open the affected device's settings")
+			}
+		})
+	}
+}
 
 func TestScheduleNavigationPreservesConversationDraft(t *testing.T) {
 	model := layoutModel()
@@ -68,7 +128,7 @@ func TestScheduleNativeLayoutsAndRunLinks(t *testing.T) {
 			m := layoutModel()
 			m.LocalDeviceID = "a"
 			m.Snapshot.Workspaces[0].DeviceID = "a"
-			m.DeviceStates["local"] = &app.DeviceState{Snapshot: m.Snapshot, Connected: true, ConnectionEpoch: "test", Readiness: m.Readiness}
+			m.DeviceStates["local"] = &app.DeviceState{Snapshot: m.Snapshot, Connected: true, ConnectionEpoch: "test", WorkerMinor: protocol.ScheduleMinor, Readiness: m.Readiness}
 			m.DeviceStates["local"].Snapshot.DeviceID = "a"
 			zone := "Asia/Taipei"
 			now := time.Date(2026, 11, 18, 1, 0, 0, 0, time.UTC)
