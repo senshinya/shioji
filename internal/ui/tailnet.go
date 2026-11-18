@@ -418,16 +418,16 @@ func (v *View) tailnetConnectionStatus(c *n.Context, t *n.Theme, s tailnet.Snaps
 
 func (v *View) tailnetLogoutDialog(c *n.Context, t *n.Theme) {
 	u := v.networkUI()
-	dialog := n.DialogBase(c, &u.logout, func(backdrop, panel n.Element) {
-		backdrop.Background(n.RGBA(0, 0, 0, .16))
-		panel.Width(360).Padding(configurationDialogInset).Gap(12).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c)).Children(func() {
-			n.Text(c, "退出 Tailnet？").FontSize(14).FontWeight(500).FixedLineHeight(20)
-			n.Text(c, "退出后，这台 Mac 将断开 Tailnet。直连 SSH 不受影响。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
-			n.Row(c).FillWidth().Justify(n.End).Gap(8).Margin(8, 0, 0).Children(func() {
+	dialog := compactDialog(c, t, &u.logout, 360, func(panel n.Element) {
+		panel.Children(func() {
+			compactDialogContent(c, "退出 Tailnet？", func() {
+				n.Text(c, "退出后，这台 Mac 将断开 Tailnet。直连 SSH 不受影响。").FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+			}, func() {
+				n.Spacer(c).Grow(1)
 				if configurationAction(c, "取消").Label("取消退出网络").Clicked() {
 					u.logout = false
 				}
-				if n.PrimaryButton(c, "退出网络").Height(28).PaddingX(12).Radius(6).FontSize(12).Label("确认退出网络").Disabled(v.Controller == nil).Clicked() {
+				if compactDialogPrimary(c, "退出网络").Label("确认退出网络").Disabled(v.Controller == nil).Clicked() {
 					u.logout = false
 					v.tailnetAction("logout")
 				}

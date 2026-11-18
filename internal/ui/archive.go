@@ -8,7 +8,6 @@ import (
 	"shioji/internal/protocol"
 	"slices"
 	"strings"
-	"time"
 
 	n "github.com/egoist/mygo/ui"
 )
@@ -441,47 +440,44 @@ func (v *View) archiveDialogs(c *n.Context, t *n.Theme) {
 		return
 	}
 	d := a.deletion
-	n.DialogBase(c.Key("delete-archive"), &d.open, func(backdrop, panel n.Element) {
-		backdrop.Background(n.RGBA(0, 0, 0, .16)).Transition(fadeMotion(c, 180*time.Millisecond))
-		width, _ := c.Size()
-		panel.Width(min(380, width-32)).Padding(16).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c)).Children(func() {
-			n.Column(c).FillWidth().Gap(10).Children(func() {
-				kind, title := "会话", d.session.Title
-				message := "“" + title + "”将无法恢复。"
-				if d.session.ID == "" {
-					kind = "工作区"
-					title = d.workspace.Name
-					message = fmt.Sprintf("“%s”及其中的 %d 个会话将无法恢复。", title, d.count)
-				}
-				if d.batch {
-					kind = "全部归档会话"
-					message = fmt.Sprintf("全部 %d 个归档会话将无法恢复。", d.count)
-					if d.workspaces {
-						kind = "全部归档工作区"
-						message = fmt.Sprintf("全部 %d 个归档工作区及其中的会话将无法恢复。", d.count)
-					}
-				}
-				n.Text(c, "彻底删除"+kind+"？").FontSize(15).FontWeight(500).FixedLineHeight(22)
-				n.Text(c, message).FontSize(13).FixedLineHeight(22)
-				n.Text(c, "中止会话任务，移除记录与附件；未完成的回收在后台重试。\n原项目文件和 Git 仓库不会删除。\n自建 worktree 备份到分支后回收，不备份被忽略的文件。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
-				if d.error != "" {
-					n.Text(c, d.error).FontSize(12).FixedLineHeight(20).TextColor(t.Danger)
-				}
-				n.Row(c).FillWidth().Gap(8).Margin(6, 0, 0, 0).Children(func() {
-					n.Spacer(c).Grow(1)
-					if configurationAction(c, "取消").Disabled(d.busy).Clicked() {
-						d.open = false
-					}
-					label := "彻底删除"
-					if d.busy {
-						label = "正在删除…"
-					} else if d.batch && d.error != "" {
-						label = "重试失败项"
-					}
-					if n.PrimaryButton(c, label).Height(28).FontSize(12).Radius(6).Disabled(d.busy || !d.batch && !v.canDeleteArchive(d.connection)).Clicked() {
-						v.deleteArchive(d)
+	compactDialog(c.Key("delete-archive"), t, &d.open, 380, func(panel n.Element) {
+		kind := "会话"
+		message := "“" + d.session.Title + "”将无法恢复。"
+		if d.session.ID == "" {
+			kind = "工作区"
+			message = fmt.Sprintf("“%s”及其中的 %d 个会话将无法恢复。", d.workspace.Name, d.count)
+		}
+		if d.batch {
+			kind = "全部归档会话"
+			message = fmt.Sprintf("全部 %d 个归档会话将无法恢复。", d.count)
+			if d.workspaces {
+				kind = "全部归档工作区"
+				message = fmt.Sprintf("全部 %d 个归档工作区及其中的会话将无法恢复。", d.count)
+			}
+		}
+		panel.Children(func() {
+			compactDialogContent(c, "彻底删除"+kind+"？", func() {
+				n.Column(c).FillWidth().Gap(8).Children(func() {
+					n.Text(c, message).FillWidth().FontSize(13).FixedLineHeight(20)
+					n.Text(c, "中止会话任务，移除记录与附件；未完成的回收在后台重试。\n原项目文件和 Git 仓库不会删除。\n自建 worktree 备份到分支后回收，不备份被忽略的文件。").FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+					if d.error != "" {
+						n.Text(c, d.error).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.Danger)
 					}
 				})
+			}, func() {
+				n.Spacer(c).Grow(1)
+				if configurationAction(c, "取消").Disabled(d.busy).Clicked() {
+					d.open = false
+				}
+				label := "彻底删除"
+				if d.busy {
+					label = "正在删除…"
+				} else if d.batch && d.error != "" {
+					label = "重试失败项"
+				}
+				if compactDialogPrimary(c, label).Disabled(d.busy || !d.batch && !v.canDeleteArchive(d.connection)).Clicked() {
+					v.deleteArchive(d)
+				}
 			})
 		})
 	})

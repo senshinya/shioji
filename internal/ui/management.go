@@ -238,56 +238,51 @@ func (v *View) managementDialogs(c *n.Context, t *n.Theme) {
 	if r == nil {
 		return
 	}
-	dialog := n.DialogBase(c.Key("rename-session:"+r.Session.ID), &r.Open, func(backdrop, panel n.Element) {
-		backdrop.Background(n.RGBA(0, 0, 0, .16)).Transition(fadeMotion(c, 180*time.Millisecond))
-		width, _ := c.Size()
-		panel.Width(min(380, width-48)).Padding(configurationDialogInset).Radius(10).Clip().Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c))
+	dialog := compactDialog(c.Key("rename-session:"+r.Session.ID), t, &r.Open, 380, func(panel n.Element) {
 		if r.NaturalHeight > 0 {
-			panel.Height(panel.AnimateTo("rename-height", r.NaturalHeight+34, motionAnimation(c, 180*time.Millisecond)))
+			panel.Height(panel.AnimateTo("rename-height", r.NaturalHeight+compactDialogVerticalChrome, motionAnimation(c, 180*time.Millisecond)))
 		}
 		panel.Children(func() {
-			content := n.Column(c.Key("rename-content")).FillWidth().Shrink(0).Gap(12)
+			content := compactDialogContent(c, "重命名会话", func() {
+				n.Column(c).FillWidth().Gap(8).Children(func() {
+					input := n.TextAreaBase(c.Key("title"), &r.Title).FillWidth().Lines(1, 4).MinHeight(32).Padding(6, 8).FontSize(13).FixedLineHeight(20).Radius(6).Background(t.Surface).Border(1, t.Border).Label("新的会话名称").AutoFocus().Disabled(r.Busy).OnTextKey(func(k n.TextKey) bool {
+						if k.Key == n.KeyEnter && k.Mods == 0 {
+							r.Title = k.Text()
+							v.saveSessionName(r)
+							return true
+						}
+						return false
+					})
+					fieldFeedback(c, input)
+					if r.Error != "" {
+						n.Text(c.Key("rename-error"), r.Error).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Transition(disclosureMotion(c, 160*time.Millisecond))
+					}
+				})
+			}, func() {
+				if r.Error != "" && compactDialogLeadingAction(c, "重新载入").Label("重新载入会话名称").Disabled(r.Busy).Clicked() {
+					for _, current := range v.Model.Snapshot.Sessions {
+						if current.ID == r.Session.ID {
+							r.Session = current
+							r.Title = current.Title
+							r.Error = ""
+							break
+						}
+					}
+				}
+				n.Spacer(c).Grow(1)
+				if configurationAction(c, "取消").Label("取消重命名").Clicked() {
+					r.Open = false
+				}
+				if compactDialogPrimary(c, "保存").Label("保存名称").Disabled(r.Busy || strings.TrimSpace(r.Title) == "" || !v.canManage(r.Connection)).Clicked() {
+					v.saveSessionName(r)
+				}
+			})
 			invalidate := c.Services().Invalidate
 			content.DrawOver(func(_ *n.Painter, bounds n.Rect) {
 				if content.Valid() && r.NaturalHeight != bounds.H {
 					r.NaturalHeight = bounds.H
 					invalidate()
 				}
-			})
-			content.Children(func() {
-				n.Text(c, "重命名会话").FontSize(14).FontWeight(500)
-				input := n.TextAreaBase(c.Key("title"), &r.Title).FillWidth().Lines(1, 4).MinHeight(32).Padding(6, 8).FontSize(13).FixedLineHeight(20).Radius(6).Background(t.Surface).Border(1, t.Border).Label("新的会话名称").AutoFocus().Disabled(r.Busy).OnTextKey(func(k n.TextKey) bool {
-					if k.Key == n.KeyEnter && k.Mods == 0 {
-						r.Title = k.Text()
-						v.saveSessionName(r)
-						return true
-					}
-					return false
-				})
-				fieldFeedback(c, input)
-				if r.Error != "" {
-					n.Text(c.Key("rename-error"), r.Error).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Transition(disclosureMotion(c, 160*time.Millisecond))
-				}
-				n.Row(c).FillWidth().Gap(8).Children(func() {
-					if ghost(c, "取消").Clicked() {
-						r.Open = false
-					}
-					if r.Error != "" && ghost(c, "重新载入").Label("重新载入会话名称").Disabled(r.Busy).Clicked() {
-						for _, current := range v.Model.Snapshot.Sessions {
-							if current.ID == r.Session.ID {
-								r.Session = current
-								r.Title = current.Title
-								r.Error = ""
-								break
-							}
-						}
-					}
-
-					n.Spacer(c).Grow(1)
-					if n.PrimaryButton(c, "保存").Label("保存名称").Height(28).FontSize(12).Radius(6).Disabled(r.Busy || strings.TrimSpace(r.Title) == "" || !v.canManage(r.Connection)).Clicked() {
-						v.saveSessionName(r)
-					}
-				})
 			})
 		})
 	})

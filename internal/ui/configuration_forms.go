@@ -62,7 +62,7 @@ func configurationSectionTitle(c *n.Context, label string) n.Element {
 	return n.Text(c, label).FontSize(configurationSectionSize).FontWeight(500).FixedLineHeight(configurationTitleLine)
 }
 func configurationAction(c *n.Context, label string) n.Element {
-	return ghost(c, label, 6).Height(configurationControlHeight).PaddingX(8).FontSize(configurationValueSize)
+	return ghost(c, label, 6).Height(configurationControlHeight).PaddingX(configurationHoverInset).FontSize(configurationValueSize)
 }
 
 // Keep the reading edge with neighboring form rows; the feedback surface has

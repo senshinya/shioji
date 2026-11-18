@@ -30,20 +30,18 @@ func (v *View) workerUpgradeConfirmation(c *n.Context, t *n.Theme, key string, s
 		return
 	}
 
-	n.DialogBase(c.Key("immediate-worker-update"), &f.open, func(backdrop, panel n.Element) {
-		backdrop.Background(n.RGBA(0, 0, 0, .2))
-		width, _ := c.Size()
-		panel.Width(min(float32(420), width-32)).Padding(configurationDialogInset).Gap(12).Radius(10).Background(raised(t)).Border(1, t.Border).Children(func() {
+	compactDialog(c.Key("immediate-worker-update"), t, &f.open, 420, func(panel n.Element) {
+		panel.Children(func() {
 			title := "立即更新执行服务？"
 			message := "将停止该设备正在运行的任务。会话历史、草稿和暂停的队列会保留。"
 			if f.manage {
 				title = "正在等待 " + v.Model.DeviceName(f.device) + " 空闲"
 				message = "当前任务继续运行。选择“停止任务并更新”将停止这台设备上正在运行的任务，并暂停待发队列。会话历史、草稿和文件保留；更新后不会自动续答。"
 			}
-			n.Text(c, title).FontSize(15).FixedLineHeight(24).FillWidth()
-			n.Text(c, message).FillWidth().FontSize(13).FixedLineHeight(20)
-			n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
-				if f.manage && configurationAction(c, "取消更新").Label("取消执行服务更新").Disabled(!valid || v.Controller == nil).Clicked() {
+			compactDialogContent(c, title, func() {
+				n.Text(c, message).FillWidth().FontSize(13).FixedLineHeight(20)
+			}, func() {
+				if f.manage && compactDialogLeadingAction(c, "取消更新").Label("取消执行服务更新").Disabled(!valid || v.Controller == nil).Clicked() {
 					f.open = false
 					v.do(app.Job{ConnectionID: key, Method: "$worker.update.cancel"})
 				}

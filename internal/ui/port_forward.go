@@ -124,47 +124,48 @@ func (v *View) portForwardDialog(c *n.Context, t *n.Theme) {
 	if d == nil {
 		return
 	}
-	dialog := n.DialogBase(c.Key("create-port-forward"), &d.open, func(backdrop, panel n.Element) {
-		backdrop.Background(n.RGBA(0, 0, 0, .16))
-		width, _ := c.Size()
-		panel.Width(min(380, width-32)).Padding(configurationDialogInset).Radius(10).Background(raised(t)).Border(1, t.Border).Transition(popupMotion(c)).Children(func() {
-			n.Text(c, "创建端口转发").FontSize(14).FontWeight(500).FixedLineHeight(24).Margin(0, 0, 8, 0)
-			configurationFormRow(c, "设备", configurationSettingsForm, func() {
-				name := "选择设备"
-				var choices []menuChoice
-				for _, conn := range v.Model.Connections {
-					if conn.ID == d.connection {
-						name = conn.Name
+	dialog := compactDialog(c.Key("create-port-forward"), t, &d.open, 380, func(panel n.Element) {
+		panel.Children(func() {
+			compactDialogContent(c, "创建端口转发", func() {
+				n.Column(c).FillWidth().Children(func() {
+					configurationFormRow(c, "设备", configurationSettingsForm, func() {
+						name := "选择设备"
+						var choices []menuChoice
+						for _, conn := range v.Model.Connections {
+							if conn.ID == d.connection {
+								name = conn.Name
+							}
+							id := conn.ID
+							choices = append(choices, menuChoice{id: id, name: conn.Name, checked: id == d.connection, choose: func() { d.connection = id }})
+						}
+						trigger := configurationChoiceField(c, "转发设备", name, d.busy || len(choices) == 0).Width(210)
+						v.choiceMenu(c, t, "port-forward-device", trigger, choices)
+					})
+					for _, row := range []struct {
+						label string
+						value *string
+					}{{"目标地址", &d.host}, {"目标端口", &d.remote}, {"本机端口", &d.local}} {
+						configurationFormRow(c, row.label, configurationSettingsForm, func() {
+							before := d.remote
+							input := configurationTextField(c, row.value).Width(210).Label("转发" + row.label).Disabled(d.busy)
+							if row.label == "目标地址" {
+								input.AutoFocus()
+							}
+							if input.Changed() && row.label == "目标端口" && (d.local == before || d.local == "") {
+								d.local = d.remote
+							}
+						})
 					}
-					id := conn.ID
-					choices = append(choices, menuChoice{id: id, name: conn.Name, checked: id == d.connection, choose: func() { d.connection = id }})
-				}
-				trigger := configurationChoiceField(c, "转发设备", name, d.busy || len(choices) == 0).Width(210)
-				v.choiceMenu(c, t, "port-forward-device", trigger, choices)
-			})
-			for _, row := range []struct {
-				label string
-				value *string
-			}{{"目标地址", &d.host}, {"目标端口", &d.remote}, {"本机端口", &d.local}} {
-				configurationFormRow(c, row.label, configurationSettingsForm, func() {
-					before := d.remote
-					input := configurationTextField(c, row.value).Width(210).Label("转发" + row.label).Disabled(d.busy)
-					if row.label == "目标地址" {
-						input.AutoFocus()
-					}
-					if input.Changed() && row.label == "目标端口" && (d.local == before || d.local == "") {
-						d.local = d.remote
+					if d.error != "" {
+						n.Text(c, d.error).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Margin(8, 0, 0, 0)
 					}
 				})
-			}
-			if d.error != "" {
-				n.Text(c, d.error).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted).FillWidth().Margin(8, 0, 0, 0)
-			}
-			n.Row(c).FillWidth().Justify(n.End).Gap(8).Margin(12, 0, 0, 0).Children(func() {
+			}, func() {
+				n.Spacer(c).Grow(1)
 				if configurationAction(c, "取消").Clicked() {
 					v.cancelPortForward(d)
 				}
-				if configurationAction(c, "创建").Disabled(d.busy || v.Controller == nil || len(v.Model.Connections) == 0).Clicked() {
+				if compactDialogPrimary(c, "创建").Disabled(d.busy || v.Controller == nil || len(v.Model.Connections) == 0).Clicked() {
 					v.submitPortForward(d)
 				}
 			})
