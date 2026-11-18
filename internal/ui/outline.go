@@ -308,7 +308,11 @@ func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock
 		} else if a.compaction != "" {
 			label = "正在压缩上下文"
 		} else {
-			label = v.progressFor(c, turn).activityCaption(c, label)
+			p := v.progressFor(c, turn)
+			if v.runningGroup != "" && v.activityTurn == turn.ID {
+				label = p.label
+			}
+			label = p.activityCaption(c, label)
 		}
 		font.Size = 11
 		textWidth, _ := n.ShapeText(label, font, 0).Size()

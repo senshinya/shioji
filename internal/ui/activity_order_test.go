@@ -194,6 +194,77 @@ func TestLateResultGroupKeepsProgressBelowAllContent(t *testing.T) {
 	}
 }
 
+func TestHiddenActivityKeepsProgressInTailToolSummary(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			v := toolTailFixture(10)
+			m := v.Model
+			m.Preferences.CollapseLatestTools = true
+			d := m.Details["s"]
+			start := time.Now().Add(-58 * time.Second)
+			d.Turns[0].StartedAt = &start
+			for i := range d.Items {
+				d.Items[i].Final = true
+				d.Items[i].Order = int64(i + 1)
+				if d.Items[i].Kind == "tool" {
+					d.Items[i].ActivityOrder = int64(i)
+					d.Items[i].Status = "completed"
+				}
+			}
+			m.Sequence = 10
+			m.Details["s"] = d
+			ui := n.NewTester(v.View, 1240, 820)
+			ui.SetDark(dark)
+			ui.Advance(400 * time.Millisecond)
+			upsert := func(item domain.Item) {
+				t.Helper()
+				if err := m.ApplyEvent(domain.Event{Type: "item.upsert", SessionID: "s", Sequence: m.Sequence + 1, Item: &item}); err != nil {
+					t.Fatal(err)
+				}
+				ui.Frame()
+			}
+			check := func(count, phase string) {
+				t.Helper()
+				summary, summaryOK := ui.Find(count)
+				caption, captionOK := ui.Find(phase)
+				clock, clockOK := ui.Find("运行时长")
+				_, grouped := ui.Find("工具组运行状态")
+				if !grouped || !summaryOK || !captionOK || !clockOK || summary.Y != clock.Y || summary.Y != caption.Y {
+					t.Errorf("计数、%s和计时应在同一行: %v %v %v", phase, summary, caption, clock)
+				}
+			}
+			check("10 次工具调用", "进行中")
+			reasoning := domain.Item{ID: "reason", TurnID: "t", Kind: "activity", Presentation: "reasoning", ActivityOrder: 11, Order: 12}
+			upsert(reasoning)
+			ui.Advance(300 * time.Millisecond)
+			check("10 次工具调用", "正在思考")
+			reasoning.Final = true
+			upsert(reasoning)
+			ui.Advance(400 * time.Millisecond)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("10-calls-dark-%v.png", dark))
+			check("10 次工具调用", "正在思考")
+			for i := int64(13); i <= 14; i++ {
+				upsert(domain.Item{ID: fmt.Sprint("next-", i), TurnID: "t", Kind: "tool", Presentation: "command", Name: "检查结果", Order: i, ActivityOrder: i, Final: true})
+			}
+			ui.Advance(8 * time.Second)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("12-calls-dark-%v.png", dark))
+			check("12 次工具调用", "进行中")
+			reply := domain.Item{ID: "reply", TurnID: "t", Kind: "assistant", Order: 15, ActivityOrder: 15}
+			upsert(reply)
+			ui.Advance(300 * time.Millisecond)
+			check("12 次工具调用", "正在回复")
+			reply.Text = "检查结果已整理。"
+			upsert(reply)
+			ui.Advance(time.Second)
+			body, bodyOK := ui.Find(reply.Text)
+			footer, footerOK := ui.Find("回复信息")
+			if !bodyOK || !footerOK || footer.Y < body.Y+body.H || !activityGreenIn(ui, footer) {
+				t.Fatal("正文出现后，运行状态应交接到正文下方", body, footer)
+			}
+		})
+	}
+}
+
 func TestNewReplyImmediatelyMovesProgressBelowContent(t *testing.T) {
 	for _, expanded := range []bool{false, true} {
 		t.Run(fmt.Sprintf("expanded=%v", expanded), func(t *testing.T) {

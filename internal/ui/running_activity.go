@@ -13,13 +13,13 @@ import (
 // This is a projection of the current normalized turn, not another execution
 // lifecycle. No phase is inferred from a tool name, source ID or elapsed time.
 type runningActivity struct {
-	label      string
-	item       string
-	kind       string
-	index      int
-	waiting    bool
-	compaction string
-	started    *time.Time
+	label           string
+	item            string
+	index           int
+	hiddenReasoning bool
+	waiting         bool
+	compaction      string
+	started         *time.Time
 }
 
 func (v *View) runningActivity(turn domain.Turn) runningActivity {
@@ -53,7 +53,7 @@ func (v *View) runningActivity(turn domain.Turn) runningActivity {
 	// without this metadata retain their stable display-order fallback.
 	if latest != nil {
 		item := *latest
-		a.item, a.kind = item.ID, item.Kind
+		a.item = item.ID
 		switch item.Kind {
 		case "assistant":
 			if !item.Final {
@@ -77,6 +77,7 @@ func (v *View) runningActivity(turn domain.Turn) runningActivity {
 				return a
 			}
 			if item.Presentation == "reasoning" {
+				a.hiddenReasoning = emptyTranscriptItem(item)
 				if !item.Final {
 					a.label = "正在思考"
 				}
@@ -143,23 +144,21 @@ type runningProgress struct {
 	caption              string
 	pendingCaption       string
 	captionSince         time.Time
+	captionUntil         time.Time
 }
 
 const (
 	progressFadeDuration    = 140 * time.Millisecond
 	progressReclaimDuration = 180 * time.Millisecond
-	toolCaptionDelay        = 180 * time.Millisecond
+	activityCaptionDelay    = 180 * time.Millisecond
+	activityCaptionRest     = 500 * time.Millisecond
 )
 
-// Coalesce brief tool activity before starting a text/width transition. This
-// only filters presentation: completion and other phases still replace the
-// caption immediately, and the worker's execution state is never delayed.
-// Keep it on the turn so disclosure changes and the offscreen proxy share it.
+// Filter short phases before changing the text or width. Once shown, give the
+// caption time to finish entering before changing phases within the same row.
+// Keep the timing on the turn so all progress surfaces share it.
 func (p *runningProgress) activityCaption(c *n.Context, label string) string {
-	if label != "正在执行命令" && label != "正在执行工具" {
-		p.caption, p.pendingCaption = label, ""
-		return label
-	}
+	transient := label == "正在执行命令" || label == "正在执行工具" || label == "正在思考"
 	if p.caption == "" {
 		p.caption = "进行中"
 	}
@@ -167,14 +166,20 @@ func (p *runningProgress) activityCaption(c *n.Context, label string) string {
 		p.pendingCaption = ""
 		return label
 	}
-	if p.pendingCaption != label {
-		p.pendingCaption, p.captionSince = label, c.Now()
+	now := c.Now()
+	if !transient {
+		p.pendingCaption = ""
+	} else if p.pendingCaption != label {
+		p.pendingCaption, p.captionSince = label, now
 	}
-	if c.Now().Sub(p.captionSince) < toolCaptionDelay {
+	if now.Before(p.captionUntil) || transient && now.Sub(p.captionSince) < activityCaptionDelay {
 		c.AnimationFrame()
 		return p.caption
 	}
 	p.caption, p.pendingCaption = label, ""
+	if transient {
+		p.captionUntil = now.Add(motionAnimation(c, progressReclaimDuration).Duration + activityCaptionRest)
+	}
 	return label
 }
 
@@ -245,13 +250,12 @@ func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domai
 	if group == "" {
 		group = row.toolParent
 	}
-	if row.item.TurnID != turn.ID {
-		group = ""
-	}
-	if activity.kind != "tool" {
+	if row.item.TurnID != turn.ID || activity.item == "" {
 		group = ""
 	}
 	if group != "" {
+		// The tail group's source span includes invisible records. They can
+		// update the phase without creating a separate progress row.
 		for first, item := range detail.Items {
 			if item.ID == row.item.ID {
 				if activity.index < first || activity.index > row.end {
@@ -261,9 +265,18 @@ func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domai
 			}
 		}
 	}
+	if group != previousGroup || row.item.Kind == "assistant" && row.item.ID == activity.item {
+		// Visible prose and changes of progress owner use their own handoff.
+		p.captionUntil = time.Time{}
+	}
 	if group != "" {
 		p.handoff = nil
 		p.label = activity.label
+		// Keep the thinking caption between calls until another activity
+		// takes over the unbroken tool group.
+		if activity.hiddenReasoning {
+			p.label = "正在思考"
+		}
 		v.runningGroup, v.activityTurn = group, turn.ID
 		return
 	}

@@ -42,9 +42,9 @@ func TestRunningActivityUsesCurrentTurnEvidence(t *testing.T) {
 			}
 			v.Model.Details["s"] = d
 			ui := n.NewTester(func(c *n.Context) { n.Column(c).Fill().Children(func() { v.turnFooter(c, c.Theme(), d.Turns[0]) }) }, 600, 120)
-			// Tool detail is presented only after sustained activity; the raw
+			// Transient captions are presented only after sustained activity; the raw
 			// normalized state still updates immediately.
-			if tc.item.Kind == "tool" && !tc.item.Final {
+			if tc.item.Kind == "tool" && !tc.item.Final || tc.item.Presentation == "reasoning" {
 				if got := v.runningActivity(d.Turns[0]).label; got != tc.want {
 					t.Fatal("presentation delay changed execution evidence", got, tc.want)
 				}

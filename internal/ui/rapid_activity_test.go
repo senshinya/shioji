@@ -45,6 +45,52 @@ func TestShortCommandKeepsProgressCaptionStable(t *testing.T) {
 	}
 }
 
+func TestTransientActivityCaptionDoesNotInterruptItsEntrance(t *testing.T) {
+	for _, surface := range []string{"footer", "tools"} {
+		for _, label := range []string{"正在执行命令", "正在执行工具", "正在思考"} {
+			t.Run(surface+"/"+label, func(t *testing.T) {
+				v, ui := runningCaptionFixture(surface)
+				quiet, _ := ui.Find("运行时长")
+				next := "进行中"
+				if surface == "tools" {
+					next = "正在回复"
+				}
+				set := func(phase string) {
+					v.runningProgress.label = phase
+					ui.Frame()
+				}
+				set(label)
+				ui.Advance(80 * time.Millisecond)
+				if ui.HasText(label) {
+					t.Error("brief phase started a caption transition")
+				}
+				set("进行中")
+				ui.Advance(400 * time.Millisecond)
+
+				set(label)
+				ui.Advance(210 * time.Millisecond)
+				if !ui.HasText(label) {
+					t.Fatal("sustained phase never started its entrance")
+				}
+				set(next)
+				ui.Advance(175 * time.Millisecond)
+				clock, _ := ui.Find("运行时长")
+				if !ui.HasText(label) || clock.X < quiet.X+9 {
+					t.Error("phase ending during its entrance interrupted the caption and clock", quiet, clock)
+				}
+				ui.Advance(370 * time.Millisecond)
+				if !ui.HasText(label) {
+					t.Error("caption did not remain readable after its entrance")
+				}
+				ui.Advance(650 * time.Millisecond)
+				if !ui.HasText(next) || ui.HasText(label) {
+					t.Fatal("settled caption did not catch up to the current phase")
+				}
+			})
+		}
+	}
+}
+
 func TestToolCaptionCoalescesBurstsAndReleasesCompletedActivity(t *testing.T) {
 	for _, kind := range []string{"footer", "tools"} {
 		for _, reduced := range []bool{false, true} {
@@ -71,7 +117,7 @@ func TestToolCaptionCoalescesBurstsAndReleasesCompletedActivity(t *testing.T) {
 				if ui.HasText("正在执行命令") {
 					t.Fatal("tool caption promoted before sustained activity")
 				}
-				ui.Advance(300 * time.Millisecond)
+				ui.Advance(820 * time.Millisecond)
 				clock, _ := ui.Find("运行时长")
 				if !ui.HasText("正在执行命令") || clock.X < before.X+20 {
 					t.Fatal("sustained command never receives its full caption", ui.Texts(), before, clock)
