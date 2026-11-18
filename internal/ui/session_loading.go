@@ -21,6 +21,7 @@ var sessionLoadingEase = n.CubicBezier(.2, 0, 0, 1)
 // requests retain their existing independent lifecycle.
 type sessionLoading struct {
 	session, connection, epoch string
+	thread                     string
 	started, ready             time.Time
 	finished                   bool
 	error                      string
@@ -39,19 +40,35 @@ func (v *View) syncSessionLoading(c *n.Context) {
 		v.sessionLoad = nil
 		return
 	}
-	if s := v.sessionLoad; s != nil && (s.session != m.SessionID || s.connection != m.ConnectionID() || s.epoch != m.ConnectionEpoch) {
-		v.sessionLoad = nil
-	}
 	d := m.Details[m.SessionID]
-	ready := len(d.Items) > 0 || d.History != nil && !d.History.Invalidated || m.WorkerMinor < 37 && d.Session.ID != "" && d.History == nil
-	if read := m.HistoryReads[m.SessionID]; read != nil && (len(d.Items) == 0 || read.Uncached) {
-		// Events arriving during an uncached read are only a live tail. They
-		// cannot complete the initial display window, even if they fill Items.
-		ready = false
+	thread := d.Session.ThreadID
+	if s := v.sessionLoad; s != nil {
+		switch {
+		case s.session != m.SessionID || s.connection != m.ConnectionID():
+			v.sessionLoad = nil
+		case s.thread != "" && thread != "" && s.thread != thread:
+			motion := v.historyExit
+			if motion != nil && motion.in.Restart && motion.in.SessionID == m.SessionID && motion.phase >= historyDispatched {
+				// The initiating pane already owns the replacement bubble and anchor.
+				s.thread = thread
+			} else {
+				v.sessionLoad = nil
+			}
+		case s.epoch != m.ConnectionEpoch:
+			if s.finished && d.HasLoadedHistory() {
+				// An already visible reader may have jumped to an older page.
+				s.epoch = m.ConnectionEpoch
+			} else {
+				v.sessionLoad = nil
+			}
+		}
 	}
+	// A new visit opens at latest. The older window is still useful during
+	// the current visit, but cannot be the new visit's first visible frame.
+	ready := d.HasLoadedHistory() && (d.History == nil || !d.History.Newer)
 	if v.sessionLoad == nil {
 		if ready {
-			v.sessionLoad = &sessionLoading{session: m.SessionID, connection: m.ConnectionID(), epoch: m.ConnectionEpoch}
+			v.sessionLoad = &sessionLoading{session: m.SessionID, connection: m.ConnectionID(), epoch: m.ConnectionEpoch, thread: thread}
 			v.sessionLoad.finish()
 			return // Cached history, including an authoritative empty history.
 		}
@@ -62,13 +79,21 @@ func (v *View) syncSessionLoading(c *n.Context) {
 		if !known {
 			return
 		}
-		v.sessionLoad = &sessionLoading{session: m.SessionID, connection: m.ConnectionID(), epoch: m.ConnectionEpoch, started: c.Now()}
+		v.sessionLoad = &sessionLoading{session: m.SessionID, connection: m.ConnectionID(), epoch: m.ConnectionEpoch, thread: thread, started: c.Now()}
 	}
 	s := v.sessionLoad
+	if thread != "" {
+		s.thread = thread
+	}
 	if s.finished {
 		return // Paging and history replacement in this visit stay silent.
 	}
 	if ready {
+		if s.ready.IsZero() {
+			if list := v.lists[m.SessionID]; list != nil {
+				list.ScrollToEnd()
+			}
+		}
 		if s.frame == 0 && s.progress == 0 || c.Preferences().ReduceMotion {
 			s.finish()
 			return

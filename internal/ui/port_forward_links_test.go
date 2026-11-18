@@ -57,7 +57,7 @@ func TestForwardLinkContextUsesOwningSessionAcrossMessageKinds(t *testing.T) {
 			m.WorkspaceID = "wb"
 			m.ActiveConnection = "air"
 			m.RefreshDevices()
-			m.Details[session.ID] = domain.SessionDetail{Session: session, Items: []domain.Item{item}}
+			m.Details[session.ID] = domain.SessionDetail{Session: session, HistoryLoaded: true, Items: []domain.Item{item}}
 			controller := app.NewController("")
 			v := New(m, controller, "")
 			ui := n.NewTester(v.View, 1240, 820)

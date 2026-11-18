@@ -126,6 +126,7 @@ func TestHistoryPickersEditOwnInlineDraftAndSubmitReferences(t *testing.T) {
 		return detail.Session.Status == "completed" && len(detail.Items) > 0 && detail.Items[0].Status == "sent"
 	})
 	m.SessionID = accepted.SessionID
+	detail.HistoryLoaded = true // The fixture completed the legacy session read above.
 	m.Details[m.SessionID] = detail
 	m.Snapshot.Sessions = append(m.Snapshot.Sessions, detail.Session)
 	m.Drafts[m.DraftKey()] = "ordinary draft stays"

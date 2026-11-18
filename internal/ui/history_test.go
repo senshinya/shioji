@@ -562,10 +562,14 @@ func TestHistoryReplacementPreservesTheConstrainedMessagePosition(t *testing.T) 
 	}
 	id := v.Model.HistoryEdits["s"].OperationID
 	keep := int64(-1)
-	v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "history.reset", SessionID: "s", HistoryTurnOrder: &keep})
+	newSession := d.Session
+	newSession.ThreadID = "locally-replaced-thread"
+	if err := v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "history.reset", SessionID: "s", Session: &newSession, HistoryTurnOrder: &keep}); err != nil {
+		t.Fatal(err)
+	}
 	ui.Frame()
 	bridge, ok := ui.Find("用户消息气泡")
-	if !ok || !ui.HasText("revised prompt") || ui.HasText("编辑历史消息") || math.Abs(float64(bridge.Y-constrained.Y)) > 1 {
+	if !ok || v.loadingHistoryOpacity() != 1 || !ui.HasText("revised prompt") || ui.HasText("编辑历史消息") || math.Abs(float64(bridge.Y-constrained.Y)) > 1 {
 		t.Fatal("reset dropped the inline anchor before the replacement arrived", constrained, bridge)
 	}
 	newItem := domain.Item{ID: "input:" + id, Kind: "user", Text: "revised prompt", Status: "sent", TurnID: "new-turn", Order: 3, Final: true}

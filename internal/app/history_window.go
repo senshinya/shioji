@@ -15,9 +15,6 @@ import (
 // Events observed during a page read bridge its snapshot to the current UI.
 // The buffer lives only for the outstanding read, never in persisted state.
 type HistoryRead struct {
-	// Uncached records the absence of display history when the read began.
-	// Live events can populate Items while that initial read is still pending.
-	Uncached bool
 	Pending  bool
 	Error    string
 	Events   []domain.Event
@@ -50,13 +47,15 @@ func (c *Controller) queueInitialHistory(parent context.Context, id, epoch, gene
 				}
 			}
 		}
-		r.Uncached = len(d.Items) == 0
 		m.Details[id] = d
 		q := domain.HistoryQuery{SessionID: id, Generation: generation, Rounds: m.Preferences.Normalized().HistoryPageRounds}
 		if !opening {
 			q.AroundID = m.HistoryAnchors[id]
 		}
 		if opening {
+			if !d.HasLoadedHistory() {
+				delete(m.HistoryAnchors, id)
+			}
 			m.FoldToolHistory[id] = true
 		}
 		if !c.Do(Job{Context: ctx, ConnectionEpoch: epoch, Method: "session.history", Input: q, Apply: func(m *Model, b json.RawMessage, err error) {
@@ -100,8 +99,10 @@ func historyOpeningTail(d domain.SessionDetail, rounds int) domain.SessionDetail
 	if d.History != nil && d.History.Newer {
 		d.Items = nil
 		d.History = &domain.HistoryWindow{Invalidated: true}
+		d.HistoryLoaded = false
 		return d
 	}
+	d.HistoryLoaded = d.HasLoadedHistory()
 	h := &domain.HistoryWindow{Invalidated: true}
 	var prompts []int
 	for i, item := range d.Items {
@@ -281,10 +282,7 @@ func historyAcceptsItem(d domain.SessionDetail, item domain.Item) bool {
 }
 
 func (m *Model) BeginHistoryRead(id string) *HistoryRead {
-	r := &HistoryRead{Pending: true, Uncached: len(m.Details[id].Items) == 0}
-	if previous := m.HistoryReads[id]; previous != nil && previous.Uncached {
-		r.Uncached = true
-	}
+	r := &HistoryRead{Pending: true}
 	m.HistoryReads[id] = r
 	return r
 }

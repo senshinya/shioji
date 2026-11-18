@@ -14,7 +14,7 @@ func parallelModel() *app.Model {
 	m.WorkerMinor = 6
 	other := domain.Session{ID: "other", WorkspaceID: "w", Title: "Another session", Status: "completed"}
 	m.Snapshot.Sessions = append(m.Snapshot.Sessions, other)
-	m.Details["other"] = domain.SessionDetail{Session: other, Items: []domain.Item{{ID: "other-reply", Kind: "assistant", Text: "Independent response"}}}
+	m.Details["other"] = domain.SessionDetail{Session: other, HistoryLoaded: true, Items: []domain.Item{{ID: "other-reply", Kind: "assistant", Text: "Independent response"}}}
 	m.Drafts["session:s"] = "left draft"
 	m.Drafts["session:other"] = "right draft"
 	return m

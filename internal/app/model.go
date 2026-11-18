@@ -494,11 +494,18 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 			detail.History = &h
 		}
 		if e.Type == "history.reset" && e.HistoryTurnOrder != nil {
+			detail.HistoryLoaded = false
 			if detail.History != nil {
 				h := *detail.History
 				h.Invalidated = true
 				detail.History = &h
+			} else if m.WorkerMinor >= 37 {
+				detail.History = &domain.HistoryWindow{Invalidated: true}
 			}
+			// The old read and its scroll anchor belong to the replaced history.
+			delete(m.HistoryReads, e.SessionID)
+			delete(m.HistoryAnchors, e.SessionID)
+			delete(m.HistoryOpenings, e.SessionID)
 			delete(m.HistoryOutlines, e.SessionID)
 			retained := map[string]bool{}
 			for _, turn := range detail.Turns {

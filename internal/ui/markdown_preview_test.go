@@ -142,6 +142,7 @@ func markdownWorkerPreview(t *testing.T, text string) (*View, *n.Tester, string)
 	m.SessionID = op.SessionID
 	m.Connected = true
 	m.ConnectionEpoch = "markdown-epoch"
+	detail.HistoryLoaded = true // The fixture read this detail directly from the store.
 	m.Details[op.SessionID] = detail
 	v := New(m, app.NewController(dir), filepath.Join(dir, "client.json"))
 	t.Cleanup(func() { v.CloseTransient(); v.Saver.Close() })

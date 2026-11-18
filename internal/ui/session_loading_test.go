@@ -23,8 +23,10 @@ func sessionLoadingFixture(cached ...bool) (*View, *n.Tester) {
 	d := m.Details["s"]
 	d.Session.ThreadID = "opening-thread"
 	d.Items = nil
+	d.HistoryLoaded = false
 	d.History = &domain.HistoryWindow{Invalidated: true}
 	if len(cached) > 0 && cached[0] {
+		d.HistoryLoaded = true
 		d.Items = []domain.Item{{ID: "cached", Kind: "assistant", Text: "缓存会话正文", Final: true, Order: 1}}
 		d.History = &domain.HistoryWindow{First: 1, Last: 1, Invalidated: true}
 	}

@@ -751,7 +751,6 @@ func (c *Controller) Run(ctx context.Context) {
 			}
 			c.post(func(m *Model) {
 				if m.ConnectionEpoch == epoch && m.ownsSession(id) {
-					read.Uncached = len(m.Details[id].Items) == 0
 					m.HistoryReads[id] = read
 				}
 			})
@@ -778,6 +777,7 @@ func (c *Controller) Run(ctx context.Context) {
 				}
 				read.Pending = false
 				delete(m.HistoryReads, id)
+				all.HistoryLoaded = true
 				m.Details[id] = all
 				if collapseHistory {
 					m.FoldToolHistory[id] = true
@@ -802,6 +802,11 @@ func (c *Controller) Run(ctx context.Context) {
 		events := page.Events
 		sequence = events[len(events)-1].Sequence
 		for _, e := range events {
+			if client != nil && client.Minor < 37 && e.Type == "history.reset" {
+				// Legacy workers refresh through the controller, without a window
+				// invalidation that the view can use to request a new page.
+				history[e.SessionID] = history[e.SessionID].invalidated()
+			}
 			if e.Operation != nil && (e.Operation.State.ReceiptObserved()) {
 				delete(unconfirmed, e.Operation.ID)
 			}

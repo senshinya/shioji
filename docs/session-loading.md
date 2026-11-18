@@ -2,6 +2,45 @@
 
 打开会话且没有可显示的历史时，原生消息区提供读取反馈。已有消息缓存直接显示，普通历史翻页、后台刷新、历史修改和新会话发送不重播这个加载状态。每个并排会话独立维护一次展示生命周期，切换设备、连接或会话后不复用旧状态。
 
+## 历史改写与分叉
+
+收到另一端的历史改写事件后，旧线程的已读状态、分页请求和查询锚点一起失效。无论从侧栏重开还是从归档列表返回，该会话都等待新线程的最新历史。有分页能力的 worker 由会话视图重新读取，旧版 worker 由控制器重新读取完整历史。本机发起改写的窗口沿用已有的修订气泡和阅读锚点。
+
+已知边界：如果另一端在断线期间改写历史，且重连快照跨过该改写事件，旧线程缓存和阅读锚点仍可能保留到下一次历史读取。本次保留这项行为。
+
+分叉保留已确认来源的版本检查。只有能证明本地保留内容完整时，才用源历史立即预填分叉；来源还有更早或更新分页时，等待所属 worker 的第一份完整显示窗口，并由既有的锚点交接定位到所选回复。
+
+浅色和深色的三条原生回归覆盖快速切回、从归档返回及部分历史分叉。定向测试、旧版 worker 读取、竞态检查、客户端构建和设计冻结通过。局域网 HTTP 画板与嵌入内容已检查 UUID 兼容、两段完整播放、暂停、跳转及 Chrome 控制台。录制和日志位于 `.ryugi/audits/session-entry-content/replacement-fix/`，使用确定性的 worker 回执。实际安装版和设备仍待复验。
+
+`go test -timeout 15m ./cmd/... ./internal/...` 全部通过，UI 包 397.024 s，worker 包 236.262 s（`source.log`）。
+
+## 2026-11-18：初始读取登记前的实时尾部
+
+继续排查发现，实时事件也可以携带完整会话元数据，因此会话 ID 无法证明历史已加载。快速切走取消初读后，已到达的尾部事件仍留在模型中。另一个复现路径是重开曾跳到旧消息的会话，界面先显示较早分页，controller 随后才清掉旧页并读取最新历史。
+
+入口现在以成功读取的历史为依据。分页协议通过权威历史窗口建立缓存，旧版 worker 在全量读取成功后记录同样的状态。正常刷新保留已读来源；初读取消不会将实时消息升级成缓存。重开只有较早分页的会话时，保留读取反馈，最新窗口到达后再从底部显示。当前会话中的旧页在连接恢复时继续显示，并保留阅读位置。已确认分叉继续从核对过的历史前缀接续显示。
+
+两条路径均用相同的原生视图和确定性回执逐帧验证。亮暗各一段，均以半速播放，前半段是带会话元数据的事件，后半段是旧分页重入，左侧为修复前，右侧为修复后。复现、定向测试与竞态输出保存在 `.ryugi/audits/session-entry-content/fix/`。局域网 HTTP 下已重新检查 UUID 兼容补丁、外层页面、嵌入画板、完成播放及进度跳转，Chrome 控制台没有消息。安装版和真实远程设备上的行为仍待验证。
+
+`go test -timeout 15m ./cmd/... ./internal/...` 最终通过，UI 包耗时 364.067 s（`source-recheck.log`）。首次运行发现七组测试夹具直接注入历史但未建立已读状态，或在未进入会话时提前注入旧页。还原测试的真实初始化顺序后，七组定向复检与完整套件均通过。定向竞态、UI/app/domain vet、设计冻结检查及 Apple Silicon 客户端构建通过。
+
+### 上轮排查记录
+
+未打开的会话可能先因请求、队列或后台工作建立仅含元数据的 detail，再收到一条实时消息。此时初始历史读取尚未登记。旧判断仅检查 `Items` 非空，会把这条消息当作历史缓存，提前结束读取呈现；后续 `Uncached` 判断也会继承这个错误，完整历史返回时才闪出全部内容。
+
+入口现在要求已读取的会话身份或有效的权威历史窗口，才接纳其内容为缓存；新旧协议的初始读取及显式重试同时保留这一来源判断。事件尾部继续留在模型中供历史合并，不清空消息、草稿或执行状态。已有缓存和真实空历史沿用原交接。
+
+`TestSessionEntryWaitsForHistoryWhenLiveTailPrecedesRead` 通过真实导航、`ApplyEvent`、`BeginHistoryRead` 与 `MergeHistoryPage` 复现这一时序；旧代码在亮暗模式下均报告 `before=1 pending=1 uncached=false`，修正后通过。`TestInitialHistoryDoesNotTreatPreexistingEventTailAsCache` 覆盖 controller 的实际初始读取回调；旧代码同样失败。`TestSessionEntryMarkdownFirstPaint` 逐次检查原生绘制，确认缓存 Markdown 入口不依赖补帧才显示完整布局。
+
+本地前后证据位于 `docs/research/session-entry-content/`；Go overlay 保留原生产逻辑，与修正后的同一测试分别录制。两段连续对照为生产 MyGo `ui.Tester` 软件渲染、确定性历史回执、左旧右新，各 101 帧；不是已安装 App 或真实远程网络录制。安装版、worker 和 Tailnet 未替换或重启。局域网 HTTP 验收页已重新修补 UUID 启动兼容、核对外层与嵌入画板、两段完整播放，Chrome 控制台为 0 条消息。
+
+本轮检查记录位于 `.ryugi/audits/session-entry-content/`：
+
+- 加载态、首次历史／实时尾部、两个新入口回归及 controller 来源回归通过（`targeted.log`）；入口、缓存重入、加载态与新旧协议初读的定向竞态检查通过（UI 185.792 s，app 2.048 s，`race.log`）。客户端构建、`go vet ./internal/ui ./internal/app`、仓库冻结设计与 diff 检查通过。
+- `go test ./cmd/... ./internal/...` 完整运行结束，UI 通过（509.199 s），app 通过（24.358 s）。全量退出码为 1：`TestPrivateLifecycleSignedChildDrainsBeforeOrWithoutBusinessSocket/missing-business-socket`、`TestStopReleasesMaintenanceSlotBeforeLateReply`、`TestLateWorkReplyCannotConfirmRetiredInput/true` 失败（`tests.log`），均未在本次会话入口修改中调整。私有生命周期单独复检通过（8.968 s，`lifecycle-recheck.log`），不据此抹去全量失败。
+- 上述另外两个 worker 失败项单独复检通过（6.399 s，`worker-recheck.log`）。保留第一次完整运行的三个失败项，不将重试通过写成完整套件通过。
+- 全仓 `go test ./...` 还会遍历忽略的本地 `build/` 实验源码。其编译检查仍被 `build/composer-enter/baseline` 的内部包导入、`build/interaction-latency/baseline` 的缺失类型及 `build/worker-recovery-20261116` 的重复声明阻断（`repository-compile.log`）。首次全仓运行还读到了本轮 overlay 原源码的 `.go` 副本；这些副本已改为 `.go.txt`，复检不再包含这个临时包，未修改既有实验档案。
+
 ## 已确认的外观与时序
 
 - 使用 [Math Curve Loaders 的 Rose Curve](https://paidax01.github.io/math-curve-loaders/) 五瓣曲线。图形槽位为 168 DIP，轨迹周期为 6.4 秒；保留参考的 78 粒子渐隐尾迹，旋转与轻微胀缩按相同比例放慢。

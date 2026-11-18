@@ -86,11 +86,13 @@ func TestPagedHistoryLoadsOlderAndOutlineWithoutFullHydration(t *testing.T) {
 func TestPagedHistoryDoesNotDrainHiddenPagesWithoutAScrollGesture(t *testing.T) {
 	v := New(layoutModel(), app.NewController(""), "")
 	v.Model.WorkerMinor = 37
+	ui := n.NewTester(v.View, 1440, 900)
+	ui.Frame()
 	d := v.Model.Details["s"]
 	d.History = &domain.HistoryWindow{First: 100, Last: 100, Older: true, Newer: true}
 	d.Items = []domain.Item{{ID: "middle", Kind: "assistant", Text: "middle window", Order: 100, Final: true}}
 	v.Model.Details["s"] = d
-	ui := n.NewTester(v.View, 1440, 900)
+	ui.Frame()
 	ui.Advance(time.Second)
 	for len(v.Controller.Jobs) > 0 {
 		j := <-v.Controller.Jobs
@@ -399,6 +401,8 @@ func TestPagedHistoryPrefetchesBeforeReachingTheEdge(t *testing.T) {
 		t.Run(fmt.Sprint("newer=", newer), func(t *testing.T) {
 			v := New(layoutModel(), app.NewController(""), "")
 			v.Model.WorkerMinor = 37
+			ui := n.NewTester(v.View, 1440, 900)
+			ui.Frame()
 			d := v.Model.Details["s"]
 			d.History = &domain.HistoryWindow{First: 100, Last: 139, Older: true, Newer: true}
 			d.Items = nil
@@ -406,7 +410,6 @@ func TestPagedHistoryPrefetchesBeforeReachingTheEdge(t *testing.T) {
 				d.Items = append(d.Items, domain.Item{ID: fmt.Sprint(i), Order: int64(i), Kind: "user", Text: fmt.Sprint("Question ", i), Final: true})
 			}
 			v.Model.Details["s"] = d
-			ui := n.NewTester(v.View, 1440, 900)
 			ui.Advance(time.Second)
 			for _, label := range []string{"加载更早消息", "加载后续消息", "正在加载历史…"} {
 				if ui.HasText(label) {
@@ -448,6 +451,8 @@ func TestPagedHistoryPrefetchesBeforeReachingTheEdge(t *testing.T) {
 func TestAppendingNewerHistoryDoesNotFollowThePageEnd(t *testing.T) {
 	v := New(layoutModel(), app.NewController(""), "")
 	v.Model.WorkerMinor = 37
+	ui := n.NewTester(v.View, 1440, 900)
+	ui.Frame()
 	d := v.Model.Details["s"]
 	d.History = &domain.HistoryWindow{First: 100, Last: 119, Older: true, Newer: true}
 	d.Items = nil
@@ -455,7 +460,7 @@ func TestAppendingNewerHistoryDoesNotFollowThePageEnd(t *testing.T) {
 		d.Items = append(d.Items, domain.Item{ID: fmt.Sprint(i), Order: int64(i), Kind: "user", Text: fmt.Sprint("Question ", i), Final: true})
 	}
 	v.Model.Details["s"] = d
-	ui := n.NewTester(v.View, 1440, 900)
+	ui.Frame()
 	ui.Advance(time.Second)
 	v.lists["s"].ScrollToEnd()
 	ui.Frame()

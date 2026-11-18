@@ -89,7 +89,7 @@ func layoutModel() *app.Model {
 	m.Readiness = domain.Readiness{State: "ready", Permissions: []string{"read-only"}, Models: []domain.Model{{ID: "gpt-5.4", Default: true}}}
 	s := domain.Session{ID: "s", WorkspaceID: "w", Title: "Layout", Status: "completed"}
 	m.Snapshot = domain.Snapshot{Workspaces: []domain.Workspace{{ID: "w", Name: "Example"}}, Sessions: []domain.Session{s}}
-	m.Details["s"] = domain.SessionDetail{Session: s, Items: []domain.Item{{ID: "i", Kind: "assistant", Text: "Aligned reply"}}}
+	m.Details["s"] = domain.SessionDetail{Session: s, HistoryLoaded: true, Items: []domain.Item{{ID: "i", Kind: "assistant", Text: "Aligned reply"}}}
 	return m
 }
 func TestConversationSharesCenteredReadingColumn(t *testing.T) {

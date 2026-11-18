@@ -253,6 +253,11 @@ func (v *View) seedHistoryFork(op domain.HistoryOperation) {
 	if source.Session.ID != op.Source.ID || source.Session.ThreadID != op.Source.ThreadID || source.Session.Revision != op.Source.Revision {
 		return
 	}
+	// The receipt proves the source revision, but a paged window can omit
+	// items from retained turns on either side of the window.
+	if !source.HasLoadedHistory() || source.HasMore || source.History != nil && (source.History.Older || source.History.Newer) {
+		return
+	}
 	detail := domain.SessionDetail{Session: op.Session, Queue: domain.QueueState{SessionID: op.Session.ID}, HasMore: source.HasMore}
 	for _, current := range m.Snapshot.Sessions {
 		if current.ID == op.Session.ID && current.Revision > op.Session.Revision {
@@ -274,6 +279,8 @@ func (v *View) seedHistoryFork(op domain.HistoryOperation) {
 			detail.Items = append(detail.Items, item)
 		}
 	}
+	// A worker-confirmed fork can display its verified prefix immediately.
+	detail.HistoryLoaded = len(detail.Items) > 0
 	for _, request := range source.Requests {
 		if kept[request.TurnID] && !request.State.AwaitingResolution() {
 			request.SessionID = op.Session.ID

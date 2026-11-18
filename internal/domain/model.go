@@ -286,7 +286,10 @@ type Snapshot struct {
 	Operations      []Operation      `json:"operations"`
 }
 type SessionDetail struct {
-	History        *HistoryWindow   `json:"history,omitempty"`
+	History *HistoryWindow `json:"history,omitempty"`
+	// HistoryLoaded records a client-side baseline even while its window is
+	// being refreshed, or when a legacy worker returned history without a window.
+	HistoryLoaded  bool             `json:"-"`
 	WorksTruncated bool             `json:"worksTruncated,omitempty"`
 	Works          []WorkActivity   `json:"works,omitempty"`
 	Plan           *Plan            `json:"plan,omitempty"`
@@ -298,6 +301,11 @@ type SessionDetail struct {
 	HasMore        bool             `json:"hasMore"`
 	Sequence       int64            `json:"sequence"`
 }
+
+func (d SessionDetail) HasLoadedHistory() bool {
+	return d.HistoryLoaded || d.History != nil && !d.History.Invalidated
+}
+
 type Model struct {
 	ID            string   `json:"id"`
 	Name          string   `json:"name"`

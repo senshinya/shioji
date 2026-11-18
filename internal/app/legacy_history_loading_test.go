@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ func TestLegacyHistoryPublishesReadLifecycle(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			started, release := make(chan struct{}, 1), make(chan struct{})
+			rewritten := make(chan struct{})
 			c := NewController("")
 			c.Dial = func(lifetime context.Context) (net.Conn, error) {
 				client, server := net.Pipe()
@@ -40,15 +42,33 @@ func TestLegacyHistoryPublishesReadLifecycle(t *testing.T) {
 							return
 						}
 						session := domain.Session{ID: "s", WorkspaceID: "w", ThreadID: "source", Revision: 1}
+						replacement := session
+						replacement.ThreadID, replacement.Revision = "replacement", 2
 						switch f.Method {
 						case "snapshot":
 							result(codec, f, domain.Snapshot{DeviceID: "legacy-device", Generation: "g", Sessions: []domain.Session{session}})
 						case "readiness":
 							result(codec, f, domain.Readiness{State: domain.RuntimeReady})
 						case "events.watch":
-							<-lifetime.Done()
-							return
+							var query protocol.EventsQuery
+							if json.Unmarshal(f.Body, &query) != nil || query.After != 0 {
+								<-lifetime.Done()
+								return
+							}
+							select {
+							case <-rewritten:
+								keep := int64(0)
+								result(codec, f, protocol.EventPage{Generation: "g", Events: []domain.Event{{Sequence: 1, Type: "history.reset", SessionID: session.ID, Session: &replacement, HistoryTurnOrder: &keep}}})
+							case <-lifetime.Done():
+								return
+							}
 						case "session":
+							select {
+							case <-rewritten:
+								result(codec, f, domain.SessionDetail{Session: replacement, Sequence: 1, Items: []domain.Item{{ID: "replacement", Kind: "user", Order: 1}}})
+								continue
+							default:
+							}
 							started <- struct{}{}
 							select {
 							case <-release:
@@ -99,6 +119,14 @@ func TestLegacyHistoryPublishesReadLifecycle(t *testing.T) {
 				})
 			} else {
 				pump(func() bool { return m.Details["s"].Session.ID == "s" && m.HistoryReads["s"] == nil })
+				if !m.Details["s"].HasLoadedHistory() {
+					t.Fatal("a successful empty legacy read did not establish a display baseline")
+				}
+				close(rewritten)
+				pump(func() bool {
+					d := m.Details["s"]
+					return d.Session.ThreadID == "replacement" && d.HasLoadedHistory() && len(d.Items) == 1 && d.Items[0].ID == "replacement"
+				})
 			}
 		})
 	}
