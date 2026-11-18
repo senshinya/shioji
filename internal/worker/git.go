@@ -105,9 +105,20 @@ func queryGit(ctx context.Context, cwd string) (domain.GitStatus, error) {
 	if err != nil {
 		return out, err
 	}
-	branch, _ := gitRun(ctx, cwd, "branch", "--show-current")
+	branch, err := gitRun(ctx, cwd, "branch", "--show-current")
+	if err != nil {
+		return out, err
+	}
 	out.Branch = strings.TrimSpace(branch)
-	head, _ := gitRun(ctx, cwd, "rev-parse", "--verify", "HEAD")
+	head, err := gitRun(ctx, cwd, "rev-parse", "--verify", "--quiet", "HEAD")
+	if err != nil {
+		// A branch with no first commit has a name but no resolvable HEAD.
+		// A detached checkout must have a readable HEAD.
+		var exit *exec.ExitError
+		if out.Branch == "" || !errors.As(err, &exit) || exit.ExitCode() != 1 {
+			return out, err
+		}
+	}
 	out.Head = strings.TrimSpace(head)
 	names, err := gitRun(ctx, cwd, "for-each-ref", "--count=2000", "--format=%(refname:lstrip=2)", "refs/heads/")
 	if err != nil {

@@ -171,6 +171,86 @@ func TestGitMonitorMarksExternalChangesWithoutSubmitting(t *testing.T) {
 	}
 }
 
+func TestGitMonitorDoesNotTreatFailedReadAsCheckoutChange(t *testing.T) {
+	for _, tc := range []struct {
+		name, probe, branch string
+	}{
+		{name: "branch read on main", probe: "--show-current", branch: "main"},
+		{name: "HEAD read while detached", probe: "--verify"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, w, dir := gitTestServer(t)
+			head := gitTestRun(t, dir, "rev-parse", "HEAD")
+			if tc.branch == "" {
+				gitTestRun(t, dir, "switch", "--detach")
+			}
+			var ids []string
+			for range 2 {
+				id := gitTestSession(t, s, w, tc.branch, "completed")
+				d, err := s.store.Session(id, 0, 1)
+				if err != nil {
+					t.Fatal(err)
+				}
+				d.Session.GitHead = head
+				if _, err = s.store.Apply(id, domain.Event{Type: "session.git", Session: &d.Session}); err != nil {
+					t.Fatal(err)
+				}
+				ids = append(ids, id)
+			}
+
+			realGit, err := exec.LookPath("git")
+			if err != nil {
+				t.Fatal(err)
+			}
+			bin := t.TempDir()
+			if err := os.WriteFile(filepath.Join(bin, "git"), []byte(`#!/bin/sh
+for arg in "$@"; do
+    if [ "$arg" = "$TEST_GIT_FAILED_PROBE" ]; then
+        echo "temporary Git read failure" >&2
+        exit 128
+    fi
+done
+exec "$TEST_GIT_REAL" "$@"
+`), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("TEST_GIT_FAILED_PROBE", tc.probe)
+			t.Setenv("TEST_GIT_REAL", realGit)
+			t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+
+			if err := s.checkGitContexts(); err != nil {
+				t.Fatal(err)
+			}
+			for _, id := range ids {
+				d, err := s.store.Session(id, 0, 1)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if d.Session.ContextChanged {
+					t.Error("failed Git read was recorded as a checkout change for session", id)
+				}
+			}
+			if _, err := gitTestCall(s, "git.status", map[string]string{"workspaceId": w.ID}); err == nil {
+				t.Fatal("Git status reported success with an unreadable checkout")
+			}
+			t.Setenv("TEST_GIT_FAILED_PROBE", "")
+			out, err := gitTestCall(s, "git.status", map[string]string{"workspaceId": w.ID})
+			if err != nil || out["head"] != head || (tc.branch == "" && out["branch"] != nil) || (tc.branch != "" && out["branch"] != tc.branch) {
+				t.Fatalf("Git status did not recover: %v %v", out, err)
+			}
+		})
+	}
+}
+
+func TestGitStatusBeforeFirstCommit(t *testing.T) {
+	dir := t.TempDir()
+	gitTestRun(t, dir, "init", "-b", "main")
+	status, err := queryGit(context.Background(), dir)
+	if err != nil || !status.Applicable || status.Branch != "main" || status.Head != "" {
+		t.Fatalf("unborn checkout status: %+v %v", status, err)
+	}
+}
+
 func TestFileReviewRejectsFIFOBeforeItCanBlockDispatch(t *testing.T) {
 	s, w, dir := gitTestServer(t)
 	path := filepath.Join(dir, "pipe")
