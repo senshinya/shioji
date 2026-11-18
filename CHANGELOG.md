@@ -5,6 +5,25 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-18
+
+[源码](https://github.com/senshinya/shioji/tree/v0.6.0) · [与 v0.5.0 比较](https://github.com/senshinya/shioji/compare/v0.5.0...v0.6.0)
+
+### Added
+
+- 侧栏新增「定时任务」。可在所属设备上设定单次、每日、每周或固定间隔运行，也可立即运行并查看记录。定时任务需要所属设备的 worker 协议 2.50，执行服务数据格式升级到 schema 16。
+
+### Changed
+
+- 从侧栏会话菜单进入独立 Hooks 页面，按该会话实际使用的目录查看。窄窗口优先显示搜索和事件名，详情保留完整命令和来源。批量审核时，「信任所选」更易辨认，勾选与取消时底部按钮位置固定。
+- 升级原生界面运行库，改善原位文本编辑菜单、附着浮层定位，以及只读差异中含不同换行格式的文本选区。
+
+### Fixed
+
+- 停止回复时立即反馈操作，避免等待执行服务回执期间界面闪回运行状态。
+- 修复归档清理与手动删除并发时，已删除的记录仍可能报错的问题。窄窗口下归档列表与返回会话的入口更容易触达。
+- 修复调整窗口大小时输入框文字偏移，校正侧栏图标和目录选择控件的对齐。
+
 ## [0.5.0] - 2026-11-18
 
 [源码](https://github.com/senshinya/shioji/tree/v0.5.0) · [与 v0.4.0 比较](https://github.com/senshinya/shioji/compare/v0.4.0...v0.5.0)
@@ -250,7 +269,7 @@
 - 新增独立执行 worker 和 Tailnet 网络服务；退出 App 不停止设备端执行或网络连接，运行中状态不明时保留人工核对入口。
 - 提供 Developer ID 签名、经 Apple 公证并附带公证票据的 DMG，以及 SHA-256 校验文件。
 
-[Unreleased]: https://github.com/senshinya/shioji/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/senshinya/shioji/compare/v0.6.0...HEAD
 [0.3.2]: https://github.com/senshinya/shioji/compare/v0.3.0...v0.3.2
 [0.3.0]: https://github.com/senshinya/shioji/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/senshinya/shioji/compare/v0.1.2...v0.2.0
