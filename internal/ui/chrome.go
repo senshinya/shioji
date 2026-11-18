@@ -39,9 +39,18 @@ var branchIcon = designIcon("M6 3v12a4 4 0 0 0 8 0V8M6 5a2 2 0 1 0 0 .01M14 5a2 
 func WindowTrafficLightPosition() *mygo.Point { return &mygo.Point{X: 22, Y: 21} }
 
 const (
-	sidebarHeaderTopInset = 6
-	sidebarTitlebarHeight = 28
-	sidebarHeaderGap      = 4
+	mainToolbarHeight      = 48
+	mainToolbarCenter      = 29 // Center of the visible macOS window controls.
+	mainToolbarTopInset    = 2*mainToolbarCenter - mainToolbarHeight
+	sidebarHeaderTopInset  = 6
+	sidebarTitlebarHeight  = 28
+	sidebarHeaderGap       = 4
+	sidebarLeadingInset    = 8
+	sidebarTrailingInset   = 16
+	sidebarIconColumnWidth = 20
+	sidebarIconLabelGap    = 3
+	sidebarHeadingInset    = 6
+	sidebarMetadataInset   = 6
 )
 
 func navButton(c *n.Context, icon *n.SVG, label string) n.Element {
@@ -56,10 +65,11 @@ func navButton(c *n.Context, icon *n.SVG, label string) n.Element {
 }
 
 func navButtonWithColors(c *n.Context, icon *n.SVG, label string, size float32, textColor, iconColor n.Color, trailing func()) n.Element {
-	return control(c, 8).FillWidth().Height(28).PaddingX(8).Justify(n.Start).Radius(8).Label(label).Children(func() {
-		inlineIconText(c, icon, label, n.Font{Family: c.Theme().Font, Size: size, Weight: 400}, 16, 8, textColor).DrawObjects(func(p *n.Painter, _ int, r n.Rect) {
-			r.W = 16
-			p.Icon(icon, r, iconColor)
+	return control(c, 8).FillWidth().Height(28).PaddingEnd(sidebarMetadataInset).Justify(n.Start).Radius(8).Label(label).Children(func() {
+		n.Row(c).Gap(sidebarIconLabelGap).AlignItems(n.Baseline).Children(func() {
+			font := n.Font{Family: c.Theme().Font, Size: size, Weight: 400}
+			inlineSymbol(c, icon, label, font, 16, iconColor).Width(sidebarIconColumnWidth).TextAlign(n.Center)
+			n.Text(c, label).FontSize(size).FixedLineHeight(20).SingleLine().TextColor(textColor)
 		})
 		if trailing != nil {
 			n.Spacer(c).Grow(1)

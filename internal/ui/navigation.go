@@ -286,7 +286,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 	n.Column(c).Width(sidebarWidth).FillHeight().Padding(8, 0, 8, 8).Children(func() {
 		card := n.Column(c).Fill().Radius(14).Clip().Background(color).Border(1, t.Border)
 		card.Children(func() {
-			n.Column(c.Key("nav-top")).FillWidth().Padding(sidebarHeaderTopInset, 8, 0, 8).Gap(sidebarHeaderGap).Children(func() {
+			n.Column(c.Key("nav-top")).FillWidth().Padding(sidebarHeaderTopInset, sidebarTrailingInset, 0, sidebarLeadingInset).Gap(sidebarHeaderGap).Children(func() {
 				n.Row(c).Height(sidebarTitlebarHeight).AlignItems(n.Start).DragWindow().Children(func() { n.Spacer(c).Grow(1); v.searchControl(c, t) })
 				if navButton(c, plus, "新建会话").Background(func() n.Color {
 					if m.SessionID == "" && !v.devices && !v.schedulePageOpen() && (v.archive == nil || !v.archive.open) {
@@ -332,8 +332,8 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 					v.navigationGeometry.bounds[r.key()] = bounds
 				}
 				box.Children(func() { v.navigationRow(c, t, r) })
-			}).Grow(1).FillHeight().Margin(0, 0, 12, 8).
-				Padding(0, 16, 0, 0).ScrollbarInsets(4, 1, 4, 0).
+			}).Grow(1).FillHeight().Margin(0, 0, 12, sidebarLeadingInset).
+				Padding(0, sidebarTrailingInset, 0, 0).ScrollbarInsets(4, 1, 4, 0).
 				Label("工作区与会话").TrackScroll(&v.navigationScroll)
 			v.navigationListGestures(c, list, rows)
 			v.quickFooter(c, t)
@@ -361,16 +361,16 @@ func (v *View) navigationRow(c *n.Context, t *n.Theme, r navigationRow) {
 	shift := n.Translation(0, v.navigationOffset(c, r.key()))
 	switch r.kind {
 	case navigationPinnedHeading:
-		n.Row(c).Height(28).Padding(8, 8, 0, 8).Opacity(r.presence).Children(func() { n.Text(c, "置顶").FontSize(11).FixedLineHeight(16).TextColor(t.TextMuted) })
+		n.Row(c).Height(28).Padding(8, 8, 0, sidebarHeadingInset).Opacity(r.presence).Children(func() { n.Text(c, "置顶").FontSize(11).FixedLineHeight(16).TextColor(t.TextMuted) })
 	case navigationWorkspaceHeading:
-		n.Row(c).Height(32).Padding(8, 0, 0, 6).AlignItems(n.Center).Transform(shift).Children(func() {
+		n.Row(c).Height(32).Padding(8, 0, 0, sidebarHeadingInset).AlignItems(n.Center).Transform(shift).Children(func() {
 			n.Text(c, "工作区").FontSize(11).FixedLineHeight(16).TextColor(t.TextMuted).Grow(1)
 			iconButton(c, moreActionsIcon, "工作区菜单").Menu(func(menu *n.Menu) {
 				if menu.Item("已归档…").Chosen() {
 					v.openArchive()
 				}
 			})
-			v.workspaceCreationMenu(c, t, iconButton(c, plus, "创建工作区").Size(28, 28).MarginEnd(-2))
+			v.workspaceCreationMenu(c, t, iconButton(c, plus, "创建工作区"))
 		})
 	case navigationWorkspace:
 		w := r.workspace
@@ -382,16 +382,16 @@ func (v *View) navigationRow(c *n.Context, t *n.Theme, r navigationRow) {
 		group := n.Row(c).Height(30).Gap(3).AlignItems(n.Center).Opacity(r.presence).Transform(shift)
 		v.navigationDragSource(c, group, r)
 		group.Children(func() {
-			if control(c.Key("workspace:" + w.ID)).Height(24).Grow(1).Gap(3).Justify(n.Start).Label(w.Name).Description(description).Expanded(expanded).Children(func() {
-				n.Row(c).Grow(1).Gap(3).AlignItems(n.Baseline).Children(func() {
+			if control(c.Key("workspace:" + w.ID)).Height(24).Grow(1).Gap(3).PaddingEnd(sidebarMetadataInset).Justify(n.Start).Label(w.Name).Description(description).Expanded(expanded).Children(func() {
+				n.Row(c).Grow(1).Gap(sidebarIconLabelGap).AlignItems(n.Baseline).Children(func() {
 					angle := float32(0)
 					if v.collapsedWorkspaces[w.ID] {
 						angle = -90
 					}
-					inlineSymbol(c, disclosureDown, w.Name, n.Font{Family: t.Font, Size: 12, Weight: 500}, 11, t.TextMuted, angle).Width(20).TextAlign(n.Center)
+					inlineSymbol(c, disclosureDown, w.Name, n.Font{Family: t.Font, Size: 12, Weight: 500}, 11, t.TextMuted, angle).Width(sidebarIconColumnWidth).TextAlign(n.Center)
 					n.Text(c, w.Name).SingleLine().Grow(1).FontSize(12).FontWeight(500).FixedLineHeight(20).TooltipWhenTruncated(w.Name)
 				})
-				n.Text(c, m.DeviceName(w.DeviceID)).FontSize(11).TextColor(t.TextMuted).PaddingX(6)
+				n.Text(c, m.DeviceName(w.DeviceID)).FontSize(11).TextColor(t.TextMuted).PaddingStart(sidebarMetadataInset)
 				if r.pending > 0 {
 					n.Text(c, fmt.Sprint(r.pending)).Font("Menlo").FontSize(11).Width(16).Shrink(0).TextAlign(n.End).
 						TextColor(t.Warning).Label("工作区待处理：" + w.ID)
@@ -414,7 +414,11 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 	}
 	pending := v.pendingCount(s.ID)
 	description := sessionNavigationDescription(s, pending, selected, finishing)
-	row := control(c, 8).FillWidth().Height(28).MarginY(1).Padding(4, 0, 4, 20).Radius(8).Label(s.Title).Description(description)
+	leftInset, gap := float32(20), float32(6)
+	if r.pinned {
+		leftInset, gap = 0, sidebarIconLabelGap
+	}
+	row := control(c, 8).FillWidth().Height(28).MarginY(1).Padding(4, 0, 4, leftInset).Radius(8).Label(s.Title).Description(description)
 	shift := v.navigationOffset(c, r.key())
 	row.Transform(n.Translation(0, shift))
 	if p := min(r.presence, v.sessionEntryProgress(c, s.ID, false)); p < 1 {
@@ -426,21 +430,24 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 	moving := v.navigationDragSource(c, row, r)
 	row.ContextMenu(func(menu *n.Menu) { v.sessionMenu(menu, s, r.ref) })
 	row.Children(func() {
-		n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
+		n.Row(c).FillWidth().Gap(gap).AlignItems(n.Baseline).Children(func() {
+			const markerSize, dotSize = 10, 4
+			font := n.Font{Family: t.Font, Size: 13}
+			var marker n.Element
 			if s.ReadOnlyHistory() {
-				inlineSymbol(c, modelEye, s.Title, n.Font{Family: t.Font, Size: 13}, 10, t.TextMuted).Label("只读会话：" + s.ID).Tooltip("只读会话")
+				marker = inlineSymbol(c, modelEye, s.Title, font, markerSize, t.TextMuted).Label("只读会话：" + s.ID).Tooltip("只读会话")
 			} else if pending > 0 {
-				statusDotSize(c, s.Title, n.Font{Family: t.Font, Size: 13}, t.Warning, 4, false).Width(10).TextAlign(n.Center).Label("会话等待状态：" + s.ID)
+				marker = statusDotSize(c, s.Title, font, t.Warning, dotSize, false).Width(markerSize).TextAlign(n.Center).Label("会话等待状态：" + s.ID)
 			} else if s.Status.Active() || finishing {
-				statusDotSize(c, s.Title, n.Font{Family: t.Font, Size: 13}, t.Success, 4, true).Width(10).TextAlign(n.Center).Label("会话运行状态：" + s.ID)
+				marker = statusDotSize(c, s.Title, font, t.Success, dotSize, true).Width(markerSize).TextAlign(n.Center).Label("会话运行状态：" + s.ID)
 			} else if s.Status == "completed" {
 				color := t.TextMuted
 				if m.HasCompletedReply(s.ID) {
 					color = t.Success
 				}
-				inlineSymbol(c, check, s.Title, n.Font{Family: t.Font, Size: 13}, 10, color)
+				marker = inlineSymbol(c, check, s.Title, font, markerSize, color)
 			} else if s.Status == "interrupted" || s.Status == "abandoned" {
-				inlineSymbol(c, check, s.Title, n.Font{Family: t.Font, Size: 13}, 10, t.TextMuted).Label("已停止")
+				marker = inlineSymbol(c, check, s.Title, font, markerSize, t.TextMuted).Label("已停止")
 			} else {
 				glyph, label := "Ⅱ", "已暂停"
 				if s.Status == "failed" {
@@ -449,7 +456,10 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 				if s.Status == "unknown" {
 					glyph, label = "?", "执行状态待核实"
 				}
-				n.Text(c, glyph).Width(10).FontSize(11).TextColor(t.TextMuted).Label(label)
+				marker = n.Text(c, glyph).Width(markerSize).FontSize(11).TextColor(t.TextMuted).Label(label)
+			}
+			if r.pinned {
+				marker.Width(sidebarIconColumnWidth).TextAlign(n.Center)
 			}
 			color := t.TextMuted
 			if selected {

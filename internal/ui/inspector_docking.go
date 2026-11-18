@@ -22,7 +22,7 @@ func (v *View) restoreInspectorTabFocus(button n.Element, kind string) {
 	}
 }
 
-func (v *View) inspectorTabs(c *n.Context, t *n.Theme, kinds []string, kind string, headerHeight float32, drop **app.InspectorLayout) {
+func (v *View) inspectorTabs(c *n.Context, t *n.Theme, kinds []string, kind string, centerY float32, drop **app.InspectorLayout) {
 	selected := 0
 	for i, k := range kinds {
 		if k == kind {
@@ -30,7 +30,7 @@ func (v *View) inspectorTabs(c *n.Context, t *n.Theme, kinds []string, kind stri
 		}
 	}
 	tabs := n.TabsBase(c.Key("inspector-tabs"), &selected, len(kinds))
-	top := (headerHeight - 28) / 2
+	top := centerY - 28/2
 	tabs.List.Absolute().Left(12).Top(top).Width(float32(len(kinds)*30 + 28)).Height(28).Gap(2).Children(func() {
 		for i, k := range kinds {
 			label, icon := "文件更改", changesIcon

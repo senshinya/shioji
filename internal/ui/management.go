@@ -316,21 +316,28 @@ func (v *View) workspaceSettingsView(c *n.Context, t *n.Theme) {
 	if e == nil {
 		return
 	}
-	n.Column(c).FillWidth().FillHeight().Grow(1).Padding(0, 32, 20).Children(func() {
+	n.Column(c).FillWidth().FillHeight().Grow(1).Padding(0, configurationInset, 20).Children(func() {
 		n.Column(c).FillWidth().FillHeight().Grow(1).Children(func() {
 			tabs := []configurationTabItem{{ID: "", Label: "常规"}, {ID: "Skills", Label: "Skills"}, {ID: "MCP", Label: "MCP"}, {ID: "Hooks", Label: "Hooks"}}
 			e.Tab = configurationTabs(c.Key("workspace-tabs"), e.Tab, tabs, configurationUnderline, e.Busy)
-			n.Column(c).FillWidth().FillHeight().Grow(1).Padding(12, 0, 0).Children(func() {
-				configurationTabPanel(c.Key("workspace-tab-panel"), e.Tab, configurationTabIndex(tabs, e.Tab), configurationPanelFill, func() {
-					if e.Tab == "Skills" {
-						v.workspaceSkills(c, t, e)
-					} else if e.Tab == "Hooks" {
-						v.workspaceHooks(c, t, e)
-					} else if e.Tab == "MCP" {
-						v.workspaceToolsView(c, t, e)
-					} else {
+			index := configurationTabIndex(tabs, e.Tab)
+			n.Column(c).AlignSelf(n.Stretch).MarginEnd(-workspaceDirectoryScrollInset).
+				FillHeight().Grow(1).Padding(12, 0, 0).Children(func() {
+				configurationTabPanel(c.Key("workspace-tab-panel"), e.Tab, index, configurationPanelFill, func() {
+					if index == 0 {
 						v.workspaceSettingsForm(c, t)
+						return
 					}
+					n.Column(c).Fill().Padding(0, workspaceDirectoryScrollInset, 0, 0).Children(func() {
+						switch e.Tab {
+						case "Skills":
+							v.workspaceSkills(c, t, e)
+						case "Hooks":
+							v.workspaceHooks(c, t, e)
+						case "MCP":
+							v.workspaceToolsView(c, t, e)
+						}
+					})
 				}, false)
 			})
 		})
@@ -345,8 +352,8 @@ func (v *View) workspaceSettingsForm(c *n.Context, t *n.Theme) {
 	rowMotion := disclosureMotion(c, 180*time.Millisecond)
 	rowMotion.Position = true
 	positionMotion := n.ElementTransition{Position: true, Duration: motionAnimation(c, 180*time.Millisecond).Duration, Ease: n.EaseOut}
-	n.Scroll(c.Key("workspace-settings:" + e.Workspace.ID)).FillWidth().FillHeight().Grow(1).TrackScroll(&e.GeneralScroll).Children(func() {
-		n.Column(c).FillWidth().Padding(8, 0).AlignItems(n.Start).Children(func() {
+	n.Scroll(c.Key("workspace-settings:" + e.Workspace.ID)).Fill().Grow(1).TrackScroll(&e.GeneralScroll).Children(func() {
+		n.Column(c).FillWidth().Padding(8, workspaceDirectoryScrollInset, 8, 0).AlignItems(n.Start).Children(func() {
 			n.Column(c).FillWidth().Gap(20).Children(func() {
 				n.Column(c).FillWidth().Gap(6).Children(func() {
 					n.Text(c, "名称").FontSize(12).TextColor(t.TextMuted)
@@ -363,7 +370,8 @@ func (v *View) workspaceSettingsForm(c *n.Context, t *n.Theme) {
 									n.Text(c.Key("main-folder"), "主目录").FontSize(11).TextColor(t.TextMuted).Transition(fadeMotion(c, 160*time.Millisecond))
 								}
 							})
-							if iconButton(c, closeIcon, "移除目录："+folder).Disabled(e.Busy || len(e.Workspace.Folders) == 1).Clicked() {
+							if iconButton(c, closeIcon, "移除目录："+folder).MarginEnd(-workspaceDirectoryActionOutset).
+								Disabled(e.Busy || len(e.Workspace.Folders) == 1).Clicked() {
 								folders := []string{}
 								for _, p := range e.Workspace.Folders {
 									if p != folder {
@@ -378,7 +386,8 @@ func (v *View) workspaceSettingsForm(c *n.Context, t *n.Theme) {
 						})
 					}
 					n.Row(c.Key("add-directory")).FillWidth().Justify(n.End).Transition(positionMotion).Children(func() {
-						if iconButton(c, plus, "添加目录").Tooltip("添加文件夹").Disabled(e.Busy).Clicked() {
+						if iconButton(c, plus, "添加目录").MarginEnd(-workspaceDirectoryActionOutset).
+							Tooltip("添加文件夹").Disabled(e.Busy).Clicked() {
 							v.chooseWorkspaceDirectory(e.Connection, "选择附加目录", e.Main, true, func() bool { return v.workspaceEditor == e && !e.Busy }, func(paths []string) { v.addWorkspaceFolders(e, paths) }, func(err error) { e.Error = err.Error() })
 						}
 					})

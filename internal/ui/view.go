@@ -624,7 +624,7 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		// Controls stop before the native scrollbar's independent gutter.
 		rightInset = 18 - conversationScrollbarGutter
 	}
-	n.Row(c).Height(48).FillWidth().Padding(0, rightInset, 0, 24).Gap(6).AlignItems(n.Center).DragWindow().Label("会话工具栏").Children(func() {
+	n.Row(c).Height(mainToolbarHeight).FillWidth().Padding(mainToolbarTopInset, rightInset, 0, 24).Gap(6).AlignItems(n.Center).DragWindow().Label("会话工具栏").Children(func() {
 		if schedules := v.splitRoot().schedules; schedules != nil && schedules.session != "" && schedules.session == m.SessionID {
 			if iconButton(c, conversationBackIcon, "返回定时任务").Clicked() {
 				v.splitRoot().openSchedulePage()
@@ -1495,7 +1495,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		v.conversationOutline(c, t, state, rows)
 	}
 	v.prefetchHistory(c, state, rows)
-	n.Column(c).Absolute().Left(0).Right(0).Top(0).Height(48).Padding(0, conversationScrollbarGutter, 0, 0).Label("会话顶栏").Draw(func(p *n.Painter, r n.Rect) {
+	n.Column(c).Absolute().Left(0).Right(0).Top(0).Height(mainToolbarHeight).Padding(0, conversationScrollbarGutter, 0, 0).Label("会话顶栏").Draw(func(p *n.Painter, r n.Rect) {
 		// History is clipped to its reading column, so the gutter contains
 		// only the pane background and native thumb, never overflowing text.
 		p.Fill(n.Rect{X: r.X, Y: r.Y, W: max(0, r.W-conversationScrollbarGutter), H: r.H}, t.Background, 0)

@@ -125,18 +125,37 @@ func TestWideWorkspaceSettingsUsesAvailableWidth(t *testing.T) {
 				ui.Advance(time.Second)
 				field, ok := ui.Find("工作区名称")
 				title, _ := ui.Find("shioji")
+				back, backOK := ui.Find("返回会话")
 				cancel, _ := ui.Find("取消工作区编辑")
 				add, _ := ui.Find("添加目录")
+				frame := ui.Image()
+				background := frame.RGBAAt(int(field.X-6), int(title.Y+title.H/2))
+				headerRight := sidebarInkBounds(t, frame, n.Rect{X: field.X + field.W - 180, Y: title.Y, W: 180, H: title.H}, 1, background).Max.X
 				if !ok || math.Abs(float64(float32(width)-configurationInset-field.X-field.W)) > 1 || math.Abs(float64(title.X-field.X)) > 1 || math.Abs(float64(cancel.X-field.X)) > 1 {
 					t.Fatal("workspace settings lost its full width or original shared left edge", title, field, cancel)
+				}
+				if !backOK || math.Abs(float64(back.X-field.X)) > 1 {
+					t.Errorf("workspace back label does not share the form's left edge: back=%+v form=%+v", back, field)
 				}
 				for _, path := range v.workspaceEditor.Workspace.Folders {
 					remove, _ := ui.Find("移除目录：" + path)
 					if math.Abs(float64(remove.X+remove.W/2-add.X-add.W/2)) > 1 {
 						t.Error("directory icon buttons do not share one visual center column", remove, add)
 					}
+					if x := sidebarInkBounds(t, frame, remove, 1, background).Max.X; math.Abs(float64(x-headerRight)) > 1 {
+						t.Errorf("remove directory ink ends at %d, want header's trailing edge %d", x, headerRight)
+					}
+				}
+				if x := sidebarInkBounds(t, frame, add, 1, background).Max.X; math.Abs(float64(x-headerRight)) > 1 {
+					t.Errorf("add directory ink ends at %d, want header's trailing edge %d", x, headerRight)
 				}
 				saveNativeSkillImage(t, ui, fmt.Sprintf("workspace-fullwidth-%d-dark-%v.png", width, dark))
+				last := "移除目录：" + v.workspaceEditor.Workspace.Folders[1]
+				remove, _ := ui.Find(last)
+				ui.ClickAt(remove.X+remove.W-2, remove.Y+remove.H/2)
+				if len(v.workspaceEditor.Workspace.Folders) != 1 {
+					t.Error("the workspace tab clips the directory button's trailing hit area", remove)
+				}
 			})
 		}
 	}

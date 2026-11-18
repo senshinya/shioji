@@ -45,6 +45,15 @@ var directoryHomeIcon = svg("M2 9l8-7 8 7M4 8v10h12V8M8 18v-6h4v6")
 var directoryHiddenIcon = svg("M2 10s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5zM12.5 10a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0M3 3l14 14")
 var directoryVisibleIcon = svg("M2 10s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5zM12.5 10a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0")
 
+const (
+	directoryListInset   = 8
+	directoryRowIconSize = 16
+	// Center the 28-DIP targets over the directory rows' 16-DIP icon column.
+	directoryActionInset = configurationDialogInset - (configurationControlHeight-directoryRowIconSize)/2
+	// The back and folder paths begin at x=7 and x=2 in their 20-unit viewBoxes.
+	directoryNavigationInset = directoryActionInset - (7-2)*directoryRowIconSize/20
+)
+
 func (v *View) chooseRemoteWorkspaceDirectory(extra bool) {
 	key, request := v.remoteWorkspaceConnection, v.remoteWorkspaceRequest
 	title := "选择主目录"
@@ -216,13 +225,13 @@ func (v *View) directoryDialog(c *n.Context, t *n.Theme) {
 		dialogSurface(panel, t).Width(w).Height(h).Clip().Label("远程文件夹选择器")
 		n.Inert(panel, closing)
 		panel.Children(func() {
-			n.Row(c).FillWidth().Height(56).PaddingX(configurationDialogInset).Gap(12).AlignItems(n.Center).Children(func() {
+			n.Row(c).FillWidth().Height(56).Padding(0, directoryActionInset, 0, configurationDialogInset).Gap(12).AlignItems(n.Center).Children(func() {
 				n.Row(c).Grow(1).Gap(12).AlignItems(n.Baseline).Children(func() {
 					n.Text(c, p.title).FontSize(14).FontWeight(500).FixedLineHeight(20).Grow(1)
 					name := v.Model.DeviceName(p.device)
 					inlineIconText(c, monitor, name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 16, 8, t.TextMuted)
 				})
-				if iconButton(c, closeIcon, "关闭目录选择器").MarginEnd(-8).Clicked() {
+				if iconButton(c, closeIcon, "关闭目录选择器").Clicked() {
 					v.closeDirectoryPicker(p)
 				}
 			})
@@ -269,7 +278,7 @@ func (v *View) directoryDialog(c *n.Context, t *n.Theme) {
 	}
 }
 func (v *View) directoryLocation(c *n.Context, t *n.Theme, p *directoryPicker) {
-	n.Row(c).FillWidth().Height(48).Padding(0, 12, 12, configurationDialogInset).Gap(4).AlignItems(n.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+	n.Row(c).FillWidth().Height(48).Padding(0, directoryActionInset, 12, directoryNavigationInset).Gap(4).AlignItems(n.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 		loading := p.visiblePhase() == directoryLoading
 		if iconButton(c, deviceBackIcon, "返回上一目录").Disabled(len(p.history) == 0 || loading).Clicked() {
 			previous := p.history[len(p.history)-1]
@@ -334,19 +343,19 @@ func (v *View) directoryContents(c *n.Context, t *n.Theme, p *directoryPicker) {
 		})
 		return
 	}
-	n.Scroll(c.Key("folders:"+p.page.Path+strconv.FormatBool(p.loadedHidden))).Fill().Padding(6, 8).Children(func() {
+	n.Scroll(c.Key("folders:"+p.page.Path+strconv.FormatBool(p.loadedHidden))).Fill().Padding(6, directoryListInset).Children(func() {
 		n.Column(c).FillWidth().FocusGroup(n.Vertical).Children(func() {
 			for _, entry := range p.page.Entries {
-				row := control(c.Key(entry.Path), 5).FillWidth().Height(32).Radius(5).PaddingX(configurationDialogInset - 8).AlignItems(n.Center).Label("文件夹：" + entry.Name).Disabled(p.visiblePhase() == directoryLoading).Transition(fadeMotion(c, 140*time.Millisecond))
+				row := control(c.Key(entry.Path), 5).FillWidth().Height(32).Radius(5).PaddingX(configurationDialogInset - directoryListInset).AlignItems(n.Center).Label("文件夹：" + entry.Name).Disabled(p.visiblePhase() == directoryLoading).Transition(fadeMotion(c, 140*time.Millisecond))
 				if p.selected == entry.Path {
 					row.Background(t.Selection)
 				}
 				row.Children(func() {
 					n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
 						font := n.Font{Family: t.Font, Size: 13, Weight: 400}
-						inlineSymbol(c, workspaceIcon, entry.Name, font, 16, t.TextMuted)
+						inlineSymbol(c, workspaceIcon, entry.Name, font, directoryRowIconSize, t.TextMuted)
 						n.Text(c, entry.Name).FontSize(13).FixedLineHeight(20).Grow(1).SingleLine().Ellipsis("…")
-						inlineSymbol(c, disclosureRight, entry.Name, font, 16, t.TextMuted)
+						inlineSymbol(c, disclosureRight, entry.Name, font, directoryRowIconSize, t.TextMuted)
 					})
 				})
 				if row.Clicked() || row.Focused() {

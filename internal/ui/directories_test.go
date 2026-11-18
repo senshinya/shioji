@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
 	"math"
@@ -97,6 +98,49 @@ func TestDirectoryPickerHeaderAndSelectionMatchNativeGeometry(t *testing.T) {
 	px := ui.Image().RGBAAt(int(row.X), int(row.Y))
 	if px.R < 245 {
 		t.Fatal("selected row lacks the approved rounded inset", row, px)
+	}
+	ui.Move(0, 0)
+	for _, dark := range []bool{false, true} {
+		ui.SetDark(dark)
+		ui.SetScale(2)
+		ui.Advance(time.Second)
+		frame := ui.Image()
+		glyphCenter := func(box n.Rect, selected bool) float64 {
+			t.Helper()
+			x := dialog.X + 4
+			if selected {
+				x = row.X + 3
+			}
+			bg := frame.RGBAAt(int(x*2), int((box.Y+box.H/2)*2))
+			bounds := sidebarInkBounds(t, frame, box, 2, bg)
+			return float64(bounds.Min.X+bounds.Max.X) / 4
+		}
+		close, hasClose := ui.Find("关闭目录选择器")
+		hide, hasHide := ui.Find("显示隐藏文件夹")
+		if !hasClose || !hasHide {
+			t.Fatal("directory actions are missing")
+		}
+		arrow := n.Rect{X: row.X + row.W - 26, Y: row.Y + 5, W: 22, H: row.H - 10}
+		closeX, hideX, arrowX := glyphCenter(close, false), glyphCenter(hide, false), glyphCenter(arrow, true)
+		if math.Abs(closeX-arrowX) > 1 || math.Abs(hideX-arrowX) > 1 {
+			t.Errorf("dark=%v: directory action centers differ: close=%g hide=%g row=%g", dark, closeX, hideX, arrowX)
+		}
+		start := func(box n.Rect, backgroundX float32) float64 {
+			bg := frame.RGBAAt(int(backgroundX*2), int((box.Y+box.H/2)*2))
+			return float64(sidebarInkBounds(t, frame, box, 2, bg).Min.X) / 2
+		}
+		listIcon := n.Rect{X: row.X + 4, Y: row.Y + 5, W: 23, H: row.H - 10}
+		bodyLeft := start(listIcon, row.X+3)
+		for _, label := range []string{"目录选择", "返回上一目录", "取消选择目录"} {
+			box, ok := ui.Find(label)
+			if !ok {
+				t.Fatalf("missing %s", label)
+			}
+			if x := start(box, dialog.X+4); math.Abs(x-bodyLeft) > 1 {
+				t.Errorf("dark=%v: %s starts at %g, want folder icon's leading edge %g", dark, label, x, bodyLeft)
+			}
+		}
+		saveNativeSkillImage(t, ui, fmt.Sprintf("directory-actions-dark-%t.png", dark))
 	}
 }
 

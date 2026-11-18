@@ -26,6 +26,9 @@ const (
 	configurationListHeight       = 140
 	configurationHoverInset       = 8
 	workspaceDirectoryChoiceInset = 4
+	// Reserve room for centered add/remove button targets past their ink edge.
+	workspaceDirectoryActionOutset = 8
+	workspaceDirectoryScrollInset  = workspaceDirectoryActionOutset + configurationHoverInset
 )
 
 // Hooks share one stable scroll gutter across the toolbar, list and footer.

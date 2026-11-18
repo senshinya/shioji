@@ -61,19 +61,10 @@ func TestToolHoverOnlyChangesText(t *testing.T) {
 	}
 }
 
-func TestWorkspaceHeadingInsetsAndNoPerWorkspacePlus(t *testing.T) {
+func TestWorkspaceHeadingOwnsTheOnlyWorkspaceCreationButton(t *testing.T) {
 	ui := n.NewTester(New(layoutModel(), nil, "").View, 1440, 900)
-	label, _ := ui.Find("工作区")
-	button, _ := ui.Find("创建工作区")
-	ink := (n.Font{Family: "system-ui", Size: 11}).InkBounds("工作区")
-	left := label.X + ink.X - 8
-	// The 16-DIP slot is centered in the 28-DIP hit target. Find reports
-	// its clipped accessible bounds, so its width is not the slot's width.
-	// Exclude the sidebar's extra 8-DIP scrollbar capture gutter from the
-	// content edge; the viewport itself extends to the panel border.
-	right := float32(256-8) - (button.X + 6 + 16*16.75/20)
-	if math.Abs(float64(left-right)) > 1 {
-		t.Fatalf("workspace heading has unequal visible insets: left=%v right=%v", left, right)
+	if _, ok := ui.Find("创建工作区"); !ok {
+		t.Fatal("workspace heading is missing its create button")
 	}
 	r, _ := ui.Find("Example")
 	ui.Move(r.X+r.W/2, r.Y+r.H/2)

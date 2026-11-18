@@ -560,9 +560,6 @@ func (v *View) workspaceSettingsHeader(c *n.Context, t *n.Theme) {
 	header.Children(func() {
 		n.Column(c).FillWidth().Gap(8).Children(func() {
 			back := control(c.Key("back"), 5).Height(28).AlignSelf(n.Start).PaddingX(4).MarginStart(-4).Label("返回")
-			if width < 900 {
-				back.MarginStart(60)
-			}
 			back.Children(func() {
 				inlineIconText(c, deviceBackIcon, "返回会话", n.Font{Family: t.Font, Size: 12}, 12, 4, t.TextMuted)
 			})
