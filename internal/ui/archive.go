@@ -133,7 +133,7 @@ func (v *View) openArchivedSession(session domain.Session) {
 func (v *View) archiveSettings() {
 	root := v.splitRoot()
 	if root.settings != nil {
-		root.settings.selectPage("appearance")
+		root.settings.selectArchiveRetention()
 	}
 	if root.OpenSettings != nil {
 		root.OpenSettings()
@@ -182,19 +182,9 @@ func (v *View) archivePage(c *n.Context, t *n.Theme) {
 						n.Text(c, name).SingleLine().Ellipsis("…").MaxWidth(120).Shrink(0).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).TooltipWhenTruncated(name)
 					}
 				})
-				label := fmt.Sprintf("保留 %d 天", m.ArchiveDays())
-				if m.ArchiveDays() == 0 {
-					label = "永久保留"
-				}
-				help := fmt.Sprintf("从归档之日起 %d 天后自动删除。点击调整保留时间。", m.ArchiveDays())
-				if m.ArchiveDays() == 0 {
-					help = "不会自动删除归档内容。点击调整保留时间。"
-				}
-				if status := m.ArchivePolicyStatus(); status != "" {
-					label = "保留时间"
-					help = status
-				}
-				button := control(c.Key("archive-retention")).Height(28).PaddingX(8).Radius(6).Label("归档保留设置").Tooltip(help).Children(func() { inlineIconText(c, settingsIcon, label, n.Font{Family: t.Font, Size: 12}, 14, 6, t.TextMuted) })
+				button := control(c.Key("archive-retention")).Height(28).PaddingX(8).Radius(6).Label("归档保留设置").Tooltip("查看和调整各设备的归档保留期。").Children(func() {
+					inlineIconText(c, settingsIcon, archiveRetentionTitle, n.Font{Family: t.Font, Size: 12}, 14, 6, t.TextMuted)
+				})
 				if button.Clicked() {
 					v.archiveSettings()
 				}
@@ -600,7 +590,9 @@ func (v *View) syncArchivePolicies() {
 	if v.archivePolicyPending == nil {
 		v.archivePolicyPending = map[string]string{}
 	}
-	jobs := v.Model.ArchivePolicyJobs()
+	jobs := v.Model.ArchivePolicyJobs(func(connection, epoch string) bool {
+		return strings.HasSuffix(v.archivePolicyPending[connection], "/"+epoch)
+	})
 	for _, job := range jobs {
 		state := v.Model.DeviceStates[job.ConnectionID]
 		if state == nil {
@@ -608,9 +600,6 @@ func (v *View) syncArchivePolicies() {
 		}
 		change := v.Model.ArchivePolicyChanges[state.Snapshot.DeviceID]
 		token := change.ID + "/" + job.ConnectionEpoch
-		if pending := v.archivePolicyPending[job.ConnectionID]; pending != "" && strings.HasSuffix(pending, "/"+job.ConnectionEpoch) {
-			continue
-		}
 		if v.Saver != nil {
 			v.queueState()
 			job.Prepare = v.Saver.FlushLatest

@@ -172,7 +172,7 @@ func TestArchiveSettingsEntryRevealsRetentionWhenScrolled(t *testing.T) {
 	v.archiveSettings()
 	ui.Frame()
 	ui.Advance(time.Second)
-	r, ok := ui.Find("设置归档内容保留")
+	r, ok := ui.Find("设置归档保留期 · 这台 Mac")
 	if !ok || r.Y < 0 || r.Y+r.H > 600 {
 		t.Fatal("archive gear opened a setting outside the visible area", r)
 	}

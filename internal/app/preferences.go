@@ -10,17 +10,16 @@ import (
 
 // ClientPreferences are local presentation and input choices, never worker policy.
 type ClientPreferences struct {
-	ArchiveRetentionDays *int                     `json:"archiveRetentionDays,omitempty"`
-	Appearance           string                   `json:"appearance"`
-	InterfaceFont        string                   `json:"interfaceFont"`
-	InterfaceZoom        float32                  `json:"interfaceZoom"`
-	ReplySize            int                      `json:"replySize"`
-	CodeFont             string                   `json:"codeFont"`
-	ReduceMotion         bool                     `json:"reduceMotion"`
-	CollapseLatestTools  bool                     `json:"collapseLatestTools"`
-	HistoryPageRounds    int                      `json:"historyPageRounds"`
-	Shortcuts            ComposerShortcuts        `json:"shortcuts"`
-	Notifications        *NotificationPreferences `json:"notifications,omitempty"`
+	Appearance          string                   `json:"appearance"`
+	InterfaceFont       string                   `json:"interfaceFont"`
+	InterfaceZoom       float32                  `json:"interfaceZoom"`
+	ReplySize           int                      `json:"replySize"`
+	CodeFont            string                   `json:"codeFont"`
+	ReduceMotion        bool                     `json:"reduceMotion"`
+	CollapseLatestTools bool                     `json:"collapseLatestTools"`
+	HistoryPageRounds   int                      `json:"historyPageRounds"`
+	Shortcuts           ComposerShortcuts        `json:"shortcuts"`
+	Notifications       *NotificationPreferences `json:"notifications,omitempty"`
 }
 
 type NotificationPreferences struct {
@@ -59,10 +58,6 @@ func DefaultShortcuts() ComposerShortcuts {
 func (p ClientPreferences) Normalized() ClientPreferences {
 	if p.InterfaceZoom < .75 || p.InterfaceZoom > 1.5 || math.IsNaN(float64(p.InterfaceZoom)) {
 		p.InterfaceZoom = 1
-	}
-	if p.ArchiveRetentionDays == nil || !domain.ValidArchiveDays(*p.ArchiveRetentionDays) {
-		days := 30
-		p.ArchiveRetentionDays = &days
 	}
 	if p.HistoryPageRounds < 1 || p.HistoryPageRounds > domain.MaxHistoryRounds {
 		p.HistoryPageRounds = domain.DefaultHistoryRounds

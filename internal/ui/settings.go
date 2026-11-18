@@ -27,6 +27,8 @@ type settingsCategory struct {
 
 var settingsCategories = []settingsCategory{{"appearance", "外观", settingsSun}, {"input", "消息输入", settingsInput}, {"notifications", "通知", settingsBell}, {"shortcuts", "快捷键", settingsKeyboard}, {"about", "关于", settingsInfo}}
 
+const archiveRetentionTitle = "归档保留期"
+
 // Settings shares the client model and writer with the conversation window.
 // It owns only its own navigation, popup and native-window presentation state.
 type Settings struct {
@@ -39,6 +41,7 @@ type Settings struct {
 	owner                      *View
 	window                     *mygo.Window
 	page, query, error         string
+	revealArchiveRetention     bool
 	menus                      View
 	fonts                      []n.FontFamily
 	fontResults                chan []n.FontFamily
@@ -117,9 +120,15 @@ func (s *Settings) selectPage(id string) {
 		s.refreshSystemPermissions()
 	}
 	s.page, s.query, s.error = id, "", ""
+	s.revealArchiveRetention = false
 	s.licenses = false
 	s.license = -1
 	clear(s.menus.menuOpen)
+}
+
+func (s *Settings) selectArchiveRetention() {
+	s.selectPage("appearance")
+	s.revealArchiveRetention = true
 }
 
 func (s *Settings) View(c *n.Context) {
@@ -255,8 +264,75 @@ func settingsRow(c *n.Context, t *n.Theme, label string, build func()) {
 }
 
 func (s *Settings) picker(c *n.Context, t *n.Theme, label, value string, choices []menuChoice) {
-	button := configurationChoiceField(c.Key("picker:"+label), "设置"+label, value, false).Width(160).Background(codeSurface(t)).Border(0, n.Transparent)
-	s.menus.choiceMenu(c, t, "settings:"+label, button, choices)
+	s.choicePicker(c, t, label, "设置"+label, value, false, choices)
+}
+
+func (s *Settings) choicePicker(c *n.Context, t *n.Theme, id, label, value string, disabled bool, choices []menuChoice) {
+	button := configurationChoiceField(c.Key("picker:"+id), label, value, disabled).Width(160).Background(codeSurface(t)).Border(0, n.Transparent)
+	s.menus.choiceMenu(c, t, "settings:"+id, button, choices)
+}
+
+func archiveRetentionLabel(days int) string {
+	if days == 0 {
+		return "永久保留"
+	}
+	return fmt.Sprintf("%d 天", days)
+}
+
+func (s *Settings) archiveRetention(c *n.Context, t *n.Theme) {
+	m := s.owner.Model
+	settingsHeading(c, t, archiveRetentionTitle)
+	for _, device := range m.ArchiveRetentionDevices() {
+		n.Column(c.Key("archive-retention:" + device.ConnectionID)).FillWidth().Children(func() {
+			value := "待确认"
+			if device.Policy != nil {
+				value = archiveRetentionLabel(device.Policy.Days)
+				if !device.Connected {
+					value = "上次确认 " + value
+				}
+			}
+			settingsRow(c, t, device.Name, func() {
+				var choices []menuChoice
+				for _, days := range []int{7, 14, 30, 0} {
+					choices = append(choices, menuChoice{id: fmt.Sprint(days), name: archiveRetentionLabel(days), checked: device.Policy != nil && device.Policy.Days == days, choose: func() {
+						if err := m.SetDeviceArchiveRetention(device.DeviceID, days); err != nil {
+							s.error = err.Error()
+							return
+						}
+						s.changed()
+					}})
+				}
+				s.choicePicker(c, t, "retention:"+device.ConnectionID, "设置"+archiveRetentionTitle+" · "+device.Name, value, !device.CanSet(), choices)
+			})
+			change, pending := m.ArchivePolicyChanges[device.DeviceID]
+			var status string
+			switch {
+			case device.DeviceID == "":
+				status = "连接设备后可设置"
+			case device.Connected && !device.Supported:
+				status = "当前执行服务版本不支持设置归档保留期"
+			case pending && (device.Policy == nil || device.Policy.Days != change.Days):
+				target := archiveRetentionLabel(change.Days)
+				if change.Days != 0 {
+					target = " " + target
+				}
+				switch {
+				case change.Error != "":
+					status = "同步失败。" + change.Error
+				case !device.Connected:
+					status = "重连后同步为" + target
+				default:
+					status = "待同步为" + target
+				}
+			case !device.Connected:
+				status = "离线"
+			}
+			if status != "" {
+				n.Text(c, status).FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Margin(4, 0, 0, 0)
+			}
+		})
+	}
+	n.Text(c, "各设备按自己的保留期清理归档。从归档时起计时，到期永久删除会话和工作区，保留原项目文件。").FillWidth().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Margin(8, 0, 0, 0)
 }
 
 func (s *Settings) appearance(c *n.Context, t *n.Theme) {
@@ -305,31 +381,14 @@ func (s *Settings) appearance(c *n.Context, t *n.Theme) {
 				s.changed()
 			}
 		})
-		settingsRow(c, t, "归档内容保留", func() {
-			choices := []menuChoice{}
-			for _, days := range []int{7, 14, 30, 0} {
-				label := fmt.Sprintf("%d 天", days)
-				if days == 0 {
-					label = "永不"
-				}
-				choices = append(choices, menuChoice{id: fmt.Sprint(days), name: label, checked: s.owner.Model.ArchiveDays() == days, choose: func() {
-					if err := s.owner.Model.SetArchiveRetention(days); err != nil {
-						s.error = err.Error()
-						return
-					}
-					s.changed()
-				}})
-			}
-			value := fmt.Sprintf("%d 天", s.owner.Model.ArchiveDays())
-			if s.owner.Model.ArchiveDays() == 0 {
-				value = "永不"
-			}
-			s.picker(c, t, "归档内容保留", value, choices)
-		})
-		n.Text(c, "从归档日起计时，到期彻底删除会话与工作区，项目文件不受影响。").FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Margin(8, 0, 0, 0)
-		if status := s.owner.Model.ArchivePolicyStatus(); status != "" {
-			n.Text(c, status).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Margin(8, 0, 0, 0)
-		}
+	})
+	retention := n.Column(c.Key("archive-retention-settings")).FillWidth().Margin(configurationSectionGap, 0, 0, 0)
+	if s.revealArchiveRetention {
+		retention.ScrollIntoView(n.ScrollIntoViewOptions{Block: n.ScrollStart})
+		s.revealArchiveRetention = false
+	}
+	retention.Children(func() {
+		s.archiveRetention(c, t)
 	})
 	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsHeading(c, t, "文字")
@@ -557,7 +616,7 @@ func (s *Settings) search(c *n.Context, t *n.Theme) {
 	n.Text(c, "搜索设置").FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Margin(0, 0, configurationHeadingGap, 0)
 	query := strings.ToLower(strings.TrimSpace(s.query))
 	found := false
-	for _, entry := range []struct{ page, label string }{{"appearance", "主题"}, {"appearance", "界面字体"}, {"appearance", "回复字号"}, {"appearance", "代码字体"}, {"appearance", "减少动态效果"}, {"appearance", "自动展开最新工具调用"}, {"appearance", "每次加载轮次"}, {"appearance", "归档内容保留"}, {"input", "发送或加入队列"}, {"input", "换行"}, {"input", "立即介入当前轮"}, {"notifications", "通知"}, {"notifications", "回复完成"}, {"notifications", "需要回答或授权"}, {"notifications", "执行失败"}, {"notifications", "提示音"}, {"notifications", "前台也通知"}, {"shortcuts", "新建会话"}, {"shortcuts", "搜索会话"}, {"shortcuts", "下一个待处理"}, {"shortcuts", "返回上一个会话"}, {"about", "版本"}, {"about", "检查更新"}, {"about", "自动检查更新"}, {"about", "第三方许可"}, {"about", "授予完全磁盘访问权限"}} {
+	for _, entry := range []struct{ page, label string }{{"appearance", "主题"}, {"appearance", "界面字体"}, {"appearance", "回复字号"}, {"appearance", "代码字体"}, {"appearance", "减少动态效果"}, {"appearance", "自动展开最新工具调用"}, {"appearance", "每次加载轮次"}, {"appearance", archiveRetentionTitle}, {"input", "发送或加入队列"}, {"input", "换行"}, {"input", "立即介入当前轮"}, {"notifications", "通知"}, {"notifications", "回复完成"}, {"notifications", "需要回答或授权"}, {"notifications", "执行失败"}, {"notifications", "提示音"}, {"notifications", "前台也通知"}, {"shortcuts", "新建会话"}, {"shortcuts", "搜索会话"}, {"shortcuts", "下一个待处理"}, {"shortcuts", "返回上一个会话"}, {"about", "版本"}, {"about", "检查更新"}, {"about", "自动检查更新"}, {"about", "第三方许可"}, {"about", "授予完全磁盘访问权限"}} {
 		category := settingsCategories[slices.IndexFunc(settingsCategories, func(x settingsCategory) bool { return x.id == entry.page })]
 		if !strings.Contains(strings.ToLower(entry.label+" "+category.title), query) {
 			continue
@@ -567,7 +626,11 @@ func (s *Settings) search(c *n.Context, t *n.Theme) {
 		if control(c.Key(label)).FillWidth().MarginX(-8).Height(configurationRowHeight).PaddingX(8).Label(label).Children(func() {
 			inlineIconText(c, category.icon, label, n.Font{Family: t.Font, Size: configurationLabelSize, Weight: 400}, 16, 8, t.Text)
 		}).Clicked() {
-			s.selectPage(entry.page)
+			if entry.label == archiveRetentionTitle {
+				s.selectArchiveRetention()
+			} else {
+				s.selectPage(entry.page)
+			}
 		}
 	}
 	if !found {

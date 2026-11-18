@@ -3,7 +3,6 @@ package app
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"slices"
@@ -101,49 +100,61 @@ type ArchivePolicyChange struct {
 	FailedEpoch string `json:"-"`
 }
 
-func (m *Model) ArchiveDays() int { return *m.Preferences.Normalized().ArchiveRetentionDays }
-
-func (m *Model) SetArchiveRetention(days int) error {
-	if !domain.ValidArchiveDays(days) {
-		return errors.New("归档保留时间只支持 7 天、14 天、30 天或永不")
-	}
-	m.Preferences.ArchiveRetentionDays = &days
-	if m.ArchivePolicyChanges == nil {
-		m.ArchivePolicyChanges = map[string]ArchivePolicyChange{}
-	}
-	for _, state := range m.DeviceStates {
-		if id := state.Snapshot.DeviceID; id != "" {
-			revision := int64(0)
-			if p := state.Snapshot.ArchivePolicy; p != nil {
-				revision = p.Revision
-			}
-			m.ArchivePolicyChanges[id] = ArchivePolicyChange{ID: domain.NewID(), Days: days, Revision: revision}
-		}
-	}
-	for _, connection := range m.Connections {
-		if connection.DeviceID != "" {
-			if _, ok := m.ArchivePolicyChanges[connection.DeviceID]; !ok {
-				m.ArchivePolicyChanges[connection.DeviceID] = ArchivePolicyChange{ID: domain.NewID(), Days: days}
-			}
-		}
-	}
-	if len(m.DeviceStates) == 0 && m.Snapshot.DeviceID != "" {
-		p := m.Snapshot.ArchivePolicy
-		revision := int64(0)
-		if p != nil {
-			revision = p.Revision
-		}
-		m.ArchivePolicyChanges[m.Snapshot.DeviceID] = ArchivePolicyChange{ID: domain.NewID(), Days: days, Revision: revision}
-	}
-	return nil
+type ArchiveRetentionDevice struct {
+	ConnectionID string
+	DeviceID     string
+	Name         string
+	Policy       *domain.ArchivePolicy
+	Connected    bool
+	Supported    bool
 }
 
-// Jobs carry only explicit, persisted setting intent. Ordinary reconnects do
-// not reapply the client's old preference over a worker's newer revision.
-func (m *Model) ArchivePolicyJobs() []Job {
-	if m.ArchivePolicyChanges == nil {
-		m.ArchivePolicyChanges = map[string]ArchivePolicyChange{}
+func (d ArchiveRetentionDevice) CanSet() bool {
+	return d.DeviceID != "" && (!d.Connected || d.Supported)
+}
+
+func (m *Model) ArchiveRetentionDevices() []ArchiveRetentionDevice {
+	devices := []ArchiveRetentionDevice{{ConnectionID: "local", DeviceID: m.LocalDeviceID, Name: m.LocalName()}}
+	for _, c := range m.Connections {
+		devices = append(devices, ArchiveRetentionDevice{ConnectionID: c.ID, DeviceID: c.DeviceID, Name: c.Name})
 	}
+	for i := range devices {
+		d := &devices[i]
+		if state := m.DeviceStates[d.ConnectionID]; state != nil {
+			d.Policy = state.Snapshot.ArchivePolicy
+			d.Connected, d.Supported = state.Connected, state.WorkerMinor >= 40
+		} else if d.ConnectionID == "local" && len(m.DeviceStates) == 0 && m.Snapshot.DeviceID != "" {
+			d.DeviceID, d.Policy = m.Snapshot.DeviceID, m.Snapshot.ArchivePolicy
+			d.Connected, d.Supported = m.Connected, m.WorkerMinor >= 40
+		}
+	}
+	return devices
+}
+
+func (m *Model) SetDeviceArchiveRetention(deviceID string, days int) error {
+	if !domain.ValidArchiveDays(days) {
+		return errors.New("归档保留期只支持 7 天、14 天、30 天或永久保留")
+	}
+	for _, device := range m.ArchiveRetentionDevices() {
+		if device.DeviceID != deviceID || !device.CanSet() {
+			continue
+		}
+		change := ArchivePolicyChange{ID: domain.NewID(), Days: days}
+		if device.Policy != nil {
+			change.Revision = device.Policy.Revision
+		}
+		if m.ArchivePolicyChanges == nil {
+			m.ArchivePolicyChanges = map[string]ArchivePolicyChange{}
+		}
+		m.ArchivePolicyChanges[deviceID] = change
+		return nil
+	}
+	return errors.New("当前无法设置这台设备的归档保留期")
+}
+
+// Jobs carry only explicit, persisted device changes. Let an in-flight job
+// settle before clearing a newer choice that matches the old snapshot.
+func (m *Model) ArchivePolicyJobs(inFlight func(connection, epoch string) bool) []Job {
 	keys := make([]string, 0, len(m.DeviceStates))
 	for key := range m.DeviceStates {
 		keys = append(keys, key)
@@ -153,18 +164,11 @@ func (m *Model) ArchivePolicyJobs() []Job {
 	for _, key := range keys {
 		state := m.DeviceStates[key]
 		policy := state.Snapshot.ArchivePolicy
-		if policy == nil || !state.Connected || state.WorkerMinor < 40 {
+		if policy == nil || !state.Connected || state.WorkerMinor < 40 || (inFlight != nil && inFlight(key, state.ConnectionEpoch)) {
 			continue
 		}
 		id := state.Snapshot.DeviceID
 		change, ok := m.ArchivePolicyChanges[id]
-		// A pristine new worker can inherit the saved default. An existing
-		// worker's revision is never treated as a client-owned preference.
-		if !ok && policy.Revision == 1 && policy.Days == 30 && m.ArchiveDays() != 30 {
-			change = ArchivePolicyChange{ID: domain.NewID(), Days: m.ArchiveDays(), Revision: 1}
-			m.ArchivePolicyChanges[id] = change
-			ok = true
-		}
 		if !ok {
 			continue
 		}
@@ -228,31 +232,6 @@ func (m *Model) ArchivePolicyJobs() []Job {
 		}})
 	}
 	return jobs
-}
-
-func (m *Model) ArchivePolicyStatus() string {
-	var messages []string
-	for id, c := range m.ArchivePolicyChanges {
-		name := m.DeviceName(id)
-		if c.Error != "" {
-			messages = append(messages, name+"："+c.Error)
-		} else {
-			messages = append(messages, name+"：等待同步归档保留时间")
-		}
-	}
-	if len(messages) == 0 {
-		for _, state := range m.DeviceStates {
-			if p := state.Snapshot.ArchivePolicy; p != nil && p.Days != m.ArchiveDays() {
-				label := fmt.Sprintf("%d 天", p.Days)
-				if p.Days == 0 {
-					label = "永不"
-				}
-				messages = append(messages, m.DeviceName(p.DeviceID)+"：设备当前保留时间为"+label)
-			}
-		}
-	}
-	sort.Strings(messages)
-	return strings.Join(messages, "\n")
 }
 
 // ApplyArchiveDeletion also accepts a validated command receipt, so a delayed

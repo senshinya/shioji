@@ -78,6 +78,13 @@ func TestArchiveBackgroundDeleteThroughOwningWorker(t *testing.T) {
 	v.openArchive()
 	ui.Frame()
 	ui.Advance(time.Second)
+	// The asynchronous connection toast can cover the archive toolbar.
+	if _, ok := ui.Find("关闭消息"); ok {
+		if err = ui.Click("关闭消息"); err != nil {
+			t.Fatal(err)
+		}
+		ui.Advance(time.Second)
+	}
 	if err = ui.Click("删除全部"); err != nil {
 		t.Fatal(err)
 	}

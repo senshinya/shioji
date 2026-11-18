@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"strings"
 	"testing"
 )
 
@@ -31,15 +33,12 @@ func archiveModel() *Model {
 func TestArchivePolicyPreferencePersistsOfflineAndFencesNewerClients(t *testing.T) {
 	m := archiveModel()
 	m.DeviceStates["air"].Connected = false
-	if err := m.SetArchiveRetention(7); err != nil {
+	if err := m.SetDeviceArchiveRetention("B", 7); err != nil {
 		t.Fatal(err)
 	}
-	jobs := m.ArchivePolicyJobs()
-	if len(jobs) != 1 || jobs[0].ConnectionID != "local" {
-		t.Fatal("offline setting dispatched or local missing", jobs)
+	if jobs := m.ArchivePolicyJobs(nil); len(jobs) != 0 {
+		t.Fatal("offline setting dispatched to a different device", jobs)
 	}
-	body, _ := json.Marshal(domain.ArchivePolicy{DeviceID: "A", Days: 7, Revision: 2})
-	m.ApplyDeviceUpdate("local", func(p *Model) { jobs[0].Apply(p, body, nil) })
 	file := filepath.Join(t.TempDir(), "client.json")
 	if err := m.Save(file); err != nil {
 		t.Fatal(err)
@@ -48,7 +47,7 @@ func TestArchivePolicyPreferencePersistsOfflineAndFencesNewerClients(t *testing.
 	if err := restored.Load(file); err != nil {
 		t.Fatal(err)
 	}
-	if restored.ArchiveDays() != 7 || len(restored.ArchivePolicyChanges) != 1 {
+	if len(restored.ArchivePolicyChanges) != 1 || restored.ArchivePolicyChanges["B"].Days != 7 {
 		t.Fatal("offline setting not durable", restored.ArchivePolicyChanges)
 	}
 	state := restored.DeviceStates["air"]
@@ -56,39 +55,60 @@ func TestArchivePolicyPreferencePersistsOfflineAndFencesNewerClients(t *testing.
 	state.WorkerMinor = 40
 	state.ConnectionEpoch = "next"
 	state.Snapshot.ArchivePolicy = &domain.ArchivePolicy{DeviceID: "B", Days: 14, Revision: 2}
-	if jobs := restored.ArchivePolicyJobs(); len(jobs) != 0 {
+	if jobs := restored.ArchivePolicyJobs(nil); len(jobs) != 0 {
 		t.Fatal("offline setting overwrote another client's policy", jobs)
 	}
-	if restored.ArchivePolicyStatus() == "" {
-		t.Fatal("policy conflict hidden")
+	if details := restored.ArchivePolicyChanges["B"].Error; !strings.Contains(details, "已被其他客户端更改") {
+		t.Fatal("policy conflict hidden", details)
 	}
-	if err := restored.SetArchiveRetention(0); err != nil {
+	if err := restored.SetDeviceArchiveRetention("B", 0); err != nil {
 		t.Fatal(err)
 	}
-	if restored.ArchiveDays() != 0 {
-		t.Fatal("never normalized into default")
-	}
-	jobs = restored.ArchivePolicyJobs()
-	if len(jobs) != 1 || jobs[0].ConnectionID != "air" {
+	jobs := restored.ArchivePolicyJobs(nil)
+	if len(jobs) != 1 || jobs[0].ConnectionID != "air" || jobs[0].Input.(protocol.ArchivePolicyInput).Days != 0 {
 		t.Fatal("explicit choice did not replace old intent", jobs)
 	}
 	jobs[0].Apply(restored, nil, errors.New("write failed"))
-	if restored.ArchivePolicyStatus() == "" {
-		t.Fatal("worker persistence failure hidden")
+	if details := restored.ArchivePolicyChanges["B"].Error; details != "write failed" {
+		t.Fatal("worker persistence failure hidden", details)
 	}
 }
 
-func TestArchivePolicyLateReceiptCannotReplaceNewerSelection(t *testing.T) {
+func TestArchivePolicyInFlightChangePreservesSelectionMatchingOldPolicy(t *testing.T) {
 	m := archiveModel()
-	m.SetArchiveRetention(7)
-	jobs := m.ArchivePolicyJobs()
-	m.SetArchiveRetention(14)
-	for _, job := range jobs {
-		body, _ := json.Marshal(domain.ArchivePolicy{DeviceID: map[string]string{"local": "A", "air": "B"}[job.ConnectionID], Days: 7, Revision: 2})
-		job.Apply(m, body, nil)
+	if err := m.SetDeviceArchiveRetention("A", 7); err != nil {
+		t.Fatal(err)
 	}
-	if m.ArchiveDays() != 14 || len(m.ArchivePolicyChanges) != 2 {
-		t.Fatal("late receipt erased latest intent")
+	jobs := m.ArchivePolicyJobs(nil)
+	if len(jobs) != 1 || jobs[0].ConnectionID != "local" {
+		t.Fatal("job targeted the wrong device", jobs)
+	}
+	if err := m.SetDeviceArchiveRetention("A", 30); err != nil {
+		t.Fatal(err)
+	}
+	if next := m.ArchivePolicyJobs(func(connection, epoch string) bool { return connection == "local" && epoch == "A" }); len(next) != 0 {
+		t.Fatal("new choice dispatched before the earlier one settled", next)
+	}
+	body, _ := json.Marshal(domain.ArchivePolicy{DeviceID: "A", Days: 7, Revision: 2})
+	m.ApplyDeviceUpdate("local", func(p *Model) { jobs[0].Apply(p, body, nil) })
+	jobs = m.ArchivePolicyJobs(nil)
+	if len(jobs) != 1 || jobs[0].ConnectionID != "local" || jobs[0].Input != (protocol.ArchivePolicyInput{Days: 30, Revision: 2}) {
+		t.Fatal("late receipt erased latest intent", jobs, m.ArchivePolicyChanges)
+	}
+}
+
+func TestArchivePolicyIgnoresLegacyGlobalPreference(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "client.json")
+	if err := os.WriteFile(file, []byte(`{"preferences":{"archiveRetentionDays":7}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewModel()
+	if err := m.Load(file); err != nil {
+		t.Fatal(err)
+	}
+	m.DeviceStates = archiveModel().DeviceStates
+	if jobs := m.ArchivePolicyJobs(nil); len(jobs) != 0 || len(m.ArchivePolicyChanges) != 0 {
+		t.Fatal("legacy global preference changed a device policy", jobs, m.ArchivePolicyChanges)
 	}
 }
 
@@ -127,17 +147,25 @@ func TestDeletedOperationReceiptSettlesAnOfflineClientWithoutResurrectingHistory
 
 func TestArchivePolicyOwnReceiptAdvancesPendingNewerLocalChoice(t *testing.T) {
 	m := archiveModel()
-	m.SetArchiveRetention(7)
-	first := m.ArchivePolicyJobs()
-	m.SetArchiveRetention(14)
+	for _, id := range []string{"A", "B"} {
+		if err := m.SetDeviceArchiveRetention(id, 7); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := m.ArchivePolicyJobs(nil)
+	for _, id := range []string{"A", "B"} {
+		if err := m.SetDeviceArchiveRetention(id, 14); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, job := range first {
 		id := map[string]string{"local": "A", "air": "B"}[job.ConnectionID]
 		body, _ := json.Marshal(domain.ArchivePolicy{DeviceID: id, Days: 7, Revision: 2})
 		m.ApplyDeviceUpdate(job.ConnectionID, func(p *Model) { job.Apply(p, body, nil) })
 	}
-	jobs := m.ArchivePolicyJobs()
+	jobs := m.ArchivePolicyJobs(nil)
 	if len(jobs) != 2 {
-		t.Fatal("latest local choice lost", len(jobs), m.ArchivePolicyStatus())
+		t.Fatal("latest local choice lost", len(jobs), m.ArchivePolicyChanges)
 	}
 	for _, job := range jobs {
 		if in := job.Input.(protocol.ArchivePolicyInput); in.Revision != 2 || in.Days != 14 {

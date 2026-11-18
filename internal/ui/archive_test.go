@@ -196,25 +196,111 @@ func TestArchivedWorkspaceDrilldownAndSearchKeepAllRows(t *testing.T) {
 
 func TestArchiveSettingUsesFourChoicesAndPersistsNever(t *testing.T) {
 	v, _ := archiveViewFixture()
+	m := v.Model
+	m.Snapshot.DeviceID = "local-mac"
+	m.Snapshot.ArchivePolicy = &domain.ArchivePolicy{DeviceID: "local-mac", Days: 30, Revision: 1}
 	s := NewSettings(v)
 	ui := n.NewTester(s.View, 968, 756)
-	if err := ui.Click("设置归档内容保留"); err != nil {
+	if err := ui.Click("设置归档保留期 · 这台 Mac"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(200 * time.Millisecond)
-	for _, label := range []string{"7 天", "14 天", "30 天", "永不"} {
+	for _, label := range []string{"7 天", "14 天", "30 天", "永久保留"} {
 		if !ui.HasText(label) {
 			t.Fatal("missing retention choice", label, ui.Texts())
 		}
 	}
-	ui.Click("永不")
-	ui.Advance(time.Second)
-	if v.Model.ArchiveDays() != 0 {
-		t.Fatal("never not applied")
+	if err := ui.Click("永久保留"); err != nil {
+		t.Fatal(err)
 	}
-	main := n.NewTester(v.View, 1240, 820)
-	if !main.HasText("永久保留") {
-		t.Fatal("archive heading did not reflect saved choice")
+	ui.Advance(time.Second)
+	if change, ok := m.ArchivePolicyChanges["local-mac"]; !ok || change.Days != 0 || !ui.HasText("待同步为永久保留") {
+		t.Fatal("pending selection hid the current policy", ui.Texts())
+	}
+	policy := &domain.ArchivePolicy{DeviceID: "local-mac", Days: 0, Revision: 2}
+	if err := m.ApplyEvent(domain.Event{Sequence: 1, Type: "archive.policy", ArchivePolicy: policy}); err != nil {
+		t.Fatal(err)
+	}
+	ui.Frame()
+	ui.Advance(time.Second)
+	if !ui.HasText("永久保留") || ui.HasText("待同步") {
+		t.Fatal("device did not reflect the confirmed choice", ui.Texts())
+	}
+}
+
+func TestArchiveRetentionChangesOnlySelectedDevice(t *testing.T) {
+	for _, size := range []struct {
+		width, height int
+		dark          bool
+	}{{968, 756, true}, {760, 600, false}} {
+		t.Run(fmt.Sprint(size.width), func(t *testing.T) {
+			v, main := archiveViewFixture()
+			m := v.Model
+			m.LocalDeviceID = "local-mac"
+			m.LocalDeviceName = "MBA at Home"
+			m.Connections = []app.DeviceConnection{
+				{ID: "work", DeviceID: "work-mac", Name: "MBP at Work"},
+				{ID: "mini", DeviceID: "mini-mac", Name: "MacMini at Home"},
+			}
+			m.DeviceStates = map[string]*app.DeviceState{}
+			for key, id := range map[string]string{"local": "local-mac", "work": "work-mac", "mini": "mini-mac"} {
+				m.DeviceStates[key] = &app.DeviceState{Connected: true, WorkerMinor: 40, ConnectionEpoch: key, Snapshot: domain.Snapshot{
+					DeviceID: id, ArchivePolicy: &domain.ArchivePolicy{DeviceID: id, Days: 7, Revision: 2},
+				}}
+			}
+			s := NewSettings(v)
+			ui := n.NewTester(s.View, size.width, size.height)
+			ui.SetDark(size.dark)
+			v.OpenSettings = func() {}
+			main.Frame()
+			main.Advance(time.Second)
+			if err := main.Click("归档保留设置"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Frame()
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("archive-retention-%d.png", size.width))
+			if len(m.ArchivePolicyChanges) != 0 {
+				t.Fatal("opening settings changed archive preferences")
+			}
+			if err := ui.Click("设置归档保留期 · MBP at Work"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			if err := ui.Click("14 天"); err != nil {
+				t.Fatal(err)
+			}
+			if change := m.ArchivePolicyChanges["work-mac"]; len(m.ArchivePolicyChanges) != 1 || change.Days != 14 || change.Revision != 2 {
+				t.Fatal("choice was not scoped to MBP at Work", m.ArchivePolicyChanges)
+			}
+			jobs := m.ArchivePolicyJobs(nil)
+			if len(jobs) != 1 || jobs[0].ConnectionID != "work" {
+				t.Fatal("selection did not produce a single device job", jobs)
+			}
+			body, _ := json.Marshal(domain.ArchivePolicy{DeviceID: "work-mac", Days: 14, Revision: 3})
+			m.ApplyDeviceUpdate("work", func(p *app.Model) { jobs[0].Apply(p, body, nil) })
+			ui.Frame()
+			ui.Advance(time.Second)
+			if size.width == 760 {
+				saveNativeSkillImage(t, ui, "archive-retention-mixed-760.png")
+			}
+			if !ui.HasText("14 天") || !ui.HasText("7 天") || ui.HasText("待同步") {
+				t.Fatalf("mixed policies lack device-specific values: %v", ui.Texts())
+			}
+			m.DeviceStates["mini"].Connected = false
+			if err := ui.Click("设置归档保留期 · MacMini at Home"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			if err := ui.Click("30 天"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Frame()
+			ui.Advance(time.Second)
+			if !ui.HasText("上次确认 7 天") || !ui.HasText("重连后同步为 30 天") || len(m.ArchivePolicyChanges) != 1 || m.ArchivePolicyChanges["mini-mac"].Days != 30 {
+				t.Fatalf("pending offline change hid the last known policy: %v", ui.Texts())
+			}
+		})
 	}
 }
 
