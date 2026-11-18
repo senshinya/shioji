@@ -5,6 +5,20 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-18
+
+[源码](https://github.com/senshinya/shioji/tree/v0.6.1) · [与 v0.6.0 比较](https://github.com/senshinya/shioji/compare/v0.6.0...v0.6.1)
+
+### Changed
+
+- 归档保留期按设备设置。归档页直接定位到各设备的选项，离线时显示上次确认的保留期和待同步的改动。
+- 定时任务页集中列出需要更新执行服务的设备，并提供进入设备设置的入口。其他设备的任务仍可查看。
+
+### Fixed
+
+- 修复从 schema 15 更新到 schema 16 的执行服务迁移。设备页通过「备份并迁移」接纳操作，等待当前工作结束后迁移数据库并保留原库备份。重连后可继续核对同一笔更新。
+- 修复本机设备图左侧多出的圆点。连接端点随连接线路显示，适用于全部五种设备造型。
+
 ## [0.6.0] - 2026-11-18
 
 [源码](https://github.com/senshinya/shioji/tree/v0.6.0) · [与 v0.5.0 比较](https://github.com/senshinya/shioji/compare/v0.5.0...v0.6.0)
@@ -270,7 +284,7 @@
 - 新增独立执行 worker 和 Tailnet 网络服务；退出 App 不停止设备端执行或网络连接，运行中状态不明时保留人工核对入口。
 - 提供 Developer ID 签名、经 Apple 公证并附带公证票据的 DMG，以及 SHA-256 校验文件。
 
-[Unreleased]: https://github.com/senshinya/shioji/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/senshinya/shioji/compare/v0.6.1...HEAD
 [0.3.2]: https://github.com/senshinya/shioji/compare/v0.3.0...v0.3.2
 [0.3.0]: https://github.com/senshinya/shioji/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/senshinya/shioji/compare/v0.1.2...v0.2.0
