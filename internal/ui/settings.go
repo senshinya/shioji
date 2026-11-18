@@ -255,7 +255,7 @@ func settingsRow(c *n.Context, t *n.Theme, label string, build func()) {
 }
 
 func (s *Settings) picker(c *n.Context, t *n.Theme, label, value string, choices []menuChoice) {
-	button := configurationChoiceField(c.Key("picker:"+label), "设置"+label, value, false).Width(160).Background(codeSurface(t)).Radius(6).Border(0, n.Transparent)
+	button := configurationChoiceField(c.Key("picker:"+label), "设置"+label, value, false).Width(160).Background(codeSurface(t)).Border(0, n.Transparent)
 	s.menus.choiceMenu(c, t, "settings:"+label, button, choices)
 }
 

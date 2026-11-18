@@ -59,8 +59,9 @@ func (s *requestPageMotion) acceptMeasurement(height float32) {
 }
 
 type requestPageMotionKey struct{}
+type questionOptionScrollKey struct{}
 
-func (v *View) pendingBody(c *n.Context, t *n.Theme, current requestPage, index int, collapsed, entering bool) float32 {
+func (v *View) pendingBody(c *n.Context, t *n.Theme, current requestPage, index int, expandedOptions map[string]bool, collapsed, entering bool) float32 {
 	frame := n.Column(c.Key("request-body")).FillWidth().Clip().Label("请求内容区域")
 	state := n.Local(frame, requestPageMotionKey{}, func() requestPageMotion {
 		return requestPageMotion{current: current, index: index, direction: 1, immediate: v.dockHeight == 0 || entering}
@@ -122,10 +123,12 @@ func (v *View) pendingBody(c *n.Context, t *n.Theme, current requestPage, index 
 			content.Transform(n.Translation(distance*(1-progress), 0))
 		}
 		content.Children(func() {
-			n.Scroll(c.Key("fields:" + page.key())).FillWidth().MaxHeight(questionBodyHeight(c)).Children(func() {
-				n.Column(c).FillWidth().Gap(8).Children(func() { v.requestBody(c, t, page.request, page.question) })
+			scroll := n.Scroll(c.Key("fields:" + page.key())).FillWidth().MaxHeight(questionBodyHeight(c)).Label("问题选项内容")
+			position := n.Local(scroll, questionOptionScrollKey{}, func() n.ScrollState { return n.ScrollState{} })
+			scroll.TrackScroll(position).Children(func() {
+				n.Column(c).FillWidth().Gap(8).Children(func() { v.requestBody(c, t, page.request, page.question, expandedOptions[page.key()]) })
 			})
-			v.requestActions(c, t, page.request)
+			v.requestActions(c, t, page, expandedOptions, position)
 			if message := v.requestAction(page.request).err; message != "" {
 				n.Text(c, message).FontSize(11).TextColor(t.TextMuted).Transition(resultBlockMotion(c))
 			}
@@ -162,14 +165,15 @@ func (v *View) pendingBody(c *n.Context, t *n.Theme, current requestPage, index 
 // Keep the keyed card mounted while its actual dock height closes. Snapshot
 // only its presentation; answered requests never remain actionable.
 type requestCardMotion struct {
-	pages       []requestPage
-	index       int
-	known       map[string]bool
-	unread      map[string]bool
-	presence    requestCardPhase
-	noticeUntil time.Time
-	noticeCount int
-	noticeKind  string
+	pages           []requestPage
+	expandedOptions map[string]bool
+	index           int
+	known           map[string]bool
+	unread          map[string]bool
+	presence        requestCardPhase
+	noticeUntil     time.Time
+	noticeCount     int
+	noticeKind      string
 }
 type requestCardPhase uint8
 
@@ -204,7 +208,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 		for _, page := range pages {
 			known[page.key()] = true
 		}
-		state := requestCardMotion{known: known, unread: map[string]bool{}}
+		state := requestCardMotion{known: known, unread: map[string]bool{}, expandedOptions: map[string]bool{}}
 		if len(pages) > 0 {
 			state.presence = requestCardActive
 		}
@@ -244,6 +248,11 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 		for key := range state.unread {
 			if !known[key] {
 				delete(state.unread, key)
+			}
+		}
+		for key := range state.expandedOptions {
+			if !known[key] {
+				delete(state.expandedOptions, key)
 			}
 		}
 		if !m.Collapsed[m.SessionID] {
@@ -364,7 +373,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 				}
 				v.requestPager(c, t, index, len(state.pages), unit)
 			})
-			bodyHeight = v.pendingBody(c, t, current, index, m.Collapsed[m.SessionID], presence < 1)
+			bodyHeight = v.pendingBody(c, t, current, index, state.expandedOptions, m.Collapsed[m.SessionID], presence < 1)
 		})
 	})
 	paddingTarget := float32(processingPanelExpandedDisclosureInset)

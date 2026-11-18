@@ -295,12 +295,15 @@ func (v *View) archiveTable(c *n.Context, t *n.Theme, a *archiveUI, scope domain
 		gap = 8
 	}
 	n.Row(c.Key("archive-table-header")).FillWidth().Height(28).PaddingX(8).Gap(gap).AlignItems(n.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-		title, metadata := "标题", "Workspace"
+		title, metadata := "标题", "工作区"
 		if workspaceRows {
 			title, metadata = "工作区", "设备"
 		}
 		n.Text(c, title).Grow(1).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
-		n.Text(c, metadata).Width(metadataWidth).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+		column := n.Text(c, metadata).Width(metadataWidth).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+		if !workspaceRows {
+			column.Label("归档工作区列")
+		}
 		n.Spacer(c).Width(archiveActionWidth).Grow(0).Shrink(0)
 	})
 	if count == 0 {

@@ -10,6 +10,11 @@ type hoverCardState struct {
 	LastInside      time.Time
 }
 
+func informationPopoverSurface(panel n.Element, t *n.Theme) n.Element {
+	return panel.Padding(10).Radius(8).Background(raised(t)).Border(1, t.Border).
+		Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14))
+}
+
 // hoverCard is interactive information, unlike a pass-through text hint.
 // Hover never moves keyboard focus; crossing the gap keeps the card alive.
 func hoverCard(c *n.Context, trigger n.Element, build func(n.Element)) n.Element {

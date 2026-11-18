@@ -2,10 +2,12 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
 	"net/url"
 	"shioji/internal/domain"
+	"slices"
 	"strings"
 )
 
@@ -31,9 +33,9 @@ func (v *View) pruneSecretAnswers(detail domain.SessionDetail) {
 		}
 	}
 }
-func (v *View) requestBody(c *n.Context, t *n.Theme, r domain.PendingRequest, question int) {
+func (v *View) requestBody(c *n.Context, t *n.Theme, r domain.PendingRequest, question int, expanded bool) {
 	if question >= 0 {
-		v.questionField(c, t, r, r.Questions[question])
+		v.questionField(c, t, r, r.Questions[question], expanded)
 		return
 	}
 	if r.Notice != "" && r.Kind != "external" {
@@ -77,7 +79,27 @@ func (v *View) requestBody(c *n.Context, t *n.Theme, r domain.PendingRequest, qu
 		}
 	}
 }
-func (v *View) questionField(c *n.Context, t *n.Theme, r domain.PendingRequest, q domain.Question) {
+
+const initialQuestionOptions = 3
+
+func (v *View) customQuestionActive(key string) bool {
+	switch v.Model.Answers["source:"+key] {
+	case "custom":
+		return true
+	case "preset":
+		return false
+	}
+	value := v.Model.Answers[key]
+	return value != "" && value == v.Model.Answers["custom:"+key]
+}
+
+func (v *View) useCustomQuestionAnswer(key, value string) {
+	v.Model.Answers["source:"+key] = "custom"
+	v.Model.Answers["custom:"+key] = value
+	v.Model.Answers[key] = value
+}
+
+func (v *View) questionField(c *n.Context, t *n.Theme, r domain.PendingRequest, q domain.Question, expanded bool) {
 	key := requestKey(r, q.ID)
 	n.Text(c, q.Text).FontSize(13).FixedLineHeight(20)
 	if q.Secret {
@@ -89,31 +111,84 @@ func (v *View) questionField(c *n.Context, t *n.Theme, r domain.PendingRequest, 
 		}
 		return
 	}
-	selected := textBinding(v.answerBindings, key, v.Model.Answers[key])
+	preset := v.Model.Answers[key]
+	if v.customQuestionActive(key) {
+		preset = ""
+	}
+	selected := textBinding(v.answerBindings, key, preset)
 	if len(q.Options) > 0 {
+		options := q.Options
+		if !expanded {
+			options = options[:min(initialQuestionOptions, len(options))]
+		}
 		n.Column(c).FillWidth().Children(func() {
-			for i, option := range q.Options {
+			for i, option := range options {
 				if i > 0 {
 					processingPanelDivider(c, t)
 				}
-				controlFeedback(c, n.Radio(c.Key(option.Label), &selected.Text, option.Label, option.Label).FillWidth().MinHeight(32).PaddingX(6).FontSize(12).Label(option.Label).Tooltip(option.Description), 4).Changed()
+				if controlFeedback(c, n.Radio(c.Key(option.Label), &selected.Text, option.Label, option.Label).FillWidth().MinHeight(32).PaddingX(6).FontSize(12).Label(option.Label).Tooltip(option.Description), 4).Changed() {
+					v.Model.Answers[key] = selected.Text
+					v.Model.Answers["source:"+key] = "preset"
+					selected.LastModel = selected.Text
+				}
 				if option.Description != "" {
 					n.Text(c, option.Description).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Padding(0, 0, 6, 22)
 				}
 			}
 		})
 	}
-	v.Model.Answers[key] = selected.Text
-	selected.LastModel = selected.Text
 	if q.Custom || len(q.Options) == 0 {
 		custom := textBinding(v.customBindings, key, v.Model.Answers["custom:"+key])
 		input := n.TextAreaBase(c.Key("answer:"+key), &custom.Text).FillWidth().Lines(1, 4).MinHeight(32).MaxHeight(96).Padding(5, 8).FontSize(12).FixedLineHeight(20).Background(raised(t)).Border(1, t.Border).Radius(requestRadius).Label("自定义答案").Placeholder("输入答案…").PlaceholderColor(subtle(t))
 		fieldFeedback(c, input)
 		if input.Changed() {
-			v.Model.Answers["custom:"+key] = custom.Text
-			v.Model.Answers[key] = custom.Text
+			v.useCustomQuestionAnswer(key, custom.Text)
 			custom.LastModel = custom.Text
 		}
+	}
+}
+
+func (v *View) questionSelectionControls(c *n.Context, t *n.Theme, page requestPage, expandedOptions map[string]bool, position *n.ScrollState) {
+	q := page.request.Questions[page.question]
+	if q.Secret {
+		return
+	}
+	key := requestKey(page.request, q.ID)
+	value, draft := v.Model.Answers[key], v.Model.Answers["custom:"+key]
+	custom := v.customQuestionActive(key)
+	long := len(q.Options) > initialQuestionOptions
+	expanded := expandedOptions[page.key()]
+	status := ""
+	canUseDraft := q.Custom && len(q.Options) > 0 && !custom && strings.TrimSpace(draft) != ""
+	index := slices.IndexFunc(q.Options, func(option domain.Option) bool { return option.Label == value })
+	if q.Custom && len(q.Options) > 0 && strings.TrimSpace(value) != "" {
+		if custom {
+			status = "将提交自定义答案"
+		} else if index >= 0 {
+			status = "将提交预设「" + value + "」"
+		}
+	} else if long && !expanded && !custom && index >= initialQuestionOptions {
+		status = "已选「" + value + "」"
+	}
+	if long {
+		label := fmt.Sprintf("显示全部 %d 个选项", len(q.Options))
+		text := fmt.Sprintf("显示其余 %d 项", len(q.Options)-initialQuestionOptions)
+		if expanded {
+			label, text = "收起选项", "收起选项"
+		}
+		if configurationAction(c.Key("question-option-count"), text).Label(label).Expanded(expanded).Clicked() {
+			expandedOptions[page.key()] = !expanded
+			if expanded {
+				position.ScrollTo(0, 0, n.Animation{})
+			}
+		}
+	}
+	if canUseDraft && configurationAction(c.Key("activate-custom-answer"), "使用自定义答案").Clicked() {
+		v.useCustomQuestionAnswer(key, draft)
+		c.Services().Invalidate()
+	}
+	if status != "" {
+		n.Text(c, status).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Role(n.RoleStatus)
 	}
 }
 func (v *View) formField(c *n.Context, t *n.Theme, r domain.PendingRequest, f domain.FormField) {
@@ -239,9 +314,10 @@ func (v *View) formAnswers(r domain.PendingRequest) map[string][]string {
 	}
 	return answers
 }
-func (v *View) requestActions(c *n.Context, t *n.Theme, r domain.PendingRequest) {
+func (v *View) requestActions(c *n.Context, t *n.Theme, page requestPage, expandedOptions map[string]bool, position *n.ScrollState) {
+	r := page.request
 	disabled := !v.Model.Connected || r.State != "pending" || v.requestAction(r).busy
-	n.Row(c).FillWidth().Wrap().Gap(messageFooterGap).Children(func() {
+	n.Row(c).FillWidth().Wrap().Gap(messageFooterGap).AlignItems(n.Center).Children(func() {
 		action := func(label, decision string, primary bool, answers map[string][]string, extraDisabled bool) {
 			var button n.Element
 			if primary {
@@ -300,6 +376,9 @@ func (v *View) requestActions(c *n.Context, t *n.Theme, r domain.PendingRequest)
 				answers[q.ID] = []string{value}
 			}
 			action("提交答案", "", true, answers, !complete)
+			if page.question >= 0 {
+				v.questionSelectionControls(c, t, page, expandedOptions, position)
+			}
 		}
 	})
 }

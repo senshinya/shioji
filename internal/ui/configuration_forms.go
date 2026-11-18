@@ -44,14 +44,18 @@ func configurationFormRow(c *n.Context, label string, style configurationFormSty
 }
 
 func configurationTextField(c *n.Context, value *string) n.Element {
-	return textField(c, value).FillWidth().Height(configurationControlHeight).Padding(4, 8).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).Background(c.Theme().Background)
+	return textField(c, value).FillWidth().Height(configurationControlHeight).Padding(4, configurationFieldInset).
+		Radius(configurationFieldRadius).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).Background(c.Theme().Background)
 }
 func configurationTextArea(c *n.Context, value *string) n.Element {
-	return fieldFeedback(c, n.TextAreaBase(c, value).SelectionColor(editorSelection(c.Theme())).FillWidth().Lines(3, 6).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).Padding(4, 8).Radius(5).Background(c.Theme().Background).Border(1, c.Theme().Border))
+	return fieldFeedback(c, n.TextAreaBase(c, value).SelectionColor(editorSelection(c.Theme())).FillWidth().Lines(3, 6).
+		FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).Padding(4, configurationFieldInset).
+		Radius(configurationFieldRadius).Background(c.Theme().Background).Border(1, c.Theme().Border))
 }
 func configurationChoiceField(c *n.Context, label, value string, disabled bool) n.Element {
 	font := n.Font{Family: c.Theme().Font, Size: configurationValueSize, Weight: 400}
-	return control(c, 5).FillWidth().Height(configurationControlHeight).PaddingX(8).Radius(5).Border(1, c.Theme().Border).Label(label).Disabled(disabled).Children(func() {
+	return control(c, configurationFieldRadius).FillWidth().Height(configurationControlHeight).PaddingX(configurationFieldInset).
+		Radius(configurationFieldRadius).Background(c.Theme().Background).Border(1, c.Theme().Border).Label(label).Disabled(disabled).Children(func() {
 		n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Transform(n.Translation(0, inlineCenterOffset(value, font))).Children(func() {
 			n.Text(c, value).SingleLine().FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).Grow(1).MinWidth(0).TooltipWhenTruncated(value).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 			inlineSymbol(c, chevron, value, font, 12, c.Theme().TextMuted)

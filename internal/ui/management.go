@@ -245,7 +245,7 @@ func (v *View) managementDialogs(c *n.Context, t *n.Theme) {
 		panel.Children(func() {
 			content := compactDialogContent(c, "重命名会话", func() {
 				n.Column(c).FillWidth().Gap(8).Children(func() {
-					input := n.TextAreaBase(c.Key("title"), &r.Title).FillWidth().Lines(1, 4).MinHeight(32).Padding(6, 8).FontSize(13).FixedLineHeight(20).Radius(6).Background(t.Surface).Border(1, t.Border).Label("新的会话名称").AutoFocus().Disabled(r.Busy).OnTextKey(func(k n.TextKey) bool {
+					input := n.TextAreaBase(c.Key("title"), &r.Title).FillWidth().Lines(1, 4).MinHeight(32).Padding(6, configurationFieldInset).FontSize(13).FixedLineHeight(20).Radius(configurationFieldRadius).Background(t.Surface).Border(1, t.Border).Label("新的会话名称").AutoFocus().Disabled(r.Busy).OnTextKey(func(k n.TextKey) bool {
 						if k.Key == n.KeyEnter && k.Mods == 0 {
 							r.Title = k.Text()
 							v.saveSessionName(r)
@@ -349,7 +349,7 @@ func (v *View) workspaceSettingsForm(c *n.Context, t *n.Theme) {
 			n.Column(c).FillWidth().Gap(20).Children(func() {
 				n.Column(c).FillWidth().Gap(6).Children(func() {
 					n.Text(c, "名称").FontSize(12).TextColor(t.TextMuted)
-					textField(c.Key("workspace-name"), &e.Workspace.Name).FillWidth().Height(32).FontSize(13).Label("工作区名称").Disabled(e.Busy)
+					configurationTextField(c.Key("workspace-name"), &e.Workspace.Name).Height(32).FontSize(13).Label("工作区名称").Disabled(e.Busy)
 				})
 				n.Column(c).FillWidth().Gap(8).Children(func() {
 					n.Text(c, "目录").FontSize(13)

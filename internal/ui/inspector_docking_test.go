@@ -4,6 +4,7 @@ import (
 	n "github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
 	"path/filepath"
+	"shioji/internal/app"
 	"shioji/internal/domain"
 	"testing"
 	"time"
@@ -40,6 +41,69 @@ func mergeTaskTab(t *testing.T, ui *n.Tester) {
 	ui.Move(pane.X+26, 24)
 	ui.Release(pane.X+26, 24)
 	ui.Advance(300 * time.Millisecond)
+}
+
+func TestInspectorTabContextMenuWorksWithTheKeyboard(t *testing.T) {
+	v, ui := dockingUI(t)
+	if err := ui.Click("任务"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Key(n.Shift, n.KeyF10)
+	if err := ui.ChooseMenuItem("合并到同一标签组"); err != nil {
+		t.Fatal(err, ui.Menu())
+	}
+	ui.Advance(time.Second)
+	if !v.Model.InspectorLayout.Joined || !ui.Focused("任务") {
+		t.Fatal("keyboard merge lost the layout or the selected tab's focus")
+	}
+	ui.Key(n.Shift, n.KeyF10)
+	if err := ui.ChooseMenuItem("拆分到下方"); err != nil {
+		t.Fatal(err, ui.Menu())
+	}
+	ui.Advance(time.Second)
+	if v.Model.InspectorLayout.Joined || !ui.Focused("任务") || v.changesFor("s").Path != "main.go" || v.Model.Drafts["session:s"] != "keep draft" {
+		t.Fatal("keyboard split lost the file, the draft, or the tab's focus")
+	}
+}
+
+func TestWorkInspectorCanMoveAndMergeTabsFromTheKeyboard(t *testing.T) {
+	v, ui := dockingUI(t)
+	v.Model.InspectorLayout.Groups = []app.InspectorGroup{
+		{Views: []string{"changes", "agents"}, Selected: "changes"},
+		{Views: []string{"tasks", "background"}, Selected: "tasks"},
+	}
+	ui.Advance(time.Second)
+	for i := 0; i < 64 && !ui.Focused("任务"); i++ {
+		ui.Key(0, n.KeyTab)
+	}
+	choose := func(label string) {
+		t.Helper()
+		if !ui.Focused("任务") {
+			rect, _ := ui.Find("任务")
+			t.Fatalf("task tab is not focused before %s: %v %v", label, rect, ui.Texts())
+		}
+		ui.Key(n.Shift, n.KeyF10)
+		if err := ui.ChooseMenuItem(label); err != nil {
+			t.Fatal(err, ui.Menu())
+		}
+		ui.Advance(time.Second)
+		if !ui.Focused("任务") {
+			t.Fatal("layout command did not keep focus on the moved tab")
+		}
+	}
+	choose("移到另一标签组")
+	groups := v.Model.InspectorLayout.Groups
+	if len(groups) != 2 || groups[0].Selected != "tasks" || len(groups[1].Views) != 1 {
+		t.Fatal(groups)
+	}
+	choose("合并到同一标签组")
+	if groups = v.Model.InspectorLayout.Groups; len(groups) != 1 || len(groups[0].Views) != 4 {
+		t.Fatal(groups)
+	}
+	choose("拆分到下方")
+	if groups = v.Model.InspectorLayout.Groups; len(groups) != 2 || groups[1].Selected != "tasks" || v.changesFor("s").Path != "main.go" {
+		t.Fatal("split lost the existing file selection", groups)
+	}
 }
 
 func TestInspectorDragMergesWithoutLosingFileOrComposer(t *testing.T) {

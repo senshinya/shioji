@@ -15,16 +15,20 @@ const (
 	compactDialogFooterGap      = 12
 	compactDialogButtonGap      = 8
 	compactDialogVerticalChrome = 2 * (configurationDialogInset + compactDialogBorder)
+	dialogBackdropOpacity       = .16
 )
+
+func dialogSurface(panel n.Element, t *n.Theme) n.Element {
+	return panel.Radius(compactDialogRadius).Background(raised(t)).Border(compactDialogBorder, t.Border).
+		Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, dialogBackdropOpacity))
+}
 
 func compactDialog(c *n.Context, t *n.Theme, open *bool, width float32, build func(n.Element)) n.Element {
 	return n.DialogBase(c, open, func(backdrop, panel n.Element) {
 		w, h := c.Size()
-		backdrop.Background(n.RGBA(0, 0, 0, .16)).Transition(fadeMotion(c, 180*time.Millisecond))
-		panel.Width(min(width, w-2*compactDialogWindowInset)).MaxHeight(h-2*compactDialogWindowInset).
-			Padding(configurationDialogInset).Radius(compactDialogRadius).Clip().
-			Background(raised(t)).Border(compactDialogBorder, t.Border).
-			Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c))
+		backdrop.Background(n.RGBA(0, 0, 0, dialogBackdropOpacity)).Transition(fadeMotion(c, 180*time.Millisecond))
+		dialogSurface(panel, t).Width(min(width, w-2*compactDialogWindowInset)).MaxHeight(h - 2*compactDialogWindowInset).
+			Padding(configurationDialogInset).Clip().Transition(popupMotion(c))
 		build(panel)
 	})
 }

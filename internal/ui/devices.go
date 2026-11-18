@@ -184,14 +184,12 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 
 func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 	dialog := func(open *bool, key string, body func()) n.Element {
-		return n.DialogBase(c.Key(key), open, func(backdrop, panel n.Element) {
-			backdrop.Background(n.RGBA(0, 0, 0, .16))
-			width, height := c.Size()
-			panelWidth := float32(420)
-			if key == "ssh-setup-dialog" {
-				panelWidth = 464
-			}
-			panel.Width(min(panelWidth, width-48)).MaxHeight(height-48).Padding(configurationDialogInset).Gap(12).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Transition(popupMotion(c)).Children(body)
+		panelWidth := float32(420)
+		if key == "ssh-setup-dialog" {
+			panelWidth = 464
+		}
+		return compactDialog(c.Key(key), t, open, panelWidth, func(panel n.Element) {
+			panel.Gap(12).Children(body)
 		})
 	}
 
@@ -212,14 +210,14 @@ func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 		})
 		n.Text(c, "主目录").FontSize(12).TextColor(t.TextMuted)
 		n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
-			textField(c.Key("remote-main"), &v.remoteWorkspacePath).MinWidth(0).Grow(1).Height(32).FontSize(13).Label("远程主目录").Placeholder("该 Mac 上的绝对路径").Disabled(v.remoteWorkspaceBusy)
+			configurationTextField(c.Key("remote-main"), &v.remoteWorkspacePath).MinWidth(0).Grow(1).Height(32).FontSize(13).Label("远程主目录").Placeholder("该 Mac 上的绝对路径").Disabled(v.remoteWorkspaceBusy)
 			choose := iconButton(c, workspaceIcon, "选择主目录").MarginEnd(-6).Disabled(v.remoteWorkspaceBusy)
 			if choose.Clicked() {
 				v.chooseRemoteWorkspaceDirectory(false)
 			}
 		})
 		n.Text(c, "名称").FontSize(12).TextColor(t.TextMuted)
-		textField(c.Key("remote-name"), &v.remoteWorkspaceName).FillWidth().Height(32).FontSize(13).Label("工作区名称").Placeholder("使用目录名称").Disabled(v.remoteWorkspaceBusy)
+		configurationTextField(c.Key("remote-name"), &v.remoteWorkspaceName).Height(32).FontSize(13).Label("工作区名称").Placeholder("使用目录名称").Disabled(v.remoteWorkspaceBusy)
 		n.Row(c).FillWidth().AlignItems(n.Center).Children(func() {
 			n.Text(c, "附加目录").FontSize(12).TextColor(t.TextMuted).Grow(1)
 			if iconButton(c, plus, "添加文件夹").Tooltip("添加文件夹").MarginEnd(-6).Disabled(v.remoteWorkspaceBusy).Clicked() {

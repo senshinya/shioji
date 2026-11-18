@@ -12,7 +12,8 @@ import (
 
 func (v *View) sshDeviceForm(c *n.Context, t *n.Theme) {
 	f := v.setupFlow()
-	f.width = 432
+	width, height := c.Size()
+	f.width = min(432, max(0, width-2*(compactDialogWindowInset+configurationDialogInset)))
 	if f.step == welcomeDevice {
 		f.step = welcomeSSH
 		f.key = ""
@@ -26,8 +27,7 @@ func (v *View) sshDeviceForm(c *n.Context, t *n.Theme) {
 				v.dismissDeviceSetup()
 			}
 		})
-		_, height := c.Size()
-		n.Scroll(c.Key("ssh-body")).Width(448).MarginX(-8).PaddingX(8).MaxHeight(max(160, height-144)).Label("SSH 设置内容").Children(func() { v.welcomeSteps(c, t, f, true); v.welcomeStage(c, t, f, true) })
+		n.Scroll(c.Key("ssh-body")).Width(f.width + 16).MarginX(-8).PaddingX(8).MaxHeight(max(160, height-144)).Label("SSH 设置内容").Children(func() { v.welcomeSteps(c, t, f, true); v.welcomeStage(c, t, f, true) })
 	})
 }
 func (v *View) completeSSHDevice() {

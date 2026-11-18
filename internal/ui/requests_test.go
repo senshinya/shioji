@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
 	"shioji/internal/domain"
@@ -9,6 +10,83 @@ import (
 	"testing"
 	"time"
 )
+
+func TestLongQuestionCanRevealAndKeepASelectionFromHiddenOptions(t *testing.T) {
+	m := layoutModel()
+	m.Preferences.InterfaceZoom = 1.5
+	d := m.Details["s"]
+	q := domain.Question{ID: "long", Text: "检查哪些文件？"}
+	for i := range 9 {
+		q.Options = append(q.Options, domain.Option{Label: fmt.Sprintf("范围 %d", i+1)})
+	}
+	d.Requests = []domain.PendingRequest{{ID: "r", SessionID: "s", State: "pending", Kind: "questions", Title: "需要回答", Questions: []domain.Question{q}}}
+	m.Details["s"] = d
+	m.Drafts["session:s"] = "普通消息仍可编辑"
+	ui := n.NewTester(New(m, nil, "").View, 850, 600)
+	ui.Advance(time.Second)
+	if ui.HasText("范围 9") {
+		t.Fatal("the remaining options are mounted before expansion")
+	}
+	if err := ui.Click("显示全部 9 个选项"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	list, ok := ui.Find("问题选项内容")
+	if !ok {
+		t.Fatal("missing question scroll area")
+	}
+	ui.Scroll(list.X+list.W/2, list.Y+list.H/2, 0, 550)
+	ui.Advance(time.Second)
+	if err := ui.Click("范围 9"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ui.Click("收起选项"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if m.Answers["s/r/long"] != "范围 9" || m.Drafts["session:s"] != "普通消息仍可编辑" || !ui.HasText("已选「范围 9」") {
+		t.Fatal("collapsing hid which selection will be submitted")
+	}
+	list, _ = ui.Find("问题选项内容")
+	prompt, visible := ui.Find(q.Text)
+	if !visible || prompt.H < 29 || prompt.Y < list.Y {
+		t.Fatalf("collapsed options clipped the question prompt: %v inside %v", prompt, list)
+	}
+}
+
+func TestQuestionDistinguishesPresetFromRetainedCustomAnswer(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Requests = []domain.PendingRequest{{ID: "r", SessionID: "s", State: "pending", Kind: "questions", Title: "需要回答",
+		Questions: []domain.Question{{ID: "q", Text: "如何处理？", Options: []domain.Option{{Label: "继续"}}, Custom: true}}}}
+	m.Details["s"] = d
+	ctl := app.NewController("")
+	ui := n.NewTester(New(m, ctl, "").View, 850, 600)
+	if err := ui.Click("自定义答案"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Type("只核对原始记录")
+	if err := ui.Click("继续"); err != nil {
+		t.Fatal(err)
+	}
+	if !ui.HasText("将提交预设「继续」") || m.Answers["custom:s/r/q"] != "只核对原始记录" {
+		t.Fatal("preset and saved custom answer are ambiguous")
+	}
+	if err := ui.Click("使用自定义答案"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if !ui.HasText("将提交自定义答案") {
+		t.Fatal("switching to the saved draft did not update the submit source")
+	}
+	if err := ui.Click("提交答案"); err != nil {
+		t.Fatal(err)
+	}
+	job := welcomeJob(t, ctl, "request.respond")
+	if got := job.Input.(protocol.AnswerInput).Answer.Answers["q"]; len(got) != 1 || got[0] != "只核对原始记录" {
+		t.Fatalf("submitted %v instead of the active answer", got)
+	}
+}
 
 func TestMCPMultiSelectRequiresExplicitSubmitAndKeepsComposer(t *testing.T) {
 	m := layoutModel()
@@ -191,7 +269,7 @@ func TestOptionHoverKeepsEqualOuterInsetsAndSpaceBeforeTheControl(t *testing.T) 
 				if multi {
 					v.formField(c, theme, r, domain.FormField{ID: "q", Title: "多选", Type: "array", Options: []domain.FormOption{{Value: "a", Label: "选项甲"}, {Value: "b", Label: "选项乙"}}})
 				} else {
-					v.questionField(c, theme, r, domain.Question{ID: "q", Text: "单选", Options: []domain.Option{{Label: "选项甲"}, {Label: "选项乙"}}})
+					v.questionField(c, theme, r, domain.Question{ID: "q", Text: "单选", Options: []domain.Option{{Label: "选项甲"}, {Label: "选项乙"}}}, false)
 				}
 			})
 		}, 400, 240)

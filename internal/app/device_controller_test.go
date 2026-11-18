@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
@@ -10,6 +11,40 @@ import (
 	"testing"
 	"time"
 )
+
+func TestDeviceSearchReportsPartialAvailability(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	c := NewDeviceController("/unused", "A", []DeviceConnection{{ID: "air", DeviceID: "B"}}, "", nil)
+	m := NewModel()
+	m.DeviceStates["local"] = &DeviceState{Snapshot: domain.Snapshot{Workspaces: []domain.Workspace{{ID: "wA", DeviceID: "A"}}}}
+	var progress SearchProgress
+	c.searchDevices(ctx, Job{Input: protocol.SearchQuery{Query: "term"}, SearchProgress: func(_ *Model, next SearchProgress) { progress = next }})
+	reply := func(key string, body json.RawMessage, err error) {
+		t.Helper()
+		source := c.fleet.sources[key]
+		select {
+		case job := <-source.controller.Jobs:
+			job.Apply(m, body, err)
+		case <-ctx.Done():
+			t.Fatal("missing delegated search")
+		}
+		select {
+		case update := <-c.Updates:
+			update(m)
+		case <-ctx.Done():
+			t.Fatal("missing aggregate update")
+		}
+	}
+	reply("local", json.RawMessage(`[{"sessionId":"s","workspaceId":"wA","title":"Local"}]`), nil)
+	if progress.Pending != 1 || progress.Failed != 0 || len(progress.Results) != 1 {
+		t.Fatalf("first result waits on another device: %+v", progress)
+	}
+	reply("air", nil, errors.New("offline"))
+	if progress.Pending != 0 || progress.Failed != 1 || progress.Error != nil || len(progress.Results) != 1 {
+		t.Fatalf("partial failure lost the successful device: %+v", progress)
+	}
+}
 
 func TestDeviceControllerRoutesCommandsAndKeepsBothSubscriptions(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

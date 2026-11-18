@@ -140,7 +140,8 @@ func (v *View) currentDeviceControl(c *n.Context, t *n.Theme) {
 		v.changeKeepAwake(!on)
 	}
 	n.PopoverBase(c.Key("device-panel:"+key), device, open, func(panel n.Element) {
-		panel.AttachTo(device, n.AnchorBottomEnd, n.AnchorTopEnd).Margin(6, 0, 0, 0).Width(292).Padding(6, 10).Radius(8).Background(raised(t)).Border(1, t.Border).Shadow(0, 4, 16, 0, n.RGBA(0, 0, 0, .10)).Transition(popupMotion(c)).Label("当前设备状态").Children(func() {
+		informationPopoverSurface(panel, t).AttachTo(device, n.AnchorBottomEnd, n.AnchorTopEnd).
+			Margin(6, 0, 0, 0).Width(292).Transition(popupMotion(c)).Label("当前设备状态").Children(func() {
 			n.Column(c).FillWidth().Gap(8).Children(func() {
 				n.Text(c, name).FontSize(13).FixedLineHeight(20).FillWidth().SingleLine().Ellipsis("…")
 

@@ -10,37 +10,84 @@ import (
 	"time"
 )
 
-func (v *View) searchControl(c *n.Context, t *n.Theme) {
-	trigger := iconButton(c, searchIcon, "搜索").Size(24, 24)
-	if trigger.Clicked() {
-		v.searchOpen = !v.searchOpen
-		v.searchSent = ""
+func (v *View) resetSearchRequest() {
+	v.searchRequest++
+	v.searchSent, v.searchProblem = "", ""
+	v.searchPending, v.searchFailed = 0, 0
+}
+
+func (v *View) toggleSearch(c *n.Context) {
+	v.searchOpen = !v.searchOpen
+	v.resetSearchRequest()
+	if v.searchOpen {
+		v.searchInput.Focus(c)
+	} else {
+		v.searchInput.CancelFocus(c)
 	}
-	popover(c.Key("search-panel"), trigger, &v.searchOpen, func(panel n.Element) {
-		width, _ := c.Size()
-		panel.Width(min(560, width-40)).Padding(10).Radius(10).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
-			textField(c.Key("search-input"), &v.searchText).FillWidth().Height(32).Label("搜索会话").Placeholder("搜索会话与对话内容…").FontSize(13).Changed()
-			if v.Controller != nil && (v.Model.Connected || len(v.Model.DeviceStates) > 0) && v.searchSent != v.searchText {
-				query := v.searchText
-				accepted := v.do(app.Job{Method: "session.search", Input: protocol.SearchQuery{Query: query}, Apply: func(m *app.Model, b json.RawMessage, err error) {
-					if query != v.searchText {
-						return
-					}
-					if err != nil {
-						m.Error = err.Error()
-						return
-					}
-					json.Unmarshal(b, &v.searchResults)
-					v.searchResultsQuery = query
-				}})
-				if accepted {
-					v.searchSent = query
-				} else {
-					c.After(100 * time.Millisecond)
-				}
+}
+
+func (v *View) requestSearch(c *n.Context, query string) {
+	v.resetSearchRequest()
+	v.searchSent = query
+	v.searchResultsQuery, v.searchResults = "", nil
+	if v.Controller == nil {
+		v.searchProblem = "没有可搜索的设备"
+		return
+	}
+	request := v.searchRequest
+	apply := func(update app.SearchProgress) {
+		if !v.searchOpen || request != v.searchRequest || query != strings.TrimSpace(v.searchText) {
+			return
+		}
+		v.searchResults, v.searchResultsQuery = update.Results, query
+		v.searchPending, v.searchFailed = update.Pending, update.Failed
+		if update.Error != nil {
+			v.searchProblem = "搜索失败"
+		}
+	}
+	v.searchPending = 1
+	if !v.do(app.Job{
+		Method: "session.search", Input: protocol.SearchQuery{Query: query},
+		SearchProgress: func(_ *app.Model, update app.SearchProgress) { apply(update) },
+		Apply: func(_ *app.Model, body json.RawMessage, err error) {
+			var results []domain.SearchResult
+			if err == nil {
+				err = json.Unmarshal(body, &results)
 			}
-			results := v.searchResults
-			if strings.TrimSpace(v.searchText) == "" {
+			apply(app.SearchProgress{Results: results, Error: err})
+		},
+	}) {
+		v.searchSent = ""
+		v.searchPending = 0
+		v.searchProblem = "搜索繁忙"
+		c.After(100 * time.Millisecond)
+	}
+}
+
+func (v *View) searchControl(c *n.Context, t *n.Theme) {
+	trigger := iconButton(c, searchIcon, "搜索")
+	if trigger.Clicked() {
+		v.toggleSearch(c)
+	}
+	panel := n.PopoverBase(c.Key("search-panel"), trigger, &v.searchOpen, func(panel n.Element) {
+		width, _ := c.Size()
+		entrance := popupMotion(c)
+		entrance.Exit = nil
+		panel.Width(min(560, width-40)).Padding(10).Radius(10).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Transition(entrance).Children(func() {
+			textField(c.Key("search-input"), &v.searchText).FillWidth().Height(32).Label("搜索会话").Placeholder("搜索会话与对话内容…").FontSize(13).Bind(&v.searchInput).Changed()
+			query := strings.TrimSpace(v.searchText)
+			if query == "" {
+				if v.searchSent != "" {
+					v.resetSearchRequest()
+				}
+			} else if v.searchSent != query && (v.Controller != nil || v.searchResultsQuery != query) {
+				v.requestSearch(c, query)
+			}
+			var results []domain.SearchResult
+			if v.searchResultsQuery == query {
+				results = v.searchResults
+			}
+			if query == "" {
 				results = nil
 				for i := len(v.Model.Snapshot.Sessions) - 1; i >= 0; i-- {
 					s := v.Model.Snapshot.Sessions[i]
@@ -53,8 +100,27 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 					results = append(results, domain.SearchResult{SessionID: s.ID, WorkspaceID: s.WorkspaceID, Title: s.Title, Archived: archived})
 				}
 			}
-			if len(results) == 0 {
-				n.Text(c, "没有匹配的会话").FontSize(12).TextColor(t.TextMuted).Padding(10)
+			status := v.searchProblem
+			if v.searchFailed > 0 && status == "" {
+				status = "部分设备搜索失败，结果可能不完整"
+			}
+			if v.searchPending > 0 {
+				if len(results) == 0 {
+					status = "正在搜索…"
+				} else {
+					status = "正在搜索其他设备…"
+				}
+			}
+			if len(results) == 0 && status == "" {
+				status = "没有匹配的会话"
+			}
+			if status != "" {
+				n.Row(c).FillWidth().Padding(4, 8).AlignItems(n.Center).Gap(8).Children(func() {
+					n.Text(c, status).FontSize(12).TextColor(t.TextMuted).Grow(1).Role(n.RoleStatus)
+					if v.searchPending == 0 && (v.searchProblem != "" || v.searchFailed > 0) && configurationAction(c, "重试搜索").Clicked() {
+						v.requestSearch(c, query)
+					}
+				})
 			}
 			v.searchList.Key = func(i int) any { return results[i].SessionID }
 			n.List(c, &v.searchList, len(results), func(i int) {
@@ -97,4 +163,7 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 			}).FillWidth().Height(min(360, float32(len(results))*74))
 		})
 	})
+	if panel.Dismissed() {
+		v.resetSearchRequest()
+	}
 }

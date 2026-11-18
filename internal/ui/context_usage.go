@@ -75,16 +75,13 @@ func (v *View) contextMeter(c *n.Context, t *n.Theme, cfg domain.RunConfig) {
 		})
 	})
 	hasAction := v.Model.WorkerMinor >= 29 && v.Model.RunReadiness().Capabilities.Compact
-	bottomInset := float32(10)
-	if hasAction {
-		bottomInset = 3
-	}
 	hoverCard(c.Key("context-details:"+session.ID), trigger, func(panel n.Element) {
 		panel.Transition(popupMotion(c))
-		panel.AttachTo(trigger, n.AnchorTopEnd, n.AnchorBottomEnd).Margin(0, 0, 6, 0).Label("上下文详情").Width(232).Padding(10, 10, bottomInset, 10).Radius(9).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Children(func() {
+		informationPopoverSurface(panel, t).AttachTo(trigger, n.AnchorTopEnd, n.AnchorBottomEnd).
+			Margin(0, 0, 6, 0).Label("上下文详情").Width(232).Children(func() {
 			n.Column(c).FillWidth().Gap(8).Children(func() {
 				n.Row(c).FillWidth().AlignItems(n.Baseline).Children(func() {
-					n.Text(c, "上下文").FontSize(12).FontWeight(500)
+					n.Text(c, "上下文").FontSize(13).FixedLineHeight(20)
 					n.Spacer(c).Grow(1)
 					animation := motionAnimation(c, 240*time.Millisecond)
 					n.Text(c, label).FontSize(11).FontFeatures("tnum").TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Numeric: known && !compacting, Animation: &animation})

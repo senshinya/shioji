@@ -143,7 +143,7 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 					}).MarginStart(-configurationHoverInset)
 					n.Row(c).Grow(1).Gap(4).AlignItems(n.Baseline).Children(func() {
 						if rename.open {
-							input := textField(c.Key("name"), &rename.name).Padding(0, 8).Grow(1).MaxWidth(360).Height(28).FixedLineHeight(configurationTitleLine).FontSize(configurationTitleSize).FontWeight(400).Label("设备显示名称").Transition(fadeMotion(c, 140*time.Millisecond))
+							input := textField(c.Key("name"), &rename.name).Padding(0, configurationFieldInset).Radius(configurationFieldRadius).Grow(1).MaxWidth(360).Height(28).FixedLineHeight(configurationTitleLine).FontSize(configurationTitleSize).FontWeight(400).Label("设备显示名称").Transition(fadeMotion(c, 140*time.Millisecond))
 							if rename.focus {
 								input.Focus()
 								rename.focus = false

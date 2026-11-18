@@ -702,7 +702,7 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 			panelHeight = p.NaturalHeight + 30
 		}
 		panelHeight = panel.AnimateTo("preview-height", panelHeight, motionAnimation(c, 180*time.Millisecond))
-		panel.Width(panelWidth).Height(panelHeight).MaxHeight(h-64).Padding(14).Radius(10).Clip().Background(raised(t)).Border(1, t.Border).Label("附件预览")
+		dialogSurface(panel, t).Width(panelWidth).Height(panelHeight).MaxHeight(h - 64).Padding(14).Clip().Label("附件预览")
 		if !p.motionReady() {
 			panel.Jump("preview-open", 0)
 			p.measured()
@@ -714,6 +714,7 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 		animation := motionAnimation(c, 280*time.Millisecond)
 		animation.Ease = composerDescentEase
 		progress := panel.AnimateTo("preview-open", target, animation)
+		panel.Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, dialogBackdropOpacity*progress))
 		if p.open() && progress >= 1 && p.LoadedImage != nil {
 			p.Image = p.LoadedImage
 			p.LoadedImage = nil
@@ -727,7 +728,7 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 		}
 		if isImage {
 			// Image pixels stay opaque. Only their crop and geometry change.
-			alpha := float32(.2)
+			alpha := float32(dialogBackdropOpacity)
 			if !reduce {
 				alpha *= progress
 			}
@@ -736,9 +737,9 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 				panel.Opacity(progress)
 			}
 		} else {
-			backdrop.Background(n.RGBA(0, 0, 0, .2*progress))
+			backdrop.Background(n.RGBA(0, 0, 0, dialogBackdropOpacity*progress))
 			if reduce {
-				backdrop.Background(n.RGBA(0, 0, 0, .2)).Transition(fadeMotion(c, 60*time.Millisecond))
+				backdrop.Background(n.RGBA(0, 0, 0, dialogBackdropOpacity)).Transition(fadeMotion(c, 60*time.Millisecond))
 			} else if p.Source.W <= 0 || p.Source.H <= 0 {
 				panel.Opacity(progress)
 			}
@@ -753,7 +754,8 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 			if cardMorph {
 				panel.Width(p.Source.W+(panelWidth-p.Source.W)*progress).Height(p.Source.H+(panelHeight-p.Source.H)*progress).Padding(0).
 					Transform(n.Translation(x, y)).Background(p.Origin.Surface.Mix(raised(t), progress)).
-					Radius(p.Origin.Radius+(10-p.Origin.Radius)*progress).Border(p.Origin.BorderWidth+(1-p.Origin.BorderWidth)*progress, t.Border)
+					Radius(p.Origin.Radius+(compactDialogRadius-p.Origin.Radius)*progress).
+					Border(p.Origin.BorderWidth+(compactDialogBorder-p.Origin.BorderWidth)*progress, t.Border)
 			} else {
 				panel.Transform(n.Scaling(sx, sy).Then(n.Translation(x, y)))
 			}

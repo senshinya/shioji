@@ -349,9 +349,10 @@ func (v *View) conversationImportDialog(c *n.Context, t *n.Theme) {
 	}
 	open := true
 	n.DialogBase(c.Key("conversation-import-dialog"), &open, func(backdrop, panel n.Element) {
-		backdrop.Background(n.RGBA(0, 0, 0, .16)).Transition(fadeMotion(c, 180*time.Millisecond))
+		backdrop.Background(n.RGBA(0, 0, 0, dialogBackdropOpacity)).Transition(fadeMotion(c, 180*time.Millisecond))
 		w, h := c.Size()
-		panel.Width(min(624, w-48)).Height(min(690, h-72)).Padding(configurationDialogInset).Radius(14).Clip().Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Label("导入已有会话").Transition(popupMotion(c))
+		dialogSurface(panel, t).Width(min(624, w-48)).Height(min(690, h-72)).Padding(configurationDialogInset).
+			Clip().Label("导入已有会话").Transition(popupMotion(c))
 		n.Inert(panel, closing)
 		panel.Children(func() {
 			n.Row(c).FillWidth().Height(28).Margin(0, 0, 20).Gap(8).AlignItems(n.Baseline).Children(func() {

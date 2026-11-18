@@ -220,6 +220,28 @@ func (v *View) workInspectorPane(c *n.Context, t *n.Theme, state *changesState, 
 			tabs.List.Gap(2).Children(func() {
 				for i, kind := range g.views {
 					button := controlFeedback(c, tabs.Tab(i), 6).Size(28, 28).AlignItems(n.Center).Justify(n.Center).Radius(6).Label(inspectorWorkName(kind)).Tooltip(inspectorWorkName(kind)).Cursor(n.CursorDefault).Drag(inspectorTabDrag{v.Model.SessionID, kind})
+					v.restoreInspectorTabFocus(button, kind)
+					button.ContextMenu(func(menu *n.Menu) {
+						switch len(visibleWorkGroups(groups, plan != nil && (len(plan.Steps) > 0 || plan.Narrative != ""))) {
+						case 1:
+							if len(g.views) > 1 && menu.Item("拆分到下方").Chosen() {
+								*next = app.SplitInspectorView(groups, kind)
+								_, height := c.Size()
+								v.Model.InspectorSplitHeight = height / 2
+								v.inspectorFocus = inspectorTabDrag{v.Model.SessionID, kind}
+							}
+						case 2:
+							if menu.Item("移到另一标签组").Chosen() {
+								*next = app.MoveInspectorView(groups, kind, 1-g.index)
+								v.inspectorFocus = inspectorTabDrag{v.Model.SessionID, kind}
+							}
+							if menu.Item("合并到同一标签组").Chosen() {
+								views := append(slices.Clone(groups[0].Views), groups[1].Views...)
+								*next = []app.InspectorGroup{{Views: views, Selected: kind}}
+								v.inspectorFocus = inspectorTabDrag{v.Model.SessionID, kind}
+							}
+						}
+					})
 					if kind == g.selected {
 						button.Background(t.SurfacePressed)
 					}

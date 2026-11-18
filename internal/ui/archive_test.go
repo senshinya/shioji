@@ -31,7 +31,7 @@ func TestArchiveMenuOpensFullListAndDirectHistoryPreservesDraft(t *testing.T) {
 		t.Fatal("archive list entry missing", err)
 	}
 	ui.Advance(time.Second)
-	if !ui.HasText("Workspace") || !ui.HasText("1 个会话") {
+	if !ui.HasText("归档工作区列") || !ui.HasText("1 个会话") {
 		t.Fatal("full archive list not shown", ui.Texts())
 	}
 	if err := ui.Click("查看归档会话：Layout"); err != nil {
@@ -198,7 +198,7 @@ func TestArchiveColumnsShareStableNativeBaselines(t *testing.T) {
 				ui := n.NewTester(v.View, width, 820)
 				ui.SetDark(dark)
 				ui.Advance(time.Second)
-				header, _ := ui.Find("Workspace")
+				header, _ := ui.Find("归档工作区列")
 				var firstX float32
 				for i, title := range []string{"check gyp", "design", "中文工作区", "English 与中文"} {
 					name, ok := ui.Find(title)

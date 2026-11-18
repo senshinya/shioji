@@ -28,6 +28,7 @@ type Job struct {
 	Input           any
 	Prepare         func() error
 	Apply           func(*Model, json.RawMessage, error)
+	SearchProgress  func(*Model, SearchProgress)
 	epoch           string
 }
 type Controller struct {

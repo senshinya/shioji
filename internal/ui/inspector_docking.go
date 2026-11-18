@@ -15,6 +15,13 @@ func otherInspectorView(kind string) string {
 	return "tasks"
 }
 
+func (v *View) restoreInspectorTabFocus(button n.Element, kind string) {
+	if v.inspectorFocus == (inspectorTabDrag{v.Model.SessionID, kind}) {
+		button.Focus()
+		v.inspectorFocus = inspectorTabDrag{}
+	}
+}
+
 func (v *View) inspectorTabs(c *n.Context, t *n.Theme, kinds []string, kind string, headerHeight float32, drop **app.InspectorLayout) {
 	selected := 0
 	for i, k := range kinds {
@@ -31,6 +38,32 @@ func (v *View) inspectorTabs(c *n.Context, t *n.Theme, kinds []string, kind stri
 				label, icon = "任务", tasksIcon
 			}
 			button := controlFeedback(c, tabs.Tab(i), 6).Size(28, 28).AlignItems(n.Center).Justify(n.Center).Radius(6).Label(label).Tooltip(label).TextColor(t.TextMuted).Cursor(n.CursorDefault).Drag(inspectorTabDrag{v.Model.SessionID, k})
+			v.restoreInspectorTabFocus(button, k)
+			button.ContextMenu(func(menu *n.Menu) {
+				if len(kinds) == 1 {
+					first := v.Model.InspectorLayout.First
+					if first == "" {
+						first = "changes"
+					}
+					if menu.Item("合并到同一标签组").Chosen() {
+						*drop = &app.InspectorLayout{Joined: true, First: first, Selected: k}
+						v.inspectorFocus = inspectorTabDrag{v.Model.SessionID, k}
+					}
+					move, next := "移到上方", k
+					if k == first {
+						move, next = "移到下方", otherInspectorView(k)
+					}
+					if menu.Item(move).Chosen() {
+						*drop = &app.InspectorLayout{First: next, Selected: k}
+						v.inspectorFocus = inspectorTabDrag{v.Model.SessionID, k}
+					}
+				} else if menu.Item("拆分到下方").Chosen() {
+					_, height := c.Size()
+					v.Model.InspectorSplitHeight = min(max(height/2, 120), max(120, height-240))
+					*drop = &app.InspectorLayout{First: otherInspectorView(k), Selected: k}
+					v.inspectorFocus = inspectorTabDrag{v.Model.SessionID, k}
+				}
+			})
 			button.Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 120*time.Millisecond).Duration})
 			if len(kinds) > 1 && selected == i {
 				button.Background(t.SurfacePressed).TextColor(t.Text)

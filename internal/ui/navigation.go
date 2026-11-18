@@ -34,6 +34,7 @@ type navigationRow struct {
 	session   domain.Session
 	ref       app.SessionLocation
 	pinned    bool
+	pending   int
 	presence  float32
 }
 
@@ -217,6 +218,7 @@ func (v *View) navigationRows(c *n.Context) []navigationRow {
 	}
 	sessions := map[app.SessionLocation]domain.Session{}
 	presence := map[app.SessionLocation]float32{}
+	pending := map[string]int{}
 	for _, s := range m.Snapshot.Sessions {
 		w, ok := byWorkspace[s.WorkspaceID]
 		if !ok {
@@ -225,6 +227,9 @@ func (v *View) navigationRows(c *n.Context) []navigationRow {
 		ref := app.SessionLocation{DeviceID: w.DeviceID, WorkspaceID: w.ID, SessionID: s.ID}
 		sessions[ref] = s
 		presence[ref] = v.navigationPresence(c, "session:"+s.ID, !w.Archived && !s.Archived)
+		if v.collapsedWorkspaces[w.ID] && !w.Archived && !s.Archived {
+			pending[w.ID] += v.pendingCount(s.ID)
+		}
 	}
 	rows := []navigationRow{}
 	heading := v.navigationPresence(c, "global-pinned-heading", len(m.NavigationPins()) > 0)
@@ -250,7 +255,7 @@ func (v *View) navigationRows(c *n.Context) []navigationRow {
 		if p <= 0 {
 			continue
 		}
-		rows = append(rows, navigationRow{kind: navigationWorkspace, workspace: w, ref: app.SessionLocation{DeviceID: w.DeviceID, WorkspaceID: w.ID}, presence: p})
+		rows = append(rows, navigationRow{kind: navigationWorkspace, workspace: w, ref: app.SessionLocation{DeviceID: w.DeviceID, WorkspaceID: w.ID}, presence: p, pending: pending[w.ID]})
 		if v.collapsedWorkspaces[w.ID] {
 			continue
 		}
@@ -281,8 +286,8 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 	n.Column(c).Width(sidebarWidth).FillHeight().Padding(8, 0, 8, 8).Children(func() {
 		card := n.Column(c).Fill().Radius(14).Clip().Background(color).Border(1, t.Border)
 		card.Children(func() {
-			n.Column(c.Key("nav-top")).FillWidth().Padding(8, 8, 0, 8).Gap(4).Children(func() {
-				n.Row(c).Height(26).AlignItems(n.Start).DragWindow().Children(func() { n.Spacer(c).Grow(1); v.searchControl(c, t) })
+			n.Column(c.Key("nav-top")).FillWidth().Padding(6, 8, 0, 8).Gap(4).Children(func() {
+				n.Row(c).Height(28).AlignItems(n.Start).DragWindow().Children(func() { n.Spacer(c).Grow(1); v.searchControl(c, t) })
 				if navButton(c, plus, "新建会话").Background(func() n.Color {
 					if m.SessionID == "" && !v.devices && (v.archive == nil || !v.archive.open) {
 						return t.SurfacePressed
@@ -352,7 +357,7 @@ func (v *View) navigationRow(c *n.Context, t *n.Theme, r navigationRow) {
 	case navigationWorkspaceHeading:
 		n.Row(c).Height(32).Padding(8, 0, 0, 6).AlignItems(n.Center).Transform(shift).Children(func() {
 			n.Text(c, "工作区").FontSize(11).FixedLineHeight(16).TextColor(t.TextMuted).Grow(1)
-			iconButton(c, moreActionsIcon, "工作区菜单").Size(24, 24).Menu(func(menu *n.Menu) {
+			iconButton(c, moreActionsIcon, "工作区菜单").Menu(func(menu *n.Menu) {
 				if menu.Item("已归档…").Chosen() {
 					v.openArchive()
 				}
@@ -361,10 +366,15 @@ func (v *View) navigationRow(c *n.Context, t *n.Theme, r navigationRow) {
 		})
 	case navigationWorkspace:
 		w := r.workspace
+		expanded := !v.collapsedWorkspaces[w.ID]
+		description := m.DeviceName(w.DeviceID)
+		if r.pending > 0 {
+			description += fmt.Sprintf("，%d 项待处理", r.pending)
+		}
 		group := n.Row(c).Height(30).Gap(3).AlignItems(n.Center).Opacity(r.presence).Transform(shift)
 		v.navigationDragSource(c, group, r)
 		group.Children(func() {
-			if control(c.Key("workspace:" + w.ID)).Height(24).Grow(1).Gap(3).Justify(n.Start).Label(w.Name).Children(func() {
+			if control(c.Key("workspace:" + w.ID)).Height(24).Grow(1).Gap(3).Justify(n.Start).Label(w.Name).Description(description).Expanded(expanded).Children(func() {
 				n.Row(c).Grow(1).Gap(3).AlignItems(n.Baseline).Children(func() {
 					angle := float32(0)
 					if v.collapsedWorkspaces[w.ID] {
@@ -374,6 +384,10 @@ func (v *View) navigationRow(c *n.Context, t *n.Theme, r navigationRow) {
 					n.Text(c, w.Name).SingleLine().Grow(1).FontSize(12).FontWeight(500).FixedLineHeight(20).TooltipWhenTruncated(w.Name)
 				})
 				n.Text(c, m.DeviceName(w.DeviceID)).FontSize(11).TextColor(t.TextMuted).PaddingX(6)
+				if r.pending > 0 {
+					n.Text(c, fmt.Sprint(r.pending)).Font("Menlo").FontSize(11).Width(16).Shrink(0).TextAlign(n.End).
+						TextColor(t.Warning).Label("工作区待处理：" + w.ID)
+				}
 			}).ContextMenu(func(menu *n.Menu) { v.workspaceMenu(menu, w) }).Clicked() {
 				v.collapsedWorkspaces[w.ID] = !v.collapsedWorkspaces[w.ID]
 			}
@@ -389,7 +403,9 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 	if finishing {
 		c.AnimationFrame()
 	}
-	row := control(c, 8).FillWidth().Height(28).MarginY(1).Padding(4, 0, 4, 20).Radius(8).Label(s.Title)
+	pending := v.pendingCount(s.ID)
+	description := sessionNavigationDescription(s, pending, selected, finishing)
+	row := control(c, 8).FillWidth().Height(28).MarginY(1).Padding(4, 0, 4, 20).Radius(8).Label(s.Title).Description(description)
 	shift := v.navigationOffset(c, r.key())
 	row.Transform(n.Translation(0, shift))
 	if p := min(r.presence, v.sessionEntryProgress(c, s.ID, false)); p < 1 {
@@ -404,7 +420,7 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 		n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
 			if s.ReadOnlyHistory() {
 				inlineSymbol(c, modelEye, s.Title, n.Font{Family: t.Font, Size: 13}, 10, t.TextMuted).Label("只读会话：" + s.ID).Tooltip("只读会话")
-			} else if v.pendingCount(s.ID) > 0 {
+			} else if pending > 0 {
 				statusDotSize(c, s.Title, n.Font{Family: t.Font, Size: 13}, t.Warning, 4, false).Width(10).TextAlign(n.Center).Label("会话等待状态：" + s.ID)
 			} else if s.Status.Active() || finishing {
 				statusDotSize(c, s.Title, n.Font{Family: t.Font, Size: 13}, t.Success, 4, true).Width(10).TextAlign(n.Center).Label("会话运行状态：" + s.ID)
@@ -433,8 +449,8 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 			animation := motionAnimation(c, 160*time.Millisecond)
 			title := n.Text(c, s.Title).SingleLine().Grow(1).MinWidth(0).FontSize(13).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: &animation}).TextColor(color)
 			title.TooltipWhenTruncated(s.Title)
-			if count := v.pendingCount(s.ID); count > 0 {
-				n.Text(c, fmt.Sprint(count)).Font("Menlo").FontSize(11).Width(16).TextAlign(n.End)
+			if pending > 0 {
+				n.Text(c, fmt.Sprint(pending)).Font("Menlo").FontSize(11).Width(16).TextAlign(n.End)
 			}
 			// The action slot has no text baseline when the pin is hidden. Keep
 			// it out of baseline alignment so its bottom cannot lower the title.
@@ -469,4 +485,28 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 		v.navigateSession(s.ID, s.WorkspaceID)
 		v.devices = false
 	}
+}
+
+func sessionNavigationDescription(s domain.Session, pending int, selected, finishing bool) string {
+	status := "已暂停"
+	switch {
+	case s.ReadOnlyHistory():
+		status = "只读会话"
+	case pending > 0:
+		status = fmt.Sprintf("%d 项待处理", pending)
+	case s.Status.Active() || finishing:
+		status = "正在执行"
+	case s.Status == domain.ExecutionCompleted:
+		status = "已完成"
+	case s.Status == domain.ExecutionInterrupted || s.Status == domain.ExecutionAbandoned:
+		status = "已停止"
+	case s.Status == domain.ExecutionFailed:
+		status = "执行失败"
+	case s.Status == domain.ExecutionUnknown:
+		status = "执行状态待核实"
+	}
+	if selected {
+		status = "已选中，" + status
+	}
+	return status
 }

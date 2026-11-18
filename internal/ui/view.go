@@ -201,7 +201,11 @@ type View struct {
 	collapsedWorkspaces                                                                                             map[string]bool
 	dockHeight                                                                                                      float32
 	searchOpen                                                                                                      bool
+	searchInput                                                                                                     n.Handle
 	searchText, searchSent                                                                                          string
+	searchRequest                                                                                                   uint64
+	searchPending, searchFailed                                                                                     int
+	searchProblem                                                                                                   string
 	searchResults                                                                                                   []domain.SearchResult
 	searchList                                                                                                      n.ListState
 	branchOpen                                                                                                      bool
@@ -210,6 +214,7 @@ type View struct {
 	switchingBranch                                                                                                 bool
 	gitLoads                                                                                                        map[string]*gitLoadState
 	resizingInspector                                                                                               bool
+	inspectorFocus                                                                                                  inspectorTabDrag
 	changes                                                                                                         map[string]*changesState
 	menuOpen                                                                                                        map[string]bool
 	menuContext                                                                                                     string
@@ -238,13 +243,13 @@ func (v *View) collectBindings() {
 	for key, b := range v.answerBindings {
 		if b.Text != b.LastModel {
 			v.Model.Answers[key] = b.Text
+			v.Model.Answers["source:"+key] = "preset"
 			b.LastModel = b.Text
 		}
 	}
 	for key, b := range v.customBindings {
 		if b.Text != b.LastModel {
-			v.Model.Answers["custom:"+key] = b.Text
-			v.Model.Answers[key] = b.Text
+			v.useCustomQuestionAnswer(key, b.Text)
 			b.LastModel = b.Text
 		}
 	}
@@ -412,7 +417,7 @@ func (v *View) View(c *n.Context) {
 		v.requestGit(false)
 	}
 	if c.Shortcut(n.Cmd, n.KeyK) {
-		v.searchOpen = !v.searchOpen
+		v.toggleSearch(c)
 	}
 	if c.Shortcut(n.Cmd, n.KeyF) {
 		v.focusedView().openConversationFind()
@@ -968,6 +973,9 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 	ready := v.Model.RunReadiness()
 	descriptor := ready.Descriptor()
 	summary := cfg.Model
+	if summary == "" {
+		summary = "未选择模型"
+	}
 	if cfg.Effort != "" {
 		summary += " · " + cfg.Effort
 	}
@@ -979,10 +987,22 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 	}
 	missing := v.Model.ModelUnavailable()
 	tip := descriptor.Name + " · " + summary
+	description := tip
 	if missing {
 		tip = cfg.Model + " 已不可用，请更换模型"
+		description += "，模型已不可用，请更换模型"
+	} else if !v.Model.Connected {
+		description += "，设备未连接"
+	} else if ready.State != domain.RuntimeReady {
+		reason := "运行配置暂不可用"
+		if ready.Error != "" {
+			reason = feedbackDetails(ready.Error)
+		} else if ready.State == domain.RuntimeRefreshing {
+			reason = "正在刷新运行配置"
+		}
+		description += "，" + reason
 	}
-	trigger := control(c).Height(28).MaxWidth(390).MinWidth(0).Shrink(1).PaddingX(6).Radius(6).Label("运行配置").Tooltip(tip)
+	trigger := control(c).Height(28).MaxWidth(390).MinWidth(0).Shrink(1).PaddingX(6).Radius(6).Label("运行配置").Description(description).Tooltip(tip)
 	modelColor := t.TextMuted
 	if missing {
 		modelColor = t.Danger

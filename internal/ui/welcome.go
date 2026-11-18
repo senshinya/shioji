@@ -106,10 +106,13 @@ func (v *View) welcomeView(c *n.Context, t *n.Theme) {
 		v.syncWelcomeLocalAgents()
 	}
 	width, height := c.Size()
+	f.width = min(560, max(0, width-40))
 	top := max(float32(112), min(height/2-208, 256))
 	if f.step == welcomeImport {
 		top = 112
 	}
+	// Preserve room for the form and footer in short or zoomed windows.
+	top = min(top, max(56, height-300))
 	distance := width
 	duration := 260 * time.Millisecond
 	if c.Preferences().ReduceMotion {
@@ -126,7 +129,7 @@ func (v *View) welcomeView(c *n.Context, t *n.Theme) {
 		}
 		f.contentTop = top
 		scroll.Padding(top-56, 0, 24).Children(func() {
-			n.Column(c).Width(min(560, width-40)).AlignSelf(n.Center).Label("欢迎内容").Children(func() {
+			n.Column(c).Width(f.width).AlignSelf(n.Center).Label("欢迎内容").Children(func() {
 				v.welcomeSteps(c, t, f, false)
 				v.welcomeStage(c, t, f, false)
 				v.welcomeError(c, v.Model.Error)

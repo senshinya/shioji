@@ -210,10 +210,10 @@ func (v *View) directoryDialog(c *n.Context, t *n.Theme) {
 	}
 	open := true
 	n.DialogBase(c.Key("directory-picker-dialog"), &open, func(backdrop, panel n.Element) {
-		backdrop.Background(n.RGBA(0, 0, 0, .16))
+		backdrop.Background(n.RGBA(0, 0, 0, dialogBackdropOpacity))
 		width, height := c.Size()
 		w, h := min(float32(640), width-48), min(float32(444), height-48)
-		panel.Width(w).Height(h).Radius(12).Clip().Background(raised(t)).Border(1, t.Border).Shadow(0, 8, 28, 0, n.RGBA(0, 0, 0, .16)).Label("远程文件夹选择器")
+		dialogSurface(panel, t).Width(w).Height(h).Clip().Label("远程文件夹选择器")
 		n.Inert(panel, closing)
 		panel.Children(func() {
 			n.Row(c).FillWidth().Height(56).PaddingX(configurationDialogInset).Gap(12).AlignItems(n.Center).Children(func() {
@@ -337,7 +337,7 @@ func (v *View) directoryContents(c *n.Context, t *n.Theme, p *directoryPicker) {
 	n.Scroll(c.Key("folders:"+p.page.Path+strconv.FormatBool(p.loadedHidden))).Fill().Padding(6, 8).Children(func() {
 		n.Column(c).FillWidth().FocusGroup(n.Vertical).Children(func() {
 			for _, entry := range p.page.Entries {
-				row := control(c.Key(entry.Path), 5).FillWidth().Height(32).Radius(5).PaddingX(configurationDialogInset-8).AlignItems(n.Center).Label("文件夹：" + entry.Name).Disabled(p.visiblePhase() == directoryLoading).Transition(fadeMotion(c, 140*time.Millisecond))
+				row := control(c.Key(entry.Path), 5).FillWidth().Height(32).Radius(5).PaddingX(configurationDialogInset - 8).AlignItems(n.Center).Label("文件夹：" + entry.Name).Disabled(p.visiblePhase() == directoryLoading).Transition(fadeMotion(c, 140*time.Millisecond))
 				if p.selected == entry.Path {
 					row.Background(t.Selection)
 				}

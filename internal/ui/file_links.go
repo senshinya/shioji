@@ -297,10 +297,8 @@ func (v *View) fileLinkDialog(c *n.Context, t *n.Theme) {
 		})
 	}
 	open := true
-	n.DialogBase(c.Key("file-link-dialog"), &open, func(backdrop, panel n.Element) {
-		backdrop.Background(n.RGBA(0, 0, 0, .2))
-		width, _ := c.Size()
-		panel.Width(min(float32(360), width-32)).Padding(configurationCompactDialogInset).Radius(10).Background(raised(t)).Border(1, t.Border).Gap(8).Label("文件链接")
+	compactDialog(c.Key("file-link-dialog"), t, &open, 360, func(panel n.Element) {
+		panel.Gap(8).Label("文件链接")
 		panel.Children(func() {
 			n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
 				title := filepath.Base(s.path)
@@ -334,7 +332,7 @@ func (v *View) fileLinkDialog(c *n.Context, t *n.Theme) {
 				}
 				if s.result != nil {
 					n.Text(c, storageCapacity(s.result.Resource.Size)).FontSize(11).TextColor(t.TextMuted)
-					n.Row(c).AlignSelf(n.Stretch).MarginX(-8).Justify(n.SpaceBetween).Gap(8).Children(func() {
+					n.Row(c).AlignSelf(n.Stretch).MarginX(-8).Wrap().Justify(n.SpaceBetween).Gap(8).Children(func() {
 						if (systemFilePreview(s.result.Path) || s.action == fileLinkOpen && defaultFileApplication(s.result.Path)) && configurationAction(c, "用默认应用打开").Clicked() {
 							v.openLinkedFile(s)
 						}
