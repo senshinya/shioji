@@ -61,6 +61,38 @@ func archiveViewFixture() (*View, *n.Tester) {
 	return v, n.NewTester(v.View, 1240, 820)
 }
 
+func TestArchiveLastRowRemainsReachableAfterResize(t *testing.T) {
+	v, ui := archiveViewFixture()
+	for i := 2; i <= 14; i++ {
+		v.Model.Snapshot.Sessions = append(v.Model.Snapshot.Sessions, domain.Session{
+			ID: fmt.Sprintf("archive-%d", i), WorkspaceID: "w", Title: fmt.Sprintf("归档会话 %02d", i), Archived: true,
+		})
+	}
+	ui.SetDark(true)
+	for _, size := range []struct{ width, height int }{{1240, 806}, {1240, 760}, {850, 600}} {
+		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
+			ui.SetSize(size.width, size.height)
+			ui.Advance(time.Second)
+			heading, ok := ui.Find("已归档")
+			if !ok || heading.Y < 20 || heading.Y > 32 {
+				t.Fatal("archive heading falls outside the compact top spacing", heading)
+			}
+			list, ok := ui.Find("已归档会话列表")
+			if !ok {
+				t.Fatal("archive list is missing")
+			}
+			ui.Scroll(list.X+100, list.Y+40, 0, -2000)
+			ui.Scroll(list.X+100, list.Y+40, 0, 2000)
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("archive-bottom-%d.png", size.height))
+			row, ok := ui.Find("查看归档会话：归档会话 14")
+			if !ok || row.H < 39 || row.Y+row.H > float32(size.height) {
+				t.Fatalf("last row remains clipped at scroll end: row=%+v list=%+v", row, list)
+			}
+		})
+	}
+}
+
 func TestArchiveDeleteConfirmationTargetsStableObjectAndRestoresFailure(t *testing.T) {
 	v, ui := archiveViewFixture()
 	v.Model.Drafts["home"] = "keep home"

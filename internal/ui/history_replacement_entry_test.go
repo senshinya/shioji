@@ -106,7 +106,7 @@ func TestSessionEntryWaitsForHistoryAfterAnotherClientRewritesIt(t *testing.T) {
 					t.Fatal(err)
 				}
 				if entry == "return-from-archive" {
-					if err := ui.Click("返回会话"); err != nil {
+					if err := ui.Click(newSession.Title); err != nil {
 						t.Fatal(err)
 					}
 				} else {

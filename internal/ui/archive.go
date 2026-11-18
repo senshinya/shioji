@@ -14,6 +14,7 @@ import (
 
 const archiveRowHeight float32 = 40
 const archiveActionWidth float32 = 60 // two 28-DIP targets and their 4-DIP gap
+const archiveTitleTopInset = 16
 
 var archiveDeleteIcon = svg("M4 5h12M8 2h4l1 3M5 5l1 13h8l1-13M8 8v7M12 8v7")
 
@@ -153,78 +154,71 @@ func (v *View) archivePage(c *n.Context, t *n.Theme) {
 			a.selectList(a.tab, "")
 		}
 	}
-	n.Column(c.Key("archive-page")).FillHeight().Grow(1).MinWidth(0).Children(func() {
-		n.Row(c).FillWidth().Height(48).DragWindow()
-		n.Column(c).Fill().AlignItems(n.Center).Children(func() {
-			inset := float32(configurationInset)
-			if v.viewportWidth <= 1000 {
-				inset = 24
-			}
-			n.Column(c.Key("archive-content")).FillWidth().MaxWidth(912).Grow(1).MinHeight(0).Padding(24, inset, 24, inset).Children(func() {
-				n.Row(c).FillWidth().Height(32).Gap(8).AlignItems(n.Center).Margin(0, 0, 12, 0).Children(func() {
-					title, backLabel := "已归档", "返回会话"
-					if scope.ID != "" {
-						title, backLabel = scope.Name, "返回已归档工作区"
-					} else if a.returnTo != nil && a.returnTo.session == "" {
-						backLabel = "返回新建会话"
-					}
-					font := n.Font{Family: t.Font, Size: 20, Weight: 500}
+	inset := float32(configurationInset)
+	if v.viewportWidth <= 1000 {
+		inset = 24
+	}
+	n.Column(c.Key("archive-page")).FillHeight().Grow(1).MinWidth(0).AlignItems(n.Center).Children(func() {
+		n.Column(c.Key("archive-content")).FillWidth().MaxWidth(912).Grow(1).MinHeight(0).Padding(0, inset, 24, inset).Children(func() {
+			n.Row(c).FillWidth().Height(48+archiveTitleTopInset).Padding(archiveTitleTopInset, 0, 0, 0).
+				Gap(8).AlignItems(n.Center).Margin(0, 0, 12, 0).DragWindow().Children(func() {
+				title := "已归档"
+				font := n.Font{Family: t.Font, Size: 20, Weight: 500}
+				if scope.ID != "" {
+					title = scope.Name
+					const backLabel = "返回已归档工作区"
 					back := control(c.Key("archive-back")).Size(28, 28).MarginStart(-5).Label(backLabel).Tooltip(backLabel).Children(func() {
 						inlineSymbol(c, conversationBackIcon, title, font, 16, t.TextMuted).FixedLineHeight(28)
 					})
 					if back.Clicked() {
-						if scope.ID != "" {
-							a.selectList("workspaces", "")
-						} else {
-							v.closeArchive()
-						}
+						a.selectList("workspaces", "")
 					}
-					n.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(n.Baseline).Children(func() {
-						n.Text(c, title).SingleLine().Ellipsis("…").Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(28).MinWidth(0).TooltipWhenTruncated(title)
-						if scope.ID != "" {
-							name := m.DeviceName(scope.DeviceID)
-							n.Text(c, name).SingleLine().Ellipsis("…").MaxWidth(120).Shrink(0).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).TooltipWhenTruncated(name)
-						}
-					})
-					label := fmt.Sprintf("保留 %d 天", m.ArchiveDays())
-					if m.ArchiveDays() == 0 {
-						label = "永久保留"
-					}
-					help := fmt.Sprintf("从归档之日起 %d 天后自动删除。点击调整保留时间。", m.ArchiveDays())
-					if m.ArchiveDays() == 0 {
-						help = "不会自动删除归档内容。点击调整保留时间。"
-					}
-					if status := m.ArchivePolicyStatus(); status != "" {
-						label = "保留时间"
-						help = status
-					}
-					button := control(c.Key("archive-retention")).Height(28).PaddingX(8).Radius(6).Label("归档保留设置").Tooltip(help).Children(func() { inlineIconText(c, settingsIcon, label, n.Font{Family: t.Font, Size: 12}, 14, 6, t.TextMuted) })
-					if button.Clicked() {
-						v.archiveSettings()
+				}
+				n.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(n.Baseline).Children(func() {
+					n.Text(c, title).SingleLine().Ellipsis("…").Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(28).MinWidth(0).TooltipWhenTruncated(title)
+					if scope.ID != "" {
+						name := m.DeviceName(scope.DeviceID)
+						n.Text(c, name).SingleLine().Ellipsis("…").MaxWidth(120).Shrink(0).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).TooltipWhenTruncated(name)
 					}
 				})
-				if scope.ID == "" {
-					if next := configurationTabs(c.Key("archive-tabs"), a.tab, []configurationTabItem{{ID: "sessions", Label: "会话"}, {ID: "workspaces", Label: "工作区"}}, configurationUnderline, false); next != a.tab {
-						a.selectList(next, "")
-					}
-				} else {
-					n.Row(c).FillWidth().Height(36).Gap(8).AlignItems(n.Center).Children(func() {
-						n.Text(c, "工作区已归档").FontSize(12).TextColor(t.TextMuted)
-						n.Spacer(c).Grow(1)
-						if configurationAction(c, "恢复工作区").Disabled(!v.canManage(m.WorkspaceConnection(scope.ID))).Clicked() {
-							v.archiveWorkspace(scope, false)
-						}
-					})
+				label := fmt.Sprintf("保留 %d 天", m.ArchiveDays())
+				if m.ArchiveDays() == 0 {
+					label = "永久保留"
 				}
-				index := 0
-				if a.tab == "workspaces" {
-					index = 1
+				help := fmt.Sprintf("从归档之日起 %d 天后自动删除。点击调整保留时间。", m.ArchiveDays())
+				if m.ArchiveDays() == 0 {
+					help = "不会自动删除归档内容。点击调整保留时间。"
 				}
-				key := a.tab + ":" + a.scope
-				configurationTabPanel(c.Key("archive-panels"), key, index, configurationPanelFill, func() {
-					n.Column(c).Fill().Margin(16, 0, 0, 0).Children(func() { v.archiveTable(c, t, a, scope, key) })
-				}, false)
+				if status := m.ArchivePolicyStatus(); status != "" {
+					label = "保留时间"
+					help = status
+				}
+				button := control(c.Key("archive-retention")).Height(28).PaddingX(8).Radius(6).Label("归档保留设置").Tooltip(help).Children(func() { inlineIconText(c, settingsIcon, label, n.Font{Family: t.Font, Size: 12}, 14, 6, t.TextMuted) })
+				if button.Clicked() {
+					v.archiveSettings()
+				}
 			})
+			if scope.ID == "" {
+				if next := configurationTabs(c.Key("archive-tabs"), a.tab, []configurationTabItem{{ID: "sessions", Label: "会话"}, {ID: "workspaces", Label: "工作区"}}, configurationUnderline, false); next != a.tab {
+					a.selectList(next, "")
+				}
+			} else {
+				n.Row(c).FillWidth().Height(36).Gap(8).AlignItems(n.Center).Children(func() {
+					n.Text(c, "工作区已归档").FontSize(12).TextColor(t.TextMuted)
+					n.Spacer(c).Grow(1)
+					if configurationAction(c, "恢复工作区").Disabled(!v.canManage(m.WorkspaceConnection(scope.ID))).Clicked() {
+						v.archiveWorkspace(scope, false)
+					}
+				})
+			}
+			index := 0
+			if a.tab == "workspaces" {
+				index = 1
+			}
+			key := a.tab + ":" + a.scope
+			configurationTabPanel(c.Key("archive-panels"), key, index, configurationPanelFill, func() {
+				n.Column(c).FillWidth().Grow(1).MinHeight(0).Margin(16, 0, 0, 0).Children(func() { v.archiveTable(c, t, a, scope, key) })
+			}, false)
 		})
 	})
 }

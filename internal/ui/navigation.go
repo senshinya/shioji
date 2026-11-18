@@ -398,7 +398,8 @@ func (v *View) navigationRow(c *n.Context, t *n.Theme, r navigationRow) {
 }
 func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 	m, s := v.Model, r.session
-	selected := s.ID == v.focusedSessionID() && !v.devices && v.workspaceEditor == nil
+	archiveOpen := v.archive != nil && v.archive.open
+	selected := !archiveOpen && s.ID == v.focusedSessionID() && !v.devices && v.workspaceEditor == nil
 	finishing := s.Status == "completed" && v.sessionOutputAnimating(s.ID)
 	if finishing {
 		c.AnimationFrame()
@@ -482,6 +483,13 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 		row.Focus()
 		v.workspaceEditor = nil
 		v.skillReturn = nil
+		if archiveOpen {
+			v.closeArchive()
+			if s.ID == v.focusedSessionID() {
+				v.readCompletedReply(s.ID)
+				return
+			}
+		}
 		v.navigateSession(s.ID, s.WorkspaceID)
 		v.devices = false
 	}

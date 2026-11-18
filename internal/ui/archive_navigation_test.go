@@ -36,18 +36,36 @@ func enterArchiveFromMenu(t *testing.T, ui *n.Tester) {
 	ui.Advance(time.Second)
 }
 
-func TestArchiveReturnsToOriginalSessionAndDraft(t *testing.T) {
+func TestArchiveSidebarDeselectsAndReturnsToOriginalSession(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		t.Run(fmt.Sprint(dark), func(t *testing.T) {
 			v, ui := archiveNavigationFixture()
 			ui.SetDark(dark)
-			enterArchiveFromMenu(t, ui)
-			saveNativeSkillImage(t, ui, fmt.Sprintf("archive-navigation-dark-%v.png", dark))
-			if err := ui.Click("返回会话"); err != nil {
-				t.Fatal("archive list has no direct return to its source conversation", err)
-			}
 			ui.Advance(time.Second)
-			if v.archive.open || v.Model.SessionID != "s" || !ui.HasText("Aligned reply") || v.Model.Drafts["session:s"] != "原会话草稿" || v.Model.Drafts["home"] != "首页草稿" {
+			row, ok := ui.Find("Layout")
+			if !ok {
+				t.Fatal("source session is missing from the sidebar")
+			}
+			x, y := int(row.X+row.W/2), int(row.Y+row.H/2)
+			selected := ui.Image().RGBAAt(x, y)
+			enterArchiveFromMenu(t, ui)
+			ui.Move(1000, 60)
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("archive-navigation-dark-%v.png", dark))
+			if image := ui.Image(); image.RGBAAt(x, y) == selected || image.RGBAAt(x, y) != image.RGBAAt(12, y) {
+				t.Fatal("source session remains highlighted while browsing the archive")
+			}
+			if _, ok := ui.Find("返回会话"); ok {
+				t.Fatal("archive overview has a separate exit button")
+			}
+			if err := ui.Click("Layout"); err != nil {
+				t.Fatal("archive source cannot be selected from the sidebar", err)
+			}
+			ui.Move(1000, 60)
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("archive-return-dark-%v.png", dark))
+			if v.archive.open || v.Model.SessionID != "s" || !ui.HasText("Aligned reply") || ui.Image().RGBAAt(x, y) != selected ||
+				v.Model.Drafts["session:s"] != "原会话草稿" || v.Model.Drafts["home"] != "首页草稿" {
 				t.Fatal("archive return lost its source conversation or drafts")
 			}
 		})
@@ -70,7 +88,7 @@ func TestArchiveReturnKeepsOriginalSourceAcrossHistoryVisits(t *testing.T) {
 		}
 		ui.Advance(time.Second)
 	}
-	if err := ui.Click("返回会话"); err != nil {
+	if err := ui.Click("Layout"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(time.Second)
@@ -84,10 +102,10 @@ func TestArchiveReturnRestoresParallelFocusAndHome(t *testing.T) {
 		t.Run(source, func(t *testing.T) {
 			v, _ := archiveNavigationFixture()
 			m := v.Model
-			label := "返回会话"
+			label := "并排会话"
 			if source == "home" {
 				m.SessionID = ""
-				label = "返回新建会话"
+				label = "新建会话"
 			} else {
 				other := domain.Session{ID: "secondary", WorkspaceID: "w", Title: "并排会话", Status: "completed"}
 				m.Snapshot.Sessions = append(m.Snapshot.Sessions, other)
@@ -140,9 +158,7 @@ func TestArchiveReturnDoesNotRestoreDeletedSource(t *testing.T) {
 			}
 			v.Model.ApplyArchiveDeletion(deletion)
 			ui.Frame()
-			if err := ui.Click("返回会话"); err != nil {
-				t.Fatal(err)
-			}
+			ui.Key(n.Cmd|n.Shift, n.KeyH)
 			ui.Advance(time.Second)
 			if v.Model.SessionID != "" || v.Model.FocusSecondary || workspaceDeleted && v.Model.WorkspaceID != "" {
 				t.Fatal("archive return restored a deleted conversation or workspace", v.Model.SessionID, v.Model.WorkspaceID)
@@ -178,7 +194,7 @@ func TestArchiveDirectReturnKeepsConversationReadingPosition(t *testing.T) {
 		t.Fatal("fixture is not reading earlier history")
 	}
 	enterArchiveFromMenu(t, ui)
-	if err := ui.Click("返回会话"); err != nil {
+	if err := ui.Click(v.Model.Snapshot.Sessions[0].Title); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(time.Second)
@@ -224,10 +240,10 @@ func TestArchiveNavigationNativeRecording(t *testing.T) {
 				case 35, 125, 255:
 					selectArchive()
 				case 60:
-					bounds, _ := ui.Find("返回会话")
+					bounds, _ := ui.Find("Layout")
 					ui.Move(bounds.X+bounds.W/2, bounds.Y+bounds.H/2)
 				case 80, 210:
-					click("返回会话")
+					click("Layout")
 				case 150:
 					click("查看归档会话：归档会话")
 				case 180:
@@ -254,7 +270,7 @@ func TestArchiveNavigationNativeRecording(t *testing.T) {
 			narrow.SetDark(dark)
 			enterArchiveFromMenu(t, narrow)
 			saveNativeSkillImage(t, narrow, "narrow.png")
-			if err := narrow.Click("返回会话"); err != nil {
+			if err := narrow.Click("Layout"); err != nil {
 				t.Fatal(err)
 			}
 			narrow.Advance(time.Second)
