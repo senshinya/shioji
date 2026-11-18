@@ -140,12 +140,12 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 												if _, ok := v.connectionPeer(key); ok {
 													label = "Tailnet · " + deviceLatency(state, c.Now())
 												}
-												color := t.TextMuted
-												if state.Connected {
-													color = t.Success
-												}
-												statusDot(c, label, n.Font{Family: t.Font, Size: 11, Weight: 400}, color, false)
 											}
+											color := t.TextMuted
+											if state.Connected {
+												color = t.Success
+											}
+											statusDot(c, label, n.Font{Family: t.Font, Size: 11, Weight: 400}, color, false)
 											n.Text(c, label).FontSize(11).FixedLineHeight(16).TextColor(t.TextMuted)
 										})
 									})

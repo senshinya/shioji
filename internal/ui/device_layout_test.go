@@ -50,6 +50,54 @@ func TestDeviceSidebarBackAlignsWithNewSession(t *testing.T) {
 	}
 }
 
+func TestDeviceSidebarShowsLocalConnectionDot(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		name := fmt.Sprintf("local-status-dark-%t", dark)
+		t.Run(name, func(t *testing.T) {
+			m := deviceUIModel()
+			m.LocalDeviceName = "MacBook at Home"
+			m.Connections[0].SSH.TailnetPeer = "peer"
+			v := New(m, nil, "")
+			v.devices, v.deviceList, v.deviceSelected = true, true, "air"
+			width := 1240
+			if dark {
+				width = 820
+			}
+			ui := n.NewTester(v.View, width, 720)
+			ui.SetDark(dark)
+			const scale = 2
+			ui.SetScale(scale)
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, name+".png")
+
+			local, hasLocal := ui.Find("这台 Mac")
+			remote, hasRemote := ui.Find("Tailnet · 待测")
+			if !hasLocal || !hasRemote || local.X != remote.X {
+				t.Fatalf("local subtitle does not reserve the same status slot as Tailnet: local=%+v remote=%+v", local, remote)
+			}
+			frame := ui.Image()
+			// Sample the center column of the 6 DIP dot, 5 DIP before its label.
+			x := int((local.X - 8) * scale)
+			green, gray := uint8(0x8a), uint8(0x66)
+			if dark {
+				green, gray = 0xd7, 0xab
+			}
+			for y := int(local.Y * scale); y < int((local.Y+local.H)*scale); y++ {
+				if px := frame.RGBAAt(x, y); px.G != green || px.G <= px.R || px.G <= px.B {
+					continue
+				}
+				m.ApplyDeviceUpdate("local", func(model *app.Model) { model.Connected = false })
+				ui.Frame()
+				if px := ui.Image().RGBAAt(x, y); px.R != gray || px.G != gray || px.B != gray {
+					t.Fatalf("local worker disconnected but its dot did not turn gray: %v", px)
+				}
+				return
+			}
+			t.Fatal("connected local worker has no green dot before its subtitle")
+		})
+	}
+}
+
 func TestDeviceManagementUsesContextualSidebarAndIndependentTabs(t *testing.T) {
 	m := deviceUIModel()
 	m.Drafts["home"] = "keep draft"
