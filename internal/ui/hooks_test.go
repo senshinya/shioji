@@ -61,6 +61,131 @@ func applyHookCatalog(t *testing.T, v *View, ui *n.Tester, project bool) {
 	ui.Frame()
 	ui.Advance(time.Second)
 }
+
+func TestHooksNativeReviewTrustsOnlySelectedDefinitionsWithoutReload(t *testing.T) {
+	for _, tc := range []struct {
+		width, height int
+		dark          bool
+	}{{1240, 820, false}, {1240, 820, true}, {640, 760, true}} {
+		name := fmt.Sprintf("%d-dark-%v", tc.width, tc.dark)
+		t.Run(name, func(t *testing.T) {
+			v, ui := hookUIFixture(t, true)
+			v.Model.DeviceStates["local"].WorkerMinor = 49
+			ui.SetSize(tc.width, tc.height)
+			ui.SetDark(tc.dark)
+			catalog := hookUICatalog(true)
+			catalog.Entries[0].Trust = domain.HookUntrusted
+			catalog.Entries[0].CanTrust = true
+			catalog.Entries = append(catalog.Entries,
+				domain.HookEntry{ID: "session-start", DefinitionRevision: "start-1", Event: "SessionStart", Scope: domain.HookProject, Kind: "command", Command: "printf '%s\\n' 'session started'", Source: "项目", SourcePath: "/device/project/.codex/hooks.json", Matcher: "startup", Enabled: true, Trust: domain.HookModified, CanTrust: true},
+				domain.HookEntry{ID: "post-tool", DefinitionRevision: "post-1", Event: "PostToolUse", Scope: domain.HookProject, Kind: "command", Command: "true # post-tool", Source: "项目", SourcePath: "/device/project/.codex/hooks.json", Enabled: true, Trust: domain.HookUntrusted, CanTrust: true},
+			)
+			body, _ := json.Marshal(catalog)
+			welcomeJob(t, v.Controller, "runtime.hooks.list").Apply(v.Model, body, nil)
+			ui.Frame()
+			ui.Advance(time.Second)
+			if err := ui.Click("审核待审批 Hooks"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			if !ui.HasText("go test ./...") || !ui.HasText("printf '%s\\n' 'session started'") || !ui.HasText("startup") || ui.HasText("echo finished") {
+				t.Fatal("review must show full owned definitions", ui.Texts())
+			}
+			saveNativeSkillImage(t, ui, "hooks-review-"+name+".png")
+			if err := ui.Click("选择 Hook：PreToolUse"); err != nil {
+				t.Fatal(err)
+			}
+			if err := ui.Click("选择 Hook：SessionStart"); err != nil {
+				t.Fatal(err)
+			}
+			saveNativeSkillImage(t, ui, "hooks-review-selected-"+name+".png")
+			if err := ui.Click("信任所选（2）"); err != nil {
+				t.Fatal(err)
+			}
+			job := welcomeJob(t, v.Controller, "runtime.hooks.change")
+			request, _ := json.Marshal(job.Input)
+			var sent struct {
+				Action, Revision string
+				Enabled          bool
+				Definitions      []struct{ ID, DefinitionRevision string }
+			}
+			if err := json.Unmarshal(request, &sent); err != nil {
+				t.Fatal(err)
+			}
+			if sent.Action != "trustDefinitions" || sent.Revision != "catalog-1" || sent.Enabled || len(sent.Definitions) != 2 ||
+				sent.Definitions[0].ID != "project" || sent.Definitions[0].DefinitionRevision != "def-project" ||
+				sent.Definitions[1].ID != "session-start" || sent.Definitions[1].DefinitionRevision != "start-1" {
+				t.Fatal("approval did not preserve the selected versions", string(request))
+			}
+			catalog.Revision = "catalog-2"
+			for _, i := range []int{1, 2} {
+				catalog.Entries[i].Trust = domain.HookTrusted
+				catalog.Entries[i].CanTrust = false
+			}
+			body, _ = json.Marshal(map[string]any{"input": job.Input, "state": domain.OperationConfirmed, "saved": true, "catalog": catalog})
+			job.Apply(v.Model, body, nil)
+			ui.Frame()
+			ui.Advance(time.Second)
+			if ui.HasText("go test ./...") || !ui.HasText("true # post-tool") {
+				t.Fatal("review did not apply the receipt in place", ui.Texts())
+			}
+			saveNativeSkillImage(t, ui, "hooks-review-saved-"+name+".png")
+			select {
+			case next := <-v.Controller.Jobs:
+				t.Fatalf("unexpected follow-up job after confirmed save: %s", next.Method)
+			default:
+			}
+		})
+	}
+}
+
+func TestHooksNativeTrustAllSubmitsEveryReviewableVersion(t *testing.T) {
+	v, ui := hookUIFixture(t, true)
+	v.Model.DeviceStates["local"].WorkerMinor = protocol.HookBatchMinor
+	ui.SetSize(640, 760)
+	catalog := hookUICatalog(true)
+	catalog.Entries[0].Trust = domain.HookUntrusted
+	catalog.Entries[0].CanTrust = true
+	catalog.Entries = append(catalog.Entries,
+		domain.HookEntry{ID: "post-tool", DefinitionRevision: "post-1", Event: "PostToolUse", Scope: domain.HookProject, Kind: "command", Command: "true # post-tool", SourcePath: "/device/project/.codex/hooks.json", Enabled: true, Trust: domain.HookModified, CanTrust: true},
+		domain.HookEntry{ID: "read-only", DefinitionRevision: "policy-1", Event: "SessionStart", Scope: domain.HookProject, Kind: "command", Command: "true # read-only", Trust: domain.HookPolicy},
+	)
+	body, _ := json.Marshal(catalog)
+	welcomeJob(t, v.Controller, "runtime.hooks.list").Apply(v.Model, body, nil)
+	ui.Frame()
+	if err := ui.Click("审核待审批 Hooks"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	saveNativeSkillImage(t, ui, "hooks-review-trust-all.png")
+	if err := ui.Click("信任全部（2）"); err != nil {
+		t.Fatal(err)
+	}
+	job := welcomeJob(t, v.Controller, "runtime.hooks.change")
+	in := job.Input.(domain.HookRequest)
+	want := []domain.HookDefinitionRef{{ID: "post-tool", DefinitionRevision: "post-1"}, {ID: "project", DefinitionRevision: "def-project"}}
+	if in.Action != domain.HookTrustDefinitions || in.Revision != "catalog-1" || in.WorkspaceID != "w" ||
+		in.Enabled || len(in.Definitions) != 2 || in.Definitions[0] != want[0] || in.Definitions[1] != want[1] {
+		t.Fatal("trust all did not submit exactly the reviewable versions", in)
+	}
+	catalog.Revision = "catalog-2"
+	for _, i := range []int{1, 2} {
+		catalog.Entries[i].Trust = domain.HookTrusted
+		catalog.Entries[i].CanTrust = false
+	}
+	body, _ = json.Marshal(domain.HookOperation{Input: in, State: domain.OperationConfirmed, Saved: true, Catalog: &catalog})
+	job.Apply(v.Model, body, nil)
+	ui.Frame()
+	if !ui.HasText("没有待审核的 Hooks") || ui.HasText("信任全部（2）") {
+		t.Fatal("review did not clear the approved items in place", ui.Texts())
+	}
+	select {
+	case next := <-v.Controller.Jobs:
+		t.Fatalf("unexpected follow-up after trusting all: %s", next.Method)
+	default:
+	}
+}
+
 func TestHooksNativeApproveVersionDoesNotEnable(t *testing.T) {
 	v, ui := hookUIFixture(t, false)
 	if _, ok := ui.Find("Hooks 列表"); !ok {
@@ -134,7 +259,7 @@ func TestHooksUnknownSaveQueriesReceiptWithoutReplayingApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := welcomeJob(t, v.Controller, "runtime.hooks.operation")
-	if q.Input.(domain.HookRequest) != in {
+	if !q.Input.(domain.HookRequest).Equal(in) {
 		t.Fatal("recovery changed approval identity")
 	}
 }
@@ -341,7 +466,7 @@ func TestHooksIndeterminateReceiptAllowsReviewOfChangedDefinition(t *testing.T) 
 	ui.Frame()
 	ui.Advance(time.Second)
 	u := v.hookManagementFor("local", "custom", "", "")
-	if len(u.unconfirmed) != 1 || u.unconfirmed[0] != in {
+	if len(u.unconfirmed) != 1 || !u.unconfirmed[0].Equal(in) {
 		t.Fatal("original uncertain receipt identity lost")
 	}
 	if !ui.HasText("echo revised") {

@@ -252,39 +252,31 @@ func (r *Runtime) ChangeHook(ctx context.Context, launch domain.LaunchContext, i
 	if err != nil {
 		return domain.HookChangeResult{}, err
 	}
-	if in.Revision == "" || in.Revision != catalog.Revision {
+	if !in.Valid() || in.Revision != catalog.Revision {
 		return domain.HookChangeResult{}, errors.New("配置已变化，请刷新后重新审核")
 	}
-	var target *domain.HookEntry
-	for i := range catalog.Entries {
-		if catalog.Entries[i].ID == in.ID {
-			target = &catalog.Entries[i]
-			break
-		}
-	}
-	if target == nil || in.DefinitionRevision == "" || in.DefinitionRevision != target.DefinitionRevision {
+	targets := in.MatchingEntries(catalog)
+	if len(targets) == 0 {
 		return domain.HookChangeResult{}, errors.New("定义已变化，请刷新后重新审核")
 	}
-	field, value := "enabled", any(in.Enabled)
-	switch in.Action {
-	case domain.HookSetEnabled:
-		if !target.CanEnable {
-			return domain.HookChangeResult{}, errors.New("当前入口不能启停此 Hook")
+	edits := make([]map[string]any, 0, len(targets))
+	for _, target := range targets {
+		if !in.Allowed(target) {
+			return domain.HookChangeResult{}, errors.New("当前入口不能修改此 Hook")
 		}
-	case domain.HookTrustDefinition:
-		if !target.CanTrust {
-			return domain.HookChangeResult{}, errors.New("当前入口不能信任此 Hook")
+		h := native[target.ID]
+		field, value := "enabled", any(in.Enabled)
+		if in.Action != domain.HookSetEnabled {
+			field, value = "trusted_hash", h.CurrentHash
 		}
-		field, value = "trusted_hash", native[in.ID].CurrentHash
-	default:
-		return domain.HookChangeResult{}, errors.New("Hook 操作无效")
+		edits = append(edits, map[string]any{"keyPath": "hooks.state." + strconv.Quote(h.Key) + "." + field, "value": value, "mergeStrategy": "replace"})
 	}
 	file, version, _ := toolUserLayer(config)
 	var result struct {
 		Status             string
 		OverriddenMetadata json.RawMessage
 	}
-	err = r.call(ctx, "config/batchWrite", map[string]any{"filePath": file, "expectedVersion": version, "reloadUserConfig": true, "edits": []map[string]any{{"keyPath": "hooks.state." + strconv.Quote(native[in.ID].Key) + "." + field, "value": value, "mergeStrategy": "replace"}}}, &result)
+	err = r.call(ctx, "config/batchWrite", map[string]any{"filePath": file, "expectedVersion": version, "reloadUserConfig": true, "edits": edits}, &result)
 	if err != nil {
 		return domain.HookChangeResult{}, &harness.DeliveryError{Uncertain: harness.IsUncertain(err), Message: "保存未确认，请刷新后核对配置"}
 	}
@@ -292,12 +284,8 @@ func (r *Runtime) ChangeHook(ctx context.Context, launch domain.LaunchContext, i
 		return domain.HookChangeResult{}, errors.New("配置受到策略限制，请刷新核对")
 	}
 	updated, err := r.Hooks(ctx, launch, "")
-	if err == nil {
-		for _, h := range updated.Entries {
-			if h.ID == in.ID && h.DefinitionRevision == in.DefinitionRevision && (in.Action == domain.HookSetEnabled && h.Enabled == in.Enabled || in.Action == domain.HookTrustDefinition && h.Trust == domain.HookTrusted) {
-				return domain.HookChangeResult{Saved: true}, nil
-			}
-		}
+	if err == nil && in.Observed(updated) {
+		return domain.HookChangeResult{Saved: true, Catalog: updated}, nil
 	}
 	return domain.HookChangeResult{}, &harness.DeliveryError{Uncertain: true, Message: "保存后定义或状态已变化，请刷新核对"}
 }

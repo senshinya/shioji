@@ -21,8 +21,18 @@ type hookManagementUI struct {
 	pending                                                         *domain.HookRequest
 	unconfirmed                                                     []domain.HookRequest
 	checking                                                        bool
+	quietRefresh                                                    bool
+	review                                                          bool
+	reviewSelection                                                 map[string]bool
 	expanded                                                        bool
-	listScroll, detailScroll                                        n.ScrollState
+	listScroll, detailScroll, reviewScroll                          n.ScrollState
+}
+
+func (u *hookManagementUI) setCatalog(catalog domain.HookCatalog) {
+	if u.catalog.Revision != catalog.Revision {
+		clear(u.reviewSelection)
+	}
+	u.catalog = catalog
 }
 
 func (v *View) hookManagementFor(key, harness, workspace, session string) *hookManagementUI {
@@ -65,6 +75,8 @@ func (v *View) hookManagementFor(key, harness, workspace, session string) *hookM
 			next.detailID = u.detailID
 			next.listScroll = u.listScroll
 			next.detailScroll = u.detailScroll
+			next.review = u.review
+			next.reviewScroll = u.reviewScroll
 			next.expanded = u.expanded
 			next.pending = u.pending
 			next.unconfirmed = append([]domain.HookRequest(nil), u.unconfirmed...)
@@ -93,14 +105,17 @@ func (v *View) queryHooks(u *hookManagementUI) {
 		v.queryHookOperation(u)
 		return
 	}
-	v.readHookCatalog(u, false)
+	v.readHookCatalog(u, false, false)
 }
-func (v *View) readHookCatalog(u *hookManagementUI, reconcile bool) {
+func (v *View) readHookCatalog(u *hookManagementUI, reconcile, quiet bool) {
 	if u.phase == skillLoading || u.checking || v.Controller == nil || !v.deviceState(u.key).Connected {
 		return
 	}
 	u.phase = skillLoading
-	u.message = ""
+	u.quietRefresh = quiet
+	if !quiet {
+		u.message = ""
+	}
 	in := domain.HookRequest{HarnessID: u.harness, WorkspaceID: u.workspace, SessionID: u.session}
 	if !v.do(app.Job{ConnectionID: u.key, Method: "runtime.hooks.list", Input: in, Apply: func(_ *app.Model, b json.RawMessage, err error) {
 		if !v.hookManagementCurrent(u) {
@@ -115,7 +130,7 @@ func (v *View) readHookCatalog(u *hookManagementUI, reconcile bool) {
 			u.message = "无法读取 Hooks，显示上次结果。请刷新重试"
 			return
 		}
-		u.catalog = next
+		u.setCatalog(next)
 		if reconcile && u.pending != nil {
 			// Retain the original receipt identity, never replay its approval. A new
 			// operation requires an explicit action against this freshly read catalog.
@@ -150,7 +165,7 @@ func (v *View) queryHookOperation(u *hookManagementUI) {
 		}
 		v.settleHookChange(u, in, b, err)
 		if u.pending != nil && !u.checking {
-			v.readHookCatalog(u, true)
+			v.readHookCatalog(u, true, false)
 		}
 	}}) {
 		u.checking = false
@@ -164,12 +179,13 @@ func (v *View) settleHookChange(u *hookManagementUI, in domain.HookRequest, b js
 	if err == nil {
 		err = json.Unmarshal(b, &result)
 	}
-	if err != nil || result.Input != in || result.State != domain.OperationConfirmed && result.State != domain.OperationRejected {
+	if err != nil || !result.Input.Equal(in) || result.State != domain.OperationConfirmed && result.State != domain.OperationRejected {
 		u.phase = skillFailed
 		u.message = "结果未确认，请刷新核对"
 		return
 	}
 	u.pending = nil
+	clear(u.reviewSelection)
 	if result.State == domain.OperationRejected || !result.Saved {
 		u.phase = skillFailed
 		u.message = result.Message
@@ -178,22 +194,33 @@ func (v *View) settleHookChange(u *hookManagementUI, in domain.HookRequest, b js
 		}
 		return
 	}
-	u.phase = skillIdle
-	v.queryHooks(u)
+	u.message = ""
 	if result.AdoptionPending {
 		u.message = result.Message
 	}
-}
-func (v *View) changeHook(u *hookManagementUI, h domain.HookEntry, action domain.HookAction) {
-	owned := u.workspace == "" && h.Scope != domain.HookProject || u.workspace != "" && h.Scope == domain.HookProject
-	if !owned || u.phase != skillLoaded || u.pending != nil || !v.deviceState(u.key).Connected || action == domain.HookSetEnabled && !h.CanEnable || action == domain.HookTrustDefinition && !h.CanTrust {
+	if result.Catalog != nil && result.Catalog.Revision != "" && in.Observed(*result.Catalog) {
+		u.setCatalog(*result.Catalog)
+		u.phase = skillLoaded
 		return
 	}
-	in := domain.HookRequest{HarnessID: u.harness, WorkspaceID: u.workspace, SessionID: u.session, HookChange: domain.HookChange{OperationID: domain.NewID(), ID: h.ID, Revision: u.catalog.Revision, DefinitionRevision: h.DefinitionRevision, Action: action, Enabled: !h.Enabled}}
-	// Trust never carries an implicit enable request.
-	if action == domain.HookTrustDefinition {
-		in.Enabled = false
+	u.phase = skillIdle
+	v.readHookCatalog(u, false, true)
+}
+func (v *View) changeHook(u *hookManagementUI, h domain.HookEntry, action domain.HookAction) {
+	change := domain.HookChange{ID: h.ID, DefinitionRevision: h.DefinitionRevision, Action: action, Enabled: action == domain.HookSetEnabled && !h.Enabled}
+	if !hookOwned(u, h) || !change.Allowed(h) {
+		return
 	}
+	v.submitHookChange(u, change)
+}
+
+func (v *View) submitHookChange(u *hookManagementUI, change domain.HookChange) {
+	if !v.hookWritable(u) {
+		return
+	}
+	change.OperationID = domain.NewID()
+	change.Revision = u.catalog.Revision
+	in := domain.HookRequest{HarnessID: u.harness, WorkspaceID: u.workspace, SessionID: u.session, HookChange: change}
 	u.pending = &in
 	u.checking = true
 	u.message = ""
@@ -279,9 +306,7 @@ func (v *View) hookFeedback(c *n.Context, t *n.Theme, u *hookManagementUI) {
 	}
 	if !v.deviceState(u.key).Connected {
 		message = "设备未连接，显示上次结果"
-	} else if u.checking {
-		message = "正在核对保存结果"
-	} else if u.phase == skillLoading {
+	} else if u.phase == skillLoading && !u.quietRefresh {
 		message = "正在读取 Hooks"
 	}
 	if u.session != "" && u.phase == skillLoaded && !u.catalog.RuntimeKnown && message == "" {
@@ -302,10 +327,16 @@ func (v *View) managedHooksView(c *n.Context, t *n.Theme, u *hookManagementUI) {
 		v.queryHooks(u)
 	}
 	page, index := "list", 0
-	if u.detailID != "" {
+	if u.review {
+		page, index = "review", 1
+	} else if u.detailID != "" {
 		page, index = "detail", 1
 	}
 	configurationTabPanel(c.Key("hooks-navigation:"+u.slot), page, index, configurationPanelFill, func() {
+		if u.review {
+			v.hookReview(c, t, u)
+			return
+		}
 		if u.detailID != "" {
 			v.hookDetail(c, t, u)
 			return
@@ -322,6 +353,15 @@ func (v *View) managedHooksView(c *n.Context, t *n.Theme, u *hookManagementUI) {
 						}
 					}
 				}
+				if v.deviceState(u.key).WorkerMinor >= protocol.HookBatchMinor {
+					if count := len(reviewableHooks(u)); count != 0 {
+						if ghost(c, fmt.Sprintf("待审核（%d）", count)).Height(28).FontSize(12).Label("审核待审批 Hooks").Clicked() {
+							u.review = true
+							u.reviewScroll = n.ScrollState{}
+							u.reviewSelection = make(map[string]bool)
+						}
+					}
+				}
 				if iconButton(c, refreshIcon, "刷新 Hooks").Disabled(!v.deviceState(u.key).Connected || u.phase == skillLoading || u.checking).Clicked() {
 					v.queryHooks(u)
 				}
@@ -330,6 +370,85 @@ func (v *View) managedHooksView(c *n.Context, t *n.Theme, u *hookManagementUI) {
 			n.Scroll(c.Key("hook-list:" + u.slot)).FillWidth().FillHeight().Grow(1).TrackScroll(&u.listScroll).PaddingEnd(hookScrollGutter).Label("Hooks 列表").Children(func() { v.hookRows(c, t, u) })
 		})
 	}, false)
+}
+
+func reviewableHooks(u *hookManagementUI) []domain.HookEntry {
+	var entries []domain.HookEntry
+	for _, h := range u.catalog.Entries {
+		if h.CanTrust && hookOwned(u, h) {
+			entries = append(entries, h)
+		}
+	}
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Event < entries[j].Event })
+	return entries
+}
+
+func (v *View) hookReview(c *n.Context, t *n.Theme, u *hookManagementUI) {
+	entries := reviewableHooks(u)
+	writable := v.hookWritable(u) && v.deviceState(u.key).WorkerMinor >= protocol.HookBatchMinor
+	all := make([]domain.HookDefinitionRef, 0, len(entries))
+	var selected []domain.HookDefinitionRef
+	n.Column(c).FillWidth().FillHeight().Grow(1).Children(func() {
+		v.hookSubpageHeader(c, u, func() {
+			u.review = false
+			clear(u.reviewSelection)
+		})
+		v.hookFeedback(c, t, u)
+		n.Scroll(c.Key("hook-review:" + u.slot)).FillWidth().FillHeight().Grow(1).TrackScroll(&u.reviewScroll).PaddingEnd(hookScrollGutter).Label("待审核的 Hook 定义").Children(func() {
+			if len(entries) == 0 {
+				n.Text(c, "没有待审核的 Hooks").FontSize(12).TextColor(t.TextMuted).PaddingY(16)
+			}
+			for _, h := range entries {
+				definition := domain.HookDefinitionRef{ID: h.ID, DefinitionRevision: h.DefinitionRevision}
+				all = append(all, definition)
+				n.Column(c.Key(h.ID)).FillWidth().Padding(12, 0, 16, 0).Gap(6).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).Children(func() {
+					n.Row(c).FillWidth().AlignItems(n.Baseline).Gap(8).Children(func() {
+						checked := u.reviewSelection[h.ID]
+						if configurationCheckbox(c, &checked, "", n.Font{Family: t.Font, Size: 13, Weight: 400}, h.Event).
+							Width(24).Height(28).Label("选择 Hook：" + h.Event).Disabled(!writable).Changed() {
+							if u.reviewSelection == nil {
+								u.reviewSelection = make(map[string]bool)
+							}
+							u.reviewSelection[h.ID] = checked
+						}
+						if checked {
+							selected = append(selected, definition)
+						}
+						n.Text(c, h.Event).FontSize(14).FixedLineHeight(20).Grow(1).MinWidth(0)
+						state := hookTrustLabel(h.Trust)
+						if !h.Enabled {
+							state += " · 已停用"
+						}
+						n.Text(c, state).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+					})
+					n.Text(c, hookDefinition(h)).Font("monospace").FontSize(13).FixedLineHeight(21).FillWidth().Padding(12).Radius(5).Background(t.Surface).Selectable()
+					n.Text(c, h.SourcePath).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+					if h.Matcher != "" {
+						hookMetadata(c, t, "匹配", h.Matcher)
+					}
+				})
+			}
+		})
+		n.Row(c).FillWidth().MinHeight(48).Padding(12, 8, 0, 0).Gap(8).AlignItems(n.Center).BorderWidth(.5, 0, 0, 0).BorderColor(t.Border).Children(func() {
+			n.Spacer(c).Grow(1)
+			if len(all) > 0 {
+				label := fmt.Sprintf("信任全部（%d）", len(all))
+				if configurationAction(c.Key("trust-all"), label).Disabled(!writable).Clicked() {
+					v.submitHookChange(u, domain.HookChange{Action: domain.HookTrustDefinitions, Definitions: all})
+				}
+			}
+			label := "信任所选"
+			if len(selected) != 0 {
+				label = fmt.Sprintf("信任所选（%d）", len(selected))
+			}
+			if u.checking && u.pending != nil {
+				label = "正在保存…"
+			}
+			if configurationAction(c.Key("trust-selected"), label).Disabled(!writable || len(selected) == 0).Clicked() {
+				v.submitHookChange(u, domain.HookChange{Action: domain.HookTrustDefinitions, Definitions: selected})
+			}
+		})
+	})
 }
 
 // Stable slots share the first line. The independent 28 DIP switches and arrow
@@ -442,6 +561,19 @@ func hookColumnText(c *n.Context, t *n.Theme, primary, label string, width float
 	offset := inlineFontMetrics(label, font).center - inlineFontMetrics(primary, font).center
 	n.Text(c, label).FontSize(13).FixedLineHeight(20).Width(width).SingleLine().Ellipsis("…").TextColor(t.TextMuted).Transform(n.Translation(0, offset))
 }
+
+func (v *View) hookSubpageHeader(c *n.Context, u *hookManagementUI, back func()) {
+	n.Row(c).FillWidth().Height(28).PaddingEnd(8).Margin(0, 0, 16, 0).Gap(8).AlignItems(n.Center).Children(func() {
+		if ghost(c, "‹ Hooks").PaddingX(0).Height(28).FontSize(13).Label("返回 Hooks 列表").Clicked() {
+			back()
+		}
+		n.Spacer(c).Grow(1)
+		if iconButton(c, refreshIcon, "刷新 Hooks").Disabled(!v.deviceState(u.key).Connected || u.phase == skillLoading || u.checking).Clicked() {
+			v.queryHooks(u)
+		}
+	})
+}
+
 func (v *View) hookDetail(c *n.Context, t *n.Theme, u *hookManagementUI) {
 	var h *domain.HookEntry
 	for i := range u.catalog.Entries {
@@ -451,15 +583,7 @@ func (v *View) hookDetail(c *n.Context, t *n.Theme, u *hookManagementUI) {
 		}
 	}
 	n.Column(c).FillWidth().FillHeight().Grow(1).Children(func() {
-		n.Row(c).FillWidth().Height(28).PaddingEnd(8).Margin(0, 0, 16, 0).Gap(8).AlignItems(n.Center).Children(func() {
-			if ghost(c, "‹ Hooks").PaddingX(0).Height(28).FontSize(13).Label("返回 Hooks 列表").Clicked() {
-				u.detailID = ""
-			}
-			n.Spacer(c).Grow(1)
-			if iconButton(c, refreshIcon, "刷新 Hooks").Disabled(!v.deviceState(u.key).Connected || u.phase == skillLoading || u.checking).Clicked() {
-				v.queryHooks(u)
-			}
-		})
+		v.hookSubpageHeader(c, u, func() { u.detailID = "" })
 		v.hookFeedback(c, t, u)
 		n.Scroll(c.Key("hook-detail:" + u.slot)).FillWidth().FillHeight().Grow(1).TrackScroll(&u.detailScroll).PaddingEnd(hookScrollGutter).Label("Hook 定义").Children(func() {
 			if h == nil {
@@ -547,7 +671,11 @@ func (v *View) hookDetail(c *n.Context, t *n.Theme, u *hookManagementUI) {
 				}
 				n.Spacer(c).Grow(1)
 				if h.CanTrust {
-					if configurationAction(c, "信任此版本").Disabled(!v.hookWritable(u)).Clicked() {
+					label := "信任此版本"
+					if u.checking && u.pending != nil && u.pending.ID == h.ID && u.pending.Action == domain.HookTrustDefinition {
+						label = "正在保存…"
+					}
+					if configurationAction(c, label).Disabled(!v.hookWritable(u)).Clicked() {
 						v.changeHook(u, *h, domain.HookTrustDefinition)
 					}
 				}
@@ -584,6 +712,7 @@ func (v *View) openHookDeviceManagement(u *hookManagementUI, id string) {
 		v.runMenu = runMenuClosed
 	}
 	target := v.hookManagementFor(u.key, u.harness, "", "")
+	target.review = false
 	target.detailID = id
 	target.phase = skillIdle
 	v.queryHooks(target)

@@ -50,7 +50,7 @@ func TestHookReceiptBindsContextAndSurvivesRestart(t *testing.T) {
 	}
 	defer reopened.Close()
 	op, err := any(reopened).(hookReceiptStore).HookOperation(in)
-	if err != nil || !op.Saved || op.State != domain.OperationConfirmed || op.Input != in {
+	if err != nil || !op.Saved || op.State != domain.OperationConfirmed || !op.Input.Equal(in) {
 		t.Fatal("receipt was not durable", op, err)
 	}
 	late, err := any(reopened).(hookReceiptStore).FinishHookOperation(in, domain.OperationIndeterminate, false, "late timeout", false)

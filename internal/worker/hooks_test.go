@@ -18,12 +18,93 @@ import (
 
 func writeWorkerHook(t *testing.T, path, event, command string) {
 	t.Helper()
-	b, _ := json.Marshal(map[string]any{"hooks": map[string]any{event: []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command}}}}}})
+	writeWorkerHooks(t, path, map[string]string{event: command})
+}
+
+func writeWorkerHooks(t *testing.T, path string, commands map[string]string) {
+	t.Helper()
+	hooks := make(map[string]any, len(commands))
+	for event, command := range commands {
+		hooks[event] = []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command}}}}
+	}
+	b, _ := json.Marshal(map[string]any{"hooks": hooks})
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, b, 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWorkerHookBatchRejectsStaleSelectionAndReturnsSavedCatalog(t *testing.T) {
+	server, client, p := startServer(t)
+	f, err := os.OpenFile(filepath.Join(p.Home, "config.toml"), os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.WriteString("\nhooks=true\n")
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeWorkerHooks(t, filepath.Join(p.Home, "hooks.json"), map[string]string{
+		"PreToolUse": "true # pre", "PostToolUse": "true # post", "Stop": "true # unselected",
+	})
+	dir := server.Directory()
+	client.Close()
+	server.Close()
+	server, err = worker.New(context.Background(), worker.Config{Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Home: p.Home}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { server.Close() })
+	go server.Serve()
+	client = connect(t, dir)
+	scope := domain.HookRequest{HarnessID: "codex"}
+	var catalog domain.HookCatalog
+	call(t, client, "runtime.hooks.list", scope, &catalog)
+	pre, post := findWorkerHook(t, catalog, "PreToolUse"), findWorkerHook(t, catalog, "PostToolUse")
+	targets := []map[string]string{
+		{"id": pre.ID, "definitionRevision": pre.DefinitionRevision},
+		{"id": post.ID, "definitionRevision": "old-definition"},
+	}
+	request := map[string]any{"harnessId": "codex", "operationId": "invalid-batch", "revision": catalog.Revision, "action": "trustDefinitions", "definitions": targets}
+	var result struct {
+		domain.HookOperation
+		Catalog domain.HookCatalog `json:"catalog"`
+	}
+	if err := client.Call(context.Background(), "runtime.hooks.change", request, &result); err == nil && result.Saved {
+		t.Fatal("stale batch was saved")
+	}
+	var afterRejected domain.HookCatalog
+	call(t, client, "runtime.hooks.list", scope, &afterRejected)
+	if findWorkerHook(t, afterRejected, "PreToolUse").Trust != domain.HookUntrusted {
+		t.Fatal("stale batch partially trusted a valid definition")
+	}
+	targets[1]["definitionRevision"] = post.DefinitionRevision
+	request["operationId"] = "approved-batch"
+	call(t, client, "runtime.hooks.change", request, &result)
+	if !result.Saved || result.State != domain.OperationConfirmed || result.Catalog.Revision == "" || result.Catalog.Revision == catalog.Revision {
+		t.Fatal("missing updated catalog in save response", result)
+	}
+	for _, entry := range []domain.HookEntry{pre, post} {
+		h := findWorkerHook(t, result.Catalog, entry.Event)
+		if h.Trust != domain.HookTrusted || h.Enabled != entry.Enabled || h.DefinitionRevision != entry.DefinitionRevision {
+			t.Fatal("wrong state in saved catalog", h)
+		}
+	}
+	if findWorkerHook(t, result.Catalog, "Stop").Trust != domain.HookUntrusted {
+		t.Fatal("unselected hook was trusted")
+	}
+	var receipt domain.HookOperation
+	call(t, client, "runtime.hooks.operation", request, &receipt)
+	if !receipt.Saved || receipt.State != domain.OperationConfirmed {
+		t.Fatal("batch receipt was not preserved", receipt)
+	}
+	unselected := findWorkerHook(t, result.Catalog, "Stop")
+	targets[1] = map[string]string{"id": unselected.ID, "definitionRevision": unselected.DefinitionRevision}
+	if err := client.Call(context.Background(), "runtime.hooks.operation", request, &receipt); err == nil {
+		t.Fatal("receipt accepted a different selection under the same operation ID")
 	}
 }
 

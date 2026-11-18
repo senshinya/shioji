@@ -1,5 +1,7 @@
 package domain
 
+import "slices"
+
 // HookScope describes the ownership of an automation definition, independently
 // of its harness's configuration keys or source identifiers.
 type HookScope string
@@ -58,21 +60,97 @@ type HookCatalog struct {
 type HookAction string
 
 const (
-	HookSetEnabled      HookAction = "setEnabled"
-	HookTrustDefinition HookAction = "trustDefinition"
+	HookSetEnabled       HookAction = "setEnabled"
+	HookTrustDefinition  HookAction = "trustDefinition"
+	HookTrustDefinitions HookAction = "trustDefinitions"
 )
 
+type HookDefinitionRef struct {
+	ID                 string `json:"id"`
+	DefinitionRevision string `json:"definitionRevision"`
+}
+
 type HookChange struct {
-	OperationID        string     `json:"operationId"`
-	ID                 string     `json:"id"`
-	Revision           string     `json:"revision"`
-	DefinitionRevision string     `json:"definitionRevision"`
-	Action             HookAction `json:"action"`
-	Enabled            bool       `json:"enabled"`
+	OperationID        string              `json:"operationId"`
+	ID                 string              `json:"id,omitempty"`
+	Revision           string              `json:"revision"`
+	DefinitionRevision string              `json:"definitionRevision,omitempty"`
+	Action             HookAction          `json:"action"`
+	Enabled            bool                `json:"enabled"`
+	Definitions        []HookDefinitionRef `json:"definitions,omitempty"`
+}
+
+func (in HookChange) Valid() bool {
+	if in.Revision == "" || len(in.Revision) > 512 {
+		return false
+	}
+	switch in.Action {
+	case HookSetEnabled, HookTrustDefinition:
+		return len(in.Definitions) == 0 && (in.Action == HookSetEnabled || !in.Enabled) &&
+			in.ID != "" && len(in.ID) <= 512 && in.DefinitionRevision != "" && len(in.DefinitionRevision) <= 512
+	case HookTrustDefinitions:
+		if in.ID != "" || in.DefinitionRevision != "" || in.Enabled || len(in.Definitions) == 0 {
+			return false
+		}
+		seen := make(map[string]bool, len(in.Definitions))
+		for _, target := range in.Definitions {
+			if target.ID == "" || len(target.ID) > 512 || target.DefinitionRevision == "" || len(target.DefinitionRevision) > 512 || seen[target.ID] {
+				return false
+			}
+			seen[target.ID] = true
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+// MatchingEntries resolves all explicitly reviewed versions in request order.
+// Callers separately check the catalog revision before a write.
+func (in HookChange) MatchingEntries(catalog HookCatalog) []HookEntry {
+	targets := in.Definitions
+	if in.Action != HookTrustDefinitions {
+		targets = []HookDefinitionRef{{ID: in.ID, DefinitionRevision: in.DefinitionRevision}}
+	}
+	byID := make(map[string]HookEntry, len(catalog.Entries))
+	for _, h := range catalog.Entries {
+		byID[h.ID] = h
+	}
+	matches := make([]HookEntry, 0, len(targets))
+	for _, target := range targets {
+		h, ok := byID[target.ID]
+		if !ok || h.DefinitionRevision != target.DefinitionRevision {
+			return nil
+		}
+		matches = append(matches, h)
+	}
+	return matches
+}
+
+func (in HookChange) Allowed(h HookEntry) bool {
+	switch in.Action {
+	case HookSetEnabled:
+		return h.CanEnable
+	case HookTrustDefinition, HookTrustDefinitions:
+		return h.CanTrust
+	default:
+		return false
+	}
+}
+
+func (in HookChange) Observed(catalog HookCatalog) bool {
+	entries := in.MatchingEntries(catalog)
+	for _, h := range entries {
+		if in.Action == HookSetEnabled && h.Enabled != in.Enabled || in.Action != HookSetEnabled && h.Trust != HookTrusted {
+			return false
+		}
+	}
+	return len(entries) != 0
 }
 
 type HookChangeResult struct {
-	Saved bool `json:"saved"`
+	Saved   bool
+	Catalog HookCatalog
 }
 
 // A management context belongs to the owning worker. Empty workspace/session
@@ -84,10 +162,20 @@ type HookRequest struct {
 	HookChange
 }
 
+func (in HookRequest) Equal(other HookRequest) bool {
+	return in.HarnessID == other.HarnessID && in.WorkspaceID == other.WorkspaceID && in.SessionID == other.SessionID &&
+		in.OperationID == other.OperationID && in.ID == other.ID && in.Revision == other.Revision &&
+		in.DefinitionRevision == other.DefinitionRevision && in.Action == other.Action && in.Enabled == other.Enabled &&
+		slices.Equal(in.Definitions, other.Definitions)
+}
+
 type HookOperation struct {
 	Input           HookRequest    `json:"input"`
 	State           OperationState `json:"state"`
 	Saved           bool           `json:"saved"`
 	AdoptionPending bool           `json:"adoptionPending,omitempty"`
 	Message         string         `json:"message,omitempty"`
+	// Catalog accompanies a fresh save response. Durable receipts retain
+	// the operation identity and outcome, not a potentially stale catalog.
+	Catalog *HookCatalog `json:"catalog,omitempty"`
 }

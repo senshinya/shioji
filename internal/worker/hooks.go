@@ -3,12 +3,14 @@ package worker
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 
 	"shioji/internal/domain"
 	"shioji/internal/harness"
+	"shioji/internal/protocol"
 )
 
 func (s *Server) hookContext(in domain.HookRequest, mutation bool) (domain.LaunchContext, domain.Session, error) {
@@ -80,7 +82,7 @@ func (s *Server) listHooks(ctx context.Context, in domain.HookRequest) (domain.H
 
 func (s *Server) refreshHookRuntimes(ctx context.Context, id string) bool {
 	s.runtimeMu.RLock()
-	owned := []harness.Runtime{s.catalogs[id]}
+	owned := make([]harness.Runtime, 0, len(s.runtimes))
 	for _, r := range s.runtimes {
 		owned = append(owned, r)
 	}
@@ -115,18 +117,15 @@ func (s *Server) inspectHookOperation(ctx context.Context, in domain.HookRequest
 		}
 	}
 	catalog, err := s.listHooks(ctx, in)
-	if err == nil {
-		for _, h := range catalog.Entries {
-			if h.ID == in.ID && h.DefinitionRevision == in.DefinitionRevision && (in.Action == domain.HookTrustDefinition && h.Trust == domain.HookTrusted || in.Action == domain.HookSetEnabled && h.Enabled == in.Enabled) {
-				return s.store.FinishHookOperation(in, domain.OperationConfirmed, true, "", false)
-			}
-		}
+	if err == nil && in.Observed(catalog) {
+		op, err = s.store.FinishHookOperation(in, domain.OperationConfirmed, true, "", false)
+		return hookSaveCatalog(op, catalog), err
 	}
 	return op, nil
 }
 
 func (s *Server) manageHooks(method string, in domain.HookRequest) (any, error) {
-	if in.HarnessID == "" || len(in.HarnessID) > 128 || len(in.WorkspaceID) > 256 || len(in.SessionID) > 256 || len(in.ID) > 512 || len(in.DefinitionRevision) > 512 || len(in.Revision) > 512 || len(in.OperationID) > 128 {
+	if in.HarnessID == "" || len(in.HarnessID) > 128 || len(in.WorkspaceID) > 256 || len(in.SessionID) > 256 || len(in.OperationID) > 128 {
 		return nil, errors.New("Hook 请求无效")
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
@@ -134,8 +133,8 @@ func (s *Server) manageHooks(method string, in domain.HookRequest) (any, error) 
 	if method == "runtime.hooks.list" {
 		return s.listHooks(ctx, in)
 	}
-	if in.OperationID == "" {
-		return nil, errors.New("缺少 Hook 操作标识")
+	if in.OperationID == "" || !in.HookChange.Valid() {
+		return nil, errors.New("Hook 操作请求无效")
 	}
 	s.toolConfigMu.Lock()
 	defer s.toolConfigMu.Unlock()
@@ -171,17 +170,15 @@ func (s *Server) manageHooks(method string, in domain.HookRequest) (any, error) 
 	if catalog.Revision != in.Revision || in.Revision == "" {
 		return nil, errors.New("配置已变化，请刷新后重新审核")
 	}
-	allowed := false
-	for _, h := range catalog.Entries {
-		if h.ID != in.ID || h.DefinitionRevision != in.DefinitionRevision {
-			continue
-		}
-		owned := in.WorkspaceID == "" && h.Scope != domain.HookProject || in.WorkspaceID != "" && h.Scope == domain.HookProject
-		allowed = owned && (in.Action == domain.HookSetEnabled && h.CanEnable || in.Action == domain.HookTrustDefinition && h.CanTrust)
-		break
+	targets := in.MatchingEntries(catalog)
+	if len(targets) == 0 {
+		return nil, errors.New("定义已变化，请刷新后重新审核")
 	}
-	if !allowed {
-		return nil, errors.New("当前入口不能修改此 Hook，请在所属位置管理")
+	for _, h := range targets {
+		owned := in.WorkspaceID == "" && h.Scope != domain.HookProject || in.WorkspaceID != "" && h.Scope == domain.HookProject
+		if !owned || !in.Allowed(h) {
+			return nil, errors.New("当前入口不能修改此 Hook，请在所属位置管理")
+		}
 	}
 	if _, fresh, err := s.store.PrepareHookOperation(in); err != nil || !fresh {
 		if err != nil {
@@ -205,5 +202,21 @@ func (s *Server) manageHooks(method string, in domain.HookRequest) (any, error) 
 	if !adopted {
 		message = "已保存，部分会话尚未确认配置刷新"
 	}
-	return s.store.FinishHookOperation(in, domain.OperationConfirmed, true, message, !adopted)
+	op, err := s.store.FinishHookOperation(in, domain.OperationConfirmed, true, message, !adopted)
+	if in.SessionID == "" {
+		op = hookSaveCatalog(op, result.Catalog)
+	}
+	return op, err
+}
+
+func hookSaveCatalog(op domain.HookOperation, catalog domain.HookCatalog) domain.HookOperation {
+	if op.Saved && catalog.Revision != "" {
+		// A list can fit on its own while the same list plus the selected
+		// definitions exceeds a frame. In that case return the receipt alone.
+		op.Catalog = &catalog
+		if b, err := json.Marshal(op); err != nil || len(b) > protocol.MaxFrame-1024 {
+			op.Catalog = nil
+		}
+	}
+	return op
 }

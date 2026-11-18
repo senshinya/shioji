@@ -48,7 +48,10 @@ const Major = 2
 // Minor 46 adds scoped Hook management and durable definition-bound receipts.
 // Minor 47 adds immutable binary uploads used as owning-device path inputs.
 // Minor 48 delegates background unregister to the independent supervisor.
-const Minor = 48
+// Minor 49 adds atomic Hook approval of multiple reviewed definitions.
+const Minor = 49
+
+const HookBatchMinor = 49
 
 type BackgroundStopInput struct {
 	ID string `json:"id"`

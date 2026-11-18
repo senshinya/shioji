@@ -9,7 +9,7 @@ import (
 
 func hookOperation(q interface{ QueryRow(string, ...any) *sql.Row }, in domain.HookRequest) (domain.HookOperation, error) {
 	op, err := load[domain.HookOperation](q.QueryRow("SELECT body FROM hook_operations WHERE id=?", in.OperationID))
-	if err == nil && op.Input != in {
+	if err == nil && !op.Input.Equal(in) {
 		return domain.HookOperation{}, errors.New("Hook 操作标识已用于其他请求")
 	}
 	return op, err
@@ -24,7 +24,7 @@ func (s *Store) HookOperation(in domain.HookRequest) (domain.HookOperation, erro
 func (s *Store) PrepareHookOperation(in domain.HookRequest) (domain.HookOperation, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if in.OperationID == "" || len(in.OperationID) > 128 || in.HarnessID == "" || in.ID == "" || in.Revision == "" || in.DefinitionRevision == "" {
+	if in.OperationID == "" || len(in.OperationID) > 128 || in.HarnessID == "" || !in.HookChange.Valid() {
 		return domain.HookOperation{}, false, errors.New("Hook 操作请求无效")
 	}
 	if op, err := hookOperation(s.db, in); !errors.Is(err, sql.ErrNoRows) {
