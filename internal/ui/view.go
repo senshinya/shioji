@@ -436,8 +436,12 @@ func (v *View) View(c *n.Context) {
 	if c.Shortcut(n.Cmd|n.Shift, n.KeyJ) {
 		v.nextAttention()
 	}
-	if c.Shortcut(n.Cmd|n.Shift, n.KeyH) && v.previousSession != "" {
-		v.navigateSession(v.previousSession, v.previousWorkspace)
+	if c.Shortcut(n.Cmd|n.Shift, n.KeyH) {
+		if v.archive != nil && v.archive.open {
+			v.closeArchive()
+		} else if v.previousSession != "" {
+			v.navigateSession(v.previousSession, v.previousWorkspace)
+		}
 	}
 	if m.SessionID != "" && !v.devices {
 		v.syncReplyStreams(m.Details[m.SessionID])

@@ -24,6 +24,12 @@ type archiveUI struct {
 	lists                      map[string]*n.ListState
 	deletion                   *archiveDeleteUI
 	queries                    map[string]string
+	returnTo                   *archiveReturn
+}
+
+type archiveReturn struct {
+	session, workspace, secondary, secondaryWorkspace string
+	focusSecondary                                    bool
 }
 
 func (a *archiveUI) selectList(tab, scope string) {
@@ -66,12 +72,52 @@ func (v *View) archiveState() *archiveUI {
 func (v *View) openArchive() {
 	root := v.splitRoot()
 	a := root.archiveState()
+	if !a.open && a.viewing == "" {
+		m := root.Model
+		a.returnTo = &archiveReturn{m.SessionID, m.WorkspaceID, m.SecondarySessionID, m.SecondaryWorkspaceID, m.FocusSecondary}
+	}
 	a.open = true
 	a.viewing = ""
 	root.workspaceEditor = nil
 	root.skillReturn = nil
 	root.devices = false
 	root.searchOpen = false
+}
+
+func (v *View) closeArchive() {
+	root := v.splitRoot()
+	a := root.archiveState()
+	a.open, a.viewing = false, ""
+	if source := a.returnTo; source != nil {
+		m := root.Model
+		if source.session != "" {
+			if location, ok := m.NavigationSessionLocation(source.session); ok {
+				source.workspace = location.WorkspaceID
+			} else {
+				source.session = ""
+			}
+		}
+		if !slices.ContainsFunc(m.Snapshot.Workspaces, func(w domain.Workspace) bool { return w.ID == source.workspace }) {
+			source.workspace = ""
+		}
+		if source.secondary != "" {
+			if location, ok := m.NavigationSessionLocation(source.secondary); ok {
+				source.secondaryWorkspace = location.WorkspaceID
+			} else {
+				source.secondary, source.secondaryWorkspace = "", ""
+			}
+		}
+		if m.SessionID != source.session {
+			root.cancelPagedHistory()
+		}
+		if m.SecondarySessionID != source.secondary && root.secondary != nil {
+			root.secondary.cancelPagedHistory()
+		}
+		m.SessionID, m.WorkspaceID = source.session, source.workspace
+		m.SecondarySessionID, m.SecondaryWorkspaceID = source.secondary, source.secondaryWorkspace
+		m.FocusSecondary = source.focusSecondary && source.session != "" && source.secondary != ""
+		a.returnTo = nil
+	}
 }
 
 func (v *View) openArchivedSession(session domain.Session) {
@@ -117,15 +163,25 @@ func (v *View) archivePage(c *n.Context, t *n.Theme) {
 			}
 			n.Column(c.Key("archive-content")).FillWidth().MaxWidth(912).Grow(1).MinHeight(0).Padding(24, inset, 24, inset).Children(func() {
 				n.Row(c).FillWidth().Height(32).Gap(8).AlignItems(n.Center).Margin(0, 0, 12, 0).Children(func() {
-					if scope.ID != "" && iconButton(c, conversationBackIcon, "返回已归档工作区").MarginStart(-5).Clicked() {
-						a.selectList("workspaces", "")
-					}
-					title := "已归档"
+					title, backLabel := "已归档", "返回会话"
 					if scope.ID != "" {
-						title = scope.Name
+						title, backLabel = scope.Name, "返回已归档工作区"
+					} else if a.returnTo != nil && a.returnTo.session == "" {
+						backLabel = "返回新建会话"
+					}
+					font := n.Font{Family: t.Font, Size: 20, Weight: 500}
+					back := control(c.Key("archive-back")).Size(28, 28).MarginStart(-5).Label(backLabel).Tooltip(backLabel).Children(func() {
+						inlineSymbol(c, conversationBackIcon, title, font, 16, t.TextMuted).FixedLineHeight(28)
+					})
+					if back.Clicked() {
+						if scope.ID != "" {
+							a.selectList("workspaces", "")
+						} else {
+							v.closeArchive()
+						}
 					}
 					n.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(n.Baseline).Children(func() {
-						n.Text(c, title).SingleLine().Ellipsis("…").FontSize(20).FontWeight(500).FixedLineHeight(28).MinWidth(0).TooltipWhenTruncated(title)
+						n.Text(c, title).SingleLine().Ellipsis("…").Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(28).MinWidth(0).TooltipWhenTruncated(title)
 						if scope.ID != "" {
 							name := m.DeviceName(scope.DeviceID)
 							n.Text(c, name).SingleLine().Ellipsis("…").MaxWidth(120).Shrink(0).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).TooltipWhenTruncated(name)
