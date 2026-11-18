@@ -176,3 +176,66 @@ func TestChangingFileDuringComparisonRejectsPreviousFile(t *testing.T) {
 		t.Fatal("old comparison replaced selected file", s.Path, s.Versions.Path)
 	}
 }
+
+func TestReturningToChangesListWhileComparisonRuns(t *testing.T) {
+	m := layoutModel()
+	m.WorkerMinor, m.ConnectionEpoch = 33, "epoch"
+	v := New(m, app.NewController(""), "")
+	s := v.changesFor(m.SessionID)
+	s.load = changesLoaded
+	s.selectFile("first.go")
+	pair := domain.DefaultDiffComparison()
+	s.installDiff(domain.FileVersions{Path: "first.go", Comparison: pair, Old: "before", New: "after"})
+	ui := n.NewTester(func(c *n.Context) {
+		var drop *app.InspectorLayout
+		v.inspectorPane(c, c.Theme(), s, nil, "top", "changes", nil, false, 36, 420, &drop)
+	}, 420, 300)
+
+	v.refreshChanges()
+	job := <-v.Controller.Jobs
+	ui.Frame()
+	if err := ui.Click("返回更改列表"); err != nil {
+		t.Fatal(err)
+	}
+	job.Apply(m, json.RawMessage(`{
+		"comparison":{"base":{"kind":"head","name":"HEAD"},"target":{"kind":"worktree","name":"工作目录"}},
+		"files":[{"path":"updated.go","kind":"add"}],
+		"versions":{"path":"first.go","old":"before","new":"refreshed"}
+	}`), nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+
+	if !ui.HasText("→") || !ui.HasText("updated.go") {
+		saveNativeSkillImage(t, ui, "diff-return-before.png")
+		t.Fatal("returning to the list discarded the comparison and left it loading", ui.Texts())
+	}
+	if s.Path != "" || s.Versions.New != "after" {
+		t.Fatal("comparison changed the closed file view")
+	}
+	saveNativeSkillImage(t, ui, "diff-return-after.png")
+}
+
+func TestDiffComparisonCanRefreshAfterReconnectWithoutOldReply(t *testing.T) {
+	m := layoutModel()
+	m.WorkerMinor, m.ConnectionEpoch = 33, "before"
+	v := New(m, app.NewController(""), "")
+	v.refreshChanges()
+	old := <-v.Controller.Jobs
+
+	m.ConnectionEpoch = "after"
+	v.refreshChanges()
+	select {
+	case latest := <-v.Controller.Jobs:
+		old.Apply(m, nil, errors.New("connection lost"))
+		s := v.changesFor(m.SessionID)
+		if !s.loading() || s.Error != "" {
+			t.Fatal("stale result ended the new comparison")
+		}
+		latest.Apply(m, json.RawMessage(`{"files":[{"path":"new.go"}]}`), nil)
+		if s.loading() || len(s.Files) != 1 || s.Files[0].Path != "new.go" {
+			t.Fatal("fresh comparison did not finish")
+		}
+	default:
+		t.Fatal("the previous connection's comparison blocked refresh")
+	}
+}

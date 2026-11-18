@@ -59,6 +59,12 @@ func (s *changesState) installDiff(versions domain.FileVersions) {
 		}
 	}
 }
+
+func (s *changesState) finishComparison() {
+	s.PendingComparison = nil
+	s.endLoad(false)
+}
+
 func (v *View) requestComparison(state *changesState, pair domain.DiffComparison) {
 	if v.Controller == nil || !v.Model.Connected {
 		return
@@ -67,17 +73,20 @@ func (v *View) requestComparison(state *changesState, pair domain.DiffComparison
 	sequence, epoch := state.ComparisonSequence, v.Model.ConnectionEpoch
 	state.FileSequence++
 	state.PendingComparison = &pair
+	state.comparisonEpoch = epoch
 	state.beginLoad()
 	_, q := v.gitQuery()
 	q.Comparison = &pair
 	q.ReviewPath = state.Path
 	if !v.do(app.Job{Method: "git.compare", Input: q, Apply: func(m *app.Model, data json.RawMessage, err error) {
-		if sequence != state.ComparisonSequence || epoch != m.ConnectionEpoch || state.Path != q.ReviewPath {
+		if sequence != state.ComparisonSequence {
 			return
 		}
-		state.PendingComparison = nil
+		state.finishComparison()
+		if epoch != m.ConnectionEpoch {
+			return
+		}
 		state.Updated = time.Now()
-		state.endLoad(false)
 		if err != nil {
 			state.failChanges(err)
 			state.FailedComparison = &pair
@@ -94,12 +103,12 @@ func (v *View) requestComparison(state *changesState, pair domain.DiffComparison
 		state.Files = result.Files
 		state.endLoad(true)
 		state.PinnedSnapshot = false
-		if result.Versions != nil {
+		// Returning to the list still leaves this comparison's file list valid.
+		if result.Versions != nil && state.Path == q.ReviewPath {
 			state.acceptComparedFile(*result.Versions)
 		}
 	}}) {
-		state.PendingComparison = nil
-		state.endLoad(false)
+		state.finishComparison()
 	}
 }
 func (v *View) requestDiffRefs(state *changesState) {

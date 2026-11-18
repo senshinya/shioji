@@ -27,6 +27,7 @@ type changesState struct {
 	Comparison           domain.DiffComparison
 	PendingComparison    *domain.DiffComparison
 	ComparisonSequence   uint64
+	comparisonEpoch      string
 	FileSequence         uint64
 	Refs                 []domain.DiffEndpoint
 	refsLoading          bool
@@ -156,10 +157,17 @@ func (v *View) refreshChanges() {
 }
 func (v *View) requestChanges(force bool) {
 	m := v.Model
-	if v.Controller == nil || !m.Connected || m.SessionID == "" {
+	if v.Controller == nil || m.SessionID == "" {
 		return
 	}
 	state := v.changesFor(m.SessionID)
+	if state.PendingComparison != nil && (!m.Connected || state.comparisonEpoch != m.ConnectionEpoch) {
+		state.ComparisonSequence++
+		state.finishComparison()
+	}
+	if !m.Connected {
+		return
+	}
 	if m.WorkerMinor >= 33 {
 		draft := state.commentDraft()
 		if state.loading() || state.PinnedSnapshot && !force || draft != nil && (draft.Open || draft.Closing) && !force || !force && time.Since(state.Updated) < 3*time.Second {
