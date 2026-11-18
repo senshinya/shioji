@@ -159,17 +159,30 @@ func (d *DiffState) selectionFragments() []DiffTextFragment {
 	if d.textSelection.computed {
 		return d.textSelection.fragments
 	}
-	d.textSelection.computed = true
 	rows := d.selectionRows()
+	if d.model.comparing() {
+		return nil
+	}
+	d.textSelection.computed = true
 	anchor, head := d.textSelection.anchor, d.textSelection.head
 	index := func(point DiffTextPoint) int {
-		line := d.selectionBuffer(point.Side).Snapshot().LineOf(point.Offset)
+		snap := d.selectionBuffer(point.Side).Snapshot()
+		line := snap.LineOf(point.Offset)
+		last := -1
 		for i, row := range rows {
-			if row.side == point.Side && row.line == line {
+			if row.side != point.Side {
+				continue
+			}
+			if row.line == line {
 				return i
 			}
+			// The diff counts physical lines. A quote can end after the
+			// final line break, at the buffer's virtual empty last line.
+			if point.Offset == snap.Len() && row.line == line-1 && snap.LineStart(line) == point.Offset {
+				last = i
+			}
 		}
-		return -1
+		return last
 	}
 	a, z := index(anchor), index(head)
 	if a < 0 || z < 0 {
@@ -462,9 +475,6 @@ func (d *DiffState) textSelectionInput(ed *editor, ev ui.InputEvent) bool {
 	return false
 }
 
-// ScrollY and SetScrollY expose the unified viewer's vertical reading position.
-func (d *DiffState) ScrollY() float64     { return d.eds[1].scrollY }
-func (d *DiffState) SetScrollY(y float64) { d.eds[1].setScrollShared(y) }
 func (d *DiffState) TextSelectionScrollTarget() (float64, bool) {
 	selection, ok := d.SelectedText()
 	ed := &d.eds[1]

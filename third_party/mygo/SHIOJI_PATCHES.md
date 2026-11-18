@@ -1,6 +1,6 @@
 # MyGo native presentation extensions
 
-Upstream: `github.com/egoist/mygo` v0.7.4. The upstream LICENSE is retained.
+Upstream: `github.com/egoist/mygo` v0.10.0 (ebde939). The upstream LICENSE is retained.
 
 Client settings additionally use `ui.Context.ReduceMotion` to request less
 motion for the current frame, including native scrolling and Markdown. It
@@ -9,6 +9,14 @@ preserves the desktop preference and cannot disable system Reduce Motion.
 Notification registration rechecks cancellation while holding the registry
 lock. This prevents a canceled delivery from restoring its callback after
 the client retires it; covered by `notification_registration_test.go`.
+The v0.10.0 import uses upstream's in-window editing menus, attached overlay
+repositioning and untracked-paint recovery. Shioji's menu density, delayed
+submenus and IME focus policy remain applied to the upstream renderer.
+Read-only diff selection retains source byte offsets across line-ending
+normalization and maps EOF after a final line break to the last physical line.
+Native captures refresh when another window has updated the shared coverage
+atlas, which may reuse an icon's transient path mask without repacking it.
+
 This local module contains the upstream runtime source and embedded resources;
 examples, website, JavaScript tooling, CI, upstream tests and testdata are omitted.
 The upstream architecture guide is retained for maintenance.

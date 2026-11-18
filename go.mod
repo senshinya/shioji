@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/ebitengine/purego v0.11.1
-	github.com/egoist/mygo v0.7.4
+	github.com/egoist/mygo v0.10.0
 	golang.org/x/image v0.46.0
 	golang.org/x/net v0.60.0
 	golang.org/x/sys v0.49.0
@@ -65,5 +65,5 @@ require (
 	modernc.org/memory v1.12.1 // indirect
 )
 
-// Small native appearance extensions; upstream base remains v0.7.4.
+// Vendored MyGo with Shioji patches documented in third_party/mygo/SHIOJI_PATCHES.md.
 replace github.com/egoist/mygo => ./third_party/mygo
