@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
 	"shioji/internal/domain"
@@ -8,6 +9,46 @@ import (
 	"testing"
 	"time"
 )
+
+func TestDeviceSidebarBackAlignsWithNewSession(t *testing.T) {
+	for _, width := range []int{820, 1240} {
+		for _, dark := range []bool{false, true} {
+			name := fmt.Sprintf("%d-dark-%t", width, dark)
+			t.Run(name, func(t *testing.T) {
+				v := New(layoutModel(), nil, "")
+				ui := n.NewTester(v.View, width, 720)
+				ui.SetDark(dark)
+				ui.SetScale(2)
+				ui.Advance(time.Second)
+				newSession, ok := ui.Find("新建会话")
+				if !ok {
+					t.Fatal("missing new session entry")
+				}
+				saveNativeSkillImage(t, ui, name+"-sessions.png")
+				for _, label := range []string{"设备", "打开设备页"} {
+					if err := ui.Click(label); err != nil {
+						t.Fatal(err)
+					}
+					ui.Advance(time.Second)
+				}
+				back, ok := ui.Find("返回会话")
+				if !ok {
+					t.Fatal("missing device sidebar return entry")
+				}
+				saveNativeSkillImage(t, ui, name+"-devices.png")
+				if back.X != newSession.X || back.Y != newSession.Y || back.H != newSession.H {
+					t.Errorf("return entry does not align with new session: return=%+v new=%+v", back, newSession)
+				}
+				if err := ui.Click("返回会话"); err != nil {
+					t.Fatal(err)
+				}
+				if v.devices || v.Model.SessionID != "s" {
+					t.Fatal("return entry did not restore the active session")
+				}
+			})
+		}
+	}
+}
 
 func TestDeviceManagementUsesContextualSidebarAndIndependentTabs(t *testing.T) {
 	m := deviceUIModel()

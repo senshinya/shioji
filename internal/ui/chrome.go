@@ -36,6 +36,12 @@ var branchIcon = designIcon("M6 3v12a4 4 0 0 0 8 0V8M6 5a2 2 0 1 0 0 .01M14 5a2 
 // WindowTrafficLightPosition is shared by the main and preference windows.
 func WindowTrafficLightPosition() *mygo.Point { return &mygo.Point{X: 22, Y: 21} }
 
+const (
+	sidebarHeaderTopInset = 6
+	sidebarTitlebarHeight = 28
+	sidebarHeaderGap      = 4
+)
+
 func navButton(c *n.Context, icon *n.SVG, label string) n.Element {
 	color, size := c.Theme().TextMuted, float32(13)
 	if label == "新建会话" {

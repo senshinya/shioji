@@ -97,8 +97,8 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 				if t.Dark {
 					surface = n.Hex("#1c1c1c")
 				}
-				n.Column(c).Fill().Radius(14).Padding(0, 8, 8).Background(surface).Border(1, t.Border).Gap(4).Children(func() {
-					n.Row(c).FillWidth().Height(44).DragWindow()
+				n.Column(c).Fill().Radius(14).Padding(sidebarHeaderTopInset, 8, 8).Background(surface).Border(1, t.Border).Gap(sidebarHeaderGap).Children(func() {
+					n.Row(c).FillWidth().Height(sidebarTitlebarHeight).DragWindow()
 					if navButton(c, deviceBackIcon, "返回会话").TextColor(t.TextMuted).Clicked() {
 						v.devices = false
 					}

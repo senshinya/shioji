@@ -286,8 +286,8 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 	n.Column(c).Width(sidebarWidth).FillHeight().Padding(8, 0, 8, 8).Children(func() {
 		card := n.Column(c).Fill().Radius(14).Clip().Background(color).Border(1, t.Border)
 		card.Children(func() {
-			n.Column(c.Key("nav-top")).FillWidth().Padding(6, 8, 0, 8).Gap(4).Children(func() {
-				n.Row(c).Height(28).AlignItems(n.Start).DragWindow().Children(func() { n.Spacer(c).Grow(1); v.searchControl(c, t) })
+			n.Column(c.Key("nav-top")).FillWidth().Padding(sidebarHeaderTopInset, 8, 0, 8).Gap(sidebarHeaderGap).Children(func() {
+				n.Row(c).Height(sidebarTitlebarHeight).AlignItems(n.Start).DragWindow().Children(func() { n.Spacer(c).Grow(1); v.searchControl(c, t) })
 				if navButton(c, plus, "新建会话").Background(func() n.Color {
 					if m.SessionID == "" && !v.devices && (v.archive == nil || !v.archive.open) {
 						return t.SurfacePressed
