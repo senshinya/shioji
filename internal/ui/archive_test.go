@@ -107,7 +107,9 @@ func TestArchiveDeleteConfirmationTargetsStableObjectAndRestoresFailure(t *testi
 	if !ui.HasText("revision changed") {
 		t.Fatal("failed deletion hid confirmation error")
 	}
-	ui.Click("彻底删除")
+	if err := ui.Click("重试失败项"); err != nil {
+		t.Fatal(err)
+	}
 	for len(v.Controller.Jobs) > 0 {
 		candidate := <-v.Controller.Jobs
 		if candidate.Method == "session.delete" {

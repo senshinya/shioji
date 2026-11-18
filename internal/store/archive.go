@@ -148,6 +148,9 @@ func (s *Store) deleteArchivedWorkspace(id string, revision int64, force bool) (
 	return s.deleteArchivedLocked(sessions, id)
 }
 
+const redactSessionJournal = "UPDATE journal SET body=? WHERE json_extract(body,'$.sessionId')=? OR json_extract(body,'$.session.id')=? OR json_extract(body,'$.operation.sessionId')=?"
+const redactWorkspaceJournal = "UPDATE journal SET body=? WHERE json_extract(body,'$.workspace.id')=?"
+
 func (s *Store) deleteArchivedLocked(sessions []domain.Session, workspace string) (domain.ArchiveDeletion, error) {
 	out := domain.ArchiveDeletion{DeviceID: s.deviceID, WorkspaceID: workspace, SessionIDs: []string{}}
 	tx, err := s.db.Begin()
@@ -165,7 +168,7 @@ func (s *Store) deleteArchivedLocked(sessions []domain.Session, workspace string
 		if _, err = tx.Exec("INSERT OR IGNORE INTO deleted_workspaces(id) VALUES(?)", workspace); err != nil {
 			return out, err
 		}
-		if _, err = tx.Exec("UPDATE journal SET body=? WHERE json_extract(body,'$.workspace.id')=?", blob(domain.Event{Type: "archive.redacted"}), workspace); err != nil {
+		if _, err = tx.Exec(redactWorkspaceJournal, blob(domain.Event{Type: "archive.redacted"}), workspace); err != nil {
 			return out, err
 		}
 		if _, err = tx.Exec("DELETE FROM workspaces WHERE id=?", workspace); err != nil {
@@ -222,7 +225,7 @@ func deleteSessionRows(tx *sql.Tx, session domain.Session) error {
 	}
 	// Redact in place rather than dropping sequence numbers: reconnecting
 	// clients can still consume every journal cursor without retaining text.
-	if _, err := tx.Exec("UPDATE journal SET body=? WHERE json_extract(body,'$.sessionId')=? OR json_extract(body,'$.session.id')=? OR json_extract(body,'$.operation.sessionId')=?", blob(domain.Event{Type: "archive.redacted"}), session.ID, session.ID, session.ID); err != nil {
+	if _, err := tx.Exec(redactSessionJournal, blob(domain.Event{Type: "archive.redacted"}), session.ID, session.ID, session.ID); err != nil {
 		return err
 	}
 	_, err = tx.Exec("DELETE FROM sessions WHERE id=?", session.ID)

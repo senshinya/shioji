@@ -76,13 +76,13 @@ func TestArchiveSearchCanClearWithoutLosingInputFocus(t *testing.T) {
 	}
 }
 
-func TestArchivePendingDeleteKeepsDialogAndShowsProgress(t *testing.T) {
+func TestArchivePendingDeleteClosesDialogAndShowsProgress(t *testing.T) {
 	v, ui := archiveViewFixture()
-	s := v.Model.Snapshot.Sessions[0]
-	v.archive.deletion = &archiveDeleteUI{connection: "local", workspace: v.Model.Snapshot.Workspaces[0], session: s, open: true, busy: true}
-	ui.Frame()
+	ui.Click("删除全部")
 	ui.Advance(time.Second)
-	if !ui.HasText("正在删除…") {
+	ui.Click("彻底删除")
+	ui.Advance(time.Second)
+	if !ui.HasText("正在删除") || v.archive.deletion.open || !v.archive.deletion.busy {
 		t.Fatal("pending deletion has no visible progress")
 	}
 }
@@ -108,16 +108,18 @@ func TestArchiveKeyboardReachesIndependentRowActions(t *testing.T) {
 	}
 }
 
-func TestArchivePendingDeleteCannotBeDismissed(t *testing.T) {
+func TestArchivePendingDeleteEscapeDoesNotCancelBackgroundWork(t *testing.T) {
 	v, ui := archiveViewFixture()
-	v.archive.deletion = &archiveDeleteUI{connection: "local", workspace: v.Model.Snapshot.Workspaces[0], session: v.Model.Snapshot.Sessions[0], open: true, busy: true}
-	ui.Frame()
+	ui.Click("删除全部")
+	ui.Advance(time.Second)
+	ui.Click("彻底删除")
 	ui.Advance(time.Second)
 	ui.Key(0, n.KeyEscape)
 	ui.Frame()
-	if !v.archive.deletion.open {
-		t.Fatal("Escape concealed a deletion still in progress")
+	if v.archive.deletion.open || !v.archive.deletion.busy || !ui.HasText("正在删除") {
+		t.Fatal("Escape canceled the pending batch or reopened its blocking dialog")
 	}
+	nextArchiveDelete(t, v)
 }
 
 func TestArchiveLongWorkspaceHeadingKeepsRetentionInsideWindow(t *testing.T) {

@@ -60,7 +60,7 @@ func TestArchiveDeleteAllCapturesUnfilteredListAndOnlyRetriesFailures(t *testing
 	body, _ := json.Marshal(domain.ArchiveDeletion{DeviceID: v.Model.Snapshot.DeviceID, SessionIDs: []string{secondID}})
 	second.Apply(v.Model, body, nil)
 	ui.Frame()
-	if !ui.HasText("still running") || v.archive.deletion == nil || !v.archive.deletion.open {
+	if !ui.HasText("still running") || v.archive.deletion == nil || v.archive.deletion.open {
 		t.Fatal("partial failure hidden")
 	}
 	ui.Click("重试失败项")
@@ -138,7 +138,7 @@ func TestArchiveDeleteAllDoesNotDispatchOfflineTargets(t *testing.T) {
 	v.Model.Connected = false
 	d := &archiveDeleteUI{batch: true, open: true, targets: []archiveDeleteTarget{{connection: "local", title: "Offline", method: "session.delete", input: protocol.ArchiveDeleteInput{SessionID: "s", Revision: 1}}}}
 	v.deleteArchive(d)
-	if d.busy || !d.open || len(d.failed) != 1 || d.error == "" {
+	if d.busy || d.open || len(d.failed) != 1 || d.error == "" {
 		t.Fatal("offline deletion was not retained", d)
 	}
 	for len(v.Controller.Jobs) > 0 {

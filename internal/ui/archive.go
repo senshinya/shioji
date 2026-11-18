@@ -273,6 +273,22 @@ func (v *View) archiveTable(c *n.Context, t *n.Theme, a *archiveUI, scope domain
 			a.deletion = &archiveDeleteUI{batch: true, workspaces: workspaceRows, targets: all, count: len(all), open: true}
 		}
 	})
+	if d := a.deletion; d != nil && !d.open && (d.busy || d.error != "") {
+		n.Row(c.Key("archive-delete-status")).FillWidth().MinHeight(28).Gap(8).AlignItems(n.Center).Margin(0, 0, 8, 0).Children(func() {
+			message := d.error
+			color := t.Danger
+			if d.busy {
+				message, color = "正在删除…", t.TextMuted
+				if d.batch {
+					message = fmt.Sprintf("正在删除 %d / %d…", max(0, d.next-1), len(d.targets))
+				}
+			}
+			n.Text(c, message).FontSize(12).FixedLineHeight(20).TextColor(color).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").TooltipWhenTruncated(message)
+			if !d.busy && configurationAction(c, "重试失败项").Clicked() {
+				v.deleteArchive(d)
+			}
+		})
+	}
 	metadataWidth := float32(160)
 	gap := float32(16)
 	if v.viewportWidth <= 1000 {
@@ -469,17 +485,17 @@ func (v *View) archiveDialogs(c *n.Context, t *n.Theme) {
 			})
 		})
 	})
-	if d.busy {
-		d.open = true
-	}
-	if !d.open && !d.busy {
+	if !d.open && !d.busy && d.error == "" {
 		a.deletion = nil
 	}
 }
 
 func (v *View) deleteArchive(d *archiveDeleteUI) {
+	if d.busy {
+		return
+	}
 	if d.batch {
-		d.busy, d.error, d.next = true, "", 0
+		d.busy, d.open, d.error, d.next = true, false, "", 0
 		d.failed = nil
 		v.deleteNextArchive(d)
 		return
@@ -495,18 +511,17 @@ func (v *View) deleteArchive(d *archiveDeleteUI) {
 	}
 	input.OperationID, input.CloseRuntime = d.operation, v.archiveCanCloseRuntime(d.connection)
 	d.busy = true
+	d.open = false
 	d.error = ""
 	if !v.do(app.Job{ConnectionID: d.connection, Method: method, Input: input, Apply: func(m *app.Model, body json.RawMessage, err error) {
 		d.busy = false
 		if err != nil {
 			d.error = err.Error()
-			d.open = true
 			return
 		}
 		var deletion domain.ArchiveDeletion
 		if json.Unmarshal(body, &deletion) != nil {
 			d.error = "设备返回了无效的删除回执"
-			d.open = true
 			return
 		}
 		m.ApplyArchiveDeletion(deletion)
@@ -517,6 +532,7 @@ func (v *View) deleteArchive(d *archiveDeleteUI) {
 	}}) {
 		d.busy = false
 		d.error = "操作队列繁忙，请重试"
+		d.open = true
 	}
 }
 
@@ -577,8 +593,7 @@ func (v *View) deleteNextArchive(d *archiveDeleteUI) {
 		return
 	}
 	d.busy = false
-	d.open = len(d.failed) > 0
-	if d.open {
+	if len(d.failed) > 0 {
 		d.error = fmt.Sprintf("%d 项未删除。%s", len(d.failed), d.error)
 		d.targets = d.failed
 	}

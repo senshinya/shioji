@@ -1119,6 +1119,10 @@ func (c *Controller) Run(ctx context.Context) {
 				c.startHistoryRead(ctx, client, job)
 				continue
 			}
+			if job.Method == "session.delete" || job.Method == "workspace.delete" {
+				c.startArchiveDelete(ctx, client, job)
+				continue
+			}
 			var opID string
 			if in, ok := job.Input.(protocol.SteerInput); ok {
 				opID = in.Input.OperationID

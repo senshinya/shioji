@@ -78,6 +78,10 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS requests (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
  CREATE TABLE IF NOT EXISTS turns (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
  CREATE TABLE IF NOT EXISTS journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, body BLOB NOT NULL);
+ CREATE INDEX IF NOT EXISTS journal_session ON journal(json_extract(body,'$.sessionId'));
+ CREATE INDEX IF NOT EXISTS journal_session_object ON journal(json_extract(body,'$.session.id'));
+ CREATE INDEX IF NOT EXISTS journal_operation_session ON journal(json_extract(body,'$.operation.sessionId'));
+ CREATE INDEX IF NOT EXISTS journal_workspace ON journal(json_extract(body,'$.workspace.id'));
  CREATE TABLE IF NOT EXISTS queues (session_id TEXT PRIMARY KEY REFERENCES sessions(id), body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS plans (session_id TEXT PRIMARY KEY REFERENCES sessions(id), body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS history_operations (id TEXT PRIMARY KEY, body BLOB NOT NULL);
