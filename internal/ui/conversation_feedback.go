@@ -445,21 +445,23 @@ func (v *View) renderConversationStatus(c *n.Context, t *n.Theme, s conversation
 	source := v.feedbackSource()
 	foldKey := "feedback:" + source.connection + ":" + source.workspace + ":" + source.session
 	folded := v.Model.Collapsed[foldKey] && !s.compact
-	padding := float32(12)
+	top := float32(processingPanelExpandedDisclosureInset - processingPanelDisclosureShift)
+	bottom := float32(processingPanelExpandedDisclosureInset + processingPanelDisclosureShift)
 	if folded {
-		padding = 4
+		top, bottom = processingPanelFoldedDisclosureInset, processingPanelFoldedDisclosureInset
 	}
-	panel := processingPanelSurface(n.Column(c.Key("status:"+s.id)).FillWidth().Padding(padding, processingPanelInset).Label("会话状态面板"), t)
+	panel := processingPanelSurface(n.Column(c.Key("status:"+s.id)).FillWidth().
+		Padding(top, processingPanelInset, bottom, processingPanelInset).Label("会话状态面板"), t)
 	if s.compact {
 		panel.Height(44).Padding(7, processingPanelInset)
 	}
 	panel.Children(func() {
-		n.Row(c).FillWidth().Height(28).Gap(4).AlignItems(n.Center).Children(func() {
+		n.Row(c).FillWidth().Height(processingPanelHeadingRow).Gap(4).AlignItems(n.Center).Children(func() {
 			heading := func(disclosure bool) {
 				n.Row(c).Gap(processingPanelIconGap).AlignItems(n.Baseline).Children(func() {
 					font := n.Font{Family: t.Font, Size: 13, Weight: 500}
 					inlineSymbol(c, s.icon, s.title, font, processingPanelIconSize, t.TextMuted)
-					n.Text(c, s.title).FontSize(13).FixedLineHeight(20).FontWeight(500)
+					n.Text(c, s.title).FontSize(13).FixedLineHeight(processingPanelHeadingLine).FontWeight(500)
 					if disclosure {
 						angle := float32(0)
 						if folded {
@@ -476,7 +478,7 @@ func (v *View) renderConversationStatus(c *n.Context, t *n.Theme, s conversation
 				if folded {
 					label = "展开会话状态"
 				}
-				if control(c, 4).Height(24).Shrink(0).PaddingX(2).Justify(n.Start).Label(label).Children(func() { heading(true) }).Clicked() {
+				if processingPanelDisclosure(c).Label(label).Children(func() { heading(true) }).Clicked() {
 					v.Model.Collapsed[foldKey] = !folded
 				}
 			}
@@ -484,7 +486,7 @@ func (v *View) renderConversationStatus(c *n.Context, t *n.Theme, s conversation
 			v.feedbackStatusPager(c, t, count, index)
 			if s.compact {
 				for _, a := range s.actions {
-					if ghost(c, a.label).Height(28).FontSize(12).Disabled(a.disabled).Clicked() {
+					if ghost(c, a.label).Height(processingPanelActionHeight).FontSize(12).Disabled(a.disabled).Clicked() {
 						a.run(c)
 					}
 				}
@@ -497,9 +499,9 @@ func (v *View) renderConversationStatus(c *n.Context, t *n.Theme, s conversation
 			if s.body != "" {
 				n.Text(c, s.body).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 			}
-			n.Row(c).FillWidth().Wrap().Gap(8).Children(func() {
+			n.Row(c).FillWidth().Wrap().Gap(messageFooterGap).Children(func() {
 				for i, a := range s.actions {
-					action := ghost(c, a.label).Height(28).FontSize(12).Disabled(a.disabled)
+					action := ghost(c, a.label).Height(processingPanelActionHeight).FontSize(12).Disabled(a.disabled)
 					if a.accessibilityLabel != "" {
 						action.Label(a.accessibilityLabel)
 					}
@@ -511,7 +513,7 @@ func (v *View) renderConversationStatus(c *n.Context, t *n.Theme, s conversation
 					}
 				}
 				if s.details != "" {
-					if ghost(c, "查看详情").FontSize(12).Height(28).Clicked() {
+					if ghost(c, "查看详情").FontSize(12).Height(processingPanelActionHeight).Clicked() {
 						v.feedbackDetail = !v.feedbackDetail
 					}
 				}

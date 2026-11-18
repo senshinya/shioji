@@ -261,39 +261,47 @@ func TestRemoteAttachmentNativePanelGeometry(t *testing.T) {
 }
 
 func TestRemoteAttachmentFailuresFitMinimumWindowWithoutDuplicateStatus(t *testing.T) {
-	v, key := remoteAttachmentFixture(t)
-	v.Model.Drafts[key] = "保留\n多行\n普通\n输入"
-	stageRemoteAttachment(t, v, key)
-	base := v.Model.Attachments[key][0]
-	v.Model.Attachments[key] = nil
-	for i := range 8 {
-		a := base
-		a.Attachment.ID = domain.NewID()
-		a.Attachment.Name = fmt.Sprintf("资料-%d.pdf", i)
-		a.UploadApproved, a.Error = true, "连接已中断"
-		v.Model.Attachments[key] = append(v.Model.Attachments[key], a)
-	}
-	ui := n.NewTester(v.View, 850, 600)
-	ui.Advance(time.Second)
-	if ui.HasText("附件暂时无法用于发送") {
-		t.Fatal("path failure duplicates its own upload panel with generic status")
-	}
-	panel, ok := ui.Find("远程附件上传")
-	retry, retryOK := ui.Find("重试上传")
-	if !ok || !retryOK || panel.Y < 48 || retry.Y+retry.H > 600 || panel.H > 320 {
-		t.Fatal("failed uploads consume minimum window", panel, retry)
-	}
-	list, ok := ui.Find("待上传文件列表")
-	if !ok {
-		t.Fatal("long upload list has no internal scrollport")
-	}
-	ui.Scroll(list.X+list.W/2, list.Y+list.H/2, 0, 300)
-	ui.Advance(300 * time.Millisecond)
-	if err := ui.Click("移除远程附件：资料-7.pdf"); err != nil {
-		t.Fatal("last upload cannot be reached without moving fixed actions", err)
-	}
-	if len(v.Model.Attachments[key]) != 7 || v.Model.Drafts[key] != "保留\n多行\n普通\n输入" {
-		t.Fatal("removing failed upload changed other content")
+	for _, zoom := range []float32{1, 1.5} {
+		t.Run(fmt.Sprintf("zoom=%g", zoom), func(t *testing.T) {
+			v, key := remoteAttachmentFixture(t)
+			v.Model.Preferences.InterfaceZoom = zoom
+			v.Model.Drafts[key] = "保留\n多行\n普通\n输入"
+			stageRemoteAttachment(t, v, key)
+			base := v.Model.Attachments[key][0]
+			v.Model.Attachments[key] = nil
+			for i := range 8 {
+				a := base
+				a.Attachment.ID = domain.NewID()
+				a.Attachment.Name = fmt.Sprintf("资料-%d.pdf", i)
+				a.UploadApproved, a.Error = true, "连接已中断"
+				v.Model.Attachments[key] = append(v.Model.Attachments[key], a)
+			}
+			ui := n.NewTester(v.View, 850, 600)
+			ui.Advance(time.Second)
+			if ui.HasText("附件暂时无法用于发送") {
+				t.Fatal("path failure duplicates its own upload panel with generic status")
+			}
+			panel, ok := ui.Find("远程附件上传")
+			retry, retryOK := ui.Find("重试上传")
+			if !ok || !retryOK || panel.Y < 48*zoom || retry.Y+retry.H > 600 || panel.H > 320*zoom {
+				t.Fatal("failed uploads consume minimum window", panel, retry)
+			}
+			list, ok := ui.Find("待上传文件列表")
+			if !ok {
+				t.Fatal("long upload list has no internal scrollport")
+			}
+			ui.Scroll(list.X+list.W/2, list.Y+list.H/2, 0, 600)
+			ui.Advance(300 * time.Millisecond)
+			if current, _ := ui.Find("重试上传"); current != retry {
+				t.Fatal("file scrolling moved fixed actions", retry, current)
+			}
+			if err := ui.Click("移除远程附件：资料-7.pdf"); err != nil {
+				t.Fatal("last upload cannot be reached without moving fixed actions", err)
+			}
+			if len(v.Model.Attachments[key]) != 7 || v.Model.Drafts[key] != "保留\n多行\n普通\n输入" {
+				t.Fatal("removing failed upload changed other content")
+			}
+		})
 	}
 }
 

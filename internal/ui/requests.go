@@ -245,9 +245,9 @@ func (v *View) requestActions(c *n.Context, t *n.Theme, r domain.PendingRequest)
 		action := func(label, decision string, primary bool, answers map[string][]string, extraDisabled bool) {
 			var button n.Element
 			if primary {
-				button = controlFeedback(c, n.PrimaryButton(c, label).Radius(requestRadius).Height(28).FontSize(12).Disabled(disabled || extraDisabled), requestRadius, true)
+				button = controlFeedback(c, n.PrimaryButton(c, label).Radius(requestRadius).Height(processingPanelActionHeight).FontSize(12).Disabled(disabled || extraDisabled), requestRadius, true)
 			} else {
-				button = ghost(c, label, requestRadius).Disabled(disabled || extraDisabled)
+				button = ghost(c, label, requestRadius).Height(processingPanelActionHeight).Disabled(disabled || extraDisabled)
 			}
 			if button.Clicked() {
 				v.respond(r, domain.Answer{RequestID: r.ID, Revision: r.Revision, Decision: decision, Answers: answers})
@@ -278,7 +278,7 @@ func (v *View) requestActions(c *n.Context, t *n.Theme, r domain.PendingRequest)
 			if r.URL != "" {
 				u, err := url.Parse(r.URL)
 				safe := err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" && u.User == nil
-				if controlFeedback(c, n.PrimaryButton(c, "在浏览器中继续").Radius(requestRadius).Height(28).FontSize(12).Disabled(disabled || !safe), requestRadius, true).Clicked() {
+				if controlFeedback(c, n.PrimaryButton(c, "在浏览器中继续").Radius(requestRadius).Height(processingPanelActionHeight).FontSize(12).Disabled(disabled || !safe), requestRadius, true).Clicked() {
 					if err := mygo.Shell.OpenExternal(r.URL); err != nil {
 						v.Model.Error = err.Error()
 					}

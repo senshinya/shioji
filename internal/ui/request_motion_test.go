@@ -167,6 +167,8 @@ func TestRequestDisclosureKeepsContentAttachedToItsHeading(t *testing.T) {
 	ui := n.NewTester(v.View, 1440, 900)
 	ui.Advance(time.Second)
 	before, _ := ui.Find("需要回答")
+	foldedCard, _ := ui.Find("待处理请求卡片")
+	foldedBody, _ := ui.Find("请求内容区域")
 	ui.Click("需要回答")
 	ui.Advance(70 * time.Millisecond)
 	middle, _ := ui.Find("需要回答")
@@ -179,7 +181,10 @@ func TestRequestDisclosureKeepsContentAttachedToItsHeading(t *testing.T) {
 	settledBody, _ := ui.Find("请求内容区域")
 	settledCard, _ := ui.Find("待处理请求卡片")
 	textGap := settledQuestion.Y - after.Y
-	chrome := settledCard.H - settledBody.H - 2*(after.Y-settledCard.Y-1)
+	topOfFolded := before.Y - foldedCard.Y
+	topOfExpanded := after.Y - settledCard.Y
+	bottomOfFolded := foldedCard.Y + foldedCard.H - foldedBody.Y - foldedBody.H
+	bottomOfExpanded := settledCard.Y + settledCard.H - settledBody.Y - settledBody.H
 	ui.Click("需要回答")
 	ui.Advance(300 * time.Millisecond)
 	ui.Click("需要回答")
@@ -189,8 +194,10 @@ func TestRequestDisclosureKeepsContentAttachedToItsHeading(t *testing.T) {
 		question, ok := ui.Find("简短问题")
 		body, _ := ui.Find("请求内容区域")
 		card, _ := ui.Find("待处理请求卡片")
-		padding := heading.Y - card.Y - 1
-		if math.Abs(float64(card.H-(chrome+2*padding+body.H))) > 1 {
+		progress := (heading.Y - card.Y - topOfFolded) / (topOfExpanded - topOfFolded)
+		expected := bottomOfFolded + progress*(bottomOfExpanded-bottomOfFolded)
+		bottom := card.Y + card.H - body.Y - body.H
+		if math.Abs(float64(bottom-expected)) > 1 {
 			t.Fatal("disclosure surface does not follow the actual content and padding height", heading, body, card)
 		}
 		if ok && question.H > 1 && math.Abs(float64(question.Y-heading.Y-textGap)) > 1 {

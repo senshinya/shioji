@@ -310,7 +310,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 	card.Children(func() {
 		content = n.Column(c.Key("request-card-content")).FillWidth().Shrink(0)
 		content.Children(func() {
-			n.Row(c.Key("request-header")).FillWidth().Height(28).Shrink(0).Gap(4).AlignItems(n.Center).Children(func() {
+			n.Row(c.Key("request-header")).FillWidth().Height(processingPanelHeadingRow).Shrink(0).Gap(4).AlignItems(n.Center).Children(func() {
 				titleText, summary := r.Title, ""
 				if m.Collapsed[m.SessionID] {
 					summary = fmt.Sprintf("%d 个问题", len(state.pages))
@@ -321,15 +321,15 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 						}
 					}
 				}
-				title := control(c, 4).Height(24).Shrink(0).PaddingX(2).Justify(n.Start).Label(r.Title).Description(titleText + " " + summary).Children(func() {
+				title := processingPanelDisclosure(c).Label(r.Title).Description(titleText + " " + summary).Children(func() {
 					n.Row(c).Gap(processingPanelIconGap).AlignItems(n.Baseline).Children(func() {
 						icon := questionIcon
 						if r.Kind == "approval" || r.Kind == "permissions" {
 							icon = shieldIcon
 						}
 						font := n.Font{Family: c.Theme().Font, Size: 13, Weight: 500}
-						inlineSymbol(c, icon, r.Title, font, 14, t.TextMuted)
-						n.Text(c, titleText).FontSize(13).FontWeight(500).FixedLineHeight(20)
+						inlineSymbol(c, icon, titleText, font, processingPanelIconSize, t.TextMuted)
+						n.Text(c, titleText).FontSize(13).FontWeight(500).FixedLineHeight(processingPanelHeadingLine)
 						angle := float32(0)
 						if m.Collapsed[m.SessionID] {
 							angle = -90
@@ -367,13 +367,15 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 			bodyHeight = v.pendingBody(c, t, current, index, m.Collapsed[m.SessionID], presence < 1)
 		})
 	})
-	paddingTarget := float32(12)
+	paddingTarget := float32(processingPanelExpandedDisclosureInset)
 	if m.Collapsed[m.SessionID] {
-		paddingTarget = 4
+		paddingTarget = processingPanelFoldedDisclosureInset
 	}
 	padding := card.AnimateTo("request-padding", paddingTarget, motionAnimation(c, 240*time.Millisecond))
-	content.Padding(padding, processingPanelInset)
-	card.Height((30 + 2*padding + bodyHeight) * presence)
+	progress := (padding - processingPanelFoldedDisclosureInset) / (processingPanelExpandedDisclosureInset - processingPanelFoldedDisclosureInset)
+	shift := processingPanelDisclosureShift * progress
+	content.Padding(padding-shift, processingPanelInset, padding+shift, processingPanelInset)
+	card.Height((2 + processingPanelHeadingRow + 2*padding + bodyHeight) * presence)
 }
 
 // Keep one total glyph mounted while its surrounding words become a pager.

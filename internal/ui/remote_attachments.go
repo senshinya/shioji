@@ -205,15 +205,25 @@ func (v *View) remoteAttachmentsPanel(c *n.Context, t *n.Theme, key string) {
 		if foreign {
 			title = "附件属于其他工作区"
 		}
-		panel := n.Column(c.Key("panel")).FillWidth().Padding(12, 14).Gap(6).Radius(12).Background(processingPanelColor(t)).Border(1, t.Border).Margin(0, 0, 8, 0).Label("远程附件上传")
+		// The conversation dock also has to fit the status and the composer.
+		// At higher zoom the files scroll within their share of the window.
+		const descriptionLine = 20
+		_, height := c.Size()
+		fileListHeight := height / 4
+		if unapproved || foreign {
+			fileListHeight -= descriptionLine + messageFooterGap
+		}
+		panel := processingPanelSurface(n.Column(c.Key("panel")).FillWidth().
+			Padding(processingPanelHeadingInset, processingPanelInset, processingPanelExpandedInset, processingPanelInset).
+			Gap(messageFooterGap).Margin(0, 0, 8, 0).Label("远程附件上传"), t)
 		panel.Children(func() {
-			n.Text(c, title).FontSize(13).FontWeight(500).FixedLineHeight(20)
+			n.Text(c, title).FontSize(13).FontWeight(500).FixedLineHeight(processingPanelHeadingLine)
 			if foreign {
-				n.Text(c, "请返回原工作区继续，或移除这些附件。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+				n.Text(c, "请返回原工作区继续，或移除这些附件。").FontSize(12).FixedLineHeight(descriptionLine).TextColor(t.TextMuted)
 			} else if unapproved {
-				n.Text(c, "将上传文件内容，并将远程路径提供给 Agent。").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+				n.Text(c, "将上传文件内容，并将远程路径提供给 Agent。").FontSize(12).FixedLineHeight(descriptionLine).TextColor(t.TextMuted)
 			}
-			n.Scroll(c.Key("files")).FillWidth().MaxHeight(192).Label("待上传文件列表").Children(func() {
+			n.Scroll(c.Key("files")).FillWidth().MaxHeight(max(processingPanelActionHeight, min(192, fileListHeight))).Label("待上传文件列表").Children(func() {
 				n.Column(c).FillWidth().Gap(6).Children(func() {
 					for _, a := range shown {
 						a := a
@@ -248,7 +258,7 @@ func (v *View) remoteAttachmentsPanel(c *n.Context, t *n.Theme, key string) {
 					}
 				})
 			})
-			n.Row(c).FillWidth().Wrap().Gap(8).AlignItems(n.Center).Children(func() {
+			n.Row(c).FillWidth().Wrap().Gap(messageFooterGap).AlignItems(n.Center).Children(func() {
 				rememberKey := v.remoteRememberKey(key)
 				if v.remoteUploadRemember == nil {
 					v.remoteUploadRemember = map[string]bool{}
@@ -263,7 +273,7 @@ func (v *View) remoteAttachmentsPanel(c *n.Context, t *n.Theme, key string) {
 				if unapproved || foreign {
 					label = "取消"
 				}
-				if ghost(c, label).FontSize(12).Height(28).Label("取消远程附件上传").Clicked() {
+				if ghost(c, label).FontSize(12).Height(processingPanelActionHeight).Label("取消远程附件上传").Clicked() {
 					v.cancelRemoteAttachments(key)
 				}
 				if unapproved && !foreign {
