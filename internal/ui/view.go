@@ -48,6 +48,7 @@ type View struct {
 	draftSaveError                   string
 	historyPage                      *conversationHistory
 	sessionLoad                      *sessionLoading
+	sessionStops                     map[string]*sessionStop
 	historyBaseline                  bool
 	historyTarget                    string
 	workSourceTarget                 app.WorkKey
@@ -337,6 +338,7 @@ func (v *View) View(c *n.Context) {
 	}
 	v.syncDeviceConnectionSave()
 	m.RefreshDevices()
+	v.syncSessionStops()
 	m.SyncHistoryEdits()
 	v.syncHistoryExit(c)
 	if pane := v.secondary; pane != nil {
@@ -734,12 +736,8 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	binding := v.composerDocument(c, key)
 	draft := m.Drafts[key]
 	cfg := m.Config()
-	running := false
-	for _, s := range m.Snapshot.Sessions {
-		if s.ID == m.SessionID {
-			running = s.Status.Active()
-		}
-	}
+	stopped := v.splitRoot().sessionStops[m.SessionID] != nil
+	active := m.Active()
 	bg := t.Background
 	if t.Dark {
 		bg = t.Surface
@@ -889,7 +887,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					iconKey := "primary-send-icon"
 					label := "发送"
 					editing := m.QueueEdits[m.SessionID].ID != ""
-					queuing := running || len(m.Queue().Items) > 0
+					queuing := len(m.Queue().Items) > 0 || active && (!stopped || !empty)
 					disabled := !m.Connected || m.RunReadiness().State != "ready" || m.ModelUnavailable() || m.ReadOnlyConversationReason() != "" || empty || m.HasPendingInput() || v.homeSendPending() || m.ArchivedContext() != "" || v.preparingAttachments(m.DraftKey())
 					if queuing {
 						label = "加入队列"
@@ -903,7 +901,8 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 						label = "压缩上下文"
 						disabled = v.compactReason() != ""
 					}
-					if running && empty && !editing && (!v.homeSendPending() || m.ActiveTurn() != "") {
+					canStop := active && !stopped && empty && !editing && (!v.homeSendPending() || m.ActiveTurn() != "")
+					if canStop {
 						icon = stop
 						iconSize = 18
 						iconKey = "primary-stop-icon"
@@ -915,13 +914,20 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 						fill = subtle(t)
 					}
 					send := controlFeedback(c, n.ButtonBase(c), 14, true).Size(28, 28).Radius(14).Background(fill).TextColor(t.AccentText).Label(label).Disabled(disabled).Children(func() {
-						n.Icon(c.Key(iconKey), icon).Size(iconSize, iconSize).Transition(n.ElementTransition{Duration: motionAnimation(c, 120*time.Millisecond).Duration, Ease: n.EaseOut, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
+						motion := n.ElementTransition{Duration: motionAnimation(c, 120*time.Millisecond).Duration, Ease: n.EaseOut, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}}
+						if canStop {
+							motion.Exit = nil
+						}
+						if stopped {
+							motion.Enter = nil
+						}
+						n.Icon(c.Key(iconKey), icon).Size(iconSize, iconSize).Transition(motion)
 					})
 					if reason := m.ReadOnlyConversationReason(); reason != "" {
 						send.Tooltip(reason)
 					}
 					if send.Clicked() {
-						if running && empty && !editing {
+						if canStop {
 							v.interrupt()
 						} else {
 							m.Drafts[key] = draft
@@ -1224,7 +1230,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	v.refreshConversationFind()
 	// An empty detail keeps the dock mounted through first-turn hydration.
 	// Its zero Session.ID also keeps the history-fold barrier unconsumed.
-	detail := v.homeSendDetail(m.Details[m.SessionID])
+	detail := v.homeSendDetail(v.stoppingReplyDetail(m.Details[m.SessionID]))
 	viewKey := v.homeSendKey(m.SessionID)
 	state := v.lists[m.SessionID]
 	if h := v.homeSend; h != nil && h.in.SessionID == "" {
@@ -1481,7 +1487,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	})
 	history.HandleInput(v.historyInput)
 	n.VirtualTextSelection(history, func(key string) (string, bool) {
-		for _, item := range v.Model.Details[v.Model.SessionID].Items {
+		for _, item := range detail.Items {
 			if item.ID == key {
 				if item.Kind == "user" || item.Kind == "command" {
 					return v.messageCopyText(item), true
@@ -1579,8 +1585,18 @@ func (v *View) turnFooter(c *n.Context, t *n.Theme, turn domain.Turn) {
 // Receipt and turn status share their full native subtree, so hydration can
 // replace the label without restarting row entrance or content animation.
 func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing string) {
-	frame := n.Column(c.Key("reply-footer")).Label("回复信息").FillWidth().MinHeight(24).Clip()
-	replySummary := turn.Status == domain.ExecutionCompleted || turn.Status == domain.ExecutionInterrupted || turn.Status == domain.ExecutionAbandoned
+	if (turn.Status.Active() || preparing != "") && v.stoppingTurn(turn.ID) {
+		turn.Status = domain.ExecutionInterrupted
+		preparing = ""
+	}
+	interrupted := turn.Status == domain.ExecutionInterrupted
+	frameKey := "reply-footer"
+	if interrupted {
+		// Removing the running footer's parent also removes its exit layers.
+		frameKey = "interrupted-reply-footer"
+	}
+	frame := n.Column(c.Key(frameKey)).Label("回复信息").FillWidth().MinHeight(24).Clip()
+	replySummary := turn.ID != "" && (turn.Status == domain.ExecutionCompleted || turn.Status == domain.ExecutionInterrupted || turn.Status == domain.ExecutionAbandoned)
 	state := string(turn.Status)
 	if (turn.Status == "running" || turn.Status == "starting") && !v.Model.Connected {
 		state = "disconnected"
@@ -1638,8 +1654,22 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 		frame.Height(frame.Jump("height", 24*remaining))
 		return
 	}
-	v.transcriptContentHeight(c, frame, !delegated && !waiting, !delegated && !waiting, 180*time.Millisecond, func() float32 {
-		row := n.Row(c.Key("state:" + state)).FillWidth().Wrap().Gap(messageFooterGap).MinHeight(24).AlignItems(n.Baseline).Transition(fadeMotion(c, 180*time.Millisecond))
+	duration := 180 * time.Millisecond
+	if interrupted {
+		duration = 0
+	}
+	metricText := func(text string) n.Element {
+		field := n.Text(c, text).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+		if !interrupted {
+			field.ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
+		}
+		return field
+	}
+	v.transcriptContentHeight(c, frame, !delegated && !waiting, !delegated && !waiting, duration, func() float32 {
+		row := n.Row(c.Key("state:" + state)).FillWidth().Wrap().Gap(messageFooterGap).MinHeight(24).AlignItems(n.Baseline)
+		if !interrupted {
+			row.Transition(fadeMotion(c, 180*time.Millisecond))
+		}
 
 		row.Children(func() {
 			if delegated || waiting {
@@ -1671,7 +1701,7 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 				copiedUntil := n.Local(copy, "copied-until", func() time.Time { return time.Time{} })
 				if copy.Clicked() {
 					var parts []string
-					for _, item := range v.Model.Details[v.Model.SessionID].Items {
+					for _, item := range v.stoppingReplyDetail(v.Model.Details[v.Model.SessionID]).Items {
 						if item.TurnID == turn.ID && item.Kind == "assistant" && strings.TrimSpace(item.Text) != "" {
 							parts = append(parts, item.Text)
 						}
@@ -1706,7 +1736,7 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 					ended = local.Format("15:04")
 					exact = local.Format("2006-01-02 15:04:05")
 				}
-				n.Text(c, ended).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)}).Label("结束时间：" + ended).Tooltip(exact).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+				metricText(ended).Label("结束时间：" + ended).Tooltip(exact)
 				if turn.Status != domain.ExecutionCompleted {
 					animation := motionAnimation(c, 160*time.Millisecond)
 					n.Text(c, label).Label("回复状态：" + label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: &animation})
@@ -1716,7 +1746,7 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 					seconds := *turn.DurationMS / 1000
 					duration = fmt.Sprintf("用时 %d分%d秒", seconds/60, seconds%60)
 				}
-				n.Text(c, duration).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)}).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+				metricText(duration)
 			} else if turn.Status == "running" || turn.Status == "starting" {
 				v.runningStatus(c, t, turn)
 			} else {
@@ -1732,9 +1762,7 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 			}
 			if replySummary {
 				n.Column(c).MinHeight(24).Justify(n.Center).Label("本轮用量").Children(func() {
-					n.Text(c, fmt.Sprintf("输入 %s · 输出 %s · 缓存 %s", count(turn.InputTokens), count(turn.OutputTokens), count(turn.CachedInputTokens))).
-						FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
-						ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
+					metricText(fmt.Sprintf("输入 %s · 输出 %s · 缓存 %s", count(turn.InputTokens), count(turn.OutputTokens), count(turn.CachedInputTokens)))
 				})
 			}
 		})
@@ -1814,7 +1842,7 @@ func (v *View) sendMessage(steer bool) {
 		return
 	}
 	m := v.Model
-	in, method, turn, err := m.BeginMessage(steer)
+	in, method, turn, err := m.BeginMessage(steer && v.splitRoot().sessionStops[m.SessionID] == nil)
 	if err != nil {
 		m.Error = err.Error()
 		return
@@ -1872,29 +1900,6 @@ func (v *View) sendMessage(steer bool) {
 		}
 		m.Reject(in, "操作繁忙，请重试")
 	}
-}
-func (v *View) interrupt() {
-	if !v.Model.RunReadiness().Capabilities.Interrupt {
-		return
-	}
-	if v.Controller == nil {
-		return
-	}
-	d := v.Model.Details[v.Model.SessionID]
-	for _, turn := range d.Turns {
-		if turn.Status == "running" {
-			v.do(app.Job{Method: "turn.interrupt", Input: map[string]string{"sessionId": d.Session.ID, "turnId": turn.ID}, Apply: func(m *app.Model, _ json.RawMessage, err error) {
-				if err != nil {
-					m.Error = err.Error()
-				}
-			}})
-			return
-		}
-	}
-	if d.Session.Status == "starting" {
-		v.do(app.Job{Method: "turn.interrupt", Input: map[string]string{"sessionId": d.Session.ID, "turnId": ""}})
-	}
-
 }
 func (v *View) nextAttention() {
 	if s, ok := v.attentionSession(); ok {

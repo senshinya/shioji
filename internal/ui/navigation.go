@@ -413,7 +413,12 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 		c.AnimationFrame()
 	}
 	pending := v.pendingCount(s.ID)
-	description := sessionNavigationDescription(s, pending, selected, finishing)
+	shown := s
+	if v.sessionStops[s.ID] != nil {
+		shown.Status = domain.ExecutionInterrupted
+		pending = 0
+	}
+	description := sessionNavigationDescription(shown, pending, selected, finishing)
 	leftInset, gap := float32(20), float32(6)
 	if r.pinned {
 		leftInset, gap = 0, sidebarIconLabelGap
@@ -438,7 +443,7 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 				marker = inlineSymbol(c, modelEye, s.Title, font, markerSize, t.TextMuted).Label("只读会话：" + s.ID).Tooltip("只读会话")
 			} else if pending > 0 {
 				marker = statusDotSize(c, s.Title, font, t.Warning, dotSize, false).Width(markerSize).TextAlign(n.Center).Label("会话等待状态：" + s.ID)
-			} else if s.Status.Active() || finishing {
+			} else if shown.Status.Active() || finishing {
 				marker = statusDotSize(c, s.Title, font, t.Success, dotSize, true).Width(markerSize).TextAlign(n.Center).Label("会话运行状态：" + s.ID)
 			} else if s.Status == "completed" {
 				color := t.TextMuted
@@ -446,7 +451,7 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 					color = t.Success
 				}
 				marker = inlineSymbol(c, check, s.Title, font, markerSize, color)
-			} else if s.Status == "interrupted" || s.Status == "abandoned" {
+			} else if shown.Status == "interrupted" || s.Status == "abandoned" {
 				marker = inlineSymbol(c, check, s.Title, font, markerSize, t.TextMuted).Label("已停止")
 			} else {
 				glyph, label := "Ⅱ", "已暂停"

@@ -207,7 +207,11 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 	endedTurns := map[string]bool{}
 	activeTurn := ""
 	for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
-		switch turn.Status {
+		status := turn.Status
+		if status.Active() && v.stoppingTurn(turn.ID) {
+			status = domain.ExecutionInterrupted
+		}
+		switch status {
 		case domain.ExecutionStarting, domain.ExecutionRunning:
 			activeTurn = turn.ID
 		case domain.ExecutionCompleted, domain.ExecutionFailed, domain.ExecutionInterrupted, domain.ExecutionAbandoned:

@@ -213,7 +213,7 @@ func (v *View) loadingComposerSkeleton(c *n.Context, t *n.Theme) {
 		p.Fill(n.Rect{X: right - 28, Y: cy - 14, W: 28, H: 28}, ink, 14)
 	})
 	// History hydration must not hide an already known active turn's Stop.
-	if v.loadingBlocksComposer() && v.Model.ActiveTurn() != "" && v.Model.Active() {
+	if v.loadingBlocksComposer() && v.Model.ActiveTurn() != "" && v.Model.Active() && !v.stoppingTurn(v.Model.ActiveTurn()) {
 		n.Column(c.Key("opening-stop")).Absolute().Right(14).Bottom(8).Children(func() {
 			if control(c, 14).Size(28, 28).Background(t.Accent).TextColor(t.AccentText).Label("停止当前轮").Disabled(!v.Model.Connected || !v.Model.RunReadiness().Capabilities.Interrupt).Children(func() { n.Icon(c, stop).Size(18, 18) }).Clicked() {
 				v.interrupt()

@@ -110,7 +110,7 @@ func (v *View) runningElapsedStart(turn domain.Turn) *time.Time {
 func (v *View) activeConversationTurn() (domain.Turn, bool) {
 	turns := v.Model.Details[v.Model.SessionID].Turns
 	for i := len(turns) - 1; i >= 0; i-- {
-		if turns[i].Status.Active() {
+		if turns[i].Status.Active() && !v.stoppingTurn(turns[i].ID) {
 			return turns[i], true
 		}
 	}
@@ -236,7 +236,7 @@ func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domai
 		}
 	}
 	activity := v.runningActivity(turn)
-	if turn.ID == "" || activity.waiting || activity.compaction != "" {
+	if turn.ID == "" || v.stoppingTurn(turn.ID) || activity.waiting || activity.compaction != "" {
 		v.runningProgress = nil
 		return
 	}

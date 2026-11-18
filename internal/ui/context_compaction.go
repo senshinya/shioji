@@ -408,7 +408,7 @@ func contextActionLabel(state domain.ExecutionState) string {
 // All compaction surfaces use the same current activity as tool summaries,
 // the reply footer and the offscreen latest indicator.
 func (v *View) currentCompaction() string {
-	if !v.Model.Connected {
+	if !v.Model.Connected || v.splitRoot().sessionStops[v.Model.SessionID] != nil {
 		return ""
 	}
 	action := v.contextAction()
@@ -438,6 +438,9 @@ func (v *View) contextCompactionItem(c *n.Context, t *n.Theme, item domain.Item)
 	}
 	if !item.Final && !live {
 		label = "压缩状态待确认"
+		if v.stoppingTurn(item.TurnID) {
+			label = contextActionLabel(domain.ExecutionInterrupted)
+		}
 	}
 	row := n.Row(c.Key("compaction-status")).FillWidth().Gap(6).AlignItems(n.Baseline)
 	row.Children(func() {

@@ -18,6 +18,7 @@ type replyStream struct {
 	changedAt   time.Time
 	revealAfter time.Time
 	revealing   bool
+	stopping    bool
 	seen        uint64
 }
 
@@ -70,12 +71,34 @@ func (v *View) syncReplyStreams(detail domain.SessionDetail) {
 	}
 	previousOrder := v.replyLatestOrder
 	var receiptUntil time.Time
+	var interrupted map[string]bool
+	for _, turn := range detail.Turns {
+		if turn.Status == domain.ExecutionInterrupted {
+			if interrupted == nil {
+				interrupted = make(map[string]bool)
+			}
+			interrupted[turn.ID] = true
+		}
+	}
 	for _, item := range detail.Items {
 		v.replyLatestOrder = max(v.replyLatestOrder, item.Order)
 		if item.Kind != "assistant" && item.Kind != "request" && item.Kind != "request_result" {
 			continue
 		}
 		stream := v.replyStreams[item.ID]
+		stopping := v.stoppingTurn(item.TurnID)
+		if stopping || interrupted[item.TurnID] || stream != nil && stream.stopping {
+			if stream == nil {
+				stream = &replyStream{}
+				v.replyStreams[item.ID] = stream
+			}
+			// Apply buffered and late output without starting a new reveal on
+			// an interrupted reply. A rejected stop can stream subsequent data.
+			stream.text, stream.phase, stream.revealing = item.Text, replyHistorical, false
+			stream.revealAfter = time.Time{}
+			stream.stopping = stopping
+			continue
+		}
 		if stream == nil {
 			live := !reset
 			if item.Kind == "request_result" && item.Order > 0 && item.Order <= previousOrder {
