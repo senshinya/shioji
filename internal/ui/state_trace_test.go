@@ -201,20 +201,25 @@ func TestStateTraceHistoryExitFrames(t *testing.T) {
 func TestStateTraceQueueArrivalFrames(t *testing.T) {
 	for _, order := range []string{"receipt-first", "row-first", "together"} {
 		t.Run(order, func(t *testing.T) {
-			m := layoutModel()
-			v := New(m, nil, "")
-			ui := n.NewTester(v.View, 1240, 820)
-			ui.Advance(time.Second)
-			v.beginQueueArrival("queued", false)
+			v, ui := nativeQueueFixture()
+			m := v.Model
+			q := m.Queue()
+			q.Items = nil
+			q.Revision++
+			m.SetQueue(q)
 			m.QueueExpanded["s"] = true
+			ui.Frame()
+			ui.Advance(time.Second)
+			job, in := submitNativeQueueDraft(t, v, ui, "queued input")
+			receipt, _ := json.Marshal(domain.Operation{ID: in.OperationID, SessionID: "s", State: domain.OperationConfirmed})
+			q.Revision++
+			q.Items = []domain.QueueItem{{ID: in.OperationID, Input: domain.Submission{Text: in.Text, OperationID: "dispatch"}}}
 			for frame := 0; frame < 36; frame++ {
-				if frame == 0 && order != "row-first" || frame == 6 {
-					m.Resolved["queued"] = true
+				if frame == 4 && order != "row-first" || frame == 12 && order == "row-first" {
+					job.Apply(m, receipt, nil)
 				}
-				if frame == 0 && order != "receipt-first" || frame == 6 {
-					d := m.Details["s"]
-					d.Queue = domain.QueueState{SessionID: "s", Revision: 1, Items: []domain.QueueItem{{ID: "queued", Input: domain.Submission{Text: "queued input"}}}}
-					m.Details["s"] = d
+				if frame == 4 && order != "receipt-first" || frame == 12 && order == "receipt-first" {
+					m.SetQueue(q)
 				}
 				ui.Frame()
 				ui.Advance(time.Second / 60)

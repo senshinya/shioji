@@ -72,12 +72,13 @@ func (a composerContent) equal(b composerContent) bool {
 }
 
 type composerDocument struct {
-	doc            *richtext.Document
-	last           composerContent
-	version        uint64
-	key, editToken string
-	departed       string
-	departedEdited bool
+	doc             *richtext.Document
+	last            composerContent
+	version         uint64
+	key, editToken  string
+	departed        string
+	departedEdited  bool
+	departedToQueue bool
 }
 type composerInput struct {
 	n.Element
@@ -127,9 +128,10 @@ func (v *View) composerDocument(c *n.Context, key string) *composerDocument {
 	}
 	restore := false
 	if b.departed != "" {
-		if _, pending := v.Model.Pending[b.departed]; !pending {
+		if _, pending := v.Model.Pending[b.departed]; !pending || b.departedToQueue && v.queueArrival(b.departed) == nil {
 			restore = !b.departedEdited
 			b.departed, b.departedEdited = "", false
+			b.departedToQueue = false
 		}
 	}
 	if b.version != 0 && !restore {
@@ -148,14 +150,13 @@ func (v *View) composerDocument(c *n.Context, key string) *composerDocument {
 			if in.SessionID != v.Model.SessionID || in.Continue || content.text != in.Text || !slices.Equal(v.Model.DraftReferencePositions(key), in.ReferencePositions) {
 				continue
 			}
-			for _, item := range v.homeSendDetail(v.Model.Details[in.SessionID]).Items {
-				if item.ID == "input:"+id {
-					// The local send preview or worker input owns the transcript
-					// slot. Keep the durable draft until delivery resolves.
-					b.doc.SetText(richtext.NewText(""))
-					b.version, b.departed = b.doc.Version(), id
-					break
-				}
+			queued := v.queueArrival(id) != nil
+			if queued || slices.ContainsFunc(v.homeSendDetail(v.Model.Details[in.SessionID]).Items, func(item domain.Item) bool { return item.ID == "input:"+id }) {
+				// The message already has a visible destination. Keep the
+				// durable draft until delivery resolves.
+				b.doc.SetText(richtext.NewText(""))
+				b.version, b.departed, b.departedToQueue = b.doc.Version(), id, queued
+				break
 			}
 		}
 	}

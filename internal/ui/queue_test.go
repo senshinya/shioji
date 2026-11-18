@@ -783,69 +783,84 @@ func TestSavedQueueEditFadesWithoutMovingItsRow(t *testing.T) {
 	}
 }
 
-func TestQueueArrivalWaitsForConfirmationAndPreservesNextDraft(t *testing.T) {
-	v, ui := nativeQueueFixture()
-	ui.Click("待发送 2")
-	ui.Advance(250 * time.Millisecond)
-	ui.Click("消息输入")
-	ui.Type("Waiting for enqueue confirmation")
-	ui.Key(0, n.KeyEnter)
-	var send app.Job
-	for len(v.Controller.Jobs) > 0 {
-		job := <-v.Controller.Jobs
-		if job.Method == "turn.enqueue" {
-			send = job
-		}
-	}
-	in := send.Input.(domain.Submission)
-	q := v.Model.Queue()
-	q.Items = append(q.Items, domain.QueueItem{ID: in.OperationID, Input: domain.Submission{OperationID: "dispatch-waiting", Text: in.Text}})
-	q.Revision++
-	v.Model.SetQueue(q)
-	ui.Frame()
-	if _, flying := ui.Find("正在加入队列"); flying || v.Model.Drafts["session:s"] != in.Text {
-		t.Fatal("arrival departs before confirmation")
-	}
-	v.Model.Drafts["session:s"] = "newer draft"
-	ui.Frame()
-	body, _ := json.Marshal(domain.Operation{ID: in.OperationID, SessionID: "s", State: "confirmed"})
-	send.Apply(v.Model, body, nil)
-	ui.Frame()
-	ui.Advance(500 * time.Millisecond)
-	if v.Model.Drafts["session:s"] != "newer draft" || !ui.Focused("消息输入") {
-		t.Fatal("arrival erases or blurs the next draft")
+func TestQueueArrivalStartsBeforeReceiptAndKeepsItsPosition(t *testing.T) {
+	for _, name := range []string{"row-first", "receipt-first"} {
+		t.Run(name, func(t *testing.T) {
+			v, ui := nativeQueueFixture()
+			ui.Click("待发送 2")
+			ui.Advance(250 * time.Millisecond)
+			const message = "Queued before the worker replies"
+			send, in := submitNativeQueueDraft(t, v, ui, message)
+			ui.Advance(120 * time.Millisecond)
+			saveNativeSkillImage(t, ui, name+"-pre-receipt.png")
+			middle, ok := ui.Find(message)
+			if !ok || middle.H <= 0 || len(v.Model.Queue().Items) != 2 || v.Model.Drafts["session:s"] != message {
+				t.Fatalf("local queue row should be entering while the durable draft still awaits its receipt: row=%+v", middle)
+			}
+			ui.Type("newer draft")
+			if v.Model.Drafts["session:s"] != "newer draft" {
+				t.Fatalf("typing after enqueue carried over the sent text: %q", v.Model.Drafts["session:s"])
+			}
+			q := v.Model.Queue()
+			q.Revision++
+			q.Items = append(q.Items, domain.QueueItem{ID: in.OperationID, Input: domain.Submission{OperationID: "dispatch-new", Text: in.Text}})
+			body, _ := json.Marshal(domain.Operation{ID: in.OperationID, SessionID: "s", State: "confirmed"})
+			applyRow := func() { v.Model.SetQueue(q) }
+			applyReceipt := func() { send.Apply(v.Model, body, nil) }
+			first, second := applyRow, applyReceipt
+			if name == "receipt-first" {
+				first, second = second, first
+			}
+			checkHandoff := func(apply func()) {
+				t.Helper()
+				before, _ := ui.Find(message)
+				apply()
+				ui.Frame()
+				after, _ := ui.Find(message)
+				if before != after || !ui.HasText("待发送 3") {
+					t.Fatalf("worker update shifted or duplicated the queue row: before=%+v after=%+v", before, after)
+				}
+			}
+			checkHandoff(first)
+			ui.Advance(450 * time.Millisecond)
+			end, _ := ui.Find(message)
+			if middle.Y < end.Y+3 || end.H < 19 {
+				t.Fatalf("queue motion did not finish independently of the second update: middle=%+v end=%+v", middle, end)
+			}
+			checkHandoff(second)
+			checkHandoff(applyReceipt)
+			ui.Advance(120 * time.Millisecond)
+			if after, _ := ui.Find(message); after != end || v.Model.Drafts["session:s"] != "newer draft" || !ui.Focused("消息输入") {
+				t.Fatalf("late receipt replayed motion or disturbed the next draft: row=%+v settled=%+v", after, end)
+			}
+			saveNativeSkillImage(t, ui, name+"-settled.png")
+		})
 	}
 }
 func TestRejectedQueueArrivalLeavesDraftInEditor(t *testing.T) {
 	v, ui := nativeQueueFixture()
-	ui.Click("消息输入")
-	ui.Type("Keep this rejected input")
-	ui.Key(0, n.KeyEnter)
-	for len(v.Controller.Jobs) > 0 {
-		job := <-v.Controller.Jobs
-		if job.Method == "turn.enqueue" {
-			job.Apply(v.Model, nil, &protocol.RemoteError{Code: "notSent", Message: "rejected"})
-		}
+	v.Model.QueueExpanded["s"] = true
+	ui.Advance(300 * time.Millisecond)
+	const message = "Keep this rejected input"
+	job, _ := submitNativeQueueDraft(t, v, ui, message)
+	ui.Advance(400 * time.Millisecond)
+	if !ui.HasText("待发送 3") || v.composerDocuments["session:s"].doc.Text().String() != "" {
+		t.Fatal("pending input did not leave the editor for the queue")
 	}
+	job.Apply(v.Model, nil, &protocol.RemoteError{Code: "notSent", Message: "rejected"})
 	ui.Frame()
 	ui.Advance(500 * time.Millisecond)
-	if _, moving := ui.Find("正在加入队列"); moving || v.Model.Drafts["session:s"] != "Keep this rejected input" || len(v.Model.Queue().Items) != 2 {
-		t.Fatal("rejected enqueue moved input or changed queue")
+	if !ui.HasText("待发送 2") || v.composerDocuments["session:s"].doc.Text().String() != message || v.Model.Drafts["session:s"] != message || len(v.Model.Queue().Items) != 2 {
+		t.Fatal("rejected enqueue did not restore the editor and authoritative queue")
 	}
 }
 func TestCollapsedQueueArrivalKeepsDisclosureCollapsed(t *testing.T) {
 	v, ui := nativeQueueFixture()
-	ui.Click("消息输入")
-	ui.Type("A collapsed arrival")
-	ui.Key(0, n.KeyEnter)
-	var send app.Job
-	for len(v.Controller.Jobs) > 0 {
-		job := <-v.Controller.Jobs
-		if job.Method == "turn.enqueue" {
-			send = job
-		}
+	const message = "A collapsed arrival"
+	send, in := submitNativeQueueDraft(t, v, ui, message)
+	if row, _ := ui.Find(message); !ui.HasText("待发送 3") || row.H > 0 {
+		t.Fatal("pending enqueue should update only the collapsed heading", row)
 	}
-	in := send.Input.(domain.Submission)
 	q := v.Model.Queue()
 	q.Items = append(q.Items, domain.QueueItem{ID: in.OperationID, Input: domain.Submission{OperationID: "dispatch-collapsed", Text: in.Text}})
 	q.Revision++
@@ -853,12 +868,46 @@ func TestCollapsedQueueArrivalKeepsDisclosureCollapsed(t *testing.T) {
 	body, _ := json.Marshal(domain.Operation{ID: in.OperationID, SessionID: "s", State: "confirmed"})
 	send.Apply(v.Model, body, nil)
 	ui.Frame()
-	if _, flying := ui.Find("正在加入队列"); flying {
-		t.Fatal("collapsed queue creates a flying text overlay")
-	}
 	ui.Advance(500 * time.Millisecond)
-	if _, moving := ui.Find("正在加入队列"); moving || v.Model.QueueExpanded["s"] {
-		t.Fatal("arrival persists or forces disclosure open")
+	if row, _ := ui.Find(message); !ui.HasText("待发送 3") || row.H > 0 || v.Model.QueueExpanded["s"] {
+		t.Fatal("confirmation forced the disclosure open", row)
+	}
+}
+
+func TestQueueArrivalWithReducedMotionRetiresWhenAlreadyDispatched(t *testing.T) {
+	v, ui := nativeQueueFixture()
+	v.Model.Preferences.ReduceMotion = true
+	q := v.Model.Queue()
+	q.Revision++
+	q.Items = nil
+	v.Model.SetQueue(q)
+	v.Model.QueueExpanded["s"] = true
+	ui.Advance(time.Second)
+	const message = "Dispatch as soon as the current turn ends"
+	job, in := submitNativeQueueDraft(t, v, ui, message)
+	if row, _ := ui.Find(message); row.H < 19 {
+		t.Fatal("reduced motion should display the pending row immediately", row)
+	}
+	op := domain.Operation{ID: in.OperationID, SessionID: "s", State: domain.OperationConfirmed}
+	body, _ := json.Marshal(op)
+	job.Apply(v.Model, body, nil)
+	queued, dispatched := q, q
+	queued.Revision++
+	queued.Items = []domain.QueueItem{{ID: in.OperationID, Input: domain.Submission{OperationID: "dispatch", Text: message}}}
+	dispatched.Revision += 2
+	for _, e := range []domain.Event{
+		{Type: "queue", Queue: &queued},
+		{Type: "operation", Operation: &op},
+		{Type: "queue", Queue: &dispatched},
+	} {
+		e.SessionID, e.Sequence = "s", v.Model.Sequence+1
+		if err := v.Model.ApplyEvent(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ui.Frame()
+	if ui.HasText("待发送 1") || v.Model.Drafts["session:s"] != "" {
+		t.Fatal("the provisional row outlived authoritative dispatch")
 	}
 }
 
@@ -1059,7 +1108,7 @@ func TestCancelledEditFadesAtItsOriginalTextPosition(t *testing.T) {
 	}
 }
 
-func enqueueNativeDraft(t *testing.T, v *View, ui *n.Tester, text string) {
+func submitNativeQueueDraft(t *testing.T, v *View, ui *n.Tester, text string) (app.Job, domain.Submission) {
 	t.Helper()
 	ui.Click("消息输入")
 	ui.Type(text)
@@ -1075,6 +1124,12 @@ func enqueueNativeDraft(t *testing.T, v *View, ui *n.Tester, text string) {
 	if !ok {
 		t.Fatal("missing enqueue request")
 	}
+	return send, in
+}
+
+func enqueueNativeDraft(t *testing.T, v *View, ui *n.Tester, text string) {
+	t.Helper()
+	send, in := submitNativeQueueDraft(t, v, ui, text)
 	q := v.Model.Queue()
 	q.Revision++
 	q.Items = append(q.Items, domain.QueueItem{ID: in.OperationID, Input: domain.Submission{OperationID: "dispatch-" + in.OperationID, Text: in.Text}})

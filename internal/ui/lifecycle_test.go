@@ -5,31 +5,6 @@ import (
 	"time"
 )
 
-// Exercise both orders, duplicates and repeated frames. The oracle is the old
-// pair of monotone receipt/row flags, independently of the phase encoding.
-func TestQueueArrivalTransitions(t *testing.T) {
-	for initial := 0; initial < 2; initial++ {
-		for sequence := 0; sequence < 256; sequence++ {
-			a := newQueuedArrival(initial == 1)
-			ready, seen, started := initial == 1, false, false
-			var startedAt time.Time
-			for frame := 0; frame < 4; frame++ {
-				event := sequence >> (frame * 2) & 3
-				ack, row := event&1 != 0, event&2 != 0
-				ready, seen = ready || ack, seen || row
-				if !started && ready && seen {
-					startedAt = time.Unix(int64(frame+1), 0)
-				}
-				started = started || ready && seen
-				a.observe(ack, row, time.Unix(int64(frame+1), 0))
-				if a.accepted() != ready || (a.phase == queueArriving) != started || !a.started.Equal(startedAt) {
-					t.Fatalf("initial=%d sequence=%d frame=%d phase=%v ready=%v seen=%v started=%v", initial, sequence, frame, a.phase, ready, seen, started)
-				}
-			}
-		}
-	}
-}
-
 func TestReplyPhaseTransitions(t *testing.T) {
 	for live := 0; live < 2; live++ {
 		for fresh := 0; fresh < 2; fresh++ {

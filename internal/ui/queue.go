@@ -26,82 +26,39 @@ type queuedMessageSource struct {
 const queueArrivalDuration = 360 * time.Millisecond
 
 type queuedArrivalMotion struct {
-	session, epoch string
-	started        time.Time
-	phase          queueArrivalPhase
+	input                  domain.Submission
+	started                time.Time
+	provisional, confirmed bool
 }
 
-type queueArrivalPhase uint8
-
-const (
-	queueAwaitingBoth queueArrivalPhase = iota
-	queueAwaitingReceipt
-	queueAwaitingRow
-	queueArriving
-)
-
-func newQueuedArrival(accepted bool) queuedArrivalMotion {
-	a := queuedArrivalMotion{}
-	if accepted {
-		a.phase = queueAwaitingRow
-	}
+func (v *View) beginQueueArrival(in domain.Submission) *queuedArrivalMotion {
+	a := &queuedArrivalMotion{input: in, provisional: true}
+	v.queueArrivals = append(v.queueArrivals, a)
+	v.services.Invalidate()
 	return a
 }
-func (a *queuedArrivalMotion) accepted() bool {
-	return a.phase == queueAwaitingRow || a.phase == queueArriving
-}
-func (a *queuedArrivalMotion) observe(receipt, row bool, now time.Time) {
-	switch a.phase {
-	case queueAwaitingBoth:
-		if receipt && row {
-			a.phase = queueArriving
-		} else if receipt {
-			a.phase = queueAwaitingRow
-		} else if row {
-			a.phase = queueAwaitingReceipt
-		}
-	case queueAwaitingReceipt:
-		if receipt {
-			a.phase = queueArriving
-		}
-	case queueAwaitingRow:
-		if row {
-			a.phase = queueArriving
+
+func (v *View) queueArrival(id string) *queuedArrivalMotion {
+	for _, a := range v.queueArrivals {
+		if a.input.OperationID == id {
+			return a
 		}
 	}
-	if a.phase == queueArriving && a.started.IsZero() {
-		a.started = now
-	}
+	return nil
 }
 
-func (v *View) beginQueueArrival(id string, ready bool) *queuedArrivalMotion {
-	if v.reduceMotion {
-		return nil
-	}
-	if v.queueArrivals == nil {
-		v.queueArrivals = map[string]*queuedArrivalMotion{}
-	}
-	arrival := newQueuedArrival(ready)
-	a := &arrival
-	a.session, a.epoch = v.Model.SessionID, v.Model.ConnectionEpoch
-	v.queueArrivals[id] = a
-	return a
+func (a *queuedArrivalMotion) animating(now time.Time) bool {
+	return a != nil && !a.started.IsZero() && now.Sub(a.started) < queueArrivalDuration
 }
 
 // The arriving row's allocated height grows with the queue. The same
 // progress pushes its existing rows up and reveals the new row at the bottom.
-func (v *View) queueArrivalProgress(c *n.Context, id string) float32 {
-	a := v.queueArrivals[id]
-	if a == nil {
+func (a *queuedArrivalMotion) progress(c *n.Context) float32 {
+	if !a.animating(c.Now()) {
 		return 1
 	}
-	if a.phase != queueArriving {
-		return 0
-	}
-	p := min(max(float32(c.Now().Sub(a.started))/float32(queueArrivalDuration), 0), 1)
-	if p < 1 {
-		c.AnimationFrame()
-	}
+	p := max(float32(c.Now().Sub(a.started))/float32(queueArrivalDuration), 0)
+	c.AnimationFrame()
 	return composerDescentEase(p)
 }
 func (v *View) cancelQueuedEdit() {
@@ -125,31 +82,37 @@ func (v *View) syncQueuedMotions() {
 	if v.queueSourceSession != m.SessionID || v.queueSourceEpoch != m.ConnectionEpoch || v.devices {
 		v.queueSources = map[string]queuedMessageSource{}
 		v.queueSourceSession, v.queueSourceEpoch = m.SessionID, m.ConnectionEpoch
-		clear(v.queueArrivals)
+		v.queueArrivals = nil
 		v.queueDisplay = domain.QueueState{}
 	}
 	if v.queueSources == nil {
 		v.queueSources = map[string]queuedMessageSource{}
 	}
 
-	for id, a := range v.queueArrivals {
-		if v.reduceMotion || a.epoch != m.ConnectionEpoch || a.session != m.SessionID || !a.started.IsZero() && v.frameTime.Sub(a.started) >= queueArrivalDuration {
-			delete(v.queueArrivals, id)
-			continue
-		}
-		seen := false
-		for _, item := range m.Queue().Items {
-			if item.ID == id {
-				seen = true
-				break
+	q := m.Queue()
+	v.queueArrivals = slices.DeleteFunc(v.queueArrivals, func(a *queuedArrivalMotion) bool {
+		id := a.input.OperationID
+		_, pending := m.Pending[id]
+		hasRow := slices.ContainsFunc(q.Items, func(item domain.QueueItem) bool { return item.ID == id })
+		if hasRow {
+			a.provisional = false
+		} else {
+			// The event stream delivers the queue write before its receipt. If
+			// both arrive with a removal, never bring the departed row back.
+			streamReceipt := m.Resolved[id] && slices.ContainsFunc(m.Snapshot.Operations, func(op domain.Operation) bool { return op.ID == id && op.State == domain.OperationConfirmed })
+			if !a.provisional || streamReceipt || !a.confirmed && (!pending || m.UncertainSubmissions[id]) {
+				return true
 			}
 		}
-		previous := a.phase
-		a.observe(m.Resolved[id], seen, v.frameTime)
-		if previous != queueArriving && a.phase == queueArriving {
+		if v.reduceMotion {
+			a.started = v.frameTime.Add(-queueArrivalDuration)
+		} else if a.started.IsZero() {
+			// Input callbacks can run after a long idle. Start on the first drawn frame.
+			a.started = v.frameTime
 			v.composerHeightUntil = v.frameTime.Add(queueArrivalDuration)
 		}
-	}
+		return hasRow && !pending && !a.animating(v.frameTime)
+	})
 	newest := -1
 	for id, source := range v.queueSources {
 		if !source.delivered && source.item.Input.OperationID != "" {
@@ -166,7 +129,7 @@ func (v *View) syncQueuedMotions() {
 			}
 		}
 		present := false
-		for _, item := range m.Queue().Items {
+		for _, item := range q.Items {
 			if item.ID == id {
 				present = true
 				break
@@ -187,13 +150,25 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 		v.queueDrag = nil
 	}
 
-	held := false
-	present := len(q.Items) > 0
 	if sid == "" {
 		v.queueDisplay = domain.QueueState{}
 		v.queueDrag = nil
 		return
 	}
+	provisional := false
+	for _, a := range v.queueArrivals {
+		if a.provisional {
+			if !provisional {
+				q.Items = slices.Clone(q.Items)
+				q.SessionID = sid
+				v.queueDrag = nil
+				provisional = true
+			}
+			q.Items = append(q.Items, domain.QueueItem{ID: a.input.OperationID, Input: a.input})
+		}
+	}
+	held := false
+	present := len(q.Items) > 0
 	if present {
 		if _, saved := m.QueueExpanded[sid]; !saved {
 			m.QueueExpanded[sid] = true
@@ -216,15 +191,14 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 	// Dim the contents while keeping the backplate opaque over the transcript.
 	contentOpacity := root.AnimateTo("queue-edit-opacity", opacity, motionAnimation(c, 180*time.Millisecond))
 	rowHeight := float32(0)
-	arriving, accepted := false, false
+	arriving := false
 	for _, item := range q.Items {
-		rowHeight += 32 * v.queueArrivalProgress(c, item.ID)
-		a := v.queueArrivals[item.ID]
-		arriving = arriving || a != nil
-		accepted = accepted || a == nil || a.accepted()
+		a := v.queueArrival(item.ID)
+		rowHeight += 32 * a.progress(c)
+		arriving = arriving || a.animating(c.Now())
 	}
 	targetPresence := float32(0)
-	if present && accepted {
+	if present {
 		targetPresence = 1
 	}
 	presenceMotion := motionAnimation(c, 160*time.Millisecond)
@@ -244,7 +218,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 			heading := n.Row(c.Key("queue-heading")).Height(32).Grow(1).MinWidth(0)
 			heading.DrawOver(func(_ *n.Painter, r n.Rect) {
 				for _, item := range q.Items {
-					if present && !m.QueueExpanded[sid] {
+					if a := v.queueArrival(item.ID); present && !m.QueueExpanded[sid] && (a == nil || !a.provisional) {
 						v.rememberQueuedSource(item, n.Rect{X: r.X + 20, Y: r.Y + 6, W: r.W - 20, H: 20})
 					}
 				}
@@ -307,11 +281,16 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 				scroll := n.Scroll(c.Key("queue-scroll")).FillWidth().Height(extent).Padding(0, 4).Label("待发送消息列表")
 				scroll.Children(func() {
 					list := n.Column(c.Key("queue-rows")).FillWidth().Gap(0)
-					items := v.previewQueueRows(c, list, q)
+					items := q.Items
+					if !provisional {
+						items = v.previewQueueRows(c, list, q)
+					}
 					list.Children(func() {
 						for i, item := range items {
 							i, item := i, item
-							progress := v.queueArrivalProgress(c, item.ID)
+							a := v.queueArrival(item.ID)
+							local := a != nil && a.provisional
+							progress := a.progress(c)
 							motion := n.ElementTransition{Position: !c.Preferences().ReduceMotion && !arriving, Colors: true, Duration: motionAnimation(c, 160*time.Millisecond).Duration, Ease: n.EaseOut}
 							slot := n.Column(c.Key("queue-slot:" + item.ID)).FillWidth().Height(32 * progress).Shrink(0).Transition(motion)
 							if progress < 1 {
@@ -320,7 +299,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 							slot.Children(func() {
 								row := n.Row(c.Key(item.ID)).Absolute().Left(0).Right(0).Top(0).FillWidth().Height(32).PaddingX(10).Gap(3).Radius(5).AlignItems(n.Center)
 
-								if present {
+								if present && !provisional {
 									held = v.queueRowGestures(c, row, q, item) || held
 								}
 								hover := n.Transparent
@@ -358,7 +337,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 									}
 									queuedText := n.Text(c, text).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").FontSize(14).FixedLineHeight(20).TextColor(t.Text.Alpha(.86)).Tooltip(preview)
 									queuedText.DrawOver(func(_ *n.Painter, r n.Rect) {
-										if present {
+										if present && !local {
 											v.rememberQueuedSource(item, r)
 										}
 									})
@@ -376,7 +355,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 									// controls keep their original size and right-edge position.
 									n.Column(c.Key("queue-action-space")).Width((actionsWidth+3)*shown).Shrink(0).Margin(0, 0, 0, -3)
 									n.Row(c.Key("queue-actions-group")).Absolute().Right(10).Top(3).Width(actionsWidth).Height(26).Gap(1).Opacity(shown).Children(func() {
-										locked := !m.Connected || v.queueBusy[sid] || item.State.Reserved()
+										locked := local || !m.Connected || v.queueBusy[sid] || item.State.Reserved()
 										for _, action := range []struct {
 											label    string
 											icon     *n.SVG
@@ -389,7 +368,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 											{fmt.Sprintf("编辑待发消息 %d", i+1), queueEditIcon, locked || edit.ID != "" || m.HasPendingInput(), func() {
 												v.editQueued(item.ID)
 											}},
-											{fmt.Sprintf("移除待发消息 %d", i+1), queueRemoveIcon, !m.Connected || v.queueBusy[sid] || item.State == "dispatching" || edit.ID == item.ID, func() {
+											{fmt.Sprintf("移除待发消息 %d", i+1), queueRemoveIcon, local || !m.Connected || v.queueBusy[sid] || item.State == "dispatching" || edit.ID == item.ID, func() {
 												v.queueCommand("queue.remove", protocol.QueueInput{SessionID: sid, ID: item.ID, Revision: q.Revision}, nil)
 											}},
 										} {
@@ -404,7 +383,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 						end := n.Column(c.Key("queue-end")).Height(4).Shrink(0)
 						if m.QueueExpanded[sid] {
 							for _, item := range q.Items {
-								if a := v.queueArrivals[item.ID]; a != nil && a.accepted() {
+								if v.queueArrival(item.ID).animating(c.Now()) {
 									end.ScrollIntoView()
 									break
 								}
@@ -520,7 +499,7 @@ func (v *View) submitActive(in domain.Submission, method, turn string) {
 	var payload any = in
 	var arrival *queuedArrivalMotion
 	if method == "turn.enqueue" {
-		arrival = v.beginQueueArrival(in.OperationID, false)
+		arrival = v.beginQueueArrival(in)
 	}
 	if method == "turn.steer" {
 		sent = v.beginSendMotion(in)
@@ -535,8 +514,8 @@ func (v *View) submitActive(in domain.Submission, method, turn string) {
 	}
 	if !v.do(app.Job{Method: method, Input: payload, Prepare: prepare, Apply: func(m *app.Model, b json.RawMessage, err error) {
 		if err != nil {
-			if v.queueArrivals[in.OperationID] == arrival {
-				delete(v.queueArrivals, in.OperationID)
+			if arrival != nil {
+				arrival.provisional = false
 			}
 			if sent != nil && v.sent == sent {
 				v.sent = nil
@@ -546,8 +525,8 @@ func (v *View) submitActive(in domain.Submission, method, turn string) {
 		}
 		var op domain.Operation
 		if err = json.Unmarshal(b, &op); err != nil {
-			if v.queueArrivals[in.OperationID] == arrival {
-				delete(v.queueArrivals, in.OperationID)
+			if arrival != nil {
+				arrival.provisional = false
 			}
 			if sent != nil && v.sent == sent {
 				v.sent = nil
@@ -556,8 +535,11 @@ func (v *View) submitActive(in domain.Submission, method, turn string) {
 			return
 		}
 		m.Accepted(in, op)
-		if arrival != nil && op.State != "confirmed" && v.queueArrivals[in.OperationID] == arrival {
-			delete(v.queueArrivals, in.OperationID)
+		if arrival != nil {
+			arrival.confirmed = op.State == domain.OperationConfirmed
+			if op.State.ReceiptObserved() && !arrival.confirmed {
+				arrival.provisional = false
+			}
 		}
 		if sent != nil && v.sent == sent {
 			if op.State == "rejected" || op.State == "indeterminate" {
@@ -567,8 +549,8 @@ func (v *View) submitActive(in domain.Submission, method, turn string) {
 			}
 		}
 	}}) {
-		if v.queueArrivals[in.OperationID] == arrival {
-			delete(v.queueArrivals, in.OperationID)
+		if arrival != nil {
+			arrival.provisional = false
 		}
 		if sent != nil && v.sent == sent {
 			v.sent = nil

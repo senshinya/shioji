@@ -27,7 +27,9 @@ func (v *View) editQueued(id string) {
 		v.Model.Error = err.Error()
 	} else {
 		v.focusComposer = true
-		delete(v.queueArrivals, id)
+		if a := v.queueArrival(id); a != nil {
+			a.started = v.frameTime.Add(-queueArrivalDuration)
+		}
 	}
 }
 

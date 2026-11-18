@@ -154,7 +154,7 @@ type View struct {
 	queueSources                                                                                                    map[string]queuedMessageSource
 	queueSourceSession                                                                                              string
 	queueSourceEpoch                                                                                                string
-	queueArrivals                                                                                                   map[string]*queuedArrivalMotion
+	queueArrivals                                                                                                   []*queuedArrivalMotion
 	queueDisplay                                                                                                    domain.QueueState
 	composerHeightKey                                                                                               string
 	composerInputHeight                                                                                             float32
@@ -882,6 +882,9 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					}
 					v.runControl(c, t, key, cfg)
 					empty := strings.TrimSpace(draft) == "" && len(m.Attachments[key]) == 0 && len(m.DraftSkills[key]) == 0
+					if binding.departedToQueue && !binding.departedEdited {
+						empty = true
+					}
 					icon := arrow
 					iconSize := float32(28.0 * 14 / 24)
 					iconKey := "primary-send-icon"
