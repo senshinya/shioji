@@ -85,7 +85,7 @@ type processConn struct {
 	once          sync.Once
 }
 
-func dialProcess(cmd *exec.Cmd) (net.Conn, error) {
+func dialProcess(cmd *exec.Cmd) (*processConn, error) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}

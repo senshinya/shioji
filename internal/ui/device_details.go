@@ -307,7 +307,7 @@ func (v *View) deviceWorker(c *n.Context, t *n.Theme, key string, state *app.Dev
 			}
 
 		case app.WorkerUpdating:
-			action = "正在更新"
+			action = service.Label()
 			if service.OperationPhase == "migrating" {
 				action = "正在迁移数据库"
 			}

@@ -32,6 +32,9 @@ func deviceWorkerUpdateCaption(state *app.DeviceState) (string, bool) {
 	case app.WorkerWaiting:
 		return "等待空闲后更新…", false
 	case app.WorkerUpdating:
+		if label := service.UploadLabel(); label != "" {
+			return label + "…", true
+		}
 		switch service.OperationPhase {
 		case "preparing":
 			return "正在准备更新…", true

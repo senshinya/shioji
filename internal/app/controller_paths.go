@@ -24,13 +24,18 @@ func readOnlyPathQuery(method string) bool {
 }
 
 func (c *Controller) currentSSH() *transport.SSH {
+	s := c.configuredSSH()
+	if s != nil && c.resolveSSH != nil {
+		if routed, err := c.resolveSSH(*s); err == nil {
+			return &routed
+		}
+	}
+	return s
+}
+
+func (c *Controller) configuredSSH() *transport.SSH {
 	if c.paths != nil {
 		if s, ok := c.paths.ssh(c.paths.active()); ok {
-			if c.resolveSSH != nil {
-				if routed, err := c.resolveSSH(s); err == nil {
-					s = routed
-				}
-			}
 			return &s
 		}
 	}

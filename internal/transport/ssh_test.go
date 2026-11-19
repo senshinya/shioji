@@ -87,12 +87,8 @@ func TestProcessTransportHalfCloseKeepsFinalResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	half, ok := conn.(interface{ CloseWrite() error })
-	if !ok {
-		t.Fatal("SSH process stream loses TCP half-close")
-	}
 	conn.Write([]byte("finished input"))
-	if err := half.CloseWrite(); err != nil {
+	if err := conn.CloseWrite(); err != nil {
 		t.Fatal(err)
 	}
 	got, err := io.ReadAll(conn)

@@ -1,8 +1,10 @@
 package app
 
 import (
-	"shioji/internal/domain"
 	"time"
+
+	"shioji/internal/domain"
+	"shioji/internal/transport"
 )
 
 type WorkerUpdatePhase string
@@ -23,6 +25,7 @@ const (
 
 type WorkerService struct {
 	OperationID, OperationPhase string
+	UploadPhase                 transport.WorkerUploadPhase
 	Legacy                      *domain.LegacyWorkerInfo
 	Background                  *domain.BackgroundService
 	Build                       *domain.WorkerBuild
@@ -77,11 +80,26 @@ func (s *WorkerService) Label() string {
 	case WorkerWaiting:
 		return "等待空闲更新"
 	case WorkerUpdating:
+		if label := s.UploadLabel(); label != "" {
+			return label
+		}
 		return "正在更新"
 	case WorkerUpdateFailed:
 		return "更新失败"
 	}
 	return "已就绪"
+}
+
+func (s *WorkerService) UploadLabel() string {
+	switch s.UploadPhase {
+	case transport.WorkerUploadSending:
+		return "正在上传执行服务"
+	case transport.WorkerUploadVerifying:
+		return "正在校验执行服务"
+	case transport.WorkerUploadReconnecting:
+		return "等待重连后续传"
+	}
+	return ""
 }
 func WorkerBuildLabel(b *domain.WorkerBuild) string {
 	if b == nil || b.BuildID == "" {

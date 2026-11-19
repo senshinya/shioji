@@ -347,6 +347,19 @@ func (c *Controller) Run(ctx context.Context) {
 	var lastUpgradeObservation time.Time
 	var lastBackgroundCheck time.Time
 	updateIntent := updateNotRequested
+	type uploadResult struct {
+		build domain.WorkerBuild
+		err   error
+	}
+	type requestedUpload struct {
+		device, sourceBuild, targetBuild, directory, policy string
+		schema                                              *WorkerSchemaConfirmation
+		staged                                              *uploadResult
+		reconnectUntil                                      time.Time
+	}
+	var upload *requestedUpload
+	uploadProgress := make(chan transport.WorkerUploadPhase, 1)
+	uploadResults := make(chan uploadResult)
 	publishService := func(state *WorkerService) {
 		state.Background = background
 		service = state
@@ -469,14 +482,19 @@ func (c *Controller) Run(ctx context.Context) {
 			return
 		}
 		candidateChecked = true
-		stageCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		timeout := 20 * time.Second
+		if force && c.configuredSSH() != nil {
+			timeout = time.Minute
+		}
+		stageCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		var info domain.WorkerBuild
 		var err error
-		if c.currentSSH() != nil {
-			info, err = transport.InspectWorker(stageCtx, c.WorkerBinary)
-			if force && err == nil {
+		if c.configuredSSH() != nil {
+			if force {
 				info, err = c.currentSSH().StageWorker(stageCtx, c.WorkerBinary)
+			} else {
+				info, err = transport.InspectWorker(stageCtx, c.WorkerBinary)
 			}
 		} else {
 			info, err = transport.StageWorker(stageCtx, c.Directory, c.WorkerBinary)
@@ -491,11 +509,14 @@ func (c *Controller) Run(ctx context.Context) {
 			return false, nil
 		}
 		if explicit {
-			if c.currentSSH() != nil && (c.ExpectedDeviceID == "" || client != nil && client.DeviceID != c.ExpectedDeviceID) {
+			remote := c.configuredSSH() != nil
+			if remote && (c.ExpectedDeviceID == "" || client != nil && client.DeviceID != c.ExpectedDeviceID) {
 				return false, errors.New("请先重新连接并确认设备身份，再更新执行服务")
 			}
 			updateIntent = updateWaitingForIdle
-			stageCandidate(true)
+			if !remote {
+				stageCandidate(true)
+			}
 		}
 		if candidateError != nil {
 			state := newWorkerService(nil, candidate)
@@ -612,6 +633,9 @@ func (c *Controller) Run(ctx context.Context) {
 		return true, nil
 	}
 	observeWorkerBuild := func() {
+		if upload != nil {
+			return
+		}
 		lastUpgradeObservation = time.Now()
 		if client.Worker != nil && (client.Worker.Lifecycle == 1 || candidate != nil && candidate.Lifecycle == 1) {
 			observer := c.upgradeObserver(client.DeviceID, client.Worker)
@@ -663,6 +687,9 @@ func (c *Controller) Run(ctx context.Context) {
 	}
 	lastDetachedService := time.Time{}
 	observeDetachedService := func() {
+		if upload != nil {
+			return
+		}
 		if time.Since(lastDetachedService) < 3*time.Second {
 			return
 		}
@@ -913,8 +940,51 @@ func (c *Controller) Run(ctx context.Context) {
 		}
 		return true
 	}
+	finishUpload := func(result uploadResult) {
+		if ctx.Err() != nil {
+			return
+		}
+		request := upload
+		upload = nil
+		var current *domain.WorkerBuild
+		if client != nil {
+			current = client.Worker
+		}
+		if result.err == nil && request.targetBuild != "" && request.targetBuild != result.build.BuildID {
+			result.err = errors.New("候选执行服务已变化，请重新检查更新")
+		}
+		if result.err == nil {
+			candidate, candidateChecked, candidateError = &result.build, true, nil
+			if current != nil && current.BuildID == candidate.BuildID && request.sourceBuild != candidate.BuildID {
+				observeWorkerBuild()
+				return
+			}
+			ssh := c.configuredSSH()
+			if client == nil || client.DeviceID != request.device || ssh == nil || ssh.StateDirectory != request.directory {
+				result.err = errors.New("执行服务已暂存，请重新连接后重试更新")
+			} else if current == nil || current.BuildID != request.sourceBuild {
+				result.err = errors.New("设备执行服务已变化，请重新检查更新")
+			}
+		}
+		if result.err != nil {
+			if current == nil {
+				current = service.Build
+			}
+			state := newWorkerService(current, candidate)
+			state.Phase, state.Message = WorkerUpdateFailed, result.err.Error()
+			publishService(state)
+			return
+		}
+		if restart, err := tryWorkerUpdate(true, request.schema, request.policy); restart || err != nil {
+			disconnected()
+			lastAttempt = time.Time{}
+		}
+	}
 	checkBackground("status")
 	for {
+		if upload != nil && upload.staged != nil && (client != nil || time.Now().After(upload.reconnectUntil)) {
+			finishUpload(*upload.staged)
+		}
 		jobs := c.Jobs
 		if c.paths != nil && client == nil {
 			jobs = nil
@@ -922,6 +992,25 @@ func (c *Controller) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case phase := <-uploadProgress:
+			state := *service
+			state.UploadPhase = phase
+			publishService(&state)
+		case result := <-uploadResults:
+			select {
+			case <-uploadProgress:
+			default:
+			}
+			if result.err == nil && client == nil {
+				upload.staged = &result
+				upload.reconnectUntil = time.Now().Add(5 * time.Second)
+				state := *service
+				state.UploadPhase = ""
+				state.Message = "执行服务已校验，正在重新连接"
+				publishService(&state)
+				continue
+			}
+			finishUpload(result)
 		case <-pathChanges:
 			c.publishPaths()
 		case result := <-backgroundResults:
@@ -1093,6 +1182,44 @@ func (c *Controller) Run(ctx context.Context) {
 						continue
 					}
 					schema = &confirmed
+				}
+				if ssh := c.configuredSSH(); ssh != nil {
+					if c.WorkerBinary == "" || client == nil || client.Worker == nil || client.DeviceID != c.ExpectedDeviceID {
+						continue
+					}
+					upload = &requestedUpload{device: client.DeviceID, sourceBuild: client.Worker.BuildID, directory: ssh.StateDirectory, policy: policy, schema: schema}
+					if candidate != nil {
+						upload.targetBuild = candidate.BuildID
+					}
+					state := newWorkerService(client.Worker, candidate)
+					state.Phase, state.UploadPhase = WorkerUpdating, transport.WorkerUploadSending
+					updateStarted = time.Time{}
+					publishService(state)
+					go func(route transport.SSH) {
+						resolve := func() (transport.SSH, error) {
+							if c.resolveSSH != nil {
+								return c.resolveSSH(route)
+							}
+							return route, nil
+						}
+						lastPhase := transport.WorkerUploadSending
+						report := func(phase transport.WorkerUploadPhase) {
+							if lastPhase != phase {
+								lastPhase = phase
+								select {
+								case <-uploadProgress:
+								default:
+								}
+								uploadProgress <- phase
+							}
+						}
+						info, err := transport.StageRemoteWorker(ctx, c.WorkerBinary, resolve, report)
+						select {
+						case uploadResults <- uploadResult{info, err}:
+						case <-ctx.Done():
+						}
+					}(*ssh)
+					continue
 				}
 				restart, err := tryWorkerUpdate(true, schema, policy)
 				if restart || err != nil {
