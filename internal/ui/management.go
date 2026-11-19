@@ -34,6 +34,19 @@ type navVisibility struct {
 	Started  time.Time
 }
 
+func (s *navVisibility) value(now time.Time) float32 {
+	p := min(1, float32(now.Sub(s.Started))/float32(180*time.Millisecond))
+	return s.From + (s.To-s.From)*n.EaseOut(p)
+}
+
+func (s *navVisibility) retarget(now time.Time, target float32) float32 {
+	value := s.value(now)
+	if target != s.To {
+		s.From, s.To, s.Started = value, target, now
+	}
+	return value
+}
+
 func (v *View) navigationPresence(c *n.Context, key string, visible bool) float32 {
 	if v.navVisibility == nil {
 		v.navVisibility = map[string]*navVisibility{}
@@ -51,14 +64,7 @@ func (v *View) navigationPresence(c *n.Context, key string, visible bool) float3
 		state.From, state.To = target, target
 		return target
 	}
-	sample := func() float32 {
-		p := min(1, float32(c.Now().Sub(state.Started))/float32(180*time.Millisecond))
-		return state.From + (state.To-state.From)*n.EaseOut(p)
-	}
-	value := sample()
-	if target != state.To {
-		state.From, state.To, state.Started = value, target, c.Now()
-	}
+	value := state.retarget(c.Now(), target)
 	if value != target {
 		c.AnimationFrame()
 	}

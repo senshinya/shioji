@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -517,27 +518,142 @@ func TestContinueOriginalSessionShowsInputBeforeWorkerAndKeepsDraft(t *testing.T
 	}
 }
 
-func TestArchiveShowsPendingWithoutPrematurelyChangingCatalog(t *testing.T) {
-	m := layoutModel()
-	m.WorkerMinor = 5
-	v := New(m, app.NewController(""), "")
-	ui := n.NewTester(v.View, 1440, 900)
-	v.sessionChange("session.archive", m.Snapshot.Sessions[0], "")
-	job := feedbackJob(t, v, "session.archive")
-	ui.Advance(150 * time.Millisecond)
-	if !ui.HasText("正在归档") || m.Snapshot.Sessions[0].Archived {
-		t.Fatal("archive has no immediate pending state or changed the catalog")
-	}
-	job.Apply(m, nil, nil)
-	ui.Frame()
-	if !ui.HasText("正在归档") {
-		t.Fatal("the command response ended feedback before the catalog changed")
-	}
-	m.Snapshot.Sessions[0].Archived = true
-	ui.Frame()
-	ui.Advance(300 * time.Millisecond)
-	if ui.HasText("正在归档") {
-		t.Fatal("archive pending feedback survived the authoritative catalog")
+func TestSessionArchiveAndRestoreAnimateBeforeCatalogChanges(t *testing.T) {
+	for _, action := range []struct {
+		name     string
+		archived bool
+		row      string
+		next     string
+		height   float32
+	}{
+		{"archive", false, "Layout", "Next session", 30},
+		{"restore", true, "查看归档会话：Layout", "查看归档会话：Next session", 40},
+	} {
+		for _, outcome := range []string{"slow", "fast", "mid-flight", "rejected", "reduced motion"} {
+			t.Run(action.name+"/"+outcome, func(t *testing.T) {
+				m := layoutModel()
+				m.WorkerMinor = 40
+				m.Snapshot.Sessions[0].Archived = action.archived
+				m.Snapshot.Sessions = append(m.Snapshot.Sessions, domain.Session{ID: "next", WorkspaceID: "w", Title: "Next session", Archived: action.archived})
+				if outcome == "mid-flight" && !action.archived {
+					m.SessionID = ""
+					m.CompletedReplies = map[string]app.CompletedReply{"s": {Unread: true}}
+				}
+				v := New(m, app.NewController(""), "")
+				if action.archived {
+					v.openArchive()
+				}
+				ui := n.NewTester(v.View, 1240, 820)
+				if outcome == "reduced motion" {
+					ui.SetPreferences(n.Preferences{ReduceMotion: true})
+				}
+				ui.Advance(time.Second)
+				sourceVisible := func() bool {
+					row, found := ui.Find(action.row)
+					return found && (action.archived || row.X < 256)
+				}
+				before, ok := ui.Find(action.next)
+				if !ok {
+					t.Fatal("missing the following row")
+				}
+				source, _ := ui.Find(action.row)
+				if action.archived {
+					row, _ := ui.Find(action.row)
+					ui.Move(row.X+10, row.Y+row.H/2)
+					ui.Frame()
+					feedbackClick(t, ui, "恢复会话：Layout")
+				} else {
+					if err := ui.RightClick(action.row); err != nil {
+						t.Fatal(err)
+					}
+					if err := ui.ChooseMenuItem("归档会话"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				job := feedbackJob(t, v, "session.archive")
+				if m.Snapshot.Sessions[0].Archived != action.archived {
+					t.Fatal("presentation mutated the authoritative catalog")
+				}
+				updateCatalog := func() {
+					m.Snapshot.Sessions[0].Archived = !action.archived
+					ui.Frame()
+				}
+				switch outcome {
+				case "fast":
+					updateCatalog()
+				case "mid-flight":
+					ui.Advance(32 * time.Millisecond)
+					ui.Frame()
+					pixels := contextPixels(ui, source)
+					saveNativeSkillImage(t, ui, action.name+"-before-receipt.png")
+					job.Apply(m, nil, nil)
+					delete(m.CompletedReplies, "s")
+					updateCatalog()
+					saveNativeSkillImage(t, ui, action.name+"-after-receipt.png")
+					if !bytes.Equal(pixels, contextPixels(ui, source)) {
+						t.Fatal("the source row changed pixels when the receipt arrived mid-animation")
+					}
+				case "slow":
+					job.Apply(m, nil, nil)
+				case "reduced motion":
+					ui.Frame()
+					after, _ := ui.Find(action.next)
+					if sourceVisible() || after.Y > before.Y-action.height+1 || m.Snapshot.Sessions[0].Archived != action.archived {
+						t.Fatalf("reduced motion did not close the row immediately: %v → %v", before, after)
+					}
+					return
+				}
+				if outcome == "mid-flight" {
+					ui.Advance(48 * time.Millisecond)
+				} else {
+					ui.Advance(80 * time.Millisecond)
+				}
+				if outcome == "slow" {
+					saveNativeSkillImage(t, ui, action.name+"-80ms.png")
+				}
+				moving, ok := ui.Find(action.next)
+				if !ok || moving.Y >= before.Y-2 || moving.Y <= before.Y-action.height+1 {
+					t.Fatalf("the following row did not move smoothly at 80 ms: %v → %v", before, moving)
+				}
+				ui.Advance(300 * time.Millisecond)
+				settled, _ := ui.Find(action.next)
+				if sourceVisible() || settled.Y >= moving.Y-2 {
+					t.Fatal("the source list did not finish closing the row")
+				}
+				if outcome == "rejected" {
+					job.Apply(m, nil, errors.New("revision changed"))
+					ui.Frame()
+					ui.Advance(300 * time.Millisecond)
+					after, _ := ui.Find(action.next)
+					if !sourceVisible() || after != before || !ui.HasText("revision changed") {
+						t.Fatalf("rejection did not restore the row and show the error: %v → %v", before, after)
+					}
+				} else if outcome == "slow" {
+					if action.archived {
+						if row, visible := ui.Find("Layout"); visible && row.X < 256 {
+							t.Fatal("restoring the session made it active before the catalog changed")
+						}
+					}
+					pixels := contextPixels(ui, source)
+					updateCatalog()
+					for range 4 {
+						after, _ := ui.Find(action.next)
+						if sourceVisible() || after != settled || !bytes.Equal(pixels, contextPixels(ui, source)) {
+							t.Fatalf("confirmation changed the settled source list: %v → %v", settled, after)
+						}
+						ui.Advance(32 * time.Millisecond)
+					}
+				} else if outcome == "fast" {
+					job.Apply(m, nil, nil)
+				}
+				if action.archived && outcome != "rejected" {
+					ui.Advance(300 * time.Millisecond)
+					if row, visible := ui.Find("Layout"); !visible || row.X >= 256 {
+						t.Fatal("confirmed restore did not make the session active")
+					}
+				}
+			})
+		}
 	}
 }
 

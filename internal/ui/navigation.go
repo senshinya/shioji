@@ -47,11 +47,17 @@ type navigationOffset struct {
 	from    float32
 	started time.Time
 }
+type navigationSessionExit struct {
+	session                     domain.Session
+	pending                     int
+	stopping, finishing, unread bool
+}
 type navigationGeometry struct {
-	keys    []navigationKey
-	tops    map[navigationKey]float32
-	offsets map[navigationKey]navigationOffset
-	bounds  map[navigationKey]n.Rect
+	keys         []navigationKey
+	tops         map[navigationKey]float32
+	offsets      map[navigationKey]navigationOffset
+	bounds       map[navigationKey]n.Rect
+	archiveExits map[app.SessionLocation]navigationSessionExit
 }
 
 func navigationRowHeight(r navigationRow) float32 {
@@ -218,6 +224,7 @@ func (v *View) navigationRows(c *n.Context) []navigationRow {
 	}
 	sessions := map[app.SessionLocation]domain.Session{}
 	presence := map[app.SessionLocation]float32{}
+	shown := map[app.SessionLocation]bool{}
 	pending := map[string]int{}
 	for _, s := range m.Snapshot.Sessions {
 		w, ok := byWorkspace[s.WorkspaceID]
@@ -226,14 +233,22 @@ func (v *View) navigationRows(c *n.Context) []navigationRow {
 		}
 		ref := app.SessionLocation{DeviceID: w.DeviceID, WorkspaceID: w.ID, SessionID: s.ID}
 		sessions[ref] = s
-		presence[ref] = v.navigationPresence(c, "session:"+s.ID, !w.Archived && !s.Archived)
-		if v.collapsedWorkspaces[w.ID] && !w.Archived && !s.Archived {
+		operation := v.pendingArchiveChange(s.WorkspaceID, s.ID)
+		shown[ref] = !w.Archived && !s.Archived && (operation == nil || !operation.archived)
+		presence[ref] = v.navigationPresence(c, "session:"+s.ID, shown[ref])
+		if v.collapsedWorkspaces[w.ID] && shown[ref] {
 			pending[w.ID] += v.pendingCount(s.ID)
 		}
 	}
+	for ref := range v.navigationGeometry.archiveExits {
+		if shown[ref] || presence[ref] == 0 {
+			delete(v.navigationGeometry.archiveExits, ref)
+		}
+	}
 	rows := []navigationRow{}
-	heading := v.navigationPresence(c, "global-pinned-heading", len(m.NavigationPins()) > 0)
-	if heading > 0 || len(m.NavigationPins()) > 0 {
+	pinsVisible := slices.ContainsFunc(m.Navigation.Pinned, func(ref app.SessionLocation) bool { return shown[ref] })
+	heading := v.navigationPresence(c, "global-pinned-heading", pinsVisible)
+	if heading > 0 || pinsVisible {
 		rows = append(rows, navigationRow{kind: navigationPinnedHeading, presence: heading})
 	}
 	global := map[app.SessionLocation]bool{}
@@ -409,15 +424,33 @@ func (v *View) navigationRow(c *n.Context, t *n.Theme, r navigationRow) {
 }
 func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 	m, s := v.Model, r.session
+	operation := v.pendingArchiveChange(s.WorkspaceID, s.ID)
+	archiving := operation != nil && operation.archived
+	leaving := s.Archived || archiving
+	pending := v.pendingCount(s.ID)
+	stopping := v.sessionStops[s.ID] != nil
+	finishing := s.Status == "completed" && v.sessionOutputAnimating(s.ID)
+	unread := m.HasCompletedReply(s.ID)
+	if leaving {
+		g := &v.navigationGeometry
+		if exit, ok := g.archiveExits[r.ref]; ok {
+			s, pending, stopping, finishing, unread = exit.session, exit.pending, exit.stopping, exit.finishing, exit.unread
+			archiving = true
+		} else if archiving {
+			// The catalog can arrive while this row is still fading out.
+			if g.archiveExits == nil {
+				g.archiveExits = make(map[app.SessionLocation]navigationSessionExit)
+			}
+			g.archiveExits[r.ref] = navigationSessionExit{s, pending, stopping, finishing, unread}
+		}
+	}
 	archiveOpen := v.archive != nil && v.archive.open
 	selected := !archiveOpen && !v.schedulePageOpen() && s.ID == v.focusedSessionID() && !v.devices && v.workspaceEditor == nil
-	finishing := s.Status == "completed" && v.sessionOutputAnimating(s.ID)
 	if finishing {
 		c.AnimationFrame()
 	}
-	pending := v.pendingCount(s.ID)
 	shown := s
-	if v.sessionStops[s.ID] != nil {
+	if stopping {
 		shown.Status = domain.ExecutionInterrupted
 		pending = 0
 	}
@@ -426,7 +459,7 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 	if r.pinned {
 		leftInset, gap = 0, sidebarIconLabelGap
 	}
-	row := control(c, 8).FillWidth().Height(28).MarginY(1).Padding(4, 0, 4, leftInset).Radius(8).Label(s.Title).Description(description)
+	row := control(c, 8).FillWidth().Height(28).MarginY(1).Padding(4, 0, 4, leftInset).Radius(8).Label(s.Title).Description(description).Disabled(leaving)
 	shift := v.navigationOffset(c, r.key())
 	row.Transform(n.Translation(0, shift))
 	if p := min(r.presence, v.sessionEntryProgress(c, s.ID, false)); p < 1 {
@@ -435,7 +468,7 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 	if selected {
 		row.Background(t.SurfacePressed)
 	}
-	moving := v.navigationDragSource(c, row, r)
+	moving := !leaving && v.navigationDragSource(c, row, r)
 	row.ContextMenu(func(menu *n.Menu) { v.sessionMenu(menu, s, r.ref) })
 	row.Children(func() {
 		n.Row(c).FillWidth().Gap(gap).AlignItems(n.Baseline).Children(func() {
@@ -450,7 +483,7 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 				marker = statusDotSize(c, s.Title, font, t.Success, dotSize, true).Width(markerSize).TextAlign(n.Center).Label("会话运行状态：" + s.ID)
 			} else if s.Status == "completed" {
 				color := t.TextMuted
-				if m.HasCompletedReply(s.ID) {
+				if unread {
 					color = t.Success
 				}
 				marker = inlineSymbol(c, check, s.Title, font, markerSize, color)
@@ -476,8 +509,8 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 			animation := motionAnimation(c, 160*time.Millisecond)
 			title := n.Text(c, s.Title).SingleLine().Grow(1).MinWidth(0).FontSize(13).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: &animation}).TextColor(color)
 			title.TooltipWhenTruncated(s.Title)
-			if operation := v.pendingArchiveChange(s.WorkspaceID, s.ID); operation != nil {
-				n.Text(c.Key("archive-pending"), operation.label()).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine()
+			if archiving {
+				n.Text(c.Key("archive-pending"), "正在归档").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine()
 			}
 			if pending > 0 {
 				n.Text(c, fmt.Sprint(pending)).Font("Menlo").FontSize(11).Width(16).TextAlign(n.End)
@@ -490,7 +523,7 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 				}
 				// Match the title's visible glyph center while retaining a 28px hit area.
 				top := (float32(20)-28)/2 - inlineCenterOffset(s.Title, n.Font{Family: t.Font, Size: 13})
-				more := iconButton(c.Key("actions"), moreActionsIcon, "会话菜单："+s.Title).Absolute().Top(top).Size(28, 28).Menu(func(menu *n.Menu) { v.sessionMenu(menu, s, r.ref) })
+				more := iconButton(c.Key("actions"), moreActionsIcon, "会话菜单："+s.Title).Absolute().Top(top).Size(28, 28).Disabled(leaving).Menu(func(menu *n.Menu) { v.sessionMenu(menu, s, r.ref) })
 				if moving || !row.Hovered() && !row.FocusWithin() && !row.MenuOpen() {
 					more.Opacity(0)
 				}

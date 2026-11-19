@@ -22,6 +22,7 @@ type archiveUI struct {
 	open                       bool
 	tab, scope, query, viewing string
 	lists                      map[string]*n.ListState
+	sessionRestores            map[archiveChangeKey]*archiveSessionRestore
 	deletion                   *archiveDeleteUI
 	queries                    map[string]string
 	returnTo                   *archiveReturn
@@ -68,6 +69,11 @@ type archiveChange struct {
 	archived bool
 }
 
+type archiveSessionRestore struct {
+	source domain.Session
+	motion navVisibility
+}
+
 func (v *View) pendingArchiveChange(workspace, session string) *archiveChange {
 	root := v.splitRoot()
 	key := archiveChangeKey{root.Model.WorkspaceConnection(workspace), workspace, session}
@@ -81,11 +87,11 @@ func (p *archiveChange) label() string {
 	return "正在恢复"
 }
 
-func (v *View) changeArchive(workspace, session string, archived bool, revision int64) {
+func (v *View) changeArchive(workspace, session string, archived bool, revision int64) bool {
 	root := v.splitRoot()
 	key := archiveChangeKey{root.Model.WorkspaceConnection(workspace), workspace, session}
 	if !root.canManage(key.connection) || root.archiveChanges[key] != nil {
-		return
+		return false
 	}
 	pending := &archiveChange{epoch: root.deviceState(key.connection).ConnectionEpoch, archived: archived}
 	if root.archiveChanges == nil {
@@ -105,11 +111,13 @@ func (v *View) changeArchive(workspace, session string, archived bool, revision 
 			}
 		}
 	}
-	if !v.do(job) {
+	submitted := v.do(job)
+	if !submitted {
 		delete(root.archiveChanges, key)
 		v.Model.Error = "设备操作繁忙，请重试"
 	}
 	root.services.Invalidate()
+	return submitted
 }
 
 func (v *View) syncArchiveChanges() {
@@ -133,10 +141,69 @@ func (v *View) syncArchiveChanges() {
 	}
 }
 
+func (v *View) archiveSessionRows(c *n.Context, a *archiveUI, scope string) ([]app.ArchivedSession, map[string]float32, bool) {
+	m := v.Model
+	var projection *app.Model
+	progress := make(map[string]float32, len(a.sessionRestores))
+	for key, exit := range a.sessionRestores {
+		i := slices.IndexFunc(m.Snapshot.Sessions, func(s domain.Session) bool { return s.ID == key.session && s.WorkspaceID == key.workspace })
+		if i < 0 || m.WorkspaceConnection(key.workspace) != key.connection {
+			delete(a.sessionRestores, key)
+			continue
+		}
+		confirmed := !m.Snapshot.Sessions[i].Archived
+		target := float32(1)
+		pending := v.archiveChanges[key]
+		if confirmed || pending != nil && !pending.archived {
+			target = 0
+		}
+		p := exit.motion.retarget(c.Now(), target)
+		if c.Preferences().ReduceMotion {
+			exit.motion.From, exit.motion.To = target, target
+			p = target
+		}
+		if (confirmed || target == 1) && p == target {
+			delete(a.sessionRestores, key)
+			continue
+		}
+		if p != target {
+			c.AnimationFrame()
+		}
+		progress[key.session] = p
+		if !confirmed {
+			continue
+		}
+		if projection == nil {
+			copy := *m
+			copy.Snapshot.Sessions = slices.Clone(m.Snapshot.Sessions)
+			projection = &copy
+		}
+		// Keep the old row and sort position until its exit finishes.
+		projection.Snapshot.Sessions[i] = exit.source
+	}
+	if projection != nil {
+		m = projection
+	}
+	restoring := false
+	rows := slices.DeleteFunc(m.ArchivedSessions(a.query, scope), func(row app.ArchivedSession) bool {
+		p, moving := progress[row.Session.ID]
+		if !moving || p > 0 {
+			return false
+		}
+		pending := v.pendingArchiveChange(row.Workspace.ID, row.Session.ID)
+		if pending != nil && !pending.archived {
+			restoring = true
+			return true
+		}
+		return false
+	})
+	return rows, progress, restoring
+}
+
 func (v *View) archiveState() *archiveUI {
 	root := v.splitRoot()
 	if root.archive == nil {
-		root.archive = &archiveUI{tab: "sessions", lists: map[string]*n.ListState{}}
+		root.archive = &archiveUI{tab: "sessions", lists: map[string]*n.ListState{}, sessionRestores: map[archiveChangeKey]*archiveSessionRestore{}}
 	}
 	return root.archive
 }
@@ -294,7 +361,12 @@ func (v *View) archivePage(c *n.Context, t *n.Theme) {
 func (v *View) archiveTable(c *n.Context, t *n.Theme, a *archiveUI, scope domain.Workspace, key string) {
 	m := v.Model
 	workspaceRows := a.tab == "workspaces" && scope.ID == ""
-	sessions := m.ArchivedSessions(a.query, scope.ID)
+	var sessions []app.ArchivedSession
+	var progress map[string]float32
+	restoring := false
+	if !workspaceRows {
+		sessions, progress, restoring = v.archiveSessionRows(c, a, scope.ID)
+	}
 	workspaces := m.ArchivedWorkspaces(a.query)
 	count := len(sessions)
 	kind := "会话"
@@ -325,11 +397,13 @@ func (v *View) archiveTable(c *n.Context, t *n.Theme, a *archiveUI, scope domain
 		})
 		n.Spacer(c).Grow(1)
 		n.Text(c, fmt.Sprintf("%d 个%s", count, kind)).FontSize(12).FontFeatures("tnum").TextColor(t.TextMuted)
-		total := len(m.ArchivedSessions("", a.scope))
+		canDeleteAll := slices.ContainsFunc(m.ArchivedSessions("", a.scope), func(row app.ArchivedSession) bool {
+			return v.pendingArchiveChange(row.Workspace.ID, row.Session.ID) == nil
+		})
 		if workspaceRows {
-			total = len(m.ArchivedWorkspaces(""))
+			canDeleteAll = len(m.ArchivedWorkspaces("")) > 0
 		}
-		if configurationAction(c, "删除全部").Disabled(total == 0 || a.deletion != nil && a.deletion.busy).Tooltip("删除此列表的全部归档" + kind + "，包含搜索未显示的内容").Clicked() {
+		if configurationAction(c, "删除全部").Disabled(!canDeleteAll || a.deletion != nil && a.deletion.busy).Tooltip("删除此列表的全部归档" + kind + "，包含搜索未显示的内容").Clicked() {
 			all := v.archiveDeleteTargets(a)
 			a.deletion = &archiveDeleteUI{batch: true, workspaces: workspaceRows, targets: all, count: len(all), open: true}
 		}
@@ -370,7 +444,9 @@ func (v *View) archiveTable(c *n.Context, t *n.Theme, a *archiveUI, scope domain
 	})
 	if count == 0 {
 		message := "没有已归档的" + kind
-		if a.query != "" {
+		if restoring {
+			message = "正在恢复…"
+		} else if a.query != "" {
 			message = "没有匹配的归档内容"
 		}
 		n.Text(c, message).FillWidth().TextAlign(n.Center).PaddingY(84).FontSize(13).TextColor(t.TextMuted)
@@ -382,6 +458,12 @@ func (v *View) archiveTable(c *n.Context, t *n.Theme, a *archiveUI, scope domain
 			return workspaces[i].ID
 		}
 		return sessions[i].Session.ID
+	}
+	list.Reveals = list.Reveals[:0]
+	for i, row := range sessions {
+		if p, ok := progress[row.Session.ID]; ok {
+			list.Reveals = append(list.Reveals, n.ListReveal{First: i, End: i + 1, Progress: p})
+		}
 	}
 	n.List(c.Key("archive-list:"+key), list, count, func(i int) {
 		var session domain.Session
@@ -395,12 +477,20 @@ func (v *View) archiveTable(c *n.Context, t *n.Theme, a *archiveUI, scope domain
 			w = sessions[i].Workspace
 			title, metadata = session.Title, w.Name
 		}
-		v.archiveRow(c, t, a, w, session, title, metadata, metadataWidth, gap, workspaceRows)
+		p := float32(1)
+		if v, ok := progress[session.ID]; ok {
+			p = v
+		}
+		v.archiveRow(c, t, a, w, session, title, metadata, metadataWidth, gap, p, workspaceRows)
 	}).FillWidth().Grow(1).MinHeight(0).Label("已归档" + kind + "列表")
 }
 
-func (v *View) archiveRow(c *n.Context, t *n.Theme, a *archiveUI, w domain.Workspace, s domain.Session, title, metadata string, metadataWidth, gap float32, isWorkspace bool) {
-	row := n.Row(c).FillWidth().Height(archiveRowHeight).PaddingX(8).Gap(gap).AlignItems(n.Center).BorderWidth(0, 0, .5, 0).BorderColor(t.Border)
+func (v *View) archiveRow(c *n.Context, t *n.Theme, a *archiveUI, w domain.Workspace, s domain.Session, title, metadata string, metadataWidth, gap, presence float32, isWorkspace bool) {
+	connection := v.Model.WorkspaceConnection(w.ID)
+	pending := v.pendingArchiveChange(w.ID, s.ID)
+	exit := a.sessionRestores[archiveChangeKey{connection, w.ID, s.ID}]
+	locked := pending != nil || exit != nil && exit.motion.To == 0
+	row := n.Row(c).FillWidth().Height(archiveRowHeight).PaddingX(8).Gap(gap).AlignItems(n.Center).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).Opacity(presence)
 	show := row.Hovered() || row.FocusWithin()
 	if show {
 		row.Background(t.Surface)
@@ -412,7 +502,7 @@ func (v *View) archiveRow(c *n.Context, t *n.Theme, a *archiveUI, w domain.Works
 		}
 		// Both text columns share one native baseline; actions use the same
 		// measured glyph center while keeping their own 28-DIP hit rectangles.
-		button := n.ButtonBase(c.Key("archive-title")).Grow(1).MinWidth(0).Height(archiveRowHeight).Justify(n.Start).Label(label).Children(func() {
+		button := n.ButtonBase(c.Key("archive-title")).Grow(1).MinWidth(0).Height(archiveRowHeight).Justify(n.Start).Label(label).Disabled(!isWorkspace && locked).Children(func() {
 			n.Row(c).FillWidth().Gap(gap).AlignItems(n.Baseline).Children(func() {
 				n.Text(c, title).SingleLine().Ellipsis("…").Grow(1).FontSize(13).FixedLineHeight(20).TooltipWhenTruncated(title)
 				n.Text(c.Key("archive-metadata"), metadata).Width(metadataWidth).SingleLine().Ellipsis("…").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).TooltipWhenTruncated(metadata).Label("归档归属：" + title)
@@ -440,9 +530,7 @@ func (v *View) archiveRow(c *n.Context, t *n.Theme, a *archiveUI, w domain.Works
 			opacity = 1
 		}
 		n.Row(c.Key("archive-actions")).Width(archiveActionWidth).Height(28).Gap(4).AlignItems(n.Center).Opacity(opacity).Transform(n.Translation(0, -inlineCenterOffset(title, font))).Children(func() {
-			connection := v.Model.WorkspaceConnection(w.ID)
 			ready := v.canManage(connection)
-			pending := v.pendingArchiveChange(w.ID, s.ID)
 			restorable := ready && (isWorkspace || !w.Archived)
 			if a.deletion != nil && a.deletion.busy {
 				ready = false
@@ -452,7 +540,7 @@ func (v *View) archiveRow(c *n.Context, t *n.Theme, a *archiveUI, w domain.Works
 			if isWorkspace {
 				restoreLabel = "恢复工作区：" + title
 			}
-			restore := iconButton(c, recoveryIcon, restoreLabel).Disabled(!show || !restorable || pending != nil)
+			restore := iconButton(c, recoveryIcon, restoreLabel).Disabled(!show || !restorable || locked)
 			if !ready {
 				restore.Tooltip("连接所属设备后可恢复")
 			} else if !isWorkspace && w.Archived {
@@ -461,15 +549,21 @@ func (v *View) archiveRow(c *n.Context, t *n.Theme, a *archiveUI, w domain.Works
 			if restore.Clicked() {
 				if isWorkspace {
 					v.archiveWorkspace(w, false)
-				} else {
-					v.sessionChange("session.archive", s, "")
+				} else if v.changeArchive(w.ID, s.ID, false, s.Revision) {
+					key := archiveChangeKey{connection, w.ID, s.ID}
+					if exit := a.sessionRestores[key]; exit != nil {
+						exit.source = s
+						exit.motion.retarget(c.Now(), 0)
+					} else {
+						a.sessionRestores[key] = &archiveSessionRestore{source: s, motion: navVisibility{From: 1, To: 0, Started: c.Now()}}
+					}
 				}
 			}
 			deleteLabel := "彻底删除会话：" + title
 			if isWorkspace {
 				deleteLabel = "彻底删除工作区：" + title
 			}
-			remove := iconButton(c, archiveDeleteIcon, deleteLabel).Disabled(!show || !ready || pending != nil || !v.canDeleteArchive(connection))
+			remove := iconButton(c, archiveDeleteIcon, deleteLabel).Disabled(!show || !ready || locked || !v.canDeleteArchive(connection))
 			if !ready {
 				remove.Tooltip("连接所属设备后可彻底删除")
 			} else if !v.canDeleteArchive(connection) {
@@ -486,7 +580,7 @@ func (v *View) archiveRow(c *n.Context, t *n.Theme, a *archiveUI, w domain.Works
 				}
 			}
 		})
-		if pending := v.pendingArchiveChange(w.ID, s.ID); pending != nil {
+		if isWorkspace && pending != nil {
 			n.Text(c.Key("archive-action-pending"), pending.label()).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 		}
 	})
@@ -617,6 +711,9 @@ func (v *View) archiveDeleteTargets(a *archiveUI) []archiveDeleteTarget {
 		}
 	} else {
 		for _, s := range v.Model.ArchivedSessions("", a.scope) {
+			if v.pendingArchiveChange(s.Workspace.ID, s.Session.ID) != nil {
+				continue
+			}
 			out = append(out, archiveDeleteTarget{connection: v.Model.WorkspaceConnection(s.Workspace.ID), method: "session.delete", title: s.Session.Title, input: protocol.ArchiveDeleteInput{SessionID: s.Session.ID, Revision: s.Session.Revision, OperationID: domain.NewID()}})
 		}
 	}
