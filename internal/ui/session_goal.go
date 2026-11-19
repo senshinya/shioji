@@ -5,23 +5,40 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	n "github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/richtext"
 
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 )
 
-var (
-	goalTargetIcon = svg("M12.9 5.25a6.16 6.16 0 1 0 2.73 3.17M9.56 7.27a3.08 3.08 0 1 0 3.17 3.17M9.56 10.44 16.16 3.84m-3.52 0h3.52v3.52")
-	goalPauseIcon  = svg("M7 3v14m6-14v14")
-)
+func goalTagRange(text string) (start, end int, ok bool) {
+	trimmed := strings.TrimLeftFunc(text, unicode.IsSpace)
+	if _, goal := domain.GoalCommand(trimmed); !goal || len(trimmed) == len(slashGoal) {
+		return 0, 0, false
+	}
+	start = utf8.RuneCountInString(text[:len(text)-len(trimmed)])
+	return start, start + len(slashGoal), true
+}
+
+func goalTagAttributes(c *n.Context) richtext.Attributes {
+	tag := inlineTagAttachment(c, string(slashGoal), goalTargetIcon, 14)
+	tag.Data = slashGoal
+	return richtext.Attributes{Attachment: tag}
+}
+
+var goalTargetIcon = svg("M12.9 5.25a6.16 6.16 0 1 0 2.73 3.17M9.56 7.27a3.08 3.08 0 1 0 3.17 3.17M9.56 10.44 16.16 3.84m-3.52 0h3.52v3.52")
 
 const (
 	goalControlHeight = 28
 	goalLineHeight    = 20
 	goalIconSize      = 16
+	goalActionInset   = 7
+	goalActionWidth   = 24 + 2*goalActionInset
 	// A one-DIP optical correction brings the icon and text ink to the editor's guides.
 	goalContentInset = processingPanelInset - 1
 )
@@ -62,7 +79,6 @@ func (v *View) sessionGoal(c *n.Context, t *n.Theme) {
 	if goal == nil || strings.TrimSpace(goal.Objective) == "" {
 		return
 	}
-	const textWidth, pauseWidth, gap = 34, 52, 6
 	key := m.WorkKey(session.ID, "")
 	root := v.splitRoot()
 	controllable := m.WorkerMinor >= protocol.GoalMinor && m.Connected && v.Controller != nil &&
@@ -82,9 +98,9 @@ func (v *View) sessionGoal(c *n.Context, t *n.Theme) {
 	if !c.Preferences().ReduceMotion {
 		visible = row.AnimateTo("actions", visible, motionAnimation(c, 160*time.Millisecond))
 	}
-	width := float32(gap + textWidth)
+	width := float32(goalActionWidth)
 	if canPause {
-		width += gap + pauseWidth
+		width += goalActionWidth
 	}
 	status := goalStatusLabel(goal.State)
 	font := n.Font{Family: t.Font, Size: 12, Weight: 400}
@@ -93,7 +109,7 @@ func (v *View) sessionGoal(c *n.Context, t *n.Theme) {
 			Focusable().Label("目标摘要").Description(status + "，" + goal.Objective).Tooltip(goal.Objective)
 		summary.FocusRing(summary.FocusVisible()).Radius(6)
 		summary.Children(func() {
-			n.Row(c).FillWidth().Height(goalLineHeight).AlignItems(n.Baseline).Gap(gap).Clip().Children(func() {
+			n.Row(c).FillWidth().Height(goalLineHeight).AlignItems(n.Baseline).Gap(6).Clip().Children(func() {
 				inlineSymbol(c, goalTargetIcon, "目标", font, goalIconSize, t.Text).Shrink(0)
 				n.Text(c, "目标").FontSize(12).FixedLineHeight(goalLineHeight).TextColor(t.Text).Shrink(0).Role(n.RoleNone)
 				n.Text(c, status).FontSize(12).FixedLineHeight(goalLineHeight).TextColor(t.TextMuted).Shrink(0).Role(n.RoleNone)
@@ -102,39 +118,44 @@ func (v *View) sessionGoal(c *n.Context, t *n.Theme) {
 					SingleLine().Grow(1).MinWidth(0).Role(n.RoleNone)
 			})
 		})
-		n.Row(c).Shrink(0).AlignItems(n.Center).Children(func() {
-			n.Text(c, goalElapsed(goal.ElapsedSeconds)).FontSize(12).FixedLineHeight(goalLineHeight).FontFeatures("tnum").TextColor(t.TextMuted).Shrink(0)
+		// Align the rightmost label with the composer while letting its hover surface extend past the text guide.
+		n.Row(c).Shrink(0).MarginEnd(-goalActionInset).AlignItems(n.Center).Children(func() {
+			n.Text(c, goalElapsed(goal.ElapsedSeconds)).FontSize(12).FixedLineHeight(goalLineHeight).FontFeatures("tnum").
+				TextColor(t.TextMuted).Shrink(0).MarginEnd(goalActionInset)
+			if canResume {
+				if goalButton(rowContext.Key("resume"), t, "恢复", !controllable || resumeDisabled).Clicked() {
+					v.controlGoal(key, session, domain.ResumeGoal)
+				}
+			}
 			if visible > 0 {
-				n.Column(rowContext.Key("actions")).Width(width * visible).Height(goalControlHeight).Shrink(0).Clip().
-					IgnoreInput(!show).AccessHidden(!show).Children(func() {
-					n.Row(c).Absolute().Left(0).Top(0).Width(width).Height(goalControlHeight).PaddingStart(gap).
-						Gap(gap).AlignItems(n.Center).Transform(n.Translation(14*(1-visible), 0)).Children(func() {
-						if goalButton(rowContext.Key("clear"), t, "清除", nil, textWidth, busy).Clicked() {
-							v.controlGoal(key, session, domain.ClearGoal)
-						}
-						if canPause && goalButton(rowContext.Key("pause"), t, "暂停", goalPauseIcon, pauseWidth, busy).Clicked() {
+				actions := n.Column(rowContext.Key("actions")).Width(width * visible).Height(goalControlHeight).Shrink(0).
+					IgnoreInput(!show).AccessHidden(!show)
+				if visible < 1 {
+					actions.Clip()
+				}
+				actions.Children(func() {
+					n.Row(c).Absolute().Left(0).Top(0).Width(width).Height(goalControlHeight).
+						AlignItems(n.Center).Transform(n.Translation(14*(1-visible), 0)).Children(func() {
+						if canPause && goalButton(rowContext.Key("pause"), t, "暂停", busy).Clicked() {
 							v.controlGoal(key, session, domain.PauseGoal)
+						}
+						if goalButton(rowContext.Key("clear"), t, "清除", busy).Clicked() {
+							v.controlGoal(key, session, domain.ClearGoal)
 						}
 					})
 				})
-			}
-			if canResume && goalButton(rowContext.Key("resume"), t, "恢复", nil, textWidth, !controllable || resumeDisabled).MarginStart(gap).Clicked() {
-				v.controlGoal(key, session, domain.ResumeGoal)
 			}
 		})
 	})
 }
 
-func goalButton(c *n.Context, t *n.Theme, label string, icon *n.SVG, width float32, disabled bool) n.Element {
-	return control(c).Width(width).Height(goalControlHeight).Shrink(0).Justify(n.End).
-		AlignItems(n.Baseline).Padding((goalControlHeight-goalLineHeight)/2, 0).Gap(4).
-		Disabled(disabled).Label(label).Children(func() {
+func goalButton(c *n.Context, t *n.Theme, label string, disabled bool) n.Element {
+	const verticalInset = (goalControlHeight - goalLineHeight) / 2
+	return control(c).Width(goalActionWidth).Height(goalControlHeight).Shrink(0).
+		Justify(n.Center).AlignItems(n.Baseline).Padding(verticalInset, goalActionInset).Disabled(disabled).Label(label).Children(func() {
 		ink := t.Text
 		if disabled {
 			ink = t.TextMuted
-		}
-		if icon != nil {
-			inlineSymbol(c, icon, label, n.Font{Family: t.Font, Size: 12, Weight: 400}, goalIconSize, ink)
 		}
 		n.Text(c, label).FontSize(12).FixedLineHeight(goalLineHeight).TextColor(ink).Role(n.RoleNone)
 	})

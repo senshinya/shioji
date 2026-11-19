@@ -56,6 +56,9 @@ func TestNativeGoalCommandCompletesAndSendsThroughGoalSubmission(t *testing.T) {
 			if draft := m.Drafts[m.DraftKey()]; draft != "/goal " || !ui.Focused("消息输入") || len(m.Pending) != 0 {
 				t.Fatalf("Goal must complete in the editor and wait for an objective: draft=%q", draft)
 			}
+			if got := v.composerDocuments[m.DraftKey()].doc.Text().String(); got != "\uFFFC " {
+				t.Fatalf("the native command should appear as one inline tag, got %q", got)
+			}
 			if jobs := contextJobs(v); len(jobs) != 0 {
 				t.Fatalf("selecting Goal submitted prematurely: %v", jobs)
 			}
@@ -70,6 +73,57 @@ func TestNativeGoalCommandCompletesAndSendsThroughGoalSubmission(t *testing.T) {
 				t.Fatalf("incorrect native goal submission: %#v", jobs[0].Input)
 			}
 		})
+	}
+}
+
+func TestGoalTagInComposerAndHistoryPreservesCommandText(t *testing.T) {
+	v, ui, item := historyFixture()
+	m := v.Model
+	item.Text = "/goal 核对每一步"
+	detail := m.Details["s"]
+	detail.Items[0] = item
+	m.Details["s"] = detail
+	m.Drafts[m.DraftKey()] = ""
+	ui.Frame()
+	if err := ui.Click("消息输入"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Type("/goal 验证连接")
+	ui.Advance(time.Second)
+	if imagePath := os.Getenv("SHIOJI_GOAL_TAG_CAPTURE"); imagePath != "" {
+		t.Setenv("SHIOJI_SKILL_SNAPSHOTS", filepath.Dir(imagePath))
+		ui.SetScale(2)
+		saveNativeSkillImage(t, ui, filepath.Base(imagePath))
+		ui.SetScale(1)
+	}
+	if got := v.composerDocuments[m.DraftKey()].doc.Text().String(); got != "\uFFFC 验证连接" || m.Drafts[m.DraftKey()] != "/goal 验证连接" {
+		t.Fatalf("typed Goal did not preserve its inline tag and plain text: %q, %q", got, m.Drafts[m.DraftKey()])
+	}
+	tag, shown := ui.Find("命令：/goal")
+	body, bodyShown := ui.Find("用户消息正文")
+	if !shown || !bodyShown || body.X+body.W <= tag.X+tag.W {
+		t.Fatal("history did not leave inline room for the objective after the Goal tag", ui.Texts())
+	}
+	if err := ui.Click("复制消息"); err != nil {
+		t.Fatal(err)
+	}
+	if got := ui.Clipboard(); got != item.Text {
+		t.Fatalf("copy lost part of the command: %q", got)
+	}
+	if err := ui.Click("消息输入"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Key(n.Cmd, n.KeyA)
+	ui.Key(n.Cmd, n.KeyC)
+	if got := ui.Clipboard(); got != "/goal 验证连接" {
+		t.Fatalf("native editor copy lost part of the command: %q", got)
+	}
+	b := v.composerDocuments[m.DraftKey()]
+	b.doc.SetSelection(0, 0)
+	ui.Frame()
+	ui.Type("备注 ")
+	if want := "备注 /goal 验证连接"; b.doc.Text().String() != want || m.Drafts[m.DraftKey()] != want {
+		t.Fatalf("a command moved inside ordinary text should lose its tag: %q", b.doc.Text().String())
 	}
 }
 
@@ -203,8 +257,14 @@ func TestGoalDockKeepsScrollAndApprovalClearOfItsRow(t *testing.T) {
 		if info, ok := tester.AccessByRole(n.RoleTooltip, ""); !ok || info.Bounds.Y+info.Bounds.H > goal.Y {
 			t.Fatalf("goal hover hint overlaps its row: %v", info.Bounds)
 		}
-		if find(t, tester, "清除").X > resume.X || find(t, tester, "恢复") != resume {
-			t.Fatal("the Clear disclosure displaced Resume")
+		shownResume, clear := find(t, tester, "恢复"), find(t, tester, "清除")
+		if gap := clear.X - shownResume.X - shownResume.W; gap != 0 || clear.X+clear.W != resume.X+resume.W {
+			t.Fatalf("Clear should reveal just to the right of Resume and take its trailing alignment: %v %v", shownResume, clear)
+		}
+		tester.Move(300, 48)
+		tester.Advance(time.Second)
+		if _, clearShown := tester.Find("清除"); clearShown || find(t, tester, "恢复") != resume {
+			t.Fatal("Resume did not return to its resting position")
 		}
 	})
 	t.Run("approval", func(t *testing.T) {
@@ -246,7 +306,8 @@ func TestGoalResumeUsesTheOwningSessionAndKeepsTheDraft(t *testing.T) {
 }
 
 func TestGoalActiveActionsSlideInOnHover(t *testing.T) {
-	v, tester := goalLayout(false, false)
+	capturePath := os.Getenv("SHIOJI_GOAL_BUTTON_CAPTURE")
+	v, tester := goalLayout(false, capturePath != "")
 	s := &v.Model.Snapshot.Sessions[0]
 	goal := *s.Goal
 	goal.State = domain.GoalActive
@@ -267,8 +328,39 @@ func TestGoalActiveActionsSlideInOnHover(t *testing.T) {
 	shifted, _ := tester.Find("6 分 22 秒")
 	clear, clearShown := tester.Find("清除")
 	pause, pauseShown := tester.Find("暂停")
-	if !clearShown || !pauseShown || shifted.X >= middle.X || middle.X >= elapsed.X || shifted.X >= clear.X || clear.X >= pause.X {
+	if !clearShown || !pauseShown || shifted.X >= middle.X || middle.X >= elapsed.X || shifted.X >= pause.X || pause.X >= clear.X {
 		t.Fatalf("the running goal actions did not slide to the right of elapsed time: %v %v %v %v %v", elapsed, middle, shifted, clear, pause)
+	}
+	if pause.W != 38 || clear.W != 38 || clear.X-pause.X-pause.W != 0 {
+		t.Errorf("Pause and Clear need compact adjacent hit targets: %v %v", pause, clear)
+	}
+	tester.Move(shifted.X+shifted.W/2, shifted.Y+shifted.H/2)
+	tester.Advance(200 * time.Millisecond)
+	beforeHover := tester.Image()
+	tester.Move(clear.X+clear.W-2, clear.Y+clear.H/2)
+	tester.Advance(200 * time.Millisecond)
+	hoverInk := image.Rect(int(clear.X)+6, int(clear.Y)+6, int(clear.X+clear.W)-6, int(clear.Y)+9)
+	if differentPixels(beforeHover, tester.Image(), hoverInk) == 0 {
+		t.Error("the trailing half of the centered hover padding does not respond")
+	}
+	edge, top := int(clear.X), int(clear.Y)
+	pauseSide := image.Rect(edge-2, top+10, edge, top+18)
+	clearSide := image.Rect(edge, top+10, edge+2, top+18)
+	if differentPixels(beforeHover, tester.Image(), pauseSide) != 0 || differentPixels(beforeHover, tester.Image(), clearSide) == 0 {
+		t.Error("Clear's hover surface should start at the shared edge")
+	}
+	tester.Move(clear.X-1, clear.Y+clear.H/2)
+	tester.Advance(200 * time.Millisecond)
+	if differentPixels(beforeHover, tester.Image(), pauseSide) == 0 || differentPixels(beforeHover, tester.Image(), clearSide) != 0 {
+		t.Error("Pause's hover surface should end at the shared edge")
+	}
+	if capturePath != "" {
+		tester.Move(clear.X+1, clear.Y+clear.H/2)
+		tester.Advance(200 * time.Millisecond)
+		t.Setenv("SHIOJI_SKILL_SNAPSHOTS", filepath.Dir(capturePath))
+		tester.SetScale(2)
+		saveNativeSkillImage(t, tester, filepath.Base(capturePath))
+		tester.SetScale(1)
 	}
 	tester.Move(300, 48)
 	tester.Advance(time.Second)

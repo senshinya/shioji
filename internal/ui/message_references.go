@@ -60,12 +60,17 @@ func (v *View) messageReferenceBody(c *n.Context, t *n.Theme, item domain.Item) 
 					continue
 				}
 				objects[at] = a
+				span := n.Span{Text: string(richtext.ObjectReplacement), ObjectWidth: a.Width, ObjectHeight: a.Height - a.Descent, ObjectDescent: a.Descent}
+				if a.Data == slashGoal {
+					n.RichText(c, span).Label("命令：/goal")
+					continue
+				}
 				ref := a.Data.(composerReference)
 				label := "Skill：" + ref.name()
 				if ref.file.Attachment.ID != "" {
 					label = "预览引用：" + ref.name()
 				}
-				tag := n.RichText(c, n.Span{Text: string(richtext.ObjectReplacement), ObjectWidth: a.Width, ObjectHeight: a.Height - a.Descent, ObjectDescent: a.Descent}).Label(label).Tooltip(a.Name)
+				tag := n.RichText(c, span).Label(label).Tooltip(a.Name)
 				if a.Tooltip != "" {
 					tag.Tooltip(a.Tooltip)
 				}
@@ -100,7 +105,14 @@ func (v *View) messageReferenceBody(c *n.Context, t *n.Theme, item domain.Item) 
 	v.decoratePlainFind(c, body, item, nil, func(offset int, end bool) int {
 		plain, raw := 0, 0
 		for _, run := range text.Runs(0, text.Len()) {
-			if run.Attributes.Attachment != nil {
+			if a := run.Attributes.Attachment; a != nil {
+				if a.Data == slashGoal {
+					if offset >= plain+len(slashGoal) || end && offset > plain {
+						raw++
+					}
+					plain += len(slashGoal)
+					continue
+				}
 				if plain < offset || plain == offset && !end {
 					raw++
 				}

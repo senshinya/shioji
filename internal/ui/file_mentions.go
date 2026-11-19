@@ -543,10 +543,16 @@ func (v *View) chooseSlashCommand(state *fileMention, binding *composerDocument,
 	replacement := string(command)
 	caret := state.start + len(replacement)
 	if command == slashGoal {
-		if state.end == len(runes) || !unicode.IsSpace(runes[state.end]) {
-			replacement += " "
-		}
-		caret++
+		binding.doc.Edit(func(e *richtext.Edit) {
+			e.ReplaceString(state.start, state.end, string(richtext.ObjectReplacement), binding.goalTag)
+			if state.end == len(runes) || !unicode.IsSpace(runes[state.end]) {
+				e.ReplaceString(state.start+1, state.start+1, " ", richtext.Attributes{})
+			}
+			e.Select(state.start+2, state.start+2)
+		})
+		v.publishComposer(state.key, binding)
+		state.phase = mentionDismissed
+		return
 	}
 	binding.doc.Edit(func(e *richtext.Edit) {
 		e.ReplaceString(state.start, state.end, replacement, richtext.Attributes{})

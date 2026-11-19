@@ -73,6 +73,7 @@ func (a composerContent) equal(b composerContent) bool {
 
 type composerDocument struct {
 	doc             *richtext.Document
+	goalTag         richtext.Attributes
 	last            composerContent
 	version         uint64
 	key, editToken  string
@@ -123,7 +124,7 @@ func (v *View) composerDocument(c *n.Context, key string) *composerDocument {
 	b := v.composerDocuments[identity]
 	content := v.composerContent(key)
 	if b == nil {
-		b = &composerDocument{doc: richtext.NewDocument(richtext.NewText("")), key: key, editToken: editToken}
+		b = &composerDocument{doc: richtext.NewDocument(richtext.NewText("")), goalTag: goalTagAttributes(c), key: key, editToken: editToken}
 		v.composerDocuments[identity] = b
 	}
 	restore := false
@@ -178,14 +179,20 @@ func (v *View) publishComposer(key string, b *composerDocument) {
 		}
 	}
 	skills := []app.DraftSkill{}
+	commandRunes := 0
 	for at, run := range text.Runs(0, text.Len()) {
 		if attachment := run.Attributes.Attachment; attachment != nil {
+			if attachment.Data == slashGoal {
+				plain.WriteString(string(slashGoal))
+				commandRunes += len(slashGoal) - 1
+				continue
+			}
 			ref, ok := attachment.Data.(composerReference)
 			if !ok {
 				continue
 			}
 			if ref.skill.Reference.ID != "" {
-				ref.skill.InlinePosition = at + 1
+				ref.skill.InlinePosition = at + commandRunes + 1
 				if !slices.ContainsFunc(skills, func(s app.DraftSkill) bool {
 					return s.Reference == ref.skill.Reference && s.DeviceID == ref.skill.DeviceID && s.WorkspaceID == ref.skill.WorkspaceID && s.HarnessID == ref.skill.HarnessID
 				}) {
@@ -198,7 +205,7 @@ func (v *View) publishComposer(key string, b *composerDocument) {
 						break
 					}
 				}
-				ref.file.InlinePosition = at + 1
+				ref.file.InlinePosition = at + commandRunes + 1
 				if !slices.ContainsFunc(files, func(a app.DraftAttachment) bool { return a.Attachment == ref.file.Attachment }) {
 					files = append(files, ref.file)
 				}
@@ -210,8 +217,37 @@ func (v *View) publishComposer(key string, b *composerDocument) {
 	v.Model.Drafts[key] = plain.String()
 	v.Model.Attachments[key] = files
 	v.Model.DraftSkills[key] = skills
-	b.last, b.version = v.composerContent(key), b.doc.Version()
+	content := v.composerContent(key)
+	// Undoing a purely visual conversion must be allowed to restore the
+	// previous representation without immediately making another undo step.
+	if !b.last.equal(content) {
+		formatTypedGoal(b)
+	}
+	b.last, b.version = content, b.doc.Version()
 	b.departedEdited = b.departed != ""
+}
+
+func formatTypedGoal(b *composerDocument) {
+	if b.goalTag.Attachment == nil || b.doc.Composing() {
+		return
+	}
+	text := b.doc.Text()
+	for at, run := range text.Runs(0, text.Len()) {
+		if a := run.Attributes.Attachment; a != nil && a.Data == slashGoal {
+			runes := []rune(text.String())
+			if strings.TrimSpace(string(runes[:at])) != "" || at+1 < len(runes) && !unicode.IsSpace(runes[at+1]) {
+				b.doc.Edit(func(e *richtext.Edit) {
+					e.ReplaceString(at, at+1, string(slashGoal), richtext.Attributes{})
+				})
+			}
+			return
+		}
+	}
+	if start, end, ok := goalTagRange(text.String()); ok {
+		b.doc.Edit(func(e *richtext.Edit) {
+			e.ReplaceString(start, end, string(richtext.ObjectReplacement), b.goalTag)
+		})
+	}
 }
 
 // Transfer completion joins the mounted native document as one undo step.
@@ -408,6 +444,9 @@ func (v *View) referenceText(c *n.Context, content composerContent) richtext.Tex
 			attrs.Attachment = v.referenceAttachment(c, a.Data.(composerReference))
 		}
 		out = out.Append(run.Text, attrs)
+	}
+	if start, end, ok := goalTagRange(out.String()); ok {
+		out = out.ReplaceString(start, end, string(richtext.ObjectReplacement), goalTagAttributes(c))
 	}
 	return out
 }

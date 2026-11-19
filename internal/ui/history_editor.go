@@ -93,10 +93,11 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 				v.historyEditor(c, t, item)
 				return
 			}
+			_, _, goal := goalTagRange(item.Text)
 			bubble := n.Column(c.Key("user-surface:"+item.ID)).MaxWidth(676).Padding(12, 16).Gap(8).Background(userBubble(t)).Radius(14).Label("用户消息气泡").Children(func() {
 				if item.Kind == "command" {
 					v.commandTagBody(c, item)
-				} else if len(item.Skills) > 0 || hasInlineFiles(item.Attachments) {
+				} else if goal || len(item.Skills) > 0 || hasInlineFiles(item.Attachments) {
 					v.messageReferenceBody(c, t, item)
 				} else if item.Text != "" {
 					text := n.RichText(c).FontSize(14).FixedLineHeight(24).Selectable()
