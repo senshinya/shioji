@@ -5,6 +5,21 @@
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-11-19
+
+[源码](https://github.com/senshinya/shioji/tree/v0.6.3) · [与 v0.6.2 比较](https://github.com/senshinya/shioji/compare/v0.6.2...v0.6.3)
+
+### Changed
+
+- 统一定时任务的侧栏入口样式，并对齐编辑器的标题、字段与底部操作。
+- 归档或恢复会话时立即显示过渡动画，等待执行服务回执期间保留操作反馈。
+- 编辑已排队的消息时，保存按钮显示对勾。
+
+### Fixed
+
+- 等待设备回执时，队列、会话操作和设置控件保留当前反馈，避免短暂跳回旧状态。消息提交失败时可继续编辑草稿。
+- 远程执行服务上传因短暂断线中断后，可在重连后从已收到的进度继续，并显示上传、重连和校验状态。
+
 ## [0.6.2] - 2026-11-19
 
 [源码](https://github.com/senshinya/shioji/tree/v0.6.2) · [与 v0.6.1 比较](https://github.com/senshinya/shioji/compare/v0.6.1...v0.6.2)
@@ -300,7 +315,7 @@
 - 新增独立执行 worker 和 Tailnet 网络服务；退出 App 不停止设备端执行或网络连接，运行中状态不明时保留人工核对入口。
 - 提供 Developer ID 签名、经 Apple 公证并附带公证票据的 DMG，以及 SHA-256 校验文件。
 
-[Unreleased]: https://github.com/senshinya/shioji/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/senshinya/shioji/compare/v0.6.3...HEAD
 [0.3.2]: https://github.com/senshinya/shioji/compare/v0.3.0...v0.3.2
 [0.3.0]: https://github.com/senshinya/shioji/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/senshinya/shioji/compare/v0.1.2...v0.2.0
