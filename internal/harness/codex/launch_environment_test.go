@@ -165,6 +165,49 @@ func TestShellEnvironmentIsCachedAndDeduplicated(t *testing.T) {
 	}
 }
 
+func TestCatalogVersionSurvivesTemporaryLoginShellTimeout(t *testing.T) {
+	root := t.TempDir()
+	shell := filepath.Join(root, "login-shell")
+	fail := filepath.Join(root, "shell-unresponsive")
+	node := filepath.Join(root, "node")
+	entry := filepath.Join(root, "codex")
+	script := fmt.Sprintf("#!/bin/sh\nif [ -f %q ]; then exec /bin/sleep 30; fi\nexport PATH=%q:/usr/bin:/bin\nexec /bin/sh -c \"$2\"\n", fail, root)
+	for path, contents := range map[string]string{
+		shell: script,
+		node:  "#!/bin/sh\nexit 0\n",
+		entry: "#!/usr/bin/env node\n",
+	} {
+		if err := os.WriteFile(path, []byte(contents), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("SHELL", shell)
+	t.Setenv("ZDOTDIR", root)
+	t.Setenv("PATH", "/usr/bin:/bin")
+	a := Adapter{Executable: entry}
+	original, err := a.CatalogVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fail, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	loginEnvironment.mu.Lock()
+	loginEnvironment.read.expires = time.Now().Add(-time.Second)
+	loginEnvironment.mu.Unlock()
+	observed, err := a.CatalogVersion()
+	if err != nil || observed != original {
+		t.Fatalf("login shell timeout changed the installed runtime identity: %v", err)
+	}
+	if err := os.Remove(node); err != nil {
+		t.Fatal(err)
+	}
+	observed, err = a.CatalogVersion()
+	if err != nil || observed == original {
+		t.Fatalf("cached PATH hid removal of the interpreter: %v", err)
+	}
+}
+
 func TestShellEnvironmentCancellationAndTimeoutReleaseItsProcessGroup(t *testing.T) {
 	root := t.TempDir()
 	shell := filepath.Join(root, "slow-shell")

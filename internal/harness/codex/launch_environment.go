@@ -20,15 +20,17 @@ import (
 
 const shellEnvironmentMarker = "__SHIOJI_LOGIN_ENV__"
 const shellEnvironmentTimeout = 3 * time.Second
+const shellEnvironmentTTL = 30 * time.Second
 
 // The owning worker captures its own user's environment, never the GUI's or a
 // different device's. Secrets remain in memory; no shell output is logged.
 type shellEnvironmentRead struct {
-	key     string
-	done    chan struct{}
-	env     []string
-	err     error
-	expires time.Time
+	key           string
+	done          chan struct{}
+	env           []string
+	err           error
+	expires       time.Time
+	reusableUntil time.Time
 }
 type shellEnvironmentCache struct {
 	mu   sync.Mutex
@@ -59,6 +61,7 @@ func (c *shellEnvironmentCache) get(ctx context.Context, base []string) ([]strin
 	c.mu.Lock()
 	read := c.read
 	if read == nil || read.key != key || !read.expires.IsZero() && time.Now().After(read.expires) {
+		previous := read
 		read = &shellEnvironmentRead{key: key, done: make(chan struct{})}
 		c.read = read
 		snapshot := slices.Clone(base)
@@ -68,11 +71,22 @@ func (c *shellEnvironmentCache) get(ctx context.Context, base []string) ([]strin
 			env, err := readLoginEnvironment(probe, snapshot)
 			c.mu.Lock()
 			read.env, read.err = env, err
-			ttl := 30 * time.Second
-			if err != nil {
-				ttl = 2 * time.Second
+			now := time.Now()
+			if err == nil {
+				read.expires = now.Add(shellEnvironmentTTL)
+				read.reusableUntil = read.expires.Add(shellEnvironmentTTL)
+			} else {
+				read.expires = now.Add(2 * time.Second)
+				// A brief shell failure can hide paths known to the same login
+				// configuration. Keep that observation briefly and retry soon.
+				if previous != nil && previous.key == key && now.Before(previous.reusableUntil) {
+					read.env, read.err = previous.env, nil
+					read.reusableUntil = previous.reusableUntil
+					if read.expires.After(read.reusableUntil) {
+						read.expires = read.reusableUntil
+					}
+				}
 			}
-			read.expires = time.Now().Add(ttl)
 			close(read.done)
 			c.mu.Unlock()
 		}()

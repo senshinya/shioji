@@ -6,6 +6,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"sync"
+	"time"
 )
 
 // Adapter is configured at composition time. Codex settings never enter the
@@ -84,9 +85,13 @@ func (a Adapter) startNative(ctx context.Context, opts harness.StartOptions) (*a
 }
 
 func (a Adapter) CatalogVersion() (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), shellEnvironmentTimeout)
+	// Allow the shared probe to finish process cleanup and publish its result.
+	ctx, cancel := context.WithTimeout(context.Background(), shellEnvironmentTimeout+time.Second)
 	defer cancel()
 	env, _ := a.environment(ctx)
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
 	image, err := installedExecutable(a.Executable, env)
 	return image.version, err
 }
