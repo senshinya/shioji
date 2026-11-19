@@ -6,12 +6,51 @@ import (
 )
 
 type QueueEdit struct {
+	Submitted            *QueueEditDraft   `json:"submitted,omitempty"`
 	DisplacedSkills      []DraftSkill      `json:"displacedSkills,omitempty"`
 	Token                string            `json:"token,omitempty"`
 	DisplacedAttachments []DraftAttachment `json:"displacedAttachments,omitempty"`
 	ID                   string            `json:"id"`
 	Revision             int64             `json:"revision"`
 	Displaced            string            `json:"displaced"`
+}
+
+type QueueEditDraft struct {
+	Text        string            `json:"text"`
+	Attachments []DraftAttachment `json:"attachments,omitempty"`
+	Skills      []DraftSkill      `json:"skills,omitempty"`
+}
+
+func (m *Model) ActiveQueueEdit(sid string) QueueEdit {
+	edit := m.QueueEdits[sid]
+	if edit.Submitted != nil {
+		return QueueEdit{}
+	}
+	return edit
+}
+
+func (m *Model) SuspendQueueEdit(sid string) {
+	edit := m.ActiveQueueEdit(sid)
+	if edit.ID == "" {
+		return
+	}
+	key := "session:" + sid
+	edit.Submitted = &QueueEditDraft{Text: m.Drafts[key], Attachments: m.Attachments[key], Skills: m.DraftSkills[key]}
+	m.CancelQueueEdit(sid)
+	m.QueueEdits[sid] = edit
+}
+
+func (m *Model) ResumeQueueEdit(sid string, revision int64) {
+	edit := m.QueueEdits[sid]
+	if edit.Submitted == nil {
+		return
+	}
+	key := "session:" + sid
+	text, attachments, skills := edit.Submitted.Text, edit.Submitted.Attachments, edit.Submitted.Skills
+	edit.Displaced, edit.DisplacedAttachments, edit.DisplacedSkills = m.Drafts[key], m.Attachments[key], m.DraftSkills[key]
+	edit.Submitted, edit.Revision = nil, revision
+	m.QueueEdits[sid] = edit
+	m.Drafts[key], m.Attachments[key], m.DraftSkills[key] = text, attachments, skills
 }
 
 func (m *Model) Queue() domain.QueueState { return m.Details[m.SessionID].Queue }
@@ -90,7 +129,7 @@ func (m *Model) EditQueued(id string) error {
 	return errors.New("待发消息已派发或移除")
 }
 func (m *Model) CancelQueueEdit(sid string) {
-	if edit := m.QueueEdits[sid]; edit.ID != "" {
+	if edit := m.ActiveQueueEdit(sid); edit.ID != "" {
 		m.Drafts["session:"+sid] = edit.Displaced
 		m.DraftSkills["session:"+sid] = edit.DisplacedSkills
 		m.Attachments["session:"+sid] = edit.DisplacedAttachments
@@ -106,7 +145,7 @@ func (m *Model) SetQueue(q domain.QueueState) {
 }
 func (m *Model) FinishQueueEdit(sid, id, text string, q domain.QueueState, attachments ...[]domain.Attachment) {
 	m.SetQueue(q)
-	edit := m.QueueEdits[sid]
+	edit := m.ActiveQueueEdit(sid)
 	if edit.ID != id {
 		return
 	}

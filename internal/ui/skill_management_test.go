@@ -198,6 +198,10 @@ func TestSkillManagementEnableFailurePreservesConfirmedValueUntilRefresh(t *test
 		t.Fatal(err)
 	}
 	job := welcomeJob(t, v.Controller, "runtime.skills.change")
+	ui.Frame()
+	if !ui.HasText("正在停用") {
+		t.Fatal("the changed Skill row does not show progress", ui.Texts())
+	}
 	in := job.Input.(protocol.SkillManagementInput)
 	if in.ID != "opaque" || in.Enabled || in.Revision != "revision" || in.WorkspaceID != "" {
 		t.Fatal("toggle changed a different source", in)

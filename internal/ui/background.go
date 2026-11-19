@@ -8,16 +8,32 @@ import (
 	"time"
 )
 
+type backgroundChange struct {
+	epoch, previous string
+	enable          bool
+}
+
 func (v *View) backgroundSwitch(c *n.Context, t *n.Theme, key string, state *app.DeviceState, setup ...bool) {
 	var service *domain.BackgroundService
 	if state.WorkerService != nil {
 		service = state.WorkerService.Background
 	}
 	enabled, busy, unavailable := false, false, true
+	phase := ""
 	if service != nil {
+		phase = service.State
 		enabled = service.State == "enabled" || service.State == "requiresApproval"
 		busy = service.State == "enabling" || service.State == "disabling"
 		unavailable = service.State == "unsupported" || service.State == "unavailable"
+	}
+	root := v.splitRoot()
+	change, pending := root.backgroundChanges[key]
+	if pending && (!state.Connected || state.ConnectionEpoch != change.epoch || phase != change.previous) {
+		delete(root.backgroundChanges, key)
+		pending = false
+	}
+	if phase == "disabling" {
+		enabled = true
 	}
 	row := deviceConfigRow
 	if len(setup) > 0 && setup[0] {
@@ -29,12 +45,19 @@ func (v *View) backgroundSwitch(c *n.Context, t *n.Theme, key string, state *app
 			if unavailable && service != nil {
 				tooltip = service.Message
 			}
-			if configurationSwitch(c, &enabled).Tooltip(tooltip).Label("登录后启动服务开关").Disabled(v.Controller == nil || !state.Connected || busy || unavailable).Changed() {
+			if confirmedConfigurationSwitch(c, &enabled, enabled).Tooltip(tooltip).Label("登录后启动服务开关").Disabled(v.Controller == nil || !state.Connected || pending || busy || unavailable).Changed() {
 				method := "$background.disable"
 				if enabled {
 					method = "$background.enable"
 				}
-				v.do(app.Job{ConnectionID: key, Method: method})
+				if v.do(app.Job{ConnectionID: key, Method: method}) {
+					if root.backgroundChanges == nil {
+						root.backgroundChanges = map[string]backgroundChange{}
+					}
+					root.backgroundChanges[key] = backgroundChange{epoch: state.ConnectionEpoch, previous: phase, enable: enabled}
+				} else {
+					v.Model.Error = "设备操作繁忙，请重试"
+				}
 			}
 		})
 	})
@@ -44,10 +67,16 @@ func (v *View) backgroundSwitch(c *n.Context, t *n.Theme, key string, state *app
 			message = service.Message
 		}
 		if service.State == "enabling" {
-			message = "正在启用…"
+			message = "正在启用后台服务"
 		}
 		if service.State == "disabling" {
-			message = "正在关闭…"
+			message = "正在关闭后台服务"
+		}
+	}
+	if pending {
+		message = "正在关闭后台服务"
+		if change.enable {
+			message = "正在启用后台服务"
 		}
 	}
 	frame := n.Column(c.Key("message")).FillWidth().Clip().Label("后台服务详情")

@@ -10,6 +10,10 @@ func configurationSwitch(c *n.Context, value *bool) n.Element {
 	return configurationSwitchIndicator(c, n.SwitchBase(c, value).Size(40, 28), *value)
 }
 
+func confirmedConfigurationSwitch(c *n.Context, value *bool, confirmed bool) n.Element {
+	return configurationSwitchIndicator(c, n.SwitchBase(c, value).Size(40, 28), confirmed)
+}
+
 func configurationSwitchIndicator(c *n.Context, e n.Element, on bool) n.Element {
 	t := c.Theme()
 	track, thumb := n.Hex("#d1d1d1"), n.Hex("#ffffff")

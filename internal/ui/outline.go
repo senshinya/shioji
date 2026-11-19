@@ -296,7 +296,7 @@ func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock
 		if active {
 			a = v.runningActivity(turn)
 		}
-		if !active || v.Model.Connected && a.waiting {
+		if !active || v.Model.Connected && a.waiting && a.sending == "" {
 			textWidth, _ := n.ShapeText("最新消息", font, 0).Size()
 			width += 14 + 5 + textWidth
 			inlineIconText(c.Key("latest-idle"), latestIcon, "最新消息", font, 14, 5, color).Shrink(0).Transition(fadeMotion(c, 160*time.Millisecond))
@@ -305,6 +305,8 @@ func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock
 		label, pulse, dotColor := a.label, true, t.Success
 		if !v.Model.Connected {
 			label, pulse, dotColor = "状态待确认", false, t.TextMuted
+		} else if a.sending != "" {
+			label, pulse, dotColor = a.sending, false, t.TextMuted
 		} else if a.compaction != "" {
 			label = "正在压缩上下文"
 		} else {

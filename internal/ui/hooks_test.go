@@ -249,6 +249,33 @@ func TestHooksWorkspaceInheritanceAndReturnPreserveDraft(t *testing.T) {
 		t.Fatal("return discarded draft/context")
 	}
 }
+
+func TestHookToggleShowsProgressNextToTheSelectedHook(t *testing.T) {
+	v, ui := hookUIFixture(t, false)
+	catalog := hookUICatalog(false)
+	catalog.Entries[0].Trust = domain.HookTrusted
+	buf, _ := json.Marshal(catalog)
+	welcomeJob(t, v.Controller, "runtime.hooks.list").Apply(v.Model, buf, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	feedbackClick(t, ui, "启停 Hook：Stop")
+	job := welcomeJob(t, v.Controller, "runtime.hooks.change")
+	ui.Frame()
+	if !ui.HasText("正在启用") {
+		t.Fatal("the Hook row does not show progress", ui.Texts())
+	}
+	in := job.Input.(domain.HookRequest)
+	catalog.Entries[0].Enabled = true
+	catalog.Revision = "catalog-2"
+	buf, _ = json.Marshal(domain.HookOperation{Input: in, State: domain.OperationConfirmed, Saved: true, Catalog: &catalog})
+	job.Apply(v.Model, buf, nil)
+	job.Apply(v.Model, buf, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	if ui.HasText("正在启用") {
+		t.Fatal("confirmed Hook left progress visible")
+	}
+}
 func TestHooksUnknownSaveQueriesReceiptWithoutReplayingApproval(t *testing.T) {
 	v, ui := hookUIFixture(t, false)
 	applyHookCatalog(t, v, ui, false)

@@ -28,6 +28,7 @@ type skillManagementUI struct {
 	phase                                                       skillLoad
 	catalog                                                     domain.SkillInventory
 	query, message, pending, detailID, detailError              string
+	confirming                                                  string
 	detailLoading                                               bool
 	document                                                    domain.SkillDocument
 	documentRequest                                             uint64
@@ -96,6 +97,7 @@ func (v *View) querySkillInventory(u *skillManagementUI) {
 		if !v.skillManagementCurrent(u) {
 			return
 		}
+		u.confirming = ""
 		if err == nil {
 			var next domain.SkillInventory
 			err = json.Unmarshal(b, &next)
@@ -126,6 +128,7 @@ func (v *View) querySkillInventory(u *skillManagementUI) {
 			}
 		}
 	}}) {
+		u.confirming = ""
 		u.phase = skillFailed
 		u.message = "设备操作繁忙，请重试"
 	}
@@ -173,7 +176,7 @@ func (v *View) changeManagedSkill(u *skillManagementUI, entry domain.ManagedSkil
 	u.message = ""
 	in := protocol.SkillManagementInput{WorkspaceID: u.workspace, HarnessID: u.harness, SkillChange: domain.SkillChange{ID: entry.ID, Revision: u.catalog.Revision, Enabled: !entry.Enabled}}
 	if !v.do(app.Job{ConnectionID: u.key, Method: "runtime.skills.change", Input: in, Apply: func(_ *app.Model, b json.RawMessage, err error) {
-		if !v.skillManagementCurrent(u) {
+		if !v.skillManagementCurrent(u) || u.pending != entry.ID {
 			return
 		}
 		u.pending = ""
@@ -190,6 +193,7 @@ func (v *View) changeManagedSkill(u *skillManagementUI, entry domain.ManagedSkil
 			return
 		}
 		u.phase = skillIdle
+		u.confirming = entry.ID
 		v.querySkillInventory(u)
 	}}) {
 		u.pending = ""
@@ -274,10 +278,8 @@ func (v *View) skillManagementFeedback(c *n.Context, t *n.Theme, u *skillManagem
 	}
 	if !v.deviceState(u.key).Connected {
 		message = "设备未连接，显示上次结果"
-	} else if u.phase == skillLoading {
+	} else if u.phase == skillLoading && u.confirming == "" {
 		message = "正在读取 Skills"
-	} else if u.pending != "" {
-		message = "正在保存"
 	} else if detail && u.detailLoading {
 		message = "正在读取内容"
 		if u.document.ID == u.detailID {
@@ -361,11 +363,7 @@ func (v *View) managedSkillRows(c *n.Context, t *n.Theme, u *skillManagementUI) 
 				v.readManagedSkill(u, entry.ID)
 			}
 			if entry.CanEnable && !inherited {
-				value := entry.Enabled
-				toggle := configurationSwitch(c.Key("enabled"), &value).MarginEnd(configurationHoverInset).Label("启停 Skill：" + entry.Name).Disabled(u.phase != skillLoaded || u.pending != "" || !v.deviceState(u.key).Connected)
-				if toggle.Changed() {
-					v.changeManagedSkill(u, entry)
-				}
+				v.managedSkillSwitch(c, t, u, entry)
 			} else {
 				label := "已停用"
 				if entry.Enabled {
@@ -428,10 +426,7 @@ func (v *View) managedSkillDetail(c *n.Context, t *n.Theme, u *skillManagementUI
 							v.openSkillDeviceManagement(u, entry.ID)
 						}
 					} else if entry.CanEnable {
-						value := entry.Enabled
-						if configurationSwitch(c, &value).Label("启停 Skill：" + entry.Name).Disabled(u.phase != skillLoaded || u.pending != "" || !v.deviceState(u.key).Connected).Changed() {
-							v.changeManagedSkill(u, *entry)
-						}
+						v.managedSkillSwitch(c, t, u, *entry)
 					}
 				})
 				n.Text(c, entry.Description).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Margin(8, 0, 0, 0)
@@ -443,6 +438,20 @@ func (v *View) managedSkillDetail(c *n.Context, t *n.Theme, u *skillManagementUI
 			}
 		})
 	})
+}
+func (v *View) managedSkillSwitch(c *n.Context, t *n.Theme, u *skillManagementUI, entry domain.ManagedSkill) {
+	if u.pending == entry.ID || u.confirming == entry.ID {
+		label := "正在启用"
+		if entry.Enabled {
+			label = "正在停用"
+		}
+		n.Text(c.Key("pending"), label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine()
+	}
+	value := entry.Enabled
+	if confirmedConfigurationSwitch(c.Key("enabled"), &value, entry.Enabled).MarginEnd(configurationHoverInset).
+		Label("启停 Skill：" + entry.Name).Disabled(u.phase != skillLoaded || u.pending != "" || !v.deviceState(u.key).Connected).Changed() {
+		v.changeManagedSkill(u, entry)
+	}
 }
 func (v *View) openSkillDeviceManagement(u *skillManagementUI, id string) {
 	if !v.openWorkspaceAgentManagement(u.key, u.harness, "Skills") {

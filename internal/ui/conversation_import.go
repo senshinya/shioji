@@ -583,20 +583,21 @@ func (v *View) conversationPreviewView(c *n.Context, t *n.Theme, u *conversation
 		}
 		n.Text(c, candidate.Title).Grow(1).MinWidth(0).SingleLine().FontSize(14).FixedLineHeight(20)
 	})
-	if u.phase == conversationPreviewLoading {
-		n.Row(c).FillWidth().Grow(1).Justify(n.Center).AlignItems(n.Center).Children(func() {
-			serviceSpinner(c, "正在读取历史", n.Font{Family: t.Font, Size: 13}, t.TextMuted)
-			n.Text(c, "正在读取历史").FontSize(13).TextColor(t.TextMuted)
-		})
-		return
-	}
 	if u.preview == nil {
-		n.Spacer(c).Grow(1)
+		n.Column(c.Key("preview-placeholder")).FillWidth().Grow(1).MinHeight(0).Center().Children(func() {
+			if u.phase == conversationPreviewLoading {
+				n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
+					serviceSpinner(c, "正在读取历史", n.Font{Family: t.Font, Size: 13}, t.TextMuted)
+					n.Text(c, "正在读取历史").FontSize(13).TextColor(t.TextMuted)
+				})
+			}
+		})
+		n.Spacer(c).Height(32)
 		return
 	}
 	u.markdown.Theme = &markdown.Theme{Font: t.Font, FontSize: 13, LineHeight: 22.0 / 13, BlockSpacing: 8.0 / 13, LinkWeight: 500, LinkUnderline: true}
 	u.markdown.WrapCode = true
-	n.Scroll(c.Key("preview-scroll")).TrackScroll(&u.previewScroll).FillWidth().Grow(1).MinHeight(0).Label("会话历史预览").Transition(fadeMotion(c, 160*time.Millisecond)).Children(func() {
+	n.Scroll(c.Key("preview-scroll")).TrackScroll(&u.previewScroll).FillWidth().Grow(1).MinHeight(0).Label("会话历史预览").Children(func() {
 		n.Column(c).FillWidth().Gap(20).PaddingY(4).Children(func() {
 			for _, item := range u.preview.Items {
 				item := item

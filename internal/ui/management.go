@@ -24,6 +24,7 @@ type sessionRename struct {
 	Title, Connection, Error string
 	Open, Busy               bool
 	NaturalHeight            float32
+	attempt                  uint64
 }
 
 var moreActionsIcon = svg("M4 10h.1M10 10h.1M16 10h.1")
@@ -161,7 +162,7 @@ func (v *View) workspaceMenu(menu *n.Menu, w domain.Workspace) {
 	if w.Archived {
 		label = "恢复工作区"
 	}
-	if menu.Item(label).Disabled(!ready).Chosen() {
+	if menu.Item(label).Disabled(!ready || v.pendingArchiveChange(w.ID, "") != nil).Chosen() {
 		v.archiveWorkspace(w, !w.Archived)
 	}
 	if !ready {
@@ -209,7 +210,7 @@ func (v *View) sessionMenu(menu *n.Menu, s domain.Session, ref app.SessionLocati
 	if s.Archived {
 		label = "恢复会话"
 	}
-	if menu.Item(label).Disabled(!ready).Chosen() {
+	if menu.Item(label).Disabled(!ready || v.pendingArchiveChange(s.WorkspaceID, s.ID) != nil).Chosen() {
 		v.sessionChange("session.archive", s, "")
 	}
 	if !ready {
@@ -233,13 +234,13 @@ func (v *View) editWorkspace(w domain.Workspace) {
 	v.devices = false
 }
 func (v *View) archiveWorkspace(w domain.Workspace, archived bool) {
-	v.do(app.Job{ConnectionID: v.Model.WorkspaceConnection(w.ID), Method: "workspace.archive", Input: protocol.WorkspaceArchiveInput{WorkspaceID: w.ID, Revision: w.Revision, Archived: archived}, Apply: func(m *app.Model, _ json.RawMessage, err error) {
-		if err != nil {
-			m.Error = err.Error()
-		}
-	}})
+	v.changeArchive(w.ID, "", archived, w.Revision)
 }
 func (v *View) sessionChange(method string, s domain.Session, title string) {
+	if method == "session.archive" {
+		v.changeArchive(s.WorkspaceID, s.ID, !s.Archived, s.Revision)
+		return
+	}
 	v.do(app.Job{ConnectionID: v.Model.WorkspaceConnection(s.WorkspaceID), Method: method, Input: protocol.SessionChangeInput{SessionID: s.ID, Revision: s.Revision, TitleRevision: s.TitleRevision, Title: title, Archived: !s.Archived}, Apply: func(m *app.Model, _ json.RawMessage, err error) {
 		if err != nil {
 			m.Error = err.Error()
@@ -286,7 +287,11 @@ func (v *View) managementDialogs(c *n.Context, t *n.Theme) {
 				if configurationAction(c, "取消").Label("取消重命名").Clicked() {
 					r.Open = false
 				}
-				if compactDialogPrimary(c, "保存").Label("保存名称").Disabled(r.Busy || strings.TrimSpace(r.Title) == "" || !v.canManage(r.Connection)).Clicked() {
+				label := "保存"
+				if r.Busy {
+					label = "正在保存"
+				}
+				if compactDialogPrimary(c.Key("save-name"), label).MinWidth(78).Label("保存名称").Disabled(r.Busy || strings.TrimSpace(r.Title) == "" || !v.canManage(r.Connection)).Clicked() {
 					v.saveSessionName(r)
 				}
 			})
@@ -308,11 +313,13 @@ func (v *View) saveSessionName(r *sessionRename) {
 		return
 	}
 	r.Busy = true
+	r.attempt++
+	attempt := r.attempt
 	if !v.do(app.Job{ConnectionID: r.Connection, Method: "session.rename", Input: protocol.SessionChangeInput{SessionID: r.Session.ID, Revision: r.Session.Revision, TitleRevision: r.Session.TitleRevision, Title: strings.TrimSpace(r.Title)}, Apply: func(m *app.Model, _ json.RawMessage, err error) {
-		r.Busy = false
-		if v.rename != r || !r.Open {
+		if v.rename != r || !r.Open || !r.Busy || attempt != r.attempt {
 			return
 		}
+		r.Busy = false
 		if err != nil {
 			r.Error = err.Error()
 			return

@@ -36,7 +36,7 @@ func TestDeviceAgentMCPIsIndependentConfigurationTab(t *testing.T) {
 	}
 }
 
-func TestToolSaveRefreshFailureKeepsRecoveryVisibleAfterCancel(t *testing.T) {
+func TestToolSaveReturnsBeforeRefreshAndKeepsRecoveryVisible(t *testing.T) {
 	v, _, ui := serviceUI(t)
 	v.Model.DeviceStates["local"].WorkerMinor = 24
 	service := domain.ToolService{ID: "files", Name: "Files", Editable: true, State: domain.ToolServiceReady, Configuration: &domain.ToolServiceConfiguration{Name: "files", Transport: "command", Enabled: true, Command: "files"}}
@@ -48,17 +48,22 @@ func TestToolSaveRefreshFailureKeepsRecoveryVisibleAfterCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 	ui.Advance(time.Second)
+	feedbackClick(t, ui, "刷新 MCP 配置")
+	oldCheck := welcomeJob(t, v.Controller, "runtime.tools.refresh")
 	if err := ui.Click("保存 MCP 服务"); err != nil {
 		t.Fatal(err)
 	}
 	body, _ = json.Marshal(domain.ToolServiceChangeResult{Saved: true})
 	welcomeJob(t, v.Controller, "runtime.tools.change").Apply(v.Model, body, nil)
-	welcomeJob(t, v.Controller, "runtime.tools.refresh").Apply(v.Model, nil, errors.New("offline"))
+	check := welcomeJob(t, v.Controller, "runtime.tools.refresh")
+	oldCheck.Apply(v.Model, nil, errors.New("pre-save check failed"))
 	ui.Frame()
 	ui.Advance(time.Second)
-	if err := ui.Click("取消编辑 MCP"); err != nil {
-		t.Fatal(err)
+	if ui.HasText("MCP 执行命令") || !ui.HasText("已保存，正在检查连接") {
+		t.Fatal("confirmed save still waits in the editor", ui.Texts())
 	}
+	check.Apply(v.Model, nil, errors.New("offline"))
+	ui.Frame()
 	ui.Advance(time.Second)
 	if !ui.HasText("配置已保存，连接检查未完成，请刷新核对") {
 		t.Fatal("saved configuration lost its recovery guidance", ui.Texts())

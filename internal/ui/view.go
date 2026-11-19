@@ -36,6 +36,7 @@ type View struct {
 	globalSidebar                    *quickSidebar
 	portForward                      *portForwardDraft
 	devicePower                      map[string]*devicePowerUI
+	backgroundChanges                map[string]backgroundChange
 	feedback                         *conversationFeedback
 	feedbackScope                    feedbackSource
 	feedbackSelection                int
@@ -130,6 +131,7 @@ type View struct {
 	rename                                                                                                          *sessionRename
 	archive                                                                                                         *archiveUI
 	archivePolicyPending                                                                                            map[string]string
+	archiveChanges                                                                                                  map[archiveChangeKey]*archiveChange
 	currentTranscriptRow                                                                                            int
 	activityMarkdown                                                                                                markdown.Options
 	secretAnswers                                                                                                   map[string]string
@@ -145,11 +147,12 @@ type View struct {
 	frameTime                                                                                                       time.Time
 	toolsAnimating                                                                                                  bool
 	homeSend                                                                                                        *homeSendPresentation
+	previousSends                                                                                                   []presentedSend
 	sent                                                                                                            *sentMessageMotion
 	sessionEntry                                                                                                    *sessionEntryMotion
 	composerHadFocus                                                                                                bool
 	focusComposer                                                                                                   bool
-	queueBusy                                                                                                       map[string]bool
+	queueCommands                                                                                                   map[app.WorkKey]*queueCommandState
 	queueDrag                                                                                                       *queuedRowDrag
 	queueSources                                                                                                    map[string]queuedMessageSource
 	queueSourceSession                                                                                              string
@@ -213,7 +216,7 @@ type View struct {
 	branchOpen                                                                                                      bool
 	branchSearch                                                                                                    string
 	branchList                                                                                                      n.ListState
-	switchingBranch                                                                                                 bool
+	branchCheckouts                                                                                                 map[string]*branchCheckout
 	gitLoads                                                                                                        map[string]*gitLoadState
 	resizingInspector                                                                                               bool
 	inspectorFocus                                                                                                  inspectorTabDrag
@@ -231,7 +234,7 @@ func New(model *app.Model, controller *app.Controller, path string) *View {
 }
 func (v *View) collectBindings() {
 	for _, b := range v.composerDocuments {
-		edit := v.Model.QueueEdits[strings.TrimPrefix(b.key, "session:")]
+		edit := v.Model.ActiveQueueEdit(strings.TrimPrefix(b.key, "session:"))
 		if b.editToken == edit.Token {
 			v.publishComposer(b.key, b)
 		}
@@ -338,6 +341,7 @@ func (v *View) View(c *n.Context) {
 	}
 	v.syncDeviceConnectionSave()
 	m.RefreshDevices()
+	v.syncArchiveChanges()
 	v.syncSessionStops()
 	m.SyncHistoryEdits()
 	v.syncHistoryExit(c)
@@ -753,7 +757,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 		v.remoteAttachmentsPanel(c, t, key)
 		binding = v.composerDocument(c, key)
 
-		editID := m.QueueEdits[m.SessionID].ID
+		editID := m.ActiveQueueEdit(m.SessionID).ID
 		if v.composerHeightKey != stackKey {
 			v.composerHeightKey, v.composerNaturalHeight, v.composerEditID = stackKey, 0, editID
 			v.composerChromeHeight = 0
@@ -792,7 +796,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 			composer := n.Column(c.Key("composer:"+stackKey)).FillWidth().Padding(10, 14, 8, 6).Gap(4)
 			v.loadingComposerContent(composer, home)
 			composer.Children(func() {
-				if m.QueueEdits[m.SessionID].ID != "" {
+				if m.ActiveQueueEdit(m.SessionID).ID != "" {
 					n.Column(c).Height(28)
 				}
 				binding = v.composerDocument(c, key)
@@ -833,7 +837,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					}
 					options.OnPaste = func(text string) bool { return v.pasteAttachments(key, text) }
 					if s := v.sent; s != nil && s.source.W > 0 && s.session == m.SessionID && !s.queued && !home && !c.Preferences().ReduceMotion {
-						options.Theme.Muted = subtle(t).Alpha(v.sendProgress(c))
+						options.Theme.Muted = subtle(t).Alpha(s.progress(c))
 					}
 					// Keep existing lines at the top as the viewport grows or
 					// shrinks. The editor still lays out at its natural height
@@ -889,7 +893,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					iconSize := float32(28.0 * 14 / 24)
 					iconKey := "primary-send-icon"
 					label := "发送"
-					editing := m.QueueEdits[m.SessionID].ID != ""
+					editing := m.ActiveQueueEdit(m.SessionID).ID != ""
 					queuing := len(m.Queue().Items) > 0 || active && (!stopped || !empty)
 					disabled := !m.Connected || m.RunReadiness().State != "ready" || m.ModelUnavailable() || m.ReadOnlyConversationReason() != "" || empty || m.HasPendingInput() || v.homeSendPending() || m.ArchivedContext() != "" || v.preparingAttachments(m.DraftKey())
 					if queuing {
@@ -898,7 +902,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					}
 					if editing {
 						label = "保存编辑"
-						disabled = disabled || v.queueBusy[m.SessionID]
+						disabled = disabled || v.pendingQueueCommand(m.SessionID) != nil
 					}
 					if fields := strings.Fields(draft); !editing && len(fields) > 0 && fields[0] == "/compact" {
 						label = "压缩上下文"
@@ -967,7 +971,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					}
 				}
 			})
-			if m.QueueEdits[m.SessionID].ID != "" {
+			if m.ActiveQueueEdit(m.SessionID).ID != "" {
 				// Keep expanding editor contents below the pinned edit controls.
 				n.Column(c.Key("queue-edit-header-surface")).Absolute().Left(1).Right(1).Top(1).Height(37).Radius(15, 15, 0, 0).Background(bg).IgnoreInput(true)
 			}
@@ -1201,6 +1205,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	// An empty detail keeps the dock mounted through first-turn hydration.
 	// Its zero Session.ID also keeps the history-fold barrier unconsumed.
 	detail := v.homeSendDetail(v.stoppingReplyDetail(m.Details[m.SessionID]))
+	detail.Items = v.projectQueuedSends(detail.Items)
 	viewKey := v.homeSendKey(m.SessionID)
 	state := v.lists[m.SessionID]
 	if h := v.homeSend; h != nil && h.in.SessionID == "" {
@@ -1244,6 +1249,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	rows = v.historyBridgeRows(rows)
 	rows = v.historyRunningRows(rows)
 	rows = v.homeSendRows(rows)
+	rows = v.queuedSendStatusRows(rows)
 	rows = withToolUserGaps(rows)
 	v.positionHistoryTarget(state, rows)
 	if v.toolsAnimating {
@@ -1572,8 +1578,8 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 		state = "disconnected"
 	}
 	activity := v.runningActivity(turn)
-	delegated := turn.Status.Active() && (v.runningGroup != "" && v.activityTurn == turn.ID || v.Model.Connected && activity.compaction != "")
-	waiting := turn.Status.Active() && v.Model.Connected && activity.waiting
+	delegated := activity.sending == "" && turn.Status.Active() && (v.runningGroup != "" && v.activityTurn == turn.ID || v.Model.Connected && activity.compaction != "")
+	waiting := activity.sending == "" && turn.Status.Active() && v.Model.Connected && activity.waiting
 	if preparing != "" || turn.Status == "running" || turn.Status == "starting" {
 		frame.MinHeight(0)
 	}
@@ -1692,11 +1698,29 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 					inlineSymbol(c.Key(glyphKey), glyph, "回复", n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}, 12, color).
 						Label(tooltip).Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 100*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 				})
-				fork := n.ButtonBase(c.Key("fork:"+turn.ID)).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("从这里分叉").Tooltip("从这里分叉").Disabled(!v.historyReady(v.Model.Details[v.Model.SessionID].Session) || !v.Model.RunReadiness().Capabilities.Fork || v.historyBusy[v.Model.SessionID])
+				forking := v.historyExit != nil && !v.historyExit.in.Restart && v.historyExit.in.SessionID == v.Model.SessionID &&
+					v.historyExit.anchorKey == "turn-footer:"+turn.ID
+				spinning := false
+				if forking && v.historyExit.phase == historyDispatched {
+					delay := v.historyExit.started.Add(350 * time.Millisecond).Sub(c.Now())
+					spinning = delay <= 0
+					if !spinning {
+						c.After(delay)
+					}
+				}
+				fork := n.ButtonBase(c.Key("fork:"+turn.ID)).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("从这里分叉").Tooltip("从这里分叉").Disabled(!v.historyReady(v.Model.Details[v.Model.SessionID].Session) || !v.Model.RunReadiness().Capabilities.Fork || v.historyBusy[v.Model.SessionID] || forking)
 				forkColor := textHoverColor(c, fork, t.TextMuted)
 				fork.Children(func() {
-					inlineSymbol(c, forkIcon, "回复", n.Font{Family: t.Font, Size: 11, Weight: 400}, 13, forkColor)
+					font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+					if spinning {
+						serviceSpinner(c.Key("pending"), "回复", font, forkColor).Label("正在创建分叉")
+					} else {
+						inlineSymbol(c, forkIcon, "回复", font, 13, forkColor)
+					}
 				})
+				if spinning {
+					fork.Label("正在创建分叉").Tooltip("正在创建分叉")
+				}
 				if fork.Clicked() {
 					v.forkSession(v.Model.Details[v.Model.SessionID].Session, turn.ID)
 				}
@@ -1769,11 +1793,16 @@ func (v *View) respond(r domain.PendingRequest, answer domain.Answer) {
 	if state.busy {
 		return
 	}
-	state.busy, state.err = true, ""
-	if !v.do(app.Job{Method: "request.respond", Input: protocol.AnswerInput{SessionID: r.SessionID, Answer: answer}, Apply: func(_ *app.Model, _ json.RawMessage, err error) {
+	state.busy, state.err, state.decision = true, "", answer.Decision
+	if !v.do(app.Job{Method: "request.respond", Input: protocol.AnswerInput{SessionID: r.SessionID, Answer: answer}, Apply: func(m *app.Model, _ json.RawMessage, err error) {
 		if err != nil {
-			state.busy = false
-			state.err = err.Error()
+			for _, current := range m.Details[r.SessionID].Requests {
+				if current.ID == r.ID && current.Revision == r.Revision && current.State == "pending" {
+					state.busy = false
+					state.err = err.Error()
+					break
+				}
+			}
 		}
 	}}) {
 		state.busy = false
@@ -1799,7 +1828,7 @@ func (v *View) sendMessage(steer bool) {
 	if v.preparingAttachments(v.Model.DraftKey()) {
 		return
 	}
-	if v.Model.QueueEdits[v.Model.SessionID].ID != "" {
+	if v.Model.ActiveQueueEdit(v.Model.SessionID).ID != "" {
 		v.saveQueued()
 		return
 	}
@@ -1821,9 +1850,7 @@ func (v *View) sendMessage(steer bool) {
 		v.submitActive(in, method, turn)
 		return
 	}
-	sent := v.beginSendMotion(in)
-	v.homeSend = &homeSendPresentation{in: in, sentAt: time.Now(), session: in.SessionID}
-	sent.session = in.SessionID
+	sent := v.beginPresentedSend(in, "")
 	var prepare func() error
 	if v.Saver != nil {
 		state, _ := v.persistenceModel().EncodeState()
@@ -1833,12 +1860,7 @@ func (v *View) sendMessage(steer bool) {
 	}
 	if !v.do(app.Job{Prepare: prepare, Method: "session.submit", Input: in, Apply: func(m *app.Model, b json.RawMessage, err error) {
 		if err != nil {
-			m.SubmissionError(in, err)
-			if h := v.homeSend; h != nil && h.in.OperationID == in.OperationID && v.homeSendPending() {
-				h.state = domain.OperationIndeterminate
-			} else if v.sent == sent {
-				v.sent = nil
-			}
+			v.presentedSendError(m, in, err)
 			return
 		}
 

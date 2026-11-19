@@ -153,6 +153,7 @@ func (v *View) prepareSecondary() {
 	pane.frameTime, pane.reduceMotion = v.frameTime, v.reduceMotion
 	pane.md.Theme = v.md.Theme
 	pane.syncQueuedMotions()
+	pane.syncHomeSend()
 	pane.syncSendMotion()
 	pane.syncSessionEntry()
 	pane.syncReplyStreams(m.Details[session.ID])

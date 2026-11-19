@@ -28,6 +28,7 @@ type directoryPicker struct {
 	input, selected, message, requested string
 	page                                domain.DirectoryPage
 	history                             []string
+	scroll                              map[string]*n.ScrollState
 	hidden                              bool
 	loadedHidden                        bool
 	phase                               directoryPhase
@@ -343,10 +344,19 @@ func (v *View) directoryContents(c *n.Context, t *n.Theme, p *directoryPicker) {
 		})
 		return
 	}
-	n.Scroll(c.Key("folders:"+p.page.Path+strconv.FormatBool(p.loadedHidden))).Fill().Padding(6, directoryListInset).Children(func() {
+	key := p.page.Path + ":" + strconv.FormatBool(p.loadedHidden)
+	if p.scroll == nil {
+		p.scroll = make(map[string]*n.ScrollState)
+	}
+	scroll := p.scroll[key]
+	if scroll == nil {
+		scroll = &n.ScrollState{}
+		p.scroll[key] = scroll
+	}
+	n.Scroll(c.Key("folders:"+key)).TrackScroll(scroll).Fill().Padding(6, directoryListInset).Children(func() {
 		n.Column(c).FillWidth().FocusGroup(n.Vertical).Children(func() {
 			for _, entry := range p.page.Entries {
-				row := control(c.Key(entry.Path), 5).FillWidth().Height(32).Radius(5).PaddingX(configurationDialogInset - directoryListInset).AlignItems(n.Center).Label("文件夹：" + entry.Name).Disabled(p.visiblePhase() == directoryLoading).Transition(fadeMotion(c, 140*time.Millisecond))
+				row := control(c.Key(entry.Path), 5).FillWidth().Height(32).Radius(5).PaddingX(configurationDialogInset - directoryListInset).AlignItems(n.Center).Label("文件夹：" + entry.Name).Disabled(p.visiblePhase() == directoryLoading)
 				if p.selected == entry.Path {
 					row.Background(t.Selection)
 				}

@@ -340,6 +340,9 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		m.Resolved[op.ID] = true
 		m.Error = ""
 	} else if op.State == "rejected" || op.State == "abandoned" {
+		if op.State == domain.OperationRejected {
+			m.retainRejectedDraft(in)
+		}
 		if m.UncertainSubmissions[op.ID] {
 			m.ReportFeedback(Feedback{ID: op.ID, ConnectionID: m.PendingDevices[op.ID], WorkspaceID: in.WorkspaceID, SessionID: in.SessionID, Title: "本次提交未被接纳", Body: "原文与附件已保留。", Details: op.Error})
 		}

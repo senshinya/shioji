@@ -28,6 +28,14 @@ type tailnetUI struct {
 	peer, refreshID                    string
 	refreshUntil                       time.Time
 	logout                             bool
+	toggle                             *tailnetToggle
+	toggleError                        string
+}
+
+type tailnetToggle struct {
+	id, kind string
+	on       bool
+	until    time.Time
 }
 
 func (v *View) networkUI() *tailnetUI {
@@ -38,6 +46,9 @@ func (v *View) networkUI() *tailnetUI {
 }
 func (v *View) tailnetAction(kind string) {
 	u := v.networkUI()
+	if v.Controller == nil || u.toggle != nil {
+		return
+	}
 	if kind == "join" {
 		u.joining = true
 		u.autoOpen = true
@@ -50,13 +61,27 @@ func (v *View) tailnetAction(kind string) {
 		u.autoOpen = false
 		u.lastURL = ""
 	}
-	if v.Controller != nil {
-		v.Controller.Do(app.Job{Method: "$tailnet", Input: tailnet.Action{Kind: kind, Hostname: strings.TrimSpace(u.hostname), ID: func() string {
-			if kind == "join" {
-				return u.joinID
-			}
-			return domain.NewID()
-		}()}})
+	id := domain.NewID()
+	if kind == "join" {
+		id = u.joinID
+	}
+	if !v.Controller.Do(app.Job{Method: "$tailnet", Input: tailnet.Action{Kind: kind, Hostname: strings.TrimSpace(u.hostname), ID: id}}) {
+		if kind == "join" {
+			u.joining, u.autoOpen = false, false
+		}
+		if kind == "join" {
+			v.sshError = "网络操作繁忙，请重试"
+		} else {
+			u.toggleError = "网络操作繁忙，请重试"
+		}
+		return
+	}
+	u.toggleError = ""
+	switch kind {
+	case "pause", "resume":
+		u.toggle = &tailnetToggle{id: id, kind: kind, on: v.Model.Tailnet.State != "Stopped", until: v.frameTime.Add(20 * time.Second)}
+	case "incoming-on", "incoming-off":
+		u.toggle = &tailnetToggle{id: id, kind: kind, on: v.Model.Tailnet.InboundEnabled, until: v.frameTime.Add(20 * time.Second)}
 	}
 }
 func (v *View) beginTailnet() {
@@ -85,6 +110,15 @@ func (v *View) syncTailnet() {
 		return
 	}
 	s := v.Model.Tailnet
+	if p := u.toggle; p != nil {
+		switch {
+		case s.OperationID == p.id && (p.kind != "resume" || s.State != "Starting" || s.Error != ""):
+			u.toggle = nil
+		case !v.frameTime.Before(p.until):
+			u.toggle = nil
+			u.toggleError = "网络操作结果待核对"
+		}
+	}
 	if u.autoOpen && u.authorizationURL(s) != "" && s.AuthURL != u.lastURL {
 		if uri, err := url.Parse(s.AuthURL); err == nil && uri.Scheme == "https" && uri.Hostname() != "" && uri.User == nil {
 			u.lastURL = s.AuthURL
@@ -270,6 +304,9 @@ func (v *View) tailnetPage(c *n.Context, t *n.Theme) {
 	s := v.Model.Tailnet
 	u := v.networkUI()
 	joining := s.State == "NotStarted" || s.State == "NeedsLogin" || s.State == "" || u.joining
+	if p := u.toggle; p != nil {
+		c.After(p.until.Sub(c.Now()))
+	}
 	n.Column(c).Fill().Children(func() {
 		width, _ := c.Size()
 		header := n.Column(c).FillWidth().Height(88).Padding(28, configurationInset, 20)
@@ -286,7 +323,7 @@ func (v *View) tailnetPage(c *n.Context, t *n.Theme) {
 				n.Text(c, "Tailnet").FontSize(configurationTitleSize).FixedLineHeight(configurationTitleLine).Grow(1)
 				if !joining {
 					trigger := iconButton(c, moreActionsIcon, "Tailnet 网络操作")
-					v.choiceMenu(c, t, "tailnet-actions", trigger, []menuChoice{{id: "logout", name: "退出网络…", choose: func() { u.logout = true }}})
+					v.choiceMenu(c, t, "tailnet-actions", trigger.Disabled(u.toggle != nil), []menuChoice{{id: "logout", name: "退出网络…", choose: func() { u.logout = true }}})
 				}
 			})
 		})
@@ -331,7 +368,10 @@ func (v *View) tailnetPage(c *n.Context, t *n.Theme) {
 							n.Text(c, name).Grow(1).MinWidth(0).FontSize(16).FontWeight(500).FixedLineHeight(24).SingleLine().Ellipsis("…").TooltipWhenTruncated(name).Transform(n.Translation(0, inlineCenterOffset(name, font)))
 							v.tailnetConnectionStatus(c.Key("status"), t, s)
 							on := s.State != "Stopped"
-							if configurationSwitch(c, &on).Label("Tailnet 连接开关").Disabled(v.Controller == nil).Changed() {
+							if p := u.toggle; p != nil && (p.kind == "resume" || p.kind == "pause") {
+								on = p.on
+							}
+							if confirmedConfigurationSwitch(c, &on, on).Label("Tailnet 连接开关").Disabled(v.Controller == nil || u.toggle != nil).Changed() {
 								if on {
 									v.tailnetAction("resume")
 								} else {
@@ -357,7 +397,15 @@ func (v *View) tailnetPage(c *n.Context, t *n.Theme) {
 					deviceConfigRow(c, "入站转发", func() {
 						on := s.InboundEnabled
 						n.Row(c).FillWidth().Justify(n.End).Children(func() {
-							if configurationSwitch(c, &on).Label("入站转发开关").Tooltip("转发到本机相同 TCP 端口").Disabled(v.Controller == nil).Changed() {
+							if p := u.toggle; p != nil && (p.kind == "incoming-on" || p.kind == "incoming-off") {
+								on = p.on
+								label := "正在开启入站转发"
+								if p.kind == "incoming-off" {
+									label = "正在关闭入站转发"
+								}
+								n.Text(c.Key("inbound-pending"), label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+							}
+							if confirmedConfigurationSwitch(c, &on, on).Label("入站转发开关").Tooltip("转发到本机相同 TCP 端口").Disabled(v.Controller == nil || u.toggle != nil).Changed() {
 								if on {
 									v.tailnetAction("incoming-on")
 								} else {
@@ -367,9 +415,13 @@ func (v *View) tailnetPage(c *n.Context, t *n.Theme) {
 						})
 					})
 				})
-				v.welcomeError(c, s.Error)
+				message := s.Error
+				if u.toggleError != "" {
+					message = u.toggleError
+				}
+				v.welcomeError(c, message)
 				if s.State != "Running" && s.State != "Stopped" {
-					if configurationAction(c, "重新连接").MarginStart(-8).Transition(fadeMotion(c, 160*time.Millisecond)).Disabled(v.Controller == nil || s.State == "Starting").Clicked() {
+					if configurationAction(c, "重新连接").MarginStart(-8).Transition(fadeMotion(c, 160*time.Millisecond)).Disabled(v.Controller == nil || s.State == "Starting" || u.toggle != nil).Clicked() {
 						v.tailnetAction("resume")
 					}
 				}
@@ -399,9 +451,18 @@ func tailnetCopyButton(c *n.Context, value, label string) {
 
 func (v *View) tailnetConnectionStatus(c *n.Context, t *n.Theme, s tailnet.Snapshot) {
 	label := tailnetStatus(s)
+	spinning := s.State == "Starting" || s.State == "NeedsMachineAuth"
+	if p := v.networkUI().toggle; p != nil {
+		switch p.kind {
+		case "resume":
+			label, spinning = "正在连接", true
+		case "pause":
+			label, spinning = "正在暂停", true
+		}
+	}
 	font := n.Font{Family: t.Font, Size: 12, Weight: 400}
 	n.Row(c).Gap(7).AlignItems(n.Baseline).Transform(n.Translation(0, inlineCenterOffset(label, font))).Children(func() {
-		if s.State == "Starting" || s.State == "NeedsMachineAuth" {
+		if spinning {
 			serviceSpinner(c.Key("spinner"), label, font, t.TextMuted)
 		} else {
 			color := t.TextMuted
@@ -457,7 +518,7 @@ func (v *View) tailnetNetworkPeers(c *n.Context, t *n.Theme, s tailnet.Snapshot)
 					n.Text(c, fmt.Sprint(len(s.Peers))).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 				}
 			})
-			button := control(c.Key("refresh")).Size(28, 28).Label("刷新网络设备").Tooltip("刷新网络设备").Disabled(v.Controller == nil || s.State != "Running" || refreshing)
+			button := control(c.Key("refresh")).Size(28, 28).Label("刷新网络设备").Tooltip("刷新网络设备").Disabled(v.Controller == nil || s.State != "Running" || refreshing || u.toggle != nil)
 			button.Children(func() {
 				if refreshing {
 					serviceSpinner(c.Key("spinner"), "刷新", n.Font{Family: t.Font, Size: 12, Weight: 400}, t.TextMuted)

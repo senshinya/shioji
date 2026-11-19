@@ -237,7 +237,11 @@ func (m *Model) ArchivePolicyJobs(inFlight func(connection, epoch string) bool) 
 // ApplyArchiveDeletion also accepts a validated command receipt, so a delayed
 // event does not keep deleted history or a confirmation dialog on screen.
 func (m *Model) ApplyArchiveDeletion(d domain.ArchiveDeletion) {
+	if d.WorkspaceID != "" {
+		m.deleteRetainedDrafts("", d.WorkspaceID)
+	}
 	for _, id := range d.SessionIDs {
+		m.deleteRetainedDrafts(id, "")
 		delete(m.Details, id)
 		delete(m.HistoryReads, id)
 		delete(m.HistoryOutlines, id)

@@ -61,6 +61,78 @@ type archiveDeleteTarget struct {
 	input                     protocol.ArchiveDeleteInput
 }
 
+type archiveChangeKey struct{ connection, workspace, session string }
+
+type archiveChange struct {
+	epoch    string
+	archived bool
+}
+
+func (v *View) pendingArchiveChange(workspace, session string) *archiveChange {
+	root := v.splitRoot()
+	key := archiveChangeKey{root.Model.WorkspaceConnection(workspace), workspace, session}
+	return root.archiveChanges[key]
+}
+
+func (p *archiveChange) label() string {
+	if p.archived {
+		return "正在归档"
+	}
+	return "正在恢复"
+}
+
+func (v *View) changeArchive(workspace, session string, archived bool, revision int64) {
+	root := v.splitRoot()
+	key := archiveChangeKey{root.Model.WorkspaceConnection(workspace), workspace, session}
+	if !root.canManage(key.connection) || root.archiveChanges[key] != nil {
+		return
+	}
+	pending := &archiveChange{epoch: root.deviceState(key.connection).ConnectionEpoch, archived: archived}
+	if root.archiveChanges == nil {
+		root.archiveChanges = make(map[archiveChangeKey]*archiveChange)
+	}
+	root.archiveChanges[key] = pending
+	job := app.Job{ConnectionID: key.connection, Method: "workspace.archive", Input: protocol.WorkspaceArchiveInput{WorkspaceID: workspace, Revision: revision, Archived: archived}}
+	if session != "" {
+		job.Method, job.Input = "session.archive", protocol.SessionChangeInput{SessionID: session, Revision: revision, Archived: archived}
+	}
+	job.Apply = func(m *app.Model, _ json.RawMessage, err error) {
+		if err != nil && root.archiveChanges[key] == pending {
+			root.syncArchiveChanges()
+			if root.archiveChanges[key] == pending {
+				delete(root.archiveChanges, key)
+				m.Error = err.Error()
+			}
+		}
+	}
+	if !v.do(job) {
+		delete(root.archiveChanges, key)
+		v.Model.Error = "设备操作繁忙，请重试"
+	}
+	root.services.Invalidate()
+}
+
+func (v *View) syncArchiveChanges() {
+	for key, pending := range v.archiveChanges {
+		state := v.deviceState(key.connection)
+		awaiting := false
+		if state.Connected && state.ConnectionEpoch == pending.epoch {
+			if key.session != "" {
+				for _, s := range state.Snapshot.Sessions {
+					awaiting = awaiting || s.ID == key.session && s.WorkspaceID == key.workspace && s.Archived != pending.archived
+				}
+			} else {
+				for _, w := range state.Snapshot.Workspaces {
+					awaiting = awaiting || w.ID == key.workspace && w.Archived != pending.archived
+				}
+			}
+		}
+		if !awaiting {
+			delete(v.archiveChanges, key)
+		}
+	}
+}
+
 func (v *View) archiveState() *archiveUI {
 	root := v.splitRoot()
 	if root.archive == nil {
@@ -197,7 +269,12 @@ func (v *View) archivePage(c *n.Context, t *n.Theme) {
 				n.Row(c).FillWidth().Height(36).Gap(8).AlignItems(n.Center).Children(func() {
 					n.Text(c, "工作区已归档").FontSize(12).TextColor(t.TextMuted)
 					n.Spacer(c).Grow(1)
-					if configurationAction(c, "恢复工作区").Disabled(!v.canManage(m.WorkspaceConnection(scope.ID))).Clicked() {
+					label := "恢复工作区"
+					pending := v.pendingArchiveChange(scope.ID, "")
+					if pending != nil {
+						label = pending.label()
+					}
+					if configurationAction(c.Key("restore-archive-scope"), label).Disabled(pending != nil || !v.canManage(m.WorkspaceConnection(scope.ID))).Clicked() {
 						v.archiveWorkspace(scope, false)
 					}
 				})
@@ -365,6 +442,7 @@ func (v *View) archiveRow(c *n.Context, t *n.Theme, a *archiveUI, w domain.Works
 		n.Row(c.Key("archive-actions")).Width(archiveActionWidth).Height(28).Gap(4).AlignItems(n.Center).Opacity(opacity).Transform(n.Translation(0, -inlineCenterOffset(title, font))).Children(func() {
 			connection := v.Model.WorkspaceConnection(w.ID)
 			ready := v.canManage(connection)
+			pending := v.pendingArchiveChange(w.ID, s.ID)
 			restorable := ready && (isWorkspace || !w.Archived)
 			if a.deletion != nil && a.deletion.busy {
 				ready = false
@@ -374,7 +452,7 @@ func (v *View) archiveRow(c *n.Context, t *n.Theme, a *archiveUI, w domain.Works
 			if isWorkspace {
 				restoreLabel = "恢复工作区：" + title
 			}
-			restore := iconButton(c, recoveryIcon, restoreLabel).Disabled(!show || !restorable)
+			restore := iconButton(c, recoveryIcon, restoreLabel).Disabled(!show || !restorable || pending != nil)
 			if !ready {
 				restore.Tooltip("连接所属设备后可恢复")
 			} else if !isWorkspace && w.Archived {
@@ -391,7 +469,7 @@ func (v *View) archiveRow(c *n.Context, t *n.Theme, a *archiveUI, w domain.Works
 			if isWorkspace {
 				deleteLabel = "彻底删除工作区：" + title
 			}
-			remove := iconButton(c, archiveDeleteIcon, deleteLabel).Disabled(!show || !ready || !v.canDeleteArchive(connection))
+			remove := iconButton(c, archiveDeleteIcon, deleteLabel).Disabled(!show || !ready || pending != nil || !v.canDeleteArchive(connection))
 			if !ready {
 				remove.Tooltip("连接所属设备后可彻底删除")
 			} else if !v.canDeleteArchive(connection) {
@@ -408,6 +486,9 @@ func (v *View) archiveRow(c *n.Context, t *n.Theme, a *archiveUI, w domain.Works
 				}
 			}
 		})
+		if pending := v.pendingArchiveChange(w.ID, s.ID); pending != nil {
+			n.Text(c.Key("archive-action-pending"), pending.label()).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+		}
 	})
 }
 

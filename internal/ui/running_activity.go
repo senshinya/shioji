@@ -14,6 +14,7 @@ import (
 // lifecycle. No phase is inferred from a tool name, source ID or elapsed time.
 type runningActivity struct {
 	label           string
+	sending         string
 	item            string
 	index           int
 	hiddenReasoning bool
@@ -23,7 +24,7 @@ type runningActivity struct {
 }
 
 func (v *View) runningActivity(turn domain.Turn) runningActivity {
-	a := runningActivity{label: "进行中", started: v.runningElapsedStart(turn)}
+	a := runningActivity{label: "进行中", sending: v.activeSendLabel(turn), started: v.runningElapsedStart(turn)}
 	if turn.Status == domain.ExecutionStarting {
 		a.label = "正在准备"
 	}
@@ -86,6 +87,18 @@ func (v *View) runningActivity(turn domain.Turn) runningActivity {
 		}
 	}
 	return a
+}
+
+func (v *View) activeSendLabel(turn domain.Turn) string {
+	if label := v.steerProgressLabel(turn); label != "" {
+		return label
+	}
+	if turn.ID != "" && turn.Status.Active() && v.Model.Connected {
+		if _, preview := v.latestQueuedSendPreview(turn.ID); preview != nil {
+			return preview.pendingLabel()
+		}
+	}
+	return ""
 }
 
 // A same-turn insertion starts a new visible elapsed interval. Worker-owned
@@ -236,12 +249,15 @@ func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domai
 		}
 	}
 	activity := v.runningActivity(turn)
-	if turn.ID == "" || v.stoppingTurn(turn.ID) || activity.waiting || activity.compaction != "" {
+	if turn.ID == "" || v.stoppingTurn(turn.ID) || activity.sending == "" && (activity.waiting || activity.compaction != "") {
 		v.runningProgress = nil
 		return
 	}
 	oldProgress := v.runningProgress
 	p := v.progressFor(c, turn)
+	if activity.sending != "" {
+		return
+	}
 	if p != oldProgress {
 		previousGroup, previousTurn = "", ""
 	}
@@ -359,7 +375,7 @@ func runningElapsed(c *n.Context, started *time.Time, color n.Color, compact boo
 
 func (v *View) runningStatus(c *n.Context, t *n.Theme, turn domain.Turn) {
 	a := v.runningActivity(turn)
-	if a.waiting {
+	if a.waiting && a.sending == "" {
 		return
 	}
 	p := v.progressFor(c, turn)
@@ -372,7 +388,9 @@ type progressLabelExtent struct {
 }
 
 func (v *View) progressStatus(c *n.Context, t *n.Theme, a runningActivity, p *runningProgress) {
-	if p != nil {
+	if a.sending != "" {
+		a.label = a.sending
+	} else if p != nil {
 		a.label = p.activityCaption(c, a.label)
 	}
 	row := n.Row(c.Key("running-status")).Gap(6).AlignItems(n.Baseline)
@@ -392,7 +410,7 @@ func (v *View) progressStatus(c *n.Context, t *n.Theme, a runningActivity, p *ru
 	if !preparation.IsZero() {
 		phase = *preparation
 	}
-	running := p != nil || a.label == "进行中"
+	running := a.sending == "" && (p != nil || a.label == "进行中")
 	color := t.TextMuted
 	if running {
 		color = t.Success

@@ -392,6 +392,9 @@ func (v *View) navigationRow(c *n.Context, t *n.Theme, r navigationRow) {
 					n.Text(c, w.Name).SingleLine().Grow(1).FontSize(12).FontWeight(500).FixedLineHeight(20).TooltipWhenTruncated(w.Name)
 				})
 				n.Text(c, m.DeviceName(w.DeviceID)).FontSize(11).TextColor(t.TextMuted).PaddingStart(sidebarMetadataInset)
+				if operation := v.pendingArchiveChange(w.ID, ""); operation != nil {
+					n.Text(c.Key("archive-pending"), operation.label()).FontSize(11).TextColor(t.TextMuted).SingleLine()
+				}
 				if r.pending > 0 {
 					n.Text(c, fmt.Sprint(r.pending)).Font("Menlo").FontSize(11).Width(16).Shrink(0).TextAlign(n.End).
 						TextColor(t.Warning).Label("工作区待处理：" + w.ID)
@@ -473,6 +476,9 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 			animation := motionAnimation(c, 160*time.Millisecond)
 			title := n.Text(c, s.Title).SingleLine().Grow(1).MinWidth(0).FontSize(13).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: &animation}).TextColor(color)
 			title.TooltipWhenTruncated(s.Title)
+			if operation := v.pendingArchiveChange(s.WorkspaceID, s.ID); operation != nil {
+				n.Text(c.Key("archive-pending"), operation.label()).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine()
+			}
 			if pending > 0 {
 				n.Text(c, fmt.Sprint(pending)).Font("Menlo").FontSize(11).Width(16).TextAlign(n.End)
 			}

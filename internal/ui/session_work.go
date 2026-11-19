@@ -459,8 +459,14 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 		u.history.visible = true
 	}
 	detail, exists := v.Model.WorkDetails[v.Model.WorkKey(v.Model.SessionID, w.ID)]
+	if kind == "agents" {
+		detail = u.input.project(detail, c.Now())
+	}
 	if exists && detail.Work.Brief != "" {
 		w.Brief = detail.Work.Brief
+	}
+	if !w.Active() {
+		u.stopping = false
 	}
 	n.Row(c.Key("work-detail-header")).FillWidth().Shrink(0).Height(36).PaddingX(12).Gap(6).AlignItems(n.Center).Children(func() {
 		back := n.ButtonBase(c.Key("work-detail-back")).Height(28).Grow(1).MinWidth(0).Justify(n.Start).Label("返回" + inspectorWorkName(kind) + "列表").Description(w.Title)
@@ -596,7 +602,8 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 					markdown.View(c.Key("body"), item.Text, &u.markdown).FillWidth().FontSize(12)
 				}
 			} else if item.Kind == "user" {
-				n.Text(c, item.Text).AlignSelf(n.End).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(userBubble(t)).Selectable()
+				bubble := n.Text(c, item.Text).AlignSelf(n.End).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(userBubble(t)).Selectable()
+				u.input.messagePose(c, bubble, item.ID)
 			} else if item.Kind == "request" {
 				v.requestSource(c, t, item, true)
 			} else if item.Kind == "request_result" {
@@ -777,12 +784,18 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 			}
 		}
 		if w.CanStop && w.Active() {
-			if control(c).Padding(3, 6).Disabled(!v.Model.Connected || u.stopping).Label("停止" + inspectorWorkName(kind)).Children(func() { n.Text(c, "停止").FontSize(11).TextColor(t.TextMuted) }).Clicked() {
+			label := "停止"
+			if u.stopping {
+				label = "正在停止"
+			}
+			if control(c.Key("stop-work")).Padding(3, 6).Disabled(!v.Model.Connected || u.stopping).Label("停止" + inspectorWorkName(kind)).Children(func() {
+				n.Text(c.Key("caption"), label).FontSize(11).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 120*time.Millisecond)})
+			}).Clicked() {
 				u.stopping = true
 				sid := v.Model.SessionID
 				if !v.do(app.Job{Method: "session.work.stop", Input: protocol.WorkQuery{SessionID: sid, ID: w.ID}, Apply: func(_ *app.Model, _ json.RawMessage, err error) {
-					u.stopping = false
-					if err != nil {
+					if err != nil && u.stopping {
+						u.stopping = false
 						u.error = err.Error()
 					}
 				}}) {

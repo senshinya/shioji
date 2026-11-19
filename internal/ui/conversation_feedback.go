@@ -374,6 +374,14 @@ func (v *View) conversationStatuses(now time.Time) []conversationStatus {
 		id := id
 		out = append(out, conversationStatus{id: "submit:" + id, title: "提交结果待核对", body: "尚未确认消息是否已被接纳。原文与附件已保留，请先核对结果。", icon: feedbackInfo, priority: 1, actions: []statusAction{{label: "核对提交结果", disabled: !m.Connected || v.Controller == nil, run: func(*n.Context) { v.querySubmission(id, source) }}, {label: "查看原文", run: func(*n.Context) { v.feedbackOriginal = !v.feedbackOriginal }}}})
 	}
+	for _, key := range m.RetainedDrafts() {
+		out = append(out, conversationStatus{id: key, title: "另有一份草稿已保留", details: m.Drafts[key], icon: fileAttachmentIcon, compact: true, priority: 1,
+			actions: []statusAction{{label: "切换到保留的草稿", disabled: m.HasPendingInput() || m.ActiveQueueEdit(m.SessionID).ID != "" || v.preparingAttachments(m.DraftKey()), run: func(*n.Context) {
+				v.collectBindings()
+				m.SwapRetainedDraft(key)
+				v.focusComposer = true
+			}}}})
+	}
 	if status := v.historyConversationStatus(); status != nil {
 		out = append(out, *status)
 	}
@@ -414,7 +422,16 @@ func (v *View) conversationStatuses(now time.Time) []conversationStatus {
 		out = append(out, conversationStatus{id: "connection", title: "无法连接执行设备", body: "正在重新连接设备，草稿和队列已保留。恢复连接后不会自动发送草稿。", icon: recoveryIcon, priority: 5, actions: []statusAction{{label: "重试连接", disabled: v.Controller == nil, run: func(*n.Context) { v.do(app.Job{Method: "$reconnect"}) }}, device}})
 	}
 	if kind := m.ArchivedContext(); kind != "" {
-		out = append(out, conversationStatus{id: "archived", title: kind + "已归档", icon: feedbackInfo, compact: true, priority: 6, actions: []statusAction{{label: "恢复" + kind, disabled: !v.canManage(source.connection), run: func(*n.Context) { v.restoreArchivedContext(kind) }}}})
+		session := m.SessionID
+		if kind == "工作区" {
+			session = ""
+		}
+		pending := v.pendingArchiveChange(m.WorkspaceID, session)
+		label := "恢复" + kind
+		if pending != nil {
+			label = pending.label()
+		}
+		out = append(out, conversationStatus{id: "archived", title: kind + "已归档", icon: feedbackInfo, compact: true, priority: 6, actions: []statusAction{{label: label, disabled: pending != nil || !v.canManage(source.connection), run: func(*n.Context) { v.restoreArchivedContext(kind) }}}})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].priority < out[j].priority })
 	return out

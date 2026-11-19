@@ -23,13 +23,19 @@ const (
 )
 
 func (v *View) editQueued(id string) {
-	if err := v.Model.EditQueued(id); err != nil {
+	m := v.Model
+	if v.pendingQueueCommand(m.SessionID) != nil || m.HasPendingInput() || m.HistoryEdits[m.SessionID].ItemID != "" {
+		return
+	}
+	if edit := m.QueueEdits[m.SessionID]; edit.ID == id && edit.Submitted != nil {
+		m.ResumeQueueEdit(m.SessionID, edit.Revision)
+	} else if err := m.EditQueued(id); err != nil {
 		v.Model.Error = err.Error()
-	} else {
-		v.focusComposer = true
-		if a := v.queueArrival(id); a != nil {
-			a.started = v.frameTime.Add(-queueArrivalDuration)
-		}
+		return
+	}
+	v.focusComposer = true
+	if a := v.queueArrival(id); a != nil {
+		a.started = v.frameTime.Add(-queueArrivalDuration)
 	}
 }
 
@@ -67,7 +73,7 @@ func (v *View) previewQueueRows(c *n.Context, list n.Element, q domain.QueueStat
 			index++
 		}
 		d.phase = queueDragSaving
-		v.queueCommand("queue.reorder", protocol.QueueInput{SessionID: q.SessionID, ID: d.id, BeforeID: before, Revision: d.revision}, nil)
+		v.queueCommand("queue.reorder", protocol.QueueInput{SessionID: q.SessionID, ID: d.id, BeforeID: before, Revision: d.revision})
 	}
 	if from < 0 || from == d.to {
 		return q.Items
@@ -96,7 +102,7 @@ func (v *View) queueRowGestures(c *n.Context, row n.Element, q domain.QueueState
 		}
 		c.AnimationFrame()
 	}
-	unlocked := m.Connected && !v.queueBusy[q.SessionID] && m.QueueEdits[q.SessionID].ID == ""
+	unlocked := m.Connected && v.pendingQueueCommand(q.SessionID) == nil && m.ActiveQueueEdit(q.SessionID).ID == ""
 	if row.DoubleClicked() && unlocked && !m.HasPendingInput() && !item.State.Reserved() {
 		v.editQueued(item.ID)
 	}

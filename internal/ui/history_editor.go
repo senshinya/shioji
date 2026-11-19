@@ -105,7 +105,7 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 				}
 				v.historyAttachments(c, t, item)
 			})
-			if v.sent == nil || v.sent.input != item.ID {
+			if v.motionForInput(item.ID) == nil {
 				bubble.Transition(n.ElementTransition{Position: true, Size: true, Colors: true, Duration: 280 * time.Millisecond, Ease: composerDescentEase})
 			}
 			if item.Kind == "user" {
@@ -122,8 +122,31 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 }
 
 func (v *View) historyMessageActions(c *n.Context, t *n.Theme, item domain.Item, preview bool, begin func()) {
-	n.Row(c.Key("user-actions:" + item.ID)).Gap(messageFooterGap).Height(24).AlignItems(n.Center).Unselectable().Label("用户消息操作").Children(func() {
+	actions := n.Row(c.Key("user-actions:" + item.ID)).Gap(messageFooterGap).Height(24).AlignItems(n.Center).Unselectable().Label("用户消息操作")
+	if motion := v.motionForInput(item.ID); motion != nil && motion.queued && motion.source.W > 0 && !c.Preferences().ReduceMotion {
+		// The action row stays in flow, but becomes visible only as the
+		// lifted bubble approaches its final position.
+		actions.Opacity(min(1, max(0, (motion.progress(c)-.84)/.16)))
+	}
+	actions.Children(func() {
 		font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+		status := v.presentedInputStatus(item)
+		slot := n.Row(c.Key("sending")).Height(24).AlignItems(n.Center)
+		retained := n.Local(slot, "caption", func() string { return status })
+		target := float32(0)
+		if status != "" {
+			*retained, target = status, 1
+		}
+		alpha := slot.AnimateTo("presence", target, motionAnimation(c, 120*time.Millisecond))
+		if alpha == 0 {
+			slot.Hidden(true)
+		} else {
+			// Keep its width until the fade ends so the native exit cannot
+			// paint the old caption over the adjacent edit and copy controls.
+			slot.Opacity(alpha).Children(func() {
+				n.Text(c, *retained).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+			})
+		}
 		if item.Kind == "user" {
 			edit := n.ButtonBase(c.Key("edit")).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("修改并重新开始").Tooltip("修改并重新开始").Disabled(preview || item.Status != "sent" || item.TurnID == "" || v.historyBusy[v.Model.SessionID] || !v.Model.RunReadiness().Capabilities.Restart)
 			color := textHoverColor(c, edit, t.TextMuted)

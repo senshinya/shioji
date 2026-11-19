@@ -191,11 +191,10 @@ func (v *View) continueSession(origin n.Rect) {
 		m.Error = err.Error()
 		return
 	}
-	sent := v.beginSendMotion(in)
+	sent := v.beginPresentedSend(in, "")
 	// The action originates in the recovery row, but its label is not the
 	// message text. Keep the normal reading width throughout the transition.
 	sent.source.Y = origin.Y
-	sent.session = in.SessionID
 	var prepare func() error
 	if v.Saver != nil {
 		state, _ := v.persistenceModel().EncodeState()
@@ -205,28 +204,21 @@ func (v *View) continueSession(origin n.Rect) {
 	}
 	if !v.do(app.Job{Prepare: prepare, Method: "session.submit", Input: in, Apply: func(model *app.Model, b json.RawMessage, err error) {
 		if err != nil {
-			if v.sent == sent {
-				v.sent = nil
-			}
-			model.SubmissionError(in, err)
+			v.presentedSendError(model, in, err)
 			return
 		}
 		var op domain.Operation
 		if err = json.Unmarshal(b, &op); err != nil {
-			model.Error = err.Error()
-			if v.sent == sent {
-				v.sent = nil
-			}
+			v.presentedSendError(model, in, err)
 			return
 		}
 		model.Accepted(in, op)
-		if v.Model.SessionID == in.SessionID {
-			v.focusComposer = true
-		}
+		v.acceptHomeSend(model, op)
 	}}) {
 		delete(m.Pending, in.OperationID)
 		delete(m.PendingDevices, in.OperationID)
 		v.sent = nil
+		v.clearHomeSend()
 	}
 }
 

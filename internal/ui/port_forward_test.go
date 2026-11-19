@@ -30,6 +30,10 @@ func TestManualForwardFormPreservesExplicitLocalPortAndUsesBoundDevice(t *testin
 		t.Fatal(err)
 	}
 	job := welcomeJob(t, controller, "$forward.create")
+	ui.Frame()
+	if !ui.HasText("正在创建") || v.portForward != d {
+		t.Fatal("the form did not show creation progress before the reply")
+	}
 	in := job.Input.(app.ForwardInput)
 	if job.ConnectionID != "air" || in.Request.DeviceID != "B" || in.Request.Target.Port != 8080 || in.Request.LocalPort != 9080 || in.Request.AutoPort || in.OpenURL != nil {
 		t.Fatal(job.ConnectionID, in)

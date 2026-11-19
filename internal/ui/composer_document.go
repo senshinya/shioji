@@ -111,7 +111,7 @@ func (v *View) composerDocument(c *n.Context, key string) *composerDocument {
 	}
 	identity := key
 	editToken := ""
-	if edit := v.Model.QueueEdits[v.Model.SessionID]; edit.ID != "" && key == v.Model.DraftKey() {
+	if edit := v.Model.ActiveQueueEdit(v.Model.SessionID); edit.ID != "" && key == v.Model.DraftKey() {
 		editToken = edit.Token
 		identity += ":edit:" + edit.Token
 	}

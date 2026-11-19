@@ -7,6 +7,7 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"slices"
 	"strings"
 	"time"
 )
@@ -22,9 +23,14 @@ const (
 
 type workInputUI struct {
 	draft       string
+	retry       string
 	open, focus bool
 	phase       workInputPhase
 	operation   domain.WorkInput
+	preview     domain.WorkInput
+	presentedID string
+	started     time.Time
+	departed    bool
 	error       string
 	epoch       string
 	settledID   string
@@ -32,6 +38,71 @@ type workInputUI struct {
 }
 
 func (s *workInputUI) locked() bool { return s.phase != workInputReady }
+
+func (s *workInputUI) confirm(in domain.WorkInput) {
+	s.settledID = in.OperationID
+	if !s.departed && s.draft == in.Text {
+		s.draft = ""
+	}
+	s.phase, s.error, s.departed = workInputReady, "", false
+	s.operation = domain.WorkInput{}
+}
+
+func (s *workInputUI) reject(in domain.WorkInput, message string) {
+	s.settledID = in.OperationID
+	if s.departed {
+		if s.draft == "" {
+			s.draft = in.Text
+		} else {
+			s.retry = in.Text
+		}
+	}
+	s.phase, s.error, s.departed = workInputReady, message, false
+	s.operation, s.preview = domain.WorkInput{}, domain.WorkInput{}
+}
+
+func (s *workInputUI) project(detail domain.WorkDetail, now time.Time) domain.WorkDetail {
+	in := s.preview
+	if in.OperationID == "" {
+		return detail
+	}
+	id := "input:" + in.OperationID
+	if s.observe(detail) {
+		return detail
+	}
+	if s.started.IsZero() {
+		s.started = now
+	}
+	item := domain.Item{ID: id, Kind: "user", Text: in.Text, Status: "dispatching", Final: true}
+	detail.Items = append(slices.Clone(detail.Items), domain.WorkItem{Item: item})
+	return detail
+}
+
+func (s *workInputUI) observe(detail domain.WorkDetail) bool {
+	in := s.preview
+	if in.OperationID != "" && slices.ContainsFunc(detail.Items, func(row domain.WorkItem) bool {
+		return row.Item.ID == "input:"+in.OperationID && row.Item.Kind == "user" && row.Item.Text == in.Text
+	}) {
+		s.preview = domain.WorkInput{}
+		if s.operation == in {
+			s.confirm(in)
+		}
+		return true
+	}
+	return false
+}
+
+func (s *workInputUI) messagePose(c *n.Context, bubble n.Element, id string) {
+	if id != s.presentedID || s.started.IsZero() || c.Preferences().ReduceMotion {
+		return
+	}
+	progress := min(float32(c.Now().Sub(s.started))/float32(160*time.Millisecond), 1)
+	if progress < 1 {
+		bubble.Transform(n.Translation(0, 8*(1-n.EaseOut(max(0, progress)))))
+		c.AnimationFrame()
+	}
+}
+
 func (s *workInputUI) result(in domain.WorkInput, b json.RawMessage, err error, query bool) {
 	if s.operation != in {
 		return
@@ -39,9 +110,7 @@ func (s *workInputUI) result(in domain.WorkInput, b json.RawMessage, err error, 
 	if err != nil {
 		var remote *protocol.RemoteError
 		if errors.As(err, &remote) && (remote.Code == "notSent" || query && remote.Code == "notFound") {
-			s.settledID = in.OperationID
-			s.phase = workInputReady
-			s.operation = domain.WorkInput{}
+			s.reject(in, err.Error())
 		} else {
 			s.phase = workInputUnknown
 		}
@@ -56,18 +125,9 @@ func (s *workInputUI) result(in domain.WorkInput, b json.RawMessage, err error, 
 	}
 	switch op.State {
 	case "confirmed":
-		s.settledID = in.OperationID
-		if s.draft == in.Text {
-			s.draft = ""
-		}
-		s.phase = workInputReady
-		s.operation = domain.WorkInput{}
-		s.error = ""
+		s.confirm(in)
 	case "rejected":
-		s.settledID = in.OperationID
-		s.phase = workInputReady
-		s.operation = domain.WorkInput{}
-		s.error = op.Error
+		s.reject(in, op.Error)
 	default:
 		s.phase = workInputUnknown
 		s.error = "尚未确认是否接收"
@@ -77,6 +137,10 @@ func workInputAllowed(w domain.WorkActivity) bool {
 	return w.Kind == "agent" && (w.Active() && w.CanSteer || !w.Active() && w.CanContinue)
 }
 func (v *View) sendChildInput(w domain.WorkActivity, u *workDetailUI, query bool) {
+	v.sendChildInputText(w, u, u.input.draft, query, false)
+}
+
+func (v *View) sendChildInputText(w domain.WorkActivity, u *workDetailUI, text string, query, retry bool) {
 	s := &u.input
 	if !v.Model.Connected || s.phase == workInputSending || s.phase == workInputChecking {
 		return
@@ -88,17 +152,22 @@ func (v *View) sendChildInput(w domain.WorkActivity, u *workDetailUI, query bool
 		}
 		s.phase = workInputChecking
 	} else {
-		if s.locked() || !workInputAllowed(w) || strings.TrimSpace(s.draft) == "" {
+		if s.locked() || s.preview.OperationID != "" || !workInputAllowed(w) || strings.TrimSpace(text) == "" {
 			return
 		}
 		mode := "continue"
 		if w.Active() {
 			mode = "steer"
 		}
-		in = domain.WorkInput{OperationID: domain.NewID(), SessionID: v.Model.SessionID, WorkID: w.ID, Mode: mode, Text: s.draft}
+		in = domain.WorkInput{OperationID: domain.NewID(), SessionID: v.Model.SessionID, WorkID: w.ID, Mode: mode, Text: text}
 		s.operation = in
-		s.phase = workInputSending
-		s.error = ""
+		s.preview, s.presentedID, s.started = in, "input:"+in.OperationID, time.Time{}
+		s.phase, s.error, s.departed = workInputSending, "", true
+		if retry {
+			s.retry = ""
+		} else {
+			s.draft = ""
+		}
 	}
 	method := "session.work.send"
 	s.epoch = v.Model.ConnectionEpoch
@@ -107,6 +176,9 @@ func (v *View) sendChildInput(w domain.WorkActivity, u *workDetailUI, query bool
 	}
 	key := v.Model.WorkKey(in.SessionID, in.WorkID)
 	if !v.do(app.Job{Method: method, Input: in, Apply: func(model *app.Model, b json.RawMessage, err error) {
+		if s.operation == in && s.preview == in {
+			s.observe(model.WorkDetails[key])
+		}
 		s.result(in, b, err, query)
 		if s.settledID == in.OperationID {
 			d := model.WorkDetails[key]
@@ -119,8 +191,7 @@ func (v *View) sendChildInput(w domain.WorkActivity, u *workDetailUI, query bool
 		if query {
 			s.phase = workInputUnknown
 		} else {
-			s.phase = workInputReady
-			s.operation = domain.WorkInput{}
+			s.reject(in, "未能连接设备，草稿已保留")
 		}
 		s.error = "未能连接设备，草稿已保留"
 	}
@@ -145,7 +216,7 @@ func (v *View) workInput(c *n.Context, t *n.Theme, w domain.WorkActivity, u *wor
 		s.error = "连接已变化，尚未确认是否接收"
 	}
 	available := workInputAllowed(w)
-	if !available && !s.open && s.draft == "" && s.operation.OperationID == "" {
+	if !available && !s.open && s.draft == "" && s.retry == "" && s.operation.OperationID == "" {
 		label := "此子 Agent 暂不可发送"
 		if !v.Model.Connected {
 			label = "设备已断开"
@@ -192,8 +263,8 @@ func (v *View) workInput(c *n.Context, t *n.Theme, w domain.WorkActivity, u *wor
 					}
 				})
 				content.Children(func() {
-					field = n.TextAreaBase(c.Key("child-message"), &s.draft).FillWidth().Lines(1, 3).MinHeight(32).MaxHeight(72).Padding(0, 2).FontSize(12).FixedLineHeight(20).Label("子 Agent 消息输入").Placeholder(placeholder).PlaceholderColor(n.Transparent).Disabled(s.locked())
-					if s.focus && s.open && !s.locked() {
+					field = n.TextAreaBase(c.Key("child-message"), &s.draft).FillWidth().Lines(1, 3).MinHeight(32).MaxHeight(72).Padding(0, 2).FontSize(12).FixedLineHeight(20).Label("子 Agent 消息输入").Placeholder(placeholder).PlaceholderColor(n.Transparent)
+					if s.focus && s.open {
 						field.Focus()
 						s.focus = false
 					}
@@ -241,7 +312,7 @@ func (v *View) workInput(c *n.Context, t *n.Theme, w domain.WorkActivity, u *wor
 						if control(c.Key("close-child-input")).Height(24).PaddingX(4).Label("收起子 Agent 输入").Children(func() { n.Text(c, "收起").FontSize(11).TextColor(t.TextMuted) }).Clicked() {
 							s.open = false
 						}
-						disabled := s.locked() || !available || !v.Model.Connected || v.Controller == nil || strings.TrimSpace(s.draft) == ""
+						disabled := s.locked() || s.preview.OperationID != "" || !available || !v.Model.Connected || v.Controller == nil || strings.TrimSpace(s.draft) == ""
 						fill := t.Accent
 						if disabled {
 							fill = subtle(t)
@@ -275,7 +346,7 @@ func (v *View) workInput(c *n.Context, t *n.Theme, w domain.WorkActivity, u *wor
 			}
 		})
 		feedback := n.Column(c.Key("child-input-feedback")).FillWidth().Shrink(0).Clip()
-		animatedContentHeight(c, feedback, s.error != "" || s.phase == workInputUnknown, 180*time.Millisecond, func() float32 {
+		animatedContentHeight(c, feedback, s.error != "" || s.phase == workInputUnknown || s.retry != "", 180*time.Millisecond, func() float32 {
 			n.Row(c).FillWidth().Padding(6, 2, 0, 2).Gap(6).AlignItems(n.Baseline).Children(func() {
 				text := s.error
 				if text == "" {
@@ -285,6 +356,10 @@ func (v *View) workInput(c *n.Context, t *n.Theme, w domain.WorkActivity, u *wor
 				if s.phase == workInputUnknown {
 					if control(c.Key("check-child-input")).Height(24).Padding(0).Disabled(!v.Model.Connected).Label("查询子 Agent 发送状态").Children(func() { n.Text(c, "查询状态").FontSize(11).TextColor(t.TextMuted) }).Clicked() {
 						v.sendChildInput(w, u, true)
+					}
+				} else if s.retry != "" {
+					if ghost(c.Key("retry-child-send"), "重试上次消息").Height(24).FontSize(11).Disabled(s.locked() || !available || !v.Model.Connected || v.Controller == nil).Clicked() {
+						v.sendChildInputText(w, u, s.retry, false, true)
 					}
 				}
 			})

@@ -21,6 +21,7 @@ type portForwardDraft struct {
 	connection, host, remote, local, error string
 	open, busy                             bool
 	cancel                                 context.CancelFunc
+	attempt                                uint64
 }
 
 func (v *View) beginPortForward() {
@@ -81,10 +82,12 @@ func (v *View) submitPortForward(d *portForwardDraft) {
 	ctx, cancel := context.WithCancel(context.Background())
 	d.cancel = cancel
 	d.busy = true
+	d.attempt++
+	attempt := d.attempt
 	d.error = ""
 	req := portforward.Request{ID: d.id, DeviceID: device, ConnectionID: d.connection, Name: name, Target: target, LocalPort: local}
 	if !v.Controller.Do(app.Job{Context: ctx, ConnectionID: d.connection, Method: "$forward.create", Input: app.ForwardInput{Request: req}, Apply: func(m *app.Model, body json.RawMessage, err error) {
-		if v.portForward != d {
+		if v.portForward != d || !d.busy || attempt != d.attempt {
 			return
 		}
 		d.busy = false
@@ -165,7 +168,11 @@ func (v *View) portForwardDialog(c *n.Context, t *n.Theme) {
 				if configurationAction(c, "取消").Clicked() {
 					v.cancelPortForward(d)
 				}
-				if compactDialogPrimary(c, "创建").Disabled(d.busy || v.Controller == nil || len(v.Model.Connections) == 0).Clicked() {
+				label := "创建"
+				if d.busy {
+					label = "正在创建"
+				}
+				if compactDialogPrimary(c.Key("create"), label).MinWidth(78).Label("创建").Disabled(d.busy || v.Controller == nil || len(v.Model.Connections) == 0).Clicked() {
 					v.submitPortForward(d)
 				}
 			})

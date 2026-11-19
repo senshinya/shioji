@@ -238,7 +238,7 @@ func (v *View) addAttachmentFiles(key string, paths []string) {
 func (v *View) appendAttachmentPaths(key string, paths []string) error {
 	var binding *composerDocument
 	for _, candidate := range v.composerDocuments {
-		if candidate.key == key && candidate.editToken == v.Model.QueueEdits[strings.TrimPrefix(key, "session:")].Token && candidate.last.equal(v.composerContent(key)) {
+		if candidate.key == key && candidate.editToken == v.Model.ActiveQueueEdit(strings.TrimPrefix(key, "session:")).Token && candidate.last.equal(v.composerContent(key)) {
 			binding = candidate
 			break
 		}
@@ -871,7 +871,7 @@ func (v *View) ControllerDirectory() string {
 }
 
 func (v *View) attachmentPreparationKey(key string) string {
-	edit := v.Model.QueueEdits[strings.TrimPrefix(key, "session:")]
+	edit := v.Model.ActiveQueueEdit(strings.TrimPrefix(key, "session:"))
 	return key + "|" + edit.ID + "|" + edit.Token
 }
 func (v *View) preparingAttachments(key string) bool {

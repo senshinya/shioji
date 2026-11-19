@@ -612,6 +612,9 @@ func TestForkFadesSuffixAndKeepsTheSelectedReplyPosition(t *testing.T) {
 	if sent.Method == "" {
 		t.Fatal("fork did not dispatch after fading")
 	}
+	if _, ok := ui.Find("正在创建分叉"); !ok {
+		t.Fatal("the selected reply has no in-place fork progress")
+	}
 	in := sent.Input.(domain.HistoryChange)
 	branch := d.Session
 	branch.ID, branch.ThreadID = "branch", "branch-thread"

@@ -144,7 +144,7 @@ func (v *View) compactReason() string {
 		return "当前回复结束并确认执行状态后可用"
 	case m.HasPendingInput():
 		return "上一条输入尚未确认"
-	case m.QueueEdits[m.SessionID].ID != "":
+	case m.ActiveQueueEdit(m.SessionID).ID != "":
 		return "请先结束队列编辑"
 	}
 	d := m.Details[m.SessionID]
@@ -168,7 +168,7 @@ func (v *View) compactReason() string {
 }
 func (v *View) tryContextCommand() bool {
 	m := v.Model
-	if m.QueueEdits[m.SessionID].ID != "" {
+	if m.ActiveQueueEdit(m.SessionID).ID != "" {
 		return false
 	}
 	fields := strings.Fields(m.Drafts[m.DraftKey()])

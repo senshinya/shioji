@@ -26,6 +26,11 @@ type gitLoadState struct {
 	previous *domain.GitStatus
 }
 
+type branchCheckout struct {
+	connection, epoch      string
+	branch, previousBranch string
+}
+
 func (v *View) gitLoading(key string) bool {
 	s := v.gitLoads[key]
 	return s != nil && (s.phase == gitRequesting || s.phase == gitRefreshing)
@@ -139,8 +144,16 @@ func (v *View) canSwitchBranch() bool {
 			return false
 		}
 	}
-	return !v.switchingBranch
+	return v.activeBranchCheckout(key) == nil
 }
+
+func (v *View) activeBranchCheckout(key string) *branchCheckout {
+	if p := v.splitRoot().branchCheckouts[key]; p != nil && p.connection == v.Model.ConnectionID() && p.epoch == v.Model.ConnectionEpoch {
+		return p
+	}
+	return nil
+}
+
 func (v *View) chooseBranch(branch string) {
 	m := v.Model
 	v.branchOpen = false
@@ -154,9 +167,24 @@ func (v *View) chooseBranch(branch string) {
 		return
 	}
 	key, q := v.gitQuery()
-	v.switchingBranch = true
+	root := v.splitRoot()
+	pending := &branchCheckout{connection: m.ConnectionID(), epoch: m.ConnectionEpoch, branch: branch, previousBranch: m.GitStatuses[key].Branch}
+	if root.branchCheckouts == nil {
+		root.branchCheckouts = map[string]*branchCheckout{}
+	}
+	root.branchCheckouts[key] = pending
 	if !v.do(app.Job{Method: "git.checkout", Input: protocol.CheckoutInput{GitQuery: q, Branch: branch}, Apply: func(m *app.Model, b json.RawMessage, err error) {
-		v.switchingBranch = false
+		if root.branchCheckouts[key] != pending {
+			return
+		}
+		delete(root.branchCheckouts, key)
+		if v.deviceState(pending.connection).ConnectionEpoch != pending.epoch {
+			return
+		}
+		current := m.GitStatuses[key].Branch
+		if current != pending.previousBranch && current == pending.branch {
+			return // A newer, independently delivered checkout observation owns the row.
+		}
 		if err != nil {
 			m.Error = err.Error()
 			return
@@ -166,9 +194,14 @@ func (v *View) chooseBranch(branch string) {
 			m.Error = err.Error()
 			return
 		}
-		m.SetGitStatus(key, status)
+		if m.ConnectionID() == pending.connection {
+			m.SetGitStatus(key, status)
+		} else {
+			m.ApplyDeviceUpdate(pending.connection, func(p *app.Model) { p.SetGitStatus(key, status) })
+		}
 	}}) {
-		v.switchingBranch = false
+		delete(root.branchCheckouts, key)
+		m.Error = "设备操作繁忙，请重试"
 	}
 }
 func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
@@ -256,6 +289,10 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 					}).FillWidth().Height(min(240, float32(len(choices))*28))
 				})
 			})
+			if pending := v.activeBranchCheckout(key); pending != nil && (pending.previousBranch == pending.branch || branch != pending.branch) {
+				n.Text(c.Key("branch-checkout"), "正在切换分支").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
+					SingleLine().Tooltip(pending.branch)
+			}
 			if home {
 				choice := v.Model.GitDrafts[v.Model.WorkspaceID]
 				isolate := choice.NewWorktree

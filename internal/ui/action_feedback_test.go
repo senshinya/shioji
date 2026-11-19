@@ -1,0 +1,720 @@
+package ui
+
+import (
+	"encoding/json"
+	"errors"
+	"testing"
+	"time"
+
+	n "github.com/egoist/mygo/ui"
+	"shioji/internal/app"
+	"shioji/internal/domain"
+	"shioji/internal/protocol"
+	"shioji/internal/tailnet"
+)
+
+func feedbackJob(t *testing.T, v *View, method string) app.Job {
+	t.Helper()
+	for len(v.Controller.Jobs) > 0 {
+		job := <-v.Controller.Jobs
+		if job.Method == method {
+			return job
+		}
+	}
+	t.Fatalf("missing %s job", method)
+	return app.Job{}
+}
+
+func feedbackClick(t *testing.T, ui *n.Tester, label string) {
+	t.Helper()
+	if err := ui.Click(label); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSteerShowsOneMovingBubbleAcrossWorkerUpdates(t *testing.T) {
+	for _, delay := range []time.Duration{0, 150 * time.Millisecond, 600 * time.Millisecond, 2 * time.Second} {
+		for _, eventFirst := range []bool{true, false} {
+			v, ui := nativeQueueFixture()
+			feedbackClick(t, ui, "消息输入")
+			ui.Type("追加这条指令")
+			ui.Key(n.Cmd, n.KeyEnter)
+			job := feedbackJob(t, v, "turn.steer")
+			in := job.Input.(protocol.SteerInput).Input
+			ui.Frame()
+			label := "用户消息气泡"
+			start, ok := ui.Find(label)
+			if !ok {
+				t.Fatalf("no transcript bubble before confirmation, delay=%v eventFirst=%v", delay, eventFirst)
+			}
+			ui.Advance(delay)
+			before, _ := ui.Find(label)
+			d := v.Model.Details["s"]
+			item := domain.Item{ID: "input:" + in.OperationID, TurnID: "active", Kind: "user", Text: in.Text, Status: "sent", Final: true}
+			op := domain.Operation{ID: in.OperationID, SessionID: "s", State: domain.OperationConfirmed}
+			body, _ := json.Marshal(op)
+			if eventFirst {
+				d.Items = append(d.Items, item)
+				v.Model.Details["s"] = d
+			} else {
+				job.Apply(v.Model, body, nil)
+			}
+			ui.Frame()
+			first, visible := ui.Find(label)
+			if !visible || first != before {
+				t.Fatalf("first update jumped or hid the bubble (%v %v): %v → %v", delay, eventFirst, before, first)
+			}
+			ui.Type("下一条草稿")
+			if eventFirst {
+				job.Apply(v.Model, body, nil)
+			} else {
+				d = v.Model.Details["s"]
+				d.Items = append(d.Items, item)
+				v.Model.Details["s"] = d
+			}
+			ui.Frame()
+			ui.Advance(time.Second)
+			end, visible := ui.Find(label)
+			if !visible || start.Y <= end.Y || v.Model.Drafts["session:s"] != "下一条草稿" || !ui.Focused("消息输入") {
+				t.Fatalf("flight or draft failed (%v %v): %v → %v, draft=%q", delay, eventFirst, start, end, v.Model.Drafts["session:s"])
+			}
+		}
+	}
+}
+
+func TestSteerShowsSendingInTheExistingTurnStatus(t *testing.T) {
+	for _, eventFirst := range []bool{false, true} {
+		v, ui := nativeQueueFixture()
+		detail := v.Model.Details["s"]
+		detail.Items[0].TurnID = "active"
+		v.Model.Details["s"] = detail
+		ui.SetPreferences(n.Preferences{ReduceMotion: true})
+		ui.Frame()
+		progress := v.runningProgress
+		if progress == nil || !ui.HasText("进行中") {
+			t.Fatal("fixture did not show the active turn")
+		}
+		feedbackClick(t, ui, "消息输入")
+		ui.Type("追加这条指令")
+		ui.Key(n.Cmd, n.KeyEnter)
+		job := feedbackJob(t, v, "turn.steer")
+		in := job.Input.(protocol.SteerInput).Input
+		ui.Frame()
+		sending, visible := ui.Find("正在发送")
+		footer, hasFooter := ui.Find("回复信息")
+		bubbleActions, _ := ui.Find("用户消息操作")
+		if !visible || !hasFooter || sending.Y < footer.Y || sending.Y+sending.H > footer.Y+footer.H || sending.Y < bubbleActions.Y+bubbleActions.H || v.runningProgress != progress {
+			t.Fatalf("sending caption should share the active turn indicator, eventFirst=%v: caption=%+v footer=%+v actions=%+v", eventFirst, sending, footer, bubbleActions)
+		}
+		accepted, _ := json.Marshal(domain.Operation{ID: in.OperationID, SessionID: "s", State: domain.OperationAccepted})
+		job.Apply(v.Model, accepted, nil)
+		ui.Frame()
+		if current, ok := ui.Find("正在发送"); !ok || current != sending {
+			t.Fatal("worker acceptance changed the still-pending indicator", sending, current)
+		}
+		detail = v.Model.Details["s"]
+		item := domain.Item{ID: "input:" + in.OperationID, TurnID: "active", Kind: "user", Text: in.Text, Status: "sent", Final: true}
+		updateItem := func() {
+			detail.Items = append(detail.Items, item)
+			v.Model.Details["s"] = detail
+		}
+		body, _ := json.Marshal(domain.Operation{ID: in.OperationID, SessionID: "s", State: domain.OperationConfirmed})
+		ack := func() { job.Apply(v.Model, body, nil) }
+		if eventFirst {
+			updateItem()
+		} else {
+			ack()
+		}
+		ui.Frame()
+		if current, ok := ui.Find("回复信息"); !ok || current != footer || ui.HasText("正在发送") || !ui.HasText("进行中") {
+			t.Fatal("first confirmation did not update the existing indicator", footer, current)
+		}
+		if eventFirst {
+			ack()
+		} else {
+			updateItem()
+		}
+		ack()
+		job.Apply(v.Model, accepted, nil)
+		ui.Frame()
+		after, visible := ui.Find("回复信息")
+		if !visible || after != footer || ui.HasText("正在发送") || !ui.HasText("进行中") || v.runningProgress != progress {
+			t.Fatalf("receipt replaced the running indicator, eventFirst=%v: before=%+v after=%+v", eventFirst, footer, after)
+		}
+	}
+}
+
+func TestSecondSteerKeepsConfirmedBubbleWhileItsItemIsDelayed(t *testing.T) {
+	v, ui := nativeQueueFixture()
+	feedbackClick(t, ui, "消息输入")
+	ui.Type("第一条追加")
+	ui.Key(n.Cmd, n.KeyEnter)
+	job := feedbackJob(t, v, "turn.steer")
+	in := job.Input.(protocol.SteerInput).Input
+	id := "input:" + in.OperationID
+	ui.Advance(600 * time.Millisecond)
+	receipt, err := json.Marshal(domain.Operation{ID: in.OperationID, SessionID: "s", State: domain.OperationConfirmed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job.Apply(v.Model, receipt, nil)
+	ui.Frame()
+	ui.Type("第二条追加")
+	ui.Key(n.Cmd, n.KeyEnter)
+	second := feedbackJob(t, v, "turn.steer").Input.(protocol.SteerInput).Input
+	ui.Advance(600 * time.Millisecond)
+	check := func() {
+		t.Helper()
+		detail := v.homeSendDetail(v.Model.Details["s"])
+		var inputs []string
+		for _, item := range detail.Items {
+			if item.ID == id || item.ID == "input:"+second.OperationID {
+				inputs = append(inputs, item.Text)
+			}
+		}
+		if len(inputs) != 2 || inputs[0] != in.Text || inputs[1] != second.Text {
+			t.Fatalf("successive bubbles disappeared, duplicated or changed order: %v", inputs)
+		}
+	}
+	check()
+	firstBounds, firstVisible := ui.Find(in.Text)
+	secondBounds, secondVisible := ui.Find(second.Text)
+	if !firstVisible || !secondVisible {
+		t.Fatal("both bubbles must be visible before the first item arrives")
+	}
+	detail := v.Model.Details["s"]
+	detail.Items = append(detail.Items, domain.Item{ID: id, TurnID: "active", Kind: "user", Text: in.Text, Status: "sent", Final: true})
+	v.Model.Details["s"] = detail
+	ui.Frame()
+	check()
+	firstAfter, _ := ui.Find(in.Text)
+	secondAfter, _ := ui.Find(second.Text)
+	if firstAfter != firstBounds || secondAfter != secondBounds {
+		t.Fatalf("the delayed item moved either bubble: %v %v → %v %v", firstBounds, secondBounds, firstAfter, secondAfter)
+	}
+}
+
+func TestQueuedSendStartsFlightBeforeWorkerUpdates(t *testing.T) {
+	v, ui := nativeQueueFixture()
+	feedbackClick(t, ui, "待发送 2")
+	ui.Advance(time.Second)
+	feedbackClick(t, ui, "立即发送待发消息 1")
+	feedbackJob(t, v, "queue.send")
+	ui.Frame()
+	if _, visible := ui.Find("用户消息气泡"); !visible || !ui.HasText("正在发送") || v.sent == nil || !v.sent.queued {
+		t.Fatal("the queued message did not start its flight before the worker", ui.Texts())
+	}
+	original := v.sent
+	ui.Advance(800 * time.Millisecond)
+	assertQueuedSendIndicator(t, ui)
+	before, _ := ui.Find("用户消息气泡")
+	copyBefore, _ := ui.Find("复制消息")
+	confirmQueuedInput(v)
+	ui.Frame()
+	after, _ := ui.Find("用户消息气泡")
+	if v.sent != nil || original.started.IsZero() || before != after {
+		t.Fatal("the item event replayed or moved the settled message", before, after)
+	}
+	ui.Advance(150 * time.Millisecond)
+	copyAfter, _ := ui.Find("复制消息")
+	if ui.HasText("正在发送") || copyBefore != copyAfter {
+		t.Fatal("confirmation kept the sending status after its exit")
+	}
+}
+
+func assertQueuedSendIndicator(t *testing.T, ui *n.Tester) {
+	t.Helper()
+	label, visible := ui.Find("正在发送")
+	actions, hasActions := ui.Find("用户消息操作")
+	status, hasStatus := ui.Find("回复信息")
+	if !visible || !hasActions || !hasStatus || label.Y < actions.Y+actions.H || label.X > status.X+40 {
+		t.Fatalf("queued send status should be in the indicator beneath the message, caption=%+v actions=%+v indicator=%+v", label, actions, status)
+	}
+}
+
+func TestQueuedFlightSurvivesDeliveryOrderAndRestoresRejectedItem(t *testing.T) {
+	for _, order := range []string{"reply-first", "event-first", "not-sent", "unknown"} {
+		t.Run(order, func(t *testing.T) {
+			v, ui := nativeQueueFixture()
+			v.Model.Drafts["session:s"] = "keep this draft"
+			feedbackClick(t, ui, "待发送 2")
+			ui.Advance(time.Second)
+			beforeQueue := v.Model.Queue()
+			first := beforeQueue.Items[0]
+			feedbackClick(t, ui, "立即发送待发消息 1")
+			job := feedbackJob(t, v, "queue.send")
+			ui.Advance(600 * time.Millisecond)
+			if _, ok := ui.Find("用户消息气泡"); !ok {
+				t.Fatal("missing local flight")
+			}
+			id := "input:" + first.Input.OperationID
+			if order == "not-sent" {
+				job.Apply(v.Model, nil, &protocol.RemoteError{Code: "notSent", Message: "未发送"})
+				ui.Frame()
+				ui.Advance(500 * time.Millisecond)
+				if _, ok := ui.Find("用户消息气泡"); ok || !ui.HasText(first.Input.Text) || len(v.Model.Queue().Items) != 2 {
+					t.Fatal("rejected input did not return to its queue row")
+				}
+				return
+			}
+			if order == "unknown" {
+				job.Apply(v.Model, nil, errors.New("connection lost"))
+				ui.Frame()
+				ui.Advance(time.Second)
+				if !ui.HasText("发送结果待核实") {
+					t.Fatal("unknown result was dropped", ui.Texts())
+				}
+				for len(v.Controller.Jobs) > 0 {
+					if (<-v.Controller.Jobs).Method == "queue.send" {
+						t.Fatal("unknown result was resent")
+					}
+				}
+			}
+			d := v.Model.Details["s"]
+			d.Items = append(d.Items, domain.Item{ID: id, Kind: "queued", TurnID: "active", Text: first.Input.Text, Final: true})
+			v.Model.Details["s"] = d
+			ui.Frame()
+			before, visible := ui.Find("用户消息气泡")
+			if !visible {
+				t.Fatal("silent worker queue record hid the pending bubble")
+			}
+			queue := beforeQueue
+			queue.Revision++
+			queue.Items = queue.Items[1:]
+			body, _ := json.Marshal(queue)
+			accept := func() {
+				d := v.Model.Details["s"]
+				d.Items[len(d.Items)-1] = domain.Item{ID: id, Kind: "user", TurnID: "active", Text: first.Input.Text, Status: "sent", Final: true}
+				v.Model.Details["s"] = d
+			}
+			if order == "reply-first" {
+				job.Apply(v.Model, body, nil)
+				ui.Frame()
+				accept()
+			} else {
+				accept()
+				ui.Frame()
+				job.Apply(v.Model, body, nil)
+			}
+			job.Apply(v.Model, body, nil)
+			ui.Frame()
+			after, visible := ui.Find("用户消息气泡")
+			if !visible || before != after || v.sent != nil || v.Model.Drafts["session:s"] != "keep this draft" {
+				t.Fatal("receipt moved, replayed or hid the settled bubble", before, after)
+			}
+		})
+	}
+}
+
+func TestQueuedFlightIntoAnIdleSessionKeepsPositionWhenTheTurnArrives(t *testing.T) {
+	v, ui := nativeQueueFixture()
+	d := v.Model.Details["s"]
+	d.Session.Status = domain.ExecutionIdle
+	d.Turns[0].Status = domain.ExecutionCompleted
+	v.Model.Details["s"] = d
+	v.Model.Snapshot.Sessions[0] = d.Session
+	ui.Frame()
+	feedbackClick(t, ui, "待发送 2")
+	ui.Advance(time.Second)
+	feedbackClick(t, ui, "立即发送待发消息 1")
+	job := feedbackJob(t, v, "queue.send")
+	in := job.Input.(protocol.QueueInput)
+	if in.TurnID != "" {
+		t.Fatal("fixture unexpectedly used Steer")
+	}
+	ui.Advance(time.Second)
+	assertQueuedSendIndicator(t, ui)
+	before, _ := ui.Find("用户消息气泡")
+	indicatorBefore, _ := ui.Find("回复信息")
+	confirmQueuedInput(v)
+	d = v.Model.Details["s"]
+	d.Items[len(d.Items)-1].TurnID = "new-turn"
+	v.Model.Details["s"] = d
+	ui.Frame()
+	if frame, ok := ui.Find("回复信息"); !ok || frame != indicatorBefore {
+		t.Fatal("message arrived before the turn and displaced its status", indicatorBefore, frame)
+	}
+	d.Turns = append(d.Turns, domain.Turn{ID: "new-turn", Status: domain.ExecutionRunning})
+	v.Model.Details["s"] = d
+	ui.Frame()
+	ui.Advance(500 * time.Millisecond)
+	after, visible := ui.Find("用户消息气泡")
+	if !visible || before != after {
+		t.Fatal("a new worker turn moved the already sent queue bubble", before, after)
+	}
+	if ui.HasText("正在发送") || !ui.HasText("进行中") || v.toolArrivals.footerKeys["new-turn"] == "" {
+		t.Fatal("the new worker turn did not take over the existing status")
+	}
+	if indicatorAfter, ok := ui.Find("回复信息"); !ok || indicatorBefore != indicatorAfter {
+		t.Fatal("the active turn relocated the status", indicatorBefore, indicatorAfter)
+	}
+}
+
+func TestSessionRenameShowsSavingWhilePreservingTheProposal(t *testing.T) {
+	v, _ := nativeQueueFixture()
+	v.Model.WorkerMinor = 5
+	v.rename = &sessionRename{Connection: "local", Session: v.Model.Details["s"].Session, Title: "renamed", Open: true}
+	ui := n.NewTester(v.View, 1240, 820)
+	ui.Advance(time.Second)
+	feedbackClick(t, ui, "保存名称")
+	job := feedbackJob(t, v, "session.rename")
+	ui.Frame()
+	if !ui.HasText("正在保存") || !v.rename.Open {
+		t.Fatal("rename has no in-place progress")
+	}
+	job.Apply(v.Model, nil, errors.New("device offline"))
+	ui.Advance(500 * time.Millisecond)
+	if !v.rename.Open || v.rename.Title != "renamed" || !ui.HasText("device offline") {
+		t.Fatal("rename failure did not preserve the input")
+	}
+}
+func TestQueuedRemovalStartsBeforeReplyAndRestoresRejectedRow(t *testing.T) {
+	v, ui := nativeQueueFixture()
+	feedbackClick(t, ui, "待发送 2")
+	ui.Advance(time.Second)
+	second, _ := ui.Find("Add a small example")
+	feedbackClick(t, ui, "移除待发消息 1")
+	job := feedbackJob(t, v, "queue.remove")
+	ui.Advance(250 * time.Millisecond)
+	if ui.HasText("Review the rotation code") || len(v.Model.Queue().Items) != 2 {
+		t.Fatal("pending removal did not leave the view while keeping the worker queue")
+	}
+	job.Apply(v.Model, nil, &protocol.RemoteError{Code: "notSent", Message: "未移除"})
+	ui.Frame()
+	ui.Advance(300 * time.Millisecond)
+	restored, _ := ui.Find("Add a small example")
+	if !ui.HasText("Review the rotation code") || restored.Y != second.Y {
+		t.Fatalf("rejection did not restore queue order: %v → %v", second, restored)
+	}
+}
+
+func TestQueuedEditReturnsToOrdinaryDraftBeforeReplyAndRestoresOnFailure(t *testing.T) {
+	v, ui := nativeQueueFixture()
+	v.Model.Drafts["session:s"] = "ordinary draft"
+	feedbackClick(t, ui, "待发送 2")
+	ui.Advance(time.Second)
+	feedbackClick(t, ui, "编辑待发消息 1")
+	ui.Advance(time.Second)
+	ui.Type(" revised")
+	edited := v.Model.Drafts["session:s"]
+	feedbackClick(t, ui, "保存编辑")
+	job := feedbackJob(t, v, "queue.edit")
+	ui.Advance(600 * time.Millisecond)
+	if v.Model.Drafts["session:s"] != "ordinary draft" || !ui.HasText("正在保存") || !ui.Focused("消息输入") {
+		t.Fatal("save left the user in the edit while waiting")
+	}
+	ui.Type(" next")
+	ordinary := v.Model.Drafts["session:s"]
+	job.Apply(v.Model, nil, &protocol.RemoteError{Code: "notSent", Message: "未保存"})
+	ui.Frame()
+	ui.Advance(500 * time.Millisecond)
+	if v.Model.Drafts["session:s"] != ordinary || !ui.Focused("消息输入") {
+		t.Fatal("a failed save interrupted the next draft")
+	}
+	feedbackClick(t, ui, "恢复待发编辑")
+	ui.Advance(500 * time.Millisecond)
+	if v.Model.Drafts["session:s"] != edited || v.Model.QueueEdits["s"].Displaced != ordinary {
+		t.Fatalf("rejection lost one of the drafts: %q vs %q", v.Model.Drafts["session:s"], v.Model.QueueEdits["s"].Displaced)
+	}
+}
+
+func TestApprovalShowsSelectedSubmissionBeforeResolution(t *testing.T) {
+	v := requestMotionModel()
+	v.Controller = app.NewController("")
+	d := v.Model.Details["s"]
+	d.Requests = []domain.PendingRequest{{ID: "approval", SessionID: "s", Kind: "approval", Title: "需要授权", State: "pending"}}
+	v.Model.Details["s"] = d
+	ui := n.NewTester(v.View, 1440, 900)
+	ui.Advance(time.Second)
+	before, _ := ui.Find("待处理请求卡片")
+	feedbackClick(t, ui, "允许这一次")
+	job := feedbackJob(t, v, "request.respond")
+	ui.Advance(150 * time.Millisecond)
+	pending, _ := ui.Find("待处理请求卡片")
+	if !ui.HasText("正在提交") || pending != before {
+		t.Fatalf("request did not show stable pending feedback: %v → %v", before, pending)
+	}
+	job.Apply(v.Model, nil, nil)
+	ui.Frame()
+	if !ui.HasText("正在提交") {
+		t.Fatal("RPC arrival reset the selected request button")
+	}
+}
+
+func TestKeepAwakeReportsPendingOnTheDeviceControl(t *testing.T) {
+	v := New(deviceHealthModel(), app.NewController(""), "")
+	ui := n.NewTester(v.View, 1240, 820)
+	feedbackClick(t, ui, "当前设备")
+	ui.Advance(time.Second)
+	feedbackClick(t, ui, "保持唤醒开关")
+	job := feedbackJob(t, v, "device.keepAwake")
+	ui.Advance(150 * time.Millisecond)
+	if !ui.HasText("正在更新") || v.Model.DeviceHealth.KeepAwake.Enabled {
+		t.Fatal("device control has no confirmed-versus-pending feedback")
+	}
+	job.Apply(v.Model, nil, &protocol.RemoteError{Code: "notSent", Message: "未更新"})
+	ui.Frame()
+	if ui.HasText("正在更新") {
+		t.Fatal("pending feedback outlived the failed operation")
+	}
+}
+
+func TestChildSendProjectsOneMessageWhileTheNextDraftStaysEditable(t *testing.T) {
+	v, ui := sessionWorkFixture(t)
+	v.Controller = app.NewController("")
+	d := v.Model.Details["s"]
+	d.Works[0].CanSteer = true
+	v.Model.Details["s"] = d
+	feedbackClick(t, ui, "查看子 Agent：检查边界条件")
+	ui.Advance(time.Second)
+	feedbackClick(t, ui, "发送消息")
+	ui.Advance(time.Second)
+	feedbackClick(t, ui, "子 Agent 消息输入")
+	ui.Type("子任务本条消息")
+	ui.Key(0, n.KeyEnter)
+	job := feedbackJob(t, v, "session.work.send")
+	in := job.Input.(domain.WorkInput)
+	ui.Advance(600 * time.Millisecond)
+	before, ok := ui.Find(in.Text)
+	if !ok || !ui.Focused("子 Agent 消息输入") {
+		t.Fatal("child send did not project a message and keep the input ready")
+	}
+	ui.Type("子任务下一条")
+	key := v.Model.WorkKey("s", "agent-a")
+	detail := v.Model.WorkDetails[key]
+	detail.Items = append(detail.Items, domain.WorkItem{Item: domain.Item{ID: "input:" + in.OperationID, Kind: "user", Text: in.Text, Final: true}})
+	v.Model.WorkDetails[key] = detail
+	ui.Frame()
+	after, ok := ui.Find(in.Text)
+	if !ok || after != before {
+		t.Fatalf("child message moved when the worker event arrived: %v → %v", before, after)
+	}
+	body, _ := json.Marshal(domain.WorkInputOperation{Input: in, State: domain.OperationConfirmed})
+	job.Apply(v.Model, body, nil)
+	ui.Frame()
+	u := v.workPanel("agents").detail("agent-a")
+	if u.input.draft != "子任务下一条" || !ui.Focused("子 Agent 消息输入") {
+		t.Fatal("late child confirmation changed the new draft or focus")
+	}
+}
+
+func TestContinueOriginalSessionShowsInputBeforeWorkerAndKeepsDraft(t *testing.T) {
+	m := layoutModel()
+	m.WorkerMinor = 7
+	d := m.Details["s"]
+	d.Session.Status = "abandoned"
+	d.Session.Recovery = &domain.SessionRecovery{Phase: "ready", CanContinue: true}
+	m.Details["s"], m.Snapshot.Sessions[0] = d, d.Session
+	m.Drafts["session:s"] = "ordinary continuation draft"
+	v := New(m, app.NewController(""), "")
+	ui := n.NewTester(v.View, 1440, 900)
+	ui.Advance(time.Second)
+	feedbackClick(t, ui, "继续原会话")
+	feedbackJob(t, v, "session.submit")
+	ui.Advance(600 * time.Millisecond)
+	if _, ok := ui.Find("用户消息气泡"); !ok || !ui.HasText("正在发送") || m.Drafts["session:s"] != "ordinary continuation draft" {
+		t.Fatal("continuation has no local input or consumed the ordinary draft")
+	}
+}
+
+func TestArchiveShowsPendingWithoutPrematurelyChangingCatalog(t *testing.T) {
+	m := layoutModel()
+	m.WorkerMinor = 5
+	v := New(m, app.NewController(""), "")
+	ui := n.NewTester(v.View, 1440, 900)
+	v.sessionChange("session.archive", m.Snapshot.Sessions[0], "")
+	job := feedbackJob(t, v, "session.archive")
+	ui.Advance(150 * time.Millisecond)
+	if !ui.HasText("正在归档") || m.Snapshot.Sessions[0].Archived {
+		t.Fatal("archive has no immediate pending state or changed the catalog")
+	}
+	job.Apply(m, nil, nil)
+	ui.Frame()
+	if !ui.HasText("正在归档") {
+		t.Fatal("the command response ended feedback before the catalog changed")
+	}
+	m.Snapshot.Sessions[0].Archived = true
+	ui.Frame()
+	ui.Advance(300 * time.Millisecond)
+	if ui.HasText("正在归档") {
+		t.Fatal("archive pending feedback survived the authoritative catalog")
+	}
+}
+
+func TestCheckoutShowsPendingUntilOwningDeviceConfirms(t *testing.T) {
+	m := layoutModel()
+	m.ConnectionEpoch = "git-epoch"
+	m.GitStatuses["session:s"] = domain.GitStatus{Applicable: true, Branch: "main", Branches: []string{"main", "topic"}}
+	m.GitEpochs["session:s"] = m.ConnectionEpoch
+	v := New(m, app.NewController(""), "")
+	v.gitLoads = map[string]*gitLoadState{"session:s": {tag: "git-epoch:0", phase: gitReady}}
+	ui := n.NewTester(v.View, 1440, 900)
+	ui.Advance(time.Second)
+	v.chooseBranch("topic")
+	job := feedbackJob(t, v, "git.checkout")
+	ui.Frame()
+	if !ui.HasText("正在切换分支") || m.GitStatuses["session:s"].Branch != "main" {
+		t.Fatal("checkout does not distinguish pending from the confirmed branch")
+	}
+	body, _ := json.Marshal(domain.GitStatus{Applicable: true, Branch: "topic", Branches: []string{"main", "topic"}})
+	job.Apply(m, body, nil)
+	ui.Frame()
+	if ui.HasText("正在切换分支") || m.GitStatuses["session:s"].Branch != "topic" {
+		t.Fatal("checkout did not settle")
+	}
+}
+
+func TestBackgroundSwitchHandsPendingCaptionToControllerState(t *testing.T) {
+	m := deviceUIModel()
+	state := m.DeviceStates["air"]
+	state.WorkerService = &app.WorkerService{Background: &domain.BackgroundService{Format: 1, State: "notRegistered"}}
+	v := New(m, app.NewController(""), "")
+	v.devices, v.deviceTab, v.deviceSelected = true, "settings", "air"
+	ui := n.NewTester(v.View, 1240, 900)
+	ui.Advance(time.Second)
+	feedbackClick(t, ui, "登录后启动服务开关")
+	feedbackJob(t, v, "$background.enable")
+	ui.Advance(200 * time.Millisecond)
+	if !ui.HasText("正在启用后台服务") {
+		t.Fatal("background switch has no immediate feedback")
+	}
+	before, _ := ui.Find("后台服务详情")
+	state.WorkerService.Background = &domain.BackgroundService{Format: 1, State: "enabling", Message: "正在启用后台服务"}
+	ui.Frame()
+	after, _ := ui.Find("后台服务详情")
+	if before != after || !ui.HasText("正在启用后台服务") {
+		t.Fatal("controller state restarted the background transition")
+	}
+}
+
+func TestTailnetInboundShowsPendingUntilMatchingServiceObservation(t *testing.T) {
+	v, ui := tailnetManagementView()
+	feedbackClick(t, ui, "入站转发开关")
+	job := feedbackJob(t, v, "$tailnet")
+	in := job.Input.(tailnet.Action)
+	ui.Advance(150 * time.Millisecond)
+	if !ui.HasText("正在关闭入站转发") || !v.Model.Tailnet.InboundEnabled {
+		t.Fatal("inbound control has no pending state")
+	}
+	v.Model.Tailnet.OperationID = "unrelated"
+	ui.Frame()
+	if !ui.HasText("正在关闭入站转发") {
+		t.Fatal("unrelated service update retired the pending action")
+	}
+	v.Model.Tailnet.OperationID, v.Model.Tailnet.InboundEnabled = in.ID, false
+	ui.Frame()
+	if ui.HasText("正在关闭入站转发") {
+		t.Fatal("matching service update did not settle the control")
+	}
+}
+
+func TestRejectedSteerKeepsOriginalAndNextDraftInSeparateEditableSlots(t *testing.T) {
+	v, ui := nativeQueueFixture()
+	feedbackClick(t, ui, "消息输入")
+	ui.Type("要保留的原文")
+	ui.Key(n.Cmd, n.KeyEnter)
+	job := feedbackJob(t, v, "turn.steer")
+	ui.Advance(150 * time.Millisecond)
+	ui.Type("独立的下一条")
+	job.Apply(v.Model, nil, &protocol.RemoteError{Code: "notSent", Message: "未接纳"})
+	ui.Frame()
+	ui.Advance(300 * time.Millisecond)
+	if v.Model.Drafts["session:s"] != "独立的下一条" || !ui.Focused("消息输入") {
+		t.Fatal("rejection changed the next draft")
+	}
+	feedbackClick(t, ui, "切换到保留的草稿")
+	if v.Model.Drafts["session:s"] != "要保留的原文" {
+		t.Fatal("could not restore rejected input")
+	}
+	feedbackClick(t, ui, "切换到保留的草稿")
+	if v.Model.Drafts["session:s"] != "独立的下一条" {
+		t.Fatal("restoring rejected text consumed the next draft")
+	}
+}
+
+func TestQueueRemovalDoesNotReplayWhenEventOrReplyArrives(t *testing.T) {
+	for _, eventFirst := range []bool{false, true} {
+		v, ui := nativeQueueFixture()
+		feedbackClick(t, ui, "待发送 2")
+		ui.Advance(time.Second)
+		feedbackClick(t, ui, "移除待发消息 1")
+		job := feedbackJob(t, v, "queue.remove")
+		ui.Advance(80 * time.Millisecond)
+		before, _ := ui.Find("Add a small example")
+		q := v.Model.Queue()
+		q.Revision++
+		q.Items = q.Items[1:]
+		body, _ := json.Marshal(q)
+		if eventFirst {
+			v.Model.SetQueue(q)
+		} else {
+			job.Apply(v.Model, body, nil)
+		}
+		ui.Frame()
+		first, ok := ui.Find("Add a small example")
+		if !ok || first.Y != before.Y || ui.HasText("Review the rotation code") {
+			t.Fatalf("first update restarted removal: %v → %v (event first %v)", before, first, eventFirst)
+		}
+		ui.Advance(600 * time.Millisecond)
+		before, _ = ui.Find("Add a small example")
+		if eventFirst {
+			job.Apply(v.Model, body, nil)
+		} else {
+			v.Model.SetQueue(q)
+		}
+		ui.Frame()
+		last, ok := ui.Find("Add a small example")
+		if !ok || last.Y != before.Y || ui.HasText("Review the rotation code") {
+			t.Fatalf("late update replayed removal: %v → %v (event first %v)", before, last, eventFirst)
+		}
+	}
+}
+
+func TestChildStopShowsPendingThroughCommandReceipt(t *testing.T) {
+	v, ui := sessionWorkFixture(t)
+	v.Controller = app.NewController("")
+	d := v.Model.Details["s"]
+	d.Works[0].CanStop = true
+	v.Model.Details["s"] = d
+	feedbackClick(t, ui, "查看子 Agent：检查边界条件")
+	ui.Advance(time.Second)
+	feedbackClick(t, ui, "停止子 Agent")
+	job := feedbackJob(t, v, "session.work.stop")
+	ui.Advance(150 * time.Millisecond)
+	if !ui.HasText("正在停止") {
+		t.Fatal("stop has no pending feedback")
+	}
+	job.Apply(v.Model, nil, nil)
+	ui.Frame()
+	if !ui.HasText("正在停止") {
+		t.Fatal("command response alone reset the stop control")
+	}
+	d.Works[0].State = "stopped"
+	v.Model.Details["s"] = d
+	ui.Frame()
+	if ui.HasText("正在停止") {
+		t.Fatal("authoritatively stopped child still shows pending")
+	}
+}
+
+func TestKeepAwakeIgnoresLateFailureAfterMatchingDeviceState(t *testing.T) {
+	v := New(deviceHealthModel(), app.NewController(""), "")
+	ui := n.NewTester(v.View, 1240, 820)
+	feedbackClick(t, ui, "当前设备")
+	ui.Advance(time.Second)
+	feedbackClick(t, ui, "保持唤醒开关")
+	job := feedbackJob(t, v, "device.keepAwake")
+	observed := *v.Model.DeviceHealth
+	observed.KeepAwake.Enabled = true
+	observed.KeepAwake.Revision++
+	v.Model.SetDeviceHealth(observed, time.Now())
+	ui.Frame()
+	if ui.HasText("正在更新") {
+		t.Fatal("matching device state did not settle the same control")
+	}
+	job.Apply(v.Model, nil, contextDeadlineError{})
+	ui.Frame()
+	if ui.HasText("未知") || !v.Model.DeviceHealth.KeepAwake.Enabled {
+		t.Fatal("late command failure reset the confirmed control")
+	}
+}

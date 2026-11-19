@@ -7,6 +7,7 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"slices"
 	"strconv"
 	"time"
 )
@@ -23,6 +24,7 @@ const (
 type toolServicesUI struct {
 	draft                       *toolConfigurationDraft
 	saving, saved               bool
+	mutation, catalogRead       uint64
 	mutationID, removingID      string
 	key, device, harness, epoch string
 	editor                      *deviceAgentEditor
@@ -101,14 +103,19 @@ func (v *View) queryToolServices(u *toolServicesUI, refresh bool) {
 		return
 	}
 	u.phase = toolServiceLoading
+	u.catalogRead++
+	read := u.catalogRead
 	u.message = ""
+	if u.saved && !slices.ContainsFunc(u.catalog.Services, func(service domain.ToolService) bool { return service.ID == u.mutationID }) {
+		u.message = "已保存，正在检查连接"
+	}
 	u.reload = false
 	method := "runtime.tools.list"
 	if refresh {
 		method = "runtime.tools.refresh"
 	}
 	if !v.toolServiceJob(u, method, protocol.ToolServiceInput{HarnessID: u.harness}, func(_ *app.Model, b json.RawMessage, err error) {
-		if !v.toolServiceCurrent(u) {
+		if !v.toolServiceCurrent(u) || read != u.catalogRead || u.phase != toolServiceLoading {
 			return
 		}
 		if err != nil {
@@ -123,14 +130,16 @@ func (v *View) queryToolServices(u *toolServicesUI, refresh bool) {
 		if json.Unmarshal(b, &result) != nil {
 			u.phase = toolServiceLoadFailed
 			u.message = "设备返回的工具服务信息无效"
+			if u.saved {
+				u.message = "配置已保存，连接检查未完成，请刷新核对"
+			}
 			return
 		}
 		u.catalog = result
 		u.phase = toolServiceLoaded
 		if u.saved {
 			u.saved = false
-			u.draft = nil
-			u.removingID = ""
+			u.mutationID = ""
 			u.message = "已保存，下轮生效"
 		}
 		if result.Authorization != nil && result.Authorization.HarnessID == u.harness {
@@ -139,6 +148,9 @@ func (v *View) queryToolServices(u *toolServicesUI, refresh bool) {
 	}) {
 		u.phase = toolServiceLoadFailed
 		u.message = "设备操作繁忙，请重试"
+		if u.saved {
+			u.message = "配置已保存，连接检查未完成，请刷新核对"
+		}
 	}
 }
 func (v *View) applyToolAuthorization(u *toolServicesUI, status domain.ToolServiceAuthorization) {

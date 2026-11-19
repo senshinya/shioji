@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"time"
 
 	n "github.com/egoist/mygo/ui"
@@ -51,6 +52,39 @@ func (v *View) beginSendMotion(in domain.Submission) *sentMessageMotion {
 	return s
 }
 
+func (v *View) beginPresentedSend(in domain.Submission, turn string) *sentMessageMotion {
+	if previous := v.homeSend; previous != nil && previous.session != "" && previous.session == in.SessionID && previous.state == domain.OperationConfirmed {
+		var motion *sentMessageMotion
+		if v.sent != nil && v.sent.input == "input:"+previous.in.OperationID && v.sent.phase == sentAnimating {
+			motion = v.sent
+		}
+		if !previous.hydrated || motion != nil {
+			v.previousSends = append(v.previousSends, presentedSend{previous, motion})
+		}
+	}
+	s := v.beginSendMotion(in)
+	s.session = in.SessionID
+	v.homeSend = &homeSendPresentation{in: in, sentAt: time.Now(), session: in.SessionID, turn: turn}
+	return s
+}
+
+func (v *View) presentedSendError(m *app.Model, in domain.Submission, err error) {
+	if m.Resolved[in.OperationID] {
+		return
+	}
+	m.SubmissionError(in, err)
+	if h := v.homeSend; h != nil && h.in.OperationID == in.OperationID {
+		if v.homeSendPending() {
+			h.state = domain.OperationIndeterminate
+		} else {
+			v.clearHomeSend()
+		}
+	}
+	if v.sent != nil && v.sent.input == "input:"+in.OperationID && !v.homeSendPending() {
+		v.sent = nil
+	}
+}
+
 func (v *View) syncSendMotion() {
 	s := v.sent
 	if s == nil {
@@ -96,8 +130,8 @@ func (v *View) anchorSentMessage(c *n.Context, state *n.ListState, rows []transc
 }
 
 func (v *View) sentMessagePose(c *n.Context, content n.Element, item domain.Item) {
-	s := v.sent
-	if s == nil || item.ID != s.input || s.phase != sentAnimating || c.Preferences().ReduceMotion || s.source.W > 0 {
+	s := v.motionForInput(item.ID)
+	if s == nil || s.phase != sentAnimating || c.Preferences().ReduceMotion || s.source.W > 0 {
 		return
 	}
 	p := min(float32(c.Now().Sub(s.started))/float32(sentFadeDuration), 1)
@@ -111,17 +145,33 @@ func (v *View) sentMessagePose(c *n.Context, content n.Element, item domain.Item
 // Keep the sent words visible as they leave the editor. Only their
 // bubble surface emerges; the message itself does not fade in at the top.
 func (v *View) sentMessageBubble(c *n.Context, t *n.Theme, bubble n.Element, item domain.Item) {
-	s := v.sent
-	if s == nil || item.ID != s.input || s.source.W <= 0 || c.Preferences().ReduceMotion {
+	s := v.motionForInput(item.ID)
+	if s == nil || s.source.W <= 0 || c.Preferences().ReduceMotion {
 		return
 	}
-	bubble.Background(userBubble(t).Alpha(v.sendProgress(c)))
+	bubble.Background(userBubble(t).Alpha(s.progress(c)))
 	bubble.Transition(n.ElementTransition{From: &s.source, Duration: sentScrollDuration, Ease: sentScrollEase, Position: true, Lift: true})
 }
 
-func (v *View) sendProgress(c *n.Context) float32 {
-	s := v.sent
-	if s == nil || s.phase != sentAnimating {
+func (v *View) motionForInput(id string) *sentMessageMotion {
+	if v.sent != nil && v.sent.input == id {
+		return v.sent
+	}
+	for _, previous := range v.previousSends {
+		if previous.motion != nil && previous.motion.input == id {
+			return previous.motion
+		}
+	}
+	for _, source := range v.queueSources {
+		if source.motion != nil && source.motion.input == id && source.motion.phase == sentAnimating {
+			return source.motion
+		}
+	}
+	return nil
+}
+
+func (s *sentMessageMotion) progress(c *n.Context) float32 {
+	if s.phase != sentAnimating {
 		return 0
 	}
 	p := min(max(float32(c.Now().Sub(s.started))/float32(sentScrollDuration), 0), 1)
@@ -222,9 +272,15 @@ type homeSendPresentation struct {
 	in       domain.Submission
 	sentAt   time.Time
 	session  string
+	turn     string
 	state    domain.OperationState
 	hydrated bool
 	list     *n.ListState
+}
+
+type presentedSend struct {
+	presentation *homeSendPresentation
+	motion       *sentMessageMotion
 }
 
 func (v *View) homeSendPending() bool {
@@ -242,11 +298,18 @@ func (v *View) homeSendKey(fallback string) string {
 	return fallback
 }
 func (v *View) syncHomeSend() {
+	m := v.Model
+	v.previousSends = slices.DeleteFunc(v.previousSends, func(previous presentedSend) bool {
+		h := previous.presentation
+		// A second send can start after the command receipt but before the
+		// first input reaches the transcript. Keep that input until it hydrates.
+		return v.devices || v.workspaceEditor != nil || h.session != m.SessionID || h.in.WorkspaceID != m.WorkspaceID ||
+			h.hydrated && (previous.motion == nil || v.frameTime.Sub(previous.motion.started) >= sentScrollDuration+60*time.Millisecond)
+	})
 	h := v.homeSend
 	if h == nil {
 		return
 	}
-	m := v.Model
 	if m.SessionID == "" && h.session != "" && v.selected == h.session {
 		v.clearHomeSend()
 		return
@@ -274,30 +337,35 @@ func (v *View) syncHomeSend() {
 	}
 }
 func (v *View) homeSendDetail(detail domain.SessionDetail) domain.SessionDetail {
-	h := v.homeSend
-	if h == nil {
-		return detail
-	}
-	if v.Model.SessionID == "" && h.session != "" {
+	if h := v.homeSend; h != nil && v.Model.SessionID == "" && h.session != "" {
 		detail = v.Model.Details[h.session]
 	}
-	id := "input:" + h.in.OperationID
-	for _, item := range detail.Items {
-		if item.ID == id {
-			h.hydrated = true
-			return detail
-		}
+	for _, previous := range v.previousSends {
+		detail.Items = previous.presentation.projectInput(detail.Items)
 	}
-	// The pending journal already holds the full immutable input and references.
-	if !h.hydrated {
-		item := domain.Item{ID: id, Kind: "user", Text: h.in.Text, Attachments: h.in.Attachments, Skills: h.in.Skills, ReferencePositions: h.in.ReferencePositions, Status: "dispatching", SentAt: &h.sentAt, Final: true}
-		detail.Items = append(append([]domain.Item(nil), detail.Items...), item)
+	if v.homeSend != nil {
+		detail.Items = v.homeSend.projectInput(detail.Items)
 	}
 	return detail
 }
+
+func (h *homeSendPresentation) projectInput(items []domain.Item) []domain.Item {
+	id := "input:" + h.in.OperationID
+	for _, item := range items {
+		if item.ID == id {
+			h.hydrated = true
+			return items
+		}
+	}
+	if h.hydrated {
+		return items
+	}
+	item := domain.Item{ID: id, Kind: "user", TurnID: h.turn, Text: h.in.Text, Attachments: h.in.Attachments, Skills: h.in.Skills, ReferencePositions: h.in.ReferencePositions, Status: "dispatching", SentAt: &h.sentAt, Final: true}
+	return append(slices.Clone(items), item)
+}
 func (v *View) homeSendRows(rows []transcriptRow) []transcriptRow {
 	h := v.homeSend
-	if h == nil {
+	if h == nil || h.turn != "" || h.in.Continue {
 		return rows
 	}
 	key := "home-send-status:" + h.in.OperationID
@@ -308,18 +376,8 @@ func (v *View) homeSendRows(rows []transcriptRow) []transcriptRow {
 			break
 		}
 	}
-	for i, row := range rows {
-		if turnID != "" && row.footer == turnID {
-			if v.toolArrivals.footerKeys == nil {
-				v.toolArrivals.footerKeys = map[string]string{}
-			}
-			v.toolArrivals.footerKeys[row.footer] = key
-			// The receipt already occupies this output slot. A newly hydrated
-			// turn must not apply a second entrance to the same visible status.
-			rows[i].opacity = 1
-			delete(v.toolArrivals.motions, row.key)
-			return rows
-		}
+	if v.adoptSendFooter(rows, turnID, key) {
+		return rows
 	}
 	if !v.homeSendPending() {
 		status := v.Model.Details[v.Model.SessionID].Session.Status
@@ -345,6 +403,64 @@ func (v *View) homeSendRows(rows []transcriptRow) []transcriptRow {
 	}
 	return rows
 }
+
+func (v *View) adoptSendFooter(rows []transcriptRow, turnID, key string) bool {
+	if turnID == "" {
+		return false
+	}
+	for i, row := range rows {
+		if row.footer == turnID {
+			if v.toolArrivals.footerKeys == nil {
+				v.toolArrivals.footerKeys = map[string]string{}
+			}
+			v.toolArrivals.footerKeys[turnID] = key
+			// The pending status already occupied this output slot.
+			rows[i].opacity = 1
+			delete(v.toolArrivals.motions, row.key)
+			return true
+		}
+	}
+	return false
+}
+
+func (h *homeSendPresentation) pendingLabel() string {
+	if h.state == domain.OperationIndeterminate {
+		return "发送结果待核实"
+	}
+	return "正在发送"
+}
+
+func (v *View) presentedInputStatus(item domain.Item) string {
+	h := v.homeSend
+	if h == nil || !h.in.Continue || item.ID != "input:"+h.in.OperationID {
+		return ""
+	}
+	if h.state == domain.OperationIndeterminate || v.Model.UncertainSubmissions[h.in.OperationID] {
+		return "发送结果待核实"
+	}
+	if v.homeSendPending() && h.state != domain.OperationConfirmed && item.Status != "sent" {
+		return "正在发送"
+	}
+	return ""
+}
+
+func (v *View) steerProgressLabel(turn domain.Turn) string {
+	h, m := v.homeSend, v.Model
+	if h == nil || h.turn == "" || h.turn != turn.ID || h.session != m.SessionID || !turn.Status.Active() || !m.Connected ||
+		h.state == domain.OperationConfirmed || !v.homeSendPending() {
+		return ""
+	}
+	for _, item := range m.Details[m.SessionID].Items {
+		if item.ID == "input:"+h.in.OperationID && (item.Status == "sent" || item.Status == "failed") {
+			return ""
+		}
+	}
+	if h.state == domain.OperationIndeterminate || m.UncertainSubmissions[h.in.OperationID] {
+		return "发送结果待核实"
+	}
+	return "正在发送"
+}
+
 func (v *View) homeSendStatus(c *n.Context, t *n.Theme, label string) {
 	v.replyFooter(c, t, domain.Turn{}, label)
 }

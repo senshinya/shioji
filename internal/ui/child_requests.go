@@ -13,7 +13,9 @@ type requestActionState struct {
 	epoch    string
 	revision int64
 	busy     bool
+	decision string
 	err      string
+	retireAt time.Time
 }
 
 func (v *View) requestAction(r domain.PendingRequest) *requestActionState {
@@ -195,7 +197,13 @@ func (v *View) pruneRequestActions(detail domain.SessionDetail) {
 				break
 			}
 		}
-		if !live {
+		state := v.requestActionsState[key]
+		if live {
+			state.retireAt = time.Time{}
+		} else if state.retireAt.IsZero() {
+			// The card and its last page may still be moving out.
+			state.retireAt = v.frameTime.Add(400 * time.Millisecond)
+		} else if !v.frameTime.Before(state.retireAt) {
 			delete(v.requestActionsState, key)
 		}
 	}

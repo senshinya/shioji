@@ -17,7 +17,7 @@ func (m *Model) BeginHistoryEdit(item domain.Item) error {
 	if m.SessionID == "" || item.Kind != "user" || item.Status != "sent" || item.TurnID == "" {
 		return errors.New("这条消息尚不能修改")
 	}
-	if m.QueueEdits[m.SessionID].ID != "" {
+	if m.ActiveQueueEdit(m.SessionID).ID != "" {
 		return errors.New("请先结束待发送消息的编辑")
 	}
 	d := m.Details[m.SessionID]

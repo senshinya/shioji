@@ -181,6 +181,9 @@ func (v *View) queryHookOperation(u *hookManagementUI) {
 	}
 }
 func (v *View) settleHookChange(u *hookManagementUI, in domain.HookRequest, b json.RawMessage, err error) {
+	if u.pending == nil || u.pending.OperationID != in.OperationID {
+		return
+	}
 	u.checking = false
 	var result domain.HookOperation
 	if err == nil {
@@ -549,6 +552,9 @@ func (v *View) hookRows(c *n.Context, t *n.Theme, u *hookManagementUI, compact b
 			continue
 		}
 		count++
+		if label := hookToggleProgress(u, h.ID); label != "" {
+			trust = label
+		}
 		inherited := u.workspace != "" && h.Scope != domain.HookProject && h.Scope != domain.HookUnknown
 		if u.workspace != "" {
 			name := "工作区"
@@ -598,7 +604,7 @@ func (v *View) hookRows(c *n.Context, t *n.Theme, u *hookManagementUI, compact b
 			n.Column(c).Width(48).Height(28).Justify(n.Center).AlignItems(n.End).Transform(n.Translation(0, hookFirstLineControlOffset(h.Event, t))).Children(func() {
 				if hookOwned(u, h) && h.CanEnable {
 					enabled := h.Enabled
-					if configurationSwitch(c.Key("enabled"), &enabled).Label("启停 Hook：" + h.Event).Disabled(!v.hookWritable(u)).Changed() {
+					if confirmedConfigurationSwitch(c.Key("enabled"), &enabled, h.Enabled).Label("启停 Hook：" + h.Event).Disabled(!v.hookWritable(u)).Changed() {
 						v.changeHook(u, h, domain.HookSetEnabled)
 					}
 				} else {
@@ -756,10 +762,14 @@ func (v *View) hookDetail(c *n.Context, t *n.Theme, u *hookManagementUI) {
 				}
 				if h.CanEnable {
 					enabled := h.Enabled
-					if configurationSwitch(c, &enabled).Label("启停 Hook：" + h.Event).Disabled(!v.hookWritable(u)).Changed() {
+					if confirmedConfigurationSwitch(c, &enabled, h.Enabled).Label("启停 Hook：" + h.Event).Disabled(!v.hookWritable(u)).Changed() {
 						v.changeHook(u, *h, domain.HookSetEnabled)
 					}
-					n.Text(c, "启用").FontSize(12)
+					label := hookToggleProgress(u, h.ID)
+					if label == "" {
+						label = "启用"
+					}
+					n.Text(c, label).FontSize(12)
 				} else {
 					n.Text(c, h.ReadOnlyReason).FontSize(12).TextColor(t.TextMuted)
 				}
@@ -776,6 +786,15 @@ func (v *View) hookDetail(c *n.Context, t *n.Theme, u *hookManagementUI) {
 			})
 		}
 	})
+}
+func hookToggleProgress(u *hookManagementUI, id string) string {
+	if !u.checking || u.pending == nil || u.pending.ID != id || u.pending.Action != domain.HookSetEnabled {
+		return ""
+	}
+	if u.pending.Enabled {
+		return "正在启用"
+	}
+	return "正在停用"
 }
 func hookMetadata(c *n.Context, t *n.Theme, label, value string) {
 	n.Row(c.Key(label)).FillWidth().Gap(12).AlignItems(n.Baseline).Children(func() {

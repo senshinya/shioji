@@ -501,7 +501,7 @@ func (s *fileMention) count() int {
 }
 
 func (v *View) compactCandidate(key, query string) bool {
-	return key == v.Model.DraftKey() && v.Model.QueueEdits[v.Model.SessionID].ID == "" && v.Model.WorkerMinor >= 30 && v.Model.RunReadiness().Capabilities.Compact && strings.HasPrefix("compact", strings.ToLower(query))
+	return key == v.Model.DraftKey() && v.Model.ActiveQueueEdit(v.Model.SessionID).ID == "" && v.Model.WorkerMinor >= 30 && v.Model.RunReadiness().Capabilities.Compact && strings.HasPrefix("compact", strings.ToLower(query))
 }
 func (s *fileMention) skillIndex() int {
 	if s.compact {

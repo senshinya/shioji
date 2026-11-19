@@ -600,7 +600,7 @@ func (v *View) diffBody(c *n.Context, t *n.Theme, state *changesState) {
 		return
 	}
 	if state.Versions.Unchanged || state.Versions.Old == state.Versions.New {
-		n.Column(c.Key("diff-unchanged")).Fill().AlignItems(n.Center).Justify(n.Center).Transition(fadeMotion(c, 180*time.Millisecond)).Children(func() {
+		n.Column(c.Key("diff-unchanged")).Fill().AlignItems(n.Center).Justify(n.Center).Children(func() {
 			message := "此文件在当前比较中没有差异"
 			if !state.Versions.Unchanged {
 				message = "此文件没有文本差异"
@@ -619,7 +619,7 @@ func (v *View) diffBody(c *n.Context, t *n.Theme, state *changesState) {
 	state.Diff.Theme.InactiveSelection = t.Text.Alpha(.12)
 	state.Diff.TextSelection = v.Model.WorkerMinor >= 33 && state.Versions.Snapshot.ID != ""
 	v.configureDiffComments(c, t, state)
-	viewer := editor.DiffView(c.Key("diff"), state.Diff).FillWidth().FillHeight().Grow(1).Label("原生文件差异").Transition(fadeMotion(c, 180*time.Millisecond))
+	viewer := editor.DiffView(c.Key("diff"), state.Diff).FillWidth().FillHeight().Grow(1).Label("原生文件差异")
 	if width := viewer.Bounds().W; width > 0 && width != state.CommentWidth {
 		state.CommentWidth = width
 		c.AnimationFrame()

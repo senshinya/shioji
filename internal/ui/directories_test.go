@@ -7,6 +7,7 @@ import (
 	n "github.com/egoist/mygo/ui"
 	"math"
 	"shioji/internal/app"
+	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"testing"
 	"time"
@@ -343,5 +344,49 @@ func TestDirectoryPaginationDoesNotRepeatFolderIdentity(t *testing.T) {
 	ui.Advance(300 * time.Millisecond)
 	if !ui.HasText("one") || !ui.HasText("two") {
 		t.Fatal("pagination lost a folder", ui.Texts())
+	}
+}
+
+func TestReturningToParentDirectoryKeepsItsReadingPosition(t *testing.T) {
+	m := deviceUIModel()
+	m.FirstRun = true
+	m.DeviceStates["air"].WorkerMinor = 23
+	ctrl := app.NewController("")
+	v := New(m, ctrl, "")
+	f := v.setupFlow()
+	f.step, f.key = welcomeWorkspace, "air"
+	ui := n.NewTester(v.View, 1240, 820)
+	feedbackClick(t, ui, "选择主目录")
+	parent := domain.DirectoryPage{Path: "/Users/remote", Home: "/Users/remote"}
+	for i := range 30 {
+		name := fmt.Sprintf("folder-%02d", i)
+		parent.Entries = append(parent.Entries, domain.DirectoryEntry{Name: name, Path: parent.Path + "/" + name})
+	}
+	reply, _ := json.Marshal(parent)
+	welcomeJob(t, ctrl, "device.directories").Apply(m, reply, nil)
+	ui.Frame()
+	ui.Advance(400 * time.Millisecond)
+	ui.Scroll(550, 400, 0, 360)
+	ui.Frame()
+	ui.Advance(400 * time.Millisecond)
+	label := "文件夹：folder-14"
+	before, visible := ui.Find(label)
+	if !visible || before.Y < 270 || before.Y > 550 {
+		t.Fatal("could not scroll to target directory", before)
+	}
+	v.navigateDirectory(v.directoryPicker, parent.Entries[14].Path, 1)
+	ui.Frame()
+	child := domain.DirectoryPage{Path: parent.Entries[14].Path, Home: parent.Home, Parent: parent.Path}
+	body, _ := json.Marshal(child)
+	welcomeJob(t, ctrl, "device.directories").Apply(m, body, nil)
+	ui.Advance(400 * time.Millisecond)
+	feedbackClick(t, ui, "返回上一目录")
+	ui.Advance(400 * time.Millisecond)
+	welcomeJob(t, ctrl, "device.directories").Apply(m, reply, nil)
+	ui.Frame()
+	ui.Advance(400 * time.Millisecond)
+	after, visible := ui.Find(label)
+	if !visible || before != after {
+		t.Fatal("parent directory lost its prior scroll position", before, after)
 	}
 }

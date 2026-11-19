@@ -15,10 +15,11 @@ var deviceDetailsArrow = svg("M3 10h14M12 5l5 5-5 5")
 var coffeeIcon = svg("M3 7h11v6a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4zM14 7h1a3 3 0 0 1 0 6h-1M6 2v2M10 2v2M14 2v2")
 
 type devicePowerUI struct {
-	epoch             string
-	pending, checking bool
-	checkAfter        time.Time
-	error             string
+	epoch      string
+	pending    *domain.KeepAwakeInput
+	checking   bool
+	checkAfter time.Time
+	error      string
 }
 
 func (v *View) powerUI() *devicePowerUI {
@@ -36,6 +37,10 @@ func (v *View) powerUI() *devicePowerUI {
 	if state.checking && v.Model.DeviceHealth != nil && v.Model.DeviceHealth.ObservedAt.After(state.checkAfter) {
 		state.checking = false
 	}
+	if pending, health := state.pending, v.Model.DeviceHealth; pending != nil && health != nil &&
+		health.KeepAwake.Available && health.KeepAwake.Revision > pending.Revision && health.KeepAwake.Enabled == pending.Enabled {
+		state.pending = nil
+	}
 	return state
 }
 func deviceHealthFresh(m *app.Model, now time.Time) bool {
@@ -45,22 +50,21 @@ func deviceHealthFresh(m *app.Model, now time.Time) bool {
 func (v *View) changeKeepAwake(enabled bool) {
 	m := v.Model
 	u := v.powerUI()
-	if !deviceHealthFresh(m, time.Now()) || u.pending || u.checking || !m.DeviceHealth.KeepAwake.Available {
+	if !deviceHealthFresh(m, time.Now()) || u.pending != nil || u.checking || !m.DeviceHealth.KeepAwake.Available {
 		return
 	}
 	key, epoch := m.ConnectionID(), m.ConnectionEpoch
-	u.pending = true
-	u.error = ""
 	input := domain.KeepAwakeInput{Enabled: enabled, Revision: m.DeviceHealth.KeepAwake.Revision}
+	u.pending, u.error = &input, ""
 	if !v.do(app.Job{ConnectionID: key, Method: "device.keepAwake", Input: input, Apply: func(model *app.Model, body json.RawMessage, err error) {
 		currentEpoch := model.ConnectionEpoch
 		if state := model.DeviceStates[key]; state != nil {
 			currentEpoch = state.ConnectionEpoch
 		}
-		if currentEpoch != epoch {
+		if currentEpoch != epoch || u.pending != &input {
 			return
 		}
-		u.pending = false
+		u.pending = nil
 		if err != nil {
 			u.error = err.Error()
 			u.checking = true
@@ -90,7 +94,7 @@ func (v *View) changeKeepAwake(enabled bool) {
 			model.SetDeviceHealth(report, time.Now())
 		}
 	}}) {
-		u.pending = false
+		u.pending = nil
 		u.error = "设备操作队列繁忙，请重试"
 	}
 }
@@ -123,11 +127,26 @@ func (v *View) currentDeviceControl(c *n.Context, t *n.Theme) {
 	}
 	known := fresh && !u.checking && h.KeepAwake.Available
 	on := known && h.KeepAwake.Enabled
+	pending := u.pending != nil
+	if pending {
+		on = !u.pending.Enabled
+	}
 	powerError := u.error
 	if powerError == "" && h != nil {
 		powerError = h.KeepAwake.Error
 	}
-	quick := iconButton(c.Key("keep-awake:"+key), coffeeIcon, "保持设备唤醒").Disabled(v.Controller == nil || !known || u.pending || u.checking)
+	quick := control(c.Key("keep-awake:"+key)).Size(28, 28).Radius(6).Label("保持设备唤醒").
+		Tooltip("保持设备唤醒").TextColor(t.TextMuted).Disabled(v.Controller == nil || !known || pending || u.checking)
+	quick.Children(func() {
+		if pending {
+			serviceSpinner(c.Key("spinner"), "正在更新", n.Font{Family: t.Font, Size: 11}, t.TextMuted)
+		} else {
+			n.Icon(c.Key("coffee"), coffeeIcon).Size(16, 16)
+		}
+	})
+	if pending {
+		quick.Tooltip("正在更新保持唤醒").Description("正在更新保持唤醒")
+	}
 	if on {
 		quick.Background(t.SurfacePressed)
 	}
@@ -172,11 +191,13 @@ func (v *View) currentDeviceControl(c *n.Context, t *n.Theme) {
 						font := n.Font{Family: t.Font, Size: 12, Weight: 400}
 						inlineIconText(c, coffeeIcon, "保持唤醒", font, 14, 6, t.TextMuted).Transform(n.Translation(0, inlineCenterOffset("保持唤醒", font)))
 						n.Spacer(c).Grow(1)
-						if !known || u.checking {
+						if pending {
+							n.Text(c.Key("power-pending"), "正在更新").FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+						} else if !known || u.checking {
 							n.Text(c, "未知").FontSize(11).TextColor(t.TextMuted)
 						}
 						value := on
-						if configurationSwitch(c, &value).Label("保持唤醒开关").Disabled(v.Controller == nil || !known || u.pending || u.checking).Changed() {
+						if confirmedConfigurationSwitch(c, &value, on).Label("保持唤醒开关").Disabled(v.Controller == nil || !known || pending || u.checking).Changed() {
 							v.changeKeepAwake(value)
 						}
 					})

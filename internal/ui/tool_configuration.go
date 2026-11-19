@@ -122,13 +122,15 @@ func (v *View) changeToolConfiguration(u *toolServicesUI, change domain.ToolServ
 		return
 	}
 	u.saving = true
+	u.mutation++
+	mutation := u.mutation
 	u.message = ""
 	u.mutationID = change.ServiceID
 	if !v.toolServiceJob(u, "runtime.tools.change", protocol.ToolServiceInput{HarnessID: u.harness, Change: &change}, func(_ *app.Model, b json.RawMessage, err error) {
-		u.saving = false
-		if !v.toolServiceCurrent(u) {
+		if !v.toolServiceCurrent(u) || mutation != u.mutation || !u.saving {
 			return
 		}
+		u.saving = false
 		if err != nil {
 			u.message = "保存结果未确认，请刷新后核对"
 			var remote *protocol.RemoteError
@@ -143,6 +145,13 @@ func (v *View) changeToolConfiguration(u *toolServicesUI, change domain.ToolServ
 			return
 		}
 		u.saved = true
+		u.draft, u.removingID = nil, ""
+		if result.ServiceID != "" {
+			u.mutationID = result.ServiceID
+		}
+		// A refresh started in the editor may have read the old configuration.
+		// Replace its request version with a check that starts after this save.
+		u.phase = toolServiceIdle
 		v.queryToolServices(u, u.catalog.CanRefresh)
 	}) {
 		u.saving = false
@@ -241,8 +250,12 @@ func (v *View) toolServiceList(c *n.Context, t *n.Theme, u *toolServicesUI, disa
 					if u.saving && u.mutationID == service.ID {
 						caption = "正在保存"
 					}
+					checking := u.saved && u.phase == toolServiceLoading && u.mutationID == service.ID
+					if checking {
+						caption = "已保存，正在检查连接"
+					}
 					n.Row(c.Key("status")).Gap(6).AlignItems(n.Baseline).Children(func() {
-						if active || service.State == domain.ToolServiceConnecting || u.saving && u.mutationID == service.ID {
+						if active || service.State == domain.ToolServiceConnecting || u.saving && u.mutationID == service.ID || checking {
 							serviceSpinner(c.Key("spinner"), caption, n.Font{Family: t.Font, Size: 12, Weight: 400}, t.TextMuted)
 						}
 						n.Text(c.Key("caption"), caption).FontSize(12).FixedLineHeight(28).TextColor(t.TextMuted).SingleLine().ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
@@ -260,7 +273,7 @@ func (v *View) toolServiceList(c *n.Context, t *n.Theme, u *toolServicesUI, disa
 					}
 					if service.Editable && v.deviceState(u.key).WorkerMinor >= 24 {
 						enabled := service.State != domain.ToolServiceDisabled
-						if configurationSwitch(c, &enabled).Label("启用 MCP：" + service.Name).AlignSelf(n.Center).Disabled(disabled || busy).Changed() {
+						if confirmedConfigurationSwitch(c, &enabled, service.State != domain.ToolServiceDisabled).Label("启用 MCP：" + service.Name).AlignSelf(n.Center).Disabled(disabled || busy).Changed() {
 							v.changeToolConfiguration(u, domain.ToolServiceChange{Action: "setEnabled", ServiceID: service.ID, Revision: u.catalog.Revision, Enabled: enabled})
 						}
 						trigger := iconButton(c, moreActionsIcon, service.Name+" 更多操作").AlignSelf(n.Center).Disabled(disabled || busy)
@@ -369,8 +382,6 @@ func (v *View) toolConfigurationEditor(c *n.Context, t *n.Theme, u *toolServices
 		caption := ""
 		if u.saving {
 			caption = "正在保存"
-		} else if u.saved && u.phase == toolServiceLoading {
-			caption = "正在检查连接"
 		}
 		if caption != "" {
 			serviceSpinner(c.Key("spinner"), caption, n.Font{Family: t.Font, Size: 12, Weight: 400}, t.TextMuted)

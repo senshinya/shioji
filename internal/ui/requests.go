@@ -316,14 +316,23 @@ func (v *View) formAnswers(r domain.PendingRequest) map[string][]string {
 }
 func (v *View) requestActions(c *n.Context, t *n.Theme, page requestPage, expandedOptions map[string]bool, position *n.ScrollState) {
 	r := page.request
-	disabled := !v.Model.Connected || r.State != "pending" || v.requestAction(r).busy
+	state := v.requestAction(r)
+	disabled := !v.Model.Connected || r.State != "pending" || state.busy
 	n.Row(c).FillWidth().Wrap().Gap(messageFooterGap).AlignItems(n.Center).Children(func() {
 		action := func(label, decision string, primary bool, answers map[string][]string, extraDisabled bool) {
 			var button n.Element
+			caption := label
+			if state.busy && state.decision == decision {
+				caption = "正在提交"
+			}
+			actionKey := c.Key("respond:" + decision)
 			if primary {
-				button = controlFeedback(c, n.PrimaryButton(c, label).Radius(requestRadius).Height(processingPanelActionHeight).FontSize(12).Disabled(disabled || extraDisabled), requestRadius, true)
+				button = controlFeedback(c, n.PrimaryButton(actionKey, caption).Radius(requestRadius).Height(processingPanelActionHeight).FontSize(12).Disabled(disabled || extraDisabled), requestRadius, true)
 			} else {
-				button = ghost(c, label, requestRadius).Height(processingPanelActionHeight).Disabled(disabled || extraDisabled)
+				button = ghost(actionKey, caption, requestRadius).Height(processingPanelActionHeight).Disabled(disabled || extraDisabled)
+			}
+			if caption != label {
+				button.Description(label)
 			}
 			if button.Clicked() {
 				v.respond(r, domain.Answer{RequestID: r.ID, Revision: r.Revision, Decision: decision, Answers: answers})
