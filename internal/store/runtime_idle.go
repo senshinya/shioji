@@ -20,6 +20,7 @@ const runtimeIdleQuery = `SELECT json_extract(s.body,'$.revision'),
  COALESCE((SELECT json_extract(body,'$.revision') FROM queues WHERE session_id=s.id),0),
  COALESCE(json_extract(s.body,'$.status'),'') IN ('idle','completed','interrupted','failed','abandoned')
  AND COALESCE(json_extract(s.body,'$.executionGuard'),'')=''
+ AND COALESCE(json_extract(s.body,'$.goal.state'),'')<>'active'
  AND COALESCE(json_extract(s.body,'$.contextAction.state'),'') IN ('','completed','interrupted','failed')
  AND NOT EXISTS(SELECT 1 FROM operations WHERE session_id=s.id AND state IN ('accepted','dispatched','indeterminate'))
  AND NOT EXISTS(SELECT 1 FROM queues WHERE session_id=s.id AND json_array_length(body,'$.items')>0)

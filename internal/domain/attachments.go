@@ -28,6 +28,9 @@ func (a Attachment) InlineReference() bool {
 }
 
 func (in Submission) ValidateContent() error {
+	if err := in.ValidateGoal(); err != nil {
+		return err
+	}
 	if !utf8.ValidString(in.Text) || len(in.Text) > 128<<10 || (strings.TrimSpace(in.Text) == "" && len(in.Attachments) == 0 && len(in.Skills) == 0) {
 		return errors.New("message requires text or an attachment")
 	}

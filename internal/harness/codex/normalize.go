@@ -132,6 +132,15 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		return nil, nil, nil
 	}
 	switch m.Method {
+	case "thread/goal/updated", "thread/goal/cleared":
+		event.Type, event.GoalSource = "goal", p.ThreadID
+		if m.Method == "thread/goal/updated" {
+			if p.Goal == nil || p.Goal.ThreadID != p.ThreadID {
+				return nil, nil, nil
+			}
+			event.Goal = normalizeGoal(p.Goal)
+		}
+		return emit(event)
 	case "thread/name/updated":
 		if p.ThreadName == nil || strings.TrimSpace(*p.ThreadName) == "" {
 			return nil, nil, nil

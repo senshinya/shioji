@@ -17,7 +17,7 @@ func (s *Store) HistoryOperation(id string) (domain.HistoryOperation, error) {
 	return load[domain.HistoryOperation](s.db.QueryRow("SELECT body FROM history_operations WHERE id=?", id))
 }
 func (s *Store) historyAvailable(q interface{ QueryRow(string, ...any) *sql.Row }, source domain.Session) error {
-	if source.ThreadID == "" || source.Archived || source.ExecutionGuard != "" {
+	if source.ThreadID == "" || source.Archived || source.ExecutionGuard != "" || source.Goal.Active() {
 		return errors.New("会话尚不能修改历史")
 	}
 	switch source.Status {
@@ -287,6 +287,9 @@ func (s *Store) CommitHistory(id string) (domain.HistoryOperation, error) {
 		if _, err = tx.Exec(`INSERT INTO requests SELECT ?,id,json_set(body,'$.sessionId',?) FROM requests WHERE session_id=? AND json_extract(body,'$.turnId') IN(SELECT json_extract(body,'$.turnId') FROM items WHERE session_id=?) AND json_extract(body,'$.state') NOT IN('pending','submitting')`, target.ID, target.ID, source.ID, target.ID); err != nil {
 			return op, err
 		}
+	}
+	if target.ThreadID != source.ThreadID {
+		target.Goal = nil
 	}
 	if _, err = tx.Exec("UPDATE sessions SET body=? WHERE id=?", blob(target), target.ID); err != nil {
 		return op, err

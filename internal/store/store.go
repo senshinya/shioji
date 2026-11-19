@@ -405,7 +405,7 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		if session.Origin != nil && session.Origin.ResumeRef == "" && session.ThreadID == "" {
 			return none, errors.New("此导入历史仅可查看")
 		}
-		if session.WorkspaceID != in.WorkspaceID || !(session.Status.CanSubmit()) {
+		if session.WorkspaceID != in.WorkspaceID || !session.Status.CanSubmit() || session.Goal.Active() {
 			return none, errors.New("session is unavailable for a new turn")
 		}
 		if session.Origin != nil && session.ThreadID == "" && session.Context.Repository == "" && len(launch) > 0 && launch[0].Repository != "" {
@@ -440,7 +440,11 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		withdrawReplyCompletion(&session)
 		session.Revision++
 	} else {
-		title := strings.SplitN(strings.TrimSpace(in.Text), "\n", 2)[0]
+		titleInput := in.Text
+		if in.GoalObjective != "" {
+			titleInput = in.GoalObjective
+		}
+		title := strings.SplitN(strings.TrimSpace(titleInput), "\n", 2)[0]
 		if title == "" && len(in.Attachments) > 0 {
 			title = in.Attachments[0].Name
 		}
@@ -470,7 +474,11 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		return none, err
 	}
 	if in.SessionID == "" {
-		job := TitleJob{Session: session, Prompt: in.Text, InputID: "input:" + op.ID}
+		prompt := in.Text
+		if in.GoalObjective != "" {
+			prompt = in.GoalObjective
+		}
+		job := TitleJob{Session: session, Prompt: prompt, InputID: "input:" + op.ID}
 		if _, err = tx.Exec("INSERT INTO title_jobs VALUES(?,?,?)", session.ID, titlePending, blob(job)); err != nil {
 			return none, err
 		}
@@ -587,6 +595,10 @@ func putItem(tx *sql.Tx, sid string, item *domain.Item) error {
 func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.applyLocked(sid, e)
+}
+
+func (s *Store) applyLocked(sid string, e domain.Event) (domain.Event, error) {
 	e.SessionID = sid
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -598,6 +610,11 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		return e, err
 	}
 	switch e.Type {
+	case "goal":
+		if e.GoalSource == "" || e.GoalSource != session.ThreadID || equalGoal(session.Goal, e.Goal) {
+			return e, nil
+		}
+		session.Goal = e.Goal
 	case "context.usage":
 		if e.ContextUsage == nil || e.ContextUsage.TurnID == "" || e.ContextUsage.UsedTokens != nil && *e.ContextUsage.UsedTokens < 0 || e.ContextUsage.LimitTokens != nil && *e.ContextUsage.LimitTokens <= 0 {
 			return e, errors.New("invalid context usage")
@@ -665,6 +682,10 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		branch, head, changed := session.GitBranch, session.GitHead, session.ContextChanged
 		archived, override, sourceTitle, titleRevision := session.Archived, session.TitleOverride, session.SourceTitle, session.TitleRevision
 		archivedAt := session.ArchivedAt
+		goal := session.Goal
+		if session.ThreadID != e.Session.ThreadID {
+			goal = nil
+		}
 		contextUsage := session.ContextUsage
 		contextAction := session.ContextAction
 		contextUsageAfter := session.ContextUsageAfterTurnOrder
@@ -673,6 +694,7 @@ func (s *Store) Apply(sid string, e domain.Event) (domain.Event, error) {
 		}
 		session = *e.Session
 		session.Completion = completion
+		session.Goal = goal
 		session.ContextAction = contextAction
 		if a := session.ContextAction; a != nil && a.State.Active() && session.Status == "unknown" {
 			a.State = "unknown"

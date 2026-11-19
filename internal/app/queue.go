@@ -72,13 +72,21 @@ func (m *Model) ActiveTurn() string {
 }
 func (m *Model) BeginMessage(steer bool) (domain.Submission, string, string, error) {
 	method, turn := "session.submit", ""
-	if m.SessionID != "" && (m.Active() || len(m.Queue().Items) > 0) {
+	_, goalCommand := domain.GoalCommand(m.Drafts[m.DraftKey()])
+	goalActive := false
+	for _, session := range m.Snapshot.Sessions {
+		if session.ID == m.SessionID {
+			goalActive = session.Goal.Active()
+			break
+		}
+	}
+	if m.SessionID != "" && (m.Active() || goalActive || len(m.Queue().Items) > 0) {
 		if m.WorkerMinor < 2 {
 			return domain.Submission{}, "", "", errors.New("请先升级 worker 以使用队列与 Steer")
 		}
 		method = "turn.enqueue"
 	}
-	if steer && m.Active() {
+	if steer && m.Active() && !goalCommand {
 		if !m.RunReadiness().Capabilities.Steer {
 			return domain.Submission{}, "", "", errors.New("此 Agent 不支持引导当前执行")
 		}

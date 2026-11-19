@@ -150,6 +150,12 @@ func (r *Runtime) Inspect(ctx context.Context, s domain.Session) (domain.Recover
 	}
 
 	out.Available = true
+	if r.ready.Capabilities.Goals && (s.Goal != nil || s.Status.NeedsRecovery()) {
+		goal, err := r.ReadGoal(ctx, s)
+		if err == nil {
+			out.Goal, out.GoalObserved = goal, true
+		}
+	}
 	if a := s.ContextAction; a != nil && a.SourceRef == s.ThreadID {
 		observation := compactionObservation(out, *a)
 		out.ContextAction = &observation

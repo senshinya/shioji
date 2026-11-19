@@ -20,14 +20,15 @@ import (
 )
 
 type protocolSupport struct {
-	scopedToolStatus   bool
-	scopedHooks        bool
-	browserLogin       bool
-	deviceLogin        bool
-	collaborationMode  bool
-	serviceTier        bool
-	serviceTierForTurn bool
-	methods            map[string]bool
+	scopedToolStatus       bool
+	scopedHooks            bool
+	browserLogin           bool
+	deviceLogin            bool
+	collaborationMode      bool
+	serviceTier            bool
+	serviceTierForTurn     bool
+	threadStartServiceTier bool
+	methods                map[string]bool
 }
 type requestShape struct {
 	OneOf      []requestShape             `json:"oneOf,omitempty"`
@@ -44,33 +45,37 @@ type protocolSchema struct {
 // remain compatible; removed security/context fields or new required inputs do
 // not silently fall back to the source's defaults.
 var requestContracts = map[string][]string{
-	"mcpServerStatus/list":    {"limit", "cursor"},
-	"mcpServer/oauth/login":   {"name", "timeoutSecs"},
-	"config/mcpServer/reload": {},
-	"initialize":              {"clientInfo", "capabilities"},
-	"model/list":              {"cursor", "limit", "includeHidden"},
-	"config/read":             {"cwd", "includeLayers"},
-	"config/batchWrite":       {"edits", "filePath", "expectedVersion", "reloadUserConfig"},
-	"account/read":            {"refreshToken"},
-	"account/login/cancel":    {"loginId"},
-	"configRequirements/read": {},
-	"environment/add":         {"environmentId", "execServerUrl", "authBearerToken"},
-	"thread/start":            {"cwd", "model", "approvalPolicy", "sandbox", "config", "runtimeWorkspaceRoots", "environments"},
-	"thread/resume":           {"threadId", "excludeTurns", "config"},
-	"turn/start":              {"threadId", "input", "clientUserMessageId", "model", "effort", "approvalPolicy", "sandboxPolicy", "environments"},
-	"turn/interrupt":          {"threadId", "turnId"},
-	"turn/steer":              {"threadId", "expectedTurnId", "clientUserMessageId", "input"},
-	"skills/list":             {"cwds", "forceReload"},
-	"hooks/list":              {"cwds"},
-	"collaborationMode/list":  {},
-	"permissionProfile/list":  {"limit"},
-	"thread/read":             {"threadId"},
-	"thread/list":             {"limit", "cursor", "sortKey", "modelProviders", "sourceKinds"},
-	"thread/compact/start":    {"threadId"},
-	"thread/turns/list":       {"threadId", "limit", "cursor", "sortDirection", "itemsView"},
-	"thread/fork":             {"threadId", "excludeTurns", "deferGoalContinuation", "config", "beforeTurnId", "lastTurnId"},
-	"thread/unsubscribe":      {"threadId"},
-	"thread/loaded/list":      {},
+	"experimentalFeature/list": {"cursor", "limit", "threadId"},
+	"thread/goal/get":          {"threadId"},
+	"thread/goal/set":          {"threadId", "objective", "status", "origin"},
+	"thread/goal/clear":        {"threadId", "origin"},
+	"mcpServerStatus/list":     {"limit", "cursor"},
+	"mcpServer/oauth/login":    {"name", "timeoutSecs"},
+	"config/mcpServer/reload":  {},
+	"initialize":               {"clientInfo", "capabilities"},
+	"model/list":               {"cursor", "limit", "includeHidden"},
+	"config/read":              {"cwd", "includeLayers"},
+	"config/batchWrite":        {"edits", "filePath", "expectedVersion", "reloadUserConfig"},
+	"account/read":             {"refreshToken"},
+	"account/login/cancel":     {"loginId"},
+	"configRequirements/read":  {},
+	"environment/add":          {"environmentId", "execServerUrl", "authBearerToken"},
+	"thread/start":             {"cwd", "model", "approvalPolicy", "sandbox", "config", "runtimeWorkspaceRoots", "environments"},
+	"thread/resume":            {"threadId", "excludeTurns", "config"},
+	"turn/start":               {"threadId", "input", "clientUserMessageId", "model", "effort", "approvalPolicy", "sandboxPolicy", "environments"},
+	"turn/interrupt":           {"threadId", "turnId"},
+	"turn/steer":               {"threadId", "expectedTurnId", "clientUserMessageId", "input"},
+	"skills/list":              {"cwds", "forceReload"},
+	"hooks/list":               {"cwds"},
+	"collaborationMode/list":   {},
+	"permissionProfile/list":   {"limit"},
+	"thread/read":              {"threadId"},
+	"thread/list":              {"limit", "cursor", "sortKey", "modelProviders", "sourceKinds"},
+	"thread/compact/start":     {"threadId"},
+	"thread/turns/list":        {"threadId", "limit", "cursor", "sortDirection", "itemsView"},
+	"thread/fork":              {"threadId", "excludeTurns", "deferGoalContinuation", "config", "beforeTurnId", "lastTurnId"},
+	"thread/unsubscribe":       {"threadId"},
+	"thread/loaded/list":       {},
 }
 var requiredMethods = []string{"initialize", "model/list", "config/read", "configRequirements/read", "environment/add", "thread/start", "thread/resume", "turn/start", "turn/interrupt"}
 
@@ -154,6 +159,9 @@ func protocolFromSchema(data []byte) (*protocolSupport, error) {
 		}
 		if method.Enum[0] == "hooks/list" && compatible {
 			_, support.scopedHooks = params.Properties["threadId"]
+		}
+		if method.Enum[0] == "thread/start" {
+			_, support.threadStartServiceTier = params.Properties["serviceTier"]
 		}
 		if method.Enum[0] == "turn/start" {
 			_, support.collaborationMode = params.Properties["collaborationMode"]

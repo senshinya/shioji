@@ -50,7 +50,10 @@ const Major = 2
 // Minor 48 delegates background unregister to the independent supervisor.
 // Minor 49 adds atomic Hook approval of multiple reviewed definitions.
 // Minor 50 adds device-owned schedules and durable run receipts.
-const Minor = 50
+// Minor 51 adds owning-worker goals and durable goal control receipts.
+const Minor = 51
+
+const GoalMinor = 51
 
 const HookBatchMinor = 49
 const ScheduleMinor = 50

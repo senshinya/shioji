@@ -383,8 +383,10 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 	padding := card.AnimateTo("request-padding", paddingTarget, motionAnimation(c, 240*time.Millisecond))
 	progress := (padding - processingPanelFoldedDisclosureInset) / (processingPanelExpandedDisclosureInset - processingPanelFoldedDisclosureInset)
 	shift := processingPanelDisclosureShift * progress
-	content.Padding(padding-shift, processingPanelInset, padding+shift, processingPanelInset)
-	card.Height((2 + processingPanelHeadingRow + 2*padding + bodyHeight) * presence)
+	// Measure the horizontal inset from the outside of the card, including its border.
+	contentInset := float32(processingPanelInset - processingPanelBorder)
+	content.Padding(padding-shift, contentInset, padding+shift, contentInset)
+	card.Height((2*processingPanelBorder + processingPanelHeadingRow + 2*padding + bodyHeight) * presence)
 }
 
 // Keep one total glyph mounted while its surrounding words become a pager.

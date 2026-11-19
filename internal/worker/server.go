@@ -788,6 +788,12 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 			return nil, err
 		}
 		return s.reloadSession(in, method == "session.reload.operation")
+	case "session.goal.control":
+		in, err := decode[domain.GoalRequest](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.goalControl(in)
 	case "session.context.compact", "session.context.operation":
 		in, err := decode[domain.ContextActionRequest](body)
 		if err != nil {
@@ -1087,6 +1093,9 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 	if err = validateAvailableConfiguration(catalog, in.Config); err != nil {
 		return domain.Operation{}, err
 	}
+	if in.GoalObjective != "" && !catalog.Readiness().Capabilities.Goals {
+		return domain.Operation{}, harness.Unsupported("goal")
+	}
 	if in.Continue && !catalog.Readiness().Capabilities.Continue {
 		return domain.Operation{}, harness.Unsupported("continue")
 	}
@@ -1126,7 +1135,10 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 		if d.Session.Origin != nil && d.Session.Origin.ResumeRef == "" && d.Session.ThreadID == "" {
 			return domain.Operation{}, errors.New("此导入历史仅可查看")
 		}
-		if !d.Session.Status.CanSubmit() {
+		if in.GoalObjective != "" && d.Session.ThreadID != "" && in.Config != d.Session.Config {
+			return domain.Operation{}, errors.New("目标使用会话已接纳的运行配置")
+		}
+		if !d.Session.Status.CanSubmit() || d.Session.Goal.Active() {
 			return domain.Operation{}, errors.New("session is unavailable for a new turn")
 		}
 		if in.Continue {
@@ -1293,6 +1305,12 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 				} else {
 					err = harness.Unsupported("imported-conversation-continuation")
 				}
+			} else if in.GoalObjective != "" {
+				if goalRuntime, ok := runtime.(harness.GoalController); ok && runtime.Readiness().Capabilities.Goals {
+					session.ThreadID, err = goalRuntime.CreateGoalThread(ctx, session)
+				} else {
+					err = harness.Unsupported("goal")
+				}
 			} else {
 				session.ThreadID, err = runtime.Create(ctx, session)
 			}
@@ -1333,7 +1351,11 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 				})
 			}
 			if err == nil {
-				turnID, err = runtime.Submit(ctx, session, op.ID, harness.TurnInput{Text: in.Text, Attachments: inputs, Skills: in.Skills})
+				if in.GoalObjective != "" {
+					err = s.startGoal(ctx, runtime, session, in.GoalObjective, gate)
+				} else {
+					turnID, err = runtime.Submit(ctx, session, op.ID, harness.TurnInput{Text: in.Text, Attachments: inputs, Skills: in.Skills})
+				}
 			}
 		}
 		settled <- result{session: session, turnID: turnID, err: err}
@@ -1446,7 +1468,7 @@ func (s *Server) onEvent(e domain.Event) error {
 		}
 	}
 	_, err := s.store.Apply(e.SessionID, e)
-	if err == nil && (e.Turn != nil || e.Type == "request.resolve") {
+	if err == nil && (e.Turn != nil || e.Type == "request.resolve" || e.Type == "goal") {
 		s.wakeRecovery()
 		s.wakeQueue()
 	}

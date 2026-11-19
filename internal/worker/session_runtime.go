@@ -77,7 +77,7 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 		if e != nil {
 			return nil, e
 		}
-		if busy {
+		if busy || d.Session.Goal.Active() {
 			return r, nil
 		}
 		// A new accepted turn may adopt the new installation, but live turns and

@@ -245,7 +245,7 @@ func (s *Server) onHarnessEvent(harnessID, sessionID string, e domain.Event) err
 		return errors.New("request belongs to another session")
 	}
 	switch e.Type {
-	case "session.title", "context.usage", "turn", "item.upsert", "request.open", "request.resolve", "plan", "plan.text", "runtime.lost", "work.upsert", "work.item":
+	case "session.title", "context.usage", "goal", "turn", "item.upsert", "request.open", "request.resolve", "plan", "plan.text", "runtime.lost", "work.upsert", "work.item":
 	default:
 		return errors.New("harness event cannot mutate worker-owned state")
 	}

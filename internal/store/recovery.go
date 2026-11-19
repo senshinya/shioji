@@ -107,6 +107,9 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 	if source.State == "active" && !source.Attached || source.State == "failed" {
 		return none, errors.New("旧轮仍在执行或无法确认停止，请先停止后重新核对")
 	}
+	if source.GoalObserved {
+		session.Goal = source.Goal
+	}
 	targets := map[string]bool{}
 	rows, err := tx.Query("SELECT body FROM turns WHERE session_id=?", id)
 	if err != nil {
@@ -168,6 +171,9 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 		}
 	}
 	for _, op := range ops {
+		if op.Kind == goalOperationKind {
+			continue
+		}
 		if op.Kind == "compact" {
 			if a := source.ContextAction; a != nil && a.OperationID == op.ID && a.TurnID != "" {
 				targets[a.TurnID] = true
@@ -243,6 +249,22 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 		}
 	}
 	for _, op := range ops {
+		if op.Kind == goalOperationKind {
+			if !source.GoalObserved && !end {
+				unresolved = true
+				continue
+			}
+			// The snapshot proves what the objective will do now, not which
+			// client changed it during an interrupted native request.
+			op.State, op.Error = domain.OperationAbandoned, "旧目标操作的结果未确认，未自动重发"
+			if _, err = tx.Exec("UPDATE operations SET state=?,error=? WHERE id=?", op.State, op.Error, op.ID); err != nil {
+				return none, err
+			}
+			if _, err = journal(tx, domain.Event{Type: "operation", SessionID: id, Operation: &op}); err != nil {
+				return none, err
+			}
+			continue
+		}
 		tid := source.Inputs["input:"+op.ID]
 		if op.Kind == "compact" {
 			if a := source.ContextAction; a != nil && a.OperationID == op.ID {

@@ -51,7 +51,16 @@ type Counters struct {
 	Output *int64 `json:"outputTokens"`
 	Cached *int64 `json:"cachedInputTokens"`
 }
+type Goal struct {
+	ThreadID       string `json:"threadId"`
+	Objective      string `json:"objective"`
+	Status         string `json:"status"`
+	ElapsedSeconds int64  `json:"timeUsedSeconds"`
+	CreatedAt      int64  `json:"createdAt"`
+}
+
 type Params struct {
+	Goal        *Goal   `json:"goal"`
 	ThreadName  *string `json:"threadName"`
 	Explanation string  `json:"explanation"`
 	Plan        []struct {
@@ -99,6 +108,7 @@ type Model struct {
 	} `json:"serviceTiers"`
 }
 type ThreadParams struct {
+	ServiceTier           string                 `json:"serviceTier,omitempty"`
 	Environments          []ExecutionEnvironment `json:"environments,omitempty"`
 	RuntimeWorkspaceRoots []string               `json:"runtimeWorkspaceRoots,omitempty"`
 	CWD                   string                 `json:"cwd"`

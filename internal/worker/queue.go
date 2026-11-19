@@ -27,7 +27,7 @@ func (s *Server) queueLoop() {
 		snapshot, err := s.store.Snapshot()
 		if err == nil && s.ctx.Err() == nil {
 			for _, session := range snapshot.Sessions {
-				if !session.Status.CanSubmit() {
+				if !session.Status.CanSubmit() || session.Goal.Active() {
 					continue
 				}
 				q, e := s.store.Queue(session.ID)
@@ -79,6 +79,9 @@ func (s *Server) enqueueLocked(in domain.Submission) (domain.Operation, error) {
 	}
 	if err := validateAvailableConfiguration(runtime, in.Config); err != nil {
 		return domain.Operation{}, err
+	}
+	if in.GoalObjective != "" && !runtime.Readiness().Capabilities.Goals {
+		return domain.Operation{}, harness.Unsupported("goal")
 	}
 	op, err := s.store.Enqueue(in)
 	if err == nil {
@@ -164,6 +167,9 @@ func (s *Server) steer(in protocol.SteerInput) (domain.Operation, error) {
 	return s.steerLocked(in, 0)
 }
 func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Operation, error) {
+	if in.Input.GoalObjective != "" {
+		return domain.Operation{}, errors.New("目标输入请加入队列")
+	}
 	if err := s.sessionMaintenanceAdmission(in.Input.SessionID); err != nil {
 		return domain.Operation{}, err
 	}

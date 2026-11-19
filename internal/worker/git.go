@@ -265,7 +265,7 @@ func (s *Server) checkoutGuard(status domain.GitStatus, own string) error {
 		if !s.sameCheckoutOutsideDispatch(session.Context.CWD, status.Checkout) {
 			continue
 		}
-		busy := session.Status.BlocksCheckout()
+		busy := session.Status.BlocksCheckout() || session.Goal.Active()
 		workBusy, e := s.store.HasActiveWork(session.ID)
 		if e != nil {
 			return e
@@ -315,7 +315,7 @@ func (s *Server) checkout(in protocol.CheckoutInput) (domain.GitStatus, error) {
 	if err != nil {
 		return status, err
 	}
-	if d.Session.Status.BlocksCheckout() {
+	if d.Session.Status.BlocksCheckout() || d.Session.Goal.Active() {
 		return status, errors.New("session must be idle")
 	}
 	for _, r := range d.Requests {
@@ -346,7 +346,7 @@ func (s *Server) checkout(in protocol.CheckoutInput) (domain.GitStatus, error) {
 		if e != nil {
 			return status, e
 		}
-		if latest.Session.ThreadID != d.Session.ThreadID || latest.Session.Context.CWD != d.Session.Context.CWD || latest.Session.Archived || latest.Session.Status.BlocksCheckout() || latest.Session.ExecutionGuard != "" {
+		if latest.Session.ThreadID != d.Session.ThreadID || latest.Session.Context.CWD != d.Session.Context.CWD || latest.Session.Archived || (latest.Session.Status.BlocksCheckout() || latest.Session.Goal.Active()) || latest.Session.ExecutionGuard != "" {
 			return status, errors.New("会话执行上下文已改变，分支未切换")
 		}
 		for _, req := range latest.Requests {

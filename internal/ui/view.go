@@ -28,6 +28,7 @@ type editBinding struct {
 }
 
 type View struct {
+	goalActions                      map[app.WorkKey]bool
 	schedules                        *schedulePageState
 	remoteUploadJobs                 map[string]*remoteUploadJob
 	remoteUploadRemember             map[string]bool
@@ -755,6 +756,9 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	stack := n.Column(c.Key("composer-stack:" + stackKey)).Label("消息编辑区").FillWidth().MaxWidth(768).Gap(0).Children(func() {
 		v.queueDisclosure(c, t)
 		v.remoteAttachmentsPanel(c, t, key)
+		if !home && !v.loadingBlocksComposer() {
+			v.sessionGoal(c, t)
+		}
 		binding = v.composerDocument(c, key)
 
 		editID := m.ActiveQueueEdit(m.SessionID).ID
@@ -1486,11 +1490,19 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	}).Children(func() { v.toolbar(c, t) })
 	v.conversationFindBar(c, t, state.Bounds(c).W)
 	dock := n.Column(c.Key("conversation-dock")).Absolute().Left(0).Right(0).Bottom(8).PaddingX(18).AlignItems(n.Center).Gap(8).Label("会话底部面板")
+	goalDock := !v.loadingBlocksComposer() && v.contextSession().Goal != nil
 	dock.Draw(func(p *n.Painter, r n.Rect) {
+		width := max(0, r.W-conversationScrollbarGutter)
+		if goalDock {
+			// Cover the fixed stack while leaving history visible beside the
+			// separately attached return control above it.
+			p.Fill(n.Rect{X: r.X, Y: r.Y, W: width, H: r.H + 8}, t.Background, 0)
+			return
+		}
 		// Cards paint their own opaque rounded surfaces; the composer also
 		// covers its lower corners. Continue that cover to the pane bottom,
 		// leaving the native scrollbar gutter uncovered.
-		p.Fill(n.Rect{X: r.X, Y: r.Y + r.H, W: max(0, r.W-conversationScrollbarGutter), H: 8}, t.Background, 0)
+		p.Fill(n.Rect{X: r.X, Y: r.Y + r.H, W: width, H: 8}, t.Background, 0)
 	})
 	// Native wrapping and question disclosure determine the complete dock height.
 	invalidate := c.Services().Invalidate

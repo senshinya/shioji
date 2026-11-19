@@ -139,7 +139,7 @@ func (s *Store) WorkerStopReady(liveSessions []string) (domain.WorkerUpdateResul
 	// not represent a lease held by this worker instance.
 	for _, id := range liveSessions {
 		var blocked bool
-		err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sessions WHERE id=? AND json_extract(body,'$.status') IN ('starting','running'))`, id).Scan(&blocked)
+		err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sessions WHERE id=? AND (json_extract(body,'$.status') IN ('starting','running') OR json_extract(body,'$.goal.state')='active'))`, id).Scan(&blocked)
 		if err != nil {
 			return domain.WorkerUpdateResult{}, err
 		}

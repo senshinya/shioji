@@ -272,6 +272,24 @@ func (m *Model) beginSubmission(method string) (domain.Submission, error) {
 			return domain.Submission{}, errors.New("正在核对设备上的分支，请稍后提交")
 		}
 	}
+	if objective, goal := domain.GoalCommand(in.Text); goal {
+		if m.WorkerMinor < protocol.GoalMinor || !ready.Capabilities.Goals {
+			return domain.Submission{}, errors.New("当前设备的 Agent 不支持 Goal")
+		}
+		if objective == "" {
+			return domain.Submission{}, errors.New("请输入 /goal 和完整目标")
+		}
+		in.GoalObjective = objective
+		if m.SessionID != "" {
+			for _, session := range m.Snapshot.Sessions {
+				if session.ID == m.SessionID {
+					// Goal continuation uses the session's accepted run configuration.
+					in.Config = session.Config
+					break
+				}
+			}
+		}
+	}
 	if m.SessionID == "" && m.GitStatuses["workspace:"+workspace].Applicable {
 		in.Git = m.GitDrafts[workspace]
 	}

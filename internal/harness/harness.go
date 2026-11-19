@@ -57,6 +57,14 @@ type ConversationContinuation interface {
 	PrepareConversation(context.Context, domain.Session) (string, error)
 }
 
+// GoalController changes or reads the source-owned conversation objective.
+// The harness owns continuation and reports each actual turn separately.
+type GoalController interface {
+	CreateGoalThread(context.Context, domain.Session) (string, error)
+	ReadGoal(context.Context, domain.Session) (*domain.Goal, error)
+	ChangeGoal(context.Context, domain.Session, domain.GoalChange) (*domain.Goal, error)
+}
+
 // ContextCompactor changes model context without adding a user message.
 // Inspection is read-only and must never repeat an uncertain request.
 type ContextCompactor interface {

@@ -144,6 +144,16 @@ func (s *Store) editQueue(sid, id string, revision int64, text string, attachmen
 					return errors.New("queued delivery is in flight or unknown")
 				}
 				input := q.Items[i].Input
+				if input.GoalObjective != "" {
+					objective, command := domain.GoalCommand(text)
+					if command && objective == "" {
+						return errors.New("请输入 /goal 和完整目标")
+					}
+					input.GoalObjective = ""
+					if command {
+						input.GoalObjective = objective
+					}
+				}
 				input.Text = text
 				input.ReferencePositions = positions
 				if replaceSkills {

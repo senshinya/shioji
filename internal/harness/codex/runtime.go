@@ -315,7 +315,7 @@ func (r *Runtime) call(ctx context.Context, method string, params, out any) erro
 	r.mu.Lock()
 	r.pending[key] = ch
 	switch method {
-	case "turn/start", "turn/steer", "turn/interrupt", "thread/start", "thread/resume", "thread/fork", "thread/compact/start":
+	case "turn/start", "turn/steer", "turn/interrupt", "thread/start", "thread/resume", "thread/fork", "thread/compact/start", "thread/goal/set", "thread/goal/clear":
 		if r.pendingActivity == nil {
 			r.pendingActivity = map[string]bool{}
 		}
@@ -435,6 +435,7 @@ func (r *Runtime) catalog(ctx context.Context) (err error) {
 	if len(ready.Permissions) == 0 {
 		return errors.New("managed permission profiles require a supported explicit mapping")
 	}
+	ready.Capabilities.Goals = r.goalsEnabled(ctx, "")
 	r.ready = ready
 	return nil
 }
@@ -487,6 +488,10 @@ func validateCodexConfig(ready domain.Readiness, config domain.RunConfig) error 
 	return errors.New("model is not in the runtime catalog")
 }
 func (r *Runtime) Create(ctx context.Context, s domain.Session) (string, error) {
+	return r.create(ctx, s, false)
+}
+
+func (r *Runtime) create(ctx context.Context, s domain.Session, goal bool) (string, error) {
 	if err := r.Validate(s.Config); err != nil {
 		return "", err
 	}
@@ -509,6 +514,18 @@ func (r *Runtime) Create(ctx context.Context, s domain.Session) (string, error) 
 	configuration, err := r.executionConfig(ctx, s)
 	if err != nil {
 		return "", err
+	}
+	if goal && s.Config.Effort != "" {
+		if configuration == nil {
+			configuration = make(map[string]any)
+		}
+		configuration["model_reasoning_effort"] = s.Config.Effort
+	}
+	if goal && s.Config.Fast {
+		params.ServiceTier = r.fastServiceTiers[s.Config.Model]
+		if params.ServiceTier == "" || r.protocol == nil || !r.protocol.threadStartServiceTier {
+			return "", harness.Unsupported("goal speed")
+		}
 	}
 	params.Config = configuration
 	params.Environments = r.executionEnvironment(s)

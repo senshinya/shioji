@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"time"
 )
@@ -29,7 +30,7 @@ func (s *Server) interruptTurn(id, turn string) error {
 		return harness.Unsupported("interrupt")
 	}
 	d, err := s.store.Session(id, 0, 1)
-	active := turn == "" && d.Session.Status.Active()
+	active := turn == "" && (d.Session.Status.Active() || d.Session.Goal.Active())
 	for _, t := range d.Turns {
 		if t.ID == turn && t.Status.Active() {
 			active = true
@@ -74,9 +75,16 @@ func (s *Server) interruptTurn(id, turn string) error {
 		defer cancel()
 		ack := make(chan error, 1)
 		go func() {
-			if turn != "" {
-				ack <- r.Interrupt(ctx, d.Session, turn)
+			if turn == "" && !d.Session.Goal.Active() {
+				return // No native turn yet. Keep the existing timeout/recovery path.
 			}
+			if turn != "" {
+				if e := r.Interrupt(ctx, d.Session, turn); e != nil {
+					ack <- e
+					return
+				}
+			}
+			ack <- s.pauseGoalAfterStop(ctx, r, d.Session)
 		}()
 		tick := time.NewTicker(20 * time.Millisecond)
 		defer tick.Stop()
@@ -153,4 +161,39 @@ func (s *Server) interruptTurn(id, turn string) error {
 		}
 	}()
 	return nil
+}
+
+// Only the captured runtime and objective may be paused by this Stop.
+func (s *Server) pauseGoalAfterStop(ctx context.Context, runtime harness.Runtime, before domain.Session) error {
+	if !before.Goal.Active() {
+		return nil
+	}
+	goals, ok := runtime.(harness.GoalController)
+	if !ok || !runtime.Readiness().Capabilities.Goals {
+		return harness.Unsupported("goal")
+	}
+	s.runtimeMu.RLock()
+	gate := s.runtimeEvents[before.ID]
+	s.runtimeMu.RUnlock()
+	if gate == nil || !gate.Load() || s.currentRuntime(before.ID) != runtime {
+		return errRuntimeRetired
+	}
+	native, err := goals.ReadGoal(ctx, before)
+	if err != nil {
+		return err
+	}
+	if !native.SameTarget(before.Goal) {
+		return nil // The goal settled or changed while Stop was in flight.
+	}
+	result, err := goals.ChangeGoal(ctx, before, domain.GoalChange{Action: domain.PauseGoal})
+	if err != nil {
+		return err
+	}
+	return gate.apply(func() error {
+		if err := s.store.RecordGoalReceipt(before.ID, before.ThreadID, native, result); err != nil {
+			return err
+		}
+		s.wakeQueue()
+		return nil
+	})
 }

@@ -43,6 +43,7 @@ type LaunchContext struct {
 	Head                  string   `json:"head,omitempty"`
 }
 type Session struct {
+	Goal           *Goal               `json:"goal,omitempty"`
 	ArchivedAt     *time.Time          `json:"archivedAt,omitempty"`
 	Completion     *ReplyCompletion    `json:"completion,omitempty"`
 	Origin         *ConversationOrigin `json:"origin,omitempty"`
@@ -89,6 +90,7 @@ type ReplyCompletion struct {
 }
 
 type Submission struct {
+	GoalObjective      string              `json:"goalObjective,omitempty"`
 	ReferencePositions []ReferencePosition `json:"referencePositions,omitempty"`
 	Skills             []SkillReference    `json:"skills,omitempty"`
 	HarnessID          string              `json:"harnessId,omitempty"`
@@ -252,6 +254,8 @@ type Plan struct {
 	Steps       []PlanStep `json:"steps"`
 }
 type Event struct {
+	Goal             *Goal            `json:"goal,omitempty"`
+	GoalSource       string           `json:"goalSource,omitempty"`
 	ActivityStart    bool             `json:"activityStart,omitempty"`
 	ArchivePolicy    *ArchivePolicy   `json:"archivePolicy,omitempty"`
 	Deletion         *ArchiveDeletion `json:"deletion,omitempty"`

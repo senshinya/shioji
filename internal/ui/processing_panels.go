@@ -3,6 +3,7 @@ package ui
 import n "github.com/egoist/mygo/ui"
 
 const (
+	processingPanelBorder                  = 1
 	processingPanelInset                   = 16
 	processingPanelExpandedInset           = 16
 	processingPanelHeadingLine             = 20
@@ -23,7 +24,7 @@ const (
 )
 
 func processingPanelSurface(e n.Element, t *n.Theme) n.Element {
-	return e.Radius(10).Background(processingPanelColor(t)).Border(1, t.Border)
+	return e.Radius(10).Background(processingPanelColor(t)).Border(processingPanelBorder, t.Border)
 }
 
 func processingPanelDisclosure(c *n.Context) n.Element {
