@@ -99,6 +99,55 @@ func TestSidebarNavigationColumnsShareVisibleAxes(t *testing.T) {
 	}
 }
 
+func TestSidebarActionsShareForeground(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%t", dark), func(t *testing.T) {
+			m := navigationFixture()
+			m.SessionID = ""
+			m.CompletedReplies = map[string]app.CompletedReply{"other": {Unread: true}}
+			const scale = 2
+			ui := n.NewTester(New(m, nil, "").View, 1280, 800)
+			ui.SetDark(dark)
+			ui.SetScale(scale)
+			for _, page := range []string{"新建会话", "定时任务"} {
+				if err := ui.Click(page); err != nil {
+					t.Fatal(err)
+				}
+				ui.Move(0, 0)
+				ui.Advance(time.Second)
+				saveNativeSkillImage(t, ui, fmt.Sprintf("sidebar-dark-%t-%s.png", dark, page))
+				frame := ui.Image()
+				foreground := func(label string) uint8 {
+					t.Helper()
+					row, ok := ui.Find(label)
+					if !ok {
+						t.Fatalf("missing sidebar action %q", label)
+					}
+					// Sample the text columns, excluding the icon and attention count.
+					ink := frame.RGBAAt(int((row.X+26)*scale), int(row.Y*scale)).R
+					for y := int(row.Y * scale); y < int((row.Y+row.H)*scale); y++ {
+						for x := int((row.X + 26) * scale); x < int((row.X+80)*scale); x++ {
+							red := frame.RGBAAt(x, y).R
+							if dark {
+								ink = max(ink, red)
+							} else {
+								ink = min(ink, red)
+							}
+						}
+					}
+					return ink
+				}
+				want := foreground("新建会话")
+				for _, action := range []string{"待我处理", "定时任务"} {
+					if got := foreground(action); absChannel(got, want) > 3 {
+						t.Errorf("%s foreground on %s = %d, want %d", action, page, got, want)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestSidebarSectionHeadingsShareVisibleLeftEdge(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, scale := range []float32{1, 2} {

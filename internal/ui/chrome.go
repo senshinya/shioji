@@ -53,18 +53,12 @@ const (
 	sidebarMetadataInset   = 6
 )
 
-func navButton(c *n.Context, icon *n.SVG, label string) n.Element {
-	color, size := c.Theme().TextMuted, float32(13)
-	if label == "新建会话" {
-		color = c.Theme().Text
-	}
-	if label == "设备" {
-		size = 12
-	}
-	return navButtonWithColors(c, icon, label, size, color, color, nil)
+func navButton(c *n.Context, icon *n.SVG, label string, color n.Color) n.Element {
+	return navButtonWithColors(c, icon, label, color, color, nil)
 }
 
-func navButtonWithColors(c *n.Context, icon *n.SVG, label string, size float32, textColor, iconColor n.Color, trailing func()) n.Element {
+func navButtonWithColors(c *n.Context, icon *n.SVG, label string, textColor, iconColor n.Color, trailing func()) n.Element {
+	const size = 13
 	return control(c, 8).FillWidth().Height(28).PaddingEnd(sidebarMetadataInset).Justify(n.Start).Radius(8).Label(label).Children(func() {
 		n.Row(c).Gap(sidebarIconLabelGap).AlignItems(n.Baseline).Children(func() {
 			font := n.Font{Family: c.Theme().Font, Size: size, Weight: 400}
@@ -98,7 +92,7 @@ func (v *View) attentionControl(c *n.Context, t *n.Theme) {
 					TextColor(t.TextMuted).Label("待处理会话数：" + value).Role(n.RoleNone)
 			}
 		}
-		button := navButtonWithColors(c, attentionIcon, "待我处理", 13, textColor, iconColor, trailing).
+		button := navButtonWithColors(c, attentionIcon, "待我处理", textColor, iconColor, trailing).
 			Description(description).Disabled(!available)
 		if !available {
 			button.Opacity(.5)

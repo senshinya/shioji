@@ -288,7 +288,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 		card.Children(func() {
 			n.Column(c.Key("nav-top")).FillWidth().Padding(sidebarHeaderTopInset, sidebarTrailingInset, 0, sidebarLeadingInset).Gap(sidebarHeaderGap).Children(func() {
 				n.Row(c).Height(sidebarTitlebarHeight).AlignItems(n.Start).DragWindow().Children(func() { n.Spacer(c).Grow(1); v.searchControl(c, t) })
-				if navButton(c, plus, "新建会话").Background(func() n.Color {
+				if navButton(c, plus, "新建会话", t.Text).Background(func() n.Color {
 					if m.SessionID == "" && !v.devices && !v.schedulePageOpen() && (v.archive == nil || !v.archive.open) {
 						return t.SurfacePressed
 					}
@@ -297,7 +297,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 					v.home()
 				}
 				v.attentionControl(c, t)
-				if navButton(c, scheduleClockIcon, "定时任务").Background(func() n.Color {
+				if navButton(c, scheduleClockIcon, "定时任务", t.Text).Background(func() n.Color {
 					if v.schedulePageOpen() {
 						return t.SurfacePressed
 					}

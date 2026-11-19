@@ -99,7 +99,7 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 				}
 				n.Column(c).Fill().Radius(14).Padding(sidebarHeaderTopInset, 8, 8).Background(surface).Border(1, t.Border).Gap(sidebarHeaderGap).Children(func() {
 					n.Row(c).FillWidth().Height(sidebarTitlebarHeight).DragWindow()
-					if navButton(c, deviceBackIcon, "返回会话").TextColor(t.TextMuted).Clicked() {
+					if navButton(c, deviceBackIcon, "返回会话", t.TextMuted).Clicked() {
 						v.devices = false
 					}
 					n.Row(c).FillWidth().Padding(8, 4).Gap(4).AlignItems(n.Center).Children(func() {
