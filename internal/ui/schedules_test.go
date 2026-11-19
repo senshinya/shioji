@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -310,6 +311,9 @@ func TestNewScheduleEditorKeepsFormAlignedAndActionsVisible(t *testing.T) {
 				t.Errorf("workspace and its device should fit in a single selector row: workspace=%+v frequency=%+v", workspace, frequency)
 			}
 			form, save := find("定时任务设置"), find("保存任务")
+			if name.X+name.W != form.X+form.W {
+				t.Errorf("name must reach the trailing edge of the form: name=%+v form=%+v", name, form)
+			}
 			if form.W > 640 || save.Y < form.Y+form.H || save.Y+save.H > float32(layout.height) {
 				t.Errorf("form should have a readable width and keep save below its scrollport: form=%+v save=%+v", form, save)
 			}
@@ -352,6 +356,88 @@ func TestNewScheduleEditorKeepsFormAlignedAndActionsVisible(t *testing.T) {
 			click("取消")
 			if g.draft != nil || !ui.HasText("新建任务") {
 				t.Fatal("cancel did not return to the task list")
+			}
+		})
+	}
+}
+
+func TestScheduleEditSharesFormEdges(t *testing.T) {
+	for _, layout := range []struct {
+		name          string
+		width, height int
+		dark          bool
+	}{{"wide-light", 1440, 800, false}, {"compact-dark", 850, 600, true}} {
+		t.Run(layout.name, func(t *testing.T) {
+			m := layoutModel()
+			m.Connections = []app.DeviceConnection{{ID: "remote", DeviceID: "mini", Name: "MacMini at Home"}}
+			m.Snapshot.DeviceID = "mini"
+			m.Snapshot.Workspaces[0].DeviceID, m.Snapshot.Workspaces[0].Name = "mini", "server"
+			ready := m.Readiness
+			ready.Permissions = []string{"YOLO"}
+			ready.Models = []domain.Model{{ID: "gpt-6.2-sol", Name: "GPT-6.2-Sol", Default: true, DefaultEffort: "high", Efforts: []string{"high"}}}
+			m.DeviceStates["remote"] = &app.DeviceState{Snapshot: m.Snapshot, Connected: true, ConnectionEpoch: "remote", WorkerMinor: protocol.ScheduleMinor, Readiness: ready}
+			v := New(m, nil, "")
+			v.openSchedulePage()
+			v.editSchedule(v.schedules, domain.Schedule{
+				ID: "daily", DeviceID: "mini", WorkspaceID: "w", Name: "每日巡检", Text: "巡检", Revision: 1, Enabled: true,
+				Rule: domain.ScheduleRule{Kind: "daily", Time: "21:00"}, Zone: "Asia/Taipei",
+				NextAt: time.Date(2026, time.November, 19, 13, 0, 0, 0, time.UTC),
+				Config: domain.RunConfig{Permission: "YOLO", Model: "gpt-6.2-sol", Effort: "high"},
+			})
+			ui := n.NewTester(v.View, layout.width, layout.height)
+			ui.SetDark(layout.dark)
+			const scale = 2
+			ui.SetScale(scale)
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, "schedule-edit-"+layout.name+".png")
+			find := func(label string) n.Rect {
+				t.Helper()
+				box, ok := ui.Find(label)
+				if !ok {
+					t.Fatalf("missing %q", label)
+				}
+				return box
+			}
+			name, form := find("输入任务名称"), find("定时任务设置")
+			saveButton, ok := ui.AccessByRole(n.RoleButton, "保存任务")
+			if !ok {
+				t.Fatal("missing save button")
+			}
+			save := saveButton.Bounds
+			if name.X+name.W != form.X+form.W || math.Abs(float64((name.X+name.W)-(save.X+save.W))) > 0.01 {
+				t.Errorf("name, form and save must share the trailing edge: name=%+v form=%+v save=%+v", name, form, save)
+			}
+			findInForm := func(label string) n.Rect {
+				t.Helper()
+				for _, item := range ui.AccessAll() {
+					if item.Name == label && item.Bounds.X >= form.X && item.Bounds.Y >= form.Y && item.Bounds.Y < form.Y+form.H {
+						return item.Bounds
+					}
+				}
+				t.Fatalf("missing %q in the form", label)
+				return n.Rect{}
+			}
+			workspace, device := findInForm("server"), findInForm("MacMini at Home")
+			if workspace.X != name.X+configurationFieldInset || device.X+device.W != name.X+name.W-configurationFieldInset {
+				t.Errorf("workspace and device must share the name field's text insets: name=%+v workspace=%+v device=%+v", name, workspace, device)
+			}
+			backButton, ok := ui.AccessByRole(n.RoleButton, "返回任务列表")
+			if !ok {
+				t.Fatal("missing back button")
+			}
+			back, frame := backButton.Bounds, ui.Image()
+			background := frame.RGBAAt(int((form.X+form.W/2)*scale), int(back.Y*scale))
+			leftInk := frame.Bounds().Max.X
+			for y := int(back.Y * scale); y < int((back.Y+back.H)*scale); y++ {
+				for x := int(back.X * scale); x < int((back.X+back.W)*scale); x++ {
+					p := frame.RGBAAt(x, y)
+					if absChannel(p.R, background.R) > 30 {
+						leftInk = min(leftInk, x)
+					}
+				}
+			}
+			if offset := float64(leftInk)/scale - float64(form.X); math.Abs(offset) > 1 {
+				t.Errorf("back arrow ink must align with the form's leading edge: offset=%g DIP", offset)
 			}
 		})
 	}

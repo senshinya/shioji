@@ -42,7 +42,7 @@ const (
 
 const (
 	scheduleEditorWidth      = 640
-	scheduleEditorFieldWidth = 380
+	scheduleEditorBackInset  = 11 // Left edge of the chevron ink within the 28 DIP button.
 	scheduleEditorLabelWidth = 80
 	scheduleEditorRowGap     = 12
 	scheduleEditorDetailGap  = 8

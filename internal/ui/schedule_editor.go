@@ -145,7 +145,7 @@ func (v *View) scheduleEditor(c *n.Context, t *n.Theme, g *schedulePageState, in
 	n.Column(c.Key("schedule-editor")).FillHeight().Grow(1).MinWidth(0).AlignItems(n.Center).Children(func() {
 		n.Column(c).FillWidth().MaxWidth(scheduleEditorWidth+2*inset).Grow(1).MinHeight(0).Padding(0, inset, 16, inset).Children(func() {
 			scheduleTitle(c, title, func() {
-				if iconButton(c, conversationBackIcon, "返回任务列表").Disabled(g.busy).MarginStart(-5).Clicked() {
+				if iconButton(c, conversationBackIcon, "返回任务列表").Disabled(g.busy).MarginStart(-scheduleEditorBackInset).Clicked() {
 					g.draft, g.message = nil, ""
 					g.refreshAt = time.Time{}
 				}
@@ -153,7 +153,7 @@ func (v *View) scheduleEditor(c *n.Context, t *n.Theme, g *schedulePageState, in
 			n.Scroll(c.Key("schedule-editor-scroll")).FillWidth().Shrink(1).MinHeight(0).TrackScroll(&g.form).Label("定时任务设置").Children(func() {
 				n.Column(c).FillWidth().PaddingY(16).Gap(scheduleEditorRowGap).Children(func() {
 					scheduleFormRow(c, "任务名称", func() {
-						configurationTextField(c, &draft.task.Name).MaxWidth(scheduleEditorFieldWidth).
+						configurationTextField(c, &draft.task.Name).
 							Label("输入任务名称").Placeholder("例如，工作日提交摘要").Disabled(g.busy)
 					})
 					scheduleFormRow(c, "工作区", func() {
@@ -175,8 +175,7 @@ func (v *View) scheduleEditor(c *n.Context, t *n.Theme, g *schedulePageState, in
 			if g.message != "" {
 				n.Text(c, g.message).FontSize(12).TextColor(t.Danger)
 			}
-			n.Row(c.Key("schedule-editor-footer")).FillWidth().Height(44).Shrink(0).Gap(8).AlignItems(n.Center).
-				BorderWidth(.5, 0, 0, 0).BorderColor(t.Border).Children(func() {
+			n.Row(c.Key("schedule-editor-footer")).FillWidth().Height(44).Shrink(0).Gap(8).AlignItems(n.Center).Children(func() {
 				n.Spacer(c).Grow(1)
 				if configurationAction(c, "取消").Disabled(g.busy).Clicked() {
 					g.draft, g.message, g.refreshAt = nil, "", time.Time{}
@@ -223,17 +222,17 @@ func (v *View) scheduleWorkspaceControl(c *n.Context, t *n.Theme, g *schedulePag
 	editing := draft.task.Revision != 0
 	var trigger n.Element
 	if editing {
-		trigger = n.Row(c).Tooltip(label)
+		trigger = n.Row(c).Tooltip(label).PaddingX(configurationFieldInset)
 	} else {
 		summary := label
 		if device != "" {
 			summary += " · " + device
 		}
 		trigger = control(c, configurationFieldRadius).Radius(configurationFieldRadius).
+			MaxWidth(compactChoiceWidth).PaddingX(compactMenuInset+compactMenuRowInset).
 			Background(t.Background).Border(1, t.Border).Label("选择工作区").Description(summary).Tooltip(summary).Disabled(g.busy)
 	}
-	trigger.FillWidth().MaxWidth(compactChoiceWidth).Height(configurationControlHeight).
-		PaddingX(compactMenuInset + compactMenuRowInset).Children(func() {
+	trigger.FillWidth().Height(configurationControlHeight).Children(func() {
 		n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
 			compactMenuChoiceText(c, t, label, device)
 			if !editing {
