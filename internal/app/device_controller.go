@@ -231,6 +231,11 @@ func (c *Controller) runDevices(ctx context.Context) {
 						key = "local"
 					}
 					err = m.validateDeviceReply(key, job, body)
+					if err == nil && (job.Method == "session.delete" || job.Method == "workspace.delete") {
+						// Receipts update the owning catalog just like archive.deleted events.
+						m.ApplyDeviceUpdate(key, func(p *Model) { job.Apply(p, body, nil) })
+						return
+					}
 				}
 				job.Apply(m, body, err)
 			})

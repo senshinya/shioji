@@ -67,7 +67,9 @@ func TestArchiveBackgroundDeleteThroughOwningWorker(t *testing.T) {
 	m := app.NewModel()
 	m.FirstRun = false
 	m.Drafts["home"] = "保留普通草稿"
-	c := app.NewController(dir)
+	m.Connections = []app.DeviceConnection{{ID: "air", DeviceID: "air-device", Name: "Air"}}
+	c := app.NewDeviceController(dir, "", nil, "", nil)
+	c.SetWorkerAutoUpdate(false)
 	done := make(chan struct{})
 	go func() { c.Run(ctx); close(done) }()
 	defer func() { cancel(); <-done }()
@@ -75,19 +77,25 @@ func TestArchiveBackgroundDeleteThroughOwningWorker(t *testing.T) {
 	defer v.CloseTransient()
 	ui := n.NewTester(v.View, 1240, 820)
 	waitNative(t, ui, func() bool { return m.Connected && len(m.Snapshot.Sessions) == 17 })
+	m.ApplyDeviceUpdate("air", func(p *app.Model) {
+		p.ApplySnapshot(domain.Snapshot{
+			DeviceID: "air-device", Generation: "air-generation",
+			Workspaces: []domain.Workspace{{ID: "air-workspace", DeviceID: "air-device", Name: "Air 项目"}},
+		})
+	})
+	m.WorkspaceID = "air-workspace"
+	m.RefreshDevices()
 	v.openArchive()
 	ui.Frame()
 	ui.Advance(time.Second)
-	// The asynchronous connection toast can cover the archive toolbar.
-	if _, ok := ui.Find("关闭消息"); ok {
-		if err = ui.Click("关闭消息"); err != nil {
-			t.Fatal(err)
+	// Connection feedback can cover the toolbar until its exit animation ends.
+	waitNative(t, ui, func() bool {
+		if _, ok := ui.Find("关闭消息"); ok {
+			_ = ui.Click("关闭消息")
+			return false
 		}
-		ui.Advance(time.Second)
-	}
-	if err = ui.Click("删除全部"); err != nil {
-		t.Fatal(err)
-	}
+		return ui.Click("删除全部") == nil
+	})
 	ui.Advance(time.Second)
 	start := time.Now()
 	if err = ui.Click("彻底删除"); err != nil {
@@ -97,13 +105,19 @@ func TestArchiveBackgroundDeleteThroughOwningWorker(t *testing.T) {
 		t.Fatal("real worker deletion blocked navigation:", err)
 	}
 	waitNative(t, ui, func() bool { return v.archive.deletion == nil || !v.archive.deletion.busy })
+	if m.WorkspaceID != "air-workspace" || m.Snapshot.DeviceID != "air-device" {
+		t.Fatal("batch changed the selected device", m.WorkspaceID, m.Snapshot.DeviceID)
+	}
+	if d := v.archive.deletion; d != nil && d.error != "" {
+		t.Fatal("owning worker receipt was reported as failed", d.error)
+	}
 	if len(m.Snapshot.Sessions) != 1 || m.Snapshot.Sessions[0].ID != keep.ID || v.archive.open || m.Drafts["home"] != "保留普通草稿" {
 		t.Fatal("real delete batch changed an uncaptured session, navigation or draft", v.archive.deletion, m.Snapshot.Sessions)
 	}
 	var dialer net.Dialer
 	client, err := protocol.Dial(ctx, func(ctx context.Context) (net.Conn, error) {
 		return dialer.DialContext(ctx, "unix", filepath.Join(dir, "worker.sock"))
-	}, m.Snapshot.DeviceID)
+	}, m.LocalDeviceID)
 	if err != nil {
 		t.Fatal(err)
 	}
