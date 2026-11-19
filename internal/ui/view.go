@@ -1393,6 +1393,11 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		if entry.footer != "" || entry.restarting || entry.preparing != "" {
 			bottom = 32
 		}
+		// A compaction at the end of the transcript has no reply footer to
+		// provide reading clearance above the dock.
+		if row == len(rows) && item.Presentation == "compaction" {
+			bottom = 32
+		}
 		// A folded summary or automatic compaction takes the status's 24 DIP slot.
 		// Its 20 DIP line needs only the remaining leading, rather than an
 		// extra paragraph gap before the now-empty footer's reading clearance.

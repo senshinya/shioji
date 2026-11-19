@@ -13,6 +13,55 @@ import (
 	"shioji/internal/domain"
 )
 
+func TestManualCompactionKeepsClearanceAboveComposer(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			m := layoutModel()
+			d := m.Details["s"]
+			for i := 0; i < 16; i++ {
+				d.Items = append(d.Items, domain.Item{ID: fmt.Sprint("history-", i), Kind: "assistant", Text: fmt.Sprintf("历史回复 %d", i+1), Final: true})
+			}
+			d.Items = append(d.Items,
+				domain.Item{ID: "command", TurnID: "ct", Kind: "command", Presentation: "compact", Name: "压缩上下文", Final: true},
+				domain.Item{ID: "compact", TurnID: "ct", Kind: "activity", Presentation: "compaction", Name: "正在压缩上下文", Status: "running"},
+			)
+			d.Turns = []domain.Turn{{ID: "ct", Presentation: "compaction", Status: "running"}}
+			d.Session.Status = "running"
+			m.Snapshot.Sessions[0] = d.Session
+			m.Details["s"] = d
+			ui := n.NewTester(New(m, nil, "").View, 1240, 820)
+			ui.SetDark(dark)
+			ui.Advance(time.Second)
+			check := func(label, phase string) float32 {
+				saveNativeSkillImage(t, ui, fmt.Sprintf("manual-compaction-dark-%v-%s.png", dark, phase))
+				status, ok := ui.Find(label)
+				dock, dockOK := ui.Find("会话底部面板")
+				if !ok || !dockOK {
+					t.Fatalf("missing status or dock: %q %v %v", label, ok, dockOK)
+				}
+				gap := dock.Y - (status.Y + status.H)
+				t.Logf("%s: %.1f DIP above the dock", label, gap)
+				if gap < 23.5 {
+					t.Errorf("%q is too close to the composer: %.1f DIP", label, gap)
+				}
+				return gap
+			}
+			running := check("正在压缩上下文", "running")
+			completion := &d.Items[len(d.Items)-1]
+			completion.Name, completion.Status, completion.Final = "上下文已压缩", "completed", true
+			d.Turns[0].Status, d.Session.Status = "completed", "completed"
+			m.Snapshot.Sessions[0] = d.Session
+			m.Details["s"] = d
+			ui.Frame()
+			ui.Advance(time.Second)
+			completed := check("上下文已压缩", "completed")
+			if delta := completed - running; delta < -.5 || delta > .5 {
+				t.Errorf("completion shifts status clearance by %.1f DIP", delta)
+			}
+		})
+	}
+}
+
 // Capture the full transcript renderer, including list-row spacing and footer
 // clearance; directly stacking item renderers omits both layout contracts.
 func TestCompactionContinuationTranscriptSpacing(t *testing.T) {
