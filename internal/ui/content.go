@@ -148,7 +148,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 	})
 	if button.Clicked() && hasBody {
 		if list := v.lists[v.Model.SessionID]; list != nil && (len(transcriptAnchor) == 0 || transcriptAnchor[0]) {
-			list.KeepRow(v.currentTranscriptRow, button.Bounds().Y-list.Bounds(c).Y)
+			list.KeepRowWithinContent(v.currentTranscriptRow, button.Bounds().Y-list.Bounds(c).Y)
 		}
 		v.Model.Collapsed[key] = !v.Model.Collapsed[key]
 	}

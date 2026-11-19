@@ -2,8 +2,10 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +13,68 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 )
+
+func TestIndividualToolCollapseKeepsConversationWithinScrollRange(t *testing.T) {
+	for _, presentation := range []string{"search", "command"} {
+		for _, reduced := range []bool{false, true} {
+			name := fmt.Sprintf("%s-%v", presentation, reduced)
+			t.Run(name, func(t *testing.T) {
+				m := layoutModel()
+				d := m.Details["s"]
+				d.Items = append(toolHistoryModelItems()[:24],
+					domain.Item{ID: "earlier-call", TurnID: "t", Kind: "tool", Presentation: "command", Name: "Earlier command", Final: true},
+					domain.Item{ID: "call", TurnID: "t", Kind: "tool", Presentation: presentation, Name: "Inspect files", Text: strings.Repeat("One result line\n", 7), Status: "completed", Final: true},
+					domain.Item{ID: "reply", TurnID: "t", Kind: "assistant", Text: "Final reply", Final: true},
+				)
+				d.Turns = []domain.Turn{{ID: "t", Status: "completed"}}
+				m.Details["s"] = d
+				v := New(m, nil, "")
+				ui := n.NewTester(v.View, 1440, 700)
+				ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
+				ui.Advance(time.Second)
+				if err := ui.Click("2 次工具调用"); err != nil {
+					t.Fatal(err)
+				}
+				ui.Advance(time.Second)
+				ui.Scroll(1300, 390, 0, 2000)
+				position := func() float32 {
+					ui.Frame()
+					r, ok := ui.Find("Final reply")
+					if !ok {
+						t.Fatal("final reply is outside the viewport")
+					}
+					return r.Y
+				}
+				clickTool := func() {
+					if err := ui.Click("Inspect files"); err != nil {
+						t.Fatal(err)
+					}
+					ui.Advance(time.Second)
+				}
+				end := position()
+				ui.Scroll(1300, 390, 0, -40)
+				ui.Frame()
+				clickTool()
+				if !ui.HasText("One result line") {
+					t.Fatal("individual tool output did not open")
+				}
+				ui.Scroll(1300, 390, 0, 2000)
+				if openedEnd := position(); math.Abs(float64(openedEnd-end)) > 1 {
+					t.Fatalf("did not reach the bottom with output open: %.1f, want %.1f", openedEnd, end)
+				}
+				clickTool()
+				collapsed := position()
+				saveNativeSkillImage(t, ui, name+"-collapsed.png")
+				ui.Scroll(1300, 390, 0, -6)
+				after := position()
+				saveNativeSkillImage(t, ui, name+"-after-wheel.png")
+				if math.Abs(float64(collapsed-end)) > 1 || math.Abs(float64(after-collapsed-6)) > 1 {
+					t.Fatalf("collapsed output moved the reply outside the scroll range: end %.1f, collapsed %.1f, after scrolling up 6 DIP %.1f", end, collapsed, after)
+				}
+			})
+		}
+	}
+}
 
 func TestExpandedToolGroupStartsWithCollapsedTools(t *testing.T) {
 	for _, dark := range []bool{false, true} {
