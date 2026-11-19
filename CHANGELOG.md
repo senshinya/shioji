@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-19
+
+[源码](https://github.com/senshinya/shioji/tree/v0.6.2) · [与 v0.6.1 比较](https://github.com/senshinya/shioji/compare/v0.6.1...v0.6.2)
+
+### Changed
+
+- 定时任务编辑器重新组织工作区、运行频率和任务指令，显示接下来的运行时间，并提供分支、模型及权限选择。
+- 排队的消息在点击发送后立即以动画移入队列，随后用执行服务的回执确认状态。
+
+### Fixed
+
+- 本机设备行也显示连接状态点。
+- 删除归档会话或工作区时，删除回执更新所属设备的归档列表。
+- Git 分支或提交读取暂时失败时，分支监控避免误报会话的 Git 上下文已改变。
+- 登录 shell 的环境探测短暂失败时，Codex 保留最近成功读取的环境，避免已安装的 CLI 暂时无法识别。
+
 ## [0.6.1] - 2026-11-18
 
 [源码](https://github.com/senshinya/shioji/tree/v0.6.1) · [与 v0.6.0 比较](https://github.com/senshinya/shioji/compare/v0.6.0...v0.6.1)
