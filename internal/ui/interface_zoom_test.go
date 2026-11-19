@@ -95,6 +95,33 @@ func TestCommandWheelScalesConversationChromeAndKeepsComposerEditing(t *testing.
 	}
 }
 
+func TestCommandPlusAndMinusZoomWhileComposerHasFocus(t *testing.T) {
+	v := New(layoutModel(), nil, "")
+	var zoom float32
+	ui := n.NewTester(func(c *n.Context) { v.View(c); zoom = c.Zoom() }, 1240, 820)
+	ui.Click("消息输入")
+	ui.Type("保留草稿")
+	for _, press := range []struct {
+		mods n.Modifiers
+		key  n.Key
+		want float32
+	}{
+		{n.Cmd, n.KeyEqual, 1.05},
+		{n.Cmd | n.Shift, n.KeyEqual, 1.1},
+		{n.Cmd, n.KeyMinus, 1.05},
+		{n.Cmd, n.Key0, 1},
+	} {
+		ui.Key(press.mods, press.key)
+		if math.Abs(float64(zoom-press.want)) > .001 {
+			t.Fatalf("shortcut %v+%v zoom = %g, want %g", press.mods, press.key, zoom, press.want)
+		}
+	}
+	ui.Type("继续")
+	if got := v.Model.Drafts["session:s"]; got != "保留草稿继续" {
+		t.Fatal("zoom shortcuts lost the editor focus or draft", got)
+	}
+}
+
 func TestCommandScrollIsReversibleBoundedAndIndependentOfCurrentZoom(t *testing.T) {
 	v := New(layoutModel(), nil, "")
 	var zoom float32

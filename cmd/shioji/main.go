@@ -102,7 +102,7 @@ func run() error {
 				{Label: "设置…", Accelerator: "Cmd+,", Click: func(*mygo.MenuItem, *mygo.Window) { settings.Show() }},
 				mygo.Separator(), {Role: mygo.RoleServices}, {Role: mygo.RoleHide}, {Role: mygo.RoleHideOthers}, {Role: mygo.RoleUnhide}, mygo.Separator(), {Role: mygo.RoleQuit},
 			}},
-			{Role: mygo.RoleFileMenu}, {Role: mygo.RoleEditMenu}, {Role: mygo.RoleViewMenu}, {Role: mygo.RoleWindowMenu},
+			{Role: mygo.RoleFileMenu}, {Role: mygo.RoleEditMenu}, view.ViewMenu(), {Role: mygo.RoleWindowMenu},
 		})
 		mygo.App.SetMenu(menu)
 		quitting := false
