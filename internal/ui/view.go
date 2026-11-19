@@ -901,6 +901,8 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 						disabled = disabled || m.WorkerMinor < 2
 					}
 					if editing {
+						icon = check
+						iconSize = 18
 						label = "保存编辑"
 						disabled = disabled || v.pendingQueueCommand(m.SessionID) != nil
 					}

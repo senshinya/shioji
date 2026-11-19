@@ -103,6 +103,42 @@ func TestQueueEditAndKeyboardActionsReachWorker(t *testing.T) {
 		t.Fatal("draft not restored")
 	}
 }
+
+func TestQueueEditShowsCheckmarkOnPrimaryButton(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			v, ui := nativeQueueFixture()
+			ui.SetDark(dark)
+			ui.SetScale(2)
+			ui.SetPreferences(n.Preferences{ReduceMotion: true})
+			v.Model.Drafts["session:s"] = "Ordinary draft"
+			ui.Frame()
+			if err := ui.Click("待发送 2"); err != nil {
+				t.Fatal(err)
+			}
+			if err := ui.Click("编辑待发消息 1"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("queue-edit-dark-%v.png", dark))
+
+			button, ok := ui.Find("保存编辑")
+			if !ok {
+				t.Fatal("save button missing")
+			}
+			frame := ui.Image()
+			x, y := int(2*(button.X+button.W/2)), int(2*(button.Y+button.H/2))
+			fill := frame.RGBAAt(x-16, y).R
+			// The check's upper tip is to the right, whereas the arrow's is centered.
+			right := frame.RGBAAt(x+10, y-9).R
+			top := frame.RGBAAt(x, y-12).R
+			if absChannel(right, fill) < 50 || absChannel(top, fill) > 30 {
+				t.Fatalf("save button does not show a checkmark: fill=%d, upper right=%d, top center=%d", fill, right, top)
+			}
+		})
+	}
+}
+
 func TestEmptyEnterNeverStopsAndReducedDisclosureIsImmediate(t *testing.T) {
 	v, ui := nativeQueueFixture()
 	ui.Click("消息输入")
@@ -1351,9 +1387,9 @@ func TestQueueHeaderUsesOneOpticalCenter(t *testing.T) {
 	}
 }
 
-func TestSendGlyphStaysAnUpArrowAtHomeInQueuesAndWhileEditing(t *testing.T) {
+func TestSendGlyphStaysAnUpArrowAtHomeAndInQueues(t *testing.T) {
 	var expected []uint32
-	for _, mode := range []string{"idle", "home", "running", "queued", "editing"} {
+	for _, mode := range []string{"idle", "home", "running", "queued"} {
 		t.Run(mode, func(t *testing.T) {
 			v, _ := nativeQueueFixture()
 			m := v.Model
@@ -1373,15 +1409,9 @@ func TestSendGlyphStaysAnUpArrowAtHomeInQueuesAndWhileEditing(t *testing.T) {
 			case "running":
 				m.Snapshot.Sessions[0].Status = "running"
 				label = "加入队列"
-			case "queued", "editing":
+			case "queued":
 				m.SetQueue(originalQueue)
 				label = "加入队列"
-				if mode == "editing" {
-					if err := m.EditQueued("one"); err != nil {
-						t.Fatal(err)
-					}
-					label = "保存编辑"
-				}
 			}
 			ui := n.NewTester(v.View, 1200, 820)
 			ui.Advance(time.Second)
