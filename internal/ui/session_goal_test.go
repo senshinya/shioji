@@ -5,6 +5,7 @@ import (
 	"image"
 	"math"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,6 +15,87 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 )
+
+func TestNativeGoalCommandCompletesAndSendsThroughGoalSubmission(t *testing.T) {
+	for _, method := range []string{"enter", "tab", "click"} {
+		t.Run(method, func(t *testing.T) {
+			v, ui := compactView(t)
+			m := v.Model
+			m.WorkerMinor = protocol.GoalMinor
+			m.Readiness.Capabilities.Goals = true
+			git := feedbackJob(t, v, "git.status")
+			git.Apply(m, []byte(`{"applicable":false}`), nil)
+			if err := ui.Click("消息输入"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Type("/")
+			ui.Advance(300 * time.Millisecond)
+			if dir := os.Getenv("SHIOJI_GOAL_COMMAND_CAPTURE"); dir != "" && method == "enter" {
+				t.Setenv("SHIOJI_SKILL_SNAPSHOTS", filepath.Dir(dir))
+				ui.SetScale(2)
+				saveNativeSkillImage(t, ui, filepath.Base(dir))
+				ui.SetScale(1)
+			}
+			for _, label := range []string{"压缩上下文命令", "设置目标命令"} {
+				if _, ok := ui.Find(label); !ok {
+					t.Fatalf("missing %q in the native slash menu: %v", label, ui.Texts())
+				}
+			}
+			switch method {
+			case "enter":
+				ui.Key(0, n.KeyDown)
+				ui.Key(0, n.KeyEnter)
+			case "tab":
+				ui.Type("go")
+				ui.Key(0, n.KeyTab)
+			case "click":
+				if err := ui.Click("设置目标命令"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if draft := m.Drafts[m.DraftKey()]; draft != "/goal " || !ui.Focused("消息输入") || len(m.Pending) != 0 {
+				t.Fatalf("Goal must complete in the editor and wait for an objective: draft=%q", draft)
+			}
+			if jobs := contextJobs(v); len(jobs) != 0 {
+				t.Fatalf("selecting Goal submitted prematurely: %v", jobs)
+			}
+			ui.Type("验证连接")
+			ui.Key(0, n.KeyEnter)
+			jobs := contextJobs(v)
+			if len(jobs) != 1 || jobs[0].Method != "session.submit" {
+				t.Fatalf("goal did not reach the submission path: draft=%q error=%q jobs=%v", m.Drafts[m.DraftKey()], m.Error, jobs)
+			}
+			in, ok := jobs[0].Input.(domain.Submission)
+			if !ok || in.GoalObjective != "验证连接" || in.Text != "/goal 验证连接" || len(in.Skills) != 0 {
+				t.Fatalf("incorrect native goal submission: %#v", jobs[0].Input)
+			}
+		})
+	}
+}
+
+func TestNativeGoalCommandRequiresWorkerAndHarnessSupport(t *testing.T) {
+	for _, unsupported := range []string{"worker", "harness"} {
+		t.Run(unsupported, func(t *testing.T) {
+			v, ui := compactView(t)
+			v.Model.WorkerMinor = protocol.GoalMinor
+			v.Model.Readiness.Capabilities.Goals = unsupported == "worker"
+			if unsupported == "worker" {
+				v.Model.WorkerMinor--
+			}
+			if err := ui.Click("消息输入"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Type("/")
+			ui.Advance(300 * time.Millisecond)
+			if _, ok := ui.Find("压缩上下文命令"); !ok {
+				t.Fatal("missing native slash menu")
+			}
+			if _, ok := ui.Find("设置目标命令"); ok {
+				t.Fatal("unsupported Goal appears in the slash menu")
+			}
+		})
+	}
+}
 
 func goalLayout(approval, history bool) (*View, *n.Tester) {
 	m := layoutModel()

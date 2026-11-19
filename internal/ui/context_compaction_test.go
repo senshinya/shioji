@@ -137,7 +137,7 @@ func TestCompactMenuDoesNotInterpretCommandInsideOrdinaryText(t *testing.T) {
 	ui.Click("消息输入")
 	ui.Type("explain /co")
 	ui.Advance(200 * time.Millisecond)
-	if v.fileMention != nil && v.fileMention.compact {
+	if v.fileMention != nil && len(v.fileMention.commands) != 0 {
 		t.Fatal("inline literal offered a destructive maintenance command")
 	}
 }
