@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-19
+
+[源码](https://github.com/senshinya/shioji/tree/v0.7.1) · [与 v0.7.0 比较](https://github.com/senshinya/shioji/compare/v0.7.0...v0.7.1)
+
+### Fixed
+
+- 在支持 Goals 的设备上，输入 `/` 可在原生命令菜单中选择「设置目标」，也可输入 `/go` 筛选。选中后补全 `/goal ` 并保留输入焦点，写完目标后即可发送。
+
 ## [0.7.0] - 2026-11-19
 
 [源码](https://github.com/senshinya/shioji/tree/v0.7.0) · [与 v0.6.3 比较](https://github.com/senshinya/shioji/compare/v0.6.3...v0.7.0)
@@ -328,7 +336,7 @@
 - 新增独立执行 worker 和 Tailnet 网络服务；退出 App 不停止设备端执行或网络连接，运行中状态不明时保留人工核对入口。
 - 提供 Developer ID 签名、经 Apple 公证并附带公证票据的 DMG，以及 SHA-256 校验文件。
 
-[Unreleased]: https://github.com/senshinya/shioji/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/senshinya/shioji/compare/v0.7.1...HEAD
 [0.3.2]: https://github.com/senshinya/shioji/compare/v0.3.0...v0.3.2
 [0.3.0]: https://github.com/senshinya/shioji/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/senshinya/shioji/compare/v0.1.2...v0.2.0
