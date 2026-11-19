@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-19
+
+[源码](https://github.com/senshinya/shioji/tree/v0.7.0) · [与 v0.6.3 比较](https://github.com/senshinya/shioji/compare/v0.6.3...v0.7.0)
+
+### Added
+
+- 新增 Codex Goal 模式。输入 `/goal 目标内容` 后，目标和耗时固定显示在输入框上方。将指针移到摘要可读全文，移到目标行可暂停或清除，暂停时「恢复」常驻。需要所属设备的执行服务协议 2.51，以及支持且启用了 Goals 的 Codex 运行环境。
+- 「显示」菜单新增界面缩放快捷键。用 `⌘+` 放大、`⌘-` 缩小，`⌘0` 恢复默认大小。
+
+### Fixed
+
+- 折叠对话中的长工具结果时，滚动位置会收回到实际内容范围。
+
 ## [0.6.3] - 2026-11-19
 
 [源码](https://github.com/senshinya/shioji/tree/v0.6.3) · [与 v0.6.2 比较](https://github.com/senshinya/shioji/compare/v0.6.2...v0.6.3)
@@ -315,7 +328,7 @@
 - 新增独立执行 worker 和 Tailnet 网络服务；退出 App 不停止设备端执行或网络连接，运行中状态不明时保留人工核对入口。
 - 提供 Developer ID 签名、经 Apple 公证并附带公证票据的 DMG，以及 SHA-256 校验文件。
 
-[Unreleased]: https://github.com/senshinya/shioji/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/senshinya/shioji/compare/v0.7.0...HEAD
 [0.3.2]: https://github.com/senshinya/shioji/compare/v0.3.0...v0.3.2
 [0.3.0]: https://github.com/senshinya/shioji/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/senshinya/shioji/compare/v0.1.2...v0.2.0
