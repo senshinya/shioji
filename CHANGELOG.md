@@ -5,6 +5,17 @@
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-11-20
+
+[源码](https://github.com/senshinya/shioji/tree/v0.7.3) · [与 v0.7.2 比较](https://github.com/senshinya/shioji/compare/v0.7.2...v0.7.3)
+
+### Fixed
+
+- 本机和远程执行服务短暂断线后，从上次收到的事件继续同步。消息和入队结果按原提交核对，保留未接纳的草稿。迟到回执保留原消息行、阅读位置和发送动画进度。
+- 停止时撤销还未交给 Agent 的消息，并保留暂停的队列草稿。同一设备中，其他会话仍可发送、审批和停止。
+- 修复部分远程执行服务更新失败后的恢复流程。空闲升级会等待仍在活动且需要审批的后台子任务。
+- 修复长错误影响 Codex 运行、审批写入失败后卡在「提交中」、输入框右侧文字裁切，以及上下文压缩时对话顺序跳动的问题。
+
 ## [0.7.2] - 2026-11-20
 
 [源码](https://github.com/senshinya/shioji/tree/v0.7.2) · [与 v0.7.1 比较](https://github.com/senshinya/shioji/compare/v0.7.1...v0.7.2)
