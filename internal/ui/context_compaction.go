@@ -7,6 +7,7 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"slices"
 	"strings"
 	"time"
 )
@@ -27,6 +28,7 @@ type contextInputUI struct {
 	source, epoch, draftKey, draft, error, settledID string
 	command                                          bool
 	commandSeen                                      bool
+	afterOrder                                       int64
 	draftDocument                                    *composerDocument
 	draftVersion                                     uint64
 	started                                          time.Time
@@ -214,6 +216,10 @@ func (v *View) beginContextCompaction(command bool) {
 	}
 	s.phase, s.error, s.started = contextSending, "", v.frameTime
 	s.commandSeen = false
+	s.afterOrder = 0
+	if items := m.Details[session.ID].Items; len(items) > 0 {
+		s.afterOrder = items[len(items)-1].Order
+	}
 	v.sendContextOperation(s, false)
 }
 func (v *View) sendContextOperation(s *contextInputUI, query bool) {
@@ -329,38 +335,42 @@ func (v *View) contextRows(rows []transcriptRow) []transcriptRow {
 	if a == nil {
 		return rows
 	}
+	s := v.contextInput()
+	history := v.Model.Details[v.Model.SessionID].History
+	atLatest := history == nil || !history.Newer
+	local := !s.started.IsZero() && (s.in.OperationID == a.OperationID || s.settledID == a.OperationID)
 	key := "context-compaction:" + a.OperationID
 	progress := float32(1)
-	if s := v.contextInput(); !s.started.IsZero() && !v.reduceMotion {
+	if local && !v.reduceMotion {
 		progress = min(float32(1), max(float32(0), float32(v.frameTime.Sub(s.started))/float32(200*time.Millisecond)))
 		if progress < 1 {
 			v.toolsAnimating = true
 		}
 	}
 	commandID := "context-command:" + a.OperationID
-	commandPresent := false
+	commandAt := -1
 	for i, row := range rows {
 		if row.item.ID == commandID {
-			commandPresent = true
-			v.contextInput().commandSeen = true
-			if !v.contextInput().started.IsZero() {
+			commandAt = i
+			s.commandSeen = true
+			if local {
 				rows[i].opacity = progress
 			}
+			break
 		}
 	}
 	// Keep the same command row while its durable journal event catches up.
-	if s := v.contextInput(); !commandPresent && !s.commandSeen && !s.started.IsZero() && (s.in.OperationID == a.OperationID || s.settledID == a.OperationID) {
+	if commandAt < 0 && atLatest && local && !s.commandSeen {
 		at := len(rows)
 		for i, row := range rows {
-			if a.TurnID != "" && row.item.TurnID == a.TurnID {
+			if (a.TurnID != "" && row.item.TurnID == a.TurnID) || (s.afterOrder > 0 && row.item.Order > s.afterOrder) {
 				at = i
 				break
 			}
 		}
-		command := transcriptRow{key: commandID, item: domain.Item{ID: commandID, Kind: "command", Presentation: "compact", Name: "压缩上下文", Status: "accepted", Final: true}, end: -1, opacity: progress}
-		rows = append(rows, transcriptRow{})
-		copy(rows[at+1:], rows[at:])
-		rows[at] = command
+		command := transcriptRow{key: commandID, item: domain.Item{ID: commandID, TurnID: a.TurnID, Kind: "command", Presentation: "compact", Name: "压缩上下文", Status: "accepted", Final: true}, end: -1, opacity: progress}
+		rows = slices.Insert(rows, at, command)
+		commandAt = at
 	}
 	for i, row := range rows {
 		if row.item.Presentation == "compaction" && row.item.TurnID == a.TurnID && a.TurnID != "" {
@@ -371,13 +381,15 @@ func (v *View) contextRows(rows []transcriptRow) []transcriptRow {
 				rows[i].item.Name = contextActionLabel(a.State)
 			}
 			v.contextRowKeys[v.Model.WorkKey(v.Model.SessionID, row.item.ID)] = key
-			if !v.contextInput().started.IsZero() {
+			if local {
 				rows[i].opacity = progress
 			}
 			return rows
 		}
 	}
-	if a.State == "unknown" || a.State == "abandoned" {
+	// A terminal action can outlive its history in the current page. Only
+	// show its fallback beside its own command while the source item catches up.
+	if !atLatest || a.State == "unknown" || a.State == "abandoned" || (!a.State.Active() && commandAt < 0) {
 		return rows
 	}
 	item := domain.Item{ID: key, TurnID: a.TurnID, Kind: "activity", Presentation: "compaction", Name: "正在压缩上下文", Status: "running"}
@@ -389,7 +401,11 @@ func (v *View) contextRows(rows []transcriptRow) []transcriptRow {
 			return rows
 		}
 	}
-	return append(rows, transcriptRow{key: key, item: item, end: -1, opacity: progress})
+	at := len(rows)
+	if commandAt >= 0 {
+		at = commandAt + 1
+	}
+	return slices.Insert(rows, at, transcriptRow{key: key, item: item, end: -1, opacity: progress})
 }
 func contextActionLabel(state domain.ExecutionState) string {
 	switch state {

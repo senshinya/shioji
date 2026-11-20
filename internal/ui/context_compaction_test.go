@@ -275,6 +275,125 @@ func TestCompactionResultProjectsAcrossOlderItemDelivery(t *testing.T) {
 	}
 }
 
+func TestCompletedCompactionStaysInItsHistoryPage(t *testing.T) {
+	v := liveCompletionModel()
+	m := v.Model
+	m.Snapshot.Sessions[0].ThreadID = "source"
+	m.Snapshot.Sessions[0].ContextAction = &domain.ContextAction{OperationID: "compact", SourceRef: "source", TurnID: "old", State: "completed"}
+	d := m.Details["s"]
+	d.Session = m.Snapshot.Sessions[0]
+	d.Items = []domain.Item{
+		{ID: "reply", TurnID: "t", Kind: "assistant", Text: "我会接着整理工具文件预览的前后对照。", Order: 101, Final: true},
+		{ID: "tool-1", TurnID: "t", Kind: "tool", Order: 102, Final: true},
+		{ID: "tool-2", TurnID: "t", Kind: "tool", Order: 103, Final: true},
+	}
+	d.History = &domain.HistoryWindow{First: 101, Last: 103, Older: true}
+	m.Details["s"] = d
+	ui := n.NewTester(v.View, 1240, 820)
+	ui.Advance(time.Second)
+	saveNativeSkillImage(t, ui, "compaction-latest-history.png")
+	if !ui.HasText("2 次工具调用") || !ui.HasText("进行中") || ui.HasText("上下文已压缩") {
+		t.Errorf("an old compaction was inserted into the latest history page: %v", ui.Texts())
+	}
+
+	command := domain.Item{ID: "context-command:compact", TurnID: "old", Kind: "command", Presentation: "compact", Name: "压缩上下文", Order: 10, Final: true}
+	source := domain.Item{ID: "source-item", TurnID: "old", Kind: "activity", Presentation: "compaction", Name: "上下文已压缩", Status: "completed", Order: 11, Final: true}
+	d.History.First = 10
+	d.Items = append([]domain.Item{command, source}, d.Items...)
+	d.Turns = append([]domain.Turn{{ID: "old", Presentation: "compaction", Status: "completed"}}, d.Turns...)
+	m.Details["s"] = d
+	ui.Frame()
+	ui.Advance(time.Second)
+	saveNativeSkillImage(t, ui, "compaction-original-history.png")
+	compact, compactShown := ui.Find("上下文已压缩")
+	reply, replyShown := ui.Find("我会接着整理工具文件预览的前后对照。")
+	count := 0
+	for _, label := range ui.Texts() {
+		if label == "上下文已压缩" {
+			count++
+		}
+	}
+	if !compactShown || !replyShown || count != 1 || compact.Y+compact.H > reply.Y {
+		t.Fatalf("loading earlier history misplaced or duplicated the compaction: %v %v %v", compact, reply, ui.Texts())
+	}
+
+	d.History = &domain.HistoryWindow{First: 10, Last: 10, Newer: true}
+	d.Items = []domain.Item{command}
+	m.Details["s"] = d
+	rows := v.contextRows(v.transcriptRows(d.Items))
+	if len(rows) != 1 || rows[0].item.ID != command.ID {
+		t.Fatalf("a historical page synthesized the result of a command whose result is on a newer page: %v", rows)
+	}
+}
+
+func TestManualCompactionReceiptUsesCommandPositionWhileSourceIsPending(t *testing.T) {
+	v := liveCompletionModel()
+	m := v.Model
+	m.Snapshot.Sessions[0].ThreadID = "source"
+	a := &domain.ContextAction{OperationID: "compact", SourceRef: "source", TurnID: "ct", State: "running"}
+	m.Snapshot.Sessions[0].ContextAction = a
+	d := m.Details["s"]
+	d.Items = []domain.Item{
+		{ID: "context-command:compact", TurnID: "ct", Kind: "command", Presentation: "compact", Order: 10, Final: true},
+		{ID: "reply", TurnID: "t", Kind: "assistant", Order: 11, Text: "较晚的回复", Final: true},
+	}
+	m.Details["s"] = d
+	for _, state := range []domain.ExecutionState{"running", "completed"} {
+		a.State = state
+		rows := v.contextRows(v.transcriptRows(d.Items))
+		if len(rows) != 3 || rows[1].item.Presentation != "compaction" || rows[1].item.Status != string(state) || rows[2].item.ID != "reply" {
+			t.Errorf("%s: compression result should use its command position while the source item arrives: %v", state, rows)
+		}
+	}
+}
+
+func TestLocalCompactionPreviewKeepsItsPositionBeforeAcceptance(t *testing.T) {
+	v, ui := compactView(t)
+	m := v.Model
+	d := m.Details["s"]
+	d.Items = []domain.Item{{ID: "earlier", Kind: "assistant", Order: 10, Text: "较早的回复", Final: true}}
+	m.Details["s"] = d
+	ui.Frame()
+	v.beginContextCompaction(false)
+	if jobs := contextJobs(v); len(jobs) != 1 {
+		t.Fatal("compression did not start", jobs)
+	}
+	d.Items = append(d.Items, domain.Item{ID: "later", Kind: "assistant", Order: 11, Text: "稍后抵达的回复", Final: true})
+	m.Details["s"] = d
+	rows := v.contextRows(v.transcriptRows(d.Items))
+	if len(rows) != 4 || rows[1].item.Kind != "command" || rows[2].item.Presentation != "compaction" || rows[3].item.ID != "later" {
+		t.Fatalf("the pending compression moved after new items: %v", rows)
+	}
+}
+
+func TestCompactionCompletesInPlaceAfterLaterReplyStarts(t *testing.T) {
+	v := liveCompletionModel()
+	m := v.Model
+	d := m.Details["s"]
+	d.Items = nil
+	m.Details["s"] = d
+	ui := n.NewTester(v.View, 1240, 820)
+	upsert := func(item domain.Item) {
+		t.Helper()
+		if err := m.ApplyEvent(domain.Event{Type: "item.upsert", SessionID: "s", Sequence: m.Sequence + 1, Item: &item}); err != nil {
+			t.Fatal(err)
+		}
+		ui.Frame()
+		ui.Advance(time.Second)
+	}
+	compact := domain.Item{ID: "compact", TurnID: "t", Kind: "activity", Presentation: "compaction", Name: "正在压缩上下文", Status: "running", Order: 1, ActivityOrder: 1}
+	reply := domain.Item{ID: "reply", TurnID: "t", Kind: "assistant", Text: "较晚开始的回复", Order: 2, ActivityOrder: 2}
+	upsert(compact)
+	upsert(reply)
+	before := v.historyRowBounds[compact.ID]
+	later := v.historyRowBounds[reply.ID]
+	compact.Name, compact.Status, compact.Final = "上下文已压缩", "completed", true
+	upsert(compact)
+	if after, shown := ui.Find(compact.Name); !shown || before.H == 0 || later.H == 0 || before.Y >= later.Y || after.Y >= v.historyRowBounds[reply.ID].Y {
+		t.Fatalf("completion changed conversation order: before %v, after %v, later reply %v", before, after, later)
+	}
+}
+
 func TestContextCompactionNativeEvidence(t *testing.T) {
 	dir := os.Getenv("SHIOJI_COMPACT_CAPTURE")
 	if dir == "" {

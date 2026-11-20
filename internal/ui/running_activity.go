@@ -130,23 +130,6 @@ func (v *View) activeConversationTurn() (domain.Turn, bool) {
 	return domain.Turn{}, false
 }
 
-// Live progress is the transcript's tail, even when an older tool delivers
-// output into a later display record. Keep persisted content order untouched.
-func (v *View) bottomActivityRows(rows []transcriptRow) []transcriptRow {
-	id := v.currentCompaction()
-	if id == "" {
-		return rows
-	}
-	for i, row := range rows {
-		if row.item.ID == id && i < len(rows)-1 {
-			copy(rows[i:], rows[i+1:])
-			rows[len(rows)-1] = row
-			break
-		}
-	}
-	return rows
-}
-
 // This visual clock preserves progress animation phase across insertions.
 // Elapsed labels independently use the latest accepted input's timestamp.
 type runningProgress struct {

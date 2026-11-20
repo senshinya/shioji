@@ -1247,9 +1247,8 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		state.FollowAnimation = nil
 	}
 	rows := v.transcriptRows(detail.Items)
-	rows = v.contextRows(rows)
-	rows = v.bottomActivityRows(rows)
 	rows = v.revealFindTarget(rows, reopening)
+	rows = v.contextRows(rows)
 	v.syncRunningGroup(c, rows, detail)
 	turns := make(map[string]domain.Turn, len(detail.Turns))
 	for _, turn := range detail.Turns {
@@ -1392,7 +1391,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		// paragraph gap rather than reusing only its outer 8 DIP padding.
 		if item.Kind == "assistant" && row < len(rows) {
 			next := rows[row]
-			if next.footer != "" || next.restarting || next.preparing != "" || next.group != "" || next.item.Kind == "request" {
+			if next.footer != "" || next.restarting || next.preparing != "" || next.group != "" || next.item.Kind == "request" || next.item.Presentation == "compaction" {
 				bottom = v.bodyMetadataGap()
 			}
 		}

@@ -44,8 +44,8 @@ func TestLatestStartedActivityOwnsProgress(t *testing.T) {
 					t.Error("latest-started compression does not own elapsed time", compact, clock)
 				}
 				tools, ok := ui.Find("1 次工具调用")
-				if !ok || compact.Y < tools.Y+tools.H {
-					t.Error("live compaction must follow all tool results", compact, tools)
+				if !ok || tools.Y < compact.Y+compact.H {
+					t.Error("live compaction moved from its recorded transcript position", compact, tools)
 				}
 				count := 0
 				for _, label := range ui.Texts() {
@@ -125,9 +125,16 @@ func TestActivityOwnershipAcrossPhasesAndLifecycle(t *testing.T) {
 			if !found {
 				t.Fatal("missing tail progress")
 			}
-			for key, bounds := range v.historyRowBounds {
-				if key != "turn-footer:t" && bounds.H > 0 && bounds.Y > dot.Y+1 {
-					t.Fatalf("content %s remains below progress: %v %v", key, bounds, dot)
+			if tc.name == "compaction" {
+				group, ok := ui.Find("1 次工具调用")
+				if !ok || group.Y < dot.Y+dot.H {
+					t.Fatalf("the active compression moved below later transcript content: %v %v", dot, group)
+				}
+			} else {
+				for key, bounds := range v.historyRowBounds {
+					if key != "turn-footer:t" && bounds.H > 0 && bounds.Y > dot.Y+1 {
+						t.Fatalf("content %s remains below progress: %v %v", key, bounds, dot)
+					}
 				}
 			}
 			if a := v.runningActivity(d.Turns[0]); a.item != "current" {
