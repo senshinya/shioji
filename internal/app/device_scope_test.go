@@ -16,7 +16,8 @@ func scopedDeviceModel() *Model {
 		})
 	}
 	m.Details["sA"] = domain.SessionDetail{Session: domain.Session{ID: "sA", WorkspaceID: "wA"}, Items: []domain.Item{{ID: "local-item", Text: "keep local content"}}}
-	m.Configs["session:sA"] = domain.RunConfig{Permission: "default"}
+	m.SessionID = "sA"
+	m.SetConfig(m.DraftKey(), domain.RunConfig{Permission: "read-only"})
 	m.Pending["b-op"] = domain.Submission{OperationID: "b-op", WorkspaceID: "wB", SessionID: "sB", Text: "run", Config: domain.RunConfig{Permission: "yolo"}}
 	m.PendingDevices["b-op"] = "air"
 	m.Drafts["session:sB"] = "run"
@@ -42,7 +43,7 @@ func TestRemoteOperationCannotChangeAnotherDevicesPermission(t *testing.T) {
 			p.Connected = false
 		}
 	})
-	if m.Configs["session:sA"].Permission != "default" || m.Drafts["session:sB"] != "run" || m.Resolved["b-op"] {
+	if m.Config().Permission != "read-only" || m.Drafts["session:sB"] != "run" || m.Resolved["b-op"] {
 		t.Fatal("remote receipt changes local permission or shared draft")
 	}
 }
@@ -51,7 +52,7 @@ func TestRejectedSnapshotCannotMutateDraftsOrImportForeignRequests(t *testing.T)
 	m.ApplyDeviceUpdate("air", func(p *Model) {
 		p.ApplySnapshot(domain.Snapshot{DeviceID: "B", Generation: "B", Sequence: 2, Workspaces: []domain.Workspace{{ID: "wB", DeviceID: "B"}}, Sessions: []domain.Session{{ID: "sB", WorkspaceID: "wB"}}, PendingRequests: []domain.PendingRequest{{ID: "foreign", SessionID: "sA", State: "pending"}}, Operations: []domain.Operation{{ID: "b-op", SessionID: "sA", State: "confirmed"}}})
 	})
-	if m.Configs["session:sA"].Permission != "default" || m.Drafts["session:sB"] != "run" || len(m.Details["sA"].Requests) != 0 || len(m.Details["sA"].Items) != 1 || m.Resolved["b-op"] {
+	if m.Config().Permission != "read-only" || m.Drafts["session:sB"] != "run" || len(m.Details["sA"].Requests) != 0 || len(m.Details["sA"].Items) != 1 || m.Resolved["b-op"] {
 		t.Fatal("rejected snapshot mutated shared state")
 	}
 }
@@ -85,7 +86,7 @@ func TestForeignSessionMetadataCannotAuthorizeForeignReceipt(t *testing.T) {
 			p.Error = err.Error()
 		}
 	})
-	if m.Configs["session:sA"].Permission != "default" || m.Resolved["b-op"] {
+	if m.Config().Permission != "read-only" || m.Resolved["b-op"] {
 		t.Fatal("foreign session metadata bypasses receipt ownership check")
 	}
 }

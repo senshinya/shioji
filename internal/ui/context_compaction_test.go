@@ -407,7 +407,7 @@ func TestContextCompactionNativeEvidence(t *testing.T) {
 		m.Snapshot.Sessions[0].Title = "红黑树旋转讲解"
 		m.Drafts[m.DraftKey()] = "继续补齐删除节点的边界条件。"
 		m.Readiness.Models = []domain.Model{{ID: "gpt-6.1-sol", Default: true, Efforts: []string{"medium"}}}
-		m.Configs[m.DraftKey()] = domain.RunConfig{Model: "gpt-6.1-sol", Effort: "medium", Permission: "read-only"}
+		m.Snapshot.Sessions[0].Config = domain.RunConfig{Model: "gpt-6.1-sol", Effort: "medium", Permission: "read-only"}
 		d := m.Details["s"]
 		d.Items = []domain.Item{{ID: "user", TurnID: "root", Kind: "user", Text: "用 Go 讲清楚红黑树左旋，保留节点的父子关系。", Final: true}, {ID: "reply", TurnID: "root", Kind: "assistant", Text: "左旋会把当前节点的右孩子提上来，当前节点成为它的左孩子。中间子树接回当前节点右侧，大小顺序保持不变。\n\n```go\nfunc rotateLeft(x *Node) *Node {\n    y := x.Right\n    x.Right = y.Left\n    if y.Left != nil {\n        y.Left.Parent = x\n    }\n    y.Parent = x.Parent\n    y.Left = x\n    x.Parent = y\n    return y\n}\n```\n\n先接好中间子树，再处理父节点，最后把原节点挂到新根左边。", Final: true}}
 		d.Turns = []domain.Turn{{ID: "root", Status: "completed"}}

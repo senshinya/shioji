@@ -281,7 +281,7 @@ func TestContextRingInkAlignsWithRunControl(t *testing.T) {
 				m := layoutModel()
 				m.Snapshot.Sessions[0].ContextUsage = contextReport(100, 100)
 				m.Readiness.Models = []domain.Model{{ID: model, Default: true}}
-				m.Configs[m.DraftKey()] = domain.RunConfig{Model: model, Effort: "medium"}
+				m.Snapshot.Sessions[0].Config = domain.RunConfig{Model: model, Effort: "medium"}
 				ui := n.NewTester(New(m, nil, "").View, 1240, 820)
 				ui.SetDark(dark)
 				ui.Advance(time.Second)

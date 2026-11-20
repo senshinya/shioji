@@ -200,7 +200,7 @@ func TestZoomedNarrowConversationKeepsSendAndPermissionVisible(t *testing.T) {
 	m.Drafts["session:s"] = "继续工作"
 	cfg := m.Config()
 	cfg.Model, cfg.Effort = "gpt-6.1-sol", "medium"
-	m.Configs[m.DraftKey()] = cfg
+	m.SetConfig(m.DraftKey(), cfg)
 	v := New(m, nil, "")
 	ui := n.NewTester(v.View, 850, 650)
 	ui.Wheel(800, 300, 0, -1000, n.Cmd)

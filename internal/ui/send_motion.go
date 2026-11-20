@@ -483,7 +483,6 @@ func (v *View) acceptHomeSend(m *app.Model, op domain.Operation) {
 		for _, session := range m.Snapshot.Sessions {
 			if session.ID == op.SessionID && session.WorkspaceID == h.in.WorkspaceID {
 				m.SessionID = op.SessionID
-				m.Configs["session:"+op.SessionID] = h.in.Config
 				break
 			}
 		}

@@ -14,6 +14,8 @@ func TestUnavailableModelUsesRunControlWithoutConsumingDraft(t *testing.T) {
 			m := layoutModel()
 			if home {
 				m.SessionID = ""
+			} else {
+				m.Snapshot.Sessions[0].Config.Model = "gpt-5.4"
 			}
 			m.Config()
 			key := m.DraftKey()

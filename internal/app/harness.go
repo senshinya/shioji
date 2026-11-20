@@ -99,6 +99,10 @@ func (m *Model) initializeHomeDefaults() {
 
 // Explicit choices also freeze an offline draft's defaults while reconnecting.
 func (m *Model) SetConfig(key string, config domain.RunConfig) {
+	if m.SessionID != "" && key == m.DraftKey() {
+		m.setSessionConfig(config)
+		return
+	}
 	if key == "home" && m.SessionID == "" {
 		m.homeDefaultsPending = false
 		id := m.HarnessID()

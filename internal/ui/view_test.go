@@ -140,7 +140,7 @@ func TestBottomDockReservesLatestReplyWithGrowingDraft(t *testing.T) {
 	m.Details["s"] = d
 
 	m.Readiness.Models = []domain.Model{{ID: strings.Repeat("a-long-model-name-", 5), Default: true, Efforts: []string{"medium"}}}
-	m.Configs[m.DraftKey()] = domain.RunConfig{Model: m.Readiness.Models[0].ID, Effort: "medium", Permission: "read-only"}
+	m.Snapshot.Sessions[0].Config = domain.RunConfig{Model: m.Readiness.Models[0].ID, Effort: "medium", Permission: "read-only"}
 	test := native.NewTester(New(m, nil, "").View, 850, 600)
 	m.Drafts[m.DraftKey()] = strings.Repeat("A growing multiline draft\n", 12)
 	test.Frame()

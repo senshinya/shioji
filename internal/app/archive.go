@@ -257,7 +257,7 @@ func (m *Model) ApplyArchiveDeletion(d domain.ArchiveDeletion) {
 		delete(m.Inspectors, id)
 		delete(m.CompletedReplies, id)
 		delete(m.completionReads, id)
-		delete(m.Configs, "session:"+id)
+		delete(m.sessionConfigDrafts, id)
 		delete(m.HarnessConfigs, "session:"+id)
 		delete(m.GitStatuses, "session:"+id)
 		delete(m.GitEpochs, "session:"+id)

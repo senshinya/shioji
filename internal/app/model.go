@@ -99,6 +99,7 @@ type Model struct {
 	SessionID                  string
 	Drafts                     map[string]string
 	Configs                    map[string]domain.RunConfig
+	sessionConfigDrafts        map[string]sessionConfigDraft
 	Answers                    map[string]string
 	Pager                      map[string]int
 	Collapsed                  map[string]bool
@@ -119,7 +120,7 @@ type Model struct {
 }
 
 func NewModel() *Model {
-	return &Model{RemotePathUploads: map[string]bool{}, startedAt: time.Now(), completionCutoffs: map[string]time.Time{}, completionReads: map[string]string{}, HistoryAnchors: map[string]string{}, HistoryOpenings: map[string]bool{}, HistoryReads: map[string]*HistoryRead{}, HistoryOutlines: map[string]domain.HistoryOutline{}, homeDefaultsPending: true, WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{CollapseLatestTools: true}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, pendingGenerations: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{RemotePathUploads: map[string]bool{}, startedAt: time.Now(), completionCutoffs: map[string]time.Time{}, completionReads: map[string]string{}, HistoryAnchors: map[string]string{}, HistoryOpenings: map[string]bool{}, HistoryReads: map[string]*HistoryRead{}, HistoryOutlines: map[string]domain.HistoryOutline{}, homeDefaultsPending: true, WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{CollapseLatestTools: true}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, pendingGenerations: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, sessionConfigDrafts: map[string]sessionConfigDraft{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {
@@ -128,20 +129,20 @@ func (m *Model) DraftKey() string {
 	return "session:" + m.SessionID
 }
 func (m *Model) Config() domain.RunConfig {
-	if m.SessionID == "" {
-		m.syncHomeConfiguration()
+	if id := m.SessionID; id != "" {
+		c := m.sessionConfigDrafts[id].apply(m.acceptedSessionConfig(id))
+		return normalizeRunConfig(c, m.RunReadiness())
 	}
-	key := m.DraftKey()
+	m.syncHomeConfiguration()
 	ready := m.RunReadiness()
-	c, configured := m.Configs[key]
-	if !configured && m.SessionID != "" {
-		for _, session := range m.Snapshot.Sessions {
-			if session.ID == m.SessionID {
-				c = session.Config
-				break
-			}
-		}
+	c := normalizeRunConfig(m.Configs["home"], ready)
+	if ready.State == domain.RuntimeReady || len(ready.Models) > 0 {
+		m.Configs["home"] = c
 	}
+	return c
+}
+
+func normalizeRunConfig(c domain.RunConfig, ready domain.Readiness) domain.RunConfig {
 	if ready.State != domain.RuntimeReady && len(ready.Models) == 0 {
 		if c.Permission == "" {
 			c.Permission = "default"
@@ -189,7 +190,6 @@ func (m *Model) Config() domain.RunConfig {
 			c.Permission = ready.Permissions[0]
 		}
 	}
-	m.Configs[key] = c
 	return c
 }
 func (m *Model) BeginSubmission() (domain.Submission, error) {
@@ -400,7 +400,11 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		}
 		m.clearAcceptedAttachments(key, in.Attachments)
 		m.clearAcceptedSkills(key, in)
-		m.Configs["session:"+op.SessionID] = in.Config
+		// A receipt settles the submitted choices, but current session
+		// configuration still comes from the owning worker's session metadata.
+		if op.Kind == "submit" && !in.Continue {
+			m.reconcileSessionConfig(in.SessionID, in.Config)
+		}
 		if in.SessionID == "" && m.SessionID == "" && m.WorkspaceID == in.WorkspaceID {
 			m.SessionID = op.SessionID
 		}
@@ -468,6 +472,9 @@ func (m *Model) ApplySnapshot(snapshot domain.Snapshot, requestedAt ...time.Time
 		m.Details[req.SessionID] = detail
 	}
 	m.Snapshot = snapshot
+	for _, s := range snapshot.Sessions {
+		m.reconcileSessionConfig(s.ID, s.Config)
+	}
 	m.KnownDeviceID = snapshot.DeviceID
 	m.Sequence = snapshot.Sequence
 	if m.WorkspaceID == "" && len(snapshot.Workspaces) > 0 {
@@ -552,6 +559,7 @@ func (m *Model) applyEvent(e domain.Event, live bool) error {
 			if s.ID == e.Session.ID {
 				if s.Revision <= e.Session.Revision {
 					m.Snapshot.Sessions[i] = *e.Session
+					m.reconcileSessionConfig(e.Session.ID, e.Session.Config)
 				}
 				found = true
 				break
@@ -559,6 +567,7 @@ func (m *Model) applyEvent(e domain.Event, live bool) error {
 		}
 		if !found {
 			m.Snapshot.Sessions = append(m.Snapshot.Sessions, *e.Session)
+			m.reconcileSessionConfig(e.Session.ID, e.Session.Config)
 		}
 	}
 	if e.Type == "submission" && e.Item != nil && e.Item.Kind == "user" {
@@ -725,6 +734,7 @@ type savedState struct {
 	WorkspaceID                string                                     `json:"workspaceId"`
 	Drafts                     map[string]string                          `json:"drafts"`
 	Configs                    map[string]domain.RunConfig                `json:"configs"`
+	SessionConfigDrafts        map[string]sessionConfigDraft              `json:"sessionConfigDrafts,omitempty"`
 	Answers                    map[string]string                          `json:"answers"`
 	Pager                      map[string]int                             `json:"pager"`
 	Collapsed                  map[string]bool                            `json:"collapsed,omitempty"`
@@ -858,6 +868,16 @@ func (m *Model) Load(path string) error {
 	}
 	if saved.Configs != nil {
 		m.Configs = saved.Configs
+		// Older clients used the same key for explicit edits and cached
+		// session defaults, so these entries cannot serve as draft overrides.
+		for key := range m.Configs {
+			if strings.HasPrefix(key, "session:") {
+				delete(m.Configs, key)
+			}
+		}
+	}
+	if saved.SessionConfigDrafts != nil {
+		m.sessionConfigDrafts = saved.SessionConfigDrafts
 	}
 	if saved.Answers != nil {
 		m.Answers = saved.Answers
