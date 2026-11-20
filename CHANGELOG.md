@@ -5,6 +5,23 @@
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-20
+
+[源码](https://github.com/senshinya/shioji/tree/v0.7.2) · [与 v0.7.1 比较](https://github.com/senshinya/shioji/compare/v0.7.1...v0.7.2)
+
+### Added
+
+- 对话中显示「目标自动续跑」标记，便于辨认每次自动继续的位置。
+
+### Changed
+
+- `/goal` 在输入框和已发送消息中显示为行内命令标签。调整目标栏的暂停、恢复和清除按钮布局。
+
+### Fixed
+
+- Goal 自动续跑各计为一轮。打开长 Goal 会话时，默认先加载最近 20 轮。远程会话的历史分页需要同时更新所属设备的执行服务。
+- 修复加载会话时停止按钮的圆角，以及对话末尾的上下文压缩提示与输入区间距过小的问题。
+
 ## [0.7.1] - 2026-11-19
 
 [源码](https://github.com/senshinya/shioji/tree/v0.7.1) · [与 v0.7.0 比较](https://github.com/senshinya/shioji/compare/v0.7.0...v0.7.1)
