@@ -512,9 +512,6 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 			if archiving {
 				n.Text(c.Key("archive-pending"), "正在归档").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine()
 			}
-			if pending > 0 {
-				n.Text(c, fmt.Sprint(pending)).Font("Menlo").FontSize(11).Width(16).TextAlign(n.End)
-			}
 			// The action slot has no text baseline when the pin is hidden. Keep
 			// it out of baseline alignment so its bottom cannot lower the title.
 			n.Column(c).Width(28).Height(20).AlignSelf(n.Center).Children(func() {

@@ -10,6 +10,33 @@ import (
 	"shioji/internal/domain"
 )
 
+func TestSidebarPendingSessionShowsDotWithoutCount(t *testing.T) {
+	for _, pinned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pinned=%v", pinned), func(t *testing.T) {
+			m := navigationFixture()
+			s := m.Snapshot.Sessions[0]
+			s.Title = "修复文件夹会话的目录切换"
+			detail := m.Details[s.ID]
+			detail.Requests = []domain.PendingRequest{{ID: "approval", SessionID: s.ID, State: "pending"}}
+			m.Details[s.ID] = detail
+			v := New(m, nil, "")
+			r := navigationRow{session: s, presence: 1, pinned: pinned}
+			ui := n.NewTester(func(c *n.Context) {
+				n.Column(c).Fill().Padding(20).Background(c.Theme().Background).Children(func() {
+					v.navigationSessionRow(c, c.Theme(), r)
+				})
+			}, 252, 70)
+			ui.SetScale(2)
+			ui.Move(220, 34)
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("pending-session-pinned-%v.png", pinned))
+			if !ui.HasText("会话等待状态："+s.ID) || ui.HasText("1") {
+				t.Fatalf("pending session should show the waiting indicator without a count: %v", ui.Texts())
+			}
+		})
+	}
+}
+
 func TestSidebarRunningIndicatorPulsesWithoutRebuilding(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, reduce := range []bool{false, true} {
