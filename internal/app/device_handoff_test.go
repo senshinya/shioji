@@ -370,3 +370,42 @@ func TestDeviceHandoffKeepsLogicalEpochAndUsesFasterPath(t *testing.T) {
 		t.Fatal("path handoff reset the logical connection")
 	}
 }
+
+func TestDeviceReconnectKeepsHealthyEqualLatencyRoute(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := testDevicePaths()
+	a, b := p.config.Routes[0].ID, p.config.Routes[1].ID
+	p.record(a, 5*time.Millisecond, time.Now(), nil)
+	p.record(b, 5*time.Millisecond, time.Now(), nil)
+	p.open = func(_ context.Context, s transport.SSH) (net.Conn, error) { return handoffPipe(ctx, s.Target), nil }
+	c := NewController("")
+	c.ExpectedDeviceID = "worker"
+	c.paths = p
+	c.Dial = p.dial
+	done := make(chan struct{})
+	go func() { defer close(done); c.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	m := NewModel()
+	wait := func(ready func() bool) {
+		t.Helper()
+		deadline := time.After(3 * time.Second)
+		for !ready() {
+			select {
+			case u := <-c.Updates:
+				u(m)
+			case <-deadline:
+				t.Fatal("reconnect did not finish")
+			}
+		}
+	}
+	wait(func() bool { return m.Connected })
+	for range 3 {
+		epoch := m.ConnectionEpoch
+		c.Do(Job{Method: "$reconnect"})
+		wait(func() bool { return p.active() != a || m.Connected && m.ConnectionEpoch != epoch })
+		if p.active() != a {
+			t.Fatal("explicit reconnect demoted a healthy route and bypassed latency hysteresis", p.active(), b)
+		}
+	}
+}

@@ -190,6 +190,17 @@ func (u workerUpgradeClient) observe(ctx context.Context, client *protocol.Clien
 	state := upgradeService(current, candidate, r)
 	if actual, e := query(""); e == nil && actual.DeviceID == u.device && actual.Phase == "blocked" {
 		state.Phase, state.Message = WorkerUpdateFailed, actual.Error
+	} else if e == nil && actual.DeviceID == u.device && client != nil && current != nil &&
+		r.Operation.Terminal() && r.Operation.Phase != "applied" && actual.Phase == "applied" &&
+		actual.Input.ID != "" && actual.Input.ID != r.Input.ID && actual.Input.BuildID == current.BuildID {
+		// Another client may have repaired this failed operation. Follow its
+		// authoritative receipt only after the live writer confirms that build;
+		// save keeps our original failure in the per-operation archive.
+		r = &workerUpgradeRecord{DeviceID: u.device, Input: actual.Input, Operation: &actual}
+		if err = u.save(r); err != nil {
+			return state, err
+		}
+		state = upgradeService(current, candidate, r)
 	}
 	return state, nil
 }
@@ -285,6 +296,16 @@ func (u workerUpgradeClient) update(ctx context.Context, client *protocol.Client
 		return nil, err
 	}
 	if r != nil {
+		if !repairing && r.Operation != nil && r.Operation.Phase == "blocked" {
+			state, e := u.observe(ctx, client, candidate)
+			if e != nil {
+				return state, e
+			}
+			r, err = u.load()
+			if err != nil {
+				return state, err
+			}
+		}
 		if !repairing && !r.Rejected && (r.Operation == nil || !r.Operation.Terminal()) {
 			return u.observe(ctx, client, candidate)
 		}

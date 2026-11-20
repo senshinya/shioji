@@ -1,6 +1,7 @@
 package attachments
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -14,9 +15,22 @@ import (
 // Storage serializes with Put/Get. cache is reserved for a dedicated,
 // reconstructible download repository, never the mixed original/staging store.
 func (r *Repository) Storage(now time.Time, clean, cache bool) (domain.StorageReport, error) {
-	r.mu.Lock()
+	return r.StorageContext(context.Background(), now, clean, cache)
+}
+
+func (r *Repository) StorageContext(ctx context.Context, now time.Time, clean, cache bool) (domain.StorageReport, error) {
+	for !r.mu.TryLock() {
+		select {
+		case <-ctx.Done():
+			return domain.StorageReport{}, ctx.Err()
+		case <-time.After(time.Millisecond):
+		}
+	}
 	defer r.mu.Unlock()
 	var out domain.StorageReport
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
 	info, err := os.Lstat(r.Directory)
 	if errors.Is(err, os.ErrNotExist) {
 		return out, nil
@@ -32,14 +46,17 @@ func (r *Repository) Storage(now time.Time, clean, cache bool) (domain.StorageRe
 		return out, err
 	}
 	defer root.Close()
-	return inspectStorage(root, now, clean, cache)
+	return inspectStorage(ctx, root, now, clean, cache)
 }
 
-func inspectStorage(root *os.Root, now time.Time, clean, cache bool) (domain.StorageReport, error) {
+func inspectStorage(ctx context.Context, root *os.Root, now time.Time, clean, cache bool) (domain.StorageReport, error) {
 	var out domain.StorageReport
 	files := map[string]fs.FileInfo{}
 	var order []string
 	err := fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -61,6 +78,9 @@ func inspectStorage(root *os.Root, now time.Time, clean, cache bool) (domain.Sto
 		return out, err
 	}
 	for _, name := range order {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
 		file := files[name]
 		parent, leaf := path.Split(name)
 		if !validID(strings.TrimSuffix(parent, "/")) {
@@ -111,7 +131,7 @@ func inspectStorage(root *os.Root, now time.Time, clean, cache bool) (domain.Sto
 	if clean {
 		// Rescan after removals rather than deriving remaining size from a
 		// successful command count. A failed file stays visible and retryable.
-		remaining, err := inspectStorage(root, now, false, cache)
+		remaining, err := inspectStorage(ctx, root, now, false, cache)
 		if err != nil {
 			return out, err
 		}

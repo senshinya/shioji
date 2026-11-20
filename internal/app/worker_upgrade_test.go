@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"os"
+	"path/filepath"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"shioji/internal/supervisor"
@@ -239,5 +241,126 @@ func TestRemoteUpgradeObserverPersistsIntentOnControllingMac(t *testing.T) {
 	}
 	if child.Directory != "" || child.currentSSH().StateDirectory != "/remote/state" {
 		t.Fatal("local receipt storage changed remote execution paths")
+	}
+}
+
+// A second client repaired the device, but this client still owns the failed
+// original receipt. That receipt must remain historical rather than blocking
+// the next explicit update forever.
+func TestBlockedUpgradeFollowsRepairAcceptedByAnotherClient(t *testing.T) {
+	for _, test := range []struct {
+		name, liveBuild, repairPhase string
+		update                       bool
+	}{
+		{name: "observe", liveBuild: "repaired", repairPhase: "applied"},
+		{name: "update", liveBuild: "repaired", repairPhase: "applied", update: true},
+		{name: "different-live-build", liveBuild: "different", repairPhase: "applied"},
+		{name: "uncommitted-repair", liveBuild: "repaired", repairPhase: "observing"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			old := domain.WorkerReplacement{ID: "failed-original", ExpectedBuildID: "before", BuildID: "repaired", Policy: "when-idle", Explicit: true}
+			blocked := supervisor.Operation{DeviceID: "device", Input: old, Phase: "blocked", Error: "worker exited without a drained receipt"}
+			repair := supervisor.Operation{DeviceID: "device", Input: domain.WorkerReplacement{ID: "other-client-repair", ExpectedBuildID: "before", BuildID: "repaired", Policy: "when-idle", Explicit: true}, Phase: test.repairPhase}
+			u := workerUpgradeClient{directory: t.TempDir(), device: "device"}
+			if err := u.save(&workerUpgradeRecord{DeviceID: "device", Input: old, Operation: &blocked}); err != nil {
+				t.Fatal(err)
+			}
+			a, b := net.Pipe()
+			var submitted *domain.WorkerReplacement
+			go func() {
+				defer b.Close()
+				codec, _, err := protocol.Welcome(b, "device", domain.WorkerBuild{BuildID: test.liveBuild, SafeUpdate: true, Lifecycle: 1})
+				if err != nil {
+					return
+				}
+				for {
+					var frame protocol.Frame
+					if codec.Read(&frame) != nil {
+						return
+					}
+					switch frame.Method {
+					case "worker.update":
+						var input domain.WorkerReplacement
+						if err := json.Unmarshal(frame.Body, &input); err != nil {
+							t.Error(err)
+							return
+						}
+						submitted = &input
+						result(codec, frame, domain.WorkerUpdateResult{OperationID: input.ID, Phase: "waiting"})
+					case "worker.update.status":
+						var query struct{ ID string }
+						if err := json.Unmarshal(frame.Body, &query); err != nil {
+							t.Error(err)
+							return
+						}
+						op := repair
+						if query.ID == old.ID {
+							op = blocked
+						} else if submitted != nil && (query.ID == submitted.ID || query.ID == "") {
+							op = supervisor.Operation{DeviceID: "device", Input: *submitted, Phase: "waiting"}
+						} else if query.ID != "" && query.ID != repair.Input.ID {
+							t.Error("unexpected operation query", query.ID)
+							return
+						}
+						result(codec, frame, op)
+					default:
+						t.Error("unexpected command", frame.Method)
+						return
+					}
+				}
+			}()
+			client, err := protocol.Connect(ctx, a, "device")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			candidate := &domain.WorkerBuild{BuildID: "newest", SafeUpdate: true, Lifecycle: 1}
+			var state *WorkerService
+			if test.update {
+				state, err = u.update(ctx, client, candidate, true, "when-idle", false)
+			} else {
+				state, err = u.observe(ctx, client, candidate)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.liveBuild != "repaired" || test.repairPhase != "applied" {
+				if state.Phase != WorkerUpdateFailed || state.OperationID != old.ID {
+					t.Fatal("unconfirmed repair erased the historical failure", state)
+				}
+			} else if test.update {
+				if state.Phase != WorkerWaiting || state.OperationID == old.ID || state.OperationID == repair.Input.ID {
+					t.Fatal("new explicit update remains blocked by the historical failure", state)
+				}
+			} else if state.Phase != WorkerAvailable || state.OperationID != repair.Input.ID {
+				t.Fatal("another client's confirmed repair was not adopted", state)
+			}
+			raw, err := os.ReadFile(filepath.Join(u.directory, "client-updates", "receipts", old.ID+".json"))
+			var retained workerUpgradeRecord
+			if err != nil || json.Unmarshal(raw, &retained) != nil || retained.Operation == nil || retained.Operation.Phase != "blocked" {
+				t.Fatal("reconciliation overwrote the original failed receipt", string(raw), err)
+			}
+		})
+	}
+}
+
+func TestBlockedUpgradeDoesNotTrustDetachedKnownBuild(t *testing.T) {
+	original := domain.WorkerReplacement{ID: "original", ExpectedBuildID: "old", BuildID: "new"}
+	blocked := supervisor.Operation{DeviceID: "device", Input: original, Phase: "blocked"}
+	u := workerUpgradeClient{directory: t.TempDir(), device: "device", knownBuild: &domain.WorkerBuild{BuildID: "new"}}
+	if err := u.save(&workerUpgradeRecord{DeviceID: "device", Input: original, Operation: &blocked}); err != nil {
+		t.Fatal(err)
+	}
+	u.control = func(_ context.Context, _, id string) (supervisor.Operation, error) {
+		if id == original.ID {
+			return blocked, nil
+		}
+		return supervisor.Operation{DeviceID: "device", Input: domain.WorkerReplacement{ID: "repair", BuildID: "new"}, Phase: "applied"}, nil
+	}
+	state, err := u.observe(context.Background(), nil, &domain.WorkerBuild{BuildID: "newest"})
+	if err != nil || state.Phase != WorkerUpdateFailed || state.OperationID != original.ID {
+		t.Fatal("cached build was treated as a live recovery confirmation", state, err)
 	}
 }

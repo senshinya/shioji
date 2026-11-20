@@ -64,6 +64,7 @@ type Server struct {
 	detachedRuntimes     map[string]*detachedRuntime
 	health               *devicehealth.Monitor
 	storageMu            sync.Mutex
+	storageReport        *domain.StorageReport
 	idleRuntimes         map[string]idleRuntimeObservation
 	toolConfigMu         sync.RWMutex
 	toolAuthMu           sync.Mutex
@@ -529,7 +530,15 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		}
 		return s.importConversation(in)
 	case "storage.usage", "storage.clean":
-		return s.storage(method == "storage.clean")
+		query := struct {
+			Refresh bool `json:"refresh"`
+		}{Refresh: true} // Older clients have no cache option; preserve fresh reads.
+		if len(body) > 0 {
+			if err := json.Unmarshal(body, &query); err != nil {
+				return nil, err
+			}
+		}
+		return s.storage(method == "storage.clean", query.Refresh)
 	case "runtime.tools.inspect":
 		in, err := decode[protocol.ToolInspectionInput](body)
 		if err != nil {

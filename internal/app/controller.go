@@ -850,8 +850,8 @@ func (c *Controller) Run(ctx context.Context) {
 	defer cancelHistory(nil)
 	disconnected := func() {
 		if c.paths != nil {
-			c.paths.record(c.paths.active(), 0, time.Now(), net.ErrClosed)
-			c.publishPaths()
+			// Resetting a client is not a failed path observation. Actual dial,
+			// probe and stream failures are recorded at their own boundaries.
 			if recoverPath != nil && recoverPath() {
 				return
 			}

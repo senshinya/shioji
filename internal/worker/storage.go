@@ -2,7 +2,6 @@ package worker
 
 import (
 	"errors"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"shioji/internal/domain"
@@ -11,10 +10,28 @@ import (
 	"time"
 )
 
-func (s *Server) storage(clean bool) (domain.StorageReport, error) {
-	s.storageMu.Lock()
+func (s *Server) storage(clean bool, refresh ...bool) (domain.StorageReport, error) {
+	requested := time.Now()
+	for !s.storageMu.TryLock() {
+		select {
+		case <-s.ctx.Done():
+			return domain.StorageReport{}, s.ctx.Err()
+		case <-time.After(time.Millisecond):
+		}
+	}
 	defer s.storageMu.Unlock()
-	out, err := s.attachments.Storage(time.Now(), clean, false)
+	if err := s.ctx.Err(); err != nil {
+		return domain.StorageReport{}, err
+	}
+	if cached := s.storageReport; !clean && cached != nil &&
+		(cached.MeasuredAt.After(requested) || (len(refresh) == 0 || !refresh[0]) && time.Since(cached.MeasuredAt) < 30*time.Second) {
+		return *cached, nil
+	}
+	// A partial cleanup must never leave an earlier total available as current.
+	if clean {
+		s.storageReport = nil
+	}
+	out, err := s.attachments.StorageContext(s.ctx, time.Now(), clean, false)
 	if err != nil {
 		return out, err
 	}
@@ -23,46 +40,38 @@ func (s *Server) storage(clean bool) (domain.StorageReport, error) {
 		return out, err
 	}
 	defer root.Close()
-	err = fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if name == "attachments" && d.IsDir() {
-			return fs.SkipDir
-		}
-		if d.IsDir() || d.Type()&os.ModeSymlink != 0 {
-			return nil
-		}
-		info, err := root.Lstat(name)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return nil
-			}
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
+	dir, err := root.Open(".")
+	if err != nil {
+		return out, err
+	}
+	defer dir.Close()
+	err = walkStorageFiles(s.ctx, dir, "", func(name string, size int64) error {
 		if !rotatedWorkerLog(name) {
-			out.Usage.RetainedBytes += info.Size()
+			out.Usage.RetainedBytes += size
 			return nil
 		}
 		if !clean {
-			out.Usage.LogBytes += info.Size()
+			out.Usage.LogBytes += size
 			return nil
 		}
 		if err := root.Remove(name); err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
-				out.Usage.LogBytes += info.Size()
+				out.Usage.LogBytes += size
 				if len(out.Failures) < 32 {
 					out.Failures = append(out.Failures, domain.StorageFailure{Name: filepath.Base(name), Reason: "无法删除文件"})
 				}
 			}
 		} else {
-			out.FreedBytes += info.Size()
+			out.FreedBytes += size
 		}
 		return nil
 	})
+	if err == nil {
+		out.MeasuredAt = time.Now().UTC()
+		cached := out
+		cached.FreedBytes, cached.Failures = 0, nil
+		s.storageReport = &cached
+	}
 	return out, err
 }
 

@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 // StorageUsage describes Shioji-owned files on one execution device or client.
 // Retained bytes include originals; they are never part of cleanup.
 type StorageUsage struct {
@@ -18,6 +20,7 @@ type StorageFailure struct {
 }
 
 type StorageReport struct {
+	MeasuredAt time.Time        `json:"measuredAt,omitempty"`
 	Usage      StorageUsage     `json:"usage"`
 	FreedBytes int64            `json:"freedBytes"`
 	Failures   []StorageFailure `json:"failures,omitempty"`

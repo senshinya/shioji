@@ -188,7 +188,7 @@ func (p *devicePaths) preferred(now time.Time) string {
 	if count == 0 {
 		return best
 	}
-	if best == active || now.Sub(p.switchedAt) < 30*time.Second || current-fastest < 5*time.Millisecond || float64(fastest) > float64(current)*.7 {
+	if best == active || now.Sub(p.switchedAt) < 30*time.Second || current-fastest < 20*time.Millisecond || float64(fastest) > float64(current)*.7 {
 		p.vote = ""
 		p.votes = 0
 		p.voteAt = time.Time{}

@@ -224,3 +224,48 @@ func TestDevicePathsKeepProbeTransportBeyondSampleTimeout(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 }
+
+func TestDevicePathPerformanceSwitchNeedsTwentyMillisecondGain(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		current, standby time.Duration
+		switches         bool
+	}{
+		{name: "nineteen-milliseconds", current: 40 * time.Millisecond, standby: 21 * time.Millisecond},
+		{name: "twenty-milliseconds", current: 40 * time.Millisecond, standby: 20 * time.Millisecond, switches: true},
+		{name: "relative-gain-still-required", current: 100 * time.Millisecond, standby: 80 * time.Millisecond},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			p := testDevicePaths()
+			active, standby := p.config.Routes[0].ID, p.config.Routes[1].ID
+			now := time.Unix(100, 0)
+			selected := ""
+			for i := 0; i < 6; i++ {
+				at := now.Add(time.Duration(i) * time.Second)
+				p.record(active, test.current, at, nil)
+				p.record(standby, test.standby, at, nil)
+				selected = p.preferred(at)
+			}
+			want := active
+			if test.switches {
+				want = standby
+			}
+			if selected != want {
+				t.Fatal("unexpected route for sustained latency gain", selected, want)
+			}
+		})
+	}
+}
+
+func TestDevicePathFailureBypassesTwentyMillisecondGainAndCooldown(t *testing.T) {
+	p := testDevicePaths()
+	active, standby := p.config.Routes[0].ID, p.config.Routes[1].ID
+	now := time.Unix(100, 0)
+	p.record(active, 5*time.Millisecond, now, nil)
+	p.record(standby, 6*time.Millisecond, now, nil)
+	p.switchedAt = now
+	p.record(active, 0, now, errors.New("connection lost"))
+	if got := p.preferred(now); got != standby {
+		t.Fatal("real failure waited for latency gain or cooldown", got)
+	}
+}

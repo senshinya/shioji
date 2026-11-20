@@ -44,7 +44,7 @@ func (m *Model) StorageTarget(directory, key string) (StorageTarget, error) {
 // Stop, answers or the main event subscription. The device ID is authenticated;
 // connection epochs belong to individual streams and are checked by the UI's
 // result owner, never compared between this stream and its primary connection.
-func (t StorageTarget) Read(ctx context.Context, clean bool) (domain.StorageReport, error) {
+func (t StorageTarget) Read(ctx context.Context, clean bool, refresh ...bool) (domain.StorageReport, error) {
 	var out domain.StorageReport
 	c, err := (AttachmentTarget{Directory: t.Directory, DeviceID: t.DeviceID, SSH: t.SSH, dial: t.dial}).connect(ctx)
 	if err != nil {
@@ -58,6 +58,9 @@ func (t StorageTarget) Read(ctx context.Context, clean bool) (domain.StorageRepo
 	if clean {
 		method = "storage.clean"
 	}
-	err = c.Call(ctx, method, nil, &out)
+	force := len(refresh) > 0 && refresh[0]
+	err = c.Call(ctx, method, struct {
+		Refresh bool `json:"refresh"`
+	}{force}, &out)
 	return out, err
 }

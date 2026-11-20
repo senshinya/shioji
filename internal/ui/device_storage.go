@@ -75,7 +75,7 @@ func (v *View) deviceStorage(c *n.Context, t *n.Theme, key string, device *app.D
 	if s.phase == storageUnloaded && available {
 		v.readDeviceStorage(key, s, false)
 	}
-	v.storageGroup(c, t, "存储", s, available, reason, func(clean bool) { v.readDeviceStorage(key, s, clean) })
+	v.storageGroup(c, t, "存储", s, available, reason, func(clean bool) { v.readDeviceStorage(key, s, clean, true) })
 	if v.clientStorageState == nil {
 		v.clientStorageState = &deviceStorageState{}
 	}
@@ -87,7 +87,7 @@ func (v *View) deviceStorage(c *n.Context, t *n.Theme, key string, device *app.D
 	v.storageGroup(c, t, "本机显示缓存", local, clientAvailable, "", func(clean bool) { v.readClientStorage(local, clean) })
 }
 
-func (v *View) readDeviceStorage(key string, s *deviceStorageState, clean bool) {
+func (v *View) readDeviceStorage(key string, s *deviceStorageState, clean bool, refresh ...bool) {
 	if v.Controller == nil || s.busy() {
 		return
 	}
@@ -115,7 +115,7 @@ func (v *View) readDeviceStorage(key string, s *deviceStorageState, clean bool) 
 			target.SSH, err = &routed, routeErr
 		}
 		if err == nil {
-			report, err = target.Read(ctx, clean)
+			report, err = target.Read(ctx, clean, refresh...)
 		}
 		return func(m *app.Model) {
 			v.applyStorageResult(m, key, s, epoch, request, report, err, clean)
@@ -186,7 +186,10 @@ func (v *View) storageGroup(c *n.Context, t *n.Theme, title string, s *deviceSto
 					if s.report != nil {
 						value = "共 " + storageCapacity(s.report.Usage.Total())
 					}
-					storageValue(c, t, value)
+					total := storageValue(c, t, value)
+					if s.report != nil && !s.report.MeasuredAt.IsZero() {
+						total.Tooltip("统计于 " + s.report.MeasuredAt.Local().Format("15:04:05"))
+					}
 				}
 			})
 		})
