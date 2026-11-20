@@ -911,9 +911,12 @@ func (s *Store) Snapshot() (domain.Snapshot, error) {
 	return out, rows.Err()
 }
 func (s *Store) Session(id string, after int64, limit int) (domain.SessionDetail, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.sessionLocked(id, after, limit, nil)
+	reader, close, err := s.historySnapshot()
+	if err != nil {
+		return domain.SessionDetail{}, err
+	}
+	defer close()
+	return reader.sessionLocked(id, after, limit, nil)
 }
 
 func (s *Store) sessionLocked(id string, after int64, limit int, window *domain.HistoryQuery) (domain.SessionDetail, error) {

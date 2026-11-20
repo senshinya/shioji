@@ -136,25 +136,25 @@ func (s *Server) recoverSession(id string) {
 	defer cancel()
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
-	latest, err := s.store.Session(id, 0, 1)
-	if err != nil || ctx.Err() != nil || latest.Session.Archived || !latest.Session.Status.NeedsRecovery() {
+	latest, err := s.store.SessionRecord(id)
+	if err != nil || ctx.Err() != nil || latest.Archived || !latest.Status.NeedsRecovery() {
 		return
 	}
 	checked := s.recoveryChecked[id]
-	if checked.Revision == latest.Session.Revision && checked.Generation >= s.recoveryRefresh.Load() {
+	if checked.Revision == latest.Revision && checked.Generation >= s.recoveryRefresh.Load() {
 		return
 	}
 	if own := s.currentRuntime(id); own == nil || own.Stopped() {
-		catalog := s.catalogRuntime(latest.Session.HarnessID)
+		catalog := s.catalogRuntime(latest.HarnessID)
 		if catalog == nil || catalog.Stopped() {
-			updated, err := s.store.SetRecovery(id, &domain.SessionRecovery{Phase: "attention", Message: "暂时无法核对执行状态", NeedsStop: ownedProcessPresent(s.catalogDirectory(latest.Session.HarnessID))})
+			updated, err := s.store.SetRecovery(id, &domain.SessionRecovery{Phase: "attention", Message: "暂时无法核对执行状态", NeedsStop: ownedProcessPresent(s.catalogDirectory(latest.HarnessID))})
 			if err == nil {
 				s.recoveryChecked[id] = recoveryAttempt{Revision: updated.Revision, Generation: s.recoveryRefresh.Load()}
 			}
 			return
 		}
 	}
-	_, _ = s.reconcileLocked(ctx, protocol.RecoveryInput{SessionID: id, Revision: latest.Session.Revision})
+	_, _ = s.reconcileLocked(ctx, protocol.RecoveryInput{SessionID: id, Revision: latest.Revision})
 }
 
 func (s *Server) reconcileReply(entry store.ReplyReconciliation) error {

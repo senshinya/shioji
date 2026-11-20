@@ -54,8 +54,8 @@ func (s *Server) capturedRuntimeCurrent(id string, r harness.Runtime, source str
 	if current == nil || current.Done() != r.Done() || current.Stopped() {
 		return false
 	}
-	d, err := s.store.Session(id, 0, 1)
-	return err == nil && d.Session.ThreadID == source && r.Observes(d.Session)
+	session, err := s.store.SessionRecord(id)
+	return err == nil && session.ThreadID == source && r.Observes(session)
 }
 func (s *Server) respondRequest(in AnswerInput) error {
 	s.dispatchMu.Lock()

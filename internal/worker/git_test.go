@@ -175,8 +175,8 @@ func TestGitMonitorDoesNotTreatFailedReadAsCheckoutChange(t *testing.T) {
 	for _, tc := range []struct {
 		name, probe, branch string
 	}{
-		{name: "branch read on main", probe: "--show-current", branch: "main"},
-		{name: "HEAD read while detached", probe: "--verify"},
+		{name: "checkout identity read on main", probe: "--porcelain=v2", branch: "main"},
+		{name: "checkout identity read while detached", probe: "--porcelain=v2"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, w, dir := gitTestServer(t)

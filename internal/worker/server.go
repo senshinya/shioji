@@ -97,6 +97,7 @@ type Server struct {
 	catalogErrors        map[string]error
 	catalogGates         map[string]*sync.RWMutex
 	catalogStates        map[string]catalogState
+	installations        map[string]domain.RuntimeInstallation
 	catalogWake          chan struct{}
 	runtimeSettingErrors map[string]error
 	runtimeSettings      map[string]string
@@ -278,6 +279,16 @@ func New(ctx context.Context, config Config) (*Server, error) {
 		startup, cancelStartup := context.WithTimeout(ctx, 20*time.Second)
 		_, _ = s.openCatalog(startup, id, false)
 		cancelStartup()
+	}
+	// Catalog startup already discovers enabled installations. Keep metadata
+	// available for disabled/invalid configurations without probing twice.
+	for _, id := range s.adapterOrder {
+		s.runtimeMu.RLock()
+		_, discovered := s.installations[id]
+		s.runtimeMu.RUnlock()
+		if !discovered {
+			s.refreshInstallation(id, s.adapter(id))
+		}
 	}
 
 	s.health = devicehealth.New(config.Directory)

@@ -82,12 +82,8 @@ func queryGit(ctx context.Context, cwd string) (domain.GitStatus, error) {
 	top, err := gitRun(ctx, cwd, "rev-parse", "--show-toplevel")
 	if err != nil {
 		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() == 128 {
-			inside, e := gitRun(ctx, cwd, "rev-parse", "--is-inside-work-tree")
-			if e != nil && strings.Contains(err.Error(), "not a git repository") {
-				return out, nil
-			}
-			_ = inside
+		if errors.As(err, &exit) && exit.ExitCode() == 128 && strings.Contains(err.Error(), "not a git repository") {
+			return out, nil
 		}
 		return out, err
 	}
@@ -105,21 +101,41 @@ func queryGit(ctx context.Context, cwd string) (domain.GitStatus, error) {
 	if err != nil {
 		return out, err
 	}
-	branch, err := gitRun(ctx, cwd, "branch", "--show-current")
+	// Porcelain v2 supplies branch, HEAD and dirty state in the same native
+	// read. Ahead/behind counts and rename detection are not needed for admission.
+	status, err := gitRun(ctx, cwd, "status", "--porcelain=v2", "--branch", "--no-ahead-behind", "--no-renames", "-z", "--untracked-files=all")
 	if err != nil {
 		return out, err
 	}
-	out.Branch = strings.TrimSpace(branch)
-	head, err := gitRun(ctx, cwd, "rev-parse", "--verify", "--quiet", "HEAD")
-	if err != nil {
-		// A branch with no first commit has a name but no resolvable HEAD.
-		// A detached checkout must have a readable HEAD.
-		var exit *exec.ExitError
-		if out.Branch == "" || !errors.As(err, &exit) || exit.ExitCode() != 1 {
-			return out, err
+	branchRead, headRead := false, false
+	for _, record := range strings.Split(status, "\x00") {
+		switch {
+		case strings.HasPrefix(record, "# branch.head "):
+			out.Branch = strings.TrimPrefix(record, "# branch.head ")
+			branchRead = out.Branch != ""
+		case strings.HasPrefix(record, "# branch.oid "):
+			out.Head = strings.TrimPrefix(record, "# branch.oid ")
+			headRead = out.Head != ""
+			if out.Head == "(initial)" {
+				out.Head = ""
+			}
+		case record == "" || strings.HasPrefix(record, "# "):
+		default:
+			out.Dirty = true
 		}
 	}
-	out.Head = strings.TrimSpace(head)
+	if !branchRead || !headRead {
+		return out, errors.New("Git status omitted checkout identity")
+	}
+	if out.Branch == "(detached)" {
+		// This is also a legal literal branch name. Disambiguate it without
+		// paying for a separate branch query on the ordinary path.
+		branch, e := gitRun(ctx, cwd, "branch", "--show-current")
+		if e != nil {
+			return out, e
+		}
+		out.Branch = strings.TrimSpace(branch)
+	}
 	names, err := gitRun(ctx, cwd, "for-each-ref", "--count=2000", "--format=%(refname:lstrip=2)", "refs/heads/")
 	if err != nil {
 		return out, err
@@ -141,9 +157,7 @@ func queryGit(ctx context.Context, cwd string) (domain.GitStatus, error) {
 	} else if len(out.Branches) > 0 {
 		out.DefaultBranch = out.Branches[0]
 	}
-	status, err := gitRun(ctx, cwd, "status", "--porcelain=v1", "-z", "--untracked-files=all")
-	out.Dirty = status != ""
-	return out, err
+	return out, nil
 }
 func (s *Server) gitDirectory(q protocol.GitQuery) (string, error) {
 	snap, err := s.store.Snapshot()
@@ -226,11 +240,11 @@ func (s *Server) detectGitContext(status domain.GitStatus, observed ...[]domain.
 		}
 		changed := session.GitBranch != status.Branch || (session.GitBranch == "" && session.GitHead != status.Head)
 		if changed && s.sameCheckoutOutsideDispatch(session.Context.CWD, status.Checkout) {
-			current, e := s.store.Session(session.ID, 0, 1)
+			current, e := s.store.SessionRecord(session.ID)
 			if e != nil {
 				continue
 			}
-			fresh := current.Session
+			fresh := current
 			if fresh.ThreadID != session.ThreadID || fresh.Context.CWD != session.Context.CWD || fresh.GitBranch != session.GitBranch || fresh.GitHead != session.GitHead {
 				continue
 			}
@@ -249,12 +263,12 @@ func (s *Server) checkoutGuard(status domain.GitStatus, own string) error {
 		return err
 	}
 	for _, scope := range retired {
-		d, e := s.store.Session(scope.Session, 0, 1)
+		session, e := s.store.SessionRecord(scope.Session)
 		if e != nil {
 			return e
 		}
-		if s.sameCheckoutOutsideDispatch(d.Session.Context.CWD, status.Checkout) {
-			return fmt.Errorf("%s 的旧执行尚未确认停止；请等待或新建 worktree", d.Session.Title)
+		if s.sameCheckoutOutsideDispatch(session.Context.CWD, status.Checkout) {
+			return fmt.Errorf("%s 的旧执行尚未确认停止；请等待或新建 worktree", session.Title)
 		}
 	}
 	snap, err := s.store.Snapshot()

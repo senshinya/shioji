@@ -98,8 +98,8 @@ func (s *Server) titleLoop() {
 }
 
 func (s *Server) generateTitle(manager *managedexec.Manager, job store.TitleJob) string {
-	current, err := s.store.Session(job.Session.ID, 0, 1)
-	if err != nil || current.Session.TitleOverride || current.Session.SourceTitle != "" || current.Session.TitleRevision != job.Session.TitleRevision {
+	current, err := s.store.SessionRecord(job.Session.ID)
+	if err != nil || current.TitleOverride || current.SourceTitle != "" || current.TitleRevision != job.Session.TitleRevision {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 60*time.Second)

@@ -106,8 +106,8 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		s.mu.Lock()
 		unchanged := s.dispatchEpochs[in.SessionID] == epoch
 		s.mu.Unlock()
-		latest, e := s.store.Session(in.SessionID, 0, 1)
-		return transition.active() && unchanged && e == nil && latest.Session.ThreadID == d.Session.ThreadID && latest.Session.Archived == d.Session.Archived && latest.Session.Status.NeedsRecovery()
+		latest, e := s.store.SessionRecord(in.SessionID)
+		return transition.active() && unchanged && e == nil && latest.ThreadID == d.Session.ThreadID && latest.Archived == d.Session.Archived && latest.Status.NeedsRecovery()
 	}
 	info := domain.SessionRecovery{Phase: "checking"}
 	if old := d.Session.Recovery; old != nil {
@@ -121,9 +121,9 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	d.Session = session
 	finish := func() (protocol.RecoveryResult, error) {
 		if !stillCurrent() {
-			latest, e := s.store.Session(in.SessionID, 0, 1)
+			latest, e := s.store.SessionRecord(in.SessionID)
 			if e == nil {
-				result.Status = string(latest.Session.Status)
+				result.Status = string(latest.Status)
 				result.Readiness = s.runtimeReadiness(in.SessionID)
 			}
 			return result, e
@@ -176,8 +176,8 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		if !stillCurrent() {
 			return finish()
 		}
-		if latest, e := s.store.Session(in.SessionID, 0, 1); e == nil {
-			d.Session = latest.Session
+		if latest, e := s.store.SessionRecord(in.SessionID); e == nil {
+			d.Session = latest
 		}
 	}
 	if err != nil {
@@ -344,11 +344,11 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	}
 	updated, err := s.store.Reconcile(in.SessionID, d.Session.Revision, source, in.Action == "end")
 	if err != nil {
-		latest, e := s.store.Session(in.SessionID, 0, 1)
+		latest, e := s.store.SessionRecord(in.SessionID)
 		if e != nil {
 			return result, e
 		}
-		result.Status = string(latest.Session.Status)
+		result.Status = string(latest.Status)
 		result.Message = "状态已更新，请重新核对"
 		return finish()
 	}

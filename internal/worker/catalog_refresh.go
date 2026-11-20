@@ -99,6 +99,7 @@ func (s *Server) startCatalog(ctx context.Context, id string, stop bool, revisio
 	if a == nil {
 		return nil, errors.New("harness unavailable")
 	}
+	s.refreshInstallation(id, a)
 	dir := s.catalogDirectory(id)
 	if err = os.MkdirAll(dir, 0700); err != nil {
 		return nil, err

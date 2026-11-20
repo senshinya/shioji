@@ -40,6 +40,8 @@ type fileMention struct {
 	phase                mentionPhase
 	results              domain.FileSearchResult
 	skills               []domain.Skill
+	skillCatalog         []domain.Skill
+	skillsLoaded         bool
 	captured             app.DraftAttachment
 	trigger              rune
 	selected             int
@@ -87,7 +89,16 @@ func (v *View) mentionContext(key string) string {
 	if !v.referenceEditorActive(key) {
 		return "inactive:" + key
 	}
-	return v.Model.ConnectionID() + "/" + v.Model.WorkspaceID + "/" + v.Model.HarnessID() + "/" + v.attachmentPreparationKey(key)
+	context := v.Model.ConnectionID() + "/" + v.Model.WorkspaceID + "/" + v.Model.HarnessID() + "/" + v.attachmentPreparationKey(key)
+	if v.Model.SessionID == "" {
+		for _, workspace := range v.Model.Snapshot.Workspaces {
+			if workspace.ID == v.Model.WorkspaceID {
+				context += "\x00" + strings.Join(workspace.Folders, "\x00")
+				break
+			}
+		}
+	}
+	return context
 }
 func (v *View) clearMention() {
 	if v.fileMention != nil && v.fileMention.cancel != nil {
@@ -152,14 +163,18 @@ func (v *View) syncMention(c *n.Context, input composerInput, text string) {
 			v.clearMention()
 			return
 		}
+		searchingSkills := state != nil && state.trigger == '/' && state.phase == mentionSearching
 		if state == nil || state.start != from || state.trigger != trigger {
 			v.clearMention()
 			state = &fileMention{key: key, context: context, start: from, trigger: trigger}
 			v.fileMention = state
-		} else if state.cancel != nil {
+			searchingSkills = false
+		} else if state.cancel != nil && trigger != '/' {
 			state.cancel()
 		}
-		state.revision++
+		if !searchingSkills {
+			state.revision++
+		}
 		state.text, state.query, state.end = text, query, to
 		if !slices.Equal(state.commands, commands) {
 			state.selected = 0
@@ -170,6 +185,16 @@ func (v *View) syncMention(c *n.Context, input composerInput, text string) {
 		}
 		state.phase, state.err = mentionWaiting, ""
 		state.due = c.Now().Add(120 * time.Millisecond)
+		if trigger == '/' {
+			if state.skillsLoaded {
+				state.filterSkills()
+				state.phase = mentionShowing
+			} else if searchingSkills {
+				// The device returns the whole catalog. Query edits only change
+				// its local filter; keep the in-flight discovery alive.
+				state.phase = mentionSearching
+			}
+		}
 	}
 	if state.phase == mentionWaiting {
 		if c.Now().Before(state.due) {
@@ -201,31 +226,23 @@ func (v *View) searchMention(state *fileMention) {
 	v.Controller.AttachmentTask(func() app.Update {
 		defer cancel()
 		var results domain.FileSearchResult
-		var skills []domain.Skill
+		var catalog domain.SkillCatalog
 		var err error
 		if trigger == '/' {
-			var catalog domain.SkillCatalog
 			catalog, err = target.Skills(ctx, session, harnessID)
-			if err == nil {
-				for _, skill := range catalog.Skills {
-					if strings.Contains(strings.ToLower(skill.Name+" "+skill.Description), strings.ToLower(query)) {
-						skills = append(skills, skill)
-						if len(skills) == 40 {
-							break
-						}
-					}
-				}
-			}
 		} else {
 			results, err = target.SearchFiles(ctx, session, query)
 		}
 		return func(*app.Model) {
-			if v.fileMention != state || state.revision != revision || state.phase == mentionDismissed {
+			if v.fileMention != state || state.revision != revision || state.phase == mentionDismissed || v.mentionContext(state.key) != state.context {
 				return
 			}
 			state.phase = mentionShowing
 			state.results = results
-			state.skills = skills
+			if trigger == '/' && err == nil {
+				state.skillCatalog, state.skillsLoaded = catalog.Skills, true
+				state.filterSkills()
+			}
 			state.selected = min(state.selected, max(0, state.count()-1))
 			state.reveal = true
 			if err != nil {
@@ -233,6 +250,23 @@ func (v *View) searchMention(state *fileMention) {
 			}
 		}
 	})
+}
+
+// A slash popup fetches once for its owning execution context. Typing filters
+// that catalog immediately; reopening the popup discovers current device state.
+func (s *fileMention) filterSkills() {
+	s.skills = nil
+	query := strings.ToLower(s.query)
+	for _, skill := range s.skillCatalog {
+		if strings.Contains(strings.ToLower(skill.Name+" "+skill.Description), query) {
+			s.skills = append(s.skills, skill)
+			if len(s.skills) == 40 {
+				break
+			}
+		}
+	}
+	s.selected = min(s.selected, max(0, s.count()-1))
+	s.reveal = true
 }
 func (v *View) mentionKey(k composerKey) bool {
 	key := k.binding.key

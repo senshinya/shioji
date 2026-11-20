@@ -42,11 +42,26 @@ func (s *Server) configureAdapters() error {
 	s.catalogs = map[string]harness.Runtime{}
 	s.catalogErrors = map[string]error{}
 	s.catalogStates = map[string]catalogState{}
+	s.installations = map[string]domain.RuntimeInstallation{}
 	s.catalogGates = map[string]*sync.RWMutex{}
 	for _, id := range s.adapterOrder {
 		s.catalogGates[id] = &sync.RWMutex{}
 	}
 	return s.loadRuntimeSettings()
+}
+
+// Installation discovery may read a login shell and inspect the native harness.
+// Run it at configuration/catalog boundaries, never on a status-polling request.
+// Callers serialize adapter replacement with the catalog gate, or at startup.
+func (s *Server) refreshInstallation(id string, adapter harness.Adapter) {
+	provider, ok := adapter.(harness.InstallationProvider)
+	if !ok {
+		return
+	}
+	installation := provider.Installation()
+	s.runtimeMu.Lock()
+	s.installations[id] = installation
+	s.runtimeMu.Unlock()
 }
 func (s *Server) catalogDirectory(id string) string {
 	if id == s.rootCatalogID {
@@ -65,14 +80,14 @@ func (s *Server) catalogRuntime(id string) harness.Runtime {
 func (s *Server) inputHarness(in domain.Submission) (string, error) {
 	id := in.HarnessID
 	if in.SessionID != "" {
-		d, err := s.store.Session(in.SessionID, 0, 1)
+		session, err := s.store.SessionRecord(in.SessionID)
 		if err != nil {
 			return "", err
 		}
-		if id != "" && id != d.Session.HarnessID {
+		if id != "" && id != session.HarnessID {
 			return "", errors.New("session harness cannot change")
 		}
-		id = d.Session.HarnessID
+		id = session.HarnessID
 		if id == "" {
 			return "", errors.New("saved session has no harness identity")
 		}
@@ -170,9 +185,9 @@ func (s *Server) runtimeProfiles(sessions []string, allAdapters bool) domain.Rea
 				info.Error = err.Error()
 			}
 		}
-		if provider, ok := s.adapter(id).(harness.InstallationProvider); ok {
-			installation := provider.Installation()
-			s.runtimeMu.RLock()
+		s.runtimeMu.RLock()
+		installation, hasInstallation := s.installations[id]
+		if hasInstallation {
 			if failure := s.runtimeSettingErrors[id]; failure != nil {
 				installation.Options = s.runtimeOptions[id]
 				installation.Override = s.runtimeSettings[id]
@@ -180,7 +195,9 @@ func (s *Server) runtimeProfiles(sessions []string, allAdapters bool) domain.Rea
 				installation.SignInCommand = nil
 				installation.SignInMethods = nil
 			}
-			s.runtimeMu.RUnlock()
+		}
+		s.runtimeMu.RUnlock()
+		if hasInstallation {
 			if err != nil {
 				var setup *harness.SetupError
 				if errors.As(err, &setup) {
@@ -230,11 +247,11 @@ func (s *Server) onHarnessEvent(harnessID, sessionID string, e domain.Event) err
 		return errors.New("harness event belongs to another session")
 	}
 	if sessionID == "" {
-		d, err := s.store.Session(e.SessionID, 0, 1)
+		session, err := s.store.SessionRecord(e.SessionID)
 		if err != nil {
 			return err
 		}
-		if d.Session.HarnessID != harnessID {
+		if session.HarnessID != harnessID {
 			return errors.New("harness event belongs to another harness")
 		}
 	}

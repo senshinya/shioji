@@ -15,6 +15,14 @@ func (s *Store) Workspace(id string) (domain.Workspace, error) {
 	return load[domain.Workspace](s.db.QueryRow("SELECT body FROM workspaces WHERE id=?", id))
 }
 
+// SessionRecord reads ownership/configuration without materializing transcript,
+// work roster, requests or queue data needed only by a conversation view.
+func (s *Store) SessionRecord(id string) (domain.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return load[domain.Session](s.db.QueryRow("SELECT body FROM sessions WHERE id=?", id))
+}
+
 func (s *Store) RenameSession(id, title string, revision int64, useSource bool) (domain.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -19,9 +19,15 @@ type ReplyReconciliation struct {
 // PendingReplies includes old records after a worker restart. Failed/interrupted
 // turns retain their partial output; only successfully completed turns qualify.
 func (s *Store) PendingReplies() ([]ReplyReconciliation, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT s.body,i.body FROM items i
+	reader, close, err := s.historySnapshot()
+	if err != nil {
+		return nil, err
+	}
+	defer close()
+	// Ordering by transcript position otherwise makes SQLite prefer items_order
+	// and parse every historical message. Only provisional replies need inspection;
+	// keep this background read off the execution writer and its admission mutex.
+	rows, err := reader.historyQueries().Query(`SELECT s.body,i.body FROM items i INDEXED BY items_provisional_replies
  JOIN sessions s ON s.id=i.session_id
  JOIN turns t ON t.session_id=i.session_id AND t.id=json_extract(i.body,'$.turnId')
  WHERE json_extract(i.body,'$.kind')='assistant' AND COALESCE(json_extract(i.body,'$.final'),0)=0

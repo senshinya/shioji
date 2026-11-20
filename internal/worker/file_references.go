@@ -28,14 +28,14 @@ func (s *Server) referenceRoots(q protocol.GitQuery) ([]string, error) {
 	}
 	roots := w.Folders
 	if q.SessionID != "" {
-		d, err := s.store.Session(q.SessionID, 0, 1)
+		session, err := s.store.SessionRecord(q.SessionID)
 		if err != nil {
 			return nil, err
 		}
-		if d.Session.WorkspaceID != w.ID || d.Session.Archived {
+		if session.WorkspaceID != w.ID || session.Archived {
 			return nil, errors.New("会话不属于此工作区或已归档")
 		}
-		roots = append([]string{d.Session.Context.CWD}, d.Session.Context.AdditionalDirectories...)
+		roots = append([]string{session.Context.CWD}, session.Context.AdditionalDirectories...)
 	}
 	valid, err := validateFolders(roots)
 	if err != nil {
