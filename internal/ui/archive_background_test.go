@@ -20,7 +20,7 @@ func TestArchiveSingleDeleteDoesNotBlockAndOnlyRetriesThatSession(t *testing.T) 
 	ui.Click("彻底删除")
 	j := nextArchiveDelete(t, v)
 	ui.Advance(time.Second)
-	if v.archive.deletion.open || !ui.HasText("正在删除") {
+	if v.archive.deletion.open || !ui.HasText("删除中") {
 		t.Fatal("single deletion still blocks the interface")
 	}
 	j.Apply(v.Model, nil, errors.New("connection lost"))
@@ -45,10 +45,17 @@ func TestArchiveBackgroundDeleteNativeStates(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		v, ui := archiveViewFixture()
 		ui.SetDark(dark)
+		if dark {
+			ui.SetSize(850, 600)
+		}
 		for i := 0; i < 15; i++ {
 			v.Model.Snapshot.Sessions = append(v.Model.Snapshot.Sessions, domain.Session{ID: fmt.Sprint("older-", i), WorkspaceID: "w", Title: fmt.Sprint("历史会话 ", i), Archived: true, Revision: 1})
 		}
 		ui.Frame()
+		headerBefore, headerOK := ui.Find("归档工作区列")
+		if !headerOK {
+			t.Fatal("archive table header is missing")
+		}
 		ui.Click("删除全部")
 		ui.Advance(time.Second)
 		saveNativeSkillImage(t, ui, fmt.Sprintf("confirm-dark-%v.png", dark))
@@ -56,10 +63,16 @@ func TestArchiveBackgroundDeleteNativeStates(t *testing.T) {
 		nextArchiveDelete(t, v).Apply(v.Model, nil, errors.New("所属设备已断开连接，请重连后重试"))
 		ui.Frame()
 		ui.Advance(time.Second)
-		if v.archive.deletion.open || !ui.HasText("正在删除 1 / 16") {
+		status, statusOK := ui.Find("删除中 1/16")
+		search, searchOK := ui.Find("搜索标题或工作区")
+		if v.archive.deletion.open || !statusOK || !searchOK ||
+			status.Y >= search.Y+search.H || search.Y >= status.Y+status.H || ui.HasText("删除全部") {
 			t.Fatal("batch progress did not remain inline")
 		}
 		saveNativeSkillImage(t, ui, fmt.Sprintf("pending-dark-%v.png", dark))
+		if header, ok := ui.Find("归档工作区列"); !ok || header.Y != headerBefore.Y {
+			t.Errorf("deletion progress moved the table header from y=%g to y=%g", headerBefore.Y, header.Y)
+		}
 		for v.archive.deletion.busy {
 			j := nextArchiveDelete(t, v)
 			id := j.Input.(protocol.ArchiveDeleteInput).SessionID
@@ -88,7 +101,7 @@ func TestArchiveDeletionContinuesAfterLeavingPage(t *testing.T) {
 	if ui.HasText("彻底删除全部归档会话？") {
 		t.Fatal("pending deletion still blocks the interface with its confirmation")
 	}
-	if !ui.HasText("正在删除") {
+	if !ui.HasText("删除中") {
 		t.Fatal("background deletion has no progress")
 	}
 	if err := ui.Click("新建会话"); err != nil {

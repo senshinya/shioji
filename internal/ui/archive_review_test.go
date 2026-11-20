@@ -82,7 +82,7 @@ func TestArchivePendingDeleteClosesDialogAndShowsProgress(t *testing.T) {
 	ui.Advance(time.Second)
 	ui.Click("彻底删除")
 	ui.Advance(time.Second)
-	if !ui.HasText("正在删除") || v.archive.deletion.open || !v.archive.deletion.busy {
+	if !ui.HasText("删除中") || v.archive.deletion.open || !v.archive.deletion.busy {
 		t.Fatal("pending deletion has no visible progress")
 	}
 }
@@ -116,7 +116,7 @@ func TestArchivePendingDeleteEscapeDoesNotCancelBackgroundWork(t *testing.T) {
 	ui.Advance(time.Second)
 	ui.Key(0, n.KeyEscape)
 	ui.Frame()
-	if v.archive.deletion.open || !v.archive.deletion.busy || !ui.HasText("正在删除") {
+	if v.archive.deletion.open || !v.archive.deletion.busy || !ui.HasText("删除中") {
 		t.Fatal("Escape canceled the pending batch or reopened its blocking dialog")
 	}
 	nextArchiveDelete(t, v)

@@ -397,29 +397,30 @@ func (v *View) archiveTable(c *n.Context, t *n.Theme, a *archiveUI, scope domain
 		})
 		n.Spacer(c).Grow(1)
 		n.Text(c, fmt.Sprintf("%d 个%s", count, kind)).FontSize(12).FontFeatures("tnum").TextColor(t.TextMuted)
+		if d := a.deletion; d != nil && d.busy {
+			status := "删除中"
+			if d.batch {
+				status = fmt.Sprintf("删除中 %d/%d", max(0, d.next-1), len(d.targets))
+			}
+			n.Text(c.Key("archive-delete-progress"), status).PaddingX(configurationHoverInset).SingleLine().Shrink(0).
+				FontSize(12).FixedLineHeight(20).FontFeatures("tnum").TextColor(t.TextMuted)
+			return
+		}
 		canDeleteAll := slices.ContainsFunc(m.ArchivedSessions("", a.scope), func(row app.ArchivedSession) bool {
 			return v.pendingArchiveChange(row.Workspace.ID, row.Session.ID) == nil
 		})
 		if workspaceRows {
 			canDeleteAll = len(m.ArchivedWorkspaces("")) > 0
 		}
-		if configurationAction(c, "删除全部").Disabled(!canDeleteAll || a.deletion != nil && a.deletion.busy).Tooltip("删除此列表的全部归档" + kind + "，包含搜索未显示的内容").Clicked() {
+		if configurationAction(c, "删除全部").Disabled(!canDeleteAll).Tooltip("删除此列表的全部归档" + kind + "，包含搜索未显示的内容").Clicked() {
 			all := v.archiveDeleteTargets(a)
 			a.deletion = &archiveDeleteUI{batch: true, workspaces: workspaceRows, targets: all, count: len(all), open: true}
 		}
 	})
-	if d := a.deletion; d != nil && !d.open && (d.busy || d.error != "") {
+	if d := a.deletion; d != nil && !d.open && !d.busy && d.error != "" {
 		n.Row(c.Key("archive-delete-status")).FillWidth().MinHeight(28).Gap(8).AlignItems(n.Center).Margin(0, 0, 8, 0).Children(func() {
-			message := d.error
-			color := t.Danger
-			if d.busy {
-				message, color = "正在删除…", t.TextMuted
-				if d.batch {
-					message = fmt.Sprintf("正在删除 %d / %d…", max(0, d.next-1), len(d.targets))
-				}
-			}
-			n.Text(c, message).FontSize(12).FixedLineHeight(20).TextColor(color).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").TooltipWhenTruncated(message)
-			if !d.busy && configurationAction(c, "重试失败项").Clicked() {
+			n.Text(c, d.error).FontSize(12).FixedLineHeight(20).TextColor(t.Danger).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").TooltipWhenTruncated(d.error)
+			if configurationAction(c, "重试失败项").Clicked() {
 				v.deleteArchive(d)
 			}
 		})
@@ -634,7 +635,7 @@ func (v *View) archiveDialogs(c *n.Context, t *n.Theme) {
 				}
 				label := "彻底删除"
 				if d.busy {
-					label = "正在删除…"
+					label = "删除中"
 				} else if d.batch && d.error != "" {
 					label = "重试失败项"
 				}
