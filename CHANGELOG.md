@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-11-20
+
+[源码](https://github.com/senshinya/shioji/tree/v0.7.4) · [与 v0.7.3 比较](https://github.com/senshinya/shioji/compare/v0.7.3...v0.7.4)
+
+### Changed
+
+- 将 Goal 状态放在待发送队列上方，队列与输入框保持相接。Agent 提问和提交核对提示出现在目标行上方。
+- 在会话及子 Agent 详情中就地显示授权和回答结果，并改进折叠工具组的摘要与对齐。
+- 加快 Codex 历史导入的会话查找。支持索引的 Codex 优先查索引，也可补查未索引的旧记录。
+
+### Fixed
+
+- 修复导入的 Codex 会话末轮中断后无法接续的问题。发送前核对独立副本的历史，来源变化时可重新核对。
+- 修复存储统计阻塞执行服务升级、跨客户端修复后仍显示旧升级失败，以及正常重连导致设备连接路径反复切换的问题。
+- Goal 即将自动续跑时不再发送完成通知。设备页和设置页恢复窗口拖动，批量删除归档时可在页面内查看进度。
+
 ## [0.7.3] - 2026-11-20
 
 [源码](https://github.com/senshinya/shioji/tree/v0.7.3) · [与 v0.7.2 比较](https://github.com/senshinya/shioji/compare/v0.7.2...v0.7.3)
@@ -364,7 +380,7 @@
 - 新增独立执行 worker 和 Tailnet 网络服务；退出 App 不停止设备端执行或网络连接，运行中状态不明时保留人工核对入口。
 - 提供 Developer ID 签名、经 Apple 公证并附带公证票据的 DMG，以及 SHA-256 校验文件。
 
-[Unreleased]: https://github.com/senshinya/shioji/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/senshinya/shioji/compare/v0.7.4...HEAD
 [0.3.2]: https://github.com/senshinya/shioji/compare/v0.3.0...v0.3.2
 [0.3.0]: https://github.com/senshinya/shioji/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/senshinya/shioji/compare/v0.1.2...v0.2.0
