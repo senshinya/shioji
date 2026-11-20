@@ -283,6 +283,75 @@ func TestGoalDockKeepsScrollAndApprovalClearOfItsRow(t *testing.T) {
 	})
 }
 
+func TestGoalKeepsQueueJoinedToComposer(t *testing.T) {
+	for _, scenario := range []struct {
+		name  string
+		width int
+		dark  bool
+	}{
+		{name: "regular-dark", width: 1240, dark: true},
+		{name: "compact-light", width: 850},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			v, tester := goalLayout(false, false)
+			tester.SetSize(scenario.width, 820)
+			tester.SetDark(scenario.dark)
+			session := v.Model.Snapshot.Sessions[0]
+			session.Status = domain.ExecutionRunning
+			session.Goal.State = domain.GoalActive
+			v.Model.Snapshot.Sessions[0] = session
+			detail := v.Model.Details[session.ID]
+			detail.Session = session
+			detail.Turns = []domain.Turn{{ID: "active", Status: domain.ExecutionRunning}}
+			v.Model.Details[session.ID] = detail
+			v.Model.Drafts[v.Model.DraftKey()] = ""
+			v.Model.SetQueue(domain.QueueState{SessionID: session.ID, Revision: 1, Paused: true, Items: []domain.QueueItem{
+				{ID: "queued", Input: domain.Submission{OperationID: "send-queued", Text: "检查重连后是否还会重复发送。"}},
+			}})
+			tester.Frame()
+			tester.Advance(time.Second)
+			if dir := os.Getenv("SHIOJI_GOAL_RECORDING"); dir != "" {
+				t.Setenv("SHIOJI_SKILL_SNAPSHOTS", dir)
+				tester.SetScale(2)
+				saveNativeSkillImage(t, tester, "goal-queue-"+scenario.name+".png")
+				tester.SetScale(1)
+			}
+			find := func(label string) n.Rect {
+				t.Helper()
+				r, ok := tester.Find(label)
+				if !ok {
+					t.Fatalf("missing %q", label)
+				}
+				return r
+			}
+			editor := find("消息编辑器")
+			checkJoin := func() {
+				t.Helper()
+				goal := find("目标状态行")
+				queue := find("待发送队列")
+				if goal.Y+goal.H > queue.Y || queue.X != editor.X || queue.W != editor.W ||
+					math.Abs(float64(queue.Y+queue.H-editor.Y-17)) > .5 {
+					t.Fatalf("goal splits the queue and composer: goal=%v queue=%v editor=%v", goal, queue, editor)
+				}
+				if activeEditor := find("消息编辑器"); activeEditor != editor {
+					t.Fatalf("queue disclosure displaced the editor: %v -> %v", editor, activeEditor)
+				}
+			}
+			checkJoin()
+			for _, expanded := range []bool{false, true} {
+				if err := tester.Click("待发送 1"); err != nil {
+					t.Fatal(err)
+				}
+				tester.Advance(250 * time.Millisecond)
+				checkJoin()
+				if v.Model.QueueExpanded[session.ID] != expanded {
+					t.Fatalf("queue expansion did not change to %t", expanded)
+				}
+			}
+		})
+	}
+}
+
 func TestGoalResumeUsesTheOwningSessionAndKeepsTheDraft(t *testing.T) {
 	v, tester := goalLayout(false, false)
 	for len(v.Controller.Jobs) > 0 {

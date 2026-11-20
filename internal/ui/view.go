@@ -754,11 +754,12 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 		inputSize, inputLeading = 15, 26
 	}
 	stack := n.Column(c.Key("composer-stack:" + stackKey)).Label("消息编辑区").FillWidth().MaxWidth(768).Gap(0).Children(func() {
-		v.queueDisclosure(c, t)
 		v.remoteAttachmentsPanel(c, t, key)
 		if !home && !v.loadingBlocksComposer() {
 			v.sessionGoal(c, t)
 		}
+		// The queue backplate extends behind the editor's rounded top edge.
+		v.queueDisclosure(c, t)
 		binding = v.composerDocument(c, key)
 
 		editID := m.ActiveQueueEdit(m.SessionID).ID
