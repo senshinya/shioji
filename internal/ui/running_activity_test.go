@@ -125,10 +125,10 @@ func TestLiveToolSummaryOwnsActivityExpandedAndCollapsed(t *testing.T) {
 	checkPhase()
 	before, _ := ui.Find("2 次工具调用")
 	clock, ok := ui.Find("运行时长")
-	if !ok || math.Abs(float64(clock.Y-before.Y)) > 1 {
-		t.Fatal("expanded title lost its elapsed clock", before, clock)
+	if !ok || clock.Y <= before.Y+1 {
+		t.Fatal("expanded status did not move the elapsed clock below the heading", before, clock)
 	}
-	ui.Click("执行工具")
+	ui.Click("2 次工具调用")
 	ui.Advance(time.Second)
 	after, _ := ui.Find("2 次工具调用")
 	clock, ok = ui.Find("运行时长")
@@ -226,7 +226,7 @@ func TestToolActivityHandoffNeverPaintsTwoLiveIndicators(t *testing.T) {
 					}
 					return false
 				}
-				for _, action := range []string{"执行工具", "1 次工具调用"} {
+				for _, action := range []string{"1 次工具调用", "1 次工具调用"} {
 					ui.Click(action)
 					for frame := 0; frame < 30; frame++ {
 						ui.Advance(time.Second / 60)
@@ -316,8 +316,7 @@ func TestPendingRequestKeepsOnlySourceAndDock(t *testing.T) {
 	}
 }
 
-// Keep coverage during the crossfade, then reclaim the dot/timer space with
-// real width animation while the count stays in place until the dot fades.
+// The progress handoff keeps the count aligned while the phase and timer clear.
 func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, expanded := range []bool{false, true} {
@@ -332,14 +331,18 @@ func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 				ui.SetDark(dark)
 				ui.Advance(time.Second)
 				if !expanded {
-					ui.Click("执行工具")
+					ui.Click("2 次工具调用")
 					ui.Advance(time.Second)
 				}
 				if ui.HasText("go test ./...") != expanded {
 					t.Fatal("tool fixture does not match the requested disclosure state")
 				}
 				header, _ := ui.Find("2 次工具调用")
-				titleX := activityTitleInkX(ui, header, dark)
+				countX := func(r n.Rect) float32 {
+					r.X += toolGlyphSlot + toolSummaryGap
+					return activityTitleInkX(ui, r, dark)
+				}
+				titleX := countX(header)
 				font := n.Font{Family: v.Model.Preferences.InterfaceFont, Size: 11, Weight: 400, Features: "tnum"}
 				titleWidth, _ := n.ShapeText("2 次工具调用", font, 0).Size()
 				titleWidth += toolGlyphSlot + toolSummaryGap
@@ -348,8 +351,8 @@ func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 				if right := activityLastInkX(ui, header, dark); right > titleX+titleWidth+phaseWidth+clockWidth+34 {
 					t.Fatal("running status extends beyond its elapsed time", titleX, right)
 				}
-				lastTitleX := titleX
 				d.Items[1].Final, d.Items[2].Final = true, true
+				d.Items[1].Status, d.Items[2].Status = "completed", "completed"
 				d.Items = append(d.Items, domain.Item{ID: "reply", TurnID: "t", Kind: "assistant", Text: "三个检查均已通过。"})
 				v.Model.Details["s"] = d
 				began := ui.Now()
@@ -372,15 +375,11 @@ func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 					if hasOld {
 						t.Fatalf("tool progress remains above the new reply at frame %d", frame)
 					}
-					x := activityTitleInkX(ui, header, dark)
+					x := countX(header)
 					elapsed := ui.Now().Sub(began)
-					if elapsed <= ready+140*time.Millisecond && math.Abs(float64(x-titleX)) > 1 {
-						t.Fatalf("title moved before the dot finished fading at frame %d", frame)
+					if math.Abs(float64(x-titleX)) > 1 {
+						t.Fatalf("count moved as the group handed off progress at frame %d: %v -> %v", frame, titleX, x)
 					}
-					if x > lastTitleX+1 || lastTitleX-x > 4 {
-						t.Fatalf("title jumped instead of gliding left: %v -> %v", lastTitleX, x)
-					}
-					lastTitleX = x
 					if hasNew {
 						if firstFooterY < 0 {
 							firstFooterY = footer.Y
@@ -399,32 +398,27 @@ func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 					if elapsed >= ready+90*time.Millisecond && firstFooterY < 0 {
 						t.Fatal("progress waits after the actual disclosure has settled", elapsed, ready)
 					}
-					if elapsed >= ready+140*time.Millisecond+90*time.Millisecond && titleX-x < 8 {
-						t.Fatal("title recovery restarted its own clock instead of continuing the handoff", elapsed, titleX, x)
-					}
 				}
 				if firstFooterY < 0 || activityGreenIn(ui, header) {
 					t.Fatal("progress never completed its handoff")
 				}
-				if math.Abs(float64(titleX-lastTitleX-12)) > 1 {
-					t.Fatal("title retained the vanished dot's indentation", titleX, lastTitleX)
-				}
-				if right := activityLastInkX(ui, header, dark); right <= lastTitleX+titleWidth+6 || right > lastTitleX+titleWidth+22 {
-					t.Fatal("folded summary lost its disclosure cue after handoff", header, right)
+				outcome, ok := ui.Find("已完成")
+				if right := activityLastInkX(ui, header, dark); !ok || outcome.Y != header.Y || right <= outcome.X+outcome.W {
+					t.Fatal("folded summary lost its outcome or disclosure cue after handoff", header, outcome, right)
 				}
 				saveNativeSkillImage(t, ui, fmt.Sprintf("handoff-dark-%v-expanded-%v.png", dark, expanded))
-				handoffGap := activityLastInkX(ui, header, dark) - lastTitleX
+				handoffGap := activityLastInkX(ui, header, dark) - titleX
 				// The same count must leave the disclosure cue in the same
 				// place when the turn changes from prose to completed history.
 				d.Turns[0].Status, d.Session.Status = "completed", "completed"
 				v.Model.Details["s"] = d
 				ui.Frame()
 				ui.Advance(time.Second)
-				header, ok := ui.Find("2 次工具调用")
+				header, ok = ui.Find("2 次工具调用")
 				if !ok {
 					t.Fatal("completed history lost the tool summary")
 				}
-				completedGap := activityLastInkX(ui, header, dark) - activityTitleInkX(ui, header, dark)
+				completedGap := activityLastInkX(ui, header, dark) - countX(header)
 				saveNativeSkillImage(t, ui, fmt.Sprintf("completed-dark-%v-expanded-%v.png", dark, expanded))
 				if delta := handoffGap - completedGap; math.Abs(float64(delta)) > 1 {
 					t.Fatalf("hidden activity spacing shifts the disclosure cue by %.1f DIP after handoff", delta)

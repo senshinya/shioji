@@ -25,7 +25,7 @@ func TestPagedHistoryShowsCompleteToolCountAndKeepsManualExpansion(t *testing.T)
 	if !ui.HasText("100 次工具调用") {
 		t.Fatal("partial window only counted loaded calls", ui.Texts())
 	}
-	if e := ui.Click("执行工具"); e != nil {
+	if e := ui.Click("100 次工具调用"); e != nil {
 		t.Fatal(e)
 	}
 	ui.Advance(time.Second)

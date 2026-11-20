@@ -38,9 +38,13 @@ func TestInsertedUserMessageUsesNormalTurnSpacing(t *testing.T) {
 					if ui.HasText("go test ./internal/ui -run Check0") != expanded {
 						t.Fatal("incorrect disclosure fixture")
 					}
-					previous, ok := ui.Find("2 次工具调用")
+					label := "2 次工具调用"
+					if expanded {
+						label = "go test ./internal/ui -run Check1"
+					}
+					previous, ok := ui.Find(label)
 					if !ok {
-						t.Fatal("tool summary missing")
+						t.Fatal("last visible tool row missing", label)
 					}
 					next, ok := v.historyRowBounds["steer"]
 					if !ok {

@@ -42,3 +42,48 @@ func shimmer(c *n.Context, text n.Element, rest, highlight n.Color, phase ...tim
 	}
 	text.Effect(shimmerEffect{started: started, rest: rest, highlight: highlight})
 }
+
+// Apply one running-clock sweep to all of the row's painted ink, including
+// icons and the live timer. Preserve premultiplied alpha and the dot's hue.
+var toolStatusSweepShader = shader.MustCompile(`package main
+var Time float
+var Strength float
+var Highlight vec4
+var Green vec4
+func ColorEffect(pos vec2, color vec4) vec4 {
+    width := max(22.0, rectSize().x * 0.23)
+    center := fract(Time / 2.2) * (rectSize().x + width * 2.0) - width
+    band := 1.0 - smoothstep(0.0, width, abs(pos.x - center))
+    greenDominance := (color.g - max(color.r, color.b)) / max(color.a, 0.001)
+    isGreen := smoothstep(0.05, 0.22, greenDominance)
+    ink := mix(Highlight.rgb, Green.rgb, isGreen) * color.a
+    return vec4(mix(color.rgb, ink, band * Strength), color.a)
+}
+`)
+
+type toolStatusSweepEffect struct {
+	started          time.Time
+	highlight, green n.Color
+	extent           float32
+}
+
+func (toolStatusSweepEffect) EffectMargin() n.Point { return n.Point{} }
+
+func (fx toolStatusSweepEffect) PaintEffect(p *n.Painter, box n.Rect, content *n.Bitmap, inset n.Point) {
+	toolStatusSweepShader.Effect(shader.Options{Uniforms: map[string]any{
+		"Time": float32(p.Now().Sub(fx.started).Seconds()), "Strength": fx.extent,
+		"Highlight": fx.highlight, "Green": fx.green,
+	}}).PaintEffect(p, box, content, inset)
+	p.AnimationFrameRate(60)
+}
+
+func shimmerToolStatus(c *n.Context, line n.Element, started time.Time, highlight n.Color, extent float32) {
+	if c.Preferences().ReduceMotion || extent <= 0 {
+		return
+	}
+	green := n.RGB(1, 107, 59)
+	if c.Theme().Background.R < 115 {
+		green = n.RGB(114, 255, 165)
+	}
+	line.Effect(toolStatusSweepEffect{started: started, highlight: highlight, green: green, extent: extent})
+}

@@ -28,7 +28,14 @@ func TestToolSummaryShimmerCoversMetadataWithoutRestarting(t *testing.T) {
 						if v.runningProgress == nil {
 							v.runningProgress = &runningProgress{started: c.Now(), label: "进行中"}
 						}
-						n.Column(c).Fill().Padding(16).Children(func() { v.toolGroup(c, c.Theme(), row, 0) })
+						n.Column(c).Fill().Padding(16).Children(func() {
+							if folded {
+								v.toolGroupTitle(c, c.Theme(), row, 0)
+							} else {
+								row.toolParent, row.opacity = row.group, 1
+								v.toolGroupProgress(c, c.Theme(), row)
+							}
+						})
 					}, 640, 56)
 					ui.SetDark(dark)
 					ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
@@ -54,6 +61,10 @@ func TestToolSummaryShimmerCoversMetadataWithoutRestarting(t *testing.T) {
 					for frame := 0; frame < 28; frame++ {
 						saveNativeSkillImage(t, ui, fmt.Sprintf("summary-dark-%v-reduced-%v-folded-%v-%03d.png", dark, reduced, folded, frame))
 						ui.Advance(80 * time.Millisecond)
+						row, ok := ui.Find("工具组运行状态")
+						if !ok || !activityGreenIn(ui, row) {
+							t.Fatal("the status row lost its green ink during the sweep", frame)
+						}
 						for i, r := range regions {
 							changed[i] = changed[i] || !bytes.Equal(before[i], contextPixels(ui, r))
 						}
@@ -65,6 +76,9 @@ func TestToolSummaryShimmerCoversMetadataWithoutRestarting(t *testing.T) {
 					}
 					// Same-width updates leave other text at exactly the same sweep
 					// position; remounting/restarting the effect changes these pixels.
+					if !folded {
+						return
+					}
 					ui.Advance(420 * time.Millisecond)
 					ui.Frame()
 					phase, _ := ui.Find("进行中")

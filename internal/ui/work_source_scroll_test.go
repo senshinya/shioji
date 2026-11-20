@@ -104,7 +104,7 @@ func TestWorkSourceLocateUsesVisibleToolRow(t *testing.T) {
 				ui.Advance(time.Second)
 				key := source
 				if folded {
-					key = group + ":title"
+					key = group
 				}
 				bounds, ok := v.historyRowBounds[key]
 				if !ok || math.Abs(float64(bounds.Y-112)) > 1 || bounds.H <= 0 {

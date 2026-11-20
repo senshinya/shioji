@@ -107,7 +107,7 @@ func TestExpandedToolGroupStartsWithCollapsedTools(t *testing.T) {
 			if !ui.HasText("ok   shioji/internal/ui") || !ui.HasText("搜索结果正文") {
 				t.Fatal("manual tool expansion did not reveal output")
 			}
-			ui.Click("执行工具")
+			ui.Click("2 次工具调用")
 			ui.Advance(time.Second)
 			ui.Click("2 次工具调用")
 			ui.Advance(time.Second)
@@ -164,7 +164,7 @@ func TestToolItemDisclosureNativeRecording(t *testing.T) {
 				case 165:
 					click("go vet ./internal/ui")
 				case 195:
-					click("执行工具")
+					click("3 次工具调用")
 				case 225:
 					click("3 次工具调用")
 				case 255:

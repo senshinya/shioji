@@ -96,14 +96,14 @@ func TestToolTailScenarioRecordings(t *testing.T) {
 					case "disclosure":
 						switch frame {
 						case 60, 180:
-							click("执行工具")
+							click("6 次工具调用")
 						case 120, 240:
 							click("6 次工具调用")
 						case 248, 252:
-							click("执行工具") // reverse the in-flight motion
+							click("6 次工具调用") // reverse the in-flight motion
 						case 300:
 							ui.SetPreferences(n.Preferences{ReduceMotion: true})
-							click("执行工具")
+							click("6 次工具调用")
 						case 360:
 							click("6 次工具调用")
 						}
@@ -116,7 +116,7 @@ func TestToolTailScenarioRecordings(t *testing.T) {
 						case 120, 240:
 							tool()
 						case 180:
-							click("执行工具")
+							click("3 次工具调用")
 						case 300:
 							click("4 次工具调用")
 						case 360:
@@ -209,11 +209,11 @@ func TestToolTailScenarioRecordings(t *testing.T) {
 							}
 							ui.Frame()
 						case 240:
-							click("执行工具")
+							click("78 次工具调用")
 						case 360:
 							click("78 次工具调用")
 						case 420:
-							click("执行工具")
+							click("78 次工具调用")
 						case 480:
 							v.home()
 							ui.Frame()
@@ -235,7 +235,7 @@ func TestToolTailScenarioRecordings(t *testing.T) {
 					}
 					// Assert settled acceptance states in addition to recording them.
 					if scene.name == "arrivals" && frame == 285 {
-						if _, open := ui.Find("执行工具"); open {
+						if ui.HasText("go test ./internal/ui -run Check3") {
 							t.Fatal("a new call reopened the manually folded group")
 						}
 					}

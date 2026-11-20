@@ -21,7 +21,7 @@ func runningCaptionFixture(kind string) (*View, *n.Tester) {
 		}
 		n.Column(c).Fill().Padding(16).Background(c.Theme().Background).Children(func() {
 			if kind == "tools" {
-				v.toolGroup(c, c.Theme(), transcriptRow{group: "tools", count: 1, item: domain.Item{TurnID: "t"}}, 0)
+				v.toolGroupTitle(c, c.Theme(), transcriptRow{group: "tools", count: 1, item: domain.Item{TurnID: "t"}}, 0)
 			} else {
 				v.progressStatus(c, c.Theme(), runningActivity{label: v.runningProgress.label, started: v.Model.Details["s"].Turns[0].StartedAt}, v.runningProgress)
 			}
@@ -65,19 +65,19 @@ func TestConversationProgressMovesSmoothlyWhenToolIsAdded(t *testing.T) {
 	v := toolTailFixture(1)
 	ui := n.NewTester(v.View, 1200, 820)
 	ui.Advance(time.Second)
-	before, _ := ui.Find("1 次工具调用")
+	before, _ := ui.Find("工具组运行状态")
 	d := v.Model.Details["s"]
 	d.Items = append(d.Items, domain.Item{ID: "second", TurnID: "t", Kind: "tool", Presentation: "command", Name: "go vet ./...", Text: "checking", Status: "running"})
 	v.Model.Details["s"] = d
 	ui.Frame()
-	first, _ := ui.Find("2 次工具调用")
+	first, _ := ui.Find("工具组运行状态")
 	if math.Abs(float64(first.Y-before.Y)) > 1 {
 		t.Fatal("new tool immediately jumps the live summary", before, first)
 	}
 	previous, largest, moving := first.Y, float32(0), 0
 	for frame := 0; frame < 36; frame++ {
 		ui.Advance(time.Second / 60)
-		r, _ := ui.Find("2 次工具调用")
+		r, _ := ui.Find("工具组运行状态")
 		step := float32(math.Abs(float64(r.Y - previous)))
 		largest = max(largest, step)
 		if step > .1 {
@@ -141,7 +141,7 @@ func TestConversationProgressNativeRecording(t *testing.T) {
 			ui.Advance(time.Second)
 			// A quiet all-finished group mounts folded by default; explicitly
 			// open it before recording phase changes in both disclosure states.
-			if _, expanded := ui.Find("执行工具"); !expanded {
+			if !ui.HasText("go test ./internal/ui -run Check0") {
 				if err := ui.Click("3 次工具调用"); err != nil {
 					t.Fatal(err)
 				}
@@ -160,7 +160,7 @@ func TestConversationProgressNativeRecording(t *testing.T) {
 				case 75, 87:
 					latestMotionPhase(v, "command")
 				case 105:
-					if err := ui.Click("执行工具"); err != nil {
+					if err := ui.Click("4 次工具调用"); err != nil {
 						t.Fatal(err)
 					}
 				case 195:

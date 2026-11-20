@@ -76,7 +76,7 @@ func TestOpeningSessionExpandsOnlyItsLatestExecutingToolGroup(t *testing.T) {
 					if !tc.open {
 						return
 					}
-					if err := ui.Click("执行工具"); err != nil {
+					if err := ui.Click("2 次工具调用"); err != nil {
 						t.Fatal(err)
 					}
 					ui.Advance(200 * time.Millisecond)

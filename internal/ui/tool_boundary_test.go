@@ -30,7 +30,7 @@ func TestToolGroupClosesOnFollowingNonToolContent(t *testing.T) {
 				if !ui.HasText("正在执行的命令") {
 					t.Fatal("live tool was not expanded")
 				}
-				heading, _ := ui.Find("执行工具")
+				heading, _ := ui.Find("1 次工具调用")
 				next := domain.Item{ID: "next", TurnID: "t", Kind: kind, Text: "后续内容", Status: "pending", Final: true}
 				if kind == "activity" {
 					next.Presentation = "reasoning"

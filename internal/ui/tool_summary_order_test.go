@@ -119,15 +119,17 @@ func TestToolIssueSummaryPrecedesDisclosureCue(t *testing.T) {
 		for _, ended := range []bool{false, true} {
 			t.Run(fmt.Sprintf("dark=%v/ended=%v", dark, ended), func(t *testing.T) {
 				v := toolTailFixture(2)
-				row := transcriptRow{group: "tools", toolParent: "tools", count: 13, issues: 3, toolEnded: ended}
+				row := transcriptRow{group: "tools", count: 13, issues: 3}
 				v.Model.SetToolDisclosure(row.group, v.Model.ToolDisclosure(row.group).Toggle())
 				ui := n.NewTester(func(c *n.Context) {
 					n.Column(c).Fill().Background(c.Theme().Background).Padding(16).Children(func() {
-						if ended {
-							v.toolGroupTitle(c, c.Theme(), row, 0)
-						} else {
-							v.toolGroup(c, c.Theme(), row, 0)
+						if !ended {
+							v.runningGroup = row.group
+							if v.runningProgress == nil {
+								v.runningProgress = &runningProgress{started: c.Now(), label: "进行中"}
+							}
 						}
+						v.toolGroupTitle(c, c.Theme(), row, 0)
 					})
 				}, 440, 56)
 				ui.SetDark(dark)
@@ -175,10 +177,8 @@ func TestToolSummaryOrderNativeRecording(t *testing.T) {
 			}
 			for frame := 0; frame < 210; frame++ {
 				switch frame {
-				case 30, 90, 150, 180:
+				case 30, 60, 90, 93, 150, 180:
 					click("2 次工具调用")
-				case 60, 93:
-					click("执行工具")
 				case 120:
 					now := ui.Now()
 					d.Turns[0].Status, d.Turns[0].CompletedAt = "completed", &now

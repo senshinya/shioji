@@ -71,7 +71,7 @@ func TestNativeElapsedResetsInFooterAndToolHeader(t *testing.T) {
 						if header {
 							v.runningGroup = "current-group"
 							v.runningProgress = v.progressFor(c, d.Turns[0])
-							v.toolGroup(c, c.Theme(), transcriptRow{group: "current-group", count: 1, item: domain.Item{TurnID: "t"}}, 0)
+							v.toolGroupTitle(c, c.Theme(), transcriptRow{group: "current-group", count: 1, item: domain.Item{TurnID: "t"}}, 0)
 						} else {
 							v.turnFooter(c, c.Theme(), d.Turns[0])
 						}

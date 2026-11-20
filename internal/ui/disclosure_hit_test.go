@@ -86,9 +86,8 @@ func TestToolGroupDisclosureIgnoresBlankHeadingSpace(t *testing.T) {
 			}
 			ui := n.NewTester(v.View, 1440, 900)
 			ui.Advance(time.Second)
-			label := "执行工具"
+			const label = "2 次工具调用"
 			if ended {
-				label = "2 次工具调用"
 				if err := ui.Click(label); err != nil {
 					t.Fatal(err)
 				}
@@ -112,7 +111,6 @@ func TestToolGroupDisclosureIgnoresBlankHeadingSpace(t *testing.T) {
 				if v.Model.ToolDisclosure(key).Closed() == closed {
 					t.Fatal("group title no longer toggles its tools")
 				}
-				label = "2 次工具调用"
 			}
 		})
 	}

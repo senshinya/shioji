@@ -19,14 +19,14 @@ func TestLatestToolDefaultFoldedOnArrivalAndReentry(t *testing.T) {
 			v.Model.FoldToolHistory["s"] = reentry
 			ui := n.NewTester(v.View, 1240, 820)
 			ui.Advance(time.Second)
-			if ui.HasText("执行工具") || ui.HasText("go test ./internal/ui -run Check0") || !ui.HasText("2 次工具调用") || !ui.HasText("正在执行命令") {
+			if ui.HasText("go test ./internal/ui -run Check0") || !ui.HasText("2 次工具调用") || !ui.HasText("正在执行命令") {
 				t.Fatal("latest tools did not start as a single status row", ui.Texts())
 			}
 			if err := ui.Click("2 次工具调用"); err != nil {
 				t.Fatal(err)
 			}
 			ui.Advance(time.Second)
-			if !ui.HasText("执行工具") || !ui.HasText("go test ./internal/ui -run Check0") {
+			if !ui.HasText("2 次工具调用") || !ui.HasText("go test ./internal/ui -run Check0") {
 				t.Fatal("default folding blocks manual expansion")
 			}
 			d := v.Model.Details["s"]

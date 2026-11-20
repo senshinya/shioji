@@ -25,7 +25,7 @@ func timelineFixture(t *testing.T, dark bool) (*View, *n.Tester) {
 	return v, ui
 }
 
-func TestExpandedToolsShareTimelineRailAndEndWithCompleted(t *testing.T) {
+func TestExpandedToolsShareTimelineRailBelowTheCompletedHeading(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		_, ui := timelineFixture(t, dark)
 		heading, _ := ui.Find("2 次工具调用")
@@ -35,14 +35,14 @@ func TestExpandedToolsShareTimelineRailAndEndWithCompleted(t *testing.T) {
 		if !ok {
 			t.Fatal("expanded completed calls have no timeline completion receipt")
 		}
-		for _, r := range []n.Rect{a, b, done} {
+		for _, r := range []n.Rect{a, b} {
 			if math.Abs(float64(r.X-heading.X-40)) > .5 {
 				t.Errorf("tool details should be inset by one 16 DIP icon column: heading=%+v label=%+v", heading, r)
 			}
 		}
 		footer, _ := ui.Find("回复信息")
-		if !(done.Y > b.Y+b.H && footer.Y > done.Y+done.H) {
-			t.Fatal("group completion is not before the separate turn footer")
+		if !(done.Y == heading.Y && done.X > heading.X && a.Y > done.Y+done.H && footer.Y > b.Y+b.H) {
+			t.Fatal("completion must share the heading above the calls and turn footer", heading, done, a, b, footer)
 		}
 		x, y := int(a.X-16), int((a.Y+a.H+b.Y)/2)
 		line, bg := ui.Image().RGBAAt(x, y), ui.Image().RGBAAt(x-4, y)
@@ -54,8 +54,8 @@ func TestExpandedToolsShareTimelineRailAndEndWithCompleted(t *testing.T) {
 		}
 		ui.Click("2 次工具调用")
 		ui.Advance(180 * time.Millisecond)
-		if ui.HasText("已完成") || ui.HasText("first command") {
-			t.Fatal("collapsed group leaves its timeline receipt visible")
+		if !ui.HasText("已完成") || ui.HasText("first command") {
+			t.Fatal("collapsed group must retain the outcome and hide its calls")
 		}
 	}
 }
@@ -76,6 +76,13 @@ func TestToolTimelineCompletionFollowsConfirmedToolLifecycle(t *testing.T) {
 	ui.Frame()
 	if !ui.HasText("已完成") {
 		t.Fatal("confirmed tool completion has no receipt")
+	}
+	d.Items[0].Order, d.Items[1].Order = 1, 2
+	d.History = &domain.HistoryWindow{Groups: []domain.HistoryToolGroup{{ID: "a", TurnID: "t", First: 1, Last: 3, Count: 3}}}
+	v.Model.Details["s"] = d
+	ui.Frame()
+	if !ui.HasText("3 次工具调用") || ui.HasText("已完成") {
+		t.Fatal("paginated history inferred success from the loaded calls", ui.Texts())
 	}
 }
 
@@ -115,7 +122,7 @@ func TestFailedOrDeclinedToolsDoNotShowSuccessfulGroupReceipt(t *testing.T) {
 		if !ui.HasText(want) {
 			t.Fatalf("%s call lost its terminal state", status)
 		}
-		if !ui.HasText("调用结束") || ui.HasText("执行失败") {
+		if !ui.HasText("1 项未成功") || ui.HasText("执行失败") {
 			t.Fatal("one unsuccessful call is presented as a group failure")
 		}
 	}
@@ -152,7 +159,7 @@ func TestToolIssuesStayWithTheirCallWhileMoreCommandsArrive(t *testing.T) {
 				t.Fatal("current batch completion prematurely ends the open tool group")
 			}
 		}
-		ui.Click("执行工具")
+		ui.Click("3 次工具调用")
 		ui.Advance(200 * time.Millisecond)
 		if !ui.HasText("1 项未成功") || ui.HasText("退出码 1") {
 			t.Fatal("collapsed group loses the issue summary")
@@ -162,7 +169,7 @@ func TestToolIssuesStayWithTheirCallWhileMoreCommandsArrive(t *testing.T) {
 		ui.Frame()
 		ui.Click("3 次工具调用")
 		ui.Advance(time.Second)
-		if !ui.HasText("调用结束") || !ui.HasText("退出码 1") || ui.HasText("1 项未成功") || ui.HasText("本轮失败") {
+		if !ui.HasText("1 项未成功") || !ui.HasText("退出码 1") || ui.HasText("本轮失败") {
 			t.Fatal("closed group loses its factual issues or claims the turn failed")
 		}
 	}

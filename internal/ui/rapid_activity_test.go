@@ -173,7 +173,7 @@ func TestRapidActivityNativeRecording(t *testing.T) {
 						t.Fatal(err)
 					}
 				case 240:
-					if err := ui.Click("执行工具"); err != nil {
+					if err := ui.Click("3 次工具调用"); err != nil {
 						t.Fatal(err)
 					}
 				case 255, 267, 279:

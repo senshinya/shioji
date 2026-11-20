@@ -35,6 +35,9 @@ func TestLatestStartedActivityOwnsProgress(t *testing.T) {
 				if _, ok := ui.Find("工具组运行状态"); ok {
 					t.Error("older tool result reclaimed live progress")
 				}
+				if _, ok := v.historyRowBounds["tool-group:s/tool:status"]; ok {
+					t.Error("an older tool group reserved an empty status row")
+				}
 				compact, ok := ui.Find("正在压缩上下文")
 				if !ok {
 					t.Fatal("current compression missing")

@@ -83,13 +83,13 @@ func TestToolDisclosureKeepsClickedHeadingInPlace(t *testing.T) {
 		ui := n.NewTester(New(m, nil, "").View, 1440, 700)
 		ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
 		before, _ := ui.Find("8 次工具调用")
-		for i, label := range []string{"8 次工具调用", "执行工具"} {
+		for i, label := range []string{"8 次工具调用", "8 次工具调用"} {
 			if err := ui.Click(label); err != nil {
 				t.Fatal(err)
 			}
 			for _, delay := range []time.Duration{40, 180} {
 				ui.Advance(delay * time.Millisecond)
-				next := "执行工具"
+				next := "8 次工具调用"
 				if i == 1 && delay == 180 {
 					next = "8 次工具调用"
 				}
@@ -166,7 +166,7 @@ func TestToolGroupActuallyAnimatesBothDirections(t *testing.T) {
 	if entering.Y >= settled.Y-.5 {
 		t.Fatalf("tools have no content entrance transition: entering=%+v settled=%+v", entering, settled)
 	}
-	if err := ui.Click("执行工具"); err != nil {
+	if err := ui.Click("8 次工具调用"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(40 * time.Millisecond)
@@ -193,7 +193,7 @@ func TestToolDisclosureCanReverseAndUserScrollReleasesAnchor(t *testing.T) {
 	ui.Frame()
 	key := "tool-group:s/tool0"
 	before, _ := v.toolMotions[key].sample(ui.Now())
-	if err := ui.Click("执行工具"); err != nil {
+	if err := ui.Click("8 次工具调用"); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := v.toolMotions[key].sample(ui.Now())
@@ -201,14 +201,14 @@ func TestToolDisclosureCanReverseAndUserScrollReleasesAnchor(t *testing.T) {
 		t.Fatalf("reversing tool disclosure restarted its animation: %v -> %v", before, after)
 	}
 	ui.Advance(40 * time.Millisecond)
-	if err := ui.Click("执行工具"); err != nil {
+	if err := ui.Click("8 次工具调用"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(180 * time.Millisecond)
-	heading, _ := ui.Find("执行工具")
+	heading, _ := ui.Find("8 次工具调用")
 	ui.Scroll(1300, 400, 0, 80)
 	ui.Frame()
-	moved, ok := ui.Find("执行工具")
+	moved, ok := ui.Find("8 次工具调用")
 	if !ok || math.Abs(float64(moved.Y-heading.Y)) < 5 {
 		t.Fatalf("the disclosure anchor prevents user scrolling: before=%+v after=%+v", heading, moved)
 	}
@@ -238,7 +238,7 @@ func TestToolDisclosureHeightContinuouslyMovesFollowingText(t *testing.T) {
 	if middle.Y <= closed.Y+.5 || middle.Y >= opened.Y-.5 {
 		t.Fatalf("following text does not track intermediate content height: closed=%v middle=%v open=%v", closed.Y, middle.Y, opened.Y)
 	}
-	ui.Click("执行工具")
+	ui.Click("2 次工具调用")
 	initial, _ = ui.Find("Following reply")
 	if math.Abs(float64(initial.Y-opened.Y)) > .5 {
 		t.Fatal("following text jumps at the start of collapse")
@@ -287,7 +287,10 @@ func TestLargeToolDisclosureKeepsHiddenRowsVirtualized(t *testing.T) {
 	d.Items = append(d.Items, domain.Item{ID: "reply", TurnID: "t", Kind: "assistant", Text: "After large group"})
 	m.Details["s"] = d
 	ui := n.NewTester(New(m, nil, "").View, 1440, 900)
-	ui.Click("10000 次工具调用")
+	const heading = "10000 次工具调用"
+	if err := ui.Click(heading); err != nil {
+		t.Fatal(err)
+	}
 	textLabelCount := func() int {
 		count := 0
 		for _, label := range ui.Texts() {
@@ -305,7 +308,7 @@ func TestLargeToolDisclosureKeepsHiddenRowsVirtualized(t *testing.T) {
 			t.Fatalf("tool disclosure mounted hidden history: %d visible labels", got)
 		}
 	}
-	if err := ui.Click("执行工具"); err != nil {
+	if err := ui.Click(heading); err != nil {
 		t.Fatal(err)
 	}
 	for _, delay := range []time.Duration{0, 140, 40} {
@@ -407,7 +410,7 @@ func BenchmarkLargeToolDisclosure(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				ui.Click(label)
 				ui.Advance(180 * time.Millisecond)
-				ui.Click("执行工具")
+				ui.Click(label)
 				ui.Advance(180 * time.Millisecond)
 			}
 		})
@@ -465,7 +468,7 @@ func TestToolCollapseAfterScrollingToEndDoesNotLeaveReadingSpace(t *testing.T) {
 					ui.Scroll(1300, 400, 0, scrollBack)
 					ui.Frame()
 				}
-				if err := ui.Click("执行工具"); err != nil {
+				if err := ui.Click("2 次工具调用"); err != nil {
 					t.Fatal(err)
 				}
 				ui.Advance(time.Second)

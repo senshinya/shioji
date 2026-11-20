@@ -2,10 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"time"
+
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
 	"shioji/internal/domain"
-	"time"
 )
 
 type transcriptRow struct {
@@ -17,7 +18,8 @@ type transcriptRow struct {
 	issues     int
 	toolParent string
 	toolTitle  bool
-	toolEnded  bool
+	toolStatus bool
+	toolReveal float32
 	toolGap    bool
 	opacity    float32
 	footer     string
@@ -256,9 +258,9 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			endedTurns[turn.ID] = true
 		}
 	}
-	// Each tool run adds a title, trailing summary, optional result and gap.
+	// Each tool run adds a title, optional trailing summary and gap.
 	// Without these slots a large run reallocates as its last row is appended.
-	rows := make([]transcriptRow, 0, len(items)+4*groups+len(v.Model.Details[v.Model.SessionID].Turns))
+	rows := make([]transcriptRow, 0, len(items)+3*groups+len(v.Model.Details[v.Model.SessionID].Turns))
 	for i := 0; i < len(items); {
 		item := items[i]
 		if domain.HistorySpacer(item) {
@@ -293,6 +295,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			break
 		}
 		key := "tool-group:" + v.Model.SessionID + "/" + item.ID
+		loaded := count
 		var summary *domain.HistoryToolGroup
 		if h := v.Model.Details[v.Model.SessionID].History; h != nil {
 			for j := range h.Groups {
@@ -320,7 +323,8 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			v.Model.SetToolDisclosure(key, disclosure)
 			delete(v.toolMotions, key)
 		}
-		if laterContent[end] && !disclosure.SawProse() {
+		newBoundary := laterContent[end] && !disclosure.SawProse()
+		if newBoundary {
 			// The persisted prose marker records this one-time boundary for
 			// requests, inserted user messages and other non-tool content too.
 			// Only previously displayed content exits. Hydrated history starts
@@ -337,7 +341,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 				if v.toolMotions == nil {
 					v.toolMotions = map[string]*toolDisclosureMotion{}
 				}
-				v.toolMotions[key] = &toolDisclosureMotion{from: from, to: 0, start: v.frameTime, duration: 160 * time.Millisecond}
+				v.toolMotions[key] = &toolDisclosureMotion{from: from, to: 0, start: v.frameTime, duration: toolDisclosureDuration}
 			}
 			disclosure = disclosure.ObserveProse()
 			v.Model.SetToolDisclosure(key, disclosure)
@@ -355,50 +359,39 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 				delete(v.toolMotions, key)
 			}
 		}
-		row := transcriptRow{key: key, item: item, end: -1, group: key, count: count, opacity: arrival(key)}
+		heading := transcriptRow{key: key, item: item, end: end - 1, group: key, count: count, toolTitle: true, opacity: arrival(key)}
 		for _, call := range items[i:end] {
 			if call.Kind == "tool" && toolIssueLabel(call) != "" {
-				row.issues++
+				heading.issues++
 			}
 		}
 		if summary != nil {
-			row.issues = summary.Issues
+			heading.issues = max(heading.issues, summary.Issues)
 		}
-		row.end = end - 1
-		// Keep the title's zero-height row while folded so the one-line
-		// summary can hand its stable reading anchor to the expanded title.
-		titleOpacity := min(opacity, arrival(key+":title"))
-		if !show {
-			titleOpacity = 0
+		// Only visible later content or a terminal turn seals a group. A
+		// page containing only some of the calls cannot establish success.
+		if (endedTurns[item.TurnID] || laterContent[end]) && !executing && loaded == count {
+			heading.toolResult = toolGroupResult(items[i:end])
 		}
-		title := transcriptRow{key: key + ":title", item: item, end: -1, toolParent: key, toolTitle: true, opacity: titleOpacity}
-		if endedTurns[item.TurnID] {
-			// Finished history has one count heading in both disclosure states.
-			// It also owns the original event boundary when its body is hidden.
-			title.group, title.count, title.issues = key, count, row.issues
-			title.toolEnded, title.end, title.opacity = true, end-1, arrival(key+":title")
+		if show {
+			heading.toolReveal = opacity
 		}
-		rows = append(rows, title)
-		for j := i; j < end; j++ {
+		rows = append(rows, heading)
+		for j := i; show && j < end; j++ {
 			if items[j].Kind == "tool" {
 				progress := min(opacity, arrival(items[j].ID))
-				if show {
-					rows = append(rows, transcriptRow{key: items[j].ID, item: items[j], end: j, toolParent: key, opacity: progress})
-				}
-			} else if show && len(rows) > 0 {
+				rows = append(rows, transcriptRow{key: items[j].ID, item: items[j], end: j, toolParent: key, opacity: progress})
+			} else {
 				rows[len(rows)-1].end = j
 			}
 		}
-		// A quiet gap between calls is not a group boundary: another call
-		// may still join. Non-tool content or a confirmed turn end seals it.
-		if result := toolGroupResult(items[i:end]); result != "" && (laterContent[end] || endedTurns[item.TurnID]) {
-			progress := min(opacity, arrival(key+":result"))
-			if show {
-				rows = append(rows, transcriptRow{key: key + ":result", item: item, end: end - 1, toolParent: key, toolResult: result, opacity: progress})
-			}
-		}
-		if !title.toolEnded {
-			rows = append(rows, row)
+		// Keep the outgoing status slot in the same height reveal when
+		// another item takes over. The status renderer checks the current owner.
+		liveTail := activeTurn != "" && item.TurnID == activeTurn && latestTool < end && !laterContent[end]
+		progress := v.runningProgress
+		outgoing := v.runningGroup == key || progress != nil && progress.handoff != nil && progress.handoff.group == key
+		if show && v.Model.Connected && (liveTail || outgoing && v.toolMotions[key] != nil) {
+			rows = append(rows, transcriptRow{key: key + ":status", item: item, end: end - 1, toolParent: key, toolStatus: true, opacity: min(opacity, heading.opacity)})
 		}
 		i = end
 	}
@@ -419,10 +412,11 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 }
 
 const (
-	toolGlyphSlot     = 16
-	toolTimelineInset = toolGlyphSlot
-	toolTimelineGap   = 8
-	toolSummaryGap    = 6
+	toolGlyphSlot          = 16
+	toolTimelineInset      = toolGlyphSlot
+	toolTimelineGap        = 8
+	toolSummaryGap         = 6
+	toolDisclosureDuration = 160 * time.Millisecond
 )
 
 func toolGlyph(c *n.Context, icon *n.SVG, label string, font n.Font, color n.Color) n.Element {
@@ -430,139 +424,117 @@ func toolGlyph(c *n.Context, icon *n.SVG, label string, font n.Font, color n.Col
 		Children(func() { inlineSymbol(c, icon, label, font, 14, color) })
 }
 
-func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int) {
+func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index int) {
 	label := fmt.Sprintf("%d 次工具调用", row.count)
-	// Once folded, this summary takes the title's place as the sole header.
-	// While expanded (including its exit), the trailing status is read-only.
-	folded := v.Model.ToolDisclosure(row.group).Closed() && v.toolMotions[row.group] == nil
-	var heading n.Element
-	color := t.TextMuted
-	if folded {
-		heading = n.ButtonBase(c).AlignSelf(n.Start).Justify(n.Start)
-		color = textHoverColor(c, heading, color)
-	} else {
-		heading = n.Row(c).FillWidth()
+	outcome := ""
+	switch {
+	case row.issues > 0:
+		outcome = fmt.Sprintf("%d 项未成功", row.issues)
+	case row.toolResult == "completed":
+		outcome = "已完成"
+	case row.toolResult == "ended":
+		outcome = "调用结束"
 	}
-	heading.Height(20).Label(label)
-	live := v.runningGroup == row.group
-	heading.Children(func() {
-		heading := n.Row(c).Gap(0).AlignItems(n.Baseline)
-		if live {
-			heading.Label("工具组运行状态")
-		}
-		heading.Children(func() {
-			font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}
-			width, alpha, phase := float32(0), float32(0), c.Now()
-			if live {
-				width, alpha, phase = 12, 1-v.runningProgress.handoffFraction(c.Now()), v.runningProgress.started
-			}
-			// Fade and reclaim use one absolute turn timeline. Native local
-			// width animation is only used for exits outside that handoff.
-			p := v.runningProgress
-			handoff := p != nil && p.handoff != nil && p.handoff.group == row.group
-			extent := float32(0)
-			if live {
-				extent = 1
-			}
-			if handoff {
-				extent = p.handoffSlotExtent(c.Now())
-			}
-			prefix := statusDot(c.Key("group-dot"), label, font, t.Success, live, phase).Opacity(alpha).Shrink(0).SingleLine().Height(20).Clip()
-			if handoff {
-				prefix.Width(prefix.Jump("prefix-width", 12*extent))
-			} else {
-				prefix.Width(prefix.AnimateTo("prefix-width", width, motionAnimation(c, progressReclaimDuration)))
-			}
-			if !live {
-				prefix.Label("")
-			}
-			toolGlyph(c.Key("group-command-icon"), commandTerminalIcon, label, font, t.TextMuted).Margin(0, toolSummaryGap, 0, 0)
 
-			// One continuous sweep covers the count and its changing metadata.
-			// Keep the turn's phase; text transitions and clock ticks never restart it.
-			summary := n.Row(c.Key("group-summary")).Gap(0).AlignItems(n.Baseline).Shrink(0)
-			if live {
-				shimmer(c, summary, color, t.Text, v.runningProgress.started)
-			}
-			summary.Children(func() {
-				n.Text(c.Key("group-label"), label).FontSize(11).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
-				if live || handoff {
-					phase := v.runningProgress.label
-					if phase == "" {
-						phase = "进行中"
-					}
-					if !handoff {
-						phase = v.runningProgress.activityCaption(c, phase)
-					}
-					w, _ := n.ShapeText(phase, font, 0).Size()
-					// Padding must leave with the slot; native layout cannot
-					// shrink a box below its remaining padding.
-					caption := n.Text(c.Key("group-phase"), phase).SingleLine().FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).Padding(0, 0, 0, 6*extent).Clip().Opacity(alpha).
-						ContentTransition(n.ContentTransition{Animation: animationPointer(c, progressReclaimDuration)})
-					if handoff {
-						caption.Width(caption.Jump("phase-width", (w+6)*extent))
-					} else {
-						caption.Width(caption.AnimateTo("phase-width", (w+6)*extent, motionAnimation(c, progressReclaimDuration)))
-					}
-				}
-				for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
-					if !live && !handoff {
-						break
-					}
-					if turn.ID == row.item.TurnID {
-						clock, natural := runningElapsed(c.Key("group-elapsed"), v.runningElapsedStart(turn), t.TextMuted, true)
-						if handoff {
-							clock.Width(clock.Jump("elapsed-width", natural*extent))
-						} else {
-							clock.Width(clock.AnimateTo("elapsed-width", natural*extent, motionAnimation(c, progressReclaimDuration)))
-						}
-						clock.Opacity(alpha)
-						break
-					}
-				}
-				if row.issues > 0 && v.Model.ToolDisclosure(row.group).Closed() {
-					animation := motionAnimation(c, 160*time.Millisecond)
-					n.Text(c.Key("issues"), fmt.Sprintf("%d 项未成功", row.issues)).Margin(0, 0, 0, 6).FontSize(11).FixedLineHeight(20).TextColor(color).
-						Transition(disclosureMotion(c, 160*time.Millisecond)).ContentTransition(n.ContentTransition{Numeric: true, Animation: &animation})
+	opened := !v.Model.ToolDisclosure(row.group).Closed()
+	progress := v.runningProgress
+	inline := float32(0)
+	live := progress != nil && v.runningGroup == row.group
+	if live {
+		inline = 1 - row.toolReveal
+	}
+	description := outcome
+	if live {
+		description = "进行中"
+		if outcome != "" {
+			description += "，" + outcome
+		}
+	}
+	button := n.ButtonBase(c).AlignSelf(n.Start).Height(20).Justify(n.Start).Label(label).Description(description).Expanded(opened)
+	color := textHoverColor(c, button, t.TextMuted)
+	font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+	button.Children(func() {
+		line := n.Row(c).Height(20).AlignItems(n.Baseline)
+		if inline > 0 {
+			line.Label("工具组运行状态")
+			shimmerToolStatus(c, line, progress.started, t.Text, inline)
+		}
+		line.Children(func() {
+			n.Row(c.Key("icon")).Size(toolGlyphSlot, 20).Shrink(0).MarginEnd(toolSummaryGap).AlignItems(n.Baseline).Justify(n.Center).Children(func() {
+				inlineSymbol(c.Key("terminal"), commandTerminalIcon, label, font, 14, color).Opacity(1 - inline)
+				if inline > 0 {
+					statusDot(c.Key("dot"), label, font, t.Success, true, progress.started).Absolute().
+						Left((toolGlyphSlot - 6) / 2).Top(0).Opacity(inline)
 				}
 			})
-			if folded {
-				inlineSymbol(c.Key("group-chevron"), rightChevron, label, font, 14, color).Margin(0, 0, 0, 6)
+			countAnimation := animationPointer(c, 180*time.Millisecond)
+			n.Text(c.Key("count"), label).FontSize(11).FixedLineHeight(20).TextColor(color).
+				ContentTransition(n.ContentTransition{Numeric: true, Animation: countAnimation})
+			if outcome != "" {
+				n.Text(c.Key("outcome"), outcome).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).MarginStart(toolSummaryGap).
+					ContentTransition(n.ContentTransition{Numeric: true, Animation: countAnimation})
 			}
-		})
-	})
-	if folded && heading.Clicked() {
-		v.toggleToolGroup(c, row.group, index-1, heading)
-	}
-}
-
-func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index int) {
-	label, angle := "执行工具", float32(0)
-	closed := v.Model.ToolDisclosure(row.toolParent).Closed()
-	if row.toolEnded {
-		label = fmt.Sprintf("%d 次工具调用", row.count)
-		if closed {
-			angle = -90
-		}
-	}
-	button := n.ButtonBase(c).AlignSelf(n.Start).Height(20).Justify(n.Start).Label(label)
-	color := textHoverColor(c, button, t.TextMuted)
-	button.Children(func() {
-		n.Row(c).Gap(toolSummaryGap).AlignItems(n.Baseline).Children(func() {
-			font := n.Font{Family: t.Font, Size: 11, Weight: 400}
-			if row.toolEnded {
-				toolGlyph(c.Key("group-command-icon"), commandTerminalIcon, label, font, t.TextMuted)
+			if inline > 0 {
+				v.toolProgressCaption(c.Key("inline"), t, row, inline, true)
 			}
-			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(color)
-			if row.toolEnded && closed && row.issues > 0 {
-				n.Text(c, fmt.Sprintf("%d 项未成功", row.issues)).FontSize(11).FixedLineHeight(20).TextColor(color)
+			angle := float32(-90)
+			if opened {
+				angle = 0
 			}
-			inlineSymbol(c, chevron, label, font, 14, color, angle)
+			inlineSymbol(c.Key("chevron"), chevron, label, font, 14, color, angle).MarginStart(toolSummaryGap)
 		})
 	})
 	if button.Clicked() {
-		v.toggleToolGroup(c, row.toolParent, index, button)
+		v.toggleToolGroup(c, row.group, index, button)
 	}
+}
+
+func (v *View) toolGroupProgress(c *n.Context, t *n.Theme, row transcriptRow) {
+	line := n.Row(c).Height(20).AlignSelf(n.Start).AlignItems(n.Baseline)
+	progress := v.runningProgress
+	if progress == nil || v.runningGroup != row.toolParent {
+		return
+	}
+	line.Label("工具组运行状态")
+	shimmerToolStatus(c, line, progress.started, t.Text, row.opacity)
+	font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+	line.Children(func() {
+		n.Row(c.Key("dot")).Size(toolGlyphSlot, 20).AlignItems(n.Baseline).Justify(n.Center).Children(func() {
+			statusDot(c.Key("pulse"), progress.label, font, t.Success, true, progress.started)
+		})
+		v.toolProgressCaption(c.Key("caption"), t, row, 1, false)
+	})
+}
+
+func (v *View) toolProgressCaption(c *n.Context, t *n.Theme, row transcriptRow, extent float32, clipped bool) {
+	p := v.runningProgress
+	phase := p.label
+	if phase == "" {
+		phase = "进行中"
+	}
+	phase = p.activityCaption(c, phase)
+	font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+	var started *time.Time
+	for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
+		if turn.ID == row.item.TurnID {
+			started = v.runningElapsedStart(turn)
+			break
+		}
+	}
+	line := n.Row(c).AlignItems(n.Baseline).Height(20)
+	line.Children(func() {
+		phaseWidth, _ := n.ShapeText(phase, font, 0).Size()
+		caption := n.Text(c.Key("phase"), phase).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine().Shrink(0).Padding(0, 0, 0, 6).Clip().
+			ContentTransition(n.ContentTransition{Animation: animationPointer(c, progressReclaimDuration)})
+		width := caption.AnimateTo("phase-width", phaseWidth+6, motionAnimation(c, progressReclaimDuration))
+		caption.Width(width)
+		_, clockWidth := runningElapsed(c.Key("elapsed"), started, t.TextMuted, true)
+		if clipped && extent < 1 {
+			// Fade the intact caption ahead of collapsing the width of its slot.
+			fade := max(0, (extent-.45)/.55)
+			line.Width((width + clockWidth) * min(1, extent/.72)).Clip().Opacity(fade)
+		}
+	})
 }
 
 func (v *View) toggleToolGroup(c *n.Context, key string, index int, button n.Element) {
@@ -575,14 +547,13 @@ func (v *View) toggleToolGroup(c *n.Context, key string, index int, button n.Ele
 		from, _ = motion.sample(c.Now())
 	}
 	if list := v.lists[v.Model.SessionID]; list != nil {
-		// The folded summary hands its position to the top title on opening;
-		// closing uses that same title anchor throughout the transition.
+		// Both directions preserve the same native heading as the reading anchor.
 		list.KeepRowWithinContent(index, button.Bounds().Y-list.Bounds(c).Y)
 	}
 	if v.toolMotions == nil {
 		v.toolMotions = map[string]*toolDisclosureMotion{}
 	}
-	v.toolMotions[key] = &toolDisclosureMotion{from: from, to: to, start: c.Now(), duration: motionAnimation(c, 160*time.Millisecond).Duration}
+	v.toolMotions[key] = &toolDisclosureMotion{from: from, to: to, start: c.Now(), duration: motionAnimation(c, toolDisclosureDuration).Duration}
 	v.Model.SetToolDisclosure(key, v.Model.ToolDisclosure(key).Toggle())
 	c.AnimationFrame()
 }
@@ -599,15 +570,12 @@ func toolGroupResult(items []domain.Item) string {
 		if !item.Final {
 			return ""
 		}
-		if toolIssueLabel(item) != "" || item.Status == "unknown" {
+		if toolIssueLabel(item) != "" || item.Status != "completed" {
 			result = "ended"
 		}
 	}
 	return result
 }
-
-var toolCompleteIcon = svg("M18 10a8 8 0 1 1-16 0a8 8 0 0 1 16 0M6 10l3 3 5-6")
-var toolEndedIcon = svg("M18 10a8 8 0 1 1-16 0a8 8 0 0 1 16 0M6 10h8")
 
 func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow, inset float32) {
 	icon := activityIcon(row.item.Presentation)
@@ -617,17 +585,7 @@ func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow, ins
 		icon = commandActivityIcon(row.item.Name)
 		font.Family, font.Size = "Menlo", 11
 	}
-	if row.toolResult == "" {
-		v.item(c, t, row.item)
-	} else {
-		label = "已完成"
-		font.Family, font.Size = t.Font, 11
-		icon = toolCompleteIcon
-		if row.toolResult == "ended" {
-			label, icon = "调用结束", toolEndedIcon
-		}
-		n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-	}
+	v.item(c, t, row.item)
 	// A small neutral mask interrupts the rail around each native glyph.
 	toolGlyph(c, icon, label, font, t.TextMuted).Absolute().Left(inset).Top(0).Background(t.Background)
 }

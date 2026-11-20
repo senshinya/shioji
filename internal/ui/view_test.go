@@ -545,7 +545,7 @@ func TestEmptyAssistantEventsKeepToolsInOneVirtualizedGroup(t *testing.T) {
 	v := New(m, nil, "")
 	items := []domain.Item{{ID: "a", Kind: "tool", TurnID: "turn"}, {ID: "empty", Kind: "assistant", TurnID: "turn", Text: " "}, {ID: "b", Kind: "tool", TurnID: "turn"}}
 	rows := v.transcriptRows(items)
-	if len(rows) != 4 || !rows[0].toolTitle || rows[1].key != "a" || rows[2].key != "b" || rows[3].count != 2 {
+	if len(rows) != 3 || !rows[0].toolTitle || rows[0].count != 2 || rows[1].key != "a" || rows[2].key != "b" {
 		t.Fatalf("tool children must stay individual virtual rows under one group: %+v", rows)
 	}
 }
@@ -676,7 +676,7 @@ func TestLiveToolGroupAutoCollapseAnimatesFollowingReply(t *testing.T) {
 			if !ui.HasText("first tool") {
 				t.Fatal("fixture did not display live tools")
 			}
-			heading, _ := ui.Find("执行工具")
+			heading, _ := ui.Find("2 次工具调用")
 			for i := range d.Items {
 				d.Items[i].Final, d.Items[i].Status = true, "completed"
 			}

@@ -32,12 +32,12 @@ func TestToolTailSummaryFollowsNativeTools(t *testing.T) {
 		ui := n.NewTester(v.View, 1240, 820)
 		ui.SetDark(dark)
 		ui.Advance(time.Second)
-		title, titleOK := ui.Find("执行工具")
+		title, titleOK := ui.Find("2 次工具调用")
 		first, firstOK := ui.Find("go test ./internal/ui -run Check0")
 		last, lastOK := ui.Find("go test ./internal/ui -run Check1")
-		summary, summaryOK := ui.Find("2 次工具调用")
+		summary, summaryOK := ui.Find("工具组运行状态")
 		if !titleOK || !firstOK || !lastOK || !summaryOK || title.Y >= first.Y || summary.Y < last.Y+last.H {
-			t.Fatal("tool disclosure must have a plain top control and a trailing count", title, first, last, summary)
+			t.Fatal("tool disclosure must have a count heading and trailing progress", title, first, last, summary)
 		}
 		phase, ok := ui.Find("正在执行命令")
 		clock, clockOK := ui.Find("运行时长")
@@ -47,12 +47,12 @@ func TestToolTailSummaryFollowsNativeTools(t *testing.T) {
 		if _, proxy := ui.Find("最新运行状态"); proxy {
 			t.Fatal("visible trailing status also shows an offscreen proxy")
 		}
-		if err := ui.Click("执行工具"); err != nil {
+		if err := ui.Click("2 次工具调用"); err != nil {
 			t.Fatal(err)
 		}
 		ui.Advance(time.Second)
-		if ui.HasText("执行工具") || ui.HasText("go test ./internal/ui -run Check0") || !ui.HasText("2 次工具调用") {
-			t.Fatal("top disclosure does not collapse into its trailing summary", ui.Texts())
+		if ui.HasText("go test ./internal/ui -run Check0") || !ui.HasText("2 次工具调用") {
+			t.Fatal("heading did not fold its tools", ui.Texts())
 		}
 	}
 }
@@ -204,7 +204,7 @@ func TestToolTailNativeEvidence(t *testing.T) {
 		ui.SetDark(dark)
 		ui.Advance(time.Second)
 		saveNativeSkillImage(t, ui, fmt.Sprintf("tail-expanded-%v.png", dark))
-		ui.Click("执行工具")
+		ui.Click("8 次工具调用")
 		ui.Advance(time.Second)
 		saveNativeSkillImage(t, ui, fmt.Sprintf("tail-collapsed-%v.png", dark))
 		d := v.Model.Details["s"]
@@ -240,7 +240,7 @@ func TestToolTailNativeRecording(t *testing.T) {
 	for frame := 0; frame < 600; frame++ {
 		switch frame {
 		case 60:
-			if err := ui.Click("执行工具"); err != nil {
+			if err := ui.Click("8 次工具调用"); err != nil {
 				t.Fatal(err)
 			}
 		case 120:
@@ -248,11 +248,11 @@ func TestToolTailNativeRecording(t *testing.T) {
 				t.Fatal(err)
 			}
 		case 180:
-			if err := ui.Click("执行工具"); err != nil {
+			if err := ui.Click("8 次工具调用"); err != nil {
 				t.Fatal(err)
 			}
 		case 240:
-			if err := ui.Click("执行工具"); err != nil {
+			if err := ui.Click("8 次工具调用"); err != nil {
 				t.Fatal(err)
 			}
 		case 300:
@@ -281,7 +281,7 @@ func TestToolTailNativeRecording(t *testing.T) {
 			}
 			ui.Frame()
 		case 480:
-			if err := ui.Click("执行工具"); err != nil {
+			if err := ui.Click("76 次工具调用"); err != nil {
 				t.Fatal(err)
 			}
 		case 540:

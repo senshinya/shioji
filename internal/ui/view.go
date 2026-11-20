@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/egoist/mygo"
 	"math"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -1252,6 +1253,9 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	rows = v.revealFindTarget(rows, reopening)
 	rows = v.contextRows(rows)
 	v.syncRunningGroup(c, rows, detail)
+	rows = slices.DeleteFunc(rows, func(row transcriptRow) bool {
+		return row.toolStatus && row.toolParent != v.runningGroup && v.toolMotions[row.toolParent] == nil
+	})
 	turns := make(map[string]domain.Turn, len(detail.Turns))
 	for _, turn := range detail.Turns {
 		turns[turn.ID] = turn
@@ -1365,15 +1369,12 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			n.Column(c).Height(32 - 8)
 			return
 		}
-		if entry.toolTitle && entry.opacity == 0 {
-			n.Column(c).Height(0)
-			return
-		}
 		v.currentTranscriptRow = row
 		i := entry.end
 		item := entry.item
 		bottom := float32(8)
-		if i >= 0 && (i == len(detail.Items)-1 || (item.TurnID != "" && detail.Items[i+1].TurnID != item.TurnID)) {
+		hasToolBody := entry.toolTitle && row < len(rows) && rows[row].toolParent == entry.group
+		if !hasToolBody && i >= 0 && (i == len(detail.Items)-1 || (item.TurnID != "" && detail.Items[i+1].TurnID != item.TurnID)) {
 			bottom = 32
 			if _, ok := turns[item.TurnID]; ok {
 				bottom = 8
@@ -1413,11 +1414,12 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		if row == len(rows) && item.Presentation == "compaction" {
 			bottom = 32
 		}
-		// A folded summary or automatic compaction takes the status's 24 DIP slot.
-		// Its 20 DIP line needs only the remaining leading, rather than an
-		// extra paragraph gap before the now-empty footer's reading clearance.
-		if entry.group != "" && entry.group == v.runningGroup && row < len(rows) && rows[row].footer == v.activityTurn && v.Model.ToolDisclosure(entry.group).Closed() && v.toolMotions[entry.group] == nil {
-			bottom = 24 - 20
+		// Inline and trailing live status use the same 24 DIP reading slot.
+		// Keep its extra clearance on the disclosure clock.
+		if entry.toolStatus {
+			bottom = 4
+		} else if entry.toolTitle && entry.group == v.runningGroup {
+			bottom = 4 + 4*entry.toolReveal
 		}
 		if item.Presentation == "compaction" && row < len(rows) && rows[row].footer == item.TurnID && v.Model.Connected {
 			turn := turns[item.TurnID]
@@ -1447,10 +1449,10 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 				n.SelectionItem(content, item.ID)
 			}
 			v.sentMessagePose(c, content, item)
-			if entry.toolParent != "" && !entry.toolTitle {
+			if entry.toolParent != "" && !entry.toolStatus {
 				content.Padding(0, 0, bottom, toolTimelineInset+toolGlyphSlot+toolTimelineGap).Draw(func(p *n.Painter, r n.Rect) {
 					height := r.H
-					if row == len(rows) || rows[row].toolParent != entry.toolParent {
+					if row == len(rows) || rows[row].toolParent != entry.toolParent || rows[row].toolStatus {
 						height = 10
 					}
 					p.Fill(n.Rect{X: r.X + toolTimelineInset + toolGlyphSlot/2 - .5, Y: r.Y, W: 1, H: height}, t.Border, 0)
@@ -1460,7 +1462,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 					content.Transform(n.Translation(0, -4*(1-entry.opacity)))
 				}
 			}
-			if entry.group != "" || entry.toolTitle || entry.toolParent == "" && !entry.restarting && entry.opacity < 1 {
+			if entry.group != "" || entry.toolStatus || entry.toolParent == "" && !entry.restarting && entry.opacity < 1 {
 				content.Opacity(entry.opacity)
 			}
 			content.DrawOver(func(_ *n.Painter, r n.Rect) { rowBounds[entry.key] = r })
@@ -1474,8 +1476,8 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 					v.turnFooter(c, t, turns[entry.footer])
 				} else if entry.toolTitle {
 					v.toolGroupTitle(c, t, entry, row)
-				} else if entry.group != "" {
-					v.toolGroup(c, t, entry, row)
+				} else if entry.toolStatus {
+					v.toolGroupProgress(c, t, entry)
 				} else if entry.toolParent != "" {
 					v.toolTimelineItem(c, t, entry, toolTimelineInset)
 				} else {
