@@ -125,13 +125,13 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 				return
 			}
 			width, _ := c.Size()
-			header := n.Column(c).FillWidth().Height(80).Padding(28, configurationInset, 6)
+			header := n.Column(c).FillWidth().Height(80).Padding(28, configurationInset, 6).DragWindow()
 			if width < 900 {
 				header.Height(88).Padding(8, configurationInset, 6)
 			}
 			header.Children(func() {
 				if width < 900 {
-					if configurationAction(c, "返回设备列表").MarginStart(64).Clicked() {
+					if configurationAction(c, "返回设备列表").AlignSelf(n.Start).MarginStart(64).Clicked() {
 						v.deviceList = true
 					}
 				}

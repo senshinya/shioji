@@ -43,6 +43,8 @@ type headless struct {
 	opened        []string
 	// escapes counts the Escapes nothing handled.
 	escapes int
+	// windowDrags counts requests to start a native window drag.
+	windowDrags int
 	// stack is the system's stack of screens tests give the window.
 	stack platform.StackSurface
 	// titleDoubles counts the double clicks a DragWindow handle left to
@@ -137,7 +139,7 @@ func (h *headless) repaintTimer(at time.Time)                  { h.repaintAt = a
 func (h *headless) setCursor(c Cursor)                         { h.cursor = c }
 func (h *headless) setTextInput(t platform.TextInputState)     { h.ime = t }
 func (h *headless) updateAccessibility(t *platform.AccessTree) { h.keepAccess(t) }
-func (h *headless) startDrag()                                 {}
+func (h *headless) startDrag()                                 { h.windowDrags++ }
 func (h *headless) setDropFormats([]transfer.Format)           {}
 func (h *headless) readClipboard() string {
 	if r := h.reading; r != nil {
@@ -898,6 +900,9 @@ func (t *Tester) Press(x, y float32) { t.PressButton(0, x, y) }
 
 // Release releases the pointer at (x, y).
 func (t *Tester) Release(x, y float32) { t.ReleaseButton(0, x, y) }
+
+// WindowDragCount reports how often input asked the host to move the window.
+func (t *Tester) WindowDragCount() int { return t.h.windowDrags }
 
 // PressButton presses (x, y) with the pointer's button, 0 the primary, 1
 // the secondary and 2 the middle, without releasing, as a right-button

@@ -197,15 +197,17 @@ func (s *Settings) View(c *n.Context) {
 			})
 		})
 		n.Column(c).Grow(1).FillHeight().MinWidth(0).Clip().Children(func() {
+			n.Row(c).FillWidth().Height(configurationSectionGap).Shrink(0).DragWindow()
 			key := s.page
 			if strings.TrimSpace(s.query) != "" {
 				key = "search"
 			}
 
 			buildPage := func() {
-				n.Scroll(c.Key("settings-page:" + key)).Fill().Label("设置内容").Children(func() {
-					n.Column(c).FillWidth().Padding(configurationSectionGap, configurationInset, configurationSectionGap, configurationInset).Children(func() {
+				n.Scroll(c.Key("settings-page:" + key)).FillWidth().Grow(1).MinHeight(0).Label("设置内容").Children(func() {
+					n.Column(c).FillWidth().Padding(0, configurationInset, configurationSectionGap, configurationInset).Children(func() {
 						if key == "search" {
+							settingsPageHeading(c, "搜索设置")
 							s.search(c, &t)
 							return
 						}
@@ -215,7 +217,7 @@ func (s *Settings) View(c *n.Context) {
 								title = category.title
 							}
 						}
-						n.Text(c, title).FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Margin(0, 0, configurationHeadingGap, 0)
+						settingsPageHeading(c, title)
 						switch s.page {
 						case "appearance":
 							s.appearance(c, &t)
@@ -250,6 +252,12 @@ func (s *Settings) View(c *n.Context) {
 				buildPage()
 			}
 		})
+	})
+}
+
+func settingsPageHeading(c *n.Context, title string) {
+	n.Row(c).Margin(0, -configurationInset, configurationHeadingGap).PaddingX(configurationInset).DragWindow().Children(func() {
+		n.Text(c, title).FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine)
 	})
 }
 
@@ -613,7 +621,6 @@ func (s *Settings) about(c *n.Context, t *n.Theme) {
 }
 
 func (s *Settings) search(c *n.Context, t *n.Theme) {
-	n.Text(c, "搜索设置").FontSize(configurationTitleSize).FontWeight(400).FixedLineHeight(configurationTitleLine).Margin(0, 0, configurationHeadingGap, 0)
 	query := strings.ToLower(strings.TrimSpace(s.query))
 	found := false
 	for _, entry := range []struct{ page, label string }{{"appearance", "主题"}, {"appearance", "界面字体"}, {"appearance", "回复字号"}, {"appearance", "代码字体"}, {"appearance", "减少动态效果"}, {"appearance", "自动展开最新工具调用"}, {"appearance", "每次加载轮次"}, {"appearance", archiveRetentionTitle}, {"input", "发送或加入队列"}, {"input", "换行"}, {"input", "立即介入当前轮"}, {"notifications", "通知"}, {"notifications", "回复完成"}, {"notifications", "需要回答或授权"}, {"notifications", "执行失败"}, {"notifications", "提示音"}, {"notifications", "前台也通知"}, {"shortcuts", "新建会话"}, {"shortcuts", "搜索会话"}, {"shortcuts", "下一个待处理"}, {"shortcuts", "返回上一个会话"}, {"about", "版本"}, {"about", "检查更新"}, {"about", "自动检查更新"}, {"about", "第三方许可"}, {"about", "授予完全磁盘访问权限"}} {

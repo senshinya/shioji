@@ -309,13 +309,13 @@ func (v *View) tailnetPage(c *n.Context, t *n.Theme) {
 	}
 	n.Column(c).Fill().Children(func() {
 		width, _ := c.Size()
-		header := n.Column(c).FillWidth().Height(88).Padding(28, configurationInset, 20)
+		header := n.Column(c).FillWidth().Height(88).Padding(28, configurationInset, 20).DragWindow()
 		if width < 900 {
 			header.Padding(8, configurationInset, 6)
 		}
 		header.Children(func() {
 			if width < 900 {
-				if configurationAction(c, "返回设备列表").MarginStart(64).Clicked() {
+				if configurationAction(c, "返回设备列表").AlignSelf(n.Start).MarginStart(64).Clicked() {
 					v.deviceList = true
 				}
 			}
