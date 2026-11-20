@@ -125,8 +125,8 @@ func Editor(c *ui.Context, doc *Document, options ...EditorOptions) ui.Element {
 	return e
 }
 
-// EditorBase creates an Editor without padding, background, border or
-// corners, for an editor of the app's own look.
+// EditorBase creates an Editor without background, border, corners or
+// default padding, for an editor of the app's own look.
 func EditorBase(c *ui.Context, doc *Document, options ...EditorOptions) ui.Element {
 	return build(c, doc, options, false)
 }
@@ -394,6 +394,8 @@ func (v *view) setLook(t *ui.Theme, styled bool) {
 	}
 	if styled {
 		v.padX, v.padY = th.Padding[0], th.Padding[1]
+	} else if theme := v.opts.Theme; theme != nil {
+		v.padX, v.padY = theme.Padding[0], theme.Padding[1]
 	} else {
 		v.padX, v.padY = 0, 0
 	}

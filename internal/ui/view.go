@@ -812,12 +812,20 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 				n.Column(c.Key("composer-input-space")).Height(shownInputHeight).Shrink(0)
 				// A zero-height origin fixed above the footer keeps outgoing editor
 				// snapshots still while the composer changes its natural height.
-				n.Column(c.Key("composer-input-anchor")).Absolute().Left(6).Right(14).Bottom(40).Height(0).Children(func() {
+				n.Column(c.Key("composer-input-anchor")).Absolute().Left(0).Right(0).Bottom(40).Height(0).Children(func() {
+					// Put the scrollbar in the right inset and wrap the text
+					// between matching insets inside the border.
+					const textInset = 15
 					inputKey := "input"
 					if editID != "" {
 						inputKey += ":edit:" + editID
 					}
-					options := richtext.EditorOptions{Label: v.composerLabel(), Placeholder: "描述任务…", Font: n.Font{Family: t.Font, Size: inputSize, Weight: 400}, NoMarkdown: true, PlainText: true, MaxLines: 7, LineHeight: inputLeading, Theme: &richtext.Theme{Muted: subtle(t), Selection: editorSelection(t)}}
+					options := richtext.EditorOptions{
+						Label: v.composerLabel(), Placeholder: "描述任务…",
+						Font:       n.Font{Family: t.Font, Size: inputSize, Weight: 400},
+						NoMarkdown: true, PlainText: true, MaxLines: 7, LineHeight: inputLeading,
+						Theme: &richtext.Theme{Muted: subtle(t), Selection: editorSelection(t), Padding: [2]float32{textInset, 0}},
+					}
 					options.ReadOnly = waiting || !home && v.loadingBlocksComposer()
 					options.OnKey = func(keyCode n.Key, mods n.Modifiers) bool {
 						k := composerKey{Key: keyCode, Mods: mods, binding: binding}
@@ -849,7 +857,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 					n.Column(c.Key(inputKey)).Absolute().Left(0).Right(0).Bottom(0).Height(shownInputHeight).Clip().
 						Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 180*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}}).
 						Children(func() {
-							input = composerInput{Element: richtext.EditorBase(c.Key("editor"), binding.doc, options).FocusRing(false).Absolute().Left(9).Right(9).Top(0).FillWidth().MinHeight(inputHeight), binding: binding}
+							input = composerInput{Element: richtext.EditorBase(c.Key("editor"), binding.doc, options).FocusRing(false).Absolute().Left(0).Right(0).Top(0).MinHeight(inputHeight), binding: binding}
 						})
 
 					if v.focusComposer && (home || !v.loadingBlocksComposer()) {
@@ -857,7 +865,10 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 						v.focusComposer = false
 					}
 					input.Changed()
+					// The send animation starts from the text column.
 					v.inputBounds = input.Bounds()
+					v.inputBounds.X += textInset
+					v.inputBounds.W = max(0, v.inputBounds.W-2*textInset)
 					if s := v.sent; s != nil && s.origin == "" && s.session == m.SessionID && !home && !s.focused {
 						if v.composerHadFocus {
 							input.Focus()

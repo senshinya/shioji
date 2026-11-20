@@ -61,8 +61,8 @@ type Theme struct {
 	QuoteBarWidth       float32
 
 	// Padding is the room around the text of an Editor, in DIPs across
-	// and down: the window theme's Space(3) and Space(2.5). An EditorBase
-	// has none, its room the app's.
+	// and down. Editor defaults to the window theme's Space(3) and
+	// Space(2.5). EditorBase uses these values as given, defaulting to zero.
 	Padding [2]float32
 }
 

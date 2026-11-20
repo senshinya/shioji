@@ -47,6 +47,51 @@ func TestComposerEditorPaintStaysInsideScrollViewport(t *testing.T) {
 	}
 }
 
+func TestComposerWrapsInsideSymmetricTextInsets(t *testing.T) {
+	for _, home := range []bool{false, true} {
+		t.Run(fmt.Sprintf("home-%v", home), func(t *testing.T) {
+			m := layoutModel()
+			if home {
+				m.SessionID = ""
+			}
+			v := New(m, nil, "")
+			ui := n.NewTester(v.View, 1240, 820)
+			if err := ui.Click("消息输入"); err != nil {
+				t.Fatal(err)
+			}
+			frame, _ := ui.Find("消息编辑器")
+			start, ok := ui.TextCaret()
+			left := start.X - frame.X
+			if !ok || left < 15 || left > 17 {
+				t.Fatalf("unexpected leading text inset: %g, caret visible=%v", left, ok)
+			}
+			right := frame.X + frame.W - left
+			// Adjust the mixed-script line so that it fills the intended width
+			// and the next characters must wrap before reaching the clip.
+			size := float32(14)
+			if home {
+				size = 15
+			}
+			font := n.Font{Size: size, Weight: 400}
+			line := strings.Repeat("接", int((right-start.X)/size)-1)
+			for {
+				width, _ := n.ShapeRichText([]n.Span{{Text: line + "i"}}, font, 0).Size()
+				if width > right-start.X {
+					break
+				}
+				line += "i"
+			}
+			ui.Type(line + "iii")
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("home-%v-wrap.png", home))
+			end, ok := ui.TextCaret()
+			if !ok || end.Y <= start.Y || end.X >= right-10 {
+				t.Fatalf("text did not wrap inside the right inset: first=%+v last=%+v right=%g, caret visible=%v", start, end, right, ok)
+			}
+		})
+	}
+}
+
 func TestComposerKeepsFirstLineVisibleWhileResizing(t *testing.T) {
 	for _, home := range []bool{true, false} {
 		t.Run(fmt.Sprintf("home-%v", home), func(t *testing.T) {
