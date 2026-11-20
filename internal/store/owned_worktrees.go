@@ -106,7 +106,7 @@ func (s *Store) RecordWorktreeBackup(w OwnedWorktree) error {
 func (s *Store) OperationIdentities() ([]domain.Operation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query("SELECT id,session_id FROM operations UNION SELECT id,session_id FROM deleted_operations")
+	rows, err := s.db.Query("SELECT id,session_id FROM operations UNION SELECT id,session_id FROM deleted_operations WHERE session_id<>''")
 	if err != nil {
 		return nil, err
 	}

@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -284,7 +285,7 @@ func preserveScheduledRunOutcome(tx *sql.Tx, sessionID string, now time.Time, re
 
 // ReconcileScheduledRuns reads only the accepted input and its first turn.
 // Terminal run results remain durable even after the conversation is removed.
-func (s *Store) ReconcileScheduledRuns(now time.Time) error {
+func (s *Store) ReconcileScheduledRuns(now time.Time, preparing ...string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	runs, err := rowsOf[domain.ScheduleRun](s.db, "SELECT body FROM schedule_runs WHERE state IN "+inFlightScheduleStates)
@@ -296,6 +297,9 @@ func (s *Store) ReconcileScheduledRuns(now time.Time) error {
 		op, err := operation(s.db, domain.ScheduleOperationID(run.ID))
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
+			if slices.Contains(preparing, run.ID) {
+				continue
+			}
 			run.State, run.Error = domain.ScheduleInterrupted, "执行服务在接纳前停止"
 		case err != nil:
 			return err

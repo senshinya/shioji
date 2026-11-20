@@ -74,10 +74,23 @@ func (c *Controller) preparePath(ctx context.Context, id, generation string, aft
 			client.Close()
 		}
 	}()
-	if err = client.Call(call, "snapshot", nil, &snapshot); err != nil {
+	if client.Generation != "" && client.Minor >= protocol.CatalogMinor {
+		var page protocol.EventPage
+		if err = client.Call(call, "events", protocol.EventsQuery{After: after, Generation: generation}, &page); err != nil {
+			return nil, snapshot, ready, nil, err
+		}
+		snapshot = domain.Snapshot{DeviceID: client.DeviceID, Generation: page.Generation, Sequence: after}
+		for _, event := range page.Events {
+			if event.Sequence != snapshot.Sequence+1 {
+				return nil, snapshot, ready, nil, errors.New("连接交接事件不连续")
+			}
+			events = append(events, event)
+			snapshot.Sequence = event.Sequence
+		}
+	} else if snapshot, err = client.ReadSnapshot(call); err != nil {
 		return nil, snapshot, ready, nil, err
 	}
-	if snapshot.DeviceID != client.DeviceID || snapshot.Generation != generation || snapshot.Sequence < after {
+	if snapshot.DeviceID != client.DeviceID || client.Generation != "" && client.Generation != generation || snapshot.Generation != generation || snapshot.Sequence < after {
 		return nil, snapshot, ready, nil, errors.New("执行服务身份或运行代次已改变")
 	}
 	if err = client.Call(call, "readiness", q, &ready); err != nil {

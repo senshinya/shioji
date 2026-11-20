@@ -25,7 +25,7 @@ type deviceFleet struct {
 }
 type ConfigureDevice struct {
 	Connection DeviceConnection
-	Pending    []string
+	Pending    []protocol.OperationQuery
 }
 type CheckSSHDevice struct {
 	Trust *transport.SSHHostKey
@@ -99,7 +99,7 @@ func completeSSHSetup(ctx context.Context, in CompleteSSHDevice) (protocol.Agent
 	return result, err
 }
 
-func NewDeviceController(directory, localDeviceID string, connections []DeviceConnection, workerBinary string, restored map[string][]string) *Controller {
+func NewDeviceController(directory, localDeviceID string, connections []DeviceConnection, workerBinary string, restored map[string][]protocol.OperationQuery) *Controller {
 	root := NewController(directory)
 	root.fleet = &deviceFleet{sources: map[string]*deviceSource{}, workerBinary: workerBinary}
 	local := NewController(directory)
@@ -117,7 +117,7 @@ func NewDeviceController(directory, localDeviceID string, connections []DeviceCo
 	}
 	return root
 }
-func sshController(connection DeviceConnection, pending []string, binary, updateDirectory string) *Controller {
+func sshController(connection DeviceConnection, pending []protocol.OperationQuery, binary, updateDirectory string) *Controller {
 	connection = connection.Normalized()
 	c := NewController("")
 	c.workerUpdateDirectory = updateDirectory
@@ -242,6 +242,7 @@ func (c *Controller) runDevices(ctx context.Context) {
 			})
 		}
 	}
+	commands := c.commandJobs(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -253,7 +254,7 @@ func (c *Controller) runDevices(ctx context.Context) {
 			checking = false
 			checkCancel = nil
 			apply(result.job, result.body, result.err)
-		case job := <-c.Jobs:
+		case job := <-commands:
 			if job.Method == "$worker.recovery" {
 				c.runWorkerRecoveryJob(ctx, job)
 				continue

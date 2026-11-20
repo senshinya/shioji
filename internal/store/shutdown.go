@@ -22,7 +22,7 @@ func (s *Store) RecordShutdownUnknown(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, "UPDATE operations SET state='indeterminate', error='执行服务退出未确认；输入不会重发' WHERE state IN ('accepted','dispatched')"); err != nil {
+	if _, err = tx.ExecContext(ctx, "UPDATE operations SET state='indeterminate', error='执行服务退出未确认；输入不会重发' WHERE state='dispatched' OR (state='accepted' AND kind NOT IN ('submit','steer'))"); err != nil {
 		return err
 	}
 	pending, err := rowsOf[domain.Session](tx, "SELECT body FROM sessions WHERE json_extract(body,'$.completion.pending')=1")
@@ -35,7 +35,7 @@ func (s *Store) RecordShutdownUnknown(ctx context.Context) error {
 			return err
 		}
 	}
-	sessions, err := rowsOf[domain.Session](tx, "SELECT body FROM sessions WHERE json_extract(body,'$.status') IN ('running','starting','unknown')")
+	sessions, err := rowsOf[domain.Session](tx, "SELECT body FROM sessions WHERE json_extract(body,'$.status') IN ('running','starting','unknown') AND (json_extract(body,'$.status')!='starting' OR NOT EXISTS(SELECT 1 FROM operations WHERE session_id=sessions.id AND state='accepted' AND kind IN ('submit','steer')) OR EXISTS(SELECT 1 FROM operations WHERE session_id=sessions.id AND state='indeterminate'))")
 	if err != nil {
 		return err
 	}

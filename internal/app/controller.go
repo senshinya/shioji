@@ -44,11 +44,12 @@ type Controller struct {
 	WorkerAutoUpdate      bool
 	fleet                 *deviceFleet
 	ExpectedDeviceID      string
-	RestoreOperations     []string
+	RestoreOperations     []protocol.OperationQuery
 	Directory             string
 	workerUpdateDirectory string
 	Dial                  func(context.Context) (net.Conn, error)
 	Jobs                  chan Job
+	priorityJobs          chan Job
 	workerRepairs         chan Job
 	Updates               chan Update
 	mu                    sync.Mutex
@@ -60,7 +61,7 @@ type Controller struct {
 }
 
 func NewController(dir string) *Controller {
-	return &Controller{Directory: dir, workerUpdateDirectory: dir, Jobs: make(chan Job, 16), Updates: make(chan Update, 256)}
+	return &Controller{Directory: dir, workerUpdateDirectory: dir, Jobs: make(chan Job, 16), priorityJobs: make(chan Job, 8), Updates: make(chan Update, 256)}
 }
 func (c *Controller) SetInvalidate(fn func()) { c.mu.Lock(); c.invalidate = fn; c.mu.Unlock() }
 func (c *Controller) post(update Update) {
@@ -90,8 +91,12 @@ func (c *Controller) Do(job Job) bool {
 	if job.epoch == "" {
 		job.epoch = c.epoch
 	}
+	running := c.runContext != nil
 	c.mu.Unlock()
 	queue := c.Jobs
+	if running && urgentLane(job) {
+		queue = c.priorityJobs
+	}
 	if c.workerRepairs != nil && job.Method == "$worker.repair" {
 		queue = c.workerRepairs
 	}
@@ -102,6 +107,33 @@ func (c *Controller) Do(job Job) bool {
 		return false
 	}
 }
+func (c *Controller) commandJobs(ctx context.Context) <-chan Job {
+	jobs := make(chan Job)
+	c.networkWG.Add(1)
+	go func() {
+		defer c.networkWG.Done()
+		for {
+			var job Job
+			select {
+			case job = <-c.priorityJobs:
+			default:
+				select {
+				case job = <-c.priorityJobs:
+				case job = <-c.Jobs:
+				case <-ctx.Done():
+					return
+				}
+			}
+			select {
+			case jobs <- job:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return jobs
+}
+
 func (c *Controller) Select(id string) { c.Do(Job{Method: "$select", Input: id}) }
 func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.RawMessage, error) {
 	if client == nil || job.epoch == "" || job.epoch != client.Epoch || ctx.Err() != nil {
@@ -167,35 +199,41 @@ func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.Raw
 	err := client.Call(ctx, job.Method, job.Input, &out)
 	return out, err
 }
-func reconcileOperations(ctx context.Context, client *protocol.Client, ids map[string]bool, emit func(Update)) error {
+func reconcileOperations(ctx context.Context, client *protocol.Client, queries []protocol.OperationQuery) ([]domain.Operation, error) {
 	if client == nil || ctx.Err() != nil {
-		return net.ErrClosed
+		return nil, net.ErrClosed
 	}
-	for id := range ids {
+	var receipts []domain.Operation
+	if len(queries) > 1 && client.Minor >= protocol.CatalogMinor && client.Generation != "" {
+		err := client.Call(ctx, "operations", protocol.OperationBatchQuery{Operations: queries}, &receipts)
+		for _, op := range receipts {
+			if !slices.ContainsFunc(queries, func(q protocol.OperationQuery) bool { return q.ID == op.ID }) {
+				return nil, errors.New("提交回执标识与原操作不一致")
+			}
+		}
+		return receipts, err
+	}
+	for _, lookup := range queries {
+		if client.Minor < protocol.RecoveryMinor {
+			lookup.SealGeneration = ""
+		}
 		var op domain.Operation
-		err := client.Call(ctx, "operation", struct {
-			ID string `json:"id"`
-		}{id}, &op)
+		err := client.Call(ctx, "operation", lookup, &op)
 		if err != nil {
 			var remote *protocol.RemoteError
 			if errors.As(err, &remote) && remote.Code == "notFound" {
-				delete(ids, id)
-				key := id
-				emit(func(m *Model) {
-					if in, ok := m.Pending[key]; ok {
-						m.Reject(in, "未找到已接纳的提交，草稿已保留")
-					}
-				})
+				// The original handler can still be preparing the input. A
+				// read on another stream cannot infer a definitive rejection.
 				continue
 			}
-			return err
+			return receipts, err
 		}
-		emit(func(m *Model) { m.ApplyOperation(op) })
-		if op.State.ReceiptObserved() {
-			delete(ids, id)
+		if op.ID != lookup.ID {
+			return receipts, errors.New("提交回执标识与原操作不一致")
 		}
+		receipts = append(receipts, op)
 	}
-	return nil
+	return receipts, nil
 }
 
 // Pages may overlap writes. Replay every event after the first page barrier before
@@ -298,7 +336,20 @@ func (c *Controller) Run(ctx context.Context) {
 	}
 	var client *protocol.Client
 	var generation string
-	var sequence int64
+	var sequence, replayThrough int64
+	type catalogResult struct {
+		client      *protocol.Client
+		snapshot    domain.Snapshot
+		ready       domain.Readiness
+		resume      *protocol.EventPage
+		requestedAt time.Time
+		err         error
+	}
+	var catalogResults <-chan catalogResult
+	catalogReady := false
+	var catalogKnown, requireSnapshot, catalogResumed, catalogControls bool
+	catalogRetry, eventRetry := time.Second, time.Second
+	var catalogError string
 	var selected string
 	var logicalEpoch string
 	var pathChanges <-chan struct{}
@@ -310,12 +361,57 @@ func (c *Controller) Run(ctx context.Context) {
 	history := map[string]historyLoadPhase{}
 	visible := []string{}
 	var lastReadiness time.Time
+	type readinessObservation struct {
+		client *protocol.Client
+		query  protocol.ReadinessQuery
+		ready  domain.Readiness
+		timing *DeviceTiming
+		err    error
+	}
+	var readinessResults <-chan readinessObservation
 	var stopHealth context.CancelFunc
 	var eventResults <-chan eventResult
 	var stopEvents context.CancelFunc
-	unconfirmed := map[string]bool{}
-	for _, id := range c.RestoreOperations {
-		unconfirmed[id] = true
+	var retryEventsAt time.Time
+	var nextReceiptCheck time.Time
+	receiptInterval := time.Second
+	type receiptCheck struct {
+		epoch    string
+		ids      []string
+		receipts []domain.Operation
+	}
+	var receiptChecks <-chan receiptCheck
+	type commandReply struct {
+		job        Job
+		generation string
+		retried    bool
+		client     *protocol.Client
+		out        json.RawMessage
+		err        error
+	}
+	var commandReplies <-chan commandReply
+	waitingJobs := make(chan Job, cap(c.Jobs))
+	type laneReply struct {
+		key   string
+		route string
+		reply commandReply
+	}
+	laneResults := make(chan laneReply, 32)
+	activeLanes := map[string]bool{}
+	var laneJobs []Job
+	var receiptCursor string
+	unconfirmed := map[string]domain.OperationState{}
+	receiptGenerations := map[string]string{}
+	pendingReceiptErrors := map[string]Update{}
+	postReceiptError := func(id string) {
+		if update := pendingReceiptErrors[id]; update != nil {
+			delete(pendingReceiptErrors, id)
+			c.post(update)
+		}
+	}
+	for _, lookup := range c.RestoreOperations {
+		unconfirmed[lookup.ID] = ""
+		receiptGenerations[lookup.ID] = lookup.SealGeneration
 	}
 	defer func() {
 		if stopHealth != nil {
@@ -732,6 +828,16 @@ func (c *Controller) Run(ctx context.Context) {
 		}
 	}
 	var recoverPath func() bool
+	type pathHandoff struct {
+		base, next *protocol.Client
+		id, epoch  string
+		snapshot   domain.Snapshot
+		ready      domain.Readiness
+		events     []domain.Event
+		err        error
+	}
+	var pathHandoffs <-chan pathHandoff
+	var preparedPath *pathHandoff
 	initialHistory := map[string]context.CancelFunc{}
 	cancelHistory := func(wanted map[string]bool) {
 		for id, cancel := range initialHistory {
@@ -743,11 +849,6 @@ func (c *Controller) Run(ctx context.Context) {
 	}
 	defer cancelHistory(nil)
 	disconnected := func() {
-		cancelHistory(nil)
-		if stopHealth != nil {
-			stopHealth()
-			stopHealth = nil
-		}
 		if c.paths != nil {
 			c.paths.record(c.paths.active(), 0, time.Now(), net.ErrClosed)
 			c.publishPaths()
@@ -755,11 +856,20 @@ func (c *Controller) Run(ctx context.Context) {
 				return
 			}
 		}
+		catalogReady, catalogResults, catalogControls = false, nil, false
+		readinessResults = nil
+		replayThrough = 0
+		cancelHistory(nil)
+		if stopHealth != nil {
+			stopHealth()
+			stopHealth = nil
+		}
 		if stopEvents != nil {
 			stopEvents()
 			stopEvents = nil
 		}
 		eventResults = nil
+		retryEventsAt = time.Time{}
 		if client != nil {
 			client.Close()
 		}
@@ -768,15 +878,15 @@ func (c *Controller) Run(ctx context.Context) {
 			history[id] = phase.invalidated()
 		}
 		c.mu.Lock()
-		if c.paths == nil {
-			logicalEpoch = ""
-			c.epoch = ""
-		}
+		logicalEpoch, c.epoch = "", ""
 		c.mu.Unlock()
 		c.post(func(m *Model) {
 			m.Connected = false
 			m.ConnectionEpoch = ""
 		})
+		for id := range pendingReceiptErrors {
+			postReceiptError(id)
+		}
 	}
 	fetchDetail := func() error {
 		ids := append([]string{selected}, visible...)
@@ -794,7 +904,7 @@ func (c *Controller) Run(ctx context.Context) {
 				if epoch == "" {
 					epoch = client.Epoch
 				}
-				initialHistory[id] = c.queueInitialHistory(ctx, id, epoch, generation, opening)
+				initialHistory[id] = c.queueInitialHistory(ctx, id, epoch, generation, opening, catalogResumed)
 				continue
 			}
 			read := &HistoryRead{Pending: true}
@@ -845,7 +955,7 @@ func (c *Controller) Run(ctx context.Context) {
 		return nil
 	}
 
-	applyPage := func(page protocol.EventPage) bool {
+	applyPage := func(page protocol.EventPage, replay ...bool) bool {
 		if page.Generation != generation {
 			return false
 		}
@@ -853,6 +963,11 @@ func (c *Controller) Run(ctx context.Context) {
 			return true
 		}
 		events := page.Events
+		for i, event := range events {
+			if event.Sequence != sequence+int64(i)+1 {
+				return false
+			}
+		}
 		sequence = events[len(events)-1].Sequence
 		for _, e := range events {
 			if client != nil && client.Minor < 37 && e.Type == "history.reset" {
@@ -860,49 +975,51 @@ func (c *Controller) Run(ctx context.Context) {
 				// invalidation that the view can use to request a new page.
 				history[e.SessionID] = history[e.SessionID].invalidated()
 			}
-			if e.Operation != nil && (e.Operation.State.ReceiptObserved()) {
-				delete(unconfirmed, e.Operation.ID)
+			if op := e.Operation; op != nil {
+				if op.State.ReceiptObserved() {
+					delete(unconfirmed, op.ID)
+					delete(receiptGenerations, op.ID)
+				} else if _, ok := unconfirmed[op.ID]; ok {
+					unconfirmed[op.ID] = op.State
+				}
 			}
+		}
+		historicalThrough := replayThrough
+		if len(replay) != 0 && replay[0] {
+			historicalThrough = sequence
 		}
 		c.post(func(m *Model) {
 			for _, e := range events {
-				if err := m.ApplyEvent(e); err != nil {
+				if err := m.applyEvent(e, e.Sequence > historicalThrough); err != nil {
 					m.Error, m.Connected, m.ConnectionEpoch = err.Error(), false, ""
 					return
 				}
 			}
 		})
+		for _, e := range events {
+			if e.Operation != nil {
+				postReceiptError(e.Operation.ID)
+			}
+		}
 		return true
 	}
-	recoverPath = func() bool {
-		if c.paths == nil || client == nil || backgroundBusy {
-			return false
-		}
-		id := c.paths.preferred(time.Now())
-		if id == "" || id == c.paths.active() {
-			return false
-		}
-		c.paths.preparing(id)
-		c.publishPaths()
-		next, snapshot, ready, gap, err := c.preparePath(ctx, id, generation, sequence, readinessQuery())
-		// Reconcile through the candidate before discarding the old path. Buffer
-		// resulting model updates until the same-generation snapshot is committed.
-		queried := map[string]bool{}
-		for id, pending := range unconfirmed {
-			queried[id] = pending
-		}
-		var receipts []Update
-		if err == nil {
-			call, cancel := context.WithTimeout(ctx, 8*time.Second)
-			err = reconcileOperations(call, next, queried, func(u Update) { receipts = append(receipts, u) })
-			cancel()
-		}
-		if err != nil {
-			if next != nil {
-				next.Close()
+	adoptPath := func(result pathHandoff) bool {
+		if result.err != nil || result.base != client || result.epoch != logicalEpoch || !catalogReady {
+			if result.next != nil {
+				result.next.Close()
 			}
 			c.paths.preparing("")
-			c.paths.record(id, 0, time.Now(), err)
+			if result.err != nil {
+				c.paths.record(result.id, 0, time.Now(), result.err)
+			}
+			c.publishPaths()
+			return false
+		}
+		id, next, snapshot, ready, gap := result.id, result.next, result.snapshot, result.ready, result.events
+		start := sort.Search(len(gap), func(i int) bool { return gap[i].Sequence > sequence })
+		if !applyPage(protocol.EventPage{Generation: generation, Events: gap[start:]}) {
+			next.Close()
+			c.paths.preparing("")
 			c.publishPaths()
 			return false
 		}
@@ -911,14 +1028,10 @@ func (c *Controller) Run(ctx context.Context) {
 			stopEvents = nil
 		}
 		eventResults = nil
-		if len(gap) > 0 {
-			applyPage(protocol.EventPage{Generation: generation, Events: gap})
-		}
+		retryEventsAt = time.Time{}
 		old := client
 		client = next
 		observeWorkerBuild()
-		sequence = snapshot.Sequence
-		unconfirmed = queried
 		c.paths.activate(id, time.Now())
 		c.publishPaths()
 		epoch, minor := logicalEpoch, client.Minor
@@ -927,11 +1040,7 @@ func (c *Controller) Run(ctx context.Context) {
 			m.ConnectionEpoch = epoch
 			m.WorkerMinor = minor
 			m.Readiness = ready
-			m.ApplySnapshot(snapshot)
 		})
-		for _, update := range receipts {
-			c.post(update)
-		}
 		old.Close()
 		if client.Minor >= 1 {
 			eventResults, stopEvents = c.observeEvents(ctx, snapshot.DeviceID, generation, sequence)
@@ -944,6 +1053,226 @@ func (c *Controller) Run(ctx context.Context) {
 			}
 		}
 		return true
+	}
+	preferredPath := func() string {
+		if c.paths == nil || client == nil || !catalogReady || backgroundBusy || pathHandoffs != nil || preparedPath != nil {
+			return ""
+		}
+		id := c.paths.preferred(time.Now())
+		if id == c.paths.active() {
+			return ""
+		}
+		return id
+	}
+	recoverPath = func() bool {
+		id := preferredPath()
+		if id == "" {
+			return false
+		}
+		c.paths.preparing(id)
+		c.publishPaths()
+		next, snapshot, ready, gap, err := c.preparePath(ctx, id, generation, sequence, readinessQuery())
+		return adoptPath(pathHandoff{client, next, id, logicalEpoch, snapshot, ready, gap, err})
+	}
+	preparePreferredPath := func() {
+		id := preferredPath()
+		if id == "" {
+			return
+		}
+		c.paths.preparing(id)
+		c.publishPaths()
+		results := make(chan pathHandoff)
+		pathHandoffs = results
+		base, epoch, gen, cursor, query := client, logicalEpoch, generation, sequence, readinessQuery()
+		c.networkWG.Add(1)
+		go func() {
+			defer c.networkWG.Done()
+			next, snapshot, ready, gap, err := c.preparePath(ctx, id, gen, cursor, query)
+			select {
+			case results <- pathHandoff{base, next, id, epoch, snapshot, ready, gap, err}:
+			case <-ctx.Done():
+				if next != nil {
+					next.Close()
+				}
+			}
+		}()
+	}
+	repairCommand := func(cause error) bool {
+		if client == nil {
+			return false
+		}
+		// EOF on a routed stream can be a path failure. A deadline alone is
+		// not evidence to demote the independently probed active path.
+		var timeout net.Error
+		if c.paths != nil && (!errors.As(cause, &timeout) || !timeout.Timeout()) {
+			c.paths.record(c.paths.active(), 0, time.Now(), cause)
+			c.publishPaths()
+			if recoverPath() {
+				return true
+			}
+		}
+		call, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		dial := c.activeWorkerDial()
+		next, err := connectWorkerGeneration(call, func(context.Context) (net.Conn, error) { return dial(ctx) }, client.DeviceID, generation)
+		if err != nil {
+			return false
+		}
+		client.Close()
+		client = next
+		return true
+	}
+	checkReceipts := func() {
+		if receiptChecks != nil || client == nil || time.Now().Before(nextReceiptCheck) {
+			return
+		}
+		ids := make([]string, 0, len(unconfirmed))
+		for id := range unconfirmed {
+			ids = append(ids, id)
+		}
+		if len(ids) == 0 {
+			return
+		}
+		sort.Strings(ids)
+		start := sort.Search(len(ids), func(i int) bool { return ids[i] > receiptCursor })
+		if start == len(ids) {
+			start = 0
+		}
+		if len(ids) > 8 {
+			ordered := append(slices.Clone(ids[start:]), ids[:start]...)
+			ids = ordered[:8]
+			receiptInterval = time.Second
+		}
+		receiptCursor = ids[len(ids)-1]
+		queries := make([]protocol.OperationQuery, 0, len(ids))
+		for _, id := range ids {
+			queries = append(queries, protocol.OperationQuery{ID: id, SealGeneration: receiptGenerations[id]})
+		}
+		nextReceiptCheck = time.Now().Add(receiptInterval)
+		receiptInterval = min(15*time.Second, 2*receiptInterval)
+		dial, device, gen, epoch := c.activeWorkerDial(), client.DeviceID, generation, logicalEpoch
+		result := make(chan receiptCheck, 1)
+		receiptChecks = result
+		c.networkWG.Add(1)
+		go func() {
+			defer c.networkWG.Done()
+			observed := receiptCheck{epoch: epoch, ids: ids}
+			defer func() { result <- observed }()
+			call, cancel := context.WithTimeout(ctx, 4*time.Second)
+			defer cancel()
+			peer, err := connectWorkerGeneration(call, dial, device, gen)
+			if err != nil {
+				return
+			}
+			defer peer.Close()
+			observed.receipts, _ = reconcileOperations(call, peer, queries)
+		}()
+	}
+	var startCommand func(Job, bool)
+	finishCommand := func(reply commandReply) {
+		job, out, err := reply.job, reply.out, reply.err
+		var remote *protocol.RemoteError
+		if err != nil && !errors.As(err, &remote) && client != nil && reply.client == client {
+			if !repairCommand(err) {
+				disconnected()
+			} else if !reply.retried && readOnlyPathQuery(job.Method) {
+				job.epoch = client.Epoch
+				job.Prepare = nil
+				startCommand(job, true)
+				return
+			}
+		}
+		if err != nil && !errors.As(err, &remote) {
+			var opID string
+			switch in := job.Input.(type) {
+			case protocol.SteerInput:
+				opID = in.Input.OperationID
+			case domain.Submission:
+				opID = in.OperationID
+			}
+			if opID != "" {
+				unconfirmed[opID] = ""
+				if job.Method == "session.submit" || job.Method == "turn.steer" || job.Method == "turn.enqueue" {
+					receiptGenerations[opID] = reply.generation
+				}
+				nextReceiptCheck = time.Time{}
+				receiptInterval = time.Second
+				deferFeedback := client != nil && job.Apply != nil
+				if deferFeedback {
+					// Give the owning worker's journal or first receipt lookup
+					// precedence over a lost command reply in the presentation.
+					pendingReceiptErrors[opID] = func(m *Model) { job.Apply(m, out, err) }
+				}
+				checkReceipts()
+				if deferFeedback {
+					return
+				}
+			}
+		}
+		if job.Apply != nil {
+			c.post(func(m *Model) { job.Apply(m, out, err) })
+		}
+	}
+	startLane := func(job Job, key string) {
+		current, epoch, gen := client, logicalEpoch, generation
+		if current == nil || job.epoch == "" || job.epoch != epoch {
+			if job.Apply != nil {
+				c.post(func(m *Model) {
+					job.Apply(m, nil, &protocol.RemoteError{Code: "notSent", Message: "连接已改变，操作未发送；请重新提交"})
+				})
+			}
+			return
+		}
+		activeLanes[key] = true
+		dial, device, route := c.activeWorkerDial(), current.DeviceID, ""
+		if c.paths != nil {
+			route = c.paths.active()
+		}
+		c.networkWG.Add(1)
+		go func() {
+			defer c.networkWG.Done()
+			call, cancel := context.WithTimeout(ctx, commandTimeout(job.Method))
+			defer cancel()
+			if job.Context != nil {
+				stop := context.AfterFunc(job.Context, cancel)
+				defer stop()
+			}
+			peer, err := connectWorkerGeneration(call, dial, device, gen)
+			var out json.RawMessage
+			if err != nil {
+				err = &protocol.RemoteError{Code: "notSent", Message: "未建立命令连接，操作未发送：" + err.Error()}
+			} else {
+				defer peer.Close()
+				c.mu.Lock()
+				stillAdmitted := c.epoch == epoch
+				c.mu.Unlock()
+				if !stillAdmitted {
+					err = &protocol.RemoteError{Code: "notSent", Message: "连接已改变，操作未发送；请重新提交"}
+				} else {
+					wireJob := job
+					wireJob.epoch = peer.Epoch
+					wireJob.Prepare = func() error {
+						if job.Prepare != nil {
+							if err := job.Prepare(); err != nil {
+								return err
+							}
+						}
+						c.mu.Lock()
+						stillAdmitted := c.epoch == epoch
+						c.mu.Unlock()
+						if !stillAdmitted {
+							return errors.New("连接已改变，请重新提交")
+						}
+						return call.Err()
+					}
+					out, err = executeJob(call, peer, wireJob)
+				}
+			}
+			select {
+			case laneResults <- laneReply{key: key, route: route, reply: commandReply{job: job, generation: current.Generation, out: out, err: err}}:
+			case <-ctx.Done():
+			}
+		}()
 	}
 	finishUpload := func(result uploadResult) {
 		if ctx.Err() != nil {
@@ -985,17 +1314,105 @@ func (c *Controller) Run(ctx context.Context) {
 			lastAttempt = time.Time{}
 		}
 	}
+	startCommand = func(job Job, retried bool) {
+		result := make(chan commandReply, 1)
+		commandReplies = result
+		current := client
+		c.networkWG.Add(1)
+		go func() {
+			defer c.networkWG.Done()
+			call, cancel := context.WithTimeout(ctx, commandTimeout(job.Method))
+			defer cancel()
+			if job.Context != nil {
+				stop := context.AfterFunc(job.Context, cancel)
+				defer stop()
+			}
+			out, err := executeJob(call, current, job)
+			result <- commandReply{job: job, retried: retried, client: current, out: out, err: err}
+		}()
+	}
+	startCatalog := func() {
+		result := make(chan catalogResult, 1)
+		catalogResults = result
+		current, query := client, readinessQuery()
+		device := current.DeviceID
+		gen, cursor := generation, sequence
+		canResume := catalogKnown && !requireSnapshot && current.Generation == gen && current.Minor >= 1
+		c.networkWG.Add(1)
+		go func() {
+			defer c.networkWG.Done()
+			out := catalogResult{client: current, requestedAt: time.Now()}
+			call, cancel := context.WithTimeout(ctx, 30*time.Second)
+			if canResume {
+				var page protocol.EventPage
+				err := current.Call(call, "events", protocol.EventsQuery{After: cursor, Generation: gen}, &page)
+				continuous := page.Generation == gen
+				for i, event := range page.Events {
+					continuous = continuous && event.Sequence == cursor+int64(i)+1
+				}
+				if err == nil && continuous {
+					out.resume = &page
+					out.snapshot = domain.Snapshot{DeviceID: device, Generation: gen}
+				} else {
+					var remote *protocol.RemoteError
+					if err != nil && !errors.As(err, &remote) {
+						out.err = err
+					}
+				}
+			}
+			if out.err == nil && out.resume == nil {
+				out.snapshot, out.err = current.ReadSnapshot(call)
+			}
+			cancel()
+			if out.err == nil && out.snapshot.DeviceID != device {
+				out.err = &protocol.RemoteError{Code: "snapshotIdentity", Message: "worker snapshot identity mismatch"}
+			} else if out.err == nil && (out.snapshot.Generation == "" || current.Generation != "" && out.snapshot.Generation != current.Generation) {
+				out.err = &protocol.RemoteError{Code: "snapshotIdentity", Message: "设备目录与执行服务运行代次不一致"}
+			}
+			if out.err == nil {
+				call, cancel = context.WithTimeout(ctx, 3*time.Second)
+				if err := current.Call(call, "readiness", query, &out.ready); err != nil {
+					out.ready = domain.Readiness{}
+				}
+				cancel()
+			}
+			result <- out
+		}()
+	}
+	refreshCatalog := func() {
+		requireSnapshot = true
+		if client == nil || client.Generation == "" || client.Generation != generation || !catalogReady {
+			disconnected()
+			return
+		}
+		stopEvents()
+		eventResults, stopEvents = nil, nil
+		retryEventsAt = time.Time{}
+		catalogReady, catalogControls = false, true
+		startCatalog()
+	}
 	checkBackground("status")
+	commandJobs := c.commandJobs(ctx)
 	for {
+		if preparedPath != nil && commandReplies == nil && readinessResults == nil {
+			adoptPath(*preparedPath)
+			preparedPath = nil
+		}
 		if upload != nil && upload.staged != nil && (client != nil || time.Now().After(upload.reconnectUntil)) {
 			finishUpload(*upload.staged)
 		}
-		jobs := c.Jobs
-		if c.paths != nil && client == nil {
+		jobs := commandJobs
+		if catalogReady && commandReplies == nil && readinessResults == nil && len(waitingJobs) > 0 {
+			jobs = waitingJobs
+		}
+		if client != nil && !catalogReady && !catalogControls {
 			jobs = nil
 		}
 		select {
 		case <-ctx.Done():
+			if preparedPath != nil && preparedPath.next != nil {
+				preparedPath.next.Close()
+			}
 			return
 		case phase := <-uploadProgress:
 			state := *service
@@ -1018,6 +1435,13 @@ func (c *Controller) Run(ctx context.Context) {
 			finishUpload(result)
 		case <-pathChanges:
 			c.publishPaths()
+		case result := <-pathHandoffs:
+			pathHandoffs = nil
+			if commandReplies == nil && readinessResults == nil || result.err != nil {
+				adoptPath(result)
+			} else {
+				preparedPath = &result
+			}
 		case result := <-backgroundResults:
 			backgroundBusy = false
 			epoch := ""
@@ -1047,10 +1471,188 @@ func (c *Controller) Run(ctx context.Context) {
 					checkBackground(requested.action)
 				}
 			}
-		case result := <-eventResults:
-			if result.err != nil || !applyPage(result.page) {
-				disconnected()
+		case result := <-catalogResults:
+			catalogResults = nil
+			if result.client != client {
+				continue
 			}
+			if result.err != nil {
+				message := result.err.Error()
+				catalogError = message
+				c.post(func(m *Model) { m.Error = message })
+				var remote *protocol.RemoteError
+				if errors.As(result.err, &remote) && remote.Code == "snapshotIdentity" {
+					disconnected()
+					continue
+				}
+				if client.Generation == "" || client.Minor < protocol.RecoveryMinor {
+					disconnected()
+					continue
+				}
+				if remote != nil {
+					// The worker answered on this stream. Retry its catalog
+					// here without renegotiating a healthy transport.
+					lastAttempt = time.Now()
+					continue
+				}
+				// Verify liveness on a fresh stream. A catalog error must
+				// not demote an otherwise healthy worker.
+				call, cancel := context.WithTimeout(ctx, 3*time.Second)
+				next, err := connectWorkerGeneration(call, c.activeWorkerDial(), client.DeviceID, client.Generation)
+				if next != nil {
+					next.Close()
+				}
+				cancel()
+				if err != nil {
+					disconnected()
+					continue
+				}
+				client.Close()
+				client = nil
+				lastAttempt = time.Now()
+				continue
+			}
+			snapshot := result.snapshot
+			c.ExpectedDeviceID = client.DeviceID
+			if logicalEpoch == "" || generation != snapshot.Generation {
+				logicalEpoch = client.Epoch
+			}
+			if result.resume == nil {
+				generation, sequence = snapshot.Generation, snapshot.Sequence
+			}
+			catalogReady, catalogKnown, requireSnapshot, catalogControls = true, true, false, false
+			catalogResumed = result.resume != nil
+			catalogRetry = time.Second
+			nextReceiptCheck = time.Time{}
+			receiptInterval = time.Second
+			c.mu.Lock()
+			c.epoch = logicalEpoch
+			c.mu.Unlock()
+			stageCandidate(false)
+			observeWorkerBuild()
+			checkBackground("status")
+			minor, epoch := client.Minor, logicalEpoch
+			priorError := catalogError
+			catalogError = ""
+			c.post(func(m *Model) {
+				m.WorkerMinor = minor
+				m.DeviceHealth = nil
+				m.Connected = true
+				m.ConnectionEpoch = epoch
+				m.Readiness = result.ready
+				if result.resume == nil {
+					m.ApplySnapshot(snapshot, result.requestedAt)
+				}
+				if m.Error == priorError {
+					m.Error = ""
+				}
+			})
+			if result.resume != nil {
+				replayThrough = result.resume.Sequence
+				applyPage(*result.resume, true)
+			} else {
+				replayThrough = 0
+			}
+			if client.Minor >= 1 {
+				eventResults, stopEvents = c.observeEvents(ctx, snapshot.DeviceID, generation, sequence)
+				if stopHealth != nil {
+					stopHealth()
+					stopHealth = nil
+				}
+				if client.Minor >= 38 {
+					stopHealth = c.observeDeviceHealth(ctx, snapshot.DeviceID, logicalEpoch)
+				}
+			}
+			lastReadiness = time.Now()
+		case result := <-eventResults:
+			if result.err == nil {
+				if !applyPage(result.page) {
+					refreshCatalog()
+				} else {
+					eventRetry = time.Second
+				}
+				continue
+			}
+			// An event stream can be replaced at its last cursor without
+			// invalidating the healthy command channel or the visible history.
+			var remote *protocol.RemoteError
+			if errors.As(result.err, &remote) && strings.HasPrefix(remote.Message, "snapshot required:") {
+				refreshCatalog()
+				continue
+			}
+			stopEvents()
+			eventResults, stopEvents = nil, nil
+			retryEventsAt = time.Now().Add(eventRetry)
+			eventRetry = min(15*time.Second, 2*eventRetry)
+		case observed := <-readinessResults:
+			readinessResults = nil
+			if observed.client != client {
+				continue
+			}
+			if observed.err != nil {
+				var remote *protocol.RemoteError
+				if !errors.As(observed.err, &remote) && !repairCommand(observed.err) {
+					disconnected()
+				}
+				continue
+			}
+			if !slices.Equal(observed.query.SessionIDs, readinessQuery().SessionIDs) {
+				continue
+			}
+			c.post(func(m *Model) {
+				m.Readiness = observed.ready
+				if c.paths == nil {
+					m.ConnectionTiming = observed.timing
+				}
+			})
+		case observed := <-receiptChecks:
+			receiptChecks = nil
+			if client == nil || observed.epoch != logicalEpoch {
+				for _, id := range observed.ids {
+					postReceiptError(id)
+				}
+				continue
+			}
+			for _, op := range observed.receipts {
+				last, pending := unconfirmed[op.ID]
+				if !pending || last == op.State || last == domain.OperationDispatched && op.State == domain.OperationAccepted {
+					continue
+				}
+				if op.State.ReceiptObserved() {
+					delete(unconfirmed, op.ID)
+					delete(receiptGenerations, op.ID)
+				} else {
+					unconfirmed[op.ID] = op.State
+				}
+				c.post(func(m *Model) { m.ApplyOperation(op) })
+			}
+			for _, id := range observed.ids {
+				postReceiptError(id)
+			}
+		case received := <-laneResults:
+			delete(activeLanes, received.key)
+			var remote *protocol.RemoteError
+			var timeout net.Error
+			if received.route != "" && c.paths.active() == received.route && received.reply.err != nil &&
+				!errors.As(received.reply.err, &remote) && !(errors.As(received.reply.err, &timeout) && timeout.Timeout()) {
+				c.paths.record(received.route, 0, time.Now(), received.reply.err)
+				c.publishPaths()
+				preparePreferredPath()
+			}
+			finishCommand(received.reply)
+			for i := 0; i < len(laneJobs); {
+				job := laneJobs[i]
+				key := commandLane(job)
+				if activeLanes[key] || len(activeLanes) >= 12 || len(activeLanes) >= 8 && !urgentLane(job) {
+					i++
+					continue
+				}
+				laneJobs = slices.Delete(laneJobs, i, i+1)
+				startLane(job, key)
+			}
+		case reply := <-commandReplies:
+			commandReplies = nil
+			finishCommand(reply)
 		case job := <-c.workerRepairs:
 			if client != nil || upload != nil || c.ExpectedDeviceID == "" {
 				continue
@@ -1075,6 +1677,40 @@ func (c *Controller) Run(ctx context.Context) {
 			lastDetachedService = time.Now()
 			lastAttempt = time.Time{}
 		case job := <-jobs:
+			if catalogControls && !urgentLane(job) && job.Method != "$select" && job.Method != "$visible" {
+				if job.Apply != nil {
+					c.post(func(m *Model) {
+						job.Apply(m, nil, &protocol.RemoteError{Code: "notSent", Message: "设备目录正在同步，操作未发送"})
+					})
+				}
+				continue
+			}
+			if key := commandLane(job); key != "" {
+				if activeLanes[key] || len(activeLanes) >= 12 || len(activeLanes) >= 8 && !urgentLane(job) {
+					if len(laneJobs) < 40 && (urgentLane(job) || len(laneJobs) < 32) {
+						laneJobs = append(laneJobs, job)
+					} else if job.Apply != nil {
+						c.post(func(m *Model) {
+							job.Apply(m, nil, &protocol.RemoteError{Code: "notSent", Message: "设备命令队列暂满，操作未发送"})
+						})
+					}
+				} else {
+					startLane(job, key)
+				}
+				continue
+			}
+			if (commandReplies != nil || readinessResults != nil) && job.Method != "$select" && job.Method != "$visible" && !historyReadMethod(job.Method) {
+				select {
+				case waitingJobs <- job:
+				default:
+					if job.Apply != nil {
+						c.post(func(m *Model) {
+							job.Apply(m, nil, &protocol.RemoteError{Code: "notSent", Message: "设备命令队列暂满，操作未发送"})
+						})
+					}
+				}
+				continue
+			}
 			if job.Method == "$worker.recovery" {
 				c.runWorkerRecoveryJob(ctx, job)
 				continue
@@ -1083,7 +1719,7 @@ func (c *Controller) Run(ctx context.Context) {
 				c.runForwardJob(ctx, job)
 				continue
 			}
-			if c.paths != nil && client != nil && job.epoch == logicalEpoch {
+			if client != nil && job.epoch == logicalEpoch {
 				job.epoch = client.Epoch
 			}
 			if job.Method == "$background.status" || job.Method == "$background.enable" || job.Method == "$background.disable" {
@@ -1101,24 +1737,20 @@ func (c *Controller) Run(ctx context.Context) {
 				continue
 			}
 			if job.Method == "$worker.maintenance.inspect" {
-				var out json.RawMessage
 				var err error
 				if client == nil || job.epoch != client.Epoch || client.Worker == nil || !client.Worker.Maintenance {
 					err = &protocol.RemoteError{Code: "notSent", Message: "请重新连接并检查执行服务能力"}
 				} else {
 					stageCandidate(true)
-					if candidateError != nil {
-						err = &protocol.RemoteError{Code: "notSent", Message: candidateError.Error()}
-					} else {
-						callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-						request := job
-						request.Method = "worker.update.diagnose"
-						out, err = executeJob(callCtx, client, request)
-						cancel()
+					if candidateError == nil {
+						job.Method = "worker.update.diagnose"
+						startCommand(job, false)
+						continue
 					}
+					err = &protocol.RemoteError{Code: "notSent", Message: candidateError.Error()}
 				}
 				if job.Apply != nil {
-					c.post(func(m *Model) { job.Apply(m, out, err) })
+					c.post(func(m *Model) { job.Apply(m, nil, err) })
 				}
 				continue
 			}
@@ -1278,7 +1910,7 @@ func (c *Controller) Run(ctx context.Context) {
 						history[id] = historyOpening
 					}
 				}
-				if client != nil {
+				if client != nil && catalogReady && (commandReplies == nil || client.Minor >= 37) {
 					if err := fetchDetail(); err != nil {
 						disconnected()
 					}
@@ -1297,7 +1929,7 @@ func (c *Controller) Run(ctx context.Context) {
 				if selected != "" {
 					history[selected] = historyOpening
 				}
-				if client != nil {
+				if client != nil && catalogReady && (commandReplies == nil || client.Minor >= 37) {
 					if err := fetchDetail(); err != nil {
 						disconnected()
 					}
@@ -1312,53 +1944,7 @@ func (c *Controller) Run(ctx context.Context) {
 				c.startArchiveDelete(ctx, client, job)
 				continue
 			}
-			var opID string
-			if in, ok := job.Input.(protocol.SteerInput); ok {
-				opID = in.Input.OperationID
-				unconfirmed[opID] = true
-			}
-			if in, ok := job.Input.(domain.Submission); ok {
-				opID = in.OperationID
-				unconfirmed[opID] = true
-			}
-			timeout := 10 * time.Second
-			if job.Method == "conversation.import" {
-				timeout = 60 * time.Second
-			}
-			if strings.HasPrefix(job.Method, "runtime.tools.") {
-				timeout = 45 * time.Second
-			}
-			if job.Method == "session.reconcile" {
-				timeout = 25 * time.Second
-			}
-			if job.Method == "session.fork" || job.Method == "session.restart" {
-				timeout = 45 * time.Second
-			}
-			callCtx, cancel := context.WithTimeout(ctx, timeout)
-			out, err := executeJob(callCtx, client, job)
-			cancel()
-			var remote *protocol.RemoteError
-			if err != nil && !errors.As(err, &remote) && c.paths != nil && readOnlyPathQuery(job.Method) {
-				epoch := logicalEpoch
-				disconnected()
-				if client != nil && logicalEpoch == epoch {
-					retry := job
-					retry.epoch = client.Epoch
-					retry.Prepare = nil
-					call, done := context.WithTimeout(ctx, timeout)
-					out, err = executeJob(call, client, retry)
-					done()
-				}
-			}
-			if err != nil && errors.As(err, &remote) {
-				delete(unconfirmed, opID)
-			}
-			if job.Apply != nil {
-				c.post(func(m *Model) { job.Apply(m, out, err) })
-			}
-			if err != nil && !errors.As(err, &remote) && client != nil {
-				disconnected()
-			}
+			startCommand(job, false)
 		case <-ticker.C:
 			if client == nil {
 				observeDetachedService()
@@ -1387,64 +1973,45 @@ func (c *Controller) Run(ctx context.Context) {
 					if errors.As(err, &legacy) {
 						publishService(&WorkerService{Phase: WorkerLegacy, Message: err.Error(), Legacy: &domain.LegacyWorkerInfo{DeviceID: legacy.DeviceID, Major: legacy.Major, Minor: legacy.Minor}})
 					}
-					c.post(func(m *Model) { m.Error = err.Error() })
+					c.post(func(m *Model) {
+						m.Connected = false
+						m.ConnectionEpoch = ""
+						m.Error = err.Error()
+					})
 					continue
 				}
-				var snapshot domain.Snapshot
-				var ready domain.Readiness
-				requestedAt := time.Now()
-				if client.Call(ctx, "snapshot", nil, &snapshot) != nil || client.Call(ctx, "readiness", readinessQuery(), &ready) != nil {
-					disconnected()
-					continue
+				if client.Generation != "" && client.Minor >= protocol.RecoveryMinor {
+					// A verified connection is shown while its catalog is
+					// loading. The catalog still gates session mutations.
+					minor := client.Minor
+					c.post(func(m *Model) {
+						m.Connected = true
+						m.WorkerMinor = minor
+						m.Readiness = domain.Readiness{}
+					})
 				}
-				if snapshot.DeviceID != client.DeviceID {
-					c.post(func(m *Model) { m.Error = "worker snapshot identity mismatch" })
-					disconnected()
-					continue
-				}
-				c.ExpectedDeviceID = client.DeviceID
-				if logicalEpoch == "" || generation != snapshot.Generation {
-					logicalEpoch = client.Epoch
-				}
-				generation = snapshot.Generation
-				sequence = snapshot.Sequence
-				c.mu.Lock()
-				c.epoch = logicalEpoch
-				c.mu.Unlock()
-				minor := client.Minor
-				stageCandidate(false)
-				observeWorkerBuild()
-				checkBackground("status")
-				epoch := logicalEpoch
-				c.post(func(m *Model) {
-					m.WorkerMinor = minor
-					m.DeviceHealth = nil
-					m.Connected = true
-					m.ConnectionEpoch = epoch
-					m.Readiness = ready
-					m.ApplySnapshot(snapshot, requestedAt)
-				})
-				for id, phase := range history {
-					history[id] = phase.invalidated()
-				}
-				if err := reconcileOperations(ctx, client, unconfirmed, c.post); err != nil {
-					disconnected()
-					continue
-				}
-				if client.Minor >= 1 {
-					eventResults, stopEvents = c.observeEvents(ctx, snapshot.DeviceID, generation, sequence)
-					if stopHealth != nil {
-						stopHealth()
-						stopHealth = nil
-					}
-					if client.Minor >= 38 {
-						stopHealth = c.observeDeviceHealth(ctx, snapshot.DeviceID, logicalEpoch)
-					}
-				}
+				startCatalog()
 			}
-			if c.paths != nil && !backgroundBusy {
-				recoverPath()
+			if !catalogReady {
+				if catalogKnown && client.Generation == generation {
+					checkReceipts()
+				}
+				if catalogResults == nil && time.Since(lastAttempt) >= catalogRetry {
+					lastAttempt = time.Now()
+					catalogRetry = min(15*time.Second, 2*catalogRetry)
+					startCatalog()
+				}
+				continue
 			}
+			checkReceipts()
+			if !retryEventsAt.IsZero() && !time.Now().Before(retryEventsAt) {
+				eventResults, stopEvents = c.observeEvents(ctx, client.DeviceID, generation, sequence)
+				retryEventsAt = time.Time{}
+			}
+			if commandReplies != nil || readinessResults != nil {
+				continue
+			}
+			preparePreferredPath()
 			if service != nil && service.OperationID != "" &&
 				(service.Phase == WorkerUpdating || service.Phase == WorkerWaiting) &&
 				time.Since(lastUpgradeObservation) >= 3*time.Second {
@@ -1465,22 +2032,25 @@ func (c *Controller) Run(ctx context.Context) {
 			if time.Since(lastBackgroundCheck) > 30*time.Second {
 				checkBackground("status")
 			}
-			if time.Since(lastReadiness) > 5*time.Second {
-				started := time.Now()
-				var ready domain.Readiness
-				if err := client.Call(ctx, "readiness", readinessQuery(), &ready); err != nil {
-					disconnected()
-					continue
-				}
+			if readinessResults == nil && time.Since(lastReadiness) > 5*time.Second {
 				lastReadiness = time.Now()
-				sample := &DeviceTiming{Milliseconds: float64(time.Since(started)) / float64(time.Millisecond), ObservedAt: time.Now()}
-				c.post(func(m *Model) {
-					m.Readiness = ready
-					if c.paths == nil {
-						m.ConnectionTiming = sample
-					}
-				})
+				pending := make(chan readinessObservation, 1)
+				readinessResults = pending
+				current, query := client, readinessQuery()
+				c.networkWG.Add(1)
+				go func() {
+					defer c.networkWG.Done()
+					started := time.Now()
+					call, cancel := context.WithTimeout(ctx, 3*time.Second)
+					defer cancel()
+					observed := readinessObservation{client: current, query: query}
+					observed.err = current.Call(call, "readiness", query, &observed.ready)
+					observed.timing = &DeviceTiming{Milliseconds: float64(time.Since(started)) / float64(time.Millisecond), ObservedAt: time.Now()}
+					pending <- observed
+				}()
+				continue
 			}
+
 			// Accepted lifecycle operations keep waiting on the device. Their
 			// receipts are queried above, independently of automatic dispatch.
 			legacyWaiting := service != nil && service.OperationID == "" && service.Phase == WorkerWaiting
@@ -1494,7 +2064,7 @@ func (c *Controller) Run(ctx context.Context) {
 				}
 			}
 			// Older workers retain their existing polling path until upgraded.
-			if eventResults == nil {
+			if client.Minor < 1 {
 				var page protocol.EventPage
 				if err := client.Call(ctx, "events", protocol.EventsQuery{After: sequence, Generation: generation}, &page); err != nil || !applyPage(page) {
 					disconnected()

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"shioji/internal/domain"
 	"shioji/internal/harness"
+	"shioji/internal/store"
 	"time"
 )
 
@@ -305,7 +306,7 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 func (s *Server) sessionRuntimeDirectory(id string) string {
 	return filepath.Join(s.config.Directory, "runtimes", id)
 }
-func (s *Server) failRuntimeLaunch(op domain.Operation, in domain.Submission, cause error) {
+func (s *Server) failRuntimeLaunch(op domain.Operation, cause error) {
 	deleted, err := s.store.SessionDeleted(op.SessionID)
 	if err != nil {
 		s.cancel()
@@ -323,8 +324,10 @@ func (s *Server) failRuntimeLaunch(op domain.Operation, in domain.Submission, ca
 		}
 		defer s.wakeRecovery()
 	}
-	if err := s.store.SetOperation(op.ID, "rejected", cause.Error()); err != nil {
-		s.cancel()
+	if err := s.store.RejectUnhandedInput(op.ID, cause.Error()); err != nil {
+		if !errors.Is(err, store.ErrInputHandoffRevoked) {
+			s.cancel()
+		}
 		return
 	}
 	d, err := s.store.Session(op.SessionID, 0, 1)
@@ -332,23 +335,15 @@ func (s *Server) failRuntimeLaunch(op domain.Operation, in domain.Submission, ca
 		s.cancel()
 		return
 	}
-	d.Session.Status = "failed"
 	if d.Session.ExecutionGuard != "" {
-		d.Session.Status = "unknown"
-		defer s.wakeRecovery()
+		d.Session.Status = domain.ExecutionUnknown
+		d.Session.Error = cause.Error()
+		if _, err = s.store.Apply(op.SessionID, domain.Event{Type: "session", Session: &d.Session}); err != nil {
+			s.cancel()
+			return
+		}
 	}
-	d.Session.Error = cause.Error()
-	if _, err = s.store.Apply(op.SessionID, domain.Event{Type: "session", Session: &d.Session}); err != nil {
-		s.cancel()
-		return
-	}
-	if _, err = s.store.PauseQueue(op.SessionID, cause.Error()); err != nil {
-		s.cancel()
-		return
-	}
-	if _, err = s.store.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, Kind: "user", Text: in.Text, ReferencePositions: in.ReferencePositions, Skills: in.Skills, Attachments: in.Attachments, Status: "failed", Final: true}}); err != nil {
-		s.cancel()
-	}
+
 }
 
 // Restart only our own session roots, never the legacy shared runtime or another

@@ -134,12 +134,7 @@ func (v *View) syncDeviceConnectionSave() {
 		}
 		return
 	}
-	var pending []string
-	for id, key := range v.Model.PendingDevices {
-		if key == p.connection.ID {
-			pending = append(pending, id)
-		}
-	}
+	pending := v.Model.RestoredSubmissionQueries()[p.connection.ID]
 	if v.Controller != nil && !v.Controller.Do(app.Job{Method: "$device.configure", Input: app.ConfigureDevice{Connection: p.connection, Pending: pending}}) {
 		v.sshError = "连接已保存，设备操作繁忙，请重试"
 		if !p.removal {

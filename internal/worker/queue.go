@@ -6,6 +6,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/protocol"
+	"shioji/internal/store"
 	"time"
 )
 
@@ -17,46 +18,54 @@ func (s *Server) wakeQueue() {
 }
 func (s *Server) queueLoop() {
 	defer s.wg.Done()
+	active := make(map[string]bool)
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
 		case <-s.queueWake:
 		}
+		ids, err := s.store.ReadyQueueSessions()
+		if err != nil {
+			continue
+		}
 		s.dispatchMu.Lock()
-		snapshot, err := s.store.Snapshot()
-		if err == nil && s.ctx.Err() == nil {
-			for _, session := range snapshot.Sessions {
-				if !session.Status.CanSubmit() || session.Goal.Active() {
-					continue
+		for _, id := range ids {
+			if len(active) >= 4 || s.ctx.Err() != nil {
+				break
+			}
+			if active[id] || s.sessionTransitions[id] != nil {
+				continue
+			}
+			active[id] = true
+			s.wg.Add(1)
+			go func(id string) {
+				defer s.wg.Done()
+				s.dispatchMu.Lock()
+				defer s.dispatchMu.Unlock()
+				defer func() { delete(active, id) }()
+				q, err := s.store.Queue(id)
+				if err != nil || q.Paused || len(q.Items) == 0 || s.updateAdmission() != nil {
+					return
 				}
-				q, e := s.store.Queue(session.ID)
-				if e != nil || q.Paused || len(q.Items) == 0 {
-					continue
-				}
-				d, e := s.store.Session(session.ID, 0, 1)
-				if e != nil {
-					continue
-				}
-				blocked := false
-				for _, req := range d.Requests {
-					if req.State.AwaitingResolution() {
-						blocked = true
+				_, err = s.submitLocked(q.Items[0].Input, q.Revision, false)
+				if err != nil && !errors.Is(err, errCatalogRefreshing) && s.updateAdmission() == nil {
+					if latest, e := s.store.Queue(id); e == nil && latest.Revision == q.Revision {
+						_, _ = s.store.PauseQueue(id, err.Error())
 					}
 				}
-				unsettled, e := s.store.HasUnsettledOperation(session.ID)
-				if e != nil || unsettled || blocked {
-					continue
+				// A successful claim or a paused queue frees capacity for later
+				// sessions. Catalog refresh already wakes the queue on completion.
+				if !errors.Is(err, errCatalogRefreshing) {
+					s.wakeQueue()
 				}
-				if _, e = s.submitLocked(q.Items[0].Input, q.Revision, false); e != nil && !errors.Is(e, errCatalogRefreshing) {
-					s.store.PauseQueue(session.ID, e.Error())
-				}
-			}
+			}(id)
 		}
 		s.dispatchMu.Unlock()
 	}
 }
 func (s *Server) enqueue(in domain.Submission) (domain.Operation, error) {
+	defer s.beginInputReceipt(in.OperationID)()
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
 	return s.enqueueLocked(in)
@@ -162,11 +171,15 @@ func (s *Server) changeQueue(method string, in protocol.QueueInput) (domain.Queu
 	return domain.QueueState{}, errors.New("unknown queue command")
 }
 func (s *Server) steer(in protocol.SteerInput) (domain.Operation, error) {
+	defer s.beginInputReceipt(in.Input.OperationID)()
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
 	return s.steerLocked(in, 0)
 }
 func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Operation, error) {
+	if err := store.CheckSubmissionJournal(in.Input); err != nil {
+		return domain.Operation{}, err
+	}
 	if in.Input.GoalObjective != "" {
 		return domain.Operation{}, errors.New("目标输入请加入队列")
 	}
@@ -235,14 +248,11 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 		if !s.dispatchReserved(op, runtime) {
 			return
 		}
-		if s.store.SetOperation(op.ID, "dispatched", "") != nil {
-			return
-		}
 		ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 		defer cancel()
 		inputs, err := s.attachmentInputsOutsideDispatch(in.Input)
 		current, e := s.store.Operation(op.ID)
-		if e != nil || current.State != "dispatched" || !s.capturedRuntimeCurrent(op.SessionID, runtime, d.Session.ThreadID) {
+		if e != nil || current.State != "accepted" || !s.capturedRuntimeCurrent(op.SessionID, runtime, d.Session.ThreadID) {
 			return
 		}
 		if err == nil {
@@ -250,6 +260,12 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 		}
 		if err == nil && runtime.ManagedCoverage() {
 			err = s.coverOperation(op.SessionID, op.ID)
+		}
+		if err == nil {
+			err = s.store.BeginInputHandoff(op.ID)
+			if errors.Is(err, store.ErrInputHandoffRevoked) {
+				return
+			}
 		}
 		if err == nil {
 			s.dispatchMu.Unlock()
@@ -260,29 +276,24 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 			if current := s.currentRuntime(op.SessionID); current == nil || current.Done() != runtime.Done() {
 				return
 			}
-			if runtime.Stopped() {
+			if err != nil && runtime.Stopped() && !harness.IsRejected(err) {
 				err = &harness.DeliveryError{Uncertain: true, Message: "运行环境已结束，Steer 结果待核对；不会自动重发"}
 			}
 		}
 		outcome := domain.DeliveryOutcome(err != nil, harness.IsUncertain(err))
-		state, status, message := outcome.Operation, outcome.Input, ""
+		message := ""
 		if err != nil {
 			message = err.Error()
-			if state == domain.OperationIndeterminate {
-				s.store.PauseQueue(op.SessionID, "steer delivery is unknown")
+		}
+		if err := s.store.CompleteInput(op.ID, outcome, message, in.TurnID); err != nil {
+			if !errors.Is(err, store.ErrInputHandoffRevoked) {
+				s.cancel()
 			}
-		}
-		if s.store.SetOperation(op.ID, state, message) != nil {
 			return
 		}
-		if state == "indeterminate" {
-			defer s.wakeRecovery()
+		if outcome.Operation == domain.OperationIndeterminate {
+			s.wakeRecovery()
 		}
-
-		if state != "confirmed" && revision > 0 {
-			return
-		}
-		s.store.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: in.TurnID, Kind: "user", ReferencePositions: in.Input.ReferencePositions, Skills: in.Input.Skills, Attachments: in.Input.Attachments, Text: in.Input.Text, Final: true, Status: status}})
 	}()
 	return op, nil
 }

@@ -49,6 +49,10 @@ type DeviceState struct {
 	Error             string
 }
 
+func (s *DeviceState) ConversationGeneration() string {
+	return conversationGeneration(s.Snapshot, s.ConnectionEpoch)
+}
+
 type cachedDevice struct {
 	Snapshot  domain.Snapshot   `json:"snapshot"`
 	Readiness domain.Readiness  `json:"readiness"`
@@ -213,6 +217,9 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	current := m.ConnectionID()
 	if m.UncertainSubmissions == nil {
 		m.UncertainSubmissions = map[string]bool{}
+	}
+	if m.submissionAccepted == nil {
+		m.submissionAccepted = map[string]bool{}
 	}
 	p := *m
 	p.Navigation = m.Navigation.Clone()

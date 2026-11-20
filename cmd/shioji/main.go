@@ -47,15 +47,7 @@ func run() error {
 	if err = model.Load(*state); err != nil {
 		model.Error = "无法读取草稿：" + err.Error()
 	}
-	restored := map[string][]string{}
-	for id := range model.Pending {
-		key := model.PendingDevices[id]
-		if key == "" {
-			key = "local"
-		}
-		restored[key] = append(restored[key], id)
-	}
-	controller := app.NewDeviceController(*dir, model.LocalDeviceID, model.Connections, *workerBin, restored)
+	controller := app.NewDeviceController(*dir, model.LocalDeviceID, model.Connections, *workerBin, model.RestoredSubmissionQueries())
 	controller.SetWorkerAutoUpdate(!*noStart)
 	nodeDir := filepath.Join(filepath.Dir(*state), "tailnet")
 	clientDone, err := transport.RegisterNetworkClient(nodeDir)

@@ -1,9 +1,11 @@
 package worker
 
 import (
+	"encoding/json"
 	"errors"
 
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 	"shioji/internal/store"
 )
 
@@ -14,6 +16,10 @@ type connectionHistory struct {
 	query        domain.HistoryQuery
 	work, method string
 	after        int64
+	catalog      []byte
+	offset       int
+	catalogRead  *store.HistorySnapshot
+	cursor       domain.CatalogCursor
 }
 
 func (h *connectionHistory) close() {
@@ -21,9 +27,24 @@ func (h *connectionHistory) close() {
 		h.snapshot.Close()
 		h.snapshot = nil
 	}
+	if h.catalogRead != nil {
+		h.catalogRead.Close()
+		h.catalogRead = nil
+	}
 }
 
 func (h *connectionHistory) handle(s *Server, method string, body []byte) (any, error) {
+	if method == "snapshot" && len(body) != 0 {
+		q, err := decode[protocol.SnapshotQuery](body)
+		if err == nil && q.Cursor != nil {
+			return h.catalogPage(s, *q.Cursor)
+		}
+		if err == nil && q.Offset != nil {
+			h.close()
+			return h.snapshotPage(s, *q.Offset)
+		}
+	}
+	h.catalog, h.offset = nil, 0
 	if method != "session.history" && method != "session.work.history" {
 		h.close()
 		return s.handle(method, body)
@@ -73,4 +94,58 @@ func (h *connectionHistory) handle(s *Server, method string, body []byte) (any, 
 		h.close()
 	}
 	return out, nil
+}
+
+// The serialized snapshot stays on this authenticated stream until its last
+// page. Concurrent workspace and session events cannot change its barrier.
+func (h *connectionHistory) snapshotPage(s *Server, offset int) (protocol.SnapshotPage, error) {
+	var page protocol.SnapshotPage
+	if offset != h.offset && offset != 0 {
+		h.catalog, h.offset = nil, 0
+		return page, errors.New("设备目录分页已失效，请重新读取")
+	}
+	if offset == 0 {
+		h.catalog, h.offset = nil, 0
+		snapshot, err := s.store.Snapshot()
+		if err != nil {
+			return page, err
+		}
+		h.catalog, err = json.Marshal(snapshot)
+		if err != nil {
+			return page, err
+		}
+	}
+	end := min(h.offset+protocol.SnapshotChunkBytes, len(h.catalog))
+	page.Data = h.catalog[h.offset:end]
+	if end < len(h.catalog) {
+		h.offset, page.Next = end, end
+	} else {
+		h.catalog, h.offset = nil, 0
+	}
+	return page, nil
+}
+
+func (h *connectionHistory) catalogPage(s *Server, cursor domain.CatalogCursor) (protocol.SnapshotPage, error) {
+	var page protocol.SnapshotPage
+	var err error
+	if cursor == (domain.CatalogCursor{}) {
+		h.close()
+		h.catalog, h.offset = nil, 0
+		h.catalogRead, err = s.store.OpenHistorySnapshot(s.ctx)
+		h.cursor = cursor
+		if err != nil {
+			return page, err
+		}
+	}
+	if h.catalogRead == nil || h.cursor != cursor {
+		h.close()
+		return page, errors.New("设备目录分页已失效，请重新读取")
+	}
+	part, next, err := h.catalogRead.CatalogPage(cursor)
+	if err != nil || next == nil {
+		h.close()
+	} else {
+		h.cursor = *next
+	}
+	return protocol.SnapshotPage{Catalog: &part, Cursor: next}, err
 }

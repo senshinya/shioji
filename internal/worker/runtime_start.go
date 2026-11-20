@@ -33,8 +33,14 @@ func (s *Server) stopInitializing(id string, start *runtimeStart) error {
 	if err := start.scope.Detach(); err != nil {
 		return err
 	}
-	if err := s.store.StopInitializing(id); err != nil {
+	revoked, err := s.store.CancelPreparedInputs(id, "")
+	if err != nil {
 		return err
+	}
+	if len(revoked) == 0 {
+		if err := s.store.StopInitializing(id); err != nil {
+			return err
+		}
 	}
 	s.cancelRuntimeStart(id, start)
 	s.wg.Add(1)

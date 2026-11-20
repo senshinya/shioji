@@ -21,6 +21,9 @@ type pending struct {
 	decisions   map[string]json.RawMessage
 	permissions json.RawMessage
 }
+
+const turnErrorJSONLimit = 32 << 10
+
 type Normalizer struct {
 	manualCompaction  map[string]bool
 	goalContinuations map[string]*goalContinuation
@@ -198,7 +201,7 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 			n.usage[t.ID] = usage
 		}
 		if p.Turn.Error != nil {
-			t.Error = bounded(p.Turn.Error.Message)
+			t.Error = boundedJSONText(p.Turn.Error.Message, turnErrorJSONLimit)
 		}
 		if m.Method == "turn/completed" && n.usage[p.Turn.ID].phase == usageObserved {
 			base := n.usage[t.ID].baseline
@@ -405,6 +408,19 @@ func (n *Normalizer) Response(answer domain.Answer) ([]byte, error) {
 	p.request.Receipt = requestReceipt(p.request, answer)
 	return out, nil
 }
+func (n *Normalizer) retryUnwrittenAnswer(answer domain.Answer) (domain.PendingRequest, bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	p := n.requests[answer.RequestID]
+	if p == nil || p.request.State != domain.RequestSubmitting || answer.Revision != p.request.Revision {
+		return domain.PendingRequest{}, false
+	}
+	p.request.State = domain.RequestPending
+	p.request.Revision++
+	p.request.Receipt = nil
+	return p.request, true
+}
+
 func (n *Normalizer) Pending(key string) (domain.PendingRequest, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()

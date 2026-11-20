@@ -38,7 +38,7 @@ const (
 )
 
 func (v *View) beginSendMotion(in domain.Submission) *sentMessageMotion {
-	s := &sentMessageMotion{input: "input:" + in.OperationID, origin: in.SessionID, epoch: v.Model.ConnectionEpoch, workspace: in.WorkspaceID, composerSource: v.composerBounds}
+	s := &sentMessageMotion{input: "input:" + in.OperationID, origin: in.SessionID, epoch: v.Model.ConversationGeneration(), workspace: in.WorkspaceID, composerSource: v.composerBounds}
 	if v.inputBounds.W > 0 {
 		// Align the bubble text with the draft text, accounting for their
 		// respective 16/12 px bubble and 9/0 px input insets.
@@ -69,16 +69,11 @@ func (v *View) beginPresentedSend(in domain.Submission, turn string) *sentMessag
 }
 
 func (v *View) presentedSendError(m *app.Model, in domain.Submission, err error) {
-	if m.Resolved[in.OperationID] {
+	if !m.SubmissionError(in, err) {
 		return
 	}
-	m.SubmissionError(in, err)
-	if h := v.homeSend; h != nil && h.in.OperationID == in.OperationID {
-		if v.homeSendPending() {
-			h.state = domain.OperationIndeterminate
-		} else {
-			v.clearHomeSend()
-		}
+	if h := v.homeSend; h != nil && h.in.OperationID == in.OperationID && !v.homeSendPending() {
+		v.clearHomeSend()
 	}
 	if v.sent != nil && v.sent.input == "input:"+in.OperationID && !v.homeSendPending() {
 		v.sent = nil
@@ -94,7 +89,7 @@ func (v *View) syncSendMotion() {
 	if s.origin == "" && m.SessionID != "" && m.SessionID == s.session {
 		s.departed = true
 	}
-	if (s.departed && m.SessionID == "") || (m.ConnectionEpoch != s.epoch && v.homeSend == nil) || v.devices || (s.origin == "" && m.WorkspaceID != s.workspace) || (m.SessionID != s.origin && m.SessionID != s.session) {
+	if (s.departed && m.SessionID == "") || (m.ConversationGeneration() != s.epoch && v.homeSend == nil) || v.devices || (s.origin == "" && m.WorkspaceID != s.workspace) || (m.SessionID != s.origin && m.SessionID != s.session) {
 		v.sent = nil
 		return
 	}
@@ -217,7 +212,7 @@ func (v *View) syncSessionEntry() {
 	}
 	m := v.Model
 	home := m.SessionID == "" && m.WorkspaceID == s.workspace && !s.entered
-	if (!home && m.SessionID != s.session) || m.ConnectionEpoch != s.epoch || v.devices || v.reduceMotion {
+	if (!home && m.SessionID != s.session) || m.ConversationGeneration() != s.epoch || v.devices || v.reduceMotion {
 		v.sessionEntry = nil
 		return
 	}
@@ -392,7 +387,7 @@ func (v *View) homeSendRows(rows []transcriptRow) []transcriptRow {
 	if h.state == domain.OperationConfirmed || v.Model.Details[v.Model.SessionID].Session.Status == domain.ExecutionRunning {
 		label = "进行中"
 	}
-	if h.state == domain.OperationIndeterminate {
+	if h.state == domain.OperationIndeterminate || v.Model.UncertainSubmissions[h.in.OperationID] {
 		label = "发送结果待核实"
 	}
 	if !v.Model.Connected {

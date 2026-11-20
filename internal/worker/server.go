@@ -48,6 +48,8 @@ type EventsQuery = protocol.EventsQuery
 type EventPage = protocol.EventPage
 type AnswerInput = protocol.AnswerInput
 type Server struct {
+	inputReceiptMu       sync.Mutex
+	inputReceipts        map[string]int
 	runtimeStarts        map[string]*runtimeStart
 	drainMu              sync.Mutex
 	drainOperation       string
@@ -336,7 +338,7 @@ func (s *Server) serveConnection(conn net.Conn) {
 	if authorizeLocal(conn) != nil {
 		return
 	}
-	codec, epoch, err := protocol.Welcome(conn, s.store.DeviceID(), s.build)
+	codec, epoch, err := protocol.WelcomeWorker(conn, s.store.DeviceID(), s.store.Generation(), s.build)
 	if err != nil {
 		return
 	}
@@ -470,8 +472,11 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		}
 		return s.prepareWorkerUpdate(in)
 	}
-	// Long polls do not mutate state and must not hold up maintenance admission.
-	if method != "events" && method != "events.watch" {
+	// Connection recovery can observe the last committed state during a drain.
+	// These reads must not queue behind a mutation waiting for another session.
+	switch method {
+	case "events", "events.watch", "snapshot", "readiness", "operation", "operations", "device.health":
+	default:
 		s.maintenance.RLock()
 		defer s.maintenance.RUnlock()
 		if err := s.updateAdmission(); err != nil {
@@ -775,13 +780,31 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		}
 		return s.store.HistoryMatches(q)
 	case "operation":
-		q, err := decode[struct {
-			ID string `json:"id"`
-		}](body)
+		q, err := decode[protocol.OperationQuery](body)
 		if err != nil {
 			return nil, err
 		}
-		return s.store.Operation(q.ID)
+		return s.inputReceipt(q)
+	case "operations":
+		q, err := decode[protocol.OperationBatchQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		if len(q.Operations) > 8 {
+			return nil, errors.New("too many operation receipts")
+		}
+		var receipts []domain.Operation
+		for _, lookup := range q.Operations {
+			op, err := s.inputReceipt(lookup)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			receipts = append(receipts, op)
+		}
+		return receipts, nil
 	case "session.reload", "session.reload.operation":
 		in, err := decode[domain.SessionReloadRequest](body)
 		if err != nil {
@@ -836,15 +859,19 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 			case <-timer.C:
 			}
 		}
+		head, err := s.store.JournalSequence()
+		if err != nil {
+			return nil, err
+		}
 		events, err := s.store.Events(q.After, 100)
 		if err != nil {
 			return nil, err
 		}
-		page := EventPage{Generation: q.Generation}
+		page := EventPage{Generation: q.Generation, Sequence: head}
 		size := 0
 		for _, e := range events {
 			b, _ := json.Marshal(e)
-			if size+len(b) > 768<<10 {
+			if e.Sequence > head || size+len(b) > 768<<10 {
 				break
 			}
 			size += len(b)
@@ -987,13 +1014,14 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		return nil, s.respondRequest(in)
 	case "turn.interrupt":
 		in, err := decode[struct {
-			SessionID string `json:"sessionId"`
-			TurnID    string `json:"turnId"`
+			SessionID   string `json:"sessionId"`
+			TurnID      string `json:"turnId"`
+			OperationID string `json:"operationId,omitempty"`
 		}](body)
 		if err != nil {
 			return nil, err
 		}
-		return nil, s.interruptTurn(in.SessionID, in.TurnID)
+		return nil, s.interruptTurn(in.SessionID, in.TurnID, in.OperationID)
 
 	default:
 		return nil, errors.New("unsupported worker command")
@@ -1037,20 +1065,20 @@ func (s *Server) submit(in domain.Submission) (domain.Operation, error) {
 	if in.OperationID == "" || len(in.OperationID) > 256 || in.ValidateContent() != nil {
 		return domain.Operation{}, errors.New("submission requires an operation ID and nonempty bounded text")
 	}
+	defer s.beginInputReceipt(in.OperationID)()
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
 	return s.submitLocked(in, 0, false)
 }
-func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immediate bool) (domain.Operation, error) {
+func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immediate bool) (_ domain.Operation, failure error) {
 	if err := s.waitSessionTransition(s.ctx, in.SessionID); err != nil {
 		return domain.Operation{}, err
 	}
 	if err := s.updateAdmission(); err != nil {
 		return domain.Operation{}, err
 	}
-	existing, err := s.store.Operation(in.OperationID)
+	_, err := s.store.Operation(in.OperationID)
 	if err == nil {
-		_ = existing
 		if queueRevision > 0 {
 			return s.store.AcceptQueued(in, queueRevision)
 		}
@@ -1058,6 +1086,24 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return domain.Operation{}, err
+	}
+	if err := store.CheckSubmissionJournal(in); err != nil {
+		return domain.Operation{}, err
+	}
+	if in.SessionID == "" && in.Git.Branch != "" && !in.Git.NewWorktree {
+		if warning, e := s.store.SubmissionGitWarning(in.OperationID); e != nil {
+			return domain.Operation{}, e
+		} else if warning != "" {
+			return domain.Operation{}, errors.New(warning)
+		}
+		defer func() {
+			if failure == nil {
+				return
+			}
+			if warning, e := s.store.SubmissionGitWarning(in.OperationID); e == nil && warning != "" {
+				failure = fmt.Errorf("%s %w", warning, failure)
+			}
+		}()
 	}
 	if in.SessionID != "" {
 		if err = s.cleanRuntimeRetirements(in.SessionID); err != nil {
@@ -1099,25 +1145,17 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 	if in.Continue && !catalog.Readiness().Capabilities.Continue {
 		return domain.Operation{}, harness.Unsupported("continue")
 	}
-	snapshot, err := s.store.Snapshot()
+	workspace, err := s.store.Workspace(in.WorkspaceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Operation{}, errors.New("workspace unavailable")
+	}
 	if err != nil {
 		return domain.Operation{}, err
 	}
-	var paths []string
-	found := false
-	for _, w := range snapshot.Workspaces {
-		if w.ID == in.WorkspaceID {
-			if w.Archived {
-				return domain.Operation{}, errors.New("请先恢复工作区")
-			}
-			paths = w.Folders
-			found = true
-			break
-		}
+	if workspace.Archived {
+		return domain.Operation{}, errors.New("请先恢复工作区")
 	}
-	if !found {
-		return domain.Operation{}, errors.New("workspace unavailable")
-	}
+	paths := workspace.Folders
 	if in.Continue && in.SessionID == "" {
 		return domain.Operation{}, errors.New("继续需要原会话标识")
 	}
@@ -1245,7 +1283,7 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 		runtime, startErr := s.sessionRuntime(ctx, op.SessionID)
 		cancel()
 		if startErr != nil && !errors.Is(startErr, errRuntimeStartCancelled) {
-			s.failRuntimeLaunch(op, in, startErr)
+			s.failRuntimeLaunch(op, startErr)
 		}
 		s.dispatchMu.Unlock()
 		if startErr == nil {
@@ -1268,9 +1306,6 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 	defer s.wakeQueue()
 	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
 	defer cancel()
-	if err := s.store.SetOperation(op.ID, "dispatched", ""); err != nil {
-		return
-	}
 	detail, err := s.store.Session(op.SessionID, 0, 1)
 	if err != nil {
 		return
@@ -1290,12 +1325,14 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 	type result struct {
 		session domain.Session
 		turnID  string
+		handed  bool
 		err     error
 	}
 	settled := make(chan result, 1)
 	go func(session domain.Session) {
 		var turnID string
 		var err error
+		handed := false
 		if !gate.Load() {
 			err = errRuntimeRetired
 		} else if session.ThreadID == "" {
@@ -1316,8 +1353,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 			}
 			if err == nil {
 				err = gate.apply(func() error {
-					_, e := s.store.Apply(session.ID, domain.Event{Type: "session", Session: &session})
-					return e
+					return s.store.BindPreparedInput(op.ID, session)
 				})
 			}
 			if err == nil && session.Origin != nil {
@@ -1345,12 +1381,15 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 					s.bound[session.ID] = true
 					s.mu.Unlock()
 					if runtime.ManagedCoverage() {
-						return s.coverOperation(session.ID, op.ID)
+						if err := s.coverOperation(session.ID, op.ID); err != nil {
+							return err
+						}
 					}
-					return nil
+					return s.store.BeginInputHandoff(op.ID)
 				})
 			}
 			if err == nil {
+				handed = true
 				if in.GoalObjective != "" {
 					err = s.startGoal(ctx, runtime, session, in.GoalObjective, gate)
 				} else {
@@ -1358,12 +1397,13 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 				}
 			}
 		}
-		settled <- result{session: session, turnID: turnID, err: err}
+		settled <- result{session: session, turnID: turnID, handed: handed, err: err}
 	}(session)
 	var turnID string
+	var handed bool
 	select {
 	case out := <-settled:
-		session, turnID, err = out.session, out.turnID, out.err
+		session, turnID, handed, err = out.session, out.turnID, out.handed, out.err
 	case <-gate.done:
 		err = errRuntimeRetired
 	}
@@ -1371,54 +1411,25 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 
 	s.dispatchMu.Lock()
 	locked = true
-	if errors.Is(err, errRuntimeRetired) {
+	if errors.Is(err, errRuntimeRetired) || errors.Is(err, store.ErrInputHandoffRevoked) {
 		return
 	}
 	if current := s.currentRuntime(session.ID); current == nil || current.Done() != runtime.Done() {
 		return // The retired owner cannot settle a successor's execution.
 	}
-	if runtime.Stopped() {
+	if handed && err != nil && runtime.Stopped() && !harness.IsRejected(err) {
 		err = &harness.DeliveryError{Uncertain: true, Message: "运行环境已结束，输入结果待核对；不会自动重发"}
 	}
-	outcome := domain.DeliveryOutcome(err != nil, harness.IsUncertain(err))
-	state, delivery := outcome.Operation, outcome.Input
-	if err != nil {
-		s.reportRuntimeSetup(session.ID, runtime, err)
-		if _, e := s.store.PauseQueue(session.ID, err.Error()); e != nil {
-			s.cancel()
-			return
-		}
-		session.Status = outcome.Execution
-		if state == "indeterminate" {
-			defer s.wakeRecovery()
-		}
-		session.Error = err.Error()
-		if _, writeErr := s.store.Apply(session.ID, domain.Event{Type: "session", Session: &session}); writeErr != nil {
-			return
-		}
-	}
+	outcome := domain.DeliveryOutcome(err != nil, handed && harness.IsUncertain(err))
 	message := ""
 	if err != nil {
+		s.reportRuntimeSetup(session.ID, runtime, err)
 		message = err.Error()
 	}
-	if err = s.store.SetOperation(op.ID, state, message); err != nil {
-		return
+	if outcome.Operation == domain.OperationIndeterminate {
+		defer s.wakeRecovery()
 	}
-	// Queue failures retain their original input outside sent history.
-	if state != "confirmed" {
-		q, e := s.store.Queue(session.ID)
-		if e != nil {
-			return
-		}
-		for _, item := range q.Items {
-			if item.Input.OperationID == op.ID {
-				return
-			}
-		}
-	}
-	// Update the existing accepted input; a wire userMessage never creates a duplicate.
-	_, err = s.store.Apply(session.ID, domain.Event{Type: "item.upsert", Item: &domain.Item{ID: "input:" + op.ID, TurnID: turnID, Kind: "user", ReferencePositions: in.ReferencePositions, Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Final: true, Status: delivery}})
-	if err != nil {
+	if err = s.store.CompleteInput(op.ID, outcome, message, turnID); err != nil && !errors.Is(err, store.ErrInputHandoffRevoked) {
 		s.cancel()
 	}
 }

@@ -343,5 +343,5 @@ func (s *Store) openHistorySnapshot(ctx context.Context) (*Store, func(), error)
 		db.Close()
 		return nil, nil, err
 	}
-	return &Store{generation: s.generation, historyReader: historyTransaction{ctx, tx}}, func() { tx.Rollback(); db.Close() }, nil
+	return &Store{deviceID: s.deviceID, generation: s.generation, historyReader: historyTransaction{ctx, tx}}, func() { tx.Rollback(); db.Close() }, nil
 }

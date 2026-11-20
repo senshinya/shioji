@@ -44,6 +44,7 @@ type EventsQuery struct {
 	WaitMS     int    `json:"waitMs,omitempty"`
 }
 type EventPage struct {
+	Sequence   int64          `json:"sequence,omitempty"`
 	Generation string         `json:"generation"`
 	Events     []domain.Event `json:"events"`
 }

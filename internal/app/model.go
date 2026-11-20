@@ -33,6 +33,7 @@ type Model struct {
 	ArchivePolicyChanges       map[string]ArchivePolicyChange
 	Feedbacks                  []Feedback
 	UncertainSubmissions       map[string]bool
+	submissionAccepted         map[string]bool
 	PortForwards               []portforward.Mapping
 	HistoryReads               map[string]*HistoryRead
 	HistoryOutlines            map[string]domain.HistoryOutline
@@ -84,6 +85,7 @@ type Model struct {
 	LocalDeviceID              string
 	DeviceStates               map[string]*DeviceState
 	PendingDevices             map[string]string
+	pendingGenerations         map[string]string
 	WorkerMinor                int
 	QueueExpanded              map[string]bool
 	QueueEdits                 map[string]QueueEdit
@@ -117,7 +119,7 @@ type Model struct {
 }
 
 func NewModel() *Model {
-	return &Model{RemotePathUploads: map[string]bool{}, startedAt: time.Now(), completionCutoffs: map[string]time.Time{}, completionReads: map[string]string{}, HistoryAnchors: map[string]string{}, HistoryOpenings: map[string]bool{}, HistoryReads: map[string]*HistoryRead{}, HistoryOutlines: map[string]domain.HistoryOutline{}, homeDefaultsPending: true, WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{CollapseLatestTools: true}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{RemotePathUploads: map[string]bool{}, startedAt: time.Now(), completionCutoffs: map[string]time.Time{}, completionReads: map[string]string{}, HistoryAnchors: map[string]string{}, HistoryOpenings: map[string]bool{}, HistoryReads: map[string]*HistoryRead{}, HistoryOutlines: map[string]domain.HistoryOutline{}, homeDefaultsPending: true, WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{CollapseLatestTools: true}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, pendingGenerations: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {
@@ -298,8 +300,39 @@ func (m *Model) beginSubmission(method string) (domain.Submission, error) {
 	}
 	m.Pending[in.OperationID] = in
 	m.PendingDevices[in.OperationID] = m.ConnectionID()
+	if (method == "session.submit" || method == "turn.steer" || method == "turn.enqueue") && m.WorkerMinor >= protocol.RecoveryMinor && m.Snapshot.Generation != "" {
+		m.pendingGenerations[in.OperationID] = m.Snapshot.Generation
+	}
 	return in, nil
 }
+
+// Missing receipts can only be settled by the original submission journal.
+// Older saved drafts carry no such proof and are still looked up read-only.
+func (m *Model) SubmissionReceiptQuery(id string) protocol.OperationQuery {
+	q := protocol.OperationQuery{ID: id}
+	if m.WorkerMinor >= protocol.RecoveryMinor && m.pendingGenerations[id] == m.Snapshot.Generation {
+		q.SealGeneration = m.pendingGenerations[id]
+	}
+	return q
+}
+
+func (m *Model) RestoredSubmissionQueries() map[string][]protocol.OperationQuery {
+	byDevice := map[string][]protocol.OperationQuery{}
+	for id, connection := range m.PendingDevices {
+		if connection == "" {
+			connection = "local"
+		}
+		byDevice[connection] = append(byDevice[connection], protocol.OperationQuery{ID: id, SealGeneration: m.pendingGenerations[id]})
+	}
+	for id := range m.Pending {
+		if _, hasOwner := m.PendingDevices[id]; hasOwner {
+			continue
+		}
+		byDevice["local"] = append(byDevice["local"], protocol.OperationQuery{ID: id, SealGeneration: m.pendingGenerations[id]})
+	}
+	return byDevice
+}
+
 func (m *Model) Accepted(in domain.Submission, op domain.Operation) {
 	if m.Resolved[op.ID] {
 		return
@@ -318,11 +351,22 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		}
 		delete(m.Pending, op.ID)
 		delete(m.PendingDevices, op.ID)
+		delete(m.pendingGenerations, op.ID)
 		delete(m.UncertainSubmissions, op.ID)
+		delete(m.submissionAccepted, op.ID)
 		m.Resolved[op.ID] = true
 		return
 	}
 	if m.sourceConnection != "" && op.SessionID != "" && !m.ownsSession(op.SessionID) {
+		// A receipt query can overtake the journal's creation of an owned
+		// session. Record acceptance without selecting an unpublished session.
+		if in, ok := m.Pending[op.ID]; ok && in.SessionID == "" && m.ownsWorkspace(in.WorkspaceID) && !m.sessionOnOtherDevice(m.sourceConnection, op.SessionID) {
+			switch op.State {
+			case domain.OperationAccepted, domain.OperationDispatched, domain.OperationConfirmed:
+				m.noteSubmissionAccepted(op.ID)
+			}
+			return
+		}
 		m.scopeFailure(errors.New("设备提交回执不属于本设备"))
 		return
 	}
@@ -335,7 +379,14 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		m.scopeFailure(errors.New("提交回执与本设备的原始请求不一致"))
 		return
 	}
-	if op.State == "confirmed" {
+	if op.State == domain.OperationAccepted || op.State == domain.OperationDispatched {
+		for _, current := range m.Snapshot.Operations {
+			if current.ID == op.ID && current.State.ReceiptObserved() {
+				return
+			}
+		}
+		m.noteSubmissionAccepted(op.ID)
+	} else if op.State == "confirmed" {
 		if m.UncertainSubmissions[op.ID] {
 			m.ReportFeedback(Feedback{ID: op.ID, ConnectionID: m.PendingDevices[op.ID], WorkspaceID: in.WorkspaceID, SessionID: in.SessionID, Kind: FeedbackSuccess, Title: "已核对提交结果", Body: "已确认消息已被接纳。"})
 		}
@@ -355,6 +406,8 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		}
 		delete(m.Pending, op.ID)
 		delete(m.PendingDevices, op.ID)
+		delete(m.pendingGenerations, op.ID)
+		delete(m.submissionAccepted, op.ID)
 		m.Resolved[op.ID] = true
 		m.Error = ""
 	} else if op.State == "rejected" || op.State == "abandoned" {
@@ -362,11 +415,17 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 			m.retainRejectedDraft(in)
 		}
 		if m.UncertainSubmissions[op.ID] {
-			m.ReportFeedback(Feedback{ID: op.ID, ConnectionID: m.PendingDevices[op.ID], WorkspaceID: in.WorkspaceID, SessionID: in.SessionID, Title: "本次提交未被接纳", Body: "原文与附件已保留。", Details: op.Error})
+			title := "本次提交未被接纳"
+			if op.State == domain.OperationRejected && op.SessionID != "" {
+				title = "消息未送达 Agent"
+			}
+			m.ReportFeedback(Feedback{ID: op.ID, ConnectionID: m.PendingDevices[op.ID], WorkspaceID: in.WorkspaceID, SessionID: in.SessionID, Title: title, Body: "原文与附件已保留。", Details: op.Error})
 		}
 		delete(m.UncertainSubmissions, op.ID)
 		delete(m.Pending, op.ID)
 		delete(m.PendingDevices, op.ID)
+		delete(m.pendingGenerations, op.ID)
+		delete(m.submissionAccepted, op.ID)
 		m.Resolved[op.ID] = true
 		m.Error = op.Error
 	} else if op.State == "indeterminate" {
@@ -418,7 +477,20 @@ func (m *Model) ApplySnapshot(snapshot domain.Snapshot, requestedAt ...time.Time
 		m.ApplyOperation(op)
 	}
 }
-func (m *Model) ApplyEvent(e domain.Event) error {
+func (m *Model) ConversationGeneration() string {
+	return conversationGeneration(m.Snapshot, m.ConnectionEpoch)
+}
+
+func conversationGeneration(snapshot domain.Snapshot, epoch string) string {
+	if snapshot.Generation == "" {
+		return epoch
+	}
+	return snapshot.DeviceID + ":" + snapshot.Generation
+}
+
+func (m *Model) ApplyEvent(e domain.Event) error { return m.applyEvent(e, true) }
+
+func (m *Model) applyEvent(e domain.Event, live bool) error {
 	if e.Sequence <= m.Sequence {
 		return nil
 	}
@@ -456,7 +528,10 @@ func (m *Model) ApplyEvent(e domain.Event) error {
 			m.HistoryOutlines[e.SessionID] = outline
 		}
 	}
-	notice := m.notificationForEvent(e)
+	var notice *SessionNotification
+	if live {
+		notice = m.notificationForEvent(e)
+	}
 	m.observeCompletedReply(e)
 	if e.Workspace != nil {
 		found := false
@@ -643,6 +718,7 @@ type savedState struct {
 	Connections                []DeviceConnection                         `json:"connections,omitempty"`
 	ActiveConnection           string                                     `json:"activeConnection,omitempty"`
 	PendingDevices             map[string]string                          `json:"pendingDevices,omitempty"`
+	PendingGenerations         map[string]string                          `json:"pendingGenerations,omitempty"`
 	QueueExpanded              map[string]bool                            `json:"queueExpanded,omitempty"`
 	QueueEdits                 map[string]QueueEdit                       `json:"queueEdits,omitempty"`
 	DeviceID                   string                                     `json:"deviceId"`
@@ -773,6 +849,9 @@ func (m *Model) Load(path string) error {
 	if saved.PendingDevices != nil {
 		m.PendingDevices = saved.PendingDevices
 	}
+	if saved.PendingGenerations != nil {
+		m.pendingGenerations = saved.PendingGenerations
+	}
 	m.WorkspaceID = saved.WorkspaceID
 	if saved.Drafts != nil {
 		m.Drafts = saved.Drafts
@@ -799,14 +878,35 @@ func (m *Model) Load(path string) error {
 	return nil
 }
 
-func (m *Model) SubmissionError(in domain.Submission, err error) {
+const submissionUncertainMessage = "提交结果待核实，草稿已保留"
+
+func (m *Model) noteSubmissionAccepted(id string) {
+	delete(m.pendingGenerations, id)
+	if m.submissionAccepted == nil {
+		m.submissionAccepted = map[string]bool{}
+	}
+	m.submissionAccepted[id] = true
+	if m.UncertainSubmissions[id] {
+		delete(m.UncertainSubmissions, id)
+		m.Feedbacks = slices.DeleteFunc(m.Feedbacks, func(f Feedback) bool { return f.ID == id && f.Kind == FeedbackSubmissionUncertain })
+		if m.Error == submissionUncertainMessage {
+			m.Error = ""
+		}
+	}
+}
+
+func (m *Model) SubmissionError(in domain.Submission, err error) bool {
+	if _, pending := m.Pending[in.OperationID]; !pending || m.submissionAccepted[in.OperationID] {
+		return false
+	}
 	var remote *protocol.RemoteError
 	if errors.As(err, &remote) {
 		m.Reject(in, err.Error())
 	} else {
 		m.markSubmissionUncertain(in)
-		m.Error = "提交结果待核实，草稿已保留"
+		m.Error = submissionUncertainMessage
 	}
+	return true
 }
 
 func (m *Model) SetGitStatus(key string, status domain.GitStatus) {

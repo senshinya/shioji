@@ -206,14 +206,10 @@ func TestHydrationReplaysFinalizationBetweenPageReads(t *testing.T) {
 	}
 }
 func TestReconciliationRetainsQueriesThatDidNotReachWorker(t *testing.T) {
-	ids := map[string]bool{"op": true}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := reconcileOperations(ctx, nil, ids, func(Update) {}); err == nil {
-		t.Fatal("disconnected reconciliation pretended to finish")
-	}
-	if !ids["op"] {
-		t.Fatal("unconfirmed query was forgotten")
+	if receipts, err := reconcileOperations(ctx, nil, []protocol.OperationQuery{{ID: "op"}}); err == nil || len(receipts) != 0 {
+		t.Fatal("disconnected reconciliation invented a receipt", receipts, err)
 	}
 }
 

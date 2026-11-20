@@ -37,6 +37,14 @@ func TestLodyMechanismNativePendingMustSurviveLocalCancellation(t *testing.T) {
 	if adapter.PendingOperations() != 1 {
 		t.Fatalf("native request has no reply, but local cancellation removed pending ownership: pending=%d err=%v", adapter.PendingOperations(), err)
 	}
+	native.settleTurnActivity(wire.Message{Method: "turn/completed", Params: []byte(`{"threadId":"thread","turn":{"id":"another-turn"}}`)})
+	if adapter.PendingOperations() != 1 {
+		t.Fatal("an unrelated turn released an unknown native operation")
+	}
+	native.settleTurnActivity(wire.Message{Method: "turn/completed", Params: []byte(`{"threadId":"thread","turn":{"id":"turn"}}`)})
+	if adapter.PendingOperations() != 0 {
+		t.Fatal("the matching terminal turn did not release native activity")
+	}
 }
 
 func TestLodyMechanismCloseMustRespectCancelledBudget(t *testing.T) {

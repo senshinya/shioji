@@ -189,6 +189,11 @@ type DeliveryError struct {
 func (e *DeliveryError) Error() string { return e.Message }
 func IsUncertain(err error) bool       { var e *DeliveryError; return errors.As(err, &e) && e.Uncertain }
 
+func IsRejected(err error) bool {
+	var delivery *DeliveryError
+	return errors.As(err, &delivery) && !delivery.Uncertain
+}
+
 type UnsupportedError struct{ Capability string }
 
 func (e *UnsupportedError) Error() string {

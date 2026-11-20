@@ -172,7 +172,7 @@ func TestAddingRouteRetainsPendingOperationQueries(t *testing.T) {
 	v.finishSSHSetup(app.DeviceSetupCheck{Info: transport.WorkerInfo{DeviceID: "B", Worker: "/worker"}})
 	job := welcomeJob(t, c, "$device.configure")
 	in := job.Input.(app.ConfigureDevice)
-	if len(in.Pending) != 1 || in.Pending[0] != "operation" {
+	if len(in.Pending) != 1 || in.Pending[0].ID != "operation" {
 		t.Fatal("adding a route lost pending-operation queries", in.Pending)
 	}
 }

@@ -11,11 +11,15 @@ import (
 )
 
 func (s *Store) queueLocked(id string) (domain.QueueState, error) {
-	q, err := load[domain.QueueState](s.historyQueries().QueryRow("SELECT body FROM queues WHERE session_id=?", id))
+	return readQueue(s.historyQueries(), id)
+}
+
+func readQueue(q interface{ QueryRow(string, ...any) *sql.Row }, id string) (domain.QueueState, error) {
+	state, err := load[domain.QueueState](q.QueryRow("SELECT body FROM queues WHERE session_id=?", id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.QueueState{SessionID: id, Items: []domain.QueueItem{}}, nil
 	}
-	return q, err
+	return state, err
 }
 func (s *Store) Queue(id string) (domain.QueueState, error) {
 	s.mu.Lock()
@@ -189,22 +193,27 @@ func (s *Store) RemoveQueue(sid, id string, revision int64) (domain.QueueState, 
 func (s *Store) PauseQueue(sid, reason string) (domain.QueueState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	q, err := s.queueLocked(sid)
-	if err != nil || q.Paused {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return domain.QueueState{}, err
+	}
+	defer tx.Rollback()
+	q, changed, err := pauseQueue(tx, sid, reason)
+	if err != nil || !changed {
 		return q, err
+	}
+	return q, s.commit(tx)
+}
+
+func pauseQueue(tx *sql.Tx, sid, reason string) (domain.QueueState, bool, error) {
+	q, err := readQueue(tx, sid)
+	if err != nil || q.Paused {
+		return q, false, err
 	}
 	q.Paused = true
 	q.Reason = reason
 	q.Revision++
-	tx, err := s.db.Begin()
-	if err != nil {
-		return q, err
-	}
-	defer tx.Rollback()
-	if err = putQueue(tx, q); err != nil {
-		return q, err
-	}
-	return q, s.commit(tx)
+	return q, true, putQueue(tx, q)
 }
 func (s *Store) ContinueQueue(sid string, revision int64) (domain.QueueState, error) {
 	return s.changeQueue(sid, revision, func(q *domain.QueueState) error {
@@ -299,13 +308,13 @@ func (s *Store) acceptSteerLocked(in domain.Submission, turn string, revision in
 	if session.WorkspaceID != in.WorkspaceID || session.Status != "running" || session.ContextChanged || active.Status != "running" {
 		return none, errors.New("turn is no longer active")
 	}
-	op = domain.Operation{ID: in.OperationID, SessionID: in.SessionID, State: "accepted", Digest: digest}
+	op = domain.Operation{ID: in.OperationID, SessionID: in.SessionID, State: "accepted", Digest: digest, Kind: steerSubmissionKind}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return none, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec("INSERT INTO operations(id,session_id,state,digest) VALUES(?,?,?,?)", op.ID, op.SessionID, op.State, digest); err != nil {
+	if _, err = tx.Exec("INSERT INTO operations(id,session_id,state,digest,kind) VALUES(?,?,?,?,?)", op.ID, op.SessionID, op.State, digest, op.Kind); err != nil {
 		return none, err
 	}
 	var item *domain.Item
@@ -409,4 +418,35 @@ func (s *Store) ReorderQueue(sid, id, before string, revision int64) (domain.Que
 		q.Items[to] = item
 		return nil
 	})
+}
+
+// Read only the eligible IDs. Archived history and paused queues are outside
+// the automatic dispatch scan; submitLocked still checks the current revision.
+func (s *Store) ReadyQueueSessions() ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.Query(`SELECT s.id FROM sessions s JOIN queues q ON q.session_id=s.id
+		JOIN workspaces w ON w.id=json_extract(s.body,'$.workspaceId')
+		WHERE json_extract(s.body,'$.status') IN ('idle','completed','interrupted','failed','abandoned')
+		AND COALESCE(json_extract(w.body,'$.archived'),0)=0
+		AND COALESCE(json_extract(s.body,'$.archived'),0)=0
+		AND COALESCE(json_extract(s.body,'$.goal.state'),'') <>'active'
+		AND COALESCE(json_extract(q.body,'$.paused'),0)=0 AND json_array_length(json_extract(q.body,'$.items'))>0
+		AND COALESCE(json_extract(q.body,'$.items[0].state'),'')=''
+		AND NOT EXISTS(SELECT 1 FROM operations o WHERE o.session_id=s.id AND o.state IN ('accepted','dispatched','indeterminate'))
+		AND NOT EXISTS(SELECT 1 FROM requests r WHERE r.session_id=s.id AND json_extract(r.body,'$.state') IN ('pending','submitting'))
+		ORDER BY s.rowid`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }

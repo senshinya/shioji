@@ -51,7 +51,13 @@ const Major = 2
 // Minor 49 adds atomic Hook approval of multiple reviewed definitions.
 // Minor 50 adds device-owned schedules and durable run receipts.
 // Minor 51 adds owning-worker goals and durable goal control receipts.
-const Minor = 51
+// Minor 52 adds coherent paged snapshots and a terminal receipt for unreceived input.
+// Minor 53 adds bounded catalog projections and batched operation lookup.
+const Minor = 53
+
+const CatalogMinor = 53
+
+const RecoveryMinor = 52
 
 const GoalMinor = 51
 
@@ -72,6 +78,7 @@ type Frame struct {
 	Minor            int                 `json:"minor,omitempty"`
 	Nonce            string              `json:"nonce,omitempty"`
 	DeviceID         string              `json:"deviceId,omitempty"`
+	Generation       string              `json:"generation,omitempty"`
 	Epoch            string              `json:"epoch,omitempty"`
 	ID               string              `json:"id,omitempty"`
 	Method           string              `json:"method,omitempty"`
@@ -142,6 +149,7 @@ type Client struct {
 	conn             net.Conn
 	codec            *Codec
 	DeviceID, Epoch  string
+	Generation       string
 	Minor            int
 }
 
@@ -208,6 +216,7 @@ func Connect(ctx context.Context, conn net.Conn, target string) (*Client, error)
 	}
 	client.DeviceID = f.DeviceID
 	client.Epoch = f.Epoch
+	client.Generation = f.Generation
 	client.Minor = f.Minor
 	client.TCPStreamVersion = f.TCPStreamVersion
 	client.Worker = f.Worker
@@ -257,6 +266,16 @@ func (c *Client) Call(ctx context.Context, method string, in, out any) error {
 
 // Welcome verifies a fresh connection. Authorization of the underlying transport precedes this.
 func Welcome(conn net.Conn, deviceID string, build ...domain.WorkerBuild) (*Codec, string, error) {
+	return welcome(conn, deviceID, "", build)
+}
+
+// WelcomeWorker carries the worker's journal generation independently of the
+// command connection epoch. Older peers can continue to verify it by snapshot.
+func WelcomeWorker(conn net.Conn, deviceID, generation string, build domain.WorkerBuild) (*Codec, string, error) {
+	return welcome(conn, deviceID, generation, []domain.WorkerBuild{build})
+}
+
+func welcome(conn net.Conn, deviceID, generation string, build []domain.WorkerBuild) (*Codec, string, error) {
 	conn.SetDeadline(time.Now().Add(10 * time.Second))
 	defer conn.SetDeadline(time.Time{})
 	c := NewCodec(conn, conn)
@@ -268,7 +287,7 @@ func Welcome(conn net.Conn, deviceID string, build ...domain.WorkerBuild) (*Code
 		return nil, "", errors.New("handshake rejected")
 	}
 	epoch := domain.NewID()
-	welcome := Frame{TCPStreamVersion: TCPStreamVersion, Type: "welcome", Major: Major, Minor: Minor, Nonce: hello.Nonce, DeviceID: deviceID, Epoch: epoch}
+	welcome := Frame{TCPStreamVersion: TCPStreamVersion, Type: "welcome", Major: Major, Minor: Minor, Nonce: hello.Nonce, DeviceID: deviceID, Epoch: epoch, Generation: generation}
 	if len(build) > 0 {
 		welcome.Worker = &build[0]
 	}
@@ -279,6 +298,15 @@ func Welcome(conn net.Conn, deviceID string, build ...domain.WorkerBuild) (*Code
 // ReadinessQuery scopes live runtime profiles to the client's two visible sessions.
 type ReadinessQuery struct {
 	SessionIDs []string `json:"sessionIds,omitempty"`
+}
+
+type OperationQuery struct {
+	ID             string `json:"id"`
+	SealGeneration string `json:"sealGeneration,omitempty"`
+}
+
+type OperationBatchQuery struct {
+	Operations []OperationQuery `json:"operations"`
 }
 
 type CompletionReadInput struct {

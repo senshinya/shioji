@@ -186,7 +186,7 @@ func TestRuntimeLaunchFailureKeepsInlineReferencePositions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.failRuntimeLaunch(op, in, errors.New("launcher unavailable"))
+	s.failRuntimeLaunch(op, errors.New("launcher unavailable"))
 	d, err := s.store.Session(op.SessionID, 0, 100)
 	if err != nil {
 		t.Fatal(err)

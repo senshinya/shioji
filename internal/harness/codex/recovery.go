@@ -86,7 +86,7 @@ func (r *Runtime) Inspect(ctx context.Context, s domain.Session) (domain.Recover
 				return domain.RecoveryHistory{}, errors.New("Codex 返回了未知的执行状态")
 			}
 			if src.Error != nil {
-				turn.Error = bounded(src.Error.Message)
+				turn.Error = boundedJSONText(src.Error.Message, turnErrorJSONLimit)
 			}
 			out.Turns = append(out.Turns, turn)
 			if turn.Status == "completed" {

@@ -123,9 +123,9 @@ func (v *View) rememberQueuedSource(item domain.QueueItem, bounds n.Rect) {
 }
 func (v *View) syncQueuedMotions() {
 	m := v.Model
-	if v.queueSourceSession != m.SessionID || v.queueSourceEpoch != m.ConnectionEpoch || v.devices {
+	if v.queueSourceSession != m.SessionID || v.queueSourceEpoch != m.ConversationGeneration() || v.devices {
 		v.queueSources = map[string]queuedMessageSource{}
-		v.queueSourceSession, v.queueSourceEpoch = m.SessionID, m.ConnectionEpoch
+		v.queueSourceSession, v.queueSourceEpoch = m.SessionID, m.ConversationGeneration()
 		v.queueArrivals = nil
 		v.queueDisplay = domain.QueueState{}
 	}
@@ -207,7 +207,7 @@ func queueInputObserved(detail domain.SessionDetail, source queuedMessageSource)
 
 func (v *View) queuedSendMotion(source queuedMessageSource) *sentMessageMotion {
 	m := v.Model
-	motion := &sentMessageMotion{input: "input:" + source.item.Input.OperationID, origin: m.SessionID, session: m.SessionID, epoch: m.ConnectionEpoch, workspace: m.WorkspaceID, queued: true, focused: true}
+	motion := &sentMessageMotion{input: "input:" + source.item.Input.OperationID, origin: m.SessionID, session: m.SessionID, epoch: m.ConversationGeneration(), workspace: m.WorkspaceID, queued: true, focused: true}
 	if r := source.bounds; r.W > 0 {
 		motion.source = n.Rect{X: r.X - 16, Y: r.Y - 12, W: r.W + 32, H: r.H + 24}
 	}
@@ -640,7 +640,7 @@ func (v *View) queueCommand(method string, in protocol.QueueInput) {
 		}
 		current := m.Details[sid].Queue
 		observed := pending.observed(current)
-		if method == "queue.send" && v.Model.SessionID == sid && v.queueSourceEpoch == pending.epoch {
+		if method == "queue.send" && v.Model.SessionID == sid && v.Model.ConnectionEpoch == pending.epoch {
 			if source, ok := v.queueSources[in.ID]; ok && err != nil {
 				observed = observed || queueInputObserved(m.Details[sid], source)
 				if !observed && source.preview != nil {

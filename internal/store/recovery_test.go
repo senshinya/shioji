@@ -141,7 +141,12 @@ func TestActiveSourceCannotBeManuallyEndedOrUnlockCheckout(t *testing.T) {
 	s := open(t)
 	w := workspace(t, s)
 	op, _ := s.Accept(domain.Submission{OperationID: "active", WorkspaceID: w.ID, Text: "work"})
-	s.Recover()
+	if err := s.SetOperation(op.ID, domain.OperationDispatched, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Recover(); err != nil {
+		t.Fatal(err)
+	}
 	d, _ := s.Session(op.SessionID, 0, 100)
 	_, err := s.Reconcile(op.SessionID, d.Session.Revision, domain.RecoveryHistory{State: "active"}, true)
 	if err == nil {
@@ -265,5 +270,28 @@ func TestIndeterminateReceiptImmediatelyMakesACompletedSessionRecoverable(t *tes
 	d, _ := s.Session(op.SessionID, 0, 100)
 	if d.Session.Status != "unknown" {
 		t.Fatal("late unknown receipt is invisible to automatic reconciliation", d.Session.Status)
+	}
+}
+
+func TestRestartRejectsAnAcceptedInputThatNeverReachedTheHarness(t *testing.T) {
+	s := open(t)
+	w := workspace(t, s)
+	in := domain.Submission{OperationID: "before-handoff", WorkspaceID: w.ID, Text: "keep the original message"}
+	op, err := s.Accept(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Recover(); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := s.Operation(op.ID)
+	if err != nil || receipt.State != domain.OperationRejected {
+		t.Fatalf("input that never reached the harness remained uncertain: %+v, %v", receipt, err)
+	}
+	d, err := s.Session(op.SessionID, 0, 100)
+	if err != nil || d.Session.Status != "failed" || len(d.Items) != 1 ||
+		d.Items[0].ID != "input:"+op.ID || d.Items[0].Text != in.Text ||
+		d.Items[0].Status != "failed" || d.Items[0].SentAt == nil {
+		t.Fatalf("restart lost or replaced the original message: %+v, %v", d, err)
 	}
 }

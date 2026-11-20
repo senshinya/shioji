@@ -26,15 +26,20 @@ func historyReadMethod(method string) bool {
 	return method == "session.history" || method == "session.outline" || method == "session.matches" || method == "session.work.history"
 }
 
-func (c *Controller) queueInitialHistory(parent context.Context, id, epoch, generation string, opening bool) context.CancelFunc {
+func (c *Controller) queueInitialHistory(parent context.Context, id, epoch, generation string, opening bool, resuming ...bool) context.CancelFunc {
 	ctx, cancel := context.WithCancel(parent)
 	r := &HistoryRead{Pending: true}
 	c.post(func(m *Model) {
 		if ctx.Err() != nil || m.ConnectionEpoch != epoch || !m.ownsSession(id) {
 			return
 		}
-		m.HistoryReads[id] = r
 		d := m.Details[id]
+		if !opening && len(resuming) != 0 && resuming[0] && d.HasLoadedHistory() && d.History != nil && !d.History.Invalidated {
+			delete(m.HistoryReads, id)
+			cancel()
+			return
+		}
+		m.HistoryReads[id] = r
 		if opening {
 			d = historyOpeningTail(d, m.Preferences.Normalized().HistoryPageRounds)
 		} else if d.History == nil {

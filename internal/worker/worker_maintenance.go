@@ -567,6 +567,18 @@ func (s *Server) workerMaintenanceLoop() {
 }
 
 func (s *Server) advanceWorkerMaintenance(now time.Time) error {
+	if s.ctx.Err() != nil || s.updating.Load() {
+		return nil
+	}
+	op, err := s.store.WorkerMaintenance("")
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil || !op.Phase.Active() || op.Phase == domain.WorkerMaintenanceUpdating {
+		return err
+	}
+	// Only an unfinished legacy operation needs exclusive admission. Recheck
+	// it under the lock because an explicit action may have settled it.
 	s.maintenance.Lock()
 	defer s.maintenance.Unlock()
 	s.dispatchMu.Lock()
@@ -574,7 +586,7 @@ func (s *Server) advanceWorkerMaintenance(now time.Time) error {
 	if s.ctx.Err() != nil || s.updating.Load() {
 		return nil
 	}
-	op, err := s.store.WorkerMaintenance("")
+	op, err = s.store.WorkerMaintenance("")
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}

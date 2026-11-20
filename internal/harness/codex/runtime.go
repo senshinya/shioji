@@ -44,11 +44,12 @@ type Runtime struct {
 	desktop          *desktopBridge
 	cmd              *exec.Cmd
 	stdin            io.WriteCloser
-	writeMu          sync.Mutex
+	writeOnce        sync.Once
+	writeSlot        chan struct{}
 	mu               sync.Mutex
 	eventMu          sync.Mutex
 	pending          map[string]chan wire.Message
-	pendingActivity  map[string]bool
+	pendingActivity  map[string]nativeCallActivity
 	done             chan struct{}
 	normalizer       *Normalizer
 	onEvent          func(domain.Event) error
@@ -192,6 +193,22 @@ func (r *Runtime) read(stdout io.Reader) {
 	// message. Turn/item pagination cannot bound a single item's JSON size.
 	// Keep the presentation limits in normalization, after protocol decoding.
 	reader := bufio.NewReaderSize(stdout, 64<<10)
+	var stream *domain.Event
+	var flushTimer *time.Timer
+	// Only consecutive updates to the same item share a display frame. Any
+	// other native frame flushes the preceding projection first.
+	flush := func() error {
+		if flushTimer != nil {
+			flushTimer.Stop()
+			flushTimer = nil
+		}
+		if stream == nil {
+			return nil
+		}
+		event := *stream
+		stream = nil
+		return r.emit([]domain.Event{event})
+	}
 	for {
 		frame, err := reader.ReadBytes('\n')
 		if err != nil && err != io.EOF {
@@ -208,6 +225,16 @@ func (r *Runtime) read(stdout io.Reader) {
 		if err := json.Unmarshal(frame, &m); err != nil {
 			r.fail(errors.New("malformed app-server frame"))
 			break
+		}
+		delta := m.Method == "item/agentMessage/delta" || m.Method == "item/commandExecution/outputDelta"
+		if !delta {
+			r.eventMu.Lock()
+			err = flush()
+			r.eventMu.Unlock()
+			if err != nil {
+				r.fail(err)
+				break
+			}
 		}
 		if m.Method == "" {
 			r.deliverResponse(m)
@@ -230,8 +257,35 @@ func (r *Runtime) read(stdout io.Reader) {
 		if err == nil && reply != nil {
 			err = r.write(reply)
 		}
-		if err == nil {
-			err = r.emit(events)
+		if err == nil && delta && len(events) == 1 && events[0].Type == "item.upsert" && events[0].Item != nil && !events[0].Item.Final {
+			next := events[0]
+			if stream != nil && (stream.SessionID != next.SessionID || stream.Item.ID != next.Item.ID) {
+				err = flush()
+			}
+			if err == nil {
+				stream = &next
+				if flushTimer == nil {
+					var timer *time.Timer
+					timer = time.AfterFunc(time.Second/60, func() {
+						r.eventMu.Lock()
+						defer r.eventMu.Unlock()
+						if flushTimer == timer {
+							if err := flush(); err != nil {
+								r.fail(err)
+							}
+						}
+					})
+					flushTimer = timer
+				}
+			}
+		} else if err == nil {
+			err = flush()
+			if err == nil {
+				err = r.emit(events)
+			}
+			if err == nil {
+				r.settleTurnActivity(m)
+			}
 		}
 		r.eventMu.Unlock()
 		if err != nil {
@@ -242,6 +296,9 @@ func (r *Runtime) read(stdout io.Reader) {
 	r.signalProcess(syscall.SIGKILL)
 	r.cmd.Wait()
 	r.eventMu.Lock()
+	if err := flush(); err != nil {
+		r.fail(err)
+	}
 	r.emit(r.normalizer.Invalidate())
 	r.eventMu.Unlock()
 	r.mu.Lock()
@@ -289,15 +346,85 @@ func (r *Runtime) signalProcess(sig syscall.Signal) error {
 	}
 	return r.cmd.Process.Signal(sig)
 }
+
+type nativeCallActivity struct {
+	ThreadID       string `json:"threadId"`
+	TurnID         string `json:"turnId"`
+	ExpectedTurnID string `json:"expectedTurnId"`
+}
+
 func (r *Runtime) write(b []byte) error {
-	r.writeMu.Lock()
-	defer r.writeMu.Unlock()
-	if len(b) > 16<<20 {
-		return errors.New("app-server request too large")
-	}
-	_, err := r.stdin.Write(append(b, '\n'))
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	_, err := r.writeContext(ctx, b)
 	return err
 }
+
+func (r *Runtime) writeContext(ctx context.Context, b []byte) (int, error) {
+	if len(b) > 16<<20 {
+		return 0, errors.New("app-server request too large")
+	}
+	r.writeOnce.Do(func() { r.writeSlot = make(chan struct{}, 1) })
+	select {
+	case r.writeSlot <- struct{}{}:
+		defer func() { <-r.writeSlot }()
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	wakeWrite := func() { _ = r.stdin.Close() }
+	reset := func() {}
+	if pipe, ok := r.stdin.(interface{ SetWriteDeadline(time.Time) error }); ok {
+		deadline, _ := ctx.Deadline()
+		if pipe.SetWriteDeadline(deadline) == nil {
+			wakeWrite = func() { _ = pipe.SetWriteDeadline(time.Now()) }
+			reset = func() { _ = pipe.SetWriteDeadline(time.Time{}) }
+		}
+	}
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		wakeWrite()
+		close(done)
+	})
+	raw := append(b, '\n')
+	n, err := r.stdin.Write(raw)
+	if !stop() {
+		<-done
+	}
+	reset()
+	if n != len(raw) && err == nil {
+		err = io.ErrShortWrite
+	}
+	if n > 0 && err != nil && r.cmd != nil && r.cmd.Process != nil {
+		// A partial JSON line is no longer a reusable native pipe.
+		r.fail(err)
+	}
+	return n, err
+}
+
+func (r *Runtime) settleTurnActivity(m wire.Message) {
+	if m.Method != "turn/completed" {
+		return
+	}
+	var p wire.Params
+	if json.Unmarshal(m.Params, &p) != nil || p.ThreadID == "" || p.Turn.ID == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, activity := range r.pendingActivity {
+		turn := activity.TurnID
+		if turn == "" {
+			turn = activity.ExpectedTurnID
+		}
+		if activity.ThreadID == p.ThreadID && turn == p.Turn.ID {
+			delete(r.pendingActivity, id)
+		}
+	}
+}
+
 func (r *Runtime) send(m wire.Message) error {
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -312,14 +439,24 @@ func (r *Runtime) call(ctx context.Context, method string, params, out any) erro
 	id, _ := json.Marshal("shioji:" + domain.NewID())
 	ch := make(chan wire.Message, 1)
 	key := string(id)
+	b, err := json.Marshal(params)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(wire.Message{ID: id, Method: method, Params: b})
+	if err != nil {
+		return err
+	}
 	r.mu.Lock()
 	r.pending[key] = ch
 	switch method {
 	case "turn/start", "turn/steer", "turn/interrupt", "thread/start", "thread/resume", "thread/fork", "thread/compact/start", "thread/goal/set", "thread/goal/clear":
 		if r.pendingActivity == nil {
-			r.pendingActivity = map[string]bool{}
+			r.pendingActivity = map[string]nativeCallActivity{}
 		}
-		r.pendingActivity[key] = true
+		var activity nativeCallActivity
+		_ = json.Unmarshal(b, &activity)
+		r.pendingActivity[key] = activity
 	}
 	r.mu.Unlock()
 	attempted := false
@@ -331,12 +468,12 @@ func (r *Runtime) call(ctx context.Context, method string, params, out any) erro
 		}
 		r.mu.Unlock()
 	}()
-	b, err := json.Marshal(params)
+	n, err := r.writeContext(ctx, raw)
+	attempted = n != 0
 	if err != nil {
-		return err
-	}
-	attempted = true
-	if err = r.send(wire.Message{ID: id, Method: method, Params: b}); err != nil {
+		if !attempted {
+			return &CallError{Message: "app-server write did not send the request: " + err.Error()}
+		}
 		return &CallError{Uncertain: true, Message: "app-server send failed; external acceptance is unknown"}
 	}
 	select {
@@ -675,16 +812,29 @@ func (r *Runtime) steer(ctx context.Context, s domain.Session, turnID, operation
 }
 func (r *Runtime) Respond(answer domain.Answer) error {
 	r.eventMu.Lock()
-	defer r.eventMu.Unlock()
 	data, err := r.normalizer.Response(answer)
 	if err != nil {
+		r.eventMu.Unlock()
 		return err
 	}
 	request, _ := r.normalizer.Pending(answer.RequestID)
-	if err = r.emit([]domain.Event{{Type: "request.open", SessionID: request.SessionID, Request: &request}}); err != nil {
+	err = r.emit([]domain.Event{{Type: "request.open", SessionID: request.SessionID, Request: &request}})
+	r.eventMu.Unlock()
+	if err != nil {
 		return err
 	}
-	if err = r.write(data); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	n, err := r.writeContext(ctx, data)
+	if err != nil && n == 0 {
+		r.eventMu.Lock()
+		defer r.eventMu.Unlock()
+		if pending, ok := r.normalizer.retryUnwrittenAnswer(answer); ok {
+			err = errors.Join(err, r.emit([]domain.Event{{Type: "request.open", SessionID: pending.SessionID, Request: &pending}}))
+		}
+		return err
+	}
+	if err != nil {
 		return &CallError{Uncertain: true, Message: "response delivery is unknown; do not resend"}
 	}
 	return nil

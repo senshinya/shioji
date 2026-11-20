@@ -6,6 +6,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/protocol"
+	"shioji/internal/store"
 	"time"
 )
 
@@ -401,8 +402,12 @@ func (s *Server) dispatchReserved(op domain.Operation, runtime harness.Runtime) 
 		return true
 	}
 	defer s.wakeRecovery()
-	message := "Runtime changed before dispatch; input was not replayed"
-	if err = s.store.SetOperation(op.ID, "indeterminate", message); err != nil {
+	message := "运行环境在交接输入前已改变，输入已保留"
+	err = s.store.RejectUnhandedInput(op.ID, message)
+	if errors.Is(err, store.ErrInputHandoffRevoked) {
+		err = s.store.SetOperation(op.ID, "indeterminate", message)
+	}
+	if err != nil {
 		s.cancel()
 		return false
 	}

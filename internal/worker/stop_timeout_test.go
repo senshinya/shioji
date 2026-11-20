@@ -85,6 +85,9 @@ func TestStopDetachesUnfinishedRuntimeCreation(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("creation did not start")
 	}
+	if err := s.interruptTurn(op.SessionID, "old-turn"); err == nil {
+		t.Fatal("an old turn Stop cancelled a new runtime that was still starting")
+	}
 	raw, _ := json.Marshal(map[string]string{"sessionId": op.SessionID, "turnId": ""})
 	stopped := make(chan error, 1)
 	go func() { _, err := s.handle("turn.interrupt", raw); stopped <- err }()

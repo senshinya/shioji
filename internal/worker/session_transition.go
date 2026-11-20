@@ -63,6 +63,7 @@ func (s *Server) beginSessionTransition(ctx context.Context, id string) (func(),
 			delete(s.sessionTransitions, id)
 			transition.cancel()
 			close(transition.done)
+			s.wakeQueue()
 		}
 	}, nil
 }

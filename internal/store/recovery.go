@@ -492,3 +492,22 @@ func (s *Store) CanContinue(id string, source domain.RecoveryHistory) (bool, err
 	defer s.mu.Unlock()
 	return sourceContainsLatestInput(s.db.QueryRow("SELECT body FROM items WHERE session_id=? AND json_extract(body,'$.kind')='user' ORDER BY position DESC LIMIT 1", id), source)
 }
+
+func (s *Store) RecoverableSessionIDs() ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.Query("SELECT id FROM sessions WHERE COALESCE(json_extract(body,'$.archived'),0)=0 AND json_extract(body,'$.status') IN ('unknown','abandoned')")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}

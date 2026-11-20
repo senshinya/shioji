@@ -34,6 +34,9 @@ func TestNewConnectionChecksAgainAfterOldProcessExits(t *testing.T) {
 	}
 	w, _ := db.CreateWorkspace("Reconnect", []string{folder})
 	op, _ := db.Accept(domain.Submission{HarnessID: "codex", OperationID: "lost", WorkspaceID: w.ID, Text: "do not replay"})
+	if err = db.SetOperation(op.ID, domain.OperationDispatched, ""); err != nil {
+		t.Fatal(err)
+	}
 	db.Close()
 	old := exec.Command("/bin/sleep", "60")
 	old.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

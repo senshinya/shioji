@@ -50,7 +50,7 @@ func handoffBuildPipe(ctx context.Context, path string, build domain.WorkerBuild
 			case "session.submit":
 				return // Accepted, but its receipt was lost with the old route.
 			case "operation":
-				result(codec, f, domain.Operation{ID: "op", State: domain.OperationConfirmed})
+				result(codec, f, domain.Operation{ID: "op", SessionID: "confirmed-session", State: domain.OperationConfirmed})
 			case "device.directories":
 				if path == "lan" {
 					return
@@ -207,7 +207,12 @@ func TestDeviceHandoffDoesNotReplayUnknownSubmission(t *testing.T) {
 	epoch := m.ConnectionEpoch
 	lost, finished := false, false
 	var path string
-	c.Do(Job{ConnectionEpoch: epoch, Method: "session.submit", Input: domain.Submission{OperationID: "op"}, Apply: func(_ *Model, _ json.RawMessage, err error) { lost = err != nil }})
+	in := domain.Submission{OperationID: "op"}
+	m.Pending[in.OperationID] = in
+	c.Do(Job{ConnectionEpoch: epoch, Method: "session.submit", Input: in, Apply: func(_ *Model, _ json.RawMessage, err error) { lost = err != nil }})
+	// Unrelated commands now run in parallel. Observe the handoff before
+	// requiring a subsequent command to use the replacement route.
+	waitFor(func() bool { return lost && m.Resolved[in.OperationID] && p.active() == p.config.Routes[1].ID })
 	c.Do(Job{ConnectionEpoch: epoch, Method: "probe", Apply: func(_ *Model, b json.RawMessage, err error) {
 		if err != nil {
 			t.Error(err)
@@ -215,7 +220,7 @@ func TestDeviceHandoffDoesNotReplayUnknownSubmission(t *testing.T) {
 		json.Unmarshal(b, &path)
 		finished = true
 	}})
-	waitFor(func() bool { return lost && finished })
+	waitFor(func() bool { return lost && finished && m.Resolved[in.OperationID] })
 	if submitted.Load() != 1 || queried.Load() == 0 || path != "mesh" {
 		t.Fatal("unknown input replayed, not reconciled, or unsent job lost", submitted.Load(), queried.Load(), path)
 	}

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"testing"
@@ -10,6 +11,41 @@ import (
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/domain"
 )
+
+func TestLateCommandFailureDoesNotReplaceAnAcceptedSend(t *testing.T) {
+	for _, home := range []bool{false, true} {
+		t.Run(fmt.Sprintf("home=%v", home), func(t *testing.T) {
+			v, ui, job := sendFixture(t, home)
+			in := job.Input.(domain.Submission)
+			id := in.SessionID
+			if home {
+				id = "created"
+			}
+			session := domain.Session{ID: id, WorkspaceID: in.WorkspaceID, Status: domain.ExecutionStarting, Config: in.Config}
+			op := domain.Operation{ID: in.OperationID, SessionID: id, State: domain.OperationAccepted}
+			item := domain.Item{ID: "input:" + in.OperationID, Kind: "user", Text: in.Text, Status: "dispatching", Final: true}
+			ui.Advance(150 * time.Millisecond)
+			if err := v.Model.ApplyEvent(domain.Event{Sequence: v.Model.Sequence + 1, Type: "submission", SessionID: id, Session: &session, Operation: &op, Item: &item}); err != nil {
+				t.Fatal(err)
+			}
+			ui.Frame()
+			before, visible := ui.Find("用户消息气泡")
+			composer, composerVisible := ui.Find("消息编辑器")
+			motion := v.sent
+			started := motion.started
+			job.Apply(v.Model, nil, errors.New("command receipt lost"))
+			ui.Frame()
+			if v.Model.UncertainSubmissions[in.OperationID] || ui.HasText("提交结果待核对") || ui.HasText("发送结果待核实") {
+				t.Fatal("a late command error hid the owning worker's accepted receipt")
+			}
+			after, stillVisible := ui.Find("用户消息气泡")
+			nextComposer, stillHasComposer := ui.Find("消息编辑器")
+			if !visible || !stillVisible || before != after || !composerVisible || !stillHasComposer || composer != nextComposer || v.sent != motion || motion.started != started {
+				t.Fatal("late command result changed native layout or restarted the send", before, after, composer, nextComposer)
+			}
+		})
+	}
+}
 
 // A receipt may overtake the event stream or arrive after it. Neither ordering
 // may remount the already visible status or restart the departing message.
@@ -125,5 +161,37 @@ func TestHomeConfirmationBeforeHistoryKeepsTheMovingPreview(t *testing.T) {
 	after, ok = ui.Find("用户消息气泡")
 	if !ok || after != before {
 		t.Fatal("history loading restarted the moving preview", before, after)
+	}
+}
+
+func TestSameJournalReconnectKeepsNativeSendUntilReceipt(t *testing.T) {
+	v, ui := readySendFixture(t, false)
+	m := v.Model
+	m.Snapshot.DeviceID, m.Snapshot.Generation = "device", "journal"
+	job := sendFromFixture(t, v, ui)
+	ui.Advance(100 * time.Millisecond)
+	motion := v.sent
+	if motion == nil {
+		t.Fatal("send animation did not start")
+	}
+	started := motion.started
+	before, shown := ui.Find("用户消息气泡")
+	m.Connected, m.ConnectionEpoch = false, ""
+	ui.Frame()
+	m.Connected, m.ConnectionEpoch = true, "second"
+	ui.Frame()
+	in := job.Input.(domain.Submission)
+	items := m.Details[in.SessionID]
+	session := items.Session
+	receipt := domain.Operation{ID: in.OperationID, SessionID: in.SessionID, State: domain.OperationConfirmed}
+	item := domain.Item{ID: "input:" + in.OperationID, TurnID: "next-turn", Kind: "user", Text: in.Text, Status: "sent", Final: true}
+	turn := domain.Turn{ID: "next-turn", Status: domain.ExecutionRunning}
+	if err := m.ApplyEvent(domain.Event{Sequence: m.Sequence + 1, Type: "submission", SessionID: in.SessionID, Session: &session, Item: &item, Turn: &turn, Operation: &receipt}); err != nil {
+		t.Fatal(err)
+	}
+	ui.Frame()
+	after, stillShown := ui.Find("用户消息气泡")
+	if !shown || !stillShown || before != after || v.sent != motion || v.sent.started != started {
+		t.Fatal("same-journal reconnect moved the outgoing message or restarted the animation", before, after)
 	}
 }

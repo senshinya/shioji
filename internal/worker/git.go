@@ -546,6 +546,9 @@ func (s *Server) prepareGitLocked(in domain.Submission, launch domain.LaunchCont
 		if err = valid(); err != nil {
 			return launch, err
 		}
+		if err = s.store.RecordSubmissionGit(in.OperationID, status.Checkout, status.Branch, branch); err != nil {
+			return launch, err
+		}
 		if _, err = s.gitRunOutsideDispatch(s.ctx, status.Checkout, "switch", "--no-guess", branch); err != nil {
 			return launch, err
 		}

@@ -96,6 +96,7 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS work_inputs (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), work_id TEXT NOT NULL, body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS archive_policy (id INTEGER PRIMARY KEY CHECK(id=1), body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS deleted_operations (id TEXT PRIMARY KEY, session_id TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS submission_git_preparation (operation_id TEXT PRIMARY KEY, checkout TEXT NOT NULL, original_branch TEXT NOT NULL, branch TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS deleted_sessions (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, cleaned INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS deleted_workspaces (id TEXT PRIMARY KEY, cleaned INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS archive_resources (workspace_id TEXT NOT NULL, attachment_id TEXT NOT NULL, PRIMARY KEY(workspace_id,attachment_id));
@@ -165,6 +166,8 @@ func Open(path string) (*Store, error) {
 }
 func (s *Store) Close() error     { return s.db.Close() }
 func (s *Store) DeviceID() string { return s.deviceID }
+
+func (s *Store) Generation() string { return s.generation }
 
 func (s *Store) Item(sessionID, itemID string) (domain.Item, error) {
 	s.mu.Lock()
@@ -323,6 +326,15 @@ func operation(q interface{ QueryRow(string, ...any) *sql.Row }, id string) (dom
 	var deletedSession string
 	err := q.QueryRow("SELECT session_id FROM deleted_operations WHERE id=?", id).Scan(&deletedSession)
 	if err == nil {
+		if deletedSession == "" {
+			message := "执行服务未接纳这次提交，原输入可重新提交"
+			if detail, err := readSubmissionGit(q, id); err != nil {
+				return op, err
+			} else if detail != "" {
+				message = detail
+			}
+			return domain.Operation{ID: id, State: domain.OperationRejected, Error: message}, nil
+		}
 		return domain.Operation{ID: id, SessionID: deletedSession, State: "rejected", Deleted: true, Error: "所属会话已彻底删除，不能重放此操作"}, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -465,6 +477,7 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		session.GitHead = session.Context.Head
 	}
 	op := domain.Operation{ID: in.OperationID, SessionID: session.ID, State: "accepted", Digest: digest}
+	op.Kind = ordinarySubmissionKind
 	tx, err := s.db.Begin()
 	if err != nil {
 		return none, err
@@ -483,7 +496,10 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 			return none, err
 		}
 	}
-	if _, err = tx.Exec("INSERT INTO operations(id,session_id,state,digest) VALUES(?,?,?,?)", op.ID, op.SessionID, op.State, digest); err != nil {
+	if _, err = tx.Exec("INSERT INTO operations(id,session_id,state,digest,kind) VALUES(?,?,?,?,?)", op.ID, op.SessionID, op.State, digest, op.Kind); err != nil {
+		return none, err
+	}
+	if _, err = tx.Exec("DELETE FROM submission_git_preparation WHERE operation_id=?", op.ID); err != nil {
 		return none, err
 	}
 	var item *domain.Item
@@ -522,20 +538,32 @@ func (s *Store) SetOperation(id string, state domain.OperationState, message str
 	if op.State == "abandoned" && state != "abandoned" {
 		return errors.New("执行实例已退休，原结果未确认")
 	}
-	op.State = state
-	op.Error = message
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err = setOperation(tx, op, state, message); err != nil {
+		return err
+	}
+	if state == domain.OperationConfirmed && (op.Kind == ordinarySubmissionKind || op.Kind == steerSubmissionKind) {
+		if err = saveInputStatus(tx, op.SessionID, op.ID, "", "sent"); err != nil {
+			return err
+		}
+	}
+	return s.commit(tx)
+}
+
+func setOperation(tx *sql.Tx, op domain.Operation, state domain.OperationState, message string) error {
+	op.State, op.Error = state, message
+	var err error
 	if op.Kind == "compact" {
 		if err = settleContextAction(tx, &op); err != nil {
 			return err
 		}
 		state, message = op.State, op.Error
 	}
-	if _, err = tx.Exec("UPDATE operations SET state=?,error=? WHERE id=?", state, message, id); err != nil {
+	if _, err = tx.Exec("UPDATE operations SET state=?,error=? WHERE id=?", state, message, op.ID); err != nil {
 		return err
 	}
 	if state == "indeterminate" && op.Kind != "compact" {
@@ -560,8 +588,9 @@ func (s *Store) SetOperation(id string, state domain.OperationState, message str
 	if _, err = journal(tx, domain.Event{Type: "operation", SessionID: op.SessionID, Operation: &op}); err != nil {
 		return err
 	}
-	return s.commit(tx)
+	return nil
 }
+
 func putItem(tx *sql.Tx, sid string, item *domain.Item) error {
 	var pos int64
 	var body []byte
@@ -772,9 +801,8 @@ func (s *Store) applyLocked(sid string, e domain.Event) (domain.Event, error) {
 			return e, nil
 		}
 		item.Text += e.Text
-		if len(item.Text) > 256<<10 {
-			item.Text = item.Text[:256<<10] + "\n[Output limit reached]"
-			item.Final = true
+		if clipped := clipEventText(item.Text, 160<<10); clipped != item.Text {
+			item.Text, item.Truncated, item.Final = clipped, true, true
 		}
 		if err = putItem(tx, sid, &item); err != nil {
 			return e, err
@@ -1076,6 +1104,14 @@ func (s *Store) sessionLocked(id string, after int64, limit int, window *domain.
 	err = s.historyQueries().QueryRow("SELECT COALESCE(MAX(sequence),0) FROM journal").Scan(&out.Sequence)
 	return out, err
 }
+func (s *Store) JournalSequence() (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var sequence int64
+	err := s.db.QueryRow("SELECT COALESCE(MAX(sequence),0) FROM journal").Scan(&sequence)
+	return sequence, err
+}
+
 func (s *Store) Events(after int64, limit int) ([]domain.Event, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1123,27 +1159,23 @@ func (s *Store) Recover() error {
 	if titleErr != nil {
 		return titleErr
 	}
-	snapshot, err := s.Snapshot()
-	if err != nil {
-		return err
-	}
 	s.mu.Lock()
-	if _, err = s.db.Exec(`UPDATE history_operations SET body=json_set(body,'$.state','failed','$.error','操作在确认分叉前中断，原会话保持不变，可重新尝试') WHERE json_extract(body,'$.state')='prepared'`); err != nil {
+	if _, err := s.db.Exec(`UPDATE history_operations SET body=json_set(body,'$.state','failed','$.error','操作在确认分叉前中断，原会话保持不变，可重新尝试') WHERE json_extract(body,'$.state')='prepared'`); err != nil {
 		s.mu.Unlock()
 		return err
 	}
-	rows, err := s.db.Query("SELECT id FROM operations WHERE state IN ('accepted','dispatched')")
+	rows, err := s.db.Query("SELECT id,kind,state FROM operations WHERE state IN ('accepted','dispatched')")
 	if err != nil {
 		s.mu.Unlock()
 		return err
 	}
-	ids := []string{}
+	var pending []domain.Operation
 	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
+		var op domain.Operation
+		if err = rows.Scan(&op.ID, &op.Kind, &op.State); err != nil {
 			break
 		}
-		ids = append(ids, id)
+		pending = append(pending, op)
 	}
 	if err == nil {
 		err = rows.Err()
@@ -1153,10 +1185,22 @@ func (s *Store) Recover() error {
 	if err != nil {
 		return err
 	}
-	for _, id := range ids {
-		if err = s.SetOperation(id, "indeterminate", "Worker restarted before external acceptance was confirmed"); err != nil {
+	for _, op := range pending {
+		if unhanded(op) {
+			err = s.RejectUnhandedInput(op.ID, "执行服务在把消息交给 Agent 前重启，输入已保留")
+		} else {
+			err = s.SetOperation(op.ID, "indeterminate", "Worker restarted before external acceptance was confirmed")
+		}
+		if err != nil {
 			return err
 		}
+	}
+	if err := s.repairConfirmedInputItems(); err != nil {
+		return err
+	}
+	snapshot, err := s.Snapshot()
+	if err != nil {
+		return err
 	}
 	for _, session := range snapshot.Sessions {
 		if _, err = s.PauseQueue(session.ID, "worker restarted"); err != nil {

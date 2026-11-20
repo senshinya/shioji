@@ -139,7 +139,14 @@ func (s *Store) WorkerStopReady(liveSessions []string) (domain.WorkerUpdateResul
 	// not represent a lease held by this worker instance.
 	for _, id := range liveSessions {
 		var blocked bool
-		err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sessions WHERE id=? AND (json_extract(body,'$.status') IN ('starting','running') OR json_extract(body,'$.goal.state')='active'))`, id).Scan(&blocked)
+		err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sessions s WHERE id=? AND (
+			json_extract(s.body,'$.status') IN ('starting','running') OR json_extract(s.body,'$.goal.state')='active'
+			OR EXISTS(SELECT 1 FROM works w WHERE w.session_id=s.id
+				AND (COALESCE(json_extract(w.body,'$.originRef'),'')='' OR json_extract(w.body,'$.originRef')=json_extract(s.body,'$.threadId'))
+				AND (json_extract(w.body,'$.state') IN ('starting','running') OR
+					(json_extract(w.body,'$.state')='waiting' AND EXISTS(SELECT 1 FROM requests r WHERE r.session_id=s.id
+					 AND json_extract(r.body,'$.workId')=w.id AND json_extract(r.body,'$.state') IN ('pending','submitting')))))
+		))`, id).Scan(&blocked)
 		if err != nil {
 			return domain.WorkerUpdateResult{}, err
 		}

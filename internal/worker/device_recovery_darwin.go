@@ -948,12 +948,25 @@ func pauseRecoveryDatabase(ctx context.Context, dir, expected string) error {
 	if err = tx.QueryRowContext(ctx, "SELECT device_id FROM metadata LIMIT 1").Scan(&id); err != nil || id != expected {
 		return errors.New("恢复后的设备身份不一致")
 	}
+	var hasOperationKind bool
+	if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pragma_table_info('operations') WHERE name='kind')").Scan(&hasOperationKind); err != nil {
+		return err
+	}
+	uncertainSessions := ""
+	uncertainOperations := ""
+	if hasOperationKind {
+		uncertainSessions = ` AND NOT (json_extract(sessions.body,'$.status')='starting'
+			AND COALESCE(json_extract(sessions.body,'$.executionGuard'),'')=''
+			AND EXISTS(SELECT 1 FROM operations WHERE session_id=sessions.id AND state='accepted' AND kind IN ('submit','steer'))
+			AND NOT EXISTS(SELECT 1 FROM operations WHERE session_id=sessions.id AND state='dispatched'))`
+		uncertainOperations = " AND NOT (state='accepted' AND kind IN ('submit','steer'))"
+	}
 	queries := []struct{ table, query string }{
 		{"queues", `UPDATE queues SET body=json_set(body,'$.paused',json('true'),'$.reason','用户恢复执行服务，待发送消息保持暂停','$.revision',COALESCE(json_extract(body,'$.revision'),0)+1)`},
-		{"sessions", `UPDATE sessions SET body=json_set(body,'$.status','unknown','$.error','原执行服务已关闭，执行结果待核对','$.recovery',json('{"phase":"attention","canEnd":true,"message":"原执行服务已关闭，执行结果待核对"}'),'$.revision',COALESCE(json_extract(body,'$.revision'),0)+1) WHERE json_extract(body,'$.status') IN ('running','starting','unknown')`},
+		{"sessions", `UPDATE sessions SET body=json_set(body,'$.status','unknown','$.error','原执行服务已关闭，执行结果待核对','$.recovery',json('{"phase":"attention","canEnd":true,"message":"原执行服务已关闭，执行结果待核对"}'),'$.revision',COALESCE(json_extract(body,'$.revision'),0)+1) WHERE json_extract(body,'$.status') IN ('running','starting','unknown')` + uncertainSessions},
 		{"turns", `UPDATE turns SET body=json_set(body,'$.status','unknown','$.error','原执行服务已关闭，执行结果待核对') WHERE json_extract(body,'$.status')='running'`},
 		{"requests", `UPDATE requests SET body=json_set(body,'$.state','invalidated','$.revision',COALESCE(json_extract(body,'$.revision'),0)+1) WHERE json_extract(body,'$.state') IN ('pending','submitting')`},
-		{"operations", `UPDATE operations SET state='indeterminate',error='用户恢复执行服务，投递结果待核对' WHERE state IN ('accepted','dispatched')`},
+		{"operations", `UPDATE operations SET state='indeterminate',error='用户恢复执行服务，投递结果待核对' WHERE state IN ('accepted','dispatched')` + uncertainOperations},
 		{"title_jobs", `UPDATE title_jobs SET state='failed' WHERE state='running'`},
 		{"worker_maintenance", `UPDATE worker_maintenance SET body=json_set(body,'$.phase','cancelled','$.message','设备恢复已替代旧处理；不自动更新','$.revision',COALESCE(json_extract(body,'$.revision'),0)+1) WHERE json_extract(body,'$.phase') NOT IN ('completed','failed','cancelled')`},
 		{"work_inputs", `UPDATE work_inputs SET body=json_set(body,'$.state','indeterminate','$.executionStopped',json('true')) WHERE json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate')`},

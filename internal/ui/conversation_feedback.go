@@ -13,6 +13,7 @@ import (
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 )
 
 var feedbackBell = designIcon("M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4")
@@ -415,7 +416,7 @@ func (v *View) conversationStatuses(now time.Time) []conversationStatus {
 			break
 		}
 	}
-	if m.Connected && m.RunReadiness().State != "ready" {
+	if m.Connected && (m.WorkerMinor < protocol.RecoveryMinor || m.ConnectionEpoch != "") && m.RunReadiness().State != "ready" {
 		out = append(out, conversationStatus{id: "runtime", title: "当前 Agent 尚未就绪", body: "请在所属设备的详情中检查 Agent 配置。草稿已保留。", details: m.RunReadiness().Error, icon: feedbackInfo, priority: 5, actions: []statusAction{device}})
 	}
 	if observation, ok := v.feedbackState().connections[source.connection]; !m.Connected && ok && now.Sub(observation.since) >= 5*time.Second {
@@ -443,9 +444,7 @@ func (v *View) querySubmission(id string, source feedbackSource) {
 	if !ok || source != v.feedbackSource() {
 		return
 	}
-	v.do(app.Job{Method: "operation", Input: struct {
-		ID string `json:"id"`
-	}{id}, Apply: func(m *app.Model, b json.RawMessage, err error) {
+	v.do(app.Job{Method: "operation", Input: m.SubmissionReceiptQuery(id), Apply: func(m *app.Model, b json.RawMessage, err error) {
 		if err != nil {
 			m.ReportFeedback(app.Feedback{ConnectionID: source.connection, WorkspaceID: source.workspace, SessionID: source.session, Title: "尚未核对提交结果", Details: err.Error()})
 			return

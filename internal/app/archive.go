@@ -287,7 +287,9 @@ func (m *Model) ApplyArchiveDeletion(d domain.ArchiveDeletion) {
 			if in.SessionID == id {
 				delete(m.Pending, op)
 				delete(m.PendingDevices, op)
+				delete(m.pendingGenerations, op)
 				delete(m.UncertainSubmissions, op)
+				delete(m.submissionAccepted, op)
 			}
 		}
 		m.Navigation.Pinned = slices.DeleteFunc(m.Navigation.Pinned, func(ref SessionLocation) bool { return ref.SessionID == id && ref.DeviceID == d.DeviceID })

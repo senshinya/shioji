@@ -10,17 +10,48 @@ import (
 
 // An interrupt ACK is only request acceptance. The captured turn and native
 // requests must settle within the same five-second cancellation budget.
-func (s *Server) interruptTurn(id, turn string) error {
+func (s *Server) interruptTurn(id, turn string, operation ...string) error {
 	s.dispatchMu.Lock()
+	target := ""
+	if len(operation) > 0 && turn == "" {
+		target = operation[0]
+	}
+	if target != "" {
+		op, err := s.store.Operation(target)
+		if err != nil || op.SessionID != id || op.Kind != "submit" {
+			s.dispatchMu.Unlock()
+			return errors.New("要停止的输入已结束或已变更")
+		}
+		switch op.State {
+		case domain.OperationAccepted, domain.OperationDispatched:
+		case domain.OperationConfirmed:
+			input, err := s.store.Item(id, "input:"+target)
+			if err != nil || input.TurnID == "" {
+				s.dispatchMu.Unlock()
+				return errors.New("要停止的输入已结束或已变更")
+			}
+			turn, target = input.TurnID, ""
+		default:
+			s.dispatchMu.Unlock()
+			return errors.New("要停止的输入已结束或已变更")
+		}
+	}
 	r := s.currentRuntime(id)
 	if r == nil {
 		s.runtimeMu.RLock()
 		pending := s.runtimeStarts[id]
 		s.runtimeMu.RUnlock()
-		if pending != nil {
+		if pending != nil && turn == "" {
 			err := s.stopInitializing(id, pending)
 			s.dispatchMu.Unlock()
 			return err
+		}
+		if target != "" {
+			revoked, err := s.revokePreparedInputs(id, target)
+			if err != nil || len(revoked) != 0 {
+				s.dispatchMu.Unlock()
+				return err
+			}
 		}
 		s.dispatchMu.Unlock()
 		return errors.New("runtime unavailable")
@@ -30,7 +61,15 @@ func (s *Server) interruptTurn(id, turn string) error {
 		return harness.Unsupported("interrupt")
 	}
 	d, err := s.store.Session(id, 0, 1)
-	active := turn == "" && (d.Session.Status.Active() || d.Session.Goal.Active())
+	active := turn == "" && (d.Session.Status == domain.ExecutionStarting || d.Session.Goal.Active())
+	if target != "" && turn == "" && !active {
+		for _, t := range d.Turns {
+			if t.Status.Active() {
+				turn = t.ID
+				break
+			}
+		}
+	}
 	for _, t := range d.Turns {
 		if t.ID == turn && t.Status.Active() {
 			active = true
@@ -48,6 +87,17 @@ func (s *Server) interruptTurn(id, turn string) error {
 			return err
 		}
 		return errors.New("turn is not active")
+	}
+	revoked, err := s.revokePreparedInputs(id, target)
+	if err != nil {
+		s.dispatchMu.Unlock()
+		return err
+	}
+	if len(revoked) != 0 {
+		if turn == "" && !d.Session.Goal.Active() {
+			s.dispatchMu.Unlock()
+			return nil
+		}
 	}
 	err = s.store.WithdrawCompletion(id)
 	if err == nil {
@@ -161,6 +211,20 @@ func (s *Server) interruptTurn(id, turn string) error {
 		}
 	}()
 	return nil
+}
+
+// Caller holds dispatchMu while retiring the preparation and its reservation.
+func (s *Server) revokePreparedInputs(session, target string) ([]string, error) {
+	revoked, err := s.store.CancelPreparedInputs(session, target)
+	if err != nil || len(revoked) == 0 {
+		return revoked, err
+	}
+	s.mu.Lock()
+	for _, id := range revoked {
+		delete(s.dispatchReservations, id)
+	}
+	s.mu.Unlock()
+	return revoked, nil
 }
 
 // Only the captured runtime and objective may be paused by this Stop.

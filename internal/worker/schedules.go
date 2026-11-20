@@ -89,9 +89,10 @@ func (s *Server) scheduleLoop() {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	recovering := true
+	active := map[string]bool{}
 	for {
 		if !s.updating.Load() && !s.backgroundStopping.Load() && s.ctx.Err() == nil {
-			if err := s.processSchedules(time.Now(), recovering); err != nil {
+			if err := s.processSchedules(time.Now(), recovering, active); err != nil {
 				if s.ctx.Err() == nil {
 					log.Printf("scheduled tasks: %v", err)
 				}
@@ -108,8 +109,14 @@ func (s *Server) scheduleLoop() {
 	}
 }
 
-func (s *Server) processSchedules(now time.Time, recovering bool) error {
-	if err := s.store.ReconcileScheduledRuns(now); err != nil {
+func (s *Server) processSchedules(now time.Time, recovering bool, active map[string]bool) error {
+	s.dispatchMu.Lock()
+	preparing := make([]string, 0, len(active))
+	for id := range active {
+		preparing = append(preparing, id)
+	}
+	s.dispatchMu.Unlock()
+	if err := s.store.ReconcileScheduledRuns(now, preparing...); err != nil {
 		return err
 	}
 	if err := s.store.AdvanceSchedules(now, scheduleZone(), recovering); err != nil {
@@ -119,33 +126,42 @@ func (s *Server) processSchedules(now time.Time, recovering bool) error {
 	if err != nil {
 		return err
 	}
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
 	for _, run := range runs {
-		s.dispatchMu.Lock()
-		if s.ctx.Err() != nil || s.updateAdmission() != nil {
-			s.dispatchMu.Unlock()
-			return nil
+		if len(active) >= 4 || s.ctx.Err() != nil || s.updateAdmission() != nil {
+			break
+		}
+		if active[run.ID] {
+			continue
 		}
 		input, err := s.store.ClaimScheduleRun(run, now)
 		if err != nil {
-			s.dispatchMu.Unlock()
-			return err
+			log.Printf("scheduled task %s: %v", run.ID, err)
+			continue
 		}
-		run.State, run.StartedAt = domain.ScheduleStarting, now.UTC()
-		op, launchErr := s.submitLocked(input, 0, false)
-		run.SessionID = op.SessionID
-		if launchErr != nil {
-			var remote *protocol.RemoteError
-			if errors.Is(launchErr, errCatalogRefreshing) || errors.As(launchErr, &remote) && remote.Code == "notSent" {
-				run.State, run.StartedAt = domain.ScheduleQueued, time.Time{}
-			} else {
-				run.State, run.Error, run.FinishedAt = domain.ScheduleFailed, launchErr.Error(), time.Now().UTC()
+		active[run.ID] = true
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.dispatchMu.Lock()
+			defer s.dispatchMu.Unlock()
+			defer func() { delete(active, run.ID) }()
+			run.State, run.StartedAt = domain.ScheduleStarting, now.UTC()
+			op, launchErr := s.submitLocked(input, 0, false)
+			run.SessionID = op.SessionID
+			if launchErr != nil {
+				var remote *protocol.RemoteError
+				if errors.Is(launchErr, errCatalogRefreshing) || errors.As(launchErr, &remote) && remote.Code == "notSent" {
+					run.State, run.StartedAt = domain.ScheduleQueued, time.Time{}
+				} else {
+					run.State, run.Error, run.FinishedAt = domain.ScheduleFailed, launchErr.Error(), time.Now().UTC()
+				}
 			}
-		}
-		err = s.store.UpdateScheduleRun(run)
-		s.dispatchMu.Unlock()
-		if err != nil {
-			return err
-		}
+			if err := s.store.UpdateScheduleRun(run); err != nil {
+				log.Printf("scheduled task %s: %v", run.ID, err)
+			}
+		}()
 	}
 	return nil
 }

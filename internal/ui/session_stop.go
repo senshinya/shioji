@@ -11,9 +11,9 @@ import (
 // The presentation ends the turn immediately. The model continues receiving
 // execution events and the worker still governs what can run next.
 type sessionStop struct {
-	connection, epoch, turn string
-	sessionRevision         int64
-	items                   map[string]domain.Item
+	connection, generation, turn string
+	sessionRevision              int64
+	items                        map[string]domain.Item
 }
 
 func (v *View) interrupt() {
@@ -23,6 +23,7 @@ func (v *View) interrupt() {
 		return
 	}
 	turn := m.ActiveTurn()
+	input := map[string]string{"sessionId": id, "turnId": turn}
 	if turn == "" {
 		starting := false
 		for _, session := range m.Snapshot.Sessions {
@@ -34,10 +35,16 @@ func (v *View) interrupt() {
 		if !starting {
 			return
 		}
+		for _, op := range m.Snapshot.Operations {
+			if op.SessionID == id && op.Kind == "submit" && (op.State == domain.OperationAccepted || op.State == domain.OperationDispatched) {
+				input["operationId"] = op.ID
+				break
+			}
+		}
 	}
 	connection := m.ConnectionID()
 	detail := m.Details[id]
-	stop := &sessionStop{connection: connection, epoch: root.deviceState(connection).ConnectionEpoch, turn: turn, sessionRevision: detail.Session.Revision}
+	stop := &sessionStop{connection: connection, generation: root.deviceState(connection).ConversationGeneration(), turn: turn, sessionRevision: detail.Session.Revision}
 	if turn != "" {
 		stop.items = make(map[string]domain.Item)
 		for _, item := range detail.Items {
@@ -46,7 +53,7 @@ func (v *View) interrupt() {
 			}
 		}
 	}
-	if !v.do(app.Job{Method: "turn.interrupt", Input: map[string]string{"sessionId": id, "turnId": turn}, Apply: func(m *app.Model, _ json.RawMessage, err error) {
+	if !v.do(app.Job{Method: "turn.interrupt", Input: input, Apply: func(m *app.Model, _ json.RawMessage, err error) {
 		if err != nil && root.sessionStops[id] == stop && !stop.observedEnd(m.Details[id]) {
 			delete(root.sessionStops, id)
 			m.Error = err.Error()
@@ -75,7 +82,7 @@ func (v *View) syncSessionStops() {
 	for id, stop := range v.sessionStops {
 		state := v.deviceState(stop.connection)
 		awaiting := false
-		if state.Connected && state.ConnectionEpoch == stop.epoch {
+		if state.ConversationGeneration() == stop.generation && (state.Connected || state.Snapshot.Generation != "") {
 			for _, session := range v.Model.Snapshot.Sessions {
 				if session.ID == id {
 					awaiting = stop.awaitingSettlement(session, v.Model.Details[id].Turns)
