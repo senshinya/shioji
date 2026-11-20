@@ -108,7 +108,7 @@ func (v *View) currentDeviceControl(c *n.Context, t *n.Theme) {
 	if fresh {
 		c.After(h.ObservedAt.Add(8 * time.Second).Sub(c.Now()))
 	}
-	device := control(c.Key("device-trigger:" + key)).Height(28).PaddingX(6).Radius(6).Label("当前设备")
+	device := control(c.Key("device-trigger:" + key)).Height(toolbarActionSize).PaddingX(6).Radius(6).Label("当前设备")
 	device.Children(func() {
 		n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
 			color := t.TextMuted
@@ -135,7 +135,7 @@ func (v *View) currentDeviceControl(c *n.Context, t *n.Theme) {
 	if powerError == "" && h != nil {
 		powerError = h.KeepAwake.Error
 	}
-	quick := control(c.Key("keep-awake:"+key)).Size(28, 28).Radius(6).Label("保持设备唤醒").
+	quick := control(c.Key("keep-awake:"+key)).Size(toolbarActionSize, toolbarActionSize).Radius(6).Label("保持设备唤醒").
 		Tooltip("保持设备唤醒").TextColor(t.TextMuted).Disabled(v.Controller == nil || !known || pending || u.checking)
 	quick.Children(func() {
 		if pending {

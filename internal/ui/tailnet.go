@@ -309,9 +309,9 @@ func (v *View) tailnetPage(c *n.Context, t *n.Theme) {
 	}
 	n.Column(c).Fill().Children(func() {
 		width, _ := c.Size()
-		header := n.Column(c).FillWidth().Height(88).Padding(28, configurationInset, 20).DragWindow()
+		header := n.Column(c).FillWidth().Height(68).Padding(mainWindowTopInset, configurationInset, 20).DragWindow()
 		if width < 900 {
-			header.Padding(8, configurationInset, 6)
+			header.Height(88).Padding(mainWindowTopInset, configurationInset, 6)
 		}
 		header.Children(func() {
 			if width < 900 {

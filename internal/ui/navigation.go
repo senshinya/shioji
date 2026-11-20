@@ -298,7 +298,7 @@ func (v *View) sidebar(c *n.Context, t *n.Theme) {
 	if t.Dark {
 		color = n.Hex("#161616")
 	}
-	n.Column(c).Width(sidebarWidth).FillHeight().Padding(8, 0, 8, 8).Children(func() {
+	n.Column(c).Width(sidebarWidth).FillHeight().Padding(mainWindowTopInset, 0, 8, 8).Children(func() {
 		card := n.Column(c).Fill().Radius(14).Clip().Background(color).Border(1, t.Border)
 		card.Children(func() {
 			n.Column(c.Key("nav-top")).FillWidth().Padding(sidebarHeaderTopInset, sidebarTrailingInset, 0, sidebarLeadingInset).Gap(sidebarHeaderGap).Children(func() {

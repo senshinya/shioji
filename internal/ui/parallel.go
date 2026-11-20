@@ -324,7 +324,7 @@ func (v *View) pruneHistoryCaches() {
 
 func (v *View) secondaryPlaceholder(c *n.Context, t *n.Theme) {
 	n.Column(c).Fill().Children(func() {
-		n.Row(c).FillWidth().Height(48).PaddingX(18).AlignItems(n.Center).Children(func() {
+		n.Row(c).FillWidth().Height(mainToolbarHeight).Padding(mainWindowTopInset, 18, mainToolbarBottomInset, 18).AlignItems(n.Center).Children(func() {
 			n.Text(c, "正在打开会话").FontSize(13).Grow(1)
 			if iconButton(c, queueRemoveIcon, "关闭并排会话").Clicked() {
 				v.closeParallel()

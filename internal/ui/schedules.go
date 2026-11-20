@@ -341,7 +341,7 @@ func (v *View) schedulePage(c *n.Context, t *n.Theme) {
 }
 
 func scheduleTitle(c *n.Context, heading string, navigation, trailing func()) {
-	n.Row(c.Key("schedule-heading")).FillWidth().Height(48+archiveTitleTopInset).Padding(archiveTitleTopInset, 0, 0, 0).
+	n.Row(c.Key("schedule-heading")).FillWidth().Height(mainToolbarHeight).Padding(mainWindowTopInset, 0, mainToolbarBottomInset, 0).
 		Gap(6).AlignItems(n.Center).DragWindow().Children(func() {
 		if navigation != nil {
 			navigation()

@@ -136,11 +136,8 @@ func (v *View) loadDeviceAgents(key string, state *app.DeviceState, e *deviceAge
 }
 
 func (v *View) deviceAgentPage(c *n.Context, t *n.Theme, key, deviceName string, state *app.DeviceState, e *deviceAgentEditor, info domain.HarnessInfo) {
-	header := n.Column(c.Key("agent-header")).FillWidth().Height(104).Padding(24, configurationInset, 12).DragWindow()
+	header := n.Column(c.Key("agent-header")).FillWidth().Height(88).Padding(mainWindowTopInset, configurationInset, 12).DragWindow()
 	width, _ := c.Size()
-	if width < 900 {
-		header.Height(88).Padding(8, configurationInset, 12)
-	}
 	header.Children(func() {
 		n.Column(c).FillWidth().Gap(8).Children(func() {
 			backName, backLabel := deviceName, "返回 Agent 列表"

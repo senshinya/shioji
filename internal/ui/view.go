@@ -611,7 +611,7 @@ func (v *View) home() {
 	v.searchOpen = false
 }
 func iconButton(c *n.Context, icon *n.SVG, label string) n.Element {
-	return control(c).Size(28, 28).Radius(6).Label(label).Tooltip(label).TextColor(c.Theme().TextMuted).Children(func() { n.Icon(c, icon).Size(16, 16) })
+	return control(c).Size(toolbarActionSize, toolbarActionSize).Radius(6).Label(label).Tooltip(label).TextColor(c.Theme().TextMuted).Children(func() { n.Icon(c, icon).Size(16, 16) })
 }
 func ghost(c *n.Context, label string, radius ...float32) n.Element {
 	r := c.Theme().Radius
@@ -632,7 +632,7 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		// Controls stop before the native scrollbar's independent gutter.
 		rightInset = 18 - conversationScrollbarGutter
 	}
-	n.Row(c).Height(mainToolbarHeight).FillWidth().Padding(mainToolbarTopInset, rightInset, 0, 24).Gap(6).AlignItems(n.Center).DragWindow().Label("会话工具栏").Children(func() {
+	n.Row(c).Height(mainToolbarHeight).FillWidth().Padding(mainWindowTopInset, rightInset, mainToolbarBottomInset, 24).Gap(6).AlignItems(n.Center).DragWindow().Label("会话工具栏").Children(func() {
 		if schedules := v.splitRoot().schedules; schedules != nil && schedules.session != "" && schedules.session == m.SessionID {
 			if iconButton(c, conversationBackIcon, "返回定时任务").Clicked() {
 				v.splitRoot().openSchedulePage()

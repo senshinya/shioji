@@ -329,8 +329,7 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool, width, limit flo
 				c.AnimationFrame()
 			}
 		})
-		const actionHeight = 28
-		n.Row(c.Key("inspector-actions")).Absolute().Right(12).Top(mainToolbarCenter - actionHeight/2).Height(actionHeight).Gap(6).AlignItems(n.Center).Background(t.Background).Children(func() {
+		n.Row(c.Key("inspector-actions")).Absolute().Right(12).Top(mainWindowTopInset).Height(toolbarActionSize).Gap(6).AlignItems(n.Center).Background(t.Background).Children(func() {
 			if iconButton(c, refreshIcon, "刷新更改").Disabled(!v.Model.Connected).Clicked() {
 				v.refreshChanges()
 			}
@@ -388,22 +387,23 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 	}
 	pane.Children(func() {
 		inset := float32(12)
-		topInset, right := float32(0), float32(12)
+		var topInset, bottomInset float32
+		right := float32(12)
 		if key == "top" {
-			topInset, right = mainToolbarTopInset, 80
+			topInset, bottomInset, right = mainWindowTopInset, mainToolbarBottomInset, 80
 		}
 		if draggable {
 			inset += float32(len(tabs)*30) + 6
-			defer v.inspectorTabs(c, t, tabs, kind, (headerHeight+topInset)/2, drop)
+			defer v.inspectorTabs(c, t, tabs, kind, (headerHeight+topInset-bottomInset)/2, drop)
 		}
 		goBack := false
 		header := func(file bool) {
 			if headerHeight == 0 && !file {
 				return
 			}
-			height, headerInset := headerHeight, topInset
+			height, headerTop, headerBottom := headerHeight, topInset, bottomInset
 			if file && v.Model.WorkerMinor >= 33 {
-				height, headerInset = 36, 0
+				height, headerTop, headerBottom = 36, 0, 0
 			}
 			if height == 0 {
 				height = 36
@@ -412,7 +412,7 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 			if file && v.Model.WorkerMinor >= 33 {
 				leftInset, rightInset = 12, 12
 			}
-			n.Row(c).FillWidth().Height(height).Shrink(0).Padding(headerInset, rightInset, 0, leftInset).Gap(6).AlignItems(n.Center).Children(func() {
+			n.Row(c).FillWidth().Height(height).Shrink(0).Padding(headerTop, rightInset, headerBottom, leftInset).Gap(6).AlignItems(n.Center).Children(func() {
 				if file {
 					back := control(c, 5).Size(24, 26).Label("返回更改列表").Tooltip("返回更改列表").Children(func() { n.Icon(c, disclosureRight).Size(14, 14).Transform(n.Rotation(180)).TextColor(t.TextMuted) })
 					goBack = back.Clicked()

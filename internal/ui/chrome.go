@@ -40,8 +40,9 @@ func WindowTrafficLightPosition() *mygo.Point { return &mygo.Point{X: 22, Y: 21}
 
 const (
 	mainToolbarHeight      = 48
-	mainToolbarCenter      = 29 // Center of the visible macOS window controls.
-	mainToolbarTopInset    = 2*mainToolbarCenter - mainToolbarHeight
+	mainWindowTopInset     = 8
+	toolbarActionSize      = 28
+	mainToolbarBottomInset = mainToolbarHeight - mainWindowTopInset - toolbarActionSize
 	sidebarHeaderTopInset  = 6
 	sidebarTitlebarHeight  = 28
 	sidebarHeaderGap       = 4

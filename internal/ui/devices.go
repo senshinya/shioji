@@ -88,7 +88,7 @@ func (v *View) deviceView(c *n.Context, t *n.Theme) {
 	}
 	n.Row(c).Fill().Children(func() {
 		if !narrow || v.deviceList {
-			collection := n.Column(c.Key("device-collection")).Width(232).FillHeight().Padding(8).Label("设备列表")
+			collection := n.Column(c.Key("device-collection")).Width(232).FillHeight().Padding(mainWindowTopInset, 8, 8).Label("设备列表")
 			if narrow {
 				collection.FillWidth().Grow(1)
 			}

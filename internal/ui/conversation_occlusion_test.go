@@ -72,6 +72,73 @@ func TestConversationChromeCoversHistoryAtThePaneEdges(t *testing.T) {
 	}
 }
 
+func TestConversationToolbarActionsAlignWithSidebarFrame(t *testing.T) {
+	for _, width := range []int{1000, 1240} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			v := New(layoutModel(), nil, "")
+			ui := n.NewTester(v.View, width, 820)
+			ui.Advance(time.Second)
+			const sidebarFrameTop = 8
+			checkTop := func(label string) {
+				t.Helper()
+				if bounds, ok := ui.Find(label); !ok || bounds.Y != sidebarFrameTop {
+					t.Errorf("%s starts at y=%g (found: %v), want sidebar frame y=%d", label, bounds.Y, ok, sidebarFrameTop)
+				}
+			}
+			for _, label := range []string{"当前设备", "保持设备唤醒", "最近消息", "展开更改侧栏"} {
+				checkTop(label)
+			}
+			if err := ui.Click("展开更改侧栏"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			checkTop("刷新更改")
+			checkTop("关闭更改侧栏")
+		})
+	}
+}
+
+func TestMainWindowPagesAlignWithSidebarFrame(t *testing.T) {
+	model := layoutModel()
+	v := New(model, nil, "")
+	ui := n.NewTester(v.View, 1240, 820)
+	checkTop := func(label string) {
+		t.Helper()
+		ui.Frame()
+		ui.Advance(time.Second)
+		const sidebarFrameTop = 8
+		if bounds, ok := ui.Find(label); !ok || bounds.Y != sidebarFrameTop {
+			t.Errorf("%s starts at y=%g (found: %v), want sidebar frame y=%d", label, bounds.Y, ok, sidebarFrameTop)
+		}
+	}
+	model.SecondarySessionID = "pending"
+	checkTop("关闭并排会话")
+	v.closeParallel()
+
+	v.home()
+	checkTop("当前设备")
+
+	v.openArchive()
+	checkTop("归档保留设置")
+
+	v.openSchedulePage()
+	checkTop("新建任务")
+	v.newSchedule(v.schedules)
+	checkTop("返回任务列表")
+
+	v.editWorkspace(model.Snapshot.Workspaces[0])
+	checkTop("返回")
+
+	v.workspaceEditor = nil
+	v.devices = true
+	v.deviceSelected = "local"
+	checkTop("修改设备名称")
+
+	model.Tailnet.State = "Running"
+	v.deviceSelected = "tailnet"
+	checkTop("Tailnet 网络操作")
+}
+
 func differentPixels(a, b *image.RGBA, r image.Rectangle) int {
 	count := 0
 	for y := r.Min.Y; y < r.Max.Y; y++ {

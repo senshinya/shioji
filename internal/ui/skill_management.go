@@ -556,11 +556,7 @@ func containsHarness(agents []domain.HarnessInfo, id string) bool {
 
 func (v *View) workspaceSettingsHeader(c *n.Context, t *n.Theme) {
 	e := v.workspaceEditor
-	header := n.Column(c.Key("workspace-header")).FillWidth().Height(104).Padding(24, configurationInset, 12)
-	width, _ := c.Size()
-	if width < 900 {
-		header.Height(88).Padding(8, configurationInset, 12)
-	}
+	header := n.Column(c.Key("workspace-header")).FillWidth().Height(88).Padding(mainWindowTopInset, configurationInset, 12)
 	header.Children(func() {
 		n.Column(c).FillWidth().Gap(8).Children(func() {
 			back := configurationBackAction(c.Key("back"), "返回会话", "返回")
@@ -603,7 +599,7 @@ func (v *View) skillDeviceManagementPage(c *n.Context, t *n.Theme, r *skillManag
 		v.deviceAgentPage(c, t, r.key, v.Model.DeviceName(r.workspace.Workspace.DeviceID), state, r.editor, info)
 		return
 	}
-	n.Column(c).FillWidth().Padding(configurationInset).Gap(12).Children(func() {
+	n.Column(c).FillWidth().Padding(mainWindowTopInset, configurationInset, configurationInset).Gap(12).Children(func() {
 		if ghost(c, r.backLabel()).Clicked() {
 			v.returnSkillWorkspace()
 		}
