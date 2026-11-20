@@ -144,6 +144,28 @@ func showImport(t *testing.T) (*View, *app.Controller, *n.Tester) {
 	ui.Advance(time.Second)
 	return v, c, ui
 }
+func TestConversationImportWaitsForExplicitUnindexedScan(t *testing.T) {
+	v, c, ui := showImport(t)
+	v.readConversations(v.conversationImport, false)
+	job := welcomeJob(t, c, "conversation.list")
+	body, err := json.Marshal(domain.ConversationCatalog{Cursor: "scan-unindexed", UnindexedScan: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job.Apply(v.Model, body, nil)
+	ui.Frame()
+	if len(c.Jobs) != 0 {
+		t.Fatal("empty index launched another scan without user action")
+	}
+	if err := ui.Click("扫描未索引历史"); err != nil {
+		t.Fatal(err, ui.Texts())
+	}
+	continuation := welcomeJob(t, c, "conversation.list").Input.(protocol.ConversationQuery)
+	if continuation.Cursor != "scan-unindexed" {
+		t.Fatal("explicit scan did not continue from the index response", continuation)
+	}
+}
+
 func TestConversationImportSelectionSurvivesFilterAndPreviewDoesNotImport(t *testing.T) {
 	v, c, ui := showImport(t)
 	if err := ui.Click("选择会话：旋转测试"); err != nil {

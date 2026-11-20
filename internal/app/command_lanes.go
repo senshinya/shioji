@@ -13,6 +13,10 @@ func urgentLane(job Job) bool {
 }
 
 func commandLane(job Job) string {
+	switch job.Method {
+	case "conversation.list", "conversation.preview":
+		return "conversation:read"
+	}
 	switch in := job.Input.(type) {
 	case domain.Submission:
 		if in.SessionID == "" {
@@ -49,6 +53,9 @@ func commandLane(job Job) string {
 
 func commandTimeout(method string) time.Duration {
 	switch method {
+	case "conversation.list", "conversation.preview":
+		// Allow the worker's 20-second read plus probe cleanup and transport time.
+		return 35 * time.Second
 	case "conversation.import":
 		return 60 * time.Second
 	case "session.reconcile":

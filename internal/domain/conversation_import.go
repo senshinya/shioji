@@ -15,8 +15,9 @@ type ConversationCandidate struct {
 	ImportedSessionID string    `json:"importedSessionId,omitempty"`
 }
 type ConversationCatalog struct {
-	Items  []ConversationCandidate `json:"items"`
-	Cursor string                  `json:"cursor,omitempty"`
+	Items         []ConversationCandidate `json:"items"`
+	Cursor        string                  `json:"cursor,omitempty"`
+	UnindexedScan bool                    `json:"unindexedScan,omitempty"` // The continuation starts a scan outside the index.
 }
 type ConversationPreview struct {
 	Candidate ConversationCandidate `json:"candidate"`

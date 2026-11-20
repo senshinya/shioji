@@ -44,6 +44,12 @@ func conversationDirectory(value string) string {
 	}
 	return filepath.Clean(value)
 }
+
+const (
+	conversationIndexCursor = "index:"
+	conversationScanCursor  = "scan:"
+)
+
 func (r *Runtime) Conversations(ctx context.Context, roots []string, cursor string) (domain.ConversationCatalog, error) {
 	var out domain.ConversationCatalog
 	if !r.supports("thread/list") {
@@ -52,30 +58,63 @@ func (r *Runtime) Conversations(ctx context.Context, roots []string, cursor stri
 	if len(roots) == 0 || len(cursor) > 4096 {
 		return out, errors.New("历史查询范围无效")
 	}
-	var page struct {
-		Data       []conversationThread
-		NextCursor *string
-	}
 	// Index metadata can retain a logical/symlink cwd while thread/read returns
-	// its physical path. Filter bounded pages locally against canonical folders.
+	// its physical path. Filter locally so a literal cwd filter cannot hide it.
 	args := map[string]any{"limit": 50, "sortKey": "updated_at", "modelProviders": []string{}, "sourceKinds": []string{"cli", "vscode", "appServer"}}
-	if cursor != "" {
-		args["cursor"] = cursor
-	}
-	if err := r.call(ctx, "thread/list", args, &page); err != nil {
-		return out, err
-	}
-	if len(page.Data) > 50 {
-		return out, errors.New("历史目录超过分页上限")
-	}
-	for _, t := range page.Data {
-		c := conversationCandidate(t)
-		if c.SourceRef != "" && c.Title != "" && t.ParentThreadID == nil && slices.Contains(roots, c.Directory) {
-			out.Items = append(out.Items, c)
+	maxPages := 1
+	cursorPrefix := ""
+	if r.protocol.indexedThreadList {
+		var scan bool
+		cursor, scan = strings.CutPrefix(cursor, conversationScanCursor)
+		if scan {
+			cursorPrefix = conversationScanCursor
+		} else {
+			cursor, _ = strings.CutPrefix(cursor, conversationIndexCursor)
+			cursorPrefix = conversationIndexCursor
+			// Skip unrelated index pages within one probe. Reading the index
+			// directly avoids scanning JSONL rollouts to repair metadata.
+			args["useStateDbOnly"] = true
+			maxPages = 20
 		}
 	}
-	if page.NextCursor != nil {
-		out.Cursor = *page.NextCursor
+	seen := map[string]bool{cursor: true}
+	for range maxPages {
+		if cursor != "" {
+			args["cursor"] = cursor
+		}
+		var page struct {
+			Data       []conversationThread
+			NextCursor *string
+		}
+		if err := r.call(ctx, "thread/list", args, &page); err != nil {
+			return out, err
+		}
+		if len(page.Data) > 50 {
+			return out, errors.New("历史目录超过分页上限")
+		}
+		for _, t := range page.Data {
+			c := conversationCandidate(t)
+			if c.SourceRef != "" && c.Title != "" && t.ParentThreadID == nil && slices.Contains(roots, c.Directory) {
+				out.Items = append(out.Items, c)
+			}
+		}
+		if page.NextCursor == nil || *page.NextCursor == "" {
+			out.Cursor = ""
+			if cursorPrefix == conversationIndexCursor {
+				out.Cursor = conversationScanCursor
+				out.UnindexedScan = true
+			}
+			break
+		}
+		cursor = *page.NextCursor
+		if len(cursorPrefix)+len(cursor) > 4096 || seen[cursor] {
+			return out, errors.New("历史分页游标无效")
+		}
+		out.Cursor = cursorPrefix + cursor
+		if len(out.Items) > 0 {
+			break
+		}
+		seen[cursor] = true
 	}
 	return out, nil
 }

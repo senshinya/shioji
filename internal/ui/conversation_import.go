@@ -34,6 +34,7 @@ type conversationImportUI struct {
 	welcome                        bool
 	phase                          conversationImportPhase
 	query, filter, cursor, message string
+	unindexedScan                  bool
 	items                          []domain.ConversationCandidate
 	arrived                        map[string]time.Time
 	selected                       map[string]bool
@@ -44,7 +45,6 @@ type conversationImportUI struct {
 	previewScroll                  n.ScrollState
 	markdown                       markdown.Options
 	listRequest, previewRequest    uint64
-	pages                          int
 	seenCursors                    map[string]bool
 	queue                          []domain.ConversationCandidate
 	total, done, imported          int
@@ -111,7 +111,7 @@ func (v *View) readConversations(u *conversationImportUI, more bool) {
 	if !more {
 		u.items = nil
 		u.cursor = ""
-		u.pages = 0
+		u.unindexedScan = false
 		u.seenCursors = map[string]bool{}
 		u.list = n.ListState{}
 	}
@@ -155,9 +155,9 @@ func (v *View) readConversations(u *conversationImportUI, more bool) {
 				delete(u.selected, item.SourceRef)
 			}
 		}
-		u.pages++
 		u.phase = conversationReady
 		u.cursor = page.Cursor
+		u.unindexedScan = page.UnindexedScan
 		if page.Cursor != "" {
 			if u.seenCursors[page.Cursor] {
 				u.phase = conversationFailed
@@ -166,11 +166,6 @@ func (v *View) readConversations(u *conversationImportUI, more bool) {
 				return
 			}
 			u.seenCursors[page.Cursor] = true
-			// A source index may need several pages before matching this workspace.
-			// Bound each scan; the explicit More control can continue it later.
-			if len(u.items) == 0 && u.pages < 20 {
-				v.readConversations(u, true)
-			}
 		}
 		if len(u.items) >= 1000 {
 			u.items = u.items[:1000]
@@ -497,6 +492,8 @@ func (v *View) conversationImportFilteredList(c *n.Context, t *n.Theme, u *conve
 				caption = "正在查找会话"
 			} else if u.phase == conversationFailed {
 				caption = "暂时无法读取会话"
+			} else if u.cursor != "" {
+				caption = "暂未找到已有会话"
 			}
 			if u.phase == conversationLoading {
 				serviceSpinner(c, "正在查找会话", n.Font{Family: t.Font, Size: 13}, t.TextMuted)
@@ -510,7 +507,11 @@ func (v *View) conversationImportFilteredList(c *n.Context, t *n.Theme, u *conve
 		n.List(c.Key("source-list:"+u.filter), &u.list, len(shown), func(i int) { v.conversationImportRow(c, t, u, shown[i], busy || !valid) }).FillWidth().Grow(1).MinHeight(0).Label("可导入的会话列表")
 	}
 	if u.cursor != "" {
-		if configurationAction(c, "继续扫描").Label("继续扫描历史").AlignSelf(n.Center).Disabled(busy || u.phase == conversationLoading || !valid || len(u.items) >= 1000).Clicked() {
+		label := "继续扫描"
+		if u.unindexedScan {
+			label = "扫描未索引历史"
+		}
+		if configurationAction(c, label).Label(label).AlignSelf(n.Center).Disabled(busy || u.phase == conversationLoading || !valid || len(u.items) >= 1000).Clicked() {
 			v.readConversations(u, true)
 		}
 	}

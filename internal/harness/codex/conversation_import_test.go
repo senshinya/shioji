@@ -115,7 +115,84 @@ func TestCompleteImportReadsEverySourcePageAndRejectsUndisplayedChanges(t *testi
 	}
 }
 
-func TestConversationDiscoveryDoesNotRequireUnusedSourceDirectoryFilter(t *testing.T) {
+func TestConversationDiscoveryFindsIndexedHistoryAfterAnUnrelatedPage(t *testing.T) {
+	data, err := os.ReadFile("../../../design/protocol/codex-0.166.0/types.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema protocolSchema
+	if err = json.Unmarshal(data, &schema); err != nil {
+		t.Fatal(err)
+	}
+	schema.OneOf = schema.Definitions["ClientRequest"].OneOf
+	data, err = json.Marshal(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	support, err := protocolFromSchema(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	r := &Runtime{protocol: support, pending: map[string]chan wire.Message{}, done: make(chan struct{})}
+	r.stdin = workInputWriter{write: func(b []byte) (int, error) {
+		var q wire.Message
+		var args struct {
+			Cursor         string
+			UseStateDbOnly bool
+		}
+		if err := json.Unmarshal(b, &q); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(q.Params, &args); err != nil {
+			t.Fatal(err)
+		}
+		if q.Method != "thread/list" {
+			t.Fatalf("unexpected request: %s", q.Method)
+		}
+		var result string
+		if args.UseStateDbOnly {
+			switch args.Cursor {
+			case "":
+				result = `{"data":[{"id":"other","cwd":"/other","preview":"Unrelated"}],"nextCursor":"second"}`
+			case "second":
+				result = fmt.Sprintf(`{"data":[{"id":"expected","cwd":%q,"preview":"Match"}],"nextCursor":"third"}`, alias)
+			case "third":
+				result = `{"data":[]}`
+			default:
+				t.Fatalf("invalid index cursor: %s", args.Cursor)
+			}
+		} else {
+			if args.Cursor != "" {
+				t.Fatalf("scan reused an index cursor: %s", args.Cursor)
+			}
+			result = fmt.Sprintf(`{"data":[{"id":"unindexed","cwd":%q,"preview":"Recovered"}]}`, alias)
+		}
+		r.pending[string(q.ID)] <- wire.Message{Result: json.RawMessage(result)}
+		return len(b), nil
+	}}
+	page, err := r.Conversations(context.Background(), []string{root}, "")
+	if err != nil || len(page.Items) != 1 || page.Items[0].SourceRef != "expected" || page.Items[0].Directory != root || page.Cursor == "" {
+		t.Fatalf("discovery missed the matching history or its continuation: %+v, %v", page, err)
+	}
+	end, err := r.Conversations(context.Background(), []string{root}, page.Cursor)
+	if err != nil || len(end.Items) != 0 || end.Cursor == "" || !end.UnindexedScan {
+		t.Fatalf("end of index did not leave a way to scan unindexed history: %+v, %v", end, err)
+	}
+	full, err := r.Conversations(context.Background(), []string{root}, end.Cursor)
+	if err != nil || len(full.Items) != 1 || full.Items[0].SourceRef != "unindexed" || full.Cursor != "" {
+		t.Fatalf("explicit full scan lost unindexed history: %+v, %v", full, err)
+	}
+}
+
+func TestConversationDiscoveryDoesNotRequireOptionalIndexFilters(t *testing.T) {
 	data, err := os.ReadFile("../../../design/protocol/codex-0.166.0/types.schema.json")
 	if err != nil {
 		t.Fatal(err)
@@ -130,11 +207,12 @@ func TestConversationDiscoveryDoesNotRequireUnusedSourceDirectoryFilter(t *testi
 		t.Fatal("baseline lacks history list shape")
 	}
 	delete(shape.Properties, "cwd")
+	delete(shape.Properties, "useStateDbOnly")
 	schema.Definitions["ThreadListParams"] = shape
 	data, _ = json.Marshal(schema)
 	support, err := protocolFromSchema(data)
 	if err != nil || !support.methods["thread/list"] {
-		t.Fatal("unused optional query field disabled discovery", err)
+		t.Fatal("optional index fields disabled discovery", err)
 	}
 }
 

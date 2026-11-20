@@ -22,6 +22,7 @@ import (
 type protocolSupport struct {
 	scopedToolStatus       bool
 	scopedHooks            bool
+	indexedThreadList      bool
 	browserLogin           bool
 	deviceLogin            bool
 	collaborationMode      bool
@@ -159,6 +160,10 @@ func protocolFromSchema(data []byte) (*protocolSupport, error) {
 		}
 		if method.Enum[0] == "hooks/list" && compatible {
 			_, support.scopedHooks = params.Properties["threadId"]
+		}
+		if method.Enum[0] == "thread/list" && compatible {
+			var field struct{ Type string }
+			support.indexedThreadList = json.Unmarshal(params.Properties["useStateDbOnly"], &field) == nil && field.Type == "boolean"
 		}
 		if method.Enum[0] == "thread/start" {
 			_, support.threadStartServiceTier = params.Properties["serviceTier"]
