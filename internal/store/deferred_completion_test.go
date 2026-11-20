@@ -70,6 +70,38 @@ func TestDeferredCompletionWaitsForAllNativeWorkAndPublishesOnce(t *testing.T) {
 		t.Fatal("duplicate work resurrected completion", c)
 	}
 }
+
+func TestDeferredCompletionUsesQueueStateWhenNativeWorkSettles(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		paused    bool
+		continues bool
+	}{
+		{name: "active queue", continues: true},
+		{name: "paused queue", paused: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, w, id, work := deferredReply(t)
+			if _, err := s.Enqueue(domain.Submission{OperationID: "next", WorkspaceID: w.ID, SessionID: id, Text: "next"}); err != nil {
+				t.Fatal(err)
+			}
+			if tc.paused {
+				if _, err := s.PauseQueue(id, "paused"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			work.State = "completed"
+			e, err := s.Apply(id, domain.Event{Type: "work.upsert", Work: &work})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c := e.Session.Completion; c == nil || !c.Unread || c.AutomaticContinuation != tc.continues {
+				t.Fatal("completion did not preserve unread state and reflect the current queue", c)
+			}
+		})
+	}
+}
+
 func TestDeferredCompletionWithdrawalPreventsLatePublication(t *testing.T) {
 	for _, action := range []string{"new-turn", "archive", "workspace-archive", "restart", "history-change"} {
 		t.Run(action, func(t *testing.T) {

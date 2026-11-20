@@ -78,6 +78,8 @@ type Session struct {
 // ReplyCompletion is owned by the device worker. ID fences acknowledgements
 // against a newer reply or replacement history independently of source IDs.
 type ReplyCompletion struct {
+	// AutomaticContinuation suppresses delivery while keeping the reply's read state.
+	AutomaticContinuation bool `json:"automaticContinuation,omitempty"`
 	// Pending has no publication ID or unread signal until native work settles.
 	Pending     bool           `json:"pending,omitempty"`
 	Outcome     ExecutionState `json:"outcome,omitempty"`

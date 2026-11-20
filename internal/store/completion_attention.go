@@ -37,10 +37,31 @@ func (s *Store) observeReplyCompletion(tx *sql.Tx, session *domain.Session, prev
 	}
 	session.Completion = &domain.ReplyCompletion{HistoryRef: session.ThreadID, TurnID: turn.ID, Order: turn.Order, CompletedAt: at, Pending: busy}
 	if !busy {
+		continues, err := replyContinuesAutomatically(tx, session)
+		if err != nil {
+			return err
+		}
+		session.Completion.AutomaticContinuation = continues
 		session.Completion.ID = domain.NewID()
 		session.Completion.Unread = true
 	}
 	return nil
+}
+
+func replyContinuesAutomatically(tx *sql.Tx, session *domain.Session) (bool, error) {
+	if session.Goal.Active() {
+		return true, nil
+	}
+	if session.ContextChanged || session.ExecutionGuard != "" {
+		return false, nil
+	}
+	// The finishing turn's input receipt can arrive after its completion event.
+	// An indeterminate receipt blocks dispatch until the user reconciles it.
+	var ready bool
+	err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM queues q WHERE q.session_id=? AND `+automaticQueueHead+`
+		AND NOT EXISTS(SELECT 1 FROM operations o WHERE o.session_id=q.session_id AND o.state='indeterminate')
+		AND NOT EXISTS(SELECT 1 FROM requests r WHERE r.session_id=q.session_id AND json_extract(r.body,'$.state') IN ('pending','submitting')))`, session.ID).Scan(&ready)
+	return ready, err
 }
 
 func withdrawReplyCompletion(session *domain.Session) {
@@ -68,6 +89,11 @@ func (s *Store) settleReplyCompletion(tx *sql.Tx, session *domain.Session, inter
 		if err != nil || busy {
 			return false, err
 		}
+		continues, err := replyContinuesAutomatically(tx, session)
+		if err != nil {
+			return false, err
+		}
+		c.AutomaticContinuation = continues
 	}
 	c.Pending, c.Unread = false, true
 	c.ID, c.CompletedAt = domain.NewID(), time.Now().UTC()

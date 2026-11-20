@@ -2,9 +2,11 @@ package worker_test
 
 import (
 	"reflect"
-	"shioji/internal/domain"
+	"strings"
 	"testing"
 	"time"
+
+	"shioji/internal/domain"
 )
 
 func TestWorkerGoalStartsOwnedTurnAndControlsSameObjective(t *testing.T) {
@@ -120,8 +122,12 @@ func TestWorkerPersistsNativeGoalContinuationBetweenReplies(t *testing.T) {
 		}
 	}
 	awaitModel()
+	notifications := watchReplyNotifications(t, client)
 	releaseModel()
 	awaitModel()
+	if replies := replyNotifications(t, client, notifications, accepted.SessionID); len(replies) != 0 {
+		t.Fatal("the reply before an automatic Goal continuation should not notify", replies)
+	}
 	detail := read()
 	if !detail.Session.Goal.Active() {
 		t.Fatal("the goal was lost before the continuation")
@@ -132,6 +138,9 @@ func TestWorkerPersistsNativeGoalContinuationBetweenReplies(t *testing.T) {
 	releaseModel()
 	wait(t, func() bool { return read().Session.Status == domain.ExecutionCompleted })
 	detail = read()
+	if replies := replyNotifications(t, client, notifications, accepted.SessionID); len(replies) != 1 || detail.Session.Completion == nil || !strings.HasSuffix(replies[0].ID, ":completion:"+detail.Session.Completion.ID) {
+		t.Fatal("the reply after pausing the Goal should notify", replies)
+	}
 	if len(detail.Items) != 4 || detail.Items[0].Kind != "user" || detail.Items[1].Kind != "assistant" ||
 		detail.Items[2].Presentation != "goal-continuation" || detail.Items[3].Kind != "assistant" ||
 		detail.Items[2].TurnID != detail.Items[3].TurnID || detail.Items[1].TurnID == detail.Items[2].TurnID {

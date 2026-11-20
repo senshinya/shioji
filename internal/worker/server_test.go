@@ -427,6 +427,7 @@ func TestDurableQueueDispatchesFIFOAfterRealCompletion(t *testing.T) {
 			t.Fatal("queued input in history")
 		}
 	}
+	notifications := watchReplyNotifications(t, c)
 	close(p.Release)
 	wait(t, func() bool {
 		call(t, c, "session", protocol.SessionQuery{ID: op.SessionID}, &d)
@@ -440,6 +441,9 @@ func TestDurableQueueDispatchesFIFOAfterRealCompletion(t *testing.T) {
 	}
 	if strings.Join(texts, ",") != "SHIOJI_SLOW,second,third" {
 		t.Fatal(texts)
+	}
+	if replies := replyNotifications(t, c, notifications, op.SessionID); len(replies) != 1 || d.Session.Completion == nil || !strings.HasSuffix(replies[0].ID, ":completion:"+d.Session.Completion.ID) {
+		t.Fatal("only the reply after the queue drains should notify", replies)
 	}
 }
 

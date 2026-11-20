@@ -420,6 +420,10 @@ func (s *Store) ReorderQueue(sid, id, before string, revision int64) (domain.Que
 	})
 }
 
+const automaticQueueHead = `COALESCE(json_extract(q.body,'$.paused'),0)=0
+	AND json_array_length(json_extract(q.body,'$.items'))>0
+	AND COALESCE(json_extract(q.body,'$.items[0].state'),'')=''`
+
 // Read only the eligible IDs. Archived history and paused queues are outside
 // the automatic dispatch scan; submitLocked still checks the current revision.
 func (s *Store) ReadyQueueSessions() ([]string, error) {
@@ -431,8 +435,7 @@ func (s *Store) ReadyQueueSessions() ([]string, error) {
 		AND COALESCE(json_extract(w.body,'$.archived'),0)=0
 		AND COALESCE(json_extract(s.body,'$.archived'),0)=0
 		AND COALESCE(json_extract(s.body,'$.goal.state'),'') <>'active'
-		AND COALESCE(json_extract(q.body,'$.paused'),0)=0 AND json_array_length(json_extract(q.body,'$.items'))>0
-		AND COALESCE(json_extract(q.body,'$.items[0].state'),'')=''
+		AND ` + automaticQueueHead + `
 		AND NOT EXISTS(SELECT 1 FROM operations o WHERE o.session_id=s.id AND o.state IN ('accepted','dispatched','indeterminate'))
 		AND NOT EXISTS(SELECT 1 FROM requests r WHERE r.session_id=s.id AND json_extract(r.body,'$.state') IN ('pending','submitting'))
 		ORDER BY s.rowid`)

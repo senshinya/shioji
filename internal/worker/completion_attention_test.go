@@ -4,11 +4,44 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
+	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"shioji/internal/worker"
 )
+
+func replyNotifications(t *testing.T, c *protocol.Client, model *app.Model, sessionID string) []app.SessionNotification {
+	t.Helper()
+	var page protocol.EventPage
+	call(t, c, "events", protocol.EventsQuery{After: model.Sequence, Generation: model.Snapshot.Generation}, &page)
+	for _, event := range page.Events {
+		if err := model.ApplyEvent(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var replies []app.SessionNotification
+	for _, notice := range model.Notifications {
+		if notice.SessionID == sessionID && notice.Kind == "completed" {
+			replies = append(replies, notice)
+		}
+	}
+	return replies
+}
+
+func watchReplyNotifications(t *testing.T, c *protocol.Client) *app.Model {
+	t.Helper()
+	model := app.NewModel()
+	model.Preferences.Notifications.Enabled = true
+	model.WorkerMinor = c.Minor
+	var snapshot domain.Snapshot
+	call(t, c, "snapshot", nil, &snapshot)
+	// Codex reports turn completion at whole-second precision.
+	snapshot.ObservedAt = snapshot.ObservedAt.Truncate(time.Second)
+	model.ApplySnapshot(snapshot)
+	return model
+}
 
 func TestCompletionReadSynchronizesClientsAndCannotConsumeNewReply(t *testing.T) {
 	server, a, _ := startServer(t)

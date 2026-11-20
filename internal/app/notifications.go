@@ -42,8 +42,10 @@ func (m *Model) notificationForEvent(e domain.Event) *SessionNotification {
 		}
 		if publication {
 			notice.Kind, notice.Title = "completed", "回复已完成"
-			if c.Outcome == "interrupted" {
+			if c.Outcome == domain.ExecutionInterrupted {
 				notice.Kind, notice.Title = "failed", "后台工作已中断"
+			} else if c.AutomaticContinuation {
+				return nil
 			}
 			if notice.Kind == "completed" && !p.Completed || notice.Kind == "failed" && !p.Failed {
 				return nil
