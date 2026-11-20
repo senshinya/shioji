@@ -62,6 +62,8 @@ type GoalRequest struct {
 
 const MaxGoalRunes = 4000
 
+const GoalContinuationPresentation = "goal-continuation"
+
 func GoalCommand(text string) (objective string, command bool) {
 	text = strings.TrimLeftFunc(text, unicode.IsSpace)
 	end := strings.IndexFunc(text, unicode.IsSpace)

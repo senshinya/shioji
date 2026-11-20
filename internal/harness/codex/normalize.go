@@ -22,21 +22,22 @@ type pending struct {
 	permissions json.RawMessage
 }
 type Normalizer struct {
-	manualCompaction map[string]bool
-	earlyRequests    []*pending
-	work             *workTracker
-	workControl      bool
-	workSteer        bool
-	workContinue     bool
-	importResource   func(harness.OutputResource) (domain.Attachment, error)
-	mu               sync.Mutex
-	sessions         map[string]string
-	requests         map[string]*pending
-	sourceRequests   map[string]string
-	items            map[string]domain.Item
-	turns            map[string]domain.Turn
-	totals           map[string]wire.Counters
-	usage            map[string]turnUsage
+	manualCompaction  map[string]bool
+	goalContinuations map[string]*goalContinuation
+	earlyRequests     []*pending
+	work              *workTracker
+	workControl       bool
+	workSteer         bool
+	workContinue      bool
+	importResource    func(harness.OutputResource) (domain.Attachment, error)
+	mu                sync.Mutex
+	sessions          map[string]string
+	requests          map[string]*pending
+	sourceRequests    map[string]string
+	items             map[string]domain.Item
+	turns             map[string]domain.Turn
+	totals            map[string]wire.Counters
+	usage             map[string]turnUsage
 }
 
 // Missing usage and a reported zero are different observations. Baseline
@@ -106,6 +107,7 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 	}
 	sid := n.sessions[p.ThreadID]
 	event := domain.Event{SessionID: sid}
+	var goalMarker *domain.Item
 	emit := func(e domain.Event) ([]domain.Event, []byte, error) {
 		e.SessionID = sid
 		work := n.observeRootWork(m, p, e)
@@ -114,6 +116,9 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		// Publish continuing execution ownership before releasing its parent turn.
 		if e.Turn != nil && e.Turn.Status != "running" {
 			return append(work, e), reply, nil
+		}
+		if goalMarker != nil {
+			return append([]domain.Event{{SessionID: sid, Type: "item.upsert", Item: goalMarker}, e}, work...), reply, nil
 		}
 		return append([]domain.Event{e}, work...), reply, nil
 	}
@@ -140,6 +145,7 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 			}
 			event.Goal = normalizeGoal(p.Goal)
 		}
+		n.observeGoal(p.ThreadID, event.Goal)
 		return emit(event)
 	case "thread/name/updated":
 		if p.ThreadName == nil || strings.TrimSpace(*p.ThreadName) == "" {
@@ -172,7 +178,8 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		event.Type, event.Plan = "plan", &plan
 		return emit(event)
 	case "turn/started", "turn/completed":
-		t := n.turns[p.Turn.ID]
+		previous := n.turns[p.Turn.ID]
+		t := previous
 		if m.Method == "turn/started" && n.manualCompaction[p.ThreadID] {
 			t.Presentation = "compaction"
 			delete(n.manualCompaction, p.ThreadID)
@@ -182,6 +189,7 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		t.CompletedAt = stamp(p.Turn.CompletedAt)
 		t.DurationMS = p.Turn.DurationMS
 		t.Status = normalizedTurnStatus(p.Turn.Status)
+		n.observeGoalTurn(p.ThreadID, m.Method == "turn/started", previous, t)
 		if t.Status == "running" {
 			usage := n.usage[t.ID]
 			if usage.phase == usageUnobserved {
@@ -237,6 +245,7 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		}
 		return nil, nil, nil
 	case "item/started", "item/completed":
+		goalMarker = n.goalContinuationItem(p)
 		if p.Item.Type == "userMessage" {
 			return nil, nil, nil
 		} // The accepted input already has a stable worker item.

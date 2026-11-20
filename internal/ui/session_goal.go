@@ -110,12 +110,12 @@ func (v *View) sessionGoal(c *n.Context, t *n.Theme) {
 		summary.FocusRing(summary.FocusVisible()).Radius(6)
 		summary.Children(func() {
 			n.Row(c).FillWidth().Height(goalLineHeight).AlignItems(n.Baseline).Gap(6).Clip().Children(func() {
-				inlineSymbol(c, goalTargetIcon, "目标", font, goalIconSize, t.Text).Shrink(0)
+				inlineSymbol(c, goalTargetIcon, "目标", font, goalIconSize, t.Text).Shrink(0).MarginEnd(-3)
 				n.Text(c, "目标").FontSize(12).FixedLineHeight(goalLineHeight).TextColor(t.Text).Shrink(0).Role(n.RoleNone)
 				n.Text(c, status).FontSize(12).FixedLineHeight(goalLineHeight).TextColor(t.TextMuted).Shrink(0).Role(n.RoleNone)
 				n.Text(c, "·").FontSize(12).FixedLineHeight(goalLineHeight).TextColor(t.TextMuted).Shrink(0).Role(n.RoleNone)
 				n.Text(c, goal.Objective).FontSize(12).FixedLineHeight(goalLineHeight).TextColor(t.TextMuted).
-					SingleLine().Grow(1).MinWidth(0).Role(n.RoleNone)
+					SingleLine().Grow(1).MinWidth(0).MarginStart(4).Role(n.RoleNone)
 			})
 		})
 		// Align the rightmost label with the composer while letting its hover surface extend past the text guide.

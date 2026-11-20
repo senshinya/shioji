@@ -305,6 +305,81 @@ func TestGoalResumeUsesTheOwningSessionAndKeepsTheDraft(t *testing.T) {
 	}
 }
 
+func TestGoalContinuationUsesOrdinaryHistorySpacing(t *testing.T) {
+	v, tester := goalLayout(false, false)
+	m := v.Model
+	detail := m.Details[m.SessionID]
+	// The goal has since paused. The confirmed continuation remains in history.
+	detail.Turns = []domain.Turn{{ID: "first", Order: 1, Status: "completed"}, {ID: "next", Order: 2, Status: "completed"}}
+	detail.Items = []domain.Item{
+		{ID: "first-reply", TurnID: "first", Kind: "assistant", Text: "检查上一轮结果。", Order: 1, Final: true},
+		{ID: "next-goal-mark", TurnID: "next", Kind: "activity", Name: "目标自动续跑", Presentation: "goal-continuation", Order: 2, Final: true},
+		{ID: "next-reply", TurnID: "next", Kind: "assistant", Text: "继续核对会话结果。", Order: 3, Final: true},
+	}
+	m.Details[m.SessionID] = detail
+	tester.SetScale(2)
+	tester.Advance(time.Second)
+	mark, ok := tester.Find("目标自动续跑")
+	footer, footerShown := tester.Find("回复信息")
+	reply := v.historyRowBounds["next-reply"]
+	if !ok || !footerShown || reply.H == 0 {
+		t.Fatalf("goal continuation is missing from the restored history: %v", tester.Texts())
+	}
+	if above, below := mark.Y-footer.Y-footer.H, reply.Y-mark.Y-mark.H; math.Abs(float64(above-8)) > 0.02 || math.Abs(float64(below-8)) > 0.02 {
+		t.Fatalf("wanted ordinary 8 DIP spacing around the mark, got %g/%g DIP", above, below)
+	}
+	pixels := tester.Image()
+	leftInk := func(y, height float32) int {
+		start := int(2 * reply.X)
+		for x := start; x <= start+8; x++ {
+			for row := int(2 * y); row < int(2*(y+height)); row++ {
+				if pixels.RGBAAt(x, row).R < 150 {
+					return x
+				}
+			}
+		}
+		t.Fatal("no visible ink along the conversation's left edge")
+		return 0
+	}
+	if icon, text := leftInk(mark.Y, mark.H), leftInk(reply.Y, 24); math.Abs(float64(icon-text)) > 2 {
+		t.Fatalf("arrow target and text left edges differ: %d vs %d pixels", icon, text)
+	}
+}
+
+func TestGoalContinuationPrecedesAutomaticCompactionInItsTurn(t *testing.T) {
+	v, tester := goalLayout(false, false)
+	m := v.Model
+	detail := m.Details[m.SessionID]
+	detail.Turns = []domain.Turn{{ID: "first", Order: 1, Status: "completed"}, {ID: "next", Order: 2, Status: "completed"}}
+	detail.Items = []domain.Item{
+		{ID: "first-reply", TurnID: "first", Kind: "assistant", Text: "完成上一轮验证。", Order: 1, Final: true},
+		{ID: "compaction", TurnID: "next", Kind: "activity", Presentation: "compaction", Name: "上下文已压缩", Status: "completed", Order: 2, Final: true},
+		{ID: "goal-mark", TurnID: "next", Kind: "activity", Presentation: domain.GoalContinuationPresentation, Name: "目标自动续跑", Order: 3, Final: true},
+		{ID: "next-tool", TurnID: "next", Kind: "tool", Name: "Reconnect check", Text: "Tool output needle", Order: 4, Final: true},
+		{ID: "next-reply", TurnID: "next", Kind: "assistant", Text: "继续核对重连。", Order: 5, Final: true},
+	}
+	m.Details[m.SessionID] = detail
+	m.FoldToolHistory[m.SessionID] = true
+	tester.Frame()
+	tester.Advance(time.Second)
+	assertOrder := func() {
+		t.Helper()
+		marker, shown := tester.Find("目标自动续跑")
+		compaction, compactionShown := tester.Find("上下文已压缩")
+		if !shown || !compactionShown || marker.Y+marker.H > compaction.Y {
+			t.Fatalf("the marker must introduce the continuation before its compaction: %v, %v (%v)", marker, compaction, tester.Texts())
+		}
+	}
+	assertOrder()
+	tester.Key(n.Cmd, n.KeyF)
+	tester.Type("needle")
+	tester.Advance(time.Second)
+	if !tester.HasText("Tool output needle") {
+		t.Fatal("search did not reveal the continuation's tool output")
+	}
+	assertOrder()
+}
+
 func TestGoalActiveActionsSlideInOnHover(t *testing.T) {
 	capturePath := os.Getenv("SHIOJI_GOAL_BUTTON_CAPTURE")
 	v, tester := goalLayout(false, capturePath != "")
@@ -373,7 +448,7 @@ func TestGoalVisibleEdgesMatchComposer(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, width := range []int{850, 1240} {
 			t.Run(fmt.Sprintf("dark=%v/width=%d", dark, width), func(t *testing.T) {
-				_, tester := goalLayout(true, false)
+				v, tester := goalLayout(true, false)
 				tester.SetDark(dark)
 				tester.SetSize(width, 820)
 				tester.SetScale(2)
@@ -387,6 +462,10 @@ func TestGoalVisibleEdgesMatchComposer(t *testing.T) {
 					return r
 				}
 				row, summary, paused, resume := find("目标状态行"), find("目标摘要"), find("已暂停"), find("恢复")
+				label, separator, objective := find("目标"), find("·"), find(v.contextSession().Goal.Objective)
+				if iconGap, objectiveGap := label.X-summary.X-goalIconSize, objective.X-separator.X-separator.W; iconGap != 3 || math.Abs(float64(objectiveGap-10)) > 0.01 {
+					t.Errorf("goal label and objective need distinct spacing: icon gap %g, objective gap %g", iconGap, objectiveGap)
+				}
 				pixels := tester.Image()
 				ink := func(box n.Rect, bg byte) image.Rectangle {
 					t.Helper()

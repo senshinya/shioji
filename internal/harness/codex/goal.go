@@ -16,6 +16,82 @@ func normalizeGoal(g *wire.Goal) *domain.Goal {
 	}
 }
 
+type goalContinuation struct {
+	goal      *domain.Goal
+	ready     bool
+	candidate string
+}
+
+func (n *Normalizer) observeGoal(thread string, goal *domain.Goal) {
+	state := n.goalContinuations[thread]
+	if state == nil {
+		if !goal.Active() {
+			return
+		}
+		if n.goalContinuations == nil {
+			n.goalContinuations = make(map[string]*goalContinuation)
+		}
+		state = &goalContinuation{}
+		n.goalContinuations[thread] = state
+	}
+	if !state.goal.SameTarget(goal) {
+		state.ready = false
+	}
+	if goal.Active() {
+		state.goal = goal
+	} else {
+		// A pause or clear after a turn has started does not change its origin.
+		state.goal = nil
+		if state.candidate == "" {
+			delete(n.goalContinuations, thread)
+		}
+	}
+}
+
+func (n *Normalizer) observeGoalTurn(thread string, started bool, previous, turn domain.Turn) {
+	state := n.goalContinuations[thread]
+	if state == nil || turn.ID == "" {
+		return
+	}
+	if started && previous.ID == "" {
+		state.candidate = ""
+		if state.ready && turn.Status == domain.ExecutionRunning && turn.Presentation == "" {
+			state.candidate = turn.ID
+		}
+		state.ready = false
+	} else if !started && previous.Status == domain.ExecutionRunning && n.workState().currentTurns[thread] == turn.ID {
+		state.candidate = ""
+		state.ready = state.goal.Active() && turn.Status == domain.ExecutionCompleted && turn.Presentation == ""
+	}
+	if state.goal == nil && state.candidate == "" {
+		delete(n.goalContinuations, thread)
+	}
+}
+
+// Codex's public turn record omits turn_trigger. A native Goal continuation
+// starts after a completed root turn under the same active goal. Wait for
+// model output: direct and native queued inputs emit a user item before it.
+// Manual compaction is already identified at its source request.
+func (n *Normalizer) goalContinuationItem(p wire.Params) *domain.Item {
+	state := n.goalContinuations[p.ThreadID]
+	if state == nil || state.candidate == "" || state.candidate != p.TurnID {
+		return nil
+	}
+	var marker *domain.Item
+	switch p.Item.Type {
+	case "userMessage", "enteredReviewMode", "exitedReviewMode":
+	case "agentMessage", "reasoning", "plan", "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "webSearch", "imageView", "imageGeneration", "sleep":
+		marker = &domain.Item{ID: "goal-continuation:" + p.TurnID, TurnID: p.TurnID, Kind: "activity", Presentation: domain.GoalContinuationPresentation, Name: "目标自动续跑", Final: true}
+	default:
+		return nil
+	}
+	state.candidate = ""
+	if state.goal == nil {
+		delete(n.goalContinuations, p.ThreadID)
+	}
+	return marker
+}
+
 func (r *Runtime) goalsEnabled(ctx context.Context, thread string) bool {
 	for _, method := range []string{"experimentalFeature/list", "thread/goal/get", "thread/goal/set", "thread/goal/clear"} {
 		if !r.supports(method) {

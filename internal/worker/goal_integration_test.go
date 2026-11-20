@@ -86,3 +86,55 @@ func TestWorkerGoalStartsOwnedTurnAndControlsSameObjective(t *testing.T) {
 	wait(t, func() bool { read(); return d.Session.Goal == nil })
 	close(provider.Release)
 }
+
+func TestWorkerPersistsNativeGoalContinuationBetweenReplies(t *testing.T) {
+	_, client, provider := startServer(t)
+	var workspace domain.Workspace
+	call(t, client, "workspace.create", map[string]any{"name": "Goal", "folders": []string{t.TempDir()}}, &workspace)
+	const objective = "SHIOJI_SLOW verify a goal continuation"
+	var accepted domain.Operation
+	call(t, client, "session.submit", domain.Submission{
+		OperationID: "goal", WorkspaceID: workspace.ID, Text: "/goal " + objective, GoalObjective: objective,
+		Config: domain.RunConfig{Model: "fixture-model", Permission: "read-only"},
+	}, &accepted)
+	awaitModel := func() {
+		t.Helper()
+		select {
+		case <-provider.Started:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the next Codex turn did not reach the model")
+		}
+	}
+	read := func() domain.SessionDetail {
+		t.Helper()
+		var detail domain.SessionDetail
+		call(t, client, "session", map[string]string{"id": accepted.SessionID}, &detail)
+		return detail
+	}
+	releaseModel := func() {
+		t.Helper()
+		select {
+		case provider.Release <- struct{}{}:
+		case <-time.After(5 * time.Second):
+			t.Fatal("no active model request to release")
+		}
+	}
+	awaitModel()
+	releaseModel()
+	awaitModel()
+	detail := read()
+	if !detail.Session.Goal.Active() {
+		t.Fatal("the goal was lost before the continuation")
+	}
+	call(t, client, "session.goal.control", domain.GoalRequest{
+		OperationID: "pause-goal", SessionID: accepted.SessionID, Target: *detail.Session.Goal, Action: domain.PauseGoal,
+	}, nil)
+	releaseModel()
+	wait(t, func() bool { return read().Session.Status == domain.ExecutionCompleted })
+	detail = read()
+	if len(detail.Items) != 4 || detail.Items[0].Kind != "user" || detail.Items[1].Kind != "assistant" ||
+		detail.Items[2].Presentation != "goal-continuation" || detail.Items[3].Kind != "assistant" ||
+		detail.Items[2].TurnID != detail.Items[3].TurnID || detail.Items[1].TurnID == detail.Items[2].TurnID {
+		t.Fatalf("the worker history should be input, first reply, continuation marker, and next reply: %+v", detail.Items)
+	}
+}

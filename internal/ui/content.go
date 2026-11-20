@@ -81,6 +81,12 @@ func toolIssueLabel(item domain.Item) string {
 }
 
 func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcriptAnchor ...bool) {
+	if item.Presentation == domain.GoalContinuationPresentation {
+		font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+		// The arrow target's visible stroke starts inside its 14-DIP slot.
+		inlineIconText(c, goalTargetIcon, item.Name, font, 14, 5, t.TextMuted).MarginStart(-1.5)
+		return
+	}
 	if item.Presentation == "compaction" {
 		v.contextCompactionItem(c, t, item)
 		return

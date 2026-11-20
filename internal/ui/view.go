@@ -1393,6 +1393,9 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		if entry.footer != "" || entry.restarting || entry.preparing != "" {
 			bottom = 32
 		}
+		if entry.footer != "" && row < len(rows) && rows[row].item.Presentation == domain.GoalContinuationPresentation {
+			bottom = 8
+		}
 		// A compaction at the end of the transcript has no reply footer to
 		// provide reading clearance above the dock.
 		if row == len(rows) && item.Presentation == "compaction" {

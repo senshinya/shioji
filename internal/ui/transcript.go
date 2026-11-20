@@ -38,6 +38,45 @@ type toolArrivalState struct {
 	footerKeys    map[string]string // Restart waiting rows retain their native animation state.
 }
 
+// An automatic compaction or hook can arrive before the adapter can confirm
+// the continuation. Keep the marker at the start of its turn in the view.
+func withGoalContinuationMarkers(rows []transcriptRow) []transcriptRow {
+	var markers map[string]int
+	for i, row := range rows {
+		if row.item.Presentation == domain.GoalContinuationPresentation {
+			if markers == nil {
+				markers = make(map[string]int)
+			}
+			markers[row.item.TurnID] = i
+		}
+	}
+	for i, row := range rows {
+		if len(markers) == 0 {
+			return rows
+		}
+		index, ok := markers[row.item.TurnID]
+		if !ok {
+			continue
+		}
+		if index == i {
+			delete(markers, row.item.TurnID)
+			continue
+		}
+		ordered := append(make([]transcriptRow, 0, len(rows)), rows[:i]...)
+		for _, entry := range rows[i:] {
+			if at, pending := markers[entry.item.TurnID]; pending {
+				ordered = append(ordered, rows[at])
+				delete(markers, entry.item.TurnID)
+			}
+			if entry.item.Presentation != domain.GoalContinuationPresentation {
+				ordered = append(ordered, entry)
+			}
+		}
+		return ordered
+	}
+	return rows
+}
+
 // A turn receipt is its own stable row below a disclosure, so it follows the
 // group's changing height rather than disappearing inside its clipped body.
 func withTurnFooters(rows []transcriptRow, turns map[string]domain.Turn) []transcriptRow {
@@ -377,7 +416,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		}
 		arrival(key)
 	}
-	return rows
+	return withGoalContinuationMarkers(rows)
 }
 func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int) {
 	label := fmt.Sprintf("%d 次工具调用", row.count)
