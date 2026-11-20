@@ -507,8 +507,8 @@ func TestExpandedToolTimelineSeparatesIconAndTextColumns(t *testing.T) {
 		group, _ := ui.Find("2 次工具调用")
 		for _, label := range []string{"first command", "second command"} {
 			child, ok := ui.Find(label)
-			// The icon rail stays at the group edge; plain titles use the text column.
-			if !ok || math.Abs(float64(child.X-group.X-24)) > .5 {
+			// The timeline is inset 16 DIP, with 24 DIP for the icon and gap.
+			if !ok || math.Abs(float64(child.X-group.X-40)) > .5 {
 				t.Errorf("width %d: %s is not beside the timeline rail: group=%+v child=%+v", width, label, group, child)
 			}
 		}
@@ -516,6 +516,9 @@ func TestExpandedToolTimelineSeparatesIconAndTextColumns(t *testing.T) {
 		output, ok := ui.Find("first result")
 		if !ok || math.Abs(float64(output.Y-command.Y-command.H-8)) > .5 {
 			t.Errorf("width %d: indentation changed the tool-output gap: command=%+v output=%+v", width, command, output)
+		}
+		if ok && math.Abs(float64(output.X-command.X)) > .5 {
+			t.Errorf("width %d: expanded output does not share the command text column: command=%+v output=%+v", width, command, output)
 		}
 		footer, ok := ui.Find("回复信息")
 		if !ok || math.Abs(float64(footer.X-group.X)) > .5 {
