@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	"image"
 	"math"
@@ -371,6 +372,98 @@ func TestGoalResumeUsesTheOwningSessionAndKeepsTheDraft(t *testing.T) {
 	}
 	if v.Model.Drafts[v.Model.DraftKey()] != "先确认重连后是否还会重复发送。" {
 		t.Fatal("goal action changed the normal draft")
+	}
+}
+
+func TestGoalClearCollapsesTheDockWithoutMovingTheComposer(t *testing.T) {
+	for _, reduced := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reduce-motion=%t", reduced), func(t *testing.T) {
+			v, tester := goalLayout(false, true)
+			tester.SetPreferences(n.Preferences{ReduceMotion: reduced})
+			m := v.Model
+			m.SetQueue(domain.QueueState{SessionID: m.SessionID, Revision: 1, Paused: true, Items: []domain.QueueItem{
+				{ID: "queued", Input: domain.Submission{OperationID: "send-queued", Text: "再检查一次连接。"}},
+			}})
+			tester.Frame()
+			tester.Advance(time.Second)
+
+			if dir := os.Getenv("SHIOJI_GOAL_CLEAR_CAPTURE"); dir != "" && !reduced {
+				t.Setenv("SHIOJI_SKILL_SNAPSHOTS", dir)
+				tester.SetScale(2)
+			}
+			find := func(label string) n.Rect {
+				t.Helper()
+				r, ok := tester.Find(label)
+				if !ok {
+					t.Fatalf("missing %q", label)
+				}
+				return r
+			}
+			goal := find("目标状态行")
+			editor := find("消息编辑器")
+			queue := find("待发送队列")
+			dockHeight := find("会话底部面板").H
+			assertDockControlsStay := func() {
+				t.Helper()
+				if find("消息编辑器") != editor || find("待发送队列") != queue {
+					t.Fatal("clearing Goal moved the editor or queue")
+				}
+			}
+			tester.Move(goal.X+goal.W/2, goal.Y+goal.H/2)
+			tester.Advance(200 * time.Millisecond)
+			feedbackClick(t, tester, "清除")
+			job := feedbackJob(t, v, "session.goal.control")
+			in := job.Input.(domain.GoalRequest)
+			if in.Action != domain.ClearGoal || in.SessionID != m.SessionID {
+				t.Fatalf("wrong clear target: %#v", in)
+			}
+			receipt, err := json.Marshal(domain.Operation{ID: in.OperationID, SessionID: in.SessionID, State: domain.OperationConfirmed})
+			if err != nil {
+				t.Fatal(err)
+			}
+			job.Apply(m, receipt, nil)
+			tester.Frame()
+			if before := find("会话底部面板").H; before != dockHeight {
+				t.Fatalf("Goal moved before the session update: %g -> %g DIP", dockHeight, before)
+			}
+			if !reduced {
+				saveNativeSkillImage(t, tester, "before-confirmation.png")
+			}
+
+			session := m.Snapshot.Sessions[0]
+			session.Revision++
+			session.Goal = nil
+			if err := m.ApplyEvent(domain.Event{Type: "goal", Sequence: m.Sequence + 1, SessionID: session.ID, Session: &session}); err != nil {
+				t.Fatal(err)
+			}
+			tester.Frame()
+			startHeight := find("会话底部面板").H
+			assertDockControlsStay()
+			if _, ok := tester.AccessByRole(n.RoleButton, "清除"); ok {
+				t.Fatal("cleared Goal is still actionable")
+			}
+			tester.Advance(60 * time.Millisecond)
+			middleHeight := find("会话底部面板").H
+			assertDockControlsStay()
+			if !reduced {
+				saveNativeSkillImage(t, tester, "after-60ms.png")
+			}
+			tester.Advance(240 * time.Millisecond)
+			finalHeight := find("会话底部面板").H
+			if !reduced {
+				saveNativeSkillImage(t, tester, "after-300ms.png")
+			}
+			if reduced && startHeight != finalHeight || !reduced && (startHeight != dockHeight || middleHeight >= startHeight || middleHeight <= finalHeight) {
+				t.Fatalf("Goal clearance needs an intermediate dock height unless Reduce Motion is enabled: %g -> %g -> %g -> %g DIP", dockHeight, startHeight, middleHeight, finalHeight)
+			}
+			if _, shown := tester.Find("目标状态行"); shown || finalHeight >= dockHeight {
+				t.Fatal("the Goal strip still occupies the dock")
+			}
+			assertDockControlsStay()
+			if m.Drafts[m.DraftKey()] != "先确认重连后是否还会重复发送。" {
+				t.Fatal("clearing Goal changed the draft")
+			}
+		})
 	}
 }
 

@@ -34,6 +34,10 @@ func goalTagAttributes(c *n.Context) richtext.Attributes {
 var goalTargetIcon = svg("M12.9 5.25a6.16 6.16 0 1 0 2.73 3.17M9.56 7.27a3.08 3.08 0 1 0 3.17 3.17M9.56 10.44 16.16 3.84m-3.52 0h3.52v3.52")
 
 const (
+	goalRowHeight     = 32
+	goalTopGap        = 1
+	goalBottomGap     = 2
+	goalDockHeight    = goalRowHeight + goalTopGap + goalBottomGap
 	goalControlHeight = 28
 	goalLineHeight    = 20
 	goalIconSize      = 16
@@ -72,14 +76,45 @@ func goalStatusLabel(state domain.GoalState) string {
 	}
 }
 
-func (v *View) sessionGoal(c *n.Context, t *n.Theme) {
+type goalRowMotion struct {
+	goal         domain.Goal
+	actionsShown float32
+}
+
+// sessionGoal reports whether the dock still needs to cover history behind the row.
+func (v *View) sessionGoal(c *n.Context, t *n.Theme) bool {
 	m := v.Model
 	session := v.contextSession()
-	goal := session.Goal
-	if goal == nil || strings.TrimSpace(goal.Objective) == "" {
-		return
-	}
 	key := m.WorkKey(session.ID, "")
+	frame := n.Column(c.Key("goal-presence:" + key.DeviceID + ":" + key.SessionID + ":" + session.ThreadID + ":" + m.ConversationGeneration() + ":" + m.ConnectionEpoch)).FillWidth().Clip()
+	state := n.Local(frame, "goal-row", func() goalRowMotion { return goalRowMotion{} })
+	active := session.Goal != nil && strings.TrimSpace(session.Goal.Objective) != ""
+	target := float32(0)
+	if active {
+		target = 1
+		if state.goal.Objective == "" {
+			frame.Jump("presence", target)
+		}
+		state.goal = *session.Goal
+	}
+	presence := frame.AnimateTo("presence", target, motionAnimation(c, 180*time.Millisecond))
+	if presence == 0 {
+		*state = goalRowMotion{}
+		frame.Hidden(true)
+		return false
+	}
+	// Keep the old presentation while the dock gives back its actual layout height.
+	frame.Height(goalDockHeight * presence)
+	n.Inert(frame, !active)
+	frame.Children(func() {
+		v.goalRow(c, t, session, key, state, active, presence)
+	})
+	return true
+}
+
+func (v *View) goalRow(c *n.Context, t *n.Theme, session domain.Session, key app.WorkKey, state *goalRowMotion, active bool, presence float32) {
+	m := v.Model
+	goal := state.goal
 	root := v.splitRoot()
 	controllable := m.WorkerMinor >= protocol.GoalMinor && m.Connected && v.Controller != nil &&
 		m.RunReadiness().Capabilities.Goals && !session.Archived && m.ArchivedContext() == ""
@@ -88,15 +123,19 @@ func (v *View) sessionGoal(c *n.Context, t *n.Theme) {
 	canPause := goal.Active()
 	resumeDisabled := busy || !session.Status.CanSubmit() || session.ContextChanged || session.ExecutionGuard != "" || m.HasPendingInput()
 	rowContext := c.Key("goal-row:" + key.DeviceID + ":" + key.SessionID)
-	row := n.Row(rowContext).FillWidth().Height(32).PaddingX(goalContentInset).Margin(1, 0, 2, 0).
+	row := n.Row(rowContext).FillWidth().Height(goalRowHeight).Shrink(0).PaddingX(goalContentInset).Margin(goalTopGap, 0, goalBottomGap, 0).
 		AlignItems(n.Center).Gap(8).Background(t.Background).KeepFocus().Label("目标状态行")
-	show := controllable && (row.Hovered() || row.FocusWithin())
-	visible := float32(0)
-	if show {
-		visible = 1
+	show := active && controllable && (row.Hovered() || row.FocusWithin())
+	if active {
+		visible := float32(0)
+		if show {
+			visible = 1
+		}
+		state.actionsShown = row.AnimateTo("actions", visible, motionAnimation(c, 160*time.Millisecond))
 	}
-	if !c.Preferences().ReduceMotion {
-		visible = row.AnimateTo("actions", visible, motionAnimation(c, 160*time.Millisecond))
+	visible := state.actionsShown
+	if presence < 1 {
+		row.Opacity(presence).Transform(n.Translation(0, -goalDockHeight*(1-presence)/2))
 	}
 	width := float32(goalActionWidth)
 	if canPause {
@@ -123,7 +162,7 @@ func (v *View) sessionGoal(c *n.Context, t *n.Theme) {
 			n.Text(c, goalElapsed(goal.ElapsedSeconds)).FontSize(12).FixedLineHeight(goalLineHeight).FontFeatures("tnum").
 				TextColor(t.TextMuted).Shrink(0).MarginEnd(goalActionInset)
 			if canResume {
-				if goalButton(rowContext.Key("resume"), t, "恢复", !controllable || resumeDisabled).Clicked() {
+				if goalButton(rowContext.Key("resume"), t, "恢复", !controllable || resumeDisabled).Clicked() && active {
 					v.controlGoal(key, session, domain.ResumeGoal)
 				}
 			}
@@ -136,10 +175,10 @@ func (v *View) sessionGoal(c *n.Context, t *n.Theme) {
 				actions.Children(func() {
 					n.Row(c).Absolute().Left(0).Top(0).Width(width).Height(goalControlHeight).
 						AlignItems(n.Center).Transform(n.Translation(14*(1-visible), 0)).Children(func() {
-						if canPause && goalButton(rowContext.Key("pause"), t, "暂停", busy).Clicked() {
+						if canPause && goalButton(rowContext.Key("pause"), t, "暂停", busy).Clicked() && active {
 							v.controlGoal(key, session, domain.PauseGoal)
 						}
-						if goalButton(rowContext.Key("clear"), t, "清除", busy).Clicked() {
+						if goalButton(rowContext.Key("clear"), t, "清除", busy).Clicked() && active {
 							v.controlGoal(key, session, domain.ClearGoal)
 						}
 					})

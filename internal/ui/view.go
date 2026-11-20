@@ -726,7 +726,7 @@ func (v *View) homeView(c *n.Context, t *n.Theme) {
 func (v *View) notice(c *n.Context, t *n.Theme) {
 	v.conversationStatusPanel(c, t)
 }
-func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
+func (v *View) composer(c *n.Context, t *n.Theme, home bool) (goalShown bool) {
 	m := v.Model
 	key := m.DraftKey()
 	waiting := v.homeSend != nil && m.SessionID == ""
@@ -756,7 +756,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	stack := n.Column(c.Key("composer-stack:" + stackKey)).Label("消息编辑区").FillWidth().MaxWidth(768).Gap(0).Children(func() {
 		v.remoteAttachmentsPanel(c, t, key)
 		if !home && !v.loadingBlocksComposer() {
-			v.sessionGoal(c, t)
+			goalShown = v.sessionGoal(c, t)
 		}
 		// The queue backplate extends behind the editor's rounded top edge.
 		v.queueDisclosure(c, t)
@@ -1014,6 +1014,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) {
 	}
 	v.composerSendTransition(c, stack, home)
 	v.composerHadFocus = stack.FocusWithin()
+	return goalShown
 }
 func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunConfig) {
 	ready := v.Model.RunReadiness()
@@ -1509,7 +1510,12 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	}).Children(func() { v.toolbar(c, t) })
 	v.conversationFindBar(c, t, state.Bounds(c).W)
 	dock := n.Column(c.Key("conversation-dock")).Absolute().Left(0).Right(0).Bottom(8).PaddingX(18).AlignItems(n.Center).Gap(8).Label("会话底部面板")
-	goalDock := !v.loadingBlocksComposer() && v.contextSession().Goal != nil
+	var goalDock bool
+	dock.Children(func() {
+		v.notice(c, t)
+		v.pending(c, t, detail)
+		goalDock = v.composer(c, t, false)
+	})
 	dock.Draw(func(p *n.Painter, r n.Rect) {
 		width := max(0, r.W-conversationScrollbarGutter)
 		if goalDock {
@@ -1531,7 +1537,6 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			invalidate()
 		}
 	})
-	dock.Children(func() { v.notice(c, t); v.pending(c, t, detail); v.composer(c, t, false) })
 	state.EndOverlay = dock
 	v.sessionLoadingOverlay(c, t)
 	if !v.loadingBlocksComposer() {
