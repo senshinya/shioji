@@ -5,6 +5,20 @@
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-11-20
+
+[源码](https://github.com/senshinya/shioji/tree/v0.7.5) · [与 v0.7.4 比较](https://github.com/senshinya/shioji/compare/v0.7.4...v0.7.5)
+
+### Changed
+
+- 区分进行中和已结束的工具组。进行中状态行的扫光覆盖整行，两个状态都显示未成功的项数。
+- 主窗口各页面的顶栏与左侧栏外框上沿对齐，统一留出 8 DIP。
+
+### Fixed
+
+- 工具组展开和折叠时平滑衔接，首条工具调用出现时保持当前阅读位置。展开进行中的工具组时，末条命令下方不再显示多余的连接线。
+- 清除 Goal 时平滑收起目标栏，待发送队列和输入框随布局移动。
+
 ## [0.7.4] - 2026-11-20
 
 [源码](https://github.com/senshinya/shioji/tree/v0.7.4) · [与 v0.7.3 比较](https://github.com/senshinya/shioji/compare/v0.7.3...v0.7.4)
@@ -380,7 +394,7 @@
 - 新增独立执行 worker 和 Tailnet 网络服务；退出 App 不停止设备端执行或网络连接，运行中状态不明时保留人工核对入口。
 - 提供 Developer ID 签名、经 Apple 公证并附带公证票据的 DMG，以及 SHA-256 校验文件。
 
-[Unreleased]: https://github.com/senshinya/shioji/compare/v0.7.4...HEAD
+[Unreleased]: https://github.com/senshinya/shioji/compare/v0.7.5...HEAD
 [0.3.2]: https://github.com/senshinya/shioji/compare/v0.3.0...v0.3.2
 [0.3.0]: https://github.com/senshinya/shioji/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/senshinya/shioji/compare/v0.1.2...v0.2.0
