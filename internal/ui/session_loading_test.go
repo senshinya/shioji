@@ -243,6 +243,45 @@ func TestSessionLoadingKeepsKnownStopAndPendingQuestionsUsable(t *testing.T) {
 	}
 }
 
+func TestSessionLoadingStopButtonKeepsRoundedBackground(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%t", dark), func(t *testing.T) {
+			v, ui := sessionLoadingFixture()
+			ui.SetDark(dark)
+			delete(v.Model.Drafts, "session:s")
+			v.Model.Readiness.Capabilities.Interrupt = true
+			v.Model.Snapshot.Sessions[0].Status = domain.ExecutionRunning
+			d := v.Model.Details["s"]
+			d.Session.Status = domain.ExecutionRunning
+			d.Turns = []domain.Turn{{ID: "active", Status: domain.ExecutionRunning}}
+			v.Model.Details["s"] = d
+			ui.Frame()
+			ui.Advance(400 * time.Millisecond)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("stop-dark-%t-loading.png", dark))
+
+			assertRoundedStop := func() {
+				t.Helper()
+				button, ok := ui.Find("停止当前轮")
+				if !ok || button.W != 28 || button.H != 28 {
+					t.Fatal("the composer lost its 28 DIP Stop control", button)
+				}
+				frame := ui.Image()
+				x, y := int(button.X), int(button.Y)
+				outside := frame.RGBAAt(x-2, y+1)
+				if frame.RGBAAt(x+1, y+1) != outside || frame.RGBAAt(x+26, y+1) != outside || frame.RGBAAt(x+14, y+3) == outside {
+					t.Fatal("the Stop background does not have rounded corners")
+				}
+			}
+			assertRoundedStop()
+			completeSessionLoading(v)
+			ui.Frame()
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("stop-dark-%t-ready.png", dark))
+			assertRoundedStop()
+		})
+	}
+}
+
 func TestSessionLoadingIsScopedToEachVisiblePane(t *testing.T) {
 	v := New(layoutModel(), app.NewController(""), "")
 	v.Model.WorkerMinor = 37
