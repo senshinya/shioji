@@ -108,3 +108,20 @@ func TestHistoryOpeningCacheTrimsAtUserMessageBoundaries(t *testing.T) {
 		t.Fatal("cache still clips by message count", len(trimmed.Items), trimmed.History)
 	}
 }
+
+func TestHistoryOpeningCacheTrimsAtGoalContinuationBoundaries(t *testing.T) {
+	d := domain.SessionDetail{Items: []domain.Item{
+		{ID: "prompt", Kind: "user", Order: 1},
+		{ID: "first-goal", Kind: "activity", Presentation: domain.GoalContinuationPresentation, Order: 2},
+		{ID: "first-reply", Kind: "assistant", Order: 3},
+		{ID: "second-goal", Kind: "activity", Presentation: domain.GoalContinuationPresentation, Order: 4},
+		{ID: "second-reply", Kind: "assistant", Order: 5},
+		{ID: "third-goal", Kind: "activity", Presentation: domain.GoalContinuationPresentation, Order: 6},
+		{ID: "compaction", Kind: "activity", Presentation: "compaction", Order: 7},
+		{ID: "third-reply", Kind: "assistant", Order: 8},
+	}}
+	trimmed := historyOpeningTail(d, 2)
+	if len(trimmed.Items) != 5 || trimmed.Items[0].ID != "second-goal" || trimmed.History.First != 4 || trimmed.History.Last != 8 || !trimmed.History.Older {
+		t.Fatalf("cache did not keep the two latest Goal rounds: %+v (%+v)", trimmed.Items, trimmed.History)
+	}
+}

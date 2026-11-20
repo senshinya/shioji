@@ -11,7 +11,10 @@ import (
 )
 
 const historyVisibleSQL = "session_id=? AND json_extract(body,'$.kind')!='queued'"
-const historyPromptSQL = "json_extract(body,'$.kind')='user' AND COALESCE(json_extract(body,'$.workId'),'')=''"
+const historyMainItemSQL = "COALESCE(json_extract(body,'$.workId'),'')=''"
+const historyPromptSQL = historyMainItemSQL + " AND json_extract(body,'$.kind')='user'"
+const historyRoundStartSQL = historyMainItemSQL + ` AND (json_extract(body,'$.kind')='user' OR
+ (json_extract(body,'$.kind')='activity' AND json_extract(body,'$.presentation')='` + domain.GoalContinuationPresentation + `'))`
 
 // HistorySnapshot keeps transport-sized chunks on one read-only WAL snapshot.
 // It never takes the execution store's writer lock.
@@ -41,8 +44,8 @@ func (h *HistorySnapshot) Close() {
 	}
 }
 
-// A display round starts at each main-conversation user message, including
-// steering inputs sharing one harness turn. Its end precedes the next prompt.
+// A display round starts at a main-conversation user message (including a
+// steering input) or a persisted Goal continuation marker.
 func (s *Store) historyRoundRangeLocked(q domain.HistoryQuery) (first, last int64, err error) {
 	if q.Rounds < 1 || q.Rounds > domain.MaxHistoryRounds {
 		return 0, 0, errors.New("invalid history round count")
@@ -64,13 +67,13 @@ func (s *Store) historyRoundRangeLocked(q domain.HistoryQuery) (first, last int6
 			if err != nil {
 				return
 			}
-			var prompt int64
-			err = s.historyQueries().QueryRow("SELECT COALESCE(MAX(position),0) FROM items WHERE session_id=? AND "+historyPromptSQL+" AND position<=?", q.SessionID, target).Scan(&prompt)
+			var start int64
+			err = s.historyQueries().QueryRow("SELECT COALESCE(MAX(position),0) FROM items WHERE session_id=? AND "+historyRoundStartSQL+" AND position<=?", q.SessionID, target).Scan(&start)
 			if err != nil {
 				return
 			}
-			if prompt != 0 {
-				first = prompt
+			if start != 0 {
+				first = start
 			}
 		} else {
 			err = s.historyQueries().QueryRow("SELECT COALESCE(MIN(position),0) FROM items WHERE "+historyVisibleSQL+" AND position>?", q.SessionID, q.After).Scan(&first)
@@ -79,7 +82,7 @@ func (s *Store) historyRoundRangeLocked(q domain.HistoryQuery) (first, last int6
 			}
 		}
 		var next int64
-		err = s.historyQueries().QueryRow("SELECT position FROM items WHERE session_id=? AND "+historyPromptSQL+" AND position>? ORDER BY position LIMIT 1 OFFSET ?", q.SessionID, first, q.Rounds-1).Scan(&next)
+		err = s.historyQueries().QueryRow("SELECT position FROM items WHERE session_id=? AND "+historyRoundStartSQL+" AND position>? ORDER BY position LIMIT 1 OFFSET ?", q.SessionID, first, q.Rounds-1).Scan(&next)
 		if errors.Is(err, sql.ErrNoRows) {
 			return first, last, nil
 		}
@@ -95,21 +98,21 @@ func (s *Store) historyRoundRangeLocked(q domain.HistoryQuery) (first, last int6
 			return 0, 0, err
 		}
 	}
-	rows, err := s.historyQueries().Query("SELECT position FROM items WHERE session_id=? AND "+historyPromptSQL+" AND position<=? ORDER BY position DESC LIMIT ?", q.SessionID, last, q.Rounds+1)
+	rows, err := s.historyQueries().Query("SELECT position FROM items WHERE session_id=? AND "+historyRoundStartSQL+" AND position<=? ORDER BY position DESC LIMIT ?", q.SessionID, last, q.Rounds+1)
 	if err != nil {
 		return 0, 0, err
 	}
 	defer rows.Close()
-	var prompts []int64
+	var starts []int64
 	for rows.Next() {
 		var position int64
 		if err = rows.Scan(&position); err != nil {
 			return 0, 0, err
 		}
-		prompts = append(prompts, position)
+		starts = append(starts, position)
 	}
-	if len(prompts) > q.Rounds {
-		first = prompts[q.Rounds-1]
+	if len(starts) > q.Rounds {
+		first = starts[q.Rounds-1]
 	}
 	return first, last, rows.Err()
 }

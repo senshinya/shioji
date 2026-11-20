@@ -54,6 +54,45 @@ func TestHistoryRoundsCountInsertedUserMessagesInsteadOfHarnessTurns(t *testing.
 	read(domain.HistoryQuery{Rounds: 3, AroundID: "t07-4"}, "u07", "u09", 3)
 }
 
+func TestHistoryRoundsPageGoalContinuations(t *testing.T) {
+	s := open(t)
+	w := workspace(t, s)
+	op, err := s.Accept(domain.Submission{OperationID: "goal-rounds", WorkspaceID: w.ID, Text: "/goal keep going", Config: domain.RunConfig{Model: "test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for round := 1; round <= 25; round++ {
+		turn := fmt.Sprint(round)
+		for _, item := range []domain.Item{
+			{ID: "goal-" + turn, TurnID: turn, Kind: "activity", Presentation: domain.GoalContinuationPresentation, Final: true},
+			{ID: "reply-" + turn, TurnID: turn, Kind: "assistant", Text: "Progress", Final: true},
+		} {
+			if _, err := s.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &item}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	read := func(q domain.HistoryQuery, first, last string, count int) domain.SessionDetail {
+		t.Helper()
+		q.SessionID = op.SessionID
+		d, err := s.SessionHistory(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(d.Items) != count || d.Items[0].ID != first || d.Items[count-1].ID != last || d.History.ContextID != "" {
+			t.Fatalf("expected %d items from %s through %s, got %d items with history %+v", count, first, last, len(d.Items), d.History)
+		}
+		return d
+	}
+	latest := read(domain.HistoryQuery{Rounds: domain.DefaultHistoryRounds}, "goal-6", "reply-25", 40)
+	if !latest.History.Older || latest.History.Newer {
+		t.Fatal(latest.History)
+	}
+	older := read(domain.HistoryQuery{Rounds: 2, Before: latest.History.First}, "goal-4", "reply-5", 4)
+	read(domain.HistoryQuery{Rounds: 2, After: older.History.Last}, "goal-6", "reply-7", 4)
+	read(domain.HistoryQuery{Rounds: 2, AroundID: "reply-8"}, "goal-8", "reply-9", 4)
+}
+
 func TestHistoryRoundBodiesContinueByBytesWithoutAnItemLimit(t *testing.T) {
 	s := open(t)
 	w := workspace(t, s)

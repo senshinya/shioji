@@ -951,7 +951,11 @@ func (s *Store) sessionLocked(id string, after int64, limit int, window *domain.
 	contextID := ""
 	if window != nil && len(out.Items) > 0 {
 		first := out.Items[0]
-		context, e := load[domain.Item](s.historyQueries().QueryRow("SELECT body FROM items WHERE session_id=? AND position<=? AND "+historyPromptSQL+" ORDER BY position DESC LIMIT 1", id, first.Order))
+		boundary := historyPromptSQL
+		if rounds {
+			boundary = historyRoundStartSQL
+		}
+		context, e := load[domain.Item](s.historyQueries().QueryRow("SELECT body FROM items WHERE session_id=? AND position<=? AND "+boundary+" ORDER BY position DESC LIMIT 1", id, first.Order))
 		if e != nil && !errors.Is(e, sql.ErrNoRows) {
 			return out, e
 		}

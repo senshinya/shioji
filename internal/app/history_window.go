@@ -104,15 +104,16 @@ func historyOpeningTail(d domain.SessionDetail, rounds int) domain.SessionDetail
 	}
 	d.HistoryLoaded = d.HasLoadedHistory()
 	h := &domain.HistoryWindow{Invalidated: true}
-	var prompts []int
+	var starts []int
 	for i, item := range d.Items {
-		if item.Kind == "user" && item.WorkID == "" {
-			prompts = append(prompts, i)
+		goalContinuation := item.Kind == "activity" && item.Presentation == domain.GoalContinuationPresentation
+		if item.WorkID == "" && (item.Kind == "user" || goalContinuation) {
+			starts = append(starts, i)
 		}
 	}
 	start := 0
-	if len(prompts) > rounds {
-		start = prompts[len(prompts)-rounds]
+	if len(starts) > rounds {
+		start = starts[len(starts)-rounds]
 	}
 	items := slices.Clone(d.Items[start:])
 	if len(items) > 0 {
