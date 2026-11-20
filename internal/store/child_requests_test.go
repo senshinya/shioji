@@ -43,12 +43,20 @@ func TestChildRequestPersistsBothSourcesAndLatestReceipt(t *testing.T) {
 	apply(domain.Event{Type: "turn", Turn: &domain.Turn{ID: "turn", Status: "completed"}})
 	r.State = "answered"
 	r.Revision = 2
+	r.Receipt = []domain.ContentPart{{Label: "检查根节点？", Text: "包含根节点"}}
 	apply(domain.Event{Type: "request.resolve", Request: &r})
-	result := domain.Item{ID: "request-result:request", WorkID: "child", TurnID: "turn", Kind: "request_result", Presentation: "questions", Text: "已提交回答", Final: true, Parts: []domain.ContentPart{{Label: "检查根节点？", Text: "包含根节点"}}}
+	result := domain.Item{ID: "request-result:request", WorkID: "child", TurnID: "turn", Kind: "request_result", Presentation: "questions", Text: "已提交回答", Final: true, Parts: r.Receipt}
 	apply(domain.Event{Type: "item.upsert", Item: &result})
 	child, _ = db.Work(op.SessionID, "child")
 	if len(child.Items) != 2 || child.Items[0].Item.Status != "answered" || child.Items[1].Item.Kind != "request_result" {
 		t.Fatal("child source or receipt lost", child)
+	}
+	sourceOrder := child.Items[0].Item.Order
+	page, err := db.WorkHistory(domain.WorkHistoryQuery{ID: "child", HistoryQuery: domain.HistoryQuery{
+		SessionID: op.SessionID, Rounds: 1, WindowFirst: sourceOrder, WindowLast: sourceOrder, After: sourceOrder - 1,
+	}})
+	if err != nil || len(page.Items) != 1 || len(page.Items[0].Item.Parts) != 1 || page.Items[0].Item.Parts[0].Text != "包含根节点" {
+		t.Fatal("the original child history page cannot show its answer without the later result page", page, err)
 	}
 	detail, _ = db.Session(op.SessionID, 0, 100)
 	if detail.Session.Status != "completed" || detail.Items[len(detail.Items)-1].ID != "request-result:request" || detail.Requests[0].WorkID != "child" {
@@ -88,5 +96,35 @@ func TestChildRequestCannotMoveAcrossWorkOrRoot(t *testing.T) {
 	r.WorkID = ""
 	if _, err := db.Apply(a.SessionID, domain.Event{Type: "request.open", Request: &r}); err == nil {
 		t.Fatal("request silently moved to parent")
+	}
+}
+
+func TestChildApprovalHistoryIncludesSavedDecision(t *testing.T) {
+	db := open(t)
+	w := workspace(t, db)
+	op, err := db.Accept(domain.Submission{OperationID: "child-approval", WorkspaceID: w.ID, Text: "检查"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := domain.WorkActivity{ID: "child", Kind: "agent", TurnID: "root", State: "running"}
+	if _, err := db.Apply(op.SessionID, domain.Event{Type: "work.upsert", Work: &work}); err != nil {
+		t.Fatal(err)
+	}
+	r := domain.PendingRequest{ID: "approval", WorkID: work.ID, TurnID: work.TurnID, Kind: "approval", State: "answered", Revision: 2,
+		Receipt: []domain.ContentPart{{Text: "始终允许此命令"}}}
+	if _, err := db.Apply(op.SessionID, domain.Event{Type: "request.resolve", Request: &r}); err != nil {
+		t.Fatal(err)
+	}
+	child, err := db.Work(op.SessionID, work.ID)
+	if err != nil || len(child.Items) != 1 {
+		t.Fatal(child, err)
+	}
+	order := child.Items[0].Item.Order
+	page, err := db.WorkHistory(domain.WorkHistoryQuery{ID: work.ID, HistoryQuery: domain.HistoryQuery{
+		SessionID: op.SessionID, Rounds: 1, WindowFirst: order, WindowLast: order, After: order - 1,
+	}})
+	if err != nil || len(page.Items) != 1 || page.Items[0].Item.Presentation != "approval" ||
+		len(page.Items[0].Item.Parts) != 1 || page.Items[0].Item.Parts[0].Text != "始终允许此命令" {
+		t.Fatal("child approval page did not load the saved decision with its anchor", page, err)
 	}
 }

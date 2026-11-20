@@ -515,6 +515,18 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 		v.syncCommandOutputs(commands, &u.latestCommand, w.ID)
 	}
 	u.syncStreams(c, detail, v.Model.ConnectionEpoch)
+	items := detail.Items
+	receipts := requestReceipts(v.Model.Details[v.Model.SessionID].Requests)
+	if kind != "background" {
+		filtered := make([]domain.WorkItem, 0, len(items))
+		for _, entry := range items {
+			receipts.recordResult(entry.Item)
+			if domain.InlineRequestResultAnchor(entry.Item) == "" {
+				filtered = append(filtered, entry)
+			}
+		}
+		items = filtered
+	}
 	u.markdownTheme = *v.md.Theme
 	u.markdownTheme.FontSize = 12
 	u.markdownTheme.LineHeight = 20.0 / 12
@@ -605,7 +617,7 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 				bubble := n.Text(c, item.Text).AlignSelf(n.End).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(userBubble(t)).Selectable()
 				u.input.messagePose(c, bubble, item.ID)
 			} else if item.Kind == "request" {
-				v.requestSource(c, t, item, true)
+				v.requestSource(c, t, receipts.attach(item), true, stream)
 			} else if item.Kind == "request_result" {
 				v.requestResultWithStream(c, t, item, stream, false)
 			} else if item.Presentation != "command" {
@@ -710,13 +722,13 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 			if row == 0 {
 				return "header"
 			}
-			if row <= len(detail.Items) {
-				return "item:" + detail.Items[row-1].Item.ID
+			if row <= len(items) {
+				return "item:" + items[row-1].Item.ID
 			}
 			return "failure"
 		}
-		u.list.SkipAnchor = func(row int) bool { return row == 0 || row > len(detail.Items) }
-		rows := len(detail.Items) + 1
+		u.list.SkipAnchor = func(row int) bool { return row == 0 || row > len(items) }
+		rows := len(items) + 1
 		if u.error != "" && (u.history == nil || u.history.before == 0) {
 			rows++
 		}
@@ -725,8 +737,8 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 				switch {
 				case row == 0:
 					n.Column(c).FillWidth().Padding(8, 0, 0, 0).Gap(12).Children(header)
-				case row <= len(detail.Items):
-					entry(detail.Items[row-1])
+				case row <= len(items):
+					entry(items[row-1])
 				default:
 					failure()
 				}

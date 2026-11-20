@@ -84,5 +84,20 @@ type HistoryMatches struct {
 func HistorySpacer(item Item) bool {
 	return item.Kind == "assistant" && strings.TrimSpace(item.Text) == "" ||
 		item.Kind == "activity" && item.Presentation == "reasoning" && item.Text == "" && len(item.Parts) == 0 && len(item.Files) == 0 && len(item.Agents) == 0 ||
-		item.Kind == "request_result" && len(item.Parts) == 0 && item.WorkID == ""
+		item.Kind == "request_result" && len(item.Parts) == 0 && item.WorkID == "" ||
+		InlineRequestResultAnchor(item) != ""
+}
+
+func HasInlineRequestReceipt(kind string) bool {
+	return kind == "questions" || kind == "approval" || kind == "permissions"
+}
+
+// InlineRequestResultAnchor links a journal receipt to its original history row.
+func InlineRequestResultAnchor(item Item) string {
+	if item.Kind == "request_result" && HasInlineRequestReceipt(item.Presentation) {
+		if id, ok := strings.CutPrefix(item.ID, "request-result:"); ok && id != "" {
+			return "request:" + id
+		}
+	}
+	return ""
 }

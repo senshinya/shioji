@@ -154,13 +154,10 @@ func withToolUserGaps(rows []transcriptRow) []transcriptRow {
 	return rows
 }
 
-func emptyTranscriptItem(item domain.Item) bool {
-	return domain.HistorySpacer(item)
-}
-
 // Project groups into the outer virtual list so expanded tool history still
 // unmounts normally. Any following visible non-tool content auto-closes a group.
 func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
+	receipts := requestReceipts(v.Model.Details[v.Model.SessionID].Requests)
 	baseline := v.historyBaseline
 	defer func() { v.historyBaseline = false }()
 	v.toolsAnimating = false
@@ -178,6 +175,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 	commands := arrivals.commands[:0]
 	commandsChanged := false
 	for _, item := range items {
+		receipts.recordResult(item)
 		if commandItem(item) {
 			if len(commands) >= len(arrivals.commands) || arrivals.commands[len(commands)] != item.ID {
 				commandsChanged = true
@@ -232,8 +230,9 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 	groups := 0
 	var nextKind, nextTurn string
 	for i := len(items) - 1; i >= 0; i-- {
-		laterContent[i] = laterContent[i+1] || items[i].Kind != "tool" && !emptyTranscriptItem(items[i])
-		if !emptyTranscriptItem(items[i]) {
+		visible := !domain.HistorySpacer(items[i])
+		laterContent[i] = laterContent[i+1] || items[i].Kind != "tool" && visible
+		if visible {
 			if items[i].Kind == "tool" && (nextKind != "tool" || nextTurn != items[i].TurnID) {
 				groups++
 			}
@@ -262,7 +261,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 	rows := make([]transcriptRow, 0, len(items)+4*groups+len(v.Model.Details[v.Model.SessionID].Turns))
 	for i := 0; i < len(items); {
 		item := items[i]
-		if emptyTranscriptItem(item) {
+		if domain.HistorySpacer(item) {
 			if len(rows) > 0 {
 				rows[len(rows)-1].end = i
 			}
@@ -274,7 +273,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			if item.Kind != "user" && item.Kind != "assistant" && item.Kind != "request" && item.Kind != "request_result" {
 				progress = arrival(item.ID)
 			}
-			rows = append(rows, transcriptRow{key: item.ID, item: item, end: i, opacity: progress})
+			rows = append(rows, transcriptRow{key: item.ID, item: receipts.attach(item), end: i, opacity: progress})
 			i++
 			continue
 		}
@@ -287,7 +286,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 				end++
 				continue
 			}
-			if emptyTranscriptItem(items[end]) {
+			if domain.HistorySpacer(items[end]) {
 				end++
 				continue
 			}
@@ -418,6 +417,19 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 	}
 	return withGoalContinuationMarkers(rows)
 }
+
+const (
+	toolGlyphSlot     = 16
+	toolTimelineInset = toolGlyphSlot
+	toolTimelineGap   = 8
+	toolSummaryGap    = 6
+)
+
+func toolGlyph(c *n.Context, icon *n.SVG, label string, font n.Font, color n.Color) n.Element {
+	return n.Row(c).Size(toolGlyphSlot, 20).Shrink(0).AlignItems(n.Baseline).Justify(n.Center).
+		Children(func() { inlineSymbol(c, icon, label, font, 14, color) })
+}
+
 func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int) {
 	label := fmt.Sprintf("%d 次工具调用", row.count)
 	// Once folded, this summary takes the title's place as the sole header.
@@ -464,6 +476,7 @@ func (v *View) toolGroup(c *n.Context, t *n.Theme, row transcriptRow, index int)
 			if !live {
 				prefix.Label("")
 			}
+			toolGlyph(c.Key("group-command-icon"), commandTerminalIcon, label, font, t.TextMuted).Margin(0, toolSummaryGap, 0, 0)
 
 			// One continuous sweep covers the count and its changing metadata.
 			// Keep the turn's phase; text transitions and clock ticks never restart it.
@@ -535,12 +548,16 @@ func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index
 	button := n.ButtonBase(c).AlignSelf(n.Start).Height(20).Justify(n.Start).Label(label)
 	color := textHoverColor(c, button, t.TextMuted)
 	button.Children(func() {
-		n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
+		n.Row(c).Gap(toolSummaryGap).AlignItems(n.Baseline).Children(func() {
+			font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+			if row.toolEnded {
+				toolGlyph(c.Key("group-command-icon"), commandTerminalIcon, label, font, t.TextMuted)
+			}
 			n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(color)
 			if row.toolEnded && closed && row.issues > 0 {
 				n.Text(c, fmt.Sprintf("%d 项未成功", row.issues)).FontSize(11).FixedLineHeight(20).TextColor(color)
 			}
-			inlineSymbol(c, chevron, label, n.Font{Family: t.Font, Size: 11, Weight: 400}, 14, color, angle)
+			inlineSymbol(c, chevron, label, font, 14, color, angle)
 		})
 	})
 	if button.Clicked() {
@@ -592,7 +609,7 @@ func toolGroupResult(items []domain.Item) string {
 var toolCompleteIcon = svg("M18 10a8 8 0 1 1-16 0a8 8 0 0 1 16 0M6 10l3 3 5-6")
 var toolEndedIcon = svg("M18 10a8 8 0 1 1-16 0a8 8 0 0 1 16 0M6 10h8")
 
-func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow) {
+func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow, inset float32) {
 	icon := activityIcon(row.item.Presentation)
 	label := row.item.Name
 	font := n.Font{Family: t.Font, Size: 12, Weight: 400}
@@ -612,7 +629,5 @@ func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow) {
 		n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 	}
 	// A small neutral mask interrupts the rail around each native glyph.
-	n.Row(c).Absolute().Left(0).Top(0).Size(16, 20).AlignItems(n.Baseline).Justify(n.Center).Background(t.Background).Children(func() {
-		inlineSymbol(c, icon, label, font, 14, t.TextMuted)
-	})
+	toolGlyph(c, icon, label, font, t.TextMuted).Absolute().Left(inset).Top(0).Background(t.Background)
 }

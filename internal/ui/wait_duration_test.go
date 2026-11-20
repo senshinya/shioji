@@ -100,7 +100,7 @@ func TestWaitTimelineUsesAlignedUniformTypography(t *testing.T) {
 							theme := applyAppearance(c, v.Model.Preferences.Normalized())
 							n.Column(c).Fill().Background(theme.Background).Padding(20).Children(func() {
 								n.Column(c).FillWidth().PaddingStart(24).Children(func() {
-									v.toolTimelineItem(c, theme, transcriptRow{item: item})
+									v.toolTimelineItem(c, theme, transcriptRow{item: item}, 0)
 								})
 							})
 						}, 360, 72)

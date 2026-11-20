@@ -78,7 +78,7 @@ func (v *View) runningActivity(turn domain.Turn) runningActivity {
 				return a
 			}
 			if item.Presentation == "reasoning" {
-				a.hiddenReasoning = emptyTranscriptItem(item)
+				a.hiddenReasoning = domain.HistorySpacer(item)
 				if !item.Final {
 					a.label = "正在思考"
 				}

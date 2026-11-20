@@ -209,7 +209,7 @@ func TestSourceRequestOpensItsOwnPage(t *testing.T) {
 	}
 }
 
-func TestAnsweredRequestShowsResultAfterLaterMessages(t *testing.T) {
+func TestAnsweredRequestExpandsAtItsOriginalPosition(t *testing.T) {
 	m := layoutModel()
 	d := m.Details["s"]
 	d.Items = []domain.Item{
@@ -221,17 +221,110 @@ func TestAnsweredRequestShowsResultAfterLaterMessages(t *testing.T) {
 	m.Details["s"] = d
 	m.Drafts["session:s"] = "保留普通草稿"
 	ui := n.NewTester(New(m, nil, "").View, 1440, 900)
-	source, ok := ui.Find("需要回答 · 已处理")
-	if !ok {
-		t.Fatal("source lost its handled marker")
-	}
 	later, _ := ui.Find("问题发出后补充的消息。")
-	answer, ok := ui.Find("逐项验收")
-	if !ok || answer.Y <= later.Y || source.Y >= later.Y {
-		t.Fatal("answer is not in a new result component after later messages", source, later, answer)
+	answer, ok := ui.Find("已回答 · 逐项验收")
+	if !ok || answer.Y >= later.Y || ui.HasText("选择哪种方式？") || ui.HasText("回答结果") {
+		t.Fatal("collapsed answer must appear only on the original question", ui.Texts())
 	}
-	if m.Collapsed["receipt:request:q"] || !ui.HasText("选择哪种方式？") || m.Drafts["session:s"] != "保留普通草稿" {
-		t.Fatal("answer result depends on source disclosure or changed the draft")
+	saveNativeSkillImage(t, ui, "question-receipt-collapsed.png")
+	if err := ui.Click("已回答 · 逐项验收"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	later, _ = ui.Find("问题发出后补充的消息。")
+	question, ok := ui.Find("选择哪种方式？")
+	if !ok || question.Y <= answer.Y || question.Y >= later.Y || m.Drafts["session:s"] != "保留普通草稿" {
+		t.Fatal("question details did not expand inline or changed the ordinary draft", ui.Texts())
+	}
+	saveNativeSkillImage(t, ui, "question-receipt-expanded.png")
+}
+
+func TestQuestionReceiptWaitsForConfirmationAndUsesSavedAnswers(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Items = []domain.Item{{ID: "request:q", Kind: "request", Text: "需要回答", Status: "submitting"}}
+	d.Requests = []domain.PendingRequest{{ID: "q", SessionID: "s", Kind: "questions", State: "submitting", Receipt: []domain.ContentPart{
+		{Label: "选择哪种方式？", Text: "逐项验收"}, {Label: "临时口令", Text: "已提交敏感答案"},
+	}}}
+	m.Details["s"] = d
+	m.Connected = false
+	ui := n.NewTester(New(m, nil, "").View, 1050, 720)
+	if !ui.HasText("需要回答 · 待核对") || ui.HasText("已回答 2 个问题") {
+		t.Fatal("unconfirmed answer presented as confirmed", ui.Texts())
+	}
+	d.Items[0].Status = "answered"
+	d.Requests[0].State = "answered"
+	m.Details["s"] = d
+	m.Connected = true
+	ui.Frame()
+	ui.Advance(time.Second)
+	if err := ui.Click("已回答 2 个问题"); err != nil {
+		t.Fatal(err, ui.Texts())
+	}
+	ui.Advance(time.Second)
+	if !ui.HasText("逐项验收") || !ui.HasText("已提交敏感答案") {
+		t.Fatal("original history page lost its saved answer", ui.Texts())
+	}
+	ui.SetDark(true)
+	ui.Advance(time.Second)
+	saveNativeSkillImage(t, ui, "question-receipt-multiple-dark.png")
+}
+
+func TestApprovalDecisionAppearsOnlyOnItsOriginalRow(t *testing.T) {
+	for _, example := range []struct {
+		kind, decision, detail string
+		paged, journalOnly     bool
+	}{
+		{kind: "approval", decision: "允许这一次"},
+		{kind: "approval", decision: "始终允许此命令", paged: true},
+		{kind: "approval", decision: "本会话允许"},
+		{kind: "approval", decision: "拒绝", journalOnly: true},
+		{kind: "permissions", decision: "已允许本轮访问", detail: "读取 /fixture"},
+	} {
+		t.Run(example.decision, func(t *testing.T) {
+			m := layoutModel()
+			d := m.Details["s"]
+			title := "允许执行此命令？"
+			if example.kind == "permissions" {
+				title = "允许额外访问？"
+			}
+			parts := []domain.ContentPart{{Text: example.decision}}
+			if example.detail != "" {
+				parts = append(parts, domain.ContentPart{Text: example.detail})
+			}
+			d.Items = []domain.Item{
+				{ID: "request:r", Kind: "request", Text: title, Status: "answered", Final: true},
+				{ID: "later", Kind: "assistant", Text: "请求之后发出的消息。", Final: true},
+			}
+			if !example.journalOnly {
+				d.Requests = []domain.PendingRequest{{ID: "r", SessionID: "s", Kind: example.kind, State: "answered", Receipt: parts}}
+			}
+			if !example.paged {
+				d.Items = append(d.Items, domain.Item{ID: "request-result:r", Kind: "request_result", Presentation: example.kind, Text: "审批结果", Parts: parts, Final: true})
+			}
+			m.Details["s"] = d
+			ui := n.NewTester(New(m, nil, "").View, 1440, 900)
+			later, _ := ui.Find("请求之后发出的消息。")
+			label := title + " · " + example.decision
+			source, ok := ui.Find(label)
+			if !ok || source.Y >= later.Y || ui.HasText("回答结果") || ui.HasText(title+" · 已处理") {
+				t.Fatal("decision should only appear at the original request", ui.Texts())
+			}
+			if example.detail != "" {
+				if ui.HasText(example.detail) {
+					t.Fatal("grant detail must begin collapsed")
+				}
+				if err := ui.Click(label); err != nil {
+					t.Fatal(err)
+				}
+				ui.Advance(time.Second)
+				grant, visible := ui.Find(example.detail)
+				later, _ = ui.Find("请求之后发出的消息。")
+				if !visible || grant.Y <= source.Y || grant.Y >= later.Y {
+					t.Fatal("grant detail should expand beneath the original row", ui.Texts())
+				}
+			}
+		})
 	}
 }
 

@@ -2,11 +2,83 @@ package ui
 
 import (
 	"fmt"
+	"image"
 	"testing"
 	"time"
 
 	n "github.com/egoist/mygo/ui"
 )
+
+func TestToolCountUsesTheCommandGlyph(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, live := range []bool{false, true} {
+			t.Run(fmt.Sprintf("dark=%v/live=%v", dark, live), func(t *testing.T) {
+				v := toolTailFixture(2)
+				if !live {
+					d := v.Model.Details["s"]
+					d.Items[2].Status, d.Items[2].Final = "completed", true
+					d.Turns[0].Status = "completed"
+					v.Model.Details["s"] = d
+				}
+				ui := n.NewTester(v.View, 1240, 820)
+				ui.SetDark(dark)
+				ui.Advance(time.Second)
+				if !live {
+					if err := ui.Click("2 次工具调用"); err != nil {
+						t.Fatal(err)
+					}
+					ui.Move(1200, 790)
+					ui.Advance(time.Second)
+				}
+				ink := func(x, y int) image.Rectangle {
+					im := ui.Image()
+					bg := im.RGBAAt(x+14, y)
+					var bounds image.Rectangle
+					for dy := 0; dy < 20; dy++ {
+						for dx := 0; dx < 14; dx++ {
+							p := im.RGBAAt(x+dx, y+dy)
+							if max(absChannel(p.R, bg.R), absChannel(p.G, bg.G), absChannel(p.B, bg.B)) > 35 {
+								bounds = bounds.Union(image.Rect(dx, dy, dx+1, dy+1))
+							}
+						}
+					}
+					return bounds
+				}
+				cmd, ok := ui.Find("go test ./internal/ui -run Check0")
+				if !ok {
+					t.Fatal("command reference must be visible")
+				}
+				want := ink(int(cmd.X)-24, int(cmd.Y))
+				disclosure := "2 次工具调用"
+				if live {
+					disclosure = "执行工具"
+				}
+				for _, folded := range []bool{false, true} {
+					saveNativeSkillImage(t, ui, fmt.Sprintf("tool-count-dark-%v-live-%v-folded-%v.png", dark, live, folded))
+					count, ok := ui.Find("2 次工具调用")
+					if !ok {
+						t.Fatal("tool count must be visible")
+					}
+					x := int(count.X)
+					if live {
+						x += 12 // the green activity dot precedes the icon
+					}
+					got := ink(x, int(count.Y))
+					if want.Empty() || got.Empty() || got.Min.X != want.Min.X || got.Max.X != want.Max.X || abs(got.Dy()-want.Dy()) > 1 {
+						t.Errorf("tool count glyph differs from the command glyph: count=%v command=%v", got, want)
+					}
+					if !folded {
+						if err := ui.Click(disclosure); err != nil {
+							t.Fatal(err)
+						}
+						ui.Move(1200, 790)
+						ui.Advance(time.Second)
+					}
+				}
+			})
+		}
+	}
+}
 
 func TestToolGroupOnlyTitleControlsDisclosure(t *testing.T) {
 	for _, dark := range []bool{false, true} {
@@ -65,6 +137,7 @@ func TestCompletedToolGroupKeepsVisibleDisclosureCue(t *testing.T) {
 				}
 				font := n.Font{Family: v.Model.Preferences.InterfaceFont, Size: 11, Weight: 400}
 				width, _ := n.ShapeText("2 次工具调用", font, 0).Size()
+				width += toolGlyphSlot + toolSummaryGap
 				if right := activityLastInkX(ui, summary, dark); right <= summary.X+width+6 {
 					t.Fatal("finished heading has no visible disclosure cue", closed, right, summary)
 				}

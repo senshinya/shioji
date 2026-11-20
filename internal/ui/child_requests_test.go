@@ -126,7 +126,7 @@ func TestChildDetailShowsRequestSourceAndLatestReceipt(t *testing.T) {
 	v.Model.WorkDetails[key] = child
 	ui.Frame()
 	ui.Advance(time.Second)
-	if !ui.HasText("同时覆盖根节点与空子树") || !ui.HasText("需要回答 · 已处理") {
-		t.Fatal("child receipt/source not rendered", ui.Texts())
+	if !ui.HasText("已回答 · 同时覆盖根节点与空子树") || ui.HasText("回答结果") {
+		t.Fatal("child receipt was not folded into its original source", ui.Texts())
 	}
 }

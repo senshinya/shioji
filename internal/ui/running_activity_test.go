@@ -342,6 +342,7 @@ func TestToolToProseProgressKeepsCoverageAndStableEndpoints(t *testing.T) {
 				titleX := activityTitleInkX(ui, header, dark)
 				font := n.Font{Family: v.Model.Preferences.InterfaceFont, Size: 11, Weight: 400, Features: "tnum"}
 				titleWidth, _ := n.ShapeText("2 次工具调用", font, 0).Size()
+				titleWidth += toolGlyphSlot + toolSummaryGap
 				clockWidth, _ := n.ShapeText("37 秒", font, 0).Size()
 				phaseWidth, _ := n.ShapeText("正在执行命令", font, 0).Size()
 				if right := activityLastInkX(ui, header, dark); right > titleX+titleWidth+phaseWidth+clockWidth+34 {

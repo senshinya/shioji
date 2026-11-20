@@ -61,6 +61,37 @@ func (s *requestPageMotion) acceptMeasurement(height float32) {
 type requestPageMotionKey struct{}
 type questionOptionScrollKey struct{}
 
+type requestStatusMotion struct {
+	status, epoch string
+	started       time.Time
+}
+
+func (v *View) requestStatusProgress(c *n.Context, row n.Element, status string) float32 {
+	epoch := v.Model.ConnectionEpoch
+	state := n.Local(row, "request-status", func() requestStatusMotion {
+		return requestStatusMotion{status: status, epoch: epoch}
+	})
+	if status == "" || state.epoch != epoch || c.Preferences().ReduceMotion {
+		*state = requestStatusMotion{status: status, epoch: epoch}
+	} else if state.status != status {
+		state.status, state.started = status, c.Now()
+	}
+	if !state.started.IsZero() {
+		if elapsed := c.Now().Sub(state.started); elapsed < receiptEntranceDuration {
+			c.AnimationFrame()
+			return n.EaseOut(max(0, float32(elapsed)/float32(receiptEntranceDuration)))
+		}
+		state.started = time.Time{}
+	}
+	return 1
+}
+
+func requestStatusText(text n.Element, progress float32) {
+	if progress < 1 {
+		text.Opacity(.3 + .7*progress).Transform(n.Translation(0, 4*(1-progress)))
+	}
+}
+
 func (v *View) pendingBody(c *n.Context, t *n.Theme, current requestPage, index int, expandedOptions map[string]bool, collapsed, entering bool) float32 {
 	frame := n.Column(c.Key("request-body")).FillWidth().Clip().Label("请求内容区域")
 	state := n.Local(frame, requestPageMotionKey{}, func() requestPageMotion {

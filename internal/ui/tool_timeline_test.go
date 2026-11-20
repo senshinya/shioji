@@ -36,18 +36,21 @@ func TestExpandedToolsShareTimelineRailAndEndWithCompleted(t *testing.T) {
 			t.Fatal("expanded completed calls have no timeline completion receipt")
 		}
 		for _, r := range []n.Rect{a, b, done} {
-			if math.Abs(float64(r.X-heading.X-24)) > .5 {
-				t.Fatalf("timeline label is not beside the icon column: heading=%+v label=%+v", heading, r)
+			if math.Abs(float64(r.X-heading.X-40)) > .5 {
+				t.Errorf("tool details should be inset by one 16 DIP icon column: heading=%+v label=%+v", heading, r)
 			}
 		}
 		footer, _ := ui.Find("回复信息")
 		if !(done.Y > b.Y+b.H && footer.Y > done.Y+done.H) {
 			t.Fatal("group completion is not before the separate turn footer")
 		}
-		x, y := int(heading.X+8), int((a.Y+a.H+b.Y)/2)
+		x, y := int(a.X-16), int((a.Y+a.H+b.Y)/2)
 		line, bg := ui.Image().RGBAAt(x, y), ui.Image().RGBAAt(x-4, y)
 		if line == bg {
 			t.Fatalf("tool icons are not connected by a visible line (dark=%t)", dark)
+		}
+		if ui.Image().RGBAAt(int(heading.X+8), y) != bg {
+			t.Fatal("timeline rail starts under the title instead of the inset tool icons")
 		}
 		ui.Click("2 次工具调用")
 		ui.Advance(180 * time.Millisecond)
@@ -85,9 +88,8 @@ func TestRunningToolTimelineEndsAtItsLastIcon(t *testing.T) {
 		v.Model.Details["s"] = d
 		ui.Frame()
 		ui.Advance(time.Second)
-		heading, _ := ui.Find("2 次工具调用")
 		last, _ := ui.Find("second command")
-		x := int(heading.X + 8)
+		x := int(last.X - 16)
 		for y := int(last.Y + 20); y < int(last.Y+last.H+8); y++ {
 			if ui.Image().RGBAAt(x, y) != ui.Image().RGBAAt(x-4, y) {
 				t.Fatalf("last running command leaves a rail below its icon (dark=%v, y=%d)", dark, y)

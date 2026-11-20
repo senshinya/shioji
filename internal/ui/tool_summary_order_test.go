@@ -140,7 +140,7 @@ func TestToolIssueSummaryPrecedesDisclosureCue(t *testing.T) {
 				}
 				font := n.Font{Family: v.Model.Preferences.InterfaceFont, Size: 11, Weight: 400}
 				width, _ := n.ShapeText("13 次工具调用", font, 0).Size()
-				if gap := issue.X - heading.X - width; math.Abs(float64(gap-6)) > 1 {
+				if gap := issue.X - heading.X - width - toolGlyphSlot - toolSummaryGap; math.Abs(float64(gap-toolSummaryGap)) > 1 {
 					t.Fatalf("issue count must immediately follow tool count, before the chevron; gap=%.1f", gap)
 				}
 			})

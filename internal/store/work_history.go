@@ -91,25 +91,42 @@ func (s *Store) workHistory(q domain.WorkHistoryQuery) (domain.WorkDetail, error
 	if err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM work_items WHERE "+scope+" AND position<?),EXISTS(SELECT 1 FROM work_items WHERE "+scope+" AND position>?)", q.SessionID, q.ID, first, q.SessionID, q.ID, last).Scan(&h.Older, &h.Newer); err != nil {
 		return out, err
 	}
-	rows, err := db.Query("SELECT body,revision FROM work_items WHERE "+scope+" AND position>=? AND position<=? AND position>? ORDER BY position", q.SessionID, q.ID, first, last, q.After)
+	rows, err := db.Query(`SELECT i.body, i.revision, COALESCE(json_extract(r.body,'$.kind'),''), json_extract(r.body,'$.receipt')
+		FROM work_items i LEFT JOIN requests r ON r.session_id=i.session_id
+		AND i.id LIKE 'request:%' AND r.id=substr(i.id,9)
+		AND json_extract(r.body,'$.workId')=i.work_id
+		AND json_extract(r.body,'$.kind') IN ('questions','approval','permissions') AND json_extract(r.body,'$.state')='answered'
+		WHERE i.session_id=? AND i.work_id=? AND i.position>=? AND i.position<=? AND i.position>?
+		ORDER BY i.position`, q.SessionID, q.ID, first, last, q.After)
 	if err != nil {
 		return out, err
 	}
 	defer rows.Close()
 	size := 0
 	for rows.Next() {
-		var raw []byte
+		var raw, receipt []byte
+		var receiptKind string
 		var item domain.WorkItem
-		if err = rows.Scan(&raw, &item.Revision); err != nil {
+		if err = rows.Scan(&raw, &item.Revision, &receiptKind, &receipt); err != nil {
 			return out, err
 		}
-		if len(out.Items) > 0 && size+len(raw) > 384<<10 {
+		itemSize := len(raw)
+		if len(receipt) > 0 {
+			itemSize += len(receipt) + 32
+		}
+		if len(out.Items) > 0 && size+itemSize > 384<<10 {
 			break
 		}
 		if err = json.Unmarshal(raw, &item.Item); err != nil {
 			return out, err
 		}
-		size += len(raw)
+		if item.Item.Kind == "request" && item.Item.Status == "answered" && len(receipt) > 0 {
+			if err = json.Unmarshal(receipt, &item.Item.Parts); err != nil {
+				return out, err
+			}
+			item.Item.Presentation = receiptKind
+		}
+		size += itemSize
 		out.Items = append(out.Items, item)
 		if h.First == 0 {
 			h.First = item.Item.Order

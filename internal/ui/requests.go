@@ -9,6 +9,7 @@ import (
 	"shioji/internal/domain"
 	"slices"
 	"strings"
+	"time"
 )
 
 func requestKey(r domain.PendingRequest, id string) string {
@@ -407,6 +408,102 @@ func (v *View) openSourceRequest(item domain.Item) {
 		}
 	}
 }
+
+// Receipts stay in the journal at confirmation time. The transcript renders
+// them at the request anchor, including when only that page is loaded.
+type inlineRequestReceipt struct {
+	kind  string
+	parts []domain.ContentPart
+}
+
+type requestReceiptIndex map[string]inlineRequestReceipt
+
+func requestReceipts(requests []domain.PendingRequest) requestReceiptIndex {
+	receipts := make(requestReceiptIndex)
+	for _, r := range requests {
+		if domain.HasInlineRequestReceipt(r.Kind) && r.State == domain.RequestAnswered && len(r.Receipt) > 0 {
+			receipts["request:"+r.ID] = inlineRequestReceipt{r.Kind, r.Receipt}
+		}
+	}
+	return receipts
+}
+
+func (receipts requestReceiptIndex) recordResult(item domain.Item) {
+	if anchor := domain.InlineRequestResultAnchor(item); anchor != "" && receipts[anchor].kind == "" && len(item.Parts) > 0 {
+		receipts[anchor] = inlineRequestReceipt{item.Presentation, item.Parts}
+	}
+}
+
+func (receipts requestReceiptIndex) attach(item domain.Item) domain.Item {
+	if item.Kind == "request" && item.Status == string(domain.RequestAnswered) {
+		if receipt, ok := receipts[item.ID]; ok {
+			item.Presentation, item.Parts = receipt.kind, receipt.parts
+		}
+	}
+	return item
+}
+
+func (v *View) answeredQuestion(c *n.Context, t *n.Theme, item domain.Item, child bool, progress float32) {
+	key := fmt.Sprintf("question-answer:%s/%t/%s", v.Model.DraftKey(), child, item.ID)
+	expanded := v.Model.Collapsed[key]
+	label := "已回答"
+	if len(item.Parts) > 1 {
+		label = fmt.Sprintf("已回答 %d 个问题", len(item.Parts))
+	} else if !expanded {
+		if summary := strings.Join(strings.Fields(item.Parts[0].Text), " "); summary != "" {
+			label += " · " + summary
+		}
+	}
+	if !child && item.WorkID != "" {
+		label = v.requestWork(item.WorkID).Title + " · " + label
+	}
+	n.Column(c.Key("answered-question")).FillWidth().MinWidth(0).Children(func() {
+		button := control(c.Key("summary")).AlignSelf(n.Start).MinHeight(20).MinWidth(0).Justify(n.Start).Label(label).Expanded(expanded)
+		button.Children(func() {
+			font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+			color := textHoverColor(c, button, t.TextMuted)
+			n.Row(c).MinWidth(0).Gap(7).AlignItems(n.Baseline).Children(func() {
+				inlineSymbol(c.Key("question-icon"), questionIcon, label, font, 12, subtle(t)).Shrink(0)
+				text := n.Text(c.Key("answer-summary"), label).SingleLine().MinWidth(0).Shrink(1).Ellipsis("…").TooltipWhenTruncated(label).
+					FontSize(11).FixedLineHeight(20).TextColor(color)
+				requestStatusText(text, progress)
+				angle := float32(0)
+				if expanded {
+					angle = 90
+				}
+				inlineSymbol(c.Key("answer-disclosure"), disclosureRight, label, font, 10, subtle(t), angle).Shrink(0)
+			})
+		})
+		if button.Clicked() {
+			if expanded {
+				delete(v.Model.Collapsed, key)
+			} else {
+				v.Model.Collapsed[key] = true
+			}
+		}
+		if expanded {
+			requestReceiptDetails(c, t, item.Parts)
+		}
+	})
+}
+
+func requestReceiptDetails(c *n.Context, t *n.Theme, parts []domain.ContentPart) {
+	n.Column(c.Key("details")).FillWidth().Padding(4, 0, 0, 19).Gap(8).Clip().Transition(disclosureMotion(c, 180*time.Millisecond)).Children(func() {
+		requestReceiptParts(c, t, parts)
+	})
+}
+
+func requestReceiptParts(c *n.Context, t *n.Theme, parts []domain.ContentPart) {
+	for _, part := range parts {
+		n.Column(c).FillWidth().Gap(2).Children(func() {
+			if part.Label != "" {
+				n.Text(c, part.Label).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+			}
+			n.Text(c, part.Text).FontSize(13).FixedLineHeight(20).Selectable()
+		})
+	}
+}
+
 func (v *View) requestResult(c *n.Context, t *n.Theme, item domain.Item) {
 	v.requestResultWithStream(c, t, item, v.replyStreams[item.ID], true)
 }
@@ -431,13 +528,6 @@ func (v *View) requestResultWithStream(c *n.Context, t *n.Theme, item domain.Ite
 		if origin && item.WorkID != "" {
 			v.requestOrigin(c, t, domain.PendingRequest{WorkID: item.WorkID})
 		}
-		for _, part := range item.Parts {
-			n.Column(c).FillWidth().Gap(2).Children(func() {
-				if part.Label != "" {
-					n.Text(c, part.Label).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
-				}
-				n.Text(c, part.Text).FontSize(13).FixedLineHeight(20).Selectable()
-			})
-		}
+		requestReceiptParts(c, t, item.Parts)
 	})
 }

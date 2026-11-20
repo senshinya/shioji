@@ -41,7 +41,7 @@ func TestChildReceiptCompletesBeforeItsContinuationReveals(t *testing.T) {
 		if !reduce && ui.HasText("收到，我会继续检查根节点与空子树。") {
 			t.Fatal("child output mounted before its receipt entrance completed")
 		}
-		if !ui.HasText("同时覆盖根节点与空子树") {
+		if !ui.HasText("已回答 · 同时覆盖根节点与空子树") {
 			t.Fatal("receipt missing in child detail")
 		}
 		ui.Advance(time.Second)

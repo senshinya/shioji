@@ -1446,12 +1446,12 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			}
 			v.sentMessagePose(c, content, item)
 			if entry.toolParent != "" && !entry.toolTitle {
-				content.Padding(0, 0, bottom, 24).Draw(func(p *n.Painter, r n.Rect) {
+				content.Padding(0, 0, bottom, toolTimelineInset+toolGlyphSlot+toolTimelineGap).Draw(func(p *n.Painter, r n.Rect) {
 					height := r.H
 					if row == len(rows) || rows[row].toolParent != entry.toolParent {
 						height = 10
 					}
-					p.Fill(n.Rect{X: r.X + 7.5, Y: r.Y, W: 1, H: height}, t.Border, 0)
+					p.Fill(n.Rect{X: r.X + toolTimelineInset + toolGlyphSlot/2 - .5, Y: r.Y, W: 1, H: height}, t.Border, 0)
 				})
 				content.Opacity(entry.opacity)
 				if !v.reduceMotion {
@@ -1475,7 +1475,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 				} else if entry.group != "" {
 					v.toolGroup(c, t, entry, row)
 				} else if entry.toolParent != "" {
-					v.toolTimelineItem(c, t, entry)
+					v.toolTimelineItem(c, t, entry, toolTimelineInset)
 				} else {
 					v.item(c, t, item)
 				}
@@ -1581,7 +1581,7 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 	case "request_result":
 		v.requestResult(c, t, item)
 	case "request":
-		v.requestSource(c, t, item, false)
+		v.requestSource(c, t, item, false, v.replyStreams[item.ID])
 	default:
 		n.Text(c, item.Text).TextColor(t.TextMuted).FontSize(12).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
 	}
@@ -1629,7 +1629,7 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 		items := v.Model.Details[v.Model.SessionID].Items
 		for i := len(items) - 1; i >= 0; i-- {
 			item := items[i]
-			if item.TurnID != turn.ID || item.WorkID != "" || emptyTranscriptItem(item) {
+			if item.TurnID != turn.ID || item.WorkID != "" || domain.HistorySpacer(item) {
 				continue
 			}
 			if item.Kind == "request" && (item.Status == "pending" || item.Status == "submitting") {
@@ -1829,9 +1829,11 @@ func (v *View) respond(r domain.PendingRequest, answer domain.Answer) {
 	if !v.do(app.Job{Method: "request.respond", Input: protocol.AnswerInput{SessionID: r.SessionID, Answer: answer}, Apply: func(m *app.Model, _ json.RawMessage, err error) {
 		if err != nil {
 			for _, current := range m.Details[r.SessionID].Requests {
-				if current.ID == r.ID && current.Revision == r.Revision && current.State == "pending" {
-					state.busy = false
-					state.err = err.Error()
+				if current.ID == r.ID && current.Revision == r.Revision {
+					if current.State == "pending" || current.Kind == "questions" && current.State == "submitting" {
+						state.busy = false
+						state.err = err.Error()
+					}
 					break
 				}
 			}

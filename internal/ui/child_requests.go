@@ -123,52 +123,122 @@ func (v *View) requestOrigin(c *n.Context, t *n.Theme, r domain.PendingRequest) 
 		}
 	})
 }
-func (v *View) requestSource(c *n.Context, t *n.Theme, item domain.Item, child bool) {
+func (v *View) requestSource(c *n.Context, t *n.Theme, item domain.Item, child bool, stream *replyStream) {
+	row := n.Column(c.Key("request-source")).FillWidth().MinWidth(0)
+	if item.Status == "answered" && item.Presentation == "questions" && len(item.Parts) > 0 {
+		progress := v.requestStatusProgress(c, row, "answered-question")
+		row.Children(func() { v.answeredQuestion(c, t, item, child, progress) })
+		return
+	}
 	label := item.Text
 	if !child && item.WorkID != "" {
 		label = v.requestWork(item.WorkID).Title + " · " + label
 	}
-	switch item.Status {
-	case "answered":
-		label += " · 已处理"
-	case "resolved":
-		label += " · 已结束"
-	case "invalidated":
-		label += " · 已失效"
-	case "submitting":
-		label += " · 提交中"
-	}
 	icon := questionIcon
+	if item.Presentation == "approval" || item.Presentation == "permissions" {
+		icon = shieldIcon
+	}
+	checking := false
+	status := item.Status
 	for _, r := range v.Model.Details[v.Model.SessionID].Requests {
-		if item.ID == "request:"+r.ID && (r.Kind == "approval" || r.Kind == "permissions") {
+		if item.ID != "request:"+r.ID {
+			continue
+		}
+		if r.Kind == "approval" || r.Kind == "permissions" {
 			icon = shieldIcon
-			break
+		}
+		if status == "pending" || status == "submitting" {
+			busy := v.requestAction(r).busy
+			if busy && status == "pending" {
+				status = "submitting"
+			}
+			checking = r.Kind == "questions" && status == "submitting" && (!v.Model.Connected || !busy)
+		}
+		break
+	}
+	var suffix string
+	var details []domain.ContentPart
+	switch status {
+	case "answered":
+		suffix = "· 已处理"
+		if (item.Presentation == "approval" || item.Presentation == "permissions") && len(item.Parts) > 0 {
+			if decision := strings.TrimSpace(item.Parts[0].Text); decision != "" {
+				suffix = "· " + decision
+			}
+			details = item.Parts[1:]
+		}
+	case "resolved":
+		suffix = "· 已结束"
+	case "invalidated":
+		suffix = "· 已失效"
+	case "submitting":
+		if checking {
+			suffix = "· 待核对"
+		} else {
+			suffix = "· 提交中"
 		}
 	}
-	active := item.Status == "pending" || item.Status == "submitting"
-	name := label
+	active := status == "pending" || status == "submitting"
+	detailKey := "request-decision:" + v.Model.DraftKey() + "/" + item.ID
 	if child {
-		name = "子 Agent 请求来源：" + label
+		detailKey += "/child"
 	}
-	var source n.Element
-	if active {
-		source = control(c).AlignSelf(n.Start).MinHeight(20).Justify(n.Start).Label(name)
-	} else {
-		source = n.Row(c).FillWidth().MinHeight(20).Label(name)
+	showDetails := len(details) > 0
+	expanded := showDetails && v.Model.Collapsed[detailKey]
+	name := label
+	if suffix != "" {
+		name += " " + suffix
 	}
-	source.Children(func() {
-		n.Row(c).Gap(7).AlignItems(n.Baseline).Children(func() {
-			font := n.Font{Family: t.Font, Size: 11, Weight: 400}
-			inlineSymbol(c, icon, label, font, 12, subtle(t))
-			v.requestSourceLabel(c, t, item, label)
-			if active {
-				inlineSymbol(c.Key("pending-disclosure"), disclosureRight, label, font, 10, subtle(t)).Transition(fadeMotion(c, 180*time.Millisecond))
-			}
+	if child {
+		name = "子 Agent 请求来源：" + name
+	}
+	progress := v.requestStatusProgress(c, row, suffix)
+	row.Children(func() {
+		var source n.Element
+		if active {
+			source = control(c.Key("source-action")).AlignSelf(n.Start).MinHeight(20).Justify(n.Start).Label(name)
+		} else if showDetails {
+			source = control(c.Key("source-record")).AlignSelf(n.Start).MinHeight(20).Justify(n.Start).Label(name).Expanded(expanded)
+		} else {
+			source = n.Row(c.Key("source-record")).FillWidth().MinHeight(20).Label(name)
+		}
+		source.Children(func() {
+			n.Row(c).Gap(7).AlignItems(n.Baseline).Children(func() {
+				font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+				inlineSymbol(c, icon, label, font, 12, subtle(t))
+				n.Row(c.Key("source-title")).Gap(3).AlignItems(n.Baseline).Children(func() {
+					v.requestSourceLabel(c, t, label, stream)
+					if suffix != "" {
+						text := n.Text(c.Key("status"), suffix).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+						requestStatusText(text, progress)
+					}
+				})
+				if active {
+					inlineSymbol(c.Key("pending-disclosure"), disclosureRight, label, font, 10, subtle(t)).Transition(fadeMotion(c, 180*time.Millisecond))
+				} else if showDetails {
+					angle := float32(0)
+					if expanded {
+						angle = 90
+					}
+					inlineSymbol(c.Key("decision-disclosure"), disclosureRight, label, font, 10, subtle(t), angle)
+				}
+			})
 		})
+		if source.Clicked() {
+			if active {
+				v.openSourceRequest(item)
+			} else if showDetails {
+				if expanded {
+					delete(v.Model.Collapsed, detailKey)
+				} else {
+					v.Model.Collapsed[detailKey] = true
+				}
+			}
+		}
+		if expanded {
+			requestReceiptDetails(c, t, details)
+		}
 	})
-	if active && source.Clicked() {
-		v.openSourceRequest(item)
-	}
 }
 func (v *View) workRequestLink(c *n.Context, t *n.Theme, w domain.WorkActivity) {
 	r := v.pendingWorkRequest(w)

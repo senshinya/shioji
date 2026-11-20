@@ -329,7 +329,7 @@ func (v *View) syncHistoryExit(c *n.Context) {
 					continue
 				}
 				for _, item := range detail.Items {
-					if item.TurnID == turn.ID && !emptyTranscriptItem(item) {
+					if item.TurnID == turn.ID && !domain.HistorySpacer(item) {
 						v.retainHistoryRunningFooter(motion, turn.ID)
 						finished = true
 						break
