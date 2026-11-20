@@ -18,6 +18,7 @@ import (
 
 type workerUpgradeRecord struct {
 	Rejected        bool
+	RepairOf        string `json:",omitempty"`
 	Error, JoinedID string
 	DeviceID        string
 	Input           domain.WorkerReplacement
@@ -86,6 +87,9 @@ func upgradeService(current, available *domain.WorkerBuild, r *workerUpgradeReco
 	}
 	state.OperationID = r.Input.ID
 	if r.Rejected {
+		if r.RepairOf != "" {
+			state.OperationID, state.OperationPhase = r.RepairOf, "blocked"
+		}
 		state.Phase = WorkerUpdateFailed
 		state.Message = r.Error
 		return state
@@ -160,7 +164,7 @@ func (u workerUpgradeClient) observe(ctx context.Context, client *protocol.Clien
 		return op, e
 	}
 	op, err := query(r.Input.ID)
-	if err != nil {
+	if err != nil && r.RepairOf == "" {
 		// A second client may have joined the same target before its reply was
 		// lost. Following an existing matching receipt never resends an update.
 		if active, e := query(""); e == nil && active.Input.ID != "" && active.DeviceID == u.device && active.Input.ExpectedBuildID == r.Input.ExpectedBuildID && active.Input.BuildID == r.Input.BuildID && active.Input.Policy == r.Input.Policy && active.Input.SchemaMigration == r.Input.SchemaMigration {
@@ -188,6 +192,54 @@ func (u workerUpgradeClient) observe(ctx context.Context, client *protocol.Clien
 		state.Phase, state.Message = WorkerUpdateFailed, actual.Error
 	}
 	return state, nil
+}
+
+// A disconnected remote uses the fixed service over SSH. Admission and
+// candidate verification still occur on the owning device.
+func (u workerUpgradeClient) retryDetached(ctx context.Context, operation string, candidate *domain.WorkerBuild) (*WorkerService, error) {
+	prior, err := u.load()
+	if err != nil {
+		return nil, err
+	}
+	if prior != nil && !prior.Rejected && prior.Input.ID != operation && (prior.Operation == nil || !prior.Operation.Terminal()) {
+		return u.observe(ctx, nil, candidate)
+	}
+	state := upgradeService(u.knownBuild, candidate, prior)
+	active, err := u.control(ctx, "status", "")
+	if err != nil {
+		return state, err
+	}
+	if active.DeviceID != u.device {
+		return state, errors.New("执行服务回执的设备身份已变化")
+	}
+	if active.Phase != "blocked" {
+		return u.observe(ctx, nil, candidate)
+	}
+	if operation == "" || active.Input.ID != operation || active.Input.BuildID == "" {
+		return state, errors.New("被阻塞的更新已变化，请重新检查执行服务")
+	}
+	input := domain.WorkerReplacement{
+		ID: domain.NewID(), BuildID: active.Input.BuildID, ExpectedBuildID: active.Input.ExpectedBuildID,
+		Explicit: true, Policy: "when-idle",
+	}
+	record := &workerUpgradeRecord{DeviceID: u.device, Input: input, RepairOf: operation}
+	if err = u.save(record); err != nil {
+		return state, err
+	}
+	op, err := u.repair(ctx, input)
+	if err != nil {
+		var refused *protocol.RemoteError
+		if errors.As(err, &refused) && refused.Code == "notSent" {
+			record.Rejected, record.Error = true, err.Error()
+			err = errors.Join(err, u.save(record))
+		}
+		return upgradeService(u.knownBuild, candidate, record), err
+	}
+	if op.Input != input || op.DeviceID != u.device {
+		return upgradeService(u.knownBuild, candidate, record), errors.New("修复回执不属于原设备和操作")
+	}
+	record.Operation = &op
+	return upgradeService(u.knownBuild, candidate, record), u.save(record)
 }
 
 func (c *Controller) upgradeObserver(device string, known *domain.WorkerBuild) workerUpgradeClient {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,89 @@ import (
 	"shioji/internal/supervisor"
 	"shioji/internal/transport"
 )
+
+func TestRemoteRepairRunsWithBusinessWorkerOffline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	connection := DeviceConnection{ID: "remote", DeviceID: "device-B", SSH: transport.SSH{
+		Target: "peer", Worker: "/remote/worker", StateDirectory: "/remote/state",
+	}}
+	// A missing helper gives an immediate, attributable error if the action
+	// reaches the SSH recovery path. No real device is needed for this test.
+	missing := t.TempDir() + "/missing-worker"
+	controller := NewDeviceController(t.TempDir(), "device-A", []DeviceConnection{connection}, missing, nil)
+	child := controller.fleet.sources["remote"].controller
+	child.paths.open = func(context.Context, transport.SSH) (net.Conn, error) {
+		return nil, errors.New("business writer unavailable")
+	}
+	in := domain.WorkerReplacement{ID: "interrupted", BuildID: "staged", Explicit: true, Policy: "when-idle"}
+	op := supervisor.Operation{DeviceID: "device-B", Input: in, Phase: "blocked"}
+	if err := child.upgradeObserver("device-B", nil).save(&workerUpgradeRecord{DeviceID: "device-B", Input: in, Operation: &op}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { controller.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	result := make(chan error, 1)
+	controller.Do(Job{ConnectionID: "remote", Method: "$worker.repair", Input: in.ID, Apply: func(_ *Model, _ json.RawMessage, err error) {
+		result <- err
+	}})
+	model := NewModel()
+	for {
+		select {
+		case update := <-controller.Updates:
+			update(model)
+		case err := <-result:
+			if err == nil || !strings.Contains(err.Error(), "执行服务签名校验失败") {
+				t.Fatal("repair did not try the independent service control path", err)
+			}
+			return
+		case <-ctx.Done():
+			t.Fatal("offline controller did not handle the repair action")
+		}
+	}
+}
+
+func TestDetachedRepairUsesStagedBuildAndQueriesLostReceipt(t *testing.T) {
+	in := domain.WorkerReplacement{ID: "interrupted", BuildID: "staged", ExpectedBuildID: "old", Explicit: true, Policy: "when-idle"}
+	blocked := supervisor.Operation{DeviceID: "device-B", Input: in, Phase: "blocked"}
+	var sent domain.WorkerReplacement
+	calls := 0
+	lost := errors.New("SSH reply lost")
+	u := workerUpgradeClient{directory: t.TempDir(), device: "device-B"}
+	u.control = func(_ context.Context, _, id string) (supervisor.Operation, error) {
+		if id == "" {
+			return blocked, nil
+		}
+		if id == sent.ID {
+			return supervisor.Operation{}, lost
+		}
+		t.Fatalf("unexpected receipt query %q", id)
+		return supervisor.Operation{}, nil
+	}
+	u.repair = func(_ context.Context, input domain.WorkerReplacement) (supervisor.Operation, error) {
+		calls++
+		sent = input
+		if saved, err := u.load(); err != nil || saved.Input != input {
+			t.Fatalf("repair dispatched before saving its operation ID: %v %v", saved, err)
+		}
+		return supervisor.Operation{}, lost
+	}
+	if err := u.save(&workerUpgradeRecord{DeviceID: "device-B", Input: in, Operation: &blocked}); err != nil {
+		t.Fatal(err)
+	}
+	candidate := &domain.WorkerBuild{BuildID: "controller-bundle"}
+	state, err := u.retryDetached(context.Background(), in.ID, candidate)
+	if !errors.Is(err, lost) || state == nil || state.Phase != WorkerUpdating || sent.ID == "" || sent.ID == in.ID || sent.BuildID != "staged" {
+		t.Fatalf("expected one new repair for the signed staged target, got %+v, %+v, %v", state, sent, err)
+	}
+	if _, err = u.retryDetached(context.Background(), in.ID, candidate); !errors.Is(err, lost) {
+		t.Fatal("retry did not query the unconfirmed repair", err)
+	}
+	if saved, err := u.load(); err != nil || saved.Input != sent || calls != 1 {
+		t.Fatalf("lost reply triggered another repair: %v %v calls=%d", saved, err, calls)
+	}
+}
 
 func TestRemoteUpgradeLostReplyQueriesOriginalOperationAfterRouteAndClientRestart(t *testing.T) {
 	directory := t.TempDir()

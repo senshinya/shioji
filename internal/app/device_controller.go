@@ -126,6 +126,7 @@ func sshController(connection DeviceConnection, pending []string, binary, update
 	c.WorkerSSH = &ssh
 	c.ExpectedDeviceID = connection.DeviceID
 	c.paths = newDevicePaths(connection, nil)
+	c.workerRepairs = make(chan Job, 1)
 	c.Dial = c.paths.dial
 	c.RestoreOperations = pending
 	return c

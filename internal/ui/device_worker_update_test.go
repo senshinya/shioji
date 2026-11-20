@@ -94,6 +94,29 @@ func TestDevicePopoverWorkerUpdateTargetsOwningDeviceAndPreservesDraft(t *testin
 	}
 }
 
+func TestDisconnectedDevicePopoverRetriesThroughServiceControl(t *testing.T) {
+	v, u, c := popoverWorkerFixture(t, app.WorkerUpdateFailed)
+	state := v.Model.DeviceStates["air"]
+	state.Connected, state.ConnectionEpoch = false, ""
+	state.WorkerService.OperationID = "blocked-update"
+	u.Frame()
+	u.Advance(time.Second)
+	for len(c.Jobs) > 0 {
+		<-c.Jobs
+	}
+	if err := u.Click("浮层执行服务更新"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case job := <-c.Jobs:
+		if job.Method != "$worker.repair" || job.ConnectionID != "air" || job.Input != "blocked-update" {
+			t.Fatal("offline recovery lost its device or blocked receipt", job)
+		}
+	default:
+		t.Fatal("offline recovery did not dispatch")
+	}
+}
+
 func TestDevicePopoverWaitingUpdateCanCancelAndConfirmWithoutLeavingConversation(t *testing.T) {
 	v, u, c := popoverWorkerFixture(t, app.WorkerWaiting)
 	service := v.Model.DeviceStates["air"].WorkerService

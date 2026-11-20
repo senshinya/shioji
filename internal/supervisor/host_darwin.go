@@ -650,6 +650,7 @@ func (h *host) stopExact(c *child, grace time.Duration) error {
 
 var errDrainAdmission = errors.New("business became active before drain")
 var errDrainExpired = errors.New("prepared update expired")
+var errDrainReceiptMissing = errors.New("worker exited without a drained receipt")
 
 func (h *host) shutdown(c *child, id string, grace time.Duration, controls ...Control) error {
 	control := Control{Replacement: domain.WorkerReplacement{Policy: "immediate", Explicit: true}}
@@ -707,6 +708,9 @@ func (h *host) shutdown(c *child, id string, grace time.Duration, controls ...Co
 	}
 	var drained Drained
 	if err := readJSON(drainPath(h.options.Directory, id, c.instance), &drained); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%w: %w", errDrainReceiptMissing, err)
+		}
 		return fmt.Errorf("worker exited without a drained receipt: %w", err)
 	}
 	if drained.PID != c.cmd.Process.Pid || drained.Instance != c.instance || drained.OperationID != id || drained.BuildID != c.build.BuildID || drained.DeviceID != h.device {
@@ -821,6 +825,14 @@ waitForIdle:
 				return
 			}
 			goto waitForIdle
+		}
+		if errors.Is(err, errDrainReceiptMissing) && ctx.Err() == nil {
+			o.Error = err.Error()
+			if recoveryErr := h.restoreSourceWithoutDrain(ctx, &o, old); recoveryErr == nil {
+				return
+			} else {
+				err = errors.Join(err, recoveryErr)
+			}
 		}
 		failed(err, true)
 		return

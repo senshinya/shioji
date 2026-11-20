@@ -14,6 +14,10 @@ type workerUpdateConfirmation struct {
 }
 
 func (v *View) requestWorkerUpdate(key string, state *app.DeviceState) {
+	if !state.Connected && key != "local" && state.WorkerService != nil {
+		v.do(app.Job{ConnectionID: key, Method: "$worker.repair", Input: state.WorkerService.OperationID})
+		return
+	}
 	if service := state.WorkerService; state.Connected && service.RequiresSchemaMigration() {
 		v.beginWorkerUpdateConfirmation(key, state, false)
 		v.workerUpdateConfirm.migrate = true

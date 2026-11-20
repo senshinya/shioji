@@ -49,6 +49,7 @@ type Controller struct {
 	workerUpdateDirectory string
 	Dial                  func(context.Context) (net.Conn, error)
 	Jobs                  chan Job
+	workerRepairs         chan Job
 	Updates               chan Update
 	mu                    sync.Mutex
 	runContext            context.Context
@@ -90,8 +91,12 @@ func (c *Controller) Do(job Job) bool {
 		job.epoch = c.epoch
 	}
 	c.mu.Unlock()
+	queue := c.Jobs
+	if c.workerRepairs != nil && job.Method == "$worker.repair" {
+		queue = c.workerRepairs
+	}
 	select {
-	case c.Jobs <- job:
+	case queue <- job:
 		return true
 	default:
 		return false
@@ -1046,6 +1051,29 @@ func (c *Controller) Run(ctx context.Context) {
 			if result.err != nil || !applyPage(result.page) {
 				disconnected()
 			}
+		case job := <-c.workerRepairs:
+			if client != nil || upload != nil || c.ExpectedDeviceID == "" {
+				continue
+			}
+			operation, _ := job.Input.(string)
+			var known *domain.WorkerBuild
+			if service != nil {
+				known = service.Build
+			}
+			call, cancel := context.WithTimeout(ctx, time.Minute)
+			state, err := c.upgradeObserver(c.ExpectedDeviceID, known).retryDetached(call, operation, candidate)
+			cancel()
+			if state != nil {
+				if err != nil {
+					state.Message = err.Error()
+				}
+				publishService(state)
+			}
+			if job.Apply != nil {
+				c.post(func(m *Model) { job.Apply(m, nil, err) })
+			}
+			lastDetachedService = time.Now()
+			lastAttempt = time.Time{}
 		case job := <-jobs:
 			if job.Method == "$worker.recovery" {
 				c.runWorkerRecoveryJob(ctx, job)

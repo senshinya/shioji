@@ -63,7 +63,11 @@ func fixtureHost(name string) int {
 		}
 		return 2
 	}
-	lease, err := os.OpenFile(filepath.Join(dir, "fixture-owner.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	leaseName := "fixture-owner.lock"
+	if strings.Contains(name, "lostreceipt") {
+		leaseName = "owner.lock"
+	}
+	lease, err := os.OpenFile(filepath.Join(dir, leaseName), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return 1
 	}
@@ -104,6 +108,7 @@ func fixtureHost(name string) int {
 					}
 					var control Control
 					_ = json.Unmarshal(f.Body, &control)
+					loseReceipt := strings.Contains(name, "lostreceipt") && control.OperationID == "operation"
 					var out any
 					var failure error
 					stop := false
@@ -175,6 +180,9 @@ func fixtureHost(name string) int {
 						} else {
 							stop = true
 						}
+						if stop && loseReceipt {
+							failure = SaveDrainIntent(dir, DrainIntent{ID: control.OperationID, Instance: instance, DeviceID: "fixture-device", BuildID: buildID})
+						}
 					default:
 						failure = fmt.Errorf("unsupported fixture method %s", f.Method)
 					}
@@ -188,7 +196,7 @@ func fixtureHost(name string) int {
 					}
 					if stop {
 						lease.Close()
-						if !strings.Contains(name, "nodrain") {
+						if !strings.Contains(name, "nodrain") && !loseReceipt {
 							_ = WriteDrained(dir, Drained{PID: os.Getpid(), Instance: instance, OperationID: control.OperationID, DeviceID: "fixture-device", BuildID: buildID})
 						}
 						once.Do(func() { close(done) })
@@ -314,6 +322,72 @@ func TestHostWithoutDrainNeverStartsCandidate(t *testing.T) {
 	}
 	if _, err = os.Stat(filepath.Join(dir, "started-next")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("candidate started without source drain", err)
+	}
+}
+
+func TestHostRestartsSourceAfterAcceptedDrainLosesReceipt(t *testing.T) {
+	dir, _, _ := testHost(t, "-lostreceipt", "", false)
+	before, err := os.ReadFile(filepath.Join(dir, "started-old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := domain.WorkerReplacement{ID: "operation", ExpectedBuildID: "old", BuildID: "next", Policy: "when-idle"}
+	if _, err := Call(context.Background(), dir, Request{Action: "start", Input: in}); err != nil {
+		t.Fatal(err)
+	}
+	op := awaitHostOperation(t, dir)
+	if op.Phase != "failed" || !strings.Contains(op.Error, "without a drained receipt") {
+		t.Fatalf("original update must report the missing receipt, got %s: %s", op.Phase, op.Error)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	for ctx.Err() == nil {
+		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(dir, "worker.sock"))
+		if err == nil {
+			client, err := protocol.Connect(ctx, conn, "fixture-device")
+			if err == nil {
+				var ready Ready
+				after, readErr := os.ReadFile(filepath.Join(dir, "started-old"))
+				err = client.Call(ctx, "worker.local-ready", Control{Instance: string(after)}, &ready)
+				client.Close()
+				if readErr == nil && err == nil && string(before) != ready.Instance && ready.Build.BuildID == "old" && !ready.Paused {
+					if _, err := os.Stat(filepath.Join(dir, "started-next")); !errors.Is(err, os.ErrNotExist) {
+						t.Fatal("update candidate started without the drained receipt", err)
+					}
+					return
+				}
+			} else {
+				conn.Close()
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("supervisor did not restore business acceptance without a client recovery request")
+}
+
+func TestHostLostDrainKeepsServiceBlockedWithUnverifiedExecution(t *testing.T) {
+	dir, _, _ := testHost(t, "-lostreceipt", "", false)
+	before, err := os.ReadFile(filepath.Join(dir, "started-old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "executions", "unverified-session"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	in := domain.WorkerReplacement{ID: "operation", ExpectedBuildID: "old", BuildID: "next", Policy: "when-idle"}
+	if _, err := Call(context.Background(), dir, Request{Action: "start", Input: in}); err != nil {
+		t.Fatal(err)
+	}
+	op := awaitHostOperation(t, dir)
+	if op.Phase != "blocked" || !strings.Contains(op.Error, "旧进程登记记录不可读取") {
+		t.Fatalf("unverified execution scope did not block automatic restart: %s: %s", op.Phase, op.Error)
+	}
+	after, err := os.ReadFile(filepath.Join(dir, "started-old"))
+	if err != nil || string(after) != string(before) {
+		t.Fatal("restarted the old writer before proving execution ownership", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "started-next")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("launched the candidate with an unverified execution scope", err)
 	}
 }
 func TestHostUnreadyCandidateDrainsThenRollsBackOnce(t *testing.T) {
