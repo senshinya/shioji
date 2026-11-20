@@ -44,6 +44,15 @@ func importModel() *app.Model {
 }
 
 func TestLegacyPartialImportOffersRevisionCheckedCompletionWithoutLosingDraft(t *testing.T) {
+	testReadOnlyImportRecovery(t, true, "补全历史")
+}
+
+func TestFullReadOnlyImportOffersRecheckWithoutLosingDraft(t *testing.T) {
+	testReadOnlyImportRecovery(t, false, "重新核对历史")
+}
+
+func testReadOnlyImportRecovery(t *testing.T, partial bool, action string) {
+	t.Helper()
 	v, ui, _ := historyFixture()
 	m := v.Model
 	m.WorkerMinor = 42
@@ -51,7 +60,7 @@ func TestLegacyPartialImportOffersRevisionCheckedCompletionWithoutLosingDraft(t 
 	s.ThreadID = ""
 	s.HarnessID = "memory"
 	s.Context.CWD = "/project"
-	s.Origin = &domain.ConversationOrigin{SourceRef: "external", Truncated: true, Reason: "仅导入部分历史，无法接续原上下文"}
+	s.Origin = &domain.ConversationOrigin{SourceRef: "external", Truncated: partial, Reason: "来源没有可接续的完整轮次"}
 	m.Snapshot.Sessions[0] = s
 	m.Snapshot.Workspaces[0].Revision = 3
 	d := m.Details[s.ID]
@@ -59,7 +68,7 @@ func TestLegacyPartialImportOffersRevisionCheckedCompletionWithoutLosingDraft(t 
 	m.Details[s.ID] = d
 	ui.Frame()
 	ui.Advance(time.Second)
-	if err := ui.Click("补全历史"); err != nil {
+	if err := ui.Click(action); err != nil {
 		t.Fatal("legacy imported history has no recovery action", err, ui.Texts())
 	}
 	j := welcomeJob(t, v.Controller, "conversation.import")

@@ -13,10 +13,22 @@ import (
 // Fork copies a persisted source prefix without binding or starting a turn.
 // The owning worker binds the returned thread only after its local transaction.
 func (r *Runtime) Fork(ctx context.Context, source domain.Session, turn string, before bool) (string, error) {
+	if turn == "" {
+		return "", errors.New("缺少分叉的源线程或轮次")
+	}
+	id, err := r.forkThread(ctx, source, turn, before)
+	if err != nil {
+		return "", err
+	}
+	return id, r.ReleaseFork(ctx, id)
+}
+
+// An empty turn copies the whole thread. Import must verify that copy before binding it.
+func (r *Runtime) forkThread(ctx context.Context, source domain.Session, turn string, before bool) (string, error) {
 	if !r.supports("thread/read") || !r.supports("thread/turns/list") || !r.supports("thread/fork") || !r.supports("thread/unsubscribe") || !r.supports("thread/loaded/list") {
 		return "", harness.Unsupported("history")
 	}
-	if source.ThreadID == "" || turn == "" {
+	if source.ThreadID == "" {
 		return "", errors.New("缺少分叉的源线程或轮次")
 	}
 	var meta struct{ Thread struct{ ID, CWD string } }
@@ -29,7 +41,7 @@ func (r *Runtime) Fork(ctx context.Context, source domain.Session, turn string, 
 	params := map[string]any{"threadId": source.ThreadID, "excludeTurns": true, "deferGoalContinuation": true, "config": map[string]any{"thread_unload_delay_secs": 0}}
 	if before {
 		params["beforeTurnId"] = turn
-	} else {
+	} else if turn != "" {
 		params["lastTurnId"] = turn
 	}
 	var out struct {
@@ -45,7 +57,7 @@ func (r *Runtime) Fork(ctx context.Context, source domain.Session, turn string, 
 	if out.Thread.ID == "" || out.Thread.ID == source.ThreadID || sourceExecutionPath(out.CWD) != source.Context.CWD || out.Thread.ForkedFromID == nil || *out.Thread.ForkedFromID != source.ThreadID {
 		return "", errors.New("Codex 未确认正确的分叉来源和执行目录")
 	}
-	return out.Thread.ID, r.ReleaseFork(ctx, out.Thread.ID)
+	return out.Thread.ID, nil
 }
 
 // ReleaseFork hands a persisted fork to the destination runtime. It is safe to

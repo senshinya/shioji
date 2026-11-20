@@ -57,6 +57,10 @@ type ConversationContinuation interface {
 	PrepareConversation(context.Context, domain.Session) (string, error)
 }
 
+// ErrConversationSourceChanged means the imported snapshot must be checked
+// again before any input can be handed off to the private copy.
+var ErrConversationSourceChanged = errors.New("来源历史已变化，请重新核对历史后再发送")
+
 // GoalController changes or reads the source-owned conversation objective.
 // The harness owns continuation and reports each actual turn separately.
 type GoalController interface {

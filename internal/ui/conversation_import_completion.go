@@ -29,12 +29,18 @@ func (v *View) importedConversationStatus() *conversationStatus {
 		if status.body == "" {
 			status.body = "此导入历史仅可查看，暂不能继续发送。"
 		}
-		if !s.Origin.Truncated {
-			return status
+		label, checking := "重新核对历史", "正在核对历史"
+		if s.Origin.Truncated {
+			label, checking = "补全历史", "正在补全历史"
+			status.body = "历史尚未完整读取，补全为来源的当前完整历史后即可继续。会话名称和草稿保留。"
 		}
-		status.body = "历史尚未完整读取，补全为来源的当前完整历史后即可继续。会话名称和草稿保留。"
 		if m.WorkerMinor < 42 {
-			status.body = "请先更新所属设备的执行服务，再补全历史并继续。会话和草稿已保留。"
+			update := "请先更新所属设备的执行服务，再核对历史。"
+			if s.Origin.Truncated {
+				status.body = update
+			} else {
+				status.details = update
+			}
 			status.actions = []statusAction{{label: "设备详情", run: func(*n.Context) { v.showFeedbackDevice() }}}
 			return status
 		}
@@ -43,9 +49,9 @@ func (v *View) importedConversationStatus() *conversationStatus {
 			busy, status.details = state.busy, state.error
 		}
 		if busy {
-			status.title = "正在补全历史"
+			status.title = checking
 		}
-		status.actions = []statusAction{{label: "补全历史", disabled: busy || !m.Connected || v.Controller == nil, run: func(*n.Context) { v.completeImportedConversation(s) }}}
+		status.actions = []statusAction{{label: label, disabled: busy || !m.Connected || v.Controller == nil, run: func(*n.Context) { v.completeImportedConversation(s) }}}
 		return status
 	}
 	return nil

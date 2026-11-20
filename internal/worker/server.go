@@ -1429,7 +1429,12 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 	if outcome.Operation == domain.OperationIndeterminate {
 		defer s.wakeRecovery()
 	}
-	if err = s.store.CompleteInput(op.ID, outcome, message, turnID); err != nil && !errors.Is(err, store.ErrInputHandoffRevoked) {
+	if !handed && errors.Is(err, harness.ErrConversationSourceChanged) {
+		err = s.store.RejectChangedConversationInput(op.ID, message)
+	} else {
+		err = s.store.CompleteInput(op.ID, outcome, message, turnID)
+	}
+	if err != nil && !errors.Is(err, store.ErrInputHandoffRevoked) {
 		s.cancel()
 	}
 }

@@ -133,6 +133,16 @@ func (s *Store) BeginInputHandoff(id string) error {
 
 // CompleteInput commits the original message, queue and receipt together.
 func (s *Store) CompleteInput(id string, outcome domain.Delivery, message, turn string) error {
+	return s.completeInput(id, outcome, message, turn, false)
+}
+
+// RejectChangedConversationInput invalidates the snapshot in the same
+// transaction that records definite non-delivery of the first input.
+func (s *Store) RejectChangedConversationInput(id, message string) error {
+	return s.completeInput(id, domain.DeliveryOutcome(true, false), message, "", true)
+}
+
+func (s *Store) completeInput(id string, outcome domain.Delivery, message, turn string, changedImport bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.Begin()
@@ -147,6 +157,9 @@ func (s *Store) CompleteInput(id string, outcome domain.Delivery, message, turn 
 		return err
 	}
 	if !op.State.Unsettled() || op.State == domain.OperationIndeterminate {
+		return ErrInputHandoffRevoked
+	}
+	if changedImport && !unhanded(op) {
 		return ErrInputHandoffRevoked
 	}
 	item, err := load[domain.Item](tx.QueryRow("SELECT body FROM items WHERE session_id=? AND id=?", op.SessionID, "input:"+id))
@@ -169,6 +182,9 @@ func (s *Store) CompleteInput(id string, outcome domain.Delivery, message, turn 
 		}
 		if session.ExecutionGuard == "" {
 			session.Status, session.Error = outcome.Execution, message
+			if changedImport && session.Origin != nil && session.ThreadID == "" {
+				session.Origin.ResumeRef, session.Origin.Reason = "", message
+			}
 			if err := saveCompletionSession(tx, &session); err != nil {
 				return err
 			}

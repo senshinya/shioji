@@ -119,7 +119,10 @@ func (r *Runtime) Conversations(ctx context.Context, roots []string, cursor stri
 	return out, nil
 }
 
-type conversationPrefix struct{ Source, Directory, Turn, Digest string }
+type conversationPrefix struct {
+	Source, Directory, Turn, Digest string
+	Interrupted                     bool `json:",omitempty"`
+}
 type conversationTurn struct {
 	wire.Turn
 	Items     []wire.Item
@@ -211,7 +214,7 @@ func (r *Runtime) readConversation(ctx context.Context, launch domain.LaunchCont
 		seen[cursor] = true
 	}
 	if !matched {
-		return out, "", errors.New("已导入的历史边界已变化")
+		return out, "", harness.ErrConversationSourceChanged
 	}
 	if through == "" && !complete {
 		slices.Reverse(turns)
@@ -259,7 +262,7 @@ func (r *Runtime) readConversation(ctx context.Context, launch domain.LaunchCont
 			}
 			out.Items = append(out.Items, n)
 		}
-		if t.Status == "completed" {
+		if t.Status == "completed" || t.Status == "interrupted" {
 			last = t.ID
 		} else {
 			last = ""
@@ -268,20 +271,21 @@ func (r *Runtime) readConversation(ctx context.Context, launch domain.LaunchCont
 	if !complete {
 		boundConversationPreview(&out)
 	}
+	digest := conversationSourceDigest(turns)
 	if out.Truncated {
 		out.Reason = "仅导入部分历史，无法接续原上下文"
 	} else if running {
 		out.Reason = "来源仍在运行，仅可查看历史"
 	} else if last == "" {
-		out.Reason = "来源没有可接续的完整轮次"
+		out.Reason = "来源没有可接续的轮次"
 	} else if !r.supports("thread/fork") || !r.supports("thread/unsubscribe") || !r.supports("thread/loaded/list") {
 		out.Reason = "当前 Agent 不支持接续导入历史"
 	} else {
-		ref := conversationPrefix{Source: source, Directory: launch.CWD, Turn: last, Digest: conversationSourceDigest(turns)}
+		ref := conversationPrefix{Source: source, Directory: launch.CWD, Turn: last, Digest: digest, Interrupted: turns[len(turns)-1].Status == "interrupted"}
 		b, _ := json.Marshal(ref)
 		out.ResumeRef = base64.RawURLEncoding.EncodeToString(b)
 	}
-	return out, conversationSourceDigest(turns), nil
+	return out, digest, nil
 }
 func conversationSourceBytes(t conversationTurn) []byte {
 	items := make([]json.RawMessage, len(t.Items))
@@ -355,13 +359,41 @@ func (r *Runtime) PrepareConversation(ctx context.Context, s domain.Session) (st
 	if err != nil || json.Unmarshal(b, &ref) != nil || ref.Source != s.Origin.SourceRef || ref.Directory != s.Context.CWD || ref.Turn == "" || ref.Digest == "" {
 		return "", errors.New("导入历史边界无效")
 	}
-	p, digest, err := r.readConversation(ctx, s.Context, ref.Source, ref.Turn, true)
+	boundary := ref.Turn
+	if ref.Interrupted {
+		boundary = ""
+	}
+	p, digest, err := r.readConversation(ctx, s.Context, ref.Source, boundary, true)
 	if err != nil {
 		return "", err
 	}
-	if p.Truncated || digest != ref.Digest {
-		return "", errors.New("来源历史已变化，无法从此副本接续")
+	if p.Candidate.Active {
+		return "", errors.New("来源仍在运行，请停止来源会话后重试")
+	}
+	if p.ResumeRef == "" || digest != ref.Digest {
+		return "", harness.ErrConversationSourceChanged
 	}
 	s.ThreadID = ref.Source
-	return r.Fork(ctx, s, ref.Turn, false)
+	if !ref.Interrupted {
+		return r.Fork(ctx, s, ref.Turn, false)
+	}
+	// Codex can display the last persisted turn as interrupted but still
+	// reject its explicit turn ID as in progress. Copy the whole snapshot and
+	// check it before use, including changes from other app-server processes.
+	id, err := r.forkThread(ctx, s, "", false)
+	if err != nil {
+		return "", err
+	}
+	copy, copyDigest, readErr := r.readConversation(ctx, s.Context, id, "", true)
+	releaseErr := r.ReleaseFork(ctx, id)
+	if readErr != nil {
+		return "", readErr
+	}
+	if releaseErr != nil {
+		return "", releaseErr
+	}
+	if copy.ResumeRef == "" || copyDigest != ref.Digest {
+		return "", harness.ErrConversationSourceChanged
+	}
+	return id, nil
 }

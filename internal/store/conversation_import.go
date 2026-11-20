@@ -23,7 +23,7 @@ func (s *Store) ImportConversation(w domain.Workspace, harness string, p domain.
 	return s.importConversation(w, harness, p, config, "", 0)
 }
 
-// Completion is an explicit re-read of a legacy partial import. It preserves
+// Completion is an explicit re-read of a read-only import. It preserves
 // client drafts and session metadata, and never replaces an execution context.
 func (s *Store) CompleteConversationImport(w domain.Workspace, harness string, p domain.ConversationPreview, id string, revision int64) (domain.Session, error) {
 	s.mu.Lock()
@@ -61,7 +61,9 @@ func (s *Store) importConversation(w domain.Workspace, harness string, p domain.
 			return zero, errors.New("会话已改变，未替换原历史")
 		}
 		var used bool
-		if err = s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM operations WHERE session_id=?) OR EXISTS(SELECT 1 FROM queues WHERE session_id=? AND json_array_length(body,'$.items')>0)`, old.ID, old.ID).Scan(&used); err != nil {
+		// A definitively rejected first input can leave a receipt without
+		// creating a thread or handing off any model input.
+		if err = s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM operations WHERE session_id=? AND state<>?) OR EXISTS(SELECT 1 FROM queues WHERE session_id=? AND json_array_length(body,'$.items')>0)`, old.ID, domain.OperationRejected, old.ID).Scan(&used); err != nil {
 			return zero, err
 		}
 		if used {
@@ -94,6 +96,7 @@ func (s *Store) importConversation(w domain.Workspace, harness string, p domain.
 		origin := session.Origin
 		session = *previous
 		session.Origin = origin
+		session.Status, session.Error = domain.ExecutionCompleted, ""
 		session.Revision++
 	}
 	tx, err := s.db.Begin()
