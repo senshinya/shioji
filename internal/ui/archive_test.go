@@ -74,8 +74,8 @@ func TestArchiveLastRowRemainsReachableAfterResize(t *testing.T) {
 			ui.SetSize(size.width, size.height)
 			ui.Advance(time.Second)
 			heading, ok := ui.Find("已归档")
-			if !ok || heading.Y != 8 {
-				t.Fatal("archive heading does not align with the sidebar frame", heading)
+			if !ok || heading.Y != 24 {
+				t.Errorf("archive heading starts at y=%g (found: %v), want y=24", heading.Y, ok)
 			}
 			list, ok := ui.Find("已归档会话列表")
 			if !ok {

@@ -125,9 +125,9 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 				return
 			}
 			width, _ := c.Size()
-			header := n.Column(c).FillWidth().Height(60).Padding(mainWindowTopInset, configurationInset, 6).DragWindow()
+			header := n.Column(c).FillWidth().Height(76).Padding(mainPageTopInset, configurationInset, 6).DragWindow()
 			if width < 900 {
-				header.Height(88)
+				header.Height(88).Padding(mainWindowTopInset, configurationInset, 6)
 			}
 			header.Children(func() {
 				if width < 900 {

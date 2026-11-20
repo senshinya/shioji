@@ -43,6 +43,8 @@ const (
 	mainWindowTopInset     = 8
 	toolbarActionSize      = 28
 	mainToolbarBottomInset = mainToolbarHeight - mainWindowTopInset - toolbarActionSize
+	mainPageTopInset       = 24
+	mainPageHeaderHeight   = mainPageTopInset + toolbarActionSize + mainToolbarBottomInset
 	sidebarHeaderTopInset  = 6
 	sidebarTitlebarHeight  = 28
 	sidebarHeaderGap       = 4

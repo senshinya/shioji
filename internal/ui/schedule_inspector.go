@@ -44,7 +44,7 @@ func (v *View) scheduleInspector(c *n.Context, t *n.Theme, g *schedulePageState,
 			change := exists && !workspace.Archived && source.online && !g.busy
 			context := workspace.Name + " · " + v.Model.DeviceName(task.DeviceID)
 			if compact {
-				n.Row(c.Key("schedule-compact-detail-title")).FillWidth().Height(mainToolbarHeight).Padding(mainWindowTopInset, 0, mainToolbarBottomInset, 0).
+				n.Row(c.Key("schedule-compact-detail-title")).FillWidth().Height(mainPageHeaderHeight).Padding(mainPageTopInset, 0, mainToolbarBottomInset, 0).
 					Gap(8).AlignItems(n.Center).DragWindow().Children(func() {
 					if iconButton(c, conversationBackIcon, "返回任务列表").MarginStart(-5).Clicked() {
 						g.pick(scheduleKey{})
@@ -53,7 +53,7 @@ func (v *View) scheduleInspector(c *n.Context, t *n.Theme, g *schedulePageState,
 					n.Text(c, context).Grow(1).MinWidth(0).FontSize(12).FixedLineHeight(18).SingleLine().Ellipsis("…").TextColor(t.TextMuted)
 				})
 			} else {
-				n.Row(c.Key("schedule-detail-title")).FillWidth().Height(mainToolbarHeight).Padding(mainWindowTopInset, 0, 0, 0).
+				n.Row(c.Key("schedule-detail-title")).FillWidth().Height(mainPageHeaderHeight).Padding(mainPageTopInset, 0, 0, 0).
 					Gap(4).AlignItems(n.Start).DragWindow().Children(func() {
 					n.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 						n.Text(c, task.Name).FontSize(14).FontWeight(500).FixedLineHeight(20).MinWidth(0).

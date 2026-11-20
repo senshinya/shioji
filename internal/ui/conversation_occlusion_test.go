@@ -98,45 +98,70 @@ func TestConversationToolbarActionsAlignWithSidebarFrame(t *testing.T) {
 	}
 }
 
-func TestMainWindowPagesAlignWithSidebarFrame(t *testing.T) {
-	model := layoutModel()
-	v := New(model, nil, "")
-	ui := n.NewTester(v.View, 1240, 820)
-	checkTop := func(label string) {
-		t.Helper()
-		ui.Frame()
-		ui.Advance(time.Second)
-		const sidebarFrameTop = 8
-		if bounds, ok := ui.Find(label); !ok || bounds.Y != sidebarFrameTop {
-			t.Errorf("%s starts at y=%g (found: %v), want sidebar frame y=%d", label, bounds.Y, ok, sidebarFrameTop)
-		}
+func TestMainWindowPageHeaderInsets(t *testing.T) {
+	for _, layout := range []struct {
+		width            int
+		configurationTop float32
+		deviceTop        float32
+		deviceLead       string
+		tailnetLead      string
+	}{
+		{1240, 24, 24, "修改设备名称", "Tailnet 网络操作"},
+		// Find reports the vertical position of the text inside the narrow back button.
+		{850, 8, 15, "返回设备列表", "返回设备列表"},
+	} {
+		t.Run(fmt.Sprint(layout.width), func(t *testing.T) {
+			model := deviceUIModel()
+			model.DeviceStates["local"].WorkerMinor = 22
+			model.DeviceStates["local"].Readiness.Harnesses = setupCatalog()
+			v := New(model, nil, "")
+			ui := n.NewTester(v.View, layout.width, 820)
+			ui.SetDark(layout.width == 850)
+			checkTop := func(page, label string, want float32) {
+				t.Helper()
+				ui.Frame()
+				ui.Advance(time.Second)
+				saveNativeSkillImage(t, ui, fmt.Sprintf("header-%s-%d.png", page, layout.width))
+				if bounds, ok := ui.Find(label); !ok || bounds.Y < want-.25 || bounds.Y > want+.25 {
+					t.Errorf("%s starts at y=%g (found: %v), want y=%g", label, bounds.Y, ok, want)
+				}
+			}
+			if layout.width == 1240 {
+				model.SecondarySessionID = "pending"
+				checkTop("parallel-loading", "关闭并排会话", 8)
+				v.closeParallel()
+			}
+			v.home()
+			checkTop("home", "当前设备", 8)
+
+			v.openArchive()
+			checkTop("archive", "归档保留设置", 24)
+
+			v.openSchedulePage()
+			checkTop("schedule-list", "新建任务", 24)
+			v.newSchedule(v.schedules)
+			checkTop("schedule-editor", "返回任务列表", 24)
+
+			v.editWorkspace(model.Snapshot.Workspaces[0])
+			checkTop("workspace", "返回", layout.configurationTop)
+
+			v.workspaceEditor = nil
+			v.devices = true
+			v.deviceSelected = "local"
+			checkTop("device", layout.deviceLead, layout.deviceTop)
+			for _, label := range []string{"Agent", "配置 Custom Agent 路径"} {
+				if err := ui.Click(label); err != nil {
+					t.Fatal(err)
+				}
+				ui.Advance(time.Second)
+			}
+			checkTop("agent", "返回 Agent 列表", layout.configurationTop)
+
+			model.Tailnet.State = "Running"
+			v.deviceSelected = "tailnet"
+			checkTop("tailnet", layout.tailnetLead, layout.deviceTop)
+		})
 	}
-	model.SecondarySessionID = "pending"
-	checkTop("关闭并排会话")
-	v.closeParallel()
-
-	v.home()
-	checkTop("当前设备")
-
-	v.openArchive()
-	checkTop("归档保留设置")
-
-	v.openSchedulePage()
-	checkTop("新建任务")
-	v.newSchedule(v.schedules)
-	checkTop("返回任务列表")
-
-	v.editWorkspace(model.Snapshot.Workspaces[0])
-	checkTop("返回")
-
-	v.workspaceEditor = nil
-	v.devices = true
-	v.deviceSelected = "local"
-	checkTop("修改设备名称")
-
-	model.Tailnet.State = "Running"
-	v.deviceSelected = "tailnet"
-	checkTop("Tailnet 网络操作")
 }
 
 func differentPixels(a, b *image.RGBA, r image.Rectangle) int {

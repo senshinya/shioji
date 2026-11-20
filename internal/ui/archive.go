@@ -299,7 +299,7 @@ func (v *View) archivePage(c *n.Context, t *n.Theme) {
 	}
 	n.Column(c.Key("archive-page")).FillHeight().Grow(1).MinWidth(0).AlignItems(n.Center).Children(func() {
 		n.Column(c.Key("archive-content")).FillWidth().MaxWidth(912).Grow(1).MinHeight(0).Padding(0, inset, 24, inset).Children(func() {
-			n.Row(c).FillWidth().Height(mainToolbarHeight).Padding(mainWindowTopInset, 0, mainToolbarBottomInset, 0).
+			n.Row(c).FillWidth().Height(mainPageHeaderHeight).Padding(mainPageTopInset, 0, mainToolbarBottomInset, 0).
 				Gap(8).AlignItems(n.Center).Margin(0, 0, 12, 0).DragWindow().Children(func() {
 				title := "已归档"
 				font := n.Font{Family: t.Font, Size: 20, Weight: 500}

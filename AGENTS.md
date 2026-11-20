@@ -146,6 +146,7 @@ Avoid unnecessary secondary labels and descriptions. Let the layout do the expla
 
 ### 界面行为
 
+- 主窗口内，首页和会话页的顶部间距为 8 DIP，并排会话加载页和更改侧栏沿用会话页的间距。其他独立页面的页头距窗口内容区上沿统一为 24 DIP。设备详情、Tailnet、设备 Agent 配置、工作区设置和会话 Hooks 原有的窄窗布局保留 8 DIP。
 - Target the confirmed workflow: individual developer workflow, one focused session with background agents, optional two-session viewing, light/dark system appearance, keyboard-first interaction, next-attention navigation, and this Mac as a local execution target.
 - 首次使用以无侧栏整窗显示设备 → Agent → 工作区初始化，采用已确认的 560 DIP 居中内容区。上下步与完成进入首页使用左右滑动，不做淡入淡出；其他展开与控件动效复用设置页／设备页。只有 owning worker 接纳 Agent 配置与工作区后才完成初始化，不创建空会话，保留首页草稿；旧客户端状态不因升级强制重新初始化。
 - After setup, app startup opens the same full-page draft composer as New session and Cmd+N. Workspace-specific plus actions open that page with the owning workspace selected. Do not open a creation modal or create an empty runtime session just by entering the page.

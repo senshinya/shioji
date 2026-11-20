@@ -188,6 +188,13 @@ func TestScheduleNativeLayoutsAndRunLinks(t *testing.T) {
 			ui.Frame()
 			ui.Advance(time.Second)
 			saveNativeSkillImage(t, ui, "schedules-"+layout.name+"-detail.png")
+			closeLabel := "关闭任务详情"
+			if layout.width <= 1000 {
+				closeLabel = "返回任务列表"
+			}
+			if top := find(closeLabel).Y; top != 24 {
+				t.Errorf("schedule detail starts at y=%g, want y=24", top)
+			}
 			if !ui.HasText("运行历史") || !ui.HasText("会话已删除") || ui.HasText("新建任务") != (layout.width > 1000) {
 				t.Fatalf("detail layout or deleted-session treatment is incorrect: history=%t deleted=%t catalog=%t selected=%+v", ui.HasText("运行历史"), ui.HasText("会话已删除"), ui.HasText("新建任务"), g.selected)
 			}
