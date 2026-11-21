@@ -14,11 +14,11 @@ CPU 使用 macOS `host_statistics(HOST_CPU_LOAD_INFO)` 的相邻 tick 差值计�
 
 ## 保持唤醒
 
-worker 通过 IOKit `PreventUserIdleSystemSleep` assertion 防止所属设备自动休眠，允许屏幕关闭；不承诺阻止合盖、手动睡眠或关机。实现直接调用系统 API，不依赖系统 caffeine 应用或额外工具。参见 [Apple power assertion 类型](https://developer.apple.com/documentation/iokit/iopmlib_h/iopmassertiontypes)。
+worker 直接调用 IOKit，持有与 `caffeinate -is` 对应的两项断言。`PreventUserIdleSystemSleep` 防止因闲置而自动睡眠，`PreventSystemSleep` 在接通电源时生效，可让系统留在 DarkWake。屏幕仍可熄灭。合盖、手动睡眠及关机由 macOS 决定。参见 [Apple power assertion 类型](https://developer.apple.com/documentation/iokit/iopmlib_h/iopmassertiontypes)。
 
 开关属于设备，由同一 worker 的各客户端共享；命令携带明确目标值及修订版本，拒绝过期修改。GUI 等待权威回执，不乐观显示成功；未知结果只查询，不重发。慢到达的旧状态不能覆盖较新修订的回执。旧连接的迟到回执不回填替换连接或其他设备。
 
-明确保存的目标状态写入 worker 私有目录的 `keep-awake.json`。关闭 GUI 或断开 SSH 不释放 assertion；worker 正常退出时仅释放自己的 assertion，启动时恢复保存的目标状态。创建 assertion 或保存失败时不宣称已启用；关闭时不触碰其他进程持有的防休眠状态。
+明确保存的目标状态写入 worker 私有目录的 `keep-awake.json`。断言的持有者是 worker，GUI 退出或 SSH 断开后仍生效。关闭开关或 worker 正常退出时释放本 worker 创建的两项断言，启动时按保存状态恢复。只有两项断言都创建成功且设置已保存，才报告已启用。
 
 ## 验证
 

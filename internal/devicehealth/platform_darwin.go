@@ -1,6 +1,7 @@
 package devicehealth
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -95,19 +96,36 @@ func platform() (func() reading, func() (func() error, error)) {
 		if a.err != nil {
 			return nil, a.err
 		}
-		kind, name := a.str("PreventUserIdleSystemSleep"), a.str("Shioji keep awake")
-		defer a.release(kind)
+		name := a.str("Shioji keep awake")
 		defer a.release(name)
-		var id uint32
-		if code := a.assertionCreate(kind, 255, name, &id); code != 0 {
-			return nil, fmt.Errorf("无法保持设备唤醒（%#x）", code)
-		}
-		return func() error {
-			if code := a.assertionRelease(id); code != 0 {
-				return fmt.Errorf("无法关闭保持唤醒（%#x）", code)
+		// Match caffeinate -is. macOS applies PreventSystemSleep only on AC power.
+		kinds := [...]string{"PreventUserIdleSystemSleep", "PreventSystemSleep"}
+		var ids [len(kinds)]uint32
+		release := func() error {
+			var err error
+			for i, id := range ids {
+				if id == 0 {
+					continue
+				}
+				if code := a.assertionRelease(id); code != 0 {
+					err = errors.Join(err, fmt.Errorf("无法关闭保持唤醒（%s, %#x）", kinds[i], code))
+				} else {
+					ids[i] = 0
+				}
 			}
-			return nil
-		}, nil
+			return err
+		}
+		for i, kind := range kinds {
+			kindRef := a.str(kind)
+			var id uint32
+			code := a.assertionCreate(kindRef, 255, name, &id)
+			a.release(kindRef)
+			if code != 0 {
+				return nil, errors.Join(fmt.Errorf("无法保持设备唤醒（%s, %#x）", kind, code), release())
+			}
+			ids[i] = id
+		}
+		return release, nil
 	}
 	return read, acquire
 }
