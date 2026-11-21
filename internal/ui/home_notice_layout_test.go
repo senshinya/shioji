@@ -9,6 +9,7 @@ import (
 	"time"
 
 	n "github.com/egoist/mygo/ui"
+	"shioji/internal/app"
 )
 
 func TestHomeNoticeBelowComposerKeepsComposerAnchored(t *testing.T) {
@@ -56,12 +57,12 @@ func TestHomeNoticeBelowComposerKeepsComposerAnchored(t *testing.T) {
 							frame++
 						}
 					}
-					m.Connected = false
+					m.Connected, m.ConnectionPhase = false, app.ConnectionUnavailable
 					ui.Frame()
 					ui.Advance(6 * time.Second)
 					advance(30)
 					saveNativeSkillImage(t, ui, "disconnected.png")
-					if !ui.HasText("无法连接执行设备") {
+					if !ui.HasText("暂时连不上 这台 Mac") {
 						t.Fatal("missing disconnected notice")
 					}
 					check()
@@ -75,10 +76,10 @@ func TestHomeNoticeBelowComposerKeepsComposerAnchored(t *testing.T) {
 						}
 						advance(frames)
 					}
-					m.Connected = true
+					m.Connected, m.ConnectionPhase = true, app.ConnectionIdle
 					ui.Frame()
 					advance(30)
-					if ui.HasText("无法连接执行设备") || m.Drafts["home"] != "保留首页草稿" {
+					if ui.HasText("暂时连不上 这台 Mac") || m.Drafts["home"] != "保留首页草稿" {
 						t.Fatal("reconnection left notice or changed draft")
 					}
 				})

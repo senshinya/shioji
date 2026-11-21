@@ -76,13 +76,13 @@ func TestConversationFeedbackNativeRecording(t *testing.T) {
 			m.Snapshot.Sessions[0] = d.Session
 			ui.Frame()
 		case 225:
-			click("查看处理方法")
+			click("查看详情")
 		case 250:
 			click("收起详情")
 		case 275:
-			click("查看处理方法")
+			click("查看详情")
 		case 300:
-			click("重试恢复")
+			click("重新核对回复")
 		case 325:
 			m.ReportFeedback(app.Feedback{Title: "修改稿已复制", Kind: app.FeedbackSuccess})
 			ui.Frame()

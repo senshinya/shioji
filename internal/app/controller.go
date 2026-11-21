@@ -350,6 +350,14 @@ func (c *Controller) Run(ctx context.Context) {
 	var catalogKnown, requireSnapshot, catalogResumed, catalogControls bool
 	catalogRetry, eventRetry := time.Second, time.Second
 	var catalogError string
+	connectionPhase := ConnectionOpening
+	c.post(func(m *Model) { m.ConnectionPhase = ConnectionOpening })
+	publishConnectionPhase := func(phase ConnectionPhase) {
+		if connectionPhase != phase {
+			connectionPhase = phase
+			c.post(func(m *Model) { m.ConnectionPhase = phase })
+		}
+	}
 	var selected string
 	var logicalEpoch string
 	var pathChanges <-chan struct{}
@@ -883,7 +891,9 @@ func (c *Controller) Run(ctx context.Context) {
 		c.post(func(m *Model) {
 			m.Connected = false
 			m.ConnectionEpoch = ""
+			m.ConnectionPhase = ConnectionReconnecting
 		})
+		connectionPhase = ConnectionReconnecting
 		for id := range pendingReceiptErrors {
 			postReceiptError(id)
 		}
@@ -991,7 +1001,7 @@ func (c *Controller) Run(ctx context.Context) {
 		c.post(func(m *Model) {
 			for _, e := range events {
 				if err := m.applyEvent(e, e.Sequence > historicalThrough); err != nil {
-					m.Error, m.Connected, m.ConnectionEpoch = err.Error(), false, ""
+					m.scopeFailure(err)
 					return
 				}
 			}
@@ -1037,6 +1047,7 @@ func (c *Controller) Run(ctx context.Context) {
 		epoch, minor := logicalEpoch, client.Minor
 		c.post(func(m *Model) {
 			m.Connected = true
+			m.ConnectionPhase = ConnectionIdle
 			m.ConnectionEpoch = epoch
 			m.WorkerMinor = minor
 			m.Readiness = ready
@@ -1069,10 +1080,18 @@ func (c *Controller) Run(ctx context.Context) {
 		if id == "" {
 			return false
 		}
+		previousPhase := connectionPhase
+		publishConnectionPhase(ConnectionSwitching)
 		c.paths.preparing(id)
 		c.publishPaths()
 		next, snapshot, ready, gap, err := c.preparePath(ctx, id, generation, sequence, readinessQuery())
-		return adoptPath(pathHandoff{client, next, id, logicalEpoch, snapshot, ready, gap, err})
+		adopted := adoptPath(pathHandoff{client, next, id, logicalEpoch, snapshot, ready, gap, err})
+		if adopted {
+			connectionPhase = ConnectionIdle
+		} else {
+			publishConnectionPhase(previousPhase)
+		}
+		return adopted
 	}
 	preparePreferredPath := func() {
 		id := preferredPath()
@@ -1372,7 +1391,7 @@ func (c *Controller) Run(ctx context.Context) {
 			if out.err == nil {
 				call, cancel = context.WithTimeout(ctx, 3*time.Second)
 				if err := current.Call(call, "readiness", query, &out.ready); err != nil {
-					out.ready = domain.Readiness{}
+					out.ready = domain.Readiness{Error: err.Error()}
 				}
 				cancel()
 			}
@@ -1479,7 +1498,11 @@ func (c *Controller) Run(ctx context.Context) {
 			if result.err != nil {
 				message := result.err.Error()
 				catalogError = message
-				c.post(func(m *Model) { m.Error = message })
+				connectionPhase = ConnectionSyncFailed
+				c.post(func(m *Model) {
+					m.ConnectionPhase = ConnectionSyncFailed
+					m.Error = message
+				})
 				var remote *protocol.RemoteError
 				if errors.As(result.err, &remote) && remote.Code == "snapshotIdentity" {
 					disconnected()
@@ -1534,10 +1557,12 @@ func (c *Controller) Run(ctx context.Context) {
 			minor, epoch := client.Minor, logicalEpoch
 			priorError := catalogError
 			catalogError = ""
+			connectionPhase = ConnectionIdle
 			c.post(func(m *Model) {
 				m.WorkerMinor = minor
 				m.DeviceHealth = nil
 				m.Connected = true
+				m.ConnectionPhase = ConnectionIdle
 				m.ConnectionEpoch = epoch
 				m.Readiness = result.ready
 				if result.resume == nil {
@@ -1593,6 +1618,12 @@ func (c *Controller) Run(ctx context.Context) {
 				var remote *protocol.RemoteError
 				if !errors.As(observed.err, &remote) && !repairCommand(observed.err) {
 					disconnected()
+				} else if remote != nil {
+					c.post(func(m *Model) {
+						if m.Readiness.State == "" && len(m.Readiness.Harnesses) == 0 {
+							m.Readiness.Error = remote.Error()
+						}
+					})
 				}
 				continue
 			}
@@ -1963,8 +1994,15 @@ func (c *Controller) Run(ctx context.Context) {
 				if err != nil {
 					client = nil
 					if errors.Is(err, errDevicePathsWaiting) {
+						if c.paths != nil {
+							states := c.paths.states(time.Now())
+							if len(states) > 0 && !slices.ContainsFunc(states, func(s DevicePathStatus) bool { return s.Phase != PathUnavailable }) {
+								publishConnectionPhase(ConnectionUnavailable)
+							}
+						}
 						continue
 					}
+					publishConnectionPhase(ConnectionUnavailable)
 					var network *net.OpError
 					if c.Dial == nil && errors.As(err, &network) && network.Op == "dial" {
 						continue
@@ -1980,6 +2018,7 @@ func (c *Controller) Run(ctx context.Context) {
 					})
 					continue
 				}
+				publishConnectionPhase(ConnectionSyncing)
 				if client.Generation != "" && client.Minor >= protocol.RecoveryMinor {
 					// A verified connection is shown while its catalog is
 					// loading. The catalog still gates session mutations.

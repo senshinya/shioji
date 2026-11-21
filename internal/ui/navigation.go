@@ -431,7 +431,7 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 	archiving := operation != nil && operation.archived
 	leaving := s.Archived || archiving
 	pending := v.pendingCount(s.ID)
-	stopping := v.sessionStops[s.ID] != nil
+	stopping := v.sessionStopInFlight(s.ID)
 	finishing := s.Status == "completed" && v.sessionOutputAnimating(s.ID)
 	unread := m.HasCompletedReply(s.ID)
 	if leaving {

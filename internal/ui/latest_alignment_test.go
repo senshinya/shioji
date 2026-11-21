@@ -29,7 +29,7 @@ func TestLatestControlTextInkIsCenteredInCapsule(t *testing.T) {
 					} else if phase == "compaction" {
 						label = "正在压缩上下文"
 					} else if phase == "offline" {
-						label = "状态待确认"
+						label = "最新消息"
 					}
 					r, ok := ui.Find(label)
 					if !ok {

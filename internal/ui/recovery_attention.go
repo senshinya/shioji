@@ -7,13 +7,13 @@ import (
 )
 
 func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d domain.SessionDetail, state *recoveryState, info *domain.SessionRecovery, disabled, busy bool) {
-	title, message := "暂时无法继续", "正在核对来源历史，草稿和待发送消息已保留。"
+	title, message := "无法确认上次回复结果", ""
 	if d.Session.Status == "abandoned" {
 		title = "原会话暂时无法恢复"
 		message = "可以重试核对，或在新会话整理接续草稿。"
 	}
 	if !v.Model.Connected {
-		message = "连接设备后会继续核对，草稿和待发送消息已保留。"
+		message = "连接设备后继续核对上一轮。"
 	}
 	if state.Confirm == "end" {
 		message = "请确认没有其他后台任务仍在修改此工作区。继续会结束旧轮记录，不会自动发送待发送消息。"
@@ -26,7 +26,9 @@ func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d 
 			n.Text(c, title).FontSize(13).FontWeight(500).FixedLineHeight(processingPanelHeadingLine).Grow(1)
 			v.feedbackStatusPager(c, t, len(v.feedbackStatuses), v.feedbackSelection)
 		})
-		n.Text(c, message).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FillWidth().PaddingStart(processingPanelTextInset).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+		if message != "" {
+			n.Text(c, message).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FillWidth().PaddingStart(processingPanelTextInset).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+		}
 		if state.Details {
 			n.Column(c.Key("recovery-details")).FillWidth().PaddingStart(processingPanelTextInset).Gap(8).Transition(disclosureMotion(c, 240*time.Millisecond)).Children(func() {
 				n.Text(c, "执行设备 · "+v.Model.CurrentDeviceName()).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
@@ -48,7 +50,7 @@ func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d 
 			})
 		}
 		n.Row(c).FillWidth().Wrap().PaddingStart(processingPanelTextInset).Gap(messageFooterGap).AlignItems(n.Center).Children(func() {
-			label := "重试恢复"
+			label := "重新核对回复"
 			if busy {
 				label = "正在核对…"
 			}
@@ -68,7 +70,7 @@ func (v *View) recoveryAttention(c *n.Context, t *n.Theme, content n.Element, d 
 					state.Confirm = ""
 				}
 			} else {
-				detailLabel := "查看处理方法"
+				detailLabel := "查看详情"
 				if state.Details {
 					detailLabel = "收起详情"
 				}

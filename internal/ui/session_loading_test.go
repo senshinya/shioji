@@ -121,7 +121,7 @@ func TestSessionLoadingFailureStopsAnimationAndRetriesOnOwningDevice(t *testing.
 	v.Model.HistoryReads["s"].Error = "history unavailable"
 	ui.Frame()
 	ui.Advance(400 * time.Millisecond)
-	if ui.HasText("正在读取会话") || !ui.HasText("未能读取会话") {
+	if ui.HasText("正在读取会话") || !ui.HasText("无法读取会话历史") {
 		t.Fatal("failed read kept an indefinite progress animation", ui.Texts())
 	}
 	if err := ui.Click("重试读取会话"); err != nil {
@@ -137,7 +137,7 @@ func TestSessionLoadingFailureStopsAnimationAndRetriesOnOwningDevice(t *testing.
 	j.Apply(v.Model, b, nil)
 	ui.Frame()
 	ui.Advance(time.Second)
-	if ui.HasText("正在读取会话") || ui.HasText("未能读取会话") {
+	if ui.HasText("正在读取会话") || ui.HasText("无法读取会话历史") {
 		t.Fatal("an authoritative empty conversation is still treated as loading")
 	}
 	if v.Model.Drafts["session:s"] != "保留的普通草稿" {
@@ -211,10 +211,10 @@ func TestSessionLoadingPaintsCrossfadeAndStopsWhenDisconnected(t *testing.T) {
 		}
 		v, ui = sessionLoadingFixture()
 		ui.Advance(400 * time.Millisecond)
-		v.Model.Connected, v.Model.ConnectionEpoch = false, ""
+		v.Model.Connected, v.Model.ConnectionEpoch, v.Model.ConnectionPhase = false, "", app.ConnectionUnavailable
 		ui.Frame()
 		ui.Advance(time.Second)
-		if ui.HasText("正在读取会话") || !ui.HasText("设备连接已断开") {
+		if ui.HasText("正在读取会话") || !ui.HasText("暂时连不上 这台 Mac") {
 			t.Fatal("disconnect left the initial loader spinning")
 		}
 	}

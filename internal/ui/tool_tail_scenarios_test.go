@@ -246,7 +246,7 @@ func TestToolTailScenarioRecordings(t *testing.T) {
 						}
 					}
 					if scene.name == "large" && frame == 705 {
-						if !ui.HasText("状态待确认") || ui.HasText("运行时长") {
+						if !ui.HasText("最新消息") || ui.HasText("运行时长") {
 							t.Fatal("disconnected proxy claims live execution")
 						}
 					}

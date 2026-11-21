@@ -389,7 +389,7 @@ func (v *View) homeSendRows(rows []transcriptRow) []transcriptRow {
 		label = "进行中"
 	}
 	if h.state == domain.OperationIndeterminate || v.Model.UncertainSubmissions[h.in.OperationID] {
-		label = "发送结果待核实"
+		return rows
 	}
 	if !v.Model.Connected {
 		label = "等待重新连接"
@@ -432,7 +432,7 @@ func (v *View) presentedInputStatus(item domain.Item) string {
 		return ""
 	}
 	if h.state == domain.OperationIndeterminate || v.Model.UncertainSubmissions[h.in.OperationID] {
-		return "发送结果待核实"
+		return ""
 	}
 	if v.homeSendPending() && h.state != domain.OperationConfirmed && item.Status != "sent" {
 		return "正在发送"
@@ -452,7 +452,7 @@ func (v *View) steerProgressLabel(turn domain.Turn) string {
 		}
 	}
 	if h.state == domain.OperationIndeterminate || m.UncertainSubmissions[h.in.OperationID] {
-		return "发送结果待核实"
+		return ""
 	}
 	return "正在发送"
 }

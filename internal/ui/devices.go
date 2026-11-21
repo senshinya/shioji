@@ -75,7 +75,7 @@ func (v *View) deviceState(key string) *app.DeviceState {
 		return state
 	}
 	if key == "local" && len(v.Model.DeviceStates) == 0 {
-		return &app.DeviceState{Connected: v.Model.Connected, Readiness: v.Model.Readiness, Snapshot: v.Model.Snapshot, ConnectionEpoch: v.Model.ConnectionEpoch, WorkerService: v.Model.WorkerService}
+		return &app.DeviceState{Connected: v.Model.Connected, Readiness: v.Model.Readiness, Snapshot: v.Model.Snapshot, ConnectionEpoch: v.Model.ConnectionEpoch, ConnectionPhase: v.Model.ConnectionPhase, Paths: v.Model.DevicePaths, WorkerService: v.Model.WorkerService}
 	}
 	return &app.DeviceState{}
 }

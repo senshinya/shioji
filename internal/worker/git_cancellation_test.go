@@ -2,10 +2,12 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"shioji/internal/managedexec"
+	"shioji/internal/protocol"
 	"strconv"
 	"strings"
 	"syscall"
@@ -104,5 +106,19 @@ exit 0
 		e := <-done
 		t.Logf("Git cancellation returned only after pipe release at %v, error=%v", time.Since(start), e)
 		t.Fatal("Git cancellation did not bound waiting on inherited stdout/stderr")
+	}
+}
+
+func TestGitIncompleteOutputReturnsARecognizableResult(t *testing.T) {
+	bin := t.TempDir()
+	// The leader exits successfully while its child still holds stdout.
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\n/bin/sleep 10 &\nprintf 'partial output'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	out, err := gitRun(context.Background(), bin, "status")
+	var remote *protocol.RemoteError
+	if out != "" || !errors.As(err, &remote) || remote.Code != "gitOutputIncomplete" {
+		t.Fatalf("incomplete Git output escaped the result boundary: %q, %v", out, err)
 	}
 }

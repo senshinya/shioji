@@ -35,7 +35,7 @@ func TestLateCommandFailureDoesNotReplaceAnAcceptedSend(t *testing.T) {
 			started := motion.started
 			job.Apply(v.Model, nil, errors.New("command receipt lost"))
 			ui.Frame()
-			if v.Model.UncertainSubmissions[in.OperationID] || ui.HasText("提交结果待核对") || ui.HasText("发送结果待核实") {
+			if v.Model.UncertainSubmissions[in.OperationID] || ui.HasText("消息是否送达仍待确认") || ui.HasText("发送结果待核实") {
 				t.Fatal("a late command error hid the owning worker's accepted receipt")
 			}
 			after, stillVisible := ui.Find("用户消息气泡")

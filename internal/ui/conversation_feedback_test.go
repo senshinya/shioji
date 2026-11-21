@@ -78,29 +78,28 @@ func TestConversationFeedbackArchiveAboveComposer(t *testing.T) {
 	}
 }
 
-func TestConversationFeedbackConnectionWaitMigratesWithoutDuplicate(t *testing.T) {
+func TestConversationFeedbackConnectionFailureClearsSilently(t *testing.T) {
 	m := layoutModel()
-	m.Connected = false
-	ui := n.NewTester(New(m, nil, "").View, 1100, 820)
-	if ui.HasText("连接执行服务中…") || ui.HasText("正在连接执行服务") {
-		t.Fatal("short connection wait flashes immediately")
+	m.ConnectionPhase, m.Connected = app.ConnectionReconnecting, false
+	v := New(m, app.NewController(""), "")
+	ui := n.NewTester(v.View, 1100, 820)
+	ui.Advance(6 * time.Second)
+	if !ui.HasText("正在重连") || ui.HasText("弹出消息") || ui.HasText("暂时连不上 这台 Mac") {
+		t.Fatal("an in-progress reconnect was promoted to an error")
 	}
-	ui.Advance(450 * time.Millisecond)
-	toast, ok := ui.Find("正在连接执行服务")
-	composer, _ := ui.Find("消息编辑器")
-	if !ok || toast.Y > 100 || toast.X < composer.X+composer.W/2 {
-		t.Fatalf("connection wait is not at the upper right: %v", toast)
-	}
-	ui.Advance(5 * time.Second)
-	note, ok := ui.Find("无法连接执行设备")
-	if !ok || note.Y+note.H > composer.Y || ui.HasText("正在连接执行服务") {
-		t.Fatalf("connection wait did not migrate once: %v %v", note, ui.Texts())
-	}
-	m.Connected = true
+	m.ConnectionPhase = app.ConnectionUnavailable
 	ui.Frame()
 	ui.Advance(time.Second)
-	if ui.HasText("无法连接执行设备") || m.Drafts[m.DraftKey()] != "" {
-		t.Fatal("reconnect left the blocker or sent a draft")
+	note, ok := ui.Find("暂时连不上 这台 Mac")
+	composer, _ := ui.Find("消息编辑器")
+	if !ok || note.Y+note.H > composer.Y || ui.HasText("弹出消息") {
+		t.Fatalf("connection failure did not stay with the composer: %v", ui.Texts())
+	}
+	m.Connected, m.ConnectionPhase = true, app.ConnectionIdle
+	ui.Frame()
+	ui.Advance(time.Second)
+	if ui.HasText("暂时连不上 这台 Mac") || ui.HasText("弹出消息") || len(v.feedbackState().messages) != 0 {
+		t.Fatal("reconnect left a blocker or added a notification")
 	}
 }
 
@@ -113,8 +112,8 @@ func TestConversationFeedbackUnknownSubmissionQueriesOriginalOperation(t *testin
 	controller := app.NewController("")
 	v := New(m, controller, "")
 	ui := n.NewTester(v.View, 1100, 820)
-	ui.Advance(time.Second)
-	if err := ui.Click("核对提交结果"); err != nil {
+	ui.Advance(2 * time.Second)
+	if err := ui.Click("查看发送结果"); err != nil {
 		t.Fatal("unknown submit has no query action", err)
 	}
 	found := false
@@ -145,13 +144,17 @@ func TestConversationFeedbackDoesNotWarnDuringOrdinarySubmit(t *testing.T) {
 	}
 	ui := n.NewTester(New(m, nil, "").View, 1100, 820)
 	ui.Advance(time.Second)
-	if ui.HasText("提交结果待核对") {
+	if ui.HasText("消息是否送达仍待确认") {
 		t.Fatal("ordinary in-flight submission is presented as an unknown outcome")
 	}
 	m.SubmissionError(in, errors.New("connection interrupted"))
 	ui.Frame()
+	ui.Advance(500 * time.Millisecond)
+	if ui.HasText("消息是否送达仍待确认") {
+		t.Fatal("warning interrupted the automatic receipt check")
+	}
 	ui.Advance(time.Second)
-	if !ui.HasText("提交结果待核对") || m.Drafts[m.DraftKey()] != "原始输入" {
+	if !ui.HasText("消息是否送达仍待确认") || m.Drafts[m.DraftKey()] != "原始输入" {
 		t.Fatal("uncertain outcome lost its query surface or draft")
 	}
 }
@@ -185,14 +188,14 @@ func TestConversationFeedbackRecoverySharesStatePager(t *testing.T) {
 	v.draftSaveError = "save failed"
 	ui := n.NewTester(v.View, 1100, 820)
 	ui.Advance(time.Second)
-	if ui.HasText("草稿尚未保存") && ui.HasText("暂时无法继续") {
+	if ui.HasText("草稿尚未保存") && ui.HasText("无法确认上次回复结果") {
 		t.Fatal("two state panels expanded at once")
 	}
 	if err := ui.Click("下一个状态"); err != nil {
 		t.Fatal("recovery not available through state pager", err)
 	}
 	ui.Advance(time.Second)
-	if !ui.HasText("暂时无法继续") {
+	if !ui.HasText("无法确认上次回复结果") {
 		t.Fatal("pager did not reach recovery")
 	}
 }
@@ -276,7 +279,7 @@ func TestConversationFeedbackErrorShowsRedactedReasonAtUpperRight(t *testing.T) 
 func TestConversationFeedbackRuntimeAndAttachmentBlockersStayAboveComposer(t *testing.T) {
 	for _, kind := range []string{"runtime", "attachment"} {
 		m := layoutModel()
-		title := "当前 Agent 尚未就绪"
+		title := "当前 Agent 无法运行"
 		if kind == "runtime" {
 			m.Readiness.State = "unavailable"
 			m.Readiness.Error = "not installed"

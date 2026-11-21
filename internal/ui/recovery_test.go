@@ -28,7 +28,7 @@ func TestUnknownSessionOffersRecoveryAndKeepsDraftAndReadingPosition(t *testing.
 	if _, ok := ui.Find("恢复会话"); ok {
 		t.Fatal("automatic recovery still requires an initial manual check")
 	}
-	if err := ui.Click("重试恢复"); err != nil {
+	if err := ui.Click("重新核对回复"); err != nil {
 		t.Fatal(err)
 	}
 	found := false
@@ -56,7 +56,7 @@ func TestAutomaticRecoveryAlwaysUsesCompactProgressWithoutRetryActions(t *testin
 	v := New(m, nil, "")
 	ui := n.NewTester(v.View, 1440, 900)
 	ui.Advance(time.Second)
-	if !ui.HasText("正在恢复会话…") || ui.HasText("重试恢复") || ui.HasText("查看处理方法") {
+	if !ui.HasText("正在核对上次回复…") || ui.HasText("重新核对回复") || ui.HasText("查看详情") {
 		t.Fatal("automatic recovery asks the user to act while it is checking")
 	}
 }
@@ -72,10 +72,10 @@ func TestRecoveryShowsOneNextStepAndExplainsUnownedTools(t *testing.T) {
 	v := New(m, app.NewController(""), "")
 	ui := n.NewTester(v.View, 1440, 900)
 	ui.Advance(time.Second)
-	if !ui.HasText("暂时无法继续") || ui.HasText("手动结束旧轮") || ui.HasText("sleep 60") {
+	if !ui.HasText("无法确认上次回复结果") || ui.HasText("手动结束旧轮") || ui.HasText("sleep 60") {
 		t.Fatal("recovery exposes technical decisions before a clear next step")
 	}
-	ui.Click("查看处理方法")
+	ui.Click("查看详情")
 	ui.Advance(400 * time.Millisecond)
 	if !ui.HasText("sleep 60") || ui.HasText("停止任务并恢复") {
 		t.Fatal("unknown process ownership is hidden or presented as stoppable")
@@ -100,12 +100,12 @@ func TestRecoveryRetriesSourceHistoryWithoutProcessSelection(t *testing.T) {
 	v := New(m, app.NewController(""), "")
 	ui := n.NewTester(v.View, 1440, 900)
 	ui.Advance(time.Second)
-	ui.Click("查看处理方法")
+	ui.Click("查看详情")
 	ui.Advance(400 * time.Millisecond)
 	if _, ok := ui.Find("选择进程 123"); ok {
 		t.Fatal("source recovery still requires choosing OS processes")
 	}
-	if err := ui.Click("重试恢复"); err != nil {
+	if err := ui.Click("重新核对回复"); err != nil {
 		t.Fatal(err)
 	}
 	found := false
@@ -352,7 +352,7 @@ func TestAutomaticCheckUsesSmallDelayedStatusAndDoesNotFlashACard(t *testing.T) 
 	}
 	ui.Advance(500 * time.Millisecond)
 	after, _ := ui.Find("会话底部面板")
-	if after.H-before.H > 40 || !ui.HasText("正在恢复会话…") {
+	if after.H-before.H > 40 || !ui.HasText("正在核对上次回复…") {
 		t.Fatal("background recovery is not a compact status", before, after)
 	}
 	if _, ok := ui.TextCaret(); !ok {
@@ -474,7 +474,7 @@ func TestUnavailableOriginalThreadCanBeCheckedAgainWithoutReconnecting(t *testin
 	v := New(m, app.NewController(""), "")
 	ui := n.NewTester(v.View, 1440, 900)
 	ui.Advance(time.Second)
-	if err := ui.Click("重试恢复"); err != nil {
+	if err := ui.Click("重新核对回复"); err != nil {
 		t.Fatal("temporarily unavailable source has no retry", err)
 	}
 }

@@ -30,6 +30,19 @@ type DeviceTiming struct {
 	ObservedAt   time.Time
 }
 
+// ConnectionPhase reports the current device controller step to the client.
+type ConnectionPhase uint8
+
+const (
+	ConnectionIdle ConnectionPhase = iota
+	ConnectionOpening
+	ConnectionSyncing
+	ConnectionReconnecting
+	ConnectionSwitching
+	ConnectionUnavailable
+	ConnectionSyncFailed
+)
+
 type DeviceState struct {
 	// Transient access to independent streams, owned by this device controller.
 	// Saved SSH routes cannot hold a live Tailnet bridge.
@@ -44,6 +57,7 @@ type DeviceState struct {
 	Sequence          int64
 	Connected         bool
 	ConnectionEpoch   string
+	ConnectionPhase   ConnectionPhase
 	WorkerMinor       int
 	Readiness         domain.Readiness
 	Error             string
@@ -245,7 +259,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	p.Snapshot.Sessions = slices.Clone(state.Snapshot.Sessions)
 	p.Snapshot.Operations = slices.Clone(state.Snapshot.Operations)
 	p.Snapshot.PendingRequests = slices.Clone(state.Snapshot.PendingRequests)
-	p.Connected, p.ConnectionEpoch = state.Connected, state.ConnectionEpoch
+	p.Connected, p.ConnectionEpoch, p.ConnectionPhase = state.Connected, state.ConnectionEpoch, state.ConnectionPhase
 	p.Readiness, p.WorkerMinor, p.Error = state.Readiness, state.WorkerMinor, state.Error
 	p.WorkerService = state.WorkerService
 	p.KnownDeviceID = state.Snapshot.DeviceID
@@ -264,6 +278,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	update(&p)
 	if err := m.validateDeviceSnapshot(key, p.Snapshot); err != nil {
 		state.Connected = false
+		state.ConnectionPhase = ConnectionUnavailable
 		state.ConnectionEpoch = ""
 		state.Error = err.Error()
 		if key == current {
@@ -274,6 +289,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	}
 	if err := p.validateDeviceDetails(); err != nil {
 		state.Connected = false
+		state.ConnectionPhase = ConnectionUnavailable
 		state.ConnectionEpoch = ""
 		state.Error = err.Error()
 		if key == current {
@@ -307,7 +323,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 			}
 		}
 	}
-	state.Connected, state.ConnectionEpoch = p.Connected, p.ConnectionEpoch
+	state.Connected, state.ConnectionEpoch, state.ConnectionPhase = p.Connected, p.ConnectionEpoch, p.ConnectionPhase
 	state.Readiness, state.WorkerMinor, state.Error = p.Readiness, p.WorkerMinor, p.Error
 	state.WorkerService = p.WorkerService
 	for id := range owned {
@@ -373,7 +389,7 @@ func (m *Model) RefreshDevices() {
 			all.DeviceID, all.Generation, all.Sequence = s.DeviceID, s.Generation, s.Sequence
 			all.ArchivePolicy = s.ArchivePolicy
 			m.Sequence, m.KnownDeviceID = state.Sequence, s.DeviceID
-			m.Connected, m.ConnectionEpoch = state.Connected, state.ConnectionEpoch
+			m.Connected, m.ConnectionEpoch, m.ConnectionPhase = state.Connected, state.ConnectionEpoch, state.ConnectionPhase
 			m.Readiness, m.WorkerMinor = state.Readiness, state.WorkerMinor
 			m.WorkerService = state.WorkerService
 			m.ConnectionTiming = state.Timing
@@ -384,6 +400,9 @@ func (m *Model) RefreshDevices() {
 	if m.DeviceStates[current] == nil {
 		m.Connected = false
 		m.ConnectionEpoch = ""
+		m.ConnectionPhase = ConnectionOpening
+		m.DevicePaths = nil
+		m.ConnectionTiming = nil
 		m.Readiness = domain.Readiness{State: "unavailable"}
 		m.WorkerService = nil
 		m.DeviceHealth = nil

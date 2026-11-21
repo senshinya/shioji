@@ -73,7 +73,13 @@ func gitRun(ctx context.Context, dir string, args ...string) (string, error) {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		return "", fmt.Errorf("Git: %s (%w)", strings.TrimSpace(diagnostic.String()), err)
+		if errors.Is(err, exec.ErrWaitDelay) {
+			return "", &protocol.RemoteError{Code: "gitOutputIncomplete", Message: "Git 未返回完整结果"}
+		}
+		if message := strings.TrimSpace(diagnostic.String()); message != "" {
+			return "", fmt.Errorf("Git: %s (%w)", message, err)
+		}
+		return "", fmt.Errorf("Git: %w", err)
 	}
 	return out.String(), nil
 }

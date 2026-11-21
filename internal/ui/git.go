@@ -2,8 +2,10 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	n "github.com/egoist/mygo/ui"
+	"os/exec"
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
@@ -21,9 +23,12 @@ const (
 )
 
 type gitLoadState struct {
-	phase    gitLoadPhase
-	tag      string
-	previous *domain.GitStatus
+	phase            gitLoadPhase
+	tag              string
+	previous         *domain.GitStatus
+	problem, details string
+	recheckCheckout  bool
+	showProblem      bool
 }
 
 type branchCheckout struct {
@@ -64,7 +69,7 @@ func (v *View) gitQuery() (string, protocol.GitQuery) {
 	return "workspace:" + m.WorkspaceID, q
 }
 func (v *View) requestGit(force bool) {
-	if v.Controller == nil || !v.Model.Connected {
+	if v.Controller == nil || !v.Model.Connected || v.currentConnectionPhase() != app.ConnectionIdle {
 		return
 	}
 	key, q := v.gitQuery()
@@ -97,6 +102,9 @@ func (v *View) requestGit(force bool) {
 		}
 	}
 	tag := fmt.Sprintf("%s:%d", v.Model.ConnectionEpoch, revision)
+	if force {
+		state.showProblem = true
+	}
 	if v.gitLoading(key) || (!force && state.tag == tag) {
 		return
 	}
@@ -107,20 +115,26 @@ func (v *View) requestGit(force bool) {
 		if m.ConnectionEpoch != epoch {
 			return
 		}
-		if err != nil {
-			m.Error = err.Error()
-			return
-		}
+		state.tag = tag
 		var status domain.GitStatus
-		if err = json.Unmarshal(b, &status); err != nil {
-			m.Error = err.Error()
+		if err == nil {
+			err = json.Unmarshal(b, &status)
+		}
+		if err != nil {
+			state.problem, state.details = "无法读取分支", gitFeedbackDetail(err)
+			if state.recheckCheckout {
+				state.problem = "分支切换结果待确认"
+			}
 			return
 		}
-		state.phase, state.tag, state.previous = gitReady, tag, nil
+		state.phase, state.previous = gitReady, nil
+		state.recheckCheckout, state.showProblem = false, false
 		m.SetGitStatus(key, status)
 	}})
 	if !accepted {
 		state.finish()
+	} else {
+		state.problem, state.details = "", ""
 	}
 }
 func (v *View) canSwitchBranch() bool {
@@ -185,14 +199,16 @@ func (v *View) chooseBranch(branch string) {
 		if current != pending.previousBranch && current == pending.branch {
 			return // A newer, independently delivered checkout observation owns the row.
 		}
+		var status domain.GitStatus
+		if err == nil {
+			err = json.Unmarshal(b, &status)
+		}
 		if err != nil {
-			m.Error = err.Error()
+			v.branchCheckoutError(key, pending, err)
 			return
 		}
-		var status domain.GitStatus
-		if err = json.Unmarshal(b, &status); err != nil {
-			m.Error = err.Error()
-			return
+		if state := v.gitLoads[key]; state != nil {
+			state.problem, state.details = "", ""
 		}
 		if m.ConnectionID() == pending.connection {
 			m.SetGitStatus(key, status)
@@ -201,13 +217,47 @@ func (v *View) chooseBranch(branch string) {
 		}
 	}}) {
 		delete(root.branchCheckouts, key)
-		m.Error = "设备操作繁忙，请重试"
+		v.branchCheckoutError(key, pending, &protocol.RemoteError{Code: "notSent", Message: "设备操作繁忙"})
 	}
 }
+
+func gitFeedbackDetail(err error) string {
+	if isFeedbackTimeout(err.Error()) {
+		return "等待设备响应超时。"
+	}
+	if strings.Contains(err.Error(), exec.ErrWaitDelay.Error()) {
+		return "Git 未返回完整结果"
+	}
+	return err.Error()
+}
+
+func (v *View) branchCheckoutError(key string, pending *branchCheckout, err error) {
+	if v.gitLoads == nil {
+		v.gitLoads = make(map[string]*gitLoadState)
+	}
+	state := v.gitLoads[key]
+	if state == nil {
+		state = &gitLoadState{}
+		v.gitLoads[key] = state
+	}
+	var remote *protocol.RemoteError
+	state.recheckCheckout = !errors.As(err, &remote) || remote.Code == "gitOutputIncomplete" || strings.Contains(err.Error(), exec.ErrWaitDelay.Error())
+	state.problem, state.details, state.showProblem = "无法切换分支", gitFeedbackDetail(err), true
+	if state.recheckCheckout {
+		state.problem = "分支切换结果待确认"
+		if current, _ := v.gitQuery(); current == key && v.Model.ConnectionID() == pending.connection {
+			v.requestGit(true)
+		}
+	}
+}
+
 func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 	key, _ := v.gitQuery()
 	status, known := v.composerGitStatus(key)
-	visible := known && status.Applicable
+	load := v.gitLoads[key]
+	showIssue := load != nil && load.problem != "" && (!known || load.showProblem || v.feedbackGitWait == key)
+	rechecking := load != nil && (load.recheckCheckout || v.feedbackGitWait == key || !known && load.showProblem) && v.gitLoading(key)
+	visible := known && status.Applicable || showIssue || rechecking
 	frame := n.Column(c.Key("branch-presence")).FillWidth().Clip().Margin(0, 0, -4, 0)
 	previous := n.Local(frame, "last-status", func() domain.GitStatus { return status })
 	if visible {
@@ -246,6 +296,21 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 	}
 	frame.Children(func() {
 		n.Row(c.Key("branch-strip")).Absolute().Top(0).Left(0).Right(0).FillWidth().Height(26).Gap(12).AlignItems(n.Center).Children(func() {
+			if showIssue || rechecking {
+				if rechecking {
+					label := "正在读取分支"
+					if load.recheckCheckout || v.feedbackGitWait == key {
+						label = "正在核对当前分支"
+					}
+					n.Text(c, label).FontSize(11).TextColor(t.TextMuted)
+				} else {
+					n.Text(c, load.problem).FontSize(11).TextColor(t.TextMuted).Tooltip(feedbackDetails(load.details))
+					if ghost(c, "重新读取分支").FontSize(11).Height(26).Disabled(!v.Model.Connected).Clicked() {
+						v.requestGit(true)
+					}
+				}
+				return
+			}
 			trigger := control(c, 5).Height(26).MaxWidth(330).Padding(3, 10).Radius(5).Label("选择分支").Tooltip(label).Disabled(!v.canSwitchBranch()).Children(func() {
 				inlineIconText(c, branchIcon, label, n.Font{Family: "Menlo", Size: 11, Weight: 400}, 12, 5, t.TextMuted)
 			})

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
 	n "github.com/egoist/mygo/ui"
 	"math"
 	"shioji/internal/app"
@@ -118,9 +119,9 @@ func (v *View) recovery(c *n.Context, t *n.Theme, d domain.SessionDetail) {
 		if *mode == "checking" {
 			content.Children(func() {
 				n.Row(c).Height(26).Gap(7).AlignItems(n.Baseline).Children(func() {
-					text := "正在恢复会话…"
+					text := "正在核对上次回复…"
 					if !m.Connected {
-						text = "连接设备后自动恢复会话"
+						text = "连接后核对上次回复"
 					}
 					inlineSymbol(c, recoveryIcon, text, n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}, 12, t.TextMuted)
 					status := n.Text(c, text).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Grow(1)
@@ -208,8 +209,8 @@ func (v *View) continueSession(origin n.Rect) {
 			return
 		}
 		var op domain.Operation
-		if err = json.Unmarshal(b, &op); err != nil {
-			v.presentedSendError(model, in, err)
+		if err = json.Unmarshal(b, &op); err != nil || op.ID != in.OperationID {
+			v.presentedSendError(model, in, errors.New("设备未确认接续请求"))
 			return
 		}
 		model.Accepted(in, op)

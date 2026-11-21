@@ -137,8 +137,8 @@ func (v *View) syncSessionLoading(c *n.Context) {
 	if p := v.historyPage; p != nil && p.session == m.SessionID && p.error != "" {
 		s.error = p.error
 	}
-	if !m.Connected {
-		s.error = "设备连接已断开"
+	if phase := v.currentConnectionPhase(); phase != app.ConnectionIdle {
+		s.error = v.connectionBlocker()
 	}
 	elapsed := c.Now().Sub(s.started)
 	s.frame = loadingFraction(elapsed, sessionLoadingFade)
@@ -231,13 +231,18 @@ func (v *View) sessionLoadingOverlay(c *n.Context, t *n.Theme) {
 	n.Column(c.Key("session-loading:" + s.session)).Absolute().Left(18).Right(18).Top(48).Bottom(bottom).Clip().AlignItems(n.Center).Justify(n.Center).Children(func() {
 		if s.error != "" {
 			n.Column(c).AlignItems(n.Center).Gap(12).Opacity(s.progress).Children(func() {
-				label := "未能读取会话"
-				if !v.Model.Connected {
-					label = "设备连接已断开"
+				label := "无法读取会话历史"
+				action := statusAction{label: "重试读取", accessibilityLabel: "重试读取会话", run: func(*n.Context) { v.retrySessionLoading() }}
+				if blocker := v.connectionBlocker(); blocker != "" {
+					label, action = blocker, v.connectionRecoveryAction()
 				}
-				n.Text(c, label).FontSize(12).TextColor(t.TextMuted).Tooltip(s.error)
-				if ghost(c, "重试").Label("重试读取会话").Clicked() {
-					v.retrySessionLoading()
+				n.Text(c, label).FontSize(12).TextColor(t.TextMuted).Tooltip(feedbackDetails(s.error))
+				button := ghost(c, action.label).Disabled(action.disabled)
+				if action.accessibilityLabel != "" {
+					button.Label(action.accessibilityLabel)
+				}
+				if button.Clicked() {
+					action.run(c)
 				}
 			})
 			return
@@ -250,7 +255,11 @@ func (v *View) sessionLoadingOverlay(c *n.Context, t *n.Theme) {
 					return
 				}
 				v.sessionLoadingCurve(c, t, s)
-				label := n.Text(c, "正在读取会话").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+				caption := "正在读取会话"
+				if !v.Model.Connected || v.currentConnectionPhase() == app.ConnectionSwitching {
+					caption = "等待设备连接后读取会话"
+				}
+				label := n.Text(c, caption).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
 				shimmer(c, label, t.TextMuted, t.Text, s.started.Add(sessionLoadingDelay))
 			})
 			n.Column(c).FillWidth().PaddingX(8).Gap(12).Role(n.RoleNone).Label("会话正文加载骨架").Opacity(s.body).Children(func() {
@@ -268,10 +277,6 @@ func (v *View) sessionLoadingOverlay(c *n.Context, t *n.Theme) {
 
 func (v *View) retrySessionLoading() {
 	if v.sessionLoad == nil {
-		return
-	}
-	if !v.Model.Connected {
-		v.do(app.Job{Method: "$reconnect"})
 		return
 	}
 	if v.Model.WorkerMinor >= 37 && v.historyPage != nil {

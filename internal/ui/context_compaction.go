@@ -424,7 +424,7 @@ func contextActionLabel(state domain.ExecutionState) string {
 // All compaction surfaces use the same current activity as tool summaries,
 // the reply footer and the offscreen latest indicator.
 func (v *View) currentCompaction() string {
-	if !v.Model.Connected || v.splitRoot().sessionStops[v.Model.SessionID] != nil {
+	if !v.Model.Connected || v.sessionStopInFlight(v.Model.SessionID) {
 		return ""
 	}
 	action := v.contextAction()

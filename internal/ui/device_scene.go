@@ -81,9 +81,16 @@ func (v *View) deviceSceneProjection(key string, state *app.DeviceState, now tim
 		p.Title = "执行服务正在更新"
 		p.Busy = true
 	}
-	if !state.Connected {
-		p.Title = "连接已断开"
-		p.WorkerReady, p.AgentReady, p.AgentBusy, p.Busy = false, false, false, false
+	phase := connectionPhase(state.Connected, state.ConnectionPhase, state.Paths)
+	if state.WorkerService != nil && state.WorkerService.Phase == app.WorkerUpdating {
+		// An update can intentionally take the service offline.
+	} else if phase == app.ConnectionSwitching || phase == app.ConnectionSyncing || phase == app.ConnectionSyncFailed || !state.Connected {
+		p.Title = connectionPhaseLabel(phase)
+		if !state.Connected && state.ConnectionPhase == app.ConnectionIdle && phase == app.ConnectionOpening && v.Controller == nil {
+			p.Title = "连接已断开"
+		}
+		p.WorkerReady, p.AgentReady, p.AgentBusy = false, false, false
+		p.Busy = phase != app.ConnectionUnavailable && phase != app.ConnectionSyncFailed
 		p.WorkerStatus, p.AgentStatus = "状态未知", "状态未知"
 	}
 	for _, connection := range v.Model.Connections {

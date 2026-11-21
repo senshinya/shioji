@@ -737,14 +737,15 @@ func (v *View) submitActive(in domain.Submission, method, turn string) {
 			return
 		}
 		var op domain.Operation
-		if err = json.Unmarshal(b, &op); err != nil {
+		if err = json.Unmarshal(b, &op); err != nil || op.ID != in.OperationID {
+			err = errors.New("设备未确认本次发送")
 			if arrival != nil {
 				arrival.provisional = false
 			}
 			if sent != nil {
 				v.presentedSendError(m, in, err)
 			} else {
-				m.Error = err.Error()
+				m.SubmissionError(in, err)
 			}
 			return
 		}

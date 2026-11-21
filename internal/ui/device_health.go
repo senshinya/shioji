@@ -102,6 +102,11 @@ func (v *View) currentDeviceControl(c *n.Context, t *n.Theme) {
 	m := v.Model
 	key := m.ConnectionID()
 	name := m.CurrentDeviceName()
+	phase := v.currentConnectionPhase()
+	status := connectionPhaseLabel(phase)
+	if v.agentCheckPending() {
+		status = "正在检查 Agent"
+	}
 	u := v.powerUI()
 	h := m.DeviceHealth
 	fresh := deviceHealthFresh(m, c.Now())
@@ -109,15 +114,21 @@ func (v *View) currentDeviceControl(c *n.Context, t *n.Theme) {
 		c.After(h.ObservedAt.Add(8 * time.Second).Sub(c.Now()))
 	}
 	device := control(c.Key("device-trigger:" + key)).Height(toolbarActionSize).PaddingX(6).Radius(6).Label("当前设备")
+	if status != "" {
+		device.Description(status)
+	}
 	device.Children(func() {
 		n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
 			color := t.TextMuted
-			if m.Connected {
+			if m.Connected && phase == app.ConnectionIdle {
 				color = t.Success
 			}
 			font := n.Font{Family: t.Font, Size: 11, Weight: 400}
 			statusDotSize(c, name, font, color, 4, false).Label("设备连接指示")
 			inlineIconText(c, v.deviceGlyph(key), name, font, 14, 6, t.TextMuted)
+			if status != "" && v.connectionBlocker() == "" {
+				n.Text(c, status).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+			}
 			inlineSymbol(c, chevron, name, font, 12, t.TextMuted)
 		})
 	})

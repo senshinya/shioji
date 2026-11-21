@@ -90,6 +90,7 @@ type Model struct {
 	QueueExpanded              map[string]bool
 	QueueEdits                 map[string]QueueEdit
 	ConnectionEpoch            string
+	ConnectionPhase            ConnectionPhase
 	KnownDeviceID              string
 	Snapshot                   domain.Snapshot
 	Sequence                   int64
@@ -387,9 +388,6 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		}
 		m.noteSubmissionAccepted(op.ID)
 	} else if op.State == "confirmed" {
-		if m.UncertainSubmissions[op.ID] {
-			m.ReportFeedback(Feedback{ID: op.ID, ConnectionID: m.PendingDevices[op.ID], WorkspaceID: in.WorkspaceID, SessionID: in.SessionID, Kind: FeedbackSuccess, Title: "已核对提交结果", Body: "已确认消息已被接纳。"})
-		}
 		delete(m.UncertainSubmissions, op.ID)
 		key := "home"
 		if in.SessionID != "" {
@@ -420,12 +418,14 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		if op.State == domain.OperationRejected {
 			m.retainRejectedDraft(in)
 		}
-		if m.UncertainSubmissions[op.ID] {
-			title := "本次提交未被接纳"
-			if op.State == domain.OperationRejected && op.SessionID != "" {
+		if op.State == domain.OperationRejected || m.UncertainSubmissions[op.ID] {
+			title := "消息未发送"
+			if op.State == domain.OperationAbandoned {
+				title = "发送结果仍无法确认"
+			} else if op.SessionID != "" {
 				title = "消息未送达 Agent"
 			}
-			m.ReportFeedback(Feedback{ID: op.ID, ConnectionID: m.PendingDevices[op.ID], WorkspaceID: in.WorkspaceID, SessionID: in.SessionID, Title: title, Body: "原文与附件已保留。", Details: op.Error})
+			m.ReportFeedback(Feedback{ID: op.ID, ConnectionID: m.PendingDevices[op.ID], WorkspaceID: in.WorkspaceID, SessionID: in.SessionID, Kind: FeedbackSubmissionFailed, Title: title, Details: op.Error})
 		}
 		delete(m.UncertainSubmissions, op.ID)
 		delete(m.Pending, op.ID)

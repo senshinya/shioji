@@ -340,7 +340,7 @@ func (v *View) syncWelcomeLocalAgents() {
 			}
 		}
 	}
-	if v.Controller == nil || !state.Connected {
+	if v.Controller == nil || !state.Connected || state.ConnectionPhase == app.ConnectionSyncing {
 		return
 	}
 	e.loading = true
@@ -530,7 +530,9 @@ func (v *View) welcomeAgents(c *n.Context, t *n.Theme, f *welcomeFlow, add bool)
 		n.Text(c, "正在检测").FontSize(12).TextColor(t.TextMuted)
 		return
 	}
-	connected := f.key != "" && v.deviceState(f.key).Connected || v.sshCheck == sshSelecting || v.sshCheck == sshSaving
+	state := v.deviceState(f.key)
+	phase := connectionPhase(state.Connected, state.ConnectionPhase, state.Paths)
+	connected := f.key != "" && state.Connected && phase == app.ConnectionIdle || v.sshCheck == sshSelecting || v.sshCheck == sshSaving
 	catalogFrame := n.Column(c.Key("agent-catalog")).Width(f.width + 16).MarginX(-8).Clip()
 	animatedContentHeight(c, catalogFrame, true, 200*time.Millisecond, func() float32 {
 		n.Column(c).FillWidth().PaddingX(8).Children(func() {
@@ -542,6 +544,8 @@ func (v *View) welcomeAgents(c *n.Context, t *n.Theme, f *welcomeFlow, add bool)
 					label := runtimeSetupLabel(*info, connected)
 					if e.loading {
 						label = "正在检测"
+					} else if !connected && phase != app.ConnectionIdle {
+						label = connectionPhaseLabel(phase)
 					}
 					if n.ButtonBase(c.Key("open")).Height(48).Grow(1).Label("配置 " + info.Name).Disabled(e.busy || e.loading || info.Installation == nil).Children(func() {
 						n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
@@ -562,7 +566,11 @@ func (v *View) welcomeAgents(c *n.Context, t *n.Theme, f *welcomeFlow, add bool)
 			if len(e.catalog) == 0 {
 				label := "暂无可用 Agent"
 				if e.loading {
-					label = "正在检测"
+					label = "正在检测 Agent"
+				} else if !connected && phase != app.ConnectionIdle {
+					label = connectionPhaseLabel(phase)
+				} else if e.error != "" {
+					return
 				}
 				n.Text(c.Key("empty-catalog"), label).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Transition(fadeMotion(c, 160*time.Millisecond))
 			}

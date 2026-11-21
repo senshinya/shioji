@@ -121,7 +121,7 @@ func TestDisconnectedConversationDoesNotClaimLiveExecution(t *testing.T) {
 	d.Turns = []domain.Turn{{ID: "t", Status: "running", StartedAt: &now}}
 	m.Details["s"] = d
 	ui := n.NewTester(New(m, nil, "").View, 1440, 900)
-	if !ui.HasText("连接已断开，执行状态待核对") {
+	if !ui.HasText("暂时无法查看回复进度") {
 		t.Fatal("disconnected turn still presented as live")
 	}
 	if _, ok := ui.Find("进行中状态"); ok {

@@ -116,7 +116,7 @@ func TestToolTailOffscreenProxyRespectsLifecycle(t *testing.T) {
 				d.Requests = []domain.PendingRequest{{ID: "q", TurnID: "t", SessionID: "s", Kind: "questions", State: "pending", Title: "需要回答", Questions: []domain.Question{{ID: "q1", Text: "继续检查吗？", Custom: true}}}}
 			case "disconnected":
 				v.Model.Connected = false
-				want = "状态待确认"
+
 			default:
 				d.Turns[0].Status = domain.ExecutionState(state)
 				d.Session.Status = domain.ExecutionState(state)
@@ -131,7 +131,7 @@ func TestToolTailOffscreenProxyRespectsLifecycle(t *testing.T) {
 			if shown != (want != "") || shown && !ui.HasText(want) {
 				t.Fatal("latest status contradicts the authoritative lifecycle", state, shown, ui.Texts())
 			}
-			if state == "disconnected" && (activityGreenIn(ui, proxy) || ui.HasText("运行时长")) {
+			if state == "disconnected" && (!ui.HasText("最新消息") || activityGreenIn(ui, proxy) || ui.HasText("运行时长")) {
 				t.Fatal("disconnected proxy claims active work or invents a live timer")
 			}
 		})

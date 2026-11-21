@@ -2,10 +2,14 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
+
+	n "github.com/egoist/mygo/ui"
 	"slices"
 
 	"shioji/internal/app"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 )
 
 // The presentation ends the turn immediately. The model continues receiving
@@ -14,12 +18,13 @@ type sessionStop struct {
 	connection, generation, turn string
 	sessionRevision              int64
 	items                        map[string]domain.Item
+	problem, details             string
 }
 
 func (v *View) interrupt() {
 	m, root := v.Model, v.splitRoot()
 	id := m.SessionID
-	if id == "" || !m.Connected || !m.RunReadiness().Capabilities.Interrupt || root.sessionStops[id] != nil {
+	if id == "" || !m.Connected || !m.RunReadiness().Capabilities.Interrupt || v.sessionStopInFlight(id) {
 		return
 	}
 	turn := m.ActiveTurn()
@@ -55,12 +60,20 @@ func (v *View) interrupt() {
 	}
 	if !v.do(app.Job{Method: "turn.interrupt", Input: input, Apply: func(m *app.Model, _ json.RawMessage, err error) {
 		if err != nil && root.sessionStops[id] == stop && !stop.observedEnd(m.Details[id]) {
-			delete(root.sessionStops, id)
-			m.Error = err.Error()
+			stop.problem = "停止结果待确认"
+			var remote *protocol.RemoteError
+			if errors.As(err, &remote) {
+				stop.problem = "无法停止回复"
+				if remote.Code == "notSent" {
+					stop.problem = "停止请求未发送"
+				}
+			}
+			stop.details = err.Error()
+			stop.items = nil
 		}
 	}}) {
-		m.Error = "未能发送停止请求，请重试"
-		return
+		stop.problem = "停止请求未发送"
+		stop.items = nil
 	}
 	if root.sessionStops == nil {
 		root.sessionStops = make(map[string]*sessionStop)
@@ -119,12 +132,12 @@ func (stop *sessionStop) awaitingSettlement(session domain.Session, turns []doma
 
 func (v *View) stoppingTurn(turn string) bool {
 	stop := v.splitRoot().sessionStops[v.Model.SessionID]
-	return stop != nil && (stop.turn == turn || stop.turn == "")
+	return stop != nil && stop.problem == "" && (stop.turn == turn || stop.turn == "")
 }
 
 func (v *View) stoppingReplyDetail(detail domain.SessionDetail) domain.SessionDetail {
 	stop := v.splitRoot().sessionStops[v.Model.SessionID]
-	if stop == nil || stop.turn == "" {
+	if stop == nil || stop.problem != "" || stop.turn == "" {
 		return detail
 	}
 	items := make([]domain.Item, 0, len(detail.Items))
@@ -144,4 +157,26 @@ func (v *View) stoppingReplyDetail(detail domain.SessionDetail) domain.SessionDe
 		}
 	}
 	return detail
+}
+
+func (v *View) sessionStopInFlight(id string) bool {
+	stop := v.splitRoot().sessionStops[id]
+	return stop != nil && stop.problem == ""
+}
+
+func (v *View) stopConversationStatus() *conversationStatus {
+	m := v.Model
+	stop := v.splitRoot().sessionStops[m.SessionID]
+	if stop == nil || stop.problem == "" || stop.connection != m.ConnectionID() {
+		return nil
+	}
+	status := &conversationStatus{id: "stop", title: stop.problem, details: stop.details, icon: feedbackInfo, priority: 1}
+	if stop.problem == "停止结果待确认" {
+		if !m.Connected {
+			status.body = "连接恢复后会同步这一轮的状态。"
+		}
+	} else {
+		status.actions = []statusAction{{label: "重试停止", disabled: !m.Connected || !m.RunReadiness().Capabilities.Interrupt, run: func(*n.Context) { v.interrupt() }}}
+	}
+	return status
 }

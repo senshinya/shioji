@@ -57,7 +57,7 @@ func TestProcessingRecoveryTasksUseOneSurface(t *testing.T) {
 		ui := n.NewTester(New(m, nil, "").View, 1100, 820)
 		ui.SetDark(dark)
 		ui.Advance(time.Second)
-		if err := ui.Click("查看处理方法"); err != nil {
+		if err := ui.Click("查看详情"); err != nil {
 			t.Fatal(err)
 		}
 		ui.Move(0, 0)
@@ -181,7 +181,7 @@ func TestExpandedProcessingPanelsBalanceVerticalClearance(t *testing.T) {
 					detail.Session.Origin = &domain.ConversationOrigin{SourceRef: "external", Truncated: true}
 					m.Snapshot.Sessions[0], m.Details["s"] = detail.Session, detail
 				case "recovery":
-					panelLabel, titleLabel, actionLabel = "执行恢复", "暂时无法继续", "重试恢复"
+					panelLabel, titleLabel, actionLabel = "执行恢复", "无法确认上次回复结果", "重新核对回复"
 					m.WorkerMinor = 7
 					detail.Session.Status = "unknown"
 					detail.Session.Recovery = &domain.SessionRecovery{Phase: "attention"}

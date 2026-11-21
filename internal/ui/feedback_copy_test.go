@@ -55,7 +55,7 @@ func TestFeedbackLongFailureShowsPreviewAndRetainsDiagnostic(t *testing.T) {
 	m.Error = "无法连接执行设备，请检查设备是否在线。\n" + strings.Repeat("connection refused\n", 25) + "诊断末尾"
 	ui.Frame()
 	ui.Advance(time.Second)
-	if !ui.HasText("无法连接执行设备，请检查设备是否在线。…") {
+	if !ui.HasText("无法连接执行设备，请检查设备是否在线。") {
 		t.Fatal("long diagnostic hides even its reason", ui.Texts())
 	}
 	if err := ui.Click("查看消息详情"); err != nil {
@@ -101,5 +101,24 @@ func TestFeedbackPromotedCopyIsRedactedAndReplaysWithoutDuplication(t *testing.T
 	ui.Advance(time.Second)
 	if !ui.HasText("连接失败：token=[已隐藏]") || len(v.feedbackState().messages) != 1 {
 		t.Fatal("replay lost the reason or duplicated history")
+	}
+}
+
+func TestBackgroundTimeoutDoesNotBecomeAnUnnamedNotification(t *testing.T) {
+	m := layoutModel()
+	v := New(m, nil, "")
+	ui := n.NewTester(v.View, 1100, 680)
+	m.Error = "context deadline exceeded"
+	ui.Frame()
+	ui.Advance(time.Second)
+	if _, ok := ui.Find("弹出消息"); ok || len(v.feedbackState().messages) != 0 {
+		t.Fatalf("a background timeout interrupted the conversation: %v", ui.Texts())
+	}
+}
+
+func TestOperationFeedbackExplainsATimeoutInPlainLanguage(t *testing.T) {
+	title, body, details := feedbackCopy(app.Feedback{Title: "重新加载未完成", Body: "context deadline exceeded"})
+	if title != "重新加载未完成" || body != "等待设备响应超时。" || details != "" {
+		t.Fatalf("timeout lost its action or exposed a Go error: %q %q %q", title, body, details)
 	}
 }

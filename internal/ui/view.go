@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/egoist/mygo"
 	"math"
@@ -48,6 +49,7 @@ type View struct {
 	feedbackStatuses                 []conversationStatus
 	feedbackGitWait                  string
 	feedbackObservedError            string
+	submissionCheckError             map[string]string
 	draftSaveError                   string
 	historyPage                      *conversationHistory
 	sessionLoad                      *sessionLoading
@@ -692,7 +694,14 @@ func (v *View) homeView(c *n.Context, t *n.Theme) {
 	n.Column(c).Fill().PaddingX(18).AlignItems(n.Center).Children(func() {
 		n.Spacer(c).Grow(.84)
 		workspaces := v.Model.Snapshot.Workspaces
-		if !slices.ContainsFunc(workspaces, func(w domain.Workspace) bool { return !w.Archived }) {
+		if len(workspaces) == 0 && v.Controller != nil && v.currentConnectionPhase() != app.ConnectionIdle {
+			if v.connectionBlocker() != "" {
+				v.notice(c, t)
+			} else {
+				label := "正在读取工作区"
+				n.Text(c, label).FontSize(13).TextColor(t.TextMuted)
+			}
+		} else if !slices.ContainsFunc(workspaces, func(w domain.Workspace) bool { return !w.Archived }) {
 			title := "从一个工作区开始"
 			hasArchived := len(workspaces) > 0
 			if hasArchived {
@@ -754,7 +763,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) (goalShown bool) {
 	binding := v.composerDocument(c, key)
 	draft := m.Drafts[key]
 	cfg := m.Config()
-	stopped := v.splitRoot().sessionStops[m.SessionID] != nil
+	stopped := v.sessionStopInFlight(m.SessionID)
 	active := m.Active()
 	bg := t.Background
 	if t.Dark {
@@ -924,7 +933,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) (goalShown bool) {
 					label := "发送"
 					editing := m.ActiveQueueEdit(m.SessionID).ID != ""
 					queuing := len(m.Queue().Items) > 0 || active && (!stopped || !empty)
-					disabled := !m.Connected || m.RunReadiness().State != "ready" || m.ModelUnavailable() || m.ReadOnlyConversationReason() != "" || empty || m.HasPendingInput() || v.homeSendPending() || m.ArchivedContext() != "" || v.preparingAttachments(m.DraftKey())
+					disabled := v.currentConnectionPhase() != app.ConnectionIdle || !m.Connected || m.RunReadiness().State != "ready" || m.ModelUnavailable() || m.ReadOnlyConversationReason() != "" || empty || m.HasPendingInput() || v.homeSendPending() || m.ArchivedContext() != "" || v.preparingAttachments(m.DraftKey())
 					if queuing {
 						label = "加入队列"
 						disabled = disabled || m.WorkerMinor < 2
@@ -1708,7 +1717,7 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 				return
 			}
 			if state == "disconnected" {
-				n.Text(c, "连接已断开，执行状态待核对").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+				n.Text(c, "暂时无法查看回复进度").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 				return
 			}
 			label := string(turn.Status)
@@ -1864,6 +1873,9 @@ func (v *View) respond(r domain.PendingRequest, answer domain.Answer) {
 }
 func (v *View) submit() { v.sendMessage(false) }
 func (v *View) sendMessage(steer bool) {
+	if phase := v.currentConnectionPhase(); phase != app.ConnectionIdle {
+		return
+	}
 	if v.parent != nil && v.parent.Model.SecondarySessionID != v.Model.SessionID {
 		return
 	}
@@ -1895,11 +1907,12 @@ func (v *View) sendMessage(steer bool) {
 		return
 	}
 	m := v.Model
-	in, method, turn, err := m.BeginMessage(steer && v.splitRoot().sessionStops[m.SessionID] == nil)
+	in, method, turn, err := m.BeginMessage(steer && !v.sessionStopInFlight(m.SessionID))
 	if err != nil {
 		m.Error = err.Error()
 		return
 	}
+	v.dismissSubmissionFailure()
 	if method != "session.submit" {
 		v.submitActive(in, method, turn)
 		return
@@ -1919,11 +1932,8 @@ func (v *View) sendMessage(steer bool) {
 		}
 
 		var op domain.Operation
-		if err = json.Unmarshal(b, &op); err != nil {
-			if v.sent == sent {
-				v.sent = nil
-			}
-			m.Error = err.Error()
+		if err = json.Unmarshal(b, &op); err != nil || op.ID != in.OperationID {
+			v.presentedSendError(m, in, errors.New("设备未确认本次发送"))
 			return
 		}
 		m.Accepted(in, op)
@@ -2001,8 +2011,9 @@ func (v *View) do(job app.Job) bool {
 			message := model.Error
 			late := source.session != model.SessionID || source.workspace != model.WorkspaceID
 			if message != "" && message != app.ModelUnavailableMessage && (message != previous || v.parent != nil) {
-				if len(model.Feedbacks) == feedbackCount && (!v.feedbackErrorCovered(model, source) || late) {
-					model.ReportFeedback(app.Feedback{ConnectionID: source.connection, SessionID: source.session, WorkspaceID: source.workspace, Title: "操作未完成", Body: "操作未能完成，原有内容已保留。", Details: message})
+				title := actionFailureTitle(job.Method)
+				if len(model.Feedbacks) == feedbackCount && (!v.feedbackErrorCovered(model, source) || late) && (title != "" || !isFeedbackTimeout(message)) {
+					model.ReportFeedback(app.Feedback{ConnectionID: source.connection, SessionID: source.session, WorkspaceID: source.workspace, Title: title, Details: message})
 				}
 				if source == v.feedbackSource() {
 					v.feedbackObservedError = message

@@ -16,6 +16,7 @@ const (
 	FeedbackSuccess
 	FeedbackInformation
 	FeedbackSubmissionUncertain
+	FeedbackSubmissionFailed
 )
 
 func (m *Model) markSubmissionUncertain(in domain.Submission) {
@@ -23,7 +24,7 @@ func (m *Model) markSubmissionUncertain(in domain.Submission) {
 		m.UncertainSubmissions = map[string]bool{}
 	}
 	m.UncertainSubmissions[in.OperationID] = true
-	m.ReportFeedback(Feedback{ID: in.OperationID, ConnectionID: m.PendingDevices[in.OperationID], WorkspaceID: in.WorkspaceID, SessionID: in.SessionID, Kind: FeedbackSubmissionUncertain, Title: "提交结果待核对", Body: "原文与附件已保留，请先核对原操作。"})
+	m.ReportFeedback(Feedback{ID: in.OperationID, ConnectionID: m.PendingDevices[in.OperationID], WorkspaceID: in.WorkspaceID, SessionID: in.SessionID, Kind: FeedbackSubmissionUncertain, Title: "消息是否送达仍待确认", Body: "原文与附件已保留。"})
 }
 
 func (m *Model) ReportFeedback(f Feedback) {

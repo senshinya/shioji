@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -13,7 +14,6 @@ import (
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
 	"shioji/internal/domain"
-	"shioji/internal/protocol"
 )
 
 var feedbackBell = designIcon("M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4")
@@ -35,23 +35,19 @@ type conversationMessage struct {
 	remaining                   time.Duration
 	tick                        time.Time
 	waiting, dismissed, details bool
-}
-type feedbackConnection struct {
-	connected bool
-	since     time.Time
+	inline                      bool
 }
 type feedbackWait struct {
-	since                   time.Time
-	source                  feedbackSource
-	title                   string
-	view                    *View
-	attachmentToken, gitKey string
+	since           time.Time
+	source          feedbackSource
+	title           string
+	view            *View
+	attachmentToken string
 }
 type conversationFeedback struct {
 	messages     []conversationMessage
 	clearing     []conversationMessage
 	clearStarted time.Time
-	connections  map[string]feedbackConnection
 	waits        map[feedbackSource]feedbackWait
 	open         bool
 	replaying    string
@@ -61,7 +57,7 @@ type conversationFeedback struct {
 func (v *View) feedbackState() *conversationFeedback {
 	root := v.splitRoot()
 	if root.feedback == nil {
-		root.feedback = &conversationFeedback{connections: map[string]feedbackConnection{}, waits: map[feedbackSource]feedbackWait{}}
+		root.feedback = &conversationFeedback{waits: map[feedbackSource]feedbackWait{}}
 	}
 	return root.feedback
 }
@@ -159,8 +155,43 @@ func feedbackDetails(message string) string {
 
 // Keep the original feedback for identity, updates and replay. Both the popup
 // and recent list use the same reading order: reason, then useful guidance.
+func isFeedbackTimeout(message string) bool {
+	message = strings.TrimSpace(message)
+	return message == context.DeadlineExceeded.Error() || strings.HasSuffix(message, ": "+context.DeadlineExceeded.Error()) ||
+		message == "i/o timeout" || strings.HasSuffix(message, ": i/o timeout")
+}
+
 func feedbackCopy(f app.Feedback) (title, body, details string) {
 	title, body, details = f.Title, f.Body, strings.TrimSpace(f.Details)
+	if isFeedbackTimeout(body) {
+		body = "等待设备响应超时。"
+	}
+	if isFeedbackTimeout(details) {
+		if title == "" {
+			title = "设备响应超时"
+		} else if body == "" {
+			body = "等待设备响应超时。"
+		}
+		return title, body, ""
+	}
+	if strings.Contains(details, "exec: WaitDelay expired before I/O complete") && strings.Contains(details, "Git:") {
+		if title == "" {
+			title = "Git 未返回完整结果"
+		}
+		return
+	}
+	if title == "" {
+		line, _, _ := strings.Cut(details, "\n")
+		first := []rune(line)
+		title = string(first[:min(160, len(first))])
+		if len(first) > 160 {
+			title += "…"
+		}
+		if details == title {
+			details = ""
+		}
+		return
+	}
 	if details == "" || f.Kind == app.FeedbackSuccess || f.Kind == app.FeedbackInformation {
 		return
 	}
@@ -200,7 +231,7 @@ func (v *View) syncConversationFeedback(c *n.Context) {
 	for source, wait := range s.waits {
 		active := false
 		if wait.view != nil {
-			active = wait.attachmentToken != "" && wait.view.attachmentPreparing[wait.attachmentToken] > 0 || wait.gitKey != "" && wait.view.gitLoading(wait.gitKey)
+			active = wait.attachmentToken != "" && wait.view.attachmentPreparing[wait.attachmentToken] > 0
 		}
 		if !active {
 			s.endWait("prepare:"+source.workspace+":"+source.session, source.connection)
@@ -208,66 +239,39 @@ func (v *View) syncConversationFeedback(c *n.Context) {
 		}
 	}
 	for _, f := range m.Feedbacks {
-		s.put(f, now, false)
-		if f.Kind == app.FeedbackSubmissionUncertain && f.ConnectionID == source.connection && f.WorkspaceID == source.workspace && f.SessionID == source.session {
+		s.put(f, now, f.Kind == app.FeedbackSubmissionUncertain)
+		sameSource := f.ConnectionID == source.connection && f.WorkspaceID == source.workspace && f.SessionID == source.session
+		if sameSource && f.Details != "" && f.Details == m.Error {
+			v.feedbackObservedError = m.Error
+		}
+		if f.Kind == app.FeedbackSubmissionUncertain || sameSource && f.Kind == app.FeedbackSubmissionFailed {
 			for i := range s.messages {
 				if sameFeedback(s.messages[i].Feedback, f) {
-					s.messages[i].dismissed = true
+					s.messages[i].inline = true
 				}
 			}
 		}
 	}
 	m.Feedbacks = nil
+	s.messages = slices.DeleteFunc(s.messages, func(message conversationMessage) bool {
+		return message.Kind == app.FeedbackSubmissionUncertain && !m.UncertainSubmissions[message.ID]
+	})
+	for id := range v.submissionCheckError {
+		if _, ok := m.Pending[id]; !ok {
+			delete(v.submissionCheckError, id)
+		}
+	}
 	// Existing error producers are observed once. Asynchronous jobs additionally
 	// capture their actual source at dispatch, rather than the selected pane later.
 	if v.feedbackObservedError != m.Error {
 		v.feedbackObservedError = m.Error
-		if m.Error != "" && m.Error != app.ModelUnavailableMessage && m.Error != v.splitRoot().draftSaveError && !v.conversationErrorHasState() {
-			v.reportFeedback(app.Feedback{Title: "操作未完成", Body: "操作未能完成，原有内容已保留。", Details: m.Error})
-		}
-	}
-	for key, observation := range s.connections {
-		if key == source.connection {
-			continue
-		}
-		if device := m.DeviceStates[key]; device != nil && device.Connected && !observation.connected {
-			s.endWait("connection", key)
-			s.put(app.Feedback{ID: domain.NewID(), ConnectionID: key, Title: "已重新连接", Body: "草稿没有自动提交。", Kind: app.FeedbackSuccess}, now, false)
-			s.connections[key] = feedbackConnection{connected: true, since: now}
-		} else if !observation.connected && now.Sub(observation.since) >= 5*time.Second {
-			s.endWait("connection", key)
-		}
-	}
-	connection, known := s.connections[source.connection]
-	if !known {
-		connection = feedbackConnection{connected: m.Connected, since: now}
-	}
-	if connection.connected != m.Connected {
-		if m.Connected {
-			s.endWait("connection", source.connection)
-			s.put(app.Feedback{ID: domain.NewID(), ConnectionID: source.connection, Title: "已重新连接", Body: "草稿没有自动提交。", Kind: app.FeedbackSuccess}, now, false)
-		}
-		connection = feedbackConnection{connected: m.Connected, since: now}
-	}
-	s.connections[source.connection] = connection
-	if !m.Connected {
-		elapsed := now.Sub(connection.since)
-		if elapsed >= 5*time.Second {
-			s.endWait("connection", source.connection)
-		} else if elapsed >= 400*time.Millisecond {
-			s.put(app.Feedback{ID: "connection", ConnectionID: source.connection, Title: "正在连接执行服务", Body: "草稿和队列已保留。"}, now, true)
-		}
-		if elapsed < 400*time.Millisecond {
-			c.After(400*time.Millisecond - elapsed)
-		} else if elapsed < 5*time.Second {
-			c.After(5*time.Second - elapsed)
+		if m.Error != "" && !isFeedbackTimeout(m.Error) && m.Error != app.ModelUnavailableMessage && m.Error != v.splitRoot().draftSaveError && !v.conversationErrorHasState() {
+			v.reportFeedback(app.Feedback{Details: m.Error})
 		}
 	}
 	waitTitle := ""
 	if v.attachmentPreparing[v.attachmentPreparationKey(m.DraftKey())] > 0 {
 		waitTitle = "正在准备附件"
-	} else if key, _ := v.gitQuery(); !v.devices && v.gitLoading(key) && v.feedbackGitWait == key {
-		waitTitle = "正在核对设备上的分支"
 	}
 	wait, hasWait := s.waits[source]
 	if waitTitle == "" {
@@ -278,11 +282,7 @@ func (v *View) syncConversationFeedback(c *n.Context) {
 	} else {
 		if !hasWait || wait.title != waitTitle {
 			wait = feedbackWait{since: now, source: source, title: waitTitle, view: v}
-			if waitTitle == "正在准备附件" {
-				wait.attachmentToken = v.attachmentPreparationKey(m.DraftKey())
-			} else {
-				wait.gitKey, _ = v.gitQuery()
-			}
+			wait.attachmentToken = v.attachmentPreparationKey(m.DraftKey())
 			s.waits[source] = wait
 		}
 		if elapsed := now.Sub(wait.since); elapsed >= 400*time.Millisecond {
@@ -296,7 +296,7 @@ func (v *View) syncConversationFeedback(c *n.Context) {
 func (v *View) conversationErrorHasState() bool {
 	m := v.Model
 	_, hasHistoryAction := m.HistoryActions[m.SessionID]
-	if hasHistoryAction || !m.Connected || m.RunReadiness().State != "ready" || v.splitRoot().draftSaveError != "" || m.ArchivedContext() != "" {
+	if hasHistoryAction || !m.Connected || v.currentConnectionPhase() != app.ConnectionIdle || m.RunReadiness().State != "ready" || v.splitRoot().draftSaveError != "" || m.ArchivedContext() != "" {
 		return true
 	}
 	for _, in := range m.Pending {
@@ -348,7 +348,7 @@ func (v *View) showFeedbackDevice() {
 	v.deviceList = false
 	v.devices = true
 }
-func (v *View) conversationStatuses(now time.Time) []conversationStatus {
+func (v *View) conversationStatuses(c *n.Context) []conversationStatus {
 	m := v.Model
 	source := v.feedbackSource()
 	var out []conversationStatus
@@ -372,8 +372,24 @@ func (v *View) conversationStatuses(now time.Time) []conversationStatus {
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		id := id
-		out = append(out, conversationStatus{id: "submit:" + id, title: "提交结果待核对", body: "尚未确认消息是否已被接纳。原文与附件已保留，请先核对结果。", icon: feedbackInfo, priority: 1, actions: []statusAction{{label: "核对提交结果", disabled: !m.Connected || v.Controller == nil, run: func(*n.Context) { v.querySubmission(id, source) }}, {label: "查看原文", run: func(*n.Context) { v.feedbackOriginal = !v.feedbackOriginal }}}})
+		// Fast receipts can settle during the automatic lookup. Keep the
+		// warning out of the way while that first lookup catches up.
+		if m.Connected && v.submissionCheckError[id] == "" {
+			if remaining := v.submissionWarningDelay(c.Now(), id, source); remaining > 0 {
+				c.After(remaining)
+				continue
+			}
+		}
+		out = append(out, conversationStatus{id: "submit:" + id, title: "消息是否送达仍待确认", body: submissionCheckMessage(m.Connected, v.submissionCheckError[id]), details: v.submissionCheckError[id], icon: feedbackInfo, priority: 1, actions: []statusAction{{label: "查看发送结果", disabled: !m.Connected || v.Controller == nil, run: func(*n.Context) { v.querySubmission(id, source) }}, {label: "查看原文", run: func(*n.Context) { v.feedbackOriginal = !v.feedbackOriginal }}}})
+	}
+	if !m.HasPendingInput() {
+		if notice := v.submissionFailure(); notice != nil {
+			out = append(out, conversationStatus{id: "send-error:" + notice.ID, title: notice.Title, details: notice.Details, icon: feedbackInfo, priority: 1,
+				actions: []statusAction{{label: "返回草稿", run: func(*n.Context) {
+					v.dismissSubmissionFailure()
+					v.focusComposer = true
+				}}}})
+		}
 	}
 	for _, key := range m.RetainedDrafts() {
 		out = append(out, conversationStatus{id: key, title: "另有一份草稿已保留", details: m.Drafts[key], icon: fileAttachmentIcon, compact: true, priority: 1,
@@ -382,6 +398,9 @@ func (v *View) conversationStatuses(now time.Time) []conversationStatus {
 				m.SwapRetainedDraft(key)
 				v.focusComposer = true
 			}}}})
+	}
+	if status := v.stopConversationStatus(); status != nil {
+		out = append(out, *status)
 	}
 	if status := v.historyConversationStatus(); status != nil {
 		out = append(out, *status)
@@ -416,11 +435,22 @@ func (v *View) conversationStatuses(now time.Time) []conversationStatus {
 			break
 		}
 	}
-	if m.Connected && (m.WorkerMinor < protocol.RecoveryMinor || m.ConnectionEpoch != "") && m.RunReadiness().State != "ready" {
-		out = append(out, conversationStatus{id: "runtime", title: "当前 Agent 尚未就绪", body: "请在所属设备的详情中检查 Agent 配置。草稿已保留。", details: m.RunReadiness().Error, icon: feedbackInfo, priority: 5, actions: []statusAction{device}})
+	if title := v.connectionBlocker(); title != "" && !v.loadingBlocksComposer() {
+		action := v.connectionRecoveryAction()
+		body := ""
+		actions := []statusAction{action}
+		if v.currentConnectionPhase() == app.ConnectionSyncFailed {
+			body = "正在重新同步。"
+		} else {
+			actions = append(actions, device)
+		}
+		out = append(out, conversationStatus{id: "connection", title: title, body: body, icon: recoveryIcon, priority: 5, actions: actions})
 	}
-	if observation, ok := v.feedbackState().connections[source.connection]; !m.Connected && ok && now.Sub(observation.since) >= 5*time.Second {
-		out = append(out, conversationStatus{id: "connection", title: "无法连接执行设备", body: "正在重新连接设备，草稿和队列已保留。恢复连接后不会自动发送草稿。", icon: recoveryIcon, priority: 5, actions: []statusAction{{label: "重试连接", disabled: v.Controller == nil, run: func(*n.Context) { v.do(app.Job{Method: "$reconnect"}) }}, device}})
+	if title, details := v.agentBlocker(); title != "" {
+		out = append(out, conversationStatus{id: "runtime", title: title, details: details, icon: feedbackInfo, priority: 5, actions: []statusAction{{label: "打开 Agent 设置", run: func(*n.Context) {
+			v.showFeedbackDevice()
+			v.deviceTab = "agents"
+		}}}})
 	}
 	if kind := m.ArchivedContext(); kind != "" {
 		session := m.SessionID
@@ -438,24 +468,94 @@ func (v *View) conversationStatuses(now time.Time) []conversationStatus {
 	return out
 }
 
+func (v *View) submissionFailure() *conversationMessage {
+	source := v.feedbackSource()
+	entries := v.feedbackState().messages
+	for i := len(entries) - 1; i >= 0; i-- {
+		f := &entries[i]
+		if f.Kind == app.FeedbackSubmissionFailed && !f.dismissed && f.ConnectionID == source.connection && f.WorkspaceID == source.workspace && f.SessionID == source.session {
+			return f
+		}
+	}
+	return nil
+}
+
+func (v *View) dismissSubmissionFailure() {
+	for f := v.submissionFailure(); f != nil; f = v.submissionFailure() {
+		f.dismissed = true
+	}
+}
+
+func submissionCheckMessage(connected bool, issue string) string {
+	if !connected {
+		return "连接恢复后会查询发送结果。"
+	}
+	if issue != "" {
+		return "暂时无法查询发送结果。"
+	}
+	return ""
+}
+
+func actionFailureTitle(method string) string {
+	switch method {
+	case "session.submit", "turn.steer":
+		return "消息未发送"
+	case "queue.add", "turn.enqueue":
+		return "无法添加待发消息"
+	case "queue.edit":
+		return "无法保存待发消息"
+	case "queue.remove":
+		return "无法移除待发消息"
+	case "git.checkout":
+		return "无法切换分支"
+	case "git.status":
+		return "无法读取分支"
+	case "session.fork":
+		return "无法分叉会话"
+	case "session.restart":
+		return "无法修改已发送的消息"
+	}
+	return ""
+}
+
+func (v *View) submissionWarningDelay(now time.Time, id string, source feedbackSource) time.Duration {
+	for _, entry := range v.feedbackState().messages {
+		if entry.Kind == app.FeedbackSubmissionUncertain && entry.ID == id && entry.ConnectionID == source.connection &&
+			entry.WorkspaceID == source.workspace && entry.SessionID == source.session {
+			return 1200*time.Millisecond - now.Sub(entry.tick)
+		}
+	}
+	return 0
+}
+
 func (v *View) querySubmission(id string, source feedbackSource) {
 	m := v.Model
 	in, ok := m.Pending[id]
 	if !ok || source != v.feedbackSource() {
 		return
 	}
-	v.do(app.Job{Method: "operation", Input: m.SubmissionReceiptQuery(id), Apply: func(m *app.Model, b json.RawMessage, err error) {
+	if v.submissionCheckError == nil {
+		v.submissionCheckError = make(map[string]string)
+	}
+	delete(v.submissionCheckError, id)
+	if !v.do(app.Job{Method: "operation", Input: m.SubmissionReceiptQuery(id), Apply: func(m *app.Model, b json.RawMessage, err error) {
+		if _, ok := m.Pending[id]; !ok {
+			return
+		}
 		if err != nil {
-			m.ReportFeedback(app.Feedback{ConnectionID: source.connection, WorkspaceID: source.workspace, SessionID: source.session, Title: "尚未核对提交结果", Details: err.Error()})
+			v.submissionCheckError[id] = err.Error()
 			return
 		}
 		var op domain.Operation
 		if err := json.Unmarshal(b, &op); err != nil || op.ID != in.OperationID {
-			m.ReportFeedback(app.Feedback{ConnectionID: source.connection, WorkspaceID: source.workspace, SessionID: source.session, Title: "提交回执无法核对"})
+			v.submissionCheckError[id] = "设备返回了不匹配的发送结果"
 			return
 		}
+		delete(v.submissionCheckError, id)
 		m.ApplyOperation(op)
-	}})
+	}}) {
+		v.submissionCheckError[id] = "设备操作繁忙"
+	}
 }
 func (v *View) renderConversationStatus(c *n.Context, t *n.Theme, s conversationStatus, count, index int) {
 	source := v.feedbackSource()
@@ -548,7 +648,7 @@ func (v *View) renderConversationStatus(c *n.Context, t *n.Theme, s conversation
 }
 func (v *View) conversationStatusPanel(c *n.Context, t *n.Theme) {
 	v.syncConversationFeedback(c)
-	statuses := v.conversationStatuses(c.Now())
+	statuses := v.conversationStatuses(c)
 	scope := v.feedbackSource()
 	if scope != v.feedbackScope {
 		v.feedbackScope = scope
@@ -756,7 +856,7 @@ func (v *View) renderMessageOverlay(c *n.Context, t *n.Theme, state *conversatio
 	n.Overlay(c.Key("conversation-feedback"), func() {
 		active := -1
 		for i := len(state.messages) - 1; i >= 0; i-- {
-			if !state.messages[i].dismissed {
+			if !state.messages[i].dismissed && (!state.messages[i].inline || feedbackKey(state.messages[i].Feedback) == state.replaying) {
 				if active < 0 {
 					active = i
 				}
