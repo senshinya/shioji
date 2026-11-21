@@ -375,6 +375,114 @@ func TestGoalResumeUsesTheOwningSessionAndKeepsTheDraft(t *testing.T) {
 	}
 }
 
+func TestGoalArrivalExpandsTheDockWithoutMovingTheComposer(t *testing.T) {
+	for _, reduced := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reduce-motion=%t", reduced), func(t *testing.T) {
+			v, tester := goalLayout(false, true)
+			tester.SetPreferences(n.Preferences{ReduceMotion: reduced})
+			m := v.Model
+			session := m.Snapshot.Sessions[0]
+			goal := session.Goal
+			applyGoal := func(g *domain.Goal) {
+				t.Helper()
+				session.Goal = g
+				session.Revision++
+				if err := m.ApplyEvent(domain.Event{Type: "goal", Sequence: m.Sequence + 1, SessionID: session.ID, Session: &session}); err != nil {
+					t.Fatal(err)
+				}
+				tester.Frame()
+			}
+			m.SetQueue(domain.QueueState{SessionID: session.ID, Revision: 1, Paused: true, Items: []domain.QueueItem{
+				{ID: "queued", Input: domain.Submission{OperationID: "send-queued", Text: "再检查一次连接。"}},
+			}})
+			applyGoal(nil)
+			tester.Advance(time.Second)
+			if dir := os.Getenv("SHIOJI_GOAL_ARRIVAL_CAPTURE"); dir != "" && !reduced {
+				t.Setenv("SHIOJI_SKILL_SNAPSHOTS", dir)
+				tester.SetScale(2)
+			}
+			dockHeight := func() float32 {
+				dock, _ := tester.Find("会话底部面板")
+				return dock.H
+			}
+			editor, _ := tester.Find("消息编辑器")
+			queue, _ := tester.Find("待发送队列")
+			before := dockHeight()
+			checkControls := func() {
+				t.Helper()
+				if current, ok := tester.Find("消息编辑器"); !ok || current != editor {
+					t.Fatalf("Goal arrival moved the editor: %v -> %v", editor, current)
+				}
+				if current, ok := tester.Find("待发送队列"); !ok || current != queue {
+					t.Fatalf("Goal arrival moved the queue: %v -> %v", queue, current)
+				}
+			}
+			applyGoal(goal)
+			start := dockHeight()
+			checkControls()
+			if !reduced {
+				saveNativeSkillImage(t, tester, "arrival-start.png")
+			}
+			tester.Advance(60 * time.Millisecond)
+			middle := dockHeight()
+			checkControls()
+			if !reduced {
+				saveNativeSkillImage(t, tester, "arrival-60ms.png")
+			}
+			tester.Advance(240 * time.Millisecond)
+			end := dockHeight()
+			checkControls()
+			if !reduced {
+				saveNativeSkillImage(t, tester, "arrival-settled.png")
+			}
+			if _, shown := tester.Find("目标状态行"); !shown || end <= before {
+				t.Fatal("the Goal row failed to settle above the queue")
+			}
+			if reduced && start != end || !reduced && (start != before || middle <= start || middle >= end) {
+				t.Fatalf("Goal arrival needs an intermediate dock height unless Reduce Motion is enabled: %g -> %g -> %g -> %g DIP", before, start, middle, end)
+			}
+		})
+	}
+}
+
+func TestNewSessionGoalAnimatesWhenFirstSeenWithTheThread(t *testing.T) {
+	v, tester := readySendFixture(t, true, func(m *app.Model) {
+		m.WorkerMinor = protocol.GoalMinor
+		m.Readiness.Capabilities.Goals = true
+	})
+	if err := tester.Click("消息输入"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Type("/goal 核对每一步")
+	tester.Key(0, n.KeyEnter)
+	job := feedbackJob(t, v, "session.submit")
+	in := job.Input.(domain.Submission)
+	id := acceptSend(t, v, job, true)
+	m := v.Model
+	detail := m.Details[id]
+	session := detail.Session
+	session.ThreadID = "new-thread"
+	session.Revision++
+	session.Goal = &domain.Goal{State: domain.GoalActive, Objective: in.GoalObjective}
+	if err := m.ApplyEvent(domain.Event{Type: "goal", Sequence: m.Sequence + 1, SessionID: id, Session: &session}); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if _, shown := tester.Find("目标状态行"); shown {
+		t.Fatal("the new conversation showed the full Goal row on the first frame")
+	}
+	tester.Advance(60 * time.Millisecond)
+	if _, shown := tester.Find("目标状态行"); !shown {
+		t.Fatal("the Goal row did not enter the new conversation")
+	}
+	tester.Advance(time.Second)
+	m.ConnectionEpoch = "reconnected"
+	tester.Frame()
+	if _, shown := tester.Find("目标状态行"); !shown {
+		t.Fatal("reconnecting replayed an already presented Goal entrance")
+	}
+}
+
 func TestGoalClearCollapsesTheDockWithoutMovingTheComposer(t *testing.T) {
 	for _, reduced := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reduce-motion=%t", reduced), func(t *testing.T) {

@@ -264,13 +264,14 @@ func (v *View) sessionEntryProgress(c *n.Context, session string, heading bool) 
 // This is only a view of a client-owned pending operation. No provisional session
 // is inserted into the catalog, selected for RPCs or sent to the worker.
 type homeSendPresentation struct {
-	in       domain.Submission
-	sentAt   time.Time
-	session  string
-	turn     string
-	state    domain.OperationState
-	hydrated bool
-	list     *n.ListState
+	in            domain.Submission
+	sentAt        time.Time
+	session       string
+	turn          string
+	state         domain.OperationState
+	hydrated      bool
+	goalPresented bool
+	list          *n.ListState
 }
 
 type presentedSend struct {

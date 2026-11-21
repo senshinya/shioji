@@ -92,18 +92,24 @@ func (v *View) sessionGoal(c *n.Context, t *n.Theme) bool {
 	target := float32(0)
 	if active {
 		target = 1
-		if state.goal.Objective == "" {
-			frame.Jump("presence", target)
+		if send := v.homeSend; send != nil && !send.goalPresented && send.session == session.ID && send.in.GoalObjective == session.Goal.Objective {
+			// The new thread and its first goal can arrive before the dock is mounted.
+			if state.goal.Objective == "" {
+				frame.Jump("presence", 0)
+			}
+			send.goalPresented = true
 		}
 		state.goal = *session.Goal
 	}
 	presence := frame.AnimateTo("presence", target, motionAnimation(c, 180*time.Millisecond))
 	if presence == 0 {
-		*state = goalRowMotion{}
+		if !active {
+			*state = goalRowMotion{}
+		}
 		frame.Hidden(true)
 		return false
 	}
-	// Keep the old presentation while the dock gives back its actual layout height.
+	// Keep the same layout track through arrival and dismissal.
 	frame.Height(goalDockHeight * presence)
 	n.Inert(frame, !active)
 	frame.Children(func() {
