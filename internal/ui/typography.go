@@ -76,7 +76,10 @@ func inlineSymbolWithAnimation(c *n.Context, icon *n.SVG, label string, font n.F
 		Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).Role(n.RoleNone)
 	angle := float32(0)
 	if len(rotation) > 0 {
-		angle = e.AnimateTo("disclosure-angle", rotation[0], animation)
+		angle = rotation[0]
+		if animation.Duration > 0 {
+			angle = e.AnimateTo("disclosure-angle", angle, animation)
+		}
 	}
 	return e.DrawObjects(func(p *n.Painter, _ int, r n.Rect) {
 		r.Y += m.ascent - (size/2 + m.center)

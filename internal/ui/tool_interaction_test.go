@@ -256,6 +256,56 @@ func TestToolDisclosureHeightContinuouslyMovesFollowingText(t *testing.T) {
 	}
 }
 
+func TestToolGroupCollapseRetracesOpening(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Items = []domain.Item{
+		{ID: "a", Kind: "tool", TurnID: "t", Name: "First command", Final: true, Status: "completed"},
+		{ID: "b", Kind: "tool", TurnID: "t", Name: "Second command", Final: true, Status: "completed"},
+		{ID: "reply", Kind: "assistant", TurnID: "t", Text: "Following reply", Final: true},
+	}
+	d.Turns = []domain.Turn{{ID: "t", Status: "completed"}}
+	m.Details["s"] = d
+	v := New(m, nil, "")
+	ui := n.NewTester(v.View, 1440, 900)
+	ui.Advance(time.Second)
+	click := func() {
+		t.Helper()
+		if err := ui.Click("2 次工具调用"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	progress := func() float32 {
+		t.Helper()
+		ui.Frame()
+		// The list uses this value to clip and reposition the tool rows.
+		// Unmeasured rows can have different estimated heights on first open.
+		reveals := v.lists["s"].Reveals
+		if len(reveals) != 1 {
+			t.Fatalf("expected one tool reveal while animating, got %v", reveals)
+		}
+		return reveals[0].Progress
+	}
+	click()
+	ui.Advance(40 * time.Millisecond)
+	openingEarly := progress()
+	ui.Advance(80 * time.Millisecond)
+	openingLate := progress()
+	ui.Advance(80 * time.Millisecond)
+	if !(0 < openingEarly && openingEarly < openingLate && openingLate < 1) {
+		t.Fatalf("opening did not progress through intermediate values: %v, %v", openingEarly, openingLate)
+	}
+	click()
+	ui.Advance(40 * time.Millisecond)
+	closingEarly := progress()
+	saveNativeSkillImage(t, ui, "tool-group-collapse-40ms.png")
+	ui.Advance(80 * time.Millisecond)
+	closingLate := progress()
+	if math.Abs(float64(closingEarly-openingLate)) > .001 || math.Abs(float64(closingLate-openingEarly)) > .001 {
+		t.Fatalf("closing progress %v, %v must match opening in reverse order %v, %v", closingEarly, closingLate, openingLate, openingEarly)
+	}
+}
+
 func TestToolDisclosureFooterFollowsContentHeight(t *testing.T) {
 	m := layoutModel()
 	d := m.Details["s"]
@@ -368,12 +418,15 @@ func TestLargeToolDisclosureAnimatesTheVisibleViewport(t *testing.T) {
 			if err := ui.Click(label); err != nil {
 				t.Fatal(err)
 			}
-			ui.Advance(60 * time.Millisecond)
+			// Sample the same visible part of the curve as the opening above.
+			ui.Advance(100 * time.Millisecond)
+			ui.Frame()
 			middle, ok := ui.Find("After large group")
 			if !ok {
-				t.Fatal("large collapse spends most of its duration shrinking offscreen content")
+				t.Fatal("large collapse did not reveal the following text at the mirrored opening position")
 			}
 			ui.Advance(20 * time.Millisecond)
+			ui.Frame()
 			next, ok := ui.Find("After large group")
 			if !ok || next.Y >= middle.Y-1 {
 				t.Fatal("following text does not move continuously", middle, next)

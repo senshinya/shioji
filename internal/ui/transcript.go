@@ -334,14 +334,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 				_, visible = v.historyRowBounds[items[j].ID]
 			}
 			if visible && !disclosure.Closed() && !v.reduceMotion {
-				from := float32(1)
-				if motion := v.toolMotions[key]; motion != nil {
-					from, _ = motion.sample(v.frameTime)
-				}
-				if v.toolMotions == nil {
-					v.toolMotions = map[string]*toolDisclosureMotion{}
-				}
-				v.toolMotions[key] = &toolDisclosureMotion{from: from, to: 0, start: v.frameTime, duration: toolDisclosureDuration}
+				v.animateToolGroup(key, 0, v.frameTime, toolDisclosureDuration)
 			}
 			disclosure = disclosure.ObserveProse()
 			v.Model.SetToolDisclosure(key, disclosure)
@@ -477,11 +470,14 @@ func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index
 			if inline > 0 {
 				v.toolProgressCaption(c.Key("inline"), t, row, inline, true)
 			}
-			angle := float32(-90)
-			if opened {
-				angle = 0
+			angle := -90 * (1 - row.toolReveal)
+			if c.Preferences().ReduceMotion {
+				angle = -90
+				if opened {
+					angle = 0
+				}
 			}
-			inlineSymbol(c.Key("chevron"), chevron, label, font, 14, color, angle).MarginStart(toolSummaryGap)
+			inlineSymbolWithAnimation(c.Key("chevron"), chevron, label, font, 14, color, n.Animation{}, angle).MarginStart(toolSummaryGap)
 		})
 	})
 	if button.Clicked() {
@@ -538,24 +534,30 @@ func (v *View) toolProgressCaption(c *n.Context, t *n.Theme, row transcriptRow, 
 }
 
 func (v *View) toggleToolGroup(c *n.Context, key string, index int, button n.Element) {
-	from, to := float32(1), float32(0)
+	to := float32(0)
 	opening := v.Model.ToolDisclosure(key).Closed()
 	if opening {
-		from, to = 0, 1
-	}
-	if motion := v.toolMotions[key]; motion != nil {
-		from, _ = motion.sample(c.Now())
+		to = 1
 	}
 	if list := v.lists[v.Model.SessionID]; list != nil {
 		// Both directions preserve the same native heading as the reading anchor.
 		list.KeepRowWithinContent(index, button.Bounds().Y-list.Bounds(c).Y)
 	}
+	v.animateToolGroup(key, to, c.Now(), motionAnimation(c, toolDisclosureDuration).Duration)
+	v.Model.SetToolDisclosure(key, v.Model.ToolDisclosure(key).Toggle())
+	c.AnimationFrame()
+}
+
+func (v *View) animateToolGroup(key string, to float32, now time.Time, duration time.Duration) {
+	from := 1 - to
+	if motion := v.toolMotions[key]; motion != nil {
+		from, _ = motion.position(now)
+	}
 	if v.toolMotions == nil {
 		v.toolMotions = map[string]*toolDisclosureMotion{}
 	}
-	v.toolMotions[key] = &toolDisclosureMotion{from: from, to: to, start: c.Now(), duration: motionAnimation(c, toolDisclosureDuration).Duration}
-	v.Model.SetToolDisclosure(key, v.Model.ToolDisclosure(key).Toggle())
-	c.AnimationFrame()
+	duration = time.Duration(float32(duration) * max(to-from, from-to))
+	v.toolMotions[key] = &toolDisclosureMotion{from: from, to: to, start: now, duration: duration}
 }
 
 var rightChevron = svg("M8 5l5 5-5 5")

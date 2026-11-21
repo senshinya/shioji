@@ -17,12 +17,20 @@ type toolDisclosureMotion struct {
 	duration time.Duration
 }
 
-func (m *toolDisclosureMotion) sample(now time.Time) (float32, bool) {
-	fraction := float32(now.Sub(m.start)) / float32(m.duration)
-	if fraction >= 1 {
+// Move through the same uneased position in either direction so collapsing
+// retraces the opening curve, including when interrupted partway through.
+func (m *toolDisclosureMotion) position(now time.Time) (float32, bool) {
+	elapsed := now.Sub(m.start)
+	if elapsed >= m.duration {
 		return m.to, false
 	}
-	return m.from + (m.to-m.from)*n.EaseOut(max(0, fraction)), true
+	fraction := float32(max(0, elapsed)) / float32(m.duration)
+	return m.from + (m.to-m.from)*fraction, true
+}
+
+func (m *toolDisclosureMotion) sample(now time.Time) (float32, bool) {
+	position, active := m.position(now)
+	return n.EaseOut(position), active
 }
 
 // All custom native controls share one interruptible, neutral feedback layer.
