@@ -100,6 +100,10 @@ func TestHistoryRoundBodiesContinueByBytesWithoutAnItemLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	work := domain.WorkActivity{ID: "background", Kind: "background", TurnID: "turn", Title: "check", State: "running"}
+	if _, err = s.Apply(op.SessionID, domain.Event{Type: "work.upsert", Work: &work}); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 130; i++ {
 		item := domain.Item{ID: fmt.Sprint("tool-", i), Kind: "tool", TurnID: "turn", Text: strings.Repeat("output ", 4096), Final: true}
 		if _, err = s.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &item}); err != nil {
@@ -115,6 +119,13 @@ func TestHistoryRoundBodiesContinueByBytesWithoutAnItemLimit(t *testing.T) {
 		d, e := s.SessionHistory(q)
 		if e != nil {
 			t.Fatal(e)
+		}
+		if pages == 0 {
+			if len(d.Works) != 1 || d.Works[0].ID != work.ID {
+				t.Fatalf("first chunk omitted its work roster: %+v", d.Works)
+			}
+		} else if len(d.Works) != 0 || d.WorksTruncated {
+			t.Fatalf("continuation chunk repeated the first chunk's work roster: %+v", d.Works)
 		}
 		b, _ := json.Marshal(d)
 		if len(b) > 768<<10 {

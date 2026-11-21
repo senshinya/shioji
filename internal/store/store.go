@@ -75,6 +75,7 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), state TEXT NOT NULL, digest TEXT NOT NULL, error TEXT NOT NULL DEFAULT '');
  CREATE TABLE IF NOT EXISTS items (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, position INTEGER NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
  CREATE INDEX IF NOT EXISTS items_order ON items(session_id,position);
+ CREATE INDEX IF NOT EXISTS items_history_round_starts ON items(session_id,position) WHERE ` + historyRoundStartSQL + `;
  CREATE TABLE IF NOT EXISTS requests (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
  CREATE TABLE IF NOT EXISTS turns (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
  CREATE TABLE IF NOT EXISTS journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, body BLOB NOT NULL);
@@ -90,6 +91,7 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS worker_maintenance (id TEXT PRIMARY KEY, body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS title_jobs (session_id TEXT PRIMARY KEY REFERENCES sessions(id), state TEXT NOT NULL, body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS works (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
+ CREATE INDEX IF NOT EXISTS works_history_roster ON works(session_id, ` + workRosterRankSQL + `);
  CREATE TABLE IF NOT EXISTS work_items (session_id TEXT NOT NULL, work_id TEXT NOT NULL, id TEXT NOT NULL, position INTEGER NOT NULL, revision INTEGER NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,work_id,id), FOREIGN KEY(session_id,work_id) REFERENCES works(session_id,id) ON DELETE CASCADE);
  CREATE INDEX IF NOT EXISTS work_items_order ON work_items(session_id,work_id,position);
  CREATE INDEX IF NOT EXISTS work_items_prompts ON work_items(session_id,work_id,position) WHERE json_extract(body,'$.kind')='user';
@@ -925,6 +927,13 @@ func (s *Store) Session(id string, after int64, limit int) (domain.SessionDetail
 	return reader.sessionLocked(id, after, limit, nil)
 }
 
+// Reversing both sort keys lets SQLite traverse the priority index backwards
+// to take the newest active entries first, then the newest terminal entries.
+const workRosterRankSQL = `CASE WHEN json_extract(body,'$.state') IN('running','starting','waiting') THEN 1 ELSE 0 END`
+const workRosterSQL = `SELECT body FROM works WHERE rowid IN (
+	SELECT rowid FROM works WHERE session_id=? ORDER BY ` + workRosterRankSQL + ` DESC, rowid DESC LIMIT 129
+) ORDER BY rowid`
+
 func (s *Store) sessionLocked(id string, after int64, limit int, window *domain.HistoryQuery) (domain.SessionDetail, error) {
 	out := domain.SessionDetail{}
 	var err error
@@ -944,12 +953,15 @@ func (s *Store) sessionLocked(id string, after int64, limit int, window *domain.
 	if planErr == nil {
 		out.Plan = &plan
 	}
-	if out.Works, err = rowsOf[domain.WorkActivity](s.historyQueries(), `SELECT body FROM works WHERE rowid IN(SELECT rowid FROM works WHERE session_id=? ORDER BY CASE WHEN json_extract(body,'$.state') IN('running','starting','waiting') THEN 0 ELSE 1 END,rowid DESC LIMIT 129) ORDER BY rowid`, id); err != nil {
-		return out, err
-	}
-	out.Works, out.WorksTruncated = domain.LimitWorkRoster(out.Works)
 	if window != nil && window.ThreadID != "" && window.ThreadID != out.Session.ThreadID {
 		return out, errors.New("会话历史已改变，请重新加载")
+	}
+	// The client keeps the first chunk's roster throughout this read snapshot.
+	if window == nil || window.WindowFirst == 0 {
+		if out.Works, err = rowsOf[domain.WorkActivity](s.historyQueries(), workRosterSQL, id); err != nil {
+			return out, err
+		}
+		out.Works, out.WorksTruncated = domain.LimitWorkRoster(out.Works)
 	}
 	queryItems := "SELECT body FROM items WHERE session_id=? AND position>? AND json_extract(body,'$.kind')!='queued' ORDER BY position LIMIT ?"
 	itemArgs := []any{id, after, limit + 1}
