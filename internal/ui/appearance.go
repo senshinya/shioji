@@ -80,7 +80,7 @@ func applyAppearance(c *n.Context, prefs app.ClientPreferences) *n.Theme {
 		t.Selection = n.Hex("#e7e7e7")
 		t.Focus = n.Hex("#858589")
 		t.Success = n.Hex("#138a43")
-		t.Warning = n.Hex("#c66a00")
+		t.Warning = n.Hex("#8f4c00")
 		t.Danger = n.Hex("#d92d20")
 	}
 	t.AccentHover = t.Accent

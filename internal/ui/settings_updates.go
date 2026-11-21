@@ -28,11 +28,12 @@ func (s *Settings) appUpdateSettings(c *n.Context, t *n.Theme) {
 	n.Column(c.Key("app-updates")).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsHeading(c, t, "App 更新")
 		button := configurationRowControl(c, 6).Height(configurationRowHeight).Label("检查 App 更新").Children(func() { settingsLinkContent(c, t, "检查更新", "检查") })
+		s.revealSetting("检查更新", button)
 		n.Column(c).FillWidth().Height(.5).Background(t.Border)
 		if button.Clicked() {
 			u.Check()
 		}
-		settingsRow(c, t, "自动检查更新", func() {
+		s.row(c, "自动检查更新", func() {
 			enabled := u.Enabled()
 			on := enabled && u.AutomaticChecks()
 			if configurationSwitch(c, &on).Label("自动检查 App 更新").Disabled(!enabled).Changed() {

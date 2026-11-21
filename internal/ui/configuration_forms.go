@@ -13,7 +13,7 @@ const (
 	configurationSetupForm
 )
 
-func configurationFormRow(c *n.Context, label string, style configurationFormStyle, build func(), top ...bool) {
+func configurationFormRow(c *n.Context, label string, style configurationFormStyle, build func(), top ...bool) n.Element {
 	row := n.Row(c.Key(label)).FillWidth().MinHeight(configurationRowHeight).Gap(configurationSectionGap).AlignItems(n.Center)
 	alignTop := style == configurationSetupForm || len(top) > 0 && top[0]
 	if alignTop {
@@ -41,6 +41,7 @@ func configurationFormRow(c *n.Context, label string, style configurationFormSty
 		}
 		n.Column(c).Width(width).Children(build)
 	})
+	return row
 }
 
 func configurationTextField(c *n.Context, value *string) n.Element {

@@ -6,6 +6,7 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"slices"
 	"strings"
 	"time"
 )
@@ -14,6 +15,7 @@ func (v *View) resetSearchRequest() {
 	v.searchRequest++
 	v.searchSent, v.searchProblem = "", ""
 	v.searchPending, v.searchFailed = 0, 0
+	v.searchCursor = ""
 }
 
 func (v *View) toggleSearch(c *n.Context) {
@@ -74,7 +76,8 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 		entrance := popupMotion(c)
 		entrance.Exit = nil
 		panel.Width(min(560, width-40)).Padding(10).Radius(10).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Transition(entrance).Children(func() {
-			textField(c.Key("search-input"), &v.searchText).FillWidth().Height(32).Label("搜索会话").Placeholder("搜索会话与对话内容…").FontSize(13).Bind(&v.searchInput).Changed()
+			field := textField(c.Key("search-input"), &v.searchText).FillWidth().Height(32).Label("搜索会话").Placeholder("搜索会话与对话内容…").FontSize(13).Bind(&v.searchInput)
+			field.Changed()
 			query := strings.TrimSpace(v.searchText)
 			if query == "" {
 				if v.searchSent != "" {
@@ -100,6 +103,29 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 					results = append(results, domain.SearchResult{SessionID: s.ID, WorkspaceID: s.WorkspaceID, Title: s.Title, Archived: archived})
 				}
 			}
+			field.OnTextKey(func(key n.TextKey) bool {
+				if key.Mods != 0 || !v.searchOpen || len(results) == 0 || strings.TrimSpace(key.Text()) != query {
+					return false
+				}
+				index := slices.IndexFunc(results, func(r domain.SearchResult) bool { return r.SessionID == v.searchCursor })
+				switch key.Key {
+				case n.KeyDown:
+					index = min(index+1, len(results)-1)
+				case n.KeyUp:
+					if index < 0 {
+						index = len(results)
+					}
+					index = max(0, index-1)
+				case n.KeyEnter:
+					v.openSearchResult(results[max(0, index)])
+					return true
+				default:
+					return false
+				}
+				v.searchCursor = results[index].SessionID
+				v.searchList.ScrollIntoView(index)
+				return true
+			})
 			status := v.searchProblem
 			if v.searchFailed > 0 && status == "" {
 				status = "部分设备搜索失败，结果可能不完整"
@@ -132,7 +158,12 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 						device = v.Model.DeviceName(w.DeviceID)
 					}
 				}
-				row := control(c).FillWidth().Padding(8).Radius(6).Label("搜索结果：" + r.Title + "，" + workspace).Children(func() {
+				selected := field.Focused() && r.SessionID == v.searchCursor
+				row := control(c).FillWidth().Padding(8).Radius(6).Label("搜索结果：" + r.Title + "，" + workspace).AccessSelected(selected)
+				if selected {
+					row.Background(t.Selection)
+				}
+				row.Children(func() {
 					n.Column(c).FillWidth().Gap(4).Children(func() {
 						n.Text(c, r.Title).SingleLine().FontSize(13)
 						metadata := workspace + " · " + device
@@ -146,24 +177,26 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 					})
 				})
 				if row.Clicked() {
-					v.workspaceEditor = nil
-					v.navigateSession(r.SessionID, r.WorkspaceID)
-					v.devices = false
-					v.searchOpen = false
-					v.branchOpen = false
-					if r.ItemID != "" {
-						v.splitRoot().prepareSecondary()
-						pane := v.focusedView()
-						s := pane.findState()
-						s.mode, s.focus, s.placement = findPassive, false, findAwaitingHistory
-						s.query, s.result, s.target = v.searchResultsQuery, r, findTarget{}
-						pane.focusComposer = true
-					}
+					v.openSearchResult(r)
 				}
 			}).FillWidth().Height(min(360, float32(len(results))*74))
 		})
 	})
 	if panel.Dismissed() {
 		v.resetSearchRequest()
+	}
+}
+
+func (v *View) openSearchResult(r domain.SearchResult) {
+	v.workspaceEditor = nil
+	v.navigateSession(r.SessionID, r.WorkspaceID)
+	v.devices, v.searchOpen, v.branchOpen = false, false, false
+	if r.ItemID != "" {
+		v.splitRoot().prepareSecondary()
+		pane := v.focusedView()
+		s := pane.findState()
+		s.mode, s.focus, s.placement = findPassive, false, findAwaitingHistory
+		s.query, s.result, s.target = v.searchResultsQuery, r, findTarget{}
+		pane.focusComposer = true
 	}
 }

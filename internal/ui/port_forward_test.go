@@ -73,7 +73,7 @@ func TestFaultedForwardRetainsRetryAndCloseActions(t *testing.T) {
 	ui.Advance(time.Second)
 	ui.Click("端口转发")
 	ui.Advance(time.Second)
-	if err := ui.RightClick("打开转发：127.0.0.1:8080"); err != nil {
+	if err := ui.RightClick("端口转发：127.0.0.1:8080"); err != nil {
 		t.Fatal(err)
 	}
 	if err := ui.ChooseMenuItem("重试"); err != nil {

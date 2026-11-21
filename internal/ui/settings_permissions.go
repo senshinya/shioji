@@ -15,9 +15,10 @@ func (s *Settings) refreshSystemPermissions() {
 func (s *Settings) fullDiskAccessSetting(c *n.Context, t *n.Theme) {
 	settingsHeading(c, t, "系统权限")
 	if s.fullDiskAccessGranted {
-		settingsRow(c, t, "完全磁盘访问权限", func() {
+		row := settingsRow(c, t, "完全磁盘访问权限", func() {
 			n.Text(c, "已授予").FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).TextColor(t.TextMuted)
 		})
+		s.revealSetting("授予完全磁盘访问权限", row)
 	} else {
 		s.fullDiskAccessAction(c, t, "授予完全磁盘访问权限", false)
 	}
@@ -31,6 +32,7 @@ func (s *Settings) fullDiskAccessAction(c *n.Context, t *n.Theme, title string, 
 	button := configurationRowControl(c, 6).Height(configurationRowHeight).Label(title).Children(func() {
 		settingsLinkContent(c, t, title, "打开系统设置")
 	})
+	s.revealSetting(title, button)
 	n.Column(c).FillWidth().Height(.5).Background(t.Border)
 	if !button.Clicked() {
 		return

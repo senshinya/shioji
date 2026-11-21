@@ -5,7 +5,6 @@ import (
 	"runtime"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
@@ -38,10 +37,11 @@ type Settings struct {
 	BackgroundRuntimeAvailable func() bool
 	services                   n.Services
 	saveError                  string
+	feedback                   conversationFeedback
 	owner                      *View
 	window                     *mygo.Window
 	page, query, error         string
-	revealArchiveRetention     bool
+	settingToReveal            string
 	menus                      View
 	fonts                      []n.FontFamily
 	fontResults                chan []n.FontFamily
@@ -68,11 +68,13 @@ func (s *Settings) Show() {
 		return
 	}
 	s.query, s.error = "", ""
+	s.feedback.messages = nil
 	s.window = mygo.NewWindow(mygo.WindowOptions{Title: "Shioji 设置", Width: 968, Height: 756, MinWidth: 760, MinHeight: 600, TitleBarStyle: mygo.TitleBarHidden, TrafficLightPosition: WindowTrafficLightPosition(), Content: n.View(s.View)})
 	s.window.OnClose(func(e *mygo.CloseEvent) {
 		if err := s.owner.Flush(); err != nil {
 			e.PreventDefault()
 			s.error = "无法保存设置：" + err.Error()
+			s.feedback.messages = nil
 			s.window.Invalidate()
 		}
 	})
@@ -120,7 +122,7 @@ func (s *Settings) selectPage(id string) {
 		s.refreshSystemPermissions()
 	}
 	s.page, s.query, s.error = id, "", ""
-	s.revealArchiveRetention = false
+	s.settingToReveal = ""
 	s.licenses = false
 	s.license = -1
 	clear(s.menus.menuOpen)
@@ -128,7 +130,7 @@ func (s *Settings) selectPage(id string) {
 
 func (s *Settings) selectArchiveRetention() {
 	s.selectPage("appearance")
-	s.revealArchiveRetention = true
+	s.settingToReveal = archiveRetentionTitle
 }
 
 func (s *Settings) View(c *n.Context) {
@@ -230,12 +232,6 @@ func (s *Settings) View(c *n.Context) {
 						case "about":
 							s.about(c, &t)
 						}
-						if s.saveError != "" {
-							n.Text(c, s.saveError).FillWidth().FontSize(12).TextColor(t.Danger).Margin(12, 0, 0, 0)
-						}
-						if s.error != "" {
-							n.Text(c, s.error).FillWidth().FontSize(12).TextColor(t.Danger).Margin(12, 0, 0, 0).Transition(disclosureMotion(c, 180*time.Millisecond))
-						}
 					})
 				})
 			}
@@ -253,6 +249,35 @@ func (s *Settings) View(c *n.Context) {
 			}
 		})
 	})
+	s.syncErrorMessage(c, "settings-save", s.saveError)
+	otherError := s.error
+	if otherError == s.saveError {
+		otherError = ""
+	}
+	s.syncErrorMessage(c, "settings-action", otherError)
+	s.owner.renderMessageOverlay(c, &t, &s.feedback, "设置")
+}
+
+func (s *Settings) syncErrorMessage(c *n.Context, id, message string) {
+	entry := slices.IndexFunc(s.feedback.messages, func(item conversationMessage) bool { return item.ID == id })
+	if message == "" {
+		if entry >= 0 {
+			s.feedback.messages = slices.Delete(s.feedback.messages, entry, entry+1)
+		}
+		return
+	}
+	title, details := "操作未完成", message
+	if reason, saving := strings.CutPrefix(message, "无法保存设置："); saving {
+		title, details = "无法保存设置", reason
+	}
+	f := app.Feedback{ID: id, Title: title, Details: feedbackDetails(details)}
+	if entry >= 0 {
+		if s.feedback.messages[entry].Feedback == f {
+			return
+		}
+		s.feedback.messages = slices.Delete(s.feedback.messages, entry, entry+1)
+	}
+	s.feedback.put(f, c.Now(), false)
 }
 
 func settingsPageHeading(c *n.Context, title string) {
@@ -261,14 +286,29 @@ func settingsPageHeading(c *n.Context, title string) {
 	})
 }
 
-func settingsHeading(c *n.Context, t *n.Theme, label string) {
-	configurationSectionTitle(c, label).TextColor(t.Text).Margin(0, 0, 8, 0)
+func settingsHeading(c *n.Context, t *n.Theme, label string) n.Element {
+	return configurationSectionTitle(c, label).TextColor(t.Text).Margin(0, 0, 8, 0)
 }
 func settingsGroup(c *n.Context, t *n.Theme, build func()) {
 	n.Column(c).FillWidth().Children(build)
 }
-func settingsRow(c *n.Context, t *n.Theme, label string, build func()) {
-	configurationFormRow(c, label, configurationSettingsForm, build)
+func settingsRow(c *n.Context, t *n.Theme, label string, build func()) n.Element {
+	return configurationFormRow(c, label, configurationSettingsForm, build)
+}
+func (s *Settings) row(c *n.Context, label string, build func()) {
+	s.revealSetting(label, settingsRow(c, c.Theme(), label, build))
+}
+
+func (s *Settings) revealSetting(label string, target n.Element) {
+	if s.settingToReveal == "" || s.settingToReveal != label {
+		return
+	}
+	align := n.ScrollCenter
+	if label == archiveRetentionTitle {
+		align = n.ScrollStart
+	}
+	target.ScrollIntoView(n.ScrollIntoViewOptions{Block: align})
+	s.settingToReveal = ""
 }
 
 func (s *Settings) picker(c *n.Context, t *n.Theme, label, value string, choices []menuChoice) {
@@ -299,7 +339,7 @@ func (s *Settings) archiveRetention(c *n.Context, t *n.Theme) {
 					value = "上次确认 " + value
 				}
 			}
-			settingsRow(c, t, device.Name, func() {
+			s.row(c, device.Name, func() {
 				var choices []menuChoice
 				for _, days := range []int{7, 14, 30, 0} {
 					choices = append(choices, menuChoice{id: fmt.Sprint(days), name: archiveRetentionLabel(days), checked: device.Policy != nil && device.Policy.Days == days, choose: func() {
@@ -345,7 +385,7 @@ func (s *Settings) archiveRetention(c *n.Context, t *n.Theme) {
 
 func (s *Settings) appearance(c *n.Context, t *n.Theme) {
 	p := &s.owner.Model.Preferences
-	settingsHeading(c, t, "主题")
+	s.revealSetting("主题", settingsHeading(c, t, "主题"))
 	n.Row(c).FillWidth().Gap(12).Children(func() {
 		for _, item := range []struct {
 			id, label string
@@ -375,14 +415,14 @@ func (s *Settings) appearance(c *n.Context, t *n.Theme) {
 	})
 	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsHeading(c, t, "对话")
-		settingsRow(c, t, "每次加载轮次", func() {
+		s.row(c, "每次加载轮次", func() {
 			choices := []menuChoice{}
 			for _, count := range []int{5, 10, 20, 50, 100} {
 				choices = append(choices, menuChoice{id: fmt.Sprint(count), name: fmt.Sprintf("%d 轮", count), checked: p.HistoryPageRounds == count, choose: func() { p.HistoryPageRounds = count; s.changed() }})
 			}
 			s.picker(c, t, "每次加载轮次", fmt.Sprintf("%d 轮", p.HistoryPageRounds), choices)
 		})
-		settingsRow(c, t, "自动展开最新工具调用", func() {
+		s.row(c, "自动展开最新工具调用", func() {
 			expand := !p.CollapseLatestTools
 			if configurationSwitch(c, &expand).Label("自动展开最新工具调用开关").Changed() {
 				p.CollapseLatestTools = !expand
@@ -391,31 +431,28 @@ func (s *Settings) appearance(c *n.Context, t *n.Theme) {
 		})
 	})
 	retention := n.Column(c.Key("archive-retention-settings")).FillWidth().Margin(configurationSectionGap, 0, 0, 0)
-	if s.revealArchiveRetention {
-		retention.ScrollIntoView(n.ScrollIntoViewOptions{Block: n.ScrollStart})
-		s.revealArchiveRetention = false
-	}
+	s.revealSetting(archiveRetentionTitle, retention)
 	retention.Children(func() {
 		s.archiveRetention(c, t)
 	})
 	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsHeading(c, t, "文字")
 		settingsGroup(c, t, func() {
-			settingsRow(c, t, "界面字体", func() { s.fontPicker(c, t, false) })
-			settingsRow(c, t, "回复字号", func() {
+			s.row(c, "界面字体", func() { s.fontPicker(c, t, false) })
+			s.row(c, "回复字号", func() {
 				choices := []menuChoice{}
 				for size := 12; size <= 20; size++ {
 					choices = append(choices, menuChoice{id: fmt.Sprint(size), name: fmt.Sprintf("%d px", size), checked: p.ReplySize == size, choose: func() { p.ReplySize = size; s.changed() }})
 				}
 				s.picker(c, t, "回复字号", fmt.Sprintf("%d px", p.ReplySize), choices)
 			})
-			settingsRow(c, t, "代码字体", func() { s.fontPicker(c, t, true) })
+			s.row(c, "代码字体", func() { s.fontPicker(c, t, true) })
 		})
 	})
 	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsHeading(c, t, "动态效果")
 		settingsGroup(c, t, func() {
-			settingsRow(c, t, "减少动态效果", func() {
+			s.row(c, "减少动态效果", func() {
 				value := "跟随系统"
 				if p.ReduceMotion {
 					value = "开启"
@@ -533,7 +570,7 @@ func (s *Settings) input(c *n.Context, t *n.Theme) {
 	})
 	settingsGroup(c, t, func() {
 		for _, item := range []struct{ id, label, value string }{{"send", "发送或加入队列", p.Shortcuts.Send}, {"newline", "换行", p.Shortcuts.Newline}, {"steer", "立即介入当前轮", p.Shortcuts.Steer}} {
-			settingsRow(c, t, item.label, func() {
+			s.row(c, item.label, func() {
 				button := control(c.Key(item.id)).Width(160).Height(28).PaddingX(0).Justify(n.End).Label("修改" + item.label + "按键").Children(func() {
 					n.Text(c, bindingLabel(item.value)).FontSize(12).FixedLineHeight(20).PaddingX(7).Background(codeSurface(t)).Border(1, t.Border).Radius(5)
 				})
@@ -558,7 +595,7 @@ func (s *Settings) shortcuts(c *n.Context, t *n.Theme) {
 	settingsHeading(c, t, "会话导航")
 	settingsGroup(c, t, func() {
 		for _, item := range []struct{ label, key string }{{"新建会话", "⌘ N"}, {"搜索会话", "⌘ K"}, {"下一个待处理", "⌘ ⇧ J"}, {"返回上一个会话", "⌘ ⇧ H"}} {
-			settingsRow(c, t, item.label, func() {
+			s.row(c, item.label, func() {
 				n.Text(c, item.key).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).Padding(2, 8).Background(codeSurface(t)).Border(1, t.Border).Radius(5)
 			})
 		}
@@ -597,7 +634,7 @@ func (s *Settings) about(c *n.Context, t *n.Theme) {
 	if version == "" {
 		version = "开发版"
 	}
-	n.Text(c, "版本 "+version).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).TextColor(t.TextMuted).Margin(16, 0, 0, 0)
+	s.revealSetting("版本", n.Text(c, "版本 "+version).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).TextColor(t.TextMuted).Margin(16, 0, 0, 0))
 	s.appUpdateSettings(c, t)
 	n.Column(c).FillWidth().Margin(configurationSectionGap, 0, 0, 0).Children(func() {
 		settingsGroup(c, t, func() {
@@ -605,10 +642,11 @@ func (s *Settings) about(c *n.Context, t *n.Theme) {
 			if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 				platform = runtime.GOOS + " · " + runtime.GOARCH
 			}
-			settingsRow(c, t, "运行平台", func() { n.Text(c, platform).FontSize(12).TextColor(t.TextMuted) })
+			s.row(c, "运行平台", func() { n.Text(c, platform).FontSize(12).TextColor(t.TextMuted) })
 			button := configurationRowControl(c, 6).Height(configurationRowHeight).Label("查看第三方许可").Children(func() {
 				settingsLinkContent(c, t, "第三方许可", "查看")
 			})
+			s.revealSetting("第三方许可", button)
 			n.Column(c).FillWidth().Height(.5).Background(t.Border)
 			if button.Clicked() {
 				s.licenses = true
@@ -633,10 +671,10 @@ func (s *Settings) search(c *n.Context, t *n.Theme) {
 		if control(c.Key(label)).FillWidth().MarginX(-8).Height(configurationRowHeight).PaddingX(8).Label(label).Children(func() {
 			inlineIconText(c, category.icon, label, n.Font{Family: t.Font, Size: configurationLabelSize, Weight: 400}, 16, 8, t.Text)
 		}).Clicked() {
-			if entry.label == archiveRetentionTitle {
-				s.selectArchiveRetention()
-			} else {
-				s.selectPage(entry.page)
+			s.selectPage(entry.page)
+			s.settingToReveal = entry.label
+			if entry.label == "通知" {
+				s.settingToReveal = "系统通知"
 			}
 		}
 	}

@@ -159,13 +159,13 @@ func (v *View) prepareSecondary() {
 	pane.syncReplyStreams(m.Details[session.ID])
 	pane.requestGit(false)
 }
-func (v *View) parallelConversation(c *n.Context, t *n.Theme) {
+func (v *View) parallelConversation(c *n.Context, t *n.Theme, availableWidth float32) {
 	m := v.Model
 	if v.secondary == nil || v.secondary.Model.SessionID != m.SecondarySessionID {
 		v.prepareSecondary()
 	}
 	width, _ := c.Size()
-	wide := width >= 1180
+	wide := width >= 1180 && availableWidth >= 2*inspectorMinConversationWidth
 	pane := v.secondary
 	available := pane != nil && pane.Model.SessionID == m.SecondarySessionID
 	layout := n.Row(c.Key("conversation-layout")).Fill()

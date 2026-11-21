@@ -210,6 +210,7 @@ type View struct {
 	searchOpen                                                                                                      bool
 	searchInput                                                                                                     n.Handle
 	searchText, searchSent                                                                                          string
+	searchCursor                                                                                                    string
 	searchRequest                                                                                                   uint64
 	searchPending, searchFailed                                                                                     int
 	searchProblem                                                                                                   string
@@ -448,7 +449,9 @@ func (v *View) View(c *n.Context) {
 		v.OpenSettings()
 	}
 	if c.Shortcut(n.Cmd|n.Shift, n.KeyJ) {
-		v.nextAttention()
+		if !v.nextAttention() {
+			v.reportFeedback(app.Feedback{Title: "无待处理会话", Kind: app.FeedbackInformation})
+		}
 	}
 	if c.Shortcut(n.Cmd|n.Shift, n.KeyH) {
 		if v.archive != nil && v.archive.open {
@@ -502,6 +505,10 @@ func (v *View) View(c *n.Context) {
 			limit = available - 16
 		}
 		panelWidth := min(max(m.InspectorWidth, inspectorMinWidth), min(limit, inspectorMaxWidth))
+		conversationWidth := available
+		if open && inline {
+			conversationWidth -= panelWidth
+		}
 		conversation := n.Column(c.Key("conversation-pane")).FillHeight().Grow(1)
 		if !v.resizingInspector {
 			conversation.Transition(n.ElementTransition{Duration: motionAnimation(c, 200*time.Millisecond).Duration, Ease: n.EaseOut, Size: true})
@@ -525,7 +532,7 @@ func (v *View) View(c *n.Context) {
 				v.toolbar(c, &t)
 				v.homeView(c, &t)
 			} else {
-				v.parallelConversation(c, &t)
+				v.parallelConversation(c, &t, conversationWidth)
 			}
 		})
 		if open {
@@ -684,11 +691,22 @@ func (v *View) workspaceName() string {
 func (v *View) homeView(c *n.Context, t *n.Theme) {
 	n.Column(c).Fill().PaddingX(18).AlignItems(n.Center).Children(func() {
 		n.Spacer(c).Grow(.84)
-		if len(v.Model.Snapshot.Workspaces) == 0 {
-			n.Text(c, "从一个工作区开始").FontSize(28)
-			if ghost(c, "创建工作区").Margin(18, 0, 0, 0).Disabled(v.Controller == nil).Clicked() {
-				v.createWorkspace()
+		workspaces := v.Model.Snapshot.Workspaces
+		if !slices.ContainsFunc(workspaces, func(w domain.Workspace) bool { return !w.Archived }) {
+			title := "从一个工作区开始"
+			hasArchived := len(workspaces) > 0
+			if hasArchived {
+				title = "工作区已全部归档"
 			}
+			n.Text(c, title).FontSize(28)
+			n.Row(c).Margin(18, 0, 0, 0).Gap(8).AlignItems(n.Center).Children(func() {
+				if compactDialogPrimary(c, "创建工作区").Disabled(v.Controller == nil).Clicked() {
+					v.createWorkspace()
+				}
+				if hasArchived && configurationAction(c, "查看已归档").Clicked() {
+					v.openArchive()
+				}
+			})
 		} else {
 			n.Row(c).Gap(8).Margin(0, 0, 28, 0).AlignItems(n.Center).Children(func() {
 				n.Text(c, "想在").FixedLineHeight(48).FontSize(32).TextColor(t.TextMuted)
@@ -1929,13 +1947,15 @@ func (v *View) sendMessage(steer bool) {
 		m.Reject(in, "操作繁忙，请重试")
 	}
 }
-func (v *View) nextAttention() {
+func (v *View) nextAttention() bool {
 	if s, ok := v.attentionSession(); ok {
 		v.navigateSession(s.ID, s.WorkspaceID)
 		v.collapsedWorkspaces[s.WorkspaceID] = false
 		v.Model.Collapsed[s.ID] = false
 		v.devices = false
+		return true
 	}
+	return false
 }
 func (v *View) do(job app.Job) bool {
 	if v.parent != nil && v.parent.Model.SecondarySessionID != v.Model.SessionID {

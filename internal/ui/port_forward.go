@@ -217,16 +217,21 @@ func (v *View) quickPorts(c *n.Context, t *n.Theme) {
 			detail += " · 正在关闭"
 		}
 		n.Row(c).Height(44).FillWidth().Padding(4, 8, 4, 12).Gap(4).AlignItems(n.Start).Children(func() {
-			copy := control(c.Key("open"), 4).Grow(1).MinWidth(0).Height(36).Label("打开转发：" + item.LocalAddress()).Tooltip(title + "\n" + item.Name + "\n" + item.Error).Children(func() {
+			key := c.Key("forward-destination")
+			destination := n.Row(key).Label("端口转发：" + item.LocalAddress())
+			if item.State == "available" {
+				destination = control(key, 4).Label("打开转发：" + item.LocalAddress())
+			}
+			destination.Grow(1).MinWidth(0).Height(36).Tooltip(title + "\n" + item.Name + "\n" + item.Error).Children(func() {
 				n.Column(c).FillWidth().Children(func() {
 					n.Text(c, title).FontSize(12).FixedLineHeight(18).SingleLine().Ellipsis("…").FillWidth()
 					n.Text(c, detail).FontSize(11).FixedLineHeight(16).TextColor(t.TextMuted).SingleLine().Ellipsis("…").FillWidth()
 				})
 			})
-			if copy.Clicked() && item.State == "available" {
+			if item.State == "available" && destination.Clicked() {
 				v.forwardAction("open", item, openForwardURL)
 			}
-			copy.ContextMenu(func(menu *n.Menu) {
+			destination.ContextMenu(func(menu *n.Menu) {
 				if menu.Item("打开").Disabled(item.State != "available").Chosen() {
 					v.forwardAction("open", item, openForwardURL)
 				}
@@ -244,6 +249,13 @@ func (v *View) quickPorts(c *n.Context, t *n.Theme) {
 					v.forwardAction("close", item, nil)
 				}
 			})
+			if item.State == "unavailable" {
+				label := "重试转发：" + item.Name + " · " + strconv.Itoa(item.LocalPort)
+				if configurationAction(c.Key("retry"), "重试").Label(label).Tooltip(item.Error).
+					Shrink(0).AlignSelf(n.Center).Disabled(v.Controller == nil).Clicked() {
+					v.forwardAction("retry", item, nil)
+				}
+			}
 			if iconButton(c, closeIcon, "关闭转发："+item.Name+" · "+strconv.Itoa(item.LocalPort)).Disabled(item.State == "closing").Clicked() {
 				v.forwardAction("close", item, nil)
 			}

@@ -180,6 +180,12 @@ func (v *View) requestChanges(force bool) {
 			return
 		}
 		next := state.Comparison
+		if state.FailedComparison != nil && !state.NonRepository {
+			if !force {
+				return
+			}
+			next = *state.FailedComparison
+		}
 		if force {
 			next = unpinDiffComparison(next)
 		}

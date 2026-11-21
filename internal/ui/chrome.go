@@ -84,7 +84,7 @@ func (v *View) attentionControl(c *n.Context, t *n.Theme) {
 		var trailing func()
 		description := "无待处理会话"
 		if available {
-			textColor, iconColor = t.Text, n.Hex("#c99700")
+			textColor, iconColor = t.Text, t.Warning
 			if t.Dark {
 				iconColor = n.Hex("#c4a30a")
 			}

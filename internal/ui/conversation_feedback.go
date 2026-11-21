@@ -748,7 +748,10 @@ func (v *View) conversationMessageOverlay(c *n.Context, t *n.Theme) {
 	if v.parent != nil {
 		return
 	}
-	state := v.feedbackState()
+	v.renderMessageOverlay(c, t, v.feedbackState(), "")
+}
+
+func (v *View) renderMessageOverlay(c *n.Context, t *n.Theme, state *conversationFeedback, windowLabel string) {
 	now := c.Now()
 	n.Overlay(c.Key("conversation-feedback"), func() {
 		active := -1
@@ -801,7 +804,10 @@ func (v *View) conversationMessageOverlay(c *n.Context, t *n.Theme) {
 					icon = check
 				}
 				n.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
-					sourceLabel := v.feedbackScopeLabel(message.Feedback)
+					sourceLabel := windowLabel
+					if sourceLabel == "" {
+						sourceLabel = v.feedbackScopeLabel(message.Feedback)
+					}
 					n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
 						font := n.Font{Family: t.Font, Size: 11, Weight: 400}
 						inlineSymbol(c, icon, sourceLabel, font, 14, t.TextMuted).Label("消息来源图标")
@@ -816,7 +822,7 @@ func (v *View) conversationMessageOverlay(c *n.Context, t *n.Theme) {
 					message.dismissed = true
 				}
 			})
-			canNavigate := message.SessionID != "" && message.SessionID != v.Model.SessionID
+			canNavigate := windowLabel == "" && message.SessionID != "" && message.SessionID != v.Model.SessionID
 			if body != "" || details != "" || canNavigate {
 				n.Column(c).FillWidth().PaddingStart(22).Gap(8).Children(func() {
 					if body != "" {

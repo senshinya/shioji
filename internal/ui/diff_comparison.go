@@ -95,6 +95,7 @@ func (v *View) requestComparison(state *changesState, pair domain.DiffComparison
 		var result domain.ComparisonResult
 		if err = json.Unmarshal(data, &result); err != nil {
 			state.failChanges(err)
+			state.FailedComparison = &pair
 			return
 		}
 		state.Error = ""
@@ -109,6 +110,8 @@ func (v *View) requestComparison(state *changesState, pair domain.DiffComparison
 		}
 	}}) {
 		state.finishComparison()
+		state.Error = "操作繁忙，请重试"
+		state.FailedComparison = &pair
 	}
 }
 func (v *View) requestDiffRefs(state *changesState) {
@@ -185,7 +188,10 @@ func (v *View) diffComparisonBar(c *n.Context, t *n.Theme, state *changesState, 
 				if state.loading() {
 					n.Column(c.Key("compare-loading")).Width(16).Height(20).Children(func() { serviceSpinner(c, "", n.Font{Family: t.Font, Size: 12}, t.TextMuted) })
 				} else if state.Error != "" {
-					retry := control(c, 3).Size(16, 20).Label("重试比较").Tooltip(state.Error).Children(func() { n.Text(c, "!").FontSize(12).TextColor(t.Danger) })
+					retry := control(c, 3).Size(16, 20).Label("重试比较").Tooltip(state.Error).
+						Disabled(!v.Model.Connected || v.Controller == nil).Children(func() {
+						n.Text(c, "!").FontSize(12).TextColor(t.Danger)
+					})
 					if retry.Clicked() {
 						pair := state.Comparison
 						if state.FailedComparison != nil {
@@ -232,6 +238,7 @@ func (v *View) diffComparisonBar(c *n.Context, t *n.Theme, state *changesState, 
 		}
 	})
 }
+
 func (v *View) diffEndpointMenu(c *n.Context, t *n.Theme, trigger n.Element, state *changesState, base bool, open *bool) {
 	popover(c, trigger, open, func(panel n.Element) {
 		panel.Width(280).Padding(3).Radius(7).Background(raised(t)).Border(1, t.Border).Shadow(0, 4, 16, 0, n.RGBA(0, 0, 0, .12)).Children(func() {
