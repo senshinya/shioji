@@ -56,8 +56,20 @@ func (s *Store) historyRoundRangeLocked(q domain.HistoryQuery) (first, last int6
 		}
 		return q.WindowFirst, q.WindowLast, nil
 	}
-	err = s.historyQueries().QueryRow("SELECT COALESCE(MIN(position),0),COALESCE(MAX(position),0) FROM items WHERE "+historyVisibleSQL, q.SessionID).Scan(&first, &last)
+	// Separate the endpoints so SQLite can seek each one with items_order.
+	// A combined MIN/MAX scans the session and parses every item body.
+	lastQuery := "SELECT COALESCE(MAX(position),0) FROM items WHERE " + historyVisibleSQL
+	lastArgs := []any{q.SessionID}
+	if q.Before > 0 {
+		lastQuery += " AND position<?"
+		lastArgs = append(lastArgs, q.Before)
+	}
+	err = s.historyQueries().QueryRow(lastQuery, lastArgs...).Scan(&last)
 	if err != nil || last == 0 {
+		return
+	}
+	err = s.historyQueries().QueryRow("SELECT COALESCE(MIN(position),0) FROM items WHERE "+historyVisibleSQL, q.SessionID).Scan(&first)
+	if err != nil {
 		return
 	}
 	if q.After > 0 || q.AroundID != "" {
@@ -91,12 +103,6 @@ func (s *Store) historyRoundRangeLocked(q domain.HistoryQuery) (first, last int6
 		}
 		err = s.historyQueries().QueryRow("SELECT COALESCE(MAX(position),0) FROM items WHERE "+historyVisibleSQL+" AND position<?", q.SessionID, next).Scan(&last)
 		return
-	}
-	if q.Before > 0 {
-		err = s.historyQueries().QueryRow("SELECT COALESCE(MAX(position),0) FROM items WHERE "+historyVisibleSQL+" AND position<?", q.SessionID, q.Before).Scan(&last)
-		if err != nil || last == 0 {
-			return 0, 0, err
-		}
 	}
 	rows, err := s.historyQueries().Query("SELECT position FROM items WHERE session_id=? AND "+historyRoundStartSQL+" AND position<=? ORDER BY position DESC LIMIT ?", q.SessionID, last, q.Rounds+1)
 	if err != nil {

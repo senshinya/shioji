@@ -416,7 +416,7 @@ func TestPagedHistoryPrefetchesBeforeReachingTheEdge(t *testing.T) {
 					t.Error("normal paging exposes a loading row", label)
 				}
 			}
-			row, dy := 6, float32(-1)
+			row, dy := 0, float32(-60)
 			if newer {
 				// The dock is measured even while its trailing rows are offscreen.
 				// Stay within 3/4 of this 900-DIP viewport's actual scroll end,
@@ -426,16 +426,21 @@ func TestPagedHistoryPrefetchesBeforeReachingTheEdge(t *testing.T) {
 			v.lists["s"].ScrollTo(row, n.Start)
 			ui.Frame()
 			ui.Advance(time.Second)
+			if !newer {
+				ui.Scroll(1000, 350, 0, 1400)
+				ui.Advance(time.Second)
+			}
 			first, last := v.lists["s"].Visible()
 			if !newer && first <= 2 || newer && last >= 40 {
 				t.Fatal("fixture already reached the page edge", first)
 			}
 			before, after := v.lists["s"].ScrollEdges()
-			if !newer && before > 675 || newer && after > 675 {
-				t.Fatal("fixture is outside the prefetch threshold", before, after)
+			if !newer && (before < 1200 || before > 1600) || newer && after > 675 {
+				t.Fatal("fixture is outside the intended scroll range", before, after)
 			}
 			ui.Scroll(1000, 350, 0, dy)
 			ui.Advance(20 * time.Millisecond)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("history-prefetch-newer-%v.png", newer))
 			j := historyJob(t, v, "session.history")
 			if q := j.Input.(domain.HistoryQuery); !newer && q.Before != 100 || newer && q.After != 139 {
 				t.Fatal("did not prefetch the matching edge", q)

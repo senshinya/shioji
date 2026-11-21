@@ -320,10 +320,12 @@ func (v *View) prefetchHistory(c *n.Context, state *n.ListState, rows []transcri
 		return
 	}
 	before, after := state.ScrollEdges()
-	threshold := max(float32(240), state.Bounds(c).H*.75)
-	if p.direction < 0 && d.History.Older && before <= threshold {
+	height := state.Bounds(c).H
+	// Give earlier pages time to arrive during a fast upward scroll. A page
+	// can take several worker round trips when it contains long tool output.
+	if p.direction < 0 && d.History.Older && before <= max(240, 2*height) {
 		v.requestHistory(domain.HistoryQuery{Before: d.History.First}, false)
-	} else if p.direction > 0 && d.History.Newer && after <= threshold {
+	} else if p.direction > 0 && d.History.Newer && after <= max(240, .75*height) {
 		v.requestHistory(domain.HistoryQuery{After: d.History.Last}, false)
 	}
 }
