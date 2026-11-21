@@ -225,7 +225,7 @@ draft key 是 `(SessionID, RequestKey, QuestionID)`，不是当前页面索引�
 
 请求至少有 pending／submitting／answered／invalidated／unknown 状态。离线可编辑 draft，不能发送。若服务端先 resolved，则 invalidated，即使表单本地已填写；已提交的 receipt 不能被迟到的 resolved 覆盖为空。resolved 若没有可确认的用户回答，只显示“已结束／已失效”等真实结果，不编造回答回执。
 
-Codex `agentMessage.delivery=async` 的 questions 没有 JSON RPC request ID，应进入另一种异步交互关联，回答路径单独验证；首期若不能确认该路径，保留可读问题和明确的不支持状态，不伪造 server request response。
+Codex `agentMessage.delivery=async` 的 `questions` 属于原位会话问卷，异步消息继续执行，普通 composer 与待处理审批独立。答案由所属 worker 核对会话、问题和既有提交回执，当前有可引导轮次时使用同一轮输入，空闲时使用下一轮输入。Codex adapter 负责原生回答信封和问题标识。历史重新加载时，worker 可从同一 Codex 线程为身份与文本匹配的旧消息补回问卷。
 
 ## 操作接口草图
 

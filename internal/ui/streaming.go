@@ -160,6 +160,10 @@ func (v *View) requestSourceLabel(c *n.Context, t *n.Theme, label string, stream
 }
 
 func (v *View) assistantReply(c *n.Context, item domain.Item) {
+	if len(item.Questions) > 0 {
+		v.asyncQuestionMessage(c, c.Theme(), item)
+		return
+	}
 	v.md.DecorateRange = v.findDecoration(item, c.Theme().Dark)
 	root := n.Column(c.Key(item.ID)).FillWidth().Clip()
 	stream := v.replyStreams[item.ID]

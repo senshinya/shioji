@@ -233,6 +233,7 @@ func normalizeItemWithResources(source wire.Item, final bool, save func(harness.
 	case "agentMessage":
 		item.Kind = "assistant"
 		item.Text = bounded(source.Text)
+		item.Questions = asyncQuestions(source)
 	case "commandExecution":
 		item.Presentation = "command"
 		item.Name = bounded(source.Command)

@@ -395,11 +395,13 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		if in.SessionID != "" {
 			key = "session:" + in.SessionID
 		}
-		if !in.Continue && m.Drafts[key] == in.Text {
-			m.Drafts[key] = ""
+		if in.QuestionReply == nil {
+			if !in.Continue && m.Drafts[key] == in.Text {
+				m.Drafts[key] = ""
+			}
+			m.clearAcceptedAttachments(key, in.Attachments)
+			m.clearAcceptedSkills(key, in)
 		}
-		m.clearAcceptedAttachments(key, in.Attachments)
-		m.clearAcceptedSkills(key, in)
 		// A receipt settles the submitted choices, but current session
 		// configuration still comes from the owning worker's session metadata.
 		if op.Kind == "submit" && !in.Continue {

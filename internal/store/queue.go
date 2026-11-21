@@ -321,6 +321,12 @@ func (s *Store) acceptSteerLocked(in domain.Submission, turn string, revision in
 	if queued == nil {
 		now := time.Now()
 		item = &domain.Item{ID: "input:" + op.ID, TurnID: turn, Kind: "user", ReferencePositions: in.ReferencePositions, Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Status: "dispatching", Final: true, SentAt: &now}
+		if err = verifyQuestionReply(tx, in); err != nil {
+			return none, err
+		}
+		if in.QuestionReply != nil {
+			item.ReplyTo = in.QuestionReply.QuestionID
+		}
 		if err = putItem(tx, op.SessionID, item); err != nil {
 			return none, err
 		}

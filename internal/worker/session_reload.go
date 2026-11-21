@@ -118,8 +118,14 @@ func (s *Server) reloadSession(in domain.SessionReloadRequest, query bool) (doma
 				return errSessionTransitionRetired
 			}
 			if err == nil {
+				var history domain.RecoveryHistory
 				s.dispatchMu.Unlock()
 				err = runtime.Resume(ctx, d.Session)
+				if err == nil && runtime.Readiness().Capabilities.Recovery {
+					readCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+					history, _ = runtime.Inspect(readCtx, d.Session)
+					cancel()
+				}
 				s.dispatchMu.Lock()
 				if !transition.active() {
 					return errSessionTransitionRetired
@@ -131,6 +137,7 @@ func (s *Server) reloadSession(in domain.SessionReloadRequest, query bool) (doma
 					s.mu.Lock()
 					s.bound[in.SessionID] = true
 					s.mu.Unlock()
+					err = s.store.RestoreTranscriptQuestions(d.Session, history)
 				}
 			}
 		}

@@ -506,6 +506,12 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 	if queued == nil {
 		now := time.Now()
 		item = &domain.Item{ID: "input:" + op.ID, Kind: "user", ReferencePositions: in.ReferencePositions, Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Final: true, Status: "dispatching", SentAt: &now}
+		if err = verifyQuestionReply(tx, in); err != nil {
+			return none, err
+		}
+		if in.QuestionReply != nil {
+			item.ReplyTo = in.QuestionReply.QuestionID
+		}
 		if err = putItem(tx, session.ID, item); err != nil {
 			return none, err
 		}

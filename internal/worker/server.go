@@ -977,11 +977,17 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		if err != nil {
 			return nil, err
 		}
+		if in.QuestionReply != nil {
+			return nil, errors.New("请使用问题的回答入口")
+		}
 		return s.enqueue(in)
 	case "turn.steer":
 		in, err := decode[protocol.SteerInput](body)
 		if err != nil {
 			return nil, err
+		}
+		if in.Input.QuestionReply != nil {
+			return nil, errors.New("请使用问题的回答入口")
 		}
 		return s.steer(in)
 	case "queue.edit", "queue.remove", "queue.continue", "queue.send", "queue.reorder":
@@ -1022,10 +1028,19 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		if err != nil {
 			return nil, err
 		}
+		if in.QuestionReply != nil {
+			return nil, errors.New("请使用问题的回答入口")
+		}
 		if strings.HasPrefix(in.OperationID, "scheduled:") {
 			return nil, errors.New("定时运行标识仅供所属设备的调度器使用")
 		}
 		return s.submit(in)
+	case "question.reply":
+		in, err := decode[protocol.QuestionReplyInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.replyToQuestion(in)
 	case "request.respond":
 		in, err := decode[AnswerInput](body)
 		if err != nil {
@@ -1413,7 +1428,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 				if in.GoalObjective != "" {
 					err = s.startGoal(ctx, runtime, session, in.GoalObjective, gate)
 				} else {
-					turnID, err = runtime.Submit(ctx, session, op.ID, harness.TurnInput{Text: in.Text, Attachments: inputs, Skills: in.Skills})
+					turnID, err = runtime.Submit(ctx, session, op.ID, harness.TurnInput{Text: in.Text, Attachments: inputs, Skills: in.Skills, QuestionReply: in.QuestionReply})
 				}
 			}
 		}

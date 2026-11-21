@@ -30,9 +30,10 @@ type HistoryBoundary struct {
 }
 
 type TurnInput struct {
-	Text        string
-	Attachments []AttachmentInput
-	Skills      []domain.SkillReference
+	Text          string
+	Attachments   []AttachmentInput
+	Skills        []domain.SkillReference
+	QuestionReply *domain.QuestionReply
 }
 type SkillProvider interface {
 	Skills(context.Context, domain.LaunchContext) (domain.SkillCatalog, error)

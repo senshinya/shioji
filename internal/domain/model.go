@@ -92,6 +92,7 @@ type ReplyCompletion struct {
 }
 
 type Submission struct {
+	QuestionReply      *QuestionReply      `json:"questionReply,omitempty"`
 	GoalObjective      string              `json:"goalObjective,omitempty"`
 	ReferencePositions []ReferencePosition `json:"referencePositions,omitempty"`
 	Skills             []SkillReference    `json:"skills,omitempty"`
@@ -129,6 +130,8 @@ type Operation struct {
 	Error     string         `json:"error,omitempty"`
 }
 type Item struct {
+	Questions          []Question          `json:"questions,omitempty"`
+	ReplyTo            string              `json:"replyTo,omitempty"`
 	WorkID             string              `json:"workId,omitempty"` // opaque session-owned source work
 	ReferencePositions []ReferencePosition `json:"referencePositions,omitempty"`
 	Skills             []SkillReference    `json:"skills,omitempty"`
@@ -177,6 +180,14 @@ type Question struct {
 	Options []Option `json:"options,omitempty"`
 	Custom  bool     `json:"custom"`
 	Secret  bool     `json:"secret,omitempty"`
+}
+
+// QuestionReply associates a normal input with a nonblocking transcript question.
+// The owning device supplies Title and validates the opaque QuestionID.
+type QuestionReply struct {
+	ItemID     string `json:"itemId"`
+	QuestionID string `json:"questionId"`
+	Title      string `json:"title,omitempty"`
 }
 type Option struct {
 	Label       string `json:"label"`

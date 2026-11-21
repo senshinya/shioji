@@ -15,7 +15,7 @@ func retainedDraftPrefix(session, workspace string) string {
 }
 
 func (m *Model) retainRejectedDraft(in domain.Submission) {
-	if in.Continue {
+	if in.Continue || in.QuestionReply != nil {
 		return
 	}
 	key := "home"

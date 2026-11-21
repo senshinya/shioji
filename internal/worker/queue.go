@@ -270,7 +270,7 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 		if err == nil {
 			s.dispatchMu.Unlock()
 			locked = false
-			err = runtime.Steer(ctx, d.Session, in.TurnID, op.ID, harness.TurnInput{Text: in.Input.Text, Attachments: inputs, Skills: in.Input.Skills})
+			err = runtime.Steer(ctx, d.Session, in.TurnID, op.ID, harness.TurnInput{Text: in.Input.Text, Attachments: inputs, Skills: in.Input.Skills, QuestionReply: in.Input.QuestionReply})
 			s.dispatchMu.Lock()
 			locked = true
 			if current := s.currentRuntime(op.SessionID); current == nil || current.Done() != runtime.Done() {

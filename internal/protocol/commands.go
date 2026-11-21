@@ -52,6 +52,14 @@ type AnswerInput struct {
 	SessionID string        `json:"sessionId"`
 	Answer    domain.Answer `json:"answer"`
 }
+type QuestionReplyInput struct {
+	OperationID string           `json:"operationId"`
+	SessionID   string           `json:"sessionId"`
+	ItemID      string           `json:"itemId"`
+	QuestionID  string           `json:"questionId"`
+	Text        string           `json:"text"`
+	Config      domain.RunConfig `json:"config"`
+}
 type RemoteError struct {
 	Code    string
 	Message string

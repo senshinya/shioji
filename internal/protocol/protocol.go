@@ -53,7 +53,10 @@ const Major = 2
 // Minor 51 adds owning-worker goals and durable goal control receipts.
 // Minor 52 adds coherent paged snapshots and a terminal receipt for unreceived input.
 // Minor 53 adds bounded catalog projections and batched operation lookup.
-const Minor = 53
+// Minor 54 adds replies to nonblocking questions in the transcript.
+const Minor = 54
+
+const QuestionReplyMinor = 54
 
 const CatalogMinor = 53
 
