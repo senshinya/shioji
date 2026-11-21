@@ -173,42 +173,58 @@ func TestDisabledControlDoesNotReactToHover(t *testing.T) {
 }
 
 func TestInspectorOpensContinuouslyAndRespectsReducedMotion(t *testing.T) {
-	for _, reduced := range []bool{false, true} {
-		ui := n.NewTester(New(layoutModel(), nil, "").View, 1440, 900)
-		ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
-		if err := ui.Click("展开更改侧栏"); err != nil {
-			t.Fatal(err)
+	for _, layout := range []struct {
+		width int
+		zoom  float32
+	}{
+		{1440, 1},
+		{950, 1},
+		{1240, 1.15},
+	} {
+		for _, reduced := range []bool{false, true} {
+			m := layoutModel()
+			m.Preferences.InterfaceZoom = layout.zoom
+			ui := n.NewTester(New(m, nil, "").View, layout.width, 900)
+			checkInspectorOpening(t, ui, layout.width, 280*layout.zoom, reduced)
 		}
-		ui.Advance(70 * time.Millisecond)
-		moving, ok := ui.Find("更改侧栏")
-		if !ok {
-			t.Fatal("inspector did not open")
-		}
-		if moving.Y != 0 || moving.H != 900 {
-			t.Fatalf("inspector lost its full-height column during animation: %+v", moving)
-		}
-		history, _ := ui.Find("对话记录")
-		if math.Abs(float64(history.X+history.W-moving.X)) > .5 {
-			t.Fatalf("conversation crosses the animated inspector divider: history=%+v inspector=%+v", history, moving)
-		}
-		if !reduced && (moving.W <= 0 || moving.W >= 280) {
-			t.Fatalf("inspector jumped to its final width: %+v", moving)
-		}
-		if reduced && moving.W != 280 {
-			t.Fatalf("Reduce Motion still interpolates pane size: %+v", moving)
-		}
-		ui.Advance(200 * time.Millisecond)
-		settled, _ := ui.Find("更改侧栏")
-		if settled.W != 280 {
-			t.Fatalf("inspector did not settle at its frozen width: %+v", settled)
-		}
+	}
+}
+
+func checkInspectorOpening(t *testing.T, ui *n.Tester, windowWidth int, panelWidth float32, reduced bool) {
+	t.Helper()
+	ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
+	if err := ui.Click("展开侧栏"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(70 * time.Millisecond)
+	moving, ok := ui.Find("更改侧栏")
+	if !ok {
+		t.Fatal("inspector did not open")
+	}
+	if moving.Y != 0 || math.Abs(float64(moving.H-900)) > .5 {
+		t.Fatalf("inspector lost its full-height column during animation: %+v", moving)
+	}
+	history, _ := ui.Find("对话记录")
+	if math.Abs(float64(history.X+history.W-moving.X)) > .5 {
+		t.Fatalf("at window width %d conversation crosses the animated inspector divider: history=%+v inspector=%+v", windowWidth, history, moving)
+	}
+	if !reduced && (moving.W <= 0 || moving.W >= panelWidth) {
+		t.Fatalf("inspector jumped to its final width: %+v", moving)
+	}
+	if reduced && math.Abs(float64(moving.W-panelWidth)) > .5 {
+		t.Fatalf("Reduce Motion still interpolates pane size: %+v", moving)
+	}
+	ui.Advance(200 * time.Millisecond)
+	settled, _ := ui.Find("更改侧栏")
+	if math.Abs(float64(settled.W-panelWidth)) > .5 || math.Abs(float64(settled.X+settled.W)-float64(windowWidth)) > .5 {
+		t.Fatalf("inspector did not settle at its frozen width: %+v", settled)
 	}
 }
 
 func TestInspectorReversesFromItsCurrentPosition(t *testing.T) {
 	m := layoutModel()
 	ui := n.NewTester(New(m, nil, "").View, 1440, 900)
-	if err := ui.Click("展开更改侧栏"); err != nil {
+	if err := ui.Click("展开侧栏"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(70 * time.Millisecond)
@@ -232,23 +248,23 @@ func TestInspectorReversesFromItsCurrentPosition(t *testing.T) {
 
 func TestNarrowInspectorSlidesFromWindowEdge(t *testing.T) {
 	for _, reduced := range []bool{false, true} {
-		ui := n.NewTester(New(layoutModel(), nil, "").View, 950, 900)
+		ui := n.NewTester(New(layoutModel(), nil, "").View, 850, 900)
 		ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
-		if err := ui.Click("展开更改侧栏"); err != nil {
+		if err := ui.Click("展开侧栏"); err != nil {
 			t.Fatal(err)
 		}
 		ui.Advance(70 * time.Millisecond)
 		moving, _ := ui.Find("更改侧栏")
 		// Find reports the visible box, clipped where the drawer enters.
-		if math.Abs(float64(moving.W+moving.X-670-280)) > .5 || moving.H != 900 || moving.Y != 0 {
+		if math.Abs(float64(moving.W+moving.X-850)) > .5 || moving.H != 900 || moving.Y != 0 {
 			t.Fatalf("drawer resized its contents during entrance: %+v", moving)
 		}
-		if !reduced && moving.X <= 670 || reduced && moving.X != 670 {
+		if !reduced && moving.X <= 570 || reduced && moving.X != 570 {
 			t.Fatalf("drawer does not follow the window edge / Reduce Motion: %+v", moving)
 		}
 		ui.Advance(220 * time.Millisecond)
 		settled, _ := ui.Find("更改侧栏")
-		if settled.X != 670 || settled.W != 280 {
+		if settled.X != 570 || settled.W != 280 {
 			t.Fatalf("drawer did not settle at its frozen bounds: %+v", settled)
 		}
 	}

@@ -85,10 +85,10 @@ func TestConversationToolbarActionsAlignWithSidebarFrame(t *testing.T) {
 					t.Errorf("%s starts at y=%g (found: %v), want sidebar frame y=%d", label, bounds.Y, ok, sidebarFrameTop)
 				}
 			}
-			for _, label := range []string{"当前设备", "保持设备唤醒", "最近消息", "展开更改侧栏"} {
+			for _, label := range []string{"当前设备", "保持设备唤醒", "最近消息", "展开侧栏"} {
 				checkTop(label)
 			}
-			if err := ui.Click("展开更改侧栏"); err != nil {
+			if err := ui.Click("展开侧栏"); err != nil {
 				t.Fatal(err)
 			}
 			ui.Advance(time.Second)

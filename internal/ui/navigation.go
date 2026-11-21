@@ -285,20 +285,23 @@ func (v *View) navigationRows(c *n.Context) []navigationRow {
 	return rows
 }
 
-func (v *View) sidebar(c *n.Context, t *n.Theme) {
-	m := v.Model
-	width, _ := c.Size()
-	sidebarWidth := float32(256)
+func navigationSidebarWidth(width float32) float32 {
 	if width <= 980 {
-		sidebarWidth = 224
-	} else if width <= 1160 {
-		sidebarWidth = 236
+		return 224
 	}
+	if width <= 1160 {
+		return 236
+	}
+	return 256
+}
+
+func (v *View) sidebar(c *n.Context, t *n.Theme, width float32) {
+	m := v.Model
 	color := t.Surface
 	if t.Dark {
 		color = n.Hex("#161616")
 	}
-	n.Column(c).Width(sidebarWidth).FillHeight().Padding(mainWindowTopInset, 0, 8, 8).Children(func() {
+	n.Column(c).Width(width).FillHeight().Padding(mainWindowTopInset, 0, 8, 8).Children(func() {
 		card := n.Column(c).Fill().Radius(14).Clip().Background(color).Border(1, t.Border)
 		card.Children(func() {
 			n.Column(c.Key("nav-top")).FillWidth().Padding(sidebarHeaderTopInset, sidebarTrailingInset, 0, sidebarLeadingInset).Gap(sidebarHeaderGap).Children(func() {

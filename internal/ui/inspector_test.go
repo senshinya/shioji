@@ -175,7 +175,15 @@ func TestInspectorDividerTracksDragAndPersistsWidth(t *testing.T) {
 }
 
 func TestInspectorResizeBoundsInListAndFileViews(t *testing.T) {
-	for _, width := range []int{900, 1440} {
+	for _, layout := range []struct {
+		width int
+		limit float32
+	}{
+		{850, 610}, // Compact drawer leaves navigation uncovered.
+		{900, 316}, // Docked inspector leaves a 360-point conversation.
+		{1100, 504},
+		{1440, 824},
+	} {
 		for _, file := range []bool{false, true} {
 			m := layoutModel()
 			m.Inspectors["s"] = true
@@ -183,7 +191,7 @@ func TestInspectorResizeBoundsInListAndFileViews(t *testing.T) {
 			if file {
 				v.changesFor("s").selectFile("main.go")
 			}
-			ui := n.NewTester(v.View, width, 900)
+			ui := n.NewTester(v.View, layout.width, 900)
 			grip, _ := ui.Find("调整右侧栏宽度")
 			x, y := grip.X+3, grip.Y+100
 			ui.Press(x, y)
@@ -191,12 +199,8 @@ func TestInspectorResizeBoundsInListAndFileViews(t *testing.T) {
 			ui.Release(x-2000, y)
 			ui.Advance(250 * time.Millisecond)
 			panel, _ := ui.Find("更改侧栏")
-			limit := float32(width - 256 - 360)
-			if width <= 1160 {
-				limit = float32(width - 224 - 16)
-			}
-			if panel.W != min(limit, 960) {
-				t.Fatal("resize exceeds available width", width, file, panel)
+			if panel.W != layout.limit {
+				t.Fatal("resize did not stop at the available width", layout.width, file, panel)
 			}
 			grip, _ = ui.Find("调整右侧栏宽度")
 			x = grip.X + 3
@@ -206,7 +210,7 @@ func TestInspectorResizeBoundsInListAndFileViews(t *testing.T) {
 			ui.Advance(250 * time.Millisecond)
 			panel, _ = ui.Find("更改侧栏")
 			if panel.W != 280 {
-				t.Fatal("resize lost minimum readable width", width, file, panel)
+				t.Fatal("resize lost minimum readable width", layout.width, file, panel)
 			}
 		}
 	}

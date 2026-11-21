@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+const (
+	inspectorMinWidth             = 280
+	inspectorMaxWidth             = 960
+	inspectorMinConversationWidth = 360
+)
+
 type changesState struct {
 	FailedComparison *domain.DiffComparison
 	RefFocusFirst    bool
@@ -368,7 +374,7 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool, width, limit flo
 			change = -10
 		}
 		if change != 0 {
-			v.Model.InspectorWidth = min(max(width+change, 280), min(limit, 960))
+			v.Model.InspectorWidth = min(max(width+change, inspectorMinWidth), min(limit, inspectorMaxWidth))
 			c.AnimationFrame()
 		}
 	})

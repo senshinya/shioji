@@ -248,7 +248,7 @@ func TestConversationToolbarOnlyKeepsTheSidebarEntry(t *testing.T) {
 			t.Fatal("redundant toolbar entry remains", label)
 		}
 	}
-	if err := ui.Click("展开更改侧栏"); err != nil {
+	if err := ui.Click("展开侧栏"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(300 * time.Millisecond)

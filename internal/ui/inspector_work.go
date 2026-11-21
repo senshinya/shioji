@@ -189,7 +189,7 @@ func (v *View) workInspector(c *n.Context, t *n.Theme, drawer bool, width, limit
 			change = -10
 		}
 		if change != 0 {
-			v.Model.InspectorWidth = min(max(width+change, 280), min(limit, 960))
+			v.Model.InspectorWidth = min(max(width+change, inspectorMinWidth), min(limit, inspectorMaxWidth))
 			c.AnimationFrame()
 		}
 	})

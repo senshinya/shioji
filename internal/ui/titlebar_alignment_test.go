@@ -29,8 +29,8 @@ func TestMainToolbarContentAlignsWithSidebarFrame(t *testing.T) {
 			const toolbarCenter = 22 // A 28 DIP control starting at the sidebar frame's 8 DIP top.
 			const trafficLightCenter = 29
 			check(trafficLightCenter, "搜索")
-			check(toolbarCenter, "会话名称", "当前设备", "展开更改侧栏")
-			if err := ui.Click("展开更改侧栏"); err != nil {
+			check(toolbarCenter, "会话名称", "当前设备", "展开侧栏")
+			if err := ui.Click("展开侧栏"); err != nil {
 				t.Fatal(err)
 			}
 			ui.Move(0, 0)

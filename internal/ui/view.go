@@ -479,7 +479,9 @@ func (v *View) View(c *n.Context) {
 			v.deviceView(c, &t)
 			return
 		}
-		v.sidebar(c, &t)
+		width, _ := c.Size()
+		navigationWidth := navigationSidebarWidth(width)
+		v.sidebar(c, &t, navigationWidth)
 		if v.schedulePageOpen() {
 			v.schedulePage(c, &t)
 			return
@@ -488,26 +490,18 @@ func (v *View) View(c *n.Context) {
 			v.archivePage(c, &t)
 			return
 		}
-		width, _ := c.Size()
 		owner = v.focusedView()
 		open := owner.Model.SessionID != "" && !v.devices && v.workspaceEditor == nil && m.Inspectors[owner.Model.SessionID] && (!m.FocusSecondary || m.SecondarySessionID == owner.Model.SessionID)
-		inline := width > 1160
 		if !open {
 			v.resizingInspector = false
 		}
-		panelWidth := v.Model.InspectorWidth
-		if panelWidth == 0 {
-			panelWidth = 280
-		}
-		limit := width - 256 - 360
+		available := width - navigationWidth
+		limit := available - inspectorMinConversationWidth
+		inline := limit >= inspectorMinWidth
 		if !inline {
-			navigation := float32(236)
-			if width <= 980 {
-				navigation = 224
-			}
-			limit = width - navigation - 16
+			limit = available - 16
 		}
-		panelWidth = min(max(panelWidth, 280), min(limit, 960))
+		panelWidth := min(max(m.InspectorWidth, inspectorMinWidth), min(limit, inspectorMaxWidth))
 		conversation := n.Column(c.Key("conversation-pane")).FillHeight().Grow(1)
 		if !v.resizingInspector {
 			conversation.Transition(n.ElementTransition{Duration: motionAnimation(c, 200*time.Millisecond).Duration, Ease: n.EaseOut, Size: true})
@@ -668,9 +662,9 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 		v.currentDeviceControl(c, t)
 		v.feedbackButton(c, t)
 		if m.SessionID != "" && !v.devices {
-			label := "展开更改侧栏"
+			label := "展开侧栏"
 			if m.Inspectors[m.SessionID] {
-				label = "收起更改侧栏"
+				label = "收起侧栏"
 			}
 			if iconButton(c, sidebarIcon, label).Clicked() {
 				m.Inspectors[m.SessionID] = !m.Inspectors[m.SessionID]

@@ -210,7 +210,7 @@ func TestBranchStripAndIndependentInspectorGeometry(t *testing.T) {
 	if _, ok := test.Find("选择分支"); !ok {
 		t.Fatal("missing branch control")
 	}
-	if err := test.Click("展开更改侧栏"); err != nil {
+	if err := test.Click("展开侧栏"); err != nil {
 		t.Fatal("missing inspector toggle")
 	}
 	test.Advance(220 * time.Millisecond)
