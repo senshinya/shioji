@@ -242,7 +242,10 @@ func (s *Server) catalogLoop() {
 					continue
 				}
 				version, e := running.CatalogVersion()
-				if err == nil && e == nil && installed == version && state.phase == domain.RuntimeReady {
+				// A timed-out version check does not invalidate an already verified
+				// catalog. The next check can still detect a replacement or removal.
+				if e == nil && state.phase == domain.RuntimeReady &&
+					(errors.Is(err, context.DeadlineExceeded) || err == nil && installed == version) {
 					continue
 				}
 			}

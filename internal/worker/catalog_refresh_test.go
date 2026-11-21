@@ -17,6 +17,8 @@ import (
 // and capabilities. Real worker admission, sessions, queues and polling run.
 type changingCatalog struct {
 	version                        atomic.Int32
+	versionChecks                  chan bool
+	versionTimeout                 atomic.Bool
 	titleStarted, titleRelease     chan struct{}
 	refreshStarted, refreshRelease chan struct{}
 	keepOld                        bool
@@ -26,7 +28,19 @@ type changingCatalog struct {
 func (a *changingCatalog) Descriptor() domain.HarnessDescriptor {
 	return domain.HarnessDescriptor{ID: "changing", Name: "Changing"}
 }
-func (a *changingCatalog) CatalogVersion() (string, error) { return fmt.Sprint(a.version.Load()), nil }
+func (a *changingCatalog) CatalogVersion() (string, error) {
+	timedOut := a.versionTimeout.Load()
+	if a.versionChecks != nil {
+		select {
+		case a.versionChecks <- timedOut:
+		default:
+		}
+	}
+	if timedOut {
+		return "", context.DeadlineExceeded
+	}
+	return fmt.Sprint(a.version.Load()), nil
+}
 func (a *changingCatalog) Start(ctx context.Context, opts harness.StartOptions) (harness.Runtime, error) {
 	version := a.version.Load()
 	if version == 2 && opts.Scope == nil && a.refreshStarted != nil {
@@ -113,6 +127,41 @@ func refreshCatalogByReadiness(t *testing.T, s *Server, wantModel string, wantSt
 	t.Fatal("catalog did not refresh", s.runtimeReadiness())
 	return domain.Readiness{}
 }
+
+func TestInstalledCatalogRemainsReadyWhenVersionCheckTimesOut(t *testing.T) {
+	a := &changingCatalog{versionChecks: make(chan bool, 4)}
+	a.version.Store(1)
+	s, _ := memoryWorker(t, a)
+	a.versionTimeout.Store(true)
+	s.wakeCatalog()
+	ctx, cancel := context.WithTimeout(s.ctx, 3*time.Second)
+	defer cancel()
+	// The second timed-out check begins after the first one has published its
+	// result. A remote client sees that first result via readiness.
+	for timedOut := 0; timedOut < 2; {
+		select {
+		case failed := <-a.versionChecks:
+			if failed {
+				timedOut++
+			}
+			s.wakeCatalog()
+		case <-ctx.Done():
+			t.Fatal("background version checks did not run")
+		}
+	}
+	out, err := s.handle("readiness", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := out.(domain.Readiness)
+	if ready.State != domain.RuntimeReady || ready.Error != "" || len(ready.Models) != 1 || ready.Models[0].ID != "model-1" {
+		t.Fatalf("version check timeout invalidated confirmed catalog: state=%q error=%q models=%v", ready.State, ready.Error, ready.Models)
+	}
+	a.version.Store(2)
+	a.versionTimeout.Store(false)
+	refreshCatalogByReadiness(t, s, "model-2", domain.RuntimeReady)
+}
+
 func TestInstalledCatalogRefreshKeepsExecutingSessionAndUsesNewModelsForNewSessions(t *testing.T) {
 	a := &changingCatalog{}
 	a.version.Store(1)
