@@ -405,7 +405,7 @@ func (v *View) adoptSendFooter(rows []transcriptRow, turnID, key string) bool {
 		return false
 	}
 	for i, row := range rows {
-		if row.footer == turnID {
+		if row.footer == turnID && row.replyBefore == nil {
 			if v.toolArrivals.footerKeys == nil {
 				v.toolArrivals.footerKeys = map[string]string{}
 			}

@@ -157,7 +157,7 @@ func (v *View) historyRunningRows(rows []transcriptRow) []transcriptRow {
 	}
 	key := "history-running:" + m.in.OperationID
 	for _, row := range rows {
-		if row.footer != "" {
+		if row.footer != "" && row.replyBefore == nil {
 			if _, original := m.turns[row.footer]; !original {
 				v.retainHistoryRunningFooter(m, row.footer)
 				return rows

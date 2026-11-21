@@ -83,15 +83,17 @@ func TestSteerShowsOneMovingBubbleAcrossWorkerUpdates(t *testing.T) {
 	}
 }
 
-func TestSteerShowsSendingInTheExistingTurnStatus(t *testing.T) {
+func TestSteerKeepsTheRunningFooterWhileWaitingInReducedMotion(t *testing.T) {
 	for _, eventFirst := range []bool{false, true} {
 		v, ui := nativeQueueFixture()
 		detail := v.Model.Details["s"]
 		detail.Items[0].TurnID = "active"
+		detail.Items[0].Final = true
 		v.Model.Details["s"] = detail
 		ui.SetPreferences(n.Preferences{ReduceMotion: true})
 		ui.Frame()
 		progress := v.runningProgress
+		before := v.historyRowBounds["turn-footer:active"]
 		if progress == nil || !ui.HasText("进行中") {
 			t.Fatal("fixture did not show the active turn")
 		}
@@ -101,17 +103,17 @@ func TestSteerShowsSendingInTheExistingTurnStatus(t *testing.T) {
 		job := feedbackJob(t, v, "turn.steer")
 		in := job.Input.(protocol.SteerInput).Input
 		ui.Frame()
-		sending, visible := ui.Find("正在发送")
+		running, visible := ui.Find("进行中")
 		footer, hasFooter := ui.Find("回复信息")
-		bubbleActions, _ := ui.Find("用户消息操作")
-		if !visible || !hasFooter || sending.Y < footer.Y || sending.Y+sending.H > footer.Y+footer.H || sending.Y < bubbleActions.Y+bubbleActions.H || v.runningProgress != progress {
-			t.Fatalf("sending caption should share the active turn indicator, eventFirst=%v: caption=%+v footer=%+v actions=%+v", eventFirst, sending, footer, bubbleActions)
+		if !visible || !hasFooter || ui.HasText("正在发送") || running.Y < footer.Y || running.Y+running.H > footer.Y+footer.H ||
+			v.historyRowBounds["turn-footer:active"] != before || v.historyRowBounds["input:"+in.OperationID].H > 0 || v.runningProgress != progress {
+			t.Fatalf("the running footer moved before confirmation, eventFirst=%v: caption=%+v footer=%+v", eventFirst, running, footer)
 		}
 		accepted, _ := json.Marshal(domain.Operation{ID: in.OperationID, SessionID: "s", State: domain.OperationAccepted})
 		job.Apply(v.Model, accepted, nil)
 		ui.Frame()
-		if current, ok := ui.Find("正在发送"); !ok || current != sending {
-			t.Fatal("worker acceptance changed the still-pending indicator", sending, current)
+		if current, ok := ui.Find("进行中"); !ok || current != running {
+			t.Fatal("worker acceptance changed the still-pending indicator", running, current)
 		}
 		detail = v.Model.Details["s"]
 		item := domain.Item{ID: "input:" + in.OperationID, TurnID: "active", Kind: "user", Text: in.Text, Status: "sent", Final: true}
@@ -127,8 +129,11 @@ func TestSteerShowsSendingInTheExistingTurnStatus(t *testing.T) {
 			ack()
 		}
 		ui.Frame()
-		if current, ok := ui.Find("回复信息"); !ok || current != footer || ui.HasText("正在发送") || !ui.HasText("进行中") {
-			t.Fatal("first confirmation did not update the existing indicator", footer, current)
+		if ui.HasText("正在发送") || !ui.HasText("进行中") {
+			t.Fatal("first confirmation did not update the existing indicator")
+		}
+		if !eventFirst && (v.historyRowBounds["turn-footer:active"] != before || v.historyRowBounds[item.ID].H > 0) {
+			t.Fatal("confirmation without an authoritative input moved the running footer")
 		}
 		if eventFirst {
 			ack()
@@ -138,9 +143,12 @@ func TestSteerShowsSendingInTheExistingTurnStatus(t *testing.T) {
 		ack()
 		job.Apply(v.Model, accepted, nil)
 		ui.Frame()
-		after, visible := ui.Find("回复信息")
-		if !visible || after != footer || ui.HasText("正在发送") || !ui.HasText("进行中") || v.runningProgress != progress {
-			t.Fatalf("receipt replaced the running indicator, eventFirst=%v: before=%+v after=%+v", eventFirst, footer, after)
+		tail := v.historyRowBounds["turn-footer:active"]
+		inserted := v.historyRowBounds[item.ID]
+		summary := v.historyRowBounds["reply-before:"+item.ID]
+		if summary != before || inserted.Y <= summary.Y || tail.Y <= inserted.Y ||
+			ui.HasText("正在发送") || !ui.HasText("进行中") || v.runningProgress != progress {
+			t.Fatalf("reduced motion did not show the settled insertion in order, eventFirst=%v: summary=%+v input=%+v footer=%+v", eventFirst, summary, inserted, tail)
 		}
 	}
 }

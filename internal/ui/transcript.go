@@ -10,22 +10,34 @@ import (
 )
 
 type transcriptRow struct {
-	key        string
-	item       domain.Item
-	end        int // original event index; -1 for an expanded group heading
-	group      string
-	count      int
-	issues     int
-	toolParent string
-	toolTitle  bool
-	toolStatus bool
-	toolReveal float32
-	toolGap    bool
-	opacity    float32
-	footer     string
-	preparing  string
-	restarting bool
-	toolResult string
+	key         string
+	item        domain.Item
+	end         int // original event index; -1 for an expanded group heading
+	group       string
+	count       int
+	issues      int
+	toolParent  string
+	toolTitle   bool
+	toolStatus  bool
+	toolReveal  float32
+	toolGap     bool
+	opacity     float32
+	footer      string
+	footerAfter string
+	replyBefore *replyBoundary
+	preparing   string
+	restarting  bool
+	toolResult  string
+}
+
+type replyBoundary struct {
+	inputID    string
+	after      string
+	start, end *time.Time
+}
+
+func acceptedReplyInput(item domain.Item) bool {
+	return item.Kind == "user" && item.WorkID == "" && (item.Status == "sent" || item.Status == "")
 }
 
 // Keep arrival identity outside virtual rows: scrolling an existing call back
@@ -38,6 +50,8 @@ type toolArrivalState struct {
 	seen          map[string]bool
 	motions       map[string]*toolDisclosureMotion
 	footerKeys    map[string]string // Restart waiting rows retain their native animation state.
+	steerFooter   *steerFooterHandoff
+	heldSteerTurn string
 }
 
 // An automatic compaction or hook can arrive before the adapter can confirm
@@ -82,18 +96,43 @@ func withGoalContinuationMarkers(rows []transcriptRow) []transcriptRow {
 // A turn receipt is its own stable row below a disclosure, so it follows the
 // group's changing height rather than disappearing inside its clipped body.
 func withTurnFooters(rows []transcriptRow, turns map[string]domain.Turn) []transcriptRow {
-	last := map[string]int{}
+	type turnTail struct {
+		index          int
+		start          *time.Time
+		after          string
+		replied, input bool
+	}
+	tails := make(map[string]turnTail, len(turns))
+	var boundaries map[int]*replyBoundary
 	for i, row := range rows {
-		if row.end >= 0 && row.item.TurnID != "" {
-			last[row.item.TurnID] = i
+		item := row.item
+		turn, ok := turns[item.TurnID]
+		if !ok || item.TurnID == "" || row.end < 0 || turn.Presentation == "compaction" {
+			continue
 		}
-	}
-	footerCount := 0
-	for id := range last {
-		if turn, ok := turns[id]; ok && turn.Presentation != "compaction" {
-			footerCount++
+		tail, seen := tails[item.TurnID]
+		if !seen {
+			tail.start = turn.StartedAt
 		}
+		if acceptedReplyInput(item) {
+			if tail.replied {
+				if boundaries == nil {
+					boundaries = make(map[int]*replyBoundary)
+				}
+				boundaries[tail.index] = &replyBoundary{inputID: item.ID, after: tail.after, start: tail.start, end: item.SentAt}
+				tail.after = item.ID
+			}
+			if tail.input || tail.start == nil || item.SentAt != nil && item.SentAt.After(*tail.start) {
+				tail.start = item.SentAt
+			}
+			tail.replied, tail.input = false, true
+		} else if item.Kind == "assistant" && item.WorkID == "" && !domain.HistorySpacer(item) {
+			tail.replied = true
+		}
+		tail.index = i
+		tails[item.TurnID] = tail
 	}
+	footerCount := len(tails) + len(boundaries)
 	if footerCount == 0 {
 		return rows
 	}
@@ -104,20 +143,22 @@ func withTurnFooters(rows []transcriptRow, turns map[string]domain.Turn) []trans
 	to := len(rows) - 1
 	// Late output from an earlier turn can follow the active turn's records.
 	// Its result stays in history; the active status remains the final row.
-	for id, turn := range turns {
-		if _, present := last[id]; present && turn.Status.Active() && turn.Presentation != "compaction" {
-			rows[to] = transcriptRow{key: "turn-footer:" + id, footer: id, end: -1, opacity: 1}
+	for id, tail := range tails {
+		if turns[id].Status.Active() {
+			rows[to] = transcriptRow{key: "turn-footer:" + id, footer: id, footerAfter: tail.after, end: -1, opacity: 1}
 			to--
-			delete(last, id)
+			delete(tails, id)
 		}
 	}
 	for i := length - 1; i >= 0; i-- {
 		row := rows[i]
-		if end, present := last[row.item.TurnID]; row.end >= 0 && row.item.TurnID != "" && present && end == i {
-			if turn, ok := turns[row.item.TurnID]; ok && turn.Presentation != "compaction" {
-				rows[to] = transcriptRow{key: "turn-footer:" + row.item.TurnID, footer: row.item.TurnID, end: -1, opacity: 1}
-				to--
-			}
+		if tail, present := tails[row.item.TurnID]; present && tail.index == i {
+			rows[to] = transcriptRow{key: "turn-footer:" + row.item.TurnID, footer: row.item.TurnID, footerAfter: tail.after, end: -1, opacity: 1}
+			to--
+		}
+		if boundary := boundaries[i]; boundary != nil {
+			rows[to] = transcriptRow{key: "reply-before:" + boundary.inputID, footer: row.item.TurnID, footerAfter: boundary.after, replyBefore: boundary, end: -1, opacity: 1}
+			to--
 		}
 		rows[to] = row
 		to--
@@ -272,6 +313,9 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		}
 		if item.Kind != "tool" {
 			progress := float32(1)
+			if item.Kind == "user" {
+				seen[item.ID] = true
+			}
 			if item.Kind != "user" && item.Kind != "assistant" && item.Kind != "request" && item.Kind != "request_result" {
 				progress = arrival(item.ID)
 			}

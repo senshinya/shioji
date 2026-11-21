@@ -1270,6 +1270,8 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	} else {
 		state.FollowAnimation = nil
 	}
+	var heldSteer *domain.Item
+	detail.Items, heldSteer = v.holdSteerMessage(c, detail)
 	rows := v.transcriptRows(detail.Items)
 	rows = v.revealFindTarget(rows, reopening)
 	rows = v.contextRows(rows)
@@ -1281,7 +1283,17 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	for _, turn := range detail.Turns {
 		turns[turn.ID] = turn
 	}
+	if heldSteer != nil {
+		// Project the worker's cutoff without mounting its message or the next
+		// running footer in the same frame as the old footer's transition.
+		rows = append(rows, transcriptRow{item: *heldSteer, end: len(detail.Items)})
+	}
 	rows = withTurnFooters(rows, turns)
+	if heldSteer != nil {
+		rows = slices.DeleteFunc(rows, func(row transcriptRow) bool {
+			return row.item.ID == heldSteer.ID || row.footer == heldSteer.TurnID && row.replyBefore == nil
+		})
+	}
 	for i := range rows {
 		if rows[i].footer != "" {
 			if motion := v.toolArrivals.motions[rows[i].key]; motion != nil && !v.reduceMotion {
@@ -1348,8 +1360,14 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			return "history-newer"
 		}
 		row := rows[i-1]
-		if key := v.toolArrivals.footerKeys[row.footer]; row.footer != "" && key != "" {
-			return key
+		if row.footer != "" {
+			if row.footerAfter != "" {
+				return "reply-after:" + row.footerAfter
+			}
+			if key := v.toolArrivals.footerKeys[row.footer]; key != "" {
+				return key
+			}
+			return "turn-footer:" + row.footer
 		}
 		return row.key
 	}
@@ -1442,7 +1460,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		} else if entry.toolTitle && entry.group == v.runningGroup {
 			bottom = 4 + 4*entry.toolReveal
 		}
-		if item.Presentation == "compaction" && row < len(rows) && rows[row].footer == item.TurnID && v.Model.Connected {
+		if item.Presentation == "compaction" && row < len(rows) && rows[row].footer == item.TurnID && rows[row].replyBefore == nil && v.Model.Connected {
 			turn := turns[item.TurnID]
 			if turn.Status.Active() && v.runningActivity(turn).compaction == item.ID {
 				bottom = 24 - 20
@@ -1450,7 +1468,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		}
 		// A pending source takes the running footer's 24 DIP slot. Its
 		// 20 DIP line needs only the remaining clearance, just like compaction.
-		if item.Kind == "request" && row < len(rows) && rows[row].footer == item.TurnID && (item.Status == "pending" || item.Status == "submitting") && v.runningActivity(turns[item.TurnID]).waiting {
+		if item.Kind == "request" && row < len(rows) && rows[row].footer == item.TurnID && rows[row].replyBefore == nil && (item.Status == "pending" || item.Status == "submitting") && v.runningActivity(turns[item.TurnID]).waiting {
 			bottom = 24 - 20
 		}
 		// A user message begins a new reading block even when steering keeps
@@ -1493,6 +1511,8 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 					v.homeSendStatus(c, t, entry.preparing)
 				} else if entry.restarting {
 					v.turnFooter(c, t, domain.Turn{Status: "running"})
+				} else if entry.replyBefore != nil {
+					v.replyBeforeInputFooter(c, t, turns[entry.footer], entry.replyBefore)
 				} else if entry.footer != "" {
 					v.turnFooter(c, t, turns[entry.footer])
 				} else if entry.toolTitle {
@@ -1650,7 +1670,15 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 	// A tool-to-prose handoff already has its final footer height. A second
 	// entrance/height animation would clip the new dot and move it on screen.
 	if p := v.runningProgress; activity.compaction == "" && !waiting && state == "running" && p != nil && p.turn == turn.ID && p.handoff != nil {
-		frame.Height(24).Children(func() { v.runningStatus(c, t, turn) })
+		frame.Height(24).Children(func() {
+			n.Column(c.Key("natural-content")).FillWidth().Children(func() {
+				// Retain the running row's exit for a later insertion, with no
+				// second entrance during the tool-to-prose handoff.
+				replyFooterRow(c, "running").Transition(n.ElementTransition{
+					Duration: steerFooterDuration, Ease: n.EaseOut, Exit: &n.Motion{Opacity: 0},
+				}).Children(func() { v.runningStatus(c, t, turn) })
+			})
+		})
 		return
 	}
 	replacement := ""
@@ -1695,15 +1723,8 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 	if interrupted {
 		duration = 0
 	}
-	metricText := func(text string) n.Element {
-		field := n.Text(c, text).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-		if !interrupted {
-			field.ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
-		}
-		return field
-	}
 	v.transcriptContentHeight(c, frame, !delegated && !waiting, !delegated && !waiting, duration, func() float32 {
-		row := n.Row(c.Key("state:" + state)).FillWidth().Wrap().Gap(messageFooterGap).MinHeight(24).AlignItems(n.Baseline)
+		row := replyFooterRow(c, state)
 		if !interrupted {
 			row.Transition(fadeMotion(c, 180*time.Millisecond))
 		}
@@ -1734,74 +1755,7 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 				label = "执行状态待核实"
 			}
 			if replySummary {
-				copy := n.ButtonBase(c.Key("copy-reply:"+turn.ID)).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("复制回复")
-				copiedUntil := n.Local(copy, "copied-until", func() time.Time { return time.Time{} })
-				if copy.Clicked() {
-					var parts []string
-					for _, item := range v.stoppingReplyDetail(v.Model.Details[v.Model.SessionID]).Items {
-						if item.TurnID == turn.ID && item.Kind == "assistant" && strings.TrimSpace(item.Text) != "" {
-							parts = append(parts, item.Text)
-						}
-					}
-					if len(parts) > 0 {
-						c.WriteClipboard(strings.Join(parts, "\n\n"))
-						*copiedUntil = c.Now().Add(2 * time.Second)
-					}
-				}
-				glyph, glyphKey, tooltip := copyReplyIcon, "copy-icon", "复制回复"
-				if c.Now().Before(*copiedUntil) {
-					glyph, glyphKey, tooltip = check, "copied-icon", "已复制"
-					c.After(copiedUntil.Sub(c.Now()))
-				}
-				copy.Tooltip(tooltip)
-				color := textHoverColor(c, copy, t.TextMuted)
-				copy.Children(func() {
-					inlineSymbol(c.Key(glyphKey), glyph, "回复", n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}, 12, color).
-						Label(tooltip).Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 100*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
-				})
-				forking := v.historyExit != nil && !v.historyExit.in.Restart && v.historyExit.in.SessionID == v.Model.SessionID &&
-					v.historyExit.anchorKey == "turn-footer:"+turn.ID
-				spinning := false
-				if forking && v.historyExit.phase == historyDispatched {
-					delay := v.historyExit.started.Add(350 * time.Millisecond).Sub(c.Now())
-					spinning = delay <= 0
-					if !spinning {
-						c.After(delay)
-					}
-				}
-				fork := n.ButtonBase(c.Key("fork:"+turn.ID)).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("从这里分叉").Tooltip("从这里分叉").Disabled(!v.historyReady(v.Model.Details[v.Model.SessionID].Session) || !v.Model.RunReadiness().Capabilities.Fork || v.historyBusy[v.Model.SessionID] || forking)
-				forkColor := textHoverColor(c, fork, t.TextMuted)
-				fork.Children(func() {
-					font := n.Font{Family: t.Font, Size: 11, Weight: 400}
-					if spinning {
-						serviceSpinner(c.Key("pending"), "回复", font, forkColor).Label("正在创建分叉")
-					} else {
-						inlineSymbol(c, forkIcon, "回复", font, 13, forkColor)
-					}
-				})
-				if spinning {
-					fork.Label("正在创建分叉").Tooltip("正在创建分叉")
-				}
-				if fork.Clicked() {
-					v.forkSession(v.Model.Details[v.Model.SessionID].Session, turn.ID)
-				}
-				ended, exact := "—", "结束时间未知"
-				if turn.CompletedAt != nil {
-					local := turn.CompletedAt.Local()
-					ended = local.Format("15:04")
-					exact = local.Format("2006-01-02 15:04:05")
-				}
-				metricText(ended).Label("结束时间：" + ended).Tooltip(exact)
-				if turn.Status != domain.ExecutionCompleted {
-					animation := motionAnimation(c, 160*time.Millisecond)
-					n.Text(c, label).Label("回复状态：" + label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: &animation})
-				}
-				duration := "用时 —"
-				if turn.DurationMS != nil {
-					seconds := *turn.DurationMS / 1000
-					duration = fmt.Sprintf("用时 %d分%d秒", seconds/60, seconds%60)
-				}
-				metricText(duration)
+				v.replyFooterSummary(c, t, turn, nil, label)
 			} else if turn.Status == "running" || turn.Status == "starting" {
 				v.runningStatus(c, t, turn)
 			} else {
@@ -1815,14 +1769,149 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 			if !replySummary && !turn.Status.Active() && turn.DurationMS != nil {
 				n.Text(c, fmt.Sprintf("%.1f 秒", float64(*turn.DurationMS)/1000)).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 			}
-			if replySummary {
-				n.Column(c).MinHeight(24).Justify(n.Center).Label("本轮用量").Children(func() {
-					metricText(fmt.Sprintf("输入 %s · 输出 %s · 缓存 %s", count(turn.InputTokens), count(turn.OutputTokens), count(turn.CachedInputTokens)))
-				})
-			}
 		})
 		return 0
 	})
+}
+
+func (v *View) replyBeforeInputFooter(c *n.Context, t *n.Theme, turn domain.Turn, boundary *replyBoundary) {
+	frame := n.Column(c.Key("reply-footer")).Label("回复信息").FillWidth().MinHeight(24).Clip()
+	v.transcriptContentHeight(c, frame, true, true, steerFooterDuration, func() float32 {
+		row := replyFooterRow(c, "reply-before-input")
+		if h := v.toolArrivals.steerFooter; h != nil && h.input == boundary.inputID {
+			row.Transition(fadeMotion(c, steerFooterDuration)).IgnoreInput(true)
+		}
+		row.Children(func() { v.replyFooterSummary(c, t, turn, boundary, "") })
+		return 0
+	})
+}
+
+func replyFooterRow(c *n.Context, state string) n.Element {
+	return n.Row(c.Key("state:" + state)).FillWidth().Wrap().Gap(messageFooterGap).MinHeight(24).AlignItems(n.Baseline)
+}
+
+func (v *View) replyFooterSummary(c *n.Context, t *n.Theme, turn domain.Turn, boundary *replyBoundary, label string) {
+	before := ""
+	endedAt, elapsed := turn.CompletedAt, turn.DurationMS
+	if boundary != nil {
+		before = boundary.inputID
+		endedAt, elapsed = boundary.end, nil
+		// Imported history can only report the turn's opening timestamp for
+		// these inputs. It cannot establish a later insertion time.
+		if endedAt != nil && (endedAt.IsZero() || turn.StartedAt != nil && !endedAt.After(*turn.StartedAt)) {
+			endedAt = nil
+		}
+		if endedAt != nil && boundary.start != nil && !boundary.start.IsZero() && !endedAt.Before(*boundary.start) {
+			ms := endedAt.Sub(*boundary.start).Milliseconds()
+			elapsed = &ms
+		}
+	}
+	metricText := func(text string) n.Element {
+		field := n.Text(c, text).FontFeatures("tnum").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+		if boundary == nil && turn.Status != domain.ExecutionInterrupted {
+			field.ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
+		}
+		return field
+	}
+	copy := n.ButtonBase(c.Key("copy-reply:"+turn.ID+before)).Size(messageFooterActionWidth, 24).Justify(n.Start).Label("复制回复")
+	copiedUntil := n.Local(copy, "copied-until", func() time.Time { return time.Time{} })
+	if copy.Clicked() {
+		items := v.stoppingReplyDetail(v.Model.Details[v.Model.SessionID]).Items
+		if text := messageReplyText(items, turn.ID, before); text != "" {
+			c.WriteClipboard(text)
+			*copiedUntil = c.Now().Add(2 * time.Second)
+		}
+	}
+	glyph, glyphKey, tooltip := copyReplyIcon, "copy-icon", "复制回复"
+	if c.Now().Before(*copiedUntil) {
+		glyph, glyphKey, tooltip = check, "copied-icon", "已复制"
+		c.After(copiedUntil.Sub(c.Now()))
+	}
+	copy.Tooltip(tooltip)
+	color := textHoverColor(c, copy, t.TextMuted)
+	copy.Children(func() {
+		inlineSymbol(c.Key(glyphKey), glyph, "回复", n.Font{Family: c.Theme().Font, Size: 11, Weight: 400}, 12, color).
+			Label(tooltip).Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 100*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
+	})
+	forking := boundary == nil && v.historyExit != nil && !v.historyExit.in.Restart && v.historyExit.in.SessionID == v.Model.SessionID &&
+		v.historyExit.anchorKey == "turn-footer:"+turn.ID
+	spinning := false
+	if forking && v.historyExit.phase == historyDispatched {
+		delay := v.historyExit.started.Add(350 * time.Millisecond).Sub(c.Now())
+		spinning = delay <= 0
+		if !spinning {
+			c.After(delay)
+		}
+	}
+	fork := n.ButtonBase(c.Key("fork:"+turn.ID+before)).Size(messageFooterActionWidth, 24).Justify(n.Start)
+	if boundary != nil {
+		fork.Label("轮次中途无法分叉").Tooltip("只支持在轮次边界分叉").Disabled(true)
+	} else {
+		fork.Label("从这里分叉").Tooltip("从这里分叉").
+			Disabled(!v.historyReady(v.Model.Details[v.Model.SessionID].Session) || !v.Model.RunReadiness().Capabilities.Fork || v.historyBusy[v.Model.SessionID] || forking)
+	}
+	forkColor := textHoverColor(c, fork, t.TextMuted)
+	fork.Children(func() {
+		font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+		if spinning {
+			serviceSpinner(c.Key("pending"), "回复", font, forkColor).Label("正在创建分叉")
+		} else {
+			inlineSymbol(c, forkIcon, "回复", font, 13, forkColor)
+		}
+	})
+	if spinning {
+		fork.Label("正在创建分叉").Tooltip("正在创建分叉")
+	}
+	if boundary == nil && fork.Clicked() {
+		v.forkSession(v.Model.Details[v.Model.SessionID].Session, turn.ID)
+	}
+	ended, exact := "—", "结束时间未知"
+	if endedAt != nil {
+		local := endedAt.Local()
+		ended = local.Format("15:04")
+		exact = local.Format("2006-01-02 15:04:05")
+	}
+	metricText(ended).Label("结束时间：" + ended).Tooltip(exact)
+	if boundary == nil && turn.Status != domain.ExecutionCompleted {
+		animation := motionAnimation(c, 160*time.Millisecond)
+		n.Text(c, label).Label("回复状态：" + label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: &animation})
+	}
+	duration := "用时 —"
+	if elapsed != nil {
+		seconds := *elapsed / 1000
+		duration = fmt.Sprintf("用时 %d分%d秒", seconds/60, seconds%60)
+	}
+	metricText(duration)
+	if boundary == nil {
+		n.Column(c).MinHeight(24).Justify(n.Center).Label("本轮用量").Children(func() {
+			metricText(fmt.Sprintf("输入 %s · 输出 %s · 缓存 %s", count(turn.InputTokens), count(turn.OutputTokens), count(turn.CachedInputTokens)))
+		})
+	}
+}
+
+func messageReplyText(items []domain.Item, turnID, before string) string {
+	end := len(items)
+	if before != "" {
+		end = slices.IndexFunc(items, func(item domain.Item) bool { return item.ID == before })
+		if end < 0 {
+			return ""
+		}
+	}
+	var parts []string
+	for i := end - 1; i >= 0; i-- {
+		item := items[i]
+		if item.TurnID != turnID || item.WorkID != "" {
+			continue
+		}
+		if acceptedReplyInput(item) {
+			break
+		}
+		if item.Kind == "assistant" && strings.TrimSpace(item.Text) != "" {
+			parts = append(parts, item.Text)
+		}
+	}
+	slices.Reverse(parts)
+	return strings.Join(parts, "\n\n")
 }
 
 func count(value *int64) string {

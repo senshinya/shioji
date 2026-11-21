@@ -2,10 +2,12 @@ package ui
 
 import (
 	"fmt"
-	n "github.com/egoist/mygo/ui"
-	"shioji/internal/domain"
+	"os"
 	"testing"
 	"time"
+
+	n "github.com/egoist/mygo/ui"
+	"shioji/internal/domain"
 )
 
 func TestTurnUsageIsStaticOnHoverAndClick(t *testing.T) {
@@ -122,6 +124,120 @@ func TestCopyReplyPreservesMarkdownAndExcludesOtherTurnAndTools(t *testing.T) {
 	}
 	if m.Drafts["session:s"] != "ordinary draft" {
 		t.Fatal("copy changes composer draft")
+	}
+}
+
+func TestInsertedInputKeepsNativeReplyFooterOnEachSide(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			m := layoutModel()
+			if dark {
+				m.Preferences.Appearance = "dark"
+			}
+			m.WorkerMinor = 9
+			m.Readiness.Capabilities.Fork = true
+			d := m.Details["s"]
+			d.Session.ThreadID = "thread"
+			start := time.Date(2026, 11, 22, 12, 0, 0, 0, time.Local)
+			inserted, ended := start.Add(80*time.Second), start.Add(3*time.Minute)
+			duration, input := ended.Sub(start).Milliseconds(), int64(100)
+			items := []domain.Item{
+				{ID: "prompt", TurnID: "t", Kind: "user", Text: "Original question", Status: "sent", SentAt: &start},
+				{ID: "a", TurnID: "t", Kind: "assistant", Text: "**First part**", Final: true},
+				{ID: "tool", TurnID: "t", Kind: "tool", Name: "command", Text: "Tool output", Final: true},
+				{ID: "b", TurnID: "t", Kind: "assistant", Text: "More before insertion", Final: true},
+				{ID: "steer", TurnID: "t", Kind: "user", Text: "Inserted question", Status: "dispatching", SentAt: &inserted},
+				{ID: "c", TurnID: "t", Kind: "assistant", Text: "Reply after insertion", Final: true},
+			}
+			d.Items = items[:4]
+			d.Turns = []domain.Turn{{ID: "t", Status: domain.ExecutionRunning, StartedAt: &start}}
+			d.Session.Status = domain.ExecutionRunning
+			m.Details["s"], m.Snapshot.Sessions[0] = d, d.Session
+			v := New(m, nil, "")
+			ui := n.NewTester(v.View, 1080, 900)
+			ui.SetDark(dark)
+			record := os.Getenv("SHIOJI_REPLY_FOOTER_RECORDING") != ""
+			frame := 0
+			pause := func(frames int) {
+				t.Helper()
+				if !record {
+					ui.Advance(time.Duration(frames) * (time.Second / 30))
+					return
+				}
+				for range frames {
+					ui.Advance(time.Second / 30)
+					saveNativeSkillImage(t, ui, fmt.Sprintf("inserted-reply-%v-%04d.png", dark, frame))
+					frame++
+				}
+			}
+			pause(24)
+			d.Items = items[:5]
+			m.Details["s"] = d
+			ui.Frame()
+			pause(21)
+			if ui.HasText("轮次中途无法分叉") {
+				t.Fatal("an unconfirmed insertion created a reply footer")
+			}
+
+			d.Items[4].Status = "sent"
+			m.Details["s"] = d
+			ui.Frame()
+			pause(30)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("inserted-reply-live-%v.png", dark))
+			if !ui.HasText("轮次中途无法分叉") || !ui.HasText("进行中") {
+				t.Fatal("the reply footer and running status must coexist after an accepted insertion", ui.Texts())
+			}
+			d.Items = items
+			m.Details["s"] = d
+			ui.Frame()
+			pause(24)
+
+			d.Turns[0] = domain.Turn{ID: "t", Status: domain.ExecutionCompleted, StartedAt: &start, CompletedAt: &ended, DurationMS: &duration, InputTokens: &input}
+			d.Session.Status = domain.ExecutionCompleted
+			m.Details["s"], m.Snapshot.Sessions[0] = d, d.Session
+			ui.Frame()
+			pause(30)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("inserted-reply-completed-%v.png", dark))
+
+			first := v.historyRowBounds["reply-before:steer"]
+			last := v.historyRowBounds["turn-footer:t"]
+			if first.H <= 0 || first.Y <= v.historyRowBounds["b"].Y || first.Y >= v.historyRowBounds["steer"].Y || last.Y <= v.historyRowBounds["c"].Y {
+				t.Fatal("reply footers must follow the replies on each side of the inserted message", first, last)
+			}
+			cutoff, cutoffOK := ui.Find("结束时间：12:01")
+			fork, forkOK := ui.Find("轮次中途无法分叉")
+			terminalFork, terminalForkOK := ui.Find("从这里分叉")
+			if !cutoffOK || !forkOK || !terminalForkOK || fork.X >= cutoff.X || terminalFork.Y <= fork.Y || !ui.HasText("用时 1分20秒") || !ui.HasText("用时 3分0秒") {
+				t.Fatal("missing segment metrics or fork affordance", ui.Texts())
+			}
+			var usageCount int
+			for _, text := range ui.Texts() {
+				if text == "本轮用量" {
+					usageCount++
+				}
+			}
+			if usageCount != 1 || !ui.HasText("输入 100 · 输出 — · 缓存 —") {
+				t.Fatal("turn usage must appear only after the terminal reply", ui.Texts())
+			}
+			ui.Move(fork.X+fork.W/2, fork.Y+fork.H/2)
+			pause(36)
+			if !ui.HasText("只支持在轮次边界分叉") {
+				t.Fatal("disabled fork has no explanation")
+			}
+			if err := ui.Click("复制回复"); err != nil {
+				t.Fatal(err)
+			}
+			if got := ui.Clipboard(); got != "**First part**\n\nMore before insertion" {
+				t.Fatal("copy crossed the insertion boundary", got)
+			}
+			pause(24)
+			copy, _ := ui.Find("复制回复")
+			ui.ClickAt(copy.X+copy.W/2, terminalFork.Y+terminalFork.H/2)
+			if got := ui.Clipboard(); got != "Reply after insertion" {
+				t.Fatal("copy after the insertion included earlier text", got)
+			}
+			pause(30)
+		})
 	}
 }
 

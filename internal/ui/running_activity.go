@@ -90,6 +90,9 @@ func (v *View) runningActivity(turn domain.Turn) runningActivity {
 }
 
 func (v *View) activeSendLabel(turn domain.Turn) string {
+	if arrivals := v.toolArrivals; arrivals != nil && arrivals.heldSteerTurn != "" && arrivals.heldSteerTurn == turn.ID {
+		return ""
+	}
 	if label := v.steerProgressLabel(turn); label != "" {
 		return label
 	}
@@ -109,7 +112,7 @@ func (v *View) runningElapsedStart(turn domain.Turn) *time.Time {
 	items := v.Model.Details[v.Model.SessionID].Items
 	for i := len(items) - 1; i >= 0; i-- {
 		item := items[i]
-		if item.Kind != "user" || item.WorkID != "" || item.TurnID != turn.ID || item.SentAt == nil || item.SentAt.IsZero() {
+		if item.TurnID != turn.ID || !acceptedReplyInput(item) || item.SentAt == nil || item.SentAt.IsZero() {
 			continue
 		}
 		if start == nil || item.SentAt.After(*start) {

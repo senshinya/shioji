@@ -22,6 +22,7 @@ func TestRunningActivityElapsedUsesLatestAcceptedSameTurnInput(t *testing.T) {
 	}{
 		{"initial-input", domain.Item{}, start},
 		{"inserted", domain.Item{Kind: "user", TurnID: "t", SentAt: &steer}, steer},
+		{"waiting-for-insertion", domain.Item{Kind: "user", TurnID: "t", Status: "dispatching", SentAt: &steer}, start},
 		{"next-insertion", domain.Item{Kind: "user", TurnID: "t", SentAt: &newest}, newest},
 		{"queued-not-inserted", domain.Item{Kind: "queued", TurnID: "t", SentAt: &newest}, start},
 		{"another-turn", domain.Item{Kind: "user", TurnID: "other", SentAt: &newest}, start},
