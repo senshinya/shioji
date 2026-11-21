@@ -354,7 +354,15 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		}
 		heading := transcriptRow{key: key, item: item, end: end - 1, group: key, count: count, toolTitle: true, opacity: arrival(key)}
 		for _, call := range items[i:end] {
-			if call.Kind == "tool" && toolIssueLabel(call) != "" {
+			if call.Kind != "tool" {
+				continue
+			}
+			if !show {
+				// Reopening an existing call uses only the group's reveal.
+				seen[call.ID] = true
+				delete(arrivals.motions, call.ID)
+			}
+			if toolIssueLabel(call) != "" {
 				heading.issues++
 			}
 		}
