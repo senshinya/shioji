@@ -5,6 +5,25 @@
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-11-22
+
+[源码](https://github.com/senshinya/shioji/tree/v0.7.8) · [与 v0.7.7 比较](https://github.com/senshinya/shioji/compare/v0.7.7...v0.7.8)
+
+### Added
+
+- 支持在对话里直接回答 Codex 的异步提问。Agent 可以继续执行，输入框仍可使用。
+
+### Changed
+
+- 加快长会话的首次加载和历史分页，减少读取子 Agent 和后台任务列表所需的历史数据。
+- 在会话里区分设备连接、重连和 Agent 检查进度，发送、停止和 Git 操作的提示会随结果更新，并提供对应的重试或核对入口。
+- 开启设备的「保持唤醒」后，接通电源时的 macOS 也会保持唤醒，屏幕仍可熄灭。
+
+### Fixed
+
+- 多个会话同时运行时，新会话的首条消息更早获得执行服务回执，准备环境期间其他会话仍可接收补充消息。减少等待超时后进入「提交结果待核对」的情况。
+- 在回复中插入补充消息时，保留插入前回复的底栏和用时，已显示的工具输出保持原位。
+
 ## [0.7.7] - 2026-11-21
 
 [源码](https://github.com/senshinya/shioji/tree/v0.7.7) · [与 v0.7.6 比较](https://github.com/senshinya/shioji/compare/v0.7.6...v0.7.7)
