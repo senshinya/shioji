@@ -45,8 +45,10 @@ Client drafts: `~/Library/Application Support/Shioji/client/state.json` (0600).
 Use `--worker-state` and `--client-state` on the GUI or `--state-dir` on the worker
 for an isolated development environment. To stop a development worker, send SIGTERM
 to that specific worker process; it stops its own harness group orderly. Restart
-never automatically replays previously accepted input. Ambiguous dispatches and
-unverified old process ownership require explicit reconciliation.
+automatically closes interrupted execution records once the old owner is retired.
+Unconfirmed inputs retain their original receipts. For an interrupted turn with a
+recoverable thread and an empty queue, the worker can send one new `continue`
+message in the same session after restarting. Pending messages remain paused.
 
 ```sh
 env -u GOROOT go test ./...

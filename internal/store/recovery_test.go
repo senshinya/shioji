@@ -235,6 +235,94 @@ func TestContinuationDoesNotReleaseAnEmptyPausedQueue(t *testing.T) {
 	}
 }
 
+func TestRestartContinuationYieldsToStopAndNewerInput(t *testing.T) {
+	for _, tc := range []struct {
+		name, cancelledTurn, archive string
+		queued, priorContinuation    bool
+	}{
+		{name: "no newer input"},
+		{name: "user stopped the turn", cancelledTurn: "interrupted"},
+		{name: "user stopped the input before the turn ID was known", cancelledTurn: "input:original"},
+		{name: "user queued another input", queued: true},
+		{name: "continuation was itself interrupted", priorContinuation: true},
+		{name: "session is archived before continuation", archive: "session"},
+		{name: "workspace is archived before continuation", archive: "workspace"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := open(t)
+			w := workspace(t, s)
+			originalID := "original"
+			if tc.priorContinuation {
+				originalID = domain.RecoveryContinuationID("session", "earlier-turn")
+			}
+			op, err := s.Accept(domain.Submission{OperationID: originalID, WorkspaceID: w.ID, Text: "original request"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			queue := domain.Submission{OperationID: "next", WorkspaceID: w.ID, SessionID: op.SessionID, Text: "new request"}
+			if tc.queued {
+				if _, err = s.Enqueue(queue); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err = s.Apply(op.SessionID, domain.Event{Type: "turn", Turn: &domain.Turn{ID: "interrupted", Status: domain.ExecutionUnknown}}); err != nil {
+				t.Fatal(err)
+			}
+			session, err := s.SessionRecord(op.SessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			session.ThreadID = "source"
+			if _, err = s.Apply(op.SessionID, domain.Event{Type: "session", Session: &session}); err != nil {
+				t.Fatal(err)
+			}
+			session, err = s.SessionRecord(op.SessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := domain.RecoveryHistory{
+				Available: true, State: domain.SourceIdle, StoppedGeneration: "stopped",
+				Turns:               []domain.Turn{{ID: "interrupted", Status: domain.ExecutionInterrupted}},
+				Inputs:              map[string]string{"input:" + originalID: "interrupted"},
+				ManagedStoppedTurns: map[string]bool{"interrupted": true},
+			}
+			got, err := s.ReconcileDisconnected(session.ID, session.Revision, source, true, tc.cancelledTurn)
+			if err != nil || got.Status != domain.ExecutionInterrupted || got.Recovery == nil || !got.Recovery.CanContinue {
+				t.Fatal("original turn did not settle with context", got, err)
+			}
+			wantContinuation := tc.cancelledTurn == "" && !tc.queued && !tc.priorContinuation
+			if (got.Recovery.AutoContinueTurn != "") != wantContinuation {
+				t.Fatal("unexpected continuation intent", got.Recovery)
+			}
+			if !wantContinuation {
+				return
+			}
+			if tc.archive != "" {
+				if tc.archive == "session" {
+					_, err = s.SetSessionArchived(got.ID, got.Revision, true)
+				} else {
+					_, err = s.SetWorkspaceArchived(w.ID, w.Revision, true)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				archived, err := s.SessionRecord(got.ID)
+				if err != nil || archived.Recovery == nil || archived.Recovery.AutoContinueTurn != "" {
+					t.Fatal("archive held a pending continuation", archived.Recovery, err)
+				}
+				return
+			}
+			if _, err = s.Enqueue(queue); err != nil {
+				t.Fatal(err)
+			}
+			_, err = s.Accept(domain.Submission{OperationID: domain.RecoveryContinuationID(session.ID, "interrupted"), WorkspaceID: w.ID, SessionID: session.ID, Text: "continue", Continue: true})
+			if err == nil {
+				t.Fatal("continuation bypassed a newer queued input")
+			}
+		})
+	}
+}
+
 func TestLateTurnCompletionDoesNotHideIndeterminateDelivery(t *testing.T) {
 	s := open(t)
 	w := workspace(t, s)

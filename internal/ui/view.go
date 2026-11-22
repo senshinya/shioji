@@ -1784,7 +1784,7 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 					label = "用量耗尽"
 				}
 			case "abandoned":
-				label = "已手动结束 · 结果未确认"
+				label = "已结束 · 结果未确认"
 			case "unknown":
 				label = "执行状态待核实"
 			}

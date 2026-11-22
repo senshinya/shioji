@@ -112,7 +112,11 @@ func (s *Server) interruptTurn(id, turn string, operation ...string) error {
 		scope, e := s.executions.Existing(id)
 		err = e
 		if scope != nil && err == nil {
-			err = scope.RecordCancellation(turn)
+			ref := turn
+			if ref == "" && target != "" {
+				ref = "input:" + target
+			}
+			err = scope.RecordCancellation(ref)
 		}
 	}
 	if err != nil {

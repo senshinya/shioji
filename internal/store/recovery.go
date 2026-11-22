@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"shioji/internal/domain"
+	"strings"
 )
 
 // GuardExecution quarantines a lost managed generation before its transport is
@@ -86,6 +87,21 @@ func (s *Store) ActiveSessions() ([]domain.Session, error) {
 // Reconcile commits history, exact input acknowledgements and queue preservation
 // together. A stale client or missing source turn cannot clear the unknown state.
 func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHistory, end bool) (domain.Session, error) {
+	return s.reconcile(id, revision, source, end, nil)
+}
+
+type disconnectedRecovery struct {
+	resume        bool
+	cancelledTurn string
+}
+
+// ReconcileDisconnected settles the local execution slot after the worker has
+// retired the original owner. Source evidence still determines what was sent.
+func (s *Store) ReconcileDisconnected(id string, revision int64, source domain.RecoveryHistory, resume bool, cancelledTurn string) (domain.Session, error) {
+	return s.reconcile(id, revision, source, true, &disconnectedRecovery{resume: resume, cancelledTurn: cancelledTurn})
+}
+
+func (s *Store) reconcile(id string, revision int64, source domain.RecoveryHistory, end bool, disconnected *disconnectedRecovery) (domain.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var none domain.Session
@@ -98,14 +114,22 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 	if err != nil {
 		return none, err
 	}
-	if session.Revision != revision || session.Status != "unknown" {
+	if session.Revision != revision || session.Status != "unknown" || disconnected != nil && session.Archived {
 		return none, errors.New("会话状态已改变，请重新核对")
 	}
 	if session.ExecutionGuard != "" && session.ExecutionGuard != source.StoppedGeneration {
 		return none, errors.New("旧执行尚未确认清理完成")
 	}
-	if source.State == "active" && !source.Attached || source.State == "failed" {
+	if source.State == "active" && !source.Attached || source.State == "failed" || disconnected != nil && source.Attached {
 		return none, errors.New("旧轮仍在执行或无法确认停止，请先停止后重新核对")
+	}
+	endedTurn := "手动结束，旧轮结果未确认"
+	endedOperation := "用户手动结束；旧输入的执行结果未确认"
+	endedSession := "用户已确认旧工具停止并手动结束；原执行结果未确认"
+	if disconnected != nil {
+		endedTurn = "上次执行已结束，结果未确认"
+		endedOperation = "旧输入的执行结果未确认"
+		endedSession = endedTurn
 	}
 	if source.GoalObserved {
 		session.Goal = source.Goal
@@ -204,6 +228,9 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 			if end {
 				turn.Status = "abandoned"
 				turn.Error = "用户已确认设备上的旧工具停止；原执行结果未确认"
+				if disconnected != nil {
+					turn.Error = endedTurn
+				}
 			}
 		}
 		old := oldTurns[turn.ID]
@@ -278,7 +305,7 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 			}
 			op.State = "abandoned"
 			abandoned[op.ID] = true
-			op.Error = "用户手动结束；旧输入的执行结果未确认"
+			op.Error = endedOperation
 		} else {
 			op.State = "confirmed"
 			op.Error = ""
@@ -344,7 +371,7 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 				continue
 			}
 			old.Status = "abandoned"
-			old.Error = "手动结束，旧轮结果未确认"
+			old.Error = endedTurn
 			if _, err = tx.Exec("UPDATE turns SET body=? WHERE session_id=? AND id=?", blob(old), id, tid); err != nil {
 				return none, err
 			}
@@ -399,7 +426,12 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 		}
 	}
 	if status == "abandoned" {
-		session.Error = "用户已确认旧工具停止并手动结束；原执行结果未确认"
+		session.Error = endedSession
+		if disconnected != nil {
+			// The turn retains its unknown result. The session is available for
+			// the next input and no longer requires a recovery decision.
+			session.Status = domain.ExecutionFailed
+		}
 	}
 	session.Recovery = nil
 	if status == "unknown" {
@@ -411,10 +443,17 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 			return none, e
 		}
 		session.Recovery = &domain.SessionRecovery{Phase: "ready", Message: session.Error, CanContinue: available}
-	}
-	session.Revision++
-	if _, err = tx.Exec("UPDATE sessions SET body=? WHERE id=?", blob(session), id); err != nil {
-		return none, err
+		if disconnected != nil && disconnected.resume && status == domain.ExecutionInterrupted && available &&
+			session.ThreadID != "" && !session.ContextChanged && !session.Goal.Active() &&
+			statusTurnID != disconnected.cancelledTurn && (oldTurns[statusTurnID].Status == domain.ExecutionUnknown || oldTurns[statusTurnID].Status == domain.ExecutionRunning) {
+			item, e := load[domain.Item](tx.QueryRow("SELECT body FROM items WHERE session_id=? AND json_extract(body,'$.kind')='user' ORDER BY position DESC LIMIT 1", id))
+			if e != nil {
+				return none, e
+			}
+			if item.TurnID == statusTurnID && item.ID != disconnected.cancelledTurn && !strings.HasPrefix(item.ID, "input:"+domain.RecoveryContinuationPrefix) {
+				session.Recovery.AutoContinueTurn = statusTurnID
+			}
+		}
 	}
 	// Reconciliation never authorizes dispatch. Even an acknowledged queued input
 	// may have been consumed above, but all remaining inputs remain paused.
@@ -424,6 +463,9 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 		e = nil
 	}
 	if e == nil {
+		if session.Recovery != nil && len(q.Items) > 0 {
+			session.Recovery.AutoContinueTurn = ""
+		}
 		for i := range q.Items {
 			if abandoned[q.Items[i].Input.OperationID] {
 				q.Items[i].State = "failed"
@@ -437,6 +479,10 @@ func (s *Store) Reconcile(id string, revision int64, source domain.RecoveryHisto
 		}
 	} else if !errors.Is(e, sql.ErrNoRows) {
 		return none, e
+	}
+	session.Revision++
+	if _, err = tx.Exec("UPDATE sessions SET body=? WHERE id=?", blob(session), id); err != nil {
+		return none, err
 	}
 	if _, err = journal(tx, domain.Event{Type: "session", SessionID: id, Session: &session}); err != nil {
 		return none, err
@@ -496,7 +542,12 @@ func (s *Store) CanContinue(id string, source domain.RecoveryHistory) (bool, err
 func (s *Store) RecoverableSessionIDs() ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query("SELECT id FROM sessions WHERE COALESCE(json_extract(body,'$.archived'),0)=0 AND json_extract(body,'$.status') IN ('unknown','abandoned')")
+	rows, err := s.db.Query(`SELECT sessions.id FROM sessions
+		JOIN workspaces ON workspaces.id=json_extract(sessions.body,'$.workspaceId')
+		WHERE COALESCE(json_extract(sessions.body,'$.archived'),0)=0
+		AND COALESCE(json_extract(workspaces.body,'$.archived'),0)=0
+		AND (json_extract(sessions.body,'$.status') IN ('unknown','abandoned')
+		OR COALESCE(json_extract(sessions.body,'$.recovery.autoContinueTurn'),'')!='')`)
 	if err != nil {
 		return nil, err
 	}

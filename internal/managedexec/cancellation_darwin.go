@@ -1,14 +1,20 @@
 package managedexec
 
-// Persist the exact requested turn before sending cancellation. Startup can
-// reconcile it without replaying either the input or the interrupt request.
-func (s *Scope) RecordCancellation(turn string) error {
+// Persist the requested turn or its input reference before sending cancellation.
+func (s *Scope) RecordCancellation(ref string) error {
 	s.manager.mu.Lock()
 	defer s.manager.mu.Unlock()
 	state, err := s.load()
 	if err != nil {
 		return err
 	}
-	state.CancelledTurn = turn
+	state.CancelledTurn = ref
 	return s.writeState(state)
+}
+
+func (s *Scope) CancelledTurn() (string, error) {
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	state, err := s.load()
+	return state.CancelledTurn, err
 }

@@ -460,6 +460,12 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 			if e != nil {
 				return none, e
 			}
+			if strings.HasPrefix(in.OperationID, domain.RecoveryContinuationPrefix) &&
+				(!in.Continue || session.Status != domain.ExecutionInterrupted || session.ContextChanged || session.Config != in.Config ||
+					session.Recovery == nil || session.Recovery.AutoContinueTurn == "" ||
+					in.OperationID != domain.RecoveryContinuationID(session.ID, session.Recovery.AutoContinueTurn) || len(q.Items) > 0) {
+				return none, errors.New("会话已接纳更新的输入，未自动续跑")
+			}
 			if q.Paused && len(q.Items) == 0 && !in.Continue {
 				q.Paused = false
 				q.Reason = ""

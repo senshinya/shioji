@@ -142,7 +142,7 @@ func (r *staleRecoveryRuntime) Observes(domain.Session) bool { return false }
 func (r *staleRecoveryRuntime) Inspect(context.Context, domain.Session) (domain.RecoveryHistory, error) {
 	return domain.RecoveryHistory{Available: true, State: domain.SourceActive, Turns: []domain.Turn{{ID: "stale-source-turn", Status: "running"}}}, nil
 }
-func TestDeviceStopProofKeepsExplicitEndAvailableForStaleSource(t *testing.T) {
+func TestDeviceStopProofRetiresStaleSourceWithoutManualEnd(t *testing.T) {
 	s, w := memoryWorker(t, staleRecoveryHarness{memoryHarness{id: "alpha"}})
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
@@ -158,18 +158,14 @@ func TestDeviceStopProofKeepsExplicitEndAvailableForStaleSource(t *testing.T) {
 	if err = confirmRecoveryScopes(s.Directory(), "device-recovery", recoveryPreviewRecord{Consent: consent}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := s.reconcileLocked(context.Background(), protocol.RecoveryInput{SessionID: session.ID})
-	if err != nil || !result.CanEnd || result.Status != "unknown" {
-		t.Fatal("device stop lost explicit local end", result, err)
-	}
 	d, _ := s.store.Session(session.ID, 0, 100)
 	history := map[string]string{}
 	for _, item := range d.Items {
 		history[item.ID] = item.Text
 	}
-	result, err = s.reconcileLocked(context.Background(), protocol.RecoveryInput{SessionID: session.ID, Revision: d.Session.Revision, Action: "end"})
-	if err != nil || result.Status == "active" || result.Status == "unknown" {
-		t.Fatal("explicit end remained blocked", result, err)
+	result, err := s.reconcileLocked(context.Background(), protocol.RecoveryInput{SessionID: session.ID})
+	if err != nil || result.CanEnd || result.Status != "failed" {
+		t.Fatal("proved device stop left a manual decision", result, err)
 	}
 	d, _ = s.store.Session(session.ID, 0, 100)
 	for id, text := range history {

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"shioji/internal/domain"
@@ -137,24 +138,60 @@ func (s *Server) recoverSession(id string) {
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
 	latest, err := s.store.SessionRecord(id)
-	if err != nil || ctx.Err() != nil || latest.Archived || !latest.Status.NeedsRecovery() {
+	if err != nil || ctx.Err() != nil || latest.Archived {
+		return
+	}
+	if latest.Recovery != nil && latest.Recovery.AutoContinueTurn != "" {
+		delete(s.restartRecovery, id)
+		s.continueRecoveredSession(latest)
+		return
+	}
+	if !latest.Status.NeedsRecovery() {
+		delete(s.restartRecovery, id)
 		return
 	}
 	checked := s.recoveryChecked[id]
 	if checked.Revision == latest.Revision && checked.Generation >= s.recoveryRefresh.Load() {
 		return
 	}
-	if own := s.currentRuntime(id); own == nil || own.Stopped() {
-		catalog := s.catalogRuntime(latest.HarnessID)
-		if catalog == nil || catalog.Stopped() {
-			updated, err := s.store.SetRecovery(id, &domain.SessionRecovery{Phase: "attention", Message: "暂时无法核对执行状态", NeedsStop: ownedProcessPresent(s.catalogDirectory(latest.HarnessID))})
-			if err == nil {
-				s.recoveryChecked[id] = recoveryAttempt{Revision: updated.Revision, Generation: s.recoveryRefresh.Load()}
-			}
-			return
+	result, err := s.reconcileLocked(ctx, protocol.RecoveryInput{SessionID: id, Revision: latest.Revision})
+	if err == nil && result.CanContinue {
+		latest, err = s.store.SessionRecord(id)
+		if err == nil && latest.Recovery != nil && latest.Recovery.AutoContinueTurn != "" {
+			s.continueRecoveredSession(latest)
 		}
 	}
-	_, _ = s.reconcileLocked(ctx, protocol.RecoveryInput{SessionID: id, Revision: latest.Revision})
+}
+
+// The pending turn is committed with recovery. Normal submission consumes it
+// atomically on acceptance, so a worker crash cannot duplicate the new input.
+// Caller holds dispatchMu. Submission rechecks the candidate and queue at accept.
+func (s *Server) continueRecoveredSession(session domain.Session) {
+	if s.updateAdmission() != nil || s.ctx.Err() != nil {
+		return
+	}
+	turn := session.Recovery.AutoContinueTurn
+	_, err := s.submitLocked(domain.Submission{
+		OperationID: domain.RecoveryContinuationID(session.ID, turn),
+		SessionID:   session.ID,
+		WorkspaceID: session.WorkspaceID,
+		HarnessID:   session.HarnessID,
+		Config:      session.Config,
+		Text:        "continue",
+		Continue:    true,
+	}, 0, false)
+	if err == nil || errors.Is(err, errCatalogRefreshing) || s.updateAdmission() != nil || s.ctx.Err() != nil {
+		return
+	}
+	latest, err := s.store.SessionRecord(session.ID)
+	if err != nil || latest.Recovery == nil || latest.Recovery.AutoContinueTurn != turn {
+		return
+	}
+	info := *latest.Recovery
+	info.AutoContinueTurn = ""
+	if _, err = s.store.SetRecovery(session.ID, &info); err != nil {
+		fmt.Fprintf(os.Stderr, "shioji: settle automatic continuation: %v\n", err)
+	}
 }
 
 func (s *Server) reconcileReply(entry store.ReplyReconciliation) error {

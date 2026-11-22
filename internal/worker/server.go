@@ -117,6 +117,7 @@ type Server struct {
 	titleWake            chan struct{}
 	recoveryWake         chan struct{}
 	recoveryChecked      map[string]recoveryAttempt
+	restartRecovery      map[string]bool
 	recoveryRefresh      atomic.Uint64
 	bound                map[string]bool
 	dispatchReservations map[string]string
@@ -202,6 +203,12 @@ func New(ctx context.Context, config Config) (*Server, error) {
 		owner.Close()
 		return nil, err
 	}
+	recoverable, err := db.RecoverableSessionIDs()
+	if err != nil {
+		db.Close()
+		owner.Close()
+		return nil, err
+	}
 	listener, err := owner.Listen()
 	if err != nil {
 		db.Close()
@@ -210,6 +217,10 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	}
 	workerCtx, cancel := context.WithCancel(context.Background())
 	s := &Server{attachments: attachments.New(filepath.Join(config.Directory, "attachments")), config: config, owner: owner, listener: listener, store: db, ctx: workerCtx, cancel: cancel, queueWake: make(chan struct{}, 1), recoveryWake: make(chan struct{}, 1), recoveryChecked: map[string]recoveryAttempt{}, bound: map[string]bool{}, conns: map[net.Conn]bool{}}
+	s.restartRecovery = make(map[string]bool, len(recoverable))
+	for _, id := range recoverable {
+		s.restartRecovery[id] = true
+	}
 	s.build = runtimebuild.Current()
 	s.build.Schema = store.SchemaVersion
 	s.build.MigrationFrom = store.WorkerMigrationFrom
@@ -690,6 +701,7 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 			}
 			result, err := s.store.SetSessionArchived(in.SessionID, in.Revision, in.Archived, gen)
 			if err == nil && in.Archived {
+				delete(s.restartRecovery, in.SessionID)
 				s.wakeArchiveRetirement()
 			}
 			return result, err
@@ -718,6 +730,9 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		}
 		result, err := s.store.SetWorkspaceArchived(in.WorkspaceID, in.Revision, in.Archived, generations)
 		if err == nil && in.Archived {
+			for id := range generations {
+				delete(s.restartRecovery, id)
+			}
 			s.wakeArchiveRetirement()
 		}
 		return result, err
@@ -1339,6 +1354,7 @@ func (s *Server) prepareSubmissionLocked(in domain.Submission, queueRevision int
 		}
 		return op, err
 	}
+	delete(s.restartRecovery, op.SessionID)
 	if in.SessionID == "" {
 		select {
 		case s.titleWake <- struct{}{}:

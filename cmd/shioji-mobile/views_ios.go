@@ -1203,7 +1203,7 @@ func (a *mobileApp) turnReceipt(c *ui.Context, parent *mygo.Window, sid string, 
 			status = "用量耗尽"
 		}
 	case domain.ExecutionAbandoned:
-		status = "已手动结束 · 结果未确认"
+		status = "已结束 · 结果未确认"
 	default:
 		status = "执行状态待核实"
 	}

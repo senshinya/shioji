@@ -40,7 +40,7 @@ func TestInterruptedFooterKeepsStatusAndReplyActions(t *testing.T) {
 					}
 					label := "已停止"
 					if status == domain.ExecutionAbandoned {
-						label = "已手动结束 · 结果未确认"
+						label = "已结束 · 结果未确认"
 					}
 					if !ui.HasText(label) || !ui.HasText("输入 1.8k · 输出 320 · 缓存 —") {
 						t.Error("interrupted reply lost its status or reported usage", ui.Texts())

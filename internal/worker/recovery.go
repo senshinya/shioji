@@ -90,7 +90,8 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	if !check && (d.Session.Revision != in.Revision || d.Session.Status != "unknown") {
 		return result, errors.New("会话状态已改变，请重新核对")
 	}
-	if !d.Session.Status.NeedsRecovery() {
+	if d.Session.Archived || !d.Session.Status.NeedsRecovery() {
+		delete(s.restartRecovery, in.SessionID)
 		result.Status = string(d.Session.Status)
 		result.Readiness = s.runtimeReadiness(in.SessionID)
 		if d.Session.Recovery != nil {
@@ -123,6 +124,9 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		if !stillCurrent() {
 			latest, e := s.store.SessionRecord(in.SessionID)
 			if e == nil {
+				if latest.Archived || !latest.Status.NeedsRecovery() {
+					delete(s.restartRecovery, in.SessionID)
+				}
 				result.Status = string(latest.Status)
 				result.Readiness = s.runtimeReadiness(in.SessionID)
 			}
@@ -138,6 +142,39 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 			s.recoveryChecked[in.SessionID] = recoveryAttempt{Revision: updated.Revision, Generation: generation}
 		}
 		return result, e
+	}
+	commit := func(source domain.RecoveryHistory, retired bool, cancelledTurn string) (protocol.RecoveryResult, error) {
+		var updated domain.Session
+		var err error
+		if retired {
+			resume := s.restartRecovery[in.SessionID] && source.StoppedGeneration != "" && !source.ExplicitlyStopped
+			updated, err = s.store.ReconcileDisconnected(in.SessionID, d.Session.Revision, source, resume, cancelledTurn)
+		} else {
+			updated, err = s.store.Reconcile(in.SessionID, d.Session.Revision, source, in.Action == "end")
+		}
+		if err != nil {
+			latest, e := s.store.SessionRecord(in.SessionID)
+			if e != nil {
+				return result, e
+			}
+			result.Status, result.Message = string(latest.Status), "状态已更新，请重新核对"
+			return finish()
+		}
+		if updated.Status != domain.ExecutionUnknown {
+			delete(s.restartRecovery, in.SessionID)
+		}
+		result.Status, result.Message = string(updated.Status), updated.Error
+		result.CanEnd = updated.Status == domain.ExecutionUnknown
+		if updated.Recovery != nil {
+			result.CanContinue = updated.Recovery.CanContinue
+			if updated.Recovery.AutoContinueTurn != "" {
+				s.wakeRecovery()
+			}
+		}
+		if result.Message == "" {
+			result.Message = "已核对执行状态"
+		}
+		return finish()
 	}
 
 	runtime := s.currentRuntime(in.SessionID)
@@ -156,6 +193,7 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 			return finish()
 		}
 	}
+	retired := false
 	if runtime == nil || runtime.Stopped() || d.Session.ExecutionGuard != "" || managed != nil && !runtime.Observes(d.Session) {
 		cleanupErr := s.cleanSessionRuntime(ctx, in.SessionID)
 		if !stillCurrent() {
@@ -172,6 +210,7 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 			result.Status, result.Message = "failed", "旧 Agent 已退休，可使用新的 Agent 继续；原执行结果未确认"
 			return finish()
 		}
+		retired = check && d.Session.Status == domain.ExecutionUnknown && (runtime == nil || runtime.Stopped())
 		runtime, err = s.recoveryRuntime(ctx, in.Action == "stop-runtime", d.Session.HarnessID)
 		if !stillCurrent() {
 			return finish()
@@ -180,9 +219,20 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 			d.Session = latest
 		}
 	}
+	retireWithoutHistory := func() (protocol.RecoveryResult, error) {
+		source := domain.RecoveryHistory{State: domain.SourceUnavailable}
+		if proofErr := s.managedStopProof(in.SessionID, &source); proofErr != nil {
+			result.Message = "旧工具尚未确认停止，请重新核对"
+			return finish()
+		}
+		return commit(source, true, "")
+	}
 	if err != nil {
 		result.Message = "暂时无法核对执行状态"
 		result.NeedsStop = ownedProcessPresent(s.catalogDirectory(d.Session.HarnessID))
+		if retired && !result.NeedsStop && s.ctx.Err() == nil {
+			return retireWithoutHistory()
+		}
 		return finish()
 	}
 	if runtime == s.catalogRuntime(d.Session.HarnessID) {
@@ -196,6 +246,9 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	}
 	if !runtime.Readiness().Capabilities.Recovery {
 		result.Message = "此 Agent 暂不支持核对执行状态"
+		if retired {
+			return retireWithoutHistory()
+		}
 		return finish()
 	}
 	if in.Action == "interrupt" && !runtime.Readiness().Capabilities.Interrupt {
@@ -216,7 +269,12 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 			return finish()
 		}
 	}
-	settleExplicitStoppedHistory(&source, in.Action == "end")
+	retired = retired && !runtime.Observes(d.Session) && s.ctx.Err() == nil
+	if retired {
+		settleStoppedHistory(&source, false, true)
+	} else {
+		settleExplicitStoppedHistory(&source, in.Action == "end")
+	}
 	result.Tasks, result.CanStopTasks = s.recoveryTasks(d, source)
 	if err == nil && in.Action == "interrupt" {
 		for _, turn := range source.Turns {
@@ -264,6 +322,9 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		return finish()
 	}
 	if err != nil {
+		if retired {
+			return retireWithoutHistory()
+		}
 		result.Message = "暂时无法读取完整历史，请重新核对"
 		result.CanStopTasks = false
 		own := s.currentRuntime(d.Session.ID)
@@ -288,7 +349,7 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 	if source.State == "failed" {
 		result.Message = "暂时无法确认线程状态，请稍后重新核对"
 		result.CanEnd = source.ExplicitlyStopped
-		if !source.ExplicitlyStopped || in.Action != "end" {
+		if !retired && (!source.ExplicitlyStopped || in.Action != "end") {
 			return finish()
 		}
 		source.State = domain.SourceUnavailable
@@ -342,33 +403,28 @@ func (s *Server) reconcileLocked(ctx context.Context, in protocol.RecoveryInput)
 		result.Message = "所选进程组已停止。请另外确认没有其他后台任务仍在运行，再结束旧轮记录。"
 		return finish()
 	}
-	updated, err := s.store.Reconcile(in.SessionID, d.Session.Revision, source, in.Action == "end")
-	if err != nil {
-		latest, e := s.store.SessionRecord(in.SessionID)
-		if e != nil {
-			return result, e
+	cancelledTurn := ""
+	if retired && managed != nil {
+		cancelledTurn, err = managed.CancelledTurn()
+		if err != nil {
+			delete(s.restartRecovery, in.SessionID)
 		}
-		result.Status = string(latest.Status)
-		result.Message = "状态已更新，请重新核对"
-		return finish()
 	}
-	result.Status = string(updated.Status)
-	result.CanEnd = updated.Status == "unknown"
-	result.Message = updated.Error
-	if updated.Recovery != nil {
-		result.CanContinue = updated.Recovery.CanContinue
-	}
-	if result.Message == "" {
-		result.Message = "已核对执行状态"
-	}
-	return finish()
+	return commit(source, retired, cancelledTurn)
 }
 
 // Runtime exit proves local execution stopped, never that input was completed.
 // Only covered turns may automatically become interrupted. The end action is
 // separate user consent to abandon an unconfirmed local record.
 func settleExplicitStoppedHistory(source *domain.RecoveryHistory, end bool) {
-	if !source.ExplicitlyStopped || source.Attached {
+	settleStoppedHistory(source, end, false)
+}
+
+func settleStoppedHistory(source *domain.RecoveryHistory, end, retired bool) {
+	if source.Attached || !source.ExplicitlyStopped && !retired {
+		return
+	}
+	if retired && source.State == domain.SourceActive && !source.ExplicitlyStopped {
 		return
 	}
 	active := false
@@ -377,7 +433,10 @@ func settleExplicitStoppedHistory(source *domain.RecoveryHistory, end bool) {
 		if turn.Status == "running" || turn.Status == "unknown" {
 			if source.ManagedStoppedTurns[turn.ID] {
 				turn.Status = "interrupted"
-				turn.Error = "用户关闭了原运行环境"
+				turn.Error = "原运行环境已关闭"
+			} else if retired {
+				turn.Status = "abandoned"
+				turn.Error = "上次执行已结束，结果未确认"
 			} else if end {
 				turn.Status = "abandoned"
 				turn.Error = "用户确认结束旧轮记录，原执行结果未确认"

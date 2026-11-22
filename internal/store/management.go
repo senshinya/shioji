@@ -101,6 +101,9 @@ func (s *Store) SetSessionArchived(id string, revision int64, archived bool, gen
 		now := time.Now().UTC()
 		session.ArchivedAt = &now
 		withdrawReplyCompletion(&session)
+		if session.Recovery != nil {
+			session.Recovery.AutoContinueTurn = ""
+		}
 	}
 	session.Revision++
 	if archived {
@@ -150,8 +153,15 @@ func (s *Store) SetWorkspaceArchived(id string, revision int64, archived bool, g
 	}
 	if archived {
 		for _, session := range sessions {
-			if session.Completion != nil && session.Completion.Pending {
+			waitingCompletion := session.Completion != nil && session.Completion.Pending
+			waitingContinuation := session.Recovery != nil && session.Recovery.AutoContinueTurn != ""
+			if waitingCompletion {
 				withdrawReplyCompletion(&session)
+			}
+			if waitingContinuation {
+				session.Recovery.AutoContinueTurn = ""
+			}
+			if waitingCompletion || waitingContinuation {
 				if err = saveCompletionSession(tx, &session); err != nil {
 					return w, err
 				}
