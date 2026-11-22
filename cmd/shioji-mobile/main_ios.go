@@ -31,7 +31,9 @@ type mobileApp struct {
 	sessionOpening            *sessionListTarget
 	sessionLoadingTarget      string
 	previewLatestHistory      *domain.SessionDetail
-	newSessionSend            *mobileSendScroll
+	newSessionSend            *mobileFirstSubmission
+	promotedDraftSession      string
+	promotedDraftOperation    string
 	latestSessionEntry        string
 	reduceConversationMotion  bool
 	forkMotionTarget          mobileForkPosition
@@ -443,12 +445,27 @@ func (a *mobileApp) pushConversation(parent *mygo.Window) {
 		a.conversation(c, a.chat, false)
 	})
 	menu.listen(a, w)
+	a.mountConversationPage(w, title, scope, opening)
+	a.configureNativePage(w, nativePageOptions{Title: title, Subtitle: scope, InlineScope: isTablet()}, func(err error) {
+		if err != nil || (a.wide && parent == a.home) {
+			w.Close()
+		} else {
+			parent.Push(w)
+			if isTablet() {
+				a.callUIKit("tabsHidden", map[string]bool{"hidden": true}, nil)
+			}
+		}
+	})
+}
+
+func (a *mobileApp) mountConversationPage(w *mygo.Window, title, scope string, opening *sessionListTarget) {
 	a.chat, a.chatTitle, a.chatScope = w, title, scope
 	w.OnClosed(func() {
 		if a.find != nil && a.find.owner == w {
 			a.closeConversationFind()
 		}
 		a.chat, a.chatTitle, a.chatScope = nil, "", ""
+		a.promotedDraftSession, a.promotedDraftOperation = "", ""
 		a.sessionLoadingTarget = ""
 		if opening != nil && a.sessionOpening == opening {
 			a.sessionOpening = nil
@@ -466,16 +483,6 @@ func (a *mobileApp) pushConversation(parent *mygo.Window) {
 			}
 		}},
 	)
-	a.configureNativePage(w, nativePageOptions{Title: title, Subtitle: scope, InlineScope: isTablet()}, func(err error) {
-		if err != nil || (a.wide && parent == a.home) {
-			w.Close()
-		} else {
-			parent.Push(w)
-			if isTablet() {
-				a.callUIKit("tabsHidden", map[string]bool{"hidden": true}, nil)
-			}
-		}
-	})
 }
 
 func (a *mobileApp) openDraft(parent *mygo.Window) {
@@ -508,12 +515,20 @@ func (a *mobileApp) presentDraft(parent *mygo.Window, startAtTop bool) {
 	a.model.SessionID = ""
 	a.rebindHomeDraftAttachments()
 	a.loadGit(a.model.WorkspaceID)
-	w := a.page("新建会话", func(c *ui.Context) {
+	var w *mygo.Window
+	w = a.page("新建会话", func(c *ui.Context) {
+		if a.chat == w {
+			a.conversation(c, w, false)
+			return
+		}
 		a.newConversationView(c, startAtTop)
 		startAtTop = false
 	})
 	a.draftPage = w
 	w.OnClosed(func() {
+		if a.draftPage != w {
+			return
+		}
 		a.draftPage = nil
 		if a.model.SessionID == "" && a.draftReturnSession != "" {
 			a.selectSession(a.draftReturnSession)
@@ -770,17 +785,7 @@ func (a *mobileApp) applyUpdates(controller *app.Controller) {
 			}
 			if a.model.SessionID != oldID && a.model.SessionID != "" {
 				controller.Select(a.model.SessionID)
-				if a.draftPage != nil {
-					draft := a.draftPage
-					id := a.model.SessionID
-					a.goalEntranceSession = a.model.WorkKey(id, "")
-					draft.OnClosed(func() { a.openSession(id) })
-					if isTablet() {
-						a.callUIKit("dismissForm", map[string]uintptr{"window": draft.NativeHandle()}, nil)
-					} else {
-						draft.Pop()
-					}
-				}
+				a.completeDraftSubmission(a.model.SessionID)
 			}
 			a.resumeAgentSignIns()
 			a.reconcileQueueEdits()
@@ -886,7 +891,7 @@ func (a *mobileApp) submit(steer bool, editor *mobileDraftEditor) {
 			if in.SessionID == "" {
 				motion := editor.sendScroll
 				motion.workspace = in.WorkspaceID
-				a.newSessionSend = &motion
+				a.newSessionSend = &mobileFirstSubmission{mobileSendScroll: motion, input: in, list: ui.ListState{FollowEnd: true}}
 				editor.sendScroll.operation = ""
 			}
 		}

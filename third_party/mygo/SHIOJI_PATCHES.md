@@ -78,6 +78,9 @@ not expose the following appearance settings required by the frozen design:
   additionally clamps disclosure anchors to the natural content boundaries:
   a shrinking section can move its heading to avoid trailing blank space.
   Unbounded reading/sent-message anchors retain their temporary reading space.
+- `ui.ListReveal.LayoutOnly` animates a sent-message row's occupied height while
+  keeping its bubble mounted and unclipped for the composer-to-transcript
+  transition. Covered by `ui/list_reveal_test.go`.
 - `ui.ListState.ScrollToRowWithinContent`: animate source navigation within the
   natural content boundaries, so a subsequent wheel movement cannot remove
   artificial trailing space and jump. Covered by Shioji's

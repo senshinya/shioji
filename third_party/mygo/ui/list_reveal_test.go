@@ -130,3 +130,55 @@ func TestListRevealCapsOnlyTheAnimatedPrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestListRevealCanReserveSpaceForALiftedRow(t *testing.T) {
+	state := ListState{}
+	source := Rect{X: 72, Y: 156, W: 100, H: 24}
+	ink := RGB(205, 30, 69)
+	sending := false
+	tester := NewTester(func(c *Context) {
+		state.Key = func(index int) any {
+			if sending && index == 1 {
+				return "sent"
+			}
+			if index == 0 {
+				return "history"
+			}
+			return "footer"
+		}
+		rows := 2
+		if sending {
+			rows++
+		}
+		List(c, &state, rows, func(index int) {
+			switch state.Key(index) {
+			case "history":
+				Box(c).Height(48)
+			case "sent":
+				Column(c).Height(60).Children(func() {
+					Box(c).Size(100, 24).Background(ink).Transition(ElementTransition{
+						From: &source, Position: true, Lift: true,
+						Duration: 480 * time.Millisecond, Ease: Linear,
+					})
+				})
+			case "footer":
+				Text(c, "Footer").Height(24)
+			}
+		}).Fill()
+	}, 260, 220)
+	footer, ok := tester.Find("Footer")
+	if !ok {
+		t.Fatal("missing the original footer")
+	}
+	sending = true
+	state.Reveals = []ListReveal{{First: 1, End: 2, Progress: 0, LayoutOnly: true}}
+	tester.Frame()
+	r, g, b, _ := tester.Image().At(80, 164).RGBA()
+	if r>>8 != uint32(ink.R) || g>>8 != uint32(ink.G) || b>>8 != uint32(ink.B) {
+		t.Fatalf("the first frame did not paint the lifted row at its source: %02x%02x%02x", r>>8, g>>8, b>>8)
+	}
+	after, ok := tester.Find("Footer")
+	if !ok || math.Abs(float64(after.Y-footer.Y)) > .5 {
+		t.Fatalf("the lifted row moved the footer before it occupied any height: %v -> %v", footer, after)
+	}
+}

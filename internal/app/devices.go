@@ -233,8 +233,8 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	if m.UncertainSubmissions == nil {
 		m.UncertainSubmissions = map[string]bool{}
 	}
-	if m.submissionAccepted == nil {
-		m.submissionAccepted = map[string]bool{}
+	if m.submissionReceipts == nil {
+		m.submissionReceipts = map[string]domain.OperationState{}
 	}
 	p := *m
 	p.Navigation = m.Navigation.Clone()

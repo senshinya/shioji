@@ -16,7 +16,7 @@ func TestSubmissionPresentationRespectsReceiptStateAndOwner(t *testing.T) {
 	m.Pending["d"] = domain.Submission{OperationID: "d", WorkspaceID: "workspace", SessionID: "session", Text: "sent from chat"}
 	m.PendingDevices["c"] = "remote"
 	m.UncertainSubmissions = map[string]bool{"b": true, "c": true, "d": true}
-	if sending, uncertain := SubmissionPresentation(m, "workspace", ""); !sending || len(uncertain) != 0 {
+	if sending, preparing, uncertain := SubmissionPresentation(m, "workspace", ""); !sending || preparing || len(uncertain) != 0 {
 		t.Fatalf("ordinary home send received a recovery panel: sending=%t, receipts=%v", sending, uncertain)
 	}
 	for _, id := range []string{"a", "b", "c", "d"} {
@@ -25,7 +25,7 @@ func TestSubmissionPresentationRespectsReceiptStateAndOwner(t *testing.T) {
 		}
 	}
 	m.UncertainSubmissions["a"] = true
-	if sending, uncertain := SubmissionPresentation(m, "workspace", ""); sending || len(uncertain) != 1 || uncertain[0].OperationID != "a" {
+	if sending, preparing, uncertain := SubmissionPresentation(m, "workspace", ""); sending || preparing || len(uncertain) != 1 || uncertain[0].OperationID != "a" {
 		t.Fatalf("only the unknown result from the active workspace belongs here: sending=%t, receipts=%v", sending, uncertain)
 	}
 	if !CanCheckSubmission(m, "a", "workspace", "") || !CanCheckSubmission(m, "d", "workspace", "session") {
@@ -34,6 +34,28 @@ func TestSubmissionPresentationRespectsReceiptStateAndOwner(t *testing.T) {
 	delete(m.Pending, "a")
 	if CanCheckSubmission(m, "a", "workspace", "") {
 		t.Fatal("a stale control must not look up an already settled operation")
+	}
+}
+
+func TestNewSubmissionPreparingUsesTheOwningReceipt(t *testing.T) {
+	m := app.NewModel()
+	in := domain.Submission{OperationID: "new", WorkspaceID: "workspace", Text: "draft"}
+	m.Accepted(in, domain.Operation{ID: in.OperationID, State: domain.OperationPreparing})
+	if sending, preparing, _ := SubmissionPresentation(m, "workspace", ""); !sending || !preparing {
+		t.Fatal("direct preparation receipt did not update the new session status")
+	}
+	if sending, preparing, _ := SubmissionPresentation(m, "other", ""); sending || preparing {
+		t.Fatal("preparation leaked to another workspace")
+	}
+	m.ApplyOperation(domain.Operation{ID: in.OperationID, State: domain.OperationDispatched})
+	m.ApplyOperation(domain.Operation{ID: in.OperationID, State: domain.OperationAccepted})
+	m.ApplyOperation(domain.Operation{ID: in.OperationID, State: domain.OperationPreparing})
+	if sending, preparing, _ := SubmissionPresentation(m, "workspace", ""); !sending || preparing {
+		t.Fatal("a late receipt returned to preparation after dispatch")
+	}
+	m.ApplyOperation(domain.Operation{ID: in.OperationID, State: domain.OperationConfirmed})
+	if sending, preparing, _ := SubmissionPresentation(m, "workspace", ""); sending || preparing {
+		t.Fatal("confirmed operation still has a pending status")
 	}
 }
 

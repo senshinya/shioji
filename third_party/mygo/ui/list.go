@@ -2065,7 +2065,9 @@ func (e *node) layoutList(w, h float32) {
 		}
 		if visible < natural {
 			r.e.h = visible
-			r.e.flags |= flagClip
+			if hs.revealClips(r.i) {
+				r.e.flags |= flagClip
+			}
 		}
 	}
 	for _, ch := range extras {

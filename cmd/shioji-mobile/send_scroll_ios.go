@@ -40,8 +40,10 @@ func (s *mobileSendScroll) animation() ui.Animation {
 }
 
 func (s *mobileSendScroll) begin(operation, epoch string, source ui.Rect, steer, queued bool) {
-	if source.W > 0 {
+	if source.W > 0 && source.H > 0 {
 		source = ui.Rect{X: source.X - 13, Y: source.Y - 9, W: source.W + 26, H: source.H + 18}
+	} else if !queued {
+		source = s.composerBounds
 	}
 	*s = mobileSendScroll{
 		operation: operation, epoch: epoch,
@@ -70,10 +72,7 @@ func (s *mobileSendScroll) reveal(c *ui.Context, frame ui.Element, list *ui.List
 		if row.Footer != "" || items[row.First].ID != input || items[row.First].Status != "sent" {
 			continue
 		}
-		const motionKey = "accepted-message"
-		if !s.started {
-			frame.Jump(motionKey, 0)
-			s.started = true
+		if s.advance(frame) {
 			switch {
 			case s.steer:
 				list.ScrollToEnd(s.animation())
@@ -83,15 +82,17 @@ func (s *mobileSendScroll) reveal(c *ui.Context, frame ui.Element, list *ui.List
 				list.ScrollToEnd(mobileSendScrollAnimation)
 			}
 		}
-		s.progress = frame.AnimateTo(motionKey, 1, s.animation())
-		if s.progress >= 1 || s.steer {
+		if s.progress >= 1 || s.steer && s.queued {
 			return
 		}
-		end := i + 1
-		if end < len(rows) && rows[end].Footer != "" && rows[end].Receipt.AfterInput == input {
-			end++
+		if s.steer && i > 0 && rows[i-1].Receipt.BeforeInput == input {
+			list.Reveals = append(list.Reveals, ui.ListReveal{First: offset + i - 1, End: offset + i, Progress: s.progress})
 		}
-		list.Reveals = append(list.Reveals, ui.ListReveal{First: offset + i, End: offset + end, Progress: s.progress})
+		// The bubble lifts from the composer while its row makes room for it.
+		// Keep the live footer fully visible throughout that height change.
+		list.Reveals = append(list.Reveals, ui.ListReveal{
+			First: offset + i, End: offset + i + 1, Progress: s.progress, LayoutOnly: s.source.W > 0,
+		})
 		return
 	}
 	// The preceding progress row can become a taller reply footer before the
@@ -119,16 +120,26 @@ func (s *mobileSendScroll) reveal(c *ui.Context, frame ui.Element, list *ui.List
 	c.AnimationFrame()
 }
 
-func (s *mobileSendScroll) bubble(c *ui.Context, bubble ui.Element, id string) {
-	if !s.started || s.progress >= 1 || "input:"+s.operation != id {
-		return
+func (s *mobileSendScroll) advance(frame ui.Element) bool {
+	const motionKey = "accepted-message"
+	starting := !s.started
+	if starting {
+		frame.Jump(motionKey, 0)
+		s.started = true
 	}
-	if s.source.W > 0 {
+	s.progress = frame.AnimateTo(motionKey, 1, s.animation())
+	return starting
+}
+
+func (s *mobileSendScroll) flying(id string) bool {
+	return s != nil && s.operation != "" && s.started && s.progress < 1 && "input:"+s.operation == id && s.source.W > 0
+}
+
+func (s *mobileSendScroll) bubble(c *ui.Context, bubble ui.Element, id string) {
+	if s.flying(id) {
 		animation := s.animation()
 		bubble.Background(palette(c).inset.Alpha(s.progress)).
 			Transition(ui.ElementTransition{From: &s.source, Duration: animation.Duration,
 				Ease: animation.Ease, Position: true, Lift: true})
-	} else {
-		bubble.Opacity(s.progress).Transform(ui.Translation(0, 10*(1-s.progress)))
 	}
 }

@@ -169,6 +169,7 @@ func (a *mobileApp) conversation(c *ui.Context, parent *mygo.Window, split bool)
 		a.openConversationFind(parent, s, false)
 	}
 	detail := a.model.Details[s.ID]
+	initial := a.initialSubmissionDetail(parent, s, &detail)
 	ui.Column(c).Fill().Background(p.canvas).Children(func() {
 		if split {
 			a.conversationHeader(c, s.Title, a.conversationHeaderScope(s),
@@ -180,10 +181,10 @@ func (a *mobileApp) conversation(c *ui.Context, parent *mygo.Window, split bool)
 			return (!rightVisible || !a.parallelFindHandle.FocusWithin(c)) && c.Shortcut(mods, key)
 		})
 		var draft *mobileDraftEditor
-		if find == nil && !s.Archived && !a.workspace(s.WorkspaceID).Archived {
+		if initial.caption == "" && find == nil && !s.Archived && !a.workspace(s.WorkspaceID).Archived {
 			draft = a.bindDraftEditor(c, a.draftTarget())
 		}
-		a.conversationBody(c, parent, s, detail, find, draft, false)
+		a.conversationBody(c, parent, s, detail, find, draft, false, initial)
 	})
 }
 
@@ -217,12 +218,19 @@ func (a *mobileApp) conversationHeader(c *ui.Context, title, scope string, devic
 }
 
 func (a *mobileApp) conversationBody(c *ui.Context, parent *mygo.Window, session domain.Session, detail domain.SessionDetail,
-	find *mobileConversationFind, draft *mobileDraftEditor, right bool) {
+	find *mobileConversationFind, draft *mobileDraftEditor, right bool, initial firstSubmissionView) {
 	ui.Column(c).Grow(1).Basis(0).MinHeight(0).Children(func() {
 		dock := ui.Column(c.Key("conversation-dock")).Absolute().Left(0).Right(0).Bottom(0).ZIndex(1).PassThrough()
-		latest := a.renderTranscript(c, parent, session, detail, !right, find, nil, draft, dock)
+		latest := a.renderTranscript(c, parent, session, detail, !right, find, nil, draft, dock, initial)
 		dock.Children(func() {
 			a.historyStatus(c, parent, session)
+			if initial.caption != "" {
+				height := mobileclient.ComposerGeometry(0, false, composerLineHeight(c), mobileTapSize(c)).Height
+				mobileContent(c, conversationComposerWidth).Padding(4, conversationComposerInset, 0).Children(func() {
+					mobileComposerFrame(c, false).FillWidth().Height(height)
+				})
+				return
+			}
 			readingImport := a.importedHistoryFooter(c, parent, session, detail)
 			if readingImport || find != nil || draft == nil {
 				return
@@ -241,9 +249,16 @@ func (a *mobileApp) conversationBody(c *ui.Context, parent *mygo.Window, session
 }
 
 func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session domain.Session, detail domain.SessionDetail,
-	interactive bool, find *mobileConversationFind, preview *archiveTranscript, draft *mobileDraftEditor, dock ui.Element) func() {
+	interactive bool, find *mobileConversationFind, preview *archiveTranscript, draft *mobileDraftEditor, dock ui.Element, initial firstSubmissionView) func() {
 	p := palette(c)
 	sid := session.ID
+	viewKey := sid
+	if initial.key != "" {
+		viewKey = initial.key
+	}
+	if initial.caption != "" {
+		interactive = false
+	}
 	historyActions := interactive || preview != nil || parent != nil && parent == a.detail
 	detachedEdit := historyActions && preview == nil && a.detachedHistoryEdit(sid).ItemID != ""
 	var stop *mobileSessionStop
@@ -255,10 +270,14 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 	} else {
 		stop = a.sessionStop(session)
 		detail = stop.transcript(detail)
-		state = a.history[sid]
-		if state == nil {
-			state = &ui.ListState{FollowEnd: true}
-			a.history[sid] = state
+		if first := a.newSessionSend; first != nil && viewKey == first.operation {
+			state = &first.list
+		} else {
+			state = a.history[sid]
+			if state == nil {
+				state = &ui.ListState{FollowEnd: true}
+				a.history[sid] = state
+			}
 		}
 		timeline, compaction = a.toolTimeline(session), a.compaction(session)
 	}
@@ -291,7 +310,7 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 	}
 	older := detail.History != nil && detail.History.Older
 	newer := detail.History != nil && detail.History.Newer
-	entryLayer := c.Key("session-entry:" + sid)
+	entryLayer := c.Key("session-entry:" + viewKey)
 	var emerging bool
 	if a.latestSessionEntry == sid && interactive && preview == nil {
 		if a.model.Connected && !hasLatestSessionHistory(detail) {
@@ -341,8 +360,18 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 		}
 		older, newer = false, false
 	}
-	if len(transcript) == 0 && !older && !newer {
-		ui.Column(c).Grow(1).Children(func() {
+	frame := ui.Column(entryLayer.Key("transcript")).Grow(1).Basis(0).MinHeight(0)
+	var submission *mobileSubmissionProgress
+	if draft != nil && preview == nil && !newer {
+		submission = ui.Local(frame, "submission-progress", func() mobileSubmissionProgress { return mobileSubmissionProgress{} })
+		submission.update(c, a, draft, items)
+	}
+	submissionCaption := initial.caption
+	if submission != nil {
+		submissionCaption = submission.caption
+	}
+	if len(transcript) == 0 && !older && !newer && submissionCaption == "" {
+		frame.Children(func() {
 			if preview != nil {
 				zoom := c.Zoom()
 				label(c, "暂无会话记录", controlTextSize, p.secondary).Padding(4, pageInset, transcriptItemGap).Role(ui.RoleStatus).
@@ -362,7 +391,6 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 		})
 		return nil
 	}
-	frame := ui.Column(entryLayer.Key("transcript")).Grow(1).Basis(0).MinHeight(0)
 	dockPosition := ui.Local(frame, "dock-position", func() ui.Handle { return ui.Handle{} })
 	if dock.Valid() {
 		dock.Bind(dockPosition)
@@ -377,11 +405,12 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 	reading := a.model.HistoryReads[sid]
 	motionAllowed := find == nil && !session.Archived && !session.ReadOnlyHistory() &&
 		a.model.Connected && detail.HasLoadedHistory() && (detail.History == nil || !detail.History.Invalidated && !newer) &&
-		(reading == nil || !reading.Pending) && front && !c.Preferences().ReduceMotion
+		(reading == nil || !reading.Pending) && front && initial.caption == "" && !c.Preferences().ReduceMotion
 	canAnimate := motionAllowed && state.FollowingEnd()
 	canReveal := interactive && canAnimate
 	steer := ui.Local(frame, "steer-footer", func() steerFooterHandoff { return steerFooterHandoff{} })
-	transcript = steer.project(c, scope, transcript, items, a.model.UncertainSubmissions, canReveal)
+	localHandoff := submission != nil && submission.operation != ""
+	transcript = steer.project(c, scope, transcript, items, a.model.UncertainSubmissions, canReveal && !localHandoff)
 	turns := projection.turns
 
 	var workTurn domain.Turn
@@ -403,7 +432,7 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 		workCaption = "正在压缩上下文"
 	}
 	var toolsShowProgress bool
-	if workLive && liveCompaction == "" && workTurn.ID != "" {
+	if workLive && liveCompaction == "" && workTurn.ID != "" && submissionCaption == "" {
 		for first, group := range groups {
 			if group.Live && items[first].TurnID == workTurn.ID {
 				toolsShowProgress = true
@@ -417,6 +446,19 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 			// The tool group already draws the live status. A second, empty
 			// receipt would still reserve the transcript row's padding.
 			transcript = transcript[:len(transcript)-1]
+		}
+	}
+	// The local receipt can arrive before the Worker has published the turn.
+	// Reserve its eventual footer row while the journal catches up.
+	progressRow := -1
+	if !newer && !toolsShowProgress && liveCompaction == "" && !stop.pending() {
+		if last := len(transcript) - 1; last >= 0 && transcript[last].Footer != "" &&
+			transcript[last].Footer == workTurn.ID && transcript[last].Receipt.BeforeInput == "" {
+			progressRow = last
+		}
+		if progressRow < 0 && submissionCaption != "" {
+			progressRow = len(transcript)
+			transcript = append(slices.Clone(transcript), mobileclient.TranscriptRow{Footer: viewKey})
 		}
 	}
 	replyOrder, lastReply := projection.replyOrder, projection.lastReply
@@ -435,8 +477,15 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 	if motionAllowed {
 		state.FollowAnimation = &mobileSendHandoffAnimation
 	}
-	var sendMotion *mobileSendScroll
-	if draft != nil {
+	sendMotion := initial.motion
+	if sendMotion != nil {
+		if !front || c.Preferences().ReduceMotion || sendMotion.source.W <= 0 {
+			sendMotion.progress = 1
+		} else if sendMotion.progress < 1 {
+			sendMotion.advance(frame)
+		}
+	}
+	if draft != nil && sendMotion == nil {
 		sendMotion = &draft.sendScroll
 		if initial := a.newSessionSend; initial != nil {
 			if initial.epoch != a.model.ConnectionEpoch || c.Now().Sub(initial.began) > 15*time.Second {
@@ -444,9 +493,13 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 			} else if session.WorkspaceID == initial.workspace && slices.ContainsFunc(items, func(item domain.Item) bool {
 				return item.ID == "input:"+initial.operation
 			}) {
-				initial.from, initial.composerProgress = sendMotion.composerProgress, sendMotion.composerProgress
-				*sendMotion = *initial
-				a.newSessionSend = nil
+				if !initial.previewed {
+					initial.from, initial.composerProgress = sendMotion.composerProgress, sendMotion.composerProgress
+					*sendMotion = initial.mobileSendScroll
+				}
+				if a.draftPage == nil || !initial.previewed {
+					a.newSessionSend = nil
+				}
 			}
 		}
 		draft.queueMotion.observe(c, detail.Queue, items, a.model.ConnectionEpoch, sendMotion, canAnimate)
@@ -461,6 +514,9 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 			return transcriptOlder
 		case index-offset < len(transcript):
 			row := transcript[index-offset]
+			if index-offset == progressRow || steer.insertion != "" && row.Receipt.BeforeInput == steer.insertion {
+				return transcriptProgressKey{}
+			}
 			if row.Footer != "" {
 				if row.Receipt.AfterInput != "" {
 					return transcriptReplyKey(row.Receipt.AfterInput)
@@ -602,11 +658,11 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 	}
 	var latest func()
 	endGap := float32(2)
-	if draft != nil {
+	if draft != nil || initial.key != "" {
 		endGap = 8
 	}
 	frame.Children(func() {
-		list := ui.List(c.Key(sid), state, rows, func(index int) {
+		list := ui.List(c.Key(viewKey), state, rows, func(index int) {
 			if index < offset {
 				a.transcriptHistoryControl(c, parent, detail, prefetch, transcriptOlder, current)
 				return
@@ -643,6 +699,26 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 					a.observeReadCompletion(c, footer, state, session, turn, readVisit)
 				}
 				footer.Children(func() {
+					if index == progressRow {
+						body := row.Key("running-footer")
+						ui.Column(body).FillWidth().Transition(ui.ElementTransition{
+							Duration: mobileReplyFade, Ease: ui.EaseOut, Exit: &ui.Motion{Opacity: 0},
+						}).DrawOver(func(_ *ui.Painter, bounds ui.Rect) {
+							if canReveal && !localHandoff && bounds.H > 0 {
+								steer.observeRunning(entry)
+							}
+						}).Children(func() {
+							status, start, live := a.liveTurnStatus(sid, turn, detail.Requests, items)
+							if live && workCaption != "" {
+								status = workCaption
+							}
+							if submissionCaption != "" {
+								status, live = submissionCaption, submissionCaption == "进行中"
+							}
+							mobileTranscriptProgress(body, status, start, live)
+						})
+						return
+					}
 					if intermediate {
 						body := row.Key("intermediate-summary")
 						summary := ui.Column(body).FillWidth()
@@ -663,17 +739,6 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 						}
 						a.turnReceipt(body, parent, sid, turn, receipt, detail.Requests, items,
 							historyActions, hold, toolsShowProgress && turn.ID == workTurn.ID, previewTail, atEnd, workCaption)
-					}
-					if canReveal && turn.Status.Active() && !toolsShowProgress {
-						body := row.Key("running-footer")
-						ui.Column(body).FillWidth().Transition(ui.ElementTransition{
-							Duration: mobileReplyFade, Ease: ui.EaseOut, Exit: &ui.Motion{Opacity: 0},
-						}).DrawOver(func(_ *ui.Painter, bounds ui.Rect) {
-							if bounds.H > 0 {
-								steer.observeRunning(entry)
-							}
-						}).Children(func() { render(body) })
-						return
 					}
 					if motionAllowed && !turn.Status.Active() {
 						settled := row.Key("settled-footer")
@@ -735,7 +800,7 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 					return
 				}
 				if group, ok := groups[first]; ok {
-					a.toolGroup(row, parent, session, items[first:end], group, timeline, state, index+offset, workCaption, workStart, workLive && liveCompaction == "", target, reveal, decorate)
+					a.toolGroup(row, parent, session, items[first:end], group, timeline, state, index+offset, workCaption, workStart, workLive && liveCompaction == "" && submissionCaption == "", target, reveal, decorate)
 					return
 				}
 				var mark *markdown.RangeDecoration
@@ -797,7 +862,7 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 								}
 							}
 						}
-						userMessageFooter(row, message, item.SentAt, edit, canEdit && !restarting, previewTail)
+						userMessageFooter(row, message, item.SentAt, edit, canEdit && !restarting, previewTail, sendMotion.flying(item.ID))
 						if restarting && historyPose.Shatter == 0 && c.Now().Sub(historyVisual.started) >= conversationui.HistoryShatterDuration {
 							mobileReplyProgress(row.Key("history-running"), "进行中", nil, nil, true)
 						}
@@ -871,7 +936,7 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 	p := palette(c)
 	targetRef := editor.target
 	key, sid := targetRef.key, targetRef.session
-	sending, uncertain := mobileclient.SubmissionPresentation(m, targetRef.workspace, sid)
+	sending, _, uncertain := mobileclient.SubmissionPresentation(m, targetRef.workspace, sid)
 	ready := editor.readiness()
 	runtimeBlocked := ready.State != domain.RuntimeReady
 	var config domain.RunConfig
@@ -1006,12 +1071,6 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 		if !home {
 			conversationui.UsageLimitNotice(c.Key("usage-limit:"+key), m.UsageLimitForSession(sid, c.Now()), p.panel, p.ink, p.secondary, c.Preferences().TextScale, 52, 0)
 		}
-		if home && editor.sendScroll.operation != "" && !editor.sendScroll.started {
-			waiting := c.Key("first-send-preparation")
-			ui.Column(waiting).Transition(mobileFeedbackFade(120 * time.Millisecond)).Children(func() {
-				mobileReplyProgress(waiting, "正在准备会话", nil, nil, true)
-			})
-		}
 		a.pathAttachmentPanel(c, parent, editor)
 		a.draftReferences(c, parent, editor)
 		editor.referencePanel(a, c, parent)
@@ -1067,6 +1126,9 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 					}
 				}
 				placeholder = "与 " + harness + " 一起工作…"
+			}
+			if send.flying("input:" + send.operation) {
+				placeholder = ""
 			}
 			ui.Column(c).Margin(geometry.TextTop, geometry.TextRight, 0, geometry.TextInset).
 				Padding(mobileclient.ComposerEditorPadding, 4).Height(geometry.EditorHeight).Children(func() {
@@ -1506,8 +1568,13 @@ func copyFooterAction(title, text string) footerAction {
 	return footerAction{title: title, icon: copySymbol, copy: text, click: func() { mygo.Clipboard.WriteText(text) }}
 }
 
-func userMessageFooter(c *ui.Context, text string, stamp *time.Time, edit func(), canEdit, previewTail bool) {
-	messageFooter(c, true).Margin(transcriptItemGap, 0, 0).Padding(0, transcriptItemGap, 0, (mobileTapSize(c)-footerIconSize)/2).Justify(ui.End).Children(func() {
+func userMessageFooter(c *ui.Context, text string, stamp *time.Time, edit func(), canEdit, previewTail, flying bool) {
+	footer := messageFooter(c, true).Margin(transcriptItemGap, 0, 0).Padding(0, transcriptItemGap, 0, (mobileTapSize(c)-footerIconSize)/2).Justify(ui.End)
+	if flying {
+		footer.Opacity(0)
+		ui.Inert(footer, true)
+	}
+	footer.Children(func() {
 		copy := copyFooterAction("复制消息", text)
 		if edit == nil {
 			footerActions(c, previewTail, false, copy)

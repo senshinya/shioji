@@ -813,7 +813,7 @@ func (a *mobileApp) drawParallelPane(c *ui.Context, id string, closePane func())
 			}
 		}
 		find := a.conversationFind(c, a.detail, s, detail, true, pane.Shortcut)
-		a.conversationBody(c, a.detail, s, detail, find, draft, true)
+		a.conversationBody(c, a.detail, s, detail, find, draft, true, firstSubmissionView{})
 	})
 }
 

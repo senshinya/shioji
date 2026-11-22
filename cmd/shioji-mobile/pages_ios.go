@@ -137,6 +137,10 @@ func (a *mobileApp) newConversationView(c *ui.Context, startAtTop bool) {
 	m := a.model
 	ws := a.workspace(m.WorkspaceID)
 	parent := a.draftPage
+	if a.firstSubmissionVisible(parent) {
+		a.conversation(c, parent, false)
+		return
+	}
 	workspaces := m.Snapshot.Workspaces
 	allArchived := len(workspaces) > 0 && !slices.ContainsFunc(workspaces, func(w domain.Workspace) bool { return !w.Archived })
 	if allArchived || len(workspaces) == 0 && m.Connected && a.connectionPhase() == app.ConnectionIdle {

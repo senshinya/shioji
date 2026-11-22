@@ -236,10 +236,15 @@ func (a *mobileApp) openPreviewBoard(board string) {
 		a.model.Snapshot.Sessions[0] = detail.Session
 		a.model.Drafts["session:"+review.ID] = "再检查一下连续展开两个工具组的情况。"
 		a.openSession(review.ID)
-	case "motion-send", "motion-steer", "motion-queue", "motion-queue-auto":
+	case "motion-send", "motion-send-delayed", "motion-steer", "motion-steer-delayed", "motion-queue", "motion-queue-auto":
 		a.seedArtboardConversation(false)
 		a.seedConversationMotion(board, review.ID)
 		a.openSession(review.ID)
+	case "motion-home-preparing", "motion-home-handoff":
+		a.seedArtboardConversation(false)
+		a.previewConversationMotion = board
+		a.model.Drafts["home"] = "核对新会话的准备状态"
+		a.presentDraft(a.home, false)
 	case "motion-reply-height":
 		a.seedArtboardConversation(false)
 		a.seedReplyHeightMotion(review.ID)

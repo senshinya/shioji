@@ -13,7 +13,7 @@ import (
 
 // SubmissionPresentation separates a healthy in-flight send from a result
 // whose receipt must be checked on the original worker.
-func SubmissionPresentation(m *app.Model, workspace, session string) (sending bool, uncertain []domain.Submission) {
+func SubmissionPresentation(m *app.Model, workspace, session string) (sending, preparing bool, uncertain []domain.Submission) {
 	owner := m.ConnectionID()
 	for _, in := range m.Pending {
 		if !pendingSubmissionInScope(m, in, owner, workspace, session) {
@@ -23,10 +23,14 @@ func SubmissionPresentation(m *app.Model, workspace, session string) (sending bo
 			uncertain = append(uncertain, in)
 		} else if in.QuestionReply == nil && !in.Continue {
 			sending = true
+			if session == "" {
+				state := m.SubmissionReceiptState(in.OperationID)
+				preparing = preparing || state == domain.OperationPreparing || state == domain.OperationAccepted
+			}
 		}
 	}
 	slices.SortFunc(uncertain, func(a, b domain.Submission) int { return cmp.Compare(a.OperationID, b.OperationID) })
-	return sending, uncertain
+	return sending, preparing, uncertain
 }
 
 func CanCheckSubmission(m *app.Model, id, workspace, session string) bool {

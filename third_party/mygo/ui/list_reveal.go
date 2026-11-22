@@ -14,6 +14,10 @@ type ListReveal struct {
 	// FromEnd exposes the trailing rows. Use it when a trailing disclosure
 	// closes content above itself; the latest rows stay next to the control.
 	FromEnd bool
+	// LayoutOnly changes the occupied height while keeping the row mounted
+	// and unclipped, even at zero height. Use it for a single row containing
+	// a lifted element whose motion is independent of the reveal.
+	LayoutOnly bool
 }
 
 func (hs *listHeights) revealedHeight(r ListReveal, gap float64) float64 {
@@ -67,12 +71,24 @@ func (hs *listHeights) revealOffset(i int) float64 {
 		if i < r.First {
 			break
 		}
-		if r.FromEnd && i < r.End {
+		if r.FromEnd && !r.LayoutOnly && i < r.End {
 			cut := hs.naturalTop(r.End, hs.gap) - hs.revealedHeight(r, hs.gap)
 			return max(0, min(hs.naturalHeight(i), cut-hs.naturalTop(i, hs.gap)))
 		}
 	}
 	return 0
+}
+
+func (hs *listHeights) revealClips(i int) bool {
+	for _, r := range hs.reveals {
+		if i < r.First {
+			break
+		}
+		if i < r.End {
+			return !r.LayoutOnly
+		}
+	}
+	return false
 }
 
 func (hs *listHeights) step(i int, gap float64) float64 {
@@ -93,7 +109,7 @@ func (hs *listHeights) nextVisible(i, direction int) int {
 		if i < r.First {
 			break
 		}
-		if i < r.End && hs.height(i) == 0 {
+		if i < r.End && !r.LayoutOnly && hs.height(i) == 0 {
 			if r.FromEnd {
 				if direction < 0 {
 					return r.First - 1

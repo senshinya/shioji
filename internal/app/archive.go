@@ -248,7 +248,7 @@ func (m *Model) ApplyArchiveDeletion(d domain.ArchiveDeletion) {
 			delete(m.PendingDevices, op)
 			delete(m.pendingGenerations, op)
 			delete(m.UncertainSubmissions, op)
-			delete(m.submissionAccepted, op)
+			delete(m.submissionReceipts, op)
 			m.Resolved[op] = true
 		}
 	}

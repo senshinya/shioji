@@ -116,7 +116,7 @@ func (a *mobileApp) startArchiveConversationPreview(owner *mygo.Window, location
 			label(c.Key("title"), session.Title, bodyTextSize, p.ink).FontWeight(640).MaxLines(2).Padding(14, pageInset, 8).
 				Role(ui.RoleHeading)
 			if detail, loaded := history.Details[session.ID]; loaded {
-				renderer.renderTranscript(c, preview.window, session, detail, false, nil, &transcript, nil, ui.Element{})
+				renderer.renderTranscript(c, preview.window, session, detail, false, nil, &transcript, nil, ui.Element{}, firstSubmissionView{})
 			} else {
 				label(c.Key("status"), status, controlTextSize, p.secondary).Padding(4, pageInset, transcriptItemGap).Role(ui.RoleStatus).
 					DrawOver(func(_ *ui.Painter, r ui.Rect) { transcript.fitHeight((r.Y + r.H) * zoom) })

@@ -34,7 +34,7 @@ type Model struct {
 	ArchivePolicyChanges       map[string]ArchivePolicyChange
 	Feedbacks                  []Feedback
 	UncertainSubmissions       map[string]bool
-	submissionAccepted         map[string]bool
+	submissionReceipts         map[string]domain.OperationState
 	PortForwards               []portforward.Mapping
 	HistoryReads               map[string]*HistoryRead
 	HistoryOutlines            map[string]domain.HistoryOutline
@@ -354,7 +354,7 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		delete(m.PendingDevices, op.ID)
 		delete(m.pendingGenerations, op.ID)
 		delete(m.UncertainSubmissions, op.ID)
-		delete(m.submissionAccepted, op.ID)
+		delete(m.submissionReceipts, op.ID)
 		m.Resolved[op.ID] = true
 		return
 	}
@@ -364,7 +364,7 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		if in, ok := m.Pending[op.ID]; ok && in.SessionID == "" && m.ownsWorkspace(in.WorkspaceID) && !m.sessionOnOtherDevice(m.sourceConnection, op.SessionID) {
 			switch op.State {
 			case domain.OperationAccepted, domain.OperationDispatched, domain.OperationConfirmed:
-				m.noteSubmissionAccepted(op.ID)
+				m.noteSubmissionAccepted(op)
 			}
 			return
 		}
@@ -386,7 +386,7 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 				return
 			}
 		}
-		m.noteSubmissionAccepted(op.ID)
+		m.noteSubmissionAccepted(op)
 	} else if op.State == "confirmed" {
 		delete(m.UncertainSubmissions, op.ID)
 		key := m.submissionDraftKey(in)
@@ -406,7 +406,7 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		delete(m.Pending, op.ID)
 		delete(m.PendingDevices, op.ID)
 		delete(m.pendingGenerations, op.ID)
-		delete(m.submissionAccepted, op.ID)
+		delete(m.submissionReceipts, op.ID)
 		m.Resolved[op.ID] = true
 		m.Error = ""
 	} else if op.State == "rejected" || op.State == "abandoned" {
@@ -428,7 +428,7 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		delete(m.Pending, op.ID)
 		delete(m.PendingDevices, op.ID)
 		delete(m.pendingGenerations, op.ID)
-		delete(m.submissionAccepted, op.ID)
+		delete(m.submissionReceipts, op.ID)
 		m.Resolved[op.ID] = true
 		m.Error = op.Error
 	} else if op.State == "indeterminate" {
@@ -909,12 +909,22 @@ func (m *Model) Load(path string) error {
 
 const submissionUncertainMessage = "提交结果待核实，草稿已保留"
 
-func (m *Model) noteSubmissionAccepted(id string) {
+func (m *Model) SubmissionReceiptState(id string) domain.OperationState {
+	return m.submissionReceipts[id]
+}
+
+func (m *Model) noteSubmissionAccepted(op domain.Operation) {
+	id := op.ID
 	delete(m.pendingGenerations, id)
-	if m.submissionAccepted == nil {
-		m.submissionAccepted = map[string]bool{}
+	if m.submissionReceipts == nil {
+		m.submissionReceipts = map[string]domain.OperationState{}
 	}
-	m.submissionAccepted[id] = true
+	// Command receipts and journal events can arrive in either order.
+	previous := m.submissionReceipts[id]
+	if !previous.ReceiptObserved() && (op.State.ReceiptObserved() ||
+		previous != domain.OperationDispatched && (previous == "" || op.State != domain.OperationPreparing)) {
+		m.submissionReceipts[id] = op.State
+	}
 	if m.UncertainSubmissions[id] {
 		delete(m.UncertainSubmissions, id)
 		m.Feedbacks = slices.DeleteFunc(m.Feedbacks, func(f Feedback) bool { return f.ID == id && f.Kind == FeedbackSubmissionUncertain })
@@ -925,7 +935,7 @@ func (m *Model) noteSubmissionAccepted(id string) {
 }
 
 func (m *Model) SubmissionError(in domain.Submission, err error) bool {
-	if _, pending := m.Pending[in.OperationID]; !pending || m.submissionAccepted[in.OperationID] {
+	if _, pending := m.Pending[in.OperationID]; !pending || m.SubmissionReceiptState(in.OperationID) != "" {
 		return false
 	}
 	var remote *protocol.RemoteError

@@ -275,7 +275,7 @@ func (a *mobileApp) openWork(parent *mygo.Window, sid string, work domain.WorkAc
 					}
 				}
 				content.Children(func() { a.transcriptUserBubble(row, w, session, item, runs, nil, nil) })
-				userMessageFooter(row, sentMessageText(runs), item.SentAt, nil, false, false)
+				userMessageFooter(row, sentMessageText(runs), item.SentAt, nil, false, false, false)
 			case "assistant":
 				var embedDelta float32
 				a.drawTranscriptMarkdown(row, w, session, float32(a.model.Preferences.ReplySize), nil, func(body *ui.Context, options *markdown.Options) {
