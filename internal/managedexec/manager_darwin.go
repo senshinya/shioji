@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -353,93 +354,122 @@ func (s *Scope) setServiceState(id string, idle, unverified bool) error {
 // Reap retires only newly registered groups whose only executable member is the
 // trusted anchor. Historical receipts are never reinterpreted as live PIDs.
 func (m *Manager) Reap(ctx context.Context) error {
+	return m.reap(ctx, func() ([]unix.KinfoProc, error) {
+		return unix.SysctlKinfoProcSlice("kern.proc.all")
+	})
+}
+
+func (m *Manager) reap(ctx context.Context, snapshot func() ([]unix.KinfoProc, error)) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if len(m.live) == 0 {
+	live := maps.Clone(m.live)
+	m.mu.Unlock()
+	if len(live) == 0 {
 		return nil
 	}
-	procs, err := unix.SysctlKinfoProcSlice("kern.proc.all")
+	procs, err := snapshot()
 	if err != nil {
 		return err
 	}
-	observed := map[string]bool{}
-	for id, launch := range m.live {
-		s, t := launch.scope, launch.ticket
-		if !observed[s.Session] {
-			if _, e := s.inspectExplicitMaintenance(); e != nil {
-				return &OwnershipError{Session: s.Session, Generation: s.Generation, Cause: e}
-			}
-			observed[s.Session] = true
-		}
-		state, err := s.load()
-		if err != nil {
-			return &OwnershipError{Session: s.Session, Generation: s.Generation, Cause: err}
-		}
-		if !state.Active {
-			delete(m.live, id)
-			continue
-		}
-		if err := knownMemberStayedInGroup(t); err != nil {
-			return &OwnershipError{Session: s.Session, Generation: s.Generation, Cause: err}
-		}
-		var members []unix.KinfoProc
-		for _, p := range procs {
-			if int(p.Eproc.Pgid) == t.Group && p.Proc.P_stat != 5 {
-				members = append(members, p)
-			}
-		}
-		if len(members) > 0 && !anchorPresent(t, members) {
-			return &OwnershipError{Session: s.Session, Generation: s.Generation, Cause: errors.New("managed group anchor identity is no longer verifiable")}
-		}
-		if len(members) > 1 || len(members) == 1 && !anchorPresent(t, members) {
-			continue
-		}
-		// Refresh immediately before retiring an identity; a global snapshot may
-		// precede another group's cleanup or an external process exit.
-		members, err = groupMembers(t.Group)
-		if err != nil {
-			return err
-		}
-		if err = knownMemberStayedInGroup(t); err != nil {
-			return &OwnershipError{Session: s.Session, Generation: s.Generation, Cause: err}
-		}
-		if len(members) > 1 || len(members) == 1 && !anchorPresent(t, members) {
-			continue
-		}
-		if err = ctx.Err(); err != nil {
-			return err
-		}
-		if len(members) == 1 {
-			anchor, e := unix.SysctlKinfoProc("kern.proc.pid", t.Anchor.PID)
-			if e != nil || identity(*anchor) != t.Anchor || int(anchor.Eproc.Pgid) != t.Group || anchor.Proc.P_stat == 5 {
-				return &OwnershipError{Session: s.Session, Generation: s.Generation, Cause: errors.New("managed anchor changed before retirement")}
-			}
-			if err = unix.Kill(t.Anchor.PID, unix.SIGKILL); err != nil && !errors.Is(err, unix.ESRCH) {
-				return err
-			}
-			// The identity still occupied its group immediately before this signal;
-			// wait for its exit before recording the end of this lifetime.
-			for {
-				p, e := unix.SysctlKinfoProc("kern.proc.pid", t.Anchor.PID)
-				if errors.Is(e, unix.ESRCH) || errors.Is(e, unix.EIO) && errors.Is(unix.Kill(t.Anchor.PID, 0), unix.ESRCH) || e == nil && (identity(*p) != t.Anchor || p.Proc.P_stat == 5) {
-					break
-				}
-				if e != nil {
-					return e
-				}
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(5 * time.Millisecond):
-				}
-			}
-		}
-		t.State = LaunchStopped
-		if err = writeJSON(s.launchPath(t.ID), t); err != nil {
-			return err
-		}
-		delete(m.live, id)
+	groups := make(map[int][]unix.KinfoProc, len(live))
+	for _, launch := range live {
+		groups[launch.ticket.Group] = nil
 	}
+	for _, p := range procs {
+		group := int(p.Eproc.Pgid)
+		if _, tracked := groups[group]; tracked && p.Proc.P_stat != 5 {
+			groups[group] = append(groups[group], p)
+		}
+	}
+	ownedUID := processInfos(procs)
+	protected := controlProcessIDs()
+	observed := map[string]bool{}
+	for id, launch := range live {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := m.reapLaunch(ctx, id, launch, groups[launch.ticket.Group], ownedUID, protected, observed); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Manager) reapLaunch(ctx context.Context, id string, launch liveLaunch, members []unix.KinfoProc, procs []ProcessInfo, protected map[int]bool, observed map[string]bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.live[id] != launch {
+		return nil
+	}
+	s, t := launch.scope, launch.ticket
+	if !observed[s.Generation] {
+		if _, e := s.observeProcesses(procs, protected); e != nil {
+			return &OwnershipError{Session: s.Session, Generation: s.Generation, Cause: e}
+		}
+		observed[s.Generation] = true
+	}
+	state, err := s.load()
+	if err != nil {
+		return &OwnershipError{Session: s.Session, Generation: s.Generation, Cause: err}
+	}
+	if !state.Active {
+		delete(m.live, id)
+		return nil
+	}
+	if err := knownMemberStayedInGroup(t); err != nil {
+		return &OwnershipError{Session: s.Session, Generation: s.Generation, Cause: err}
+	}
+
+	if len(members) > 0 && !anchorPresent(t, members) {
+		return &OwnershipError{Session: s.Session, Generation: s.Generation, Cause: errors.New("managed group anchor identity is no longer verifiable")}
+	}
+	if len(members) > 1 || len(members) == 1 && !anchorPresent(t, members) {
+		return nil
+	}
+	// Refresh immediately before retiring an identity; a global snapshot may
+	// precede another group's cleanup or an external process exit.
+	members, err = groupMembers(t.Group)
+	if err != nil {
+		return err
+	}
+	if err = knownMemberStayedInGroup(t); err != nil {
+		return &OwnershipError{Session: s.Session, Generation: s.Generation, Cause: err}
+	}
+	if len(members) > 1 || len(members) == 1 && !anchorPresent(t, members) {
+		return nil
+	}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	if len(members) == 1 {
+		anchor, e := unix.SysctlKinfoProc("kern.proc.pid", t.Anchor.PID)
+		if e != nil || identity(*anchor) != t.Anchor || int(anchor.Eproc.Pgid) != t.Group || anchor.Proc.P_stat == 5 {
+			return &OwnershipError{Session: s.Session, Generation: s.Generation, Cause: errors.New("managed anchor changed before retirement")}
+		}
+		if err = unix.Kill(t.Anchor.PID, unix.SIGKILL); err != nil && !errors.Is(err, unix.ESRCH) {
+			return err
+		}
+		// The identity still occupied its group immediately before this signal;
+		// wait for its exit before recording the end of this lifetime.
+		for {
+			p, e := unix.SysctlKinfoProc("kern.proc.pid", t.Anchor.PID)
+			if errors.Is(e, unix.ESRCH) || errors.Is(e, unix.EIO) && errors.Is(unix.Kill(t.Anchor.PID, 0), unix.ESRCH) || e == nil && (identity(*p) != t.Anchor || p.Proc.P_stat == 5) {
+				break
+			}
+			if e != nil {
+				return e
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
+	}
+	t.State = LaunchStopped
+	if err = writeJSON(s.launchPath(t.ID), t); err != nil {
+		return err
+	}
+	delete(m.live, id)
 	return nil
 }
 func (s *Scope) Fence() error {

@@ -6,8 +6,30 @@ import (
 	"strings"
 
 	"shioji/internal/domain"
+	"shioji/internal/harness"
 	"shioji/internal/protocol"
 )
+
+func (s *Server) claimInput(gate *runtimeEventGate, runtime harness.Runtime, op domain.Operation) error {
+	if gate == nil {
+		return errRuntimeRetired
+	}
+	if runtime.ManagedCoverage() {
+		if err := gate.apply(func() error { return s.coverOperation(op.SessionID, op.ID) }); err != nil {
+			return err
+		}
+	}
+	// Drain and Stop share the short commit boundary. Process ownership I/O
+	// happens above, where it cannot stall another session's admission.
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	return gate.apply(func() error {
+		if err := s.updateAdmission(); err != nil {
+			return err
+		}
+		return s.store.BeginInputHandoff(op.ID)
+	})
+}
 
 func (s *Server) beginInputReceipt(id string) func() {
 	s.inputReceiptMu.Lock()

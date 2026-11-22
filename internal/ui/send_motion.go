@@ -423,6 +423,9 @@ func (h *homeSendPresentation) pendingLabel() string {
 	if h.state == domain.OperationIndeterminate {
 		return "发送结果待核实"
 	}
+	if h.state == domain.OperationPreparing {
+		return "正在准备会话"
+	}
 	return "正在发送"
 }
 
@@ -467,6 +470,9 @@ func (v *View) acceptHomeSend(m *app.Model, op domain.Operation) {
 		return
 	}
 	if h.state.ReceiptObserved() && !op.State.ReceiptObserved() {
+		return
+	}
+	if op.State == domain.OperationPreparing && h.state != "" {
 		return
 	}
 	h.state = op.State

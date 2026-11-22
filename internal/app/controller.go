@@ -196,7 +196,11 @@ func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.Raw
 		}
 	}
 	var out json.RawMessage
-	err := client.Call(ctx, job.Method, job.Input, &out)
+	input := job.Input
+	if in, ok := input.(domain.Submission); ok && job.Method == "session.submit" && in.SessionID == "" && !in.Continue && client.Minor >= protocol.SubmissionReceiptMinor {
+		input = protocol.SubmissionInput{Submission: in, ReceiveBeforePrepare: true}
+	}
+	err := client.Call(ctx, job.Method, input, &out)
 	return out, err
 }
 func reconcileOperations(ctx context.Context, client *protocol.Client, queries []protocol.OperationQuery) ([]domain.Operation, error) {

@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,7 @@ import (
 )
 
 func TestSchemaMigrationSwapsFinalDatabaseAndCanRestoreBeforeCommit(t *testing.T) {
+	const sourceSchema = 16
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.sqlite")
 	db, err := store.Open(path)
@@ -26,13 +28,12 @@ func TestSchemaMigrationSwapsFinalDatabaseAndCanRestoreBeforeCommit(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = raw.Exec(`
-		DROP TABLE schedule_runs;
-		DROP TABLE schedules;
-		PRAGMA user_version=15;
+	if _, err = raw.Exec(fmt.Sprintf(`
+		DROP TABLE received_submissions;
+		PRAGMA user_version=%d;
 		CREATE TABLE final_event (value TEXT NOT NULL);
 		INSERT INTO final_event VALUES ('committed during drain');
-	`); err != nil {
+	`, sourceSchema)); err != nil {
 		t.Fatal(err)
 	}
 	if err := raw.Close(); err != nil {
@@ -48,10 +49,10 @@ func TestSchemaMigrationSwapsFinalDatabaseAndCanRestoreBeforeCommit(t *testing.T
 		}
 		return copy.Close()
 	}
-	if err := stageSchemaMigration(ctx, dir, op, 15, 16, migrate); err != nil {
+	if err := stageSchemaMigration(ctx, dir, op, sourceSchema, store.SchemaVersion, migrate); err != nil {
 		t.Fatal(err)
 	}
-	assertMigrationSchema(t, dir, device, 16)
+	assertMigrationSchema(t, dir, device, store.SchemaVersion)
 	raw, err = sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
@@ -69,10 +70,10 @@ func TestSchemaMigrationSwapsFinalDatabaseAndCanRestoreBeforeCommit(t *testing.T
 	if err := raw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := restoreSchemaMigration(ctx, dir, op, 15, 16); err != nil {
+	if err := restoreSchemaMigration(ctx, dir, op, sourceSchema, store.SchemaVersion); err != nil {
 		t.Fatal(err)
 	}
-	assertMigrationSchema(t, dir, device, 15)
+	assertMigrationSchema(t, dir, device, sourceSchema)
 	raw, err = sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +83,7 @@ func TestSchemaMigrationSwapsFinalDatabaseAndCanRestoreBeforeCommit(t *testing.T
 	if err := raw.QueryRow("SELECT count(*) FROM final_event").Scan(&count); err != nil || count != 1 {
 		t.Fatal("candidate writes were mixed into the restored old database", count, err)
 	}
-	if err := restoreSchemaMigration(ctx, dir, op, 15, 16); err != nil {
+	if err := restoreSchemaMigration(ctx, dir, op, sourceSchema, store.SchemaVersion); err != nil {
 		t.Fatal("rollback must be safe to retry", err)
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -105,7 +106,7 @@ func TestSchemaMigrationCandidateStartupFailureRestoresOldService(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := raw.Exec("DROP TABLE schedule_runs; DROP TABLE schedules; PRAGMA user_version=15"); err != nil {
+	if _, err := raw.Exec("DROP TABLE schedule_runs; DROP TABLE schedules; DROP TABLE received_submissions; PRAGMA user_version=15"); err != nil {
 		t.Fatal(err)
 	}
 	if err := raw.Close(); err != nil {
@@ -120,11 +121,11 @@ func TestSchemaMigrationCandidateStartupFailureRestoresOldService(t *testing.T) 
 			return filepath.Join(dir, "fixture-old-schema15"), build, err
 		case "next":
 			build.MigrationFrom = 15
-			return filepath.Join(dir, "fixture-next-schema16-unready"), build, err
+			return filepath.Join(dir, "fixture-next-schema-migration-unready"), build, err
 		}
 		return "", build, err
 	}
-	for _, name := range []string{"fixture-old-schema15", "fixture-next-schema16-unready"} {
+	for _, name := range []string{"fixture-old-schema15", "fixture-next-schema-migration-unready"} {
 		if err := os.Symlink(os.Args[0], filepath.Join(dir, name)); err != nil {
 			t.Fatal(err)
 		}
@@ -136,7 +137,7 @@ func TestSchemaMigrationCandidateStartupFailureRestoresOldService(t *testing.T) 
 	}
 	op := awaitRegressionPhase(t, dir, in.ID, "rolled-back")
 	assertMigrationSchema(t, dir, "fixture-device", 15)
-	if op.SourceSchema != 15 || op.TargetSchema != 16 || op.Error == "" {
+	if op.SourceSchema != 15 || op.TargetSchema != store.SchemaVersion || op.Error == "" {
 		t.Fatal("rollback lost the migration failure or schemas", op)
 	}
 }
@@ -155,9 +156,9 @@ func TestInterruptedSchemaMigrationRestoresBeforeStartingWriter(t *testing.T) {
 	if err := raw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	op := Operation{DeviceID: "fixture-device", Phase: "observing", PreviousBuild: "old", SourceSchema: 15, TargetSchema: 16,
+	op := Operation{DeviceID: "fixture-device", Phase: "observing", PreviousBuild: "old", SourceSchema: 15, TargetSchema: store.SchemaVersion,
 		Input: domain.WorkerReplacement{ID: "interrupted", BuildID: "next", ExpectedBuildID: "old", SchemaMigration: true}}
-	if err := stageSchemaMigration(ctx, dir, op, 15, 16, func(copy string) error {
+	if err := stageSchemaMigration(ctx, dir, op, 15, store.SchemaVersion, func(copy string) error {
 		db, err := store.Open(filepath.Join(copy, "state.sqlite"))
 		if err != nil {
 			return err
@@ -191,14 +192,14 @@ func TestShutdownDuringSchemaMigrationKeepsPrecommitReceipt(t *testing.T) {
 	dir, options := regressionOptions(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	op := Operation{DeviceID: "fixture-device", Phase: "observing", PreviousBuild: "old", SourceSchema: 15, TargetSchema: 16,
+	op := Operation{DeviceID: "fixture-device", Phase: "observing", PreviousBuild: "old", SourceSchema: 15, TargetSchema: store.SchemaVersion,
 		Input: domain.WorkerReplacement{ID: "shutdown-migration", BuildID: "next", ExpectedBuildID: "old", SchemaMigration: true}}
 	host := &host{ctx: ctx, options: options, journal: journal{filepath.Join(dir, "supervisor")}, wake: make(chan struct{}, 1)}
 	if err := host.journal.save(op); err != nil {
 		t.Fatal(err)
 	}
 	cancel()
-	host.finishUpdate(ctx, op, "", domain.WorkerBuild{BuildID: "next", Schema: 16, MigrationFrom: 15})
+	host.finishUpdate(ctx, op, "", domain.WorkerBuild{BuildID: "next", Schema: store.SchemaVersion, MigrationFrom: 15})
 	pending, err := host.journal.load(op.Input.ID)
 	if err != nil || !interruptedSchemaMigration(pending) {
 		t.Fatal("shutdown replaced the recoverable precommit receipt", pending, err)

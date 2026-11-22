@@ -48,6 +48,9 @@ type Runtime struct {
 	writeSlot        chan struct{}
 	mu               sync.Mutex
 	eventMu          sync.Mutex
+	hookRefreshMu    sync.Mutex
+	hookConfig       [32]byte
+	hookConfigKnown  bool
 	pending          map[string]chan wire.Message
 	pendingActivity  map[string]nativeCallActivity
 	done             chan struct{}
@@ -360,7 +363,7 @@ func (r *Runtime) write(b []byte) error {
 	return err
 }
 
-func (r *Runtime) writeContext(ctx context.Context, b []byte) (int, error) {
+func (r *Runtime) writeContext(ctx context.Context, b []byte, beforeWrite ...func() error) (int, error) {
 	if len(b) > 16<<20 {
 		return 0, errors.New("app-server request too large")
 	}
@@ -373,6 +376,14 @@ func (r *Runtime) writeContext(ctx context.Context, b []byte) (int, error) {
 	}
 	if err := ctx.Err(); err != nil {
 		return 0, err
+	}
+	if len(beforeWrite) > 0 && beforeWrite[0] != nil {
+		if err := beforeWrite[0](); err != nil {
+			return 0, err
+		}
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 	}
 	wakeWrite := func() { _ = r.stdin.Close() }
 	reset := func() {}
@@ -432,7 +443,7 @@ func (r *Runtime) send(m wire.Message) error {
 	}
 	return r.write(b)
 }
-func (r *Runtime) call(ctx context.Context, method string, params, out any) error {
+func (r *Runtime) call(ctx context.Context, method string, params, out any, beforeWrite ...func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -468,8 +479,19 @@ func (r *Runtime) call(ctx context.Context, method string, params, out any) erro
 		}
 		r.mu.Unlock()
 	}()
-	n, err := r.writeContext(ctx, raw)
+	var claimErr error
+	var claim func() error
+	if len(beforeWrite) > 0 && beforeWrite[0] != nil {
+		claim = func() error {
+			claimErr = beforeWrite[0]()
+			return claimErr
+		}
+	}
+	n, err := r.writeContext(ctx, raw, claim)
 	attempted = n != 0
+	if claimErr != nil {
+		return claimErr
+	}
 	if err != nil {
 		if !attempted {
 			return &CallError{Message: "app-server write did not send the request: " + err.Error()}
@@ -714,9 +736,9 @@ func (r *Runtime) bindThread(thread, session string, fresh bool, name *string) e
 	return r.emit([]domain.Event{{SessionID: session, Type: "session.title", Text: boundedTo(strings.TrimSpace(*name), 4<<10)}})
 }
 func (r *Runtime) Submit(ctx context.Context, s domain.Session, operationID, text string, attachments ...AttachmentInput) (string, error) {
-	return r.submit(ctx, s, operationID, text, attachments, nil)
+	return r.submit(ctx, s, operationID, text, attachments, nil, nil)
 }
-func (r *Runtime) submit(ctx context.Context, s domain.Session, operationID, text string, attachments []AttachmentInput, skills []domain.SkillReference) (string, error) {
+func (r *Runtime) submit(ctx context.Context, s domain.Session, operationID, text string, attachments []AttachmentInput, skills []domain.SkillReference, beforeWrite func() error) (string, error) {
 	if err := r.Validate(s.Config); err != nil {
 		return "", err
 	}
@@ -768,7 +790,7 @@ func (r *Runtime) submit(ctx context.Context, s domain.Session, operationID, tex
 	var out struct {
 		Turn wire.Turn `json:"turn"`
 	}
-	if err := r.call(ctx, "turn/start", params, &out); err != nil {
+	if err := r.call(ctx, "turn/start", params, &out, beforeWrite); err != nil {
 		return "", err
 	}
 	if out.Turn.ID == "" {
@@ -779,9 +801,9 @@ func (r *Runtime) submit(ctx context.Context, s domain.Session, operationID, tex
 
 // Steer uses the pinned app-server schema's active-turn precondition.
 func (r *Runtime) Steer(ctx context.Context, s domain.Session, turnID, operationID, text string, attachments ...AttachmentInput) error {
-	return r.steer(ctx, s, turnID, operationID, text, attachments, nil)
+	return r.steer(ctx, s, turnID, operationID, text, attachments, nil, nil)
 }
-func (r *Runtime) steer(ctx context.Context, s domain.Session, turnID, operationID, text string, attachments []AttachmentInput, skills []domain.SkillReference) error {
+func (r *Runtime) steer(ctx context.Context, s domain.Session, turnID, operationID, text string, attachments []AttachmentInput, skills []domain.SkillReference, beforeWrite func() error) error {
 	if !r.supports("turn/steer") {
 		return harness.Unsupported("steer")
 	}
@@ -802,7 +824,7 @@ func (r *Runtime) steer(ctx context.Context, s domain.Session, turnID, operation
 	var out struct {
 		TurnID string `json:"turnId"`
 	}
-	if err := r.call(ctx, "turn/steer", params, &out); err != nil {
+	if err := r.call(ctx, "turn/steer", params, &out, beforeWrite); err != nil {
 		return err
 	}
 	if out.TurnID != turnID {

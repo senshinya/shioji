@@ -189,10 +189,16 @@ func (r *adapterRuntime) ActivateHistory(ctx context.Context, source domain.Sess
 }
 
 func (r *adapterRuntime) Submit(ctx context.Context, s domain.Session, operation string, input harness.TurnInput) (string, error) {
-	return r.submit(ctx, s, operation, asyncQuestionInput(input.Text, input.QuestionReply), input.Attachments, input.Skills)
+	return r.SubmitWithHandoff(ctx, s, operation, input, nil)
 }
 func (r *adapterRuntime) Steer(ctx context.Context, s domain.Session, turn, operation string, input harness.TurnInput) error {
-	return r.steer(ctx, s, turn, operation, asyncQuestionInput(input.Text, input.QuestionReply), input.Attachments, input.Skills)
+	return r.SteerWithHandoff(ctx, s, turn, operation, input, nil)
+}
+func (r *adapterRuntime) SubmitWithHandoff(ctx context.Context, s domain.Session, operation string, input harness.TurnInput, beforeWrite func() error) (string, error) {
+	return r.submit(ctx, s, operation, asyncQuestionInput(input.Text, input.QuestionReply), input.Attachments, input.Skills, beforeWrite)
+}
+func (r *adapterRuntime) SteerWithHandoff(ctx context.Context, s domain.Session, turn, operation string, input harness.TurnInput, beforeWrite func() error) error {
+	return r.steer(ctx, s, turn, operation, asyncQuestionInput(input.Text, input.QuestionReply), input.Attachments, input.Skills, beforeWrite)
 }
 
 func (a Adapter) environment(ctx context.Context) ([]string, error) {

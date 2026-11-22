@@ -240,6 +240,17 @@ func (m *Model) ApplyArchiveDeletion(d domain.ArchiveDeletion) {
 	if d.WorkspaceID != "" {
 		m.deleteRetainedDrafts("", d.WorkspaceID)
 	}
+	for op, in := range m.Pending {
+		preparingInWorkspace := d.WorkspaceID != "" && in.SessionID == "" && in.WorkspaceID == d.WorkspaceID
+		if preparingInWorkspace || slices.Contains(d.SessionIDs, in.SessionID) {
+			delete(m.Pending, op)
+			delete(m.PendingDevices, op)
+			delete(m.pendingGenerations, op)
+			delete(m.UncertainSubmissions, op)
+			delete(m.submissionAccepted, op)
+			m.Resolved[op] = true
+		}
+	}
 	for _, id := range d.SessionIDs {
 		m.deleteRetainedDrafts(id, "")
 		delete(m.Details, id)
@@ -281,15 +292,6 @@ func (m *Model) ApplyArchiveDeletion(d domain.ArchiveDeletion) {
 		for key := range m.WorkDetails {
 			if key.SessionID == id {
 				delete(m.WorkDetails, key)
-			}
-		}
-		for op, in := range m.Pending {
-			if in.SessionID == id {
-				delete(m.Pending, op)
-				delete(m.PendingDevices, op)
-				delete(m.pendingGenerations, op)
-				delete(m.UncertainSubmissions, op)
-				delete(m.submissionAccepted, op)
 			}
 		}
 		m.Navigation.Pinned = slices.DeleteFunc(m.Navigation.Pinned, func(ref SessionLocation) bool { return ref.SessionID == id && ref.DeviceID == d.DeviceID })

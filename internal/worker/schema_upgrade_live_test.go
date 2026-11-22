@@ -186,7 +186,7 @@ func TestSignedSchema15WorkerMigratesThroughOldFixedService(t *testing.T) {
 	}
 	next := connect(device, in.BuildID)
 	var snap domain.Snapshot
-	if err := next.Call(ctx, "snapshot", nil, &snap); err != nil || next.Worker.Schema != 16 || len(snap.Workspaces) != 1 || snap.Workspaces[0].ID != workspace.ID {
+	if err := next.Call(ctx, "snapshot", nil, &snap); err != nil || next.Worker.Schema != build.Schema || len(snap.Workspaces) != 1 || snap.Workspaces[0].ID != workspace.ID {
 		t.Fatal("migrated worker did not preserve workspace identity", next.Worker, snap.Workspaces, err)
 	}
 	var conversation domain.SessionDetail
@@ -210,7 +210,7 @@ func TestSignedSchema15WorkerMigratesThroughOldFixedService(t *testing.T) {
 		Rule: domain.ScheduleRule{Kind: "daily", Time: "12:00"}}
 	var saved domain.Schedule
 	if err := next.Call(ctx, "schedule.save", schedule, &saved); err != nil || saved.Revision != 1 {
-		t.Fatal("candidate did not open schema 16 business admission", saved, err)
+		t.Fatal("candidate did not open migrated business admission", saved, err)
 	}
 	next.Close()
 	pid := migrationSupervisorPID(dir)
@@ -302,7 +302,7 @@ func TestSignedInterruptedMigrationCanRecoverThroughOldFixedService(t *testing.T
 		t.Fatal(err)
 	}
 	op := supervisor.Operation{DeviceID: device, Legacy: true, Phase: "migrating", PreviousBuild: oldBuild.BuildID,
-		SourceSchema: 15, TargetSchema: 16, SourceInstance: "released-source", SourcePID: 42, Input: domain.WorkerReplacement{
+		SourceSchema: 15, TargetSchema: nextBuild.Schema, SourceInstance: "released-source", SourcePID: 42, Input: domain.WorkerReplacement{
 			ID: "interrupted-migration", BuildID: nextBuild.BuildID, ExpectedBuildID: oldBuild.BuildID,
 			Explicit: true, Policy: "when-idle", SchemaMigration: true}}
 	if err := supervisor.SaveDrainIntent(dir, supervisor.DrainIntent{

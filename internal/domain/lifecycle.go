@@ -29,6 +29,7 @@ func (s ExecutionState) NeedsRecovery() bool  { return s == ExecutionUnknown || 
 type OperationState string
 
 const (
+	OperationPreparing     OperationState = "preparing"
 	OperationAccepted      OperationState = "accepted"
 	OperationDispatched    OperationState = "dispatched"
 	OperationConfirmed     OperationState = "confirmed"

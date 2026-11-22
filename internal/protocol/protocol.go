@@ -54,7 +54,10 @@ const Major = 2
 // Minor 52 adds coherent paged snapshots and a terminal receipt for unreceived input.
 // Minor 53 adds bounded catalog projections and batched operation lookup.
 // Minor 54 adds replies to nonblocking questions in the transcript.
-const Minor = 54
+// Minor 55 supports a durable receipt before preparing a new session.
+const Minor = 55
+
+const SubmissionReceiptMinor = 55
 
 const QuestionReplyMinor = 54
 

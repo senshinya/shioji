@@ -15,6 +15,10 @@ import (
 // All callers that create/replace a session runtime hold dispatchMu. The catalog
 // adapter never starts/resumes an execution thread.
 func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime, error) {
+	return s.openSessionRuntime(ctx, id, nil)
+}
+
+func (s *Server) openSessionRuntime(ctx context.Context, id string, startup *sessionStartup) (harness.Runtime, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -61,13 +65,46 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 		source, tracked := adapter.(harness.CatalogVersion)
 		running, captured := r.(harness.CatalogVersion)
 		if tracked && captured {
+			transition := s.sessionTransitions[id]
+			s.dispatchMu.Unlock()
 			installed, e := source.CatalogVersion()
+			version, versionErr := running.CatalogVersion()
+			s.dispatchMu.Lock()
 			if e != nil {
 				return nil, e
 			}
-			version, e := running.CatalogVersion()
-			if e != nil {
-				return nil, e
+			if versionErr != nil {
+				return nil, versionErr
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if err := s.updateAdmission(); err != nil {
+				return nil, err
+			}
+			current := s.currentRuntime(id)
+			if current == nil || current.Done() != r.Done() || current.Stopped() || s.sessionTransitions[id] != transition {
+				return nil, errSessionTransitionRetired
+			}
+			latest, err := s.store.SessionRecord(id)
+			if err != nil {
+				return nil, err
+			}
+			workspace, err := s.store.Workspace(latest.WorkspaceID)
+			if err != nil {
+				return nil, err
+			}
+			if latest.Archived || workspace.Archived || latest.ThreadID != d.Session.ThreadID {
+				return nil, errSessionTransitionRetired
+			}
+			if startup != nil {
+				op, err := s.store.Operation(startup.operationID)
+				if err != nil {
+					return nil, err
+				}
+				if op.State != domain.OperationAccepted {
+					return nil, errRuntimeStartCancelled
+				}
 			}
 			replace = replace || installed != version
 		}
@@ -110,6 +147,42 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 		owner = s.sessionTransitions[id]
 		ctx = owner.ctx
 	}
+	if startup != nil {
+		owner.startupInput = startup.operationID
+		defer func() { owner.startupInput = "" }()
+	}
+	queueCtx, cancelQueue := context.WithTimeout(ctx, 2*time.Minute)
+	releaseSlot, err := s.acquireColdStart(queueCtx)
+	cancelQueue()
+	if err != nil {
+		if ctx.Err() != nil && startup != nil && s.ctx.Err() == nil {
+			return nil, errRuntimeStartCancelled
+		}
+		return nil, err
+	}
+	retained := false
+	defer func() {
+		if !retained {
+			releaseSlot()
+		}
+	}()
+	if !owner.active() || s.sessionTransitions[id] != owner || ctx.Err() != nil {
+		return nil, errRuntimeStartCancelled
+	}
+	if err = s.updateAdmission(); err != nil {
+		return nil, err
+	}
+	if startup != nil {
+		current, e := s.store.Operation(startup.operationID)
+		if e != nil {
+			return nil, e
+		}
+		if current.State != domain.OperationAccepted {
+			return nil, errRuntimeStartCancelled
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	dir := s.sessionRuntimeDirectory(id)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
@@ -301,6 +374,10 @@ func (s *Server) sessionRuntime(ctx context.Context, id string) (harness.Runtime
 	delete(s.bound, id)
 	s.mu.Unlock()
 	s.watchRuntime(r, id)
+	if startup != nil {
+		startup.release = releaseSlot
+		retained = true
+	}
 	return r, nil
 }
 func (s *Server) sessionRuntimeDirectory(id string) string {

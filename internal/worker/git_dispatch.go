@@ -8,9 +8,12 @@ import (
 // These helpers require dispatchMu. The caller keeps checkout ownership while
 // native Git waits, then revalidates its captured admission before committing.
 func (s *Server) queryGitOutsideDispatch(ctx context.Context, dir string) (out domain.GitStatus, err error) {
+	return s.readGitOutsideDispatch(ctx, dir, true)
+}
+func (s *Server) readGitOutsideDispatch(ctx context.Context, dir string, detailed bool) (out domain.GitStatus, err error) {
 	s.dispatchMu.Unlock()
 	defer s.dispatchMu.Lock()
-	return queryGit(ctx, dir)
+	return readGitStatus(ctx, dir, detailed)
 }
 func (s *Server) gitRunOutsideDispatch(ctx context.Context, dir string, args ...string) (string, error) {
 	s.dispatchMu.Unlock()

@@ -80,7 +80,7 @@ cat > "$runtime_bundle/Contents/Library/LaunchAgents/dev.shioji.runtime.agent.pl
 <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
 <key>ThrottleInterval</key><integer>10</integer>
 <key>LimitLoadToSessionType</key><string>Aqua</string>
-<key>ProcessType</key><string>Background</string>
+<key>ProcessType</key><string>Interactive</string>
 </dict></plist>
 PLIST
 cat > "$runtime_bundle/Contents/Library/LaunchAgents/dev.shioji.network.agent.plist" <<'PLIST'

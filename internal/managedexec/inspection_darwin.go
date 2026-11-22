@@ -30,6 +30,10 @@ func Processes() ([]ProcessInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	return processInfos(procs), nil
+}
+
+func processInfos(procs []unix.KinfoProc) []ProcessInfo {
 	var out []ProcessInfo
 	for _, p := range procs {
 		if p.Proc.P_stat != 5 && p.Eproc.Ucred.Uid == uint32(os.Getuid()) {
@@ -37,7 +41,7 @@ func Processes() ([]ProcessInfo, error) {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Identity.PID < out[j].Identity.PID })
-	return out, nil
+	return out
 }
 
 func ProcessState(p ProcessInfo) string {
@@ -117,19 +121,19 @@ func (s *Scope) InspectExplicitMaintenance() (MaintenanceObservation, error) {
 }
 
 func (s *Scope) inspectExplicitMaintenance() (out MaintenanceObservation, err error) {
-	if _, err = s.load(); err != nil {
-		return out, err
-	}
 	procs, err := Processes()
 	if err != nil {
 		return out, err
 	}
+	return s.observeProcesses(procs, controlProcessIDs())
+}
+
+func (s *Scope) observeProcesses(procs []ProcessInfo, protected map[int]bool) (out MaintenanceObservation, err error) {
 	tickets, err := s.tickets()
 	if err != nil {
 		return out, err
 	}
 	owned := map[Identity]ProcessInfo{}
-	protected := controlProcessIDs()
 	var previous []ProcessInfo
 	path := filepath.Join(s.Directory, s.Generation, "observed-processes.json")
 	if err = readJSON(path, &previous); err != nil && !errors.Is(err, os.ErrNotExist) {

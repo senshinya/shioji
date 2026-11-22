@@ -179,7 +179,7 @@ func (s *Server) prepareOwnedWorktree(in domain.Submission, status domain.GitSta
 // Only a known local rejection reaches here. An unknown preparation result is
 // retained for the same operation's retry, just as Lody retains an unknown owner.
 func (s *Server) removeUnacceptedWorktree(in domain.Submission) {
-	if _, e := s.store.Operation(in.OperationID); !errors.Is(e, sql.ErrNoRows) {
+	if op, e := s.store.Operation(in.OperationID); !errors.Is(e, sql.ErrNoRows) && (e != nil || op.State != domain.OperationPreparing) {
 		return
 	}
 	sum := sha256.Sum256([]byte(in.OperationID))
@@ -208,7 +208,7 @@ func (s *Server) removeUnacceptedWorktree(in domain.Submission) {
 		if e != nil || status.Checkout != dest || status.CommonDir != w.CommonDir || status.Branch != w.Branch || status.Head != w.Head {
 			return
 		}
-		if _, e = s.store.Operation(in.OperationID); !errors.Is(e, sql.ErrNoRows) {
+		if op, lookup := s.store.Operation(in.OperationID); !errors.Is(lookup, sql.ErrNoRows) && (lookup != nil || op.State != domain.OperationPreparing) {
 			return
 		}
 		snapshot, e := s.store.Snapshot()

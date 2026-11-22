@@ -5,11 +5,40 @@ import (
 	"errors"
 	"shioji/internal/harness"
 	"shioji/internal/managedexec"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
 var errRuntimeStartCancelled = errors.New("运行环境初始化已停止，输入未发送")
+
+type sessionStartup struct {
+	operationID string
+	release     func()
+}
+
+func (s *sessionStartup) finish() {
+	if s != nil && s.release != nil {
+		s.release()
+	}
+}
+
+// Caller holds dispatchMu. Waiting for a cold start must leave hot sessions
+// and lifecycle commands free to proceed.
+func (s *Server) acquireColdStart(ctx context.Context) (func(), error) {
+	if s.coldStarts == nil {
+		s.coldStarts = make(chan struct{}, 2)
+	}
+	slots := s.coldStarts
+	s.dispatchMu.Unlock()
+	defer s.dispatchMu.Lock()
+	select {
+	case slots <- struct{}{}:
+		return sync.OnceFunc(func() { <-slots }), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
 
 type runtimeStart struct {
 	cancel    context.CancelFunc

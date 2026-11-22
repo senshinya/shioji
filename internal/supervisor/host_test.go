@@ -48,7 +48,7 @@ func fixtureHost(name string) int {
 		}
 	}
 	if probe {
-		if strings.Contains(name, "schema16") && strings.HasPrefix(filepath.Base(dir), "schema-migration-") {
+		if strings.Contains(name, "schema-migration") && strings.HasPrefix(filepath.Base(dir), "schema-migration-") {
 			db, err := store.Open(filepath.Join(dir, "state.sqlite"))
 			if err != nil || db.Close() != nil {
 				return 1

@@ -145,6 +145,20 @@ func TestDeletedOperationReceiptSettlesAnOfflineClientWithoutResurrectingHistory
 	}
 }
 
+func TestWorkspaceDeletionClearsItsPreparingHomeInput(t *testing.T) {
+	m := archiveModel()
+	m.Pending["preparing"] = domain.Submission{OperationID: "preparing", WorkspaceID: "wA", Text: "home input"}
+	m.PendingDevices["preparing"] = "local"
+	m.Pending["other"] = domain.Submission{OperationID: "other", WorkspaceID: "wB", Text: "other input"}
+	m.PendingDevices["other"] = "air"
+	m.Drafts["home"] = "keep home draft"
+	m.ApplyOperation(domain.Operation{ID: "preparing", State: domain.OperationPreparing})
+	m.ApplyArchiveDeletion(domain.ArchiveDeletion{DeviceID: "A", WorkspaceID: "wA"})
+	if _, pending := m.Pending["preparing"]; pending || m.Pending["other"].WorkspaceID != "wB" || m.Drafts["home"] != "keep home draft" {
+		t.Fatal("workspace deletion did not release only its own preparation", m.Pending, m.Drafts["home"])
+	}
+}
+
 func TestArchivePolicyOwnReceiptAdvancesPendingNewerLocalChoice(t *testing.T) {
 	m := archiveModel()
 	for _, id := range []string{"A", "B"} {

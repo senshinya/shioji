@@ -2,6 +2,11 @@ package protocol
 
 import "shioji/internal/domain"
 
+type SubmissionInput struct {
+	domain.Submission
+	ReceiveBeforePrepare bool `json:"receiveBeforePrepare,omitempty"`
+}
+
 type ConversationQuery struct {
 	WorkspaceID string `json:"workspaceId"`
 	Revision    int64  `json:"revision"`

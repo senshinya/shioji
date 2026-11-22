@@ -380,7 +380,7 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		m.scopeFailure(errors.New("提交回执与本设备的原始请求不一致"))
 		return
 	}
-	if op.State == domain.OperationAccepted || op.State == domain.OperationDispatched {
+	if op.State == domain.OperationPreparing || op.State == domain.OperationAccepted || op.State == domain.OperationDispatched {
 		for _, current := range m.Snapshot.Operations {
 			if current.ID == op.ID && current.State.ReceiptObserved() {
 				return

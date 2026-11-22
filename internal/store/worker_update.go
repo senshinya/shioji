@@ -7,7 +7,7 @@ import (
 	"shioji/internal/domain"
 )
 
-const SchemaVersion = 16
+const SchemaVersion = 17
 
 // The worker installer may use Open to upgrade these contiguous schemas after
 // preflighting the signed candidate on a copy. Older stores use legacy paths.

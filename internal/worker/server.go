@@ -107,6 +107,8 @@ type Server struct {
 	executions           *managedexec.Manager
 	readiness            domain.Readiness
 	dispatchMu           sync.Mutex
+	coldStarts           chan struct{}
+	steerDispatch        map[steerRuntimeKey]chan struct{}
 	sessionTransitions   map[string]*sessionTransition
 	worktreeTransitions  map[string]chan struct{}
 	worktreeRetries      map[string]worktreeRetry
@@ -1024,15 +1026,19 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		}
 		return op, err
 	case "session.submit":
-		in, err := decode[domain.Submission](body)
+		request, err := decode[protocol.SubmissionInput](body)
 		if err != nil {
 			return nil, err
 		}
+		in := request.Submission
 		if in.QuestionReply != nil {
 			return nil, errors.New("请使用问题的回答入口")
 		}
 		if strings.HasPrefix(in.OperationID, "scheduled:") {
 			return nil, errors.New("定时运行标识仅供所属设备的调度器使用")
+		}
+		if request.ReceiveBeforePrepare && in.SessionID == "" {
+			return s.receiveHomeSubmission(in)
 		}
 		return s.submit(in)
 	case "question.reply":
@@ -1106,6 +1112,10 @@ func (s *Server) submit(in domain.Submission) (domain.Operation, error) {
 	return s.submitLocked(in, 0, false)
 }
 func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immediate bool) (_ domain.Operation, failure error) {
+	return s.prepareSubmissionLocked(in, queueRevision, immediate, nil)
+}
+
+func (s *Server) prepareSubmissionLocked(in domain.Submission, queueRevision int64, immediate bool, received *domain.Workspace) (_ domain.Operation, failure error) {
 	if err := s.waitSessionTransition(s.ctx, in.SessionID); err != nil {
 		return domain.Operation{}, err
 	}
@@ -1113,13 +1123,13 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 		return domain.Operation{}, err
 	}
 	_, err := s.store.Operation(in.OperationID)
-	if err == nil {
+	if err == nil && received == nil {
 		if queueRevision > 0 {
 			return s.store.AcceptQueued(in, queueRevision)
 		}
 		return s.store.Accept(in)
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return domain.Operation{}, err
 	}
 	if err := store.CheckSubmissionJournal(in); err != nil {
@@ -1189,6 +1199,9 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 	}
 	if workspace.Archived {
 		return domain.Operation{}, errors.New("请先恢复工作区")
+	}
+	if received != nil && workspace.Revision != received.Revision {
+		return domain.Operation{}, errors.New("工作区在准备会话期间已变化，消息未发送")
 	}
 	paths := workspace.Folders
 	if in.Continue && in.SessionID == "" {
@@ -1276,6 +1289,9 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 		if strings.Join(current.Folders, "\x00") != strings.Join(paths, "\x00") {
 			return domain.Operation{}, errors.New("工作区执行目录已改变，输入未发送")
 		}
+		if received != nil && current.Revision != received.Revision {
+			return domain.Operation{}, errors.New("工作区在准备会话期间已变化，消息未发送")
+		}
 	}
 	var op domain.Operation
 	if queueRevision > 0 && immediate {
@@ -1287,13 +1303,15 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 		if e != nil {
 			return domain.Operation{}, e
 		}
-		op, err = s.store.AcceptForHarness(in, id, launch)
+		if received == nil {
+			op, err = s.store.AcceptForHarness(in, id, launch)
+		} else {
+			op, err = s.store.AcceptReceivedForHarness(in, id, launch)
+		}
 	}
 	if err != nil {
 		if in.Git.NewWorktree {
-			if _, lookup := s.store.Operation(in.OperationID); errors.Is(lookup, sql.ErrNoRows) {
-				s.removeUnacceptedWorktree(in)
-			}
+			s.removeUnacceptedWorktree(in)
 		}
 		return op, err
 	}
@@ -1314,20 +1332,24 @@ func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immedia
 			s.dispatchMu.Unlock()
 			return
 		}
-		ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
-		runtime, startErr := s.sessionRuntime(ctx, op.SessionID)
-		cancel()
+		startup := &sessionStartup{operationID: op.ID}
+		runtime, startErr := s.openSessionRuntime(s.ctx, op.SessionID, startup)
 		if startErr != nil && !errors.Is(startErr, errRuntimeStartCancelled) {
 			s.failRuntimeLaunch(op, startErr)
 		}
 		s.dispatchMu.Unlock()
 		if startErr == nil {
-			s.dispatch(in, op, runtime)
+			s.dispatchWithStartup(in, op, runtime, startup)
 		}
 	}()
 	return op, nil
 }
 func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime harness.Runtime) {
+	s.dispatchWithStartup(in, op, runtime, nil)
+}
+
+func (s *Server) dispatchWithStartup(in domain.Submission, op domain.Operation, runtime harness.Runtime, startup *sessionStartup) {
+	defer startup.finish()
 	s.dispatchMu.Lock()
 	locked := true
 	defer func() {
@@ -1407,6 +1429,7 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 				}
 			}
 		}
+		startup.finish()
 		if err == nil {
 			var inputs []harness.AttachmentInput
 			inputs, err = s.attachmentInputs(in)
@@ -1415,20 +1438,27 @@ func (s *Server) dispatch(in domain.Submission, op domain.Operation, runtime har
 					s.mu.Lock()
 					s.bound[session.ID] = true
 					s.mu.Unlock()
-					if runtime.ManagedCoverage() {
-						if err := s.coverOperation(session.ID, op.ID); err != nil {
-							return err
-						}
-					}
-					return s.store.BeginInputHandoff(op.ID)
+					return nil
 				})
 			}
 			if err == nil {
-				handed = true
-				if in.GoalObjective != "" {
-					err = s.startGoal(ctx, runtime, session, in.GoalObjective, gate)
+				claim := func() error {
+					err := s.claimInput(gate, runtime, op)
+					handed = err == nil
+					return err
+				}
+				input := harness.TurnInput{Text: in.Text, Attachments: inputs, Skills: in.Skills, QuestionReply: in.QuestionReply}
+				if delayed, ok := runtime.(harness.InputHandoffRuntime); ok && in.GoalObjective == "" {
+					turnID, err = delayed.SubmitWithHandoff(ctx, session, op.ID, input, claim)
 				} else {
-					turnID, err = runtime.Submit(ctx, session, op.ID, harness.TurnInput{Text: in.Text, Attachments: inputs, Skills: in.Skills, QuestionReply: in.QuestionReply})
+					err = claim()
+					if err == nil {
+						if in.GoalObjective != "" {
+							err = s.startGoal(ctx, runtime, session, in.GoalObjective, gate)
+						} else {
+							turnID, err = runtime.Submit(ctx, session, op.ID, input)
+						}
+					}
 				}
 			}
 		}

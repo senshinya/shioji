@@ -35,6 +35,13 @@ type TurnInput struct {
 	Skills        []domain.SkillReference
 	QuestionReply *domain.QuestionReply
 }
+
+// InputHandoffRuntime can defer the worker's durable claim until the input
+// is ready to cross the harness transport. An error from claim revokes it.
+type InputHandoffRuntime interface {
+	SubmitWithHandoff(context.Context, domain.Session, string, TurnInput, func() error) (string, error)
+	SteerWithHandoff(context.Context, domain.Session, string, string, TurnInput, func() error) error
+}
 type SkillProvider interface {
 	Skills(context.Context, domain.LaunchContext) (domain.SkillCatalog, error)
 }

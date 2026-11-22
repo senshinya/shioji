@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,8 +13,84 @@ import (
 
 	"shioji/internal/domain"
 	"shioji/internal/harness"
+	"shioji/internal/harness/codex/wire"
 	"shioji/internal/testutil"
 )
+
+func TestNativeTurnHonorsRevokedHandoffAfterPreparingHooks(t *testing.T) {
+	r := &Runtime{
+		ready:    domain.Readiness{State: "ready", Permissions: []string{"read-only"}, Models: []domain.Model{{ID: "test"}}},
+		protocol: &protocolSupport{methods: map[string]bool{"hooks/list": true, "config/batchWrite": true}},
+		pending:  map[string]chan wire.Message{}, done: make(chan struct{}),
+	}
+	var methods []string
+	r.stdin = workInputWriter{write: func(b []byte) (int, error) {
+		var req wire.Message
+		if err := json.Unmarshal(b, &req); err != nil {
+			return 0, err
+		}
+		methods = append(methods, req.Method)
+		r.deliverResponse(wire.Message{ID: req.ID, Result: json.RawMessage(`{"status":"ok","turn":{"id":"native-turn"}}`)})
+		return len(b), nil
+	}}
+	cancelled := errors.New("operation was stopped")
+	adapter := &adapterRuntime{Runtime: r}
+	_, err := adapter.SubmitWithHandoff(context.Background(), domain.Session{ThreadID: "native-thread",
+		Config: domain.RunConfig{Permission: "read-only", Model: "test"}}, "operation", harness.TurnInput{Text: "message"}, func() error {
+		if len(methods) != 1 || methods[0] != "config/batchWrite" {
+			t.Fatalf("native input handoff ran before configuration setup: %v", methods)
+		}
+		return cancelled
+	})
+	if !errors.Is(err, cancelled) || len(methods) != 1 {
+		t.Fatalf("revoked input reached the native pipe: %v, %v", methods, err)
+	}
+}
+
+func TestInputRefreshesUserHookConfigOnlyAfterAChange(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "config.toml")
+	write := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("hooks = true\n")
+	r := &Runtime{
+		processEnv: []string{"CODEX_HOME=" + home},
+		protocol:   &protocolSupport{methods: map[string]bool{"hooks/list": true, "config/batchWrite": true}},
+		pending:    map[string]chan wire.Message{},
+		done:       make(chan struct{}),
+	}
+	calls := 0
+	r.stdin = workInputWriter{write: func(b []byte) (int, error) {
+		var req wire.Message
+		if err := json.Unmarshal(b, &req); err != nil {
+			return 0, err
+		}
+		if req.Method != "config/batchWrite" {
+			t.Errorf("unexpected RPC %s", req.Method)
+		}
+		calls++
+		r.deliverResponse(wire.Message{ID: req.ID, Result: json.RawMessage(`{"status":"ok"}`)})
+		return len(b), nil
+	}}
+	beforeInput := func(want int) {
+		t.Helper()
+		if err := r.refreshHooksBeforeInput(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if calls != want {
+			t.Fatalf("made %d reload RPCs, want %d", calls, want)
+		}
+	}
+	beforeInput(1)
+	beforeInput(1)
+	write("hooks = false\n")
+	beforeInput(2)
+	beforeInput(2)
+}
 
 func nativeHooksFixture(t *testing.T) (*Runtime, harness.HookProvider, string, string) {
 	t.Helper()

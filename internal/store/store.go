@@ -99,6 +99,7 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS archive_policy (id INTEGER PRIMARY KEY CHECK(id=1), body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS deleted_operations (id TEXT PRIMARY KEY, session_id TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS submission_git_preparation (operation_id TEXT PRIMARY KEY, checkout TEXT NOT NULL, original_branch TEXT NOT NULL, branch TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS received_submissions (id TEXT PRIMARY KEY, digest TEXT NOT NULL, input BLOB, error TEXT NOT NULL DEFAULT '');
  CREATE TABLE IF NOT EXISTS deleted_sessions (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, cleaned INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS deleted_workspaces (id TEXT PRIMARY KEY, cleaned INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS archive_resources (workspace_id TEXT NOT NULL, attachment_id TEXT NOT NULL, PRIMARY KEY(workspace_id,attachment_id));
@@ -114,7 +115,7 @@ func Open(path string) (*Store, error) {
  CREATE INDEX IF NOT EXISTS work_inputs_unsettled_session ON work_inputs(session_id) WHERE json_extract(body,'$.state') IN ('accepted','dispatched','indeterminate') AND COALESCE(json_extract(body,'$.executionStopped'),0)=0;
  CREATE INDEX IF NOT EXISTS history_active_source ON history_operations(json_extract(body,'$.source.id')) WHERE json_extract(body,'$.state') IN ('prepared','forked');
  CREATE INDEX IF NOT EXISTS history_active_session ON history_operations(json_extract(body,'$.session.id')) WHERE json_extract(body,'$.state') IN ('prepared','forked');
- PRAGMA user_version=16;`)
+ PRAGMA user_version=17;`)
 	if err != nil {
 		tx.Rollback()
 		return fail(err)
@@ -343,6 +344,9 @@ func operation(q interface{ QueryRow(string, ...any) *sql.Row }, id string) (dom
 		return op, err
 	}
 	err = q.QueryRow("SELECT id,session_id,state,digest,error,kind FROM operations WHERE id=?", id).Scan(&op.ID, &op.SessionID, &op.State, &op.Digest, &op.Error, &op.Kind)
+	if errors.Is(err, sql.ErrNoRows) {
+		return receivedSubmission(q, id)
+	}
 	return op, err
 }
 func (s *Store) Operation(id string) (domain.Operation, error) {
@@ -353,28 +357,48 @@ func (s *Store) Operation(id string) (domain.Operation, error) {
 func (s *Store) Accept(in domain.Submission, launch ...domain.LaunchContext) (domain.Operation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.acceptLocked(in, 0, false, "", launch...)
+	return s.acceptLocked(in, 0, false, "", false, launch...)
 }
 func (s *Store) AcceptForHarness(in domain.Submission, harnessID string, launch domain.LaunchContext) (domain.Operation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.acceptLocked(in, 0, false, harnessID, launch)
+	return s.acceptLocked(in, 0, false, harnessID, false, launch)
 }
-func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediate bool, acceptedHarness string, launch ...domain.LaunchContext) (domain.Operation, error) {
+
+func (s *Store) AcceptReceivedForHarness(in domain.Submission, harnessID string, launch domain.LaunchContext) (domain.Operation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	receipt, err := receivedSubmission(s.db, in.OperationID)
+	if err != nil {
+		return domain.Operation{}, err
+	}
+	if receipt.State != domain.OperationPreparing || receipt.Digest != submissionDigest(in) {
+		return domain.Operation{}, ErrInputHandoffRevoked
+	}
+	return s.acceptLocked(in, 0, false, harnessID, true, launch)
+}
+
+func submissionDigest(in domain.Submission) string {
+	hash := sha256.Sum256(blob(in))
+	return hex.EncodeToString(hash[:])
+}
+
+func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediate bool, acceptedHarness string, received bool, launch ...domain.LaunchContext) (domain.Operation, error) {
 	var none domain.Operation
 	if in.ValidateContent() != nil || in.OperationID == "" {
 		return none, errors.New("submission requires an operation ID and 1–131072 bytes of text")
 	}
-	h := sha256.Sum256(blob(in))
-	digest := hex.EncodeToString(h[:])
+	digest := submissionDigest(in)
 	existing, err := operation(s.db, in.OperationID)
 	if err == nil {
 		if existing.Digest != digest {
 			return none, errors.New("operation ID already used with different input")
 		}
-		return existing, nil
+		if !received || existing.State != domain.OperationPreparing {
+			return existing, nil
+		}
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return none, err
 	}
 	var queued, emptyQueue *domain.QueueState
@@ -502,6 +526,9 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		return none, err
 	}
 	if _, err = tx.Exec("DELETE FROM submission_git_preparation WHERE operation_id=?", op.ID); err != nil {
+		return none, err
+	}
+	if _, err = tx.Exec("DELETE FROM received_submissions WHERE id=?", op.ID); err != nil {
 		return none, err
 	}
 	var item *domain.Item
@@ -1181,6 +1208,10 @@ func (s *Store) Recover() error {
 		return titleErr
 	}
 	s.mu.Lock()
+	if _, err := s.db.Exec("UPDATE received_submissions SET input=NULL,error=? WHERE input IS NOT NULL", "准备会话期间执行服务重启，消息未发送"); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	if _, err := s.db.Exec(`UPDATE history_operations SET body=json_set(body,'$.state','failed','$.error','操作在确认分叉前中断，原会话保持不变，可重新尝试') WHERE json_extract(body,'$.state')='prepared'`); err != nil {
 		s.mu.Unlock()
 		return err

@@ -475,7 +475,9 @@ func TestRuntimeUpgradeKeepsActiveChildAfterParentCompletes(t *testing.T) {
 	}
 	a.version.Store(2)
 	refreshCatalogByReadiness(t, s, "model-2", domain.RuntimeReady)
+	s.dispatchMu.Lock()
 	current, err := s.sessionRuntime(context.Background(), op.SessionID)
+	s.dispatchMu.Unlock()
 	if err != nil || current != old || old.Stopped() {
 		t.Fatal("runtime upgrade killed independently running child", err)
 	}

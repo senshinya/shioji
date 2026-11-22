@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -294,6 +296,47 @@ func (r *Runtime) RefreshHooks(ctx context.Context) error {
 	if !r.supports("hooks/list") || !r.supports("config/batchWrite") {
 		return harness.Unsupported("hook-configuration-refresh")
 	}
+	r.hookRefreshMu.Lock()
+	defer r.hookRefreshMu.Unlock()
+	revision, known := r.userHookConfigRevision()
+	return r.refreshHooks(ctx, revision, known)
+}
+
+// The native reload adopts user config. Project hook discovery and the
+// definition trust check are still owned by Codex when it prepares execution.
+func (r *Runtime) userHookConfigRevision() ([32]byte, bool) {
+	env := r.processEnvironment()
+	home := environmentValue(env, "CODEX_HOME")
+	if home == "" {
+		if user := environmentValue(env, "HOME"); filepath.IsAbs(user) {
+			home = filepath.Join(user, ".codex")
+		}
+	}
+	if !filepath.IsAbs(home) {
+		return [32]byte{}, false
+	}
+	path := filepath.Join(home, "config.toml")
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return [32]byte{}, true
+	}
+	const maxConfigBytes = 1 << 20
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxConfigBytes {
+		return [32]byte{}, false
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return [32]byte{}, false
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxConfigBytes+1))
+	if err != nil || len(data) > maxConfigBytes {
+		return [32]byte{}, false
+	}
+	return sha256.Sum256(data), true
+}
+
+func (r *Runtime) refreshHooks(ctx context.Context, revision [32]byte, known bool) error {
 	var result struct{ Status string }
 	if err := r.call(ctx, "config/batchWrite", map[string]any{"edits": []any{}, "reloadUserConfig": true}, &result); err != nil {
 		return err
@@ -301,12 +344,19 @@ func (r *Runtime) RefreshHooks(ctx context.Context) error {
 	if result.Status != "ok" {
 		return errors.New("当前会话尚未确认 Hook 配置刷新")
 	}
+	r.hookConfig, r.hookConfigKnown = revision, known
 	return nil
 }
 
 func (r *Runtime) refreshHooksBeforeInput(ctx context.Context) error {
 	if r.supports("hooks/list") && r.supports("config/batchWrite") {
-		if err := r.RefreshHooks(ctx); err != nil {
+		r.hookRefreshMu.Lock()
+		defer r.hookRefreshMu.Unlock()
+		revision, known := r.userHookConfigRevision()
+		if known && r.hookConfigKnown && revision == r.hookConfig {
+			return nil
+		}
+		if err := r.refreshHooks(ctx, revision, known); err != nil {
 			// No turn or user input has been sent; uncertainty belongs to the
 			// configuration reload, never to the not-yet-submitted prompt.
 			return errors.New("Hook 配置尚未确认，本轮输入未发送")

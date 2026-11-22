@@ -46,6 +46,11 @@ func (s *Server) interruptTurn(id, turn string, operation ...string) error {
 			s.dispatchMu.Unlock()
 			return err
 		}
+		if target == "" && turn == "" {
+			if transition := s.sessionTransitions[id]; transition != nil {
+				target = transition.startupInput
+			}
+		}
 		if target != "" {
 			revoked, err := s.revokePreparedInputs(id, target)
 			if err != nil || len(revoked) != 0 {
@@ -222,6 +227,9 @@ func (s *Server) revokePreparedInputs(session, target string) ([]string, error) 
 	s.mu.Lock()
 	for _, id := range revoked {
 		delete(s.dispatchReservations, id)
+		if transition := s.sessionTransitions[session]; transition != nil && transition.startupInput == id {
+			transition.cancel()
+		}
 	}
 	s.mu.Unlock()
 	return revoked, nil

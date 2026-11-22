@@ -213,7 +213,7 @@ func (s *Server) ownedWorktreeCollectable(w store.OwnedWorktree) (bool, bool, er
 	// A prepared creation without any accepted/deleted owner is still unknown,
 	// not an archive. Keep its checkout and intent available to an exact retry.
 	if !referenced && len(w.DeletedSessions) == 0 && w.CreationOperation != "" {
-		if _, e := s.store.Operation(w.CreationOperation); errors.Is(e, sql.ErrNoRows) {
+		if op, e := s.store.Operation(w.CreationOperation); errors.Is(e, sql.ErrNoRows) || e == nil && op.State == domain.OperationPreparing {
 			return false, false, nil
 		} else if e != nil {
 			return false, false, e

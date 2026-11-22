@@ -17,7 +17,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	if detachedFixture() { return }
+	if detachedFixture() {
+		return
+	}
 	if manualStopFixture() {
 		return
 	}
@@ -164,6 +166,59 @@ func TestReapClosesOnlyFinishedCommandLifetime(t *testing.T) {
 	}
 	if err = s.Cover("operation/with:arbitrary-id"); err != nil || !s.Covered("operation/with:arbitrary-id") {
 		t.Fatal("operation identity was interpreted as a path", err)
+	}
+}
+
+func TestProcessTableScanLeavesOtherScopeAdmissionAvailable(t *testing.T) {
+	m, err := New(t.TempDir(), os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := m.Begin("observed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = scope.Bind("worker", os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd, stdin, _, err := scope.StartOwned(ctx, "running", []string{"/bin/sleep", "60"}, []string{"PATH=/bin:/usr/bin"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cmd.Wait()
+	defer scope.Stop(ctx)
+	defer stdin.Close()
+	scanning, release := make(chan struct{}), make(chan struct{})
+	reaped := make(chan error, 1)
+	go func() {
+		reaped <- m.reap(ctx, func() ([]unix.KinfoProc, error) {
+			close(scanning)
+			<-release
+			return unix.SysctlKinfoProcSlice("kern.proc.all")
+		})
+	}()
+	<-scanning
+	admitted := make(chan error, 1)
+	go func() {
+		_, err := m.Begin("unrelated")
+		admitted <- err
+	}()
+	select {
+	case err := <-admitted:
+		close(release)
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(350 * time.Millisecond):
+		close(release)
+		<-admitted
+		<-reaped
+		t.Fatal("an unrelated scope could not register while process inventory was blocked")
+	}
+	if err := <-reaped; err != nil {
+		t.Fatal(err)
 	}
 }
 

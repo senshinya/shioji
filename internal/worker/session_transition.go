@@ -8,11 +8,12 @@ import (
 var errSessionTransitionRetired = errors.New("会话运行环境已退休，原维护操作未继续")
 
 type sessionTransition struct {
-	done     chan struct{}
-	ctx      context.Context
-	cancel   context.CancelFunc
-	retiring bool
-	abandon  func() error // Settle this accepted maintenance receipt, without native I/O.
+	done         chan struct{}
+	ctx          context.Context
+	cancel       context.CancelFunc
+	startupInput string
+	retiring     bool
+	abandon      func() error // Settle this accepted maintenance receipt, without native I/O.
 }
 
 func (t *sessionTransition) active() bool {

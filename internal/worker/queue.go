@@ -10,6 +10,11 @@ import (
 	"time"
 )
 
+type steerRuntimeKey struct {
+	session string
+	runtime <-chan struct{}
+}
+
 func (s *Server) wakeQueue() {
 	select {
 	case s.queueWake <- struct{}{}:
@@ -233,11 +238,34 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 	if err != nil {
 		return op, err
 	}
-	runtime := s.currentRuntime(in.Input.SessionID)
+	runtime := target
+	key := steerRuntimeKey{session: op.SessionID, runtime: runtime.Done()}
+	if s.steerDispatch == nil {
+		s.steerDispatch = make(map[steerRuntimeKey]chan struct{})
+	}
+	previous := s.steerDispatch[key]
+	done := make(chan struct{})
+	s.steerDispatch[key] = done
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		defer s.wakeQueue()
+		defer func() {
+			s.dispatchMu.Lock()
+			defer s.dispatchMu.Unlock()
+			if s.steerDispatch[key] == done {
+				delete(s.steerDispatch, key)
+			}
+			close(done)
+		}()
+		if previous != nil {
+			select {
+			case <-previous:
+			case <-runtime.Done():
+			case <-s.ctx.Done():
+				return
+			}
+		}
 		s.dispatchMu.Lock()
 		locked := true
 		defer func() {
@@ -258,29 +286,46 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 		if err == nil {
 			err = s.updateAdmission()
 		}
-		if err == nil && runtime.ManagedCoverage() {
-			err = s.coverOperation(op.SessionID, op.ID)
-		}
-		if err == nil {
-			err = s.store.BeginInputHandoff(op.ID)
-			if errors.Is(err, store.ErrInputHandoffRevoked) {
-				return
+		delayed, nativeHandoff := runtime.(harness.InputHandoffRuntime)
+		handed := false
+		if err == nil && !nativeHandoff {
+			if runtime.ManagedCoverage() {
+				err = s.coverOperation(op.SessionID, op.ID)
+			}
+			if err == nil {
+				err = s.store.BeginInputHandoff(op.ID)
+				handed = err == nil
 			}
 		}
 		if err == nil {
+			s.runtimeMu.RLock()
+			gate := s.runtimeEvents[op.SessionID]
+			s.runtimeMu.RUnlock()
 			s.dispatchMu.Unlock()
 			locked = false
-			err = runtime.Steer(ctx, d.Session, in.TurnID, op.ID, harness.TurnInput{Text: in.Input.Text, Attachments: inputs, Skills: in.Input.Skills, QuestionReply: in.Input.QuestionReply})
+			input := harness.TurnInput{Text: in.Input.Text, Attachments: inputs, Skills: in.Input.Skills, QuestionReply: in.Input.QuestionReply}
+			if nativeHandoff {
+				err = delayed.SteerWithHandoff(ctx, d.Session, in.TurnID, op.ID, input, func() error {
+					err := s.claimInput(gate, runtime, op)
+					handed = err == nil
+					return err
+				})
+			} else {
+				err = runtime.Steer(ctx, d.Session, in.TurnID, op.ID, input)
+			}
 			s.dispatchMu.Lock()
 			locked = true
 			if current := s.currentRuntime(op.SessionID); current == nil || current.Done() != runtime.Done() {
 				return
 			}
-			if err != nil && runtime.Stopped() && !harness.IsRejected(err) {
+			if handed && err != nil && runtime.Stopped() && !harness.IsRejected(err) {
 				err = &harness.DeliveryError{Uncertain: true, Message: "运行环境已结束，Steer 结果待核对；不会自动重发"}
 			}
 		}
-		outcome := domain.DeliveryOutcome(err != nil, harness.IsUncertain(err))
+		if errors.Is(err, errRuntimeRetired) || errors.Is(err, store.ErrInputHandoffRevoked) {
+			return
+		}
+		outcome := domain.DeliveryOutcome(err != nil, handed && harness.IsUncertain(err))
 		message := ""
 		if err != nil {
 			message = err.Error()

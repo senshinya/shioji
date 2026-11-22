@@ -84,6 +84,10 @@ func gitRun(ctx context.Context, dir string, args ...string) (string, error) {
 	return out.String(), nil
 }
 func queryGit(ctx context.Context, cwd string) (domain.GitStatus, error) {
+	return readGitStatus(ctx, cwd, true)
+}
+
+func readGitStatus(ctx context.Context, cwd string, detailed bool) (domain.GitStatus, error) {
 	var out domain.GitStatus
 	top, err := gitRun(ctx, cwd, "rev-parse", "--show-toplevel")
 	if err != nil {
@@ -109,7 +113,11 @@ func queryGit(ctx context.Context, cwd string) (domain.GitStatus, error) {
 	}
 	// Porcelain v2 supplies branch, HEAD and dirty state in the same native
 	// read. Ahead/behind counts and rename detection are not needed for admission.
-	status, err := gitRun(ctx, cwd, "status", "--porcelain=v2", "--branch", "--no-ahead-behind", "--no-renames", "-z", "--untracked-files=all")
+	untracked := "--untracked-files=no"
+	if detailed {
+		untracked = "--untracked-files=all"
+	}
+	status, err := gitRun(ctx, cwd, "status", "--porcelain=v2", "--branch", "--no-ahead-behind", "--no-renames", "-z", untracked)
 	if err != nil {
 		return out, err
 	}
@@ -141,6 +149,9 @@ func queryGit(ctx context.Context, cwd string) (domain.GitStatus, error) {
 			return out, e
 		}
 		out.Branch = strings.TrimSpace(branch)
+	}
+	if !detailed {
+		return out, nil
 	}
 	names, err := gitRun(ctx, cwd, "for-each-ref", "--count=2000", "--format=%(refname:lstrip=2)", "refs/heads/")
 	if err != nil {
@@ -448,7 +459,7 @@ func (s *Server) prepareGitLocked(in domain.Submission, launch domain.LaunchCont
 		return nil
 	}
 
-	status, err := s.queryGitOutsideDispatch(s.ctx, launch.CWD)
+	status, err := s.readGitOutsideDispatch(s.ctx, launch.CWD, false)
 	if err != nil {
 		return launch, err
 	}
@@ -470,10 +481,14 @@ func (s *Server) prepareGitLocked(in domain.Submission, launch domain.LaunchCont
 		if err != nil {
 			return launch, err
 		}
-		current, e := s.queryGitOutsideDispatch(s.ctx, launch.CWD)
+		current, e := s.readGitOutsideDispatch(s.ctx, launch.CWD, mutating)
 		if e != nil {
 			release()
 			return launch, e
+		}
+		if current.Checkout != status.Checkout || current.CommonDir != status.CommonDir {
+			release()
+			return launch, errors.New("执行目录的 Git checkout 已改变，输入未发送")
 		}
 		if !mutating && in.SessionID == "" && in.Git.Branch != "" && in.Git.Branch != current.Branch {
 			release()
@@ -742,7 +757,7 @@ func (s *Server) checkGitContexts() error {
 			continue
 		}
 		seen[key] = true
-		status, e := s.queryGitOutsideDispatch(s.ctx, session.Context.CWD)
+		status, e := s.readGitOutsideDispatch(s.ctx, session.Context.CWD, false)
 		if e != nil {
 			continue
 		}

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"shioji/internal/domain"
 )
 
 func countGitCalls(t *testing.T) func() int {
@@ -18,7 +20,7 @@ func countGitCalls(t *testing.T) func() int {
 	bin := t.TempDir()
 	log := filepath.Join(bin, "calls")
 	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(`#!/bin/sh
-printf 'call\n' >> "$TEST_GIT_CALLS_FILE"
+printf '%s\n' "$*" >> "$TEST_GIT_CALLS_FILE"
 exec "$TEST_GIT_REAL" "$@"
 `), 0700); err != nil {
 		t.Fatal(err)
@@ -32,6 +34,29 @@ exec "$TEST_GIT_REAL" "$@"
 			t.Fatal(err)
 		}
 		return strings.Count(string(data), "\n")
+	}
+}
+
+func TestOrdinarySubmissionDoesNotEnumerateBranchesOrUntrackedFiles(t *testing.T) {
+	s, workspace, dir := gitTestServer(t)
+	head := gitTestRun(t, dir, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(dir, "untracked"), []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	calls := countGitCalls(t)
+	launch, err := prepareGitForTest(s, domain.Submission{WorkspaceID: workspace.ID, Git: domain.GitChoice{Branch: "main"}}, domain.LaunchContext{CWD: dir})
+	if err != nil || launch.Branch != "main" || launch.Head != head {
+		t.Fatalf("same-branch input lost its checkout identity: %+v, %v", launch, err)
+	}
+	if n := calls(); n > 6 {
+		t.Fatalf("same-branch input launched %d Git commands", n)
+	}
+	data, err := os.ReadFile(os.Getenv("TEST_GIT_CALLS_FILE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "for-each-ref") || strings.Contains(string(data), "--untracked-files=all") {
+		t.Fatalf("same-branch input ran a full status check:\n%s", data)
 	}
 }
 

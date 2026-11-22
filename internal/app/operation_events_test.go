@@ -30,6 +30,26 @@ func TestHomeReceiptBeforeSessionEventKeepsDraftWithoutFalseUncertainty(t *testi
 	}
 }
 
+func TestPreparingReceiptKeepsDraftAndClearsTransportUncertainty(t *testing.T) {
+	m := NewModel()
+	m.WorkspaceID = "w"
+	in := domain.Submission{OperationID: "preparing", WorkspaceID: "w", Text: "first message"}
+	m.Pending[in.OperationID] = in
+	m.Drafts["home"] = in.Text
+	m.SubmissionError(in, errors.New("lost command reply"))
+	m.ApplyOperation(domain.Operation{ID: in.OperationID, State: domain.OperationPreparing})
+	if m.UncertainSubmissions[in.OperationID] || m.SessionID != "" || m.Drafts["home"] != in.Text {
+		t.Fatal("a stored preparation should keep the draft without claiming delivery or creating a session")
+	}
+	op := domain.Operation{ID: in.OperationID, State: domain.OperationRejected, Error: "workspace changed"}
+	if err := m.ApplyEvent(domain.Event{Sequence: m.Sequence + 1, Type: "operation", Operation: &op}); err != nil {
+		t.Fatal(err)
+	}
+	if _, pending := m.Pending[in.OperationID]; pending || m.Drafts["home"] != in.Text {
+		t.Fatal("a rejected preparation should release the pending operation and preserve the draft")
+	}
+}
+
 func TestOperationEventsKeepRecentReceiptsCurrentAndBounded(t *testing.T) {
 	m := model()
 	for i := range 110 {
