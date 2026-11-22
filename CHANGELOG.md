@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+## [0.7.10] - 2026-11-22
+
+[源码](https://github.com/senshinya/shioji/tree/v0.7.10) · [与 v0.7.9 比较](https://github.com/senshinya/shioji/compare/v0.7.9...v0.7.10)
+
+### Added
+
+- 会话在 Codex 用量受限时显示所属设备和账号对应的提示，并在已知时显示恢复时间。
+- 新增原生 iPhone 和 iPad 客户端，使用同一执行设备上的工作区、会话和授权。GitHub Release 提供 macOS 安装包。
+
+### Fixed
+
+- 改善发送消息、介入当前轮和长会话的底部跟随。在 iOS 上，进行中的会话等最新历史就绪后从底部显示，折叠最新工具组时滚动与内容高度同步。
+- iOS 的回复增长、完成栏、历史编辑和分叉过渡沿用当前会话的阅读位置。
+
+执行服务使用协议 2.58，数据库继续使用 schema 17。移动端的 Agent 设置和部分 Git 变更确认需要所属设备运行新版执行服务。
+
 ## [0.7.9] - 2026-11-22
 
 [源码](https://github.com/senshinya/shioji/tree/v0.7.9) · [与 v0.7.8 比较](https://github.com/senshinya/shioji/compare/v0.7.8...v0.7.9)
