@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-11-22
+
+[源码](https://github.com/senshinya/shioji/tree/v0.7.9) · [与 v0.7.8 比较](https://github.com/senshinya/shioji/compare/v0.7.8...v0.7.9)
+
+### Added
+
+- 图片预览支持旋转和独立缩放，保留 App 的全局缩放设置。
+
+### Changed
+
+- Mac 会话只保留一份可编辑的普通草稿。发送被明确拒绝时，空输入框恢复原文、附件和行内引用，已有内容时保留当前草稿。发送结果未知时继续核对回执，禁止自动重发。升级时，无法恢复到空输入框的旧备用草稿继续保存在本机状态文件中。
+
+### Fixed
+
+- 同一设备的执行服务经另一客户端成功更新后，已核实的成功记录会替换过时的拒绝提示。
+
 ## [0.7.8] - 2026-11-22
 
 [源码](https://github.com/senshinya/shioji/tree/v0.7.8) · [与 v0.7.7 比较](https://github.com/senshinya/shioji/compare/v0.7.7...v0.7.8)
