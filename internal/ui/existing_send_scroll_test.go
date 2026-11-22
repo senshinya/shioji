@@ -124,3 +124,54 @@ func TestSendingAtBottomDoesNotRewindTheVisibleHistory(t *testing.T) {
 		})
 	}
 }
+
+func TestFollowUpAfterFirstReplySettlesAboveTheComposer(t *testing.T) {
+	v, ui, first := sendFixture(t, true)
+	id := acceptSend(t, v, first, true)
+	ui.Frame()
+	ui.Advance(time.Second)
+
+	detail := v.Model.Details[id]
+	detail.HistoryLoaded = true
+	detail.Items[0].TurnID = "first-turn"
+	detail.Turns = []domain.Turn{{ID: "first-turn", Status: domain.ExecutionRunning}}
+	for i := range 30 {
+		detail.Items = append(detail.Items, domain.Item{ID: fmt.Sprint("progress-", i), TurnID: "first-turn", Kind: "activity", Name: fmt.Sprintf("处理进度 %d", i), Final: true})
+	}
+	v.Model.Details[id] = detail
+	feedbackJob(t, v, "git.status").Apply(v.Model, []byte(`{}`), nil)
+	ui.Frame()
+
+	detail.Items = append(detail.Items, domain.Item{ID: "first-reply", TurnID: "first-turn", Kind: "assistant", Text: "上一轮回复已结束。", Final: true})
+	detail.Turns[0].Status = domain.ExecutionCompleted
+	detail.Session.Status = domain.ExecutionCompleted
+	v.Model.Details[id] = detail
+	for i, session := range v.Model.Snapshot.Sessions {
+		if session.ID == id {
+			v.Model.Snapshot.Sessions[i] = detail.Session
+		}
+	}
+	ui.Frame()
+	ui.Advance(10 * time.Second)
+
+	state := v.lists[id]
+	before, _ := state.ScrollEdges()
+	if before <= 0 || !state.AtEnd() || !state.FollowingEnd() || !ui.HasText("上一轮回复已结束。") {
+		t.Fatal("fixture did not settle at the bottom of overflowing first-turn history")
+	}
+
+	const followUp = "这是下一条用户消息。"
+	feedbackClick(t, ui, "消息输入")
+	ui.Type(followUp)
+	feedbackClick(t, ui, "发送")
+	acceptSend(t, v, feedbackJob(t, v, "session.submit"), true)
+	ui.Frame()
+	ui.Advance(time.Second)
+
+	message, visible := ui.Find(followUp)
+	dock, dockVisible := ui.Find("会话底部面板")
+	saveNativeSkillImage(t, ui, "first-follow-up-after-idle.png")
+	if !visible || !dockVisible || message.Y+message.H > dock.Y || !state.AtEnd() || !state.FollowingEnd() {
+		t.Fatalf("follow-up did not scroll into view: message=%+v visible=%t dock=%+v atEnd=%t following=%t", message, visible, dock, state.AtEnd(), state.FollowingEnd())
+	}
+}

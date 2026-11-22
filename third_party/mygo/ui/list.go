@@ -799,10 +799,11 @@ func buildList(c *context, e, owner *node, s *ListState, n int, row func(i int),
 // sync follows what changed since the last frame: rows added or removed,
 // items moving, the user or the app scrolling.
 func (s *ListState) sync(e *node, n int) {
-	// Clamping temporary reading space can round the offset by a few ulps.
-	// Only a real scroll interrupts the pinned animation.
 	st, rt := e.st, e.c.rt
-	scrollMoved := math.Abs(st.scrollY-s.wroteY) > 1e-6
+	sameMount := st.list == s && st.born != rt.frame && s.laidOut
+	// A newly mounted element has no scroll offset from this ListState.
+	// Clamping temporary reading space can round the offset by a few ulps.
+	scrollMoved := sameMount && math.Abs(st.scrollY-s.wroteY) > 1e-6
 	s.heights.reveals, s.heights.gap = s.Reveals, s.gap
 	if s.req.end {
 		s.followPaused = false
@@ -872,7 +873,7 @@ func (s *ListState) sync(e *node, n int) {
 	s.anchor = max(0, min(s.anchor, n-1))
 	s.moveScroll, s.moveJump = 0, false
 	switch {
-	case st.list != s || st.born == rt.frame || !s.laidOut:
+	case !sameMount:
 		// Built anew, as when its page shows again, or showing another
 		// place, or a new one, which did not write the offset its element
 		// has: the place stands, unless the app set the offset with a
