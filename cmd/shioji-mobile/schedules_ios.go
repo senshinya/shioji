@@ -12,25 +12,33 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 )
 
-func (a *mobileApp) openSchedule(parent *mygo.Window, seed domain.Schedule, changed, removed func()) {
+func (a *mobileApp) openSchedule(parent *mygo.Window, seed domain.Schedule, scope string, changed, removed func()) {
 	detail := domain.ScheduleDetail{Schedule: seed}
 	req := mobileRequest{}
 	read := scheduleObservation{}
 	var w *mygo.Window
+	var connectionProblem string
+	deadline := time.Now().Add(sessionCatalogTimeout)
 	loaded := a.preview
 	if a.preview {
 		detail = a.previewSchedule()
+	} else if err := a.openDeviceFromResults(parent, seed.DeviceID); err != nil {
+		connectionProblem = err.Error()
 	}
 	confirming := false
 	runKey := "schedule-run:" + seed.ID
-	runID := a.model.Drafts[runKey]
+	var runID string
 	apply := func(in domain.ScheduleDetail) error {
 		if in.Schedule.Revision < detail.Schedule.Revision {
 			return fmt.Errorf("设备返回了较早的任务版本")
+		}
+		if !loaded {
+			runID = a.model.Drafts[runKey]
 		}
 		detail, loaded = in, true
 		if runID != "" && slices.ContainsFunc(in.Runs, func(run domain.ScheduleRun) bool { return run.ID == runID && run.Manual }) {
@@ -44,17 +52,66 @@ func (a *mobileApp) openSchedule(parent *mygo.Window, seed domain.Schedule, chan
 		read.next = time.Time{}
 		w.Invalidate()
 	}
+	reconnect := func() {
+		if !a.pageCurrent(w) {
+			return
+		}
+		connectionProblem = ""
+		deadline = time.Now().Add(sessionCatalogTimeout)
+		if a.endpoint.DeviceID == seed.DeviceID {
+			a.retryConnection()
+		} else if err := a.openDeviceFromResults(parent, seed.DeviceID); err != nil {
+			connectionProblem = err.Error()
+		} else {
+			a.pageDevice[w] = a.deviceSelection
+		}
+		w.Invalidate()
+	}
 	canAct := func() bool {
 		return a.pageCurrent(w) && !req.busy && !confirming && loaded && (a.preview ||
 			a.scheduleConnected(seed) && read.epoch == a.model.ConnectionEpoch && read.fresh)
 	}
 	canEdit := func() bool {
 		workspace := a.workspace(seed.WorkspaceID)
-		return canAct() && workspace.ID != "" && !workspace.Archived
+		return canAct() && workspace.ID != "" && workspace.DeviceID == seed.DeviceID && !workspace.Archived
 	}
 	w = a.page("任务详情", func(c *ui.Context) {
 		if !req.busy && !confirming {
 			a.observeSchedule(c, w, &read, seed, apply)
+		}
+		if !loaded {
+			caption, problem := "正在读取定时任务", connectionProblem
+			var retry func()
+			upgrade := false
+			switch {
+			case problem != "":
+				retry = reconnect
+			case a.scheduleConnected(seed):
+				if read.request.err != "" {
+					problem, retry = "无法读取定时任务", reload
+				}
+			case a.model.Connected && a.model.ConnectionEpoch != "" && a.model.Snapshot.DeviceID == seed.DeviceID:
+				problem, upgrade = "更新执行服务后可查看此任务", true
+			case a.connectionPhase() == app.ConnectionUnavailable || a.connectionPhase() == app.ConnectionSyncFailed || !c.Now().Before(deadline):
+				problem, retry = "无法连接任务所属设备", reconnect
+			default:
+				caption = "等待设备连接后读取定时任务"
+				c.After(deadline.Sub(c.Now()))
+			}
+			ui.Column(c.Key("schedule-loading")).Fill().Children(func() {
+				mobilePageContent(c, 0).Shrink(0).Children(func() {
+					mobilePageContext(c, seed.Name, scope)
+				})
+				if upgrade {
+					ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).Gap(8).Children(func() {
+						label(c, problem, captionTextSize, palette(c).secondary).Role(ui.RoleStatus)
+						action(c, "更新执行服务", func() { a.openWorker(w) })
+					})
+					return
+				}
+				mobileSessionLoading(c.Key(seed.ID), caption, problem, retry)
+			})
+			return
 		}
 		task := detail.Schedule
 		mobilePageWithFooter(c, func() {

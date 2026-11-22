@@ -4871,6 +4871,54 @@ final class ShiojiMobileUITests: XCTestCase {
         capture("The owning Worker persists the reordered workspace folders", app: app)
     }
 
+    private func openScheduleCatalog(_ app: XCUIApplication) {
+        let view = app.buttons["会话视图"].firstMatch
+        XCTAssertTrue(view.waitForExistence(timeout: 8), app.debugDescription)
+        view.tap()
+        let schedules = app.descendants(matching: .any)["定时任务"].firstMatch
+        XCTAssertTrue(schedules.waitForExistence(timeout: 5), app.debugDescription)
+        schedules.tap()
+        XCTAssertTrue(app.navigationBars["定时任务"].waitForExistence(timeout: 5), app.debugDescription)
+    }
+
+    func testScheduleCatalogOpensFromSessionView() {
+        let app = launch("--preview-board-inbox")
+        let devices = app.buttons["设备"].firstMatch
+        XCTAssertTrue(devices.waitForExistence(timeout: 8))
+        devices.tap()
+        XCTAssertTrue(app.buttons["Tailnet"].waitForExistence(timeout: 5))
+        capture("Device network entries", app: app)
+        XCTAssertFalse(app.buttons["定时任务"].exists)
+        app.buttons["会话"].firstMatch.tap()
+        openScheduleCatalog(app)
+        let task = app.buttons["每日构建检查"].firstMatch
+        XCTAssertTrue(task.waitForExistence(timeout: 5))
+        capture("Schedule catalog from session view", app: app)
+        task.tap()
+        XCTAssertTrue(app.navigationBars["任务详情"].waitForExistence(timeout: 5))
+        capture("Schedule detail", app: app)
+    }
+
+    func testOfflineScheduleOpensDetailBeforeConnecting() throws {
+        guard ProcessInfo.processInfo.environment["SHIOJI_OFFLINE_SCHEDULE_FIXTURE"] == "1" else {
+            throw XCTSkip("Requires a cached schedule on a disposable offline device")
+        }
+        let app = launch("")
+        openScheduleCatalog(app)
+        XCTAssertFalse(app.buttons["重新读取"].exists)
+        let task = app.buttons["离线构建检查"].firstMatch
+        XCTAssertTrue(task.waitForExistence(timeout: 8), app.debugDescription)
+        task.tap()
+        XCTAssertTrue(app.navigationBars["任务详情"].waitForExistence(timeout: 4), app.debugDescription)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "离线构建检查")).firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["正在连接任务所属设备…"].exists)
+        capture("Offline schedule connects in its detail", app: app)
+        XCTAssertTrue(app.buttons["重试"].waitForExistence(timeout: 18), app.debugDescription)
+        app.navigationBars["任务详情"].buttons["BackButton"].firstMatch.tap()
+        XCTAssertTrue(task.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["重新读取"].exists)
+    }
+
     func testScheduledTaskCanBeDeletedAfterNativeConfirmation() {
         let app = launch("--preview-board-schedule-list")
         let task = app.buttons["每日构建检查"].firstMatch
@@ -4913,14 +4961,10 @@ final class ShiojiMobileUITests: XCTestCase {
         let devices = app.buttons["设备"].firstMatch
         XCTAssertTrue(devices.waitForExistence(timeout: 10))
         devices.tap()
-        let schedules = app.buttons["定时任务"].firstMatch
-        XCTAssertTrue(schedules.waitForExistence(timeout: 6))
-        schedules.tap()
+        app.buttons["会话"].firstMatch.tap()
+        openScheduleCatalog(app)
         let task = app.buttons["隔离定时任务"].firstMatch
-        if !task.waitForExistence(timeout: 8), app.buttons["重新读取"].exists {
-            app.buttons["重新读取"].tap()
-        }
-        XCTAssertTrue(task.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(task.waitForExistence(timeout: 20), app.debugDescription)
         task.tap()
         let zone = app.staticTexts["执行设备时区 · America/Los_Angeles"]
         XCTAssertTrue(zone.waitForExistence(timeout: 6), app.debugDescription)
@@ -4943,12 +4987,7 @@ final class ShiojiMobileUITests: XCTestCase {
             XCUIDevice.shared.orientation = .landscapeLeft
         }
         let app = launch("")
-        let devices = app.buttons["设备"].firstMatch
-        XCTAssertTrue(devices.waitForExistence(timeout: 10))
-        devices.tap()
-        let schedules = app.buttons["定时任务"].firstMatch
-        XCTAssertTrue(schedules.waitForExistence(timeout: 8))
-        schedules.tap()
+        openScheduleCatalog(app)
         let first = app.buttons["前端定时任务"].firstMatch
         let second = app.buttons["构建定时任务"].firstMatch
         XCTAssertTrue(first.waitForExistence(timeout: 10), app.debugDescription)
@@ -5022,12 +5061,7 @@ final class ShiojiMobileUITests: XCTestCase {
             XCUIDevice.shared.orientation = .landscapeLeft
         }
         let app = launch("")
-        let devices = app.buttons["设备"].firstMatch
-        XCTAssertTrue(devices.waitForExistence(timeout: 10))
-        devices.tap()
-        let schedules = app.buttons["定时任务"].firstMatch
-        XCTAssertTrue(schedules.waitForExistence(timeout: 8))
-        schedules.tap()
+        openScheduleCatalog(app)
         let original = app.buttons["构建定时任务"].firstMatch
         XCTAssertTrue(original.waitForExistence(timeout: 10), app.debugDescription)
         try Data().write(to: URL(fileURLWithPath: control), options: .atomic)
@@ -5046,12 +5080,7 @@ final class ShiojiMobileUITests: XCTestCase {
             XCUIDevice.shared.orientation = .landscapeLeft
         }
         let app = launch("")
-        let devices = app.buttons["设备"].firstMatch
-        XCTAssertTrue(devices.waitForExistence(timeout: 10))
-        devices.tap()
-        let schedules = app.buttons["定时任务"].firstMatch
-        XCTAssertTrue(schedules.waitForExistence(timeout: 8))
-        schedules.tap()
+        openScheduleCatalog(app)
         let task = app.buttons["构建定时任务"].firstMatch
         guard task.waitForExistence(timeout: 10) else { return XCTFail("The remote task did not load") }
         task.tap()

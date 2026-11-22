@@ -65,7 +65,6 @@ func (a *mobileApp) cacheSchedules(source *mobileScheduleSource) {
 
 type mobileScheduleSelection struct {
 	workspace mobileclient.WorkspaceLocation
-	task      domain.Schedule
 	upgrade   bool
 	deadline  time.Time
 }
@@ -77,6 +76,7 @@ func (a *mobileApp) openSchedules(parent *mygo.Window, deviceID string) {
 	var opening *mobileScheduleSelection
 	var nextRefresh time.Time
 	var notice string
+	var readProblem string
 	var scope mobileclient.WorkspaceLocation
 	var status mobileclient.ScheduleStatus
 	if a.preview {
@@ -104,10 +104,11 @@ func (a *mobileApp) openSchedules(parent *mygo.Window, deviceID string) {
 		nextRefresh = time.Now().Add(mobileScheduleListRefresh)
 		signer, err := a.identity()
 		if err != nil {
-			notice = "无法读取设备连接身份"
+			readProblem = "无法读取设备连接身份"
 			w.Invalidate()
 			return
 		}
+		readProblem = ""
 		ctx, stop := context.WithCancel(context.Background())
 		cancel = stop
 		active, dial := a.activeEndpoint(), a.routeDial()
@@ -178,9 +179,7 @@ func (a *mobileApp) openSchedules(parent *mygo.Window, deviceID string) {
 				case selection.upgrade || !a.preview && a.model.WorkerMinor < protocol.ScheduleMinor:
 					a.openWorker(w)
 				case workspace.ID == "" || workspace.DeviceID != selection.workspace.DeviceID:
-					notice = "任务所属工作区已变化，请重新读取"
-				case selection.task.ID != "":
-					a.openSchedule(w, selection.task, read, func() { remove(selection.task) })
+					notice = "工作区已变化，请重新选择"
 				case workspace.Archived:
 					notice = "请选择未归档的工作区"
 				default:
@@ -231,6 +230,8 @@ func (a *mobileApp) openSchedules(parent *mygo.Window, deviceID string) {
 				mobileMessage(c, "正在连接任务所属设备…")
 			} else if notice != "" {
 				mobileMessage(c, notice)
+			} else if readProblem != "" {
+				mobileMessage(c, readProblem)
 			}
 			mobileSection(c, "已安排")
 			count, reading, incomplete := 0, false, false
@@ -256,7 +257,9 @@ func (a *mobileApp) openSchedules(parent *mygo.Window, deviceID string) {
 						stateLabel = "正在核对"
 					}
 					mobileDetailRow(c.Key([2]string{task.DeviceID, task.ID}), task.Name, timing+"\n"+scope, task.Name, clockSymbol, func() {
-						open(mobileScheduleSelection{task: task, workspace: mobileclient.WorkspaceLocation{DeviceID: task.DeviceID, WorkspaceID: task.WorkspaceID}})
+						if opening == nil && a.pageCurrent(w) {
+							a.openSchedule(w, task, scope, read, func() { remove(task) })
+						}
 					}, func() {
 						oneLine(c, stateLabel, captionTextSize, palette(c).secondary).Shrink(0).PassThrough()
 					}).MinHeight(78).PaddingY(10).Value(stateLabel)
@@ -282,12 +285,6 @@ func (a *mobileApp) openSchedules(parent *mygo.Window, deviceID string) {
 				} else if source.err != "" {
 					mobileRow(c.Key("failure:"+source.data.DeviceID), a.deviceLabel(source.data.DeviceID, source.data.Address), source.err, "读取失败", infoSymbol, nil)
 				}
-			}
-			if !a.preview && len(sources) > 0 {
-				action(c.Key("schedule-refresh"), "重新读取", func() {
-					notice = ""
-					read()
-				}).Disabled(reading || opening != nil).AlignSelf(ui.Start)
 			}
 		})
 	})

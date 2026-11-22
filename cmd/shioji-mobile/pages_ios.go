@@ -119,7 +119,6 @@ func (a *mobileApp) devicesView(c *ui.Context) {
 		mobileGroupHeading(c, "网络")
 		mobileRow(c.Key("tailnet"), "Tailnet", "设备发现与连接", "", deviceSymbol, func() { a.openTailnet(a.devices) })
 		mobileRow(c.Key("forwards"), "端口转发", "", "", deviceSymbol, func() { a.openPortForwards(a.devices) })
-		mobileRow(c.Key("schedules"), "定时任务", "", "", clockSymbol, func() { a.openSchedules(a.devices, "") })
 		if a.setupError != "" {
 			label(c, a.setupError, 13, p.warning).Padding(6, 12)
 		}

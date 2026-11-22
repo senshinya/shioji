@@ -822,7 +822,7 @@ func (a *mobileApp) openPreviewBoard(board string) {
 		a.model.SetGitStatus("workspace:"+workspace.ID, domain.GitStatus{Applicable: true, Branches: []string{"main", "feat/reconnect"}})
 		a.openScheduleEditor(a.home, a.previewSchedule().Schedule, func() {})
 	case "schedule-detail":
-		a.openSchedule(a.home, a.previewSchedule().Schedule, func() {}, nil)
+		a.openSchedule(a.home, a.previewSchedule().Schedule, "", func() {}, nil)
 	case "schedule-run":
 		schedule := a.previewSchedule()
 		a.openScheduleReceipt(a.home, schedule.Schedule, schedule.Runs[0])
