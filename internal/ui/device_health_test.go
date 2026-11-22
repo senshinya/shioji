@@ -6,6 +6,7 @@ import (
 	"math"
 	"shioji/internal/app"
 	"shioji/internal/domain"
+	"shioji/internal/tailnet"
 	"testing"
 	"time"
 )
@@ -216,5 +217,32 @@ func TestRemoteDeviceRowsShareOneVerticalRhythm(t *testing.T) {
 	}
 	if a, b := center(power)-center(latency), center(details)-center(power); math.Abs(float64(a-b)) > 1 {
 		t.Fatal("separate groups insert an extra metadata/action gap", a, b)
+	}
+}
+
+func TestDeviceOverviewShowsTailnetLatencyApartFromItsPath(t *testing.T) {
+	m := deviceUIModel()
+	m.SessionID = ""
+	m.WorkspaceID = "wb"
+	m.Connections[0].SSH.TailnetPeer = "peer"
+	m.Connections[0].Routes = nil
+	m.Connections[0].ActiveRouteID = ""
+	m.Tailnet = tailnet.Snapshot{State: "Running", Peers: []tailnet.Peer{{
+		ID: "peer", Online: true, Measurement: &tailnet.Measurement{
+			Path: "derp", Region: "tpe", RegionName: "Taipei", Milliseconds: 32, ObservedAt: time.Now(),
+		},
+	}}}
+	m.RefreshDevices()
+	ui := n.NewTester(New(m, nil, "").View, 1000, 700)
+	ui.Advance(time.Second)
+	if err := ui.Click("当前设备"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if _, ok := ui.Find("设备连接方式值"); !ok {
+		t.Fatal("missing separate Tailnet connection mode row")
+	}
+	if _, ok := ui.Find("设备往返延迟值"); ok {
+		t.Fatal("Tailnet latency appears in a second row")
 	}
 }

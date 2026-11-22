@@ -188,12 +188,18 @@ func (v *View) currentDeviceControl(c *n.Context, t *n.Theme) {
 				n.Column(c).FillWidth().Gap(0).Children(func() {
 					if key != "local" {
 						n.Column(c).FillWidth().Gap(0).Children(func() {
-							connection := "直接 SSH"
 							if peer, ok := v.connectionPeer(key); ok {
-								connection = "Tailnet · " + tailnetPathLabel(peer, c.Now())
+								peer.Online = peer.Online && m.Connected
+								connection := "Tailnet"
+								if latency := tailnetLatency(peer, c.Now()); latency != "尚未测量" {
+									connection += " · " + latency
+								}
+								deviceHealthRow(c, t, "连接", connection)
+								deviceHealthRow(c, t, "连接方式", tailnetPathLabel(peer, c.Now()))
+							} else {
+								deviceHealthRow(c, t, "连接", "直接 SSH")
+								deviceHealthRow(c, t, "往返延迟", deviceLatency(&app.DeviceState{Connected: m.Connected, Timing: m.ConnectionTiming, Paths: m.DevicePaths}, c.Now()))
 							}
-							deviceHealthRow(c, t, "连接", connection)
-							deviceHealthRow(c, t, "往返延迟", deviceLatency(&app.DeviceState{Connected: m.Connected, Timing: m.ConnectionTiming, Paths: m.DevicePaths}, c.Now()))
 						})
 					}
 

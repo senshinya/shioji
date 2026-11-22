@@ -153,6 +153,7 @@ func showImport(t *testing.T) (*View, *app.Controller, *n.Tester) {
 	ui.Advance(time.Second)
 	return v, c, ui
 }
+
 func TestConversationImportWaitsForExplicitUnindexedScan(t *testing.T) {
 	v, c, ui := showImport(t)
 	v.readConversations(v.conversationImport, false)

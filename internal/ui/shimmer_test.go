@@ -19,7 +19,7 @@ func TestToolSummaryShimmerCoversMetadataWithoutRestarting(t *testing.T) {
 			for _, folded := range []bool{false, true} {
 				t.Run(fmt.Sprintf("dark=%v/reduced=%v/folded=%v", dark, reduced, folded), func(t *testing.T) {
 					v := toolTailFixture(9)
-					row := transcriptRow{group: "tools", count: 9, issues: 1, item: domain.Item{TurnID: "t"}}
+					row := transcriptRow{group: "tools", count: 9, item: domain.Item{TurnID: "t"}}
 					if v.Model.ToolDisclosure(row.group).Closed() != folded {
 						v.Model.SetToolDisclosure(row.group, v.Model.ToolDisclosure(row.group).Toggle())
 					}
@@ -41,9 +41,6 @@ func TestToolSummaryShimmerCoversMetadataWithoutRestarting(t *testing.T) {
 					ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
 					ui.Advance(500 * time.Millisecond)
 					labels := []string{"进行中", "运行时长"}
-					if folded {
-						labels = append(labels, "1 项未成功")
-					}
 					regions := make([]n.Rect, len(labels))
 					before := make([][]byte, len(labels))
 					changed := make([]bool, len(labels))

@@ -15,7 +15,6 @@ type transcriptRow struct {
 	end         int // original event index; -1 for an expanded group heading
 	group       string
 	count       int
-	issues      int
 	toolParent  string
 	toolTitle   bool
 	toolStatus  bool
@@ -345,14 +344,12 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		}
 		key := "tool-group:" + v.Model.SessionID + "/" + item.ID
 		loaded := count
-		var summary *domain.HistoryToolGroup
 		if h := v.Model.Details[v.Model.SessionID].History; h != nil {
 			for j := range h.Groups {
 				g := &h.Groups[j]
 				if item.Order >= g.First && item.Order <= g.Last && item.TurnID == g.TurnID {
 					key = "tool-group:" + v.Model.SessionID + "/" + g.ID
 					count = g.Count
-					summary = g
 					break
 				}
 			}
@@ -418,12 +415,6 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 				seen[call.ID] = true
 				delete(arrivals.motions, call.ID)
 			}
-			if toolIssueLabel(call) != "" {
-				heading.issues++
-			}
-		}
-		if summary != nil {
-			heading.issues = max(heading.issues, summary.Issues)
 		}
 		// Only visible later content or a terminal turn seals a group. A
 		// page containing only some of the calls cannot establish success.
@@ -483,12 +474,10 @@ func toolGlyph(c *n.Context, icon *n.SVG, label string, font n.Font, color n.Col
 func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index int) {
 	label := fmt.Sprintf("%d 次工具调用", row.count)
 	outcome := ""
-	switch {
-	case row.issues > 0:
-		outcome = fmt.Sprintf("%d 项未成功", row.issues)
-	case row.toolResult == "completed":
+	switch row.toolResult {
+	case "completed":
 		outcome = "已完成"
-	case row.toolResult == "ended":
+	case "ended":
 		outcome = "调用结束"
 	}
 

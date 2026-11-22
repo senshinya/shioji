@@ -25,7 +25,7 @@ func TestToolGroupOutcomeAndLiveStateInBothDisclosureStates(t *testing.T) {
 						d.Turns[0].Status = "running"
 						d.Items = append(d.Items, domain.Item{ID: "reply", TurnID: "t", Kind: "assistant", Text: "检查通过。"})
 					case "failed":
-						d.Items[2].Status, outcome = "failed", "1 项未成功"
+						d.Items[2].Status, outcome = "failed", "调用结束"
 					case "unknown":
 						d.Items[2].Status, outcome = "unknown", "调用结束"
 					}
@@ -52,6 +52,9 @@ func TestToolGroupOutcomeAndLiveStateInBothDisclosureStates(t *testing.T) {
 					count, ok := ui.Find("2 次工具调用")
 					if !ok || ui.HasText("go test ./internal/ui -run Check0") == folded {
 						t.Fatal("tool group failed to disclose its calls", ui.Texts())
+					}
+					if ui.HasText("1 项未成功") {
+						t.Fatal("tool group displayed a failure count", ui.Texts())
 					}
 					if live {
 						phase, phaseOK := ui.Find("正在执行命令")
@@ -96,9 +99,8 @@ func TestToolGroupOnlyTitleControlsDisclosure(t *testing.T) {
 			key := "tool-group:s/call-0"
 			const title = "2 次工具调用"
 			before, ok := ui.Find(title)
-			issue, issueOK := ui.Find("1 项未成功")
-			if !ok || !issueOK || issue.Y != before.Y {
-				t.Fatal("expanded activity must keep its issue count in the group header", before, issue)
+			if !ok || ui.HasText("1 项未成功") {
+				t.Fatal("expanded tool header must omit the failure count", ui.Texts())
 			}
 			for _, label := range []string{"工具组运行状态", "正在执行命令", "运行时长"} {
 				r, ok := ui.Find(label)
@@ -119,10 +121,9 @@ func TestToolGroupOnlyTitleControlsDisclosure(t *testing.T) {
 				t.Fatal("folded tools must leave only the one-line summary", ui.Texts())
 			}
 			summary, ok := ui.Find(title)
-			foldedIssue, foundIssue := ui.Find("1 项未成功")
 			phase, phaseOK := ui.Find("正在执行命令")
 			clock, clockOK := ui.Find("运行时长")
-			if !ok || !phaseOK || !clockOK || !foundIssue || foldedIssue != issue || summary.Y != before.Y || summary.Y != phase.Y || summary.Y != clock.Y {
+			if !ok || !phaseOK || !clockOK || ui.HasText("1 项未成功") || summary.Y != before.Y || summary.Y != phase.Y || summary.Y != clock.Y {
 				t.Fatal("folded header lost its single-line state and clock", summary, phase, clock)
 			}
 			if err := ui.Click(title); err != nil {

@@ -114,12 +114,15 @@ func TestCommandDisclosureCueRequiresExpandableOutput(t *testing.T) {
 	}
 }
 
-func TestToolIssueSummaryPrecedesDisclosureCue(t *testing.T) {
+func TestToolSummaryKeepsStatusNextToCount(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, ended := range []bool{false, true} {
 			t.Run(fmt.Sprintf("dark=%v/ended=%v", dark, ended), func(t *testing.T) {
 				v := toolTailFixture(2)
-				row := transcriptRow{group: "tools", count: 13, issues: 3}
+				row := transcriptRow{group: "tools", count: 13}
+				if ended {
+					row.toolResult = "ended"
+				}
 				v.Model.SetToolDisclosure(row.group, v.Model.ToolDisclosure(row.group).Toggle())
 				ui := n.NewTester(func(c *n.Context) {
 					n.Column(c).Fill().Background(c.Theme().Background).Padding(16).Children(func() {
@@ -136,14 +139,20 @@ func TestToolIssueSummaryPrecedesDisclosureCue(t *testing.T) {
 				ui.Advance(time.Second)
 				saveNativeSkillImage(t, ui, fmt.Sprintf("dark-%v-ended-%v.png", dark, ended))
 				heading, ok := ui.Find("13 次工具调用")
-				issue, issueOK := ui.Find("3 项未成功")
-				if !ok || !issueOK {
+				if !ok || ui.HasText("3 项未成功") {
 					t.Fatal("missing folded summary", ui.Texts())
 				}
+				if !ended {
+					if !ui.HasText("进行中") {
+						t.Fatal("missing live status", ui.Texts())
+					}
+					return
+				}
+				status, exists := ui.Find("调用结束")
 				font := n.Font{Family: v.Model.Preferences.InterfaceFont, Size: 11, Weight: 400}
 				width, _ := n.ShapeText("13 次工具调用", font, 0).Size()
-				if gap := issue.X - heading.X - width - toolGlyphSlot - toolSummaryGap; math.Abs(float64(gap-toolSummaryGap)) > 1 {
-					t.Fatalf("issue count must immediately follow tool count, before the chevron; gap=%.1f", gap)
+				if gap := status.X - heading.X - width - toolGlyphSlot - toolSummaryGap; !exists || math.Abs(float64(gap-toolSummaryGap)) > 1 {
+					t.Fatalf("ended status must immediately follow the tool count; gap=%.1f", gap)
 				}
 			})
 		}

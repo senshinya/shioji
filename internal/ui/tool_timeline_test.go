@@ -122,8 +122,8 @@ func TestFailedOrDeclinedToolsDoNotShowSuccessfulGroupReceipt(t *testing.T) {
 		if !ui.HasText(want) {
 			t.Fatalf("%s call lost its terminal state", status)
 		}
-		if !ui.HasText("1 项未成功") || ui.HasText("执行失败") {
-			t.Fatal("one unsuccessful call is presented as a group failure")
+		if !ui.HasText("调用结束") || ui.HasText("1 项未成功") || ui.HasText("执行失败") {
+			t.Fatal("the terminal heading must remain neutral")
 		}
 	}
 }
@@ -161,16 +161,16 @@ func TestToolIssuesStayWithTheirCallWhileMoreCommandsArrive(t *testing.T) {
 		}
 		ui.Click("3 次工具调用")
 		ui.Advance(200 * time.Millisecond)
-		if !ui.HasText("1 项未成功") || ui.HasText("退出码 1") {
-			t.Fatal("collapsed group loses the issue summary")
+		if ui.HasText("1 项未成功") || ui.HasText("退出码 1") {
+			t.Fatal("collapsed group exposes a call's failure")
 		}
 		d.Items = append(d.Items, domain.Item{ID: "explanation", TurnID: "t", Kind: "assistant", Text: "The retry succeeded.", Final: true})
 		v.Model.Details["s"] = d
 		ui.Frame()
 		ui.Click("3 次工具调用")
 		ui.Advance(time.Second)
-		if !ui.HasText("1 项未成功") || !ui.HasText("退出码 1") || ui.HasText("本轮失败") {
-			t.Fatal("closed group loses its factual issues or claims the turn failed")
+		if !ui.HasText("调用结束") || ui.HasText("1 项未成功") || !ui.HasText("退出码 1") || ui.HasText("本轮失败") {
+			t.Fatal("sealed group must keep the error in its call details")
 		}
 	}
 }
