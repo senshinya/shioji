@@ -15,8 +15,8 @@ func TestCommandChevronStaysCompactBesideItsUnderscore(t *testing.T) {
 				ui := n.NewTester(func(c *n.Context) {
 					n.Column(c).Fill().Padding(16).Background(c.Theme().Background).Children(func() {
 						n.Row(c).Gap(8).AlignItems(n.Baseline).Children(func() {
-							inlineSymbol(c, commandActivityIcon("sleep 1"), "等待", n.Font{Family: c.Theme().Font, Size: 12}, 14, c.Theme().TextMuted).Label("命令图标")
-							n.Text(c, "等待").FontSize(12).FixedLineHeight(20)
+							transcriptSymbol(c, commandActivityIcon("sleep 1"), "等待", n.Font{Family: c.Theme().Font, Size: transcriptCaptionSize}, c.Theme().TextMuted).Label("命令图标")
+							n.Text(c, "等待").FontSize(transcriptCaptionSize).FixedLineHeight(20)
 						})
 					})
 				}, 180, 60)
@@ -25,7 +25,7 @@ func TestCommandChevronStaysCompactBesideItsUnderscore(t *testing.T) {
 				ui.Advance(time.Second)
 				saveNativeSkillImage(t, ui, fmt.Sprintf("command-chevron-dark-%v-scale-%g.png", dark, scale))
 				glyph, ok := ui.Find("命令图标")
-				if !ok || glyph.W != 14 {
+				if !ok || glyph.W != 16 {
 					t.Fatal("command icon slot changed", glyph)
 				}
 				im := ui.Image()

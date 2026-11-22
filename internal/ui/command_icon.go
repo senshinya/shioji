@@ -8,14 +8,16 @@ import (
 )
 
 // Keep the prompt compact beside its underscore in the 20-DIP viewBox.
-var commandTerminalIcon = svg("M4 5l5 5-5 5M11 15h6")
-var gitCommandIcon = svg("M6 7v6M6 12h2a6 5 0 0 0 6-5M8 5a2 2 0 1 1-4 0a2 2 0 1 1 4 0M16 5a2 2 0 1 1-4 0a2 2 0 1 1 4 0M8 15a2 2 0 1 1-4 0a2 2 0 1 1 4 0")
+const commandTerminalIconPath = "M4 5l5 5-5 5M11 15h6"
+
+var commandTerminalIcon = svg(commandTerminalIconPath)
+var gitCommandIcon = newTranscriptIcon("M6 7v6M6 12h2a6 5 0 0 0 6-5M8 5a2 2 0 1 1-4 0a2 2 0 1 1 4 0M16 5a2 2 0 1 1-4 0a2 2 0 1 1 4 0M8 15a2 2 0 1 1-4 0a2 2 0 1 1 4 0")
 
 func commandActivityIcon(command string) *n.SVG {
 	if gitCommand(command, 0) {
 		return gitCommandIcon
 	}
-	return commandTerminalIcon
+	return transcriptCommandIcon
 }
 
 // This is a display hint, never an execution or permission decision. Inspect

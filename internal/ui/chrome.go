@@ -16,7 +16,9 @@ var openAIBlossomSVG []byte
 
 var openAIBlossom = n.MustParseSVG(openAIBlossomSVG)
 
-var searchIcon = svg("M14 14l4 4M15 8.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0")
+const searchIconPath = "M14 14l4 4M15 8.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0"
+
+var searchIcon = svg(searchIconPath)
 
 // Eight equally spaced teeth keep the visible contour square in a 16px slot.
 var settingsIcon = svg("M16.18 8.34 18.12 8.86 18.12 11.14 16.18 11.66 15.54 13.2 16.55 14.94 14.94 16.55 13.2 15.54 11.66 16.18 11.14 18.12 8.86 18.12 8.34 16.18 6.8 15.54 5.06 16.55 3.45 14.94 4.46 13.2 3.82 11.66 1.88 11.14 1.88 8.86 3.82 8.34 4.46 6.8 3.45 5.06 5.06 3.45 6.8 4.46 8.34 3.82 8.86 1.88 11.14 1.88 11.66 3.82 13.2 4.46 14.94 3.45 16.55 5.06 15.54 6.8ZM13 10a3 3 0 1 1-6 0 3 3 0 0 1 6 0")
@@ -26,7 +28,9 @@ func designIcon(path string) *n.SVG {
 	return n.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="` + path + `" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 }
 
-var shieldIcon = designIcon("M12 2 3 6v6c0 6 9 10 9 10s9-4 9-10V6ZM8 12l3 3 5-6")
+const shieldIconPath = "M12 2 3 6v6c0 6 9 10 9 10s9-4 9-10V6ZM8 12l3 3 5-6"
+
+var shieldIcon = designIcon(shieldIconPath)
 var disclosureDown = designIcon("m6 9 6 6 6-6")
 var disclosureRight = designIcon("m9 5 7 7-7 7")
 var attentionIcon = svg("M10 3l8 14H2zM10 7v4M10 14v.2")

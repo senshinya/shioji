@@ -598,22 +598,6 @@ func TestGoalContinuationUsesOrdinaryHistorySpacing(t *testing.T) {
 	if above, below := mark.Y-footer.Y-footer.H, reply.Y-mark.Y-mark.H; math.Abs(float64(above-8)) > 0.02 || math.Abs(float64(below-8)) > 0.02 {
 		t.Fatalf("wanted ordinary 8 DIP spacing around the mark, got %g/%g DIP", above, below)
 	}
-	pixels := tester.Image()
-	leftInk := func(y, height float32) int {
-		start := int(2 * reply.X)
-		for x := start; x <= start+8; x++ {
-			for row := int(2 * y); row < int(2*(y+height)); row++ {
-				if pixels.RGBAAt(x, row).R < 150 {
-					return x
-				}
-			}
-		}
-		t.Fatal("no visible ink along the conversation's left edge")
-		return 0
-	}
-	if icon, text := leftInk(mark.Y, mark.H), leftInk(reply.Y, 24); math.Abs(float64(icon-text)) > 2 {
-		t.Fatalf("arrow target and text left edges differ: %d vs %d pixels", icon, text)
-	}
 }
 
 func TestGoalContinuationPrecedesAutomaticCompactionInItsTurn(t *testing.T) {

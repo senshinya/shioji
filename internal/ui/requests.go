@@ -460,18 +460,18 @@ func (v *View) answeredQuestion(c *n.Context, t *n.Theme, item domain.Item, chil
 	n.Column(c.Key("answered-question")).FillWidth().MinWidth(0).Children(func() {
 		button := control(c.Key("summary")).AlignSelf(n.Start).MinHeight(20).MinWidth(0).Justify(n.Start).Label(label).Expanded(expanded)
 		button.Children(func() {
-			font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+			font := n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}
 			color := textHoverColor(c, button, t.TextMuted)
 			n.Row(c).MinWidth(0).Gap(7).AlignItems(n.Baseline).Children(func() {
-				inlineSymbol(c.Key("question-icon"), questionIcon, label, font, 12, subtle(t)).Shrink(0)
+				transcriptSymbol(c.Key("question-icon"), transcriptQuestionIcon, label, font, subtle(t))
 				text := n.Text(c.Key("answer-summary"), label).SingleLine().MinWidth(0).Shrink(1).Ellipsis("…").TooltipWhenTruncated(label).
 					FontSize(11).FixedLineHeight(20).TextColor(color)
 				requestStatusText(text, progress)
-				angle := float32(0)
+				angle := float32(-90)
 				if expanded {
-					angle = 90
+					angle = 0
 				}
-				inlineSymbol(c.Key("answer-disclosure"), disclosureRight, label, font, 10, subtle(t), angle).Shrink(0)
+				inlineSymbol(c.Key("answer-disclosure"), transcriptChevron, label, font, 14, subtle(t), angle).Shrink(0)
 			})
 		})
 		if button.Clicked() {
@@ -488,7 +488,7 @@ func (v *View) answeredQuestion(c *n.Context, t *n.Theme, item domain.Item, chil
 }
 
 func requestReceiptDetails(c *n.Context, t *n.Theme, parts []domain.ContentPart) {
-	n.Column(c.Key("details")).FillWidth().Padding(4, 0, 0, 19).Gap(8).Clip().Transition(disclosureMotion(c, 180*time.Millisecond)).Children(func() {
+	n.Column(c.Key("details")).FillWidth().Padding(4, 0, 0, transcriptGlyphSlot+7).Gap(8).Clip().Transition(disclosureMotion(c, 180*time.Millisecond)).Children(func() {
 		requestReceiptParts(c, t, parts)
 	})
 }

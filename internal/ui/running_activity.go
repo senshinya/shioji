@@ -325,7 +325,7 @@ func runningElapsed(c *n.Context, started *time.Time, color n.Color, compact boo
 		return n.Element{}, 0
 	}
 	since := *started
-	font := n.Font{Family: c.Theme().Font, Size: 11, Weight: 400, Features: "tnum"}
+	font := n.Font{Family: c.Theme().Font, Size: transcriptCaptionSize, Weight: 400, Features: "tnum"}
 	m := inlineFontMetrics("秒", font)
 	width, _ := n.ShapeText("9999 分 59 秒", font, 0).Size()
 	inset := float32(0)
@@ -334,7 +334,7 @@ func runningElapsed(c *n.Context, started *time.Time, color n.Color, compact boo
 		inset = 6
 		width += inset
 	}
-	clock := n.RichText(c, n.Span{Text: "\uFFFC", ObjectWidth: width, ObjectHeight: m.ascent, ObjectDescent: m.descent}).Font(font.Family).FontSize(11).FontFeatures("tnum").FixedLineHeight(20).TextColor(color).Label("运行时长")
+	clock := n.RichText(c, n.Span{Text: "\uFFFC", ObjectWidth: width, ObjectHeight: m.ascent, ObjectDescent: m.descent}).Font(font.Family).FontSize(transcriptCaptionSize).FontFeatures("tnum").FixedLineHeight(20).TextColor(color).Label("运行时长")
 	if compact {
 		clock.Height(20).Shrink(0).SingleLine().Clip()
 	}
@@ -405,8 +405,8 @@ func (v *View) progressStatus(c *n.Context, t *n.Theme, a runningActivity, p *ru
 	}
 	color = row.AnimateColor("status-color", color, motionAnimation(c, 180*time.Millisecond))
 	row.Children(func() {
-		statusDot(c.Key("dot"), a.label, n.Font{Family: t.Font, Size: 11, Weight: 400}, color, running, phase)
-		width, _ := n.ShapeText(a.label, n.Font{Family: t.Font, Size: 11, Weight: 400}, 0).Size()
+		transcriptStatusDot(c.Key("dot"), a.label, n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}, color, running, phase)
+		width, _ := n.ShapeText(a.label, n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}, 0).Size()
 		caption := n.Column(c.Key("activity-caption")).Height(20).Shrink(0).Clip()
 		extent := n.Local(caption, "label-extent", func() progressLabelExtent {
 			return progressLabelExtent{target: width, shown: width}
@@ -432,7 +432,7 @@ func (v *View) progressStatus(c *n.Context, t *n.Theme, a runningActivity, p *ru
 		}
 		extent.shown = shown
 		caption.Width(shown).Children(func() {
-			n.Text(c.Key("activity-label"), a.label).FontSize(11).FixedLineHeight(20).SingleLine().Shrink(0).TextColor(t.TextMuted).
+			n.Text(c.Key("activity-label"), a.label).FontSize(transcriptCaptionSize).FixedLineHeight(20).SingleLine().Shrink(0).TextColor(t.TextMuted).
 				ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
 		})
 		// Clip the text and its outgoing snapshot together while reclaiming

@@ -1077,8 +1077,8 @@ func TestHistoryRunningHandoffPreservesPaintAndAnimationPhase(t *testing.T) {
 					if !ok {
 						t.Fatal("missing running footer")
 					}
-					r.X -= 12
-					r.W += 12
+					r.X -= transcriptGlyphSlot + 6
+					r.W += transcriptGlyphSlot + 6
 					return r
 				}
 				before := contextPixels(ui, region())

@@ -19,21 +19,24 @@ type activityPatch struct {
 	State        editor.DiffState
 }
 
-var fileActivityIcon = svg("M5 2h7l4 4v12H5zM12 2v5h4M8 11h5M8 14h5")
-var agentActivityIcon = svg("M3 4h6v5H3zM11 11h6v5h-6zM6 9v5h5")
+var fileActivityIcon = newTranscriptIcon("M5 2h7l4 4v12H5zM12 2v5h4M8 11h5M8 14h5")
+
+const agentActivityIconPath = "M3 4h6v5H3zM11 11h6v5h-6zM6 9v5h5"
+
+var agentActivityIcon = svg(agentActivityIconPath)
 
 func activityIcon(kind string) *n.SVG {
 	switch kind {
 	case "files", "context", "compaction":
 		return fileActivityIcon
 	case "search", "review":
-		return searchIcon
+		return transcriptSearchIcon
 	case "agents":
-		return agentActivityIcon
+		return transcriptAgentIcon
 	case "reasoning":
-		return questionIcon
+		return transcriptQuestionIcon
 	}
-	return terminalIcon
+	return transcriptTerminalIcon
 }
 func activityStatus(status string) string {
 	switch status {
@@ -82,9 +85,11 @@ func toolIssueLabel(item domain.Item) string {
 
 func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcriptAnchor ...bool) {
 	if item.Presentation == domain.GoalContinuationPresentation {
-		font := n.Font{Family: t.Font, Size: 11, Weight: 400}
-		// The arrow target's visible stroke starts inside its 14-DIP slot.
-		inlineIconText(c, goalTargetIcon, item.Name, font, 14, 5, t.TextMuted).MarginStart(-1.5)
+		font := n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}
+		n.Row(c).Gap(5).AlignItems(n.Baseline).Children(func() {
+			transcriptSymbol(c, transcriptGoalIcon, item.Name, font, t.TextMuted)
+			n.Text(c, item.Name).FontSize(font.Size).FixedLineHeight(20).SingleLine().TextColor(t.TextMuted)
+		})
 		return
 	}
 	if item.Presentation == "compaction" {
@@ -93,10 +98,10 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 	}
 	if item.Kind == "activity" && item.Presentation == "agents" {
 		label := strings.TrimSpace(item.Name + " " + strings.TrimPrefix(item.Text, "代理"))
-		font := n.Font{Family: t.Font, Size: 12, Weight: 400}
+		font := n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}
 		n.Row(c.Key("agent-event")).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
-			inlineSymbol(c, agentActivityIcon, label, font, 14, t.TextMuted)
-			n.Text(c, label).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable().
+			transcriptSymbol(c, transcriptAgentIcon, label, font, t.TextMuted)
+			n.Text(c, label).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted).Selectable().
 				ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
 		})
 		return
@@ -123,15 +128,15 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 	color := textHoverColor(c, button, t.TextMuted)
 	button.Children(func() {
 		n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
-			font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
+			font := n.Font{Family: c.Theme().Font, Size: transcriptCaptionSize, Weight: 400}
 			metadataMotion := resultBlockMotion(c)
 			if item.Kind == "activity" {
-				inlineSymbol(c, activityIcon(item.Presentation), label, font, 14, color)
+				transcriptSymbol(c, activityIcon(item.Presentation), label, font, color)
 			}
-			title := n.Text(c, label).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(12).FixedLineHeight(20).TextColor(color).MinWidth(0).MaxLines(2).Ellipsis("…")
+			title := n.Text(c, label).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color).MinWidth(0).MaxLines(2).Ellipsis("…")
 			if duration != "" {
 				title.SingleLine()
-				n.Text(c.Key("wait-duration"), duration).SingleLine().Shrink(0).FontSize(12).FixedLineHeight(20).TextColor(color)
+				n.Text(c.Key("wait-duration"), duration).SingleLine().Shrink(0).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color)
 			}
 			title.TooltipWhenTruncated(label)
 			if item.Status != "" {
@@ -148,7 +153,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 				if v.Model.Collapsed[key] {
 					angle = -90
 				}
-				inlineSymbol(c.Key("activity-chevron"), chevron, label, font, 14, color, angle).Shrink(0).Transition(metadataMotion)
+				inlineSymbol(c.Key("activity-chevron"), transcriptChevron, label, font, 14, color, angle).Shrink(0).Transition(metadataMotion)
 			}
 		})
 	})
@@ -244,13 +249,13 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 			for _, agent := range item.Agents {
 				n.Column(c.Key("agent:" + agent.ID)).FillWidth().Gap(4).Transition(resultBlockMotion(c)).Children(func() {
 					n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-						font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
-						statusDot(c, agent.ID, font, t.TextMuted, false)
-						n.Text(c, agent.ID).FontSize(12).Grow(1)
-						n.Text(c.Key("status"), activityStatus(agent.Status)).FontSize(11).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+						font := n.Font{Family: c.Theme().Font, Size: transcriptCaptionSize, Weight: 400}
+						transcriptStatusDot(c, agent.ID, font, t.TextMuted, false)
+						n.Text(c, agent.ID).FontSize(transcriptCaptionSize).FixedLineHeight(20).Grow(1)
+						n.Text(c.Key("status"), activityStatus(agent.Status)).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
 					})
 					if agent.Message != "" {
-						n.Text(c.Key("message"), agent.Message).Transition(resultBlockMotion(c)).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).PaddingX(18)
+						n.Text(c.Key("message"), agent.Message).Transition(resultBlockMotion(c)).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).PaddingX(transcriptGlyphSlot + 8)
 					}
 				})
 			}

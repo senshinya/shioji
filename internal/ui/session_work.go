@@ -194,23 +194,20 @@ func (v *View) displayedWork(w domain.WorkActivity) domain.WorkActivity {
 	return w
 }
 func (v *View) workStatus(c *n.Context, t *n.Theme, w domain.WorkActivity, label string, font n.Font) {
-	// A shared slot keeps both the first-line text and detail caption stationary
-	// when a small dot is replaced by a question, shield or completion check.
-	n.Row(c.Key("work-status")).Width(14).Height(20).Shrink(0).Justify(n.Center).AlignItems(n.Baseline).Children(func() {
-		if r := v.pendingWorkRequest(w); r != nil {
-			icon := questionIcon
-			if r.Kind == "approval" || r.Kind == "permissions" {
-				icon = shieldIcon
-			}
-			inlineSymbol(c, icon, label, font, 14, t.TextMuted)
-		} else if w.Active() {
-			statusDot(c, label, font, t.Success, true)
-		} else if w.State == "completed" || w.State == "stopped" {
-			inlineSymbol(c, check, label, font, 14, t.TextMuted)
-		} else {
-			statusDot(c, label, font, t.TextMuted, false)
+	c = c.Key("work-status")
+	if r := v.pendingWorkRequest(w); r != nil {
+		icon := transcriptQuestionIcon
+		if r.Kind == "approval" || r.Kind == "permissions" {
+			icon = transcriptShieldIcon
 		}
-	})
+		transcriptSymbol(c, icon, label, font, t.TextMuted)
+	} else if w.Active() {
+		transcriptStatusDot(c, label, font, t.Success, true)
+	} else if w.State == "completed" || w.State == "stopped" {
+		transcriptSymbol(c, transcriptCheckIcon, label, font, t.TextMuted)
+	} else {
+		transcriptStatusDot(c, label, font, t.TextMuted, false)
+	}
 }
 func workDuration(w domain.WorkActivity, now time.Time) string {
 	ms := int64(-1)
@@ -326,23 +323,23 @@ func (v *View) sessionWorkBody(c *n.Context, t *n.Theme, kind string, all []doma
 			row.Height(row.AnimateTo("content-height", height, motionAnimation(c, 180*time.Millisecond)) * progress)
 			row.Children(func() {
 				n.Row(c).FillWidth().Gap(8).AlignItems(n.Start).Children(func() {
-					v.workStatus(c, t, w, w.Title, n.Font{Family: t.Font, Size: 12, Weight: 400})
+					v.workStatus(c, t, w, w.Title, n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400})
 					n.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 						n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
-							title := n.Text(c, w.Title).Grow(1).MinWidth(0).SingleLine().FontSize(12).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+							title := n.Text(c, w.Title).Grow(1).MinWidth(0).SingleLine().FontSize(transcriptCaptionSize).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
 							if w.Active() && pending == nil {
 								shimmer(c, title, t.TextMuted, t.Text)
 							}
 							v.workRequestLink(c, t, w)
 						})
 						if preview != "" {
-							n.Text(c, preview).FillWidth().SingleLine().FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).Transition(fadeMotion(c, 180*time.Millisecond))
+							n.Text(c, preview).FillWidth().SingleLine().FontSize(transcriptCaptionSize).FixedLineHeight(18).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).Transition(fadeMotion(c, 180*time.Millisecond))
 						}
 					})
 					if duration := workDuration(w, c.Now()); duration != "" {
-						n.Text(c, duration).Font("Menlo").FontSize(10).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
+						n.Text(c, duration).Font("Menlo").FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
 					}
-					inlineSymbol(c, disclosureRight, w.Title, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted).Shrink(0)
+					inlineSymbol(c, transcriptChevron, w.Title, n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}, 14, t.TextMuted, -90).Shrink(0)
 				})
 			})
 			if row.Clicked() {
@@ -480,7 +477,7 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 		}
 		n.Row(c.Key("work-detail-state")).Height(20).Gap(6).AlignItems(n.Baseline).Children(func() {
 			text := v.workLabel(w)
-			font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+			font := n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}
 			v.workStatus(c, t, w, text, font)
 			label := n.Text(c, text).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
 			if w.Active() && v.pendingWorkRequest(w) == nil {
@@ -557,8 +554,8 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 		if prompt != "" {
 			if kind == "background" {
 				n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-					inlineSymbol(c, commandActivityIcon(w.Brief), w.Brief, n.Font{Family: outputFont, Size: 11}, 14, outputColor)
-					n.Text(c, commandPreview(w.Brief)).Label(w.Brief).Tooltip(w.Brief).ContextMenu(commandCopyMenu(c, w.Brief)).Grow(1).MinWidth(0).MaxLines(2).Ellipsis("…").Font(outputFont).FontSize(11).FixedLineHeight(18).TextColor(outputColor).Selectable()
+					transcriptSymbol(c, commandActivityIcon(w.Brief), w.Brief, n.Font{Family: outputFont, Size: transcriptCaptionSize}, outputColor)
+					n.Text(c, commandPreview(w.Brief)).Label(w.Brief).Tooltip(w.Brief).ContextMenu(commandCopyMenu(c, w.Brief)).Grow(1).MinWidth(0).MaxLines(2).Ellipsis("…").Font(outputFont).FontSize(transcriptCaptionSize).FixedLineHeight(18).TextColor(outputColor).Selectable()
 				})
 			} else {
 				n.Text(c, prompt).AlignSelf(n.End).MaxWidth(width-24).FontSize(12).FixedLineHeight(20).Padding(8, 10).Radius(6).Background(userBubble(t)).Selectable()
@@ -642,14 +639,14 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 						heading := n.ButtonBase(c.Key("command-heading")).AlignSelf(n.Start).MinHeight(20).Justify(n.Start).Label(label).Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
 						heading.Children(func() {
 							n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
-								inlineSymbol(c, commandActivityIcon(item.Name), label, n.Font{Family: t.Font, Size: 12}, 14, t.TextMuted).Shrink(0)
-								n.Text(c, commandPreview(label)).Font(t.Font).FontSize(12).FixedLineHeight(20).MinWidth(0).MaxLines(2).Ellipsis("…").TextColor(t.TextMuted)
+								transcriptSymbol(c, commandActivityIcon(item.Name), label, n.Font{Family: t.Font, Size: transcriptCaptionSize}, t.TextMuted)
+								n.Text(c, commandPreview(label)).Font(t.Font).FontSize(transcriptCaptionSize).FixedLineHeight(20).MinWidth(0).MaxLines(2).Ellipsis("…").TextColor(t.TextMuted)
 								if hasOutput && kind != "background" {
 									angle := float32(0)
 									if v.Model.Collapsed[key] {
 										angle = -90
 									}
-									inlineSymbol(c.Key("command-chevron"), chevron, label, n.Font{Family: t.Font, Size: 12}, 14, t.TextMuted, angle).Shrink(0).Transition(resultBlockMotion(c))
+									inlineSymbol(c.Key("command-chevron"), transcriptChevron, label, n.Font{Family: t.Font, Size: transcriptCaptionSize}, 14, t.TextMuted, angle).Shrink(0).Transition(resultBlockMotion(c))
 								}
 							})
 						})

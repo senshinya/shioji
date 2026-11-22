@@ -31,7 +31,9 @@ func goalTagAttributes(c *n.Context) richtext.Attributes {
 	return richtext.Attributes{Attachment: tag}
 }
 
-var goalTargetIcon = svg("M12.9 5.25a6.16 6.16 0 1 0 2.73 3.17M9.56 7.27a3.08 3.08 0 1 0 3.17 3.17M9.56 10.44 16.16 3.84m-3.52 0h3.52v3.52")
+const goalTargetIconPath = "M12.9 5.25a6.16 6.16 0 1 0 2.73 3.17M9.56 7.27a3.08 3.08 0 1 0 3.17 3.17M9.56 10.44 16.16 3.84m-3.52 0h3.52v3.52"
+
+var goalTargetIcon = svg(goalTargetIconPath)
 
 const (
 	goalRowHeight     = 32

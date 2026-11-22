@@ -126,7 +126,7 @@ type replyMountKey struct{}
 func (v *View) requestSourceLabel(c *n.Context, t *n.Theme, label string, stream *replyStream) {
 	root := n.Column(c.Key("source-label")).MinHeight(20)
 	options := n.Local(root, "markdown", func() markdown.Options { return markdown.Options{ShareSelection: true} })
-	options.Theme = &markdown.Theme{Font: "system-ui", FontSize: 11, LineHeight: 20.0 / 11, Text: t.TextMuted}
+	options.Theme = &markdown.Theme{Font: "system-ui", FontSize: transcriptCaptionSize, LineHeight: 20.0 / transcriptCaptionSize, Text: t.TextMuted}
 	options.Reveal = &markdown.Reveal{Unit: markdown.ByCharacter, Fade: 180 * time.Millisecond, Smooth: true}
 	fresh := stream != nil && stream.live() && stream.fresh()
 	if v.reduceMotion || stream == nil || !stream.live() {

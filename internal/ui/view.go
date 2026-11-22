@@ -307,12 +307,21 @@ func svg(path string) *n.SVG {
 var plus = svg("M10 4v12M4 10h12")
 var chevron = svg("M6 8l4 4 4-4")
 var monitor = svg("M3 3h14v10H3zM7 17h6M10 13v4")
-var check = svg("M4 10l4 4 8-9")
+
+const checkPath = "M4 10l4 4 8-9"
+
+var check = svg(checkPath)
 var attention = svg("M10 3l8 14H2zM10 7v4M10 14v.2")
 var arrow = n.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 21V3M4 11l8-8 8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 var stop = n.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><rect x="6" y="5" width="12" height="14" rx="2" fill="currentColor"/></svg>`))
-var terminalIcon = svg("M4 6l4 4-4 4M11 14h5")
-var questionIcon = svg("M17.5 13.3h-10l-5 4.2v-15h15z")
+
+const terminalIconPath = "M4 6l4 4-4 4M11 14h5"
+
+var terminalIcon = svg(terminalIconPath)
+
+const questionIconPath = "M17.5 13.3h-10l-5 4.2v-15h15z"
+
+var questionIcon = svg(questionIconPath)
 
 // Native thumb: 6 px, 2 px wider while dragged, and 3 px from the edge.
 const conversationScrollbarGutter = 11
@@ -1627,9 +1636,9 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 			heading := control(c).AlignSelf(n.Start).MinHeight(20).Justify(n.Start).Label(label).Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
 			if heading.Children(func() {
 				n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
-					n.Text(c, commandPreview(label)).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).Font("Menlo").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).MinWidth(0).MaxLines(2).Ellipsis("…")
+					n.Text(c, commandPreview(label)).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).Font("Menlo").FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted).MinWidth(0).MaxLines(2).Ellipsis("…")
 					if issue := toolIssueLabel(item); issue != "" {
-						n.Text(c.Key("command-issue"), issue).SingleLine().Shrink(0).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
+						n.Text(c.Key("command-issue"), issue).SingleLine().Shrink(0).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted).
 							Transition(resultBlockMotion(c))
 					}
 					if item.Text != "" {
@@ -1637,7 +1646,7 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 						if v.Model.Collapsed[v.commandOutputKey(item.ID, "")] {
 							angle = -90
 						}
-						inlineSymbol(c.Key("command-chevron"), chevron, label, n.Font{Family: "Menlo", Size: 11}, 14, t.TextMuted, angle).Shrink(0).Transition(resultBlockMotion(c))
+						inlineSymbol(c.Key("command-chevron"), transcriptChevron, label, n.Font{Family: "Menlo", Size: transcriptCaptionSize}, 14, t.TextMuted, angle).Shrink(0).Transition(resultBlockMotion(c))
 					}
 				})
 			}).Clicked() {

@@ -30,11 +30,11 @@ func TestActivityStatusStaysBesideItsTitle(t *testing.T) {
 					ui.Advance(time.Second)
 					title, _ := ui.Find(item.Name)
 					status, ok := ui.Find("已完成")
-					font := n.Font{Family: v.Model.Preferences.InterfaceFont, Size: 12}
+					font := n.Font{Family: v.Model.Preferences.InterfaceFont, Size: 11}
 					textWidth, _ := n.ShapeText(item.Name, font, 0).Size()
 					iconWidth := float32(0)
 					if item.Kind == "activity" {
-						iconWidth = 20
+						iconWidth = 22
 					}
 					if gap := status.X - title.X - textWidth - iconWidth; !ok || math.Abs(float64(gap-6)) > 1 {
 						t.Fatalf("activity status is detached from its title: gap=%.1f", gap)
@@ -83,8 +83,8 @@ func TestCommandDisclosureCueRequiresExpandableOutput(t *testing.T) {
 				font := n.Font{Family: "Menlo", Size: 11}
 				prefix := float32(0)
 				if child {
-					font = n.Font{Family: v.Model.Preferences.InterfaceFont, Size: 12}
-					prefix = 20 // command icon and its gap
+					font = n.Font{Family: v.Model.Preferences.InterfaceFont, Size: 11}
+					prefix = 22 // command icon and its gap
 				}
 				width, _ := n.ShapeText(item.Name, font, 0).Size()
 				im := ui.Image()

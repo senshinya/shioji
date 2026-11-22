@@ -127,12 +127,14 @@ func TestTaskStatusUsesGreenActivityDotAndGrayPendingDot(t *testing.T) {
 			t.Fatal("active task is not a green dot", dark, green)
 		}
 		pending, ok := ui.Find("任务待处理")
-		if !ok || pending.W != 14 || pending.H != 20 {
+		if !ok || pending.W != 6 || pending.H != 20 {
 			t.Fatal("pending task is not a compact dot", pending)
 		}
-		gray := im.RGBAAt(int(pending.X+3), int(pending.Y+3))
-		if gray.R != gray.G || gray.G != gray.B {
-			t.Fatal("pending task dot is not neutral gray", gray)
+		y := int(pending.Y + pending.H/2)
+		gray := im.RGBAAt(int(pending.X+pending.W/2), y)
+		background := im.RGBAAt(int(pending.X-2), y)
+		if gray == background || max(gray.R, gray.G, gray.B)-min(gray.R, gray.G, gray.B) > 16 {
+			t.Fatal("pending task dot is not visible in neutral gray", gray)
 		}
 	}
 }

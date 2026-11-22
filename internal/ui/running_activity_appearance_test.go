@@ -54,7 +54,7 @@ func TestRunningActivityNativeEvidence(t *testing.T) {
 				t.Fatal("capture target missing", label, ui.Texts())
 			}
 			if name == "compact" {
-				r.X -= 12
+				r.X -= transcriptGlyphSlot + 6
 			}
 			bounds := image.Rect(int(r.X), int(r.Y)-6, int(r.X)+736, int(r.Y+r.H)+8).Intersect(ui.Image().Bounds())
 			im := ui.Image().SubImage(bounds)

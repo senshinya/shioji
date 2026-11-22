@@ -469,7 +469,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 }
 
 const (
-	toolGlyphSlot          = 16
+	toolGlyphSlot          = transcriptGlyphSlot
 	toolTimelineInset      = toolGlyphSlot
 	toolTimelineGap        = 8
 	toolSummaryGap         = 6
@@ -477,8 +477,7 @@ const (
 )
 
 func toolGlyph(c *n.Context, icon *n.SVG, label string, font n.Font, color n.Color) n.Element {
-	return n.Row(c).Size(toolGlyphSlot, 20).Shrink(0).AlignItems(n.Baseline).Justify(n.Center).
-		Children(func() { inlineSymbol(c, icon, label, font, 14, color) })
+	return transcriptMarkerSlot(c).Children(func() { transcriptSymbol(c, icon, label, font, color) })
 }
 
 func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index int) {
@@ -518,7 +517,7 @@ func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index
 	}
 	button := n.ButtonBase(c).AlignSelf(n.Start).Height(20).Justify(n.Start).Label(label).Description(description).Expanded(opened)
 	color := textHoverColor(c, button, t.TextMuted)
-	font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+	font := n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}
 	button.Children(func() {
 		line := n.Row(c).Height(20).AlignItems(n.Baseline)
 		if inline > 0 {
@@ -526,18 +525,17 @@ func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index
 			shimmerToolStatus(c, line, shimmerAt, t.Text, inline)
 		}
 		line.Children(func() {
-			n.Row(c.Key("icon")).Size(toolGlyphSlot, 20).Shrink(0).MarginEnd(toolSummaryGap).AlignItems(n.Baseline).Justify(n.Center).Children(func() {
-				inlineSymbol(c.Key("terminal"), commandTerminalIcon, label, font, 14, color).Opacity(1 - inline)
+			transcriptMarkerSlot(c.Key("icon")).MarginEnd(toolSummaryGap).Children(func() {
+				transcriptSymbol(c.Key("terminal"), transcriptCommandIcon, label, font, color).Opacity(1 - inline)
 				if inline > 0 {
-					statusDot(c.Key("dot"), label, font, t.Success, true, shimmerAt).Absolute().
-						Left((toolGlyphSlot - 6) / 2).Top(0).Opacity(inline)
+					transcriptStatusDot(c.Key("dot"), label, font, t.Success, true, shimmerAt).Absolute().Left(0).Top(0).Opacity(inline)
 				}
 			})
 			countAnimation := animationPointer(c, 180*time.Millisecond)
-			n.Text(c.Key("count"), label).FontSize(11).FixedLineHeight(20).TextColor(color).
+			n.Text(c.Key("count"), label).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color).
 				ContentTransition(n.ContentTransition{Numeric: true, Animation: countAnimation})
 			if outcome != "" {
-				n.Text(c.Key("outcome"), outcome).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).MarginStart(toolSummaryGap).
+				n.Text(c.Key("outcome"), outcome).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted).MarginStart(toolSummaryGap).
 					ContentTransition(n.ContentTransition{Numeric: true, Animation: countAnimation})
 			}
 			if inline > 0 {
@@ -550,7 +548,7 @@ func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index
 					angle = 0
 				}
 			}
-			inlineSymbolWithAnimation(c.Key("chevron"), chevron, label, font, 14, color, n.Animation{}, angle).MarginStart(toolSummaryGap)
+			inlineSymbolWithAnimation(c.Key("chevron"), transcriptChevron, label, font, 14, color, n.Animation{}, angle).MarginStart(toolSummaryGap)
 		})
 	})
 	if button.Clicked() {
@@ -578,11 +576,9 @@ func (v *View) toolElapsed(turnID string) *time.Time {
 func (v *View) toolProgressLine(c *n.Context, t *n.Theme, phase string, elapsed *time.Time, shimmerAt time.Time, opacity float32) {
 	line := n.Row(c).Height(20).AlignSelf(n.Start).AlignItems(n.Baseline).Label("工具组运行状态")
 	shimmerToolStatus(c, line, shimmerAt, t.Text, opacity)
-	font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+	font := n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}
 	line.Children(func() {
-		n.Row(c.Key("dot")).Size(toolGlyphSlot, 20).AlignItems(n.Baseline).Justify(n.Center).Children(func() {
-			statusDot(c.Key("pulse"), phase, font, t.Success, true, shimmerAt)
-		})
+		transcriptStatusDot(c.Key("dot"), phase, font, t.Success, true, shimmerAt)
 		v.toolProgressCaption(c.Key("caption"), t, phase, elapsed, 1, false)
 	})
 }
@@ -606,11 +602,11 @@ func (p *runningProgress) toolCaption(c *n.Context) string {
 }
 
 func (v *View) toolProgressCaption(c *n.Context, t *n.Theme, phase string, started *time.Time, extent float32, clipped bool) {
-	font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+	font := n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}
 	line := n.Row(c).AlignItems(n.Baseline).Height(20)
 	line.Children(func() {
 		phaseWidth, _ := n.ShapeText(phase, font, 0).Size()
-		caption := n.Text(c.Key("phase"), phase).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine().Shrink(0).Padding(0, 0, 0, 6).Clip().
+		caption := n.Text(c.Key("phase"), phase).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine().Shrink(0).Padding(0, 0, 0, 6).Clip().
 			ContentTransition(n.ContentTransition{Animation: animationPointer(c, progressReclaimDuration)})
 		width := caption.AnimateTo("phase-width", phaseWidth+6, motionAnimation(c, progressReclaimDuration))
 		caption.Width(width)
@@ -672,10 +668,10 @@ func toolGroupResult(items []domain.Item) string {
 func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow, inset float32) {
 	icon := activityIcon(row.item.Presentation)
 	label := row.item.Name
-	font := n.Font{Family: t.Font, Size: 12, Weight: 400}
+	font := n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}
 	if commandItem(row.item) {
 		icon = commandActivityIcon(row.item.Name)
-		font.Family, font.Size = "Menlo", 11
+		font.Family = "Menlo"
 	}
 	v.item(c, t, row.item)
 	// A small neutral mask interrupts the rail around each native glyph.

@@ -38,7 +38,7 @@ func TestChildDetailStatusIconAlignsToItsCaptionInk(t *testing.T) {
 					if !ok {
 						t.Fatal("missing status caption", ui.Texts())
 					}
-					icon := n.Rect{X: caption.X - 20, Y: caption.Y, W: 14, H: 20}
+					icon := n.Rect{X: caption.X - 22, Y: caption.Y, W: 16, H: 20}
 					center := func(box n.Rect) float64 {
 						im := ui.Image()
 						bg := im.RGBAAt(int((caption.X-24)*scale), int((caption.Y+1)*scale))
@@ -109,7 +109,7 @@ func TestChildWorkListMarkerAlignsToFirstLineInk(t *testing.T) {
 					}
 					return float64(top+bottom) / 2
 				}
-				if delta := center(row.X+6, 14) - center(row.X+28, 23); math.Abs(delta) > 1 {
+				if delta := center(row.X+6, 16) - center(row.X+30, 23); math.Abs(delta) > 1 {
 					t.Fatal("work marker is offset from first title line", delta)
 				}
 			})

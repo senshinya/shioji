@@ -49,7 +49,9 @@ func (s *contextInputUI) consumeCommand(m *app.Model) {
 
 // Lucide Minimize2, the same inward diagonal arrows used by T3 Code.
 // License: third_party/lucide/LICENSE.
-var compactContextIcon = n.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="m14 10 7-7M20 10h-6V4m-11 17 7-7M4 14h6v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
+const compactContextIconPath = "m14 10 7-7M20 10h-6V4m-11 17 7-7M4 14h6v6"
+
+var compactContextIcon = n.MustParseSVG([]byte(`<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="` + compactContextIconPath + `" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 
 func (v *View) contextSession() domain.Session {
 	for _, s := range v.Model.Snapshot.Sessions {
@@ -460,13 +462,13 @@ func (v *View) contextCompactionItem(c *n.Context, t *n.Theme, item domain.Item)
 	}
 	row := n.Row(c.Key("compaction-status")).FillWidth().Gap(6).AlignItems(n.Baseline)
 	row.Children(func() {
-		font := n.Font{Family: t.Font, Size: 11, Weight: 400}
+		font := n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}
 		if live {
-			statusDot(c, label, font, t.Success, true)
+			transcriptStatusDot(c, label, font, t.Success, true)
 		} else if item.Status == "completed" {
-			inlineSymbol(c, check, label, font, 14, t.TextMuted)
+			transcriptSymbol(c, transcriptCheckIcon, label, font, t.TextMuted)
 		} else {
-			inlineSymbol(c, compactContextIcon, label, font, 14, t.TextMuted)
+			transcriptSymbol(c, transcriptCompactIcon, label, font, t.TextMuted)
 		}
 		text := n.Text(c.Key("label"), label).FontSize(font.Size).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
 		if live {
@@ -481,7 +483,9 @@ func (v *View) contextCompactionItem(c *n.Context, t *n.Theme, item domain.Item)
 			}
 		}
 		if item.Status == "failed" || item.Status == "interrupted" {
-			if control(c.Key("retry-compact")).Height(26).PaddingX(4).Disabled(v.compactReason() != "").Label("重试压缩").Children(func() { n.Text(c, "重试").FontSize(12).TextColor(t.TextMuted) }).Clicked() {
+			if control(c.Key("retry-compact")).Height(26).PaddingX(4).Disabled(v.compactReason() != "").Label("重试压缩").Children(func() {
+				n.Text(c, "重试").FontSize(transcriptCaptionSize).TextColor(t.TextMuted)
+			}).Clicked() {
 				v.beginContextCompaction(false)
 			}
 		}

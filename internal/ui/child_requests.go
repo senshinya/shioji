@@ -134,9 +134,9 @@ func (v *View) requestSource(c *n.Context, t *n.Theme, item domain.Item, child b
 	if !child && item.WorkID != "" {
 		label = v.requestWork(item.WorkID).Title + " · " + label
 	}
-	icon := questionIcon
+	icon := transcriptQuestionIcon
 	if item.Presentation == "approval" || item.Presentation == "permissions" {
-		icon = shieldIcon
+		icon = transcriptShieldIcon
 	}
 	checking := false
 	status := item.Status
@@ -145,7 +145,7 @@ func (v *View) requestSource(c *n.Context, t *n.Theme, item domain.Item, child b
 			continue
 		}
 		if r.Kind == "approval" || r.Kind == "permissions" {
-			icon = shieldIcon
+			icon = transcriptShieldIcon
 		}
 		if status == "pending" || status == "submitting" {
 			busy := v.requestAction(r).busy
@@ -204,23 +204,23 @@ func (v *View) requestSource(c *n.Context, t *n.Theme, item domain.Item, child b
 		}
 		source.Children(func() {
 			n.Row(c).Gap(7).AlignItems(n.Baseline).Children(func() {
-				font := n.Font{Family: t.Font, Size: 11, Weight: 400}
-				inlineSymbol(c, icon, label, font, 12, subtle(t))
+				font := n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}
+				transcriptSymbol(c, icon, label, font, subtle(t))
 				n.Row(c.Key("source-title")).Gap(3).AlignItems(n.Baseline).Children(func() {
 					v.requestSourceLabel(c, t, label, stream)
 					if suffix != "" {
-						text := n.Text(c.Key("status"), suffix).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+						text := n.Text(c.Key("status"), suffix).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted)
 						requestStatusText(text, progress)
 					}
 				})
 				if active {
-					inlineSymbol(c.Key("pending-disclosure"), disclosureRight, label, font, 10, subtle(t)).Transition(fadeMotion(c, 180*time.Millisecond))
+					inlineSymbol(c.Key("pending-disclosure"), transcriptChevron, label, font, 14, subtle(t), -90).Transition(fadeMotion(c, 180*time.Millisecond))
 				} else if showDetails {
-					angle := float32(0)
+					angle := float32(-90)
 					if expanded {
-						angle = 90
+						angle = 0
 					}
-					inlineSymbol(c.Key("decision-disclosure"), disclosureRight, label, font, 10, subtle(t), angle)
+					inlineSymbol(c.Key("decision-disclosure"), transcriptChevron, label, font, 14, subtle(t), angle)
 				}
 			})
 		})
@@ -249,7 +249,7 @@ func (v *View) workRequestLink(c *n.Context, t *n.Theme, w domain.WorkActivity) 
 	button := n.ButtonBase(c).Height(20).Shrink(0).Label("处理子 Agent 请求：" + w.Title).Transition(resultBlockMotion(c))
 	color := textHoverColor(c, button, t.TextMuted)
 	button.Children(func() {
-		n.Text(c, label).FontSize(11).FontWeight(400).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+		n.Text(c, label).FontSize(transcriptCaptionSize).FontWeight(400).FixedLineHeight(20).TextColor(color).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
 	})
 	if button.Clicked() {
 		v.openSourceRequest(domain.Item{ID: "request:" + r.ID})
