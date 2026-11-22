@@ -389,7 +389,7 @@ func (a *mobileApp) updateChatHeader() {
 		a.chat.SetTitle(s.Title)
 	}
 	a.chatTitle, a.chatScope = s.Title, scope
-	a.callUIKit("conversationTitle", nativePageOptions{Window: a.chat.NativeHandle(), Title: s.Title, Subtitle: scope, InlineScope: true}, nil)
+	a.callUIKit("conversationTitle", nativePageOptions{Window: a.chat.NativeHandle(), Title: s.Title, Subtitle: scope, InlineScope: isTablet()}, nil)
 }
 
 func (a *mobileApp) pushConversation(parent *mygo.Window) {
@@ -412,7 +412,7 @@ func (a *mobileApp) pushConversation(parent *mygo.Window) {
 	mygo.SetBarItems(w,
 		mygo.BarItem{Title: "会话活动", Icon: toolbarImage(moreSymbol), OnClick: func() { a.openActivity(w, a.model.SessionID) }},
 	)
-	a.configureNativePage(w, nativePageOptions{Title: title, Subtitle: a.chatScope, InlineScope: true}, func(err error) {
+	a.configureNativePage(w, nativePageOptions{Title: title, Subtitle: a.chatScope, InlineScope: isTablet()}, func(err error) {
 		if err != nil || (a.wide && parent == a.home) {
 			w.Close()
 		} else {

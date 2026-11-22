@@ -5178,11 +5178,12 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertTrue(title.waitForExistence(timeout: 8))
         let scope = app.navigationBars.staticTexts["Shioji iOS · Studio Display Mac"].firstMatch
         XCTAssertTrue(scope.exists)
-        capture("Conversation title placement", app: app)
+        capture("Two-line conversation title", app: app)
         XCTAssertEqual(title.frame.minX, 76, accuracy: 1)
-        XCTAssertLessThan(title.frame.minX, scope.frame.minX)
-        XCTAssertLessThanOrEqual(title.frame.maxX, scope.frame.minX)
-        XCTAssertEqual(title.frame.maxY, scope.frame.maxY, accuracy: 2)
+        XCTAssertEqual(scope.frame.minY - title.frame.maxY, 4, accuracy: 2)
+        XCTAssertGreaterThanOrEqual(scope.frame.minX, title.frame.minX)
+        XCTAssertLessThan(scope.frame.minX - title.frame.minX, 24)
+        XCTAssertLessThanOrEqual(scope.frame.maxY, app.navigationBars.firstMatch.frame.maxY)
     }
 
     func testWorkPagesUseConversationHeaders() {
