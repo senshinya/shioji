@@ -238,7 +238,7 @@ func (m *Model) ArchivePolicyJobs(inFlight func(connection, epoch string) bool) 
 // event does not keep deleted history or a confirmation dialog on screen.
 func (m *Model) ApplyArchiveDeletion(d domain.ArchiveDeletion) {
 	if d.WorkspaceID != "" {
-		m.deleteRetainedDrafts("", d.WorkspaceID)
+		m.deleteLegacyDrafts("home:" + d.WorkspaceID)
 	}
 	for op, in := range m.Pending {
 		preparingInWorkspace := d.WorkspaceID != "" && in.SessionID == "" && in.WorkspaceID == d.WorkspaceID
@@ -252,7 +252,7 @@ func (m *Model) ApplyArchiveDeletion(d domain.ArchiveDeletion) {
 		}
 	}
 	for _, id := range d.SessionIDs {
-		m.deleteRetainedDrafts(id, "")
+		m.deleteLegacyDrafts("session:" + id)
 		delete(m.Details, id)
 		delete(m.HistoryReads, id)
 		delete(m.HistoryOutlines, id)
@@ -274,9 +274,7 @@ func (m *Model) ApplyArchiveDeletion(d domain.ArchiveDeletion) {
 		delete(m.GitEpochs, "session:"+id)
 		for key := range m.Drafts {
 			if key == "session:"+id || strings.HasPrefix(key, "history:"+id+":") {
-				delete(m.Drafts, key)
-				delete(m.Attachments, key)
-				delete(m.DraftSkills, key)
+				m.deleteDraft(key)
 			}
 		}
 		for key := range m.Attachments {

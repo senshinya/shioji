@@ -6,12 +6,81 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func (m *Model) EncodeState() ([]byte, error) {
 	completed := !m.FirstRun
 	state := savedState{RemotePathUploads: m.RemotePathUploads, WorkerRecoveryIDs: m.WorkerRecoveryIDs, WorkerMaintenanceIDs: m.WorkerMaintenanceIDs, ArchivePolicyChanges: m.ArchivePolicyChanges, Navigation: m.Navigation, ServicePreparations: m.ServicePreparations, ServicePreparationDeviceID: m.ServicePreparationDeviceID, WorkerMigrations: m.WorkerMigrations, SignInIDs: m.SignInIDs, SetupCompleted: &completed, ModelMenus: m.ModelMenus, LocalDeviceName: m.LocalDeviceName, LocalDeviceIcon: m.LocalDeviceIcon, DraftSkills: m.DraftSkills, HomeConfigContext: m.homeConfigContext, HomeHarnesses: m.HomeHarnesses, HarnessConfigs: m.HarnessConfigs, HistoryActions: m.HistoryActions, HistoryEdits: m.HistoryEdits, Preferences: m.Preferences, SecondaryWorkspaceID: m.SecondaryWorkspaceID, SecondarySessionID: m.SecondarySessionID, FocusSecondary: m.FocusSecondary, Attachments: m.Attachments, DeviceCache: m.cachedDevices(), Connections: normalizedConnections(m.Connections), ActiveConnection: m.ActiveConnection, PendingDevices: m.PendingDevices, PendingGenerations: m.pendingGenerations, QueueExpanded: m.QueueExpanded, QueueEdits: m.QueueEdits, WorkspaceID: m.WorkspaceID, Drafts: m.Drafts, Configs: m.Configs, SessionConfigDrafts: m.sessionConfigDrafts, Answers: m.Answers, Pager: m.Pager, Collapsed: m.Collapsed, Pending: m.Pending, DeviceID: m.localIdentity(), GitDrafts: m.GitDrafts, GitRepositories: m.GitRepositories, Inspectors: m.Inspectors, InspectorLayout: m.InspectorLayout, InspectorSplitHeight: m.InspectorSplitHeight, InspectorWidth: m.InspectorWidth}
 	return m.encodeState(state)
+}
+
+// Old clients put alternate drafts and their references under retained:* keys.
+// Recover unambiguous drafts into vacant editors. Conflicts stay in the state
+// file under their original keys so that saving after an upgrade is lossless.
+func (m *Model) restoreLegacyDrafts() {
+	blocked := map[string]bool{}
+	for _, in := range m.Pending {
+		key := "home"
+		if in.SessionID != "" {
+			key = "session:" + in.SessionID
+		}
+		blocked[key] = true
+	}
+	for id, edit := range m.QueueEdits {
+		if edit.ID != "" {
+			blocked["session:"+id] = true
+		}
+	}
+	candidates := map[string]string{}
+	for legacy := range m.Drafts {
+		parts, ok := strings.CutPrefix(legacy, "retained:")
+		if !ok || m.draftEmpty(legacy) {
+			continue
+		}
+		kind, rest, _ := strings.Cut(parts, ":")
+		id, operation, ok := strings.Cut(rest, ":")
+		if !ok || id == "" || operation == "" {
+			continue
+		}
+		var key string
+		switch {
+		case kind == "session":
+			key = "session:" + id
+		case kind == "home" && m.WorkspaceID == id:
+			key = "home"
+		default:
+			continue
+		}
+		if blocked[key] || !m.draftEmpty(key) {
+			continue
+		}
+		if _, multiple := candidates[key]; multiple {
+			candidates[key] = ""
+		} else {
+			candidates[key] = legacy
+		}
+	}
+	for key, legacy := range candidates {
+		if legacy != "" {
+			m.Drafts[key], m.Attachments[key], m.DraftSkills[key] = m.Drafts[legacy], m.Attachments[legacy], m.DraftSkills[legacy]
+			m.deleteDraft(legacy)
+		}
+	}
+}
+
+func (m *Model) deleteLegacyDrafts(prefix string) {
+	for key := range m.Drafts {
+		if strings.HasPrefix(key, "retained:"+prefix+":") {
+			m.deleteDraft(key)
+		}
+	}
+}
+
+func (m *Model) deleteDraft(key string) {
+	delete(m.Drafts, key)
+	delete(m.Attachments, key)
+	delete(m.DraftSkills, key)
 }
 
 // Only layout changes invalidate the large disclosure map. Encode the smaller

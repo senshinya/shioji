@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"shioji/internal/domain"
 	"testing"
@@ -72,6 +73,54 @@ func TestDraftsAndQuestionChoicesSurviveNavigationAndRestart(t *testing.T) {
 	}
 	if restored.SessionID != "" {
 		t.Fatal("startup must open home")
+	}
+}
+
+func TestLoadLegacyRejectedDraftsPreservesConflictsAndRecoversEmptySlot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "client.json")
+	legacy := `{
+		"workspaceId": "w",
+		"drafts": {
+			"session:empty": "", "retained:session:empty:op-1": "restore this",
+			"session:occupied": "keep editing", "retained:session:occupied:op-2": "save this too",
+			"retained:home:other:op-3": "belongs to another workspace"
+		},
+		"attachments": {
+			"retained:session:empty:op-1": [{"attachment":{"id":"file","name":"example.go"},"inlinePosition":1}],
+			"retained:session:occupied:op-2": [{"attachment":{"id":"backup"},"inlinePosition":2}]
+		},
+		"draftSkills": {
+			"retained:session:empty:op-1": [{"reference":{"id":"skill"},"inlinePosition":3}]
+		}
+	}`
+	if err := os.WriteFile(path, []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewModel()
+	if err := m.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	if m.Drafts["session:empty"] != "restore this" || len(m.Attachments["session:empty"]) != 1 || m.Attachments["session:empty"][0].InlinePosition != 1 ||
+		len(m.DraftSkills["session:empty"]) != 1 || m.DraftSkills["session:empty"][0].InlinePosition != 3 {
+		t.Fatal("legacy draft or its inline references did not reach the empty composer")
+	}
+	if _, exists := m.Drafts["retained:session:empty:op-1"]; exists {
+		t.Fatal("promoted draft was duplicated")
+	}
+	if err := m.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := NewModel()
+	if err := reloaded.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	const conflict = "retained:session:occupied:op-2"
+	if reloaded.Drafts["session:occupied"] != "keep editing" || reloaded.Drafts[conflict] != "save this too" ||
+		len(reloaded.Attachments[conflict]) != 1 || reloaded.Attachments[conflict][0].Attachment.ID != "backup" {
+		t.Fatal("upgrade overwrote the active draft or lost the legacy conflict")
+	}
+	if reloaded.Drafts["home"] != "" || reloaded.Drafts["retained:home:other:op-3"] != "belongs to another workspace" {
+		t.Fatal("upgrade moved a home draft across workspaces or lost its content")
 	}
 }
 func TestOfflineEmptyAndMissingWorkspaceCannotSubmit(t *testing.T) {

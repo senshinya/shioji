@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -161,21 +162,53 @@ func TestPendingSendKeepsNewAttachmentVisible(t *testing.T) {
 	}
 }
 
-func TestPendingSendReferenceSnapshotSurvivesEditorHandoff(t *testing.T) {
-	file := domain.Attachment{ID: "file", Name: "tree.go", SourcePath: "/project/tree.go", MIME: "text/plain", Size: 20, SHA256: strings.Repeat("a", 64)}
+func TestPendingSendRejectionKeepsNewAttachmentOnly(t *testing.T) {
+	original := domain.Attachment{ID: "first-image", Name: "first.png", MIME: "image/png", Size: 20, SHA256: strings.Repeat("a", 64)}
 	v, ui, in := pendingSendRow(t, func(m *app.Model) {
 		m.WorkerMinor = 12
-		m.Attachments["session:s"] = []app.DraftAttachment{{Attachment: file, InlinePosition: 1, Ready: true, WorkspaceID: "w"}}
+		m.Attachments["session:s"] = []app.DraftAttachment{{Attachment: original, Ready: true, WorkspaceID: "w", DeviceID: m.Snapshot.Workspaces[0].DeviceID}}
+	})
+	next := domain.Attachment{ID: "next-image", Name: "next.png", MIME: "image/png", Size: 20, SHA256: strings.Repeat("b", 64)}
+	v.appendAttachments("session:s", []app.DraftAttachment{{Attachment: next}})
+	ui.Frame()
+	v.Model.Reject(in, "not sent")
+	ui.Frame()
+	if text := v.composerDocuments["session:s"].doc.Text().String(); text != "" {
+		t.Fatalf("rejection put old text in the attachment-only draft: %q", text)
+	}
+	if files := v.Model.Attachments["session:s"]; len(files) != 1 || files[0].Attachment != next {
+		t.Fatalf("rejection changed the new draft's attachments: %v", files)
+	}
+}
+
+func TestPendingSendReferenceSnapshotSurvivesEditorHandoff(t *testing.T) {
+	file := domain.Attachment{ID: "file", Name: "tree.go", SourcePath: "/project/tree.go", MIME: "text/plain", Size: 20, SHA256: strings.Repeat("a", 64)}
+	image := domain.Attachment{ID: "image", Name: "tree.png", MIME: "image/png", Size: 20, SHA256: strings.Repeat("b", 64)}
+	v, ui, in := pendingSendRow(t, func(m *app.Model) {
+		m.WorkerMinor = 12
+		m.Attachments["session:s"] = []app.DraftAttachment{
+			{Attachment: file, InlinePosition: 1, Ready: true, WorkspaceID: "w"},
+			{Attachment: image, Ready: true, WorkspaceID: "w"},
+		}
 	})
 	if got := v.composerDocuments["session:s"].doc.Text().String(); got != "" {
 		t.Fatalf("departing inline reference remains in editor: %q", got)
+	}
+	feedbackClick(t, ui, "消息输入")
+	ui.Type("temporary")
+	ui.Key(n.Cmd, n.KeyA)
+	ui.Key(0, n.KeyBackspace)
+	if m := v.Model; m.HasDraftContent("session:s") {
+		t.Fatal("test did not clear the stored draft while the send was pending")
 	}
 	v.Model.Reject(in, "not sent")
 	ui.Frame()
 	if got := v.composerDocuments["session:s"].doc.Text().String(); !strings.Contains(got, "\uFFFC") || !strings.Contains(got, in.Text) {
 		t.Fatalf("rejection lost the inline reference or original text: %q", got)
 	}
-	if len(v.Model.Attachments["session:s"]) != 1 || v.Model.Attachments["session:s"][0].Attachment != file {
-		t.Fatal("editor handoff changed the immutable reference snapshot")
+	files := v.Model.Attachments["session:s"]
+	if len(files) != 2 || !slices.ContainsFunc(files, func(a app.DraftAttachment) bool { return a.Attachment == file && a.InlinePosition == 1 }) ||
+		!slices.ContainsFunc(files, func(a app.DraftAttachment) bool { return a.Attachment == image }) {
+		t.Fatal("rejection did not restore the attachments and original reference position", files)
 	}
 }

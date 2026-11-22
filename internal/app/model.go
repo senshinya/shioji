@@ -416,7 +416,7 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		m.Error = ""
 	} else if op.State == "rejected" || op.State == "abandoned" {
 		if op.State == domain.OperationRejected {
-			m.retainRejectedDraft(in)
+			m.restoreRejectedDraft(in)
 		}
 		if op.State == domain.OperationRejected || m.UncertainSubmissions[op.ID] {
 			title := "消息未发送"
@@ -897,6 +897,7 @@ func (m *Model) Load(path string) error {
 			m.markSubmissionUncertain(in)
 		}
 	}
+	m.restoreLegacyDrafts()
 	return nil
 }
 

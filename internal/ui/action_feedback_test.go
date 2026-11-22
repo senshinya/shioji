@@ -732,7 +732,7 @@ func TestTailnetInboundShowsPendingUntilMatchingServiceObservation(t *testing.T)
 	}
 }
 
-func TestRejectedSteerKeepsOriginalAndNextDraftInSeparateEditableSlots(t *testing.T) {
+func TestRejectedSteerKeepsOnlyNextDraftAndFailureFeedback(t *testing.T) {
 	v, ui := nativeQueueFixture()
 	feedbackClick(t, ui, "消息输入")
 	ui.Type("要保留的原文")
@@ -743,16 +743,15 @@ func TestRejectedSteerKeepsOriginalAndNextDraftInSeparateEditableSlots(t *testin
 	job.Apply(v.Model, nil, &protocol.RemoteError{Code: "notSent", Message: "未接纳"})
 	ui.Frame()
 	ui.Advance(300 * time.Millisecond)
+	saveNativeSkillImage(t, ui, "rejected-steer.png")
 	if v.Model.Drafts["session:s"] != "独立的下一条" || !ui.Focused("消息输入") {
 		t.Fatal("rejection changed the next draft")
 	}
-	feedbackClick(t, ui, "切换到保留的草稿")
-	if v.Model.Drafts["session:s"] != "要保留的原文" {
-		t.Fatal("could not restore rejected input")
+	if !ui.HasText("消息未发送") {
+		t.Fatal("rejection lost the send failure feedback")
 	}
-	feedbackClick(t, ui, "切换到保留的草稿")
-	if v.Model.Drafts["session:s"] != "独立的下一条" {
-		t.Fatal("restoring rejected text consumed the next draft")
+	if len(v.Model.Drafts) != 1 {
+		t.Fatalf("rejection created another draft: %v", v.Model.Drafts)
 	}
 }
 

@@ -634,7 +634,7 @@ func (v *View) applySelectedSkill(c *n.Context, b *composerDocument, state *file
 // Apply network results on the native frame, after the editor has published
 // current text and selection. Never restore focus from a network callback.
 func (v *View) applyCapturedMention(c *n.Context, input composerInput, text string, state *fileMention) {
-	if err := v.validateAddedAttachments(state.key, []app.DraftAttachment{state.captured}); err != nil {
+	if err := validateAddedAttachments(v.Model.Drafts[state.key], v.Model.Attachments[state.key], []app.DraftAttachment{state.captured}); err != nil {
 		state.phase = mentionShowing
 		state.err = err.Error()
 		v.Model.Error = err.Error()

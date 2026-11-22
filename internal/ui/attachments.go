@@ -268,22 +268,37 @@ func (v *View) appendAttachmentPaths(key string, paths []string) error {
 	v.Model.Drafts[key] = text + addition
 	return nil
 }
-func (v *View) validateAddedAttachments(key string, added []app.DraftAttachment) error {
+func validateAddedAttachments(text string, current, added []app.DraftAttachment) error {
 	refs := []domain.Attachment{}
-	for _, a := range v.Model.Attachments[key] {
+	for _, a := range current {
 		refs = append(refs, a.Attachment)
 	}
 	for _, a := range added {
 		refs = append(refs, a.Attachment)
 	}
-	return (domain.Submission{Text: v.Model.Drafts[key], Attachments: refs}).ValidateContent()
+	return (domain.Submission{Text: text, Attachments: refs}).ValidateContent()
 }
 func (v *View) appendAttachments(key string, added []app.DraftAttachment) {
-	if err := v.validateAddedAttachments(key, added); err != nil {
-		v.Model.Error = err.Error()
+	m := v.Model
+	text, files := m.Drafts[key], m.Attachments[key]
+	b := v.composerDocuments[key]
+	startsNextDraft := false
+	if b != nil && b.departed != "" && !b.departedEdited {
+		_, startsNextDraft = m.Pending[b.departed]
+		if startsNextDraft {
+			text, files = "", v.composerAttachments(key, b)
+		}
+	}
+	if err := validateAddedAttachments(text, files, added); err != nil {
+		m.Error = err.Error()
 		return
 	}
-	v.Model.Attachments[key] = append(v.Model.Attachments[key], added...)
+	if startsNextDraft {
+		// The pending operation still owns the outgoing input and references.
+		m.Drafts[key], m.DraftSkills[key] = "", nil
+		b.departedEdited = true
+	}
+	m.Attachments[key] = append(files, added...)
 }
 func (v *View) pasteAttachments(key, text string) bool {
 	if v.Controller == nil || v.StatePath == "" {

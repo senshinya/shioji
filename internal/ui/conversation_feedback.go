@@ -391,14 +391,6 @@ func (v *View) conversationStatuses(c *n.Context) []conversationStatus {
 				}}}})
 		}
 	}
-	for _, key := range m.RetainedDrafts() {
-		out = append(out, conversationStatus{id: key, title: "另有一份草稿已保留", details: m.Drafts[key], icon: fileAttachmentIcon, compact: true, priority: 1,
-			actions: []statusAction{{label: "切换到保留的草稿", disabled: m.HasPendingInput() || m.ActiveQueueEdit(m.SessionID).ID != "" || v.preparingAttachments(m.DraftKey()), run: func(*n.Context) {
-				v.collectBindings()
-				m.SwapRetainedDraft(key)
-				v.focusComposer = true
-			}}}})
-	}
 	if status := v.stopConversationStatus(); status != nil {
 		out = append(out, *status)
 	}
