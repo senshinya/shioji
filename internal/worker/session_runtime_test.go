@@ -323,11 +323,14 @@ func TestRecoveryStopsOnlyItsOwnRuntimeWhenThreadBindingIsMissing(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !original.Stopped() || result.NeedsStop || !result.CanEnd {
-		t.Fatal("lost binding hides the owned root or allows ending it while alive", result)
+	if !original.Stopped() || result.NeedsStop {
+		t.Fatal("lost binding prevented stopping the owned runtime", result)
 	}
-	if other.Stopped() || catalog.Stopped() || result.Status != "unknown" || !result.CanEnd {
-		t.Fatal("missing source binding released context or crossed session boundary", result)
+	if other.Stopped() || catalog.Stopped() {
+		t.Fatal("recovery stopped an unrelated runtime", result)
+	}
+	if result.Status != string(domain.ExecutionFailed) || result.CanEnd || result.CanContinue {
+		t.Fatal("a retired runtime without a thread must settle without resuming or requiring manual end", result)
 	}
 	close(p.Release)
 }
