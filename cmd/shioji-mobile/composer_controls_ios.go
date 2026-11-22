@@ -41,7 +41,7 @@ func (a *mobileApp) composerRuntimeStatus(c *ui.Context, parent *mygo.Window, ed
 	})
 }
 
-func (a *mobileApp) runControls(c *ui.Context, parent *mygo.Window, editor *mobileDraftEditor, ready domain.Readiness, config domain.RunConfig, progress float32, home, right bool) {
+func (a *mobileApp) runControls(c *ui.Context, parent *mygo.Window, editor *mobileDraftEditor, ready domain.Readiness, config domain.RunConfig, progress, modelSendSpacing float32, home, right bool) {
 	m, target := a.model, editor.target
 	unavailable := ready.ModelUnavailable(config.Model)
 	current := func() bool {
@@ -81,15 +81,12 @@ func (a *mobileApp) runControls(c *ui.Context, parent *mygo.Window, editor *mobi
 		detail = " · " + effort
 	}
 
-	permission := func(expanded float32) {
-		composerPermissionControl(c, expanded, ready.PermissionChoices, config, right, setConfig)
+	permissionProgress := progress
+	if home {
+		permissionProgress = 0
 	}
-	if !home {
-		permission(progress)
-		if progress >= .62 {
-			ui.Spacer(c).PassThrough()
-		}
-	}
+	composerPermissionControl(c, permissionProgress, ready.PermissionChoices, config, right, setConfig)
+	ui.Spacer(c).PassThrough()
 	title := "运行配置"
 	if right {
 		title = "右侧运行配置"
@@ -101,7 +98,8 @@ func (a *mobileApp) runControls(c *ui.Context, parent *mygo.Window, editor *mobi
 	} else {
 		p := palette(c)
 		font := ui.Font{Size: controlTextSize * c.Preferences().TextScale, Weight: 400}
-		modelControl = mobileButton(control, title, nil).AlignItems(ui.Center).PaddingX(12).Gap(7).MaxWidth(44 + 116*progress).Shrink(1)
+		modelControl = mobileButton(control, title, nil).AlignItems(ui.Center).Justify(ui.End).PaddingX(5).Gap(7).
+			MaxWidth(max(mobileTapSize(c), 44+116*progress)).Shrink(1)
 		if home {
 			modelControl.PaddingX(0).Gap(6)
 		}
@@ -121,7 +119,7 @@ func (a *mobileApp) runControls(c *ui.Context, parent *mygo.Window, editor *mobi
 	}
 	agents := m.Readiness.Harnesses
 	canChooseAgent := home && len(agents) > 1
-	modelControl.Value(modelName).KeepFocus().PopoverMenuButton(func(menu *ui.Menu) {
+	modelControl.Margin(0, modelSendSpacing, 0, 0).Value(modelName).KeepFocus().PopoverMenuButton(func(menu *ui.Menu) {
 		if len(agents) > 1 {
 			agentName := ready.HarnessID
 			for _, info := range agents {
@@ -199,9 +197,6 @@ func (a *mobileApp) runControls(c *ui.Context, parent *mygo.Window, editor *mobi
 			})
 		}
 	}, composerMenuAbove).Disabled(len(ready.Models) == 0 && !canChooseAgent && !unavailable)
-	if home {
-		permission(0)
-	}
 }
 
 func composerPermissionControl(c *ui.Context, progress float32, choices []domain.OptionChoice, config domain.RunConfig, right bool, setConfig func(domain.RunConfig)) {

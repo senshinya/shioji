@@ -36,14 +36,16 @@ func (i *Item) UnmarshalJSON(data []byte) error {
 }
 
 type Turn struct {
-	ID          string `json:"id"`
-	Status      string `json:"status"`
-	StartedAt   *int64 `json:"startedAt"`
-	CompletedAt *int64 `json:"completedAt"`
-	DurationMS  *int64 `json:"durationMs"`
-	Error       *struct {
-		Message string `json:"message"`
-	} `json:"error"`
+	ID          string     `json:"id"`
+	Status      string     `json:"status"`
+	StartedAt   *int64     `json:"startedAt"`
+	CompletedAt *int64     `json:"completedAt"`
+	DurationMS  *int64     `json:"durationMs"`
+	Error       *TurnError `json:"error"`
+}
+type TurnError struct {
+	Message        string          `json:"message"`
+	CodexErrorInfo json.RawMessage `json:"codexErrorInfo"`
 }
 type Counters struct {
 	Tokens *int64 `json:"totalTokens"`
@@ -60,9 +62,11 @@ type Goal struct {
 }
 
 type Params struct {
-	Goal        *Goal   `json:"goal"`
-	ThreadName  *string `json:"threadName"`
-	Explanation string  `json:"explanation"`
+	Error       *TurnError `json:"error"`
+	WillRetry   bool       `json:"willRetry"`
+	Goal        *Goal      `json:"goal"`
+	ThreadName  *string    `json:"threadName"`
+	Explanation string     `json:"explanation"`
 	Plan        []struct {
 		Step   string `json:"step"`
 		Status string `json:"status"`

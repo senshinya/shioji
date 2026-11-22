@@ -19,6 +19,7 @@ import (
 	"github.com/egoist/mygo/ui/richtext"
 	"shioji/internal/app"
 	"shioji/internal/attachments"
+	"shioji/internal/conversationui"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"shioji/internal/transport"
@@ -780,6 +781,11 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) (goalShown bool) {
 		v.remoteAttachmentsPanel(c, t, key)
 		if !home && !v.loadingBlocksComposer() {
 			goalShown = v.sessionGoal(c, t)
+			notice := t.Surface
+			if t.Dark {
+				notice = codeSurface(t)
+			}
+			conversationui.UsageLimitNotice(c.Key("usage-limit"), m.UsageLimitForSession(m.SessionID, c.Now()), notice, t.Text, t.TextMuted, 1, 76, 8)
 		}
 		// The queue backplate extends behind the editor's rounded top edge.
 		v.queueDisclosure(c, t)
@@ -1757,6 +1763,9 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 				label = "已停止"
 			case "failed":
 				label = "本轮失败"
+				if turn.UsageLimit != nil {
+					label = "用量耗尽"
+				}
 			case "abandoned":
 				label = "已手动结束 · 结果未确认"
 			case "unknown":
@@ -1769,7 +1778,7 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 			} else {
 				animation := motionAnimation(c, 160*time.Millisecond)
 				n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: &animation})
-				if turn.Status == domain.ExecutionFailed && turn.Error != "" {
+				if turn.Status == domain.ExecutionFailed && turn.Error != "" && turn.UsageLimit == nil {
 					n.Text(c, turn.Error).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine().MaxWidth(480).Tooltip(turn.Error).
 						Transition(fadeMotion(c, 160*time.Millisecond))
 				}

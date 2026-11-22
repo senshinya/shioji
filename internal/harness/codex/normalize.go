@@ -140,6 +140,15 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		return nil, nil, nil
 	}
 	switch m.Method {
+	case "error":
+		if !p.WillRetry && p.TurnID != "" && isUsageLimit(p.Error) {
+			turn := n.turns[p.TurnID]
+			if turn.CompletedAt == nil && turn.Status != domain.ExecutionFailed {
+				applyTurnError(&turn, p.Error)
+				n.turns[p.TurnID] = turn
+			}
+		}
+		return nil, nil, nil
 	case "thread/goal/updated", "thread/goal/cleared":
 		event.Type, event.GoalSource = "goal", p.ThreadID
 		if m.Method == "thread/goal/updated" {
@@ -201,7 +210,21 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 			n.usage[t.ID] = usage
 		}
 		if p.Turn.Error != nil {
-			t.Error = boundedJSONText(p.Turn.Error.Message, turnErrorJSONLimit)
+			applyTurnError(&t, p.Turn.Error)
+		}
+		if t.UsageLimit != nil {
+			if t.Status == domain.ExecutionFailed {
+				if t.UsageLimit.ResetAt == nil {
+					recorded := t.CompletedAt
+					if recorded == nil {
+						now := time.Now()
+						recorded = &now
+					}
+					t.UsageLimit = &domain.UsageLimit{ResetAt: usageResetTime(t.Error, recorded)}
+				}
+			} else if !t.Status.Active() {
+				t.UsageLimit = nil
+			}
 		}
 		if m.Method == "turn/completed" && n.usage[p.Turn.ID].phase == usageObserved {
 			base := n.usage[t.ID].baseline

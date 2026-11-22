@@ -243,6 +243,7 @@ type Answer struct {
 	Answers   map[string][]string `json:"answers,omitempty"`
 }
 type Turn struct {
+	UsageLimit        *UsageLimit    `json:"usageLimit,omitempty"`
 	Presentation      string         `json:"presentation,omitempty"`
 	Order             int64          `json:"order"`
 	ID                string         `json:"id"`
@@ -255,6 +256,13 @@ type Turn struct {
 	CachedInputTokens *int64         `json:"cachedInputTokens,omitempty"`
 	Error             string         `json:"error,omitempty"`
 }
+
+// UsageLimit describes a provider quota failure. A nil reset time means the
+// provider did not give a usable estimate.
+type UsageLimit struct {
+	ResetAt *time.Time `json:"resetAt,omitempty"`
+}
+
 type PlanStep struct {
 	Text   string `json:"text"`
 	Status string `json:"status"`

@@ -231,7 +231,11 @@ func (r *Runtime) readConversation(ctx context.Context, launch domain.LaunchCont
 			state = "interrupted"
 			running = true
 		}
-		out.Turns = append(out.Turns, domain.Turn{ID: t.ID, Status: state, StartedAt: stamp(t.StartedAt), CompletedAt: stamp(t.CompletedAt), DurationMS: t.DurationMS})
+		turn := domain.Turn{ID: t.ID, Status: state, StartedAt: stamp(t.StartedAt), CompletedAt: stamp(t.CompletedAt), DurationMS: t.DurationMS}
+		if state == domain.ExecutionFailed && isUsageLimit(t.Error) {
+			applyTurnError(&turn, t.Error)
+		}
+		out.Turns = append(out.Turns, turn)
 		for _, i := range t.Items {
 			if i.Type == "plan" {
 				continue

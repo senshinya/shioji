@@ -14,6 +14,7 @@ import (
 	"golang.org/x/text/message"
 
 	"shioji/internal/app"
+	"shioji/internal/conversationui"
 	"shioji/internal/domain"
 	"shioji/internal/mobileclient"
 )
@@ -787,6 +788,9 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 		if connected && runtimeBlocked {
 			a.composerRuntimeStatus(c.Key("runtime-status"), parent, editor, ready.State, active)
 		}
+		if !home {
+			conversationui.UsageLimitNotice(c.Key("usage-limit:"+key), m.UsageLimitForSession(sid, c.Now()), p.panel, p.ink, p.secondary, c.Preferences().TextScale, 52, 0)
+		}
 		a.pathAttachmentPanel(c, parent, editor)
 		a.draftReferences(c, parent, editor)
 		editor.referencePanel(a, c, parent)
@@ -819,7 +823,8 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 					}
 				})
 			})
-			ui.Row(c).Absolute().Left(5).Right(5).Top(geometry.ControlsY).Height(mobileTapSize(c)).AlignItems(ui.Center).Gap(2).PassThrough().Children(func() {
+			ui.Row(c).Absolute().Left(mobileclient.ComposerControlInset).Right(mobileclient.ComposerControlInset).
+				Top(geometry.ControlsY).Height(mobileTapSize(c)).AlignItems(ui.Center).Gap(mobileclient.ComposerControlGap).PassThrough().Children(func() {
 				attachmentSize := float32(17)
 				if home {
 					attachmentSize = 12
@@ -829,13 +834,7 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 					attachmentTitle = "添加右侧附件"
 				}
 				a.composerAttachmentMenu(c, parent, editor, attachmentTitle, attachmentSize)
-				if !home && controlsProgress < .62 {
-					ui.Spacer(c).PassThrough()
-				}
-				a.runControls(c, parent, editor, ready, config, controlsProgress, home, right)
-				if home {
-					ui.Spacer(c).PassThrough()
-				}
+				a.runControls(c, parent, editor, ready, config, controlsProgress, geometry.ModelSendSpacing, home, right)
 				switch {
 				case queueEdit.ID != "":
 					action(c, "取消", func() { m.CancelQueueEdit(sid); a.save() }).KeepFocus().Disabled(queue.busy)
@@ -945,13 +944,16 @@ func (a *mobileApp) turnReceipt(c *ui.Context, parent *mygo.Window, sid string, 
 		status = "已停止"
 	case domain.ExecutionFailed:
 		status = "本轮失败"
+		if turn.UsageLimit != nil {
+			status = "用量耗尽"
+		}
 	case domain.ExecutionAbandoned:
 		status = "已手动结束 · 结果未确认"
 	default:
 		status = "执行状态待核实"
 	}
 	a.replyFooter(c, parent, sid, turn, receipt, historyActions, status, previewTail)
-	if turn.Status == domain.ExecutionFailed && turn.Error != "" {
+	if turn.Status == domain.ExecutionFailed && turn.Error != "" && turn.UsageLimit == nil {
 		label(c, turn.Error, footerTimeSize, p.secondary).Selectable()
 	}
 }

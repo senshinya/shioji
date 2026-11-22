@@ -219,6 +219,23 @@ func (a *mobileApp) openPreviewBoard(board string) {
 		Choices: []domain.RequestChoice{{ID: "decline", Label: "拒绝变更"}, {ID: "accept", Label: "允许此次变更"}},
 	}
 	switch board {
+	case "usage-limit", "usage-limit-timed":
+		a.seedArtboardConversation(false)
+		now := time.Now()
+		detail := a.model.Details[review.ID]
+		detail.Session.Status = domain.ExecutionFailed
+		detail.Queue.Items, detail.Works, detail.Plan = nil, nil, nil
+		limit := &domain.UsageLimit{}
+		if board == "usage-limit-timed" {
+			reset := now.Add(2 * time.Hour)
+			limit.ResetAt = &reset
+		}
+		failed := &detail.Turns[len(detail.Turns)-1]
+		failed.Status, failed.CompletedAt, failed.UsageLimit = domain.ExecutionFailed, &now, limit
+		a.model.Details[review.ID] = detail
+		a.model.Snapshot.Sessions[0] = detail.Session
+		a.model.Drafts["session:"+review.ID] = "再检查一下连续展开两个工具组的情况。"
+		a.openSession(review.ID)
 	case "inbox":
 		a.seedArtboardConversation(false)
 	case "recent-operations":

@@ -31,6 +31,17 @@ func TestComposerGeometryMovesOneSetOfControls(t *testing.T) {
 	}
 }
 
+func TestCompactComposerReservesBothGroupsAndSendSpacing(t *testing.T) {
+	for _, touchSize := range []float32{44, 44 / .75} {
+		compact := ComposerGeometry(0, false, 18.6, touchSize)
+		// Two touch targets, the 2-point gap between them and the 5-point edge inset.
+		want := 2*touchSize + 7
+		if compact.TextInset != want || compact.TextRight != want+14 {
+			t.Fatalf("touch size %g: editor insets = (%g, %g), want (%g, %g)", touchSize, compact.TextInset, compact.TextRight, want, want+14)
+		}
+	}
+}
+
 func TestDraftComposerKeepsControlsExpanded(t *testing.T) {
 	idle, focused := ComposerGeometry(-1, true, 18.6, 44), ComposerGeometry(2, true, 18.6, 44)
 	if idle.Height != 92 || idle.ControlsY != 43 || focused.Height != 130 || focused.ControlsY != 80 {
