@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"shioji/internal/domain"
@@ -472,6 +473,8 @@ func (c *Controller) Run(ctx context.Context) {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	lastAttempt := time.Time{}
+	var workerStart <-chan error
+	var nextWorkerStart time.Time
 	nativeWorker := c.paths != nil && c.paths.authenticated != nil
 	candidate := c.AuthenticatedWorkerBuild
 	type workerStaging struct {
@@ -2129,6 +2132,15 @@ func (c *Controller) Run(ctx context.Context) {
 				continue
 			}
 			startCommand(job, false)
+		case err := <-workerStart:
+			workerStart = nil
+			if client == nil {
+				nextWorkerStart = time.Now().Add(15 * time.Second)
+			}
+			if err != nil && client == nil && ctx.Err() == nil {
+				publishConnectionPhase(ConnectionUnavailable)
+				c.post(func(m *Model) { m.ConnectionError = err.Error() })
+			}
 		case <-ticker.C:
 			if client == nil {
 				observeDetachedService()
@@ -2155,11 +2167,23 @@ func (c *Controller) Run(ctx context.Context) {
 						}
 						continue
 					}
-					publishConnectionPhase(ConnectionUnavailable)
 					var network *net.OpError
 					if c.Dial == nil && errors.As(err, &network) && network.Op == "dial" {
+						if c.WorkerAutoUpdate && c.WorkerBinary != "" && workerStart == nil && !time.Now().Before(nextWorkerStart) &&
+							(errors.Is(network, syscall.ENOENT) || errors.Is(network, syscall.ECONNREFUSED)) {
+							started := make(chan error, 1)
+							workerStart = started
+							if connectionPhase != ConnectionOpening {
+								publishConnectionPhase(ConnectionReconnecting)
+							}
+							c.networkWG.Go(func() { started <- EnsureWorker(ctx, c.Directory, c.WorkerBinary) })
+						}
+						if workerStart == nil {
+							publishConnectionPhase(ConnectionUnavailable)
+						}
 						continue
 					}
+					publishConnectionPhase(ConnectionUnavailable)
 					var legacy *protocol.LegacyWorkerError
 					if errors.As(err, &legacy) {
 						publishService(&WorkerService{Phase: WorkerLegacy, Message: err.Error(), Legacy: &domain.LegacyWorkerInfo{DeviceID: legacy.DeviceID, Major: legacy.Major, Minor: legacy.Minor}})
@@ -2172,6 +2196,7 @@ func (c *Controller) Run(ctx context.Context) {
 					})
 					continue
 				}
+				nextWorkerStart = time.Time{}
 				publishConnectionPhase(ConnectionSyncing)
 				if client.Generation != "" && client.Minor >= protocol.RecoveryMinor {
 					// A verified connection is shown while its catalog is

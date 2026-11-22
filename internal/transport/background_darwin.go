@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"shioji/internal/background"
 	"shioji/internal/domain"
 	"shioji/internal/runtimebuild"
 	"strings"
@@ -49,6 +50,18 @@ func RuntimeService(ctx context.Context, directory, workerBinary string, enable 
 func DisableRuntimeService(ctx context.Context, directory, workerBinary string) (domain.BackgroundService, error) {
 	return manageRuntimeService(ctx, directory, workerBinary, "unregister")
 }
+
+// StartRuntimeService wakes the already-approved login agent without replacing
+// a running instance. The caller has checked its SMAppService status.
+func StartRuntimeService(ctx context.Context) error {
+	label := strings.TrimSuffix(background.PlistName, ".plist")
+	target := fmt.Sprintf("gui/%d/%s", os.Getuid(), label)
+	if err := exec.CommandContext(ctx, "/bin/launchctl", "kickstart", target).Run(); err != nil {
+		return fmt.Errorf("无法启动系统后台执行服务：%w", err)
+	}
+	return nil
+}
+
 func manageRuntimeService(ctx context.Context, directory, workerBinary, action string) (domain.BackgroundService, error) {
 	enable := action == "register"
 	none := domain.BackgroundService{Format: 1, State: "notInstalled", NotStarted: true}

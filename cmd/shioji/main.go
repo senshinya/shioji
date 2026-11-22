@@ -61,14 +61,6 @@ func run() error {
 	controllerDone := make(chan struct{})
 	go func() {
 		defer close(controllerDone)
-		if !*noStart {
-			if err := app.EnsureWorker(ctx, *dir, *workerBin); err != nil {
-				select {
-				case controller.Updates <- func(m *app.Model) { m.Error = err.Error() }:
-				case <-ctx.Done():
-				}
-			}
-		}
 		controller.Run(ctx)
 	}()
 	mygo.App.SetName("Shioji")

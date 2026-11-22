@@ -117,10 +117,15 @@ func EnsureLocalWorker(ctx context.Context, directory, binary, codex string) (Wo
 	cmd.Env = append(os.Environ(), "PATH=/opt/homebrew/bin:/usr/local/bin:"+os.Getenv("PATH"))
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdout, cmd.Stderr = log, log
+	if err = ctx.Err(); err != nil {
+		return info, err
+	}
 	if err = cmd.Start(); err != nil {
 		return info, err
 	}
-	cmd.Process.Release()
+	// Reap an exited host while the client is still open. Setsid keeps its
+	// lifetime independent of the client and its cancellation.
+	go func() { _ = cmd.Wait() }()
 	info.Started = true
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
