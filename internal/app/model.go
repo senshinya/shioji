@@ -210,14 +210,8 @@ func (m *Model) beginSubmission(method string) (domain.Submission, error) {
 		return domain.Submission{}, errors.New("请先恢复" + kind)
 	}
 	key := m.DraftKey()
-	for _, in := range m.Pending {
-		inKey := "home"
-		if in.SessionID != "" {
-			inKey = "session:" + in.SessionID
-		}
-		if inKey == key {
-			return domain.Submission{}, errors.New("previous submission is still awaiting confirmation")
-		}
+	if m.HasPendingInput() {
+		return domain.Submission{}, errors.New("previous submission is still awaiting confirmation")
 	}
 	steering := method == "turn.steer"
 	ready := m.RunReadiness()
@@ -395,23 +389,18 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		m.noteSubmissionAccepted(op.ID)
 	} else if op.State == "confirmed" {
 		delete(m.UncertainSubmissions, op.ID)
-		key := "home"
-		if in.SessionID != "" {
-			key = "session:" + in.SessionID
-		}
-		if in.QuestionReply == nil {
-			if !in.Continue && m.Drafts[key] == in.Text {
-				m.Drafts[key] = ""
-			}
-			m.clearAcceptedAttachments(key, in.Attachments)
-			m.clearAcceptedSkills(key, in)
+		key := m.submissionDraftKey(in)
+		if in.SessionID == "" && key != "home" {
+			m.deleteDraft(key)
+		} else {
+			m.clearSubmittedDraft(key, in)
 		}
 		// A receipt settles the submitted choices, but current session
 		// configuration still comes from the owning worker's session metadata.
 		if op.Kind == "submit" && !in.Continue {
 			m.reconcileSessionConfig(in.SessionID, in.Config)
 		}
-		if in.SessionID == "" && m.SessionID == "" && m.WorkspaceID == in.WorkspaceID {
+		if key == "home" && m.SessionID == "" && m.WorkspaceID == in.WorkspaceID {
 			m.SessionID = op.SessionID
 		}
 		delete(m.Pending, op.ID)

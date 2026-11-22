@@ -50,7 +50,9 @@ func (m *Model) latestDeviceSession() (domain.Session, bool) {
 // worker session. Existing input and manual draft choices remain intact.
 func (m *Model) PrepareNewSession() {
 	m.SessionID = ""
-	m.homeDefaultsPending = true
+	// Keep the current run choices when leaving an in-flight first send.
+	m.homeDefaultsPending = !m.HasPendingInput()
+	m.detachHomeSubmission()
 	m.RefreshDevices()
 }
 

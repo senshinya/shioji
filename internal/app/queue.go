@@ -137,7 +137,7 @@ func (m *Model) HasPendingInput() bool {
 }
 func (m *Model) HasPendingInputForSession(id string) bool {
 	for _, in := range m.Pending {
-		if in.SessionID == id {
+		if in.SessionID == id && (id != "" || m.submissionDraftKey(in) == "home") {
 			return true
 		}
 	}

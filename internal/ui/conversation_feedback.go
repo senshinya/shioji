@@ -385,7 +385,8 @@ func (v *View) conversationStatuses(c *n.Context) []conversationStatus {
 	if !m.HasPendingInput() {
 		if notice := v.submissionFailure(); notice != nil {
 			out = append(out, conversationStatus{id: "send-error:" + notice.ID, title: notice.Title, details: notice.Details, icon: feedbackInfo, priority: 1,
-				actions: []statusAction{{label: "返回草稿", run: func(*n.Context) {
+				actions: []statusAction{{label: "返回草稿", disabled: m.HasRetainedHomeDraft(notice.ID) && m.HasDraftContent("home"), run: func(*n.Context) {
+					m.RestoreRetainedHomeDraft(notice.ID)
 					v.dismissSubmissionFailure()
 					v.focusComposer = true
 				}}}})
