@@ -933,7 +933,8 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 	}
 	width, inset, topInset, bottomInset := float32(conversationComposerWidth), float32(conversationComposerInset), float32(4), float32(0)
 	_, _, covered, _ := c.SafeArea()
-	keyboard := covered*c.Zoom() > 80
+	visibleCover := covered * c.Zoom()
+	keyboard := mobileclient.ComposerKeyboardVisible(visibleCover)
 	root := a.splitRoot()
 	dismissed := !home && !keyboard && editor.keyboardVisible && root.composerKeyboardDismissed == parent.NativeHandle()
 	if keyboard && editor.focused {
@@ -945,7 +946,6 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 	}
 	motion := root.keyboardMotion
 	moving := !home && motion.Moving
-	visibleCover := covered * c.Zoom()
 	wasTracking := editor.trackingKeyboard
 	editor.trackingKeyboard = moving && (editor.focused || editor.keyboardVisible || dismissed || wasTracking)
 	if home {
@@ -1017,12 +1017,16 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 		editor.referencePanel(a, c, parent)
 		needsSpace := m.HasDraftContent(key) || queueEdit.ID != "" || modelUnavailable
 		expanded := needsSpace || editor.focused && (home || keyboard)
+		usingKeyboardMotion := editor.trackingKeyboard && motion.Morphing && motion.Peak > motion.Bottom
+		if !usingKeyboardMotion || needsSpace {
+			editor.keyboardTransition = mobileclient.ComposerKeyboardTransition{}
+		}
 		var keyboardProgress *float32
 		if !home && !needsSpace && (editor.trackingKeyboard || wasTracking || dismissed || keyboard && editor.focused) {
 			progress := float32(0)
 			switch {
-			case editor.trackingKeyboard && motion.Morphing && motion.Peak > motion.Bottom:
-				progress = min(1, max(0, (visibleCover-motion.Bottom)/(motion.Peak-motion.Bottom)))
+			case usingKeyboardMotion:
+				progress = editor.keyboardTransition.Progress(visibleCover, motion.Bottom, motion.Peak)
 			case expanded:
 				progress = 1
 			}

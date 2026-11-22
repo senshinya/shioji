@@ -26,6 +26,7 @@ type mobileDraftEditor struct {
 	focusRequested      bool
 	keyboardVisible     bool
 	trackingKeyboard    bool
+	keyboardTransition  mobileclient.ComposerKeyboardTransition
 	sendScroll          mobileSendScroll
 	queueMotion         mobileQueueMotion
 	inputBounds         ui.Rect
