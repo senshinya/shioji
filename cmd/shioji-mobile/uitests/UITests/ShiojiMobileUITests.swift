@@ -9728,6 +9728,7 @@ final class ShiojiMobileUITests: XCTestCase {
         let send = app.buttons["立即发送"].firstMatch
         XCTAssertTrue(send.waitForExistence(timeout: 6), app.debugDescription)
         XCTAssertTrue(app.staticTexts[message].firstMatch.exists)
+        XCTAssertFalse(app.navigationBars["待发消息"].exists, "Long press should show a native context menu beside the message preview")
         XCTAssertTrue(app.buttons["编辑"].firstMatch.exists)
         XCTAssertTrue(app.buttons["删除"].firstMatch.exists)
         XCTAssertFalse(app.keyboards.firstMatch.exists)

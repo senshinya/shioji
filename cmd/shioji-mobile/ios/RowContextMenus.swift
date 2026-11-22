@@ -24,6 +24,7 @@ final class RowContextMenus: NSObject, UIContextMenuInteractionDelegate {
         let rect: CGRect
         let commands: [Command]
         let preview: Bool
+        let message: Message?
 
         init?(_ data: [String: Any]) {
             guard let key = data["key"] as? String,
@@ -32,7 +33,15 @@ final class RowContextMenus: NSObject, UIContextMenuInteractionDelegate {
             self.rect = CGRect(x: rect[0], y: rect[1], width: rect[2], height: rect[3])
             commands = (data["commands"] as? [[String: Any]] ?? []).compactMap(Command.init)
             preview = data["preview"] as? Bool ?? false
+            message = (data["message"] as? [String: Any]).map {
+                Message(text: $0["text"] as? String ?? "", attachments: $0["attachments"] as? [String] ?? [])
+            }
         }
+    }
+
+    private struct Message {
+        let text: String
+        let attachments: [String]
     }
 
     private let window: Int
@@ -70,15 +79,25 @@ final class RowContextMenus: NSObject, UIContextMenuInteractionDelegate {
               let row = rows.first(where: { $0.rect.contains(location) }) else { return nil }
         active = row
         picked = nil
-        let provider: UIContextMenuContentPreviewProvider? = row.preview ? { [weak self, weak view] in
-            guard let self, let view else { return nil }
+        let provider: UIContextMenuContentPreviewProvider?
+        if let message = row.message {
             let viewport = view.window?.bounds ?? view.bounds
-            let preview = ConversationContextPreview(size: CGSize(
-                width: min(370, viewport.width - 32), height: viewport.height * 2 / 3))
-            self.conversationPreview = preview
-            self.emit(key: row.key, action: "preview", request: preview.request)
-            return preview
-        } : nil
+            provider = {
+                QueuedMessageContextPreview(text: message.text, attachments: message.attachments, viewport: viewport.size)
+            }
+        } else if row.preview {
+            provider = { [weak self, weak view] in
+                guard let self, let view else { return nil }
+                let viewport = view.window?.bounds ?? view.bounds
+                let preview = ConversationContextPreview(size: CGSize(
+                    width: min(370, viewport.width - 32), height: viewport.height * 2 / 3))
+                self.conversationPreview = preview
+                self.emit(key: row.key, action: "preview", request: preview.request)
+                return preview
+            }
+        } else {
+            provider = nil
+        }
         return UIContextMenuConfiguration(identifier: row.key as NSString, previewProvider: provider) { [weak self] _ in
             UIMenu(children: row.commands.map { command in
                 UIAction(title: command.title, image: command.symbol.flatMap { UIImage(systemName: $0) },
@@ -112,8 +131,9 @@ final class RowContextMenus: NSObject, UIContextMenuInteractionDelegate {
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
                                 willPerformPreviewActionForMenuWith configuration: UIContextMenuConfiguration,
                                 animator: any UIContextMenuInteractionCommitAnimating) {
-        if let row = active, row.preview {
-            animator.preferredCommitStyle = .dismiss
+        guard let row = active else { return }
+        animator.preferredCommitStyle = .dismiss
+        if row.preview {
             picked = (row.key, "open")
         }
     }
@@ -143,6 +163,65 @@ final class RowContextMenus: NSObject, UIContextMenuInteractionDelegate {
         PluginHost.emit("shiojiUIKit", "rowContextAction", [
             "window": window, "key": key, "action": action, "request": request,
         ])
+    }
+}
+
+private final class QueuedMessageContextPreview: UIViewController {
+    private let text: String
+    private let attachments: [String]
+    private let viewport: CGSize
+
+    init(text: String, attachments: [String], viewport: CGSize) {
+        self.text = text
+        self.attachments = attachments
+        self.viewport = viewport
+        super.init(nibName: nil, bundle: nil)
+        loadViewIfNeeded()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func loadView() {
+        let scroll = UIScrollView()
+        scroll.backgroundColor = .systemBackground
+        scroll.accessibilityIdentifier = "queuedMessagePreview"
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        if !text.isEmpty {
+            let body = UILabel()
+            body.font = .preferredFont(forTextStyle: .body)
+            body.adjustsFontForContentSizeCategory = true
+            body.textColor = .label
+            body.numberOfLines = 0
+            body.text = text
+            stack.addArrangedSubview(body)
+        }
+        if !attachments.isEmpty {
+            let files = UILabel()
+            files.font = .preferredFont(forTextStyle: .footnote)
+            files.adjustsFontForContentSizeCategory = true
+            files.textColor = .secondaryLabel
+            files.numberOfLines = 0
+            files.text = attachments.joined(separator: "\n")
+            stack.addArrangedSubview(files)
+        }
+        let inset: CGFloat = 16
+        let width = min(370, viewport.width - 2 * inset)
+        let content = stack.systemLayoutSizeFitting(CGSize(width: width - 2 * inset, height: 0),
+                                                   withHorizontalFittingPriority: .required,
+                                                   verticalFittingPriority: .fittingSizeLevel)
+        preferredContentSize = CGSize(width: width, height: min(ceil(content.height) + 2 * inset, viewport.height / 2))
+        scroll.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: inset),
+            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -inset),
+            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: inset),
+            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -inset),
+            stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -2 * inset),
+        ])
+        view = scroll
     }
 }
 

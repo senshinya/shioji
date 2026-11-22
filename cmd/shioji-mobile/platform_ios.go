@@ -88,6 +88,7 @@ func (a *mobileApp) configureUIKit() {
 		detail := a.page("", a.detailView)
 		args["detail"] = detail.NativeHandle()
 		a.detail = detail
+		a.detailQueueMenu.listen(a, detail)
 	}
 	uikit.On("searchActive", func(raw []byte) {
 		if json.Unmarshal(raw, &a.searching) == nil {
@@ -153,11 +154,8 @@ func (a *mobileApp) configureUIKit() {
 		if json.Unmarshal(raw, &id) != nil {
 			return
 		}
-		for _, w := range []*mygo.Window{a.draftPage, a.queueActionsPage} {
-			if w != nil && w.NativeHandle() == id {
-				w.Close()
-				break
-			}
+		if w := a.draftPage; w != nil && w.NativeHandle() == id {
+			w.Close()
 		}
 	})
 	a.callUIKit("configureHome", args, func(err error) {

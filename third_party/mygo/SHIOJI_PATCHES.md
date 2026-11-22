@@ -87,6 +87,10 @@ not expose the following appearance settings required by the frozen design:
   intervening history. Appended rows retarget it without moving the current
   viewport; completion resumes ordinary end following. The no-argument form
   retains its immediate behavior. Covered by `ui/list_reading_motion_test.go`.
+- `ui.ListState.EndOverlayRelease`: let an animated end scroll aim past
+  a retracting dock while its layout bounds still reflect the visible dock.
+  The last queued message and the dock use one duration, covered by
+  `ui/list_end_overlay_test.go` and Shioji's queued insertion regression.
 - `ui/markdown.Options.OnRevealState`: report native buffered-text and fade
   activity so the visible conversation can defer its sidebar check until output
   settles, independently of authoritative execution completion.

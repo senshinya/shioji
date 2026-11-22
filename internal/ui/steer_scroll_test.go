@@ -161,6 +161,87 @@ func TestImmediateQueuedSteerSettlesAtNaturalEnd(t *testing.T) {
 	}
 }
 
+func TestLastQueuedSteerCollapsesWithItsInsertedMessage(t *testing.T) {
+	for _, eventFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("event-first=%v", eventFirst), func(t *testing.T) {
+			v, ui := steerScrollFixture(true, true, false)
+			detail := v.Model.Details["s"]
+			reply := &detail.Items[len(detail.Items)-2]
+			reply.TurnID = "active"
+			detail.Queue.Items = detail.Queue.Items[:1]
+			v.Model.Details["s"] = detail
+			ui.Frame()
+			ui.Advance(time.Second)
+			before := v.historyRowBounds[reply.ID]
+			startDock, _ := ui.Find("会话底部面板")
+			if before.H == 0 || v.runningGroup == "" {
+				t.Fatal("fixture needs a visible reply above the live tool")
+			}
+			feedbackClick(t, ui, "立即发送待发消息 1")
+			job := feedbackJob(t, v, "queue.send")
+			input := detail.Queue.Items[0].Input
+			queue := detail.Queue
+			queue.Revision++
+			queue.Items = nil
+			body, _ := json.Marshal(queue)
+			receipt := func() { job.Apply(v.Model, body, nil) }
+			arrival := func() {
+				item := domain.Item{ID: "input:" + input.OperationID, TurnID: "active", Kind: "user", Text: input.Text, Status: "sent", Final: true}
+				v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "submission", SessionID: "s", Item: &item})
+			}
+			first, second, arrivalFrame := receipt, arrival, 12
+			if eventFirst {
+				first, second, arrivalFrame = arrival, receipt, 5
+			}
+			previous := before
+			moving, closing := 0, 0
+			lastDock := startDock
+			settleFrame := arrivalFrame + 33
+			var settledReply, settledBubble, settledDock n.Rect
+			for frame := range settleFrame + 4*60 {
+				switch frame {
+				case 5:
+					first()
+					ui.Frame()
+				case 12:
+					second()
+					ui.Frame()
+				}
+				current := v.historyRowBounds[reply.ID]
+				dock, _ := ui.Find("会话底部面板")
+				if frame <= arrivalFrame && (math.Abs(float64(current.Y-before.Y)) > 1 || math.Abs(float64(dock.Y-startDock.Y)) > 1) {
+					t.Errorf("frame %d: queue retreated before insertion: reply Y %.1f → %.1f, dock Y %.1f → %.1f", frame, before.Y, current.Y, startDock.Y, dock.Y)
+				}
+				if current.H == 0 || current.Y > previous.Y+1 || current.Y < previous.Y-24 {
+					t.Errorf("frame %d: previous reply reversed or skipped frames: Y %.1f → %.1f", frame, previous.Y, current.Y)
+				}
+				if current.Y < previous.Y-.5 {
+					moving++
+				}
+				if dock.Y > lastDock.Y+.5 {
+					closing++
+				}
+				if frame >= settleFrame {
+					bubble, visible := ui.Find("用户消息气泡")
+					if frame == settleFrame {
+						settledReply, settledBubble, settledDock = current, bubble, dock
+						if !v.lists["s"].AtEnd() || !visible || ui.HasText("待发送 1") {
+							t.Fatal("the list, bubble and queue did not finish on the same timeline")
+						}
+					} else if math.Abs(float64(current.Y-settledReply.Y)) > .5 || math.Abs(float64(bubble.Y-settledBubble.Y)) > .5 || math.Abs(float64(dock.Y-settledDock.Y)) > .5 || !visible {
+						t.Fatalf("frame %d: settled layout moved again: reply Y %g → %g, bubble Y %g → %g, dock Y %g → %g", frame, settledReply.Y, current.Y, settledBubble.Y, bubble.Y, settledDock.Y, dock.Y)
+					}
+				}
+				previous, lastDock = current, dock
+				ui.Advance(time.Second / 60)
+			}
+			if ui.HasText("待发送 1") || !ui.HasText(input.Text) || !v.lists["s"].AtEnd() || previous.Y >= before.Y-20 || moving < 5 || closing < 5 {
+				t.Fatalf("final queue and transcript did not settle: %d moving frames, %d closing frames, reply=%+v", moving, closing, previous)
+			}
+		})
+	}
+}
+
 func TestSteerKeepsExpandedToolGroupThroughSend(t *testing.T) {
 	for _, theme := range []struct {
 		name          string

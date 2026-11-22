@@ -120,6 +120,11 @@ type ListState struct {
 	// independently of FollowInset, so an animated dock moves followed content
 	// without a second scrolling animation. Clear it when removing the overlay.
 	EndOverlay Element
+	// EndOverlayRelease is the part of the measured overlay height that will
+	// disappear during the current animated ScrollToEnd. It lets the scroll
+	// aim at the final inset while layout and scrolling bounds use the actual
+	// overlay. Supply the remaining height on each frame, or zero otherwise.
+	EndOverlayRelease float32
 	// Reveals animate the allocated height of contiguous row ranges without
 	// changing their natural measurements or mounting their hidden suffixes.
 	Reveals []ListReveal
@@ -1795,7 +1800,8 @@ func (e *node) layoutList(w, h float32) {
 		ensure(a)
 		if s.animatedAnchor() {
 			if s.endAnchor() {
-				s.pinTarget = H - padBottom - ht(a)
+				release := float64(min(max(s.EndOverlayRelease, 0), s.endOverlayHeight))
+				s.pinTarget = H - padBottom - ht(a) + release
 			}
 			target := min(s.pinTarget, padTop+hs.top(a, gap))
 			if s.anchorPending() {

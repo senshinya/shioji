@@ -32,7 +32,6 @@ type mobileApp struct {
 	sessionLoadingTarget      string
 	previewLatestHistory      *domain.SessionDetail
 	newSessionSend            *mobileSendScroll
-	queueActionsPage          *mygo.Window
 	latestSessionEntry        string
 	reduceConversationMotion  bool
 	forkMotionTarget          mobileForkPosition
@@ -65,6 +64,7 @@ type mobileApp struct {
 	attentionFeedback        attentionShortcutFeedback
 	sessionGroupings         sessionGroupingSettings
 	sessionListMenu          mobileContextMenu
+	detailQueueMenu          mobileContextMenu
 	previewResources         *previewImageResources
 	notifications            mobileNotifications
 	tailnetNode              *tailnet.Node
@@ -437,9 +437,12 @@ func (a *mobileApp) pushConversation(parent *mygo.Window) {
 	if opening != nil {
 		title, scope = opening.title, opening.scope
 	}
+	var menu mobileContextMenu
 	w := a.page(title, func(c *ui.Context) {
+		menu.drawQueues(c, a, a.chat)
 		a.conversation(c, a.chat, false)
 	})
+	menu.listen(a, w)
 	a.chat, a.chatTitle, a.chatScope = w, title, scope
 	w.OnClosed(func() {
 		if a.find != nil && a.find.owner == w {

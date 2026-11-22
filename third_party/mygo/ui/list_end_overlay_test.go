@@ -106,3 +106,37 @@ func TestListEndOverlayAndContentRetainIndependentMotion(t *testing.T) {
 		t.Fatal("overlay resizing moved the history reader", reading, after)
 	}
 }
+
+func TestAnimatedListEndAimsPastReleasingOverlay(t *testing.T) {
+	const duration = 480 * time.Millisecond
+	s := ListState{FollowEnd: true}
+	var started time.Time
+	count := 40
+	tt := NewTester(func(c *Context) {
+		inset := float32(100)
+		if !started.IsZero() {
+			progress := min(1, float32(c.Now().Sub(started))/float32(duration))
+			inset *= 1 - progress
+			s.EndOverlayRelease = inset
+			if progress < 1 {
+				c.AnimationFrame()
+			}
+		}
+		List(c, &s, count, func(i int) { Text(c, fmt.Sprint(i)).Height(20) }).Fill()
+		s.EndOverlay = Column(c).Absolute().Left(0).Right(0).Bottom(0).Height(inset)
+	}, 400, 300)
+	before, _ := tt.Find("39")
+	started = tt.Now()
+	count += 8
+	s.ScrollToEnd(Animation{Duration: duration, Ease: Linear})
+	tt.Frame()
+	first, _ := tt.Find("39")
+	tt.Advance(duration/2 + time.Millisecond)
+	middle, _ := tt.Find("39")
+	tt.Advance(duration/2 + 20*time.Millisecond)
+	last, _ := tt.Find("39")
+	if math.Abs(float64(first.Y-before.Y)) > .5 || math.Abs(float64(middle.Y-(before.Y-30))) > 3 ||
+		math.Abs(float64(last.Y-(before.Y-60))) > .5 || !s.AtEnd() {
+		t.Fatalf("animated end should use the released inset on its original timeline: %v → %v → %v → %v", before, first, middle, last)
+	}
+}

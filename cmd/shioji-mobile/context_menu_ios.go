@@ -24,13 +24,20 @@ type contextMenuRow struct {
 	Key      string               `json:"key"`
 	Rect     [4]float32           `json:"rect"`
 	Preview  bool                 `json:"preview"`
+	Message  *contextMenuMessage  `json:"message,omitempty"`
 	Commands []contextMenuCommand `json:"commands,omitempty"`
+}
+
+type contextMenuMessage struct {
+	Text        string   `json:"text"`
+	Attachments []string `json:"attachments,omitempty"`
 }
 
 type contextMenuTarget struct {
 	location app.SessionLocation
 	session  domain.Session
 	open     func()
+	message  *contextMenuMessage
 	commands []contextMenuCommand
 }
 
@@ -40,8 +47,8 @@ type contextMenuFrame struct {
 	zoom    float32
 }
 
-func (f *contextMenuFrame) add(row ui.Element, key string, target contextMenuTarget) {
-	if target.session.ID == "" && len(target.commands) == 0 {
+func (f *contextMenuFrame) add(row ui.Element, key string, target contextMenuTarget, clips ...ui.Element) {
+	if target.session.ID == "" && target.message == nil && len(target.commands) == 0 {
 		return
 	}
 	if f.targets == nil {
@@ -54,9 +61,21 @@ func (f *contextMenuFrame) add(row ui.Element, key string, target contextMenuTar
 			return
 		}
 		r := row.Bounds()
+		for _, clip := range clips {
+			r = intersectMenuRect(r, clip.Bounds())
+		}
+		if r.W <= 0 || r.H <= 0 {
+			return
+		}
 		f.rows = append(f.rows, contextMenuRow{Key: key, Rect: [4]float32{r.X, r.Y, r.W, r.H},
-			Preview: target.session.ID != "", Commands: target.commands})
+			Preview: target.session.ID != "", Message: target.message, Commands: target.commands})
 	})
+}
+
+func intersectMenuRect(r, clip ui.Rect) ui.Rect {
+	left, top := max(r.X, clip.X), max(r.Y, clip.Y)
+	right, bottom := min(r.X+r.W, clip.X+clip.W), min(r.Y+r.H, clip.Y+clip.H)
+	return ui.Rect{X: left, Y: top, W: max(0, right-left), H: max(0, bottom-top)}
 }
 
 type mobileContextMenu struct {
@@ -70,11 +89,9 @@ func (m *mobileContextMenu) publish(a *mobileApp, w *mygo.Window, f contextMenuF
 	m.targets = f.targets
 	visible := make([]contextMenuRow, 0, len(f.rows))
 	for _, row := range f.rows {
-		left, top := max(row.Rect[0], viewport.X), max(row.Rect[1], viewport.Y)
-		right := min(row.Rect[0]+row.Rect[2], viewport.X+viewport.W)
-		bottom := min(row.Rect[1]+row.Rect[3], viewport.Y+viewport.H)
-		if right > left && bottom > top {
-			rect := mobileWindowRect(ui.Rect{X: left, Y: top, W: right - left, H: bottom - top}, f.zoom)
+		r := intersectMenuRect(ui.Rect{X: row.Rect[0], Y: row.Rect[1], W: row.Rect[2], H: row.Rect[3]}, viewport)
+		if r.W > 0 && r.H > 0 {
+			rect := mobileWindowRect(r, f.zoom)
 			row.Rect = [4]float32{rect.X, rect.Y, rect.W, rect.H}
 			visible = append(visible, row)
 		}
@@ -86,6 +103,20 @@ func (m *mobileContextMenu) publish(a *mobileApp, w *mygo.Window, f contextMenuF
 	m.payload = string(data)
 	m.sequence++
 	a.callUIKit("rowContextMenus", map[string]any{"window": w.NativeHandle(), "sequence": m.sequence, "rows": json.RawMessage(data)}, nil)
+}
+
+func queueContextMenuFrame(c *ui.Context) *contextMenuFrame {
+	return ui.Local(c.Root(), "queue-context-menus", func() contextMenuFrame { return contextMenuFrame{} })
+}
+
+func (m *mobileContextMenu) drawQueues(c *ui.Context, a *mobileApp, w *mygo.Window) {
+	frame := queueContextMenuFrame(c)
+	*frame = contextMenuFrame{zoom: c.Zoom()}
+	c.Root().DrawOver(func(_ *ui.Painter, viewport ui.Rect) {
+		if w != nil {
+			m.publish(a, w, *frame, viewport)
+		}
+	})
 }
 
 func (m *mobileContextMenu) listen(a *mobileApp, w *mygo.Window) {

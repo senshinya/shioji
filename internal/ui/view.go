@@ -1582,6 +1582,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		p.Fill(n.Rect{X: r.X, Y: r.Y, W: max(0, r.W-conversationScrollbarGutter), H: r.H}, t.Background, 0)
 	}).Children(func() { v.toolbar(c, t) })
 	v.conversationFindBar(c, t, state.Bounds(c).W)
+	state.EndOverlayRelease = 0
 	dock := n.Column(c.Key("conversation-dock")).Absolute().Left(0).Right(0).Bottom(8).PaddingX(18).AlignItems(n.Center).Gap(8).Label("会话底部面板")
 	var goalDock bool
 	dock.Children(func() {

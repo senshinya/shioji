@@ -80,6 +80,7 @@ func (a *mobileApp) homeView(c *ui.Context) {
 }
 
 func (a *mobileApp) detailView(c *ui.Context) {
+	a.detailQueueMenu.drawQueues(c, a, a.detail)
 	p := palette(c)
 	if a.wide && a.openingConversation(c, true) {
 		return
@@ -428,6 +429,7 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 		rows++
 	}
 	state.EndOverlay = dock
+	state.EndOverlayRelease = 0
 	state.Reveals = state.Reveals[:0]
 	state.FollowAnimation = nil
 	if motionAllowed {
@@ -1026,7 +1028,9 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 			}
 			keyboardProgress = &progress
 		}
-		surface, geometry := mobileComposerSurface(c, key, home, expanded, &editor.sendScroll, keyboardProgress, queueEdit.ID != "")
+		send := &editor.sendScroll
+		releasing := send.operation != "" && send.steer && !send.queued && send.started && !expanded
+		surface, geometry := mobileComposerSurface(c, key, home, expanded, send, keyboardProgress, queueEdit.ID != "")
 		if !home {
 			growth := mobileComposerExtraHeight(c, surface, editor, m.Drafts[key], geometry.EditorHeight,
 				geometry.ControlsProgress, queueEdit.ID != "")
@@ -1034,6 +1038,10 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 			geometry.EditorHeight += growth
 			geometry.ControlsY += growth
 			surface.Height(geometry.Height)
+			if list := a.history[sid]; releasing && list != nil {
+				settled := mobileclient.ComposerGeometry(0, false, composerLineHeight(c), mobileTapSize(c))
+				list.EndOverlayRelease += max(0, geometry.Height-settled.Height)
+			}
 		}
 		surface.DrawOver(func(_ *ui.Painter, r ui.Rect) { editor.sendScroll.composerBounds = r })
 		if editor.sendScroll.workspace != "" && editor.sendScroll.started && editor.sendScroll.composerSource.W > 0 && !c.Preferences().ReduceMotion {

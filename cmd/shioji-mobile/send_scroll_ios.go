@@ -13,6 +13,7 @@ import (
 var (
 	mobileSendEase             = ui.CubicBezier(.4, 0, 0, 1)
 	mobileSendScrollAnimation  = ui.Animation{Duration: 480 * time.Millisecond, Ease: mobileSendEase}
+	mobileSteerScrollAnimation = ui.Animation{Duration: 480 * time.Millisecond, Ease: ui.CubicBezier(.42, 0, .58, 1)}
 	mobileSendHandoffAnimation = ui.Animation{Duration: mobileReplyFade, Ease: ui.EaseOut}
 )
 
@@ -29,6 +30,13 @@ type mobileSendScroll struct {
 	composerBounds         ui.Rect
 	began                  time.Time
 	receiptWithoutRow      time.Time
+}
+
+func (s *mobileSendScroll) animation() ui.Animation {
+	if s.steer {
+		return mobileSteerScrollAnimation
+	}
+	return mobileSendScrollAnimation
 }
 
 func (s *mobileSendScroll) begin(operation, epoch string, source ui.Rect, steer, queued bool) {
@@ -68,14 +76,14 @@ func (s *mobileSendScroll) reveal(c *ui.Context, frame ui.Element, list *ui.List
 			s.started = true
 			switch {
 			case s.steer:
-				list.ScrollToEnd()
+				list.ScrollToEnd(s.animation())
 			case s.workspace != "":
 				list.AnchorRow(offset+i, 100, mobileSendScrollAnimation)
 			case !s.queued:
 				list.ScrollToEnd(mobileSendScrollAnimation)
 			}
 		}
-		s.progress = frame.AnimateTo(motionKey, 1, mobileSendScrollAnimation)
+		s.progress = frame.AnimateTo(motionKey, 1, s.animation())
 		if s.progress >= 1 || s.steer {
 			return
 		}
@@ -116,9 +124,10 @@ func (s *mobileSendScroll) bubble(c *ui.Context, bubble ui.Element, id string) {
 		return
 	}
 	if s.source.W > 0 {
+		animation := s.animation()
 		bubble.Background(palette(c).inset.Alpha(s.progress)).
-			Transition(ui.ElementTransition{From: &s.source, Duration: mobileSendScrollAnimation.Duration,
-				Ease: mobileSendEase, Position: true, Lift: true})
+			Transition(ui.ElementTransition{From: &s.source, Duration: animation.Duration,
+				Ease: animation.Ease, Position: true, Lift: true})
 	} else {
 		bubble.Opacity(s.progress).Transform(ui.Translation(0, 10*(1-s.progress)))
 	}

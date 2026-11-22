@@ -333,7 +333,8 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 	if t.Dark {
 		bg = t.Surface
 	}
-	root := n.Column(c.Key("queued-turns:"+sid)).Label("待发送队列").FillWidth().Gap(0).Background(bg).Border(1, t.Border).Radius(16, 16, 0, 0).Margin(0, 0, -17, 0).Clip()
+	const backplateOverlap, bottomMargin = 16, -17
+	root := n.Column(c.Key("queued-turns:"+sid)).Label("待发送队列").FillWidth().Gap(0).Background(bg).Border(1, t.Border).Radius(16, 16, 0, 0).Margin(0, 0, bottomMargin, 0).Clip()
 	opacity := float32(1)
 	if edit.ID != "" {
 		opacity = .45
@@ -355,7 +356,23 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 	if arriving {
 		presenceMotion = n.Animation{Duration: queueArrivalDuration, Ease: composerDescentEase}
 	}
-	presence := root.AnimateTo("queue-presence", targetPresence, presenceMotion)
+	var departure *sentMessageMotion
+	if !present && len(q.Items) == 1 && !v.reduceMotion && m.Connected {
+		source := v.queueSources[q.Items[0].ID]
+		if motion := source.motion; motion != nil && motion == v.sent && motion.steer &&
+			(motion.phase == sentAnimating || m.Active()) &&
+			(source.preview == nil || source.preview.state != domain.OperationIndeterminate) {
+			departure = motion
+		}
+	}
+	var presence float32
+	if departure != nil {
+		// Keep the source dock in place through a reply-footer handoff,
+		// then let the lifted message and panel use the same clock.
+		presence = root.Jump("queue-presence", 1-departure.progress(c))
+	} else {
+		presence = root.AnimateTo("queue-presence", targetPresence, presenceMotion)
+	}
 	if !present && presence <= .001 {
 		v.queueDisplay = domain.QueueState{}
 		root.Height(0).Hidden(true).Margin(0).Border(0, n.Transparent)
@@ -431,7 +448,14 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 		if arriving {
 			surfaceHeight = 32*presence + height
 		}
-		root.Height(surfaceHeight + 16).Transform(n.Translation(0, 16*(1-presence)))
+		root.Height(surfaceHeight + backplateOverlap).Transform(n.Translation(0, backplateOverlap*(1-presence)))
+		if departure != nil && departure.phase == sentAnimating {
+			if state := v.lists[sid]; state != nil {
+				// Include the height and negative bottom margin that overlap
+				// the editor, so the scroll targets the dock without the queue.
+				state.EndOverlayRelease = max(0, surfaceHeight+backplateOverlap+bottomMargin)
+			}
+		}
 		body.Height(height).Children(func() {
 			if height <= .1 {
 				return
@@ -452,6 +476,10 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 							progress := a.progress(c)
 							motion := n.ElementTransition{Position: !c.Preferences().ReduceMotion && !arriving, Colors: true, Duration: motionAnimation(c, 160*time.Millisecond).Duration, Ease: n.EaseOut}
 							slot := n.Column(c.Key("queue-slot:" + item.ID)).FillWidth().Height(32 * progress).Shrink(0).Transition(motion)
+							if departure != nil && departure.phase == sentAnimating {
+								// The transcript bubble now paints the departing text.
+								slot.Invisible()
+							}
 							if progress < 1 {
 								slot.Clip()
 							}
