@@ -31,6 +31,7 @@ type attachmentPreview struct {
 	Loading                                 bool
 	Image                                   n.ImageSource
 	Thumbnail, LoadedImage                  n.ImageSource
+	imageView                               previewImageView
 	Text, Error                             string
 	NaturalHeight                           float32
 	Source                                  n.Rect
@@ -103,6 +104,7 @@ const (
 )
 
 var fileAttachmentIcon = svg("M5 2h7l4 4v12H5zM12 2v5h4M8 10h5M8 13h5")
+var rotatePreviewIcon = svg("M3 4v5h5M3.5 8.5a6.75 6.75 0 1 1 2 7")
 
 func (v *View) staging() *attachments.Repository {
 	if v.attachmentStore == nil {
@@ -681,6 +683,7 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 		visible = p.open()
 	}
 	dialog := n.DialogBase(c.Key("attachment-preview:"+p.Attachment.ID), &visible, func(backdrop, panel n.Element) {
+		const contentGap, panelChrome = 12, 30
 		w, h := c.Size()
 		panelWidth := min(float32(840), w-48)
 		if p.Attachment.Kind == domain.PathAttachmentResource {
@@ -693,13 +696,13 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 		}
 		imageAvailable := p.Loading || p.Image != nil || p.LoadedImage != nil
 		if isImage && imageAvailable {
-			panelHeight = min(580, h-160) + 66
+			panelHeight = min(580, h-160) + toolbarActionSize + contentGap + panelChrome
 		}
 		if !isImage && !p.Loading && p.Error == "" {
 			panelHeight = fileHeight + 66
 		}
 		if p.NaturalHeight > 0 {
-			panelHeight = p.NaturalHeight + 30
+			panelHeight = p.NaturalHeight + panelChrome
 		}
 		panelHeight = panel.AnimateTo("preview-height", panelHeight, motionAnimation(c, 180*time.Millisecond))
 		dialogSurface(panel, t).Width(panelWidth).Height(panelHeight).MaxHeight(h - 64).Padding(14).Clip().Label("附件预览")
@@ -766,6 +769,26 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 		if !p.open() {
 			panel.IgnoreInput(true)
 		}
+		if isImage {
+			// The window's scroll handler runs ahead of modal and child input.
+			// Use the panel's painted bounds, including its opening transform.
+			var bounds n.Rect
+			panel.DrawOver(func(_ *n.Painter, _ n.Rect) { bounds = panel.Bounds() })
+			root := v.splitRoot()
+			root.imagePreviewScroll = func(ev n.InputEvent) bool {
+				if ev.Mods != n.Cmd || ev.DY == 0 || !bounds.Contains(ev.X, ev.Y) {
+					return false
+				}
+				if p.open() && progress >= 1 && (p.Image != nil || p.LoadedImage != nil) && !ev.Momentum {
+					p.imageView.scroll(ev.DY)
+				}
+				return true
+			}
+		}
+		previewImage := p.Image
+		if previewImage == nil {
+			previewImage = p.LoadedImage
+		}
 		var imageSlot n.Element
 		panel.Children(func() {
 			if cardMorph && progress < 1 {
@@ -776,7 +799,7 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 				expanded.Absolute().Left(14).Top(14).Width(panelWidth - 28).Opacity(progress)
 			}
 			expanded.Children(func() {
-				content := n.Column(c.Key("preview-content")).FillWidth().Shrink(0).Gap(12)
+				content := n.Column(c.Key("preview-content")).FillWidth().Shrink(0).Gap(contentGap)
 				invalidate := c.Services().Invalidate
 				content.DrawOver(func(_ *n.Painter, r n.Rect) {
 					if content.Valid() && p.NaturalHeight != r.H {
@@ -793,6 +816,9 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 						if isMarkdown {
 							p.markdownTabs(c)
 						}
+						if isImage && iconButton(c.Key("rotate-preview"), rotatePreviewIcon, "逆时针旋转 90°").Disabled(previewImage == nil).Clicked() {
+							p.imageView.quarterTurns = (p.imageView.quarterTurns + 1) % 4
+						}
 						if iconButton(c, saveAttachmentIcon, "另存到本机").Disabled(p.Saving).Clicked() {
 							v.saveAttachment(p)
 						}
@@ -803,10 +829,11 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 					if isImage && imageAvailable {
 						imageSlot = n.Column(c.Key("image-slot")).FillWidth().Height(min(580, h-160)).Children(func() {
 							if !morph {
-								if p.Image != nil {
-									n.Image(c.Key("image"), p.Image).Fill().Fit(n.Contain).Label("图片预览内容")
-								} else if p.LoadedImage != nil {
-									n.Image(c.Key("image"), p.LoadedImage).Fill().Fit(n.Contain).Label("图片预览内容")
+								if previewImage != nil {
+									n.Column(c.Key("image")).Fill().Role(n.RoleImage).Label("图片预览内容").Draw(func(painter *n.Painter, r n.Rect) {
+										clip, draw := p.imageView.geometry(n.Rect{}, r, previewImage, 1)
+										p.imageView.paint(painter, previewImage, clip, draw, 0, 1)
+									})
 								} else {
 									n.Text(c, "加载中…").FontSize(12).TextColor(t.TextMuted)
 								}
@@ -836,7 +863,7 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 			if destination.W <= 0 {
 				destination = n.Rect{X: (w-panelWidth)/2 + 15, Y: (h-panelHeight)/2 + 55, W: panelWidth - 30, H: min(580, h-160)}
 			}
-			clip, draw := previewImageGeometry(p.Source, destination, p.Image, progress)
+			clip, draw := p.imageView.geometry(p.Source, destination, p.Image, progress)
 			image := p.Image
 			n.Overlay(c.Key("preview-image-layer"), func() {
 				radius := float32(5)
@@ -846,7 +873,7 @@ func (v *View) attachmentDialog(c *n.Context, t *n.Theme) {
 				n.Column(c).Absolute().Left(clip.X).Top(clip.Y).Width(clip.W).Height(clip.H).IgnoreInput(true).Role(n.RoleImage).Label("图片预览内容").Draw(func(painter *n.Painter, _ n.Rect) {
 					// Element.Clip clips children, not its own Draw callback.
 					// Apply the interpolated thumbnail crop to the image ink too.
-					painter.Clip(clip, radius*(1-progress), func() { painter.Image(image, draw, n.Contain) })
+					p.imageView.paint(painter, image, clip, draw, radius*(1-progress), progress)
 				})
 			})
 		}

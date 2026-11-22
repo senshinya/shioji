@@ -36,6 +36,7 @@ type View struct {
 	remoteUploadRemember             map[string]bool
 	workerUpdateConfirm              *workerUpdateConfirmation
 	interfaceZoomToast               bool
+	imagePreviewScroll               func(n.InputEvent) bool
 	globalSidebar                    *quickSidebar
 	portForward                      *portForwardDraft
 	devicePower                      map[string]*devicePowerUI

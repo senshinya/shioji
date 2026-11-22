@@ -46,11 +46,15 @@ func (v *View) syncInterfaceZoom(c *n.Context) {
 	}
 	zoom := v.Model.Preferences.InterfaceZoom
 	c.SetZoom(zoom)
+	v.imagePreviewScroll = nil
 	c.OnScroll(func(ev n.InputEvent) bool {
 		if ev.Precise {
 			// Events use the last drawn frame's coordinates, even when
 			// earlier callbacks have already changed the requested zoom.
 			ev.DY *= zoom
+		}
+		if v.imagePreviewScroll != nil && v.imagePreviewScroll(ev) {
+			return true
 		}
 		return v.interfaceScroll(ev)
 	})

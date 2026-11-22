@@ -18,7 +18,7 @@ func TestImageMorphRevealsTheThumbnailCropWithoutStretchingTheImage(t *testing.T
 		{.5, n.Rect{X: 55, Y: 135, W: 220, H: 120}, n.Rect{X: 45, Y: 135, W: 240, H: 120}},
 		{1, n.Rect{X: 100, Y: 250, W: 400, H: 200}, n.Rect{X: 100, Y: 250, W: 400, H: 200}},
 	} {
-		clip, draw := previewImageGeometry(source, destination, bitmap, test.progress)
+		clip, draw := (previewImageView{}).geometry(source, destination, bitmap, test.progress)
 		if clip != test.clip || draw != test.draw {
 			t.Fatal("image crop morph is incorrect", test.progress, clip, draw)
 		}
