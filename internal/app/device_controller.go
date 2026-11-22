@@ -533,12 +533,12 @@ func (c *Controller) prepareSSHDevice(ctx context.Context, in CheckSSHDevice) (D
 	}
 	inspectCtx, stopInspect := context.WithTimeout(ctx, 10*time.Second)
 	defer stopInspect()
-	if info.Minor < 16 && info.Build != nil && info.Build.SafeUpdate {
+	if info.Minor < AgentSetupWorkerMinor && info.Build != nil && info.Build.SafeUpdate {
 		candidate, e := transport.InspectWorker(inspectCtx, c.fleet.workerBinary)
 		if e != nil {
 			return DeviceSetupCheck{}, e
 		}
-		prep, e := planServicePreparation(info, candidate)
+		prep, e := PlanServicePreparation(info, candidate)
 		if e != nil {
 			return DeviceSetupCheck{}, e
 		}

@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"slices"
@@ -287,6 +288,7 @@ func (m *Model) ApplyArchiveDeletion(d domain.ArchiveDeletion) {
 				delete(m.DraftSkills, key)
 			}
 		}
+		m.clearQuestionAnswerDrafts(d.DeviceID, id)
 		for key := range m.WorkDetails {
 			if key.SessionID == id {
 				delete(m.WorkDetails, key)
@@ -310,6 +312,12 @@ func (m *Model) ApplyArchiveDeletion(d domain.ArchiveDeletion) {
 		}
 	}
 	m.Snapshot.Sessions = slices.DeleteFunc(m.Snapshot.Sessions, func(s domain.Session) bool { return slices.Contains(d.SessionIDs, s.ID) })
+	if len(d.SessionIDs) != 0 && len(m.Snapshot.SessionInputTimes) != 0 {
+		m.Snapshot.SessionInputTimes = maps.Clone(m.Snapshot.SessionInputTimes)
+		for _, id := range d.SessionIDs {
+			delete(m.Snapshot.SessionInputTimes, id)
+		}
+	}
 	m.Snapshot.PendingRequests = slices.DeleteFunc(m.Snapshot.PendingRequests, func(r domain.PendingRequest) bool { return slices.Contains(d.SessionIDs, r.SessionID) })
 	m.Snapshot.Operations = slices.DeleteFunc(m.Snapshot.Operations, func(o domain.Operation) bool { return slices.Contains(d.SessionIDs, o.SessionID) })
 	if id := d.WorkspaceID; id != "" {

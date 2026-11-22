@@ -55,18 +55,30 @@ const Major = 2
 // Minor 53 adds bounded catalog projections and batched operation lookup.
 // Minor 54 adds replies to nonblocking questions in the transcript.
 // Minor 55 supports a durable receipt before preparing a new session.
-const Minor = 55
-
-const SubmissionReceiptMinor = 55
-
-const QuestionReplyMinor = 54
+// Minor 58 includes the mobile worker's Agent settings and checkout confirmation.
+const Minor = 58
 
 const CatalogMinor = 53
+const SubmissionReceiptMinor = 55
+
+// Earlier mobile workers support both settings at 56. Desktop 54 and 55 did
+// not include either endpoint, so a minor alone cannot identify those builds.
+const RuntimeAgentSelectionMinor = 56
+const RuntimeSettingsMinor = 56
+const GitConfirmationMinor = 56
+const QuestionReplyMinor = 57
+
+// Structured questions identify support on desktop 54 and 55. The mobile
+// branch first acquired them at 57.
+func SupportsQuestionReply(minor int) bool {
+	return minor == 54 || minor == 55 || minor >= QuestionReplyMinor
+}
 
 const RecoveryMinor = 52
 
 const GoalMinor = 51
 
+const SessionReloadMinor = 45
 const HookBatchMinor = 49
 const ScheduleMinor = 50
 
@@ -338,6 +350,42 @@ type RuntimeConfiguration struct {
 	Executable string                 `json:"executable"`
 }
 
+type RuntimeSettingsQuery struct {
+	HarnessID string `json:"harnessId"`
+	Revision  string `json:"revision,omitempty"`
+	Name      string `json:"name,omitempty"`
+}
+
+// RuntimeSettings lists environment names. A private value is only returned for an explicit name and revision.
+type RuntimeSettings struct {
+	Options     domain.RuntimeOptions       `json:"options"`
+	Support     domain.RuntimeOptionSupport `json:"support"`
+	Environment []string                    `json:"environment"`
+	Executable  string                      `json:"executable"`
+	Override    string                      `json:"override"`
+	Revision    string                      `json:"revision"`
+}
+
+type RuntimeSettingsChange struct {
+	Options     domain.RuntimeOptions   `json:"options"`
+	Environment []RuntimeVariableChange `json:"environment"`
+	HarnessID   string                  `json:"harnessId"`
+	Revision    string                  `json:"revision"`
+	Executable  string                  `json:"executable"`
+}
+
+// A nil Value keeps the previous named variable's value, including on rename.
+// A non-nil empty value explicitly saves an empty string.
+type RuntimeVariableChange struct {
+	Value        *string `json:"value,omitempty"`
+	Name         string  `json:"name"`
+	PreviousName string  `json:"previousName,omitempty"`
+}
+
+type RuntimePrivateValue struct {
+	Value string `json:"value"`
+}
+
 // ID identifies a single explicitly started authorization. Querying an unknown
 // ID must never restart it, including after worker restart or network loss.
 type SignInInput struct {
@@ -352,6 +400,13 @@ type SignInInput struct {
 type DeviceAgents struct {
 	Agents []RuntimeConfiguration `json:"agents"`
 }
+
+// RuntimeAgentSelection changes one Agent without resubmitting settings for other Agents.
+type RuntimeAgentSelection struct {
+	Enabled   *bool  `json:"enabled"`
+	HarnessID string `json:"harnessId"`
+}
+
 type AgentSetupResult struct {
 	Readiness domain.Readiness     `json:"readiness"`
 	Catalog   []domain.HarnessInfo `json:"catalog"`

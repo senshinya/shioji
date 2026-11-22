@@ -3,17 +3,19 @@ package transport
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"shioji/internal/protocol"
 	"strings"
 	"time"
+
+	"shioji/internal/protocol"
+	"shioji/internal/runtimebuild"
 )
 
 // Bootstrap installs only Shioji's signed developer worker, never Codex or
@@ -26,20 +28,46 @@ func (s SSH) bootstrap(ctx context.Context, binary string, command func(context.
 	if err := s.Validate(); err != nil {
 		return WorkerInfo{}, err
 	}
-	script, err := sshWorkerProbeScript(s.Worker, s.StateDirectory)
+	return BootstrapWorker(ctx, s.Worker, s.StateDirectory, func(ctx context.Context, remote string, input io.Reader, output, diagnostics io.Writer) (int, error) {
+		cmd, err := command(ctx, remote)
+		if err != nil {
+			return -1, err
+		}
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = input, output, diagnostics
+		err = cmd.Run()
+		return cmd.ProcessState.ExitCode(), err
+	}, func(ctx context.Context) (io.ReadCloser, string, error) {
+		if err := exec.CommandContext(ctx, "/usr/bin/codesign", "--verify", "--strict", binary).Run(); err != nil {
+			return nil, "", fmt.Errorf("worker 签名校验失败：%w", err)
+		}
+		digest, err := runtimebuild.Digest(binary)
+		if err != nil {
+			return nil, "", err
+		}
+		f, err := os.Open(binary)
+		return f, digest, err
+	})
+}
+
+// ErrWorkerMissing is returned only for the bootstrap probe's explicit
+// missing-service response after authenticating over SSH.
+var ErrWorkerMissing = errors.New("设备尚未安装执行服务")
+
+type WorkerBootstrapCommand func(ctx context.Context, command string, input io.Reader, output, diagnostics io.Writer) (exitCode int, err error)
+
+type WorkerArtifact func(context.Context) (content io.ReadCloser, sha256 string, err error)
+
+// BootstrapWorker reuses an existing owner. An installer is opened only when
+// the remote probe proves the service missing and the caller supplied one.
+func BootstrapWorker(ctx context.Context, worker, directory string, command WorkerBootstrapCommand, artifact WorkerArtifact) (WorkerInfo, error) {
+	script, err := sshWorkerProbeScript(worker, directory)
 	if err != nil {
 		return WorkerInfo{}, err
 	}
 	probe, cancel := context.WithTimeout(ctx, 10*time.Second)
-	cmd, err := command(probe, "/bin/sh -c "+shellQuote(script))
-	if err != nil {
-		cancel()
-		return WorkerInfo{}, err
-	}
 	var output, diagnostic bytes.Buffer
-	cmd.Stdout = &boundedWriter{w: &output, remaining: 16 << 10}
-	cmd.Stderr = &boundedWriter{w: &diagnostic, remaining: 8192}
-	err = cmd.Run()
+	code, err := command(probe, "/bin/sh -c "+shellQuote(script), nil,
+		&boundedWriter{w: &output, remaining: 16 << 10}, &boundedWriter{w: &diagnostic, remaining: 8192})
 	probeErr := probe.Err()
 	cancel()
 	if err == nil {
@@ -48,24 +76,23 @@ func (s SSH) bootstrap(ctx context.Context, binary string, command func(context.
 	if probeErr != nil {
 		return WorkerInfo{}, probeErr
 	}
-	var exit *exec.ExitError
-	if !errors.As(err, &exit) || exit.ExitCode() != 44 || output.String() != "shioji-worker-missing-v1\n" {
+	if code != 44 || output.String() != "shioji-worker-missing-v1\n" {
 		return WorkerInfo{}, fmt.Errorf("检查已有执行服务失败：%s (%w)", strings.TrimSpace(diagnostic.String()), err)
 	}
-	// Only an explicit missing-service result may enter deployment. A failed
-	// handshake, invalid signature, incompatible protocol or timeout may not.
-	deploy, finish := context.WithTimeout(ctx, 2*time.Minute)
-	defer finish()
-	ctx = deploy
-	if err := exec.CommandContext(ctx, "/usr/bin/codesign", "--verify", "--strict", binary).Run(); err != nil {
-		return WorkerInfo{}, fmt.Errorf("worker 签名校验失败：%w", err)
+	if artifact == nil {
+		return WorkerInfo{}, ErrWorkerMissing
 	}
-	data, err := os.ReadFile(binary)
+	ctx, finish := context.WithTimeout(ctx, 2*time.Minute)
+	defer finish()
+	data, digest, err := artifact(ctx)
 	if err != nil {
 		return WorkerInfo{}, err
 	}
-	sum := sha256.Sum256(data)
-	digest := hex.EncodeToString(sum[:])
+	defer data.Close()
+	decoded, err := hex.DecodeString(digest)
+	if err != nil || len(decoded) != 32 || hex.EncodeToString(decoded) != digest {
+		return WorkerInfo{}, errors.New("无效的执行服务摘要")
+	}
 	script = `set -eu
 umask 077
 [ "$(/usr/bin/uname -s)" = Darwin ] && [ "$(/usr/bin/uname -m)" = arm64 ] || { echo '需要 Apple Silicon macOS' >&2; exit 1; }
@@ -94,20 +121,15 @@ exec "$dest/shioji-worker" --ensure STATE_ARGUMENTS
 `
 	script = strings.ReplaceAll(script, "DIGEST", digest)
 	stateArgs := ""
-	if s.StateDirectory != "" {
-		stateArgs = "--state-dir " + shellQuote(s.StateDirectory)
+	if directory != "" {
+		stateArgs = "--state-dir " + shellQuote(directory)
 	}
 	script = strings.ReplaceAll(script, "STATE_ARGUMENTS", stateArgs)
-	cmd, err = command(ctx, "/bin/sh -c "+shellQuote(script))
-	if err != nil {
-		return WorkerInfo{}, err
-	}
 	output.Reset()
 	diagnostic.Reset()
-	cmd.Stdin = bytes.NewReader(data)
-	cmd.Stdout = &boundedWriter{w: &output, remaining: 16 << 10}
-	cmd.Stderr = &boundedWriter{w: &diagnostic, remaining: 8192}
-	if err = cmd.Run(); err != nil {
+	_, err = command(ctx, "/bin/sh -c "+shellQuote(script), data,
+		&boundedWriter{w: &output, remaining: 16 << 10}, &boundedWriter{w: &diagnostic, remaining: 8192})
+	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return WorkerInfo{}, errors.New("部署执行服务超时（2 分钟），请检查连接后重试")
 		}

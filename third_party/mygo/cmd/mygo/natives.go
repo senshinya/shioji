@@ -179,7 +179,12 @@ func (c *Config) packageDirs(goos, goarch string) ([]string, error) {
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("go list: %v\n%s", err, strings.TrimSpace(stderr.String()))
 	}
-	dirs := strings.Fields(out.String())
+	var dirs []string
+	for entry := range strings.Lines(out.String()) {
+		if dir := strings.TrimRight(entry, "\r\n"); dir != "" {
+			dirs = append(dirs, dir)
+		}
+	}
 	if c.deps == nil {
 		c.deps = map[string][]string{}
 	}

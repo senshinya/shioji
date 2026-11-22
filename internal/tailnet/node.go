@@ -46,22 +46,121 @@ type routeKey struct {
 	port          int
 }
 type Node struct {
-	inbound    *inboundForwarder
-	forwarding bool
-	staging    bool
-	directory  string
-	secret     func() ([]byte, error)
-	actions    chan Action
-	mu         sync.Mutex
-	server     *tsnet.Server
-	status     Snapshot
-	bridges    map[routeKey]*bridge
-	bridgeDir  string
+	inbound      *inboundForwarder
+	forwarding   bool
+	outboundOnly bool
+	staging      bool
+	directory    string
+	secret       func() ([]byte, error)
+	actions      chan Action
+	mu           sync.Mutex
+	server       *tsnet.Server
+	status       Snapshot
+	bridges      map[routeKey]*bridge
+	outbound     map[*outboundStream]routeKey
+	bridgeDir    string
 }
 
 func New(directory string, secret func() ([]byte, error)) *Node {
 	return &Node{directory: directory, secret: secret, actions: make(chan Action, 16), forwarding: true, bridges: map[routeKey]*bridge{}}
 }
+
+// NewOutboundNode is for control clients that have no inbound execution service.
+func NewOutboundNode(directory string, secret func() ([]byte, error)) *Node {
+	n := New(directory, secret)
+	n.outboundOnly = true
+	n.forwarding = false
+	return n
+}
+
+// DialPeer opens an authorized SSH transport directly through the embedded node.
+func (n *Node) DialPeer(ctx context.Context, peerID, address string) (net.Conn, error) {
+	dst, err := netip.ParseAddrPort(address)
+	if err != nil || dst.Port() == 0 || dst.Addr().Zone() != "" {
+		return nil, errors.New("Tailnet SSH 地址无效")
+	}
+	host := dst.Addr().String()
+	n.mu.Lock()
+	server, allowed := n.server, n.canDialPeerLocked(peerID, host)
+	n.mu.Unlock()
+	if server == nil || !allowed {
+		return nil, errors.New("Tailnet 设备不可达或地址已改变")
+	}
+	sys := server.Sys()
+	if sys == nil {
+		return nil, errors.New("内嵌网络尚未就绪")
+	}
+	dialer, _ := sys.Dialer.GetOK()
+	conn, err := dialNetstack(ctx, dialer, dst)
+	if err != nil {
+		return nil, err
+	}
+	n.mu.Lock()
+	allowed = n.server == server && n.canDialPeerLocked(peerID, host)
+	if allowed {
+		conn = n.trackOutboundLocked(conn, routeKey{peer: peerID, address: host, port: int(dst.Port())})
+	}
+	n.mu.Unlock()
+	if !allowed {
+		conn.Close()
+		return nil, errors.New("Tailnet 设备不可达或地址已改变")
+	}
+	return conn, nil
+}
+
+type outboundStream struct {
+	net.Conn
+	node *Node
+}
+
+func (s *outboundStream) Close() error {
+	s.node.mu.Lock()
+	delete(s.node.outbound, s)
+	s.node.mu.Unlock()
+	return s.Conn.Close()
+}
+
+func (n *Node) trackOutboundLocked(conn net.Conn, route routeKey) *outboundStream {
+	if n.outbound == nil {
+		n.outbound = make(map[*outboundStream]routeKey)
+	}
+	stream := &outboundStream{Conn: conn, node: n}
+	n.outbound[stream] = route
+	return stream
+}
+
+// Detach revoked connections under the same lock that publishes peer
+// visibility. Close the underlying streams after releasing that lock.
+func (n *Node) detachOutboundLocked() []net.Conn {
+	var retiring []net.Conn
+	for stream, route := range n.outbound {
+		if n.server != nil && n.canDialPeerLocked(route.peer, route.address) {
+			continue
+		}
+		delete(n.outbound, stream)
+		retiring = append(retiring, stream.Conn)
+	}
+	return retiring
+}
+
+func closeOutboundStreams(streams []net.Conn) {
+	for _, stream := range streams {
+		stream.Close()
+	}
+}
+
+func (n *Node) canDialPeerLocked(id, address string) bool {
+	if id == "" || n.status.State != "Running" {
+		return false
+	}
+	for _, peer := range n.status.Peers {
+		if peer.ID == id && peer.Address == address && peer.Online {
+			return true
+		}
+	}
+	return false
+}
+
 func (n *Node) Do(a Action) bool {
 	select {
 	case n.actions <- a:
@@ -77,7 +176,13 @@ func (n *Node) Snapshot() Snapshot {
 	s.Peers = append([]Peer(nil), s.Peers...)
 	return s
 }
-func snapshotFromStatus(st *ipnstate.Status, measurements map[string]*Measurement) Snapshot {
+
+type peerMeasurement struct {
+	address string
+	sample  *Measurement
+}
+
+func snapshotFromStatus(st *ipnstate.Status, measurements map[string]peerMeasurement) Snapshot {
 	s := Snapshot{State: st.BackendState}
 	if st.CurrentTailnet != nil {
 		s.Network = st.CurrentTailnet.Name
@@ -92,7 +197,11 @@ func snapshotFromStatus(st *ipnstate.Status, measurements map[string]*Measuremen
 		if p.ID == "" || p.ShareeNode || !p.InNetworkMap || len(p.TailscaleIPs) == 0 {
 			continue
 		}
-		s.Peers = append(s.Peers, Peer{ID: string(p.ID), Name: p.HostName, DNSName: strings.TrimSuffix(p.DNSName, "."), Address: p.TailscaleIPs[0].String(), OS: p.OS, Online: p.Online, Measurement: measurements[string(p.ID)]})
+		peer := Peer{ID: string(p.ID), Name: p.HostName, DNSName: strings.TrimSuffix(p.DNSName, "."), Address: p.TailscaleIPs[0].String(), OS: p.OS, Online: p.Online}
+		if observed := measurements[peer.ID]; observed.address == peer.Address {
+			peer.Measurement = observed.sample
+		}
+		s.Peers = append(s.Peers, peer)
 	}
 	sort.Slice(s.Peers, func(i, j int) bool {
 		if s.Peers[i].Online != s.Peers[j].Online {
@@ -174,20 +283,13 @@ func (n *Node) publish(s Snapshot, changed func(Snapshot)) {
 	s.InboundEnabled = n.forwarding
 	n.status = s
 	for key, b := range n.bridges {
-		allowed := false
-		if s.State == "Running" {
-			for _, p := range s.Peers {
-				if p.ID == key.peer && p.Address == key.address && p.Online {
-					allowed = true
-					break
-				}
-			}
-		}
-		if !allowed {
+		if !n.canDialPeerLocked(key.peer, key.address) {
 			b.Drop()
 		}
 	}
+	retiring := n.detachOutboundLocked()
 	n.mu.Unlock()
+	closeOutboundStreams(retiring)
 	changed(s)
 }
 func (n *Node) Run(ctx context.Context, changed func(Snapshot)) {
@@ -210,7 +312,7 @@ func (n *Node) run(ctx context.Context, changed func(Snapshot)) {
 		return
 	}
 	n.mu.Lock()
-	n.forwarding = intent.forwardingEnabled()
+	n.forwarding = !n.outboundOnly && intent.forwardingEnabled()
 	n.mu.Unlock()
 	hostname := intent.Hostname
 	if hostname == "" {
@@ -221,7 +323,7 @@ func (n *Node) run(ctx context.Context, changed func(Snapshot)) {
 	operation := ""
 	operationError := ""
 	login := false
-	measurements := map[string]*Measurement{}
+	measurements := map[string]peerMeasurement{}
 	var retry startupRetry
 	stopped := func() Snapshot {
 		state := "NotStarted"
@@ -329,6 +431,7 @@ func (n *Node) run(ctx context.Context, changed func(Snapshot)) {
 				// A new browser enrollment gets its own provisional keys. A canceled URL
 				// can never authorize a later attempt or overwrite the old enrolled node.
 				if err = n.retirePending(); err == nil {
+					clear(measurements)
 					lc = nil
 					hostname = a.Hostname
 					if hostname == "" {
@@ -397,6 +500,7 @@ func (n *Node) run(ctx context.Context, changed func(Snapshot)) {
 			case "logout":
 				retry.clear()
 				login = false
+				clear(measurements)
 				if lc != nil {
 					err = lc.Logout(call)
 				}
@@ -416,6 +520,9 @@ func (n *Node) run(ctx context.Context, changed func(Snapshot)) {
 				last = stopped()
 				n.publish(last, changed)
 			case "incoming-on", "incoming-off":
+				if n.outboundOnly {
+					continue
+				}
 				enabled := a.Kind == "incoming-on"
 				next := intent
 				next.Forwarding = &enabled
@@ -464,7 +571,7 @@ func (n *Node) run(ctx context.Context, changed func(Snapshot)) {
 						continue
 					}
 					m := measurements[p.ID]
-					if m != nil && time.Since(m.ObservedAt) < 15*time.Second {
+					if m.address == p.Address && m.sample != nil && time.Since(m.sample.ObservedAt) < 15*time.Second {
 						continue
 					}
 					call, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
@@ -480,7 +587,7 @@ func (n *Node) run(ctx context.Context, changed func(Snapshot)) {
 										}
 									}
 								}
-								measurements[p.ID] = sample
+								measurements[p.ID] = peerMeasurement{address: p.Address, sample: sample}
 							}
 						}
 					}
@@ -564,6 +671,7 @@ func (n *Node) Close() {
 		n.inbound = nil
 	}
 	n.server = nil
+	retiring := n.detachOutboundLocked()
 	for _, b := range n.bridges {
 		b.Close()
 	}
@@ -571,6 +679,7 @@ func (n *Node) Close() {
 	dir := n.bridgeDir
 	n.bridgeDir = ""
 	n.mu.Unlock()
+	closeOutboundStreams(retiring)
 	if s != nil {
 		s.Close()
 	}

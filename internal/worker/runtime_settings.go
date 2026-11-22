@@ -95,16 +95,6 @@ func (s *Server) applyRuntimeOptions(id string, next harness.Adapter, options *d
 func (s *Server) configureRuntime(in protocol.RuntimeConfiguration) (domain.Readiness, error) {
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
-	path := strings.TrimSpace(in.Executable)
-	if path != "" {
-		if !filepath.IsAbs(path) || len(path) > 4096 || strings.ContainsAny(path, "\x00\r\n") {
-			return domain.Readiness{}, errors.New("请输入该设备上的绝对可执行文件路径")
-		}
-		st, e := os.Stat(path)
-		if e != nil || !st.Mode().IsRegular() || st.Mode().Perm()&0111 == 0 {
-			return domain.Readiness{}, errors.New("该设备上不存在可执行的普通文件")
-		}
-	}
 	provider, ok := s.adapter(in.HarnessID).(harness.InstallationProvider)
 	if !ok {
 		return domain.Readiness{}, harness.Unsupported("configure-runtime")
@@ -114,14 +104,32 @@ func (s *Server) configureRuntime(in protocol.RuntimeConfiguration) (domain.Read
 		return domain.Readiness{}, errCatalogRefreshing
 	}
 	defer gate.Unlock()
+	if err := s.applyRuntimeConfiguration(in, provider); err != nil {
+		return domain.Readiness{}, err
+	}
+	return s.runtimeReadiness(), nil
+}
+
+// Caller holds dispatchMu and the Agent catalog's write gate.
+func (s *Server) applyRuntimeConfiguration(in protocol.RuntimeConfiguration, provider harness.InstallationProvider) error {
+	path := strings.TrimSpace(in.Executable)
+	if path != "" {
+		if !filepath.IsAbs(path) || len(path) > 4096 || strings.ContainsAny(path, "\x00\r\n") {
+			return errors.New("请输入该设备上的绝对可执行文件路径")
+		}
+		st, e := os.Stat(path)
+		if e != nil || !st.Mode().IsRegular() || st.Mode().Perm()&0111 == 0 {
+			return errors.New("该设备上不存在可执行的普通文件")
+		}
+	}
 	next, err := provider.WithExecutable(path)
 	if err != nil {
-		return domain.Readiness{}, err
+		return err
 	}
 	options := cloneRuntimeOptions(s.runtimeOptions)
 	next, err = s.applyRuntimeOptions(in.HarnessID, next, in.Options)
 	if err != nil {
-		return domain.Readiness{}, err
+		return err
 	}
 	if in.Options != nil {
 		options[in.HarnessID] = *in.Options
@@ -134,13 +142,13 @@ func (s *Server) configureRuntime(in protocol.RuntimeConfiguration) (domain.Read
 	saved[in.HarnessID] = path
 	data, err := json.Marshal(runtimeSettingsDocument{Version: 1, Paths: saved, Selected: s.selectedHarnesses, Options: options})
 	if err != nil {
-		return domain.Readiness{}, err
+		return err
 	}
 	if len(data) > 256<<10 {
-		return domain.Readiness{}, errors.New("运行环境配置过大")
+		return errors.New("运行环境配置过大")
 	}
 	if err = writeDeviceFile(s.config.Directory, "runtime-settings.json", data); err != nil {
-		return domain.Readiness{}, err
+		return err
 	}
 	s.runtimeMu.Lock()
 	s.runtimeSettings = saved
@@ -149,7 +157,7 @@ func (s *Server) configureRuntime(in protocol.RuntimeConfiguration) (domain.Read
 	s.adapters[in.HarnessID] = next
 	s.runtimeMu.Unlock()
 	if err = s.markCatalogRefreshing(in.HarnessID, ""); err != nil {
-		return domain.Readiness{}, err
+		return err
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
 	defer cancel()
@@ -157,7 +165,7 @@ func (s *Server) configureRuntime(in protocol.RuntimeConfiguration) (domain.Read
 	s.wakeQueue()
 	s.recoveryRefresh.Add(1)
 	s.wakeRecovery()
-	return s.runtimeReadiness(), nil
+	return nil
 }
 func writeDeviceFile(dir, name string, data []byte) error {
 	f, err := os.CreateTemp(dir, ".device-*")
@@ -276,14 +284,54 @@ func (s *Server) configureAgents(in protocol.DeviceAgents) (protocol.AgentSetupR
 	}
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
+	selected := make([]string, 0, len(in.Agents))
+	for _, entry := range in.Agents {
+		selected = append(selected, entry.HarnessID)
+	}
+	return s.applyAgentSelection(in.Agents, selected, "")
+}
+
+func (s *Server) selectRuntimeAgent(in protocol.RuntimeAgentSelection) (protocol.AgentSetupResult, error) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	gate := s.catalogGates[in.HarnessID]
+	if gate == nil || in.Enabled == nil {
+		return protocol.AgentSetupResult{}, errors.New("请选择适用于所属设备的 Agent 和启用状态")
+	}
+	if s.agentEnabled(in.HarnessID) == *in.Enabled {
+		if !gate.TryRLock() {
+			return protocol.AgentSetupResult{}, errCatalogRefreshing
+		}
+		defer gate.RUnlock()
+		return s.agentSetupResult(), nil
+	}
+	selected := make([]string, 0, len(s.adapterOrder))
+	for _, id := range s.adapterOrder {
+		enabled := s.agentEnabled(id)
+		if id == in.HarnessID {
+			enabled = *in.Enabled
+		}
+		if enabled {
+			selected = append(selected, id)
+		}
+	}
+	var entries []protocol.RuntimeConfiguration
+	if *in.Enabled {
+		entries = append(entries, protocol.RuntimeConfiguration{HarnessID: in.HarnessID, Executable: s.runtimeSettings[in.HarnessID]})
+	}
+	return s.applyAgentSelection(entries, selected, in.HarnessID)
+}
+
+// The caller holds dispatchMu. Catalog gates protect the settings transaction
+// while catalog startup temporarily releases dispatchMu.
+func (s *Server) applyAgentSelection(entries []protocol.RuntimeConfiguration, selected []string, changedAgent string) (protocol.AgentSetupResult, error) {
 	candidates := map[string]harness.Adapter{}
 	options := cloneRuntimeOptions(s.runtimeOptions)
 	paths := map[string]string{}
 	for id, path := range s.runtimeSettings {
 		paths[id] = path
 	}
-	selected := []string{}
-	for _, entry := range in.Agents {
+	for _, entry := range entries {
 		if _, duplicate := candidates[entry.HarnessID]; duplicate {
 			return protocol.AgentSetupResult{}, errors.New("Agent 不能重复选择")
 		}
@@ -315,7 +363,6 @@ func (s *Server) configureAgents(in protocol.DeviceAgents) (protocol.AgentSetupR
 
 		candidates[entry.HarnessID] = next
 		paths[entry.HarnessID] = path
-		selected = append(selected, entry.HarnessID)
 	}
 	var unlock []func()
 	defer func() {
@@ -358,7 +405,8 @@ func (s *Server) configureAgents(in protocol.DeviceAgents) (protocol.AgentSetupR
 			cancel()
 		}
 	}()
-	for _, id := range selected {
+	for _, entry := range entries {
+		id := entry.HarnessID
 		if e := s.markCatalogRefreshing(id, ""); e != nil {
 			return protocol.AgentSetupResult{}, e
 		}
@@ -387,7 +435,7 @@ func (s *Server) configureAgents(in protocol.DeviceAgents) (protocol.AgentSetupR
 	s.runtimeMu.Unlock()
 	committed = true
 	for _, id := range s.adapterOrder {
-		if !s.agentEnabled(id) {
+		if (changedAgent == "" || changedAgent == id) && !s.agentEnabled(id) {
 			if r := s.catalogRuntime(id); r != nil {
 				ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 				r.Close(ctx)
@@ -398,8 +446,11 @@ func (s *Server) configureAgents(in protocol.DeviceAgents) (protocol.AgentSetupR
 	s.wakeQueue()
 	s.recoveryRefresh.Add(1)
 	s.wakeRecovery()
-	ready := s.runtimeReadiness()
-	return protocol.AgentSetupResult{Ready: true, Readiness: ready, Catalog: s.runtimeProfiles(nil, true).Harnesses}, nil
+	return s.agentSetupResult(), nil
+}
+
+func (s *Server) agentSetupResult() protocol.AgentSetupResult {
+	return protocol.AgentSetupResult{Ready: true, Readiness: s.runtimeReadiness(), Catalog: s.runtimeProfiles(nil, true).Harnesses}
 }
 
 func cloneRuntimeOptions(source map[string]domain.RuntimeOptions) map[string]domain.RuntimeOptions {

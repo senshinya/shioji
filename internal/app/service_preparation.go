@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"shioji/internal/transport"
@@ -11,6 +12,11 @@ import (
 )
 
 type ServicePreparationPhase string
+
+const (
+	AgentSetupWorkerMinor              = 16
+	ServicePreparationObservationLimit = 30 * time.Second
+)
 
 const (
 	ServiceStaging       ServicePreparationPhase = "staging"
@@ -57,34 +63,28 @@ func (p ServicePreparation) NextAction() string {
 	return ""
 }
 
-func planServicePreparation(info transport.WorkerInfo, candidate domain.WorkerBuild) (*ServicePreparation, error) {
+func (p ServicePreparation) valid() bool {
+	return p.ID != "" && p.Info.DeviceID != "" && p.Info.Build != nil && p.Info.Build.BuildID != "" && p.Candidate.BuildID != ""
+}
+
+func PlanServicePreparation(info transport.WorkerInfo, candidate domain.WorkerBuild) (*ServicePreparation, error) {
 	// Adding a compatible device is a connection, not consent to upgrade it.
 	// Optional worker updates remain in the device's explicit update action.
-	if info.Minor >= 16 {
+	if info.Minor >= AgentSetupWorkerMinor {
 		return nil, nil
 	}
 	current := info.Build
-	required := info.Minor < 16
 	if current == nil || current.BuildID == "" || !current.SafeUpdate {
-		if required {
-			return nil, errors.New("设备服务未提供安全更新能力，请先更新设备服务")
-		}
-		return nil, nil
+		return nil, errors.New("设备服务未提供安全更新能力，请先更新设备服务")
 	}
 	if current.BuildID == candidate.BuildID {
 		return nil, nil
 	}
 	if current.BuiltAt > 0 && candidate.BuiltAt > 0 && current.BuiltAt > candidate.BuiltAt {
-		if required {
-			return nil, errors.New("设备正在使用较新服务，但未提供所需的 Agent 配置能力")
-		}
-		return nil, nil
+		return nil, errors.New("设备正在使用较新服务，但未提供所需的 Agent 配置能力")
 	}
 	if candidate.BuildID == "" || !candidate.SafeUpdate || candidate.Schema < current.Schema {
 		return nil, errors.New("随应用提供的服务无法安全更新当前设备")
-	}
-	if !required && (current.BuiltAt == 0 || candidate.BuiltAt <= current.BuiltAt) {
-		return nil, nil
 	}
 	return &ServicePreparation{ID: domain.NewID(), Info: info, Candidate: candidate, Phase: ServiceStaging}, nil
 }
@@ -92,7 +92,7 @@ func planServicePreparation(info transport.WorkerInfo, candidate domain.WorkerBu
 // A successful handshake alone is insufficient: the accepted target build (or
 // a compatible newer replacement) must actually be running in the same directory.
 func (p ServicePreparation) ReadyAt(info transport.WorkerInfo) bool {
-	if info.DeviceID != p.Info.DeviceID || info.Directory != p.Info.Directory || info.Minor < 16 || info.Build == nil {
+	if info.DeviceID != p.Info.DeviceID || info.Directory != p.Info.Directory || info.Minor < AgentSetupWorkerMinor || info.Build == nil || p.Info.Build == nil {
 		return false
 	}
 	actual := info.Build
@@ -128,17 +128,30 @@ func updatePreparedService(ctx context.Context, c *protocol.Client, p ServicePre
 
 func (c *Controller) prepareService(ctx context.Context, in PrepareService) (ServicePreparationResult, error) {
 	p := in.Preparation
+	if !p.valid() {
+		return ServicePreparationResult{Preparation: p}, errors.New("设备服务准备记录不完整")
+	}
+	ssh, err := c.TailnetSSH(p.SSH)
+	if err != nil {
+		return ServicePreparationResult{Preparation: p}, err
+	}
+	ssh.Worker, ssh.StateDirectory = p.Info.Worker, p.Info.Directory
+	return RunServicePreparation(ctx, in, ssh.Dial, func(ctx context.Context) (domain.WorkerBuild, error) {
+		return ssh.StageWorker(ctx, c.fleet.workerBinary)
+	})
+}
+
+// RunServicePreparation uses an authenticated route and its signed staging
+// implementation. The preparation protocol and build checks are shared by
+// OpenSSH on Mac and the native SSH client on mobile.
+func RunServicePreparation(ctx context.Context, in PrepareService, dial func(context.Context) (net.Conn, error),
+	stage func(context.Context) (domain.WorkerBuild, error)) (ServicePreparationResult, error) {
+	p := in.Preparation
 	result := ServicePreparationResult{Preparation: p}
-	if p.ID == "" || p.Info.DeviceID == "" || p.Info.Build == nil || p.Info.Build.BuildID == "" || p.Candidate.BuildID == "" {
+	if !p.valid() {
 		return result, errors.New("设备服务准备记录不完整")
 	}
-	ssh, routeErr := c.TailnetSSH(p.SSH)
-	if routeErr != nil {
-		return result, routeErr
-	}
-	ssh.Worker = p.Info.Worker
-	ssh.StateDirectory = p.Info.Directory
-	conn, err := ssh.Dial(ctx)
+	conn, err := dial(ctx)
 	if err != nil {
 		return result, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
 	}
@@ -156,7 +169,7 @@ func (c *Controller) prepareService(ctx context.Context, in PrepareService) (Ser
 		if client.Worker == nil || client.Worker.BuildID != p.Info.Build.BuildID {
 			return result, &protocol.RemoteError{Code: "notSent", Message: "服务版本已改变，请重新检查设备"}
 		}
-		candidate, err := ssh.StageWorker(ctx, c.fleet.workerBinary)
+		candidate, err := stage(ctx)
 		if err != nil {
 			return result, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
 		}
@@ -194,7 +207,7 @@ func (c *Controller) prepareService(ctx context.Context, in PrepareService) (Ser
 			return result, nil
 		}
 		result.Preparation.Phase = ServiceObserving
-		if !p.RequestedAt.IsZero() && time.Since(p.RequestedAt) > 30*time.Second {
+		if !p.RequestedAt.IsZero() && time.Since(p.RequestedAt) > ServicePreparationObservationLimit {
 			result.Preparation.Phase = ServiceInterrupted
 		}
 		return result, nil

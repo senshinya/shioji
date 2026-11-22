@@ -824,6 +824,13 @@ func (v *view) CanEditCommand(name string) bool {
 	return false
 }
 
+// KeepsFocusAtPoint lets an inline action open without first activating the
+// composer and moving the action when the software keyboard appears.
+func (v *view) KeepsFocusAtPoint(point ui.Point) bool {
+	a, _ := v.attachmentAt(point.X, point.Y)
+	return a != nil && a.OnClick != nil
+}
+
 // attachmentAt uses the shaped object rectangles, including wrapped lines.
 func (v *view) attachmentAt(x, y float32) (*Attachment, ui.Rect) {
 	cx, cy := v.contentPoint(x, y)

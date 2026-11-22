@@ -57,6 +57,9 @@ type Options struct {
 	// AnchorVersion scrolls to Anchor again when it changes, for the same
 	// heading asked for twice.
 	AnchorVersion uint64
+	// AnchorScroll controls how the target is brought into view. The zero
+	// value uses the nearest visible position.
+	AnchorScroll ui.ScrollIntoViewOptions
 	// AnchorBlock, when set, finds the block an anchor names, given the
 	// view's document and the anchor without its "#", for Anchor and for
 	// the links to #an-anchor the view follows itself: a notes app finds
@@ -449,7 +452,7 @@ func (st *viewState) blocks(c *ui.Context, parent int, tight bool, base spanStyl
 			el.Margin(top, 0, 0, 0)
 		}
 		if st.scrollTo == j {
-			el.ScrollIntoView()
+			el.ScrollIntoView(st.o.AnchorScroll)
 			st.scrollTo = -1
 		}
 		prevHeading = 0
@@ -863,7 +866,7 @@ func (st *viewState) list(c *ui.Context, i int, base spanStyle) ui.Element {
 			}
 			if st.scrollTo == j {
 				// An item an anchor named (Options.AnchorBlock).
-				row.ScrollIntoView()
+				row.ScrollIntoView(st.o.AnchorScroll)
 				st.scrollTo = -1
 			}
 			num := n
@@ -1013,7 +1016,7 @@ func (st *viewState) footnotes(c *ui.Context) {
 		num := st.notes[parser.NormalizeLabel(b.Label())]
 		row := ui.Row(c).AlignItems(ui.Start).Margin(th.em(0.25), 0, 0, 0)
 		if st.scrollTo == i {
-			row.ScrollIntoView()
+			row.ScrollIntoView(st.o.AnchorScroll)
 			st.scrollTo = -1
 		}
 		row.Children(func() {

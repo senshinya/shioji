@@ -33,7 +33,7 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
     var isSecureTextEntry = false
     var textContentType: UITextContentType! = nil
 
-    private var elements: [AccessElement]?
+    private var elements: [Any]?
 
     /// What Go's renderer adds its layer to, from its thread. The view's own
     /// layer is UIKit's, which allows changes on the main thread alone.
@@ -178,6 +178,11 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
         guard let i = held.firstIndex(where: { $0.window === w }) else { return }
         held[i].clip.removeFromSuperview()
         held.remove(at: i)
+        elements = nil
+    }
+
+    func embeddedAccessibilityView(id: Int) -> UIView? {
+        held.first(where: { $0.window.id == id })?.window
     }
 
     func placeViews(_ places: [UInt8]) {
@@ -282,8 +287,10 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
             let handled = Go.answer(Event.key(id: id, down: down, key: name, text: k.characters, mods: mods, repeated: false)) {
                 KeyReply(&$0).handled
             } ?? false
-            // Keys typing text while editing reach insertText too.
-            if !handled && !(editing && SurfaceWindow.keyNames[k.keyCode] == nil) { rest.insert(p) }
+            // Text-producing keys reach insertText too. Unhandled Command
+            // shortcuts still need to reach the enclosing UIKit responders.
+            let typing = editing && !k.modifierFlags.contains(.command) && SurfaceWindow.keyNames[k.keyCode] == nil
+            if !handled && !typing { rest.insert(p) }
         }
         return rest
     }
@@ -683,11 +690,11 @@ final class AccessElement: UIAccessibilityElement {
     // platform.AccessRole and its states, as Go numbers them.
     private enum Role: Int {
         case group = 0, text, button, link, checkBox, radio, toggle, slider, progress, textField, image
-        case tab = 18, toggleButton = 31, menuItem = 40, heading = 43
+        case tab = 18, menuButton = 28, toggleButton = 31, menuItem = 40, heading = 43
     }
 
-    static func decode(_ b: [UInt8], in surface: SurfaceWindow) -> [AccessElement] {
-        var out: [AccessElement] = []
+    static func decode(_ b: [UInt8], in surface: SurfaceWindow) -> [Any] {
+        var out: [Any] = []
         b.withUnsafeBytes { buf in
             var r = WireReader(buf)
             while r.at < buf.count {
@@ -701,13 +708,18 @@ final class AccessElement: UIAccessibilityElement {
                 let states = r.int()
                 e.actions = r.int()
                 let level = r.int()
+                let embeddedID = r.int()
+                if embeddedID != 0 {
+                    if let view = surface.embeddedAccessibilityView(id: embeddedID) { out.append(view) }
+                    continue
+                }
                 e.accessibilityLabel = label
                 e.accessibilityValue = value.isEmpty ? nil : value
                 e.accessibilityHint = hint.isEmpty ? nil : hint
                 e.accessibilityFrameInContainerSpace = e.box
                 var traits: UIAccessibilityTraits = []
                 switch Role(rawValue: role) {
-                case .button, .toggleButton, .menuItem, .tab, .checkBox, .radio, .toggle: traits.insert(.button)
+                case .button, .menuButton, .toggleButton, .menuItem, .tab, .checkBox, .radio, .toggle: traits.insert(.button)
                 case .link: traits.insert(.link)
                 case .slider: traits.insert(.adjustable)
                 case .image: traits.insert(.image)

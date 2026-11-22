@@ -208,7 +208,7 @@ func (s *surface) UpdateAccessibility(tree *platform.AccessTree) {
 	if !changed {
 		for i := range tree.Nodes {
 			a, b := &old.Nodes[i], &tree.Nodes[i]
-			if a.ID != b.ID || a.Label != b.Label || a.Value != b.Value || a.Bounds != b.Bounds || a.States != b.States ||
+			if a.ID != b.ID || a.Label != b.Label || a.Value != b.Value || a.Bounds != b.Bounds || a.States != b.States || a.WebView != b.WebView ||
 				a.Now != b.Now || a.Min != b.Min || a.Max != b.Max || a.Actions != b.Actions || a.Description != b.Description {
 				changed = true
 				break
@@ -540,6 +540,13 @@ func (s *surface) accessTree() []byte {
 		w.Int(int(n.States))
 		w.Int(int(n.Actions))
 		w.Int(n.Level)
+		if runtime.GOOS == "ios" {
+			id := 0
+			if view, ok := n.WebView.(*window); ok {
+				id = view.id
+			}
+			w.Int(id)
+		}
 	}
 	return w.Buf
 }

@@ -436,7 +436,7 @@ func (v *View) conversationStatuses(c *n.Context) []conversationStatus {
 		} else {
 			actions = append(actions, device)
 		}
-		out = append(out, conversationStatus{id: "connection", title: title, body: body, icon: recoveryIcon, priority: 5, actions: actions})
+		out = append(out, conversationStatus{id: "connection", title: title, body: body, details: m.ConnectionError, icon: recoveryIcon, priority: 5, actions: actions})
 	}
 	if title, details := v.agentBlocker(); title != "" {
 		out = append(out, conversationStatus{id: "runtime", title: title, details: details, icon: feedbackInfo, priority: 5, actions: []statusAction{{label: "打开 Agent 设置", run: func(*n.Context) {

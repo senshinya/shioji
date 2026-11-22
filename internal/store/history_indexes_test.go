@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"shioji/internal/domain"
 )
 
 func TestHistoryIndexesAreAvailableAfterReopeningExistingStore(t *testing.T) {
@@ -18,19 +20,38 @@ func TestHistoryIndexesAreAvailableAfterReopeningExistingStore(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	project, err := s.CreateWorkspace("旧工作区", []string{t.TempDir()})
+	if err != nil {
+		s.Close()
+		t.Fatal(err)
+	}
+	input, err := s.Accept(domain.Submission{OperationID: "existing", WorkspaceID: project.ID, Text: "消息已保存在旧数据库里", Config: domain.RunConfig{Model: "test"}})
+	if err != nil {
+		s.Close()
+		t.Fatal(err)
+	}
+	work := domain.WorkActivity{ID: "existing-work", Kind: "background", TurnID: "existing-turn", State: "running"}
+	if _, err := s.Apply(input.SessionID, domain.Event{Type: "work.upsert", Work: &work}); err != nil {
+		s.Close()
+		t.Fatal(err)
+	}
 	s.Close()
 	s, err = Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	page, err := s.SessionHistory(domain.HistoryQuery{SessionID: input.SessionID, Rounds: 1})
+	if err != nil || len(page.Items) != 1 || page.Items[0].Text != "消息已保存在旧数据库里" || len(page.Works) != 1 || page.Works[0].ID != work.ID {
+		t.Fatalf("reopening the store must preserve the history and its work roster: %+v, %v", page, err)
+	}
 	for _, tt := range []struct {
 		index string
 		query string
 		args  []any
 	}{
-		{"works_history_roster", workRosterSQL, []any{"session"}},
-		{"items_history_round_starts", `SELECT position FROM items WHERE session_id=? AND ` + historyRoundStartSQL + ` AND position<=? ORDER BY position DESC LIMIT ?`, []any{"session", 10000, 21}},
+		{"works_history_roster", workRosterSQL, []any{input.SessionID}},
+		{"items_history_round_starts", `SELECT position FROM items WHERE session_id=? AND ` + historyRoundMarkerSQL + ` AND position<=? ORDER BY position DESC LIMIT ?`, []any{input.SessionID, 10000, 21}},
 	} {
 		t.Run(tt.index, func(t *testing.T) {
 			rows, err := s.db.Query("EXPLAIN QUERY PLAN "+tt.query, tt.args...)

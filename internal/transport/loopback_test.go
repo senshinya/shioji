@@ -37,7 +37,7 @@ func TestLoopbackForwardCarriesCallbackBytesAndReleasesBothLocalAddresses(t *tes
 	endpoint := domain.LoopbackEndpoint{Host: "localhost", Port: freeCallbackPort(t)}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	forward, err := forwardLoopback(ctx, endpoint, func(ctx context.Context) (net.Conn, error) {
+	forward, err := ForwardLoopback(ctx, endpoint, func(ctx context.Context) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "tcp", strings.TrimPrefix(server.URL, "http://"))
 	})
 	if err != nil {
@@ -71,7 +71,7 @@ func TestLoopbackForwardCarriesCallbackBytesAndReleasesBothLocalAddresses(t *tes
 }
 func TestLoopbackForwardRejectsNonLoopbackAndOccupiedPorts(t *testing.T) {
 	for _, host := range []string{"0.0.0.0", "192.168.7.119", "example.test"} {
-		if _, err := forwardLoopback(context.Background(), domain.LoopbackEndpoint{Host: host, Port: 1455}, nil); err == nil {
+		if _, err := ForwardLoopback(context.Background(), domain.LoopbackEndpoint{Host: host, Port: 1455}, nil); err == nil {
 			t.Fatal("non-loopback accepted", host)
 		}
 	}
@@ -80,7 +80,7 @@ func TestLoopbackForwardRejectsNonLoopbackAndOccupiedPorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer occupied.Close()
-	if _, err = forwardLoopback(context.Background(), domain.LoopbackEndpoint{Host: "localhost", Port: occupied.Addr().(*net.TCPAddr).Port}, nil); err == nil {
+	if _, err = ForwardLoopback(context.Background(), domain.LoopbackEndpoint{Host: "localhost", Port: occupied.Addr().(*net.TCPAddr).Port}, nil); err == nil {
 		t.Fatal("occupied callback port replaced")
 	}
 }

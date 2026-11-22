@@ -4,6 +4,7 @@ import (
 	"github.com/egoist/mygo/internal/scene"
 	"math"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/egoist/mygo/internal/platform"
@@ -152,6 +153,7 @@ type touchPan struct {
 	// textBefore is the input with the focus as it went down, and selBefore
 	// its selection then.
 	textBefore uint64
+	textTarget uint64
 	selBefore  platform.TextRange
 	// samples are its last positions, for its speed as it lifts.
 	samples [6]touchSample
@@ -189,11 +191,21 @@ func (rt *engine) touchEvent(ev platform.SurfaceEvent, x, y float32) bool {
 		if s := rt.states[rt.focused]; s != nil && s.textAdapter != nil {
 			t.selBefore = s.textAdapter.Selection().Range
 		}
+		chain := rt.hitChain(x, y)
+		for _, id := range chain {
+			if s := rt.states[id]; s != nil && s.textAdapter != nil {
+				t.textTarget = id
+				break
+			}
+		}
 		if rt.flinging.on {
-			// A finger stops content flinging, and taps nothing.
+			// A tap inside moving content stops that scroll. A separate
+			// button, including a sibling overlay, still receives its tap.
 			rt.flinging.on = false
-			t.swallow = true
-			return true
+			if rt.flinging.target == 0 || slices.Contains(chain, rt.flinging.target) {
+				t.swallow = true
+				return true
+			}
 		}
 		t.holds = rt.longPressTarget(x, y)
 		if rt.overScroller(x, y) {
@@ -356,10 +368,9 @@ func (rt *engine) nearestPressable(x, y float32) (dx, dy float32) {
 	takes := func(px, py float32) bool {
 		for _, id := range rt.hitChain(px, py) {
 			s := rt.states[id]
-			if s == nil || s.flags&flagDisabled != 0 {
-				continue
+			if s != nil && s.flags&interactive != 0 && s.flags&flagDisabled == 0 {
+				return true
 			}
-			return s.flags&interactive != 0
 		}
 		return false
 	}
@@ -417,6 +428,9 @@ func (rt *engine) afterTap(was *touchPan) {
 	s := rt.states[rt.focused]
 	if s == nil || s.textAdapter == nil {
 		rt.touchText.id = 0
+		return
+	}
+	if was.textTarget != s.id {
 		return
 	}
 	rt.textTapped(s, was.textBefore == rt.focused, was.selBefore)

@@ -89,8 +89,15 @@ func measureText(ctx, _ uintptr, _ uintptr, count uintptr, values uintptr, _ uin
 	text, err := jsText(ctx, args[0])
 	size := jsc.number(ctx, args[1], nil)
 	style := jsc.number(ctx, args[2], nil)
-	if err != nil || len(text) > MaxSource || math.IsNaN(size) || math.IsInf(size, 0) || size <= 0 || size > 128 || math.IsNaN(style) || math.IsInf(style, 0) {
+	if err != nil {
 		return jsc.makeNumber(ctx, 0)
+	}
+	return jsc.makeNumber(ctx, diagramTextWidth(text, size, style))
+}
+
+func diagramTextWidth(text string, size, style float64) float64 {
+	if len(text) > MaxSource || math.IsNaN(size) || math.IsInf(size, 0) || size <= 0 || size > 128 || math.IsNaN(style) || math.IsInf(style, 0) {
+		return 0
 	}
 	font := n.Font{Family: diagramFont, Size: float32(size), Weight: 400, Italic: int(style)&2 != 0}
 	if int(style)&1 != 0 {
@@ -103,7 +110,7 @@ func measureText(ctx, _ uintptr, _ uintptr, count uintptr, values uintptr, _ uin
 	for _, g := range n.Shape(text, font) {
 		width = max(width, g.X+g.Advance)
 	}
-	return jsc.makeNumber(ctx, float64(width))
+	return float64(width)
 }
 
 func evaluatePele(req Request) (string, error) {

@@ -113,3 +113,7 @@ coverage.out
 
 # Intermediate macOS icon sizes; the selected source and final ICNS stay versioned.
 /packaging/assets/*.iconset/
+
+/cmd/shioji-mobile/resources/worker-macos-arm64.data
+/cmd/shioji-mobile/resources/worker-runtime-macos-arm64.data
+/cmd/shioji-mobile/resources/THIRD_PARTY_NOTICES.json

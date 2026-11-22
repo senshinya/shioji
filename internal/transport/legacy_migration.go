@@ -16,7 +16,15 @@ import (
 )
 
 func migrationArguments(directory, action string, in domain.WorkerMigrationInput) ([]string, error) {
-	if !filepath.IsAbs(directory) || strings.ContainsAny(directory, "\x00\r\n") || in.ID == "" || in.DeviceID == "" {
+	if !filepath.IsAbs(directory) || strings.ContainsAny(directory, "\x00\r\n") {
+		return nil, errors.New("迁移的设备、目录或操作标识不完整")
+	}
+	args, err := legacyMigrationArguments(action, in)
+	return append([]string{"--state-dir", directory}, args...), err
+}
+
+func legacyMigrationArguments(action string, in domain.WorkerMigrationInput) ([]string, error) {
+	if in.ID == "" || in.DeviceID == "" {
 		return nil, errors.New("迁移的设备、目录或操作标识不完整")
 	}
 	if action != "start" && action != "status" && action != "resume" {
@@ -25,7 +33,7 @@ func migrationArguments(directory, action string, in domain.WorkerMigrationInput
 	if action != "status" && in.OwnerRef == "" {
 		return nil, errors.New("请重新核对旧服务身份")
 	}
-	return []string{"--state-dir", directory, "--legacy-migration", action, "--migration-id", in.ID, "--migration-device", in.DeviceID, "--migration-owner", in.OwnerRef}, nil
+	return []string{"--legacy-migration", action, "--migration-id", in.ID, "--migration-device", in.DeviceID, "--migration-owner", in.OwnerRef}, nil
 }
 func decodeWorkerMigration(output []byte, in domain.WorkerMigrationInput) (domain.WorkerMigrationStatus, error) {
 	var state domain.WorkerMigrationStatus
@@ -146,4 +154,44 @@ func (s SSH) InspectWorker(ctx context.Context, expected string) (WorkerInfo, er
 		return info, errors.New("设备身份已改变")
 	}
 	return info, nil
+}
+
+// InspectLegacyMigration reads the old owner and its operation through the
+// staged, verified helper on the authenticated route. It never starts a worker.
+func (s RemoteWorker) InspectLegacyMigration(ctx context.Context, digest, device string) (WorkerInfo, error) {
+	var info WorkerInfo
+	if device == "" {
+		return info, errors.New("缺少已核对的执行设备身份")
+	}
+	body, err := s.runStagedWorker(ctx, digest, nil, 16<<10, []string{"--legacy-migration", "inspect", "--migration-device", device})
+	if err != nil {
+		return info, err
+	}
+	if err = json.Unmarshal(body, &info); err != nil {
+		return info, err
+	}
+	path, err := StagedWorkerPath(info.Directory, digest)
+	if err != nil || !filepath.IsAbs(info.Directory) || strings.ContainsAny(info.Directory, "\x00\r\n") ||
+		info.Worker != path || s.Directory != "" && info.Directory != s.Directory || info.DeviceID != device ||
+		info.Legacy != nil && info.Legacy.DeviceID != device ||
+		info.Migration != nil && (info.Migration.DeviceID != device || info.Migration.ID == "") {
+		return WorkerInfo{}, errors.New("旧版服务检查回执与指定设备或目录不一致")
+	}
+	return info, nil
+}
+
+func (s RemoteWorker) LegacyMigration(ctx context.Context, digest, action string, in domain.WorkerMigrationInput) (domain.WorkerMigrationStatus, error) {
+	args, err := legacyMigrationArguments(action, in)
+	if err != nil {
+		return domain.WorkerMigrationStatus{}, err
+	}
+	body, err := s.runStagedWorker(ctx, digest, nil, 16<<10, args)
+	if err != nil {
+		return domain.WorkerMigrationStatus{}, err
+	}
+	state, err := decodeWorkerMigration(body, in)
+	if err == nil && action != "start" && state.ID != in.ID {
+		return domain.WorkerMigrationStatus{}, errors.New("迁移回执不属于指定操作")
+	}
+	return state, err
 }

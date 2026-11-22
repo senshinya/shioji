@@ -30,7 +30,7 @@ type DeviceTiming struct {
 	ObservedAt   time.Time
 }
 
-// ConnectionPhase reports the current device controller step to the client.
+// ConnectionPhase identifies the controller step independently of operation results.
 type ConnectionPhase uint8
 
 const (
@@ -58,6 +58,7 @@ type DeviceState struct {
 	Connected         bool
 	ConnectionEpoch   string
 	ConnectionPhase   ConnectionPhase
+	ConnectionError   string
 	WorkerMinor       int
 	Readiness         domain.Readiness
 	Error             string
@@ -259,7 +260,8 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	p.Snapshot.Sessions = slices.Clone(state.Snapshot.Sessions)
 	p.Snapshot.Operations = slices.Clone(state.Snapshot.Operations)
 	p.Snapshot.PendingRequests = slices.Clone(state.Snapshot.PendingRequests)
-	p.Connected, p.ConnectionEpoch, p.ConnectionPhase = state.Connected, state.ConnectionEpoch, state.ConnectionPhase
+	p.Connected, p.ConnectionEpoch = state.Connected, state.ConnectionEpoch
+	p.ConnectionPhase, p.ConnectionError = state.ConnectionPhase, state.ConnectionError
 	p.Readiness, p.WorkerMinor, p.Error = state.Readiness, state.WorkerMinor, state.Error
 	p.WorkerService = state.WorkerService
 	p.KnownDeviceID = state.Snapshot.DeviceID
@@ -280,6 +282,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 		state.Connected = false
 		state.ConnectionPhase = ConnectionUnavailable
 		state.ConnectionEpoch = ""
+		state.ConnectionPhase, state.ConnectionError = ConnectionUnavailable, err.Error()
 		state.Error = err.Error()
 		if key == current {
 			m.Error = err.Error()
@@ -291,6 +294,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 		state.Connected = false
 		state.ConnectionPhase = ConnectionUnavailable
 		state.ConnectionEpoch = ""
+		state.ConnectionPhase, state.ConnectionError = ConnectionUnavailable, err.Error()
 		state.Error = err.Error()
 		if key == current {
 			m.Error = err.Error()
@@ -323,7 +327,8 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 			}
 		}
 	}
-	state.Connected, state.ConnectionEpoch, state.ConnectionPhase = p.Connected, p.ConnectionEpoch, p.ConnectionPhase
+	state.Connected, state.ConnectionEpoch = p.Connected, p.ConnectionEpoch
+	state.ConnectionPhase, state.ConnectionError = p.ConnectionPhase, p.ConnectionError
 	state.Readiness, state.WorkerMinor, state.Error = p.Readiness, p.WorkerMinor, p.Error
 	state.WorkerService = p.WorkerService
 	for id := range owned {
@@ -389,7 +394,8 @@ func (m *Model) RefreshDevices() {
 			all.DeviceID, all.Generation, all.Sequence = s.DeviceID, s.Generation, s.Sequence
 			all.ArchivePolicy = s.ArchivePolicy
 			m.Sequence, m.KnownDeviceID = state.Sequence, s.DeviceID
-			m.Connected, m.ConnectionEpoch, m.ConnectionPhase = state.Connected, state.ConnectionEpoch, state.ConnectionPhase
+			m.Connected, m.ConnectionEpoch = state.Connected, state.ConnectionEpoch
+			m.ConnectionPhase, m.ConnectionError = state.ConnectionPhase, state.ConnectionError
 			m.Readiness, m.WorkerMinor = state.Readiness, state.WorkerMinor
 			m.WorkerService = state.WorkerService
 			m.ConnectionTiming = state.Timing
@@ -400,9 +406,8 @@ func (m *Model) RefreshDevices() {
 	if m.DeviceStates[current] == nil {
 		m.Connected = false
 		m.ConnectionEpoch = ""
-		m.ConnectionPhase = ConnectionOpening
-		m.DevicePaths = nil
-		m.ConnectionTiming = nil
+		m.ConnectionPhase, m.ConnectionError = ConnectionOpening, ""
+		m.DevicePaths, m.ConnectionTiming = nil, nil
 		m.Readiness = domain.Readiness{State: "unavailable"}
 		m.WorkerService = nil
 		m.DeviceHealth = nil
@@ -417,10 +422,18 @@ func (m *Model) LocalName() string {
 	}
 	return "这台 Mac"
 }
-func (m *Model) RenameDevice(key, name string) error {
+func NormalizeDeviceName(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || utf8.RuneCountInString(name) > 80 || strings.ContainsAny(name, "\x00\r\n") {
-		return fmt.Errorf("请输入 1–80 个字符的设备名称")
+		return "", fmt.Errorf("请输入 1–80 个字符的设备名称")
+	}
+	return name, nil
+}
+
+func (m *Model) RenameDevice(key, name string) error {
+	name, err := NormalizeDeviceName(name)
+	if err != nil {
+		return err
 	}
 	if key == "local" {
 		m.LocalDeviceName = name

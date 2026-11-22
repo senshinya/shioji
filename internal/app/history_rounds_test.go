@@ -53,6 +53,8 @@ func TestHistoryRoundReaderCombinesByteChunksAndRejectsChangedSnapshots(t *testi
 				d.Requests = []domain.PendingRequest{{ID: "z", State: domain.RequestPending}, {ID: "a", State: domain.RequestPending}}
 				if calls == 1 {
 					d.Turns = []domain.Turn{{ID: "first", Order: 1}, {ID: "active", Order: 3, Status: domain.ExecutionRunning}}
+					d.Works = []domain.WorkActivity{{ID: "background", Kind: "background", State: "running"}}
+					d.WorksTruncated = true
 				} else {
 					d.Requests = append(d.Requests, domain.PendingRequest{ID: fmt.Sprint("resolved-", calls), State: domain.RequestResolved})
 					d.Turns = []domain.Turn{{ID: "middle", Order: 2}, {ID: "active", Order: 3, Status: domain.ExecutionRunning}}
@@ -91,6 +93,9 @@ func TestHistoryRoundReaderCombinesByteChunksAndRejectsChangedSnapshots(t *testi
 			if len(out.Requests) != 4 || out.Requests[0].ID != "z" || out.Requests[1].ID != "a" || len(out.Turns) != 3 || out.Turns[0].ID != "first" || out.Turns[1].ID != "middle" || out.Turns[2].ID != "active" {
 				t.Fatal("round metadata was dropped or sorted by opaque IDs", out.Requests, out.Turns)
 			}
+			if len(out.Works) != 1 || out.Works[0].ID != "background" || !out.WorksTruncated {
+				t.Fatal("continuation must retain the work roster from the first chunk", out.Works)
+			}
 		})
 	}
 }
@@ -123,5 +128,26 @@ func TestHistoryOpeningCacheTrimsAtGoalContinuationBoundaries(t *testing.T) {
 	trimmed := historyOpeningTail(d, 2)
 	if len(trimmed.Items) != 5 || trimmed.Items[0].ID != "second-goal" || trimmed.History.First != 4 || trimmed.History.Last != 8 || !trimmed.History.Older {
 		t.Fatalf("cache did not keep the two latest Goal rounds: %+v (%+v)", trimmed.Items, trimmed.History)
+	}
+}
+
+func TestHistoryOpeningCacheKeepsGoalContinuationPrefix(t *testing.T) {
+	d := domain.SessionDetail{Items: []domain.Item{
+		{ID: "user", TurnID: "initial", Kind: "user", Order: 1},
+		{ID: "old-reply", TurnID: "initial", Kind: "assistant", Order: 2},
+		{ID: "compact", TurnID: "goal", Kind: "activity", Presentation: "compaction", Order: 3},
+		{ID: "late-old", TurnID: "initial", Kind: "tool", Order: 4},
+		{ID: "hook", TurnID: "goal", Kind: "activity", Presentation: "context", Order: 5},
+		{ID: "marker", TurnID: "goal", Kind: "activity", Presentation: domain.GoalContinuationPresentation, Order: 6},
+		{ID: "reply", TurnID: "goal", Kind: "assistant", Order: 7},
+	}}
+	trimmed := historyOpeningTail(d, 1)
+	if len(trimmed.Items) != 5 || trimmed.Items[0].ID != "compact" || trimmed.History.First != 3 || !trimmed.History.Older {
+		t.Fatalf("cache split a Goal continuation: %+v (%+v)", trimmed.Items, trimmed.History)
+	}
+	d.Items[3] = domain.Item{ID: "steer", Kind: "user", TurnID: "goal", Order: 4}
+	trimmed = historyOpeningTail(d, 1)
+	if len(trimmed.Items) != 3 || trimmed.Items[0].ID != "hook" || trimmed.History.First != 5 {
+		t.Fatalf("continuation prefix crossed an intervening user message: %+v (%+v)", trimmed.Items, trimmed.History)
 	}
 }

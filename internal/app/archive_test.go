@@ -193,6 +193,12 @@ func TestArchiveDeletionClearsOnlyOwningDeviceDraftsAndSelections(t *testing.T) 
 	m.Drafts["home"] = "keep home"
 	m.Drafts["session:sA"] = "keep local"
 	m.Drafts["session:sB"] = "delete remote"
+	localAnswer := QuestionAnswerKey("A", "sA", "thread-a", "message", "question")
+	remoteAnswer := QuestionAnswerKey("B", "sB", "thread-b", "message", "question")
+	for _, prefix := range []string{"", "source:", "custom:"} {
+		m.Answers[prefix+localAnswer] = "keep"
+		m.Answers[prefix+remoteAnswer] = "delete"
+	}
 	m.Details["sB"] = domain.SessionDetail{Session: domain.Session{ID: "sB", WorkspaceID: "wB"}, Items: []domain.Item{{ID: "old", Text: "old history"}}}
 	m.SecondarySessionID = "sB"
 	m.SecondaryWorkspaceID = "wB"
@@ -205,6 +211,11 @@ func TestArchiveDeletionClearsOnlyOwningDeviceDraftsAndSelections(t *testing.T) 
 	})
 	if _, ok := m.Drafts["session:sB"]; ok {
 		t.Fatal("deleted remote draft retained")
+	}
+	for _, prefix := range []string{"", "source:", "custom:"} {
+		if m.Answers[prefix+localAnswer] != "keep" || m.Answers[prefix+remoteAnswer] != "" {
+			t.Fatal("deletion failed to scope the question drafts")
+		}
 	}
 	if _, ok := m.Details["sB"]; ok {
 		t.Fatal("deleted history retained")

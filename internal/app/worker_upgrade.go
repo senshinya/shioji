@@ -14,6 +14,7 @@ import (
 	"shioji/internal/protocol"
 	"shioji/internal/supervisor"
 	"shioji/internal/transport"
+	"time"
 )
 
 type workerUpgradeRecord struct {
@@ -268,6 +269,42 @@ func (u workerUpgradeClient) retryDetached(ctx context.Context, operation string
 }
 
 func (c *Controller) upgradeObserver(device string, known *domain.WorkerBuild) workerUpgradeClient {
+	if c.paths != nil && c.paths.authenticated != nil {
+		u := workerUpgradeClient{directory: c.workerUpdateDirectory, device: device, knownBuild: known}
+		remote := c.authenticatedWorker()
+		u.control = func(ctx context.Context, action, id string) (supervisor.Operation, error) {
+			if remote.Run == nil {
+				return supervisor.Operation{}, errors.New("设备当前没有可用的 SSH 路径")
+			}
+			prior, err := u.load()
+			if err != nil {
+				return supervisor.Operation{}, err
+			}
+			var digest string
+			if prior != nil {
+				digest = prior.Input.BuildID
+			} else if c.AuthenticatedWorkerBuild != nil {
+				digest = c.AuthenticatedWorkerBuild.BuildID
+			}
+			if digest == "" {
+				return supervisor.Operation{}, errors.New("没有可用的执行服务控制程序")
+			}
+			return remote.Control(ctx, digest, device, action, id)
+		}
+		install := func(ctx context.Context, in domain.WorkerReplacement, repair bool) (supervisor.Operation, error) {
+			if remote.Run == nil {
+				return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: "设备当前没有可用的 SSH 路径"}
+			}
+			return remote.Install(ctx, device, in, repair)
+		}
+		u.legacy = func(ctx context.Context, in domain.WorkerReplacement) (supervisor.Operation, error) {
+			return install(ctx, in, false)
+		}
+		u.repair = func(ctx context.Context, in domain.WorkerReplacement) (supervisor.Operation, error) {
+			return install(ctx, in, true)
+		}
+		return u
+	}
 	return workerUpgradeClient{directory: c.workerUpdateDirectory, device: device, knownBuild: known, repair: func(ctx context.Context, in domain.WorkerReplacement) (supervisor.Operation, error) {
 		return c.runWorkerInstaller(ctx, device, in, true)
 	}, legacy: func(ctx context.Context, in domain.WorkerReplacement) (supervisor.Operation, error) {
@@ -292,6 +329,31 @@ func (c *Controller) upgradeObserver(device string, known *domain.WorkerBuild) w
 		}
 		return op, e
 	}}
+}
+
+func waitForWorkerCancellation(ctx context.Context, observer workerUpgradeClient, client *protocol.Client, candidate *domain.WorkerBuild, id string) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		state, err := observer.observe(ctx, client, candidate)
+		if err != nil {
+			return err
+		}
+		if state == nil || state.OperationID != id {
+			break
+		}
+		if state.OperationPhase == "failed" && state.Message == context.Canceled.Error() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return errors.New("原升级仍在执行，请检查升级状态")
+		case <-tick.C:
+		}
+	}
+	return errors.New("原升级记录已变化，请重新检查")
 }
 
 func (u workerUpgradeClient) update(ctx context.Context, client *protocol.Client, candidate *domain.WorkerBuild, explicit bool, policy string, migrate bool) (*WorkerService, error) {

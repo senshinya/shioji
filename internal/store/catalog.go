@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
@@ -9,10 +10,10 @@ import (
 )
 
 var catalogSections = [...]string{
-	"SELECT rowid,body FROM workspaces WHERE rowid>? ORDER BY rowid LIMIT 33",
-	"SELECT rowid,body FROM sessions WHERE rowid>? ORDER BY rowid LIMIT 33",
-	"SELECT rowid,body FROM requests WHERE rowid>? AND json_extract(body,'$.state') IN ('pending','submitting') ORDER BY rowid LIMIT 33",
-	`SELECT rowid,json_object('id',id,'sessionId',session_id,'state',state,'error',error,'kind',kind)
+	"SELECT rowid,body,NULL FROM workspaces WHERE rowid>? ORDER BY rowid LIMIT 33",
+	"SELECT s.rowid,s.body," + latestSessionInputDate + " FROM sessions AS s WHERE s.rowid>? ORDER BY s.rowid LIMIT 33",
+	"SELECT rowid,body,NULL FROM requests WHERE rowid>? AND json_extract(body,'$.state') IN ('pending','submitting') ORDER BY rowid LIMIT 33",
+	`SELECT rowid,json_object('id',id,'sessionId',session_id,'state',state,'error',error,'kind',kind),NULL
 	 FROM operations WHERE rowid>? AND rowid IN (SELECT rowid FROM operations ORDER BY rowid DESC LIMIT 100) ORDER BY rowid LIMIT 33`,
 }
 
@@ -42,20 +43,32 @@ func (h *HistorySnapshot) CatalogPage(cursor domain.CatalogCursor) (domain.Snaps
 	for i := 0; rows.Next(); i++ {
 		var row int64
 		var raw []byte
-		if err = rows.Scan(&row, &raw); err != nil {
+		var sentAt sql.NullString
+		if err = rows.Scan(&row, &raw, &sentAt); err != nil {
 			return part, nil, err
 		}
-		if len(raw) > 512<<10 {
+		recordSize := len(raw) + len(sentAt.String)
+		if recordSize > 512<<10 {
 			return part, nil, errors.New("设备目录中的记录过大")
 		}
-		if i == 32 || size+len(raw) > 512<<10 {
+		if i == 32 || size+recordSize > 512<<10 {
 			return part, &domain.CatalogCursor{Section: cursor.Section, Row: last}, nil
 		}
 		switch cursor.Section {
 		case 0:
 			err = appendCatalogRecord(&part.Workspaces, raw)
 		case 1:
-			err = appendCatalogRecord(&part.Sessions, raw)
+			var session domain.Session
+			err = json.Unmarshal(raw, &session)
+			if err == nil {
+				part.Sessions = append(part.Sessions, session)
+				if date, err := time.Parse(time.RFC3339Nano, sentAt.String); err == nil {
+					if part.SessionInputTimes == nil {
+						part.SessionInputTimes = make(map[string]time.Time)
+					}
+					part.SessionInputTimes[session.ID] = date.UTC()
+				}
+			}
 		case 2:
 			err = appendCatalogRecord(&part.PendingRequests, raw)
 		case 3:
@@ -64,7 +77,7 @@ func (h *HistorySnapshot) CatalogPage(cursor domain.CatalogCursor) (domain.Snaps
 		if err != nil {
 			return part, nil, err
 		}
-		size, last = size+len(raw), row
+		size, last = size+recordSize, row
 	}
 	if err := rows.Err(); err != nil {
 		return part, nil, err

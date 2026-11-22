@@ -252,10 +252,10 @@ const (
 	Super = Modifiers(platform.ModSuper)
 )
 
-// Cmd is the modifier of the platform's shortcuts: Command on macOS,
-// Control elsewhere, as in Cmd+C.
+// Cmd is the modifier of the platform's shortcuts: Command on macOS and
+// iOS, Control elsewhere, as in Cmd+C.
 var Cmd = func() Modifiers {
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
 		return Super
 	}
 	return Ctrl

@@ -596,6 +596,12 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		return s.toolAuthorizationCommand(method, in)
 	case "runtime.catalog":
 		return s.runtimeProfiles(nil, true), nil
+	case "runtime.agent.selection":
+		in, err := decode[protocol.RuntimeAgentSelection](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.selectRuntimeAgent(in)
 	case "runtime.signin.start", "runtime.signin.status", "runtime.signin.cancel":
 		in, err := decode[protocol.SignInInput](body)
 		if err != nil {
@@ -614,6 +620,18 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 			return nil, err
 		}
 		return s.configureRuntime(in)
+	case "runtime.settings", "runtime.settings.environment":
+		in, err := decode[protocol.RuntimeSettingsQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.readRuntimeSettings(in, method == "runtime.settings.environment")
+	case "runtime.settings.change":
+		in, err := decode[protocol.RuntimeSettingsChange](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.changeRuntimeSettings(in)
 	case "runtime.check":
 		in, err := decode[protocol.RuntimeConfiguration](body)
 		if err != nil {
@@ -941,6 +959,12 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 			return nil, err
 		}
 		return s.checkout(in)
+	case "git.confirm":
+		in, err := decode[protocol.ConfirmCheckoutInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.updateCheckout(in.CheckoutInput, &in.Head)
 	case "diff.snapshot.retain":
 		q, err := decode[protocol.DiffSnapshotInput](body)
 		if err != nil {

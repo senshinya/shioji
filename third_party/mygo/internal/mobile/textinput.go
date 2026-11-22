@@ -21,7 +21,7 @@ const textWindow = 1 << 12
 // The hosts' names of what platform.TextTraits numbers.
 var (
 	keyboardNames    = [...]string{"", "email", "number", "decimal", "phone", "url", "search"}
-	returnNames      = [...]string{"", "done", "go", "next", "search", "send"}
+	returnNames      = [...]string{"", "done", "go", "next", "search", "send", ""}
 	capitalizeNames  = [...]string{"", "none", "words", "sentences", "characters"}
 	autocorrectNames = [...]string{"", "on", "off"}
 	autofillNames    = [...]string{"", "username", "password", "newPassword", "oneTimeCode", "email", "name", "phone", "address", "postalCode", "creditCard"}
@@ -98,8 +98,8 @@ func (s *surface) key(k platform.Key) {
 }
 
 // replace puts text in a range of the document, or in place of the marked
-// text or the selection. A return or a tab typed is its key, as desktop
-// keyboards send them.
+// text or the selection. A tab and the default return issue key events.
+// Inputs using ReturnNewLine receive the software return as document text.
 func (s *surface) replace(r *platform.TextRange, text string) {
 	c := s.text.Client
 	if r == nil {
@@ -108,7 +108,7 @@ func (s *surface) replace(r *platform.TextRange, text string) {
 			_, marked = c.MarkedRange()
 		}
 		switch {
-		case text == "\n" && !marked:
+		case text == "\n" && !marked && (c == nil || s.text.Traits.ReturnKey != platform.ReturnNewLine):
 			s.key(platform.KeyEnter)
 			return
 		case text == "\t" && !marked:

@@ -205,6 +205,9 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         w.makeKeyAndVisible()
         window = w
         Host.shared.window = w
+        if let response = options.notificationResponse {
+            Host.shared.openNotification(response)
+        }
         let urls = options.urlContexts.map { $0.url.absoluteString } + options.userActivities.compactMap { $0.webpageURL?.absoluteString }
         if !urls.isEmpty { Go.send(Event.openURLs(urls: urls)) }
     }
@@ -258,6 +261,17 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 /// The view controller of the app's window, whose view holds the app's
 /// windows, the one in front last.
 final class RootViewController: UIViewController, UIScrollViewDelegate {
+    var appKeyCommands: [UIKeyCommand] = []
+    var handleAppKeyCommand: ((UIKeyCommand) -> Void)?
+
+    override var keyCommands: [UIKeyCommand]? {
+        (super.keyCommands ?? []) + appKeyCommands
+    }
+
+    @objc func performAppKeyCommand(_ command: UIKeyCommand) {
+        handleAppKeyCommand?(command)
+    }
+
     /// Where the keyboard is, on the screen, nil while it's away.
     var keyboardFrame: CGRect?
     /// UIKit tells a scroll view of a tap on the status bar, the only way it
@@ -345,6 +359,15 @@ class HostWindow: UIView {
     weak var holder: SurfaceWindow?
     /// It opens in a scene of its own, on iPad.
     var ownScene = false
+    /// A native column host can align its custom toolbar with an adjacent column.
+    var contentSafeTop: CGFloat? {
+        didSet { if contentSafeTop != oldValue { reportSize() } }
+    }
+    /// A custom root toolbar can align to the scene's status area when
+    /// the surrounding native navigation chrome is unused.
+    var usesSceneSafeTop = false {
+        didSet { if usesSceneSafeTop != oldValue { reportSize() } }
+    }
     private var lastSize: [Double] = []
 
     init(id: Int) {
@@ -370,6 +393,13 @@ class HostWindow: UIView {
         // A large title, in the scroll view standing for the page's
         // content, covers the page further down than the bars.
         if holder == nil, let top = (superview?.next as? ScreenController)?.topInset { s.top = max(s.top, top) }
+        if holder == nil {
+            if let contentSafeTop {
+                s.top = contentSafeTop
+            } else if usesSceneSafeTop, let sceneWindow = window {
+                s.top = max(0, convert(CGPoint(x: 0, y: sceneWindow.safeAreaInsets.top), from: sceneWindow).y)
+            }
+        }
         let scale = window?.screen.scale ?? traitCollection.displayScale
         let size = [Double(bounds.width), Double(bounds.height), Double(scale), Double(s.top), Double(s.left),
                     Double(s.bottom), Double(s.right), Double(keyboardCover)]

@@ -98,9 +98,9 @@ func writeOverlay(path string, replace map[string]string) (string, error) {
 }
 
 // packageDir returns the directory of the app's main package.
-func packageDir(c *Config) (string, error) {
+func packageDir(c *Config, env ...string) (string, error) {
 	var out bytes.Buffer
-	cmd := goCommand(c.root, nil, "list", "-f", "{{.Dir}}", c.Main)
+	cmd := goCommand(c.root, env, "list", "-f", "{{.Dir}}", c.Main)
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("go list %s: %w", c.Main, err)

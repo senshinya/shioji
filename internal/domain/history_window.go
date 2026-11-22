@@ -82,7 +82,7 @@ type HistoryMatches struct {
 
 // HistorySpacer reports invisible records that do not split a tool group.
 func HistorySpacer(item Item) bool {
-	return item.Kind == "assistant" && strings.TrimSpace(item.Text) == "" ||
+	return item.Kind == "assistant" && strings.TrimSpace(item.Text) == "" && len(item.Questions) == 0 ||
 		item.Kind == "activity" && item.Presentation == "reasoning" && item.Text == "" && len(item.Parts) == 0 && len(item.Files) == 0 && len(item.Agents) == 0 ||
 		item.Kind == "request_result" && len(item.Parts) == 0 && item.WorkID == "" ||
 		InlineRequestResultAnchor(item) != ""

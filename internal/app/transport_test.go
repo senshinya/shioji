@@ -110,7 +110,10 @@ func TestControllerRejectsSnapshotWithDifferentWorkerIdentity(t *testing.T) {
 			if m.Connected {
 				t.Fatal("snapshot silently rebound verified worker identity", m.KnownDeviceID)
 			}
-			if strings.Contains(m.Error, "identity") {
+			if strings.Contains(m.ConnectionError, "identity") {
+				if m.Error != "" || m.Snapshot.DeviceID != "" {
+					t.Fatalf("identity failure changed operation feedback or the device projection: error=%q, device=%q", m.Error, m.Snapshot.DeviceID)
+				}
 				return
 			}
 		case <-deadline:

@@ -15,12 +15,12 @@ func signForSimulator(bundle string) error {
 	return runQuiet("codesign", "--force", "--sign", "-", bundle)
 }
 
-// simulatorEntitlements returns the flags that link what the plugins need the app
-// signed with into a simulator's executable.
-func (ps mobilePlugins) simulatorEntitlements(work string) ([]string, error) {
+// simulatorEntitlements links the app's Keychain identity and plugin
+// entitlements into the simulator executable.
+func (ps mobilePlugins) simulatorEntitlements(work, bundleID string) ([]string, error) {
 	ent := ps.entitlements()
-	if len(ent) == 0 {
-		return nil, nil
+	if _, ok := ent["application-identifier"]; !ok {
+		ent["application-identifier"] = "LOCALSIM00." + bundleID
 	}
 	path := filepath.Join(work, "simulator.entitlements")
 	if err := os.WriteFile(path, plistBytes(ent), 0o644); err != nil {

@@ -25,7 +25,7 @@ func (m *Model) scopeFailure(err error) {
 	m.Error = err.Error()
 	m.Connected = false
 	m.ConnectionEpoch = ""
-	m.ConnectionPhase = ConnectionUnavailable
+	m.ConnectionPhase, m.ConnectionError = ConnectionUnavailable, err.Error()
 }
 func (m *Model) validateDeviceEvent(e domain.Event) error {
 	fail := errors.New("设备事件引用了其他设备的会话或工作区")

@@ -1,14 +1,13 @@
 package ui
 
 import (
-	"errors"
 	n "github.com/egoist/mygo/ui"
+	"shioji/internal/app"
 	"shioji/internal/domain"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 )
 
 var modelEye = svg("M2 10c4-7 12-7 16 0-4 7-12 7-16 0zM12 10a2 2 0 1 1-4 0 2 2 0 0 1 4 0")
@@ -46,58 +45,8 @@ func newRuntimeOptionDraft(o domain.RuntimeOptions) runtimeOptionDraft {
 	return d
 }
 
-func parseRuntimeArguments(text string) ([]string, error) {
-	var args []string
-	var word strings.Builder
-	var quote rune
-	escaped, started := false, false
-	for _, r := range text {
-		if escaped {
-			word.WriteRune(r)
-			escaped = false
-			started = true
-			continue
-		}
-		if r == '\\' && quote != '\'' {
-			escaped = true
-			started = true
-			continue
-		}
-		if quote != 0 {
-			if r == quote {
-				quote = 0
-			} else {
-				word.WriteRune(r)
-			}
-			started = true
-			continue
-		}
-		if r == '\'' || r == '"' {
-			quote = r
-			started = true
-			continue
-		}
-		if unicode.IsSpace(r) {
-			if started {
-				args = append(args, word.String())
-				word.Reset()
-				started = false
-			}
-			continue
-		}
-		word.WriteRune(r)
-		started = true
-	}
-	if quote != 0 || escaped {
-		return nil, errors.New("启动参数的引号或转义尚未结束")
-	}
-	if started {
-		args = append(args, word.String())
-	}
-	return args, nil
-}
 func (d runtimeOptionDraft) options() (domain.RuntimeOptions, error) {
-	args, err := parseRuntimeArguments(d.arguments)
+	args, err := app.ParseRuntimeArguments(d.arguments)
 	environment := []domain.EnvironmentVariable{}
 	for _, entry := range d.environment {
 		if entry.removed.IsZero() {

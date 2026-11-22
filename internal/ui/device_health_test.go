@@ -122,7 +122,7 @@ func TestLoadGraphBreaksAtUnknownAndDoesNotStretchHistory(t *testing.T) {
 	now := time.Now()
 	zero, full := 0., 100.
 	samples := []domain.DeviceLoad{{At: now.Add(-60 * time.Second), CPU: &zero}, {At: now.Add(-58 * time.Second), CPU: nil}, {At: now.Add(-2 * time.Second), CPU: &full}, {At: now, CPU: &zero}}
-	lines := deviceLoadSegments(samples, now, false)
+	lines := app.DeviceLoadSegments(samples, now, false)
 	if len(lines) != 2 || len(lines[0]) != 1 || len(lines[1]) != 2 {
 		t.Fatal("missing sample connected across a gap", lines)
 	}

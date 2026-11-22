@@ -8,12 +8,135 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 )
+
+func TestControllerReconnectPreservesStandaloneOperationError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	retrying, admit := make(chan struct{}), make(chan struct{})
+	var attempts atomic.Int32
+	c := NewController(t.TempDir())
+	c.ExpectedDeviceID = "worker"
+	c.Dial = func(ctx context.Context) (net.Conn, error) {
+		switch attempts.Add(1) {
+		case 1:
+			return nil, context.DeadlineExceeded
+		case 2:
+			close(retrying)
+			select {
+			case <-admit:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		return handoffPipe(ctx, "ssh"), nil
+	}
+	go c.Run(ctx)
+	m := NewModel()
+	const writeFailure = "无法保存草稿：设备空间不足"
+	m.Error = writeFailure
+	deadline := time.After(6 * time.Second)
+	select {
+	case <-retrying:
+	case <-deadline:
+		t.Fatal("the controller did not retry the connection")
+	}
+	for len(c.Updates) > 0 {
+		(<-c.Updates)(m)
+	}
+	if m.ConnectionPhase != ConnectionUnavailable {
+		t.Fatalf("the failed handshake is not visible as an unavailable connection: %v", m.ConnectionPhase)
+	}
+	if m.Connected || m.Error != writeFailure || m.ConnectionError != "context deadline exceeded" {
+		t.Fatalf("connection failure and operation feedback were not distinct: connected=%v, connection=%q, operation=%q", m.Connected, m.ConnectionError, m.Error)
+	}
+	close(admit)
+	sawSync := false
+	for m.Snapshot.DeviceID != "worker" || m.ConnectionPhase != ConnectionIdle {
+		select {
+		case update := <-c.Updates:
+			update(m)
+			sawSync = sawSync || m.ConnectionPhase == ConnectionSyncing
+		case <-deadline:
+			t.Fatal("the original device did not reconnect")
+		}
+	}
+	if !sawSync || !m.Connected {
+		t.Fatal("the original device did not report catalog synchronization before becoming ready")
+	}
+	if m.Snapshot.DeviceID != "worker" || m.ConnectionError != "" || m.Error != writeFailure {
+		t.Fatalf("recovery did not retire only its own error: device=%q, connection=%q, operation=%q", m.Snapshot.DeviceID, m.ConnectionError, m.Error)
+	}
+}
+
+func TestControllerCatalogFailureKeepsTransportAndOperationSeparate(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	const catalogError = "目录正在重建"
+	const operationError = "草稿写入失败"
+	var snapshots atomic.Int32
+	c := NewController(t.TempDir())
+	c.ExpectedDeviceID = "worker"
+	c.Dial = func(context.Context) (net.Conn, error) {
+		client, server := net.Pipe()
+		go func() {
+			defer server.Close()
+			stop := context.AfterFunc(ctx, func() { server.Close() })
+			defer stop()
+			codec, _, err := protocol.WelcomeWorker(server, "worker", "generation", domain.WorkerBuild{})
+			if err != nil {
+				return
+			}
+			for {
+				var f protocol.Frame
+				if codec.Read(&f) != nil {
+					return
+				}
+				switch f.Method {
+				case "snapshot":
+					if snapshots.Add(1) == 1 {
+						codec.Write(protocol.Frame{Type: "error", ID: f.ID, Epoch: f.Epoch, DeviceID: f.DeviceID, ErrorCode: "unavailable", Error: catalogError})
+					} else {
+						result(codec, f, domain.Snapshot{DeviceID: "worker", Generation: "generation"})
+					}
+				case "readiness":
+					result(codec, f, domain.Readiness{State: "ready"})
+				case "events.watch":
+					<-ctx.Done()
+					return
+				}
+			}
+		}()
+		return client, nil
+	}
+	go c.Run(ctx)
+	m := NewModel()
+	m.Error = operationError
+	sawFailure := false
+	for m.Snapshot.DeviceID != "worker" {
+		select {
+		case update := <-c.Updates:
+			update(m)
+			if m.ConnectionPhase == ConnectionSyncFailed {
+				if !m.Connected || m.ConnectionError != catalogError || m.Error != operationError {
+					t.Fatalf("catalog failure mixed state: connected=%v, connection=%q, operation=%q", m.Connected, m.ConnectionError, m.Error)
+				}
+				sawFailure = true
+			}
+		case <-ctx.Done():
+			t.Fatal("catalog retry did not finish", m.ConnectionError)
+		}
+	}
+	if !sawFailure || m.ConnectionPhase != ConnectionIdle || m.ConnectionError != "" || m.Error != operationError {
+		t.Fatalf("catalog recovery did not preserve operation state: phase=%v, connection=%q, operation=%q", m.ConnectionPhase, m.ConnectionError, m.Error)
+	}
+}
 
 func TestControllerObservesEventsWhileWatchLeavesCommandsAvailable(t *testing.T) {
 	dir, err := os.MkdirTemp("/tmp", "swatch-")
@@ -172,6 +295,9 @@ func TestDefinitelyUnsentSubmissionDoesNotPermanentlyBlockDraft(t *testing.T) {
 		m.SubmissionError(in, err)
 		if len(m.Pending) != 0 || m.Drafts["home"] != "keep" {
 			t.Fatal("definitely unsent draft is stuck")
+		}
+		if len(m.Feedbacks) != 1 || m.Feedbacks[0].Kind != FeedbackSubmissionFailed || m.Feedbacks[0].ID != in.OperationID || m.Feedbacks[0].WorkspaceID != in.WorkspaceID {
+			t.Fatal("the known failure did not retain its original operation and scope", m.Feedbacks)
 		}
 	}
 }

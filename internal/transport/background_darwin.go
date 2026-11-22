@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -135,96 +136,50 @@ func (s SSH) DisableRuntimeService(ctx context.Context, workerBinary string) (do
 	return s.manageRuntimeService(ctx, workerBinary, "unregister")
 }
 func (s SSH) manageRuntimeService(ctx context.Context, workerBinary, action string) (domain.BackgroundService, error) {
-	enable := action == "register"
-	var result domain.BackgroundService
 	if !filepath.IsAbs(s.StateDirectory) || strings.ContainsAny(s.StateDirectory, "\x00\r\n") {
-		return result, errors.New("请重新检查设备执行服务目录")
+		return domain.BackgroundService{}, errors.New("请重新检查设备执行服务目录")
 	}
-	prefix := `set -eu
-umask 077
-expected="$HOME/Library/Application Support/Shioji/worker"
-[ ` + shellQuote(s.StateDirectory) + ` = "$expected" ] || { printf '%s\n' '{"format":1,"state":"unavailable","message":"隔离开发目录不注册系统后台服务"}'; exit 0; }
-root="$HOME/Library/Application Support/Shioji/Runtime"
-target="$root/Shioji Runtime.app"
-[ ! -L "$root" ] && [ ! -L "$target" ]
-`
-	var archive *os.File
-	if enable {
-		action = "register"
-		source := bundledRuntime(workerBinary)
-		if err := verifyRuntimeBundle(ctx, source); err != nil {
-			return result, err
-		}
-		// The archive is made from our signature-verified, regular-files-only bundle.
-		if err := filepath.WalkDir(source, func(p string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.Type()&os.ModeSymlink != 0 {
-				return errors.New("后台宿主含不支持的符号链接")
-			}
-			return nil
-		}); err != nil {
-			return result, err
-		}
-		temp, err := os.CreateTemp("", "shioji-runtime-*.tar")
+	remote := RemoteWorker{Directory: s.StateDirectory, Run: func(ctx context.Context, command string, input io.Reader, output, diagnostics io.Writer) (int, error) {
+		cmd, err := s.command(ctx, command)
 		if err != nil {
-			return result, err
+			return -1, err
 		}
-		defer os.Remove(temp.Name())
-		temp.Close()
-		if err = exec.CommandContext(ctx, "/usr/bin/tar", "-cf", temp.Name(), "-C", source, ".").Run(); err != nil {
-			return result, err
-		}
-		digest, err := runtimebuild.Digest(temp.Name())
-		if err != nil {
-			return result, err
-		}
-		archive, err = os.Open(temp.Name())
-		if err != nil {
-			return result, err
-		}
-		defer archive.Close()
-		prefix += `/bin/mkdir -p "$root"
-stage=$(/usr/bin/mktemp -d "$root/.runtime.XXXXXX")
-trap '/bin/rm -rf "$stage"' EXIT
-/bin/cat > "$stage/runtime.tar"
-actual=$(/usr/bin/shasum -a 256 "$stage/runtime.tar")
-[ "${actual%% *}" = ` + shellQuote(digest) + ` ]
-if [ ! -e "$target" ]; then
-/bin/mkdir "$stage/Shioji Runtime.app"
-/usr/bin/tar -xf "$stage/runtime.tar" -C "$stage/Shioji Runtime.app"
-/usr/bin/codesign --verify --deep --strict "$stage/Shioji Runtime.app"
-[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$stage/Shioji Runtime.app/Contents/Info.plist")" = dev.shioji.runtime ]
-/bin/mv -n "$stage/Shioji Runtime.app" "$target"
-fi
-`
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = input, output, diagnostics
+		err = cmd.Run()
+		return cmd.ProcessState.ExitCode(), err
+	}}
+	return remote.RuntimeRegistration(ctx, action, func(ctx context.Context) (io.ReadCloser, string, error) {
+		return archiveRuntimeBundle(ctx, bundledRuntime(workerBinary))
+	})
+}
+
+func archiveRuntimeBundle(ctx context.Context, path string) (io.ReadCloser, string, error) {
+	if err := verifyRuntimeBundle(ctx, path); err != nil {
+		return nil, "", err
 	}
-	prefix += `if [ ! -d "$target" ]; then printf '%s\n' '{"format":1,"state":"notInstalled"}'; exit 0; fi
-/usr/bin/codesign --verify --deep --strict "$target"
-[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$target/Contents/Info.plist")" = dev.shioji.runtime ]
-exec "$target/Contents/MacOS/shioji-runtime" --action ` + shellQuote(action) + "\n"
-	cmd, err := s.command(ctx, "/bin/sh -c "+shellQuote(prefix))
+	if err := filepath.WalkDir(path, func(_ string, d os.DirEntry, err error) error {
+		if err == nil && d.Type()&os.ModeSymlink != 0 {
+			return errors.New("后台宿主含不支持的符号链接")
+		}
+		return err
+	}); err != nil {
+		return nil, "", err
+	}
+	temp, err := os.CreateTemp("", "shioji-runtime-*.tar")
 	if err != nil {
-		return result, err
+		return nil, "", err
 	}
-	if archive != nil {
-		cmd.Stdin = archive
+	defer os.Remove(temp.Name())
+	temp.Close()
+	if err = exec.CommandContext(ctx, "/usr/bin/tar", "-cf", temp.Name(), "-C", path, ".").Run(); err != nil {
+		return nil, "", err
 	}
-	var output, diagnostic bytes.Buffer
-	cmd.Stdout = &boundedWriter{w: &output, remaining: 8192}
-	cmd.Stderr = &boundedWriter{w: &diagnostic, remaining: 2048}
-	err = cmd.Run()
-	if json.Unmarshal(output.Bytes(), &result) != nil {
-		return result, fmt.Errorf("设备后台服务检查失败：%s", strings.TrimSpace(diagnostic.String()))
-	}
-	if result.Format != 1 {
-		return result, errors.New("设备后台宿主格式不兼容")
-	}
+	digest, err := runtimebuild.Digest(temp.Name())
 	if err != nil {
-		return result, fmt.Errorf("设备后台服务操作失败：%s", result.Message)
+		return nil, "", err
 	}
-	return result, nil
+	file, err := os.Open(temp.Name())
+	return file, digest, err
 }
 
 // Called only after explicit background disable; this is a new idle owner, not a

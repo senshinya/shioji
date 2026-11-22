@@ -14,6 +14,10 @@ type StorageTarget struct {
 	dial                func(context.Context) (net.Conn, error)
 }
 
+func RemoteStorageTarget(device string, dial func(context.Context) (net.Conn, error)) StorageTarget {
+	return StorageTarget{DeviceID: device, dial: dial}
+}
+
 func (m *Model) StorageTarget(directory, key string) (StorageTarget, error) {
 	state := m.DeviceStates[key]
 	if state == nil || !state.Connected {

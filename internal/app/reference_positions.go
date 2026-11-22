@@ -3,13 +3,21 @@ package app
 import "shioji/internal/domain"
 
 func (m *Model) DraftReferencePositions(key string) []domain.ReferencePosition {
+	return draftReferencePositions(m.Attachments[key], m.DraftSkills[key])
+}
+
+func (d QueueEditDraft) ReferencePositions() []domain.ReferencePosition {
+	return draftReferencePositions(d.Attachments, d.Skills)
+}
+
+func draftReferencePositions(files []DraftAttachment, skills []DraftSkill) []domain.ReferencePosition {
 	var positions []domain.ReferencePosition
-	for _, file := range m.Attachments[key] {
+	for _, file := range files {
 		if file.Attachment.InlineReference() && file.InlinePosition > 0 {
 			positions = append(positions, domain.ReferencePosition{Position: file.InlinePosition, AttachmentID: file.Attachment.ID})
 		}
 	}
-	for _, skill := range m.DraftSkills[key] {
+	for _, skill := range skills {
 		if skill.InlinePosition > 0 {
 			positions = append(positions, domain.ReferencePosition{Position: skill.InlinePosition, SkillID: skill.Reference.ID})
 		}

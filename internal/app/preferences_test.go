@@ -7,6 +7,60 @@ import (
 	"testing"
 )
 
+func TestMobileComposerBindingsPreserveLegacyAndPersistIndependentChoices(t *testing.T) {
+	for _, legacyReturnSends := range []bool{false, true} {
+		p := (ClientPreferences{MobileReturnSends: legacyReturnSends}).Normalized()
+		plain := "newline"
+		if legacyReturnSends {
+			plain = "send"
+		}
+		for binding, want := range map[string]string{
+			"Enter": plain, "Cmd+Enter": "send", "Shift+Enter": "newline", "Cmd+Shift+Enter": "steer",
+		} {
+			if got := p.MobileShortcutAction(binding); got != want {
+				t.Errorf("legacy Return sends=%v: %s has action %q, want %q", legacyReturnSends, binding, got, want)
+			}
+		}
+	}
+	m := NewModel()
+	p := &m.Preferences
+	desktop := p.Shortcuts
+	if err := p.SetMobileShortcut("send", "Enter"); err == nil || p.MobileComposerShortcuts != nil {
+		t.Fatal("a conflict must leave both mobile and desktop preferences intact")
+	}
+	for _, setting := range []struct{ action, binding string }{
+		{"newline", "Alt+Enter"}, {"send", "Enter"}, {"steer", "Ctrl+Enter"},
+	} {
+		if err := p.SetMobileShortcut(setting.action, setting.binding); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := m.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	restored := NewModel()
+	if err := restored.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	p = &restored.Preferences
+	for binding, want := range map[string]string{
+		"Enter": "send", "Alt+Enter": "newline", "Ctrl+Enter": "steer", "Cmd+Enter": "", "Shift+Enter": "",
+	} {
+		if got := p.MobileShortcutAction(binding); got != want {
+			t.Errorf("restored %s has action %q, want %q", binding, got, want)
+		}
+	}
+	if p.Shortcuts != desktop {
+		t.Fatal("mobile choices changed desktop shortcuts", p.Shortcuts)
+	}
+	p.ResetMobileShortcuts()
+	if p.MobileShortcuts() != (ComposerShortcuts{Send: "Cmd+Enter", Newline: "Enter", Steer: "Cmd+Shift+Enter"}) ||
+		p.MobileShortcutAction("Shift+Enter") != "newline" || p.Shortcuts != desktop {
+		t.Fatal("restoring mobile defaults affected other bindings", p)
+	}
+}
+
 func TestClientPreferencesSurviveRestartAlongsideDrafts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	data := []byte(`{"drafts":{"home":"keep this draft"},"preferences":{"appearance":"dark","interfaceFont":"Arial","replySize":16,"codeFont":"Menlo","reduceMotion":true,"shortcuts":{"send":"Cmd+Enter","newline":"Enter","steer":"Shift+Enter"}}}`)

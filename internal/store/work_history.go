@@ -120,7 +120,7 @@ func (s *Store) workHistory(q domain.WorkHistoryQuery) (domain.WorkDetail, error
 		if err = json.Unmarshal(raw, &item.Item); err != nil {
 			return out, err
 		}
-		if item.Item.Kind == "request" && item.Item.Status == "answered" && len(receipt) > 0 {
+		if item.Item.Kind == "request" && item.Item.Status == string(domain.RequestAnswered) && len(receipt) > 0 {
 			if err = json.Unmarshal(receipt, &item.Item.Parts); err != nil {
 				return out, err
 			}

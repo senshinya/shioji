@@ -42,10 +42,17 @@ func (m *Model) DeviceIconChoice(key string) DeviceIcon {
 	return DeviceIconAuto
 }
 
-func (m *Model) SetDeviceIcon(key string, icon DeviceIcon) error {
-	switch icon {
+func (i DeviceIcon) Valid() bool {
+	switch i {
 	case DeviceIconAuto, DeviceIconMonitor, DeviceIconLaptop, DeviceIconTablet, DeviceIconPhone, DeviceIconServer:
+		return true
 	default:
+		return false
+	}
+}
+
+func (m *Model) SetDeviceIcon(key string, icon DeviceIcon) error {
+	if !icon.Valid() {
 		return fmt.Errorf("不支持的设备图标")
 	}
 	if key == "local" {

@@ -56,7 +56,15 @@ func TestPrivateLifecycleStorageScanReleasesDrainedReceipt(t *testing.T) {
 	}
 	defer log.Close()
 	cmd := exec.Command(bin, "--service-child", "--state-dir", dir, "--codex", transport.ExistingCodex())
-	cmd.Env = append(os.Environ(), "CODEX_HOME="+p.Home, "SHIOJI_WORKER_INSTANCE=storage-drain")
+	// This is the running child on the business socket, even when the
+	// test itself runs inside a supervisor-started replacement.
+	cmd.Env = append(os.Environ(),
+		"CODEX_HOME="+p.Home,
+		"SHIOJI_WORKER_INSTANCE=storage-drain",
+		"SHIOJI_WORKER_PAUSED=false",
+		"SHIOJI_SUPERVISOR_OPERATION=",
+		"SHIOJI_WORKER_LIFECYCLE_FD=",
+	)
 	cmd.Stdout, cmd.Stderr = log, log
 	if err = cmd.Start(); err != nil {
 		t.Fatal(err)

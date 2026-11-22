@@ -1090,6 +1090,7 @@ func (rt *engine) openDrawnMenu(e *node) {
 	d := &drawnMenu{id: e.id, text: rt.menu.text, source: e.Bounds()}
 	if input := rt.states[rt.focused]; input != nil && input.textClient != nil {
 		_, d.keepInputFocus = input.textClient.MarkedRange()
+		d.keepInputFocus = d.keepInputFocus || rt.menu.button && e.flags&flagKeepFocus != 0
 	}
 	d.menu.openAt(rt, d.source)
 	rt.menu.drawn = d

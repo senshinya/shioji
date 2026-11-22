@@ -329,6 +329,48 @@ func TestCompletionReadReceiptKeepsNewerReplyAndFailureRestoresAttention(t *test
 	}
 }
 
+func TestCompletionReadRoutesToAnAuthenticatedSingleDevice(t *testing.T) {
+	model := NewModel()
+	owner := domain.Workspace{ID: "workspace", DeviceID: "remote"}
+	reply := domain.Session{ID: "session", WorkspaceID: owner.ID, ThreadID: "history", Status: domain.ExecutionCompleted,
+		Context: domain.LaunchContext{DeviceID: owner.DeviceID}, Completion: &domain.ReplyCompletion{ID: "reply", HistoryRef: "history",
+			CompletedAt: time.Now(), Unread: true}}
+	model.ApplySnapshot(domain.Snapshot{DeviceID: "remote", Workspaces: []domain.Workspace{owner}, Sessions: []domain.Session{reply}})
+	job, ok := model.CompletionReadJob(reply.ID)
+	if !ok || job.ConnectionID != owner.DeviceID || job.Input.(protocol.CompletionReadInput).CompletionID != "reply" {
+		t.Fatalf("could not target the owning single-device connection: %+v", job)
+	}
+	that := reply
+	that.Context.DeviceID = "unrelated"
+	that.Revision++
+	that.Completion = &domain.ReplyCompletion{ID: reply.Completion.ID, HistoryRef: reply.ThreadID}
+	raw, err := json.Marshal(that)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job.Apply(model, raw, nil)
+	if !model.HasCompletedReply(reply.ID) || model.Snapshot.Sessions[0].Context.DeviceID != owner.DeviceID {
+		t.Fatal("a receipt with the wrong device identity marked the reply as read")
+	}
+}
+
+func TestDeviceSelectionKeepsTheLaunchClockBoundary(t *testing.T) {
+	model := NewModel()
+	clock := model.startedAt.Add(-3 * time.Hour)
+	snapshot := domain.Snapshot{DeviceID: "remote", ObservedAt: clock, Sessions: []domain.Session{
+		completionSession(t, "old", clock.Add(-2*time.Minute), true),
+	}}
+	model.CompletionCutoffForSnapshot(snapshot, model.startedAt.Add(time.Minute))
+	snapshot.Sessions = append(snapshot.Sessions, completionSession(t, "new", clock.Add(-30*time.Second), true))
+	snapshot.Sessions[1].ID = "next"
+	selection := model.NewDeviceSelection()
+	snapshot.ObservedAt = clock.Add(2 * time.Hour)
+	selection.ApplySnapshot(snapshot)
+	if selection.HasCompletedReply("s") || !selection.HasCompletedReply("next") {
+		t.Fatal("switching devices changed which replies belong to the current launch")
+	}
+}
+
 func TestCompletionReadRejectsReplyFromAnotherDevice(t *testing.T) {
 	m := NewModel()
 	s := completionSession(t, "reply", time.Now(), true)

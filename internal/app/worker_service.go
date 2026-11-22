@@ -13,12 +13,17 @@ type WorkerSchemaConfirmation struct {
 	SourceBuild, TargetBuild string
 }
 
+type AuthenticatedWorkerConfirmation struct {
+	SourceBuild, TargetBuild, OperationID string
+}
+
 const (
 	WorkerCurrent      WorkerUpdatePhase = "current"
 	WorkerAvailable    WorkerUpdatePhase = "available"
 	WorkerNewer        WorkerUpdatePhase = "newer"
 	WorkerLegacy       WorkerUpdatePhase = "legacy"
 	WorkerWaiting      WorkerUpdatePhase = "waiting"
+	WorkerPreparing    WorkerUpdatePhase = "preparing"
 	WorkerUpdating     WorkerUpdatePhase = "updating"
 	WorkerUpdateFailed WorkerUpdatePhase = "failed"
 )
@@ -79,6 +84,8 @@ func (s *WorkerService) Label() string {
 		return "需要手动更新"
 	case WorkerWaiting:
 		return "等待空闲更新"
+	case WorkerPreparing:
+		return "正在准备升级"
 	case WorkerUpdating:
 		if label := s.UploadLabel(); label != "" {
 			return label

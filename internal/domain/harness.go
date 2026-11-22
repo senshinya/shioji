@@ -72,4 +72,17 @@ func (r Readiness) Descriptor() HarnessDescriptor {
 	return HarnessDescriptor{ID: r.HarnessID, Name: "Agent"}
 }
 
+// An incomplete catalog cannot establish that a model was removed.
+func (r Readiness) ModelUnavailable(id string) bool {
+	if r.State != RuntimeReady || id == "" {
+		return false
+	}
+	for _, model := range r.Models {
+		if model.ID == id {
+			return false
+		}
+	}
+	return true
+}
+
 const ModelUnavailableMessage = "当前模型已不可用，请更换模型"

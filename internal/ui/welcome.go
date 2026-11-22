@@ -132,7 +132,11 @@ func (v *View) welcomeView(c *n.Context, t *n.Theme) {
 			n.Column(c).Width(f.width).AlignSelf(n.Center).Label("欢迎内容").Children(func() {
 				v.welcomeSteps(c, t, f, false)
 				v.welcomeStage(c, t, f, false)
-				v.welcomeError(c, v.Model.Error)
+				message := v.Model.ConnectionError
+				if message == "" {
+					message = v.Model.Error
+				}
+				v.welcomeError(c, message)
 			})
 		})
 	})

@@ -20,7 +20,7 @@ func TestCompactionDoesNotNotifyAsAnAgentReply(t *testing.T) {
 func TestNotificationsUseNewConfirmedEventsNotSnapshotsOrLateUsage(t *testing.T) {
 	m := NewModel()
 	m.Preferences.Notifications.Enabled = true
-	m.ApplySnapshot(domain.Snapshot{Sessions: []domain.Session{{ID: "s", WorkspaceID: "w", Title: "A task", Status: "running"}}})
+	m.ApplySnapshot(domain.Snapshot{DeviceID: "d", Sessions: []domain.Session{{ID: "s", WorkspaceID: "w", ThreadID: "thread", Title: "A task", Status: "running"}}})
 	if len(m.Notifications) != 0 {
 		t.Fatal("history snapshot produced notifications")
 	}
@@ -38,7 +38,7 @@ func TestNotificationsUseNewConfirmedEventsNotSnapshotsOrLateUsage(t *testing.T)
 	if len(m.Notifications) != 1 || m.Notifications[0].Kind != "completed" || m.Notifications[0].SessionID != "s" {
 		t.Fatal("completion notification missing or repeated", m.Notifications)
 	}
-	req := domain.PendingRequest{ID: "r", SessionID: "s", State: "pending", Kind: "questions", Revision: 1}
+	req := domain.PendingRequest{ID: "r", SessionID: "s", WorkID: "child", State: "pending", Kind: "questions", Revision: 1}
 	if err := m.ApplyEvent(domain.Event{Sequence: 3, SessionID: "s", Type: "request.open", Request: &req}); err != nil {
 		t.Fatal(err)
 	}
@@ -48,6 +48,10 @@ func TestNotificationsUseNewConfirmedEventsNotSnapshotsOrLateUsage(t *testing.T)
 	}
 	if len(m.Notifications) != 2 || m.Notifications[1].Kind != "attention" {
 		t.Fatal("request lifecycle was not distinguished", m.Notifications)
+	}
+	if notice := m.Notifications[1]; notice.SessionLocation != (SessionLocation{DeviceID: "d", WorkspaceID: "w", SessionID: "s"}) ||
+		notice.ThreadID != "thread" || notice.RequestID != req.ID || notice.WorkID != req.WorkID || notice.RequestRevision != req.Revision {
+		t.Fatalf("request notification lost its exact target: %+v", notice)
 	}
 	if err := m.ApplyEvent(domain.Event{Sequence: 5, SessionID: "s", Type: "turn", Turn: &domain.Turn{ID: "t2", Status: "interrupted"}}); err != nil {
 		t.Fatal(err)

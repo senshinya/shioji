@@ -6,6 +6,9 @@ Client settings additionally use `ui.Context.ReduceMotion` to request less
 motion for the current frame, including native scrolling and Markdown. It
 preserves the desktop preference and cannot disable system Reduce Motion.
 
+Markdown accepts optional `AnchorScroll` options. Mobile conversation links
+opt into aligning the target at the start of the native scrolling region.
+
 Notification registration rechecks cancellation while holding the registry
 lock. This prevents a canceled delivery from restoring its callback after
 the client retires it; covered by `notification_registration_test.go`.
@@ -14,6 +17,9 @@ repositioning and untracked-paint recovery. Shioji's menu density, delayed
 submenus and IME focus policy remain applied to the upstream renderer.
 Read-only diff selection retains source byte offsets across line-ending
 normalization and maps EOF after a final line break to the last physical line.
+Mobile historical comments use `editor.DiffState.UnifiedTextFragments` to
+highlight unchanged base text on its shared row in a unified diff. Deleted
+text keeps its own base row. The stored quote retains its original offsets.
 Native captures refresh when another window has updated the shared coverage
 atlas, which may reuse an icon's transient path mask without repacking it.
 
@@ -31,6 +37,18 @@ text, separate from the retained IME undo transaction. Native unmark or empty
 preedit must release Enter back to Shioji's send binding; a following native
 replacement still shares the original undo step. Covered by
 `ui/richtext/ime_test.go` and `internal/ui/composer_enter_test.go`.
+
+`ui.ReturnNewLine` makes an on-screen Return insert text into the focused
+document. Shioji's iOS composer uses it so hardware shortcuts can send while
+the software keyboard continues to insert line breaks.
+
+On iOS, a pointer press on a clickable rich-text attachment keeps the current
+focus until the attachment handles the tap. Opening the software keyboard on
+press would move the attachment before release.
+
+`HostWindow.usesSceneSafeTop` aligns the iPhone conversation list's custom
+toolbar with the scene's status area. Native search uses the navigation
+controller's insets while it is visible.
 
 Scroll containers show their overlay thumbs only after the offset actually
 changes or while a thumb is dragged. Hover and initial history placement do not
@@ -171,6 +189,11 @@ reply regressions in internal/ui/streaming_test.go. Remove the replacement when 
 upstream release exposes equivalent controls. This remains a native renderer;
 no HTML or WebView is introduced.
 
+On iOS, the host includes embedded UIKit views in the parent surface's
+accessibility reading order. The mobile image preview uses this slot for
+its native zoomable image and rotation button. Android's accessibility
+wire format is unchanged.
+
 Read-only unified Diff additionally supports exact old/new text fragments,
 including deleted blocks and partial lines, native copy, wrapped-row keyboard
 selection, and restoring disjoint quotes after context expansion. Buffer keeps
@@ -179,3 +202,25 @@ and save normalization remains unchanged. Read-only Diff hides insertion
 carets, while editable editors keep theirs. Full-width annotations let Shioji
 place compact inline comments. Regression tests live in
 `ui/editor/diff_selection{,_regression}_test.go`.
+
+Touch targeting checks interactive ancestors before adjusting a tap's position.
+This keeps a tap on a styled inline link from snapping away to nearby selectable
+text. Covered by Shioji's native file-link UI test.
+
+Deceleration consumes taps inside its scroll container. A tap on a sibling
+control stops the motion and still activates that control, including Shioji's
+return-to-latest button. Covered by `ui/touch_scroll_target_test.go`.
+
+A drawn menu button with KeepFocus also keeps its focused text input while the
+menu is open. This keeps the keyboard and menu anchor in place while choosing
+the queued-message action in Shioji's iOS and iPadOS interaction tests.
+Touch editing commands also check that the touch started on the text editor,
+so tapping a reference candidate that retains editor focus does not open the
+system selection menu.
+
+Simulator executables link a bundle-scoped application identifier alongside
+plugin entitlements so the native Keychain can store Shioji's connection
+identity.
+
+The iOS host forwards notification responses from scene connection options
+and coalesces the matching notification delegate callback.

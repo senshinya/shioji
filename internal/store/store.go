@@ -75,7 +75,8 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), state TEXT NOT NULL, digest TEXT NOT NULL, error TEXT NOT NULL DEFAULT '');
  CREATE TABLE IF NOT EXISTS items (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, position INTEGER NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
  CREATE INDEX IF NOT EXISTS items_order ON items(session_id,position);
- CREATE INDEX IF NOT EXISTS items_history_round_starts ON items(session_id,position) WHERE ` + historyRoundStartSQL + `;
+ CREATE INDEX IF NOT EXISTS items_history_round_starts ON items(session_id,position) WHERE ` + historyRoundMarkerSQL + `;
+ CREATE INDEX IF NOT EXISTS items_recorded_input_date ON items(session_id,` + sessionInputEpoch + ` DESC,position DESC) WHERE ` + recordedSessionInput + `;
  CREATE TABLE IF NOT EXISTS requests (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
  CREATE TABLE IF NOT EXISTS turns (session_id TEXT NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(session_id,id));
  CREATE TABLE IF NOT EXISTS journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, body BLOB NOT NULL);
@@ -927,6 +928,9 @@ func (s *Store) Snapshot() (domain.Snapshot, error) {
 	if out.Sessions, err = rowsOf[domain.Session](s.db, "SELECT body FROM sessions ORDER BY rowid"); err != nil {
 		return out, err
 	}
+	if out.SessionInputTimes, err = s.snapshotSessionInputTimes(); err != nil {
+		return out, err
+	}
 	if out.PendingRequests, err = rowsOf[domain.PendingRequest](s.db, "SELECT body FROM requests WHERE json_extract(body,'$.state') IN ('pending','submitting')"); err != nil {
 		return out, err
 	}
@@ -994,6 +998,7 @@ func (s *Store) sessionLocked(id string, after int64, limit int, window *domain.
 	itemArgs := []any{id, after, limit + 1}
 	backwards := false
 	rounds := window != nil && window.Rounds > 0
+	startsMidRound := rounds && window.WindowFirst == 0 && window.After > 0
 	if rounds {
 		q := *window
 		q.WindowFirst, q.WindowLast, err = s.historyRoundRangeLocked(q)
@@ -1025,19 +1030,30 @@ func (s *Store) sessionLocked(id string, after int64, limit int, window *domain.
 		slices.Reverse(out.Items)
 	}
 	contextID := ""
-	if window != nil && len(out.Items) > 0 {
+	if window != nil && len(out.Items) > 0 && (!rounds || startsMidRound) {
 		first := out.Items[0]
+		position := first.Order
 		boundary := historyPromptSQL
 		if rounds {
-			boundary = historyRoundStartSQL
+			var err error
+			position, _, err = s.historyRoundAt(id, first.Order)
+			if err != nil {
+				return out, err
+			}
+			if position > first.Order {
+				position = 0 // The marker is already part of the current round.
+			}
+			boundary = historyRoundMarkerSQL
 		}
-		context, e := load[domain.Item](s.historyQueries().QueryRow("SELECT body FROM items WHERE session_id=? AND position<=? AND "+boundary+" ORDER BY position DESC LIMIT 1", id, first.Order))
-		if e != nil && !errors.Is(e, sql.ErrNoRows) {
-			return out, e
-		}
-		if e == nil && context.ID != first.ID {
-			contextID = context.ID
-			out.Items = append([]domain.Item{context}, out.Items...)
+		if position != 0 {
+			context, e := load[domain.Item](s.historyQueries().QueryRow("SELECT body FROM items WHERE session_id=? AND position<=? AND "+boundary+" ORDER BY position DESC LIMIT 1", id, position))
+			if e != nil && !errors.Is(e, sql.ErrNoRows) {
+				return out, e
+			}
+			if e == nil && context.ID != first.ID {
+				contextID = context.ID
+				out.Items = append([]domain.Item{context}, out.Items...)
+			}
 		}
 	}
 

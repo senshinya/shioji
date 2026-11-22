@@ -171,6 +171,53 @@ func TestGitMonitorMarksExternalChangesWithoutSubmitting(t *testing.T) {
 	}
 }
 
+func TestGitConfirmationVerifiesTheObservedCheckoutWithoutChangingIt(t *testing.T) {
+	s, w, dir := gitTestServer(t)
+	id := gitTestSession(t, s, w, "main", "completed")
+	const queued = "Keep the queued task"
+	if _, err := s.store.Enqueue(domain.Submission{OperationID: domain.NewID(), WorkspaceID: w.ID, SessionID: id, HarnessID: "codex", Text: queued}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.store.PauseQueue(id, "user paused"); err != nil {
+		t.Fatal(err)
+	}
+	gitTestRun(t, dir, "switch", "other")
+	gitTestRun(t, dir, "commit", "--allow-empty", "-m", "observed")
+	observed := gitTestRun(t, dir, "rev-parse", "HEAD")
+	gitTestRun(t, dir, "commit", "--allow-empty", "-m", "replaced observation")
+	latest := gitTestRun(t, dir, "rev-parse", "HEAD")
+	confirm := func(branch, head string) (map[string]any, error) {
+		return gitTestCall(s, "git.confirm", map[string]any{"workspaceId": w.ID, "sessionId": id, "branch": branch, "head": head})
+	}
+	for _, test := range []struct{ branch, head string }{{"main", latest}, {"other", observed}, {"other", ""}} {
+		if _, err := confirm(test.branch, test.head); err == nil {
+			t.Fatalf("accepted a confirmation for another checkout: %+v", test)
+		}
+		if got := gitTestRun(t, dir, "branch", "--show-current"); got != "other" {
+			t.Fatalf("confirmation switched the checkout to %q", got)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "untracked"), []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	status, err := confirm("other", latest)
+	if err != nil || status["branch"] != "other" || status["head"] != latest || status["dirty"] != true {
+		t.Fatalf("dirty checkout was not confirmed: %v %v", status, err)
+	}
+	d, err := s.store.Session(id, 0, 1)
+	if err != nil || d.Session.ContextChanged || d.Session.GitBranch != "other" || d.Session.GitHead != latest ||
+		d.Session.Context.Branch != "main" || d.Session.Context.CWD != dir {
+		t.Fatalf("wrong observed context: %+v %v", d.Session, err)
+	}
+	queue, err := s.store.Queue(id)
+	if err != nil || !queue.Paused || len(queue.Items) != 1 || queue.Items[0].Input.Text != queued {
+		t.Fatalf("confirmation affected the paused queue: %+v %v", queue, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "untracked")); err != nil || string(data) != "keep" {
+		t.Fatalf("confirmation affected untracked data: %q %v", data, err)
+	}
+}
+
 func TestGitMonitorDoesNotTreatFailedReadAsCheckoutChange(t *testing.T) {
 	for _, tc := range []struct {
 		name, probe, branch string

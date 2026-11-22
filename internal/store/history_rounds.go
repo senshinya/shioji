@@ -13,7 +13,7 @@ import (
 const historyVisibleSQL = "session_id=? AND json_extract(body,'$.kind')!='queued'"
 const historyMainItemSQL = "COALESCE(json_extract(body,'$.workId'),'')=''"
 const historyPromptSQL = historyMainItemSQL + " AND json_extract(body,'$.kind')='user'"
-const historyRoundStartSQL = historyMainItemSQL + ` AND (json_extract(body,'$.kind')='user' OR
+const historyRoundMarkerSQL = historyMainItemSQL + ` AND (json_extract(body,'$.kind')='user' OR
  (json_extract(body,'$.kind')='activity' AND json_extract(body,'$.presentation')='` + domain.GoalContinuationPresentation + `'))`
 
 // HistorySnapshot keeps transport-sized chunks on one read-only WAL snapshot.
@@ -44,8 +44,67 @@ func (h *HistorySnapshot) Close() {
 	}
 }
 
+// A Goal turn can record compaction or context before the adapter confirms
+// that it is a continuation. Include its prefix without crossing the previous
+// user message or continuation marker. The underlying journal stays ordered.
+func (s *Store) historyRoundStartPosition(sid string, marker int64) (int64, error) {
+	var start int64
+	err := s.historyQueries().QueryRow(`
+		SELECT CASE WHEN json_extract(mark.body,'$.kind')='activity'
+			AND json_extract(mark.body,'$.presentation')='`+domain.GoalContinuationPresentation+`'
+			AND COALESCE(json_extract(mark.body,'$.turnId'),'')!=''
+		THEN COALESCE((
+			SELECT MIN(prefix.position) FROM items AS prefix
+			WHERE prefix.session_id=mark.session_id AND prefix.position<mark.position
+				AND prefix.position>COALESCE((
+					SELECT MAX(prior.position) FROM items AS prior
+					WHERE prior.session_id=mark.session_id AND prior.position<mark.position
+						AND `+historyRoundMarkerSQL+`
+				),0)
+				AND json_extract(prefix.body,'$.kind')!='queued' AND `+historyMainItemSQL+`
+				AND json_extract(prefix.body,'$.turnId')=json_extract(mark.body,'$.turnId')
+		),mark.position)
+		ELSE mark.position END
+		FROM items AS mark WHERE mark.session_id=? AND mark.position=?`, sid, marker).Scan(&start)
+	return start, err
+}
+
+func (s *Store) historyRoundMarkerAfter(sid string, position int64, skip int) (int64, error) {
+	var marker int64
+	err := s.historyQueries().QueryRow("SELECT position FROM items WHERE session_id=? AND "+
+		historyRoundMarkerSQL+" AND position>? ORDER BY position LIMIT 1 OFFSET ?", sid, position, skip).Scan(&marker)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = nil
+	}
+	return marker, err
+}
+
+func (s *Store) historyRoundAt(sid string, position int64) (marker, start int64, err error) {
+	// Only the next marker can move across this position. Every continuation
+	// prefix is bounded by the raw position of the preceding marker.
+	next, err := s.historyRoundMarkerAfter(sid, position, 0)
+	if err != nil {
+		return 0, 0, err
+	}
+	if next != 0 {
+		nextStart, err := s.historyRoundStartPosition(sid, next)
+		if err != nil {
+			return 0, 0, err
+		}
+		if nextStart <= position {
+			return next, nextStart, nil
+		}
+	}
+	err = s.historyQueries().QueryRow("SELECT COALESCE(MAX(position),0) FROM items WHERE session_id=? AND "+
+		historyRoundMarkerSQL+" AND position<=?", sid, position).Scan(&marker)
+	if err == nil && marker != 0 {
+		start, err = s.historyRoundStartPosition(sid, marker)
+	}
+	return
+}
+
 // A display round starts at a main-conversation user message (including a
-// steering input) or a persisted Goal continuation marker.
+// steering input) or the beginning of a marked Goal continuation.
 func (s *Store) historyRoundRangeLocked(q domain.HistoryQuery) (first, last int64, err error) {
 	if q.Rounds < 1 || q.Rounds > domain.MaxHistoryRounds {
 		return 0, 0, errors.New("invalid history round count")
@@ -56,11 +115,10 @@ func (s *Store) historyRoundRangeLocked(q domain.HistoryQuery) (first, last int6
 		}
 		return q.WindowFirst, q.WindowLast, nil
 	}
-	// Separate the endpoints so SQLite can seek each one with items_order.
-	// A combined MIN/MAX scans the session and parses every item body.
+	// Separate seeks use items_order to find both ends without parsing every body.
 	lastQuery := "SELECT COALESCE(MAX(position),0) FROM items WHERE " + historyVisibleSQL
 	lastArgs := []any{q.SessionID}
-	if q.Before > 0 {
+	if q.Before > 0 && q.After == 0 && q.AroundID == "" {
 		lastQuery += " AND position<?"
 		lastArgs = append(lastArgs, q.Before)
 	}
@@ -79,32 +137,32 @@ func (s *Store) historyRoundRangeLocked(q domain.HistoryQuery) (first, last int6
 			if err != nil {
 				return
 			}
-			var start int64
-			err = s.historyQueries().QueryRow("SELECT COALESCE(MAX(position),0) FROM items WHERE session_id=? AND "+historyRoundStartSQL+" AND position<=?", q.SessionID, target).Scan(&start)
-			if err != nil {
-				return
-			}
-			if start != 0 {
-				first = start
-			}
 		} else {
 			err = s.historyQueries().QueryRow("SELECT COALESCE(MIN(position),0) FROM items WHERE "+historyVisibleSQL+" AND position>?", q.SessionID, q.After).Scan(&first)
 			if err != nil || first == 0 {
 				return 0, 0, err
 			}
+			target = first
 		}
-		var next int64
-		err = s.historyQueries().QueryRow("SELECT position FROM items WHERE session_id=? AND "+historyRoundStartSQL+" AND position>? ORDER BY position LIMIT 1 OFFSET ?", q.SessionID, first, q.Rounds-1).Scan(&next)
-		if errors.Is(err, sql.ErrNoRows) {
-			return first, last, nil
-		}
+		marker, start, err := s.historyRoundAt(q.SessionID, target)
 		if err != nil {
-			return
+			return 0, 0, err
 		}
-		err = s.historyQueries().QueryRow("SELECT COALESCE(MAX(position),0) FROM items WHERE "+historyVisibleSQL+" AND position<?", q.SessionID, next).Scan(&last)
-		return
+		if q.AroundID != "" && start != 0 {
+			first = start
+		}
+		next, err := s.historyRoundMarkerAfter(q.SessionID, max(first, marker), q.Rounds-1)
+		if err != nil || next == 0 {
+			return first, last, err
+		}
+		end, err := s.historyRoundStartPosition(q.SessionID, next)
+		if err != nil {
+			return 0, 0, err
+		}
+		err = s.historyQueries().QueryRow("SELECT COALESCE(MAX(position),0) FROM items WHERE "+historyVisibleSQL+" AND position<?", q.SessionID, end).Scan(&last)
+		return first, last, err
 	}
-	rows, err := s.historyQueries().Query("SELECT position FROM items WHERE session_id=? AND "+historyRoundStartSQL+" AND position<=? ORDER BY position DESC LIMIT ?", q.SessionID, last, q.Rounds+1)
+	rows, err := s.historyQueries().Query("SELECT position FROM items WHERE session_id=? AND "+historyRoundMarkerSQL+" AND position<=? ORDER BY position DESC LIMIT ?", q.SessionID, last, q.Rounds+1)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -117,10 +175,13 @@ func (s *Store) historyRoundRangeLocked(q domain.HistoryQuery) (first, last int6
 		}
 		starts = append(starts, position)
 	}
-	if len(starts) > q.Rounds {
-		first = starts[q.Rounds-1]
+	if err = rows.Err(); err != nil {
+		return
 	}
-	return first, last, rows.Err()
+	if len(starts) > q.Rounds {
+		first, err = s.historyRoundStartPosition(q.SessionID, starts[q.Rounds-1])
+	}
+	return
 }
 
 // Read only one transport-sized piece. A round can contain any number of

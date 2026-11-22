@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"slices"
+	"time"
 
 	"shioji/internal/domain"
 )
@@ -89,6 +91,12 @@ func (c *Client) readCatalog(ctx context.Context) (domain.Snapshot, error) {
 			}
 			all.Workspaces = append(all.Workspaces, part.Workspaces...)
 			all.Sessions = append(all.Sessions, part.Sessions...)
+			if len(part.SessionInputTimes) > 0 {
+				if all.SessionInputTimes == nil {
+					all.SessionInputTimes = make(map[string]time.Time)
+				}
+				maps.Copy(all.SessionInputTimes, part.SessionInputTimes)
+			}
 			all.PendingRequests = append(all.PendingRequests, part.PendingRequests...)
 			all.Operations = append(all.Operations, part.Operations...)
 		}

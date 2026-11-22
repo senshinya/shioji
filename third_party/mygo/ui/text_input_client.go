@@ -38,6 +38,8 @@ type Point struct{ X, Y float32 }
 // queried again after every mutation, before the next native event.
 // A client may also implement CanEditCommand(string) bool to provide EditItems
 // availability; commands are delivered to its paired HandleInput as InputCommand.
+// On iOS, KeepsFocusAtPoint(Point) bool preserves focus when an inline action
+// is pressed, so the software keyboard cannot move the action mid-gesture.
 type TextInputClient interface {
 	TextForRange(TextInputRange) (string, TextInputRange)
 	Selection() TextInputSelection

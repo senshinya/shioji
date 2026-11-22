@@ -14,23 +14,27 @@ type HistoryEdit struct {
 }
 
 func (m *Model) BeginHistoryEdit(item domain.Item) error {
-	if m.SessionID == "" || item.Kind != "user" || item.Status != "sent" || item.TurnID == "" {
+	return m.BeginSessionHistoryEdit(m.SessionID, item)
+}
+
+func (m *Model) BeginSessionHistoryEdit(sid string, item domain.Item) error {
+	if sid == "" || item.Kind != "user" || item.Status != "sent" || item.TurnID == "" {
 		return errors.New("这条消息尚不能修改")
 	}
-	if m.ActiveQueueEdit(m.SessionID).ID != "" {
+	if m.ActiveQueueEdit(sid).ID != "" {
 		return errors.New("请先结束待发送消息的编辑")
 	}
-	d := m.Details[m.SessionID]
+	d := m.Details[sid]
 	for _, earlier := range d.Items {
 		if earlier.Kind == "user" && earlier.TurnID == item.TurnID && earlier.Order < item.Order {
 			return errors.New("轮次内的追加消息暂不能单独重开")
 		}
 	}
-	if old := m.HistoryEdits[m.SessionID]; old.OperationID != "" {
+	if old := m.HistoryEdits[sid]; old.OperationID != "" {
 		return errors.New("先核对上次重开的结果")
 	}
-	m.HistoryEdits[m.SessionID] = HistoryEdit{ItemID: item.ID}
-	key := m.HistoryDraftKey()
+	m.HistoryEdits[sid] = HistoryEdit{ItemID: item.ID}
+	key := m.SessionHistoryDraftKey(sid)
 	if _, ok := m.Drafts[key]; !ok {
 		m.Drafts[key] = item.Text
 	}
@@ -38,19 +42,27 @@ func (m *Model) BeginHistoryEdit(item domain.Item) error {
 	return nil
 }
 func (m *Model) CancelHistoryEdit() {
+	m.CancelSessionHistoryEdit(m.SessionID)
+}
+
+func (m *Model) CancelSessionHistoryEdit(sid string) {
 	// Closing an unresolved submitted operation retains its recovery draft.
 	// Canceling a local edit discards its text and references together.
-	if m.HistoryEdits[m.SessionID].OperationID == "" {
-		key := m.HistoryDraftKey()
+	if m.HistoryEdits[sid].OperationID == "" {
+		key := m.SessionHistoryDraftKey(sid)
 		delete(m.Drafts, key)
 		delete(m.Attachments, key)
 		delete(m.DraftSkills, key)
 	}
-	delete(m.HistoryEdits, m.SessionID)
+	delete(m.HistoryEdits, sid)
 }
 
 func (m *Model) HistoryDraftKey() string {
-	return "history:" + m.SessionID + ":" + m.HistoryEdits[m.SessionID].ItemID
+	return m.SessionHistoryDraftKey(m.SessionID)
+}
+
+func (m *Model) SessionHistoryDraftKey(sid string) string {
+	return "history:" + sid + ":" + m.HistoryEdits[sid].ItemID
 }
 
 func (m *Model) confirmHistoryOperation(op domain.Operation) {
@@ -111,12 +123,20 @@ func sameHistoryReferences(a, b domain.HistoryReferences) bool {
 	return slices.Equal(a.Attachments, b.Attachments) && slices.Equal(a.Skills, b.Skills) && slices.Equal(a.ReferencePositions, b.ReferencePositions)
 }
 func (m *Model) HistoryReferences() (*domain.HistoryReferences, error) {
-	key := m.HistoryDraftKey()
-	attachments, err := m.submissionAttachments(key, m.WorkspaceID)
+	return m.historyReferences(m.SessionID, m.WorkspaceID, m.HarnessID())
+}
+
+func (m *Model) SessionHistoryReferences(s domain.Session) (*domain.HistoryReferences, error) {
+	return m.historyReferences(s.ID, s.WorkspaceID, s.HarnessID)
+}
+
+func (m *Model) historyReferences(sid, workspace, harness string) (*domain.HistoryReferences, error) {
+	key := m.SessionHistoryDraftKey(sid)
+	attachments, err := m.submissionAttachments(key, workspace)
 	if err != nil {
 		return nil, err
 	}
-	skills, err := m.submissionSkills(key, m.WorkspaceID, m.HarnessID())
+	skills, err := m.submissionSkills(key, workspace, harness)
 	if err != nil {
 		return nil, err
 	}
@@ -126,8 +146,8 @@ func (m *Model) HistoryReferences() (*domain.HistoryReferences, error) {
 		for _, a := range attachments {
 			inline = inline || a.InlineReference()
 		}
-		for _, item := range m.Details[m.SessionID].Items {
-			if item.ID == m.HistoryEdits[m.SessionID].ItemID {
+		for _, item := range m.Details[sid].Items {
+			if item.ID == m.HistoryEdits[sid].ItemID {
 				inline = inline || len(item.Skills) > 0
 				for _, a := range item.Attachments {
 					inline = inline || a.InlineReference()
@@ -138,8 +158,8 @@ func (m *Model) HistoryReferences() (*domain.HistoryReferences, error) {
 			return nil, errors.New("请先升级执行服务以编辑含行内引用的历史消息")
 		}
 
-		for _, item := range m.Details[m.SessionID].Items {
-			if item.ID == m.HistoryEdits[m.SessionID].ItemID && slices.Equal(attachments, item.Attachments) && slices.Equal(skills, item.Skills) {
+		for _, item := range m.Details[sid].Items {
+			if item.ID == m.HistoryEdits[sid].ItemID && slices.Equal(attachments, item.Attachments) && slices.Equal(skills, item.Skills) {
 				return nil, nil
 			}
 		}

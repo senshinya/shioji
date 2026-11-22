@@ -55,7 +55,8 @@ func TestChildRequestPersistsBothSourcesAndLatestReceipt(t *testing.T) {
 	page, err := db.WorkHistory(domain.WorkHistoryQuery{ID: "child", HistoryQuery: domain.HistoryQuery{
 		SessionID: op.SessionID, Rounds: 1, WindowFirst: sourceOrder, WindowLast: sourceOrder, After: sourceOrder - 1,
 	}})
-	if err != nil || len(page.Items) != 1 || len(page.Items[0].Item.Parts) != 1 || page.Items[0].Item.Parts[0].Text != "包含根节点" {
+	if err != nil || len(page.Items) != 1 || page.Items[0].Item.Presentation != "questions" ||
+		len(page.Items[0].Item.Parts) != 1 || page.Items[0].Item.Parts[0].Text != "包含根节点" {
 		t.Fatal("the original child history page cannot show its answer without the later result page", page, err)
 	}
 	detail, _ = db.Session(op.SessionID, 0, 100)

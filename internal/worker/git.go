@@ -318,6 +318,12 @@ func (s *Server) checkoutGuard(status domain.GitStatus, own string) error {
 	return nil
 }
 func (s *Server) checkout(in protocol.CheckoutInput) (domain.GitStatus, error) {
+	return s.updateCheckout(in, nil)
+}
+
+// An observed head is supplied only for confirmation. A stale confirmation
+// cannot fall through to the code that changes the shared checkout.
+func (s *Server) updateCheckout(in protocol.CheckoutInput, observedHead *string) (domain.GitStatus, error) {
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
 	if in.SessionID == "" {
@@ -330,14 +336,19 @@ func (s *Server) checkout(in protocol.CheckoutInput) (domain.GitStatus, error) {
 	if !status.Applicable {
 		return status, errors.New("not a Git repository")
 	}
-	release, err := s.beginGitTransition(status.Checkout, status.CommonDir)
+	checkout, common := status.Checkout, status.CommonDir
+	release, err := s.beginGitTransition(checkout, common)
 	if err != nil {
 		return status, err
 	}
 	defer release()
-	status, err = s.queryGitOutsideDispatch(s.ctx, status.Checkout)
+	status, err = s.queryGitOutsideDispatch(s.ctx, checkout)
 	if err != nil {
 		return status, err
+	}
+	if observedHead != nil && (!status.Applicable || status.Checkout != checkout || status.CommonDir != common ||
+		status.Branch != in.Branch || status.Head != *observedHead) {
+		return status, &protocol.RemoteError{Code: "gitContextChanged", Message: "分支或提交已变化，请刷新后再确认"}
 	}
 	if err = s.updateAdmission(); err != nil {
 		return status, err
@@ -363,7 +374,29 @@ func (s *Server) checkout(in protocol.CheckoutInput) (domain.GitStatus, error) {
 		}
 		return status, errors.New("session has an unsettled operation")
 	}
-	if in.Branch != status.Branch {
+	if observedHead != nil {
+		if d.Session.Archived || d.Session.ExecutionGuard != "" {
+			return status, errors.New("当前会话暂时无法确认分支")
+		}
+		workspace, e := s.store.Workspace(d.Session.WorkspaceID)
+		if e != nil {
+			return status, e
+		}
+		if workspace.Archived {
+			return status, errors.New("请先恢复工作区")
+		}
+		if err = s.sessionMaintenanceAdmission(in.SessionID); err != nil {
+			return status, err
+		}
+		if busy, e := s.store.HasActiveWork(in.SessionID); e != nil {
+			return status, e
+		} else if busy {
+			return status, errors.New("会话仍有活动工作")
+		}
+		if !d.Session.ContextChanged && d.Session.GitBranch == status.Branch && d.Session.GitHead == status.Head {
+			return status, nil
+		}
+	} else if in.Branch != status.Branch {
 		if err = s.checkoutGuard(status, in.SessionID); err != nil {
 			return status, err
 		}

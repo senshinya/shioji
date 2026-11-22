@@ -1,0 +1,33 @@
+name: ShiojiMobileChecks
+settings:
+  base:
+    CODE_SIGNING_ALLOWED: NO
+    TARGETED_DEVICE_FAMILY: "1,2"
+options:
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  ShiojiClipboardFixture:
+    type: application
+    platform: iOS
+    sources: [ClipboardFixture]
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: ai.shioji.mobile.clipboard-fixture
+      GENERATE_INFOPLIST_FILE: YES
+      INFOPLIST_KEY_UILaunchScreen_Generation: YES
+      INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+  ShiojiMobileUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: ai.shioji.mobile.uitests
+      GENERATE_INFOPLIST_FILE: YES
+schemes:
+  ShiojiMobileChecks:
+    build:
+      targets:
+        ShiojiMobileUITests: [test]
+        ShiojiClipboardFixture: [test]
+    test:
+      targets: [ShiojiMobileUITests]

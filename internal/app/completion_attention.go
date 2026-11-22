@@ -109,12 +109,14 @@ func (m *Model) observeCompletedReply(e domain.Event) {
 	m.CompletedReplies[e.SessionID] = CompletedReply{HistoryRef: history, TurnID: e.Turn.ID, Order: e.Turn.Order, Unread: true}
 }
 
-func (m *Model) reconcileCompletedReplies(snapshot domain.Snapshot, requestedAt time.Time) {
+// CompletionCutoffForSnapshot records the first live clock sample for a
+// device, including devices queried without changing the UI's active scope.
+func (m *Model) CompletionCutoffForSnapshot(snapshot domain.Snapshot, requestedAt time.Time) time.Time {
 	// Translate this launch's monotonic elapsed time into the owning worker's
 	// clock. Use request start, never UI application time: readiness/queue delay
 	// must not admit pre-launch replies. The first request's transit interval is
 	// conservatively excluded when the clocks differ.
-	if !snapshot.ObservedAt.IsZero() {
+	if snapshot.DeviceID != "" && !snapshot.ObservedAt.IsZero() {
 		if _, ok := m.completionCutoffs[snapshot.DeviceID]; !ok {
 			m.completionCutoffs[snapshot.DeviceID] = snapshot.ObservedAt.Add(-requestedAt.Sub(m.startedAt))
 		}
@@ -123,6 +125,20 @@ func (m *Model) reconcileCompletedReplies(snapshot domain.Snapshot, requestedAt 
 	if at, ok := m.completionCutoffs[snapshot.DeviceID]; ok {
 		cutoff = at
 	}
+	return cutoff
+}
+
+// NewDeviceSelection keeps the launch boundary across independent client
+// models. Device-local drafts, navigation and in-flight reads stay separate.
+func (m *Model) NewDeviceSelection() *Model {
+	next := NewModel()
+	next.startedAt = m.startedAt
+	next.completionCutoffs = maps.Clone(m.completionCutoffs)
+	return next
+}
+
+func (m *Model) reconcileCompletedReplies(snapshot domain.Snapshot, requestedAt time.Time) {
+	cutoff := m.CompletionCutoffForSnapshot(snapshot, requestedAt)
 	for _, session := range snapshot.Sessions {
 		if session.Completion != nil {
 			m.projectCompletion(session, cutoff)
@@ -138,10 +154,19 @@ func (m *Model) reconcileCompletedReplies(snapshot domain.Snapshot, requestedAt 
 func (m *Model) CompletionReadJob(id string) (Job, bool) {
 	for _, s := range m.Snapshot.Sessions {
 		c := s.Completion
-		if s.ID != id || c == nil || c.Pending || c.ID == "" || !c.Unread || m.completionReads[id] == c.ID {
+		if s.ID != id || c == nil || c.Pending || c.ID == "" || c.HistoryRef != s.ThreadID || !c.Unread || m.completionReads[id] == c.ID {
 			continue
 		}
 		key := m.WorkspaceConnection(s.WorkspaceID)
+		device := m.Snapshot.DeviceID
+		if key == "" && len(m.DeviceStates) == 0 && device != "" {
+			for _, workspace := range m.Snapshot.Workspaces {
+				if workspace.ID == s.WorkspaceID && workspace.DeviceID == device {
+					key = device
+					break
+				}
+			}
+		}
 		if key == "" {
 			return Job{}, false
 		}
@@ -155,7 +180,8 @@ func (m *Model) CompletionReadJob(id string) (Job, bool) {
 				}
 				if err == nil {
 					var result domain.Session
-					if json.Unmarshal(raw, &result) != nil || result.ID != id {
+					if json.Unmarshal(raw, &result) != nil || result.ID != id || result.WorkspaceID != s.WorkspaceID ||
+						result.Context.DeviceID != "" && result.Context.DeviceID != p.Snapshot.DeviceID {
 						err = errors.New("会话处理状态回执不一致")
 					} else {
 						for i, current := range p.Snapshot.Sessions {

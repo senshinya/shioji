@@ -7438,9 +7438,8 @@ func (_handle Element) ReplaceText(start int, end int, s string) Element {
 	return wrapElement(_node.ReplaceText(start, end, s))
 }
 
-// ReturnKey sets what the return key of an on-screen keyboard says, for a
-// single-line input. It submits the input as Enter does; ReturnNext moves
-// the focus on as well.
+// ReturnKey sets the on-screen return key's label or behavior. ReturnNewLine
+// inserts a line break into the text document. The other keys issue Enter.
 func (_handle Element) ReturnKey(k ReturnKeyType) Element {
 	_node := _handle.node()
 	if _node == nil {

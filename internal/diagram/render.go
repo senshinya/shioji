@@ -1,4 +1,4 @@
-// Package diagram renders untrusted Mermaid source in an isolated local helper.
+// Package diagram renders Mermaid source into a bounded local SVG.
 package diagram
 
 import (
@@ -123,10 +123,14 @@ func (b *fontDiagnostics) Write(data []byte) (int, error) {
 }
 
 func renderSource(req Request) ([]byte, error) {
+	return evaluateSource(req, evaluatePele)
+}
+
+func evaluateSource(req Request, evaluate func(Request) (string, error)) ([]byte, error) {
 	if strings.TrimSpace(req.Source) == "" || len(req.Source) > MaxSource || strings.ContainsRune(req.Source, 0) {
 		return nil, errors.New("图表内容为空或超出渲染范围")
 	}
-	svg, err := evaluatePele(req)
+	svg, err := evaluate(req)
 	if err != nil {
 		return nil, err
 	}

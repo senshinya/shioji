@@ -2,8 +2,10 @@ package app
 
 import (
 	"errors"
-	"shioji/internal/domain"
 	"strings"
+
+	"shioji/internal/domain"
+	"shioji/internal/protocol"
 )
 
 // PrepareRecoveryDraft does not create a runtime session, move a queue, or send.
@@ -127,4 +129,18 @@ func (m *Model) BeginContinuation() (domain.Submission, error) {
 	m.Pending[in.OperationID] = in
 	m.PendingDevices[in.OperationID] = m.ConnectionID()
 	return in, nil
+}
+
+// BeginContinuationInSession continues another visible session on the owning
+// Worker while leaving the selected conversation and its draft in place.
+func (m *Model) BeginContinuationInSession(id string) (domain.Submission, error) {
+	target, err := m.queueSession(id)
+	if err != nil {
+		return domain.Submission{}, err
+	}
+	in, err := target.BeginContinuation()
+	if err == nil && m.WorkerMinor >= protocol.RecoveryMinor && m.Snapshot.Generation != "" {
+		m.pendingGenerations[in.OperationID] = m.Snapshot.Generation
+	}
+	return in, err
 }

@@ -108,6 +108,31 @@ func TestReaderInterruptsAnimatedEndFollowing(t *testing.T) {
 	}
 }
 
+func TestAnimatedEndFollowsNewRowsAfterListRemount(t *testing.T) {
+	count, mount := 60, "first"
+	s := ListState{FollowEnd: true, Key: func(i int) any { return i }}
+	tt := NewTester(func(c *Context) {
+		List(c.Key(mount), &s, count, func(i int) {
+			Text(c, fmt.Sprint("message ", i)).Height(40)
+		}).Fill()
+	}, 400, 400)
+	before, _ := s.ScrollEdges()
+	if before == 0 || !s.AtEnd() {
+		t.Fatal("fixture did not start at the bottom of a long reply")
+	}
+
+	mount = "conversation"
+	count++
+	s.ScrollToEnd(Animation{Duration: 300 * time.Millisecond, Ease: Linear})
+	tt.Frame()
+	tt.Advance(time.Second)
+	followUp, visible := tt.Find("message 60")
+	if !visible || followUp.Y+followUp.H > 400.5 || !s.AtEnd() || !s.FollowingEnd() {
+		t.Fatalf("follow-up after remount: bounds=%+v visible=%t atEnd=%t following=%t",
+			followUp, visible, s.AtEnd(), s.FollowingEnd())
+	}
+}
+
 func TestAnimatedEndScrollKeepsVisibleRowsWhenPrefixEstimatesChange(t *testing.T) {
 	for _, atEnd := range []bool{false, true} {
 		t.Run(fmt.Sprint(atEnd), func(t *testing.T) {

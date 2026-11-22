@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"math"
 	"net"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
@@ -88,4 +89,48 @@ func (c *Controller) observeDeviceHealth(ctx context.Context, device, epoch stri
 		}
 	}()
 	return cancel
+}
+
+// DeviceLoadPercent returns the measured CPU or physical memory percentage.
+func DeviceLoadPercent(sample domain.DeviceLoad, memory bool) *float64 {
+	if !memory {
+		return sample.CPU
+	}
+	if sample.Memory == nil || sample.Memory.TotalBytes == 0 || sample.Memory.UsedBytes > sample.Memory.TotalBytes {
+		return nil
+	}
+	percent := 100 * float64(sample.Memory.UsedBytes) / float64(sample.Memory.TotalBytes)
+	return &percent
+}
+
+type DeviceLoadPoint struct{ X, Y float32 }
+
+// DeviceLoadSegments returns points normalized to a fixed 60-second / 0–100% plot. Missing values and
+// sampling pauses break the line, rather than inventing zeroes or interpolation.
+func DeviceLoadSegments(samples []domain.DeviceLoad, now time.Time, memory bool) [][]DeviceLoadPoint {
+	var lines [][]DeviceLoadPoint
+	var line []DeviceLoadPoint
+	var previous time.Time
+	flush := func() {
+		if len(line) > 0 {
+			lines = append(lines, line)
+			line = nil
+		}
+	}
+	for _, sample := range samples {
+		elapsed := now.Sub(sample.At).Seconds()
+		percent := DeviceLoadPercent(sample, memory)
+		if elapsed < 0 || elapsed > 60 || percent == nil || math.IsNaN(*percent) || math.IsInf(*percent, 0) || *percent < 0 || *percent > 100 {
+			flush()
+			previous = time.Time{}
+			continue
+		}
+		if !previous.IsZero() && (sample.At.Sub(previous) > 5*time.Second || !sample.At.After(previous)) {
+			flush()
+		}
+		line = append(line, DeviceLoadPoint{X: float32(1 - elapsed/60), Y: float32(1 - *percent/100)})
+		previous = sample.At
+	}
+	flush()
+	return lines
 }

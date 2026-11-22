@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 )
 
 type QueueEdit struct {
@@ -63,13 +64,45 @@ func (m *Model) Active() bool {
 	return false
 }
 func (m *Model) ActiveTurn() string {
-	for _, t := range m.Details[m.SessionID].Turns {
+	return m.ActiveTurnForSession(m.SessionID)
+}
+
+func (m *Model) ActiveTurnForSession(sid string) string {
+	for _, t := range m.Details[sid].Turns {
 		if t.Status == "running" {
 			return t.ID
 		}
 	}
 	return ""
 }
+
+// BeginMessageInSession uses the draft and live state of another session on
+// this model's Worker without moving the selected conversation. BeginMessage
+// records the submission and receipt scope in the owning model's maps.
+func (m *Model) BeginMessageInSession(id string, steer bool) (domain.Submission, string, string, error) {
+	selected, err := m.queueSession(id)
+	if err != nil {
+		return domain.Submission{}, "", "", err
+	}
+	return selected.BeginMessage(steer)
+}
+
+func (m *Model) queueSession(id string) (*Model, error) {
+	for _, session := range m.Snapshot.Sessions {
+		if id == "" || session.ID != id {
+			continue
+		}
+		device := m.workspaceDevice(session.WorkspaceID)
+		if device == "" || device != m.Snapshot.DeviceID || session.Context.DeviceID != "" && session.Context.DeviceID != device {
+			break
+		}
+		selected := *m
+		selected.SessionID, selected.WorkspaceID = id, session.WorkspaceID
+		return &selected, nil
+	}
+	return nil, errors.New("会话不属于当前执行设备")
+}
+
 func (m *Model) BeginMessage(steer bool) (domain.Submission, string, string, error) {
 	method, turn := "session.submit", ""
 	_, goalCommand := domain.GoalCommand(m.Drafts[m.DraftKey()])
@@ -100,8 +133,11 @@ func (m *Model) BeginMessage(steer bool) (domain.Submission, string, string, err
 	return in, method, turn, err
 }
 func (m *Model) HasPendingInput() bool {
+	return m.HasPendingInputForSession(m.SessionID)
+}
+func (m *Model) HasPendingInputForSession(id string) bool {
 	for _, in := range m.Pending {
-		if in.SessionID == m.SessionID {
+		if in.SessionID == id {
 			return true
 		}
 	}
@@ -135,6 +171,39 @@ func (m *Model) EditQueued(id string) error {
 		}
 	}
 	return errors.New("待发消息已派发或移除")
+}
+
+func (m *Model) EditQueuedInSession(sid, id string) error {
+	selected, err := m.queueSession(sid)
+	if err != nil {
+		return err
+	}
+	return selected.EditQueued(id)
+}
+
+func (m *Model) QueueEditInput(sid string) (protocol.QueueInput, error) {
+	var in protocol.QueueInput
+	selected, err := m.queueSession(sid)
+	if err != nil {
+		return in, err
+	}
+	edit, key := m.ActiveQueueEdit(sid), selected.DraftKey()
+	if edit.ID == "" || !m.HasDraftContent(key) {
+		return in, errors.New("待发消息编辑已结束，或消息为空")
+	}
+	attachments, err := selected.SubmissionAttachments(selected.WorkspaceID)
+	if err != nil {
+		return in, err
+	}
+	skills, err := selected.SubmissionSkills()
+	if err != nil {
+		return in, err
+	}
+	if skills == nil {
+		skills = []domain.SkillReference{}
+	}
+	return protocol.QueueInput{SessionID: sid, ID: edit.ID, Revision: edit.Revision, Text: m.Drafts[key],
+		Attachments: attachments, Skills: skills, ReferencePositions: m.DraftReferencePositions(key)}, nil
 }
 func (m *Model) CancelQueueEdit(sid string) {
 	if edit := m.ActiveQueueEdit(sid); edit.ID != "" {

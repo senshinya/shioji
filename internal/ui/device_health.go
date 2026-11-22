@@ -3,7 +3,6 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"time"
@@ -242,46 +241,6 @@ func deviceHealthRow(c *n.Context, t *n.Theme, label, value string) {
 	})
 }
 
-func loadPercent(sample domain.DeviceLoad, memory bool) *float64 {
-	if !memory {
-		return sample.CPU
-	}
-	if sample.Memory == nil || sample.Memory.TotalBytes == 0 || sample.Memory.UsedBytes > sample.Memory.TotalBytes {
-		return nil
-	}
-	percent := 100 * float64(sample.Memory.UsedBytes) / float64(sample.Memory.TotalBytes)
-	return &percent
-}
-
-// Points are normalized to a fixed 60-second / 0–100% plot. Missing values and
-// sampling pauses break the line, rather than inventing zeroes or interpolation.
-func deviceLoadSegments(samples []domain.DeviceLoad, now time.Time, memory bool) [][]n.Point {
-	var lines [][]n.Point
-	var line []n.Point
-	var previous time.Time
-	flush := func() {
-		if len(line) > 0 {
-			lines = append(lines, line)
-			line = nil
-		}
-	}
-	for _, sample := range samples {
-		elapsed := now.Sub(sample.At).Seconds()
-		percent := loadPercent(sample, memory)
-		if elapsed < 0 || elapsed > 60 || percent == nil || math.IsNaN(*percent) || math.IsInf(*percent, 0) || *percent < 0 || *percent > 100 {
-			flush()
-			previous = time.Time{}
-			continue
-		}
-		if !previous.IsZero() && (sample.At.Sub(previous) > 5*time.Second || !sample.At.After(previous)) {
-			flush()
-		}
-		line = append(line, n.Point{X: float32(1 - elapsed/60), Y: float32(1 - *percent/100)})
-		previous = sample.At
-	}
-	flush()
-	return lines
-}
 func (v *View) deviceLoadChart(c *n.Context, t *n.Theme, label string, memory, fresh bool) {
 	h := v.Model.DeviceHealth
 	now := c.Now()
@@ -296,13 +255,13 @@ func (v *View) deviceLoadChart(c *n.Context, t *n.Theme, label string, memory, f
 	if len(samples) > 0 && fresh {
 		sample := samples[len(samples)-1]
 		if now.Sub(sample.At) >= 0 && now.Sub(sample.At) < 8*time.Second {
-			last := loadPercent(sample, memory)
+			last := app.DeviceLoadPercent(sample, memory)
 			if last != nil {
 				value = fmt.Sprintf("%.0f%%", *last)
 			}
 		}
 	}
-	lines := deviceLoadSegments(samples, now, memory)
+	lines := app.DeviceLoadSegments(samples, now, memory)
 	n.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
 		n.Row(c).FillWidth().AlignItems(n.Baseline).Children(func() {
 			n.Text(c, label).FontSize(12).FixedLineHeight(24).TextColor(t.TextMuted)

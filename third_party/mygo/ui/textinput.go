@@ -250,6 +250,19 @@ func (k TextKey) valid() *editor {
 // typed as the next frame is built.
 func (k TextKey) Text() string { return k.valid().String() }
 
+// Composing reports whether an input method owns the current key.
+func (k TextKey) Composing() bool { return k.valid().compose != "" }
+
+// InsertText replaces the selection as a normal text edit during OnTextKey.
+func (k TextKey) InsertText(s string) {
+	ed := k.valid()
+	ed.insert(s)
+	if w := ed.client; w != nil {
+		w.publish()
+		w.rt.requestFrame()
+	}
+}
+
 // SetText replaces the text of the input, and its bound value, as the app
 // does by setting the value as the view is built: a composer clears the
 // draft it sent, Up puts the last message back. Writing the bound value
@@ -420,7 +433,7 @@ const (
 type ReturnKeyType = platform.ReturnKeyKind
 
 // The return keys of phones and tablets. ReturnNext moves the focus to the
-// next element after it submits.
+// next element after it submits. ReturnNewLine inserts a line break.
 const (
 	ReturnDefault = platform.ReturnDefault
 	ReturnDone    = platform.ReturnDone
@@ -428,6 +441,7 @@ const (
 	ReturnNext    = platform.ReturnNext
 	ReturnSearch  = platform.ReturnSearch
 	ReturnSend    = platform.ReturnSend
+	ReturnNewLine = platform.ReturnNewLine
 )
 
 // Capitalization is what an on-screen keyboard capitalizes as one types.
@@ -470,9 +484,8 @@ func (e *node) Keyboard(k KeyboardType) *node {
 	return e
 }
 
-// ReturnKey sets what the return key of an on-screen keyboard says, for a
-// single-line input. It submits the input as Enter does; ReturnNext moves
-// the focus on as well.
+// ReturnKey sets the on-screen return key's label or behavior. ReturnNewLine
+// inserts a line break into the text document. The other keys issue Enter.
 func (e *node) ReturnKey(k ReturnKeyType) *node {
 	if e.hasState() {
 		e.st.traits.ReturnKey = k

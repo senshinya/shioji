@@ -4,6 +4,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"shioji/internal/protocol"
 	"shioji/internal/tailnet"
@@ -91,6 +92,7 @@ type Model struct {
 	QueueEdits                 map[string]QueueEdit
 	ConnectionEpoch            string
 	ConnectionPhase            ConnectionPhase
+	ConnectionError            string
 	KnownDeviceID              string
 	Snapshot                   domain.Snapshot
 	Sequence                   int64
@@ -141,6 +143,10 @@ func (m *Model) Config() domain.RunConfig {
 		m.Configs["home"] = c
 	}
 	return c
+}
+
+func (m *Model) SessionConfig(s domain.Session) domain.RunConfig {
+	return normalizeRunConfig(m.sessionConfigDrafts[s.ID].apply(s.Config), m.SessionReadiness(s))
 }
 
 func normalizeRunConfig(c domain.RunConfig, ready domain.Readiness) domain.RunConfig {
@@ -422,6 +428,8 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 			title := "消息未发送"
 			if op.State == domain.OperationAbandoned {
 				title = "发送结果仍无法确认"
+			} else if in.QuestionReply != nil {
+				title = "答案未提交"
 			} else if op.SessionID != "" {
 				title = "消息未送达 Agent"
 			}
@@ -574,6 +582,15 @@ func (m *Model) applyEvent(e domain.Event, live bool) error {
 	}
 	if e.Type == "submission" && e.Item != nil && e.Item.Kind == "user" {
 		m.promoteNavigationSession(e.SessionID)
+	}
+	if item := e.Item; e.SessionID != "" && item != nil && item.Kind == "user" && item.WorkID == "" && item.SentAt != nil &&
+		item.SentAt.After(m.Snapshot.SessionInputTimes[e.SessionID]) {
+		if len(m.Snapshot.SessionInputTimes) == 0 {
+			m.Snapshot.SessionInputTimes = make(map[string]time.Time)
+		} else {
+			m.Snapshot.SessionInputTimes = maps.Clone(m.Snapshot.SessionInputTimes)
+		}
+		m.Snapshot.SessionInputTimes[e.SessionID] = item.SentAt.UTC()
 	}
 	if e.Operation != nil {
 		// Keep the live receipt available to presentation after confirmation

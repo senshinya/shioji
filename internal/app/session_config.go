@@ -38,9 +38,7 @@ func runChoice[T comparable](choice *T, accepted T) T {
 	return accepted
 }
 
-func (m *Model) setSessionConfig(next domain.RunConfig) {
-	id := m.SessionID
-	ready := m.RunReadiness()
+func (m *Model) setSessionConfig(id string, ready domain.Readiness, next domain.RunConfig) {
 	accepted := m.acceptedSessionConfig(id)
 	d := m.sessionConfigDrafts[id]
 	current := normalizeRunConfig(d.apply(accepted), ready)

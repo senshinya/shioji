@@ -27,6 +27,10 @@ func historyReadMethod(method string) bool {
 }
 
 func (c *Controller) queueInitialHistory(parent context.Context, id, epoch, generation string, opening bool, resuming ...bool) context.CancelFunc {
+	return c.queueInitialHistoryPage(parent, id, epoch, generation, opening, len(resuming) != 0 && resuming[0], historySelection{})
+}
+
+func (c *Controller) queueInitialHistoryPage(parent context.Context, id, epoch, generation string, opening, resuming bool, target historySelection) context.CancelFunc {
 	ctx, cancel := context.WithCancel(parent)
 	r := &HistoryRead{Pending: true}
 	c.post(func(m *Model) {
@@ -34,7 +38,7 @@ func (c *Controller) queueInitialHistory(parent context.Context, id, epoch, gene
 			return
 		}
 		d := m.Details[id]
-		if !opening && len(resuming) != 0 && resuming[0] && d.HasLoadedHistory() && d.History != nil && !d.History.Invalidated {
+		if !opening && resuming && target.item == "" && d.HasLoadedHistory() && d.History != nil && !d.History.Invalidated {
 			delete(m.HistoryReads, id)
 			cancel()
 			return
@@ -54,7 +58,9 @@ func (c *Controller) queueInitialHistory(parent context.Context, id, epoch, gene
 		}
 		m.Details[id] = d
 		q := domain.HistoryQuery{SessionID: id, Generation: generation, Rounds: m.Preferences.Normalized().HistoryPageRounds}
-		if !opening {
+		if target.item != "" {
+			q.ThreadID, q.AroundID = target.thread, target.item
+		} else if !opening {
 			q.AroundID = m.HistoryAnchors[id]
 		}
 		if opening {
@@ -80,6 +86,9 @@ func (c *Controller) queueInitialHistory(parent context.Context, id, epoch, gene
 			if err == nil {
 				err = m.MergeHistoryPage(page, r, true, q)
 			}
+			if target.done != nil {
+				target.done(err)
+			}
 			if err != nil {
 				r.Error = err.Error()
 				m.HistoryReads[id] = r
@@ -88,13 +97,16 @@ func (c *Controller) queueInitialHistory(parent context.Context, id, epoch, gene
 			if opening {
 				m.FoldToolHistory[id] = true
 			}
-			if opening || q.AroundID == "" {
+			if opening && target.item == "" || q.AroundID == "" {
 				m.HistoryOpenings[id] = true
 			}
 		}}) {
 			cancel()
 			r.Pending = false
 			r.Error = "设备忙，请重试加载历史"
+			if target.done != nil {
+				target.done(errors.New(r.Error))
+			}
 		}
 	})
 	return cancel
@@ -118,7 +130,18 @@ func historyOpeningTail(d domain.SessionDetail, rounds int) domain.SessionDetail
 	}
 	start := 0
 	if len(starts) > rounds {
-		start = starts[len(starts)-rounds]
+		boundary := len(starts) - rounds
+		start = starts[boundary]
+		marker := d.Items[start]
+		if marker.Kind == "activity" && marker.Presentation == domain.GoalContinuationPresentation && marker.TurnID != "" {
+			for i := starts[boundary-1] + 1; i < start; i++ {
+				item := d.Items[i]
+				if item.TurnID == marker.TurnID && item.WorkID == "" && item.Kind != "queued" {
+					start = i
+					break
+				}
+			}
+		}
 	}
 	items := slices.Clone(d.Items[start:])
 	if len(items) > 0 {

@@ -2,8 +2,10 @@ package transport
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +17,8 @@ import (
 	"time"
 
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
+	"shioji/internal/supervisor"
 )
 
 type WorkerUploadPhase string
@@ -248,4 +252,157 @@ dest="$updates/$digest"
 [ ! -L "$dest/.upload.lock" ]
 exec /usr/bin/lockf -k -t 0 "$dest/.upload.lock" /bin/sh -c ` + shellQuote(upload) + ` stage "$dest" "$digest" "$size"
 `, nil
+}
+
+func nativeWorkerStageScript(directory, digest string) (string, error) {
+	decoded, err := hex.DecodeString(digest)
+	if err != nil || len(decoded) != 32 || hex.EncodeToString(decoded) != digest {
+		return "", errors.New("无效的执行服务摘要")
+	}
+	root, err := remoteWorkerRoot(directory)
+	if err != nil {
+		return "", err
+	}
+	return `set -eu
+umask 077
+root=` + root + `
+[ -d "$root" ] && [ ! -L "$root" ]
+[ "$(/usr/bin/stat -f %u "$root")" = "$(/usr/bin/id -u)" ]
+[ "$(/usr/bin/stat -f %Lp "$root")" = 700 ]
+updates="$root/updates"
+[ ! -L "$updates" ]
+/bin/mkdir -p "$updates"
+[ "$(/usr/bin/stat -f %Lp "$updates")" = 700 ]
+stage=$(/usr/bin/mktemp "$updates/.worker.XXXXXX")
+trap '/bin/rm -f "$stage"' EXIT
+/bin/cat > "$stage"
+actual=$(/usr/bin/shasum -a 256 "$stage")
+[ "${actual%% *}" = ` + shellQuote(digest) + ` ]
+/bin/chmod 700 "$stage"
+/usr/bin/codesign --verify --strict "$stage"
+dest="$updates/` + digest + `"
+[ ! -L "$dest" ]
+/bin/mkdir -p "$dest"
+[ "$(/usr/bin/stat -f %Lp "$dest")" = 700 ]
+[ ! -L "$dest/shioji-worker" ]
+/bin/ln "$stage" "$dest/shioji-worker" 2>/dev/null || true
+actual=$(/usr/bin/shasum -a 256 "$dest/shioji-worker")
+[ "${actual%% *}" = ` + shellQuote(digest) + ` ]
+/usr/bin/codesign --verify --strict "$dest/shioji-worker"
+printf '%s\n' ` + shellQuote(digest) + "\n", nil
+}
+
+// RemoteWorker addresses the worker on an enrolled native SSH route. It uses
+// the desktop staging layout. Supervisor receipts need no business socket.
+type RemoteWorker struct {
+	Directory string
+	Worker    string
+	Run       WorkerBootstrapCommand
+}
+
+func remoteWorkerRoot(directory string) (string, error) {
+	if directory == "" {
+		return "\"$HOME/Library/Application Support/Shioji/worker\"", nil
+	}
+	if !filepath.IsAbs(directory) || strings.ContainsAny(directory, "\x00\r\n") {
+		return "", errors.New("设备执行服务目录无效，请重新检查设备")
+	}
+	return shellQuote(directory), nil
+}
+
+func (s RemoteWorker) Stage(ctx context.Context, expected string, artifact WorkerArtifact) error {
+	script, err := nativeWorkerStageScript(s.Directory, expected)
+	if err != nil {
+		return err
+	}
+	content, digest, err := artifact(ctx)
+	if err != nil {
+		return err
+	}
+	defer content.Close()
+	if digest != expected {
+		return errors.New("内置执行服务版本与确认的构建不一致")
+	}
+	var output, diagnostic bytes.Buffer
+	_, err = s.Run(ctx, "/bin/sh -c "+shellQuote(script), content,
+		&boundedWriter{w: &output, remaining: 256}, &boundedWriter{w: &diagnostic, remaining: 2048})
+	if err != nil {
+		return fmt.Errorf("上传执行服务失败：%s (%w)", strings.TrimSpace(diagnostic.String()), err)
+	}
+	if strings.TrimSpace(output.String()) != digest {
+		return errors.New("远端执行服务摘要未确认")
+	}
+	return nil
+}
+
+func (s RemoteWorker) Control(ctx context.Context, digest, device, action, id string) (supervisor.Operation, error) {
+	if action != "status" && action != "cancel" {
+		return supervisor.Operation{}, errors.New("未知服务控制操作")
+	}
+	return s.serviceOperation(ctx, digest, device, nil, "--service-control", action, "--service-id", id)
+}
+
+func (s RemoteWorker) Install(ctx context.Context, device string, input domain.WorkerReplacement, repair bool) (supervisor.Operation, error) {
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
+	}
+	mode := []string{"--service-migrate", "start"}
+	if input.SchemaMigration {
+		mode = []string{"--service-schema-upgrade", "start"}
+	} else if repair {
+		mode = []string{"--service-control", "repair"}
+	}
+	return s.serviceOperation(ctx, input.BuildID, device, bytes.NewReader(raw), mode...)
+}
+
+func (s RemoteWorker) serviceOperation(ctx context.Context, digest, device string, input io.Reader, mode ...string) (supervisor.Operation, error) {
+	body, err := s.runStagedWorker(ctx, digest, input, 1<<20, append([]string{"--service-device", device}, mode...))
+	if err != nil {
+		return supervisor.Operation{}, err
+	}
+	var out struct {
+		Operation   supervisor.Operation
+		Error, Code string
+	}
+	if err = json.Unmarshal(body, &out); err != nil {
+		return supervisor.Operation{}, err
+	}
+	if out.Error != "" {
+		return out.Operation, &protocol.RemoteError{Code: out.Code, Message: out.Error}
+	}
+	if out.Operation.DeviceID != "" && out.Operation.DeviceID != device {
+		return supervisor.Operation{}, errors.New("升级回执来自其他设备")
+	}
+	return out.Operation, nil
+}
+
+func (s RemoteWorker) runStagedWorker(ctx context.Context, digest string, input io.Reader, limit int, args []string) ([]byte, error) {
+	root, err := remoteWorkerRoot(s.Directory)
+	if err != nil {
+		return nil, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
+	}
+	if _, err = StagedWorkerPath("/", digest); err != nil {
+		return nil, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
+	}
+	quoted := make([]string, len(args))
+	for i, arg := range args {
+		quoted[i] = shellQuote(arg)
+	}
+	command := "set -eu\nroot=" + root + "\n" + `[ -d "$root" ] && [ ! -L "$root" ]
+[ "$(/usr/bin/stat -f %u "$root")" = "$(/usr/bin/id -u)" ]
+[ "$(/usr/bin/stat -f %Lp "$root")" = 700 ]
+helper="$root/updates/` + digest + `/shioji-worker"
+[ -f "$helper" ] && [ ! -L "$helper" ]
+/usr/bin/codesign --verify --strict "$helper"
+actual=$(/usr/bin/shasum -a 256 "$helper")
+[ "${actual%% *}" = ` + shellQuote(digest) + ` ]
+exec "$helper" --state-dir "$root" ` + strings.Join(quoted, " ")
+	var output, diagnostic bytes.Buffer
+	_, err = s.Run(ctx, "/bin/sh -c "+shellQuote(command), input,
+		&boundedWriter{w: &output, remaining: limit}, &boundedWriter{w: &diagnostic, remaining: 2048})
+	if err != nil {
+		return nil, fmt.Errorf("执行服务控制未完成：%s (%w)", strings.TrimSpace(diagnostic.String()), err)
+	}
+	return output.Bytes(), nil
 }

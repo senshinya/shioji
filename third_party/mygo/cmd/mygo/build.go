@@ -134,7 +134,12 @@ WebAssembly, named by its content: a static site, to serve from anywhere.`)
 	}
 	defer os.RemoveAll(work)
 	opts.work = work
-	if opts.pkg, err = packageDir(c); err != nil {
+	var packageEnv []string
+	if _, mobile := mobilePlatform(targets[0]); mobile {
+		goos, _, _ := strings.Cut(targets[0], "/")
+		packageEnv = listEnv(goos, "arm64")
+	}
+	if opts.pkg, err = packageDir(c, packageEnv...); err != nil {
 		return err
 	}
 	// Left behind by an interrupted build.

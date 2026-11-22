@@ -9,8 +9,12 @@ import (
 // SessionNotification is a confirmed lifecycle transition awaiting client delivery.
 // It contains session context, never assistant text, tool output or error details.
 type SessionNotification struct {
-	ID, ConnectionID, SessionID, WorkspaceID string
-	Kind, Title, Body                        string
+	SessionLocation
+	ID, ConnectionID    string
+	Kind, Title, Body   string
+	ThreadID, RequestID string
+	WorkID              string
+	RequestRevision     int64
 }
 
 func (m *Model) notificationForEvent(e domain.Event) *SessionNotification {
@@ -18,7 +22,8 @@ func (m *Model) notificationForEvent(e domain.Event) *SessionNotification {
 	if !p.Enabled {
 		return nil
 	}
-	notice := SessionNotification{ConnectionID: m.sourceConnection, SessionID: e.SessionID, Body: "会话"}
+	notice := SessionNotification{ConnectionID: m.sourceConnection, Body: "会话",
+		SessionLocation: SessionLocation{DeviceID: m.Snapshot.DeviceID, SessionID: e.SessionID}}
 	if notice.ConnectionID == "" {
 		notice.ConnectionID = "local"
 	}
@@ -26,6 +31,7 @@ func (m *Model) notificationForEvent(e domain.Event) *SessionNotification {
 		if session.ID == e.SessionID {
 			notice.Body = session.Title
 			notice.WorkspaceID = session.WorkspaceID
+			notice.ThreadID = session.ThreadID
 			break
 		}
 	}
@@ -92,6 +98,7 @@ func (m *Model) notificationForEvent(e domain.Event) *SessionNotification {
 			notice.Title = "需要回答"
 		}
 		notice.ID = fmt.Sprintf("request:%s:%d", e.Request.ID, e.Request.Revision)
+		notice.RequestID, notice.WorkID, notice.RequestRevision = e.Request.ID, e.Request.WorkID, e.Request.Revision
 	} else {
 		return nil
 	}

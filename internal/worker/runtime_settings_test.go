@@ -8,6 +8,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/protocol"
+	"strings"
 	"testing"
 )
 
@@ -132,9 +133,130 @@ func TestDisableAllAgentsPersistsAndKeepsLiveRuntimeControls(t *testing.T) {
 	}
 }
 
+func TestRuntimeAgentSelectionOnlyChangesTheNamedAgent(t *testing.T) {
+	first := optionsMemory{configurableMemory: configurableMemory{memoryHarness: memoryHarness{id: "custom", hold: true}}}
+	second := configurableMemory{memoryHarness: memoryHarness{id: "other"}}
+	s, w := memoryWorker(t, first, second)
+	options := domain.RuntimeOptions{Directory: "worker-config", TitleModel: "custom-model"}
+	if _, err := s.configureRuntime(protocol.RuntimeConfiguration{HarnessID: "custom", Executable: "/usr/bin/true", Options: &options}); err != nil {
+		t.Fatal(err)
+	}
+	op, err := s.submit(domain.Submission{OperationID: "live-selection", WorkspaceID: w.ID, HarnessID: "custom",
+		Text: "keep running", Config: domain.RunConfig{Model: "custom-model", Permission: "limited"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitReceipt(t, s, op.ID)
+	live, otherCatalog := s.currentRuntime(op.SessionID), s.catalogRuntime("other")
+	change := func(id string, enabled bool) protocol.AgentSetupResult {
+		t.Helper()
+		input, _ := json.Marshal(map[string]any{"harnessId": id, "enabled": enabled})
+		result, err := s.handle("runtime.agent.selection", input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		setup, ok := result.(protocol.AgentSetupResult)
+		if !ok || !setup.Ready {
+			t.Fatalf("Agent selection rejected: %+v", result)
+		}
+		return setup
+	}
+	off := change("custom", false)
+	if s.agentEnabled("custom") || !s.agentEnabled("other") || live.Stopped() || otherCatalog != s.catalogRuntime("other") ||
+		len(off.Catalog) != 2 || len(off.Readiness.Harnesses) != 1 {
+		t.Fatal("disabling one Agent changed the other Agent or an active session")
+	}
+	change("other", false)
+	reopened := &Server{ctx: context.Background(), config: Config{Directory: s.Directory(), Harnesses: []harness.Adapter{first, second}}}
+	if err := reopened.configureAdapters(); err != nil {
+		t.Fatal(err)
+	}
+	if reopened.agentEnabled("custom") || reopened.agentEnabled("other") {
+		t.Fatal("persisted empty selection enabled adapters after restart")
+	}
+	change("custom", true)
+	current := s.adapter("custom").(optionsMemory)
+	if s.agentEnabled("other") || !s.agentEnabled("custom") || live.Stopped() ||
+		current.executable != "/usr/bin/true" || current.options.Directory != options.Directory || current.options.TitleModel != options.TitleModel {
+		t.Fatal("enabling the saved Agent lost configuration or changed other Agents")
+	}
+	catalog := s.catalogRuntime("custom")
+	change("custom", true)
+	if s.catalogRuntime("custom") != catalog {
+		t.Fatal("repeating the enabled state restarted its catalog")
+	}
+}
+
 type optionsMemory struct {
 	configurableMemory
 	options domain.RuntimeOptions
+}
+
+func (a optionsMemory) Installation() domain.RuntimeInstallation {
+	return domain.RuntimeInstallation{Override: a.executable, Executable: a.executable, Options: a.options, Configurable: true,
+		OptionsSupported: domain.RuntimeOptionSupport{Arguments: true, Directory: true, Environment: true, Instructions: true, TitleModel: true}}
+}
+
+func TestRemoteRuntimeSettingsKeepPrivateValuesAndRejectAnOldRevision(t *testing.T) {
+	agent := optionsMemory{configurableMemory: configurableMemory{memoryHarness: memoryHarness{id: "custom", hold: true}}}
+	s, w := memoryWorker(t, agent)
+	const storedValue = "private-fixture-value"
+	opts := domain.RuntimeOptions{Environment: []domain.EnvironmentVariable{{Name: "KEEP", Value: storedValue}}}
+	if _, err := s.configureRuntime(protocol.RuntimeConfiguration{HarnessID: "custom", Executable: "/usr/bin/true", Options: &opts}); err != nil {
+		t.Fatal(err)
+	}
+	op, err := s.submit(domain.Submission{OperationID: "running", WorkspaceID: w.ID, HarnessID: "custom", Text: "keep",
+		Config: domain.RunConfig{Model: "custom-model", Permission: "limited"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitReceipt(t, s, op.ID)
+	active := s.currentRuntime(op.SessionID)
+	request := func(method string, input map[string]any) (map[string]any, error) {
+		body, _ := json.Marshal(input)
+		value, err := s.handle(method, body)
+		if err != nil {
+			return nil, err
+		}
+		var result map[string]any
+		encoded, _ := json.Marshal(value)
+		if err = json.Unmarshal(encoded, &result); err != nil {
+			t.Fatal(err)
+		}
+		return result, nil
+	}
+	read, err := request("runtime.settings", map[string]any{"harnessId": "custom"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, _ := read["revision"].(string)
+	names, _ := read["environment"].([]any)
+	raw, _ := json.Marshal(read)
+	if revision == "" || len(names) != 1 || names[0] != "KEEP" || strings.Contains(string(raw), storedValue) {
+		t.Fatal("public settings did not provide a redacted environment and revision")
+	}
+	reveal, err := request("runtime.settings.environment", map[string]any{"harnessId": "custom", "revision": revision, "name": "KEEP"})
+	if err != nil || reveal["value"] != storedValue {
+		t.Fatal("explicitly revealed variable did not match the stored value", err)
+	}
+	update := map[string]any{"harnessId": "custom", "revision": revision, "executable": "/usr/bin/true",
+		"options":     map[string]any{"arguments": []string{"--profile", "with space"}, "directory": "/tmp", "instructions": "test instructions", "titleModel": "custom-model"},
+		"environment": []any{map[string]any{"name": "RENAMED", "previousName": "KEEP"}, map[string]any{"name": "EMPTY", "value": ""}},
+	}
+	done, err := request("runtime.settings.change", update)
+	if err != nil || done["revision"] == revision || done["revision"] == nil {
+		t.Fatal("settings change did not return a fresh revision", err)
+	}
+	if _, err = request("runtime.settings.change", update); err == nil {
+		t.Fatal("stale configuration was accepted")
+	}
+	got := s.adapter("custom").(optionsMemory).options
+	if len(got.Arguments) != 2 || got.Arguments[1] != "with space" || got.Directory != "/tmp" ||
+		got.Instructions != "test instructions" || got.TitleModel != "custom-model" || len(got.Environment) != 2 ||
+		got.Environment[0].Name != "RENAMED" || got.Environment[0].Value != storedValue ||
+		got.Environment[1].Name != "EMPTY" || got.Environment[1].Value != "" || active.Stopped() {
+		t.Fatal("the update lost settings, exposed or replaced a private value, or stopped the running session")
+	}
 }
 
 func (a optionsMemory) WithExecutable(path string) (harness.Adapter, error) {

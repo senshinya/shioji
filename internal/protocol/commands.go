@@ -82,6 +82,10 @@ type CheckoutInput struct {
 	GitQuery
 	Branch string `json:"branch"`
 }
+type ConfirmCheckoutInput struct {
+	CheckoutInput
+	Head string `json:"head"`
+}
 type FileQuery struct {
 	GitQuery
 	Path string `json:"path"`

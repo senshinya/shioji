@@ -21,6 +21,12 @@ type AttachmentTarget struct {
 	dial                             func(context.Context) (net.Conn, error)
 }
 
+// RemoteAttachmentTarget binds an authenticated execution-device stream to one
+// workspace. This supports clients that provide their own transport.
+func RemoteAttachmentTarget(device, workspace string, dial func(context.Context) (net.Conn, error)) AttachmentTarget {
+	return AttachmentTarget{DeviceID: device, WorkspaceID: workspace, dial: dial}
+}
+
 func (m *Model) AttachmentTarget(directory, workspace string) (AttachmentTarget, error) {
 	target := AttachmentTarget{Directory: directory, DeviceID: m.workspaceDevice(workspace), WorkspaceID: workspace}
 	key := m.WorkspaceConnection(workspace)

@@ -100,13 +100,18 @@ func TestDeviceHandoffRefreshesAdmittedWorkerBuild(t *testing.T) {
 		p.record(b, 5*time.Millisecond, at, nil)
 		p.preferred(at)
 	}
-	for m.WorkerService.Build.BuildID != "updated" {
+	sawSwitch := false
+	for m.WorkerService.Build.BuildID != "updated" || m.ConnectionPhase != ConnectionIdle {
 		select {
 		case u := <-c.Updates:
 			u(m)
+			sawSwitch = sawSwitch || m.ConnectionPhase == ConnectionSwitching
 		case <-deadline:
 			t.Fatal("new worker was adopted without refreshing service version", m.WorkerService)
 		}
+	}
+	if !sawSwitch || !m.Connected || m.ConnectionError != "" {
+		t.Fatal("the controller did not expose the active route change")
 	}
 }
 
@@ -312,6 +317,51 @@ func TestDeviceHandoffAddingRouteKeepsControllerAndEpoch(t *testing.T) {
 	drain(func() bool { return finished })
 	if root.fleet.sources["air"].controller != child || m.DeviceStates["air"].ConnectionEpoch != epoch || !m.DeviceStates["air"].Connected {
 		t.Fatal("adding path restarted the logical device")
+	}
+}
+
+func TestAuthenticatedDevicePathsAddAndFailOverWithoutReconnecting(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	lan := AuthenticatedDevicePath{ID: "lan", Endpoint: transport.SSHEndpoint{Host: "mac.local", User: "alice", Port: 22},
+		Dial: func(lifetime context.Context) (net.Conn, error) { return handoffPipe(lifetime, "lan"), nil }}
+	mesh := AuthenticatedDevicePath{ID: "mesh", Endpoint: transport.SSHEndpoint{Host: "100.64.0.2", User: "bob", Port: 22},
+		Dial: func(lifetime context.Context) (net.Conn, error) { return handoffPipe(lifetime, "mesh"), nil }}
+	c := NewAuthenticatedDeviceController(t.TempDir(), "worker", "lan", []AuthenticatedDevicePath{lan})
+	m := NewModel()
+	go c.Run(ctx)
+	drain := func(until func() bool) {
+		t.Helper()
+		deadline := time.NewTimer(4 * time.Second)
+		defer deadline.Stop()
+		for !until() {
+			select {
+			case u := <-c.Updates:
+				u(m)
+			case <-deadline.C:
+				t.Fatalf("expected controller state not reached: %v %+v", m.Connected, m.DevicePaths)
+			}
+		}
+	}
+	drain(func() bool { return m.Connected })
+	epoch := m.ConnectionEpoch
+	c.UpdateAuthenticatedDevicePaths([]AuthenticatedDevicePath{lan, mesh})
+	drain(func() bool { return len(m.DevicePaths) == 2 && m.DevicePaths[1].Phase == PathReady })
+	if m.ConnectionEpoch != epoch || m.DevicePaths[1].Endpoint == nil || m.DevicePaths[1].Endpoint.User != "bob" {
+		t.Fatal("adding a path replaced the existing controller or lost login metadata")
+	}
+	var done bool
+	if !c.Do(Job{ConnectionEpoch: epoch, Method: "device.directories", Apply: func(_ *Model, body json.RawMessage, err error) {
+		done = true
+		if err != nil || string(body) != `{"path":"/tmp"}` {
+			t.Errorf("read did not resume over the admitted path: %s %v", body, err)
+		}
+	}}) {
+		t.Fatal("directory job was rejected")
+	}
+	drain(func() bool { return done && len(m.DevicePaths) == 2 && m.DevicePaths[1].Phase == PathActive })
+	if m.ConnectionEpoch != epoch || !m.Connected || c.currentSSH() != nil {
+		t.Fatal("handoff changed the logical connection or exposed a system SSH configuration")
 	}
 }
 

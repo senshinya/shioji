@@ -346,6 +346,9 @@ const (
 	ReturnNext
 	ReturnSearch
 	ReturnSend
+	// ReturnNewLine inserts a line break from the on-screen keyboard into
+	// the focused text document without issuing an Enter shortcut.
+	ReturnNewLine
 )
 
 // CapitalizeKind is what an on-screen keyboard capitalizes.

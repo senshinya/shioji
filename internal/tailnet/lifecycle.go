@@ -53,6 +53,7 @@ func (n *Node) closeServer() {
 	n.mu.Lock()
 	s := n.server
 	n.server = nil
+	retiring := n.detachOutboundLocked()
 	for _, b := range n.bridges {
 		b.Drop()
 	}
@@ -61,6 +62,7 @@ func (n *Node) closeServer() {
 		n.inbound = nil
 	}
 	n.mu.Unlock()
+	closeOutboundStreams(retiring)
 	if s != nil {
 		s.Close()
 	}

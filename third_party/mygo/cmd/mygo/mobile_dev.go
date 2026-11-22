@@ -89,7 +89,7 @@ func (s *devSession) buildAndLaunchMobile(ctx context.Context, t *task, running 
 		return nil, sum, err
 	}
 	opts := buildOptions{debug: true, work: work}
-	if opts.pkg, err = packageDir(c); err != nil {
+	if opts.pkg, err = packageDir(c, listEnv(s.device.platform, "arm64")...); err != nil {
 		return nil, sum, err
 	}
 	if c.DevURL == "" {

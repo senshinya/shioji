@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -99,6 +100,29 @@ func TestSSHBootstrapReusesExistingWorkerWithoutReadingOrUploadingClientBinary(t
 	}
 	if _, err = os.Stat(filepath.Join(root, "Library/Application Support/Shioji/Runtime/development")); !os.IsNotExist(err) {
 		t.Fatal("existing device created deployment files", err)
+	}
+}
+
+func TestWorkerBootstrapWithoutInstallerReportsOnlyVerifiedMissingWorker(t *testing.T) {
+	ssh, root, command, calls := bootstrapFixture(t)
+	if err := os.Remove(ssh.Worker); err != nil {
+		t.Fatal(err)
+	}
+	run := func(ctx context.Context, remote string, input io.Reader, stdout, stderr io.Writer) (int, error) {
+		cmd, err := command(ctx, remote)
+		if err != nil {
+			return -1, err
+		}
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = input, stdout, stderr
+		err = cmd.Run()
+		return cmd.ProcessState.ExitCode(), err
+	}
+	_, err := BootstrapWorker(context.Background(), ssh.Worker, ssh.StateDirectory, run, nil)
+	if !errors.Is(err, ErrWorkerMissing) || *calls != 1 {
+		t.Fatalf("probe = %v after %d commands", err, *calls)
+	}
+	if _, err = os.Stat(filepath.Join(root, "Library/Application Support/Shioji/Runtime/development")); !os.IsNotExist(err) {
+		t.Fatal("a probe deployed files", err)
 	}
 }
 

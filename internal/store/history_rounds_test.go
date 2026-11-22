@@ -3,6 +3,7 @@ package store_test
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -91,6 +92,66 @@ func TestHistoryRoundsPageGoalContinuations(t *testing.T) {
 	older := read(domain.HistoryQuery{Rounds: 2, Before: latest.History.First}, "goal-4", "reply-5", 4)
 	read(domain.HistoryQuery{Rounds: 2, After: older.History.Last}, "goal-6", "reply-7", 4)
 	read(domain.HistoryQuery{Rounds: 2, AroundID: "reply-8"}, "goal-8", "reply-9", 4)
+}
+
+func TestHistoryRoundsKeepEventsReceivedBeforeGoalMarker(t *testing.T) {
+	s := open(t)
+	w := workspace(t, s)
+	op, err := s.Accept(domain.Submission{OperationID: "goal-prefix", WorkspaceID: w.ID, Text: "start", Config: domain.RunConfig{Model: "test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []domain.Item{
+		{ID: "older-reply", TurnID: "initial", Kind: "assistant", Text: "Initial reply", Final: true},
+		{ID: "first-context", TurnID: "first", Kind: "activity", Presentation: "context", Final: true},
+		{ID: "first-goal", TurnID: "first", Kind: "activity", Presentation: domain.GoalContinuationPresentation, Final: true},
+		{ID: "first-reply", TurnID: "first", Kind: "assistant", Text: "First continuation", Final: true},
+		{ID: "late-initial", TurnID: "initial", Kind: "tool", Final: true},
+		{ID: "second-compaction", TurnID: "second", Kind: "activity", Presentation: "compaction", Final: true},
+		{ID: "late-first", TurnID: "first", Kind: "tool", Final: true},
+		{ID: "second-context", TurnID: "second", Kind: "activity", Presentation: "context", Final: true},
+		{ID: "second-goal", TurnID: "second", Kind: "activity", Presentation: domain.GoalContinuationPresentation, Final: true},
+		{ID: "second-reply", TurnID: "second", Kind: "assistant", Text: "Second continuation", Final: true},
+	} {
+		if _, err := s.Apply(op.SessionID, domain.Event{Type: "item.upsert", Item: &item}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func(q domain.HistoryQuery, expected ...string) domain.SessionDetail {
+		t.Helper()
+		q.SessionID, q.Rounds = op.SessionID, 1
+		d, err := s.SessionHistory(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, item := range d.Items {
+			ids = append(ids, item.ID)
+		}
+		if !slices.Equal(ids, expected) {
+			t.Errorf("%+v: got %v, want %v", q, ids, expected)
+		}
+		return d
+	}
+	second := []string{"second-compaction", "late-first", "second-context", "second-goal", "second-reply"}
+	first := []string{"first-context", "first-goal", "first-reply", "late-initial"}
+	latest := read(domain.HistoryQuery{}, second...)
+	older := read(domain.HistoryQuery{Before: latest.History.First}, first...)
+	read(domain.HistoryQuery{After: older.History.Last}, second...)
+	read(domain.HistoryQuery{AroundID: "first-context"}, first...)
+	for _, target := range second {
+		read(domain.HistoryQuery{AroundID: target}, second...)
+	}
+	if len(latest.Items) == len(second) {
+		prefixChunk := read(domain.HistoryQuery{After: latest.Items[0].Order}, second[1:]...)
+		if prefixChunk.History.ContextID != "" {
+			t.Errorf("partial prefix received context from a different round: %s", prefixChunk.History.ContextID)
+		}
+		replyChunk := read(domain.HistoryQuery{After: latest.Items[3].Order}, "second-goal", "second-reply")
+		if replyChunk.History.ContextID != "second-goal" {
+			t.Errorf("partial reply lost its continuation marker: %s", replyChunk.History.ContextID)
+		}
+	}
 }
 
 func TestHistoryRoundBodiesContinueByBytesWithoutAnItemLimit(t *testing.T) {

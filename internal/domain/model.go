@@ -292,15 +292,16 @@ type Event struct {
 	Turn             *Turn            `json:"turn,omitempty"`
 }
 type Snapshot struct {
-	ArchivePolicy   *ArchivePolicy   `json:"archivePolicy,omitempty"`
-	ObservedAt      time.Time        `json:"observedAt,omitempty"`
-	PendingRequests []PendingRequest `json:"pendingRequests,omitempty"`
-	DeviceID        string           `json:"deviceId"`
-	Generation      string           `json:"generation"`
-	Sequence        int64            `json:"sequence"`
-	Workspaces      []Workspace      `json:"workspaces"`
-	Sessions        []Session        `json:"sessions"`
-	Operations      []Operation      `json:"operations"`
+	SessionInputTimes map[string]time.Time `json:"sessionInputTimes,omitempty"`
+	ArchivePolicy     *ArchivePolicy       `json:"archivePolicy,omitempty"`
+	ObservedAt        time.Time            `json:"observedAt,omitempty"`
+	PendingRequests   []PendingRequest     `json:"pendingRequests,omitempty"`
+	DeviceID          string               `json:"deviceId"`
+	Generation        string               `json:"generation"`
+	Sequence          int64                `json:"sequence"`
+	Workspaces        []Workspace          `json:"workspaces"`
+	Sessions          []Session            `json:"sessions"`
+	Operations        []Operation          `json:"operations"`
 }
 type SessionDetail struct {
 	History *HistoryWindow `json:"history,omitempty"`

@@ -232,7 +232,19 @@ final class Navigation: NSObject, UINavigationControllerDelegate, UITabBarContro
         nav.popToViewController(nav.viewControllers[i - 1], animated: animated)
     }
 
+    private func syncPushedTabBar(_ nav: UINavigationController, showing vc: UIViewController, animated: Bool) {
+        guard #available(iOS 18.0, *), nav.traitCollection.userInterfaceIdiom == .pad,
+              let tabs = nav.tabBarController, tabs.selectedViewController === nav else { return }
+        let hidden = vc !== nav.viewControllers.first && vc.hidesBottomBarWhenPushed
+        if tabs.isTabBarHidden != hidden { tabs.setTabBarHidden(hidden, animated: animated) }
+    }
+
+    func navigationController(_ nav: UINavigationController, willShow vc: UIViewController, animated: Bool) {
+        syncPushedTabBar(nav, showing: vc, animated: animated)
+    }
+
     func navigationController(_ nav: UINavigationController, didShow vc: UIViewController, animated: Bool) {
+        syncPushedTabBar(nav, showing: vc, animated: false)
         // Screens of routers the user took off, with the back button or a
         // swipe: the window goes into the screen shown, and its router back.
         for (id, rs) in routes {

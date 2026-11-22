@@ -604,6 +604,12 @@ func (rt *engine) pointerDown(x, y float32, button int, mods Modifiers, clicks i
 		s := rt.states[id]
 		return s != nil && s.flags&flagKeepFocus != 0
 	})
+	if button == 0 && !keep && focus != nil && runtime.GOOS == "ios" {
+		if client, ok := focus.textClient.(interface{ KeepsFocusAtPoint(Point) bool }); ok {
+			localX, localY := focus.local(x, y)
+			keep = client.KeepsFocusAtPoint(Point{X: localX, Y: localY})
+		}
+	}
 	if button == 0 && !keep {
 		newFocus := uint64(0)
 		if focus != nil {

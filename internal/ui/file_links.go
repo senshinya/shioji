@@ -10,8 +10,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -43,41 +41,15 @@ const (
 	fileLinkOpen
 )
 
-type fileLinkPosition struct {
-	Line, Column, LastLine int // One-based; zero means no source location.
-}
-
-var fileLinkLocation = regexp.MustCompile(`:([0-9]+)(?::([0-9]+))?$`)
-var fileLinkFragment = regexp.MustCompile(`^L([0-9]+)(?:-L?([0-9]+))?$`)
+type fileLinkPosition = app.FileLinkPosition
 
 func fileLinkPath(dest string) (string, error) {
-	path, _, err := fileLinkTarget(dest)
+	path, _, err := app.FileLinkTarget(dest)
 	return path, err
 }
 
 func fileLinkTarget(dest string) (string, fileLinkPosition, error) {
-	var position fileLinkPosition
-	if match := fileLinkLocation.FindStringSubmatch(dest); match != nil {
-		position.Line, _ = strconv.Atoi(match[1])
-		position.Column, _ = strconv.Atoi(match[2])
-		dest = strings.TrimSuffix(dest, match[0])
-	}
-	u, err := url.Parse(dest)
-	if err != nil || u.Opaque != "" || u.User != nil || (u.Scheme != "" && u.Scheme != "file") || (u.Host != "" && u.Host != "localhost") || strings.HasPrefix(dest, "//") {
-		return "", position, errors.New("不支持的文件链接")
-	}
-	if match := fileLinkFragment.FindStringSubmatch(u.Fragment); match != nil {
-		position.Line, _ = strconv.Atoi(match[1])
-		position.LastLine, _ = strconv.Atoi(match[2])
-	}
-	path := u.Path
-	if u.Scheme == "file" && !filepath.IsAbs(path) {
-		return "", position, errors.New("文件地址必须是绝对路径")
-	}
-	if path == "" || len(path) > 4096 || strings.ContainsAny(path, "\x00\r\n\\") {
-		return "", position, errors.New("文件路径无效")
-	}
-	return path, position, nil
+	return app.FileLinkTarget(dest)
 }
 func (v *View) fileLinkCurrent(s *fileLinkState) bool {
 	if v.parent != nil && v.parent.Model.SecondarySessionID != s.session {

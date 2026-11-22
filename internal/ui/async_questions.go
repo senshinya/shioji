@@ -21,7 +21,7 @@ func (v *View) asyncQuestionMessage(c *n.Context, t *n.Theme, item domain.Item) 
 			status[i.ReplyTo] = i.Status
 		}
 	}
-	canReply := item.Final && v.Controller != nil && m.CanReplyToQuestion() && !v.sessionStopInFlight(session)
+	canReply := item.Final && v.Controller != nil && m.CanReplyToQuestion(session, m.Details[session].Session.ThreadID) && !v.sessionStopInFlight(session)
 	group := domain.PendingRequest{SessionID: session, ID: "async:" + item.ID, Questions: item.Questions}
 	root := n.Column(c.Key(item.ID)).FillWidth().Clip()
 	v.transcriptContentHeight(c, root, true, true, 180*time.Millisecond, func() float32 {
@@ -62,7 +62,7 @@ func (v *View) asyncQuestionMessage(c *n.Context, t *n.Theme, item domain.Item) 
 
 func (v *View) sendAsyncQuestionReply(item, question, text string) {
 	m := v.Model
-	in, reply, err := m.BeginQuestionReply(item, question, text)
+	in, reply, err := m.BeginQuestionReply(m.SessionID, m.Details[m.SessionID].Session.ThreadID, item, question, text)
 	if err != nil {
 		m.Error = err.Error()
 		return

@@ -11,10 +11,11 @@ func TestAsyncQuestionHistoryRestoresOnlyMatchingItems(t *testing.T) {
 	if _, err := s.db.Exec("UPDATE sessions SET body=json_set(body, '$.threadId', ?) WHERE id=?", "thread", session.ID); err != nil {
 		t.Fatal(err)
 	}
-	session, err := s.SessionRecord(session.ID)
+	detail, err := s.Session(session.ID, 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
+	session = detail.Session
 	old := domain.Item{ID: "question", TurnID: "turn", Kind: "assistant", Text: "When?\n- Now", Final: true}
 	if _, err := s.Apply(session.ID, domain.Event{Type: "item.upsert", Item: &old}); err != nil {
 		t.Fatal(err)

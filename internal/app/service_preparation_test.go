@@ -31,7 +31,7 @@ func TestServicePreparationPlansOnlySafeForwardUpdates(t *testing.T) {
 		{"newer incompatible", 15, domain.WorkerBuild{BuildID: "newer", BuiltAt: 300, SafeUpdate: true}, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p, e := planServicePreparation(transport.WorkerInfo{DeviceID: "device", Minor: tc.minor, Build: &tc.old}, candidate)
+			p, e := PlanServicePreparation(transport.WorkerInfo{DeviceID: "device", Minor: tc.minor, Build: &tc.old}, candidate)
 			if (e != nil) != tc.fail || (p != nil) != tc.update {
 				t.Fatal(p, e)
 			}

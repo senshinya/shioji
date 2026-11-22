@@ -38,7 +38,7 @@ func (s SSH) loopbackCommand(ctx context.Context, e domain.LoopbackEndpoint) (*e
 	return exec.CommandContext(ctx, "/usr/bin/ssh", args...), nil
 }
 func (s SSH) ForwardLoopback(ctx context.Context, e domain.LoopbackEndpoint) (*LoopbackForward, error) {
-	return forwardLoopback(ctx, e, func(ctx context.Context) (net.Conn, error) {
+	return ForwardLoopback(ctx, e, func(ctx context.Context) (net.Conn, error) {
 		cmd, err := s.loopbackCommand(ctx, e)
 		if err != nil {
 			return nil, err
@@ -46,7 +46,10 @@ func (s SSH) ForwardLoopback(ctx context.Context, e domain.LoopbackEndpoint) (*L
 		return dialProcess(cmd)
 	})
 }
-func forwardLoopback(ctx context.Context, e domain.LoopbackEndpoint, dial func(context.Context) (net.Conn, error)) (*LoopbackForward, error) {
+
+// ForwardLoopback relays a callback on the same local host and port requested
+// by the authorization provider, through an authenticated device dialer.
+func ForwardLoopback(ctx context.Context, e domain.LoopbackEndpoint, dial func(context.Context) (net.Conn, error)) (*LoopbackForward, error) {
 	if !e.Valid() {
 		return nil, errors.New("登录回调必须位于回环地址")
 	}

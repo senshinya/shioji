@@ -4,6 +4,8 @@
 
 Build a native macOS application for controlling parallel coding agents across multiple devices, using a self-contained Shioji worker on execution devices.
 
+Add native iOS and iPadOS clients for controlling the user's other Shioji execution devices. The mobile clients use the same device-owned workspaces, sessions and authorization boundaries.
+
 The confirmed requirements are:
 
 - Support direct SSH connections to devices.
@@ -15,8 +17,8 @@ The confirmed requirements are:
 ## Project constraints
 
 - Product name: Shioji (潮路 / しおじ); commands use `shioji` and `shioji-worker`. Preserve existing historical filenames and signed artifact identities rather than renaming them retroactively.
-- Target macOS on Apple Silicon (`darwin/arm64`) for both client and execution devices. Intel, Linux and Windows are out of scope. The minimum supported macOS version remains undecided.
-- Implement in Go with MyGo native UI (`github.com/egoist/mygo/ui`). Prefer its native text, Markdown, code and diff components. Keep the main interface native; do not substitute HTML, Electron or a WebView.
+- Target macOS on Apple Silicon (`darwin/arm64`) for the desktop client and execution devices. iOS and iPadOS are control clients. Intel, Linux, Windows and Android are out of scope. Minimum supported OS versions remain undecided.
+- Implement macOS, iOS and iPadOS in Go with MyGo native UI (`github.com/egoist/mygo/ui`). Start mobile implementation with Shioji's pinned MyGo v0.10.0 source in `third_party/mygo`. Prefer its native text, Markdown, code and diff components. Use UIKit for mobile system navigation and platform controls. Keep the main interface native on all three platforms.
 - Use a complete, self-owned Go worker, including for this Mac as a local target. Do not require, bundle, install or invoke herdr-core as a runtime dependency.
 - Embed official `tailscale.com/tsnet` behind the transport interface; its network work and lifecycle stay independent of UI rendering. Support authorized inbound and outbound connections without assuming the system SSH listener is exposed by the embedded node or automatically enabling Remote Login.
 - Preserve the frozen design. Verify repository inputs with `python3 scripts/verify-design-freeze.py --repository`; the command without flags also checks the full local design archive.
@@ -209,6 +211,47 @@ Avoid unnecessary secondary labels and descriptions. Let the layout do the expla
 - Use progressive disclosure for detailed paths, network diagnostics, raw logs, and harness-specific settings.
 - Preserve device/workspace/session context across navigation and reconnects.
 - Keep an icon entry for the current device in narrow conversation toolbars.
+
+## iOS / iPadOS 界面与交互
+
+移动端以 Shioji iOS／iPadOS 画板（`shioji-ios-reference`）为视觉与交互验收基准，参考 [LodyAI/lody-ios 的 AGENTS.md 及其链接规范](https://github.com/LodyAI/lody-ios/blob/09fcb6f551c19c1e483f7e7b17ffa29bc4ef8663/AGENTS.md) 和同版本的原生实现。会话区的元素、文案、展开折叠、实时追加和读写行为以 Shioji Mac 端为准。下列规则适用于界面源码、组件调用方、预览夹具和验收。改动前核对对应画板状态、Mac 端当前行为及上游视觉细则。
+
+### 原生组件与页面
+
+- 移动端公共组件的抽取与维护以当前原生 App 为基准。页面骨架、按钮、平铺行、表单、分段与面板复用 `cmd/shioji-mobile/components_ios.go`。浅深色语义色、触控尺寸及 MyGo 动效集中在 `appearance_ios.go`，由 Go 向 UIKit 提供共用的画布、侧栏和标题样式。原位面板共用 180 ms 高度与位置过渡，连续布局与开关使用同一无回弹弹簧。导航、工作表与返回手势由 UIKit 驱动，移动端同时尊重系统和 App 的减少动态效果设置。
+- MyGo 承载会话列表、正文、输入框、审阅与其他业务内容。系统 Tab 栏、页面导航和手势优先使用 MyGo 已接入的 UIKit 能力。iPad 系统双栏、系统搜索、工作表、Liquid Glass 和滚动边缘效果按设计使用 UIKit；MyGo 的系统接入不足时，在该控件或宿主补齐 UIKit 实现。自有会话页标题区遵循安全区，兼顾 iPad 窗口控制和 iPhone 屏幕圆角；其他页面复用导航栏。工具栏仅在其页面居顶时显示。
+- 带导航栏的移动页面只保留一个页面标题。正文直接进入内容；需要说明所属设备、会话或路径时复用紧凑的上下文文字，内容分组使用次级标题。配对和核对主机身份的操作固定在底部安全区，表单随键盘避让并保留滚动。分段控件用紧凑的可见底板，点击区域至少 44 pt；归档、全文搜索和会话导入复用搜索输入样式。
+- App 自绘区域按画板落实字级、字重、颜色、间距、圆角、分隔线、图标和浮层材质。MyGo 默认样式有偏差时，通过组件参数或自绘校正。系统控件按目标系统版本核对原生外观与行为；如系统差异影响画板里的布局或交互，记录对应场景，设计如需调整先确认。
+- 文字使用系统字体，代码与技术元数据用系统等宽字体；通过语义字级支持 Dynamic Type，图标按钮有 VoiceOver 名称与至少 44 pt 的触控范围。中英文案及系统授权提示进入各自 String Catalog，使用系统复数和格式化规则。保持系统安全区、键盘避让、文字选择和减少动态效果。
+- 采用固定 Ink、灰阶选择面和语义前景色，App 自绘深色画布为 `#111113`。仅用状态色表达有意义的状态，例如 diff 增删、警告与错误。设置和设备页用平铺行与从文字列开始的细分隔线；表单标签与值行内对齐。可选值带低强调的尾部箭头，固定值不带箭头。需要独立选择页时，新建会话的选择器可用系统 inset-grouped 样式。
+- 导航行在目标页打开时保留选中，跟随返回过渡取消选中，手势取消时恢复；立即执行的操作行随触发解除高亮。由同一原生导航宿主管理页面、工作表和返回；通知、深链接、文件预览都校验目标归属，文件预览的路由占用保留到该预览真正关闭。
+
+### 首页、设备与自适应分栏
+
+- iPhone 首页顶部为工作区胶囊、系统集成搜索和视图菜单。胶囊保留完整工作区名的无障碍读法，视觉上单行截断；展开搜索时让出顶部空间。底部用系统 Tab 栏和独立撰写操作，iOS 27 用 prominent action 且保留系统收缩行为。Shioji 将上游 Schedules 的位置用于「设备」；会话、设备、设置分别保留自己的根页面，详情覆盖整个 Tab 栏。连接反馈与工作区身份分开。
+- iPad 横屏常规宽度用系统双栏，主栏以 320 pt 为参考，保留会话列表、选中态与底部操作；会话在详情，改动和文件预览进同一个可关闭检查器。竖屏和窄窗按可用宽度折叠主栏，紧凑宽度用原生页面或工作表呈现检查器。交互调整窗口尺寸时保留当前宿主，结束后再转移页面，保持会话、列表位置、选中文件及草稿。
+- iPhone 与 iPad 复用同一平铺会话列表、搜索和归档入口。左上角可选全局视图或单个工作区；只有全局视图的分组菜单提供「按工作区分组」。首行使用常规字重，前置状态标记与 Mac 侧栏一致。单条会话通过状态点和无障碍描述传达待处理状态，折叠分组可保留汇总数字；第二行仅在有可显示的工作区、分支等元数据时出现。分组标题可折叠并吸顶，由下组接替；按渲染后的 header 位置更新原生边缘效果。置顶会话单独成组，搜索覆盖当前允许访问的会话。归档从视图菜单进入，左滑操作需再点击。若支持关联会话，以明确的来源关系分组，子项跟随父项，折叠保留最紧急状态；资料缺失或循环关系不能吞掉行。
+- 设备列表和详情区分连通性、主机验证、Worker 就绪与 Agent 就绪。添加方式从同一个入口选择，核对主机身份再建立信任。断线时保留所属设备、上次确认时间、上下文与可编辑草稿；设备或会话切换后丢弃旧范围的迟到结果。上次读取的目录、模型、权限和状态可供阅读，提交仍依赖 owning worker 的当前确认。
+
+### 会话、审阅与输入
+
+- 会话自有紧凑标题区，工作区与设备摘要在标题同一行靠右排列，按文字基线对齐；iPad 摘要仍可进入所属设备详情。输入框上方省去重复的设备按钮。正文用系统 Markdown 与代码字体，阅读区参考 16 pt 边距；用户气泡右对齐，直接展示消息及其附件，气泡下方右对齐显示编辑、复制和发送时间。操作图标紧凑排列并保留至少 44 pt 的触控范围。历史编辑在原位展开；分叉从回复底栏或会话操作直接发起，回执待核对时在原处提供查询与继续完成入口。历史编辑、分叉和复制沿用 Shioji 的原会话、草稿和授权语义。历史或重连水合保留阅读位置，只有实时可见尾部流式更新。
+- 会话区沿用 Mac 端 `internal/ui/transcript.go`、`internal/ui/view.go` 与 `docs/message-area-motion.md` 的有序投影、工具组展开折叠、实时追加和阅读锚点。工具组标题和审批来源行采用紧凑内边距。工具组沿用 Mac 的 11 pt 组头、16 pt 图标槽与 8 pt 明细行间距。移动端展开轨道内缩 10 pt、止于最后一个调用图标，命令和输出共用距组头 34 pt 的文字列；普通命令的运行阶段和完成结果由组内状态行或组头统一呈现，单条命令保留失败原因。运行阶段与计时共用文字基线，数字使用等宽字形。会话首行图标和绿／黄状态点共用 16 pt 图形槽，按笔画和字面校准中心。回复和仅有工具输出的轮次都按复制、分叉、信息、完成时间、用时排列，工具轮次的复制来源为该轮已有输出。回复底栏按图标与文字的可见边缘对齐间距，完成时间与耗时独立排布，用量通过信息按钮按需展示。文件改动由会话的改动入口统一进入列表，再打开对应差异；iPad 审阅时保留会话可见。原生预览的复制、分享、缩放或保存依实际资源能力提供。
+- 计划与任务、子 Agent 和后台任务集中在右上角「会话活动」。详情使用原生页面，子 Agent 和后台任务的状态、输出及对应工具记录只在活动详情显示。主会话保留对话、普通工具记录和本会话的待处理请求。
+- 「计划与任务」中的计划步骤和本轮活动共用平铺行的图标槽、文字列和分隔线。待答面板展开时以向下箭头表示收起；「暂不选择」只折叠当前面板，保留待答状态和已填答案，可从折叠栏或正文来源继续。
+- 用户消息底栏保留编辑、复制和发送时间，归档消息省略编辑。已结束的 AI 回复保留复制、分叉、用量入口、完成时间与耗时，当前轮内显示实际回复状态。受能力或状态限制的动作置灰，历史缺失值显示破折号。用量按输入、输出、缓存命中展示所属轮次的独立计数。
+- 审批、权限请求和问题在所属会话或子 Agent 的可收起面板处理，不建立独立请求页。「待我处理」和正文来源记录直接展开对应请求，普通草稿保持独立。命令审批按钮来自具体请求的决策目录，同一组按钮平分宽度，窄屏可换行。权限选择器的名称、说明和作用域沿用 Mac 端。确认后原来源转为已处理，结果按接纳顺序追加。未确认的发送始终保留待核对状态，恢复连接只查询结果。若支持系统通知、Live Activity 或分享扩展，入口绑定准确的设备、工作区、会话和请求；扩展只持有必要的无凭据快照并交由主 App 的普通接纳路径处理。
+- 新建与会话共用一个原生 composer；空闲收为 Glass 单行，编辑时展开，Agent 标志在两种状态间连续移动且只显示一次。保留独立 Permission 和组合运行配置入口，已有会话的 Agent 固定；模型、推理、Plan、Fast 按所属设备的实际能力显示。发送和加入队列沿用 Mac 端的同一上箭头，按实际动作设置无障碍名称。运行时有文本就进入队列／Steer 选择，空草稿只通过明确点击停止按钮触发停止。软件键盘 Return 插入换行；硬件键盘沿用 Shioji 发送规则并保留中文输入法组合。上下文动作使用独立的紧凑胶囊，窄宽度逐步收起次要标签，完整值与入口仍可访问。
+- iPhone 的新建会话为整页推入，iPad 使用原生表单工作表；紧凑排列工作区和适用的分支／worktree。执行设备由工作区决定，表单省去独立设备行。输入框工具行的附件和发送按钮触控区采用相同的左右内边距。上下文单选一次展开一组；选择与搜索有自己的焦点，使用同一个键盘布局管理方。切换上下文、离开页面或后台返回保留草稿；只有首条非空输入被 owning worker 接纳才清空草稿并进入新会话。
+- `@` 文件和 `/` Skill 使用贴合键盘的原生候选区，层级导航有返回，筛选保留编辑焦点，候选行不截获输入。引用以内嵌标签保留在草稿、排队及已发送气泡中；始终区分显示文本和 adapter 的原生输入。任何扩展类别或快捷指令都需有实际支持，设备和工作区范围内的候选缓存仅用于显示。
+- 设置页直接使用平铺语义组，基础偏好在设置，远程 Agent 与运行环境配置随所属设备。列表可先显示最后一次接纳的快照；写入前核对当前归属和修订版本。私密值不进入列表或缓存，保留未编辑密钥，提交后清除编辑器中输入的值。
+
+### 移动端验收
+
+- 使用 `packaging/build-mobile.sh ios/simulator` 构建包含执行服务安装包的移动端。发布时可用 `SHIOJI_MOBILE_WORKER` 传入已经签名的同版 Apple Silicon Worker。iOS 只读取包内资源，由通过主机指纹验证的目标 Mac 校验摘要和签名后安装。仅确认服务缺失并点击安装才上传，已绑定设备添加连接路径时只接受原 Worker 身份。
+- 用生产控制器和确定性的设备、Worker 与 Agent 夹具建立可独立复位的原生离线场景。覆盖共享控件的各个宿主，测试从明确场景入口开始，等待可观测状态，避免固定延时。保留系统签名与模拟器隔离，验收不要使用用户凭据、生产设备或云连接。
+- 首轮原生实现覆盖会话列表、会话与输入框，以及 iPad 双栏。每个页面按画板对应的 iPhone 或 iPad 尺寸、内容、主题和状态截取原生截图，并排核对 App 自绘区域和系统控件。重点检查标题与返回按钮的间距、浮层遮挡与材质、键盘避让、分栏折叠及选中态。修正可见偏差后再标记视觉验收通过。
+- iPhone 和 iPad 都检查浅／深色静态状态、原生返回手势、搜索和键盘、窄窗切换、审阅与断线保留。动态交互提供原生录像，另外核对中文、英文及混排对齐和 IME。HTML 画板可验证布局与演示路径，模拟器验收用于原生渲染、手势和键盘，真实设备接纳另行验证。
 
 ## Conversation protocol
 

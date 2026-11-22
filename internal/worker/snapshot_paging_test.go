@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net"
 	"path/filepath"
 	"strings"
@@ -79,6 +80,9 @@ func TestSnapshotReadSpansFrameLimit(t *testing.T) {
 	if !model.Connected || len(model.Snapshot.Sessions) != 68 || model.Snapshot.DeviceID != w.DeviceID ||
 		model.Sequence < snapshot.Sequence {
 		t.Fatalf("controller did not apply the whole catalog: online=%t, sessions=%d, sequence=%d", model.Connected, len(model.Snapshot.Sessions), model.Sequence)
+	}
+	if len(snapshot.SessionInputTimes) != 68 || !maps.Equal(model.Snapshot.SessionInputTimes, snapshot.SessionInputTimes) {
+		t.Fatalf("paged catalog returned %d input dates, want all %d recorded dates", len(model.Snapshot.SessionInputTimes), len(snapshot.SessionInputTimes))
 	}
 	t.Logf("controller loaded %d sessions in a %d-byte catalog through the %d-byte frame limit", len(model.Snapshot.Sessions), len(b), protocol.MaxFrame)
 }

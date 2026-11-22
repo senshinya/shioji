@@ -13,6 +13,7 @@ final class Host: NSObject, HostCalls, UNUserNotificationCenterDelegate, UIDocum
     let root = RootViewController()
     var window: UIWindow?
     var windows: [Int: HostWindow] = [:]
+    private var lastOpenedNotification: (id: String, date: Date)?
     /// The windows on screen, the one in front last.
     var pickers: [UIDocumentPickerViewController: Int] = [:]
 
@@ -390,12 +391,23 @@ final class Host: NSObject, HostCalls, UNUserNotificationCenterDelegate, UIDocum
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler done: @escaping () -> Void) {
+        DispatchQueue.main.async {
+            self.openNotification(response)
+            done()
+        }
+    }
+
+    func openNotification(_ response: UNNotificationResponse) {
+        guard response.actionIdentifier != UNNotificationDismissActionIdentifier else { return }
         let n = response.notification
+        let id = n.request.identifier
+        // A scene launch can also arrive through the notification delegate.
+        guard lastOpenedNotification?.id != id || lastOpenedNotification?.date != n.date else { return }
+        lastOpenedNotification = (id, n.date)
         if n.request.trigger is UNPushNotificationTrigger {
             PluginHost.applicationEvent(.pushOpened(n.request.content.userInfo))
         }
-        Go.send(Event.notificationClicked(notificationID: n.request.identifier))
-        done()
+        Go.send(Event.notificationClicked(notificationID: id))
     }
 
     func removeNotification(_ c: RemoveNotificationCall) {

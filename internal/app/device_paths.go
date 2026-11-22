@@ -51,6 +51,7 @@ type devicePaths struct {
 	retiring           map[string]DeviceRoute
 	health             map[string]*pathHealth
 	open               func(context.Context, transport.SSH) (net.Conn, error)
+	authenticated      map[string]AuthenticatedDevicePath
 	changed            chan struct{}
 	ctx                context.Context
 	wg                 sync.WaitGroup
@@ -94,6 +95,10 @@ func (p *devicePaths) run(ctx context.Context) {
 func (p *devicePaths) configure(c DeviceConnection) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.configureLocked(c)
+}
+
+func (p *devicePaths) configureLocked(c DeviceConnection) {
 	c = c.Normalized()
 	c.ActiveRouteID = p.activeID
 	retained := map[string]bool{}
@@ -221,6 +226,11 @@ func (p *devicePaths) activate(id string, now time.Time) {
 	p.config.ActiveRouteID = id
 	p.activeID = id
 	clear(p.retiring)
+	for pathID := range p.authenticated {
+		if p.health[pathID] == nil {
+			delete(p.authenticated, pathID)
+		}
+	}
 	p.switching = ""
 	p.vote = ""
 	p.votes = 0
@@ -276,6 +286,15 @@ func (p *devicePaths) states(now time.Time) []DevicePathStatus {
 }
 func (p *devicePaths) preparing(id string) { p.mu.Lock(); p.switching = id; p.mu.Unlock(); p.signal() }
 func (p *devicePaths) dialRoute(ctx context.Context, id string) (net.Conn, error) {
+	if p.authenticated != nil {
+		p.mu.Lock()
+		route, ok := p.authenticated[id]
+		p.mu.Unlock()
+		if !ok {
+			return nil, errors.New("连接路径已移除")
+		}
+		return route.Dial(ctx)
+	}
 	s, ok := p.ssh(id)
 	if !ok {
 		return nil, errors.New("连接路径已移除")
@@ -330,9 +349,17 @@ func (p *devicePaths) dialStream(ctx context.Context) (net.Conn, error) {
 var errDevicePathsWaiting = errors.New("正在检查连接路径")
 
 func (p *devicePaths) probe(ctx context.Context, r DeviceRoute) {
-	lookup, stopLookup := context.WithTimeout(ctx, 8*time.Second)
-	endpoint, endpointErr := r.SSH.Endpoint(lookup)
-	stopLookup()
+	var endpoint transport.SSHEndpoint
+	var endpointErr error
+	if p.authenticated != nil {
+		p.mu.Lock()
+		endpoint = p.authenticated[r.ID].Endpoint
+		p.mu.Unlock()
+	} else {
+		lookup, stopLookup := context.WithTimeout(ctx, 8*time.Second)
+		endpoint, endpointErr = r.SSH.Endpoint(lookup)
+		stopLookup()
+	}
 	if endpointErr == nil && ctx.Err() == nil {
 		p.mu.Lock()
 		if h := p.health[r.ID]; h != nil {
@@ -356,7 +383,7 @@ func (p *devicePaths) probe(ctx context.Context, r DeviceRoute) {
 		for attempt := 0; attempt < 2; attempt++ {
 			call, cancel := context.WithTimeout(ctx, 8*time.Second)
 			if client == nil {
-				client, err = protocol.Dial(call, func(_ context.Context) (net.Conn, error) { return p.open(ctx, r.SSH) }, owner)
+				client, err = protocol.Dial(call, func(_ context.Context) (net.Conn, error) { return p.dialRoute(ctx, r.ID) }, owner)
 			}
 			if err == nil {
 				method := "device.ping"

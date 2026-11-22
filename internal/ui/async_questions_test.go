@@ -14,6 +14,8 @@ import (
 func TestAsyncQuestionUsesNativeChoicesAndAnIndependentSubmission(t *testing.T) {
 	m := layoutModel()
 	m.WorkerMinor = protocol.QuestionReplyMinor
+	m.Snapshot.DeviceID = "device"
+	m.Snapshot.Workspaces[0].DeviceID = m.Snapshot.DeviceID
 	m.Readiness.Harnesses = []domain.HarnessInfo{{ID: "codex", State: domain.RuntimeReady, Models: m.Readiness.Models}}
 	d := m.Details["s"]
 	d.Session.HarnessID = "codex"

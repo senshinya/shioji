@@ -1,0 +1,10 @@
+{
+  "mobile": {
+    "id": "shiojiUIKit",
+    "ios": {
+      "sources": ["ios/*.swift"],
+      "frameworks": ["SafariServices", "ImageIO"],
+      "class": "ShiojiUIKit"
+    }
+  }
+}

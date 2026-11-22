@@ -189,6 +189,51 @@ func TestDevicePathRemovingActiveWaitsForHandoff(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedPathRemovalKeepsCurrentTransportUntilReadyHandoff(t *testing.T) {
+	c := NewAuthenticatedDeviceController(t.TempDir(), "worker", "lan", []AuthenticatedDevicePath{
+		{ID: "lan"}, {ID: "mesh"},
+	})
+	p := c.paths
+	now := time.Now()
+	p.record("lan", time.Millisecond, now, nil)
+	var saved []string
+	save := func(replacement string) error {
+		saved = append(saved, replacement)
+		return nil
+	}
+	if err := c.RemoveAuthenticatedDevicePath("lan", save); err == nil || len(saved) != 0 {
+		t.Fatal("an unchecked backup allowed the active route to be removed")
+	}
+	p.record("mesh", time.Millisecond, now.Add(-16*time.Second), nil)
+	if err := c.RemoveAuthenticatedDevicePath("lan", save); err == nil || len(saved) != 0 {
+		t.Fatal("a stale backup observation allowed the active route to be removed")
+	}
+	p.record("mesh", time.Millisecond, now, nil)
+	p.preparing("mesh")
+	if err := c.RemoveAuthenticatedDevicePath("mesh", save); err == nil || len(saved) != 0 {
+		t.Fatal("removed the route preparing for admission")
+	}
+	p.preparing("")
+	saveErr := errors.New("registry write failed")
+	if err := c.RemoveAuthenticatedDevicePath("lan", func(string) error { return saveErr }); !errors.Is(err, saveErr) ||
+		len(p.config.Routes) != 2 || p.active() != "lan" {
+		t.Fatal("the runtime changed despite a registry write failure", err)
+	}
+	if err := c.RemoveAuthenticatedDevicePath("lan", save); err != nil || len(saved) != 1 || saved[0] != "mesh" {
+		t.Fatalf("did not remove the active route with a ready backup: %v %v", err, saved)
+	}
+	if p.active() != "lan" || p.preferred(now) != "mesh" || p.authenticated["lan"].ID != "lan" {
+		t.Fatal("business transport retired before handoff, or the removed route could still win")
+	}
+	p.activate("mesh", now)
+	if _, ok := p.authenticated["lan"]; ok {
+		t.Fatal("removed transport remained after the replacement was admitted")
+	}
+	if err := c.RemoveAuthenticatedDevicePath("mesh", save); err == nil {
+		t.Fatal("removed the last route")
+	}
+}
+
 func TestDevicePathsKeepProbeTransportBeyondSampleTimeout(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

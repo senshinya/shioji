@@ -100,8 +100,16 @@ func (m *Model) initializeHomeDefaults() {
 // Explicit choices also freeze an offline draft's defaults while reconnecting.
 func (m *Model) SetConfig(key string, config domain.RunConfig) {
 	if m.SessionID != "" && key == m.DraftKey() {
-		m.setSessionConfig(config)
+		m.setSessionConfig(m.SessionID, m.RunReadiness(), config)
 		return
+	}
+	if id, ok := strings.CutPrefix(key, "session:"); ok && id != "" {
+		for _, session := range m.Snapshot.Sessions {
+			if session.ID == id {
+				m.setSessionConfig(id, m.SessionReadiness(session), config)
+				return
+			}
+		}
 	}
 	if key == "home" && m.SessionID == "" {
 		m.homeDefaultsPending = false
@@ -165,17 +173,7 @@ func (m *Model) ReadOnlyConversationReason() string {
 }
 
 func (m *Model) ModelUnavailable() bool {
-	ready := m.RunReadiness()
-	config := m.Config()
-	if ready.State != domain.RuntimeReady || config.Model == "" {
-		return false
-	}
-	for _, model := range ready.Models {
-		if model.ID == config.Model {
-			return false
-		}
-	}
-	return true
+	return m.RunReadiness().ModelUnavailable(m.Config().Model)
 }
 func (m *Model) selectReadiness(ready domain.Readiness, id string) domain.Readiness {
 	return selectReadiness(ready, id, m.WorkerMinor)
