@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+## [0.7.11] - 2026-11-22
+
+[源码](https://github.com/senshinya/shioji/tree/v0.7.11) · [与 v0.7.10 比较](https://github.com/senshinya/shioji/compare/v0.7.10...v0.7.11)
+
+### Fixed
+
+- macOS 统一对话中工具、Agent 和状态行的图标与文字尺寸，改善介入当前轮时的消息插入与滚动，并保持原工具组的展开状态。
+- iOS 的发送消息与介入当前轮动画从输入框开始。正在发送、准备环境和进行中沿用对话末尾的同一状态行，避免切换时闪烁或跳动。
+- iOS 定时任务由详情页独立加载，待发队列使用原生操作菜单。
+- 本机执行服务断开后按需启动并重新连接。执行服务重启后尝试恢复中断的轮次与仍可接续的对话。
+
+执行服务沿用协议 2.58 和 schema 17。设备需更新执行服务才能获得重启恢复修复。
+
 ## [0.7.10] - 2026-11-22
 
 [源码](https://github.com/senshinya/shioji/tree/v0.7.10) · [与 v0.7.9 比较](https://github.com/senshinya/shioji/compare/v0.7.9...v0.7.10)
