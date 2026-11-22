@@ -124,10 +124,15 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 
 func (v *View) historyMessageActions(c *n.Context, t *n.Theme, item domain.Item, preview bool, begin func()) {
 	actions := n.Row(c.Key("user-actions:" + item.ID)).Gap(messageFooterGap).Height(24).AlignItems(n.Center).Unselectable().Label("用户消息操作")
-	if motion := v.motionForInput(item.ID); motion != nil && motion.queued && motion.source.W > 0 && !c.Preferences().ReduceMotion {
+	if motion := v.motionForInput(item.ID); motion != nil && (motion.queued || motion.steer) && motion.source.W > 0 && !c.Preferences().ReduceMotion {
 		// The action row stays in flow, but becomes visible only as the
 		// lifted bubble approaches its final position.
-		actions.Opacity(min(1, max(0, (motion.progress(c)-.84)/.16)))
+		alpha := min(1, max(0, (motion.progress(c)-.84)/.16))
+		if alpha == 0 {
+			actions.Invisible()
+		} else {
+			actions.Opacity(alpha)
+		}
 	}
 	actions.Children(func() {
 		font := n.Font{Family: t.Font, Size: 11, Weight: 400}

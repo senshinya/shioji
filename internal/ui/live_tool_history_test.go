@@ -105,7 +105,7 @@ func TestOpeningSessionExpandsOnlyItsLatestExecutingToolGroup(t *testing.T) {
 					if !ui.HasText("最新组的第二个调用") || ui.HasText("较早的工具调用") {
 						t.Fatal("switching back does not reopen only the latest executing group")
 					}
-					d.Items = append(d.Items, domain.Item{ID: "after-entry", TurnID: "current", Kind: "user", Text: "切回后插入的消息", Final: true})
+					d.Items = append(d.Items, domain.Item{ID: "after-entry", TurnID: "next-turn", Kind: "user", Text: "切回后发起的新一轮", Status: "sent", Final: true})
 					m.Details["s"] = d
 					ui.Frame()
 					ui.Advance(200 * time.Millisecond)

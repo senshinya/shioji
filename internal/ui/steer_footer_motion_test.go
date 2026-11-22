@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +14,109 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 )
+
+func TestSteerAfterProseAndToolsKeepsOneLayoutHandoff(t *testing.T) {
+	for _, tc := range []struct{ eventFirst, collapsed bool }{
+		{false, false}, {false, true}, {true, false}, {true, true},
+	} {
+		eventFirst, collapsed := tc.eventFirst, tc.collapsed
+		t.Run(fmt.Sprintf("event-first=%v/collapsed=%v", eventFirst, collapsed), func(t *testing.T) {
+			v, ui := steerScrollFixture(false, true, false)
+			detail := v.Model.Details["s"]
+			replyID := detail.Items[len(detail.Items)-2].ID
+			detail.Items[len(detail.Items)-2].TurnID = "active"
+			v.Model.Details["s"] = detail
+			ui.Frame()
+			ui.Advance(time.Second)
+			if collapsed {
+				feedbackClick(t, ui, "1 次工具调用")
+				ui.Advance(time.Second)
+				v.lists["s"].ScrollToEnd()
+				ui.Frame()
+			}
+			ui.SetDark(!eventFirst)
+			feedbackClick(t, ui, "消息输入")
+			ui.Type(strings.TrimSpace(strings.Repeat("追加一条关于当前回复的指令。\n", 5)))
+			ui.Advance(time.Second)
+			before := v.historyRowBounds[replyID]
+			outgoing, hasOutgoing := ui.Find("工具组运行状态")
+			if before.H == 0 || v.runningGroup == "" || !hasOutgoing {
+				t.Fatal("fixture needs a visible reply and a live tool group")
+			}
+			saveNativeSkillImage(t, ui, fmt.Sprintf("prose-tool-%v-%v-000.png", eventFirst, collapsed))
+			ui.Key(n.Cmd, n.KeyEnter)
+			job := feedbackJob(t, v, "turn.steer")
+			in := job.Input.(protocol.SteerInput).Input
+			id := "input:" + in.OperationID
+			op := domain.Operation{ID: in.OperationID, SessionID: "s", State: domain.OperationConfirmed}
+			body, _ := json.Marshal(op)
+			sentAt := ui.Now()
+			item := domain.Item{ID: id, TurnID: "active", Kind: "user", Text: in.Text, Status: "sent", SentAt: &sentAt, Final: true}
+			receipt := func() { job.Apply(v.Model, body, nil) }
+			event := func() {
+				v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "submission", SessionID: "s", Operation: &op, Item: &item})
+			}
+			first, second, eventFrame := receipt, event, 12
+			if eventFirst {
+				first, second, eventFrame = event, receipt, 5
+			}
+			previous := before
+			movingFrames := 0
+			for frame := range 45 {
+				switch frame {
+				case 5:
+					first()
+					ui.Frame()
+				case 12:
+					second()
+					ui.Frame()
+				}
+				reply := v.historyRowBounds[replyID]
+				input := v.historyRowBounds[id]
+				summary := v.historyRowBounds["reply-before:"+id]
+				dock, _ := ui.Find("会话底部面板")
+				if os.Getenv("SHIOJI_STEER_FOOTER_RECORDING") != "" {
+					t.Logf("frame=%02d elapsed=%6.1f replyY=%6.1f inputY=%6.1f inputH=%5.1f summaryH=%5.1f dockY=%6.1f", frame, float64(ui.Now().Sub(sentAt))/float64(time.Millisecond), reply.Y, input.Y, input.H, summary.H, dock.Y)
+				}
+				saveNativeSkillImage(t, ui, fmt.Sprintf("prose-tool-%v-%v-%03d.png", eventFirst, collapsed, frame+1))
+				if frame < eventFrame {
+					if input.H != 0 || math.Abs(float64(reply.Y-before.Y)) > 1 {
+						t.Errorf("frame %d: pending operation moved the reply or mounted the input: reply Y %g → %g, input H=%g", frame, before.Y, reply.Y, input.H)
+					}
+				} else if frame == eventFrame {
+					if math.Abs(float64(reply.Y-before.Y)) > 1 {
+						t.Errorf("frame %d: the insertion reserved its space in one frame: reply Y %g → %g", frame, before.Y, reply.Y)
+					}
+					status, visible := ui.Find("工具组运行状态")
+					if !visible || math.Abs(float64(status.Y-outgoing.Y)) > 1 {
+						t.Errorf("old running indicator did not begin its fade in place: before=%+v after=%+v", outgoing, status)
+					}
+					if _, visible := ui.Find("用户消息操作"); visible {
+						t.Error("message actions appeared at the destination before the bubble")
+					}
+				} else {
+					if reply.H == 0 || reply.Y > previous.Y+1 || reply.Y < previous.Y-28 {
+						t.Errorf("frame %d: previous reply did not move smoothly upward: Y %g → %g", frame, previous.Y, reply.Y)
+					}
+					if reply.Y < previous.Y-.5 {
+						movingFrames++
+					}
+				}
+				previous = reply
+				ui.Advance(time.Second / 60)
+			}
+			if input := v.historyRowBounds[id]; input.H == 0 || movingFrames < 5 || !v.lists["s"].AtEnd() || !v.lists["s"].FollowingEnd() {
+				t.Errorf("insertion did not expand and settle at the measured end: %d moving frames, input=%+v", movingFrames, input)
+			}
+			if _, visible := ui.Find("工具组运行状态"); visible || !ui.HasText("复制回复") {
+				t.Error("old running indicator did not give way to the reply actions")
+			}
+			if _, visible := ui.Find("用户消息操作"); !visible {
+				t.Error("message actions did not appear after the bubble landed")
+			}
+		})
+	}
+}
 
 func TestSteerFinishesReplyFooterBeforeStartingMessageFlight(t *testing.T) {
 	for _, dark := range []bool{false, true} {

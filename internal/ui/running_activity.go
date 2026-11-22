@@ -136,6 +136,7 @@ func (v *View) activeConversationTurn() (domain.Turn, bool) {
 // This visual clock preserves progress animation phase across insertions.
 // Elapsed labels independently use the latest accepted input's timestamp.
 type runningProgress struct {
+	elapsed              *time.Time
 	session, epoch, turn string
 	label                string
 	started              time.Time
@@ -274,6 +275,7 @@ func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domai
 	if group != "" {
 		p.handoff = nil
 		p.label = activity.label
+		p.elapsed = activity.started
 		// Keep the thinking caption between calls until another activity
 		// takes over the unbroken tool group.
 		if activity.hiddenReasoning {

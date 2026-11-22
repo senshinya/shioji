@@ -122,6 +122,10 @@ func TestImmediateQueuedSteerSettlesAtNaturalEnd(t *testing.T) {
 		if err := ui.Click("立即发送待发消息 1"); err != nil {
 			t.Fatal(err)
 		}
+		ui.Frame()
+		if reduced && !v.lists["s"].AtEnd() {
+			t.Fatal("reduced-motion queue insertion did not reach the end immediately")
+		}
 		var send app.Job
 		for len(v.Controller.Jobs) > 0 {
 			job := <-v.Controller.Jobs
@@ -154,6 +158,91 @@ func TestImmediateQueuedSteerSettlesAtNaturalEnd(t *testing.T) {
 		if !ok || math.Abs(float64(after.Y-footer.Y)) > 2 {
 			t.Error("queued steer needs a manual scroll to reach its stable position", footer, after)
 		}
+	}
+}
+
+func TestSteerKeepsExpandedToolGroupThroughSend(t *testing.T) {
+	for _, theme := range []struct {
+		name          string
+		dark, reduced bool
+	}{{"light", false, false}, {"dark", true, false}, {"reduced", false, true}} {
+		t.Run(theme.name, func(t *testing.T) {
+			v, ui := steerScrollFixture(false, true, theme.reduced)
+			ui.SetDark(theme.dark)
+			record := os.Getenv("SHIOJI_STEER_SCROLL_MOTION") != "" && !theme.reduced
+			capture := func(frame int) {
+				if record {
+					saveNativeSkillImage(t, ui, fmt.Sprintf("steer-insert-%s-%03d.png", theme.name, frame))
+				}
+			}
+			// Close and reopen via the heading to exercise a real reader choice.
+			for range 2 {
+				feedbackClick(t, ui, "1 次工具调用")
+				ui.Advance(250 * time.Millisecond)
+			}
+			emptyDock, _ := ui.Find("会话底部面板")
+			feedbackClick(t, ui, "消息输入")
+			message := "继续检查这组工具的输出"
+			if theme.reduced {
+				message = strings.TrimSpace(strings.Repeat(message+"\n", 4))
+			}
+			ui.Type(message)
+			ui.Advance(time.Second)
+			tool, ok := ui.Find("正在执行的命令")
+			if !ok {
+				t.Fatal("tool group was not expanded before sending")
+			}
+			capture(0)
+
+			ui.Key(n.Cmd, n.KeyEnter)
+			if theme.reduced {
+				dock, _ := ui.Find("会话底部面板")
+				if dock.H > emptyDock.H+1 {
+					t.Errorf("first insertion frame still reserves the multiline draft: dock=%+v empty=%+v", dock, emptyDock)
+				}
+			}
+			job := feedbackJob(t, v, "turn.steer")
+			in := job.Input.(protocol.SteerInput).Input
+			op := domain.Operation{ID: in.OperationID, SessionID: "s", State: domain.OperationConfirmed}
+			item := domain.Item{ID: "input:" + in.OperationID, TurnID: "active", Kind: "user", Text: in.Text, Status: "sent", Final: true}
+			body, _ := json.Marshal(op)
+			// Leave time for the optimistic row to render before the worker
+			// confirms the insertion. Both stages must preserve the group.
+			previousY := tool.Y
+			missing, reversed := false, false
+			for frame := range 36 {
+				if frame == 6 {
+					job.Apply(v.Model, body, nil)
+					v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "submission", SessionID: "s", Operation: &op, Item: &item})
+				}
+				ui.Advance(time.Second / 60)
+				if frame == 0 && theme.reduced {
+					footer, visible := ui.Find("回复信息")
+					dock, dockOK := ui.Find("会话底部面板")
+					if !v.lists["s"].AtEnd() || !visible || !dockOK || footer.Y+footer.H > dock.Y {
+						t.Errorf("reduced-motion insertion did not reach the end immediately: footer=%+v dock=%+v", footer, dock)
+					}
+				}
+				current, visible := ui.Find("正在执行的命令")
+				missing = missing || !visible
+				reversed = reversed || visible && current.Y > previousY+1
+				if visible {
+					previousY = current.Y
+				}
+				capture(frame + 1)
+			}
+			if missing {
+				t.Error("expanded tool row disappeared during insertion")
+			}
+			if reversed {
+				t.Error("preceding tool row moved down during insertion")
+			}
+			bubble := v.historyRowBounds[item.ID]
+			dock, dockOK := ui.Find("会话底部面板")
+			if !dockOK || bubble.H <= 0 || bubble.Y+bubble.H > dock.Y || !v.lists["s"].AtEnd() || !v.lists["s"].FollowingEnd() {
+				t.Errorf("inserted message did not settle above the dock: message=%+v dock=%+v", bubble, dock)
+			}
+		})
 	}
 }
 
@@ -197,6 +286,9 @@ func checkMultilineSteerScroll(t *testing.T, dark bool) {
 		current := v.historyRowBounds[replyID]
 		if current.H <= 0 || current.Y > previous.Y+1 {
 			t.Errorf("frame %d: preceding reply moved down during insertion: Y=%g → %g", frame, previous.Y, current.Y)
+		}
+		if current.Y < previous.Y-28 {
+			t.Errorf("frame %d: preceding reply jumped during insertion: Y=%g → %g", frame, previous.Y, current.Y)
 		}
 		saveNativeSkillImage(t, ui, fmt.Sprintf("steer-handoff-%v-%03d.png", dark, frame))
 		previous = current

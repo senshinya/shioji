@@ -14,10 +14,29 @@ const steerFooterDuration = 180 * time.Millisecond
 type steerFooterHandoff struct {
 	input   string
 	started time.Time
+	tool    *steerToolStatus
 }
 
-// Keep a new insertion out of the displayed transcript until the old running
-// footer has become its reply summary. The worker's items remain authoritative.
+type steerToolStatus struct {
+	group, label string
+	shimmerAt    time.Time
+	elapsed      *time.Time
+	inline       bool
+}
+
+func (h *steerFooterHandoff) fraction(now time.Time) float32 {
+	return n.EaseOut(min(1, max(0, float32(now.Sub(h.started))/float32(steerFooterDuration))))
+}
+
+func (v *View) steerFooterTransition() *steerFooterHandoff {
+	if v.toolArrivals == nil {
+		return nil
+	}
+	return v.toolArrivals.steerFooter
+}
+
+// Keep an insertion after a reply out of the transcript until its reply
+// boundary is available. The worker's items remain authoritative.
 func (v *View) holdSteerMessage(c *n.Context, detail domain.SessionDetail) ([]domain.Item, *domain.Item) {
 	items := detail.Items
 	m, arrivals := v.Model, v.toolArrivals
@@ -30,7 +49,14 @@ func (v *View) holdSteerMessage(c *n.Context, detail domain.SessionDetail) ([]do
 		arrivals.steerFooter = nil
 		return items, nil
 	}
-	if handoff := arrivals.steerFooter; handoff != nil {
+	if handoff := arrivals.steerFooter; handoff != nil && handoff.tool != nil {
+		if v.reduceMotion || c.Now().Sub(handoff.started) >= steerFooterDuration {
+			arrivals.steerFooter = nil
+		} else {
+			c.AnimationFrame()
+		}
+	}
+	if handoff := arrivals.steerFooter; handoff != nil && handoff.tool == nil {
 		at := slices.IndexFunc(items, func(item domain.Item) bool { return item.ID == handoff.input })
 		if at >= 0 && acceptedReplyInput(items[at]) {
 			if !v.reduceMotion && c.Now().Sub(handoff.started) < steerFooterDuration {
@@ -48,7 +74,11 @@ func (v *View) holdSteerMessage(c *n.Context, detail domain.SessionDetail) ([]do
 	}
 
 	progress := v.runningProgress
-	if progress == nil || progress.turn == "" || v.runningGroup != "" || v.historyRowBounds["turn-footer:"+progress.turn].H <= 0 {
+	if progress == nil || progress.turn == "" {
+		return items, nil
+	}
+	toolOwnsProgress := v.runningGroup != "" && v.activityTurn == progress.turn
+	if !toolOwnsProgress && v.historyRowBounds["turn-footer:"+progress.turn].H <= 0 {
 		return items, nil
 	}
 	replied := false
@@ -68,8 +98,20 @@ func (v *View) holdSteerMessage(c *n.Context, detail domain.SessionDetail) ([]do
 				if v.reduceMotion {
 					return items, nil
 				}
-				arrivals.steerFooter = &steerFooterHandoff{input: item.ID, started: c.Now()}
+				handoff := &steerFooterHandoff{input: item.ID, started: c.Now()}
+				arrivals.steerFooter = handoff
 				c.AnimationFrame()
+				if toolOwnsProgress {
+					// Retain the caption that was on screen before the new
+					// input reset the live clock. Its summary fades into the
+					// same slot as the message opens space below it.
+					handoff.tool = &steerToolStatus{
+						group: v.runningGroup, label: progress.shownToolCaption(),
+						shimmerAt: progress.started, elapsed: progress.elapsed,
+						inline: v.Model.ToolDisclosure(v.runningGroup).Closed(),
+					}
+					return items, nil
+				}
 				return items[:i], &items[i]
 			}
 			if item.Status == "dispatching" && detail.Session.Status.Active() && !m.UncertainSubmissions[strings.TrimPrefix(item.ID, "input:")] {

@@ -821,7 +821,14 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) (goalShown bool) {
 		}
 		if v.composerNaturalHeight > 0 {
 			if resize {
-				shownInputHeight = heightFrame.AnimateTo("input-height", shownInputHeight, heightAnimation)
+				if s := v.sent; s != nil && s.steer && !s.queued && s.session == m.SessionID && s.phase == sentAnimating && s.started.Equal(c.Now()) && !m.HasDraftContent(key) {
+					// The list is measuring its end this frame. Give it the
+					// empty editor's height before positioning the new input.
+					shownInputHeight = inputHeight
+					heightFrame.Jump("input-height", shownInputHeight)
+				} else {
+					shownInputHeight = heightFrame.AnimateTo("input-height", shownInputHeight, heightAnimation)
+				}
 				shownChromeHeight = heightFrame.AnimateTo("chrome-height", shownChromeHeight, heightAnimation)
 			} else {
 				heightFrame.Jump("input-height", shownInputHeight)
@@ -1795,8 +1802,18 @@ func (v *View) replyBeforeInputFooter(c *n.Context, t *n.Theme, turn domain.Turn
 	frame := n.Column(c.Key("reply-footer")).Label("回复信息").FillWidth().MinHeight(24).Clip()
 	v.transcriptContentHeight(c, frame, true, true, steerFooterDuration, func() float32 {
 		row := replyFooterRow(c, "reply-before-input")
-		if h := v.toolArrivals.steerFooter; h != nil && h.input == boundary.inputID {
-			row.Transition(fadeMotion(c, steerFooterDuration)).IgnoreInput(true)
+		if h := v.steerFooterTransition(); h != nil && h.input == boundary.inputID {
+			if tool := h.tool; tool != nil {
+				p := h.fraction(c.Now())
+				row.Opacity(p).IgnoreInput(true)
+				if !tool.inline {
+					n.Column(c.Key("outgoing-tool-progress")).Absolute().Top(0).Left(0).Right(0).Opacity(1 - p).IgnoreInput(true).Children(func() {
+						v.toolProgressLine(c, t, tool.label, tool.elapsed, tool.shimmerAt, 1)
+					})
+				}
+			} else {
+				row.Transition(fadeMotion(c, steerFooterDuration)).IgnoreInput(true)
+			}
 		}
 		row.Children(func() { v.replyFooterSummary(c, t, turn, boundary, "") })
 		return 0

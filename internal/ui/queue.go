@@ -208,6 +208,7 @@ func queueInputObserved(detail domain.SessionDetail, source queuedMessageSource)
 func (v *View) queuedSendMotion(source queuedMessageSource) *sentMessageMotion {
 	m := v.Model
 	motion := &sentMessageMotion{input: "input:" + source.item.Input.OperationID, origin: m.SessionID, session: m.SessionID, epoch: m.ConversationGeneration(), workspace: m.WorkspaceID, queued: true, focused: true}
+	motion.steer = source.preview != nil && source.preview.turn != ""
 	if r := source.bounds; r.W > 0 {
 		motion.source = n.Rect{X: r.X - 16, Y: r.Y - 12, W: r.W + 32, H: r.H + 24}
 	}

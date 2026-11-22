@@ -32,6 +32,9 @@ func TestToolGroupClosesOnFollowingNonToolContent(t *testing.T) {
 				}
 				heading, _ := ui.Find("1 次工具调用")
 				next := domain.Item{ID: "next", TurnID: "t", Kind: kind, Text: "后续内容", Status: "pending", Final: true}
+				if kind == "user" {
+					next.TurnID, next.Status = "next-turn", "sent"
+				}
 				if kind == "activity" {
 					next.Presentation = "reasoning"
 				}
@@ -48,7 +51,9 @@ func TestToolGroupClosesOnFollowingNonToolContent(t *testing.T) {
 				if !m.ToolDisclosure("tool-group:s/tool").Closed() {
 					t.Error("non-tool content did not immediately begin closing the group")
 				}
-				ui.Advance(40 * time.Millisecond)
+				// The reveal clips against the viewport, so a short group can
+				// still occupy almost its full height early in the transition.
+				ui.Advance(80 * time.Millisecond)
 				middle := v.historyRowBounds["next"]
 				ui.Advance(220 * time.Millisecond)
 				end := v.historyRowBounds["next"]

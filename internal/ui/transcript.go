@@ -198,7 +198,8 @@ func withToolUserGaps(rows []transcriptRow) []transcriptRow {
 }
 
 // Project groups into the outer virtual list so expanded tool history still
-// unmounts normally. Any following visible non-tool content auto-closes a group.
+// unmounts normally. A same-turn user insertion preserves the preceding
+// group's disclosure when it becomes a separate reading block.
 func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 	receipts := requestReceipts(v.Model.Details[v.Model.SessionID].Requests)
 	baseline := v.historyBaseline
@@ -268,13 +269,17 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			}
 		}
 	}()
-	laterContent := make([]bool, len(items)+1)
+	nextContent := make([]int, len(items)+1)
+	nextContent[len(items)] = len(items)
 	latestTool := -1
 	groups := 0
 	var nextKind, nextTurn string
 	for i := len(items) - 1; i >= 0; i-- {
 		visible := !domain.HistorySpacer(items[i])
-		laterContent[i] = laterContent[i+1] || items[i].Kind != "tool" && visible
+		nextContent[i] = nextContent[i+1]
+		if items[i].Kind != "tool" && visible {
+			nextContent[i] = i
+		}
 		if visible {
 			if items[i].Kind == "tool" && (nextKind != "tool" || nextTurn != items[i].TurnID) {
 				groups++
@@ -353,6 +358,8 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			}
 		}
 		disclosure := v.Model.ToolDisclosure(key)
+		following := nextContent[end]
+		hasLaterContent := following < len(items)
 		if baseline {
 			if _, known := v.Model.Collapsed[key]; !known {
 				disclosure = disclosure.OpenHistory()
@@ -361,26 +368,31 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		}
 		if collapseHistory {
 			disclosure = disclosure.OpenHistory()
-			if !v.Model.Preferences.CollapseLatestTools && v.Model.Connected && activeTurn != "" && item.TurnID == activeTurn && latestTool < end && executing && !laterContent[end] {
+			if !v.Model.Preferences.CollapseLatestTools && v.Model.Connected && activeTurn != "" && item.TurnID == activeTurn && latestTool < end && executing && !hasLaterContent {
 				disclosure = app.ToolOpenedBeforeProse
 			}
 			v.Model.SetToolDisclosure(key, disclosure)
 			delete(v.toolMotions, key)
 		}
-		newBoundary := laterContent[end] && !disclosure.SawProse()
+		newBoundary := hasLaterContent && !disclosure.SawProse()
 		if newBoundary {
-			// The persisted prose marker records this one-time boundary for
-			// requests, inserted user messages and other non-tool content too.
-			// Only previously displayed content exits. Hydrated history starts
-			// folded without briefly mounting all of its tools.
-			_, visible := v.historyRowBounds[key]
-			for j := i; !visible && j < end; j++ {
-				_, visible = v.historyRowBounds[items[j].ID]
+			next := items[following]
+			if !disclosure.Closed() && item.TurnID != "" && next.TurnID == item.TurnID && next.Kind == "user" {
+				// Keep the open group and record the boundary so later output
+				// cannot close it after the reader has moved past the insertion.
+				disclosure = app.ToolOpenedAfterProse
+			} else {
+				// Only previously displayed content exits. Hydrated history
+				// starts folded without briefly mounting all of its tools.
+				_, visible := v.historyRowBounds[key]
+				for j := i; !visible && j < end; j++ {
+					_, visible = v.historyRowBounds[items[j].ID]
+				}
+				if visible && !disclosure.Closed() && !v.reduceMotion {
+					v.animateToolGroup(key, 0, v.frameTime, toolDisclosureDuration)
+				}
+				disclosure = disclosure.ObserveProse()
 			}
-			if visible && !disclosure.Closed() && !v.reduceMotion {
-				v.animateToolGroup(key, 0, v.frameTime, toolDisclosureDuration)
-			}
-			disclosure = disclosure.ObserveProse()
 			v.Model.SetToolDisclosure(key, disclosure)
 		}
 		opacity, show := float32(1), !disclosure.Closed()
@@ -415,7 +427,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		}
 		// Only visible later content or a terminal turn seals a group. A
 		// page containing only some of the calls cannot establish success.
-		if (endedTurns[item.TurnID] || laterContent[end]) && !executing && loaded == count {
+		if (endedTurns[item.TurnID] || hasLaterContent) && !executing && loaded == count {
 			heading.toolResult = toolGroupResult(items[i:end])
 		}
 		if show {
@@ -432,7 +444,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		}
 		// Keep the outgoing status slot in the same height reveal when
 		// another item takes over. The status renderer checks the current owner.
-		liveTail := activeTurn != "" && item.TurnID == activeTurn && latestTool < end && !laterContent[end]
+		liveTail := activeTurn != "" && item.TurnID == activeTurn && latestTool < end && !hasLaterContent
 		progress := v.runningProgress
 		outgoing := v.runningGroup == key || progress != nil && progress.handoff != nil && progress.handoff.group == key
 		if show && v.Model.Connected && (liveTail || outgoing && v.toolMotions[key] != nil) {
@@ -485,8 +497,17 @@ func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index
 	progress := v.runningProgress
 	inline := float32(0)
 	live := progress != nil && v.runningGroup == row.group
+	var phase string
+	var elapsed *time.Time
+	var shimmerAt time.Time
 	if live {
 		inline = 1 - row.toolReveal
+		if inline > 0 {
+			phase, elapsed, shimmerAt = progress.toolCaption(c), v.toolElapsed(row.item.TurnID), progress.started
+		}
+	} else if h := v.steerFooterTransition(); h != nil && h.tool != nil && h.tool.group == row.group && h.tool.inline {
+		inline = 1 - h.fraction(c.Now())
+		phase, elapsed, shimmerAt = h.tool.label, h.tool.elapsed, h.tool.shimmerAt
 	}
 	description := outcome
 	if live {
@@ -502,13 +523,13 @@ func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index
 		line := n.Row(c).Height(20).AlignItems(n.Baseline)
 		if inline > 0 {
 			line.Label("工具组运行状态")
-			shimmerToolStatus(c, line, progress.started, t.Text, inline)
+			shimmerToolStatus(c, line, shimmerAt, t.Text, inline)
 		}
 		line.Children(func() {
 			n.Row(c.Key("icon")).Size(toolGlyphSlot, 20).Shrink(0).MarginEnd(toolSummaryGap).AlignItems(n.Baseline).Justify(n.Center).Children(func() {
 				inlineSymbol(c.Key("terminal"), commandTerminalIcon, label, font, 14, color).Opacity(1 - inline)
 				if inline > 0 {
-					statusDot(c.Key("dot"), label, font, t.Success, true, progress.started).Absolute().
+					statusDot(c.Key("dot"), label, font, t.Success, true, shimmerAt).Absolute().
 						Left((toolGlyphSlot - 6) / 2).Top(0).Opacity(inline)
 				}
 			})
@@ -520,7 +541,7 @@ func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index
 					ContentTransition(n.ContentTransition{Numeric: true, Animation: countAnimation})
 			}
 			if inline > 0 {
-				v.toolProgressCaption(c.Key("inline"), t, row, inline, true)
+				v.toolProgressCaption(c.Key("inline"), t, phase, elapsed, inline, true)
 			}
 			angle := -90 * (1 - row.toolReveal)
 			if c.Preferences().ReduceMotion {
@@ -538,37 +559,54 @@ func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index
 }
 
 func (v *View) toolGroupProgress(c *n.Context, t *n.Theme, row transcriptRow) {
-	line := n.Row(c).Height(20).AlignSelf(n.Start).AlignItems(n.Baseline)
 	progress := v.runningProgress
 	if progress == nil || v.runningGroup != row.toolParent {
 		return
 	}
-	line.Label("工具组运行状态")
-	shimmerToolStatus(c, line, progress.started, t.Text, row.opacity)
+	v.toolProgressLine(c, t, progress.toolCaption(c), v.toolElapsed(row.item.TurnID), progress.started, row.opacity)
+}
+
+func (v *View) toolElapsed(turnID string) *time.Time {
+	for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
+		if turn.ID == turnID {
+			return v.runningElapsedStart(turn)
+		}
+	}
+	return nil
+}
+
+func (v *View) toolProgressLine(c *n.Context, t *n.Theme, phase string, elapsed *time.Time, shimmerAt time.Time, opacity float32) {
+	line := n.Row(c).Height(20).AlignSelf(n.Start).AlignItems(n.Baseline).Label("工具组运行状态")
+	shimmerToolStatus(c, line, shimmerAt, t.Text, opacity)
 	font := n.Font{Family: t.Font, Size: 11, Weight: 400}
 	line.Children(func() {
 		n.Row(c.Key("dot")).Size(toolGlyphSlot, 20).AlignItems(n.Baseline).Justify(n.Center).Children(func() {
-			statusDot(c.Key("pulse"), progress.label, font, t.Success, true, progress.started)
+			statusDot(c.Key("pulse"), phase, font, t.Success, true, shimmerAt)
 		})
-		v.toolProgressCaption(c.Key("caption"), t, row, 1, false)
+		v.toolProgressCaption(c.Key("caption"), t, phase, elapsed, 1, false)
 	})
 }
 
-func (v *View) toolProgressCaption(c *n.Context, t *n.Theme, row transcriptRow, extent float32, clipped bool) {
-	p := v.runningProgress
+func (p *runningProgress) shownToolCaption() string {
+	if p.caption != "" {
+		return p.caption
+	}
+	if p.label != "" {
+		return p.label
+	}
+	return "进行中"
+}
+
+func (p *runningProgress) toolCaption(c *n.Context) string {
 	phase := p.label
 	if phase == "" {
 		phase = "进行中"
 	}
-	phase = p.activityCaption(c, phase)
+	return p.activityCaption(c, phase)
+}
+
+func (v *View) toolProgressCaption(c *n.Context, t *n.Theme, phase string, started *time.Time, extent float32, clipped bool) {
 	font := n.Font{Family: t.Font, Size: 11, Weight: 400}
-	var started *time.Time
-	for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
-		if turn.ID == row.item.TurnID {
-			started = v.runningElapsedStart(turn)
-			break
-		}
-	}
 	line := n.Row(c).AlignItems(n.Baseline).Height(20)
 	line.Children(func() {
 		phaseWidth, _ := n.ShapeText(phase, font, 0).Size()

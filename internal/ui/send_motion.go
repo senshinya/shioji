@@ -15,6 +15,7 @@ type composerSendMatch struct{ input string }
 // delegates to browser smooth scrolling, whose Chromium curve is separate.
 var composerDescentEase = n.CubicBezier(.4, 0, .2, 1)
 var sentScrollEase = n.CubicBezier(.4, 0, 0, 1)
+var steerSpaceEase = n.CubicBezier(.42, 0, .58, 1)
 
 const sentScrollDuration = 480 * time.Millisecond
 const sentFadeDuration = 300 * time.Millisecond
@@ -28,7 +29,7 @@ type sentMessageMotion struct {
 	source, composerSource                   n.Rect
 	steerInputHeight                         float32
 	phase                                    sentMotionPhase
-	focused, departed, queued                bool
+	focused, departed, queued, steer         bool
 }
 
 type sentMotionPhase uint8
@@ -65,7 +66,8 @@ func (v *View) beginPresentedSend(in domain.Submission, turn string) *sentMessag
 	}
 	s := v.beginSendMotion(in)
 	s.session = in.SessionID
-	if state := v.lists[in.SessionID]; turn != "" && state != nil && state.FollowingEnd() {
+	s.steer = turn != ""
+	if state := v.lists[in.SessionID]; s.steer && state != nil && state.FollowingEnd() {
 		s.steerInputHeight = v.composerInputHeight
 	}
 	v.homeSend = &homeSendPresentation{in: in, sentAt: time.Now(), session: in.SessionID, turn: turn}
@@ -112,8 +114,12 @@ func (v *View) anchorSentMessage(c *n.Context, state *n.ListState, rows []transc
 			continue
 		}
 		s.started, s.phase = c.Now(), sentAnimating
-		// Automatic queue dispatch must not pull a reader away from history.
-		if !s.queued || state.AtEnd() {
+		if s.steer {
+			// Start the measured end reveal at the previous reading position.
+			// The bubble uses the same curve as the room it is entering.
+			state.ScrollToEnd(s.animation())
+		} else if !s.queued || state.AtEnd() {
+			// Automatic queue dispatch only follows an existing bottom reader.
 			animation := n.Animation{Duration: sentScrollDuration, Ease: sentScrollEase}
 			if s.origin != "" {
 				// Existing conversations settle at their measured end. Only a
@@ -149,7 +155,8 @@ func (v *View) sentMessageBubble(c *n.Context, t *n.Theme, bubble n.Element, ite
 		return
 	}
 	bubble.Background(userBubble(t).Alpha(s.progress(c)))
-	bubble.Transition(n.ElementTransition{From: &s.source, Duration: sentScrollDuration, Ease: sentScrollEase, Position: true, Lift: true})
+	animation := s.animation()
+	bubble.Transition(n.ElementTransition{From: &s.source, Duration: animation.Duration, Ease: animation.Ease, Position: true, Lift: true})
 }
 
 func (v *View) motionForInput(id string) *sentMessageMotion {
@@ -169,6 +176,14 @@ func (v *View) motionForInput(id string) *sentMessageMotion {
 	return nil
 }
 
+func (s *sentMessageMotion) animation() n.Animation {
+	ease := sentScrollEase
+	if s.steer {
+		ease = steerSpaceEase
+	}
+	return n.Animation{Duration: sentScrollDuration, Ease: ease}
+}
+
 func (s *sentMessageMotion) progress(c *n.Context) float32 {
 	if s.phase != sentAnimating {
 		return 0
@@ -177,13 +192,13 @@ func (s *sentMessageMotion) progress(c *n.Context) float32 {
 	if p < 1 {
 		c.AnimationFrame()
 	}
-	return sentScrollEase(p)
+	return s.animation().Ease(p)
 }
 
 func (v *View) composerSendTransition(c *n.Context, composer n.Element, home bool) {
 	composer.DrawOver(func(_ *n.Painter, r n.Rect) { v.composerBounds = r })
 	s := v.sent
-	if s == nil || s.queued {
+	if s == nil || s.queued || s.steer {
 		return
 	}
 	t := n.ElementTransition{Duration: 360 * time.Millisecond, Ease: n.EaseOut, Size: true}
