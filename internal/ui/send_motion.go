@@ -26,6 +26,7 @@ type sentMessageMotion struct {
 	input, origin, session, epoch, workspace string
 	started                                  time.Time
 	source, composerSource                   n.Rect
+	steerInputHeight                         float32
 	phase                                    sentMotionPhase
 	focused, departed, queued                bool
 }
@@ -64,6 +65,9 @@ func (v *View) beginPresentedSend(in domain.Submission, turn string) *sentMessag
 	}
 	s := v.beginSendMotion(in)
 	s.session = in.SessionID
+	if state := v.lists[in.SessionID]; turn != "" && state != nil && state.FollowingEnd() {
+		s.steerInputHeight = v.composerInputHeight
+	}
 	v.homeSend = &homeSendPresentation{in: in, sentAt: time.Now(), session: in.SessionID, turn: turn}
 	return s
 }

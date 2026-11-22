@@ -806,6 +806,13 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) (goalShown bool) {
 		// The editor viewport supplies the same animated height to the dock
 		// and to the text clip. The attachment strip animates its own height.
 		shownInputHeight, shownChromeHeight := v.composerInputHeight, v.composerChromeHeight
+		if s, h := v.sent, v.homeSend; s != nil && s.steerInputHeight > 0 && s.phase == sentAwaitingRow && s.session == m.SessionID &&
+			h != nil && h.state != domain.OperationIndeterminate && m.Connected && !m.UncertainSubmissions[h.in.OperationID] && !c.Preferences().ReduceMotion {
+			// Keep the previous viewport through the reply-footer handoff. If
+			// the empty editor shrinks first, the transcript follows it down
+			// before scrolling up again for the inserted message.
+			shownInputHeight = max(shownInputHeight, s.steerInputHeight)
+		}
 		if v.composerNaturalHeight > 0 {
 			if resize {
 				shownInputHeight = heightFrame.AnimateTo("input-height", shownInputHeight, heightAnimation)

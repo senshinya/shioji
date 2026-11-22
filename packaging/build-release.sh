@@ -31,7 +31,14 @@ fi
 out=build/release
 app="$out/Shioji.app"
 mkdir -p "$out"
-SHIOJI_RELEASE_UPDATES=1 SHIOJI_APP_PATH="$app" bash packaging/build-dev.sh
+worker_stage=$(mktemp -d "$out/worker-stage.XXXXXX")
+trap 'rm -rf "$worker_stage"' EXIT
+python3 scripts/worker_release.py "${GH_REPO:-senshinya/shioji}" "$version" "$APPLE_TEAM_ID" "$worker_stage/shioji-worker"
+reused_worker=
+if [[ -f "$worker_stage/shioji-worker" ]]; then
+  reused_worker="$worker_stage/shioji-worker"
+fi
+SHIOJI_RELEASE_UPDATES=1 SHIOJI_APP_PATH="$app" SHIOJI_REUSED_WORKER="$reused_worker" bash packaging/build-dev.sh
 signature=$(codesign --display --verbose=4 "$app" 2>&1)
 if ! grep -q '^Authority=Developer ID Application:' <<< "$signature" || ! grep -q 'flags=.*runtime' <<< "$signature"; then
   echo 'Release requires a Developer ID Application signature with hardened runtime.' >&2
@@ -58,7 +65,7 @@ env -u GOROOT go run ./cmd/shioji-update package --app "$app" --version "$versio
   --base-url "https://github.com/senshinya/shioji/releases/download/v$version" \
   --public-key "$SHIOJI_UPDATE_PUBLIC_KEY" "${update_options[@]}"
 stage=$(mktemp -d "$out/dmg-stage.XXXXXX")
-trap 'rm -rf "$stage"' EXIT
+trap 'rm -rf "$stage" "$worker_stage"' EXIT
 ditto "$app" "$stage/Shioji.app"
 ln -s /Applications "$stage/Applications"
 cp internal/ui/third_party_notices.json "$stage/THIRD_PARTY_NOTICES.json"

@@ -156,3 +156,55 @@ func TestImmediateQueuedSteerSettlesAtNaturalEnd(t *testing.T) {
 		}
 	}
 }
+
+func TestSteerScrollDoesNotReverseAsMessageEnters(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dark=%v", dark), func(t *testing.T) {
+			checkMultilineSteerScroll(t, dark)
+		})
+	}
+}
+
+func checkMultilineSteerScroll(t *testing.T, dark bool) {
+	t.Helper()
+	v, ui := steerScrollFixture(true, false, false)
+	ui.SetDark(dark)
+	d := v.Model.Details["s"]
+	reply := &d.Items[len(d.Items)-1]
+	reply.TurnID = "active"
+	replyID := reply.ID
+	v.Model.Details["s"] = d
+	ui.Frame()
+	ui.Advance(time.Second)
+
+	feedbackClick(t, ui, "消息输入")
+	ui.Type(strings.TrimSpace(strings.Repeat("追加一条关于当前回复的指令。\n", 7)))
+	ui.Advance(time.Second)
+	start := v.historyRowBounds[replyID]
+	ui.Key(n.Cmd, n.KeyEnter)
+	job := feedbackJob(t, v, "turn.steer")
+	in := job.Input.(protocol.SteerInput).Input
+	ui.Frame()
+	op := domain.Operation{ID: in.OperationID, SessionID: "s", State: domain.OperationConfirmed}
+	body, _ := json.Marshal(op)
+	job.Apply(v.Model, body, nil)
+	item := domain.Item{ID: "input:" + in.OperationID, TurnID: "active", Kind: "user", Text: in.Text, Status: "sent", Final: true}
+	v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "submission", SessionID: "s", Operation: &op, Item: &item})
+
+	previous := start
+	ui.Frame()
+	for frame := range 60 {
+		current := v.historyRowBounds[replyID]
+		if current.H <= 0 || current.Y > previous.Y+1 {
+			t.Errorf("frame %d: preceding reply moved down during insertion: Y=%g → %g", frame, previous.Y, current.Y)
+		}
+		saveNativeSkillImage(t, ui, fmt.Sprintf("steer-handoff-%v-%03d.png", dark, frame))
+		previous = current
+		ui.Advance(time.Second / 60)
+	}
+	dock, _ := ui.Find("会话底部面板")
+	message := v.historyRowBounds[item.ID]
+	if start.Y-previous.Y < 32 || message.H <= 0 || message.Y+message.H > dock.Y || !v.lists["s"].FollowingEnd() {
+		t.Fatalf("insertion did not scroll the conversation to its end: Y=%g → %g", start.Y, previous.Y)
+	}
+}
