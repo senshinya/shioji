@@ -5,5 +5,38 @@
       "maxFindings": 5,
       "maxChars": 8000
     }
+  },
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "marquee",
+        "value": "*",
+        "files": [
+          "third_party/mygo/plugins/updater/page.html"
+        ],
+        "createdAt": "2026-11-20T05:11:04.996Z",
+        "reason": "Agent: only the indeterminate updater progress fill moves within its clipped track while progress is unknown; the text remains stationary."
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "design/spec.html"
+        ],
+        "createdAt": "2026-11-20T05:11:05.047Z",
+        "reason": "Agent: the frozen notes.css from the local archive defines 32 px and 19 px headings and 14 px body text. Worktree scans may lack that archived stylesheet."
+      },
+      {
+        "rule": "pulsing-dot",
+        "value": "*",
+        "files": [
+          ".ryugi/artifacts/artboard/tool-group-disclosure-design/pages/design/states.html"
+        ],
+        "createdAt": "2026-11-20T14:04:13.886Z",
+        "reason": "Agent: this design fixture previews the native MyGo breathing indicator for running tool calls. The animation is limited to running examples and respects Reduce Motion."
+      }
+    ]
   }
 }
