@@ -211,7 +211,7 @@ func (a *mobileApp) mobileForwardRow(c *ui.Context, w *mygo.Window, mapping port
 			if mapping.State == "unavailable" {
 				action(c.Key("retry"), "重试", retry).PaddingX(5).Disabled(retrying)
 			}
-			iconButton(c.Key("actions"), "转发操作："+address, moreSymbol, 17, nil).PopoverMenuButton(func(menu *ui.Menu) {
+			iconButton(c.Key("actions"), "转发操作："+address, moreSymbol, 17, nil).Menu(func(menu *ui.Menu) {
 				if menu.Item("复制本机地址").Disabled(mapping.LocalPort == 0).Chosen() {
 					mygo.Clipboard.WriteText(mapping.LocalAddress())
 				}

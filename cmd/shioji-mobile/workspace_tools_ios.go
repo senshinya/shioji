@@ -190,7 +190,7 @@ func (s *mobileWorkspaceTools) list(a *mobileApp, c *ui.Context, w *mygo.Window,
 			MinHeight(mobileTapSize(c)).Grow(1).MinWidth(0).PaddingX(10).Radius(10).Background(p.inset)
 		if len(agents) > 1 {
 			iconAction(c.Key("agent"), agent.Name, "MCP Agent", nil, 0, pickerSymbol, 12, 13, 400, nil).
-				PaddingX(3).MaxWidthPercent(31).PopoverMenuButton(func(m *ui.Menu) {
+				PaddingX(3).MaxWidthPercent(31).Menu(func(m *ui.Menu) {
 				for _, next := range agents {
 					menuChoice(m, next.Name, next.ID == agent.ID, func() { s.selectScope(next.ID, s.folder, "") })
 				}
@@ -206,7 +206,7 @@ func (s *mobileWorkspaceTools) list(a *mobileApp, c *ui.Context, w *mygo.Window,
 	}
 	rowDivider(ui.Row(c).Gap(4).AlignItems(ui.Center), p.line).Children(func() {
 		iconAction(c.Key("scope"), scope, "MCP 查看范围", nil, 0, pickerSymbol, 12, 13, 500, nil).
-			PaddingX(0).Grow(1).MinWidth(0).PopoverMenuButton(func(m *ui.Menu) {
+			PaddingX(0).Grow(1).MinWidth(0).Menu(func(m *ui.Menu) {
 			menuChoice(m, "配置来源", s.session == "", func() { s.selectScope(s.harness, s.folder, "") })
 			for _, entry := range sessions {
 				menuChoice(m, entry.Title, entry.ID == s.session, func() { s.selectScope(s.harness, s.folder, entry.ID) })
@@ -214,7 +214,7 @@ func (s *mobileWorkspaceTools) list(a *mobileApp, c *ui.Context, w *mygo.Window,
 		})
 		if s.session == "" && len(ws.Folders) > 1 {
 			iconAction(c.Key("folder"), path.Base(s.folder), "MCP 查询目录", folderSymbol, 15, pickerSymbol, 12, 13, 400, nil).
-				PaddingX(0).MaxWidthPercent(55).Value(s.folder).PopoverMenuButton(func(m *ui.Menu) {
+				PaddingX(0).MaxWidthPercent(55).Value(s.folder).Menu(func(m *ui.Menu) {
 				for _, dir := range ws.Folders {
 					menuChoice(m, dir, dir == s.folder, func() { s.selectScope(s.harness, dir, "") })
 				}

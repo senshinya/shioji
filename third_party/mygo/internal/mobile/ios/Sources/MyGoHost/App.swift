@@ -4,6 +4,7 @@
 // to Go through mygo_event.
 
 import UIKit
+import QuartzCore
 import os
 
 /// The way to Go.
@@ -385,6 +386,7 @@ class HostWindow: UIView {
     var usesSceneSafeTop = false {
         didSet { if usesSceneSafeTop != oldValue { reportSize() } }
     }
+    private var lastSceneSafeTop: CGFloat?
     private var lastUncoveredBottom: CGFloat?
     private var lastSize: [Double] = []
 
@@ -423,10 +425,15 @@ class HostWindow: UIView {
         // content, covers the page further down than the bars.
         if holder == nil, let top = (superview?.next as? ScreenController)?.topInset { s.top = max(s.top, top) }
         if holder == nil {
-            if let contentSafeTop {
+            if usesSceneSafeTop {
+                // The home view fills the scene. UIKit can detach or
+                // temporarily move it while completing a back gesture.
+                if let sceneWindow = window {
+                    lastSceneSafeTop = sceneWindow.safeAreaInsets.top
+                }
+                s.top = lastSceneSafeTop ?? Host.shared.window?.safeAreaInsets.top ?? 0
+            } else if let contentSafeTop {
                 s.top = contentSafeTop
-            } else if usesSceneSafeTop, let sceneWindow = window {
-                s.top = max(0, convert(CGPoint(x: 0, y: sceneWindow.safeAreaInsets.top), from: sceneWindow).y)
             }
         }
         let scale = window?.screen.scale ?? traitCollection.displayScale

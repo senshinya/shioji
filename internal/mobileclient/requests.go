@@ -24,6 +24,9 @@ type DeviceCatalog struct {
 	Name        string
 	Minor       int
 	RequestedAt time.Time
+	CheckedAt   time.Time
+	RouteID     string
+	Timing      *app.DeviceTiming
 }
 
 func (d DeviceCatalog) Label() string {
@@ -41,10 +44,22 @@ func DeviceLabel(name, address string) string {
 }
 
 func ReadDeviceCatalog(ctx context.Context, device SavedDevice, signer ssh.Signer, route RouteDial) (DeviceCatalog, error) {
-	return readVerifiedDevice(ctx, device, device.Endpoint, signer, route, func(ctx context.Context, client *protocol.Client, address string) (DeviceCatalog, error) {
+	return readVerifiedDevice(ctx, device, device.Endpoint, signer, route, func(ctx context.Context, client *protocol.Client, endpoint Endpoint) (DeviceCatalog, error) {
 		requestedAt := time.Now()
 		catalog, err := readDeviceCatalog(ctx, client)
-		return DeviceCatalog{Snapshot: catalog, Address: address, Minor: client.Minor, RequestedAt: requestedAt}, err
+		result := DeviceCatalog{Snapshot: catalog, Address: endpoint.Address, Minor: client.Minor, RequestedAt: requestedAt, RouteID: endpoint.RouteID(), CheckedAt: time.Now()}
+		if err == nil && endpoint.TailnetPeerID == "" && client.Minor >= 34 {
+			probe, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
+			defer cancel()
+			started := time.Now()
+			var pong struct {
+				DeviceID string `json:"deviceId"`
+			}
+			if client.Call(probe, "device.ping", nil, &pong) == nil && pong.DeviceID == client.DeviceID {
+				result.Timing = &app.DeviceTiming{Milliseconds: float64(time.Since(started)) / float64(time.Millisecond), ObservedAt: time.Now()}
+			}
+		}
+		return result, err
 	})
 }
 

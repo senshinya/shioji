@@ -51,8 +51,8 @@ func (a *mobileApp) currentAttentionEntries() attentionEntries {
 func (a *mobileApp) remoteAttentionEntries(catalog mobileclient.DeviceCatalog) attentionEntries {
 	cutoff := a.model.CompletionCutoffForSnapshot(catalog.Snapshot, catalog.RequestedAt)
 	return attentionEntries{
-		requests: mobileclient.DeviceRequests(catalog.Snapshot, catalog.Label()),
-		replies: mobileclient.DeviceReplies(catalog.Snapshot, catalog.Label(), func(s domain.Session) bool {
+		requests: mobileclient.DeviceRequests(catalog.Snapshot, mobileDeviceName(catalog.Name, catalog.Address)),
+		replies: mobileclient.DeviceReplies(catalog.Snapshot, mobileDeviceName(catalog.Name, catalog.Address), func(s domain.Session) bool {
 			return mobileclient.UnreadReplySince(s, cutoff)
 		}),
 	}

@@ -22,7 +22,7 @@ func CallArchiveDevice(ctx context.Context, saved SavedDevice, device ArchiveDev
 		err  error
 	}
 	out, err := readVerifiedDevice(ctx, saved, saved.Endpoint, signer, route,
-		func(ctx context.Context, client *protocol.Client, _ string) (result, error) {
+		func(ctx context.Context, client *protocol.Client, _ Endpoint) (result, error) {
 			if client.Generation != device.Generation {
 				return result{err: errors.New("执行服务已变化，请重新读取归档")}, nil
 			}

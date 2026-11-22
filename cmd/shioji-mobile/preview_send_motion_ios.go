@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
 
+	"shioji/internal/app"
 	"shioji/internal/domain"
 )
 
@@ -22,12 +24,13 @@ func (a *mobileApp) seedConversationMotion(board, sid string) {
 		detail.Turns = detail.Turns[:len(detail.Turns)-1]
 	}
 	m.Drafts["session:"+sid] = map[string]string{
-		"motion-send":          "发送后的新消息",
-		"motion-send-delayed":  "发送后的新消息",
-		"motion-steer-delayed": "插入当前执行轮的消息",
-		"motion-steer":         "插入当前执行轮的消息",
-		"motion-queue":         "先排队再强制插入",
-		"motion-queue-auto":    "轮次结束后自动发送",
+		"motion-send":           "发送后的新消息",
+		"motion-send-delayed":   "发送后的新消息",
+		"motion-send-uncertain": "发送后的新消息",
+		"motion-steer-delayed":  "插入当前执行轮的消息",
+		"motion-steer":          "插入当前执行轮的消息",
+		"motion-queue":          "先排队再强制插入",
+		"motion-queue-auto":     "轮次结束后自动发送",
 	}[board]
 	m.Snapshot.Sessions[0] = detail.Session
 	m.Details[sid] = detail
@@ -65,8 +68,9 @@ func (a *mobileApp) seedReplyHeightMotion(sid string) {
 }
 
 func (a *mobileApp) previewAcceptMotion(in domain.Submission, method, turn string) {
-	board, m := a.previewConversationMotion, a.model
+	board := a.previewConversationMotion
 	if board == "motion-home-preparing" || board == "motion-home-handoff" {
+		m := a.model
 		a.refresh()
 		time.AfterFunc(5*time.Second, func() {
 			mygo.RunOnMain(func() {
@@ -87,11 +91,18 @@ func (a *mobileApp) previewAcceptMotion(in domain.Submission, method, turn strin
 		}
 		return
 	}
-	if board == "motion-send-delayed" || board == "motion-steer-delayed" {
+	if board == "motion-send-delayed" || board == "motion-send-uncertain" || board == "motion-steer-delayed" {
+		m := a.model
 		a.refresh()
 		time.AfterFunc(6*time.Second, func() {
 			mygo.RunOnMain(func() {
-				if a.model == m {
+				if a.model != m {
+					return
+				}
+				if board == "motion-send-uncertain" {
+					m.SubmissionError(in, context.DeadlineExceeded)
+					a.refresh()
+				} else {
 					a.confirmPreviewMotion(in, method, turn)
 				}
 			})
@@ -99,6 +110,35 @@ func (a *mobileApp) previewAcceptMotion(in domain.Submission, method, turn strin
 		return
 	}
 	a.confirmPreviewMotion(in, method, turn)
+}
+
+func (a *mobileApp) seedStoppedBeforeOutput(sid string) {
+	m := a.model
+	detail := m.Details[sid]
+	const turn = "stopped-without-output"
+	started := time.Now().Add(-5 * time.Second)
+	item := domain.Item{ID: "stopped-prompt", TurnID: turn, Kind: "user", Text: "继续核对。", Status: "sent", SentAt: &started}
+	detail.Items = []domain.Item{item}
+	detail.Turns = []domain.Turn{{ID: turn, Status: domain.ExecutionRunning, StartedAt: &started}}
+	detail.Queue.Items = nil
+	m.Details[sid] = detail
+	a.sessionStops = map[app.WorkKey]*mobileSessionStop{m.WorkKey(sid, ""): {
+		generation: m.ConversationGeneration(), turn: turn, items: map[string]domain.Item{item.ID: item},
+	}}
+	time.AfterFunc(12*time.Second, func() {
+		mygo.RunOnMain(func() {
+			if a.model != m {
+				return
+			}
+			detail := m.Details[sid]
+			detail.Session.Status = domain.ExecutionInterrupted
+			end := started.Add(5 * time.Second)
+			detail.Turns[0] = domain.Turn{ID: turn, Status: domain.ExecutionInterrupted, StartedAt: &started, CompletedAt: &end, DurationMS: new(int64(5000))}
+			m.Details[sid], m.Snapshot.Sessions[0] = detail, detail.Session
+			a.syncSessionStops()
+			a.refresh()
+		})
+	})
 }
 
 func (a *mobileApp) confirmPreviewMotion(in domain.Submission, method, turn string) {

@@ -72,7 +72,7 @@ func (s *mobileSessionStop) transcript(detail domain.SessionDetail) domain.Sessi
 	}
 	detail.Items = items
 	for i, turn := range detail.Turns {
-		if turn.ID == s.turn {
+		if turn.ID == s.turn && turn.Status.Active() {
 			detail.Turns = slices.Clone(detail.Turns)
 			detail.Turns[i].Status = domain.ExecutionInterrupted
 			break

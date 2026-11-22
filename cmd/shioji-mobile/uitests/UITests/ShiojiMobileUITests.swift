@@ -92,7 +92,7 @@ final class ShiojiMobileUITests: XCTestCase {
             ("inbox", "切换会话范围"), ("chat", "会话活动"), ("approval", "命令审批"),
             ("create", "新建会话"), ("diff", "internal/transport/connection.go"), ("file", "connection.go"),
             ("request-question", "回答问题"), ("request-access", "文件与权限审批"),
-            ("attention", "待我处理"), ("operation-receipt", "消息是否送达仍待确认"), ("queue-manager", "待发消息操作"),
+            ("attention", "待我处理"), ("operation-receipt", "消息是否送达仍待确认"), ("queue-manager", "补上连接超时测试"),
             ("steer", "发送选项"), ("plan", "计划与任务"), ("child-agent", "连接验证"),
             ("background-task", "重连回归"), ("message-search", "全文搜索"), ("history-match", "会话活动"),
         ])
@@ -100,7 +100,7 @@ final class ShiojiMobileUITests: XCTestCase {
 
     func testFrozenPhoneBoardsDevices() {
         captureBoards([
-            ("device-list", "MacBook Pro"), ("pair", "检查连接"), ("verify", "信任主机，继续配置 SSH"),
+            ("device-list", "MacBook Pro"), ("pair", "检查连接"), ("verify", "信任并继续"),
             ("device-detail", "Mac mini"), ("offline", "重连"), ("ssh-auth", "验证 SSH 登录"),
             ("worker-setup", "执行服务"), ("agent-config", "Codex"), ("workspace-config", "工作区设置"),
             ("directory-picker", "选择远程目录"), ("tailnet-setup", "Tailnet"), ("device-health", "设备诊断"),
@@ -1110,7 +1110,7 @@ final class ShiojiMobileUITests: XCTestCase {
     }
 
     func testFeedbackDeviceScreens() {
-        captureBoards([("device-list", "MacBook Pro"), ("verify", "信任主机，继续配置 SSH"),
+        captureBoards([("device-list", "MacBook Pro"), ("verify", "信任并继续"),
                        ("device-detail", "Mac mini"), ("offline", "重连")])
     }
 
@@ -1842,22 +1842,8 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertTrue(sent.waitForExistence(timeout: 15), app.debugDescription)
         capture("PDF reference in the selected workspace conversation", app: app)
         sent.tap()
-        let preview = app.buttons["原生预览"].firstMatch
-        XCTAssertTrue(preview.waitForExistence(timeout: 8), app.debugDescription)
-        preview.tap()
-        let close = app.buttons["关闭预览"].firstMatch
-        XCTAssertTrue(close.waitForExistence(timeout: 8), app.debugDescription)
-        let bar = app.navigationBars["attachmentPreviewNavigation"].firstMatch
-        XCTAssertTrue(bar.waitForExistence(timeout: 6))
-        XCTAssertEqual(bar.frame.width, app.frame.width, accuracy: 1)
-        let screen = app.frame
-        let page = CGRect(x: screen.width * 0.28, y: screen.height * 0.21,
-                          width: screen.width * 0.44, height: screen.height * 0.61)
-        let visiblePage = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in self.hasVisibleInk(in: page) }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [visiblePage], timeout: 12), .completed, "PDF preview stayed blank")
-        capture("The sent PDF opens in Quick Look", app: app)
-        close.tap()
-        XCTAssertTrue(preview.waitForExistence(timeout: 8))
+        closeQuickLook("Shioji review.pdf", app: app)
+        XCTAssertTrue(sent.waitForExistence(timeout: 8))
     }
 
     func testInterruptedDocumentUploadCanRetryWithoutLosingItsDraft() throws {
@@ -1955,39 +1941,7 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertEqual(draft.value as? String, "Keep this draft")
         XCTAssertEqual(preview.value as? String, parallel ? "等待上传" : "上传失败")
         preview.tap()
-        let done = app.buttons["关闭预览"].firstMatch
-        XCTAssertTrue(done.waitForExistence(timeout: 8), app.debugDescription)
-        let previewBar = app.navigationBars["attachmentPreviewNavigation"].firstMatch
-        XCTAssertTrue(previewBar.exists)
-        XCTAssertEqual(previewBar.frame.width, app.frame.width, accuracy: 1)
-        let imageVisible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            let screen = XCUIScreen.main.screenshot().image
-            let format = UIGraphicsImageRendererFormat()
-            format.scale = 1
-            return [0.0, 45, 90, -45, -90].contains { offset in
-                let sample = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1), format: format).image { _ in
-                    screen.draw(at: CGPoint(x: -screen.size.width / 2, y: -screen.size.height / 2 - offset))
-                }
-                guard let image = sample.cgImage else { return false }
-                var color = [UInt8](repeating: 0, count: 4)
-                return color.withUnsafeMutableBytes { bytes in
-                    guard let context = CGContext(data: bytes.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
-                                                  space: CGColorSpaceCreateDeviceRGB(),
-                                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
-                    context.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 1))
-                    return bytes[0] < 60 && (65...150).contains(bytes[1]) && bytes[2] > 175
-                }
-            }
-        }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [imageVisible], timeout: 8), .completed, app.debugDescription)
-        let draftImage = app.images[filename].firstMatch
-        XCTAssertTrue(draftImage.exists)
-        XCTAssertTrue(previewBar.buttons["分享原图"].exists)
-        previewBar.buttons["逆时针旋转 90°"].tap()
-        let rotated = NSPredicate { _, _ in (draftImage.value as? String)?.contains("90°") == true }
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: rotated, object: draftImage)], timeout: 5), .completed)
-        capture("Rotated local draft image in the attachment preview", app: app)
-        done.tap()
+        closeQuickLook(filename, app: app)
         XCTAssertTrue(retry.waitForExistence(timeout: 8))
         let canRetry = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: retry)
         XCTAssertEqual(XCTWaiter.wait(for: [canRetry], timeout: 8), .completed)
@@ -2385,7 +2339,7 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertTrue(app.buttons["远程 Agent"].firstMatch.waitForExistence(timeout: 8), app.debugDescription)
         if parallel {
             let address = try XCTUnwrap(environment["SHIOJI_RIGHT_FIXTURE_ADDRESS"])
-            app.buttons["连接路径"].firstMatch.tap()
+            app.buttons["管理连接"].firstMatch.tap()
             let route = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "直接 SSH，" + address + "，")).firstMatch
             XCTAssertTrue(route.waitForExistence(timeout: 8), app.debugDescription)
             app.navigationBars.buttons["BackButton"].firstMatch.tap()
@@ -2873,6 +2827,80 @@ final class ShiojiMobileUITests: XCTestCase {
         capture("Steering arrived in the original running turn", app: app)
     }
 
+    func testVisibleSendStatusFollowsTheSubmissionReceipt() {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCUIDevice.shared.orientation = .landscapeLeft
+        }
+        for uncertain in [false, true] {
+            let route = uncertain ? "motion-send-uncertain" : "motion-send-delayed"
+            let app = launch("--preview-board-" + route)
+            let send = app.buttons["发送"].firstMatch
+            let pending = app.staticTexts["正在发送"].firstMatch
+            let lookup = app.buttons["查询接纳结果"].firstMatch
+            let draft = app.textFields["消息"].firstMatch
+            let text = "发送后的新消息"
+            XCTAssertTrue(send.waitForExistence(timeout: 8), app.debugDescription)
+            let submittedMessages = app.buttons.matching(identifier: "复制消息")
+            let existingCount = submittedMessages.count
+            XCTAssertFalse(pending.exists)
+            send.tap()
+            XCTAssertTrue(app.buttons["正在发送"].firstMatch.waitForExistence(timeout: 3))
+            capture("Waiting for send receipt " + route, app: app)
+            XCTAssertTrue(pending.exists, "A delayed receipt needs visible status beside the draft")
+            XCTAssertFalse(lookup.exists)
+            XCTAssertEqual(draft.value as? String, text)
+            if uncertain {
+                XCTAssertTrue(lookup.waitForExistence(timeout: 9))
+                XCTAssertTrue(app.staticTexts["消息是否送达仍待确认"].exists)
+                XCTAssertEqual(draft.value as? String, text)
+                XCTAssertEqual(submittedMessages.count, existingCount, "The receipt preview must not become a submitted message")
+            } else {
+                XCTAssertTrue(app.staticTexts[text].firstMatch.waitForExistence(timeout: 9))
+                XCTAssertFalse(lookup.exists)
+                XCTAssertNotEqual(draft.value as? String, text)
+            }
+            XCTAssertTrue(pending.waitForNonExistence(timeout: 3))
+            capture("After send receipt " + route, app: app)
+            app.terminate()
+        }
+    }
+
+    func testNewSessionShowsEnvironmentPreparationAfterItsReceipt() {
+        let app = launch("--preview-board-motion-home-preparing")
+        let send = app.buttons["发送"].firstMatch
+        XCTAssertTrue(send.waitForExistence(timeout: 8), app.debugDescription)
+        send.tap()
+        let sending = app.staticTexts["正在发送"].firstMatch
+        XCTAssertTrue(sending.waitForExistence(timeout: 4))
+        capture("New session waiting for its initial receipt", app: app)
+        let preparing = app.staticTexts["正在准备环境"].firstMatch
+        XCTAssertTrue(preparing.waitForExistence(timeout: 8))
+        XCTAssertFalse(sending.exists)
+        XCTAssertFalse(app.buttons["查询接纳结果"].exists)
+        capture("Worker preparing the new session environment", app: app)
+    }
+
+    func testStopWithoutOutputKeepsStatusBetweenTimeAndDuration() {
+        let app = launch("--preview-board-stopped-before-output")
+        let stopped = app.staticTexts["已停止"].firstMatch
+        XCTAssertTrue(stopped.waitForExistence(timeout: 8))
+        let unknownTime = app.staticTexts["完成时间未知"].firstMatch
+        let unknownDuration = app.staticTexts["用时 —"].firstMatch
+        XCTAssertTrue(unknownTime.exists)
+        XCTAssertTrue(unknownDuration.exists)
+        XCTAssertEqual(stopped.frame.midY, unknownTime.frame.midY, accuracy: 1)
+        XCTAssertEqual(stopped.frame.midY, unknownDuration.frame.midY, accuracy: 1)
+        XCTAssertLessThan(unknownTime.frame.maxX, stopped.frame.minX)
+        XCTAssertLessThan(stopped.frame.maxX, unknownDuration.frame.minX)
+        capture("Stopped before any output while awaiting the Worker", app: app)
+        let duration = app.staticTexts["用时 5秒"].firstMatch
+        XCTAssertTrue(duration.waitForExistence(timeout: 12))
+        XCTAssertEqual(stopped.frame.midY, duration.frame.midY, accuracy: 1)
+        XCTAssertLessThan(stopped.frame.maxX, duration.frame.minX)
+        XCTAssertFalse(unknownTime.exists)
+        capture("Stopped receipt remains on the same line", app: app)
+    }
+
     func testSubmissionLooksUpOnlyAnUncertainReceipt() throws {
         let mode = ProcessInfo.processInfo.environment["SHIOJI_SUBMISSION_RECEIPT_FIXTURE"]
         try XCTSkipUnless(mode != nil, "Requires an isolated Worker that delays the harness receipt")
@@ -3055,7 +3083,7 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertGreaterThan(later.frame.minY, laterReply.frame.maxY)
         XCTAssertFalse(app.buttons["轮次中途无法分叉"].firstMatch.isEnabled)
         XCTAssertTrue(app.buttons["从这里分叉"].firstMatch.exists)
-        XCTAssertEqual(app.buttons.matching(identifier: "回复详情").count, 1)
+        XCTAssertFalse(app.buttons["回复详情"].exists)
         if !live {
             XCTAssertTrue(app.staticTexts["用时 1分20秒"].firstMatch.exists)
             XCTAssertTrue(app.staticTexts["用时 3分00秒"].firstMatch.exists)
@@ -3145,6 +3173,12 @@ final class ShiojiMobileUITests: XCTestCase {
         let agent = app.buttons["连接验证"].firstMatch
         let background = app.buttons["重连回归"].firstMatch
         XCTAssertTrue(steps.waitForExistence(timeout: 8))
+        let running = app.staticTexts["补充接纳回执测试"]
+        XCTAssertTrue(running.exists)
+        XCTAssertEqual(running.value as? String, "进行中")
+        for status in ["待开始", "进行中", "已完成"] {
+            XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label == %@", status)).firstMatch.exists)
+        }
         XCTAssertTrue(agent.exists)
         XCTAssertTrue(background.exists)
         capture("Board plan", app: app)
@@ -3401,15 +3435,24 @@ final class ShiojiMobileUITests: XCTestCase {
         print("SHIOJI-MOTION review end \(Date().timeIntervalSince1970)")
     }
 
-    func testHostVerificationShowsEvidenceBeforeTrustInput() {
+    func testHostVerificationContinuesWithoutRetypingTheFingerprint() {
         let app = launch("--preview-board-verify")
-        let trust = app.buttons["信任主机，继续配置 SSH"]
-        XCTAssertTrue(trust.waitForExistence(timeout: 8))
-        XCTAssertFalse(app.textFields["设备上核实的指纹"].exists)
-        trust.tap()
-        XCTAssertTrue(app.textFields["设备上核实的指纹"].waitForExistence(timeout: 5))
-        app.buttons["连接"].tap()
-        XCTAssertTrue(app.staticTexts["请核实设备上的完整 SHA256 指纹"].waitForExistence(timeout: 5))
+        let fingerprint = "SHA256:mS6bQ1EiR4uJvWRbUZYqASfMJgzeoLaM98ib5qEqOg8"
+        XCTAssertTrue(app.staticTexts[fingerprint].waitForExistence(timeout: 8))
+        capture("Review the complete host fingerprint", app: app)
+        app.buttons["信任并继续"].tap()
+        XCTAssertTrue(app.buttons["验证 SSH 登录"].waitForExistence(timeout: 5))
+    }
+
+    func testSSHCredentialsCanRevealPasswordAuthorization() {
+        let app = launch("--preview-board-ssh-auth")
+        XCTAssertTrue(app.buttons["验证 SSH 登录"].waitForExistence(timeout: 8))
+        app.buttons["使用密码授权公钥"].tap()
+        let authorize = app.buttons["授权公钥并继续"]
+        XCTAssertTrue(authorize.waitForExistence(timeout: 5))
+        XCTAssertFalse(authorize.isEnabled)
+        XCTAssertTrue(app.textFields["SSH 帐户密码"].exists || app.secureTextFields["SSH 帐户密码"].exists, app.debugDescription)
+        capture("Password authorization before entering a secret", app: app)
     }
 
     func testRemoteWorkerLoginItemUsesOnlyTheSelectedDevice() throws {
@@ -3507,18 +3550,9 @@ final class ShiojiMobileUITests: XCTestCase {
 
     func testNewDeviceInstallsOnlyAfterSSHCredentialsAreVerified() {
         let app = launch("--preview-board-verify")
-        let trust = app.buttons["信任主机，继续配置 SSH"]
+        let trust = app.buttons["信任并继续"]
         XCTAssertTrue(trust.waitForExistence(timeout: 8))
         trust.tap()
-        let fingerprint = app.textFields["设备上核实的指纹"]
-        XCTAssertTrue(fingerprint.waitForExistence(timeout: 5))
-        fingerprint.tap()
-        app.typeText("SHA256:mS6bQ1EiR4uJvWRbUZYqASfMJgzeoLaM98ib5qEqOg8")
-        if UIDevice.current.userInterfaceIdiom == .pad {
-            app.typeText("\n")
-        } else {
-            app.buttons["连接"].tap()
-        }
         let verify = app.buttons["验证 SSH 登录"]
         XCTAssertTrue(verify.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["安装执行服务"].exists)
@@ -3559,13 +3593,10 @@ final class ShiojiMobileUITests: XCTestCase {
             XCTAssertEqual(portField.value as? String, port)
             app.textFields["用户名"].firstMatch.tap()
             app.typeText(user + "\n")
-            let trust = app.buttons["信任主机，继续配置 SSH"].firstMatch
+            let trust = app.buttons["信任并继续"].firstMatch
             XCTAssertTrue(trust.waitForExistence(timeout: 12))
+            XCTAssertTrue(app.staticTexts[fingerprint].waitForExistence(timeout: 6))
             trust.tap()
-            let field = app.textFields["设备上核实的指纹"].firstMatch
-            XCTAssertTrue(field.waitForExistence(timeout: 6))
-            field.tap()
-            app.typeText(fingerprint + "\n")
             let verify = app.buttons["验证 SSH 登录"].firstMatch
             XCTAssertTrue(verify.waitForExistence(timeout: 8))
             verify.tap()
@@ -3759,13 +3790,10 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertEqual(portField.value as? String, port)
         app.textFields["用户名"].firstMatch.tap()
         app.typeText(user + "\n")
-        let trust = app.buttons["信任主机，继续配置 SSH"].firstMatch
+        let trust = app.buttons["信任并继续"].firstMatch
         XCTAssertTrue(trust.waitForExistence(timeout: 12))
+        XCTAssertTrue(app.staticTexts[fingerprint].waitForExistence(timeout: 6))
         trust.tap()
-        let field = app.textFields["设备上核实的指纹"].firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 6))
-        field.tap()
-        app.typeText(fingerprint + "\n")
         let verify = app.buttons["验证 SSH 登录"].firstMatch
         XCTAssertTrue(verify.waitForExistence(timeout: 8))
         verify.tap()
@@ -4027,18 +4055,36 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["核对原生动画"].waitForExistence(timeout: 5))
         capture("Native plan", app: app)
         app.navigationBars.buttons["BackButton"].tap()
+        XCTAssertFalse(app.buttons["检查 iPad 分栏"].exists)
+        XCTAssertFalse(app.buttons["编译模拟器构建"].exists)
+        let agents = app.buttons["子 Agent"]
+        XCTAssertTrue(agents.waitForExistence(timeout: 5))
+        agents.tap()
+        let agentList = app.navigationBars["子 Agent"]
+        XCTAssertTrue(agentList.waitForExistence(timeout: 5))
+        capture("Child agent list", app: app)
         print("SHIOJI-MOTION child begin \(Date().timeIntervalSince1970)")
         app.buttons["检查 iPad 分栏"].firstMatch.tap()
         let child = app.navigationBars["检查 iPad 分栏"]
         XCTAssertTrue(child.waitForExistence(timeout: 5))
         capture("Native child agent", app: app)
         child.buttons["BackButton"].tap()
+        XCTAssertTrue(agentList.waitForExistence(timeout: 5))
+        agentList.buttons["BackButton"].tap()
         let activity = app.navigationBars["会话活动"]
         XCTAssertTrue(activity.waitForExistence(timeout: 5))
-        app.buttons["编译模拟器构建"].firstMatch.tap()
+        app.buttons["后台任务"].firstMatch.tap()
+        let taskList = app.navigationBars["后台任务"]
+        XCTAssertTrue(taskList.waitForExistence(timeout: 5))
+        let task = app.buttons["编译模拟器构建"].firstMatch
+        XCTAssertTrue(task.waitForExistence(timeout: 5))
+        capture("Background task list", app: app)
+        task.tap()
         let background = app.navigationBars["编译模拟器构建"]
         XCTAssertTrue(background.waitForExistence(timeout: 5))
         background.buttons["BackButton"].tap()
+        XCTAssertTrue(taskList.waitForExistence(timeout: 5))
+        taskList.buttons["BackButton"].tap()
         XCTAssertTrue(activity.waitForExistence(timeout: 5))
         activity.buttons["BackButton"].tap()
         XCTAssertTrue(more.waitForExistence(timeout: 5))
@@ -4047,6 +4093,30 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["检查 iPad 分栏"].exists)
         XCTAssertFalse(app.staticTexts["编译模拟器构建"].exists)
         print("SHIOJI-MOTION child end \(Date().timeIntervalSince1970)")
+    }
+
+    func testBackgroundTaskListKeepsLongCommandsToOneLine() {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCUIDevice.shared.orientation = .landscapeLeft
+        }
+        let app = launch("--preview-board-work-rosters")
+        let activity = app.buttons["会话活动"].firstMatch
+        XCTAssertTrue(activity.waitForExistence(timeout: 8))
+        activity.tap()
+        let showTasks = app.buttons["后台任务"].firstMatch
+        XCTAssertTrue(showTasks.waitForExistence(timeout: 5))
+        let task = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "go test ./internal/transport")).firstMatch
+        XCTAssertFalse(task.exists)
+        capture("Conversation activity with two work menus", app: app)
+        showTasks.tap()
+        XCTAssertTrue(task.waitForExistence(timeout: 5))
+        XCTAssertLessThan(task.frame.height, 52)
+        XCTAssertFalse(app.buttons["连接验证"].exists)
+        capture("Long background command on a single list row", app: app)
+        task.tap()
+        let terminal = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "RestoreTheInitialPosition")).firstMatch
+        XCTAssertTrue(terminal.waitForExistence(timeout: 5))
+        capture("Full command in its task detail", app: app)
     }
 
     func testChildRequestSourceOpensTheMatchingInlineFileApproval() throws {
@@ -5255,6 +5325,7 @@ final class ShiojiMobileUITests: XCTestCase {
 
     func testConversationFootersFollowApprovedGeometry() {
         let app = launch("--preview-board-chat")
+        let zoom: CGFloat = 1.12
         let copyReply = app.buttons["复制回复"].firstMatch
         XCTAssertTrue(copyReply.waitForExistence(timeout: 8))
         let replyTime = app.staticTexts["09:38"].firstMatch
@@ -5263,33 +5334,30 @@ final class ShiojiMobileUITests: XCTestCase {
         let userTime = app.staticTexts["09:36"].firstMatch
         XCTAssertTrue(replyTime.exists)
         XCTAssertTrue(userTime.exists)
-        XCTAssertEqual(copyReply.frame.width, 44, accuracy: 1)
-        XCTAssertEqual(copyReply.frame.height, 44, accuracy: 1)
+        XCTAssertEqual(copyReply.frame.width, 44 * zoom, accuracy: 1)
+        XCTAssertEqual(copyReply.frame.height, 44 * zoom, accuracy: 1)
         let fork = app.buttons["从这里分叉"].firstMatch
-        let details = app.buttons["回复详情"].firstMatch
-        XCTAssertEqual(fork.frame.midX - copyReply.frame.midX, details.frame.midX - fork.frame.midX, accuracy: 1)
-        XCTAssertEqual(replyTime.frame.minX - (details.frame.midX - 5 + 7.5), 24, accuracy: 1)
+        XCTAssertFalse(app.buttons["回复详情"].exists)
+        XCTAssertEqual(fork.frame.midX - copyReply.frame.midX, copyReply.frame.width, accuracy: 1)
+        XCTAssertEqual(replyTime.frame.minX - (fork.frame.midX + 4 * zoom), 24 * zoom, accuracy: 1)
         XCTAssertTrue(duration.exists)
-        XCTAssertEqual(duration.frame.minX - replyTime.frame.maxX, 24, accuracy: 1)
-        XCTAssertEqual(replyTime.frame.midY - copyReply.frame.minY, 12, accuracy: 1)
+        XCTAssertEqual(duration.frame.minX - replyTime.frame.maxX, 24 * zoom, accuracy: 1)
+        XCTAssertEqual(replyTime.frame.midY - copyReply.frame.minY, 12 * zoom, accuracy: 1)
         let replyBody = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "接下来验证恢复连接后的状态交接")).firstMatch
         XCTAssertTrue(replyBody.exists)
-        XCTAssertEqual(copyReply.frame.midX + 5 - 7.5, replyBody.frame.minX, accuracy: 1)
-        XCTAssertEqual(copyReply.frame.minY - replyBody.frame.maxY, 4, accuracy: 1)
+        XCTAssertEqual(copyReply.frame.midX - 4 * zoom, replyBody.frame.minX, accuracy: 1)
+        XCTAssertEqual(copyReply.frame.minY - replyBody.frame.maxY, 4 * zoom, accuracy: 1)
         let edit = app.buttons["编辑消息"].firstMatch
-        XCTAssertEqual(edit.frame.midX - copyUser.frame.midX, 44, accuracy: 1)
-        XCTAssertEqual(userTime.frame.minX - (edit.frame.midX - 2.5 + 7.5), 24, accuracy: 1)
-        XCTAssertEqual(copyUser.frame.width, 44, accuracy: 1)
-        XCTAssertEqual(copyUser.frame.height, 44, accuracy: 1)
-        XCTAssertEqual(userTime.frame.midY - copyUser.frame.minY, 12, accuracy: 1)
+        XCTAssertEqual(edit.frame.midX - copyUser.frame.midX, 44 * zoom, accuracy: 1)
+        XCTAssertEqual(userTime.frame.minX - (edit.frame.midX + 4 * zoom), 24 * zoom, accuracy: 1)
+        XCTAssertEqual(copyUser.frame.width, 44 * zoom, accuracy: 1)
+        XCTAssertEqual(copyUser.frame.height, 44 * zoom, accuracy: 1)
+        XCTAssertEqual(userTime.frame.midY - copyUser.frame.minY, 12 * zoom, accuracy: 1)
         let userBody = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "帮我测试 Worker 断线重连")).firstMatch
         XCTAssertTrue(userBody.exists)
-        XCTAssertEqual(copyUser.frame.minY - userBody.frame.maxY, 13, accuracy: 1)
+        XCTAssertEqual(copyUser.frame.minY - userBody.frame.maxY, 13 * zoom, accuracy: 1)
         XCTAssertTrue(app.staticTexts["进行中"].exists)
         capture("Conversation footers", app: app)
-        details.coordinate(withNormalizedOffset: CGVector(dx: 17.0 / 44, dy: 12.0 / 44)).tap()
-        let cached = app.descendants(matching: .any).matching(identifier: "缓存命中 1,024").firstMatch
-        XCTAssertTrue(cached.waitForExistence(timeout: 4), app.debugDescription)
     }
 
     func testRequestDisclosuresShareTranscriptSpacing() {
@@ -5363,7 +5431,7 @@ final class ShiojiMobileUITests: XCTestCase {
             XCTAssertTrue(option.waitForExistence(timeout: 5), name)
             option.tap()
         }
-        let size = app.buttons["回复字号"].firstMatch
+        let size = app.buttons["会话字号"].firstMatch
         let font = app.buttons["代码字体"].firstMatch
         let motion = app.buttons["减少动态效果"].firstMatch
         let preview = app.buttons["对话预览"].firstMatch
@@ -5726,9 +5794,42 @@ final class ShiojiMobileUITests: XCTestCase {
         let app = launch("--preview-board-inbox")
         let settings = app.buttons["设置"].firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 8))
+        capture("Conversation list at the updated default size", app: app)
         settings.tap()
-        XCTAssertTrue(app.buttons["输入与外观"].waitForExistence(timeout: 8))
-        capture("Settings landing page", app: app)
+        let appearance = app.buttons["输入与外观"].firstMatch
+        XCTAssertTrue(appearance.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.tables["shioji-settings-list"].exists)
+        capture("Shioji settings landing page", app: app)
+        appearance.tap()
+        let theme = app.buttons["主题"]
+        XCTAssertTrue(theme.waitForExistence(timeout: 8))
+        theme.tap()
+        let dark = app.descendants(matching: .any).matching(identifier: "深色").firstMatch
+        XCTAssertTrue(dark.waitForExistence(timeout: 5), app.debugDescription)
+        capture("Native theme dropdown", app: app)
+        dark.tap()
+        let selected = NSPredicate(format: "value == %@", "深色")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: selected, object: theme)], timeout: 5), .completed, app.debugDescription)
+        app.navigationBars["输入与外观"].buttons["BackButton"].firstMatch.tap()
+        XCTAssertTrue(appearance.waitForExistence(timeout: 6))
+        capture("Shioji settings in dark appearance", app: app)
+    }
+
+    func testPhoneHomeEmptyStateCentersInContent() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad)
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch("--preview-board-home-empty")
+        let message = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "暂无会话")).firstMatch
+        XCTAssertTrue(message.waitForExistence(timeout: 8), app.debugDescription)
+        let toolbar = app.buttons["切换会话范围"].firstMatch
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(toolbar.exists && tabBar.exists)
+        let centerY = (toolbar.frame.maxY + tabBar.frame.minY) / 2
+        XCTAssertEqual(message.frame.midX, app.frame.midX, accuracy: 2)
+        XCTAssertEqual(message.frame.midY, centerY + 27, accuracy: 16)
+        let icon = CGRect(x: message.frame.midX - 22, y: message.frame.minY - 54, width: 44, height: 42)
+        XCTAssertTrue(hasVisibleInk(in: icon))
+        capture("Centered home empty state", app: app)
     }
 
     func testSettingsShowsBundledThirdPartyLicenses() {
@@ -5773,7 +5874,7 @@ final class ShiojiMobileUITests: XCTestCase {
     }
 
     func testFinishedReplyKeepsFooterWhenHistoryLacksMetadata() {
-        let app = launch("--preview-session")
+        let app = launch("--preview-board-transcript-legacy")
         XCTAssertTrue(app.buttons["复制回复"].firstMatch.waitForExistence(timeout: 8))
         let edit = app.buttons["编辑消息"].firstMatch
         XCTAssertTrue(edit.exists)
@@ -5783,11 +5884,7 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertFalse(fork.isEnabled)
         XCTAssertTrue(app.staticTexts["完成时间未知"].exists)
         XCTAssertTrue(app.staticTexts["用时 —"].exists)
-        app.buttons["回复详情"].firstMatch.tap()
-        for text in ["输入 —", "输出 —", "缓存命中 —"] {
-            let row = app.descendants(matching: .any).matching(identifier: text).firstMatch
-            XCTAssertTrue(row.waitForExistence(timeout: 4), app.debugDescription)
-        }
+        XCTAssertFalse(app.buttons["回复详情"].exists)
     }
 
     func testContextCompactionPreservesDraftAndRetriesTheIndependentStatus() {
@@ -5798,14 +5895,14 @@ final class ShiojiMobileUITests: XCTestCase {
         let editor = app.textFields["消息"].firstMatch
         XCTAssertTrue(editor.waitForExistence(timeout: 8))
         capture("The conversation before manual compaction", app: app)
-        let context = app.buttons["上下文用量"]
-        guard context.waitForExistence(timeout: 4) else { return XCTFail("A session has no context usage or compaction entry") }
+        XCTAssertFalse(app.buttons["上下文用量"].exists)
         let editCount = app.buttons.matching(identifier: "编辑消息").count
         editor.tap()
         app.typeText("keep this draft")
-        context.tap()
-        capture("Context usage and manual action", app: app)
-        app.descendants(matching: .any).matching(identifier: "压缩上下文").firstMatch.tap()
+        app.buttons["会话活动"].firstMatch.tap()
+        let compact = app.buttons["压缩上下文"].firstMatch
+        XCTAssertTrue(compact.waitForExistence(timeout: 6))
+        compact.tap()
         let retry = app.buttons["重试压缩"]
         XCTAssertTrue(retry.waitForExistence(timeout: 8))
         XCTAssertEqual(editor.value as? String, "keep this draft")
@@ -5818,6 +5915,136 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertEqual(editor.value as? String, "keep this draft")
         XCTAssertLessThanOrEqual(app.buttons.matching(identifier: "编辑消息").count, editCount)
         capture("Independent compaction completion", app: app)
+    }
+
+    func testLinkedAgentShowsRemoteSubscriptionWithoutAnAuthorizationPrompt() {
+        let app = launch("--preview-board-agent-config-linked")
+        XCTAssertTrue(app.staticTexts["Pro"].firstMatch.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["developer@example.com"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["登录方式"].exists)
+        XCTAssertFalse(app.buttons["开始登录"].exists)
+        capture("Linked remote Agent subscription", app: app)
+    }
+
+    func testConnectedDevicesKeepTheirOwnCatalogStatusAndName() {
+        let app = launch("--preview-board-connected-device-catalogs")
+        let recent = app.buttons["家庭设备巡检"].firstMatch
+        XCTAssertTrue(recent.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue((recent.value as? String)?.contains("已完成") == true)
+        XCTAssertTrue((recent.value as? String)?.contains("家里 Mac mini") == true)
+        XCTAssertFalse((recent.value as? String)?.contains("192.0.2.20") == true)
+        capture("Active and completed sessions in the global list", app: app)
+        app.buttons["切换会话范围"].firstMatch.tap()
+        let scope = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "家庭项目 · 家里 Mac mini")).firstMatch
+        XCTAssertTrue(scope.waitForExistence(timeout: 5), app.debugDescription)
+        capture("Workspace filter with device icons and names", app: app)
+        scope.tap()
+        let devices = app.tabBars.buttons["设备"].firstMatch
+        XCTAssertTrue(devices.waitForExistence(timeout: 6))
+        devices.tap()
+        let primary = app.buttons["工作室 Mac"].firstMatch
+        XCTAssertTrue(primary.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue((primary.value as? String)?.hasPrefix("在线，") == true)
+        let other = app.buttons["家里 Mac mini"].firstMatch
+        XCTAssertTrue(other.waitForExistence(timeout: 5))
+        XCTAssertTrue((other.value as? String)?.hasPrefix("在线，") == true)
+        capture("Two devices with current reachability and measured latency", app: app)
+        other.tap()
+        let detail = app.navigationBars["家里 Mac mini"].firstMatch
+        XCTAssertTrue(detail.waitForExistence(timeout: 6), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["当前线路"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts.matching(identifier: "直接 SSH").count, 1)
+        XCTAssertFalse(app.staticTexts["连接方式"].exists)
+        capture("One route row in device details", app: app)
+        detail.buttons["BackButton"].firstMatch.tap()
+        XCTAssertTrue(primary.waitForExistence(timeout: 6))
+        XCTAssertTrue((primary.value as? String)?.hasPrefix("在线，") == true)
+        XCTAssertTrue((other.value as? String)?.hasPrefix("在线，") == true)
+    }
+
+    func testCrossDeviceSessionOpensBeforeTheWorkerReturnsHistory() {
+        let tablet = UIDevice.current.userInterfaceIdiom == .pad
+        if tablet { XCUIDevice.shared.orientation = .landscapeLeft }
+        let app = launch("--preview-board-session-list-opening")
+        let row = app.buttons["家庭设备巡检"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 8))
+        row.tap()
+        let title = app.staticTexts[tablet ? "家庭设备巡检" : "conversation-title"].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 3))
+        XCTAssertEqual(title.label, "家庭设备巡检")
+        let connecting = app.descendants(matching: .any)["等待设备连接后读取会话"].firstMatch
+        XCTAssertTrue(connecting.waitForExistence(timeout: 2), app.debugDescription)
+        XCTAssertFalse(app.staticTexts["正在连接所属设备…"].exists)
+        XCTAssertFalse(app.staticTexts["远端历史已加载。"].exists)
+        capture("Conversation opens while its device connects", app: app)
+        let reading = app.descendants(matching: .any)["正在读取会话"].firstMatch
+        XCTAssertTrue(reading.waitForExistence(timeout: 6), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["远端历史已加载。"].waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertFalse(reading.exists)
+        XCTAssertEqual(title.label, "家庭设备巡检")
+    }
+
+    func testDeviceDetailContinuesAcrossConsecutiveScrolls() {
+        let app = launch("--preview-board-device-scroll")
+        let first = app.staticTexts["连接状态"].firstMatch
+        let tail = app.buttons["测试工作区 24"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 8))
+        XCTAssertFalse(tail.isHittable)
+        for _ in 0..<4 where !tail.isHittable { app.swipeUp(velocity: .fast) }
+        let atTail = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: tail)
+        XCTAssertEqual(XCTWaiter.wait(for: [atTail], timeout: 5), .completed, app.debugDescription)
+        for _ in 0..<4 where !first.isHittable { app.swipeDown(velocity: .fast) }
+        let atStart = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: first)
+        XCTAssertEqual(XCTWaiter.wait(for: [atStart], timeout: 5), .completed)
+    }
+
+    func testRunningSessionDotBreathesAndSettlesWithReducedMotion() {
+        let app = launch("--preview-board-inbox")
+        let running = app.buttons["测试断线重连"].firstMatch
+        XCTAssertTrue(running.waitForExistence(timeout: 8))
+
+        func amplitude(in frame: CGRect) -> Int {
+            let crop = CGRect(x: frame.minX, y: frame.minY, width: 22, height: frame.height).integral
+            let width = Int(crop.width)
+            let height = Int(crop.height)
+            let levels: [Int] = (0..<5).map { index in
+                if index > 0 { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.24)) }
+                let screenshot = XCUIScreen.main.screenshot().image
+                let format = UIGraphicsImageRendererFormat()
+                format.scale = 1
+                let image = UIGraphicsImageRenderer(size: crop.size, format: format).image { _ in
+                    screenshot.draw(at: CGPoint(x: -crop.minX, y: -crop.minY))
+                }
+                var bytes = [UInt8](repeating: 0, count: width * height * 4)
+                return bytes.withUnsafeMutableBytes { pixels in
+                    guard let bitmap = image.cgImage,
+                          let context = CGContext(data: pixels.baseAddress, width: width, height: height,
+                                                  bitsPerComponent: 8, bytesPerRow: width * 4,
+                                                  space: CGColorSpaceCreateDeviceRGB(),
+                                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return 0 }
+                    context.draw(bitmap, in: CGRect(origin: .zero, size: crop.size))
+                    return stride(from: 0, to: pixels.count, by: 4).reduce(0) { peak, i in
+                        max(peak, Int(pixels[i + 1]) - max(Int(pixels[i]), Int(pixels[i + 2])))
+                    }
+                }
+            }
+            return (levels.max() ?? 0) - (levels.min() ?? 0)
+        }
+
+        XCTAssertGreaterThan(amplitude(in: running.frame), 12)
+        app.tabBars.buttons["设置"].firstMatch.tap()
+        let appearance = app.buttons["输入与外观"].firstMatch
+        XCTAssertTrue(appearance.waitForExistence(timeout: 6))
+        appearance.tap()
+        let motion = app.buttons["减少动态效果"].firstMatch
+        XCTAssertTrue(motion.waitForExistence(timeout: 6))
+        motion.tap()
+        app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "开启")).firstMatch.tap()
+        XCTAssertEqual(motion.value as? String, "开启")
+        app.navigationBars["输入与外观"].buttons["BackButton"].firstMatch.tap()
+        app.tabBars.buttons["会话"].firstMatch.tap()
+        XCTAssertTrue(running.waitForExistence(timeout: 6))
+        XCTAssertLessThanOrEqual(amplitude(in: running.frame), 2)
     }
 
     func testCompactCommandChecksTheOriginalReceiptAndPreservesNewTyping() {
@@ -5886,7 +6113,7 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertTrue(status.waitForExistence(timeout: 8))
         XCTAssertEqual(app.staticTexts.matching(identifier: "正在压缩上下文").count, 1)
         XCTAssertFalse(app.staticTexts["进行中"].exists)
-        XCTAssertEqual(app.buttons.matching(identifier: "回复详情").count, 1)
+        XCTAssertFalse(app.buttons["回复详情"].exists)
         capture("Live automatic context compaction", app: app)
     }
 
@@ -5916,8 +6143,10 @@ final class ShiojiMobileUITests: XCTestCase {
         let app = launch("--preview-board-transcript-turns")
         XCTAssertTrue(app.buttons["会话活动"].waitForExistence(timeout: 8))
         capture("Tool-only turns", app: app)
-        let completed = app.staticTexts["本轮完成"]
+        let completed = app.buttons["复制工具输出"].firstMatch
         XCTAssertTrue(completed.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["本轮完成"].exists)
+        XCTAssertFalse(app.buttons["回复详情"].exists)
         XCTAssertTrue(app.staticTexts["用时 18秒"].exists)
         let failure = app.staticTexts["本轮失败"]
         XCTAssertTrue(failure.exists)
@@ -5928,7 +6157,6 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertTrue(copyOutput.exists)
         XCTAssertTrue(copyOutput.isEnabled)
         let fork = app.buttons["从这里分叉"].firstMatch
-        let info = app.buttons["回复详情"].firstMatch
         let duration = app.staticTexts["用时 18秒"].firstMatch
         // The submitted message and the reply can display the same minute.
         let times = app.staticTexts.matching(identifier: "09:36").allElementsBoundByIndex
@@ -5936,17 +6164,14 @@ final class ShiojiMobileUITests: XCTestCase {
             return XCTFail("The tool receipt should show its completion time beside its duration")
         }
         XCTAssertLessThan(copyOutput.frame.midX, fork.frame.midX)
-        XCTAssertLessThan(fork.frame.midX, info.frame.midX)
-        XCTAssertLessThan(info.frame.midX, time.frame.midX)
+        XCTAssertLessThan(fork.frame.midX, time.frame.midX)
         XCTAssertLessThan(time.frame.midX, duration.frame.midX)
         let group = app.buttons["1 次工具调用"].firstMatch
         group.tap()
         XCTAssertTrue(app.buttons["核对重连逻辑"].exists)
-        XCTAssertEqual(app.staticTexts.matching(identifier: "本轮完成").count, 1)
-        app.buttons["回复详情"].firstMatch.tap()
-        for text in ["输入 560", "输出 0", "缓存命中 —"] {
-            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: text).firstMatch.waitForExistence(timeout: 5))
-        }
+        XCTAssertFalse(app.staticTexts["本轮完成"].exists)
+        XCTAssertTrue(copyOutput.exists)
+        XCTAssertTrue(duration.exists)
     }
 
     func testSentReferencesKeepInlinePlacementAndOpenTheirSnapshot() {
@@ -6042,7 +6267,7 @@ final class ShiojiMobileUITests: XCTestCase {
         app.typeText("check @ref")
         let candidate = app.buttons["引用文件 reference.go"].firstMatch
         XCTAssertTrue(candidate.waitForExistence(timeout: 5))
-        let queue = app.buttons["待发消息操作"].firstMatch
+        let queue = app.buttons["按 review-check 检查 connection.go 的边界"].firstMatch
         XCTAssertTrue(queue.exists)
         let keyboard = app.keyboards.firstMatch
         let docked = NSPredicate { _, _ in
@@ -6075,7 +6300,7 @@ final class ShiojiMobileUITests: XCTestCase {
         if checkQueueScrolling {
             XCTAssertTrue(queue.isHittable, "The queue must remain accessible while editing")
             let viewport = app.descendants(matching: .any)["待发消息列表"].firstMatch
-            let last = app.buttons["介入当前轮，第 4 条待发消息"].firstMatch
+            let last = app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "也验证一下移动端")).firstMatch
             XCTAssertTrue(viewport.exists)
             XCTAssertTrue(last.exists)
             func tailVisible() -> Bool {
@@ -6114,21 +6339,21 @@ final class ShiojiMobileUITests: XCTestCase {
 
     func testQueuedReferencesReopenInTheEditorWithoutReplacingTheOrdinaryDraft() {
         let app = launch("--preview-board-draft-references")
-        let queue = app.staticTexts["按 review-check 检查 connection.go 的边界"]
-        XCTAssertTrue(app.buttons["待发消息操作"].firstMatch.waitForExistence(timeout: 8))
+        let queue = app.buttons["按 review-check 检查 connection.go 的边界"].firstMatch
+        XCTAssertTrue(queue.waitForExistence(timeout: 8))
         capture("Queued reference preview", app: app)
         XCTAssertTrue(queue.exists)
         let editor = app.textFields["消息"].firstMatch
         editor.tap()
         app.typeText("ordinary draft")
-        let actions = app.buttons["待发消息操作"].firstMatch
+        let actions = queue
         let keyboard = app.keyboards.firstMatch
         XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
         let keyboardLayout = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             actions.isHittable && actions.frame.maxY < keyboard.frame.minY
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [keyboardLayout], timeout: 5), .completed)
-        actions.tap()
+        actions.press(forDuration: 0.65)
         let edit = app.descendants(matching: .any).matching(identifier: "编辑").firstMatch
         capture("Queue actions", app: app)
         XCTAssertTrue(edit.waitForExistence(timeout: 4), app.debugDescription)
@@ -6159,7 +6384,7 @@ final class ShiojiMobileUITests: XCTestCase {
         let queued = app.staticTexts["Queued draft"].firstMatch
         XCTAssertTrue(queued.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertEqual(composer.value as? String, "Ordinary draft")
-        app.buttons["待发消息操作"].firstMatch.tap()
+        app.buttons["Queued draft"].firstMatch.press(forDuration: 0.65)
         let edit = app.descendants(matching: .any).matching(identifier: "编辑").firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 5), app.debugDescription)
         edit.tap()
@@ -6294,10 +6519,20 @@ final class ShiojiMobileUITests: XCTestCase {
         let output = app.otherElements["命令输出：核对重连逻辑"].firstMatch
         XCTAssertTrue(output.waitForExistence(timeout: 4))
         capture("Completed tool output in the text column", app: app)
-        XCTAssertEqual(command.frame.minX - group.frame.minX, 34, accuracy: 1)
+        XCTAssertEqual(command.frame.minX - group.frame.minX, 34 * 1.12, accuracy: 1)
         XCTAssertEqual(output.frame.minX, command.frame.minX, accuracy: 1)
         let firstGlyphs = CGRect(x: command.frame.minX, y: command.frame.minY, width: 36, height: command.frame.height)
         XCTAssertTrue(hasVisibleInk(in: firstGlyphs), "The command must paint in the text column")
+    }
+
+    func testCompletedCallsAtTheLiveTailKeepOneStatus() {
+        let app = launch("--preview-board-transcript-tool-tail-settled")
+        let group = app.buttons["3 次工具调用"].firstMatch
+        XCTAssertTrue(group.waitForExistence(timeout: 8), app.debugDescription)
+        capture("Folded tool tail after all current calls finished", app: app)
+        XCTAssertTrue((group.value as? String ?? "").contains("进行中"))
+        XCTAssertFalse((group.value as? String ?? "").contains("已完成"))
+        XCTAssertFalse(app.staticTexts["已完成"].exists)
     }
 
     func testActiveToolGroupKeepsItsDisclosureAndOneLiveStatus() {
@@ -6324,12 +6559,12 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertTrue(clock.exists)
         XCTAssertEqual(clock.frame.midY, phase.frame.midY, accuracy: 0.5)
         XCTAssertEqual(clock.frame.minX - phase.frame.maxX, 6, accuracy: 1)
-        XCTAssertEqual(command.frame.minX - summary.frame.minX, 34, accuracy: 1)
+        XCTAssertEqual(command.frame.minX - summary.frame.minX, 34 * 1.12, accuracy: 1)
         XCTAssertTrue(hasVisibleInk(in: phase.frame), "The expanded live caption must be painted")
         capture("Active tool group after disclosure", app: app)
         XCTAssertEqual(app.staticTexts.matching(identifier: "正在执行命令").count, 1)
         XCTAssertEqual(summaries.count, 2)
-        XCTAssertTrue(app.staticTexts["本轮完成"].exists)
+        XCTAssertFalse(app.staticTexts["本轮完成"].exists)
         let output = app.staticTexts["正在比对重连前后的事件游标"]
         XCTAssertFalse(output.exists)
         command.tap()
@@ -6349,7 +6584,7 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertTrue(output.waitForExistence(timeout: 4))
     }
 
-    func testActiveToolGroupUsesTheReplyFooterInBothDisclosureStates() {
+    func testActiveToolGroupKeepsTheEarlierReceiptInBothDisclosureStates() {
         if UIDevice.current.userInterfaceIdiom == .pad {
             XCUIDevice.shared.orientation = .landscapeLeft
         }
@@ -6363,28 +6598,23 @@ final class ShiojiMobileUITests: XCTestCase {
         if command.exists {
             group.tap()
         }
-        let copy = app.buttons.matching(identifier: "复制工具输出").element(boundBy: 1)
-        let fork = app.buttons.matching(identifier: "从这里分叉").element(boundBy: 1)
-        let info = app.buttons.matching(identifier: "回复详情").element(boundBy: 1)
-        let endTime = app.staticTexts["完成时间未知"]
-        let duration = app.staticTexts["用时 —"]
-        capture("Folded active tool group and footer", app: app)
-        guard copy.waitForExistence(timeout: 4) else { return XCTFail("The active group is missing its shared reply footer") }
-        XCTAssertTrue(copy.isEnabled)
-        XCTAssertTrue(fork.exists)
-        XCTAssertFalse(fork.isEnabled)
-        XCTAssertTrue(info.isEnabled)
-        XCTAssertLessThan(copy.frame.midX, fork.frame.midX)
-        XCTAssertLessThan(fork.frame.midX, info.frame.midX)
-        XCTAssertLessThan(info.frame.midX, endTime.frame.midX)
-        XCTAssertLessThan(endTime.frame.midX, duration.frame.midX)
+        let completedCopy = app.buttons["复制工具输出"].firstMatch
+        XCTAssertTrue(completedCopy.waitForExistence(timeout: 4))
+        XCTAssertTrue(completedCopy.isEnabled)
+        let time = app.staticTexts["用时 18秒"]
+        XCTAssertTrue(time.exists)
+        XCTAssertLessThan(completedCopy.frame.midX, time.frame.midX)
+        XCTAssertLessThan(completedCopy.frame.midY, group.frame.midY)
+        XCTAssertEqual(app.buttons.matching(identifier: "复制工具输出").count, 1)
+        XCTAssertFalse(app.buttons["回复详情"].exists)
+        capture("Folded active tool group and earlier completed footer", app: app)
         XCTAssertFalse(command.exists)
         group.tap()
         XCTAssertTrue(command.waitForExistence(timeout: 4))
-        XCTAssertTrue(copy.exists)
-        XCTAssertGreaterThan(copy.frame.minY, command.frame.minY)
+        XCTAssertTrue(completedCopy.exists)
+        XCTAssertLessThan(completedCopy.frame.midY, command.frame.midY)
         XCTAssertEqual(app.staticTexts.matching(identifier: "正在执行命令").count, 1)
-        capture("Expanded active tool group and footer", app: app)
+        capture("Expanded active tool group and earlier completed footer", app: app)
     }
 
     func testLongCommandOutputScrollsIndependentlyAndRevealsSearch() {
@@ -6449,6 +6679,415 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertTrue(current.waitForExistence(timeout: 10))
     }
 
+    func testPhoneConversationHeaderKeepsCompactControls() throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else {
+            throw XCTSkip("The phone uses a pushed conversation header")
+        }
+        let app = launch("--preview")
+        let toolbar = app.buttons["切换会话范围"].firstMatch
+        let row = app.buttons["检查移动端会话体验"].firstMatch
+        XCTAssertTrue(toolbar.waitForExistence(timeout: 8))
+        let originalTop = toolbar.frame.minY
+        XCTAssertEqual(toolbar.frame.height, 44, accuracy: 1)
+        row.tap()
+        let title = app.navigationBars.staticTexts["conversation-title"].firstMatch
+        let activity = app.navigationBars.buttons["会话活动"].firstMatch
+        let back = app.navigationBars.buttons["BackButton"].firstMatch
+        XCTAssertTrue(activity.waitForExistence(timeout: 8))
+        XCTAssertTrue(title.exists)
+        XCTAssertGreaterThanOrEqual(back.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(activity.frame.height, 36)
+        capture("Compact conversation header", app: app)
+        activity.tap()
+        XCTAssertTrue(app.buttons["在会话中查找"].waitForExistence(timeout: 5))
+        app.navigationBars["会话活动"].buttons["BackButton"].tap()
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        back.tap()
+        XCTAssertTrue(toolbar.waitForExistence(timeout: 5))
+        XCTAssertEqual(toolbar.frame.minY, originalTop, accuracy: 1)
+        row.tap()
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.002, dy: 0.35))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.35))
+        edge.press(forDuration: 0.08, thenDragTo: end)
+        XCTAssertTrue(toolbar.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(toolbar.frame.minY, originalTop, accuracy: 1)
+        capture("Conversation list preserves its top after returning", app: app)
+    }
+
+    func testWorkspaceGroupsStayClearOfToolbarAndReflow() {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCUIDevice.shared.orientation = .landscapeLeft
+        }
+        let app = launch("--preview")
+        let toolbar = app.buttons["切换会话范围"].firstMatch
+        let views = app.buttons["会话视图"].firstMatch
+        XCTAssertTrue(views.waitForExistence(timeout: 8), app.debugDescription)
+        views.tap()
+        app.buttons["按工作区分组"].firstMatch.tap()
+        let first = app.buttons["Shioji iOS"].firstMatch
+        let next = app.buttons["Shioji Mac"].firstMatch
+        let row = app.buttons["检查移动端会话体验"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(next.exists && row.exists)
+        XCTAssertLessThan(first.frame.height, toolbar.frame.height * 0.80)
+        XCTAssertGreaterThanOrEqual(first.frame.minY, toolbar.frame.maxY - 1)
+        XCTAssertGreaterThanOrEqual(first.frame.minY - toolbar.frame.maxY, 4)
+        XCTAssertLessThanOrEqual(first.frame.minY - toolbar.frame.maxY, 12)
+        let expanded = next.frame.minY
+        capture("Compact workspace groups below the toolbar", app: app)
+        first.tap()
+        XCTAssertTrue(row.waitForNonExistence(timeout: 5))
+        XCTAssertLessThan(next.frame.minY, expanded - 30)
+        XCTAssertTrue(views.isHittable && toolbar.isHittable)
+        capture("Compact workspace group collapsed", app: app)
+        first.tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        let reflow = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            abs(next.frame.minY - expanded) < 1
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [reflow], timeout: 5), .completed)
+    }
+
+    func testCachedSessionRefreshKeepsRowPositions() {
+        func frames(_ route: String, cached: Bool) -> [CGRect] {
+            let app = launch("--preview-board-session-list-" + route)
+            let remote = app.buttons["家庭设备巡检"].firstMatch
+            XCTAssertTrue(remote.waitForExistence(timeout: 8), app.debugDescription)
+            XCTAssertEqual((remote.value as? String)?.contains("上次读取"), cached)
+            XCTAssertFalse(app.staticTexts["上次读取"].exists)
+            XCTAssertFalse(app.staticTexts["正在连接"].exists)
+            let group = app.buttons["家庭项目"].firstMatch
+            XCTAssertTrue(group.exists)
+            capture("Session list " + route, app: app)
+            return [group.frame, remote.frame]
+        }
+        let cold = frames("cached", cached: true)
+        let warm = frames("fresh", cached: false)
+        for (before, after) in zip(cold, warm) {
+            XCTAssertEqual(before.minY, after.minY, accuracy: 1)
+            XCTAssertEqual(before.height, after.height, accuracy: 1)
+        }
+    }
+
+    func testCatalogRefreshReconcilesSessionsAndWorkspaceGroups() {
+        let app = launch("--preview-board-session-list-refresh")
+        let stable = app.buttons["家庭设备巡检"].firstMatch
+        let old = app.buttons["旧会话"].firstMatch
+        let oldGroup = app.buttons["旧工作区"].firstMatch
+        XCTAssertTrue(old.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(oldGroup.exists)
+        let originalY = stable.frame.minY
+        capture("Cached workspaces and sessions", app: app)
+
+        let incoming = app.buttons["新会话"].firstMatch
+        let newGroup = app.buttons["新工作区"].firstMatch
+        XCTAssertTrue(incoming.waitForExistence(timeout: 12), app.debugDescription)
+        XCTAssertTrue(newGroup.exists)
+        XCTAssertTrue(app.buttons["新工作区的会话"].exists)
+        XCTAssertTrue(old.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(oldGroup.exists)
+        XCTAssertEqual(stable.frame.minY, originalY, accuracy: 1)
+        capture("Refreshed workspaces and sessions", app: app)
+    }
+
+    func testFirstTabSwitchesRevealEachDestination() {
+        let app = launch("--preview")
+        let scope = app.buttons["切换会话范围"].firstMatch
+        XCTAssertTrue(scope.waitForExistence(timeout: 8), app.debugDescription)
+        capture("Cold conversation tab", app: app)
+        for (tab, title) in [("设备", "远程设备"), ("设置", "搜索设置")] {
+            app.buttons[tab].firstMatch.tap()
+            let content = app.descendants(matching: .any)[title].firstMatch
+            XCTAssertTrue(content.waitForExistence(timeout: 6), app.debugDescription)
+            capture("First tab " + tab, app: app)
+            app.buttons["会话"].firstMatch.tap()
+            XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        }
+    }
+
+    func testDismissingConversationKeyboardKeepsDraftAndGap() throws {
+        if UIDevice.current.userInterfaceIdiom != .pad {
+            throw XCTSkip("The simulator uses the standard iPad keyboard hide button")
+        }
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = launch("--preview-board-motion-send")
+        let input = app.textFields["消息"].firstMatch
+        XCTAssertTrue(input.waitForExistence(timeout: 8), app.debugDescription)
+        let initialHeight = input.frame.height
+        input.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5), app.debugDescription)
+        let send = app.buttons["发送"].firstMatch
+        XCTAssertTrue(send.exists)
+        XCTAssertTrue(app.buttons["权限"].firstMatch.exists)
+        XCTAssertTrue(app.buttons["运行配置"].firstMatch.exists)
+        let expanded = input.frame.height
+        XCTAssertGreaterThanOrEqual(keyboard.frame.minY - send.frame.maxY, 10)
+        capture("Conversation composer above the keyboard", app: app)
+        let hide = keyboard.descendants(matching: .any)
+            .matching(NSPredicate(format: "label IN %@", ["Hide keyboard", "Hide Keyboard", "Dismiss Keyboard", "隐藏键盘", "收起键盘"]))
+            .firstMatch
+        XCTAssertTrue(hide.exists, keyboard.debugDescription)
+        hide.tap()
+        XCTAssertTrue(keyboard.waitForNonExistence(timeout: 5))
+        let reopened = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in keyboard.exists }, object: nil)
+        reopened.isInverted = true
+        XCTAssertEqual(XCTWaiter.wait(for: [reopened], timeout: 2), .completed)
+        XCTAssertEqual(input.value as? String, "发送后的新消息")
+        XCTAssertEqual(input.frame.height, expanded, accuracy: 1)
+        capture("Dismissed keyboard preserves the conversation draft", app: app)
+        input.tap()
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        XCTAssertEqual(input.frame.height, initialHeight, accuracy: 1)
+    }
+
+    func testEmptyComposerExpandsAndReturnsWithKeyboard() throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else {
+            throw XCTSkip("Uses the system iPad keyboard hide button")
+        }
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = launch("--preview-board-transcript-tool-tail")
+        let input = app.textFields["消息"].firstMatch
+        XCTAssertTrue(input.waitForExistence(timeout: 8))
+        let permission = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "权限")).firstMatch
+        let model = app.buttons["运行配置"].firstMatch
+        XCTAssertFalse(permission.exists)
+        XCTAssertFalse(model.exists)
+        let initial = input.frame
+        input.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        let expanded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            input.frame.height > initial.height + 20 && input.frame.maxY < keyboard.frame.minY
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [expanded], timeout: 5), .completed)
+        XCTAssertTrue(permission.waitForExistence(timeout: 4))
+        XCTAssertTrue(model.exists)
+        let hide = keyboard.descendants(matching: .any)
+            .matching(NSPredicate(format: "label IN %@", ["Hide keyboard", "Hide Keyboard", "Dismiss Keyboard", "隐藏键盘", "收起键盘"]))
+            .firstMatch
+        XCTAssertTrue(hide.exists, keyboard.debugDescription)
+        hide.tap()
+        XCTAssertTrue(keyboard.waitForNonExistence(timeout: 5))
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            abs(input.frame.height - initial.height) < 1 && abs(input.frame.minY - initial.minY) < 1
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed)
+        XCTAssertFalse(permission.exists)
+        XCTAssertFalse(model.exists)
+    }
+
+    func testModelPickerKeepsEffortInItsOwnSubmenu() {
+        let app = launch("--preview-board-create")
+        let run = app.buttons["运行配置"].firstMatch
+        XCTAssertTrue(run.waitForExistence(timeout: 8), app.debugDescription)
+        run.tap()
+        let model = app.descendants(matching: .any)["GPT-5.4"].firstMatch
+        let effort = app.descendants(matching: .any)["推理强度"].firstMatch
+        XCTAssertTrue(effort.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(model.exists)
+        XCTAssertFalse(app.buttons["高"].exists)
+        capture("Model picker with a separate reasoning effort submenu", app: app)
+        effort.tap()
+        XCTAssertTrue(app.buttons["高"].firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+    }
+
+    func testMobileSendAndSteerReachTheTranscript() {
+        for (route, text) in [("motion-send", "发送后的新消息"), ("motion-steer", "插入当前执行轮的消息")] {
+            let app = launch("--preview-board-" + route)
+            let composer = app.textFields["消息"].firstMatch
+            XCTAssertTrue(composer.waitForExistence(timeout: 8), app.debugDescription)
+            XCTAssertEqual(composer.value as? String, text)
+            if route == "motion-steer" {
+                app.descendants(matching: .any).matching(identifier: "发送选项").firstMatch.tap()
+                app.descendants(matching: .any).matching(identifier: "介入当前轮").firstMatch.tap()
+            } else {
+                app.buttons["发送"].tap()
+            }
+            let sent = app.staticTexts[text].firstMatch
+            XCTAssertTrue(sent.waitForExistence(timeout: 6), app.debugDescription)
+            XCTAssertLessThan(sent.frame.maxY, composer.frame.minY)
+            capture("Motion accepted " + route, app: app)
+        }
+    }
+
+    func testQueueLongPressPreviewsAndDispatchesTheAcceptedMessage() {
+        let app = launch("--preview-board-motion-queue")
+        let options = app.buttons["发送选项"]
+        XCTAssertTrue(options.waitForExistence(timeout: 8), app.debugDescription)
+        options.tap()
+        app.descendants(matching: .any).matching(identifier: "加入待发队列").firstMatch.tap()
+        let queued = app.buttons["待发消息 1"].firstMatch
+        let message = "先排队再强制插入"
+        let row = app.buttons["先排队再强制插入"].firstMatch
+        let appeared = row.waitForExistence(timeout: 5)
+        capture("Queue after an accepted arrival", app: app)
+        XCTAssertTrue(appeared, app.debugDescription)
+        XCTAssertFalse(queued.exists)
+        XCTAssertFalse(app.buttons["立即发送"].exists)
+        row.press(forDuration: 0.65)
+        let send = app.buttons["立即发送"].firstMatch
+        XCTAssertTrue(send.waitForExistence(timeout: 6), app.debugDescription)
+        XCTAssertTrue(app.staticTexts[message].firstMatch.exists)
+        XCTAssertFalse(app.navigationBars["待发消息"].exists, "Long press should show a native context menu beside the message preview")
+        XCTAssertTrue(app.buttons["编辑"].firstMatch.exists)
+        XCTAssertTrue(app.buttons["删除"].firstMatch.exists)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        capture("Queue long-press preview and operations", app: app)
+        send.tap()
+        XCTAssertTrue(row.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts[message].firstMatch.waitForExistence(timeout: 5))
+        capture("Queued input inserted into the active turn", app: app)
+    }
+
+    func testLiveReplyGrowsAndKeepsTheComposerInPlace() {
+        let app = launch("--preview-board-motion-reply-height")
+        let initial = app.staticTexts["已记录第一段回复。"].firstMatch
+        let composer = app.textFields["消息"].firstMatch
+        XCTAssertTrue(initial.waitForExistence(timeout: 8), app.debugDescription)
+        let before = initial.frame.minY
+        let dock = composer.frame
+        capture("Live reply before new paragraphs", app: app)
+        let ending = app.staticTexts["追加第四段进展。"].firstMatch
+        XCTAssertTrue(ending.waitForExistence(timeout: 12), app.debugDescription)
+        XCTAssertLessThan(initial.frame.minY, before - 10)
+        XCTAssertEqual(composer.frame.minY, dock.minY, accuracy: 1)
+        XCTAssertLessThan(ending.frame.maxY, composer.frame.minY)
+        capture("Live reply after new paragraphs", app: app)
+    }
+
+    func testAutomaticQueueDispatchUsesTheAcceptedInput() {
+        let app = launch("--preview-board-motion-queue-auto")
+        let options = app.buttons["发送选项"]
+        XCTAssertTrue(options.waitForExistence(timeout: 8), app.debugDescription)
+        options.tap()
+        app.descendants(matching: .any).matching(identifier: "加入待发队列").firstMatch.tap()
+        let source = app.buttons["轮次结束后自动发送"].firstMatch
+        XCTAssertTrue(source.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(source.waitForNonExistence(timeout: 8), app.debugDescription)
+        let sent = app.staticTexts.matching(identifier: "轮次结束后自动发送")
+        XCTAssertTrue(sent.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(sent.count, 1)
+        XCTAssertLessThan(sent.firstMatch.frame.maxY, app.textFields["消息"].firstMatch.frame.minY)
+        capture("Automatically dispatched queued input", app: app)
+    }
+
+    func testConversationSelectionOffersCopyWithoutShowingKeyboard() {
+        let app = launch("--preview-board-transcript-tool-tail")
+        let text = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "第 12 次核对已完成")).firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        capture("Conversation canvas reaches the safe areas", app: app)
+        text.press(forDuration: 0.8)
+        let copy = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@", ["Copy", "复制"])).firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 4), app.debugDescription)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        copy.tap()
+        app.textFields["消息"].firstMatch.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+    }
+
+    func testRunningAndFinishedConversationTailClearance() {
+        func gap(_ fixture: String, _ caption: String) -> CGFloat {
+            let app = launch("--preview-board-" + fixture)
+            let status = app.descendants(matching: .any)[caption].firstMatch
+            let composer = app.textFields["消息"].firstMatch
+            XCTAssertTrue(status.waitForExistence(timeout: 8), app.debugDescription)
+            XCTAssertTrue(composer.exists)
+            if fixture == "transcript-tool-tail-completed" {
+                let body = app.staticTexts["连接恢复已核对。"].firstMatch
+                XCTAssertTrue(body.exists)
+                let bodyGap = status.frame.minY - body.frame.maxY
+                XCTAssertGreaterThanOrEqual(bodyGap, 0)
+                XCTAssertLessThanOrEqual(bodyGap, 17, "The final action line sits \(bodyGap) points after its reply")
+                let actions = app.buttons.matching(identifier: "复制回复").allElementsBoundByIndex
+                XCTAssertGreaterThanOrEqual(actions.last?.frame.height ?? 0, 44)
+            }
+            capture("Conversation tail " + fixture, app: app)
+            return composer.frame.minY - status.frame.maxY
+        }
+
+        let running = gap("transcript-tool-tail", "正在执行命令")
+        let finished = gap("transcript-tool-tail-completed", "用时 2秒")
+        XCTAssertGreaterThanOrEqual(running, 0)
+        XCTAssertLessThanOrEqual(running, finished + 2,
+                                 "Running clearance is \(running) points, finished clearance is \(finished) points")
+    }
+
+    func testRunningConversationOpensAtLatestAfterReadingHistory() throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else {
+            throw XCTSkip("Checks opening and reopening a pushed phone conversation")
+        }
+        let app = launch("--preview-board-running-session-entry")
+        let row = app.buttons["核对会话工具状态"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 8), app.debugDescription)
+        row.tap()
+        let title = app.navigationBars["核对会话工具状态"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        let latest = app.buttons["回到最新消息"].firstMatch
+        let active = app.staticTexts["正在执行命令"].firstMatch
+        XCTAssertTrue(active.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertFalse(latest.exists)
+        app.swipeDown()
+        XCTAssertTrue(latest.waitForExistence(timeout: 5))
+        title.buttons["BackButton"].tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.tap()
+        XCTAssertTrue(active.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(latest.exists)
+        capture("Running conversation reopens directly at the latest message", app: app)
+    }
+
+    func testRunningConversationWaitsForColdHistoryBeforeShowingItsTail() throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else {
+            throw XCTSkip("Checks the first pushed conversation on iPhone")
+        }
+        let app = launch("--preview-board-running-session-cold-entry")
+        let heading = app.buttons["2 次工具调用"].firstMatch
+        let loading = app.descendants(matching: .any)["正在读取会话"].firstMatch
+        XCTAssertTrue(loading.waitForExistence(timeout: 3))
+        XCTAssertFalse(heading.exists, "The live tool group is only a partial history window")
+        capture("Waiting for the full conversation", app: app)
+        XCTAssertTrue(heading.waitForExistence(timeout: 24))
+        let composer = app.textFields["消息"].firstMatch
+        XCTAssertTrue(composer.exists)
+        let phase = app.staticTexts["正在执行命令"].firstMatch
+        XCTAssertTrue(phase.exists)
+        XCTAssertGreaterThanOrEqual(composer.frame.minY - phase.frame.maxY, 0)
+        XCTAssertLessThan(composer.frame.minY - phase.frame.maxY, 48)
+        XCTAssertFalse(app.buttons["回到最新消息"].exists)
+        capture("The first complete conversation at the latest message", app: app)
+    }
+
+    func testCollapsingAnExpandedLiveToolGroupAtTheEndKeepsTheTailVisible() {
+        let app = launch("--preview-board-transcript-tool-tail")
+        let group = app.buttons["2 次工具调用"].firstMatch
+        let phase = app.staticTexts["正在执行命令"].firstMatch
+        let latest = app.buttons["回到最新消息"].firstMatch
+        let composer = app.textFields["消息"].firstMatch
+        XCTAssertTrue(group.waitForExistence(timeout: 8))
+        XCTAssertTrue(phase.waitForExistence(timeout: 4))
+        group.tap()
+        XCTAssertTrue(phase.waitForNonExistence(timeout: 4))
+        let foldedY = group.frame.minY
+        group.tap()
+        XCTAssertTrue(latest.waitForExistence(timeout: 5))
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.72))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.50))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
+        XCTAssertTrue(latest.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(phase.waitForExistence(timeout: 4))
+        XCTAssertLessThan(phase.frame.maxY, composer.frame.minY)
+        XCTAssertLessThan(group.frame.minY, foldedY - 20)
+        capture("Expanded tool group scrolled to the end", app: app)
+        group.tap()
+        XCTAssertTrue(phase.waitForNonExistence(timeout: 4))
+        XCTAssertFalse(latest.exists)
+        XCTAssertEqual(group.frame.minY, foldedY, accuracy: 1)
+        capture("Folded tool group still at the end", app: app)
+    }
+
     func testReturnToLatestCarriesToolActivityWhileReadingHistory() {
         if UIDevice.current.userInterfaceIdiom == .pad {
             XCUIDevice.shared.orientation = .landscapeLeft
@@ -6458,10 +7097,25 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertTrue(heading.waitForExistence(timeout: 8))
         let latest = app.buttons["回到最新消息"]
         XCTAssertFalse(latest.exists)
+        let replyActions = app.buttons.matching(NSPredicate(format: "label IN %@", ["复制回复", "从这里分叉"]))
+        XCTAssertFalse(replyActions.allElementsBoundByIndex.contains { $0.frame.midY > heading.frame.midY })
         capture("Latest live tool group", app: app)
         app.swipeDown()
         XCTAssertTrue(latest.waitForExistence(timeout: 5))
         XCTAssertEqual(latest.value as? String, "正在执行命令")
+        let font = UIFont.systemFont(ofSize: 12 * 1.12)
+        let fullWidth = ("正在执行命令" as NSString).size(withAttributes: [.font: font]).width
+        let chrome = CGFloat(22 + 16 + 14 + 10) * 1.12
+        XCTAssertEqual(latest.frame.width, fullWidth + chrome, accuracy: 4,
+                       "The capsule fits the complete status, dot and arrow without space for a timer")
+        let composer = app.textFields["消息"].firstMatch
+        XCTAssertTrue(composer.exists)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            XCTAssertEqual(latest.frame.midX, app.frame.midX, accuracy: 2)
+        }
+        XCTAssertGreaterThan(latest.frame.maxY, composer.frame.minY - 75)
+        XCTAssertLessThan(latest.frame.maxY, composer.frame.minY)
+        XCTAssertFalse(app.buttons["上下文用量"].exists)
         capture("Reading earlier messages with live status in return control", app: app)
         latest.tap()
         XCTAssertTrue(latest.waitForNonExistence(timeout: 5))
@@ -6471,7 +7125,7 @@ final class ShiojiMobileUITests: XCTestCase {
     func testLiveTurnClockRetainsComposerAndEarlierReceiptOnReconnect() {
         let app = launch("--preview-board-transcript-offline")
         XCTAssertTrue(app.staticTexts["执行状态待核对"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["本轮完成"].exists)
+        XCTAssertFalse(app.staticTexts["本轮完成"].exists)
         app.buttons["重连"].tap()
         let summaries = app.buttons.matching(identifier: "1 次工具调用")
         let active = summaries.element(boundBy: 1)
@@ -6548,57 +7202,64 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertGreaterThan(result.frame.height, 140)
         capture("Native sent and tool images", app: app)
         result.tap()
-        XCTAssertTrue(app.navigationBars["附件预览"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["reconnect-after.png"].exists)
+        closeQuickLook("reconnect-after.png", app: app)
     }
 
-    func testAttachmentImagePreviewRotatesAndZoomsLocally() {
-        let tablet = UIDevice.current.userInterfaceIdiom == .pad
-        if tablet {
-            XCUIDevice.shared.orientation = .landscapeLeft
-        }
-        continueAfterFailure = false
+    private func closeQuickLook(_ name: String, app: XCUIApplication) {
+        let close = app.buttons["shioji-close-quick-look"].firstMatch
+        XCTAssertTrue(close.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(app.otherElements["QLPreviewControllerView"].firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        let frame = app.frame
+        let content = frame.insetBy(dx: 12, dy: frame.height * 0.19)
+        let rendered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.hasVisibleInk(in: content)
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [rendered], timeout: 8), .completed, "Quick Look should render " + name)
+        capture("System Quick Look opens " + name, app: app)
+        close.tap()
+        XCTAssertTrue(close.waitForNonExistence(timeout: 5))
+    }
+
+    func testAttachmentImageUsesSystemQuickLookAndReturnsToConversation() {
         let app = launch("--preview-board-transcript-images")
         let thumbnail = app.buttons["预览 reconnect-before.png"]
         XCTAssertTrue(thumbnail.waitForExistence(timeout: 8))
         thumbnail.tap()
-        let bar = app.navigationBars["附件预览"]
-        XCTAssertTrue(bar.waitForExistence(timeout: 5))
-        capture("Opened the image attachment", app: app)
-        let image = app.images["reconnect-before.png"].firstMatch
-        let rotate = app.buttons["逆时针旋转 90°"].firstMatch
-        let viewport = app.scrollViews["imagePreviewScroll"].firstMatch
-        XCTAssertTrue(rotate.waitForExistence(timeout: 5), "The image viewer must expose the same rotation action as Mac")
-        func waitForImage(_ predicate: @escaping (XCUIElement) -> Bool) {
-            let observed = NSPredicate { _, _ in image.exists && predicate(image) }
-            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: observed, object: image)], timeout: 5), .completed)
-        }
-        waitForImage { $0.frame.width > $0.frame.height }
-        let original = image.screenshot().pngRepresentation
-        rotate.tap()
-        waitForImage { $0.frame.height > $0.frame.width }
-        capture("Rotated 90 degrees counterclockwise", app: app)
-
-        XCTAssertTrue(viewport.isHittable)
-        viewport.pinch(withScale: 2, velocity: 1)
-        waitForImage { image in
-            guard let value = image.value as? String else { return false }
-            return !value.hasPrefix("100%")
-        }
-        capture("Zoomed the image only", app: app)
-        let zoomed = viewport.screenshot().pngRepresentation
-        viewport.swipeUp()
-        XCTAssertNotEqual(viewport.screenshot().pngRepresentation, zoomed, "A zoomed image can be panned to inspect the crop")
-        XCTAssertTrue(rotate.isHittable)
-        XCTAssertTrue(bar.exists)
-        viewport.doubleTap()
-        waitForImage { ($0.value as? String)?.hasPrefix("100%") == true }
-
-        bar.buttons.firstMatch.tap()
+        closeQuickLook("reconnect-before.png", app: app)
         XCTAssertTrue(thumbnail.waitForExistence(timeout: 5))
         thumbnail.tap()
-        waitForImage { $0.frame.width > $0.frame.height && ($0.value as? String)?.hasPrefix("100%") == true }
-        XCTAssertEqual(image.screenshot().pngRepresentation, original, "Each opening starts with the original orientation and fit")
+        closeQuickLook("reconnect-before.png", app: app)
+    }
+
+    func testPDFAttachmentUsesSystemQuickLook() {
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 280, height: 190))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("Shioji PDF Preview" as NSString).draw(at: CGPoint(x: 24, y: 24), withAttributes: [.font: UIFont.systemFont(ofSize: 20)])
+        }
+        checkSystemFilePreview(name: "quick-look.pdf", data: data)
+    }
+
+    func testVideoAttachmentUsesSystemQuickLook() throws {
+        guard let base64 = ProcessInfo.processInfo.environment["SHIOJI_XCTEST_QUICK_LOOK_VIDEO"],
+              let data = Data(base64Encoded: base64) else {
+            throw XCTSkip("Requires an MP4 fixture supplied to the test runner")
+        }
+        checkSystemFilePreview(name: "quick-look.mp4", data: data)
+    }
+
+    private func checkSystemFilePreview(name: String, data: Data) {
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier: "ai.shioji.mobile")
+        app.launchArguments = ["--preview-board-system-file-preview"]
+        app.launchEnvironment["SHIOJI_FIXTURE_PREVIEW_NAME"] = name
+        app.launchEnvironment["SHIOJI_FIXTURE_PREVIEW_BYTES"] = data.base64EncodedString()
+        app.launch()
+        let file = app.links["打开文件"].firstMatch
+        XCTAssertTrue(file.waitForExistence(timeout: 8), app.debugDescription)
+        file.tap()
+        closeQuickLook(name, app: app)
+        XCTAssertTrue(file.waitForExistence(timeout: 5))
     }
 
     func testMarkdownImagesReadOwningWorkerAndDocumentPaths() throws {
@@ -6627,26 +7288,10 @@ final class ShiojiMobileUITests: XCTestCase {
         let report = app.links["查看恢复报告"]
         let reportLeadingEdge = report.frame.minX
         local.tap()
-        let original = app.buttons["原生预览"]
-        XCTAssertTrue(original.waitForExistence(timeout: 6), app.debugDescription)
-        let linkedImage = app.images["latency chart.png"].firstMatch
-        XCTAssertTrue(linkedImage.waitForExistence(timeout: 6), app.debugDescription)
-        let rotateImage = app.buttons["逆时针旋转 90°"].firstMatch
-        XCTAssertTrue(rotateImage.isHittable)
-        rotateImage.tap()
-        let rotated = NSPredicate { _, _ in (linkedImage.value as? String)?.contains("90°") == true }
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: rotated, object: linkedImage)], timeout: 5), .completed)
-        capture("Linked image preview keeps the loaded file", app: app)
-        if tablet {
-            app.buttons["关闭文件预览"].tap()
-            XCTAssertTrue(original.waitForNonExistence(timeout: 6))
-            let conversationRestored = NSPredicate { _, _ in
-                report.isHittable && abs(report.frame.minX - reportLeadingEdge) < 2
-            }
-            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: conversationRestored, object: report)], timeout: 6), .completed)
-        } else {
-            app.navigationBars.buttons.firstMatch.tap()
-        }
+        closeQuickLook("latency chart.png", app: app)
+        XCTAssertTrue(report.waitForExistence(timeout: 5))
+        XCTAssertEqual(report.frame.minX, reportLeadingEdge, accuracy: 2)
+
         report.tap()
         let nested = app.buttons["预览 报告目录的图"]
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: loaded, object: nested)], timeout: 7), .completed)
@@ -7228,6 +7873,9 @@ final class ShiojiMobileUITests: XCTestCase {
         let activity = app.buttons["会话活动"].firstMatch
         XCTAssertTrue(activity.waitForExistence(timeout: 8))
         activity.tap()
+        let agents = app.buttons["子 Agent"].firstMatch
+        XCTAssertTrue(agents.waitForExistence(timeout: 8))
+        agents.tap()
         let childRow = app.buttons["连接验证"].firstMatch
         XCTAssertTrue(childRow.waitForExistence(timeout: 8))
         childRow.tap()
@@ -7322,7 +7970,7 @@ final class ShiojiMobileUITests: XCTestCase {
         let reply = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "from alpha: Keyboard first")).firstMatch
         if environment["SHIOJI_HARDWARE_RETURN_QUEUE"] == "1" {
             XCTAssertTrue(app.staticTexts["队列已暂停"].exists)
-            let queued = app.buttons["介入当前轮，第 2 条待发消息"]
+            let queued = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", softwareText)).firstMatch
             XCTAssertTrue(queued.waitForExistence(timeout: 12), app.debugDescription)
             XCTAssertFalse(reply.exists)
             capture("Physical Return appended to the paused queue", app: app)
@@ -7336,7 +7984,7 @@ final class ShiojiMobileUITests: XCTestCase {
             app.typeText("Steer only the running turn")
             press("control-return")
             XCTAssertTrue(app.staticTexts["Steer only the running turn"].firstMatch.waitForExistence(timeout: 10))
-            XCTAssertTrue(app.buttons["介入当前轮，第 2 条待发消息"].firstMatch.exists)
+            XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", softwareText)).firstMatch.exists)
             capture("Control-Return adds a message to the running turn and leaves the queue intact", app: app)
         }
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 2))
@@ -8409,28 +9057,25 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertEqual(rightDraft.value as? String, "Second")
         capture("Before managing the right queue", app: app)
 
-        let alpha = app.staticTexts["Right queue alpha"].firstMatch
-        let beta = app.staticTexts["Right queue beta"].firstMatch
-        let gamma = app.staticTexts["Right queue gamma"].firstMatch
-        let delta = app.staticTexts["Right queue delta"].firstMatch
+        let alpha = app.buttons["Right queue alpha"].firstMatch
+        let beta = app.buttons["Right queue beta"].firstMatch
+        let gamma = app.buttons["Right queue gamma"].firstMatch
+        let delta = app.buttons["Right queue delta"].firstMatch
         XCTAssertTrue(alpha.waitForExistence(timeout: 8), "An enrolled right session must show its own queue")
         XCTAssertTrue(beta.exists)
         let leftQueued = app.staticTexts["Left queued message"].firstMatch
         XCTAssertTrue(leftQueued.exists)
         let paneStart = rightDraft.frame.minX - 20
-        func actions(for item: XCUIElement) throws -> XCUIElement {
-            let buttons = app.buttons.matching(identifier: "待发消息操作").allElementsBoundByIndex
-            return try XCTUnwrap(buttons.first { $0.isHittable && $0.frame.midX > paneStart && abs($0.frame.midY-item.frame.midY) < 24 })
-        }
         func choose(_ title: String, for item: XCUIElement) throws {
-            try actions(for: item).tap()
+            XCTAssertTrue(item.isHittable && item.frame.midX > paneStart)
+            item.press(forDuration: 0.65)
             let choice = app.descendants(matching: .any).matching(identifier: title).firstMatch
             XCTAssertTrue(choice.waitForExistence(timeout: 6), app.debugDescription)
             choice.tap()
         }
         let lists = app.descendants(matching: .any).matching(identifier: "待发消息列表").allElementsBoundByIndex
         let list = try XCTUnwrap(lists.first { $0.frame.midX > paneStart })
-        XCTAssertEqual(list.frame.height, 125, accuracy: 1)
+        XCTAssertEqual(list.frame.height, 125 * 1.12, accuracy: 1)
         XCTAssertLessThan(gamma.frame.minY, list.frame.maxY)
         XCTAssertGreaterThanOrEqual(delta.frame.minY, list.frame.maxY)
         capture("The right queue shows two and a half rows", app: app)
@@ -8459,7 +9104,7 @@ final class ShiojiMobileUITests: XCTestCase {
         app.typeText(" revised")
         XCTAssertEqual(rightDraft.value as? String, "Right queue alpha revised")
         save.tap()
-        let revised = app.staticTexts["Right queue alpha revised"].firstMatch
+        let revised = app.buttons["Right queue alpha revised"].firstMatch
         XCTAssertTrue(revised.waitForExistence(timeout: 10))
         XCTAssertEqual(rightDraft.value as? String, "Second")
         try choose("下移", for: revised)
@@ -8467,17 +9112,15 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [reordered], timeout: 8), .completed)
         capture("The right queue retains the saved text in its new order", app: app)
 
-        let send = app.buttons["发送第 2 条待发消息"].firstMatch
-        XCTAssertTrue(send.waitForExistence(timeout: 8))
-        send.tap()
+        try choose("立即发送", for: revised)
         XCTAssertTrue(app.staticTexts["from alpha: Right queue alpha revised"].waitForExistence(timeout: 12), app.debugDescription)
         XCTAssertTrue(beta.exists)
-        try choose("移除", for: gamma)
+        try choose("删除", for: gamma)
         XCTAssertTrue(gamma.waitForNonExistence(timeout: 8))
         let resumes = app.buttons.matching(identifier: "恢复").allElementsBoundByIndex
         let resume = try XCTUnwrap(resumes.first { $0.frame.midX > paneStart })
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            resume.isEnabled && resume.isHittable && abs(list.frame.height - 100) < 1
+            resume.isEnabled && resume.isHittable && abs(list.frame.height - 100 * 1.12) < 1
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 8), .completed, app.debugDescription)
         resume.tap()
@@ -9175,7 +9818,7 @@ final class ShiojiMobileUITests: XCTestCase {
             let host = app.buttons["路径验收设备"].firstMatch
             XCTAssertTrue(host.waitForExistence(timeout: 8))
             host.tap()
-            let paths = app.buttons["连接路径"].firstMatch
+            let paths = app.buttons["管理连接"].firstMatch
             XCTAssertTrue(paths.waitForExistence(timeout: 8))
             paths.tap()
         }
@@ -9251,7 +9894,7 @@ final class ShiojiMobileUITests: XCTestCase {
 
     func testSavedDeviceRoutesRetainOwnCredentials() {
         let app = launch("--preview-board-device-paths")
-        let paths = app.buttons["连接路径"]
+        let paths = app.buttons["管理连接"]
         XCTAssertTrue(paths.waitForExistence(timeout: 8))
         paths.tap()
         XCTAssertTrue(app.buttons["直接 SSH，mac-mini.local:22，当前"].waitForExistence(timeout: 6))
@@ -9375,12 +10018,36 @@ final class ShiojiMobileUITests: XCTestCase {
             XCUIDevice.shared.orientation = .landscapeLeft
         }
         let app = launch("--preview-board-tailnet-route-last")
-        let last = app.staticTexts["上次 32 ms"]
+        let last = app.staticTexts["Tailnet · 上次 32 ms"]
         XCTAssertTrue(last.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["上次 · DERP 中继 · Taipei (tpe)"].exists)
-        XCTAssertTrue(app.staticTexts["离线"].exists)
+        XCTAssertTrue(app.staticTexts["上次 · DERP"].exists)
+        XCTAssertTrue(app.staticTexts["DERP 区域"].exists)
+        XCTAssertTrue(app.staticTexts["Taipei (tpe)"].exists)
+        XCTAssertTrue(app.staticTexts["连接不可用"].exists)
         XCTAssertFalse(app.staticTexts["32 ms"].exists)
         capture("Paused Tailnet route shows its last observation", app: app)
+    }
+
+    func testSavedTailnetDevicePutsRouteDetailsBeyondTheList() {
+        for (board, latency, method) in [
+            ("device-list", "12 ms", "直连"),
+            ("tailnet-route-derp", "32 ms", "DERP"),
+        ] {
+            let app = launch("--preview-board-" + board)
+            let device = app.buttons["Mac mini"].firstMatch
+            XCTAssertTrue(device.waitForExistence(timeout: 8))
+            let summary = app.staticTexts["Tailnet · " + latency].firstMatch
+            XCTAssertTrue((device.value as? String)?.contains("Tailnet · " + latency) == true, app.debugDescription)
+            XCTAssertFalse(app.staticTexts["Taipei (tpe)"].exists)
+            if method == "DERP" { capture("Tailnet device list shows only its latency", app: app) }
+            device.tap()
+            XCTAssertTrue(app.staticTexts["当前线路"].waitForExistence(timeout: 6))
+            XCTAssertTrue(summary.exists)
+            XCTAssertTrue(app.staticTexts["连接方式"].exists)
+            XCTAssertTrue(app.staticTexts[method].exists)
+            XCTAssertEqual(app.staticTexts["Taipei (tpe)"].exists, method == "DERP")
+            if method == "DERP" { capture("Tailnet device detail shows its observed DERP region", app: app) }
+        }
     }
 
     func testTailnetEmbeddedNodeReadsHostFingerprint() throws {
@@ -9423,11 +10090,20 @@ final class ShiojiMobileUITests: XCTestCase {
         capture("Pairing opened for the discovered peer", app: app)
         username.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 6))
-        app.typeText("shioji ")
-        XCTAssertEqual((username.value as? String)?.trimmingCharacters(in: .whitespaces), "shioji")
-        app.typeText("\n")
+        let keyboard = app.keyboards.firstMatch
+        let nextKeyboard = app.buttons["Next keyboard"].firstMatch
+        if nextKeyboard.exists, nextKeyboard.value as? String == "English (US)" {
+            nextKeyboard.tap()
+        }
+        for letter in "shioji" {
+            keyboard.keys[String(letter)].tap()
+        }
+        let usernameEntered = NSPredicate(format: "value == %@", "shioji")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: usernameEntered, object: username)], timeout: 5), .completed, app.debugDescription)
+        keyboard.buttons["Go"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["核对主机身份"].waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertTrue(app.staticTexts[fingerprint].waitForExistence(timeout: 20), app.debugDescription)
-        XCTAssertTrue(app.buttons["信任主机，继续配置 SSH"].isEnabled)
+        XCTAssertTrue(app.buttons["信任并继续"].isEnabled)
         XCTAssertFalse(app.textFields["设备上核实的指纹"].exists)
         capture("Fingerprint read from the actual Tailnet peer", app: app)
     }
@@ -9516,23 +10192,26 @@ final class ShiojiMobileUITests: XCTestCase {
 
     func testPhoneQueueAndBackGesture() {
         let app = launch("--preview-session")
-        let rowActions = app.buttons.matching(identifier: "待发消息操作")
-        XCTAssertTrue(rowActions.firstMatch.waitForExistence(timeout: 8), app.debugDescription)
+        let firstQueued = app.buttons["核对浅色和深色状态"].firstMatch
+        let secondQueued = app.buttons["检查 iPad 窄窗切换后的阅读位置"].firstMatch
+        XCTAssertTrue(firstQueued.waitForExistence(timeout: 8), app.debugDescription)
         let back = app.navigationBars.buttons["BackButton"]
         let title = app.navigationBars.staticTexts["conversation-title"].firstMatch
         XCTAssertTrue(title.exists)
         XCTAssertGreaterThanOrEqual(title.frame.minX - back.frame.maxX, 16)
-        XCTAssertTrue(rowActions.element(boundBy: 1).exists)
-        let firstRow = rowActions.element(boundBy: 0).frame
-        let secondRow = rowActions.element(boundBy: 1).frame
-        XCTAssertEqual(secondRow.midY - firstRow.midY, 50, accuracy: 1)
+        XCTAssertTrue(secondQueued.exists)
+        let firstRow = firstQueued.frame
+        let secondRow = secondQueued.frame
+        XCTAssertEqual(secondRow.midY - firstRow.midY, 50 * 1.12, accuracy: 1)
         print("PIXEL-QUEUE-ROWS", firstRow, secondRow)
         capture("iPhone queue expanded", app: app)
-        let second = app.staticTexts["检查 iPad 窄窗切换后的阅读位置"]
-        XCTAssertTrue(second.exists)
-        let last = app.staticTexts["确认长队列保留最后一条"]
-        second.swipeUp(velocity: .slow)
-        XCTAssertTrue(last.waitForExistence(timeout: 4))
+        let last = app.buttons["确认长队列保留最后一条"].firstMatch
+        let viewport = app.descendants(matching: .any)["待发消息列表"].firstMatch
+        viewport.swipeUp(velocity: .slow)
+        let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            last.exists && viewport.frame.contains(CGPoint(x: last.frame.midX, y: last.frame.midY))
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: 4), .completed)
         capture("iPhone queue scrolled", app: app)
         let editor = app.descendants(matching: .any).matching(identifier: "消息").firstMatch
         XCTAssertTrue(editor.exists, app.debugDescription)
@@ -9554,7 +10233,7 @@ final class ShiojiMobileUITests: XCTestCase {
         let row = app.buttons["检查移动端会话体验"]
         XCTAssertTrue(row.waitForExistence(timeout: 5), app.debugDescription)
         row.tap()
-        XCTAssertTrue(rowActions.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(firstQueued.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue((editor.value as? String)?.contains("你") == true)
         let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.002, dy: 0.34))
         let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.86, dy: 0.34))
@@ -9577,18 +10256,61 @@ final class ShiojiMobileUITests: XCTestCase {
     }
 
 
+    func testInlineSearchShowsResultsAtTopAndFindsConversationText() {
+        if UIDevice.current.userInterfaceIdiom == .pad { XCUIDevice.shared.orientation = .landscapeLeft }
+        let app = launch("--preview-board-inbox")
+        let search = app.buttons["搜索会话"].firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 8))
+        search.tap()
+        let field = app.descendants(matching: .any)["session-search"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 6), app.debugDescription)
+        let first = app.buttons["测试断线重连"].firstMatch
+        capture("Inline search before typing", app: app)
+        XCTAssertTrue(first.exists, app.debugDescription)
+        XCTAssertGreaterThanOrEqual(first.frame.minY, field.frame.maxY - 1)
+        XCTAssertLessThan(first.frame.minY - field.frame.maxY, 24)
+
+        field.tap()
+        field.typeText("Worker")
+        let hit = app.buttons.matching(NSPredicate(format: "label == %@ AND value == %@",
+                                                   "测试断线重连", "Shioji · Mac mini")).firstMatch
+        let found = hit.waitForExistence(timeout: 6)
+        capture("Inline search for text absent from the session title", app: app)
+        XCTAssertTrue(found, app.debugDescription)
+        guard found else { return }
+        XCTAssertTrue(hit.isHittable)
+        hit.tap()
+        XCTAssertTrue(app.buttons["会话活动"].firstMatch.waitForExistence(timeout: 6), app.debugDescription)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "帮我测试 Worker")).firstMatch.exists)
+        capture("Inline search opens the matched conversation", app: app)
+    }
+
     func testPhoneSearchAndOpenDraft() {
         let app = launch("--preview")
         let search = app.buttons["搜索会话"].firstMatch
+        let views = app.buttons["会话视图"].firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 5))
+        XCTAssertEqual(search.frame.width, 44, accuracy: 0.5)
+        XCTAssertEqual(search.frame.height, search.frame.width, accuracy: 0.5)
+        XCTAssertEqual(views.frame.width, search.frame.width, accuracy: 0.5)
+        XCTAssertEqual(views.frame.height, search.frame.height, accuracy: 0.5)
+        let top = search.frame.minY
         search.tap()
-        let field = app.searchFields.firstMatch
+        let field = app.descendants(matching: .any)["session-search"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5), app.debugDescription)
         field.tap()
         field.typeText("移动端")
-        XCTAssertTrue(app.buttons["检查移动端会话体验"].exists)
+        XCTAssertTrue(app.buttons["检查移动端会话体验"].firstMatch.waitForExistence(timeout: 6))
         XCTAssertFalse(app.buttons["核对本轮后台任务"].exists)
         capture("iPhone system search", app: app)
+        let cancel = app.buttons.matching(NSPredicate(format: "label IN %@", ["Cancel", "Close", "取消", "关闭"])).firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5), app.debugDescription)
+        cancel.tap()
+        XCTAssertTrue(field.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        XCTAssertEqual(search.frame.minY, top, accuracy: 1)
+        XCTAssertTrue(app.buttons["核对本轮后台任务"].exists)
+        capture("Circular search and view controls after closing search", app: app)
     }
 
     func testHardwareSessionNavigationShortcuts() {
@@ -9624,7 +10346,7 @@ final class ShiojiMobileUITests: XCTestCase {
         editor.tap()
 
         app.typeKey("k", modifierFlags: .command)
-        let search = app.searchFields.firstMatch
+        let search = app.descendants(matching: .any)["session-search"].firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 6), "Command-K opens native session search from a conversation")
         app.typeText("键盘交互")
         XCTAssertEqual(search.value as? String, "键盘交互", "Typing after Command-K goes to native search")
@@ -9689,135 +10411,6 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertTrue(archive.waitForExistence(timeout: 8))
         app.typeKey("h", modifierFlags: [.command, .shift])
         XCTAssertTrue(archive.waitForNonExistence(timeout: 6), "Command-Shift-H dismisses the archive before navigating")
-    }
-
-    func testMobileSendAndSteerReachTheTranscript() {
-        for (route, text) in [("motion-send", "发送后的新消息"), ("motion-steer", "插入当前执行轮的消息")] {
-            let app = launch("--preview-board-" + route)
-            let composer = app.textFields["消息"].firstMatch
-            XCTAssertTrue(composer.waitForExistence(timeout: 8), app.debugDescription)
-            XCTAssertEqual(composer.value as? String, text)
-            if route == "motion-steer" {
-                app.descendants(matching: .any).matching(identifier: "发送选项").firstMatch.tap()
-                app.descendants(matching: .any).matching(identifier: "介入当前轮").firstMatch.tap()
-            } else {
-                app.buttons["发送"].tap()
-            }
-            let sent = app.staticTexts[text].firstMatch
-            XCTAssertTrue(sent.waitForExistence(timeout: 6), app.debugDescription)
-            XCTAssertLessThan(sent.frame.maxY, composer.frame.minY)
-            capture("Motion accepted " + route, app: app)
-        }
-    }
-
-    func testQueueLongPressPreviewsAndDispatchesTheAcceptedMessage() {
-        let app = launch("--preview-board-motion-queue")
-        let options = app.buttons["发送选项"]
-        XCTAssertTrue(options.waitForExistence(timeout: 8), app.debugDescription)
-        options.tap()
-        app.descendants(matching: .any).matching(identifier: "加入待发队列").firstMatch.tap()
-        let queued = app.buttons["待发消息 1"].firstMatch
-        let message = "先排队再强制插入"
-        let row = app.buttons["先排队再强制插入"].firstMatch
-        let appeared = row.waitForExistence(timeout: 5)
-        capture("Queue after an accepted arrival", app: app)
-        XCTAssertTrue(appeared, app.debugDescription)
-        XCTAssertFalse(queued.exists)
-        XCTAssertFalse(app.buttons["立即发送"].exists)
-        row.press(forDuration: 0.65)
-        let send = app.buttons["立即发送"].firstMatch
-        XCTAssertTrue(send.waitForExistence(timeout: 6), app.debugDescription)
-        XCTAssertTrue(app.staticTexts[message].firstMatch.exists)
-        XCTAssertFalse(app.navigationBars["待发消息"].exists, "Long press should show a native context menu beside the message preview")
-        XCTAssertTrue(app.buttons["编辑"].firstMatch.exists)
-        XCTAssertTrue(app.buttons["删除"].firstMatch.exists)
-        XCTAssertFalse(app.keyboards.firstMatch.exists)
-        capture("Queue long-press preview and operations", app: app)
-        send.tap()
-        XCTAssertTrue(row.waitForNonExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts[message].firstMatch.waitForExistence(timeout: 5))
-        capture("Queued input inserted into the active turn", app: app)
-    }
-
-    func testLiveReplyGrowsAndKeepsTheComposerInPlace() {
-        let app = launch("--preview-board-motion-reply-height")
-        let initial = app.staticTexts["已记录第一段回复。"].firstMatch
-        let composer = app.textFields["消息"].firstMatch
-        XCTAssertTrue(initial.waitForExistence(timeout: 8), app.debugDescription)
-        let before = initial.frame.minY
-        let dock = composer.frame
-        capture("Live reply before new paragraphs", app: app)
-        let ending = app.staticTexts["追加第四段进展。"].firstMatch
-        XCTAssertTrue(ending.waitForExistence(timeout: 12), app.debugDescription)
-        XCTAssertLessThan(initial.frame.minY, before - 10)
-        XCTAssertEqual(composer.frame.minY, dock.minY, accuracy: 1)
-        XCTAssertLessThan(ending.frame.maxY, composer.frame.minY)
-        capture("Live reply after new paragraphs", app: app)
-    }
-
-    func testAutomaticQueueDispatchUsesTheAcceptedInput() {
-        let app = launch("--preview-board-motion-queue-auto")
-        let options = app.buttons["发送选项"]
-        XCTAssertTrue(options.waitForExistence(timeout: 8), app.debugDescription)
-        options.tap()
-        app.descendants(matching: .any).matching(identifier: "加入待发队列").firstMatch.tap()
-        let source = app.buttons["轮次结束后自动发送"].firstMatch
-        XCTAssertTrue(source.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(source.waitForNonExistence(timeout: 8), app.debugDescription)
-        let sent = app.staticTexts.matching(identifier: "轮次结束后自动发送")
-        XCTAssertTrue(sent.firstMatch.waitForExistence(timeout: 5))
-        XCTAssertEqual(sent.count, 1)
-        XCTAssertLessThan(sent.firstMatch.frame.maxY, app.textFields["消息"].firstMatch.frame.minY)
-        capture("Automatically dispatched queued input", app: app)
-    }
-
-    func testRunningConversationWaitsForColdHistoryBeforeShowingItsTail() throws {
-        guard UIDevice.current.userInterfaceIdiom == .phone else {
-            throw XCTSkip("Checks the first pushed conversation on iPhone")
-        }
-        let app = launch("--preview-board-running-session-cold-entry")
-        let heading = app.buttons["2 次工具调用"].firstMatch
-        let loading = app.descendants(matching: .any)["正在读取会话"].firstMatch
-        XCTAssertTrue(loading.waitForExistence(timeout: 3))
-        XCTAssertFalse(heading.exists, "The live tool group is only a partial history window")
-        capture("Waiting for the full conversation", app: app)
-        XCTAssertTrue(heading.waitForExistence(timeout: 24))
-        let composer = app.textFields["消息"].firstMatch
-        XCTAssertTrue(composer.exists)
-        let phase = app.staticTexts["正在执行命令"].firstMatch
-        XCTAssertTrue(phase.exists)
-        XCTAssertGreaterThanOrEqual(composer.frame.minY - phase.frame.maxY, 0)
-        XCTAssertLessThan(composer.frame.minY - phase.frame.maxY, 48)
-        XCTAssertFalse(app.buttons["回到最新消息"].exists)
-        capture("The first complete conversation at the latest message", app: app)
-    }
-
-    func testCollapsingAnExpandedLiveToolGroupAtTheEndKeepsTheTailVisible() {
-        let app = launch("--preview-board-transcript-tool-tail")
-        let group = app.buttons["2 次工具调用"].firstMatch
-        let phase = app.staticTexts["正在执行命令"].firstMatch
-        let latest = app.buttons["回到最新消息"].firstMatch
-        let composer = app.textFields["消息"].firstMatch
-        XCTAssertTrue(group.waitForExistence(timeout: 8))
-        XCTAssertTrue(phase.waitForExistence(timeout: 4))
-        group.tap()
-        XCTAssertTrue(phase.waitForNonExistence(timeout: 4))
-        let foldedY = group.frame.minY
-        group.tap()
-        XCTAssertTrue(latest.waitForExistence(timeout: 5))
-        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.72))
-        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.50))
-        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
-        XCTAssertTrue(latest.waitForNonExistence(timeout: 5))
-        XCTAssertTrue(phase.waitForExistence(timeout: 4))
-        XCTAssertLessThan(phase.frame.maxY, composer.frame.minY)
-        XCTAssertLessThan(group.frame.minY, foldedY - 20)
-        capture("Expanded tool group scrolled to the end", app: app)
-        group.tap()
-        XCTAssertTrue(phase.waitForNonExistence(timeout: 4))
-        XCTAssertFalse(latest.exists)
-        XCTAssertEqual(group.frame.minY, foldedY, accuracy: 1)
-        capture("Folded tool group still at the end", app: app)
     }
 
     func testPhoneReviewOpensFile() {
@@ -9918,7 +10511,7 @@ final class ShiojiMobileUITests: XCTestCase {
         capture("Audit iPhone settings", app: app)
         app.buttons["会话"].firstMatch.tap()
         app.buttons["检查移动端会话体验"].firstMatch.tap()
-        let queueMore = app.buttons["待发消息操作"].firstMatch
+        let queueMore = app.buttons["核对浅色和深色状态"].firstMatch
         let more = app.navigationBars.buttons["会话活动"].firstMatch
         XCTAssertTrue(queueMore.waitForExistence(timeout: 5))
         print("PIXEL-PHONE-CHAT", app.frame, more.frame, queueMore.frame)

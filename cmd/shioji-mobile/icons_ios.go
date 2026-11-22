@@ -52,6 +52,7 @@ var (
 	checkSymbol         = mobileSymbol(`<path d="M20 6 9 17l-5-5"></path>`)
 	deviceSymbol        = mobileSymbol(`<rect width="20" height="14" x="2" y="3" rx="2"></rect><line x1="8" x2="16" y1="21" y2="21"></line><line x1="12" x2="12" y1="17" y2="21"></line>`)
 	conversationsSymbol = mobileSymbol(`<path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path><path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1"></path>`)
+	emptyInboxSymbol    = mobileSymbol(`<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="m5.45 5.11-3.45 6.89v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>`)
 	gearSymbol          = mobileSymbol(`<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path><circle cx="12" cy="12" r="3"></circle>`)
 	fileCodeSymbol      = mobileSymbol(`<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"></path><path d="M14 2v5a1 1 0 0 0 1 1h5"></path><path d="M10 12.5 8 15l2 2.5"></path><path d="m14 12.5 2 2.5-2 2.5"></path>`)
 	compareSymbol       = mobileSymbol(`<circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><path d="M11 18H8a2 2 0 0 1-2-2V9"></path>`)
@@ -214,8 +215,16 @@ func iconAction(c *ui.Context, title, accessibleName string, before *ui.SVG, bef
 
 // UIKit receives a template at 3× and lays it out in its native toolbar.
 func toolbarImage(symbol *ui.SVG) []byte {
+	return nativeIconImage(symbol, int(toolbarIconSize))
+}
+
+func tabIconImage(symbol *ui.SVG) []byte {
+	return nativeIconImage(symbol, 24)
+}
+
+func nativeIconImage(symbol *ui.SVG, points int) []byte {
 	var pngData bytes.Buffer
-	size := int(toolbarIconSize * 3)
+	size := points * 3
 	if err := png.Encode(&pngData, symbol.Image(size, size, color.Black)); err != nil {
 		return nil
 	}

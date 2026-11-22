@@ -109,14 +109,10 @@ func (a *mobileApp) openPlan(parent *mygo.Window, sid string) {
 					mobileMessage(c, d.Plan.Explanation)
 				}
 				for i, step := range d.Plan.Steps {
-					title := map[string]string{"completed": "已完成", "in_progress": "进行中", "pending": "待开始"}[step.Status]
-					icon := infoSymbol
-					if step.Status == "completed" {
-						icon = checkSymbol
-					} else if step.Status == "in_progress" {
-						icon = clockSymbol
-					}
-					mobileRow(c.Key(i), step.Text, title, "", icon, nil)
+					mobilePlanStep(c.Key(i), step)
+				}
+				if d.Plan.Truncated {
+					mobileMessage(c, "任务内容过长，已截断显示")
 				}
 			}
 			mobileGroupHeading(c, "本轮活动")
@@ -126,25 +122,135 @@ func (a *mobileApp) openPlan(parent *mygo.Window, sid string) {
 	a.pushNative(parent, w)
 }
 
+func mobilePlanStep(c *ui.Context, step domain.PlanStep) {
+	p := palette(c)
+	font := mobileStatusFont(c, captionTextSize)
+	status, ink := "待处理", p.secondary
+	running := step.Status == "running" || step.Status == "in_progress"
+	if running {
+		status, ink = "进行中", p.ink
+	} else if step.Status == "completed" {
+		status = "已完成"
+	}
+	ui.Row(c).FillWidth().Padding(8, 0).Gap(8).AlignItems(ui.Baseline).Children(func() {
+		switch {
+		case running:
+			transcriptStatusDot(c, step.Text, font, p.active, true)
+		case step.Status == "completed":
+			transcriptSymbol(c, checkSymbol, step.Text, font, 14, p.secondary)
+		default:
+			transcriptStatusDot(c, step.Text, font, p.secondary, false)
+		}
+		label(c, step.Text, captionTextSize, ink).Value(status).Grow(1).MinWidth(0).
+			FixedLineHeight(mobileStatusLineHeight(font))
+	})
+}
+
+func (a *mobileApp) openWorkList(parent *mygo.Window, sid, kind, title string) {
+	var w *mygo.Window
+	w = a.page(title, func(c *ui.Context) {
+		mobilePageBody(c, func() { a.workRows(c, w, sid, kind) })
+	})
+	a.pushNative(parent, w)
+}
+
 func (a *mobileApp) workRows(c *ui.Context, parent *mygo.Window, sid, kind string) {
+	detail := a.model.Details[sid]
 	found := false
-	for _, work := range domain.SessionWorks(a.model.Details[sid]) {
+	for _, work := range domain.SessionWorks(detail) {
 		if kind != "" && work.Kind != kind {
 			continue
 		}
-		found = true
-		icon := terminalSymbol
-		kindName := "后台任务"
-		if work.Kind == "agent" {
-			icon = branchSymbol
-			kindName = "子 Agent"
+		if !found && detail.WorksTruncated {
+			mobileMessage(c, "仅显示最近的工作记录")
 		}
-		mobileRow(c.Key(work.ID), work.Title, kindName+" · "+workStateName(work.State), "", icon,
-			func() { a.openWork(parent, sid, work) })
+		found = true
+		a.workRow(c.Key(work.ID), parent, sid, detail.Requests, work)
 	}
 	if !found {
-		mobileMessage(c, "暂无")
+		message := "暂无"
+		switch kind {
+		case "agent":
+			message = "暂无子 Agent"
+		case "background":
+			message = "暂无后台任务"
+		}
+		mobileMessage(c, message)
 	}
+}
+
+func (a *mobileApp) workRow(c *ui.Context, parent *mygo.Window, sid string, requests []domain.PendingRequest, work domain.WorkActivity) {
+	p := palette(c)
+	title, _, _ := strings.Cut(work.Title, "\n")
+	preview, status := work.Latest, workStateName(work.State)
+	active := a.model.Connected && work.Active()
+	if !a.model.Connected && work.Active() {
+		status = workStateName("unknown")
+	}
+	if work.Kind == "background" {
+		preview = ""
+	}
+	var requestIcon *ui.SVG
+	if a.model.Connected && work.State != "unknown" && work.State != "stopped" && work.State != "failed" {
+		for _, request := range requests {
+			if request.WorkID != work.ID || !request.State.AwaitingResolution() {
+				continue
+			}
+			preview = request.Text
+			if len(request.Questions) > 0 {
+				preview = request.Questions[0].Text
+			}
+			requestIcon, status = conversationsSymbol, "等待回答"
+			if request.Kind == "approval" || request.Kind == "permissions" {
+				requestIcon, status = permissionSymbol, "等待授权"
+			}
+			break
+		}
+	}
+	preview, _, _ = strings.Cut(strings.TrimSpace(preview), "\n")
+	duration := ""
+	if work.DurationMS != nil {
+		duration = mobileElapsed(*work.DurationMS)
+	} else if work.StartedAt != nil && !work.StartedAt.IsZero() {
+		if work.CompletedAt != nil {
+			duration = mobileElapsed(work.CompletedAt.Sub(*work.StartedAt).Milliseconds())
+		} else if active {
+			elapsed := max(0, c.Now().Sub(*work.StartedAt))
+			duration = mobileElapsed(elapsed.Milliseconds())
+			c.After(time.Second - elapsed%time.Second)
+		}
+	}
+	row := mobileButton(c, work.Title, func() { a.openWork(parent, sid, work) }).FillWidth().MinWidth(0).
+		PaddingY(8).AlignItems(ui.Center).Value(status)
+	if preview != "" {
+		row.Description(preview)
+	}
+	row.Children(func() {
+		font := mobileStatusFont(c, captionTextSize)
+		ui.Row(c).FillWidth().MinWidth(0).Gap(8).AlignItems(ui.Baseline).PassThrough().Children(func() {
+			switch {
+			case requestIcon != nil:
+				transcriptSymbol(c, requestIcon, title, font, 14, p.secondary)
+			case work.State == "completed" || work.State == "stopped":
+				transcriptSymbol(c, checkSymbol, title, font, 14, p.secondary)
+			case active:
+				transcriptStatusDot(c, title, font, p.active, true)
+			default:
+				transcriptStatusDot(c, title, font, p.secondary, false)
+			}
+			ui.Column(c).Grow(1).MinWidth(0).Gap(2).PassThrough().Children(func() {
+				oneLine(c, title, captionTextSize, p.ink).FixedLineHeight(mobileStatusLineHeight(font)).PassThrough()
+				if preview != "" {
+					oneLine(c, preview, captionTextSize-1, p.secondary).PassThrough()
+				}
+			})
+			if duration != "" {
+				oneLine(c, strings.ReplaceAll(duration, " ", ""), captionTextSize-1, p.secondary).
+					Font("Menlo").FontFeatures("tnum").Shrink(0).PassThrough()
+			}
+			transcriptSymbol(c, rightSymbol, title, font, 12, p.secondary)
+		})
+	})
 }
 
 func workStateName(state string) string {

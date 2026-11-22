@@ -45,7 +45,7 @@ final class Host: NSObject, HostCalls, UNUserNotificationCenterDelegate, UIDocum
         return r
     }
 
-    func firstFrame(_ c: FirstFrameCall) {} // iOS's launch screen goes by itself
+    func firstFrame(_ c: FirstFrameCall) { surface(c.id)?.didPresentFirstFrame() }
 
     func appInfo() -> AppInfoReply {
         var r = AppInfoReply()
@@ -547,27 +547,52 @@ final class Host: NSObject, HostCalls, UNUserNotificationCenterDelegate, UIDocum
         UIPasteboard.general.image = UIImage(data: Data(c.png))
     }
 
-    /// A menu shown by the app, as a context menu: an action sheet, from the
-    /// point on an iPad.
     func popupMenu(_ c: PopupMenuCall) {
+        guard let items = try? JSONDecoder().decode([PopupMenuItem].self, from: Data(c.items)), !items.isEmpty else {
+            Go.send(Event.menuPicked(req: c.req, item: 0))
+            return
+        }
+        let finish: (Int) -> Void = { Go.send(Event.menuPicked(req: c.req, item: $0)) }
+        if #available(iOS 17.4, *), let surface = windows[c.id], surface.window != nil {
+            let anchor = PopupMenuAnchor(frame: CGRect(
+                x: min(surface.bounds.maxX - 1, max(0, c.x)),
+                y: min(surface.bounds.maxY - 1, max(0, c.y)), width: 1, height: 1))
+            anchor.isAccessibilityElement = false
+            anchor.showsMenuAsPrimaryAction = true
+            anchor.menu = UIMenu(children: PopupMenuItem.elements(items) { [weak anchor] in anchor?.select($0) })
+            anchor.finish = finish
+            surface.addSubview(anchor)
+            anchor.performPrimaryAction()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self, weak anchor] in
+                guard let anchor, !anchor.didPresent, anchor.finish != nil else { return }
+                anchor.finish = nil
+                anchor.removeFromSuperview()
+                self?.popupMenuSheet(items, x: c.x, y: c.y, finish: finish)
+            }
+            return
+        }
+        popupMenuSheet(items, x: c.x, y: c.y, finish: finish)
+    }
+
+    private func popupMenuSheet(_ items: [PopupMenuItem], x: Double, y: Double, finish: @escaping (Int) -> Void) {
         let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
-        c.items.withUnsafeBytes { buf in
-            var r = WireReader(buf)
-            while r.at < buf.count {
-                let id = r.int(), label = r.string(), enabled = r.bool(), checked = r.bool()
-                if id == 0 { continue }
-                let a = UIAlertAction(title: label, style: .default) { _ in
-                    Go.send(Event.menuPicked(req: c.req, item: id))
+        func append(_ items: [PopupMenuItem], prefix: String = "") {
+            for item in items where item.Visible && item.Type != 1 {
+                if let children = item.Submenu?.Items {
+                    append(children, prefix: prefix + item.Label + " › ")
+                    continue
                 }
-                a.isEnabled = enabled
-                if checked { a.setValue(true, forKey: "checked") }
-                sheet.addAction(a)
+                let title = (item.Checked ? "✓ " : "") + prefix + item.Label
+                let action = UIAlertAction(title: title, style: item.Destructive ? .destructive : .default) { _ in finish(item.ID) }
+                action.isEnabled = item.Enabled
+                sheet.addAction(action)
             }
         }
+        append(items)
         sheet.addAction(UIAlertAction(title: NSLocalizedString("Cancel", comment: ""), style: .cancel) { _ in
-            Go.send(Event.menuPicked(req: c.req, item: 0))
+            finish(0)
         })
-        popover(sheet, x: c.x, y: c.y)
+        popover(sheet, x: x, y: y)
         present(sheet)
     }
 

@@ -1136,6 +1136,7 @@ type MenuItem struct {
 	Enabled        bool
 	Visible        bool
 	Checked        bool
+	Destructive    bool
 	ToolTip        string
 	// Icon is the image beside the label, nil for none.
 	Icon *MenuIcon

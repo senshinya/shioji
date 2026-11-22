@@ -23,6 +23,7 @@ package mobile
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"runtime"
@@ -353,7 +354,11 @@ func (b *Backend) PopupMenu(m *platform.Menu, pw platform.Window, pos *platform.
 		return
 	}
 	var enc wire.Writer
-	encodeMenu(&enc, m, "")
+	if runtime.GOOS == "ios" {
+		enc.Buf, _ = json.Marshal(m.Items)
+	} else {
+		encodeMenu(&enc, m, "")
+	}
 	var x, y float64
 	if pos != nil {
 		x, y = float64(pos.X), float64(pos.Y)

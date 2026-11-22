@@ -28,133 +28,136 @@ import (
 )
 
 type mobileApp struct {
+	model                     *app.Model
+	controller                *app.Controller
+	cancel                    context.CancelFunc
+	directory                 string
+	rootDirectory             string
+	savedDevices              savedMobileDevices
+	legacyMigrations          map[string]mobileLegacyReceipt
+	legacyMigrationLoadError  error
+	workerPreparations        map[string]mobileServicePreparation
+	workerPreparationError    error
+	sessionPins               []app.SessionLocation
+	pinLoadError              error
+	navigationOrder           mobileclient.NavigationOrder
+	navigationOrderLoadError  error
+	navigationOrderingOpen    bool
+	sessionCatalogs           map[string]mobileclient.DeviceCatalog
+	sessionCatalogCancel      context.CancelFunc
+	catalogNextRefresh        time.Time
+	sessionListNotice         string
+	workspaceArchiveRequest   mobileRequest
+	operationHistory          mobileclient.OperationFeedbackHistory
+	sessionListOpening        *sessionListTarget
 	sessionOpening            *sessionListTarget
 	sessionLoadingTarget      string
+	attentionShortcut         *attentionShortcutScan
+	attentionFeedback         attentionShortcutFeedback
+	sessionGroupings          sessionGroupingSettings
+	sessionListMenu           mobileContextMenu
+	detailQueueMenu           mobileContextMenu
+	previewResources          *previewImageResources
+	previewLinkedResource     app.LinkedFile
 	previewLatestHistory      *domain.SessionDetail
+	notifications             mobileNotifications
+	tailnetNode               *tailnet.Node
+	tailnetStatus             tailnet.Snapshot
+	tailnetLastPeers          []tailnet.Peer
+	tailnetPending            string
+	forwards                  *portforward.Manager
+	forwardedPageOpen         bool
+	linkExport                *mobileLinkExport
+	agentSignIns              map[string]*mobileAgentSignIn
+	agentSettingsDrafts       map[[2]string]*mobileAgentSettingsDraft
+	mcpDrafts                 map[[2]string]*mobileToolEditor
+	hookReceipts              map[mobileHookSlot]*mobileHookReceipts
+	compactions               map[app.WorkKey]*mobileCompaction
+	sessionStops              map[app.WorkKey]*mobileSessionStop
+	queueSaves                map[app.WorkKey]string
+	goalOperations            map[app.WorkKey]*mobileGoalOperation
+	goalEntranceSession       app.WorkKey
+	sessionReloads            map[mobileclient.SessionReloadTarget]*mobileSessionReload
+	reloadStorageError        string
+	windows                   map[*mygo.Window]bool
+	pageDevice                map[*mygo.Window]uint64
+	deviceSelection           uint64
+	home                      *mygo.Window
+	devices                   *mygo.Window
+	settings                  *mygo.Window
+	settingsQuery             string
+	detail                    *mygo.Window
+	chat                      *mygo.Window
+	chatTitle, chatScope      string
 	newSessionSend            *mobileFirstSubmission
 	promotedDraftSession      string
 	promotedDraftOperation    string
+	lastConversation          app.SessionLocation
+	previousConversation      app.SessionLocation
+	draftPage                 *mygo.Window
+	draftReturnSession        string
+	stateWriter               *app.StateWriter
+	draftEncodingFailed       bool
+	catalogWriter             *app.StateWriter
+	cachedGeneration          string
+	cachedSequence            int64
+	review                    *reviewState
+	conversationEditor        *mobileDraftEditor
+	parallel                  string
+	parallelDevice            *mobileApp
+	parallelOwner             *mobileApp
+	parallelEditor            *mobileDraftEditor
+	draftAttachmentUploads    map[mobileDraftUploadKey]*mobileDraftUpload
+	endpoint                  mobileclient.Endpoint
+	signer                    ssh.Signer
+	setupError                string
+	archive                   bool
+	archivePages              map[uintptr]*mygo.Window
+	archiveConfirmation       *mygo.Window
+	archiveDeletion           *mobileArchiveDeletion
+	filter                    mobileclient.WorkspaceLocation
+	inlineSearch              mobileContentSearch
+	searching                 bool
+	searchAfterDetailBlur     bool
+	prominentCompose          bool
+	history                   map[string]*ui.ListState
+	importCompletions         map[app.WorkKey]*mobileImportCompletion
+	historyJump               transcriptJump
 	latestSessionEntry        string
 	reduceConversationMotion  bool
 	forkMotionTarget          mobileForkPosition
 	composerKeyboardDismissed uintptr
 	keyboardMotion            mobileKeyboardMotion
+	searchAnchor              ui.Rect
+	replyActivation           uint64
+	find                      *mobileConversationFind
+	findShortcutPage          *mygo.Window
+	parallelFind              *mobileConversationFind
+	parallelFindQueries       map[mobileFindLocation]string
+	parallelFindHandle        ui.Handle
+	toolTimelines             map[app.WorkKey]*mobileToolTimeline
+	historyRequests           map[app.WorkKey]*mobileHistoryRequest
+	transcriptImages          *mobileImageCache
+	displayAttachmentCaches   map[string]*app.AttachmentCache
+	preview                   bool
+	requestReveal             mobileRequestReveal
+	previewRoute              string
+	previewDeviceName         string
+	previewSessionOpening     bool
 	previewConversationMotion string
-
-	model                    *app.Model
-	controller               *app.Controller
-	cancel                   context.CancelFunc
-	directory                string
-	rootDirectory            string
-	savedDevices             savedMobileDevices
-	legacyMigrations         map[string]mobileLegacyReceipt
-	legacyMigrationLoadError error
-	workerPreparations       map[string]mobileServicePreparation
-	workerPreparationError   error
-	sessionPins              []app.SessionLocation
-	pinLoadError             error
-	navigationOrder          mobileclient.NavigationOrder
-	navigationOrderLoadError error
-	navigationOrderingOpen   bool
-	sessionCatalogs          map[string]mobileclient.DeviceCatalog
-	sessionCatalogCancel     context.CancelFunc
-	sessionListNotice        string
-	workspaceArchiveRequest  mobileRequest
-	operationHistory         mobileclient.OperationFeedbackHistory
-	sessionListOpening       *sessionListTarget
-	attentionShortcut        *attentionShortcutScan
-	attentionFeedback        attentionShortcutFeedback
-	sessionGroupings         sessionGroupingSettings
-	sessionListMenu          mobileContextMenu
-	detailQueueMenu          mobileContextMenu
-	previewResources         *previewImageResources
-	notifications            mobileNotifications
-	tailnetNode              *tailnet.Node
-	tailnetStatus            tailnet.Snapshot
-	tailnetLastPeers         []tailnet.Peer
-	tailnetPending           string
-	forwards                 *portforward.Manager
-	forwardedPageOpen        bool
-	linkExport               *mobileLinkExport
-	agentSignIns             map[string]*mobileAgentSignIn
-	agentSettingsDrafts      map[[2]string]*mobileAgentSettingsDraft
-	mcpDrafts                map[[2]string]*mobileToolEditor
-	hookReceipts             map[mobileHookSlot]*mobileHookReceipts
-	compactions              map[app.WorkKey]*mobileCompaction
-	sessionStops             map[app.WorkKey]*mobileSessionStop
-	queueSaves               map[app.WorkKey]string
-	goalOperations           map[app.WorkKey]*mobileGoalOperation
-	goalEntranceSession      app.WorkKey
-	sessionReloads           map[mobileclient.SessionReloadTarget]*mobileSessionReload
-	reloadStorageError       string
-	windows                  map[*mygo.Window]bool
-	pageDevice               map[*mygo.Window]uint64
-	deviceSelection          uint64
-	home                     *mygo.Window
-	devices                  *mygo.Window
-	settings                 *mygo.Window
-	settingsQuery            string
-	detail                   *mygo.Window
-	chat                     *mygo.Window
-	chatTitle, chatScope     string
-	lastConversation         app.SessionLocation
-	previousConversation     app.SessionLocation
-	draftPage                *mygo.Window
-	draftReturnSession       string
-	stateWriter              *app.StateWriter
-	draftEncodingFailed      bool
-	catalogWriter            *app.StateWriter
-	cachedGeneration         string
-	cachedSequence           int64
-	review                   *reviewState
-	conversationEditor       *mobileDraftEditor
-	parallel                 string
-	parallelDevice           *mobileApp
-	parallelOwner            *mobileApp
-	parallelEditor           *mobileDraftEditor
-	draftAttachmentUploads   map[mobileDraftUploadKey]*mobileDraftUpload
-	endpoint                 mobileclient.Endpoint
-	signer                   ssh.Signer
-	setupError               string
-	archive                  bool
-	archivePages             map[uintptr]*mygo.Window
-	archiveConfirmation      *mygo.Window
-	archiveDeletion          *mobileArchiveDeletion
-	filter                   mobileclient.WorkspaceLocation
-	search                   string
-	searching                bool
-	searchAfterDetailBlur    bool
-	prominentCompose         bool
-	history                  map[string]*ui.ListState
-	importCompletions        map[app.WorkKey]*mobileImportCompletion
-	historyJump              transcriptJump
-	replyActivation          uint64
-	find                     *mobileConversationFind
-	findShortcutPage         *mygo.Window
-	parallelFind             *mobileConversationFind
-	parallelFindQueries      map[mobileFindLocation]string
-	parallelFindHandle       ui.Handle
-	toolTimelines            map[app.WorkKey]*mobileToolTimeline
-	historyRequests          map[app.WorkKey]*mobileHistoryRequest
-	transcriptImages         *mobileImageCache
-	displayAttachmentCaches  map[string]*app.AttachmentCache
-	preview                  bool
-	requestReveal            mobileRequestReveal
-	previewRoute             string
-	previewDeviceName        string
-	previewReviewBoard       bool
-	previewDisabledSkills    map[string]bool
-	previewSkillRevision     int
-	previewSkillFailure      bool
-	previewHooks             *mobilePreviewHooks
-	previewCompaction        *mobilePreviewCompaction
-	previewReload            *mobilePreviewReload
-	previewFind              bool
-	previewReferenceKeyboard bool
-	uiConfigured             bool
-	widthReported            bool
-	wide                     bool
-	zoomFeedback             *mygo.Window
+	previewReviewBoard        bool
+	previewDisabledSkills     map[string]bool
+	previewSkillRevision      int
+	previewSkillFailure       bool
+	previewHooks              *mobilePreviewHooks
+	previewCompaction         *mobilePreviewCompaction
+	previewReload             *mobilePreviewReload
+	previewFind               bool
+	previewReferenceKeyboard  bool
+	uiConfigured              bool
+	widthReported             bool
+	wide                      bool
+	zoomFeedback              *mygo.Window
 }
 
 func main() {
@@ -218,9 +221,9 @@ func (a *mobileApp) start() {
 		a.openPair(a.devices, mobileclient.Endpoint{})
 	}})
 	if _, err := mygo.NewTabs(
-		mygo.TabItem{Title: "会话", Icon: toolbarImage(conversationsSymbol), Window: a.home},
-		mygo.TabItem{Title: "设备", Icon: toolbarImage(deviceSymbol), Window: a.devices},
-		mygo.TabItem{Title: "设置", Icon: toolbarImage(gearSymbol), Window: a.settings},
+		mygo.TabItem{Title: "会话", Icon: tabIconImage(conversationsSymbol), Window: a.home},
+		mygo.TabItem{Title: "设备", Icon: tabIconImage(deviceSymbol), Window: a.devices},
+		mygo.TabItem{Title: "设置", Icon: tabIconImage(gearSymbol), Window: a.settings},
 	); err != nil {
 		log.Fatal(err)
 	}
@@ -239,13 +242,14 @@ func (a *mobileApp) page(title string, draw func(*ui.Context)) *mygo.Window {
 	var w *mygo.Window
 	owner := a.deviceSelection
 	w = mygo.NewWindow(mygo.WindowOptions{Title: title, Content: ui.View(func(c *ui.Context) {
-		c.SetZoom(a.splitRoot().model.Preferences.InterfaceZoom)
+		c.SetZoom(a.splitRoot().model.Preferences.InterfaceZoom * mobileBaselineZoom)
 		if font := a.splitRoot().model.Preferences.InterfaceFont; font != "" && font != "system-ui" {
 			theme := *c.Theme()
 			theme.Font = font + ", system-ui"
 			c.SetTheme(&theme)
 		}
 		c.ReduceMotion(a.model.Preferences.ReduceMotion)
+		c.Root().Background(palette(c).canvas)
 		if w != nil && !a.pageCurrent(w) {
 			mobilePageBody(c, func() { mobileMessage(c, "执行设备已切换，请返回重新打开此页面。") })
 			return
@@ -939,6 +943,7 @@ func (a *mobileApp) deliverInput(in domain.Submission, method string, input any,
 		a.refresh()
 		return
 	}
+	a.refresh()
 	go func() {
 		err := writer.FlushLatest()
 		mygo.RunOnMain(func() {

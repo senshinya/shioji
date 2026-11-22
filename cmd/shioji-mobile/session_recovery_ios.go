@@ -102,7 +102,7 @@ func (a *mobileApp) recoveryPanel(c *ui.Context, parent *mygo.Window, s domain.S
 				}).PaddingX(4).KeepFocus().Disabled(!connected || busy || !historyReady || ready.State != domain.RuntimeReady ||
 					!ready.Capabilities.Continue || m.HasPendingInputForSession(s.ID) || s.ContextChanged)
 				iconButton(c.Key("recovery-more"), "更多恢复操作", moreSymbol, 17, nil).KeepFocus().
-					PopoverMenuButton(func(menu *ui.Menu) {
+					Menu(func(menu *ui.Menu) {
 						if menu.Item("在新会话接续").Disabled(!draftReady).Chosen() {
 							openDraft()
 						}

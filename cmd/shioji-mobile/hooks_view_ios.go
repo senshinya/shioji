@@ -77,7 +77,7 @@ func (s *mobileHooks) feedback(a *mobileApp, c *ui.Context, w *mygo.Window, agen
 		})
 	} else if len(s.receipts.unconfirmed) > 0 && s.request == "" {
 		action(c.Key("hook-prior"), "查询未确认回执", nil).AlignSelf(ui.Start).PaddingX(4).
-			Disabled(!a.model.Connected).PopoverMenuButton(func(m *ui.Menu) {
+			Disabled(!a.model.Connected).Menu(func(m *ui.Menu) {
 			for i, in := range s.receipts.unconfirmed {
 				title := fmt.Sprintf("未确认的操作 %d", i+1)
 				if m.Item(title).Chosen() {
@@ -143,7 +143,7 @@ func (s *mobileHooks) showList(a *mobileApp, c *ui.Context, w *mygo.Window, agen
 	})
 	if len(agents) > 1 {
 		iconAction(c.Key("agent"), agent.Name, "Hooks Agent", nil, 0, pickerSymbol, 12, 13, 400, nil).
-			AlignSelf(ui.End).PaddingX(3).PopoverMenuButton(func(m *ui.Menu) {
+			AlignSelf(ui.End).PaddingX(3).Menu(func(m *ui.Menu) {
 			for _, item := range agents {
 				menuChoice(m, item.Name, item.ID == agent.ID, func() { s.harness = item.ID })
 			}

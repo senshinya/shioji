@@ -17,8 +17,12 @@ import (
 	"shioji/internal/protocol"
 )
 
+func conversationHeaderScope(workspace, device string) string {
+	return strings.Trim(workspace+" · "+device, " ·")
+}
+
 func (a *mobileApp) conversationHeaderScope(s domain.Session) string {
-	return strings.Trim(a.workspace(s.WorkspaceID).Name+" · "+a.deviceName(), " ·")
+	return conversationHeaderScope(a.workspace(s.WorkspaceID).Name, a.deviceName())
 }
 
 func (a *mobileApp) conversationScope(s domain.Session) string {
@@ -39,70 +43,79 @@ func (a *mobileApp) deviceName() string {
 		}
 		return "Studio Display Mac"
 	}
-	return deviceHost(a.endpoint)
+	if a.endpoint.Address == "" {
+		return ""
+	}
+	return mobileDeviceName("", a.endpoint.Address)
 }
 
 func (a *mobileApp) devicesView(c *ui.Context) {
+	a.maintainSessionCatalogs(c)
 	p := palette(c)
 	mobilePageBody(c, func() {
 		mobileSection(c, "远程设备")
-		if name := a.deviceName(); name != "" {
-			status, statusInk := "离线", p.secondary
-			transport := a.connectionName()
-			profile := a.savedDevice(a.endpoint.DeviceID)
-			if a.model.Connected {
-				status, statusInk = "已连接", p.active
-			}
-			observed := a.tailnetObservation(a.activeEndpoint(), a.model.Connected, c.Now())
-			if observed.Current {
-				transport += " · " + observed.Path
-				status, statusInk = observed.Latency, p.secondary
-			} else if observed.Measured {
-				transport += " · " + observed.Latency
-			}
-			if profile.Name != "" {
-				transport += " · " + a.activeEndpoint().Address
-			}
-			_, glyph := mobileDeviceIcon(profile.Icon)
-			mobileDetailRow(c.Key("active-device"), name, transport, name, glyph, func() { a.openDevice(a.devices) }, func() {
-				oneLine(c, status, 13, statusInk).PassThrough()
-			})
+		devices := a.savedDevices.Devices
+		if a.savedDevice(a.endpoint.DeviceID).Endpoint.DeviceID == "" && a.deviceName() != "" {
+			devices = append([]savedMobileDevice{{Endpoint: a.endpoint, Name: a.deviceName()}}, devices...)
 		}
-		for _, saved := range a.savedDevices.Devices {
+		for _, saved := range devices {
 			ep := saved.Endpoint
-			if ep.DeviceID == a.endpoint.DeviceID {
-				continue
+			active := ep.DeviceID == a.endpoint.DeviceID
+			name := mobileDeviceName(saved.Name, ep.Address)
+			catalog := a.sessionCatalogs[ep.DeviceID]
+			fresh := !catalog.RequestedAt.IsZero() && c.Now().Sub(catalog.CheckedAt) < 2*sessionCatalogInterval
+			timing := catalog.Timing
+			status, statusInk := "正在检查", p.secondary
+			if !catalog.CheckedAt.IsZero() {
+				status = "离线"
 			}
-			name, subtitle, status := deviceHost(ep), "直接 SSH", "—"
-			if ep.TailnetPeerID != "" {
-				subtitle = "Tailnet"
-				observed := a.tailnetObservation(ep, true, c.Now())
-				if observed.Current {
-					status = observed.Latency
-				} else if observed.Measured {
-					subtitle += " · " + observed.Latency
+			online := fresh
+			if active {
+				name, ep = a.deviceName(), a.activeEndpoint()
+				timing = a.activeDeviceTiming(ep.RouteID())
+				phase := a.connectionPhase()
+				online = a.model.Connected || fresh && (phase == app.ConnectionOpening || phase == app.ConnectionSyncing || phase == app.ConnectionSwitching)
+				if !online && (phase == app.ConnectionUnavailable || phase == app.ConnectionSyncFailed) {
+					status = "离线"
+				}
+			} else {
+				for _, route := range saved.Endpoints() {
+					if route.RouteID() == catalog.RouteID {
+						ep = route
+						break
+					}
 				}
 			}
-			if a.preview {
+			if online {
+				status, statusInk = "在线", p.active
+			}
+			subtitle := a.deviceRouteDisplay(ep, timing, online, c.Now()).summary()
+			if a.preview && !active {
 				switch ep.DeviceID {
 				case "preview-laptop":
-					name, subtitle, status = "MacBook Pro", "直接 SSH · SSH", "18 ms"
+					name, subtitle, status, statusInk = "MacBook Pro", "直接 SSH · 18 ms", "在线", p.active
 				case "preview-builder":
 					name, subtitle, status = "构建机", "上次连接 09:26", "离线"
 				}
 			}
-			if saved.Name != "" {
-				name = saved.Name
-				subtitle += " · " + ep.Address
-			}
 			_, glyph := mobileDeviceIcon(saved.Icon)
-			mobileRow(c.Key(ep.DeviceID), name, subtitle, status, glyph, func() {
-				if a.preview {
-					a.endpoint, a.previewDeviceName, a.model.Connected = ep, name, false
+			mobileDetailRow(c.Key(ep.DeviceID), name, subtitle, name, glyph, func() {
+				if active {
 					a.openDevice(a.devices)
 					return
 				}
-				if e := a.switchSavedDevice(ep); e != nil {
+				if a.preview {
+					a.cacheSessionCatalog()
+					a.endpoint, a.previewDeviceName, a.model.Connected = saved.Endpoint, name, online
+					if catalog.Snapshot.DeviceID != "" {
+						a.model.Snapshot = catalog.Snapshot
+						a.model.DevicePaths = []app.DevicePathStatus{{ID: ep.RouteID(), Phase: app.PathActive, Timing: timing}}
+					}
+					a.devices.Invalidate()
+					a.openDevice(a.devices)
+					return
+				}
+				if e := a.switchSavedDevice(saved.Endpoint); e != nil {
 					a.setupError = e.Error()
 					a.refresh()
 					return
@@ -112,7 +125,9 @@ func (a *mobileApp) devicesView(c *ui.Context) {
 						a.openDevice(a.devices)
 					}
 				})
-			})
+			}, func() {
+				oneLine(c, status, 13, statusInk).PassThrough()
+			}).Value(status + "，" + subtitle)
 		}
 		a.legacyMigrationRows(c)
 		a.servicePreparationRows(c)
@@ -186,7 +201,7 @@ func (a *mobileApp) newConversationView(c *ui.Context, startAtTop bool) {
 				ui.Icon(c, folderSymbol).Size(16, 16).TextColor(p.secondary).PassThrough()
 				oneLine(c, title, 15, p.ink).Grow(1).PassThrough()
 				ui.Icon(c, pickerSymbol).Size(13, 13).TextColor(p.secondary).PassThrough()
-			}).PopoverMenuButton(func(menu *ui.Menu) {
+			}).Menu(func(menu *ui.Menu) {
 				for _, item := range m.Snapshot.Workspaces {
 					if !item.Archived {
 						menuChoice(menu, item.Name, item.ID == ws.ID, func() {
@@ -306,6 +321,15 @@ func (a *mobileApp) openActivity(parent *mygo.Window, sid string) {
 			mobileRow(c.Key("plan"), "计划与任务", "", "", planSymbol, func() { a.openPlan(w, sid) })
 			mobileRow(c.Key("actions"), "会话操作", "", "", moreSymbol, func() { a.openSessionActions(w, sid) })
 			if session := a.sessionByID(sid); session.ID != "" {
+				if a.model.SessionReadiness(session).Capabilities.Compact {
+					state := a.compaction(session)
+					if a.compactionReason(session, state) == "" {
+						mobileRow(c.Key("compact"), "压缩上下文", "", "", compactSymbol, func() {
+							a.beginCompaction(session, nil)
+							a.callUIKit("showPage", map[string]uintptr{"window": parent.NativeHandle()}, nil)
+						})
+					}
+				}
 				mobileRow(c.Key("operation-history"), "最近操作", "", "", clockSymbol, func() {
 					a.openOperationHistory(w, session.WorkspaceID, sid)
 				})
@@ -321,10 +345,12 @@ func (a *mobileApp) openActivity(parent *mygo.Window, sid string) {
 			if a.wide {
 				mobileRow(c.Key("parallel"), "并排查看会话", "", "", panelSymbol, func() { a.openParallelPicker(w, sid) })
 			}
-			for _, group := range []struct{ kind, title string }{{"agent", "子 Agent"}, {"background", "后台任务"}} {
-				mobileSection(c.Key(group.kind), group.title)
-				a.workRows(c.Key(group.kind+"-rows"), w, sid, group.kind)
-			}
+			mobileRow(c.Key("agent"), "子 Agent", "", "", branchSymbol, func() {
+				a.openWorkList(w, sid, "agent", "子 Agent")
+			})
+			mobileRow(c.Key("background"), "后台任务", "", "", terminalSymbol, func() {
+				a.openWorkList(w, sid, "background", "后台任务")
+			})
 		})
 	})
 	a.pushNative(parent, w)
@@ -365,4 +391,7 @@ func (a *mobileApp) seedPreview() {
 		{ID: "agent", Kind: "agent", Title: "检查 iPad 分栏", State: "running"},
 		{ID: "task", Kind: "background", Title: "编译模拟器构建", State: "completed"},
 	}}
+	if a.previewRoute == "board-home-empty" {
+		m.Snapshot.Sessions = nil
+	}
 }

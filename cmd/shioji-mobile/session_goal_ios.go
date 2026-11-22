@@ -180,7 +180,7 @@ func (a *mobileApp) goalControl(c *ui.Context, parent *mygo.Window, s domain.Ses
 							Disabled(pending || control == domain.ResumeGoal && !a.canResumeGoal(s))
 					}
 					if canControl {
-						iconButton(scope.Key("more"), "目标操作", moreSymbol, 15, nil).KeepFocus().Disabled(pending).PopoverMenuButton(func(menu *ui.Menu) {
+						iconButton(scope.Key("more"), "目标操作", moreSymbol, 15, nil).KeepFocus().Disabled(pending).Menu(func(menu *ui.Menu) {
 							if menu.Item("清除目标").Danger().Chosen() {
 								a.confirmClearGoal(parent, s)
 							}

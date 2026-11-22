@@ -103,7 +103,7 @@ func (a *mobileApp) agentModels(c *ui.Context, w *mygo.Window, deviceID string, 
 						save(next)
 					}
 					iconButton(row.Key("order"), name+" 模型操作", moreSymbol, inlineIconSize, nil).
-						Disabled(disabled).PopoverMenuButton(func(menu *ui.Menu) {
+						Disabled(disabled).Menu(func(menu *ui.Menu) {
 						if menu.Item("上移").Disabled(index == 0).Chosen() {
 							move(index - 1)
 						}

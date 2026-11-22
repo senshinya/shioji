@@ -9,13 +9,17 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
 
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/mobileclient"
 )
 
-const sessionCatalogTimeout = 15 * time.Second
+const (
+	sessionCatalogTimeout  = 15 * time.Second
+	sessionCatalogInterval = 25 * time.Second
+)
 
 const (
 	workspaceSettingsAction = "workspace-settings"
@@ -125,6 +129,12 @@ func (a *mobileApp) cacheSessionCatalog() {
 	if a.model.Connected || a.sessionCatalogs[id].Snapshot.DeviceID == "" {
 		catalog := a.sessionCatalog(id)
 		catalog.Snapshot.Operations = nil
+		catalog.RouteID = a.activeEndpoint().RouteID()
+		catalog.Timing = a.activeDeviceTiming(catalog.RouteID)
+		catalog.CheckedAt = time.Now()
+		if a.model.Connected && catalog.RequestedAt.IsZero() {
+			catalog.RequestedAt = catalog.CheckedAt
+		}
 		a.sessionCatalogs[id] = catalog
 	}
 }
@@ -170,6 +180,7 @@ func (a *mobileApp) refreshSessionCatalogs() {
 	if a.signer == nil || a.sessionCatalogs == nil {
 		return
 	}
+	a.catalogNextRefresh = time.Now().Add(sessionCatalogInterval)
 	if a.sessionCatalogCancel != nil {
 		a.sessionCatalogCancel()
 	}
@@ -195,13 +206,27 @@ func (a *mobileApp) refreshSessionCatalogs() {
 					a.observeNavigationOrder(catalog.Snapshot)
 					a.updateArchivedBrowseScope(catalog.Snapshot)
 					a.saveBrowseCatalog(device, catalog.Snapshot)
-				} else if last, ok := a.sessionCatalogs[id]; ok {
+				} else {
+					last := a.sessionCatalogs[id]
 					last.RequestedAt = time.Time{}
+					last.CheckedAt = time.Now()
 					a.sessionCatalogs[id] = last
 				}
 				a.refresh()
 			})
 		}()
+	}
+}
+
+func (a *mobileApp) maintainSessionCatalogs(c *ui.Context) {
+	if a.preview || a.signer == nil || len(a.savedDevices.Devices) < 2 || !c.WindowActive() || !mygo.App.IsActive() {
+		return
+	}
+	if !c.Now().Before(a.catalogNextRefresh) {
+		a.refreshSessionCatalogs()
+	}
+	if delay := a.catalogNextRefresh.Sub(c.Now()); delay > 0 {
+		c.After(delay)
 	}
 }
 
@@ -270,7 +295,7 @@ func (a *mobileApp) openSessionListTarget(target sessionListTarget) {
 				}
 				for _, workspace := range catalog.Snapshot.Workspaces {
 					if workspace.ID == ref.WorkspaceID && workspace.DeviceID == ref.DeviceID {
-						target.scope = strings.Join([]string{workspace.Name, a.deviceLabel(ref.DeviceID, catalog.Address)}, " · ")
+						target.scope = conversationHeaderScope(workspace.Name, a.deviceLabel(ref.DeviceID, catalog.Address))
 						break
 					}
 				}

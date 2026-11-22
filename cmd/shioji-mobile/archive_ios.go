@@ -78,7 +78,7 @@ func (a *mobileApp) archivePage(parent *mygo.Window, scope mobileclient.Workspac
 				}
 				row := rows.Workspaces[0]
 				ui.Row(c.Key("workspace-context")).MinHeight(mobileTapSize(c)).AlignItems(ui.Center).Children(func() {
-					oneLine(c, row.Device.Label()+" · 已归档", captionTextSize, palette(c).secondary).Grow(1).MinWidth(0)
+					oneLine(c, mobileDeviceName(row.Device.Name, row.Device.Address)+" · 已归档", captionTextSize, palette(c).secondary).Grow(1).MinWidth(0)
 					action(c, "恢复工作区", func() { a.restoreArchiveWorkspace(w, &req, row) }).Disabled(busy || !a.canUseArchiveDevice(row.Device, 5))
 					action(c, "彻底删除工作区", func() {
 						a.confirmArchiveDeletion(w, []mobileArchiveTarget{archiveWorkspaceTarget(row)}, false, "")
@@ -138,7 +138,7 @@ func (a *mobileApp) archivePage(parent *mygo.Window, scope mobileclient.Workspac
 			})
 			a.archiveDeletionStatus(c, deletion)
 			if opening != nil {
-				mobileMessage(c, "正在打开 "+opening.Device.Label()+" 的会话…")
+				mobileMessage(c, "正在打开 "+mobileDeviceName(opening.Device.Name, opening.Device.Address)+" 的会话…")
 			}
 			if workspaceList {
 				for _, row := range hits.Workspaces {
@@ -150,7 +150,7 @@ func (a *mobileApp) archivePage(parent *mygo.Window, scope mobileclient.Workspac
 					if !busy && a.canUseArchiveDevice(row.Device, 40) {
 						remove = func() { a.confirmArchiveDeletion(w, []mobileArchiveTarget{archiveWorkspaceTarget(row)}, false, "") }
 					}
-					a.archiveRow(c.Key(key), &frame, key, row.Name, fmt.Sprintf("%s · %d 个会话", row.Device.Label(), row.Count),
+					a.archiveRow(c.Key(key), &frame, key, row.Name, fmt.Sprintf("%s · %d 个会话", mobileDeviceName(row.Device.Name, row.Device.Address), row.Count),
 						"恢复工作区", folderSymbol, contextMenuTarget{}, func() {
 							a.archivePage(w, mobileclient.WorkspaceLocation{DeviceID: row.Device.ID, WorkspaceID: row.ID}, row.Name, "会话", false)
 						}, restore, remove)
@@ -161,7 +161,7 @@ func (a *mobileApp) archivePage(parent *mygo.Window, scope mobileclient.Workspac
 					key := "session:" + row.Device.ID + ":" + row.Workspace.ID + ":" + s.ID
 					subtitle := row.Workspace.Name + " · 只读"
 					if len(catalogs) > 1 {
-						subtitle = row.Workspace.Name + " · " + row.Device.Label() + " · 只读"
+						subtitle = row.Workspace.Name + " · " + mobileDeviceName(row.Device.Name, row.Device.Address) + " · 只读"
 					}
 					var restore, remove func()
 					if !busy && s.Archived && !row.Workspace.Archived && a.canUseArchiveDevice(row.Device, 5) {

@@ -2,7 +2,9 @@ package main
 
 import (
 	"errors"
+	"net"
 	"slices"
+	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -34,9 +36,31 @@ func mobileDeviceIcon(icon app.DeviceIcon) (string, *ui.SVG) {
 }
 
 func (a *mobileApp) deviceLabel(id, address string) string {
-	return mobileclient.DeviceLabel(a.splitRoot().savedDevice(id).Name, address)
+	return mobileDeviceName(a.splitRoot().savedDevice(id).Name, address)
 }
 
+func mobileDeviceName(name, address string) string {
+	if name != "" {
+		return name
+	}
+	host := deviceHost(mobileclient.Endpoint{Address: address})
+	if ip, _, _ := strings.Cut(strings.Trim(host, "[]"), "%"); host == "" || net.ParseIP(ip) != nil {
+		return "Mac"
+	}
+	return host
+}
+
+var mobileDeviceMenuIcons = map[app.DeviceIcon]*mygo.MenuIcon{}
+
+func mobileDeviceMenuIcon(kind app.DeviceIcon) *mygo.MenuIcon {
+	if icon := mobileDeviceMenuIcons[kind]; icon != nil {
+		return icon
+	}
+	_, glyph := mobileDeviceIcon(kind)
+	icon, _ := mygo.NewMenuIcon(nativeIconImage(glyph, 16), true)
+	mobileDeviceMenuIcons[kind] = icon
+	return icon
+}
 func (a *mobileApp) openDeviceAppearance(parent *mygo.Window, deviceID string) {
 	root := a.splitRoot()
 	entry := root.savedDevice(deviceID)
@@ -76,9 +100,11 @@ func (a *mobileApp) openDeviceAppearance(parent *mygo.Window, deviceID string) {
 			iconName, glyph := mobileDeviceIcon(icon)
 			formRow(c.Key("device-icon"), "设备图标", func() {
 				iconAction(c, iconName, "设备图标", glyph, inlineIconSize, pickerSymbol, pickerIconSize, bodyTextSize, 400, nil).
-					PaddingX(0).MaxWidthPercent(62).Value(iconName).PopoverMenuButton(func(m *ui.Menu) {
+					PaddingX(0).MaxWidthPercent(62).Value(iconName).Menu(func(m *ui.Menu) {
 					for _, choice := range mobileDeviceIcons {
-						menuChoice(m, choice.name, choice.id == icon, func() { icon = choice.id })
+						if m.Item(choice.name).Icon(mobileDeviceMenuIcon(choice.id)).Checked(choice.id == icon).Chosen() {
+							icon = choice.id
+						}
 					}
 				})
 			})

@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -304,61 +303,6 @@ func (a *mobileApp) sendCompaction(session domain.Session, state *mobileCompacti
 		}
 	}
 	a.refresh()
-}
-
-func (a *mobileApp) compactionControl(c *ui.Context, session domain.Session, s *mobileCompaction) {
-	p := palette(c)
-	info := session.ContextUsage
-	display := "用量未知"
-	var fraction float32
-	if info != nil && info.UsedTokens != nil {
-		display = fmt.Sprintf("%d 令牌", *info.UsedTokens)
-		if info.LimitTokens != nil && *info.LimitTokens > 0 {
-			display = fmt.Sprintf("%d / %d 令牌", *info.UsedTokens, *info.LimitTokens)
-			fraction = float32(min(1, max(0, float64(*info.UsedTokens)/float64(*info.LimitTokens))))
-		}
-	}
-	busy := a.model.Connected && (s.phase == mobileCompactionSending || s.phase == mobileCompactionAccepted ||
-		a.currentLiveCompaction(session, a.model.Details[session.ID], mobileclient.ConversationItems(a.model.Details[session.ID])) != "")
-	button := mobileButton(c, "上下文用量", nil).Size(mobileTapSize(c), mobileTapSize(c)).AlignItems(ui.Center).Justify(ui.Center).Value(display).KeepFocus()
-	value := button.AnimateTo("usage", fraction, ui.Animation{Duration: 200 * time.Millisecond})
-	reduce := c.Preferences().ReduceMotion
-	button.Children(func() {
-		ui.Box(c).Size(18, 18).PassThrough().Draw(func(painter *ui.Painter, r ui.Rect) {
-			var ring ui.Path
-			ring.Circle(r.X+r.W/2, r.Y+r.H/2, 6.5)
-			painter.StrokePath(&ring, 2, p.selected)
-			if busy {
-				start := float32(0)
-				if !reduce {
-					start = float32(painter.Now().UnixMilli()%900) / 900
-					painter.After(time.Second / 60)
-				}
-				painter.StrokePath(ring.Trim(start, start+.28), 2, p.secondary)
-				if start+.28 > 1 {
-					painter.StrokePath(ring.Trim(0, start+.28-1), 2, p.secondary)
-				}
-			} else if value > 0 {
-				painter.StrokePath(ring.Trim(0, value), 2, p.secondary)
-			}
-		})
-	}).PopoverMenuButton(func(menu *ui.Menu) {
-		menu.Item(display).Disabled(true)
-		menu.Separator()
-		if s.phase == mobileCompactionUnknown {
-			if menu.Item("核对压缩结果").Disabled(!a.model.Connected).Chosen() {
-				a.queryCompaction(session, s)
-			}
-			return
-		}
-		reason := a.compactionReason(session, s)
-		if menu.Item("压缩上下文").Disabled(reason != "").Chosen() {
-			a.beginCompaction(session, nil)
-		}
-		if reason != "" {
-			menu.Item(reason).Disabled(true)
-		}
-	}, ui.PopoverMenuButtonOptions{At: ui.AnchorTopEnd, Self: ui.AnchorBottomEnd})
 }
 
 func (a *mobileApp) currentLiveCompaction(session domain.Session, detail domain.SessionDetail, items []domain.Item) string {

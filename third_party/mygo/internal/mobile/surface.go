@@ -4,6 +4,7 @@ import (
 	"math"
 	"runtime"
 	"strconv"
+	"time"
 
 	"github.com/egoist/mygo/internal/mobile/wire"
 	"github.com/egoist/mygo/internal/platform"
@@ -68,6 +69,8 @@ func (s *surface) send(ev platform.SurfaceEvent) bool {
 func (s *surface) resized(size, insets bool) {
 	if size {
 		s.send(platform.SurfaceEvent{Kind: platform.SurfaceResize})
+	} else if insets {
+		s.send(platform.SurfaceEvent{Kind: platform.SurfaceInsetsChanged})
 	}
 	if size || insets {
 		s.RequestFrame()
@@ -324,6 +327,7 @@ func (s *surface) touch(e *wire.TouchEvent) {
 		s.mouse(e)
 		return
 	}
+	touchTime := time.Duration(e.Time * float64(time.Second))
 	switch e.Phase {
 	case "down":
 		s.fingers[e.Pointer] = [2]float64{e.X, e.Y}
@@ -352,7 +356,7 @@ func (s *surface) touch(e *wire.TouchEvent) {
 			s.taps = 1
 		}
 		s.send(platform.SurfaceEvent{Kind: platform.PointerMove, X: e.X, Y: e.Y, Touch: true})
-		s.send(platform.SurfaceEvent{Kind: platform.PointerDown, X: e.X, Y: e.Y, Clicks: s.taps, Touch: true})
+		s.send(platform.SurfaceEvent{Kind: platform.PointerDown, X: e.X, Y: e.Y, Clicks: s.taps, Touch: true, TouchTime: touchTime})
 	case "move":
 		if _, ok := s.fingers[e.Pointer]; !ok {
 			return
@@ -369,7 +373,7 @@ func (s *surface) touch(e *wire.TouchEvent) {
 			return
 		}
 		if s.touching && e.Pointer == s.primary {
-			s.send(platform.SurfaceEvent{Kind: platform.PointerMove, X: e.X, Y: e.Y, Touch: true})
+			s.send(platform.SurfaceEvent{Kind: platform.PointerMove, X: e.X, Y: e.Y, Touch: true, TouchTime: touchTime})
 		}
 	case "up", "cancel":
 		delete(s.fingers, e.Pointer)
@@ -386,7 +390,7 @@ func (s *surface) touch(e *wire.TouchEvent) {
 			s.cancel()
 			return
 		}
-		s.send(platform.SurfaceEvent{Kind: platform.PointerUp, X: e.X, Y: e.Y, Clicks: s.taps, Touch: true})
+		s.send(platform.SurfaceEvent{Kind: platform.PointerUp, X: e.X, Y: e.Y, Clicks: s.taps, Touch: true, TouchTime: touchTime})
 		s.send(platform.SurfaceEvent{Kind: platform.PointerLeave, Touch: true})
 		s.lastTapX, s.lastTapY, s.lastTapTime = e.X, e.Y, e.Time
 	}

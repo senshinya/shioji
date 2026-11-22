@@ -64,7 +64,7 @@ func TestToolDisclosurePreservesHistoryGroupIdentityAcrossLoadedPages(t *testing
 		return timeline.Groups(detail.Items, TranscriptRows(detail.Items, detail.Turns, false), detail, false, false)
 	}
 	group := groups()[0]
-	if group.Open || !group.Ended || group.Count != 2 || group.Issues != 1 {
+	if group.Open || !group.Ended || group.Count != 2 {
 		t.Fatalf("loaded group did not use its whole-history metadata: %+v", group)
 	}
 	timeline.Toggle(group.Key)
@@ -89,6 +89,16 @@ func TestToolGroupOutcomeUsesOnlyKnownCalls(t *testing.T) {
 	if got := groups(nil); got.Outcome != ToolGroupCompleted {
 		t.Fatalf("confirmed calls did not report completion: %+v", got)
 	}
+	turn.Status = domain.ExecutionRunning
+	if got := groups(nil); got.Outcome != "" {
+		t.Fatalf("the unsealed tool tail reported completion before the turn moved on: %+v", got)
+	}
+	items = append(items, domain.Item{ID: "reply", TurnID: turn.ID, Kind: "assistant", Text: "done"})
+	if got := groups(nil); got.Outcome != ToolGroupCompleted {
+		t.Fatalf("visible reply did not seal the completed group: %+v", got)
+	}
+	items = items[:2]
+	turn.Status = domain.ExecutionCompleted
 	items[1].Status = "unknown"
 	if got := groups(nil); got.Outcome != ToolGroupEnded {
 		t.Fatalf("unknown result was treated as success: %+v", got)

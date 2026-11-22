@@ -36,19 +36,27 @@ func (a *mobileApp) openDevice(parent *mygo.Window) {
 			mobileDetailRow(c, "连接状态", diagnostic, "连接状态", infoSymbol, nil, func() {
 				oneLine(c, status, 13, statusInk)
 			})
-			mobileRow(c, "连接方式", "", a.connectionName(), linkSymbol, nil)
-			path, latency := "—", "—"
-			if endpoint := a.activeEndpoint(); endpoint.TailnetPeerID != "" {
-				observed := a.tailnetObservation(endpoint, a.model.Connected, c.Now())
-				path, latency = observed.Path, observed.Latency
+			endpoint := a.activeEndpoint()
+			route := a.deviceRouteDisplay(endpoint, a.activeDeviceTiming(endpoint.RouteID()), a.model.Connected, c.Now())
+			if endpoint.TailnetPeerID != "" {
+				devicePathRow(c, "当前线路", route.summary())
+				devicePathRow(c, "连接方式", route.tailnet.Mode)
+				if route.tailnet.Region != "" {
+					devicePathRow(c, "DERP 区域", route.tailnet.Region)
+				}
+			} else {
+				devicePathRow(c, "当前线路", route.name)
+				latency := route.latency
+				if latency == "" {
+					latency = "尚未测得"
+				}
+				mobileRow(c, "往返延迟", "", latency, clockSymbol, nil)
 			}
-			tailnetPathRow(c, path)
-			mobileRow(c, "往返延迟", "", latency, clockSymbol, nil)
-			host := deviceHost(a.endpoint)
+			host := deviceHost(endpoint)
 			mobileDetailRow(c, "主机", "", "主机", deviceSymbol, nil, func() {
 				oneLine(c, host, 11.5, p.secondary).Font("monospace").MaxWidthPercent(64)
 			})
-			mobileRow(c, "连接路径", a.activeEndpoint().Address, "", permissionSymbol, func() { a.openDevicePaths(w) })
+			mobileRow(c, "管理连接", "", "", linkSymbol, func() { a.openDevicePaths(w) })
 			mobileRow(c, "设备诊断", "", "", infoSymbol, func() { a.openDeviceHealth(w) })
 			mobileGroupHeading(c, "运行环境")
 			workerStatus := status
@@ -160,7 +168,7 @@ func (a *mobileApp) openDevicePaths(parent *mygo.Window) {
 							mobilePageContext(c, endpoint.Address, endpoint.User)
 							if endpoint.TailnetPeerID != "" {
 								observed := a.tailnetObservation(endpoint, true, c.Now())
-								tailnetPathRow(c, observed.Path)
+								devicePathRow(c, "路径", observed.Path)
 								mobileRow(c, "往返延迟", "", observed.Latency, clockSymbol, nil)
 							}
 							mobileSection(c, "主机公钥指纹")
@@ -226,8 +234,8 @@ func (a *mobileApp) removeDevicePath(deviceID, routeID string) error {
 	return fmt.Errorf("设备的连接路径已变化")
 }
 
-func tailnetPathRow(c *ui.Context, path string) {
-	mobileDetailRow(c, "路径", "", "路径", branchSymbol, nil, func() {
+func devicePathRow(c *ui.Context, title, path string) {
+	mobileDetailRow(c, title, "", title, branchSymbol, nil, func() {
 		label(c, path, 13, palette(c).secondary).MaxWidthPercent(65).MaxLines(2).Ellipsis("…")
 	})
 }
@@ -273,7 +281,7 @@ func (a *mobileApp) openWorker(parent *mygo.Window) {
 				primaryAction(c, "配置远程 Agent", func() { a.openRemoteAgents(w) })
 			} else {
 				primaryAction(c, "检查连接", func() {
-					stop = a.runWorkerSetup(w, a.activeEndpoint(), nil, &req, func(verified mobileclient.Endpoint, _ *transport.WorkerInfo) {
+					stop = a.runWorkerSetup(w, a.activeEndpoint(), nil, "", &req, func(verified mobileclient.Endpoint, _ *transport.WorkerInfo) {
 						if err := a.switchSavedDevice(verified); err != nil {
 							req.err = err.Error()
 						}
@@ -518,12 +526,12 @@ func (a *mobileApp) openRemoteAgents(parent *mygo.Window) {
 		}
 		mobilePageBody(c, func() {
 			ready := m.Readiness
-			if refreshed != nil {
+			if refreshed != nil && catalogEpoch == m.ConnectionEpoch {
 				ready = *refreshed
 			}
 			catalog := ready.Harnesses
 			if len(catalog) == 0 && ready.HarnessID != "" {
-				catalog = []domain.HarnessInfo{{ID: ready.HarnessID, Name: ready.Descriptor().Name, State: ready.State, Models: ready.Models}}
+				catalog = []domain.HarnessInfo{{ID: ready.HarnessID, Name: ready.Descriptor().Name, State: ready.State, Models: ready.Models, Account: ready.Account}}
 			}
 			for _, info := range catalog {
 				agent := a.signedInAgent(info)
@@ -609,7 +617,7 @@ func (a *mobileApp) openAgentSettingsAt(parent *mygo.Window, agent domain.Harnes
 			agent.Installation = &installation
 		}
 	}
-	settingsEpoch := ""
+	settingsEpoch, accountEpoch := "", ""
 	loadSettings := func(discard bool) {
 		epoch := a.model.ConnectionEpoch
 		settingsEpoch = epoch
@@ -679,6 +687,7 @@ func (a *mobileApp) openAgentSettingsAt(parent *mygo.Window, agent domain.Harnes
 			})
 	}
 	refetch := func() {
+		accountEpoch = a.model.ConnectionEpoch
 		a.pageJob(w, &req, "runtime.check", protocol.RuntimeConfiguration{HarnessID: agent.ID}, applyReadiness)
 	}
 	title := agent.Name
@@ -694,6 +703,10 @@ func (a *mobileApp) openAgentSettingsAt(parent *mygo.Window, agent domain.Harnes
 		epoch := a.model.ConnectionEpoch
 		if w != nil && modern && configured && !req.busy && a.model.Connected && epoch != "" && settingsEpoch != epoch {
 			loadSettings(false)
+		}
+		if w != nil && !a.preview && tab == "常规" && !req.busy && a.model.Connected && epoch != "" &&
+			current.Account == nil && current.Installation != nil && accountEpoch != epoch {
+			refetch()
 		}
 		unsaved := configured && settings.changed()
 		blocked := req.busy || !a.model.Connected || a.model.WorkerMinor < 16

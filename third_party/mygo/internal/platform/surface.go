@@ -1,8 +1,10 @@
 package platform
 
 import (
-	"github.com/egoist/mygo/transfer"
 	"image"
+	"time"
+
+	"github.com/egoist/mygo/transfer"
 )
 
 // Surface is the drawing area of a window created with
@@ -577,6 +579,9 @@ const (
 	// lands, and leaves one that does to the system's mouse, whose press
 	// moves the window (Windows).
 	DragRegionAt
+	// SurfaceInsetsChanged updates the content layout without changing
+	// the native surface size or invalidating the GPU renderer.
+	SurfaceInsetsChanged
 )
 
 // EditCommands are the menu roles of edit commands, which native UI takes as
@@ -648,6 +653,9 @@ type SurfaceEvent struct {
 	// has no hover: a drag of one pans what scrolls under it, and no
 	// pointer stays over the content after it lifts.
 	Touch bool
+	// TouchTime is the monotonic event timestamp from the touch device.
+	// Zero means that the source does not report timestamps.
+	TouchTime time.Duration
 	// Paced marks a SurfaceFrame of frames following each other at the
 	// display's refreshes (PacedSurface): the content may draw it later,
 	// once the display can take it, which it tells by returning true from

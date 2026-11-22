@@ -20,8 +20,21 @@ type mobileSessionGroup struct {
 }
 
 type sessionWorkspaceChoice struct {
-	location      mobileclient.WorkspaceLocation
-	name, address string
+	location     mobileclient.WorkspaceLocation
+	name, device string
+}
+
+type sessionListScope struct {
+	workspace mobileclient.WorkspaceLocation
+	grouping  sessionGrouping
+	archive   bool
+}
+
+var sessionListItemTransition = ui.ElementTransition{
+	Position: true,
+	Duration: 240 * time.Millisecond,
+	Enter:    &ui.Motion{Collapse: true},
+	Exit:     &ui.Motion{Collapse: true},
 }
 
 func sessionWorkspaceChoices(catalogs []mobileclient.DeviceCatalog) []sessionWorkspaceChoice {
@@ -33,7 +46,7 @@ func sessionWorkspaceChoices(catalogs []mobileclient.DeviceCatalog) []sessionWor
 			}
 			choices = append(choices, sessionWorkspaceChoice{
 				location: mobileclient.WorkspaceLocation{DeviceID: workspace.DeviceID, WorkspaceID: workspace.ID},
-				name:     workspace.Name, address: catalog.Label(),
+				name:     workspace.Name, device: mobileDeviceName(catalog.Name, catalog.Address),
 			})
 		}
 	}
@@ -41,17 +54,18 @@ func sessionWorkspaceChoices(catalogs []mobileclient.DeviceCatalog) []sessionWor
 }
 
 func (a *mobileApp) sessionList(c *ui.Context) {
+	a.maintainSessionCatalogs(c)
 	p := palette(c)
 	catalogs := a.browseCatalogs()
 	workspaces := a.orderedWorkspaces(catalogs)
 	global := a.filter == (mobileclient.WorkspaceLocation{})
+	scope := sessionListScope{a.filter, a.groupingForScope(global), a.archive}
 	now := c.Now().In(time.Local)
-	if !a.searching && !a.archive && a.groupingForScope(global) == groupByTime {
+	if !a.archive && scope.grouping == groupByTime {
 		c.After(mobileclient.StartOfDay(now).AddDate(0, 0, 1).Sub(now))
 	}
-	if !a.searching {
-		a.sessionListToolbar(c, workspaces, global)
-	}
+	a.sessionListToolbar(c, workspaces, global)
+	groups, count := a.sessionListRows(catalogs, workspaces, global, now, a.archive)
 	status := a.sessionListNotice
 	if status == "" {
 		if a.workspaceArchiveRequest.busy {
@@ -60,39 +74,82 @@ func (a *mobileApp) sessionList(c *ui.Context) {
 			status = a.workspaceArchiveRequest.err
 		}
 	}
-	if status == "" && a.endpoint.Address != "" {
+	if status == "" && count == 0 && a.endpoint.Address != "" && a.sessionOpening == nil {
 		status = mobileConnectionLabel(a.connectionPhase())
 	}
 	if status != "" {
 		label(c, status, captionTextSize, p.secondary).Role(ui.RoleStatus).Padding(4, 16, 8)
 	}
 	menu := contextMenuFrame{zoom: c.Zoom()}
-	ui.Scroll(c).Grow(1).Basis(0).MinHeight(0).Padding(2, 16, 28).Children(func() {
-		groups, count := a.sessionListRows(catalogs, workspaces, global, now)
-		for _, group := range groups {
-			if len(group.rows) == 0 {
-				continue
-			}
-			if group.key == "" {
-				for _, row := range group.rows {
-					a.sessionRow(c, &menu, row)
+	top := float32(0)
+	if !a.archive {
+		top = 6
+	}
+	ui.Column(c).Grow(1).Basis(0).MinHeight(0).Children(func() {
+		ui.Scroll(c).Fill().Padding(top, 16, 28).Children(func() {
+			list := c.Key(scope)
+			ui.Column(list).Shrink(0).Children(func() {
+				for _, group := range groups {
+					if len(group.rows) == 0 {
+						continue
+					}
+					if group.key == "" {
+						for _, row := range group.rows {
+							a.sessionRow(list, &menu, row).Transition(sessionListItemTransition)
+						}
+					} else {
+						a.sessionGroup(list, &menu, group)
+					}
 				}
-			} else {
-				a.sessionGroup(c, &menu, group)
+			})
+		}).DrawOver(func(_ *ui.Painter, viewport ui.Rect) {
+			if !a.searching {
+				a.sessionListMenu.publish(a, a.home, menu, viewport)
 			}
+		})
+		if count != 0 {
+			return
 		}
-		if count == 0 {
-			message := "暂无会话"
-			if a.searching && strings.TrimSpace(a.search) != "" {
-				message = "没有找到会话"
-			} else if a.endpoint.Address == "" && !a.preview {
-				message = "在「设备」中添加执行设备"
-			} else if a.archive {
-				message = "暂无归档"
-			}
-			label(c, message, 15, p.secondary).Margin(20, 0)
+		message := "暂无会话"
+		if a.endpoint.Address == "" && !a.preview {
+			message = "在「设备」中添加执行设备"
+		} else if a.archive {
+			message = "暂无归档"
 		}
-	}).DrawOver(func(_ *ui.Painter, viewport ui.Rect) { a.sessionListMenu.publish(a, a.home, menu, viewport) })
+		ui.Column(c.Key("session-list-empty")).Absolute().Fill().PaddingX(16).Gap(12).
+			AlignItems(ui.Center).Justify(ui.Center).IgnoreInput(true).
+			Transition(ui.ElementTransition{Position: true, Duration: 240 * time.Millisecond, Enter: &ui.Motion{}, Exit: &ui.Motion{}}).
+			Children(func() {
+				ui.Icon(c, emptyInboxSymbol).Size(36, 36).TextColor(p.secondary).PassThrough()
+				oneLine(c, message, 15, p.secondary).Role(ui.RoleStatus)
+			})
+	})
+}
+
+func (a *mobileApp) sessionSearchResults(c *ui.Context) {
+	search := &a.inlineSearch
+	if strings.TrimSpace(search.query) != "" {
+		hits := search.hits()
+		ui.Column(c).Fill().Padding(0, 16, 28).Gap(4).Children(func() {
+			search.status(c, a, a.home, len(hits))
+			search.resultList(c, a, a.home, hits, a.searching)
+		})
+		return
+	}
+	groups, count := a.sessionListRows(a.browseCatalogs(), nil, false, c.Now(), true)
+	if count == 0 {
+		return
+	}
+	menu := contextMenuFrame{zoom: c.Zoom()}
+	ui.Scroll(c.Key("search-recent")).Fill().Padding(0, 16, 28).Children(func() {
+		for _, row := range groups[0].rows {
+			a.sessionRow(c, &menu, row)
+		}
+	}).DrawOver(func(_ *ui.Painter, viewport ui.Rect) {
+		if a.searching && strings.TrimSpace(search.query) == "" {
+			a.sessionListMenu.publish(a, a.home, menu, viewport)
+		}
+	})
 }
 
 func (a *mobileApp) sessionListToolbar(c *ui.Context, workspaces []sessionWorkspaceChoice, global bool) {
@@ -102,6 +159,7 @@ func (a *mobileApp) sessionListToolbar(c *ui.Context, workspaces []sessionWorksp
 		for _, workspace := range workspaces {
 			if workspace.location == a.filter {
 				title = workspace.name
+				_, scopeIcon = mobileDeviceIcon(a.savedDevice(workspace.location.DeviceID).Icon)
 				break
 			}
 		}
@@ -109,19 +167,24 @@ func (a *mobileApp) sessionListToolbar(c *ui.Context, workspaces []sessionWorksp
 	if a.archive {
 		title = "归档"
 	}
-	ui.Row(c).MinHeight(55).Padding(2, 16, 4).Gap(8).AlignItems(ui.Center).Children(func() {
+	size := mobileHeaderSize(c)
+	ui.Row(c).Height(size).Shrink(0).ZIndex(1).PaddingX(16).Gap(8).AlignItems(ui.Center).Children(func() {
 		floatingSurface(c, iconAction(c, title, "切换会话范围", scopeIcon, inlineIconSize, pickerSymbol, pickerIconSize, 15, 650, nil).
-			Shrink(1), 22).
-			PopoverMenuButton(func(m *ui.Menu) {
+			MinHeight(size).Height(size).Shrink(1), size/2).
+			Menu(func(m *ui.Menu) {
 				menuChoice(m, "全局视图", global && !a.archive, func() { a.selectListScope(mobileclient.WorkspaceLocation{}) })
 				for _, workspace := range workspaces {
-					label := strings.Trim(workspace.name+" · "+workspace.address, " ·")
-					menuChoice(m, label, workspace.location == a.filter && !a.archive, func() { a.selectListScope(workspace.location) })
+					title := strings.Trim(workspace.name+" · "+workspace.device, " ·")
+					icon := mobileDeviceMenuIcon(a.savedDevice(workspace.location.DeviceID).Icon)
+					if m.Item(title).Icon(icon).Checked(workspace.location == a.filter && !a.archive).Chosen() {
+						a.selectListScope(workspace.location)
+					}
 				}
 			})
 		ui.Spacer(c).MinWidth(0)
-		toolbarButton(c, "搜索会话", searchSymbol, func() { a.toggleSessionSearch(true) })
-		toolbarButton(c, "会话视图", filterSymbol, nil).PopoverMenuButton(func(m *ui.Menu) {
+		mobileHeaderButton(c, "搜索会话", searchSymbol, func() { a.toggleSessionSearch(true) }).
+			DrawOver(func(_ *ui.Painter, bounds ui.Rect) { a.searchAnchor = mobileWindowRect(bounds, c.Zoom()) })
+		mobileHeaderButton(c, "会话视图", filterSymbol, nil).Menu(func(m *ui.Menu) {
 			selected := a.groupingForScope(global)
 			choose := func(title string, mode sessionGrouping) {
 				menuChoice(m, title, !a.archive && selected == mode, func() {
@@ -171,15 +234,10 @@ func (a *mobileApp) sessionListToolbar(c *ui.Context, workspaces []sessionWorksp
 	})
 }
 
-func (a *mobileApp) sessionListRows(catalogs []mobileclient.DeviceCatalog, workspaces []sessionWorkspaceChoice, global bool, now time.Time) ([]mobileSessionGroup, int) {
-	flat := a.searching || a.archive
+func (a *mobileApp) sessionListRows(catalogs []mobileclient.DeviceCatalog, workspaces []sessionWorkspaceChoice, global bool, now time.Time, flat bool) ([]mobileSessionGroup, int) {
 	mode := a.groupingForScope(global)
 	byWorkspace, byTime := !flat && mode == groupByWorkspace, !flat && mode == groupByTime
 	byManual := !flat && mode == groupByManual
-	var query string
-	if a.searching {
-		query = strings.ToLower(strings.TrimSpace(a.search))
-	}
 	groups := []mobileSessionGroup{{}}
 	workspaceGroups := make(map[mobileclient.WorkspaceLocation]int)
 	if !flat {
@@ -189,7 +247,7 @@ func (a *mobileApp) sessionListRows(catalogs []mobileclient.DeviceCatalog, works
 			for _, workspace := range workspaces {
 				workspaceGroups[workspace.location] = len(groups)
 				groups = append(groups, mobileSessionGroup{key: "workspace:" + workspace.location.DeviceID + ":" + workspace.location.WorkspaceID,
-					title: workspace.name, device: workspace.address, workspace: workspace.location})
+					title: workspace.name, device: workspace.device, workspace: workspace.location})
 			}
 		case groupByTime:
 			groups = append(groups, mobileSessionGroup{key: "time:today", title: "今天"},
@@ -209,13 +267,10 @@ func (a *mobileApp) sessionListRows(catalogs []mobileclient.DeviceCatalog, works
 		remote := id != a.model.Snapshot.DeviceID
 		for _, entry := range mobileclient.BrowseSessionCatalog(catalog.Snapshot, a.filter, a.archive) {
 			session, workspace := entry.Session, entry.Workspace
-			if query != "" && !strings.Contains(strings.ToLower(session.Title+" "+workspace.Name+" "+session.GitBranch+" "+catalog.Label()), query) {
-				continue
-			}
 			row := mobileSessionRow{session: session, workspace: workspace, requests: entry.Pending, inGroup: byWorkspace,
-				cached: remote && catalog.RequestedAt.IsZero() && !a.preview}
+				cached: remote && catalog.RequestedAt.IsZero()}
 			if len(catalogs) > 1 {
-				row.address = catalog.Label()
+				row.address = mobileDeviceName(catalog.Name, catalog.Address)
 			}
 			if flat {
 				groups[0].rows = append(groups[0].rows, row)
@@ -250,7 +305,7 @@ func (a *mobileApp) sessionListRows(catalogs []mobileclient.DeviceCatalog, works
 				group = 1
 			case session.Status.Active():
 				group = 2
-			case session.Status == domain.ExecutionCompleted:
+			case session.Status == domain.ExecutionCompleted && a.sessionCompletionUnread(catalog, session):
 				group = 3
 			default:
 				group = 4
@@ -286,10 +341,10 @@ func (a *mobileApp) sessionGroup(c *ui.Context, menu *contextMenuFrame, group mo
 		bg = p.panel
 	}
 	section := c.Key(group.key)
-	collapsed := ui.Local(c.Root(), "session-group:"+group.key, func() bool { return false })
-	ui.Column(section).Margin(0, 0, 5).Children(func() {
+	expanded := ui.Local(c.Root(), "session-group-expanded:"+group.key, func() bool { return true })
+	ui.Column(section).Margin(2, 0, 2).Transition(sessionListItemTransition).Children(func() {
 		pending := 0
-		if *collapsed {
+		if !*expanded {
 			for _, row := range group.rows {
 				pending += row.requests
 			}
@@ -298,31 +353,31 @@ func (a *mobileApp) sessionGroup(c *ui.Context, menu *contextMenuFrame, group mo
 		if pending > 0 {
 			value = pendingSessionDescription(value, pending)
 		}
-		header := ui.ButtonBase(section).Sticky().Top(0).MinHeight(mobileTapSize(c)).Gap(8).AlignItems(ui.Center).Background(bg).
-			Label(group.title).Value(value).Role(ui.RoleButton).OnClick(func() { *collapsed = !*collapsed }).Children(func() {
+		disclosure := ui.CollapsibleBase(section, expanded)
+		header := disclosure.Trigger.Sticky().Top(0).MinHeight(28).PaddingY(2).Gap(8).AlignItems(ui.Center).Background(bg).
+			Role(ui.RoleButton).Label(group.title).Value(value).Children(func() {
 			oneLine(section, group.title, 13, p.secondary).FontWeight(640).Grow(1).MinWidth(0).PassThrough()
 			if group.device != "" {
+				_, glyph := mobileDeviceIcon(a.savedDevice(group.workspace.DeviceID).Icon)
+				alignedSymbol(section, glyph, group.device, mobileStatusFont(section, 11.5), 11, p.secondary)
 				oneLine(section, group.device, 11.5, p.secondary).MaxWidth(130).PassThrough()
 			}
 			if pending != 0 {
 				oneLine(section, fmt.Sprint(pending), 12, p.warning).PassThrough()
 			}
-			arrow := downSymbol
-			if *collapsed {
-				arrow = rightSymbol
-			}
-			ui.Icon(section, arrow).Size(12, 12).Shrink(0).TextColor(p.secondary).PassThrough()
+			angle := -90 * (1 - disclosure.Progress())
+			ui.Icon(section, downSymbol).Size(12, 12).Shrink(0).Transform(ui.Rotation(angle)).TextColor(p.secondary).PassThrough()
 		})
 		if group.workspace.WorkspaceID != "" {
 			menu.add(header.Description("长按显示工作区操作"), group.key, contextMenuTarget{
 				commands: a.workspaceListCommands(group.workspace),
 			})
 		}
-		if !*collapsed {
+		disclosure.Panel(func() {
 			for _, row := range group.rows {
-				a.sessionRow(section, menu, row)
+				a.sessionRow(section, menu, row).Transition(sessionListItemTransition)
 			}
-		}
+		}).IgnoreInput(!*expanded).AccessHidden(!*expanded)
 	})
 }
 
@@ -352,7 +407,7 @@ func (a *mobileApp) workspaceListCommands(scope mobileclient.WorkspaceLocation) 
 	}
 }
 
-func (a *mobileApp) sessionRow(c *ui.Context, menu *contextMenuFrame, item mobileSessionRow) {
+func (a *mobileApp) sessionRow(c *ui.Context, menu *contextMenuFrame, item mobileSessionRow) ui.Element {
 	p := palette(c)
 	session, requests := item.session, item.requests
 	ref := app.SessionLocation{DeviceID: item.workspace.DeviceID, WorkspaceID: item.workspace.ID, SessionID: session.ID}
@@ -370,32 +425,48 @@ func (a *mobileApp) sessionRow(c *ui.Context, menu *contextMenuFrame, item mobil
 	if selected {
 		bg = p.selected
 	}
-	status := p.secondary
-	if requests > 0 {
-		status = p.warning
-	} else if session.Status.Active() || session.Status == domain.ExecutionCompleted {
-		status = p.active
+	status, name, glyph := p.secondary, "已暂停", (*ui.SVG)(nil)
+	pulse := false
+	switch {
+	case session.ReadOnlyHistory():
+		name, glyph = "只读会话", readOnlySymbol
+	case requests > 0:
+		name, status = fmt.Sprintf("%d 项待处理", requests), p.warning
+	case session.Status.Active():
+		name = "进行中"
+		if !item.cached && (!current || a.model.Connected) {
+			status = p.active
+			pulse = !c.Preferences().ReduceMotion
+		}
+	case session.Status == domain.ExecutionCompleted:
+		name, glyph = "已完成", checkSymbol
+		if a.sessionCompletionUnread(a.sessionCatalog(ref.DeviceID), session) {
+			status = p.active
+		}
+	case session.Status == domain.ExecutionInterrupted || session.Status == domain.ExecutionAbandoned:
+		name, glyph = "已停止", checkSymbol
+	case session.Status == domain.ExecutionFailed:
+		name, glyph = "执行失败", closeSymbol
+	case session.Status == domain.ExecutionUnknown:
+		name, glyph = "执行状态待确认", infoSymbol
 	}
-	value := strings.Trim(item.metadata()+" · "+item.dateLabel, " ·")
-	if session.ReadOnlyHistory() {
-		value = strings.Trim(value+" · 只读会话", " ·")
-	}
-	if requests > 0 {
-		value = pendingSessionDescription(value, requests)
+	value := strings.Trim(item.metadata()+" · "+item.dateLabel+" · "+name, " ·")
+	if item.cached {
+		value += " · 上次读取"
 	}
 	target := sessionListTarget{location: ref, pinned: pinned, archived: session.Archived || item.workspace.Archived}
 	open := func() { a.openSessionListTarget(target) }
-	button := ui.ButtonBase(row).MinHeight(max(contentRowHeight, mobileTapSize(c))).Padding(4, 8).Margin(0, -8).AlignItems(ui.Center).Justify(ui.Center).Radius(10).
+	button := ui.ButtonBase(row).MinHeight(max(46, mobileHeaderSize(c))).Padding(3, 8).Margin(0, -8).AlignItems(ui.Center).Justify(ui.Center).Radius(10).
 		Role(ui.RoleButton).Label(session.Title).Value(value).AccessSelected(selected).Background(bg).
 		Description("长按预览会话").OnClick(open).Children(func() {
 		ui.Column(row).WidthPercent(100).Gap(3).PassThrough().Children(func() {
 			ui.Row(row).Gap(10).AlignItems(ui.Center).Children(func() {
 				font := mobileStatusFont(row, 15)
-				if session.ReadOnlyHistory() {
-					alignedSymbol(row, readOnlySymbol, session.Title, font, 10, p.secondary)
+				if glyph != nil {
+					alignedSymbol(row, glyph, session.Title, font, 10, status)
 				} else {
 					ui.Box(row).Size(10, 10).Shrink(0).PassThrough().Draw(func(p *ui.Painter, r ui.Rect) {
-						p.Fill(ui.Rect{X: r.X + 3, Y: r.Y + 3 + inkCenterOffset(session.Title, font), W: 4, H: 4}, mobileBreathingInk(p, status, current && a.model.Connected && session.Status.Active() && !c.Preferences().ReduceMotion), 2)
+						p.Fill(ui.Rect{X: r.X + 3, Y: r.Y + 3 + inkCenterOffset(session.Title, font), W: 4, H: 4}, mobileBreathingInk(p, status, pulse), 2)
 					})
 				}
 				oneLine(row.Key("session-title"), session.Title, 15, p.ink).Grow(1).
@@ -413,6 +484,7 @@ func (a *mobileApp) sessionRow(c *ui.Context, menu *contextMenuFrame, item mobil
 	menu.add(button, ref.DeviceID+":"+ref.WorkspaceID+":"+ref.SessionID, contextMenuTarget{
 		location: ref, session: session, open: open, commands: a.sessionRowCommands(target, item),
 	})
+	return button
 }
 
 func pendingSessionDescription(value string, count int) string {
@@ -458,4 +530,14 @@ func (a *mobileApp) sessionRowCommands(target sessionListTarget, row mobileSessi
 			}})
 	}
 	return commands
+}
+
+func (a *mobileApp) sessionCompletionUnread(catalog mobileclient.DeviceCatalog, session domain.Session) bool {
+	if catalog.Snapshot.DeviceID == a.model.Snapshot.DeviceID {
+		return a.model.Connected && a.model.HasCompletedReply(session.ID)
+	}
+	if catalog.RequestedAt.IsZero() {
+		return false
+	}
+	return mobileclient.UnreadReplySince(session, a.model.CompletionCutoffForSnapshot(catalog.Snapshot, catalog.RequestedAt))
 }

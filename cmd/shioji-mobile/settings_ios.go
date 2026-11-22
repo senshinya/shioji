@@ -91,7 +91,7 @@ func (a *mobileApp) openInputSettings(parent *mygo.Window, target string) {
 					func() { a.openInterfaceFont(w, commit) }).
 					PaddingX(0).MaxWidthPercent(62).Value(name)
 			}))
-			revealSetting(&target, "reply-size", formChoice(c.Key("reply-size"), "回复字号", fmt.Sprint(prefs.ReplySize)+" pt", func(m *ui.Menu) {
+			revealSetting(&target, "reply-size", formChoice(c.Key("reply-size"), "会话字号", fmt.Sprint(prefs.ReplySize)+" pt", func(m *ui.Menu) {
 				for size := 12; size <= 20; size++ {
 					size := size
 					menuChoice(m, fmt.Sprint(size)+" pt", size == prefs.ReplySize, func() {

@@ -700,7 +700,7 @@ func (a *mobileApp) openParallelPicker(parent *mygo.Window, sid string) {
 						continue
 					}
 					ref := app.SessionLocation{DeviceID: id, WorkspaceID: entry.Workspace.ID, SessionID: other.ID}
-					scope := entry.Workspace.Name + " · " + catalog.Label()
+					scope := entry.Workspace.Name + " · " + mobileDeviceName(catalog.Name, catalog.Address)
 					mobileRow(c.Key(ref), other.Title, scope, "", layersSymbol, func() {
 						if err := a.openParallelSession(ref); err != nil {
 							message = err.Error()
@@ -777,7 +777,7 @@ func (a *mobileApp) drawParallelPane(c *ui.Context, id string, closePane func())
 	pane := ui.Column(c).Grow(1).Basis(0).MinWidth(0).HeightPercent(100).BorderStartWidth(1).BorderColor(p.line).
 		Bind(&a.splitRoot().parallelFindHandle)
 	pane.Children(func() {
-		ui.Row(c).MinHeight(55).PaddingX(12).Gap(6).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).MinHeight(mobileHeaderSize(c)).PaddingX(12).Gap(6).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 				oneLine(c, title, 16, p.ink).FontWeight(650)
 				scope := a.conversationWorkspaceScope(s)
@@ -787,8 +787,8 @@ func (a *mobileApp) drawParallelPane(c *ui.Context, id string, closePane func())
 				oneLine(c, scope, 12, p.secondary)
 			})
 			if s.ID != "" {
-				toolbarButton(c, inParallelFind, searchSymbol, func() { a.openConversationFind(a.detail, s, true) })
-				toolbarButton(c, "右栏文件改动", filesSymbol, func() {
+				mobileHeaderButton(c, inParallelFind, searchSymbol, func() { a.openConversationFind(a.detail, s, true) })
+				mobileHeaderButton(c, "右栏文件改动", filesSymbol, func() {
 					reviewDraft := draft
 					if a.model.ActiveQueueEdit(s.ID).ID != "" {
 						reviewDraft = nil
@@ -796,7 +796,7 @@ func (a *mobileApp) drawParallelPane(c *ui.Context, id string, closePane func())
 					a.openReview(a.detail, s, a.detail, reviewDraft)
 				})
 			}
-			iconButton(c, "关闭并排会话", closeSymbol, 17, closePane)
+			iconButton(c, "关闭并排会话", closeSymbol, 17, closePane).Size(mobileHeaderSize(c), mobileHeaderSize(c))
 		})
 		if a.parallelOwner != nil {
 			a.connectionNotice(c.Key("connection"), a.detail)

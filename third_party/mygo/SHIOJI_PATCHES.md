@@ -15,6 +15,9 @@ the client retires it; covered by `notification_registration_test.go`.
 The v0.10.0 import uses upstream's in-window editing menus, attached overlay
 repositioning and untracked-paint recovery. Shioji's menu density, delayed
 submenus and IME focus policy remain applied to the upstream renderer.
+On iOS, system menu buttons open an anchored UIKit menu, retaining selections,
+submenus, subtitles, and destructive actions. Older iOS releases use a system
+action sheet.
 Read-only diff selection retains source byte offsets across line-ending
 normalization and maps EOF after a final line break to the last physical line.
 Mobile historical comments use `editor.DiffState.UnifiedTextFragments` to
@@ -49,6 +52,11 @@ press would move the attachment before release.
 `HostWindow.usesSceneSafeTop` aligns the iPhone conversation list's custom
 toolbar with the scene's status area. Native search uses the navigation
 controller's insets while it is visible.
+
+Touch scrolling uses the device's event timestamps even if the render loop
+receives several touch events together. A fling hands its remaining velocity
+to the spring on the frame it crosses a content edge. The iOS selection menu
+can make read-only text the responder without showing the software keyboard.
 
 Scroll containers show their overlay thumbs only after the offset actually
 changes or while a thumb is dragged. Hover and initial history placement do not

@@ -45,15 +45,24 @@ func readMobileThumbnail(path string) (*ui.Bitmap, error) {
 var uikit = mygo.Native("shiojiUIKit")
 
 func (a *mobileApp) openNativeFilePreview(parent *mygo.Window, path, name, mime string) {
-	a.presentFilePreview(parent, path, name, mime, false)
+	a.tryNativeFilePreview(parent, path, name, mime, func(shown *bool, err error) {
+		if err == nil && shown != nil && !*shown {
+			a.linkError(errors.New("此文件不支持系统预览"))
+		}
+	})
 }
 
-func (a *mobileApp) presentFilePreview(parent *mygo.Window, path, name, mime string, imageReader bool) {
+func (a *mobileApp) tryNativeFilePreview(parent *mygo.Window, path, name, mime string, done func(*bool, error)) {
 	if a.pageCurrent(parent) && path != "" {
-		a.callUIKit("quickLook", map[string]any{"window": parent.NativeHandle(),
-			"path": path, "name": name, "mime": mime, "imageReader": imageReader,
-			"reduceMotion": a.model.Preferences.ReduceMotion}, nil)
+		var shown *bool
+		a.callUIKitResult("quickLook", mobilePreviewArgs(parent, path, name, mime), &shown, func(err error) {
+			done(shown, err)
+		})
 	}
+}
+
+func mobilePreviewArgs(parent *mygo.Window, path, name, mime string) map[string]any {
+	return map[string]any{"window": parent.NativeHandle(), "path": path, "name": name, "mime": mime}
 }
 
 func (a *mobileApp) callUIKit(method string, args any, done func(error)) {
@@ -82,7 +91,7 @@ func (a *mobileApp) callUIKitResult(method string, args, result any, done func(e
 func (a *mobileApp) configureUIKit() {
 	args := map[string]any{"home": a.home.NativeHandle(), "devices": a.devices.NativeHandle(),
 		"settings": a.settings.NativeHandle(), "minimumWidth": mobileclient.SidebarMinWidth,
-		"composeIcon": toolbarImage(composeSymbol), "appearance": nativeAppearance(),
+		"composeIcon": tabIconImage(composeSymbol), "appearance": nativeAppearance(),
 		"shortcuts": slices.Concat(conversationShortcuts, interfaceShortcuts)}
 	if isTablet() {
 		detail := a.page("", a.detailView)
@@ -91,8 +100,15 @@ func (a *mobileApp) configureUIKit() {
 		a.detailQueueMenu.listen(a, detail)
 	}
 	uikit.On("searchActive", func(raw []byte) {
-		if json.Unmarshal(raw, &a.searching) == nil {
-			a.refresh()
+		var active bool
+		if json.Unmarshal(raw, &active) == nil {
+			a.inlineSearch.cancel()
+			if active {
+				a.inlineSearch = mobileContentSearch{}
+				a.sessionListMenu.publish(a, a.home, contextMenuFrame{}, ui.Rect{})
+			}
+			a.searching = active
+			a.home.Invalidate()
 		}
 	})
 	uikit.On("composerKeyboardDismissed", func(raw []byte) {
@@ -112,8 +128,24 @@ func (a *mobileApp) configureUIKit() {
 		}
 	})
 	uikit.On("searchQuery", func(raw []byte) {
-		if json.Unmarshal(raw, &a.search) == nil {
-			a.refresh()
+		var query string
+		if a.searching && json.Unmarshal(raw, &query) == nil {
+			a.inlineSearch.change(query)
+			if strings.TrimSpace(query) != "" {
+				a.sessionListMenu.publish(a, a.home, contextMenuFrame{}, ui.Rect{})
+			}
+			a.home.Invalidate()
+		}
+	})
+	uikit.On("searchSubmit", func(_ []byte) {
+		if a.searching && strings.TrimSpace(a.inlineSearch.query) != "" {
+			a.inlineSearch.submit(a, a.home)
+		}
+	})
+	uikit.On("searchMove", func(raw []byte) {
+		var direction int
+		if a.searching && json.Unmarshal(raw, &direction) == nil && a.inlineSearch.move(direction, a.inlineSearch.hits()) {
+			a.home.Invalidate()
 		}
 	})
 	uikit.On("prominentCompose", func(_ []byte) {
@@ -260,7 +292,9 @@ func (a *mobileApp) toggleSessionSearch(fromSplit bool) {
 }
 
 func (a *mobileApp) showSessionSearch() {
-	a.callUIKit("search", map[string]any{"home": a.home.NativeHandle(), "toggle": true}, nil)
+	anchor := a.searchAnchor
+	a.callUIKit("search", map[string]any{"home": a.home.NativeHandle(), "toggle": true,
+		"anchor": [4]float32{anchor.X, anchor.Y, anchor.W, anchor.H}, "reduceMotion": a.model.Preferences.ReduceMotion}, nil)
 }
 
 func (a *mobileApp) openPreviewRoute() {

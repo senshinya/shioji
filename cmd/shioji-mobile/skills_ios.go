@@ -264,7 +264,7 @@ func (s *mobileManagedSkills) list(a *mobileApp, c *ui.Context, w *mygo.Window, 
 			MinHeight(mobileTapSize(c)).Grow(1).MinWidth(0).PaddingX(10).Radius(10).Background(p.inset)
 		if len(agents) > 1 {
 			iconAction(c.Key("agent"), agent.Name, "Skills Agent", nil, 0, pickerSymbol, 12, 13, 400, nil).
-				PaddingX(3).MaxWidthPercent(30).PopoverMenuButton(func(m *ui.Menu) {
+				PaddingX(3).MaxWidthPercent(30).Menu(func(m *ui.Menu) {
 				for _, item := range agents {
 					menuChoice(m, item.Name, item.ID == agent.ID, func() { s.harness = item.ID })
 				}

@@ -44,6 +44,29 @@ func TestDeviceSearchUsesVerifiedAlternateWhenTheFirstStreamCloses(t *testing.T)
 }
 
 func deviceSearchPathFixture(t *testing.T, client ssh.Signer, closeStream bool) (Endpoint, <-chan error) {
+	return deviceCatalogSSHFixture(t, client, func(channel ssh.Channel, codec *protocol.Codec, epoch string) error {
+		if closeStream {
+			var search protocol.Frame
+			if err := codec.Read(&search); err != nil {
+				return err
+			}
+			if search.Method != "session.search" {
+				return fmt.Errorf("unexpected call %s", search.Method)
+			}
+			return channel.Close()
+		}
+		results := []domain.SearchResult{{SessionID: "session", WorkspaceID: "project", ItemID: "result"}}
+		if err := writeSearchFixture(codec, epoch, "session.search", results); err != nil {
+			return err
+		}
+		return writeSearchFixture(codec, epoch, "snapshot", domain.Snapshot{DeviceID: "worker",
+			Workspaces: []domain.Workspace{{ID: "project", DeviceID: "worker"}},
+			Sessions:   []domain.Session{{ID: "session", WorkspaceID: "project"}},
+		})
+	})
+}
+
+func deviceCatalogSSHFixture(t *testing.T, client ssh.Signer, serve func(ssh.Channel, *protocol.Codec, string) error) (Endpoint, <-chan error) {
 	t.Helper()
 	host := testSigner(t)
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -73,27 +96,48 @@ func deviceSearchPathFixture(t *testing.T, client ssh.Signer, closeStream bool) 
 				Nonce: hello.Nonce, DeviceID: "worker", Epoch: epoch}); err != nil {
 				return err
 			}
-			if closeStream {
-				var search protocol.Frame
-				if err := codec.Read(&search); err != nil {
-					return err
-				}
-				if search.Method != "session.search" {
-					return fmt.Errorf("unexpected call %s", search.Method)
-				}
-				return channel.Close()
-			}
-			results := []domain.SearchResult{{SessionID: "session", WorkspaceID: "project", ItemID: "result"}}
-			if err := writeSearchFixture(codec, epoch, "session.search", results); err != nil {
-				return err
-			}
-			return writeSearchFixture(codec, epoch, "snapshot", domain.Snapshot{DeviceID: "worker",
-				Workspaces: []domain.Workspace{{ID: "project", DeviceID: "worker"}},
-				Sessions:   []domain.Session{{ID: "session", WorkspaceID: "project"}},
-			})
+			return serve(channel, codec, epoch)
 		})
 	}()
 	return endpoint, done
+}
+
+func TestDeviceCatalogMeasuresOnlyItsVerifiedWorkerRoute(t *testing.T) {
+	for _, pongOwner := range []string{"worker", "different-device"} {
+		t.Run(pongOwner, func(t *testing.T) {
+			signer := testSigner(t)
+			endpoint, done := deviceCatalogSSHFixture(t, signer, func(_ ssh.Channel, codec *protocol.Codec, epoch string) error {
+				if err := writeSearchFixture(codec, epoch, "snapshot", domain.Snapshot{
+					DeviceID:   "worker",
+					Workspaces: []domain.Workspace{{ID: "project", DeviceID: "worker"}},
+					Sessions:   []domain.Session{{ID: "session", WorkspaceID: "project", Status: domain.ExecutionCompleted}},
+				}); err != nil {
+					return err
+				}
+				return writeSearchFixture(codec, epoch, "device.ping", map[string]string{"deviceId": pongOwner})
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			catalog, err := ReadDeviceCatalog(ctx, SavedDevice{Endpoint: endpoint}, signer, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if catalog.RouteID != endpoint.RouteID() || catalog.CheckedAt.IsZero() || len(catalog.Snapshot.Sessions) != 1 {
+				t.Fatalf("catalog lost verified path or sessions: %+v", catalog)
+			}
+			if (catalog.Timing != nil) != (pongOwner == endpoint.DeviceID) {
+				t.Fatalf("wrong timing attribution: %+v", catalog.Timing)
+			}
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-ctx.Done():
+				t.Fatal("verified catalog stream was left open")
+			}
+		})
+	}
 }
 
 func TestDeviceSearchOnlyReturnsResultsOwnedByItsWorker(t *testing.T) {

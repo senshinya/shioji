@@ -115,7 +115,8 @@ func (s *mobileToolSweep) caption(c *ui.Context, title string, transition ui.Con
 	}
 	layout := ui.ShapeText(title, font, 0)
 	width, _ := layout.Size()
-	slot := ui.Row(c.Key("sweep-caption-slot")).MinWidth(0).Shrink(1).ClipX().AlignItems(ui.Baseline)
+	// Keep the caller's key so adjacent captions have independent widths.
+	slot := ui.Row(c).MinWidth(0).Shrink(1).ClipX().AlignItems(ui.Baseline)
 	extent := ui.Local(slot, "extent", func() mobileCaptionExtent {
 		return mobileCaptionExtent{target: width, shown: width}
 	})

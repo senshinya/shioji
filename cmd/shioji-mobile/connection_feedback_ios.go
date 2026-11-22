@@ -187,7 +187,7 @@ func (a *mobileApp) openRecentOperations(parent *mygo.Window) {
 
 func (a *mobileApp) operationSource(ref app.SessionLocation) (string, domain.Session) {
 	catalog := a.sessionCatalog(ref.DeviceID)
-	device := catalog.Label()
+	device := mobileDeviceName(catalog.Name, catalog.Address)
 	if device == "" {
 		if saved := a.savedDevice(ref.DeviceID); saved.Endpoint.DeviceID == ref.DeviceID {
 			device = a.deviceLabel(ref.DeviceID, saved.Endpoint.Address)

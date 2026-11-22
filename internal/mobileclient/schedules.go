@@ -34,7 +34,9 @@ type ScheduleRow struct {
 }
 
 func ReadDeviceSchedules(ctx context.Context, device SavedDevice, preferred Endpoint, signer ssh.Signer, route RouteDial) (DeviceSchedules, error) {
-	return readVerifiedDevice(ctx, device, preferred, signer, route, readConnectedSchedules)
+	return readVerifiedDevice(ctx, device, preferred, signer, route, func(ctx context.Context, client *protocol.Client, endpoint Endpoint) (DeviceSchedules, error) {
+		return readConnectedSchedules(ctx, client, endpoint.Address)
+	})
 }
 
 func readConnectedSchedules(ctx context.Context, client *protocol.Client, address string) (DeviceSchedules, error) {

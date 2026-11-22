@@ -20,7 +20,7 @@ func ReadDeviceSessionHistory(ctx context.Context, device SavedDevice, signer ss
 		return domain.SessionDetail{}, errors.New("会话归属已改变")
 	}
 	return readVerifiedDevice(ctx, device, device.Endpoint, signer, route,
-		func(ctx context.Context, client *protocol.Client, _ string) (domain.SessionDetail, error) {
+		func(ctx context.Context, client *protocol.Client, _ Endpoint) (domain.SessionDetail, error) {
 			var page domain.SessionDetail
 			if err := client.Call(ctx, "session.history", query, &page); err != nil {
 				return domain.SessionDetail{}, err

@@ -30,7 +30,6 @@ type mobileLinkedPreview struct {
 	cancel      context.CancelFunc
 	options     markdown.Options
 	reader      *editor.State
-	image       mobileImageReader
 	text, mode  string
 	first, last int
 	markdown    bool
@@ -76,16 +75,12 @@ func (a *mobileApp) replaceReview(r *reviewState) {
 		a.review.comment.stop()
 	}
 	a.review = r
-	if r != nil && r.linked != nil {
-		a.openLinkedImage(r)
-	}
 	if home := a.splitRoot().home; home != nil {
 		home.Invalidate()
 	}
 }
 
 func (p *mobileLinkedPreview) stop() {
-	p.image.close()
 	if p.cancel != nil {
 		p.cancel()
 		p.cancel = nil
@@ -98,8 +93,32 @@ func (a *mobileApp) openLinkedFile(parent *mygo.Window, source domain.Session, s
 		return
 	}
 	r := &reviewState{parent: parent, session: source, linked: p}
+	if mobileMarkdownFile(p.target, p.file.Resource.MIME) {
+		a.showLinkedFile(r, sourcePath)
+		return
+	}
+	show := func() {
+		if p.file.Path == "" || p.req.err != "" || mobileMarkdownFile(p.file.Resource.Name, p.file.Resource.MIME) {
+			a.showLinkedFile(r, sourcePath)
+			return
+		}
+		a.tryNativeFilePreview(parent, p.file.Path, p.file.Resource.Name, p.file.Resource.MIME, func(shown *bool, err error) {
+			if a.visibleLinkSource(parent, source) && (err != nil || shown != nil && !*shown) {
+				a.showLinkedFile(r, sourcePath)
+			}
+		})
+	}
+	if p.file.Path != "" {
+		show()
+	} else {
+		a.loadLinkedFile(r, show)
+	}
+}
+
+func (a *mobileApp) showLinkedFile(r *reviewState, sourcePath string) {
+	parent, p := r.parent, r.linked
 	if a.wide && parent == a.detail {
-		if current := a.review; current != nil && current.session.ID == source.ID &&
+		if current := a.review; current != nil && current.session.ID == r.session.ID &&
 			current.linked != nil && current.linked.file.Resource.Path == sourcePath && sourcePath != "" {
 			r.previous = current
 		}
@@ -109,38 +128,40 @@ func (a *mobileApp) openLinkedFile(parent *mygo.Window, source domain.Session, s
 		r.parent = window
 		window.OnClosed(p.stop)
 		a.pushNative(parent, window)
-		a.openLinkedImage(r)
 	}
-	if p.file.Path == "" {
-		a.loadLinkedFile(r)
+	if p.file.Path == "" && p.req.err == "" {
+		a.loadLinkedFile(r, nil)
 	}
 	a.refresh()
 }
 
-func (a *mobileApp) openLinkedImage(r *reviewState) {
-	p := r.linked
-	if p.file.Path != "" && strings.HasPrefix(p.file.Resource.MIME, "image/") {
-		p.image.open(r.parent, p.file.Path, p.file.Resource.Name, a.model.Preferences.ReduceMotion, false)
-	}
-}
-
-func (a *mobileApp) loadLinkedFile(r *reviewState) {
+func (a *mobileApp) loadLinkedFile(r *reviewState, ready func()) {
 	p := r.linked
 	if p.req.busy {
 		return
 	}
 	if a.preview {
-		file, text, err := previewLinkedFile(p.target)
-		if err != nil {
-			p.req.err = err.Error()
+		if file := a.previewLinkedResource; file.Path != "" && p.target == file.Resource.Path {
+			p.apply(file, "", false)
 		} else {
-			p.apply(file, text, true)
+			file, text, err := previewLinkedFile(p.target)
+			if err != nil {
+				p.req.err = err.Error()
+			} else {
+				p.apply(file, text, true)
+			}
+		}
+		if ready != nil {
+			ready()
 		}
 		a.refresh()
 		return
 	}
 	if !a.model.Connected || a.controller == nil || a.directory == "" {
 		p.req.err = "连接所属设备后再打开文件"
+		if ready != nil {
+			ready()
+		}
 		a.refresh()
 		return
 	}
@@ -150,6 +171,7 @@ func (a *mobileApp) loadLinkedFile(r *reviewState) {
 	name, snapshot := p.target, p.snapshot
 	target := app.RemoteAttachmentTarget(device, r.session.WorkspaceID, owner.DialDeviceStream)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	unregister := r.parent.OnClosed(cancel)
 	p.cancel = cancel
 	p.req.busy, p.req.err = true, ""
 	a.refresh()
@@ -170,13 +192,14 @@ func (a *mobileApp) loadLinkedFile(r *reviewState) {
 			data, readErr := os.ReadFile(file.Path)
 			if readErr == nil && utf8.Valid(data) && !bytes.ContainsRune(data, 0) {
 				text, isText = string(data), true
-			} else if snapshot != nil {
-				err = fmt.Errorf("无法读取已保存的文本文件 %s", name)
 			}
 		}
 		mygo.RunOnMain(func() {
 			defer cancel()
-			if ctx.Err() == context.Canceled || p.cancel == nil || !a.pageCurrent(r.parent) || r.parent == a.detail && a.review != r {
+			unregister()
+			if ctx.Err() == context.Canceled || p.cancel == nil || !a.pageCurrent(r.parent) ||
+				(ready == nil && r.parent == a.detail && a.review != r) ||
+				(ready != nil && !a.visibleLinkSource(r.parent, r.session)) {
 				return
 			}
 			p.cancel = nil
@@ -187,10 +210,12 @@ func (a *mobileApp) loadLinkedFile(r *reviewState) {
 				p.req.err = err.Error()
 			} else {
 				p.apply(file, text, isText)
-				a.openLinkedImage(r)
-				if r.parent != a.detail {
+				if ready == nil && r.parent != a.detail {
 					r.parent.SetTitle(file.Resource.Name)
 				}
+			}
+			if ready != nil {
+				ready()
 			}
 			a.refresh()
 		})
@@ -202,10 +227,7 @@ func (p *mobileLinkedPreview) apply(file app.LinkedFile, text string, isText boo
 	if !isText {
 		return
 	}
-	extension := strings.ToLower(path.Ext(file.Resource.Name))
-	// The tool snapshot owns its bytes, not a workspace-relative path for
-	// resolving Markdown links. Show its source with the file's own syntax.
-	p.markdown = p.snapshot == nil && (extension == ".md" || extension == ".markdown")
+	p.markdown = mobileMarkdownFile(file.Resource.Name, file.Resource.MIME)
 	p.mode = "源码"
 	if p.markdown && p.position.Line == 0 {
 		p.mode = "预览"
@@ -260,21 +282,19 @@ func (a *mobileApp) linkedFileView(c *ui.Context, r *reviewState, close func()) 
 				mobileMessage(c, "正在读取文件…")
 			} else if p.req.err != "" {
 				p.req.status(c)
-				action(c, "重新读取", func() { a.loadLinkedFile(r) }).AlignSelf(ui.Start)
+				action(c, "重新读取", func() { a.loadLinkedFile(r, nil) }).AlignSelf(ui.Start)
 			}
 		})
 		switch {
-		case p.file.Path != "" && strings.HasPrefix(p.file.Resource.MIME, "image/"):
-			ui.Column(c).Grow(1).Basis(0).MinHeight(0).Padding(4, pageInset).Children(func() {
-				p.image.render(c)
-			})
 		case p.mode == "预览":
 			ui.Scroll(c).Grow(1).Basis(0).MinHeight(0).Children(func() {
 				mobileContent(c, contentMaxWidth).Padding(8, pageInset, 24).Children(func() {
 					p.options.WrapCode = true
 					p.options.Theme = &markdown.Theme{FontSize: bodyTextSize * c.Preferences().TextScale, CodeFont: a.codeFont()}
-					a.bindMobileFileLinks(r.parent, r.session, p.file.Resource.Path, &p.options)
-					a.bindMobileMarkdownImages(r.parent, r.session, p.file.Resource.Path, &p.options)
+					if p.file.Resource.Path != "" {
+						a.bindMobileFileLinks(r.parent, r.session, p.file.Resource.Path, &p.options)
+						a.bindMobileMarkdownImages(r.parent, r.session, p.file.Resource.Path, &p.options)
+					}
 					a.bindMobileDiagrams(c, root, p.target, &p.options)
 					markdown.View(c, p.text, &p.options).Selectable()
 				})
@@ -293,9 +313,11 @@ func (a *mobileApp) linkedFileView(c *ui.Context, r *reviewState, close func()) 
 		if p.file.Path != "" {
 			mobileContent(c, contentMaxWidth).Padding(4, pageInset, 8).Children(func() {
 				ui.Row(c).Wrap().Gap(8).Children(func() {
-					action(c, "原生预览", func() {
-						a.openNativeFilePreview(r.parent, p.file.Path, p.file.Resource.Name, p.file.Resource.MIME)
-					})
+					if !mobileMarkdownFile(p.file.Resource.Name, p.file.Resource.MIME) {
+						action(c, "原生预览", func() {
+							a.openNativeFilePreview(r.parent, p.file.Path, p.file.Resource.Name, p.file.Resource.MIME)
+						})
+					}
 					action(c, "另存为…", func() {
 						go func() { _, _ = mygo.Dialog.SaveCopy(p.file.Path, p.file.Resource.Name) }()
 					})

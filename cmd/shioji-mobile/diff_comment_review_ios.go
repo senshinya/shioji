@@ -216,7 +216,7 @@ func (a *mobileApp) savedDiffCommentView(c *ui.Context, r *reviewState, close fu
 					})
 			} else {
 				iconAction(c, title, "评论选区", nil, 0, pickerSymbol, pickerIconSize, captionTextSize, 550, nil).
-					Value(title).AlignSelf(ui.Start).PopoverMenuButton(func(m *ui.Menu) {
+					Value(title).AlignSelf(ui.Start).Menu(func(m *ui.Menu) {
 					for i, part := range saved.content.Fragments {
 						menuChoice(m, savedDiffRangeName(part), saved.active == i, func() { pick(i) })
 					}

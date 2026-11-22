@@ -24,10 +24,7 @@ func (a *mobileApp) confirmWorkspaceArchive(w *mygo.Window, req *mobileRequest, 
 	}
 	m := a.model
 	epoch, generation := m.ConnectionEpoch, m.Snapshot.Generation
-	device := a.activeEndpoint().Address
-	if device == "" || a.preview {
-		device = a.deviceName()
-	}
+	device := a.deviceName()
 	args := map[string]any{
 		"window": w.NativeHandle(),
 		"title":  "归档工作区？",

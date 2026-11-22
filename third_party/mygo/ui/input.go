@@ -48,7 +48,7 @@ func (rt *engine) event(ev platform.SurfaceEvent) (taken bool) {
 		rt.buildNext()
 	}
 	switch ev.Kind {
-	case platform.SurfaceFrame, platform.SurfaceResize, platform.SurfaceShown, platform.SurfaceHidden:
+	case platform.SurfaceFrame, platform.SurfaceResize, platform.SurfaceInsetsChanged, platform.SurfaceShown, platform.SurfaceHidden:
 	default:
 		// Input, which the next frame builds even out of sight.
 		rt.input = true
@@ -90,7 +90,7 @@ func (rt *engine) event(ev platform.SurfaceEvent) (taken bool) {
 	switch ev.Kind {
 	case platform.SurfaceFrame:
 		rt.surfaceFrame()
-	case platform.SurfaceResize:
+	case platform.SurfaceResize, platform.SurfaceInsetsChanged:
 		rt.requestFrame()
 	case platform.SurfaceShown:
 		// A video goes on from where it stood out of sight.

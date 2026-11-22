@@ -65,9 +65,18 @@ func mobileUserBubble(c *ui.Context) ui.Element {
 	return ui.Column(c).AlignSelf(ui.End).MaxWidthPercent(89).Padding(9, 13).Radius(18).Background(palette(c).inset)
 }
 
+func mobileHeaderSize(c *ui.Context) float32 { return tapSize / c.Zoom() }
+
 type mobileKeyboardMotion struct {
 	Bottom, Peak     float32
 	Moving, Morphing bool
+}
+
+func mobileHeaderButton(c *ui.Context, title string, symbol *ui.SVG, activate func()) ui.Element {
+	size := mobileHeaderSize(c)
+	button := iconButton(c, title, symbol, toolbarIconSize, activate).
+		MinWidth(size).MinHeight(size).Size(size, size)
+	return floatingSurface(c, button, size/2)
 }
 
 func mobileComposerSurface(c *ui.Context, key string, home, expanded bool, send *mobileSendScroll, keyboardProgress *float32, editingQueue ...bool) (ui.Element, mobileclient.ComposerMetrics) {
@@ -459,7 +468,7 @@ func rowDivider(row ui.Element, color ui.Color) ui.Element {
 func formChoice(c *ui.Context, title, value string, items func(*ui.Menu)) ui.Element {
 	return formRow(c, title, func() {
 		iconAction(c, value, title, nil, 0, pickerSymbol, pickerIconSize, bodyTextSize, 400, nil).PaddingX(0).
-			MaxWidthPercent(62).Value(value).PopoverMenuButton(items)
+			MaxWidthPercent(62).Value(value).Menu(items)
 	})
 }
 

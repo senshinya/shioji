@@ -10,12 +10,13 @@ import (
 
 type TailnetObservation struct {
 	Path, Latency string
+	Mode, Region  string
 	Measured      bool
 	Current       bool
 }
 
 func TailnetPeerObservation(peer tailnet.Peer, connected bool, now time.Time) TailnetObservation {
-	result := TailnetObservation{Path: "尚未确认", Latency: "—"}
+	result := TailnetObservation{Path: "尚未确认", Latency: "—", Mode: "尚未确认"}
 	sample := peer.Measurement
 	if sample == nil || sample.Milliseconds <= 0 || sample.ObservedAt.IsZero() || sample.ObservedAt.After(now) {
 		return result
@@ -23,17 +24,23 @@ func TailnetPeerObservation(peer tailnet.Peer, connected bool, now time.Time) Ta
 	switch sample.Path {
 	case "direct":
 		result.Path = "直连"
+		result.Mode = "直连"
 	case "derp":
+		result.Mode = "DERP"
 		result.Path = "DERP 中继"
 		if sample.RegionName != "" && sample.Region != "" {
-			result.Path += " · " + sample.RegionName + " (" + sample.Region + ")"
+			result.Region = sample.RegionName + " (" + sample.Region + ")"
 		} else if sample.RegionName != "" {
-			result.Path += " · " + sample.RegionName
+			result.Region = sample.RegionName
 		} else if sample.Region != "" {
-			result.Path += " · " + sample.Region
+			result.Region = sample.Region
+		}
+		if result.Region != "" {
+			result.Path += " · " + result.Region
 		}
 	case "peer-relay":
 		result.Path = "设备中继"
+		result.Mode = "设备中继"
 	}
 	result.Latency = fmt.Sprintf("%.0f ms", sample.Milliseconds)
 	if sample.Milliseconds < 1 {
@@ -43,6 +50,9 @@ func TailnetPeerObservation(peer tailnet.Peer, connected bool, now time.Time) Ta
 	result.Current = connected && peer.Online && now.Sub(sample.ObservedAt) <= 30*time.Second
 	if !result.Current {
 		result.Path, result.Latency = "上次 · "+result.Path, "上次 "+result.Latency
+		if result.Mode != "尚未确认" {
+			result.Mode = "上次 · " + result.Mode
+		}
 	}
 	return result
 }

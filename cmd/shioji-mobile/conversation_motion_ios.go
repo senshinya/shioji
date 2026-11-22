@@ -30,7 +30,7 @@ func mobileOutputFollowMotion(c *ui.Context) ui.Animation {
 }
 
 // Animate the occupied layout while keeping the outgoing contents inert.
-func mobilePanelPresence(c *ui.Context, frame ui.Element, visible bool, duration time.Duration, build func(*ui.Context)) {
+func mobilePanelPresence(c *ui.Context, frame ui.Element, visible bool, duration time.Duration, build func(*ui.Context)) float32 {
 	height := ui.Local(frame, "presence-height", func() float32 { return 0 })
 	target := float32(0)
 	if visible {
@@ -44,7 +44,7 @@ func mobilePanelPresence(c *ui.Context, frame ui.Element, visible bool, duration
 	}
 	if !visible && presence == 0 {
 		frame.Height(0).Hidden(true)
-		return
+		return 0
 	}
 	if presence < 1 && *height > 0 {
 		frame.Height(*height*presence).Margin(0, 0, -composerPanelGap*(1-presence))
@@ -65,6 +65,7 @@ func mobilePanelPresence(c *ui.Context, frame ui.Element, visible bool, duration
 			}
 		}).Children(func() { build(body) })
 	})
+	return (*height + composerPanelGap) * presence
 }
 
 type mobileActivityCaption struct {

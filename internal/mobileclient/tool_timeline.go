@@ -16,7 +16,7 @@ const (
 
 type ToolGroup struct {
 	Key               string
-	Count, Issues     int
+	Count             int
 	Open, Ended, Live bool
 	Outcome           ToolGroupOutcome
 }
@@ -75,9 +75,6 @@ func (t *ToolTimeline) Groups(items []domain.Item, rows []TranscriptRow, detail 
 			if item.Status != "completed" || item.ExitCode != nil && *item.ExitCode != 0 {
 				outcome = ToolGroupEnded
 			}
-			if item.Final && (item.Status == "failed" || item.Status == "declined" || item.Status == "interrupted" || item.ExitCode != nil && *item.ExitCode != 0) {
-				group.Issues++
-			}
 			if live != nil && live.ID == item.ID && row.End > lastContent {
 				group.Live = true
 			}
@@ -93,12 +90,14 @@ func (t *ToolTimeline) Groups(items []domain.Item, rows []TranscriptRow, detail 
 					group.Key = "tool-group:" + hint.ID
 				}
 				if cutBefore || cutAfter {
-					group.Count, group.Issues = max(group.Count, hint.Count), max(group.Issues, hint.Issues)
+					group.Count = max(group.Count, hint.Count)
 				}
 				break
 			}
 		}
-		if !unfinished && group.Count == row.End-row.First {
+		// Final call records cannot seal a running tail. More calls may still
+		// join it until later content arrives or the turn itself ends.
+		if (group.Ended || row.End <= lastContent) && !unfinished && group.Count == row.End-row.First {
 			group.Outcome = outcome
 		}
 		state, known := t.disclosures[group.Key]

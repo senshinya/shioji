@@ -81,6 +81,9 @@ final class WindowController: ScreenController {
     /// routed is set while the window's router shows its pages as screens
     /// of the stack, this the first: the bar shows its title.
     var routed = false
+    /// Allow content to start immediately below the inline bar's controls.
+    /// The remaining transparent bar space overlaps the content.
+    var compactInlineBar = false
 
     override func loadView() {
         super.loadView()
@@ -93,7 +96,25 @@ final class WindowController: ScreenController {
         super.viewWillAppear(animated)
         guard let nav = navigationController else { return }
         let atRoot = nav.viewControllers.first === self
-        nav.setNavigationBarHidden(atRoot && !barAtRoot && !routed, animated: animated)
+        let hidesBar = atRoot && !barAtRoot && !routed
+        nav.setNavigationBarHidden(hidesBar, animated: animated && !(hidesBar && window.usesSceneSafeTop))
+        if window.usesSceneSafeTop { window.reportSize() }
+    }
+
+    override func viewDidLayoutSubviews() {
+        if compactInlineBar, let nav = navigationController, !nav.isNavigationBarHidden {
+            let bar = nav.navigationBar
+            let frame = view.convert(bar.bounds, from: bar)
+            window.contentSafeTop = max(0, frame.minY + min(frame.height, 44))
+        }
+        super.viewDidLayoutSubviews()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if window.usesSceneSafeTop {
+            window.reportSize()
+        }
     }
 }
 

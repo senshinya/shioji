@@ -23,21 +23,27 @@ func TestComposerGeometryMovesOneSetOfControls(t *testing.T) {
 	compact := ComposerGeometry(0, false, 18.6, 44)
 	open := ComposerGeometry(1, false, 18.6, 44)
 	half := ComposerGeometry(0.5, false, 18.6, 44)
+	revealing := ComposerGeometry(0.75, false, 18.6, 44)
 	if compact.Height != 56 || compact.ControlsY != 6 || open.Height != 130 || open.ControlsY != 80 {
 		t.Fatalf("unexpected endpoint geometry: compact = %+v open = %+v", compact, open)
 	}
 	if !(half.ControlsY > compact.ControlsY && half.ControlsY < open.ControlsY && half.TextInset < compact.TextInset && half.TextInset > open.TextInset) {
 		t.Fatalf("controls or editor jumped at the midpoint: %+v", half)
 	}
+	if compact.ControlsOpacity != 0 || half.ControlsOpacity != 0 || revealing.ControlsOpacity != .5 || open.ControlsOpacity != 1 {
+		t.Fatalf("run controls don't fade with the composer: compact=%+v half=%+v revealing=%+v open=%+v", compact, half, revealing, open)
+	}
+	if bottom := open.Height - open.ControlsY; revealing.Height-revealing.ControlsY != bottom || half.Height-half.ControlsY != bottom {
+		t.Fatal("the options row moves relative to the composer bottom while fading")
+	}
 }
 
-func TestCompactComposerReservesBothGroupsAndSendSpacing(t *testing.T) {
+func TestCompactComposerReservesAttachmentAndSendTargets(t *testing.T) {
 	for _, touchSize := range []float32{44, 44 / .75} {
 		compact := ComposerGeometry(0, false, 18.6, touchSize)
-		// Two touch targets, the 2-point gap between them and the 5-point edge inset.
-		want := 2*touchSize + 7
-		if compact.TextInset != want || compact.TextRight != want+14 {
-			t.Fatalf("touch size %g: editor insets = (%g, %g), want (%g, %g)", touchSize, compact.TextInset, compact.TextRight, want, want+14)
+		want := touchSize + ComposerControlInset + ComposerControlGap
+		if compact.TextInset != want || compact.TextRight != want {
+			t.Fatalf("touch size %g: editor insets = (%g, %g), want (%g, %g)", touchSize, compact.TextInset, compact.TextRight, want, want)
 		}
 	}
 }
@@ -48,7 +54,7 @@ func TestDraftComposerKeepsControlsExpanded(t *testing.T) {
 		t.Fatalf("unexpected draft geometry: idle = %+v focused = %+v", idle, focused)
 	}
 	for _, metrics := range []ComposerMetrics{idle, focused} {
-		if metrics.ControlsProgress != 1 || metrics.TextInset != 12 || metrics.TextTop != 4 || metrics.TextRight != 0 {
+		if metrics.ControlsProgress != 1 || metrics.ControlsOpacity != 1 || metrics.TextInset != 12 || metrics.TextTop != 4 || metrics.TextRight != 0 {
 			t.Fatalf("draft lost its expanded controls: %+v", metrics)
 		}
 	}

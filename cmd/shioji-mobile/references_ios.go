@@ -12,6 +12,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/markdown"
 
 	"shioji/internal/app"
 	"shioji/internal/attachments"
@@ -321,12 +322,18 @@ func (a *mobileApp) attachmentPage(parent *mygo.Window, session domain.Session, 
 		a.openSavedDiffComment(parent, session, item, nil)
 		return
 	}
-	if !showLocal && imageAttachment(item) {
-		a.imageAttachmentPage(parent, session, item)
+	if !mobileMarkdownFile(item.Name, item.MIME) {
+		a.previewAttachment(parent, session, item, func() { a.attachmentDetailsPage(parent, session, item, showLocal) })
 		return
 	}
+	a.attachmentDetailsPage(parent, session, item, showLocal)
+}
+
+func (a *mobileApp) attachmentDetailsPage(parent *mygo.Window, session domain.Session, item domain.Attachment, showLocal bool) {
 	req := mobileRequest{}
 	text := ""
+	isMarkdown := mobileMarkdownFile(item.Name, item.MIME)
+	options := markdown.Options{WrapCode: true}
 	var w *mygo.Window
 	var localPath string
 	var load func()
@@ -352,7 +359,14 @@ func (a *mobileApp) attachmentPage(parent *mygo.Window, session domain.Session, 
 				status = "已读取"
 			}
 			mobileRow(c.Key("remote-file"), item.Name, fmt.Sprintf("%d KB", (item.Size+1023)/1024), status, filesSymbol, nil)
-			if text != "" {
+			if text != "" && isMarkdown {
+				root := ui.Column(c).Margin(8, 0, 0)
+				root.Children(func() {
+					options.Theme = &markdown.Theme{FontSize: bodyTextSize * c.Preferences().TextScale, CodeFont: a.codeFont()}
+					a.bindMobileDiagrams(c, root, item.ID, &options)
+					markdown.View(c, text, &options).Selectable()
+				})
+			} else if text != "" {
 				mobilePanel(c.Key("attachment-text")).Margin(8, 0, 0).Children(func() {
 					label(c, text, controlTextSize, palette(c).ink).Selectable().Padding(12)
 				})
@@ -387,9 +401,11 @@ func (a *mobileApp) attachmentPage(parent *mygo.Window, session domain.Session, 
 					secondaryAction(c, "另存为…", func() {
 						go func() { _, _ = mygo.Dialog.SaveCopy(localPath, item.Name) }()
 					}).Grow(1).Basis(0)
-					primaryAction(c, "原生预览", func() {
-						a.openNativeFilePreview(w, localPath, item.Name, item.MIME)
-					}).Grow(1).Basis(0)
+					if !isMarkdown {
+						primaryAction(c, "原生预览", func() {
+							a.openNativeFilePreview(w, localPath, item.Name, item.MIME)
+						}).Grow(1).Basis(0)
+					}
 				})
 			} else if !read {
 				button := "读取附件"
@@ -421,7 +437,7 @@ func (a *mobileApp) attachmentPage(parent *mygo.Window, session domain.Session, 
 			defer cancel()
 			worker := app.RemoteAttachmentTarget(device, session.WorkspaceID, owner.DialDeviceStream)
 			path, err := worker.Download(ctx, staging, item)
-			if err == nil && item.MIME == "text/plain" {
+			if err == nil && (item.MIME == "text/plain" || isMarkdown) {
 				if bytes, readErr := os.ReadFile(path); readErr == nil {
 					mygo.RunOnMain(func() {
 						if a.windows[w] && owner == a.controller {

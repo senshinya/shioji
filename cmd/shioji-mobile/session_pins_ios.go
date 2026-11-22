@@ -59,7 +59,7 @@ func (a *mobileApp) pinnedRows() []mobileSessionRow {
 				requests++
 			}
 		}
-		row := mobileSessionRow{session: session, workspace: workspace, pin: pin, address: catalog.Label(), requests: requests, cached: pin.DeviceID != a.endpoint.DeviceID && catalog.RequestedAt.IsZero() && !a.preview}
+		row := mobileSessionRow{session: session, workspace: workspace, pin: pin, address: mobileDeviceName(catalog.Name, catalog.Address), requests: requests, cached: pin.DeviceID != a.endpoint.DeviceID && catalog.RequestedAt.IsZero()}
 		if !slices.ContainsFunc(rows, func(existing mobileSessionRow) bool { return existing.pin == pin }) {
 			rows = append(rows, row)
 		}
@@ -139,9 +139,6 @@ func (row mobileSessionRow) metadata() string {
 	parts := []string{row.session.GitBranch}
 	if !row.inGroup {
 		parts = []string{row.workspace.Name, row.session.GitBranch, row.address}
-	}
-	if row.cached {
-		parts = append(parts, "上次读取")
 	}
 	return strings.Join(slices.DeleteFunc(parts, func(part string) bool { return part == "" }), " · ")
 }

@@ -459,6 +459,9 @@ func (it *MenuItem) ID(id string) *MenuItem {
 //	}
 func (it *MenuItem) Danger() *MenuItem {
 	it.danger = true
+	if it.p != nil {
+		it.p.Destructive = true
+	}
 	return it
 }
 
@@ -470,6 +473,9 @@ func (it *MenuItem) Danger() *MenuItem {
 //	m.Item("Image.png").Trailing("2.4 MB")
 func (it *MenuItem) Trailing(s string) *MenuItem {
 	it.trailing = s
+	if runtime.GOOS == "ios" && it.p != nil && it.p.Subtitle == "" {
+		it.p.Subtitle = s
+	}
 	return it
 }
 

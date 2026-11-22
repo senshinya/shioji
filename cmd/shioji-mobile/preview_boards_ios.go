@@ -147,7 +147,7 @@ func (a *mobileApp) seedArtboardConversation(longQueue bool) {
 	}
 	detail.Plan = &domain.Plan{Steps: []domain.PlanStep{
 		{Text: "梳理离线恢复路径", Status: "completed"},
-		{Text: "补充接纳回执测试", Status: "in_progress"},
+		{Text: "补充接纳回执测试", Status: "running"},
 		{Text: "验证历史位置", Status: "pending"},
 	}}
 	detail.Works = []domain.WorkActivity{
@@ -236,21 +236,59 @@ func (a *mobileApp) openPreviewBoard(board string) {
 		a.model.Snapshot.Sessions[0] = detail.Session
 		a.model.Drafts["session:"+review.ID] = "再检查一下连续展开两个工具组的情况。"
 		a.openSession(review.ID)
-	case "motion-send", "motion-send-delayed", "motion-steer", "motion-steer-delayed", "motion-queue", "motion-queue-auto":
+	case "motion-send", "motion-send-delayed", "motion-send-uncertain", "motion-steer", "motion-steer-delayed", "motion-queue", "motion-queue-auto":
 		a.seedArtboardConversation(false)
 		a.seedConversationMotion(board, review.ID)
 		a.openSession(review.ID)
 	case "motion-home-preparing", "motion-home-handoff":
 		a.seedArtboardConversation(false)
 		a.previewConversationMotion = board
-		a.model.Drafts["home"] = "核对新会话的准备状态"
 		a.presentDraft(a.home, false)
+		a.model.Drafts[a.model.DraftKey()] = "核对新会话的准备状态"
+	case "stopped-before-output":
+		a.seedArtboardConversation(false)
+		a.seedStoppedBeforeOutput(review.ID)
+		a.openSession(review.ID)
 	case "motion-reply-height":
 		a.seedArtboardConversation(false)
 		a.seedReplyHeightMotion(review.ID)
 		a.openSession(review.ID)
 	case "inbox":
 		a.seedArtboardConversation(false)
+	case "connected-device-catalogs", "session-list-opening", "session-list-cached", "session-list-fresh", "session-list-refresh":
+		a.previewSessionOpening = board == "session-list-opening"
+		now := time.Now()
+		first := mobileclient.Endpoint{DeviceID: a.model.Snapshot.DeviceID, Address: "192.0.2.10:22"}
+		other := mobileclient.Endpoint{DeviceID: "preview-other-device", Address: "192.0.2.20:22"}
+		m := a.model
+		a.endpoint = first
+		a.savedDevices.Devices = []savedMobileDevice{
+			{Endpoint: first, Name: "工作室 Mac", Icon: app.DeviceIconLaptop},
+			{Endpoint: other, Name: "家里 Mac mini", Icon: app.DeviceIconServer},
+		}
+		timing := &app.DeviceTiming{Milliseconds: 12, ObservedAt: now}
+		m.DevicePaths = []app.DevicePathStatus{{ID: first.RouteID(), Phase: app.PathActive, Timing: timing}}
+		a.sessionCatalogs = map[string]mobileclient.DeviceCatalog{other.DeviceID: {
+			Address: other.Address, RouteID: other.RouteID(), Timing: timing, RequestedAt: now, CheckedAt: now,
+			Snapshot: domain.Snapshot{DeviceID: other.DeviceID,
+				Workspaces: []domain.Workspace{{ID: "house", DeviceID: other.DeviceID, Name: "家庭项目"}},
+				Sessions:   []domain.Session{{ID: "house-reply", WorkspaceID: "house", Title: "家庭设备巡检", Status: domain.ExecutionCompleted}},
+			},
+		}}
+		if board == "session-list-cached" || board == "session-list-fresh" {
+			a.sessionGroupings.Global = groupByWorkspace
+			if board == "session-list-cached" {
+				m.ConnectionPhase = app.ConnectionOpening
+				catalog := a.sessionCatalogs[other.DeviceID]
+				catalog.RequestedAt = time.Time{}
+				a.sessionCatalogs[other.DeviceID] = catalog
+			}
+		}
+		if board == "session-list-refresh" {
+			a.seedSessionCatalogRefresh(other.DeviceID)
+		}
+		a.home.Invalidate()
+		a.devices.Invalidate()
 	case "recent-operations":
 		a.seedArtboardConversation(false)
 		a.endpoint.DeviceID = workspace.DeviceID
@@ -273,8 +311,16 @@ func (a *mobileApp) openPreviewBoard(board string) {
 		a.collectOperationFeedback()
 		a.operationHistory.Collect(remoteDevice, []app.Feedback{{ID: "recent-operation", WorkspaceID: workspace.ID,
 			SessionID: "artboard-1", Kind: app.FeedbackSuccess, Title: "备用 Mac 已核对"}}, nil)
-	case "chat", "queue-manager", "pad-chat", "pad-portrait":
+	case "chat", "queue-manager", "pad-chat", "pad-portrait", "work-rosters":
 		a.seedArtboardConversation(board == "queue-manager")
+		if board == "work-rosters" {
+			detail := a.model.Details[review.ID]
+			task := &detail.Works[1]
+			task.Brief = "go test ./internal/transport ./internal/mobileclient ./internal/app ./internal/worker -run 'Test(ResumeCursor|VerifyAcceptedInput|ReconnectAfterTimeout|RecoverFromInterruptedHistory|RestoreTheInitialPosition)' -count=1 -v"
+			task.Title = task.Brief
+			a.model.Details[review.ID] = detail
+			a.model.WorkDetails[a.model.WorkKey(review.ID, task.ID)] = domain.WorkDetail{SessionID: review.ID, Work: *task}
+		}
 		a.openSession(review.ID)
 	case "context-compaction", "context-compaction-receipt", "context-compaction-auto",
 		"context-compaction-history", "context-compaction-order":
@@ -293,7 +339,7 @@ func (a *mobileApp) openPreviewBoard(board string) {
 	case "transcript-command-output":
 		a.seedPreviewCommandOutput(review.ID)
 		a.openSession(review.ID)
-	case "transcript-tool-tail", "transcript-tool-tail-completed", "running-session-entry", "running-session-cold-entry":
+	case "transcript-tool-tail", "transcript-tool-tail-completed", "transcript-tool-tail-settled", "running-session-entry", "running-session-cold-entry":
 		a.seedArtboardConversation(false)
 		a.model.Preferences.CollapseLatestTools = false
 		detail := a.model.Details[review.ID]
@@ -313,6 +359,13 @@ func (a *mobileApp) openPreviewBoard(board string) {
 			domain.Item{ID: "tool-tail-read", TurnID: "tool-tail", Kind: "tool", Name: "读取连接记录", ActivityOrder: 1, Final: true},
 			domain.Item{ID: "tool-tail-check", TurnID: "tool-tail", Kind: "tool", Presentation: "command", Name: "核对连接恢复", ActivityOrder: 2, Status: "running"},
 		)
+		if board == "transcript-tool-tail-settled" {
+			for i := len(detail.Items) - 2; i < len(detail.Items); i++ {
+				detail.Items[i].Status, detail.Items[i].Final = "completed", true
+			}
+			detail.Items = append(detail.Items, domain.Item{ID: "tool-tail-review", TurnID: "tool-tail", Kind: "tool",
+				Name: "核对执行回执", ActivityOrder: 3, Status: "completed", Final: true})
+		}
 		if board == "transcript-tool-tail-completed" {
 			detail.Session.Status = domain.ExecutionCompleted
 			turn := &detail.Turns[len(detail.Turns)-1]
@@ -391,6 +444,17 @@ func (a *mobileApp) openPreviewBoard(board string) {
 		detail.Queue.Items = nil
 		a.model.Details[review.ID] = detail
 		a.openSession(review.ID)
+	case "transcript-legacy":
+		a.seedArtboardConversation(false)
+		detail := a.model.Details[review.ID]
+		detail.Session.Status = domain.ExecutionCompleted
+		detail.Turns, detail.Queue.Items = nil, nil
+		detail.Items = []domain.Item{
+			{ID: "legacy-input", Kind: "user", Text: "读一下之前的记录。", Final: true},
+			{ID: "legacy-reply", Kind: "assistant", Text: "已经过核对。", Final: true},
+		}
+		a.model.Details[review.ID], a.model.Snapshot.Sessions[0] = detail, detail.Session
+		a.openSession(review.ID)
 	case "transcript-turns", "transcript-offline":
 		a.seedArtboardConversation(false)
 		detail := a.model.Details[review.ID]
@@ -454,9 +518,13 @@ func (a *mobileApp) openPreviewBoard(board string) {
 		}
 		a.model.Details[review.ID] = detail
 		a.openSession(review.ID)
-	case "transcript-images":
+	case "transcript-images", "system-file-preview":
 		a.seedArtboardConversation(false)
-		a.seedPreviewImages(review.ID)
+		if board == "system-file-preview" {
+			a.seedSystemFilePreview(review.ID)
+		} else {
+			a.seedPreviewImages(review.ID)
+		}
 		a.openSession(review.ID)
 	case "transcript-mermaid", "transcript-mermaid-fallback":
 		a.seedArtboardConversation(false)
@@ -536,16 +604,26 @@ func (a *mobileApp) openPreviewBoard(board string) {
 			editor.DiffTextPoint{Side: editor.DiffNew, Offset: buffer.LineEnd(2)})
 		selected, _ := file.diff.SelectedText()
 		file.note = &diffCommentDraft{selection: selected, versions: file.versions}
-	case "device-list":
+	case "device-list", "tailnet-route-derp":
 		a.seedArtboardDevices()
+		if board == "tailnet-route-derp" {
+			a.tailnetStatus.Peers[0].Measurement = &tailnet.Measurement{Path: "derp", RegionName: "Taipei", Region: "tpe", Milliseconds: 32, ObservedAt: time.Now()}
+		}
 		a.callUIKit("selectTab", map[string]int{"index": 1}, nil)
 	case "pair":
 		a.openPair(a.home, mobileclient.Endpoint{Address: "mac-mini.local:22", User: "shinya"})
 	case "verify":
 		a.previewDeviceName = "Mac mini"
 		a.openHostVerification(a.home, mobileclient.Endpoint{Address: "mac-mini.local:22", User: "shinya", WorkerPath: mobileclient.DefaultWorkerPath})
-	case "device-detail":
+	case "device-detail", "device-scroll":
 		a.seedArtboardDevices()
+		if board == "device-scroll" {
+			for i := 1; i <= 24; i++ {
+				a.model.Snapshot.Workspaces = append(a.model.Snapshot.Workspaces, domain.Workspace{
+					ID: fmt.Sprintf("scroll-%d", i), DeviceID: a.endpoint.DeviceID, Name: fmt.Sprintf("测试工作区 %02d", i),
+				})
+			}
+		}
 		a.openDevice(a.home)
 	case "tailnet-route-last":
 		a.seedArtboardDevices()
@@ -598,11 +676,15 @@ func (a *mobileApp) openPreviewBoard(board string) {
 				a.openWorker(a.devices)
 			}
 		})
-	case "agent-config":
+	case "agent-config", "agent-config-linked":
 		a.model.WorkerMinor = protocol.Minor
+		account := &domain.RuntimeAccount{Mode: "chatgpt", Label: "尚未登录", State: "required"}
+		if board == "agent-config-linked" {
+			account = &domain.RuntimeAccount{Mode: "account", Label: "ChatGPT", Identity: "developer@example.com", Subscription: "Pro", State: "authenticated"}
+		}
 		a.openAgentSettings(a.home, domain.HarnessInfo{ID: "codex", Name: "Codex", State: domain.RuntimeReady,
 			Capabilities: domain.HarnessCapabilities{SkillManagement: true, HookManagement: true},
-			Models:       a.model.Readiness.Models, Account: &domain.RuntimeAccount{Mode: "chatgpt", Label: "尚未登录", State: "required"},
+			Models:       a.model.Readiness.Models, Account: account,
 			Installation: &domain.RuntimeInstallation{Executable: "/Applications/Codex.app/Contents/Resources/codex", Configurable: true,
 				SignInMethods: []domain.SignInMethod{domain.SignInDeviceCode, domain.SignInBrowser}, APISetup: true}})
 	case "workspace-mcp", "workspace-skills-uncertain", "workspace-hooks-receipt":
@@ -964,6 +1046,36 @@ func previewFindWindow(detail domain.SessionDetail, item string) domain.SessionD
 	return detail
 }
 
+func (a *mobileApp) previewSessionDeviceOpening(endpoint mobileclient.Endpoint) {
+	catalog := a.sessionCatalogs[endpoint.DeviceID]
+	a.endpoint = endpoint
+	a.model.Connected, a.model.ConnectionPhase = false, app.ConnectionOpening
+	time.AfterFunc(4*time.Second, func() {
+		mygo.RunOnMain(func() {
+			if a.endpoint.DeviceID != endpoint.DeviceID {
+				return
+			}
+			a.model.Connected, a.model.ConnectionPhase = true, app.ConnectionIdle
+			a.model.Snapshot = catalog.Snapshot
+			session := catalog.Snapshot.Sessions[0]
+			a.model.HistoryReads[session.ID] = &app.HistoryRead{Pending: true}
+			a.completeSessionListOpening()
+			a.refresh()
+			time.AfterFunc(4*time.Second, func() {
+				mygo.RunOnMain(func() {
+					if a.model.Snapshot.DeviceID != endpoint.DeviceID {
+						return
+					}
+					delete(a.model.HistoryReads, session.ID)
+					a.model.Details[session.ID] = domain.SessionDetail{Session: session, HistoryLoaded: true,
+						Items: []domain.Item{{ID: "loaded-remote", Kind: "assistant", Text: "远端历史已加载。", Final: true}}}
+					a.refresh()
+				})
+			})
+		})
+	})
+}
+
 func (a *mobileApp) seedArtboardDevices() {
 	a.previewDeviceName = "Mac mini"
 	a.endpoint = mobileclient.Endpoint{Address: "mac-mini.local:22", User: "shinya",
@@ -977,6 +1089,7 @@ func (a *mobileApp) seedArtboardDevices() {
 		{ID: a.endpoint.TailnetPeerID, Address: "mac-mini.local", Online: true,
 			Measurement: &tailnet.Measurement{Path: "direct", Milliseconds: 12, ObservedAt: time.Now()}},
 	}}
+	a.model.Connected = true
 	a.model.Snapshot.Workspaces[0].Name = "Shioji"
 }
 

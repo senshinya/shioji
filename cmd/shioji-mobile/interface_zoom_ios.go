@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	mobileMinZoom  = 75
-	mobileMaxZoom  = 150
-	mobileZoomStep = 5
+	mobileBaselineZoom float32 = 1.12
+	mobileMinZoom              = 75
+	mobileMaxZoom              = 150
+	mobileZoomStep             = 5
 )
 
 func zoomPercent(factor float32) int { return int(math.Round(float64(factor * 100))) }
@@ -64,7 +65,7 @@ func (a *mobileApp) handleZoomShortcut(action string, window uintptr) bool {
 func (a *mobileApp) showZoomFeedback(c *ui.Context, page *mygo.Window) {
 	if page != nil && a.zoomFeedback == page {
 		a.zoomFeedback = nil
-		c.AddToast(ui.Toast{ID: "interface-zoom", Title: "缩放 " + zoomLabel(zoomPercent(c.Zoom())), Timeout: 1500 * time.Millisecond})
+		c.AddToast(ui.Toast{ID: "interface-zoom", Title: "缩放 " + zoomLabel(zoomPercent(a.model.Preferences.InterfaceZoom)), Timeout: 1500 * time.Millisecond})
 	}
 }
 

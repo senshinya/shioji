@@ -25,14 +25,14 @@ type DeviceSearchHit struct {
 // SearchDevice reads an enrolled worker without changing the client's active
 // device. Both SSH and the worker handshake check the saved route's identity.
 func SearchDevice(ctx context.Context, device SavedDevice, preferred Endpoint, signer ssh.Signer, route RouteDial, query string) ([]DeviceSearchHit, error) {
-	return readVerifiedDevice(ctx, device, preferred, signer, route, func(ctx context.Context, client *protocol.Client, address string) ([]DeviceSearchHit, error) {
-		return searchConnectedDevice(ctx, client, address, query)
+	return readVerifiedDevice(ctx, device, preferred, signer, route, func(ctx context.Context, client *protocol.Client, endpoint Endpoint) ([]DeviceSearchHit, error) {
+		return searchConnectedDevice(ctx, client, endpoint.Address, query)
 	})
 }
 
 // readVerifiedDevice retries only read paths with the saved worker identity.
 func readVerifiedDevice[T any](ctx context.Context, device SavedDevice, preferred Endpoint, signer ssh.Signer, route RouteDial,
-	read func(context.Context, *protocol.Client, string) (T, error),
+	read func(context.Context, *protocol.Client, Endpoint) (T, error),
 ) (T, error) {
 	var zero T
 	deviceID := device.Endpoint.DeviceID
@@ -54,7 +54,7 @@ func readVerifiedDevice[T any](ctx context.Context, device SavedDevice, preferre
 		}, deviceID)
 		cancel()
 		if err == nil {
-			result, queryErr := read(ctx, client, endpoint.Address)
+			result, queryErr := read(ctx, client, endpoint)
 			client.Close()
 			if queryErr == nil {
 				return result, nil

@@ -2,16 +2,47 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"image"
 	"image/color"
 	"image/draw"
 	"image/png"
+	"net/http"
 	"os"
 	"path/filepath"
 
+	"shioji/internal/app"
 	"shioji/internal/attachments"
 	"shioji/internal/domain"
 )
+
+func (a *mobileApp) seedSystemFilePreview(sessionID string) {
+	data, err := base64.StdEncoding.DecodeString(os.Getenv("SHIOJI_FIXTURE_PREVIEW_BYTES"))
+	if err != nil {
+		return
+	}
+	name := os.Getenv("SHIOJI_FIXTURE_PREVIEW_NAME")
+	if len(data) == 0 || name == "" || name != filepath.Base(name) {
+		return
+	}
+	directory, err := os.MkdirTemp("", "shioji-quick-look-fixture-")
+	if err != nil {
+		return
+	}
+	a.directory = directory
+	local := filepath.Join(directory, name)
+	if err := os.WriteFile(local, data, 0600); err != nil {
+		return
+	}
+	a.previewLinkedResource = app.LinkedFile{
+		Path:     local,
+		Resource: domain.FileResource{Path: name, Name: name, MIME: http.DetectContentType(data), Size: int64(len(data))},
+	}
+	detail := a.model.Details[sessionID]
+	detail.Turns, detail.Queue.Items = nil, nil
+	detail.Items = []domain.Item{{ID: "quick-look-file", Kind: "assistant", Final: true, Text: "[打开文件](" + name + ")"}}
+	a.model.Details[sessionID] = detail
+}
 
 func (a *mobileApp) seedPreviewImages(sessionID string) {
 	directory, err := os.MkdirTemp("", "shioji-preview-images-")

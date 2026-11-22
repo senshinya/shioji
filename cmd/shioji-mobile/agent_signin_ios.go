@@ -379,6 +379,7 @@ func (a *mobileApp) agentSignInProgress(c *ui.Context, w *mygo.Window, p *mobile
 type mobileAgentAccountDraft struct {
 	method               domain.SignInMethod
 	endpoint, credential string
+	reauthorize          bool
 }
 
 func (d *mobileAgentAccountDraft) selected(methods []domain.SignInMethod) domain.SignInMethod {
@@ -402,6 +403,29 @@ func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain
 	attempt := a.agentSignIns[agent.ID]
 	active := attempt != nil && attempt.status.Phase.Active()
 	methods := agentMobileSignInMethods(agent, a.model.WorkerMinor)
+	if account := agent.Account; account != nil && account.Mode != "api" && (account.State == "authenticated" || account.State == "notRequired") && !draft.reauthorize {
+		mobileRow(c, "账号", "", agentAccountName(account), accountSymbol, nil)
+		if account.Identity != "" {
+			mobileRow(c, "账号标识", "", account.Identity, nil, nil)
+		}
+		if account.Subscription != "" {
+			mobileRow(c, "订阅", "", account.Subscription, nil, nil)
+		}
+		action(c, "重新检测", refresh).Disabled(blocked || active)
+		if len(methods) != 0 && account.State == "authenticated" {
+			action(c, "更换账号", func() { draft.reauthorize = true }).Disabled(blocked || active)
+		}
+		return
+	}
+	if agent.Account == nil && !active && !draft.reauthorize && !a.preview {
+		message := "设备尚未返回账号状态"
+		if blocked && a.model.Connected {
+			message = "正在读取设备账号…"
+		}
+		mobileMessage(c, message)
+		action(c, "重新检测", refresh).Disabled(blocked)
+		return
+	}
 	selected := draft.selected(methods)
 	accountMode := "订阅账号"
 	if selected == domain.SignInAPI || agent.Account != nil && agent.Account.Mode == "api" {

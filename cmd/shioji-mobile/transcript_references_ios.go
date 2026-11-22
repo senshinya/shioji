@@ -19,9 +19,10 @@ import (
 func (a *mobileApp) sentMessageBody(c *ui.Context, parent *mygo.Window, session domain.Session, runs []mobileclient.SentMessageRun,
 	text string, mark *markdown.RangeDecoration) {
 	p := palette(c)
+	size := float32(a.model.Preferences.ReplySize)
 	if len(runs) == 1 && !runs[0].Inline() && !mobileMessageURL.MatchString(runs[0].Text) {
 		if runs[0].Text != "" {
-			el := label(c, runs[0].Text, bodyTextSize, p.ink).LineHeight(transcriptLeading).Selectable()
+			el := label(c, runs[0].Text, size, p.ink).LineHeight(transcriptLeading).Selectable()
 			decorateTranscriptText(c, el, text, mark, nil)
 		}
 		return
@@ -29,7 +30,7 @@ func (a *mobileApp) sentMessageBody(c *ui.Context, parent *mygo.Window, session 
 	refByOffset := make(map[int]mobileclient.SentMessageRun)
 	drawByOffset := make(map[int]func(*ui.Painter, ui.Rect))
 	scale := c.Preferences().TextScale
-	font := ui.Font{Size: bodyTextSize * scale}
+	font := ui.Font{Size: size * scale}
 	tagFont := ui.Font{Size: (controlTextSize - 1) * scale}
 	column := ui.Column(c).Selectable()
 	column.Children(func() {

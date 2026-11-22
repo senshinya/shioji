@@ -345,7 +345,7 @@ func (a *mobileApp) openSchedules(parent *mygo.Window, deviceID string) {
 
 func scheduleFilter(c *ui.Context, title, value string, menu func(*ui.Menu)) {
 	iconAction(c, value, title, nil, 0, pickerSymbol, pickerIconSize, controlTextSize, 400, nil).
-		Radius(pillRadius).Background(palette(c).inset).MaxWidthPercent(57).Value(value).PopoverMenuButton(menu)
+		Radius(pillRadius).Background(palette(c).inset).MaxWidthPercent(57).Value(value).Menu(menu)
 }
 
 func scheduleFilterName(status mobileclient.ScheduleStatus) string {

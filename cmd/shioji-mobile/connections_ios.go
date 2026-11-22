@@ -210,6 +210,10 @@ func (a *mobileApp) openDeviceFromResults(w *mygo.Window, id string) error {
 	}
 	for _, device := range a.savedDevices.Devices {
 		if device.Endpoint.DeviceID == id {
+			if a.previewSessionOpening {
+				a.previewSessionDeviceOpening(device.Endpoint)
+				return nil
+			}
 			if err := a.switchSavedDevice(device.Endpoint); err != nil {
 				return err
 			}
@@ -266,6 +270,56 @@ func (a *mobileApp) connectionName() string {
 		return "Tailnet"
 	}
 	return "直接 SSH"
+}
+
+func (a *mobileApp) activeDeviceTiming(route string) *app.DeviceTiming {
+	for _, path := range a.model.DevicePaths {
+		if path.ID == route && path.Timing != nil {
+			return path.Timing
+		}
+	}
+	if catalog := a.sessionCatalogs[a.endpoint.DeviceID]; catalog.RouteID == route {
+		return catalog.Timing
+	}
+	return nil
+}
+
+type mobileDeviceRouteDisplay struct {
+	name, latency string
+	tailnet       mobileclient.TailnetObservation
+}
+
+func (route mobileDeviceRouteDisplay) summary() string {
+	if route.latency == "" {
+		return route.name
+	}
+	return route.name + " · " + route.latency
+}
+
+func (a *mobileApp) deviceRouteDisplay(endpoint mobileclient.Endpoint, timing *app.DeviceTiming, online bool, now time.Time) mobileDeviceRouteDisplay {
+	if endpoint.TailnetPeerID != "" {
+		observation := a.tailnetObservation(endpoint, online, now)
+		route := mobileDeviceRouteDisplay{name: "Tailnet", tailnet: observation}
+		if observation.Measured {
+			route.latency = observation.Latency
+		}
+		return route
+	}
+	if endpoint.Address == "" {
+		return mobileDeviceRouteDisplay{name: "尚未确认"}
+	}
+	route := mobileDeviceRouteDisplay{name: "直接 SSH"}
+	if timing == nil || timing.Milliseconds <= 0 || timing.ObservedAt.IsZero() || timing.ObservedAt.After(now) {
+		return route
+	}
+	route.latency = fmt.Sprintf("%.0f ms", timing.Milliseconds)
+	if timing.Milliseconds < 1 {
+		route.latency = "<1 ms"
+	}
+	if !online || now.Sub(timing.ObservedAt) > 2*sessionCatalogInterval {
+		route.latency = "上次 " + route.latency
+	}
+	return route
 }
 
 func (a *mobileApp) tailnetObservation(endpoint mobileclient.Endpoint, active bool, now time.Time) mobileclient.TailnetObservation {
@@ -616,8 +670,8 @@ func (a *mobileApp) openPair(parent *mygo.Window, draft mobileclient.Endpoint) {
 
 func (a *mobileApp) openHostVerification(parent *mygo.Window, draft mobileclient.Endpoint) {
 	var key mobileclient.HostKeyInfo
-	expected, problem := "", ""
-	busy, confirming := false, false
+	problem := ""
+	busy := false
 	var w *mygo.Window
 	route := a.routeDial()
 	scan := func() {
@@ -651,14 +705,14 @@ func (a *mobileApp) openHostVerification(parent *mygo.Window, draft mobileclient
 		}(draft)
 	}
 	proceed := func() {
-		if !confirming {
-			confirming = true
+		if busy || key.Fingerprint == "" {
 			return
 		}
 		in := draft
-		in.HostFingerprint = strings.TrimSpace(expected)
-		if in.HostFingerprint != key.Fingerprint || in.Validate() != nil {
-			problem = "请核实设备上的完整 SHA256 指纹"
+		in.HostFingerprint = key.Fingerprint
+		if err := in.Validate(); err != nil {
+			problem = err.Error()
+			w.Invalidate()
 			return
 		}
 		problem = ""
@@ -675,15 +729,12 @@ func (a *mobileApp) openHostVerification(parent *mygo.Window, draft mobileclient
 				keyType = strings.ToUpper(strings.TrimPrefix(key.Type, "ssh-"))
 			}
 			mobileRow(c, "密钥类型", "", keyType, permissionSymbol, nil)
-			label(c, "通过你已有的可信渠道取得主机公钥指纹，核对完全一致后继续。", 13, p.secondary).Padding(10, 0, 18)
+			label(c, "在目标 Mac 上核对 SSH 主机指纹，一致后点击「信任并继续」。", 13, p.secondary).Padding(10, 0, 18)
 			if key.Fingerprint != "" {
 				label(c, key.Fingerprint, 13, p.ink).Font("monospace").Selectable().
 					Padding(10, 12).Radius(10).Background(p.inset)
-			}
-			if confirming {
-				formRow(c, "设备上核实的指纹", func() {
-					formInput(c, "设备上核实的指纹", "SHA256:…", &expected).
-						Capitalize(ui.CapitalizeNone).Autocorrect(false).ReturnKey(ui.ReturnGo).OnSubmit(proceed)
+				action(c, "复制核对命令", func() {
+					mygo.Clipboard.WriteText(`for file in /etc/ssh/ssh_host_*_key.pub; do ssh-keygen -lf "$file" -E sha256; done`)
 				})
 			}
 			if busy {
@@ -696,12 +747,8 @@ func (a *mobileApp) openHostVerification(parent *mygo.Window, draft mobileclient
 				action(c, "重新读取指纹", scan)
 			}
 		}, func() {
-			trust := "信任主机，继续配置 SSH"
-			if confirming {
-				trust = "连接"
-			}
 			ui.Column(c).Gap(8).Children(func() {
-				primaryAction(c, trust, proceed).Disabled(busy || key.Fingerprint == "")
+				primaryAction(c, "信任并继续", proceed).Disabled(busy || key.Fingerprint == "")
 				secondaryAction(c, "取消", func() { w.Pop() })
 			})
 		})

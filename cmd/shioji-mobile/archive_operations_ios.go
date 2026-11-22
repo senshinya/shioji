@@ -174,7 +174,7 @@ func (a *mobileApp) archiveRetention(c *ui.Context, w *mygo.Window, req *mobileR
 			showHeading = false
 		}
 		device := catalog.ArchiveDevice()
-		formChoice(c.Key(device.ID), device.Label(), daysName(policy.Days), func(menu *ui.Menu) {
+		formChoice(c.Key(device.ID), mobileDeviceName(device.Name, device.Address), daysName(policy.Days), func(menu *ui.Menu) {
 			for _, days := range []int{30, 7, 14, 0} {
 				menuChoice(menu, daysName(days), days == policy.Days, func() {
 					if busy || req.busy || days == policy.Days || !a.canUseArchiveDevice(device, 40) {
@@ -234,11 +234,11 @@ func (a *mobileApp) confirmArchiveDeletion(w *mygo.Window, targets []mobileArchi
 		counts[target.device.ID]++
 	}
 	if len(devices) == 1 {
-		detail += "\n\n设备 · " + devices[0].Label()
+		detail += "\n\n设备 · " + mobileDeviceName(devices[0].Name, devices[0].Address)
 	} else {
 		names := make([]string, 0, len(devices))
 		for _, device := range devices {
-			names = append(names, fmt.Sprintf("%s · %d 项", device.Label(), counts[device.ID]))
+			names = append(names, fmt.Sprintf("%s · %d 项", mobileDeviceName(device.Name, device.Address), counts[device.ID]))
 		}
 		detail += "\n\n" + strings.Join(names, "\n")
 	}
@@ -306,7 +306,7 @@ func (a *mobileApp) deleteNextArchive(d *mobileArchiveDeletion) {
 		if err != nil {
 			d.failed = append(d.failed, target)
 			if d.message == "" {
-				d.message = target.device.Label() + " · " + target.title + " · " + err.Error()
+				d.message = mobileDeviceName(target.device.Name, target.device.Address) + " · " + target.title + " · " + err.Error()
 			}
 		} else {
 			a.applyFleetArchiveDeletion(target.device, receipt)

@@ -10,8 +10,6 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
-	"golang.org/x/text/language"
-	"golang.org/x/text/message"
 
 	"shioji/internal/app"
 	"shioji/internal/conversationui"
@@ -29,51 +27,67 @@ func (a *mobileApp) homeView(c *ui.Context) {
 	if a.wide {
 		root.BorderEndWidth(1).BorderColor(p.line)
 	}
-	ui.Column(c).Fill().Background(bg).Children(func() {
-		a.sessionList(c)
-		if !a.searching && !a.prominentCompose {
-			bottom, gap := float32(8), float32(4)
-			if a.wide {
-				bottom, gap = 0, 10
-			}
-			ui.Row(c).Padding(0, 12, bottom).Gap(gap).AlignItems(ui.Center).Children(func() {
+	target := float32(0)
+	if a.searching {
+		target = 1
+		a.inlineSearch.update(c, a, a.home)
+	}
+	progress := root.AnimateTo("session-search", target, ui.Animation{Duration: 230 * time.Millisecond, Ease: ui.EaseOut})
+	// Both panes share the root content area, including the native safe-area insets.
+	ui.Column(c.Key("home-panes")).Fill().Children(func() {
+		ui.Column(c.Key("session-browser")).Fill().Opacity(1 - progress).
+			IgnoreInput(a.searching).AccessHidden(a.searching).Children(func() {
+			a.sessionList(c)
+			if !a.prominentCompose {
+				bottom, gap := float32(8), float32(4)
 				if a.wide {
-					tabs := ui.Row(c).Grow(1).MinWidth(0).Height(max(50, mobileTapSize(c)+6)).Padding(3).Gap(2)
-					floatingSurface(c, tabs, 25).Children(func() {
-						for index, item := range []struct {
-							title string
-							icon  *ui.SVG
-						}{
-							{"会话", conversationsSymbol}, {"设备", deviceSymbol}, {"设置", gearSymbol},
-						} {
-							row := c.Key(index)
-							selected := p.canvas.Alpha(0)
-							if index == 0 {
-								selected = p.selected
-							}
-							ui.ButtonBase(row).Grow(1).Basis(0).MinWidth(mobileTapSize(c)).MinHeight(mobileTapSize(c)).Radius(24).
-								AlignItems(ui.Center).Justify(ui.Center).Background(selected).
-								Label(item.title).Role(ui.RoleButton).OnClick(func() {
-								if index != 0 {
-									a.callUIKit("selectTab", map[string]int{"index": index}, nil)
+					bottom, gap = 0, 10
+				}
+				ui.Row(c).Padding(0, 12, bottom).Gap(gap).AlignItems(ui.Center).Children(func() {
+					if a.wide {
+						tabs := ui.Row(c).Grow(1).MinWidth(0).Height(max(50, mobileTapSize(c)+6)).Padding(3).Gap(2)
+						floatingSurface(c, tabs, 25).Children(func() {
+							for index, item := range []struct {
+								title string
+								icon  *ui.SVG
+							}{
+								{"会话", conversationsSymbol}, {"设备", deviceSymbol}, {"设置", gearSymbol},
+							} {
+								row := c.Key(index)
+								selected := p.canvas.Alpha(0)
+								if index == 0 {
+									selected = p.selected
 								}
-							}).Children(func() {
-								ui.Column(row).AlignItems(ui.Center).Gap(1).PassThrough().Children(func() {
-									ui.Icon(row, item.icon).Size(17, 17).TextColor(p.ink).PassThrough()
-									oneLine(row, item.title, 10, p.ink)
+								ui.ButtonBase(row).Grow(1).Basis(0).MinWidth(mobileTapSize(c)).MinHeight(mobileTapSize(c)).Radius(24).
+									AlignItems(ui.Center).Justify(ui.Center).Background(selected).
+									Label(item.title).Role(ui.RoleButton).OnClick(func() {
+									if index != 0 {
+										a.callUIKit("selectTab", map[string]int{"index": index}, nil)
+									}
+								}).Children(func() {
+									ui.Column(row).AlignItems(ui.Center).Gap(1).PassThrough().Children(func() {
+										ui.Icon(row, item.icon).Size(20, 20).TextColor(p.ink).PassThrough()
+										oneLine(row, item.title, 10, p.ink).FontWeight(500)
+									})
 								})
-							})
-						}
-					})
-				} else {
-					ui.Spacer(c)
-				}
-				size := mobileTapSize(c)
-				if a.wide {
-					size = max(49, mobileTapSize(c))
-				}
-				floatingSurface(c, iconButton(c, "新建会话", composeSymbol, toolbarIconSize,
-					func() { a.openDraft(a.home) }).Size(size, size), size/2)
+							}
+						})
+					} else {
+						ui.Spacer(c)
+					}
+					size := mobileTapSize(c)
+					if a.wide {
+						size = max(49, mobileTapSize(c))
+					}
+					floatingSurface(c, iconButton(c, "新建会话", composeSymbol, toolbarIconSize,
+						func() { a.openDraft(a.home) }).Size(size, size), size/2)
+				})
+			}
+		})
+		if a.searching || progress > 0 {
+			ui.Column(c.Key("session-search-pane")).Absolute().Top(mobileHeaderSize(c) + 6).Left(0).Right(0).Bottom(0).
+				Opacity(progress).IgnoreInput(!a.searching).AccessHidden(!a.searching).Children(func() {
+				a.sessionSearchResults(c)
 			})
 		}
 	})
@@ -190,8 +204,8 @@ func (a *mobileApp) conversation(c *ui.Context, parent *mygo.Window, split bool)
 
 func (a *mobileApp) conversationHeader(c *ui.Context, title, scope string, device, activity func()) {
 	p := palette(c)
-	ui.Row(c).Gap(16).AlignItems(ui.Center).MinHeight(55).Padding(2, 16, 4).Children(func() {
-		toolbarButton(c, "切换侧栏", panelSymbol, func() { a.callUIKit("toggleSidebar", nil, nil) })
+	ui.Row(c).Gap(16).AlignItems(ui.Center).MinHeight(mobileHeaderSize(c)).PaddingX(16).Children(func() {
+		mobileHeaderButton(c, "切换侧栏", panelSymbol, func() { a.callUIKit("toggleSidebar", nil, nil) })
 		ui.Row(c).Grow(1).MinWidth(0).AlignItems(ui.Baseline).Gap(8).Children(func() {
 			oneLine(c.Key("conversation-title"), title, conversationTitle, p.ink).FontWeight(650).Grow(1).Shrink(1).
 				ContentTransition(ui.ContentTransition{Animation: &mobileTitleMotion})
@@ -212,7 +226,7 @@ func (a *mobileApp) conversationHeader(c *ui.Context, title, scope string, devic
 			})
 		})
 		if activity != nil {
-			toolbarButton(c, "会话活动", moreSymbol, activity)
+			mobileHeaderButton(c, "会话活动", moreSymbol, activity)
 		}
 	})
 }
@@ -733,14 +747,10 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 						return
 					}
 					render := func(body *ui.Context) {
-						if stop.pending() && turn.ID == stop.turn {
-							mobileReplyProgress(body, "已停止", nil, nil, false)
-							return
-						}
 						a.turnReceipt(body, parent, sid, turn, receipt, detail.Requests, items,
 							historyActions, hold, toolsShowProgress && turn.ID == workTurn.ID, previewTail, atEnd, workCaption)
 					}
-					if motionAllowed && !turn.Status.Active() {
+					if motionAllowed && !turn.Status.Active() && turn.Status != domain.ExecutionInterrupted {
 						settled := row.Key("settled-footer")
 						ui.Column(settled).Transition(mobileFeedbackFade(180 * time.Millisecond)).Children(func() { render(settled) })
 					} else {
@@ -1028,12 +1038,6 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 			if session.ContextChanged {
 				a.branchContextNotice(c.Key("branch-context"), parent, session, editor, right, connected)
 			}
-			if ready.Capabilities.Compact || session.ContextUsage != nil || compact.phase == mobileCompactionUnknown {
-				ui.Row(c.Key("context-controls")).AlignItems(ui.Center).Gap(4).Children(func() {
-					ui.Spacer(c)
-					a.compactionControl(c.Key("compaction"), session, compact)
-				})
-			}
 			a.goalControl(c.Key("session-goal"), parent, session)
 			referencePanelOpen := editor.query.Marker != 0 && editor.query != editor.dismissed
 			a.queue(c, parent, session, editor, queue, !isTablet() && keyboard && referencePanelOpen)
@@ -1092,7 +1096,7 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 			keyboardProgress = &progress
 		}
 		send := &editor.sendScroll
-		releasing := send.operation != "" && send.steer && !send.queued && send.started && !expanded
+		releasing := send.operation != "" && send.steer && !send.queued && send.started
 		surface, geometry := mobileComposerSurface(c, key, home, expanded, send, keyboardProgress, queueEdit.ID != "")
 		if !home {
 			growth := mobileComposerExtraHeight(c, surface, editor, m.Drafts[key], geometry.EditorHeight,
@@ -1102,8 +1106,11 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 			geometry.ControlsY += growth
 			surface.Height(geometry.Height)
 			if list := a.history[sid]; releasing && list != nil {
-				settled := mobileclient.ComposerGeometry(0, false, composerLineHeight(c), mobileTapSize(c))
-				list.EndOverlayRelease += max(0, geometry.Height-settled.Height)
+				// Aim the inserted message past the parts of the dock closing with it.
+				if !expanded {
+					settled := mobileclient.ComposerGeometry(0, false, composerLineHeight(c), mobileTapSize(c))
+					list.EndOverlayRelease += max(0, geometry.Height-settled.Height)
+				}
 			}
 		}
 		surface.DrawOver(func(_ *ui.Painter, r ui.Rect) { editor.sendScroll.composerBounds = r })
@@ -1114,7 +1121,6 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 		if dismissed && editor.focused {
 			surface.Focus(ui.FocusOptions{PreventScroll: true}).FocusRing(false)
 		}
-		controlsProgress := geometry.ControlsProgress
 		surface.Children(func() {
 			placeholder := "发消息…"
 			if home {
@@ -1155,7 +1161,13 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 					attachmentTitle = "添加右侧附件"
 				}
 				a.composerAttachmentMenu(c, parent, editor, attachmentTitle, attachmentSize)
-				a.runControls(c, parent, editor, ready, config, controlsProgress, geometry.ModelSendSpacing, home, right)
+				options := c.Key("run-controls")
+				row := ui.Row(options).Grow(1).MinWidth(0).AlignItems(ui.Center).Gap(mobileclient.ComposerControlGap).
+					Opacity(geometry.ControlsOpacity).PassThrough()
+				ui.Inert(row, geometry.ControlsOpacity < 1)
+				row.Children(func() {
+					a.runControls(options, parent, editor, ready, config, modelUnavailable, home, right)
+				})
 				switch {
 				case queueEdit.ID != "":
 					action(c, "取消", func() { m.CancelQueueEdit(sid); a.save() }).KeepFocus().Disabled(queue.busy)
@@ -1188,7 +1200,7 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 					if right {
 						title = "右侧发送选项"
 					}
-					sendButton(c, title, sendSymbol, home, !canSubmit() && !canSteer(), nil).PopoverMenuButton(func(menu *ui.Menu) {
+					sendButton(c, title, sendSymbol, home, !canSubmit() && !canSteer(), nil).Menu(func(menu *ui.Menu) {
 						if menu.Item("加入待发队列").Disabled(!canSubmit()).Chosen() {
 							submit(false)
 						}
@@ -1258,9 +1270,6 @@ func (a *mobileApp) turnReceipt(c *ui.Context, parent *mygo.Window, sid string, 
 	status := ""
 	switch turn.Status {
 	case domain.ExecutionCompleted:
-		if len(receipt.Reply) == 0 {
-			status = "本轮完成"
-		}
 	case domain.ExecutionInterrupted:
 		status = "已停止"
 	case domain.ExecutionFailed:
@@ -1272,6 +1281,18 @@ func (a *mobileApp) turnReceipt(c *ui.Context, parent *mygo.Window, sid string, 
 		status = "已结束 · 结果未确认"
 	default:
 		status = "执行状态待核实"
+	}
+	if turn.Status == domain.ExecutionFailed && len(receipt.Reply) == 0 {
+		ui.Row(c).FillWidth().Wrap().Gap(8).AlignItems(ui.Baseline).Children(func() {
+			footerLabel(c, status)
+			if turn.Error != "" && turn.UsageLimit == nil {
+				label(c, turn.Error, captionTextSize, p.secondary).MinWidth(0).Shrink(1).Selectable()
+			}
+			if turn.DurationMS != nil {
+				footerLabel(c, mobileElapsed(*turn.DurationMS))
+			}
+		})
+		return
 	}
 	a.replyFooter(c, parent, sid, turn, receipt, historyActions, status, previewTail, atEnd)
 	if turn.Status == domain.ExecutionFailed && turn.Error != "" && turn.UsageLimit == nil {
@@ -1392,7 +1413,6 @@ func (a *mobileApp) liveTurnStatus(sid string, turn domain.Turn, requests []doma
 }
 
 func (a *mobileApp) replyFooter(c *ui.Context, parent *mygo.Window, sid string, timing domain.Turn, receipt mobileclient.ReplyReceipt, historyActions bool, status string, previewTail, atEnd bool) {
-	p := palette(c)
 	s := a.sessionByID(sid)
 	intermediate := receipt.BeforeInput != ""
 	if intermediate {
@@ -1415,51 +1435,20 @@ func (a *mobileApp) replyFooter(c *ui.Context, parent *mygo.Window, sid string, 
 	if intermediate {
 		fork.title = "轮次中途无法分叉"
 	}
-	details := footerAction{title: "回复详情", icon: infoSymbol, menu: func(menu *ui.Menu) {
-		menu.Item("输入 " + usageValue(timing.InputTokens)).Disabled(true)
-		menu.Item("输出 " + usageValue(timing.OutputTokens)).Disabled(true)
-		menu.Item("缓存命中 " + usageValue(timing.CachedInputTokens)).Disabled(true)
-	}}
-	if reply == "" && status != "" {
-		font := mobileStatusFont(c, captionTextSize)
-		ui.Row(c.Key("turn-outcome")).MinHeight(mobileStatusLineHeight(font)).AlignItems(ui.Baseline).Gap(6).Children(func() {
-			if timing.Status == domain.ExecutionCompleted {
-				transcriptSymbol(c, checkSymbol, status, font, 12, p.active)
-			}
-			oneLine(c, status, captionTextSize, p.secondary).Font(font.Family).FixedLineHeight(mobileStatusLineHeight(font)).
-				ContentTransition(ui.ContentTransition{Animation: &mobileTitleMotion})
-		})
-	}
 	copyTitle, copyText := "复制回复", reply
 	if reply == "" {
 		copyTitle, copyText = "复制工具输出", strings.Join(receipt.ToolOutput, "\n\n")
 	}
 	copy := copyFooterAction(copyTitle, copyText)
 	copy.disabled = copyText == ""
-	if reply == "" && timing.Status == domain.ExecutionFailed {
-		fork.disabled = true
-	}
 	messageFooter(c, false).DrawOver(func(_ *ui.Painter, r ui.Rect) { *anchor = r }).Children(func() {
-		if intermediate {
-			footerActions(c, previewTail, atEnd, copy, fork)
-		} else {
-			footerActions(c, previewTail, atEnd, copy, fork, details)
-		}
+		footerActions(c, previewTail, atEnd, copy, fork)
 		footerClock(c, timing.CompletedAt, "完成时间未知")
-		if reply != "" && status != "" {
+		if status != "" {
 			footerLabel(c, status)
 		}
 		footerLabel(c, elapsed)
 	})
-}
-
-var usageNumbers = message.NewPrinter(language.SimplifiedChinese)
-
-func usageValue(tokens *int64) string {
-	if tokens == nil {
-		return "—"
-	}
-	return usageNumbers.Sprintf("%d", *tokens)
 }
 
 func footerMetadataHeight(c *ui.Context) float32 {
@@ -1504,7 +1493,6 @@ type footerAction struct {
 	icon     *ui.SVG
 	copy     string
 	click    func()
-	menu     func(*ui.Menu)
 	disabled bool
 }
 
@@ -1557,9 +1545,6 @@ func footerActions(c *ui.Context, previewTail, atEnd bool, actions ...footerActi
 					Margin(0, -offset, 0, offset).Transition(mobileFeedbackFade(120 * time.Millisecond))
 			})
 			button.Padding(touchOverflow, 0, padding-touchOverflow)
-			if action.menu != nil {
-				button.Menu(action.menu)
-			}
 		}
 	})
 }

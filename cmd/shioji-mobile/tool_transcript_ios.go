@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -103,12 +104,10 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 	p := palette(c)
 	title := fmt.Sprintf("%d 次工具调用", group.Count)
 	outcome := ""
-	switch {
-	case group.Issues > 0:
-		outcome = fmt.Sprintf("%d 项未成功", group.Issues)
-	case group.Outcome == mobileclient.ToolGroupCompleted:
+	switch group.Outcome {
+	case mobileclient.ToolGroupCompleted:
 		outcome = "已完成"
-	case group.Outcome == mobileclient.ToolGroupEnded:
+	case mobileclient.ToolGroupEnded:
 		outcome = "调用结束"
 	}
 	live := observed && group.Live
@@ -160,16 +159,20 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 			}
 			if live && progress < 1 {
 				phaseKey := line.Key("inline-phase")
-				phaseRow := ui.Row(phaseKey).Gap(mobileToolSummaryGap).AlignItems(ui.Baseline).Clip().Opacity(1 - progress)
-				if progress > 0 {
+				if progress == 0 {
+					mobileToolPhase(phaseKey, phase, started, sweep)
+				} else {
 					width, _ := ui.ShapeText(phase, font, 0).Size()
 					if started != nil && !started.IsZero() {
-						clockWidth, _ := ui.ShapeText(mobileElapsed(c.Now().Sub(*started).Milliseconds()), font, 0).Size()
-						width += clockWidth + mobileToolSummaryGap + 2
+						clockFont := font
+						clockFont.Features = "tnum"
+						clockWidth, _ := ui.ShapeText(mobileElapsed(c.Now().Sub(*started).Milliseconds()), clockFont, 0).Size()
+						width += clockWidth + mobileToolSummaryGap
 					}
-					phaseRow.Width(width * (1 - progress))
+					ui.Row(phaseKey).Gap(mobileToolSummaryGap).AlignItems(ui.Baseline).
+						Width(width * (1 - progress)).MinWidth(0).Clip().Opacity(1 - progress).
+						Children(func() { mobileToolPhase(phaseKey, phase, started, sweep) })
 				}
-				phaseRow.Children(func() { mobileToolPhase(phaseKey, phase, started, sweep) })
 			}
 			paintMobileToolChevron(line.Key("arrow"), title, font, -90*(1-progress), sweep)
 		})
@@ -290,27 +293,28 @@ func (a *mobileApp) transcriptLatest(c *ui.Context, dock ui.Element, sid string,
 	}).KeepFocus().Value(caption).AlignItems(ui.Center).Justify(ui.Center).
 		AttachTo(dock, ui.AnchorTop, ui.AnchorBottom).Margin(0, 0, 4, 0).ZIndex(2).
 		Disabled(load && (!a.model.Connected || detail.History.Invalidated || read != nil && read.Pending && prefetch.cancel == nil))
+	const padding, gap, border = 10, 5, 1
 	font := mobileStatusFont(c, captionTextSize)
 	textWidth, _ := ui.ShapeText(caption, font, 0).Size()
-	width := 20 + textWidth + footerIconSize + 5
+	width := 2*(padding+border) + textWidth + footerIconSize + gap
 	if live {
-		width += 11
-		if started != nil && !started.IsZero() {
-			clockWidth, _ := ui.ShapeText(mobileElapsed(c.Now().Sub(*started).Milliseconds()), font, 0).Size()
-			width += clockWidth + 5
-		}
+		width += transcriptGlyphSlot + gap
 	}
-	button.Width(button.AnimateTo("latest-width", max(width, mobileTapSize(c)), mobileTitleMotion))
+	target := max(float32(math.Ceil(float64(width))), mobileTapSize(c))
+	shown := button.AnimateTo("latest-width", target, mobileTitleMotion)
+	button.Width(max(target, shown))
+	if pane := list.Bounds(c); pane.W > 0 {
+		button.MaxWidth(max(mobileTapSize(c), pane.W-2*pageInset))
+	}
 	button.Children(func() {
-		font := mobileStatusFont(c, captionTextSize)
 		ink := p.secondary
 		lineHeight := mobileStatusLineHeight(font)
-		chip := ui.Row(c.Key("chip")).Height(max(28, lineHeight+6)).MinWidth(mobileTapSize(c)).PaddingX(10).
-			AlignItems(ui.Center).Justify(ui.Center).Radius(14).Background(p.floating).Border(1, p.floatingEdge).
+		chip := ui.Row(c.Key("chip")).FillWidth().Height(max(28, lineHeight+6)).PaddingX(padding).
+			AlignItems(ui.Center).Justify(ui.Center).Radius(14).Background(p.floating).Border(border, p.floatingEdge).
 			PassThrough().Transition(mobilePanelTransition)
 		chip.Children(func() {
 			line := c.Key("content")
-			row := ui.Row(line.Key(live)).AlignItems(ui.Baseline).Gap(5).PassThrough().Transition(mobileFeedbackFade(160 * time.Millisecond)).
+			row := ui.Row(line.Key(live)).MinWidth(0).Shrink(1).AlignItems(ui.Baseline).Gap(gap).PassThrough().Transition(mobileFeedbackFade(160 * time.Millisecond)).
 				Transform(ui.Translation(0, -inkCenterOffset(caption, font)))
 			var sweep *mobileToolSweep
 			if live {
@@ -333,9 +337,6 @@ func (a *mobileApp) transcriptLatest(c *ui.Context, dock ui.Element, sid string,
 				}
 				sweep.caption(line.Key("caption"), caption, ui.ContentTransition{Animation: &ui.Animation{Duration: 160 * time.Millisecond}})
 				if live {
-					if started != nil && !started.IsZero() {
-						mobileClock(line.Key("time"), *started, nil, font, sweep)
-					}
 					arrow()
 				}
 			})

@@ -21,7 +21,7 @@ import (
 	"shioji/internal/transport"
 )
 
-func (a *mobileApp) runWorkerSetup(w *mygo.Window, endpoint mobileclient.Endpoint, installer transport.WorkerArtifact, req *mobileRequest,
+func (a *mobileApp) runWorkerSetup(w *mygo.Window, endpoint mobileclient.Endpoint, installer transport.WorkerArtifact, password string, req *mobileRequest,
 	done func(mobileclient.Endpoint, *transport.WorkerInfo)) context.CancelFunc {
 	signer, err := a.identity()
 	if err != nil {
@@ -35,7 +35,17 @@ func (a *mobileApp) runWorkerSetup(w *mygo.Window, endpoint mobileclient.Endpoin
 	w.Invalidate()
 	go func() {
 		defer cancel()
-		verified, info, err := endpoint.Bootstrap(ctx, signer, route, installer)
+		enrolling := password != ""
+		var err error
+		if enrolling {
+			err = endpoint.AuthorizeKeyWithPassword(ctx, signer, route, password)
+			password = ""
+		}
+		var verified mobileclient.Endpoint
+		var info transport.WorkerInfo
+		if err == nil {
+			verified, info, err = endpoint.Bootstrap(ctx, signer, route, installer)
+		}
 		var preparation *app.ServicePreparation
 		if err == nil && info.Legacy == nil && info.Migration == nil && info.Minor < app.AgentSetupWorkerMinor {
 			preparation, err = planMobileServicePreparation(info)
@@ -56,6 +66,10 @@ func (a *mobileApp) runWorkerSetup(w *mygo.Window, endpoint mobileclient.Endpoin
 				done(verified, &info)
 			case installer == nil && endpoint.DeviceID == "" && errors.Is(err, transport.ErrWorkerMissing):
 				done(endpoint, nil)
+			case errors.Is(err, mobileclient.ErrSSHKeyRejected) && enrolling:
+				req.err = "公钥已写入，但目标 Mac 未接受。请检查目标帐户的 SSH 公钥登录设置。"
+			case errors.Is(err, mobileclient.ErrSSHKeyRejected):
+				req.err = "目标 Mac 尚未接受此设备的公钥。请选择「使用密码授权公钥」或在 Mac 上手动授权。"
 			default:
 				req.err = err.Error()
 			}
@@ -74,6 +88,21 @@ func (a *mobileApp) openSSHCredentials(parent *mygo.Window, endpoint mobileclien
 	var w *mygo.Window
 	var stop context.CancelFunc
 	req := mobileRequest{}
+	password, usePassword := "", false
+	submit := func() {
+		if req.busy || usePassword && password == "" {
+			return
+		}
+		if a.preview {
+			a.openVerifiedWorker(w, endpoint, nil)
+			return
+		}
+		secret := password
+		password = ""
+		stop = a.runWorkerSetup(w, endpoint, nil, secret, &req, func(verified mobileclient.Endpoint, info *transport.WorkerInfo) {
+			a.openVerifiedWorker(w, verified, info)
+		})
+	}
 	w = a.page("SSH 凭据", func(c *ui.Context) {
 		mobilePageWithFooter(c, func() {
 			p := palette(c)
@@ -103,21 +132,34 @@ func (a *mobileApp) openSSHCredentials(parent *mygo.Window, endpoint mobileclien
 				}
 				mygo.Clipboard.WriteText(strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key.PublicKey()))) + " Shioji-Mobile")
 			})
-			label(c, "在目标 Mac 的 SSH 帐户授权此公钥。私钥保存在此设备的 Keychain。", 13, p.secondary).Padding(8, 0)
+			if usePassword {
+				formRow(c, "SSH 帐户密码", func() {
+					formInput(c, "SSH 帐户密码", "目标 Mac 的登录密码", &password).Password().
+						Capitalize(ui.CapitalizeNone).Autocorrect(false).ReturnKey(ui.ReturnGo).OnSubmit(submit).Disabled(req.busy)
+				})
+				label(c, "密码仅用于在目标 Mac 上授权此公钥，后续使用公钥登录。", 13, p.secondary).Padding(8, 0)
+			} else {
+				label(c, "可复制公钥到目标 Mac 手动授权，或用 SSH 帐户密码授权。", 13, p.secondary).Padding(8, 0)
+			}
 			req.status(c)
 		}, func() {
-			primaryAction(c, "验证 SSH 登录", func() {
-				if a.preview {
-					a.openVerifiedWorker(w, endpoint, nil)
-					return
+			ui.Column(c).Gap(8).Children(func() {
+				if usePassword {
+					primaryAction(c, "授权公钥并继续", submit).Disabled(req.busy || password == "")
+					secondaryAction(c, "返回公钥验证", func() {
+						usePassword, password, req.err = false, "", ""
+					}).Disabled(req.busy)
+				} else {
+					primaryAction(c, "验证 SSH 登录", submit).Disabled(req.busy)
+					secondaryAction(c, "使用密码授权公钥", func() {
+						usePassword, req.err = true, ""
+					}).Disabled(req.busy)
 				}
-				stop = a.runWorkerSetup(w, endpoint, nil, &req, func(verified mobileclient.Endpoint, info *transport.WorkerInfo) {
-					a.openVerifiedWorker(w, verified, info)
-				})
-			}).Disabled(req.busy)
+			})
 		})
 	})
 	w.OnClosed(func() {
+		password = ""
 		if stop != nil {
 			stop()
 		}
@@ -146,6 +188,24 @@ func (a *mobileApp) openVerifiedWorker(parent *mygo.Window, endpoint mobileclien
 	var w *mygo.Window
 	var stop context.CancelFunc
 	req := mobileRequest{}
+	register := func(verified mobileclient.Endpoint) error {
+		if a.preview || a.savedDevice(verified.DeviceID).Endpoint.DeviceID != "" {
+			return nil
+		}
+		if err := a.rememberDevice(verified, a.savedDevices.Active == ""); err != nil {
+			return err
+		}
+		a.selectListScope(mobileclient.WorkspaceLocation{})
+		a.refreshSessionCatalogs()
+		a.home.Invalidate()
+		a.devices.Invalidate()
+		return nil
+	}
+	if worker != nil {
+		if err := register(endpoint); err != nil {
+			req.err = err.Error()
+		}
+	}
 	w = a.page("执行服务", func(c *ui.Context) {
 		state, detail := "尚未安装", "通过已验证的 SSH 连接安装已签名的执行服务。安装完成后即可配置远程 Agent。"
 		if worker != nil {
@@ -160,9 +220,12 @@ func (a *mobileApp) openVerifiedWorker(parent *mygo.Window, endpoint mobileclien
 						w.Invalidate()
 						return
 					}
-					stop = a.runWorkerSetup(w, endpoint, bundledWorkerArtifact, &req,
+					stop = a.runWorkerSetup(w, endpoint, bundledWorkerArtifact, "", &req,
 						func(verified mobileclient.Endpoint, info *transport.WorkerInfo) {
 							endpoint, worker = verified, info
+							if err := register(verified); err != nil {
+								req.err = err.Error()
+							}
 						})
 				}).Disabled(req.busy)
 				return
@@ -188,10 +251,15 @@ func (a *mobileApp) configureVerifiedRemoteAgent(w *mygo.Window, endpoint mobile
 	if !a.pageCurrent(w) {
 		return
 	}
+	newDevice := endpoint.DeviceID != a.endpoint.DeviceID
 	if err := a.switchSavedDevice(endpoint); err != nil {
 		req.err = err.Error()
 		w.Invalidate()
 		return
+	}
+	if newDevice {
+		a.selectListScope(mobileclient.WorkspaceLocation{})
+		a.home.Invalidate()
 	}
 	a.resetDeviceNavigation(func(err error) {
 		if err == nil && a.endpoint.DeviceID == endpoint.DeviceID {

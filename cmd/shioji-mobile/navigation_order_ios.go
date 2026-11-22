@@ -109,7 +109,7 @@ func (a *mobileApp) arrangeWorkspaces() {
 	var rows []navigationOrderRow
 	var before []mobileclient.WorkspaceLocation
 	for _, workspace := range workspaces {
-		rows = append(rows, navigationOrderRow{Title: workspace.name, Detail: workspace.address})
+		rows = append(rows, navigationOrderRow{Title: workspace.name, Detail: workspace.device})
 		before = append(before, workspace.location)
 	}
 	a.presentNavigationOrdering("排列工作区", rows, func(indices []int) error {

@@ -129,8 +129,8 @@ const touchIndicatorWidth = 3
 type touchPan struct {
 	down    bool
 	panning bool
-	// swallow drops what the finger does: it went down to stop a fling,
-	// which takes no tap.
+	// swallow suppresses a tap that only caught a fling. Moving past
+	// the drag threshold still starts a new pan.
 	swallow bool
 	// waiting is a press held back until pressDelay passed (at), on what
 	// scrolls, with its clicks.
@@ -161,7 +161,7 @@ type touchPan struct {
 }
 
 type touchSample struct {
-	t    time.Time
+	t    time.Duration
 	x, y float32
 }
 
@@ -178,10 +178,15 @@ type fling struct {
 // it took the event, which the mouse's handling then skips.
 func (rt *engine) touchEvent(ev platform.SurfaceEvent, x, y float32) bool {
 	t := &rt.touch
+	now := rt.now()
+	sampleAt := ev.TouchTime
+	if sampleAt == 0 {
+		sampleAt = time.Duration(now.UnixNano())
+	}
 	switch ev.Kind {
 	case platform.PointerDown:
-		*t = touchPan{down: true, x0: x, y0: y, lx: x, ly: y, at: rt.now(), aimX: t.aimX, aimY: t.aimY}
-		t.sample(rt.now(), x, y)
+		*t = touchPan{down: true, x0: x, y0: y, lx: x, ly: y, at: now, aimX: t.aimX, aimY: t.aimY}
+		t.sample(sampleAt, x, y)
 		rt.catchBounces()
 		if h := rt.handleAt(x, y); h != handleNone {
 			rt.touchText.held = h
@@ -223,31 +228,28 @@ func (rt *engine) touchEvent(ev platform.SurfaceEvent, x, y float32) bool {
 			rt.dragHandle(x, y)
 			return true
 		}
-		if t.swallow {
-			return true
-		}
 		if t.dragging {
 			return false
 		}
 		if t.edge {
 			rt.moveEdgeSwipe(t, x)
-			t.sample(rt.now(), x, y)
+			t.sample(sampleAt, x, y)
 			return true
 		}
 		if !t.panning {
 			dx, dy := x-t.x0, y-t.y0
 			if math.Hypot(float64(dx), float64(dy)) < touchSlop {
-				return t.waiting
+				return t.swallow || t.waiting
 			}
 			t.holds = 0
 			axis := Vertical
 			if abs32(dx) > abs32(dy) {
 				axis = Horizontal
 			}
-			if axis == Horizontal && dx > 0 && rt.startEdgeSwipe(t) {
+			if !t.swallow && axis == Horizontal && dx > 0 && rt.startEdgeSwipe(t) {
 				return true
 			}
-			if d := rt.draggableAlong(t.x0, t.y0, axis); d != nil && d != rt.pressed {
+			if d := rt.draggableAlong(t.x0, t.y0, axis); !t.swallow && d != nil && d != rt.pressed {
 				// A row's content takes clicks, the row what goes across.
 				rt.cancelPress()
 				t.waiting = false
@@ -255,10 +257,10 @@ func (rt *engine) touchEvent(ev platform.SurfaceEvent, x, y float32) bool {
 				t.dragging = true
 				return false
 			}
-			if rt.dragsPress(axis) {
+			if !t.swallow && rt.dragsPress(axis) {
 				return t.waiting
 			}
-			t.panning = true
+			t.panning, t.swallow = true, false
 			if t.waiting {
 				t.waiting = false // it never pressed
 			} else {
@@ -271,7 +273,7 @@ func (rt *engine) touchEvent(ev platform.SurfaceEvent, x, y float32) bool {
 		}
 		dx, dy := t.lx-x, t.ly-y
 		t.lx, t.ly = x, y
-		t.sample(rt.now(), x, y)
+		t.sample(sampleAt, x, y)
 		rt.pan(t.target, t.axes, t.x0, t.y0, dx, dy, false)
 		return true
 	case platform.PointerUp:
@@ -301,8 +303,8 @@ func (rt *engine) touchEvent(ev platform.SurfaceEvent, x, y float32) bool {
 			return false
 		}
 		if was.edge {
-			t.sample(rt.now(), x, y)
-			vx, _ := t.velocity(rt.now())
+			t.sample(sampleAt, x, y)
+			vx, _ := t.velocity()
 			rt.endEdgeSwipe(-vx)
 			return true
 		}
@@ -316,8 +318,8 @@ func (rt *engine) touchEvent(ev platform.SurfaceEvent, x, y float32) bool {
 			rt.afterTap(&was)
 			return false
 		}
-		t.sample(rt.now(), x, y)
-		vx, vy := t.velocity(rt.now())
+		t.sample(sampleAt, x, y)
+		vx, vy := t.velocity()
 		v := flingVelocity(Point{vx, vy})
 		vx, vy = v.X, v.Y
 		s := rt.states[was.target]
@@ -335,7 +337,7 @@ func (rt *engine) touchEvent(ev platform.SurfaceEvent, x, y float32) bool {
 			// The content moves slower than the finger, on the band.
 			rt.startBounce(s, vx*s.bandSlope(0), vy*s.bandSlope(1))
 		} else if math.Hypot(float64(vx), float64(vy)) > flingStop && !rt.preferences().ReduceMotion {
-			rt.flinging = fling{on: true, target: was.target, x: was.x0, y: was.y0, vx: vx, vy: vy, at: rt.now()}
+			rt.flinging = fling{on: true, target: was.target, x: was.x0, y: was.y0, vx: vx, vy: vy, at: now}
 			rt.requestFrame()
 		}
 		return true
@@ -462,7 +464,7 @@ func (rt *engine) pressNow(t touchPan) {
 	rt.pointerDown(t.x0, t.y0, 0, rt.mods, max(t.clicks, 1))
 }
 
-func (t *touchPan) sample(now time.Time, x, y float32) {
+func (t *touchPan) sample(now time.Duration, x, y float32) {
 	copy(t.samples[1:], t.samples[:len(t.samples)-1])
 	t.samples[0] = touchSample{now, x, y}
 	t.n = min(t.n+1, len(t.samples))
@@ -470,17 +472,17 @@ func (t *touchPan) sample(now time.Time, x, y float32) {
 
 // velocity is the finger's speed over its last tenth of a second, in DIPs
 // a second the content moves: against the finger.
-func (t *touchPan) velocity(now time.Time) (float32, float32) {
+func (t *touchPan) velocity() (float32, float32) {
 	last := t.samples[0]
 	first := last
 	for i := 1; i < t.n; i++ {
-		if now.Sub(t.samples[i].t) > 100*time.Millisecond {
+		if last.t-t.samples[i].t > 100*time.Millisecond {
 			break
 		}
 		first = t.samples[i]
 	}
-	dt := float32(last.t.Sub(first.t).Seconds())
-	if dt <= 0 || now.Sub(last.t) > 100*time.Millisecond {
+	dt := float32((last.t - first.t).Seconds())
+	if dt <= 0 {
 		return 0, 0
 	}
 	return (first.x - last.x) / dt, (first.y - last.y) / dt
@@ -589,18 +591,18 @@ func (rt *engine) panTarget(x, y float32, axis Orientation) (uint64, Orientation
 // handling its input takes it, as it takes a touchpad's scrolling, or else
 // the container the finger locked to, and past its ends its overscroll. It
 // reports whether something moved.
-func (rt *engine) pan(target uint64, axes Orientation, x, y, dx, dy float32, momentum bool) bool {
+func (rt *engine) pan(target uint64, axes Orientation, x, y, dx, dy float32, momentum bool) (moved bool, edges Orientation) {
 	chain := rt.appendHitChain(rt.chain[:0], x, y)
 	rt.chain = chain[:0]
 	ev := InputEvent{Kind: InputScroll, DX: dx, DY: dy, Mods: rt.mods, Precise: true, Momentum: momentum}
 	for _, id := range chain {
 		if s := rt.states[id]; s != nil && s.input != nil && s.flags&flagDisabled == 0 && rt.deliver(s, ev) {
-			return true
+			return true, 0
 		}
 	}
 	s := rt.states[target]
 	if s == nil {
-		return false
+		return false, 0
 	}
 	sx, sy := s.vector(x, y, dx, dy)
 	if axes&Horizontal == 0 {
@@ -610,30 +612,37 @@ func (rt *engine) pan(target uint64, axes Orientation, x, y, dx, dy float32, mom
 		sy = 0
 	}
 	s.wheel = nil
-	moved := false
-	if sx != 0 && rt.panAxis(s, 0, sx, momentum) {
-		moved = true
+	if sx != 0 {
+		var hitEdge bool
+		moved, hitEdge = rt.panAxis(s, 0, sx, momentum)
+		if hitEdge {
+			edges |= Horizontal
+		}
 	}
-	if sy != 0 && rt.panAxis(s, 1, sy, momentum) {
-		moved = true
+	if sy != 0 {
+		advanced, hitEdge := rt.panAxis(s, 1, sy, momentum)
+		moved = moved || advanced
+		if hitEdge {
+			edges |= Vertical
+		}
 	}
 	if moved {
 		s.barsUntil = rt.now().Add(indicatorHold)
 		rt.requestFrame()
 	}
-	return moved
+	return moved, edges
 }
 
 // panAxis moves s along an axis, 0 across and 1 down: what its overscroll
 // takes back first, then its content, and the rest into its overscroll, as a
 // finger does. A fling's rest becomes a spring's speed instead (flingStep).
-func (rt *engine) panAxis(s *state, axis int, d float32, momentum bool) bool {
+func (rt *engine) panAxis(s *state, axis int, d float32, momentum bool) (moved, hitEdge bool) {
 	raw := &s.overRaw[axis]
 	if *raw != 0 {
 		if n := *raw + d; n*(*raw) > 0 {
 			*raw = n
 			s.setOver(axis)
-			return true
+			return true, false
 		} else {
 			d = n
 			*raw = 0
@@ -657,14 +666,17 @@ func (rt *engine) panAxis(s *state, axis int, d float32, momentum bool) bool {
 	}
 	left := d - went
 	if abs32(left) < 1e-3 {
-		return went != 0
+		return went != 0, false
 	}
-	if momentum || !s.canOverscroll(axis) {
-		return went != 0
+	if !s.canOverscroll(axis) {
+		return went != 0, false
+	}
+	if momentum {
+		return went != 0, true
 	}
 	*raw = left
 	s.setOver(axis)
-	return true
+	return true, false
 }
 
 // canOverscroll reports whether a finger takes s past its ends along axis.
@@ -876,24 +888,22 @@ func (rt *engine) flingStep(now time.Time) {
 	if f.vy != 0 {
 		axes |= Vertical
 	}
-	moved := rt.pan(f.target, axes, f.x, f.y, dx, dy, true)
-	if !moved {
-		if s := rt.states[f.target]; s != nil && !rt.preferences().ReduceMotion {
-			vx, vy := float32(0), float32(0)
-			if s.canOverscroll(0) {
-				vx = f.vx
-			}
-			if s.canOverscroll(1) {
-				vy = f.vy
-			}
-			if vx != 0 || vy != 0 {
-				rt.startBounce(s, vx, vy)
-			}
+	moved, edges := rt.pan(f.target, axes, f.x, f.y, dx, dy, true)
+	if edges != 0 {
+		// The viewport can remeasure the end after this very frame. Hand
+		// the remaining velocity to the spring before that layout runs.
+		vx, vy := float32(0), float32(0)
+		if edges&Horizontal != 0 {
+			vx, f.vx = f.vx, 0
 		}
-		f.on = false
-		return
+		if edges&Vertical != 0 {
+			vy, f.vy = f.vy, 0
+		}
+		if !rt.preferences().ReduceMotion {
+			rt.startBounce(rt.states[f.target], vx, vy)
+		}
 	}
-	if math.Hypot(float64(f.vx), float64(f.vy)) < flingStop {
+	if !moved && edges == 0 || math.Hypot(float64(f.vx), float64(f.vy)) < flingStop {
 		f.on = false
 		return
 	}

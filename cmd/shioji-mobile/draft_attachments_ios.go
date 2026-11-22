@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"slices"
 	"time"
@@ -271,6 +272,7 @@ func (a *mobileApp) previewDraftAttachment(parent *mygo.Window, editor *mobileDr
 		return
 	}
 	item := entry.Attachment
+	isMarkdown := mobileMarkdownFile(item.Name, item.MIME)
 	controller, connected := a.controller, m.Connected && entry.DeviceID == m.Snapshot.DeviceID
 	staging := attachments.New(filepath.Join(a.directory, "attachments"))
 	go func() {
@@ -280,6 +282,10 @@ func (a *mobileApp) previewDraftAttachment(parent *mygo.Window, editor *mobileDr
 			defer cancel()
 			worker := app.RemoteAttachmentTarget(entry.DeviceID, entry.WorkspaceID, controller.DialDeviceStream)
 			path, err = worker.Download(ctx, staging, item)
+		}
+		var text []byte
+		if err == nil && isMarkdown {
+			text, err = os.ReadFile(path)
 		}
 		mygo.RunOnMain(func() {
 			if !current() {
@@ -291,7 +297,15 @@ func (a *mobileApp) previewDraftAttachment(parent *mygo.Window, editor *mobileDr
 				return
 			}
 			editor.attachmentError = ""
-			a.presentFilePreview(parent, path, item.Name, item.MIME, imageAttachment(item))
+			if isMarkdown {
+				preview := &mobileLinkedPreview{target: item.Name}
+				preview.apply(app.LinkedFile{
+					Path: path, Resource: domain.FileResource{Name: item.Name, MIME: item.MIME, Size: item.Size},
+				}, string(text), true)
+				a.showLinkedFile(&reviewState{parent: parent, session: a.sessionByID(target.session), linked: preview}, "")
+			} else {
+				a.openNativeFilePreview(parent, path, item.Name, item.MIME)
+			}
 			a.refresh()
 		})
 	}()

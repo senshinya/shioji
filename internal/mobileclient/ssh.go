@@ -172,13 +172,21 @@ func (e Endpoint) DialRoute(ctx context.Context, signer ssh.Signer, route RouteD
 }
 
 func (e Endpoint) authenticate(ctx context.Context, signer ssh.Signer, route RouteDial) (*ssh.Client, func() bool, error) {
+	client, stop, err := e.authenticateWith(ctx, route, ssh.PublicKeys(signer))
+	if isSSHAuthenticationRejection(err) {
+		return nil, nil, ErrSSHKeyRejected
+	}
+	return client, stop, err
+}
+
+func (e Endpoint) authenticateWith(ctx context.Context, route RouteDial, auth ssh.AuthMethod) (*ssh.Client, func() bool, error) {
 	raw, err := e.open(ctx, route)
 	if err != nil {
 		return nil, nil, err
 	}
 	stop := context.AfterFunc(ctx, func() { _ = raw.Close() })
 	conn, channels, requests, err := ssh.NewClientConn(raw, e.Address, &ssh.ClientConfig{
-		User: e.User, Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)}, HostKeyCallback: e.verifyHostKey,
+		User: e.User, Auth: []ssh.AuthMethod{auth}, HostKeyCallback: e.verifyHostKey,
 	})
 	if err != nil {
 		stop()

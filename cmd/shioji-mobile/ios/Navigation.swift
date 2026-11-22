@@ -5,11 +5,13 @@ import QuickLook
 import SafariServices
 import UniformTypeIdentifiers
 
-final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerDelegate, UISearchResultsUpdating, UISearchControllerDelegate, UITabBarControllerDelegate, SFSafariViewControllerDelegate {
-    private let keyboardTiming = KeyboardTiming()
+final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerDelegate, UITabBarControllerDelegate, SFSafariViewControllerDelegate {
     private let composeTabID = "shioji.compose"
     private var forms: [Int: UINavigationController] = [:]
-    private var searches: [Int: UISearchController] = [:]
+    private var sessionSearch: SessionSearchBar?
+    private let keyboardTiming = KeyboardTiming()
+    private var tabSlide: TabSlideCover?
+    private var tabRoots: [UIViewController] = []
     private let rowMenus = NSMapTable<UIView, RowContextMenus>.weakToStrongObjects()
     private var forwardedPage: (browser: SFSafariViewController, close: PluginReply)?
     private let linkExporter = LinkExporter()
@@ -21,15 +23,6 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
     private var titleSize: CGFloat?
     private var scopeSize: CGFloat?
     private var titleGap: CGFloat = 4
-
-    override init() {
-        super.init()
-        PluginHost.registerView("shiojiImagePreview") { _, args in
-            ImagePreviewView(path: args["path"] as? String ?? "", name: args["name"] as? String ?? "图片",
-                             reduceMotion: args["reduceMotion"] as? Bool ?? false,
-                             showsFilename: args["showsFilename"] as? Bool ?? false)
-        }
-    }
 
     func call(_ method: String, _ args: [String: Any], _ reply: @escaping PluginReply) {
         switch method {
@@ -49,13 +42,15 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
                 }
             }
             home.navigationItem.title = ""
-            setHomeNavigation(home, searchVisible: false, animated: false)
+            configureHomeNavigation(home)
             sidebarBackground(for: home, wide: false)
             tabs = home.tabBarController
+            Host.shared.root.view.backgroundColor = canvasColor
             keyboardTiming.attach(to: Host.shared.root.view)
             Host.shared.root.keyboardAnimationChanged = { [weak self] from, to, bottom, duration, curve in
                 self?.keyboardTiming.animate(from: from, to: to, bottom: bottom, duration: duration, curve: curve)
             }
+            tabs?.view.backgroundColor = canvasColor
             tabs?.tabBar.tintColor = .label
             tabs?.delegate = self
             home.navigationItem.largeTitleDisplayMode = .never
@@ -64,16 +59,9 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
                 if let id = args[key] as? Int, let root = controller(id) {
                     root.navigationItem.largeTitleDisplayMode = .never
                     root.navigationItem.backButtonDisplayMode = .minimal
+                    configureInlineBar(root)
                 }
             }
-            let search = UISearchController(searchResultsController: nil)
-            search.obscuresBackgroundDuringPresentation = false
-            search.searchBar.placeholder = "搜索会话"
-            search.searchResultsUpdater = self
-            search.delegate = self
-            home.definesPresentationContext = true
-            home.navigationItem.hidesSearchBarWhenScrolling = false
-            searches[id] = search
             if let detailID = args["detail"] as? Int, let detail = controller(detailID) {
                 installSplit(home: home, detail: detail, minimumWidth: args["minimumWidth"] as? Double ?? 840)
             } else if #available(iOS 27.0, *), let tabs {
@@ -82,20 +70,31 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
                     .flatMap { UIImage(data: $0, scale: 3)?.withRenderingMode(.alwaysTemplate) }
                 installComposeTab(in: tabs, image: image)
             }
+            if let bar = tabs?.tabBar { configureTabBarLabels(bar) }
             installNavigationShortcuts(args["shortcuts"] as? [[String: Any]] ?? [])
             reply(.success(nil))
         case "search":
             if let id = args["home"] as? Int {
-                openSearch(home: id, toggle: args["toggle"] as? Bool == true)
+                let values = args["anchor"] as? [Double]
+                let anchor = values.flatMap { v -> CGRect? in
+                    guard v.count == 4, v[2] > 0, v[3] > 0 else { return nil }
+                    return CGRect(x: v[0], y: v[1], width: v[2], height: v[3])
+                }
+                openSearch(home: id, toggle: args["toggle"] as? Bool == true, anchor: anchor,
+                           reduceMotion: args["reduceMotion"] as? Bool == true)
             }
+            reply(.success(nil))
+        case "closeSearch":
+            sessionSearch?.close()
             reply(.success(nil))
         case "configurePage":
             if let id = args["window"] as? Int, let page = controller(id) {
                 page.hidesBottomBarWhenPushed = true
-                if let screen = page as? WindowController { observeTextDismissal(screen) }
                 page.navigationItem.backButtonDisplayMode = .minimal
+                configureInlineBar(page)
                 if let title = args["title"] as? String {
-                    setConversationTitle(title, subtitle: args["subtitle"] as? String ?? "", inlineScope: args["inlineScope"] as? Bool == true, reduceMotion: args["reduceMotion"] as? Bool == true, on: page)
+                    setConversationTitle(title, subtitle: args["subtitle"] as? String ?? "", inlineScope: args["inlineScope"] as? Bool == true,
+                                     reduceMotion: args["reduceMotion"] as? Bool == true, on: page)
                 }
                 if #available(iOS 26.0, *), args["commit"] as? Bool == true,
                    let button = page.navigationItem.rightBarButtonItem {
@@ -187,7 +186,8 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
             PluginHost.present(alert)
         case "conversationTitle":
             if let id = args["window"] as? Int, let page = controller(id), let title = args["title"] as? String {
-                setConversationTitle(title, subtitle: args["subtitle"] as? String ?? "", inlineScope: args["inlineScope"] as? Bool == true, reduceMotion: args["reduceMotion"] as? Bool == true, on: page)
+                setConversationTitle(title, subtitle: args["subtitle"] as? String ?? "", inlineScope: args["inlineScope"] as? Bool == true,
+                                     reduceMotion: args["reduceMotion"] as? Bool == true, on: page)
             }
             reply(.success(nil))
         case "toggleSidebar":
@@ -298,20 +298,22 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
             }
             do {
                 let preview = try AttachmentPreview(stagedFile: URL(fileURLWithPath: path), name: name, mime: mime)
-                let useImageReader = args["imageReader"] as? Bool == true && ["image/png", "image/jpeg", "image/heic", "image/heif"].contains(mime)
-                let overlay: AttachmentOverlay
-                if useImageReader {
-                    let image = ImagePreviewController(path: path, name: name, reduceMotion: args["reduceMotion"] as? Bool ?? false)
-                    overlay = AttachmentOverlay(preview: image, name: name, originalImage: preview)
-                } else {
-                    overlay = AttachmentOverlay(preview: preview, name: name)
+                guard preview.canShowItem else {
+                    reply(.success(false))
+                    return
                 }
-                page.present(overlay, animated: true)
+                let navigation = UINavigationController(rootViewController: preview)
+                preview.navigationItem.leftBarButtonItem = UIBarButtonItem(systemItem: .close, primaryAction: UIAction { [weak navigation] _ in
+                    navigation?.dismiss(animated: true)
+                })
+                preview.navigationItem.leftBarButtonItem?.accessibilityIdentifier = "shioji-close-quick-look"
+                navigation.modalPresentationStyle = .fullScreen
+                page.present(navigation, animated: true)
             } catch {
                 reply(.failure(PluginFailure("AttachmentPreviewUnavailable", "无法预览此附件")))
                 return
             }
-            reply(.success(nil))
+            reply(.success(true))
         case "beginLinkExport":
             guard let window = args["window"] as? Int, let page = controller(window), let id = args["id"] as? String else {
                 reply(.failure(PluginFailure("MissingExportSource", "找不到链接所属页面")))
@@ -438,9 +440,10 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
             view.spacing = 8
             view.alignment = .firstBaseline
             label.setContentHuggingPriority(UILayoutPriority(249), for: .horizontal)
-            caption.setContentCompressionResistancePriority(UILayoutPriority(249), for: .horizontal)
+            label.setContentCompressionResistancePriority(UILayoutPriority(249), for: .horizontal)
+            caption.lineBreakMode = .byTruncatingMiddle
             if !subtitle.isEmpty {
-                scope.widthAnchor.constraint(lessThanOrEqualTo: view.layoutMarginsGuide.widthAnchor, multiplier: 0.48).isActive = true
+                scope.widthAnchor.constraint(lessThanOrEqualTo: view.layoutMarginsGuide.widthAnchor, multiplier: 0.56).isActive = true
             }
         } else {
             view.axis = .vertical
@@ -454,6 +457,19 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
         MyGoWindows.controller(NSNumber(value: id))
     }
 
+    private func configureInlineBar(_ page: UIViewController) {
+        guard let screen = page as? WindowController else { return }
+        screen.compactInlineBar = true
+        screen.view.backgroundColor = canvasColor
+        screen.window.backgroundColor = canvasColor
+        screen.navigationController?.view.backgroundColor = canvasColor
+        observeTextDismissal(screen)
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithTransparentBackground()
+        screen.navigationItem.standardAppearance = appearance
+        screen.navigationItem.scrollEdgeAppearance = appearance
+    }
+
     private func observeTextDismissal(_ screen: WindowController) {
         guard let surface = screen.window as? SurfaceWindow else { return }
         let id = surface.id
@@ -462,35 +478,47 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
         }
     }
 
-    private func openSearch(home id: Int, toggle: Bool) {
-        guard let search = searches[id], let page = controller(id) else { return }
+    private func openSearch(home id: Int, toggle: Bool, anchor: CGRect?, reduceMotion: Bool) {
+        guard let page = controller(id) as? WindowController else { return }
+        if let search = sessionSearch {
+            if toggle { search.close() }
+            return
+        }
         if toggle {
-            if search.isActive {
-                search.isActive = false
-                return
-            }
             selectTab(0)
-            if let split, !split.isCollapsed, split.displayMode == .secondaryOnly {
-                split.show(.primary)
-            }
+            if let split, !split.isCollapsed, split.displayMode == .secondaryOnly { split.show(.primary) }
             if let nav = page.navigationController, nav.topViewController !== page {
                 nav.popToViewController(page, animated: true)
                 if let transition = nav.transitionCoordinator,
                    transition.animate(alongsideTransition: nil, completion: { [weak self] context in
-                       if !context.isCancelled { self?.openSearch(home: id, toggle: false) }
+                       if !context.isCancelled { self?.openSearch(home: id, toggle: false, anchor: anchor, reduceMotion: reduceMotion) }
                    }) {
                     return
                 }
             }
         }
-        setHomeNavigation(page, searchVisible: true, animated: true)
-        page.navigationItem.searchController = search
-        search.isActive = true
-        DispatchQueue.main.async { search.searchBar.becomeFirstResponder() }
+        page.loadViewIfNeeded()
+        let fallback = CGRect(x: page.view.bounds.width - 112,
+                              y: page.view.safeAreaInsets.top, width: 44, height: 44)
+        let frame = anchor.map { page.window.convert($0, to: page.view) } ?? fallback
+        let search = SessionSearchBar(width: page.view.bounds.width, anchor: frame, reduceMotion: reduceMotion)
+        sessionSearch = search
+        search.onQuery = { PluginHost.emit("shiojiUIKit", "searchQuery", $0) }
+        search.onSubmit = { PluginHost.emit("shiojiUIKit", "searchSubmit", true) }
+        search.field.onMove = { PluginHost.emit("shiojiUIKit", "searchMove", $0) }
+        search.onClosing = { PluginHost.emit("shiojiUIKit", "searchActive", false) }
+        search.onClose = { [weak self, weak search] in
+            if self?.sessionSearch === search { self?.sessionSearch = nil }
+        }
+        page.view.addSubview(search)
+        PluginHost.emit("shiojiUIKit", "searchActive", true)
+        search.open()
     }
 
     private func selectTab(_ index: Int) {
         guard let tabs else { return }
+        let roots = tabRoots.isEmpty ? tabs.viewControllers ?? [] : tabRoots
+        if roots.indices.contains(index) { prepareTabSlide(tabs, to: roots[index]) }
         if #available(iOS 27.0, *), tabs.prominentTabIdentifier == composeTabID,
            tabs.tabs.indices.contains(index), tabs.tabs[index].identifier != composeTabID {
             tabs.selectedTab = tabs.tabs[index]
@@ -498,6 +526,7 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
             tabs.selectedIndex = index
         }
         syncSplitTabs()
+        playTabSlide(in: tabs)
     }
 
     private func installNavigationShortcuts(_ shortcuts: [[String: Any]]) {
@@ -563,39 +592,15 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
         }
     }
 
-    func updateSearchResults(for searchController: UISearchController) {
-        PluginHost.emit("shiojiUIKit", "searchQuery", searchController.searchBar.text ?? "")
-    }
-
-    func willPresentSearchController(_ searchController: UISearchController) {
-        PluginHost.emit("shiojiUIKit", "searchActive", true)
-    }
-
-    func didPresentSearchController(_ searchController: UISearchController) {
-        searchController.searchBar.searchTextField.becomeFirstResponder()
-    }
-
-    func didDismissSearchController(_ searchController: UISearchController) {
-        searchController.searchBar.text = ""
-        PluginHost.emit("shiojiUIKit", "searchQuery", "")
-        PluginHost.emit("shiojiUIKit", "searchActive", false)
-        if let id = searches.first(where: { $0.value === searchController })?.key, let home = controller(id) {
-            home.navigationItem.searchController = nil
-            setHomeNavigation(home, searchVisible: false, animated: true)
-        }
-    }
-
-    private func setHomeNavigation(_ home: UIViewController, searchVisible: Bool, animated: Bool) {
+    private func configureHomeNavigation(_ home: UIViewController) {
         if let screen = home as? WindowController {
             screen.loadViewIfNeeded()
-            screen.barAtRoot = searchVisible
-            screen.titles?.contentInsetAdjustmentBehavior = searchVisible ? .automatic : .never
-            screen.window.usesSceneSafeTop = !searchVisible && screen.traitCollection.userInterfaceIdiom == .phone
-            if searchVisible { screen.window.contentSafeTop = nil }
-            split?.view.setNeedsLayout()
+            screen.barAtRoot = false
+            screen.titles?.contentInsetAdjustmentBehavior = .never
+            screen.window.usesSceneSafeTop = screen.traitCollection.userInterfaceIdiom == .phone
         }
         if let nav = home.navigationController, nav.topViewController === home {
-            nav.setNavigationBarHidden(!searchVisible, animated: animated)
+            nav.setNavigationBarHidden(true, animated: false)
         }
     }
 
@@ -634,11 +639,106 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
 
     func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
         syncSplitTabs()
+        playTabSlide(in: tabBarController)
+    }
+
+    func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
+        prepareTabSlide(tabBarController, to: viewController)
+        return true
+    }
+
+    private func prepareTabSlide(_ tabs: UITabBarController, to destination: UIViewController) {
+        let roots = tabRoots.isEmpty ? tabs.viewControllers ?? [] : tabRoots
+        guard let current = tabs.selectedViewController, current !== destination,
+              let previous = roots.firstIndex(of: current), let next = roots.firstIndex(of: destination),
+              let content = current.viewIfLoaded, content.window != nil else { return }
+        if tabSlide?.destination === destination { return }
+        tabSlide?.cover.removeFromSuperview()
+        tabSlide = nil
+        var body = tabs.view.bounds
+        if !tabs.tabBar.isHidden && tabs.tabBar.window != nil {
+            let bar = tabs.tabBar.convert(tabs.tabBar.bounds, to: tabs.view)
+            if bar.minY > 0 && bar.minY < body.height { body.size.height = bar.minY }
+        }
+        let source = content.convert(body, from: tabs.view)
+        guard let snapshot = content.resizableSnapshotView(from: source, afterScreenUpdates: false, withCapInsets: .zero) else { return }
+        let cover = UIView(frame: body)
+        cover.isUserInteractionEnabled = false
+        cover.accessibilityElementsHidden = true
+        cover.clipsToBounds = true
+        cover.backgroundColor = canvasColor
+        snapshot.frame = cover.bounds
+        cover.addSubview(snapshot)
+        tabs.view.addSubview(cover)
+        tabSlide = TabSlideCover(cover: cover, outgoing: snapshot, destination: destination, direction: previous < next ? 1 : -1)
+    }
+
+    private func playTabSlide(in tabs: UITabBarController) {
+        guard let slide = tabSlide, !slide.started, let destination = slide.destination,
+              tabs.selectedViewController === destination else { return }
+        slide.started = true
+        tabs.view.bringSubviewToFront(slide.cover)
+        let page = (destination as? UINavigationController)?.topViewController as? WindowController
+        let surface = page?.window as? SurfaceWindow
+        var ready = false
+        let reveal = { [weak self, weak tabs, weak destination, weak surface] in
+            guard let self, self.tabSlide === slide, !ready else { return }
+            ready = true
+            surface?.onFirstFrame = nil
+            guard let tabs, let content = destination?.viewIfLoaded else {
+                slide.cover.removeFromSuperview()
+                self.tabSlide = nil
+                return
+            }
+            let visible = content.convert(slide.cover.frame, from: tabs.view)
+            guard let incoming = content.resizableSnapshotView(from: visible, afterScreenUpdates: false, withCapInsets: .zero) else {
+                slide.cover.removeFromSuperview()
+                self.tabSlide = nil
+                return
+            }
+            let distance = slide.direction * slide.cover.bounds.width
+            incoming.frame = slide.cover.bounds.offsetBy(dx: distance, dy: 0)
+            slide.cover.addSubview(incoming)
+            UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.26, delay: 0,
+                           options: [.curveEaseOut, .allowUserInteraction]) {
+                slide.outgoing.frame.origin.x = -distance
+                incoming.frame.origin.x = 0
+            } completion: { [weak self] _ in
+                slide.cover.removeFromSuperview()
+                if self?.tabSlide === slide { self?.tabSlide = nil }
+            }
+        }
+        let present = { DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 30, execute: reveal) }
+        if let surface, !surface.hasPresentedFirstFrame {
+            surface.onFirstFrame = present
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.50, execute: reveal)
+        } else {
+            present()
+        }
+    }
+
+    private func configureTabBarLabels(_ bar: UITabBar) {
+        func styleLabels(_ appearance: UITabBarAppearance) -> UITabBarAppearance {
+            for layout in [appearance.stackedLayoutAppearance, appearance.inlineLayoutAppearance,
+                           appearance.compactInlineLayoutAppearance] {
+                for state in [layout.normal, layout.selected, layout.disabled, layout.focused] {
+                    var attributes = state.titleTextAttributes
+                    attributes[.font] = UIFont.systemFont(ofSize: 10, weight: .medium)
+                    state.titleTextAttributes = attributes
+                }
+            }
+            return appearance
+        }
+        bar.standardAppearance = styleLabels(bar.standardAppearance)
+        if let scrollEdge = bar.scrollEdgeAppearance {
+            bar.scrollEdgeAppearance = styleLabels(scrollEdge)
+        }
     }
 
     @available(iOS 27.0, *)
     private func installComposeTab(in tabs: UITabBarController, image: UIImage?) {
         guard let roots = tabs.viewControllers, roots.count == 3 else { return }
+        tabRoots = roots
         let destinations = roots.enumerated().map { index, root in
             let item = root.tabBarItem
             return UITab(title: item?.title ?? "", image: item?.image, identifier: "shioji.root.\(index)") { _ in root }
@@ -653,12 +753,23 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
 
     @available(iOS 18.0, *)
     func tabBarController(_ tabBarController: UITabBarController, shouldSelectTab tab: UITab) -> Bool {
-        guard tab.identifier == composeTabID else { return true }
+        guard tab.identifier == composeTabID else {
+            if let index = tabBarController.tabs.firstIndex(of: tab), tabRoots.indices.contains(index) {
+                prepareTabSlide(tabBarController, to: tabRoots[index])
+            }
+            return true
+        }
         if let home = tabBarController.tabs.first {
             tabBarController.selectedTab = home
             PluginHost.emit("shiojiUIKit", "compose", true)
         }
         return false
+    }
+
+    @available(iOS 18.0, *)
+    func tabBarController(_ tabBarController: UITabBarController, didSelectTab selectedTab: UITab, previousTab: UITab?) {
+        syncSplitTabs()
+        playTabSlide(in: tabBarController)
     }
 
     private func installSplit(home: UIViewController, detail: UIViewController, minimumWidth: CGFloat) {
@@ -677,6 +788,7 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
         }
         let wasSelected = tabs.selectedViewController === primary
         controllers[index] = split
+        tabRoots = controllers
         tabs.setViewControllers(controllers, animated: false)
         tabs.view.tintColor = .label
         tabs.tabBar.tintColor = .label
@@ -696,6 +808,244 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
         split.setViewController(secondary, for: .secondary)
         if wasSelected { tabs.selectedViewController = split }
         self.split = split
+    }
+}
+
+// The guide tracks the keyboard in this scene. The notification's UIKit
+// curve also provides a position on keyboard transitions where the guide
+// exposes only an endpoint.
+private final class KeyboardTiming: NSObject {
+    private let guideProbe = UIView()
+    private let timingProbe = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+    private weak var viewport: UIView?
+    private var displayLink: CADisplayLink?
+    private var started: CFTimeInterval = 0
+    private var duration: TimeInterval = 0
+    private var bottom: CGFloat = 0
+    private var from: CGFloat = 0
+    private var target: CGFloat = 0
+    private var peak: CGFloat = 0
+    private var morphing = false
+    private var guideIsMoving = false
+    private var last: CGFloat?
+
+    func attach(to view: UIView) {
+        guard viewport !== view else { return }
+        viewport = view
+        guideProbe.isUserInteractionEnabled = false
+        guideProbe.accessibilityElementsHidden = true
+        guideProbe.translatesAutoresizingMaskIntoConstraints = false
+        timingProbe.isUserInteractionEnabled = false
+        timingProbe.accessibilityElementsHidden = true
+        view.addSubview(timingProbe)
+        view.addSubview(guideProbe)
+        NSLayoutConstraint.activate([
+            guideProbe.topAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+            guideProbe.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            guideProbe.widthAnchor.constraint(equalToConstant: 1),
+            guideProbe.heightAnchor.constraint(equalToConstant: 1),
+        ])
+    }
+
+    func animate(from: CGFloat, to: CGFloat, bottom: CGFloat, duration: TimeInterval, curve: Int) {
+        let interrupted = displayLink != nil && morphing
+        let current = displayLink == nil ? from : last ?? from
+        displayLink?.invalidate()
+        displayLink = nil
+        timingProbe.layer.removeAllAnimations()
+        timingProbe.center.y = current
+        self.bottom = bottom
+        self.from = current
+        target = to
+        peak = max(from, to, current)
+        morphing = interrupted || min(from, to) <= bottom + 80
+        self.duration = duration
+        started = CACurrentMediaTime()
+        guideIsMoving = false
+        last = nil
+        guard duration > 0, abs(to - current) > 0.25 else {
+            Host.shared.root.keyboardPresentationTop = nil
+            emitMotion(moving: false)
+            return
+        }
+        emitMotion(moving: true)
+        report(coverage: current)
+        let options = UIView.AnimationOptions(rawValue: UInt(max(0, curve)) << 16)
+        UIView.animate(withDuration: duration, delay: 0, options: [options, .allowUserInteraction]) {
+            self.timingProbe.center.y = to
+        }
+        let link = CADisplayLink(target: self, selector: #selector(sample))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    @objc private func sample() {
+        guard let viewport else { finish(); return }
+        let elapsed = CACurrentMediaTime() - started
+        let guide = viewport.bounds.maxY - (guideProbe.layer.presentation()?.frame.minY ?? guideProbe.frame.minY)
+        let low = min(from, target)
+        let high = max(from, target)
+        if guide > low + 0.75, guide < high - 0.75 { guideIsMoving = true }
+        let position = guideIsMoving ? guide : timingProbe.layer.presentation()?.position.y ?? from
+        if elapsed > duration && (abs(position - target) < 0.75 || elapsed > duration + 0.15) {
+            finish()
+        } else {
+            report(coverage: min(high, max(low, position)))
+        }
+    }
+
+    private func report(coverage: CGFloat) {
+        guard let viewport, let window = viewport.window,
+              last.map({ abs(coverage - $0) > 0.15 }) ?? true else { return }
+        last = coverage
+        Host.shared.root.keyboardPresentationTop = viewport.convert(
+            CGPoint(x: 0, y: viewport.bounds.maxY - coverage), to: window.screen.coordinateSpace).y
+    }
+
+    private func finish() {
+        displayLink?.invalidate()
+        displayLink = nil
+        Host.shared.root.keyboardPresentationTop = nil
+        emitMotion(moving: false)
+    }
+
+    private func emitMotion(moving: Bool) {
+        PluginHost.emit("shiojiUIKit", "keyboardMotion",
+                        ["bottom": bottom, "peak": peak, "moving": moving, "morphing": morphing])
+    }
+}
+
+private final class SessionSearchField: UISearchTextField {
+    var onMove: ((Int) -> Void)?
+
+    override var keyCommands: [UIKeyCommand]? {
+        guard markedTextRange == nil, !(text ?? "").isEmpty else { return super.keyCommands }
+        let arrows = [UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow].map { key in
+            let command = UIKeyCommand(input: key, modifierFlags: [], action: #selector(moveResult(_:)))
+            command.wantsPriorityOverSystemBehavior = true
+            return command
+        }
+        return arrows + (super.keyCommands ?? [])
+    }
+
+    @objc private func moveResult(_ command: UIKeyCommand) {
+        onMove?(command.input == UIKeyCommand.inputUpArrow ? -1 : 1)
+    }
+}
+
+private final class SessionSearchBar: UIView {
+    let field = SessionSearchField()
+    var onQuery: ((String) -> Void)?
+    var onSubmit: (() -> Void)?
+    var onClosing: (() -> Void)?
+    var onClose: (() -> Void)?
+
+    private let closeButton = UIButton(type: .close)
+    private let capsule = UIView()
+    private let glyph = UIImageView(image: UIImage(systemName: "magnifyingglass"))
+    private let anchor: CGRect
+    private let reduceMotion: Bool
+    private var expanded = false
+    private var closing = false
+
+    init(width: CGFloat, anchor: CGRect, reduceMotion: Bool) {
+        self.reduceMotion = reduceMotion
+        self.anchor = CGRect(x: anchor.minX, y: 0, width: anchor.width, height: anchor.height)
+        super.init(frame: CGRect(x: 0, y: anchor.minY, width: width, height: anchor.height))
+        autoresizingMask = [.flexibleWidth]
+        capsule.backgroundColor = .secondarySystemBackground
+        capsule.clipsToBounds = true
+        capsule.layer.cornerRadius = anchor.height / 2
+        capsule.frame = self.anchor
+        addSubview(capsule)
+        glyph.tintColor = .secondaryLabel
+        glyph.contentMode = .scaleAspectFit
+        glyph.frame = CGRect(x: (anchor.height - 18) / 2, y: (anchor.height - 18) / 2, width: 18, height: 18)
+        capsule.addSubview(glyph)
+        field.backgroundColor = .clear
+        field.borderStyle = .none
+        field.accessibilityIdentifier = "session-search"
+        field.accessibilityLabel = "搜索会话"
+        field.accessibilityTraits.insert(.searchField)
+        field.placeholder = "搜索会话与内容"
+        field.autocorrectionType = .no
+        field.returnKeyType = .search
+        field.clearButtonMode = .whileEditing
+        field.alpha = 0
+        field.addAction(UIAction { [weak self] _ in
+            guard let self, self.field.markedTextRange == nil else { return }
+            self.onQuery?(self.field.text ?? "")
+        }, for: .editingChanged)
+        field.addAction(UIAction { [weak self] _ in
+            guard let self, self.field.markedTextRange == nil else { return }
+            self.onSubmit?()
+        }, for: .editingDidEndOnExit)
+        capsule.addSubview(field)
+        closeButton.accessibilityLabel = "关闭"
+        closeButton.alpha = 0
+        closeButton.addAction(UIAction { [weak self] _ in self?.close() }, for: .primaryActionTriggered)
+        addSubview(closeButton)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private var expandedFrame: CGRect {
+        CGRect(x: 16, y: 0, width: max(44, bounds.width - 84), height: bounds.height)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        closeButton.frame = CGRect(x: bounds.width - 60, y: 0, width: 44, height: bounds.height)
+        if expanded { capsule.frame = expandedFrame }
+        field.frame = CGRect(origin: .zero, size: expandedFrame.size)
+    }
+
+    func open() {
+        layoutIfNeeded()
+        expanded = true
+        UIView.animate(withDuration: (reduceMotion || UIAccessibility.isReduceMotionEnabled) ? 0 : 0.23, delay: 0,
+                       options: [.beginFromCurrentState, .curveEaseOut, .allowUserInteraction]) {
+            self.capsule.frame = self.expandedFrame
+            self.field.alpha = 1
+            self.closeButton.alpha = 1
+            self.glyph.alpha = 0
+        }
+        field.becomeFirstResponder()
+    }
+
+    func close() {
+        guard !closing else { return }
+        closing = true
+        expanded = false
+        isUserInteractionEnabled = false
+        accessibilityElementsHidden = true
+        onClosing?()
+        field.resignFirstResponder()
+        UIView.animate(withDuration: (reduceMotion || UIAccessibility.isReduceMotionEnabled) ? 0 : 0.23, delay: 0,
+                       options: [.beginFromCurrentState, .curveEaseOut, .allowUserInteraction]) {
+            self.capsule.frame = self.anchor
+            self.field.alpha = 0
+            self.closeButton.alpha = 0
+            self.glyph.alpha = 1
+        } completion: { _ in
+            self.removeFromSuperview()
+            self.onClose?()
+        }
+    }
+}
+
+private final class TabSlideCover {
+    let cover: UIView
+    let outgoing: UIView
+    weak var destination: UIViewController?
+    let direction: CGFloat
+    var started = false
+
+    init(cover: UIView, outgoing: UIView, destination: UIViewController, direction: CGFloat) {
+        self.cover = cover
+        self.outgoing = outgoing
+        self.destination = destination
+        self.direction = direction
     }
 }
 
@@ -838,79 +1188,7 @@ private final class AttachmentPreview: QLPreviewController, QLPreviewControllerD
     func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
     func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem { item }
 
-    var fileURL: URL? { item.previewItemURL }
-}
-
-// Keep dismissal reachable even while Quick Look hides its own controls.
-private final class AttachmentOverlay: UIViewController {
-    private let preview: UIViewController
-    private let name: String
-    private let originalImage: AttachmentPreview?
-
-    init(preview: UIViewController, name: String, originalImage: AttachmentPreview? = nil) {
-        self.preview = preview
-        self.name = name
-        self.originalImage = originalImage
-        super.init(nibName: nil, bundle: nil)
-        modalPresentationStyle = .overFullScreen
-        modalTransitionStyle = .crossDissolve
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = .systemBackground
-        let bar = UINavigationBar()
-        bar.accessibilityIdentifier = "attachmentPreviewNavigation"
-        let item = UINavigationItem(title: name)
-        let close = UIBarButtonItem(systemItem: .close, primaryAction: UIAction { [weak self] _ in
-            self?.dismiss(animated: true)
-        })
-        close.accessibilityLabel = "关闭预览"
-        item.leftBarButtonItem = close
-        if let image = preview as? ImagePreviewController {
-            let rotate = UIBarButtonItem(image: UIImage(systemName: "rotate.left"), primaryAction: UIAction { [weak image] _ in
-                image?.preview.rotateImage()
-            })
-            rotate.accessibilityLabel = "逆时针旋转 90°"
-            rotate.tintColor = .label
-            let share = UIBarButtonItem(barButtonSystemItem: .action, target: self, action: #selector(shareOriginalImage(_:)))
-            share.accessibilityLabel = "分享原图"
-            share.tintColor = .label
-            item.rightBarButtonItems = [share, rotate]
-        }
-        bar.items = [item]
-        let appearance = UINavigationBarAppearance()
-        appearance.configureWithOpaqueBackground()
-        bar.standardAppearance = appearance
-        bar.scrollEdgeAppearance = appearance
-        bar.translatesAutoresizingMaskIntoConstraints = false
-
-        addChild(preview)
-        let content = preview.view!
-        content.translatesAutoresizingMaskIntoConstraints = false
-        content.clipsToBounds = true
-        view.addSubview(content)
-        view.addSubview(bar)
-        NSLayoutConstraint.activate([
-            bar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            bar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            content.topAnchor.constraint(equalTo: bar.bottomAnchor),
-            content.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            content.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
-        preview.didMove(toParent: self)
-    }
-
-    @objc private func shareOriginalImage(_ source: UIBarButtonItem) {
-        guard let url = originalImage?.fileURL else { return }
-        let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-        activity.popoverPresentationController?.barButtonItem = source
-        present(activity, animated: true)
-    }
+    var canShowItem: Bool { QLPreviewController.canPreview(item) }
 }
 
 private final class AttachmentPreviewItem: NSObject, QLPreviewItem {
@@ -920,109 +1198,5 @@ private final class AttachmentPreviewItem: NSObject, QLPreviewItem {
     init(url: URL, name: String) {
         previewItemURL = url
         previewItemTitle = name
-    }
-}
-
-// The guide tracks the keyboard in this scene. The notification's UIKit
-// curve also provides a position on keyboard transitions where the guide
-// exposes only an endpoint.
-private final class KeyboardTiming: NSObject {
-    private let guideProbe = UIView()
-    private let timingProbe = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
-    private weak var viewport: UIView?
-    private var displayLink: CADisplayLink?
-    private var started: CFTimeInterval = 0
-    private var duration: TimeInterval = 0
-    private var bottom: CGFloat = 0
-    private var from: CGFloat = 0
-    private var target: CGFloat = 0
-    private var peak: CGFloat = 0
-    private var morphing = false
-    private var guideIsMoving = false
-    private var last: CGFloat?
-
-    func attach(to view: UIView) {
-        guard viewport !== view else { return }
-        viewport = view
-        guideProbe.isUserInteractionEnabled = false
-        guideProbe.accessibilityElementsHidden = true
-        guideProbe.translatesAutoresizingMaskIntoConstraints = false
-        timingProbe.isUserInteractionEnabled = false
-        timingProbe.accessibilityElementsHidden = true
-        view.addSubview(timingProbe)
-        view.addSubview(guideProbe)
-        NSLayoutConstraint.activate([
-            guideProbe.topAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
-            guideProbe.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            guideProbe.widthAnchor.constraint(equalToConstant: 1),
-            guideProbe.heightAnchor.constraint(equalToConstant: 1),
-        ])
-    }
-
-    func animate(from: CGFloat, to: CGFloat, bottom: CGFloat, duration: TimeInterval, curve: Int) {
-        let interrupted = displayLink != nil && morphing
-        let current = displayLink == nil ? from : last ?? from
-        displayLink?.invalidate()
-        displayLink = nil
-        timingProbe.layer.removeAllAnimations()
-        timingProbe.center.y = current
-        self.bottom = bottom
-        self.from = current
-        target = to
-        peak = max(from, to, current)
-        morphing = interrupted || min(from, to) <= bottom + 80
-        self.duration = duration
-        started = CACurrentMediaTime()
-        guideIsMoving = false
-        last = nil
-        guard duration > 0, abs(to - current) > 0.25 else {
-            Host.shared.root.keyboardPresentationTop = nil
-            emitMotion(moving: false)
-            return
-        }
-        emitMotion(moving: true)
-        report(coverage: current)
-        let options = UIView.AnimationOptions(rawValue: UInt(max(0, curve)) << 16)
-        UIView.animate(withDuration: duration, delay: 0, options: [options, .allowUserInteraction]) {
-            self.timingProbe.center.y = to
-        }
-        let link = CADisplayLink(target: self, selector: #selector(sample))
-        link.add(to: .main, forMode: .common)
-        displayLink = link
-    }
-
-    @objc private func sample() {
-        guard let viewport else { finish(); return }
-        let elapsed = CACurrentMediaTime() - started
-        let guide = viewport.bounds.maxY - (guideProbe.layer.presentation()?.frame.minY ?? guideProbe.frame.minY)
-        let low = min(from, target)
-        let high = max(from, target)
-        if guide > low + 0.75, guide < high - 0.75 { guideIsMoving = true }
-        let position = guideIsMoving ? guide : timingProbe.layer.presentation()?.position.y ?? from
-        if elapsed > duration && (abs(position - target) < 0.75 || elapsed > duration + 0.15) {
-            finish()
-        } else {
-            report(coverage: min(high, max(low, position)))
-        }
-    }
-
-    private func report(coverage: CGFloat) {
-        guard let viewport, let window = viewport.window,
-              last.map({ abs(coverage - $0) > 0.15 }) ?? true else { return }
-        last = coverage
-        Host.shared.root.keyboardPresentationTop = viewport.convert(
-            CGPoint(x: 0, y: viewport.bounds.maxY - coverage), to: window.screen.coordinateSpace).y
-    }
-
-    private func finish() {
-        displayLink?.invalidate()
-        displayLink = nil
-        Host.shared.root.keyboardPresentationTop = nil
-        emitMotion(moving: false)
-    }
-
-    private func emitMotion(moving: Bool) {
-        PluginHost.emit("shiojiUIKit", "keyboardMotion",
-                        ["bottom": bottom, "peak": peak, "moving": moving, "morphing": morphing])
     }
 }

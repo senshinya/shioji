@@ -8,6 +8,8 @@ import QuartzCore
 
 final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate {
     private var link: CADisplayLink?
+    private(set) var hasPresentedFirstFrame = false
+    var onFirstFrame: (() -> Void)?
     var onTextInputDismissed: (() -> Void)?
     private var fingers: [ObjectIdentifier: Int] = [:]
     private var nextFinger = 1
@@ -133,6 +135,13 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
     }
 
     func requestFrame() { link?.isPaused = false }
+
+    func didPresentFirstFrame() {
+        hasPresentedFirstFrame = true
+        let ready = onFirstFrame
+        onFirstFrame = nil
+        ready?()
+    }
 
     @objc private func tick() {
         // One frame per request: Go asks again while it animates.
@@ -310,6 +319,10 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
     // The keyboard.
 
     override var canBecomeFirstResponder: Bool { true }
+    private let passiveInputView = UIView(frame: .zero)
+    // The edit menu needs a responder for Copy even on read-only text.
+    // Only an editable document or control should summon the keyboard.
+    override var inputView: UIView? { editing ? super.inputView : passiveInputView }
 
     func setTextInput(_ c: SetTextInputCall) {
         let wasEditing = editing
