@@ -20,12 +20,11 @@ type mobileRecoveryState struct {
 
 func (a *mobileApp) recoveryControls(c *ui.Context, parent *mygo.Window, s domain.Session, editor *mobileDraftEditor) {
 	m := a.model
+	frame := ui.Column(c.Key("recovery-presence:" + s.ID)).FillWidth().Clip().Shrink(0)
+	retained := ui.Local(frame, "recovery", func() domain.Session { return domain.Session{} })
 	info := s.Recovery
-	canContinue := info != nil && info.CanContinue &&
-		(s.Status == domain.ExecutionInterrupted || s.Status == domain.ExecutionAbandoned || s.Status == domain.ExecutionFailed)
-	if s.ID == "" || s.ReadOnlyHistory() || !s.Status.NeedsRecovery() && !canContinue {
-		return
-	}
+	canContinue := mobileCanContinueRecovery(s)
+	present := s.ID != "" && !s.ReadOnlyHistory() && (s.Status.NeedsRecovery() || canContinue)
 	state := ui.Local(c.Root(), "recovery:"+m.Snapshot.DeviceID+":"+s.ID+":"+s.ThreadID, func() mobileRecoveryState {
 		return mobileRecoveryState{}
 	})
@@ -37,12 +36,44 @@ func (a *mobileApp) recoveryControls(c *ui.Context, parent *mygo.Window, s domai
 		}
 		if wait := state.checkingSince.Add(300 * time.Millisecond).Sub(c.Now()); wait > 0 {
 			c.After(wait)
-			return
+			present = false
 		}
 	} else {
 		state.checkingSince = time.Time{}
 	}
 
+	if present {
+		*retained = s
+	}
+	mobilePanelPresence(c, frame, present, 240*time.Millisecond, func(c *ui.Context) {
+		s := *retained
+		if s.ID == "" {
+			return
+		}
+		mode := c.Key("checking")
+		switch {
+		case mobileCanContinueRecovery(s):
+			mode = c.Key("continue")
+		case s.Recovery != nil && s.Recovery.Phase != domain.RecoveryChecking:
+			mode = c.Key("blocked")
+		}
+		ui.Column(mode).FillWidth().Transition(mobileFeedbackFade(mobileReplyFade)).Children(func() {
+			a.recoveryPanel(mode, parent, s, editor, state)
+		})
+	})
+}
+
+func mobileCanContinueRecovery(s domain.Session) bool {
+	return s.Recovery != nil && s.Recovery.CanContinue &&
+		(s.Status == domain.ExecutionInterrupted || s.Status == domain.ExecutionAbandoned || s.Status == domain.ExecutionFailed)
+}
+
+func (a *mobileApp) recoveryPanel(c *ui.Context, parent *mygo.Window, s domain.Session, editor *mobileDraftEditor, state *mobileRecoveryState) {
+	m := a.model
+	info := s.Recovery
+	canContinue := mobileCanContinueRecovery(s)
+	checking := !canContinue && s.Status.NeedsRecovery() && (info == nil || info.Phase == domain.RecoveryChecking)
+	busy := state.request.busy || state.confirming
 	p := palette(c)
 	connected := m.Connected && m.ConnectionEpoch != "" && m.WorkerMinor >= 7
 	historyReady := m.Details[s.ID].HasLoadedHistory()

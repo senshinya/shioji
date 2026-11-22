@@ -204,7 +204,7 @@ func (a *mobileApp) transcriptImageAttachment(c *ui.Context, parent *mygo.Window
 	})
 }
 
-func mobileImageCard(c *ui.Context, name, state string, image *ui.Bitmap, compact bool, open func()) {
+func mobileImageCard(c *ui.Context, name, state string, image *ui.Bitmap, compact bool, open func()) float32 {
 	p := palette(c)
 	button := mobileButton(c, "预览 "+name, open).AlignSelf(ui.Start).MaxWidthPercent(100).MinWidth(0).Value(state).Disabled(open == nil)
 	if compact {
@@ -215,22 +215,34 @@ func mobileImageCard(c *ui.Context, name, state string, image *ui.Bitmap, compac
 			})
 			oneLine(c, name, captionTextSize, p.ink).MinWidth(0).Shrink(1)
 		})
-		return
+		return 0
 	}
+	var delta float32
 	button.Width(224).Children(func() {
 		ui.Column(c).FillWidth().MinWidth(0).Gap(5).Children(func() {
-			box := ui.Box(c).FillWidth().Height(128).Center().Clip().Radius(8).Background(p.inset)
+			box := ui.Box(c).FillWidth().Center().Clip().Radius(8).Background(p.inset)
+			target := float32(128)
+			if image == nil {
+				target = 80
+			}
+			shown := box.AnimateTo("image-height", target, ui.Animation{Duration: mobileReplyFade, Ease: ui.EaseOut})
+			box.Height(shown)
+			if bounds := box.LayoutBounds(); bounds.W > 0 {
+				delta = shown - bounds.H
+			}
 			box.Children(func() {
 				transcriptPicture(c, box, image)
 				if image == nil {
-					label(c, state, captionTextSize, p.secondary).Padding(6).Absolute().Bottom(8)
+					label(c.Key("image-status"), state, captionTextSize, p.secondary).Padding(6).Absolute().Bottom(8).
+						Transition(mobileFeedbackFade(160 * time.Millisecond)).
+						ContentTransition(ui.ContentTransition{Animation: &mobileTitleMotion})
 				}
 			})
 			oneLine(c, name, captionTextSize, p.secondary).MinWidth(0).MaxWidthPercent(100)
 		})
 	})
+	return delta
 }
-
 func transcriptPicture(c *ui.Context, container ui.Element, image *ui.Bitmap) {
 	waiting := ui.Local(container, "waiting", func() bool { return image == nil })
 	if image == nil {

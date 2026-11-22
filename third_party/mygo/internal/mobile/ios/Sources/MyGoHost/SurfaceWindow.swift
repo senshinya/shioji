@@ -8,6 +8,7 @@ import QuartzCore
 
 final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate {
     private var link: CADisplayLink?
+    var onTextInputDismissed: (() -> Void)?
     private var fingers: [ObjectIdentifier: Int] = [:]
     private var nextFinger = 1
 
@@ -20,6 +21,7 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
     private var markStart = -1, markEnd = -1
     private var caret = CGRect.zero
     private var editing = false
+    private var keyboardDismissed = false
     private var hasDocument = false
     private var shows = 0
     private var serial = 0
@@ -314,6 +316,8 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
         editing = c.active
         let another = c.serial != serial
         serial = c.serial
+        let showRequested = c.show != shows
+        if !editing || !wasEditing || another || showRequested { keyboardDismissed = false }
         hasDocument = c.document
         caret = CGRect(x: c.x, y: c.y, width: max(c.width, 2), height: max(c.height, 1))
         let traitsChanged = setTraits(c)
@@ -324,12 +328,14 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
         apply(text: c.text, base: c.base, length: c.length, selStart: c.selStart, selEnd: c.selEnd, markStart: c.markStart, markEnd: c.markEnd)
         if selChanged { inputDelegate?.selectionDidChange(self) }
         if textChanged { inputDelegate?.textDidChange(self) }
-        if editing && (!isFirstResponder || c.show != shows) {
-            becomeFirstResponder()
+        if editing && !keyboardDismissed {
+            if !isFirstResponder {
+                becomeFirstResponder()
+            } else if !wasEditing || showRequested || traitsChanged || another {
+                reloadInputViews()
+            }
         } else if !editing && wasEditing && isFirstResponder {
             resignFirstResponder()
-        } else if editing && (traitsChanged || another) {
-            reloadInputViews()
         }
         shows = c.show
     }
@@ -408,8 +414,15 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
     }
 
     override func resignFirstResponder() -> Bool {
+        let active = isFirstResponder
         let r = super.resignFirstResponder()
-        if editing { Go.send(Event.textInputEnded(id: id)) }
+        if r && active && editing {
+            // The editable document can keep its focus and selection. Only
+            // a new editor or an explicit show request should reopen its IME.
+            keyboardDismissed = true
+            Go.send(Event.textInputEnded(id: id))
+            onTextInputDismissed?()
+        }
         return r
     }
 

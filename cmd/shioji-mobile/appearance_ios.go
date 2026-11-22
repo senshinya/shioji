@@ -25,8 +25,7 @@ const (
 	transcriptTurnGap                    = 8
 	transcriptMetadataHeight             = 24
 	transcriptLeading                    = 1.48
-	footerIconSize                       = 15
-	footerTimeSize                       = 11
+	footerIconSize                       = 14
 	footerElementGap                     = 24
 	panelInset                           = 10
 	panelContentGap                      = 6
@@ -43,6 +42,7 @@ const (
 
 var (
 	// The spring owns live geometry so a reversal continues from the visible frame.
+	mobileTitleMotion  = ui.Animation{Duration: 160 * time.Millisecond}
 	mobileLayoutMotion = ui.Animation{Spring: ui.SpringOptions{Duration: 500 * time.Millisecond}}
 	// In-place panels animate height and position. UIKit owns navigation motion.
 	mobilePanelTransition = ui.ElementTransition{Height: true, Position: true, Duration: 180 * time.Millisecond}

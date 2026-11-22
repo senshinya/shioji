@@ -91,63 +91,66 @@ func (a *mobileApp) draftReferences(c *ui.Context, parent *mygo.Window, editor *
 		}
 		return !entry.Attachment.InlineReference() || !entry.Ready || !draftAttachmentOwner(entry, target)
 	}
-	if !slices.ContainsFunc(m.Attachments[target.key], visible) {
-		return
+	entries := slices.DeleteFunc(slices.Clone(m.Attachments[target.key]), func(entry app.DraftAttachment) bool { return !visible(entry) })
+	frame := ui.Column(c.Key("draft-attachment-presence")).FillWidth().Clip().Shrink(0)
+	retained := ui.Local(frame, "attachments", func() []app.DraftAttachment { return nil })
+	present := len(entries) > 0
+	if present {
+		*retained = entries
 	}
 	p := palette(c)
-	ui.Row(c.Key("draft-attachments")).Wrap().Gap(4).Transition(mobilePanelTransition).Children(func() {
-		for _, entry := range m.Attachments[target.key] {
-			if !visible(entry) {
-				continue
-			}
-			item := entry.Attachment
-			key := draftUploadKey(target, item.ID)
-			busy := a.draftAttachmentUploads[key] != nil
-			owned := draftAttachmentOwner(entry, target)
-			state := "已上传"
-			switch {
-			case !owned:
-				state = "属于其他工作区"
-			case busy:
-				state = "上传中"
-			case entry.Error != "":
-				state = "上传失败"
-			case !entry.Ready:
-				state = "等待上传"
-			}
-			row := c.Key(item.ID)
-			ui.Row(row).MaxWidthPercent(100).MaxWidth(290).AlignItems(ui.Center).Radius(10).Background(p.inset).Children(func() {
-				var open func()
-				if !item.InlineReference() && !a.preview {
-					open = func() { a.previewDraftAttachment(parent, editor, entry) }
+	mobilePanelPresence(c, frame, present, mobileReplyFade, func(c *ui.Context) {
+		ui.Row(c.Key("draft-attachments")).Wrap().Gap(4).Children(func() {
+			for _, entry := range *retained {
+				item := entry.Attachment
+				key := draftUploadKey(target, item.ID)
+				busy := a.draftAttachmentUploads[key] != nil
+				owned := draftAttachmentOwner(entry, target)
+				state := "已上传"
+				switch {
+				case !owned:
+					state = "属于其他工作区"
+				case busy:
+					state = "上传中"
+				case entry.Error != "":
+					state = "上传失败"
+				case !entry.Ready:
+					state = "等待上传"
 				}
-				mobileButton(row.Key("preview"), "预览草稿附件 "+item.Name, open).Value(state).
-					Disabled(open == nil).DimDisabled(false).
-					MinHeight(mobileTapSize(c)).MinWidth(0).Shrink(1).PaddingX(8).Gap(7).AlignItems(ui.Center).Children(func() {
-					alignedSymbol(row, filesSymbol, item.Name, ui.Font{Size: captionTextSize * c.Preferences().TextScale}, 14, p.secondary)
-					ui.Column(row).MinWidth(0).Shrink(1).Children(func() {
-						oneLine(row, item.Name, captionTextSize, p.ink)
-						if state != "已上传" {
-							ink := p.secondary
-							if entry.Error != "" && owned {
-								ink = p.warning
+				row := c.Key(item.ID)
+				ui.Row(row).MaxWidthPercent(100).MaxWidth(290).AlignItems(ui.Center).Radius(10).Background(p.inset).Transition(mobileFeedbackFade(mobileReplyFade)).Children(func() {
+					var open func()
+					if !item.InlineReference() && !a.preview {
+						open = func() { a.previewDraftAttachment(parent, editor, entry) }
+					}
+					mobileButton(row.Key("preview"), "预览草稿附件 "+item.Name, open).Value(state).
+						Disabled(open == nil).DimDisabled(false).
+						MinHeight(mobileTapSize(c)).MinWidth(0).Shrink(1).PaddingX(8).Gap(7).AlignItems(ui.Center).Children(func() {
+						alignedSymbol(row, filesSymbol, item.Name, ui.Font{Size: captionTextSize * c.Preferences().TextScale}, 14, p.secondary)
+						ui.Column(row).MinWidth(0).Shrink(1).Children(func() {
+							oneLine(row, item.Name, captionTextSize, p.ink)
+							if state != "已上传" {
+								ink := p.secondary
+								if entry.Error != "" && owned {
+									ink = p.warning
+								}
+								oneLine(row, state, captionTextSize, ink)
 							}
-							oneLine(row, state, captionTextSize, ink)
-						}
+						})
 					})
+					if canRetryDraftAttachment(entry, target) && !busy {
+						action(row.Key("retry"), "重试", func() {
+							if editor.current(a, parent) {
+								a.uploadDraftAttachment(target, item)
+							}
+						}).Label("重试上传 " + item.Name).KeepFocus().Shrink(0).PaddingX(4).
+							MinWidth(mobileTapSize(c)).Disabled(!m.Connected || m.WorkerMinor < 6 || a.controller == nil)
+					}
+					iconButton(row.Key("remove"), "移除 "+item.Name, closeSymbol, 12,
+						func() { a.removeDraftAttachment(parent, editor, entry) }).KeepFocus()
 				})
-				if canRetryDraftAttachment(entry, target) && !busy {
-					action(row.Key("retry"), "重试", func() {
-						if editor.current(a, parent) {
-							a.uploadDraftAttachment(target, item)
-						}
-					}).Label("重试上传 " + item.Name).KeepFocus().Shrink(0).PaddingX(4).
-						MinWidth(mobileTapSize(c)).Disabled(!m.Connected || m.WorkerMinor < 6 || a.controller == nil)
-				}
-				iconButton(row.Key("remove"), "移除 "+item.Name, closeSymbol, 12,
-					func() { a.removeDraftAttachment(parent, editor, entry) }).KeepFocus()
-			})
-		}
+			}
+		})
 	})
 }
 

@@ -274,6 +274,15 @@ final class RootViewController: UIViewController, UIScrollViewDelegate {
 
     /// Where the keyboard is, on the screen, nil while it's away.
     var keyboardFrame: CGRect?
+    /// The visible keyboard edge in screen coordinates, while a host is
+    /// following UIKit's presentation instead of its final frame.
+    var keyboardPresentationTop: CGFloat? {
+        didSet {
+            guard keyboardPresentationTop != oldValue else { return }
+            for w in Host.shared.windows.values where w.window != nil { w.reportSize() }
+        }
+    }
+    var keyboardAnimationChanged: ((CGFloat, CGFloat, CGFloat, TimeInterval, Int) -> Void)?
     /// UIKit tells a scroll view of a tap on the status bar, the only way it
     /// tells: this one shows nothing, and tells Go.
     private let statusBarTap = UIScrollView()
@@ -328,14 +337,22 @@ final class RootViewController: UIViewController, UIScrollViewDelegate {
     }
 
     @objc func keyboardChanged(_ n: Notification) {
-        var frame: CGRect?
-        if n.name != UIResponder.keyboardWillHideNotification {
-            frame = (n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+        let window = view.window ?? Host.shared.window
+        let bottom = window?.screen.bounds.maxY
+        let end = (n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+        let offscreen = bottom.flatMap { edge in end.map { $0.minY >= edge - 0.5 } } ?? false
+        let target = n.name == UIResponder.keyboardWillHideNotification || offscreen ? nil : end
+        guard target != keyboardFrame else { return }
+        if let bottom {
+            let safe = window?.safeAreaInsets.bottom ?? 0
+            let old = max(safe, bottom - (keyboardFrame?.minY ?? bottom))
+            let next = max(safe, bottom - (target?.minY ?? bottom))
+            let duration = n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? TimeInterval ?? 0
+            let curve = n.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int ?? 0
+            keyboardAnimationChanged?(old, next, safe, UIAccessibility.isReduceMotionEnabled ? 0 : duration, curve)
         }
-        if frame != keyboardFrame {
-            keyboardFrame = frame
-            for w in Host.shared.windows.values { w.reportSize() }
-        }
+        keyboardFrame = target
+        for w in Host.shared.windows.values where w.window != nil { w.reportSize() }
     }
 
     override func viewDidLayoutSubviews() {
@@ -368,6 +385,7 @@ class HostWindow: UIView {
     var usesSceneSafeTop = false {
         didSet { if usesSceneSafeTop != oldValue { reportSize() } }
     }
+    private var lastUncoveredBottom: CGFloat?
     private var lastSize: [Double] = []
 
     init(id: Int) {
@@ -381,15 +399,26 @@ class HostWindow: UIView {
     /// How much of this window the keyboard covers: only that of the scene the
     /// user is typing in, of those an iPad may show side by side.
     private var keyboardCover: CGFloat {
-        guard let frame = Host.shared.root.keyboardFrame, let w = window,
-              w.windowScene?.activationState == .foregroundActive else { return 0 }
-        let local = convert(frame, from: w.screen.coordinateSpace)
-        return max(0, bounds.maxY - local.minY)
+        guard let w = window, w.windowScene?.activationState == .foregroundActive else { return 0 }
+        let root = Host.shared.root
+        guard let top = root.keyboardPresentationTop ?? root.keyboardFrame?.minY else { return 0 }
+        let local = convert(CGPoint(x: 0, y: top), from: w.screen.coordinateSpace)
+        return max(0, bounds.maxY - local.y)
     }
 
     /// Tells Go the window's size and what covers it, when they changed.
     func reportSize() {
         var s = holder == nil ? safeAreaInsets : .zero
+        if holder == nil, let sceneWindow = window {
+            if Host.shared.root.keyboardFrame != nil || Host.shared.root.keyboardPresentationTop != nil {
+                // UIKit's tab container can keep its keyboard-sized bottom
+                // safe area until dismissal completes. The moving keyboard
+                // already contributes its own inset, measured independently.
+                s.bottom = min(s.bottom, lastUncoveredBottom ?? sceneWindow.safeAreaInsets.bottom)
+            } else {
+                lastUncoveredBottom = s.bottom
+            }
+        }
         // A large title, in the scroll view standing for the page's
         // content, covers the page further down than the bars.
         if holder == nil, let top = (superview?.next as? ScreenController)?.topInset { s.top = max(s.top, top) }

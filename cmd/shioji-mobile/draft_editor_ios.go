@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo/ui/richtext"
 
 	"shioji/internal/app"
+	"shioji/internal/conversationui"
 	"shioji/internal/domain"
 	"shioji/internal/mobileclient"
 	"shioji/internal/protocol"
@@ -23,7 +24,11 @@ type mobileDraftEditor struct {
 	target              mobileDraftTarget
 	focused             bool
 	focusRequested      bool
+	keyboardVisible     bool
+	trackingKeyboard    bool
 	sendScroll          mobileSendScroll
+	queueMotion         mobileQueueMotion
+	inputBounds         ui.Rect
 	query               mobileclient.ReferenceQuery
 	dismissed           mobileclient.ReferenceQuery
 	queryAt             time.Time
@@ -166,7 +171,8 @@ func (b *mobileDraftEditor) field(a *mobileApp, c *ui.Context, parent *mygo.Wind
 	size := bodyTextSize * c.Preferences().TextScale
 	e := richtext.EditorBase(c.Key("native-draft"), b.Doc, richtext.EditorOptions{
 		PlainText: true, NoMarkdown: true, NoScrollbar: true, ReadOnly: disabled, MaxLines: maxLines,
-		Label: title, Placeholder: placeholder, Font: ui.Font{Family: c.Theme().Font, Size: size}, LineHeight: composerLineHeight(c),
+		CaretScrollDuration: 140 * time.Millisecond,
+		Label:               title, Placeholder: placeholder, Font: ui.Font{Family: c.Theme().Font, Size: size}, LineHeight: composerLineHeight(c),
 		Theme: &richtext.Theme{Text: p.ink, Muted: p.secondary},
 		OnPaste: func(text string) bool {
 			if text != "" || b.target.history || disabled || b.pending() || !b.current(a, parent) {
@@ -218,6 +224,7 @@ func (b *mobileDraftEditor) field(a *mobileApp, c *ui.Context, parent *mygo.Wind
 			return true
 		},
 	}).ReturnKey(ui.ReturnNewLine).FillWidth()
+	e.DrawOver(func(_ *ui.Painter, r ui.Rect) { b.inputBounds = r })
 	if maxLines == 0 {
 		e.FillHeight()
 	}
@@ -472,15 +479,20 @@ func (b *mobileDraftEditor) referenceKey(a *mobileApp, parent *mygo.Window, key 
 	return true
 }
 
+type mobileReferenceExit struct {
+	commands           []string
+	choices            []mobileReferenceChoice
+	searching, visible bool
+	err                string
+	until              time.Time
+}
+
 func (b *mobileDraftEditor) referencePanel(a *mobileApp, c *ui.Context, parent *mygo.Window) {
-	if b.query.Marker == 0 || b.query == b.dismissed {
-		return
-	}
+	present := b.query.Marker != 0 && b.query != b.dismissed
 	p, chip := palette(c), b.chipMaker(c)
 	commands := b.slashCommands(b.query)
 	choices := b.choices
-	offset := len(commands)
-	count, rowHeight := len(choices)+offset, mobileTapSize(c)
+	rowHeight := mobileTapSize(c)
 	searching := b.search == nil || b.search.busy
 	err := ""
 	if b.search != nil {
@@ -489,12 +501,26 @@ func (b *mobileDraftEditor) referencePanel(a *mobileApp, c *ui.Context, parent *
 	if b.insertion != nil && b.insertion.err != "" {
 		err = b.insertion.err
 	}
-	panel := ui.Column(c.Key("reference-candidates")).Radius(14).Border(1, p.line).Background(p.panel).
-		Clip().Transition(mobilePanelTransition)
-	if count > 0 {
-		panel.MinHeight(rowHeight + 2)
+	key := c.Key("reference-candidates")
+	panel := ui.Column(key).Radius(14).Border(1, p.line).Background(p.panel).Clip().Shrink(0)
+	state := ui.Local(panel, "reference-exit", func() mobileReferenceExit { return mobileReferenceExit{} })
+	if state.visible && !present {
+		state.until = c.Now().Add(mobileReplyFade)
 	}
-	panel.Children(func() {
+	state.visible = present
+	if present {
+		state.commands, state.choices, state.searching, state.err = commands, choices, searching, err
+	} else {
+		if c.Preferences().ReduceMotion || !c.Now().Before(state.until) {
+			panel.Height(0).Hidden(true)
+			return
+		}
+		commands, choices, searching, err = state.commands, state.choices, state.searching, state.err
+		c.After(state.until.Sub(c.Now()))
+	}
+	offset := len(commands)
+	count := len(choices) + offset
+	conversationui.AnimatedContentHeight(key, panel, present, false, mobileReplyFade, func() float32 {
 		if err != "" {
 			label(c, err, 13, p.warning).Padding(9, 12)
 		}
@@ -506,7 +532,7 @@ func (b *mobileDraftEditor) referencePanel(a *mobileApp, c *ui.Context, parent *
 			if err == "" {
 				label(c, status, 13, p.secondary).Padding(9, 12)
 			}
-			return
+			return 0
 		}
 		b.referenceList.Key = func(i int) any {
 			if i < offset {
@@ -568,6 +594,7 @@ func (b *mobileDraftEditor) referencePanel(a *mobileApp, c *ui.Context, parent *
 					c.Services().Invalidate()
 				}
 			})
+		return 0
 	})
 }
 

@@ -11,7 +11,8 @@ import (
 )
 
 var (
-	mobileSendScrollAnimation  = ui.Animation{Duration: 260 * time.Millisecond, Ease: ui.EaseOut}
+	mobileSendEase             = ui.CubicBezier(.4, 0, 0, 1)
+	mobileSendScrollAnimation  = ui.Animation{Duration: 480 * time.Millisecond, Ease: mobileSendEase}
 	mobileSendHandoffAnimation = ui.Animation{Duration: mobileReplyFade, Ease: ui.EaseOut}
 )
 
@@ -19,16 +20,26 @@ var (
 // client submitting to the same turn must not resize this client's composer.
 type mobileSendScroll struct {
 	operation, epoch       string
+	workspace              string
 	composerProgress, from float32
 	progress               float32
 	started                bool
+	steer, queued          bool
+	source, composerSource ui.Rect
+	composerBounds         ui.Rect
+	began                  time.Time
 	receiptWithoutRow      time.Time
 }
 
-func (s *mobileSendScroll) begin(operation, epoch string) {
+func (s *mobileSendScroll) begin(operation, epoch string, source ui.Rect, steer, queued bool) {
+	if source.W > 0 {
+		source = ui.Rect{X: source.X - 13, Y: source.Y - 9, W: source.W + 26, H: source.H + 18}
+	}
 	*s = mobileSendScroll{
 		operation: operation, epoch: epoch,
 		composerProgress: s.composerProgress, from: s.composerProgress,
+		source: source, composerSource: s.composerBounds, composerBounds: s.composerBounds,
+		steer: steer, queued: queued, began: time.Now(),
 	}
 }
 
@@ -37,8 +48,12 @@ func (s *mobileSendScroll) reveal(c *ui.Context, frame ui.Element, list *ui.List
 	if s.operation == "" {
 		return
 	}
-	if !enabled || model.ConnectionEpoch != s.epoch || model.UncertainSubmissions[s.operation] {
+	if c.Preferences().ReduceMotion || model.ConnectionEpoch != s.epoch || model.UncertainSubmissions[s.operation] ||
+		(!s.started && c.Now().Sub(s.began) > 15*time.Second) {
 		s.operation = ""
+		return
+	}
+	if !enabled {
 		return
 	}
 
@@ -51,9 +66,17 @@ func (s *mobileSendScroll) reveal(c *ui.Context, frame ui.Element, list *ui.List
 		if !s.started {
 			frame.Jump(motionKey, 0)
 			s.started = true
+			switch {
+			case s.steer:
+				list.ScrollToEnd()
+			case s.workspace != "":
+				list.AnchorRow(offset+i, 100, mobileSendScrollAnimation)
+			case !s.queued:
+				list.ScrollToEnd(mobileSendScrollAnimation)
+			}
 		}
 		s.progress = frame.AnimateTo(motionKey, 1, mobileSendScrollAnimation)
-		if s.progress >= 1 {
+		if s.progress >= 1 || s.steer {
 			return
 		}
 		end := i + 1
@@ -86,4 +109,17 @@ func (s *mobileSendScroll) reveal(c *ui.Context, frame ui.Element, list *ui.List
 		return
 	}
 	c.AnimationFrame()
+}
+
+func (s *mobileSendScroll) bubble(c *ui.Context, bubble ui.Element, id string) {
+	if !s.started || s.progress >= 1 || "input:"+s.operation != id {
+		return
+	}
+	if s.source.W > 0 {
+		bubble.Background(palette(c).inset.Alpha(s.progress)).
+			Transition(ui.ElementTransition{From: &s.source, Duration: mobileSendScrollAnimation.Duration,
+				Ease: mobileSendEase, Position: true, Lift: true})
+	} else {
+		bubble.Opacity(s.progress).Transform(ui.Translation(0, 10*(1-s.progress)))
+	}
 }

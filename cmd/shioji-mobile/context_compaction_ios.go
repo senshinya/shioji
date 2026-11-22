@@ -418,24 +418,19 @@ func (a *mobileApp) compactionRow(c *ui.Context, session domain.Session, item do
 			title = "上下文压缩"
 		}
 	}
-	active, glyph := p.secondary, compactSymbol
 	if live {
-		active = p.active
-	} else if item.Status == string(domain.ExecutionCompleted) {
+		mobileReplyProgress(c, title, turn.StartedAt, nil, true)
+		return
+	}
+	glyph := compactSymbol
+	if item.Status == string(domain.ExecutionCompleted) {
 		glyph = checkSymbol
 	}
 	font := mobileStatusFont(c, captionTextSize)
 	ui.Row(c).MinHeight(transcriptMetadataHeight).Gap(6).AlignItems(ui.Baseline).Children(func() {
-		if live {
-			transcriptStatusDot(c, title, font, active)
-		} else {
-			transcriptSymbol(c, glyph, title, font, 13, active)
-		}
+		transcriptSymbol(c, glyph, title, font, footerIconSize, p.secondary)
 		ui.Text(c, title).Font(font.Family).FontSize(font.Size).FixedLineHeight(mobileStatusLineHeight(font)).TextColor(p.secondary).MaxLines(2).MinWidth(0).Shrink(1).
 			ContentTransition(ui.ContentTransition{Animation: &ui.Animation{Duration: 180 * time.Millisecond}})
-		if live && turn.StartedAt != nil {
-			mobileRunningClock(c.Key("compact-time"), *turn.StartedAt)
-		}
 		if interactive && (item.Status == string(domain.ExecutionFailed) || item.Status == string(domain.ExecutionInterrupted)) {
 			action(c.Key("retry"), "重试", func() { a.beginCompaction(session, nil) }).Label("重试压缩").
 				KeepFocus().PaddingX(4).Disabled(a.compactionReason(session, s) != "")

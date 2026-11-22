@@ -345,7 +345,7 @@ func (a *mobileApp) historyRequest(key app.WorkKey) *mobileHistoryRequest {
 
 func (a *mobileApp) forkAvailable(s domain.Session) bool {
 	req := a.historyRequests[a.model.WorkKey(s.ID, "")]
-	return (req == nil || !req.busy) && a.model.HistoryActions[s.ID].OperationID == "" &&
+	return (req == nil || !req.busy && req.visual == nil) && a.model.HistoryActions[s.ID].OperationID == "" &&
 		a.model.HistoryEdits[s.ID].ItemID == "" && a.historyActionAvailable(s) &&
 		a.model.SessionReadiness(s).Capabilities.Fork
 }
@@ -452,7 +452,20 @@ func (a *mobileApp) historyDraftRecovery(c *ui.Context, parent *mygo.Window, s d
 }
 
 func (a *mobileApp) openFork(parent *mygo.Window, s domain.Session, turn string) {
-	a.submitFork(parent, s, turn, historySubmit)
+	if !a.forkAvailable(s) {
+		return
+	}
+	req := a.historyRequest(a.model.WorkKey(s.ID, ""))
+	if turn == "" {
+		req.hasAnchor = false
+	}
+	detail := a.model.Details[s.ID]
+	in := domain.HistoryChange{SessionID: s.ID, Revision: s.Revision, TurnID: turn}
+	if detail.Session.ID == "" {
+		a.submitFork(parent, s, turn, historySubmit)
+		return
+	}
+	a.animateHistoryExit(parent, s, req, in, func() { a.submitFork(parent, s, turn, historySubmit) })
 }
 
 func (a *mobileApp) submitFork(parent *mygo.Window, s domain.Session, turn string, intent historyIntent) {
@@ -485,7 +498,7 @@ func (a *mobileApp) submitFork(parent *mygo.Window, s domain.Session, turn strin
 		req.prepared = ""
 		input, prepare = in, a.stateWriter.FlushLatest
 	case historySubmit:
-		if !a.forkAvailable(s) {
+		if !a.forkAvailable(s) && (req.visual == nil || !req.visual.sent) {
 			return
 		}
 		req.completedUntil = time.Time{}
@@ -525,7 +538,6 @@ func (a *mobileApp) submitFork(parent *mygo.Window, s domain.Session, turn strin
 			req.prepared, req.epoch = op.ID, epoch
 		case domain.HistoryComplete:
 			clear()
-			delete(a.historyRequests, key)
 			a.finishFork(parent, s, op, sourceDetail)
 		}
 		a.refresh()
@@ -548,6 +560,12 @@ func (a *mobileApp) finishFork(parent *mygo.Window, source domain.Session, op do
 		return
 	}
 	a.seedForkHistory(op, history)
+	if req := a.historyRequests[a.model.WorkKey(source.ID, "")]; req != nil && req.visual != nil && req.visual.placed {
+		a.forkMotionTarget = mobileForkPosition{session: op.Session.ID, thread: op.Session.ThreadID,
+			turn: req.visual.input.TurnID, y: req.visual.y}
+		req.visual = nil
+	}
+	delete(a.historyRequests, a.model.WorkKey(source.ID, ""))
 	if parent == a.detail {
 		if a.parallelOwner == nil && source.ID != a.model.SessionID && source.ID == a.parallel {
 			a.openParallel(op.Session.ID)
@@ -795,15 +813,7 @@ func (a *mobileApp) drawParallelPane(c *ui.Context, id string, closePane func())
 			}
 		}
 		find := a.conversationFind(c, a.detail, s, detail, true, pane.Shortcut)
-		a.renderTranscript(c, a.detail, s, detail, false, find, nil, draft)
-		a.historyStatus(c, a.detail, s)
-		readingImport := a.importedHistoryFooter(c, a.detail, s, detail)
-		if find == nil && !readingImport && draft != nil {
-			if a.parallelOwner != nil {
-				a.parallelEditor = draft
-			}
-			a.drawComposer(c.Key("parallel-composer"), a.detail, s, draft, false, true)
-		}
+		a.conversationBody(c, a.detail, s, detail, find, draft, true)
 	})
 }
 
@@ -811,6 +821,9 @@ type mobileHistoryRequest struct {
 	mobileRequest
 	prepared, epoch string
 	completedUntil  time.Time
+	visual          *mobileHistoryVisual
+	anchorY         float32
+	hasAnchor       bool
 }
 
 func (r *mobileHistoryRequest) canContinue(id, epoch string) bool {
@@ -845,7 +858,7 @@ func (a *mobileApp) historyEditor(c *ui.Context, parent *mygo.Window, s domain.S
 	req := a.historyRequests[m.WorkKey(s.ID, "")]
 	busy := req != nil && req.busy
 	p := palette(c)
-	ui.Column(c).WidthPercent(92).AlignSelf(ui.End).Padding(8).Gap(4).Background(p.inset).Radius(16).Children(func() {
+	ui.Column(c.Key("user-surface")).WidthPercent(92).AlignSelf(ui.End).Padding(8).Gap(4).Background(p.inset).Radius(16).Transition(mobileHistoryBubbleMotion).Children(func() {
 		ui.Column(c).Height(80).Padding(8).Children(func() {
 			editor.field(a, c, parent, "编辑已发送消息", "", edit.OperationID != "", 0, nil)
 		})
@@ -872,7 +885,7 @@ func (a *mobileApp) submitHistoryEdit(parent *mygo.Window, s domain.Session, edi
 		return
 	}
 	req := a.historyRequest(m.WorkKey(s.ID, ""))
-	if req.busy {
+	if req.busy || req.visual != nil && !req.visual.sent {
 		return
 	}
 	in := m.HistoryActions[s.ID]
@@ -913,31 +926,43 @@ func (a *mobileApp) submitHistoryEdit(parent *mygo.Window, s domain.Session, edi
 		in = domain.HistoryChange{OperationID: domain.NewID(), SessionID: s.ID, Revision: s.Revision, ItemID: edit.ItemID,
 			Restart: true, Text: m.Drafts[key], Config: m.SessionConfig(s), References: refs}
 		input, prepare = in, a.stateWriter.FlushLatest
-		edit.OperationID, edit.SubmittedText, edit.SubmittedReferences = in.OperationID, in.Text, refs
-		m.HistoryEdits[s.ID], m.HistoryActions[s.ID] = edit, in
-		a.save()
 	}
-	clear := func() { a.clearHistoryAction(in, req, true) }
-	clearOnMissing := clear
-	if intent == historyContinue {
-		clearOnMissing = nil
+	dispatch := func() {
+		if intent == historySubmit {
+			edit.OperationID, edit.SubmittedText, edit.SubmittedReferences = in.OperationID, in.Text, in.References
+			m.HistoryEdits[s.ID], m.HistoryActions[s.ID] = edit, in
+			a.save()
+		}
+		clear := func() {
+			req.visual = nil
+			a.clearHistoryAction(in, req, true)
+		}
+		clearOnMissing := clear
+		if intent == historyContinue {
+			clearOnMissing = nil
+		}
+		a.historyPageJob(parent, &req.mobileRequest, method, input, prepare, clearOnMissing, decodePage(func(op domain.HistoryOperation) error {
+			if !historyReceiptMatches(op, in, s, m.Snapshot.DeviceID) {
+				return fmt.Errorf("历史修改回执与当前会话不一致")
+			}
+			if op.State == domain.HistoryFailed {
+				clear()
+				return fmt.Errorf("%s", op.Error)
+			}
+			if op.State == domain.HistoryForked {
+				req.prepared, req.epoch = op.ID, m.ConnectionEpoch
+			}
+			if op.State == domain.HistoryComplete && m.SessionID == s.ID {
+				a.controller.Select(s.ID)
+			}
+			return nil
+		}))
 	}
-	a.historyPageJob(parent, &req.mobileRequest, method, input, prepare, clearOnMissing, decodePage(func(op domain.HistoryOperation) error {
-		if !historyReceiptMatches(op, in, s, m.Snapshot.DeviceID) {
-			return fmt.Errorf("历史修改回执与当前会话不一致")
-		}
-		if op.State == domain.HistoryFailed {
-			clear()
-			return fmt.Errorf("%s", op.Error)
-		}
-		if op.State == domain.HistoryForked {
-			req.prepared, req.epoch = op.ID, m.ConnectionEpoch
-		}
-		if op.State == domain.HistoryComplete && m.SessionID == s.ID {
-			a.controller.Select(s.ID)
-		}
-		return nil
-	}))
+	if intent == historySubmit {
+		a.animateHistoryExit(parent, s, req, in, dispatch)
+	} else {
+		dispatch()
+	}
 }
 
 func historyReceiptMatches(op domain.HistoryOperation, in domain.HistoryChange, source domain.Session, device string) bool {

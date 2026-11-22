@@ -2,9 +2,40 @@ package richtext
 
 import (
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
+
+func TestCaretScrollReachesNextLineOverSeveralFrames(t *testing.T) {
+	doc := NewDocument(NewText("one\ntwo\nthree\nfour\nfive\n"))
+	doc.SetSelection(0, 0)
+	duration := 140 * time.Millisecond
+	tt := ui.NewTester(func(c *ui.Context) {
+		EditorBase(c, doc, EditorOptions{Label: "input", PlainText: true,
+			LineHeight: 20, CaretScrollDuration: duration}).Fill()
+	}, 220, 61)
+	if err := tt.Click("input"); err != nil {
+		t.Fatal(err)
+	}
+	view := doc.shownIn.Value()
+	initial := view.scroll
+	next := len("one\ntwo\nthree\n")
+	doc.SetSelection(next, next)
+	tt.Frame()
+	if view.scroll != initial {
+		t.Fatalf("caret scroll jumped from %v to %v", initial, view.scroll)
+	}
+	tt.Advance(duration / 2)
+	midpoint := view.scroll
+	tt.Advance(duration)
+	if midpoint <= initial || view.scroll <= midpoint {
+		t.Fatalf("expected progressive scrolling, got %v, %v, %v", initial, midpoint, view.scroll)
+	}
+	if caret, ok := doc.CaretRect(); !ok || caret.Y+caret.H > 61.5 {
+		t.Fatalf("the caret stayed outside the editor: %+v, %v", caret, ok)
+	}
+}
 
 func TestEndedPreeditReleasesApplicationKeys(t *testing.T) {
 	for _, unmark := range []bool{false, true} {

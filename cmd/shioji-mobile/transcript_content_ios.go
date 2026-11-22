@@ -10,6 +10,7 @@ import (
 	"github.com/egoist/mygo/ui/editor"
 	"github.com/egoist/mygo/ui/markdown"
 
+	"shioji/internal/conversationui"
 	"shioji/internal/domain"
 	"shioji/internal/mobileclient"
 )
@@ -23,7 +24,7 @@ func (a *mobileApp) transcriptMarkdown(c *ui.Context, parent *mygo.Window, sourc
 	})
 }
 
-func (a *mobileApp) drawTranscriptMarkdown(c *ui.Context, parent *mygo.Window, source domain.Session, size float32, mark *markdown.RangeDecoration, draw func(*ui.Context, *markdown.Options)) {
+func (a *mobileApp) drawTranscriptMarkdown(c *ui.Context, parent *mygo.Window, source domain.Session, size float32, mark *markdown.RangeDecoration, draw func(*ui.Context, *markdown.Options), heightOwner ...*float32) {
 	body := c.Key("transcript-markdown")
 	frame := ui.Column(body).FillWidth()
 	// Links are activated after Markdown has examined the current anchor.
@@ -38,9 +39,13 @@ func (a *mobileApp) drawTranscriptMarkdown(c *ui.Context, parent *mygo.Window, s
 		BlockSpacing: transcriptItemGap / float32(bodyTextSize),
 		ItemSpacing:  .15,
 	}
+	var delta *float32
+	if len(heightOwner) > 0 {
+		delta = heightOwner[0]
+	}
 	a.bindMobileFileLinks(parent, source, "", options)
-	a.bindMobileMarkdownImages(parent, source, "", options)
-	a.bindMobileDiagrams(body, c.Root(), "", options)
+	a.bindMobileMarkdownImages(parent, source, "", options, delta)
+	a.bindMobileDiagrams(body, c.Root(), "", options, delta)
 	frame.Children(func() { draw(body, options) })
 }
 
@@ -150,14 +155,18 @@ func snapshotSize(size int64) string {
 	return fmt.Sprintf("%.1f KB", float64(size)/1024)
 }
 
-func (a *mobileApp) transcriptUserBubble(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, runs []mobileclient.SentMessageRun, mark *markdown.RangeDecoration) {
-	mobileUserBubble(c).Children(func() {
+func (a *mobileApp) transcriptUserBubble(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, runs []mobileclient.SentMessageRun, mark *markdown.RangeDecoration, motion *mobileSendScroll) {
+	bubble := mobileUserBubble(c.Key("user-surface")).Transition(mobileHistoryBubbleMotion)
+	if motion != nil {
+		motion.bubble(c, bubble, item.ID)
+	}
+	bubble.Children(func() {
 		if item.Kind == "command" {
 			text := item.Name
 			if text == "" {
 				text = sentMessageText(runs)
 			}
-			label(c, text, bodyTextSize, palette(c).ink).LineHeight(transcriptLeading).Selectable().Font(a.codeFont())
+			label(c, text, float32(a.model.Preferences.ReplySize), palette(c).ink).LineHeight(transcriptLeading).Selectable().Font(a.codeFont())
 		} else {
 			a.sentMessageBody(c, parent, session, runs, item.Text, mark)
 		}
@@ -183,9 +192,9 @@ func (a *mobileApp) codeResult(c *ui.Context, text string) {
 	a.codeViewportView(c, "", text, structuredCodeHeight, nil, nil, nil)
 }
 
-func (a *mobileApp) requestResult(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item) {
+func (a *mobileApp) requestResult(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, progress float32) {
 	p := palette(c)
-	ui.Column(c).Gap(6).Padding(4, 0, 4, 10).BorderStartWidth(1).BorderColor(p.line).Label("回答结果").Children(func() {
+	ui.Column(c).Gap(6).Padding(4, 0, 4, 10).Opacity(progress).Transform(ui.Translation(0, 6*(1-progress))).BorderStartWidth(1).BorderColor(p.line).Label("回答结果").Children(func() {
 		if len(item.Parts) == 0 && item.Text != "" {
 			label(c, item.Text, captionTextSize, p.secondary).Selectable()
 		}
@@ -195,7 +204,7 @@ func (a *mobileApp) requestResult(c *ui.Context, parent *mygo.Window, session do
 
 type toolResultBodyKey string
 
-func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, open *bool, mark *markdown.RangeDecoration, grouped bool) ui.Element {
+func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, open *bool, mark *markdown.RangeDecoration, grouped bool, anchors ...func()) ui.Element {
 	p := palette(c)
 	name, symbol := item.Name, terminalSymbol
 	switch item.Presentation {
@@ -223,7 +232,7 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 	if grouped {
 		ink = p.secondary
 		if isCommand {
-			size = mobileToolCaptionSize
+			size = captionTextSize
 			font = mobileStatusFont(c, size)
 			font.Family = "Menlo"
 			symbol = toolTerminalSymbol
@@ -276,7 +285,9 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 			if issue && !grouped {
 				color = p.warning
 			}
-			oneLine(c, status, size, color).Shrink(0).FixedLineHeight(lineHeight)
+			oneLine(c.Key("tool-outcome"), status, size, color).Shrink(0).FixedLineHeight(lineHeight).
+				Transition(mobileFeedbackFade(mobileReplyFade)).
+				ContentTransition(ui.ContentTransition{Animation: &mobileTitleMotion})
 		}
 		if hasBody {
 			if grouped {
@@ -304,6 +315,9 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 		}
 		heading = ui.ButtonBase(c).MinHeight(mobileTapSize(c)).AlignSelf(ui.Start).Gap(6).AlignItems(ui.Baseline).
 			Role(ui.RoleButton).Label(name).Value(value).OnClick(func() {
+			if len(anchors) > 0 {
+				anchors[0]()
+			}
 			*open = !*open
 			if *open {
 				a.previewCommandOpened(session.ID, item.ID)
@@ -348,9 +362,7 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 			} else if item.Text != "" {
 				row := c.Key("tool-summary")
 				block := ui.Column(row)
-				if !grouped {
-					animateToolResultBlock(c, block)
-				}
+				animateToolResultBlock(c, block)
 				block.Children(func() { toolResultText(row, item.Text, mark) })
 			}
 			type fileKey struct {
@@ -362,26 +374,23 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 				row := c.Key(fileKey{file.Path, files[file.Path]})
 				files[file.Path]++
 				block := ui.Column(row)
-				if !grouped {
-					animateToolResultBlock(c, block)
-				}
+				animateToolResultBlock(c, block)
 				block.Children(func() { a.transcriptFile(row, file) })
 			}
 			a.contentParts(c, parent, session, item.Parts)
 			if item.Truncated {
 				note := label(c.Key("tool-truncated"), "内容过长，已截断显示", captionTextSize, p.secondary)
-				if !grouped {
-					animateToolResultBlock(c, note)
-				}
+				animateToolResultBlock(c, note)
 			}
 		})
 	}
 	body := c.Key(toolResultBodyKey(item.ID))
-	if grouped {
-		// The tool group owns the height of all of its expanded results.
-		if visible {
-			build(body)
-		}
+	if grouped && hasBody {
+		frame := ui.Column(body).FillWidth().Shrink(0).Clip()
+		conversationui.AnimatedContentHeight(body, frame, visible, visible, mobileToolDisclosureDuration, func() float32 {
+			build(body.Key("result"))
+			return 0
+		})
 		return heading
 	}
 	toolResultPanel(body, visible, mark != nil, nil, build)
@@ -390,7 +399,7 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 
 // Resize the measured list content so the following rows move with it.
 // The intrinsic stack stays at full width inside the growing clip.
-func toolResultPanel(c *ui.Context, visible, immediate bool, progress *float32, build func(*ui.Context)) {
+func toolResultPanel(c *ui.Context, visible, immediate bool, progress *float32, build func(*ui.Context), viewport ...float32) {
 	frame := ui.Column(c).FillWidth().Shrink(0).Clip()
 	type measurement struct {
 		width, height float32
@@ -408,9 +417,15 @@ func toolResultPanel(c *ui.Context, visible, immediate bool, progress *float32, 
 		shown = frame.AnimateTo("height", target, ui.Animation{Duration: mobileToolDisclosureDuration})
 	}
 	if progress != nil {
+		if len(viewport) > 0 && viewport[0] > 0 && *progress < 1 {
+			shown = min(shown, viewport[0])
+		}
 		shown *= *progress
 	}
-	if !visible || size.height > 0 || !size.baseline {
+	// While fully open the group takes the real height of its animated
+	// children. The parent only owns clipping during group disclosure.
+	naturalFlow := progress != nil && visible && *progress >= 1
+	if !naturalFlow && (!visible || size.height > 0 || !size.baseline) {
 		frame.Height(shown)
 	}
 	if !visible && shown <= 0 {
@@ -419,7 +434,7 @@ func toolResultPanel(c *ui.Context, visible, immediate bool, progress *float32, 
 	frame.Children(func() {
 		body := c.Key("measured")
 		content := ui.Column(body).FillWidth().Shrink(0).Disabled(!visible).DimDisabled(false)
-		if size.height > 0 || !size.baseline {
+		if !naturalFlow && (size.height > 0 || !size.baseline) {
 			content.Absolute().Left(0).Right(0).Top(0)
 		}
 		invalidate := c.Services().Invalidate

@@ -580,7 +580,7 @@ func (f *mobileConversationFind) decoration(c *ui.Context, item domain.Item, sta
 			mark.aligned = true
 			if box.Y < viewport.Y+4 || box.Y+box.H > viewport.Y+viewport.H-4 {
 				y := max(8, viewport.H*.25) - (box.Y - row.Y)
-				state.KeepRowWithinContent(mark.row, y)
+				state.ScrollToRowWithinContent(mark.row, y, mobilePositionMotion(c))
 				f.owner.Invalidate()
 			}
 		}

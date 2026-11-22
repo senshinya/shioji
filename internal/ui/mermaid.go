@@ -8,6 +8,7 @@ import (
 
 	n "github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
+	"shioji/internal/conversationui"
 	"shioji/internal/diagram"
 )
 
@@ -166,7 +167,7 @@ func mermaidCodeBlock(c *n.Context, b *markdown.CodeBlockView, cache *mermaidCac
 			b.CopyButton(c)
 		})
 		body := n.Column(c.Key("body")).FillWidth().Clip()
-		cache.heightDelta += animatedContentHeightAtMount(c, body, true, true, 180*time.Millisecond, func() float32 {
+		cache.heightDelta += conversationui.AnimatedContentHeight(c, body, true, true, 180*time.Millisecond, func() float32 {
 			if *showSource || message != "" {
 				if message != "" {
 					n.Text(c, "无法渲染图表，已显示源码").FontSize(11).TextColor(t.TextMuted).Padding(4, 10).Tooltip(message)

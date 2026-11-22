@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"image/color"
 	"image/png"
+	"math"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/egoist/mygo/ui"
@@ -176,10 +178,22 @@ func transcriptSymbol(c *ui.Context, icon *ui.SVG, label string, font ui.Font, s
 	})
 }
 
-func transcriptStatusDot(c *ui.Context, label string, font ui.Font, ink ui.Color) ui.Element {
+func mobileBreathingInk(p *ui.Painter, ink ui.Color, pulse bool) ui.Color {
+	if !pulse {
+		return ink
+	}
+	const period = 1400 * time.Millisecond
+	phase := float64(p.Now().UnixNano()%int64(period)) / float64(period)
+	alpha := .4 + .6*float32((1-math.Cos(2*math.Pi*phase))/2)
+	p.AnimationFrameRate(30)
+	return ink.Alpha(alpha)
+}
+
+func transcriptStatusDot(c *ui.Context, label string, font ui.Font, ink ui.Color, live bool) ui.Element {
 	const size = 6
+	pulse := live && !c.Preferences().ReduceMotion
 	return transcriptGlyph(c, label, font, transcriptGlyphSlot, size, func(p *ui.Painter, r ui.Rect) {
-		p.Fill(r, ink, size/2)
+		p.Fill(r, mobileBreathingInk(p, ink, pulse), size/2)
 	})
 }
 

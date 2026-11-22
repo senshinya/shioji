@@ -27,6 +27,8 @@ type EditorOptions struct {
 	// MaxLines grows the editor to its content, bounded by this many lines.
 	// Zero keeps the ordinary externally sized, scrolling editor.
 	MaxLines int
+	// CaretScrollDuration animates short scrolls that bring the caret into view.
+	CaretScrollDuration time.Duration
 	// LineHeight fixes the line advance in DIPs, zero uses the font metrics.
 	LineHeight float32
 
@@ -168,12 +170,15 @@ type view struct {
 	// below the anchor's, or, while anchorText, the view keeps the
 	// anchor's first line where it was when its text was at anchorY in
 	// the content (the caret's paragraph, while the editor is focused).
-	anchor      int
-	anchorOff   float64
-	anchorText  bool
-	anchorY     float64
-	reveal      bool
-	first, last int
+	anchor                         int
+	anchorOff                      float64
+	anchorText                     bool
+	anchorY                        float64
+	reveal                         bool
+	first, last                    int
+	caretScrollFrom, caretScrollTo float64
+	caretScrollStart, frameTime    time.Time
+	animateCaretScroll             bool
 	// The selection, in runes: anchor and caret, and the caret's visual
 	// edge.
 	selAnchor, caret int
@@ -299,6 +304,11 @@ func build(c *ui.Context, doc *Document, options []EditorOptions, styled bool) u
 		v.opts = options[0]
 	}
 	v.services = c.Services()
+	v.frameTime = c.Now()
+	v.animateCaretScroll = v.opts.CaretScrollDuration > 0 && !c.Preferences().ReduceMotion
+	if !v.caretScrollStart.IsZero() {
+		c.AnimationFrame()
+	}
 	v.setLook(t, styled)
 	v.sync()
 	v.inView = e.Hovered()
@@ -1018,6 +1028,7 @@ func (v *view) setScroll(y float64) {
 // scrollTo scrolls the content to y, kept between its ends, and reports
 // whether it moved.
 func (v *view) scrollTo(y float64) bool {
+	v.caretScrollStart = time.Time{}
 	y = max(0, min(y, v.hs.top(len(v.paras))-float64(v.viewH)))
 	if y == v.scroll {
 		return false
@@ -1074,20 +1085,40 @@ func (v *view) layout(w, h float32) {
 	}
 	v.viewH = h
 	v.estimate()
+	if !v.caretScrollStart.IsZero() {
+		progress := float64(1)
+		if v.animateCaretScroll {
+			progress = max(0, min(1, float64(v.frameTime.Sub(v.caretScrollStart))/float64(v.opts.CaretScrollDuration)))
+		}
+		eased := 1 - (1-progress)*(1-progress)*(1-progress)
+		v.setScroll(v.caretScrollFrom + (v.caretScrollTo-v.caretScrollFrom)*eased)
+		if progress == 1 {
+			v.caretScrollStart = time.Time{}
+		}
+	}
 	v.place(h)
 	if v.reveal {
 		v.reveal = false
 		_, y, ch := v.caretAt(v.caret, v.composeCaret, v.affinity)
+		target := v.scroll
 		switch {
 		case y < v.scroll:
-			v.setScroll(y)
+			target = y
 		case y+float64(ch) > v.scroll+float64(h):
 			p := v.shown.paraAt(v.caret)
 			for q, room := p-1, y+float64(ch)-v.hs.top(p); q >= 0 && room < float64(h); q-- {
 				room += float64(v.paraLayout(q).h)
 			}
 			_, y, ch = v.caretAt(v.caret, v.composeCaret, v.affinity)
-			v.setScroll(y + float64(ch) - float64(h))
+			target = y + float64(ch) - float64(h)
+		}
+		if target != v.scroll && v.animateCaretScroll && v.focused && !v.composing && !v.dragging &&
+			target >= v.scroll-float64(h) && target <= v.scroll+float64(h) {
+			v.caretScrollFrom, v.caretScrollTo, v.caretScrollStart = v.scroll, target, v.frameTime
+			v.services.Invalidate()
+		} else if target != v.scroll || !v.caretScrollStart.IsZero() {
+			v.caretScrollStart = time.Time{}
+			v.setScroll(target)
 		}
 		v.place(h)
 	}

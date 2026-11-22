@@ -1,10 +1,12 @@
 import UIKit
+import QuartzCore
 import UserNotifications
 import QuickLook
 import SafariServices
 import UniformTypeIdentifiers
 
 final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerDelegate, UISearchResultsUpdating, UISearchControllerDelegate, UITabBarControllerDelegate, SFSafariViewControllerDelegate {
+    private let keyboardTiming = KeyboardTiming()
     private let composeTabID = "shioji.compose"
     private var forms: [Int: UINavigationController] = [:]
     private var searches: [Int: UISearchController] = [:]
@@ -50,6 +52,10 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
             setHomeNavigation(home, searchVisible: false, animated: false)
             sidebarBackground(for: home, wide: false)
             tabs = home.tabBarController
+            keyboardTiming.attach(to: Host.shared.root.view)
+            Host.shared.root.keyboardAnimationChanged = { [weak self] from, to, bottom, duration, curve in
+                self?.keyboardTiming.animate(from: from, to: to, bottom: bottom, duration: duration, curve: curve)
+            }
             tabs?.tabBar.tintColor = .label
             tabs?.delegate = self
             home.navigationItem.largeTitleDisplayMode = .never
@@ -86,9 +92,10 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
         case "configurePage":
             if let id = args["window"] as? Int, let page = controller(id) {
                 page.hidesBottomBarWhenPushed = true
+                if let screen = page as? WindowController { observeTextDismissal(screen) }
                 page.navigationItem.backButtonDisplayMode = .minimal
                 if let title = args["title"] as? String {
-                    setConversationTitle(title, subtitle: args["subtitle"] as? String ?? "", inlineScope: args["inlineScope"] as? Bool == true, on: page)
+                    setConversationTitle(title, subtitle: args["subtitle"] as? String ?? "", inlineScope: args["inlineScope"] as? Bool == true, reduceMotion: args["reduceMotion"] as? Bool == true, on: page)
                 }
                 if #available(iOS 26.0, *), args["commit"] as? Bool == true,
                    let button = page.navigationItem.rightBarButtonItem {
@@ -180,7 +187,7 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
             PluginHost.present(alert)
         case "conversationTitle":
             if let id = args["window"] as? Int, let page = controller(id), let title = args["title"] as? String {
-                setConversationTitle(title, subtitle: args["subtitle"] as? String ?? "", inlineScope: args["inlineScope"] as? Bool == true, on: page)
+                setConversationTitle(title, subtitle: args["subtitle"] as? String ?? "", inlineScope: args["inlineScope"] as? Bool == true, reduceMotion: args["reduceMotion"] as? Bool == true, on: page)
             }
             reply(.success(nil))
         case "toggleSidebar":
@@ -239,13 +246,19 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
                 reply(.failure(PluginFailure("MissingForm", "找不到新建会话页面")))
                 return
             }
-            page.title = "新建会话"
+            let title = args["title"] as? String
+            page.title = title ?? "新建会话"
             page.navigationItem.largeTitleDisplayMode = .never
             (page as? WindowController)?.barAtRoot = true
             let form = UINavigationController(rootViewController: page)
             form.modalPresentationStyle = .formSheet
-            form.preferredContentSize = CGSize(width: 590, height: 540)
-            page.navigationItem.leftBarButtonItem = UIBarButtonItem(title: "取消", primaryAction: UIAction { [weak self] _ in
+            form.preferredContentSize = CGSize(width: title == nil ? 590 : 460, height: 540)
+            if title != nil, page.traitCollection.userInterfaceIdiom == .phone,
+               let sheet = form.sheetPresentationController {
+                sheet.detents = [.medium(), .large()]
+                sheet.prefersGrabberVisible = true
+            }
+            page.navigationItem.leftBarButtonItem = UIBarButtonItem(title: title == nil ? "取消" : "关闭", primaryAction: UIAction { [weak self] _ in
                 self?.dismissForm(id)
             })
             forms[id] = form
@@ -381,7 +394,21 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
         return UIFontMetrics(forTextStyle: style).scaledFont(for: .systemFont(ofSize: size, weight: weight))
     }
 
-    private func setConversationTitle(_ title: String, subtitle: String, inlineScope: Bool, on page: UIViewController) {
+    private func setConversationTitle(_ title: String, subtitle: String, inlineScope: Bool, reduceMotion: Bool = false, on page: UIViewController) {
+        if let view = page.navigationItem.titleView as? ConversationTitleStack,
+           let label = view.arrangedSubviews.first as? UILabel,
+           (view.arrangedSubviews.dropFirst().first as? ConversationScopeStack)?.arrangedSubviews.last.flatMap({ $0 as? UILabel })?.text ?? "" == subtitle {
+            if label.text != title {
+                if reduceMotion || UIAccessibility.isReduceMotionEnabled {
+                    label.text = title
+                } else {
+                    UIView.transition(with: label, duration: 0.16, options: [.transitionCrossDissolve, .beginFromCurrentState, .allowUserInteraction]) {
+                        label.text = title
+                    }
+                }
+            }
+            return
+        }
         let label = UILabel()
         label.text = title
         label.accessibilityIdentifier = "conversation-title"
@@ -425,6 +452,14 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
 
     private func controller(_ id: Int) -> UIViewController? {
         MyGoWindows.controller(NSNumber(value: id))
+    }
+
+    private func observeTextDismissal(_ screen: WindowController) {
+        guard let surface = screen.window as? SurfaceWindow else { return }
+        let id = surface.id
+        surface.onTextInputDismissed = {
+            PluginHost.emit("shiojiUIKit", "composerKeyboardDismissed", id)
+        }
     }
 
     private func openSearch(home id: Int, toggle: Bool) {
@@ -634,6 +669,7 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
         split.minimumWidth = minimumWidth
         split.primaryPage = home as? WindowController
         split.detailPage = detail as? WindowController
+        if let page = split.detailPage { observeTextDismissal(page) }
         split.tabHost = tabs
         split.updateSidebar = { [weak self, weak home] wide in
             if let home { self?.sidebarBackground(for: home, wide: wide) }
@@ -884,5 +920,109 @@ private final class AttachmentPreviewItem: NSObject, QLPreviewItem {
     init(url: URL, name: String) {
         previewItemURL = url
         previewItemTitle = name
+    }
+}
+
+// The guide tracks the keyboard in this scene. The notification's UIKit
+// curve also provides a position on keyboard transitions where the guide
+// exposes only an endpoint.
+private final class KeyboardTiming: NSObject {
+    private let guideProbe = UIView()
+    private let timingProbe = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+    private weak var viewport: UIView?
+    private var displayLink: CADisplayLink?
+    private var started: CFTimeInterval = 0
+    private var duration: TimeInterval = 0
+    private var bottom: CGFloat = 0
+    private var from: CGFloat = 0
+    private var target: CGFloat = 0
+    private var peak: CGFloat = 0
+    private var morphing = false
+    private var guideIsMoving = false
+    private var last: CGFloat?
+
+    func attach(to view: UIView) {
+        guard viewport !== view else { return }
+        viewport = view
+        guideProbe.isUserInteractionEnabled = false
+        guideProbe.accessibilityElementsHidden = true
+        guideProbe.translatesAutoresizingMaskIntoConstraints = false
+        timingProbe.isUserInteractionEnabled = false
+        timingProbe.accessibilityElementsHidden = true
+        view.addSubview(timingProbe)
+        view.addSubview(guideProbe)
+        NSLayoutConstraint.activate([
+            guideProbe.topAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+            guideProbe.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            guideProbe.widthAnchor.constraint(equalToConstant: 1),
+            guideProbe.heightAnchor.constraint(equalToConstant: 1),
+        ])
+    }
+
+    func animate(from: CGFloat, to: CGFloat, bottom: CGFloat, duration: TimeInterval, curve: Int) {
+        let interrupted = displayLink != nil && morphing
+        let current = displayLink == nil ? from : last ?? from
+        displayLink?.invalidate()
+        displayLink = nil
+        timingProbe.layer.removeAllAnimations()
+        timingProbe.center.y = current
+        self.bottom = bottom
+        self.from = current
+        target = to
+        peak = max(from, to, current)
+        morphing = interrupted || min(from, to) <= bottom + 80
+        self.duration = duration
+        started = CACurrentMediaTime()
+        guideIsMoving = false
+        last = nil
+        guard duration > 0, abs(to - current) > 0.25 else {
+            Host.shared.root.keyboardPresentationTop = nil
+            emitMotion(moving: false)
+            return
+        }
+        emitMotion(moving: true)
+        report(coverage: current)
+        let options = UIView.AnimationOptions(rawValue: UInt(max(0, curve)) << 16)
+        UIView.animate(withDuration: duration, delay: 0, options: [options, .allowUserInteraction]) {
+            self.timingProbe.center.y = to
+        }
+        let link = CADisplayLink(target: self, selector: #selector(sample))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    @objc private func sample() {
+        guard let viewport else { finish(); return }
+        let elapsed = CACurrentMediaTime() - started
+        let guide = viewport.bounds.maxY - (guideProbe.layer.presentation()?.frame.minY ?? guideProbe.frame.minY)
+        let low = min(from, target)
+        let high = max(from, target)
+        if guide > low + 0.75, guide < high - 0.75 { guideIsMoving = true }
+        let position = guideIsMoving ? guide : timingProbe.layer.presentation()?.position.y ?? from
+        if elapsed > duration && (abs(position - target) < 0.75 || elapsed > duration + 0.15) {
+            finish()
+        } else {
+            report(coverage: min(high, max(low, position)))
+        }
+    }
+
+    private func report(coverage: CGFloat) {
+        guard let viewport, let window = viewport.window,
+              last.map({ abs(coverage - $0) > 0.15 }) ?? true else { return }
+        last = coverage
+        Host.shared.root.keyboardPresentationTop = viewport.convert(
+            CGPoint(x: 0, y: viewport.bounds.maxY - coverage), to: window.screen.coordinateSpace).y
+    }
+
+    private func finish() {
+        displayLink?.invalidate()
+        displayLink = nil
+        Host.shared.root.keyboardPresentationTop = nil
+        emitMotion(moving: false)
+    }
+
+    private func emitMotion(moving: Bool) {
+        PluginHost.emit("shiojiUIKit", "keyboardMotion",
+                        ["bottom": bottom, "peak": peak, "moving": moving, "morphing": morphing])
     }
 }

@@ -236,6 +236,14 @@ func (a *mobileApp) openPreviewBoard(board string) {
 		a.model.Snapshot.Sessions[0] = detail.Session
 		a.model.Drafts["session:"+review.ID] = "再检查一下连续展开两个工具组的情况。"
 		a.openSession(review.ID)
+	case "motion-send", "motion-steer", "motion-queue", "motion-queue-auto":
+		a.seedArtboardConversation(false)
+		a.seedConversationMotion(board, review.ID)
+		a.openSession(review.ID)
+	case "motion-reply-height":
+		a.seedArtboardConversation(false)
+		a.seedReplyHeightMotion(review.ID)
+		a.openSession(review.ID)
 	case "inbox":
 		a.seedArtboardConversation(false)
 	case "recent-operations":
@@ -280,7 +288,7 @@ func (a *mobileApp) openPreviewBoard(board string) {
 	case "transcript-command-output":
 		a.seedPreviewCommandOutput(review.ID)
 		a.openSession(review.ID)
-	case "transcript-tool-tail":
+	case "transcript-tool-tail", "transcript-tool-tail-completed", "running-session-entry", "running-session-cold-entry":
 		a.seedArtboardConversation(false)
 		a.model.Preferences.CollapseLatestTools = false
 		detail := a.model.Details[review.ID]
@@ -300,9 +308,44 @@ func (a *mobileApp) openPreviewBoard(board string) {
 			domain.Item{ID: "tool-tail-read", TurnID: "tool-tail", Kind: "tool", Name: "读取连接记录", ActivityOrder: 1, Final: true},
 			domain.Item{ID: "tool-tail-check", TurnID: "tool-tail", Kind: "tool", Presentation: "command", Name: "核对连接恢复", ActivityOrder: 2, Status: "running"},
 		)
+		if board == "transcript-tool-tail-completed" {
+			detail.Session.Status = domain.ExecutionCompleted
+			turn := &detail.Turns[len(detail.Turns)-1]
+			turn.Status = domain.ExecutionCompleted
+			finished := started.Add(2 * time.Second)
+			duration := int64(2000)
+			turn.CompletedAt, turn.DurationMS = &finished, &duration
+			tool := &detail.Items[len(detail.Items)-1]
+			tool.Status, tool.Final = "completed", true
+			detail.Items = append(detail.Items, domain.Item{ID: "tool-tail-reply", TurnID: turn.ID, Kind: "assistant", Final: true,
+				Text: "连接恢复已核对。"})
+		}
 		a.model.Details[review.ID] = detail
 		a.model.Snapshot.Sessions[0] = detail.Session
-		a.openSession(review.ID)
+		if board == "running-session-cold-entry" {
+			partial := detail
+			partial.Items, partial.Turns = detail.Items[12:], detail.Turns[12:]
+			partial.History, partial.HistoryLoaded = nil, false
+			a.model.Details[review.ID] = partial
+			a.model.BeginHistoryRead(review.ID)
+			a.openSession(review.ID)
+			time.AfterFunc(20*time.Second, func() {
+				mygo.RunOnMain(func() {
+					delete(a.model.HistoryReads, review.ID)
+					a.model.Details[review.ID] = detail
+					a.refresh()
+				})
+			})
+		} else if board == "running-session-entry" {
+			a.previewLatestHistory = &detail
+			cached := detail
+			cached.Items, cached.Turns = detail.Items[:8], detail.Turns[:8]
+			cached.History = &domain.HistoryWindow{First: 1, Last: 8, Newer: true}
+			a.model.Details[review.ID] = cached
+			a.home.Invalidate()
+		} else {
+			a.openSession(review.ID)
+		}
 	case "draft-references", "draft-references-history", "draft-references-keyboard", "draft-references-keyboard-long-queue":
 		a.seedArtboardConversation(board == "draft-references-keyboard-long-queue")
 		a.previewReferenceKeyboard = strings.HasPrefix(board, "draft-references-keyboard")

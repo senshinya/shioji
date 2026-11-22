@@ -24,31 +24,67 @@ func newMobileToolSweep(c *ui.Context, row ui.Element, started time.Time) *mobil
 	return &mobileToolSweep{row: row, started: started, highlight: palette(c).ink, green: green}
 }
 
-// Draw the sweep with the row's native primitives. A layer effect on the
-// entire row drops the text and icons in the iOS renderer.
-func (s *mobileToolSweep) color(p *ui.Painter, r ui.Rect, ink ui.Color) ui.Color {
-	if s == nil {
-		return ink
+// Use the same continuous band as the Mac status row. Paint the shaped
+// glyphs directly so the iOS renderer does not need an offscreen effect layer.
+func (s *mobileToolSweep) band(p *ui.Painter) (center, width float32) {
+	if !s.row.Valid() {
+		return 0, 0
 	}
 	p.AnimationFrameRate(60)
 	row := s.row.LayoutBounds()
 	if row.W <= 0 {
-		return ink
+		return 0, 0
 	}
-	width := max(22, row.W*0.23)
+	width = max(22, row.W*0.23)
 	progress := float32(math.Mod(p.Now().Sub(s.started).Seconds()/2.2, 1))
-	center := progress*(row.W+2*width) - width
-	distance := float32(math.Abs(float64(r.X + r.W/2 - row.X - center)))
-	strength := max(0, 1-distance/width)
-	strength = strength * strength * (3 - 2*strength)
-	glint := s.highlight
-	if int(ink.G) > int(max(ink.R, ink.B))+20 {
-		glint = s.green
-	}
-	return ink.Mix(glint, strength)
+	return row.X + progress*(row.W+2*width) - width, width
 }
 
-const mobileToolCaptionSize = 11
+func mobileSweepColor(ink, highlight ui.Color, center, width, x float32) ui.Color {
+	strength := max(0, 1-float32(math.Abs(float64(x-center)))/width)
+	strength = strength * strength * (3 - 2*strength)
+	return ink.Mix(highlight, strength)
+}
+
+func (s *mobileToolSweep) color(p *ui.Painter, r ui.Rect, ink ui.Color) ui.Color {
+	if s == nil {
+		return ink
+	}
+	center, width := s.band(p)
+	if width <= 0 {
+		return ink
+	}
+	highlight := s.highlight
+	if int(ink.G) > int(max(ink.R, ink.B))+20 {
+		highlight = s.green
+	}
+	return mobileSweepColor(ink, highlight, center, width, r.X+r.W/2)
+}
+
+func (s *mobileToolSweep) text(p *ui.Painter, glyphs []ui.Glyph, x, baseline float32, ink ui.Color) {
+	if s == nil {
+		p.Glyphs(glyphs, x, baseline, ink)
+		return
+	}
+	center, width := s.band(p)
+	if width <= 0 {
+		p.Glyphs(glyphs, x, baseline, ink)
+		return
+	}
+	// Keep contiguous dim glyphs together and shade the moving band per
+	// glyph. Shaping and font fallback are still shared with layout.
+	start := 0
+	for i, glyph := range glyphs {
+		mid := x + glyph.X + glyph.Advance/2
+		if mid <= center-width || mid >= center+width {
+			continue
+		}
+		p.Glyphs(glyphs[start:i], x, baseline, ink)
+		p.Glyphs(glyphs[i:i+1], x, baseline, mobileSweepColor(ink, s.highlight, center, width, mid))
+		start = i + 1
+	}
+	p.Glyphs(glyphs[start:], x, baseline, ink)
+}
 
 func mobileStatusFont(c *ui.Context, size float32) ui.Font {
 	return ui.Font{Family: c.Theme().Font, Size: size * c.Preferences().TextScale}
@@ -71,32 +107,57 @@ func mobileInlineText(c *ui.Context, label string, font ui.Font, width float32, 
 
 func (s *mobileToolSweep) caption(c *ui.Context, title string, transition ui.ContentTransition) {
 	ink := palette(c).secondary
-	font := mobileStatusFont(c, mobileToolCaptionSize)
+	font := mobileStatusFont(c, captionTextSize)
 	if s == nil {
-		oneLine(c, title, mobileToolCaptionSize, ink).Font(font.Family).FixedLineHeight(mobileStatusLineHeight(font)).
+		oneLine(c, title, captionTextSize, ink).Font(font.Family).FixedLineHeight(mobileStatusLineHeight(font)).
 			Shrink(1).ContentTransition(transition)
 		return
 	}
 	layout := ui.ShapeText(title, font, 0)
 	width, _ := layout.Size()
-	text := []rune(title)
-	display := layout
-	displayBaseline := layout.Lines()[0].Baseline
-	available := width
-	var element ui.Element
-	element = mobileInlineText(c, title, font, width, func(p *ui.Painter, r ui.Rect, baseline float32) {
-		if space := element.LayoutBounds().W; space != available {
-			available = space
-			display = layout
-			for length := len(text) - 1; length >= 0; length-- {
-				if measured, _ := display.Size(); measured <= space+.5 {
-					break
-				}
-				display = ui.ShapeText(string(text[:length])+"…", font, 0)
-			}
-			displayBaseline = display.Lines()[0].Baseline
+	slot := ui.Row(c.Key("sweep-caption-slot")).MinWidth(0).Shrink(1).ClipX().AlignItems(ui.Baseline)
+	extent := ui.Local(slot, "extent", func() mobileCaptionExtent {
+		return mobileCaptionExtent{target: width, shown: width}
+	})
+	if extent.target != width {
+		extent.release = time.Time{}
+		if width < extent.shown {
+			extent.release = c.Now().Add(mobileReplyFade)
 		}
-		r.W = min(r.W, available)
-		p.TextLayout(display, r.X, baseline-displayBaseline, s.color(p, r, ink))
-	}).MinWidth(0).Shrink(1).ClipX()
+		extent.target = width
+	}
+	target := width
+	if wait := extent.release.Sub(c.Now()); wait > 0 {
+		target = max(width, extent.shown)
+		c.After(wait)
+	}
+	extent.shown = slot.AnimateTo("caption-width", target, ui.Animation{Duration: mobileReplyFade, Ease: ui.EaseOut})
+	slot.Width(extent.shown).Children(func() {
+		text := []rune(title)
+		glyphs := ui.Shape(title, font)
+		available := width
+		var element ui.Element
+		element = mobileInlineText(c.Key(title), title, font, width, func(p *ui.Painter, r ui.Rect, baseline float32) {
+			space := available
+			if element.Valid() {
+				space = element.LayoutBounds().W
+			}
+			if space != available {
+				available = space
+				display := title
+				measured := width
+				for length := len(text) - 1; measured > space+.5 && length >= 0; length-- {
+					display = string(text[:length]) + "…"
+					measured, _ = ui.ShapeText(display, font, 0).Size()
+				}
+				glyphs = ui.Shape(display, font)
+			}
+			s.text(p, glyphs, r.X, baseline, ink)
+		}).MinWidth(0).Shrink(1).ClipX().Transition(mobileFeedbackFade(mobileReplyFade))
+	})
+}
+
+type mobileCaptionExtent struct {
+	target, shown float32
+	release       time.Time
 }

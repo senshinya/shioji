@@ -10,6 +10,8 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
 
+	"shioji/internal/conversationui"
+
 	"shioji/internal/diagram"
 )
 
@@ -103,7 +105,7 @@ func (m *mobileDiagramCache) request(c *ui.Context, source string) mobileDiagram
 	return mobileDiagramResult{}
 }
 
-func (a *mobileApp) bindMobileDiagrams(c *ui.Context, owner ui.Element, file string, options *markdown.Options) {
+func (a *mobileApp) bindMobileDiagrams(c *ui.Context, owner ui.Element, file string, options *markdown.Options, owners ...*float32) {
 	cache := ui.Local(owner, "mermaid-cache", func() mobileDiagramCache { return mobileDiagramCache{} })
 	cache.reset(mobileDiagramScope{device: a.deviceSelection, epoch: a.model.ConnectionEpoch,
 		session: a.model.SessionID, parallel: a.parallel, file: file, dark: c.Theme().Dark})
@@ -111,14 +113,17 @@ func (a *mobileApp) bindMobileDiagrams(c *ui.Context, owner ui.Element, file str
 		options.Code = make(map[string]func(*ui.Context, *markdown.CodeBlockView))
 	}
 	options.Code["mermaid"] = func(c *ui.Context, block *markdown.CodeBlockView) {
-		mobileMermaidBlock(c, block, cache, file == "")
+		delta := mobileMermaidBlock(c, block, cache, file == "")
+		if len(owners) > 0 && owners[0] != nil {
+			*owners[0] += delta
+		}
 	}
 }
 
-func mobileMermaidBlock(c *ui.Context, block *markdown.CodeBlockView, cache *mobileDiagramCache, compact bool) {
+func mobileMermaidBlock(c *ui.Context, block *markdown.CodeBlockView, cache *mobileDiagramCache, compact bool) float32 {
 	if block.Open {
 		markdown.DefaultCodeBlock(c, block)
-		return
+		return 0
 	}
 	result := cache.request(c, block.Code())
 	p := palette(c)
@@ -133,6 +138,7 @@ func mobileMermaidBlock(c *ui.Context, block *markdown.CodeBlockView, cache *mob
 		card.Width(width).MaxWidthPercent(100).AlignSelf(ui.Start)
 	}
 	source := ui.Local(card, "source", func() bool { return false })
+	delta := float32(0)
 	card.Children(func() {
 		ui.Row(c.Key("controls")).AlignItems(ui.Center).Padding(0, 9, 0, 11).Gap(3).Children(func() {
 			oneLine(c, "Mermaid", captionTextSize, p.secondary)
@@ -147,19 +153,21 @@ func mobileMermaidBlock(c *ui.Context, block *markdown.CodeBlockView, cache *mob
 			}
 			block.CopyButton(c).MinHeight(mobileTapSize(c)).MinWidth(mobileTapSize(c)).AlignItems(ui.Center)
 		})
-		ui.Column(c.Key("body")).FillWidth().Clip().Transition(mobilePanelTransition).Children(func() {
+		body := c.Key("body")
+		frame := ui.Column(body).FillWidth().Clip()
+		delta = conversationui.AnimatedContentHeight(body, frame, true, true, mobileReplyFade, func() float32 {
 			if result.err != "" {
 				label(c, "无法渲染图表，已显示源码", captionTextSize, p.secondary).Padding(1, 11, 4).Value(result.err)
 			}
 			if *source || result.err != "" {
 				block.Body(c)
-				return
+				return 0
 			}
 			if result.image == nil {
 				ui.Box(c).FillWidth().Height(74).Center().Children(func() {
 					label(c, "正在渲染…", captionTextSize, p.secondary)
 				})
-				return
+				return 0
 			}
 			width, height := result.image.Size()
 			showImage := func() {
@@ -172,6 +180,8 @@ func mobileMermaidBlock(c *ui.Context, block *markdown.CodeBlockView, cache *mob
 			} else {
 				showImage()
 			}
+			return 0
 		})
 	})
+	return delta
 }

@@ -65,7 +65,12 @@ func mobileUserBubble(c *ui.Context) ui.Element {
 	return ui.Column(c).AlignSelf(ui.End).MaxWidthPercent(89).Padding(9, 13).Radius(18).Background(palette(c).inset)
 }
 
-func mobileComposerSurface(c *ui.Context, key string, home, expanded bool, send *mobileSendScroll) (ui.Element, mobileclient.ComposerMetrics) {
+type mobileKeyboardMotion struct {
+	Bottom, Peak     float32
+	Moving, Morphing bool
+}
+
+func mobileComposerSurface(c *ui.Context, key string, home, expanded bool, send *mobileSendScroll, keyboardProgress *float32, editingQueue ...bool) (ui.Element, mobileclient.ComposerMetrics) {
 	surface := mobileComposerFrame(c.Key("composer-surface"), home)
 	target := float32(0)
 	if expanded {
@@ -73,18 +78,25 @@ func mobileComposerSurface(c *ui.Context, key string, home, expanded bool, send 
 	}
 	channel := "composer-progress:" + key
 	var progress float32
-	if send != nil && send.operation != "" {
+	if send != nil && send.operation != "" && !send.queued {
 		// The same progress reveals the message and releases its input space.
 		progress = send.from + (target-send.from)*send.progress
 		surface.Jump(channel, progress)
-		if send.progress >= 1 {
-			send.operation = ""
-		}
+	} else if keyboardProgress != nil {
+		progress = *keyboardProgress
+		surface.Jump(channel, progress)
 	} else {
-		progress = surface.AnimateTo(channel, target, mobileLayoutMotion)
+		duration := mobileReplyFade
+		if len(editingQueue) > 0 && editingQueue[0] {
+			duration = 360 * time.Millisecond
+		}
+		progress = surface.AnimateTo(channel, target, ui.Animation{Duration: duration, Ease: ui.EaseOut})
 	}
 	if send != nil {
 		send.composerProgress = progress
+		if send.progress >= 1 {
+			send.operation = ""
+		}
 	}
 	geometry := mobileclient.ComposerGeometry(progress, home, composerLineHeight(c), mobileTapSize(c))
 	return surface.Height(geometry.Height), geometry

@@ -392,10 +392,11 @@ func (a *mobileApp) sessionRow(c *ui.Context, menu *contextMenuFrame, item mobil
 					alignedSymbol(row, readOnlySymbol, session.Title, font, 10, p.secondary)
 				} else {
 					ui.Box(row).Size(10, 10).Shrink(0).PassThrough().Draw(func(p *ui.Painter, r ui.Rect) {
-						p.Fill(ui.Rect{X: r.X + 3, Y: r.Y + 3 + inkCenterOffset(session.Title, font), W: 4, H: 4}, status, 2)
+						p.Fill(ui.Rect{X: r.X + 3, Y: r.Y + 3 + inkCenterOffset(session.Title, font), W: 4, H: 4}, mobileBreathingInk(p, status, current && a.model.Connected && session.Status.Active() && !c.Preferences().ReduceMotion), 2)
 					})
 				}
-				oneLine(row, session.Title, 15, p.ink).Grow(1)
+				oneLine(row.Key("session-title"), session.Title, 15, p.ink).Grow(1).
+					ContentTransition(ui.ContentTransition{Animation: &mobileTitleMotion})
 				if item.dateLabel != "" {
 					oneLine(row, item.dateLabel, captionTextSize, p.secondary).Shrink(0)
 				}

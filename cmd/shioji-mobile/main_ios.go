@@ -28,6 +28,18 @@ import (
 )
 
 type mobileApp struct {
+	sessionOpening            *sessionListTarget
+	sessionLoadingTarget      string
+	previewLatestHistory      *domain.SessionDetail
+	newSessionSend            *mobileSendScroll
+	queueActionsPage          *mygo.Window
+	latestSessionEntry        string
+	reduceConversationMotion  bool
+	forkMotionTarget          mobileForkPosition
+	composerKeyboardDismissed uintptr
+	keyboardMotion            mobileKeyboardMotion
+	previewConversationMotion string
+
 	model                    *app.Model
 	controller               *app.Controller
 	cancel                   context.CancelFunc
@@ -353,8 +365,31 @@ func (a *mobileApp) openSessionFrom(parent *mygo.Window, id string) {
 }
 
 func (a *mobileApp) openConversationFrom(parent *mygo.Window, id string, jump transcriptJump) {
-	if !a.pageCurrent(parent) || a.sessionByID(id).ID == "" {
+	session := a.sessionByID(id)
+	if !a.pageCurrent(parent) || session.ID == "" {
 		return
+	}
+	if jump.item != "" || a.latestSessionEntry != id {
+		a.latestSessionEntry = ""
+	}
+	entering := a.chat == nil || a.model.SessionID != id || parent == a.home
+	if entering && jump.item == "" && session.Status.Active() {
+		a.history[id] = &ui.ListState{FollowEnd: true}
+		if a.model.Connected && !hasLatestSessionHistory(a.model.Details[id]) {
+			a.latestSessionEntry = id
+			if a.model.SessionID == id && a.controller != nil {
+				a.controller.Select(id)
+			}
+			if preview := a.previewLatestHistory; preview != nil && preview.Session.ID == id {
+				a.previewLatestHistory = nil
+				time.AfterFunc(2*time.Second, func() {
+					mygo.RunOnMain(func() {
+						a.model.Details[id] = *preview
+						a.refresh()
+					})
+				})
+			}
+		}
 	}
 	if a.wide && parent == a.home && id == a.model.SessionID {
 		if review := a.currentSplitReview(); review.right {
@@ -367,7 +402,9 @@ func (a *mobileApp) openConversationFrom(parent *mygo.Window, id string, jump tr
 		// explicit navigation target comes from a newly connected device.
 		a.pageDevice[a.chat] = a.deviceSelection
 		a.updateChatHeader()
-		a.callUIKit("showPage", map[string]uintptr{"window": a.chat.NativeHandle()}, nil)
+		if a.sessionLoadingTarget != id {
+			a.callUIKit("showPage", map[string]uintptr{"window": a.chat.NativeHandle()}, nil)
+		}
 		return
 	}
 	if a.wide && parent == a.home {
@@ -377,7 +414,7 @@ func (a *mobileApp) openConversationFrom(parent *mygo.Window, id string, jump tr
 }
 
 func (a *mobileApp) updateChatHeader() {
-	if a.chat == nil {
+	if a.chat == nil || a.sessionOpening != nil {
 		return
 	}
 	s := a.session()
@@ -389,30 +426,44 @@ func (a *mobileApp) updateChatHeader() {
 		a.chat.SetTitle(s.Title)
 	}
 	a.chatTitle, a.chatScope = s.Title, scope
-	a.callUIKit("conversationTitle", nativePageOptions{Window: a.chat.NativeHandle(), Title: s.Title, Subtitle: scope, InlineScope: isTablet()}, nil)
+	a.callUIKit("conversationTitle", nativePageOptions{Window: a.chat.NativeHandle(), Title: s.Title, Subtitle: scope, InlineScope: isTablet(), ReduceMotion: a.model.Preferences.ReduceMotion}, nil)
 }
 
 func (a *mobileApp) pushConversation(parent *mygo.Window) {
 	delete(a.toolTimelines, a.model.WorkKey(a.model.SessionID, ""))
-	title := a.session().Title
+	session := a.session()
+	title, scope := session.Title, a.conversationHeaderScope(session)
+	opening := a.sessionOpening
+	if opening != nil {
+		title, scope = opening.title, opening.scope
+	}
 	w := a.page(title, func(c *ui.Context) {
 		a.conversation(c, a.chat, false)
 	})
-	a.chat, a.chatTitle, a.chatScope = w, title, a.conversationHeaderScope(a.session())
+	a.chat, a.chatTitle, a.chatScope = w, title, scope
 	w.OnClosed(func() {
 		if a.find != nil && a.find.owner == w {
 			a.closeConversationFind()
 		}
 		a.chat, a.chatTitle, a.chatScope = nil, "", ""
+		a.sessionLoadingTarget = ""
+		if opening != nil && a.sessionOpening == opening {
+			a.sessionOpening = nil
+			a.cancelSessionListOpening()
+		}
 		if isTablet() {
 			a.callUIKit("tabsHidden", map[string]bool{"hidden": false}, nil)
 		}
 		a.refresh()
 	})
 	mygo.SetBarItems(w,
-		mygo.BarItem{Title: "会话活动", Icon: toolbarImage(moreSymbol), OnClick: func() { a.openActivity(w, a.model.SessionID) }},
+		mygo.BarItem{Title: "会话活动", Icon: toolbarImage(moreSymbol), OnClick: func() {
+			if a.sessionOpening == nil {
+				a.openActivity(w, a.model.SessionID)
+			}
+		}},
 	)
-	a.configureNativePage(w, nativePageOptions{Title: title, Subtitle: a.chatScope, InlineScope: isTablet()}, func(err error) {
+	a.configureNativePage(w, nativePageOptions{Title: title, Subtitle: scope, InlineScope: isTablet()}, func(err error) {
 		if err != nil || (a.wide && parent == a.home) {
 			w.Close()
 		} else {
@@ -699,7 +750,7 @@ func (a *mobileApp) applyUpdates(controller *app.Controller) {
 			}
 			if oldID != "" && a.model.SessionID == "" && a.sessionByID(oldID).ID == "" {
 				controller.Select("")
-				if a.chat != nil {
+				if a.chat != nil && a.sessionOpening == nil {
 					a.callUIKit("popPage", map[string]uintptr{"window": a.chat.NativeHandle()}, nil)
 				}
 			}
@@ -823,10 +874,23 @@ func (a *mobileApp) submit(steer bool, editor *mobileDraftEditor) {
 		m.Error = err.Error()
 		return
 	}
-	if editor != nil && in.SessionID != "" && (method == "turn.steer" || method == "session.submit") {
-		if state := a.history[in.SessionID]; state != nil && state.FollowingEnd() {
-			editor.sendScroll.begin(in.OperationID, m.ConnectionEpoch)
+	if editor != nil {
+		switch method {
+		case "turn.enqueue":
+			editor.queueMotion.arrival, editor.queueMotion.arrivalSource = in.OperationID, editor.inputBounds
+		case "turn.steer", "session.submit":
+			editor.sendScroll.begin(in.OperationID, m.ConnectionEpoch, editor.inputBounds, method == "turn.steer", false)
+			if in.SessionID == "" {
+				motion := editor.sendScroll
+				motion.workspace = in.WorkspaceID
+				a.newSessionSend = &motion
+				editor.sendScroll.operation = ""
+			}
 		}
+	}
+	if a.previewConversationMotion != "" {
+		a.previewAcceptMotion(in, method, turn)
+		return
 	}
 	a.deliverSubmission(in, method, turn)
 }

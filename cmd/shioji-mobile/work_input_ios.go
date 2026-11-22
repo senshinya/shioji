@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -14,6 +15,8 @@ import (
 )
 
 type mobileChildInput struct {
+	presented             string
+	presentedAt           time.Time
 	key                   app.WorkKey
 	draftKey, receiptKey  string
 	draft, message        string
@@ -62,6 +65,9 @@ func (s *mobileChildInput) finish(a *mobileApp, confirmed bool) {
 	m := a.model
 	if s.local {
 		delete(m.Drafts, s.receiptKey)
+		if confirmed {
+			s.presented, s.presentedAt = "input:"+s.pending.OperationID, time.Now()
+		}
 		if confirmed && s.draft == s.pending.Text {
 			s.draft = ""
 			delete(m.Drafts, s.draftKey)
@@ -118,7 +124,7 @@ func (s *mobileChildInput) view(a *mobileApp, c *ui.Context, w *mygo.Window, sou
 	}
 	if mode != "" || s.draft != "" {
 		p := palette(c)
-		surface, geometry := mobileComposerSurface(c, s.draftKey, false, s.focused || s.draft != "", nil)
+		surface, geometry := mobileComposerSurface(c, s.draftKey, false, s.focused || s.draft != "", nil, nil)
 		surface.Children(func() {
 			textRight := (mobileTapSize(c) + 5) * (1 - geometry.ControlsProgress)
 			ui.Column(c).Margin(geometry.TextTop, textRight, 0, 12).Padding(8, 4).Height(geometry.EditorHeight).Children(func() {

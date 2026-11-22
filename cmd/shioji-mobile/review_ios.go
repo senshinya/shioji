@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -180,53 +181,69 @@ func (a *mobileApp) reviewContent(c *ui.Context, r *reviewState, close func()) {
 				}
 			}).AlignSelf(ui.Start)
 		}
-		switch {
-		case r.path != "" && r.diff != nil:
-			a.reviewDiff(c, r)
-		case r.loading && !hasContent:
-			oneLine(c, "正在读取…", 13, p.secondary).Padding(12)
-		case r.path == "" && r.filesLoaded && len(r.files) == 0:
-			oneLine(c, "暂无改动", 13, p.secondary).Padding(16)
-		case r.path == "" && r.filesLoaded:
-			ui.Scroll(c).Grow(1).Basis(0).Padding(pageTopInset, pageInset, 40).Children(func() {
-				ui.Row(c).Gap(10).MinHeight(32).AlignItems(ui.Center).Children(func() {
-					oneLine(c, fmt.Sprintf("%d 个文件", len(r.files)), 13, p.secondary)
-					add, del, added, deleted := 0, 0, false, false
+		draw := func(c *ui.Context) {
+			switch {
+			case r.path != "" && r.diff != nil:
+				a.reviewDiff(c, r)
+			case r.loading && !hasContent:
+				oneLine(c, "正在读取…", 13, p.secondary).Padding(12)
+			case r.path == "" && r.filesLoaded && len(r.files) == 0:
+				oneLine(c, "暂无改动", 13, p.secondary).Padding(16)
+			case r.path == "" && r.filesLoaded:
+				ui.Scroll(c).Grow(1).Basis(0).Padding(pageTopInset, pageInset, 40).Children(func() {
+					ui.Row(c).Gap(10).MinHeight(32).AlignItems(ui.Center).Children(func() {
+						oneLine(c, fmt.Sprintf("%d 个文件", len(r.files)), 13, p.secondary)
+						add, del, added, deleted := 0, 0, false, false
+						for _, file := range r.files {
+							if file.Added != nil {
+								add += *file.Added
+								added = true
+							}
+							if file.Removed != nil {
+								del += *file.Removed
+								deleted = true
+							}
+						}
+						diffCounts(c, add, del, added, deleted)
+					})
 					for _, file := range r.files {
-						if file.Added != nil {
-							add += *file.Added
-							added = true
+						row := c.Key(file.Path)
+						subtitle := path.Dir(file.Path)
+						if subtitle == "." {
+							subtitle = ""
 						}
-						if file.Removed != nil {
-							del += *file.Removed
-							deleted = true
-						}
+						mobileDetailRow(row, path.Base(file.Path), subtitle, file.Path, fileCodeSymbol, func() {
+							if !r.loading {
+								a.showReviewFile(r, file.Path)
+							}
+						}, func() {
+							add, del := 0, 0
+							if file.Added != nil {
+								add = *file.Added
+							}
+							if file.Removed != nil {
+								del = *file.Removed
+							}
+							diffCounts(row, add, del, file.Added != nil, file.Removed != nil)
+						}).Disabled(r.loading)
 					}
-					diffCounts(c, add, del, added, deleted)
 				})
-				for _, file := range r.files {
-					row := c.Key(file.Path)
-					subtitle := path.Dir(file.Path)
-					if subtitle == "." {
-						subtitle = ""
-					}
-					mobileDetailRow(row, path.Base(file.Path), subtitle, file.Path, fileCodeSymbol, func() {
-						if !r.loading {
-							a.showReviewFile(r, file.Path)
-						}
-					}, func() {
-						add, del := 0, 0
-						if file.Added != nil {
-							add = *file.Added
-						}
-						if file.Removed != nil {
-							del = *file.Removed
-						}
-						diffCounts(row, add, del, file.Added != nil, file.Removed != nil)
-					}).Disabled(r.loading)
-				}
-			})
+			}
 		}
+		if close == nil {
+			draw(c)
+			return
+		}
+		slot := ui.Column(c.Key("review-content")).FillWidth().Grow(1).MinHeight(0).Basis(0).Clip()
+		slot.Children(func() {
+			page := c.Key(r.path)
+			panel := ui.Column(page).FillWidth().Grow(1).MinHeight(0).Basis(0)
+			if r.path != "" && !c.Preferences().ReduceMotion {
+				pose := ui.Motion{XPercent: 100, Opacity: 1}
+				panel.Transition(ui.ElementTransition{Duration: 260 * time.Millisecond, Ease: ui.EaseOut, Enter: &pose, Exit: &pose})
+			}
+			panel.Children(func() { draw(page) })
+		})
 	})
 }
 

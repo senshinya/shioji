@@ -1,17 +1,17 @@
 package ui
 
 import (
-	"math"
 	"slices"
 	"time"
 
 	n "github.com/egoist/mygo/ui"
+	"shioji/internal/conversationui"
 	"shioji/internal/domain"
 )
 
-const historyShatterDuration = 1150 * time.Millisecond
-const historyCollapseDuration = 200 * time.Millisecond
-const historyForkFadeDuration = 220 * time.Millisecond
+const historyShatterDuration = conversationui.HistoryShatterDuration
+const historyCollapseDuration = conversationui.HistoryCollapseDuration
+const historyForkFadeDuration = conversationui.HistoryForkFadeDuration
 
 type historyRestartMotion struct {
 	in              domain.HistoryChange
@@ -466,48 +466,13 @@ func (v *View) historySuffixReveals(c *n.Context, state *n.ListState, rows []tra
 	}
 }
 
-// Erode the actual native content into fine grains, carried to the right.
-// Sampling stays on the GPU; there is no screenshot readback or whole-row blur.
+// Retain the desktop effect's concrete adapter for its raster regression.
 type historyShatter struct {
 	progress float32
 	seed     uint32
 }
 
-func (historyShatter) EffectMargin() n.Point { return n.Point{X: 160, Y: 160} }
+func (historyShatter) EffectMargin() n.Point { return (conversationui.Shatter{}).EffectMargin() }
 func (fx historyShatter) PaintEffect(p *n.Painter, box n.Rect, content *n.Bitmap, inset n.Point) {
-	w, h := content.Size()
-	sx, sy := float32(w)/(box.W+320), float32(h)/(box.H+320)
-	const grain = float32(2.4)
-	for y, iy := float32(0), uint32(0); y < box.H; y, iy = y+grain, iy+1 {
-		for x, ix := float32(0), uint32(0); x < box.W; x, ix = x+grain, ix+1 {
-			hash := (ix*374761393 + iy*668265263) ^ fx.seed
-			hash = (hash ^ (hash >> 13)) * 1274126177
-			u, v := float32(hash&65535)/65535, float32((hash>>16)&65535)/65535
-			delay := .48*(x/box.W) + .12*u
-			age := (fx.progress - delay) / .40
-			if age >= 1 {
-				continue
-			}
-			k := max(float32(0), age)
-			alpha := float32(1)
-			if k > .58 {
-				q := (k - .58) / .42
-				alpha = 1 - q*q*(3-2*q)
-			}
-			dx, dy := float32(0), float32(0)
-			if k > 0 {
-				curl := float32(math.Sin(float64(k*8 + u*6.28)))
-				dx = (58+88*u)*k + curl*8*k
-				dy = (v-.64)*46*k - 18*k*k
-			}
-			gw, gh := min(grain, box.W-x), min(grain, box.H-y)
-			scale := float32(1)
-			if k > 0 {
-				scale = max(.30, 1-.65*k)
-			}
-			src := n.Rect{X: inset.X + x*sx, Y: inset.Y + y*sy, W: gw * sx, H: gh * sy}
-			dst := n.Rect{X: box.X + x + dx + gw*(1-scale)/2, Y: box.Y + y + dy + gh*(1-scale)/2, W: gw * scale, H: gh * scale}
-			p.ImageRegion(content, src, dst, n.ImageOptions{Tint: n.RGBA(255, 255, 255, alpha)})
-		}
-	}
+	(conversationui.Shatter{Progress: fx.progress, Seed: fx.seed}).PaintEffect(p, box, content, inset)
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -159,6 +160,9 @@ func (a *mobileApp) openWork(parent *mygo.Window, sid string, work domain.WorkAc
 	var list ui.ListState
 	var terminal codeViewport
 	var terminalText string
+	terminalFollowing := true
+	var terminalLastScroll float32
+	var tail replyTail
 	list.FollowEnd = true
 	key := a.model.WorkKey(sid, work.ID)
 	source := a.sessionByID(sid)
@@ -217,12 +221,12 @@ func (a *mobileApp) openWork(parent *mygo.Window, sid string, work domain.WorkAc
 		header := func(c *ui.Context) {
 			if current.State != "" {
 				live := a.model.Connected && (current.State == "running" || current.State == "starting")
-				mobileProgressRow(c, workStateName(current.State), live, func() {
+				mobileProgressRow(c, workStateName(current.State), current.StartedAt, live, func(sweep *mobileToolSweep) {
 					switch {
 					case current.DurationMS != nil:
 						oneLine(c, mobileElapsed(*current.DurationMS), captionTextSize, palette(c).secondary)
 					case current.StartedAt != nil && !current.StartedAt.IsZero() && (live || current.CompletedAt != nil && !current.CompletedAt.IsZero()):
-						mobileReplyClock(c, *current.StartedAt, current.CompletedAt)
+						mobileClock(c, *current.StartedAt, current.CompletedAt, mobileStatusFont(c, captionTextSize), sweep)
 					}
 				})
 			}
@@ -236,6 +240,12 @@ func (a *mobileApp) openWork(parent *mygo.Window, sid string, work domain.WorkAc
 		session := a.sessionByID(sid)
 		items := mobileclient.WorkConversationItems(d, a.model.Details[sid].Requests)
 		conversation := current.Kind == "agent" && len(items) != 0
+		var order int64
+		for _, item := range items {
+			order = max(order, item.Order)
+		}
+		tail.observe(c.Now(), replyHistoryScope{session: work.ID, thread: source.ThreadID, connection: a.model.ConnectionEpoch},
+			order, items, conversation && a.model.Connected && inputState.ready && list.FollowingEnd() && !c.Preferences().ReduceMotion, nil)
 		var replies map[string]string
 		if conversation {
 			replies = childReplyFooters(items)
@@ -245,7 +255,7 @@ func (a *mobileApp) openWork(parent *mygo.Window, sid string, work domain.WorkAc
 			case "tool", "activity", "reasoning":
 				a.toolItem(row, w, session, item, nil, nil, false)
 			case "request":
-				a.requestSource(row, w, sid, item, a.model.Snapshot.PendingRequests, true, func() {
+				a.requestSource(row, w, sid, item, a.model.Snapshot.PendingRequests, true, tail.receiptProgress(row, item.ID), func() {
 					if row.Preferences().ReduceMotion {
 						list.ScrollToEnd()
 					} else {
@@ -253,17 +263,28 @@ func (a *mobileApp) openWork(parent *mygo.Window, sid string, work domain.WorkAc
 					}
 				})
 			case "request_result":
-				a.requestResult(row, w, session, item)
+				a.requestResult(row, w, session, item, tail.receiptProgress(row, item.ID))
 			case "user":
 				runs := mobileclient.SentMessageRuns(item)
-				a.transcriptUserBubble(row, w, session, item, runs, nil)
+				content := ui.Column(row.Key("child-input-arrival")).FillWidth()
+				if item.ID == inputState.presented && !row.Preferences().ReduceMotion {
+					progress := min(1, float32(row.Now().Sub(inputState.presentedAt))/float32(160*time.Millisecond))
+					if progress < 1 {
+						content.Transform(ui.Translation(0, 8*(1-ui.EaseOut(max(0, progress)))))
+						row.AnimationFrame()
+					}
+				}
+				content.Children(func() { a.transcriptUserBubble(row, w, session, item, runs, nil, nil) })
 				userMessageFooter(row, sentMessageText(runs), item.SentAt, nil, false, false)
 			case "assistant":
-				a.transcriptMarkdown(row, w, session, item.Text, float32(a.model.Preferences.ReplySize), nil)
+				var embedDelta float32
+				a.drawTranscriptMarkdown(row, w, session, float32(a.model.Preferences.ReplySize), nil, func(body *ui.Context, options *markdown.Options) {
+					tail.draw(body, item, options, &list, &embedDelta)
+				}, &embedDelta)
 				a.contentParts(row, w, session, item.Parts)
-				if text := replies[item.ID]; text != "" {
+				if text := replies[item.ID]; text != "" && !tail.holdReceipt(row, item.TurnID) {
 					messageFooter(row, false).Margin(transcriptItemGap, 0, 0).Children(func() {
-						footerActions(row, false, copyFooterAction("复制回复", text))
+						footerActions(row, false, false, copyFooterAction("复制回复", text))
 					})
 				}
 			default:
@@ -298,23 +319,26 @@ func (a *mobileApp) openWork(parent *mygo.Window, sid string, work domain.WorkAc
 					text += "\n" + output
 				}
 			}
-			follow := text != terminalText && terminal.scroll.Y >= terminal.scroll.MaxY-1
+			if !terminal.scroll.Scrolling() && terminal.scroll.Y != terminalLastScroll {
+				terminalFollowing = terminal.scroll.Y >= terminal.scroll.MaxY-1
+			}
+			follow := text != terminalText && terminalFollowing
 			terminalText = text
 			ui.Column(c).Fill().Background(palette(c).canvas).Children(func() {
 				mobilePageContent(c, pageInset).Grow(1).Basis(0).MinHeight(0).Children(func() {
 					header(c)
 					view := codeViewportSurface(c, "终端输出", text, 0, nil, nil, &terminal, darkColors.inset, darkColors.ink, a.codeFont(), captionTextSize)
-					if follow {
-						view.DrawOver(func(_ *ui.Painter, bounds ui.Rect) {
-							if bounds.H > 0 && terminal.scroll.MaxY > terminal.scroll.Y {
-								terminal.scroll.ScrollTo(terminal.scroll.X, terminal.scroll.MaxY, ui.Animation{})
-								c.Services().Invalidate()
-							}
-						})
-					}
+					view.DrawOver(func(_ *ui.Painter, bounds ui.Rect) {
+						terminalLastScroll = terminal.scroll.Y
+						if follow && bounds.H > 0 && terminal.scroll.MaxY > terminal.scroll.Y {
+							terminal.scroll.ScrollTo(terminal.scroll.X, terminal.scroll.MaxY, mobileOutputFollowMotion(c))
+							c.Services().Invalidate()
+						}
+					})
 					var latest func()
 					if terminal.scroll.Y < terminal.scroll.MaxY-1 {
 						latest = func() {
+							terminalFollowing = true
 							terminal.scroll.ScrollTo(terminal.scroll.X, terminal.scroll.MaxY, workScrollMotion(c))
 						}
 					}

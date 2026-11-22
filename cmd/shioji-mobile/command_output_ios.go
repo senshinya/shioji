@@ -62,14 +62,14 @@ func (s *mobileCommandOutput) render(c *ui.Context, item domain.Item, open bool,
 	p := palette(c)
 	spans := s.spans(c, display, p.secondary)
 	view := codeViewportSurface(c, "命令输出："+name, display, commandOutputHeight, spans, mark, &s.codeViewport,
-		p.panel, p.secondary, font, mobileToolCaptionSize).Radius(6)
+		p.panel, p.secondary, font, captionTextSize).Radius(6)
 	view.DrawOver(func(_ *ui.Painter, bounds ui.Rect) {
 		if !s.tail || bounds.H <= 0 {
 			return
 		}
 		s.tail = false
 		if s.scroll.MaxY > s.scroll.Y+.5 {
-			s.scroll.ScrollTo(0, s.scroll.MaxY, ui.Animation{Duration: mobilePanelTransition.Duration})
+			s.scroll.ScrollTo(0, s.scroll.MaxY, mobileOutputFollowMotion(c))
 			c.Services().Invalidate()
 		}
 	})

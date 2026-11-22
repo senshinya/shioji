@@ -94,6 +94,22 @@ func (a *mobileApp) configureUIKit() {
 			a.refresh()
 		}
 	})
+	uikit.On("composerKeyboardDismissed", func(raw []byte) {
+		var window uintptr
+		if json.Unmarshal(raw, &window) == nil {
+			a.composerKeyboardDismissed = window
+			a.refresh()
+		}
+	})
+	uikit.On("keyboardMotion", func(raw []byte) {
+		if json.Unmarshal(raw, &a.keyboardMotion) == nil {
+			for _, w := range []*mygo.Window{a.chat, a.detail} {
+				if w != nil {
+					w.Invalidate()
+				}
+			}
+		}
+	})
 	uikit.On("searchQuery", func(raw []byte) {
 		if json.Unmarshal(raw, &a.search) == nil {
 			a.refresh()
@@ -134,8 +150,14 @@ func (a *mobileApp) configureUIKit() {
 	})
 	uikit.On("formDismissed", func(raw []byte) {
 		var id uintptr
-		if json.Unmarshal(raw, &id) == nil && a.draftPage != nil && a.draftPage.NativeHandle() == id {
-			a.draftPage.Close()
+		if json.Unmarshal(raw, &id) != nil {
+			return
+		}
+		for _, w := range []*mygo.Window{a.draftPage, a.queueActionsPage} {
+			if w != nil && w.NativeHandle() == id {
+				w.Close()
+				break
+			}
 		}
 	})
 	a.callUIKit("configureHome", args, func(err error) {
@@ -264,15 +286,17 @@ func (a *mobileApp) openPreviewRoute() {
 }
 
 type nativePageOptions struct {
-	Window      uintptr `json:"window"`
-	Title       string  `json:"title,omitempty"`
-	Subtitle    string  `json:"subtitle,omitempty"`
-	InlineScope bool    `json:"inlineScope,omitempty"`
-	Commit      bool    `json:"commit,omitempty"`
+	Window       uintptr `json:"window"`
+	Title        string  `json:"title,omitempty"`
+	Subtitle     string  `json:"subtitle,omitempty"`
+	InlineScope  bool    `json:"inlineScope,omitempty"`
+	Commit       bool    `json:"commit,omitempty"`
+	ReduceMotion bool    `json:"reduceMotion,omitempty"`
 }
 
 func (a *mobileApp) configureNativePage(page *mygo.Window, options nativePageOptions, done func(error)) {
 	options.Window = page.NativeHandle()
+	options.ReduceMotion = a.model.Preferences.ReduceMotion
 	a.callUIKit("configurePage", options, done)
 }
 

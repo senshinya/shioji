@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -25,6 +24,7 @@ const (
 var (
 	toolTerminalSymbol = toolTranscriptSymbol("M4 5l5 5-5 5M11 15h6")
 	toolChevronSymbol  = toolTranscriptSymbol("M6 8l4 4 4-4")
+	latestMobileSymbol = toolTranscriptSymbol("M5 7.5l5 5 5-5")
 )
 
 func toolTranscriptSymbol(path string) *ui.SVG {
@@ -32,9 +32,16 @@ func toolTranscriptSymbol(path string) *ui.SVG {
 }
 
 type mobileToolTimeline struct {
-	thread string
-	bodies map[string]*bool
+	thread            string
+	bodies            map[string]*bool
+	disclosureVersion uint64
+	projection        *mobileTranscriptProjection
 	mobileclient.ToolTimeline
+}
+
+func (t *mobileToolTimeline) Toggle(key string) {
+	t.ToolTimeline.Toggle(key)
+	t.disclosureVersion++
 }
 
 type mobileToolDisclosure struct {
@@ -107,7 +114,7 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 	live := observed && group.Live
 	inline := live && !group.Open
 	header := c.Key("disclosure")
-	font := mobileStatusFont(c, mobileToolCaptionSize)
+	font := mobileStatusFont(c, captionTextSize)
 	lineHeight := mobileStatusLineHeight(font)
 	button := transcriptDisclosure(mobileButton(header, title, nil)).AlignItems(ui.Start).Expanded(group.Open)
 	progress := mobileToolReveal(c, button, group.Open, target != "")
@@ -137,8 +144,12 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 		}
 		row.Children(func() {
 			glyph := line.Key("group-glyph")
-			if inline {
-				mobileToolStatusDot(glyph, title, font, sweep)
+			if live && progress < 1 {
+				icon := ui.Row(glyph).Width(mobileToolGlyphSlot).Height(lineHeight).AlignItems(ui.Baseline)
+				icon.Children(func() {
+					mobileToolGlyph(glyph.Key("terminal"), toolTerminalSymbol, title, font).Opacity(progress)
+					mobileToolStatusDot(glyph.Key("live"), title, font, sweep).Absolute().Left(0).Top(0).Opacity(1 - progress)
+				})
 			} else {
 				mobileToolGlyph(glyph, toolTerminalSymbol, title, font)
 			}
@@ -147,12 +158,33 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 			if outcome != "" {
 				sweep.caption(line.Key("outcome"), outcome, numeric)
 			}
-			if inline {
-				mobileToolPhase(line, phase, started, sweep)
+			if live && progress < 1 {
+				phaseKey := line.Key("inline-phase")
+				phaseRow := ui.Row(phaseKey).Gap(mobileToolSummaryGap).AlignItems(ui.Baseline).Clip().Opacity(1 - progress)
+				if progress > 0 {
+					width, _ := ui.ShapeText(phase, font, 0).Size()
+					if started != nil && !started.IsZero() {
+						clockWidth, _ := ui.ShapeText(mobileElapsed(c.Now().Sub(*started).Milliseconds()), font, 0).Size()
+						width += clockWidth + mobileToolSummaryGap + 2
+					}
+					phaseRow.Width(width * (1 - progress))
+				}
+				phaseRow.Children(func() { mobileToolPhase(phaseKey, phase, started, sweep) })
 			}
 			paintMobileToolChevron(line.Key("arrow"), title, font, -90*(1-progress), sweep)
 		})
 	})
+	type previousToolProgress struct {
+		active  bool
+		phase   string
+		started *time.Time
+	}
+	trailing := ui.Local(button, "previous-tool-progress", func() previousToolProgress { return previousToolProgress{} })
+	if live {
+		*trailing = previousToolProgress{active: true, phase: phase, started: started}
+	} else if group.Open || progress == 0 {
+		*trailing = previousToolProgress{}
+	}
 	toolResultPanel(c.Key("body"), group.Open, target != "", &progress, func(c *ui.Context) {
 		ui.Box(c.Key("heading-clearance")).Height(mobileToolRowGap - (transcriptMetadataHeight - 20)).Shrink(0)
 		for index, tool := range tools {
@@ -163,6 +195,10 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 			}
 			row := c.Key(tool.ID)
 			call := ui.Column(row).FillWidth().Padding(0, 0, mobileToolRowGap, 0)
+			if live && group.Open && progress == 1 {
+				call.Transition(ui.ElementTransition{Height: true, Duration: 200 * time.Millisecond, Ease: ui.EaseOut,
+					Enter: &ui.Motion{Collapse: true, Opacity: 0}})
+			}
 			if tool.ID == target {
 				call.Background(p.selected).Radius(cardRadius)
 				if reveal && group.Open {
@@ -187,34 +223,38 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 					}
 				})
 			}
-			call.Children(func() { heading = a.toolItem(row, parent, session, tool, body, mark, true) })
-		}
-		if live && group.Open {
-			row := c.Key("progress")
-			status := ui.Row(row).MinHeight(lineHeight).AlignSelf(ui.Start).Gap(mobileToolSummaryGap).AlignItems(ui.Baseline)
-			sweep := newMobileToolSweep(row, status, sweepStart)
-			status.Children(func() {
-				mobileToolStatusDot(row, phase, font, sweep)
-				mobileToolPhase(row, phase, started, sweep)
+			call.Children(func() {
+				heading = a.toolItem(row, parent, session, tool, body, mark, true, func() {
+					// The result changes only below its title. Anchoring the
+					// group row preserves that title's location as well.
+					list.KeepRowWithinContent(index, button.Bounds().Y-list.Bounds(c).Y-float32(transcriptItemGap)/2)
+				})
 			})
 		}
-	})
+		// Keep the outgoing status in the measured stack until the clip closes.
+		// Removing its height on click would move the bounded scroll anchor early.
+		if trailing.active {
+			row := c.Key("progress")
+			status := ui.Row(row).MinHeight(lineHeight).AlignSelf(ui.Start).Gap(mobileToolSummaryGap).AlignItems(ui.Baseline).Opacity(progress)
+			sweep := newMobileToolSweep(row, status, sweepStart)
+			status.Children(func() {
+				mobileToolStatusDot(row, trailing.phase, font, sweep)
+				mobileToolPhase(row, trailing.phase, trailing.started, sweep)
+			})
+		}
+	}, list.Bounds(c).H)
 }
 
 func mobileToolGlyph(c *ui.Context, symbol *ui.SVG, title string, font ui.Font) ui.Element {
 	return transcriptSymbol(c, symbol, title, font, 14, palette(c).secondary)
 }
 
-func mobileToolStatusDot(c *ui.Context, title string, font ui.Font, sweep *mobileToolSweep) {
+func mobileToolStatusDot(c *ui.Context, title string, font ui.Font, sweep *mobileToolSweep) ui.Element {
 	const size = 6
 	ink := palette(c).active
-	transcriptGlyph(c, title, font, transcriptGlyphSlot, size, func(p *ui.Painter, r ui.Rect) {
-		color := sweep.color(p, r, ink)
-		if sweep != nil {
-			phase := p.Now().Sub(sweep.started).Seconds() / 1.4
-			color = color.Alpha(.4 + .6*float32((1-math.Cos(2*math.Pi*phase))/2))
-		}
-		p.Fill(r, color, size/2)
+	pulse := !c.Preferences().ReduceMotion
+	return transcriptGlyph(c, title, font, transcriptGlyphSlot, size, func(p *ui.Painter, r ui.Rect) {
+		p.Fill(r, mobileBreathingInk(p, sweep.color(p, r, ink), pulse), size/2)
 	})
 }
 
@@ -231,38 +271,73 @@ func paintMobileToolChevron(c *ui.Context, title string, font ui.Font, angle flo
 func mobileToolPhase(c *ui.Context, phase string, started *time.Time, sweep *mobileToolSweep) {
 	sweep.caption(c.Key("phase"), phase, ui.ContentTransition{Animation: &ui.Animation{Duration: mobileReplyFade}})
 	if started != nil && !started.IsZero() {
-		mobileClock(c.Key("elapsed"), *started, nil, mobileStatusFont(c, mobileToolCaptionSize), sweep)
+		mobileClock(c.Key("elapsed"), *started, nil, mobileStatusFont(c, captionTextSize), sweep)
 	}
 }
 
-func (a *mobileApp) transcriptLatest(c *ui.Context, sid string, detail domain.SessionDetail, list *ui.ListState, prefetch *transcriptPrefetch, load bool, caption string, started *time.Time, live bool) {
+func (a *mobileApp) transcriptLatest(c *ui.Context, dock ui.Element, sid string, detail domain.SessionDetail, list *ui.ListState, prefetch *transcriptPrefetch, load bool, caption string, started *time.Time, live bool) {
 	p := palette(c)
 	read := a.model.HistoryReads[sid]
-	ui.Row(c).Absolute().Left(0).Right(0).Bottom(8).Justify(ui.Center).PassThrough().Children(func() {
-		ui.Row(c.Key("track")).WidthPercent(100).MaxWidth(conversationComposerWidth).PaddingX(conversationComposerInset).
-			Justify(ui.End).PassThrough().Children(func() {
-			button := mobileButton(c.Key("button"), "回到最新消息", func() {
-				prefetch.stop()
-				if load {
-					a.readTranscriptHistory(sid, detail, domain.HistoryQuery{})
-				} else if c.Preferences().ReduceMotion {
-					list.ScrollToEnd()
-				} else {
-					list.ScrollToEnd(ui.Animation{Duration: 280 * time.Millisecond})
+	button := mobileButton(c, "回到最新消息", func() {
+		prefetch.stop()
+		if load {
+			a.readTranscriptHistory(sid, detail, domain.HistoryQuery{})
+		} else if c.Preferences().ReduceMotion {
+			list.ScrollToEnd()
+		} else {
+			list.ScrollToEnd(ui.Animation{Duration: 320 * time.Millisecond, Ease: mobileComposerMotionEase})
+		}
+	}).KeepFocus().Value(caption).AlignItems(ui.Center).Justify(ui.Center).
+		AttachTo(dock, ui.AnchorTop, ui.AnchorBottom).Margin(0, 0, 4, 0).ZIndex(2).
+		Disabled(load && (!a.model.Connected || detail.History.Invalidated || read != nil && read.Pending && prefetch.cancel == nil))
+	font := mobileStatusFont(c, captionTextSize)
+	textWidth, _ := ui.ShapeText(caption, font, 0).Size()
+	width := 20 + textWidth + footerIconSize + 5
+	if live {
+		width += 11
+		if started != nil && !started.IsZero() {
+			clockWidth, _ := ui.ShapeText(mobileElapsed(c.Now().Sub(*started).Milliseconds()), font, 0).Size()
+			width += clockWidth + 5
+		}
+	}
+	button.Width(button.AnimateTo("latest-width", max(width, mobileTapSize(c)), mobileTitleMotion))
+	button.Children(func() {
+		font := mobileStatusFont(c, captionTextSize)
+		ink := p.secondary
+		lineHeight := mobileStatusLineHeight(font)
+		chip := ui.Row(c.Key("chip")).Height(max(28, lineHeight+6)).MinWidth(mobileTapSize(c)).PaddingX(10).
+			AlignItems(ui.Center).Justify(ui.Center).Radius(14).Background(p.floating).Border(1, p.floatingEdge).
+			PassThrough().Transition(mobilePanelTransition)
+		chip.Children(func() {
+			line := c.Key("content")
+			row := ui.Row(line.Key(live)).AlignItems(ui.Baseline).Gap(5).PassThrough().Transition(mobileFeedbackFade(160 * time.Millisecond)).
+				Transform(ui.Translation(0, -inkCenterOffset(caption, font)))
+			var sweep *mobileToolSweep
+			if live {
+				phase := *ui.Local(row, "latest-sweep-start", c.Now)
+				if started != nil && !started.IsZero() {
+					phase = *started
 				}
-			}).AlignItems(ui.Baseline).PaddingX(10).Gap(5).KeepFocus().Value(caption).
-				Disabled(load && (!a.model.Connected || detail.History.Invalidated || read != nil && read.Pending && prefetch.cancel == nil))
-			floatingSurface(c, button, 22).Transition(mobilePanelTransition).Children(func() {
-				font := mobileStatusFont(c, captionTextSize)
+				sweep = newMobileToolSweep(line, row, phase)
+			}
+			row.Children(func() {
+				arrow := func() {
+					transcriptGlyph(line.Key("arrow"), caption, font, footerIconSize, footerIconSize, func(p *ui.Painter, r ui.Rect) {
+						paintCenteredSymbol(p, latestMobileSymbol, r, sweep.color(p, r, ink))
+					})
+				}
 				if live {
-					transcriptStatusDot(c.Key("dot"), caption, font, p.active)
+					mobileToolStatusDot(line.Key("dot"), caption, font, sweep)
+				} else {
+					arrow()
 				}
-				label(c.Key("caption"), caption, captionTextSize, p.secondary).Font(font.Family).FixedLineHeight(mobileStatusLineHeight(font)).
-					ContentTransition(ui.ContentTransition{Animation: &ui.Animation{Duration: 180 * time.Millisecond}})
-				if live && started != nil && !started.IsZero() {
-					mobileRunningClock(c.Key("time"), *started)
+				sweep.caption(line.Key("caption"), caption, ui.ContentTransition{Animation: &ui.Animation{Duration: 160 * time.Millisecond}})
+				if live {
+					if started != nil && !started.IsZero() {
+						mobileClock(line.Key("time"), *started, nil, font, sweep)
+					}
+					arrow()
 				}
-				transcriptSymbol(c.Key("arrow"), downSymbol, caption, font, 13, p.secondary)
 			})
 		})
 	})

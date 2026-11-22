@@ -30,6 +30,11 @@ type sessionListTarget struct {
 	archived     bool
 	notification *mobileNotificationRoute
 	attention    *attentionTarget
+	title        string
+	scope        string
+	problem      string
+	attempt      uint64
+	retry        bool
 }
 
 type sessionGrouping string
@@ -237,6 +242,9 @@ func (a *mobileApp) updateArchivedBrowseScope(snapshot domain.Snapshot) {
 }
 
 func (a *mobileApp) openSessionListTarget(target sessionListTarget) {
+	if a.searching {
+		a.callUIKit("closeSearch", nil, nil)
+	}
 	waiting := a.sessionListOpening != nil
 	a.cancelSessionListOpening()
 	a.sessionListNotice = ""
@@ -250,20 +258,59 @@ func (a *mobileApp) openSessionListTarget(target sessionListTarget) {
 		a.home.Invalidate()
 		return
 	}
+	if ref.SessionID != "" && target.action == "" && target.notification == nil && target.attention == nil && a.chat == nil {
+		// The browse catalog supplies the destination header until the
+		// owning device confirms the session and returns its history.
+		catalog := a.sessionCatalog(ref.DeviceID)
+		for _, session := range catalog.Snapshot.Sessions {
+			if session.ID == ref.SessionID && session.WorkspaceID == ref.WorkspaceID {
+				target.title = session.Title
+				if target.title == "" {
+					target.title = "会话"
+				}
+				for _, workspace := range catalog.Snapshot.Workspaces {
+					if workspace.ID == ref.WorkspaceID && workspace.DeviceID == ref.DeviceID {
+						target.scope = strings.Join([]string{workspace.Name, a.deviceLabel(ref.DeviceID, catalog.Address)}, " · ")
+						break
+					}
+				}
+				break
+			}
+		}
+	}
 	if err := a.openDeviceFromResults(a.home, ref.DeviceID); err != nil {
 		a.sessionListNotice = err.Error()
 		a.home.Invalidate()
 		return
 	}
-	a.sessionListOpening = &target
-	a.sessionListNotice = "正在连接所属设备…"
-	a.home.Invalidate()
+	if target.title != "" {
+		a.sessionOpening = &target
+		a.awaitSessionListTarget(&target)
+		if !a.wide {
+			a.pushConversation(a.home)
+		}
+	} else {
+		a.sessionListNotice = "正在连接所属设备…"
+		a.awaitSessionListTarget(&target)
+	}
+}
+
+func (a *mobileApp) awaitSessionListTarget(target *sessionListTarget) {
+	a.sessionListOpening = target
+	target.attempt++
+	attempt := target.attempt
+	a.refresh()
 	time.AfterFunc(sessionCatalogTimeout, func() {
 		mygo.RunOnMain(func() {
-			if a.sessionListOpening == &target {
+			if a.sessionListOpening == target && target.attempt == attempt {
 				a.sessionListOpening = nil
-				a.sessionListNotice = "无法连接所属设备"
-				a.home.Invalidate()
+				if a.sessionOpening == target {
+					target.problem = "暂时连不上所属设备"
+					target.retry = true
+				} else {
+					a.sessionListNotice = "无法连接所属设备"
+				}
+				a.refresh()
 			}
 		})
 	})
@@ -274,6 +321,12 @@ func (a *mobileApp) cancelSessionListOpening() {
 	if a.sessionListOpening != nil {
 		a.sessionListOpening, a.sessionListNotice = nil, ""
 	}
+	if a.sessionOpening != nil {
+		a.sessionOpening = nil
+		if a.chat != nil {
+			a.chat.Close()
+		}
+	}
 }
 
 func (a *mobileApp) completeSessionListOpening() {
@@ -283,12 +336,25 @@ func (a *mobileApp) completeSessionListOpening() {
 		return
 	}
 	a.sessionListOpening, a.sessionListNotice = nil, ""
+	inConversation := a.sessionOpening == target
+	if inConversation {
+		a.sessionLoadingTarget = target.location.SessionID
+		a.sessionOpening = nil
+	}
 	a.presentSessionListTarget(*target)
+	if inConversation && a.sessionListNotice != "" {
+		target.problem = a.sessionListNotice
+		a.sessionLoadingTarget = ""
+		a.sessionOpening, a.sessionListNotice = target, ""
+	}
 }
 
 func (a *mobileApp) presentSessionListTarget(target sessionListTarget) {
 	ref := target.location
 	if target.pinned && !a.isSessionPinned(ref) {
+		if target.title != "" {
+			a.sessionListNotice = "会话已取消置顶"
+		}
 		return
 	}
 	workspace := a.workspace(ref.WorkspaceID)

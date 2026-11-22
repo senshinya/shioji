@@ -9662,6 +9662,134 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertTrue(archive.waitForNonExistence(timeout: 6), "Command-Shift-H dismisses the archive before navigating")
     }
 
+    func testMobileSendAndSteerReachTheTranscript() {
+        for (route, text) in [("motion-send", "发送后的新消息"), ("motion-steer", "插入当前执行轮的消息")] {
+            let app = launch("--preview-board-" + route)
+            let composer = app.textFields["消息"].firstMatch
+            XCTAssertTrue(composer.waitForExistence(timeout: 8), app.debugDescription)
+            XCTAssertEqual(composer.value as? String, text)
+            if route == "motion-steer" {
+                app.descendants(matching: .any).matching(identifier: "发送选项").firstMatch.tap()
+                app.descendants(matching: .any).matching(identifier: "介入当前轮").firstMatch.tap()
+            } else {
+                app.buttons["发送"].tap()
+            }
+            let sent = app.staticTexts[text].firstMatch
+            XCTAssertTrue(sent.waitForExistence(timeout: 6), app.debugDescription)
+            XCTAssertLessThan(sent.frame.maxY, composer.frame.minY)
+            capture("Motion accepted " + route, app: app)
+        }
+    }
+
+    func testQueueLongPressPreviewsAndDispatchesTheAcceptedMessage() {
+        let app = launch("--preview-board-motion-queue")
+        let options = app.buttons["发送选项"]
+        XCTAssertTrue(options.waitForExistence(timeout: 8), app.debugDescription)
+        options.tap()
+        app.descendants(matching: .any).matching(identifier: "加入待发队列").firstMatch.tap()
+        let queued = app.buttons["待发消息 1"].firstMatch
+        let message = "先排队再强制插入"
+        let row = app.buttons["先排队再强制插入"].firstMatch
+        let appeared = row.waitForExistence(timeout: 5)
+        capture("Queue after an accepted arrival", app: app)
+        XCTAssertTrue(appeared, app.debugDescription)
+        XCTAssertFalse(queued.exists)
+        XCTAssertFalse(app.buttons["立即发送"].exists)
+        row.press(forDuration: 0.65)
+        let send = app.buttons["立即发送"].firstMatch
+        XCTAssertTrue(send.waitForExistence(timeout: 6), app.debugDescription)
+        XCTAssertTrue(app.staticTexts[message].firstMatch.exists)
+        XCTAssertTrue(app.buttons["编辑"].firstMatch.exists)
+        XCTAssertTrue(app.buttons["删除"].firstMatch.exists)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        capture("Queue long-press preview and operations", app: app)
+        send.tap()
+        XCTAssertTrue(row.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts[message].firstMatch.waitForExistence(timeout: 5))
+        capture("Queued input inserted into the active turn", app: app)
+    }
+
+    func testLiveReplyGrowsAndKeepsTheComposerInPlace() {
+        let app = launch("--preview-board-motion-reply-height")
+        let initial = app.staticTexts["已记录第一段回复。"].firstMatch
+        let composer = app.textFields["消息"].firstMatch
+        XCTAssertTrue(initial.waitForExistence(timeout: 8), app.debugDescription)
+        let before = initial.frame.minY
+        let dock = composer.frame
+        capture("Live reply before new paragraphs", app: app)
+        let ending = app.staticTexts["追加第四段进展。"].firstMatch
+        XCTAssertTrue(ending.waitForExistence(timeout: 12), app.debugDescription)
+        XCTAssertLessThan(initial.frame.minY, before - 10)
+        XCTAssertEqual(composer.frame.minY, dock.minY, accuracy: 1)
+        XCTAssertLessThan(ending.frame.maxY, composer.frame.minY)
+        capture("Live reply after new paragraphs", app: app)
+    }
+
+    func testAutomaticQueueDispatchUsesTheAcceptedInput() {
+        let app = launch("--preview-board-motion-queue-auto")
+        let options = app.buttons["发送选项"]
+        XCTAssertTrue(options.waitForExistence(timeout: 8), app.debugDescription)
+        options.tap()
+        app.descendants(matching: .any).matching(identifier: "加入待发队列").firstMatch.tap()
+        let source = app.buttons["轮次结束后自动发送"].firstMatch
+        XCTAssertTrue(source.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(source.waitForNonExistence(timeout: 8), app.debugDescription)
+        let sent = app.staticTexts.matching(identifier: "轮次结束后自动发送")
+        XCTAssertTrue(sent.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(sent.count, 1)
+        XCTAssertLessThan(sent.firstMatch.frame.maxY, app.textFields["消息"].firstMatch.frame.minY)
+        capture("Automatically dispatched queued input", app: app)
+    }
+
+    func testRunningConversationWaitsForColdHistoryBeforeShowingItsTail() throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else {
+            throw XCTSkip("Checks the first pushed conversation on iPhone")
+        }
+        let app = launch("--preview-board-running-session-cold-entry")
+        let heading = app.buttons["2 次工具调用"].firstMatch
+        let loading = app.descendants(matching: .any)["正在读取会话"].firstMatch
+        XCTAssertTrue(loading.waitForExistence(timeout: 3))
+        XCTAssertFalse(heading.exists, "The live tool group is only a partial history window")
+        capture("Waiting for the full conversation", app: app)
+        XCTAssertTrue(heading.waitForExistence(timeout: 24))
+        let composer = app.textFields["消息"].firstMatch
+        XCTAssertTrue(composer.exists)
+        let phase = app.staticTexts["正在执行命令"].firstMatch
+        XCTAssertTrue(phase.exists)
+        XCTAssertGreaterThanOrEqual(composer.frame.minY - phase.frame.maxY, 0)
+        XCTAssertLessThan(composer.frame.minY - phase.frame.maxY, 48)
+        XCTAssertFalse(app.buttons["回到最新消息"].exists)
+        capture("The first complete conversation at the latest message", app: app)
+    }
+
+    func testCollapsingAnExpandedLiveToolGroupAtTheEndKeepsTheTailVisible() {
+        let app = launch("--preview-board-transcript-tool-tail")
+        let group = app.buttons["2 次工具调用"].firstMatch
+        let phase = app.staticTexts["正在执行命令"].firstMatch
+        let latest = app.buttons["回到最新消息"].firstMatch
+        let composer = app.textFields["消息"].firstMatch
+        XCTAssertTrue(group.waitForExistence(timeout: 8))
+        XCTAssertTrue(phase.waitForExistence(timeout: 4))
+        group.tap()
+        XCTAssertTrue(phase.waitForNonExistence(timeout: 4))
+        let foldedY = group.frame.minY
+        group.tap()
+        XCTAssertTrue(latest.waitForExistence(timeout: 5))
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.72))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.50))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
+        XCTAssertTrue(latest.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(phase.waitForExistence(timeout: 4))
+        XCTAssertLessThan(phase.frame.maxY, composer.frame.minY)
+        XCTAssertLessThan(group.frame.minY, foldedY - 20)
+        capture("Expanded tool group scrolled to the end", app: app)
+        group.tap()
+        XCTAssertTrue(phase.waitForNonExistence(timeout: 4))
+        XCTAssertFalse(latest.exists)
+        XCTAssertEqual(group.frame.minY, foldedY, accuracy: 1)
+        capture("Folded tool group still at the end", app: app)
+    }
+
     func testPhoneReviewOpensFile() {
         let app = launch("--preview-board-diff")
         let file = app.buttons["internal/transport/connection.go"].firstMatch

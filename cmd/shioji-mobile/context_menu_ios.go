@@ -49,6 +49,10 @@ func (f *contextMenuFrame) add(row ui.Element, key string, target contextMenuTar
 	}
 	f.targets[key] = target
 	row.DrawOver(func(_ *ui.Painter, _ ui.Rect) {
+		// A row retained for its exit transition no longer owns a menu target.
+		if !row.Valid() {
+			return
+		}
 		r := row.Bounds()
 		f.rows = append(f.rows, contextMenuRow{Key: key, Rect: [4]float32{r.X, r.Y, r.W, r.H},
 			Preview: target.session.ID != "", Commands: target.commands})

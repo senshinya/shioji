@@ -28,7 +28,7 @@ func (a *mobileApp) releaseMarkdownImages(session string) {
 	}
 }
 
-func (a *mobileApp) bindMobileMarkdownImages(parent *mygo.Window, source domain.Session, sourcePath string, options *markdown.Options) {
+func (a *mobileApp) bindMobileMarkdownImages(parent *mygo.Window, source domain.Session, sourcePath string, options *markdown.Options, owners ...*float32) {
 	options.Image = func(c *ui.Context, dest, name string) {
 		target, _, err := mobileFileLinkTarget(sourcePath, dest)
 		if name == "" {
@@ -72,7 +72,7 @@ func (a *mobileApp) bindMobileMarkdownImages(parent *mygo.Window, source domain.
 		if entry != nil {
 			image = entry.image
 		}
-		mobileImageCard(c, name, state, image, false, func() {
+		delta := mobileImageCard(c, name, state, image, false, func() {
 			if entry == nil || cache != a.transcriptImages || cache.entries[key] != entry {
 				return
 			}
@@ -83,5 +83,8 @@ func (a *mobileApp) bindMobileMarkdownImages(parent *mygo.Window, source domain.
 				a.refresh()
 			}
 		})
+		if len(owners) > 0 && owners[0] != nil {
+			*owners[0] += delta
+		}
 	}
 }
