@@ -30,7 +30,12 @@ if [[ "${SHIOJI_RELEASE_UPDATES:-0}" == 1 ]]; then
 fi
 mkdir -p "$app/Contents/MacOS"
 env -u GOROOT CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$app_ldflags" -o "$app/Contents/MacOS/shioji" ./cmd/shioji
-env -u GOROOT CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$build_ldflags" -o "$app/Contents/MacOS/shioji-worker" ./cmd/shioji-worker
+if [[ -n "${SHIOJI_REUSED_WORKER:-}" ]]; then
+  cp "$SHIOJI_REUSED_WORKER" "$app/Contents/MacOS/shioji-worker"
+else
+  env -u GOROOT CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$build_ldflags" -o "$app/Contents/MacOS/shioji-worker" ./cmd/shioji-worker
+  codesign "${sign_options[@]}" "$app/Contents/MacOS/shioji-worker"
+fi
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -52,8 +57,7 @@ PLIST
 runtime_bundle="$app/Contents/Resources/Shioji Runtime.app"
 mkdir -p "$runtime_bundle/Contents/MacOS" "$runtime_bundle/Contents/Library/LaunchAgents"
 env -u GOROOT CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$build_ldflags" -o "$runtime_bundle/Contents/MacOS/shioji-runtime" ./cmd/shioji-runtime
-# Sign once, then copy the exact worker. Timestamped signatures affect BuildID.
-codesign "${sign_options[@]}" "$app/Contents/MacOS/shioji-worker"
+# Copy the already-signed worker. Timestamped signatures affect BuildID.
 cp "$app/Contents/MacOS/shioji-worker" "$runtime_bundle/Contents/MacOS/shioji-worker"
 cat > "$runtime_bundle/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

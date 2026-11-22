@@ -8,7 +8,7 @@
 
 使用 `Added`、`Changed`、`Deprecated`、`Removed`、`Fixed`、`Security` 分类，只保留有内容的分类；版本标题包含数字版本、UTC 发布日期和源码／比较链接。说明用户影响，排除本地产物、内部重构和纯测试调整。GitHub Release 正文复用对应版本条目，并补充该版安装与更新方式。修改历史说明保留原发布日期，不移动标签或替换已发布二进制。
 
-v0.7.9 增加图片预览的旋转与独立缩放，简化 Mac 会话的发送失败草稿，并修复跨客户端更新执行服务后仍显示旧拒绝提示的问题。执行服务沿用协议 2.55 和 schema 17。更新 App 即可获得本版变更。
+v0.7.9 增加图片预览的旋转与独立缩放，简化 Mac 会话的发送失败草稿，并修复跨客户端更新执行服务后仍显示旧拒绝提示的问题。执行服务沿用协议 2.55 和 schema 17。更新 App 即可获得本版变更。该版发布时重新构建并签名了 worker，因此已安装 v0.7.8 worker 的设备会看到可用更新。两版的 worker 编译输入相同。
 
 v0.7.8 改善多会话并行时的发送响应，支持回答 Codex 异步提问，并加快长会话加载。本机及远程设备需更新所属执行服务以获得设备端改动。新版执行服务使用协议 2.55，更新时备份并将数据库迁移到 schema 17。回退到只支持 schema 16 的执行服务需要使用迁移前的备份。
 
@@ -57,7 +57,7 @@ GitHub 仓库：`senshinya/shioji`，本地 remote 为 `upstream`。`origin` 保
 - CI 按提交保存 Go 编译／测试缓存，并复用相同源码和 Xcode 版本的 Swift 权限桥缓存。正式 Release 要求发布提交在 `main` 上的最新 CI 成功，并重新进行源码校验、构建、签名、公证和打包。全量 Go 测试在发布前本机运行。
 - Tag 必须与 `VERSION` 对应。生产构建强制要求 Developer ID Application 签名、hardened runtime、Apple 接受公证以及 stapled tickets；没有降级到 ad-hoc / 未公证包的路径。
 - 先公证并 staple App，再生成全量自动更新归档，然后生成、公证并 staple DMG。正式版本将 DMG、校验文件与 `Shioji-<版本>-darwin-arm64-<SHA256>.tar.gz` 上传到原 Release，全部成功后最后上传 `update-darwin-arm64.json`。归档按内容摘要命名，同一 Release 重跑也保留旧清单对应的归档。不创建额外 Release。预发行仅上传 DMG 与校验文件，不向正式客户端发布更新清单。
-- 两处 worker 使用同一份已签名二进制，打包后 `cmp` 核验，避免安全时间戳引起相同版本的 BuildID 不同。
+- 正式打包检查 worker 的传递源码依赖与模块文件。输入沿用时，从 GitHub Release 复用同一 Go 版本构建的原始已签名 worker，以保留 BuildID。打包会核对归档摘要、Developer ID 和构建元数据，再将同一份 worker 放入两个 bundle，由 `cmp` 核验。
 
 ## 首次配置 GitHub：只需在这台 Mac 的终端执行
 
