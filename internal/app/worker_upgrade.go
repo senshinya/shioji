@@ -142,9 +142,6 @@ func (u workerUpgradeClient) observe(ctx context.Context, client *protocol.Clien
 	if r == nil {
 		return newWorkerService(current, candidate), nil
 	}
-	if r.Rejected {
-		return upgradeService(current, candidate, r), nil
-	}
 	query := func(id string) (supervisor.Operation, error) {
 		var op supervisor.Operation
 		var e error
@@ -162,6 +159,23 @@ func (u workerUpgradeClient) observe(ctx context.Context, client *protocol.Clien
 			op, e = u.control(ctx, "status", id)
 		}
 		return op, e
+	}
+	if r.Rejected {
+		state := upgradeService(current, candidate, r)
+		if client == nil || client.DeviceID != u.device || current == nil || current.BuildID == "" ||
+			r.RepairOf != "" || r.Input.ExpectedBuildID != current.BuildID || r.Input.BuildID != current.BuildID {
+			return state, nil
+		}
+		actual, e := query("")
+		if e != nil || actual.DeviceID != u.device || actual.Phase != "applied" ||
+			actual.Input.ID == "" || actual.Input.ID == r.Input.ID || actual.Input.BuildID != current.BuildID {
+			return state, nil
+		}
+		confirmed := &workerUpgradeRecord{DeviceID: u.device, Input: actual.Input, Operation: &actual}
+		if e = u.save(confirmed); e != nil {
+			return state, e
+		}
+		return upgradeService(current, candidate, confirmed), nil
 	}
 	op, err := query(r.Input.ID)
 	if err != nil && r.RepairOf == "" {
@@ -290,6 +304,10 @@ func (u workerUpgradeClient) update(ctx context.Context, client *protocol.Client
 		if actual, e := u.control(ctx, "status", ""); e == nil && actual.Phase == "blocked" && actual.DeviceID == u.device {
 			repairing = true
 		}
+	}
+	if !repairing && client != nil && client.DeviceID == u.device && current != nil && candidate != nil &&
+		current.BuildID != "" && current.BuildID == candidate.BuildID {
+		return u.observe(ctx, client, candidate)
 	}
 	r, err := u.load()
 	if err != nil {

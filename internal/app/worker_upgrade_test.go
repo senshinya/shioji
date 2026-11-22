@@ -364,3 +364,75 @@ func TestBlockedUpgradeDoesNotTrustDetachedKnownBuild(t *testing.T) {
 		t.Fatal("cached build was treated as a live recovery confirmation", state, err)
 	}
 }
+
+func TestSameBuildRetryKeepsAppliedWorkerCurrent(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	build := domain.WorkerBuild{BuildID: "current", SafeUpdate: true, Lifecycle: 1}
+	applied := supervisor.Operation{
+		DeviceID: "device", Phase: "applied",
+		Input: domain.WorkerReplacement{ID: "applied", ExpectedBuildID: "old", BuildID: "current", SchemaMigration: true},
+	}
+	u := workerUpgradeClient{directory: t.TempDir(), device: "device"}
+	rejected := workerUpgradeRecord{
+		DeviceID: "device", Rejected: true, Error: "执行服务版本已变化，请重新检查",
+		Input: domain.WorkerReplacement{ID: "rejected", ExpectedBuildID: "current", BuildID: "current"},
+	}
+	if err := u.save(&rejected); err != nil {
+		t.Fatal(err)
+	}
+
+	a, b := net.Pipe()
+	go func() {
+		defer b.Close()
+		codec, epoch, err := protocol.Welcome(b, "device", build)
+		if err != nil {
+			return
+		}
+		observed := applied
+		observed.Phase = "observing"
+		for {
+			var frame protocol.Frame
+			if codec.Read(&frame) != nil {
+				return
+			}
+			if frame.Method != "worker.update.status" {
+				_ = codec.Write(protocol.Frame{
+					Type: "result", ID: frame.ID, Epoch: epoch, DeviceID: "device",
+					ErrorCode: "notSent", Error: "unexpected update submission",
+				})
+				continue
+			}
+			result(codec, frame, observed)
+			observed = applied
+		}
+	}()
+	client, err := protocol.Connect(ctx, a, "device")
+	if err != nil {
+		a.Close()
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	state, err := u.observe(ctx, client, &build)
+	if err != nil || state.Phase != WorkerUpdateFailed || state.OperationID != "rejected" {
+		t.Fatalf("unconfirmed update hid the rejected receipt: state=%+v err=%v", state, err)
+	}
+	state, err = u.observe(ctx, client, &build)
+	if err != nil || state.Phase != WorkerCurrent || state.OperationID != "applied" || state.Message != "" {
+		t.Fatalf("same-build rejection masked the applied update: state=%+v err=%v", state, err)
+	}
+	state, err = u.update(ctx, client, &build, true, "when-idle", false)
+	if err != nil || state.Phase != WorkerCurrent || state.OperationID != "applied" || state.Message != "" {
+		t.Fatalf("retry dispatched an update for the current build: state=%+v err=%v", state, err)
+	}
+	current, err := u.load()
+	if err != nil || current == nil || current.Input.ID != "applied" {
+		t.Fatalf("retry replaced the applied receipt: record=%+v err=%v", current, err)
+	}
+	raw, err := os.ReadFile(filepath.Join(u.directory, "client-updates", "receipts", "rejected.json"))
+	var archived workerUpgradeRecord
+	if err != nil || json.Unmarshal(raw, &archived) != nil || !archived.Rejected || archived.Input.ID != "rejected" {
+		t.Fatalf("reconciliation lost the rejected receipt: record=%+v err=%v", archived, err)
+	}
+}
