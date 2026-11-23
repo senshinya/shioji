@@ -280,11 +280,6 @@ func (a *mobileApp) newConversationView(c *ui.Context, startAtTop bool) {
 						Value(config.Branch).MinWidth(mobileTapSize(c)).PaddingX(4).Shrink(1).Justify(ui.End).Disabled(len(status.Branches) == 0)
 				})
 			}
-			if entries := a.operationFeedbackRecords(ws.ID, ""); len(entries) != 0 {
-				mobileRow(c.Key("draft-operation"), "最近操作", entries[0].Title, "", clockSymbol, func() {
-					a.openOperationHistory(parent, ws.ID, "")
-				})
-			}
 		})
 		a.drawComposer(c, parent, a.session(), editor, true, false)
 	})

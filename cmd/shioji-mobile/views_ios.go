@@ -10,6 +10,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
+	"github.com/egoist/mygo/ui/richtext"
 
 	"shioji/internal/app"
 	"shioji/internal/conversationui"
@@ -238,11 +239,19 @@ func (a *mobileApp) conversationBody(c *ui.Context, parent *mygo.Window, session
 		latest := a.renderTranscript(c, parent, session, detail, !right, find, nil, draft, dock, initial)
 		dock.Children(func() {
 			a.historyStatus(c, parent, session)
-			if initial.caption != "" {
-				height := mobileclient.ComposerGeometry(0, false, composerLineHeight(c), mobileTapSize(c)).Height
-				mobileContent(c, conversationComposerWidth).Padding(4, conversationComposerInset, 0).Children(func() {
-					mobileComposerFrame(c, false).FillWidth().Height(height)
-				})
+			if initial.caption != "" && draft == nil {
+				if session.ID == "" && a.firstSubmissionVisible(parent) {
+					// The submitted input is already in the transcript. Keep the
+					// read-only dock separate from the pending home draft.
+					editor := ui.Local(dock, "first-submission-editor", func() mobileDraftEditor {
+						var editor mobileDraftEditor
+						editor.Doc = richtext.NewDocument(richtext.NewText(""))
+						return editor
+					})
+					editor.model = a.model
+					editor.target = mobileDraftTarget{workspace: a.model.WorkspaceID}
+					a.drawComposer(c.Key("conversation-composer"), parent, session, editor, false, right)
+				}
 				return
 			}
 			readingImport := a.importedHistoryFooter(c, parent, session, detail)
@@ -946,11 +955,12 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 	p := palette(c)
 	targetRef := editor.target
 	key, sid := targetRef.key, targetRef.session
+	waitingForSession := !home && sid == ""
 	sending, _, uncertain := mobileclient.SubmissionPresentation(m, targetRef.workspace, sid)
 	ready := editor.readiness()
 	runtimeBlocked := ready.State != domain.RuntimeReady
 	var config domain.RunConfig
-	if home {
+	if home || waitingForSession {
 		config = m.Config()
 	} else {
 		config = m.SessionConfig(session)
@@ -970,7 +980,7 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 	manualCompaction := work != nil && work.State.Active()
 	attachmentsReady := a.preview || a.draftAttachmentsReady(targetRef)
 	canCompose := func() bool {
-		return connected && readyPhase && !session.ContextChanged && !a.draftSaveFailed() && attachmentsReady && !m.HasPendingInputForSession(sid) && queueEdit.ID == "" && !editor.pending() && m.HasDraftContent(key)
+		return !waitingForSession && connected && readyPhase && !session.ContextChanged && !a.draftSaveFailed() && attachmentsReady && !m.HasPendingInputForSession(sid) && queueEdit.ID == "" && !editor.pending() && !editor.attachmentMenuOpen && m.HasDraftContent(key)
 	}
 	canSubmit := func() bool {
 		return canCompose() && ((!runtimeBlocked && !modelUnavailable) || mobileCompactCommand(m.Drafts[key]))
@@ -1032,7 +1042,7 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 	}
 	// Let scrollable panels give up height before the fixed input surface.
 	mobileContent(c, width).MinHeight(0).PassThrough().Padding(topInset, inset, bottomInset).Gap(composerPanelGap).Children(func() {
-		if !home {
+		if !home && !waitingForSession {
 			a.requestPanels(c, parent, sid, "", false)
 			a.recoveryControls(c, parent, session, editor)
 			if session.ContextChanged {
@@ -1142,7 +1152,7 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 				if right {
 					title = "右侧会话草稿"
 				}
-				editor.field(a, c, parent, title, placeholder, false, 0, func(steer bool) {
+				editor.field(a, c, parent, title, placeholder, waitingForSession, 0, func(steer bool) {
 					if queueEdit.ID != "" && !steer {
 						saveQueue()
 					} else {
@@ -1160,11 +1170,11 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 				if right {
 					attachmentTitle = "添加右侧附件"
 				}
-				a.composerAttachmentMenu(c, parent, editor, attachmentTitle, attachmentSize)
+				a.composerAttachmentMenu(c, parent, editor, attachmentTitle, attachmentSize).Disabled(waitingForSession).DimDisabled(false)
 				options := c.Key("run-controls")
 				row := ui.Row(options).Grow(1).MinWidth(0).AlignItems(ui.Center).Gap(mobileclient.ComposerControlGap).
 					Opacity(geometry.ControlsOpacity).PassThrough()
-				ui.Inert(row, geometry.ControlsOpacity < 1)
+				ui.Inert(row, waitingForSession || geometry.ControlsOpacity < 1)
 				row.Children(func() {
 					a.runControls(options, parent, editor, ready, config, modelUnavailable, home, right)
 				})

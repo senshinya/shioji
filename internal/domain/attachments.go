@@ -22,6 +22,7 @@ type Attachment struct {
 const DiffCommentResource = "diff-comment"
 const DiffSnapshotResource = "diff-snapshot"
 const PathAttachmentResource = "file-path"
+const MaxMessageAttachments = 8
 
 func (a Attachment) InlineReference() bool {
 	return a.SourcePath != "" || a.Kind == DiffCommentResource || a.Kind == PathAttachmentResource
@@ -55,7 +56,7 @@ func (in Submission) ValidateContent() error {
 	if comments > 8 {
 		return errors.New("最多添加 8 条代码评论")
 	}
-	if files > 8 {
+	if files > MaxMessageAttachments {
 		return errors.New("最多添加 8 个附件")
 	}
 	var total int64

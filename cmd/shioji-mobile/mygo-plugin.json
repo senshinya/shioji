@@ -3,7 +3,7 @@
     "id": "shiojiUIKit",
     "ios": {
       "sources": ["ios/*.swift"],
-      "frameworks": ["SafariServices", "ImageIO"],
+      "frameworks": ["SafariServices", "ImageIO", "PhotosUI"],
       "class": "ShiojiUIKit"
     }
   }

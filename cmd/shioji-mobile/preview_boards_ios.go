@@ -308,6 +308,8 @@ func (a *mobileApp) openPreviewBoard(board string) {
 			Kind: app.FeedbackSubmissionUncertain, Title: "提交结果待核对"})
 		a.model.ReportFeedback(app.Feedback{ID: "recent-operation", WorkspaceID: workspace.ID, SessionID: "artboard-1",
 			Kind: app.FeedbackFailure, Title: "Git 操作未完成", Details: "等待设备响应超时。 token=fixture-secret"})
+		a.model.ReportFeedback(app.Feedback{ID: "new-session-failure", WorkspaceID: workspace.ID,
+			Kind: app.FeedbackSubmissionFailed, Title: "消息未发送", Details: "执行设备未能准备会话。"})
 		a.collectOperationFeedback()
 		a.operationHistory.Collect(remoteDevice, []app.Feedback{{ID: "recent-operation", WorkspaceID: workspace.ID,
 			SessionID: "artboard-1", Kind: app.FeedbackSuccess, Title: "备用 Mac 已核对"}}, nil)

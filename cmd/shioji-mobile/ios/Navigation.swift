@@ -15,6 +15,7 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
     private let rowMenus = NSMapTable<UIView, RowContextMenus>.weakToStrongObjects()
     private var forwardedPage: (browser: SFSafariViewController, close: PluginReply)?
     private let linkExporter = LinkExporter()
+    private let composerPhotoPicker = ComposerPhotoPicker()
     private var split: SessionSplitController?
     private weak var tabs: UITabBarController?
     private var canvasColor = UIColor.systemBackground
@@ -110,7 +111,14 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
                 reply(.success(nil))
                 return
             }
-            let menu = ComposerAttachmentMenu(appearance: container.traitCollection, reply: reply)
+            let photoLimit = args["photoLimit"] as? Int ?? 0
+            let menu = ComposerAttachmentMenu(appearance: container.traitCollection, pickPhoto: { [weak page, composerPhotoPicker] completion in
+                guard let page else {
+                    completion(.success(nil))
+                    return
+                }
+                composerPhotoPicker.present(from: page, limit: photoLimit, reply: completion)
+            }, reply: reply)
             if let presentation = menu.popoverPresentationController {
                 presentation.delegate = menu
                 presentation.backgroundColor = menu.surfaceColor

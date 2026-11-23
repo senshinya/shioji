@@ -8,9 +8,12 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/richtext"
+
+	"shioji/internal/attachments"
+	"shioji/internal/domain"
 )
 
-func (a *mobileApp) composerAttachmentMenu(c *ui.Context, parent *mygo.Window, editor *mobileDraftEditor, title string, size float32) {
+func (a *mobileApp) composerAttachmentMenu(c *ui.Context, parent *mygo.Window, editor *mobileDraftEditor, title string, size float32) ui.Element {
 	chip := editor.chipMaker(c)
 	zoom := c.Zoom()
 	var button ui.Element
@@ -19,8 +22,14 @@ func (a *mobileApp) composerAttachmentMenu(c *ui.Context, parent *mygo.Window, e
 			return
 		}
 		rect := mobileWindowRect(button.LayoutBounds(), zoom)
-		controller := a.controller
-		args := map[string]any{"window": parent.NativeHandle(), "rect": []float32{rect.X, rect.Y, rect.W, rect.H}}
+		controller, epoch := a.controller, a.model.ConnectionEpoch
+		remaining := domain.MaxMessageAttachments
+		for _, file := range a.model.Attachments[editor.target.key] {
+			if file.Attachment.Kind != domain.DiffCommentResource {
+				remaining--
+			}
+		}
+		args := map[string]any{"window": parent.NativeHandle(), "rect": []float32{rect.X, rect.Y, rect.W, rect.H}, "photoLimit": max(0, remaining)}
 		start, end := editor.Doc.Selection()
 		if !editor.focused {
 			start = editor.Doc.Text().Len()
@@ -29,17 +38,27 @@ func (a *mobileApp) composerAttachmentMenu(c *ui.Context, parent *mygo.Window, e
 		version := editor.Doc.Version()
 		editor.attachmentMenuOpen = true
 		go func() {
-			var choice struct{ Action, Text, Path string }
+			var choice struct {
+				Action, Text, Path string
+				Photos             []struct{ Path, Name string }
+			}
 			err := uikit.Call(context.Background(), "composerAttachments", args, &choice)
+			cleanPhotos := func() {
+				for _, photo := range choice.Photos {
+					os.Remove(photo.Path)
+				}
+			}
 			mygo.RunOnMain(func() {
 				editor.attachmentMenuOpen = false
-				if a.controller != controller || editor.pending() || !editor.current(a, parent) {
+				if a.controller != controller || a.model.ConnectionEpoch != epoch || editor.pending() || !editor.current(a, parent) {
 					if choice.Path != "" {
 						os.Remove(choice.Path)
 					}
+					cleanPhotos()
 					return
 				}
 				if err != nil {
+					cleanPhotos()
 					editor.attachmentError = err.Error()
 					a.refresh()
 					return
@@ -56,6 +75,25 @@ func (a *mobileApp) composerAttachmentMenu(c *ui.Context, parent *mygo.Window, e
 						return "粘贴图片.png", data, err
 					}) {
 						os.Remove(choice.Path)
+					}
+				case "photos":
+					if !a.stageLocalAttachments(parent, editor.target, editor, func(staging *attachments.Repository) ([]domain.Attachment, error) {
+						defer cleanPhotos()
+						items := make([]domain.Attachment, 0, len(choice.Photos))
+						for _, photo := range choice.Photos {
+							data, err := os.ReadFile(photo.Path)
+							if err != nil {
+								return nil, err
+							}
+							item, err := staging.Save(photo.Name, data)
+							if err != nil {
+								return nil, err
+							}
+							items = append(items, item)
+						}
+						return items, nil
+					}) {
+						cleanPhotos()
 					}
 				case "text":
 					if editor.Doc.Version() != version {
@@ -75,4 +113,5 @@ func (a *mobileApp) composerAttachmentMenu(c *ui.Context, parent *mygo.Window, e
 			})
 		}()
 	}).KeepFocus()
+	return button
 }

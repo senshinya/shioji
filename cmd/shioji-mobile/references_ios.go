@@ -190,7 +190,7 @@ func (a *mobileApp) localAttachment(parent *mygo.Window, target mobileDraftTarge
 		if err != nil {
 			return nil, err
 		}
-		if len(paths) > 8 {
+		if len(paths) > domain.MaxMessageAttachments {
 			return nil, errors.New("每条消息最多添加 8 个附件")
 		}
 		var files []domain.Attachment

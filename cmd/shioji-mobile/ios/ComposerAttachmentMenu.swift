@@ -4,14 +4,16 @@ import UniformTypeIdentifiers
 final class ComposerAttachmentMenu: UIViewController, UIPopoverPresentationControllerDelegate {
     let surfaceColor: UIColor
     private var reply: PluginReply?
+    private let pickPhoto: (@escaping PluginReply) -> Void
     private var loading = false
 
-    init(appearance: UITraitCollection, reply: @escaping PluginReply) {
+    init(appearance: UITraitCollection, pickPhoto: @escaping (@escaping PluginReply) -> Void, reply: @escaping PluginReply) {
         surfaceColor = UIColor.secondarySystemBackground.resolvedColor(with: appearance)
+        self.pickPhoto = pickPhoto
         self.reply = reply
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .popover
-        preferredContentSize = CGSize(width: 224, height: 146)
+        preferredContentSize = CGSize(width: 224, height: 192)
         pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: [UTType.plainText.identifier, UTType.image.identifier])
     }
 
@@ -26,6 +28,7 @@ final class ComposerAttachmentMenu: UIViewController, UIPopoverPresentationContr
         stack.translatesAutoresizingMaskIntoConstraints = false
         for (title, image, action) in [
             ("文件与 Skill 引用", "doc.text", "reference"),
+            ("从相册选择图片", "photo", "photos"),
             ("从文件选择附件", "folder", "file")
         ] {
             var style = UIButton.Configuration.plain()
@@ -43,7 +46,12 @@ final class ComposerAttachmentMenu: UIViewController, UIPopoverPresentationContr
             style.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 13, bottom: 0, trailing: 8)
             style.baseForegroundColor = .label
             let row = UIButton(configuration: style, primaryAction: UIAction { [weak self] _ in
-                self?.finish(.success(["action": action]))
+                guard let self, !self.loading else { return }
+                if action == "photos" {
+                    self.dismissForReply(self.pickPhoto)
+                } else {
+                    self.finish(.success(["action": action]))
+                }
             })
             row.contentHorizontalAlignment = .leading
             row.heightAnchor.constraint(equalToConstant: 44).isActive = true
@@ -123,8 +131,12 @@ final class ComposerAttachmentMenu: UIViewController, UIPopoverPresentationContr
     }
 
     private func finish(_ result: Result<Any?, PluginFailure>) {
+        dismissForReply { $0(result) }
+    }
+
+    private func dismissForReply(_ complete: @escaping (@escaping PluginReply) -> Void) {
         guard let completion = reply else { return }
         reply = nil
-        dismiss(animated: true) { completion(result) }
+        dismiss(animated: true) { complete(completion) }
     }
 }
