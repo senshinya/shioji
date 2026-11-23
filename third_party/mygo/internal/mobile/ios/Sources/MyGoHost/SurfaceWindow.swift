@@ -330,6 +330,8 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
         let another = c.serial != serial
         serial = c.serial
         let showRequested = c.show != shows
+        // Every touch in the editor requests the keyboard, including taps that only move the caret.
+        let reopenRequested = showRequested && Host.shared.root.keyboardFrame == nil
         if !editing || !wasEditing || another || showRequested { keyboardDismissed = false }
         hasDocument = c.document
         caret = CGRect(x: c.x, y: c.y, width: max(c.width, 2), height: max(c.height, 1))
@@ -344,7 +346,7 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
         if editing && !keyboardDismissed {
             if !isFirstResponder {
                 becomeFirstResponder()
-            } else if !wasEditing || showRequested || traitsChanged || another {
+            } else if !wasEditing || reopenRequested || traitsChanged || another {
                 reloadInputViews()
             }
         } else if !editing && wasEditing && isFirstResponder {
