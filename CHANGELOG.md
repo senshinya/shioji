@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+## [0.7.12] - 2026-11-23
+
+[源码](https://github.com/senshinya/shioji/tree/v0.7.12) · [与 v0.7.11 比较](https://github.com/senshinya/shioji/compare/v0.7.11...v0.7.12)
+
+### Added
+
+- iOS 支持在照片选择器中一次选中多张图片，并在定时任务页查看已连接设备上的任务。
+
+### Fixed
+
+- macOS 对话中的工具组标题显示「已完成」或「调用结束」。单项工具的结果在展开后查看。
+- macOS 设备详情分别显示 Tailnet 对端延迟和连接路径，断开时保留可用的历史延迟读数。
+- iOS 改善首次发送、普通发送和介入当前轮的动画与状态交接，纯工具回复显示底部操作行。
+
+更新 Mac App 即可获得本版桌面改动。执行服务沿用协议 2.58 和 schema 17。
+
 ## [0.7.11] - 2026-11-22
 
 [源码](https://github.com/senshinya/shioji/tree/v0.7.11) · [与 v0.7.10 比较](https://github.com/senshinya/shioji/compare/v0.7.10...v0.7.11)
