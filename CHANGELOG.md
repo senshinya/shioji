@@ -5,6 +5,16 @@
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-23
+
+[源码](https://github.com/senshinya/shioji/tree/v0.8.1) · [与 v0.8.0 Beta 比较](https://github.com/senshinya/shioji/compare/v0.8.0...v0.8.1)
+
+### Fixed
+
+- macOS 的设备 Agent 列表和输入框模型按钮显示 Antigravity 官方单色图标，随浅色和深色主题着色。
+
+更新 Mac App 和 Antigravity 所属设备的执行服务后可看到新图标。执行服务沿用协议 2.60 和 schema 17。
+
 ## [0.8.0] - 2026-11-23
 
 [源码](https://github.com/senshinya/shioji/tree/v0.8.0) · [与 v0.7.13 比较](https://github.com/senshinya/shioji/compare/v0.7.13...v0.8.0)
