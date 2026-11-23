@@ -85,12 +85,24 @@ func (s *Server) compactContext(in domain.ContextActionRequest) (domain.Operatio
 		return none, workNotSent(err)
 	}
 	compactor, ok := r.(harness.ContextCompactor)
-	if !ok || !r.Readiness().Capabilities.Compact {
+	preparer, sessionScoped := r.(harness.ContextCompactionPreparer)
+	if !ok || !sessionScoped && !r.Readiness().Capabilities.Compact {
 		return none, workNotSent(harness.Unsupported("context-compaction"))
 	}
 	if !r.Observes(d.Session) {
 		s.dispatchMu.Unlock()
 		err = r.Resume(setup, d.Session)
+		s.dispatchMu.Lock()
+		if !transition.active() {
+			return none, errSessionTransitionRetired
+		}
+		if err != nil {
+			return none, workNotSent(err)
+		}
+	}
+	if sessionScoped {
+		s.dispatchMu.Unlock()
+		err = preparer.PrepareCompaction(setup, d.Session)
 		s.dispatchMu.Lock()
 		if !transition.active() {
 			return none, errSessionTransitionRetired

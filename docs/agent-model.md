@@ -18,6 +18,16 @@ Codex adapter 启动时检查当前安装导出的协议形状和实际能力，
 
 Goal 的当前状态、暂停、恢复和清除由 worker 持久化。续跑需要匹配本轮来源的结构化进展，并经过普通输入的接纳边界。报告工具仅监听执行设备的回环地址，每个会话有独立认证，每次报告绑定当前目标输入。原生审批按当前运行环境处理。执行中失联或重启需要核对，已中断的输入不会自动重发。
 
+会话的原生命令公告用于判断手动压缩能力。输入框的 `/` 菜单使用 Shioji 命令和所选 Agent 的 Skill 目录。手动压缩复用 worker 的独立维护操作。冷会话可从现有压缩入口发起操作，worker 恢复并核对目标会话的命令公告，发送不带附件和附加指令的 `/compact`。原生 prompt 正常结束时显示「压缩命令已结束」。上下文圆环使用可归属的 `usage_update`，等待新报告期间用量显示为未知。Stop 等待原 prompt 返回；运行实例失联时保留待核对状态，恢复操作只查询已有回执。
+
+Antigravity 的选择题通过 ACP 表单进入会话的待处理面板，支持单选、多选和自由填写。答复经所属 worker 核对请求版本后返回原 ACP 请求。请求属于当前会话，已知工具 ID 可将迟到的表单、审批和真实工具结束状态归回该工具的原轮次。普通轮次结束时只发送一次回复完成通知。文本中的提问可以用普通消息回答。[Lody 表单映射](https://github.com/LodyAI/Lody/blob/2e1bb69/packages/shared/src/acp/ask-user-question.ts) · [t3code ACP 事件与请求](https://github.com/pingdotgg/t3code/blob/8851fb79/packages/provider-acp/src/server/adapter.ts)
+
+定时任务的计划与运行回执保存在所属 worker。AGY 定时运行保留任务所选的 Agent、运行配置和工作区，使用普通提交入口。
+
+文本 `@` 引用使用 worker 已保存的不可变快照。二进制路径附件只传执行设备上的已验证路径，访问仍受 Antigravity 当前权限约束。代码评论携带已选 diff 片段和比较基准。工具结果的内嵌图片、文本和设备文件链接由所属 worker 校验并保存为可跨客户端读取的附件。会话标题仅采纳同一原生会话的标题事件，用户手工命名优先。
+
+只读 Skill 目录从执行设备已接纳的项目目录及 Antigravity 的个人与内置标准目录读取，按 CLI 的同名优先级选择。行内引用绑定文件位置及内容摘要，编辑或替换文件后需要重新选取。清单声明的附加来源、继承和插件目录由 Antigravity CLI 管理。[Antigravity Skill 查找规则](https://antigravity.google/docs/customization-discovery?tab=cli)
+
 ## 子工作来源与待处理请求
 
 已有外部会话通过可选 `ConversationReader` 发现与只读预览，正式导入通过独立的 `ConversationImporter` 读取设备上的完整快照；共享的 `ConversationCandidate`、`ConversationPreview`、`ConversationOrigin` 不含具体 harness 结构。`SourceRef` 与 `ResumeRef` 由 adapter 生成并解释。worker 负责范围验证、持久去重、原子导入及旧部分副本的显式补全，首次提交通过 `ConversationContinuation` 准备独立的已导入历史上下文，不恢复外部进程。详见[会话导入](conversation-import.md)。

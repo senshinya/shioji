@@ -10,6 +10,7 @@ type HarnessCapabilities struct {
 	Reload                bool `json:"reload,omitempty"`
 	ConversationImport    bool `json:"conversationImport,omitempty"`
 	Compact               bool `json:"compact,omitempty"`
+	CompactNeedsCheck     bool `json:"compactNeedsCheck,omitempty"`
 	ToolServiceInspection bool `json:"toolServiceInspection,omitempty"`
 	ToolServices          bool `json:"toolServices,omitempty"`
 	Skills                bool `json:"skills,omitempty"`
@@ -25,6 +26,10 @@ type HarnessCapabilities struct {
 	Fork                  bool `json:"fork"`
 	Restart               bool `json:"restart"`
 }
+
+// CanRequestCompaction includes a worker that can verify compaction on demand
+// when an idle session has no observed runtime.
+func (c HarnessCapabilities) CanRequestCompaction() bool { return c.Compact || c.CompactNeedsCheck }
 
 // CanReopenIdle is independent of recovery of an unfinished input.
 func (c HarnessCapabilities) CanReopenIdle() bool { return c.Resume || c.Continue }

@@ -64,7 +64,11 @@ func TestCodeCommentAdapterUsesExclusiveEndRowForTrailingNewline(t *testing.T) {
 		{"国😀", "位置：f.go:1:1–1:3（末端不含）", 1, 3},
 	} {
 		c := domain.CodeCommentContent{Path: "f.go", Comment: "check", Fragments: []domain.CodeSelection{{Side: "target", StartLine: 1, StartColumn: 1, EndLine: tc.endLine, EndColumn: tc.endColumn, Text: tc.text}}}
-		got := codeCommentText(c, "main")
+		inputs, err := attachmentInputs("", []AttachmentInput{{Comment: &c, ExecutionBranch: "main"}})
+		if err != nil || len(inputs) != 1 {
+			t.Fatal(inputs, err)
+		}
+		got := inputs[0].Text
 		if !strings.Contains(got, tc.want) {
 			t.Fatalf("exclusive coordinate missing: want %q in %s", tc.want, got)
 		}

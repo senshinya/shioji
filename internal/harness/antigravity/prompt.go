@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,6 +18,8 @@ type contentBlock struct {
 	Text     string        `json:"text,omitempty"`
 	Data     []byte        `json:"data,omitempty"`
 	MIMEType string        `json:"mimeType,omitempty"`
+	URI      string        `json:"uri,omitempty"`
+	Name     string        `json:"name,omitempty"`
 	Resource *textResource `json:"resource,omitempty"`
 }
 
@@ -40,6 +41,7 @@ type logicalTurn struct {
 	stream      *domain.Item
 	tools       map[string]domain.Item
 	interrupted bool
+	sawUsage    bool
 }
 
 func (r *runtime) Submit(ctx context.Context, session domain.Session, id string, input harness.TurnInput) (string, error) {
@@ -71,7 +73,7 @@ func (r *runtime) SubmitDeferred(ctx context.Context, session domain.Session, _ 
 		input.Text = "Advance this Shioji goal: " + input.Objective + "\nBefore ending this step, call the Shioji Goal tool report_goal with key " + goalKey +
 			" and outcome complete only if verified, blocked if user input is required, or continue if there is more work."
 	}
-	blocks, err := r.promptContent(input)
+	blocks, err := r.promptContent(ctx, input)
 	if err != nil {
 		return "", nil, err
 	}
@@ -101,7 +103,7 @@ func (r *runtime) SubmitDeferred(ctx context.Context, session domain.Session, _ 
 func (r *runtime) hasActiveTurn() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.active != nil
+	return r.active != nil || len(r.requests) != 0
 }
 
 func (r *runtime) Steer(ctx context.Context, s domain.Session, turn, id string, input harness.TurnInput) error {
@@ -121,13 +123,13 @@ func (r *runtime) SteerDeferred(ctx context.Context, session domain.Session, tur
 	if len(fields) > 0 && strings.HasPrefix(fields[0], "/") && !strings.Contains(fields[0][1:], "/") {
 		return nil, errors.New("运行命令请等待当前回复结束")
 	}
-	blocks, err := r.promptContent(input)
+	blocks, err := r.promptContent(ctx, input)
 	if err != nil {
 		return nil, err
 	}
 	r.mu.Lock()
 	active := r.active
-	if active != nil && active.turn.ID != turn {
+	if active != nil && (active.turn.ID != turn || active.turn.Presentation == "compaction") {
 		active = nil
 	}
 	r.mu.Unlock()
@@ -158,8 +160,11 @@ func (r *runtime) beginPrompt(ctx context.Context, session domain.Session, turn 
 		return &harness.DeliveryError{Message: "所属运行环境已变化，消息未发送"}
 	}
 	steer := receipt != nil
-	if steer && (r.active != turn || turn.interrupted || turn.prompts == 0) || !steer && r.active != nil {
+	if steer && (r.active != turn || turn.interrupted || turn.prompts == 0) || !steer && (r.active != nil || len(r.requests) != 0) {
 		return &harness.DeliveryError{Message: "目标回复已变化，消息未发送"}
+	}
+	if turn.turn.Presentation == "compaction" && !r.commandOffers[session.ThreadID] {
+		return harness.Unsupported("context-compaction")
 	}
 	args := struct {
 		SessionID string         `json:"sessionId"`
@@ -184,13 +189,16 @@ func (r *runtime) beginPrompt(ctx context.Context, session domain.Session, turn 
 		_ = r.process.in.Close()
 		return unknownDelivery()
 	}
+	if turn.turn.Presentation == "compaction" {
+		if err := r.compactionActivity(turn, domain.ExecutionRunning); err != nil {
+			_ = r.process.in.Close()
+			return unknownDelivery()
+		}
+	}
 	return nil
 }
 
-func (r *runtime) promptContent(input harness.TurnInput) ([]contentBlock, error) {
-	if len(input.Skills) > 0 {
-		return nil, harness.Unsupported("skills")
-	}
+func (r *runtime) promptContent(ctx context.Context, input harness.TurnInput) ([]contentBlock, error) {
 	if input.QuestionReply != nil {
 		return nil, harness.Unsupported("nonblocking-question")
 	}
@@ -217,22 +225,21 @@ func (r *runtime) promptContent(input harness.TurnInput) ([]contentBlock, error)
 		blocks = append(blocks, contentBlock{Type: "text", Text: input.Text})
 	}
 	for _, file := range input.Attachments {
-		if file.Attachment.InlineReference() || file.Comment != nil || !r.native.AgentCapabilities.PromptCapabilities.Image {
-			return nil, harness.Unsupported("attachment")
+		block, err := r.attachmentBlock(file)
+		if err != nil {
+			return nil, err
 		}
-		switch file.Attachment.MIME {
-		case "image/png", "image/jpeg", "image/webp", "image/gif":
-		default:
-			return nil, harness.Unsupported("attachment")
+		blocks = append(blocks, block)
+	}
+	if len(input.Skills) > 0 {
+		skills, err := r.skillBlocks(ctx, input.Skills)
+		if err != nil {
+			return nil, err
 		}
-		data, err := os.ReadFile(file.Path)
-		if err != nil || len(data) == 0 || len(data) > 8<<20 {
-			return nil, errors.New("无法读取该图片附件")
-		}
-		blocks = append(blocks, contentBlock{Type: "image", MIMEType: file.Attachment.MIME, Data: data})
+		blocks = append(blocks, skills...)
 	}
 	if len(blocks) == 0 {
-		return nil, errors.New("消息需要文字或图片")
+		return nil, errors.New("消息需要文字或附件")
 	}
 	return blocks, nil
 }
@@ -326,10 +333,10 @@ func (r *runtime) confirm(t *logicalTurn, err error) {
 }
 
 func (r *runtime) finishIfSettled(t *logicalTurn) error {
-	if t.prompts != 0 || len(r.requests) != 0 {
+	if t == nil || t.prompts != 0 || len(r.requests) != 0 {
 		return nil
 	}
-	for _, tool := range t.tools {
+	for id, tool := range t.tools {
 		if tool.Final {
 			continue
 		}
@@ -337,6 +344,7 @@ func (r *runtime) finishIfSettled(t *logicalTurn) error {
 		if t.outcome == domain.ExecutionInterrupted {
 			tool.Status = "interrupted"
 		}
+		t.tools[id] = tool
 		if err := r.emit(domain.Event{Type: "item.upsert", Item: &tool}); err != nil {
 			return err
 		}
@@ -346,6 +354,17 @@ func (r *runtime) finishIfSettled(t *logicalTurn) error {
 	terminal := t.turn
 	terminal.CompletedAt, terminal.DurationMS = &now, &duration
 	terminal.Status, terminal.Error = t.outcome, t.message
+	if terminal.Presentation == "compaction" {
+		if terminal.Status == domain.ExecutionCompleted && !t.sawUsage {
+			if err := r.emit(domain.Event{Type: "context.usage", ContextUsage: &domain.ContextUsage{TurnID: terminal.ID, UpdatedAt: now}}); err != nil {
+				return err
+			}
+		}
+		if err := r.compactionActivity(t, terminal.Status); err != nil {
+			return err
+		}
+	}
+	r.rememberTools(t)
 	r.active = nil
 	r.settledTurn = terminal.ID
 	return r.emit(domain.Event{Type: "turn", Turn: &terminal, GoalProgress: t.goal})
@@ -380,7 +399,11 @@ func (r *runtime) Interrupt(ctx context.Context, s domain.Session, turn string) 
 	}
 	t.interrupted = true
 	for key, p := range r.requests {
-		if err := r.resolvePermission(ctx, key, p, ""); err != nil {
+		var outcome any = permissionOutcome("")
+		if p.Request.Kind == "form" {
+			outcome = elicitationResponse{Action: "cancel"}
+		}
+		if err := r.resolveRequest(ctx, key, p, outcome, true); err != nil {
 			return err
 		}
 	}

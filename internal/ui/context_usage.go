@@ -74,7 +74,7 @@ func (v *View) contextMeter(c *n.Context, t *n.Theme, cfg domain.RunConfig) {
 			})
 		})
 	})
-	hasAction := v.Model.WorkerMinor >= 29 && v.Model.RunReadiness().Capabilities.Compact
+	hasAction := v.Model.WorkerMinor >= 29 && v.Model.RunReadiness().Capabilities.CanRequestCompaction()
 	hoverCard(c.Key("context-details:"+session.ID), trigger, func(panel n.Element) {
 		panel.Transition(popupMotion(c))
 		informationPopoverSurface(panel, t).AttachTo(trigger, n.AnchorTopEnd, n.AnchorBottomEnd).

@@ -95,6 +95,12 @@ type ContextCompactor interface {
 	InspectCompaction(context.Context, domain.Session, domain.ContextAction) (domain.ContextObservation, error)
 }
 
+// ContextCompactionPreparer confirms that the bound session offers compaction
+// before a maintenance operation is durably admitted.
+type ContextCompactionPreparer interface {
+	PrepareCompaction(context.Context, domain.Session) error
+}
+
 // An empty launch context means device-level Skills only. Concrete adapters
 // resolve discovery roots, file reads, scopes and native enablement policies.
 type SkillManager interface {

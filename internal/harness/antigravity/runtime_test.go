@@ -147,7 +147,7 @@ func TestACPFixtureProcess(t *testing.T) {
 			{"id": "mode", "category": "mode", "type": "select", "currentValue": mode, "options": []map[string]string{{"value": "default", "name": "Default"}, {"value": "plan", "name": "Plan"}}},
 		}
 	}
-	var first json.RawMessage
+	var first, pendingCompact json.RawMessage
 	for in.Scan() {
 		var msg struct {
 			ID     json.RawMessage
@@ -174,6 +174,15 @@ func TestACPFixtureProcess(t *testing.T) {
 			if !filepath.IsAbs(msg.Params.CWD) || msg.Params.MCPServers == nil {
 				os.Exit(4)
 			}
+			advertisedSession := "native-session"
+			if _, err := os.Stat(os.Getenv("SHIOJI_ACP_FIXTURE_LOG") + ".foreign-compact"); err == nil {
+				advertisedSession = "foreign-session"
+			}
+			_ = out.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+				"sessionId": advertisedSession, "update": map[string]any{
+					"sessionUpdate": "available_commands_update", "availableCommands": []map[string]string{{"name": "compact"}},
+				},
+			}})
 			reply(msg.ID, map[string]any{"sessionId": "native-session", "configOptions": options()})
 		case "session/close":
 			reply(msg.ID, struct{}{})
@@ -185,9 +194,26 @@ func TestACPFixtureProcess(t *testing.T) {
 				mode = msg.Params.Value
 			}
 			reply(msg.ID, map[string]any{"configOptions": options()})
+		case "session/cancel":
+			if pendingCompact != nil {
+				reply(pendingCompact, map[string]string{"stopReason": "cancelled"})
+				pendingCompact = nil
+			}
 		case "session/prompt":
 			if msg.Params.SessionID != "native-session" || effort != "high" || mode != "plan" || len(msg.Params.Prompt) == 0 {
 				os.Exit(5)
+			}
+			if len(msg.Params.Prompt) == 1 && msg.Params.Prompt[0].Text == "/compact" {
+				logPath := os.Getenv("SHIOJI_ACP_FIXTURE_LOG")
+				if _, err := os.Stat(logPath + ".lose-compact"); err == nil {
+					os.Exit(8)
+				}
+				if _, err := os.Stat(logPath + ".hold-compact"); err == nil {
+					pendingCompact = msg.ID
+					continue
+				}
+				reply(msg.ID, map[string]string{"stopReason": "end_turn"})
+				continue
 			}
 			if msg.Params.Prompt[0].Text == "slow" {
 				time.Sleep(300 * time.Millisecond)

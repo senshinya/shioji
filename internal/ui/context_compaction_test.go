@@ -579,3 +579,37 @@ func TestCompactionRequiresWorkerThatPersistsCommandRecords(t *testing.T) {
 		t.Fatal("older worker accepted an action it cannot persist as a command record")
 	}
 }
+
+func TestCompletedCompactionPreservesTheSourceLabel(t *testing.T) {
+	v := liveCompletionModel()
+	m := v.Model
+	m.Snapshot.Sessions[0].ThreadID = "source"
+	m.Snapshot.Sessions[0].ContextAction = &domain.ContextAction{OperationID: "compact", SourceRef: "source", TurnID: "compact-turn", State: "completed"}
+	d := m.Details["s"]
+	d.Items = []domain.Item{
+		{ID: "context-command:compact", TurnID: "compact-turn", Kind: "command", Presentation: "compact", Name: "压缩上下文", Final: true},
+		{ID: "maintenance", TurnID: "compact-turn", Kind: "activity", Presentation: "compaction", Name: "压缩命令已结束", Status: "completed", Final: true},
+	}
+	m.Details["s"] = d
+	rows := v.contextRows(v.transcriptRows(d.Items))
+	if len(rows) != 2 || rows[1].item.Name != "压缩命令已结束" {
+		t.Fatalf("terminal command was relabeled as a confirmed checkpoint: %+v", rows)
+	}
+}
+
+func TestColdSessionCanRequestCompactionWithWorkerPreflight(t *testing.T) {
+	v, ui := compactView(t)
+	v.Model.Readiness.Capabilities = domain.HarnessCapabilities{}
+	if err := json.Unmarshal([]byte(`{"compactNeedsCheck":true}`), &v.Model.Readiness.Capabilities); err != nil {
+		t.Fatal(err)
+	}
+	ui.Frame()
+	hoverContextMeter(t, ui)
+	ui.Advance(300 * time.Millisecond)
+	if err := ui.Click("压缩上下文"); err != nil {
+		t.Fatalf("cold session cannot ask the worker to check compaction: %v", err)
+	}
+	if jobs := contextJobs(v); len(jobs) != 1 || jobs[0].Method != "session.context.compact" {
+		t.Fatalf("cold session bypassed worker preflight: %+v", jobs)
+	}
+}

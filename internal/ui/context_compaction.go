@@ -138,7 +138,7 @@ func (v *View) compactReason() string {
 		return "更新执行服务后可用"
 	case s.phase != contextReady:
 		return "正在处理压缩操作"
-	case !m.RunReadiness().Capabilities.Compact:
+	case !m.RunReadiness().Capabilities.CanRequestCompaction():
 		return "此 Agent 暂不支持手动压缩"
 	case session.Archived || m.ArchivedContext() != "":
 		return "请先恢复会话或工作区"
@@ -380,7 +380,9 @@ func (v *View) contextRows(rows []transcriptRow) []transcriptRow {
 			if !a.State.Active() {
 				rows[i].item.Status = string(a.State)
 				rows[i].item.Final = true
-				rows[i].item.Name = contextActionLabel(a.State)
+				if !row.item.Final || row.item.Status != string(a.State) || row.item.Name == "" {
+					rows[i].item.Name = contextActionLabel(a.State)
+				}
 			}
 			v.contextRowKeys[v.Model.WorkKey(v.Model.SessionID, row.item.ID)] = key
 			if local {
@@ -412,7 +414,7 @@ func (v *View) contextRows(rows []transcriptRow) []transcriptRow {
 func contextActionLabel(state domain.ExecutionState) string {
 	switch state {
 	case "completed":
-		return "上下文已压缩"
+		return "压缩命令已结束"
 	case "failed":
 		return "上下文压缩失败"
 	case "interrupted":

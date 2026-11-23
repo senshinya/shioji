@@ -17,11 +17,12 @@ import (
 type sessionUpdate struct {
 	SessionID string `json:"sessionId"`
 	Update    struct {
-		Kind       string `json:"sessionUpdate"`
-		Content    json.RawMessage
-		Used, Size *int64
-		Title      *string
-		Entries    []struct{ Content, Status string }
+		Kind              string `json:"sessionUpdate"`
+		Content           json.RawMessage
+		Used, Size        *int64
+		Title             *string
+		AvailableCommands []struct{ Name string }
+		Entries           []struct{ Content, Status string }
 	} `json:"update"`
 }
 
@@ -31,13 +32,21 @@ func (r *runtime) handle(msg packet) error {
 	switch msg.Method {
 	case "session/update":
 		var update sessionUpdate
-		if json.Unmarshal(msg.Params, &update) != nil || r.session.ThreadID == "" || update.SessionID != r.session.ThreadID {
+		if json.Unmarshal(msg.Params, &update) != nil {
 			return nil
 		}
-		return r.update(update, msg.Params)
+		if update.Update.Kind == "available_commands_update" {
+			r.observeCommands(update.SessionID, update.Update.AvailableCommands)
+		} else if r.session.ThreadID != "" && update.SessionID == r.session.ThreadID {
+			return r.update(update, msg.Params)
+		}
 	case "session/request_permission":
 		if len(msg.ID) != 0 {
 			return r.receivePermission(msg)
+		}
+	case "elicitation/create":
+		if len(msg.ID) != 0 {
+			return r.receiveQuestion(msg)
 		}
 	default:
 		if len(msg.ID) != 0 {
@@ -49,6 +58,45 @@ func (r *runtime) handle(msg packet) error {
 
 func (r *runtime) update(event sessionUpdate, raw json.RawMessage) error {
 	t, u := r.active, event.Update
+	if u.Kind == "session_info_update" && u.Title != nil {
+		title := clip(strings.TrimSpace(*u.Title), 4096)
+		if title != "" && title != r.nativeTitle {
+			r.nativeTitle = title
+			return r.emit(domain.Event{Type: "session.title", Text: title})
+		}
+	}
+	if u.Kind == "usage_update" {
+		turn := r.settledTurn
+		if t != nil {
+			turn = t.turn.ID
+		}
+		if turn == "" || u.Used == nil && u.Size == nil {
+			return nil
+		}
+		if t != nil {
+			t.sawUsage = true
+		}
+		return r.emit(domain.Event{Type: "context.usage", ContextUsage: &domain.ContextUsage{
+			TurnID: turn, UsedTokens: u.Used, LimitTokens: u.Size, UpdatedAt: time.Now().UTC(),
+		}})
+	}
+	if u.Kind == "tool_call" || u.Kind == "tool_call_update" {
+		var tool struct{ Update toolUpdate }
+		if json.Unmarshal(raw, &tool) != nil || tool.Update.ToolCallID == "" {
+			return nil
+		}
+		if late, ok := r.lateTools[tool.Update.ToolCallID]; ok {
+			return r.updateLateTool(late, tool.Update)
+		}
+		if t == nil || t.interrupted {
+			return nil
+		}
+		r.confirm(t, nil)
+		if err := r.finishStream(t); err != nil {
+			return err
+		}
+		return r.updateTool(t.tools, t.turn.ID, tool.Update)
+	}
 	if t == nil {
 		return nil
 	}
@@ -60,16 +108,6 @@ func (r *runtime) update(event sessionUpdate, raw json.RawMessage) error {
 			return nil
 		}
 		return r.stream(t, u.Kind, content)
-	case "tool_call", "tool_call_update":
-		r.confirm(t, nil)
-		var tool struct{ Update toolUpdate }
-		if json.Unmarshal(raw, &tool) != nil {
-			return nil
-		}
-		if err := r.finishStream(t); err != nil {
-			return err
-		}
-		return r.updateTool(t, tool.Update)
 	case "plan":
 		r.confirm(t, nil)
 		plan := domain.Plan{TurnID: t.turn.ID}
@@ -77,13 +115,6 @@ func (r *runtime) update(event sessionUpdate, raw json.RawMessage) error {
 			plan.Steps = append(plan.Steps, domain.PlanStep{Text: clip(entry.Content, 4096), Status: entry.Status})
 		}
 		return r.emit(domain.Event{Type: "plan", Plan: &plan})
-	case "usage_update":
-		if u.Used == nil && u.Size == nil {
-			return nil
-		}
-		return r.emit(domain.Event{Type: "context.usage", ContextUsage: &domain.ContextUsage{
-			TurnID: t.turn.ID, UsedTokens: u.Used, LimitTokens: u.Size, UpdatedAt: time.Now().UTC(),
-		}})
 	}
 	return nil
 }
@@ -137,6 +168,7 @@ func (r *runtime) importImage(id string, index int, content contentBlock) (domai
 
 type toolUpdate struct {
 	ToolCallID, Title, Kind, Status string
+	RawOutput                       json.RawMessage
 	Content                         []struct {
 		Type, Path string
 		OldText    *string
@@ -146,16 +178,22 @@ type toolUpdate struct {
 	Locations []struct{ Path string }
 }
 
-func (r *runtime) updateTool(t *logicalTurn, update toolUpdate) error {
-	if update.ToolCallID == "" {
-		return nil
-	}
-	item, known := t.tools[update.ToolCallID]
+func (r *runtime) updateTool(tools map[string]domain.Item, turn string, update toolUpdate) error {
+	item, known := tools[update.ToolCallID]
 	if !known {
-		item = domain.Item{ID: "agy-tool:" + domain.NewID(), TurnID: t.turn.ID, Kind: "tool", Status: "starting"}
+		item = domain.Item{ID: "agy-tool:" + domain.NewID(), TurnID: turn, Kind: "tool", Status: "starting"}
 	}
-	if item.Final {
+	if !applyToolUpdate(&item, update) {
 		return nil
+	}
+	r.updateToolContent(&item, update)
+	tools[update.ToolCallID] = item
+	return r.emit(domain.Event{Type: "item.upsert", Item: &item, ActivityStart: !known})
+}
+
+func applyToolUpdate(item *domain.Item, update toolUpdate) bool {
+	if item.Final && (item.Status != "unknown" || update.Status != "completed" && update.Status != "failed") {
+		return false
 	}
 	if update.Title != "" {
 		item.Name = clip(update.Title, 4096)
@@ -178,9 +216,39 @@ func (r *runtime) updateTool(t *logicalTurn, update toolUpdate) error {
 	case "failed":
 		item.Status, item.Final = "failed", true
 	}
+	return true
+}
+
+func (r *runtime) updateToolContent(item *domain.Item, update toolUpdate) {
+	if item.Presentation == "command" && len(update.RawOutput) != 0 {
+		var result struct {
+			CombinedOutput *string
+			ExitCode       *int
+			NativeOutput   *string `json:"combined_output"`
+			NativeExitCode *int    `json:"exit_code"`
+		}
+		if json.Unmarshal(update.RawOutput, &result) == nil {
+			if result.ExitCode == nil {
+				result.ExitCode = result.NativeExitCode
+			}
+			if result.ExitCode != nil {
+				item.ExitCode = result.ExitCode
+			}
+			if result.CombinedOutput == nil {
+				result.CombinedOutput = result.NativeOutput
+			}
+			if len(update.Content) == 0 && result.CombinedOutput != nil {
+				value := clip(*result.CombinedOutput, 32<<10)
+				item.Parts = []domain.ContentPart{{Kind: "text", Text: value}}
+				item.Truncated = item.Truncated || len(value) != len(*result.CombinedOutput)
+				return
+			}
+		}
+	}
 	if update.Content != nil {
 		item.Parts, item.Files = nil, nil
 		budget := 64 << 10
+		resourceIndices := map[string]int{}
 		for _, part := range update.Content {
 			switch {
 			case part.Type == "diff" && part.Path != "":
@@ -203,6 +271,10 @@ func (r *runtime) updateTool(t *logicalTurn, update toolUpdate) error {
 				item.Truncated = item.Truncated || len(text) != len(part.Content.Text)
 				budget -= len(text)
 				item.Parts = append(item.Parts, domain.ContentPart{Kind: "text", Text: text})
+			case item.Final && part.Type == "content":
+				if resource, ok := r.importToolContent(item.ID, part.Content, resourceIndices); ok {
+					item.Parts = append(item.Parts, resource)
+				}
 			}
 			if budget <= 0 || len(item.Parts)+len(item.Files) >= 24 {
 				item.Truncated = true
@@ -210,8 +282,47 @@ func (r *runtime) updateTool(t *logicalTurn, update toolUpdate) error {
 			}
 		}
 	}
-	t.tools[update.ToolCallID] = item
-	return r.emit(domain.Event{Type: "item.upsert", Item: &item, ActivityStart: !known})
+}
+
+type lateTool struct {
+	item    domain.Item
+	blocked bool
+}
+
+const maxLateTools = 256
+
+// Keep the original routing of tools after a prompt ends. ACP gives these
+// callbacks a tool ID but no turn ID, even if a different prompt has started.
+func (r *runtime) rememberTools(t *logicalTurn) {
+	if r.lateTools == nil {
+		r.lateTools = make(map[string]lateTool)
+	}
+	blocked := t.interrupted || t.outcome != domain.ExecutionCompleted || t.turn.Presentation == "compaction"
+	for id, item := range t.tools {
+		if _, exists := r.lateTools[id]; exists {
+			continue
+		}
+		if len(r.lateToolIDs) == maxLateTools {
+			delete(r.lateTools, r.lateToolIDs[0])
+			r.lateToolIDs = r.lateToolIDs[1:]
+		}
+		if blocked || item.Status != "unknown" {
+			item = domain.Item{ID: item.ID, TurnID: item.TurnID, Status: item.Status, Final: true}
+		}
+		r.lateTools[id] = lateTool{item: item, blocked: blocked}
+		r.lateToolIDs = append(r.lateToolIDs, id)
+	}
+}
+
+func (r *runtime) updateLateTool(late lateTool, update toolUpdate) error {
+	item := late.item
+	if late.blocked || !applyToolUpdate(&item, update) {
+		return nil
+	}
+	r.updateToolContent(&item, update)
+	late.item = domain.Item{ID: item.ID, TurnID: item.TurnID, Status: item.Status, Final: true}
+	r.lateTools[update.ToolCallID] = late
+	return r.emit(domain.Event{Type: "item.upsert", Item: &item})
 }
 
 // ACP provides literal before and after text. Preserve both in a unified hunk
@@ -244,7 +355,7 @@ func patch(before, after string) string {
 	return out.String()
 }
 
-type permissionRequest struct {
+type nativeRequest struct {
 	WireID  json.RawMessage
 	Request domain.PendingRequest
 }
@@ -255,21 +366,16 @@ func (r *runtime) receivePermission(msg packet) error {
 		ToolCall  toolUpdate
 		Options   []struct{ OptionID, Name, Kind string }
 	}
-	if json.Unmarshal(msg.Params, &payload) != nil || r.active == nil || r.active.interrupted || payload.SessionID != r.session.ThreadID {
+	if json.Unmarshal(msg.Params, &payload) != nil {
 		return r.reply(context.Background(), msg.ID, permissionOutcome(""), nil)
 	}
-	t := r.active
-	r.confirm(t, nil)
-	request := domain.PendingRequest{
-		ID: "agy-request:" + domain.NewID(), SessionID: r.session.ID,
-		TurnID: t.turn.ID, Title: clip(payload.ToolCall.Title, 4096), Kind: "approval",
-		Revision: 1, State: domain.RequestPending,
+	request, turn, ok := r.requestSource(payload.SessionID, payload.ToolCall.ToolCallID)
+	if !ok {
+		return r.reply(context.Background(), msg.ID, permissionOutcome(""), nil)
 	}
+	request.Title, request.Kind = clip(payload.ToolCall.Title, 4096), "approval"
 	if request.Title == "" {
 		request.Title = "Antigravity 请求执行工具"
-	}
-	if item, ok := t.tools[payload.ToolCall.ToolCallID]; ok {
-		request.ItemID = item.ID
 	}
 	for _, location := range payload.ToolCall.Locations {
 		if filepath.IsAbs(location.Path) {
@@ -285,7 +391,34 @@ func (r *runtime) receivePermission(msg packet) error {
 	if len(request.Choices) == 0 {
 		return r.reply(context.Background(), msg.ID, permissionOutcome(""), nil)
 	}
-	r.requests[request.ID] = permissionRequest{WireID: msg.ID, Request: request}
+	return r.openRequest(msg.ID, request, turn)
+}
+
+func (r *runtime) requestSource(sessionID, toolID string) (domain.PendingRequest, *logicalTurn, bool) {
+	if sessionID == "" || sessionID != r.session.ThreadID {
+		return domain.PendingRequest{}, nil, false
+	}
+	request := domain.PendingRequest{
+		ID: "agy-request:" + domain.NewID(), SessionID: r.session.ID,
+		Revision: 1, State: domain.RequestPending,
+	}
+	if late, known := r.lateTools[toolID]; known {
+		request.TurnID, request.ItemID = late.item.TurnID, late.item.ID
+		return request, nil, !late.blocked
+	}
+	t := r.active
+	if t == nil || t.interrupted || t.turn.Presentation == "compaction" {
+		return domain.PendingRequest{}, nil, false
+	}
+	request.TurnID, request.ItemID = t.turn.ID, t.tools[toolID].ID
+	return request, t, true
+}
+
+func (r *runtime) openRequest(id json.RawMessage, request domain.PendingRequest, turn *logicalTurn) error {
+	if turn != nil {
+		r.confirm(turn, nil)
+	}
+	r.requests[request.ID] = nativeRequest{WireID: id, Request: request}
 	return r.emit(domain.Event{Type: "request.open", Request: &request})
 }
 
@@ -323,20 +456,27 @@ func (r *runtime) Respond(answer domain.Answer) error {
 	if !ok || p.Request.Revision != answer.Revision {
 		return errors.New("请求已提交或失效")
 	}
+	if p.Request.Kind == "form" {
+		outcome, err := questionResponse(p.Request.Fields, answer)
+		if err != nil {
+			return err
+		}
+		return r.resolveRequest(context.Background(), answer.RequestID, p, outcome, false)
+	}
 	if !slices.ContainsFunc(p.Request.Choices, func(c domain.RequestChoice) bool { return c.ID == answer.Decision }) {
 		return errors.New("该审批选项不可用")
 	}
-	return r.resolvePermission(context.Background(), answer.RequestID, p, answer.Decision)
+	return r.resolveRequest(context.Background(), answer.RequestID, p, permissionOutcome(answer.Decision), false)
 }
 
-func (r *runtime) resolvePermission(ctx context.Context, key string, p permissionRequest, option string) error {
-	if err := r.reply(ctx, p.WireID, permissionOutcome(option), nil); err != nil {
+func (r *runtime) resolveRequest(ctx context.Context, key string, p nativeRequest, outcome any, invalidated bool) error {
+	if err := r.reply(ctx, p.WireID, outcome, nil); err != nil {
 		return err
 	}
 	delete(r.requests, key)
 	p.Request.Revision++
 	p.Request.State = domain.RequestResolved
-	if option == "" {
+	if invalidated {
 		p.Request.State = domain.RequestInvalidated
 	}
 	if err := r.emit(domain.Event{Type: "request.resolve", Request: &p.Request}); err != nil {

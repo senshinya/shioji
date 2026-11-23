@@ -26,6 +26,8 @@ func (r *runtime) discover(ctx context.Context) error {
 			if saved := readCatalog(path); saved.Version == r.version && saved.Profile == r.profile && saved.Models.HarnessID == r.ready.HarnessID {
 				r.ready = saved.Models
 				r.ready.Capabilities = r.capabilities()
+				r.ready.Capabilities.Compact = saved.Models.Capabilities.Compact
+				r.ready.Capabilities.CompactNeedsCheck = !r.ready.Capabilities.Compact && r.ready.Capabilities.CompactNeedsCheck
 			}
 		}
 		return nil
@@ -45,12 +47,16 @@ func (r *runtime) discover(ctx context.Context) error {
 		}
 		return err
 	}
+	compact := r.waitForCompactCommand(ctx, found.SessionID)
 	if r.native.AgentCapabilities.SessionCapabilities.Close != nil {
 		if err := r.process.call(ctx, "session/close", sessionID(found.SessionID), nil); err != nil {
 			return setupError(err)
 		}
 	}
-	r.ready = makeReadiness(r.ready.HarnessID, found, r.capabilities())
+	caps := r.capabilities()
+	caps.Compact = compact
+	caps.CompactNeedsCheck = !compact && caps.CompactNeedsCheck
+	r.ready = makeReadiness(r.ready.HarnessID, found, caps)
 	if r.ready.State != domain.RuntimeReady {
 		return errors.New(r.ready.Error)
 	}

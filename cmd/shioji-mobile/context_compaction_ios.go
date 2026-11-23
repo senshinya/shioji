@@ -122,7 +122,7 @@ func (a *mobileApp) compactionReason(session domain.Session, s *mobileCompaction
 		return "更新执行服务后可用"
 	case s.phase != mobileCompactionReady:
 		return "正在处理压缩操作"
-	case !m.SessionReadiness(session).Capabilities.Compact:
+	case !m.SessionReadiness(session).Capabilities.CanRequestCompaction():
 		return "此 Agent 暂不支持手动压缩"
 	case session.Archived || session.ReadOnlyHistory() || a.workspace(session.WorkspaceID).Archived:
 		return "请先恢复会话或工作区"

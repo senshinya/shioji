@@ -320,7 +320,7 @@ func (a *mobileApp) openActivity(parent *mygo.Window, sid string) {
 			mobileRow(c.Key("plan"), "计划与任务", "", "", planSymbol, func() { a.openPlan(w, sid) })
 			mobileRow(c.Key("actions"), "会话操作", "", "", moreSymbol, func() { a.openSessionActions(w, sid) })
 			if session := a.sessionByID(sid); session.ID != "" {
-				if a.model.SessionReadiness(session).Capabilities.Compact {
+				if a.model.SessionReadiness(session).Capabilities.CanRequestCompaction() {
 					state := a.compaction(session)
 					if a.compactionReason(session, state) == "" {
 						mobileRow(c.Key("compact"), "压缩上下文", "", "", compactSymbol, func() {

@@ -549,7 +549,7 @@ func (v *View) slashCommands(key string, from int, query string) []slashCommand 
 	query = "/" + strings.ToLower(query)
 	capabilities := m.RunReadiness().Capabilities
 	var commands []slashCommand
-	if m.WorkerMinor >= 30 && capabilities.Compact && strings.HasPrefix(string(slashCompact), query) {
+	if m.SessionID != "" && m.WorkerMinor >= 30 && capabilities.CanRequestCompaction() && strings.HasPrefix(string(slashCompact), query) {
 		commands = append(commands, slashCompact)
 	}
 	if m.WorkerMinor >= protocol.GoalMinor && capabilities.Goals && strings.HasPrefix(string(slashGoal), query) {

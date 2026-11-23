@@ -203,3 +203,39 @@ func TestCompactionRejectsParentOrIndependentExecutionBeforeAcceptance(t *testin
 		})
 	}
 }
+
+type sessionOfferedCompaction struct {
+	*compactRuntime
+	prepared bool
+}
+
+func (r *sessionOfferedCompaction) Readiness() domain.Readiness {
+	ready := r.compactRuntime.Readiness()
+	ready.Capabilities.Compact = false
+	return ready
+}
+
+func (r *sessionOfferedCompaction) PrepareCompaction(_ context.Context, s domain.Session) error {
+	if !r.Observes(s) {
+		return errors.New("target session has not been resumed")
+	}
+	r.prepared = true
+	return nil
+}
+
+func TestCompactionChecksTargetOfferAfterColdResume(t *testing.T) {
+	s, sid, inner := compactWorker(t)
+	inner.forceResume = true
+	r := &sessionOfferedCompaction{compactRuntime: inner}
+	s.runtimeMu.Lock()
+	s.runtimes[sid] = r
+	s.runtimeMu.Unlock()
+	d, err := s.store.Session(sid, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := compactCall(s, "session.context.compact", domain.ContextActionRequest{OperationID: "scoped-compact", SessionID: sid, Revision: d.Session.Revision})
+	if err != nil || op.State != domain.OperationConfirmed || !r.prepared || r.calls != 1 {
+		t.Fatalf("cold target was not checked and dispatched: %+v, %v", op, err)
+	}
+}

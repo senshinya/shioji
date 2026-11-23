@@ -105,23 +105,29 @@ type sessionRequest struct {
 }
 
 type runtime struct {
-	options harness.StartOptions
-	version string
-	profile string
-	native  initialization
-	process *rpc
-	bridge  *goalBridge
-	direct  sync.Mutex // Serialize native configuration and binding.
+	options      harness.StartOptions
+	version      string
+	profile      string
+	skillProfile string
+	native       initialization
+	process      *rpc
+	bridge       *goalBridge
+	direct       sync.Mutex // Serialize native configuration and binding.
 
-	mu          sync.Mutex
-	ready       domain.Readiness
-	cfg         sessionResponse
-	session     domain.Session
-	active      *logicalTurn
-	settledTurn string
-	requests    map[string]permissionRequest
-	done        chan struct{} // Catalog lifetime only.
-	close       sync.Once
+	mu             sync.Mutex
+	ready          domain.Readiness
+	cfg            sessionResponse
+	session        domain.Session
+	active         *logicalTurn
+	settledTurn    string
+	lateTools      map[string]lateTool
+	lateToolIDs    []string
+	nativeTitle    string
+	commandOffers  map[string]bool
+	commandChanged chan struct{}
+	requests       map[string]nativeRequest
+	done           chan struct{} // Catalog lifetime only.
+	close          sync.Once
 }
 
 func (a Adapter) Start(ctx context.Context, options harness.StartOptions) (harness.Runtime, error) {
@@ -138,7 +144,7 @@ func (a Adapter) Start(ctx context.Context, options harness.StartOptions) (harne
 		return nil, err
 	}
 	r := &runtime{
-		options: options, version: version, profile: profileKey(env), done: make(chan struct{}), requests: make(map[string]permissionRequest),
+		options: options, version: version, profile: profileKey(env), skillProfile: skillProfileDirectory(env), done: make(chan struct{}), requests: make(map[string]nativeRequest),
 		ready: domain.Readiness{HarnessID: a.Descriptor().ID, State: domain.RuntimeUnavailable, Error: "请在设备 Agent 设置重新检测以获取模型"},
 	}
 	argv := []string{path, "acp", "--process-per-session", "--disable-telemetry"}
@@ -160,9 +166,14 @@ func (a Adapter) Start(ctx context.Context, options harness.StartOptions) (harne
 		}
 	}()
 	params := struct {
-		ProtocolVersion int               `json:"protocolVersion"`
-		ClientInfo      map[string]string `json:"clientInfo"`
-	}{1, map[string]string{"name": "Shioji", "version": "1"}}
+		ProtocolVersion    int               `json:"protocolVersion"`
+		ClientInfo         map[string]string `json:"clientInfo"`
+		ClientCapabilities struct {
+			Elicitation struct {
+				Form struct{} `json:"form"`
+			} `json:"elicitation"`
+		} `json:"clientCapabilities"`
+	}{ProtocolVersion: 1, ClientInfo: map[string]string{"name": "Shioji", "version": "1"}}
 	if err := c.call(ctx, "initialize", params, &r.native); err != nil || r.native.ProtocolVersion != 1 || r.native.AgentInfo.Name != "Antigravity ACP Server" {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -200,9 +211,9 @@ func (r *runtime) capabilities() domain.HarnessCapabilities {
 	portable := r.native.AgentCapabilities.PromptCapabilities.EmbeddedContext
 	goals := r.native.AgentCapabilities.MCPMethods.HTTP && (r.bridge != nil || r.options.CatalogOnly)
 	return domain.HarnessCapabilities{
-		Goals: goals, WorkerGoals: goals, ExclusivePlan: true,
+		Goals: goals, WorkerGoals: goals, ExclusivePlan: true, PathAttachments: true, Skills: true, SkillManagement: true,
 		Interrupt: true, Steer: verifiedConcurrentPrompt(r.native.AgentInfo.Version),
-		Resume: resume, Reload: resume && r.native.AgentCapabilities.SessionCapabilities.Close != nil,
+		Resume: resume, CompactNeedsCheck: resume, Reload: resume && r.native.AgentCapabilities.SessionCapabilities.Close != nil,
 		Fork: portable, PortableFork: portable,
 	}
 }
@@ -293,6 +304,11 @@ func (r *runtime) setBinding(s domain.Session, response sessionResponse) {
 	defer r.mu.Unlock()
 	s.ThreadID = response.SessionID
 	r.session, r.cfg = s, response
+	for id := range r.commandOffers {
+		if id != s.ThreadID {
+			delete(r.commandOffers, id)
+		}
+	}
 	r.ready = makeReadiness(r.ready.HarnessID, response, r.capabilities())
 }
 
@@ -347,6 +363,11 @@ func (r *runtime) Readiness() domain.Readiness {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	ready := r.ready
+	if r.session.ThreadID != "" {
+		compact, advertised := r.commandOffers[r.session.ThreadID]
+		ready.Capabilities.Compact = compact
+		ready.Capabilities.CompactNeedsCheck = !advertised && ready.Capabilities.CompactNeedsCheck
+	}
 	d := (Adapter{}).Descriptor()
 	ready.Harnesses = []domain.HarnessInfo{{
 		ID: d.ID, Name: d.Name, State: ready.State, Error: ready.Error,
