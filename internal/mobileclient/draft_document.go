@@ -57,6 +57,39 @@ type DraftDocument struct {
 	GoalChip func() *richtext.Attachment
 	last     draftContent
 	version  uint64
+	departed string
+}
+
+// Depart clears the editor while the original input remains in the model and
+// its pending submission. A new edit can now start an independent draft.
+func (d *DraftDocument) Depart(operation string) {
+	d.Doc.SetText(richtext.NewText(""))
+	d.version, d.departed = d.Doc.Version(), operation
+}
+
+func (d *DraftDocument) departure(m *app.Model) domain.Submission {
+	if m.UncertainSubmissions[d.departed] {
+		return domain.Submission{}
+	}
+	return m.Pending[d.departed]
+}
+
+func (d *DraftDocument) VisibleText(m *app.Model, key string) string {
+	text := m.Drafts[key]
+	if in := d.departure(m); in.OperationID != "" && text == in.Text {
+		return ""
+	}
+	return text
+}
+
+func (d *DraftDocument) VisibleAttachments(m *app.Model, key string) []app.DraftAttachment {
+	files := m.Attachments[key]
+	if in := d.departure(m); len(in.Attachments) != 0 {
+		files = slices.DeleteFunc(slices.Clone(files), func(file app.DraftAttachment) bool {
+			return slices.Contains(in.Attachments, file.Attachment)
+		})
+	}
+	return files
 }
 
 const GoalCommandText = "/goal"
@@ -92,12 +125,20 @@ func (d *DraftDocument) InsertGoal(start, end int) {
 
 func (d *DraftDocument) Sync(m *app.Model, key string, chip func(DraftReference) *richtext.Attachment) {
 	current := readDraft(m, key)
-	if d.Doc != nil && current.equal(d.last) {
+	in := d.departure(m)
+	restore := d.departed != "" && in.OperationID == ""
+	if restore {
+		d.departed = ""
+	}
+	if !restore && d.Doc != nil && current.equal(d.last) {
 		return
 	}
-	input := domain.Item{Text: current.text}
+	input := domain.Item{Text: d.VisibleText(m, key)}
 	byID := make(map[string]DraftReference, len(current.refs))
 	for _, ref := range current.refs {
+		if slices.Contains(in.Skills, ref.Skill.Reference) || slices.Contains(in.Attachments, ref.File.Attachment) {
+			continue
+		}
 		byID[ref.ID()] = ref
 		if ref.Skill.Reference.ID != "" {
 			input.Skills = append(input.Skills, ref.Skill.Reference)
@@ -108,8 +149,8 @@ func (d *DraftDocument) Sync(m *app.Model, key string, chip func(DraftReference)
 		}
 	}
 	text := richtext.NewText("")
-	if start, end, goal := GoalTagRange(current.text); goal && len(current.refs) == 0 && d.GoalChip != nil {
-		runes := []rune(current.text)
+	if start, end, goal := GoalTagRange(input.Text); goal && len(byID) == 0 && d.GoalChip != nil {
+		runes := []rune(input.Text)
 		text = text.Append(string(runes[:start]), richtext.Attributes{}).
 			Append(string(richtext.ObjectReplacement), d.goalTag()).
 			Append(string(runes[end:]), richtext.Attributes{})
@@ -143,7 +184,7 @@ func (d *DraftDocument) Publish(m *app.Model, key string) bool {
 	var plain strings.Builder
 	var files []app.DraftAttachment
 	var skills []app.DraftSkill
-	for _, file := range m.Attachments[key] {
+	for _, file := range d.VisibleAttachments(m, key) {
 		if !file.Attachment.InlineReference() || !file.Ready || unplacedPathUpload(file) {
 			files = append(files, file)
 		}
@@ -179,6 +220,7 @@ func (d *DraftDocument) Publish(m *app.Model, key string) bool {
 	}
 	m.Drafts[key], m.Attachments[key], m.DraftSkills[key] = plain.String(), files, skills
 	d.last, d.version = readDraft(m, key), d.Doc.Version()
+	d.departed = ""
 	return true
 }
 

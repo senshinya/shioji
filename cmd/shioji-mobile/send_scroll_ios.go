@@ -17,18 +17,22 @@ var (
 	mobileSendHandoffAnimation = ui.Animation{Duration: mobileReplyFade, Ease: ui.EaseOut}
 )
 
+const mobileSentActionsFade = 120 * time.Millisecond
+
 // Only the composer that submitted the message may hold its space. A remote
 // client submitting to the same turn must not resize this client's composer.
 type mobileSendScroll struct {
 	operation, epoch       string
 	workspace              string
 	composerProgress, from float32
-	progress               float32
+	progress, elapsed      float32
 	started                bool
 	steer, queued          bool
+	keyboardComposer       bool
 	source, composerSource ui.Rect
 	composerBounds         ui.Rect
 	began                  time.Time
+	provisional            *domain.Item
 	receiptWithoutRow      time.Time
 }
 
@@ -40,16 +44,20 @@ func (s *mobileSendScroll) animation() ui.Animation {
 }
 
 func (s *mobileSendScroll) begin(operation, epoch string, source ui.Rect, steer, queued bool) {
-	if source.W > 0 && source.H > 0 {
-		source = ui.Rect{X: source.X - 13, Y: source.Y - 9, W: source.W + 26, H: source.H + 18}
-	} else if !queued {
-		source = s.composerBounds
-	}
 	*s = mobileSendScroll{
 		operation: operation, epoch: epoch,
 		composerProgress: s.composerProgress, from: s.composerProgress,
-		source: source, composerSource: s.composerBounds, composerBounds: s.composerBounds,
+		composerSource: s.composerBounds, composerBounds: s.composerBounds,
 		steer: steer, queued: queued, began: time.Now(),
+	}
+	s.setSource(source)
+}
+
+func (s *mobileSendScroll) setSource(source ui.Rect) {
+	if source.W > 0 && source.H > 0 {
+		s.source = ui.Rect{X: source.X - 13, Y: source.Y - 9, W: source.W + 26, H: source.H + 18}
+	} else if !s.queued {
+		s.source = s.composerBounds
 	}
 }
 
@@ -69,8 +77,21 @@ func (s *mobileSendScroll) reveal(c *ui.Context, frame ui.Element, list *ui.List
 
 	input := "input:" + s.operation
 	for i, row := range rows {
-		if row.Footer != "" || items[row.First].ID != input || items[row.First].Status != "sent" {
+		if row.Footer != "" {
 			continue
+		}
+		item := items[row.First]
+		if item.ID != input {
+			continue
+		}
+		if item.Status != "sent" {
+			if s.provisional == nil {
+				continue
+			}
+			if item.Status != "dispatching" && item.Status != "" {
+				s.operation = ""
+				return
+			}
 		}
 		if s.advance(frame) {
 			switch {
@@ -86,7 +107,8 @@ func (s *mobileSendScroll) reveal(c *ui.Context, frame ui.Element, list *ui.List
 			return
 		}
 		if s.steer && i > 0 && rows[i-1].Receipt.BeforeInput == input {
-			list.Reveals = append(list.Reveals, ui.ListReveal{First: offset + i - 1, End: offset + i, Progress: s.progress})
+			// The receipt fades as a full row while its reserved space grows.
+			list.Reveals = append(list.Reveals, ui.ListReveal{First: offset + i - 1, End: offset + i, Progress: s.progress, LayoutOnly: true})
 		}
 		// The bubble lifts from the composer while its row makes room for it.
 		// Keep the live footer fully visible throughout that height change.
@@ -127,12 +149,30 @@ func (s *mobileSendScroll) advance(frame ui.Element) bool {
 		frame.Jump(motionKey, 0)
 		s.started = true
 	}
-	s.progress = frame.AnimateTo(motionKey, 1, s.animation())
+	animation := s.animation()
+	s.elapsed = frame.AnimateTo(motionKey, 1, ui.Animation{Duration: animation.Duration, Ease: ui.Linear})
+	s.progress = animation.Ease(s.elapsed)
 	return starting
 }
 
 func (s *mobileSendScroll) flying(id string) bool {
 	return s != nil && s.operation != "" && s.started && s.progress < 1 && "input:"+s.operation == id && s.source.W > 0
+}
+
+func (s *mobileSendScroll) actionsOpacity(id string) float32 {
+	if s.flying(id) {
+		fade := float32(mobileSentActionsFade) / float32(s.animation().Duration)
+		return ui.EaseOut(max(0, (s.elapsed-(1-fade))/fade))
+	}
+	return 1
+}
+
+func (s *mobileSendScroll) replyFooterDelay(id string) time.Duration {
+	if !s.flying(id) {
+		return 0
+	}
+	remaining := time.Duration((1 - s.elapsed) * float32(s.animation().Duration))
+	return max(0, remaining-mobileReplyFade)
 }
 
 func (s *mobileSendScroll) bubble(c *ui.Context, bubble ui.Element, id string) {

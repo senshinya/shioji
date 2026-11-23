@@ -787,6 +787,7 @@ func (a *mobileApp) applyUpdates(controller *app.Controller) {
 				a.splitRoot().observeNavigationOrder(a.model.Snapshot)
 				a.splitRoot().updateArchivedBrowseScope(a.model.Snapshot)
 			}
+			a.selectAcceptedFirstSubmission()
 			if a.model.SessionID != oldID && a.model.SessionID != "" {
 				controller.Select(a.model.SessionID)
 				a.completeDraftSubmission(a.model.SessionID)
@@ -891,12 +892,23 @@ func (a *mobileApp) submit(steer bool, editor *mobileDraftEditor) {
 		case "turn.enqueue":
 			editor.queueMotion.arrival, editor.queueMotion.arrivalSource = in.OperationID, editor.inputBounds
 		case "turn.steer", "session.submit":
-			editor.sendScroll.begin(in.OperationID, m.ConnectionEpoch, editor.inputBounds, method == "turn.steer", false)
+			send := &editor.sendScroll
+			send.begin(in.OperationID, m.ConnectionEpoch, editor.inputBounds, method == "turn.steer", false)
+			send.keyboardComposer = editor.keyboardVisible || editor.trackingKeyboard
+			if in.SessionID != "" && !in.Continue {
+				editor.Depart(in.OperationID)
+			}
 			if in.SessionID == "" {
 				motion := editor.sendScroll
 				motion.workspace = in.WorkspaceID
 				a.newSessionSend = &mobileFirstSubmission{mobileSendScroll: motion, input: in, list: ui.ListState{FollowEnd: true}}
 				editor.sendScroll.operation = ""
+			} else if !in.Continue && (!send.steer || send.keyboardComposer) {
+				send.provisional = &domain.Item{
+					ID: "input:" + in.OperationID, TurnID: turn, Kind: "user", Status: "dispatching", Final: true,
+					Text: in.Text, Attachments: in.Attachments, Skills: in.Skills, ReferencePositions: in.ReferencePositions,
+					SentAt: new(send.began),
+				}
 			}
 		}
 	}
@@ -934,6 +946,9 @@ func (a *mobileApp) deliverInput(in domain.Submission, method string, input any,
 			m.SubmissionError(in, err)
 		} else {
 			m.Accepted(in, operation)
+			if m == a.model {
+				a.noteFirstSubmissionReceipt(operation)
+			}
 		}
 	}}
 	controller, writer := a.controller, a.stateWriter

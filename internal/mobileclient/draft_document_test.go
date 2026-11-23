@@ -53,6 +53,40 @@ func TestDraftDocumentKeepsReferencesAndUploadsAcrossNativeEdits(t *testing.T) {
 	}
 }
 
+func TestDepartedDraftStaysRecoverableAndAllowsIndependentEdits(t *testing.T) {
+	for _, edit := range []bool{false, true} {
+		m := app.NewModel()
+		const key = "session:session"
+		original := domain.Attachment{ID: "original", Name: "before.png"}
+		next := domain.Attachment{ID: "next", Name: "next.png"}
+		in := domain.Submission{OperationID: "send", SessionID: "session", Text: "outgoing", Attachments: []domain.Attachment{original}}
+		m.Drafts[key] = in.Text
+		m.Attachments[key] = []app.DraftAttachment{{Attachment: original}, {Attachment: next}}
+		m.Pending[in.OperationID] = in
+		var draft DraftDocument
+		draft.Sync(m, key, nil)
+		draft.Depart(in.OperationID)
+		draft.Sync(m, key, nil)
+		files := draft.VisibleAttachments(m, key)
+		if draft.Doc.Text().String() != "" || m.Drafts[key] != in.Text || len(files) != 1 || files[0].Attachment != next {
+			t.Fatalf("outgoing draft must leave the editor and remain recoverable: %q, %+v", draft.Doc.Text().String(), files)
+		}
+		want := in.Text
+		if edit {
+			want = "next draft"
+			draft.Doc.InsertText(want)
+			if !draft.Publish(m, key) || len(m.Attachments[key]) != 1 || m.Attachments[key][0].Attachment != next {
+				t.Fatal("publishing the next draft retained an outgoing attachment or lost the next attachment")
+			}
+		}
+		m.Reject(in, "not sent")
+		draft.Sync(m, key, nil)
+		if got := draft.Doc.Text().String(); got != want {
+			t.Fatalf("rejection changed the current draft: got %q, want %q", got, want)
+		}
+	}
+}
+
 func TestUnplacedPathUploadDoesNotRebuildAnEditingDraft(t *testing.T) {
 	m := app.NewModel()
 	const key = "home"

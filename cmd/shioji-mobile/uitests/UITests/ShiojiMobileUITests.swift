@@ -2839,6 +2839,7 @@ final class ShiojiMobileUITests: XCTestCase {
             let lookup = app.buttons["查询接纳结果"].firstMatch
             let draft = app.textFields["消息"].firstMatch
             let text = "发送后的新消息"
+            let bubble = app.staticTexts.matching(identifier: text)
             XCTAssertTrue(send.waitForExistence(timeout: 8), app.debugDescription)
             let submittedMessages = app.buttons.matching(identifier: "复制消息")
             let existingCount = submittedMessages.count
@@ -2846,16 +2847,21 @@ final class ShiojiMobileUITests: XCTestCase {
             send.tap()
             XCTAssertTrue(app.buttons["正在发送"].firstMatch.waitForExistence(timeout: 3))
             capture("Waiting for send receipt " + route, app: app)
-            XCTAssertTrue(pending.exists, "A delayed receipt needs visible status beside the draft")
+            XCTAssertTrue(pending.exists)
+            XCTAssertTrue(bubble.firstMatch.waitForExistence(timeout: 1), "Show the message in the transcript before the worker receipt")
+            XCTAssertEqual(bubble.count, 1)
+            XCTAssertLessThan(bubble.firstMatch.frame.maxY, pending.frame.minY)
+            XCTAssertLessThan(pending.frame.maxY, draft.frame.minY)
             XCTAssertFalse(lookup.exists)
-            XCTAssertEqual(draft.value as? String, text)
+            XCTAssertNotEqual(draft.value as? String, text, "The composer is ready for the next draft before the receipt")
             if uncertain {
                 XCTAssertTrue(lookup.waitForExistence(timeout: 9))
                 XCTAssertTrue(app.staticTexts["消息是否送达仍待确认"].exists)
                 XCTAssertEqual(draft.value as? String, text)
                 XCTAssertEqual(submittedMessages.count, existingCount, "The receipt preview must not become a submitted message")
             } else {
-                XCTAssertTrue(app.staticTexts[text].firstMatch.waitForExistence(timeout: 9))
+                XCTAssertTrue(pending.waitForNonExistence(timeout: 9))
+                XCTAssertEqual(bubble.count, 1)
                 XCTAssertFalse(lookup.exists)
                 XCTAssertNotEqual(draft.value as? String, text)
             }
@@ -2873,7 +2879,7 @@ final class ShiojiMobileUITests: XCTestCase {
         let sending = app.staticTexts["正在发送"].firstMatch
         XCTAssertTrue(sending.waitForExistence(timeout: 4))
         capture("New session waiting for its initial receipt", app: app)
-        let preparing = app.staticTexts["正在准备环境"].firstMatch
+        let preparing = app.staticTexts["正在准备会话"].firstMatch
         XCTAssertTrue(preparing.waitForExistence(timeout: 8))
         XCTAssertFalse(sending.exists)
         XCTAssertFalse(app.buttons["查询接纳结果"].exists)

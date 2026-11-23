@@ -41,7 +41,7 @@ final class SubmissionStatusUITests: XCTestCase {
         send.tap()
 
         let sending = app.staticTexts["正在发送"]
-        let preparing = app.staticTexts["正在准备环境"]
+        let preparing = app.staticTexts["正在准备会话"]
         let running = app.staticTexts["进行中"]
         let message = app.staticTexts["核对新会话的准备状态"].firstMatch
         XCTAssertTrue(sending.waitForExistence(timeout: 3))
@@ -51,7 +51,10 @@ final class SubmissionStatusUITests: XCTestCase {
         XCTAssertTrue(preparing.waitForExistence(timeout: 9))
         XCTAssertFalse(sending.exists)
         XCTAssertEqual(preparing.frame.minX, line.minX, accuracy: 1)
-        XCTAssertEqual(preparing.frame.midY, line.midY, accuracy: 1)
+        if !tablet {
+            XCTAssertEqual(preparing.frame.midY, line.midY, accuracy: 1)
+        }
+        XCTAssertTrue(app.textFields["消息"].firstMatch.exists, "Worker acceptance opens the conversation before the harness confirms delivery")
         XCTAssertTrue(running.waitForExistence(timeout: 10))
         XCTAssertFalse(preparing.exists)
         if !tablet {
@@ -59,6 +62,44 @@ final class SubmissionStatusUITests: XCTestCase {
             XCTAssertEqual(running.frame.midY, line.midY, accuracy: 2)
         }
         XCTAssertLessThan(message.frame.maxY, running.frame.minY)
+    }
+
+    func testSteeringWithKeyboardShowsMessageBeforeTheReceipt() {
+        let app = launch("motion-steer-delayed")
+        let composer = app.textFields["消息"].firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 8))
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.buttons["发送选项"].firstMatch.tap()
+        app.descendants(matching: .any)["介入当前轮"].firstMatch.tap()
+
+        let input = app.staticTexts.matching(identifier: "插入当前执行轮的消息")
+        XCTAssertTrue(app.staticTexts["正在发送"].firstMatch.waitForExistence(timeout: 2))
+        XCTAssertTrue(input.firstMatch.exists, "The bubble should take over as the composer clears, before the worker receipt")
+        XCTAssertNotEqual(composer.value as? String, "插入当前执行轮的消息")
+        XCTAssertTrue(app.staticTexts["进行中"].firstMatch.waitForExistence(timeout: 8))
+        XCTAssertEqual(input.count, 1, "The journal item should take over the local bubble")
+    }
+
+    func testSteeringWithKeyboardKeepsRunningToolDetailsOpen() {
+        let app = launch("motion-steer-tool")
+        let composer = app.textFields["消息"].firstMatch
+        let heading = app.staticTexts["核对介入前的命令"].firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 8))
+        XCTAssertTrue(heading.waitForExistence(timeout: 5))
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.buttons["发送选项"].firstMatch.tap()
+        app.descendants(matching: .any)["介入当前轮"].firstMatch.tap()
+
+        let input = app.staticTexts["插入当前执行轮的消息"].firstMatch
+        XCTAssertTrue(input.waitForExistence(timeout: 8))
+        XCTAssertTrue(heading.exists, "Inserting input must preserve the outgoing tool disclosure")
+        let copyOutput = app.buttons["复制工具输出"].firstMatch
+        XCTAssertTrue(copyOutput.waitForExistence(timeout: 5), "The preceding tool-only reply should have its own footer")
+        XCTAssertLessThan(heading.frame.midY, copyOutput.frame.midY)
+        XCTAssertLessThan(copyOutput.frame.midY, input.frame.minY)
+        XCTAssertLessThan(input.frame.maxY, composer.frame.minY)
     }
 
 }

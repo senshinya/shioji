@@ -52,7 +52,8 @@ func (t *ToolTimeline) Groups(items []domain.Item, rows []TranscriptRow, detail 
 	live := LatestTurnActivity(items, activeTurn)
 	lastContent := -1
 	for i := len(items) - 1; i >= 0; i-- {
-		if items[i].Kind != "tool" {
+		item := items[i]
+		if item.Kind != "tool" && (item.Kind != "user" || acceptedReplyInput(item)) {
 			lastContent = i
 			break
 		}
@@ -107,7 +108,9 @@ func (t *ToolTimeline) Groups(items []domain.Item, rows []TranscriptRow, detail 
 				state = app.ToolOpenedBeforeProse
 			}
 		}
-		if row.End <= lastContent {
+		// An input steered into the running turn is not a prose reply.
+		steered := row.End < len(items) && items[row.End].TurnID == first.TurnID && items[row.End].Kind == "user"
+		if row.End <= lastContent && !steered {
 			state = state.ObserveProse()
 		}
 		t.disclosures[group.Key] = state

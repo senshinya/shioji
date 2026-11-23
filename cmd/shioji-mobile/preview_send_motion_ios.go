@@ -23,12 +23,23 @@ func (a *mobileApp) seedConversationMotion(board, sid string) {
 		detail.Items = detail.Items[:len(detail.Items)-1]
 		detail.Turns = detail.Turns[:len(detail.Turns)-1]
 	}
+	if board == "motion-steer-tool" {
+		m.Preferences.CollapseLatestTools = false
+		turn := detail.Turns[len(detail.Turns)-1].ID
+		var order int64
+		for _, item := range detail.Items {
+			order = max(order, item.ActivityOrder)
+		}
+		detail.Items = append(detail.Items, domain.Item{ID: "steer-tool", Kind: "tool", TurnID: turn,
+			Presentation: "command", Name: "核对介入前的命令", Status: "running", ActivityOrder: order + 1})
+	}
 	m.Drafts["session:"+sid] = map[string]string{
 		"motion-send":           "发送后的新消息",
 		"motion-send-delayed":   "发送后的新消息",
 		"motion-send-uncertain": "发送后的新消息",
 		"motion-steer-delayed":  "插入当前执行轮的消息",
 		"motion-steer":          "插入当前执行轮的消息",
+		"motion-steer-tool":     "插入当前执行轮的消息",
 		"motion-queue":          "先排队再强制插入",
 		"motion-queue-auto":     "轮次结束后自动发送",
 	}[board]
@@ -72,7 +83,7 @@ func (a *mobileApp) previewAcceptMotion(in domain.Submission, method, turn strin
 	if board == "motion-home-preparing" || board == "motion-home-handoff" {
 		m := a.model
 		a.refresh()
-		time.AfterFunc(5*time.Second, func() {
+		time.AfterFunc(2*time.Second, func() {
 			mygo.RunOnMain(func() {
 				if a.model == m {
 					m.Accepted(in, domain.Operation{ID: in.OperationID, State: domain.OperationPreparing})
@@ -80,10 +91,28 @@ func (a *mobileApp) previewAcceptMotion(in domain.Submission, method, turn strin
 				}
 			})
 		})
+		time.AfterFunc(5*time.Second, func() {
+			mygo.RunOnMain(func() {
+				if a.model == m {
+					session := domain.Session{
+						ID: "motion-first-session", WorkspaceID: in.WorkspaceID, Title: "首条消息验收",
+						HarnessID: in.HarnessID, Config: in.Config, Status: domain.ExecutionStarting,
+					}
+					op := domain.Operation{ID: in.OperationID, SessionID: session.ID, State: domain.OperationAccepted}
+					m.Snapshot.Sessions = append(m.Snapshot.Sessions, session)
+					m.Details[session.ID] = domain.SessionDetail{Session: session, HistoryLoaded: true}
+					m.Accepted(in, op)
+					a.noteFirstSubmissionReceipt(op)
+					a.selectAcceptedFirstSubmission()
+					a.completeDraftSubmission(session.ID)
+					a.refresh()
+				}
+			})
+		})
 		if board == "motion-home-handoff" {
 			time.AfterFunc(9*time.Second, func() {
 				mygo.RunOnMain(func() {
-					if a.model == m && a.firstSubmissionVisible(a.draftPage) {
+					if _, pending := m.Pending[in.OperationID]; a.model == m && pending {
 						a.confirmPreviewFirstSubmission(in)
 					}
 				})
@@ -199,17 +228,10 @@ func (a *mobileApp) previewMotionJournal(in domain.Submission, turn string) {
 
 func (a *mobileApp) confirmPreviewFirstSubmission(in domain.Submission) {
 	m := a.model
-	session := domain.Session{
-		ID: "motion-first-session", WorkspaceID: in.WorkspaceID, Title: "核对新会话的准备状态",
-		ThreadID: "motion-first-thread", HarnessID: in.HarnessID, Config: in.Config,
-		Status: domain.ExecutionRunning,
-	}
-	m.Snapshot.Sessions = append(m.Snapshot.Sessions, session)
-	m.Details[session.ID] = domain.SessionDetail{Session: session, HistoryLoaded: true}
+	const sid = "motion-first-session"
 	delivery := in
-	delivery.SessionID = session.ID
+	delivery.SessionID = sid
 	a.previewMotionJournal(delivery, "")
-	m.Accepted(in, domain.Operation{ID: in.OperationID, SessionID: session.ID, State: domain.OperationConfirmed})
-	a.completeDraftSubmission(session.ID)
+	m.Accepted(in, domain.Operation{ID: in.OperationID, SessionID: sid, State: domain.OperationConfirmed})
 	a.refresh()
 }

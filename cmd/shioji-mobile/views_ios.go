@@ -196,7 +196,7 @@ func (a *mobileApp) conversation(c *ui.Context, parent *mygo.Window, split bool)
 			return (!rightVisible || !a.parallelFindHandle.FocusWithin(c)) && c.Shortcut(mods, key)
 		})
 		var draft *mobileDraftEditor
-		if initial.caption == "" && find == nil && !s.Archived && !a.workspace(s.WorkspaceID).Archived {
+		if (initial.caption == "" || s.ID != "") && find == nil && !s.Archived && !a.workspace(s.WorkspaceID).Archived {
 			draft = a.bindDraftEditor(c, a.draftTarget())
 		}
 		a.conversationBody(c, parent, s, detail, find, draft, false, initial)
@@ -390,8 +390,20 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 		submission.update(c, a, draft, items)
 	}
 	submissionCaption := initial.caption
-	if submission != nil {
+	if submission != nil && submission.caption != "" {
 		submissionCaption = submission.caption
+		pending := draft.sendScroll.provisional
+		if submissionCaption != "" && pending != nil && pending.ID == "input:"+submission.operation &&
+			!slices.ContainsFunc(items, func(item domain.Item) bool { return item.ID == pending.ID }) {
+			// The worker's item uses the same key and takes over this row.
+			first := len(items)
+			items = append(slices.Clip(items), *pending)
+			at := len(transcript)
+			if pending.TurnID != "" && at > 0 && transcript[at-1].Footer == pending.TurnID {
+				at--
+			}
+			transcript = slices.Insert(slices.Clip(transcript), at, mobileclient.TranscriptRow{First: first, End: first + 1})
+		}
 	}
 	if len(transcript) == 0 && !older && !newer && submissionCaption == "" {
 		frame.Children(func() {
@@ -455,7 +467,8 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 		workCaption = "正在压缩上下文"
 	}
 	var toolsShowProgress bool
-	if workLive && liveCompaction == "" && workTurn.ID != "" && submissionCaption == "" {
+	localSteer := submission != nil && submission.operation != "" && draft.sendScroll.steer && !draft.sendScroll.queued
+	if workLive && liveCompaction == "" && workTurn.ID != "" && (submissionCaption == "" || localSteer) {
 		for first, group := range groups {
 			if group.Live && items[first].TurnID == workTurn.ID {
 				toolsShowProgress = true
@@ -702,13 +715,29 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 				row := c.Key(state.Key(index + offset))
 				turn := turns[entry.Footer]
 				receipt := entry.Receipt
+				intermediate := receipt.BeforeInput != ""
+				hold := !intermediate && turn.Status == domain.ExecutionCompleted && tail.holdReceipt(row, turn.ID)
+				settled := index != progressRow && !hold && (intermediate || !turn.Status.Active() && turn.Status != domain.ExecutionInterrupted)
 				bottom := float32(transcriptItemGap / 2)
 				if previewTail {
 					bottom = transcriptItemGap
 				} else if receipt.BeforeInput != "" || index+1 < len(transcript) && transcript[index+1].Footer == "" && items[transcript[index+1].First].Kind == "user" {
 					bottom = transcriptTurnGap - transcriptItemGap/2
 				}
-				footer := mobileContent(row, contentMaxWidth).Padding(transcriptItemGap/2, pageInset, bottom)
+				body := row
+				if settled {
+					body = row.Key("settled-footer")
+				}
+				footer := mobileContent(body, contentMaxWidth).Padding(transcriptItemGap/2, pageInset, bottom)
+				if settled && canAnimate {
+					fade := mobileFeedbackFade(mobileReplyFade)
+					if delay := sendMotion.replyFooterDelay(receipt.BeforeInput); delay > 0 {
+						// Give the expanding row room to paint its full status line.
+						fade.Animation = &ui.Animation{Duration: fade.Duration, Delay: delay, Ease: fade.Ease}
+						fade.ExitDelay = -1
+					}
+					footer.Transition(fade)
+				}
 				if previewTail {
 					preview.fitTail(c, footer)
 				}
@@ -716,8 +745,6 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 					historyVisual.paint(footer, entry.Footer, historyPose)
 				}
 
-				intermediate := receipt.BeforeInput != ""
-				hold := !intermediate && turn.Status == domain.ExecutionCompleted && tail.holdReceipt(row, turn.ID)
 				if !intermediate && canReadReply && !hold {
 					a.observeReadCompletion(c, footer, state, session, turn, readVisit)
 				}
@@ -743,28 +770,11 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 						return
 					}
 					if intermediate {
-						body := row.Key("intermediate-summary")
-						summary := ui.Column(body).FillWidth()
-						if steer.insertion == receipt.BeforeInput {
-							summary.Transition(ui.ElementTransition{
-								Duration: mobileReplyFade, Ease: ui.EaseOut, Enter: &ui.Motion{Opacity: 0},
-							})
-						}
-						summary.Children(func() {
-							a.replyFooter(body, parent, sid, turn, receipt, false, "", previewTail, false)
-						})
+						a.replyFooter(body, parent, sid, turn, receipt, false, "", previewTail, false)
 						return
 					}
-					render := func(body *ui.Context) {
-						a.turnReceipt(body, parent, sid, turn, receipt, detail.Requests, items,
-							historyActions, hold, toolsShowProgress && turn.ID == workTurn.ID, previewTail, atEnd, workCaption)
-					}
-					if motionAllowed && !turn.Status.Active() && turn.Status != domain.ExecutionInterrupted {
-						settled := row.Key("settled-footer")
-						ui.Column(settled).Transition(mobileFeedbackFade(180 * time.Millisecond)).Children(func() { render(settled) })
-					} else {
-						render(row)
-					}
+					a.turnReceipt(body, parent, sid, turn, receipt, detail.Requests, items,
+						historyActions, hold, toolsShowProgress && turn.ID == workTurn.ID, previewTail, atEnd, workCaption)
 				})
 				return
 			}
@@ -819,7 +829,7 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 					return
 				}
 				if group, ok := groups[first]; ok {
-					a.toolGroup(row, parent, session, items[first:end], group, timeline, state, index+offset, workCaption, workStart, workLive && liveCompaction == "" && submissionCaption == "", target, reveal, decorate)
+					a.toolGroup(row, parent, session, items[first:end], group, timeline, state, index+offset, workCaption, workStart, toolsShowProgress, target, reveal, decorate)
 					return
 				}
 				var mark *markdown.RangeDecoration
@@ -881,7 +891,7 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 								}
 							}
 						}
-						userMessageFooter(row, message, item.SentAt, edit, canEdit && !restarting, previewTail, sendMotion.flying(item.ID))
+						userMessageFooter(row, message, item.SentAt, edit, canEdit && !restarting, previewTail, sendMotion.actionsOpacity(item.ID))
 						if restarting && historyPose.Shatter == 0 && c.Now().Sub(historyVisual.started) >= conversationui.HistoryShatterDuration {
 							mobileReplyProgress(row.Key("history-running"), "进行中", nil, nil, true)
 						}
@@ -956,7 +966,14 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 	targetRef := editor.target
 	key, sid := targetRef.key, targetRef.session
 	waitingForSession := !home && sid == ""
+	draftText := editor.VisibleText(m, key)
 	sending, _, uncertain := mobileclient.SubmissionPresentation(m, targetRef.workspace, sid)
+	firstInput, firstPending := m.Pending[a.promotedDraftOperation]
+	firstPending = firstPending && sid != "" && sid == a.promotedDraftSession
+	firstUncertain := firstPending && m.UncertainSubmissions[firstInput.OperationID]
+	if firstUncertain {
+		uncertain = append(uncertain, firstInput)
+	}
 	ready := editor.readiness()
 	runtimeBlocked := ready.State != domain.RuntimeReady
 	var config domain.RunConfig
@@ -980,7 +997,7 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 	manualCompaction := work != nil && work.State.Active()
 	attachmentsReady := a.preview || a.draftAttachmentsReady(targetRef)
 	canCompose := func() bool {
-		return !waitingForSession && connected && readyPhase && !session.ContextChanged && !a.draftSaveFailed() && attachmentsReady && !m.HasPendingInputForSession(sid) && queueEdit.ID == "" && !editor.pending() && !editor.attachmentMenuOpen && m.HasDraftContent(key)
+		return !waitingForSession && connected && readyPhase && !session.ContextChanged && !a.draftSaveFailed() && attachmentsReady && !firstPending && !m.HasPendingInputForSession(sid) && queueEdit.ID == "" && !editor.pending() && !editor.attachmentMenuOpen && m.HasDraftContent(key)
 	}
 	canSubmit := func() bool {
 		return canCompose() && ((!runtimeBlocked && !modelUnavailable) || mobileCompactCommand(m.Drafts[key]))
@@ -1088,7 +1105,7 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 		a.pathAttachmentPanel(c, parent, editor)
 		a.draftReferences(c, parent, editor)
 		editor.referencePanel(a, c, parent)
-		needsSpace := m.HasDraftContent(key) || queueEdit.ID != "" || modelUnavailable
+		needsSpace := editor.Doc.Text().Len() != 0 || len(editor.VisibleAttachments(m, key)) != 0 || queueEdit.ID != "" || modelUnavailable
 		expanded := needsSpace || editor.focused && (home || keyboard)
 		usingKeyboardMotion := editor.trackingKeyboard && motion.Morphing && motion.Peak > motion.Bottom
 		if !usingKeyboardMotion || needsSpace {
@@ -1109,7 +1126,7 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 		releasing := send.operation != "" && send.steer && !send.queued && send.started
 		surface, geometry := mobileComposerSurface(c, key, home, expanded, send, keyboardProgress, queueEdit.ID != "")
 		if !home {
-			growth := mobileComposerExtraHeight(c, surface, editor, m.Drafts[key], geometry.EditorHeight,
+			growth := mobileComposerExtraHeight(c, surface, editor, draftText, geometry.EditorHeight,
 				geometry.ControlsProgress, queueEdit.ID != "")
 			geometry.Height += growth
 			geometry.EditorHeight += growth
@@ -1188,7 +1205,7 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 						title = "执行右侧压缩命令"
 					}
 					sendButton(c, title, sendSymbol, home, !canSubmit(), func() { submit(false) })
-				case sending && connected:
+				case (sending || firstPending && !firstUncertain) && connected:
 					title := "正在发送"
 					if right {
 						title = "正在发送右侧消息"
@@ -1563,10 +1580,10 @@ func copyFooterAction(title, text string) footerAction {
 	return footerAction{title: title, icon: copySymbol, copy: text, click: func() { mygo.Clipboard.WriteText(text) }}
 }
 
-func userMessageFooter(c *ui.Context, text string, stamp *time.Time, edit func(), canEdit, previewTail, flying bool) {
+func userMessageFooter(c *ui.Context, text string, stamp *time.Time, edit func(), canEdit, previewTail bool, opacity float32) {
 	footer := messageFooter(c, true).Margin(transcriptItemGap, 0, 0).Padding(0, transcriptItemGap, 0, (mobileTapSize(c)-footerIconSize)/2).Justify(ui.End)
-	if flying {
-		footer.Opacity(0)
+	if opacity < 1 {
+		footer.Opacity(opacity)
 		ui.Inert(footer, true)
 	}
 	footer.Children(func() {

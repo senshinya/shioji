@@ -241,9 +241,23 @@ func (a *mobileApp) composerOperationError(c *ui.Context, parent *mygo.Window, e
 	m := a.model
 	history := &a.splitRoot().operationHistory
 	source := app.SessionLocation{DeviceID: a.endpoint.DeviceID, WorkspaceID: editor.target.workspace, SessionID: editor.target.session}
-	if failure, ok := history.SubmissionFailureFor(source); ok && !m.HasPendingInputForSession(source.SessionID) {
+	failure, found := history.SubmissionFailureFor(source)
+	failureSource := source
+	if !found && source.SessionID != "" && source.SessionID == a.promotedDraftSession {
+		home := source
+		home.SessionID = ""
+		if first, ok := history.SubmissionFailureFor(home); ok && first.ID == a.promotedDraftOperation {
+			failure, found, failureSource = first, true, home
+		}
+	}
+	if found && !m.HasPendingInputForSession(source.SessionID) {
 		a.submissionFailurePanel(c.Key(failure.ID), parent, editor, failure, func() {
-			history.AcknowledgeSubmissionFailures(source)
+			history.AcknowledgeSubmissionFailures(failureSource)
+			if failureSource != source {
+				a.presentDraft(parent, false)
+			} else {
+				editor.focusRequested = true
+			}
 		})
 	}
 	if !showGeneric || m.Error == "" || m.Error == domain.ModelUnavailableMessage || m.Error == m.ConnectionError {
@@ -255,7 +269,7 @@ func (a *mobileApp) composerOperationError(c *ui.Context, parent *mygo.Window, e
 	}
 }
 
-func (a *mobileApp) submissionFailurePanel(c *ui.Context, parent *mygo.Window, editor *mobileDraftEditor, failure app.Feedback, acknowledge func()) {
+func (a *mobileApp) submissionFailurePanel(c *ui.Context, parent *mygo.Window, editor *mobileDraftEditor, failure app.Feedback, returnToDraft func()) {
 	p := palette(c)
 	summary, _, _ := strings.Cut(failure.Details, "\n")
 	const summaryLimit = 100
@@ -273,8 +287,7 @@ func (a *mobileApp) submissionFailurePanel(c *ui.Context, parent *mygo.Window, e
 		ui.Row(c.Key("failure-actions")).Wrap().Gap(panelContentGap).Children(func() {
 			action(c.Key("return"), "返回草稿", func() {
 				if editor.current(a, parent) {
-					acknowledge()
-					editor.focusRequested = true
+					returnToDraft()
 					a.refresh()
 				}
 			}).PaddingX(4).KeepFocus()

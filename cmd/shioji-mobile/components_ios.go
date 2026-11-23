@@ -87,8 +87,8 @@ func mobileComposerSurface(c *ui.Context, key string, home, expanded bool, send 
 	}
 	channel := "composer-progress:" + key
 	var progress float32
-	if send != nil && send.operation != "" && !send.queued {
-		// The same progress reveals the message and releases its input space.
+	if send != nil && send.operation != "" && !send.queued && !send.keyboardComposer {
+		// Without a keyboard transition, flight also releases the input space.
 		progress = send.from + (target-send.from)*send.progress
 		surface.Jump(channel, progress)
 	} else if keyboardProgress != nil {

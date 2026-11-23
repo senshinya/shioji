@@ -52,6 +52,29 @@ func TestToolDisclosureWaitsForVisibleContentAndHonorsManualReopen(t *testing.T)
 	}
 }
 
+func TestSteeringDoesNotFoldThePreviousRunningToolGroup(t *testing.T) {
+	var timeline ToolTimeline
+	detail := domain.SessionDetail{Turns: []domain.Turn{{ID: "turn", Status: domain.ExecutionRunning}}, Items: []domain.Item{
+		{ID: "prompt", Kind: "user", TurnID: "turn", Status: "sent"},
+		{ID: "tool", Kind: "tool", TurnID: "turn", Status: "running"},
+	}}
+	group := func() ToolGroup {
+		return timeline.Groups(detail.Items, TranscriptRows(detail.Items, detail.Turns, true), detail, true, false)[1]
+	}
+	before := group()
+	if !before.Open || !before.Live {
+		t.Fatalf("fixture must show live tool details: %+v", before)
+	}
+	detail.Items = append(detail.Items, domain.Item{ID: "steer", Kind: "user", TurnID: "turn", Status: "dispatching"})
+	if waiting := group(); !waiting.Open || !waiting.Live || waiting.Key != before.Key {
+		t.Fatalf("a dispatching steer moved live progress out of its tool group: %+v", waiting)
+	}
+	detail.Items[2].Status = "sent"
+	if after := group(); !after.Open || after.Live || after.Key != before.Key {
+		t.Fatalf("steering closed the outgoing tool details or kept their live status: %+v", after)
+	}
+}
+
 func TestToolDisclosurePreservesHistoryGroupIdentityAcrossLoadedPages(t *testing.T) {
 	var timeline ToolTimeline
 	turn := domain.Turn{ID: "turn", Status: domain.ExecutionCompleted}
@@ -281,6 +304,30 @@ func TestAcceptedInsertedInputRetainsEarlierReplyFooter(t *testing.T) {
 	rows = TranscriptRows(items, []domain.Turn{turn}, true)
 	if got := rows[3].Receipt; got.CompletedAt != nil || got.DurationMS != nil {
 		t.Fatalf("unavailable insertion times must stay unknown: %+v", got)
+	}
+}
+
+func TestAcceptedInsertedInputRetainsToolOnlyReplyFooter(t *testing.T) {
+	turn := domain.Turn{ID: "turn", Status: domain.ExecutionRunning}
+	items := []domain.Item{
+		{ID: "prompt", Kind: "user", TurnID: turn.ID, Status: "sent"},
+		{ID: "command", Kind: "tool", TurnID: turn.ID, Text: "前一段工具输出"},
+		{ID: "inserted", Kind: "user", TurnID: turn.ID, Status: "dispatching"},
+	}
+	rows := TranscriptRows(items, []domain.Turn{turn}, true)
+	if len(rows) != 4 || rows[3].Receipt.BeforeInput != "" {
+		t.Fatalf("only the live footer should be present before acceptance: %+v", rows)
+	}
+	items[2].Status = "sent"
+	items = append(items, domain.Item{ID: "later", Kind: "tool", TurnID: turn.ID, Text: "后一段工具输出"})
+	rows = TranscriptRows(items, []domain.Turn{turn}, true)
+	if len(rows) != 6 || rows[2].Footer != turn.ID || rows[2].Receipt.BeforeInput != "inserted" ||
+		!slices.Equal(rows[2].Receipt.ToolOutput, []string{"前一段工具输出"}) || rows[3].First != 2 {
+		t.Fatalf("earlier tool output should have its own footer before the accepted input: %+v", rows)
+	}
+	live := rows[5].Receipt
+	if live.BeforeInput != "" || live.AfterInput != "inserted" || !slices.Equal(live.ToolOutput, []string{"后一段工具输出"}) {
+		t.Fatalf("following output must remain in the current reply: %+v", live)
 	}
 }
 

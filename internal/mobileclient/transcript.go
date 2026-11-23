@@ -214,6 +214,7 @@ func TranscriptRows(items []domain.Item, turns []domain.Turn, atLatest bool) []T
 				tail.reply = append(tail.reply, item.Text)
 			}
 		case item.Kind == "tool":
+			tail.replied = true
 			if output := strings.TrimRight(item.Text, "\r\n"); output != "" {
 				tail.output = append(tail.output, output)
 			} else {

@@ -6,6 +6,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"shioji/internal/app"
 	"shioji/internal/domain"
 )
 
@@ -16,6 +17,7 @@ type mobileFirstSubmission struct {
 	input     domain.Submission
 	list      ui.ListState
 	previewed bool
+	session   string
 }
 
 type firstSubmissionView struct {
@@ -33,10 +35,37 @@ func (a *mobileApp) firstSubmissionVisible(parent *mygo.Window) bool {
 	return sending || m.SessionID != "" && m.Resolved[first.operation]
 }
 
+func (a *mobileApp) noteFirstSubmissionReceipt(op domain.Operation) {
+	first := a.newSessionSend
+	if first == nil || first.epoch != a.model.ConnectionEpoch || op.ID != first.operation || op.SessionID == "" {
+		return
+	}
+	switch op.State {
+	case domain.OperationAccepted, domain.OperationDispatched, domain.OperationConfirmed:
+		first.session = op.SessionID
+	}
+}
+
+func (a *mobileApp) selectAcceptedFirstSubmission() {
+	if !a.firstSubmissionVisible(a.draftPage) || a.model.SessionID != "" {
+		return
+	}
+	first := a.newSessionSend
+	for _, op := range a.model.Snapshot.Operations {
+		if op.ID == first.operation {
+			a.noteFirstSubmissionReceipt(op)
+			break
+		}
+	}
+	if session := a.sessionByID(first.session); session.ID != "" && session.WorkspaceID == first.workspace {
+		a.model.SessionID = session.ID
+	}
+}
+
 func (a *mobileApp) initialSubmissionDetail(parent *mygo.Window, session domain.Session, detail *domain.SessionDetail) firstSubmissionView {
 	first := a.newSessionSend
 	key := ""
-	promoted := parent == a.chat && session.ID != "" && session.ID == a.promotedDraftSession
+	promoted := (parent == a.chat || parent == a.detail) && session.ID != "" && session.ID == a.promotedDraftSession
 	if !promoted && !a.firstSubmissionVisible(parent) {
 		return firstSubmissionView{}
 	}
@@ -45,7 +74,13 @@ func (a *mobileApp) initialSubmissionDetail(parent *mygo.Window, session domain.
 		if first == nil || first.operation != key {
 			return firstSubmissionView{key: key}
 		}
-		if slices.ContainsFunc(detail.Items, func(item domain.Item) bool { return item.ID == "input:"+key }) {
+		_, pending := a.model.Pending[key]
+		if a.model.UncertainSubmissions[key] || !pending && a.firstSubmissionFailed(first) {
+			a.newSessionSend = nil
+			return firstSubmissionView{key: key}
+		}
+		if slices.ContainsFunc(detail.Items, func(item domain.Item) bool { return item.ID == "input:"+key }) &&
+			(!pending || session.Status == domain.ExecutionRunning) {
 			a.history[session.ID] = &first.list
 			if first.progress >= 1 {
 				a.newSessionSend = nil
@@ -66,10 +101,23 @@ func (a *mobileApp) initialSubmissionDetail(parent *mygo.Window, session domain.
 		ReferencePositions: in.ReferencePositions, Attachments: in.Attachments, Skills: in.Skills,
 		SentAt: &first.began,
 	}}}
-	if a.model.SessionID != "" {
-		return firstSubmissionView{key: key, caption: "进行中", motion: &first.mobileSendScroll}
+	caption := "正在发送"
+	if first.session != "" {
+		caption = "正在准备会话"
 	}
-	return firstSubmissionView{key: key, caption: mobileWaitingCaption(a.model, first.operation), motion: &first.mobileSendScroll}
+	if a.model.Resolved[key] || session.Status == domain.ExecutionRunning {
+		caption = "进行中"
+	}
+	if !a.model.Connected {
+		caption = "等待重新连接"
+	}
+	return firstSubmissionView{key: key, caption: caption, motion: &first.mobileSendScroll}
+}
+
+func (a *mobileApp) firstSubmissionFailed(first *mobileFirstSubmission) bool {
+	return slices.ContainsFunc(a.operationFeedbackRecords(first.workspace, ""), func(feedback app.Feedback) bool {
+		return feedback.ID == first.operation && feedback.Kind == app.FeedbackSubmissionFailed
+	})
 }
 
 func (a *mobileApp) completeDraftSubmission(id string) {
@@ -78,10 +126,12 @@ func (a *mobileApp) completeDraftSubmission(id string) {
 		return
 	}
 	a.goalEntranceSession = a.model.WorkKey(id, "")
+	if a.firstSubmissionVisible(draft) {
+		a.promotedDraftSession, a.promotedDraftOperation = id, a.newSessionSend.operation
+	}
 	// On iPhone the draft is already a full-size conversation surface. Keep
 	// its transcript mounted as the provisional input receives a session ID.
 	if session := a.sessionByID(id); !isTablet() && a.chat == nil && session.ID != "" && a.firstSubmissionVisible(draft) {
-		a.promotedDraftSession, a.promotedDraftOperation = id, a.newSessionSend.operation
 		a.draftPage, a.draftReturnSession = nil, ""
 		a.selectConversation(id, transcriptJump{})
 		a.mountConversationPage(draft, "", "", nil)

@@ -46,7 +46,7 @@ func (s *mobileSubmissionProgress) update(c *ui.Context, a *mobileApp, draft *mo
 		}
 	}
 	if _, pending := m.Pending[id]; pending {
-		s.caption = mobileWaitingCaption(m, id)
+		s.caption = mobileWaitingCaption(m)
 		s.settled = time.Time{}
 		return
 	}
@@ -76,13 +76,9 @@ func (s *mobileSubmissionProgress) update(c *ui.Context, a *mobileApp, draft *mo
 	}
 }
 
-func mobileWaitingCaption(m *app.Model, operation string) string {
+func mobileWaitingCaption(m *app.Model) string {
 	if !m.Connected {
 		return "等待重新连接"
-	}
-	switch state := m.SubmissionReceiptState(operation); {
-	case state == domain.OperationPreparing, state == domain.OperationAccepted && m.Pending[operation].SessionID == "":
-		return "正在准备环境"
 	}
 	return "正在发送"
 }
@@ -96,26 +92,22 @@ func mobileTranscriptProgress(c *ui.Context, caption string, started *time.Time,
 		line := c.Key("line")
 		row := ui.Row(line).MinWidth(0).Shrink(1).Gap(6).AlignItems(ui.Baseline)
 		ink := p.secondary
-		var sweep *mobileToolSweep
+		phase := *ui.Local(row, "progress-sweep-start", c.Now)
+		sweep := newMobileToolSweep(line, row, phase)
 		if live {
 			ink = p.active
-			phase := *ui.Local(row, "progress-sweep-start", c.Now)
-			if started != nil {
-				phase = *started
-			}
-			sweep = newMobileToolSweep(line, row, phase)
 		} else if caption == waitingForRequest {
 			ink = p.warning
+		}
+		if !c.Preferences().ReduceMotion {
+			ink = row.AnimateColor("progress-color", ink, ui.Animation{Duration: 180 * time.Millisecond, Ease: ui.EaseOut})
 		}
 		row.Children(func() {
 			transcriptGlyph(line.Key("status-dot"), caption, font, transcriptGlyphSlot, 6, func(p *ui.Painter, bounds ui.Rect) {
 				p.Fill(bounds, mobileBreathingInk(p, sweep.color(p, bounds, ink), live && !c.Preferences().ReduceMotion), 3)
 			})
-			glyphs := ui.Shape(caption, font)
-			width, _ := ui.ShapeText(caption, font, 0).Size()
-			mobileInlineText(line.Key("status"), caption, font, width, func(painter *ui.Painter, r ui.Rect, baseline float32) {
-				sweep.text(painter, glyphs, r.X, baseline, p.secondary)
-			}).MinWidth(0).Shrink(1).ClipX()
+			transition := ui.Animation{Duration: mobileReplyFade, Ease: ui.EaseOut}
+			sweep.caption(line.Key("status"), caption, ui.ContentTransition{Animation: &transition})
 			if started != nil && !started.IsZero() {
 				mobileClock(line.Key("elapsed"), *started, nil, font, sweep)
 			}

@@ -92,7 +92,7 @@ func (a *mobileApp) draftReferences(c *ui.Context, parent *mygo.Window, editor *
 		}
 		return !entry.Attachment.InlineReference() || !entry.Ready || !draftAttachmentOwner(entry, target)
 	}
-	entries := slices.DeleteFunc(slices.Clone(m.Attachments[target.key]), func(entry app.DraftAttachment) bool { return !visible(entry) })
+	entries := slices.DeleteFunc(slices.Clone(editor.VisibleAttachments(m, target.key)), func(entry app.DraftAttachment) bool { return !visible(entry) })
 	frame := ui.Column(c.Key("draft-attachment-presence")).FillWidth().Clip().Shrink(0)
 	retained := ui.Local(frame, "attachments", func() []app.DraftAttachment { return nil })
 	present := len(entries) > 0
