@@ -5,6 +5,28 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-23
+
+[源码](https://github.com/senshinya/shioji/tree/v0.8.0) · [与 v0.7.13 比较](https://github.com/senshinya/shioji/compare/v0.7.13...v0.8.0)
+
+### Added
+
+- 设备可以选用 Antigravity CLI（`agy`）。Shioji 在执行设备上探测已安装的 CLI，并在设备设置中提供账号授权、模型、权限、MCP 和 Hook 配置。
+- Antigravity 会话支持停止、立即发送（Steer）、分叉、上下文压缩、文件和 Skill 引用、审批和提问。Goal 由执行服务管理，支持查看、暂停、恢复和清除目标。
+- 显示 Antigravity 提供的用量限制信息，并支持在执行设备上安排 Antigravity 定时任务。
+
+### Changed
+
+- 可以在会话运行期间确认已在外部切换到的当前 Git 分支。实际检出其他分支仍须等待共享目录空闲。
+- 首次发送时显示会话准备和 worktree 创建进度。
+
+### Fixed
+
+- 修复创建会话时的 Git 检出问题，并改由 Shioji Runtime 接管 SSH 设备升级后的执行服务。
+- 统一 macOS 侧栏的左右间距。
+
+本版为 macOS Beta。使用 Antigravity 需要在所属设备安装并授权 `agy`，并将执行服务更新至本版。执行服务使用协议 2.60，数据库沿用 schema 17。
+
 ## [0.7.13] - 2026-11-23
 
 [源码](https://github.com/senshinya/shioji/tree/v0.7.13) · [与 v0.7.12 比较](https://github.com/senshinya/shioji/compare/v0.7.12...v0.7.13)
