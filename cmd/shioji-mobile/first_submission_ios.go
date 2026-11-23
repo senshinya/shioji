@@ -101,7 +101,7 @@ func (a *mobileApp) initialSubmissionDetail(parent *mygo.Window, session domain.
 		ReferencePositions: in.ReferencePositions, Attachments: in.Attachments, Skills: in.Skills,
 		SentAt: &first.began,
 	}}}
-	caption := "正在发送"
+	caption := a.model.FirstSubmissionProgressLabel(key)
 	if first.session != "" {
 		caption = "正在准备会话"
 	}

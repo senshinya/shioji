@@ -10,7 +10,8 @@ import (
 func receivedSubmission(q interface{ QueryRow(string, ...any) *sql.Row }, id string) (domain.Operation, error) {
 	op := domain.Operation{ID: id, Kind: ordinarySubmissionKind, State: domain.OperationPreparing}
 	var pending bool
-	err := q.QueryRow("SELECT digest,input IS NOT NULL,error FROM received_submissions WHERE id=?", id).Scan(&op.Digest, &pending, &op.Error)
+	err := q.QueryRow(`SELECT digest,input IS NOT NULL,error,COALESCE(json_extract(input,'$.preparation'),'')
+		FROM received_submissions WHERE id=?`, id).Scan(&op.Digest, &pending, &op.Error, &op.Preparation)
 	if err != nil {
 		return domain.Operation{}, err
 	}
@@ -24,6 +25,32 @@ func receivedSubmission(q interface{ QueryRow(string, ...any) *sql.Row }, id str
 		}
 	}
 	return op, nil
+}
+
+// Keep the phase with the pending receipt so the event and a reconnect lookup
+// report the same preparation. Accepting or rejecting the input clears it.
+func (s *Store) MarkSubmissionPreparation(id string, phase domain.SubmissionPreparation) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	op := domain.Operation{Kind: ordinarySubmissionKind, State: domain.OperationPreparing, Preparation: phase}
+	err = tx.QueryRow(`UPDATE received_submissions SET input=json_set(input,'$.preparation',?)
+		WHERE id=? AND input IS NOT NULL AND json_extract(input,'$.preparation') IS NULL RETURNING id`,
+		phase, id).Scan(&op.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // Older clients and scheduled sends do not reserve a home receipt.
+	}
+	if err != nil {
+		return err
+	}
+	if _, err = journal(tx, domain.Event{Type: "operation", Operation: &op}); err != nil {
+		return err
+	}
+	return s.commit(tx)
 }
 
 func (s *Store) ReceiveHomeSubmission(in domain.Submission) (domain.Operation, bool, error) {

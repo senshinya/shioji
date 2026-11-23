@@ -12,6 +12,81 @@ import (
 	"shioji/internal/protocol"
 )
 
+func TestHomePreparationReceiptAdvancesEvenWhenTheJournalEventIsUnavailable(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	in := domain.Submission{OperationID: "preparing-home", WorkspaceID: "w", Text: "draft"}
+	var submissions atomic.Int32
+	c := NewController("")
+	c.Dial = func(context.Context) (net.Conn, error) {
+		client, worker := net.Pipe()
+		go func() {
+			defer worker.Close()
+			stop := context.AfterFunc(ctx, func() { worker.Close() })
+			defer stop()
+			codec, _, err := protocol.WelcomeWorker(worker, "device", "generation", domain.WorkerBuild{})
+			if err != nil {
+				return
+			}
+			for {
+				var request protocol.Frame
+				if codec.Read(&request) != nil {
+					return
+				}
+				switch request.Method {
+				case "snapshot":
+					result(codec, request, domain.Snapshot{DeviceID: "device", Generation: "generation"})
+				case "readiness":
+					result(codec, request, domain.Readiness{State: "ready"})
+				case "session.submit":
+					submissions.Add(1)
+					result(codec, request, domain.Operation{ID: in.OperationID, State: domain.OperationPreparing})
+				case "operation":
+					result(codec, request, domain.Operation{ID: in.OperationID, State: domain.OperationPreparing, Preparation: domain.SubmissionCreatingWorktree})
+				case "events.watch":
+					<-ctx.Done()
+					return
+				}
+			}
+		}()
+		return client, nil
+	}
+	go c.Run(ctx)
+	m := NewModel()
+	waitFor := func(ready func() bool) {
+		t.Helper()
+		deadline := time.NewTimer(8 * time.Second)
+		defer deadline.Stop()
+		for !ready() {
+			select {
+			case update := <-c.Updates:
+				update(m)
+			case <-deadline.C:
+				t.Fatal("did not receive the expected preparation receipt")
+			}
+		}
+	}
+	waitFor(func() bool {
+		return m.Connected && m.ConnectionEpoch != "" && m.Readiness.State == "ready"
+	})
+	m.Pending[in.OperationID] = in
+	m.Drafts["home"] = in.Text
+	if !c.Do(Job{Method: "session.submit", ConnectionEpoch: m.ConnectionEpoch, Input: in, Apply: func(m *Model, out json.RawMessage, err error) {
+		var op domain.Operation
+		if err != nil || json.Unmarshal(out, &op) != nil {
+			t.Errorf("initial home receipt: %s, %v", out, err)
+			return
+		}
+		m.Accepted(in, op)
+	}}) {
+		t.Fatal("unable to send home submission")
+	}
+	waitFor(func() bool { return m.FirstSubmissionProgressLabel(in.OperationID) == "正在创建 worktree" })
+	if submissions.Load() != 1 || m.SessionID != "" || m.Drafts["home"] != in.Text {
+		t.Fatal("preparation lookup replayed the submission, fabricated a session or consumed the draft")
+	}
+}
+
 func TestLostSubmitKeepsConnectionAndQueriesUntilOriginalReceiptArrives(t *testing.T) {
 	for _, receiptAtFirstCheck := range []bool{false, true} {
 		name := "missing first"

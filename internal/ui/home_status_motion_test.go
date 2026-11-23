@@ -13,6 +13,63 @@ import (
 	"shioji/internal/domain"
 )
 
+func TestHomeStatusShowsGitPreparationInTheSameRow(t *testing.T) {
+	for _, stage := range []struct{ phase, caption string }{
+		{"createWorktree", "正在创建 worktree"},
+		{"switchBranch", "正在切换分支"},
+	} {
+		t.Run(stage.phase, func(t *testing.T) {
+			v, ui := readySendFixture(t, true)
+			ui.SetDark(stage.phase == "switchBranch")
+			if stage.phase == "switchBranch" {
+				ui.SetSize(900, 740)
+				ui.SetPreferences(n.Preferences{ReduceMotion: true})
+			}
+			job := sendFromFixture(t, v, ui)
+			ui.Advance(time.Second)
+			before, ok := ui.Find("正在发送")
+			if !ok {
+				t.Fatal("initial status is missing")
+			}
+			in := job.Input.(domain.Submission)
+			initial := domain.Operation{ID: in.OperationID, State: domain.OperationPreparing}
+			v.Model.ApplyOperation(initial)
+			ui.Frame()
+			ui.Advance(500 * time.Millisecond)
+			if !ui.HasText("正在准备环境") {
+				t.Error("the initial worker receipt did not show environment preparation")
+			}
+			progress := initial
+			progress.Preparation = domain.SubmissionPreparation(stage.phase)
+			if err := v.Model.ApplyEvent(domain.Event{Type: "operation", Sequence: v.Model.Sequence + 1, Operation: &progress}); err != nil {
+				t.Fatal(err)
+			}
+			// A delayed initial receipt must not erase a more specific journal event.
+			ack, _ := json.Marshal(initial)
+			job.Apply(v.Model, ack, nil)
+			ui.Frame()
+			ui.Advance(500 * time.Millisecond)
+			after, ok := ui.Find(stage.caption)
+			if !ok || after.X != before.X || after.Y != before.Y || ui.HasText("正在准备环境") || ui.HasText("正在发送") {
+				t.Fatalf("%q did not replace the original status in place: before=%+v after=%+v texts=%v", stage.caption, before, after, ui.Texts())
+			}
+			saveNativeSkillImage(t, ui, stage.phase+"-after.png")
+			if v.Model.SessionID != "" || v.Model.Drafts["home"] != in.Text {
+				t.Fatal("preparation must keep the unsent draft")
+			}
+			session := domain.Session{ID: "created", WorkspaceID: in.WorkspaceID, Status: domain.ExecutionStarting}
+			v.Model.Snapshot.Sessions = append(v.Model.Snapshot.Sessions, session)
+			accepted, _ := json.Marshal(domain.Operation{ID: in.OperationID, SessionID: session.ID, State: domain.OperationAccepted})
+			job.Apply(v.Model, accepted, nil)
+			ui.Frame()
+			ui.Advance(500 * time.Millisecond)
+			if !ui.HasText("正在准备会话") || ui.HasText(stage.caption) {
+				t.Fatal("Git phase did not give the same row back to session preparation", ui.Texts())
+			}
+		})
+	}
+}
+
 // Losing the native content identity at receipt/hydration must not fade an
 // already visible status row out and restart its entrance from zero opacity.
 func TestHomeStatusHandoffKeepsPaintedStatus(t *testing.T) {

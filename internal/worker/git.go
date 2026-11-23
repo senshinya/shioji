@@ -36,7 +36,13 @@ func (b *cappedOutput) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 func gitRun(ctx context.Context, dir string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	timeout := 10 * time.Second
+	worktreeCheckout := len(args) >= 2 && args[0] == "worktree" && args[1] == "add"
+	if worktreeCheckout {
+		// A worktree checkout writes the entire tree, unlike Git metadata reads.
+		timeout = 2 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	argv := append([]string{"--no-optional-locks", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-C", dir}, args...)
 	cmd := exec.CommandContext(ctx, "git", argv...)
@@ -70,8 +76,11 @@ func gitRun(ctx context.Context, dir string, args ...string) (string, error) {
 		// Output-limit and inherited-pipe failures abandon this same invocation
 		// too. Never leave its filter running merely because the leader exited.
 		_ = stop()
-		if ctx.Err() != nil {
-			return "", ctx.Err()
+		if cause := ctx.Err(); cause != nil {
+			if worktreeCheckout && errors.Is(cause, context.DeadlineExceeded) {
+				return "", fmt.Errorf("Git 工作树检出超时：%w", cause)
+			}
+			return "", cause
 		}
 		if errors.Is(err, exec.ErrWaitDelay) {
 			return "", &protocol.RemoteError{Code: "gitOutputIncomplete", Message: "Git 未返回完整结果"}
@@ -611,7 +620,21 @@ func (s *Server) prepareGitLocked(in domain.Submission, launch domain.LaunchCont
 		if status.Dirty {
 			return launch, dirtyBranchSwitchError(status, branch)
 		}
+		// Reject a known conflict before journaling a possible checkout mutation.
+		// Git itself still guards the switch against concurrent external changes.
+		ref := "refs/heads/" + branch
+		occupancy, err := s.gitRunOutsideDispatch(s.ctx, status.Checkout, "for-each-ref", "--count=1", "--format=%(refname)%00%(worktreepath)", ref)
+		if err != nil {
+			return launch, err
+		}
+		name, path, _ := strings.Cut(strings.TrimSuffix(occupancy, "\n"), "\x00")
+		if name == ref && path != "" && path != status.Checkout {
+			return launch, fmt.Errorf("分支“%s”已在工作树“%s”中检出。勾选“新建 worktree”可基于该分支开始会话，也可以选择其他分支。", branch, path)
+		}
 		if err = valid(); err != nil {
+			return launch, err
+		}
+		if err = s.store.MarkSubmissionPreparation(in.OperationID, domain.SubmissionSwitchingBranch); err != nil {
 			return launch, err
 		}
 		if err = s.store.RecordSubmissionGit(in.OperationID, status.Checkout, status.Branch, branch); err != nil {

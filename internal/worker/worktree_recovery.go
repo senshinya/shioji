@@ -153,6 +153,9 @@ func (s *Server) prepareOwnedWorktree(in domain.Submission, status domain.GitSta
 	if err = s.store.SaveOwnedWorktree(*owned); err != nil {
 		return err
 	}
+	if err = s.store.MarkSubmissionPreparation(in.OperationID, domain.SubmissionCreatingWorktree); err != nil {
+		return err
+	}
 	err = s.addOwnedWorktree(*owned, true, valid)
 	if err != nil && worktreeBranchConflict(err) {
 		// A concurrent Git user won that name. Allocate once more; never adopt

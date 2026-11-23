@@ -122,13 +122,14 @@ type QueueItem struct {
 	Input Submission     `json:"input"`
 }
 type Operation struct {
-	Deleted   bool           `json:"deleted,omitempty"`
-	Kind      string         `json:"kind,omitempty"`
-	ID        string         `json:"id"`
-	SessionID string         `json:"sessionId"`
-	State     OperationState `json:"state"`
-	Digest    string         `json:"-"`
-	Error     string         `json:"error,omitempty"`
+	Deleted     bool                  `json:"deleted,omitempty"`
+	Kind        string                `json:"kind,omitempty"`
+	ID          string                `json:"id"`
+	SessionID   string                `json:"sessionId"`
+	State       OperationState        `json:"state"`
+	Preparation SubmissionPreparation `json:"preparation,omitempty"`
+	Digest      string                `json:"-"`
+	Error       string                `json:"error,omitempty"`
 }
 type Item struct {
 	Questions          []Question          `json:"questions,omitempty"`

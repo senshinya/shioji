@@ -2879,9 +2879,16 @@ final class ShiojiMobileUITests: XCTestCase {
         let sending = app.staticTexts["正在发送"].firstMatch
         XCTAssertTrue(sending.waitForExistence(timeout: 4))
         capture("New session waiting for its initial receipt", app: app)
+        let worktree = app.staticTexts["正在创建 worktree"].firstMatch
+        XCTAssertTrue(worktree.waitForExistence(timeout: 5))
+        XCTAssertFalse(sending.exists)
+        let composer = app.textFields["消息"].firstMatch
+        XCTAssertTrue(composer.exists)
+        XCTAssertLessThan(worktree.frame.maxY, composer.frame.minY)
         let preparing = app.staticTexts["正在准备会话"].firstMatch
         XCTAssertTrue(preparing.waitForExistence(timeout: 8))
         XCTAssertFalse(sending.exists)
+        XCTAssertFalse(worktree.exists)
         XCTAssertFalse(app.buttons["查询接纳结果"].exists)
         capture("Worker preparing the new session environment", app: app)
     }

@@ -34,7 +34,7 @@ type Model struct {
 	ArchivePolicyChanges       map[string]ArchivePolicyChange
 	Feedbacks                  []Feedback
 	UncertainSubmissions       map[string]bool
-	submissionReceipts         map[string]domain.OperationState
+	submissionReceipts         map[string]domain.Operation
 	PortForwards               []portforward.Mapping
 	HistoryReads               map[string]*HistoryRead
 	HistoryOutlines            map[string]domain.HistoryOutline
@@ -912,20 +912,36 @@ func (m *Model) Load(path string) error {
 const submissionUncertainMessage = "提交结果待核实，草稿已保留"
 
 func (m *Model) SubmissionReceiptState(id string) domain.OperationState {
-	return m.submissionReceipts[id]
+	return m.submissionReceipts[id].State
+}
+
+func (m *Model) FirstSubmissionProgressLabel(id string) string {
+	op := m.submissionReceipts[id]
+	switch op.State {
+	case domain.OperationPreparing:
+		switch op.Preparation {
+		case domain.SubmissionCreatingWorktree:
+			return "正在创建 worktree"
+		case domain.SubmissionSwitchingBranch:
+			return "正在切换分支"
+		default:
+			return "正在准备环境"
+		}
+	case domain.OperationAccepted, domain.OperationDispatched, domain.OperationConfirmed:
+		return "正在准备会话"
+	default:
+		return "正在发送"
+	}
 }
 
 func (m *Model) noteSubmissionAccepted(op domain.Operation) {
 	id := op.ID
 	delete(m.pendingGenerations, id)
 	if m.submissionReceipts == nil {
-		m.submissionReceipts = map[string]domain.OperationState{}
+		m.submissionReceipts = map[string]domain.Operation{}
 	}
-	// Command receipts and journal events can arrive in either order.
-	previous := m.submissionReceipts[id]
-	if !previous.ReceiptObserved() && (op.State.ReceiptObserved() ||
-		previous != domain.OperationDispatched && (previous == "" || op.State != domain.OperationPreparing)) {
-		m.submissionReceipts[id] = op.State
+	if op.AdvancesReceipt(m.submissionReceipts[id]) {
+		m.submissionReceipts[id] = op
 	}
 	if m.UncertainSubmissions[id] {
 		delete(m.UncertainSubmissions, id)

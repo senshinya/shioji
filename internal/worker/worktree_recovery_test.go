@@ -94,6 +94,39 @@ exec /usr/bin/git "$@"
 	}
 }
 
+func TestWorktreeCreationCanOutlastGitQueryDeadline(t *testing.T) {
+	s, w := memoryWorker(t, memoryHarness{id: "alpha"})
+	dir := w.Folders[0]
+	gitTestRun(t, dir, "init", "-b", "main")
+	gitTestRun(t, dir, "config", "user.name", "Test")
+	gitTestRun(t, dir, "config", "user.email", "test@example.invalid")
+	for name, content := range map[string]string{".gitattributes": "file.txt filter=slow\n", "file.txt": "original\n"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitTestRun(t, dir, "add", ".")
+	gitTestRun(t, dir, "commit", "-m", "initial")
+	gitTestRun(t, dir, "config", "filter.slow.clean", "cat")
+	gitTestRun(t, dir, "config", "filter.slow.smudge", "/bin/sleep 11 && cat")
+	gitTestRun(t, dir, "config", "filter.slow.required", "true")
+
+	in := domain.Submission{OperationID: "slow-worktree", WorkspaceID: w.ID, Text: "new worktree",
+		Git: domain.GitChoice{NewWorktree: true}, Config: domain.RunConfig{Model: "alpha-model", Permission: "limited"}}
+	op, err := s.submit(in)
+	if err != nil {
+		t.Fatalf("a slow Git checkout should finish before the input is accepted: %v", err)
+	}
+	session, err := s.store.SessionRecord(op.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(session.Context.CWD, "file.txt"))
+	if session.Context.CWD == dir || err != nil || string(data) != "original\n" {
+		t.Fatalf("expected a complete independent checkout at %q, contents=%q, err=%v", session.Context.CWD, data, err)
+	}
+}
+
 func TestWorktreeCreationPreservesForeignDirectory(t *testing.T) {
 	for _, kind := range []string{"directory", "symlink", "registered"} {
 		t.Run(kind, func(t *testing.T) {

@@ -91,6 +91,16 @@ func (a *mobileApp) previewAcceptMotion(in domain.Submission, method, turn strin
 				}
 			})
 		})
+		if board == "motion-home-preparing" {
+			time.AfterFunc(3*time.Second, func() {
+				mygo.RunOnMain(func() {
+					if a.model == m {
+						m.ApplyOperation(domain.Operation{ID: in.OperationID, State: domain.OperationPreparing, Preparation: domain.SubmissionCreatingWorktree})
+						a.refresh()
+					}
+				})
+			})
+		}
 		time.AfterFunc(5*time.Second, func() {
 			mygo.RunOnMain(func() {
 				if a.model == m {

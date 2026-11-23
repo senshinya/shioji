@@ -28,6 +28,13 @@ func (s ExecutionState) NeedsRecovery() bool  { return s == ExecutionUnknown || 
 
 type OperationState string
 
+type SubmissionPreparation string
+
+const (
+	SubmissionCreatingWorktree SubmissionPreparation = "createWorktree"
+	SubmissionSwitchingBranch  SubmissionPreparation = "switchBranch"
+)
+
 const (
 	OperationPreparing     OperationState = "preparing"
 	OperationAccepted      OperationState = "accepted"
@@ -50,6 +57,28 @@ func (s OperationState) ReceiptObserved() bool {
 		return true
 	}
 	return false
+}
+
+// AdvancesReceipt handles a command reply, a lookup and journal events
+// arriving in different orders for the same input.
+func (op Operation) AdvancesReceipt(previous Operation) bool {
+	if previous.State.ReceiptObserved() {
+		return false
+	}
+	if op.State.ReceiptObserved() {
+		return true
+	}
+	switch op.State {
+	case OperationPreparing:
+		return previous.State == "" ||
+			previous.State == OperationPreparing && previous.Preparation == "" && op.Preparation != ""
+	case OperationAccepted:
+		return previous.State == "" || previous.State == OperationPreparing
+	case OperationDispatched:
+		return previous.State != OperationDispatched
+	default:
+		return false
+	}
 }
 
 type RequestState string

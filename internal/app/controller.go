@@ -434,7 +434,7 @@ func (c *Controller) Run(ctx context.Context) {
 	activeLanes := map[string]bool{}
 	var laneJobs []Job
 	var receiptCursor string
-	unconfirmed := map[string]domain.OperationState{}
+	unconfirmed := map[string]domain.Operation{}
 	receiptGenerations := map[string]string{}
 	pendingReceiptErrors := map[string]Update{}
 	postReceiptError := func(id string) {
@@ -444,7 +444,7 @@ func (c *Controller) Run(ctx context.Context) {
 		}
 	}
 	for _, lookup := range c.RestoreOperations {
-		unconfirmed[lookup.ID] = ""
+		unconfirmed[lookup.ID] = domain.Operation{}
 		receiptGenerations[lookup.ID] = lookup.SealGeneration
 	}
 	defer func() {
@@ -1000,8 +1000,8 @@ func (c *Controller) Run(ctx context.Context) {
 				if op.State.ReceiptObserved() {
 					delete(unconfirmed, op.ID)
 					delete(receiptGenerations, op.ID)
-				} else if _, ok := unconfirmed[op.ID]; ok {
-					unconfirmed[op.ID] = op.State
+				} else if last, ok := unconfirmed[op.ID]; ok && op.AdvancesReceipt(last) {
+					unconfirmed[op.ID] = *op
 				}
 			}
 		}
@@ -1227,7 +1227,7 @@ func (c *Controller) Run(ctx context.Context) {
 				opID = in.OperationID
 			}
 			if opID != "" {
-				unconfirmed[opID] = ""
+				unconfirmed[opID] = domain.Operation{}
 				if job.Method == "session.submit" || job.Method == "turn.steer" || job.Method == "turn.enqueue" {
 					receiptGenerations[opID] = reply.generation
 				}
@@ -1243,6 +1243,15 @@ func (c *Controller) Run(ctx context.Context) {
 				if deferFeedback {
 					return
 				}
+			}
+		}
+		if err == nil && job.Method == "session.submit" {
+			var op domain.Operation
+			if in, ok := job.Input.(domain.Submission); ok && in.SessionID == "" &&
+				json.Unmarshal(out, &op) == nil && op.ID == in.OperationID && op.State == domain.OperationPreparing &&
+				op.AdvancesReceipt(unconfirmed[op.ID]) {
+				// A reconnect can skip the journal event emitted during preparation.
+				unconfirmed[op.ID] = op
 			}
 		}
 		if job.Apply != nil {
@@ -1671,14 +1680,14 @@ func (c *Controller) Run(ctx context.Context) {
 			}
 			for _, op := range observed.receipts {
 				last, pending := unconfirmed[op.ID]
-				if !pending || last == op.State || last == domain.OperationDispatched && op.State == domain.OperationAccepted {
+				if !pending || !op.AdvancesReceipt(last) {
 					continue
 				}
 				if op.State.ReceiptObserved() {
 					delete(unconfirmed, op.ID)
 					delete(receiptGenerations, op.ID)
 				} else {
-					unconfirmed[op.ID] = op.State
+					unconfirmed[op.ID] = op
 				}
 				c.post(func(m *Model) { m.ApplyOperation(op) })
 			}

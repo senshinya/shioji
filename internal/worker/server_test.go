@@ -332,6 +332,8 @@ func TestGitSubmissionProtectsCheckoutAndCreatesIndependentWorktree(t *testing.T
 	git("add", ".")
 	git("commit", "-m", "initial")
 	git("branch", "other")
+	occupied := filepath.Join(canonicalTestPath(t, t.TempDir()), "existing worktree")
+	git("worktree", "add", occupied, "other")
 	var ready domain.Readiness
 	call(t, c, "readiness", nil, &ready)
 	var w domain.Workspace
@@ -371,6 +373,22 @@ func TestGitSubmissionProtectsCheckoutAndCreatesIndependentWorktree(t *testing.T
 	if git("branch", "--show-current") != "main" {
 		t.Fatal("invalid submission changed the checkout")
 	}
+	occupiedInput := domain.Submission{OperationID: "git-occupied", WorkspaceID: w.ID, Text: "SHIOJI_FAST", Config: cfg, Git: domain.GitChoice{Branch: "other"}}
+	var conflict domain.Operation
+	call(t, c, "session.submit", protocol.SubmissionInput{Submission: occupiedInput, ReceiveBeforePrepare: true}, &conflict)
+	wait(t, func() bool {
+		call(t, c, "operation", protocol.OperationQuery{ID: occupiedInput.OperationID}, &conflict)
+		return conflict.State.ReceiptObserved()
+	})
+	if conflict.State != domain.OperationRejected || !strings.Contains(conflict.Error, occupied) || !strings.Contains(conflict.Error, "新建 worktree") || strings.Contains(conflict.Error, "可能已") {
+		t.Fatalf("expected an actionable worktree conflict, got %+v", conflict)
+	}
+	var snap domain.Snapshot
+	call(t, c, "snapshot", nil, &snap)
+	if len(snap.Sessions) != 2 || git("branch", "--show-current") != "main" {
+		t.Fatal("rejected submission created a session or changed the checkout")
+	}
+	git("worktree", "remove", occupied)
 	call(t, c, "git.checkout", map[string]any{"workspaceId": w.ID, "sessionId": a.SessionID, "branch": "other"}, nil)
 	os.WriteFile(filepath.Join(dir, "untracked"), []byte("preserve"), 0600)
 	call(t, c, "session.submit", domain.Submission{OperationID: "git-dirty-same", WorkspaceID: w.ID, SessionID: a.SessionID, Text: "SHIOJI_FAST", Config: cfg}, nil)

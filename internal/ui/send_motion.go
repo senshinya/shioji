@@ -401,8 +401,11 @@ func (v *View) homeSendRows(rows []transcriptRow) []transcriptRow {
 		}
 	}
 	label := "正在发送"
-	if h.session != "" && h.in.SessionID == "" {
-		label = "正在准备会话"
+	if h.in.SessionID == "" {
+		label = v.Model.FirstSubmissionProgressLabel(h.in.OperationID)
+		if h.session != "" {
+			label = "正在准备会话"
+		}
 	}
 	if h.state == domain.OperationConfirmed || v.Model.Details[v.Model.SessionID].Session.Status == domain.ExecutionRunning {
 		label = "进行中"
