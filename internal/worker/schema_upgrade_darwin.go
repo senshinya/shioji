@@ -15,9 +15,6 @@ import (
 )
 
 func StartSchemaUpgrade(ctx context.Context, directory, executable, device string, in domain.WorkerReplacement) (supervisor.Operation, error) {
-	if err := transport.CheckInstallationRuntime(ctx, directory); err != nil {
-		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
-	}
 	candidate, err := transport.VerifyStagedWorker(ctx, directory, in.BuildID)
 	if err != nil {
 		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
@@ -29,6 +26,24 @@ func StartSchemaUpgrade(ctx context.Context, directory, executable, device strin
 	build, err := transport.InspectWorker(ctx, executable)
 	if err != nil || build.BuildID != candidate.BuildID {
 		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: "迁移助手与签名候选构建不一致"}
+	}
+	if pending, ok, err := supervisor.PendingInstallation(directory); err != nil {
+		return supervisor.Operation{}, err
+	} else if ok && pending.ExecutionRegistration != "" {
+		if pending.Input != in || pending.DeviceID != device {
+			return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: "设备正在接续另一项执行服务更新"}
+		}
+		if err = transport.StartExecutionRuntime(ctx, directory); err != nil {
+			return pending, err
+		}
+		return supervisor.Query(ctx, directory, in.ID)
+	}
+	registrationBuild := ""
+	if in.RuntimeHandoff && candidate.RuntimeHost >= domain.RuntimeHostRegistrationRefresh {
+		registrationBuild = candidate.BuildID
+	}
+	if err := transport.CheckInstallationRuntime(ctx, directory, registrationBuild); err != nil {
+		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
 	}
 	start := supervisor.StartSchemaMigration
 	if in.RuntimeHandoff && !in.SchemaMigration {

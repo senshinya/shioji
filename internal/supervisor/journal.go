@@ -18,9 +18,18 @@ type Operation struct {
 	SourcePID                                                int
 	SourceSchema, TargetSchema                               int `json:",omitempty"`
 	Created                                                  time.Time
-	ExpiresAt                                                time.Time `json:"expiresAt,omitempty"`
-	HostStartDeadline                                        time.Time `json:",omitempty"`
+	ExpiresAt                                                time.Time                  `json:"expiresAt,omitempty"`
+	HostStartDeadline                                        time.Time                  `json:",omitempty"`
+	ExecutionRegistration                                    ExecutionRegistrationPhase `json:",omitempty"`
 }
+
+type ExecutionRegistrationPhase string
+
+const (
+	RefreshExecutionRegistration ExecutionRegistrationPhase = "refresh"
+	RestoreExecutionRegistration ExecutionRegistrationPhase = "register"
+	ExecutionRegistrationEnabled ExecutionRegistrationPhase = "enabled"
+)
 
 func (o Operation) Terminal() bool {
 	switch o.Phase {

@@ -1,5 +1,7 @@
 package domain
 
+const RuntimeHostRegistrationRefresh = 2
+
 // WorkerBuild identifies the running service independently of harness readiness
 // and protocol compatibility. BuildID is captured before replacing any file.
 type WorkerBuild struct {

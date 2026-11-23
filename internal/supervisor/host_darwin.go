@@ -114,6 +114,9 @@ func Run(ctx context.Context, o Options) error {
 			return err
 		}
 		if ok {
+			if pending.ExecutionRegistration != "" && pending.ExecutionRegistration != ExecutionRegistrationEnabled {
+				return errors.New("执行服务正在刷新系统注册，等待交接完成")
+			}
 			// The SSH installer has released both source processes and its
 			// control lease. Only this Runtime-owned host may open admission.
 			device, schema, err := store.ReadWorkerIdentity(ctx, o.Directory)

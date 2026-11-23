@@ -250,7 +250,7 @@ func New(ctx context.Context, config Config) (*Server, error) {
 		return nil, err
 	}
 	s.build.Managed = config.BackgroundManaged
-	s.build.RuntimeHost = 1
+	s.build.RuntimeHost = domain.RuntimeHostRegistrationRefresh
 	s.build.RuntimeHosted = config.RuntimeHosted
 	s.executions = manager
 	if err = s.recoverManualGuards(); err != nil {

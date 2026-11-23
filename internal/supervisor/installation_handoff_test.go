@@ -98,3 +98,27 @@ func TestInstallationTimeoutRemainsResumableWithoutStatusLaunchingAnything(t *te
 	}
 	regressionHost(t, options, "applied")
 }
+
+func TestPendingExecutionRegistrationCannotStartCandidate(t *testing.T) {
+	dir, options := regressionOptions(t)
+	op := Operation{Legacy: true, DeviceID: "fixture-device", Phase: "installing", PreviousBuild: "old", TargetSchema: store.SchemaVersion,
+		ExecutionRegistration: RestoreExecutionRegistration,
+		Input:                 domain.WorkerReplacement{ID: "await-registration", BuildID: "next", ExpectedBuildID: "old", Policy: "when-idle", RuntimeHandoff: true}}
+	if err := (journal{filepath.Join(dir, "supervisor")}).save(op); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	_ = Run(ctx, options)
+	if _, err := os.Stat(filepath.Join(dir, "started-next")); !os.IsNotExist(err) {
+		t.Fatalf("candidate started before registration completed: %v", err)
+	}
+	if pending, ok, err := PendingInstallation(dir); err != nil || !ok || pending != op {
+		t.Fatalf("Runtime discarded the resumable registration: %+v, %v", pending, err)
+	}
+	op.ExecutionRegistration = ExecutionRegistrationEnabled
+	if err := SaveLegacy(dir, op); err != nil {
+		t.Fatal(err)
+	}
+	regressionHost(t, options, "applied")
+}

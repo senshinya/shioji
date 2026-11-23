@@ -22,6 +22,14 @@ func EnsureWorker(ctx context.Context, directory, binary string) error {
 		}
 		return transport.WaitLocalWorker(ctx, directory)
 	}
+	if op, pending, err := supervisor.PendingInstallation(directory); err != nil {
+		return err
+	} else if pending && op.ExecutionRegistration != "" {
+		if err := transport.StartExecutionRuntime(ctx, directory); err != nil {
+			return err
+		}
+		return transport.WaitLocalWorker(ctx, directory)
+	}
 	service, checkErr := transport.RuntimeService(ctx, directory, binary, false)
 	if checkErr != nil {
 		return checkErr

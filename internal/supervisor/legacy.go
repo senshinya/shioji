@@ -117,7 +117,7 @@ func PendingInstallation(directory string) (Operation, bool, error) {
 // A status query never launches or resends anything. Keep the underlying
 // handoff resumable, but report a missing host after its bounded launch window.
 func installationStatus(directory string, op Operation) Operation {
-	if op.Phase != "installing" || op.HostStartDeadline.IsZero() || time.Now().Before(op.HostStartDeadline) {
+	if op.Phase != "installing" || op.Error == "" && (op.HostStartDeadline.IsZero() || time.Now().Before(op.HostStartDeadline)) {
 		return op
 	}
 	lease, err := AcquireLease(directory)
@@ -127,8 +127,11 @@ func installationStatus(directory string, op Operation) Operation {
 	defer lease.Close()
 	current, ok, err := PendingInstallation(directory)
 	if err == nil && ok && current.Input == op.Input && current.DeviceID == op.DeviceID {
+		op = current
 		op.Phase = "blocked"
-		op.Error = "执行 Runtime 尚未接管；重新连接设备后将接续原更新"
+		if op.Error == "" {
+			op.Error = "执行 Runtime 尚未接管；重新连接设备后将接续原更新"
+		}
 	}
 	return op
 }

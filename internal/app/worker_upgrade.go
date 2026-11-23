@@ -244,6 +244,19 @@ func (u workerUpgradeClient) retryDetached(ctx context.Context, operation string
 	if operation == "" || active.Input.ID != operation || active.Input.BuildID == "" {
 		return state, errors.New("被阻塞的更新已变化，请重新检查执行服务")
 	}
+	if active.ExecutionRegistration != "" {
+		// The original writer has already drained. Resume that installation,
+		// including its registration phase, under its original operation ID.
+		resumed, err := u.repair(ctx, active.Input)
+		if err != nil {
+			return state, err
+		}
+		if resumed.Input != active.Input || resumed.DeviceID != u.device {
+			return state, errors.New("接管回执不属于原设备和操作")
+		}
+		record := &workerUpgradeRecord{DeviceID: u.device, Input: resumed.Input, Operation: &resumed}
+		return upgradeService(u.knownBuild, candidate, record), u.save(record)
+	}
 	input := domain.WorkerReplacement{
 		ID: domain.NewID(), BuildID: active.Input.BuildID, ExpectedBuildID: active.Input.ExpectedBuildID,
 		Explicit: true, Policy: "when-idle",
@@ -369,6 +382,9 @@ func (u workerUpgradeClient) update(ctx context.Context, client *protocol.Client
 	repairing := false
 	if explicit && u.repair != nil && u.control != nil {
 		if actual, e := u.control(ctx, "status", ""); e == nil && actual.Phase == "blocked" && actual.DeviceID == u.device {
+			if actual.ExecutionRegistration != "" {
+				return u.retryDetached(ctx, actual.Input.ID, candidate)
+			}
 			repairing = true
 		}
 	}
@@ -414,13 +430,16 @@ func (u workerUpgradeClient) update(ctx context.Context, client *protocol.Client
 			return state, nil
 		}
 	}
+	runtimeHandoff := !repairing && candidate.RuntimeHost > 0 && current != nil && current.Lifecycle == 1 &&
+		(!current.RuntimeHosted || current.Managed && current.RuntimeHost < domain.RuntimeHostRegistrationRefresh &&
+			candidate.RuntimeHost >= domain.RuntimeHostRegistrationRefresh)
 	r = &workerUpgradeRecord{DeviceID: u.device, Input: domain.WorkerReplacement{ID: domain.NewID(), ExpectedBuildID: func() string {
 		if current != nil {
 			return current.BuildID
 		}
 		return ""
 	}(), BuildID: candidate.BuildID, Explicit: explicit, Policy: policy, SchemaMigration: migrate,
-		RuntimeHandoff: !repairing && candidate.RuntimeHost > 0 && current != nil && current.Lifecycle == 1 && !current.RuntimeHosted}}
+		RuntimeHandoff: runtimeHandoff}}
 	if err = u.save(r); err != nil {
 		return nil, err
 	}

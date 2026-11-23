@@ -28,7 +28,7 @@ func StartLegacyUpgrade(ctx context.Context, directory, executable, device strin
 	if in.ID == "" || device == "" || in.BuildID == "" || in.Policy != "when-idle" && in.Policy != "immediate" || in.Policy == "immediate" && !in.Explicit {
 		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: "旧服务更新意图不完整"}
 	}
-	if err := transport.CheckInstallationRuntime(ctx, directory); err != nil {
+	if err := transport.CheckInstallationRuntime(ctx, directory, ""); err != nil {
 		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
 	}
 	if _, _, _, err := recoveryCatalog(ctx, directory, device); err != nil {

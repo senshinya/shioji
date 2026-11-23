@@ -298,6 +298,9 @@ func RunSchemaBootstrap(ctx context.Context, directory, id, device, path string,
 		return fail(err, true)
 	}
 	guard.Close()
+	if managed && op.Input.RuntimeHandoff && candidate.RuntimeHost >= domain.RuntimeHostRegistrationRefresh {
+		op.ExecutionRegistration = RefreshExecutionRegistration
+	}
 	return install(LegacyInstall{Operation: op, Lease: fixedLease}, managed)
 }
 

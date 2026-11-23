@@ -62,18 +62,25 @@ func StartRuntimeService(ctx context.Context) error {
 	return nil
 }
 
+func runtimeServiceDirectory() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "Library", "Application Support", "Shioji", "worker"), nil
+}
+
 func manageRuntimeService(ctx context.Context, directory, workerBinary, action string) (domain.BackgroundService, error) {
 	enable := action == "register"
 	none := domain.BackgroundService{Format: 1, State: "notInstalled", NotStarted: true}
-	home, err := os.UserHomeDir()
+	expected, err := runtimeServiceDirectory()
 	if err != nil {
 		return none, err
 	}
-	expected := filepath.Join(home, "Library", "Application Support", "Shioji", "worker")
 	if filepath.Clean(directory) != expected {
 		return domain.BackgroundService{Format: 1, State: "unavailable", Message: "隔离开发目录不注册系统后台服务"}, nil
 	}
-	root := filepath.Join(home, "Library", "Application Support", "Shioji", "Runtime")
+	root := filepath.Join(filepath.Dir(expected), "Runtime")
 	target := filepath.Join(root, runtimeBundleName)
 	if _, err = os.Lstat(target); os.IsNotExist(err) {
 		if !enable {

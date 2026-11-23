@@ -72,7 +72,7 @@ func run() error {
 	build.MigrationFrom = store.WorkerMigrationFrom
 	build.SafeUpdate = true
 	build.Lifecycle = 1
-	build.RuntimeHost = 1
+	build.RuntimeHost = domain.RuntimeHostRegistrationRefresh
 	build.PrivateControl = supervisor.PrivateControlVersion
 	build.Maintenance = true
 	build.ContextUsage = true

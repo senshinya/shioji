@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -66,21 +67,43 @@ func executionRuntime(ctx context.Context, directory string) (string, error) {
 }
 
 // CheckInstallationRuntime runs before source drain, not after stopping it.
-func CheckInstallationRuntime(ctx context.Context, directory string) error {
-	if _, err := prepareExecutionRuntimeHost(ctx, directory); err != nil {
+func CheckInstallationRuntime(ctx context.Context, directory, registrationBuild string) error {
+	if _, err := prepareExecutionRuntimeHost(ctx, directory, registrationBuild); err != nil {
 		return err
 	}
 	_, err := executionRuntimeManaged(ctx, directory)
 	return err
 }
 
+func executionRuntimePlist(bundle string) string {
+	return filepath.Join(bundle, "Contents", "Library", "LaunchAgents", background.PlistName)
+}
+
+func verifyInteractiveExecutionRuntime(ctx context.Context, bundle, build string) error {
+	actual, err := runtimebuild.Digest(filepath.Join(bundle, "Contents", "MacOS", "shioji-worker"))
+	if err != nil || actual != build {
+		return errors.New("签名执行 Runtime 与接管候选构建不一致")
+	}
+	raw, err := exec.CommandContext(ctx, "/usr/bin/plutil", "-convert", "json", "-o", "-", executionRuntimePlist(bundle)).Output()
+	var config struct{ Label, ProcessType string }
+	if err != nil || json.Unmarshal(raw, &config) != nil || config.Label != strings.TrimSuffix(background.PlistName, ".plist") || config.ProcessType != "Interactive" {
+		return errors.New("签名执行 Runtime 的服务标识或调度配置无效")
+	}
+	return nil
+}
+
 // Replace only the signed bundle on disk, without unregistering its login item
 // or stopping any execution/network process. launchd's next invocation uses the
 // new entry point at the registered path and keeps the existing identity.
-func prepareExecutionRuntimeHost(ctx context.Context, directory string) (string, error) {
+func prepareExecutionRuntimeHost(ctx context.Context, directory, registrationBuild string) (string, error) {
 	source, err := executionRuntime(ctx, directory)
 	if err != nil {
 		return "", err
+	}
+	if registrationBuild != "" {
+		if err := verifyInteractiveExecutionRuntime(ctx, source, registrationBuild); err != nil {
+			return "", err
+		}
 	}
 	root := filepath.Dir(filepath.Dir(filepath.Dir(source)))
 	target := filepath.Join(root, runtimeBundleName)
@@ -118,8 +141,12 @@ func prepareExecutionRuntimeHost(ctx context.Context, directory string) (string,
 		if err != nil {
 			return "", err
 		}
-		if before == after {
-			return target, nil
+		oldPlist, oldErr := os.ReadFile(executionRuntimePlist(target))
+		newPlist, newErr := os.ReadFile(executionRuntimePlist(source))
+		if before == after && oldErr == nil && newErr == nil && bytes.Equal(oldPlist, newPlist) {
+			if registrationBuild == "" || verifyInteractiveExecutionRuntime(ctx, target, registrationBuild) == nil {
+				return target, nil
+			}
 		}
 	} else if !os.IsNotExist(err) {
 		return "", err
@@ -158,8 +185,8 @@ func executionRuntimeManaged(ctx context.Context, directory string) (bool, error
 	case "notInstalled", "notRegistered":
 		return false, nil
 	case "unavailable":
-		home, err := os.UserHomeDir()
-		if err == nil && directory != filepath.Join(home, "Library", "Application Support", "Shioji", "worker") {
+		expected, err := runtimeServiceDirectory()
+		if err == nil && filepath.Clean(directory) != expected {
 			return false, nil // isolated development state has no login registration
 		}
 		return false, errors.New("执行设备的后台项目状态不可用，请先检查系统设置")
@@ -169,13 +196,50 @@ func executionRuntimeManaged(ctx context.Context, directory string) (bool, error
 }
 
 func StartExecutionRuntime(ctx context.Context, directory string) error {
-	return startExecutionRuntime(ctx, directory, false)
-}
-
-func startExecutionRuntime(ctx context.Context, directory string, replaceIdleHost bool) error {
-	bundle, err := prepareExecutionRuntimeHost(ctx, directory)
+	op, pending, err := supervisor.PendingInstallation(directory)
 	if err != nil {
 		return err
+	}
+	if !pending || op.ExecutionRegistration == "" {
+		return startExecutionRuntime(ctx, directory, false, nil)
+	}
+	lease, err := supervisor.AcquireLease(directory)
+	if errors.Is(err, supervisor.ErrOwned) {
+		return nil // The installer or the newly registered Runtime owns the handoff.
+	}
+	if err != nil {
+		return err
+	}
+	defer lease.Close()
+	latest, pending, err := supervisor.PendingInstallation(directory)
+	if err != nil || !pending || latest.Input != op.Input {
+		return err
+	}
+	return startExecutionRuntime(ctx, directory, true, &latest)
+}
+
+func startExecutionRuntime(ctx context.Context, directory string, replaceIdleHost bool, registration *supervisor.Operation) error {
+	registrationBuild := ""
+	if registration != nil {
+		expected, err := runtimeServiceDirectory()
+		if err != nil {
+			return err
+		}
+		if filepath.Clean(directory) != expected {
+			return errors.New("隔离开发目录不能刷新系统执行服务注册")
+		}
+		registrationBuild = registration.Input.BuildID
+	}
+	bundle, err := prepareExecutionRuntimeHost(ctx, directory, registrationBuild)
+	if err != nil {
+		return err
+	}
+	if registration != nil {
+		if err = completeExecutionRegistration(ctx, directory, bundle, registration); err != nil {
+			registration.Error = err.Error()
+			return errors.Join(err, supervisor.SaveLegacy(directory, *registration))
+		}
+		return StartRuntimeService(ctx)
 	}
 	// LaunchServices gives this process Runtime's responsibility identity. A
 	// direct exec (including setsid/nohup) would retain the SSH initiator's TCC.
@@ -205,6 +269,55 @@ func startExecutionRuntime(ctx context.Context, directory string, replaceIdleHos
 	return nil
 }
 
+// The caller holds the handoff lease and has verified the signed Runtime.
+// Each phase is recorded before the next SMAppService action can run.
+func completeExecutionRegistration(ctx context.Context, directory, bundle string, op *supervisor.Operation) error {
+	binary := filepath.Join(bundle, "Contents", "MacOS", "shioji-runtime")
+	state, err := runRuntimeHelper(ctx, binary, "status")
+	if err != nil {
+		return err
+	}
+	if state.State == "requiresApproval" {
+		return errors.New("请在系统设置的登录项与扩展中允许 Shioji 执行服务")
+	}
+	if op.ExecutionRegistration == supervisor.RefreshExecutionRegistration {
+		if state.State == "enabled" {
+			state, err = runRuntimeHelper(ctx, binary, "unregister")
+			if err != nil {
+				return err
+			}
+		}
+		if state.State != "notRegistered" && state.State != "notFound" {
+			return errors.New("旧执行服务注册尚未确认移除")
+		}
+		op.ExecutionRegistration = supervisor.RestoreExecutionRegistration
+		if err = supervisor.SaveLegacy(directory, *op); err != nil {
+			return err
+		}
+	}
+	if op.ExecutionRegistration == supervisor.RestoreExecutionRegistration {
+		if state.State == "notRegistered" || state.State == "notFound" {
+			state, err = runRuntimeHelper(ctx, binary, "register")
+			if err != nil {
+				return err
+			}
+		}
+		if state.State == "requiresApproval" {
+			return errors.New("请在系统设置的登录项与扩展中允许 Shioji 执行服务")
+		}
+		if state.State != "enabled" {
+			return errors.New("执行服务注册尚未确认启用")
+		}
+		op.ExecutionRegistration = supervisor.ExecutionRegistrationEnabled
+		op.Error = ""
+		return supervisor.SaveLegacy(directory, *op)
+	}
+	if op.ExecutionRegistration != supervisor.ExecutionRegistrationEnabled || state.State != "enabled" {
+		return errors.New("执行服务注册状态已变化")
+	}
+	return nil
+}
+
 func HandoffWorkerInstallation(ctx context.Context, directory string, install supervisor.LegacyInstall) error {
 	if err := supervisor.InstallationHandoff(directory, install); err != nil {
 		return err
@@ -213,7 +326,18 @@ func HandoffWorkerInstallation(ctx context.Context, directory string, install su
 	// while a failed native launch leaves the installer holding it for recovery.
 	launch, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	if err := startExecutionRuntime(launch, directory, true); err != nil {
+	var registration *supervisor.Operation
+	if install.Operation.ExecutionRegistration != "" {
+		op, pending, err := supervisor.PendingInstallation(directory)
+		if err != nil {
+			return err
+		}
+		if !pending || op.Input != install.Operation.Input {
+			return errors.New("执行 Runtime 接管记录已变化")
+		}
+		registration = &op
+	}
+	if err := startExecutionRuntime(launch, directory, true, registration); err != nil {
 		return err
 	}
 	return install.Lease.Close()

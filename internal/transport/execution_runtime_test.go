@@ -2,12 +2,107 @@ package transport
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"shioji/internal/domain"
+	"shioji/internal/supervisor"
 )
+
+func TestExecutionRegistrationPreflightBindsWorkerAndLaunchAgent(t *testing.T) {
+	bundle := filepath.Join(t.TempDir(), runtimeBundleName)
+	worker := filepath.Join(bundle, "Contents", "MacOS", "shioji-worker")
+	plist := executionRuntimePlist(bundle)
+	for _, name := range []string{worker, plist} {
+		if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	contents := []byte("fixture candidate worker")
+	if err := os.WriteFile(worker, contents, 0700); err != nil {
+		t.Fatal(err)
+	}
+	build := fmt.Sprintf("%x", sha256.Sum256(contents))
+	for _, tc := range []struct {
+		label, processType, build string
+		wantOK                    bool
+	}{
+		{"dev.shioji.runtime.agent", "Interactive", build, true},
+		{"dev.shioji.network.agent", "Interactive", build, false},
+		{"dev.shioji.runtime.agent", "Background", build, false},
+		{"dev.shioji.runtime.agent", "Interactive", strings.Repeat("a", 64), false},
+	} {
+		data := fmt.Sprintf(`<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>%s</string><key>ProcessType</key><string>%s</string></dict></plist>`, tc.label, tc.processType)
+		if err := os.WriteFile(plist, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := verifyInteractiveExecutionRuntime(t.Context(), bundle, tc.build); (err == nil) != tc.wantOK {
+			t.Fatalf("preflight on %q/%q for %q: %v", tc.label, tc.processType, tc.build, err)
+		}
+	}
+}
+
+func TestExecutionRegistrationResumesAfterUnregister(t *testing.T) {
+	dir := t.TempDir()
+	bundle := filepath.Join(dir, runtimeBundleName)
+	bin := filepath.Join(bundle, "Contents", "MacOS", "shioji-runtime")
+	if err := os.MkdirAll(filepath.Dir(bin), 0700); err != nil {
+		t.Fatal(err)
+	}
+	// Exercise the same helper subprocess and persisted supervisor operation
+	// as installation, with a private substitute for ServiceManagement.
+	const helper = `#!/bin/sh
+dir="$SHIOJI_TEST_REGISTRATION"
+action="$2"
+printf '%s\n' "$action" >> "$dir/calls"
+case "$action" in
+  unregister) printf 'notRegistered' > "$dir/state" ;;
+  register)
+    if [ ! -e "$dir/allow" ]; then
+      printf '{"format":1,"state":"failed","message":"registration temporarily unavailable"}\n'
+      exit 1
+    fi
+    printf 'enabled' > "$dir/state" ;;
+esac
+printf '{"format":1,"state":"%s"}\n' "$(/bin/cat "$dir/state")"
+`
+	t.Setenv("SHIOJI_TEST_REGISTRATION", dir)
+	if err := os.WriteFile(bin, []byte(helper), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "state"), []byte("enabled"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	op := supervisor.Operation{Legacy: true, Phase: "installing", DeviceID: "device",
+		Input:                 domain.WorkerReplacement{ID: "original-installation", RuntimeHandoff: true},
+		ExecutionRegistration: supervisor.RefreshExecutionRegistration}
+	if err := completeExecutionRegistration(t.Context(), dir, bundle, &op); err == nil {
+		t.Fatal("temporary registration failure was ignored")
+	}
+	resumed, ok, err := supervisor.PendingInstallation(dir)
+	if err != nil || !ok || resumed.Input != op.Input || resumed.ExecutionRegistration != supervisor.RestoreExecutionRegistration {
+		t.Fatalf("registration gap lost the resumable installation: %+v, %v", resumed, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "allow"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := completeExecutionRegistration(t.Context(), dir, bundle, &resumed); err != nil {
+		t.Fatal(err)
+	}
+	if err := completeExecutionRegistration(t.Context(), dir, bundle, &resumed); err != nil {
+		t.Fatal(err)
+	}
+	calls, err := os.ReadFile(filepath.Join(dir, "calls"))
+	if err != nil || strings.TrimSpace(string(calls)) != "status\nunregister\nregister\nstatus\nregister\nstatus" {
+		t.Fatalf("retry repeated or skipped a system action: %q, %v", calls, err)
+	}
+}
 
 func TestExecutionRuntimePreparationPreservesRegisteredBundleAndDoesNotLaunch(t *testing.T) {
 	home := t.TempDir()
