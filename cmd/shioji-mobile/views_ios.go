@@ -693,6 +693,11 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 		}
 	}
 	var latest func()
+	var startGap float32
+	if preview == nil {
+		// Each row contributes half the spacing between adjacent items.
+		startGap = transcriptItemGap / 2
+	}
 	endGap := float32(2)
 	if draft != nil || initial.key != "" {
 		endGap = 8
@@ -943,7 +948,7 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 					a.contentParts(row, parent, session, item.Parts)
 				}
 			})
-		}).Grow(1).Basis(0).MinHeight(0).Padding(0, 0, endGap)
+		}).Grow(1).Basis(0).MinHeight(0).Padding(startGap, 0, endGap)
 		a.prefetchTranscript(c, list, state, prefetch, parent, detail, current, parent != nil && preview == nil && historyActions && find == nil && !reveal)
 		if interactive && find == nil && (newer || !state.AtEnd() && !state.FollowingEnd()) && a.model.HistoryEdits[sid].ItemID == "" {
 			if !workLive {

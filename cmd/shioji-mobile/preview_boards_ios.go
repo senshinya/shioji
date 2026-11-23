@@ -341,7 +341,7 @@ func (a *mobileApp) openPreviewBoard(board string) {
 	case "transcript-command-output":
 		a.seedPreviewCommandOutput(review.ID)
 		a.openSession(review.ID)
-	case "transcript-tool-tail", "transcript-tool-tail-completed", "transcript-tool-tail-settled", "running-session-entry", "running-session-cold-entry":
+	case "transcript-tool-tail", "transcript-tool-tail-completed", "transcript-tool-tail-settled", "transcript-tool-tail-disclosure", "running-session-entry", "running-session-cold-entry":
 		a.seedArtboardConversation(false)
 		a.model.Preferences.CollapseLatestTools = false
 		detail := a.model.Details[review.ID]
@@ -361,6 +361,9 @@ func (a *mobileApp) openPreviewBoard(board string) {
 			domain.Item{ID: "tool-tail-read", TurnID: "tool-tail", Kind: "tool", Name: "读取连接记录", ActivityOrder: 1, Final: true},
 			domain.Item{ID: "tool-tail-check", TurnID: "tool-tail", Kind: "tool", Presentation: "command", Name: "核对连接恢复", ActivityOrder: 2, Status: "running"},
 		)
+		if board == "transcript-tool-tail-disclosure" {
+			detail.Items[len(detail.Items)-1].Text = "已比对连接事件游标"
+		}
 		if board == "transcript-tool-tail-settled" {
 			for i := len(detail.Items) - 2; i < len(detail.Items); i++ {
 				detail.Items[i].Status, detail.Items[i].Final = "completed", true

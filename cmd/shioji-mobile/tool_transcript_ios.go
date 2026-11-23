@@ -99,7 +99,7 @@ func (a *mobileApp) toolTimeline(s domain.Session) *mobileToolTimeline {
 }
 
 func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain.Session, tools []domain.Item, group mobileclient.ToolGroup,
-	timeline *mobileToolTimeline, list *ui.ListState, index int, phase string, started *time.Time, observed bool, target string, reveal bool,
+	timeline *mobileToolTimeline, list *ui.ListState, rowIndex int, phase string, started *time.Time, observed bool, target string, reveal bool,
 	decorate func(domain.Item) *markdown.RangeDecoration) {
 	p := palette(c)
 	title := fmt.Sprintf("%d 次工具调用", group.Count)
@@ -131,8 +131,11 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 			value += " · " + outcome
 		}
 	}
+	keepPosition := func() {
+		list.KeepRowWithinContent(rowIndex, button.Bounds().Y-list.Bounds(c).Y-float32(transcriptItemGap)/2)
+	}
 	button.Value(value).OnClick(func() {
-		list.KeepRowWithinContent(index, button.Bounds().Y-list.Bounds(c).Y-float32(transcriptItemGap)/2)
+		keepPosition()
 		timeline.Toggle(group.Key)
 	}).Children(func() {
 		line := header.Key("line")
@@ -227,11 +230,7 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 				})
 			}
 			call.Children(func() {
-				heading = a.toolItem(row, parent, session, tool, body, mark, true, func() {
-					// The result changes only below its title. Anchoring the
-					// group row preserves that title's location as well.
-					list.KeepRowWithinContent(index, button.Bounds().Y-list.Bounds(c).Y-float32(transcriptItemGap)/2)
-				})
+				heading = a.toolItem(row, parent, session, tool, body, mark, true, keepPosition)
 			})
 		}
 		// Keep the outgoing status in the measured stack until the clip closes.
