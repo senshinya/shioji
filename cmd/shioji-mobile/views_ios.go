@@ -695,8 +695,8 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 	var latest func()
 	var startGap float32
 	if preview == nil {
-		// Each row contributes half the spacing between adjacent items.
-		startGap = transcriptItemGap / 2
+		// Leave room below the header in addition to the half-row gap.
+		startGap = 4 + transcriptItemGap/2
 	}
 	endGap := float32(2)
 	if draft != nil || initial.key != "" {
