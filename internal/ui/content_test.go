@@ -56,6 +56,60 @@ func TestPublicSummaryDisclosurePreservesOrdinaryDraft(t *testing.T) {
 	}
 }
 
+func TestReasoningSummaryHidesTrailingNewlines(t *testing.T) {
+	const summary = "检查约束。\n\n核对历史。"
+	const next = "摘要之后的回复"
+	for _, structured := range []bool{false, true} {
+		t.Run(fmt.Sprintf("parts=%t", structured), func(t *testing.T) {
+			m := layoutModel()
+			d := m.Details["s"]
+			d.Items = []domain.Item{
+				{ID: "reason", Kind: "activity", Presentation: "reasoning", Name: "思考摘要"},
+				{ID: "reply", Kind: "assistant", Text: next, Final: true},
+			}
+			setSummary := func(text string, final bool) {
+				item := &d.Items[0]
+				item.Final = final
+				if structured {
+					item.Parts = []domain.ContentPart{{Kind: "text", Text: text}}
+				} else {
+					item.Text = text
+				}
+				m.Details["s"] = d
+			}
+			setSummary(summary, false)
+			ui := n.NewTester(New(m, nil, "").View, 950, 650)
+			ui.SetDark(true)
+			ui.SetScale(2)
+			if err := ui.Click("思考摘要"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			before, ok := ui.Find(next)
+			if !ok {
+				t.Fatal("missing reply after summary")
+			}
+			for _, update := range []struct {
+				text  string
+				final bool
+			}{
+				{summary + "\n", false},
+				{summary + "\r\n \t\r\n\n", true},
+			} {
+				setSummary(update.text, update.final)
+				ui.Frame()
+				ui.Advance(time.Second)
+				saveNativeSkillImage(t, ui, fmt.Sprintf("reasoning-parts-%t-final-%t.png", structured, update.final))
+				after, found := ui.Find(next)
+				_, sameText := ui.Find(summary)
+				if !found || !sameText || after.Y < before.Y-1 || after.Y > before.Y+1 {
+					t.Errorf("trailing newlines changed visible text or reply position: final=%t text=%q y=%.1f → %.1f", update.final, ui.Texts(), before.Y, after.Y)
+				}
+			}
+		})
+	}
+}
+
 func TestNarrativePlanUsesInspectorWithoutInventingTaskSteps(t *testing.T) {
 	m := layoutModel()
 	d := m.Details["s"]

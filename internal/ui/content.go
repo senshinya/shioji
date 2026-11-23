@@ -6,6 +6,7 @@ import (
 	"github.com/egoist/mygo/ui/editor"
 	"github.com/egoist/mygo/ui/markdown"
 	"math"
+	"shioji/internal/conversationui"
 	"shioji/internal/domain"
 	"strings"
 	"time"
@@ -106,6 +107,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 		})
 		return
 	}
+	item = conversationui.ReasoningForDisplay(item)
 	key := "activity:" + v.Model.SessionID + "/" + item.ID
 	if _, seen := v.Model.Collapsed[key]; !seen && item.Presentation != "wait" {
 		v.Model.Collapsed[key] = true

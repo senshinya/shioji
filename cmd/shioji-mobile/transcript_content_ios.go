@@ -205,6 +205,7 @@ func (a *mobileApp) requestResult(c *ui.Context, parent *mygo.Window, session do
 type toolResultBodyKey string
 
 func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, open *bool, mark *markdown.RangeDecoration, grouped bool, anchors ...func()) ui.Element {
+	item = conversationui.ReasoningForDisplay(item)
 	p := palette(c)
 	name, symbol := item.Name, terminalSymbol
 	switch item.Presentation {
