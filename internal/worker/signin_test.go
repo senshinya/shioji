@@ -23,6 +23,7 @@ type signInMemory struct {
 	finish   chan bool
 	failure  error
 	canceled *atomic.Bool
+	manual   bool
 }
 
 func (a signInMemory) WithExecutable(p string) (harness.Adapter, error) {
@@ -34,7 +35,11 @@ func (a signInMemory) Installation() domain.RuntimeInstallation {
 }
 func (a signInMemory) BeginSignIn(context.Context, domain.SignInMethod) (harness.SignIn, domain.SignInChallenge, error) {
 	a.starts.Add(1)
-	return &memorySignIn{finish: a.finish, canceled: a.canceled, failure: a.failure}, domain.SignInChallenge{URL: "https://example.test/authorize", Code: "PRIVATE-ONE-TIME"}, nil
+	login := memorySignIn{finish: a.finish, canceled: a.canceled, failure: a.failure}
+	if a.manual {
+		return &manualCodeSignIn{memorySignIn: login}, domain.SignInChallenge{URL: "https://example.test/authorize", ManualCode: true}, nil
+	}
+	return &login, domain.SignInChallenge{URL: "https://example.test/authorize", Code: "PRIVATE-ONE-TIME"}, nil
 }
 
 type memorySignIn struct {
@@ -254,6 +259,26 @@ type manualCodeSignIn struct {
 func (l *manualCodeSignIn) SubmitCode(_ context.Context, code string) error {
 	l.codes = append(l.codes, code)
 	return nil
+}
+
+func TestManualSignInClearsVerificationMessageOnCompletion(t *testing.T) {
+	s, a := signInWorker(t)
+	a.manual = true
+	in := protocol.SignInInput{ID: "manual-completion", HarnessID: "custom", Method: domain.SignInBrowser}
+	if _, err := s.signInCommand("runtime.signin.start", in); err != nil {
+		t.Fatal(err)
+	}
+	awaitSignIn(t, s, in.ID, domain.SignInWaiting)
+	in.AuthorizationCode = "fixture-code"
+	submitted, err := s.signInCommand("runtime.signin.code", in)
+	if err != nil || submitted.Challenge.ManualCode || submitted.Message == "" {
+		t.Fatalf("expected a verification receipt: %+v %v", submitted, err)
+	}
+	close(a.finish)
+	completed := awaitSignIn(t, s, in.ID, domain.SignInCompleted)
+	if completed.Profile == nil || completed.Profile.Account.State != "authenticated" || completed.Message != "" {
+		t.Fatalf("completion kept verification state: %+v", completed)
+	}
 }
 
 func TestSignInManualCodeIsBoundToOneActiveAttempt(t *testing.T) {

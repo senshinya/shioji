@@ -60,6 +60,7 @@ func (s *Server) signInCommand(method string, in protocol.SignInInput) (domain.S
 		if method == "runtime.signin.cancel" && current.status.Phase.Active() {
 			current.status.Phase = domain.SignInCanceled
 			current.status.Challenge = domain.SignInChallenge{}
+			current.status.Message = ""
 			// Cancel the exact source authorization before ending its waiting context.
 			if current.login != nil {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -226,6 +227,7 @@ func (s *Server) runSignIn(ctx context.Context, in protocol.SignInInput, entry *
 	}
 	entry.status.Profile = &info
 	entry.status.Phase = domain.SignInCompleted
+	entry.status.Message = ""
 }
 func (s *Server) closeSignIns() {
 	s.signInMu.Lock()

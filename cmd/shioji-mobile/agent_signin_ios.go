@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -321,7 +322,7 @@ func (a *mobileApp) signedInAgent(agent domain.HarnessInfo) domain.HarnessInfo {
 			if known.ID != profile.ID {
 				continue
 			}
-			if profile.Account != nil && known.Account != nil && *profile.Account == *known.Account && known.State == profile.State {
+			if profile.Account != nil && reflect.DeepEqual(profile.Account, known.Account) && known.State == profile.State {
 				attempt.observed = true
 			}
 			if attempt.observed {
@@ -344,7 +345,7 @@ func agentAccountName(account *domain.RuntimeAccount) string {
 
 func (a *mobileApp) agentSignInProgress(c *ui.Context, w *mygo.Window, p *mobileAgentSignIn) {
 	ui.Column(c.Key("agent-sign-in-status")).Clip().Transition(mobilePanelTransition).Children(func() {
-		if p == nil {
+		if p == nil || p.status.Phase == domain.SignInCompleted {
 			return
 		}
 		message := p.message
@@ -396,6 +397,8 @@ type mobileAgentAccountDraft struct {
 	method               domain.SignInMethod
 	endpoint, credential string
 	reauthorize          bool
+	reauthorizeAttempt   string
+	quotaOpen            bool
 }
 
 func (d *mobileAgentAccountDraft) selected(methods []domain.SignInMethod) domain.SignInMethod {
@@ -418,14 +421,11 @@ func (a *mobileApp) connectAgentAPI(agent domain.HarnessInfo, draft *mobileAgent
 func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain.HarnessInfo, draft *mobileAgentAccountDraft, blocked bool, refresh func()) {
 	attempt := a.agentSignIns[agent.ID]
 	active := attempt != nil && attempt.status.Phase.Active()
-	methods := agentMobileSignInMethods(agent, a.model.WorkerMinor)
-	if agent.Account != nil && !active && !draft.reauthorize {
-		for i, window := range agent.Account.QuotaWindows {
-			title, value := app.RuntimeQuotaLabels(window)
-			mobileRow(c.Key(i), title, "", value, nil, nil)
-		}
+	if attempt != nil && attempt.status.ID == draft.reauthorizeAttempt && attempt.status.Phase == domain.SignInCompleted {
+		draft.reauthorize, draft.reauthorizeAttempt = false, ""
 	}
-	if account := agent.Account; account != nil && account.Mode != "api" && (account.State == "authenticated" || account.State == "notRequired") && !draft.reauthorize {
+	methods := agentMobileSignInMethods(agent, a.model.WorkerMinor)
+	if account := agent.Account; account != nil && account.Mode != "api" && (account.State == "authenticated" || account.State == "notRequired") && !active && !draft.reauthorize {
 		mobileRow(c, "账号", "", agentAccountName(account), accountSymbol, nil)
 		if account.Identity != "" {
 			mobileRow(c, "账号标识", "", account.Identity, nil, nil)
@@ -436,6 +436,9 @@ func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain
 		action(c, "重新检测", refresh).Disabled(blocked || active)
 		if len(methods) != 0 && account.State == "authenticated" {
 			action(c, "更换账号", func() { draft.reauthorize = true }).Disabled(blocked || active)
+		}
+		if len(account.QuotaWindows) > 0 {
+			mobileAgentQuota(c.Key("quota"), account.QuotaWindows, &draft.quotaOpen)
 		}
 		return
 	}
@@ -508,8 +511,31 @@ func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain
 			if agent.Account != nil && agent.Account.State == "authenticated" {
 				caption = "重新登录"
 			}
-			action(c, caption, func() { a.startAgentSignIn(agent, selected, nil) }).Disabled(blocked)
+			action(c, caption, func() {
+				if a.startAgentSignIn(agent, selected, nil) && draft.reauthorize {
+					draft.reauthorizeAttempt = a.agentSignIns[agent.ID].status.ID
+				}
+			}).Disabled(blocked)
 		})
 	}
 	a.agentSignInProgress(c, w, attempt)
+}
+
+func mobileAgentQuota(c *ui.Context, windows []domain.RuntimeQuotaWindow, expanded *bool) {
+	p := palette(c)
+	toggle := c.Key("toggle")
+	row := mobileButton(toggle, "额度", func() { *expanded = !*expanded }).FillWidth().Expanded(*expanded)
+	mobileRowContent(toggle, rowDivider(row, p.line), "额度", "", nil, false, func() {
+		arrow := rightSymbol
+		if *expanded {
+			arrow = downSymbol
+		}
+		ui.Icon(toggle, arrow).Size(pickerIconSize, pickerIconSize).TextColor(p.secondary).PassThrough()
+	})
+	mobileDisclosureBody(c.Key("details"), *expanded, func(body *ui.Context) {
+		for i, window := range windows {
+			title, value := app.RuntimeQuotaLabels(window)
+			mobileRow(body.Key(i), title, value, "", nil, nil)
+		}
+	})
 }

@@ -184,6 +184,10 @@ func (v *View) sendSignIn(u *agentSignInUI, action string, input *protocol.SignI
 		if json.Unmarshal(body, &status) != nil || status.ID != u.status.ID || status.HarnessID != u.status.HarnessID {
 			return
 		}
+		if status.Phase == domain.SignInCompleted {
+			// Older workers could retain a pending verification message on success.
+			status.Message = ""
+		}
 		u.status = status
 		if !status.Challenge.ManualCode {
 			u.manualCode = ""
@@ -253,6 +257,9 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 			identity = info.Account.Identity
 			if at := strings.Index(identity, "@"); at > 1 {
 				identity = string([]rune(identity[:at])[:1]) + "…" + identity[at:]
+			}
+			if identity == "" && info.Account.State == "authenticated" {
+				identity = "已登录"
 			}
 		}
 
@@ -365,14 +372,6 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 			}
 		})
 		v.agentManualAuthorization(c, u, disabled)
-		if info.Account != nil && !active {
-			for i, window := range info.Account.QuotaWindows {
-				label, value := app.RuntimeQuotaLabels(window)
-				deviceConfigRow(c.Key(i), label, func() {
-					n.Text(c, value).FontSize(12).TextColor(t.TextMuted).SingleLine()
-				})
-			}
-		}
 		body := n.Column(c.Key("auth-code")).FillWidth().Clip()
 		var challenge domain.SignInChallenge
 		if u != nil {
@@ -399,6 +398,20 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 			})
 			return 0
 		})
+	})
+}
+
+func agentQuotaDetails(c *n.Context, t *n.Theme, windows []domain.RuntimeQuotaWindow, open *bool) {
+	deviceDisclosure(c, "额度", open, func() {
+		for i, window := range windows {
+			label, value := app.RuntimeQuotaLabels(window)
+			n.Row(c.Key(i)).FillWidth().MinHeight(configurationControlHeight).Gap(configurationSectionGap).AlignItems(n.Baseline).Children(func() {
+				n.Text(c, label).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).
+					Grow(1).MinWidth(0).SingleLine().TooltipWhenTruncated(label)
+				n.Text(c, value).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).
+					TextColor(t.TextMuted).SingleLine()
+			})
+		}
 	})
 }
 

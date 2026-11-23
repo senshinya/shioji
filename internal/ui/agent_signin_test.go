@@ -603,3 +603,79 @@ func TestAgentManualAuthorizationUsesTheOriginalDeviceReceipt(t *testing.T) {
 		t.Fatal("authorization response escaped the attempt or stayed in the form")
 	}
 }
+
+func TestCompletedManualAuthorizationReplacesOlderWorkerVerificationMessage(t *testing.T) {
+	m, v, e, ui := signInUI(t, "local")
+	feedbackClick(t, ui, "登录账号")
+	job := welcomeJob(t, v.Controller, "runtime.signin.start")
+	in := job.Input.(protocol.SignInInput)
+	profile := e.catalog[0]
+	profile.Account = &domain.RuntimeAccount{Label: "Antigravity", State: "authenticated"}
+	message := "已提交授权信息，正在核对账号"
+	body, _ := json.Marshal(domain.SignInStatus{
+		ID: in.ID, HarnessID: in.HarnessID, Phase: domain.SignInCompleted, Profile: &profile, Message: message,
+	})
+	job.Apply(m, body, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	if ui.HasText(message) || !ui.HasText("已登录") || !ui.HasText("重新登录") {
+		t.Fatal("completed authorization still looks pending", ui.Texts())
+	}
+}
+
+func TestAgentQuotaDetailsAreCollapsedAndUseCompactRowsWhenOpened(t *testing.T) {
+	m := deviceUIModel()
+	state := m.DeviceStates["local"]
+	state.WorkerMinor = protocol.SignInManualCodeMinor
+	v := New(m, app.NewController(""), "")
+	info := domain.HarnessInfo{
+		ID: "antigravity", Name: "Antigravity", Icon: "antigravity", State: domain.RuntimeReady,
+		Installation: &domain.RuntimeInstallation{SignInMethods: []domain.SignInMethod{domain.SignInBrowser}},
+		Capabilities: domain.HarnessCapabilities{SkillManagement: true, ToolServices: true, HookManagement: true},
+	}
+	reset := time.Date(2026, 11, 30, 17, 27, 0, 0, time.Local)
+	info.Account = &domain.RuntimeAccount{Label: "Antigravity", State: "authenticated", QuotaWindows: []domain.RuntimeQuotaWindow{
+		{Group: "Gemini Models", DurationSeconds: 604800, UsedPercent: 1, ResetsAt: &reset},
+		{Group: "Gemini Models", DurationSeconds: 18000, UsedPercent: 0, ResetsAt: &reset},
+		{Group: "Claude and GPT models", DurationSeconds: 604800, UsedPercent: 0, ResetsAt: &reset},
+		{Group: "Claude and GPT models", DurationSeconds: 18000, UsedPercent: 0, ResetsAt: &reset},
+		{Group: "Gemini 4 Argon", DurationSeconds: 604800, UsedPercent: 0, ResetsAt: &reset},
+	}}
+	e := agentEditor([]domain.HarnessInfo{info})
+	e.edit(info)
+	e.draft.login = true
+	ui := n.NewTester(func(c *n.Context) {
+		n.Column(c).FillWidth().FillHeight().Background(c.Theme().Surface).Children(func() {
+			v.deviceAgentPage(c, c.Theme(), "local", "本机", state, e, info)
+		})
+	}, 950, 670)
+	ui.SetDark(true)
+	ui.Advance(time.Second)
+	const title = "Claude and GPT models · 5 小时额度"
+	const usage = "已用 0% · 11-30 17:27 重置"
+	if ui.HasText(title) || ui.HasText(usage) {
+		t.Fatal("quota details are visible by default")
+	}
+	auditCapture(t, ui, "agy-quota-collapsed")
+	if err := ui.Click("额度"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	auditCapture(t, ui, "agy-quota-expanded")
+	ui.SetSize(550, 630)
+	ui.SetDark(false)
+	ui.Advance(time.Second)
+	name, hasName := ui.Find(title)
+	last, hasLast := ui.Find("Gemini 4 Argon · 每周额度")
+	if !hasName || !hasLast || name.W < 200 || name.H > 24 || last.Y-name.Y > 30 {
+		t.Fatalf("quota names should fit in adjacent compact rows: name=%+v next=%+v", name, last)
+	}
+	auditCapture(t, ui, "agy-quota-expanded-narrow")
+	if err := ui.Click("额度"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if ui.HasText(title) || ui.HasText(usage) {
+		t.Fatal("quota details remain visible after collapsing")
+	}
+}

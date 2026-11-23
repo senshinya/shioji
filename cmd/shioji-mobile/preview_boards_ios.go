@@ -194,7 +194,7 @@ func (a *mobileApp) seedArtboardRequest(request domain.PendingRequest, title, pr
 
 func (a *mobileApp) openPreviewBoard(board string) {
 	switch board {
-	case "ssh-auth", "worker-setup", "worker-upgrade", "worker-schema-upgrade", "agent-config", "directory-picker", "device-health", "hook-review", "port-forwards", "import-session", "device-paths":
+	case "ssh-auth", "worker-setup", "worker-upgrade", "worker-schema-upgrade", "agent-config", "agent-agy-quota", "directory-picker", "device-health", "hook-review", "port-forwards", "import-session", "device-paths":
 		a.seedArtboardDevices()
 	case "message-search", "history-match", "session-actions", "session-archive", "session-archive-progress", "fork-session", "branch-switch", "attachment-transfer",
 		"schedule-list", "schedule-editor", "schedule-detail", "schedule-run":
@@ -692,6 +692,25 @@ func (a *mobileApp) openPreviewBoard(board string) {
 			Models:       a.model.Readiness.Models, Account: account,
 			Installation: &domain.RuntimeInstallation{Executable: "/Applications/Codex.app/Contents/Resources/codex", Configurable: true,
 				SignInMethods: []domain.SignInMethod{domain.SignInDeviceCode, domain.SignInBrowser}, APISetup: true}})
+	case "agent-agy-quota":
+		a.model.WorkerMinor = protocol.Minor
+		reset := time.Date(2026, 11, 30, 9, 27, 0, 0, time.UTC)
+		agent := domain.HarnessInfo{ID: "antigravity", Name: "Antigravity", State: domain.RuntimeReady,
+			Installation: &domain.RuntimeInstallation{SignInMethods: []domain.SignInMethod{domain.SignInBrowser}}}
+		profile := agent
+		profile.Account = &domain.RuntimeAccount{Mode: "account", State: "authenticated", Label: "Antigravity",
+			QuotaWindows: []domain.RuntimeQuotaWindow{
+				{Group: "Gemini Models", DurationSeconds: 604800, UsedPercent: 1, ResetsAt: &reset},
+				{Group: "Gemini Models", DurationSeconds: 18000, ResetsAt: &reset},
+				{Group: "Claude and GPT models", DurationSeconds: 604800, ResetsAt: &reset},
+				{Group: "Claude and GPT models", DurationSeconds: 18000, ResetsAt: &reset},
+			}}
+		a.model.Readiness.Harnesses = []domain.HarnessInfo{profile}
+		a.keepAgentSignIn(&mobileAgentSignIn{status: domain.SignInStatus{
+			ID: "agy-authorization", HarnessID: agent.ID, Phase: domain.SignInCompleted, Profile: &profile,
+			Message: "已提交授权信息，正在核对账号",
+		}})
+		a.openAgentSettings(a.home, agent)
 	case "workspace-mcp", "workspace-skills-uncertain", "workspace-hooks-receipt":
 		a.previewSkillFailure = board == "workspace-skills-uncertain"
 		a.seedPreviewHooks(board == "workspace-hooks-receipt")
