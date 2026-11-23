@@ -5,6 +5,17 @@
 
 ## [Unreleased]
 
+## [0.7.13] - 2026-11-23
+
+[源码](https://github.com/senshinya/shioji/tree/v0.7.13) · [与 v0.7.12 比较](https://github.com/senshinya/shioji/compare/v0.7.12...v0.7.13)
+
+### Fixed
+
+- 修复 Codex 的 MCP 服务启动失败时，Shioji 执行服务误将通知解析为轮次错误，导致新会话发送后立即结束的问题。
+- iOS 在会话标题下留出间距，并在折叠工具组或工具结果时保留阅读位置。
+
+会话执行修复需要更新所属设备的执行服务。协议沿用 2.58，数据库继续使用 schema 17。
+
 ## [0.7.12] - 2026-11-23
 
 [源码](https://github.com/senshinya/shioji/tree/v0.7.12) · [与 v0.7.11 比较](https://github.com/senshinya/shioji/compare/v0.7.11...v0.7.12)

@@ -1,12 +1,14 @@
 # Shioji 发布
 
-当前版本为 `v0.7.12`。`VERSION` 保存不带 `v` 的数字版本，两个 App bundle 的版本均由构建脚本写入。`dev.shioji.app`、`dev.shioji.runtime` 与现有服务身份保持不变。
+当前版本为 `v0.7.13`。`VERSION` 保存不带 `v` 的数字版本，macOS App 和 Runtime bundle 的版本均由构建脚本写入。iOS 与 iPadOS 的版本号和构建号记录在 `cmd/shioji-mobile/mygo.json`。
 
 ## 变更记录与发布说明
 
 完整变更见 [CHANGELOG.md](../CHANGELOG.md)。每次发布前比较上一正式标签与待发布代码的实际差异，核对面向用户的行为、兼容性和升级要求；不能只根据 commit message 生成说明。
 
 使用 `Added`、`Changed`、`Deprecated`、`Removed`、`Fixed`、`Security` 分类，只保留有内容的分类；版本标题包含数字版本、UTC 发布日期和源码／比较链接。说明用户影响，排除本地产物、内部重构和纯测试调整。GitHub Release 正文复用对应版本条目，并补充该版安装与更新方式。修改历史说明保留原发布日期，不移动标签或替换已发布二进制。
+
+v0.7.13 修复 Codex 在 MCP 服务启动失败时导致会话提前结束的问题，并改善 iOS/iPadOS 的会话标题间距和工具结果折叠时的阅读位置。执行修复需要更新设备的执行服务，沿用协议 2.58 和 schema 17。
 
 v0.7.12 调整 macOS 对话的工具组标题，并在设备详情里显示 Tailnet 对端延迟和连接路径。更新 Mac App 即可获得这两项界面改进。执行服务沿用协议 2.58 和 schema 17。
 
@@ -123,7 +125,7 @@ bash packaging/build-dev.sh
 # 指定本机已有 Developer ID identity 和 notarytool profile 后：
 # 另需 APPLE_TEAM_ID、SHIOJI_UPDATE_PUBLIC_KEY 与 SHIOJI_UPDATE_PRIVATE_KEY；
 # 私钥从安全文件/CI Secret 注入环境，不要写在命令参数或 shell 历史中。
-CODE_SIGN_IDENTITY='<证书指纹>' NOTARY_PROFILE='<本机公证配置名称>' RELEASE_TAG=v0.7.12 bash packaging/build-release.sh
+CODE_SIGN_IDENTITY='<证书指纹>' NOTARY_PROFILE='<本机公证配置名称>' RELEASE_TAG=v0.7.13 bash packaging/build-release.sh
 ```
 
 产物位于 `build/release/`。构建不会启动或替换用户正在运行的 GUI、worker 或 Tailnet 节点。
