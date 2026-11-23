@@ -7,6 +7,16 @@ import (
 	"time"
 )
 
+func TestAntigravityCatalogIconUsesBrandArtwork(t *testing.T) {
+	ready := domain.Readiness{HarnessID: "antigravity", Harnesses: []domain.HarnessInfo{
+		{ID: "antigravity", Name: "Antigravity", Icon: "antigravity"},
+	}}
+	icon := harnessIcon(ready.Descriptor())
+	if icon == nil || icon == genericAgentIcon || icon == openAIBlossom {
+		t.Fatal("Antigravity needs its own catalog icon")
+	}
+}
+
 func TestRunMenuUsesSelectedHarnessCatalogAndHidesUnsupportedControls(t *testing.T) {
 	m := layoutModel()
 	m.SessionID = ""

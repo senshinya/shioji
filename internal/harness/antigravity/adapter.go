@@ -21,7 +21,7 @@ type Adapter struct {
 }
 
 func (a Adapter) Descriptor() domain.HarnessDescriptor {
-	return domain.HarnessDescriptor{ID: "antigravity", Name: "Antigravity"}
+	return domain.HarnessDescriptor{ID: "antigravity", Name: "Antigravity", Icon: "antigravity"}
 }
 
 func (a Adapter) WithExecutable(path string) (harness.Adapter, error) {

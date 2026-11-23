@@ -12,6 +12,12 @@ import (
 	"shioji/internal/harness"
 )
 
+func TestDescriptorPublishesAntigravityIcon(t *testing.T) {
+	if got := (Adapter{}).Descriptor().Icon; got != "antigravity" {
+		t.Fatalf("descriptor icon = %q, want antigravity", got)
+	}
+}
+
 func TestInstallationFindsExecutableFromOwningLoginShell(t *testing.T) {
 	root := t.TempDir()
 	bin := filepath.Join(root, "bin")
