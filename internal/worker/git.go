@@ -366,6 +366,9 @@ func (s *Server) updateCheckout(in protocol.CheckoutInput, observedHead *string)
 	if err != nil {
 		return status, err
 	}
+	if observedHead != nil {
+		return status, s.confirmGitContext(d.Session, status)
+	}
 	if d.Session.Status.BlocksCheckout() || d.Session.Goal.Active() {
 		return status, errors.New("session must be idle")
 	}
@@ -383,29 +386,7 @@ func (s *Server) updateCheckout(in protocol.CheckoutInput, observedHead *string)
 		}
 		return status, errors.New("session has an unsettled operation")
 	}
-	if observedHead != nil {
-		if d.Session.Archived || d.Session.ExecutionGuard != "" {
-			return status, errors.New("当前会话暂时无法确认分支")
-		}
-		workspace, e := s.store.Workspace(d.Session.WorkspaceID)
-		if e != nil {
-			return status, e
-		}
-		if workspace.Archived {
-			return status, errors.New("请先恢复工作区")
-		}
-		if err = s.sessionMaintenanceAdmission(in.SessionID); err != nil {
-			return status, err
-		}
-		if busy, e := s.store.HasActiveWork(in.SessionID); e != nil {
-			return status, e
-		} else if busy {
-			return status, errors.New("会话仍有活动工作")
-		}
-		if !d.Session.ContextChanged && d.Session.GitBranch == status.Branch && d.Session.GitHead == status.Head {
-			return status, nil
-		}
-	} else if in.Branch != status.Branch {
+	if in.Branch != status.Branch {
 		if err = s.checkoutGuard(status, in.SessionID); err != nil {
 			return status, err
 		}
@@ -462,11 +443,34 @@ func (s *Server) updateCheckout(in protocol.CheckoutInput, observedHead *string)
 	if err != nil {
 		return status, err
 	}
-	d.Session.GitBranch = status.Branch
-	d.Session.GitHead = status.Head
-	d.Session.ContextChanged = false
-	_, err = s.store.Apply(d.Session.ID, domain.Event{Type: "session.git", Session: &d.Session})
-	return status, err
+	return status, s.saveGitContext(d.Session, status)
+}
+
+func (s *Server) confirmGitContext(session domain.Session, status domain.GitStatus) error {
+	if session.Archived || session.ExecutionGuard != "" || session.Status == domain.ExecutionUnknown {
+		return errors.New("当前会话暂时无法确认分支")
+	}
+	workspace, err := s.store.Workspace(session.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	if workspace.Archived {
+		return errors.New("请先恢复工作区")
+	}
+	if err = s.sessionMaintenanceAdmission(session.ID); err != nil {
+		return err
+	}
+	if !session.ContextChanged && session.GitBranch == status.Branch && session.GitHead == status.Head {
+		return nil
+	}
+	return s.saveGitContext(session, status)
+}
+
+func (s *Server) saveGitContext(session domain.Session, status domain.GitStatus) error {
+	session.GitBranch, session.GitHead = status.Branch, status.Head
+	session.ContextChanged = false
+	_, err := s.store.Apply(session.ID, domain.Event{Type: "session.git", Session: &session})
+	return err
 }
 func (s *Server) prepareGitLocked(in domain.Submission, launch domain.LaunchContext) (domain.LaunchContext, error) {
 	owner := s.sessionTransitions[in.SessionID]

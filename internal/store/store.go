@@ -802,6 +802,17 @@ func (s *Store) applyLocked(sid string, e domain.Event) (domain.Event, error) {
 		if e.Session == nil || e.Session.ID != sid {
 			return e, errors.New("invalid Git context event")
 		}
+		if session.ContextChanged || e.Session.ContextChanged {
+			q, err := readQueue(tx, sid)
+			if err != nil {
+				return e, err
+			}
+			if len(q.Items) > 0 && !q.Paused {
+				if _, _, err = pauseQueue(tx, sid, "执行分支已改变"); err != nil {
+					return e, err
+				}
+			}
+		}
 		session.GitBranch = e.Session.GitBranch
 		session.GitHead = e.Session.GitHead
 		session.ContextChanged = e.Session.ContextChanged

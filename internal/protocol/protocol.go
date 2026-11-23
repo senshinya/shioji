@@ -56,7 +56,8 @@ const Major = 2
 // Minor 54 adds replies to nonblocking questions in the transcript.
 // Minor 55 supports a durable receipt before preparing a new session.
 // Minor 58 includes the mobile worker's Agent settings and checkout confirmation.
-const Minor = 58
+// Minor 59 permits confirmation of an observed checkout during an active turn.
+const Minor = 59
 
 const CatalogMinor = 53
 const SubmissionReceiptMinor = 55
@@ -67,6 +68,7 @@ const RuntimeAgentSelectionMinor = 56
 const RuntimeSettingsMinor = 56
 const GitConfirmationMinor = 56
 const QuestionReplyMinor = 57
+const ActiveGitConfirmationMinor = 59
 
 // Structured questions identify support on desktop 54 and 55. The mobile
 // branch first acquired them at 57.

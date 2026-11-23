@@ -688,6 +688,50 @@ func TestCheckoutShowsPendingUntilOwningDeviceConfirms(t *testing.T) {
 	}
 }
 
+func TestActiveConversationConfirmsObservedBranchAndClearsNotice(t *testing.T) {
+	m := layoutModel()
+	m.WorkerMinor = 59
+	m.ConnectionEpoch = "git-epoch"
+	detail := m.Details["s"]
+	detail.Session.Status = "running"
+	detail.Session.GitBranch = "main"
+	detail.Session.ContextChanged = true
+	m.Details["s"] = detail
+	m.Snapshot.Sessions[0] = detail.Session
+	status := domain.GitStatus{Applicable: true, Branch: "topic", Head: "abcdef1234", Branches: []string{"main", "topic"}}
+	m.SetGitStatus("session:s", status)
+	v := New(m, app.NewController(""), "")
+	v.gitLoads = map[string]*gitLoadState{"session:s": {tag: "git-epoch:0", phase: gitReady}}
+	ui := n.NewTester(v.View, 1440, 900)
+	ui.Advance(time.Second)
+	saveNativeSkillImage(t, ui, "active-branch-notice.png")
+	feedbackClick(t, ui, "查看分支")
+	body, _ := json.Marshal(status)
+	feedbackJob(t, v, "git.status").Apply(m, body, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	saveNativeSkillImage(t, ui, "active-branch-menu.png")
+	feedbackClick(t, ui, "确认当前分支")
+	job := feedbackJob(t, v, "git.confirm")
+	if input, ok := job.Input.(protocol.ConfirmCheckoutInput); !ok || input.SessionID != "s" || input.WorkspaceID != "w" || input.Branch != "topic" || input.Head != "abcdef1234" {
+		t.Fatalf("confirmation did not send the reviewed branch and HEAD: %+v", job.Input)
+	}
+	job.Apply(m, body, nil)
+	confirmed := detail.Session
+	confirmed.ContextChanged = false
+	confirmed.GitBranch, confirmed.GitHead = "topic", "abcdef1234"
+	confirmed.Revision++
+	if err := m.ApplyEvent(domain.Event{Sequence: 1, Type: "session", SessionID: "s", Session: &confirmed}); err != nil {
+		t.Fatal(err)
+	}
+	ui.Frame()
+	ui.Advance(time.Second)
+	saveNativeSkillImage(t, ui, "active-branch-confirmed.png")
+	if ui.HasText("执行分支已改变") || m.Details["s"].Session.Status != "running" {
+		t.Fatal("confirmation should clear the notice while the agent keeps running")
+	}
+}
+
 func TestBackgroundSwitchHandsPendingCaptionToControllerState(t *testing.T) {
 	m := deviceUIModel()
 	state := m.DeviceStates["air"]

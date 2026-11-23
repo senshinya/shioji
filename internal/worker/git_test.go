@@ -171,6 +171,40 @@ func TestGitMonitorMarksExternalChangesWithoutSubmitting(t *testing.T) {
 	}
 }
 
+func TestGitConfirmationClearsContextChangeDuringAnActiveTurn(t *testing.T) {
+	s, w, dir := gitTestServer(t)
+	id := gitTestSession(t, s, w, "main", "running")
+	turn := domain.Turn{ID: "active", Status: "running"}
+	if _, err := s.store.Apply(id, domain.Event{Type: "turn", Turn: &turn}); err != nil {
+		t.Fatal(err)
+	}
+	queued := domain.Submission{OperationID: domain.NewID(), WorkspaceID: w.ID, SessionID: id, HarnessID: "codex", Text: "Keep the queued task"}
+	if _, err := s.store.Enqueue(queued); err != nil {
+		t.Fatal(err)
+	}
+	gitTestRun(t, dir, "switch", "other")
+	head := gitTestRun(t, dir, "rev-parse", "HEAD")
+	query := map[string]string{"workspaceId": w.ID, "sessionId": id, "branch": "other", "head": head}
+	if _, err := gitTestCall(s, "git.confirm", query); err != nil {
+		t.Fatalf("confirm checkout during active turn: %v", err)
+	}
+	d, err := s.store.Session(id, 0, 1)
+	if err != nil || d.Session.ContextChanged || d.Session.GitBranch != "other" || d.Session.GitHead != head ||
+		d.Session.Context.Branch != "main" || d.Session.Status != "running" || len(d.Turns) != 1 || d.Turns[0].Status != "running" {
+		t.Fatalf("confirmation did not preserve the active turn: %+v %v", d, err)
+	}
+	if !d.Queue.Paused || len(d.Queue.Items) != 1 || d.Queue.Items[0].ID != queued.OperationID {
+		t.Fatalf("confirmation released the queued task: %+v", d.Queue)
+	}
+	query["branch"] = "main"
+	if _, err = gitTestCall(s, "git.checkout", query); err == nil {
+		t.Fatal("confirmation allowed switching an active checkout")
+	}
+	if got := gitTestRun(t, dir, "branch", "--show-current"); got != "other" {
+		t.Fatalf("checkout changed to %q", got)
+	}
+}
+
 func TestGitConfirmationVerifiesTheObservedCheckoutWithoutChangingIt(t *testing.T) {
 	s, w, dir := gitTestServer(t)
 	id := gitTestSession(t, s, w, "main", "completed")

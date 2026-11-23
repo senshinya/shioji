@@ -34,6 +34,7 @@ type gitLoadState struct {
 type branchCheckout struct {
 	connection, epoch      string
 	branch, previousBranch string
+	confirming             bool
 }
 
 func (v *View) gitLoading(key string) bool {
@@ -137,14 +138,19 @@ func (v *View) requestGit(force bool) {
 		state.problem, state.details = "", ""
 	}
 }
+func (v *View) gitActionReady(key string) bool {
+	m := v.Model
+	return m.Connected && m.GitEpochs[key] == m.ConnectionEpoch && !v.gitLoading(key) && v.activeBranchCheckout(key) == nil
+}
+
 func (v *View) canSwitchBranch() bool {
 	m := v.Model
 	key, _ := v.gitQuery()
-	if !m.Connected || m.GitEpochs[key] != m.ConnectionEpoch || v.gitLoading(key) {
+	if !v.gitActionReady(key) {
 		return false
 	}
 	for _, s := range m.Snapshot.Sessions {
-		if s.ID == m.SessionID && (s.Status.BlocksCheckout()) {
+		if s.ID == m.SessionID && (s.Status.BlocksCheckout() || s.Goal.Active()) {
 			return false
 		}
 	}
@@ -158,7 +164,17 @@ func (v *View) canSwitchBranch() bool {
 			return false
 		}
 	}
-	return v.activeBranchCheckout(key) == nil
+	return true
+}
+
+func (v *View) canConfirmBranch(key string) bool {
+	m := v.Model
+	session := m.Details[m.SessionID].Session
+	if session.ID == "" || session.Status == domain.ExecutionUnknown || session.ExecutionGuard != "" || m.ArchivedContext() != "" ||
+		!v.gitActionReady(key) || !m.GitStatuses[key].Applicable || m.WorkerMinor < protocol.GitConfirmationMinor {
+		return false
+	}
+	return m.WorkerMinor >= protocol.ActiveGitConfirmationMinor || v.canSwitchBranch()
 }
 
 func (v *View) activeBranchCheckout(key string) *branchCheckout {
@@ -180,14 +196,33 @@ func (v *View) chooseBranch(branch string) {
 	if !v.canSwitchBranch() || v.Controller == nil {
 		return
 	}
+	v.submitBranchAction(branch, nil)
+}
+
+func (v *View) confirmBranch(status domain.GitStatus) {
+	key, _ := v.gitQuery()
+	if !v.canConfirmBranch(key) || v.Controller == nil {
+		return
+	}
+	v.branchOpen = false
+	v.submitBranchAction(status.Branch, &status.Head)
+}
+
+func (v *View) submitBranchAction(branch string, observedHead *string) {
+	m := v.Model
 	key, q := v.gitQuery()
 	root := v.splitRoot()
-	pending := &branchCheckout{connection: m.ConnectionID(), epoch: m.ConnectionEpoch, branch: branch, previousBranch: m.GitStatuses[key].Branch}
+	pending := &branchCheckout{connection: m.ConnectionID(), epoch: m.ConnectionEpoch, branch: branch, previousBranch: m.GitStatuses[key].Branch, confirming: observedHead != nil}
+	checkout := protocol.CheckoutInput{GitQuery: q, Branch: branch}
+	method, input := "git.checkout", any(checkout)
+	if observedHead != nil {
+		method, input = "git.confirm", protocol.ConfirmCheckoutInput{CheckoutInput: checkout, Head: *observedHead}
+	}
 	if root.branchCheckouts == nil {
 		root.branchCheckouts = map[string]*branchCheckout{}
 	}
 	root.branchCheckouts[key] = pending
-	if !v.do(app.Job{Method: "git.checkout", Input: protocol.CheckoutInput{GitQuery: q, Branch: branch}, Apply: func(m *app.Model, b json.RawMessage, err error) {
+	if !v.do(app.Job{Method: method, Input: input, Apply: func(m *app.Model, b json.RawMessage, err error) {
 		if root.branchCheckouts[key] != pending {
 			return
 		}
@@ -241,8 +276,11 @@ func (v *View) branchCheckoutError(key string, pending *branchCheckout, err erro
 		v.gitLoads[key] = state
 	}
 	var remote *protocol.RemoteError
-	state.recheckCheckout = !errors.As(err, &remote) || remote.Code == "gitOutputIncomplete" || strings.Contains(err.Error(), exec.ErrWaitDelay.Error())
+	state.recheckCheckout = !pending.confirming && (!errors.As(err, &remote) || remote.Code == "gitOutputIncomplete" || strings.Contains(err.Error(), exec.ErrWaitDelay.Error()))
 	state.problem, state.details, state.showProblem = "无法切换分支", gitFeedbackDetail(err), true
+	if pending.confirming {
+		state.problem = "无法确认分支"
+	}
 	if state.recheckCheckout {
 		state.problem = "分支切换结果待确认"
 		if current, _ := v.gitQuery(); current == key && v.Model.ConnectionID() == pending.connection {
@@ -281,18 +319,15 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 		branch = v.Model.GitDrafts[v.Model.WorkspaceID].Branch
 	}
 	label := branch
-	if !home {
-		for _, session := range v.Model.Snapshot.Sessions {
-			if session.ID == v.Model.SessionID && session.ContextChanged {
-				label += " · 待确认"
-			}
-		}
-	}
 	if label == "" {
 		label = "分离 HEAD"
 		if len(status.Head) >= 7 {
 			label += " · " + status.Head[:7]
 		}
+	}
+	contextChanged := !home && v.Model.Details[v.Model.SessionID].Session.ContextChanged
+	if contextChanged {
+		label += " · 待确认"
 	}
 	frame.Children(func() {
 		n.Row(c.Key("branch-strip")).Absolute().Top(0).Left(0).Right(0).FillWidth().Height(26).Gap(12).AlignItems(n.Center).Children(func() {
@@ -311,7 +346,9 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 				}
 				return
 			}
-			trigger := control(c, 5).Height(26).MaxWidth(330).Padding(3, 10).Radius(5).Label("选择分支").Tooltip(label).Disabled(!v.canSwitchBranch()).Children(func() {
+			canSwitch := v.canSwitchBranch()
+			canReview := contextChanged && v.Model.Connected
+			trigger := control(c, 5).Height(26).MaxWidth(330).Padding(3, 10).Radius(5).Label("选择分支").Tooltip(label).Disabled(!canSwitch && !canReview).Children(func() {
 				inlineIconText(c, branchIcon, label, n.Font{Family: "Menlo", Size: 11, Weight: 400}, 12, 5, t.TextMuted)
 			})
 			if trigger.Clicked() {
@@ -328,9 +365,14 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 							choices = append(choices, name)
 						}
 					}
+					canConfirm := v.canConfirmBranch(key)
 					if !home {
-						if ghost(c, "确认当前分支").FillWidth().FontSize(12).Clicked() {
-							v.chooseBranch(status.Branch)
+						confirm := ghost(c, "确认当前分支").FillWidth().FontSize(12).Disabled(!canConfirm)
+						if v.Model.WorkerMinor < protocol.GitConfirmationMinor || contextChanged && !canSwitch && v.Model.WorkerMinor < protocol.ActiveGitConfirmationMinor {
+							confirm.Tooltip("更新执行服务后可确认当前分支")
+						}
+						if confirm.Clicked() {
+							v.confirmBranch(status)
 						}
 					}
 					if len(choices) == 0 {
@@ -339,8 +381,10 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 					v.branchList.Key = func(i int) any { return choices[i] }
 					n.List(c, &v.branchList, len(choices), func(i int) {
 						name := choices[i]
+						confirming := !home && name == status.Branch
 						row := control(c, compactMenuRowRadius).FillWidth().MinHeight(compactMenuRowHeight).
-							Padding(3, compactMenuRowInset).Radius(compactMenuRowRadius).Label("分支:" + name).Children(func() {
+							Padding(3, compactMenuRowInset).Radius(compactMenuRowRadius).Label("分支:" + name).
+							Disabled(confirming && !canConfirm || !confirming && !canSwitch).Children(func() {
 							n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
 								n.Text(c, name).Grow(1).FontSize(compactMenuFontSize).FixedLineHeight(20)
 								if name == branch {
@@ -349,13 +393,21 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 							})
 						})
 						if row.Clicked() {
-							v.chooseBranch(name)
+							if confirming {
+								v.confirmBranch(status)
+							} else {
+								v.chooseBranch(name)
+							}
 						}
 					}).FillWidth().Height(min(240, float32(len(choices))*28))
 				})
 			})
 			if pending := v.activeBranchCheckout(key); pending != nil && (pending.previousBranch == pending.branch || branch != pending.branch) {
-				n.Text(c.Key("branch-checkout"), "正在切换分支").FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
+				progress := "正在切换分支"
+				if pending.confirming {
+					progress = "正在确认分支"
+				}
+				n.Text(c.Key("branch-checkout"), progress).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).
 					SingleLine().Tooltip(pending.branch)
 			}
 			if home {

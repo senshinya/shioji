@@ -228,12 +228,16 @@ func (a *mobileApp) openBranch(parent *mygo.Window, s domain.Session) {
 		}
 		confirming := current.ContextChanged && (!choseBranch || branch == status.Branch)
 		supported := m.WorkerMinor >= protocol.GitConfirmationMinor
+		activeConfirmation := confirming && m.WorkerMinor >= protocol.ActiveGitConfirmationMinor
 		disabled := !fresh || !m.Connected || req.busy || current.ID == "" || current.Archived || workspace.Archived ||
-			current.Status.BlocksCheckout() || current.Goal.Active() || current.ExecutionGuard != "" || m.HasPendingInputForSession(s.ID)
-		for _, request := range m.Snapshot.PendingRequests {
-			if request.SessionID == s.ID && request.State.AwaitingResolution() {
-				disabled = true
-				break
+			current.Status == domain.ExecutionUnknown || current.ExecutionGuard != ""
+		if !activeConfirmation {
+			disabled = disabled || current.Status.BlocksCheckout() || current.Goal.Active() || m.HasPendingInputForSession(s.ID)
+			for _, request := range m.Snapshot.PendingRequests {
+				if request.SessionID == s.ID && request.State.AwaitingResolution() {
+					disabled = true
+					break
+				}
 			}
 		}
 		mobilePageWithFooter(c, func() {
