@@ -4844,23 +4844,32 @@ final class ShiojiMobileUITests: XCTestCase {
     }
 
     func testDeviceScheduleAndWorkspaceNavigation() {
+        let tablet = UIDevice.current.userInterfaceIdiom == .pad
+        if tablet {
+            XCUIDevice.shared.orientation = .landscapeLeft
+        }
         let app = launch("--preview")
         let devices = app.buttons["设备"].firstMatch
         XCTAssertTrue(devices.waitForExistence(timeout: 8))
         devices.tap()
         app.buttons["Studio Display Mac"].firstMatch.tap()
-        XCTAssertTrue(app.navigationBars["Studio Display Mac"].waitForExistence(timeout: 5))
+        let device = app.navigationBars["Studio Display Mac"]
+        XCTAssertTrue(device.waitForExistence(timeout: 5))
         capture("Native device detail", app: app)
         app.buttons["Shioji iOS"].firstMatch.tap()
-        XCTAssertTrue(app.navigationBars["工作区设置"].waitForExistence(timeout: 5))
+        let workspace = app.navigationBars["工作区设置"]
+        XCTAssertTrue(workspace.waitForExistence(timeout: 5))
         capture("Native workspace settings", app: app)
-        app.navigationBars.buttons["BackButton"].tap()
-        app.navigationBars.buttons["BackButton"].tap()
-        app.buttons["定时任务"].firstMatch.tap()
+        workspace.buttons["BackButton"].tap()
+        XCTAssertTrue(device.waitForExistence(timeout: 5))
+        let schedules = app.buttons["定时任务"].firstMatch
+        for _ in 0..<3 where !schedules.isHittable { app.swipeUp(velocity: .slow) }
+        schedules.tap()
         XCTAssertTrue(app.navigationBars["定时任务"].waitForExistence(timeout: 5))
         capture("Native schedule list", app: app)
         app.buttons["每日构建检查"].firstMatch.tap()
-        XCTAssertTrue(app.navigationBars["任务详情"].waitForExistence(timeout: 5))
+        let detail = tablet ? app.buttons["关闭任务详情"].firstMatch : app.navigationBars["任务详情"]
+        XCTAssertTrue(detail.waitForExistence(timeout: 5))
         capture("Native schedule detail", app: app)
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@","11月19日")).firstMatch.tap()
         XCTAssertTrue(app.navigationBars["运行回执"].waitForExistence(timeout: 5))
@@ -4941,37 +4950,66 @@ final class ShiojiMobileUITests: XCTestCase {
         capture("The owning Worker persists the reordered workspace folders", app: app)
     }
 
-    private func openScheduleCatalog(_ app: XCUIApplication) {
-        let view = app.buttons["会话视图"].firstMatch
-        XCTAssertTrue(view.waitForExistence(timeout: 8), app.debugDescription)
-        view.tap()
-        let schedules = app.descendants(matching: .any)["定时任务"].firstMatch
+    private func openScheduleCatalog(_ app: XCUIApplication, captureEntry: Bool = false) {
+        let devices = app.buttons["设备"].firstMatch
+        XCTAssertTrue(devices.waitForExistence(timeout: 8), app.debugDescription)
+        devices.tap()
+        XCTAssertTrue(app.staticTexts["自动化"].waitForExistence(timeout: 5), app.debugDescription)
+        let schedules = app.buttons["定时任务"].firstMatch
         XCTAssertTrue(schedules.waitForExistence(timeout: 5), app.debugDescription)
+        for _ in 0..<3 where !schedules.isHittable { app.swipeUp(velocity: .slow) }
+        if captureEntry {
+            capture("Device automation entry", app: app)
+        }
         schedules.tap()
         XCTAssertTrue(app.navigationBars["定时任务"].waitForExistence(timeout: 5), app.debugDescription)
     }
 
-    func testScheduleCatalogOpensFromSessionView() {
+    func testScheduleCatalogOpensFromDeviceAutomation() {
+        let tablet = UIDevice.current.userInterfaceIdiom == .pad
+        if tablet {
+            XCUIDevice.shared.orientation = .landscapeLeft
+        }
         let app = launch("--preview-board-inbox")
-        let devices = app.buttons["设备"].firstMatch
-        XCTAssertTrue(devices.waitForExistence(timeout: 8))
-        devices.tap()
-        XCTAssertTrue(app.buttons["Tailnet"].waitForExistence(timeout: 5))
-        capture("Device network entries", app: app)
-        XCTAssertFalse(app.buttons["定时任务"].exists)
-        app.buttons["会话"].firstMatch.tap()
-        openScheduleCatalog(app)
+        openScheduleCatalog(app, captureEntry: true)
+        let nextColumn = app.staticTexts["下一次"]
+        let statusFilter = app.buttons["状态筛选"].firstMatch
+        XCTAssertTrue(nextColumn.exists)
+        XCTAssertTrue(app.staticTexts["最近一次"].exists)
         let task = app.buttons["每日构建检查"].firstMatch
         XCTAssertTrue(task.waitForExistence(timeout: 5))
-        capture("Schedule catalog from session view", app: app)
+        XCTAssertTrue((task.value as? String)?.contains("已完成") == true)
+        capture("All schedules from device automation", app: app)
+        XCTAssertGreaterThanOrEqual(nextColumn.frame.minY - statusFilter.frame.maxY, 16)
+        XCTAssertGreaterThanOrEqual(task.frame.height, 61)
+        statusFilter.tap()
+        app.descendants(matching: .any)["已暂停"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["此筛选下没有定时任务"].waitForExistence(timeout: 5))
+        statusFilter.tap()
+        app.descendants(matching: .any)["全部状态"].firstMatch.tap()
+        XCTAssertTrue(task.waitForExistence(timeout: 5))
         task.tap()
-        XCTAssertTrue(app.navigationBars["任务详情"].waitForExistence(timeout: 5))
-        capture("Schedule detail", app: app)
+        if tablet {
+            let close = app.buttons["关闭任务详情"].firstMatch
+            XCTAssertTrue(close.waitForExistence(timeout: 5))
+            XCTAssertTrue(task.exists)
+            XCTAssertTrue(app.staticTexts["工作区"].exists)
+            capture("Schedule list and inspector", app: app)
+            close.tap()
+            XCTAssertTrue(close.waitForNonExistence(timeout: 5))
+        } else {
+            XCTAssertTrue(app.navigationBars["任务详情"].waitForExistence(timeout: 5))
+            capture("Schedule detail", app: app)
+        }
     }
 
     func testOfflineScheduleOpensDetailBeforeConnecting() throws {
         guard ProcessInfo.processInfo.environment["SHIOJI_OFFLINE_SCHEDULE_FIXTURE"] == "1" else {
             throw XCTSkip("Requires a cached schedule on a disposable offline device")
+        }
+        let tablet = UIDevice.current.userInterfaceIdiom == .pad
+        if tablet {
+            XCUIDevice.shared.orientation = .landscapeLeft
         }
         let app = launch("")
         openScheduleCatalog(app)
@@ -4979,17 +5017,21 @@ final class ShiojiMobileUITests: XCTestCase {
         let task = app.buttons["离线构建检查"].firstMatch
         XCTAssertTrue(task.waitForExistence(timeout: 8), app.debugDescription)
         task.tap()
-        XCTAssertTrue(app.navigationBars["任务详情"].waitForExistence(timeout: 4), app.debugDescription)
+        let close = tablet ? app.buttons["关闭任务详情"].firstMatch : app.navigationBars["任务详情"].buttons["BackButton"].firstMatch
+        XCTAssertTrue(close.waitForExistence(timeout: 4), app.debugDescription)
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "离线构建检查")).firstMatch.exists)
         XCTAssertFalse(app.staticTexts["正在连接任务所属设备…"].exists)
         capture("Offline schedule connects in its detail", app: app)
         XCTAssertTrue(app.buttons["重试"].waitForExistence(timeout: 18), app.debugDescription)
-        app.navigationBars["任务详情"].buttons["BackButton"].firstMatch.tap()
+        close.tap()
         XCTAssertTrue(task.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["重新读取"].exists)
     }
 
     func testScheduledTaskCanBeDeletedAfterNativeConfirmation() {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCUIDevice.shared.orientation = .landscapeLeft
+        }
         let app = launch("--preview-board-schedule-list")
         let task = app.buttons["每日构建检查"].firstMatch
         XCTAssertTrue(task.waitForExistence(timeout: 8))
@@ -5027,18 +5069,18 @@ final class ShiojiMobileUITests: XCTestCase {
         guard ProcessInfo.processInfo.environment["SHIOJI_SCHEDULE_FIXTURE"] == "1" else {
             throw XCTSkip("Requires a disposable Worker with a saved schedule")
         }
+        let tablet = UIDevice.current.userInterfaceIdiom == .pad
+        if tablet {
+            XCUIDevice.shared.orientation = .landscapeLeft
+        }
         let app = launch("")
-        let devices = app.buttons["设备"].firstMatch
-        XCTAssertTrue(devices.waitForExistence(timeout: 10))
-        devices.tap()
-        app.buttons["会话"].firstMatch.tap()
         openScheduleCatalog(app)
         let task = app.buttons["隔离定时任务"].firstMatch
         XCTAssertTrue(task.waitForExistence(timeout: 20), app.debugDescription)
         task.tap()
         let zone = app.staticTexts["执行设备时区 · America/Los_Angeles"]
         XCTAssertTrue(zone.waitForExistence(timeout: 6), app.debugDescription)
-        XCTAssertTrue(app.staticTexts["下次运行"].exists)
+        XCTAssertTrue(app.staticTexts[tablet ? "下一次" : "下次运行"].exists)
         app.buttons["删除任务"].firstMatch.tap()
         let alert = app.alerts["删除定时任务？"]
         XCTAssertTrue(alert.waitForExistence(timeout: 5))
@@ -5086,11 +5128,15 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertTrue(first.waitForExistence(timeout: 5))
 
         second.tap()
-        let detail = app.navigationBars["任务详情"]
-        XCTAssertTrue(detail.waitForExistence(timeout: 15), app.debugDescription)
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCTAssertTrue(app.buttons["关闭任务详情"].waitForExistence(timeout: 15), app.debugDescription)
+            XCTAssertTrue(first.exists)
+        } else {
+            XCTAssertTrue(app.navigationBars["任务详情"].waitForExistence(timeout: 15), app.debugDescription)
+        }
         XCTAssertTrue(app.staticTexts["暂无运行记录"].waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertFalse(app.buttons["刷新记录"].exists)
-        let remove = detail.buttons["删除任务"].firstMatch
+        let remove = app.buttons["删除任务"].firstMatch
         XCTAssertTrue(remove.waitForExistence(timeout: 8))
         remove.tap()
         let alert = app.alerts["删除定时任务？"]
@@ -5183,7 +5229,11 @@ final class ShiojiMobileUITests: XCTestCase {
         archived.buttons["BackButton"].tap()
         XCTAssertTrue(app.navigationBars["运行回执"].waitForExistence(timeout: 8))
         app.navigationBars["运行回执"].buttons["BackButton"].tap()
-        XCTAssertTrue(app.navigationBars["任务详情"].waitForExistence(timeout: 8))
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCTAssertTrue(app.buttons["关闭任务详情"].waitForExistence(timeout: 8))
+        } else {
+            XCTAssertTrue(app.navigationBars["任务详情"].waitForExistence(timeout: 8))
+        }
         let completedRun = app.buttons.matching(NSPredicate(
             format: "label CONTAINS %@ AND value == %@", "手动运行", "已完成 · 会话已归档"
         )).firstMatch

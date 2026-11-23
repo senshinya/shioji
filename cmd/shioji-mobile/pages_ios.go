@@ -131,6 +131,10 @@ func (a *mobileApp) devicesView(c *ui.Context) {
 		}
 		a.legacyMigrationRows(c)
 		a.servicePreparationRows(c)
+		mobileGroupHeading(c, "自动化")
+		mobileRow(c.Key("all-schedules"), "定时任务", "", "", clockSymbol, func() {
+			a.openSchedules(a.devices, "")
+		})
 		mobileGroupHeading(c, "网络")
 		mobileRow(c.Key("tailnet"), "Tailnet", "设备发现与连接", "", deviceSymbol, func() { a.openTailnet(a.devices) })
 		mobileRow(c.Key("forwards"), "端口转发", "", "", deviceSymbol, func() { a.openPortForwards(a.devices) })

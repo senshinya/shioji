@@ -84,7 +84,7 @@ func (a *mobileApp) openDevice(parent *mygo.Window) {
 			}
 			mobileRow(c, "新建工作区", "", "", folderSymbol, func() { a.openWorkspace(w, domain.Workspace{}) })
 			mobileGroupHeading(c, "自动化")
-			mobileRow(c, "定时任务", "", "", terminalSymbol, func() { a.openSchedules(w, a.endpoint.DeviceID) })
+			mobileRow(c, "定时任务", "", "", clockSymbol, func() { a.openSchedules(w, a.endpoint.DeviceID) })
 		})
 	})
 	if deviceID != "" && a.splitRoot().savedDevice(deviceID).Endpoint.DeviceID == deviceID {

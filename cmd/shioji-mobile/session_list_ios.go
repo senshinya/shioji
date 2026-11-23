@@ -221,9 +221,6 @@ func (a *mobileApp) sessionListToolbar(c *ui.Context, workspaces []sessionWorksp
 				}
 			}
 			m.Separator()
-			if m.Item("定时任务").Chosen() {
-				a.openSchedules(a.home, "")
-			}
 			menuChoice(m, "归档", a.archive, func() { a.openArchive(a.home) })
 			menuChoice(m, "全文搜索", false, func() { a.openContentSearch(a.home, "") })
 			menuChoice(m, "待我处理", false, func() { a.openAttention(a.home) })

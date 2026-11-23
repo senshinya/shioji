@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -79,6 +80,15 @@ func (a *mobileApp) openSchedules(parent *mygo.Window, deviceID string) {
 	var readProblem string
 	var scope mobileclient.WorkspaceLocation
 	var status mobileclient.ScheduleStatus
+	var inspected [2]string
+	var inspector *mobileScheduleDetailView
+	canBrowse := func() bool {
+		return opening == nil && (inspector == nil || !inspector.busy())
+	}
+	closeInspector := func() {
+		inspected, inspector = [2]string{}, nil
+		w.Invalidate()
+	}
 	if a.preview {
 		task := a.previewSchedule().Schedule
 		task.Text = ""
@@ -141,7 +151,7 @@ func (a *mobileApp) openSchedules(parent *mygo.Window, deviceID string) {
 		w.Invalidate()
 	}
 	open := func(selection mobileScheduleSelection) {
-		if opening != nil || !a.pageCurrent(w) {
+		if !canBrowse() || !a.pageCurrent(w) {
 			return
 		}
 		if !a.preview {
@@ -151,6 +161,7 @@ func (a *mobileApp) openSchedules(parent *mygo.Window, deviceID string) {
 				return
 			}
 		}
+		closeInspector()
 		selection.deadline = time.Now().Add(15 * time.Second)
 		notice, opening = "", &selection
 		w.Invalidate()
@@ -199,97 +210,150 @@ func (a *mobileApp) openSchedules(parent *mygo.Window, deviceID string) {
 				c.After(remaining)
 			}
 		}
-		mobilePageBody(c, func() {
-			workspaceLabel := "全部工作区"
-			for _, source := range sources {
-				for _, workspace := range source.data.Workspaces {
-					if scope != (mobileclient.WorkspaceLocation{}) && scope.Includes(workspace) {
-						workspaceLabel = workspace.Name + " · " + a.deviceLabel(source.data.DeviceID, source.data.Address)
-					}
-				}
+		var rows []mobileScheduleTableRow
+		reading, incomplete := false, false
+		for _, source := range sources {
+			if scope.DeviceID != "" && scope.DeviceID != source.data.DeviceID {
+				continue
 			}
-			ui.Row(c.Key("schedule-filters")).Gap(8).Wrap().Children(func() {
-				scheduleFilter(c.Key("workspaces"), "工作区筛选", workspaceLabel, func(m *ui.Menu) {
-					menuChoice(m, "全部工作区", scope == (mobileclient.WorkspaceLocation{}), func() { scope = mobileclient.WorkspaceLocation{} })
-					for _, source := range sources {
-						for _, workspace := range source.data.Workspaces {
-							if !workspace.Archived && workspace.DeviceID == source.data.DeviceID {
-								location := mobileclient.WorkspaceLocation{DeviceID: workspace.DeviceID, WorkspaceID: workspace.ID}
-								menuChoice(m, workspace.Name+" · "+a.deviceLabel(source.data.DeviceID, source.data.Address), scope == location, func() { scope = location })
-							}
-						}
-					}
-				})
-				scheduleFilter(c.Key("states"), "状态筛选", scheduleFilterName(status), func(m *ui.Menu) {
-					for _, state := range []mobileclient.ScheduleStatus{"", mobileclient.ScheduleEnabled, mobileclient.SchedulePaused, mobileclient.ScheduleOffline} {
-						menuChoice(m, scheduleFilterName(state), state == status, func() { status = state })
-					}
-				})
-			})
-			if opening != nil {
-				mobileMessage(c, "正在连接任务所属设备…")
-			} else if notice != "" {
-				mobileMessage(c, notice)
-			} else if readProblem != "" {
-				mobileMessage(c, readProblem)
-			}
-			mobileSection(c, "已安排")
-			count, reading, incomplete := 0, false, false
-			for _, source := range sources {
-				if scope.DeviceID != "" && scope.DeviceID != source.data.DeviceID {
+			reading = reading || source.reading
+			incomplete = incomplete || source.err != "" || source.online && source.data.Minor < protocol.ScheduleMinor
+			for _, row := range mobileclient.BrowseDeviceSchedules(source.data, scope, status, source.online) {
+				checking := source.reading && !source.online && source.err == ""
+				if checking && status == mobileclient.ScheduleOffline {
 					continue
 				}
-				reading = reading || source.reading
-				incomplete = incomplete || source.err != "" || source.online && source.data.Minor < protocol.ScheduleMinor
-				for _, row := range mobileclient.BrowseDeviceSchedules(source.data, scope, status, source.online) {
-					if source.reading && !source.online && status == mobileclient.ScheduleOffline {
-						continue
-					}
-					count++
-					task := row.Task
-					timing := scheduleSummary(task)
-					if row.Status == mobileclient.ScheduleEnabled && !task.NextAt.IsZero() {
-						timing += " · 下次 " + mobileScheduleDate(task.NextAt, task.Zone)
-					}
-					scope := row.Workspace.Name + " · " + a.deviceLabel(source.data.DeviceID, source.data.Address)
-					stateLabel := scheduleFilterName(row.Status)
-					if source.reading && !source.online {
-						stateLabel = "正在核对"
-					}
-					mobileDetailRow(c.Key([2]string{task.DeviceID, task.ID}), task.Name, timing+"\n"+scope, task.Name, clockSymbol, func() {
-						if opening == nil && a.pageCurrent(w) {
-							a.openSchedule(w, task, scope, read, func() { remove(task) })
+				rows = append(rows, mobileScheduleTableRow{
+					ScheduleRow: row,
+					device:      a.deviceLabel(source.data.DeviceID, source.data.Address),
+					checking:    checking,
+				})
+			}
+		}
+		if inspector != nil && !inspector.busy() && !slices.ContainsFunc(rows, func(row mobileScheduleTableRow) bool {
+			return mobileScheduleKey(row.Task) == inspected
+		}) {
+			inspected, inspector = [2]string{}, nil
+		}
+		width, _ := c.Size()
+		split := isTablet() && width >= mobileScheduleSplitMin
+		listWidth := width
+		if inspector != nil {
+			if !split {
+				inspector.draw(c.Key(inspected))
+				return
+			}
+			listWidth -= mobileScheduleInspectorWidth
+		}
+		withWorkspace := listWidth >= mobileScheduleFourColumnMin
+		drawList := func(c *ui.Context) {
+			mobilePageBody(c, func() {
+				workspaceLabel := "全部工作区"
+				for _, source := range sources {
+					for _, workspace := range source.data.Workspaces {
+						if scope != (mobileclient.WorkspaceLocation{}) && scope.Includes(workspace) {
+							workspaceLabel = workspace.Name + " · " + a.deviceLabel(source.data.DeviceID, source.data.Address)
 						}
-					}, func() {
-						oneLine(c, stateLabel, captionTextSize, palette(c).secondary).Shrink(0).PassThrough()
-					}).MinHeight(78).PaddingY(10).Value(stateLabel)
+					}
 				}
-			}
-			if count == 0 {
-				switch {
-				case reading:
-					mobileMessage(c, "正在载入定时任务…")
-				case incomplete:
-					mobileMessage(c, "部分设备的任务暂不可读")
-				case scope != (mobileclient.WorkspaceLocation{}) || status != "":
-					mobileMessage(c, "此筛选下没有定时任务")
-				default:
-					mobileMessage(c, "还没有定时任务")
-				}
-			}
-			for _, source := range sources {
-				if source.online && source.data.Minor < protocol.ScheduleMinor {
-					mobileRow(c.Key("upgrade:"+source.data.DeviceID), a.deviceLabel(source.data.DeviceID, source.data.Address), "更新执行服务后可管理该设备的任务", "需更新", serverSymbol, func() {
-						open(mobileScheduleSelection{workspace: mobileclient.WorkspaceLocation{DeviceID: source.data.DeviceID}, upgrade: true})
+				ui.Row(c.Key("schedule-filters")).Margin(8, 0, 0).Gap(8).Wrap().Children(func() {
+					scheduleFilter(c.Key("workspaces"), "工作区筛选", workspaceLabel, func(m *ui.Menu) {
+						menuChoice(m, "全部工作区", scope == (mobileclient.WorkspaceLocation{}), func() {
+							if canBrowse() {
+								scope = mobileclient.WorkspaceLocation{}
+							}
+						})
+						for _, source := range sources {
+							for _, workspace := range source.data.Workspaces {
+								if !workspace.Archived && workspace.DeviceID == source.data.DeviceID {
+									location := mobileclient.WorkspaceLocation{DeviceID: workspace.DeviceID, WorkspaceID: workspace.ID}
+									menuChoice(m, workspace.Name+" · "+a.deviceLabel(source.data.DeviceID, source.data.Address), scope == location, func() {
+										if canBrowse() {
+											scope = location
+										}
+									})
+								}
+							}
+						}
 					})
-				} else if source.err != "" {
-					mobileRow(c.Key("failure:"+source.data.DeviceID), a.deviceLabel(source.data.DeviceID, source.data.Address), source.err, "读取失败", infoSymbol, nil)
+					scheduleFilter(c.Key("states"), "状态筛选", scheduleFilterName(status), func(m *ui.Menu) {
+						for _, state := range []mobileclient.ScheduleStatus{"", mobileclient.ScheduleEnabled, mobileclient.SchedulePaused, mobileclient.ScheduleOffline} {
+							menuChoice(m, scheduleFilterName(state), state == status, func() {
+								if canBrowse() {
+									status = state
+								}
+							})
+						}
+					})
+					if len(rows) != 0 {
+						ui.Spacer(c).MinWidth(0)
+						oneLine(c, fmt.Sprintf("%d 个任务", len(rows)), captionTextSize, palette(c).secondary).AlignSelf(ui.Center)
+					}
+				})
+				if opening != nil {
+					mobileMessage(c, "正在连接任务所属设备…")
+				} else if notice != "" {
+					mobileMessage(c, notice)
+				} else if readProblem != "" {
+					mobileMessage(c, readProblem)
 				}
+				if len(rows) != 0 {
+					mobileScheduleTableHeader(c.Key("schedule-table-head"), withWorkspace)
+					for _, row := range rows {
+						task, key := row.Task, mobileScheduleKey(row.Task)
+						drawMobileScheduleRow(c.Key(key), row, withWorkspace, key == inspected, !canBrowse(), func() {
+							if !canBrowse() || !a.pageCurrent(w) || key == inspected {
+								return
+							}
+							owner := row.Workspace.Name + " · " + row.device
+							removed := func() { remove(task) }
+							if split {
+								view := a.scheduleDetailView(w, w, task, owner, read, removed, closeInspector)
+								inspected, inspector = key, &view
+								w.Invalidate()
+							} else {
+								a.openSchedule(w, task, owner, read, removed)
+							}
+						})
+					}
+				}
+				if len(rows) == 0 {
+					switch {
+					case reading:
+						mobileMessage(c, "正在载入定时任务…")
+					case incomplete:
+						mobileMessage(c, "部分设备的任务暂不可读")
+					case scope != (mobileclient.WorkspaceLocation{}) || status != "":
+						mobileMessage(c, "此筛选下没有定时任务")
+					default:
+						mobileMessage(c, "还没有定时任务")
+					}
+				}
+				for _, source := range sources {
+					if source.online && source.data.Minor < protocol.ScheduleMinor {
+						mobileRow(c.Key("upgrade:"+source.data.DeviceID), a.deviceLabel(source.data.DeviceID, source.data.Address), "更新执行服务后可管理该设备的任务", "需更新", serverSymbol, func() {
+							open(mobileScheduleSelection{workspace: mobileclient.WorkspaceLocation{DeviceID: source.data.DeviceID}, upgrade: true})
+						})
+					} else if source.err != "" {
+						mobileRow(c.Key("failure:"+source.data.DeviceID), a.deviceLabel(source.data.DeviceID, source.data.Address), source.err, "读取失败", infoSymbol, nil)
+					}
+				}
+			})
+		}
+		ui.Row(c).Fill().Children(func() {
+			list := c.Key("schedule-list-pane")
+			ui.Column(list).Grow(1).Basis(0).MinWidth(0).HeightPercent(100).Children(func() {
+				drawList(list.Key("schedule-catalog"))
+			})
+			if inspector != nil {
+				detail := c.Key(inspected)
+				ui.Column(detail).Width(mobileScheduleInspectorWidth).Shrink(0).HeightPercent(100).
+					BorderStartWidth(.5).BorderColor(palette(c).line).Children(func() { inspector.draw(detail) })
 			}
 		})
 	})
 	mygo.SetBarItems(w, mygo.BarItem{Title: "新建定时任务", Symbol: "plus", OnClick: func() {
-		if opening != nil {
+		if !canBrowse() {
 			return
 		}
 		var workspaces []domain.Workspace

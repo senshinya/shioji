@@ -17,18 +17,41 @@ import (
 	"shioji/internal/protocol"
 )
 
+type mobileScheduleDetailView struct {
+	draw         func(*ui.Context)
+	edit, remove func()
+	busy         func() bool
+}
+
 func (a *mobileApp) openSchedule(parent *mygo.Window, seed domain.Schedule, scope string, changed, removed func()) {
+	var view mobileScheduleDetailView
+	w := a.page("任务详情", func(c *ui.Context) {
+		if view.draw != nil {
+			view.draw(c)
+		}
+	})
+	view = a.scheduleDetailView(parent, w, seed, scope, changed, removed, nil)
+	mygo.SetBarItems(w, mygo.BarItem{Title: "编辑任务", Icon: toolbarImage(pencilSymbol), OnClick: view.edit},
+		mygo.BarItem{Title: "删除任务", Symbol: "trash", OnClick: view.remove})
+	a.pushNative(parent, w)
+}
+
+func (a *mobileApp) scheduleDetailView(parent, w *mygo.Window, seed domain.Schedule, scope string,
+	changed, removed, closeInspector func()) mobileScheduleDetailView {
 	detail := domain.ScheduleDetail{Schedule: seed}
 	req := mobileRequest{}
 	read := scheduleObservation{}
-	var w *mygo.Window
 	var connectionProblem string
 	deadline := time.Now().Add(sessionCatalogTimeout)
 	loaded := a.preview
 	if a.preview {
-		detail = a.previewSchedule()
+		if mock := a.previewSchedule(); sameSchedule(seed, mock.Schedule) {
+			detail = mock
+		}
 	} else if err := a.openDeviceFromResults(parent, seed.DeviceID); err != nil {
 		connectionProblem = err.Error()
+	} else {
+		a.pageDevice[w] = a.deviceSelection
 	}
 	confirming := false
 	runKey := "schedule-run:" + seed.ID
@@ -75,32 +98,130 @@ func (a *mobileApp) openSchedule(parent *mygo.Window, seed domain.Schedule, scop
 		workspace := a.workspace(seed.WorkspaceID)
 		return canAct() && workspace.ID != "" && workspace.DeviceID == seed.DeviceID && !workspace.Archived
 	}
-	w = a.page("任务详情", func(c *ui.Context) {
+	setEnabled := func(enabled bool) {
+		if !canEdit() {
+			return
+		}
+		if a.preview {
+			detail.Schedule.Enabled = enabled
+			return
+		}
+		in := detail.Schedule
+		in.Enabled = enabled
+		a.pageJob(w, &req, "schedule.save", in, decodePage(func(saved domain.Schedule) error {
+			if !validScheduleSave(in, saved) {
+				return fmt.Errorf("设备返回了无效的保存回执")
+			}
+			detail.Schedule = saved
+			reload()
+			changed()
+			return nil
+		}))
+	}
+	runNow := func() {
+		if !canEdit() {
+			return
+		}
+		if a.stateWriter == nil {
+			req.err = "无法保存定时任务运行标识"
+			return
+		}
+		task := detail.Schedule
+		if runID == "" {
+			runID = domain.NewID()
+		}
+		a.model.Drafts[runKey] = runID
+		a.save()
+		in := protocol.ScheduleCommand{ID: task.ID, Revision: task.Revision, RunID: runID}
+		a.pageJobPrepared(w, &req, "schedule.run", in, a.stateWriter.FlushLatest, decodePage(func(run domain.ScheduleRun) error {
+			if run.ID != in.RunID || run.ScheduleID != task.ID {
+				return fmt.Errorf("执行服务返回了其他任务的回执")
+			}
+			runID = ""
+			delete(a.model.Drafts, runKey)
+			a.save()
+			detail.Runs = slices.DeleteFunc(detail.Runs, func(existing domain.ScheduleRun) bool { return existing.ID == run.ID })
+			detail.Runs = append([]domain.ScheduleRun{run}, detail.Runs...)
+			reload()
+			changed()
+			a.openScheduleReceipt(w, task, run)
+			return nil
+		}))
+	}
+	view := mobileScheduleDetailView{
+		busy: func() bool { return req.busy || confirming },
+	}
+	heading := func(c *ui.Context, name, context string) {
+		if closeInspector == nil {
+			mobilePageContext(c, name, context)
+			return
+		}
+		p := palette(c)
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Start).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(3).PaddingY(4).Children(func() {
+				label(c, name, 16, p.ink).FontWeight(650)
+				if context != "" {
+					label(c, context, captionTextSize, p.secondary)
+				}
+			})
+			iconButton(c, "关闭任务详情", closeSymbol, 15, closeInspector).Disabled(view.busy())
+		})
+	}
+	zoneLabel := func(task domain.Schedule) string {
+		if task.Zone == "" {
+			return ""
+		}
+		return "执行设备时区 · " + task.Zone
+	}
+	view.draw = func(c *ui.Context) {
 		if !req.busy && !confirming {
 			a.observeSchedule(c, w, &read, seed, apply)
 		}
 		if !loaded {
 			caption, problem := "正在读取定时任务", connectionProblem
+			nextStatus := ""
 			var retry func()
 			upgrade := false
 			switch {
 			case problem != "":
-				retry = reconnect
+				nextStatus, retry = "设备离线", reconnect
 			case a.scheduleConnected(seed):
 				if read.request.err != "" {
 					problem, retry = "无法读取定时任务", reload
 				}
 			case a.model.Connected && a.model.ConnectionEpoch != "" && a.model.Snapshot.DeviceID == seed.DeviceID:
 				problem, upgrade = "更新执行服务后可查看此任务", true
+				nextStatus = "执行服务需更新"
 			case a.connectionPhase() == app.ConnectionUnavailable || a.connectionPhase() == app.ConnectionSyncFailed || !c.Now().Before(deadline):
 				problem, retry = "无法连接任务所属设备", reconnect
+				nextStatus = "设备离线"
 			default:
 				caption = "等待设备连接后读取定时任务"
+				nextStatus = "正在连接"
 				c.After(deadline.Sub(c.Now()))
+			}
+			if closeInspector != nil {
+				mobilePageBody(c, func() {
+					heading(c, seed.Name, scope)
+					a.drawScheduleFacts(c, seed, zoneLabel(seed), nextStatus)
+					mobileGroupHeading(c, "运行历史")
+					if problem == "" {
+						mobileMessage(c, caption)
+					} else {
+						mobileMessage(c, problem)
+					}
+					switch {
+					case upgrade:
+						action(c, "更新执行服务", func() { a.openWorker(w) }).AlignSelf(ui.Start)
+					case retry != nil:
+						action(c, "重试", retry).AlignSelf(ui.Start)
+					}
+				})
+				return
 			}
 			ui.Column(c.Key("schedule-loading")).Fill().Children(func() {
 				mobilePageContent(c, 0).Shrink(0).Children(func() {
-					mobilePageContext(c, seed.Name, scope)
+					heading(c, seed.Name, scope)
 				})
 				if upgrade {
 					ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).Gap(8).Children(func() {
@@ -114,40 +235,47 @@ func (a *mobileApp) openSchedule(parent *mygo.Window, seed domain.Schedule, scop
 			return
 		}
 		task := detail.Schedule
-		mobilePageWithFooter(c, func() {
-			mobilePageContext(c, task.Name, a.workspace(task.WorkspaceID).Name, a.deviceName())
-			zone := ""
-			if task.Zone != "" {
-				zone = "执行设备时区 · " + task.Zone
+		runText := "立即运行"
+		if runID != "" {
+			runText = "重试同一次运行"
+		}
+		content := func() {
+			if closeInspector != nil {
+				heading(c, task.Name, scope)
+				toggle, symbol := "暂停", schedulePauseSymbol
+				if !task.Enabled {
+					toggle, symbol = "恢复", schedulePlaySymbol
+				}
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Wrap().Children(func() {
+					iconAction(c, runText, runText, schedulePlaySymbol, 12, nil, 0, captionTextSize, 500, runNow).
+						Disabled(!canEdit())
+					iconAction(c, toggle, toggle, symbol, 12, nil, 0, captionTextSize, 500, func() { setEnabled(!task.Enabled) }).
+						Disabled(!canEdit())
+					ui.Spacer(c)
+					iconButton(c, "编辑任务", pencilSymbol, 14, view.edit).Disabled(!canEdit())
+					iconButton(c, "删除任务", scheduleTrashSymbol, 14, view.remove).Disabled(!canAct())
+				})
+			} else {
+				mobilePageContext(c, task.Name, a.workspace(task.WorkspaceID).Name, a.deviceName())
 			}
-			mobileRow(c, scheduleSummary(task), zone, "", clockSymbol, nil)
-			if task.Enabled && !a.workspace(task.WorkspaceID).Archived && !task.NextAt.IsZero() {
-				mobileRow(c, "下次运行", "", mobileScheduleDate(task.NextAt, task.Zone), nil, nil)
+			zone := zoneLabel(task)
+			if closeInspector != nil {
+				nextStatus := ""
+				if !a.preview && !a.scheduleConnected(task) {
+					nextStatus = "设备离线"
+				}
+				a.drawScheduleFacts(c, task, zone, nextStatus)
+			} else {
+				mobileRow(c, scheduleSummary(task), zone, "", clockSymbol, nil)
+				if task.Enabled && !a.workspace(task.WorkspaceID).Archived && !task.NextAt.IsZero() {
+					mobileRow(c, "下次运行", "", mobileScheduleDate(task.NextAt, task.Zone), nil, nil)
+				}
+				enabled := task.Enabled
+				mobileRowContent(c, ui.Row(c).MinHeight(max(formRowHeight, mobileTapSize(c))), "启用任务", "", nil, false, func() {
+					mobileSwitch(c, "启用任务", &enabled, func() { setEnabled(enabled) }).Disabled(!canEdit())
+				})
 			}
-			enabled := task.Enabled
-			mobileRowContent(c, ui.Row(c).MinHeight(max(formRowHeight, mobileTapSize(c))), "启用任务", "", nil, false, func() {
-				mobileSwitch(c, "启用任务", &enabled, func() {
-					if !canEdit() {
-						return
-					}
-					if a.preview {
-						detail.Schedule.Enabled = enabled
-						return
-					}
-					in := task
-					in.Enabled = enabled
-					a.pageJob(w, &req, "schedule.save", in, decodePage(func(saved domain.Schedule) error {
-						if !validScheduleSave(task, saved) {
-							return fmt.Errorf("设备返回了无效的保存回执")
-						}
-						detail.Schedule = saved
-						reload()
-						changed()
-						return nil
-					}))
-				}).Disabled(!canEdit())
-			})
-			mobileGroupHeading(c, "运行记录")
+			mobileGroupHeading(c, "运行历史")
 			for _, run := range detail.Runs {
 				source := "定时运行"
 				if run.Manual {
@@ -172,47 +300,19 @@ func (a *mobileApp) openSchedule(parent *mygo.Window, seed domain.Schedule, scop
 					reload()
 				}).Disabled(req.busy || read.request.busy || !a.scheduleConnected(seed))
 			}
-		}, func() {
-			runText := "立即运行"
-			if runID != "" {
-				runText = "重试同一次运行"
-			}
-			primaryAction(c, runText, func() {
-				if !canEdit() {
-					return
-				}
-				if a.stateWriter == nil {
-					req.err = "无法保存定时任务运行标识"
-					return
-				}
-				if runID == "" {
-					runID = domain.NewID()
-				}
-				a.model.Drafts[runKey] = runID
-				a.save()
-				in := protocol.ScheduleCommand{ID: task.ID, Revision: task.Revision, RunID: runID}
-				a.pageJobPrepared(w, &req, "schedule.run", in, a.stateWriter.FlushLatest, decodePage(func(run domain.ScheduleRun) error {
-					if run.ID != in.RunID || run.ScheduleID != task.ID {
-						return fmt.Errorf("执行服务返回了其他任务的回执")
-					}
-					runID = ""
-					delete(a.model.Drafts, runKey)
-					a.save()
-					detail.Runs = slices.DeleteFunc(detail.Runs, func(existing domain.ScheduleRun) bool { return existing.ID == run.ID })
-					detail.Runs = append([]domain.ScheduleRun{run}, detail.Runs...)
-					reload()
-					changed()
-					a.openScheduleReceipt(w, task, run)
-					return nil
-				}))
-			}).Disabled(!canEdit())
-		})
-	})
-	mygo.SetBarItems(w, mygo.BarItem{Title: "编辑任务", Icon: toolbarImage(pencilSymbol), OnClick: func() {
+		}
+		if closeInspector != nil {
+			mobilePageBody(c, content)
+		} else {
+			mobilePageWithFooter(c, content, func() { primaryAction(c, runText, runNow).Disabled(!canEdit()) })
+		}
+	}
+	view.edit = func() {
 		if canEdit() {
 			a.openScheduleEditor(w, detail.Schedule, func() { reload(); changed() })
 		}
-	}}, mygo.BarItem{Title: "删除任务", Symbol: "trash", OnClick: func() {
+	}
+	view.remove = func() {
 		if !canAct() {
 			return
 		}
@@ -238,7 +338,11 @@ func (a *mobileApp) openSchedule(parent *mygo.Window, seed domain.Schedule, scop
 				finish := func() {
 					delete(a.model.Drafts, runKey)
 					a.save()
-					w.Pop()
+					if closeInspector != nil {
+						closeInspector()
+					} else {
+						w.Pop()
+					}
 					if removed != nil {
 						removed()
 					}
@@ -251,12 +355,73 @@ func (a *mobileApp) openSchedule(parent *mygo.Window, seed domain.Schedule, scop
 					func(_ json.RawMessage) error { finish(); return nil })
 			})
 		}()
-	}})
-	a.pushNative(parent, w)
+	}
+	return view
 }
 
 func validScheduleSave(input, saved domain.Schedule) bool {
 	return sameSchedule(input, saved) && saved.Revision == input.Revision+1
+}
+
+func (a *mobileApp) drawScheduleFacts(c *ui.Context, task domain.Schedule, zone, nextStatus string) {
+	p := palette(c)
+	fact := func(title, value, note string) {
+		row := c.Key(title)
+		ui.Row(row).FillWidth().Gap(8).MinHeight(28).PaddingY(3).AlignItems(ui.Start).Children(func() {
+			oneLine(row, title, captionTextSize, p.secondary).Width(57).Shrink(0)
+			ui.Column(row).MinWidth(0).Grow(1).Gap(2).Children(func() {
+				label(row, value, captionTextSize, p.ink)
+				if note != "" {
+					label(row, note, captionTextSize, p.secondary)
+				}
+			})
+		})
+	}
+	next := "无下一次"
+	switch {
+	case nextStatus != "":
+		next = nextStatus
+		if nextStatus == "设备离线" && !task.NextAt.IsZero() {
+			zone = "原定 " + mobileScheduleDate(task.NextAt, task.Zone)
+		}
+	case a.workspace(task.WorkspaceID).Archived:
+		next = "工作区已归档"
+	case !task.Enabled:
+		next, zone = "已暂停", ""
+	case !task.NextAt.IsZero():
+		next = mobileScheduleDate(task.NextAt, task.Zone)
+	}
+	fact("下一次", next, zone)
+	rule := mobileScheduleCadence(task.Rule)
+	if task.Rule.Kind != "interval" && task.Rule.Time != "" {
+		rule += " · " + task.Rule.Time
+	}
+	fact("重复规则", rule, "")
+
+	configuration := []string{}
+	for _, harness := range a.model.Readiness.Harnesses {
+		if harness.ID == task.HarnessID && harness.Name != "" {
+			configuration = append(configuration, harness.Name)
+			break
+		}
+	}
+	if task.Config.Model != "" {
+		configuration = append(configuration, task.Config.Model)
+	}
+	if task.Config.Permission != "" {
+		permission := task.Config.Permission
+		for _, choice := range a.model.Readiness.PermissionChoices {
+			if choice.ID == permission && choice.Name != "" {
+				permission = choice.Name
+				break
+			}
+		}
+		configuration = append(configuration, permission)
+	}
+	if len(configuration) != 0 {
+		fact("运行配置", strings.Join(configuration, " · "), "")
+	}
+	fact("会话", "每次新开会话", "")
 }
 
 func mobileScheduleLocation(zone string) *time.Location {
@@ -681,8 +846,10 @@ func (a *mobileApp) previewSchedule() domain.ScheduleDetail {
 		Rule: domain.ScheduleRule{Kind: "daily", Time: "09:00"}, Zone: "Asia/Taipei", Enabled: true, Revision: 1,
 		Git: domain.GitChoice{Branch: "main"}, Config: domain.RunConfig{Model: "gpt-5.4", Effort: "medium", Permission: "default"}}
 	task.NextAt = task.Rule.Next(time.Now(), mobileScheduleLocation(task.Zone))
-	return domain.ScheduleDetail{Schedule: task, Runs: []domain.ScheduleRun{
+	runs := []domain.ScheduleRun{
 		{ID: "first-run", ScheduleID: task.ID, At: at, StartedAt: at, FinishedAt: at.Add(42 * time.Second), State: domain.ScheduleCompleted, SessionID: "review"},
 		{ID: "previous-run", ScheduleID: task.ID, At: at.AddDate(0, 0, -1), State: domain.ScheduleCompleted},
-	}}
+	}
+	task.Latest = &runs[0]
+	return domain.ScheduleDetail{Schedule: task, Runs: runs}
 }
