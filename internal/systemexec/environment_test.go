@@ -85,6 +85,44 @@ func TestEnvironmentSurvivesTemporaryLoginShellTimeout(t *testing.T) {
 	}
 }
 
+func TestExpiredLoginEnvironmentStillResolvesNodeAfterShellTimeout(t *testing.T) {
+	root := t.TempDir()
+	shell := filepath.Join(root, "login-shell")
+	fail := filepath.Join(root, "shell-unresponsive")
+	node := filepath.Join(root, "node")
+	script := fmt.Sprintf("#!/bin/sh\nif [ -f %q ]; then exec /bin/sleep 30; fi\nexport PATH=%q:/usr/bin:/bin\nexport LOGIN_FIXTURE_TOKEN=stale\nexec /bin/sh -c \"$2\"\n", fail, root)
+	if err := os.WriteFile(shell, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(node, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	base := []string{"SHELL=" + shell, "ZDOTDIR=" + root, "PATH=/usr/bin:/bin"}
+	cache := &shellEnvironmentCache{}
+	if _, err := cache.get(context.Background(), base); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fail, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cache.mu.Lock()
+	cache.read.expires = time.Now().Add(-time.Second)
+	cache.read.reusableUntil = cache.read.expires
+	cache.mu.Unlock()
+
+	observed, err := cache.get(context.Background(), base)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected a login shell timeout, got %v", err)
+	}
+	env := MergeEnvironment(base, observed)
+	if resolved, err := LookPath("node", env); err != nil || resolved != node {
+		t.Fatalf("shell timeout lost the previously discovered Node.js: %q, %v", resolved, err)
+	}
+	if EnvironmentValue(env, "LOGIN_FIXTURE_TOKEN") != "" {
+		t.Fatal("expired shell credentials were reused")
+	}
+}
+
 func TestShellEnvironmentCancellationAndTimeoutReleaseItsProcessGroup(t *testing.T) {
 	root := t.TempDir()
 	shell := filepath.Join(root, "slow-shell")

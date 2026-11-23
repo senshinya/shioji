@@ -25,6 +25,7 @@ const shellEnvironmentTTL = 30 * time.Second
 // different device's. Secrets remain in memory; no shell output is logged.
 type shellEnvironmentRead struct {
 	key           string
+	loginPath     string
 	done          chan struct{}
 	env           []string
 	err           error
@@ -62,6 +63,9 @@ func (c *shellEnvironmentCache) get(ctx context.Context, base []string) ([]strin
 	if read == nil || read.key != key || !read.expires.IsZero() && time.Now().After(read.expires) {
 		previous := read
 		read = &shellEnvironmentRead{key: key, done: make(chan struct{})}
+		if previous != nil && previous.key == key {
+			read.loginPath = previous.loginPath
+		}
 		c.read = read
 		snapshot := slices.Clone(base)
 		go func() {
@@ -72,6 +76,7 @@ func (c *shellEnvironmentCache) get(ctx context.Context, base []string) ([]strin
 			read.env, read.err = env, err
 			now := time.Now()
 			if err == nil {
+				read.loginPath = EnvironmentValue(env, "PATH")
 				read.expires = now.Add(shellEnvironmentTTL)
 				read.reusableUntil = read.expires.Add(shellEnvironmentTTL)
 			} else {
@@ -84,6 +89,10 @@ func (c *shellEnvironmentCache) get(ctx context.Context, base []string) ([]strin
 					if read.expires.After(read.reusableUntil) {
 						read.expires = read.reusableUntil
 					}
+				} else if read.loginPath != "" {
+					// Retain command lookup for this shell configuration after the
+					// full environment (which may contain credentials) expires.
+					read.env = []string{"PATH=" + read.loginPath}
 				}
 			}
 			close(read.done)
