@@ -206,10 +206,10 @@ func (v *View) requestSource(c *n.Context, t *n.Theme, item domain.Item, child b
 			n.Row(c).Gap(7).AlignItems(n.Baseline).Children(func() {
 				font := n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}
 				transcriptSymbol(c, icon, label, font, subtle(t))
-				n.Row(c.Key("source-title")).Gap(3).AlignItems(n.Baseline).Children(func() {
+				n.Row(c.Key("source-title")).MinWidth(0).Gap(3).AlignItems(n.Baseline).Children(func() {
 					v.requestSourceLabel(c, t, label, stream)
 					if suffix != "" {
-						text := n.Text(c.Key("status"), suffix).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted)
+						text := n.Text(c.Key("status"), suffix).SingleLine().Shrink(0).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted)
 						requestStatusText(text, progress)
 					}
 				})

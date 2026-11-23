@@ -15,6 +15,31 @@ type requestPage struct {
 	question int
 }
 
+func approvalPresentation(r domain.PendingRequest, items []domain.Item) domain.PendingRequest {
+	if r.Kind != "approval" || r.Title == "" {
+		return r
+	}
+	// Some runtimes send the literal command as the request title.
+	commandTitle := strings.ContainsAny(r.Title, "\r\n")
+	if !commandTitle && r.ItemID != "" {
+		for _, item := range items {
+			if item.ID == r.ItemID {
+				commandTitle = commandItem(item) && item.Name == r.Title
+				break
+			}
+		}
+	}
+	if commandTitle {
+		if r.Text == "" {
+			r.Text = r.Title
+		} else if r.Text != r.Title {
+			r.Text = r.Title + "\n" + r.Text
+		}
+		r.Title = "待审批"
+	}
+	return r
+}
+
 func (p requestPage) key() string {
 	if p.question >= 0 {
 		return p.request.ID + "/" + p.request.Questions[p.question].ID
@@ -225,7 +250,7 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 			continue
 		}
 		if len(r.Questions) == 0 {
-			pages = append(pages, requestPage{r, -1})
+			pages = append(pages, requestPage{approvalPresentation(r, detail.Items), -1})
 		} else {
 			for i := range r.Questions {
 				pages = append(pages, requestPage{r, i})
@@ -361,20 +386,21 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 						}
 					}
 				}
-				title := processingPanelDisclosure(c).Label(r.Title).Description(titleText + " " + summary).Children(func() {
-					n.Row(c).Gap(processingPanelIconGap).AlignItems(n.Baseline).Children(func() {
+				title := processingPanelDisclosure(c).MinWidth(0).Shrink(1).Label(r.Title).Description(titleText + " " + summary).Children(func() {
+					n.Row(c).MinWidth(0).Gap(processingPanelIconGap).AlignItems(n.Baseline).Children(func() {
 						icon := questionIcon
 						if r.Kind == "approval" || r.Kind == "permissions" {
 							icon = shieldIcon
 						}
 						font := n.Font{Family: c.Theme().Font, Size: 13, Weight: 500}
-						inlineSymbol(c, icon, titleText, font, processingPanelIconSize, t.TextMuted)
-						n.Text(c, titleText).FontSize(13).FontWeight(500).FixedLineHeight(processingPanelHeadingLine)
+						inlineSymbol(c, icon, titleText, font, processingPanelIconSize, t.TextMuted).Shrink(0)
+						n.Text(c, titleText).SingleLine().MinWidth(0).Ellipsis("…").TooltipWhenTruncated(titleText).
+							FontSize(13).FontWeight(500).FixedLineHeight(processingPanelHeadingLine)
 						angle := float32(0)
 						if m.Collapsed[m.SessionID] {
 							angle = -90
 						}
-						inlineSymbol(c, disclosureDown, r.Title, font, 11, t.TextMuted, angle)
+						inlineSymbol(c, disclosureDown, r.Title, font, 11, t.TextMuted, angle).Shrink(0)
 					})
 				})
 				if title.Clicked() {
