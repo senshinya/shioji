@@ -2,16 +2,170 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"golang.org/x/sys/unix"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"shioji/internal/runtimebuild"
 	"shioji/internal/tailnet"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
+
+func TestReconnectPreflightsBeforeMovingLegacyNetworkRegistration(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	support := filepath.Join(home, "Library", "Application Support", "Shioji")
+	dir := filepath.Join(support, "client", "tailnet")
+	runtimeRoot := filepath.Join(support, "Runtime")
+	legacyBundle := filepath.Join(runtimeRoot, runtimeBundleName)
+	legacyBinary := filepath.Join(legacyBundle, "Contents", "MacOS", "shioji-runtime")
+	if err = os.MkdirAll(filepath.Dir(legacyBinary), 0700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(home, "fixture.go")
+	program := `package main
+import ("fmt"; "io"; "net"; "os")
+func main() {
+	switch os.Args[1] {
+	case "--network-preflight":
+		if _, err := os.Stat(os.Getenv("SHIOJI_TEST_PREFLIGHT_READY")); err != nil { os.Exit(1) }
+		fmt.Println("{\"Version\":1,\"Ready\":true}")
+		return
+	case "--action":
+		if err := os.WriteFile(os.Getenv("SHIOJI_TEST_REGISTRATION_TRACE"), []byte(os.Args[0]+"\n"+os.Args[2]+"\n"+os.Args[4]), 0600); err != nil { panic(err) }
+		fmt.Println("{\"format\":1,\"state\":\"failed\"}")
+		os.Exit(1)
+	}
+	listener, err := net.Listen("unix", os.Getenv("SHIOJI_TEST_LEGACY_SOCKET"))
+	if err != nil { panic(err) }
+	for {
+		conn, err := listener.Accept()
+		if err != nil { return }
+		go func() {
+			defer conn.Close()
+			_, _ = io.Copy(io.Discard, conn)
+		}()
+	}
+}`
+	if err = os.WriteFile(source, []byte(program), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if out, e := exec.Command("go", "build", "-o", legacyBinary, source).CombinedOutput(); e != nil {
+		t.Fatal(e, string(out))
+	}
+	plist := []byte(`<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>dev.shioji.runtime</string><key>CFBundleExecutable</key><string>shioji-runtime</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`)
+	if err = os.WriteFile(filepath.Join(legacyBundle, "Contents", "Info.plist"), plist, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, e := exec.Command("/usr/bin/codesign", "--force", "--sign", "-", legacyBundle).CombinedOutput(); e != nil {
+		t.Fatal(e, string(out))
+	}
+	digest, err := runtimebuild.Digest(legacyBinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registeredBundle := filepath.Join(runtimeRoot, "Network", digest, runtimeBundleName)
+	if out, e := exec.Command("/usr/bin/ditto", legacyBundle, registeredBundle).CombinedOutput(); e != nil {
+		t.Fatal(e, string(out))
+	}
+	registeredBinary := filepath.Join(registeredBundle, "Contents", "MacOS", "shioji-runtime")
+	if err = os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = saveNetworkHostSelection(dir, registeredBinary); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	// With a temporary HOME, unqualified GUI arguments resolve to the test
+	// profile. Mark any real GUI so it cannot be mistaken for this test's owner.
+	processes, err := unix.SysctlKinfoProcSlice("kern.proc.all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, process := range processes {
+		owner, e := WorkerProcess(int(process.Proc.P_pid))
+		if e == nil && legacyNetworkOwner(owner, dir) {
+			remove, e := registerNetworkClient(dir, owner)
+			if e != nil {
+				t.Fatal(e)
+			}
+			t.Cleanup(remove)
+		}
+	}
+	preflightReady := filepath.Join(home, "preflight-ready")
+	registrationTrace := filepath.Join(home, "registration-trace")
+	t.Setenv("SHIOJI_TEST_PREFLIGHT_READY", preflightReady)
+	t.Setenv("SHIOJI_TEST_REGISTRATION_TRACE", registrationTrace)
+
+	socketPath := tailnet.ServiceSocket(dir)
+	if err = os.Mkdir(filepath.Dir(socketPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(socketPath)) })
+	host := exec.Command(legacyBinary, "--network-serve")
+	host.Env = append(host.Environ(), "SHIOJI_TEST_LEGACY_SOCKET="+socketPath)
+	if err = host.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = host.Process.Signal(syscall.SIGTERM)
+		_ = host.Wait()
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		conn, e := net.Dial("unix", tailnet.ServiceSocket(dir))
+		if e == nil {
+			conn.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("legacy runtime did not listen:", e)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// The signed candidate fixture fails preflight. Its failure must leave the
+	// working legacy owner of the private socket untouched.
+	verify, ensure := networkOperations(dir, "", registeredBinary)
+	if err = verify(host.Process.Pid); err == nil {
+		t.Fatal("ordinary GUI attached to the legacy path")
+	}
+	if err = ensure(t.Context(), false); err == nil {
+		t.Fatal("automatic startup attempted legacy migration")
+	}
+	if err = ensure(t.Context(), true); !errors.Is(err, tailnet.ErrUserAction) || !strings.Contains(err.Error(), "网络身份预检未完成") {
+		t.Fatalf("explicit reconnect failed before candidate identity preflight: %v", err)
+	}
+	if _, err = os.Stat(registrationTrace); !os.IsNotExist(err) {
+		t.Fatal("failed preflight changed registration:", err)
+	}
+	conn, err := net.Dial("unix", tailnet.ServiceSocket(dir))
+	if err != nil {
+		t.Fatal("failed preflight disconnected the old host:", err)
+	}
+	pid, peerErr := networkPeerPID(conn)
+	conn.Close()
+	if peerErr != nil || pid != host.Process.Pid {
+		t.Fatalf("failed preflight replaced the old owner: pid=%d, err=%v", pid, peerErr)
+	}
+	if err = os.WriteFile(preflightReady, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = ensure(t.Context(), true); err == nil || err.Error() != "网络后台服务注册失败" {
+		t.Fatalf("reconnect did not reach the fixture's unregister: %v", err)
+	}
+	trace, err := os.ReadFile(registrationTrace)
+	want := registeredBinary + "\nunregister\ndev.shioji.network.agent.plist"
+	if err != nil || string(trace) != want {
+		t.Fatalf("legacy handoff used the wrong registration: %q, %v", trace, err)
+	}
+}
 
 func TestLegacyGUIProfileMatchingAndNewClientMarker(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "client", "tailnet")

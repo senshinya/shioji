@@ -397,6 +397,31 @@ func verifyInstalledNetworkHost(ctx context.Context, binary string) error {
 	}
 	return nil
 }
+
+// ServiceManagement can still associate a registered network agent with the
+// old shared Runtime path. Only explicit reconnect may move that registration.
+// Use the last verified network bundle for unregister, since the shared
+// bundle may have been replaced by an execution update since launch.
+func legacyNetworkRegistration(ctx context.Context, directory string, owner WorkerProcessIdentity) (networkHostSelection, error) {
+	root := filepath.Join(filepath.Dir(filepath.Dir(directory)), "Runtime")
+	bundle := filepath.Join(root, runtimeBundleName)
+	if owner.Executable != filepath.Join(bundle, "Contents", "MacOS", "shioji-runtime") ||
+		owner.UID != uint32(os.Getuid()) || !networkHostProcess(owner, directory) {
+		return networkHostSelection{}, errors.New("网络服务进程身份不匹配")
+	}
+	if err := verifyRuntimeBundle(ctx, bundle); err != nil {
+		return networkHostSelection{}, err
+	}
+	registration, err := readNetworkHostSelection(directory)
+	if err != nil {
+		return networkHostSelection{}, fmt.Errorf("无法核对旧 Tailnet 后台注册：%w", err)
+	}
+	if err = verifyInstalledNetworkHost(ctx, registration.Binary); err != nil {
+		return networkHostSelection{}, err
+	}
+	return registration, nil
+}
+
 func launchNetworkHost(ctx context.Context, binary, directory string, production, register bool) (*WorkerProcessIdentity, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -427,9 +452,9 @@ func launchNetworkHost(ctx context.Context, binary, directory string, production
 	}
 	return &owner, nil
 }
-func stopNetworkHost(ctx context.Context, owner WorkerProcessIdentity, directory string, production bool) error {
+func stopNetworkHost(ctx context.Context, owner WorkerProcessIdentity, registration, directory string, production bool) error {
 	if production {
-		state, err := networkRegistration(ctx, owner.Executable, "unregister")
+		state, err := networkRegistration(ctx, registration, "unregister")
 		if err != nil {
 			return err
 		}
@@ -507,6 +532,7 @@ func networkOperations(directory, workerBinary, developmentHost string) (func(in
 		}
 		defer lock.Close()
 		var old *WorkerProcessIdentity
+		var oldRegistration string
 		var oldInfo tailnet.HostInfo
 		if conn, e := (&net.Dialer{}).DialContext(ctx, "unix", tailnet.ServiceSocket(directory)); e == nil {
 			pid, e := networkPeerPID(conn)
@@ -514,17 +540,26 @@ func networkOperations(directory, workerBinary, developmentHost string) (func(in
 			if e != nil {
 				return e
 			}
-			if e = verify(pid); e != nil {
-				return e
-			}
 			owner, e := WorkerProcess(pid)
 			if e != nil {
 				return e
 			}
 			old = &owner
-			oldInfo, e = tailnet.InspectService(ctx, directory, verify)
-			if e != nil {
-				return e
+			if e = verify(pid); e == nil {
+				oldRegistration = owner.Executable
+				oldInfo, e = tailnet.InspectService(ctx, directory, verify)
+				if e != nil {
+					return e
+				}
+			} else {
+				if !production || !explicit {
+					return e
+				}
+				legacy, legacyErr := legacyNetworkRegistration(ctx, directory, owner)
+				if legacyErr != nil {
+					return legacyErr
+				}
+				oldRegistration, oldInfo.BuildID = legacy.Binary, legacy.Digest
 			}
 			if !explicit {
 				if !oldInfo.Compatible {
@@ -577,7 +612,7 @@ func networkOperations(directory, workerBinary, developmentHost string) (func(in
 			return saveNetworkHostSelection(directory, bin)
 		}
 		if old != nil {
-			if err = stopNetworkHost(ctx, *old, directory, production); err != nil {
+			if err = stopNetworkHost(ctx, *old, oldRegistration, directory, production); err != nil {
 				return err
 			}
 		}
@@ -615,16 +650,16 @@ func networkOperations(directory, workerBinary, developmentHost string) (func(in
 			if spawned != nil {
 				candidate = *spawned
 			}
-			if e := stopNetworkHost(rollback, candidate, directory, production); e != nil {
+			if e := stopNetworkHost(rollback, candidate, bin, directory, production); e != nil {
 				return fmt.Errorf("网络升级失败且候选宿主未退出：%w", e)
 			}
-			if _, e := launchNetworkHost(rollback, old.Executable, directory, production, true); e != nil {
+			if _, e := launchNetworkHost(rollback, oldRegistration, directory, production, true); e != nil {
 				return fmt.Errorf("网络升级失败，旧宿主恢复失败：%w", e)
 			}
 			for {
 				info, e := tailnet.InspectService(rollback, directory, verify)
 				if e == nil && (oldInfo.BuildID == "" || info.BuildID == oldInfo.BuildID) {
-					if e = saveNetworkHostSelection(directory, old.Executable); e != nil {
+					if e = saveNetworkHostSelection(directory, oldRegistration); e != nil {
 						return e
 					}
 					return errors.New("网络服务升级未完成，已恢复原版本")
