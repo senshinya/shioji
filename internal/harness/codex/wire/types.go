@@ -47,6 +47,10 @@ type TurnError struct {
 	Message        string          `json:"message"`
 	CodexErrorInfo json.RawMessage `json:"codexErrorInfo"`
 }
+type ErrorNotification struct {
+	Error     *TurnError `json:"error"`
+	WillRetry bool       `json:"willRetry"`
+}
 type Counters struct {
 	Tokens *int64 `json:"totalTokens"`
 	Input  *int64 `json:"inputTokens"`
@@ -62,11 +66,9 @@ type Goal struct {
 }
 
 type Params struct {
-	Error       *TurnError `json:"error"`
-	WillRetry   bool       `json:"willRetry"`
-	Goal        *Goal      `json:"goal"`
-	ThreadName  *string    `json:"threadName"`
-	Explanation string     `json:"explanation"`
+	Goal        *Goal   `json:"goal"`
+	ThreadName  *string `json:"threadName"`
+	Explanation string  `json:"explanation"`
 	Plan        []struct {
 		Step   string `json:"step"`
 		Status string `json:"status"`

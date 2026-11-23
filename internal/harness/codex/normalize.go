@@ -141,10 +141,14 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 	}
 	switch m.Method {
 	case "error":
-		if !p.WillRetry && p.TurnID != "" && isUsageLimit(p.Error) {
+		var reported wire.ErrorNotification
+		if err := json.Unmarshal(m.Params, &reported); err != nil {
+			return nil, nil, err
+		}
+		if !reported.WillRetry && p.TurnID != "" && isUsageLimit(reported.Error) {
 			turn := n.turns[p.TurnID]
 			if turn.CompletedAt == nil && turn.Status != domain.ExecutionFailed {
-				applyTurnError(&turn, p.Error)
+				applyTurnError(&turn, reported.Error)
 				n.turns[p.TurnID] = turn
 			}
 		}

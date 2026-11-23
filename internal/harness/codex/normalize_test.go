@@ -99,6 +99,24 @@ func TestRecordedConversationsNormalizeWithoutDuplicatingFinalMessages(t *testin
 		})
 	}
 }
+func TestMCPStartupFailureDoesNotInterruptActiveTurn(t *testing.T) {
+	n := NewNormalizer()
+	n.Bind("thread", "session", true)
+	if _, _, err := n.Feed([]byte(`{"method":"turn/started","params":{"threadId":"thread","turn":{"id":"turn","status":"inProgress"}}}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	events, reply, err := n.Feed([]byte(`{"method":"mcpServer/startupStatus/updated","params":{"name":"example","status":"failed","error":"authorization required"}}`))
+	if err != nil || len(events) != 0 || reply != nil {
+		t.Fatalf("MCP startup notification: events=%+v reply=%s err=%v", events, reply, err)
+	}
+
+	events, _, err = n.Feed([]byte(`{"method":"turn/completed","params":{"threadId":"thread","turn":{"id":"turn","status":"completed"}}}`))
+	if err != nil || len(events) != 1 || events[0].SessionID != "session" || events[0].Turn == nil || events[0].Turn.Status != domain.ExecutionCompleted {
+		t.Fatalf("turn completion: events=%+v err=%v", events, err)
+	}
+}
+
 func TestNumericZeroAndStringZeroRemainIndependentRequests(t *testing.T) {
 	n := NewNormalizer()
 	n.Bind("thread", "session", true)
