@@ -9,6 +9,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/store"
+	"strings"
 	"time"
 )
 
@@ -400,6 +401,12 @@ func (s *Server) failRuntimeLaunch(op domain.Operation, cause error) {
 			}
 		}
 		defer s.wakeRecovery()
+	}
+	if strings.HasPrefix(op.ID, domain.GoalContinuationPrefix) {
+		if err := s.store.BlockManagedGoal(op.SessionID, op.ID); err != nil {
+			s.cancel()
+			return
+		}
 	}
 	if err := s.store.RejectUnhandedInput(op.ID, cause.Error()); err != nil {
 		if !errors.Is(err, store.ErrInputHandoffRevoked) {

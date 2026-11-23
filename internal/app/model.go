@@ -187,6 +187,8 @@ func normalizeRunConfig(c domain.RunConfig, ready domain.Readiness) domain.RunCo
 	}
 	if !ready.Plan {
 		c.Plan = false
+	} else if c.Plan && ready.Capabilities.ExclusivePlan {
+		c.Permission = "default"
 	}
 	if model != nil && len(model.Efforts) == 0 {
 		c.Effort = ""

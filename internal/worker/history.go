@@ -45,6 +45,7 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 		return domain.HistoryOperation{}, err
 	}
 	defer release()
+	portable := !in.Restart && runtime.Readiness().Capabilities.PortableFork
 	var op domain.HistoryOperation
 	owner.abandon = func() error {
 		if op.ID == "" {
@@ -60,7 +61,7 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 		if existing.State == "complete" {
 			return existing, nil
 		}
-		if existing.State != "forked" {
+		if existing.State != "forked" && !(portable && existing.State == "prepared") {
 			return existing, store.HistoryPending(existing)
 		}
 		op = existing
@@ -84,6 +85,9 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 				s.store.FailHistory(op.ID, e)
 				return op, e
 			}
+		}
+		if portable {
+			return s.store.CommitPortableFork(op.ID)
 		}
 		ctx, cancel := context.WithTimeout(owner.ctx, 20*time.Second)
 		s.dispatchMu.Unlock()
@@ -109,6 +113,9 @@ func (s *Server) changeHistory(in domain.HistoryChange) (domain.HistoryOperation
 	}
 	if err = s.historyPreflight(in); err != nil {
 		return op, err
+	}
+	if portable {
+		return s.store.CommitPortableFork(op.ID)
 	}
 	if in.Restart {
 		if _, err = s.attachmentInputsOutsideDispatch(op.Submission); err != nil {

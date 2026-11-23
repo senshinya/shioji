@@ -3,6 +3,8 @@ package domain
 // These are Shioji operations. Adapters report actual support; absent support
 // never authorizes a substitute operation or a guessed configuration.
 type HarnessCapabilities struct {
+	ExclusivePlan         bool `json:"exclusivePlan,omitempty"`
+	WorkerGoals           bool `json:"workerGoals,omitempty"`
 	Goals                 bool `json:"goals,omitempty"`
 	PathAttachments       bool `json:"pathAttachments,omitempty"`
 	Reload                bool `json:"reload,omitempty"`
@@ -17,10 +19,16 @@ type HarnessCapabilities struct {
 	Steer                 bool `json:"steer"`
 	Interrupt             bool `json:"interrupt"`
 	Recovery              bool `json:"recovery"`
+	Resume                bool `json:"resume,omitempty"`
 	Continue              bool `json:"continue"`
+	PortableFork          bool `json:"portableFork,omitempty"`
 	Fork                  bool `json:"fork"`
 	Restart               bool `json:"restart"`
 }
+
+// CanReopenIdle is independent of recovery of an unfinished input.
+func (c HarnessCapabilities) CanReopenIdle() bool { return c.Resume || c.Continue }
+
 type HarnessDescriptor struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`

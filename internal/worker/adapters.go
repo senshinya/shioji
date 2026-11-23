@@ -16,7 +16,7 @@ import (
 func (s *Server) configureAdapters() error {
 	adapters := s.config.Harnesses
 	if len(adapters) == 0 {
-		adapters = defaultAdapters()
+		adapters = SystemAdapters("")
 	}
 	s.adapters = map[string]harness.Adapter{}
 	for _, a := range adapters {
@@ -146,7 +146,7 @@ func (s *Server) openCatalog(ctx context.Context, id string, stop bool) (harness
 	if err != nil {
 		return nil, err
 	}
-	return s.startCatalog(ctx, id, stop, revision)
+	return s.startCatalog(ctx, id, stop, revision, false)
 }
 func (s *Server) runtimeReadiness(sessions ...string) domain.Readiness {
 	return s.runtimeProfiles(sessions, false)

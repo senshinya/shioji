@@ -30,6 +30,9 @@ type HistoryBoundary struct {
 }
 
 type TurnInput struct {
+	ForkContext   *domain.ForkContext
+	Goal          *domain.GoalProgress
+	Objective     string
 	Text          string
 	Attachments   []AttachmentInput
 	Skills        []domain.SkillReference
@@ -42,6 +45,14 @@ type InputHandoffRuntime interface {
 	SubmitWithHandoff(context.Context, domain.Session, string, TurnInput, func() error) (string, error)
 	SteerWithHandoff(context.Context, domain.Session, string, string, TurnInput, func() error) error
 }
+
+// DeferredInputRuntime releases the send order as soon as the input crosses
+// the transport, while leaving the durable receipt to the actual native reply.
+type DeferredInputRuntime interface {
+	SubmitDeferred(context.Context, domain.Session, string, TurnInput, func() error) (string, <-chan error, error)
+	SteerDeferred(context.Context, domain.Session, string, string, TurnInput, func() error) (<-chan error, error)
+}
+
 type SkillProvider interface {
 	Skills(context.Context, domain.LaunchContext) (domain.SkillCatalog, error)
 }
@@ -123,6 +134,10 @@ type StartOptions struct {
 	// discovery processes and acquire short-lived probes for later service calls.
 	// Accepted conversations always use a separate owned execution scope.
 	CatalogOnly bool
+	// CatalogDirectory is worker-owned storage for the adapter’s discovery data.
+	// RefreshCatalog allows probes that require explicit user action.
+	CatalogDirectory string
+	RefreshCatalog   bool
 	// ImportResource snapshots device-local or inline image/text bytes in worker storage.
 	// Adapters translate source encodings before calling this; journals carry only
 	// the returned immutable reference, never bytes or a runtime storage path.

@@ -18,6 +18,10 @@ const (
 )
 
 type Goal struct {
+	ID             string    `json:"id,omitempty"`
+	Revision       int64     `json:"revision,omitempty"`
+	RunID          string    `json:"runId,omitempty"`
+	ContinueFrom   string    `json:"continueFrom,omitempty"`
 	Objective      string    `json:"objective"`
 	State          GoalState `json:"state"`
 	ElapsedSeconds int64     `json:"elapsedSeconds"`
@@ -36,7 +40,7 @@ func (g *Goal) SameTarget(other *Goal) bool {
 	if g == nil || other == nil {
 		return g == other
 	}
-	return g.Objective == other.Objective && g.CreatedAt == other.CreatedAt && g.State == other.State
+	return g.ID == other.ID && g.Revision == other.Revision && g.Objective == other.Objective && g.CreatedAt == other.CreatedAt && g.State == other.State
 }
 
 type GoalAction string
@@ -83,4 +87,19 @@ func (in Submission) ValidateGoal() error {
 		return errors.New("目标需要独立的 /goal 正文，并使用执行模式")
 	}
 	return nil
+}
+
+// An ID marks a worker-owned objective. Native goals keep their existing shape.
+func (g *Goal) Managed() bool { return g != nil && g.ID != "" }
+
+const GoalContinuationPrefix = "goal-continuation:"
+
+func (g *Goal) ContinuationID() string {
+	return GoalContinuationPrefix + g.ID + ":" + g.ContinueFrom
+}
+
+type GoalProgress struct {
+	GoalID  string
+	RunID   string
+	Outcome GoalState
 }

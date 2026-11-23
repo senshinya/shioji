@@ -71,6 +71,28 @@ func (s *Server) goalControl(in domain.GoalRequest) (domain.Operation, error) {
 			return zero, err
 		}
 	}
+	if session.Goal.Managed() {
+		op, err := s.store.ChangeManagedGoal(in)
+		if err != nil {
+			return zero, err
+		}
+		if in.Action != domain.ResumeGoal && session.Goal.Active() && session.Status.Active() {
+			// State is already durable, so the scheduler cannot dispatch between
+			// this transition and cancellation of the captured input.
+			var turn string
+			for _, t := range d.Turns {
+				if t.Status.Active() {
+					turn = t.ID
+					break
+				}
+			}
+			s.dispatchMu.Unlock()
+			_ = s.interruptTurn(session.ID, turn, session.Goal.RunID)
+			s.dispatchMu.Lock()
+		}
+		s.wakeQueue()
+		return op, nil
+	}
 	r := s.currentRuntime(session.ID)
 	if r == nil || r.Stopped() || in.Action == domain.ResumeGoal && !r.ExecutionReady() {
 		r, err = s.sessionRuntime(ctx, session.ID)
@@ -231,4 +253,29 @@ func (s *Server) startGoal(ctx context.Context, r harness.Runtime, session domai
 	return gate.apply(func() error {
 		return s.store.RecordGoalReceipt(session.ID, session.ThreadID, session.Goal, goal)
 	})
+}
+
+func (s *Server) dispatchManagedGoals() {
+	ids, err := s.store.ManagedGoalsReady()
+	if err != nil {
+		return
+	}
+	for _, id := range ids {
+		s.dispatchMu.Lock()
+		if s.updateAdmission() != nil || s.sessionTransitions[id] != nil {
+			s.dispatchMu.Unlock()
+			continue
+		}
+		d, err := s.store.Session(id, 0, 1)
+		if err == nil && d.Session.Goal.Managed() && d.Session.Goal.Active() && d.Session.Goal.ContinueFrom != "" {
+			goal := d.Session.Goal
+			in := domain.Submission{OperationID: goal.ContinuationID(), SessionID: id, WorkspaceID: d.Session.WorkspaceID,
+				Config: d.Session.Config, Text: "继续目标"}
+			if _, err := s.prepareSubmissionLocked(in, 0, false, nil, goal); err != nil &&
+				!errors.Is(err, errCatalogRefreshing) && !errors.Is(err, errSessionTransitionRetired) && s.updateAdmission() == nil {
+				_ = s.store.BlockManagedGoalContinuation(id, goal)
+			}
+		}
+		s.dispatchMu.Unlock()
+	}
 }

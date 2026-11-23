@@ -73,7 +73,7 @@ func (s *Server) reclaimRuntime(id string, now time.Time, pressure bool, parent 
 		delete(s.idleRuntimes, id)
 		return nil
 	}
-	if !r.ManagedCoverage() || !r.Readiness().Capabilities.Continue {
+	if !r.ManagedCoverage() || !r.Readiness().Capabilities.CanReopenIdle() {
 		delete(s.idleRuntimes, id)
 		return nil
 	}

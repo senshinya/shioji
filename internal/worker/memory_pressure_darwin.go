@@ -76,7 +76,7 @@ func (s *Server) admitMemoryPressure(exclude string) error {
 					continue
 				}
 				r := s.currentRuntime(id)
-				if r == nil || !r.ManagedCoverage() || !r.Readiness().Capabilities.Continue {
+				if r == nil || !r.ManagedCoverage() || !r.Readiness().Capabilities.CanReopenIdle() {
 					continue
 				}
 				if pending, ok := r.(harness.PendingRuntime); ok && pending.PendingOperations() != 0 {

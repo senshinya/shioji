@@ -358,12 +358,12 @@ func (s *Store) Operation(id string) (domain.Operation, error) {
 func (s *Store) Accept(in domain.Submission, launch ...domain.LaunchContext) (domain.Operation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.acceptLocked(in, 0, false, "", false, launch...)
+	return s.acceptLocked(in, 0, false, "", false, nil, launch...)
 }
 func (s *Store) AcceptForHarness(in domain.Submission, harnessID string, launch domain.LaunchContext) (domain.Operation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.acceptLocked(in, 0, false, harnessID, false, launch)
+	return s.acceptLocked(in, 0, false, harnessID, false, nil, launch)
 }
 
 func (s *Store) AcceptReceivedForHarness(in domain.Submission, harnessID string, launch domain.LaunchContext) (domain.Operation, error) {
@@ -376,7 +376,7 @@ func (s *Store) AcceptReceivedForHarness(in domain.Submission, harnessID string,
 	if receipt.State != domain.OperationPreparing || receipt.Digest != submissionDigest(in) {
 		return domain.Operation{}, ErrInputHandoffRevoked
 	}
-	return s.acceptLocked(in, 0, false, harnessID, true, launch)
+	return s.acceptLocked(in, 0, false, harnessID, true, nil, launch)
 }
 
 func submissionDigest(in domain.Submission) string {
@@ -384,7 +384,7 @@ func submissionDigest(in domain.Submission) string {
 	return hex.EncodeToString(hash[:])
 }
 
-func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediate bool, acceptedHarness string, received bool, launch ...domain.LaunchContext) (domain.Operation, error) {
+func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediate bool, acceptedHarness string, received bool, managedGoal *domain.Goal, launch ...domain.LaunchContext) (domain.Operation, error) {
 	var none domain.Operation
 	if in.ValidateContent() != nil || in.OperationID == "" {
 		return none, errors.New("submission requires an operation ID and 1–131072 bytes of text")
@@ -444,7 +444,11 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		if session.Origin != nil && session.Origin.ResumeRef == "" && session.ThreadID == "" {
 			return none, errors.New("此导入历史仅可查看")
 		}
-		if session.WorkspaceID != in.WorkspaceID || !session.Status.CanSubmit() || session.Goal.Active() {
+		continuing := managedGoal != nil && session.Goal.Managed() && session.Goal.Active() &&
+			*session.Goal == *managedGoal && managedGoal.ContinueFrom != "" &&
+			in.OperationID == managedGoal.ContinuationID() && in.Config == session.Config && !session.ContextChanged &&
+			session.ExecutionGuard == ""
+		if session.WorkspaceID != in.WorkspaceID || !session.Status.CanSubmit() || (session.Goal.Active() || managedGoal != nil) && !continuing {
 			return none, errors.New("session is unavailable for a new turn")
 		}
 		if session.Origin != nil && session.ThreadID == "" && session.Context.Repository == "" && len(launch) > 0 && launch[0].Repository != "" {
@@ -472,6 +476,11 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 				q.Revision++
 				emptyQueue = &q
 			}
+		}
+		if continuing {
+			goal := *session.Goal
+			goal.ContinueFrom, goal.RunID = "", in.OperationID
+			session.Goal = &goal
 		}
 		if session.Config.Model != in.Config.Model {
 			session.ContextUsage = nil
@@ -544,6 +553,9 @@ func (s *Store) acceptLocked(in domain.Submission, queueRevision int64, immediat
 		item = &domain.Item{ID: "input:" + op.ID, Kind: "user", ReferencePositions: in.ReferencePositions, Skills: in.Skills, Attachments: in.Attachments, Text: in.Text, Final: true, Status: "dispatching", SentAt: &now}
 		if err = verifyQuestionReply(tx, in); err != nil {
 			return none, err
+		}
+		if managedGoal != nil {
+			item.Presentation = domain.GoalContinuationPresentation
 		}
 		if in.QuestionReply != nil {
 			item.ReplyTo = in.QuestionReply.QuestionID
@@ -882,6 +894,8 @@ func (s *Store) applyLocked(sid string, e domain.Event) (domain.Event, error) {
 		if err = putTurn(tx, sid, e.Turn); err != nil {
 			return e, err
 		}
+		settleManagedGoal(&session, e.Turn, e.GoalProgress)
+		e.GoalProgress = nil
 		if err = s.observeReplyCompletion(tx, &session, previous, *e.Turn); err != nil {
 			return e, err
 		}
@@ -1284,7 +1298,13 @@ func (s *Store) Recover() error {
 		if e != nil {
 			return e
 		}
-		if session.Status.Active() || unsettled {
+		managedStepLost := session.Goal.Managed() && session.Goal.Active() && session.Goal.RunID != ""
+		if session.Status.Active() || unsettled || managedStepLost {
+			if managedStepLost {
+				if err := s.BlockManagedGoal(session.ID, session.Goal.RunID); err != nil {
+					return err
+				}
+			}
 			if _, e = s.SetRecovery(session.ID, nil); e != nil {
 				return e
 			}

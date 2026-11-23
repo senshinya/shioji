@@ -177,6 +177,16 @@ func (s *Store) FailHistory(id string, cause error) error {
 	return err
 }
 func (s *Store) CommitHistory(id string) (domain.HistoryOperation, error) {
+	return s.commitHistory(id, false)
+}
+
+// CommitPortableFork copies the pinned transcript and issues a receipt without
+// creating a native session. A prepared receipt can be retried without RPCs.
+func (s *Store) CommitPortableFork(id string) (domain.HistoryOperation, error) {
+	return s.commitHistory(id, true)
+}
+
+func (s *Store) commitHistory(id string, portable bool) (domain.HistoryOperation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	op, err := load[domain.HistoryOperation](s.db.QueryRow("SELECT body FROM history_operations WHERE id=?", id))
@@ -186,7 +196,7 @@ func (s *Store) CommitHistory(id string) (domain.HistoryOperation, error) {
 	if op.State == "complete" {
 		return op, nil
 	}
-	if op.State != "forked" {
+	if portable && (op.State != "prepared" || op.Input.Restart || op.ThreadID != "") || !portable && op.State != "forked" {
 		return op, errors.New("分叉结果尚未确认，原会话保持不变")
 	}
 	tx, err := s.db.Begin()
@@ -216,6 +226,7 @@ func (s *Store) CommitHistory(id string) (domain.HistoryOperation, error) {
 	target.ContextUsage = nil
 	target.ContextUsageAfterTurnOrder = 0
 	target.ThreadID = op.ThreadID
+	target.PortableFork = portable
 	target.Completion = nil
 	if op.Input.Restart {
 		// Keep metadata edits and accepted launch context authoritative.

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"shioji/internal/domain"
 	"shioji/internal/harness"
+	"shioji/internal/systemexec"
 	"slices"
 	"strings"
 	"sync"
@@ -346,11 +347,11 @@ func runDetectionCommand(ctx context.Context, path string, env []string, args ..
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 200 * time.Millisecond
-	var out shellOutput
+	var out systemexec.BoundedOutput
 	cmd.Stdout = &out
 	cmd.Stderr = io.Discard
 	err := cmd.Run()
-	if err == nil && out.overflow {
+	if err == nil && out.Overflow() {
 		return errors.New("Codex 检测输出过大")
 	}
 	return err

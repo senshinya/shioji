@@ -1,12 +1,22 @@
 # Harness 中立模型与适配边界
 
-状态：2026-11-07 已实现首轮 harness 中立边界。生产仍只注册 Codex；独立内存驱动仅用于多 harness 契约测试。本文“当前实现”列出实际接口和兼容行为，后续详细内容模型与接口草图仍是设计建议，不能作为已支持能力的清单。最初研究依据为 [Codex 0.166.0 schema](../design/protocol/codex-0.166.0/inventory.json) 和[官方 App Server 文档](https://developers.openai.com/codex/app-server/)。
+Shioji 注册 Codex 和 Antigravity 两个 Agent。独立内存驱动用于多 harness 契约测试。本文的接口说明以实际 Worker、adapter 和目录能力为准。Codex 的协议依据为 [冻结 schema](../design/protocol/codex-0.166.0/inventory.json) 和[官方 App Server 文档](https://developers.openai.com/codex/app-server/)。
 
 Codex adapter 启动时检查当前安装导出的协议形状和实际能力，不再按单一 CLI 版本白名单拒绝正常升级；0.166.0 保留为冻结录制基线，0.167.0 已通过真实 App Server 集成测试。缺少可选能力时显式关闭，必需上下文／安全契约不兼容时拒绝启动。详见 [本机版本与更新](local-worker-updates.md)。
 
 运行边界已由用户确定：采用自有完整 worker，取消 herdr-core 依赖。Codex adapter 位于 owning device 的 worker 内；客户端通过版本化 worker 协议接收中间结构，不自行持有远端 app-server 连接。
 
 首期执行设备限定为 macOS。最新可行性实验见 [macOS worker 技术验证](macos-worker-research-2026-11-03.md)；研究夹具与当前生产实现分别验证。
+
+## Antigravity
+
+执行设备的 worker 用与 Codex 共用的登录 Shell 环境解析系统 `agy`。它也可使用设备配置中的绝对路径，或探测常见的系统安装目录。Shioji 的安装包只分发 Shioji 自身组件。安装和登录使用执行设备上的 [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli)。
+
+后台探测执行 ACP 握手并读取适用于当前可执行文件和设备配置目录的缓存。显式配置或重新检测会用空的探测会话获取模型、思考强度和执行模式。每个执行会话持有独立 ACP 进程，恢复时重新核对模型、思考强度和模式。Plan 是 Antigravity 的执行模式，进入 Plan 时使用默认权限选项。未确认的输入在恢复时保持待核对。
+
+普通提交和立即发送分别持久化交接回执。立即发送向当前原生会话并发提交独立输入。逻辑轮次等待其所有请求和批准收尾。分叉在 worker 内复制所选轮次之前的历史及该轮次，首条新消息创建独立的原生会话，并附上有界的只读对话上下文。
+
+Goal 的当前状态、暂停、恢复和清除由 worker 持久化。续跑需要匹配本轮来源的结构化进展，并经过普通输入的接纳边界。报告工具仅监听执行设备的回环地址，每个会话有独立认证，每次报告绑定当前目标输入。原生审批按当前运行环境处理。执行中失联或重启需要核对，已中断的输入不会自动重发。
 
 ## 子工作来源与待处理请求
 
@@ -60,7 +70,7 @@ Worker 编排／通用领域模型
         ↕ harness 中立的接口
 具体 Harness Adapter（双向翻译）
         ↕ 该 harness 的协议、配置、错误与进程接入
-Codex app-server／后续 harness
+Codex app-server／Antigravity CLI ACP
 ```
 
 中间层定义产品语义：提交输入、引导当前执行、中断、处理请求、计划、用量、历史分叉与恢复等。它不以某个 harness 的 RPC 方法、枚举或对象形状作为自己的定义。执行、连接、投递、请求和呈现状态继续独立；上一轮显式状态重构不表示 harness 解耦也已经完成。
@@ -105,7 +115,7 @@ Codex adapter 为所属运行实例提供私有 Unix socket，兼容 Ryugi 1.58.
 
 兼容规则：
 
-- Worker 协议为 **major 2 / minor 11**。minor 10 增加多 harness 目录，minor 11 增加文件引用和 typed Skill 目录／输入（见 [输入框引用](composer-references.md)）。保留顶层默认目录投影供旧客户端读取，新客户端按 HarnessID 选择独立目录；旧 worker 的能力兼容限于已协商的 minor <= 9 单运行时协议。
+- Worker 协议为 **major 2 / minor 58**。minor 10 增加多 harness 目录，minor 11 增加文件引用和 typed Skill 目录／输入（见 [输入框引用](composer-references.md)）。保留顶层默认目录投影供旧客户端读取，新客户端按 HarnessID 选择独立目录；旧 worker 的能力兼容限于已协商的 minor <= 9 单运行时协议。
 - 已保存的 `ThreadID` 继续是不透明来源引用，不因改名重写数据库。历史阶段名 `forked` 保留既有存储含义，表示已有可重试的准备结果，不要求其他 harness 真正创建 fork。
 - 旧提交的空 HarnessID 不改变其操作摘要；Worker 将默认身份作为接纳元数据写入新会话。已有会话身份不会随首页或设备默认变化。
 - 根目录 catalog 的归属保存在 `catalog-owner`，与当前默认选择独立。无归属文件但存在旧根进程记录时，由组合入口明确识别旧单 Codex 布局。

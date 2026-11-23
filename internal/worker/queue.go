@@ -7,6 +7,7 @@ import (
 	"shioji/internal/harness"
 	"shioji/internal/protocol"
 	"shioji/internal/store"
+	"sync"
 	"time"
 )
 
@@ -30,6 +31,7 @@ func (s *Server) queueLoop() {
 			return
 		case <-s.queueWake:
 		}
+		s.dispatchManagedGoals()
 		ids, err := s.store.ReadyQueueSessions()
 		if err != nil {
 			continue
@@ -250,14 +252,15 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 	go func() {
 		defer s.wg.Done()
 		defer s.wakeQueue()
-		defer func() {
+		releaseOrder := sync.OnceFunc(func() {
 			s.dispatchMu.Lock()
 			defer s.dispatchMu.Unlock()
 			if s.steerDispatch[key] == done {
 				delete(s.steerDispatch, key)
 			}
 			close(done)
-		}()
+		})
+		defer releaseOrder()
 		if previous != nil {
 			select {
 			case <-previous:
@@ -304,12 +307,23 @@ func (s *Server) steerLocked(in protocol.SteerInput, revision int64) (domain.Ope
 			s.dispatchMu.Unlock()
 			locked = false
 			input := harness.TurnInput{Text: in.Input.Text, Attachments: inputs, Skills: in.Input.Skills, QuestionReply: in.Input.QuestionReply}
-			if nativeHandoff {
-				err = delayed.SteerWithHandoff(ctx, d.Session, in.TurnID, op.ID, input, func() error {
-					err := s.claimInput(gate, runtime, op)
-					handed = err == nil
-					return err
-				})
+			claim := func() error {
+				err := s.claimInput(gate, runtime, op)
+				handed = err == nil
+				return err
+			}
+			if deferred, ok := runtime.(harness.DeferredInputRuntime); ok {
+				var receipt <-chan error
+				receipt, err = deferred.SteerDeferred(ctx, d.Session, in.TurnID, op.ID, input, claim)
+				releaseOrder()
+				if err == nil {
+					err = awaitNativeInput(s.ctx, runtime, receipt)
+					if s.ctx.Err() != nil {
+						return
+					}
+				}
+			} else if nativeHandoff {
+				err = delayed.SteerWithHandoff(ctx, d.Session, in.TurnID, op.ID, input, claim)
 			} else {
 				err = runtime.Steer(ctx, d.Session, in.TurnID, op.ID, input)
 			}

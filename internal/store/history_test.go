@@ -153,3 +153,67 @@ func TestUnconfirmedHistoryIntentFailsOnWorkerRestartWithoutChangingSource(t *te
 		t.Fatal("intent recovery changed original")
 	}
 }
+
+func TestPortableForkHasIndependentHistoryBeforeFirstNativeSession(t *testing.T) {
+	s := open(t)
+	w := workspace(t, s)
+	source, err := s.Accept(domain.Submission{OperationID: "portable-source", WorkspaceID: w.ID, Text: "question"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.Session(source.SessionID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Session.ThreadID = "source-native"
+	events := []domain.Event{
+		{Type: "session", Session: &d.Session},
+		{Type: "item.upsert", Item: &domain.Item{ID: "input:" + source.ID, TurnID: "first", Kind: "user", Text: "question", Status: "sent", Final: true}},
+		{Type: "item.upsert", Item: &domain.Item{ID: "tool", TurnID: "first", Kind: "tool", Text: "tool output cannot be rerun", Final: true}},
+		{Type: "item.upsert", Item: &domain.Item{ID: "reply", TurnID: "first", Kind: "assistant", Text: "answer", Final: true}},
+		{Type: "turn", Turn: &domain.Turn{ID: "first", Status: "completed"}},
+	}
+	for _, event := range events {
+		if _, err := s.Apply(source.SessionID, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.SetOperation(source.ID, "confirmed", ""); err != nil {
+		t.Fatal(err)
+	}
+	d, _ = s.Session(source.SessionID, 0, 100)
+	op, err := s.PrepareHistory(domain.HistoryChange{OperationID: "portable-fork", SessionID: source.SessionID, Revision: d.Session.Revision, TurnID: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fork, err := s.CommitPortableFork(op.ID)
+	if err != nil || fork.Session.ID == source.SessionID || fork.Session.ThreadID != "" {
+		t.Fatalf("fork = %+v, %v", fork, err)
+	}
+	copied, _ := s.Session(fork.Session.ID, 0, 100)
+	if len(copied.Items) != 3 || copied.Items[1].Kind != "tool" {
+		t.Fatalf("display history = %+v", copied.Items)
+	}
+	if _, err := s.Enqueue(domain.Submission{OperationID: "queued-input", SessionID: fork.Session.ID, WorkspaceID: w.ID, Text: "queued context"}); err != nil {
+		t.Fatal(err)
+	}
+	context, err := s.PortableForkContext(fork.Session.ID, "first-new-message")
+	if err != nil || len(context.Entries) != 2 || context.Entries[0].Role != "user" || context.Entries[0].Text != "question" || context.Entries[1].Text != "answer" {
+		t.Fatalf("fork model context = %+v, %v", context, err)
+	}
+	queue, err := s.Queue(fork.Session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.AcceptQueued(queue.Items[0].Input, queue.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetOperation(first.ID, "confirmed", ""); err != nil {
+		t.Fatal(err)
+	}
+	context, err = s.PortableForkContext(fork.Session.ID, "later")
+	if err != nil || len(context.Entries) != 0 {
+		t.Fatalf("context was replayed on later input: %+v, %v", context, err)
+	}
+}

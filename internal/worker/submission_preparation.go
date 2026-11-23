@@ -39,7 +39,7 @@ func (s *Server) receiveHomeSubmission(in domain.Submission) (domain.Operation, 
 		defer release()
 		s.dispatchMu.Lock()
 		defer s.dispatchMu.Unlock()
-		_, err := s.prepareSubmissionLocked(in, 0, false, &workspace)
+		_, err := s.prepareSubmissionLocked(in, 0, false, &workspace, nil)
 		if err != nil {
 			if saveErr := s.store.RejectReceivedSubmission(op.ID, err.Error()); saveErr != nil {
 				log.Printf("save submission preparation result: %v", saveErr)

@@ -93,6 +93,13 @@ func (s *Server) interruptTurn(id, turn string, operation ...string) error {
 		}
 		return errors.New("turn is not active")
 	}
+	if d.Session.Goal.Managed() && d.Session.Goal.Active() {
+		err := s.store.PauseManagedGoalForStop(id, d.Session.Goal.ID)
+		if err != nil {
+			s.dispatchMu.Unlock()
+			return err
+		}
+	}
 	revoked, err := s.revokePreparedInputs(id, target)
 	if err != nil {
 		s.dispatchMu.Unlock()
@@ -243,6 +250,9 @@ func (s *Server) revokePreparedInputs(session, target string) ([]string, error) 
 func (s *Server) pauseGoalAfterStop(ctx context.Context, runtime harness.Runtime, before domain.Session) error {
 	if !before.Goal.Active() {
 		return nil
+	}
+	if before.Goal.Managed() {
+		return nil // Managed goals are paused before native cancellation.
 	}
 	goals, ok := runtime.(harness.GoalController)
 	if !ok || !runtime.Readiness().Capabilities.Goals {

@@ -11,8 +11,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"shioji/internal/domain"
-	"shioji/internal/harness"
-	"shioji/internal/harness/codex"
 	"shioji/internal/managedexec"
 	"shioji/internal/protocol"
 	"shioji/internal/runtimebuild"
@@ -460,7 +458,7 @@ func run() error {
 			return domain.BackgroundService{NotStarted: true}, err
 		}
 		return supervisor.BackgroundCall(callCtx, dir, supervisor.Request{Action: "background-stop", ID: id, DeviceID: device, Instance: os.Getenv("SHIOJI_WORKER_INSTANCE")})
-	}, Directory: dir, Harnesses: []harness.Adapter{codex.Adapter{Executable: *binary}}, ReplaceWorker: func(in domain.WorkerReplacement) error {
+	}, Directory: dir, Harnesses: worker.SystemAdapters(*binary), ReplaceWorker: func(in domain.WorkerReplacement) error {
 		verifyCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 		candidate, err := transport.VerifyStagedWorker(verifyCtx, dir, in.BuildID)

@@ -10,11 +10,10 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/managedexec"
+	"shioji/internal/systemexec"
 	"shioji/internal/testutil"
-	"strconv"
+	"slices"
 	"strings"
-	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -120,146 +119,16 @@ func TestMissingNpmNodeIsReportedAsADependencyFailure(t *testing.T) {
 	}
 }
 
-func TestShellEnvironmentIsCachedAndDeduplicated(t *testing.T) {
-	root := t.TempDir()
-	counter := filepath.Join(root, "calls")
-	rc := fmt.Sprintf("printf 'probe\\n' >> %q\nexport PATH=/fixture/node:/usr/bin:/bin\nprintf 'noisy rc output\\n'\n", counter)
-	if err := os.WriteFile(filepath.Join(root, ".zshrc"), []byte(rc), 0600); err != nil {
-		t.Fatal(err)
-	}
-	base := runtimeEnvironment(os.Environ(), "", []domain.EnvironmentVariable{{Name: "SHELL", Value: "/bin/zsh"}, {Name: "ZDOTDIR", Value: root}})
-	cache := &shellEnvironmentCache{}
-	var wg sync.WaitGroup
-	errs := make(chan error, 8)
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			env, err := cache.get(context.Background(), base)
-			if err == nil && !strings.HasPrefix(environmentValue(env, "PATH"), "/fixture/node:") {
-				err = fmt.Errorf("missing discovered path")
-			}
-			errs <- err
-		}()
-	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := cache.get(context.Background(), base); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(counter)
-	if err != nil || strings.Count(string(data), "probe") != 1 {
-		t.Fatal("concurrent discovery ran multiple login shells", err)
-	}
-	if err = os.WriteFile(filepath.Join(root, ".zshrc"), []byte(rc+"export PATH=/changed/node:/usr/bin:/bin\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	env, err := cache.get(context.Background(), base)
-	if err != nil || !strings.HasPrefix(environmentValue(env, "PATH"), "/changed/node:") {
-		t.Fatal("changed shell configuration retained a stale cache", err)
-	}
-}
-
-func TestCatalogVersionSurvivesTemporaryLoginShellTimeout(t *testing.T) {
-	root := t.TempDir()
-	shell := filepath.Join(root, "login-shell")
-	fail := filepath.Join(root, "shell-unresponsive")
-	node := filepath.Join(root, "node")
-	entry := filepath.Join(root, "codex")
-	script := fmt.Sprintf("#!/bin/sh\nif [ -f %q ]; then exec /bin/sleep 30; fi\nexport PATH=%q:/usr/bin:/bin\nexec /bin/sh -c \"$2\"\n", fail, root)
-	for path, contents := range map[string]string{
-		shell: script,
-		node:  "#!/bin/sh\nexit 0\n",
-		entry: "#!/usr/bin/env node\n",
-	} {
-		if err := os.WriteFile(path, []byte(contents), 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("SHELL", shell)
-	t.Setenv("ZDOTDIR", root)
-	t.Setenv("PATH", "/usr/bin:/bin")
-	a := Adapter{Executable: entry}
-	original, err := a.CatalogVersion()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(fail, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	loginEnvironment.mu.Lock()
-	loginEnvironment.read.expires = time.Now().Add(-time.Second)
-	loginEnvironment.mu.Unlock()
-	observed, err := a.CatalogVersion()
-	if err != nil || observed != original {
-		t.Fatalf("login shell timeout changed the installed runtime identity: %v", err)
-	}
-	if err := os.Remove(node); err != nil {
-		t.Fatal(err)
-	}
-	observed, err = a.CatalogVersion()
-	if err != nil || observed == original {
-		t.Fatalf("cached PATH hid removal of the interpreter: %v", err)
-	}
-}
-
-func TestShellEnvironmentCancellationAndTimeoutReleaseItsProcessGroup(t *testing.T) {
-	root := t.TempDir()
-	shell := filepath.Join(root, "slow-shell")
-	pidFile := filepath.Join(root, "child.pid")
-	script := fmt.Sprintf("#!/bin/sh\n/bin/sleep 30 &\necho $! > %q\nwait\n", pidFile)
-	if err := os.WriteFile(shell, []byte(script), 0700); err != nil {
-		t.Fatal(err)
-	}
-	cache := &shellEnvironmentCache{}
-	base := runtimeEnvironment(os.Environ(), "", []domain.EnvironmentVariable{{Name: "SHELL", Value: shell}})
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	start := time.Now()
-	_, err := cache.get(ctx, base)
-	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > time.Second {
-		t.Fatal("caller cancellation waited for the shell", err)
-	}
-	cache.mu.Lock()
-	read := cache.read
-	cache.mu.Unlock()
-	select {
-	case <-read.done:
-	case <-time.After(shellEnvironmentTimeout + time.Second):
-		t.Fatal("shared shell probe exceeded its total budget")
-	}
-	data, err := os.ReadFile(pidFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(time.Second)
-	for syscall.Kill(pid, 0) == nil && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if syscall.Kill(pid, 0) == nil {
-		t.Fatal("shell timeout left its child process running", pid)
-	}
-}
-
 func TestLoginEnvironmentKeepsManagedContextAndExplicitSettings(t *testing.T) {
-	raw := shellEnvironmentMarker + "PATH=/node:/usr/bin\x00VALUE=line one\nline two\x00SHIOJI_OWNER=must-not-import\x00CODEX_HOME=/other\x00CODEX_THREAD_ID=other-thread\x00CODEX_APP_TOOLS_PIPE_PATH=/other.sock\x00" + shellEnvironmentMarker
-	shell := parseLoginEnvironment(raw)
+	raw := "__SHIOJI_LOGIN_ENV__" + "PATH=/node:/usr/bin\x00VALUE=line one\nline two\x00SHIOJI_OWNER=must-not-import\x00CODEX_HOME=/other\x00CODEX_THREAD_ID=other-thread\x00CODEX_APP_TOOLS_PIPE_PATH=/other.sock\x00" + "__SHIOJI_LOGIN_ENV__"
+	shell := systemexec.ParseLoginEnvironment(raw)
 	for _, key := range []string{"SHIOJI_OWNER", "CODEX_THREAD_ID", "CODEX_APP_TOOLS_PIPE_PATH"} {
-		if environmentValue(shell, key) != "" {
+		if environmentValue(slices.DeleteFunc(shell, codexManagedEnvironment), key) != "" {
 			t.Fatal("shell configuration replaced a worker-owned identity", key)
 		}
 	}
 	base := []string{"PATH=/worker:/usr/bin", "VALUE=worker-value", "CODEX_HOME=/bound"}
-	merged := runtimeEnvironment(mergeLoginEnvironment(base, shell), "/chosen", []domain.EnvironmentVariable{{Name: "VALUE", Value: "explicit"}})
+	merged := runtimeEnvironment(systemexec.MergeEnvironment(base, shell), "/chosen", []domain.EnvironmentVariable{{Name: "VALUE", Value: "explicit"}})
 	if environmentValue(merged, "PATH") != "/node:/usr/bin:/worker" || environmentValue(merged, "VALUE") != "explicit" || environmentValue(merged, "CODEX_HOME") != "/chosen" {
 		t.Fatal("environment precedence changed")
 	}
@@ -409,13 +278,13 @@ func TestNpmAdapterSharesItsEnvironmentWithOwnedExecutorAndTitles(t *testing.T) 
 }
 
 func TestLoginShellCodexDirectoryFillsOnlyAnUnsetConfiguration(t *testing.T) {
-	shell := parseLoginEnvironment(shellEnvironmentMarker + "CODEX_HOME=/shell-config\x00" + shellEnvironmentMarker)
+	shell := systemexec.ParseLoginEnvironment("__SHIOJI_LOGIN_ENV__" + "CODEX_HOME=/shell-config\x00" + "__SHIOJI_LOGIN_ENV__")
 	cases := []struct {
 		base       []string
 		home, want string
 	}{{nil, "", "/shell-config"}, {[]string{"CODEX_HOME=/worker-config"}, "", "/worker-config"}, {nil, "/agent-config", "/agent-config"}}
 	for _, tc := range cases {
-		env := runtimeEnvironment(mergeLoginEnvironment(tc.base, shell), tc.home, nil)
+		env := runtimeEnvironment(systemexec.MergeEnvironment(tc.base, shell), tc.home, nil)
 		if environmentValue(env, "CODEX_HOME") != tc.want {
 			t.Fatal("login-shell native config was lost or overwrote an explicit directory")
 		}

@@ -63,7 +63,7 @@ func (s *Server) markCatalogRefreshing(id, revision string) error {
 
 // Caller holds the catalog's write gate, has claimed its refreshing phase, and
 // does not hold dispatchMu while waiting on native processes.
-func (s *Server) startCatalog(ctx context.Context, id string, stop bool, revision string) (next harness.Runtime, err error) {
+func (s *Server) startCatalog(ctx context.Context, id string, stop bool, revision string, refresh bool) (next harness.Runtime, err error) {
 	previous := s.catalogRuntime(id)
 	attempted := false
 	defer func() {
@@ -116,7 +116,7 @@ func (s *Server) startCatalog(ctx context.Context, id string, stop bool, revisio
 		return nil, err
 	}
 	attempted = true
-	next, err = a.Start(ctx, harness.StartOptions{CatalogOnly: true, ImportResource: func(image harness.OutputResource) (domain.Attachment, error) {
+	next, err = a.Start(ctx, harness.StartOptions{CatalogOnly: true, CatalogDirectory: dir, RefreshCatalog: refresh, ImportResource: func(image harness.OutputResource) (domain.Attachment, error) {
 		return s.importOutputResource(id, "", image)
 	}, OnEvent: func(e domain.Event) error { return s.onHarnessEvent(id, "", e) }, OnStart: func(pid int) error { return recordProcess(dir, pid) }})
 	if err != nil {
@@ -164,10 +164,10 @@ func (s *Server) startCatalog(ctx context.Context, id string, stop bool, revisio
 
 // Settings callers capture and mark under dispatch, then keep only the
 // per-harness catalog gate while native startup/cleanup is in progress.
-func (s *Server) startCatalogOutsideDispatch(ctx context.Context, id string, stop bool, revision string) (harness.Runtime, error) {
+func (s *Server) startCatalogOutsideDispatch(ctx context.Context, id string, stop bool, revision string, refresh bool) (harness.Runtime, error) {
 	s.dispatchMu.Unlock()
 	defer s.dispatchMu.Lock()
-	return s.startCatalog(ctx, id, stop, revision)
+	return s.startCatalog(ctx, id, stop, revision, refresh)
 }
 func (s *Server) borrowCatalog(id string) (harness.Runtime, func(), error) {
 	gate := s.catalogGates[id]
@@ -275,7 +275,7 @@ func (s *Server) catalogLoop() {
 				s.maintenance.RUnlock()
 				if err == nil {
 					ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
-					_, err = s.startCatalog(ctx, id, false, installed)
+					_, err = s.startCatalog(ctx, id, false, installed, false)
 					cancel()
 				}
 			}

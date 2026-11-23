@@ -1145,6 +1145,9 @@ func validateFolders(paths []string) ([]string, error) {
 	return out, nil
 }
 func (s *Server) submit(in domain.Submission) (domain.Operation, error) {
+	if strings.HasPrefix(in.OperationID, domain.GoalContinuationPrefix) {
+		return domain.Operation{}, errors.New("无效的输入标识")
+	}
 	if in.OperationID == "" || len(in.OperationID) > 256 || in.ValidateContent() != nil {
 		return domain.Operation{}, errors.New("submission requires an operation ID and nonempty bounded text")
 	}
@@ -1154,10 +1157,10 @@ func (s *Server) submit(in domain.Submission) (domain.Operation, error) {
 	return s.submitLocked(in, 0, false)
 }
 func (s *Server) submitLocked(in domain.Submission, queueRevision int64, immediate bool) (_ domain.Operation, failure error) {
-	return s.prepareSubmissionLocked(in, queueRevision, immediate, nil)
+	return s.prepareSubmissionLocked(in, queueRevision, immediate, nil, nil)
 }
 
-func (s *Server) prepareSubmissionLocked(in domain.Submission, queueRevision int64, immediate bool, received *domain.Workspace) (_ domain.Operation, failure error) {
+func (s *Server) prepareSubmissionLocked(in domain.Submission, queueRevision int64, immediate bool, received *domain.Workspace, goal *domain.Goal) (_ domain.Operation, failure error) {
 	if err := s.waitSessionTransition(s.ctx, in.SessionID); err != nil {
 		return domain.Operation{}, err
 	}
@@ -1266,7 +1269,7 @@ func (s *Server) prepareSubmissionLocked(in domain.Submission, queueRevision int
 		if in.GoalObjective != "" && d.Session.ThreadID != "" && in.Config != d.Session.Config {
 			return domain.Operation{}, errors.New("目标使用会话已接纳的运行配置")
 		}
-		if !d.Session.Status.CanSubmit() || d.Session.Goal.Active() {
+		if !d.Session.Status.CanSubmit() || d.Session.Goal.Active() != (goal != nil) || goal != nil && *d.Session.Goal != *goal {
 			return domain.Operation{}, errors.New("session is unavailable for a new turn")
 		}
 		if in.Continue {
@@ -1274,7 +1277,7 @@ func (s *Server) prepareSubmissionLocked(in domain.Submission, queueRevision int
 				return domain.Operation{}, errors.New("原线程尚不能继续，请重新核对")
 			}
 		}
-		if queueRevision == 0 && !in.Continue {
+		if queueRevision == 0 && !in.Continue && goal == nil {
 			q, e := s.store.Queue(in.SessionID)
 			if e != nil {
 				return domain.Operation{}, e
@@ -1283,7 +1286,7 @@ func (s *Server) prepareSubmissionLocked(in domain.Submission, queueRevision int
 				return domain.Operation{}, errors.New("session has queued messages")
 			}
 		}
-		if queueRevision > 0 || in.Continue {
+		if queueRevision > 0 || in.Continue || goal != nil {
 			for _, req := range d.Requests {
 				if req.State.AwaitingResolution() {
 					return domain.Operation{}, errors.New("session has pending requests")
@@ -1345,7 +1348,9 @@ func (s *Server) prepareSubmissionLocked(in domain.Submission, queueRevision int
 		if e != nil {
 			return domain.Operation{}, e
 		}
-		if received == nil {
+		if goal != nil {
+			op, err = s.store.AcceptManagedGoalContinuation(in, goal, launch)
+		} else if received == nil {
 			op, err = s.store.AcceptForHarness(in, id, launch)
 		} else {
 			op, err = s.store.AcceptReceivedForHarness(in, id, launch)
@@ -1427,10 +1432,12 @@ func (s *Server) dispatchWithStartup(in domain.Submission, op domain.Operation, 
 		turnID  string
 		handed  bool
 		err     error
+		receipt <-chan error
 	}
 	settled := make(chan result, 1)
 	go func(session domain.Session) {
 		var turnID string
+		var receipt <-chan error
 		var err error
 		handed := false
 		if !gate.Load() {
@@ -1442,7 +1449,7 @@ func (s *Server) dispatchWithStartup(in domain.Submission, op domain.Operation, 
 				} else {
 					err = harness.Unsupported("imported-conversation-continuation")
 				}
-			} else if in.GoalObjective != "" {
+			} else if in.GoalObjective != "" && !runtime.Readiness().Capabilities.WorkerGoals {
 				if goalRuntime, ok := runtime.(harness.GoalController); ok && runtime.Readiness().Capabilities.Goals {
 					session.ThreadID, err = goalRuntime.CreateGoalThread(ctx, session)
 				} else {
@@ -1485,13 +1492,50 @@ func (s *Server) dispatchWithStartup(in domain.Submission, op domain.Operation, 
 				})
 			}
 			if err == nil {
+				commit := func() error { return s.store.BeginInputHandoff(op.ID) }
 				claim := func() error {
-					err := s.claimInput(gate, runtime, op)
+					err := s.claimInput(gate, runtime, op, commit)
 					handed = err == nil
 					return err
 				}
 				input := harness.TurnInput{Text: in.Text, Attachments: inputs, Skills: in.Skills, QuestionReply: in.QuestionReply}
-				if delayed, ok := runtime.(harness.InputHandoffRuntime); ok && in.GoalObjective == "" {
+				if session.PortableFork {
+					var prefix domain.ForkContext
+					prefix, err = s.store.PortableForkContext(session.ID, op.ID)
+					if err != nil {
+						settled <- result{session: session, err: err}
+						return
+					}
+					if len(prefix.Entries) > 0 || prefix.Omitted {
+						input.ForkContext = &prefix
+					}
+				}
+				workerGoal := runtime.Readiness().Capabilities.WorkerGoals
+				firstGoal := workerGoal && in.GoalObjective != ""
+				continueGoal := workerGoal && session.Goal.Managed() && session.Goal.Active() && session.Goal.RunID == op.ID
+				if strings.HasPrefix(op.ID, domain.GoalContinuationPrefix) && !continueGoal {
+					settled <- result{session: session, err: errors.New("目标已暂停或改变，本次续跑未发送")}
+					return
+				}
+				if firstGoal || continueGoal {
+					goalID, objective := op.ID, in.GoalObjective
+					if continueGoal {
+						goalID, objective = session.Goal.ID, session.Goal.Objective
+					}
+					commit = func() error {
+						var before *domain.Goal
+						if continueGoal {
+							before = session.Goal
+						}
+						return s.store.BeginGoalInputHandoff(op.ID, session.ThreadID, in.GoalObjective, before)
+					}
+					input.Goal = &domain.GoalProgress{GoalID: goalID, RunID: op.ID}
+					input.Objective = objective
+					input.Text = ""
+				}
+				if deferred, ok := runtime.(harness.DeferredInputRuntime); ok && (in.GoalObjective == "" || workerGoal) {
+					turnID, receipt, err = deferred.SubmitDeferred(ctx, session, op.ID, input, claim)
+				} else if delayed, ok := runtime.(harness.InputHandoffRuntime); ok && (in.GoalObjective == "" || workerGoal) {
 					turnID, err = delayed.SubmitWithHandoff(ctx, session, op.ID, input, claim)
 				} else {
 					err = claim()
@@ -1505,17 +1549,24 @@ func (s *Server) dispatchWithStartup(in domain.Submission, op domain.Operation, 
 				}
 			}
 		}
-		settled <- result{session: session, turnID: turnID, handed: handed, err: err}
+		settled <- result{session: session, turnID: turnID, handed: handed, err: err, receipt: receipt}
 	}(session)
 	var turnID string
 	var handed bool
+	var receipt <-chan error
 	select {
 	case out := <-settled:
-		session, turnID, handed, err = out.session, out.turnID, out.handed, out.err
+		session, turnID, handed, err, receipt = out.session, out.turnID, out.handed, out.err, out.receipt
 	case <-gate.done:
 		err = errRuntimeRetired
 	}
 	s.toolConfigMu.RUnlock()
+	if receipt != nil && err == nil {
+		err = awaitNativeInput(s.ctx, runtime, receipt)
+		if s.ctx.Err() != nil {
+			return
+		}
+	}
 
 	s.dispatchMu.Lock()
 	locked = true
@@ -1545,6 +1596,11 @@ func (s *Server) dispatchWithStartup(in domain.Submission, op domain.Operation, 
 	if err != nil && !errors.Is(err, store.ErrInputHandoffRevoked) {
 		s.cancel()
 	}
+	if outcome.Operation == domain.OperationRejected && (in.GoalObjective != "" || strings.HasPrefix(op.ID, domain.GoalContinuationPrefix)) {
+		if err := s.store.BlockManagedGoal(session.ID, op.ID); err != nil {
+			s.cancel()
+		}
+	}
 }
 func (s *Server) onEvent(e domain.Event) error {
 	if e.SessionID == "" {
@@ -1558,6 +1614,11 @@ func (s *Server) onEvent(e domain.Event) error {
 		return s.store.InterruptCompletion(e.SessionID)
 	}
 	if lost {
+		if before, err := s.store.SessionRecord(e.SessionID); err == nil && before.Goal.Managed() && before.Goal.RunID != "" {
+			if err := s.store.BlockManagedGoal(e.SessionID, before.Goal.RunID); err != nil {
+				return err
+			}
+		}
 		if err := s.store.InterruptCompletion(e.SessionID); err != nil {
 			return err
 		}

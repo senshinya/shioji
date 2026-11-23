@@ -184,3 +184,15 @@ func TestSavedDefaultHarnessChoicesSurviveOfflineFirstRender(t *testing.T) {
 		t.Fatal("offline first render erased saved default choices", got, c)
 	}
 }
+
+func TestExclusivePlanModeUsesDefaultPermission(t *testing.T) {
+	ready := domain.Readiness{
+		State: domain.RuntimeReady, Models: []domain.Model{{ID: "model", Default: true}},
+		Permissions: []string{"default", "accept-edits"}, Plan: true,
+		Capabilities: domain.HarnessCapabilities{ExclusivePlan: true},
+	}
+	result := normalizeRunConfig(domain.RunConfig{Model: "model", Permission: "accept-edits", Plan: true}, ready)
+	if !result.Plan || result.Permission != "default" {
+		t.Fatalf("configuration cannot enter plan mode: %+v", result)
+	}
+}

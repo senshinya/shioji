@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"strings"
@@ -10,7 +11,7 @@ import (
 	"shioji/internal/protocol"
 )
 
-func (s *Server) claimInput(gate *runtimeEventGate, runtime harness.Runtime, op domain.Operation) error {
+func (s *Server) claimInput(gate *runtimeEventGate, runtime harness.Runtime, op domain.Operation, commit ...func() error) error {
 	if gate == nil {
 		return errRuntimeRetired
 	}
@@ -26,6 +27,9 @@ func (s *Server) claimInput(gate *runtimeEventGate, runtime harness.Runtime, op 
 	return gate.apply(func() error {
 		if err := s.updateAdmission(); err != nil {
 			return err
+		}
+		if len(commit) > 0 {
+			return commit[0]()
 		}
 		return s.store.BeginInputHandoff(op.ID)
 	})
@@ -73,4 +77,20 @@ func (s *Server) inputReceipt(q protocol.OperationQuery) (domain.Operation, erro
 		return s.store.Operation(q.ID)
 	}
 	return s.store.SealUnreceivedInput(q.ID)
+}
+
+func awaitNativeInput(ctx context.Context, runtime harness.Runtime, receipt <-chan error) error {
+	select {
+	case err := <-receipt:
+		return err
+	case <-runtime.Done():
+		select {
+		case err := <-receipt:
+			return err
+		default:
+			return &harness.DeliveryError{Uncertain: true, Message: "运行环境已结束，输入结果待核对"}
+		}
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

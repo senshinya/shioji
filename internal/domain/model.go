@@ -49,6 +49,7 @@ type Session struct {
 	Origin         *ConversationOrigin `json:"origin,omitempty"`
 	ContextAction  *ContextAction      `json:"contextAction,omitempty"`
 	ContextUsage   *ContextUsage       `json:"contextUsage,omitempty"`
+	PortableFork   bool                `json:"portableFork,omitempty"`
 	ForkedFrom     string              `json:"forkedFrom,omitempty"`
 	ForkedTurn     string              `json:"forkedTurn,omitempty"`
 	ExecutionGuard string              `json:"executionGuard,omitempty"`
@@ -275,6 +276,7 @@ type Plan struct {
 	Steps       []PlanStep `json:"steps"`
 }
 type Event struct {
+	GoalProgress     *GoalProgress    `json:"-"`
 	Goal             *Goal            `json:"goal,omitempty"`
 	GoalSource       string           `json:"goalSource,omitempty"`
 	ActivityStart    bool             `json:"activityStart,omitempty"`
