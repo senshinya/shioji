@@ -1002,7 +1002,7 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 	manualCompaction := work != nil && work.State.Active()
 	attachmentsReady := a.preview || a.draftAttachmentsReady(targetRef)
 	canCompose := func() bool {
-		return !waitingForSession && connected && readyPhase && !session.ContextChanged && !a.draftSaveFailed() && attachmentsReady && !firstPending && !m.HasPendingInputForSession(sid) && queueEdit.ID == "" && !editor.pending() && !editor.attachmentMenuOpen && m.HasDraftContent(key)
+		return !waitingForSession && connected && readyPhase && !session.ContextChanged && !a.draftSaveFailed() && attachmentsReady && !firstPending && !m.HasPendingInputForSession(sid) && !m.PermissionChangePending(sid) && queueEdit.ID == "" && !editor.pending() && !editor.attachmentMenuOpen && m.HasDraftContent(key)
 	}
 	canSubmit := func() bool {
 		return canCompose() && ((!runtimeBlocked && !modelUnavailable) || mobileCompactCommand(m.Drafts[key]))

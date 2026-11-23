@@ -23,6 +23,32 @@ func (s *Store) SessionRecord(id string) (domain.Session, error) {
 	return load[domain.Session](s.db.QueryRow("SELECT body FROM sessions WHERE id=?", id))
 }
 
+func (s *Store) SetSessionPermission(id, thread, previous, permission string, leavePlan bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, err := load[domain.Session](s.db.QueryRow("SELECT body FROM sessions WHERE id=?", id))
+	if err != nil {
+		return err
+	}
+	if session.ThreadID != thread || session.Config.Permission != previous {
+		return errors.New("会话权限已变化，请重新选择")
+	}
+	workspace, err := load[domain.Workspace](s.db.QueryRow("SELECT body FROM workspaces WHERE id=?", session.WorkspaceID))
+	if err != nil {
+		return err
+	}
+	if session.Archived || workspace.Archived || session.ExecutionGuard != "" || session.Status == domain.ExecutionUnknown {
+		return errors.New("当前会话无法更改权限")
+	}
+	session.Config.Permission = permission
+	if leavePlan {
+		session.Config.Plan = false
+	}
+	session.Revision++
+	_, err = s.saveSessionMetadataLocked(session)
+	return err
+}
+
 func (s *Store) RenameSession(id, title string, revision int64, useSource bool) (domain.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

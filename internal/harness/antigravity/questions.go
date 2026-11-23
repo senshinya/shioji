@@ -49,7 +49,7 @@ func (r *runtime) receiveQuestion(msg packet) error {
 		return r.reply(ctx, msg.ID, decline, nil)
 	}
 	request.Kind, request.Title, request.Fields = "form", "Antigravity 提问", fields
-	return r.openRequest(msg.ID, request, turn)
+	return r.openRequest(nativeRequest{WireID: msg.ID, Request: request}, turn)
 }
 
 // AGY exposes ask_question as an ACP form with numbered choice fields and

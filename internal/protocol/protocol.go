@@ -58,7 +58,8 @@ const Major = 2
 // Minor 58 includes the mobile worker's Agent settings and checkout confirmation.
 // Minor 59 permits confirmation of an observed checkout during an active turn.
 // Minor 60 accepts one-time browser authorization responses on their owning worker.
-const Minor = 60
+// Minor 61 applies live session permission changes on the owning worker.
+const Minor = 61
 
 const CatalogMinor = 53
 const SubmissionReceiptMinor = 55
@@ -71,6 +72,7 @@ const GitConfirmationMinor = 56
 const QuestionReplyMinor = 57
 const ActiveGitConfirmationMinor = 59
 const SignInManualCodeMinor = 60
+const LivePermissionMinor = 61
 
 // Structured questions identify support on desktop 54 and 55. The mobile
 // branch first acquired them at 57.

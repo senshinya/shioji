@@ -103,6 +103,7 @@ type Model struct {
 	Drafts                     map[string]string
 	Configs                    map[string]domain.RunConfig
 	sessionConfigDrafts        map[string]sessionConfigDraft
+	permissionChanges          map[string]*sessionPermissionChange
 	Answers                    map[string]string
 	Pager                      map[string]int
 	Collapsed                  map[string]bool
@@ -212,6 +213,9 @@ func (m *Model) beginSubmission(method string) (domain.Submission, error) {
 		return domain.Submission{}, errors.New("请先恢复" + kind)
 	}
 	key := m.DraftKey()
+	if m.PermissionChangePending(m.SessionID) {
+		return domain.Submission{}, errors.New("正在更改会话权限")
+	}
 	if m.HasPendingInput() {
 		return domain.Submission{}, errors.New("previous submission is still awaiting confirmation")
 	}

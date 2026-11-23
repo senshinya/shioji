@@ -945,7 +945,10 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) (goalShown bool) {
 					for _, id := range m.RunReadiness().Permissions {
 						id := id
 						detail := m.PermissionDescription(id)
-						choices = append(choices, menuChoice{id: id, name: m.PermissionName(id), detail: detail, checked: cfg.Permission == id, choose: func() { cfg.Permission = id; m.SetConfig(key, cfg) }})
+						choices = append(choices, menuChoice{id: id, name: m.PermissionName(id), detail: detail, checked: cfg.Permission == id,
+							disabled: v.persistenceModel().PermissionChangePending(m.SessionID), choose: func() {
+								v.persistenceModel().SelectPermission(key, m.RunReadiness(), cfg, id, v.do)
+							}})
 					}
 					v.choiceMenu(c, t, "permission:"+key, permission, choices)
 					n.Spacer(c).Grow(1)
@@ -963,7 +966,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) (goalShown bool) {
 					label := "发送"
 					editing := m.ActiveQueueEdit(m.SessionID).ID != ""
 					queuing := len(m.Queue().Items) > 0 || active && (!stopped || !empty)
-					disabled := v.currentConnectionPhase() != app.ConnectionIdle || !m.Connected || m.RunReadiness().State != "ready" || m.ModelUnavailable() || m.ReadOnlyConversationReason() != "" || empty || m.HasPendingInput() || v.homeSendPending() || m.ArchivedContext() != "" || v.preparingAttachments(m.DraftKey())
+					disabled := v.currentConnectionPhase() != app.ConnectionIdle || !m.Connected || m.RunReadiness().State != "ready" || m.ModelUnavailable() || m.ReadOnlyConversationReason() != "" || empty || m.HasPendingInput() || v.persistenceModel().PermissionChangePending(m.SessionID) || v.homeSendPending() || m.ArchivedContext() != "" || v.preparingAttachments(m.DraftKey())
 					if queuing {
 						label = "加入队列"
 						disabled = disabled || m.WorkerMinor < 2

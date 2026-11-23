@@ -356,8 +356,9 @@ func patch(before, after string) string {
 }
 
 type nativeRequest struct {
-	WireID  json.RawMessage
-	Request domain.PendingRequest
+	WireID    json.RawMessage
+	Request   domain.PendingRequest
+	AllowOnce string
 }
 
 func (r *runtime) receivePermission(msg packet) error {
@@ -382,16 +383,26 @@ func (r *runtime) receivePermission(msg packet) error {
 			request.Text = clip(request.Text+location.Path+"\n", 4096)
 		}
 	}
+	var allowOnce string
 	for _, option := range payload.Options {
 		if option.OptionID == "" || option.Name == "" {
 			continue
 		}
+		if allowOnce == "" && option.Kind == "allow_once" {
+			allowOnce = option.OptionID
+		}
 		request.Choices = append(request.Choices, domain.RequestChoice{ID: option.OptionID, Label: clip(option.Name, 256), Restriction: strings.HasPrefix(option.Kind, "reject")})
+	}
+	if r.session.Config.Permission == yoloPermission {
+		if turn != nil {
+			r.confirm(turn, nil)
+		}
+		return r.reply(context.Background(), msg.ID, permissionOutcome(allowOnce), nil)
 	}
 	if len(request.Choices) == 0 {
 		return r.reply(context.Background(), msg.ID, permissionOutcome(""), nil)
 	}
-	return r.openRequest(msg.ID, request, turn)
+	return r.openRequest(nativeRequest{WireID: msg.ID, Request: request, AllowOnce: allowOnce}, turn)
 }
 
 func (r *runtime) requestSource(sessionID, toolID string) (domain.PendingRequest, *logicalTurn, bool) {
@@ -414,12 +425,12 @@ func (r *runtime) requestSource(sessionID, toolID string) (domain.PendingRequest
 	return request, t, true
 }
 
-func (r *runtime) openRequest(id json.RawMessage, request domain.PendingRequest, turn *logicalTurn) error {
+func (r *runtime) openRequest(p nativeRequest, turn *logicalTurn) error {
 	if turn != nil {
 		r.confirm(turn, nil)
 	}
-	r.requests[request.ID] = nativeRequest{WireID: id, Request: request}
-	return r.emit(domain.Event{Type: "request.open", Request: &request})
+	r.requests[p.Request.ID] = p
+	return r.emit(domain.Event{Type: "request.open", Request: &p.Request})
 }
 
 type permissionResponse struct {

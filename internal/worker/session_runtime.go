@@ -59,9 +59,13 @@ func (s *Server) openSessionRuntime(ctx context.Context, id string, startup *ses
 		return nil, errors.New("session harness unavailable")
 	}
 	if r := s.currentRuntime(id); r != nil && r.ExecutionReady() {
-		replace := false
+		permissionRestart := false
+		if live, ok := r.(harness.LivePermissionRuntime); ok {
+			permissionRestart = live.PermissionRequiresRestart(d.Session.Config)
+		}
+		replace := permissionRestart
 		if pending, ok := r.(harness.PendingRuntime); ok {
-			replace = pending.PendingOperations() != 0
+			replace = replace || pending.PendingOperations() != 0
 		}
 		source, tracked := adapter.(harness.CatalogVersion)
 		running, captured := r.(harness.CatalogVersion)
@@ -117,17 +121,26 @@ func (s *Server) openSessionRuntime(ctx context.Context, id string, startup *ses
 			return nil, e
 		}
 		if busy || d.Session.Goal.Active() {
+			if permissionRestart {
+				return nil, errPermissionRuntimeBusy
+			}
 			return r, nil
 		}
 		// A new accepted turn may adopt the new installation, but live turns and
 		// pending forms retain the process that owns their protocol lifecycle.
 		for _, turn := range d.Turns {
 			if turn.Status.Active() {
+				if permissionRestart {
+					return nil, errPermissionRuntimeBusy
+				}
 				return r, nil
 			}
 		}
 		for _, request := range d.Requests {
 			if request.State.AwaitingResolution() {
+				if permissionRestart {
+					return nil, errPermissionRuntimeBusy
+				}
 				return r, nil
 			}
 		}
@@ -269,8 +282,12 @@ func (s *Server) openSessionRuntime(ctx context.Context, id string, startup *ses
 	s.runtimeMu.Unlock()
 	s.dispatchMu.Unlock()
 	started := make(chan runtimeStartResult, 1)
+	var initial *domain.RunConfig
+	if startup != nil && latest.Session.ThreadID == "" && latest.Session.Origin == nil {
+		initial = &latest.Session.Config
+	}
 	go func() {
-		r, err := adapter.Start(startCtx, harness.StartOptions{Scope: scope, ImportResource: func(image harness.OutputResource) (domain.Attachment, error) {
+		r, err := adapter.Start(startCtx, harness.StartOptions{Scope: scope, InitialConfig: initial, ImportResource: func(image harness.OutputResource) (domain.Attachment, error) {
 			return s.importOutputResource(d.Session.HarnessID, id, image)
 		}, OnMessage: func(ctx context.Context, input harness.IncomingMessage) error {
 			if !accepting.Load() {

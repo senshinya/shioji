@@ -6,6 +6,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/mobileclient"
 )
@@ -75,7 +76,15 @@ func (a *mobileApp) runControls(c *ui.Context, parent *mygo.Window, editor *mobi
 		detail = composerEffortName(effort)
 	}
 
-	composerPermissionControl(c, ready.PermissionChoices, config, right, setConfig)
+	composerPermissionControl(c, ready.PermissionChoices, config, right, m.PermissionChangePending(target.session), func(permission string) {
+		if current() {
+			m.SelectPermission(target.key, ready, config, permission, func(job app.Job) bool {
+				return a.controller != nil && a.controller.Do(job)
+			})
+			a.save()
+			a.refresh()
+		}
+	})
 	ui.Spacer(c).PassThrough()
 	title := "运行配置"
 	if right {
@@ -209,7 +218,7 @@ func composerEffortName(effort string) string {
 	}
 }
 
-func composerPermissionControl(c *ui.Context, choices []domain.OptionChoice, config domain.RunConfig, right bool, setConfig func(domain.RunConfig)) {
+func composerPermissionControl(c *ui.Context, choices []domain.OptionChoice, config domain.RunConfig, right, changing bool, choose func(string)) {
 	name := "权限"
 	for _, choice := range choices {
 		if config.Permission == choice.ID {
@@ -225,10 +234,8 @@ func composerPermissionControl(c *ui.Context, choices []domain.OptionChoice, con
 	control.Value(name).KeepFocus().Menu(func(menu *ui.Menu) {
 		for _, choice := range choices {
 			if menu.Item(choice.Name).Subtitle(choice.Description).Checked(config.Permission == choice.ID).Chosen() {
-				next := config
-				next.Permission = choice.ID
-				setConfig(next)
+				choose(choice.ID)
 			}
 		}
-	}).Disabled(len(choices) == 0)
+	}).Disabled(len(choices) == 0 || changing)
 }

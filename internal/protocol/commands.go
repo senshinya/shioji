@@ -33,6 +33,12 @@ type SessionChangeInput struct {
 	Title         string `json:"title,omitempty"`
 	Archived      bool   `json:"archived"`
 }
+type SessionPermissionInput struct {
+	SessionID  string `json:"sessionId"`
+	ThreadID   string `json:"threadId,omitempty"`
+	Previous   string `json:"previous"`
+	Permission string `json:"permission"`
+}
 type WorkspaceArchiveInput struct {
 	WorkspaceID string `json:"workspaceId"`
 	Revision    int64  `json:"revision"`

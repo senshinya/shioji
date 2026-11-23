@@ -55,6 +55,49 @@ func TestCatalogRefreshCreatesSessionOnlyOnRequest(t *testing.T) {
 	}
 }
 
+func TestYOLOIsAvailableInDiscoveredAndCachedCatalogs(t *testing.T) {
+	a, _ := fixtureAdapter(t)
+	dir := t.TempDir()
+	for _, refresh := range []bool{true, false} {
+		r, err := a.Start(t.Context(), harness.StartOptions{CatalogOnly: true, CatalogDirectory: dir, RefreshCatalog: refresh})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = r.Close(context.Background()) })
+		if err := r.Validate(domain.RunConfig{Model: "gemini-fixture", Permission: "yolo"}); err != nil {
+			t.Fatalf("YOLO unavailable with refresh=%v: %v", refresh, err)
+		}
+	}
+}
+
+func TestYOLOLaunchFlagOnlyForNewConversation(t *testing.T) {
+	a, log := fixtureAdapter(t)
+	choice := domain.RunConfig{Model: "gemini-fixture", Permission: "yolo"}
+	for _, tc := range []struct {
+		name    string
+		options harness.StartOptions
+		want    bool
+	}{
+		{name: "existing conversation"},
+		{name: "new YOLO conversation", options: harness.StartOptions{InitialConfig: &choice}, want: true},
+		{name: "catalog", options: harness.StartOptions{CatalogOnly: true, InitialConfig: &choice}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.Remove(log); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			r, err := a.Start(t.Context(), tc.options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close(context.Background())
+			if !hasMethod(log, "initialize") || hasMethod(log, "--dangerously-skip-permissions") != tc.want {
+				t.Fatalf("native launch flag present=%v, want %v", hasMethod(log, "--dangerously-skip-permissions"), tc.want)
+			}
+		})
+	}
+}
+
 func TestPromptAndSteerShareOneTurnUntilBothSettle(t *testing.T) {
 	a, _ := fixtureAdapter(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -127,6 +170,9 @@ func TestACPFixtureProcess(t *testing.T) {
 	log, err := os.OpenFile(os.Getenv("SHIOJI_ACP_FIXTURE_LOG"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		os.Exit(2)
+	}
+	if slices.Contains(os.Args, "--dangerously-skip-permissions") {
+		_, _ = log.WriteString("--dangerously-skip-permissions\n")
 	}
 	in := bufio.NewScanner(os.Stdin)
 	out := json.NewEncoder(os.Stdout)

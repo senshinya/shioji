@@ -58,6 +58,18 @@ type OptionChoice struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	Live        bool   `json:"live,omitempty"`
+}
+
+func (r Readiness) LivePermissionChange(from, to string) bool {
+	if from != to {
+		for _, choice := range r.PermissionChoices {
+			if choice.Live && (choice.ID == from || choice.ID == to) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ForHarness keeps each catalog separate. The top-level projection remains the

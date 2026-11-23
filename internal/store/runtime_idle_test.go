@@ -14,7 +14,7 @@ func TestRuntimeIdleUsesSessionIndexesForHistoricalOperations(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer s.Close()
-	rows, e := s.db.Query("EXPLAIN QUERY PLAN "+runtimeIdleQuery, "session", false)
+	rows, e := s.db.Query("EXPLAIN QUERY PLAN "+runtimeIdleQuery, "session", false, false)
 	if e != nil {
 		t.Fatal(e)
 	}

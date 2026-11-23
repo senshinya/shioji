@@ -144,6 +144,9 @@ type StartOptions struct {
 	// RefreshCatalog allows probes that require explicit user action.
 	CatalogDirectory string
 	RefreshCatalog   bool
+	// InitialConfig is the accepted configuration for a new native conversation.
+	// Catalog probes and launches that resume an existing conversation omit it.
+	InitialConfig *domain.RunConfig
 	// ImportResource snapshots device-local or inline image/text bytes in worker storage.
 	// Adapters translate source encodings before calling this; journals carry only
 	// the returned immutable reference, never bytes or a runtime storage path.
@@ -153,6 +156,13 @@ type StartOptions struct {
 	OnEvent        func(domain.Event) error
 	OnStart        func(int) error
 	OnLost         func() error
+}
+
+// LivePermissionRuntime applies an explicit session permission selection to
+// the bound runtime, including any requests it already owns.
+type LivePermissionRuntime interface {
+	ChangePermission(ctx context.Context, session domain.Session, permission string, accept func() error) error
+	PermissionRequiresRestart(config domain.RunConfig) bool
 }
 
 type OutputResource struct {

@@ -12,6 +12,50 @@ import (
 	"shioji/internal/harness"
 )
 
+const yoloApproval = `{"sessionId":"native","toolCall":{"toolCallId":"native-tool","title":"Run command"},"options":[{"optionId":"deny","name":"Deny","kind":"reject_once"},{"optionId":"always","name":"Always allow","kind":"allow_always"},{"optionId":"once","name":"Allow once","kind":"allow_once"}]}`
+
+func TestYOLOAnswersToolApprovalWithoutOpeningARequest(t *testing.T) {
+	r, writes, events := callbackRuntime()
+	r.session.Config.Permission = "yolo"
+	r.active = &logicalTurn{turn: domain.Turn{ID: "turn"}, prompts: 1, primary: make(chan error, 1)}
+	sendCallback(t, r, "session/request_permission", yoloApproval, "approval")
+	if !strings.Contains(writes.String(), `"optionId":"once"`) || len(*events) != 0 || !r.active.confirmed {
+		t.Fatalf("YOLO should allow once and acknowledge the turn without opening an approval: wire=%s events=%+v", writes, *events)
+	}
+	sendCallback(t, r, "session/request_permission", strings.Replace(yoloApproval, `"native"`, `"foreign"`, 1), "foreign")
+	if !strings.Contains(writes.String(), `"id":"foreign","result":{"outcome":{"outcome":"cancelled"}}`) {
+		t.Fatalf("an unrelated request did not get cancelled: %s", writes)
+	}
+}
+
+func TestSwitchToYOLOResolvesOpenApprovalSilently(t *testing.T) {
+	r, writes, events := callbackRuntime()
+	r.active = &logicalTurn{turn: domain.Turn{ID: "turn"}, prompts: 1, primary: make(chan error, 1)}
+	sendCallback(t, r, "session/request_permission", yoloApproval, "open")
+	if len(*events) != 1 || (*events)[0].Type != "request.open" {
+		t.Fatalf("expected a pending manual approval: %+v", *events)
+	}
+	accepted := false
+	if err := r.ChangePermission(t.Context(), r.session, "yolo", func() error { accepted = true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if !accepted || len(*events) != 2 || (*events)[1].Type != "request.resolve" || !strings.Contains(writes.String(), `"optionId":"once"`) {
+		t.Fatalf("started approval remained pending after switching: wire=%s events=%+v", writes, *events)
+	}
+	sendCallback(t, r, "session/request_permission", yoloApproval, "next")
+	if strings.Count(writes.String(), `"optionId":"once"`) != 2 || len(*events) != 2 {
+		t.Fatalf("next approval was shown to the user: wire=%s events=%+v", writes, *events)
+	}
+	r.cfg.ConfigOptions = []configOption{{ID: "mode", Type: "select", CurrentValue: "default", Options: []choice{{Value: "default"}}}}
+	if err := r.ChangePermission(t.Context(), r.session, "default", func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	sendCallback(t, r, "session/request_permission", yoloApproval, "manual")
+	if len(*events) != 3 || (*events)[2].Type != "request.open" {
+		t.Fatalf("returning to manual permission did not restore approval prompts: %+v", *events)
+	}
+}
+
 func TestIdleSessionTitleRequiresMatchingSource(t *testing.T) {
 	var events []domain.Event
 	r := &runtime{

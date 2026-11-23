@@ -690,6 +690,12 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 			return nil, err
 		}
 		return s.store.ReadCompletion(in.SessionID, in.CompletionID)
+	case "session.permission":
+		in, err := decode[protocol.SessionPermissionInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.changeSessionPermission(in)
 	case "session.rename", "session.reset-title", "session.archive":
 		in, err := decode[protocol.SessionChangeInput](body)
 		if err != nil {

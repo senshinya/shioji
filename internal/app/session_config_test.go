@@ -1,12 +1,47 @@
 package app
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 )
+
+func TestLivePermissionSelectionWaitsForTheOwningWorkerBeforeSending(t *testing.T) {
+	m := harnessModel()
+	m.SessionID, m.WorkerMinor = "s", protocol.Minor
+	m.Readiness.Harnesses[0].Permissions = []string{"limited", "yolo"}
+	m.Readiness.Harnesses[0].PermissionChoices = []domain.OptionChoice{{ID: "limited"}, {ID: "yolo", Live: true}}
+	s := domain.Session{ID: "s", WorkspaceID: "w", HarnessID: "alpha", ThreadID: "native", Status: "completed", Revision: 1,
+		Config: domain.RunConfig{Model: "a", Permission: "limited"}}
+	m.Snapshot.DeviceID = "paired-mac"
+	m.Snapshot.Workspaces = []domain.Workspace{{ID: "w", DeviceID: "paired-mac"}}
+	s.Context.DeviceID = "paired-mac"
+	m.Snapshot.Sessions = []domain.Session{s}
+	m.Drafts[m.DraftKey()] = "stay here"
+	var job Job
+	m.SelectPermission(m.DraftKey(), m.SessionReadiness(s), m.Config(), "yolo", func(j Job) bool { job = j; return true })
+	if job.Method != "session.permission" || job.Input != (protocol.SessionPermissionInput{SessionID: "s", ThreadID: "native", Previous: "limited", Permission: "yolo"}) {
+		t.Fatalf("permission did not target the owning session: %+v", job)
+	}
+	if _, err := m.BeginSubmission(); err == nil || m.Config().Permission != "limited" {
+		t.Fatal("client used the new selection before worker confirmation")
+	}
+	s.Revision++
+	s.Config.Permission = "yolo"
+	body, _ := json.Marshal(s)
+	job.Apply(m, body, nil)
+	if err := m.ApplyEvent(domain.Event{Sequence: 1, SessionID: s.ID, Session: &s}); err != nil {
+		t.Fatal(err)
+	}
+	in, err := m.BeginSubmission()
+	if err != nil || in.Config.Permission != "yolo" || in.Text != "stay here" || len(m.Notifications) != 0 || len(m.Feedbacks) != 0 {
+		t.Fatalf("confirmed selection was not silent or did not preserve the draft: %+v error=%v", in, err)
+	}
+}
 
 func TestSessionConfigIgnoresLegacyClientCacheAfterRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "client.json")

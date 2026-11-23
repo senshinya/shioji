@@ -25,6 +25,7 @@ func (r *runtime) discover(ctx context.Context, executable string, env []string)
 		if dir != "" {
 			if saved := readCatalog(path); saved.Version == r.version && saved.Profile == r.profile && saved.Models.HarnessID == r.ready.HarnessID {
 				r.ready = saved.Models
+				addYOLOPermission(&r.ready)
 				r.ready.Capabilities = r.capabilities()
 				r.ready.Capabilities.Compact = saved.Models.Capabilities.Compact
 				r.ready.Capabilities.CompactNeedsCheck = !r.ready.Capabilities.Compact && r.ready.Capabilities.CompactNeedsCheck

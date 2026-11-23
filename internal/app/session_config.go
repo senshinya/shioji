@@ -59,9 +59,13 @@ func updateRunChoice[T comparable](choice **T, current, next, base T) {
 }
 
 func (m *Model) reconcileSessionConfig(id string, config domain.RunConfig) {
-	d, ok := m.sessionConfigDrafts[id]
-	if !ok {
-		return
+	d := m.sessionConfigDrafts[id]
+	if change := m.permissionChanges[id]; change != nil && change.permission == config.Permission {
+		delete(m.permissionChanges, id)
+		d.Permission = nil
+		if change.clearPlan {
+			d.Plan = nil
+		}
 	}
 	clearRunChoice(&d.Model, config.Model)
 	clearRunChoice(&d.Effort, config.Effort)

@@ -113,6 +113,7 @@ type runtime struct {
 	process      *rpc
 	bridge       *goalBridge
 	callback     *callbackBridge
+	nativeYOLO   bool
 	direct       sync.Mutex // Serialize native configuration and binding.
 
 	mu             sync.Mutex
@@ -153,6 +154,10 @@ func (a Adapter) Start(ctx context.Context, options harness.StartOptions) (harne
 		ready: domain.Readiness{HarnessID: a.Descriptor().ID, State: domain.RuntimeUnavailable, Error: "请在设备 Agent 设置重新检测以获取模型"},
 	}
 	argv := []string{path, "acp", "--process-per-session", "--disable-telemetry"}
+	if cfg := options.InitialConfig; !options.CatalogOnly && cfg != nil && cfg.Permission == yoloPermission && !cfg.Plan {
+		argv = append(argv, "--dangerously-skip-permissions")
+		r.nativeYOLO = true
+	}
 	if profile := systemexec.EnvironmentValue(env, "GEMINI_HOME"); filepath.IsAbs(profile) {
 		argv = append(argv, "--gemini-dir", profile)
 	}
@@ -332,6 +337,9 @@ func (r *runtime) setBinding(s domain.Session, response sessionResponse) {
 }
 
 func (r *runtime) configure(ctx context.Context, cfg domain.RunConfig) error {
+	if r.PermissionRequiresRestart(cfg) {
+		return errPermissionRestart
+	}
 	if err := r.Validate(cfg); err != nil {
 		return err
 	}
@@ -344,13 +352,19 @@ func (r *runtime) configure(ctx context.Context, cfg domain.RunConfig) error {
 		}
 	}
 	mode := cfg.Permission
-	if mode == "" {
+	if mode == "" || mode == yoloPermission {
 		mode = "default"
 	}
 	if cfg.Plan {
 		mode = "plan"
 	}
-	return r.setOption(ctx, "mode", mode)
+	if err := r.setOption(ctx, "mode", mode); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.session.Config.Permission = cfg.Permission
+	r.mu.Unlock()
+	return nil
 }
 
 func (r *runtime) setOption(ctx context.Context, category, value string) error {
@@ -456,6 +470,7 @@ func makeReadiness(id string, result sessionResponse, capabilities domain.Harnes
 	}
 	if len(ready.Models) > 0 {
 		ready.State, ready.Error = domain.RuntimeReady, ""
+		addYOLOPermission(&ready)
 	}
 	return ready
 }
