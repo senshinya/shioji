@@ -91,110 +91,126 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 	n.Column(c).FillWidth().Gap(0).Children(func() {
 		if e.tab == "常规" || e.tab == "" {
 			initial := slices.Contains(v.agentSignInMethods(key, info), domain.SignInAPI)
-			if initial {
-				row(c, "接入方式", func() { v.agentConnectionMode(c, t, key, e, info, disabled) })
-			} else {
-				row(c, "账号", func() {
-					label, status := "登录状态未报告", ""
-					if account := info.Account; account != nil {
-						label = account.Label
-						if account.State == "authenticated" {
-							status = account.Subscription
-						}
-					}
-					if install != nil && (install.Issue == domain.RuntimeSignInRequired || install.Issue == domain.RuntimeAuthenticationExpired) {
-						if info.Account == nil || info.Account.Mode != "api" {
-							label = runtimeSetupLabel(info, connected)
-						}
-					}
-					trigger := control(c.Key("account"), 5).FillWidth().Height(28).PaddingX(8).Radius(5).Label("管理账号").Disabled(install == nil || len(install.SignInCommand) == 0 && len(install.SignInMethods) == 0 || info.Account != nil && info.Account.State == "notRequired" && info.Account.Mode != "api").Children(func() {
-						n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-							n.Text(c, label).FontSize(12).FixedLineHeight(20).SingleLine().Shrink(1).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-							if status != "" {
-								size := float32(11)
-								if e.setup {
-									size = 12
-								}
-								n.Text(c, status).SingleLine().MaxWidth(120).FontSize(size).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)}).TooltipWhenTruncated(status)
-							}
-							n.Spacer(c).Grow(1)
-							angle := float32(-90)
-							if e.draft.login {
-								angle = 0
-							}
-							inlineSymbol(c, chevron, label, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted, angle)
-						})
-					})
-					if trigger.Clicked() {
-						e.draft.login = !e.draft.login
-					}
-				})
+			topRow := n.Column(c).FillWidth()
+			if !e.setup {
+				topRow.PaddingX(configurationHoverInset)
 			}
+			topRow.Children(func() {
+				if initial {
+					row(c, "接入方式", func() { v.agentConnectionMode(c, t, key, e, info, disabled) })
+				} else {
+					row(c, "账号", func() {
+						label, status := "登录状态未报告", ""
+						if account := info.Account; account != nil {
+							label = account.Label
+							if account.State == "authenticated" {
+								status = account.Subscription
+							}
+						}
+						if install != nil && (install.Issue == domain.RuntimeSignInRequired || install.Issue == domain.RuntimeAuthenticationExpired) {
+							if info.Account == nil || info.Account.Mode != "api" {
+								label = runtimeSetupLabel(info, connected)
+							}
+						}
+						trigger := control(c.Key("account"), 5).FillWidth().Height(28).PaddingX(8).Radius(5).Label("管理账号").Disabled(install == nil || len(install.SignInCommand) == 0 && len(install.SignInMethods) == 0 || info.Account != nil && info.Account.State == "notRequired" && info.Account.Mode != "api").Children(func() {
+							n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
+								n.Text(c, label).FontSize(12).FixedLineHeight(20).SingleLine().Shrink(1).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+								if status != "" {
+									size := float32(11)
+									if e.setup {
+										size = 12
+									}
+									n.Text(c, status).SingleLine().MaxWidth(120).FontSize(size).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)}).TooltipWhenTruncated(status)
+								}
+								n.Spacer(c).Grow(1)
+								angle := float32(-90)
+								if e.draft.login {
+									angle = 0
+								}
+								inlineSymbol(c, chevron, label, n.Font{Family: t.Font, Size: 12, Weight: 400}, 12, t.TextMuted, angle)
+							})
+						})
+						if trigger.Clicked() {
+							e.draft.login = !e.draft.login
+						}
+					})
+				}
+			})
 
 			mode, index := "account", 0
 			if agentSignInMethod(key, e, v.agentSignInMethods(key, info)) == domain.SignInAPI {
 				mode, index = "api", 1
 			}
 			configurationTabPanel(c.Key("authentication-tabs"), mode, index, configurationPanelFit, func() {
-				frame := n.Column(c.Key("login")).FillWidth().Clip()
-				animatedContentHeight(c, frame, initial || e.draft.login, configurationTabDuration, func() float32 {
-					if info.Account != nil && info.Account.Mode == "api" || agentSignInMethod(key, e, v.agentSignInMethods(key, info)) == domain.SignInAPI {
-						v.agentAuthentication(c, t, key, e, info, disabled)
-					} else {
-						authLabel := ""
-						if initial {
-							authLabel = "授权方式"
-						}
-						row(c, authLabel, func() {
-							top, bottom := float32(4), float32(8)
-							if e.setup {
-								top, bottom = 0, 0
+				body := n.Column(c).FillWidth()
+				if !e.setup {
+					body.PaddingX(configurationHoverInset)
+				}
+				body.Children(func() {
+					frame := n.Column(c.Key("login")).FillWidth().Clip()
+					animatedContentHeight(c, frame, initial || e.draft.login, configurationTabDuration, func() float32 {
+						if info.Account != nil && info.Account.Mode == "api" || agentSignInMethod(key, e, v.agentSignInMethods(key, info)) == domain.SignInAPI {
+							v.agentAuthentication(c, t, key, e, info, disabled)
+						} else {
+							authLabel := ""
+							if initial {
+								authLabel = "授权方式"
 							}
-							n.Column(c).FillWidth().Padding(top, 0, bottom, 0).Children(func() {
-								v.agentAuthentication(c, t, key, e, info, disabled)
+							row(c, authLabel, func() {
+								top, bottom := float32(4), float32(8)
+								if e.setup {
+									top, bottom = 0, 0
+								}
+								n.Column(c).FillWidth().Padding(top, 0, bottom, 0).Children(func() {
+									v.agentAuthentication(c, t, key, e, info, disabled)
+								})
 							})
-						})
-					}
-					return 0
-				})
-
-				row(c, "可执行文件", func() {
-					placeholder := "自动检测"
-					if install != nil && install.Executable != "" {
-						placeholder = install.Executable
-					}
-					field := configurationTextField(c.Key("executable"), &e.path).Label(info.Name + " 可执行文件").Placeholder(placeholder).Tooltip("留空时在所属设备自动检测").Disabled(disabled)
-					if e.setup {
-						field.Padding(4, 8).Background(t.Background)
-					}
-				})
-				if install != nil {
-					guidance := n.Column(c.Key("login-guidance")).FillWidth().Clip()
-					inlineSignIn := (install.Issue == domain.RuntimeSignInRequired || install.Issue == domain.RuntimeAuthenticationExpired) && len(install.SignInMethods) > 0 && minor >= 19
-					visible := install.Issue != "" && !e.draft.login && !inlineSignIn
-					last := n.Local(guidance, "info", func() domain.HarnessInfo { return info })
-					if visible {
-						*last = info
-					}
-					animatedContentHeight(c, guidance, visible, 240*time.Millisecond, func() float32 {
-						previous := *last
-						n.Column(c).FillWidth().PaddingY(8).Children(func() {
-							v.agentGuidance(c, key, previous)
-						})
+						}
 						return 0
 					})
-				}
-				signIn := v.agentSignIn(key, info.ID)
-				if account := info.Account; account != nil && account.State == "authenticated" && len(account.QuotaWindows) > 0 &&
-					(signIn == nil || !signIn.status.Phase.Active()) {
-					agentQuotaDetails(c.Key("quota"), t, account.QuotaWindows, &e.draft.quota)
-				}
+
+					row(c, "可执行文件", func() {
+						placeholder := "自动检测"
+						if install != nil && install.Executable != "" {
+							placeholder = install.Executable
+						}
+						field := configurationTextField(c.Key("executable"), &e.path).Label(info.Name + " 可执行文件").Placeholder(placeholder).Tooltip("留空时在所属设备自动检测").Disabled(disabled)
+						if e.setup {
+							field.Padding(4, 8).Background(t.Background)
+						}
+					})
+					if install != nil {
+						guidance := n.Column(c.Key("login-guidance")).FillWidth().Clip()
+						inlineSignIn := (install.Issue == domain.RuntimeSignInRequired || install.Issue == domain.RuntimeAuthenticationExpired) && len(install.SignInMethods) > 0 && minor >= 19
+						visible := install.Issue != "" && !e.draft.login && !inlineSignIn
+						last := n.Local(guidance, "info", func() domain.HarnessInfo { return info })
+						if visible {
+							*last = info
+						}
+						animatedContentHeight(c, guidance, visible, 240*time.Millisecond, func() float32 {
+							previous := *last
+							n.Column(c).FillWidth().PaddingY(8).Children(func() {
+								v.agentGuidance(c, key, previous)
+							})
+							return 0
+						})
+					}
+					signIn := v.agentSignIn(key, info.ID)
+					if account := info.Account; account != nil && account.State == "authenticated" && len(account.QuotaWindows) > 0 &&
+						(signIn == nil || !signIn.status.Phase.Active()) {
+						agentQuotaDetails(c.Key("quota"), t, account.QuotaWindows, &e.draft.quota)
+					}
+				})
 			}).Label("Agent 接入内容")
 		}
 		modelPane := n.Column(c.Key("model-configuration")).FillWidth().Clip()
 		animatedContentHeight(c, modelPane, e.tab == "模型", 180*time.Millisecond, func() float32 {
 			if e.tab == "模型" && len(info.Models) > 0 {
-				n.Column(c).FillWidth().Padding(sectionInset, 0, 0).Children(func() {
+				modelBox := n.Column(c).FillWidth().Padding(sectionInset, 0, 0)
+				if !e.setup {
+					modelBox.PaddingX(configurationHoverInset)
+				}
+				modelBox.Children(func() {
 					if !e.setup {
 						v.deviceModels(c.Key("models"), t, key, info)
 					}
@@ -206,9 +222,9 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 						v.deviceModels(c.Key("models"), t, key, info, deviceID)
 					}
 					if install != nil && install.OptionsSupported.TitleModel && minor >= 18 {
-						titleField := n.Column(c.Key("title-model-field")).FillWidth()
-						if e.setup {
-							titleField.Margin(12, 0, 0)
+						titleField := n.Column(c.Key("title-model-field")).FillWidth().Margin(12, 0, 0)
+						if !e.setup {
+							titleField.Padding(8, 0, 0).BorderWidth(.5, 0, 0, 0).BorderColor(t.Border)
 						}
 						titleField.Children(func() {
 							row(c, "标题生成", func() {
@@ -261,15 +277,15 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 			supported = install.OptionsSupported
 		}
 		if e.tab == "高级" && minor >= 18 && (supported.Arguments || supported.Directory || supported.Environment || supported.Instructions) {
-			n.Column(c).FillWidth().Padding(sectionInset, 0, 0).Children(func() {
+			advBox := n.Column(c).FillWidth().Padding(sectionInset, 0, 0)
+			if !e.setup {
+				advBox.PaddingX(configurationHoverInset)
+			}
+			advBox.Children(func() {
 
 				body := n.Column(c.Key("advanced-body")).FillWidth().Clip()
 				animatedContentHeight(c, body, true, 240*time.Millisecond, func() float32 {
-					padding := float32(8)
-					if e.setup {
-						padding = 0
-					}
-					n.Column(c).FillWidth().Padding(padding, 0, 0).Children(func() {
+					n.Column(c).FillWidth().Children(func() {
 						if supported.Arguments {
 							row(c, "启动参数", func() {
 								label := "启动参数"
@@ -291,7 +307,11 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 							})
 						}
 						if supported.Environment {
-							row(c, "环境变量", func() { v.runtimeEnvironmentFields(c, t, e, disabled) })
+							style := configurationDeviceForm
+							if e.setup {
+								style = configurationSetupForm
+							}
+							configurationFormRow(c, "环境变量", style, func() { v.runtimeEnvironmentFields(c, t, e, disabled) }, true)
 						}
 						if supported.Instructions {
 							style := configurationDeviceForm
@@ -334,7 +354,7 @@ func (v *View) runtimeEnvironmentFields(c *n.Context, t *n.Theme, e *deviceAgent
 	}
 	n.Column(c).FillWidth().Children(func() {
 		n.Row(c).FillWidth().Justify(n.End).Children(func() {
-			if configurationAction(c, "添加变量").Disabled(disabled).Clicked() {
+			if configurationAction(c, "添加变量").MarginEnd(-configurationHoverInset).Disabled(disabled).Clicked() {
 				e.draft.nextID++
 				e.draft.environment = append(e.draft.environment, runtimeEnvironmentDraft{id: e.draft.nextID, added: true})
 			}
@@ -365,7 +385,7 @@ func (v *View) runtimeEnvironmentFields(c *n.Context, t *n.Theme, e *deviceAgent
 					if iconButton(c, modelEye, "显示环境变量值").Size(configurationControlHeight, configurationControlHeight).Disabled(disabled).Clicked() {
 						entry.reveal = !entry.reveal
 					}
-					if iconButton(c, closeIcon, "删除环境变量").Size(configurationControlHeight, configurationControlHeight).Disabled(disabled).Clicked() {
+					if iconButton(c, closeIcon, "删除环境变量").Size(configurationControlHeight, configurationControlHeight).MarginEnd(-6).Disabled(disabled).Clicked() {
 						entry.removed = c.Now()
 					}
 				})
@@ -399,24 +419,34 @@ func (v *View) agentConfiguration(c *n.Context, t *n.Theme, key string, connecte
 		if e.tab == "" || !slices.ContainsFunc(tabs, func(i configurationTabItem) bool { return i.ID == e.tab }) {
 			e.tab = "常规"
 		}
-		e.tab = configurationTabs(c.Key("agent-tabs"), e.tab, tabs, configurationUnderline, e.busy)
+		n.Column(c).FillWidth().PaddingX(configurationHoverInset).Children(func() {
+			e.tab = configurationTabs(c.Key("agent-tabs"), e.tab, tabs, configurationUnderline, e.busy)
+		})
 		n.Column(c.Key("agent-page")).FillWidth().FillHeight().Grow(1).Padding(12, 0, 0).Children(func() {
 			configurationTabPanel(c.Key("page-motion"), e.tab, configurationTabIndex(tabs, e.tab), configurationPanelFill, func() {
 				if e.tab == "Hooks" {
-					v.agentHooks(c, t, key, e, info)
+					n.Column(c).FillWidth().FillHeight().Grow(1).PaddingX(configurationHoverInset).Children(func() {
+						v.agentHooks(c, t, key, e, info)
+					})
 					return
 				}
 				if e.tab == "Skills" {
-					v.agentSkills(c, t, key, e, info)
+					n.Column(c).FillWidth().FillHeight().Grow(1).PaddingX(configurationHoverInset).Children(func() {
+						v.agentSkills(c, t, key, e, info)
+					})
 					return
 				}
 				if e.tab == "MCP" {
 					v.agentToolServices(c, t, key, e, info, e.readOnly || e.busy || e.loading || !connected)
 					return
 				}
-				n.Scroll(c.Key("configuration-scroll:" + e.tab)).FillWidth().FillHeight().Grow(1).Children(func() { v.agentConfigurationContent(c, t, key, connected, e, info, onboarding, save) })
+				n.Scroll(c.Key("configuration-scroll:" + e.tab)).FillWidth().FillHeight().Grow(1).Children(func() {
+					v.agentConfigurationContent(c, t, key, connected, e, info, onboarding, save)
+				})
 			}, false)
-			v.agentConfigurationActions(c, t, key, connected, e, info, onboarding, save)
+			n.Column(c).FillWidth().PaddingX(configurationHoverInset).Children(func() {
+				v.agentConfigurationActions(c, t, key, connected, e, info, onboarding, save)
+			})
 		})
 	})
 }

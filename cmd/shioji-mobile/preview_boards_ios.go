@@ -704,16 +704,18 @@ func (a *mobileApp) openPreviewBoard(board string) {
 		if board == "agent-config-linked" {
 			account = &domain.RuntimeAccount{Mode: "account", Label: "ChatGPT", Identity: "developer@example.com", Subscription: "Pro", State: "authenticated"}
 		}
-		a.openAgentSettings(a.home, domain.HarnessInfo{ID: "codex", Name: "Codex", State: domain.RuntimeReady,
-			Capabilities: domain.HarnessCapabilities{SkillManagement: true, HookManagement: true},
+		a.openAgentSettings(a.home, domain.HarnessInfo{ID: "codex", Name: "Codex", Icon: "openai", State: domain.RuntimeReady,
+			Capabilities: domain.HarnessCapabilities{SkillManagement: true, ToolServices: true, HookManagement: true},
 			Models:       a.model.Readiness.Models, Account: account,
 			Installation: &domain.RuntimeInstallation{Executable: "/Applications/Codex.app/Contents/Resources/codex", Configurable: true,
 				SignInMethods: []domain.SignInMethod{domain.SignInDeviceCode, domain.SignInBrowser}, APISetup: true}})
 	case "agent-agy-quota":
 		a.model.WorkerMinor = protocol.Minor
 		reset := time.Date(2026, 11, 30, 9, 27, 0, 0, time.UTC)
-		agent := domain.HarnessInfo{ID: "antigravity", Name: "Antigravity", State: domain.RuntimeReady,
-			Installation: &domain.RuntimeInstallation{SignInMethods: []domain.SignInMethod{domain.SignInBrowser}}}
+		agent := domain.HarnessInfo{ID: "antigravity", Name: "Antigravity", Icon: "antigravity", State: domain.RuntimeReady,
+			Capabilities: domain.HarnessCapabilities{SkillManagement: true, ToolServices: true, HookManagement: true},
+			Models:       a.model.Readiness.Models,
+			Installation: &domain.RuntimeInstallation{Executable: "/opt/homebrew/bin/agy", Configurable: true, SignInMethods: []domain.SignInMethod{domain.SignInBrowser}}}
 		profile := agent
 		profile.Account = &domain.RuntimeAccount{Mode: "account", State: "authenticated", Label: "Antigravity",
 			QuotaWindows: []domain.RuntimeQuotaWindow{

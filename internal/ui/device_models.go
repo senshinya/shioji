@@ -67,7 +67,11 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 		if len(setupDevice) > 0 && key == "" {
 			connected = v.sshCheck == sshSelecting || v.sshCheck == sshSaving
 		}
-		if configurationAction(c, "刷新").Disabled(v.Controller == nil || !connected).Clicked() {
+		refresh := configurationAction(c, "刷新").Disabled(v.Controller == nil || !connected)
+		if len(setupDevice) == 0 {
+			refresh.MarginEnd(-configurationHoverInset)
+		}
+		if refresh.Clicked() {
 			if len(setupDevice) > 0 {
 				v.recheckWelcomeAgent(key, info.ID)
 			} else {
@@ -81,7 +85,7 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 		viewport = n.Scroll(c.Key("model-list-scroll")).FillWidth().Label("模型列表滚动区")
 		height = min(float32(configurationListHeight), height)
 	} else {
-		viewport = n.Column(c.Key("model-list-scroll")).FillWidth().Shrink(0).Clip().Label("模型列表区域")
+		viewport = n.Column(c.Key("model-list-scroll")).AlignSelf(n.Stretch).MarginX(-configurationHoverInset).Shrink(0).Clip().Label("模型列表区域")
 	}
 	if !c.Preferences().ReduceMotion {
 		height = viewport.AnimateTo("catalog-height", height, motionAnimation(c, 180*time.Millisecond))
@@ -126,12 +130,16 @@ func (v *View) deviceModels(c *n.Context, t *n.Theme, key string, info domain.Ha
 					if starred {
 						icon = modelStarFilled
 					}
-					if iconButton(c, icon, "收藏 "+modelName(model)).Disabled(stale).TextColor(func() n.Color {
+					star := iconButton(c, icon, "收藏 "+modelName(model)).Disabled(stale).TextColor(func() n.Color {
 						if starred {
 							return t.Text
 						}
 						return t.TextMuted
-					}()).Clicked() {
+					}())
+					if len(setupDevice) == 0 {
+						star.MarginStart(-6)
+					}
+					if star.Clicked() {
 						pref.Favorites = toggleModelValue(pref.Favorites, model.ID)
 						v.Model.SetModelPreferences(device, info.ID, pref)
 					}

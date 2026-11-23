@@ -156,7 +156,7 @@ func (s *mobileToolServices) list(a *mobileApp, c *ui.Context, w *mygo.Window) {
 					iconButton(c, "添加 MCP 服务", plusSymbol, 17, func() {
 						s.saved = false
 						s.draft = newMobileToolEditor(s.catalog, nil)
-					}).Disabled(!s.authorizedWrite(a, w))
+					}).Margin(0, -13, 0, 0).Disabled(!s.authorizedWrite(a, w))
 				}
 			})
 			ui.Scroll(c.Key("service-scroll")).Grow(1).Basis(0).MinHeight(0).Label("MCP 服务列表").Children(func() {
@@ -184,12 +184,11 @@ func (s *mobileToolServices) serviceRow(a *mobileApp, c *ui.Context, w *mygo.Win
 			s.draft = newMobileToolEditor(s.catalog, &service)
 		}
 	}
-	ui.Row(c).AlignItems(ui.Center).MinHeight(max(contentRowHeight, mobileTapSize(c))).Gap(6).Children(func() {
+	rowDivider(ui.Row(c).AlignItems(ui.Center).MinHeight(max(contentRowHeight, mobileTapSize(c))).Gap(6), p.line).Children(func() {
 		status := mobileToolLabel(service)
 		mobileDetailRow(c, service.Name, status, "编辑 MCP："+service.Name, glyph, edit, nil).
 			Grow(1).MinWidth(0).Value(status)
 		if service.Editable && service.Configuration != nil && a.model.WorkerMinor >= 24 {
-			ui.Box(c).Absolute().Height(1).Right(0).Bottom(0).Width(mobileTapSize(c) + 6).Background(p.line).PassThrough()
 			enabled := service.Configuration.Enabled
 			mobileSwitch(c, "启用 MCP："+service.Name, &enabled, func() {
 				s.change(a, w, domain.ToolServiceChange{

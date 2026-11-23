@@ -218,7 +218,7 @@ func (v *View) toolServiceList(c *n.Context, t *n.Theme, u *toolServicesUI, disa
 	n.Scroll(c.Key("service-list")).FillWidth().FillHeight().Grow(1).MinHeight(0).Label("MCP 服务列表").Children(func() {
 		n.Column(c).FillWidth().Children(func() {
 			for _, service := range u.catalog.Services {
-				row := n.Row(c.Key(service.ID)).FillWidth().Height(configurationRowHeight).PaddingY(6).Gap(8).AlignItems(n.Baseline).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).Label("MCP 服务：" + service.Name).Transition(n.ElementTransition{Position: true, Duration: motionAnimation(c, 180*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
+				row := n.Row(c.Key(service.ID)).FillWidth().Height(configurationRowHeight).PaddingY(6).Gap(8).AlignItems(n.Center).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).Label("MCP 服务：" + service.Name).Transition(n.ElementTransition{Position: true, Duration: motionAnimation(c, 180*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 				row.Children(func() {
 					if u.removingID == service.ID {
 						n.Text(c, "删除 "+service.Name+"？").FontSize(12).FixedLineHeight(28).Grow(1)
@@ -306,10 +306,8 @@ func (v *View) toolConfigurationEditor(c *n.Context, t *n.Theme, u *toolServices
 	d := u.draft
 	authorizing := u.authorization != nil && u.authorization.Phase.Active()
 	disabled = disabled || d.readOnly || u.saving || u.saved || authorizing
-	n.Row(c).FillWidth().Height(28).Gap(6).AlignItems(n.Baseline).Children(func() {
-		if control(c, 5).Height(28).Label("返回 MCP 列表").Disabled(u.saving).Children(func() {
-			inlineIconText(c, deviceBackIcon, "MCP", n.Font{Family: t.Font, Size: 13, Weight: 400}, 14, 6, t.TextMuted)
-		}).Clicked() {
+	n.Row(c).FillWidth().Height(configurationControlHeight).Gap(8).AlignItems(n.Center).Children(func() {
+		if configurationBackAction(c.Key("back"), "MCP", "返回 MCP 列表").Disabled(u.saving).Clicked() {
 			u.draft = nil
 			if !u.saved {
 				u.message = ""

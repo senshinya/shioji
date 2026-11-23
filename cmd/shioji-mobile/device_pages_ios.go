@@ -547,8 +547,9 @@ func (a *mobileApp) openRemoteAgents(parent *mygo.Window) {
 						}
 					})
 				}
+				symbol := mobileHarnessSymbol(agent.Icon)
 				if m.WorkerMinor < protocol.RuntimeAgentSelectionMinor {
-					mobileRow(c.Key(agent.ID), agent.Name, "", status, terminalSymbol, open)
+					mobileRow(c.Key(agent.ID), agent.Name, "", status, symbol, open)
 					continue
 				}
 				row := c.Key(agent.ID)
@@ -556,9 +557,10 @@ func (a *mobileApp) openRemoteAgents(parent *mygo.Window) {
 					ui.Box(row).Absolute().Height(1).Left(30).Right(0).Bottom(0).Background(palette(c).line).PassThrough()
 					detail := ui.ButtonBase(row.Key("details")).MinHeight(max(contentRowHeight, mobileTapSize(c))).Grow(1).MinWidth(0).
 						Role(ui.RoleButton).Label(agent.Name).Value(status).OnClick(open)
-					mobileRowContent(row.Key("details"), detail, agent.Name, status, terminalSymbol, true, nil)
+					mobileRowContent(row.Key("details"), detail, agent.Name, status, symbol, false, nil)
 					mobileSwitch(row.Key("enabled"), "启用 "+agent.Name, &enabled, func() { change(agent.ID, enabled) }).
 						Disabled(req.busy || !m.Connected || catalogEpoch == "" || catalogEpoch != m.ConnectionEpoch || agent.Installation == nil)
+					ui.Icon(row, rightSymbol).Size(13, 13).TextColor(palette(c).secondary).PassThrough()
 				})
 			}
 			if len(catalog) == 0 && !req.busy {
@@ -727,6 +729,7 @@ func (a *mobileApp) openAgentSettingsAt(parent *mygo.Window, agent domain.Harnes
 			case "模型":
 				a.agentModels(c, w, draftKey[0], current, req.busy || authBusy, refetch)
 				if modern && settings.base.Support.TitleModel {
+					ui.Spacer(c).Height(12)
 					settings.titleModel(c, current.Models, settingsBlocked || current.State != domain.RuntimeReady || len(current.Models) == 0)
 				}
 			case "高级":
@@ -736,7 +739,13 @@ func (a *mobileApp) openAgentSettingsAt(parent *mygo.Window, agent domain.Harnes
 					if modern && settings.base.Revision != "" {
 						reportedPath = settings.base.Executable
 					}
-					mobileRow(c, "当前可执行文件", reportedPath, "", nil, nil)
+					p := palette(c)
+					rowDivider(ui.Column(c).Padding(10, 0).Gap(3), p.line).Children(func() {
+						label(c, "当前可执行文件", bodyTextSize, p.ink)
+						if reportedPath != "" {
+							label(c, reportedPath, captionTextSize, p.secondary).Font("monospace").Selectable()
+						}
+					})
 					if install.Configurable {
 						formField(c, "覆盖路径", "自动发现", &settings.path).Disabled(authBusy || req.busy)
 						if modern {
@@ -759,12 +768,12 @@ func (a *mobileApp) openAgentSettingsAt(parent *mygo.Window, agent domain.Harnes
 			if apiSetup && !unsaved {
 				primaryAction(c, "连接 API", func() { a.connectAgentAPI(current, &account) }).
 					Disabled(blocked || authBusy || strings.TrimSpace(account.endpoint) == "")
-			} else if configured {
+			} else if configured && (unsaved || tab == "高级") {
 				primaryAction(c, "保存并继续", save).Disabled(settingsBlocked)
 			}
 		}
 		ui.Column(c).Fill().Background(palette(c).canvas).Children(func() {
-			mobilePageContent(c.Key("agent-header"), 0).Shrink(0).Children(func() {
+			mobilePageContent(c.Key("agent-header"), 8).Shrink(0).Children(func() {
 				mobilePageContext(c, a.deviceName())
 				mobileSegments(c, tabs, tab, func(value string) { tab = value })
 			})

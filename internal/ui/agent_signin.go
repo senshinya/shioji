@@ -271,7 +271,7 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 			minor = v.sshSetup.Info.Minor
 		}
 		supported := info.Installation != nil && minor >= 19 && slices.Contains(methods, method)
-		n.Row(c.Key("auth-actions")).FillWidth().MinHeight(28).Gap(8).AlignItems(n.Baseline).Children(func() {
+		n.Row(c.Key("auth-actions")).FillWidth().MinHeight(28).Gap(6).AlignItems(n.Center).Children(func() {
 			caption := identity
 			tooltip := ""
 			if info.Account != nil {
@@ -316,10 +316,10 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 				}
 			} else {
 				if supported {
-					n.Row(c.Key("sign-in-method-control")).Grow(1).MinWidth(0).Height(28).Gap(8).AlignItems(n.Center).Transition(fadeMotion(c, 160*time.Millisecond)).Children(func() {
+					n.Row(c.Key("sign-in-method-control")).Grow(1).MinWidth(0).Height(28).Gap(6).AlignItems(n.Center).Transition(fadeMotion(c, 160*time.Millisecond)).Children(func() {
 						name := signInMethodLabel(method)
 						if len(methods) > 1 {
-							trigger := configurationChoiceField(c.Key("login-method"), "选择登录方式", name, disabled).Width(112)
+							trigger := configurationChoiceField(c.Key("login-method"), "选择登录方式", name, disabled).Width(104)
 							var choices []menuChoice
 							for _, value := range []domain.SignInMethod{domain.SignInBrowser, domain.SignInDeviceCode} {
 								if slices.Contains(methods, value) {
@@ -329,7 +329,7 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 							}
 							v.choiceMenu(c, t, "sign-in-method:"+key+":"+info.ID, trigger, choices)
 						} else {
-							n.Text(c, name).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+							n.Text(c, name).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).MarginStart(configurationFieldInset)
 						}
 						status()
 						label := "登录"
@@ -403,15 +403,17 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 
 func agentQuotaDetails(c *n.Context, t *n.Theme, windows []domain.RuntimeQuotaWindow, open *bool) {
 	deviceDisclosure(c, "额度", open, func() {
-		for i, window := range windows {
-			label, value := app.RuntimeQuotaLabels(window)
-			n.Row(c.Key(i)).FillWidth().MinHeight(configurationControlHeight).Gap(configurationSectionGap).AlignItems(n.Baseline).Children(func() {
-				n.Text(c, label).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).
-					Grow(1).MinWidth(0).SingleLine().TooltipWhenTruncated(label)
-				n.Text(c, value).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).
-					TextColor(t.TextMuted).SingleLine()
-			})
-		}
+		n.Column(c).FillWidth().Padding(4, 0, 4, 0).Children(func() {
+			for i, window := range windows {
+				label, value := app.RuntimeQuotaLabels(window)
+				n.Row(c.Key(i)).FillWidth().Height(configurationControlHeight).PaddingY(4).Gap(configurationSectionGap).AlignItems(n.Baseline).Children(func() {
+					n.Text(c, label).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).
+						Grow(1).MinWidth(0).SingleLine().TooltipWhenTruncated(label)
+					n.Text(c, value).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).
+						TextColor(t.TextMuted).SingleLine()
+				})
+			}
+		})
 	})
 }
 
@@ -420,8 +422,10 @@ func (v *View) agentManualAuthorization(c *n.Context, u *agentSignInUI, disabled
 		return
 	}
 	n.Row(c.Key("manual-google-auth")).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
-		configurationTextField(c, &u.manualCode).Label("Google 授权码").Placeholder("粘贴授权码或回调地址").Password().Disabled(disabled || u.pending)
-		if configurationAction(c, "提交授权").Disabled(disabled || u.pending || strings.TrimSpace(u.manualCode) == "").Clicked() {
+		textField(c, &u.manualCode).Grow(1).Basis(0).MinWidth(0).Height(configurationControlHeight).Padding(4, configurationFieldInset).
+			Radius(configurationFieldRadius).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).Background(c.Theme().Background).
+			Label("Google 授权码").Placeholder("粘贴授权码或回调地址").Password().Disabled(disabled || u.pending)
+		if configurationAction(c, "提交授权").Shrink(0).Disabled(disabled || u.pending || strings.TrimSpace(u.manualCode) == "").Clicked() {
 			v.sendSignIn(u, "code", &protocol.SignInInput{ID: u.status.ID, HarnessID: u.status.HarnessID, AuthorizationCode: u.manualCode})
 			if u.pending {
 				u.manualCode = ""

@@ -54,8 +54,9 @@ func (a *mobileApp) agentModels(c *ui.Context, w *mygo.Window, deviceID string, 
 	}
 	for index, model := range models {
 		row := c.Key(model.ID)
-		ui.Row(row).MinHeight(max(contentRowHeight, mobileTapSize(c))).Gap(6).AlignItems(ui.Center).
-			Transition(ui.ElementTransition{Position: true, Duration: mobileToolDisclosureDuration, Ease: ui.EaseOut}).
+		p := palette(c)
+		rowDivider(ui.Row(row).MinHeight(max(contentRowHeight, mobileTapSize(c))).Gap(6).AlignItems(ui.Center).
+			Transition(ui.ElementTransition{Position: true, Duration: mobileToolDisclosureDuration, Ease: ui.EaseOut}), p.line).
 			Children(func() {
 				name := mobileModelName(model)
 				favorite := slices.Contains(pref.Favorites, model.ID)
@@ -67,10 +68,9 @@ func (a *mobileApp) agentModels(c *ui.Context, w *mygo.Window, deviceID string, 
 					next := pref
 					next.Favorites = setMobileModelPreference(pref.Favorites, model.ID, !favorite)
 					save(next)
-				}).AccessSelected(favorite).Disabled(disabled)
+				}).Margin(0, 0, 0, -14).AccessSelected(favorite).Disabled(disabled)
 
 				visible := !slices.Contains(pref.Hidden, model.ID)
-				p := palette(c)
 				ink := p.ink
 				if !visible || stale {
 					ink = p.secondary
@@ -103,7 +103,7 @@ func (a *mobileApp) agentModels(c *ui.Context, w *mygo.Window, deviceID string, 
 						save(next)
 					}
 					iconButton(row.Key("order"), name+" 模型操作", moreSymbol, inlineIconSize, nil).
-						Disabled(disabled).Menu(func(menu *ui.Menu) {
+						Margin(0, -14, 0, 0).Disabled(disabled).Menu(func(menu *ui.Menu) {
 						if menu.Item("上移").Disabled(index == 0).Chosen() {
 							move(index - 1)
 						}

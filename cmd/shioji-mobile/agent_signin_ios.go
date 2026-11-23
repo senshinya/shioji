@@ -366,28 +366,34 @@ func (a *mobileApp) agentSignInProgress(c *ui.Context, w *mygo.Window, p *mobile
 		}
 		challenge := p.status.Challenge
 		if challenge.Code != "" {
-			mobileDetailRow(c, challenge.Code, "", "验证码", nil, nil, func() {
-				action(c, "复制验证码", func() { mygo.Clipboard.WriteText(challenge.Code) })
+			p := palette(c)
+			rowDivider(ui.Row(c).MinHeight(max(contentRowHeight, mobileTapSize(c))).AlignItems(ui.Center).Gap(10), p.line).Children(func() {
+				oneLine(c, challenge.Code, bodyTextSize, p.ink).Font("monospace").Grow(1).Selectable()
+				secondaryAction(c, "复制验证码", func() { mygo.Clipboard.WriteText(challenge.Code) }).PaddingX(14)
 			})
 		}
 		input := protocol.SignInInput{ID: p.status.ID, HarnessID: p.status.HarnessID}
 		if challenge.ManualCode {
-			formInput(c, "Google 授权码", "粘贴授权码或回调地址", &p.manualCode).Password().Disabled(p.pending || !a.model.Connected)
-			action(c, "提交授权", func() {
-				codeInput := input
-				codeInput.AuthorizationCode = p.manualCode
-				if a.sendAgentSignIn(p, "code", codeInput) {
-					p.manualCode = ""
-				}
-			}).Disabled(p.pending || !a.model.Connected || strings.TrimSpace(p.manualCode) == "")
+			formRow(c, "授权码", func() {
+				formInput(c, "Google 授权码", "粘贴授权码或回调地址", &p.manualCode).Password().Disabled(p.pending || !a.model.Connected)
+			})
 		}
-		ui.Row(c).Wrap().Gap(4).Children(func() {
-			if agentAuthorizationURL(challenge.URL) {
-				action(c, "打开授权页", func() { a.openAgentAuthorization(w, p) }).Disabled(p.opening || !a.model.Connected)
+		ui.Row(c).Wrap().Gap(8).Padding(12, 0, 4).Children(func() {
+			if challenge.ManualCode {
+				secondaryAction(c, "提交授权", func() {
+					codeInput := input
+					codeInput.AuthorizationCode = p.manualCode
+					if a.sendAgentSignIn(p, "code", codeInput) {
+						p.manualCode = ""
+					}
+				}).PaddingX(16).Disabled(p.pending || !a.model.Connected || strings.TrimSpace(p.manualCode) == "")
 			}
-			action(c, "检查授权结果", func() { a.sendAgentSignIn(p, "status", input) }).Disabled(p.pending || !a.model.Connected)
+			if agentAuthorizationURL(challenge.URL) {
+				secondaryAction(c, "打开授权页", func() { a.openAgentAuthorization(w, p) }).PaddingX(16).Disabled(p.opening || !a.model.Connected)
+			}
+			secondaryAction(c, "检查授权结果", func() { a.sendAgentSignIn(p, "status", input) }).PaddingX(16).Disabled(p.pending || !a.model.Connected)
 			if p.method != domain.SignInAPI && (p.method != "" || challenge.URL != "") {
-				action(c, "取消登录", func() { a.sendAgentSignIn(p, "cancel", input) }).Disabled(p.pending || !a.model.Connected)
+				secondaryAction(c, "取消登录", func() { a.sendAgentSignIn(p, "cancel", input) }).PaddingX(16).Disabled(p.pending || !a.model.Connected)
 			}
 		})
 	})
@@ -418,6 +424,13 @@ func (a *mobileApp) connectAgentAPI(agent domain.HarnessInfo, draft *mobileAgent
 	}
 }
 
+func agentInfoRow(c *ui.Context, title, value string) {
+	p := palette(c)
+	formRow(c, title, func() {
+		oneLine(c, value, bodyTextSize, p.secondary).MaxWidthPercent(68).TextAlign(ui.End)
+	})
+}
+
 func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain.HarnessInfo, draft *mobileAgentAccountDraft, blocked bool, refresh func()) {
 	attempt := a.agentSignIns[agent.ID]
 	active := attempt != nil && attempt.status.Phase.Active()
@@ -426,20 +439,22 @@ func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain
 	}
 	methods := agentMobileSignInMethods(agent, a.model.WorkerMinor)
 	if account := agent.Account; account != nil && account.Mode != "api" && (account.State == "authenticated" || account.State == "notRequired") && !active && !draft.reauthorize {
-		mobileRow(c, "账号", "", agentAccountName(account), accountSymbol, nil)
+		agentInfoRow(c, "账号", agentAccountName(account))
 		if account.Identity != "" {
-			mobileRow(c, "账号标识", "", account.Identity, nil, nil)
+			agentInfoRow(c, "账号标识", account.Identity)
 		}
 		if account.Subscription != "" {
-			mobileRow(c, "订阅", "", account.Subscription, nil, nil)
-		}
-		action(c, "重新检测", refresh).Disabled(blocked || active)
-		if len(methods) != 0 && account.State == "authenticated" {
-			action(c, "更换账号", func() { draft.reauthorize = true }).Disabled(blocked || active)
+			agentInfoRow(c, "订阅", account.Subscription)
 		}
 		if len(account.QuotaWindows) > 0 {
 			mobileAgentQuota(c.Key("quota"), account.QuotaWindows, &draft.quotaOpen)
 		}
+		ui.Row(c.Key("account-actions")).Wrap().Gap(10).Padding(14, 0, 4).Children(func() {
+			secondaryAction(c, "重新检测", refresh).PaddingX(16).Disabled(blocked || active)
+			if len(methods) != 0 && account.State == "authenticated" {
+				secondaryAction(c, "更换账号", func() { draft.reauthorize = true }).PaddingX(16).Disabled(blocked || active)
+			}
+		})
 		return
 	}
 	if agent.Account == nil && !active && !draft.reauthorize && !a.preview {
@@ -448,7 +463,9 @@ func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain
 			message = "正在读取设备账号…"
 		}
 		mobileMessage(c, message)
-		action(c, "重新检测", refresh).Disabled(blocked)
+		ui.Row(c.Key("account-actions")).Padding(8, 0, 4).Children(func() {
+			secondaryAction(c, "重新检测", refresh).PaddingX(16).Disabled(blocked)
+		})
 		return
 	}
 	selected := draft.selected(methods)
@@ -463,21 +480,23 @@ func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain
 			menuChoice(menu, "自定义 API", selected == domain.SignInAPI, func() { draft.method = domain.SignInAPI })
 		}).Disabled(active || blocked)
 	} else if agent.Account != nil || len(methods) != 0 {
-		mobileRow(c, "接入方式", "", accountMode, nil, nil)
+		agentInfoRow(c, "接入方式", accountMode)
 	}
 	if agent.Account != nil && agent.Account.Mode == "api" {
 		account := agent.Account
-		mobileRow(c, agentAccountName(account), "", readinessName(agent.State), accountSymbol, nil)
+		agentInfoRow(c, "账号", agentAccountName(account))
 		if account.Endpoint != "" {
-			mobileRow(c, "服务地址", "", account.Endpoint, nil, nil)
+			agentInfoRow(c, "服务地址", account.Endpoint)
 		}
 		if account.Model != "" {
-			mobileRow(c, "默认模型", "", account.Model, nil, nil)
+			agentInfoRow(c, "默认模型", account.Model)
 		}
 		if value := map[string]string{"configured": "已配置", "managed": "由系统管理", "missing": "缺少凭据", "notRequired": "无需凭据"}[account.Credential]; value != "" {
-			mobileRow(c, "API Key", "", value, nil, nil)
+			agentInfoRow(c, "API Key", value)
 		}
-		action(c, "重新检测", refresh).Disabled(blocked || active)
+		ui.Row(c.Key("account-actions")).Padding(14, 0, 4).Children(func() {
+			secondaryAction(c, "重新检测", refresh).PaddingX(16).Disabled(blocked || active)
+		})
 	} else if apiAvailable && selected == domain.SignInAPI {
 		formRow(c, "服务地址", func() {
 			formInput(c, "API 地址", "https://api.example.com/v1", &draft.endpoint).
@@ -499,23 +518,27 @@ func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain
 				menuChoice(menu, "浏览器授权", selected == domain.SignInBrowser, func() { draft.method = domain.SignInBrowser })
 			}).Disabled(active || blocked)
 		}
-		mobileDetailRow(c, title, "登录凭据由远程设备保存", title, accountSymbol, nil, func() {
-			if active {
-				return
-			}
-			if len(methods) == 0 {
-				action(c, "重新检测", refresh).Disabled(blocked)
-				return
-			}
-			caption := "开始登录"
-			if agent.Account != nil && agent.Account.State == "authenticated" {
-				caption = "重新登录"
-			}
-			action(c, caption, func() {
-				if a.startAgentSignIn(agent, selected, nil) && draft.reauthorize {
-					draft.reauthorizeAttempt = a.agentSignIns[agent.ID].status.ID
+		p := palette(c)
+		rowDivider(ui.Row(c).MinHeight(max(contentRowHeight, mobileTapSize(c))).Padding(8, 0).Gap(12).AlignItems(ui.Center), p.line).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
+				label(c, title, bodyTextSize, p.ink)
+				label(c, "登录凭据由远程设备保存", captionTextSize, p.secondary)
+			})
+			if !active {
+				if len(methods) == 0 {
+					secondaryAction(c, "重新检测", refresh).PaddingX(14).Disabled(blocked)
+				} else {
+					caption := "开始登录"
+					if agent.Account != nil && agent.Account.State == "authenticated" {
+						caption = "重新登录"
+					}
+					secondaryAction(c, caption, func() {
+						if a.startAgentSignIn(agent, selected, nil) && draft.reauthorize {
+							draft.reauthorizeAttempt = a.agentSignIns[agent.ID].status.ID
+						}
+					}).PaddingX(14).Disabled(blocked)
 				}
-			}).Disabled(blocked)
+			}
 		})
 	}
 	a.agentSignInProgress(c, w, attempt)
@@ -530,12 +553,15 @@ func mobileAgentQuota(c *ui.Context, windows []domain.RuntimeQuotaWindow, expand
 		if *expanded {
 			arrow = downSymbol
 		}
-		ui.Icon(toggle, arrow).Size(pickerIconSize, pickerIconSize).TextColor(p.secondary).PassThrough()
+		alignedSymbol(toggle, arrow, "额度", mobileStatusFont(toggle, bodyTextSize), pickerIconSize, p.secondary)
 	})
 	mobileDisclosureBody(c.Key("details"), *expanded, func(body *ui.Context) {
 		for i, window := range windows {
 			title, value := app.RuntimeQuotaLabels(window)
-			mobileRow(body.Key(i), title, value, "", nil, nil)
+			rowDivider(ui.Column(body.Key(i)).Padding(10, 0).Gap(3), p.line).Children(func() {
+				label(body, title, controlTextSize, p.ink)
+				oneLine(body, value, captionTextSize, p.secondary)
+			})
 		}
 	})
 }

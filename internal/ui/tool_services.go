@@ -267,7 +267,7 @@ func (v *View) agentToolServices(c *n.Context, t *n.Theme, key string, e *device
 		v.queryToolServices(u, false)
 	}
 	if !valid {
-		n.Text(c, "保存配置后查看 MCP 服务").FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
+		n.Text(c, "保存配置后查看 MCP 服务").FontSize(12).FixedLineHeight(20).PaddingX(configurationHoverInset).TextColor(t.TextMuted)
 		return
 	}
 	n.Column(c.Key("tool-services")).FillWidth().FillHeight().Grow(1).Children(func() {
@@ -276,11 +276,13 @@ func (v *View) agentToolServices(c *n.Context, t *n.Theme, key string, e *device
 			page, index = "editor", 1
 		}
 		configurationTabPanel(c.Key("service-page"), page, index, configurationPanelFill, func() {
-			if u.draft != nil {
-				v.toolConfigurationEditor(c, t, u, disabled)
-				return
-			}
-			v.toolServiceList(c, t, u, disabled)
+			n.Column(c).FillWidth().FillHeight().Grow(1).PaddingX(configurationHoverInset).Children(func() {
+				if u.draft != nil {
+					v.toolConfigurationEditor(c, t, u, disabled)
+					return
+				}
+				v.toolServiceList(c, t, u, disabled)
+			})
 		}, false)
 	})
 }

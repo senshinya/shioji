@@ -339,7 +339,7 @@ func (v *View) managedSkillRows(c *n.Context, t *n.Theme, u *skillManagementUI) 
 				if inherited {
 					label += " · 继承"
 				}
-				n.Text(c, label).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).PaddingX(4).Radius(4).Background(t.Surface)
+				n.Text(c, label).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).PaddingX(5).Radius(4).Background(t.Text.Alpha(.06))
 				n.Spacer(c).Grow(1)
 				if inherited && !managementShown {
 					if ghost(c, "管理").Label("在设备设置中管理 Skills").Height(24).FontSize(11).Clicked() {
@@ -394,7 +394,7 @@ func (v *View) managedSkillDetail(c *n.Context, t *n.Theme, u *skillManagementUI
 	}
 	n.Column(c).FillWidth().FillHeight().Grow(1).Children(func() {
 		n.Row(c).FillWidth().Height(configurationControlHeight).Margin(0, 0, configurationSubpageHeaderGap, 0).Gap(8).AlignItems(n.Center).Children(func() {
-			if ghost(c, "‹ Skills").Label("返回 Skills 列表").Height(28).FontSize(13).Clicked() {
+			if configurationBackAction(c.Key("back"), "Skills", "返回 Skills 列表").Clicked() {
 				u.detailID = ""
 				u.documentRequest++
 				u.detailLoading = false

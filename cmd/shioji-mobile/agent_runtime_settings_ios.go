@@ -132,10 +132,10 @@ func (a *mobileApp) runtimeSettingsFields(c *ui.Context, w *mygo.Window, harness
 			} else if variable.value != nil || variable.previous != variable.name {
 				status = "待保存"
 			}
-			mobileDetailRow(c.Key(variable.id), variable.name, "", variable.name, nil,
+			rowDivider(mobileDetailRow(c.Key(variable.id), variable.name, "", variable.name, nil,
 				func() { a.openRuntimeVariable(w, harnessID, d, variable) }, func() {
 					oneLine(c, status, captionTextSize, palette(c).secondary).PassThrough()
-				}).Disabled(disabled)
+				}), palette(c).line).Disabled(disabled)
 		}
 	}
 }

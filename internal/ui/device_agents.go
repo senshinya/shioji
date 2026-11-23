@@ -167,14 +167,17 @@ func (v *View) deviceAgentPage(c *n.Context, t *n.Theme, key, deviceName string,
 			}
 			n.Row(c).FillWidth().Height(32).Gap(16).AlignItems(n.Baseline).Children(func() {
 				inlineIconText(c, harnessIcon(domain.HarnessDescriptor{ID: info.ID, Name: info.Name, Icon: info.Icon}), info.Name, n.Font{Family: t.Font, Size: configurationTitleSize, Weight: 400}, 24, 8, t.Text).FixedLineHeight(configurationTitleLine).Grow(1).MinWidth(0).TooltipWhenTruncated(info.Name)
-				n.Text(c, runtimeSetupLabel(info, state.Connected)).FontSize(12).FixedLineHeight(20).SingleLine().TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+				status := runtimeSetupLabel(info, state.Connected)
+				titleCenter := inlineFontMetrics(info.Name, n.Font{Family: t.Font, Size: configurationTitleSize, Weight: 400}).center
+				statusCenter := inlineFontMetrics(status, n.Font{Family: t.Font, Size: 12, Weight: 400}).center
+				n.Text(c, status).FontSize(12).FixedLineHeight(20).SingleLine().TextColor(t.TextMuted).Transform(n.Translation(0, statusCenter-titleCenter)).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 			})
 		})
 	})
-	n.Column(c.Key("agent-content")).FillWidth().FillHeight().Grow(1).Padding(0, configurationInset, configurationSectionGap).Children(func() {
+	n.Column(c.Key("agent-content")).FillWidth().FillHeight().Grow(1).Padding(0, configurationInset-configurationHoverInset, configurationSectionGap).Children(func() {
 		n.Column(c).FillWidth().FillHeight().Grow(1).Children(func() {
 			v.agentConfiguration(c, t, key, state.Connected, e, info, false, func() { v.saveDeviceAgents(key, state, e) })
-			frame := n.Column(c.Key("agent-error")).FillWidth().Clip()
+			frame := n.Column(c.Key("agent-error")).FillWidth().PaddingX(configurationHoverInset).Clip()
 			message := n.Local(frame, "message", func() string { return e.error })
 			if e.error != "" {
 				*message = e.error
