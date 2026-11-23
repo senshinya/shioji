@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"shioji/internal/domain"
 	"shioji/internal/managedexec"
@@ -173,6 +174,13 @@ type OutputResource struct {
 	Name      string
 	Path      string
 	Data      []byte
+}
+
+// SessionOutputFiles is an optional adapter capability for reading native
+// artifacts outside a session's launch directories. The worker authenticates
+// the session before calling it. A nil file and nil error means out of scope.
+type SessionOutputFiles interface {
+	OpenSessionOutputFile(context.Context, domain.Session, string) (*os.File, error)
 }
 
 // CatalogVersion is optional. An adapter reports the currently installed image;

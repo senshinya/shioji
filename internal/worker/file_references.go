@@ -19,32 +19,38 @@ import (
 )
 
 func (s *Server) referenceRoots(q protocol.GitQuery) ([]string, error) {
+	roots, _, err := s.referenceScope(q)
+	return roots, err
+}
+
+func (s *Server) referenceScope(q protocol.GitQuery) ([]string, domain.Session, error) {
+	var session domain.Session
 	w, err := s.store.Workspace(q.WorkspaceID)
 	if err != nil {
-		return nil, err
+		return nil, session, err
 	}
 	if w.Archived {
-		return nil, errors.New("请先恢复工作区")
+		return nil, session, errors.New("请先恢复工作区")
 	}
 	roots := w.Folders
 	if q.SessionID != "" {
-		session, err := s.store.SessionRecord(q.SessionID)
+		session, err = s.store.SessionRecord(q.SessionID)
 		if err != nil {
-			return nil, err
+			return nil, session, err
 		}
 		if session.WorkspaceID != w.ID || session.Archived {
-			return nil, errors.New("会话不属于此工作区或已归档")
+			return nil, session, errors.New("会话不属于此工作区或已归档")
 		}
 		roots = append([]string{session.Context.CWD}, session.Context.AdditionalDirectories...)
 	}
 	valid, err := validateFolders(roots)
 	if err != nil {
-		return nil, err
+		return nil, session, err
 	}
 	if strings.Join(valid, "\x00") != strings.Join(roots, "\x00") {
-		return nil, errors.New("目录身份已改变，请重新选择工作区")
+		return nil, session, errors.New("目录身份已改变，请重新选择工作区")
 	}
-	return roots, nil
+	return roots, session, nil
 }
 
 func (s *Server) searchFiles(q protocol.FileSearchQuery) (domain.FileSearchResult, error) {

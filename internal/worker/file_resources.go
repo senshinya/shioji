@@ -16,6 +16,7 @@ import (
 
 	"shioji/internal/attachments"
 	"shioji/internal/domain"
+	"shioji/internal/harness"
 	"shioji/internal/protocol"
 )
 
@@ -29,7 +30,7 @@ func (s *Server) openFileResource(q protocol.FileResourceQuery) (*os.File, domai
 	if q.SessionID == "" || len(q.Path) > 4096 || q.Path == "" || !utf8.ValidString(q.Path) || strings.ContainsAny(q.Path, "\x00\r\n\\") {
 		return nil, meta, errors.New("文件链接无效")
 	}
-	roots, err := s.referenceRoots(protocol.GitQuery{WorkspaceID: q.WorkspaceID, SessionID: q.SessionID})
+	roots, session, err := s.referenceScope(protocol.GitQuery{WorkspaceID: q.WorkspaceID, SessionID: q.SessionID})
 	if err != nil {
 		return nil, meta, err
 	}
@@ -49,6 +50,42 @@ func (s *Server) openFileResource(q protocol.FileResourceQuery) (*os.File, domai
 			roots = append(roots, real)
 		}
 	}
+	f, err := openResourcePath(roots, path)
+	if err != nil {
+		return nil, meta, err
+	}
+	if f == nil {
+		if provider, ok := s.adapter(session.HarnessID).(harness.SessionOutputFiles); ok {
+			f, err = provider.OpenSessionOutputFile(s.ctx, session, path)
+			if err != nil {
+				return nil, meta, err
+			}
+		}
+	}
+	if f == nil {
+		return nil, meta, errors.New("文件不在本会话可预览的目录中")
+	}
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		f.Close()
+		return nil, meta, errors.New("只能打开普通文件")
+	}
+	var head [512]byte
+	n, err := f.ReadAt(head[:], 0)
+	if err != nil && err != io.EOF {
+		f.Close()
+		return nil, meta, err
+	}
+	typ := http.DetectContentType(head[:n])
+	if ext := mime.TypeByExtension(filepath.Ext(path)); ext != "" && (typ == "application/octet-stream" || strings.HasPrefix(typ, "text/plain")) {
+		typ = ext
+	}
+	typ, _, _ = mime.ParseMediaType(typ)
+	meta = domain.FileResource{Path: path, Name: filepath.Base(path), MIME: typ, Size: info.Size(), Version: fileResourceVersion(info)}
+	return f, meta, nil
+}
+
+func openResourcePath(roots []string, path string) (*os.File, error) {
 	for _, dir := range roots {
 		rel, e := filepath.Rel(dir, path)
 		if e != nil || rel == "." || !filepath.IsLocal(rel) {
@@ -56,33 +93,12 @@ func (s *Server) openFileResource(q protocol.FileResourceQuery) (*os.File, domai
 		}
 		root, e := os.OpenRoot(dir)
 		if e != nil {
-			return nil, meta, e
+			return nil, e
 		}
-		f, e := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
-		root.Close()
-		if e != nil {
-			return nil, meta, e
-		}
-		info, e := f.Stat()
-		if e != nil || !info.Mode().IsRegular() {
-			f.Close()
-			return nil, meta, errors.New("只能打开普通文件")
-		}
-		var head [512]byte
-		n, e := f.ReadAt(head[:], 0)
-		if e != nil && e != io.EOF {
-			f.Close()
-			return nil, meta, e
-		}
-		typ := http.DetectContentType(head[:n])
-		if ext := mime.TypeByExtension(filepath.Ext(path)); ext != "" && (typ == "application/octet-stream" || strings.HasPrefix(typ, "text/plain")) {
-			typ = ext
-		}
-		typ, _, _ = mime.ParseMediaType(typ)
-		meta = domain.FileResource{Path: path, Name: filepath.Base(path), MIME: typ, Size: info.Size(), Version: fileResourceVersion(info)}
-		return f, meta, nil
+		defer root.Close()
+		return root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
 	}
-	return nil, meta, errors.New("文件不在本会话的已接纳目录或设备临时目录中")
+	return nil, nil
 }
 func (s *Server) fileResourceCommand(method string, q protocol.FileResourceQuery) (any, error) {
 	file, meta, err := s.openFileResource(q)
