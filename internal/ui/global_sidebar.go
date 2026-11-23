@@ -52,8 +52,7 @@ func quickIndex(kind string) int {
 func (v *View) quickFooter(c *n.Context, t *n.Theme) {
 	s := v.quickUI()
 	const targetSize = 28
-	const leadingInset = sidebarLeadingInset - (targetSize-sidebarIconColumnWidth)/2
-	n.Row(c.Key("global-footer")).Height(quickFooterHeight).Shrink(0).FillWidth().Padding(2, sidebarTrailingInset, 2, leadingInset).Gap(4).AlignItems(n.Center).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Label("全局快捷栏").Children(func() {
+	n.Row(c.Key("global-footer")).Height(quickFooterHeight).Shrink(0).FillWidth().Padding(2, sidebarTrailingInset, 2, sidebarLeadingInset).Gap(4).AlignItems(n.Center).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Label("全局快捷栏").Children(func() {
 		for _, item := range []struct {
 			kind, label string
 			icon        *n.SVG

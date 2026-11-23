@@ -53,7 +53,7 @@ const (
 	sidebarTitlebarHeight  = 28
 	sidebarHeaderGap       = 4
 	sidebarLeadingInset    = 8
-	sidebarTrailingInset   = 16
+	sidebarTrailingInset   = 8
 	sidebarIconColumnWidth = 20
 	sidebarIconLabelGap    = 3
 	sidebarHeadingInset    = 6
