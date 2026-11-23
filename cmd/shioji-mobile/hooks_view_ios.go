@@ -108,7 +108,7 @@ func (s *mobileHooks) entries() []domain.HookEntry {
 		if a.SourcePath != b.SourcePath {
 			return a.SourcePath < b.SourcePath
 		}
-		return a.Event < b.Event
+		return a.Title() < b.Title()
 	})
 	return entries
 }
@@ -162,7 +162,7 @@ func (s *mobileHooks) showList(a *mobileApp, c *ui.Context, w *mygo.Window, agen
 		count := 0
 		var last [2]string
 		for _, h := range s.entries() {
-			if !strings.Contains(strings.ToLower(h.Event+" "+h.SourcePath+" "+h.Source+" "+mobileHookDefinition(h)+" "+h.Matcher), query) {
+			if !strings.Contains(strings.ToLower(h.Title()+" "+h.Event+" "+h.SourcePath+" "+h.Source+" "+mobileHookDefinition(h)+" "+h.Matcher), query) {
 				continue
 			}
 			group := [2]string{string(h.Scope), h.SourcePath}
@@ -188,12 +188,12 @@ func (s *mobileHooks) showList(a *mobileApp, c *ui.Context, w *mygo.Window, agen
 			}
 			status := mobileHookTrust(h.Trust)
 			row := c.Key(h.ID)
-			rowDivider(mobileButton(row, "查看 Hook："+h.Event, func() {
+			rowDivider(mobileButton(row, "查看 Hook："+h.Title(), func() {
 				s.detail, s.metadata, s.detailScroll = h.ID, false, ui.ScrollState{}
 			}).KeepFocus().MinHeight(64).Gap(6).AlignItems(ui.Center), p.line).
 				Value(status + " · " + enabled).Children(func() {
 				ui.Column(row).Grow(1).MinWidth(0).Gap(3).PassThrough().Children(func() {
-					oneLine(row, h.Event, bodyTextSize, p.ink).PassThrough()
+					oneLine(row, h.Title(), bodyTextSize, p.ink).PassThrough()
 					oneLine(row, mobileHookDefinition(h), 12, p.secondary).Font("monospace").PassThrough()
 				})
 				ui.Column(row).AlignItems(ui.End).Gap(3).Shrink(0).PassThrough().Children(func() {
@@ -231,7 +231,7 @@ func (s *mobileHooks) showDetail(a *mobileApp, c *ui.Context, w *mygo.Window, ag
 	if i := slices.IndexFunc(s.catalog.Entries, func(entry domain.HookEntry) bool { return entry.ID == s.detail }); i >= 0 {
 		h = s.catalog.Entries[i]
 	}
-	title := h.Event
+	title := h.Title()
 	if title == "" {
 		title = "Hook"
 	}
@@ -287,7 +287,7 @@ func (s *mobileHooks) showDetail(a *mobileApp, c *ui.Context, w *mygo.Window, ag
 			if h.CanEnable {
 				enabled := h.Enabled
 				label(c, "启用", 13, p.secondary)
-				mobileSwitch(c, "启停 Hook："+h.Event, &enabled, func() {
+				mobileSwitch(c, "启停 Hook："+h.Title(), &enabled, func() {
 					s.change(a, w, agent, revision, domain.HookChange{Action: domain.HookSetEnabled, ID: h.ID,
 						DefinitionRevision: h.DefinitionRevision, Enabled: enabled})
 				}).Disabled(!s.writable(a))
@@ -323,12 +323,12 @@ func (s *mobileHooks) showReview(a *mobileApp, c *ui.Context, w *mygo.Window, ag
 				selected = append(selected, definition)
 			}
 			ui.Column(c.Key(h.ID)).Gap(3).PaddingY(7).Children(func() {
-				remoteChoiceRow(c, h.Event, mobileHookTrust(h.Trust), s.selected[h.ID], func() {
+				remoteChoiceRow(c, h.Title(), mobileHookTrust(h.Trust), s.selected[h.ID], func() {
 					if s.selected == nil {
 						s.selected = make(map[string]bool)
 					}
 					s.selected[h.ID] = !s.selected[h.ID]
-				}).Label("选择 Hook：" + h.Event).Disabled(!writable)
+				}).Label("选择 Hook：" + h.Title()).Disabled(!writable)
 				a.codeResult(c, mobileHookDefinition(h))
 				if h.SourcePath != "" {
 					label(c.Key("source"), h.SourcePath, 12, p.secondary).Font("monospace").PaddingY(3).Selectable()
@@ -384,6 +384,8 @@ func mobileHookTrust(trust domain.HookTrust) string {
 		return "已信任"
 	case domain.HookModified:
 		return "已修改"
+	case domain.HookNativeManaged:
+		return "Agent 管理"
 	case domain.HookPolicy:
 		return "策略管理"
 	case domain.HookUntrusted:

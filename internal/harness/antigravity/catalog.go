@@ -18,7 +18,7 @@ type cachedCatalog struct {
 	Models  domain.Readiness `json:"catalog"`
 }
 
-func (r *runtime) discover(ctx context.Context) error {
+func (r *runtime) discover(ctx context.Context, executable string, env []string) error {
 	dir := r.options.CatalogDirectory
 	path := filepath.Join(dir, "model-catalog.json")
 	if !r.options.RefreshCatalog {
@@ -60,10 +60,16 @@ func (r *runtime) discover(ctx context.Context) error {
 	if r.ready.State != domain.RuntimeReady {
 		return errors.New(r.ready.Error)
 	}
+	r.ready.Account = &domain.RuntimeAccount{Mode: "account", Label: "Antigravity", State: "configured",
+		QuotaWindows: queryNativeQuota(ctx, executable, r.native.AgentInfo.Version, env)}
 	if dir == "" {
 		return nil
 	}
-	return saveCatalog(dir, path, cachedCatalog{Version: r.version, Profile: r.profile, Models: r.ready})
+	cached := r.ready
+	account := *r.ready.Account
+	account.QuotaWindows = nil
+	cached.Account = &account
+	return saveCatalog(dir, path, cachedCatalog{Version: r.version, Profile: r.profile, Models: cached})
 }
 
 func readCatalog(path string) cachedCatalog {

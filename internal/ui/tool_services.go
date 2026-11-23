@@ -106,8 +106,14 @@ func (v *View) queryToolServices(u *toolServicesUI, refresh bool) {
 	u.catalogRead++
 	read := u.catalogRead
 	u.message = ""
+	checkMessage := "已保存，正在检查连接"
+	checkFailure := "配置已保存，连接检查未完成，请刷新核对"
+	if u.catalog.BasicEditing {
+		checkMessage = "已保存，正在核对设备配置"
+		checkFailure = "配置已保存，读取未完成，请刷新核对"
+	}
 	if u.saved && !slices.ContainsFunc(u.catalog.Services, func(service domain.ToolService) bool { return service.ID == u.mutationID }) {
-		u.message = "已保存，正在检查连接"
+		u.message = checkMessage
 	}
 	u.reload = false
 	method := "runtime.tools.list"
@@ -122,7 +128,7 @@ func (v *View) queryToolServices(u *toolServicesUI, refresh bool) {
 			u.phase = toolServiceLoadFailed
 			u.message = "无法读取 MCP 服务，请重试"
 			if u.saved {
-				u.message = "配置已保存，连接检查未完成，请刷新核对"
+				u.message = checkFailure
 			}
 			return
 		}
@@ -131,7 +137,7 @@ func (v *View) queryToolServices(u *toolServicesUI, refresh bool) {
 			u.phase = toolServiceLoadFailed
 			u.message = "设备返回的工具服务信息无效"
 			if u.saved {
-				u.message = "配置已保存，连接检查未完成，请刷新核对"
+				u.message = checkFailure
 			}
 			return
 		}
@@ -141,6 +147,9 @@ func (v *View) queryToolServices(u *toolServicesUI, refresh bool) {
 			u.saved = false
 			u.mutationID = ""
 			u.message = "已保存，下轮生效"
+			if result.BasicEditing {
+				u.message = "已保存到设备配置，当前会话生效状态未知"
+			}
 		}
 		if result.Authorization != nil && result.Authorization.HarnessID == u.harness {
 			v.applyToolAuthorization(u, *result.Authorization)
@@ -149,7 +158,7 @@ func (v *View) queryToolServices(u *toolServicesUI, refresh bool) {
 		u.phase = toolServiceLoadFailed
 		u.message = "设备操作繁忙，请重试"
 		if u.saved {
-			u.message = "配置已保存，连接检查未完成，请刷新核对"
+			u.message = checkFailure
 		}
 	}
 }

@@ -582,3 +582,24 @@ func TestAPIModeMovesEntireGeneralForm(t *testing.T) {
 		t.Fatal("mode change leaves the rest of the form stationary", mid, end)
 	}
 }
+
+func TestAgentManualAuthorizationUsesTheOriginalDeviceReceipt(t *testing.T) {
+	m, v, _, ui := signInUI(t, "air")
+	m.DeviceStates["air"].WorkerMinor = protocol.SignInManualCodeMinor
+	feedbackClick(t, ui, "登录账号")
+	started := welcomeJob(t, v.Controller, "runtime.signin.start")
+	in := started.Input.(protocol.SignInInput)
+	raw, _ := json.Marshal(domain.SignInStatus{ID: in.ID, HarnessID: in.HarnessID, Phase: domain.SignInWaiting,
+		Challenge: domain.SignInChallenge{URL: "https://accounts.google.com/o/oauth2/v2/auth", ManualCode: true}})
+	started.Apply(m, raw, nil)
+	ui.Frame()
+	feedbackClick(t, ui, "Google 授权码")
+	ui.Type("fixture-auth-code")
+	feedbackClick(t, ui, "提交授权")
+	code := welcomeJob(t, v.Controller, "runtime.signin.code")
+	forwarded := code.Input.(protocol.SignInInput)
+	if code.ConnectionID != "air" || forwarded.ID != in.ID || forwarded.HarnessID != in.HarnessID ||
+		forwarded.AuthorizationCode != "fixture-auth-code" || v.agentSignIn("air", in.HarnessID).manualCode != "" {
+		t.Fatal("authorization response escaped the attempt or stayed in the form")
+	}
+}

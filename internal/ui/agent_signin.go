@@ -6,6 +6,7 @@ import (
 	"github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
 	"net/url"
+	"reflect"
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
@@ -29,6 +30,7 @@ type agentSignInUI struct {
 	next            time.Time
 	autoOpen        bool
 	editor          *deviceAgentEditor
+	manualCode      string
 }
 
 func (v *View) signInDevice(key string) string {
@@ -163,6 +165,9 @@ func (v *View) sendSignIn(u *agentSignInUI, action string, input *protocol.SignI
 				u.status.Message = "取消尚未确认，连接恢复后可重试"
 			}
 			var remote *protocol.RemoteError
+			if errors.As(err, &remote) && action == "code" {
+				u.status.Message = remote.Message
+			}
 			if errors.As(err, &remote) && action == "start" {
 				u.status.Phase = domain.SignInFailed
 				u.status.Message = remote.Message
@@ -180,6 +185,9 @@ func (v *View) sendSignIn(u *agentSignInUI, action string, input *protocol.SignI
 			return
 		}
 		u.status = status
+		if !status.Challenge.ManualCode {
+			u.manualCode = ""
+		}
 		if status.Phase == domain.SignInWaiting && u.autoOpen && status.Challenge.URL != "" {
 			u.autoOpen = false
 			if err := openSignInLink(status.Challenge.URL); err != nil {
@@ -356,6 +364,15 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 				}
 			}
 		})
+		v.agentManualAuthorization(c, u, disabled)
+		if info.Account != nil && !active {
+			for i, window := range info.Account.QuotaWindows {
+				label, value := app.RuntimeQuotaLabels(window)
+				deviceConfigRow(c.Key(i), label, func() {
+					n.Text(c, value).FontSize(12).TextColor(t.TextMuted).SingleLine()
+				})
+			}
+		}
 		body := n.Column(c.Key("auth-code")).FillWidth().Clip()
 		var challenge domain.SignInChallenge
 		if u != nil {
@@ -385,6 +402,21 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 	})
 }
 
+func (v *View) agentManualAuthorization(c *n.Context, u *agentSignInUI, disabled bool) {
+	if u == nil || u.status.Phase != domain.SignInWaiting || !u.status.Challenge.ManualCode {
+		return
+	}
+	n.Row(c.Key("manual-google-auth")).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
+		configurationTextField(c, &u.manualCode).Label("Google 授权码").Placeholder("粘贴授权码或回调地址").Password().Disabled(disabled || u.pending)
+		if configurationAction(c, "提交授权").Disabled(disabled || u.pending || strings.TrimSpace(u.manualCode) == "").Clicked() {
+			v.sendSignIn(u, "code", &protocol.SignInInput{ID: u.status.ID, HarnessID: u.status.HarnessID, AuthorizationCode: u.manualCode})
+			if u.pending {
+				u.manualCode = ""
+			}
+		}
+	})
+}
+
 func signInConfigurationMatches(u *agentSignInUI, e *deviceAgentEditor) bool {
 	if u.config == nil || e.openID != u.status.HarnessID {
 		return false
@@ -400,7 +432,7 @@ func (v *View) signInProfileInfo(key string, e *deviceAgentEditor, info domain.H
 	if u.profileConsumed {
 		return info
 	}
-	if info.Account != nil && u.status.Profile.Account != nil && *info.Account == *u.status.Profile.Account && info.State == u.status.Profile.State {
+	if info.Account != nil && u.status.Profile.Account != nil && reflect.DeepEqual(info.Account, u.status.Profile.Account) && info.State == u.status.Profile.State {
 		u.profileConsumed = true
 		return info
 	}
@@ -618,6 +650,7 @@ func (v *View) agentInitialAccount(c *n.Context, t *n.Theme, key string, e *devi
 					}
 				}
 			})
+			v.agentManualAuthorization(c, u, disabled)
 			challengeBody := n.Column(c.Key("initial-auth-code")).FillWidth().Clip()
 			animatedContentHeight(c, challengeBody, active && challenge.Code != "", 180*time.Millisecond, func() float32 {
 				n.Row(c).FillWidth().Height(32).Gap(8).AlignItems(n.Baseline).Children(func() {

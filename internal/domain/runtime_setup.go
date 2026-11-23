@@ -1,6 +1,9 @@
 package domain
 
-import "net"
+import (
+	"net"
+	"time"
+)
 
 type RuntimeIssue string
 
@@ -37,9 +40,10 @@ const (
 // Authorization challenges are transient. Never persist them in client state,
 // conversation history, diagnostics or the worker journal.
 type SignInChallenge struct {
-	Callback *LoopbackEndpoint `json:"callback,omitempty"`
-	URL      string            `json:"url,omitempty"`
-	Code     string            `json:"code,omitempty"`
+	ManualCode bool              `json:"manualCode,omitempty"`
+	Callback   *LoopbackEndpoint `json:"callback,omitempty"`
+	URL        string            `json:"url,omitempty"`
+	Code       string            `json:"code,omitempty"`
 }
 
 // LoopbackEndpoint describes a temporary callback listener on the owning
@@ -98,17 +102,25 @@ type RuntimeOptionSupport struct {
 }
 
 // RuntimeAccount contains public account metadata only; never credentials.
+type RuntimeQuotaWindow struct {
+	Group           string     `json:"group"`
+	DurationSeconds int        `json:"durationSeconds"`
+	UsedPercent     float64    `json:"usedPercent"`
+	ResetsAt        *time.Time `json:"resetsAt,omitempty"`
+}
+
 type RuntimeAccount struct {
-	Mode              string `json:"mode,omitempty"`
-	Endpoint          string `json:"endpoint,omitempty"`
-	Model             string `json:"model,omitempty"`
-	Credential        string `json:"credential,omitempty"`
-	ConfigurationFile string `json:"configurationFile,omitempty"`
-	Profile           string `json:"profile,omitempty"`
-	Subscription      string `json:"subscription,omitempty"`
-	Label             string `json:"label"`
-	Identity          string `json:"identity,omitempty"`
-	State             string `json:"state"`
+	QuotaWindows      []RuntimeQuotaWindow `json:"quotaWindows,omitempty"`
+	Mode              string               `json:"mode,omitempty"`
+	Endpoint          string               `json:"endpoint,omitempty"`
+	Model             string               `json:"model,omitempty"`
+	Credential        string               `json:"credential,omitempty"`
+	ConfigurationFile string               `json:"configurationFile,omitempty"`
+	Profile           string               `json:"profile,omitempty"`
+	Subscription      string               `json:"subscription,omitempty"`
+	Label             string               `json:"label"`
+	Identity          string               `json:"identity,omitempty"`
+	State             string               `json:"state"`
 }
 
 // APIConfiguration is an explicit, transient setup input. Credentials never enter Shioji persistence.

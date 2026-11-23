@@ -44,7 +44,8 @@ func (a Adapter) Installation() domain.RuntimeInstallation {
 		Executable: path, Override: a.Executable, Configurable: true,
 		Guide:         "在该设备的终端安装并登录 Antigravity CLI，然后重新检测",
 		Documentation: "https://antigravity.google/docs/cli",
-		SignInCommand: []string{path},
+		SignInCommand: []string{path, "acp", "--login"},
+		SignInMethods: []domain.SignInMethod{domain.SignInBrowser},
 	}
 }
 

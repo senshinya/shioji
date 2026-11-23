@@ -24,6 +24,9 @@ type skillDirectory struct {
 	base, relative string
 	scope          domain.SkillScope
 	priority       bool // CLI-only and shared skills outrank the other locations.
+	explicit       bool
+	filter         skillFilter
+	filterBases    []string
 }
 
 func skillProfileDirectory(env []string) string {
@@ -40,20 +43,17 @@ func (r *runtime) skillDirectories(launch domain.LaunchContext) []skillDirectory
 	var dirs []skillDirectory
 	if r.skillProfile != "" {
 		for _, sub := range []string{"antigravity-cli/skills", "skills"} {
-			dirs = append(dirs, skillDirectory{r.skillProfile, sub, domain.SkillUser, true})
+			dirs = append(dirs, skillDirectory{base: r.skillProfile, relative: sub, scope: domain.SkillUser, priority: true})
 		}
 	}
-	for _, project := range append([]string{launch.CWD}, launch.AdditionalDirectories...) {
-		if !filepath.IsAbs(project) {
-			continue
-		}
-		for _, sub := range []string{".agents/skills", ".agent/skills"} {
-			dirs = append(dirs, skillDirectory{project, sub, domain.SkillProject, false})
+	for _, project := range projectNativeConfigBases(launch) {
+		for _, sub := range projectNativeConfigDirectories {
+			dirs = append(dirs, skillDirectory{base: project, relative: filepath.Join(sub, "skills"), scope: domain.SkillProject})
 		}
 	}
 	if r.skillProfile != "" {
-		dirs = append(dirs, skillDirectory{r.skillProfile, "config/skills", domain.SkillUser, false},
-			skillDirectory{r.skillProfile, "antigravity-cli/builtin/skills", domain.SkillBuiltIn, false})
+		dirs = append(dirs, skillDirectory{base: r.skillProfile, relative: "config/skills", scope: domain.SkillUser},
+			skillDirectory{base: r.skillProfile, relative: "antigravity-cli/builtin/skills", scope: domain.SkillBuiltIn})
 	}
 	return dirs
 }
@@ -65,15 +65,28 @@ type discoveredSkills struct {
 
 func (r *runtime) discoverSkills(ctx context.Context, launch domain.LaunchContext, wanted []string) (discoveredSkills, error) {
 	out := discoveredSkills{bodies: map[string]string{}}
-	var excluded []string
-	if r.skillProfile != "" {
-		readSkillExclusions(r.skillProfile, "config/skills.json", &out.inventory, &excluded)
+	extra, excluded := r.manifestSkills(launch, &out.inventory)
+	dirs := append(r.skillDirectories(launch), extra...)
+	dirs = append(dirs, r.pluginSkills()...)
+	rank := func(dir skillDirectory) int {
+		if dir.priority {
+			return 0
+		}
+		switch dir.scope {
+		case domain.SkillProject:
+			return 1
+		case domain.SkillUser:
+			return 2
+		case domain.SkillManaged:
+			return 3
+		default:
+			return 4
+		}
 	}
-	for _, project := range append([]string{launch.CWD}, launch.AdditionalDirectories...) {
-		readSkillExclusions(project, ".agents/skills.json", &out.inventory, &excluded)
-	}
+	slices.SortStableFunc(dirs, func(a, b skillDirectory) int { return cmp.Compare(rank(a), rank(b)) })
 	found := make(map[string]bool)
-	for _, dir := range r.skillDirectories(launch) {
+	observed := make(map[string]bool)
+	for _, dir := range dirs {
 		if err := ctx.Err(); err != nil {
 			return discoveredSkills{}, err
 		}
@@ -81,8 +94,12 @@ func (r *runtime) discoverSkills(ctx context.Context, launch domain.LaunchContex
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+			if observed[entry.ID] {
+				return nil
+			}
+			observed[entry.ID] = true
 			switch {
-			case !dir.priority && (slices.Contains(excluded, entry.Name) || slices.Contains(excluded, folder)):
+			case !dir.priority && excludedNativeSkill(excluded, entry, folder):
 				entry.ReadOnlyReason = "原生配置排除此 Skill"
 			case found[entry.Name]:
 				entry.ReadOnlyReason = "同名 Skill 由优先来源提供"
@@ -100,35 +117,9 @@ func (r *runtime) discoverSkills(ctx context.Context, launch domain.LaunchContex
 			return discoveredSkills{}, err
 		}
 	}
+	projected, _ := json.Marshal(out.inventory.Entries)
+	out.inventory.Revision = fmt.Sprintf("%x", sha256.Sum256(projected))
 	return out, nil
-}
-
-func readSkillExclusions(base, rel string, inv *domain.SkillInventory, excluded *[]string) {
-	if !filepath.IsAbs(base) {
-		return
-	}
-	root, err := os.OpenRoot(base)
-	if err != nil {
-		return
-	}
-	defer root.Close()
-	data, err := readSkillFile(root, rel)
-	if err != nil {
-		return
-	}
-	var manifest struct {
-		Exclude  []string
-		Entries  []json.RawMessage
-		Inherits []json.RawMessage
-	}
-	if json.Unmarshal(data, &manifest) != nil {
-		inv.Warnings = append(inv.Warnings, "部分 Antigravity Skill 清单无法读取")
-		return
-	}
-	*excluded = append(*excluded, manifest.Exclude...)
-	if len(manifest.Entries)+len(manifest.Inherits) != 0 && !slices.Contains(inv.Warnings, "清单附加来源由 Antigravity CLI 管理") {
-		inv.Warnings = append(inv.Warnings, "清单附加来源由 Antigravity CLI 管理")
-	}
 }
 
 func scanSkillDirectory(dir skillDirectory, visit func(domain.ManagedSkill, []byte, string) error) error {
@@ -137,7 +128,33 @@ func scanSkillDirectory(dir skillDirectory, visit func(domain.ManagedSkill, []by
 		return nil
 	}
 	defer base.Close()
-	root, err := base.OpenRoot(filepath.FromSlash(dir.relative))
+	add := func(rel, folder string, data []byte) error {
+		name, description := skillFrontmatter(string(data))
+		path := filepath.Join(dir.base, rel)
+		aliases := append(skillAliases(path, dir.filterBases...), name, folder)
+		if name == "" || !dir.filter.matches(aliases...) {
+			return nil
+		}
+		hash := sha256.New()
+		_, _ = io.WriteString(hash, path+"\x00")
+		_, _ = hash.Write(data)
+		entry := domain.ManagedSkill{
+			SkillReference: domain.SkillReference{ID: fmt.Sprintf("%x", hash.Sum(nil)), Name: name},
+			Description:    description, Scope: dir.scope, Directory: filepath.Dir(path), Path: path,
+			ReadOnlyReason: "由 Antigravity CLI 管理",
+		}
+		return visit(entry, data, folder)
+	}
+	if dir.explicit {
+		rel := dir.relative
+		if !strings.EqualFold(filepath.Base(rel), "SKILL.md") {
+			rel = filepath.Join(rel, "SKILL.md")
+		}
+		if data, err := readSkillFile(base, rel); err == nil {
+			return add(rel, filepath.Base(filepath.Dir(rel)), data)
+		}
+	}
+	root, err := base.OpenRoot(dir.relative)
 	if err != nil {
 		return nil
 	}
@@ -161,20 +178,7 @@ func scanSkillDirectory(dir skillDirectory, visit func(domain.ManagedSkill, []by
 		if err != nil {
 			continue
 		}
-		name, description := skillFrontmatter(string(data))
-		if name == "" {
-			continue
-		}
-		path := filepath.Join(dir.base, filepath.FromSlash(dir.relative), rel)
-		hash := sha256.New()
-		_, _ = io.WriteString(hash, path+"\x00")
-		_, _ = hash.Write(data)
-		entry := domain.ManagedSkill{
-			SkillReference: domain.SkillReference{ID: fmt.Sprintf("%x", hash.Sum(nil)), Name: name},
-			Description:    description, Scope: dir.scope, Directory: filepath.Dir(path), Path: path,
-			ReadOnlyReason: "由 Antigravity CLI 管理",
-		}
-		if err := visit(entry, data, folder.Name()); err != nil {
+		if err := add(filepath.Join(dir.relative, rel), folder.Name(), data); err != nil {
 			return err
 		}
 	}

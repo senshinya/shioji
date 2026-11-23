@@ -112,6 +112,7 @@ type runtime struct {
 	native       initialization
 	process      *rpc
 	bridge       *goalBridge
+	callback     *callbackBridge
 	direct       sync.Mutex // Serialize native configuration and binding.
 
 	mu             sync.Mutex
@@ -143,16 +144,31 @@ func (a Adapter) Start(ctx context.Context, options harness.StartOptions) (harne
 	if err != nil {
 		return nil, err
 	}
+	profile := skillProfileDirectory(env)
+	if resolved, err := filepath.EvalSymlinks(profile); err == nil && filepath.IsAbs(resolved) {
+		profile = resolved
+	}
 	r := &runtime{
-		options: options, version: version, profile: profileKey(env), skillProfile: skillProfileDirectory(env), done: make(chan struct{}), requests: make(map[string]nativeRequest),
+		options: options, version: version, profile: profileKey(env), skillProfile: profile, done: make(chan struct{}), requests: make(map[string]nativeRequest),
 		ready: domain.Readiness{HarnessID: a.Descriptor().ID, State: domain.RuntimeUnavailable, Error: "请在设备 Agent 设置重新检测以获取模型"},
 	}
 	argv := []string{path, "acp", "--process-per-session", "--disable-telemetry"}
+	if profile := systemexec.EnvironmentValue(env, "GEMINI_HOME"); filepath.IsAbs(profile) {
+		argv = append(argv, "--gemini-dir", profile)
+	}
 	env = append(env, "AGY_CLI_DISABLE_AUTO_UPDATE=1")
+	if !options.CatalogOnly && options.OnMessage != nil {
+		r.callback, err = r.startCallbackBridge()
+		if err != nil {
+			return nil, errors.New("无法启动会话回调入口")
+		}
+		env = append(env, "SHIOJI_CALLBACK_URL="+r.callback.url, "SHIOJI_CALLBACK_TOKEN="+r.callback.token)
+	}
 	hooks := options
 	hooks.OnLost = r.transportLost
 	c, err := startRPC(ctx, argv, env, hooks, r.handle)
 	if err != nil {
+		_ = r.callback.close()
 		return nil, &harness.SetupError{Issue: domain.RuntimeIncompatible, Message: "无法启动该设备上的 agy ACP"}
 	}
 	r.process = c
@@ -184,7 +200,7 @@ func (a Adapter) Start(ctx context.Context, options harness.StartOptions) (harne
 		return nil, errors.New("agy 安装正在变化，请重新检测")
 	}
 	if options.CatalogOnly {
-		if err := r.discover(ctx); err != nil {
+		if err := r.discover(ctx, path, env); err != nil {
 			return nil, err
 		}
 		if err := r.closeProcess(ctx); err != nil {
@@ -215,6 +231,8 @@ func (r *runtime) capabilities() domain.HarnessCapabilities {
 		Interrupt: true, Steer: verifiedConcurrentPrompt(r.native.AgentInfo.Version),
 		Resume: resume, CompactNeedsCheck: resume, Reload: resume && r.native.AgentCapabilities.SessionCapabilities.Close != nil,
 		Fork: portable, PortableFork: portable,
+		ToolServices: r.skillProfile != "", ToolServiceInspection: r.skillProfile != "",
+		HookManagement: r.skillProfile != "", HookInspection: r.skillProfile != "",
 	}
 }
 
@@ -263,7 +281,8 @@ func setupError(err error) error {
 		return err
 	}
 	if native.Code == -32000 {
-		return &harness.SetupError{Issue: domain.RuntimeSignInRequired, Message: "请先在执行设备的终端登录 Antigravity CLI，再重新检测"}
+		return &harness.SetupError{Issue: domain.RuntimeSignInRequired, Message: "请登录所属设备上的 Antigravity 账号",
+			Account: &domain.RuntimeAccount{Mode: "account", Label: "Antigravity", State: "required"}}
 	}
 	return fmt.Errorf("Antigravity ACP 请求失败（%d）", native.Code)
 }
@@ -467,7 +486,7 @@ func (r *runtime) Close(ctx context.Context) error {
 		r.close.Do(func() { close(r.done) })
 		return nil
 	}
-	return errors.Join(r.closeProcess(ctx), r.bridge.close(ctx))
+	return errors.Join(r.callback.close(), r.closeProcess(ctx), r.bridge.close(ctx))
 }
 
 func (r *runtime) closeProcess(ctx context.Context) error {
@@ -527,7 +546,7 @@ func (r *runtime) ActivateHistory(context.Context, domain.Session, string, func(
 func (r *runtime) transportLost() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	bridgeErr := r.bridge.close(ctx)
+	bridgeErr := errors.Join(r.callback.close(), r.bridge.close(ctx))
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for key, permission := range r.requests {

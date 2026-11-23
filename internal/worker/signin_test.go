@@ -245,3 +245,40 @@ func TestCompletedAuthorizationRetainsAccountWhenModelsFail(t *testing.T) {
 		t.Fatalf("authorization/model states conflated: %+v", done)
 	}
 }
+
+type manualCodeSignIn struct {
+	memorySignIn
+	codes []string
+}
+
+func (l *manualCodeSignIn) SubmitCode(_ context.Context, code string) error {
+	l.codes = append(l.codes, code)
+	return nil
+}
+
+func TestSignInManualCodeIsBoundToOneActiveAttempt(t *testing.T) {
+	s, _ := signInWorker(t)
+	login := &manualCodeSignIn{memorySignIn: memorySignIn{canceled: &atomic.Bool{}}}
+	s.signInMu.Lock()
+	s.signIns = map[string]*workerSignIn{"custom": {
+		login: login, cancel: func() {},
+		status: domain.SignInStatus{ID: "attempt", HarnessID: "custom", Phase: domain.SignInWaiting,
+			Challenge: domain.SignInChallenge{ManualCode: true}},
+	}}
+	s.signInMu.Unlock()
+	test := protocol.SignInInput{ID: "foreign", HarnessID: "custom", AuthorizationCode: "fixture"}
+	receipt, err := s.signInCommand("runtime.signin.code", test)
+	if err != nil || receipt.Phase != domain.SignInExpired || len(login.codes) != 0 {
+		t.Fatalf("foreign authorization reached the native process: %+v %v", receipt, err)
+	}
+	test.ID = "attempt"
+	for range 2 {
+		receipt, err = s.signInCommand("runtime.signin.code", test)
+		if err != nil || receipt.Challenge.ManualCode {
+			t.Fatalf("one-time receipt did not settle: %+v %v", receipt, err)
+		}
+	}
+	if len(login.codes) != 1 || login.codes[0] != test.AuthorizationCode {
+		t.Fatalf("code was sent more than once: %d", len(login.codes))
+	}
+}

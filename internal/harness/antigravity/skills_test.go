@@ -60,3 +60,36 @@ func TestSkillsBrowseAndReferenceTheSelectedDeviceSource(t *testing.T) {
 		t.Fatal("an edited source silently replaced the selected instructions")
 	}
 }
+
+func TestNativeSkillManifestProjectsInheritedAndFilteredEntries(t *testing.T) {
+	profile, project, foreign := t.TempDir(), t.TempDir(), t.TempDir()
+	writeMCPFixture(t, filepath.Join(project, ".agents", "skills.json"), `{"inherits":[{"path":"shared/manifest.json","include_only":["shared/skills/allowed"]}],"entries":[{"path":"`+foreign+`"}]}`)
+	writeMCPFixture(t, filepath.Join(project, "shared", "manifest.json"), `{"entries":[{"path":"shared/skills"}]}`)
+	for _, item := range []string{"allowed", "excluded"} {
+		writeMCPFixture(t, filepath.Join(project, "shared", "skills", item, "SKILL.md"), "---\nname: "+item+"\n---\n"+item)
+	}
+	writeMCPFixture(t, filepath.Join(foreign, "foreign", "SKILL.md"), "---\nname: foreign\n---\nprivate")
+	writeMCPFixture(t, filepath.Join(profile, "config", "plugins", "enabled", "skills", "plug", "SKILL.md"), "---\nname: plug\n---\nplugin")
+	writeMCPFixture(t, filepath.Join(profile, "config", "plugins", "disabled", "skills", "hidden", "SKILL.md"), "---\nname: hidden\n---\ndisabled")
+	writeMCPFixture(t, filepath.Join(profile, "config", "plugins", "enabled", "plugin.json"), `{"name":"enabled"}`)
+	writeMCPFixture(t, filepath.Join(profile, "config", "plugins", "disabled", "plugin.json"), `{"name":"disabled"}`)
+	writeMCPFixture(t, filepath.Join(profile, "config", "plugins", "stray", "skills", "stray", "SKILL.md"), "---\nname: stray\n---\nnot installed")
+	writeMCPFixture(t, filepath.Join(profile, "config", "config.json"), `{"plugins":{"disabled":{"enabled":false}}}`)
+	r := &runtime{skillProfile: profile}
+	inv, err := r.SkillInventory(context.Background(), domain.LaunchContext{CWD: project})
+	if err != nil || len(inv.Entries) != 2 || inv.Entries[0].Name != "allowed" || inv.Entries[1].Name != "plug" || len(inv.Warnings) == 0 {
+		t.Fatalf("wrong native Skill projection: %+v %v", inv, err)
+	}
+}
+
+func TestNativeSkillExclusionMatchesManifestRelativePath(t *testing.T) {
+	project := t.TempDir()
+	writeMCPFixture(t, filepath.Join(project, ".agents", "skills.json"),
+		`{"entries":[{"path":"shared/skills"}],"exclude":["shared/skills/hidden"]}`)
+	writeMCPFixture(t, filepath.Join(project, "shared", "skills", "hidden", "SKILL.md"), "---\nname: differently-named\n---\ninstructions")
+	r := &runtime{}
+	got, err := r.SkillInventory(context.Background(), domain.LaunchContext{CWD: project})
+	if err != nil || len(got.Entries) != 1 || got.Entries[0].Enabled {
+		t.Fatalf("native configuration exclusion did not apply: %+v %v", got, err)
+	}
+}

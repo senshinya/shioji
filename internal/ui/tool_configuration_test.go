@@ -137,3 +137,35 @@ func TestToolEditorSavesTypedArgumentsAndRetainsPrivateValues(t *testing.T) {
 		t.Fatal("confirmed save did not return to list", ui.Texts())
 	}
 }
+
+func TestNativeFileMCPReportsSavedConfigurationWithoutClaimingRuntimeAdoption(t *testing.T) {
+	v, _, ui := serviceUI(t)
+	v.Model.DeviceStates["local"].WorkerMinor = 24
+	service := domain.ToolService{ID: "native", Name: "Native", Editable: true, State: domain.ToolServiceUnknown,
+		Configuration: &domain.ToolServiceConfiguration{Name: "native", Transport: "http", URL: "https://example.invalid/mcp", Enabled: true}}
+	catalog := domain.ToolServiceCatalog{CanAdd: true, BasicEditing: true, Revision: "one", Services: []domain.ToolService{service}}
+	data, _ := json.Marshal(catalog)
+	welcomeJob(t, v.Controller, "runtime.tools.list").Apply(v.Model, data, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	feedbackClick(t, ui, "编辑 MCP：Native")
+	ui.Advance(time.Second)
+	if _, found := ui.Find("MCP 令牌环境变量"); found {
+		t.Fatal("native-file editor displayed an unsupported token setting")
+	}
+	feedbackClick(t, ui, "保存 MCP 服务")
+	job := welcomeJob(t, v.Controller, "runtime.tools.change")
+	if cfg := job.Input.(protocol.ToolServiceInput).Change.Configuration; cfg.StartupSeconds != 0 {
+		t.Fatalf("native-file form sent an unsupported startup setting: %+v", cfg)
+	}
+	data, _ = json.Marshal(domain.ToolServiceChangeResult{Saved: true})
+	job.Apply(v.Model, data, nil)
+	catalog.Revision = "two"
+	data, _ = json.Marshal(catalog)
+	welcomeJob(t, v.Controller, "runtime.tools.list").Apply(v.Model, data, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	if !ui.HasText("已保存到设备配置，当前会话生效状态未知") {
+		t.Fatal("native-file save misrepresented runtime adoption", ui.Texts())
+	}
+}

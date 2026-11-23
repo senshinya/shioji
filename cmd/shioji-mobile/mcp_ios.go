@@ -155,7 +155,7 @@ func (s *mobileToolServices) list(a *mobileApp, c *ui.Context, w *mygo.Window) {
 				if s.catalog.CanAdd && a.model.WorkerMinor >= 24 {
 					iconButton(c, "添加 MCP 服务", plusSymbol, 17, func() {
 						s.saved = false
-						s.draft = newMobileToolEditor(s.catalog.Revision, nil)
+						s.draft = newMobileToolEditor(s.catalog, nil)
 					}).Disabled(!s.authorizedWrite(a, w))
 				}
 			})
@@ -181,7 +181,7 @@ func (s *mobileToolServices) serviceRow(a *mobileApp, c *ui.Context, w *mygo.Win
 	if service.Configuration != nil {
 		edit = func() {
 			s.saved = false
-			s.draft = newMobileToolEditor(s.catalog.Revision, &service)
+			s.draft = newMobileToolEditor(s.catalog, &service)
 		}
 	}
 	ui.Row(c).AlignItems(ui.Center).MinHeight(max(contentRowHeight, mobileTapSize(c))).Gap(6).Children(func() {
@@ -217,15 +217,27 @@ func (s *mobileToolServices) feedback(c *ui.Context, connected bool) {
 		s.write.status(c)
 	case s.read.err != "":
 		if s.saved {
-			mobileMessage(c, "配置已保存，连接检查未完成")
+			message := "配置已保存，连接检查未完成"
+			if s.catalog.BasicEditing {
+				message = "配置已保存，读取未完成，请刷新核对"
+			}
+			mobileMessage(c, message)
 		}
 		s.read.status(c)
 	case s.read.busy:
-		mobileMessage(c, "正在检查 MCP…")
+		message := "正在检查 MCP…"
+		if s.catalog.BasicEditing {
+			message = "正在读取 MCP 配置…"
+		}
+		mobileMessage(c, message)
 	case !connected:
 		mobileMessage(c, "连接执行设备后再试")
 	case s.saved:
-		mobileMessage(c, "已保存，下轮生效")
+		message := "已保存，下轮生效"
+		if s.catalog.BasicEditing {
+			message = "已保存到设备配置，当前会话生效状态未知"
+		}
+		mobileMessage(c, message)
 	}
 }
 

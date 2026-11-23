@@ -454,7 +454,7 @@ func signInSSHSetup(ctx context.Context, in SignInSSHDevice) (domain.SignInStatu
 	if in.DeviceID == "" || in.SSH.Worker == "" || in.SSH.StateDirectory == "" {
 		return domain.SignInStatus{}, errors.New("请先检查 SSH 设备")
 	}
-	if in.Action != "start" && in.Action != "status" && in.Action != "cancel" {
+	if in.Action != "start" && in.Action != "status" && in.Action != "cancel" && in.Action != "code" {
 		return domain.SignInStatus{}, errors.New("登录操作无效")
 	}
 	conn, err := in.SSH.Dial(ctx)
@@ -467,6 +467,9 @@ func signInSSHSetup(ctx context.Context, in SignInSSHDevice) (domain.SignInStatu
 		return domain.SignInStatus{}, err
 	}
 	defer client.Close()
+	if in.Action == "code" && client.Minor < protocol.SignInManualCodeMinor {
+		return domain.SignInStatus{}, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能提交授权信息"}
+	}
 	if client.Minor < 19 {
 		return domain.SignInStatus{}, errors.New("更新设备的执行服务后才能在应用内登录")
 	}

@@ -195,6 +195,9 @@ func executeJob(ctx context.Context, client *protocol.Client, job Job) (json.Raw
 	if strings.HasPrefix(job.Method, "storage.") && client.Minor < 31 {
 		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能管理存储"}
 	}
+	if job.Method == "runtime.signin.code" && client.Minor < protocol.SignInManualCodeMinor {
+		return nil, &protocol.RemoteError{Code: "notSent", Message: "更新设备执行服务后才能提交授权信息"}
+	}
 	if strings.HasPrefix(job.Method, "runtime.signin.") && client.Minor < 19 {
 		return nil, errors.New("更新设备的执行服务后才能在应用内登录")
 	}

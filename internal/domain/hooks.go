@@ -17,10 +17,11 @@ const (
 type HookTrust string
 
 const (
-	HookUntrusted HookTrust = "untrusted"
-	HookModified  HookTrust = "modified"
-	HookTrusted   HookTrust = "trusted"
-	HookPolicy    HookTrust = "policy"
+	HookUntrusted     HookTrust = "untrusted"
+	HookModified      HookTrust = "modified"
+	HookTrusted       HookTrust = "trusted"
+	HookPolicy        HookTrust = "policy"
+	HookNativeManaged HookTrust = "nativeManaged"
 )
 
 // IDs and definition revisions are opaque adapter references. Paths and the
@@ -28,6 +29,7 @@ const (
 type HookEntry struct {
 	ID                 string    `json:"id"`
 	DefinitionRevision string    `json:"definitionRevision"`
+	Name               string    `json:"name,omitempty"`
 	Event              string    `json:"event"`
 	Kind               string    `json:"kind"`
 	Command            string    `json:"command,omitempty"`
@@ -47,6 +49,13 @@ type HookEntry struct {
 	CanEnable          bool      `json:"canEnable"`
 	CanTrust           bool      `json:"canTrust"`
 	ReadOnlyReason     string    `json:"readOnlyReason,omitempty"`
+}
+
+func (h HookEntry) Title() string {
+	if h.Name != "" {
+		return h.Name
+	}
+	return h.Event
 }
 
 type HookCatalog struct {

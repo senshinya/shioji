@@ -616,7 +616,7 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 			return nil, err
 		}
 		return s.selectRuntimeAgent(in)
-	case "runtime.signin.start", "runtime.signin.status", "runtime.signin.cancel":
+	case "runtime.signin.start", "runtime.signin.status", "runtime.signin.cancel", "runtime.signin.code":
 		in, err := decode[protocol.SignInInput](body)
 		if err != nil {
 			return nil, err

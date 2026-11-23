@@ -10,7 +10,9 @@ Codex adapter 启动时检查当前安装导出的协议形状和实际能力，
 
 ## Antigravity
 
-执行设备的 worker 用与 Codex 共用的登录 Shell 环境解析系统 `agy`。它也可使用设备配置中的绝对路径，或探测常见的系统安装目录。Shioji 的安装包只分发 Shioji 自身组件。安装和登录使用执行设备上的 [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli)。
+执行设备的 worker 用与 Codex 共用的登录 Shell 环境解析系统 `agy`。它也可使用设备配置中的绝对路径，或探测常见的系统安装目录。Shioji 的安装包只分发 Shioji 自身组件。安装使用执行设备上的 [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli)。
+
+设备设置的 Google 登录由所属 worker 启动官方 `agy acp --login`。控制端打开 Google 授权页，将一次性授权码或对应回调地址送回原登录进程。取消会结束该进程组。凭据由执行设备的 CLI 保存。授权结果与模型目录分别确认。已有 Gemini API key、Enterprise 和 Agent Platform 配置继续由设备的原生 CLI 管理。[官方认证说明](https://antigravity.google/docs/install) · [Lody 登录方式](https://github.com/LodyAI/Lody/blob/2e1bb69/apps/cli/src/agent/README.md#authentication)
 
 后台探测执行 ACP 握手并读取适用于当前可执行文件和设备配置目录的缓存。显式配置或重新检测会用空的探测会话获取模型、思考强度和执行模式。每个执行会话持有独立 ACP 进程，恢复时重新核对模型、思考强度和模式。Plan 是 Antigravity 的执行模式，进入 Plan 时使用默认权限选项。未确认的输入在恢复时保持待核对。
 
@@ -24,9 +26,17 @@ Antigravity 的选择题通过 ACP 表单进入会话的待处理面板，支持
 
 定时任务的计划与运行回执保存在所属 worker。AGY 定时运行保留任务所选的 Agent、运行配置和工作区，使用普通提交入口。
 
+AGY 受管会话向原生 Hook 提供 `SHIOJI_CALLBACK_URL` 和 `SHIOJI_CALLBACK_TOKEN`。Hook 可向执行设备的回环端点发送带 Bearer 令牌的 HTTP POST，正文为 `{"id":"稳定事件标识","text":"排队消息"}`。worker 以当前会话、原生来源和执行代次核对接纳，使用稳定回执去重。重复事件沿用原回执，用户暂停的队列保持暂停。接口返回 202 时，消息已进入普通持久队列。
+
+设备重新检测时，默认原生配置目录可通过官方 CLI 的 `/usage` 零模型轮次结果读取五小时和周额度。设备页显示有效的模型组、已用百分比和可核实的重置时间。自定义 ACP 配置目录使用独立账号范围，额度未核实的窗口保持未知。[Lody 原生额度读取](https://github.com/LodyAI/Lody/blob/2e1bb69/apps/cli/src/agent/antigravity-quota.ts)
+
 文本 `@` 引用使用 worker 已保存的不可变快照。二进制路径附件只传执行设备上的已验证路径，访问仍受 Antigravity 当前权限约束。代码评论携带已选 diff 片段和比较基准。工具结果的内嵌图片、文本和设备文件链接由所属 worker 校验并保存为可跨客户端读取的附件。会话标题仅采纳同一原生会话的标题事件，用户手工命名优先。
 
-只读 Skill 目录从执行设备已接纳的项目目录及 Antigravity 的个人与内置标准目录读取，按 CLI 的同名优先级选择。行内引用绑定文件位置及内容摘要，编辑或替换文件后需要重新选取。清单声明的附加来源、继承和插件目录由 Antigravity CLI 管理。[Antigravity Skill 查找规则](https://antigravity.google/docs/customization-discovery?tab=cli)
+只读 Skill 目录读取已接纳的项目和设备原生配置，包括标准目录、清单声明的条目和继承，以及已启用的设备插件。清单按名称或相对路径筛选，继承内的相对路径沿用原项目或个人配置基准。授权范围之外的来源由 CLI 管理。行内引用绑定文件位置及内容摘要，编辑、停用或替换文件后需要重新选取。[Antigravity Skill 查找规则](https://antigravity.google/docs/customization-discovery?tab=cli)
+
+设备设置的 MCP 页读取和编辑所属设备原生配置目录中的 `config/mcp_config.json`。默认原生目录为 `~/.gemini`，绝对路径 `GEMINI_HOME` 会传给 ACP 进程。设备页支持 stdio 和 Streamable HTTP 的基本配置及启停，保留未编辑的原生字段。环境变量和请求头读取时只返回名称。原文件修订和所属配置目录共同限定写入，文件仅对设备账户可读。服务迁移到其他来源时需要重新配置凭据。保存回执表示配置已写入，新会话由 CLI 加载，当前会话的连接、OAuth 和生效状态由原生 CLI 管理。[Antigravity MCP 配置](https://antigravity.google/docs/mcp?tab=cli)
+
+Hooks 按 `hooks.json` 中的命名定义展示和启停，每个开关对应整个原生定义及其处理器。设备页写入设备配置，会话 Hooks 页面仅允许编辑已接纳目录中的项目定义。配置数据和定义修订都须匹配请求。保存只修改指定定义的 `enabled` 字段。项目与会话的 MCP 检查和 Hooks 列表覆盖已接纳目录及其中可观察到的 Git 父级和原生目录别名。范围外的继承配置和插件来源由 CLI 管理。当前会话生效状态以原生可观察结果为准。[Antigravity Hooks 配置](https://antigravity.google/docs/hooks?tab=cli) · [配置发现规则](https://antigravity.google/docs/customization-discovery?tab=cli)
 
 ## 子工作来源与待处理请求
 

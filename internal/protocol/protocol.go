@@ -57,7 +57,8 @@ const Major = 2
 // Minor 55 supports a durable receipt before preparing a new session.
 // Minor 58 includes the mobile worker's Agent settings and checkout confirmation.
 // Minor 59 permits confirmation of an observed checkout during an active turn.
-const Minor = 59
+// Minor 60 accepts one-time browser authorization responses on their owning worker.
+const Minor = 60
 
 const CatalogMinor = 53
 const SubmissionReceiptMinor = 55
@@ -69,6 +70,7 @@ const RuntimeSettingsMinor = 56
 const GitConfirmationMinor = 56
 const QuestionReplyMinor = 57
 const ActiveGitConfirmationMinor = 59
+const SignInManualCodeMinor = 60
 
 // Structured questions identify support on desktop 54 and 55. The mobile
 // branch first acquired them at 57.
@@ -391,11 +393,12 @@ type RuntimePrivateValue struct {
 // ID identifies a single explicitly started authorization. Querying an unknown
 // ID must never restart it, including after worker restart or network loss.
 type SignInInput struct {
-	API           *domain.APIConfiguration `json:"api,omitempty"`
-	ID            string                   `json:"id"`
-	HarnessID     string                   `json:"harnessId"`
-	Method        domain.SignInMethod      `json:"method,omitempty"`
-	Configuration *RuntimeConfiguration    `json:"configuration,omitempty"`
+	AuthorizationCode string                   `json:"authorizationCode,omitempty"`
+	API               *domain.APIConfiguration `json:"api,omitempty"`
+	ID                string                   `json:"id"`
+	HarnessID         string                   `json:"harnessId"`
+	Method            domain.SignInMethod      `json:"method,omitempty"`
+	Configuration     *RuntimeConfiguration    `json:"configuration,omitempty"`
 }
 
 // DeviceAgents is the complete set selected for one owning device.

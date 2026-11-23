@@ -32,6 +32,7 @@ type ToolService struct {
 	CanAuthorize   bool                      `json:"canAuthorize"`
 }
 type ToolServiceCatalog struct {
+	BasicEditing  bool                      `json:"basicEditing,omitempty"`
 	CanAdd        bool                      `json:"canAdd,omitempty"`
 	Revision      string                    `json:"revision,omitempty"`
 	Services      []ToolService             `json:"services"`

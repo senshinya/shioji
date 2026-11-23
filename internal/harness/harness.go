@@ -250,6 +250,11 @@ type SignIn interface {
 	Wait(context.Context) (domain.Readiness, error)
 	Cancel(context.Context) error
 }
+
+// SignInCodeReceiver holds a one-time response on its original authorization process.
+type SignInCodeReceiver interface {
+	SubmitCode(context.Context, string) error
+}
 type APIConfigurationProvider interface {
 	ConfigureAPI(context.Context, domain.APIConfiguration) (domain.Readiness, error)
 }

@@ -252,6 +252,8 @@ func hookTrustLabel(trust domain.HookTrust) string {
 		return "已信任"
 	case domain.HookModified:
 		return "已修改"
+	case domain.HookNativeManaged:
+		return "Agent 管理"
 	case domain.HookPolicy:
 		return "策略管理"
 	default:
@@ -464,8 +466,8 @@ func (v *View) hookReview(c *n.Context, t *n.Theme, u *hookManagementUI) {
 				n.Column(c.Key(h.ID)).FillWidth().Padding(12, 0, 16, 0).Gap(6).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).Children(func() {
 					n.Row(c).FillWidth().AlignItems(n.Baseline).Gap(8).Children(func() {
 						checked := u.reviewSelection[h.ID]
-						if configurationCheckbox(c, &checked, "", n.Font{Family: t.Font, Size: 13, Weight: 400}, h.Event).
-							Width(24).Height(28).Label("选择 Hook：" + h.Event).Disabled(!writable).Changed() {
+						if configurationCheckbox(c, &checked, "", n.Font{Family: t.Font, Size: 13, Weight: 400}, h.Title()).
+							Width(24).Height(28).Label("选择 Hook：" + h.Title()).Disabled(!writable).Changed() {
 							if u.reviewSelection == nil {
 								u.reviewSelection = make(map[string]bool)
 							}
@@ -474,7 +476,7 @@ func (v *View) hookReview(c *n.Context, t *n.Theme, u *hookManagementUI) {
 						if checked {
 							selected = append(selected, definition)
 						}
-						n.Text(c, h.Event).FontSize(14).FixedLineHeight(20).Grow(1).MinWidth(0)
+						n.Text(c, h.Title()).FontSize(14).FixedLineHeight(20).Grow(1).MinWidth(0)
 						state := hookTrustLabel(h.Trust)
 						if !h.Enabled {
 							state += " · 已停用"
@@ -548,7 +550,7 @@ func (v *View) hookRows(c *n.Context, t *n.Theme, u *hookManagementUI, compact b
 		}
 		summary := hookRowSummary(h)
 		trust := hookTrustLabel(h.Trust)
-		if query != "" && !strings.Contains(strings.ToLower(h.Event+" "+summary+" "+h.SourcePath+" "+hookDefinition(h)+" "+trust), query) {
+		if query != "" && !strings.Contains(strings.ToLower(h.Title()+" "+h.Event+" "+summary+" "+h.SourcePath+" "+hookDefinition(h)+" "+trust), query) {
 			continue
 		}
 		count++
@@ -578,13 +580,13 @@ func (v *View) hookRows(c *n.Context, t *n.Theme, u *hookManagementUI, compact b
 			}
 		}
 		n.Row(c.Key(h.ID)).FillWidth().Height(hookRowHeight).Padding(8, 0, 8, 0).Gap(8).AlignItems(n.Start).BorderWidth(0, 0, .5, 0).BorderColor(t.Border).Children(func() {
-			open := control(c.Key("open"), 5).Grow(1).MinWidth(0).Height(48).Padding(0, 0).Justify(n.Start).Label("查看 Hook：" + h.Event)
+			open := control(c.Key("open"), 5).Grow(1).MinWidth(0).Height(48).Padding(0, 0).Justify(n.Start).Label("查看 Hook：" + h.Title())
 			open.Children(func() {
 				n.Column(c).FillWidth().MinWidth(0).Children(func() {
 					n.Row(c).FillWidth().Height(28).Gap(12).AlignItems(n.Baseline).Children(func() {
-						n.Text(c, h.Event).FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").TooltipWhenTruncated(h.Event)
+						n.Text(c, h.Title()).FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").TooltipWhenTruncated(h.Title())
 						if !compact {
-							hookColumnText(c, t, h.Event, trust, 60)
+							hookColumnText(c, t, h.Title(), trust, 60)
 						}
 					})
 					n.Row(c).FillWidth().Height(configurationTextLine).Gap(8).AlignItems(n.Baseline).Children(func() {
@@ -601,10 +603,10 @@ func (v *View) hookRows(c *n.Context, t *n.Theme, u *hookManagementUI, compact b
 				u.expanded = false
 				u.detailScroll = n.ScrollState{}
 			}
-			n.Column(c).Width(48).Height(28).Justify(n.Center).AlignItems(n.End).Transform(n.Translation(0, hookFirstLineControlOffset(h.Event, t))).Children(func() {
+			n.Column(c).Width(48).Height(28).Justify(n.Center).AlignItems(n.End).Transform(n.Translation(0, hookFirstLineControlOffset(h.Title(), t))).Children(func() {
 				if hookOwned(u, h) && h.CanEnable {
 					enabled := h.Enabled
-					if confirmedConfigurationSwitch(c.Key("enabled"), &enabled, h.Enabled).Label("启停 Hook：" + h.Event).Disabled(!v.hookWritable(u)).Changed() {
+					if confirmedConfigurationSwitch(c.Key("enabled"), &enabled, h.Enabled).Label("启停 Hook：" + h.Title()).Disabled(!v.hookWritable(u)).Changed() {
 						v.changeHook(u, h, domain.HookSetEnabled)
 					}
 				} else {
@@ -615,7 +617,7 @@ func (v *View) hookRows(c *n.Context, t *n.Theme, u *hookManagementUI, compact b
 					n.Text(c, label).FontSize(11).TextColor(t.TextMuted).Tooltip(h.ReadOnlyReason)
 				}
 			})
-			if iconButton(c, rightChevron, "查看 Hook 详情："+h.Event).Transform(n.Translation(0, hookFirstLineControlOffset(h.Event, t))).Clicked() {
+			if iconButton(c, rightChevron, "查看 Hook 详情："+h.Title()).Transform(n.Translation(0, hookFirstLineControlOffset(h.Title(), t))).Clicked() {
 				u.detailID = h.ID
 				u.expanded = false
 				u.detailScroll = n.ScrollState{}
@@ -634,6 +636,13 @@ func (v *View) hookRows(c *n.Context, t *n.Theme, u *hookManagementUI, compact b
 	}
 }
 
+func nativeHookEvents(h domain.HookEntry) string {
+	if h.Name != "" {
+		return h.Event
+	}
+	return ""
+}
+
 func hookRowSummary(h domain.HookEntry) string {
 	name := h.Plugin
 	if h.Kind == "tool" && h.Service != "" && h.Tool != "" {
@@ -642,7 +651,7 @@ func hookRowSummary(h domain.HookEntry) string {
 		name = path.Base(h.SourcePath)
 	}
 	var parts []string
-	for _, part := range []string{h.Source, h.Matcher, name} {
+	for _, part := range []string{h.Source, nativeHookEvents(h), h.Matcher, name} {
 		if part != "" {
 			parts = append(parts, part)
 		}
@@ -687,8 +696,8 @@ func (v *View) hookDetail(c *n.Context, t *n.Theme, u *hookManagementUI) {
 			}
 			n.Column(c).FillWidth().PaddingEnd(0).Gap(16).Children(func() {
 				n.Row(c).FillWidth().MinHeight(28).Gap(12).AlignItems(n.Baseline).Children(func() {
-					n.Text(c, h.Event).FontSize(18).FixedLineHeight(28).Grow(1).MinWidth(0)
-					n.Text(c, hookTrustLabel(h.Trust)).FontSize(12).TextColor(t.TextMuted).Transform(n.Translation(0, inlineFontMetrics(hookTrustLabel(h.Trust), n.Font{Family: t.Font, Size: 12, Weight: 400}).center-inlineFontMetrics(h.Event, n.Font{Family: t.Font, Size: 18, Weight: 400}).center))
+					n.Text(c, h.Title()).FontSize(18).FixedLineHeight(28).Grow(1).MinWidth(0)
+					n.Text(c, hookTrustLabel(h.Trust)).FontSize(12).TextColor(t.TextMuted).Transform(n.Translation(0, inlineFontMetrics(hookTrustLabel(h.Trust), n.Font{Family: t.Font, Size: 12, Weight: 400}).center-inlineFontMetrics(h.Title(), n.Font{Family: t.Font, Size: 18, Weight: 400}).center))
 				})
 				n.Text(c, hookDefinition(*h)).Font("monospace").FontSize(13).FixedLineHeight(21).FillWidth().Padding(12).Radius(5).Background(t.Surface).Selectable()
 				n.Text(c, h.SourcePath).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
@@ -762,7 +771,7 @@ func (v *View) hookDetail(c *n.Context, t *n.Theme, u *hookManagementUI) {
 				}
 				if h.CanEnable {
 					enabled := h.Enabled
-					if confirmedConfigurationSwitch(c, &enabled, h.Enabled).Label("启停 Hook：" + h.Event).Disabled(!v.hookWritable(u)).Changed() {
+					if confirmedConfigurationSwitch(c, &enabled, h.Enabled).Label("启停 Hook：" + h.Title()).Disabled(!v.hookWritable(u)).Changed() {
 						v.changeHook(u, *h, domain.HookSetEnabled)
 					}
 					label := hookToggleProgress(u, h.ID)

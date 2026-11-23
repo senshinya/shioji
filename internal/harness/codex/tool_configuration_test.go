@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"shioji/internal/domain"
+	"shioji/internal/harness"
 	"strings"
 	"testing"
 	"time"
@@ -120,7 +121,7 @@ func TestToolHeaderNamesRejectCaseDuplicatesAndWhitespace(t *testing.T) {
 		{{Name: "Authorization", Value: "a"}, {Name: "authorization", Value: "b"}},
 		{{Name: "X Invalid", Value: "a"}},
 	} {
-		if _, err := mergeToolValues(rows, nil, true); err == nil {
+		if _, err := harness.MergeToolValues(rows, nil, true); err == nil {
 			t.Fatal("invalid or ambiguous HTTP headers accepted")
 		}
 	}

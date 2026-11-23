@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -38,13 +39,17 @@ func (s *Server) hookContext(in domain.HookRequest, mutation bool) (domain.Launc
 		if session.WorkspaceID != w.ID || session.HarnessID != in.HarnessID || mutation && session.Archived {
 			return domain.LaunchContext{}, session, errors.New("会话不属于此工作区或 Agent，或已归档")
 		}
-		roots = []string{session.Context.CWD}
+		roots = append([]string{session.Context.CWD}, session.Context.AdditionalDirectories...)
 	}
 	valid, err := validateFolders(roots)
 	if err != nil || len(valid) == 0 || strings.Join(valid, "\x00") != strings.Join(roots, "\x00") {
 		return domain.LaunchContext{}, session, errors.New("所属目录已改变，请重新核对")
 	}
-	return domain.LaunchContext{CWD: valid[0]}, session, nil
+	launch := domain.LaunchContext{CWD: valid[0]}
+	if in.SessionID != "" {
+		launch.AdditionalDirectories = valid[1:]
+	}
+	return launch, session, nil
 }
 
 func (s *Server) listHooks(ctx context.Context, in domain.HookRequest) (domain.HookCatalog, error) {
@@ -57,7 +62,7 @@ func (s *Server) listHooks(ctx context.Context, in domain.HookRequest) (domain.H
 			if provider, ok := r.(harness.HookProvider); ok {
 				out, err := provider.Hooks(ctx, launch, session.ThreadID)
 				current, e := s.store.Session(session.ID, 0, 1)
-				if e != nil || current.Session.ThreadID != session.ThreadID || current.Session.Context.CWD != launch.CWD || current.Session.HarnessID != in.HarnessID {
+				if e != nil || current.Session.ThreadID != session.ThreadID || current.Session.Context.CWD != launch.CWD || !slices.Equal(current.Session.Context.AdditionalDirectories, launch.AdditionalDirectories) || current.Session.HarnessID != in.HarnessID {
 					return domain.HookCatalog{}, errors.New("会话上下文已变化，请重新核对")
 				}
 				return out, err

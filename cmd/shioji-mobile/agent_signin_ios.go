@@ -19,16 +19,17 @@ import (
 )
 
 type mobileAgentSignIn struct {
-	status   domain.SignInStatus
-	method   domain.SignInMethod
-	pending  bool
-	message  string
-	timer    *time.Timer
-	callback *transport.LoopbackForward
-	stop     context.CancelFunc
-	opening  bool
-	route    string
-	observed bool
+	status     domain.SignInStatus
+	method     domain.SignInMethod
+	pending    bool
+	message    string
+	timer      *time.Timer
+	callback   *transport.LoopbackForward
+	stop       context.CancelFunc
+	opening    bool
+	route      string
+	observed   bool
+	manualCode string
 }
 
 func (a *mobileApp) retireAgentSignIns() {
@@ -167,9 +168,14 @@ func (a *mobileApp) sendAgentSignIn(attempt *mobileAgentSignIn, action string, i
 		switch {
 		case err == nil && json.Unmarshal(raw, &status) == nil && validSignInReceipt(reference, status):
 			attempt.status = status
+			if !status.Challenge.ManualCode {
+				attempt.manualCode = ""
+			}
 			attempt.message = ""
 		case action == "start" && errors.As(err, &rejected):
 			attempt.status.Phase = domain.SignInFailed
+			attempt.message = rejected.Message
+		case action == "code" && errors.As(err, &rejected):
 			attempt.message = rejected.Message
 		case action == "cancel":
 			attempt.message = "取消尚未确认，连接恢复后可重试"
@@ -364,6 +370,16 @@ func (a *mobileApp) agentSignInProgress(c *ui.Context, w *mygo.Window, p *mobile
 			})
 		}
 		input := protocol.SignInInput{ID: p.status.ID, HarnessID: p.status.HarnessID}
+		if challenge.ManualCode {
+			formInput(c, "Google 授权码", "粘贴授权码或回调地址", &p.manualCode).Password().Disabled(p.pending || !a.model.Connected)
+			action(c, "提交授权", func() {
+				codeInput := input
+				codeInput.AuthorizationCode = p.manualCode
+				if a.sendAgentSignIn(p, "code", codeInput) {
+					p.manualCode = ""
+				}
+			}).Disabled(p.pending || !a.model.Connected || strings.TrimSpace(p.manualCode) == "")
+		}
 		ui.Row(c).Wrap().Gap(4).Children(func() {
 			if agentAuthorizationURL(challenge.URL) {
 				action(c, "打开授权页", func() { a.openAgentAuthorization(w, p) }).Disabled(p.opening || !a.model.Connected)
@@ -403,6 +419,12 @@ func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain
 	attempt := a.agentSignIns[agent.ID]
 	active := attempt != nil && attempt.status.Phase.Active()
 	methods := agentMobileSignInMethods(agent, a.model.WorkerMinor)
+	if agent.Account != nil && !active && !draft.reauthorize {
+		for i, window := range agent.Account.QuotaWindows {
+			title, value := app.RuntimeQuotaLabels(window)
+			mobileRow(c.Key(i), title, "", value, nil, nil)
+		}
+	}
 	if account := agent.Account; account != nil && account.Mode != "api" && (account.State == "authenticated" || account.State == "notRequired") && !draft.reauthorize {
 		mobileRow(c, "账号", "", agentAccountName(account), accountSymbol, nil)
 		if account.Identity != "" {

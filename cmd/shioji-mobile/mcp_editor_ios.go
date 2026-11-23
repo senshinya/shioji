@@ -24,7 +24,7 @@ type mobileToolEditor struct {
 	original              *domain.ToolServiceConfiguration
 	args                  []*string
 	env, headers          []*mobileToolValue
-	readOnly              bool
+	readOnly, basic       bool
 	advanced, confirmDrop bool
 }
 
@@ -33,8 +33,8 @@ type mobileToolValue struct {
 	replace bool
 }
 
-func newMobileToolEditor(revision string, service *domain.ToolService) *mobileToolEditor {
-	d := &mobileToolEditor{revision: revision, config: domain.ToolServiceConfiguration{Transport: "command", Enabled: true}}
+func newMobileToolEditor(catalog domain.ToolServiceCatalog, service *domain.ToolService) *mobileToolEditor {
+	d := &mobileToolEditor{revision: catalog.Revision, basic: catalog.BasicEditing, config: domain.ToolServiceConfiguration{Transport: "command", Enabled: true}}
 	if service != nil {
 		d.id, d.readOnly, d.reason = service.ID, !service.Editable, service.ReadOnlyReason
 		d.config = *service.Configuration
@@ -167,7 +167,9 @@ func (s *mobileToolServices) editor(a *mobileApp, c *ui.Context, w *mygo.Window)
 					d.arguments(c, editable)
 				} else {
 					toolField(c, "服务地址", "MCP 服务地址", "https://…/mcp", &d.config.URL, editable)
-					toolField(c, "令牌环境变量", "MCP 令牌环境变量", "可选", &d.config.TokenEnvironment, editable)
+					if !d.basic {
+						toolField(c, "令牌环境变量", "MCP 令牌环境变量", "可选", &d.config.TokenEnvironment, editable)
+					}
 				}
 				arrow := rightSymbol
 				if d.advanced {
@@ -179,12 +181,16 @@ func (s *mobileToolServices) editor(a *mobileApp, c *ui.Context, w *mygo.Window)
 					ui.Column(c.Key("mcp-advanced")).Transition(mobilePanelTransition).Children(func() {
 						if d.config.Transport == "command" {
 							toolValueRows(c.Key("env"), "环境变量", &d.env, editable)
-							toolField(c, "继承环境变量", "MCP 继承环境变量", "PATH HOME", &d.inherited, editable)
+							if !d.basic {
+								toolField(c, "继承环境变量", "MCP 继承环境变量", "PATH HOME", &d.inherited, editable)
+							}
 							toolField(c, "工作目录", "MCP 工作目录", "Agent 默认目录", &d.config.Directory, editable)
 						} else {
 							toolValueRows(c.Key("headers"), "请求头", &d.headers, editable)
 						}
-						toolField(c, "启动超时（秒）", "MCP 启动超时", "默认", &d.timeout, editable)
+						if !d.basic {
+							toolField(c, "启动超时（秒）", "MCP 启动超时", "默认", &d.timeout, editable)
+						}
 					})
 				}
 				formRow(c, "启用", func() { mobileSwitch(c, "启用 MCP 服务", &d.config.Enabled, nil).Disabled(!editable) })

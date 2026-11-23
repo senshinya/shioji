@@ -36,12 +36,12 @@ type toolConfigurationDraft struct {
 	arguments                        []toolArgumentDraft
 	environment, headers             []toolValueDraft
 	nextID                           int
-	advanced, focus, readOnly        bool
+	advanced, focus, readOnly, basic bool
 	reason                           string
 }
 
 func (u *toolServicesUI) editService(service *domain.ToolService) {
-	d := &toolConfigurationDraft{config: domain.ToolServiceConfiguration{Transport: "command", Enabled: true}, revision: u.catalog.Revision, timeout: "10", focus: true}
+	d := &toolConfigurationDraft{config: domain.ToolServiceConfiguration{Transport: "command", Enabled: true}, revision: u.catalog.Revision, timeout: "10", focus: true, basic: u.catalog.BasicEditing}
 	if service != nil && service.Configuration != nil {
 		d.config = *service.Configuration
 		d.id = service.ID
@@ -53,7 +53,7 @@ func (u *toolServicesUI) editService(service *domain.ToolService) {
 	}
 	d.inherited = strings.Join(d.config.InheritedEnvironment, " ")
 	d.original = d.config
-	if d.original.StartupSeconds == 0 {
+	if !d.basic && d.original.StartupSeconds == 0 {
 		d.original.StartupSeconds = 10
 	}
 	for _, arg := range d.config.Arguments {
@@ -109,6 +109,9 @@ func (d *toolConfigurationDraft) value() (domain.ToolServiceConfiguration, error
 	}
 	if result.Transport == "http" && !strings.HasPrefix(result.URL, "http://") && !strings.HasPrefix(result.URL, "https://") {
 		return result, errors.New("请输入 HTTP 或 HTTPS 地址")
+	}
+	if d.basic {
+		return result, nil
 	}
 	var err error
 	result.StartupSeconds, err = strconv.ParseFloat(d.timeout, 64)
@@ -277,7 +280,11 @@ func (v *View) toolServiceList(c *n.Context, t *n.Theme, u *toolServicesUI, disa
 							v.changeToolConfiguration(u, domain.ToolServiceChange{Action: "setEnabled", ServiceID: service.ID, Revision: u.catalog.Revision, Enabled: enabled})
 						}
 						trigger := iconButton(c, moreActionsIcon, service.Name+" 更多操作").AlignSelf(n.Center).Disabled(disabled || busy)
-						v.choiceMenu(c, t, "mcp:"+u.device+":"+u.harness+":"+service.ID, trigger, []menuChoice{{id: "edit", name: "编辑", choose: func() { u.editService(&service) }}, {id: "check", name: "检查连接", choose: func() { v.queryToolServices(u, u.catalog.CanRefresh) }}, {id: "delete", name: "删除", choose: func() { u.removingID = service.ID }}})
+						check := "检查连接"
+						if u.catalog.BasicEditing {
+							check = "核对设备配置"
+						}
+						v.choiceMenu(c, t, "mcp:"+u.device+":"+u.harness+":"+service.ID, trigger, []menuChoice{{id: "edit", name: "编辑", choose: func() { u.editService(&service) }}, {id: "check", name: check, choose: func() { v.queryToolServices(u, u.catalog.CanRefresh) }}, {id: "delete", name: "删除", choose: func() { u.removingID = service.ID }}})
 					} else if service.ReadOnlyReason != "" {
 						inlineSymbol(c, toolLockIcon, service.Name, n.Font{Family: t.Font, Size: 13, Weight: 400}, 14, t.TextMuted).Tooltip(service.ReadOnlyReason)
 					}
@@ -345,24 +352,30 @@ func (v *View) toolConfigurationEditor(c *n.Context, t *n.Theme, u *toolServices
 					deviceConfigRow(c, "服务地址", func() {
 						configurationTextField(c, &d.config.URL).Label("MCP 服务地址").Placeholder("https://…/mcp").Disabled(disabled)
 					})
-					deviceConfigRow(c, "令牌环境变量", func() {
-						configurationTextField(c, &d.config.TokenEnvironment).Label("MCP 令牌环境变量").Placeholder("GITHUB_TOKEN").Disabled(disabled)
-					})
+					if !d.basic {
+						deviceConfigRow(c, "令牌环境变量", func() {
+							configurationTextField(c, &d.config.TokenEnvironment).Label("MCP 令牌环境变量").Placeholder("GITHUB_TOKEN").Disabled(disabled)
+						})
+					}
 				}
 			}, false)
 			deviceDisclosure(c.Key("advanced"), "高级选项", &d.advanced, func() {
 				if d.config.Transport == "command" {
 					configurationFormRow(c, "环境变量", configurationDeviceForm, func() { v.toolValueFields(c, t, d, &d.environment, disabled) }, true)
-					deviceConfigRow(c, "继承环境变量", func() {
-						configurationTextField(c, &d.inherited).Label("MCP 继承环境变量").Placeholder("PATH HOME").Disabled(disabled)
-					})
+					if !d.basic {
+						deviceConfigRow(c, "继承环境变量", func() {
+							configurationTextField(c, &d.inherited).Label("MCP 继承环境变量").Placeholder("PATH HOME").Disabled(disabled)
+						})
+					}
 					deviceConfigRow(c, "工作目录", func() {
 						configurationTextField(c, &d.config.Directory).Label("MCP 工作目录").Placeholder("Agent 默认目录").Disabled(disabled)
 					})
 				} else {
 					configurationFormRow(c, "请求头", configurationDeviceForm, func() { v.toolValueFields(c, t, d, &d.headers, disabled) }, true)
 				}
-				deviceConfigRow(c, "启动超时（秒）", func() { configurationTextField(c, &d.timeout).Label("MCP 启动超时").Disabled(disabled) })
+				if !d.basic {
+					deviceConfigRow(c, "启动超时（秒）", func() { configurationTextField(c, &d.timeout).Label("MCP 启动超时").Disabled(disabled) })
+				}
 			})
 			deviceConfigRow(c, "启用", func() {
 				n.Row(c).FillWidth().Justify(n.End).Children(func() { configurationSwitch(c, &d.config.Enabled).Label("启用 MCP 服务").Disabled(disabled) })

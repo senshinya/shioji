@@ -41,6 +41,22 @@ func (s *Server) signInCommand(method string, in protocol.SignInInput) (domain.S
 			}
 			return domain.SignInStatus{ID: in.ID, HarnessID: in.HarnessID, Phase: domain.SignInExpired, Message: "登录已过期，请重新登录"}, nil
 		}
+		if method == "runtime.signin.code" && current.status.Phase == domain.SignInWaiting && current.status.Challenge.ManualCode {
+			receiver, ok := current.login.(harness.SignInCodeReceiver)
+			if !ok {
+				return current.status, harness.Unsupported("sign-in-input")
+			}
+			ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+			err := receiver.SubmitCode(ctx, in.AuthorizationCode)
+			cancel()
+			if err == nil || harness.IsUncertain(err) {
+				current.status.Challenge.ManualCode = false
+				current.status.Message = "已提交授权信息，正在核对账号"
+			}
+			if err != nil && !harness.IsUncertain(err) {
+				return current.status, err
+			}
+		}
 		if method == "runtime.signin.cancel" && current.status.Phase.Active() {
 			current.status.Phase = domain.SignInCanceled
 			current.status.Challenge = domain.SignInChallenge{}
@@ -60,7 +76,7 @@ func (s *Server) signInCommand(method string, in protocol.SignInInput) (domain.S
 	if in.Method != domain.SignInBrowser && in.Method != domain.SignInDeviceCode && in.Method != domain.SignInAPI {
 		return domain.SignInStatus{}, errors.New("登录方式不可用")
 	}
-	if (in.Method == domain.SignInAPI) != (in.API != nil) {
+	if in.AuthorizationCode != "" || (in.Method == domain.SignInAPI) != (in.API != nil) {
 		return domain.SignInStatus{}, errors.New("接入配置无效")
 	}
 	encoded, _ := json.Marshal(in)
