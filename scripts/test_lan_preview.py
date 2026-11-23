@@ -1,5 +1,6 @@
 """Exercise the running preview's bootstrap, including after a tool upgrade."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -11,6 +12,33 @@ SCRIPT = Path(__file__).with_name("prepare-lan-preview.py")
 
 
 class LANPreviewTests(unittest.TestCase):
+    def test_patches_the_release_named_in_the_hub_process_title(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            dist = cache / "ryugi/artifacts/1.102.7/node_modules/ryugi-artifacts/dist"
+            viewer = dist / "viewer"
+            viewer.mkdir(parents=True)
+            entry = viewer / "index.html"
+            entry.write_text('<head><script type="module">crypto.randomUUID()</script></head>')
+            server = dist / "server.cjs"
+            server.write_text(
+                "process.title='Ryugi hub (1.102.7) --artifacts-server-id=0123456789abcdef';"
+                "const s=require('node:http').createServer((q,r)=>r.end('ok'));"
+                "s.listen(0,'127.0.0.1',()=>console.log(s.address().port));"
+            )
+            with subprocess.Popen(["node", str(server)], stdout=subprocess.PIPE, text=True) as process:
+                try:
+                    port = process.stdout.readline().strip()
+                    result = subprocess.run(
+                        [sys.executable, str(SCRIPT), "--port", port],
+                        env={**os.environ, "XDG_CACHE_HOME": str(cache)},
+                        capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertLess(entry.read_text().index("data-shioji-lan-uuid"), entry.read_text().index('type="module"'))
+                finally:
+                    process.terminate()
+
     def test_patches_the_actual_running_release_after_an_upgrade(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -5,6 +5,7 @@ release. Templates are read per HTTP request, so this needs no server restart.
 """
 from pathlib import Path
 import argparse
+import os
 import re
 import shlex
 import subprocess
@@ -39,7 +40,14 @@ try {
 def running_viewer(port):
     pids = subprocess.run(["lsof", "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"], capture_output=True, text=True, check=True).stdout.split()
     for pid in dict.fromkeys(pids):
-        command = subprocess.run(["ps", "-p", pid, "-o", "command="], capture_output=True, text=True, check=True).stdout
+        command = subprocess.run(["ps", "-ww", "-p", pid, "-o", "command="], capture_output=True, text=True, check=True).stdout.strip()
+        # Newer releases overwrite argv with a versioned hub title on macOS.
+        hub = re.match(r"^Ryugi hub \((\d+\.\d+\.\d+(?:[-+][\w.-]+)?)\) --artifacts-server-id=[\da-f]+", command)
+        if hub:
+            cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+            dist = cache / "ryugi" / "artifacts" / hub[1] / "node_modules" / "ryugi-artifacts" / "dist"
+            if (dist / "server.cjs").is_file():
+                return dist / "viewer"
         for argument in shlex.split(command):
             server = Path(argument)
             if server.name == "server.cjs" and server.parent.parent.name == "ryugi-artifacts":
