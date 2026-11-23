@@ -341,7 +341,7 @@ func (a *mobileApp) openPreviewBoard(board string) {
 	case "transcript-command-output":
 		a.seedPreviewCommandOutput(review.ID)
 		a.openSession(review.ID)
-	case "transcript-tool-tail", "transcript-tool-tail-completed", "transcript-tool-tail-settled", "transcript-tool-tail-disclosure", "running-session-entry", "running-session-cold-entry":
+	case "transcript-tool-tail", "transcript-tool-tail-completed", "transcript-tool-tail-settled", "transcript-tool-tail-disclosure", "transcript-tool-arrival", "running-session-entry", "running-session-cold-entry":
 		a.seedArtboardConversation(false)
 		a.model.Preferences.CollapseLatestTools = false
 		detail := a.model.Details[review.ID]
@@ -408,6 +408,23 @@ func (a *mobileApp) openPreviewBoard(board string) {
 			a.home.Invalidate()
 		} else {
 			a.openSession(review.ID)
+		}
+		if board == "transcript-tool-arrival" {
+			model := a.model
+			time.AfterFunc(10*time.Second, func() {
+				mygo.RunOnMain(func() {
+					if model != a.model || model.SessionID != review.ID {
+						return
+					}
+					current := model.Details[review.ID]
+					current.Items = append(slices.Clone(current.Items), domain.Item{
+						ID: "tool-tail-arrival", TurnID: "tool-tail", Kind: "tool", Presentation: "command",
+						Name: "核对收到的新事件", Status: "running", Order: 3, ActivityOrder: 3,
+					})
+					model.Details[review.ID] = current
+					a.refresh()
+				})
+			})
 		}
 	case "draft-references", "draft-references-history", "draft-references-keyboard", "draft-references-keyboard-long-queue":
 		a.seedArtboardConversation(board == "draft-references-keyboard-long-queue")

@@ -99,7 +99,7 @@ func (a *mobileApp) toolTimeline(s domain.Session) *mobileToolTimeline {
 }
 
 func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain.Session, tools []domain.Item, group mobileclient.ToolGroup,
-	timeline *mobileToolTimeline, list *ui.ListState, rowIndex int, phase string, started *time.Time, observed bool, target string, reveal bool,
+	timeline *mobileToolTimeline, list *ui.ListState, rowIndex int, phase string, started *time.Time, observed, animateCalls bool, target string, reveal bool,
 	decorate func(domain.Item) *markdown.RangeDecoration) {
 	p := palette(c)
 	title := fmt.Sprintf("%d 次工具调用", group.Count)
@@ -117,6 +117,8 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 	lineHeight := mobileStatusLineHeight(font)
 	button := transcriptDisclosure(mobileButton(header, title, nil)).AlignItems(ui.Start).Expanded(group.Open)
 	progress := mobileToolReveal(c, button, group.Open, target != "")
+	arrivals := ui.Local(button, "tool-call-arrivals", func() mobileToolCallArrivals { return nil })
+	arrivals.observe(c.Now(), tools, animateCalls && group.Open && progress == 1 && target == "")
 	sweepStart := *ui.Local(button, "tool-sweep-start", func() time.Time { return c.Now() })
 	if started != nil && !started.IsZero() {
 		sweepStart = *started
@@ -200,37 +202,41 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 				timeline.bodies[tool.ID] = body
 			}
 			row := c.Key(tool.ID)
-			call := ui.Column(row).FillWidth().Padding(0, 0, mobileToolRowGap, 0)
-			if live && group.Open && progress == 1 {
-				call.Transition(ui.ElementTransition{Height: true, Duration: 200 * time.Millisecond, Ease: ui.EaseOut,
-					Enter: &ui.Motion{Collapse: true, Opacity: 0}})
+			entrance := arrivals.progress(c.Now(), tool.ID)
+			if entrance < 1 {
+				// The measured row already moves the followed viewport.
+				list.FollowAnimation = nil
+				c.AnimationFrame()
 			}
-			if tool.ID == target {
-				call.Background(p.selected).Radius(cardRadius)
-				if reveal && group.Open {
-					call.ScrollIntoView(ui.ScrollIntoViewOptions{Block: ui.ScrollCenter})
+			mobileToolCallLayout(row, entrance, func(call ui.Element) {
+				call.Padding(0, 0, mobileToolRowGap, 0)
+				if tool.ID == target {
+					call.Background(p.selected).Radius(cardRadius)
+					if reveal && group.Open {
+						call.ScrollIntoView(ui.ScrollIntoViewOptions{Block: ui.ScrollCenter})
+					}
 				}
-			}
-			var mark *markdown.RangeDecoration
-			if decorate != nil && tool.ID != target {
-				mark = decorate(tool)
-			}
-			var heading ui.Element
-			if len(tools) > 1 {
-				call.Draw(func(painter *ui.Painter, bounds ui.Rect) {
-					bar := heading.LayoutBounds()
-					center := bar.Y + lineHeight/2
-					x := bounds.X + mobileToolTimelineInset + mobileToolGlyphSlot/2 - .5
-					if index > 0 && center > bounds.Y+9 {
-						painter.Fill(ui.Rect{X: x, Y: bounds.Y, W: 1, H: center - bounds.Y - 9}, p.line, 0)
-					}
-					if index+1 < len(tools) && bounds.Y+bounds.H > center+9 {
-						painter.Fill(ui.Rect{X: x, Y: center + 9, W: 1, H: bounds.Y + bounds.H - center - 9}, p.line, 0)
-					}
+				var mark *markdown.RangeDecoration
+				if decorate != nil && tool.ID != target {
+					mark = decorate(tool)
+				}
+				var heading ui.Element
+				if len(tools) > 1 {
+					call.Draw(func(painter *ui.Painter, bounds ui.Rect) {
+						bar := heading.LayoutBounds()
+						center := bar.Y + lineHeight/2
+						x := bounds.X + mobileToolTimelineInset + mobileToolGlyphSlot/2 - .5
+						if index > 0 && center > bounds.Y+9 {
+							painter.Fill(ui.Rect{X: x, Y: bounds.Y, W: 1, H: center - bounds.Y - 9}, p.line, 0)
+						}
+						if index+1 < len(tools) && bounds.Y+bounds.H > center+9 {
+							painter.Fill(ui.Rect{X: x, Y: center + 9, W: 1, H: bounds.Y + bounds.H - center - 9}, p.line, 0)
+						}
+					})
+				}
+				call.Children(func() {
+					heading = a.toolItem(row, parent, session, tool, body, mark, true, keepPosition)
 				})
-			}
-			call.Children(func() {
-				heading = a.toolItem(row, parent, session, tool, body, mark, true, keepPosition)
 			})
 		}
 		// Keep the outgoing status in the measured stack until the clip closes.

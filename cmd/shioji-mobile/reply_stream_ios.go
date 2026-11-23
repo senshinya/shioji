@@ -205,8 +205,12 @@ func (s *replyTail) revealEvents(c *ui.Context, state *ui.ListState, rows []mobi
 		}
 		item := items[row.First]
 		switch item.Kind {
-		case "user", "command", "assistant", "request", "request_result":
+		case "user", "command", "request":
 			continue
+		case "assistant":
+			if len(item.Questions) == 0 && (item.Text != "" || len(item.Parts) == 0) {
+				continue // prose already animates its measured content height
+			}
 		}
 		index += offset
 		key := state.Key(index)
@@ -216,12 +220,22 @@ func (s *replyTail) revealEvents(c *ui.Context, state *ui.ListState, rows []mobi
 				continue
 			}
 			start = c.Now()
+			if item.Kind == "request_result" {
+				start = s.receipts[item.ID]
+				if start.IsZero() {
+					continue
+				}
+			}
 			if s.arrivals == nil {
 				s.arrivals = make(map[any]time.Time)
 			}
 			s.arrivals[key] = start
 		}
-		progress := float32(c.Now().Sub(start)) / float32(mobileReplyFade)
+		duration := mobileReplyFade
+		if item.Kind == "request_result" {
+			duration = mobileReceiptEntrance
+		}
+		progress := float32(c.Now().Sub(start)) / float32(duration)
 		if progress >= 1 {
 			delete(s.arrivals, key)
 			continue
@@ -230,7 +244,7 @@ func (s *replyTail) revealEvents(c *ui.Context, state *ui.ListState, rows []mobi
 		c.AnimationFrame()
 	}
 	for key, start := range s.arrivals {
-		if c.Now().Sub(start) >= mobileReplyFade {
+		if c.Now().Sub(start) >= max(mobileReplyFade, mobileReceiptEntrance) {
 			delete(s.arrivals, key)
 		}
 	}

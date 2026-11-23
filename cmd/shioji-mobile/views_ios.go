@@ -681,8 +681,8 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 				}
 			}
 		}
-		slices.SortFunc(state.Reveals, func(a, b ui.ListReveal) int { return a.First - b.First })
 	}
+	slices.SortFunc(state.Reveals, func(a, b ui.ListReveal) int { return a.First - b.First })
 	if jump := a.forkMotionTarget; jump.session == sid && jump.thread == session.ThreadID {
 		for i, row := range transcript {
 			if row.Footer == jump.turn && row.Receipt.BeforeInput == "" {
@@ -834,7 +834,8 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 					return
 				}
 				if group, ok := groups[first]; ok {
-					a.toolGroup(row, parent, session, items[first:end], group, timeline, state, index+offset, workCaption, workStart, toolsShowProgress, target, reveal, decorate)
+					animateCalls := canAnimate && (tail.continuous || !interactive && preview == nil) && tail.arrivals[group.Key].IsZero()
+					a.toolGroup(row, parent, session, items[first:end], group, timeline, state, index+offset, workCaption, workStart, toolsShowProgress, animateCalls, target, reveal, decorate)
 					return
 				}
 				var mark *markdown.RangeDecoration
