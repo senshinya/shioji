@@ -22,11 +22,14 @@ import (
 )
 
 // StartLegacyUpgrade is the explicit installer relay for an older worker. The
-// signed detached helper keeps only the control lease, and becomes the fixed
-// entry after it has released the old business writer and registered tools.
+// signed detached helper keeps only the control lease. Runtime becomes the
+// fixed entry after it has released the old business writer and registered tools.
 func StartLegacyUpgrade(ctx context.Context, directory, executable, device string, in domain.WorkerReplacement) (supervisor.Operation, error) {
 	if in.ID == "" || device == "" || in.BuildID == "" || in.Policy != "when-idle" && in.Policy != "immediate" || in.Policy == "immediate" && !in.Explicit {
 		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: "旧服务更新意图不完整"}
+	}
+	if err := transport.CheckInstallationRuntime(ctx, directory); err != nil {
+		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
 	}
 	if _, _, _, err := recoveryCatalog(ctx, directory, device); err != nil {
 		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
@@ -328,7 +331,7 @@ func RunLegacyUpgrade(ctx context.Context, directory, executable, id, device str
 	if err = supervisor.SaveLegacy(directory, op); err != nil {
 		return err
 	}
-	return transport.RunWorkerSupervisor(ctx, directory, executable, transport.ExistingCodex(), false, &supervisor.LegacyInstall{Operation: op, Lease: lease})
+	return transport.HandoffWorkerInstallation(ctx, directory, supervisor.LegacyInstall{Operation: op, Lease: lease})
 }
 
 func retireLegacyRegistered(ctx context.Context, directory, executable, operation string) error {

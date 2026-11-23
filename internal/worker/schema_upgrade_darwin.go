@@ -15,6 +15,9 @@ import (
 )
 
 func StartSchemaUpgrade(ctx context.Context, directory, executable, device string, in domain.WorkerReplacement) (supervisor.Operation, error) {
+	if err := transport.CheckInstallationRuntime(ctx, directory); err != nil {
+		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
+	}
 	candidate, err := transport.VerifyStagedWorker(ctx, directory, in.BuildID)
 	if err != nil {
 		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
@@ -27,7 +30,11 @@ func StartSchemaUpgrade(ctx context.Context, directory, executable, device strin
 	if err != nil || build.BuildID != candidate.BuildID {
 		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: "迁移助手与签名候选构建不一致"}
 	}
-	return supervisor.StartSchemaMigration(ctx, directory, device, in, candidate, func(guard *os.File) error {
+	start := supervisor.StartSchemaMigration
+	if in.RuntimeHandoff && !in.SchemaMigration {
+		start = supervisor.StartRuntimeMigration
+	}
+	return start(ctx, directory, device, in, candidate, func(guard *os.File) error {
 		log, err := os.OpenFile(filepath.Join(directory, "supervisor", "schema-bootstrap.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 		if err != nil {
 			return err
@@ -62,6 +69,6 @@ func RunSchemaUpgrade(ctx context.Context, directory, executable, id, device str
 		return errors.New("迁移助手未从已验证的候选制品启动")
 	}
 	return supervisor.RunSchemaBootstrap(ctx, directory, id, device, path, build, guard, func(install supervisor.LegacyInstall, managed bool) error {
-		return transport.RunWorkerSupervisor(ctx, directory, path, transport.ExistingCodex(), managed, &install)
+		return transport.HandoffWorkerInstallation(ctx, directory, install)
 	})
 }

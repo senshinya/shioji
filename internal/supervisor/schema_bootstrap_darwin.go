@@ -1,7 +1,9 @@
 package supervisor
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"net"
 	"os"
@@ -28,7 +30,7 @@ func acquireSchemaBootstrap(directory string) (*os.File, error) {
 }
 
 func checkSchemaBootstrapStatus(directory string, op Operation) Operation {
-	if !op.Legacy || op.SourceSchema == 0 || op.Terminal() {
+	if !op.Legacy || op.SourceSchema == 0 && !op.Input.RuntimeHandoff || op.Terminal() {
 		return op
 	}
 	j := journal{filepath.Join(directory, "supervisor")}
@@ -43,6 +45,55 @@ func checkSchemaBootstrapStatus(directory string, op Operation) Operation {
 		}
 	}
 	return op
+}
+
+// StartRuntimeMigration uses the existing drained-writer bootstrap for a
+// same-schema fixed host whose macOS responsibility still belongs to SSH.
+func StartRuntimeMigration(ctx context.Context, directory, device string, in domain.WorkerReplacement, candidate domain.WorkerBuild, start func(*os.File) error) (Operation, error) {
+	refuse := func(reason string) (Operation, error) {
+		return Operation{}, &protocol.RemoteError{Code: "notSent", Message: reason}
+	}
+	if !safeID(in.ID) || device == "" || !in.RuntimeHandoff || in.SchemaMigration ||
+		in.ExpectedBuildID == "" || in.BuildID != candidate.BuildID || candidate.RuntimeHost < 1 ||
+		in.Policy != "when-idle" && (in.Policy != "immediate" || !in.Explicit) {
+		return refuse("执行 Runtime 接管意图或候选不匹配")
+	}
+	j := journal{filepath.Join(directory, "supervisor")}
+	if prior, err := j.load(in.ID); err == nil {
+		if prior.Input != in || prior.DeviceID != device {
+			return refuse("接管标识已绑定其他更新")
+		}
+		return prior, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Operation{}, err
+	}
+	if schema, err := schemaAt(ctx, directory, device); err != nil || schema != candidate.Schema {
+		return refuse("Runtime 接管不能改变设备数据库版本")
+	}
+	lease, err := acquireSchemaBootstrap(directory)
+	if err != nil {
+		return refuse("该设备已有执行服务接管正在准备")
+	}
+	defer lease.Close()
+	if prior, e := j.load(in.ID); e == nil {
+		if prior.Input != in || prior.DeviceID != device {
+			return refuse("接管标识已绑定其他更新")
+		}
+		return prior, nil
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return Operation{}, e
+	}
+	now := time.Now().UTC()
+	op := Operation{Legacy: true, Input: in, Phase: "preparing", DeviceID: device, PreviousBuild: in.ExpectedBuildID,
+		TargetSchema: candidate.Schema, Created: now, ExpiresAt: now.Add(24 * time.Hour)}
+	if err := j.saveRecord(op); err != nil {
+		return op, err
+	}
+	if err := start(lease); err != nil {
+		op.Phase, op.Error = "failed", err.Error()
+		return op, errors.Join(err, j.saveRecord(op))
+	}
+	return op, nil
 }
 
 func StartSchemaMigration(ctx context.Context, directory, device string, in domain.WorkerReplacement, candidate domain.WorkerBuild, start func(*os.File) error) (Operation, error) {
@@ -67,11 +118,14 @@ func StartSchemaMigration(ctx context.Context, directory, device string, in doma
 		if probe.DeviceID != device || probe.Phase != "schema-capable" {
 			return refuse("固定服务的设备身份未确认")
 		}
-		return Call(ctx, directory, Request{Action: "start", DeviceID: device, Input: in})
-	}
-	var remote *protocol.RemoteError
-	if !errors.As(err, &remote) || remote.Message != "unknown supervisor command" {
-		return refuse("无法确认当前固定执行服务，连接后可重新检查")
+		if !in.RuntimeHandoff {
+			return Call(ctx, directory, Request{Action: "start", DeviceID: device, Input: in})
+		}
+	} else {
+		var remote *protocol.RemoteError
+		if !errors.As(err, &remote) || remote.Message != "unknown supervisor command" {
+			return refuse("无法确认当前固定执行服务，连接后可重新检查")
+		}
 	}
 	schema, err := schemaAt(ctx, directory, device)
 	if err != nil || !candidate.MigratesSchema(schema) {
@@ -121,9 +175,10 @@ func RunSchemaBootstrap(ctx context.Context, directory, id, device, path string,
 	if err != nil {
 		return err
 	}
-	if op.Phase != "preparing" || !op.Legacy || !op.Input.SchemaMigration || !op.Input.Explicit ||
-		op.DeviceID != device || op.Input.BuildID != candidate.BuildID || !candidate.MigratesSchema(op.SourceSchema) ||
-		candidate.Schema != op.TargetSchema {
+	if op.Phase != "preparing" || !op.Legacy || op.DeviceID != device || op.Input.BuildID != candidate.BuildID ||
+		candidate.Schema != op.TargetSchema ||
+		op.Input.SchemaMigration && (!op.Input.Explicit || !candidate.MigratesSchema(op.SourceSchema)) ||
+		!op.Input.SchemaMigration && (!op.Input.RuntimeHandoff || op.SourceSchema != 0 || candidate.RuntimeHost < 1) {
 		return errors.New("迁移回执的设备、构建或存储版本未确认")
 	}
 	fail := func(cause error, blocked bool) error {
@@ -146,7 +201,13 @@ func RunSchemaBootstrap(ctx context.Context, directory, id, device, path string,
 	probeInput := op.Input
 	probeInput.ID += "-inspect"
 	probeInput.SchemaMigration = false
-	source, err := captureSchemaSource(preflight, directory, op.DeviceID, probeInput)
+	probeInput.RuntimeHandoff = false
+	var source Operation
+	if op.Input.SchemaMigration {
+		source, err = captureSchemaSource(preflight, directory, op.DeviceID, probeInput)
+	} else {
+		source, err = captureRuntimeSource(preflight, directory, op)
+	}
 	stop()
 	if err != nil {
 		return fail(err, false)
@@ -168,7 +229,7 @@ func RunSchemaBootstrap(ctx context.Context, directory, id, device, path string,
 		}
 		call, end := context.WithTimeout(ctx, 5*time.Second)
 		active, e := Call(call, directory, Request{Action: "status"})
-		if e != nil || active.Input.ID != probeInput.ID || active.Phase != "failed" || active.Instance != op.Instance {
+		if e != nil || active.Input.ID != source.Input.ID || active.Phase != source.Phase || active.Instance != op.Instance {
 			end()
 			return fail(errors.New("原固定服务已有其他操作，请重新检查设备"), false)
 		}
@@ -214,7 +275,7 @@ func RunSchemaBootstrap(ctx context.Context, directory, id, device, path string,
 	}
 	defer writerLease.Close()
 	active, err := Call(handoff, directory, Request{Action: "status"})
-	if err != nil || active.Input.ID != probeInput.ID || active.Instance != op.Instance {
+	if err != nil || active.Input.ID != source.Input.ID || active.Instance != op.Instance {
 		return fail(errors.New("迁移排空后固定服务归属变化，请重新检查"), false)
 	}
 	// A restarting old host cannot acquire this writer lease. Only terminate
@@ -238,6 +299,98 @@ func RunSchemaBootstrap(ctx context.Context, directory, id, device, path string,
 	}
 	guard.Close()
 	return install(LegacyInstall{Operation: op, Lease: fixedLease}, managed)
+}
+
+func captureRuntimeSource(ctx context.Context, directory string, op Operation) (Operation, error) {
+	active, err := Call(ctx, directory, Request{Action: "source"})
+	legacy := false
+	var remote *protocol.RemoteError
+	if errors.As(err, &remote) && remote.Message == "unknown supervisor command" {
+		legacy = true
+		active, err = Call(ctx, directory, Request{Action: "status"})
+	}
+	if err != nil {
+		return active, err
+	}
+	if active.DeviceID != op.DeviceID || active.Phase != "ready" && active.Phase != "applied" && active.Phase != "rolled-back" && active.Phase != "failed" {
+		return active, errors.New("原固定服务仍在切换或恢复，暂不接管")
+	}
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(directory, "worker.sock"))
+	if err != nil {
+		return active, err
+	}
+	pid, err := schemaPeerPID(conn)
+	if err != nil {
+		conn.Close()
+		return active, err
+	}
+	instance := active.SourceInstance
+	if legacy {
+		// Older fixed hosts do not expose their current child instance. Read
+		// only Shioji's launch marker from the authenticated socket peer, never
+		// log process arguments/environment, and confirm it through worker RPC.
+		raw, e := unix.SysctlRaw("kern.procargs2", pid)
+		if e != nil {
+			conn.Close()
+			return active, errors.New("无法读取旧执行服务的接管标识，原服务保持运行")
+		}
+		instance = sourceInstanceFromProcargs(raw)
+	}
+	if instance == "" {
+		conn.Close()
+		return active, errors.New("原执行服务缺少可核对的接管标识")
+	}
+	client, err := protocol.Connect(ctx, conn, op.DeviceID)
+	if err != nil {
+		conn.Close()
+		return active, err
+	}
+	defer client.Close()
+	var ready Ready
+	if err := client.Call(ctx, "worker.local-ready", Control{Instance: instance}, &ready); err != nil {
+		return active, err
+	}
+	if ready.Paused || ready.PID != pid || ready.Instance != instance || ready.DeviceID != op.DeviceID ||
+		ready.Build.BuildID != op.PreviousBuild || ready.Build.Schema != op.TargetSchema {
+		return active, errors.New("原执行服务的运行身份或数据库版本已变化")
+	}
+	active.SourcePID, active.SourceInstance = ready.PID, ready.Instance
+	return active, nil
+}
+
+func sourceInstanceFromProcargs(raw []byte) string {
+	if len(raw) < 4 {
+		return ""
+	}
+	argc := int(binary.LittleEndian.Uint32(raw[:4]))
+	if argc < 1 || argc > len(raw) {
+		return ""
+	}
+	raw = raw[4:]
+	end := bytes.IndexByte(raw, 0) // executable path, before alignment padding
+	if end < 0 {
+		return ""
+	}
+	raw = bytes.TrimLeft(raw[end+1:], "\x00")
+	for range argc {
+		end = bytes.IndexByte(raw, 0)
+		if end < 0 {
+			return ""
+		}
+		raw = raw[end+1:]
+	}
+	const marker = "SHIOJI_WORKER_INSTANCE="
+	for len(raw) > 0 {
+		end = bytes.IndexByte(raw, 0)
+		if end <= 0 {
+			return ""
+		}
+		if bytes.HasPrefix(raw[:end], []byte(marker)) {
+			return string(raw[len(marker):end])
+		}
+		raw = raw[end+1:]
+	}
+	return ""
 }
 
 func captureSchemaSource(ctx context.Context, directory, device string, in domain.WorkerReplacement) (Operation, error) {
@@ -310,7 +463,11 @@ func captureSchemaPeers(ctx context.Context, directory string, op Operation) (*p
 		return nil, writer, fixed, err
 	}
 	client, err := protocol.Connect(ctx, conn, op.DeviceID)
-	if err == nil && (client.Worker == nil || client.Worker.BuildID != op.PreviousBuild || client.Worker.Schema != op.SourceSchema) {
+	expectedSchema := op.SourceSchema
+	if expectedSchema == 0 {
+		expectedSchema = op.TargetSchema
+	}
+	if err == nil && (client.Worker == nil || client.Worker.BuildID != op.PreviousBuild || client.Worker.Schema != expectedSchema) {
 		err = errors.New("旧 writer 的构建或 schema 发生变化")
 	}
 	return client, writer, fixed, err

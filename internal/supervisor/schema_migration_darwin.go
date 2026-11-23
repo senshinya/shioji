@@ -23,6 +23,7 @@ func saveSchemaPlan(directory string, op Operation) error {
 
 func sameSchemaIntent(a, b domain.WorkerReplacement) bool {
 	a.SchemaMigration, b.SchemaMigration = false, false
+	a.RuntimeHandoff, b.RuntimeHandoff = false, false
 	return a == b
 }
 
@@ -38,6 +39,7 @@ func hydrateSchemaPlan(directory string, op Operation) Operation {
 		plan.SourceSchema > 0 && plan.TargetSchema > plan.SourceSchema &&
 		plan.DeviceID == op.DeviceID && plan.PreviousBuild == op.PreviousBuild && sameSchemaIntent(plan.Input, op.Input) {
 		op.Input.SchemaMigration = true
+		op.Input.RuntimeHandoff = plan.Input.RuntimeHandoff
 		op.SourceSchema, op.TargetSchema = plan.SourceSchema, plan.TargetSchema
 	}
 	return op

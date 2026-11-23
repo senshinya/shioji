@@ -108,6 +108,23 @@ func Run(ctx context.Context, o Options) error {
 		}
 	}
 	defer lease.Close()
+	if o.LegacyInstall == nil {
+		pending, ok, err := PendingInstallation(o.Directory)
+		if err != nil {
+			return err
+		}
+		if ok {
+			// The SSH installer has released both source processes and its
+			// control lease. Only this Runtime-owned host may open admission.
+			device, schema, err := store.ReadWorkerIdentity(ctx, o.Directory)
+			if err != nil || device != pending.DeviceID || pending.Input.BuildID == "" ||
+				pending.SourceSchema > 0 && schema != pending.SourceSchema ||
+				pending.SourceSchema == 0 && pending.TargetSchema > 0 && schema != pending.TargetSchema {
+				return errors.New("installation handoff device or schema changed")
+			}
+			o.LegacyInstall = &LegacyInstall{Operation: pending, Lease: lease}
+		}
+	}
 
 	path := filepath.Join(o.Directory, "supervisor.sock")
 	if existing, e := os.Lstat(path); e == nil {
@@ -142,6 +159,10 @@ func Run(ctx context.Context, o Options) error {
 		recovered = o.LegacyInstall.Operation
 		recovered.Phase = "observing"
 		err = h.journal.save(recovered)
+		if err == nil {
+			h.health = serviceHealth{Phase: "installing", DeviceID: recovered.DeviceID, Schema: schema}
+			err = h.saveHealth()
+		}
 	} else if current, interrupted := InterruptedSchemaControl(o.Directory); interrupted {
 		recovered, err = h.recoverSchemaMigration(ctx, current)
 		if err == nil && recovered.Phase == "rolled-back" {
@@ -171,7 +192,27 @@ func Run(ctx context.Context, o Options) error {
 		if o.LegacyInstall != nil {
 			// This is still an uncommitted candidate. Its first failure must
 			// retain the installation handoff rather than retry another writer.
-			err = h.startSelected(o.InitialPath, paused, opID)
+			path, build, verifyErr := o.Verify(ctx, recovered.Input.BuildID)
+			err = verifyErr
+			if err == nil {
+				var candidate *child
+				candidate, err = h.launch(path, build, true, opID)
+				if err == nil {
+					var ready Ready
+					ready, err = h.ready(ctx, candidate, true)
+					if err == nil && ready.DeviceID != recovered.DeviceID {
+						err = errors.New("installed candidate device identity changed")
+					}
+				}
+				if err == nil {
+					h.mu.Lock()
+					h.child = candidate
+					h.device = recovered.DeviceID
+					h.mu.Unlock()
+				} else if candidate != nil {
+					err = errors.Join(err, h.stopExact(candidate, o.StopGrace))
+				}
+			}
 		} else {
 			// Applied/rolled-back selections may start paused until resume;
 			// they retain ordinary dependency and endpoint retry semantics.
@@ -381,6 +422,21 @@ func (h *host) control(req Request) (Operation, error) {
 	switch req.Action {
 	case "schema-capability":
 		return Operation{DeviceID: h.device, Phase: "schema-capable"}, nil
+	case "source":
+		if !h.readyDone || h.blocked || h.updating || h.backgroundStopping() || h.child == nil {
+			return Operation{}, errors.New("execution service is not ready for handoff")
+		}
+		// Keep the current receipt identity for the existing bootstrap's
+		// before/after concurrency checks; only refresh the actual writer.
+		op, err := h.journal.current()
+		if err != nil {
+			return op, err
+		}
+		if op.Input.ID == "" {
+			op.DeviceID, op.Phase = h.device, "ready"
+		}
+		op.SourcePID, op.SourceInstance = h.child.cmd.Process.Pid, h.child.instance
+		return op, nil
 	case "status":
 		var op Operation
 		var err error

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"shioji/internal/domain"
+	"time"
 )
 
 var ErrOwned = errors.New("execution supervisor already owned")
@@ -80,4 +81,54 @@ func LegacyOperation(directory, id string) (Operation, error) {
 		err = errors.New("not a legacy installation")
 	}
 	return op, err
+}
+
+// InstallationHandoff is published only after the source writer and fixed
+// host have exited. The installer retains its control lease until publication;
+// Runtime must acquire that same lease before consuming the record.
+func InstallationHandoff(directory string, install LegacyInstall) error {
+	if install.Lease == nil || !install.Operation.Legacy {
+		return errors.New("missing installation control lease")
+	}
+	actual, err := install.Lease.Stat()
+	expected, statErr := os.Lstat(filepath.Join(directory, "supervisor.lock"))
+	if err != nil || statErr != nil || !os.SameFile(actual, expected) {
+		return errors.New("installation control lease changed")
+	}
+	if err := unix.Flock(int(install.Lease.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		return err
+	}
+	op := install.Operation
+	if op.Phase != "switching" && op.Phase != "observing" {
+		return errors.New("installation is not ready for Runtime")
+	}
+	op.Phase = "installing"
+	op.HostStartDeadline = time.Now().Add(45 * time.Second)
+	return SaveLegacy(directory, op)
+}
+
+// PendingInstallation is read by the Runtime entry point to select the signed
+// candidate's supervisor code, without committing its worker selection early.
+func PendingInstallation(directory string) (Operation, bool, error) {
+	op, err := (journal{filepath.Join(directory, "supervisor")}).current()
+	return op, err == nil && op.Legacy && op.Phase == "installing", err
+}
+
+// A status query never launches or resends anything. Keep the underlying
+// handoff resumable, but report a missing host after its bounded launch window.
+func installationStatus(directory string, op Operation) Operation {
+	if op.Phase != "installing" || op.HostStartDeadline.IsZero() || time.Now().Before(op.HostStartDeadline) {
+		return op
+	}
+	lease, err := AcquireLease(directory)
+	if err != nil {
+		return op
+	}
+	defer lease.Close()
+	current, ok, err := PendingInstallation(directory)
+	if err == nil && ok && current.Input == op.Input && current.DeviceID == op.DeviceID {
+		op.Phase = "blocked"
+		op.Error = "执行 Runtime 尚未接管；重新连接设备后将接续原更新"
+	}
+	return op
 }

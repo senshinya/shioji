@@ -144,5 +144,5 @@ func Query(ctx context.Context, directory, id string) (Operation, error) {
 		op.Phase = "observing"
 		op.Error = "服务控制尚未连接，正在核对是否已开放接纳"
 	}
-	return checkSchemaBootstrapStatus(directory, hydrateSchemaPlan(directory, op)), nil
+	return installationStatus(directory, checkSchemaBootstrapStatus(directory, hydrateSchemaPlan(directory, op))), nil
 }

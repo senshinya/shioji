@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
 	"shioji/internal/supervisor"
@@ -112,8 +113,27 @@ func (s SSH) workerInstallerOperation(ctx context.Context, binary, device string
 	if err != nil {
 		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
 	}
+	if !repair || input.SchemaMigration {
+		remote := RemoteWorker{Directory: s.StateDirectory, Run: func(ctx context.Context, command string, input io.Reader, output, diagnostics io.Writer) (int, error) {
+			cmd, err := s.command(ctx, command)
+			if err != nil {
+				return -1, err
+			}
+			cmd.Stdin, cmd.Stdout, cmd.Stderr = input, output, diagnostics
+			err = cmd.Run()
+			if cmd.ProcessState == nil {
+				return -1, err
+			}
+			return cmd.ProcessState.ExitCode(), err
+		}}
+		if err := remote.PrepareExecutionRuntime(ctx, func(ctx context.Context) (io.ReadCloser, string, error) {
+			return archiveRuntimeBundle(ctx, bundledRuntime(binary))
+		}); err != nil {
+			return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
+		}
+	}
 	mode := " --service-migrate start"
-	if input.SchemaMigration {
+	if input.SchemaMigration || input.RuntimeHandoff {
 		mode = " --service-schema-upgrade start"
 	} else if repair {
 		mode = " --service-control repair"

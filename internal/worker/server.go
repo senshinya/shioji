@@ -36,6 +36,7 @@ type Config struct {
 	legacyExpected                                  *legacyMigrationRecord
 	CheckStartupBuild                               func() error `json:"-"`
 	BackgroundManaged                               bool
+	RuntimeHosted                                   bool
 	DisableBackground                               func(context.Context, string) (domain.BackgroundService, error) `json:"-"`
 	ReplaceWorker                                   func(domain.WorkerReplacement) error                            `json:"-"`
 	VerifyReplacement                               func(context.Context, domain.WorkerReplacement) error           `json:"-"`
@@ -249,6 +250,8 @@ func New(ctx context.Context, config Config) (*Server, error) {
 		return nil, err
 	}
 	s.build.Managed = config.BackgroundManaged
+	s.build.RuntimeHost = 1
+	s.build.RuntimeHosted = config.RuntimeHosted
 	s.executions = manager
 	if err = s.recoverManualGuards(); err != nil {
 		s.Close()

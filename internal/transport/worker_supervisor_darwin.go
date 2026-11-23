@@ -56,7 +56,8 @@ func RunWorkerSupervisor(ctx context.Context, directory, initial, codex string, 
 	}, LegacyInstall: legacy, Directory: filepath.Clean(directory), InitialPath: path, Arguments: args, Verify: verify, Select: func(build string) error { return SaveActiveWorker(directory, build) }}
 	for {
 		err := supervisor.Run(ctx, options)
-		if !managed || !errors.Is(err, supervisor.ErrOwned) {
+		_, pending, pendingErr := supervisor.PendingInstallation(directory)
+		if !errors.Is(err, supervisor.ErrOwned) || !managed && (!pending || pendingErr != nil) {
 			return err
 		}
 		// A registered login job may coexist with an already running manual fixed

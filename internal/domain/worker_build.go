@@ -3,6 +3,8 @@ package domain
 // WorkerBuild identifies the running service independently of harness readiness
 // and protocol compatibility. BuildID is captured before replacing any file.
 type WorkerBuild struct {
+	RuntimeHost    int    `json:"runtimeHost,omitempty"`
+	RuntimeHosted  bool   `json:"runtimeHosted,omitempty"`
 	PrivateControl int    `json:"privateControl,omitempty"`
 	Lifecycle      int    `json:"lifecycle,omitempty"`
 	RecoveryHelper bool   `json:"recoveryHelper,omitempty"`
@@ -26,6 +28,7 @@ type WorkerReplacement struct {
 	ExpectedBuildID string `json:"expectedBuildId"`
 	BuildID         string `json:"buildId"`
 	SchemaMigration bool   `json:"schemaMigration,omitempty"`
+	RuntimeHandoff  bool   `json:"runtimeHandoff,omitempty"`
 }
 
 func (b *WorkerBuild) MigratesSchema(from int) bool {

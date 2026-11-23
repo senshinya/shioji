@@ -348,7 +348,7 @@ func (s RemoteWorker) Install(ctx context.Context, device string, input domain.W
 		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
 	}
 	mode := []string{"--service-migrate", "start"}
-	if input.SchemaMigration {
+	if input.SchemaMigration || input.RuntimeHandoff {
 		mode = []string{"--service-schema-upgrade", "start"}
 	} else if repair {
 		mode = []string{"--service-control", "repair"}

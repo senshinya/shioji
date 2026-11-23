@@ -19,6 +19,7 @@ type Operation struct {
 	SourceSchema, TargetSchema                               int `json:",omitempty"`
 	Created                                                  time.Time
 	ExpiresAt                                                time.Time `json:"expiresAt,omitempty"`
+	HostStartDeadline                                        time.Time `json:",omitempty"`
 }
 
 func (o Operation) Terminal() bool {

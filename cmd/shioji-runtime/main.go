@@ -8,9 +8,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"shioji/internal/background"
+	"shioji/internal/supervisor"
 	"shioji/internal/tailnet"
 	"shioji/internal/transport"
 	"shioji/internal/worker"
@@ -27,6 +29,8 @@ func main() {
 func run() error {
 	action := flag.String("action", "status", "status, register or unregister")
 	serve := flag.Bool("serve", false, "Run the user-owned execution service")
+	onDemand := flag.Bool("on-demand", false, "Run without enabling login startup")
+	executionDescribe := flag.Bool("execution-describe", false, "Describe the execution host without opening state")
 	stateDir := flag.String("state-dir", "", "Private worker directory (defaults to the current user)")
 	plist := flag.String("plist", background.PlistName, "Bundled launch agent plist name")
 	networkServe := flag.Bool("network-serve", false, "Run the independent local network service")
@@ -39,6 +43,12 @@ func run() error {
 	networkWorker := flag.String("network-worker", "", "Bundled worker locating the signed runtime")
 	networkOperation := flag.String("network-operation", "", "Network preparation operation identifier")
 	flag.Parse()
+	if *executionDescribe {
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			Version int
+			Role    string
+		}{1, "execution"})
+	}
 	if *networkDescribe {
 		return json.NewEncoder(os.Stdout).Encode(struct {
 			Version int
@@ -123,6 +133,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if pending, ok, e := supervisor.PendingInstallation(directory); e != nil {
+		return e
+	} else if ok {
+		build = pending.Input.BuildID
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if build != "" {
@@ -138,5 +153,25 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return transport.RunWorkerSupervisor(ctx, directory, path, transport.ExistingCodex(), true)
+	// Keep Runtime as the macOS responsible application, while executing the
+	// selected worker's supervisor implementation rather than frozen host code.
+	args := []string{"--state-dir", directory, "--codex", transport.ExistingCodex()}
+	if !*onDemand {
+		args = append(args, "--managed-service")
+	}
+	command := exec.Command(path, args...)
+	command.Env = append(os.Environ(), "SHIOJI_RUNTIME_HOSTED=true")
+	command.Stdout, command.Stderr = os.Stdout, os.Stderr
+	if err := command.Start(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		_ = command.Process.Signal(syscall.SIGTERM)
+		return <-done
+	}
 }

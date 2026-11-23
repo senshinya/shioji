@@ -74,6 +74,7 @@ func run() error {
 	build.MigrationFrom = store.WorkerMigrationFrom
 	build.SafeUpdate = true
 	build.Lifecycle = 1
+	build.RuntimeHost = 1
 	build.PrivateControl = supervisor.PrivateControlVersion
 	build.Maintenance = true
 	build.ContextUsage = true
@@ -488,6 +489,7 @@ func run() error {
 		config.ServiceInstance = os.Getenv("SHIOJI_WORKER_INSTANCE")
 		config.ServiceOperation = os.Getenv("SHIOJI_SUPERVISOR_OPERATION")
 		config.StartPaused = os.Getenv("SHIOJI_WORKER_PAUSED") == "true"
+		config.RuntimeHosted = os.Getenv("SHIOJI_RUNTIME_HOSTED") == "true"
 		if config.ServiceInstance == "" {
 			return errors.New("missing fixed supervisor instance")
 		}

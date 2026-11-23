@@ -146,7 +146,7 @@ func (u workerUpgradeClient) observe(ctx context.Context, client *protocol.Clien
 	query := func(id string) (supervisor.Operation, error) {
 		var op supervisor.Operation
 		var e error
-		if r.Input.SchemaMigration && u.control != nil {
+		if (r.Input.SchemaMigration || r.Input.RuntimeHandoff) && u.control != nil {
 			return u.control(ctx, "status", id)
 		}
 		if client != nil {
@@ -182,7 +182,7 @@ func (u workerUpgradeClient) observe(ctx context.Context, client *protocol.Clien
 	if err != nil && r.RepairOf == "" {
 		// A second client may have joined the same target before its reply was
 		// lost. Following an existing matching receipt never resends an update.
-		if active, e := query(""); e == nil && active.Input.ID != "" && active.DeviceID == u.device && active.Input.ExpectedBuildID == r.Input.ExpectedBuildID && active.Input.BuildID == r.Input.BuildID && active.Input.Policy == r.Input.Policy && active.Input.SchemaMigration == r.Input.SchemaMigration {
+		if active, e := query(""); e == nil && active.Input.ID != "" && active.DeviceID == u.device && active.Input.ExpectedBuildID == r.Input.ExpectedBuildID && active.Input.BuildID == r.Input.BuildID && active.Input.Policy == r.Input.Policy && active.Input.SchemaMigration == r.Input.SchemaMigration && active.Input.RuntimeHandoff == r.Input.RuntimeHandoff {
 			r.JoinedID = active.Input.ID
 			if e = u.save(r); e != nil {
 				return upgradeService(current, candidate, r), e
@@ -294,6 +294,11 @@ func (c *Controller) upgradeObserver(device string, known *domain.WorkerBuild) w
 		install := func(ctx context.Context, in domain.WorkerReplacement, repair bool) (supervisor.Operation, error) {
 			if remote.Run == nil {
 				return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: "设备当前没有可用的 SSH 路径"}
+			}
+			if !repair || in.SchemaMigration {
+				if err := remote.PrepareExecutionRuntime(ctx, c.AuthenticatedRuntimeArtifact); err != nil {
+					return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
+				}
 			}
 			return remote.Install(ctx, device, in, repair)
 		}
@@ -414,7 +419,8 @@ func (u workerUpgradeClient) update(ctx context.Context, client *protocol.Client
 			return current.BuildID
 		}
 		return ""
-	}(), BuildID: candidate.BuildID, Explicit: explicit, Policy: policy, SchemaMigration: migrate}}
+	}(), BuildID: candidate.BuildID, Explicit: explicit, Policy: policy, SchemaMigration: migrate,
+		RuntimeHandoff: !repairing && candidate.RuntimeHost > 0 && current != nil && current.Lifecycle == 1 && !current.RuntimeHosted}}
 	if err = u.save(r); err != nil {
 		return nil, err
 	}
@@ -423,7 +429,7 @@ func (u workerUpgradeClient) update(ctx context.Context, client *protocol.Client
 		var op supervisor.Operation
 		op, err = u.repair(ctx, r.Input)
 		result = domain.WorkerUpdateResult{Ready: err == nil, OperationID: op.Input.ID, Phase: op.Phase, Reason: op.Error}
-	} else if (migrate || client == nil || current.Lifecycle != 1) && u.legacy != nil {
+	} else if (migrate || r.Input.RuntimeHandoff || client == nil || current.Lifecycle != 1) && u.legacy != nil {
 		var op supervisor.Operation
 		op, err = u.legacy(ctx, r.Input)
 		result = domain.WorkerUpdateResult{Ready: err == nil, OperationID: op.Input.ID, Phase: op.Phase, Reason: op.Error}
@@ -452,7 +458,7 @@ func (u workerUpgradeClient) update(ctx context.Context, client *protocol.Client
 		if e != nil {
 			return upgradeService(current, candidate, r), e
 		}
-		if active.DeviceID != u.device || active.Input.ExpectedBuildID != r.Input.ExpectedBuildID || active.Input.BuildID != r.Input.BuildID || active.Input.Policy != r.Input.Policy || active.Input.SchemaMigration != r.Input.SchemaMigration {
+		if active.DeviceID != u.device || active.Input.ExpectedBuildID != r.Input.ExpectedBuildID || active.Input.BuildID != r.Input.BuildID || active.Input.Policy != r.Input.Policy || active.Input.SchemaMigration != r.Input.SchemaMigration || active.Input.RuntimeHandoff != r.Input.RuntimeHandoff {
 			return upgradeService(current, candidate, r), errors.New("另一个更新与请求目标不一致")
 		}
 		r.JoinedID = active.Input.ID
@@ -487,9 +493,14 @@ func (c *Controller) runWorkerInstaller(ctx context.Context, device string, in d
 	if build.Lifecycle != 1 {
 		return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: "当前应用未包含新版服务安装程序"}
 	}
+	if !repair || in.SchemaMigration {
+		if err := transport.PrepareExecutionRuntime(ctx, c.Directory, c.WorkerBinary); err != nil {
+			return supervisor.Operation{}, &protocol.RemoteError{Code: "notSent", Message: err.Error()}
+		}
+	}
 	raw, _ := json.Marshal(in)
 	mode := []string{"--service-migrate", "start"}
-	if in.SchemaMigration {
+	if in.SchemaMigration || in.RuntimeHandoff {
 		mode = []string{"--service-schema-upgrade", "start"}
 	} else if repair {
 		mode = []string{"--service-control", "repair"}
