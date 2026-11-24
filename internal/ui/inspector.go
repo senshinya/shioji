@@ -312,13 +312,27 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool, width, limit flo
 			target = 1
 		}
 		animation := motionAnimation(c, 200*time.Millisecond)
-		if c.Preferences().ReduceMotion {
-			animation.Duration = 0
-		}
 		extent := bottom.AnimateTo("split-presence", target, animation)
 		bottom.Height(splitHeight * extent)
+		n.Inert(bottom, !split)
+		closingKind := n.Local(bottom, "closing-bottom-kind", func() string { return "" })
+		if split {
+			*closingKind = otherInspectorView(first)
+		} else if extent <= .01 {
+			*closingKind = ""
+		}
 		bottom.Children(func() {
 			if !split {
+				if extent > .01 && *closingKind != "" {
+					// Avoid mounting a second live List when the top pane now shows the same kind;
+					// inspectorPane's Exit transition retains the visual ghost while bottom shrinks.
+					if *closingKind != topKind {
+						var ignored *app.InspectorLayout
+						kind := *closingKind
+						v.inspectorPane(c, t, state, plan, "bottom", kind, []string{kind}, true, 36, width, &ignored)
+					}
+					n.Column(c).Absolute().Left(0).Right(0).Top(0).Height(1).Background(t.Border).PassThrough()
+				}
 				return
 			}
 			kind := otherInspectorView(first)
@@ -395,7 +409,7 @@ func (v *View) inspector(c *n.Context, t *n.Theme, drawer bool, width, limit flo
 func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan *domain.Plan, key, kind string, tabs []string, draggable bool, headerHeight, width float32, drop **app.InspectorLayout) {
 	pane := n.Column(c.Key("inspector-pane:" + key)).FillWidth().FillHeight().Grow(1).Clip().Background(t.Background)
 	if headerHeight > 0 {
-		pane.Transition(n.ElementTransition{Duration: motionAnimation(c, 140*time.Millisecond).Duration, Colors: true, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
+		pane.Transition(n.ElementTransition{Duration: motionAnimation(c, 200*time.Millisecond).Duration, Colors: true, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 	}
 	pane.Children(func() {
 		inset := float32(12)

@@ -391,7 +391,7 @@ func (a *mobileApp) openWork(parent *mygo.Window, sid string, work domain.WorkAc
 		entry := func(row *ui.Context, item domain.Item) {
 			switch item.Kind {
 			case "tool", "activity", "reasoning":
-				a.toolItem(row, w, session, item, nil, nil, false)
+				a.toolItem(row, w, session, item, nil, nil, false, nil)
 			case "request":
 				a.requestSource(row, w, sid, item, a.model.Snapshot.PendingRequests, true, tail.receiptProgress(row, item.ID), func() {
 					if row.Preferences().ReduceMotion {
@@ -466,11 +466,19 @@ func (a *mobileApp) openWork(parent *mygo.Window, sid string, work domain.WorkAc
 				mobilePageContent(c, pageInset).Grow(1).Basis(0).MinHeight(0).Children(func() {
 					header(c)
 					view := codeViewportSurface(c, "终端输出", text, 0, nil, nil, &terminal, darkColors.inset, darkColors.ink, a.codeFont(), captionTextSize)
+					terminalPlaced := ui.Local(view, "terminal-placed", func() bool { return false })
 					view.DrawOver(func(_ *ui.Painter, bounds ui.Rect) {
 						terminalLastScroll = terminal.scroll.Y
 						if follow && bounds.H > 0 && terminal.scroll.MaxY > terminal.scroll.Y {
-							terminal.scroll.ScrollTo(terminal.scroll.X, terminal.scroll.MaxY, mobileOutputFollowMotion(c))
+							if !*terminalPlaced {
+								*terminalPlaced = true
+								terminal.scroll = ui.ScrollState{Handle: terminal.scroll.Handle, X: terminal.scroll.X, Y: terminal.scroll.MaxY, MaxX: terminal.scroll.MaxX, MaxY: terminal.scroll.MaxY}
+							} else {
+								terminal.scroll.ScrollTo(terminal.scroll.X, terminal.scroll.MaxY, mobileOutputFollowMotion(c))
+							}
 							c.Services().Invalidate()
+						} else if bounds.H > 0 {
+							*terminalPlaced = true
 						}
 					})
 					var latest func()

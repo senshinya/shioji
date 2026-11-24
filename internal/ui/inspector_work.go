@@ -128,8 +128,24 @@ func (v *View) workInspector(c *n.Context, t *n.Theme, drawer bool, width, limit
 		}
 		extent := bottom.AnimateTo("split-presence", target, motionAnimation(c, 200*time.Millisecond))
 		bottom.Height(bottomHeight * extent)
+		n.Inert(bottom, !split)
+		closingGroup := n.Local(bottom, "closing-work-group", func() visibleWorkGroup { return visibleWorkGroup{} })
+		if split {
+			*closingGroup = visible[1]
+		} else if extent <= .01 {
+			*closingGroup = visibleWorkGroup{}
+		}
 		bottom.Children(func() {
 			if !split {
+				if extent > .01 && len(closingGroup.views) > 0 {
+					// Only keep the closing pane live when its active view is not
+					// already mounted in the top pane (which shares ListState).
+					if closingGroup.selected != visible[0].selected {
+						var ignored []app.InspectorGroup
+						v.workInspectorPane(c, t, state, plan, works, "bottom", *closingGroup, groups, 36, width, &ignored)
+					}
+					n.Column(c).Absolute().Left(0).Right(0).Top(0).Height(1).Background(t.Border).PassThrough()
+				}
 				return
 			}
 			v.workInspectorPane(c, t, state, plan, works, "bottom", visible[1], groups, 36, width, &next)
@@ -167,7 +183,7 @@ func (v *View) workInspector(c *n.Context, t *n.Theme, drawer bool, width, limit
 			valid := over && dragged.session == id
 			zone := inside && y > height*.6
 			if valid && zone {
-				n.Column(c.Key("inspector-split-preview")).Absolute().Left(6).Right(6).Bottom(6).Height(max(0, height/2-12)).Radius(6).Background(t.Text.Alpha(.07)).Border(1, t.TextMuted.Alpha(.4)).PassThrough().Label("下方分屏预览")
+				n.Column(c.Key("inspector-split-preview")).Absolute().Left(6).Right(6).Bottom(6).Height(max(0, height/2-12)).Radius(6).Background(t.Text.Alpha(.07)).Border(1, t.TextMuted.Alpha(.4)).PassThrough().Label("下方分屏预览").Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 100*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 			}
 			if released && zone && dropped.session == id {
 				next = app.SplitInspectorView(groups, dropped.kind)
@@ -201,7 +217,7 @@ func (v *View) workInspector(c *n.Context, t *n.Theme, drawer bool, width, limit
 }
 func (v *View) workInspectorPane(c *n.Context, t *n.Theme, state *changesState, plan *domain.Plan, works []domain.WorkActivity, slot string, g visibleWorkGroup, groups []app.InspectorGroup, headerHeight, width float32, next *[]app.InspectorGroup) {
 	pane := n.Column(c.Key("inspector-pane:" + slot)).FillWidth().FillHeight().Grow(1).Clip().Background(t.Background)
-	pane.Transition(n.ElementTransition{Duration: motionAnimation(c, 200*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 1}, Exit: &n.Motion{Opacity: 1}})
+	pane.Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 200*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 1}, Exit: &n.Motion{Opacity: 1}})
 	switch g.selected {
 	case "agents":
 		pane.Label("子 Agent 面板")
@@ -266,7 +282,7 @@ func (v *View) workInspectorPane(c *n.Context, t *n.Theme, state *changesState, 
 		dropped, released := n.Drop[inspectorTabDrag](header)
 		valid := over && dragged.session == v.Model.SessionID && !slices.Contains(g.views, dragged.kind)
 		if valid {
-			n.Column(c.Key("work-merge-preview")).Absolute().Left(10).Top((headerHeight-32)/2).Width(float32(len(g.views)*30+30)).Height(32).Radius(7).Background(t.Text.Alpha(.07)).Border(1, t.TextMuted.Alpha(.4)).PassThrough().Label("合并标签预览")
+			n.Column(c.Key("work-merge-preview")).Absolute().Left(10).Top((headerHeight-32)/2).Width(float32(len(g.views)*30+30)).Height(32).Radius(7).Background(t.Text.Alpha(.07)).Border(1, t.TextMuted.Alpha(.4)).PassThrough().Label("合并标签预览").Transition(n.ElementTransition{Colors: true, Duration: motionAnimation(c, 100*time.Millisecond).Duration, Enter: &n.Motion{Opacity: 0}, Exit: &n.Motion{Opacity: 0}})
 		}
 		if released && dropped.session == v.Model.SessionID && !slices.Contains(g.views, dropped.kind) {
 			*next = app.MoveInspectorView(groups, dropped.kind, g.index)

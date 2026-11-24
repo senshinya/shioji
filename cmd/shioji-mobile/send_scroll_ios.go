@@ -48,7 +48,7 @@ func (s *mobileSendScroll) begin(operation, epoch string, source ui.Rect, steer,
 		operation: operation, epoch: epoch,
 		composerProgress: s.composerProgress, from: s.composerProgress,
 		composerSource: s.composerBounds, composerBounds: s.composerBounds,
-		steer: steer, queued: queued, began: time.Now(),
+		steer: steer, queued: queued,
 	}
 	s.setSource(source)
 }
@@ -65,6 +65,9 @@ func (s *mobileSendScroll) reveal(c *ui.Context, frame ui.Element, list *ui.List
 	items []domain.Item, rows []mobileclient.TranscriptRow, offset int, enabled bool) {
 	if s.operation == "" {
 		return
+	}
+	if s.began.IsZero() {
+		s.began = c.Now()
 	}
 	if c.Preferences().ReduceMotion || model.ConnectionEpoch != s.epoch || model.UncertainSubmissions[s.operation] ||
 		(!s.started && c.Now().Sub(s.began) > 15*time.Second) {

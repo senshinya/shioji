@@ -117,7 +117,7 @@ func (v *View) welcomeView(c *n.Context, t *n.Theme) {
 	duration := 260 * time.Millisecond
 	if c.Preferences().ReduceMotion {
 		distance = 0
-		duration = 0
+		duration = -1
 	}
 	n.Column(c.Key("welcome")).Fill().Background(t.Background).Transition(n.ElementTransition{Duration: duration, Ease: n.EaseOut, Exit: &n.Motion{X: -distance, Opacity: 1}}).Children(func() {
 		n.Row(c).FillWidth().Height(56).DragWindow()

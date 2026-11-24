@@ -468,7 +468,7 @@ func (a *mobileApp) pushConversation(parent *mygo.Window) {
 		} else {
 			parent.Push(w)
 			if isTablet() {
-				a.callUIKit("tabsHidden", map[string]bool{"hidden": true}, nil)
+				a.callUIKit("tabsHidden", map[string]bool{"hidden": true, "reduceMotion": a.model.Preferences.ReduceMotion}, nil)
 			}
 		}
 	})
@@ -488,7 +488,7 @@ func (a *mobileApp) mountConversationPage(w *mygo.Window, title, scope string, o
 			a.cancelSessionListOpening()
 		}
 		if isTablet() {
-			a.callUIKit("tabsHidden", map[string]bool{"hidden": false}, nil)
+			a.callUIKit("tabsHidden", map[string]bool{"hidden": false, "reduceMotion": a.model.Preferences.ReduceMotion}, nil)
 		}
 		a.refresh()
 	})

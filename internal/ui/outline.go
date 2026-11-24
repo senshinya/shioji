@@ -222,14 +222,13 @@ func (v *View) conversationOutline(c *n.Context, t *n.Theme, state *n.ListState,
 			anchor := outline.Anchor
 			if outline.PreviewEntry != entry.ID {
 				outline.PreviewEntry = entry.ID
-				outline.PreviewHeight = 0
 			}
 			n.Overlay(c.Key("outline-preview"), func() {
 				w, _ := c.Size()
 				readingTop := bounds.Y + 48 + 8
 				readingBottom := bounds.Y + bounds.H - dockHeight - 8
 				y := max(readingTop, min(anchor.Y+anchor.H/2-outline.PreviewHeight/2, readingBottom-outline.PreviewHeight))
-				panel := n.Column(c.Key("preview:"+entry.ID)).Label("对话导航预览").Role(n.RoleTooltip).Absolute().Left(min(anchor.X+40, w-328)).Top(y).Width(320).MaxHeight(max(0, readingBottom-readingTop)).Clip().Padding(8).Gap(4).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 4, 8, 0, n.RGBA(0, 0, 0, .12)).PassThrough()
+				panel := n.Column(c.Key("outline-preview-card")).Label("对话导航预览").Role(n.RoleTooltip).Absolute().Left(min(anchor.X+40, w-328)).Top(y).Width(320).MaxHeight(max(0, readingBottom-readingTop)).Clip().Padding(8).Gap(4).Radius(12).Background(raised(t)).Border(1, t.Border).Shadow(0, 4, 8, 0, n.RGBA(0, 0, 0, .12)).PassThrough().Transition(fadeMotion(c, 100*time.Millisecond))
 				if outline.PreviewHeight == 0 {
 					if h := panel.LayoutBounds().H; h > 0 {
 						outline.PreviewHeight = h

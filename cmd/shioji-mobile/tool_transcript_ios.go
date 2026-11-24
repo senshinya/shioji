@@ -232,7 +232,7 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 	} else if group.Open || progress == 0 {
 		*trailing = previousToolProgress{}
 	}
-	toolResultPanel(c.Key("body"), group.Open, target != "", &progress, func(c *ui.Context) {
+	if delta := toolResultPanel(c.Key("body"), group.Open, target != "", &progress, func(c *ui.Context) {
 		ui.Box(c.Key("heading-clearance")).Height(mobileToolRowGap - (transcriptMetadataHeight - 20)).Shrink(0)
 		last := len(tools) - 1
 		for last >= 0 && domain.HistorySpacer(tools[last]) {
@@ -287,7 +287,7 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 						body = new(bool)
 						timeline.bodies[tool.ID] = body
 					}
-					heading = a.toolItem(row, parent, session, tool, body, mark, true, keepPosition)
+					heading = a.toolItem(row, parent, session, tool, body, mark, true, list, keepPosition)
 				})
 			})
 		}
@@ -302,7 +302,9 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 				mobileToolPhase(row, trailing.phase, trailing.started, sweep)
 			})
 		}
-	}, list.Bounds(c).H)
+	}, list.Bounds(c).H); delta != 0 && list != nil {
+		list.FollowAnimation = nil
+	}
 }
 
 func mobileToolReasoning(c *ui.Context, item domain.Item, font ui.Font, mark *markdown.RangeDecoration) ui.Element {
@@ -362,6 +364,8 @@ func (a *mobileApp) transcriptLatest(c *ui.Context, dock ui.Element, sid string,
 		}
 	}).KeepFocus().Value(caption).AlignItems(ui.Center).Justify(ui.Center).
 		AttachTo(dock, ui.AnchorTop, ui.AnchorBottom).Margin(0, 0, 4, 0).ZIndex(2).
+		Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Ease: ui.EaseOut, Colors: true,
+			Enter: &ui.Motion{Y: 6, Opacity: 0}, Exit: &ui.Motion{Y: 6, Opacity: 0}}).
 		Disabled(load && (!a.model.Connected || detail.History.Invalidated || read != nil && read.Pending && prefetch.cancel == nil))
 	const padding, gap, border = 10, 5, 1
 	font := mobileStatusFont(c, captionTextSize)
@@ -372,7 +376,7 @@ func (a *mobileApp) transcriptLatest(c *ui.Context, dock ui.Element, sid string,
 	}
 	target := max(float32(math.Ceil(float64(width))), mobileTapSize(c))
 	shown := button.AnimateTo("latest-width", target, mobileTitleMotion)
-	button.Width(max(target, shown))
+	button.Width(shown)
 	if pane := list.Bounds(c); pane.W > 0 {
 		button.MaxWidth(max(mobileTapSize(c), pane.W-2*pageInset))
 	}
@@ -381,7 +385,7 @@ func (a *mobileApp) transcriptLatest(c *ui.Context, dock ui.Element, sid string,
 		lineHeight := mobileStatusLineHeight(font)
 		chip := ui.Row(c.Key("chip")).FillWidth().Height(max(28, lineHeight+6)).PaddingX(padding).
 			AlignItems(ui.Center).Justify(ui.Center).Radius(14).Background(p.floating).Border(border, p.floatingEdge).
-			PassThrough().Transition(mobilePanelTransition)
+			PassThrough().Transition(ui.ElementTransition{Colors: true, Duration: mobilePanelTransition.Duration, Ease: ui.EaseOut})
 		chip.Children(func() {
 			line := c.Key("content")
 			row := ui.Row(line.Key(live)).MinWidth(0).Shrink(1).AlignItems(ui.Baseline).Gap(gap).PassThrough().Transition(mobileFeedbackFade(160 * time.Millisecond)).

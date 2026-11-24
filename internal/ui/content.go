@@ -354,7 +354,11 @@ func (v *View) activityBodyDisclosure(c *n.Context, t *n.Theme, item domain.Item
 						v.bindMarkdownLinks(c, &v.activityMarkdown)
 						v.activityMarkdown.ShareSelection = true
 						v.activityMarkdown.WrapCode = true
-						v.activityMarkdown.Reveal = &markdown.Reveal{Unit: markdown.ByCharacter, Fade: 180 * time.Millisecond, Smooth: true}
+						if c.Preferences().ReduceMotion {
+							v.activityMarkdown.Reveal = &markdown.Reveal{Unit: markdown.AtOnce}
+						} else {
+							v.activityMarkdown.Reveal = &markdown.Reveal{Unit: markdown.ByCharacter, Fade: 180 * time.Millisecond, Smooth: true}
+						}
 						root := n.Column(c.Key("markdown")).FillWidth()
 						mounted := n.Local(root, "mounted", func() bool { return false })
 						root.Children(func() {

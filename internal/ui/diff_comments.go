@@ -153,28 +153,53 @@ func (v *View) configureDiffComments(c *n.Context, t *n.Theme, state *changesSta
 
 func (v *View) diffSelectionAction(c *n.Context, t *n.Theme, state *changesState, viewer n.Element) {
 	if state.Locating {
+		type locateMotion struct {
+			initialized bool
+			started     time.Time
+			attempts    int
+			lastScroll  float64
+		}
+		clock := n.Column(c.Key(fmt.Sprint("locate-comment-", state.LocateSequence))).Absolute().Size(0, 0).PassThrough()
+		loc := n.Local(clock, "locate-state", func() locateMotion { return locateMotion{started: c.Now()} })
 		target, ok := state.Diff.TextSelectionScrollTarget()
 		if state.LocateFragment != nil {
 			target, ok = state.Diff.TextFragmentScrollTarget(*state.LocateFragment)
 		}
 		if ok {
-			clock := n.Column(c.Key(fmt.Sprint("locate-comment-", state.LocateSequence))).Absolute().Size(0, 0).PassThrough()
-			initialized := n.Local(clock, "initialized", func() bool { return false })
-			if !*initialized {
-				clock.Jump("scroll", float32(state.Diff.ScrollY()))
-				*initialized = true
-				c.AnimationFrame()
+			current := state.Diff.ScrollY()
+			if loc.initialized && math.Abs(current-loc.lastScroll) > 1 {
+				state.Locating = false
+				state.LocateFragment = nil
+			} else {
+				if !loc.initialized {
+					clock.Jump("scroll", float32(current))
+					loc.initialized = true
+				}
+				shown := clock.AnimateTo("scroll", float32(target), motionAnimation(c, 220*time.Millisecond))
+				state.Diff.SetScrollY(float64(shown))
+				loc.lastScroll = state.Diff.ScrollY()
+				if math.Abs(float64(shown)-target) < .5 || clock.Settled("scroll") {
+					state.Locating = false
+					state.LocateFragment = nil
+				} else {
+					c.AnimationFrame()
+				}
 			}
-			shown := clock.AnimateTo("scroll", float32(target), motionAnimation(c, 220*time.Millisecond))
-			state.Diff.SetScrollY(float64(shown))
-			if math.Abs(float64(shown)-target) < .5 {
+		} else {
+			loc.attempts++
+			const (
+				maxMeasuredLocateAttempts   = 6
+				maxUnmeasuredLocateAttempts = 30
+				maxLocateWait               = 500 * time.Millisecond
+			)
+			if (viewer.Bounds().H > 0 && loc.attempts >= maxMeasuredLocateAttempts) ||
+				loc.attempts >= maxUnmeasuredLocateAttempts ||
+				c.Now().Sub(loc.started) >= maxLocateWait {
 				state.Locating = false
 				state.LocateFragment = nil
 			} else {
 				c.AnimationFrame()
 			}
-		} else {
-			c.AnimationFrame()
 		}
 	}
 	selection, ok := state.Diff.SelectedText()

@@ -195,9 +195,18 @@ func (v *View) parallelConversation(c *n.Context, t *n.Theme, availableWidth flo
 		}
 	}
 	layout.Children(func() {
+		secondaryOpen := m.SecondarySessionID != "" && wide
+		lastSecondary := n.Local(layout, "secondary-split-open", func() bool { return secondaryOpen })
+		splitUntil := n.Local(layout, "secondary-split-until", func() time.Time { return time.Time{} })
+		if *lastSecondary != secondaryOpen {
+			*lastSecondary = secondaryOpen
+			*splitUntil = c.Now().Add(220 * time.Millisecond)
+		}
 		if wide || !m.FocusSecondary || m.SecondarySessionID == "" {
 			motion := fadeMotion(c, 200*time.Millisecond)
-			motion.Size = true
+			if !c.Preferences().ReduceMotion && c.Now().Before(*splitUntil) {
+				motion.Size = true
+			}
 			left := n.Column(c.Key("primary-conversation")).FillHeight().Grow(1).MinWidth(0).Clip().Label("左侧会话").Transition(motion)
 			focusVersion := v.paneFocusVersion
 			left.Children(func() { v.conversation(c.Key("left-conversation"), t, !wide && m.SecondarySessionID != "") })

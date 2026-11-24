@@ -22,13 +22,19 @@ func ColorEffect(pos vec2, color vec4) vec4 {
 type shimmerEffect struct {
 	started         time.Time
 	rest, highlight n.Color
+	uniforms        map[string]any
 }
 
 func (shimmerEffect) EffectMargin() n.Point { return n.Point{} }
 func (fx shimmerEffect) PaintEffect(p *n.Painter, box n.Rect, content *n.Bitmap, inset n.Point) {
-	shimmerShader.Effect(shader.Options{Uniforms: map[string]any{
-		"Time": float32(p.Now().Sub(fx.started).Seconds()), "Rest": fx.rest, "Highlight": fx.highlight,
-	}}).PaintEffect(p, box, content, inset)
+	u := fx.uniforms
+	if u == nil {
+		u = make(map[string]any, 3)
+	}
+	u["Time"] = float32(p.Now().Sub(fx.started).Seconds())
+	u["Rest"] = fx.rest
+	u["Highlight"] = fx.highlight
+	shimmerShader.Effect(shader.Options{Uniforms: u}).PaintEffect(p, box, content, inset)
 	p.AnimationFrameRate(60)
 }
 
@@ -37,10 +43,11 @@ func shimmer(c *n.Context, text n.Element, rest, highlight n.Color, phase ...tim
 		return
 	}
 	started := *n.Local(text, "shimmer-start", func() time.Time { return c.Now() })
+	uniforms := *n.Local(text, "shimmer-uniforms", func() map[string]any { return make(map[string]any, 3) })
 	if len(phase) > 0 {
 		started = phase[0]
 	}
-	text.Effect(shimmerEffect{started: started, rest: rest, highlight: highlight})
+	text.Effect(shimmerEffect{started: started, rest: rest, highlight: highlight, uniforms: uniforms})
 }
 
 // Apply one running-clock sweep to all of the row's painted ink, including
@@ -65,15 +72,21 @@ type toolStatusSweepEffect struct {
 	started          time.Time
 	highlight, green n.Color
 	extent           float32
+	uniforms         map[string]any
 }
 
 func (toolStatusSweepEffect) EffectMargin() n.Point { return n.Point{} }
 
 func (fx toolStatusSweepEffect) PaintEffect(p *n.Painter, box n.Rect, content *n.Bitmap, inset n.Point) {
-	toolStatusSweepShader.Effect(shader.Options{Uniforms: map[string]any{
-		"Time": float32(p.Now().Sub(fx.started).Seconds()), "Strength": fx.extent,
-		"Highlight": fx.highlight, "Green": fx.green,
-	}}).PaintEffect(p, box, content, inset)
+	u := fx.uniforms
+	if u == nil {
+		u = make(map[string]any, 4)
+	}
+	u["Time"] = float32(p.Now().Sub(fx.started).Seconds())
+	u["Strength"] = fx.extent
+	u["Highlight"] = fx.highlight
+	u["Green"] = fx.green
+	toolStatusSweepShader.Effect(shader.Options{Uniforms: u}).PaintEffect(p, box, content, inset)
 	p.AnimationFrameRate(60)
 }
 
@@ -85,5 +98,6 @@ func shimmerToolStatus(c *n.Context, line n.Element, started time.Time, highligh
 	if c.Theme().Background.R < 115 {
 		green = n.RGB(114, 255, 165)
 	}
-	line.Effect(toolStatusSweepEffect{started: started, highlight: highlight, green: green, extent: extent})
+	uniforms := *n.Local(line, "tool-sweep-uniforms", func() map[string]any { return make(map[string]any, 4) })
+	line.Effect(toolStatusSweepEffect{started: started, highlight: highlight, green: green, extent: extent, uniforms: uniforms})
 }

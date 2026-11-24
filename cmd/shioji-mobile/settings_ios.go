@@ -194,11 +194,12 @@ func (a *mobileApp) appearancePreview(c *ui.Context, owner *mygo.Window, expande
 		FillWidth().MinHeight(max(formRowHeight, mobileTapSize(c))).AlignItems(ui.Center).Gap(8).Expanded(*expanded)
 	rowDivider(row, p.line).Children(func() {
 		label(toggle, "对话预览", bodyTextSize, p.ink).Grow(1).PassThrough()
-		arrow := rightSymbol
+		target := float32(-90)
 		if *expanded {
-			arrow = downSymbol
+			target = 0
 		}
-		ui.Icon(toggle, arrow).Size(pickerIconSize, pickerIconSize).TextColor(p.secondary).PassThrough()
+		angle := row.AnimateTo("chevron-angle", target, ui.Animation{Duration: mobileToolDisclosureDuration, Ease: ui.EaseOut})
+		ui.Icon(toggle, downSymbol).Size(pickerIconSize, pickerIconSize).TextColor(p.secondary).Transform(ui.Rotation(angle)).PassThrough()
 	})
 	mobileDisclosureBody(c.Key("appearance-sample"), *expanded, func(c *ui.Context) {
 		const sample = "Shioji 已保存改动。下次运行会采用新配置。\n\n```go\nfmt.Println(\"Shioji\")\n```"

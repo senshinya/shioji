@@ -187,10 +187,8 @@ func (a *mobileApp) goalControl(c *ui.Context, parent *mygo.Window, s domain.Ses
 						})
 					}
 				})
-				ui.Column(scope.Key("expanded")).Clip().Transition(mobilePanelTransition).Children(func() {
-					if *expanded {
-						label(scope.Key("objective"), goal.Objective, controlTextSize, p.ink).Padding(0, 8, 8, 25).Selectable()
-					}
+				mobileDisclosureBody(scope.Key("expanded"), *expanded, func(body *ui.Context) {
+					label(body.Key("objective"), goal.Objective, controlTextSize, p.ink).Padding(0, 8, 8, 25).Selectable()
 				})
 			}
 			if operation != nil && operation.message != "" {

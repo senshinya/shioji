@@ -37,6 +37,13 @@ var sessionListItemTransition = ui.ElementTransition{
 	Exit:     &ui.Motion{Collapse: true},
 }
 
+var sessionListFoldTransition = ui.ElementTransition{
+	Colors:   true,
+	Duration: 240 * time.Millisecond,
+	Enter:    &ui.Motion{Collapse: true},
+	Exit:     &ui.Motion{Collapse: true},
+}
+
 func sessionWorkspaceChoices(catalogs []mobileclient.DeviceCatalog) []sessionWorkspaceChoice {
 	var choices []sessionWorkspaceChoice
 	for _, catalog := range catalogs {
@@ -92,6 +99,7 @@ func (a *mobileApp) sessionList(c *ui.Context) {
 	ui.Column(c).Grow(1).Basis(0).MinHeight(0).Children(func() {
 		ui.Scroll(c).Fill().Padding(top, 16, bottom).Children(func() {
 			list := c.Key(scope)
+			pruneSessionGroupFolding(c, groups)
 			ui.Column(list).Shrink(0).Children(func() {
 				for _, group := range groups {
 					if len(group.rows) == 0 {
@@ -335,6 +343,24 @@ func (a *mobileApp) sessionListRows(catalogs []mobileclient.DeviceCatalog, works
 	return groups, count
 }
 
+func pruneSessionGroupFolding(c *ui.Context, groups []mobileSessionGroup) {
+	folding := ui.Local(c.Root(), "session-group-folding", func() map[string]bool { return map[string]bool{} })
+	if len(*folding) == 0 {
+		return
+	}
+	active := make(map[string]bool, len(groups))
+	for _, group := range groups {
+		if len(group.rows) > 0 && group.key != "" {
+			active[group.key] = true
+		}
+	}
+	for key := range *folding {
+		if !active[key] {
+			delete(*folding, key)
+		}
+	}
+}
+
 func (a *mobileApp) sessionGroup(c *ui.Context, menu *contextMenuFrame, group mobileSessionGroup) {
 	p := palette(c)
 	bg := p.canvas
@@ -343,7 +369,19 @@ func (a *mobileApp) sessionGroup(c *ui.Context, menu *contextMenuFrame, group mo
 	}
 	section := c.Key(group.key)
 	expanded := ui.Local(c.Root(), "session-group-expanded:"+group.key, func() bool { return true })
-	ui.Column(section).Margin(2, 0, 2).Transition(sessionListItemTransition).Children(func() {
+	wasExpanded := ui.Local(c.Root(), "session-group-prev-expanded:"+group.key, func() bool { return *expanded })
+	folding := ui.Local(c.Root(), "session-group-folding", func() map[string]bool { return map[string]bool{} })
+	toggled := *wasExpanded != *expanded
+	if toggled {
+		*wasExpanded = *expanded
+		(*folding)[group.key] = true
+	}
+	transition := sessionListItemTransition
+	if len(*folding) > 0 {
+		// CollapsibleBase owns the 250ms fold geometry; skip sibling Position easing while folding.
+		transition = sessionListFoldTransition
+	}
+	ui.Column(section).Margin(2, 0, 2).Transition(transition).Children(func() {
 		pending := 0
 		if !*expanded {
 			for _, row := range group.rows {
@@ -355,6 +393,12 @@ func (a *mobileApp) sessionGroup(c *ui.Context, menu *contextMenuFrame, group mo
 			value = pendingSessionDescription(value, pending)
 		}
 		disclosure := ui.CollapsibleBase(section, expanded)
+		progress := disclosure.Progress()
+		if progress > 0 && progress < 1 {
+			(*folding)[group.key] = true
+		} else if !toggled {
+			delete(*folding, group.key)
+		}
 		header := disclosure.Trigger.Sticky().Top(0).MinHeight(mobileTapSize(c)).PaddingY(2).Gap(8).AlignItems(ui.Center).Background(bg).
 			Role(ui.RoleButton).Label(group.title).Value(value).Children(func() {
 			oneLine(section, group.title, 13, p.secondary).FontWeight(640).Grow(1).MinWidth(0).PassThrough()
@@ -458,8 +502,9 @@ func (a *mobileApp) sessionRow(c *ui.Context, menu *contextMenuFrame, item mobil
 	target := sessionListTarget{location: ref, pinned: pinned, archived: session.Archived || item.workspace.Archived}
 	open := func() { a.openSessionListTarget(target) }
 	button := ui.ButtonBase(row).MinHeight(max(46, mobileHeaderSize(c))).Padding(6, 10).Margin(1, -10).AlignItems(ui.Center).Justify(ui.Center).Radius(10).
-		Role(ui.RoleButton).Label(session.Title).Value(value).AccessSelected(selected).Background(bg).
-		Description("长按预览会话").OnClick(open).Children(func() {
+		Role(ui.RoleButton).Label(session.Title).Value(value).AccessSelected(selected).
+		Description("长按预览会话").OnClick(open)
+	button.Background(button.AnimateColor("row-bg", bg, ui.Animation{Duration: 140 * time.Millisecond, Ease: ui.EaseOut})).Children(func() {
 		ui.Column(row).WidthPercent(100).Gap(3).PassThrough().Children(func() {
 			ui.Row(row).Gap(10).AlignItems(ui.Center).Children(func() {
 				font := mobileStatusFont(row, 15)

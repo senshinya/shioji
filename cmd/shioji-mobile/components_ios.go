@@ -1,12 +1,12 @@
 package main
 
 import (
-	"math"
 	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
 
+	"shioji/internal/conversationui"
 	"shioji/internal/mobileclient"
 )
 
@@ -29,35 +29,10 @@ func mobileInlinePanel(c *ui.Context) ui.Element {
 // Animate the space reserved by the panel so the conversation and composer
 // follow the same geometry as the clipped content.
 func mobileDisclosureBody(c *ui.Context, expanded bool, content func(*ui.Context)) {
-	frame := ui.Column(c).Clip().Shrink(0)
-	natural := ui.Local(frame, "natural-height", func() float32 { return 0 })
-	target := float32(0)
-	if expanded {
-		target = *natural
-	}
-	height := frame.AnimateTo("height", target, ui.Animation{Duration: mobilePanelTransition.Duration, Ease: ui.EaseOut})
-	if *natural > 0 || !expanded {
-		frame.Height(height)
-	}
-	if !expanded && height <= 0 {
-		return
-	}
-	ui.Inert(frame, !expanded)
-	frame.Children(func() {
-		body := c.Key("disclosure-content")
-		measured := ui.Column(body).FillWidth().Shrink(0)
-		if *natural > 0 {
-			measured.Absolute().Left(0).Right(0).Top(0)
-		}
-		measured.DrawOver(func(_ *ui.Painter, r ui.Rect) {
-			if math.Abs(float64(*natural-r.H)) > .5 {
-				if expanded && *natural == 0 {
-					frame.Jump("height", r.H)
-				}
-				*natural = r.H
-				c.Services().Invalidate()
-			}
-		}).Children(func() { content(body) })
+	frame := ui.Column(c).FillWidth().Clip().Shrink(0)
+	conversationui.AnimatedContentHeight(c, frame, expanded, expanded, mobilePanelTransition.Duration, func() float32 {
+		content(c.Key("disclosure-content"))
+		return 0
 	})
 }
 
@@ -162,18 +137,27 @@ func mobileMetadataField(c *ui.Context, title, value, copyLabel string) {
 	})
 }
 
+type mobileCopyFeedback struct {
+	pending bool
+	until   time.Time
+}
+
 func mobileCopyButton(c *ui.Context, title, value string) {
 	slot := ui.Box(c).Size(mobileTapSize(c), mobileTapSize(c)).Shrink(0)
-	copied := ui.Local(slot, "copied-until", func() time.Time { return time.Time{} })
-	showCopied := c.Now().Before(*copied)
+	copied := ui.Local(slot, "copied-until", func() mobileCopyFeedback { return mobileCopyFeedback{} })
+	if copied.pending {
+		copied.pending = false
+		copied.until = c.Now().Add(2 * time.Second)
+	}
+	showCopied := c.Now().Before(copied.until)
 	if showCopied {
-		c.After(copied.Sub(c.Now()))
+		c.After(copied.until.Sub(c.Now()))
 	}
 	slot.Children(func() {
 		copy := func() {
 			c.WriteClipboardThen(value, func(err error) {
 				if err == nil {
-					*copied = time.Now().Add(2 * time.Second)
+					copied.pending = true
 				}
 			})
 		}
@@ -558,9 +542,12 @@ func mobileSwitch(c *ui.Context, title string, value *bool, changed func()) ui.E
 				fill, thumb = p.ink, p.canvas
 				offset = 18
 			}
-			ui.Column(c).Size(43, 25).Radius(13).Background(fill).Border(1, p.line).PassThrough().Children(func() {
-				knob := ui.Box(c).Size(17, 17).Radius(8.5).Background(thumb).Absolute().Top(3).PassThrough()
-				knob.Left(3 + knob.AnimateTo("toggle-position", offset, mobileLayoutMotion))
+			anim := ui.Animation{Duration: 160 * time.Millisecond, Ease: ui.EaseOut}
+			track := ui.Column(c).Size(43, 25).Radius(13).Border(1, p.line).PassThrough()
+			track.Background(track.AnimateColor("toggle-track", fill, anim)).Children(func() {
+				knob := ui.Box(c).Size(17, 17).Radius(8.5).Absolute().Top(3).PassThrough()
+				knob.Background(knob.AnimateColor("toggle-thumb", thumb, anim)).
+					Left(3 + knob.AnimateTo("toggle-position", offset, anim))
 			})
 		})
 }

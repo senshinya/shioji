@@ -584,7 +584,7 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 		item := entry.Item
 		stream := u.streams[item.ID]
 		if item.Kind == "assistant" && stream != nil && stream.live() && !c.Preferences().ReduceMotion && c.Now().Before(stream.revealAfter) {
-			c.AnimationFrame()
+			c.After(stream.revealAfter.Sub(c.Now()))
 			return
 		}
 		block := n.Column(c.Key("work-item:" + item.ID)).FillWidth().Gap(6)
@@ -756,8 +756,14 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 				return
 			}
 			target := u.scroll.MaxY
-			if !u.placed || target != u.target {
+			if !u.placed {
 				u.placed = true
+				u.target = target
+				if target > 0 {
+					u.scroll = n.ScrollState{Handle: u.scroll.Handle, X: 0, Y: target, MaxX: u.scroll.MaxX, MaxY: u.scroll.MaxY}
+					invalidate()
+				}
+			} else if target != u.target {
 				u.target = target
 				u.scroll.ScrollTo(0, target, animation)
 				invalidate()

@@ -236,8 +236,9 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
             reply(.success(nil))
         case "tabsHidden":
             if let hidden = args["hidden"] as? Bool, let tabs {
+                let animated = !UIAccessibility.isReduceMotionEnabled && (args["reduceMotion"] as? Bool != true)
                 if #available(iOS 18.0, *) {
-                    tabs.setTabBarHidden(hidden || shouldHideSplitTabs, animated: true)
+                    tabs.setTabBarHidden(hidden || shouldHideSplitTabs, animated: animated)
                 } else {
                     tabs.tabBar.isHidden = hidden || shouldHideSplitTabs
                 }
@@ -927,23 +928,36 @@ private final class SessionSearchBar: UIView {
         return CGRect(x: max(0, bounds.width - trailingOffset - width), y: 0, width: width, height: bounds.height)
     }
 
+    private var animating = false
+    private var animationGeneration = 0
+
     override func layoutSubviews() {
         super.layoutSubviews()
         glyph.frame = CGRect(x: (collapsedFrame.width - 18) / 2, y: (bounds.height - 18) / 2, width: 18, height: 18)
         closeButton.frame = CGRect(x: bounds.width - 60, y: 0, width: 44, height: bounds.height)
-        capsule.frame = expanded ? expandedFrame : collapsedFrame
+        if !animating {
+            capsule.frame = expanded ? expandedFrame : collapsedFrame
+        }
         field.frame = CGRect(origin: .zero, size: expandedFrame.size)
     }
 
     func open() {
         layoutIfNeeded()
         expanded = true
-        UIView.animate(withDuration: (reduceMotion || UIAccessibility.isReduceMotionEnabled) ? 0 : 0.23, delay: 0,
+        animationGeneration += 1
+        let gen = animationGeneration
+        let duration: TimeInterval = (reduceMotion || UIAccessibility.isReduceMotionEnabled) ? 0 : 0.23
+        animating = duration > 0
+        UIView.animate(withDuration: duration, delay: 0,
                        options: [.beginFromCurrentState, .curveEaseOut, .allowUserInteraction]) {
             self.capsule.frame = self.expandedFrame
             self.field.alpha = 1
             self.closeButton.alpha = 1
             self.glyph.alpha = 0
+        } completion: { _ in
+            guard self.animationGeneration == gen else { return }
+            self.animating = false
+            self.setNeedsLayout()
         }
         field.becomeFirstResponder()
     }
@@ -952,17 +966,24 @@ private final class SessionSearchBar: UIView {
         guard !closing else { return }
         closing = true
         expanded = false
+        animationGeneration += 1
+        let gen = animationGeneration
+        let duration: TimeInterval = (reduceMotion || UIAccessibility.isReduceMotionEnabled) ? 0 : 0.23
+        animating = duration > 0
         isUserInteractionEnabled = false
         accessibilityElementsHidden = true
         onClosing?()
         field.resignFirstResponder()
-        UIView.animate(withDuration: (reduceMotion || UIAccessibility.isReduceMotionEnabled) ? 0 : 0.23, delay: 0,
+        UIView.animate(withDuration: duration, delay: 0,
                        options: [.beginFromCurrentState, .curveEaseOut, .allowUserInteraction]) {
             self.capsule.frame = self.collapsedFrame
             self.field.alpha = 0
             self.closeButton.alpha = 0
             self.glyph.alpha = 1
         } completion: { _ in
+            if self.animationGeneration == gen {
+                self.animating = false
+            }
             self.removeFromSuperview()
             self.onClose?()
         }

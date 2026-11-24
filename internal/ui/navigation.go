@@ -271,7 +271,8 @@ func (v *View) navigationRows(c *n.Context) []navigationRow {
 			continue
 		}
 		rows = append(rows, navigationRow{kind: navigationWorkspace, workspace: w, ref: app.SessionLocation{DeviceID: w.DeviceID, WorkspaceID: w.ID}, presence: p, pending: pending[w.ID]})
-		if v.collapsedWorkspaces[w.ID] {
+		wsOpen := v.navigationPresence(c, "workspace-open:"+w.ID, !v.collapsedWorkspaces[w.ID])
+		if wsOpen <= 0 && v.collapsedWorkspaces[w.ID] {
 			continue
 		}
 		for _, s := range m.NavigationSessions(w) {
@@ -279,7 +280,7 @@ func (v *View) navigationRows(c *n.Context) []navigationRow {
 			if global[ref] || presence[ref] <= 0 {
 				continue
 			}
-			rows = append(rows, navigationRow{kind: navigationSession, workspace: w, session: s, ref: ref, presence: min(p, presence[ref])})
+			rows = append(rows, navigationRow{kind: navigationSession, workspace: w, session: s, ref: ref, presence: min(p, min(wsOpen, presence[ref]))})
 		}
 	}
 	return rows
@@ -438,7 +439,8 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 	m, s := v.Model, r.session
 	operation := v.pendingArchiveChange(s.WorkspaceID, s.ID)
 	archiving := operation != nil && operation.archived
-	leaving := s.Archived || archiving
+	collapsing := !r.pinned && v.collapsedWorkspaces[r.workspace.ID]
+	leaving := s.Archived || archiving || collapsing
 	pending := v.pendingCount(s.ID)
 	stopping := v.sessionStopInFlight(s.ID)
 	finishing := s.Status == "completed" && v.sessionOutputAnimating(s.ID)
@@ -533,9 +535,11 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 				// Match the title's visible glyph center while retaining a 28px hit area.
 				top := (float32(20)-28)/2 - inlineCenterOffset(s.Title, n.Font{Family: t.Font, Size: 13})
 				more := iconButton(c.Key("actions"), moreActionsIcon, "会话菜单："+s.Title).Absolute().Top(top).Size(28, 28).Disabled(leaving).Menu(func(menu *n.Menu) { v.sessionMenu(menu, s, r.ref) })
+				moreTarget := float32(1)
 				if moving || !row.Hovered() && !row.FocusWithin() && !row.MenuOpen() {
-					more.Opacity(0)
+					moreTarget = 0
 				}
+				more.Opacity(more.AnimateTo("actions-opacity", moreTarget, motionAnimation(c, 120*time.Millisecond)))
 			})
 		})
 	})

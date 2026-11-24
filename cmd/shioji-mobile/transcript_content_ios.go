@@ -211,7 +211,7 @@ type mobileReasoningLiveState struct {
 	started *time.Time
 }
 
-func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, open *bool, mark *markdown.RangeDecoration, live bool, phaseLabel string, started *time.Time) {
+func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, open *bool, mark *markdown.RangeDecoration, live bool, phaseLabel string, started *time.Time, list *ui.ListState) {
 	item = conversationui.ReasoningForDisplay(item)
 	p := palette(c)
 	summaryName := item.Name
@@ -327,11 +327,8 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 								ContentTransition(ui.ContentTransition{Animation: &mobileTitleMotion})
 						}
 						if hasBody {
-							chevron := rightSymbol
-							if *open {
-								chevron = downSymbol
-							}
-							transcriptSymbol(lineKey.Key("chevron"), chevron, summaryName, font, 12, p.secondary)
+							angle := -90 * (1 - mobileToolReveal(c, heading, *open, mark != nil))
+							transcriptSymbol(lineKey.Key("chevron"), downSymbol, summaryName, font, 12, p.secondary).Transform(ui.Rotation(angle))
 						}
 					})
 				}
@@ -339,7 +336,7 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 		})
 	})
 	visible := !live && hasBody && *open
-	toolResultPanel(c.Key(toolResultBodyKey(item.ID)), visible, mark != nil, nil, func(c *ui.Context) {
+	if delta := toolResultPanel(c.Key(toolResultBodyKey(item.ID)), visible, mark != nil, nil, func(c *ui.Context) {
 		ui.Column(c).FillWidth().Gap(7).Padding(4, 0, 8, 10).BorderStartWidth(1).BorderColor(p.line).Children(func() {
 			if item.Text != "" {
 				row := c.Key("tool-summary")
@@ -365,10 +362,12 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 				animateToolResultBlock(c, note)
 			}
 		})
-	})
+	}); delta != 0 && list != nil {
+		list.FollowAnimation = nil
+	}
 }
 
-func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, open *bool, mark *markdown.RangeDecoration, grouped bool, anchors ...func()) ui.Element {
+func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, open *bool, mark *markdown.RangeDecoration, grouped bool, list *ui.ListState, anchors ...func()) ui.Element {
 	item = conversationui.ReasoningForDisplay(item)
 	p := palette(c)
 	name, symbol := item.Name, terminalSymbol
@@ -461,11 +460,7 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 			if grouped {
 				paintMobileToolChevron(c.Key("chevron"), name, font, -90*(1-disclosureProgress), nil)
 			} else {
-				mark := rightSymbol
-				if *open {
-					mark = downSymbol
-				}
-				transcriptSymbol(c, mark, name, font, 12, p.secondary)
+				transcriptSymbol(c.Key("chevron"), downSymbol, name, font, 12, p.secondary).Transform(ui.Rotation(-90 * (1 - disclosureProgress)))
 			}
 		}
 	}
@@ -494,14 +489,14 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 	} else {
 		heading = ui.Row(c).MinHeight(28).Gap(6).AlignItems(ui.Baseline)
 	}
+	if hasBody {
+		disclosureProgress = mobileToolReveal(c, heading, *open, mark != nil)
+	}
 	if grouped {
 		if !hasBody {
 			heading.MinHeight(lineHeight)
 		}
 		heading.FillWidth().Padding(0, 0, 0, mobileToolTextColumn).AlignItems(ui.Center).Justify(ui.Start)
-		if hasBody {
-			disclosureProgress = mobileToolReveal(c, heading, *open, mark != nil)
-		}
 	}
 	var command *mobileCommandOutput
 	if isCommand {
@@ -557,25 +552,31 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 	body := c.Key(toolResultBodyKey(item.ID))
 	if grouped && hasBody {
 		frame := ui.Column(body).FillWidth().Shrink(0).Clip()
-		conversationui.AnimatedContentHeight(body, frame, visible, visible, mobileToolDisclosureDuration, func() float32 {
+		if delta := conversationui.AnimatedContentHeight(body, frame, visible, visible, mobileToolDisclosureDuration, func() float32 {
 			build(body.Key("result"))
 			return 0
-		})
+		}); delta != 0 && list != nil {
+			list.FollowAnimation = nil
+		}
 		return heading
 	}
-	toolResultPanel(body, visible, mark != nil, nil, build)
+	if delta := toolResultPanel(body, visible, mark != nil, nil, build); delta != 0 && list != nil {
+		list.FollowAnimation = nil
+	}
 	return heading
 }
 
 // Resize the measured list content so the following rows move with it.
 // The intrinsic stack stays at full width inside the growing clip.
-func toolResultPanel(c *ui.Context, visible, immediate bool, progress *float32, build func(*ui.Context), viewport ...float32) {
+func toolResultPanel(c *ui.Context, visible, immediate bool, progress *float32, build func(*ui.Context), viewport ...float32) float32 {
 	frame := ui.Column(c).FillWidth().Shrink(0).Clip()
 	type measurement struct {
 		width, height float32
 		baseline      bool
+		probing       bool
 	}
 	size := ui.Local(frame, "tool-result-panel", func() measurement { return measurement{baseline: visible} })
+	previous := ui.Local(frame, "reported-height", func() float32 { return -1 })
 	target := float32(0)
 	if visible || progress != nil {
 		target = size.height
@@ -599,7 +600,13 @@ func toolResultPanel(c *ui.Context, visible, immediate bool, progress *float32, 
 		frame.Height(shown)
 	}
 	if !visible && shown <= 0 {
-		return
+		size.probing = false
+		delta := float32(0)
+		if *previous > 0 {
+			delta = -*previous
+		}
+		*previous = 0
+		return delta
 	}
 	frame.Children(func() {
 		body := c.Key("measured")
@@ -612,6 +619,7 @@ func toolResultPanel(c *ui.Context, visible, immediate bool, progress *float32, 
 			if r.H <= 0 || r.W <= 0 {
 				return
 			}
+			size.probing = false
 			resized := size.width != 0 && math.Abs(float64(size.width-r.W)) > .5
 			if resized || size.height == 0 && size.baseline {
 				frame.Jump("height", r.H)
@@ -625,10 +633,29 @@ func toolResultPanel(c *ui.Context, visible, immediate bool, progress *float32, 
 		content.Children(func() { build(body) })
 		if size.height == 0 && !size.baseline {
 			// A zero-height clip has layout bounds before it starts painting.
+			// Probe at most one frame when empty so zero-height content does not spin.
 			measure(content.LayoutBounds())
-			c.AnimationFrame()
+			if size.height > 0 {
+				size.probing = false
+				c.AnimationFrame()
+			} else if !size.probing {
+				size.probing = true
+				c.AnimationFrame()
+			} else {
+				size.probing = false
+			}
+		} else {
+			size.probing = false
 		}
 	})
+	delta := float32(0)
+	if size.height > 0 {
+		if *previous >= 0 {
+			delta = shown - *previous
+		}
+		*previous = shown
+	}
+	return delta
 }
 
 func (a *mobileApp) transcriptFile(c *ui.Context, file domain.FileChange) {

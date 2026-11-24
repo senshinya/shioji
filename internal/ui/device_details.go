@@ -41,7 +41,7 @@ func deviceDisclosure(c *n.Context, label string, open *bool, body func()) {
 	}
 	frame := n.Column(c.Key("body")).FillWidth().Clip()
 	animatedContentHeight(c, frame, *open, 200*time.Millisecond, func() float32 {
-		n.Column(c).FillWidth().Transition(disclosureMotion(c, 160*time.Millisecond)).Children(body)
+		n.Column(c).FillWidth().Children(body)
 		return 0
 	})
 }

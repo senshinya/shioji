@@ -355,7 +355,7 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 					copyLabel := "复制登录命令"
 					if c.Now().Before(e.draft.copiedUntil) {
 						copyLabel = "已复制"
-						c.AnimationFrame()
+						c.After(e.draft.copiedUntil.Sub(c.Now()))
 					}
 					if configurationAction(c.Key("copy-login-command"), "").Label("复制登录命令").Width(88).Disabled(disabled).Children(func() {
 						n.Text(c, copyLabel).SingleLine().ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
@@ -391,7 +391,7 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 				copyLabel := "复制验证码"
 				if c.Now().Before(e.draft.copiedUntil) {
 					copyLabel = "已复制"
-					c.AnimationFrame()
+					c.After(e.draft.copiedUntil.Sub(c.Now()))
 				}
 				if configurationAction(c.Key("copy-login-code"), "").Label("复制验证码").Width(76).Disabled(!active || challenge.Code == "").Children(func() {
 					n.Text(c, copyLabel).SingleLine().ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
@@ -679,7 +679,7 @@ func (v *View) agentInitialAccount(c *n.Context, t *n.Theme, key string, e *devi
 					caption := "复制"
 					if c.Now().Before(e.draft.copiedUntil) {
 						caption = "已复制"
-						c.AnimationFrame()
+						c.After(e.draft.copiedUntil.Sub(c.Now()))
 					}
 					if configurationAction(c, caption).Label("复制验证码").Disabled(!active).Clicked() {
 						c.WriteClipboard(challenge.Code)

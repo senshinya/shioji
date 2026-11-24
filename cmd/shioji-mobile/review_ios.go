@@ -238,9 +238,14 @@ func (a *mobileApp) reviewContent(c *ui.Context, r *reviewState, close func()) {
 		slot.Children(func() {
 			page := c.Key(r.path)
 			panel := ui.Column(page).FillWidth().Grow(1).MinHeight(0).Basis(0)
-			if r.path != "" && !c.Preferences().ReduceMotion {
-				pose := ui.Motion{XPercent: 100, Opacity: 1}
-				panel.Transition(ui.ElementTransition{Duration: 260 * time.Millisecond, Ease: ui.EaseOut, Enter: &pose, Exit: &pose})
+			if !c.Preferences().ReduceMotion {
+				if r.path != "" {
+					pose := ui.Motion{XPercent: 100, Opacity: 1}
+					panel.Transition(ui.ElementTransition{Colors: true, Duration: 260 * time.Millisecond, Ease: ui.EaseOut, Enter: &pose, Exit: &pose})
+				} else {
+					pose := ui.Motion{XPercent: -25, Opacity: 1}
+					panel.Transition(ui.ElementTransition{Colors: true, Duration: 260 * time.Millisecond, Ease: ui.EaseOut, Enter: &pose, Exit: &pose})
+				}
 			}
 			panel.Children(func() { draw(page) })
 		})

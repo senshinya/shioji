@@ -483,7 +483,7 @@ func (v *View) View(c *n.Context) {
 		duration := 260 * time.Millisecond
 		if c.Preferences().ReduceMotion {
 			distance = 0
-			duration = 0
+			duration = -1
 		}
 		main.Transition(n.ElementTransition{Duration: duration, Ease: n.EaseOut, Enter: &n.Motion{X: distance, Opacity: 1}})
 		if c.Now().Sub(f.changed) > 260*time.Millisecond {

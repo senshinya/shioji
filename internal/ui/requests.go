@@ -188,7 +188,7 @@ func (v *View) questionSelectionControls(c *n.Context, t *n.Theme, page requestP
 		if configurationAction(c.Key("question-option-count"), text).Label(label).Expanded(expanded).Clicked() {
 			expandedOptions[page.key()] = !expanded
 			if expanded && position != nil {
-				position.ScrollTo(0, 0, n.Animation{})
+				position.ScrollTo(0, 0, motionAnimation(c, 180*time.Millisecond))
 			}
 		}
 	}

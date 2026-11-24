@@ -330,7 +330,7 @@ func (v *View) findDecoration(item domain.Item, dark bool) *markdown.RangeDecora
 			return
 		}
 		if p.Now().Before(s.settle) {
-			p.AnimationFrame()
+			p.After(s.settle.Sub(p.Now()))
 			return
 		}
 		if s.started.IsZero() {
@@ -341,6 +341,8 @@ func (v *View) findDecoration(item domain.Item, dark bool) *markdown.RangeDecora
 			elapsed := p.Now().Sub(s.started)
 			if elapsed < 2180*time.Millisecond {
 				p.After(2180*time.Millisecond - elapsed)
+			} else if v.reduceMotion {
+				alpha = 0
 			} else {
 				alpha = max(0, 1-float32(elapsed-2180*time.Millisecond)/float32(400*time.Millisecond))
 				if alpha > 0 {

@@ -23,7 +23,7 @@ type mobileHistoryVisual struct {
 
 func (a *mobileApp) animateHistoryExit(parent *mygo.Window, session domain.Session, req *mobileHistoryRequest, in domain.HistoryChange, send func()) {
 	detail := a.model.Details[session.ID]
-	visual := &mobileHistoryVisual{input: in, started: time.Now(), suffix: make(map[string]bool)}
+	visual := &mobileHistoryVisual{input: in, suffix: make(map[string]bool)}
 	target := in.TurnID
 	if in.Restart {
 		for _, item := range detail.Items {
@@ -118,6 +118,10 @@ func (m *mobileHistoryVisual) paint(e ui.Element, key string, frame conversation
 	ui.Inert(e, true)
 	e.Opacity(frame.Opacity)
 	if frame.Shatter > 0 {
+		if bounds := e.Bounds(); bounds.W > 0 && bounds.H > 0 && !conversationui.HistoryShatterFits(bounds.W, bounds.H, 3) {
+			e.Opacity(frame.Opacity * (1 - ui.EaseOut(max(0, min(1, frame.Shatter)))))
+			return
+		}
 		e.Effect(conversationui.HistoryShatter(frame.Shatter, key))
 	}
 }
@@ -133,7 +137,11 @@ var mobileHistoryBubbleMotion = ui.ElementTransition{Duration: 280 * time.Millis
 func mobileHistoryMessageHeight(c *ui.Context, editing, restarting bool, render func(*ui.Context)) {
 	wrapper := ui.Column(c.Key("history-message-height")).FillWidth()
 	active := ui.Local(wrapper, "has-editor", func() bool { return false })
-	*active = *active || editing || restarting
+	if editing || restarting {
+		*active = true
+	} else if *active && wrapper.Settled("height") {
+		*active = false
+	}
 	if !*active {
 		// Keep the ordinary send's lifted text free of an editor clip.
 		wrapper.Children(func() { render(c.Key("history-message-body")) })

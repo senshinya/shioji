@@ -333,3 +333,69 @@ func TestDiffToEmptyKeepsOutgoingRendererAliveDuringFade(t *testing.T) {
 	}
 	ui.Advance(time.Second)
 }
+
+func TestDiffLocateMissingFragmentStopsRequestingFrames(t *testing.T) {
+	m := layoutModel()
+	m.WorkerMinor = 33
+	m.Inspectors["s"] = true
+	v := New(m, nil, "")
+	state := v.changesFor("s")
+	state.load = changesLoaded
+	state.Path = "file.go"
+	state.installDiff(domain.FileVersions{Path: "file.go", Old: "old\n", New: "new\n", Comparison: state.Comparison})
+	state.Locating = true
+	state.LocateSequence = 1
+	// No selection and no matching fragment -> TextSelectionScrollTarget returns false.
+	tester := n.NewTester(func(c *n.Context) { v.diffBody(c, c.Theme(), state) }, 420, 300)
+	tester.Advance(time.Second)
+	if state.Locating {
+		t.Fatal("missing locate target left state.Locating stuck true")
+	}
+	if tester.FramePending() {
+		t.Fatal("missing locate target keeps requesting frames forever")
+	}
+}
+
+func TestDiffLocateCancelsWhenUserScrolls(t *testing.T) {
+	m := layoutModel()
+	m.WorkerMinor = 33
+	m.Inspectors["s"] = true
+	v := New(m, nil, "")
+	state := v.changesFor("s")
+	state.load = changesLoaded
+	state.Path = "long.go"
+	var oldText, newText string
+	for i := 0; i < 200; i++ {
+		line := fmt.Sprintf("line %03d value = %d\n", i, i)
+		oldText += line
+		if i == 170 {
+			newText += fmt.Sprintf("line %03d changed = %d\n", i, i)
+		} else {
+			newText += line
+		}
+	}
+	state.installDiff(domain.FileVersions{Path: "long.go", Old: oldText, New: newText, Comparison: state.Comparison})
+	state.Diff.ExpandAll()
+	tester := n.NewTester(func(c *n.Context) { v.diffBody(c, c.Theme(), state) }, 420, 200)
+	tester.Advance(time.Second)
+
+	offset := len(newText) - 30*len("line 000 value = 000\n")
+	part := editor.DiffTextFragment{Side: editor.DiffNew, Start: offset, End: offset + 12}
+	v.locateVisibleDiffComment(state, part)
+	tester.Frame()
+	tester.Advance(60 * time.Millisecond)
+	if !state.Locating || state.Diff.ScrollY() <= 0 {
+		t.Fatalf("expected active locate scroll mid-flight: locating=%v scrollY=%g", state.Locating, state.Diff.ScrollY())
+	}
+
+	// Simulate the user manually scrolling back to the top mid-animation.
+	state.Diff.SetScrollY(0)
+	tester.Frame()
+	tester.Advance(300 * time.Millisecond)
+	if state.Locating {
+		t.Fatal("user scroll did not cancel state.Locating")
+	}
+	if state.Diff.ScrollY() > 1 {
+		t.Fatalf("locate animation fought user scroll and moved to %g", state.Diff.ScrollY())
+	}
+}

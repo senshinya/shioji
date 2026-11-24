@@ -245,14 +245,26 @@ func mobileImageCard(c *ui.Context, name, state string, image *ui.Bitmap, compac
 }
 func transcriptPicture(c *ui.Context, container ui.Element, image *ui.Bitmap) {
 	waiting := ui.Local(container, "waiting", func() bool { return image == nil })
+	fading := ui.Local(container, "bitmap-fading", func() bool { return false })
 	if image == nil {
 		*waiting = true
+		*fading = false
 		ui.Icon(c, filesSymbol).Size(17, 17).TextColor(palette(c).secondary)
 		return
 	}
 	bitmap := ui.Image(c.Key("bitmap"), image).Fill().Fit(ui.Contain)
-	if *waiting && !c.Preferences().ReduceMotion {
-		bitmap.Transition(ui.ElementTransition{Duration: 140 * time.Millisecond, Enter: &ui.Motion{Opacity: 0}})
+	if *waiting {
+		*waiting = false
+		if !c.Preferences().ReduceMotion {
+			*fading = true
+			bitmap.Jump("bitmap-opacity", 0)
+		}
 	}
-	*waiting = false
+	if *fading {
+		opacity := bitmap.AnimateTo("bitmap-opacity", 1, ui.Animation{Duration: 140 * time.Millisecond, Ease: ui.EaseOut})
+		bitmap.Opacity(opacity)
+		if bitmap.Settled("bitmap-opacity") {
+			*fading = false
+		}
+	}
 }

@@ -172,7 +172,7 @@ func (v *View) assistantReply(c *n.Context, item domain.Item) {
 	// entrance before mounting Markdown and starting its own reveal clock.
 	if stream != nil && stream.live() && !v.reduceMotion && c.Now().Before(stream.revealAfter) {
 		stream.seen, stream.revealing = v.replyFrame, true
-		c.AnimationFrame()
+		c.After(stream.revealAfter.Sub(c.Now()))
 		return
 	}
 	initialized := n.Local(root, replyMountKey{}, func() bool { return false })

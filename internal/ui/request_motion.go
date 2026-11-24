@@ -352,9 +352,14 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 	card.Transform(n.Translation(0, 8*(1-presence)))
 	n.Inert(card, !active)
 	// The dock owns an 8px gap. Include it in this same progress so there is
-	// no last-frame jump when the closed card leaves the layout.
-	card.Margin(0, 0, -8*(1-presence), 0).Hidden(presence == 0)
-	if len(state.pages) == 0 || (!active && presence == 0) {
+	// no last-frame jump when the closed card leaves the layout. Keep the first
+	// active frame unhidden at height 0 so pendingBody measures before opening.
+	hidden := !active && presence == 0
+	card.Margin(0, 0, -8*(1-presence), 0).Hidden(hidden)
+	if presence == 0 {
+		card.Opacity(0)
+	}
+	if len(state.pages) == 0 || hidden {
 		state.pages = nil
 		state.presence = requestCardHidden
 		card.Height(0)

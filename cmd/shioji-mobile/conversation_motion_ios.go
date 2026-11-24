@@ -131,13 +131,16 @@ func mobileComposerExtraHeight(c *ui.Context, surface ui.Element, draft *mobileD
 		lines := min(5, len(ui.ShapeText(text, font, width).Lines()))
 		metric.height = float32(lines)*composerLineHeight(c) + 2*mobileclient.ComposerEditorPadding
 	}
-	target := max(0, min(26, metric.height-baseHeight)) * progress
+	extra := max(0, min(26, metric.height-baseHeight))
+	var shown float32
 	if c.Preferences().ReduceMotion {
-		return surface.Jump("draft-extra-height", target)
+		shown = surface.Jump("draft-extra-height", extra)
+	} else {
+		duration := mobileReplyFade
+		if queued {
+			duration = 360 * time.Millisecond
+		}
+		shown = surface.AnimateTo("draft-extra-height", extra, ui.Animation{Duration: duration, Ease: ui.EaseOut})
 	}
-	duration := mobileReplyFade
-	if queued {
-		duration = 360 * time.Millisecond
-	}
-	return surface.AnimateTo("draft-extra-height", target, ui.Animation{Duration: duration, Ease: ui.EaseOut})
+	return shown * progress
 }

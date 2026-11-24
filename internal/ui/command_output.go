@@ -142,11 +142,11 @@ func (v *View) commandOutput(c *n.Context, t *n.Theme, item domain.Item, heading
 				target := max(0, contentHeight-height)
 				if !state.placed || math.Abs(float64(target-state.target)) > .5 || !state.scroll.Scrolling() && math.Abs(float64(target-state.scroll.Y)) > .5 {
 					state.placed, state.target = true, target
-					motion := animation
 					if target == 0 {
-						motion = n.Animation{}
+						state.scroll = n.ScrollState{Handle: state.scroll.Handle, X: state.scroll.X, Y: 0, MaxX: state.scroll.MaxX, MaxY: state.scroll.MaxY}
+					} else {
+						state.scroll.ScrollTo(state.scroll.X, target, animation)
 					}
-					state.scroll.ScrollTo(state.scroll.X, target, motion)
 					invalidate()
 					return
 				}

@@ -128,7 +128,7 @@ func splitColumn(c *ui.Context, visible bool, render func()) {
 	}
 	weight := pane.AnimateTo("pane-width", target, mobileLayoutMotion)
 	pane.Grow(weight).Transition(ui.ElementTransition{Duration: 200 * time.Millisecond, Ease: ui.EaseOut,
-		Position: true, Size: true, Exit: &ui.Motion{Collapse: true, Opacity: 1}})
+		Colors: true, Exit: &ui.Motion{Collapse: true, Opacity: 1}})
 	if weight > 0 {
 		pane.Disabled(!visible).Children(render)
 	}
@@ -327,6 +327,9 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 		a.reduceConversationMotion = c.Preferences().ReduceMotion
 		detail, historyVisual = a.historyVisualDetail(detail, sid)
 		if historyVisual != nil {
+			if historyVisual.started.IsZero() {
+				historyVisual.started = c.Now()
+			}
 			historyPose = conversationui.HistoryExitAt(c.Now(), historyVisual.started, historyVisual.input.Restart, a.reduceConversationMotion)
 			if !historyPose.Dispatch {
 				c.AnimationFrame()
@@ -398,8 +401,19 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 	if dock.Valid() {
 		dock.Bind(dockPosition)
 	}
+	emergingFade := ui.Local(frame, "emerging-fade", func() bool { return false })
 	if emerging {
-		frame.Transition(mobileFeedbackFade(120 * time.Millisecond))
+		*emergingFade = true
+		frame.Jump("emerging-opacity", 0)
+	}
+	if *emergingFade {
+		opacity := frame.AnimateTo("emerging-opacity", 1, ui.Animation{
+			Duration: 120 * time.Millisecond, Ease: ui.EaseOut, NonMotion: true,
+		})
+		frame.Opacity(opacity)
+		if frame.Settled("emerging-opacity") {
+			*emergingFade = false
+		}
 	}
 	scope := replyHistoryScope{session: sid, thread: session.ThreadID, connection: a.model.ConnectionEpoch,
 		snapshot: detail.Sequence, activation: a.replyActivation}
@@ -940,9 +954,9 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 						body = timeline.bodies[item.ID]
 					}
 					if domain.ReasoningSummary(item) {
-						a.reasoningItem(row, parent, session, item, body, mark, item.ID == liveReasoning, workCaption, workStart)
+						a.reasoningItem(row, parent, session, item, body, mark, item.ID == liveReasoning, workCaption, workStart, state)
 					} else {
-						a.toolItem(row, parent, session, item, body, mark, false)
+						a.toolItem(row, parent, session, item, body, mark, false, state)
 					}
 				default:
 					if item.Text != "" {
@@ -1574,24 +1588,28 @@ func footerActions(c *ui.Context, previewTail, atEnd bool, actions ...footerActi
 			offset := (middle - float32(i)) * compression
 			// The painted glyph shares the metadata line inside the full touch target.
 			activate := action.click
-			var copied *time.Time
+			var copied *mobileCopyFeedback
 			button := mobileButton(key, action.title, nil).MinHeight(targetHeight).Size(mobileTapSize(c), targetHeight).Shrink(0).
 				AlignItems(ui.Center).Justify(ui.Center).Disabled(action.disabled)
 			if action.copy != "" {
-				copied = ui.Local(button, "copy-feedback", func() time.Time { return time.Time{} })
+				copied = ui.Local(button, "copy-feedback", func() mobileCopyFeedback { return mobileCopyFeedback{} })
+				if copied.pending {
+					copied.pending = false
+					copied.until = c.Now().Add(2 * time.Second)
+				}
 				activate = func() {
 					action.click()
-					*copied = time.Now().Add(2 * time.Second)
+					copied.pending = true
 				}
 			}
 			if activate != nil {
 				button.OnClick(activate)
 			}
 			button.Children(func() {
-				glyph, copiedNow := action.icon, copied != nil && c.Now().Before(*copied)
+				glyph, copiedNow := action.icon, copied != nil && c.Now().Before(copied.until)
 				if copiedNow {
 					glyph = checkSymbol
-					c.After(copied.Sub(c.Now()))
+					c.After(copied.until.Sub(c.Now()))
 				}
 				alignedSymbol(key.Key(copiedNow), glyph, "00:00", mobileStatusFont(key, captionTextSize), footerIconSize, palette(key).secondary).
 					Margin(0, -offset, 0, offset).Transition(mobileFeedbackFade(120 * time.Millisecond))

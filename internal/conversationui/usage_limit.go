@@ -16,9 +16,16 @@ const (
 )
 
 type usageNoticeState struct {
-	turn  domain.Turn
-	start time.Time
-	width float32
+	turn        domain.Turn
+	start       time.Time
+	width       float32
+	initialized bool
+	// Cached text height measurement to avoid calling ShapeText twice every frame.
+	cachedCaption string
+	cachedFamily  string
+	cachedScale   float32
+	cachedWidth   float32
+	cachedHeight  float32
 }
 
 // UsageLimitNotice shares the geometry and one-shot motion across the Mac
@@ -27,12 +34,21 @@ type usageNoticeState struct {
 func UsageLimitNotice(c *n.Context, turn domain.Turn, surface, ink, muted n.Color, textScale, tideWidth, bottomGap float32) {
 	frame := n.Column(c).FillWidth().Shrink(0).Clip()
 	state := n.Local(frame, "usage-limit", func() usageNoticeState {
-		frame.Jump("height", 0)
 		return usageNoticeState{}
 	})
 	now := c.Now()
 	reduced := c.Preferences().ReduceMotion
-	if turn.UsageLimit != nil && turn.ID != state.turn.ID {
+	initialMount := !state.initialized
+	state.initialized = true
+	if initialMount {
+		if turn.UsageLimit == nil {
+			frame.Jump("height", 0)
+		} else {
+			// An already-present usage limit on initial mount (e.g. switching sessions)
+			// starts settled without replaying the entrance or tide wave.
+			state.turn = turn
+		}
+	} else if turn.UsageLimit != nil && turn.ID != state.turn.ID {
 		state.start = now
 	}
 	if turn.UsageLimit != nil {
@@ -61,15 +77,20 @@ func UsageLimitNotice(c *n.Context, turn domain.Turn, surface, ink, muted n.Colo
 	body := n.Font{Family: c.Theme().Font, Size: 12 * textScale, Weight: 400}
 	titleLine, bodyLine := 18*textScale, 17*textScale
 	caption := usageResetCaption(state.turn.UsageLimit.ResetAt, now)
-	titleHeight := float32(len(n.ShapeText(usageTitle, title, max(1, textWidth)).Lines())) * titleLine
-	bodyHeight := float32(len(n.ShapeText(caption, body, max(1, textWidth)).Lines())) * bodyLine
-	height := max(40, titleHeight+2+bodyHeight) + 2*pad
+	if state.cachedHeight == 0 || state.cachedCaption != caption || state.cachedFamily != title.Family ||
+		state.cachedScale != textScale || state.cachedWidth != textWidth {
+		titleHeight := float32(len(n.ShapeText(usageTitle, title, max(1, textWidth)).Lines())) * titleLine
+		bodyHeight := float32(len(n.ShapeText(caption, body, max(1, textWidth)).Lines())) * bodyLine
+		state.cachedCaption, state.cachedFamily, state.cachedScale, state.cachedWidth = caption, title.Family, textScale, textWidth
+		state.cachedHeight = max(40, titleHeight+2+bodyHeight) + 2*pad
+	}
+	height := state.cachedHeight
 	target := float32(0)
 	if turn.UsageLimit != nil {
 		target = height + bottomGap
 	}
 	shown := target
-	if reduced {
+	if reduced || initialMount {
 		frame.Jump("height", target)
 	} else {
 		shown = frame.AnimateTo("height", target, n.Animation{Duration: usageNoticeMotion, Ease: n.EaseOut})
@@ -98,7 +119,7 @@ func UsageLimitNotice(c *n.Context, turn domain.Turn, surface, ink, muted n.Colo
 			if tideWidth > 0 {
 				n.Box(c).Size(tideWidth, 40).Shrink(0).Role(n.RoleNone).Draw(func(p *n.Painter, box n.Rect) {
 					progress := 1.0
-					if !departing && !reduced {
+					if !departing && !reduced && !started.IsZero() {
 						progress = min(1, max(0, float64(p.Now().Sub(started))/float64(tideMotion)))
 						if progress < 1 {
 							p.AnimationFrameRate(60)

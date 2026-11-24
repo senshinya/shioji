@@ -44,8 +44,11 @@ var (
 	// The spring owns live geometry so a reversal continues from the visible frame.
 	mobileTitleMotion  = ui.Animation{Duration: 160 * time.Millisecond}
 	mobileLayoutMotion = ui.Animation{Spring: ui.SpringOptions{Duration: 500 * time.Millisecond}}
-	// In-place panels animate height and position. UIKit owns navigation motion.
-	mobilePanelTransition = ui.ElementTransition{Height: true, Position: true, Duration: 180 * time.Millisecond}
+	// In-place panels animate height, position, and conditional enter/exit opacity. UIKit owns navigation motion.
+	mobilePanelTransition = ui.ElementTransition{
+		Height: true, Position: true, Duration: 180 * time.Millisecond, Ease: ui.EaseOut,
+		Enter: &ui.Motion{Opacity: 0}, Exit: &ui.Motion{Opacity: 0},
+	}
 )
 
 func mobileHorizontalTransition(percent float32) ui.ElementTransition {

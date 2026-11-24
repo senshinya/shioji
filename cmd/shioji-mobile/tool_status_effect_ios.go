@@ -215,10 +215,18 @@ func (s *mobileToolSweep) caption(c *ui.Context, title string, transition ui.Con
 			if space != available {
 				available = space
 				display := title
-				measured := width
-				for length := len(text) - 1; measured > space+.5 && length >= 0; length-- {
-					display = string(text[:length]) + "…"
-					measured, _ = ui.ShapeText(display, font, 0).Size()
+				if width > space+.5 {
+					lo, hi := 0, len(text)
+					for lo < hi {
+						mid := (lo + hi + 1) / 2
+						measured, _ := ui.ShapeText(string(text[:mid])+"…", font, 0).Size()
+						if measured <= space+.5 {
+							lo = mid
+						} else {
+							hi = mid - 1
+						}
+					}
+					display = string(text[:lo]) + "…"
 				}
 				glyphs = ui.Shape(display, font)
 			}

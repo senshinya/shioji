@@ -112,7 +112,7 @@ func popover(c *n.Context, trigger n.Element, open *bool, build func(n.Element))
 // their final layout and opacity while the actual panel height opens/closes.
 func workspacePopupMotion(c *n.Context) n.ElementTransition {
 	if c.Preferences().ReduceMotion {
-		return n.ElementTransition{Duration: 0}
+		return n.ElementTransition{Duration: -1}
 	}
 	pose := n.Motion{Collapse: true, Opacity: 1}
 	return n.ElementTransition{Duration: 180 * time.Millisecond, Ease: n.EaseOut, Size: true, Enter: &pose, Exit: &pose}

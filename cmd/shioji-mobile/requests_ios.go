@@ -134,12 +134,11 @@ func (a *mobileApp) inlineRequestReceipt(c *ui.Context, parent *mygo.Window, sid
 		button := transcriptRequestAction(c.Key("summary"), title, title, glyph, chevron,
 			func() { *expanded = !*expanded }).Expanded(*expanded)
 		transcriptDisclosure(button)
-		if *expanded {
-			body := c.Key("details")
-			ui.Column(body).Gap(6).Padding(0, 0, 5, transcriptGlyphSlot+6).Clip().Transition(mobilePanelTransition).Children(func() {
+		mobileDisclosureBody(c.Key("details"), *expanded, func(body *ui.Context) {
+			ui.Column(body).Gap(6).Padding(0, 0, 5, transcriptGlyphSlot+6).Children(func() {
 				a.contentParts(body, parent, a.sessionByID(sid), parts)
 			})
-		}
+		})
 	})
 }
 
@@ -288,20 +287,22 @@ func (a *mobileApp) renderRequestPanel(c *ui.Context, parent *mygo.Window, sid, 
 					title = requestName(request)
 				}
 			}
-			arrow := upSymbol
-			if state.expanded {
-				arrow = downSymbol
-			}
-			ui.ButtonBase(row).Grow(1).MinWidth(0).MinHeight(mobileTapSize(c)).Padding(10, 12).
+			toggle := ui.ButtonBase(row).Grow(1).MinWidth(0).MinHeight(mobileTapSize(c)).Padding(10, 12).
 				AlignItems(ui.Center).Role(ui.RoleButton).Label(accessible).Expanded(state.expanded).KeepFocus().
-				OnClick(func() { state.expanded = !state.expanded }).Children(func() {
+				OnClick(func() { state.expanded = !state.expanded })
+			arrowTarget := float32(-180)
+			if state.expanded {
+				arrowTarget = 0
+			}
+			arrowAngle := toggle.AnimateTo("chevron-angle", arrowTarget, ui.Animation{Duration: mobileToolDisclosureDuration, Ease: ui.EaseOut})
+			toggle.Children(func() {
 				font := mobileStatusFont(row, 13)
 				font.Weight = 630
 				ui.Row(row.Key("title-line")).FillWidth().MinWidth(0).Gap(8).AlignItems(ui.Baseline).PassThrough().Children(func() {
 					transcriptSymbol(row, permissionSymbol, title, font, 16, p.ink)
 					label(row, title, 13, p.ink).Font(font.Family).FontWeight(font.Weight).
 						FixedLineHeight(mobileStatusLineHeight(font)).Grow(1).MinWidth(0).PassThrough()
-					transcriptSymbol(row, arrow, title, font, 14, p.ink)
+					transcriptSymbol(row, downSymbol, title, font, 14, p.ink).Transform(ui.Rotation(arrowAngle))
 				})
 			})
 			if len(requests) > 1 {

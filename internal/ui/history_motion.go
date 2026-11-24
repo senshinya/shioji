@@ -432,11 +432,16 @@ func (v *View) historySuffixPose(c *n.Context, content n.Element, row transcript
 		content.Opacity(0)
 		return
 	}
-	seed := uint32(2166136261)
-	for _, b := range row.key {
-		seed = (seed ^ uint32(b)) * 16777619
+	progress := float32(elapsed) / float32(historyShatterDuration)
+	if bounds, ok := v.historyRowBounds[row.key]; ok && bounds.W > 0 && bounds.H > 0 && !conversationui.HistoryShatterFits(bounds.W, bounds.H, 2) {
+		content.Opacity(1 - n.EaseOut(max(0, min(1, progress))))
+	} else {
+		seed := uint32(2166136261)
+		for _, b := range row.key {
+			seed = (seed ^ uint32(b)) * 16777619
+		}
+		content.Effect(historyShatter{progress: progress, seed: seed})
 	}
-	content.Effect(historyShatter{progress: float32(elapsed) / float32(historyShatterDuration), seed: seed})
 	c.AnimationFrame()
 }
 

@@ -166,8 +166,8 @@ func (p *runningProgress) activityCaption(c *n.Context, label string) string {
 	if p.caption == "" {
 		p.caption = "进行中"
 	}
-	if p.caption == label {
-		p.pendingCaption = ""
+	if p.caption == label || c.Preferences().ReduceMotion {
+		p.caption, p.pendingCaption = label, ""
 		return label
 	}
 	now := c.Now()
@@ -176,8 +176,14 @@ func (p *runningProgress) activityCaption(c *n.Context, label string) string {
 	} else if p.pendingCaption != label {
 		p.pendingCaption, p.captionSince = label, now
 	}
-	if now.Before(p.captionUntil) || transient && now.Sub(p.captionSince) < activityCaptionDelay {
-		c.AnimationFrame()
+	wait := p.captionUntil
+	if transient {
+		if until := p.captionSince.Add(activityCaptionDelay); until.After(wait) {
+			wait = until
+		}
+	}
+	if now.Before(wait) {
+		c.After(wait.Sub(now))
 		return p.caption
 	}
 	p.caption, p.pendingCaption = label, ""
