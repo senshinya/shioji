@@ -506,7 +506,16 @@ func (r *Runtime) call(ctx context.Context, method string, params, out any, befo
 		delete(r.pendingActivity, key)
 		r.mu.Unlock()
 		if m.Error != nil {
-			if issue := authenticationIssue(m.Error.Code, m.Error.Message); issue != "" {
+			issue := authenticationIssue(m.Error.Code, m.Error.Message)
+			if method == "account/read" && m.Error.Code == -32603 {
+				switch m.Error.Message {
+				case "workspace routing discovery failed", "workspace routing discovery timed out":
+					return errAccountRoutingUnavailable
+				case "workspace routing discovery unauthorized (401)":
+					issue = domain.RuntimeAuthenticationExpired
+				}
+			}
+			if issue != "" {
 				return &harness.SetupError{Issue: issue, Message: "登录已失效，请在该设备重新登录"}
 			}
 			return &CallError{Message: fmt.Sprintf("Codex rejected %s (code %d)", method, m.Error.Code)}

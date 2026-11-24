@@ -1,12 +1,82 @@
 package codex
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"shioji/internal/domain"
+	"shioji/internal/harness"
+	"shioji/internal/harness/codex/wire"
 	"slices"
 	"strings"
 	"testing"
 )
+
+func TestCatalogStartsWithUnconfirmedAccountOnlyForTransientWorkspaceRouting(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		account   wire.Message
+		wantReady bool
+		wantIssue domain.RuntimeIssue
+	}{
+		{name: "routing failed", account: wire.Message{Error: &wire.RPCError{Code: -32603, Message: "workspace routing discovery failed"}}, wantReady: true},
+		{name: "routing timed out", account: wire.Message{Error: &wire.RPCError{Code: -32603, Message: "workspace routing discovery timed out"}}, wantReady: true},
+		{name: "token rejected", account: wire.Message{Error: &wire.RPCError{Code: -32603, Message: "workspace routing discovery unauthorized (401)"}}, wantIssue: domain.RuntimeAuthenticationExpired},
+		{name: "signed out", account: wire.Message{Result: json.RawMessage(`{"account":null,"requiresOpenaiAuth":true}`)}, wantIssue: domain.RuntimeSignInRequired},
+		{name: "unknown internal error", account: wire.Message{Error: &wire.RPCError{Code: -32603, Message: "workspace routing discovery failed: unexpected detail"}}},
+		{name: "other error code", account: wire.Message{Error: &wire.RPCError{Code: -32602, Message: "workspace routing discovery failed"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &Runtime{
+				protocol: &protocolSupport{methods: map[string]bool{"account/read": true, "config/read": true}},
+				pending:  map[string]chan wire.Message{},
+				done:     make(chan struct{}),
+			}
+			r.stdin = workInputWriter{write: func(data []byte) (int, error) {
+				var request wire.Message
+				if err := json.Unmarshal(data, &request); err != nil {
+					t.Fatal(err)
+				}
+				var response wire.Message
+				switch request.Method {
+				case "account/read":
+					response = tc.account
+				case "config/read":
+					response.Result = json.RawMessage(`{"config":{"model_provider":"openai"}}`)
+				case "model/list":
+					response.Result = json.RawMessage(`{"data":[{"model":"fixture-model","displayName":"Fixture","isDefault":true}]}`)
+				case "configRequirements/read":
+					response.Result = json.RawMessage(`{"requirements":{"allowedSandboxModes":["read-only"]}}`)
+				default:
+					t.Fatalf("unexpected request %q", request.Method)
+				}
+				r.pending[string(request.ID)] <- response
+				return len(data), nil
+			}}
+			err := r.catalog(context.Background())
+			if tc.wantReady {
+				if err != nil {
+					t.Fatalf("transient account error blocked startup: %v", err)
+				}
+				ready := r.Readiness()
+				if ready.State != domain.RuntimeReady || ready.Account != nil ||
+					len(ready.Models) != 1 || ready.Models[0].ID != "fixture-model" ||
+					!slices.Equal(ready.Permissions, []string{"read-only"}) {
+					t.Fatalf("catalog must keep account unknown and use native models and policy: %+v", ready)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("unexpected startup with an account error")
+			}
+			var setup *harness.SetupError
+			isSetup := errors.As(err, &setup)
+			if tc.wantIssue != "" && (!isSetup || setup.Issue != tc.wantIssue) || tc.wantIssue == "" && isSetup {
+				t.Fatalf("startup error = %v, want issue %q", err, tc.wantIssue)
+			}
+		})
+	}
+}
 
 func TestAuthenticationDiagnosisDoesNotRequireOpenAIForPrivateProviders(t *testing.T) {
 	for _, tc := range []struct {

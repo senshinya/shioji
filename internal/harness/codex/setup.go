@@ -52,6 +52,8 @@ type accountStatus struct {
 	RequiresOpenAIAuth bool            `json:"requiresOpenaiAuth"`
 }
 
+var errAccountRoutingUnavailable = errors.New("Codex 账号工作区路由暂不可用")
+
 func (a accountStatus) issue() domain.RuntimeIssue {
 	if a.RequiresOpenAIAuth && (len(a.Account) == 0 || bytes.Equal(bytes.TrimSpace(a.Account), []byte("null"))) {
 		return domain.RuntimeSignInRequired
@@ -66,6 +68,11 @@ func (r *Runtime) checkAuthentication(ctx context.Context) error {
 	if err := r.call(ctx, "account/read", struct {
 		Refresh bool `json:"refreshToken"`
 	}{false}, &account); err != nil {
+		if errors.Is(err, errAccountRoutingUnavailable) {
+			// Routing discovery can fail with a saved login. Leave the account
+			// unconfirmed and let Codex enforce authentication on native requests.
+			return nil
+		}
 		return err
 	}
 	r.account = account.summary()
