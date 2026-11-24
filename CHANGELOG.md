@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-11-24
+
+[源码](https://github.com/senshinya/shioji/tree/v0.8.4) · [与上一正式版 v0.8.3 比较](https://github.com/senshinya/shioji/compare/v0.8.3...v0.8.4)
+
+### Fixed
+
+- 改善 macOS、iPhone 和 iPad 上消息发送、工具结果展开与折叠的动画，减少滚动跳动。修正「正在思考」状态点和文字的对齐。
+- 修复 macOS 会话分叉后滚到错误位置、外观主题卡片边框错位，以及在更改侧栏定位评论时的滚动动画问题。
+- 修复会话在启动目录克隆仓库后无法确认当前 Git 分支的问题。
+- Codex 账号工作区路由暂时不可用时，会话仍可启动。登录过期时仍会提示重新登录。
+
+GitHub Release 提供适用于 Apple Silicon 的 macOS 安装包。已安装支持自动更新的正式版可在 Shioji 菜单或「设置 → 关于」检查更新。Git 分支确认与 Codex 启动修复需要更新所属设备的执行服务。本版执行服务沿用协议 2.61 和 schema 17。
+
 ## [0.8.3] - 2026-11-24
 
 [源码](https://github.com/senshinya/shioji/tree/v0.8.3) · [与上一正式版 v0.8.2 比较](https://github.com/senshinya/shioji/compare/v0.8.2...v0.8.3)
