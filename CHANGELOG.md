@@ -5,6 +5,24 @@
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-11-24
+
+[源码](https://github.com/senshinya/shioji/tree/v0.8.3) · [与上一正式版 v0.8.2 比较](https://github.com/senshinya/shioji/compare/v0.8.2...v0.8.3)
+
+### Changed
+
+- Antigravity 的 Skill 目录支持项目内的 `.gemini/skills`，并能读取设备用户通过原生配置或目录链接引用的 `~/.agents/skills`。
+- 对话会在整理思考摘要前显示「正在思考」。工具调用之后的摘要归入同组，工具调用之前的摘要保留在原位置。iPhone 和 iPad 在展开单项工具后显示执行结果。
+
+### Fixed
+
+- 修复 Antigravity 重开会话后丢失已登录状态和额度展示的问题，并修正介入当前轮的发送回执和停止状态。
+- 改善 macOS 待处理会话的切换、表单校验和键盘操作，以及窄窗中的并排会话导航和分支选择。
+- 改善 iPhone 和 iPad 的历史滚动及工具展开。输入框有草稿时仍可停止当前回复，归档会话可从对话页恢复。狭窄布局下已选 Agent 页签保持可见，表单按字段约束校验。
+- 修复部分 Mermaid 图表的 SVG 颜色渲染。
+
+GitHub Release 提供适用于 Apple Silicon 的 macOS 安装包。已安装支持自动更新的正式版可在 Shioji 菜单或「设置 → 关于」检查更新。Antigravity 执行及 Skill 目录修复需要更新所属设备的执行服务。本版执行服务使用协议 2.61，数据库沿用 schema 17。
+
 ## [0.8.2] - 2026-11-24
 
 [源码](https://github.com/senshinya/shioji/tree/v0.8.2) · [与上一正式版 v0.7.13 比较](https://github.com/senshinya/shioji/compare/v0.7.13...v0.8.2)
