@@ -682,7 +682,7 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 	if jump := a.forkMotionTarget; jump.session == sid && jump.thread == session.ThreadID {
 		for i, row := range transcript {
 			if row.Footer == jump.turn && row.Receipt.BeforeInput == "" {
-				state.KeepRow(i+offset, jump.y)
+				state.ScrollToEndFromRow(i+offset, jump.y, mobilePositionMotion(c))
 				a.forkMotionTarget = mobileForkPosition{}
 				break
 			}

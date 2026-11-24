@@ -188,7 +188,7 @@ func (v *View) retainHistoryRunningFooter(m *historyRestartMotion, turn string) 
 	delete(arrivals.motions, "turn-footer:"+turn)
 }
 
-func (v *View) anchorHistoryRows(state *n.ListState, rows []transcriptRow) {
+func (v *View) anchorHistoryRows(c *n.Context, state *n.ListState, rows []transcriptRow) {
 	m := v.historyExit
 	if m == nil {
 		return
@@ -208,7 +208,7 @@ func (v *View) anchorHistoryRows(state *n.ListState, rows []transcriptRow) {
 					// Keep the sending anchor's eventual end-following behavior.
 					state.AnchorRow(i+1, *m.anchorY)
 				} else {
-					state.KeepRow(i+1, *m.anchorY)
+					state.ScrollToEndFromRow(i+1, *m.anchorY, motionAnimation(c, 260*time.Millisecond))
 				}
 			}
 			m.handOff()
@@ -217,7 +217,7 @@ func (v *View) anchorHistoryRows(state *n.ListState, rows []transcriptRow) {
 		if sid == m.in.SessionID && row.key == m.anchorKey {
 			if !m.sourcePinned() {
 				if m.anchorY != nil {
-					if m.in.Restart && v.reduceMotion {
+					if !m.in.Restart || v.reduceMotion {
 						state.KeepRowWithinContent(i+1, *m.anchorY)
 					} else {
 						state.KeepRow(i+1, *m.anchorY)

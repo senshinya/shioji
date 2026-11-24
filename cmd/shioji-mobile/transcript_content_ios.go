@@ -289,14 +289,13 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 			slot := ui.Row(glyph).Width(mobileToolGlyphSlot).Height(lineHeight).MarginEnd(6).AlignItems(ui.Baseline)
 			slot.Children(func() {
 				if liveProgress < 1 {
-					transcriptSymbol(glyph.Key("summary"), infoSymbol, summaryName, font, 14, p.secondary).Opacity(1 - liveProgress)
+					icon := transcriptSymbol(glyph.Key("summary"), infoSymbol, summaryName, font, 14, p.secondary).Opacity(1 - liveProgress)
+					if liveProgress > 0 {
+						icon.Absolute().Left(0).Top(0)
+					}
 				}
 				if liveProgress > 0 {
-					dotLabel := liveState.caption
-					if dotLabel == "" {
-						dotLabel = "正在思考"
-					}
-					mobileToolStatusDot(glyph.Key("live"), dotLabel, font, sweep).Absolute().Left(0).Top(0).Opacity(liveProgress)
+					mobileToolStatusDot(glyph.Key("live"), displayName, font, sweep).Opacity(liveProgress)
 				}
 			})
 			sweep.caption(lineKey.Key("title"), displayName, ui.ContentTransition{Animation: &ui.Animation{Duration: mobileReplyFade}})

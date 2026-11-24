@@ -582,17 +582,39 @@ func TestHistoryReplacementPreservesTheConstrainedMessagePosition(t *testing.T) 
 	}
 }
 
-func TestForkFadesSuffixAndKeepsTheSelectedReplyPosition(t *testing.T) {
+func TestForkFadesSuffixAndGlidesFromSelectedReplyToLatest(t *testing.T) {
+	for _, scenario := range []struct {
+		name       string
+		scrollable bool
+	}{
+		{name: "short"},
+		{name: "scrollable", scrollable: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			checkForkGlide(t, scenario.name, scenario.scrollable)
+		})
+	}
+}
+
+func checkForkGlide(t *testing.T, name string, scrollable bool) {
+	t.Helper()
 	v, ui, _ := historyFixture()
+	v.Model.Readiness.Capabilities.Fork = true
 	d := v.Model.Details["s"]
-	d.Items = append(d.Items, domain.Item{ID: "later", TurnID: "later-turn", Kind: "assistant", Text: strings.Repeat("Later context\n\n", 14), Final: true})
+	if scrollable {
+		d.Items[1].Text = strings.Repeat("Retained context\n\n", 30)
+	}
+	d.Items = append(d.Items, domain.Item{ID: "later", TurnID: "later-turn", Kind: "assistant", Order: 3, Text: strings.Repeat("Later context\n\n", 30), Final: true})
 	d.Turns = append(d.Turns, domain.Turn{ID: "later-turn", Order: 1, Status: "completed"})
 	v.Model.Details["s"] = d
 	ui.Frame()
-	v.lists["s"].KeepRow(3, 270)
+	ui.Advance(time.Second)
+	v.lists["s"].KeepRowWithinContent(3, 270)
 	ui.Frame()
 	before, _ := ui.Find("回复信息")
-	v.forkSession(d.Session, "turn")
+	if err := ui.Click("从这里分叉"); err != nil {
+		t.Fatal(err)
+	}
 	ui.Frame()
 	ui.Advance(80 * time.Millisecond)
 	var sent app.Job
@@ -621,13 +643,30 @@ func TestForkFadesSuffixAndKeepsTheSelectedReplyPosition(t *testing.T) {
 	data, _ := json.Marshal(domain.HistoryOperation{ID: in.OperationID, Input: in, Source: d.Session, Session: branch, State: "complete", KeepOrder: 0})
 	sent.Apply(v.Model, data, nil)
 	ui.Frame()
+	first, ok := ui.Find("回复信息")
+	saveNativeSkillImage(t, ui, "fork-"+name+"-first-frame.png")
+	if !ok || v.Model.SessionID != "branch" || math.Abs(float64(first.Y-before.Y)) > 1 {
+		t.Fatal("fork did not start from the selected reply", before, first, v.Model.SessionID)
+	}
+	ui.Advance(120 * time.Millisecond)
+	ui.Frame()
+	middle, middleOK := ui.Find("回复信息")
+	saveNativeSkillImage(t, ui, "fork-"+name+"-glide.png")
+	if scrollable && middleOK {
+		ui.Scroll(middle.X+32, middle.Y-8, 0, -2)
+		if scrolled, ok := ui.Find("回复信息"); !ok || math.Abs(float64(scrolled.Y-middle.Y)) > 2 {
+			t.Fatal("a small scroll interrupted the glide with a jump", middle, scrolled)
+		}
+	}
 	ui.Advance(400 * time.Millisecond)
 	after, ok := ui.Find("回复信息")
-	if !ok || v.Model.SessionID != "branch" || math.Abs(float64(after.Y-before.Y)) > 1 {
-		t.Fatal("fork lost the selected reply or jumped while hydrating", before, after, v.Model.SessionID)
+	saveNativeSkillImage(t, ui, "fork-"+name+"-latest.png")
+	t.Logf("selected reply Y before/first/mid/latest: %.1f / %.1f / %.1f / %.1f DIP", before.Y, first.Y, middle.Y, after.Y)
+	if !ok || !middleOK || (scrollable && !(before.Y < middle.Y && middle.Y < after.Y && after.Y-before.Y > 100)) {
+		t.Fatal("selected reply did not glide to the branch's latest position", before, middle, after)
 	}
 	// The controller's first full history arrives later than the receipt and
-	// repeats its opening fold barrier. That must not release the new anchor.
+	// repeats its opening fold barrier. That must not shift the settled reply.
 	// Ordinary watch events may already have advanced the detail sequence.
 	v.Model.ApplyEvent(domain.Event{Sequence: 1, Type: "session", SessionID: "branch", Session: &branch})
 	ui.Frame()
@@ -640,8 +679,18 @@ func TestForkFadesSuffixAndKeepsTheSelectedReplyPosition(t *testing.T) {
 	ui.Frame()
 	ui.Advance(400 * time.Millisecond)
 	hydrated, ok := ui.Find("回复信息")
-	if !ok || math.Abs(float64(hydrated.Y-before.Y)) > 1 {
-		t.Fatal("late history hydration released the fork reading anchor", before, hydrated)
+	if !ok || math.Abs(float64(hydrated.Y-after.Y)) > 1 {
+		t.Fatal("late history hydration moved the settled fork", after, hydrated)
+	}
+	ui.Scroll(hydrated.X+32, hydrated.Y-8, 0, -2)
+	ui.Advance(100 * time.Millisecond)
+	if scrolled, ok := ui.Find("回复信息"); !ok || math.Abs(float64(scrolled.Y-hydrated.Y)) > 2 {
+		t.Fatal("a small scroll jumped from the branch's latest position", hydrated, scrolled)
+	}
+	v.lists["branch"].ScrollToEnd()
+	ui.Frame()
+	if latest, ok := ui.Find("回复信息"); !ok || math.Abs(float64(latest.Y-after.Y)) > 1 {
+		t.Fatal("the glide's endpoint differs from the normal latest position", after, latest)
 	}
 }
 

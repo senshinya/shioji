@@ -312,6 +312,7 @@ type ListState struct {
 	pinAnimation     Animation
 	pinGlide         channel
 	pinWithinContent bool
+	pinStartRow      int
 	pinEndTop        float64
 	// A reader who leaves a sent-message anchor stays in reading mode even
 	// when removing its temporary end space makes all current rows fit.
@@ -478,6 +479,7 @@ func (s *ListState) ScrollToEnd(animation ...Animation) {
 	if len(animation) > 0 {
 		s.KeepRow(max(0, s.heights.n-1), 0)
 		s.pinKey, s.pinWithinContent = nil, true
+		s.pinStartRow = -1
 		s.anchorMode, s.pinAnimation = listAnchorEndPending, animation[0]
 		return
 	}
@@ -485,6 +487,19 @@ func (s *ListState) ScrollToEnd(animation ...Animation) {
 	s.followPaused = false
 	s.req = listRequest{set: true, end: true}
 	s.scrolled = true
+}
+
+// ScrollToEndFromRow starts an end glide with row at y DIPs below the list's
+// top, including when switching to a list that has yet to be laid out.
+// The glide can use temporary reading space to match the previous view.
+func (s *ListState) ScrollToEndFromRow(row int, y float32, animation Animation) {
+	if animation.Duration <= 0 {
+		s.ScrollToEnd()
+		return
+	}
+	s.ScrollToEnd(animation)
+	s.req = listRequest{}
+	s.pinStartRow, s.pinY, s.pinWithinContent = row, float64(y), false
 }
 
 // reveal scrolls as little as shows row, as ScrollIntoView does, for the
@@ -809,6 +824,12 @@ func (s *ListState) sync(e *node, n int) {
 	// A newly mounted element has no scroll offset from this ListState.
 	// Clamping temporary reading space can round the offset by a few ulps.
 	scrollMoved := sameMount && math.Abs(st.scrollY-s.wroteY) > 1e-6
+	if scrollMoved && s.anchorMode == listAnchorEnd && !s.pinWithinContent {
+		// Keep settling while a gesture is still inside the temporary tail.
+		// Releasing it here would jump the viewport to the real end.
+		end := max(0, s.wroteY+s.pinY-s.pinGlide.target)
+		scrollMoved = st.scrollY <= end
+	}
 	s.heights.reveals, s.heights.gap = s.Reveals, s.gap
 	if s.req.end {
 		s.followPaused = false
@@ -960,7 +981,9 @@ func (s *ListState) plan(e *node, n int) (a, first, last int) {
 	switch r := s.req; {
 	case s.anchored():
 		a, y = max(0, min(s.pinRow, n-1)), s.pinY
-		if s.animatedAnchor() && !s.sentAnchor() {
+		if s.anchorMode == listAnchorEndPending && s.pinStartRow >= 0 {
+			a = min(s.pinStartRow, n-1)
+		} else if s.animatedAnchor() && !s.sentAnchor() {
 			offset := s.wroteY
 			if !s.anchorPending() {
 				glide := s.pinGlide
@@ -1798,6 +1821,11 @@ func (e *node) layoutList(w, h float32) {
 	case s.anchored():
 		a = max(0, min(s.pinRow, n-1))
 		ensure(a)
+		startRow := -1
+		if s.anchorMode == listAnchorEndPending && s.pinStartRow >= 0 {
+			startRow = min(s.pinStartRow, n-1)
+			ensure(startRow)
+		}
 		if s.animatedAnchor() {
 			if s.endAnchor() {
 				release := float64(min(max(s.EndOverlayRelease, 0), s.endOverlayHeight))
@@ -1806,7 +1834,9 @@ func (e *node) layoutList(w, h float32) {
 			target := min(s.pinTarget, padTop+hs.top(a, gap))
 			if s.anchorPending() {
 				from := padTop + hs.top(a, gap) - s.wroteY
-				if s.endAnchor() && !s.KeepOffset {
+				if startRow >= 0 {
+					from = hs.top(a, gap) - hs.top(startRow, gap) + s.pinY
+				} else if s.endAnchor() && !s.KeepOffset {
 					// Measuring the new tail can change every estimated prefix
 					// height. Carry the visible row's place into that coordinate
 					// system instead of replaying the old absolute scroll offset.

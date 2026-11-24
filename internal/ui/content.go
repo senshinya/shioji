@@ -230,14 +230,13 @@ func (v *View) reasoningActivityItem(c *n.Context, t *n.Theme, item domain.Item,
 			font := n.Font{Family: c.Theme().Font, Size: transcriptCaptionSize, Weight: 400}
 			transcriptMarkerSlot(c.Key("icon")).MarginEnd(6).Children(func() {
 				if liveProgress < 1 {
-					transcriptSymbol(c.Key("summary-icon"), activityIcon(item.Presentation), summaryLabel, font, color).Opacity(1 - liveProgress)
+					icon := transcriptSymbol(c.Key("summary-icon"), activityIcon(item.Presentation), summaryLabel, font, color).Opacity(1 - liveProgress)
+					if liveProgress > 0 {
+						icon.Absolute().Left(0).Top(0)
+					}
 				}
 				if liveProgress > 0 {
-					dotLabel := liveState.caption
-					if dotLabel == "" {
-						dotLabel = "正在思考"
-					}
-					transcriptStatusDot(c.Key("dot"), dotLabel, font, t.Success, live, liveState.phase).Absolute().Left(0).Top(0).Opacity(liveProgress)
+					statusDot(c.Key("dot"), displayLabel, font, t.Success, live, liveState.phase).Opacity(liveProgress)
 				}
 			})
 			title := n.Text(c.Key("reasoning-label"), displayLabel).

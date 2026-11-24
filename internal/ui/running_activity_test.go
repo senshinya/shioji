@@ -288,6 +288,49 @@ func TestRunningStatusMatchesParagraphInkSpacing(t *testing.T) {
 	}
 }
 
+func TestFirstThinkingDotAlignsWithCaptionInk(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		t.Run(fmt.Sprint(dark), func(t *testing.T) {
+			v := liveCompletionModel()
+			d := v.Model.Details["s"]
+			started := time.Now().Add(-9 * time.Second)
+			d.Turns[0].StartedAt = &started
+			d.Items[1] = domain.Item{ID: "thinking", TurnID: "t", Kind: "activity", Presentation: "reasoning", Text: "先核对滚动范围。", Status: "running"}
+			v.Model.Details["s"] = d
+			ui := n.NewTester(v.View, 1240, 820)
+			ui.SetDark(dark)
+			ui.SetScale(2)
+			ui.Advance(1100 * time.Millisecond)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("first-thinking-dark-%t.png", dark))
+			row := v.historyRowBounds["thinking"]
+			clock, ok := ui.Find("运行时长")
+			if !ok || row.H == 0 || !ui.HasText("正在思考") {
+				t.Fatal("missing first thinking caption or elapsed time", ui.Texts())
+			}
+			im := ui.Image()
+			dotTop, dotBottom := im.Bounds().Max.Y, -1
+			textTop, textBottom := im.Bounds().Max.Y, -1
+			for y := int(row.Y * 2); y < int((row.Y+row.H)*2); y++ {
+				for x := int(row.X * 2); x < int(clock.X*2); x++ {
+					pixel := im.RGBAAt(x, y)
+					if x < int((row.X+16)*2) && int(pixel.G) > max(int(pixel.R), int(pixel.B))+16 {
+						dotTop, dotBottom = min(dotTop, y), max(dotBottom, y)
+					}
+					if x >= int((row.X+22)*2) && (dark && pixel.R > 105 || !dark && pixel.R < 165) {
+						textTop, textBottom = min(textTop, y), max(textBottom, y)
+					}
+				}
+			}
+			if dotBottom < 0 || textBottom < 0 {
+				t.Fatal("no painted dot or caption ink", row, clock)
+			}
+			if gap := float64(dotTop+dotBottom-textTop-textBottom) / 4; math.Abs(gap) > 1 {
+				t.Fatalf("thinking dot is %.2f DIP from the caption's ink center", gap)
+			}
+		})
+	}
+}
+
 func TestPendingRequestKeepsOnlySourceAndDock(t *testing.T) {
 	for _, kind := range []string{"questions", "approval"} {
 		t.Run(kind, func(t *testing.T) {

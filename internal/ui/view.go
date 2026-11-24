@@ -1414,7 +1414,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme, switchPane bool) {
 	}
 	state.FollowEnd = !hasNewer
 	v.positionWorkSource(c, state, rows)
-	v.anchorHistoryRows(state, rows)
+	v.anchorHistoryRows(c, state, rows)
 	v.anchorSentMessage(c, state, rows)
 	v.positionFind(c, state, rows)
 	rowBounds := map[string]n.Rect{}
