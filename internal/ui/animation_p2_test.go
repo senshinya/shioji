@@ -8,41 +8,33 @@ import (
 	"shioji/internal/domain"
 )
 
-func TestActivityCaptionUsesAfterTimerAndRespectsReduceMotion(t *testing.T) {
-	var p runningProgress
-	var got string
-	builds := 0
-	tester := n.NewTester(func(c *n.Context) {
-		builds++
-		got = p.activityCaption(c, "正在思考")
-	}, 200, 80)
+func TestActivityCaptionDebouncesWithoutRequestingFrames(t *testing.T) {
+	for _, mode := range []struct {
+		name         string
+		reduceMotion bool
+	}{{"standard", false}, {"reduced", true}} {
+		t.Run(mode.name, func(t *testing.T) {
+			var p runningProgress
+			var got string
+			builds := 0
+			tester := n.NewTesterWith(func(c *n.Context) {
+				builds++
+				got = p.activityCaption(c, "正在思考")
+			}, 200, 80, n.TesterOptions{Preferences: n.Preferences{ReduceMotion: mode.reduceMotion}})
 
-	// While waiting out the 180ms transient debounce, activityCaption must schedule c.After(...)
-	// rather than calling c.AnimationFrame() at 60-120Hz.
-	if tester.FramePending() {
-		t.Fatal("activityCaption busy-waits with AnimationFrame instead of c.After")
-	}
-	if got != "进行中" {
-		t.Fatalf("expected initial debounced caption, got %q", got)
-	}
-	before := builds
-	tester.Advance(100 * time.Millisecond)
-	if builds != before {
-		t.Fatalf("activityCaption rebuilt %d times before 180ms timer fired", builds-before)
-	}
-	tester.Advance(100 * time.Millisecond)
-	if got != "正在思考" {
-		t.Fatalf("activityCaption did not switch after debounce timer elapsed: got %q", got)
-	}
-
-	// Under ReduceMotion, caption switches immediately without waiting.
-	var pReduced runningProgress
-	var reducedGot string
-	reducedTester := n.NewTesterWith(func(c *n.Context) {
-		reducedGot = pReduced.activityCaption(c, "正在执行命令")
-	}, 200, 80, n.TesterOptions{Preferences: n.Preferences{ReduceMotion: true}})
-	if reducedGot != "正在执行命令" || reducedTester.FramePending() {
-		t.Fatalf("activityCaption ignored ReduceMotion: got=%q pending=%v", reducedGot, reducedTester.FramePending())
+			if tester.FramePending() || got != "进行中" {
+				t.Fatalf("expected a debounced caption and no animation frame, got %q, pending=%v", got, tester.FramePending())
+			}
+			before := builds
+			tester.Advance(100 * time.Millisecond)
+			if builds != before {
+				t.Fatalf("activityCaption rebuilt %d times before debounce expired", builds-before)
+			}
+			tester.Advance(100 * time.Millisecond)
+			if got != "正在思考" {
+				t.Fatalf("activityCaption did not switch after debounce timer elapsed: got %q", got)
+			}
+		})
 	}
 }
 

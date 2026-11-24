@@ -158,16 +158,16 @@ const (
 	activityCaptionRest     = 500 * time.Millisecond
 )
 
-// Filter short phases before changing the text or width. Once shown, give the
-// caption time to finish entering before changing phases within the same row.
+// Filter short phases in both motion modes so brief activity cannot flash a
+// caption. Once shown, give it time to finish entering before changing phases.
 // Keep the timing on the turn so all progress surfaces share it.
 func (p *runningProgress) activityCaption(c *n.Context, label string) string {
 	transient := label == "正在执行命令" || label == "正在执行工具" || label == "正在思考"
 	if p.caption == "" {
 		p.caption = "进行中"
 	}
-	if p.caption == label || c.Preferences().ReduceMotion {
-		p.caption, p.pendingCaption = label, ""
+	if p.caption == label {
+		p.pendingCaption = ""
 		return label
 	}
 	now := c.Now()

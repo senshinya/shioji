@@ -546,6 +546,10 @@ func TestToolToProseRetainsBreathingClock(t *testing.T) {
 	a.Advance(400 * time.Millisecond)
 	b.Advance(400 * time.Millisecond)
 	for i := 0; i < 5; i++ {
+		// Paint both surfaces at the same time. Their scheduled frames can fall
+		// at different times when the caption and prose reveal timers fire.
+		a.Frame()
+		b.Frame()
 		ra, _ := a.Find("进行中状态")
 		rb, ok := b.Find("进行中状态")
 		if !ok {
