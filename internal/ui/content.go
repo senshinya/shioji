@@ -113,6 +113,10 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 		v.Model.Collapsed[key] = true
 	}
 	hasBody := item.Presentation != "wait" && activityHasBody(item)
+	if domain.ReasoningSummary(item) {
+		v.reasoningActivityItem(c, t, item, key, hasBody, transcriptAnchor...)
+		return
+	}
 	duration := ""
 	if item.Presentation == "wait" {
 		for _, part := range item.Parts {
@@ -123,9 +127,6 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 		}
 	}
 	label := item.Name
-	if label == "" && domain.ReasoningSummary(item) {
-		label = "思考摘要"
-	}
 	if label == "" {
 		label = "工具活动"
 	}
@@ -135,7 +136,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 		n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
 			font := n.Font{Family: c.Theme().Font, Size: transcriptCaptionSize, Weight: 400}
 			metadataMotion := resultBlockMotion(c)
-			if item.Kind == "activity" || domain.ReasoningSummary(item) {
+			if item.Kind == "activity" {
 				transcriptSymbol(c, activityIcon(item.Presentation), label, font, color)
 			}
 			title := n.Text(c, label).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color).MinWidth(0).MaxLines(2).Ellipsis("…")
@@ -171,11 +172,132 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 	if item.Presentation == "wait" {
 		return
 	}
+	v.activityBodyDisclosure(c, t, item, key, hasBody && !v.Model.Collapsed[key], transcriptAnchor...)
+}
+
+type reasoningLiveState struct {
+	phase   time.Time
+	caption string
+	started *time.Time
+}
+
+func (v *View) reasoningActivityItem(c *n.Context, t *n.Theme, item domain.Item, key string, hasBody bool, transcriptAnchor ...bool) {
+	live := v.runningReasoning == item.ID && v.activityTurn == item.TurnID && item.WorkID == ""
+	summaryLabel := item.Name
+	if summaryLabel == "" {
+		summaryLabel = "思考摘要"
+	}
+	button := n.ButtonBase(c.Key("activity-heading")).AlignSelf(n.Start).MinHeight(20).Justify(n.Start)
+	liveState := n.Local(button, "reasoning-live-state", func() reasoningLiveState { return reasoningLiveState{} })
+	if live {
+		caption, phase := "正在思考", c.Now()
+		if p := v.runningProgress; p != nil && p.turn == item.TurnID {
+			caption = p.activityCaption(c, "正在思考")
+			phase = p.started
+		}
+		liveState.caption = caption
+		liveState.phase = phase
+		liveState.started = v.toolElapsed(item.TurnID)
+	}
+	target := float32(0)
+	if live {
+		target = 1
+	}
+	liveProgress := target
+	if c.Preferences().ReduceMotion {
+		button.Jump("reasoning-live", target)
+	} else {
+		liveProgress = button.AnimateTo("reasoning-live", target, motionAnimation(c, 180*time.Millisecond))
+	}
+	displayLabel := summaryLabel
+	if live {
+		displayLabel = liveState.caption
+		if displayLabel == "" {
+			displayLabel = "正在思考"
+		}
+	}
+	button.Label(displayLabel)
+	color := t.TextMuted
+	if !live && hasBody {
+		color = textHoverColor(c, button, t.TextMuted)
+	}
+	button.Children(func() {
+		line := n.Row(c).Height(20).AlignItems(n.Baseline)
+		if liveProgress > 0 {
+			shimmerToolStatus(c, line, liveState.phase, t.Text, liveProgress)
+		}
+		line.Children(func() {
+			font := n.Font{Family: c.Theme().Font, Size: transcriptCaptionSize, Weight: 400}
+			transcriptMarkerSlot(c.Key("icon")).MarginEnd(6).Children(func() {
+				if liveProgress < 1 {
+					transcriptSymbol(c.Key("summary-icon"), activityIcon(item.Presentation), summaryLabel, font, color).Opacity(1 - liveProgress)
+				}
+				if liveProgress > 0 {
+					dotLabel := liveState.caption
+					if dotLabel == "" {
+						dotLabel = "正在思考"
+					}
+					transcriptStatusDot(c.Key("dot"), dotLabel, font, t.Success, live, liveState.phase).Absolute().Left(0).Top(0).Opacity(liveProgress)
+				}
+			})
+			title := n.Text(c.Key("reasoning-label"), displayLabel).
+				ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).
+				FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color).MinWidth(0).MaxLines(2).Ellipsis("…")
+			if !live {
+				title.TooltipWhenTruncated(summaryLabel)
+			}
+			if liveProgress > 0 && liveState.started != nil && !liveState.started.IsZero() {
+				clockSlot := n.Row(c.Key("elapsed-slot")).Height(20).AlignItems(n.Baseline).Clip()
+				clockSlot.Children(func() {
+					_, clockW := runningElapsed(c.Key("elapsed"), liveState.started, t.TextMuted, true)
+					if liveProgress < 1 {
+						fade := max(0, (liveProgress-.35)/.65)
+						clockSlot.Width(clockW * liveProgress).Opacity(fade)
+					}
+				})
+			}
+			if !live {
+				status := ""
+				if item.Status != "" && !(item.Status == "running" && !item.Final) {
+					status = activityStatus(item.Status)
+					if issue := toolIssueLabel(item); issue != "" {
+						status = issue
+					}
+				}
+				if status != "" || hasBody {
+					meta := n.Row(c.Key("settled-meta")).MarginStart(6).Gap(6).AlignItems(n.Baseline).Opacity(1 - liveProgress)
+					meta.Children(func() {
+						if status != "" {
+							animation := motionAnimation(c, 160*time.Millisecond)
+							n.Text(c.Key("activity-status"), status).SingleLine().Shrink(0).FontSize(font.Size).FixedLineHeight(20).TextColor(t.TextMuted).
+								ContentTransition(n.ContentTransition{Animation: &animation})
+						}
+						if hasBody {
+							angle := float32(0)
+							if v.Model.Collapsed[key] {
+								angle = -90
+							}
+							inlineSymbol(c.Key("activity-chevron"), transcriptChevron, summaryLabel, font, 14, color, angle).Shrink(0)
+						}
+					})
+				}
+			}
+		})
+	})
+	if button.Clicked() && hasBody && !live {
+		if list := v.lists[v.Model.SessionID]; list != nil && (len(transcriptAnchor) == 0 || transcriptAnchor[0]) {
+			list.KeepRowWithinContent(v.currentTranscriptRow, button.Bounds().Y-list.Bounds(c).Y)
+		}
+		v.Model.Collapsed[key] = !v.Model.Collapsed[key]
+	}
+	v.activityBodyDisclosure(c, t, item, key, !live && hasBody && !v.Model.Collapsed[key], transcriptAnchor...)
+}
+
+func (v *View) activityBodyDisclosure(c *n.Context, t *n.Theme, item domain.Item, key string, open bool, transcriptAnchor ...bool) {
 	// Keep the measured stack in layout while it closes. Element exit
 	// snapshots alone do not reserve height for the transcript that follows.
 	frame := n.Column(c.Key("activity-body")).FillWidth().Clip().Margin(-8, 0, 0, 0)
 	retained := n.Local(frame, "item", func() domain.Item { return item })
-	open := hasBody && !v.Model.Collapsed[key]
 	if open {
 		*retained = item
 	}

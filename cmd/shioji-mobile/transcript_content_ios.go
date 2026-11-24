@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -203,6 +204,170 @@ func (a *mobileApp) requestResult(c *ui.Context, parent *mygo.Window, session do
 }
 
 type toolResultBodyKey string
+
+type mobileReasoningLiveState struct {
+	phase   time.Time
+	caption string
+	started *time.Time
+}
+
+func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, open *bool, mark *markdown.RangeDecoration, live bool, phaseLabel string, started *time.Time) {
+	item = conversationui.ReasoningForDisplay(item)
+	p := palette(c)
+	summaryName := item.Name
+	if summaryName == "" {
+		summaryName = "思考摘要"
+	}
+	font := mobileStatusFont(c, captionTextSize)
+	lineHeight := mobileStatusLineHeight(font)
+	hasBody := item.Text != "" || len(item.Parts) != 0 || len(item.Files) != 0 || item.Truncated
+	if open == nil {
+		open = ui.Local(c.Root(), "tool:"+session.ID+":"+item.ID, func() bool { return false })
+	}
+	header := c.Key("reasoning-heading")
+	heading := ui.ButtonBase(header).MinHeight(mobileTapSize(c)).AlignSelf(ui.Start).AlignItems(ui.Center)
+	liveState := ui.Local(heading, "reasoning-live-state", func() mobileReasoningLiveState { return mobileReasoningLiveState{} })
+	if live {
+		if liveState.phase.IsZero() {
+			liveState.phase = c.Now()
+		}
+		if started != nil && !started.IsZero() {
+			liveState.phase = *started
+		}
+		liveState.caption = phaseLabel
+		if liveState.caption == "" {
+			liveState.caption = "正在思考"
+		}
+		liveState.started = started
+	}
+	target := float32(0)
+	if live {
+		target = 1
+	}
+	liveProgress := target
+	if c.Preferences().ReduceMotion {
+		heading.Jump("reasoning-live", target)
+	} else {
+		liveProgress = heading.AnimateTo("reasoning-live", target, ui.Animation{Duration: mobileReplyFade, Ease: ui.EaseOut})
+	}
+	displayName := summaryName
+	if live {
+		displayName = liveState.caption
+	}
+	if hasBody && !live {
+		status := ""
+		if item.Status != "" && !(item.Status == "running" && !item.Final) {
+			status = map[string]string{
+				"starting": "正在启动", "running": "进行中", "completed": "已完成",
+				"failed": "调用失败", "declined": "已拒绝", "interrupted": "已中断",
+				"stopped": "已停止", "unknown": "状态未知",
+			}[item.Status]
+		}
+		disclosure := "已折叠"
+		if *open {
+			disclosure = "已展开"
+		}
+		value := disclosure
+		if status != "" {
+			value = status + " · " + disclosure
+		}
+		heading.Role(ui.RoleButton).Label(summaryName).Value(value).OnClick(func() {
+			*open = !*open
+		})
+	} else {
+		heading.Label(displayName)
+	}
+	heading.Children(func() {
+		lineKey := header.Key("line")
+		line := ui.Row(lineKey).MinWidth(0).MinHeight(lineHeight).Shrink(1).AlignItems(ui.Baseline).PassThrough()
+		var sweep *mobileToolSweep
+		if liveProgress > 0 {
+			sweep = newMobileToolSweep(lineKey, line, liveState.phase)
+		}
+		line.Children(func() {
+			glyph := lineKey.Key("glyph")
+			slot := ui.Row(glyph).Width(mobileToolGlyphSlot).Height(lineHeight).MarginEnd(6).AlignItems(ui.Baseline)
+			slot.Children(func() {
+				if liveProgress < 1 {
+					transcriptSymbol(glyph.Key("summary"), infoSymbol, summaryName, font, 14, p.secondary).Opacity(1 - liveProgress)
+				}
+				if liveProgress > 0 {
+					dotLabel := liveState.caption
+					if dotLabel == "" {
+						dotLabel = "正在思考"
+					}
+					mobileToolStatusDot(glyph.Key("live"), dotLabel, font, sweep).Absolute().Left(0).Top(0).Opacity(liveProgress)
+				}
+			})
+			sweep.caption(lineKey.Key("title"), displayName, ui.ContentTransition{Animation: &ui.Animation{Duration: mobileReplyFade}})
+			if liveProgress > 0 && liveState.started != nil && !liveState.started.IsZero() {
+				clockKey := lineKey.Key("elapsed")
+				clockFont := font
+				clockFont.Features = "tnum"
+				clockWidth, _ := ui.ShapeText(mobileElapsed(c.Now().Sub(*liveState.started).Milliseconds()), clockFont, 0).Size()
+				slot := ui.Row(clockKey).MarginStart(6 * liveProgress).AlignItems(ui.Baseline).Clip()
+				if liveProgress < 1 {
+					slot.Width(clockWidth * liveProgress).Opacity(max(0, (liveProgress-.35)/.65))
+				}
+				slot.Children(func() { mobileClock(clockKey, *liveState.started, nil, font, sweep) })
+			}
+			if !live {
+				status := ""
+				if item.Status != "" && !(item.Status == "running" && !item.Final) {
+					status = map[string]string{
+						"starting": "正在启动", "running": "进行中", "completed": "已完成",
+						"failed": "调用失败", "declined": "已拒绝", "interrupted": "已中断",
+						"stopped": "已停止", "unknown": "状态未知",
+					}[item.Status]
+				}
+				if status != "" || hasBody {
+					meta := ui.Row(lineKey.Key("settled-meta")).MarginStart(6).Gap(6).AlignItems(ui.Baseline).Opacity(1 - liveProgress)
+					meta.Children(func() {
+						if status != "" {
+							oneLine(lineKey.Key("tool-outcome"), status, captionTextSize, p.secondary).Shrink(0).FixedLineHeight(lineHeight).
+								ContentTransition(ui.ContentTransition{Animation: &mobileTitleMotion})
+						}
+						if hasBody {
+							chevron := rightSymbol
+							if *open {
+								chevron = downSymbol
+							}
+							transcriptSymbol(lineKey.Key("chevron"), chevron, summaryName, font, 12, p.secondary)
+						}
+					})
+				}
+			}
+		})
+	})
+	visible := !live && hasBody && *open
+	toolResultPanel(c.Key(toolResultBodyKey(item.ID)), visible, mark != nil, nil, func(c *ui.Context) {
+		ui.Column(c).FillWidth().Gap(7).Padding(4, 0, 8, 10).BorderStartWidth(1).BorderColor(p.line).Children(func() {
+			if item.Text != "" {
+				row := c.Key("tool-summary")
+				block := ui.Column(row)
+				animateToolResultBlock(c, block)
+				block.Children(func() { toolResultText(row, item.Text, mark) })
+			}
+			type fileKey struct {
+				path       string
+				occurrence int
+			}
+			files := make(map[string]int, len(item.Files))
+			for _, file := range item.Files {
+				row := c.Key(fileKey{file.Path, files[file.Path]})
+				files[file.Path]++
+				block := ui.Column(row)
+				animateToolResultBlock(c, block)
+				block.Children(func() { a.transcriptFile(row, file) })
+			}
+			a.contentParts(c, parent, session, item.Parts)
+			if item.Truncated {
+				note := label(c.Key("tool-truncated"), "内容过长，已截断显示", captionTextSize, p.secondary)
+				animateToolResultBlock(c, note)
+			}
+		})
+	})
+}
 
 func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, open *bool, mark *markdown.RangeDecoration, grouped bool, anchors ...func()) ui.Element {
 	item = conversationui.ReasoningForDisplay(item)

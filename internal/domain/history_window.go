@@ -99,10 +99,22 @@ const AutomaticApprovalPresentation = "automatic-approval"
 // HistorySpacer reports invisible records that do not split a tool group.
 func HistorySpacer(item Item) bool {
 	return item.Kind == "assistant" && strings.TrimSpace(item.Text) == "" && len(item.Questions) == 0 && len(item.Attachments) == 0 && len(item.Parts) == 0 ||
-		ReasoningSummary(item) && item.Text == "" && len(item.Parts) == 0 && len(item.Files) == 0 && len(item.Agents) == 0 ||
+		ReasoningSummary(item) && emptyReasoningSummary(item) ||
 		item.Kind == "request_result" && len(item.Parts) == 0 && item.WorkID == "" ||
 		item.Kind == "request" && item.Presentation == AutomaticApprovalPresentation ||
 		InlineRequestResultAnchor(item) != ""
+}
+
+func emptyReasoningSummary(item Item) bool {
+	if item.Truncated || strings.TrimSpace(item.Text) != "" || len(item.Files) != 0 || len(item.Agents) != 0 {
+		return false
+	}
+	for _, part := range item.Parts {
+		if part.Attachment != nil || strings.TrimSpace(part.Text) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func HasInlineRequestReceipt(kind string) bool {

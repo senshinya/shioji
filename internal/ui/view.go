@@ -80,7 +80,7 @@ type View struct {
 	navigationScroll                                                                                                n.ScrollState
 	conversationImport                                                                                              *conversationImportUI
 	runningProgress                                                                                                 *runningProgress
-	runningGroup, activityTurn                                                                                      string
+	runningGroup, runningReasoning, activityTurn                                                                    string
 	contextInputs                                                                                                   map[app.WorkKey]*contextInputUI
 	contextRowKeys                                                                                                  map[app.WorkKey]string
 	requestActionsState                                                                                             map[app.WorkKey]*requestActionState
@@ -1466,7 +1466,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		// paragraph gap rather than reusing only its outer 8 DIP padding.
 		if item.Kind == "assistant" && row < len(rows) {
 			next := rows[row]
-			if next.footer != "" || next.restarting || next.preparing != "" || next.group != "" || next.item.Kind == "request" || next.item.Presentation == "compaction" {
+			if next.footer != "" || next.restarting || next.preparing != "" || next.group != "" || next.item.Kind == "request" || next.item.Presentation == "compaction" || domain.ReasoningSummary(next.item) {
 				bottom = v.bodyMetadataGap()
 			}
 		}
@@ -1498,6 +1498,9 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 			if turn.Status.Active() && v.runningActivity(turn).compaction == item.ID {
 				bottom = 24 - 20
 			}
+		}
+		if domain.ReasoningSummary(item) && v.runningReasoning == item.ID && row < len(rows) && rows[row].footer == item.TurnID && rows[row].replyBefore == nil && v.Model.Connected {
+			bottom = 24 - 20
 		}
 		// A pending source takes the running footer's 24 DIP slot. Its
 		// 20 DIP line needs only the remaining clearance, just like compaction.
@@ -1693,7 +1696,7 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 		state = "disconnected"
 	}
 	activity := v.runningActivity(turn)
-	delegated := activity.sending == "" && turn.Status.Active() && (v.runningGroup != "" && v.activityTurn == turn.ID || v.Model.Connected && activity.compaction != "")
+	delegated := activity.sending == "" && turn.Status.Active() && ((v.runningGroup != "" || v.runningReasoning != "") && v.activityTurn == turn.ID || v.Model.Connected && activity.compaction != "")
 	waiting := activity.sending == "" && turn.Status.Active() && v.Model.Connected && activity.waiting
 	if preparing != "" || turn.Status == "running" || turn.Status == "starting" {
 		frame.MinHeight(0)
@@ -1735,6 +1738,8 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 			if key := v.contextRowKeys[v.Model.WorkKey(v.Model.SessionID, replacement)]; key != "" {
 				replacement = key
 			}
+		} else if v.runningReasoning != "" && v.activityTurn == turn.ID {
+			replacement = v.runningReasoning
 		} else if v.runningGroup != "" && v.activityTurn == turn.ID && v.Model.ToolDisclosure(v.runningGroup).Closed() && v.toolMotions[v.runningGroup] == nil {
 			replacement = v.runningGroup
 		}

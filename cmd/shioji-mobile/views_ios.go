@@ -459,13 +459,6 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 			break
 		}
 	}
-	if workLive {
-		caption := ui.Local(frame, "activity:"+workTurn.ID, func() mobileActivityCaption { return mobileActivityCaption{} })
-		workCaption = caption.update(c, workCaption)
-	}
-	if liveCompaction != "" {
-		workCaption = "正在压缩上下文"
-	}
 	var toolsShowProgress bool
 	localSteer := submission != nil && submission.operation != "" && draft.sendScroll.steer && !draft.sendScroll.queued
 	if workLive && liveCompaction == "" && workTurn.ID != "" && (submissionCaption == "" || localSteer) {
@@ -476,18 +469,46 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 			}
 		}
 	}
-	if toolsShowProgress && !stop.pending() && len(transcript) > 0 {
+	var liveReasoning string
+	if workLive && liveCompaction == "" && !toolsShowProgress && workTurn.ID != "" && (submissionCaption == "" || localSteer) {
+		lastIdx := len(transcript) - 1
+		if lastIdx >= 0 && transcript[lastIdx].Footer == workTurn.ID && transcript[lastIdx].Receipt.BeforeInput == "" {
+			lastIdx--
+		}
+		if lastIdx >= 0 && transcript[lastIdx].Footer == "" {
+			row := transcript[lastIdx]
+			if row.First+1 == row.End && groups[row.First].Key == "" {
+				item := items[row.First]
+				if domain.ReasoningSummary(item) && !item.Final && item.TurnID == workTurn.ID && item.WorkID == "" {
+					liveReasoning = item.ID
+				}
+			}
+		}
+	}
+	if workLive {
+		caption := ui.Local(frame, "activity:"+workTurn.ID, func() mobileActivityCaption { return mobileActivityCaption{} })
+		previousReasoning := ui.Local(frame, "live-reasoning:"+workTurn.ID, func() string { return "" })
+		if *previousReasoning != "" && liveReasoning != *previousReasoning {
+			*caption = mobileActivityCaption{}
+		}
+		*previousReasoning = liveReasoning
+		workCaption = caption.update(c, workCaption)
+	}
+	if liveCompaction != "" {
+		workCaption = "正在压缩上下文"
+	}
+	if (toolsShowProgress || liveReasoning != "") && !stop.pending() && len(transcript) > 0 {
 		last := transcript[len(transcript)-1]
 		if last.Footer == workTurn.ID && last.Receipt.BeforeInput == "" {
-			// The tool group already draws the live status. A second, empty
-			// receipt would still reserve the transcript row's padding.
+			// The tool group or live reasoning row already draws the live status.
+			// A second, empty receipt would still reserve the transcript row's padding.
 			transcript = transcript[:len(transcript)-1]
 		}
 	}
 	// The local receipt can arrive before the Worker has published the turn.
 	// Reserve its eventual footer row while the journal catches up.
 	progressRow := -1
-	if !newer && !toolsShowProgress && liveCompaction == "" && !stop.pending() {
+	if !newer && !toolsShowProgress && liveReasoning == "" && liveCompaction == "" && !stop.pending() {
 		if last := len(transcript) - 1; last >= 0 && transcript[last].Footer != "" &&
 			transcript[last].Footer == workTurn.ID && transcript[last].Receipt.BeforeInput == "" {
 			progressRow = last
@@ -943,7 +964,11 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 					if target != "" || mark != nil {
 						body = timeline.bodies[item.ID]
 					}
-					a.toolItem(row, parent, session, item, body, mark, false)
+					if domain.ReasoningSummary(item) {
+						a.reasoningItem(row, parent, session, item, body, mark, item.ID == liveReasoning, workCaption, workStart)
+					} else {
+						a.toolItem(row, parent, session, item, body, mark, false)
+					}
 				default:
 					if item.Text != "" {
 						label(row, item.Text, 13, p.secondary).Selectable()

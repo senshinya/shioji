@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	n "github.com/egoist/mygo/ui"
+	"math"
 	"shioji/internal/domain"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -169,6 +171,109 @@ func TestEmptyReasoningDoesNotCreateAnUnexpandableRow(t *testing.T) {
 	rows = withTurnFooters(rows, map[string]domain.Turn{"t": d.Turns[0]})
 	if len(rows) != 3 || rows[2].footer != "t" {
 		t.Fatal("hiding trailing empty reasoning lost the receipt", rows)
+	}
+}
+
+func TestStandaloneReasoningShowsOnlyThinkingThenMorphsInPlace(t *testing.T) {
+	const summary = "先核对现有状态机和渲染顺序。"
+	for _, reduced := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reduceMotion=%t", reduced), func(t *testing.T) {
+			m := layoutModel()
+			d := m.Details["s"]
+			started := time.Now().Add(-3 * time.Second)
+			d.Turns = []domain.Turn{{ID: "t", Status: domain.ExecutionRunning, StartedAt: &started}}
+			d.Items = []domain.Item{
+				{ID: "prompt", TurnID: "t", Kind: "user", Text: "检查一下问题", Status: "sent", Final: true},
+				{ID: "reason", TurnID: "t", Kind: "activity", Presentation: "reasoning", Name: "思考摘要", Status: "running", ActivityOrder: 1},
+			}
+			m.Details["s"] = d
+			v := New(m, nil, "")
+			ui := n.NewTester(v.View, 1180, 740)
+			ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
+			ui.Advance(time.Second)
+
+			if !ui.HasText("正在思考") || ui.HasText("思考摘要") || slices.Contains(ui.Texts(), "进行中") {
+				t.Fatalf("empty running reasoning should show only 正在思考: %v", ui.Texts())
+			}
+			beforeEmpty, ok := ui.Find("正在思考")
+			if !ok {
+				t.Fatal("missing 正在思考 before summary text arrives")
+			}
+
+			// Streaming reasoning text while still thinking must keep showing
+			// only 正在思考 at the exact same Y position without 思考摘要/进行中.
+			d.Items[1].Text = summary + "\n"
+			m.Details["s"] = d
+			ui.Frame()
+			ui.Advance(time.Second)
+			if !ui.HasText("正在思考") || ui.HasText("思考摘要") || slices.Contains(ui.Texts(), "进行中") || ui.HasText(summary) {
+				t.Fatalf("streaming reasoning showed duplicate or expanded summary: %v", ui.Texts())
+			}
+			whileStreaming, ok := ui.Find("正在思考")
+			if !ok {
+				t.Fatal("missing 正在思考 while streaming summary")
+			}
+			if math.Abs(float64(whileStreaming.Y-beforeEmpty.Y)) > 1 {
+				t.Fatalf("taking over live reasoning row moved vertically: %.1f -> %.1f", beforeEmpty.Y, whileStreaming.Y)
+			}
+
+			// Completing reasoning with a summary morphs the same row in-place
+			// into the collapsed 思考摘要 disclosure, then yields live progress below.
+			d.Items[1].Status = "completed"
+			d.Items[1].Final = true
+			m.Details["s"] = d
+			ui.Frame()
+			for step := 0; step < 6; step++ {
+				ui.Advance(35 * time.Millisecond)
+				heading, found := ui.Find("思考摘要")
+				if !found {
+					t.Fatalf("step %d: missing 思考摘要 during in-place transition: %v", step, ui.Texts())
+				}
+				if math.Abs(float64(heading.Y-whileStreaming.Y)) > 1 {
+					t.Fatalf("step %d: 思考摘要 jumped vertically during morph: %.1f -> %.1f", step, whileStreaming.Y, heading.Y)
+				}
+			}
+			ui.Advance(time.Second)
+			if !ui.HasText("思考摘要") || ui.HasText("正在思考") || ui.HasText(summary) {
+				t.Fatalf("completed reasoning did not settle into collapsed summary: %v", ui.Texts())
+			}
+			settled, ok := ui.Find("思考摘要")
+			if !ok || math.Abs(float64(settled.Y-whileStreaming.Y)) > 1 {
+				t.Fatalf("settled 思考摘要 did not stay in place: %.1f -> %.1f", whileStreaming.Y, settled.Y)
+			}
+			if err := ui.Click("思考摘要"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			if !ui.HasText(summary) {
+				t.Fatalf("clicking settled 思考摘要 did not reveal body: %v", ui.Texts())
+			}
+		})
+	}
+}
+
+func TestStandaloneReasoningWithoutSummaryLeavesNoRow(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Turns = []domain.Turn{{ID: "t", Status: domain.ExecutionRunning}}
+	d.Items = []domain.Item{
+		{ID: "prompt", TurnID: "t", Kind: "user", Text: "检查", Status: "sent", Final: true},
+		{ID: "reason", TurnID: "t", Kind: "activity", Presentation: "reasoning", Name: "思考摘要", Text: " \n\t ", Status: "running", ActivityOrder: 1},
+	}
+	m.Details["s"] = d
+	ui := n.NewTester(New(m, nil, "").View, 1180, 740)
+	ui.Advance(time.Second)
+	if !ui.HasText("正在思考") || ui.HasText("思考摘要") {
+		t.Fatalf("whitespace-only running reasoning should show only 正在思考: %v", ui.Texts())
+	}
+	d.Items[1].Status, d.Items[1].Final = "completed", true
+	d.Turns[0].Status = domain.ExecutionCompleted
+	d.Items = append(d.Items, domain.Item{ID: "reply", TurnID: "t", Kind: "assistant", Text: "已完成。", Final: true})
+	m.Details["s"] = d
+	ui.Frame()
+	ui.Advance(time.Second)
+	if ui.HasText("思考摘要") || ui.HasText("正在思考") || !ui.HasText("已完成。") {
+		t.Fatalf("empty reasoning summary should not leave a collapsed row: %v", ui.Texts())
 	}
 }
 

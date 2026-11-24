@@ -20,6 +20,7 @@ type runningActivity struct {
 	hiddenReasoning bool
 	waiting         bool
 	compaction      string
+	reasoning       string
 	started         *time.Time
 }
 
@@ -44,7 +45,7 @@ func (v *View) runningActivity(turn domain.Turn) runningActivity {
 		if item.TurnID != turn.ID || item.WorkID != "" {
 			continue
 		}
-		eligible := item.Kind == "tool" || item.Kind == "assistant" && (item.ActivityOrder > 0 || strings.TrimSpace(item.Text) != "") || item.Kind == "activity" && (item.Presentation == "compaction" || item.Presentation == "reasoning")
+		eligible := item.Kind == "tool" || item.Kind == "assistant" && (item.ActivityOrder > 0 || strings.TrimSpace(item.Text) != "") || item.Kind == "activity" && item.Presentation == "compaction" || domain.ReasoningSummary(item)
 		if eligible && (latest == nil || item.ActivityOrder > latest.ActivityOrder) {
 			latest = &d.Items[i]
 			a.index = i
@@ -70,17 +71,20 @@ func (v *View) runningActivity(turn domain.Turn) runningActivity {
 				}
 			}
 			return a
-		case "activity":
+		case "activity", "reasoning":
 			if item.Presentation == "compaction" {
 				if !item.Final {
 					a.compaction = item.ID
 				}
 				return a
 			}
-			if item.Presentation == "reasoning" {
+			if domain.ReasoningSummary(item) {
 				a.hiddenReasoning = domain.HistorySpacer(item)
 				if !item.Final {
 					a.label = "正在思考"
+					if !a.hiddenReasoning {
+						a.reasoning = item.ID
+					}
 				}
 				return a
 			}
@@ -222,8 +226,8 @@ func (v *View) progressFor(c *n.Context, turn domain.Turn) *runningProgress {
 // prose, use the actual disclosure deadline (no delay for an already folded
 // group), then continue crossfade and slot reclamation on the same timeline.
 func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domain.SessionDetail) {
-	previousGroup, previousTurn := v.runningGroup, v.activityTurn
-	v.runningGroup, v.activityTurn = "", ""
+	previousGroup, previousReasoning, previousTurn := v.runningGroup, v.runningReasoning, v.activityTurn
+	v.runningGroup, v.runningReasoning, v.activityTurn = "", "", ""
 	if !v.Model.Connected || len(rows) == 0 {
 		v.runningProgress = nil
 		return
@@ -246,7 +250,7 @@ func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domai
 		return
 	}
 	if p != oldProgress {
-		previousGroup, previousTurn = "", ""
+		previousGroup, previousReasoning, previousTurn = "", "", ""
 	}
 	row := rows[len(rows)-1]
 	group := row.group
@@ -268,6 +272,15 @@ func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domai
 			}
 		}
 	}
+	reasoning := ""
+	if group == "" && activity.reasoning != "" && row.toolParent == "" && row.group == "" && row.item.ID == activity.reasoning && row.item.TurnID == turn.ID {
+		reasoning = row.item.ID
+	}
+	if previousReasoning != "" && previousTurn == turn.ID && reasoning != previousReasoning {
+		// Standalone thinking settled into its collapsed summary; start the
+		// next live indicator fresh instead of repeating "正在思考".
+		p.caption, p.pendingCaption, p.captionUntil = "", "", time.Time{}
+	}
 	if group != previousGroup || row.item.Kind == "assistant" && row.item.ID == activity.item {
 		// Visible prose and changes of progress owner use their own handoff.
 		p.captionUntil = time.Time{}
@@ -282,6 +295,18 @@ func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domai
 			p.label = "正在思考"
 		}
 		v.runningGroup, v.activityTurn = group, turn.ID
+		return
+	}
+	if reasoning != "" {
+		p.handoff = nil
+		p.label = activity.label
+		p.elapsed = activity.started
+		v.runningReasoning, v.activityTurn = reasoning, turn.ID
+		// Take over the already visible live status slot without replaying row entrance.
+		if v.toolArrivals != nil {
+			delete(v.toolArrivals.motions, reasoning)
+		}
+		rows[len(rows)-1].opacity = 1
 		return
 	}
 	if p.handoff == nil && previousGroup != "" && previousTurn == turn.ID && row.item.Kind == "assistant" {
