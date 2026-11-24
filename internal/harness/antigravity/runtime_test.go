@@ -192,6 +192,109 @@ func TestPromptAndSteerShareOneTurnUntilBothSettle(t *testing.T) {
 	}
 }
 
+func TestSteerReceiptSettlesWhileNativeReplyKeepsRunning(t *testing.T) {
+	r, s, _, ctx := startPromptFixture(t)
+	turn, err := r.Submit(ctx, s, "op", harness.TurnInput{Text: "start"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"hold steer", "hold next steer"} {
+		receipt, err := r.(harness.DeferredInputRuntime).SteerDeferred(ctx, s, turn, text, harness.TurnInput{Text: text}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case result := <-receipt:
+			if result != nil {
+				t.Fatalf("steer receipt = %v", result)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("steer receipt still waiting for the running prompt")
+		}
+		if got := r.(harness.PendingRuntime).PendingOperations(); got != 1 {
+			t.Fatalf("native prompt should still be running, pending = %d", got)
+		}
+	}
+}
+
+func TestPromptInternalErrorAfterStopSettlesAsInterrupted(t *testing.T) {
+	r, s, events, ctx := startPromptFixture(t)
+	turn, err := r.Submit(ctx, s, "op", harness.TurnInput{Text: "start"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Interrupt(ctx, s, turn); err != nil {
+		t.Fatal(err)
+	}
+	waitPromptTerminal(t, ctx, events, turn, domain.ExecutionInterrupted)
+}
+
+func TestPromptInternalErrorAfterStopKeepsUnconfirmedDeliveryUncertain(t *testing.T) {
+	r, s, events, ctx := startPromptFixture(t)
+	turn, receipt, err := r.(harness.DeferredInputRuntime).SubmitDeferred(ctx, s, "op", harness.TurnInput{Text: "hold start"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Interrupt(ctx, s, turn); err != nil {
+		t.Fatal(err)
+	}
+	waitPromptTerminal(t, ctx, events, turn, domain.ExecutionInterrupted)
+	select {
+	case err := <-receipt:
+		if !harness.IsUncertain(err) {
+			t.Fatalf("unconfirmed receipt = %v", err)
+		}
+	default:
+		t.Fatal("missing delivery receipt")
+	}
+}
+
+func TestPromptInternalErrorWithoutStopStillFails(t *testing.T) {
+	r, s, events, ctx := startPromptFixture(t)
+	turn, err := r.Submit(ctx, s, "op", harness.TurnInput{Text: "fail after output"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitPromptTerminal(t, ctx, events, turn, domain.ExecutionFailed)
+}
+
+func startPromptFixture(t *testing.T) (harness.Runtime, domain.Session, <-chan domain.Event, context.Context) {
+	t.Helper()
+	a, _ := fixtureAdapter(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	t.Cleanup(cancel)
+	events := make(chan domain.Event, 32)
+	r, err := a.Start(ctx, harness.StartOptions{OnEvent: func(e domain.Event) error { events <- e; return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close(context.Background()) })
+	s := domain.Session{ID: "shioji", Context: domain.LaunchContext{CWD: t.TempDir()}, Config: domain.RunConfig{Model: "gemini-fixture", Effort: "high", Permission: "default", Plan: true}}
+	s.ThreadID, err = r.Create(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r, s, events, ctx
+}
+
+func waitPromptTerminal(t *testing.T, ctx context.Context, events <-chan domain.Event, turn string, want domain.ExecutionState) {
+	t.Helper()
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatal("missing terminal turn")
+		case event := <-events:
+			if event.Turn == nil || event.Turn.Status.Active() {
+				continue
+			}
+			if event.Turn.ID != turn || event.Turn.Status != want || want == domain.ExecutionInterrupted && event.Turn.Error != "" {
+				t.Fatalf("terminal turn = %+v, want %s", event.Turn, want)
+			}
+			return
+		}
+	}
+}
+
 func fixtureAdapter(t *testing.T) (Adapter, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -237,6 +340,9 @@ func TestACPFixtureProcess(t *testing.T) {
 	out := json.NewEncoder(os.Stdout)
 	reply := func(id json.RawMessage, result any) {
 		_ = out.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+	}
+	reject := func(id json.RawMessage, code int, message string) {
+		_ = out.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "error": rpcError{Code: code, Message: message}})
 	}
 	update := func(kind, text string) {
 		_ = out.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
@@ -303,6 +409,9 @@ func TestACPFixtureProcess(t *testing.T) {
 			if pendingCompact != nil {
 				reply(pendingCompact, map[string]string{"stopReason": "cancelled"})
 				pendingCompact = nil
+			} else if first != nil {
+				reject(first, -32603, "Internal error")
+				first = nil
 			}
 		case "session/prompt":
 			if msg.Params.SessionID != "native-session" || effort != "high" || mode != "plan" || len(msg.Params.Prompt) == 0 {
@@ -325,15 +434,23 @@ func TestACPFixtureProcess(t *testing.T) {
 				reply(msg.ID, map[string]string{"stopReason": "end_turn"})
 				continue
 			}
-			if msg.Params.Prompt[0].Text == "start" {
+			switch msg.Params.Prompt[0].Text {
+			case "start":
 				first = msg.ID
 				update("agent_message_chunk", "primary continued")
-			} else {
+			case "hold start":
+				first = msg.ID
+			case "hold steer", "hold next steer":
+				reply(first, map[string]any{"stopReason": "end_turn", "usage": map[string]int{"inputTokens": 5}})
+				first = msg.ID
+			case "reject":
+				reject(msg.ID, -32602, "rejected fixture")
+			case "fail after output":
+				update("agent_message_chunk", "primary continued")
+				reject(msg.ID, -32603, "Internal error")
+			default:
 				reply(first, map[string]string{"stopReason": "end_turn"})
-				if msg.Params.Prompt[0].Text == "reject" {
-					_ = out.Encode(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32602, "message": "rejected fixture"}})
-					continue
-				}
+				first = nil
 				update("agent_message_chunk", "steer continued")
 				reply(msg.ID, map[string]string{"stopReason": "end_turn"})
 			}
@@ -344,19 +461,7 @@ func TestACPFixtureProcess(t *testing.T) {
 }
 
 func TestSteerReportsNativeRejectionAfterWireHandoff(t *testing.T) {
-	a, _ := fixtureAdapter(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	r, err := a.Start(ctx, harness.StartOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close(context.Background())
-	s := domain.Session{ID: "shioji", Context: domain.LaunchContext{CWD: t.TempDir()}, Config: domain.RunConfig{Model: "gemini-fixture", Effort: "high", Permission: "default", Plan: true}}
-	s.ThreadID, err = r.Create(ctx, s)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r, s, _, ctx := startPromptFixture(t)
 	turn, err := r.Submit(ctx, s, "op", harness.TurnInput{Text: "start"})
 	if err != nil {
 		t.Fatal(err)

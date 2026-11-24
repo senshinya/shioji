@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -35,13 +36,25 @@ type logicalTurn struct {
 	turn        domain.Turn
 	primary     chan error
 	confirmed   bool
-	prompts     int
+	prompts     []*nativePrompt
 	outcome     domain.ExecutionState
 	message     string
 	stream      *domain.Item
 	tools       map[string]domain.Item
 	interrupted bool
 	sawUsage    bool
+}
+
+type nativePrompt struct {
+	receipt   chan<- error // nil for the primary prompt
+	confirmed bool
+}
+
+func (p *nativePrompt) confirm(err error) {
+	if !p.confirmed {
+		p.confirmed = true
+		p.receipt <- err
+	}
 }
 
 func (r *runtime) Submit(ctx context.Context, session domain.Session, id string, input harness.TurnInput) (string, error) {
@@ -160,7 +173,7 @@ func (r *runtime) beginPrompt(ctx context.Context, session domain.Session, turn 
 		return &harness.DeliveryError{Message: "所属运行环境已变化，消息未发送"}
 	}
 	steer := receipt != nil
-	if steer && (r.active != turn || turn.interrupted || turn.prompts == 0) || !steer && (r.active != nil || len(r.requests) != 0) {
+	if steer && (r.active != turn || turn.interrupted || len(turn.prompts) == 0) || !steer && (r.active != nil || len(r.requests) != 0) {
 		return &harness.DeliveryError{Message: "目标回复已变化，消息未发送"}
 	}
 	if turn.turn.Presentation == "compaction" && !r.commandOffers[session.ThreadID] {
@@ -170,8 +183,9 @@ func (r *runtime) beginPrompt(ctx context.Context, session domain.Session, turn 
 		SessionID string         `json:"sessionId"`
 		Prompt    []contentBlock `json:"prompt"`
 	}{session.ThreadID, blocks}
+	prompt := &nativePrompt{receipt: receipt}
 	_, err := r.process.request(ctx, "session/prompt", args, func(p packet) error {
-		return r.promptComplete(turn, receipt, p)
+		return r.promptComplete(turn, prompt, p)
 	})
 	if err != nil {
 		var write *writeError
@@ -180,7 +194,7 @@ func (r *runtime) beginPrompt(ctx context.Context, session domain.Session, turn 
 		}
 		return &harness.DeliveryError{Message: "未能向 Antigravity 发送消息"}
 	}
-	turn.prompts++
+	turn.prompts = append(turn.prompts, prompt)
 	if steer {
 		return nil
 	}
@@ -248,24 +262,30 @@ func unknownDelivery() error {
 	return &harness.DeliveryError{Uncertain: true, Message: "无法确认 Antigravity 是否收到输入，消息不会自动重发"}
 }
 
-func (r *runtime) promptComplete(t *logicalTurn, receipt chan<- error, p packet) error {
+func (r *runtime) promptComplete(t *logicalTurn, prompt *nativePrompt, p packet) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.active != t {
 		return nil
 	}
-	t.prompts--
+	index := slices.Index(t.prompts, prompt)
+	var successor *nativePrompt
+	if index+1 < len(t.prompts) {
+		successor = t.prompts[index+1]
+	}
+	t.prompts = slices.Delete(t.prompts, index, index+1)
 	status, message := domain.ExecutionCompleted, ""
 	var usage promptUsage
+	var delivery error
 	switch {
+	case t.interrupted && p.Error != nil && p.Error.Code == -32603:
+		status = domain.ExecutionInterrupted
+		// The cancelled prompt settled, but an internal error cannot prove
+		// delivery for an input whose acceptance was still unconfirmed.
+		delivery = unknownDelivery()
 	case p.Error != nil:
 		status, message = domain.ExecutionFailed, fmt.Sprintf("Antigravity 返回执行错误（%d）", p.Error.Code)
-		rejection := &harness.DeliveryError{Message: message}
-		if receipt == nil {
-			r.confirm(t, rejection)
-		} else {
-			receipt <- rejection
-		}
+		delivery = &harness.DeliveryError{Message: message}
 	default:
 		var result struct {
 			StopReason string      `json:"stopReason"`
@@ -276,6 +296,11 @@ func (r *runtime) promptComplete(t *logicalTurn, receipt chan<- error, p packet)
 		}
 		switch result.StopReason {
 		case "end_turn":
+			// agy answers the prompt a steer took over while the new
+			// prompt continues to run. Settle only the successor's receipt.
+			if successor != nil && !t.interrupted {
+				successor.confirm(nil)
+			}
 		case "cancelled":
 			status = domain.ExecutionInterrupted
 		case "max_tokens":
@@ -288,11 +313,11 @@ func (r *runtime) promptComplete(t *logicalTurn, receipt chan<- error, p packet)
 			status, message = domain.ExecutionFailed, "Antigravity 未报告可识别的结束原因"
 		}
 		usage = result.Usage
-		if receipt == nil {
-			r.confirm(t, nil)
-		} else {
-			receipt <- nil
-		}
+	}
+	if prompt.receipt == nil {
+		r.confirm(t, delivery)
+	} else {
+		prompt.confirm(delivery)
 	}
 	usage.accumulate(&t.turn)
 	if t.outcome == "" || status == domain.ExecutionFailed || t.outcome == domain.ExecutionCompleted && status == domain.ExecutionInterrupted {
@@ -333,7 +358,7 @@ func (r *runtime) confirm(t *logicalTurn, err error) {
 }
 
 func (r *runtime) finishIfSettled(t *logicalTurn) error {
-	if t == nil || t.prompts != 0 || len(r.requests) != 0 {
+	if t == nil || len(t.prompts) != 0 || len(r.requests) != 0 {
 		return nil
 	}
 	for id, tool := range t.tools {
@@ -415,7 +440,7 @@ func (r *runtime) PendingOperations() int {
 	defer r.mu.Unlock()
 	pending := len(r.requests)
 	if r.active != nil {
-		pending += r.active.prompts
+		pending += len(r.active.prompts)
 	}
 	return pending
 }

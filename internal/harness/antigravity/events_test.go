@@ -17,7 +17,7 @@ const yoloApproval = `{"sessionId":"native","toolCall":{"toolCallId":"native-too
 func TestYOLOAnswersToolApprovalWithoutOpeningARequest(t *testing.T) {
 	r, writes, events := callbackRuntime()
 	r.session.Config.Permission = "yolo"
-	r.active = &logicalTurn{turn: domain.Turn{ID: "turn"}, prompts: 1, primary: make(chan error, 1), tools: map[string]domain.Item{}}
+	r.active = &logicalTurn{turn: domain.Turn{ID: "turn"}, prompts: []*nativePrompt{{}}, primary: make(chan error, 1), tools: map[string]domain.Item{}}
 	sendCallback(t, r, "session/request_permission", yoloApproval, "approval")
 	if !strings.Contains(writes.String(), `"optionId":"once"`) || len(*events) != 1 || (*events)[0].Item == nil || (*events)[0].Item.Kind != "tool" || !r.active.confirmed {
 		t.Fatalf("YOLO should allow once and acknowledge the turn without opening an approval: wire=%s events=%+v", writes, *events)
@@ -30,7 +30,7 @@ func TestYOLOAnswersToolApprovalWithoutOpeningARequest(t *testing.T) {
 
 func TestSwitchToYOLOConvertsOpenApprovalToOneTool(t *testing.T) {
 	r, writes, events := callbackRuntime()
-	r.active = &logicalTurn{turn: domain.Turn{ID: "turn"}, prompts: 1, primary: make(chan error, 1), tools: map[string]domain.Item{}}
+	r.active = &logicalTurn{turn: domain.Turn{ID: "turn"}, prompts: []*nativePrompt{{}}, primary: make(chan error, 1), tools: map[string]domain.Item{}}
 	sendCallback(t, r, "session/request_permission", yoloApproval, "open")
 	if len(*events) != 1 || (*events)[0].Type != "request.open" {
 		t.Fatalf("expected a pending manual approval: %+v", *events)
@@ -133,7 +133,7 @@ func TestLateToolAndApprovalKeepOriginalTurnWhileAnotherPromptRuns(t *testing.T)
 	if err := r.finishIfSettled(previous); err != nil {
 		t.Fatal(err)
 	}
-	r.active = &logicalTurn{turn: domain.Turn{ID: "current"}, tools: map[string]domain.Item{}, prompts: 1, primary: make(chan error, 1)}
+	r.active = &logicalTurn{turn: domain.Turn{ID: "current"}, tools: map[string]domain.Item{}, prompts: []*nativePrompt{{}}, primary: make(chan error, 1)}
 	approval := `{"sessionId":"native","toolCall":{"toolCallId":"native-tool","title":"Approve write"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]}`
 	sendCallback(t, r, "session/request_permission", approval, "approval")
 	opened := (*events)[len(*events)-1].Request
@@ -161,7 +161,7 @@ func TestLateToolAndApprovalKeepOriginalTurnWhileAnotherPromptRuns(t *testing.T)
 
 func TestAntigravityQuestionFormReturnsTypedAnswersToOriginalCallback(t *testing.T) {
 	r, writes, events := callbackRuntime()
-	r.active = &logicalTurn{turn: domain.Turn{ID: "turn"}, tools: map[string]domain.Item{"question-tool": {ID: "question-item"}}, prompts: 1, primary: make(chan error, 1)}
+	r.active = &logicalTurn{turn: domain.Turn{ID: "turn"}, tools: map[string]domain.Item{"question-tool": {ID: "question-item"}}, prompts: []*nativePrompt{{}}, primary: make(chan error, 1)}
 	form := `{"sessionId":"native","toolCallId":"question-tool","mode":"form","message":"The agent has 2 questions.","requestedSchema":{"type":"object","properties":{
 		"q2":{"type":"array","title":"Which checks?","items":{"anyOf":[{"const":"1","title":"Build"},{"const":"2","title":"Tests"}]}},
 		"q2_other":{"type":"string","title":"Other"},
