@@ -472,18 +472,21 @@ func (v *View) contextCompactionItem(c *n.Context, t *n.Theme, item domain.Item)
 		} else {
 			transcriptSymbol(c, transcriptCompactIcon, label, font, t.TextMuted)
 		}
-		text := n.Text(c.Key("label"), label).FontSize(font.Size).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+		metadata := n.Row(c.Key("metadata")).Gap(6).AlignItems(n.Baseline)
 		if live {
-			shimmer(c, text, t.TextMuted, t.Text)
+			shimmer(c, metadata, t.TextMuted, t.Text)
 		}
-		if live && item.TurnID != "" {
-			for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
-				if turn.ID == item.TurnID && turn.Status.Active() {
-					runningElapsed(c.Key("elapsed"), v.runningElapsedStart(turn), t.TextMuted, false)
-					break
+		metadata.Children(func() {
+			n.Text(c.Key("label"), label).FontSize(font.Size).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+			if live && item.TurnID != "" {
+				for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
+					if turn.ID == item.TurnID && turn.Status.Active() {
+						runningElapsed(c.Key("elapsed"), v.runningElapsedStart(turn), t.TextMuted, false)
+						break
+					}
 				}
 			}
-		}
+		})
 		if item.Status == "failed" || item.Status == "interrupted" {
 			if control(c.Key("retry-compact")).Height(26).PaddingX(4).Disabled(v.compactReason() != "").Label("重试压缩").Children(func() {
 				n.Text(c, "重试").FontSize(transcriptCaptionSize).TextColor(t.TextMuted)

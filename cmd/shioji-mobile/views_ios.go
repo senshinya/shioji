@@ -339,13 +339,13 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 		if a.model.Connected && !hasLatestSessionHistory(detail) {
 			ui.Column(entryLayer.Key("loading")).Grow(1).Transition(mobileFeedbackFade(120 * time.Millisecond)).Children(func() {
 				if read := a.model.HistoryReads[sid]; read != nil && read.Error != "" {
-					mobileSessionLoading(c.Key(sid), "", "无法读取会话历史", func() {
+					mobileSessionLoading(c.Key(sid), "", "无法读取会话历史", false, func() {
 						if a.controller != nil {
 							a.controller.Select(sid)
 						}
 					})
 				} else {
-					mobileSessionLoading(c.Key(sid), "正在读取会话", "", nil)
+					mobileSessionLoading(c.Key(sid), "正在读取会话", "", true, nil)
 				}
 			})
 			return nil
@@ -419,9 +419,9 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 				if interactive && a.controller != nil && a.model.Connected {
 					retry = func() { a.controller.Select(sid) }
 				}
-				mobileSessionLoading(c.Key(sid), "", "无法读取会话历史", retry)
+				mobileSessionLoading(c.Key(sid), "", "无法读取会话历史", false, retry)
 			} else if !detail.HasLoadedHistory() && (!a.preview || read != nil && read.Pending) && a.model.Connected {
-				mobileSessionLoading(c.Key(sid), "正在读取会话", "", nil)
+				mobileSessionLoading(c.Key(sid), "正在读取会话", "", true, nil)
 			}
 		})
 		return nil
@@ -764,13 +764,15 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 							}
 						}).Children(func() {
 							status, start, live := a.liveTurnStatus(sid, turn, detail.Requests, items)
+							sweeping := live
 							if live && workCaption != "" {
 								status = workCaption
 							}
 							if submissionCaption != "" {
 								status, live = submissionCaption, submissionCaption == "进行中"
+								sweeping = a.model.Connected
 							}
-							mobileTranscriptProgress(body, status, start, live)
+							mobileTranscriptProgress(body, status, start, live, sweeping)
 						})
 						return
 					}

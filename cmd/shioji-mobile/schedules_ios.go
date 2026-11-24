@@ -230,7 +230,7 @@ func (a *mobileApp) scheduleDetailView(parent, w *mygo.Window, seed domain.Sched
 					})
 					return
 				}
-				mobileSessionLoading(c.Key(seed.ID), caption, problem, retry)
+				mobileSessionLoading(c.Key(seed.ID), caption, problem, a.scheduleConnected(seed), retry)
 			})
 			return
 		}

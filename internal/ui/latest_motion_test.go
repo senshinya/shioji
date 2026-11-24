@@ -226,17 +226,39 @@ func latestTextDifference(a, b *image.RGBA, r n.Rect) int64 {
 func TestLatestControlCrossfadesChangedWords(t *testing.T) {
 	v, ui := latestMotionFixture()
 	label, _ := ui.Find("正在执行命令")
-	before := ui.Image()
-	latestMotionPhase(v, "tool") // Same width, only the final two words change.
-	ui.Frame()
-	ui.Advance(180 * time.Millisecond)
-	first := latestTextDifference(before, ui.Image(), label)
-	ui.Advance(80 * time.Millisecond)
-	middleImage := ui.Image()
-	middle := latestTextDifference(before, middleImage, label)
-	ui.Advance(time.Second)
-	end := latestTextDifference(before, ui.Image(), label)
-	if end < 1000 || first > end/10 || middle <= first+100 || latestTextDifference(middleImage, ui.Image(), label) < 100 {
+	first, middle, end, remaining := captionCrossfadeInk(ui, label, func() {
+		latestMotionPhase(v, "tool") // Same width, only the final two words change.
+	})
+	if end < 1000 || first > end/10 || middle <= first+100 || remaining < 100 {
 		t.Fatal("latest status text replaces immediately instead of crossfading", first, middle, end)
 	}
+}
+
+func captionCrossfadeInk(ui *n.Tester, label n.Rect, change func()) (first, middle, end, remaining int64) {
+	const delay = 180 * time.Millisecond
+	const blend = 80 * time.Millisecond
+	const settle = time.Second
+	const sweepPeriod = 2200 * time.Millisecond
+	sample := func() [3]*image.RGBA {
+		var frames [3]*image.RGBA
+		for i, offset := range []time.Duration{delay, blend, settle} {
+			ui.Advance(offset)
+			ui.Frame()
+			frames[i] = ui.Image()
+		}
+		return frames
+	}
+	// Compare the same sweep phase so the moving highlight does not count as
+	// a change of caption.
+	reference := sample()
+	ui.Advance(sweepPeriod - delay - blend - settle)
+	change()
+	ui.Frame()
+	changing := sample()
+	ui.Advance(sweepPeriod - settle)
+	ui.Frame()
+	return latestTextDifference(reference[0], changing[0], label),
+		latestTextDifference(reference[1], changing[1], label),
+		latestTextDifference(reference[2], changing[2], label),
+		latestTextDifference(changing[1], ui.Image(), label)
 }

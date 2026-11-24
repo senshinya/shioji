@@ -11,6 +11,66 @@ import (
 	"time"
 )
 
+func TestRunningFooterSweepsFromCaptionThroughElapsedTime(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, reduced := range []bool{false, true} {
+			t.Run(fmt.Sprintf("dark=%v/reduced=%v", dark, reduced), func(t *testing.T) {
+				v := liveCompletionModel()
+				d := v.Model.Details["s"]
+				d.Items = []domain.Item{{ID: "command", TurnID: "t", Kind: "tool", Presentation: "command"}}
+				ui := n.NewTester(func(c *n.Context) {
+					if d.Turns[0].StartedAt == nil {
+						d.Turns[0].StartedAt = new(c.Now().Add(-33 * time.Second))
+						v.Model.Details["s"] = d
+					}
+					n.Column(c).Fill().Padding(16).Background(c.Theme().Background).Children(func() {
+						v.turnFooter(c, c.Theme(), d.Turns[0])
+					})
+				}, 320, 64)
+				ui.SetDark(dark)
+				ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
+				ui.Advance(2200 * time.Millisecond)
+				ui.Frame()
+				caption, hasCaption := ui.Find("正在执行命令")
+				clock, hasClock := ui.Find("运行时长")
+				if !hasCaption || !hasClock {
+					t.Fatal("running footer is missing its phase or elapsed time")
+				}
+				caption.W = 11 // The first glyph of the phase.
+				font := n.Font{Size: transcriptCaptionSize, Weight: 400, Features: "tnum"}
+				width, _ := n.ShapeText("35 秒", font, 0).Size()
+				clock.X, clock.W = clock.X+width-11, 11 // The 秒 glyph never ticks.
+				regions := []n.Rect{caption, clock}
+				rest := [][]byte{contextPixels(ui, caption), contextPixels(ui, clock)}
+				peak, peakFrame := [2]int{}, [2]int{}
+				for frame := 1; frame <= 44; frame++ {
+					ui.Advance(50 * time.Millisecond)
+					ui.Frame()
+					if frame == 10 || frame == 28 {
+						saveNativeSkillImage(t, ui, fmt.Sprintf("footer-dark-%v-reduced-%v-%02d.png", dark, reduced, frame))
+					}
+					for i, region := range regions {
+						delta := 0
+						for j, ink := range contextPixels(ui, region) {
+							delta += abs(int(ink) - int(rest[i][j]))
+						}
+						if delta > peak[i] {
+							peak[i], peakFrame[i] = delta, frame
+						}
+					}
+				}
+				if reduced {
+					if peak != [2]int{} {
+						t.Fatal("footer ink sweeps with Reduce Motion enabled", peak)
+					}
+				} else if peak[0] == 0 || peak[1] == 0 || peakFrame[0] >= peakFrame[1] {
+					t.Fatalf("the sweep must cross the phase first and then the clock: strength=%v frame=%v", peak, peakFrame)
+				}
+			})
+		}
+	}
+}
+
 // The live tool summary is one sweep, including metadata drawn by the clock.
 // Sampling only the clock's final unit excludes ordinary ticking digits.
 func TestToolSummaryShimmerCoversMetadataWithoutRestarting(t *testing.T) {

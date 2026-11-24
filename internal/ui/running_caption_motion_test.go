@@ -206,16 +206,10 @@ func TestConversationProgressCaptionCrossfadesAndMovesClockSmoothly(t *testing.T
 				t.Error("phase growth jumps the adjacent clock", before, first, middle, end)
 			}
 			r, _ := ui.Find("正在执行命令")
-			pixels := ui.Image()
-			v.runningProgress.label = "正在执行工具"
-			ui.Frame()
-			ui.Advance(180 * time.Millisecond)
-			firstPixels := latestTextDifference(pixels, ui.Image(), r)
-			ui.Advance(80 * time.Millisecond)
-			middlePixels := ui.Image()
-			ui.Advance(time.Second)
-			endPixels := latestTextDifference(pixels, ui.Image(), r)
-			if endPixels < 500 || firstPixels > endPixels/10 || latestTextDifference(middlePixels, ui.Image(), r) < 100 {
+			firstPixels, middlePixels, endPixels, remaining := captionCrossfadeInk(ui, r, func() {
+				v.runningProgress.label = "正在执行工具"
+			})
+			if endPixels < 500 || firstPixels > endPixels/10 || middlePixels < 100 || remaining < 100 {
 				t.Fatal("conversation phase text replaces immediately", firstPixels, endPixels)
 			}
 		})

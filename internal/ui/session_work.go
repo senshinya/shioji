@@ -325,20 +325,23 @@ func (v *View) sessionWorkBody(c *n.Context, t *n.Theme, kind string, all []doma
 				n.Row(c).FillWidth().Gap(8).AlignItems(n.Start).Children(func() {
 					v.workStatus(c, t, w, w.Title, n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400})
 					n.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-						n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
-							title := n.Text(c, w.Title).Grow(1).MinWidth(0).SingleLine().FontSize(transcriptCaptionSize).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
-							if w.Active() && pending == nil {
-								shimmer(c, title, t.TextMuted, t.Text)
+						metadata := n.Row(c.Key("metadata")).FillWidth().Gap(8).AlignItems(n.Baseline)
+						if (w.State == "running" || w.State == "starting") && pending == nil {
+							shimmer(c, metadata, t.TextMuted, t.Text)
+						}
+						metadata.Children(func() {
+							n.Row(c).Grow(1).MinWidth(0).Gap(6).AlignItems(n.Baseline).Children(func() {
+								n.Text(c, w.Title).Grow(1).MinWidth(0).SingleLine().FontSize(transcriptCaptionSize).FixedLineHeight(20).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+								v.workRequestLink(c, t, w)
+							})
+							if duration := workDuration(w, c.Now()); duration != "" {
+								n.Text(c, duration).Font("Menlo").FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
 							}
-							v.workRequestLink(c, t, w)
 						})
 						if preview != "" {
 							n.Text(c, preview).FillWidth().SingleLine().FontSize(transcriptCaptionSize).FixedLineHeight(18).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).Transition(fadeMotion(c, 180*time.Millisecond))
 						}
 					})
-					if duration := workDuration(w, c.Now()); duration != "" {
-						n.Text(c, duration).Font("Menlo").FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Numeric: true, Animation: animationPointer(c, 180*time.Millisecond)})
-					}
 					inlineSymbol(c, transcriptChevron, w.Title, n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}, 14, t.TextMuted, -90).Shrink(0)
 				})
 			})

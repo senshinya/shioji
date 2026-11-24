@@ -13,6 +13,70 @@ type mobileToolSweep struct {
 	highlight, green ui.Color
 }
 
+var mobileSweepMask = ui.RGB(255, 255, 255)
+
+// Tint the native text's alpha mask so line wrapping, ellipsis and baseline
+// remain under native layout. iOS uses tinted bitmap slices for this effect.
+type mobileTextSweepEffect struct {
+	started         time.Time
+	rest, highlight ui.Color
+}
+
+func (mobileTextSweepEffect) EffectMargin() ui.Point { return ui.Point{} }
+
+func (s mobileTextSweepEffect) PaintEffect(p *ui.Painter, box ui.Rect, content *ui.Bitmap, inset ui.Point) {
+	p.AnimationFrameRate(60)
+	if box.W <= 0 || box.H <= 0 {
+		return
+	}
+	w, h := content.Size()
+	if w <= 0 || h <= 0 {
+		return
+	}
+	scale := p.Scale()
+	originX, originY := box.X-inset.X/scale, box.Y-inset.Y/scale
+	center, width := mobileSweepBand(box.W, p.Now().Sub(s.started))
+	left := max(0, min(w, int(inset.X+(center-width)*scale)))
+	right := max(left, min(w, int(math.Ceil(float64(inset.X+(center+width)*scale)))))
+	draw := func(first, end int, tint ui.Color) {
+		if first == end {
+			return
+		}
+		p.ImageRegion(content,
+			ui.Rect{X: float32(first), W: float32(end - first), H: float32(h)},
+			ui.Rect{X: originX + float32(first)/scale, Y: originY, W: float32(end-first) / scale, H: float32(h) / scale},
+			ui.ImageOptions{Tint: tint})
+	}
+	draw(0, left, s.rest)
+	step := max(1, int(3*scale))
+	for first := left; first < right; first += step {
+		end := min(first+step, right)
+		mid := (float32(first+end)/2 - inset.X) / scale
+		draw(first, end, mobileSweepColor(s.rest, s.highlight, center, width, mid))
+	}
+	draw(right, w, s.rest)
+}
+
+// The caller paints affected text white to supply the mask's alpha.
+func mobileTextSweep(c *ui.Context, target ui.Element, phase ...time.Time) bool {
+	if c.Preferences().ReduceMotion {
+		return false
+	}
+	started := *ui.Local(target, "text-sweep-start", c.Now)
+	if len(phase) != 0 {
+		started = phase[0]
+	}
+	p := palette(c)
+	target.Effect(mobileTextSweepEffect{started: started, rest: p.secondary, highlight: p.ink})
+	return true
+}
+
+func mobileShimmeredText(c *ui.Context, text ui.Element, phase ...time.Time) {
+	if mobileTextSweep(c, text, phase...) {
+		text.TextColor(mobileSweepMask)
+	}
+}
+
 func newMobileToolSweep(c *ui.Context, row ui.Element, started time.Time) *mobileToolSweep {
 	if c.Preferences().ReduceMotion {
 		return nil
@@ -35,9 +99,14 @@ func (s *mobileToolSweep) band(p *ui.Painter) (center, width float32) {
 	if row.W <= 0 {
 		return 0, 0
 	}
-	width = max(22, row.W*0.23)
-	progress := float32(math.Mod(p.Now().Sub(s.started).Seconds()/2.2, 1))
-	return row.X + progress*(row.W+2*width) - width, width
+	center, width = mobileSweepBand(row.W, p.Now().Sub(s.started))
+	return row.X + center, width
+}
+
+func mobileSweepBand(rowWidth float32, elapsed time.Duration) (center, width float32) {
+	width = max(22, rowWidth*0.23)
+	progress := float32(math.Mod(elapsed.Seconds()/2.2, 1))
+	return progress*(rowWidth+2*width) - width, width
 }
 
 func mobileSweepColor(ink, highlight ui.Color, center, width, x float32) ui.Color {

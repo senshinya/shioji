@@ -57,7 +57,7 @@ func (a *mobileApp) openingConversation(c *ui.Context, split bool) bool {
 		if split {
 			a.conversationHeader(c, title, scope, nil, nil)
 		}
-		mobileSessionLoading(c.Key(sid), caption, problem, retry)
+		mobileSessionLoading(c.Key(sid), caption, problem, opening == nil && a.model.Connected, retry)
 		if problem == "" {
 			mobileContent(c, conversationComposerWidth).Padding(4, conversationComposerInset, 0).
 				Children(func() {
@@ -71,7 +71,7 @@ func (a *mobileApp) openingConversation(c *ui.Context, split bool) bool {
 	return true
 }
 
-func mobileSessionLoading(c *ui.Context, caption, problem string, retry func()) {
+func mobileSessionLoading(c *ui.Context, caption, problem string, reading bool, retry func()) {
 	p := palette(c)
 	stack := ui.Column(c).FillWidth().Grow(1).Basis(0).MinHeight(0).AlignItems(ui.Center).Justify(ui.Center).Clip().
 		Transition(mobileFeedbackFade(120 * time.Millisecond))
@@ -104,8 +104,11 @@ func mobileSessionLoading(c *ui.Context, caption, problem string, retry func()) 
 						painter.AnimationFrameRate(60)
 					}
 				})
-				oneLine(c.Key("loading-caption"), caption, captionTextSize, p.secondary).Role(ui.RoleStatus).
+				text := oneLine(c.Key("loading-caption"), caption, captionTextSize, p.secondary).Role(ui.RoleStatus).
 					Transition(mobileFeedbackFade(120 * time.Millisecond))
+				if reading {
+					mobileShimmeredText(c, text, started.Add(delay))
+				}
 			})
 			ui.Column(c).FillWidth().Gap(12).Role(ui.RoleNone).Children(func() {
 				for _, width := range []float32{88, 100, 72, 42} {

@@ -317,14 +317,18 @@ func (v *View) returnToLatest(c *n.Context, t *n.Theme, state *n.ListState, dock
 		font.Size = 11
 		textWidth, _ := n.ShapeText(label, font, 0).Size()
 		width += 12 + textWidth + 6 + 14
-		n.Row(c.Key("latest-activity")).Height(20).Shrink(0).AlignItems(n.Baseline).Label("最新运行状态").Transition(fadeMotion(c, 160*time.Millisecond)).Children(func() {
-			phase := c.Now()
-			if turn.StartedAt != nil {
-				phase = *turn.StartedAt
-			}
-			if p := v.runningProgress; p != nil && p.turn == turn.ID {
-				phase = p.started
-			}
+		line := n.Row(c.Key("latest-activity")).Height(20).Shrink(0).AlignItems(n.Baseline).Label("最新运行状态").Transition(fadeMotion(c, 160*time.Millisecond))
+		phase := *n.Local(line, "phase", c.Now)
+		if turn.StartedAt != nil && !turn.StartedAt.IsZero() {
+			phase = *turn.StartedAt
+		}
+		if p := v.runningProgress; p != nil && p.turn == turn.ID {
+			phase = p.started
+		}
+		if pulse {
+			shimmerToolStatus(c, line, phase, t.Text, 1)
+		}
+		line.Children(func() {
 			statusDot(c, label, font, dotColor, pulse, phase).Width(12)
 			caption := n.Column(c.Key("caption")).Height(20).Shrink(0).Clip()
 			caption.Width(latestControlWidth(c, caption, textWidth)).Children(func() {

@@ -88,7 +88,7 @@ func (a *mobileApp) recoveryPanel(c *ui.Context, parent *mygo.Window, s domain.S
 			}
 			ready := m.SessionReadiness(s)
 			ui.Row(c).Wrap().MinHeight(mobileTapSize(c)).Gap(2).AlignItems(ui.Center).Children(func() {
-				recoveryHeading(c, title)
+				recoveryHeading(c, title, false)
 				action(c.Key("continue"), "继续原会话", func() {
 					if _, ok := a.mobileRecoverySource(parent, s); !ok {
 						return
@@ -113,13 +113,13 @@ func (a *mobileApp) recoveryPanel(c *ui.Context, parent *mygo.Window, s domain.S
 			if !connected {
 				title = "连接设备后自动恢复会话"
 			}
-			ui.Row(c).MinHeight(mobileTapSize(c)).AlignItems(ui.Center).Children(func() { recoveryHeading(c, title) })
+			ui.Row(c).MinHeight(mobileTapSize(c)).AlignItems(ui.Center).Children(func() { recoveryHeading(c, title, connected) })
 		} else {
 			title := "暂时无法继续"
 			if s.Status == domain.ExecutionAbandoned {
 				title = "原会话暂时无法恢复"
 			}
-			ui.Row(c).Padding(6, 0, 0).AlignItems(ui.Center).Children(func() { recoveryHeading(c, title) })
+			ui.Row(c).Padding(6, 0, 0).AlignItems(ui.Center).Children(func() { recoveryHeading(c, title, false) })
 			message := state.message
 			if message == "" && info != nil {
 				message = info.Message
@@ -150,12 +150,15 @@ func (a *mobileApp) recoveryPanel(c *ui.Context, parent *mygo.Window, s domain.S
 	})
 }
 
-func recoveryHeading(c *ui.Context, title string) {
+func recoveryHeading(c *ui.Context, title string, checking bool) {
 	p := palette(c)
 	ui.Row(c).Grow(1).MinWidth(0).Gap(6).AlignItems(ui.Baseline).Children(func() {
 		font := mobileStatusFont(c, captionTextSize)
 		transcriptSymbol(c, refreshSymbol, title, font, 15, p.secondary)
-		label(c, title, captionTextSize, p.ink).Font(font.Family).FixedLineHeight(mobileStatusLineHeight(font)).Shrink(1).MinWidth(0)
+		text := label(c, title, captionTextSize, p.ink).Font(font.Family).FixedLineHeight(mobileStatusLineHeight(font)).Shrink(1).MinWidth(0)
+		if checking {
+			mobileShimmeredText(c, text)
+		}
 	})
 }
 

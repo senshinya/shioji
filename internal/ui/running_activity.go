@@ -406,53 +406,55 @@ func (v *View) progressStatus(c *n.Context, t *n.Theme, a runningActivity, p *ru
 	color = row.AnimateColor("status-color", color, motionAnimation(c, 180*time.Millisecond))
 	row.Children(func() {
 		transcriptStatusDot(c.Key("dot"), a.label, n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}, color, running, phase)
-		width, _ := n.ShapeText(a.label, n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}, 0).Size()
-		caption := n.Column(c.Key("activity-caption")).Height(20).Shrink(0).Clip()
-		extent := n.Local(caption, "label-extent", func() progressLabelExtent {
-			return progressLabelExtent{target: width, shown: width}
+		// One sweep crosses both the transitioning caption and the elapsed time.
+		metadata := n.Row(c.Key("activity-metadata")).Gap(6).AlignItems(n.Baseline)
+		shimmer(c, metadata, t.TextMuted, t.Text, phase)
+		metadata.Children(func() {
+			width, _ := n.ShapeText(a.label, n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}, 0).Size()
+			caption := n.Column(c.Key("activity-caption")).Height(20).Shrink(0).Clip()
+			extent := n.Local(caption, "label-extent", func() progressLabelExtent {
+				return progressLabelExtent{target: width, shown: width}
+			})
+			if extent.target != width {
+				extent.target = width
+				extent.release = time.Time{}
+				if width < extent.shown {
+					// Retain the outgoing words' raster until they have faded, then
+					// reclaim the slot. Growth can move the clock immediately.
+					extent.release = c.Now().Add(180 * time.Millisecond)
+				}
+			}
+			shown := width
+			if c.Preferences().ReduceMotion {
+				caption.Jump("label-width", width)
+			} else {
+				if c.Now().Before(extent.release) {
+					width = max(width, extent.shown)
+					c.AnimationFrame()
+				}
+				shown = caption.AnimateTo("label-width", width, motionAnimation(c, 180*time.Millisecond))
+			}
+			extent.shown = shown
+			caption.Width(shown).Children(func() {
+				n.Text(c.Key("activity-label"), a.label).FontSize(transcriptCaptionSize).FixedLineHeight(20).SingleLine().Shrink(0).TextColor(t.TextMuted).
+					ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+			})
+			clock, _ := runningElapsed(c.Key("elapsed"), a.started, t.TextMuted, false)
+			if clock.Valid() {
+				// A newly available clock enters at the settled caption, rather
+				// than flashing beside the outgoing long preparation label first.
+				// Once visible, phase changes keep moving the existing clock.
+				visible := n.Local(row, "clock-visible", func() bool { return false })
+				if math.Abs(float64(shown-extent.target)) < .5 {
+					*visible = true
+				}
+				alpha := float32(0)
+				if *visible {
+					alpha = 1
+				}
+				clock.Opacity(clock.AnimateTo("entrance", alpha, motionAnimation(c, 120*time.Millisecond)))
+			}
 		})
-		if extent.target != width {
-			extent.target = width
-			extent.release = time.Time{}
-			if width < extent.shown {
-				// Retain the outgoing words' raster until they have faded, then
-				// reclaim the slot. Growth can move the clock immediately.
-				extent.release = c.Now().Add(180 * time.Millisecond)
-			}
-		}
-		shown := width
-		if c.Preferences().ReduceMotion {
-			caption.Jump("label-width", width)
-		} else {
-			if c.Now().Before(extent.release) {
-				width = max(width, extent.shown)
-				c.AnimationFrame()
-			}
-			shown = caption.AnimateTo("label-width", width, motionAnimation(c, 180*time.Millisecond))
-		}
-		extent.shown = shown
-		caption.Width(shown).Children(func() {
-			n.Text(c.Key("activity-label"), a.label).FontSize(transcriptCaptionSize).FixedLineHeight(20).SingleLine().Shrink(0).TextColor(t.TextMuted).
-				ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
-		})
-		// Clip the text and its outgoing snapshot together while reclaiming
-		// width, keeping the adjacent clock on the same animation timeline.
-		shimmer(c, caption, t.TextMuted, t.Text, phase)
-		clock, _ := runningElapsed(c.Key("elapsed"), a.started, t.TextMuted, false)
-		if clock.Valid() {
-			// A newly available clock enters at the settled caption, rather
-			// than flashing beside the outgoing long preparation label first.
-			// Once visible, phase changes keep moving the existing clock.
-			visible := n.Local(row, "clock-visible", func() bool { return false })
-			if math.Abs(float64(shown-extent.target)) < .5 {
-				*visible = true
-			}
-			alpha := float32(0)
-			if *visible {
-				alpha = 1
-			}
-			clock.Opacity(clock.AnimateTo("entrance", alpha, motionAnimation(c, 120*time.Millisecond)))
-		}
 	})
 }
 

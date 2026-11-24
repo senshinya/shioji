@@ -117,6 +117,7 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 	lineHeight := mobileStatusLineHeight(font)
 	button := transcriptDisclosure(mobileButton(header, title, nil)).AlignItems(ui.Start).Expanded(group.Open)
 	progress := mobileToolReveal(c, button, group.Open, target != "")
+	showInline := live && progress < 1
 	arrivals := ui.Local(button, "tool-call-arrivals", func() mobileToolCallArrivals { return nil })
 	arrivals.observe(c.Now(), tools, animateCalls && group.Open && progress == 1 && target == "")
 	sweepStart := *ui.Local(button, "tool-sweep-start", func() time.Time { return c.Now() })
@@ -143,12 +144,12 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 		line := header.Key("line")
 		row := ui.Row(line).MinWidth(0).MinHeight(lineHeight).Shrink(1).AlignItems(ui.Baseline).Gap(mobileToolSummaryGap).PassThrough()
 		var sweep *mobileToolSweep
-		if inline {
+		if showInline {
 			sweep = newMobileToolSweep(line, row, sweepStart)
 		}
 		row.Children(func() {
 			glyph := line.Key("group-glyph")
-			if live && progress < 1 {
+			if showInline {
 				icon := ui.Row(glyph).Width(mobileToolGlyphSlot).Height(lineHeight).AlignItems(ui.Baseline)
 				icon.Children(func() {
 					mobileToolGlyph(glyph.Key("terminal"), toolTerminalSymbol, title, font).Opacity(progress)
@@ -162,7 +163,7 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 			if outcome != "" {
 				sweep.caption(line.Key("outcome"), outcome, numeric)
 			}
-			if live && progress < 1 {
+			if showInline {
 				phaseKey := line.Key("inline-phase")
 				if progress == 0 {
 					mobileToolPhase(phaseKey, phase, started, sweep)

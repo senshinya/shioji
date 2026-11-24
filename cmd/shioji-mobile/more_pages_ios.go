@@ -109,7 +109,7 @@ func (a *mobileApp) openPlan(parent *mygo.Window, sid string) {
 					mobileMessage(c, d.Plan.Explanation)
 				}
 				for i, step := range d.Plan.Steps {
-					mobilePlanStep(c.Key(i), step)
+					mobilePlanStep(c.Key(i), step, a.model.Connected)
 				}
 				if d.Plan.Truncated {
 					mobileMessage(c, "任务内容过长，已截断显示")
@@ -122,7 +122,7 @@ func (a *mobileApp) openPlan(parent *mygo.Window, sid string) {
 	a.pushNative(parent, w)
 }
 
-func mobilePlanStep(c *ui.Context, step domain.PlanStep) {
+func mobilePlanStep(c *ui.Context, step domain.PlanStep, connected bool) {
 	p := palette(c)
 	font := mobileStatusFont(c, captionTextSize)
 	status, ink := "待处理", p.secondary
@@ -135,14 +135,17 @@ func mobilePlanStep(c *ui.Context, step domain.PlanStep) {
 	ui.Row(c).FillWidth().Padding(8, 0).Gap(8).AlignItems(ui.Baseline).Children(func() {
 		switch {
 		case running:
-			transcriptStatusDot(c, step.Text, font, p.active, true)
+			transcriptStatusDot(c, step.Text, font, p.active, connected)
 		case step.Status == "completed":
 			transcriptSymbol(c, checkSymbol, step.Text, font, 14, p.secondary)
 		default:
 			transcriptStatusDot(c, step.Text, font, p.secondary, false)
 		}
-		label(c, step.Text, captionTextSize, ink).Value(status).Grow(1).MinWidth(0).
+		text := label(c, step.Text, captionTextSize, ink).Value(status).Grow(1).MinWidth(0).
 			FixedLineHeight(mobileStatusLineHeight(font))
+		if running && connected {
+			mobileShimmeredText(c, text)
+		}
 	})
 }
 
@@ -239,15 +242,24 @@ func (a *mobileApp) workRow(c *ui.Context, parent *mygo.Window, sid string, requ
 				transcriptStatusDot(c, title, font, p.secondary, false)
 			}
 			ui.Column(c).Grow(1).MinWidth(0).Gap(2).PassThrough().Children(func() {
-				oneLine(c, title, captionTextSize, p.ink).FixedLineHeight(mobileStatusLineHeight(font)).PassThrough()
+				metadata := ui.Row(c.Key("metadata")).FillWidth().MinWidth(0).Gap(8).AlignItems(ui.Baseline).PassThrough()
+				titleInk, durationInk := p.ink, p.secondary
+				if active && work.State != "waiting" && requestIcon == nil {
+					if mobileTextSweep(c, metadata) {
+						titleInk, durationInk = mobileSweepMask, mobileSweepMask
+					}
+				}
+				metadata.Children(func() {
+					oneLine(c, title, captionTextSize, titleInk).Grow(1).FixedLineHeight(mobileStatusLineHeight(font)).PassThrough()
+					if duration != "" {
+						oneLine(c, strings.ReplaceAll(duration, " ", ""), captionTextSize-1, durationInk).
+							Font("Menlo").FontFeatures("tnum").Shrink(0).PassThrough()
+					}
+				})
 				if preview != "" {
 					oneLine(c, preview, captionTextSize-1, p.secondary).PassThrough()
 				}
 			})
-			if duration != "" {
-				oneLine(c, strings.ReplaceAll(duration, " ", ""), captionTextSize-1, p.secondary).
-					Font("Menlo").FontFeatures("tnum").Shrink(0).PassThrough()
-			}
 			transcriptSymbol(c, rightSymbol, title, font, 12, p.secondary)
 		})
 	})
@@ -330,7 +342,7 @@ func (a *mobileApp) openWork(parent *mygo.Window, sid string, work domain.WorkAc
 				mobileProgressRow(c, workStateName(current.State), current.StartedAt, live, func(sweep *mobileToolSweep) {
 					switch {
 					case current.DurationMS != nil:
-						oneLine(c, mobileElapsed(*current.DurationMS), captionTextSize, palette(c).secondary)
+						sweep.caption(c.Key("duration"), mobileElapsed(*current.DurationMS), ui.ContentTransition{})
 					case current.StartedAt != nil && !current.StartedAt.IsZero() && (live || current.CompletedAt != nil && !current.CompletedAt.IsZero()):
 						mobileClock(c, *current.StartedAt, current.CompletedAt, mobileStatusFont(c, captionTextSize), sweep)
 					}

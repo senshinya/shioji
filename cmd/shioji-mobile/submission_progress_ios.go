@@ -85,7 +85,7 @@ func mobileWaitingCaption(m *app.Model) string {
 
 // Sending, preparation and execution reuse the text and dot slots. The
 // message or composer can move independently without starting an entry fade.
-func mobileTranscriptProgress(c *ui.Context, caption string, started *time.Time, live bool) {
+func mobileTranscriptProgress(c *ui.Context, caption string, started *time.Time, live, sweeping bool) {
 	p := palette(c)
 	font := mobileStatusFont(c, captionTextSize)
 	ui.Row(c).MinHeight(transcriptMetadataHeight).AlignItems(ui.Center).Children(func() {
@@ -93,7 +93,10 @@ func mobileTranscriptProgress(c *ui.Context, caption string, started *time.Time,
 		row := ui.Row(line).MinWidth(0).Shrink(1).Gap(6).AlignItems(ui.Baseline)
 		ink := p.secondary
 		phase := *ui.Local(row, "progress-sweep-start", c.Now)
-		sweep := newMobileToolSweep(line, row, phase)
+		var sweep *mobileToolSweep
+		if sweeping {
+			sweep = newMobileToolSweep(line, row, phase)
+		}
 		if live {
 			ink = p.active
 		} else if caption == waitingForRequest {
