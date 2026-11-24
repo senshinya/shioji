@@ -20,10 +20,6 @@ func (v *View) ViewMenu() *mygo.MenuItem {
 	}
 	// AppKit handles the View menu's key equivalents before the window.
 	return &mygo.MenuItem{Role: mygo.RoleViewMenu, Submenu: []*mygo.MenuItem{
-		{Role: mygo.RoleReload},
-		{Role: mygo.RoleForceReload},
-		{Role: mygo.RoleToggleDevTools},
-		mygo.Separator(),
 		{Role: mygo.RoleResetZoom, Click: zoom(0)},
 		{Role: mygo.RoleZoomIn, Click: zoom(1)},
 		{Role: mygo.RoleZoomOut, Click: zoom(-1)},

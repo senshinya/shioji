@@ -344,6 +344,30 @@ func (a *mobileApp) attachmentDetailsPage(parent *mygo.Window, session domain.Se
 	}
 	w = a.page(title, func(c *ui.Context) {
 		read := localPath != "" || text != ""
+		var footer func()
+		switch {
+		case localPath != "":
+			footer = func() {
+				ui.Row(c).Gap(8).Children(func() {
+					secondaryAction(c, "另存为…", func() {
+						go func() { _, _ = mygo.Dialog.SaveCopy(localPath, item.Name) }()
+					}).Grow(1).Basis(0)
+					if !isMarkdown {
+						primaryAction(c, "原生预览", func() {
+							a.openNativeFilePreview(w, localPath, item.Name, item.MIME)
+						}).Grow(1).Basis(0)
+					}
+				})
+			}
+		case !read:
+			footer = func() {
+				button := "读取附件"
+				if req.err != "" {
+					button = "重试读取"
+				}
+				primaryAction(c, button, load).Disabled(req.busy)
+			}
+		}
 		mobilePageWithFooter(c, func() {
 			mobilePageContext(c, session.Title, a.workspace(session.WorkspaceID).Name, a.deviceName())
 			if showLocal {
@@ -395,26 +419,7 @@ func (a *mobileApp) attachmentDetailsPage(parent *mygo.Window, session domain.Se
 					func() { a.localAttachment(w, target, nil) }, nil).
 					Disabled(!a.preview && (!a.model.Connected || target.session != session.ID))
 			}
-		}, func() {
-			if localPath != "" {
-				ui.Row(c).Gap(8).Children(func() {
-					secondaryAction(c, "另存为…", func() {
-						go func() { _, _ = mygo.Dialog.SaveCopy(localPath, item.Name) }()
-					}).Grow(1).Basis(0)
-					if !isMarkdown {
-						primaryAction(c, "原生预览", func() {
-							a.openNativeFilePreview(w, localPath, item.Name, item.MIME)
-						}).Grow(1).Basis(0)
-					}
-				})
-			} else if !read {
-				button := "读取附件"
-				if req.err != "" {
-					button = "重试读取"
-				}
-				primaryAction(c, button, load).Disabled(req.busy)
-			}
-		})
+		}, footer)
 	})
 	load = func() {
 		if a.preview {

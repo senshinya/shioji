@@ -258,7 +258,7 @@ func (s *mobileManagedSkills) notice(a *mobileApp, c *ui.Context) {
 
 func (s *mobileManagedSkills) list(a *mobileApp, c *ui.Context, w *mygo.Window, agent domain.HarnessInfo, agents []domain.HarnessInfo) {
 	p := palette(c)
-	ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+	ui.Row(c).AlignItems(ui.Center).Gap(6).Margin(0, 0, 8).Children(func() {
 		ui.TextInputBase(c.Key("search"), &s.search).Label("搜索 Skills").Placeholder("搜索 Skills").
 			TextColor(p.ink).PlaceholderColor(p.secondary).FontSize(controlTextSize * c.Preferences().TextScale).
 			MinHeight(mobileTapSize(c)).Grow(1).MinWidth(0).PaddingX(10).Radius(10).Background(p.inset)

@@ -17,7 +17,9 @@ repositioning and untracked-paint recovery. Shioji's menu density, delayed
 submenus and IME focus policy remain applied to the upstream renderer.
 On iOS, system menu buttons open an anchored UIKit menu, retaining selections,
 submenus, subtitles, and destructive actions. Older iOS releases use a system
-action sheet.
+action sheet. The iOS host can also expose native VoiceOver custom actions
+for an existing accessibility node. The queue publishes only actions that
+belong to its current visible row and validates its revision on activation.
 Read-only diff selection retains source byte offsets across line-ending
 normalization and maps EOF after a final line break to the last physical line.
 Mobile historical comments use `editor.DiffState.UnifiedTextFragments` to

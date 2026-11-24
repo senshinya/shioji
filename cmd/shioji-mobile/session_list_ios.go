@@ -85,8 +85,12 @@ func (a *mobileApp) sessionList(c *ui.Context) {
 	if !a.archive {
 		top = 6
 	}
+	bottom := float32(28)
+	if !a.prominentCompose {
+		bottom = max(bottom, mobileTapSize(c)+20)
+	}
 	ui.Column(c).Grow(1).Basis(0).MinHeight(0).Children(func() {
-		ui.Scroll(c).Fill().Padding(top, 16, 28).Children(func() {
+		ui.Scroll(c).Fill().Padding(top, 16, bottom).Children(func() {
 			list := c.Key(scope)
 			ui.Column(list).Shrink(0).Children(func() {
 				for _, group := range groups {
@@ -351,7 +355,7 @@ func (a *mobileApp) sessionGroup(c *ui.Context, menu *contextMenuFrame, group mo
 			value = pendingSessionDescription(value, pending)
 		}
 		disclosure := ui.CollapsibleBase(section, expanded)
-		header := disclosure.Trigger.Sticky().Top(0).MinHeight(28).PaddingY(2).Gap(8).AlignItems(ui.Center).Background(bg).
+		header := disclosure.Trigger.Sticky().Top(0).MinHeight(mobileTapSize(c)).PaddingY(2).Gap(8).AlignItems(ui.Center).Background(bg).
 			Role(ui.RoleButton).Label(group.title).Value(value).Children(func() {
 			oneLine(section, group.title, 13, p.secondary).FontWeight(640).Grow(1).MinWidth(0).PassThrough()
 			if group.device != "" {
@@ -441,9 +445,9 @@ func (a *mobileApp) sessionRow(c *ui.Context, menu *contextMenuFrame, item mobil
 			status = p.active
 		}
 	case session.Status == domain.ExecutionInterrupted || session.Status == domain.ExecutionAbandoned:
-		name, glyph = "已停止", checkSymbol
+		name, glyph = "已停止", stopSymbol
 	case session.Status == domain.ExecutionFailed:
-		name, glyph = "执行失败", closeSymbol
+		name, glyph, status = "执行失败", closeSymbol, p.diffRemoved
 	case session.Status == domain.ExecutionUnknown:
 		name, glyph = "执行状态待确认", infoSymbol
 	}
@@ -453,7 +457,7 @@ func (a *mobileApp) sessionRow(c *ui.Context, menu *contextMenuFrame, item mobil
 	}
 	target := sessionListTarget{location: ref, pinned: pinned, archived: session.Archived || item.workspace.Archived}
 	open := func() { a.openSessionListTarget(target) }
-	button := ui.ButtonBase(row).MinHeight(max(46, mobileHeaderSize(c))).Padding(3, 8).Margin(0, -8).AlignItems(ui.Center).Justify(ui.Center).Radius(10).
+	button := ui.ButtonBase(row).MinHeight(max(46, mobileHeaderSize(c))).Padding(6, 10).Margin(1, -10).AlignItems(ui.Center).Justify(ui.Center).Radius(10).
 		Role(ui.RoleButton).Label(session.Title).Value(value).AccessSelected(selected).Background(bg).
 		Description("长按预览会话").OnClick(open).Children(func() {
 		ui.Column(row).WidthPercent(100).Gap(3).PassThrough().Children(func() {

@@ -499,12 +499,12 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 							leftColor, rightColor := added, deleted
 							switch file.Kind {
 							case "add":
-								a, d, rightColor = "新增", "—", added
 								if file.Added != nil {
-									d = fmt.Sprintf("+%d", *file.Added)
+									a = fmt.Sprintf("+%d", *file.Added)
 								}
+								d, rightColor = "新增", t.TextMuted
 							case "delete":
-								a, d, leftColor = "删除", "—", deleted
+								a, leftColor = "删除", t.TextMuted
 								if file.Removed != nil {
 									d = fmt.Sprintf("−%d", *file.Removed)
 								}
@@ -512,8 +512,8 @@ func (v *View) inspectorPane(c *n.Context, t *n.Theme, state *changesState, plan
 							if a == "" && d == "" {
 								d, rightColor = "—", t.TextMuted
 							}
-							n.Text(c, a).Font("Menlo").FontSize(11).FixedLineHeight(18).Width(34).Shrink(0).TextAlign(n.End).TextColor(leftColor)
-							n.Text(c, d).Font("Menlo").FontSize(11).FixedLineHeight(18).Width(34).Shrink(0).TextAlign(n.End).TextColor(rightColor)
+							n.Text(c, a).Font("Menlo").FontSize(11).FixedLineHeight(18).MinWidth(38).SingleLine().Shrink(0).TextAlign(n.End).TextColor(leftColor)
+							n.Text(c, d).Font("Menlo").FontSize(11).FixedLineHeight(18).MinWidth(38).SingleLine().Shrink(0).TextAlign(n.End).TextColor(rightColor)
 						})
 					})
 					if row.Clicked() {

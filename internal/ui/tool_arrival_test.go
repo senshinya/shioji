@@ -323,7 +323,7 @@ func TestConversationToolbarDoesNotCoverPartOfTheTopScrollbar(t *testing.T) {
 				ui.Scroll(1150, 300, 0, -10000)
 				ui.Frame()
 				first, ok := ui.Find("进度 0")
-				if !ok || math.Abs(float64(first.Y-80)) > 1 {
+				if !ok || math.Abs(float64(first.Y-transcriptStartInset)) > 1 {
 					t.Fatal("fixture did not reach the actual top", first)
 				}
 				left := 1191

@@ -333,6 +333,15 @@ func (v *View) sidebar(c *n.Context, t *n.Theme, width float32) {
 			v.prepareNavigationMotion(c, rows)
 			v.nav.Key = func(i int) any { return rows[i].key() }
 			v.nav.KeepOffset = true
+			if v.navReveal != "" {
+				for i, row := range rows {
+					if row.kind == navigationSession && row.session.ID == v.navReveal {
+						v.nav.ScrollIntoView(i)
+						v.navReveal = ""
+						break
+					}
+				}
+			}
 			v.nav.Reveals = v.nav.Reveals[:0]
 			for i, r := range rows {
 				p := r.presence
@@ -489,18 +498,18 @@ func (v *View) navigationSessionRow(c *n.Context, t *n.Theme, r navigationRow) {
 				if unread {
 					color = t.Success
 				}
-				marker = inlineSymbol(c, check, s.Title, font, markerSize, color)
+				marker = inlineSymbol(c, check, s.Title, font, markerSize, color).Tooltip("已完成")
 			} else if shown.Status == "interrupted" || s.Status == "abandoned" {
-				marker = inlineSymbol(c, check, s.Title, font, markerSize, t.TextMuted).Label("已停止")
+				marker = inlineSymbol(c, sessionStopMarker, s.Title, font, markerSize, t.TextMuted).Label("已停止").Tooltip("已停止")
 			} else {
-				glyph, label := "Ⅱ", "已暂停"
+				glyph, label, ink := "Ⅱ", "已暂停", t.TextMuted
 				if s.Status == "failed" {
-					glyph, label = "×", "执行失败"
+					glyph, label, ink = "×", "执行失败", t.Danger
 				}
 				if s.Status == "unknown" {
 					glyph, label = "?", "执行状态待核实"
 				}
-				marker = n.Text(c, glyph).Width(markerSize).FontSize(11).TextColor(t.TextMuted).Label(label)
+				marker = n.Text(c, glyph).Width(markerSize).FontSize(11).TextColor(ink).Label(label).Tooltip(label)
 			}
 			if r.pinned {
 				marker.Width(sidebarIconColumnWidth).TextAlign(n.Center)

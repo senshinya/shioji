@@ -55,6 +55,8 @@ const (
 	directoryNavigationInset = directoryActionInset - (7-2)*directoryRowIconSize/20
 )
 
+const directoryHeaderHeight = 44
+
 func (v *View) chooseRemoteWorkspaceDirectory(extra bool) {
 	key, request := v.remoteWorkspaceConnection, v.remoteWorkspaceRequest
 	title := "选择主目录"
@@ -226,7 +228,7 @@ func (v *View) directoryDialog(c *n.Context, t *n.Theme) {
 		dialogSurface(panel, t).Width(w).Height(h).Clip().Label("远程文件夹选择器")
 		n.Inert(panel, closing)
 		panel.Children(func() {
-			n.Row(c).FillWidth().Height(56).Padding(0, directoryActionInset, 0, configurationDialogInset).Gap(12).AlignItems(n.Center).Children(func() {
+			n.Row(c).FillWidth().Height(directoryHeaderHeight).Padding(0, directoryActionInset, 0, configurationDialogInset).Gap(12).AlignItems(n.Center).Children(func() {
 				n.Row(c).Grow(1).Gap(12).AlignItems(n.Baseline).Children(func() {
 					n.Text(c, p.title).FontSize(14).FontWeight(500).FixedLineHeight(20).Grow(1)
 					name := v.Model.DeviceName(p.device)
@@ -240,7 +242,7 @@ func (v *View) directoryDialog(c *n.Context, t *n.Theme) {
 			n.Column(c).FillWidth().MinHeight(0).Grow(1).Children(func() {
 				configurationTabPanel(c.Key("directory-page"), strconv.Itoa(p.index), p.index, configurationPanelFill, func() { v.directoryContents(c, t, p) }, false)
 			})
-			n.Row(c).FillWidth().Height(60).Padding(12, configurationDialogInset).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Justify(n.SpaceBetween).AlignItems(n.Center).Children(func() {
+			n.Row(c).FillWidth().Height(52).Padding(8, configurationDialogInset).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Justify(n.SpaceBetween).AlignItems(n.Center).Children(func() {
 				if configurationAction(c, "取消").Label("取消选择目录").MarginStart(-8).Clicked() {
 					v.closeDirectoryPicker(p)
 				}
@@ -279,7 +281,7 @@ func (v *View) directoryDialog(c *n.Context, t *n.Theme) {
 	}
 }
 func (v *View) directoryLocation(c *n.Context, t *n.Theme, p *directoryPicker) {
-	n.Row(c).FillWidth().Height(48).Padding(0, directoryActionInset, 12, directoryNavigationInset).Gap(4).AlignItems(n.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+	n.Row(c).FillWidth().Height(40).Padding(0, directoryActionInset, 4, directoryNavigationInset).Gap(4).AlignItems(n.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 		loading := p.visiblePhase() == directoryLoading
 		if iconButton(c, deviceBackIcon, "返回上一目录").Disabled(len(p.history) == 0 || loading).Clicked() {
 			previous := p.history[len(p.history)-1]

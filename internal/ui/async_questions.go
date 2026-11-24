@@ -27,7 +27,7 @@ func (v *View) asyncQuestionMessage(c *n.Context, t *n.Theme, item domain.Item) 
 	v.transcriptContentHeight(c, root, true, true, 180*time.Millisecond, func() float32 {
 		n.Column(c).FillWidth().Gap(8).Children(func() {
 			for i, question := range item.Questions {
-				card := n.Column(c.Key(question.ID)).FillWidth().Gap(6).Padding(10, 12).
+				card := n.Column(c.Key(question.ID)).FillWidth().Gap(8).Padding(10, 12).
 					Background(raised(t)).Border(1, t.Border).Radius(requestRadius)
 				expanded := n.Local(card, asyncQuestionOptionsKey{}, func() map[string]bool { return map[string]bool{} })
 				card.Children(func() {
@@ -37,18 +37,19 @@ func (v *View) asyncQuestionMessage(c *n.Context, t *n.Theme, item domain.Item) 
 						label := map[string]string{"sent": "已回答", "dispatching": "正在提交答案", "unknown": "答案待核对"}[status[question.ID]]
 						n.Text(c, label).FontSize(11).TextColor(t.TextMuted).Role(n.RoleStatus)
 					default:
-						key := requestKey(group, question.ID)
-						if _, chosen := m.Answers[key]; !chosen && len(question.Options) > 0 {
-							m.Answers[key] = question.Options[0].Label
-							m.Answers["source:"+key] = "preset"
+						if question.Secret {
+							n.Text(c, question.Text).FontSize(13).FixedLineHeight(20)
+							n.Text(c, "此问题需要保密输入。请在 Agent 的原生界面回答。").
+								FontSize(12).TextColor(t.Warning).Role(n.RoleStatus)
+							return
 						}
 						page := requestPage{request: group, question: i}
 						v.questionField(c, t, group, question, (*expanded)[page.key()])
-						n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
+						n.Row(c).FillWidth().Gap(8).Margin(4, 0, 0).AlignItems(n.Center).Children(func() {
 							v.questionSelectionControls(c, t, page, *expanded, nil)
 							n.Spacer(c).Grow(1)
-							text := strings.TrimSpace(m.Answers[key])
-							if configurationAction(c.Key("submit-answer"), "提交答案").Disabled(!canReply || text == "").Clicked() {
+							text := strings.TrimSpace(v.questionAnswer(group, question))
+							if controlFeedback(c, n.PrimaryButton(c.Key("submit-answer"), "提交答案").Radius(requestRadius).Height(processingPanelActionHeight).FontSize(12).Disabled(!canReply || text == ""), requestRadius, true).Clicked() {
 								v.sendAsyncQuestionReply(item.ID, question.ID, text)
 							}
 						})

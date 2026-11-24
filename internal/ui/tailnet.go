@@ -309,7 +309,7 @@ func (v *View) tailnetPage(c *n.Context, t *n.Theme) {
 	}
 	n.Column(c).Fill().Children(func() {
 		width, _ := c.Size()
-		header := n.Column(c).FillWidth().Height(84).Padding(mainPageTopInset, configurationInset, 20).DragWindow()
+		header := n.Column(c).FillWidth().MinHeight(64).Padding(mainPageTopInset, configurationInset, 8).DragWindow()
 		if width < 900 {
 			header.Height(88).Padding(mainWindowTopInset, configurationInset, 6)
 		}
@@ -327,7 +327,7 @@ func (v *View) tailnetPage(c *n.Context, t *n.Theme) {
 				}
 			})
 		})
-		n.Scroll(c).FillWidth().Grow(1).Padding(20, configurationInset, 24).Children(func() {
+		n.Scroll(c).FillWidth().Grow(1).Padding(12, configurationInset, 24).Children(func() {
 			content := n.Column(c).FillWidth().Label("Tailnet 管理内容")
 			content.Children(func() {
 				if joining {
@@ -509,9 +509,9 @@ func (v *View) tailnetNetworkPeers(c *n.Context, t *n.Theme, s tailnet.Snapshot)
 	if refreshing {
 		c.After(u.refreshUntil.Sub(c.Now()))
 	}
-	n.Column(c).FillWidth().Margin(34, 0, 0).Children(func() {
+	n.Column(c).FillWidth().Margin(24, 0, 0).Children(func() {
 		deviceDivider(c)
-		n.Row(c).FillWidth().Height(32).Margin(20, 0, 8).Gap(8).AlignItems(n.Center).Children(func() {
+		n.Row(c).FillWidth().Height(32).Margin(12, 0, 8).Gap(8).AlignItems(n.Center).Children(func() {
 			n.Row(c).Grow(1).Gap(6).AlignItems(n.Baseline).Transform(n.Translation(0, inlineCenterOffset("网络设备", n.Font{Family: t.Font, Size: 14, Weight: 500}))).Children(func() {
 				n.Text(c, "网络设备").FontSize(14).FontWeight(500).FixedLineHeight(20)
 				if s.State == "Running" || len(s.Peers) > 0 {
@@ -549,7 +549,7 @@ func (v *View) tailnetNetworkPeers(c *n.Context, t *n.Theme, s tailnet.Snapshot)
 				p.Online = false
 			}
 			n.Column(c.Key(p.ID)).FillWidth().Transition(fadeMotion(c, 160*time.Millisecond)).Children(func() {
-				row := configurationRowControl(c.Key("peer"), 6).MinHeight(64).PaddingY(12).Label("查看 Tailnet 设备：" + name)
+				row := configurationRowControl(c.Key("peer"), 6).MinHeight(52).PaddingY(6).Label("查看 Tailnet 设备：" + name)
 				row.Children(func() {
 					n.Row(c).FillWidth().Gap(10).AlignItems(n.Baseline).Children(func() {
 						font := n.Font{Family: t.Font, Size: 13, Weight: 400}

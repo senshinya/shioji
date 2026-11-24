@@ -106,9 +106,9 @@ func TestPopoverActuallyExpandsFromItsTrigger(t *testing.T) {
 	m := layoutModel()
 	m.Readiness.Permissions = []string{"read-only", "default"}
 	ui := n.NewTester(New(m, nil, "").View, 1440, 900)
-	trigger, _ := ui.Find("Permission")
+	trigger, _ := ui.Find("权限")
 	baseline := copyFrame(ui)
-	if err := ui.Click("Permission"); err != nil {
+	if err := ui.Click("权限"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(40 * time.Millisecond)

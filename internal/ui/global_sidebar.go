@@ -94,14 +94,14 @@ func (v *View) quickFooter(c *n.Context, t *n.Theme) {
 func (v *View) quickPanelHeight(kind string) float32 {
 	switch kind {
 	case "devices":
-		return 49 + 48*float32(1+len(v.Model.Connections))
+		return 41 + 44*float32(1+len(v.Model.Connections))
 	case "tailnet":
 		if v.Model.Tailnet.State != "Running" {
 			return 97
 		}
-		return 121 + max(32, 48*float32(len(v.Model.Tailnet.Peers)))
+		return 113 + max(32, 44*float32(len(v.Model.Tailnet.Peers)))
 	case "ports":
-		return 49 + max(32, 44*float32(len(v.persistenceModel().PortForwards)))
+		return 41 + max(32, 44*float32(len(v.persistenceModel().PortForwards)))
 	}
 	return 0
 }
@@ -207,7 +207,7 @@ func quickRow(c *n.Context, t *n.Theme, label, name, secondary, value string, on
 		color = t.Success
 		state = "在线"
 	}
-	n.Column(c).Height(48).FillWidth().Padding(6, 12).Label(label + "，" + state).Tooltip(state).Children(func() {
+	n.Column(c).Height(44).FillWidth().Padding(4, 12).Label(label + "，" + state).Tooltip(state).Children(func() {
 		n.Row(c).Height(18).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
 			statusDotSize(c, name, font, color, 4, false).FixedLineHeight(18).Label("连接状态点").Role(n.RoleNone)
 			n.Text(c, name).FontSize(12).FixedLineHeight(18).SingleLine().Ellipsis("…").MinWidth(0).Grow(1).TooltipWhenTruncated(name)

@@ -136,7 +136,7 @@ func (a *mobileApp) reviewContent(c *ui.Context, r *reviewState, close func()) {
 	p := palette(c)
 	ui.Column(c).Fill().MinWidth(0).Background(p.canvas).Children(func() {
 		if close != nil {
-			ui.Row(c).MinHeight(55).Padding(2, 8, 4).AlignItems(ui.Center).Gap(8).Children(func() {
+			ui.Row(c).MinHeight(mobileHeaderSize(c)).PaddingX(8).AlignItems(ui.Center).Gap(8).Children(func() {
 				if r.path != "" {
 					iconButton(c, "返回文件列表", backSymbol, toolbarIconSize, func() {
 						r.path, r.diff, r.err, r.loading = "", nil, "", false
@@ -146,13 +146,13 @@ func (a *mobileApp) reviewContent(c *ui.Context, r *reviewState, close func()) {
 					oneLine(c, path.Base(r.path), 16, p.ink).Grow(1).FontWeight(650)
 				} else {
 					oneLine(c, "改动", 17, p.ink).FontWeight(650).Grow(1).PaddingX(8)
-					iconButton(c, "选择比较范围", compareSymbol, toolbarIconSize, func() { a.openDiffComparison(r) })
 				}
+				iconButton(c, "选择比较范围", compareSymbol, toolbarIconSize, func() { a.openDiffComparison(r) })
 				iconButton(c, "刷新改动", refreshSymbol, toolbarIconSize, func() { a.refreshReview(r) }).Disabled(r.loading)
 				iconButton(c, "关闭改动", closeSymbol, toolbarIconSize, close)
 			})
 		}
-		if r.showRange && r.path == "" {
+		if r.showRange {
 			a.reviewRange(c, r)
 			if r.refPicker != nil {
 				a.reviewRefOptions(c, r, r.refPicker)
@@ -315,8 +315,9 @@ func (a *mobileApp) styleMobileDiff(c *ui.Context, diff *editor.DiffState) {
 	theme.Added, theme.Deleted = p.active, p.diffRemoved
 	theme.AddedBackground, theme.DeletedBackground = p.diffAddedFill, p.diffRemovedFill
 	diff.Theme = theme
+	diff.Wrap = true
 	const codeFontSize = 12
-	const codeRowHeight = 25
+	const codeRowHeight = 20
 	diff.Font = ui.Font{Family: a.codeFont(), Size: codeFontSize * c.Preferences().TextScale}
 	diff.LineHeight = float32(codeRowHeight) / codeFontSize
 }

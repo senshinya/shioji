@@ -40,49 +40,9 @@ func (a *mobileApp) homeView(c *ui.Context) {
 			IgnoreInput(a.searching).AccessHidden(a.searching).Children(func() {
 			a.sessionList(c)
 			if !a.prominentCompose {
-				bottom, gap := float32(8), float32(4)
-				if a.wide {
-					bottom, gap = 0, 10
-				}
-				ui.Row(c).Padding(0, 12, bottom).Gap(gap).AlignItems(ui.Center).Children(func() {
-					if a.wide {
-						tabs := ui.Row(c).Grow(1).MinWidth(0).Height(max(50, mobileTapSize(c)+6)).Padding(3).Gap(2)
-						floatingSurface(c, tabs, 25).Children(func() {
-							for index, item := range []struct {
-								title string
-								icon  *ui.SVG
-							}{
-								{"会话", conversationsSymbol}, {"设备", deviceSymbol}, {"设置", gearSymbol},
-							} {
-								row := c.Key(index)
-								selected := p.canvas.Alpha(0)
-								if index == 0 {
-									selected = p.selected
-								}
-								ui.ButtonBase(row).Grow(1).Basis(0).MinWidth(mobileTapSize(c)).MinHeight(mobileTapSize(c)).Radius(24).
-									AlignItems(ui.Center).Justify(ui.Center).Background(selected).
-									Label(item.title).Role(ui.RoleButton).OnClick(func() {
-									if index != 0 {
-										a.callUIKit("selectTab", map[string]int{"index": index}, nil)
-									}
-								}).Children(func() {
-									ui.Column(row).AlignItems(ui.Center).Gap(1).PassThrough().Children(func() {
-										ui.Icon(row, item.icon).Size(20, 20).TextColor(p.ink).PassThrough()
-										oneLine(row, item.title, 10, p.ink).FontWeight(500)
-									})
-								})
-							}
-						})
-					} else {
-						ui.Spacer(c)
-					}
-					size := mobileTapSize(c)
-					if a.wide {
-						size = max(49, mobileTapSize(c))
-					}
-					floatingSurface(c, iconButton(c, "新建会话", composeSymbol, toolbarIconSize,
-						func() { a.openDraft(a.home) }).Size(size, size), size/2)
-				})
+				size := mobileTapSize(c)
+				button := iconButton(c, "新建会话", composeSymbol, toolbarIconSize, func() { a.openDraft(a.home) })
+				floatingSurface(c, button.Size(size, size).Absolute().Right(16).Bottom(12), size/2)
 			}
 		})
 		if a.searching || progress > 0 {
@@ -103,7 +63,8 @@ func (a *mobileApp) detailView(c *ui.Context) {
 	findShortcut := a.takeFindShortcut(a.detail)
 	if a.wide && a.model.SessionID != "" {
 		c.Root().Background(p.canvas)
-		const inspectorWidth = 315
+		width, _ := c.Size()
+		inspectorWidth := min(315, width*.42)
 		current := a.currentSplitReview()
 		showLeft := !current.right
 		hasParallel := a.parallelDevice != nil || a.parallel != "" && a.parallel != a.model.SessionID
@@ -220,9 +181,9 @@ func (a *mobileApp) conversationHeader(c *ui.Context, title, scope string, devic
 			} else {
 				row = ui.Row(c.Key("conversation-scope"))
 			}
-			row.MinWidth(0).MaxWidthPercent(48).AlignItems(ui.Center).Justify(ui.End).Gap(4).Shrink(1).Children(func() {
+			row.MinHeight(mobileHeaderSize(c)).MinWidth(0).MaxWidthPercent(48).AlignItems(ui.Baseline).Justify(ui.End).Gap(4).Shrink(1).Children(func() {
 				_, glyph := mobileDeviceIcon(a.splitRoot().savedDevice(a.endpoint.DeviceID).Icon)
-				alignedSymbol(c, glyph, scope, mobileStatusFont(c, captionTextSize), 11, p.secondary)
+				transcriptSymbol(c, glyph, scope, mobileStatusFont(c, captionTextSize), 11, p.secondary)
 				oneLine(c, scope, captionTextSize, p.secondary).Shrink(1)
 			})
 		})
@@ -235,7 +196,8 @@ func (a *mobileApp) conversationHeader(c *ui.Context, title, scope string, devic
 func (a *mobileApp) conversationBody(c *ui.Context, parent *mygo.Window, session domain.Session, detail domain.SessionDetail,
 	find *mobileConversationFind, draft *mobileDraftEditor, right bool, initial firstSubmissionView) {
 	ui.Column(c).Grow(1).Basis(0).MinHeight(0).Children(func() {
-		dock := ui.Column(c.Key("conversation-dock")).Absolute().Left(0).Right(0).Bottom(0).ZIndex(1).PassThrough()
+		dock := ui.Scroll(c.Key("conversation-dock")).Absolute().Left(0).Right(0).Bottom(0).
+			MaxHeightPercent(92).ZIndex(1).PassThrough()
 		latest := a.renderTranscript(c, parent, session, detail, !right, find, nil, draft, dock, initial)
 		dock.Children(func() {
 			a.historyStatus(c, parent, session)
@@ -252,6 +214,10 @@ func (a *mobileApp) conversationBody(c *ui.Context, parent *mygo.Window, session
 					editor.target = mobileDraftTarget{workspace: a.model.WorkspaceID}
 					a.drawComposer(c.Key("conversation-composer"), parent, session, editor, false, right)
 				}
+				return
+			}
+			if workspace := a.workspace(session.WorkspaceID); workspace.Archived || session.Archived {
+				a.archivedConversationFooter(c, parent, session, workspace)
 				return
 			}
 			readingImport := a.importedHistoryFooter(c, parent, session, detail)
@@ -1025,7 +991,6 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 		config = m.SessionConfig(session)
 	}
 	modelUnavailable := ready.ModelUnavailable(config.Model)
-	_, goalCommand := domain.GoalCommand(m.Drafts[key])
 	active := session.Status.Active()
 	stop := a.sessionStop(session)
 	stopping := stop.pending()
@@ -1043,6 +1008,12 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 	}
 	canSubmit := func() bool {
 		return canCompose() && ((!runtimeBlocked && !modelUnavailable) || mobileCompactCommand(m.Drafts[key]))
+	}
+	canStop := active && !stopping && connected && (a.preview || ready.Capabilities.Interrupt)
+	stopTurn := func() {
+		if canStop && editor.current(a, parent) {
+			a.stopSession(sid)
+		}
 	}
 	canSteer := func() bool {
 		_, goalDraft := domain.GoalCommand(m.Drafts[key])
@@ -1241,7 +1212,7 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 				case queueEdit.ID != "":
 					action(c, "取消", func() { m.CancelQueueEdit(sid); a.save() }).KeepFocus().Disabled(queue.busy)
 					sendButton(c, "保存待发消息", checkSymbol, home, !canSaveQueue(), saveQueue).KeepFocus()
-				case mobileCompactCommand(m.Drafts[key]):
+				case !active && mobileCompactCommand(m.Drafts[key]):
 					title := "执行压缩命令"
 					if right {
 						title = "执行右侧压缩命令"
@@ -1259,22 +1230,21 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 					if right {
 						title = "停止右侧回复"
 					}
-					sendButton(c, title, stopSymbol, home, !connected || !a.preview && !ready.Capabilities.Interrupt, func() {
-						if editor.current(a, parent) {
-							a.stopSession(sid)
-						}
-					})
-				case active && !stopping && !manualCompaction && !goalCommand && ready.Capabilities.Steer:
+					sendButton(c, title, stopSymbol, home, !canStop, stopTurn)
+				case active && !stopping && (canStop || ready.Capabilities.Steer):
 					title := "发送选项"
 					if right {
 						title = "右侧发送选项"
 					}
-					sendButton(c, title, sendSymbol, home, !canSubmit() && !canSteer(), nil).Menu(func(menu *ui.Menu) {
+					sendButton(c, title, sendSymbol, home, !canSubmit() && !canSteer() && !canStop, nil).Menu(func(menu *ui.Menu) {
 						if menu.Item("加入待发队列").Disabled(!canSubmit()).Chosen() {
 							submit(false)
 						}
-						if menu.Item("介入当前轮").Disabled(!canSteer()).Chosen() {
+						if ready.Capabilities.Steer && menu.Item("介入当前轮").Disabled(!canSteer()).Chosen() {
 							submit(true)
+						}
+						if menu.Item("停止当前轮").Disabled(!canStop).Chosen() {
+							stopTurn()
 						}
 					})
 				default:
@@ -1511,7 +1481,20 @@ func (a *mobileApp) replyFooter(c *ui.Context, parent *mygo.Window, sid string, 
 	copy := copyFooterAction(copyTitle, copyText)
 	copy.disabled = copyText == ""
 	messageFooter(c, false).DrawOver(func(_ *ui.Painter, r ui.Rect) { *anchor = r }).Children(func() {
-		footerActions(c, previewTail, atEnd, copy, fork)
+		actions := []footerAction{copy, fork}
+		if !intermediate && parent != nil && (timing.InputTokens != nil || timing.OutputTokens != nil || timing.CachedInputTokens != nil) {
+			actions = append(actions, footerAction{title: "本轮用量", icon: infoSymbol, click: func() {
+				value := func(tokens *int64) string {
+					if tokens == nil {
+						return "—"
+					}
+					return fmt.Sprint(*tokens)
+				}
+				detail := fmt.Sprintf("输入 %s\n输出 %s\n缓存 %s", value(timing.InputTokens), value(timing.OutputTokens), value(timing.CachedInputTokens))
+				go mygo.Dialog.Message(mygo.MessageOptions{Parent: parent, Title: "本轮用量", Message: detail, Buttons: []string{"好"}})
+			}})
+		}
+		footerActions(c, previewTail, atEnd, actions...)
 		footerClock(c, timing.CompletedAt, "完成时间未知")
 		if status != "" {
 			footerLabel(c, status)
@@ -1579,10 +1562,10 @@ func footerActions(c *ui.Context, previewTail, atEnd bool, actions ...footerActi
 		targetHeight = lineHeight
 	}
 	padding := targetHeight - lineHeight
-	touchOverflow := float32(0)
+	// Preserve full targets while reserving only six points for the space
+	// they share with adjacent transcript rows.
+	touchOverflow := max(0, (padding-6)/2)
 	if atEnd {
-		// Keep the final line against the reply and let the touch area extend
-		// evenly above and below it without adding transcript height.
 		touchOverflow = padding / 2
 	}
 	ui.Row(c).Shrink(0).Margin(-touchOverflow, -inset).Children(func() {
@@ -1593,7 +1576,7 @@ func footerActions(c *ui.Context, previewTail, atEnd bool, actions ...footerActi
 			activate := action.click
 			var copied *time.Time
 			button := mobileButton(key, action.title, nil).MinHeight(targetHeight).Size(mobileTapSize(c), targetHeight).Shrink(0).
-				AlignItems(ui.Center).Justify(ui.Center).DimDisabled(false).Disabled(action.disabled)
+				AlignItems(ui.Center).Justify(ui.Center).Disabled(action.disabled)
 			if action.copy != "" {
 				copied = ui.Local(button, "copy-feedback", func() time.Time { return time.Time{} })
 				activate = func() {
@@ -1633,7 +1616,7 @@ func userMessageFooter(c *ui.Context, text string, stamp *time.Time, edit func()
 		if edit == nil {
 			footerActions(c, previewTail, false, copy)
 		} else {
-			footerActions(c, previewTail, false, copy, footerAction{title: "编辑消息", icon: pencilSymbol, click: edit, disabled: !canEdit})
+			footerActions(c, previewTail, false, footerAction{title: "编辑消息", icon: pencilSymbol, click: edit, disabled: !canEdit}, copy)
 		}
 		footerClock(c, stamp, "发送时间未知")
 	})

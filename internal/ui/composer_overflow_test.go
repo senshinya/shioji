@@ -179,7 +179,7 @@ func TestLongComposerNativeCapture(t *testing.T) {
 					t.Fatal("missing composer")
 				}
 				ui.Scroll(box.X+100, box.Y+50, 0, 95)
-				footer, ok := ui.Find("Permission")
+				footer, ok := ui.Find("权限")
 				if !ok || box.Y+box.H > footer.Y {
 					t.Fatal("input viewport overlaps footer", box, footer)
 				}

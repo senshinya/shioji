@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
 
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
@@ -100,4 +101,29 @@ func (a *mobileApp) changeWorkspaceArchive(w *mygo.Window, req *mobileRequest, s
 		}
 		return nil
 	}))
+}
+
+func (a *mobileApp) archivedConversationFooter(c *ui.Context, parent *mygo.Window, session domain.Session, workspace domain.Workspace) {
+	p := palette(c)
+	kind := "会话"
+	if workspace.Archived {
+		kind = "工作区"
+	}
+	req := ui.Local(c.Root(), a.model.WorkKey(session.ID, "restore-archive"), func() mobileRequest { return mobileRequest{} })
+	mobileContent(c, conversationComposerWidth).Padding(4, pageInset, 6).Children(func() {
+		ui.Row(c).Padding(0, 10).Gap(8).AlignItems(ui.Center).Background(p.panel).Radius(panelRadius).Children(func() {
+			label(c, kind+"已归档 · 只读", captionTextSize, p.secondary).Grow(1).MinWidth(0).Role(ui.RoleStatus)
+			action(c, "恢复"+kind, func() {
+				if !a.pageCurrent(parent) {
+					return
+				}
+				if workspace.Archived {
+					a.changeWorkspaceArchive(parent, req, workspace, false, nil)
+				} else {
+					a.confirmSessionArchive(parent, session)
+				}
+			}).Disabled(!a.model.Connected || req.busy || workspace.Archived && !a.canChangeWorkspaceArchive(workspace))
+		})
+		req.status(c)
+	})
 }

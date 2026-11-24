@@ -10,8 +10,6 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
     private var forms: [Int: UINavigationController] = [:]
     private var sessionSearch: SessionSearchBar?
     private let keyboardTiming = KeyboardTiming()
-    private var tabSlide: TabSlideCover?
-    private var tabRoots: [UIViewController] = []
     private let rowMenus = NSMapTable<UIView, RowContextMenus>.weakToStrongObjects()
     private var forwardedPage: (browser: SFSafariViewController, close: PluginReply)?
     private let linkExporter = LinkExporter()
@@ -149,6 +147,9 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
                let sequence = args["sequence"] as? Int, let view = page.view {
                 let menus = rowMenus.object(forKey: view) ?? RowContextMenus(view: view, window: id)
                 rowMenus.setObject(menus, forKey: view)
+                ((page as? WindowController)?.window as? SurfaceWindow)?.rowAccessibilityActions = { [weak menus] node in
+                    menus?.accessibilityActions(node: node)
+                }
                 menus.update(sequence: sequence, rows: args["rows"] as? [[String: Any]] ?? [])
             }
             reply(.success(nil))
@@ -509,7 +510,10 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
         let fallback = CGRect(x: page.view.bounds.width - 112,
                               y: page.view.safeAreaInsets.top, width: 44, height: 44)
         let frame = anchor.map { page.window.convert($0, to: page.view) } ?? fallback
-        let search = SessionSearchBar(width: page.view.bounds.width, anchor: frame, reduceMotion: reduceMotion)
+        let safeArea = page.view.safeAreaLayoutGuide
+        let safeFrame = safeArea.layoutFrame
+        let trailingOffset = safeFrame.width > 0 ? max(0, safeFrame.maxX - frame.maxX) : 68
+        let search = SessionSearchBar(anchorSize: frame.size, trailingOffset: trailingOffset, reduceMotion: reduceMotion)
         sessionSearch = search
         search.onQuery = { PluginHost.emit("shiojiUIKit", "searchQuery", $0) }
         search.onSubmit = { PluginHost.emit("shiojiUIKit", "searchSubmit", true) }
@@ -518,15 +522,21 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
         search.onClose = { [weak self, weak search] in
             if self?.sessionSearch === search { self?.sessionSearch = nil }
         }
+        search.translatesAutoresizingMaskIntoConstraints = false
         page.view.addSubview(search)
+        NSLayoutConstraint.activate([
+            search.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor),
+            search.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor),
+            search.topAnchor.constraint(equalTo: safeArea.topAnchor),
+            search.heightAnchor.constraint(equalToConstant: max(44, frame.height)),
+        ])
+        page.view.layoutIfNeeded()
         PluginHost.emit("shiojiUIKit", "searchActive", true)
         search.open()
     }
 
     private func selectTab(_ index: Int) {
         guard let tabs else { return }
-        let roots = tabRoots.isEmpty ? tabs.viewControllers ?? [] : tabRoots
-        if roots.indices.contains(index) { prepareTabSlide(tabs, to: roots[index]) }
         if #available(iOS 27.0, *), tabs.prominentTabIdentifier == composeTabID,
            tabs.tabs.indices.contains(index), tabs.tabs[index].identifier != composeTabID {
             tabs.selectedTab = tabs.tabs[index]
@@ -534,7 +544,6 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
             tabs.selectedIndex = index
         }
         syncSplitTabs()
-        playTabSlide(in: tabs)
     }
 
     private func installNavigationShortcuts(_ shortcuts: [[String: Any]]) {
@@ -623,9 +632,6 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
 
     private var shouldHideSplitTabs: Bool {
         guard let tabs else { return false }
-        if let split, tabs.selectedViewController === split {
-            return split.wideLayout
-        }
         if tabs.traitCollection.userInterfaceIdiom == .pad, let nav = tabs.selectedViewController as? UINavigationController {
             return nav.viewControllers.count > 1 && nav.topViewController?.hidesBottomBarWhenPushed == true
         }
@@ -647,82 +653,6 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
 
     func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
         syncSplitTabs()
-        playTabSlide(in: tabBarController)
-    }
-
-    func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
-        prepareTabSlide(tabBarController, to: viewController)
-        return true
-    }
-
-    private func prepareTabSlide(_ tabs: UITabBarController, to destination: UIViewController) {
-        let roots = tabRoots.isEmpty ? tabs.viewControllers ?? [] : tabRoots
-        guard let current = tabs.selectedViewController, current !== destination,
-              let previous = roots.firstIndex(of: current), let next = roots.firstIndex(of: destination),
-              let content = current.viewIfLoaded, content.window != nil else { return }
-        if tabSlide?.destination === destination { return }
-        tabSlide?.cover.removeFromSuperview()
-        tabSlide = nil
-        var body = tabs.view.bounds
-        if !tabs.tabBar.isHidden && tabs.tabBar.window != nil {
-            let bar = tabs.tabBar.convert(tabs.tabBar.bounds, to: tabs.view)
-            if bar.minY > 0 && bar.minY < body.height { body.size.height = bar.minY }
-        }
-        let source = content.convert(body, from: tabs.view)
-        guard let snapshot = content.resizableSnapshotView(from: source, afterScreenUpdates: false, withCapInsets: .zero) else { return }
-        let cover = UIView(frame: body)
-        cover.isUserInteractionEnabled = false
-        cover.accessibilityElementsHidden = true
-        cover.clipsToBounds = true
-        cover.backgroundColor = canvasColor
-        snapshot.frame = cover.bounds
-        cover.addSubview(snapshot)
-        tabs.view.addSubview(cover)
-        tabSlide = TabSlideCover(cover: cover, outgoing: snapshot, destination: destination, direction: previous < next ? 1 : -1)
-    }
-
-    private func playTabSlide(in tabs: UITabBarController) {
-        guard let slide = tabSlide, !slide.started, let destination = slide.destination,
-              tabs.selectedViewController === destination else { return }
-        slide.started = true
-        tabs.view.bringSubviewToFront(slide.cover)
-        let page = (destination as? UINavigationController)?.topViewController as? WindowController
-        let surface = page?.window as? SurfaceWindow
-        var ready = false
-        let reveal = { [weak self, weak tabs, weak destination, weak surface] in
-            guard let self, self.tabSlide === slide, !ready else { return }
-            ready = true
-            surface?.onFirstFrame = nil
-            guard let tabs, let content = destination?.viewIfLoaded else {
-                slide.cover.removeFromSuperview()
-                self.tabSlide = nil
-                return
-            }
-            let visible = content.convert(slide.cover.frame, from: tabs.view)
-            guard let incoming = content.resizableSnapshotView(from: visible, afterScreenUpdates: false, withCapInsets: .zero) else {
-                slide.cover.removeFromSuperview()
-                self.tabSlide = nil
-                return
-            }
-            let distance = slide.direction * slide.cover.bounds.width
-            incoming.frame = slide.cover.bounds.offsetBy(dx: distance, dy: 0)
-            slide.cover.addSubview(incoming)
-            UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.26, delay: 0,
-                           options: [.curveEaseOut, .allowUserInteraction]) {
-                slide.outgoing.frame.origin.x = -distance
-                incoming.frame.origin.x = 0
-            } completion: { [weak self] _ in
-                slide.cover.removeFromSuperview()
-                if self?.tabSlide === slide { self?.tabSlide = nil }
-            }
-        }
-        let present = { DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 30, execute: reveal) }
-        if let surface, !surface.hasPresentedFirstFrame {
-            surface.onFirstFrame = present
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.50, execute: reveal)
-        } else {
-            present()
-        }
     }
 
     private func configureTabBarLabels(_ bar: UITabBar) {
@@ -746,7 +676,6 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
     @available(iOS 27.0, *)
     private func installComposeTab(in tabs: UITabBarController, image: UIImage?) {
         guard let roots = tabs.viewControllers, roots.count == 3 else { return }
-        tabRoots = roots
         let destinations = roots.enumerated().map { index, root in
             let item = root.tabBarItem
             return UITab(title: item?.title ?? "", image: item?.image, identifier: "shioji.root.\(index)") { _ in root }
@@ -761,12 +690,7 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
 
     @available(iOS 18.0, *)
     func tabBarController(_ tabBarController: UITabBarController, shouldSelectTab tab: UITab) -> Bool {
-        guard tab.identifier == composeTabID else {
-            if let index = tabBarController.tabs.firstIndex(of: tab), tabRoots.indices.contains(index) {
-                prepareTabSlide(tabBarController, to: tabRoots[index])
-            }
-            return true
-        }
+        guard tab.identifier == composeTabID else { return true }
         if let home = tabBarController.tabs.first {
             tabBarController.selectedTab = home
             PluginHost.emit("shiojiUIKit", "compose", true)
@@ -777,7 +701,6 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
     @available(iOS 18.0, *)
     func tabBarController(_ tabBarController: UITabBarController, didSelectTab selectedTab: UITab, previousTab: UITab?) {
         syncSplitTabs()
-        playTabSlide(in: tabBarController)
     }
 
     private func installSplit(home: UIViewController, detail: UIViewController, minimumWidth: CGFloat) {
@@ -796,7 +719,6 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
         }
         let wasSelected = tabs.selectedViewController === primary
         controllers[index] = split
-        tabRoots = controllers
         tabs.setViewControllers(controllers, animated: false)
         tabs.view.tintColor = .label
         tabs.tabBar.tintColor = .label
@@ -951,24 +873,23 @@ private final class SessionSearchBar: UIView {
     private let closeButton = UIButton(type: .close)
     private let capsule = UIView()
     private let glyph = UIImageView(image: UIImage(systemName: "magnifyingglass"))
-    private let anchor: CGRect
+    private let anchorSize: CGSize
+    private let trailingOffset: CGFloat
     private let reduceMotion: Bool
     private var expanded = false
     private var closing = false
 
-    init(width: CGFloat, anchor: CGRect, reduceMotion: Bool) {
+    init(anchorSize: CGSize, trailingOffset: CGFloat, reduceMotion: Bool) {
         self.reduceMotion = reduceMotion
-        self.anchor = CGRect(x: anchor.minX, y: 0, width: anchor.width, height: anchor.height)
-        super.init(frame: CGRect(x: 0, y: anchor.minY, width: width, height: anchor.height))
-        autoresizingMask = [.flexibleWidth]
+        self.anchorSize = anchorSize
+        self.trailingOffset = trailingOffset
+        super.init(frame: .zero)
         capsule.backgroundColor = .secondarySystemBackground
         capsule.clipsToBounds = true
-        capsule.layer.cornerRadius = anchor.height / 2
-        capsule.frame = self.anchor
+        capsule.layer.cornerRadius = anchorSize.height / 2
         addSubview(capsule)
         glyph.tintColor = .secondaryLabel
         glyph.contentMode = .scaleAspectFit
-        glyph.frame = CGRect(x: (anchor.height - 18) / 2, y: (anchor.height - 18) / 2, width: 18, height: 18)
         capsule.addSubview(glyph)
         field.backgroundColor = .clear
         field.borderStyle = .none
@@ -1001,10 +922,16 @@ private final class SessionSearchBar: UIView {
         CGRect(x: 16, y: 0, width: max(44, bounds.width - 84), height: bounds.height)
     }
 
+    private var collapsedFrame: CGRect {
+        let width = max(44, anchorSize.width)
+        return CGRect(x: max(0, bounds.width - trailingOffset - width), y: 0, width: width, height: bounds.height)
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
+        glyph.frame = CGRect(x: (collapsedFrame.width - 18) / 2, y: (bounds.height - 18) / 2, width: 18, height: 18)
         closeButton.frame = CGRect(x: bounds.width - 60, y: 0, width: 44, height: bounds.height)
-        if expanded { capsule.frame = expandedFrame }
+        capsule.frame = expanded ? expandedFrame : collapsedFrame
         field.frame = CGRect(origin: .zero, size: expandedFrame.size)
     }
 
@@ -1031,7 +958,7 @@ private final class SessionSearchBar: UIView {
         field.resignFirstResponder()
         UIView.animate(withDuration: (reduceMotion || UIAccessibility.isReduceMotionEnabled) ? 0 : 0.23, delay: 0,
                        options: [.beginFromCurrentState, .curveEaseOut, .allowUserInteraction]) {
-            self.capsule.frame = self.anchor
+            self.capsule.frame = self.collapsedFrame
             self.field.alpha = 0
             self.closeButton.alpha = 0
             self.glyph.alpha = 1
@@ -1039,21 +966,6 @@ private final class SessionSearchBar: UIView {
             self.removeFromSuperview()
             self.onClose?()
         }
-    }
-}
-
-private final class TabSlideCover {
-    let cover: UIView
-    let outgoing: UIView
-    weak var destination: UIViewController?
-    let direction: CGFloat
-    var started = false
-
-    init(cover: UIView, outgoing: UIView, destination: UIViewController, direction: CGFloat) {
-        self.cover = cover
-        self.outgoing = outgoing
-        self.destination = destination
-        self.direction = direction
     }
 }
 

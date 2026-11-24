@@ -74,7 +74,7 @@ func (s *Settings) notifications(c *n.Context, t *n.Theme) {
 				value *bool
 			}{{"回复完成", &p.Completed}, {"需要回答或授权", &p.Attention}, {"执行失败", &p.Failed}} {
 				s.row(c, item.label, func() {
-					if configurationSwitch(c, item.value).Label("通知：" + item.label).Changed() {
+					if configurationSwitch(c, item.value).Disabled(!p.Enabled).Label("通知：" + item.label).Changed() {
 						s.changed()
 					}
 				})
@@ -90,17 +90,17 @@ func (s *Settings) notifications(c *n.Context, t *n.Theme) {
 				}
 			})
 			s.row(c, "提示音", func() {
-				if configurationSwitch(c, &p.Sound).Label("通知提示音").Changed() {
+				if configurationSwitch(c, &p.Sound).Disabled(!p.Enabled).Label("通知提示音").Changed() {
 					s.changed()
 				}
 			})
 		})
 	})
-	n.Row(c).FillWidth().Gap(12).Margin(configurationSectionGap, 0, 0, 0).Children(func() {
-		if configurationAction(c, "发送测试通知").MarginX(-8).Disabled(!p.Enabled || s.notificationPending).Clicked() {
+	n.Row(c).FillWidth().Gap(4).Margin(configurationSectionGap, 0, 0, 0).Children(func() {
+		if configurationAction(c, "发送测试通知").MarginStart(-8).Disabled(!p.Enabled || s.notificationPending).Clicked() {
 			s.testNotification(c, false)
 		}
-		if configurationAction(c, "系统通知设置…").MarginX(-8).Clicked() {
+		if configurationAction(c, "系统通知设置…").Clicked() {
 			if err := mygo.Shell.OpenExternal("x-apple.systempreferences:com.apple.preference.notifications"); err != nil {
 				s.error = err.Error()
 			}

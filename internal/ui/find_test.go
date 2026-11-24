@@ -234,7 +234,7 @@ func TestConversationFindKeepsTheKeywordMarkedUntilClosed(t *testing.T) {
 	yellow := func() int {
 		im := ui.Image()
 		count := 0
-		for y := 85; y < 650; y++ {
+		for y := transcriptStartInset; y < 650; y++ {
 			for x := 350; x < 1150; x++ {
 				p := im.RGBAAt(x, y)
 				if p.R > 180 && p.G > 140 && p.B < 150 {

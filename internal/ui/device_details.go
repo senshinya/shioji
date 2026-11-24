@@ -125,9 +125,9 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 				return
 			}
 			width, _ := c.Size()
-			header := n.Column(c).FillWidth().Height(76).Padding(mainPageTopInset, configurationInset, 6).DragWindow()
+			header := n.Column(c).FillWidth().MinHeight(76).Gap(2).Padding(mainPageTopInset, configurationInset, 6).DragWindow()
 			if width < 900 {
-				header.Height(88).Padding(mainWindowTopInset, configurationInset, 6)
+				header.MinHeight(88).Padding(mainWindowTopInset, configurationInset, 6)
 			}
 			header.Children(func() {
 				if width < 900 {
@@ -227,10 +227,10 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 								v.deviceStorage(c.Key("storage:"+key), t, key, state)
 							}
 							if m.Error != "" && m.Error != state.Error {
-								n.Text(c, m.Error).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted)
+								n.Text(c, m.Error).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.Danger)
 							}
 							if state.Error != "" && v.migrationForConnection(key) == nil {
-								n.Text(c, state.Error).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
+								n.Text(c, state.Error).FillWidth().FontSize(12).FixedLineHeight(18).TextColor(t.Danger).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 							}
 						})
 					})

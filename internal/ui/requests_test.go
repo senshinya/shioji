@@ -386,3 +386,18 @@ func TestOptionHoverKeepsEqualOuterInsetsAndSpaceBeforeTheControl(t *testing.T) 
 		}
 	}
 }
+
+func TestFormOptionGrowsWithWrappedText(t *testing.T) {
+	request := domain.PendingRequest{ID: "form", SessionID: "s"}
+	v := New(layoutModel(), nil, "")
+	field := domain.FormField{ID: "choices", Title: "范围", Type: "array", Options: []domain.FormOption{
+		{Value: "short", Label: "一行"},
+		{Value: "long", Label: "请核对所有未完成的审批事项和本机工作区的目录权限以及归档会话的恢复入口"},
+	}}
+	ui := n.NewTester(func(c *n.Context) { v.formField(c, c.Theme(), request, field) }, 220, 240)
+	short, ok := ui.Find(field.Options[0].Label)
+	long, wrapped := ui.Find(field.Options[1].Label)
+	if !ok || !wrapped || short.H != 32 || long.H < 48 {
+		t.Fatalf("choice heights single=%+v wrapped=%+v", short, long)
+	}
+}

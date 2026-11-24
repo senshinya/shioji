@@ -6,7 +6,7 @@ func TestQueueViewportShowsPartialThirdRow(t *testing.T) {
 	for _, tc := range []struct {
 		count int
 		want  float32
-	}{{0, 0}, {1, 50}, {2, 100}, {3, 125}, {24, 125}} {
+	}{{0, 0}, {1, 44}, {2, 88}, {3, 110}, {24, 110}} {
 		if got := QueueViewport(tc.count); got != tc.want {
 			t.Errorf("QueueViewport(%d) = %g, want %g", tc.count, got, tc.want)
 		}
@@ -24,7 +24,7 @@ func TestComposerGeometryMovesOneSetOfControls(t *testing.T) {
 	open := ComposerGeometry(1, false, 18.6, 44)
 	half := ComposerGeometry(0.5, false, 18.6, 44)
 	revealing := ComposerGeometry(0.75, false, 18.6, 44)
-	if compact.Height != 56 || compact.ControlsY != 6 || open.Height != 130 || open.ControlsY != 80 {
+	if compact.Height != 56 || compact.ControlsY != 6 || open.Height != 108 || open.ControlsY != 58 {
 		t.Fatalf("unexpected endpoint geometry: compact = %+v open = %+v", compact, open)
 	}
 	if !(half.ControlsY > compact.ControlsY && half.ControlsY < open.ControlsY && half.TextInset < compact.TextInset && half.TextInset > open.TextInset) {
@@ -50,7 +50,7 @@ func TestCompactComposerReservesAttachmentAndSendTargets(t *testing.T) {
 
 func TestDraftComposerKeepsControlsExpanded(t *testing.T) {
 	idle, focused := ComposerGeometry(-1, true, 18.6, 44), ComposerGeometry(2, true, 18.6, 44)
-	if idle.Height != 92 || idle.ControlsY != 43 || focused.Height != 130 || focused.ControlsY != 80 {
+	if idle.Height != 92 || idle.ControlsY != 43 || focused.Height != 108 || focused.ControlsY != 58 {
 		t.Fatalf("unexpected draft geometry: idle = %+v focused = %+v", idle, focused)
 	}
 	for _, metrics := range []ComposerMetrics{idle, focused} {

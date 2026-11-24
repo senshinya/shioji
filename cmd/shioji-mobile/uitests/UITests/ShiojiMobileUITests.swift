@@ -1593,7 +1593,7 @@ final class ShiojiMobileUITests: XCTestCase {
         path.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
         app.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4) + "false")
         XCTAssertEqual(path.value as? String, "/usr/bin/false")
-        app.buttons["保存并继续"].firstMatch.tap()
+        app.buttons["保存"].firstMatch.tap()
         XCTAssertTrue(app.staticTexts["/usr/bin/false"].firstMatch.waitForExistence(timeout: 10))
         app.navigationBars.buttons["BackButton"].firstMatch.tap()
         waitForSwitch(alpha, false)
@@ -2507,7 +2507,7 @@ final class ShiojiMobileUITests: XCTestCase {
             let button = app.buttons[label].firstMatch
             XCTAssertTrue(button.waitForExistence(timeout: 10), app.debugDescription)
             if label.hasPrefix("FIXTURE_") || label == "添加变量" {
-                let save = app.buttons["保存并继续"].firstMatch
+                let save = app.buttons["保存"].firstMatch
                 if save.exists && button.frame.midY >= save.frame.minY - 12 {
                     let start = app.coordinate(withNormalizedOffset: .zero)
                         .withOffset(CGVector(dx: button.frame.midX, dy: save.frame.minY - 45))
@@ -2567,7 +2567,7 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertTrue(app.buttons["FIXTURE_MOBILE"].waitForExistence(timeout: 8), app.debugDescription)
         open("FIXTURE_DELETE")
         open("删除变量")
-        open("保存并继续")
+        open("保存")
         let saved = app.descendants(matching: .any)["已保存运行设置"].firstMatch
         XCTAssertTrue(saved.waitForExistence(timeout: 12), app.debugDescription)
         XCTAssertTrue(app.buttons["FIXTURE_KEEP_RENAMED"].exists)
@@ -2709,7 +2709,7 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertTrue(endpoint.waitForExistence(timeout: 5))
         XCTAssertTrue(key.exists)
         XCTAssertFalse(connect.isEnabled)
-        XCTAssertFalse(app.buttons["保存并继续"].exists)
+        XCTAssertFalse(app.buttons["保存"].exists)
         endpoint.tap()
         app.typeText("https://api.example.test/v1")
         app.typeText("\n")

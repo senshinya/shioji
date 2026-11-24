@@ -58,7 +58,7 @@ func (v *View) requestBody(c *n.Context, t *n.Theme, r domain.PendingRequest, qu
 				continue
 			}
 			checked := containsSelection(selected, choice.ID)
-			if controlFeedback(c, n.Checkbox(c.Key(choice.ID), &checked, choice.Label).FillWidth().MinHeight(28).FontSize(12), 4).Changed() {
+			if controlFeedback(c, n.Checkbox(c.Key(choice.ID), &checked, choice.Label).FillWidth().MinHeight(32).Padding(6, 6).AlignItems(n.Start).FontSize(12).FixedLineHeight(18), 4).Changed() {
 				selected = toggleSelection(selected, choice.ID, checked)
 				v.saveRequestSelection(r, "permissions", selected)
 			}
@@ -100,6 +100,14 @@ func (v *View) useCustomQuestionAnswer(key, value string) {
 	v.Model.Answers[key] = value
 }
 
+func (v *View) questionAnswer(r domain.PendingRequest, q domain.Question) string {
+	key := requestKey(r, q.ID)
+	if q.Secret {
+		return v.secretAnswers[key]
+	}
+	return v.Model.Answers[key]
+}
+
 func (v *View) questionField(c *n.Context, t *n.Theme, r domain.PendingRequest, q domain.Question, expanded bool) {
 	key := requestKey(r, q.ID)
 	n.Text(c, q.Text).FontSize(13).FixedLineHeight(20)
@@ -127,13 +135,13 @@ func (v *View) questionField(c *n.Context, t *n.Theme, r domain.PendingRequest, 
 				if i > 0 {
 					processingPanelDivider(c, t)
 				}
-				if controlFeedback(c, n.Radio(c.Key(option.Label), &selected.Text, option.Label, option.Label).FillWidth().MinHeight(32).PaddingX(6).FontSize(12).Label(option.Label).Tooltip(option.Description), 4).Changed() {
+				if controlFeedback(c, n.Radio(c.Key(option.Label), &selected.Text, option.Label, option.Label).FillWidth().MinHeight(32).Padding(6, 6).AlignItems(n.Start).FontSize(12).FixedLineHeight(18).Label(option.Label).Tooltip(option.Description), 4).Changed() {
 					v.Model.Answers[key] = selected.Text
 					v.Model.Answers["source:"+key] = "preset"
 					selected.LastModel = selected.Text
 				}
 				if option.Description != "" {
-					n.Text(c, option.Description).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Padding(0, 0, 6, 22)
+					n.Text(c, option.Description).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Padding(0, 6, 6, 30)
 				}
 			}
 		})
@@ -209,13 +217,19 @@ func (v *View) formField(c *n.Context, t *n.Theme, r domain.PendingRequest, f do
 		if f.Required {
 			title += " *"
 		}
-		n.Text(c, title).FontSize(12).FixedLineHeight(20)
-		if f.Description != "" {
-			n.Text(c, f.Description).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+		if f.Type != "boolean" || f.Description != "" {
+			n.Column(c).FillWidth().Gap(2).Children(func() {
+				if f.Type != "boolean" {
+					n.Text(c, title).FontSize(12).FixedLineHeight(20)
+				}
+				if f.Description != "" {
+					n.Text(c, f.Description).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+				}
+			})
 		}
 		if f.Type == "boolean" {
 			checked := len(values) == 1 && values[0] == "true"
-			if controlFeedback(c, n.Checkbox(c, &checked, f.Title).MinHeight(28).FontSize(12), 4).Changed() {
+			if controlFeedback(c, n.Checkbox(c, &checked, title).FillWidth().MinHeight(32).Padding(6, 6).AlignItems(n.Start).FontSize(12).FixedLineHeight(18), 4).Changed() {
 				value := "false"
 				if checked {
 					value = "true"
@@ -232,7 +246,7 @@ func (v *View) formField(c *n.Context, t *n.Theme, r domain.PendingRequest, f do
 					}
 					if f.Type == "array" {
 						checked := containsSelection(values, option.Value)
-						if controlFeedback(c, n.Checkbox(c.Key(option.Value), &checked, option.Label).FillWidth().MinHeight(32).PaddingX(6).FontSize(12).Label(option.Label), 4).Changed() {
+						if controlFeedback(c, n.Checkbox(c.Key(option.Value), &checked, option.Label).FillWidth().MinHeight(32).Padding(6, 6).AlignItems(n.Start).FontSize(12).FixedLineHeight(18).Label(option.Label), 4).Changed() {
 							values = toggleSelection(values, option.Value, checked)
 							v.saveRequestSelection(r, f.ID, values)
 						}
@@ -241,7 +255,7 @@ func (v *View) formField(c *n.Context, t *n.Theme, r domain.PendingRequest, f do
 						if len(values) > 0 {
 							value = values[0]
 						}
-						if controlFeedback(c, n.Radio(c.Key(option.Value), &value, option.Value, option.Label).FillWidth().MinHeight(32).PaddingX(6).FontSize(12).Label(option.Label), 4).Changed() {
+						if controlFeedback(c, n.Radio(c.Key(option.Value), &value, option.Value, option.Label).FillWidth().MinHeight(32).Padding(6, 6).AlignItems(n.Start).FontSize(12).FixedLineHeight(18).Label(option.Label), 4).Changed() {
 							values = []string{value}
 							v.saveRequestSelection(r, f.ID, values)
 						}
@@ -315,7 +329,7 @@ func (v *View) formAnswers(r domain.PendingRequest) map[string][]string {
 	}
 	return answers
 }
-func (v *View) requestActions(c *n.Context, t *n.Theme, page requestPage, expandedOptions map[string]bool, position *n.ScrollState) {
+func (v *View) requestActions(c *n.Context, t *n.Theme, page requestPage, expandedOptions map[string]bool, position *n.ScrollState, focused bool) {
 	r := page.request
 	state := v.requestAction(r)
 	disabled := !v.Model.Connected || r.State != "pending" || state.busy
@@ -335,7 +349,8 @@ func (v *View) requestActions(c *n.Context, t *n.Theme, page requestPage, expand
 			if caption != label {
 				button.Description(label)
 			}
-			if button.Clicked() {
+			if button.Clicked() || primary && !disabled && !extraDisabled &&
+				(r.Kind == "form" || len(r.Questions) > 0) && focused && c.Shortcut(n.Cmd, n.KeyEnter) {
 				v.respond(r, domain.Answer{RequestID: r.ID, Revision: r.Revision, Decision: decision, Answers: answers})
 			}
 		}
@@ -374,18 +389,15 @@ func (v *View) requestActions(c *n.Context, t *n.Theme, page requestPage, expand
 			action("取消", "cancel", false, nil, false)
 		default:
 			answers := map[string][]string{}
-			complete := true
+			missing := 0
 			for _, q := range r.Questions {
-				value := v.Model.Answers[requestKey(r, q.ID)]
-				if q.Secret {
-					value = v.secretAnswers[requestKey(r, q.ID)]
-				}
+				value := v.questionAnswer(r, q)
 				if strings.TrimSpace(value) == "" {
-					complete = false
+					missing++
 				}
 				answers[q.ID] = []string{value}
 			}
-			action("提交答案", "", true, answers, !complete)
+			action("提交答案", "", true, answers, missing > 0)
 			if page.question >= 0 {
 				v.questionSelectionControls(c, t, page, expandedOptions, position)
 			}

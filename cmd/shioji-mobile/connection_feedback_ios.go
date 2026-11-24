@@ -61,7 +61,11 @@ func (a *mobileApp) connectionNotice(c *ui.Context, parent *mygo.Window) {
 			ui.Spinner(c).Size(15, 15).TextColor(p.secondary).PassThrough()
 		}
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).PaddingY(5).Children(func() {
-			label(c, message, captionTextSize, p.secondary).Role(ui.RoleStatus)
+			tint := p.secondary
+			if phase == app.ConnectionUnavailable || phase == app.ConnectionSyncFailed {
+				tint = p.warning
+			}
+			label(c, message, captionTextSize, tint).Role(ui.RoleStatus)
 			if phase == app.ConnectionUnavailable {
 				detail := "草稿已保留"
 				if observed := a.model.Snapshot.ObservedAt; !observed.IsZero() {

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"slices"
+	"strconv"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -21,6 +22,7 @@ type contextMenuCommand struct {
 }
 
 type contextMenuRow struct {
+	Node     string               `json:"node,omitempty"`
 	Key      string               `json:"key"`
 	Rect     [4]float32           `json:"rect"`
 	Preview  bool                 `json:"preview"`
@@ -67,7 +69,11 @@ func (f *contextMenuFrame) add(row ui.Element, key string, target contextMenuTar
 		if r.W <= 0 || r.H <= 0 {
 			return
 		}
-		f.rows = append(f.rows, contextMenuRow{Key: key, Rect: [4]float32{r.X, r.Y, r.W, r.H},
+		node := ""
+		if target.message != nil {
+			node = strconv.FormatUint(row.ID(), 10)
+		}
+		f.rows = append(f.rows, contextMenuRow{Node: node, Key: key, Rect: [4]float32{r.X, r.Y, r.W, r.H},
 			Preview: target.session.ID != "", Message: target.message, Commands: target.commands})
 	})
 }

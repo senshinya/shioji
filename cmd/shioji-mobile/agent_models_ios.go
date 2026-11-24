@@ -55,7 +55,7 @@ func (a *mobileApp) agentModels(c *ui.Context, w *mygo.Window, deviceID string, 
 	for index, model := range models {
 		row := c.Key(model.ID)
 		p := palette(c)
-		rowDivider(ui.Row(row).MinHeight(max(contentRowHeight, mobileTapSize(c))).Gap(6).AlignItems(ui.Center).
+		rowDivider(ui.Row(row).MinHeight(max(contentRowHeight, mobileTapSize(c))).PaddingY(8).Gap(6).AlignItems(ui.Center).
 			Transition(ui.ElementTransition{Position: true, Duration: mobileToolDisclosureDuration, Ease: ui.EaseOut}), p.line).
 			Children(func() {
 				name := mobileModelName(model)

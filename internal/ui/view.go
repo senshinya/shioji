@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	n "github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
@@ -185,6 +184,7 @@ type View struct {
 	StatePath                                                                                                       string
 	lists                                                                                                           map[string]*n.ListState
 	nav                                                                                                             n.ListState
+	navReveal                                                                                                       string
 	fileLink                                                                                                        *fileLinkState
 	md                                                                                                              markdown.Options
 	mermaid                                                                                                         *mermaidCache
@@ -537,12 +537,12 @@ func (v *View) View(c *n.Context) {
 						r := v.skillReturn
 						v.skillDeviceManagementPage(c, &t, r)
 					} else {
-						v.toolbar(c, &t)
+						v.toolbar(c, &t, false)
 						v.workspaceSettingsView(c, &t)
 					}
 				}, false)
 			} else if m.SessionID == "" && v.homeSend == nil {
-				v.toolbar(c, &t)
+				v.toolbar(c, &t, false)
 				v.homeView(c, &t)
 			} else {
 				v.parallelConversation(c, &t, conversationWidth)
@@ -608,6 +608,7 @@ func (v *View) home() {
 	v.workspaceEditor = nil
 	v.skillReturn = nil
 	v.Model.PrepareNewSession()
+	v.focusComposer = true
 	// An empty new-session composer starts from the owning checkout again.
 	// Keep explicit branch intent while an unsent draft or receipt is pending.
 	if !v.Model.HasDraftContent("home") && !v.Model.HasPendingInput() {
@@ -634,7 +635,7 @@ func ghost(c *n.Context, label string, radius ...float32) n.Element {
 	}
 	return controlFeedback(c, n.Button(c, label).Radius(r), r).FontWeight(400).Justify(n.Start).Background(n.Transparent).Border(0, n.Transparent).Height(28)
 }
-func (v *View) toolbar(c *n.Context, t *n.Theme) {
+func (v *View) toolbar(c *n.Context, t *n.Theme, switchPane bool) {
 	if v.workspaceEditor != nil && !v.devices {
 		v.workspaceSettingsHeader(c, t)
 		return
@@ -672,7 +673,7 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 					if s.ID == m.SessionID {
 						v.toolbarWorkspace(c, t)
 						n.Column(c).Size(1, 14).Background(t.Border).MarginX(8)
-						n.Text(c, s.Title).SingleLine().Grow(1).FontSize(13).FontWeight(400).ContentTransition(n.ContentTransition{Animation: &titleAnimation})
+						n.Text(c, s.Title).SingleLine().Grow(1).MinWidth(0).TooltipWhenTruncated(s.Title).FontSize(13).FontWeight(400).ContentTransition(n.ContentTransition{Animation: &titleAnimation})
 					}
 				}
 			})
@@ -680,7 +681,14 @@ func (v *View) toolbar(c *n.Context, t *n.Theme) {
 			n.Spacer(c).Grow(1)
 		}
 		v.currentDeviceControl(c, t)
-		v.feedbackButton(c, t)
+		if switchPane {
+			v.parallelSwitch(c, v.parent == nil)
+		}
+		if v.parent == nil {
+			v.feedbackButton(c, t)
+		} else if iconButton(c, closeIcon, "关闭并排会话").Clicked() {
+			v.closeParallel()
+		}
 		if m.SessionID != "" && !v.devices {
 			label := "展开侧栏"
 			if m.Inspectors[m.SessionID] {
@@ -780,10 +788,10 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) (goalShown bool) {
 	if t.Dark {
 		bg = t.Surface
 	}
-	inputHeight := float32(54)
+	inputHeight := float32(42)
 	inputSize, inputLeading := float32(14), float32(22)
 	if home {
-		inputHeight = 72
+		inputHeight = 58
 		inputSize, inputLeading = 15, 26
 	}
 	stack := n.Column(c.Key("composer-stack:" + stackKey)).Label("消息编辑区").FillWidth().MaxWidth(768).Gap(0).Children(func() {
@@ -886,6 +894,10 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) (goalShown bool) {
 						if v.mentionKey(k) {
 							return true
 						}
+						if keyCode == n.KeyEscape && mods == 0 && editID != "" && v.pendingQueueCommand(m.SessionID) == nil && !binding.doc.Composing() {
+							v.cancelQueuedEdit()
+							return true
+						}
 						if keyCode != n.KeyEnter {
 							return false
 						}
@@ -938,7 +950,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) (goalShown bool) {
 					if iconButton(c, plus, "添加附件").Size(28, 28).Disabled(v.Controller == nil || v.StatePath == "" || m.WorkerMinor < 6 || waiting || v.preparingAttachments(m.DraftKey())).Clicked() {
 						v.pickAttachments()
 					}
-					permission := control(c).Height(28).PaddingX(6).Radius(6).Label("Permission").Children(func() {
+					permission := control(c).Height(28).PaddingX(6).Radius(6).Label("权限").Children(func() {
 						inlineIconText(c, shieldIcon, m.PermissionName(cfg.Permission), n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}, 13, 6, t.TextMuted)
 					})
 					choices := []menuChoice{}
@@ -1112,31 +1124,24 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 	modelColor = trigger.AnimateColor("model-availability", modelColor, motionAnimation(c, 180*time.Millisecond))
 	trigger.Children(func() {
 		font := n.Font{Family: c.Theme().Font, Size: 12, Weight: 400}
-		text := cfg.Model
+		model := cfg.Model
+		if model == "" {
+			model = "选择模型"
+		}
+		text := model
 		if cfg.Effort != "" {
 			text += " · " + cfg.Effort
 		}
-		spans := []n.Span{inlineIconSpan(text, font, 20, 3), {Text: cfg.Model, Color: modelColor}, {Text: strings.TrimPrefix(text, cfg.Model)}}
-		icons := map[int]*n.SVG{0: harnessIcon(descriptor)}
-		at := 1 + utf8.RuneCountInString(text)
-		if cfg.Plan {
-			icons[at] = planModeIcon
-			spans = append(spans, inlineIconSpan(text, font, 14, 6))
-			at++
-		}
-		if cfg.Fast {
-			icons[at] = fastModeIcon
-			spans = append(spans, inlineIconSpan(text, font, 14, 6))
-		}
-		n.RichText(c, spans...).MinWidth(0).FillWidth().Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).SingleLine().TextColor(t.TextMuted).Label(summary).DrawObjects(func(p *n.Painter, at int, r n.Rect) {
-			if at == 0 {
-				r.W = 20
-			} else {
-				r.X += 6
-				r.W = 14
+		n.Row(c).MinWidth(0).Gap(6).AlignItems(n.Baseline).Children(func() {
+			inlineSymbol(c, harnessIcon(descriptor), text, font, 20, t.TextMuted).Shrink(0)
+			n.RichText(c, n.Span{Text: model, Color: modelColor}, n.Span{Text: strings.TrimPrefix(text, model)}).
+				MinWidth(0).Shrink(1).Font(font.Family).FontSize(font.Size).FixedLineHeight(20).SingleLine().
+				Ellipsis("…").TextColor(t.TextMuted).Label(summary)
+			if cfg.Plan {
+				inlineSymbol(c, planModeIcon, text, font, 14, t.TextMuted).Shrink(0)
 			}
-			if icon := icons[at]; icon != nil {
-				p.Icon(icon, r, t.TextMuted)
+			if cfg.Fast {
+				inlineSymbol(c, fastModeIcon, text, font, 14, t.TextMuted).Shrink(0)
 			}
 		})
 	})
@@ -1271,7 +1276,7 @@ func settingRow(c *n.Context, name, value string) n.Element {
 		})
 	})
 }
-func (v *View) conversation(c *n.Context, t *n.Theme) {
+func (v *View) conversation(c *n.Context, t *n.Theme, switchPane bool) {
 	m := v.Model
 	v.syncPagedHistory(c)
 	v.syncSessionLoading(c)
@@ -1415,7 +1420,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 	rowBounds := map[string]n.Rect{}
 	history := n.List(c.Key("history:"+viewKey), state, historyEndRow+1, func(row int) {
 		if row == 0 {
-			height := float32(80)
+			height := float32(transcriptStartInset)
 			if v.hasHistoryPageControl() {
 				height = 48 + 20 + 8
 			}
@@ -1586,7 +1591,7 @@ func (v *View) conversation(c *n.Context, t *n.Theme) {
 		// History is clipped to its reading column, so the gutter contains
 		// only the pane background and native thumb, never overflowing text.
 		p.Fill(n.Rect{X: r.X, Y: r.Y, W: max(0, r.W-conversationScrollbarGutter), H: r.H}, t.Background, 0)
-	}).Children(func() { v.toolbar(c, t) })
+	}).Children(func() { v.toolbar(c, t, switchPane) })
 	v.conversationFindBar(c, t, state.Bounds(c).W)
 	state.EndOverlayRelease = 0
 	dock := n.Column(c.Key("conversation-dock")).Absolute().Left(0).Right(0).Bottom(8).PaddingX(18).AlignItems(n.Center).Gap(8).Label("会话底部面板")
@@ -1802,9 +1807,13 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 				v.runningStatus(c, t, turn)
 			} else {
 				animation := motionAnimation(c, 160*time.Millisecond)
-				n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: &animation})
+				ink := t.TextMuted
+				if turn.Status == domain.ExecutionFailed {
+					ink = t.Danger
+				}
+				n.Text(c, label).FontSize(11).FixedLineHeight(20).TextColor(ink).ContentTransition(n.ContentTransition{Animation: &animation})
 				if turn.Status == domain.ExecutionFailed && turn.Error != "" && turn.UsageLimit == nil {
-					n.Text(c, turn.Error).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).SingleLine().MaxWidth(480).Tooltip(turn.Error).
+					n.Text(c, turn.Error).FontSize(11).FixedLineHeight(20).TextColor(t.Danger).SingleLine().MaxWidth(480).Tooltip(turn.Error).
 						Transition(fadeMotion(c, 160*time.Millisecond))
 				}
 			}
@@ -2102,6 +2111,7 @@ func (v *View) nextAttention() bool {
 	if s, ok := v.attentionSession(); ok {
 		v.navigateSession(s.ID, s.WorkspaceID)
 		v.collapsedWorkspaces[s.WorkspaceID] = false
+		v.navReveal = s.ID
 		v.Model.Collapsed[s.ID] = false
 		v.devices = false
 		return true

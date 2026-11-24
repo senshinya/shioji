@@ -158,6 +158,53 @@ func TestNarrowParallelSwitchKeepsBothDrafts(t *testing.T) {
 	}
 }
 
+func TestParallelToolbarSwitchAppearsOnlyWhenOnePaneIsVisible(t *testing.T) {
+	t.Run("both panes", func(t *testing.T) {
+		m := parallelModel()
+		m.SecondarySessionID = "other"
+		view := n.NewTester(New(m, nil, "").View, 1600, 850)
+		for _, label := range []string{"切换到左侧会话", "切换到右侧会话"} {
+			if _, found := view.Find(label); found {
+				t.Errorf("both panes are already visible, unexpected %q", label)
+			}
+		}
+		if _, found := view.Find("关闭并排会话"); !found {
+			t.Error("right pane is missing its close action")
+		}
+	})
+	t.Run("one pane", func(t *testing.T) {
+		m := parallelModel()
+		m.SecondarySessionID = "other"
+		view := n.NewTester(New(m, nil, "").View, 900, 650)
+		if err := view.Click("切换到右侧会话"); err != nil {
+			t.Fatal(err)
+		}
+		if !m.FocusSecondary || !view.HasText("右侧会话输入") {
+			t.Fatal("the right conversation did not take focus")
+		}
+		if err := view.Click("切换到左侧会话"); err != nil {
+			t.Fatal(err)
+		}
+		if m.FocusSecondary || !view.HasText("消息输入") {
+			t.Fatal("the left conversation did not take focus")
+		}
+	})
+	t.Run("loading right pane", func(t *testing.T) {
+		m := parallelModel()
+		m.SecondarySessionID, m.FocusSecondary = "loading", true
+		view := n.NewTester(New(m, nil, "").View, 900, 650)
+		if !view.HasText("正在打开会话") {
+			t.Fatal("right-hand loading placeholder is missing")
+		}
+		if err := view.Click("切换到左侧会话"); err != nil {
+			t.Fatal(err)
+		}
+		if m.FocusSecondary || m.SecondarySessionID != "loading" || !view.HasText("消息输入") {
+			t.Fatal("returning to the left must keep the right session open")
+		}
+	})
+}
+
 func TestSecondaryQuestionSubmissionKeepsOtherRequestAndDraft(t *testing.T) {
 	m := parallelModel()
 	m.SecondarySessionID = "other"

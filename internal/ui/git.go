@@ -9,6 +9,7 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"slices"
 	"strings"
 	"time"
 )
@@ -348,8 +349,8 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 			}
 			canSwitch := v.canSwitchBranch()
 			canReview := contextChanged && v.Model.Connected
-			trigger := control(c, 5).Height(26).MaxWidth(330).Padding(3, 10).Radius(5).Label("选择分支").Tooltip(label).Disabled(!canSwitch && !canReview).Children(func() {
-				inlineIconText(c, branchIcon, label, n.Font{Family: "Menlo", Size: 11, Weight: 400}, 12, 5, t.TextMuted)
+			trigger := control(c, 5).Height(26).MaxWidth(330).MinWidth(0).Shrink(1).Padding(3, 10).Radius(5).Label("选择分支").Tooltip(label).Disabled(!canSwitch && !canReview).Children(func() {
+				inlineIconText(c, branchIcon, label, n.Font{Family: "Menlo", Size: 11, Weight: 400}, 12, 5, t.TextMuted).MinWidth(0).Shrink(1).Ellipsis("…")
 			})
 			if trigger.Clicked() {
 				v.branchOpen = !v.branchOpen
@@ -357,8 +358,12 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 				v.requestGit(true)
 			}
 			popover(c.Key("branches"), trigger, &v.branchOpen, func(panel n.Element) {
-				compactMenuSurface(panel, t).Width(260).Children(func() {
-					textField(c.Key("filter"), &v.branchSearch).FillWidth().Height(28).FontSize(12).Label("搜索分支").Placeholder("搜索分支…").Changed()
+				cursor := n.Local(panel, "branch-keyboard-choice", func() string { return "" })
+				compactMenuSurface(panel, t).Width(260).Gap(4).Children(func() {
+					search := textField(c.Key("filter"), &v.branchSearch).FillWidth().Height(28).FontSize(12).Label("搜索分支").Placeholder("搜索分支…").AutoFocus()
+					if search.Changed() {
+						*cursor = ""
+					}
 					choices := []string{}
 					for _, name := range status.Branches {
 						if strings.Contains(strings.ToLower(name), strings.ToLower(v.branchSearch)) {
@@ -366,7 +371,54 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 						}
 					}
 					canConfirm := v.canConfirmBranch(key)
-					if !home {
+					enabled := func(name string) bool {
+						if !home && name == status.Branch {
+							return contextChanged && canConfirm
+						}
+						return canSwitch
+					}
+					choose := func(name string) {
+						if !enabled(name) {
+							return
+						}
+						if !home && name == status.Branch {
+							v.confirmBranch(status)
+						} else {
+							v.chooseBranch(name)
+						}
+					}
+					search.OnTextKey(func(key n.TextKey) bool {
+						if key.Mods != 0 {
+							return false
+						}
+						options := slices.DeleteFunc(slices.Clone(choices), func(name string) bool { return !enabled(name) })
+						if len(options) == 0 {
+							return false
+						}
+						index := slices.Index(options, *cursor)
+						switch key.Key {
+						case n.KeyDown:
+							index = min(index+1, len(options)-1)
+						case n.KeyUp:
+							if index < 0 {
+								index = len(options)
+							}
+							index = max(0, index-1)
+						case n.KeyHome:
+							index = 0
+						case n.KeyEnd:
+							index = len(options) - 1
+						case n.KeyEnter:
+							choose(options[max(0, index)])
+							return true
+						default:
+							return false
+						}
+						*cursor = options[index]
+						v.branchList.ScrollIntoView(slices.Index(choices, *cursor))
+						return true
+					})
+					if !home && contextChanged {
 						confirm := ghost(c, "确认当前分支").FillWidth().FontSize(12).Disabled(!canConfirm)
 						if v.Model.WorkerMinor < protocol.GitConfirmationMinor || contextChanged && !canSwitch && v.Model.WorkerMinor < protocol.ActiveGitConfirmationMinor {
 							confirm.Tooltip("更新执行服务后可确认当前分支")
@@ -381,10 +433,13 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 					v.branchList.Key = func(i int) any { return choices[i] }
 					n.List(c, &v.branchList, len(choices), func(i int) {
 						name := choices[i]
-						confirming := !home && name == status.Branch
 						row := control(c, compactMenuRowRadius).FillWidth().MinHeight(compactMenuRowHeight).
 							Padding(3, compactMenuRowInset).Radius(compactMenuRowRadius).Label("分支:" + name).
-							Disabled(confirming && !canConfirm || !confirming && !canSwitch).Children(func() {
+							Role(n.RoleMenuItemRadio).AccessSelected(name == branch).Disabled(!enabled(name))
+						if search.Focused() && name == *cursor {
+							row.Background(t.Selection)
+						}
+						row.Children(func() {
 							n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
 								n.Text(c, name).Grow(1).FontSize(compactMenuFontSize).FixedLineHeight(20)
 								if name == branch {
@@ -393,11 +448,7 @@ func (v *View) branchStrip(c *n.Context, t *n.Theme, home bool) {
 							})
 						})
 						if row.Clicked() {
-							if confirming {
-								v.confirmBranch(status)
-							} else {
-								v.chooseBranch(name)
-							}
+							choose(name)
 						}
 					}).FillWidth().Height(min(240, float32(len(choices))*28))
 				})

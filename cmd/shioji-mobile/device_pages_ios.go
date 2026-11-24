@@ -755,21 +755,27 @@ func (a *mobileApp) openAgentSettingsAt(parent *mygo.Window, agent domain.Harnes
 				}
 			}
 		}
-		footer := func() {
-			req.status(c)
-			if modern && settings.stale {
-				action(c, "放弃修改并重新读取", func() { loadSettings(true) }).AlignSelf(ui.Start).Disabled(blocked)
-			} else if modern && settings.base.Revision == "" && req.err != "" {
-				action(c, "重新读取运行设置", func() { loadSettings(false) }).AlignSelf(ui.Start).Disabled(blocked)
-			}
-			if modern && settings.saved && !settings.changed() && req.err == "" {
-				oneLine(c, "已保存运行设置", captionTextSize, palette(c).secondary).PaddingY(8).Role(ui.RoleStatus)
-			}
-			if apiSetup && !unsaved {
-				primaryAction(c, "连接 API", func() { a.connectAgentAPI(current, &account) }).
-					Disabled(blocked || authBusy || strings.TrimSpace(account.endpoint) == "")
-			} else if configured && (unsaved || tab == "高级") {
-				primaryAction(c, "保存并继续", save).Disabled(settingsBlocked)
+		saved := modern && settings.saved && !settings.changed() && req.err == ""
+		connect := apiSetup && !unsaved
+		canShowSave := configured && (unsaved || tab == "高级")
+		var footer func()
+		if req.busy || req.err != "" || modern && settings.stale || saved || connect || canShowSave {
+			footer = func() {
+				req.status(c)
+				if modern && settings.stale {
+					action(c, "放弃修改并重新读取", func() { loadSettings(true) }).AlignSelf(ui.Start).Disabled(blocked)
+				} else if modern && settings.base.Revision == "" && req.err != "" {
+					action(c, "重新读取运行设置", func() { loadSettings(false) }).AlignSelf(ui.Start).Disabled(blocked)
+				}
+				if saved {
+					oneLine(c, "已保存运行设置", captionTextSize, palette(c).secondary).PaddingY(8).Role(ui.RoleStatus)
+				}
+				if connect {
+					primaryAction(c, "连接 API", func() { a.connectAgentAPI(current, &account) }).
+						Disabled(blocked || authBusy || strings.TrimSpace(account.endpoint) == "")
+				} else if canShowSave {
+					primaryAction(c, "保存", save).Disabled(settingsBlocked)
+				}
 			}
 		}
 		ui.Column(c).Fill().Background(palette(c).canvas).Children(func() {
@@ -789,6 +795,9 @@ func (a *mobileApp) openAgentSettingsAt(parent *mygo.Window, agent domain.Harnes
 					mobilePageWithFooter(c, settingsContent, footer)
 				}
 			})
+			if unsaved && (tab == "Skills" || tab == "MCP" || tab == "Hooks") {
+				mobilePageFooter(c, footer)
+			}
 		})
 	})
 	w.OnClosed(func() {

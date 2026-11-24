@@ -179,7 +179,16 @@ func (s *Settings) View(c *n.Context) {
 				n.Row(c).FillWidth().Height(32).DragWindow()
 				fieldFeedback(c, n.Row(c.Key("settings-search-field")).FillWidth().Height(28).PaddingX(8).Gap(8).AlignItems(n.Center).Radius(6).Background(t.Surface)).Children(func() {
 					n.Icon(c, searchIcon).Size(16, 16).TextColor(t.TextMuted)
-					n.TextInputBase(c.Key("settings-search"), &s.query).Grow(1).MinWidth(0).Height(24).FontSize(12).FixedLineHeight(18).Label("搜索设置").Placeholder("搜索设置").Changed()
+					n.TextInputBase(c.Key("settings-search"), &s.query).Grow(1).MinWidth(0).Height(24).FontSize(12).FixedLineHeight(18).Label("搜索设置").Placeholder("搜索设置").OnTextKey(func(key n.TextKey) bool {
+						if key.Key != n.KeyEscape || s.query == "" {
+							return false
+						}
+						s.query = ""
+						return true
+					}).Changed()
+					if s.query != "" && iconButton(c, closeIcon, "清除设置搜索").Size(20, 20).KeepFocus().Clicked() {
+						s.query = ""
+					}
 				})
 				n.Column(c).FillWidth().Margin(12, 0, 0, 0).Children(func() {
 					items := make([]configurationTabItem, 0, len(settingsCategories))
@@ -392,7 +401,7 @@ func (s *Settings) appearance(c *n.Context, t *n.Theme) {
 			icon      *n.SVG
 		}{{"light", "浅色", settingsSun}, {"dark", "深色", settingsMoon}, {"system", "跟随系统", monitor}} {
 			selected := p.Appearance == item.id
-			button := control(c.Key("theme:"+item.id), 8).Grow(1).MinWidth(0).Height(176).Padding(4).Radius(8).Background(t.Surface).Label("外观"+item.label).Checked(selected).Role(n.RoleRadio).TextColor(t.Text).Border(1, t.Border)
+			button := control(c.Key("theme:"+item.id), 8).Grow(1).MinWidth(0).Height(140).Padding(4).Radius(8).Background(t.Surface).Label("外观"+item.label).Checked(selected).Role(n.RoleRadio).TextColor(t.Text).Border(1, t.Border)
 			if selected {
 				button.Border(1, t.Text)
 			}

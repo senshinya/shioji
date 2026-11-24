@@ -401,3 +401,19 @@ func TestCompletionAttentionSkipsArchivedAndActiveSessions(t *testing.T) {
 		})
 	}
 }
+
+func TestAttentionCyclesThroughPendingSessions(t *testing.T) {
+	m := parallelModel()
+	m.SecondarySessionID = ""
+	for _, id := range []string{"s", "other"} {
+		detail := m.Details[id]
+		detail.Requests = []domain.PendingRequest{{ID: id, SessionID: id, Kind: "questions", State: "pending"}}
+		m.Details[id] = detail
+	}
+	v := New(m, nil, "")
+	for _, want := range []string{"other", "s", "other"} {
+		if !v.nextAttention() || m.SessionID != want {
+			t.Fatalf("next attention = %q, want %q", m.SessionID, want)
+		}
+	}
+}

@@ -154,7 +154,7 @@ func TestHomeSentMessageLeavesTheDraftTextPosition(t *testing.T) {
 			middle, _ := ui.Find("Explain a tree rotation.")
 			ui.Advance(500 * time.Millisecond)
 			end, ok := ui.Find("Explain a tree rotation.")
-			if !ok || !(first.Y > middle.Y+20 && middle.Y > end.Y+20 && end.Y >= 80 && end.Y <= 125) {
+			if !ok || !(first.Y > middle.Y+20 && middle.Y > end.Y+20 && end.Y >= transcriptStartInset && end.Y <= 125) {
 				t.Fatalf("home message has no continuous path into history: first=%+v middle=%+v end=%+v", first, middle, end)
 			}
 		})

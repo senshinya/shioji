@@ -105,7 +105,8 @@ func TestSendReceiptHandoffKeepsNativeRows(t *testing.T) {
 							nextComposer, _ := ui.Find("消息编辑器")
 							copyAfter, _ := ui.Find("复制消息")
 							editAfter, _ := ui.Find("修改并重新开始")
-							if !ok || math.Abs(float64(after.Y-before.Y)) > 1 || math.Abs(float64(after.X-before.X)) > 1 || nextComposer != composer {
+							if !ok || math.Abs(float64(after.Y-before.Y)) > 1 || math.Abs(float64(after.X-before.X)) > 1 || math.Abs(float64(nextComposer.Y-composer.Y)) > .01 ||
+								math.Abs(float64(nextComposer.H-composer.H)) > .01 || nextComposer.X != composer.X || nextComposer.W != composer.W {
 								t.Fatal("authoritative event moved the message or composer at the same animation time", before, after, composer, nextComposer)
 							}
 							if copyAfter != copyBefore || editAfter != editBefore {

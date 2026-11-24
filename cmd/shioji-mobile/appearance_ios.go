@@ -12,8 +12,8 @@ const (
 	pageInset                            = 16
 	pageTopInset                         = 6
 	contentMaxWidth                      = 704
-	contentRowHeight                     = 52
-	formRowHeight                        = 47
+	contentRowHeight                     = 48
+	formRowHeight                        = 44
 	cardRadius                           = 12
 	panelRadius                          = 13
 	bodyTextSize                         = 15
@@ -26,13 +26,13 @@ const (
 	transcriptMetadataHeight             = 24
 	transcriptLeading                    = 1.48
 	footerIconSize                       = 14
-	footerElementGap                     = 24
+	footerElementGap                     = 16
 	panelInset                           = 10
 	panelContentGap                      = 6
 	searchResultsGap                     = 12
 	draftComposerWidth                   = 660
 	conversationComposerWidth            = 720
-	conversationComposerInset            = 19
+	conversationComposerInset            = 16
 	composerBottomGap                    = 8
 	mobileTabDuration                    = 260 * time.Millisecond
 	mobileReplyFade                      = 180 * time.Millisecond
@@ -69,7 +69,7 @@ var lightColors = colors{
 }
 
 var darkColors = colors{
-	canvas: ui.Hex("#111113"), panel: ui.Hex("#18181b"), inset: ui.Hex("#222225"), selected: ui.Hex("#28282c"),
+	canvas: ui.Hex("#111113"), panel: ui.Hex("#18181b"), inset: ui.Hex("#222225"), selected: ui.Hex("#36363b"),
 	ink: ui.Hex("#f2f2f4"), secondary: ui.Hex("#a3a3ad"), line: ui.RGBA(255, 255, 255, .09),
 	active: ui.Hex("#79d39b"), warning: ui.Hex("#ff9f0a"),
 	floating: ui.Hex("#232326"), floatingEdge: ui.Hex("#ffffff").Alpha(.13),

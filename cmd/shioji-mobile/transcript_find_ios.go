@@ -228,7 +228,7 @@ func (a *mobileApp) conversationFind(c *ui.Context, parent *mygo.Window, source 
 	controls := mobileContent(c.Key("find"), contentMaxWidth).Padding(4, pageInset, 2).Gap(4).Transition(mobilePanelTransition)
 	controls.Children(func() {
 		row := ui.Row(c.Key("find-field")).FillWidth().MinHeight(mobileTapSize(c)).Padding(0, 1, 0, 10).
-			Radius(cardRadius).Background(p.inset).AlignItems(ui.Center).Gap(4)
+			Radius(cardRadius).Background(p.inset).AlignItems(ui.Center).Gap(0)
 		row.Children(func() {
 			ui.Icon(c, searchSymbol).Size(16, 16).TextColor(p.secondary).Shrink(0).PassThrough()
 			field := ui.TextInputBase(c.Key("find-query"), &f.query).Label(fieldLabel).Placeholder("查找…").
@@ -269,9 +269,9 @@ func (a *mobileApp) conversationFind(c *ui.Context, parent *mygo.Window, source 
 				}
 				index := r.current + delta
 				disabled := !showCount || r.more && (index < 0 || index >= r.total)
-				iconButton(c.Key(delta), buttonPrefix+title, icon, 15, func() { f.step(a, delta) }).KeepFocus().Disabled(disabled)
+				iconButton(c.Key(delta), buttonPrefix+title, icon, 15, func() { f.step(a, delta) }).Size(mobileHeaderSize(c), mobileHeaderSize(c)).MinWidth(mobileHeaderSize(c)).MinHeight(mobileHeaderSize(c)).KeepFocus().Disabled(disabled)
 			}
-			iconButton(c.Key("close-find"), closeLabel, closeSymbol, 15, closePanel)
+			mobileHeaderButton(c.Key("close-find"), closeLabel, closeSymbol, closePanel)
 		})
 		caption := r.message
 		switch {

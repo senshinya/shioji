@@ -1,13 +1,13 @@
 // Package mobileclient contains the iOS and iPadOS client's platform-neutral code.
 package mobileclient
 
-const QueueRowHeight float32 = 50
+const QueueRowHeight float32 = 44
 const SidebarMinWidth = 840
 const (
 	ComposerEditorPadding = 10
 	ComposerControlInset  = 5
 	ComposerControlGap    = 2
-	ComposerModelSendGap  = 22
+	ComposerModelSendGap  = 8
 )
 
 // QueueViewport leaves the third row partially visible to indicate overflow.
@@ -31,16 +31,16 @@ func ComposerGeometry(progress float32, draft bool, lineHeight, touchSize float3
 	// The compact editor shares the row with the attachment and send targets.
 	inlineControls := touchSize + ComposerControlInset + ComposerControlGap
 	metrics := ComposerMetrics{
-		Height: 56 + 74*progress, ControlsY: 6 + 74*progress,
+		Height: 56 + 52*progress, ControlsY: 6 + 52*progress,
 		TextInset: 12 + (inlineControls-12)*(1-progress), TextTop: 8 - 4*progress,
 		TextRight:    inlineControls * (1 - progress),
-		EditorHeight: 44 + 33*progress, ControlsProgress: progress,
+		EditorHeight: 44 + 11*progress, ControlsProgress: progress,
 	}
 	// When an enlarged line no longer fits in the compact editor, put the
 	// controls on their own row and reserve room for the actual font metrics.
 	extra := max(0, lineHeight+2*ComposerEditorPadding-44) * (1 + progress)
 	if draft || extra > 0 {
-		metrics.Height, metrics.ControlsY = 92+38*progress, 43+37*progress
+		metrics.Height, metrics.ControlsY = 92+16*progress, 43+15*progress
 		metrics.TextInset, metrics.TextTop, metrics.TextRight, metrics.ControlsProgress = 12, 4, 0, 1
 	}
 	metrics.Height += extra

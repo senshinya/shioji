@@ -36,6 +36,9 @@ func (s *Server) replyToQuestion(in protocol.QuestionReplyInput) (domain.Operati
 	if err != nil {
 		return none, err
 	}
+	if question.Secret {
+		return none, errors.New("请在 Agent 的原生界面回答保密问题")
+	}
 	input := domain.Submission{OperationID: in.OperationID, WorkspaceID: session.WorkspaceID, SessionID: session.ID,
 		HarnessID: session.HarnessID, Config: in.Config, Text: strings.TrimSpace(in.Text),
 		QuestionReply: &domain.QuestionReply{ItemID: in.ItemID, QuestionID: question.ID, Title: question.Text}}

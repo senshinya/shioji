@@ -92,7 +92,7 @@ func TestDirectoryPickerHeaderAndSelectionMatchNativeGeometry(t *testing.T) {
 	ui.Advance(time.Second)
 	dialog, _ := ui.Find("远程文件夹选择器")
 	title, _ := ui.Find("目录选择")
-	if math.Abs(float64(title.Y+title.H/2-(dialog.Y+28))) > 1.5 {
+	if math.Abs(float64(title.Y+title.H/2-(dialog.Y+directoryHeaderHeight/2))) > 1.5 {
 		t.Fatal("directory title is not centered in its header", dialog, title)
 	}
 	row, _ := ui.Find("文件夹：tree")

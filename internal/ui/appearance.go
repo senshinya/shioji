@@ -26,7 +26,7 @@ func editorSelection(t *n.Theme) n.Color {
 	if t.Dark {
 		return n.Hex("#505050")
 	}
-	return t.Selection
+	return n.Hex("#e7e7e7")
 }
 
 func userBubble(t *n.Theme) n.Color {
@@ -55,14 +55,14 @@ func applyAppearance(c *n.Context, prefs app.ClientPreferences) *n.Theme {
 	if t.Dark {
 		t.Background = n.Hex("#101010")
 		t.Surface = n.Hex("#202020")
-		t.SurfaceHover = n.Hex("#292929")
-		t.SurfacePressed = n.Hex("#292929")
+		t.SurfaceHover = n.Hex("#252525")
+		t.SurfacePressed = n.Hex("#363636")
 		t.Border = n.Hex("#343434")
 		t.Text = n.Hex("#e9e9e9")
 		t.TextMuted = n.Hex("#ababab")
 		t.Accent = n.Hex("#e5e5e5")
 		t.AccentText = n.Hex("#181818")
-		t.Selection = n.Hex("#292929")
+		t.Selection = n.Hex("#303030")
 		t.Focus = n.Hex("#8c8c90")
 		t.Success = n.Hex("#32d769")
 		t.Warning = n.Hex("#ff9f0a")
@@ -77,7 +77,7 @@ func applyAppearance(c *n.Context, prefs app.ClientPreferences) *n.Theme {
 		t.TextMuted = n.Hex("#666666")
 		t.Accent = n.Hex("#262626")
 		t.AccentText = n.Hex("#ffffff")
-		t.Selection = n.Hex("#e7e7e7")
+		t.Selection = n.Hex("#dfdfdf")
 		t.Focus = n.Hex("#858589")
 		t.Success = n.Hex("#138a43")
 		t.Warning = n.Hex("#8f4c00")

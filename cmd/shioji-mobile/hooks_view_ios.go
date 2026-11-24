@@ -128,7 +128,7 @@ func (s *mobileHooks) reviewable() []domain.HookEntry {
 
 func (s *mobileHooks) showList(a *mobileApp, c *ui.Context, w *mygo.Window, agent domain.HarnessInfo, agents []domain.HarnessInfo) {
 	p := palette(c)
-	ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+	ui.Row(c).AlignItems(ui.Center).Gap(6).Margin(0, 0, 8).Children(func() {
 		ui.TextInputBase(c.Key("search"), &s.query).Label("搜索 Hooks").Placeholder("搜索 Hooks").
 			TextColor(p.ink).PlaceholderColor(p.secondary).FontSize(controlTextSize * c.Preferences().TextScale).
 			MinHeight(mobileTapSize(c)).Grow(1).MinWidth(0).PaddingX(10).Radius(10).Background(p.inset)
@@ -190,7 +190,7 @@ func (s *mobileHooks) showList(a *mobileApp, c *ui.Context, w *mygo.Window, agen
 			row := c.Key(h.ID)
 			rowDivider(mobileButton(row, "查看 Hook："+h.Title(), func() {
 				s.detail, s.metadata, s.detailScroll = h.ID, false, ui.ScrollState{}
-			}).KeepFocus().MinHeight(64).Gap(6).AlignItems(ui.Center), p.line).
+			}).KeepFocus().MinHeight(56).PaddingY(8).Gap(6).AlignItems(ui.Center), p.line).
 				Value(status + " · " + enabled).Children(func() {
 				ui.Column(row).Grow(1).MinWidth(0).Gap(3).PassThrough().Children(func() {
 					oneLine(row, h.Title(), bodyTextSize, p.ink).PassThrough()

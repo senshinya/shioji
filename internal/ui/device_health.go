@@ -112,7 +112,7 @@ func (v *View) currentDeviceControl(c *n.Context, t *n.Theme) {
 	if fresh {
 		c.After(h.ObservedAt.Add(8 * time.Second).Sub(c.Now()))
 	}
-	device := control(c.Key("device-trigger:" + key)).Height(toolbarActionSize).PaddingX(6).Radius(6).Label("当前设备")
+	device := control(c.Key("device-trigger:" + key)).Height(toolbarActionSize).MaxWidth(200).MinWidth(0).Shrink(1).PaddingX(6).Radius(6).Label("当前设备").Tooltip(name)
 	if status != "" {
 		device.Description(status)
 	}
@@ -124,7 +124,7 @@ func (v *View) currentDeviceControl(c *n.Context, t *n.Theme) {
 			}
 			font := n.Font{Family: t.Font, Size: 11, Weight: 400}
 			statusDotSize(c, name, font, color, 4, false).Label("设备连接指示")
-			inlineIconText(c, v.deviceGlyph(key), name, font, 14, 6, t.TextMuted)
+			inlineIconText(c, v.deviceGlyph(key), name, font, 14, 6, t.TextMuted).MinWidth(0).Shrink(1).Ellipsis("…")
 			if status != "" && v.connectionBlocker() == "" {
 				n.Text(c, status).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 			}

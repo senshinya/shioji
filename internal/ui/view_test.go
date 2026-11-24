@@ -126,7 +126,7 @@ func TestShortQuestionDoesNotReserveMultilineAnswerSpace(t *testing.T) {
 	if answer.H > 34 || answer.H < 30 {
 		t.Fatalf("short answer should start compact: %+v", answer)
 	}
-	if input.Y+input.H > 650 || input.H < 54 {
+	if input.Y+input.H > 650 || input.H < 42 {
 		t.Fatalf("composer hidden by question: %+v", input)
 	}
 }
@@ -187,7 +187,7 @@ func TestCompactTokenCounts(t *testing.T) {
 }
 func TestNativeChromeUsesLabeledIconsAndCompactNavigationGap(t *testing.T) {
 	test := native.NewTester(New(layoutModel(), nil, "").View, 1440, 900)
-	for _, label := range []string{"新建会话", "待我处理", "搜索", "设置", "设备", "Permission"} {
+	for _, label := range []string{"新建会话", "待我处理", "搜索", "设置", "设备", "权限"} {
 		if _, ok := test.Find(label); !ok {
 			t.Errorf("missing native control %s", label)
 		}
@@ -554,7 +554,7 @@ func TestChoiceMenuDoesNotReopenAfterSessionNavigation(t *testing.T) {
 	m := layoutModel()
 	v := New(m, nil, "")
 	test := native.NewTester(v.View, 1440, 900)
-	if err := test.Click("Permission"); err != nil {
+	if err := test.Click("权限"); err != nil {
 		t.Fatal(err)
 	}
 	if !test.HasText("仅查看") {
@@ -599,7 +599,7 @@ func TestChoiceMenuClosesAcrossDevicePageNavigation(t *testing.T) {
 	m := layoutModel()
 	v := New(m, nil, "")
 	test := native.NewTester(v.View, 1440, 900)
-	if err := test.Click("Permission"); err != nil {
+	if err := test.Click("权限"); err != nil {
 		t.Fatal(err)
 	}
 	v.devices = true

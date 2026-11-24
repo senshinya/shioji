@@ -21,6 +21,7 @@ final class RowContextMenus: NSObject, UIContextMenuInteractionDelegate {
 
     private struct Row {
         let key: String
+        let node: UInt64?
         let rect: CGRect
         let commands: [Command]
         let preview: Bool
@@ -30,6 +31,7 @@ final class RowContextMenus: NSObject, UIContextMenuInteractionDelegate {
             guard let key = data["key"] as? String,
                   let rect = data["rect"] as? [Double], rect.count == 4 else { return nil }
             self.key = key
+            node = (data["node"] as? String).flatMap { UInt64($0) }
             self.rect = CGRect(x: rect[0], y: rect[1], width: rect[2], height: rect[3])
             commands = (data["commands"] as? [[String: Any]] ?? []).compactMap(Command.init)
             preview = data["preview"] as? Bool ?? false
@@ -61,6 +63,19 @@ final class RowContextMenus: NSObject, UIContextMenuInteractionDelegate {
         guard sequence > self.sequence else { return }
         self.sequence = sequence
         self.rows = rows.compactMap(Row.init)
+    }
+
+    func accessibilityActions(node: UInt64) -> [UIAccessibilityCustomAction]? {
+        guard let row = rows.first(where: { $0.node == node }) else { return nil }
+        return row.commands.filter { !$0.attributes.contains(.disabled) }.map { command in
+            UIAccessibilityCustomAction(name: command.title) { [weak self] _ in
+                guard let self, let current = self.rows.first(where: { $0.key == row.key && $0.node == node }),
+                      current.commands.contains(where: { $0.id == command.id && !$0.attributes.contains(.disabled) })
+                else { return false }
+                self.emit(key: current.key, action: command.id)
+                return true
+            }
+        }
     }
 
     func mountPreview(_ child: UIViewController, request: String) {

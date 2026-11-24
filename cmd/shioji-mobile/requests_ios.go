@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,7 +39,7 @@ func requestName(request domain.PendingRequest) string {
 	if request.Title != "" {
 		return request.Title
 	}
-	if len(request.Questions) != 0 || len(request.Fields) != 0 {
+	if len(request.Questions) != 0 || request.Kind == "form" {
 		return "回答问题"
 	}
 	return "待处理请求"
@@ -145,11 +146,13 @@ func (a *mobileApp) inlineRequestReceipt(c *ui.Context, parent *mygo.Window, sid
 func transcriptRequestAction(c *ui.Context, title, accessible string, glyph, arrow *ui.SVG, click func()) ui.Element {
 	font := mobileStatusFont(c, captionTextSize)
 	ink := palette(c)
-	return mobileButton(c, accessible, click).Gap(6).AlignItems(ui.Baseline).Children(func() {
-		transcriptSymbol(c, glyph, title, font, 14, ink.secondary)
-		oneLine(c, title, captionTextSize, ink.ink).Font(font.Family).FixedLineHeight(mobileStatusLineHeight(font)).Shrink(1)
-		transcriptSymbol(c.Key("request-source-arrow"), arrow, title, font, 12, ink.secondary).
-			Transition(mobileFeedbackFade(mobileReplyFade))
+	return mobileButton(c, accessible, click).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).MinWidth(0).Gap(6).AlignItems(ui.Baseline).PassThrough().Children(func() {
+			transcriptSymbol(c, glyph, title, font, 14, ink.secondary)
+			oneLine(c, title, captionTextSize, ink.ink).Font(font.Family).FixedLineHeight(mobileStatusLineHeight(font)).Shrink(1)
+			transcriptSymbol(c.Key("request-source-arrow"), arrow, title, font, 12, ink.secondary).
+				Transition(mobileFeedbackFade(mobileReplyFade))
+		})
 	})
 }
 
@@ -218,7 +221,7 @@ func (a *mobileApp) renderRequestPanel(c *ui.Context, parent *mygo.Window, sid, 
 		s := requestPanelState{expanded: true, values: make(map[string][]string), text: make(map[string]string), custom: make(map[string]bool)}
 		for _, field := range request.Fields {
 			s.values[field.ID] = slices.Clone(field.Default)
-			if len(field.Options) == 0 && len(field.Default) == 1 {
+			if field.Type != "boolean" && len(field.Options) == 0 && len(field.Default) == 1 {
 				s.text[field.ID] = field.Default[0]
 			}
 		}
@@ -227,26 +230,43 @@ func (a *mobileApp) renderRequestPanel(c *ui.Context, parent *mygo.Window, sid, 
 	if reveal {
 		state.expanded = true
 	}
+	answers := func() map[string][]string {
+		values := make(map[string][]string)
+		for id, selection := range state.values {
+			if len(selection) != 0 {
+				values[id] = slices.Clone(selection)
+			}
+		}
+		for _, field := range request.Fields {
+			if field.Type == "array" && field.Required && len(values[field.ID]) == 0 {
+				values[field.ID] = []string{}
+			}
+		}
+		for id, text := range state.text {
+			if request.Kind != "form" {
+				text = strings.TrimSpace(text)
+			}
+			if text != "" {
+				values[id] = []string{text}
+			}
+		}
+		return values
+	}
 	respond := func(decision string) {
 		if state.accepted || request.State == domain.RequestSubmitting {
 			return
 		}
 		answer := domain.Answer{RequestID: request.ID, Revision: request.Revision, Decision: decision}
-		if decision == "" {
-			answer.Answers = make(map[string][]string)
-			for id, values := range state.values {
-				if len(values) != 0 {
-					answer.Answers[id] = slices.Clone(values)
-				}
-			}
-			for id, value := range state.text {
-				if text := strings.TrimSpace(value); text != "" {
-					answer.Answers[id] = []string{text}
-				}
-			}
+		if decision == "" || request.Kind == "form" && decision == "accept" {
+			answer.Answers = answers()
 		}
 		a.pageJob(parent, &state.mobileRequest, "request.respond", protocol.AnswerInput{SessionID: sid, Answer: answer}, func(_ json.RawMessage) error {
 			state.accepted = true
+			for _, question := range request.Questions {
+				if question.Secret {
+					delete(state.text, question.ID)
+				}
+			}
 			return nil
 		})
 	}
@@ -272,7 +292,7 @@ func (a *mobileApp) renderRequestPanel(c *ui.Context, parent *mygo.Window, sid, 
 			if state.expanded {
 				arrow = downSymbol
 			}
-			ui.ButtonBase(row).Grow(1).MinWidth(0).MinHeight(mobileTapSize(c)).PaddingX(panelInset).
+			ui.ButtonBase(row).Grow(1).MinWidth(0).MinHeight(mobileTapSize(c)).Padding(10, 12).
 				AlignItems(ui.Center).Role(ui.RoleButton).Label(accessible).Expanded(state.expanded).KeepFocus().
 				OnClick(func() { state.expanded = !state.expanded }).Children(func() {
 				font := mobileStatusFont(row, 13)
@@ -305,65 +325,90 @@ func (a *mobileApp) renderRequestPanel(c *ui.Context, parent *mygo.Window, sid, 
 				ui.Column(content).FillWidth().Transition(ui.ElementTransition{Duration: 240 * time.Millisecond, Ease: ui.EaseOut,
 					Enter: &ui.Motion{XPercent: distance, Opacity: 1}, Exit: &ui.Motion{XPercent: -distance, Opacity: 1}}).Children(func() {
 					disabled := state.busy || state.accepted || !a.model.Connected || request.State == domain.RequestSubmitting
-					ui.Column(content).Padding(0, panelInset, panelInset).Gap(panelContentGap).Children(func() {
-						fileApproval := request.Title == "允许修改这些文件？" || request.Kind == "file-approval"
-						if fileApproval {
-							label(content, "文件变更", captionTextSize, p.secondary)
-							a.requestFiles(content, parent, request, state)
-						}
-						if request.Kind == "permissions" {
-							label(content, "权限请求", captionTextSize, p.secondary)
-						}
-						if request.Text != "" {
-							command, context, _ := strings.Cut(request.Text, "\n")
-							ui.Scroll(content).MaxHeight(144).Radius(10).Background(p.canvas).Children(func() {
-								ui.Column(content).Padding(8, 10).Gap(3).Children(func() {
-									label(content, command, 13, p.ink).Font(a.codeFont()).Selectable()
-									if context != "" {
-										label(content, context, 13, p.ink).Font("monospace").Selectable()
+					body := ui.Column(content)
+					if workID == "" {
+						_, height := c.Size()
+						top, _, bottom, _ := c.SafeArea()
+						available := max(0, height-top-bottom)
+						body = ui.Scroll(content).MaxHeight(max(mobileTapSize(c), min(380, available*.42)))
+					}
+					body.Children(func() {
+						ui.Column(content).Padding(0, panelInset, panelInset).Gap(panelContentGap).Children(func() {
+							fileApproval := request.Title == "允许修改这些文件？" || request.Kind == "file-approval"
+							if fileApproval {
+								label(content, "文件变更", captionTextSize, p.secondary)
+								a.requestFiles(content, parent, request, state)
+							}
+							if request.Kind == "permissions" {
+								label(content, "权限请求", captionTextSize, p.secondary)
+							}
+							if request.Text != "" {
+								command, context, _ := strings.Cut(request.Text, "\n")
+								ui.Scroll(content).MaxHeight(144).Radius(10).Background(p.canvas).Children(func() {
+									ui.Column(content).Padding(8, 10).Gap(3).Children(func() {
+										label(content, command, 13, p.ink).Font(a.codeFont()).Selectable()
+										if context != "" {
+											label(content, context, 13, p.ink).Font("monospace").Selectable()
+										}
+									})
+								})
+							}
+							if request.Notice != "" {
+								label(content, request.Notice, 12, p.secondary)
+							}
+							if len(request.Questions) != 0 || len(request.Fields) != 0 {
+								ui.Scroll(content.Key("fields")).MaxHeight(228).Children(func() {
+									ui.Column(content).Gap(8).Children(func() { requestFields(content, request, state) })
+								})
+							}
+							if request.Kind == "form" {
+								_, err := domain.FormContent(request.Fields, answers())
+								if err != nil {
+									label(content, err.Error(), captionTextSize, p.diffRemoved).Role(ui.RoleStatus)
+								}
+								ui.Row(content.Key("form-actions")).Gap(panelContentGap).Children(func() {
+									action(content.Key("cancel"), "取消", func() { respond("cancel") }).Disabled(disabled).KeepFocus()
+									action(content.Key("decline"), "拒绝", func() { respond("decline") }).Disabled(disabled).KeepFocus()
+									primaryAction(content.Key("confirm"), "确认表单", func() { respond("accept") }).
+										Grow(1).MinWidth(0).KeepFocus().Disabled(disabled || err != nil)
+								})
+							} else if len(request.Questions) != 0 {
+								unanswered := false
+								for _, question := range request.Questions {
+									if len(state.values[question.ID]) == 0 && strings.TrimSpace(state.text[question.ID]) == "" {
+										unanswered = true
+									}
+								}
+								if unanswered {
+									label(content, "请回答全部问题", captionTextSize, p.secondary).Role(ui.RoleStatus)
+								}
+								ui.Row(content.Key("question-actions")).Gap(panelContentGap).Children(func() {
+									action(content.Key("defer"), "暂不选择", func() { state.expanded = false }).KeepFocus()
+									primaryAction(content.Key("submit"), "提交答案", func() { respond("") }).
+										Grow(1).Basis(0).Radius(8).KeepFocus().Disabled(disabled || unanswered)
+								})
+							}
+							for first := 0; request.Kind != "form" && first < len(request.Choices); {
+								columns := 4
+								width := c.Root().LayoutBounds().W
+								if width > 0 && width < 460 || c.Preferences().TextScale > 1.2 {
+									columns = 2
+								}
+								end := min(first+columns, len(request.Choices))
+								ui.Row(content.Key(first)).Gap(6).Children(func() {
+									for i, choice := range request.Choices[first:end] {
+										fill, ink := p.canvas, p.ink
+										if first+i == 0 && !fileApproval && request.Kind != "permissions" || choice.ID == "accept" || choice.ID == "turn" {
+											fill, ink = p.ink, p.canvas
+										}
+										filledAction(content.Key(choice.ID), choice.Label, fill, ink, func() { respond(choice.ID) }).
+											Grow(1).Basis(0).MinWidth(mobileTapSize(c)).Padding(8, 10).Radius(8).KeepFocus().Disabled(disabled)
 									}
 								})
-							})
-						}
-						if request.Notice != "" {
-							label(content, request.Notice, 12, p.secondary)
-						}
-						if len(request.Questions) != 0 || len(request.Fields) != 0 {
-							ui.Scroll(content.Key("fields")).MaxHeight(228).Children(func() {
-								ui.Column(content).Gap(5).Children(func() { requestFields(content, request, state) })
-							})
-							unanswered := false
-							for _, question := range request.Questions {
-								if len(state.values[question.ID]) == 0 && strings.TrimSpace(state.text[question.ID]) == "" {
-									unanswered = true
-								}
+								first = end
 							}
-							ui.Row(content.Key("question-actions")).Gap(panelContentGap).Children(func() {
-								action(content.Key("defer"), "暂不选择", func() { state.expanded = false }).KeepFocus()
-								primaryAction(content.Key("submit"), "提交答案", func() { respond("") }).
-									Grow(1).Basis(0).Radius(8).KeepFocus().Disabled(disabled || unanswered)
-							})
-						}
-						for first := 0; first < len(request.Choices); {
-							columns := 4
-							width := c.Root().LayoutBounds().W
-							if width > 0 && width < 375 || c.Preferences().TextScale > 1.2 {
-								columns = 2
-							}
-							end := min(first+columns, len(request.Choices))
-							ui.Row(content.Key(first)).Gap(6).Children(func() {
-								for i, choice := range request.Choices[first:end] {
-									fill, ink := p.canvas, p.ink
-									if first+i == 0 && !fileApproval && request.Kind != "permissions" || choice.ID == "accept" || choice.ID == "turn" {
-										fill, ink = p.ink, p.canvas
-									}
-									filledAction(content.Key(choice.ID), choice.Label, fill, ink, func() { respond(choice.ID) }).
-										Grow(1).Basis(0).MinWidth(mobileTapSize(c)).Padding(4).Radius(8).KeepFocus().Disabled(disabled)
-								}
-							})
-							first = end
-						}
-						ui.Column(content.Key("request-submit-status")).Transition(mobilePanelTransition).Children(func() { state.status(content) })
+							ui.Column(content.Key("request-submit-status")).Transition(mobilePanelTransition).Children(func() { state.status(content) })
+						})
 					})
 				})
 			})
@@ -435,7 +480,7 @@ func requestFields(c *ui.Context, request domain.PendingRequest, state *requestP
 	for i, question := range request.Questions {
 		row := c.Key(question.ID)
 		if i != 0 {
-			label(row, question.Header, 13, p.ink).FontWeight(600)
+			label(row, question.Header, 13, p.ink).FontWeight(600).Padding(10, 0, 0).Role(ui.RoleHeading)
 		}
 		if question.Text != "" {
 			label(row, question.Text, 12, p.secondary)
@@ -472,21 +517,42 @@ func requestFields(c *ui.Context, request domain.PendingRequest, state *requestP
 		if field.Description != "" {
 			label(row, field.Description, 12, p.secondary)
 		}
+		if field.Type == "boolean" {
+			if len(field.Default) != 0 {
+				selected := slices.Contains(state.values[field.ID], "true")
+				mobileToggle(row, field.Title, &selected, func() {
+					state.values[field.ID] = []string{strconv.FormatBool(selected)}
+				})
+				continue
+			}
+			value := ""
+			if values := state.values[field.ID]; len(values) != 0 {
+				value = values[0]
+			}
+			names := map[string]string{"": "未填写", "true": "是", "false": "否"}
+			formChoice(row, field.Title, names[value], func(menu *ui.Menu) {
+				if !field.Required {
+					menuChoice(menu, names[""], value == "", func() { delete(state.values, field.ID) })
+				}
+				for _, choice := range []string{"true", "false"} {
+					menuChoice(menu, names[choice], value == choice, func() {
+						state.values[field.ID] = []string{choice}
+					})
+				}
+			})
+			continue
+		}
 		if len(field.Options) == 0 {
 			text := state.text[field.ID]
 			formRow(row, field.Title, func() {
-				ui.TextInputBase(row, &text).WidthPercent(58).MinHeight(mobileTapSize(c)).Label(field.Title).TextAlign(ui.End).
+				formInput(row, field.Title, "", &text).
 					OnChange(func() { state.text[field.ID] = text; delete(state.values, field.ID) })
 			})
 			continue
 		}
 		label(row, field.Title, 13, p.ink).FontWeight(600)
 		for _, option := range field.Options {
-			mark := ""
-			if slices.Contains(state.values[field.ID], option.Value) {
-				mark = "已选"
-			}
-			mobileRow(row.Key(option.Value), option.Label, "", mark, nil, func() {
+			mobileChoiceRow(row.Key(option.Value), option.Label, "", slices.Contains(state.values[field.ID], option.Value), func() {
 				values := state.values[field.ID]
 				if field.Type != "array" {
 					state.values[field.ID] = []string{option.Value}

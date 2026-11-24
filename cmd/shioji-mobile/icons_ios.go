@@ -58,6 +58,8 @@ var (
 	compareSymbol       = mobileSymbol(`<circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><path d="M11 18H8a2 2 0 0 1-2-2V9"></path>`)
 	clockSymbol         = mobileSymbol(`<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>`)
 	linkSymbol          = mobileSymbol(`<path d="M9 17H7A5 5 0 0 1 7 7h2m6 0h2a5 5 0 0 1 0 10h-2M8 12h8"/>`)
+	returnSymbol        = mobileSymbol(`<path d="M20 5v5a4 4 0 0 1-4 4H4m0 0 5-5m-5 5 5 5"/>`)
+	fastSymbol          = mobileSymbol(`<path d="m13 2-9 12h7l-1 8 10-12h-7l1-8Z"/>`)
 	planSymbol          = mobileSymbol(`<path d="m3 5 2 2 4-4M11 6h10M3 12l2 2 4-4m2 3h10M3 19l2 2 4-4m2 3h10"/>`)
 	goalSymbol          = mobileSymbol(`<path d="M20.1 10a8.4 8.4 0 1 1-6.2-6.2M16 12a4 4 0 1 1-4-4m0 4L21 3m-5 0h5v5"/>`)
 	downSymbol          = mobileSymbol(`<path d="m6 9 6 6 6-6"></path>`)

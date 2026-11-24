@@ -182,9 +182,9 @@ func (v *View) parallelConversation(c *n.Context, t *n.Theme, availableWidth flo
 		col.Children(func() {
 			if available {
 				pane.bindMarkdownLinks(c, &pane.md)
-				pane.conversation(c.Key("right-conversation"), t)
+				pane.conversation(c.Key("right-conversation"), t, !wide)
 			} else {
-				v.secondaryPlaceholder(c, t)
+				v.secondaryPlaceholder(c, t, !wide)
 			}
 		})
 		if m.SecondarySessionID != "" && v.paneFocusVersion == focusVersion && (n.PointerPressedWithin(col) || col.FocusWithin()) {
@@ -200,7 +200,7 @@ func (v *View) parallelConversation(c *n.Context, t *n.Theme, availableWidth flo
 			motion.Size = true
 			left := n.Column(c.Key("primary-conversation")).FillHeight().Grow(1).MinWidth(0).Clip().Label("左侧会话").Transition(motion)
 			focusVersion := v.paneFocusVersion
-			left.Children(func() { v.conversation(c.Key("left-conversation"), t) })
+			left.Children(func() { v.conversation(c.Key("left-conversation"), t, !wide && m.SecondarySessionID != "") })
 			if v.paneFocusVersion == focusVersion && (n.PointerPressedWithin(left) || left.FocusWithin()) {
 				if m.FocusSecondary {
 					c.After(0)
@@ -322,10 +322,13 @@ func (v *View) pruneHistoryCaches() {
 	}
 }
 
-func (v *View) secondaryPlaceholder(c *n.Context, t *n.Theme) {
+func (v *View) secondaryPlaceholder(c *n.Context, t *n.Theme, switchPane bool) {
 	n.Column(c).Fill().Children(func() {
 		n.Row(c).FillWidth().Height(mainToolbarHeight).Padding(mainWindowTopInset, 18, mainToolbarBottomInset, 18).AlignItems(n.Center).Children(func() {
 			n.Text(c, "正在打开会话").FontSize(13).Grow(1)
+			if switchPane {
+				v.parallelSwitch(c, false)
+			}
 			if iconButton(c, queueRemoveIcon, "关闭并排会话").Clicked() {
 				v.closeParallel()
 			}
@@ -338,6 +341,16 @@ func (v *View) secondaryPlaceholder(c *n.Context, t *n.Theme) {
 			}
 		})
 	})
+}
+
+func (v *View) parallelSwitch(c *n.Context, toRight bool) {
+	label := "切换到左侧会话"
+	if toRight {
+		label = "切换到右侧会话"
+	}
+	if iconButton(c, diffSwapIcon, label).Clicked() {
+		v.setSecondaryFocus(toRight)
+	}
 }
 
 func (v *View) setSecondaryFocus(secondary bool) {

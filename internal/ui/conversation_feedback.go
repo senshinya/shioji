@@ -812,7 +812,7 @@ func (v *View) feedbackButton(c *n.Context, t *n.Theme) {
 									inlineSymbol(c, icon, title, n.Font{Family: t.Font, Size: 13, Weight: 400}, 14, t.TextMuted)
 									n.Text(c, title).FontSize(13).FixedLineHeight(18).Grow(1).MinWidth(0).SingleLine().Ellipsis("…")
 								})
-								n.Text(c, summary).FillWidth().PaddingStart(22).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted).SingleLine().Ellipsis("…")
+								n.Text(c, summary).FillWidth().PaddingStart(0).FontSize(12).FixedLineHeight(18).TextColor(t.TextMuted).SingleLine().Ellipsis("…")
 							})
 						})
 						if row.Clicked() {
@@ -906,7 +906,7 @@ func (v *View) renderMessageOverlay(c *n.Context, t *n.Theme, state *conversatio
 						inlineSymbol(c, icon, sourceLabel, font, 14, t.TextMuted).Label("消息来源图标")
 						n.Text(c, sourceLabel).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted).FillWidth()
 					})
-					heading := n.Text(c, title).PaddingStart(22).FontSize(13).FixedLineHeight(20).FontWeight(500).FillWidth()
+					heading := n.Text(c, title).PaddingStart(0).FontSize(13).FixedLineHeight(20).FontWeight(500).FillWidth()
 					if title != message.Title {
 						heading.Selectable()
 					}
@@ -917,7 +917,7 @@ func (v *View) renderMessageOverlay(c *n.Context, t *n.Theme, state *conversatio
 			})
 			canNavigate := windowLabel == "" && message.SessionID != "" && message.SessionID != v.Model.SessionID
 			if body != "" || details != "" || canNavigate {
-				n.Column(c).FillWidth().PaddingStart(22).Gap(8).Children(func() {
+				n.Column(c).FillWidth().PaddingStart(0).Gap(8).Children(func() {
 					if body != "" {
 						n.Scroll(c.Key("message-body")).FillWidth().MaxHeight(80).Label("消息说明").Children(func() {
 							n.Text(c, body).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()

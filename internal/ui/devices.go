@@ -208,43 +208,52 @@ func (v *View) deviceDialogs(c *n.Context, t *n.Theme) {
 				inlineIconText(c, v.deviceGlyph(v.remoteWorkspaceConnection), name, n.Font{Family: t.Font, Size: 12, Weight: 400}, 13, 6, t.TextMuted)
 			})
 		})
-		n.Text(c, "主目录").FontSize(12).TextColor(t.TextMuted)
-		n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
-			configurationTextField(c.Key("remote-main"), &v.remoteWorkspacePath).MinWidth(0).Grow(1).Height(32).FontSize(13).Label("远程主目录").Placeholder("该 Mac 上的绝对路径").Disabled(v.remoteWorkspaceBusy)
-			choose := iconButton(c, workspaceIcon, "选择主目录").MarginEnd(-6).Disabled(v.remoteWorkspaceBusy)
-			if choose.Clicked() {
-				v.chooseRemoteWorkspaceDirectory(false)
-			}
-		})
-		n.Text(c, "名称").FontSize(12).TextColor(t.TextMuted)
-		configurationTextField(c.Key("remote-name"), &v.remoteWorkspaceName).Height(32).FontSize(13).Label("工作区名称").Placeholder("使用目录名称").Disabled(v.remoteWorkspaceBusy)
-		n.Row(c).FillWidth().AlignItems(n.Center).Children(func() {
-			n.Text(c, "附加目录").FontSize(12).TextColor(t.TextMuted).Grow(1)
-			if iconButton(c, plus, "添加文件夹").Tooltip("添加文件夹").MarginEnd(-6).Disabled(v.remoteWorkspaceBusy).Clicked() {
-				v.chooseRemoteWorkspaceDirectory(true)
-			}
-		})
-		for _, folder := range strings.Split(v.remoteWorkspaceExtra, "\n") {
-			folder = strings.TrimSpace(folder)
-			if folder == "" {
-				continue
-			}
-			n.Row(c.Key("extra:" + folder)).FillWidth().MinHeight(32).Gap(8).AlignItems(n.Center).Transition(disclosureMotion(c, 180*time.Millisecond)).Children(func() {
-				n.Text(c, folder).SingleLine().Grow(1).FontSize(12).TooltipWhenTruncated(folder)
-				if iconButton(c, closeIcon, "移除附加目录："+folder).MarginEnd(-6).Disabled(v.remoteWorkspaceBusy).Clicked() {
-					remaining := []string{}
-					for _, old := range strings.Split(v.remoteWorkspaceExtra, "\n") {
-						if strings.TrimSpace(old) != folder {
-							remaining = append(remaining, old)
+		_, height := c.Size()
+		n.Scroll(c.Key("workspace-fields")).FillWidth().MaxHeight(max(0, height-140)).Children(func() {
+			n.Column(c).FillWidth().Gap(12).Children(func() {
+				n.Column(c).FillWidth().Gap(4).Children(func() {
+					n.Text(c, "主目录").FontSize(12).TextColor(t.TextMuted)
+					n.Row(c).FillWidth().Gap(8).AlignItems(n.Center).Children(func() {
+						configurationTextField(c.Key("remote-main"), &v.remoteWorkspacePath).MinWidth(0).Grow(1).Height(32).FontSize(13).Label("远程主目录").Placeholder("该 Mac 上的绝对路径").Disabled(v.remoteWorkspaceBusy)
+						choose := iconButton(c, workspaceIcon, "选择主目录").MarginEnd(-6).Disabled(v.remoteWorkspaceBusy)
+						if choose.Clicked() {
+							v.chooseRemoteWorkspaceDirectory(false)
 						}
+					})
+				})
+				n.Column(c).FillWidth().Gap(4).Children(func() {
+					n.Text(c, "名称").FontSize(12).TextColor(t.TextMuted)
+					configurationTextField(c.Key("remote-name"), &v.remoteWorkspaceName).Height(32).FontSize(13).Label("工作区名称").Placeholder("使用目录名称").Disabled(v.remoteWorkspaceBusy)
+				})
+				n.Row(c).FillWidth().AlignItems(n.Center).Children(func() {
+					n.Text(c, "附加目录").FontSize(12).TextColor(t.TextMuted).Grow(1)
+					if iconButton(c, plus, "添加文件夹").Tooltip("添加文件夹").MarginEnd(-6).Disabled(v.remoteWorkspaceBusy).Clicked() {
+						v.chooseRemoteWorkspaceDirectory(true)
 					}
-					v.remoteWorkspaceExtra = strings.Join(remaining, "\n")
+				})
+				for _, folder := range strings.Split(v.remoteWorkspaceExtra, "\n") {
+					folder = strings.TrimSpace(folder)
+					if folder == "" {
+						continue
+					}
+					n.Row(c.Key("extra:" + folder)).FillWidth().MinHeight(32).Gap(8).AlignItems(n.Center).Transition(disclosureMotion(c, 180*time.Millisecond)).Children(func() {
+						n.Text(c, folder).SingleLine().Grow(1).FontSize(12).TooltipWhenTruncated(folder)
+						if iconButton(c, closeIcon, "移除附加目录："+folder).MarginEnd(-6).Disabled(v.remoteWorkspaceBusy).Clicked() {
+							remaining := []string{}
+							for _, old := range strings.Split(v.remoteWorkspaceExtra, "\n") {
+								if strings.TrimSpace(old) != folder {
+									remaining = append(remaining, old)
+								}
+							}
+							v.remoteWorkspaceExtra = strings.Join(remaining, "\n")
+						}
+					})
+				}
+				if v.remoteWorkspaceError != "" {
+					n.Text(c, v.remoteWorkspaceError).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.Danger).Role(n.RoleStatus)
 				}
 			})
-		}
-		if v.remoteWorkspaceError != "" {
-			n.Text(c, v.remoteWorkspaceError).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted)
-		}
+		})
 		n.Row(c).FillWidth().Gap(8).Justify(n.End).Children(func() {
 			if ghost(c, "取消").Disabled(v.remoteWorkspaceBusy).Clicked() {
 				v.remoteWorkspaceOpen = false

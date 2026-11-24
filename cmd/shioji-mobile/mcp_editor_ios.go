@@ -208,7 +208,7 @@ func (s *mobileToolServices) editor(a *mobileApp, c *ui.Context, w *mygo.Window)
 				mobileMessage(c, "配置已变化，请返回列表后重新打开")
 			}
 			s.feedback(c, a.model.Connected)
-			ui.Row(c.Key("mcp-footer")).MinHeight(mobileTapSize(c)).Padding(4, 0).AlignItems(ui.Center).Gap(8).Children(func() {
+			ui.Row(c.Key("mcp-footer")).Wrap().MinHeight(mobileTapSize(c)).Padding(4, 0).AlignItems(ui.Center).Gap(8).Children(func() {
 				if d.confirmDrop && writable {
 					label(c, "删除 "+d.config.Name+"？", 13, p.ink).Grow(1)
 					action(c, "取消", func() { d.confirmDrop = false }).KeepFocus().PaddingX(6)
@@ -290,12 +290,12 @@ func toolValueRows(c *ui.Context, title string, rows *[]*mobileToolValue, editab
 	}
 	for i, item := range *rows {
 		row := c.Key(item)
-		ui.Row(row).MinHeight(mobileTapSize(c)).AlignItems(ui.Center).Gap(6).Children(func() {
+		ui.Row(row).Wrap().MinHeight(mobileTapSize(c)).AlignItems(ui.Center).Gap(6).Children(func() {
 			name := fmt.Sprintf("%s %d", title, i+1)
 			if item.Retained {
 				oneLine(row, item.Name, 14, p.ink).Grow(1)
 			} else {
-				toolRowField(row, name+" 名称", "名称", &item.Name, editable)
+				toolRowField(row, name+" 名称", "名称", &item.Name, editable).MinWidth(130)
 			}
 			if item.Retained && !item.replace {
 				oneLine(row, "已保留", 12, p.secondary)
@@ -305,7 +305,7 @@ func toolValueRows(c *ui.Context, title string, rows *[]*mobileToolValue, editab
 				if item.Retained {
 					placeholder = "留空保留"
 				}
-				toolRowField(row, name+" 私密值", placeholder, &item.Value, editable).Password()
+				toolRowField(row, name+" 私密值", placeholder, &item.Value, editable).MinWidth(130).Password()
 			}
 			iconButton(row, "移除 "+name, closeSymbol, 14, func() {
 				item.Value = ""
@@ -319,6 +319,6 @@ func toolValueRows(c *ui.Context, title string, rows *[]*mobileToolValue, editab
 func toolRowField(c *ui.Context, title, placeholder string, value *string, editable bool) ui.Element {
 	p := palette(c)
 	return ui.TextInputBase(c, value).Label(title).Placeholder(placeholder).FontSize(controlTextSize * c.Preferences().TextScale).
-		PlaceholderColor(p.secondary).TextColor(p.ink).PaddingX(7).Grow(1).Basis(0).MinWidth(0).MinHeight(mobileTapSize(c)).
+		PlaceholderColor(p.secondary).TextColor(p.ink).PaddingX(7).Radius(7).Background(p.inset).Grow(1).Basis(0).MinWidth(0).MinHeight(mobileTapSize(c)).
 		Autocorrect(false).Capitalize(ui.CapitalizeNone).ReturnKey(ui.ReturnNext).Disabled(!editable)
 }

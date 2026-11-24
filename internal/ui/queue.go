@@ -568,7 +568,7 @@ func (v *View) queueDisclosure(c *n.Context, t *n.Theme) {
 												v.queueCommand("queue.remove", protocol.QueueInput{SessionID: sid, ID: item.ID, Revision: q.Revision})
 											}},
 										} {
-											if control(c.Key(action.label), 5).Size(25, 26).Label(action.label).Disabled(action.disabled).Children(func() { n.Icon(c, action.icon).Size(12, 12) }).Clicked() && present {
+											if control(c.Key(action.label), 5).Size(25, 26).Label(action.label).Tooltip(action.label).Disabled(action.disabled).Children(func() { n.Icon(c, action.icon).Size(12, 12) }).Clicked() && present {
 												action.run()
 											}
 										}

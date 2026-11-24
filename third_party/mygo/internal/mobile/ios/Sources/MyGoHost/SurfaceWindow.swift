@@ -38,6 +38,7 @@ final class SurfaceWindow: HostWindow, UITextInput, UIPointerInteractionDelegate
     var textContentType: UITextContentType! = nil
 
     private var elements: [Any]?
+    var rowAccessibilityActions: ((UInt64) -> [UIAccessibilityCustomAction]?)?
 
     /// What Go's renderer adds its layer to, from its thread. The view's own
     /// layer is UIKit's, which allows changes on the main thread alone.
@@ -767,6 +768,11 @@ final class AccessElement: UIAccessibilityElement {
             }
         }
         return out
+    }
+
+    override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+        get { surface?.rowAccessibilityActions?(UInt64(bitPattern: Int64(node))) ?? super.accessibilityCustomActions }
+        set { super.accessibilityCustomActions = newValue }
     }
 
     override func accessibilityActivate() -> Bool { surface?.accessAction(node, "press") ?? false }

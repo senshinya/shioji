@@ -233,8 +233,12 @@ func (a *mobileApp) workRow(c *ui.Context, parent *mygo.Window, sid string, requ
 		ui.Row(c).FillWidth().MinWidth(0).Gap(8).AlignItems(ui.Baseline).PassThrough().Children(func() {
 			switch {
 			case requestIcon != nil:
-				transcriptSymbol(c, requestIcon, title, font, 14, p.secondary)
-			case work.State == "completed" || work.State == "stopped":
+				transcriptSymbol(c, requestIcon, title, font, 14, p.warning)
+			case work.State == "failed":
+				transcriptSymbol(c, closeSymbol, title, font, 14, p.diffRemoved)
+			case work.State == "stopped":
+				transcriptSymbol(c, stopSymbol, title, font, 14, p.secondary)
+			case work.State == "completed":
 				transcriptSymbol(c, checkSymbol, title, font, 14, p.secondary)
 			case active:
 				transcriptStatusDot(c, title, font, p.active, true)
@@ -256,8 +260,24 @@ func (a *mobileApp) workRow(c *ui.Context, parent *mygo.Window, sid string, requ
 							Font("Menlo").FontFeatures("tnum").Shrink(0).PassThrough()
 					}
 				})
-				if preview != "" {
-					oneLine(c, preview, captionTextSize-1, p.secondary).PassThrough()
+				stateInk := p.secondary
+				if work.State == "failed" {
+					stateInk = p.diffRemoved
+				} else if requestIcon != nil {
+					stateInk = p.warning
+				}
+				if status != "" || preview != "" {
+					ui.Row(c.Key("work-status")).FillWidth().MinWidth(0).Gap(5).AlignItems(ui.Baseline).PassThrough().Children(func() {
+						if status != "" {
+							oneLine(c, status, captionTextSize-1, stateInk).Shrink(0).PassThrough()
+						}
+						if status != "" && preview != "" {
+							oneLine(c, "·", captionTextSize-1, p.secondary).Shrink(0).PassThrough()
+						}
+						if preview != "" {
+							oneLine(c, preview, captionTextSize-1, p.secondary).MinWidth(0).Shrink(1).PassThrough()
+						}
+					})
 				}
 			})
 			transcriptSymbol(c, rightSymbol, title, font, 12, p.secondary)

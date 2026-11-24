@@ -102,3 +102,26 @@ func TestAsyncQuestionWorkerAnswersThroughActiveOrNextTurn(t *testing.T) {
 		})
 	}
 }
+
+func TestAsyncQuestionRejectsSecretBeforeAcceptingASubmission(t *testing.T) {
+	s, w := memoryWorker(t, questionHarness{memoryHarness: memoryHarness{id: "fake"}, replies: make(chan harness.TurnInput, 1)})
+	config := domain.RunConfig{Model: "fake-model", Permission: "limited"}
+	first, err := s.submit(domain.Submission{OperationID: "first", WorkspaceID: w.ID, HarnessID: "fake", Text: "Investigate", Config: config})
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitReceipt(t, s, first.ID)
+	item := domain.Item{ID: "secret-question", Kind: "assistant", Final: true,
+		Questions: []domain.Question{{ID: "secret", Text: "Credential", Secret: true}}}
+	if _, err := s.store.Apply(first.SessionID, domain.Event{Type: "item.upsert", Item: &item}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.replyToQuestion(protocol.QuestionReplyInput{OperationID: "answer", SessionID: first.SessionID, ItemID: item.ID,
+		QuestionID: item.Questions[0].ID, Text: "private-value", Config: config})
+	if err == nil || err.Error() != "请在 Agent 的原生界面回答保密问题" {
+		t.Fatalf("unexpected reply result: %v", err)
+	}
+	if _, err := s.store.Operation("answer"); err == nil {
+		t.Fatal("secret answer was accepted as an ordinary submission")
+	}
+}

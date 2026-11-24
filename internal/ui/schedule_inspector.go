@@ -130,7 +130,7 @@ func scheduleAction(c *n.Context, t *n.Theme, label string, icon *n.SVG) n.Eleme
 }
 
 func scheduleInfo(c *n.Context, t *n.Theme, label, value string) {
-	n.Row(c.Key(label)).FillWidth().MinHeight(28).Gap(8).AlignItems(n.Center).Children(func() {
+	n.Row(c.Key(label)).FillWidth().MinHeight(28).PaddingY(4).Gap(8).AlignItems(n.Center).Children(func() {
 		n.Text(c, label).Width(64).Shrink(0).FontSize(12).TextColor(t.TextMuted)
 		n.Text(c, value).Grow(1).MinWidth(0).FontSize(12).FixedLineHeight(18)
 	})

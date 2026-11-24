@@ -55,12 +55,16 @@ func (v *View) conversationOutline(c *n.Context, t *n.Theme, state *n.ListState,
 	entries := outlineEntries(rows)
 	if index, ok := v.Model.HistoryOutlines[v.Model.SessionID]; ok {
 		positions := map[string]int{}
+		replies := map[string]string{}
+		for _, entry := range entries {
+			replies[entry.ID] = entry.Reply
+		}
 		for i, row := range rows {
 			positions[row.item.ID] = i + 1
 		}
 		entries = nil
 		for _, p := range index.Prompts {
-			entries = append(entries, outlineEntry{ID: p.ID, Prompt: p.Text, Row: positions[p.ID], Order: p.Order})
+			entries = append(entries, outlineEntry{ID: p.ID, Prompt: p.Text, Reply: replies[p.ID], Row: positions[p.ID], Order: p.Order})
 		}
 	}
 	if len(entries) < 4 {

@@ -72,10 +72,10 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 		v.toggleSearch(c)
 	}
 	panel := n.PopoverBase(c.Key("search-panel"), trigger, &v.searchOpen, func(panel n.Element) {
-		width, _ := c.Size()
+		width, height := c.Size()
 		entrance := popupMotion(c)
 		entrance.Exit = nil
-		panel.Width(min(560, width-40)).Padding(10).Radius(10).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Transition(entrance).Children(func() {
+		panel.Width(min(560, width-40)).Padding(10).Gap(6).Radius(10).Background(raised(t)).Border(1, t.Border).Shadow(0, 5, 18, 0, n.RGBA(0, 0, 0, .14)).Transition(entrance).Children(func() {
 			field := textField(c.Key("search-input"), &v.searchText).FillWidth().Height(32).Label("搜索会话").Placeholder("搜索会话与对话内容…").FontSize(13).Bind(&v.searchInput)
 			field.Changed()
 			query := strings.TrimSpace(v.searchText)
@@ -148,6 +148,13 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 					}
 				})
 			}
+			resultHeight := float32(0)
+			for _, result := range results {
+				resultHeight += 52
+				if result.Snippet != "" {
+					resultHeight += 20
+				}
+			}
 			v.searchList.Key = func(i int) any { return results[i].SessionID }
 			n.List(c, &v.searchList, len(results), func(i int) {
 				r := results[i]
@@ -179,7 +186,7 @@ func (v *View) searchControl(c *n.Context, t *n.Theme) {
 				if row.Clicked() {
 					v.openSearchResult(r)
 				}
-			}).FillWidth().Height(min(360, float32(len(results))*74))
+			}).FillWidth().Height(min(resultHeight, 360, max(52, height-mainToolbarHeight-90)))
 		})
 	})
 	if panel.Dismissed() {
@@ -191,12 +198,12 @@ func (v *View) openSearchResult(r domain.SearchResult) {
 	v.workspaceEditor = nil
 	v.navigateSession(r.SessionID, r.WorkspaceID)
 	v.devices, v.searchOpen, v.branchOpen = false, false, false
+	v.splitRoot().prepareSecondary()
+	pane := v.focusedView()
+	pane.focusComposer = true
 	if r.ItemID != "" {
-		v.splitRoot().prepareSecondary()
-		pane := v.focusedView()
 		s := pane.findState()
 		s.mode, s.focus, s.placement = findPassive, false, findAwaitingHistory
 		s.query, s.result, s.target = v.searchResultsQuery, r, findTarget{}
-		pane.focusComposer = true
 	}
 }

@@ -312,18 +312,25 @@ func (a *mobileApp) openActivity(parent *mygo.Window, sid string) {
 	var w *mygo.Window
 	w = a.page("会话活动", func(c *ui.Context) {
 		mobilePageBody(c, func() {
+			p := palette(c)
+			immediate := func(key, title string, symbol *ui.SVG, run func()) {
+				row := c.Key(key)
+				mobileRowContent(row, rowDivider(mobileButton(row, title, run), p.line), title, "", symbol, false, nil)
+			}
+			mobileSection(c, "导航")
 			mobileRow(c.Key("outline"), "对话导航", "", "", conversationsSymbol, func() { a.openConversationOutline(w, parent, sid) })
-			mobileRow(c.Key("find"), inConversationFind, "", "", searchSymbol, func() {
+			immediate("find", inConversationFind, searchSymbol, func() {
 				a.openConversationFind(parent, a.sessionByID(sid), false)
 				a.callUIKit("showPage", map[string]uintptr{"window": parent.NativeHandle()}, nil)
 			})
 			mobileRow(c.Key("plan"), "计划与任务", "", "", planSymbol, func() { a.openPlan(w, sid) })
+			mobileGroupHeading(c, "操作")
 			mobileRow(c.Key("actions"), "会话操作", "", "", moreSymbol, func() { a.openSessionActions(w, sid) })
 			if session := a.sessionByID(sid); session.ID != "" {
 				if a.model.SessionReadiness(session).Capabilities.CanRequestCompaction() {
 					state := a.compaction(session)
 					if a.compactionReason(session, state) == "" {
-						mobileRow(c.Key("compact"), "压缩上下文", "", "", compactSymbol, func() {
+						immediate("compact", "压缩上下文", compactSymbol, func() {
 							a.beginCompaction(session, nil)
 							a.callUIKit("showPage", map[string]uintptr{"window": parent.NativeHandle()}, nil)
 						})
@@ -344,10 +351,37 @@ func (a *mobileApp) openActivity(parent *mygo.Window, sid string) {
 			if a.wide {
 				mobileRow(c.Key("parallel"), "并排查看会话", "", "", panelSymbol, func() { a.openParallelPicker(w, sid) })
 			}
-			mobileRow(c.Key("agent"), "子 Agent", "", "", branchSymbol, func() {
+			mobileGroupHeading(c, "执行")
+			pending := make(map[string]bool)
+			for _, request := range a.model.Snapshot.PendingRequests {
+				if request.SessionID == sid && request.WorkID != "" && pendingRequest(request) {
+					pending[request.WorkID] = true
+				}
+			}
+			summary := func(kind string) string {
+				var active, attention int
+				for _, work := range a.model.Details[sid].Works {
+					if work.Kind == kind {
+						if pending[work.ID] {
+							attention++
+						} else if work.Active() {
+							active++
+						}
+					}
+				}
+				var labels []string
+				if active > 0 {
+					labels = append(labels, fmt.Sprintf("%d 运行中", active))
+				}
+				if attention > 0 {
+					labels = append(labels, fmt.Sprintf("%d 待处理", attention))
+				}
+				return strings.Join(labels, " · ")
+			}
+			mobileRow(c.Key("agent"), "子 Agent", summary("agent"), "", branchSymbol, func() {
 				a.openWorkList(w, sid, "agent", "子 Agent")
 			})
-			mobileRow(c.Key("background"), "后台任务", "", "", terminalSymbol, func() {
+			mobileRow(c.Key("background"), "后台任务", summary("background"), "", terminalSymbol, func() {
 				a.openWorkList(w, sid, "background", "后台任务")
 			})
 		})

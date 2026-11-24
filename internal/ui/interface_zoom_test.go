@@ -205,7 +205,7 @@ func TestZoomedNarrowConversationKeepsSendAndPermissionVisible(t *testing.T) {
 	ui := n.NewTester(v.View, 850, 650)
 	ui.Wheel(800, 300, 0, -1000, n.Cmd)
 	ui.Advance(time.Second)
-	for _, label := range []string{"发送", "Permission", "运行配置", "消息输入"} {
+	for _, label := range []string{"发送", "权限", "运行配置", "消息输入"} {
 		r, ok := ui.Find(label)
 		if !ok || r.W < 12 || r.X < 0 || r.X+r.W > 850.5 {
 			t.Errorf("zoom clipped %s: %+v", label, r)

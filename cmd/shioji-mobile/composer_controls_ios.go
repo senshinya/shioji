@@ -112,12 +112,24 @@ func (a *mobileApp) runControls(c *ui.Context, parent *mygo.Window, editor *mobi
 		if detail != "" && !home {
 			oneLine(control, detail, captionTextSize, p.secondary).Margin(0, 0, 0, 3).Shrink(1).PassThrough()
 		}
+		if config.Plan {
+			ui.Icon(control.Key("plan"), planSymbol).Size(12, 12).Shrink(0).TextColor(p.secondary).PassThrough()
+		}
+		if config.Fast {
+			ui.Icon(control.Key("fast"), fastSymbol).Size(12, 12).Shrink(0).TextColor(p.secondary).PassThrough()
+		}
 	})
 	if unavailable {
 		modelControl.Description(domain.ModelUnavailableMessage).Tooltip(domain.ModelUnavailableMessage)
 	}
 	agents := m.Readiness.Harnesses
 	canChooseAgent := home && len(agents) > 1
+	if config.Plan {
+		modelName += " · Plan"
+	}
+	if config.Fast {
+		modelName += " · Fast"
+	}
 	modelControl.Margin(0, mobileclient.ComposerModelSendGap, 0, 0).Value(modelName).KeepFocus().Menu(func(menu *ui.Menu) {
 		if len(agents) > 1 {
 			agentName := ready.HarnessID
@@ -230,7 +242,12 @@ func composerPermissionControl(c *ui.Context, choices []domain.OptionChoice, con
 	if right {
 		title = "右侧权限"
 	}
-	control := iconButton(c, title, permissionSymbol, inlineIconSize, nil)
+	p := palette(c)
+	control := mobileButton(c, title, nil).MaxWidth(84).Shrink(1).Gap(3).AlignItems(ui.Center).Justify(ui.Center)
+	control.Children(func() {
+		ui.Icon(c, permissionSymbol).Size(inlineIconSize, inlineIconSize).Shrink(0).TextColor(p.secondary).PassThrough()
+		oneLine(c, name, captionTextSize, p.secondary).MinWidth(0).Shrink(1).PassThrough()
+	})
 	control.Value(name).KeepFocus().Menu(func(menu *ui.Menu) {
 		for _, choice := range choices {
 			if menu.Item(choice.Name).Subtitle(choice.Description).Checked(config.Permission == choice.ID).Chosen() {

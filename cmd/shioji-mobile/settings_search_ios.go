@@ -20,7 +20,7 @@ var mobileSettings = []mobileSetting{
 	{settingsAppearance, "theme", "主题"},
 	{settingsAppearance, "interface-zoom", "界面缩放"},
 	{settingsAppearance, "interface-font", "界面字体"},
-	{settingsAppearance, "reply-size", "回复字号"},
+	{settingsAppearance, "reply-size", "会话字号"},
 	{settingsAppearance, "code-font", "代码字体"},
 	{settingsAppearance, "motion", "减少动态效果"},
 	{settingsAppearance, "appearance-preview", "对话预览"},
@@ -48,6 +48,9 @@ func (a *mobileApp) settingsResults(c *ui.Context, query []string, version strin
 	found := false
 	result := func(setting mobileSetting, value string) {
 		text := strings.ToLower(setting.title + " " + setting.group + " " + value)
+		if setting.key == "reply-size" {
+			text += " 回复字号"
+		}
 		for _, word := range query {
 			if !strings.Contains(text, word) {
 				return

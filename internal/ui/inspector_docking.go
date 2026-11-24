@@ -37,7 +37,7 @@ func (v *View) inspectorTabs(c *n.Context, t *n.Theme, kinds []string, kind stri
 			if k == "tasks" {
 				label, icon = "任务", tasksIcon
 			}
-			button := controlFeedback(c, tabs.Tab(i), 6).Size(28, 28).AlignItems(n.Center).Justify(n.Center).Radius(6).Label(label).Tooltip(label).TextColor(t.TextMuted).Cursor(n.CursorDefault).Drag(inspectorTabDrag{v.Model.SessionID, k})
+			button := controlFeedback(c, tabs.Tab(i), 6).Size(28, 28).AlignItems(n.Center).Justify(n.Center).Radius(6).Label(label).Tooltip(label + " · 拖动以调整分区").TextColor(t.TextMuted).Cursor(n.CursorDefault).Drag(inspectorTabDrag{v.Model.SessionID, k})
 			v.restoreInspectorTabFocus(button, k)
 			button.ContextMenu(func(menu *n.Menu) {
 				if len(kinds) == 1 {

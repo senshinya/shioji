@@ -437,7 +437,10 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 	}
 	var disclosureProgress float32
 	children := func() {
-		if !grouped {
+		if grouped {
+			mobileToolGlyph(c.Key("timeline-icon"), symbol, name, font).Absolute().Left(mobileToolTimelineInset).
+				Top(max(0, (mobileTapSize(c)-lineHeight)/2))
+		} else {
 			transcriptSymbol(c, symbol, name, font, 14, p.secondary)
 		}
 		title := label(c, titleName, size, ink).Font(font.Family).FixedLineHeight(lineHeight).
@@ -448,7 +451,7 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 		}
 		if status != "" && !(grouped && isCommand && !issue) {
 			color := p.secondary
-			if issue && !grouped {
+			if issue {
 				color = p.warning
 			}
 			oneLine(c.Key("tool-outcome"), status, size, color).Shrink(0).FixedLineHeight(lineHeight).
@@ -493,8 +496,10 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 		heading = ui.Row(c).MinHeight(28).Gap(6).AlignItems(ui.Baseline)
 	}
 	if grouped {
-		heading.MinHeight(lineHeight).FillWidth().MarginStart(mobileToolTextColumn).AlignItems(ui.Baseline).Justify(ui.Start)
-		mobileToolGlyph(c.Key("timeline-icon"), symbol, name, font).Absolute().Left(mobileToolTimelineInset).Top(0)
+		if !hasBody {
+			heading.MinHeight(lineHeight)
+		}
+		heading.FillWidth().Padding(0, 0, 0, mobileToolTextColumn).AlignItems(ui.Center).Justify(ui.Start)
 		if hasBody {
 			disclosureProgress = mobileToolReveal(c, heading, *open, mark != nil)
 		}

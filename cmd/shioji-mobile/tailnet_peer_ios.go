@@ -44,6 +44,16 @@ func (a *mobileApp) openTailnetPeer(parent *mygo.Window, id string) {
 			}
 		}
 		seen := mobileclient.TailnetPeerObservation(peer, active, c.Now())
+		var footer func()
+		if _, available := a.currentTailnetPeer(id); available {
+			footer = func() {
+				primaryAction(c.Key("pair-tailnet-peer"), "添加设备", func() {
+					if current, allowed := a.currentTailnetPeer(id); allowed {
+						a.openPair(w, mobileclient.Endpoint{Address: net.JoinHostPort(current.Address, "22"), TailnetPeerID: current.ID})
+					}
+				})
+			}
+		}
 		mobilePageWithFooter(c, func() {
 			mobilePageContext(c, peer.Name, status)
 			mobileMetadataField(c.Key("peer-address"), "Tailnet 地址", peer.Address, "复制 Tailnet 设备地址")
@@ -53,15 +63,7 @@ func (a *mobileApp) openTailnetPeer(parent *mygo.Window, id string) {
 			mobileMetadataField(c.Key("path"), "连接路径", seen.Path, "")
 			mobileMetadataField(c.Key("latency"), "往返延迟", seen.Latency, "")
 			mobileMetadataField(c.Key("system"), "系统", peer.OS, "")
-		}, func() {
-			if _, available := a.currentTailnetPeer(id); available {
-				primaryAction(c.Key("pair-tailnet-peer"), "添加设备", func() {
-					if current, allowed := a.currentTailnetPeer(id); allowed {
-						a.openPair(w, mobileclient.Endpoint{Address: net.JoinHostPort(current.Address, "22"), TailnetPeerID: current.ID})
-					}
-				})
-			}
-		})
+		}, footer)
 	})
 	a.pushNative(parent, w)
 }

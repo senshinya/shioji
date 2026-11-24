@@ -11,7 +11,7 @@ import (
 
 func TestInteractiveControlsFadeTheirHoverFeedback(t *testing.T) {
 	for _, dark := range []bool{false, true} {
-		for _, label := range []string{"新建会话", "待我处理", "搜索", "Layout", "当前设备", "Permission", "运行配置"} {
+		for _, label := range []string{"新建会话", "待我处理", "搜索", "Layout", "当前设备", "权限", "运行配置"} {
 			t.Run(label+map[bool]string{false: "/light", true: "/dark"}[dark], func(t *testing.T) {
 				m := layoutModel()
 				if label == "待我处理" {
@@ -111,7 +111,7 @@ func TestPopoverAcceptsEscapeDuringItsEntrance(t *testing.T) {
 	m := layoutModel()
 	m.Readiness.Permissions = []string{"read-only", "default"}
 	ui := n.NewTester(New(m, nil, "").View, 1440, 900)
-	if err := ui.Click("Permission"); err != nil {
+	if err := ui.Click("权限"); err != nil {
 		t.Fatal(err)
 	}
 	if !ui.HasText("按需请求批准") {
@@ -121,11 +121,11 @@ func TestPopoverAcceptsEscapeDuringItsEntrance(t *testing.T) {
 	if ui.HasText("按需请求批准") {
 		t.Fatal("Escape waited for the entrance to finish")
 	}
-	if !ui.Focused("Permission") {
+	if !ui.Focused("权限") {
 		t.Fatal("menu dismissal did not restore trigger focus")
 	}
 	ui.Advance(200 * time.Millisecond)
-	if !ui.Focused("Permission") {
+	if !ui.Focused("权限") {
 		t.Fatal("menu exit completion stole trigger focus")
 	}
 }

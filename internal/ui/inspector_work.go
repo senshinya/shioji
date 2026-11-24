@@ -151,7 +151,7 @@ func (v *View) workInspector(c *n.Context, t *n.Theme, drawer bool, width, limit
 				c.AnimationFrame()
 			}
 		})
-		n.Row(c.Key("inspector-actions")).Absolute().Right(12).Top(10).Height(28).Gap(6).AlignItems(n.Center).Background(t.Background).Children(func() {
+		n.Row(c.Key("inspector-actions")).Absolute().Right(12).Top(mainWindowTopInset).Height(28).Gap(6).AlignItems(n.Center).Background(t.Background).Children(func() {
 			if iconButton(c, refreshIcon, "刷新更改").Disabled(!v.Model.Connected).Clicked() {
 				v.refreshChanges()
 				v.refreshSelectedWork()
@@ -167,7 +167,7 @@ func (v *View) workInspector(c *n.Context, t *n.Theme, drawer bool, width, limit
 			valid := over && dragged.session == id
 			zone := inside && y > height*.6
 			if valid && zone {
-				n.Column(c.Key("inspector-split-preview")).Absolute().Left(6).Right(6).Bottom(6).Height(height/2-12).Radius(6).Background(t.Text.Alpha(.07)).Border(1, t.TextMuted.Alpha(.4)).PassThrough().Label("下方分屏预览")
+				n.Column(c.Key("inspector-split-preview")).Absolute().Left(6).Right(6).Bottom(6).Height(max(0, height/2-12)).Radius(6).Background(t.Text.Alpha(.07)).Border(1, t.TextMuted.Alpha(.4)).PassThrough().Label("下方分屏预览")
 			}
 			if released && zone && dropped.session == id {
 				next = app.SplitInspectorView(groups, dropped.kind)
@@ -242,13 +242,15 @@ func (v *View) workInspectorPane(c *n.Context, t *n.Theme, state *changesState, 
 							}
 						}
 					})
+					ink := t.TextMuted
 					if kind == g.selected {
 						button.Background(t.SurfacePressed)
+						ink = t.Text
 					}
 					if button.Dragging() {
 						button.Opacity(0).Cursor(n.CursorGrabbing)
 					}
-					button.Children(func() { n.Icon(c, inspectorWorkIcon(kind)).Size(16, 16).TextColor(t.TextMuted) })
+					button.Children(func() { n.Icon(c, inspectorWorkIcon(kind)).Size(16, 16).TextColor(ink) })
 				}
 			})
 			n.Text(c, inspectorWorkName(g.selected)).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).MarginStart(6).Grow(1)

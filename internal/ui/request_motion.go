@@ -172,7 +172,11 @@ func (v *View) pendingBody(c *n.Context, t *n.Theme, current requestPage, index 
 		if old {
 			key = "outgoing:" + page.key()
 		}
-		content := n.Column(c.Key(key)).FillWidth().Shrink(0).Padding(8, 0, 0, processingPanelTextInset).Gap(12)
+		inset := float32(processingPanelTextInset)
+		if page.question >= 0 || page.request.Kind == "form" || page.request.Kind == "permissions" {
+			inset = 0
+		}
+		content := n.Column(c.Key(key)).FillWidth().Shrink(0).Padding(8, 0, 0, inset).Gap(10)
 		if old {
 			content.Absolute().Left(0).Right(0).Top(0).IgnoreInput(true).Disabled(true).Transform(n.Translation(-distance*progress, 0))
 		} else if state.hasPrevious() {
@@ -182,11 +186,25 @@ func (v *View) pendingBody(c *n.Context, t *n.Theme, current requestPage, index 
 			scroll := n.Scroll(c.Key("fields:" + page.key())).FillWidth().MaxHeight(questionBodyHeight(c)).Label("问题选项内容")
 			position := n.Local(scroll, questionOptionScrollKey{}, func() n.ScrollState { return n.ScrollState{} })
 			scroll.TrackScroll(position).Children(func() {
-				n.Column(c).FillWidth().Gap(8).Children(func() { v.requestBody(c, t, page.request, page.question, expandedOptions[page.key()]) })
+				n.Column(c).FillWidth().Gap(12).Children(func() { v.requestBody(c, t, page.request, page.question, expandedOptions[page.key()]) })
 			})
-			v.requestActions(c, t, page, expandedOptions, position)
+			v.requestActions(c, t, page, expandedOptions, position, !old && !collapsed && content.FocusWithin())
 			if message := v.requestAction(page.request).err; message != "" {
-				n.Text(c, message).FontSize(11).TextColor(t.TextMuted).Transition(resultBlockMotion(c))
+				n.Text(c, message).FontSize(11).TextColor(t.Danger).Role(n.RoleStatus).Transition(resultBlockMotion(c))
+			} else if page.request.Kind == "form" {
+				if _, err := domain.FormContent(page.request.Fields, v.formAnswers(page.request)); err != nil {
+					n.Text(c, err.Error()).FontSize(11).TextColor(t.Danger).Role(n.RoleStatus)
+				}
+			} else if page.question >= 0 {
+				missing := 0
+				for _, q := range page.request.Questions {
+					if strings.TrimSpace(v.questionAnswer(page.request, q)) == "" {
+						missing++
+					}
+				}
+				if missing > 0 {
+					n.Text(c, fmt.Sprintf("还有 %d 个问题未回答", missing)).FontSize(11).TextColor(t.TextMuted).Role(n.RoleStatus)
+				}
 			}
 		})
 		if old {
@@ -431,6 +449,14 @@ func (v *View) pending(c *n.Context, t *n.Theme, detail domain.SessionDetail) {
 				v.requestPager(c, t, index, len(state.pages), unit)
 			})
 			bodyHeight = v.pendingBody(c, t, current, index, state.expandedOptions, m.Collapsed[m.SessionID], presence < 1)
+			if !m.Collapsed[m.SessionID] && content.FocusWithin() {
+				if index > 0 && c.Shortcut(n.Cmd|n.Alt, n.KeyLeft) {
+					m.Pager[m.SessionID] = index - 1
+				}
+				if index+1 < len(state.pages) && c.Shortcut(n.Cmd|n.Alt, n.KeyRight) {
+					m.Pager[m.SessionID] = index + 1
+				}
+			}
 		})
 	})
 	paddingTarget := float32(processingPanelExpandedDisclosureInset)
@@ -467,7 +493,7 @@ func (v *View) requestPager(c *n.Context, t *n.Theme, index, total int, unit str
 		previous := n.Column(c.Key("previous")).Width(28 * progress).Height(24).Shrink(0).Clip().Hidden(progress == 0)
 		n.Inert(previous, target == 0)
 		previous.Children(func() {
-			if ghost(c, "‹", requestRadius).Size(24, 24).Padding(0).Justify(n.Center).Label("上一个请求").Disabled(index == 0).Clicked() {
+			if ghost(c, "‹", requestRadius).Size(24, 24).Padding(0).Justify(n.Center).Label("上一个请求").Tooltip("上一个请求 ⌘⌥←").Disabled(index == 0).Clicked() {
 				v.Model.Pager[v.Model.SessionID]--
 			}
 		})
@@ -481,7 +507,7 @@ func (v *View) requestPager(c *n.Context, t *n.Theme, index, total int, unit str
 		next := n.Column(c.Key("next")).Width(28 * progress).Height(24).Shrink(0).AlignItems(n.End).Clip().Hidden(progress == 0)
 		n.Inert(next, target == 0)
 		next.Children(func() {
-			if ghost(c, "›", requestRadius).Size(24, 24).Padding(0).Justify(n.Center).Label("下一个请求").Disabled(index == total-1).Clicked() {
+			if ghost(c, "›", requestRadius).Size(24, 24).Padding(0).Justify(n.Center).Label("下一个请求").Tooltip("下一个请求 ⌘⌥→").Disabled(index == total-1).Clicked() {
 				v.Model.Pager[v.Model.SessionID]++
 			}
 		})

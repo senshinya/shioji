@@ -219,14 +219,17 @@ func (v *View) diffComparisonBar(c *n.Context, t *n.Theme, state *changesState, 
 			if state.Comparison.Base.Kind == state.Comparison.Target.Kind && state.Comparison.Base.Name == state.Comparison.Target.Name {
 				identity += string(rune('0' + i))
 			}
-			label := n.Row(c.Key("endpoint-name:" + identity)).Absolute().Width(slot - 20).Height(20).PassThrough().Label("比较名称:" + diffEndpointName(endpoint))
+			label := n.Row(c.Key("endpoint-name:" + identity)).Absolute().Width(max(0, slot-24)).Height(20).PassThrough().Label("比较名称:" + diffEndpointName(endpoint))
 			origin := n.Local(label, "origin", func() int { return i })
 			position := label.AnimateTo("slot", float32(i), motionAnimation(c, 260*time.Millisecond))
-			arc := float32(math.Sin(math.Pi*float64(position))) * 5
+			arc := float32(0)
+			if !c.Preferences().ReduceMotion {
+				arc = float32(math.Sin(math.Pi*float64(position))) * 5
+			}
 			if *origin == 0 {
 				arc = -arc
 			}
-			label.Left(18 + position*(slot+20)).Top(9 + arc).Gap(6).AlignItems(n.Baseline).Children(func() {
+			label.Left(18 + position*(slot+24)).Top(9 + arc).Gap(6).AlignItems(n.Baseline).Children(func() {
 				icon := branchIcon
 				if endpoint.Kind == "worktree" {
 					icon = workspaceIcon
@@ -241,7 +244,7 @@ func (v *View) diffComparisonBar(c *n.Context, t *n.Theme, state *changesState, 
 
 func (v *View) diffEndpointMenu(c *n.Context, t *n.Theme, trigger n.Element, state *changesState, base bool, open *bool) {
 	popover(c, trigger, open, func(panel n.Element) {
-		panel.Width(280).Padding(3).Radius(7).Background(raised(t)).Border(1, t.Border).Shadow(0, 4, 16, 0, n.RGBA(0, 0, 0, .12)).Children(func() {
+		panel.Width(280).Padding(3).Gap(4).Radius(7).Background(raised(t)).Border(1, t.Border).Shadow(0, 4, 16, 0, n.RGBA(0, 0, 0, .12)).Children(func() {
 			choices := []domain.DiffEndpoint{}
 			for _, ref := range state.Refs {
 				if strings.Contains(strings.ToLower(diffEndpointName(ref)+" "+ref.Branch), strings.ToLower(state.RefSearch)) {

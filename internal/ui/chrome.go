@@ -36,6 +36,7 @@ var disclosureRight = designIcon("m9 5 7 7-7 7")
 var attentionIcon = svg("M10 3l8 14H2zM10 7v4M10 14v.2")
 var sidebarIcon = svg("M2 3h16v14H2zM12 3v14")
 var copyReplyIcon = svg("M7 3h9a1 1 0 0 1 1 1v10M4 6h9a1 1 0 0 1 1 1v10H3V7a1 1 0 0 1 1-1z")
+var sessionStopMarker = svg("M5 10h10")
 var closeIcon = svg("M5 5l10 10M15 5L5 15")
 var branchIcon = designIcon("M6 3v12a4 4 0 0 0 8 0V8M6 5a2 2 0 1 0 0 .01M14 5a2 2 0 1 0 0 .01M6 18a2 2 0 1 0 0 .01")
 
@@ -44,6 +45,7 @@ func WindowTrafficLightPosition() *mygo.Point { return &mygo.Point{X: 22, Y: 21}
 
 const (
 	mainToolbarHeight      = 48
+	transcriptStartInset   = mainToolbarHeight + mainWindowTopInset
 	mainWindowTopInset     = 8
 	toolbarActionSize      = 28
 	mainToolbarBottomInset = mainToolbarHeight - mainWindowTopInset - toolbarActionSize
@@ -101,9 +103,6 @@ func (v *View) attentionControl(c *n.Context, t *n.Theme) {
 		}
 		button := navButtonWithColors(c, attentionIcon, "待我处理", textColor, iconColor, trailing).
 			Description(description).Disabled(!available)
-		if !available {
-			button.Opacity(.5)
-		}
 		if button.Clicked() {
 			v.nextAttention()
 		}

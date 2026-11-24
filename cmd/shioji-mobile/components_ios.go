@@ -62,7 +62,7 @@ func mobileDisclosureBody(c *ui.Context, expanded bool, content func(*ui.Context
 }
 
 func mobileUserBubble(c *ui.Context) ui.Element {
-	return ui.Column(c).AlignSelf(ui.End).MaxWidthPercent(89).Padding(9, 13).Radius(18).Background(palette(c).inset)
+	return ui.Column(c).AlignSelf(ui.End).MaxWidthPercent(89).Padding(10, 14).Gap(6).Radius(18).Background(palette(c).inset)
 }
 
 func mobileHeaderSize(c *ui.Context) float32 { return tapSize / c.Zoom() }
@@ -141,7 +141,10 @@ func mobilePageWithFooter(c *ui.Context, content, footer func()) ui.Element {
 }
 
 func mobilePageFooter(c *ui.Context, content func()) {
-	mobileContent(c, contentMaxWidth).Padding(7, pageInset, 0).Shrink(0).Children(content)
+	if content == nil {
+		return
+	}
+	mobileContent(c, contentMaxWidth).Padding(10, pageInset).Shrink(0).BorderWidth(1, 0, 0, 0).BorderColor(palette(c).line).Children(content)
 }
 
 func mobileMetadataField(c *ui.Context, title, value, copyLabel string) {
@@ -155,8 +158,6 @@ func mobileMetadataField(c *ui.Context, title, value, copyLabel string) {
 		if copyLabel != "" {
 			text.Font("monospace").FontSize(12 * c.Preferences().TextScale)
 			mobileCopyButton(c.Key("copy"), copyLabel, value)
-		} else {
-			ui.Spacer(c).Width(mobileTapSize(c))
 		}
 	})
 }
@@ -243,6 +244,52 @@ type mobileSegment struct {
 
 func mobileSegments(c *ui.Context, segments []mobileSegment, selection string, change func(string)) {
 	p := palette(c)
+	if len(segments) >= 5 {
+		scroll := ui.ScrollHorizontal(c).FillWidth()
+		width, _ := c.Size()
+		_, right, _, left := c.SafeArea()
+		textScale := c.Preferences().TextScale
+		type viewport struct {
+			selected         string
+			width, textScale float32
+		}
+		current := viewport{selection, width - left - right, textScale}
+		previous := ui.Local(scroll, "segment-viewport", func() viewport { return viewport{} })
+		reveal := *previous != current
+		*previous = current
+		scroll.Children(func() {
+			widths := make([]float32, len(segments))
+			var x, selectedWidth float32
+			for i, segment := range segments {
+				width, _ := c.MeasureText(0, ui.Span{Text: segment.title, Size: controlTextSize * textScale})
+				widths[i] = max(mobileTapSize(c), width+24)
+				if segment.title == selection {
+					selectedWidth = widths[i]
+				} else if selectedWidth == 0 {
+					x += widths[i] + 4
+				}
+			}
+			track := ui.Row(c).Gap(4)
+			track.Children(func() {
+				ui.Box(c.Key("track")).Absolute().Left(0).Right(0).Top(4).Bottom(4).
+					Radius(16).Background(p.inset).ZIndex(-2).PassThrough()
+				marker := ui.Box(c.Key("indicator")).Absolute().Top(7).Bottom(7).
+					Radius(14).Background(p.canvas).ZIndex(-1).PassThrough()
+				animation := ui.Animation{Duration: mobileTabDuration, Ease: ui.EaseOut}
+				marker.Left(marker.AnimateTo("segment-x", x, animation)).
+					Width(marker.AnimateTo("segment-width", selectedWidth, animation))
+				for i, segment := range segments {
+					title := segment.title
+					tab := action(c.Key(title), title, func() { change(title) }).Role(ui.RoleTab).
+						Width(widths[i]).AccessSelected(title == selection).Disabled(segment.disabled).Shrink(0)
+					if reveal && title == selection {
+						tab.ScrollIntoView()
+					}
+				}
+			})
+		})
+		return
+	}
 	ui.Column(c).Children(func() {
 		ui.Box(c.Key("track")).Absolute().Left(0).Right(0).Top(4).Bottom(4).
 			Radius(18).Background(p.inset).ZIndex(-1).PassThrough()
@@ -382,7 +429,7 @@ func mobileDetailRow(c *ui.Context, title, subtitle, accessibilityName string, i
 
 func mobileRowContent(c *ui.Context, row ui.Element, title, subtitle string, icon *ui.SVG, disclosure bool, tail func()) ui.Element {
 	p := palette(c)
-	return row.AlignItems(ui.Center).Padding(5, 0).Gap(6).Children(func() {
+	return row.AlignItems(ui.Center).Padding(8, 0).Gap(8).Children(func() {
 		ui.Row(c).Grow(1).MinWidth(0).AlignItems(ui.Start).Gap(6).PassThrough().Children(func() {
 			if icon != nil {
 				font := mobileStatusFont(c, bodyTextSize)
@@ -419,7 +466,7 @@ func mobileButton(c *ui.Context, title string, onClick func()) ui.Element {
 }
 
 func transcriptDisclosure(button ui.Element) ui.Element {
-	return button.MinHeight(transcriptMetadataHeight).FillWidth().Justify(ui.Start).KeepFocus()
+	return button.FillWidth().Justify(ui.Start).KeepFocus()
 }
 
 func action(c *ui.Context, title string, onClick func()) ui.Element {
@@ -431,7 +478,7 @@ func action(c *ui.Context, title string, onClick func()) ui.Element {
 func mobileTextArea(c *ui.Context, value *string, title string) ui.Element {
 	p := palette(c)
 	return ui.TextAreaBase(c, value).Label(title).Multiline(true).Padding(8).Radius(cardRadius).
-		Background(p.inset).TextColor(p.ink).PlaceholderColor(p.secondary)
+		Background(p.inset).TextColor(p.ink).PlaceholderColor(p.secondary).FontSize(bodyTextSize * c.Preferences().TextScale)
 }
 
 func menuChoice(m *ui.Menu, text string, selected bool, change func()) {
@@ -449,13 +496,13 @@ func formField(c *ui.Context, title, placeholder string, value *string) ui.Eleme
 func formInput(c *ui.Context, title, placeholder string, value *string) ui.Element {
 	p := palette(c)
 	return ui.TextInputBase(c, value).WidthPercent(58).MaxWidth(245).MinWidth(0).MinHeight(mobileTapSize(c)).
-		Label(title).Placeholder(placeholder).TextColor(p.secondary).PlaceholderColor(p.secondary).
+		Label(title).Placeholder(placeholder).TextColor(p.ink).PlaceholderColor(p.secondary).
 		FontSize(bodyTextSize * c.Preferences().TextScale).TextAlign(ui.End)
 }
 
 func formRow(c *ui.Context, title string, control func()) ui.Element {
 	p := palette(c)
-	return rowDivider(ui.Row(c).MinHeight(max(formRowHeight, mobileTapSize(c))).AlignItems(ui.Center).Gap(10), p.line).Children(func() {
+	return rowDivider(ui.Row(c).MinHeight(formRowHeight).Padding(6, 0).AlignItems(ui.Center).Gap(10), p.line).Children(func() {
 		label(c, title, bodyTextSize, p.ink).Grow(1).MinWidth(0)
 		control()
 	})

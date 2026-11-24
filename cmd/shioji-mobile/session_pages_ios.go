@@ -864,9 +864,14 @@ func (a *mobileApp) historyEditor(c *ui.Context, parent *mygo.Window, s domain.S
 	busy := req != nil && req.busy
 	p := palette(c)
 	ui.Column(c.Key("user-surface")).WidthPercent(92).AlignSelf(ui.End).Padding(8).Gap(4).Background(p.inset).Radius(16).Transition(mobileHistoryBubbleMotion).Children(func() {
-		ui.Column(c).Height(80).Padding(8).Children(func() {
-			editor.field(a, c, parent, "编辑已发送消息", "", edit.OperationID != "", 0, nil)
+		ui.Column(c).MinHeight(mobileTapSize(c)).Padding(8).Children(func() {
+			editor.field(a, c, parent, "编辑已发送消息", "", edit.OperationID != "", 6, func(bool) {
+				if !busy && !editor.pending() && m.Connected && m.HasDraftContent(key) {
+					a.submitHistoryEdit(parent, s, editor, historySubmit)
+				}
+			}).MinHeight(composerLineHeight(c) * 2)
 		})
+		a.draftReferences(c, parent, editor)
 		editor.referencePanel(a, c, parent)
 		if edit.OperationID == "" {
 			ui.Row(c).Justify(ui.End).Gap(4).Children(func() {
@@ -875,7 +880,7 @@ func (a *mobileApp) historyEditor(c *ui.Context, parent *mygo.Window, s domain.S
 					m.CancelSessionHistoryEdit(s.ID)
 					a.save()
 				}).KeepFocus().Disabled(busy)
-				iconButton(c, "确认修改并重开", checkSymbol, 16, func() { a.submitHistoryEdit(parent, s, editor, historySubmit) }).
+				iconButton(c, "确认修改并重开", returnSymbol, 16, func() { a.submitHistoryEdit(parent, s, editor, historySubmit) }).
 					KeepFocus().Disabled(busy || editor.pending() || !m.Connected || !m.HasDraftContent(key))
 			})
 		}

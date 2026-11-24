@@ -39,10 +39,11 @@ func (a *mobileApp) queue(c *ui.Context, parent *mygo.Window, session domain.Ses
 		return
 	}
 
+	rowHeight := max(mobileclient.QueueRowHeight, mobileTapSize(c))
 	viewport := func(count int) float32 {
-		height := mobileclient.QueueViewport(count)
+		height := mobileclient.QueueViewport(count) / mobileclient.QueueRowHeight * rowHeight
 		if compact {
-			return min(height, 1.25*mobileclient.QueueRowHeight)
+			return min(height, 1.25*rowHeight)
 		}
 		return height
 	}
@@ -127,7 +128,7 @@ func (a *mobileApp) queue(c *ui.Context, parent *mygo.Window, session domain.Ses
 					if title == "" {
 						title = "附件"
 					}
-					slotHeight := mobileclient.QueueRowHeight
+					slotHeight := rowHeight
 					newRow := arriving && entry.Input.OperationID == motion.arrival
 					if newRow {
 						slotHeight *= arrival
@@ -142,12 +143,21 @@ func (a *mobileApp) queue(c *ui.Context, parent *mygo.Window, session domain.Ses
 						slot.Transition(ui.ElementTransition{Position: true, Duration: mobileReplyFade, Ease: ui.EaseOut})
 					}
 					slot.Children(func() {
-						item := ui.ButtonBase(row).FillWidth().Height(mobileclient.QueueRowHeight).Shrink(0).
+						item := ui.ButtonBase(row).FillWidth().Height(rowHeight).Shrink(0).
 							PaddingX(12).AlignItems(ui.Center).KeepFocus().Label(title).Role(ui.RoleButton).
-							Description("长按查看完整消息和操作")
+							Description("轻点查看操作，长按预览完整消息")
 						if present {
 							key := fmt.Sprintf("queue:%q:%q:%q:%q:%d", a.model.Snapshot.DeviceID, sid, entry.ID, a.model.ConnectionEpoch, q.Revision)
 							menu := a.queueContextTarget(parent, session, editor, req, q, index, input)
+							if len(menu.commands) > 0 {
+								item.Menu(func(actions *ui.Menu) {
+									for _, command := range menu.commands {
+										if actions.Item(command.Title).Disabled(command.Disabled).Chosen() {
+											command.run()
+										}
+									}
+								})
+							}
 							queueContextMenuFrame(c).add(item, key, menu, panel, list, slot)
 						}
 						item.Children(func() {

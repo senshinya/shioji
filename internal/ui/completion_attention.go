@@ -49,13 +49,11 @@ func (v *View) attentionSession() (domain.Session, bool) {
 // Count each navigable session once. Questions and approvals retain priority
 // over unread natural replies.
 func (v *View) attentionSummary() (domain.Session, int) {
-	var firstRequest, firstReply domain.Session
+	var requests, replies []domain.Session
 	count := 0
 	for _, session := range v.Model.Snapshot.Sessions {
 		if v.pendingCount(session.ID) > 0 {
-			if firstRequest.ID == "" {
-				firstRequest = session
-			}
+			requests = append(requests, session)
 			count++
 			continue
 		}
@@ -64,16 +62,23 @@ func (v *View) attentionSummary() (domain.Session, int) {
 		}
 		for _, workspace := range v.Model.Snapshot.Workspaces {
 			if workspace.ID == session.WorkspaceID && !workspace.Archived {
-				if firstReply.ID == "" {
-					firstReply = session
-				}
+				replies = append(replies, session)
 				count++
 				break
 			}
 		}
 	}
-	if firstRequest.ID != "" {
-		return firstRequest, count
+	if len(requests) > 0 {
+		current := v.focusedSessionID()
+		for i, session := range requests {
+			if session.ID == current {
+				return requests[(i+1)%len(requests)], count
+			}
+		}
+		return requests[0], count
 	}
-	return firstReply, count
+	if len(replies) > 0 {
+		return replies[0], count
+	}
+	return domain.Session{}, 0
 }
