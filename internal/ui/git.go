@@ -104,6 +104,9 @@ func (v *View) requestGit(force bool) {
 		}
 	}
 	tag := fmt.Sprintf("%s:%d", v.Model.ConnectionEpoch, revision)
+	if v.Model.Details[q.SessionID].Session.ContextChanged {
+		tag += ":review"
+	}
 	if force {
 		state.showProblem = true
 	}

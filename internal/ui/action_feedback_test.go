@@ -701,7 +701,7 @@ func TestActiveConversationConfirmsObservedBranchAndClearsNotice(t *testing.T) {
 	status := domain.GitStatus{Applicable: true, Branch: "topic", Head: "abcdef1234", Branches: []string{"main", "topic"}}
 	m.SetGitStatus("session:s", status)
 	v := New(m, app.NewController(""), "")
-	v.gitLoads = map[string]*gitLoadState{"session:s": {tag: "git-epoch:0", phase: gitReady}}
+	v.gitLoads = map[string]*gitLoadState{"session:s": {tag: "git-epoch:0:review", phase: gitReady}}
 	ui := n.NewTester(v.View, 1440, 900)
 	ui.Advance(time.Second)
 	saveNativeSkillImage(t, ui, "active-branch-notice.png")

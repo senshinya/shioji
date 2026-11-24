@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"shioji/internal/protocol"
 )
 
 func gitTestRun(t *testing.T, dir string, args ...string) string {
@@ -168,6 +170,59 @@ func TestGitMonitorMarksExternalChangesWithoutSubmitting(t *testing.T) {
 	d, _ := s.store.Session(id, 0, 1)
 	if !d.Session.ContextChanged {
 		t.Fatal("external branch change was invisible before next submission")
+	}
+}
+
+func TestExistingSessionRequiresConfirmationWhenGitAppears(t *testing.T) {
+	for _, method := range []string{"git.status", "submission"} {
+		t.Run(method, func(t *testing.T) {
+			s, _, source := gitTestServer(t)
+			dir, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			w, err := s.store.CreateWorkspace("Clone target", []string{dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			in := domain.Submission{OperationID: domain.NewID(), WorkspaceID: w.ID, HarnessID: "codex", Text: "Clone the repository"}
+			launch, err := prepareGitForTest(s, in, domain.LaunchContext{CWD: dir})
+			if err != nil || launch.Repository != "" {
+				t.Fatalf("non-Git launch: %+v, %v", launch, err)
+			}
+			op, err := s.store.Accept(in, launch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			in.SessionID, in.OperationID, in.Text = op.SessionID, domain.NewID(), "Continue"
+			q := protocol.GitQuery{WorkspaceID: w.ID, SessionID: op.SessionID}
+			if status, err := s.gitStatus(q); err != nil || status.Applicable {
+				t.Fatalf("empty directory reported a Git checkout: %+v, %v", status, err)
+			}
+			gitTestRun(t, dir, "clone", "--quiet", source, ".")
+			head := gitTestRun(t, dir, "rev-parse", "HEAD")
+			if method == "git.status" {
+				if status, err := s.gitStatus(q); err != nil || !status.Applicable || status.Branch != "main" {
+					t.Fatalf("cloned checkout was not visible: %+v, %v", status, err)
+				}
+			} else if _, err := prepareGitForTest(s, in, launch); err == nil {
+				t.Fatal("submission proceeded before confirming the new checkout")
+			}
+			session, err := s.store.SessionRecord(op.SessionID)
+			if err != nil || !session.ContextChanged || session.GitBranch != "" || session.GitHead != "" {
+				t.Fatalf("worker did not publish a pending confirmation: %+v, %v", session, err)
+			}
+			if _, err := s.updateCheckout(protocol.CheckoutInput{GitQuery: q, Branch: "main"}, &head); err != nil {
+				t.Fatal(err)
+			}
+			session, err = s.store.SessionRecord(op.SessionID)
+			if err != nil || session.ContextChanged || session.GitBranch != "main" || session.GitHead != head || session.Context.Repository != "" {
+				t.Fatalf("confirmation did not record the new Git baseline and preserve the launch context: %+v, %v", session, err)
+			}
+			if _, err := prepareGitForTest(s, in, launch); err != nil {
+				t.Fatalf("confirmed checkout still blocked input: %v", err)
+			}
+		})
 	}
 }
 

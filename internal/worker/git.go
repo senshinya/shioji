@@ -239,7 +239,7 @@ func (s *Server) gitStatusLocked(q protocol.GitQuery) (domain.GitStatus, error) 
 	}
 	status, err := s.queryGitOutsideDispatch(s.ctx, dir)
 	if err == nil && status.Applicable {
-		err = s.detectGitContext(status, observed.Sessions)
+		err = s.detectGitContext(status, dir, observed.Sessions)
 	}
 	return status, err
 }
@@ -251,7 +251,11 @@ func sameCheckout(ctx context.Context, cwd, checkout string) bool {
 	actual, err := filepath.EvalSymlinks(strings.TrimSpace(top))
 	return err == nil && actual == checkout
 }
-func (s *Server) detectGitContext(status domain.GitStatus, observed ...[]domain.Session) error {
+func firstImportedExecution(session domain.Session) bool {
+	return session.Origin != nil && session.ThreadID == "" && session.Context.Repository == ""
+}
+
+func (s *Server) detectGitContext(status domain.GitStatus, observedDir string, observed ...[]domain.Session) error {
 	snap, err := s.store.Snapshot()
 	if err != nil {
 		return err
@@ -261,24 +265,29 @@ func (s *Server) detectGitContext(status domain.GitStatus, observed ...[]domain.
 		sessions = observed[0]
 	}
 	for _, session := range sessions {
-		if session.ContextChanged || (session.GitBranch == "" && session.GitHead == "") {
+		if session.ContextChanged {
 			continue
 		}
-		changed := session.GitBranch != status.Branch || (session.GitBranch == "" && session.GitHead != status.Head)
-		if changed && s.sameCheckoutOutsideDispatch(session.Context.CWD, status.Checkout) {
-			current, e := s.store.SessionRecord(session.ID)
-			if e != nil {
+		if session.GitBranch == "" && session.GitHead == "" {
+			// A session can create a repository in its original non-Git directory.
+			// Use a successful read for that directory before requesting confirmation.
+			if session.Context.CWD != observedDir || firstImportedExecution(session) {
 				continue
 			}
-			fresh := current
-			if fresh.ThreadID != session.ThreadID || fresh.Context.CWD != session.Context.CWD || fresh.GitBranch != session.GitBranch || fresh.GitHead != session.GitHead {
+		} else {
+			changed := session.GitBranch != status.Branch || (session.GitBranch == "" && session.GitHead != status.Head)
+			if !changed || !s.sameCheckoutOutsideDispatch(session.Context.CWD, status.Checkout) {
 				continue
 			}
-			session = fresh
-			session.ContextChanged = true
-			if _, err = s.store.Apply(session.ID, domain.Event{Type: "session.git", Session: &session}); err != nil {
-				return err
-			}
+		}
+		fresh, err := s.store.SessionRecord(session.ID)
+		if err != nil || fresh.ContextChanged || fresh.ThreadID != session.ThreadID || fresh.Context.CWD != session.Context.CWD ||
+			fresh.GitBranch != session.GitBranch || fresh.GitHead != session.GitHead {
+			continue
+		}
+		fresh.ContextChanged = true
+		if _, err = s.store.Apply(fresh.ID, domain.Event{Type: "session.git", Session: &fresh}); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -435,7 +444,7 @@ func (s *Server) updateCheckout(in protocol.CheckoutInput, observedHead *string)
 		if err != nil {
 			return status, err
 		}
-		if err = s.detectGitContext(status); err != nil {
+		if err = s.detectGitContext(status, status.Checkout); err != nil {
 			return status, err
 		}
 	}
@@ -548,7 +557,7 @@ func (s *Server) prepareGitLocked(in domain.Submission, launch domain.LaunchCont
 	if err = valid(); err != nil {
 		return launch, err
 	}
-	if err = s.detectGitContext(status); err != nil {
+	if err = s.detectGitContext(status, launch.CWD); err != nil {
 		return launch, err
 	}
 	if in.SessionID != "" {
@@ -559,7 +568,7 @@ func (s *Server) prepareGitLocked(in domain.Submission, launch domain.LaunchCont
 		if in.Git.NewWorktree {
 			return launch, errors.New("existing sessions cannot be relocated")
 		}
-		firstImport := d.Session.Origin != nil && d.Session.ThreadID == "" && d.Session.Context.Repository == ""
+		firstImport := firstImportedExecution(d.Session)
 		if d.Session.ContextChanged || (d.Session.GitBranch == "" && d.Session.GitHead == "" && !firstImport) {
 			return launch, errors.New("执行分支已改变，请在分支选择中明确确认后继续")
 		}
@@ -651,7 +660,7 @@ func (s *Server) prepareGitLocked(in domain.Submission, launch domain.LaunchCont
 		if err != nil {
 			return launch, err
 		}
-		if err = s.detectGitContext(status); err != nil {
+		if err = s.detectGitContext(status, launch.CWD); err != nil {
 			return launch, err
 		}
 	}
@@ -822,7 +831,7 @@ func (s *Server) checkGitContexts() error {
 			continue
 		}
 		if status.Applicable {
-			if err = s.detectGitContext(status, snapshot.Sessions); err != nil {
+			if err = s.detectGitContext(status, session.Context.CWD, snapshot.Sessions); err != nil {
 				return err
 			}
 		}

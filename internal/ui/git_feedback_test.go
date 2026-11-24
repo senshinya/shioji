@@ -9,7 +9,47 @@ import (
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 )
+
+func TestContextChangeRefreshesPreviouslyNonGitComposerAndExposesConfirmation(t *testing.T) {
+	m := layoutModel()
+	m.WorkerMinor = protocol.ActiveGitConfirmationMinor
+	m.ConnectionEpoch = "git-epoch"
+	const draft = "Continue after cloning"
+	m.Drafts[m.DraftKey()] = draft
+	v := New(m, app.NewController(""), "")
+	ui := n.NewTester(v.View, 1100, 680)
+	feedbackJob(t, v, "git.status").Apply(m, json.RawMessage(`{}`), nil)
+	ui.Frame()
+	if ui.HasText("选择分支") {
+		t.Fatal("the initial non-Git session shows a branch")
+	}
+
+	session := m.Details["s"].Session
+	session.ContextChanged = true
+	session.Revision++
+	if err := m.ApplyEvent(domain.Event{Sequence: 1, Type: "session", SessionID: "s", Session: &session}); err != nil {
+		t.Fatal(err)
+	}
+	ui.Frame()
+	status := json.RawMessage(`{"applicable":true,"branch":"main","head":"abcdef1234","branches":["main"]}`)
+	feedbackJob(t, v, "git.status").Apply(m, status, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	feedbackClick(t, ui, "选择分支")
+	feedbackJob(t, v, "git.status").Apply(m, status, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	feedbackClick(t, ui, "确认当前分支")
+	job := feedbackJob(t, v, "git.confirm")
+	if input, ok := job.Input.(protocol.ConfirmCheckoutInput); !ok || input.SessionID != "s" || input.Branch != "main" || input.Head != "abcdef1234" {
+		t.Fatalf("confirmation did not target the checkout shown in the menu: %+v", job.Input)
+	}
+	if m.Drafts[m.DraftKey()] != draft {
+		t.Fatal("opening branch confirmation changed the unsent draft")
+	}
+}
 
 func TestBackgroundBranchReadDoesNotRepeatTheSameFailure(t *testing.T) {
 	m := layoutModel()
