@@ -802,7 +802,20 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) (goalShown bool) {
 			if t.Dark {
 				notice = codeSurface(t)
 			}
-			conversationui.UsageLimitNotice(c.Key("usage-limit"), m.UsageLimitForSession(m.SessionID, c.Now()), notice, t.Text, t.TextMuted, 1, 76, 8)
+			sid := m.SessionID
+			limit, item := conversationui.ComposerWarning(m.Details[sid], m.UsageLimitForSession(sid, c.Now()))
+			var retry func(n.Rect)
+			if (limit.ID != "" || item != "") && v.canRetryMessage(sid) {
+				retry = func(button n.Rect) {
+					current, currentItem := conversationui.ComposerWarning(m.Details[sid], m.UsageLimitForSession(sid, c.Now()))
+					if current.ID == limit.ID && currentItem == item {
+						width, _ := c.MeasureText(0, n.Span{Text: app.RetryMessageText, Font: t.Font, Size: userMessageFontSize})
+						source := conversationui.MessageFlightOrigin(button, width+2*userMessagePaddingX, userMessageLeading+2*userMessagePaddingY)
+						v.retryComposerWarning(sid, source)
+					}
+				}
+			}
+			conversationui.ComposerNotice(c.Key("usage-limit"), limit, item, notice, t.Text, t.TextMuted, 1, 76, 8, 28, retry)
 		}
 		// The queue backplate extends behind the editor's rounded top edge.
 		v.queueDisclosure(c, t)
@@ -2067,7 +2080,36 @@ func (v *View) sendMessage(steer bool) {
 		v.submitActive(in, method, turn)
 		return
 	}
+	v.submitNewTurn(in, n.Rect{})
+}
+
+func (v *View) canRetryMessage(sid string) bool {
+	return v.Controller != nil && v.currentConnectionPhase() == app.ConnectionIdle &&
+		(v.parent == nil || v.parent.Model.SecondarySessionID == sid) &&
+		!v.homeSendPending() && v.Model.CanRetryMessage(sid)
+}
+
+func (v *View) retryComposerWarning(sid string, source n.Rect) {
+	m := v.Model
+	if m.SessionID != sid || !v.canRetryMessage(sid) {
+		return
+	}
+	in, err := m.BeginRetryMessage(sid)
+	if err != nil {
+		m.Error = err.Error()
+		return
+	}
+	v.dismissSubmissionFailure()
+	v.submitNewTurn(in, source)
+}
+
+func (v *View) submitNewTurn(in domain.Submission, source n.Rect) {
+	m := v.Model
 	sent := v.beginPresentedSend(in, "")
+	if source.W > 0 {
+		sent.source = source
+		sent.fromNotice = true
+	}
 	var prepare func() error
 	if v.Saver != nil {
 		state, _ := v.persistenceModel().EncodeState()

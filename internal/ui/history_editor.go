@@ -25,6 +25,13 @@ func (v *View) historyEditorVisible() bool {
 	return false
 }
 
+const (
+	userMessagePaddingX = 16
+	userMessagePaddingY = 12
+	userMessageFontSize = 14
+	userMessageLeading  = 24
+)
+
 func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 	m := v.Model
 	editing := m.HistoryEdits[m.SessionID].ItemID == item.ID
@@ -94,13 +101,13 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 				return
 			}
 			_, _, goal := goalTagRange(item.Text)
-			bubble := n.Column(c.Key("user-surface:"+item.ID)).MaxWidth(676).Padding(12, 16).Gap(8).Background(userBubble(t)).Radius(14).Label("用户消息气泡").Children(func() {
+			bubble := n.Column(c.Key("user-surface:"+item.ID)).MaxWidth(676).Padding(userMessagePaddingY, userMessagePaddingX).Gap(8).Background(userBubble(t)).Radius(14).Label("用户消息气泡").Children(func() {
 				if item.Kind == "command" {
 					v.commandTagBody(c, item)
 				} else if goal || len(item.Skills) > 0 || hasInlineFiles(item.Attachments) {
 					v.messageReferenceBody(c, t, item)
 				} else if item.Text != "" {
-					text := n.RichText(c).FontSize(14).FixedLineHeight(24).Selectable()
+					text := n.RichText(c).FontSize(userMessageFontSize).FixedLineHeight(userMessageLeading).Selectable()
 					text.Children(func() { v.userMessageLinks(c, item.Text) })
 					v.decoratePlainFind(c, text, item, nil)
 				}
@@ -124,7 +131,7 @@ func (v *View) historyUserMessage(c *n.Context, t *n.Theme, item domain.Item) {
 
 func (v *View) historyMessageActions(c *n.Context, t *n.Theme, item domain.Item, preview bool, begin func()) {
 	actions := n.Row(c.Key("user-actions:" + item.ID)).Gap(messageFooterGap).Height(24).AlignItems(n.Center).Unselectable().Label("用户消息操作")
-	if motion := v.motionForInput(item.ID); motion != nil && (motion.queued || motion.steer) && motion.source.W > 0 && !c.Preferences().ReduceMotion {
+	if motion := v.motionForInput(item.ID); motion != nil && (motion.queued || motion.steer || motion.fromNotice) && motion.source.W > 0 && !c.Preferences().ReduceMotion {
 		// The action row stays in flow, but becomes visible only as the
 		// lifted bubble approaches its final position.
 		alpha := min(1, max(0, (motion.progress(c)-.84)/.16))

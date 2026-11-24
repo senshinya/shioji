@@ -245,6 +245,7 @@ func (m *Model) ApplyArchiveDeletion(d domain.ArchiveDeletion) {
 		preparingInWorkspace := d.WorkspaceID != "" && in.SessionID == "" && in.WorkspaceID == d.WorkspaceID
 		if preparingInWorkspace || slices.Contains(d.SessionIDs, in.SessionID) {
 			delete(m.Pending, op)
+			delete(m.independentInputs, op)
 			delete(m.PendingDevices, op)
 			delete(m.pendingGenerations, op)
 			delete(m.UncertainSubmissions, op)

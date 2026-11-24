@@ -181,6 +181,9 @@ func (s *replyTail) draw(c *ui.Context, item domain.Item, options *markdown.Opti
 	delta := conversationui.AnimatedContentHeight(measured, frame, true, !stream.live, duration, func() float32 {
 		*embedDelta = 0
 		stream.draw(measured.Key("text"), item, options)
+		if item.Text == "" && options.OnRevealState != nil {
+			options.OnRevealState(false)
+		}
 		return *embedDelta
 	})
 	if delta != 0 {

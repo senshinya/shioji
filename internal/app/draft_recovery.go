@@ -45,7 +45,7 @@ func (m *Model) RestoreRetainedHomeDraft(id string) {
 }
 
 func (m *Model) clearSubmittedDraft(key string, in domain.Submission) {
-	if in.QuestionReply != nil {
+	if in.QuestionReply != nil || m.SubmissionKeepsDraft(in.OperationID) {
 		return
 	}
 	if !in.Continue && m.Drafts[key] == in.Text {
@@ -56,7 +56,7 @@ func (m *Model) clearSubmittedDraft(key string, in domain.Submission) {
 }
 
 func (m *Model) restoreRejectedDraft(in domain.Submission) {
-	if in.Continue || in.QuestionReply != nil {
+	if in.Continue || in.QuestionReply != nil || m.SubmissionKeepsDraft(in.OperationID) {
 		return
 	}
 	key := m.submissionDraftKey(in)

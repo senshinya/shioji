@@ -899,6 +899,11 @@ func (a *mobileApp) submit(steer bool, editor *mobileDraftEditor) {
 		m.Error = err.Error()
 		return
 	}
+	a.presentAndDeliverSubmission(editor, in, method, turn, ui.Rect{})
+}
+
+func (a *mobileApp) presentAndDeliverSubmission(editor *mobileDraftEditor, in domain.Submission, method, turn string, source ui.Rect) {
+	m := a.model
 	if editor != nil {
 		switch method {
 		case "turn.enqueue":
@@ -906,8 +911,12 @@ func (a *mobileApp) submit(steer bool, editor *mobileDraftEditor) {
 		case "turn.steer", "session.submit":
 			send := &editor.sendScroll
 			send.begin(in.OperationID, m.ConnectionEpoch, editor.inputBounds, method == "turn.steer", false)
+			if source.W > 0 {
+				send.source = source
+				send.fromNotice = true
+			}
 			send.keyboardComposer = editor.keyboardVisible || editor.trackingKeyboard
-			if in.SessionID != "" && !in.Continue {
+			if in.SessionID != "" && !in.Continue && !m.SubmissionKeepsDraft(in.OperationID) {
 				editor.Depart(in.OperationID)
 			}
 			if in.SessionID == "" {

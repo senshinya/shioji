@@ -241,6 +241,10 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 	interactive bool, find *mobileConversationFind, preview *archiveTranscript, draft *mobileDraftEditor, dock ui.Element, initial firstSubmissionView) func() {
 	p := palette(c)
 	sid := session.ID
+	var warningItem string
+	if draft != nil && find == nil && preview == nil {
+		_, warningItem = conversationui.ComposerWarning(detail, a.model.UsageLimitForSession(sid, c.Now()))
+	}
 	viewKey := sid
 	if initial.key != "" {
 		viewKey = initial.key
@@ -924,9 +928,17 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 					if len(item.Questions) != 0 {
 						a.asyncQuestionMessage(row, parent, session, item, questionStatuses, interactive && preview == nil)
 					} else if item.Text != "" {
+						reply := item
+						if item.ID == warningItem {
+							var regional bool
+							reply.Text, regional = conversationui.SplitRegionalAccessWarning(item)
+							if !regional {
+								reply.Text, _, _ = conversationui.SplitAntigravityQuotaWarning(session.HarnessID, item)
+							}
+						}
 						var embedDelta float32
 						a.drawTranscriptMarkdown(row, parent, session, float32(a.model.Preferences.ReplySize), mark, func(body *ui.Context, options *markdown.Options) {
-							tail.draw(body, item, options, state, &embedDelta)
+							tail.draw(body, reply, options, state, &embedDelta)
 						}, &embedDelta)
 					}
 					a.contentParts(row, parent, session, item.Parts)
@@ -1127,7 +1139,29 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 			a.composerRuntimeStatus(c.Key("runtime-status"), parent, editor, ready.State, active)
 		}
 		if !home {
-			conversationui.UsageLimitNotice(c.Key("usage-limit:"+key), m.UsageLimitForSession(sid, c.Now()), p.panel, p.ink, p.secondary, c.Preferences().TextScale, 52, 0)
+			limit, item := conversationui.ComposerWarning(m.Details[sid], m.UsageLimitForSession(sid, c.Now()))
+			canRetry := func() bool {
+				return connected && readyPhase && !firstPending && !a.draftSaveFailed() && m.CanRetryMessage(sid)
+			}
+			var retry func(ui.Rect)
+			if (limit.ID != "" || item != "") && canRetry() {
+				retry = func(button ui.Rect) {
+					current, currentItem := conversationui.ComposerWarning(m.Details[sid], m.UsageLimitForSession(sid, c.Now()))
+					if !editor.current(a, parent) || !canRetry() || current.ID != limit.ID || currentItem != item {
+						return
+					}
+					in, err := m.BeginRetryMessage(sid)
+					if err != nil {
+						m.Error = err.Error()
+						return
+					}
+					size := float32(m.Preferences.ReplySize) * c.Preferences().TextScale
+					width, _ := c.MeasureText(0, ui.Span{Text: in.Text, Font: c.Theme().Font, Size: size})
+					source := conversationui.MessageFlightOrigin(button, width+2*mobileUserBubbleInsetX, size*transcriptLeading+2*mobileUserBubbleInsetY)
+					a.presentAndDeliverSubmission(editor, in, "session.submit", "", source)
+				}
+			}
+			conversationui.ComposerNotice(c.Key("usage-limit:"+key), limit, item, p.panel, p.ink, p.secondary, c.Preferences().TextScale, 52, 0, mobileTapSize(c), retry)
 		}
 		a.pathAttachmentPanel(c, parent, editor)
 		a.draftReferences(c, parent, editor)

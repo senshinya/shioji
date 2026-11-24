@@ -12,7 +12,7 @@ func TestUsageLimitNoticeDoesNotReplayEntranceOnSessionMount(t *testing.T) {
 	var height float32
 	tester := n.NewTester(func(c *n.Context) {
 		n.Column(c).Fill().Children(func() {
-			UsageLimitNotice(c.Key("usage-limit"), turn, n.Hex("#f1f1f3"), n.Hex("#18181b"), n.Hex("#66666e"), 1, 76, 8)
+			ComposerNotice(c.Key("usage-limit"), turn, "", n.Hex("#f1f1f3"), n.Hex("#18181b"), n.Hex("#66666e"), 1, 76, 8, 28, nil)
 			n.Box(c.Key("below")).FillWidth().Height(10).DrawOver(func(_ *n.Painter, r n.Rect) { height = r.Y })
 		})
 	}, 420, 200)

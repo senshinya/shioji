@@ -1,6 +1,7 @@
 package conversationui
 
 import (
+	"fmt"
 	"math"
 	"time"
 
@@ -12,26 +13,60 @@ import (
 const (
 	usageNoticeMotion = 220 * time.Millisecond
 	tideMotion        = 420 * time.Millisecond
-	usageTitle        = "You’ve hit your usage limit."
+	usageTitle        = "使用额度已用尽"
+	noticeInset       = float32(12)
+	noticePadding     = float32(9)
+	noticeGap         = float32(10)
+	noticeTideHeight  = float32(40)
 )
 
 type usageNoticeState struct {
-	turn        domain.Turn
+	id          string
+	limit       *domain.UsageLimit
 	start       time.Time
 	width       float32
 	initialized bool
 	// Cached text height measurement to avoid calling ShapeText twice every frame.
 	cachedCaption string
+	cachedTitle   string
 	cachedFamily  string
 	cachedScale   float32
 	cachedWidth   float32
 	cachedHeight  float32
 }
 
-// UsageLimitNotice shares the geometry and one-shot motion across the Mac
-// conversation and the mobile dock. The clipped wrapper takes up only the
-// height already revealed, keeping the composer anchored below it.
-func UsageLimitNotice(c *n.Context, turn domain.Turn, surface, ink, muted n.Color, textScale, tideWidth, bottomGap float32) {
+// ComposerWarning selects the notice and the reply it represents. A saved
+// relative estimate is anchored to the original turn's completion time.
+func ComposerWarning(detail domain.SessionDetail, limit domain.Turn) (domain.Turn, string) {
+	turn, item := latestAntigravityReply(detail)
+	_, retryAfter, quota := SplitAntigravityQuotaWarning(detail.Session.HarnessID, item)
+	if limit.UsageLimit != nil {
+		if quota && turn.ID == limit.ID {
+			return limit, item.ID
+		}
+		return limit, ""
+	}
+	if quota {
+		turn.UsageLimit = &domain.UsageLimit{}
+		if turn.CompletedAt != nil && !turn.CompletedAt.IsZero() && retryAfter != nil {
+			reset := turn.CompletedAt.Add(*retryAfter)
+			turn.UsageLimit.ResetAt = &reset
+		}
+		return turn, item.ID
+	}
+	if _, regional := SplitRegionalAccessWarning(item); regional {
+		return domain.Turn{}, item.ID
+	}
+	return domain.Turn{}, ""
+}
+
+// ComposerNotice shares the layout and one-shot motion of the notices in the
+// Mac and mobile docks, keeping the composer anchored below them.
+func ComposerNotice(c *n.Context, turn domain.Turn, itemID string, surface, ink, muted n.Color, textScale, tideWidth, bottomGap, retryHeight float32, retry func(n.Rect)) {
+	id := itemID
+	if turn.UsageLimit != nil {
+		id = turn.ID
+	}
 	frame := n.Column(c).FillWidth().Shrink(0).Clip()
 	state := n.Local(frame, "usage-limit", func() usageNoticeState {
 		return usageNoticeState{}
@@ -40,53 +75,52 @@ func UsageLimitNotice(c *n.Context, turn domain.Turn, surface, ink, muted n.Colo
 	reduced := c.Preferences().ReduceMotion
 	initialMount := !state.initialized
 	state.initialized = true
-	if initialMount {
-		if turn.UsageLimit == nil {
-			frame.Jump("height", 0)
-		} else {
-			// An already-present usage limit on initial mount (e.g. switching sessions)
-			// starts settled without replaying the entrance or tide wave.
-			state.turn = turn
-		}
-	} else if turn.UsageLimit != nil && turn.ID != state.turn.ID {
+	if initialMount && id == "" {
+		frame.Jump("height", 0)
+	} else if !initialMount && id != "" && id != state.id {
 		state.start = now
 	}
-	if turn.UsageLimit != nil {
-		state.turn = turn
-		if reset := turn.UsageLimit.ResetAt; reset != nil && reset.After(now) {
-			c.After(reset.Sub(now))
-		}
+	if id != "" {
+		state.id, state.limit = id, turn.UsageLimit
 	}
-	if state.turn.UsageLimit == nil {
+	if state.id == "" {
 		frame.Hidden(true)
 		return
 	}
-	const inset, pad, gap = float32(12), float32(9), float32(10)
 	width := state.width
 	if width <= 0 {
 		width = 300
 	}
-	if width < 240 || textScale > 1.4 {
+	retryWidth := max(48, 26*textScale+16)
+	textWidth := width - noticeInset*2 - retryWidth - noticeGap
+	minContentHeight := max(noticeTideHeight, retryHeight)
+	if textWidth < 240-2*noticeInset || textScale > 1.4 {
 		tideWidth = 0
 	}
-	textWidth := width - inset*2
 	if tideWidth > 0 {
-		textWidth -= tideWidth + gap
+		textWidth -= tideWidth + noticeGap
 	}
-	title := n.Font{Family: c.Theme().Font, Size: 13 * textScale, Weight: 600}
-	body := n.Font{Family: c.Theme().Font, Size: 12 * textScale, Weight: 400}
-	titleLine, bodyLine := 18*textScale, 17*textScale
-	caption := usageResetCaption(state.turn.UsageLimit.ResetAt, now)
-	if state.cachedHeight == 0 || state.cachedCaption != caption || state.cachedFamily != title.Family ||
+	title, body, titleLine, bodyLine := noticeTypography(c, textScale)
+	headline, caption := regionalAccessTitle, regionalAccessCaption
+	if state.limit != nil {
+		var next time.Duration
+		headline = usageTitle
+		caption, next = usageResetCaption(state.limit.ResetAt, now)
+		if id != "" && next > 0 {
+			c.After(next)
+		}
+	}
+	if state.cachedHeight == 0 || state.cachedTitle != headline || state.cachedCaption != caption || state.cachedFamily != title.Family ||
 		state.cachedScale != textScale || state.cachedWidth != textWidth {
-		titleHeight := float32(len(n.ShapeText(usageTitle, title, max(1, textWidth)).Lines())) * titleLine
+		titleHeight := float32(len(n.ShapeText(headline, title, max(1, textWidth)).Lines())) * titleLine
 		bodyHeight := float32(len(n.ShapeText(caption, body, max(1, textWidth)).Lines())) * bodyLine
+		state.cachedTitle = headline
 		state.cachedCaption, state.cachedFamily, state.cachedScale, state.cachedWidth = caption, title.Family, textScale, textWidth
-		state.cachedHeight = max(40, titleHeight+2+bodyHeight) + 2*pad
+		state.cachedHeight = max(minContentHeight, titleHeight+2+bodyHeight) + 2*noticePadding
 	}
 	height := state.cachedHeight
 	target := float32(0)
-	if turn.UsageLimit != nil {
+	if id != "" {
 		target = height + bottomGap
 	}
 	shown := target
@@ -98,13 +132,13 @@ func UsageLimitNotice(c *n.Context, turn domain.Turn, surface, ink, muted n.Colo
 	if shown <= 0.01 {
 		// The first opening frame still schedules the animated layout.
 		if target == 0 {
-			state.turn = domain.Turn{}
+			state.id, state.limit = "", nil
 			frame.Hidden(true)
 			return
 		}
 	}
 	frame.Height(shown)
-	n.Inert(frame, turn.UsageLimit == nil)
+	n.Inert(frame, id == "")
 	invalidate := c.Services().Invalidate
 	frame.Draw(func(_ *n.Painter, box n.Rect) {
 		if box.W > 0 && state.width != box.W {
@@ -112,40 +146,79 @@ func UsageLimitNotice(c *n.Context, turn domain.Turn, surface, ink, muted n.Colo
 			invalidate()
 		}
 	})
-	departing, started := turn.UsageLimit == nil, state.start
+	started := state.start
+	if id == "" || reduced {
+		started = time.Time{}
+	}
 	frame.Children(func() {
-		n.Row(c).Absolute().Left(0).Right(0).Bottom(min(bottomGap, shown)).Height(height).
-			Padding(pad, inset).Gap(gap).Radius(12).Background(surface).AlignItems(n.Center).Children(func() {
-			if tideWidth > 0 {
-				n.Box(c).Size(tideWidth, 40).Shrink(0).Role(n.RoleNone).Draw(func(p *n.Painter, box n.Rect) {
-					progress := 1.0
-					if !departing && !reduced && !started.IsZero() {
-						progress = min(1, max(0, float64(p.Now().Sub(started))/float64(tideMotion)))
-						if progress < 1 {
-							p.AnimationFrameRate(60)
-						}
-					}
-					paintUsageTide(p, box, muted, 1-math.Pow(1-progress, 3))
-				})
+		trailing := func() {
+			button := n.ButtonBase(c.Key("retry")).Role(n.RoleButton).Label("重试").Disabled(retry == nil).KeepFocus().
+				Width(retryWidth).MinHeight(retryHeight).Shrink(0).Justify(n.Center).AlignItems(n.Center).Radius(6).Border(1, ink.Alpha(.15))
+			textColor := ink
+			if retry == nil {
+				textColor = muted
+			} else {
+				if button.Hovered() || button.FocusVisible() {
+					button.Background(ink.Alpha(.07))
+				}
+				if button.Pressed() {
+					button.Background(ink.Alpha(.13))
+				}
+				button.OnClick(func() { retry(button.Bounds()) })
 			}
-			n.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-				n.Text(c, usageTitle).Font(title.Family).FontSize(title.Size).FontWeight(title.Weight).
-					FixedLineHeight(titleLine).TextColor(ink).Wrap().Role(n.RoleStatus)
-				n.Text(c, caption).Font(body.Family).FontSize(body.Size).FixedLineHeight(bodyLine).TextColor(muted).Wrap()
+			button.Children(func() {
+				n.Text(c, "重试").FontSize(12 * textScale).FontWeight(500).SingleLine().TextColor(textColor)
 			})
-		})
+		}
+		noticeCard(c, headline, caption, surface, ink, muted, textScale, tideWidth, started, trailing).
+			Absolute().Left(0).Right(0).Bottom(min(bottomGap, shown)).Height(height)
 	})
 }
 
-func usageResetCaption(reset *time.Time, now time.Time) string {
+func noticeTypography(c *n.Context, textScale float32) (title, body n.Font, titleLine, bodyLine float32) {
+	family := c.Theme().Font
+	return n.Font{Family: family, Size: 13 * textScale, Weight: 600},
+		n.Font{Family: family, Size: 12 * textScale, Weight: 400, Features: "tnum"}, 18 * textScale, 17 * textScale
+}
+
+func noticeCard(c *n.Context, headline, caption string, surface, ink, muted n.Color, textScale, tideWidth float32, started time.Time, trailing func()) n.Element {
+	title, body, titleLine, bodyLine := noticeTypography(c, textScale)
+	row := n.Row(c).Padding(noticePadding, noticeInset).Gap(noticeGap).Radius(12).Background(surface).AlignItems(n.Center)
+	row.Children(func() {
+		if tideWidth > 0 && textScale <= 1.4 {
+			n.Box(c).Size(tideWidth, noticeTideHeight).Shrink(0).Role(n.RoleNone).Draw(func(p *n.Painter, box n.Rect) {
+				progress := 1.0
+				if !started.IsZero() {
+					progress = min(1, max(0, float64(p.Now().Sub(started))/float64(tideMotion)))
+					if progress < 1 {
+						p.AnimationFrameRate(60)
+					}
+				}
+				paintUsageTide(p, box, muted, 1-math.Pow(1-progress, 3))
+			})
+		}
+		n.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+			n.Text(c, headline).Font(title.Family).FontSize(title.Size).FontWeight(title.Weight).
+				FixedLineHeight(titleLine).TextColor(ink).Wrap().Role(n.RoleStatus)
+			n.Text(c, caption).Font(body.Family).FontSize(body.Size).FontFeatures(body.Features).FixedLineHeight(bodyLine).TextColor(muted).Wrap()
+		})
+		trailing()
+	})
+	return row
+}
+
+func usageResetCaption(reset *time.Time, now time.Time) (string, time.Duration) {
 	if reset == nil {
-		return "重置时间暂未知"
+		return "重置时间暂未知", 0
 	}
-	local := reset.In(now.Location())
-	if local.Year() == now.Year() && local.YearDay() == now.YearDay() {
-		return "预计今日 " + local.Format("15:04") + " 重置"
+	remaining := reset.Sub(now)
+	if remaining <= 0 {
+		return "预计重置时间已到", 0
 	}
-	return "预计 " + local.Format("1 月 2 日 15:04") + " 重置"
+	// Round up so zero is never displayed before the deadline.
+	seconds := int64((remaining-1)/time.Second) + 1
+	next := remaining - time.Duration(seconds-1)*time.Second
+	return fmt.Sprintf("预计 %02d:%02d:%02d 后重置", seconds/3600, seconds/60%60, seconds%60), next
 }
 
 func paintUsageTide(p *n.Painter, box n.Rect, ink n.Color, progress float64) {

@@ -36,8 +36,10 @@ func mobileDisclosureBody(c *ui.Context, expanded bool, content func(*ui.Context
 	})
 }
 
+const mobileUserBubbleInsetX, mobileUserBubbleInsetY = 14, 10
+
 func mobileUserBubble(c *ui.Context) ui.Element {
-	return ui.Column(c).AlignSelf(ui.End).MaxWidthPercent(89).Padding(10, 14).Gap(6).Radius(18).Background(palette(c).inset)
+	return ui.Column(c).AlignSelf(ui.End).MaxWidthPercent(89).Padding(mobileUserBubbleInsetY, mobileUserBubbleInsetX).Gap(6).Radius(18).Background(palette(c).inset)
 }
 
 func mobileHeaderSize(c *ui.Context) float32 { return tapSize / c.Zoom() }

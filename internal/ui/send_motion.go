@@ -30,6 +30,7 @@ type sentMessageMotion struct {
 	steerInputHeight                         float32
 	phase                                    sentMotionPhase
 	focused, departed, queued, steer         bool
+	fromNotice                               bool
 }
 
 type sentMotionPhase uint8
@@ -154,7 +155,9 @@ func (v *View) sentMessageBubble(c *n.Context, t *n.Theme, bubble n.Element, ite
 	if s == nil || s.source.W <= 0 || c.Preferences().ReduceMotion {
 		return
 	}
-	bubble.Background(userBubble(t).Alpha(s.progress(c)))
+	if !s.fromNotice {
+		bubble.Background(userBubble(t).Alpha(s.progress(c)))
+	}
 	animation := s.animation()
 	bubble.Transition(n.ElementTransition{From: &s.source, Duration: animation.Duration, Ease: animation.Ease, Position: true, Lift: true})
 }

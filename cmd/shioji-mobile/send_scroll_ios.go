@@ -28,6 +28,7 @@ type mobileSendScroll struct {
 	progress, elapsed      float32
 	started                bool
 	steer, queued          bool
+	fromNotice             bool
 	keyboardComposer       bool
 	source, composerSource ui.Rect
 	composerBounds         ui.Rect
@@ -181,8 +182,10 @@ func (s *mobileSendScroll) replyFooterDelay(id string) time.Duration {
 func (s *mobileSendScroll) bubble(c *ui.Context, bubble ui.Element, id string) {
 	if s.flying(id) {
 		animation := s.animation()
-		bubble.Background(palette(c).inset.Alpha(s.progress)).
-			Transition(ui.ElementTransition{From: &s.source, Duration: animation.Duration,
-				Ease: animation.Ease, Position: true, Lift: true})
+		if !s.fromNotice {
+			bubble.Background(palette(c).inset.Alpha(s.progress))
+		}
+		bubble.Transition(ui.ElementTransition{From: &s.source, Duration: animation.Duration,
+			Ease: animation.Ease, Position: true, Lift: true})
 	}
 }

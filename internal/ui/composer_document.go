@@ -148,7 +148,7 @@ func (v *View) composerDocument(c *n.Context, key string) *composerDocument {
 	}
 	if b.departed == "" && key == "session:"+v.Model.SessionID && v.Model.SessionID != "" && editToken == "" {
 		for id, in := range v.Model.Pending {
-			if in.SessionID != v.Model.SessionID || in.Continue || content.text != in.Text || !slices.Equal(v.Model.DraftReferencePositions(key), in.ReferencePositions) {
+			if in.SessionID != v.Model.SessionID || in.Continue || v.Model.SubmissionKeepsDraft(id) || content.text != in.Text || !slices.Equal(v.Model.DraftReferencePositions(key), in.ReferencePositions) {
 				continue
 			}
 			queued := v.queueArrival(id) != nil

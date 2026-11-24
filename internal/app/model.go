@@ -110,6 +110,7 @@ type Model struct {
 	// Transient: each visit starts with its hydrated tool history collapsed.
 	FoldToolHistory      map[string]bool
 	Pending              map[string]domain.Submission
+	independentInputs    map[string]bool
 	Details              map[string]domain.SessionDetail
 	Resolved             map[string]bool
 	GitDrafts            map[string]domain.GitChoice
@@ -124,7 +125,7 @@ type Model struct {
 }
 
 func NewModel() *Model {
-	return &Model{RemotePathUploads: map[string]bool{}, startedAt: time.Now(), completionCutoffs: map[string]time.Time{}, completionReads: map[string]string{}, HistoryAnchors: map[string]string{}, HistoryOpenings: map[string]bool{}, HistoryReads: map[string]*HistoryRead{}, HistoryOutlines: map[string]domain.HistoryOutline{}, homeDefaultsPending: true, WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{CollapseLatestTools: true}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, pendingGenerations: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, sessionConfigDrafts: map[string]sessionConfigDraft{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{RemotePathUploads: map[string]bool{}, startedAt: time.Now(), completionCutoffs: map[string]time.Time{}, completionReads: map[string]string{}, HistoryAnchors: map[string]string{}, HistoryOpenings: map[string]bool{}, HistoryReads: map[string]*HistoryRead{}, HistoryOutlines: map[string]domain.HistoryOutline{}, homeDefaultsPending: true, WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{CollapseLatestTools: true}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, pendingGenerations: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, sessionConfigDrafts: map[string]sessionConfigDraft{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, independentInputs: map[string]bool{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {
@@ -203,9 +204,9 @@ func normalizeRunConfig(c domain.RunConfig, ready domain.Readiness) domain.RunCo
 	return c
 }
 func (m *Model) BeginSubmission() (domain.Submission, error) {
-	return m.beginSubmission("session.submit")
+	return m.beginSubmission("session.submit", nil)
 }
-func (m *Model) beginSubmission(method string) (domain.Submission, error) {
+func (m *Model) beginSubmission(method string, independentText *string) (domain.Submission, error) {
 	if reason := m.ReadOnlyConversationReason(); reason != "" {
 		return domain.Submission{}, errors.New(reason)
 	}
@@ -237,7 +238,7 @@ func (m *Model) beginSubmission(method string) (domain.Submission, error) {
 	if !steering && m.ModelUnavailable() {
 		return domain.Submission{}, errors.New(ModelUnavailableMessage)
 	}
-	if !m.HasDraftContent(key) {
+	if independentText == nil && !m.HasDraftContent(key) {
 		return domain.Submission{}, errors.New("enter a message")
 	}
 	workspace := m.WorkspaceID
@@ -263,18 +264,24 @@ func (m *Model) beginSubmission(method string) (domain.Submission, error) {
 	if !found {
 		return domain.Submission{}, errors.New("select a workspace")
 	}
-	refs, err := m.SubmissionAttachments(workspace)
-	if err != nil {
-		return domain.Submission{}, err
+	in := domain.Submission{HarnessID: m.HarnessID(), OperationID: domain.NewID(), WorkspaceID: workspace, SessionID: m.SessionID, Config: m.Config()}
+	if independentText != nil {
+		in.Text = *independentText
+	} else {
+		refs, err := m.SubmissionAttachments(workspace)
+		if err != nil {
+			return domain.Submission{}, err
+		}
+		skills, err := m.SubmissionSkills()
+		if err != nil {
+			return domain.Submission{}, err
+		}
+		in.Text, in.Attachments, in.Skills = m.Drafts[key], refs, skills
+		in.ReferencePositions = m.DraftReferencePositions(key)
+		if m.WorkerMinor < 12 && len(in.ReferencePositions) > 0 {
+			return domain.Submission{}, errors.New("请先升级执行服务以保留行内引用的位置")
+		}
 	}
-	skills, err := m.SubmissionSkills()
-	if err != nil {
-		return domain.Submission{}, err
-	}
-	if m.WorkerMinor < 12 && len(m.DraftReferencePositions(key)) > 0 {
-		return domain.Submission{}, errors.New("请先升级执行服务以保留行内引用的位置")
-	}
-	in := domain.Submission{ReferencePositions: m.DraftReferencePositions(key), Skills: skills, HarnessID: m.HarnessID(), Attachments: refs, OperationID: domain.NewID(), WorkspaceID: workspace, SessionID: m.SessionID, Text: m.Drafts[key], Config: m.Config()}
 	if m.SessionID == "" {
 		choice := m.GitDrafts[workspace]
 		if (choice.Branch != "" || choice.NewWorktree) && m.GitEpochs["workspace:"+workspace] != m.ConnectionEpoch {
@@ -306,6 +313,9 @@ func (m *Model) beginSubmission(method string) (domain.Submission, error) {
 		return domain.Submission{}, err
 	}
 	m.Pending[in.OperationID] = in
+	if independentText != nil {
+		m.independentInputs[in.OperationID] = true
+	}
 	m.PendingDevices[in.OperationID] = m.ConnectionID()
 	if (method == "session.submit" || method == "turn.steer" || method == "turn.enqueue") && m.WorkerMinor >= protocol.RecoveryMinor && m.Snapshot.Generation != "" {
 		m.pendingGenerations[in.OperationID] = m.Snapshot.Generation
@@ -357,6 +367,7 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 			return
 		}
 		delete(m.Pending, op.ID)
+		delete(m.independentInputs, op.ID)
 		delete(m.PendingDevices, op.ID)
 		delete(m.pendingGenerations, op.ID)
 		delete(m.UncertainSubmissions, op.ID)
@@ -410,6 +421,7 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 			m.SessionID = op.SessionID
 		}
 		delete(m.Pending, op.ID)
+		delete(m.independentInputs, op.ID)
 		delete(m.PendingDevices, op.ID)
 		delete(m.pendingGenerations, op.ID)
 		delete(m.submissionReceipts, op.ID)
@@ -432,6 +444,7 @@ func (m *Model) ApplyOperation(op domain.Operation) {
 		}
 		delete(m.UncertainSubmissions, op.ID)
 		delete(m.Pending, op.ID)
+		delete(m.independentInputs, op.ID)
 		delete(m.PendingDevices, op.ID)
 		delete(m.pendingGenerations, op.ID)
 		delete(m.submissionReceipts, op.ID)
@@ -753,6 +766,7 @@ type savedState struct {
 	Pager                      map[string]int                             `json:"pager"`
 	Collapsed                  map[string]bool                            `json:"collapsed,omitempty"`
 	Pending                    map[string]domain.Submission               `json:"pending"`
+	IndependentInputs          map[string]bool                            `json:"independentInputs,omitempty"`
 	GitDrafts                  map[string]domain.GitChoice                `json:"gitDrafts,omitempty"`
 	GitRepositories            map[string]string                          `json:"gitRepositories,omitempty"`
 	Inspectors                 map[string]bool                            `json:"inspectors,omitempty"`
@@ -901,6 +915,9 @@ func (m *Model) Load(path string) error {
 	}
 	if saved.Collapsed != nil {
 		m.Collapsed = saved.Collapsed
+	}
+	if saved.IndependentInputs != nil {
+		m.independentInputs = saved.IndependentInputs
 	}
 	if saved.Pending != nil {
 		m.Pending = saved.Pending

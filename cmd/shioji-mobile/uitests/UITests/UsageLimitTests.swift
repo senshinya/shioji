@@ -8,7 +8,7 @@ final class UsageLimitTests: XCTestCase {
         app.launch()
 
         let notice = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@", "You’ve hit your usage limit.")).firstMatch
+            .matching(NSPredicate(format: "label == %@", "使用额度已用尽")).firstMatch
         if !notice.waitForExistence(timeout: 3) {
             let session = app.buttons["测试断线重连"].firstMatch
             XCTAssertTrue(session.waitForExistence(timeout: 12))

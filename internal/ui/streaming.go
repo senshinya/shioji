@@ -6,6 +6,7 @@ import (
 
 	n "github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
+	"shioji/internal/conversationui"
 	"shioji/internal/domain"
 )
 
@@ -208,12 +209,29 @@ func (v *View) assistantReply(c *n.Context, item domain.Item) {
 	// The existing tool-to-prose handoff establishes the first reply's final
 	// slot before fading in its footer; do not add another entrance clock.
 	baseline := !fresh || v.runningProgress != nil && v.runningProgress.handoff != nil
+	detail := v.Model.Details[v.Model.SessionID]
+	text := item.Text
+	if !v.loadingBlocksComposer() {
+		body, regional := conversationui.SplitRegionalAccessWarning(item)
+		if !regional {
+			body, _, _ = conversationui.SplitAntigravityQuotaWarning(detail.Session.HarnessID, item)
+		}
+		if body != item.Text {
+			if _, warning := conversationui.ComposerWarning(detail, v.Model.UsageLimitForSession(v.Model.SessionID, c.Now())); item.ID == warning {
+				text = body
+			}
+		}
+	}
 	v.transcriptContentHeight(c, root, true, baseline, duration, func() float32 {
 		return v.markdownHeightDelta(func() {
-			if streaming {
-				markdown.Stream(c.Key("body"), item.Text, &v.md).FillWidth().FontSize(float32(v.Model.Preferences.ReplySize))
-			} else {
-				markdown.View(c.Key("body"), item.Text, &v.md).FillWidth().FontSize(float32(v.Model.Preferences.ReplySize))
+			if text != "" || text == item.Text {
+				if streaming {
+					markdown.Stream(c.Key("body"), text, &v.md).FillWidth().FontSize(float32(v.Model.Preferences.ReplySize))
+				} else {
+					markdown.View(c.Key("body"), text, &v.md).FillWidth().FontSize(float32(v.Model.Preferences.ReplySize))
+				}
+			} else if v.md.OnRevealState != nil {
+				v.md.OnRevealState(false)
 			}
 		})
 	})
