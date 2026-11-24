@@ -34,7 +34,7 @@ AGY 受管会话向原生 Hook 提供 `SHIOJI_CALLBACK_URL` 和 `SHIOJI_CALLBACK
 
 文本 `@` 引用使用 worker 已保存的不可变快照。二进制路径附件只传执行设备上的已验证路径，访问仍受 Antigravity 当前权限约束。代码评论携带已选 diff 片段和比较基准。工具结果的内嵌图片、文本和设备文件链接由所属 worker 校验并保存为可跨客户端读取的附件。会话标题仅采纳同一原生会话的标题事件，用户手工命名优先。
 
-只读 Skill 目录读取已接纳的项目和设备原生配置，包括标准目录、清单声明的条目和继承，以及已启用的设备插件。清单按名称或相对路径筛选，继承内的相对路径沿用原项目或个人配置基准。授权范围之外的来源由 CLI 管理。行内引用绑定文件位置及内容摘要，编辑、停用或替换文件后需要重新选取。[Antigravity Skill 查找规则](https://antigravity.google/docs/customization-discovery?tab=cli)
+只读 Skill 目录扫描执行设备上已接纳的项目和附加目录，以及设备原生配置。项目的 `.gemini/skills` 提供兼容来源，同名时沿用已有来源。目录还包含清单声明的条目和继承，以及已启用的设备插件。用户配置的 `config/skills.json` 可显式引用该设备用户的 `~/.agents/skills`，标准用户 Skill 目录也可以链接到该共享目录。清单按名称或相对路径筛选，继承内的相对路径沿用原项目或个人配置基准。授权范围之外的来源由 CLI 管理。行内引用绑定文件位置及内容摘要，编辑、停用或替换文件后需要重新选取。[Antigravity Skill 查找规则](https://antigravity.google/docs/customization-discovery?tab=cli)
 
 设备设置的 MCP 页读取和编辑所属设备原生配置目录中的 `config/mcp_config.json`。默认原生目录为 `~/.gemini`，绝对路径 `GEMINI_HOME` 会传给 ACP 进程。设备页支持 stdio 和 Streamable HTTP 的基本配置及启停，保留未编辑的原生字段。环境变量和请求头读取时只返回名称。原文件修订和所属配置目录共同限定写入，文件仅对设备账户可读。服务迁移到其他来源时需要重新配置凭据。保存回执表示配置已写入，新会话由 CLI 加载，当前会话的连接、OAuth 和生效状态由原生 CLI 管理。[Antigravity MCP 配置](https://antigravity.google/docs/mcp?tab=cli)
 

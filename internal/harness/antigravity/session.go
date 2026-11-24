@@ -109,6 +109,7 @@ type runtime struct {
 	version      string
 	profile      string
 	skillProfile string
+	skillHome    string
 	native       initialization
 	process      *rpc
 	bridge       *goalBridge
@@ -153,7 +154,8 @@ func (a Adapter) Start(ctx context.Context, options harness.StartOptions) (harne
 	}
 	r := &runtime{
 		options: options, version: version, profile: profileKey(env), skillProfile: profile, done: make(chan struct{}), requests: make(map[string]nativeRequest),
-		ready: domain.Readiness{HarnessID: a.Descriptor().ID, State: domain.RuntimeUnavailable, Error: "请在设备 Agent 设置重新检测以获取模型"},
+		skillHome: systemexec.EnvironmentValue(env, "HOME"),
+		ready:     domain.Readiness{HarnessID: a.Descriptor().ID, State: domain.RuntimeUnavailable, Error: "请在设备 Agent 设置重新检测以获取模型"},
 	}
 	argv := []string{path, "acp", "--process-per-session", "--disable-telemetry"}
 	if cfg := options.InitialConfig; !options.CatalogOnly && cfg != nil && cfg.Permission == yoloPermission && !cfg.Plan {

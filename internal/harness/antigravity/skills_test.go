@@ -2,14 +2,161 @@ package antigravity
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 )
+
+func TestSharedUserSkillsRequireExplicitConfiguration(t *testing.T) {
+	for _, source := range []string{"manifest", "standard-directory-link"} {
+		t.Run(source, func(t *testing.T) {
+			home, profile, project := t.TempDir(), t.TempDir(), t.TempDir()
+			shared := filepath.Join(home, ".agents", "skills")
+			sharedFile := filepath.Join(shared, "shared", "SKILL.md")
+			writeMCPFixture(t, sharedFile, "---\nname: shared\n---\nShared user instructions")
+			foreign := filepath.Join(home, "unrelated")
+			writeMCPFixture(t, filepath.Join(foreign, "foreign", "SKILL.md"), "---\nname: foreign\n---\nOutside skill roots")
+			writeMCPFixture(t, filepath.Join(project, ".agents", "skills.json"), skillEntries(t, shared))
+			if err := os.Symlink(foreign, filepath.Join(profile, "skills")); err != nil {
+				t.Fatal(err)
+			}
+
+			launch := domain.LaunchContext{CWD: project}
+			r := &runtime{skillHome: home, skillProfile: profile, session: domain.Session{Context: launch}}
+			before, err := r.Skills(t.Context(), launch)
+			if err != nil || len(before.Skills) != 0 {
+				t.Fatalf("unconfigured shared or foreign skills = %+v, %v", before, err)
+			}
+
+			switch source {
+			case "manifest":
+				writeMCPFixture(t, filepath.Join(profile, "config", "skills.json"), skillEntries(t, shared, foreign))
+			case "standard-directory-link":
+				if err := os.Mkdir(filepath.Join(profile, "config"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(shared, filepath.Join(profile, "config", "skills")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := r.SkillInventory(t.Context(), launch)
+			if err != nil || len(got.Entries) != 1 {
+				t.Fatalf("configured inventory = %+v, %v", got, err)
+			}
+			entry := got.Entries[0]
+			if !entry.Enabled || entry.Scope != domain.SkillUser || entry.Path != sharedFile {
+				t.Fatalf("unexpected shared source: %+v", entry)
+			}
+			blocks, err := r.skillBlocks(t.Context(), []domain.SkillReference{entry.SkillReference})
+			if err != nil || len(blocks) != 1 || !strings.Contains(blocks[0].Text, "Shared user instructions") {
+				t.Fatalf("shared skill input = %+v, %v", blocks, err)
+			}
+			if source == "standard-directory-link" {
+				writeMCPFixture(t, filepath.Join(profile, "config", "skills.json"), `{"exclude":["skills/shared"]}`)
+				catalog, err := r.Skills(t.Context(), launch)
+				if err != nil || len(catalog.Skills) != 0 {
+					t.Fatalf("linked skill ignored its configured exclusion: %+v, %v", catalog, err)
+				}
+			}
+		})
+	}
+}
+
+func TestSharedUserSkillRootCannotLinkOutsideHome(t *testing.T) {
+	home, profile, outside := t.TempDir(), t.TempDir(), t.TempDir()
+	shared := filepath.Join(home, ".agents", "skills")
+	writeMCPFixture(t, filepath.Join(outside, "foreign", "SKILL.md"), "---\nname: foreign\n---\nOutside home")
+	if err := os.Mkdir(filepath.Dir(shared), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, shared); err != nil {
+		t.Fatal(err)
+	}
+	writeMCPFixture(t, filepath.Join(profile, "config", "skills.json"), skillEntries(t, shared))
+	r := &runtime{skillHome: home, skillProfile: profile}
+	got, err := r.Skills(t.Context(), domain.LaunchContext{})
+	if err != nil || len(got.Skills) != 0 {
+		t.Fatalf("shared root escaped home: %+v, %v", got, err)
+	}
+}
+
+func TestSharedDirectoryLinkToAGYDoesNotReplaceStandardSource(t *testing.T) {
+	home := t.TempDir()
+	profile := filepath.Join(home, ".gemini")
+	standard := filepath.Join(profile, "config", "skills")
+	file := filepath.Join(standard, "review", "SKILL.md")
+	writeMCPFixture(t, file, "---\nname: review\n---\nStandard user skill")
+	if err := os.Mkdir(filepath.Join(home, ".agents"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(standard, filepath.Join(home, ".agents", "skills")); err != nil {
+		t.Fatal(err)
+	}
+	r := &runtime{skillHome: home, skillProfile: profile}
+	got, err := r.SkillInventory(t.Context(), domain.LaunchContext{})
+	if err != nil || len(got.Entries) != 1 || got.Entries[0].Path != file {
+		t.Fatalf("shared alias changed the standard source: %+v, %v", got, err)
+	}
+}
+
+func skillEntries(t *testing.T, paths ...string) string {
+	t.Helper()
+	entries := make([]map[string]string, 0, len(paths))
+	for _, path := range paths {
+		entries = append(entries, map[string]string{"path": path})
+	}
+	data, err := json.Marshal(map[string]any{"entries": entries})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestSkillCatalogScansLegacyGeminiDirectories(t *testing.T) {
+	project, extra := t.TempDir(), t.TempDir()
+	native := filepath.Join(project, ".agents", "skills", "review", "SKILL.md")
+	writeMCPFixture(t, native, "---\nname: review\n---\nNative instructions")
+	writeMCPFixture(t, filepath.Join(project, ".gemini", "skills", "review", "SKILL.md"), "---\nname: review\n---\nLegacy duplicate")
+	legacy := filepath.Join(project, ".gemini", "skills", "legacy", "SKILL.md")
+	writeMCPFixture(t, legacy, "---\nname: legacy\n---\nLegacy instructions")
+	writeMCPFixture(t, filepath.Join(extra, ".gemini", "skills", "extra", "SKILL.md"), "---\nname: extra\n---\nAdditional directory")
+
+	launch := domain.LaunchContext{CWD: project, AdditionalDirectories: []string{extra}}
+	r := &runtime{session: domain.Session{Context: launch}}
+	inventory, err := r.SkillInventory(t.Context(), launch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var enabled []string
+	for _, entry := range inventory.Entries {
+		if !entry.Enabled {
+			continue
+		}
+		if entry.Scope != domain.SkillProject || entry.Name == "review" && entry.Path != native {
+			t.Fatalf("unexpected selected source: %+v", entry)
+		}
+		enabled = append(enabled, entry.Name)
+	}
+	slices.Sort(enabled)
+	if !slices.Equal(enabled, []string{"extra", "legacy", "review"}) {
+		t.Fatalf("enabled skills = %v", enabled)
+	}
+	for _, entry := range inventory.Entries {
+		if entry.Path != legacy {
+			continue
+		}
+		blocks, err := r.skillBlocks(t.Context(), []domain.SkillReference{entry.SkillReference})
+		if err != nil || len(blocks) != 1 || !strings.Contains(blocks[0].Text, "Legacy instructions") {
+			t.Fatalf("legacy skill input = %+v, %v", blocks, err)
+		}
+	}
+}
 
 func TestSkillsBrowseAndReferenceTheSelectedDeviceSource(t *testing.T) {
 	profile, project, other := t.TempDir(), t.TempDir(), t.TempDir()

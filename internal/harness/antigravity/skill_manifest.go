@@ -61,9 +61,12 @@ func skillAliases(path string, bases ...string) []string {
 	return aliases
 }
 
-func excludedNativeSkill(exclusions []skillExclusion, entry domain.ManagedSkill, folder string) bool {
+func excludedNativeSkill(exclusions []skillExclusion, entry domain.ManagedSkill, folder, linkPath string) bool {
 	for _, exclusion := range exclusions {
 		aliases := append(skillAliases(entry.Path, exclusion.base), entry.Name, folder)
+		if linkPath != "" {
+			aliases = append(aliases, skillAliases(filepath.Join(linkPath, folder, "SKILL.md"), exclusion.base)...)
+		}
 		if !(skillFilter{excludes: exclusion.patterns}).matches(aliases...) {
 			return true
 		}
@@ -105,10 +108,10 @@ func (s skillManifestSource) resolve(path string) string {
 	return target
 }
 
-func (r *runtime) manifestSkills(launch domain.LaunchContext, inventory *domain.SkillInventory) ([]skillDirectory, []skillExclusion) {
+func (r *runtime) manifestSkills(launch domain.LaunchContext, bases []string, inventory *domain.SkillInventory) ([]skillDirectory, []skillExclusion) {
 	var sources []skillManifestSource
 	roots := append([]string{launch.CWD}, launch.AdditionalDirectories...)
-	bases := projectNativeConfigBases(launch)
+	shared := r.sharedSkillRoot()
 	for _, base := range bases {
 		fallback := ""
 		for _, ancestor := range bases {
@@ -187,12 +190,16 @@ func (r *runtime) manifestSkills(launch domain.LaunchContext, inventory *domain.
 			// resolving paths listed by inherited manifests.
 			scan(child, filter.narrow(inherited), depth+1)
 		}
+		entryRoots := source.roots
+		if source.scope == domain.SkillUser && shared != "" {
+			entryRoots = append(slices.Clone(entryRoots), shared)
+		}
 		for _, entry := range manifest.Entries {
 			if entry.Path == "" || budget <= 0 {
 				continue
 			}
 			path := source.resolve(entry.Path)
-			if root, relative, ok := skillRelative(path, source.roots); ok {
+			if root, relative, ok := skillRelative(path, entryRoots); ok {
 				dirs = append(dirs, skillDirectory{base: root, relative: relative, scope: source.scope, explicit: true,
 					filter: filter.narrow(entry), filterBases: []string{source.relativeBase, path}})
 				budget--

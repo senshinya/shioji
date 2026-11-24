@@ -22,6 +22,7 @@ import (
 
 type skillDirectory struct {
 	base, relative string
+	linkPath       string
 	scope          domain.SkillScope
 	priority       bool // CLI-only and shared skills outrank the other locations.
 	explicit       bool
@@ -39,21 +40,47 @@ func skillProfileDirectory(env []string) string {
 	return ""
 }
 
-func (r *runtime) skillDirectories(launch domain.LaunchContext) []skillDirectory {
+const sharedSkillPath = ".agents/skills"
+
+func (r *runtime) sharedSkillRoot() string {
+	if !filepath.IsAbs(r.skillHome) {
+		return ""
+	}
+	return filepath.Join(r.skillHome, sharedSkillPath)
+}
+
+func (r *runtime) skillDirectories(projects []string) []skillDirectory {
 	var dirs []skillDirectory
+	shared := r.sharedSkillRoot()
+	var sharedTarget string
+	if shared != "" {
+		sharedTarget, _ = filepath.EvalSymlinks(shared)
+	}
+	addUserDirectory := func(path string, priority bool) {
+		dir := skillDirectory{base: r.skillProfile, relative: path, scope: domain.SkillUser, priority: priority}
+		configured := filepath.Join(dir.base, dir.relative)
+		// Require the link on the AGY side. The shared path can also be an alias for a normal AGY directory.
+		if _, err := os.Readlink(configured); sharedTarget != "" && err == nil {
+			if target, err := filepath.EvalSymlinks(configured); err == nil && target == sharedTarget {
+				dir.linkPath = configured
+				dir.base, dir.relative = shared, "."
+			}
+		}
+		dirs = append(dirs, dir)
+	}
 	if r.skillProfile != "" {
 		for _, sub := range []string{"antigravity-cli/skills", "skills"} {
-			dirs = append(dirs, skillDirectory{base: r.skillProfile, relative: sub, scope: domain.SkillUser, priority: true})
+			addUserDirectory(sub, true)
 		}
 	}
-	for _, project := range projectNativeConfigBases(launch) {
+	for _, project := range projects {
 		for _, sub := range projectNativeConfigDirectories {
 			dirs = append(dirs, skillDirectory{base: project, relative: filepath.Join(sub, "skills"), scope: domain.SkillProject})
 		}
 	}
 	if r.skillProfile != "" {
-		dirs = append(dirs, skillDirectory{base: r.skillProfile, relative: "config/skills", scope: domain.SkillUser},
-			skillDirectory{base: r.skillProfile, relative: "antigravity-cli/builtin/skills", scope: domain.SkillBuiltIn})
+		addUserDirectory("config/skills", false)
+		dirs = append(dirs, skillDirectory{base: r.skillProfile, relative: "antigravity-cli/builtin/skills", scope: domain.SkillBuiltIn})
 	}
 	return dirs
 }
@@ -65,8 +92,9 @@ type discoveredSkills struct {
 
 func (r *runtime) discoverSkills(ctx context.Context, launch domain.LaunchContext, wanted []string) (discoveredSkills, error) {
 	out := discoveredSkills{bodies: map[string]string{}}
-	extra, excluded := r.manifestSkills(launch, &out.inventory)
-	dirs := append(r.skillDirectories(launch), extra...)
+	projects := projectNativeConfigBases(launch)
+	extra, excluded := r.manifestSkills(launch, projects, &out.inventory)
+	dirs := append(r.skillDirectories(projects), extra...)
 	dirs = append(dirs, r.pluginSkills()...)
 	rank := func(dir skillDirectory) int {
 		if dir.priority {
@@ -84,13 +112,17 @@ func (r *runtime) discoverSkills(ctx context.Context, launch domain.LaunchContex
 		}
 	}
 	slices.SortStableFunc(dirs, func(a, b skillDirectory) int { return cmp.Compare(rank(a), rank(b)) })
+	// Keep existing selections when a legacy project directory adds a duplicate.
+	for _, project := range projects {
+		dirs = append(dirs, skillDirectory{base: project, relative: ".gemini/skills", scope: domain.SkillProject})
+	}
 	found := make(map[string]bool)
 	observed := make(map[string]bool)
 	for _, dir := range dirs {
 		if err := ctx.Err(); err != nil {
 			return discoveredSkills{}, err
 		}
-		err := scanSkillDirectory(dir, func(entry domain.ManagedSkill, data []byte, folder string) error {
+		err := r.scanSkillDirectory(dir, func(entry domain.ManagedSkill, data []byte, folder string) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
@@ -99,7 +131,7 @@ func (r *runtime) discoverSkills(ctx context.Context, launch domain.LaunchContex
 			}
 			observed[entry.ID] = true
 			switch {
-			case !dir.priority && excludedNativeSkill(excluded, entry, folder):
+			case !dir.priority && excludedNativeSkill(excluded, entry, folder, dir.linkPath):
 				entry.ReadOnlyReason = "原生配置排除此 Skill"
 			case found[entry.Name]:
 				entry.ReadOnlyReason = "同名 Skill 由优先来源提供"
@@ -122,8 +154,21 @@ func (r *runtime) discoverSkills(ctx context.Context, launch domain.LaunchContex
 	return out, nil
 }
 
-func scanSkillDirectory(dir skillDirectory, visit func(domain.ManagedSkill, []byte, string) error) error {
-	base, err := os.OpenRoot(dir.base)
+func (r *runtime) openSkillRoot(path string) (*os.Root, error) {
+	shared := r.sharedSkillRoot()
+	if shared == "" || path != shared {
+		return os.OpenRoot(path)
+	}
+	home, err := os.OpenRoot(r.skillHome)
+	if err != nil {
+		return nil, err
+	}
+	defer home.Close()
+	return home.OpenRoot(sharedSkillPath)
+}
+
+func (r *runtime) scanSkillDirectory(dir skillDirectory, visit func(domain.ManagedSkill, []byte, string) error) error {
+	base, err := r.openSkillRoot(dir.base)
 	if err != nil {
 		return nil
 	}
