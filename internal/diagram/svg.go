@@ -239,7 +239,7 @@ func resolveCSS(value string, vars map[string]string, depth int) (string, error)
 	for {
 		start := strings.Index(value, "var(")
 		if start < 0 {
-			return value, nil
+			return resolveColorMix(value)
 		}
 		level, end := 1, start+4
 		for ; end < len(value) && level > 0; end++ {
@@ -267,6 +267,273 @@ func resolveCSS(value string, vars map[string]string, depth int) (string, error)
 		}
 		value = value[:start] + resolved + value[end:]
 	}
+}
+
+type srgbColor struct {
+	r, g, b, a float64
+}
+
+func resolveColorMix(value string) (string, error) {
+	for range 32 {
+		lower := strings.ToLower(value)
+		start := strings.LastIndex(lower, "color-mix(")
+		if start < 0 {
+			return value, nil
+		}
+		level, end := 1, start+len("color-mix(")
+		for ; end < len(value) && level > 0; end++ {
+			if value[end] == '(' {
+				level++
+			} else if value[end] == ')' {
+				level--
+			}
+		}
+		if level != 0 {
+			return "", errors.New("图表样式无法转换")
+		}
+		mixed, err := evaluateColorMix(value[start+len("color-mix(") : end-1])
+		if err != nil {
+			return "", err
+		}
+		value = value[:start] + mixed + value[end:]
+	}
+	return "", errors.New("图表样式无法转换")
+}
+
+func evaluateColorMix(inner string) (string, error) {
+	parts := splitTopLevel(inner, ',')
+	if len(parts) != 3 {
+		return "", errors.New("图表样式无法转换")
+	}
+	if strings.Join(strings.Fields(strings.ToLower(parts[0])), " ") != "in srgb" {
+		return "", errors.New("图表样式无法转换")
+	}
+	c1, p1, has1, err := parseColorMixComponent(parts[1])
+	if err != nil {
+		return "", err
+	}
+	c2, p2, has2, err := parseColorMixComponent(parts[2])
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case !has1 && !has2:
+		p1, p2 = 50, 50
+	case has1 && !has2:
+		p2 = 100 - p1
+	case !has1 && has2:
+		p1 = 100 - p2
+	}
+	sum := p1 + p2
+	if sum <= 0 {
+		return "", errors.New("图表样式无法转换")
+	}
+	alphaMul := 1.0
+	if sum < 100 {
+		alphaMul = sum / 100
+	}
+	w1, w2 := p1/sum, p2/sum
+	aInterp := c1.a*w1 + c2.a*w2
+	aFinal := aInterp * alphaMul
+	if aInterp <= 0 || aFinal <= 0 {
+		return "rgba(0,0,0,0)", nil
+	}
+	r := clampByte((c1.r*c1.a*w1 + c2.r*c2.a*w2) / aInterp)
+	g := clampByte((c1.g*c1.a*w1 + c2.g*c2.a*w2) / aInterp)
+	b := clampByte((c1.b*c1.a*w1 + c2.b*c2.a*w2) / aInterp)
+	if aFinal >= 1-1e-6 {
+		return fmt.Sprintf("#%02x%02x%02x", r, g, b), nil
+	}
+	alpha := math.Round(min(1, aFinal)*10000) / 10000
+	return fmt.Sprintf("rgba(%d,%d,%d,%s)", r, g, b, strconv.FormatFloat(alpha, 'f', -1, 64)), nil
+}
+
+func splitTopLevel(s string, sep byte) []string {
+	var out []string
+	level, start := 0, 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			level++
+		case ')':
+			if level > 0 {
+				level--
+			}
+		case sep:
+			if level == 0 {
+				out = append(out, strings.TrimSpace(s[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	return append(out, strings.TrimSpace(s[start:]))
+}
+
+func splitTopLevelTokens(s string) []string {
+	var out []string
+	level, start := 0, -1
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '(' {
+			if start < 0 {
+				start = i
+			}
+			level++
+			continue
+		}
+		if c == ')' {
+			if level > 0 {
+				level--
+			}
+			continue
+		}
+		if level == 0 && (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+			if start >= 0 {
+				out = append(out, s[start:i])
+				start = -1
+			}
+			continue
+		}
+		if start < 0 {
+			start = i
+		}
+	}
+	if start >= 0 {
+		out = append(out, s[start:])
+	}
+	return out
+}
+
+func parseColorMixComponent(raw string) (srgbColor, float64, bool, error) {
+	tokens := splitTopLevelTokens(strings.TrimSpace(raw))
+	switch len(tokens) {
+	case 1:
+		c, err := parseSRGBColor(tokens[0])
+		return c, 0, false, err
+	case 2:
+		if p, ok := parsePercentage(tokens[1]); ok {
+			c, err := parseSRGBColor(tokens[0])
+			return c, p, true, err
+		}
+		if p, ok := parsePercentage(tokens[0]); ok {
+			c, err := parseSRGBColor(tokens[1])
+			return c, p, true, err
+		}
+	}
+	return srgbColor{}, 0, false, errors.New("图表样式无法转换")
+}
+
+func parsePercentage(s string) (float64, bool) {
+	if !strings.HasSuffix(s, "%") {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(strings.TrimSuffix(s, "%"), 64)
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 100 {
+		return 0, false
+	}
+	return v, true
+}
+
+func parseSRGBColor(raw string) (srgbColor, error) {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	switch s {
+	case "transparent":
+		return srgbColor{0, 0, 0, 0}, nil
+	case "black":
+		return srgbColor{0, 0, 0, 1}, nil
+	case "white":
+		return srgbColor{255, 255, 255, 1}, nil
+	}
+	if strings.HasPrefix(s, "#") {
+		hex := s[1:]
+		switch len(hex) {
+		case 3, 4:
+			r, err1 := strconv.ParseUint(hex[0:1], 16, 8)
+			g, err2 := strconv.ParseUint(hex[1:2], 16, 8)
+			b, err3 := strconv.ParseUint(hex[2:3], 16, 8)
+			if err1 != nil || err2 != nil || err3 != nil {
+				return srgbColor{}, errors.New("图表样式无法转换")
+			}
+			a := 1.0
+			if len(hex) == 4 {
+				av, err4 := strconv.ParseUint(hex[3:4], 16, 8)
+				if err4 != nil {
+					return srgbColor{}, errors.New("图表样式无法转换")
+				}
+				a = float64(av*17) / 255
+			}
+			return srgbColor{float64(r * 17), float64(g * 17), float64(b * 17), a}, nil
+		case 6, 8:
+			r, err1 := strconv.ParseUint(hex[0:2], 16, 8)
+			g, err2 := strconv.ParseUint(hex[2:4], 16, 8)
+			b, err3 := strconv.ParseUint(hex[4:6], 16, 8)
+			if err1 != nil || err2 != nil || err3 != nil {
+				return srgbColor{}, errors.New("图表样式无法转换")
+			}
+			a := 1.0
+			if len(hex) == 8 {
+				av, err4 := strconv.ParseUint(hex[6:8], 16, 8)
+				if err4 != nil {
+					return srgbColor{}, errors.New("图表样式无法转换")
+				}
+				a = float64(av) / 255
+			}
+			return srgbColor{float64(r), float64(g), float64(b), a}, nil
+		}
+		return srgbColor{}, errors.New("图表样式无法转换")
+	}
+	if strings.HasPrefix(s, "rgb(") && strings.HasSuffix(s, ")") {
+		parts := splitTopLevel(s[4:len(s)-1], ',')
+		if len(parts) == 3 {
+			r, ok1 := parseChannel(parts[0])
+			g, ok2 := parseChannel(parts[1])
+			b, ok3 := parseChannel(parts[2])
+			if ok1 && ok2 && ok3 {
+				return srgbColor{r, g, b, 1}, nil
+			}
+		}
+		return srgbColor{}, errors.New("图表样式无法转换")
+	}
+	if strings.HasPrefix(s, "rgba(") && strings.HasSuffix(s, ")") {
+		parts := splitTopLevel(s[5:len(s)-1], ',')
+		if len(parts) == 4 {
+			r, ok1 := parseChannel(parts[0])
+			g, ok2 := parseChannel(parts[1])
+			b, ok3 := parseChannel(parts[2])
+			a, ok4 := parseAlpha(parts[3])
+			if ok1 && ok2 && ok3 && ok4 {
+				return srgbColor{r, g, b, a}, nil
+			}
+		}
+		return srgbColor{}, errors.New("图表样式无法转换")
+	}
+	return srgbColor{}, errors.New("图表样式无法转换")
+}
+
+func parseChannel(s string) (float64, bool) {
+	if p, ok := parsePercentage(s); ok {
+		return p * 2.55, true
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, false
+	}
+	return max(0, min(255, v)), true
+}
+
+func parseAlpha(s string) (float64, bool) {
+	if p, ok := parsePercentage(s); ok {
+		return p / 100, true
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, false
+	}
+	return max(0, min(1, v)), true
+}
+
+func clampByte(v float64) int {
+	return int(max(0, min(255, math.Round(v))))
 }
 
 func dimensions(root *svgNode) error {

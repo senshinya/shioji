@@ -77,10 +77,60 @@ func TestDiagramSVGResolvesInheritedTokensAndKeepsTextPositions(t *testing.T) {
 	}
 }
 func TestDiagramSVGRejectsResourcesAndUnknownCSS(t *testing.T) {
-	for _, body := range []string{`<image href="file:///etc/passwd"/>`, `<script>1</script>`, `<foreignObject/>`, `<path fill="url(https://example.invalid/x)"/>`, `<path fill="var(--missing)"/>`} {
+	for _, body := range []string{`<image href="file:///etc/passwd"/>`, `<script>1</script>`, `<foreignObject/>`, `<path fill="url(https://example.invalid/x)"/>`, `<path fill="var(--missing)"/>`, `<path stroke="color-mix(in oklch, #111 50%, #fff)"/>`, `<path stroke="color-mix(in srgb, #111 0%, #fff 0%)"/>`} {
 		_, err := normalizeSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">`+body+`</svg>`), false)
 		if err == nil {
 			t.Fatal("accepted unsupported content", body)
+		}
+	}
+}
+
+func TestDiagramSVGResolvesSRGBColorMixForSubgraphTitleHalos(t *testing.T) {
+	src := `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80" style="--_bg:var(--pele-bg,#fff);--_a:var(--pele-surface-alt,#eee)"><text fill="none" stroke="color-mix(in srgb,var(--_a) 75%,var(--_bg))" stroke-width="5">Nested</text><rect fill="color-mix(in srgb, #ff0000 25%, #0000ff 25%)"/></svg>`
+	light, err := normalizeSVG([]byte(src), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := string(light); !strings.Contains(text, `stroke="#efefef"`) || !strings.Contains(text, `fill="rgba(128,0,128,0.5)"`) || strings.Contains(text, "color-mix(") {
+		t.Fatalf("unexpected light color-mix resolution: %s", text)
+	}
+	dark, err := normalizeSVG([]byte(src), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := string(dark); !strings.Contains(text, `stroke="#303030"`) || strings.Contains(text, "color-mix(") {
+		t.Fatalf("unexpected dark color-mix resolution: %s", text)
+	}
+}
+
+func TestDiagramNestedSubgraphCrossingTitleRenders(t *testing.T) {
+	source := `flowchart TB
+	subgraph Outer["Outer"]
+		A["A"]
+		subgraph Middle["Middle"]
+			subgraph Inner["Inner"]
+				B["B"]
+			end
+		end
+	end
+	X["Outside"] --> B
+	A --> Inner`
+	for _, dark := range []bool{false, true} {
+		svg, err := renderSource(Request{Source: source, Dark: dark})
+		if err != nil {
+			t.Fatalf("dark=%v renderSource failed: %v", dark, err)
+		}
+		if strings.Contains(string(svg), "color-mix(") {
+			t.Fatalf("dark=%v left unresolved color-mix", dark)
+		}
+	}
+	if path := os.Getenv("SHIOJI_DIAGRAM_USVG"); path != "" {
+		out, err := render(context.Background(), Request{Source: source, Dark: true}, path)
+		if err != nil {
+			t.Fatalf("full render failed: %v", err)
+		}
+		if !strings.Contains(string(out), "<path") || strings.Contains(string(out), "<text") {
+			t.Fatal("nested subgraph output is not a complete vector diagram")
 		}
 	}
 }

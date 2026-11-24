@@ -21,6 +21,7 @@ func TestEmbeddedDiagramsDrawWithNativeSVG(t *testing.T) {
 		{"gantt", "gantt\n title Release\n dateFormat YYYY-MM-DD\n Ship :t1, 2026-11-20, 1d", "Ship"},
 		{"pie", "pie\n title Animals\n \"Dog\" : 30\n \"Cat\" : 20", "Animals"},
 		{"mindmap", "mindmap\n root((hello))\n  branch\n   leaf", "hello"},
+		{"nestedSubgraph", "flowchart TB\n subgraph Outer[\"Outer\"]\n  A[\"A\"]\n  subgraph Middle[\"Middle\"]\n   subgraph Inner[\"Inner\"]\n    B[\"B\"]\n   end\n  end\n end\n X[\"Outside\"] --> B\n A --> Inner", "Inner"},
 	} {
 		t.Run(sample.name, func(t *testing.T) {
 			for _, dark := range []bool{false, true} {
