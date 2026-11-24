@@ -401,7 +401,7 @@ func (s *Settings) appearance(c *n.Context, t *n.Theme) {
 			icon      *n.SVG
 		}{{"light", "浅色", settingsSun}, {"dark", "深色", settingsMoon}, {"system", "跟随系统", monitor}} {
 			selected := p.Appearance == item.id
-			button := control(c.Key("theme:"+item.id), 8).Grow(1).MinWidth(0).Height(140).Padding(4).Radius(8).Background(t.Surface).Label("外观"+item.label).Checked(selected).Role(n.RoleRadio).TextColor(t.Text).Border(1, t.Border)
+			button := control(c.Key("theme:"+item.id), 8).Grow(1).MinWidth(0).Padding(4).Radius(8).Background(t.Surface).Label("外观"+item.label).Checked(selected).Role(n.RoleRadio).TextColor(t.Text).Border(1, t.Border)
 			if selected {
 				button.Border(1, t.Text)
 			}
