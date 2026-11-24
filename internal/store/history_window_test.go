@@ -167,3 +167,51 @@ func TestHistoryOutlinePagesOnlyUserMetadata(t *testing.T) {
 		t.Fatal(b, e)
 	}
 }
+
+func TestHistoryToolGroupSpansReasoningAndAutomaticApproval(t *testing.T) {
+	s := open(t)
+	w := workspace(t, s)
+	op, err := s.Accept(domain.Submission{OperationID: "reasoning-group", WorkspaceID: w.ID, Text: "check", Config: domain.RunConfig{Model: "test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply := func(e domain.Event) domain.Event {
+		t.Helper()
+		got, err := s.Apply(op.SessionID, e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	upsert := func(id, kind, presentation string) domain.Item {
+		t.Helper()
+		return *apply(domain.Event{Type: "item.upsert", Item: &domain.Item{
+			ID: id, TurnID: "t", Kind: kind, Presentation: presentation,
+			Text: id, Status: "completed", Final: true,
+		}}).Item
+	}
+	first := upsert("first-thought", "activity", "reasoning")
+	call := upsert("first-call", "tool", "files")
+	request := domain.PendingRequest{ID: "approval", TurnID: "t", ItemID: call.ID, Kind: "approval", Title: "Allow?", State: domain.RequestPending, Revision: 1}
+	apply(domain.Event{Type: "request.open", Request: &request})
+	request.State, request.Revision = domain.RequestResolved, 2
+	resolved := apply(domain.Event{Type: "request.resolve", Request: &request, AutomaticallyApproved: true})
+	if !domain.HistorySpacer(*resolved.Item) {
+		t.Fatal("resolved approval should leave only the tool visible", resolved.Item)
+	}
+	upsert("second-call", "tool", "command")
+	last := upsert("last-thought", "activity", "reasoning")
+	upsert("answer", "assistant", "")
+	upsert("separate", "tool", "command")
+
+	for _, around := range []string{first.ID, last.ID} {
+		page, err := s.SessionHistory(domain.HistoryQuery{SessionID: op.SessionID, AroundID: around, Limit: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := domain.HistoryToolGroup{ID: call.ID, TurnID: "t", First: first.Order, Last: last.Order, Count: 2}
+		if got := page.History.Groups; len(got) != 1 || got[0] != want {
+			t.Fatalf("summary-only page at %s lost its group: %+v", around, got)
+		}
+	}
+}

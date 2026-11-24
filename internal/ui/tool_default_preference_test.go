@@ -37,7 +37,7 @@ func TestLatestToolDefaultFoldedOnArrivalAndReentry(t *testing.T) {
 			if !ui.HasText("next command") {
 				t.Fatal("new call reset explicit expansion")
 			}
-			d.Items = append(d.Items, domain.Item{ID: "steer", TurnID: "t", Kind: "user", Text: "继续检查", Final: true}, domain.Item{ID: "new-group", TurnID: "t", Kind: "tool", Presentation: "command", Name: "new group command", Status: "running"})
+			d.Items = append(d.Items, domain.Item{ID: "reply", TurnID: "t", Kind: "assistant", Text: "已核对第一部分。", Final: true}, domain.Item{ID: "new-group", TurnID: "t", Kind: "tool", Presentation: "command", Name: "new group command", Status: "running"})
 			v.Model.Details["s"] = d
 			ui.Frame()
 			ui.Advance(time.Second)

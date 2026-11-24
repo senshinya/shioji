@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -10,6 +11,7 @@ import (
 	"github.com/egoist/mygo/ui/markdown"
 
 	"shioji/internal/app"
+	"shioji/internal/conversationui"
 	"shioji/internal/domain"
 	"shioji/internal/mobileclient"
 )
@@ -23,13 +25,46 @@ const (
 )
 
 var (
-	toolTerminalSymbol = toolTranscriptSymbol("M4 5l5 5-5 5M11 15h6")
+	toolThinkingSymbol = mobileToolTimelineSymbol(conversationui.ThinkingIconPath)
+	toolTerminalSymbol = mobileToolTimelineSymbol("M4 5l5 5-5 5M11 15h6")
+	toolFileSymbol     = mobileToolTimelineSymbol("M5 2h7l4 4v12H5zM12 2v5h4M8 11h5M8 14h5")
+	toolSearchSymbol   = mobileToolTimelineSymbol("M17 17l4 4M19 11a8 8 0 1 1-16 0 8 8 0 1 1 16 0")
+	toolWaitSymbol     = mobileToolTimelineSymbol("M21 12a9 9 0 1 1-18 0 9 9 0 1 1 18 0M12 6v6l4 2")
 	toolChevronSymbol  = toolTranscriptSymbol("M6 8l4 4 4-4")
 	latestMobileSymbol = toolTranscriptSymbol("M5 7.5l5 5 5-5")
 )
 
 func toolTranscriptSymbol(path string) *ui.SVG {
 	return ui.MustParseSVG([]byte(`<svg viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path d="` + path + `" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
+}
+
+const mobileToolIconSlot = 14
+
+// Match the actual ink of each timeline icon so the paths can have different
+// view boxes without changing the perceived weight or height of the row.
+func mobileToolTimelineSymbol(path string) *ui.SVG {
+	const inkHeight, stroke = 8, 1.05
+	bounds := ui.MustParsePath(path).Bounds()
+	scale := (inkHeight - stroke) / bounds.H
+	side := mobileToolIconSlot / scale
+	x, y := bounds.X+(bounds.W-side)/2, bounds.Y+(bounds.H-side)/2
+	return ui.MustParseSVG([]byte(fmt.Sprintf(
+		`<svg viewBox="%g %g %g %g" xmlns="http://www.w3.org/2000/svg"><path d="%s" fill="none" stroke="currentColor" stroke-width="%g" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+		x, y, side, side, path, stroke/scale,
+	)))
+}
+
+func mobileToolTimelineIcon(presentation string) *ui.SVG {
+	switch presentation {
+	case "files", "context", "compaction":
+		return toolFileSymbol
+	case "review", "search":
+		return toolSearchSymbol
+	case "wait":
+		return toolWaitSymbol
+	default:
+		return toolTerminalSymbol
+	}
 }
 
 type mobileToolTimeline struct {
@@ -197,10 +232,8 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 	toolResultPanel(c.Key("body"), group.Open, target != "", &progress, func(c *ui.Context) {
 		ui.Box(c.Key("heading-clearance")).Height(mobileToolRowGap - (transcriptMetadataHeight - 20)).Shrink(0)
 		for index, tool := range tools {
-			body := timeline.bodies[tool.ID]
-			if body == nil {
-				body = new(bool)
-				timeline.bodies[tool.ID] = body
+			if domain.HistorySpacer(tool) {
+				continue
 			}
 			row := c.Key(tool.ID)
 			entrance := arrivals.progress(c.Now(), tool.ID)
@@ -236,6 +269,15 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 					})
 				}
 				call.Children(func() {
+					if domain.ReasoningSummary(tool) {
+						heading = mobileToolReasoning(row, tool, font, mark)
+						return
+					}
+					body := timeline.bodies[tool.ID]
+					if body == nil {
+						body = new(bool)
+						timeline.bodies[tool.ID] = body
+					}
 					heading = a.toolItem(row, parent, session, tool, body, mark, true, keepPosition)
 				})
 			})
@@ -254,8 +296,21 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 	}, list.Bounds(c).H)
 }
 
+func mobileToolReasoning(c *ui.Context, item domain.Item, font ui.Font, mark *markdown.RangeDecoration) ui.Element {
+	body := conversationui.ReasoningSummaryText(item)
+	firstLine, _, _ := strings.Cut(body, "\n")
+	text := ui.Text(c.Key("reasoning"), body).Font(font.Family).FontSize(font.Size).
+		FixedLineHeight(mobileStatusLineHeight(font)).TextColor(palette(c).secondary).
+		Wrap().Selectable().FillWidth().MinWidth(0).MarginStart(mobileToolTextColumn)
+	decorateTranscriptText(c, text, body, mark, nil)
+	if body != "" {
+		mobileToolGlyph(c.Key("timeline-icon"), toolThinkingSymbol, firstLine, font).Absolute().Left(mobileToolTimelineInset).Top(0)
+	}
+	return text
+}
+
 func mobileToolGlyph(c *ui.Context, symbol *ui.SVG, title string, font ui.Font) ui.Element {
-	return transcriptSymbol(c, symbol, title, font, 14, palette(c).secondary)
+	return transcriptSymbol(c, symbol, title, font, mobileToolIconSlot, palette(c).secondary)
 }
 
 func mobileToolStatusDot(c *ui.Context, title string, font ui.Font, sweep *mobileToolSweep) ui.Element {

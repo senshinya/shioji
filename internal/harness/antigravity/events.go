@@ -359,6 +359,7 @@ type nativeRequest struct {
 	WireID    json.RawMessage
 	Request   domain.PendingRequest
 	AllowOnce string
+	ToolCall  toolUpdate
 }
 
 func (r *runtime) receivePermission(msg packet) error {
@@ -393,16 +394,17 @@ func (r *runtime) receivePermission(msg packet) error {
 		}
 		request.Choices = append(request.Choices, domain.RequestChoice{ID: option.OptionID, Label: clip(option.Name, 256), Restriction: strings.HasPrefix(option.Kind, "reject")})
 	}
+	pending := nativeRequest{WireID: msg.ID, Request: request, AllowOnce: allowOnce, ToolCall: payload.ToolCall}
 	if r.session.Config.Permission == yoloPermission {
 		if turn != nil {
 			r.confirm(turn, nil)
 		}
-		return r.reply(context.Background(), msg.ID, permissionOutcome(allowOnce), nil)
+		return r.autoApprove(context.Background(), "", pending, turn)
 	}
 	if len(request.Choices) == 0 {
 		return r.reply(context.Background(), msg.ID, permissionOutcome(""), nil)
 	}
-	return r.openRequest(nativeRequest{WireID: msg.ID, Request: request, AllowOnce: allowOnce}, turn)
+	return r.openRequest(pending, turn)
 }
 
 func (r *runtime) requestSource(sessionID, toolID string) (domain.PendingRequest, *logicalTurn, bool) {
@@ -484,13 +486,17 @@ func (r *runtime) resolveRequest(ctx context.Context, key string, p nativeReques
 	if err := r.reply(ctx, p.WireID, outcome, nil); err != nil {
 		return err
 	}
+	return r.closeRequest(key, p, invalidated, false)
+}
+
+func (r *runtime) closeRequest(key string, p nativeRequest, invalidated, automatic bool) error {
 	delete(r.requests, key)
 	p.Request.Revision++
 	p.Request.State = domain.RequestResolved
 	if invalidated {
 		p.Request.State = domain.RequestInvalidated
 	}
-	if err := r.emit(domain.Event{Type: "request.resolve", Request: &p.Request}); err != nil {
+	if err := r.emit(domain.Event{Type: "request.resolve", Request: &p.Request, AutomaticallyApproved: automatic}); err != nil {
 		return err
 	}
 	return r.finishIfSettled(r.active)

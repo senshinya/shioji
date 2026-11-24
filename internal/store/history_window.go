@@ -149,7 +149,7 @@ func (s *Store) historyItemsQueryLocked(q domain.HistoryQuery, limit int) (strin
 
 func (s *Store) historyWindowLocked(id string, items []domain.Item, contextID string) (*domain.HistoryWindow, error) {
 	h := &domain.HistoryWindow{ContextID: contextID}
-	var tools []domain.Item
+	var members []domain.Item
 	for _, item := range items {
 		if item.ID == contextID {
 			continue
@@ -158,8 +158,8 @@ func (s *Store) historyWindowLocked(id string, items []domain.Item, contextID st
 			h.First = item.Order
 		}
 		h.Last = item.Order
-		if item.Kind == "tool" {
-			tools = append(tools, item)
+		if domain.ToolGroupMember(item) {
+			members = append(members, item)
 		}
 	}
 	if h.First == 0 {
@@ -168,11 +168,11 @@ func (s *Store) historyWindowLocked(id string, items []domain.Item, contextID st
 	if err := s.historyQueries().QueryRow("SELECT EXISTS(SELECT 1 FROM items WHERE session_id=? AND position<? AND json_extract(body,'$.kind')!='queued'), EXISTS(SELECT 1 FROM items WHERE session_id=? AND position>? AND json_extract(body,'$.kind')!='queued')", id, h.First, id, h.Last).Scan(&h.Older, &h.Newer); err != nil {
 		return nil, err
 	}
-	if len(tools) == 0 {
+	if len(members) == 0 {
 		return h, nil
 	}
 	// Only the two edge groups can extend beyond this contiguous window.
-	for _, item := range []domain.Item{tools[0], tools[len(tools)-1]} {
+	for _, item := range []domain.Item{members[0], members[len(members)-1]} {
 		if len(h.Groups) > 0 {
 			g := h.Groups[0]
 			if item.TurnID == g.TurnID && item.Order >= g.First && item.Order <= g.Last {
@@ -183,20 +183,22 @@ func (s *Store) historyWindowLocked(id string, items []domain.Item, contextID st
 		if err != nil {
 			return nil, err
 		}
-		if len(h.Groups) == 0 || h.Groups[0].ID != g.ID {
+		if g.Count > 0 && (len(h.Groups) == 0 || h.Groups[0].ID != g.ID) {
 			h.Groups = append(h.Groups, g)
 		}
 	}
 	return h, nil
 }
 
-// Tool bodies stay in SQLite; only potential boundaries need decoding.
+const toolHistoryMemberSQL = `(json_extract(body,'$.kind')='tool' OR (json_extract(body,'$.kind') IN ('activity','reasoning') AND json_extract(body,'$.presentation')='reasoning'))`
+
+// Tool and summary bodies stay in SQLite; only potential boundaries need decoding.
 func (s *Store) historyToolBoundaryLocked(id string, item domain.Item, before bool) (int64, error) {
 	comparison, direction, boundary := ">", "ASC", int64(9223372036854775807)
 	if before {
 		comparison, direction, boundary = "<", "DESC", 0
 	}
-	rows, err := s.historyQueries().Query("SELECT body FROM items WHERE session_id=? AND position"+comparison+"? AND json_extract(body,'$.kind')!='queued' AND (json_extract(body,'$.kind')!='tool' OR COALESCE(json_extract(body,'$.turnId'),'')!=?) ORDER BY position "+direction, id, item.Order, item.TurnID)
+	rows, err := s.historyQueries().Query("SELECT body FROM items WHERE session_id=? AND position"+comparison+"? AND json_extract(body,'$.kind')!='queued' AND (NOT ("+toolHistoryMemberSQL+") OR COALESCE(json_extract(body,'$.turnId'),'')!=?) ORDER BY position "+direction, id, item.Order, item.TurnID)
 	if err != nil {
 		return 0, err
 	}
@@ -210,7 +212,7 @@ func (s *Store) historyToolBoundaryLocked(id string, item domain.Item, before bo
 		if err = json.Unmarshal(body, &candidate); err != nil {
 			return 0, err
 		}
-		if candidate.TurnID != item.TurnID || !domain.HistorySpacer(candidate) {
+		if candidate.TurnID != item.TurnID || !domain.ToolGroupMember(candidate) && !domain.HistorySpacer(candidate) {
 			return candidate.Order, nil
 		}
 	}
@@ -227,9 +229,14 @@ func (s *Store) historyToolGroupLocked(id string, item domain.Item) (domain.Hist
 		return domain.HistoryToolGroup{}, err
 	}
 	g := domain.HistoryToolGroup{TurnID: item.TurnID}
-	err = s.historyQueries().QueryRow(`SELECT MIN(position),MAX(position),COUNT(*),COALESCE(SUM(CASE WHEN json_extract(body,'$.final') AND (COALESCE(json_extract(body,'$.exitCode'),0)!=0 OR json_extract(body,'$.status') IN ('failed','declined','interrupted')) THEN 1 ELSE 0 END),0) FROM items WHERE session_id=? AND position>? AND position<? AND json_extract(body,'$.kind')='tool'`, id, before, after).Scan(&g.First, &g.Last, &g.Count, &g.Issues)
-	if err == nil {
-		err = s.historyQueries().QueryRow("SELECT id FROM items WHERE session_id=? AND position=?", id, g.First).Scan(&g.ID)
+	var firstTool sql.NullInt64
+	err = s.historyQueries().QueryRow(`SELECT MIN(position),MAX(position),
+		SUM(CASE WHEN json_extract(body,'$.kind')='tool' THEN 1 ELSE 0 END),
+		MIN(CASE WHEN json_extract(body,'$.kind')='tool' THEN position END),
+		SUM(CASE WHEN json_extract(body,'$.kind')='tool' AND json_extract(body,'$.final') AND (COALESCE(json_extract(body,'$.exitCode'),0)!=0 OR json_extract(body,'$.status') IN ('failed','declined','interrupted')) THEN 1 ELSE 0 END)
+		FROM items WHERE session_id=? AND position>? AND position<? AND `+toolHistoryMemberSQL, id, before, after).Scan(&g.First, &g.Last, &g.Count, &firstTool, &g.Issues)
+	if err == nil && firstTool.Valid {
+		err = s.historyQueries().QueryRow("SELECT id FROM items WHERE session_id=? AND position=?", id, firstTool.Int64).Scan(&g.ID)
 	}
 	return g, err
 }

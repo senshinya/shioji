@@ -1659,7 +1659,7 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 			}
 			v.commandOutput(c, t, item, heading)
 		})
-	case "activity":
+	case "activity", "reasoning":
 		v.activityItem(c, t, item)
 	case "request_result":
 		v.requestResult(c, t, item)

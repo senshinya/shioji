@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"shioji/internal/app"
 	"shioji/internal/domain"
 )
 
@@ -21,7 +22,7 @@ func TestToolDisclosureWaitsForVisibleContentAndHonorsManualReopen(t *testing.T)
 	}
 	groups := func() map[int]ToolGroup {
 		items := ConversationItems(detail)
-		return timeline.Groups(items, TranscriptRows(items, detail.Turns, true), detail, true, false)
+		return timeline.Groups(items, TranscriptRows(items, detail.Turns, true, nil), detail, true, false)
 	}
 	initial := groups()
 	if initial[0].Open || !initial[2].Open || !initial[2].Live {
@@ -59,7 +60,7 @@ func TestSteeringDoesNotFoldThePreviousRunningToolGroup(t *testing.T) {
 		{ID: "tool", Kind: "tool", TurnID: "turn", Status: "running"},
 	}}
 	group := func() ToolGroup {
-		return timeline.Groups(detail.Items, TranscriptRows(detail.Items, detail.Turns, true), detail, true, false)[1]
+		return timeline.Groups(detail.Items, TranscriptRows(detail.Items, detail.Turns, true, nil), detail, true, false)[1]
 	}
 	before := group()
 	if !before.Open || !before.Live {
@@ -84,7 +85,7 @@ func TestToolDisclosurePreservesHistoryGroupIdentityAcrossLoadedPages(t *testing
 		History: &domain.HistoryWindow{First: 4, Last: 4, Older: true, Groups: []domain.HistoryToolGroup{{ID: "scope", TurnID: turn.ID, First: 1, Last: 4, Count: 2, Issues: 1}}},
 	}
 	groups := func() map[int]ToolGroup {
-		return timeline.Groups(detail.Items, TranscriptRows(detail.Items, detail.Turns, false), detail, false, false)
+		return timeline.Groups(detail.Items, TranscriptRows(detail.Items, detail.Turns, false, detail.History), detail, false, false)
 	}
 	group := groups()[0]
 	if group.Open || !group.Ended || group.Count != 2 {
@@ -107,7 +108,7 @@ func TestToolGroupOutcomeUsesOnlyKnownCalls(t *testing.T) {
 	}
 	groups := func(window *domain.HistoryWindow) ToolGroup {
 		detail := domain.SessionDetail{Items: items, Turns: []domain.Turn{turn}, History: window}
-		return timeline.Groups(items, TranscriptRows(items, detail.Turns, false), detail, false, false)[0]
+		return timeline.Groups(items, TranscriptRows(items, detail.Turns, false, detail.History), detail, false, false)[0]
 	}
 	if got := groups(nil); got.Outcome != ToolGroupCompleted {
 		t.Fatalf("confirmed calls did not report completion: %+v", got)
@@ -244,17 +245,17 @@ func TestTranscriptRowsKeepOneReceiptOutsideDisclosuresAndActiveAtEnd(t *testing
 	}
 	items := ConversationItems(detail)
 	want := []TranscriptRow{
-		{First: 0, End: 2},
+		{First: 0, End: 2, tool: app.ToolSpan{ID: "command-a", End: 2, Count: 2, Loaded: 2, Unfinished: true}},
 		{First: 2, End: 3},
-		{First: 3, End: 4},
+		{First: 3, End: 4, tool: app.ToolSpan{ID: "late-result", End: 4, Count: 1, Loaded: 1, Unfinished: true}},
 		{Footer: "done"},
 		{First: 4, End: 5},
 		{Footer: "active"},
 	}
-	if got := TranscriptRows(items, detail.Turns, true); !reflect.DeepEqual(got, want) {
+	if got := TranscriptRows(items, detail.Turns, true, nil); !reflect.DeepEqual(got, want) {
 		t.Fatalf("rows = %+v, want %+v", got, want)
 	}
-	if got := TranscriptRows(items, detail.Turns, false); !reflect.DeepEqual(got, want[:len(want)-1]) {
+	if got := TranscriptRows(items, detail.Turns, false, nil); !reflect.DeepEqual(got, want[:len(want)-1]) {
 		t.Fatalf("historical window shows current live receipt: %+v", got)
 	}
 }
@@ -278,11 +279,11 @@ func TestAcceptedInsertedInputRetainsEarlierReplyFooter(t *testing.T) {
 		}
 		return footers
 	}
-	if got := count(TranscriptRows(items, []domain.Turn{turn}, true)); got != 1 {
+	if got := count(TranscriptRows(items, []domain.Turn{turn}, true, nil)); got != 1 {
 		t.Fatalf("dispatching insertion created %d footers, want only the live footer", got)
 	}
 	items[3].Status = "sent"
-	rows := TranscriptRows(items, []domain.Turn{turn}, true)
+	rows := TranscriptRows(items, []domain.Turn{turn}, true, nil)
 	if got := count(rows); got != 2 {
 		t.Fatalf("accepted insertion left %d footers, want an earlier reply receipt and the live footer", got)
 	}
@@ -296,12 +297,12 @@ func TestAcceptedInsertedInputRetainsEarlierReplyFooter(t *testing.T) {
 	}
 	items = append(items, domain.Item{ID: "later", Kind: "assistant", TurnID: turn.ID, Text: "复查结果"})
 	turn.Status = domain.ExecutionCompleted
-	rows = TranscriptRows(items, []domain.Turn{turn}, true)
+	rows = TranscriptRows(items, []domain.Turn{turn}, true, nil)
 	if got := rows[len(rows)-1].Receipt; got.BeforeInput != "" || got.AfterInput != "inserted" || !slices.Equal(got.Reply, []string{"复查结果"}) || len(got.ToolOutput) != 0 {
 		t.Fatalf("completed receipt crossed the accepted input: %+v", got)
 	}
 	items[3].SentAt = &start // An imported thread can only supply the turn start.
-	rows = TranscriptRows(items, []domain.Turn{turn}, true)
+	rows = TranscriptRows(items, []domain.Turn{turn}, true, nil)
 	if got := rows[3].Receipt; got.CompletedAt != nil || got.DurationMS != nil {
 		t.Fatalf("unavailable insertion times must stay unknown: %+v", got)
 	}
@@ -314,13 +315,13 @@ func TestAcceptedInsertedInputRetainsToolOnlyReplyFooter(t *testing.T) {
 		{ID: "command", Kind: "tool", TurnID: turn.ID, Text: "前一段工具输出"},
 		{ID: "inserted", Kind: "user", TurnID: turn.ID, Status: "dispatching"},
 	}
-	rows := TranscriptRows(items, []domain.Turn{turn}, true)
+	rows := TranscriptRows(items, []domain.Turn{turn}, true, nil)
 	if len(rows) != 4 || rows[3].Receipt.BeforeInput != "" {
 		t.Fatalf("only the live footer should be present before acceptance: %+v", rows)
 	}
 	items[2].Status = "sent"
 	items = append(items, domain.Item{ID: "later", Kind: "tool", TurnID: turn.ID, Text: "后一段工具输出"})
-	rows = TranscriptRows(items, []domain.Turn{turn}, true)
+	rows = TranscriptRows(items, []domain.Turn{turn}, true, nil)
 	if len(rows) != 6 || rows[2].Footer != turn.ID || rows[2].Receipt.BeforeInput != "inserted" ||
 		!slices.Equal(rows[2].Receipt.ToolOutput, []string{"前一段工具输出"}) || rows[3].First != 2 {
 		t.Fatalf("earlier tool output should have its own footer before the accepted input: %+v", rows)
@@ -355,5 +356,27 @@ func TestSentMessageRunsPreserveFileAndSkillOrderingWithUnicodeOffsets(t *testin
 	want := []string{"查", "review-check", "🙂 并", "连接.go", "核对。", " ", "legacy-review"}
 	if !slices.Equal(words, want) || runs[1].Skill == nil || runs[3].Attachment == nil || runs[3].Attachment.ID != "snap" {
 		t.Fatalf("sent content = %+v, want %v with the original file identity", runs, want)
+	}
+}
+
+func TestReasoningStaysInToolGroupWithoutCountingAsACall(t *testing.T) {
+	turn := domain.Turn{ID: "t", Status: domain.ExecutionRunning}
+	items := []domain.Item{
+		{ID: "leading", TurnID: "t", Kind: "activity", Presentation: "reasoning", Text: "Inspect", Final: true},
+		{ID: "tool", TurnID: "t", Kind: "tool", Status: "completed", Final: true},
+		{ID: "thinking", TurnID: "t", Kind: "activity", Presentation: "reasoning", Text: "Compare", ActivityOrder: 2},
+	}
+	var timeline ToolTimeline
+	detail := domain.SessionDetail{Turns: []domain.Turn{turn}}
+	rows := TranscriptRows(items, detail.Turns, true, nil)
+	group := timeline.Groups(items, rows, detail, true, false)[0]
+	if rows[0].End != 3 || group.Count != 1 || !group.Live || !group.Open || group.Outcome != "" {
+		t.Fatalf("thinking split the live tool group: rows=%+v group=%+v", rows, group)
+	}
+	items = append(items, domain.Item{ID: "answer", TurnID: "t", Kind: "assistant", Text: "Done", ActivityOrder: 3})
+	rows = TranscriptRows(items, detail.Turns, true, nil)
+	group = timeline.Groups(items, rows, detail, true, false)[0]
+	if rows[0].End != 3 || group.Open || group.Live || group.Outcome != ToolGroupCompleted {
+		t.Fatalf("reply did not seal the group using the tool result: rows=%+v group=%+v", rows, group)
 	}
 }

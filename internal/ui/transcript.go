@@ -2,10 +2,12 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
+	"shioji/internal/conversationui"
 	"shioji/internal/domain"
 )
 
@@ -170,7 +172,7 @@ func withTurnFooters(rows []transcriptRow, turns map[string]domain.Turn) []trans
 func withToolUserGaps(rows []transcriptRow) []transcriptRow {
 	count := 0
 	for i := 1; i < len(rows); i++ {
-		if rows[i-1].item.Kind == "tool" && rows[i].item.Kind == "user" {
+		if (rows[i-1].toolTitle || rows[i-1].toolParent != "") && rows[i].item.Kind == "user" {
 			count++
 		}
 	}
@@ -182,7 +184,7 @@ func withToolUserGaps(rows []transcriptRow) []transcriptRow {
 	to, nextUser := len(rows)-1, ""
 	for i := length - 1; i >= 0; i-- {
 		row := rows[i]
-		if row.item.Kind == "tool" && nextUser != "" {
+		if (row.toolTitle || row.toolParent != "") && nextUser != "" {
 			rows[to] = transcriptRow{key: "tool-user-gap:" + nextUser, toolGap: true, end: -1, opacity: 1}
 			to--
 		}
@@ -271,21 +273,14 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 	nextContent := make([]int, len(items)+1)
 	nextContent[len(items)] = len(items)
 	latestTool := -1
-	groups := 0
-	var nextKind, nextTurn string
+	spans := app.ToolSpans(items, v.Model.Details[v.Model.SessionID].History, domain.HistorySpacer)
 	for i := len(items) - 1; i >= 0; i-- {
-		visible := !domain.HistorySpacer(items[i])
+		item := items[i]
 		nextContent[i] = nextContent[i+1]
-		if items[i].Kind != "tool" && visible {
+		if !domain.ToolGroupMember(item) && !domain.HistorySpacer(item) {
 			nextContent[i] = i
 		}
-		if visible {
-			if items[i].Kind == "tool" && (nextKind != "tool" || nextTurn != items[i].TurnID) {
-				groups++
-			}
-			nextKind, nextTurn = items[i].Kind, items[i].TurnID
-		}
-		if latestTool < 0 && items[i].Kind == "tool" {
+		if latestTool < 0 && domain.ToolGroupMember(item) {
 			latestTool = i
 		}
 	}
@@ -305,7 +300,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 	}
 	// Each tool run adds a title, optional trailing summary and gap.
 	// Without these slots a large run reallocates as its last row is appended.
-	rows := make([]transcriptRow, 0, len(items)+3*groups+len(v.Model.Details[v.Model.SessionID].Turns))
+	rows := make([]transcriptRow, 0, len(items)+3*len(spans)+len(v.Model.Details[v.Model.SessionID].Turns))
 	for i := 0; i < len(items); {
 		item := items[i]
 		if domain.HistorySpacer(item) {
@@ -315,7 +310,8 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			i++
 			continue
 		}
-		if item.Kind != "tool" {
+		span, grouped := spans[i]
+		if !grouped {
 			progress := float32(1)
 			if item.Kind == "user" {
 				seen[item.ID] = true
@@ -327,33 +323,9 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			i++
 			continue
 		}
-		end, count := i+1, 1
-		executing := !item.Final
-		for end < len(items) && items[end].TurnID == item.TurnID {
-			if items[end].Kind == "tool" {
-				executing = executing || !items[end].Final
-				count++
-				end++
-				continue
-			}
-			if domain.HistorySpacer(items[end]) {
-				end++
-				continue
-			}
-			break
-		}
-		key := "tool-group:" + v.Model.SessionID + "/" + item.ID
-		loaded := count
-		if h := v.Model.Details[v.Model.SessionID].History; h != nil {
-			for j := range h.Groups {
-				g := &h.Groups[j]
-				if item.Order >= g.First && item.Order <= g.Last && item.TurnID == g.TurnID {
-					key = "tool-group:" + v.Model.SessionID + "/" + g.ID
-					count = g.Count
-					break
-				}
-			}
-		}
+		end, count, loaded := span.End, span.Count, span.Loaded
+		executing := span.Unfinished
+		key := "tool-group:" + v.Model.SessionID + "/" + span.ID
 		disclosure := v.Model.ToolDisclosure(key)
 		following := nextContent[end]
 		hasLaterContent := following < len(items)
@@ -407,7 +379,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		}
 		heading := transcriptRow{key: key, item: item, end: end - 1, group: key, count: count, toolTitle: true, opacity: arrival(key)}
 		for _, call := range items[i:end] {
-			if call.Kind != "tool" {
+			if domain.HistorySpacer(call) {
 				continue
 			}
 			if !show {
@@ -418,7 +390,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		}
 		// Only visible later content or a terminal turn seals a group. A
 		// page containing only some of the calls cannot establish success.
-		if (endedTurns[item.TurnID] || hasLaterContent) && !executing && loaded == count {
+		if (endedTurns[item.TurnID] || hasLaterContent) && loaded == count {
 			heading.toolResult = toolGroupResult(items[i:end])
 		}
 		if show {
@@ -426,7 +398,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		}
 		rows = append(rows, heading)
 		for j := i; show && j < end; j++ {
-			if items[j].Kind == "tool" {
+			if !domain.HistorySpacer(items[j]) {
 				progress := min(opacity, arrival(items[j].ID))
 				rows = append(rows, transcriptRow{key: items[j].ID, item: items[j], end: j, toolParent: key, opacity: progress})
 			} else {
@@ -654,6 +626,8 @@ func toolGroupResult(items []domain.Item) string {
 	return result
 }
 
+var toolThinkingIcon = newTranscriptIcon(conversationui.ThinkingIconPath)
+
 func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow, inset float32) {
 	icon := activityIcon(row.item.Presentation)
 	label := row.item.Name
@@ -662,7 +636,20 @@ func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow, ins
 		icon = commandActivityIcon(row.item.Name)
 		font.Family = "Menlo"
 	}
-	v.item(c, t, row.item)
+	if domain.ReasoningSummary(row.item) {
+		body := conversationui.ReasoningSummaryText(row.item)
+		if body == "" {
+			return
+		}
+		icon = toolThinkingIcon
+		label, _, _ = strings.Cut(body, "\n")
+		resultText(c.Key("reasoning"), body, t.TextMuted, func(text n.Element) {
+			text.Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).Wrap().Selectable()
+			v.decoratePlainFind(c, text, row.item, nil)
+		})
+	} else {
+		v.item(c, t, row.item)
+	}
 	// A small neutral mask interrupts the rail around each native glyph.
 	toolGlyph(c, icon, label, font, t.TextMuted).Absolute().Left(inset).Top(0).Background(t.Background)
 }

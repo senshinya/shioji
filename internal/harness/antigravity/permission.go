@@ -53,10 +53,37 @@ func (r *runtime) ChangePermission(ctx context.Context, s domain.Session, permis
 	}
 	for id, pending := range r.requests {
 		if pending.Request.Kind == "approval" {
-			if err := r.resolveRequest(ctx, id, pending, permissionOutcome(pending.AllowOnce), pending.AllowOnce == ""); err != nil {
+			if err := r.autoApprove(ctx, id, pending, r.active); err != nil {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+// Keep the native tool ID as the one source for later execution and output
+// updates. Some ACP peers ask for permission before publishing a tool call.
+func (r *runtime) autoApprove(ctx context.Context, key string, p nativeRequest, turn *logicalTurn) error {
+	if err := r.reply(ctx, p.WireID, permissionOutcome(p.AllowOnce), nil); err != nil {
+		return err
+	}
+	if p.AllowOnce != "" && turn != nil && !turn.interrupted && turn.turn.ID == p.Request.TurnID && p.ToolCall.ToolCallID != "" {
+		if _, known := turn.tools[p.ToolCall.ToolCallID]; !known {
+			if err := r.finishStream(turn); err != nil {
+				return err
+			}
+			update := p.ToolCall
+			update.Status = "pending"
+			if update.Title == "" {
+				update.Title = p.Request.Title
+			}
+			if err := r.updateTool(turn.tools, turn.turn.ID, update); err != nil {
+				return err
+			}
+		}
+	}
+	if key != "" {
+		return r.closeRequest(key, p, p.AllowOnce == "", p.AllowOnce != "")
 	}
 	return nil
 }

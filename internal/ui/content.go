@@ -123,6 +123,9 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 		}
 	}
 	label := item.Name
+	if label == "" && domain.ReasoningSummary(item) {
+		label = "思考摘要"
+	}
 	if label == "" {
 		label = "工具活动"
 	}
@@ -132,7 +135,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 		n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
 			font := n.Font{Family: c.Theme().Font, Size: transcriptCaptionSize, Weight: 400}
 			metadataMotion := resultBlockMotion(c)
-			if item.Kind == "activity" {
+			if item.Kind == "activity" || domain.ReasoningSummary(item) {
 				transcriptSymbol(c, activityIcon(item.Presentation), label, font, color)
 			}
 			title := n.Text(c, label).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color).MinWidth(0).MaxLines(2).Ellipsis("…")

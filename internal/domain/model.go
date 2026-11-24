@@ -277,6 +277,9 @@ type Plan struct {
 	Steps       []PlanStep `json:"steps"`
 }
 type Event struct {
+	// AutomaticallyApproved is worker input for a resolved approval's transcript row.
+	AutomaticallyApproved bool `json:"-"`
+
 	GoalProgress     *GoalProgress    `json:"-"`
 	Goal             *Goal            `json:"goal,omitempty"`
 	GoalSource       string           `json:"goalSource,omitempty"`

@@ -58,7 +58,7 @@ func (a *mobileApp) transcriptProjection(session domain.Session, detail domain.S
 	p := &mobileTranscriptProjection{stamp: stamp}
 	p.items = compaction.project(mobileclient.ConversationItems(detail), session, latest && stamp.loaded)
 	p.liveCompaction = a.currentLiveCompaction(session, detail, p.items)
-	p.rows = mobileclient.TranscriptRows(p.items, detail.Turns, latest && p.liveCompaction == "" && observe)
+	p.rows = mobileclient.TranscriptRows(p.items, detail.Turns, latest && p.liveCompaction == "" && observe, detail.History)
 	p.groups = timeline.Groups(p.items, p.rows, detail, latest && stamp.connected, stamp.fold)
 	p.turns = make(map[string]domain.Turn, len(detail.Turns))
 	for _, turn := range detail.Turns {

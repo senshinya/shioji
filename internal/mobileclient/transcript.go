@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"shioji/internal/app"
 	"shioji/internal/domain"
 )
 
@@ -21,7 +22,7 @@ func ConversationItems(detail domain.SessionDetail) []domain.Item {
 	for index, item := range detail.Items {
 		if item.WorkID != "" || item.Kind == "plan" || item.Presentation == "agents" ||
 			len(item.Agents) != 0 || sources[item.ID] ||
-			item.Kind == "activity" && item.Presentation == "reasoning" && domain.HistorySpacer(item) ||
+			(domain.ReasoningSummary(item) || item.Presentation == domain.AutomaticApprovalPresentation) && domain.HistorySpacer(item) ||
 			item.Kind == "assistant" && strings.TrimSpace(item.Text) == "" && len(item.Parts) == 0 && len(item.Attachments) == 0 && len(item.Questions) == 0 {
 			if items == nil {
 				items = make([]domain.Item, 0, len(detail.Items)-1)
@@ -136,6 +137,7 @@ type TranscriptRow struct {
 	First, End int
 	Footer     string
 	Receipt    ReplyReceipt
+	tool       app.ToolSpan
 }
 
 // ReplyReceipt scopes copy and timing to the response between accepted inputs.
@@ -167,7 +169,12 @@ func acceptedReplyInput(item domain.Item) bool {
 	return item.Kind == "user" && item.WorkID == "" && (item.Status == "sent" || item.Status == "")
 }
 
-func TranscriptRows(items []domain.Item, turns []domain.Turn, atLatest bool) []TranscriptRow {
+// Receipts without a loaded source are still visible in mobile history.
+func transcriptSpacer(item domain.Item) bool {
+	return domain.HistorySpacer(item) && (item.Kind != "request_result" || len(item.Parts) == 0)
+}
+
+func TranscriptRows(items []domain.Item, turns []domain.Turn, atLatest bool, history *domain.HistoryWindow) []TranscriptRow {
 	turnByID := make(map[string]domain.Turn, len(turns))
 	for _, turn := range turns {
 		if turn.ID != "" && turn.Presentation != "compaction" {
@@ -229,15 +236,15 @@ func TranscriptRows(items []domain.Item, turns []domain.Turn, atLatest bool) []T
 		tails[turn.ID] = tail
 	}
 	rows := make([]TranscriptRow, 0, len(items)+len(turns)+len(beforeInput))
+	spans := app.ToolSpans(items, history, transcriptSpacer)
 	for start := 0; start < len(items); {
 		item := items[start]
 		end := start + 1
-		if item.Kind == "tool" {
-			for end < len(items) && items[end].Kind == "tool" && items[end].TurnID == item.TurnID {
-				end++
-			}
+		span := spans[start]
+		if span.ID != "" {
+			end = span.End
 		}
-		rows = append(rows, TranscriptRow{First: start, End: end})
+		rows = append(rows, TranscriptRow{First: start, End: end, tool: span})
 		if footer, ok := beforeInput[end-1]; ok {
 			rows = append(rows, footer)
 		}

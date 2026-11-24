@@ -23,7 +23,7 @@ func TestCompactionProjectionKeepsJournalIdentityAndCompletedOrdinaryTurn(t *tes
 		t.Fatalf("projection modified the authoritative item: %+v", items[2])
 	}
 	turns := []domain.Turn{{ID: "ordinary", Status: domain.ExecutionCompleted}, {ID: "maintenance", Status: domain.ExecutionCompleted, Presentation: "compaction"}}
-	for _, row := range TranscriptRows(projected, turns, false) {
+	for _, row := range TranscriptRows(projected, turns, false, nil) {
 		if row.Footer == "maintenance" {
 			t.Fatal("maintenance acquired an ordinary reply footer")
 		}

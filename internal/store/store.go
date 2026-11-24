@@ -887,6 +887,9 @@ func (s *Store) applyLocked(sid string, e domain.Event) (domain.Event, error) {
 			return e, err
 		}
 		anchor := domain.Item{WorkID: e.Request.WorkID, ID: "request:" + e.Request.ID, TurnID: e.Request.TurnID, Kind: "request", Text: e.Request.Title, Status: string(e.Request.State), Final: e.Request.State != "pending"}
+		if e.Type == "request.resolve" && e.AutomaticallyApproved && e.Request.Kind == "approval" && e.Request.State == domain.RequestResolved {
+			anchor.Presentation = domain.AutomaticApprovalPresentation
+		}
 		if err = putItem(tx, sid, &anchor); err != nil {
 			return e, err
 		}

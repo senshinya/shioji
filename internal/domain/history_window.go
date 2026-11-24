@@ -80,11 +80,25 @@ type HistoryMatches struct {
 	Sequence  int64          `json:"sequence"`
 }
 
+// ReasoningSummary identifies the public reasoning rows in conversation history.
+func ReasoningSummary(item Item) bool {
+	return item.Presentation == "reasoning" && (item.Kind == "activity" || item.Kind == "reasoning")
+}
+
+// ToolGroupMember includes visible calls and summaries. Spacers can occur
+// between members without becoming visible rows or adding to the call count.
+func ToolGroupMember(item Item) bool {
+	return item.Kind == "tool" || ReasoningSummary(item)
+}
+
+const AutomaticApprovalPresentation = "automatic-approval"
+
 // HistorySpacer reports invisible records that do not split a tool group.
 func HistorySpacer(item Item) bool {
-	return item.Kind == "assistant" && strings.TrimSpace(item.Text) == "" && len(item.Questions) == 0 ||
-		item.Kind == "activity" && item.Presentation == "reasoning" && item.Text == "" && len(item.Parts) == 0 && len(item.Files) == 0 && len(item.Agents) == 0 ||
+	return item.Kind == "assistant" && strings.TrimSpace(item.Text) == "" && len(item.Questions) == 0 && len(item.Attachments) == 0 && len(item.Parts) == 0 ||
+		ReasoningSummary(item) && item.Text == "" && len(item.Parts) == 0 && len(item.Files) == 0 && len(item.Agents) == 0 ||
 		item.Kind == "request_result" && len(item.Parts) == 0 && item.WorkID == "" ||
+		item.Kind == "request" && item.Presentation == AutomaticApprovalPresentation ||
 		InlineRequestResultAnchor(item) != ""
 }
 

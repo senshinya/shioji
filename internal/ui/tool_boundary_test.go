@@ -36,7 +36,8 @@ func TestToolGroupClosesOnFollowingNonToolContent(t *testing.T) {
 					next.TurnID, next.Status = "next-turn", "sent"
 				}
 				if kind == "activity" {
-					next.Presentation = "reasoning"
+					next.Presentation = "search"
+					next.Name = next.Text
 				}
 				if kind == "request_result" {
 					next.Parts = []domain.ContentPart{{Text: "已确认的答案"}}

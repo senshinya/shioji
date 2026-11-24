@@ -512,6 +512,38 @@ func (a *mobileApp) openPreviewBoard(board string) {
 		}
 		a.model.Details[review.ID] = detail
 		a.openSession(review.ID)
+	case "tool-reasoning", "tool-reasoning-folded":
+		a.seedArtboardConversation(false)
+		a.model.Preferences.CollapseLatestTools = false
+		detail := a.model.Details[review.ID]
+		detail.HistoryLoaded = true
+		detail.Session.Title = "检查会话记录"
+		detail.Session.HarnessID = "antigravity"
+		detail.Session.Config = domain.RunConfig{Permission: "yolo", Model: "gemini"}
+		a.model.Readiness = domain.Readiness{State: domain.RuntimeReady, HarnessID: "antigravity", Permissions: []string{"yolo"},
+			PermissionChoices: []domain.OptionChoice{{ID: "yolo", Name: "YOLO"}},
+			Models:            []domain.Model{{ID: "gemini", Name: "Gemini", Default: true}}}
+		detail.Session.Status = domain.ExecutionRunning
+		detail.Queue.Items, detail.Works, detail.Plan = nil, nil, nil
+		start := time.Now().Add(-8 * time.Second)
+		detail.Turns = []domain.Turn{{ID: "t", Status: domain.ExecutionRunning, StartedAt: &start}}
+		detail.Items = []domain.Item{
+			{ID: "prompt", TurnID: "t", Kind: "user", Status: "sent", Text: "检查会话记录的渲染顺序"},
+			{ID: "plan", TurnID: "t", Kind: "activity", Presentation: "reasoning", Name: "思考摘要", Text: "先查看会话记录。\n\n", Status: "completed", Final: true},
+			{ID: "read", TurnID: "t", Kind: "tool", Presentation: "files", Name: "读取 transcript.go", Status: "completed", Final: true},
+			{ID: "think", TurnID: "t", Kind: "activity", Presentation: "reasoning", Name: "思考摘要", Parts: []domain.ContentPart{{Kind: "text", Text: "确认 transcript.go 的渲染顺序。\n检查换行和图标对齐，再运行回归。\n\n"}}, Status: "completed", Final: true},
+			{ID: "request:run", TurnID: "t", Kind: "request", Presentation: domain.AutomaticApprovalPresentation, Text: "允许执行此命令？", Status: "resolved", Final: true},
+			{ID: "test", TurnID: "t", Kind: "tool", Presentation: "command", Name: "go test ./internal/ui", Status: "running"},
+		}
+		if board == "tool-reasoning-folded" {
+			detail.Items[5].Status, detail.Items[5].Final = "completed", true
+			detail.Items = append(detail.Items, domain.Item{ID: "reply", TurnID: "t", Kind: "assistant", Text: "已核对会话记录。", Final: true})
+			detail.Turns[0].Status = domain.ExecutionCompleted
+			detail.Session.Status = domain.ExecutionCompleted
+		}
+		a.model.Snapshot.Sessions[0] = detail.Session
+		a.model.Details[review.ID] = detail
+		a.openSession(review.ID)
 	case "transcript-links":
 		a.seedArtboardConversation(false)
 		detail := a.model.Details[review.ID]

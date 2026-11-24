@@ -53,58 +53,45 @@ func (t *ToolTimeline) Groups(items []domain.Item, rows []TranscriptRow, detail 
 	lastContent := -1
 	for i := len(items) - 1; i >= 0; i-- {
 		item := items[i]
-		if item.Kind != "tool" && (item.Kind != "user" || acceptedReplyInput(item)) {
+		if !domain.ToolGroupMember(item) && !transcriptSpacer(item) && (item.Kind != "user" || acceptedReplyInput(item)) {
 			lastContent = i
 			break
 		}
 	}
 	groups := make(map[int]ToolGroup)
 	for _, row := range rows {
-		if row.Footer != "" || items[row.First].Kind != "tool" {
+		span := row.tool
+		if span.ID == "" {
 			continue
 		}
 		first := items[row.First]
-		group := ToolGroup{Key: "tool-group:" + first.ID, Count: row.End - row.First}
+		group := ToolGroup{Key: "tool-group:" + span.ID, Count: span.Count}
 		switch turns[first.TurnID] {
 		case domain.ExecutionCompleted, domain.ExecutionFailed, domain.ExecutionInterrupted, domain.ExecutionAbandoned:
 			group.Ended = true
 		}
-		unfinished := false
 		outcome := ToolGroupCompleted
+		unfinished := false
 		for _, item := range items[row.First:row.End] {
-			unfinished = unfinished || !item.Final
-			if item.Status != "completed" || item.ExitCode != nil && *item.ExitCode != 0 {
-				outcome = ToolGroupEnded
+			if item.Kind == "tool" {
+				unfinished = unfinished || !item.Final
+				if item.Status != "completed" || item.ExitCode != nil && *item.ExitCode != 0 {
+					outcome = ToolGroupEnded
+				}
 			}
 			if live != nil && live.ID == item.ID && row.End > lastContent {
 				group.Live = true
 			}
 		}
-		if h := detail.History; h != nil && first.Order != 0 {
-			for _, hint := range h.Groups {
-				if first.TurnID != hint.TurnID || first.Order < hint.First || first.Order > hint.Last {
-					continue
-				}
-				cutBefore := h.Older && hint.First < h.First && (row.First == 0 || items[row.First-1].Order < h.First)
-				cutAfter := h.Newer && hint.Last > h.Last && row.End == len(items)
-				if first.Order == hint.First || cutBefore {
-					group.Key = "tool-group:" + hint.ID
-				}
-				if cutBefore || cutAfter {
-					group.Count = max(group.Count, hint.Count)
-				}
-				break
-			}
-		}
 		// Final call records cannot seal a running tail. More calls may still
 		// join it until later content arrives or the turn itself ends.
-		if (group.Ended || row.End <= lastContent) && !unfinished && group.Count == row.End-row.First {
+		if (group.Ended || row.End <= lastContent) && !unfinished && span.Count == span.Loaded {
 			group.Outcome = outcome
 		}
 		state, known := t.disclosures[group.Key]
 		if !known {
 			state = app.ToolClosedBeforeProse
-			if group.Live && !collapse && (!initial || unfinished) {
+			if group.Live && !collapse && (!initial || span.Unfinished) {
 				state = app.ToolOpenedBeforeProse
 			}
 		}

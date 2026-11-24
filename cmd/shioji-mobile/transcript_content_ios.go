@@ -232,11 +232,11 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 	}
 	if grouped {
 		ink = p.secondary
+		symbol = mobileToolTimelineIcon(item.Presentation)
 		if isCommand {
 			size = captionTextSize
 			font = mobileStatusFont(c, size)
 			font.Family = "Menlo"
-			symbol = toolTerminalSymbol
 		}
 	}
 	lineHeight := mobileStatusLineHeight(font)

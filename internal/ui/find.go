@@ -287,7 +287,7 @@ func (v *View) revealFindTarget(rows []transcriptRow, reopening bool) []transcri
 	if commandItem(items[target]) {
 		v.Model.Collapsed[v.commandOutputKey(s.target.id, "")] = false
 	}
-	if items[target].Kind == "tool" || items[target].Kind == "activity" {
+	if domain.ToolGroupMember(items[target]) || items[target].Kind == "activity" {
 		v.Model.Collapsed["activity:"+v.Model.SessionID+"/"+s.target.id] = false
 	}
 	for _, row := range rows {

@@ -282,7 +282,7 @@ func historyAcceptsItem(d domain.SessionDetail, item domain.Item) bool {
 		return false
 	}
 	if item.Order > h.Last {
-		if item.Kind == "tool" {
+		if domain.ToolGroupMember(item) {
 			for i := range h.Groups {
 				g := &h.Groups[i]
 				if g.TurnID != item.TurnID {
@@ -290,15 +290,17 @@ func historyAcceptsItem(d domain.SessionDetail, item domain.Item) bool {
 				}
 				continues := true
 				for _, old := range d.Items {
-					if old.Order > g.Last && (old.TurnID != item.TurnID || !domain.HistorySpacer(old)) {
+					if old.Order > g.Last && (old.TurnID != item.TurnID || !domain.HistorySpacer(old) && !domain.ReasoningSummary(old)) {
 						continues = false
 						break
 					}
 				}
 				if continues {
 					g.Last = item.Order
-					g.Count++
-					g.Issues += historyToolIssue(item)
+					if item.Kind == "tool" {
+						g.Count++
+						g.Issues += historyToolIssue(item)
+					}
 				}
 			}
 		}
