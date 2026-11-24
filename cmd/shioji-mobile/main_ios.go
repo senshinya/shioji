@@ -306,6 +306,12 @@ func (a *mobileApp) selectSession(id string) {
 	a.selectConversation(id, transcriptJump{})
 }
 
+func (a *mobileApp) positionConversationEntry(id string) {
+	if state := a.history[id]; state != nil {
+		state.ScrollToEnd()
+	}
+}
+
 func (a *mobileApp) selectConversation(id string, jump transcriptJump) {
 	a.cancelSessionListOpening()
 	session := a.sessionByID(id)
@@ -316,6 +322,9 @@ func (a *mobileApp) selectConversation(id string, jump transcriptJump) {
 		}
 	}
 	if a.model.SessionID != id {
+		if jump.item == "" && id != a.parallel {
+			a.positionConversationEntry(id)
+		}
 		a.closeConversationFind()
 		if a.parallelOwner != nil {
 			a.suspendParallelFind()
@@ -378,14 +387,17 @@ func (a *mobileApp) openConversationFrom(parent *mygo.Window, id string, jump tr
 	if jump.item != "" || a.latestSessionEntry != id {
 		a.latestSessionEntry = ""
 	}
-	entering := a.chat == nil || a.model.SessionID != id || parent == a.home
-	if entering && jump.item == "" && session.Status.Active() {
-		a.history[id] = &ui.ListState{FollowEnd: true}
-		if a.model.Connected && !hasLatestSessionHistory(a.model.Details[id]) {
-			a.latestSessionEntry = id
-			if a.model.SessionID == id && a.controller != nil {
+	entering := a.model.SessionID != id || !a.wide && a.chat == nil
+	if entering && jump.item == "" && id != a.parallel {
+		if a.model.SessionID == id {
+			a.positionConversationEntry(id)
+			if a.controller != nil {
 				a.controller.Select(id)
 			}
+		}
+		a.latestSessionEntry = ""
+		if !hasLatestSessionHistory(a.model.Details[id]) && (!a.preview || session.Status.Active()) {
+			a.latestSessionEntry = id
 			if preview := a.previewLatestHistory; preview != nil && preview.Session.ID == id {
 				a.previewLatestHistory = nil
 				time.AfterFunc(2*time.Second, func() {

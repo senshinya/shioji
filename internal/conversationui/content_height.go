@@ -7,6 +7,9 @@ import (
 	n "github.com/egoist/mygo/ui"
 )
 
+// TranscriptFollowAnimation preserves velocity as the measured tail grows.
+var TranscriptFollowAnimation = n.Animation{Spring: n.SpringOptions{Duration: 240 * time.Millisecond}}
+
 // AnimatedContentHeight eases the actual layout height. Live replies enter from zero; history and virtual-row remounts establish
 // their measured baseline without replaying the content's entrance.
 func AnimatedContentHeight(c *n.Context, frame n.Element, visible, initiallyVisible bool, duration time.Duration, build func() float32) float32 {

@@ -9,9 +9,7 @@ import (
 	"shioji/internal/conversationui"
 )
 
-// A non-bouncing spring preserves velocity as streamed layout keeps growing.
-// Keep it shorter than message navigation, so following does not trail behind.
-var conversationFollowAnimation = n.Animation{Spring: n.SpringOptions{Duration: 240 * time.Millisecond}}
+var conversationFollowAnimation = conversationui.TranscriptFollowAnimation
 
 type toolDisclosureMotion struct {
 	from, to float32

@@ -732,6 +732,7 @@ func (a *mobileApp) openParallel(id string) {
 
 func (a *mobileApp) setParallel(id string) {
 	if a.parallel != id {
+		a.positionConversationEntry(id)
 		a.suspendParallelFind()
 		if a.reviewBelongsToParallel(a.review) {
 			a.replaceReview(nil)

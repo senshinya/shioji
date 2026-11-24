@@ -335,10 +335,12 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 	newer := detail.History != nil && detail.History.Newer
 	entryLayer := c.Key("session-entry:" + viewKey)
 	var emerging bool
-	if a.latestSessionEntry == sid && interactive && preview == nil {
-		if a.model.Connected && !hasLatestSessionHistory(detail) {
+	if sid != "" && a.latestSessionEntry == sid && interactive && preview == nil {
+		if !hasLatestSessionHistory(detail) {
 			ui.Column(entryLayer.Key("loading")).Grow(1).Transition(mobileFeedbackFade(120 * time.Millisecond)).Children(func() {
-				if read := a.model.HistoryReads[sid]; read != nil && read.Error != "" {
+				if !a.model.Connected {
+					mobileSessionLoading(c.Key(sid), "等待设备连接后读取会话", "", false, nil)
+				} else if read := a.model.HistoryReads[sid]; read != nil && read.Error != "" {
 					mobileSessionLoading(c.Key(sid), "", "无法读取会话历史", false, func() {
 						if a.controller != nil {
 							a.controller.Select(sid)
@@ -437,6 +439,11 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 		snapshot: detail.Sequence, activation: a.replyActivation}
 	// UIKit keeps a pushed page mounted while another view is in front.
 	front := parent == nil || parent != a.chat || c.WindowActive()
+	reopening := preview == nil && a.model.FoldToolHistory[sid]
+	if reopening && detail.Session.ID != "" {
+		delete(a.model.FoldToolHistory, sid)
+	}
+	state.FollowEnd = !newer
 	reading := a.model.HistoryReads[sid]
 	motionAllowed := find == nil && !session.Archived && !session.ReadOnlyHistory() &&
 		a.model.Connected && detail.HasLoadedHistory() && (detail.History == nil || !detail.History.Invalidated && !newer) &&
@@ -531,8 +538,10 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 	state.EndOverlayRelease = 0
 	state.Reveals = state.Reveals[:0]
 	state.FollowAnimation = nil
-	if motionAllowed {
-		state.FollowAnimation = &mobileSendHandoffAnimation
+	// Measure the cached tail while disconnected or awaiting history, so a
+	// background refresh has a starting position. Item entrances remain live-only.
+	if front && preview == nil && find == nil && initial.caption == "" && !reopening && !c.Preferences().ReduceMotion {
+		state.FollowAnimation = &conversationui.TranscriptFollowAnimation
 	}
 	sendMotion := initial.motion
 	if sendMotion != nil {
