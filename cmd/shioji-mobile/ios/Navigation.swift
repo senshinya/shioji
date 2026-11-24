@@ -10,6 +10,9 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
     private var forms: [Int: UINavigationController] = [:]
     private var sessionSearch: SessionSearchBar?
     private let keyboardTiming = KeyboardTiming()
+    private var tabSlide: TabSlideCover?
+    private var tabRoots: [UIViewController] = []
+    private var reduceTabMotion = false
     private let rowMenus = NSMapTable<UIView, RowContextMenus>.weakToStrongObjects()
     private var forwardedPage: (browser: SFSafariViewController, close: PluginReply)?
     private let linkExporter = LinkExporter()
@@ -51,6 +54,7 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
             }
             tabs?.view.backgroundColor = canvasColor
             tabs?.tabBar.tintColor = .label
+            reduceTabMotion = args["reduceMotion"] as? Bool == true
             tabs?.delegate = self
             home.navigationItem.largeTitleDisplayMode = .never
             home.navigationItem.backButtonDisplayMode = .minimal
@@ -212,6 +216,10 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
             if let index = args["index"] as? Int {
                 selectTab(index)
             }
+            reply(.success(nil))
+        case "tabMotion":
+            reduceTabMotion = args["reduceMotion"] as? Bool == true
+            if reduceTabMotion { clearTabSlide() }
             reply(.success(nil))
         case "attentionSource":
             guard let id = args["window"] as? Int, shortcutSource(allowDraft: true)?.window.id == id else {
@@ -538,6 +546,8 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
 
     private func selectTab(_ index: Int) {
         guard let tabs else { return }
+        let roots = tabRoots.isEmpty ? tabs.viewControllers ?? [] : tabRoots
+        if roots.indices.contains(index) { prepareTabSlide(tabs, to: roots[index]) }
         if #available(iOS 27.0, *), tabs.prominentTabIdentifier == composeTabID,
            tabs.tabs.indices.contains(index), tabs.tabs[index].identifier != composeTabID {
             tabs.selectedTab = tabs.tabs[index]
@@ -545,6 +555,7 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
             tabs.selectedIndex = index
         }
         syncSplitTabs()
+        playTabSlide(in: tabs)
     }
 
     private func installNavigationShortcuts(_ shortcuts: [[String: Any]]) {
@@ -654,6 +665,85 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
 
     func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
         syncSplitTabs()
+        playTabSlide(in: tabBarController)
+    }
+
+    func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
+        prepareTabSlide(tabBarController, to: viewController)
+        return true
+    }
+
+    private func prepareTabSlide(_ tabs: UITabBarController, to destination: UIViewController) {
+        guard !reduceTabMotion, !UIAccessibility.isReduceMotionEnabled else { return }
+        let roots = tabRoots.isEmpty ? tabs.viewControllers ?? [] : tabRoots
+        guard let current = tabs.selectedViewController, current !== destination,
+              let previous = roots.firstIndex(of: current), let next = roots.firstIndex(of: destination),
+              let content = current.viewIfLoaded, content.window != nil else { return }
+        if tabSlide?.destination === destination { return }
+        clearTabSlide()
+        var body = tabs.view.bounds
+        if !tabs.tabBar.isHidden && tabs.tabBar.window != nil {
+            let bar = tabs.tabBar.convert(tabs.tabBar.bounds, to: tabs.view)
+            if bar.minY > 0 && bar.minY < body.height { body.size.height = bar.minY }
+        }
+        let source = content.convert(body, from: tabs.view)
+        guard let snapshot = content.resizableSnapshotView(from: source, afterScreenUpdates: false, withCapInsets: .zero) else { return }
+        let cover = UIView(frame: body)
+        cover.isUserInteractionEnabled = false
+        cover.accessibilityElementsHidden = true
+        cover.clipsToBounds = true
+        cover.backgroundColor = canvasColor
+        snapshot.frame = cover.bounds
+        cover.addSubview(snapshot)
+        tabs.view.addSubview(cover)
+        tabSlide = TabSlideCover(cover: cover, outgoing: snapshot, destination: destination, direction: previous < next ? 1 : -1)
+    }
+
+    private func playTabSlide(in tabs: UITabBarController) {
+        guard let slide = tabSlide, !slide.started, let destination = slide.destination,
+              tabs.selectedViewController === destination else { return }
+        slide.started = true
+        tabs.view.bringSubviewToFront(slide.cover)
+        let page = (destination as? UINavigationController)?.topViewController as? WindowController
+        let surface = page?.window as? SurfaceWindow
+        var ready = false
+        let reveal = { [weak self, weak tabs, weak slide] in
+            guard let self, let slide, self.tabSlide === slide, !ready else { return }
+            ready = true
+            guard let tabs, let destination = slide.destination, tabs.selectedViewController === destination,
+                  let content = destination.viewIfLoaded else {
+                self.clearTabSlide()
+                return
+            }
+            let visible = content.convert(slide.cover.frame, from: tabs.view)
+            guard let incoming = content.resizableSnapshotView(from: visible, afterScreenUpdates: false, withCapInsets: .zero) else {
+                self.clearTabSlide()
+                return
+            }
+            let distance = slide.direction * slide.cover.bounds.width
+            incoming.frame = slide.cover.bounds.offsetBy(dx: distance, dy: 0)
+            slide.cover.addSubview(incoming)
+            UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.26, delay: 0,
+                           options: [.curveEaseOut, .allowUserInteraction]) {
+                slide.outgoing.frame.origin.x = -distance
+                incoming.frame.origin.x = 0
+            } completion: { [weak self] _ in
+                slide.cover.removeFromSuperview()
+                if self?.tabSlide === slide { self?.tabSlide = nil }
+            }
+        }
+        let present = { DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 30, execute: reveal) }
+        if let surface, !surface.hasPresentedFirstFrame {
+            surface.onFirstFrame = present
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.50, execute: reveal)
+        } else {
+            present()
+        }
+    }
+
+    private func clearTabSlide() {
+        tabSlide?.cover.removeFromSuperview()
+        tabSlide = nil
     }
 
     private func configureTabBarLabels(_ bar: UITabBar) {
@@ -677,6 +767,7 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
     @available(iOS 27.0, *)
     private func installComposeTab(in tabs: UITabBarController, image: UIImage?) {
         guard let roots = tabs.viewControllers, roots.count == 3 else { return }
+        tabRoots = roots
         let destinations = roots.enumerated().map { index, root in
             let item = root.tabBarItem
             return UITab(title: item?.title ?? "", image: item?.image, identifier: "shioji.root.\(index)") { _ in root }
@@ -691,7 +782,13 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
 
     @available(iOS 18.0, *)
     func tabBarController(_ tabBarController: UITabBarController, shouldSelectTab tab: UITab) -> Bool {
-        guard tab.identifier == composeTabID else { return true }
+        guard tab.identifier == composeTabID else {
+            if let index = tabBarController.tabs.firstIndex(of: tab), tabRoots.indices.contains(index) {
+                prepareTabSlide(tabBarController, to: tabRoots[index])
+            }
+            return true
+        }
+        clearTabSlide()
         if let home = tabBarController.tabs.first {
             tabBarController.selectedTab = home
             PluginHost.emit("shiojiUIKit", "compose", true)
@@ -702,6 +799,7 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
     @available(iOS 18.0, *)
     func tabBarController(_ tabBarController: UITabBarController, didSelectTab selectedTab: UITab, previousTab: UITab?) {
         syncSplitTabs()
+        playTabSlide(in: tabBarController)
     }
 
     private func installSplit(home: UIViewController, detail: UIViewController, minimumWidth: CGFloat) {
@@ -720,6 +818,7 @@ final class ShiojiUIKit: NSObject, MyGoPlugin, UIAdaptivePresentationControllerD
         }
         let wasSelected = tabs.selectedViewController === primary
         controllers[index] = split
+        tabRoots = controllers
         tabs.setViewControllers(controllers, animated: false)
         tabs.view.tintColor = .label
         tabs.tabBar.tintColor = .label
@@ -987,6 +1086,21 @@ private final class SessionSearchBar: UIView {
             self.removeFromSuperview()
             self.onClose?()
         }
+    }
+}
+
+private final class TabSlideCover {
+    let cover: UIView
+    let outgoing: UIView
+    weak var destination: UIViewController?
+    let direction: CGFloat
+    var started = false
+
+    init(cover: UIView, outgoing: UIView, destination: UIViewController, direction: CGFloat) {
+        self.cover = cover
+        self.outgoing = outgoing
+        self.destination = destination
+        self.direction = direction
     }
 }
 

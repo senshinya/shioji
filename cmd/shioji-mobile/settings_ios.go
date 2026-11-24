@@ -124,10 +124,12 @@ func (a *mobileApp) openInputSettings(parent *mygo.Window, target string) {
 			revealSetting(&target, "motion", formChoice(c.Key("motion"), "减少动态效果", motion, func(m *ui.Menu) {
 				menuChoice(m, "跟随系统", !prefs.ReduceMotion, func() {
 					prefs.ReduceMotion = false
+					a.callUIKit("tabMotion", map[string]bool{"reduceMotion": false}, nil)
 					commit()
 				})
 				menuChoice(m, "开启", prefs.ReduceMotion, func() {
 					prefs.ReduceMotion = true
+					a.callUIKit("tabMotion", map[string]bool{"reduceMotion": true}, nil)
 					commit()
 				})
 			}))

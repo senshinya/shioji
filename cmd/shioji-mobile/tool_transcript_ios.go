@@ -150,10 +150,8 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 	header := c.Key("disclosure")
 	font := mobileStatusFont(c, captionTextSize)
 	lineHeight := mobileStatusLineHeight(font)
-	// Center the visible heading in its touch target and let the target
-	// use the existing clearance below it.
 	button := transcriptDisclosure(mobileButton(header, title, nil)).
-		AlignItems(ui.Center).Margin(0, 0, -transcriptItemGap).Expanded(group.Open)
+		MinHeight(transcriptMetadataHeight).AlignItems(ui.Start).Expanded(group.Open)
 	progress := mobileToolReveal(c, button, group.Open, target != "")
 	showInline := live && progress < 1
 	arrivals := ui.Local(button, "tool-call-arrivals", func() mobileToolCallArrivals { return nil })
@@ -234,10 +232,6 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 	}
 	if delta := toolResultPanel(c.Key("body"), group.Open, target != "", &progress, func(c *ui.Context) {
 		ui.Box(c.Key("heading-clearance")).Height(mobileToolRowGap - (transcriptMetadataHeight - 20)).Shrink(0)
-		last := len(tools) - 1
-		for last >= 0 && domain.HistorySpacer(tools[last]) {
-			last--
-		}
 		for index, tool := range tools {
 			if domain.HistorySpacer(tool) {
 				continue
@@ -250,9 +244,7 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 				c.AnimationFrame()
 			}
 			mobileToolCallLayout(row, entrance, func(call ui.Element) {
-				if index < last || group.Live {
-					call.Padding(0, 0, mobileToolRowGap, 0)
-				}
+				call.Padding(0, 0, mobileToolRowGap, 0)
 				if tool.ID == target {
 					call.Background(p.selected).Radius(cardRadius)
 					if reveal && group.Open {
@@ -272,7 +264,7 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 						if index > 0 && center > bounds.Y+9 {
 							painter.Fill(ui.Rect{X: x, Y: bounds.Y, W: 1, H: center - bounds.Y - 9}, p.line, 0)
 						}
-						if index < last && bounds.Y+bounds.H > center+9 {
+						if index+1 < len(tools) && bounds.Y+bounds.H > center+9 {
 							painter.Fill(ui.Rect{X: x, Y: center + 9, W: 1, H: bounds.Y + bounds.H - center - 9}, p.line, 0)
 						}
 					})

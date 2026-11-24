@@ -92,6 +92,7 @@ func (a *mobileApp) configureUIKit() {
 	args := map[string]any{"home": a.home.NativeHandle(), "devices": a.devices.NativeHandle(),
 		"settings": a.settings.NativeHandle(), "minimumWidth": mobileclient.SidebarMinWidth,
 		"composeIcon": tabIconImage(composeSymbol), "appearance": nativeAppearance(),
+		"reduceMotion": a.model.Preferences.ReduceMotion,
 		"shortcuts": slices.Concat(conversationShortcuts, interfaceShortcuts)}
 	if isTablet() {
 		detail := a.page("", a.detailView)

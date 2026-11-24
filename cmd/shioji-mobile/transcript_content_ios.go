@@ -435,10 +435,7 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 	}
 	var disclosureProgress float32
 	children := func() {
-		if grouped {
-			mobileToolGlyph(c.Key("timeline-icon"), symbol, name, font).Absolute().Left(mobileToolTimelineInset).
-				Top(max(0, (mobileTapSize(c)-lineHeight)/2))
-		} else {
+		if !grouped {
 			transcriptSymbol(c, symbol, name, font, 14, p.secondary)
 		}
 		title := label(c, titleName, size, ink).Font(font.Family).FixedLineHeight(lineHeight).
@@ -493,10 +490,8 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 		disclosureProgress = mobileToolReveal(c, heading, *open, mark != nil)
 	}
 	if grouped {
-		if !hasBody {
-			heading.MinHeight(lineHeight)
-		}
-		heading.FillWidth().Padding(0, 0, 0, mobileToolTextColumn).AlignItems(ui.Center).Justify(ui.Start)
+		heading.MinHeight(lineHeight).AlignSelf(ui.Stretch).MarginStart(mobileToolTextColumn).AlignItems(ui.Baseline).Justify(ui.Start)
+		mobileToolGlyph(c.Key("timeline-icon"), symbol, name, font).Absolute().Left(mobileToolTimelineInset).Top(0)
 	}
 	var command *mobileCommandOutput
 	if isCommand {
