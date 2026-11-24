@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"shioji/internal/domain"
 	"shioji/internal/harness"
@@ -26,6 +27,7 @@ func (r *runtime) discover(ctx context.Context, executable string, env []string)
 			if saved := readCatalog(path); saved.Version == r.version && saved.Profile == r.profile && saved.Models.HarnessID == r.ready.HarnessID {
 				r.ready = saved.Models
 				addYOLOPermission(&r.ready)
+				normalizeCachedAccount(&r.ready)
 				r.ready.Capabilities = r.capabilities()
 				r.ready.Capabilities.Compact = saved.Models.Capabilities.Compact
 				r.ready.Capabilities.CompactNeedsCheck = !r.ready.Capabilities.Compact && r.ready.Capabilities.CompactNeedsCheck
@@ -61,7 +63,7 @@ func (r *runtime) discover(ctx context.Context, executable string, env []string)
 	if r.ready.State != domain.RuntimeReady {
 		return errors.New(r.ready.Error)
 	}
-	r.ready.Account = &domain.RuntimeAccount{Mode: "account", Label: "Antigravity", State: "configured",
+	r.ready.Account = &domain.RuntimeAccount{Mode: "account", Label: "Antigravity", State: "authenticated",
 		QuotaWindows: queryNativeQuota(ctx, executable, r.native.AgentInfo.Version, env)}
 	if dir == "" {
 		return nil
@@ -71,6 +73,60 @@ func (r *runtime) discover(ctx context.Context, executable string, env []string)
 	account.QuotaWindows = nil
 	cached.Account = &account
 	return saveCatalog(dir, path, cachedCatalog{Version: r.version, Profile: r.profile, Models: cached})
+}
+
+func normalizeCachedAccount(ready *domain.Readiness) {
+	if ready.State != domain.RuntimeReady {
+		return
+	}
+	if ready.Account == nil {
+		ready.Account = &domain.RuntimeAccount{Mode: "account", Label: "Antigravity", State: "authenticated"}
+		return
+	}
+	if ready.Account.State == "configured" {
+		account := *ready.Account
+		account.State = "authenticated"
+		ready.Account = &account
+	}
+}
+
+func (r *runtime) startQuotaRefresh(executable string, env []string) {
+	quotaEnv := slices.Clone(env)
+	version := r.native.AgentInfo.Version
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	r.quotaCancel = cancel
+	r.quotaDone = done
+	go func() {
+		defer close(done)
+		defer cancel()
+		windows := queryNativeQuota(ctx, executable, version, quotaEnv)
+		if len(windows) == 0 || ctx.Err() != nil {
+			return
+		}
+		r.mu.Lock()
+		if r.ready.Account != nil && !r.Stopped() {
+			account := *r.ready.Account
+			account.QuotaWindows = windows
+			r.ready.Account = &account
+		}
+		r.mu.Unlock()
+	}()
+}
+
+func (r *runtime) stopQuota(ctx context.Context) error {
+	if r.quotaCancel != nil {
+		r.quotaCancel()
+	}
+	if r.quotaDone == nil {
+		return nil
+	}
+	select {
+	case <-r.quotaDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func readCatalog(path string) cachedCatalog {

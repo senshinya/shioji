@@ -103,7 +103,7 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 						label, status := "登录状态未报告", ""
 						if account := info.Account; account != nil {
 							label = account.Label
-							if account.State == "authenticated" {
+							if accountAuthenticated(account) {
 								status = account.Subscription
 							}
 						}
@@ -196,7 +196,7 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 						})
 					}
 					signIn := v.agentSignIn(key, info.ID)
-					if account := info.Account; account != nil && account.State == "authenticated" && len(account.QuotaWindows) > 0 &&
+					if account := info.Account; accountAuthenticated(account) && len(account.QuotaWindows) > 0 &&
 						(signIn == nil || !signIn.status.Phase.Active()) {
 						agentQuotaDetails(c.Key("quota"), t, account.QuotaWindows, &e.draft.quota)
 					}

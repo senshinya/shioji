@@ -679,3 +679,37 @@ func TestAgentQuotaDetailsAreCollapsedAndUseCompactRowsWhenOpened(t *testing.T) 
 		t.Fatal("quota details remain visible after collapsing")
 	}
 }
+
+func TestAgentReopenShowsAuthenticatedAccountAndQuotaWithoutSignInAttempt(t *testing.T) {
+	for _, stateName := range []string{"authenticated", "configured"} {
+		t.Run(stateName, func(t *testing.T) {
+			m := deviceUIModel()
+			state := m.DeviceStates["local"]
+			state.WorkerMinor = protocol.SignInManualCodeMinor
+			v := New(m, app.NewController(""), "")
+			reset := time.Date(2026, 11, 30, 17, 27, 0, 0, time.Local)
+			info := domain.HarnessInfo{
+				ID: "antigravity", Name: "Antigravity", Icon: "antigravity", State: domain.RuntimeReady,
+				Account: &domain.RuntimeAccount{
+					Mode: "account", Label: "Antigravity", State: stateName,
+					QuotaWindows: []domain.RuntimeQuotaWindow{
+						{Group: "Gemini Models", DurationSeconds: 18000, UsedPercent: 12, ResetsAt: &reset},
+					},
+				},
+				Installation: &domain.RuntimeInstallation{SignInMethods: []domain.SignInMethod{domain.SignInBrowser}},
+			}
+			e := agentEditor([]domain.HarnessInfo{info})
+			e.edit(info)
+			e.draft.login = true
+			ui := n.NewTester(func(c *n.Context) {
+				n.Column(c).FillWidth().FillHeight().Background(c.Theme().Surface).Children(func() {
+					v.deviceAgentPage(c, c.Theme(), "local", "本机", state, e, info)
+				})
+			}, 950, 670)
+			ui.Advance(time.Second)
+			if !ui.HasText("已登录") || !ui.HasText("重新登录") || !ui.HasText("额度") {
+				t.Fatalf("reopened agent view lost login or quota for state=%q: %v", stateName, ui.Texts())
+			}
+		})
+	}
+}

@@ -130,6 +130,8 @@ type runtime struct {
 	requests       map[string]nativeRequest
 	done           chan struct{} // Catalog lifetime only.
 	close          sync.Once
+	quotaCancel    context.CancelFunc
+	quotaDone      chan struct{}
 }
 
 func (a Adapter) Start(ctx context.Context, options harness.StartOptions) (harness.Runtime, error) {
@@ -212,6 +214,10 @@ func (a Adapter) Start(ctx context.Context, options harness.StartOptions) (harne
 			return nil, err
 		}
 		r.process = nil
+		if !options.RefreshCatalog && r.ready.State == domain.RuntimeReady && r.ready.Account != nil &&
+			r.ready.Account.State == "authenticated" && len(r.ready.Account.QuotaWindows) == 0 {
+			r.startQuotaRefresh(path, env)
+		}
 	} else {
 		if r.native.AgentCapabilities.MCPMethods.HTTP {
 			r.bridge, err = r.startGoalBridge()
@@ -403,7 +409,7 @@ func (r *runtime) Readiness() domain.Readiness {
 	}
 	d := (Adapter{}).Descriptor()
 	ready.Harnesses = []domain.HarnessInfo{{
-		ID: d.ID, Name: d.Name, State: ready.State, Error: ready.Error,
+		ID: d.ID, Name: d.Name, State: ready.State, Error: ready.Error, Account: ready.Account,
 		Models: ready.Models, Permissions: ready.Permissions, PermissionChoices: ready.PermissionChoices,
 		Plan: ready.Plan, Capabilities: ready.Capabilities,
 	}}
@@ -497,11 +503,12 @@ func (r *runtime) Done() <-chan struct{} {
 }
 
 func (r *runtime) Close(ctx context.Context) error {
+	quotaErr := r.stopQuota(ctx)
 	if r.process == nil {
 		r.close.Do(func() { close(r.done) })
-		return nil
+		return quotaErr
 	}
-	return errors.Join(r.callback.close(), r.closeProcess(ctx), r.bridge.close(ctx))
+	return errors.Join(quotaErr, r.callback.close(), r.closeProcess(ctx), r.bridge.close(ctx))
 }
 
 func (r *runtime) closeProcess(ctx context.Context) error {

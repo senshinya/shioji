@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"shioji/internal/domain"
@@ -80,7 +81,7 @@ func (w *quotaOutput) Write(p []byte) (int, error) {
 // Print mode uses the system profile. A custom ACP profile cannot be queried
 // with these arguments without risking a reading from another account.
 func queryNativeQuota(ctx context.Context, executable, version string, env []string) []domain.RuntimeQuotaWindow {
-	if !verifiedConcurrentPrompt(version) || systemexec.EnvironmentValue(env, "GEMINI_HOME") != "" {
+	if ctx.Err() != nil || !verifiedConcurrentPrompt(version) || systemexec.EnvironmentValue(env, "GEMINI_HOME") != "" {
 		return nil
 	}
 	home := systemexec.EnvironmentValue(env, "HOME")
@@ -97,6 +98,13 @@ func queryNativeQuota(ctx context.Context, executable, version string, env []str
 	out := &quotaOutput{}
 	cmd := exec.CommandContext(ctx, executable, "--print", "/usage", "--output-format", "json")
 	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = dir, env, out, io.Discard
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		return nil
+	}
 	cmd.WaitDelay = time.Second
 	if cmd.Run() != nil {
 		return nil

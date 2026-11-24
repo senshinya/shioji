@@ -431,6 +431,10 @@ func agentInfoRow(c *ui.Context, title, value string) {
 	})
 }
 
+func accountAuthenticated(account *domain.RuntimeAccount) bool {
+	return account != nil && (account.State == "authenticated" || account.Mode != "api" && account.State == "configured")
+}
+
 func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain.HarnessInfo, draft *mobileAgentAccountDraft, blocked bool, refresh func()) {
 	attempt := a.agentSignIns[agent.ID]
 	active := attempt != nil && attempt.status.Phase.Active()
@@ -438,7 +442,7 @@ func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain
 		draft.reauthorize, draft.reauthorizeAttempt = false, ""
 	}
 	methods := agentMobileSignInMethods(agent, a.model.WorkerMinor)
-	if account := agent.Account; account != nil && account.Mode != "api" && (account.State == "authenticated" || account.State == "notRequired") && !active && !draft.reauthorize {
+	if account := agent.Account; account != nil && account.Mode != "api" && (accountAuthenticated(account) || account.State == "notRequired") && !active && !draft.reauthorize {
 		agentInfoRow(c, "账号", agentAccountName(account))
 		if account.Identity != "" {
 			agentInfoRow(c, "账号标识", account.Identity)
@@ -451,7 +455,7 @@ func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain
 		}
 		ui.Row(c.Key("account-actions")).Wrap().Gap(10).Padding(14, 0, 4).Children(func() {
 			secondaryAction(c, "重新检测", refresh).PaddingX(16).Disabled(blocked || active)
-			if len(methods) != 0 && account.State == "authenticated" {
+			if len(methods) != 0 && accountAuthenticated(account) {
 				secondaryAction(c, "更换账号", func() { draft.reauthorize = true }).PaddingX(16).Disabled(blocked || active)
 			}
 		})
@@ -529,7 +533,7 @@ func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain
 					secondaryAction(c, "重新检测", refresh).PaddingX(14).Disabled(blocked)
 				} else {
 					caption := "开始登录"
-					if agent.Account != nil && agent.Account.State == "authenticated" {
+					if accountAuthenticated(agent.Account) {
 						caption = "重新登录"
 					}
 					secondaryAction(c, caption, func() {

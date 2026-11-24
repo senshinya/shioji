@@ -41,7 +41,7 @@ func TestCatalogRefreshCreatesSessionOnlyOnRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	cached := probe(false).Readiness()
-	if len(cached.Models) != 1 || hasMethod(log, "session/new") {
+	if len(cached.Models) != 1 || hasMethod(log, "session/new") || cached.Account == nil || cached.Account.State != "authenticated" {
 		t.Fatalf("background catalog did not reuse discovery: %+v", cached)
 	}
 	if err := os.WriteFile(log+".auth-required", nil, 0600); err != nil {
@@ -53,6 +53,58 @@ func TestCatalogRefreshCreatesSessionOnlyOnRequest(t *testing.T) {
 	if again := probe(false).Readiness(); again.State == domain.RuntimeReady || len(again.Models) != 0 {
 		t.Fatalf("background probe restored a catalog after logout: %+v", again)
 	}
+}
+
+func TestCachedCatalogNormalizesLegacyAccountAndRefreshesQuota(t *testing.T) {
+	a, log := fixtureAdapter(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	dir := t.TempDir()
+	const usageJSON = `{"status":"SUCCESS","num_turns":0,"command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","buckets":[{"id":"g5h","window":"5h","remaining_fraction":0.8,"reset_time":"2026-11-30T12:00:00Z"}]}]}}}`
+	if err := os.WriteFile(log+".usage", []byte(usageJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := a.Start(ctx, harness.StartOptions{CatalogOnly: true, CatalogDirectory: dir, RefreshCatalog: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fresh.Close(context.Background()) })
+	ready := fresh.Readiness()
+	if ready.Account == nil || ready.Account.State != "authenticated" || len(ready.Account.QuotaWindows) != 1 {
+		t.Fatalf("fresh discovery account = %+v", ready.Account)
+	}
+	catalogPath := filepath.Join(dir, "model-catalog.json")
+	saved := readCatalog(catalogPath)
+	if saved.Models.Account == nil || saved.Models.Account.State != "authenticated" || len(saved.Models.Account.QuotaWindows) != 0 {
+		t.Fatalf("persisted catalog account = %+v", saved.Models.Account)
+	}
+	// Simulate an older worker's cached catalog written with state "configured".
+	saved.Models.Account.State = "configured"
+	if err := saveCatalog(dir, catalogPath, saved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(log); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := a.Start(ctx, harness.StartOptions{CatalogOnly: true, CatalogDirectory: dir, RefreshCatalog: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close(context.Background()) })
+	if got := reopened.Readiness().Account; got == nil || got.State != "authenticated" {
+		t.Fatalf("legacy cached account was not normalized: %+v", got)
+	}
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		if acc := reopened.Readiness().Account; acc != nil && len(acc.QuotaWindows) == 1 {
+			if hasMethod(log, "session/new") {
+				t.Fatal("background quota refresh created an ACP session")
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("background cached catalog did not refresh quota windows: %+v", reopened.Readiness().Account)
 }
 
 func TestYOLOIsAvailableInDiscoveredAndCachedCatalogs(t *testing.T) {
@@ -164,6 +216,13 @@ func hasMethod(path, method string) bool {
 }
 
 func TestACPFixtureProcess(t *testing.T) {
+	if slices.Contains(os.Args, "--print") {
+		if raw, err := os.ReadFile(os.Getenv("SHIOJI_ACP_FIXTURE_LOG") + ".usage"); err == nil {
+			_, _ = os.Stdout.Write(raw)
+			os.Exit(0)
+		}
+		os.Exit(1)
+	}
 	if !slices.Contains(os.Args, "acp") {
 		return
 	}

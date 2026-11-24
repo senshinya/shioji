@@ -232,6 +232,10 @@ func openSignInLink(target string) error {
 	}
 	return openAuthorizationURL(target)
 }
+func accountAuthenticated(account *domain.RuntimeAccount) bool {
+	return account != nil && (account.State == "authenticated" || account.Mode != "api" && account.State == "configured")
+}
+
 func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *deviceAgentEditor, info domain.HarnessInfo, disabled bool) {
 	u := v.agentSignIn(key, info.ID)
 	initialActive := u != nil && u.initial && u.status.Phase.Active()
@@ -258,7 +262,7 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 			if at := strings.Index(identity, "@"); at > 1 {
 				identity = string([]rune(identity[:at])[:1]) + "…" + identity[at:]
 			}
-			if identity == "" && info.Account.State == "authenticated" {
+			if identity == "" && accountAuthenticated(info.Account) {
 				identity = "已登录"
 			}
 		}
@@ -333,7 +337,7 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 						}
 						status()
 						label := "登录"
-						if info.Account != nil && info.Account.State == "authenticated" {
+						if accountAuthenticated(info.Account) {
 							label = "重新登录"
 						}
 						actionLabel := "登录账号"
