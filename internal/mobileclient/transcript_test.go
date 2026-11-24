@@ -359,7 +359,7 @@ func TestSentMessageRunsPreserveFileAndSkillOrderingWithUnicodeOffsets(t *testin
 	}
 }
 
-func TestReasoningStaysInToolGroupWithoutCountingAsACall(t *testing.T) {
+func TestReasoningMergesForwardIntoToolGroupWithoutPullingEarlierSummary(t *testing.T) {
 	turn := domain.Turn{ID: "t", Status: domain.ExecutionRunning}
 	items := []domain.Item{
 		{ID: "leading", TurnID: "t", Kind: "activity", Presentation: "reasoning", Text: "Inspect", Final: true},
@@ -369,14 +369,33 @@ func TestReasoningStaysInToolGroupWithoutCountingAsACall(t *testing.T) {
 	var timeline ToolTimeline
 	detail := domain.SessionDetail{Turns: []domain.Turn{turn}}
 	rows := TranscriptRows(items, detail.Turns, true, nil)
-	group := timeline.Groups(items, rows, detail, true, false)[0]
-	if rows[0].End != 3 || group.Count != 1 || !group.Live || !group.Open || group.Outcome != "" {
-		t.Fatalf("thinking split the live tool group: rows=%+v group=%+v", rows, group)
+	groups := timeline.Groups(items, rows, detail, true, false)
+	if _, merged := groups[0]; merged || rows[0].First != 0 || rows[0].End != 1 {
+		t.Fatalf("leading reasoning before the first tool was merged: rows=%+v groups=%+v", rows, groups)
+	}
+	group := groups[1]
+	if rows[1].First != 1 || rows[1].End != 3 || group.Count != 1 || !group.Live || !group.Open || group.Outcome != "" {
+		t.Fatalf("following thinking did not stay in the live tool group: rows=%+v group=%+v", rows, group)
 	}
 	items = append(items, domain.Item{ID: "answer", TurnID: "t", Kind: "assistant", Text: "Done", ActivityOrder: 3})
 	rows = TranscriptRows(items, detail.Turns, true, nil)
-	group = timeline.Groups(items, rows, detail, true, false)[0]
-	if rows[0].End != 3 || group.Open || group.Live || group.Outcome != ToolGroupCompleted {
-		t.Fatalf("reply did not seal the group using the tool result: rows=%+v group=%+v", rows, group)
+	groups = timeline.Groups(items, rows, detail, true, false)
+	group = groups[1]
+	if _, merged := groups[0]; merged || rows[1].End != 3 || group.Open || group.Live || group.Outcome != ToolGroupCompleted {
+		t.Fatalf("reply did not seal the group using the tool result: rows=%+v groups=%+v", rows, groups)
+	}
+	// A standalone reasoning summary in a later turn counts as visible content
+	// and seals an earlier tool group.
+	nextTurn := []domain.Turn{{ID: "t1", Status: domain.ExecutionRunning}, {ID: "t2", Status: domain.ExecutionRunning}}
+	crossTurn := []domain.Item{
+		{ID: "tool", TurnID: "t1", Kind: "tool", Status: "completed", Final: true},
+		{ID: "next-thought", TurnID: "t2", Kind: "activity", Presentation: "reasoning", Text: "New turn", Final: true},
+	}
+	var crossTimeline ToolTimeline
+	crossDetail := domain.SessionDetail{Turns: nextTurn}
+	crossRows := TranscriptRows(crossTurn, nextTurn, true, nil)
+	crossGroups := crossTimeline.Groups(crossTurn, crossRows, crossDetail, true, false)
+	if g := crossGroups[0]; g.Open || g.Live || g.Outcome != ToolGroupCompleted {
+		t.Fatalf("standalone reasoning in next turn did not seal previous tool group: rows=%+v group=%+v", crossRows, g)
 	}
 }

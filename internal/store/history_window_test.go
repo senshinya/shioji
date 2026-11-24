@@ -192,6 +192,7 @@ func TestHistoryToolGroupSpansReasoningAndAutomaticApproval(t *testing.T) {
 	}
 	first := upsert("first-thought", "activity", "reasoning")
 	call := upsert("first-call", "tool", "files")
+	middle := upsert("middle-thought", "activity", "reasoning")
 	request := domain.PendingRequest{ID: "approval", TurnID: "t", ItemID: call.ID, Kind: "approval", Title: "Allow?", State: domain.RequestPending, Revision: 1}
 	apply(domain.Event{Type: "request.open", Request: &request})
 	request.State, request.Revision = domain.RequestResolved, 2
@@ -204,14 +205,22 @@ func TestHistoryToolGroupSpansReasoningAndAutomaticApproval(t *testing.T) {
 	upsert("answer", "assistant", "")
 	upsert("separate", "tool", "command")
 
-	for _, around := range []string{first.ID, last.ID} {
+	leading, err := s.SessionHistory(domain.HistoryQuery{SessionID: op.SessionID, AroundID: first.ID, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leading.History.Groups) != 0 {
+		t.Fatalf("leading reasoning before the first tool must not join a group: %+v", leading.History.Groups)
+	}
+
+	for _, around := range []string{call.ID, middle.ID, last.ID} {
 		page, err := s.SessionHistory(domain.HistoryQuery{SessionID: op.SessionID, AroundID: around, Limit: 1})
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := domain.HistoryToolGroup{ID: call.ID, TurnID: "t", First: first.Order, Last: last.Order, Count: 2}
+		want := domain.HistoryToolGroup{ID: call.ID, TurnID: "t", First: call.Order, Last: last.Order, Count: 2}
 		if got := page.History.Groups; len(got) != 1 || got[0] != want {
-			t.Fatalf("summary-only page at %s lost its group: %+v", around, got)
+			t.Fatalf("page at %s lost its group: got=%+v want=%+v", around, got, want)
 		}
 	}
 }

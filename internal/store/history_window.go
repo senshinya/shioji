@@ -229,15 +229,18 @@ func (s *Store) historyToolGroupLocked(id string, item domain.Item) (domain.Hist
 		return domain.HistoryToolGroup{}, err
 	}
 	g := domain.HistoryToolGroup{TurnID: item.TurnID}
-	var firstTool sql.NullInt64
-	err = s.historyQueries().QueryRow(`SELECT MIN(position),MAX(position),
-		SUM(CASE WHEN json_extract(body,'$.kind')='tool' THEN 1 ELSE 0 END),
+	var firstTool, last sql.NullInt64
+	err = s.historyQueries().QueryRow(`SELECT
 		MIN(CASE WHEN json_extract(body,'$.kind')='tool' THEN position END),
-		SUM(CASE WHEN json_extract(body,'$.kind')='tool' AND json_extract(body,'$.final') AND (COALESCE(json_extract(body,'$.exitCode'),0)!=0 OR json_extract(body,'$.status') IN ('failed','declined','interrupted')) THEN 1 ELSE 0 END)
-		FROM items WHERE session_id=? AND position>? AND position<? AND `+toolHistoryMemberSQL, id, before, after).Scan(&g.First, &g.Last, &g.Count, &firstTool, &g.Issues)
-	if err == nil && firstTool.Valid {
-		err = s.historyQueries().QueryRow("SELECT id FROM items WHERE session_id=? AND position=?", id, firstTool.Int64).Scan(&g.ID)
+		MAX(position),
+		COALESCE(SUM(CASE WHEN json_extract(body,'$.kind')='tool' THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN json_extract(body,'$.kind')='tool' AND json_extract(body,'$.final') AND (COALESCE(json_extract(body,'$.exitCode'),0)!=0 OR json_extract(body,'$.status') IN ('failed','declined','interrupted')) THEN 1 ELSE 0 END),0)
+		FROM items WHERE session_id=? AND position>? AND position<? AND `+toolHistoryMemberSQL, id, before, after).Scan(&firstTool, &last, &g.Count, &g.Issues)
+	if err != nil || !firstTool.Valid || item.Order < firstTool.Int64 {
+		return domain.HistoryToolGroup{}, err
 	}
+	g.First, g.Last = firstTool.Int64, last.Int64
+	err = s.historyQueries().QueryRow("SELECT id FROM items WHERE session_id=? AND position=?", id, g.First).Scan(&g.ID)
 	return g, err
 }
 

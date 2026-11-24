@@ -51,10 +51,18 @@ func (t *ToolTimeline) Groups(items []domain.Item, rows []TranscriptRow, detail 
 	}
 	live := LatestTurnActivity(items, activeTurn)
 	lastContent := -1
-	for i := len(items) - 1; i >= 0; i-- {
-		item := items[i]
-		if !domain.ToolGroupMember(item) && !transcriptSpacer(item) && (item.Kind != "user" || acceptedReplyInput(item)) {
-			lastContent = i
+	for _, row := range slices.Backward(rows) {
+		if row.Footer != "" || row.tool.ID != "" {
+			continue
+		}
+		for i := row.End - 1; i >= row.First; i-- {
+			item := items[i]
+			if !transcriptSpacer(item) && (item.Kind != "user" || acceptedReplyInput(item)) {
+				lastContent = i
+				break
+			}
+		}
+		if lastContent >= 0 {
 			break
 		}
 	}

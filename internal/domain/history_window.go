@@ -85,8 +85,11 @@ func ReasoningSummary(item Item) bool {
 	return item.Presentation == "reasoning" && (item.Kind == "activity" || item.Kind == "reasoning")
 }
 
-// ToolGroupMember includes visible calls and summaries. Spacers can occur
-// between members without becoming visible rows or adding to the call count.
+// ToolGroupMember identifies items that can appear inside an active tool group:
+// tool calls and subsequent public reasoning summaries. A tool group starts on
+// a tool call and never pulls earlier reasoning summaries backward into it.
+// Spacers can occur between members without becoming visible rows or adding to
+// the call count.
 func ToolGroupMember(item Item) bool {
 	return item.Kind == "tool" || ReasoningSummary(item)
 }

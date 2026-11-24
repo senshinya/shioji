@@ -2,8 +2,9 @@ package app
 
 import "shioji/internal/domain"
 
-// ToolSpan is a consecutive run containing tool calls and public summaries
-// from one turn. Count includes calls outside the loaded history window.
+// ToolSpan is a consecutive run starting at a tool call (or continuing an
+// earlier unloaded tool group) and merging subsequent tool calls and public
+// summaries from one turn. Count includes calls outside the loaded window.
 type ToolSpan struct {
 	ID         string
 	End        int
@@ -16,7 +17,7 @@ func ToolSpans(items []domain.Item, history *domain.HistoryWindow, spacer func(d
 	var spans map[int]ToolSpan
 	for i := 0; i < len(items); {
 		first := items[i]
-		if !domain.ToolGroupMember(first) || spacer(first) {
+		if spacer(first) || first.Kind != "tool" && (!domain.ReasoningSummary(first) || !continuesHistoryToolGroup(first, history)) {
 			i++
 			continue
 		}
@@ -64,4 +65,16 @@ func ToolSpans(items []domain.Item, history *domain.HistoryWindow, spacer func(d
 		i = span.End
 	}
 	return spans
+}
+
+func continuesHistoryToolGroup(item domain.Item, history *domain.HistoryWindow) bool {
+	if history == nil || item.Order <= 0 {
+		return false
+	}
+	for _, hint := range history.Groups {
+		if hint.TurnID == item.TurnID && hint.First < item.Order && hint.Last >= item.Order && (history.First == 0 || hint.First < history.First) {
+			return true
+		}
+	}
+	return false
 }

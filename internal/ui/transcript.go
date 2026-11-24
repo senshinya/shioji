@@ -274,13 +274,19 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 	nextContent[len(items)] = len(items)
 	latestTool := -1
 	spans := app.ToolSpans(items, v.Model.Details[v.Model.SessionID].History, domain.HistorySpacer)
+	inToolSpan := make([]bool, len(items))
+	for start, span := range spans {
+		for j := start; j < span.End; j++ {
+			inToolSpan[j] = true
+		}
+	}
 	for i := len(items) - 1; i >= 0; i-- {
 		item := items[i]
 		nextContent[i] = nextContent[i+1]
-		if !domain.ToolGroupMember(item) && !domain.HistorySpacer(item) {
+		if !inToolSpan[i] && !domain.HistorySpacer(item) {
 			nextContent[i] = i
 		}
-		if latestTool < 0 && domain.ToolGroupMember(item) {
+		if latestTool < 0 && inToolSpan[i] && !domain.HistorySpacer(item) {
 			latestTool = i
 		}
 	}
