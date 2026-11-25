@@ -5,6 +5,27 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-25
+
+[源码](https://github.com/senshinya/shioji/tree/v0.9.0) · [与上一正式版 v0.8.4 比较](https://github.com/senshinya/shioji/compare/v0.8.4...v0.9.0)
+
+### Added
+
+- 新增独立的 deepseek Agent。创建 Profile 只需填写 DeepSeek API Key，模型列表来自 DeepSeek，回复使用 Responses API。执行设备需要可用的 Codex app-server。
+- 同一设备可以为 Codex 或 Antigravity 保存多套独立登录配置。新会话可以选择 Profile，已有会话保留原有运行环境和历史。
+
+### Changed
+
+- 设备的 Profile 页只显示已保存的配置。新增页内选择 Agent，切换 Agent 时清空已填写内容。
+- Antigravity 配置页显示订阅层级。对话底部显示已报告的用量或地区限制，符合条件的会话可以重试，保留输入框草稿。
+- 思考摘要在流式输出时逐步展开，并在回复完成后收起。iPhone 和 iPad 恢复了页签滑动切换和紧凑工具组。
+
+### Fixed
+
+- 修复快速流式输出时对话底部跟随中断，并修正启用「减少动态效果」时状态提示短暂闪现的问题。
+
+GitHub Release 提供适用于 Apple Silicon 的 macOS 安装包。已安装支持自动更新的正式版可在 Shioji 菜单或「设置 → 关于」检查更新。使用 DeepSeek 和设备级 Profile 需要更新所属设备的执行服务。本版执行服务使用协议 2.62，数据库沿用 schema 17。
+
 ## [0.8.4] - 2026-11-24
 
 [源码](https://github.com/senshinya/shioji/tree/v0.8.4) · [与上一正式版 v0.8.3 比较](https://github.com/senshinya/shioji/compare/v0.8.3...v0.8.4)
