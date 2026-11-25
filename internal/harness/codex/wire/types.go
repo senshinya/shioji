@@ -73,17 +73,18 @@ type Params struct {
 		Step   string `json:"step"`
 		Status string `json:"status"`
 	} `json:"plan"`
-	ThreadID  string          `json:"threadId"`
-	TurnID    string          `json:"turnId"`
-	ItemID    string          `json:"itemId"`
-	Delta     string          `json:"delta"`
-	Turn      Turn            `json:"turn"`
-	Item      Item            `json:"item"`
-	RequestID json.RawMessage `json:"requestId"`
-	Command   string          `json:"command"`
-	CWD       string          `json:"cwd"`
-	Reason    string          `json:"reason"`
-	Questions []struct {
+	ThreadID     string          `json:"threadId"`
+	TurnID       string          `json:"turnId"`
+	ItemID       string          `json:"itemId"`
+	Delta        string          `json:"delta"`
+	SummaryIndex *int            `json:"summaryIndex"`
+	Turn         Turn            `json:"turn"`
+	Item         Item            `json:"item"`
+	RequestID    json.RawMessage `json:"requestId"`
+	Command      string          `json:"command"`
+	CWD          string          `json:"cwd"`
+	Reason       string          `json:"reason"`
+	Questions    []struct {
 		ID       string `json:"id"`
 		Header   string `json:"header"`
 		Question string `json:"question"`

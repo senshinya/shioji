@@ -319,6 +319,13 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		n.items[key] = i
 		event.Type, event.Item = "item.upsert", &i
 		return emit(event)
+	case "item/reasoning/summaryTextDelta":
+		i, ok := n.appendReasoningSummary(itemKey(p.TurnID, p.ItemID), p)
+		if !ok {
+			return nil, nil, nil
+		}
+		event.Type, event.Item = "item.upsert", &i
+		return emit(event)
 	case "item/agentMessage/delta", "item/commandExecution/outputDelta":
 		key := itemKey(p.TurnID, p.ItemID)
 		i, ok := n.items[key]

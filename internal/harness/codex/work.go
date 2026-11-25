@@ -403,6 +403,11 @@ func (n *Normalizer) feedChildWork(m wire.Message, p wire.Params) ([]domain.Even
 		tracker.works[w.ID] = w
 		out = append(out, workEvent(binding.session, w), workItemEvent(binding.session, w.ID, i))
 		out = append(out, n.observeRootWork(m, p, domain.Event{Item: &i})...)
+	case "item/reasoning/summaryTextDelta":
+		key := binding.id + "\x00" + itemKey(p.TurnID, p.ItemID)
+		if i, ok := n.appendReasoningSummary(key, p); ok {
+			out = append(out, workItemEvent(binding.session, w.ID, i))
+		}
 	case "item/agentMessage/delta", "item/commandExecution/outputDelta":
 		key := binding.id + "\x00" + itemKey(p.TurnID, p.ItemID)
 		i, found := n.items[key]
