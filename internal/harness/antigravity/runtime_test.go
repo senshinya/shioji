@@ -55,7 +55,7 @@ func TestCatalogRefreshCreatesSessionOnlyOnRequest(t *testing.T) {
 	}
 }
 
-func TestCachedCatalogNormalizesLegacyAccountAndRefreshesQuota(t *testing.T) {
+func TestCachedCatalogNormalizesLegacyAccountAndPreservesSubscription(t *testing.T) {
 	a, log := fixtureAdapter(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
@@ -70,12 +70,12 @@ func TestCachedCatalogNormalizesLegacyAccountAndRefreshesQuota(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = fresh.Close(context.Background()) })
 	ready := fresh.Readiness()
-	if ready.Account == nil || ready.Account.State != "authenticated" || len(ready.Account.QuotaWindows) != 1 {
+	if ready.Account == nil || ready.Account.State != "authenticated" || ready.Account.Subscription != "Google AI Pro" || len(ready.Account.QuotaWindows) != 0 {
 		t.Fatalf("fresh discovery account = %+v", ready.Account)
 	}
 	catalogPath := filepath.Join(dir, "model-catalog.json")
 	saved := readCatalog(catalogPath)
-	if saved.Models.Account == nil || saved.Models.Account.State != "authenticated" || len(saved.Models.Account.QuotaWindows) != 0 {
+	if saved.Models.Account == nil || saved.Models.Account.State != "authenticated" || saved.Models.Account.Subscription != "Google AI Pro" || len(saved.Models.Account.QuotaWindows) != 0 {
 		t.Fatalf("persisted catalog account = %+v", saved.Models.Account)
 	}
 	// Simulate an older worker's cached catalog written with state "configured".
@@ -91,20 +91,41 @@ func TestCachedCatalogNormalizesLegacyAccountAndRefreshesQuota(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = reopened.Close(context.Background()) })
-	if got := reopened.Readiness().Account; got == nil || got.State != "authenticated" {
-		t.Fatalf("legacy cached account was not normalized: %+v", got)
+	got := reopened.Readiness().Account
+	if got == nil || got.State != "authenticated" || got.Subscription != "Google AI Pro" || len(got.QuotaWindows) != 0 {
+		t.Fatalf("reopened cached account = %+v", got)
 	}
-	deadline := time.Now().Add(4 * time.Second)
-	for time.Now().Before(deadline) {
-		if acc := reopened.Readiness().Account; acc != nil && len(acc.QuotaWindows) == 1 {
-			if hasMethod(log, "session/new") {
-				t.Fatal("background quota refresh created an ACP session")
-			}
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
+	if hasMethod(log, "session/new") {
+		t.Fatal("background cached catalog created an ACP session")
 	}
-	t.Fatalf("background cached catalog did not refresh quota windows: %+v", reopened.Readiness().Account)
+}
+
+func TestSubscriptionTierWithInstalledCLI(t *testing.T) {
+	if os.Getenv("SHIOJI_TEST_AGY_SUBSCRIPTION") != "1" {
+		t.Skip("requires an authorized device account with a subscription tier")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 22*time.Second)
+	defer cancel()
+	dir := t.TempDir()
+	adapter := Adapter{}
+	catalog, err := adapter.Start(ctx, harness.StartOptions{CatalogOnly: true, CatalogDirectory: dir, RefreshCatalog: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer catalog.Close(context.Background())
+	account := catalog.Readiness().Account
+	if account == nil || account.Subscription == "" || len(account.QuotaWindows) != 0 {
+		t.Fatalf("real CLI account = %+v", account)
+	}
+	cached, err := adapter.Start(ctx, harness.StartOptions{CatalogOnly: true, CatalogDirectory: dir, RefreshCatalog: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cached.Close(context.Background())
+	if got := cached.Readiness().Account; got == nil || got.Subscription != account.Subscription || len(got.QuotaWindows) != 0 {
+		t.Fatalf("cached CLI account = %+v, want subscription %q", got, account.Subscription)
+	}
+	t.Logf("loaded native Antigravity subscription tier: %q", account.Subscription)
 }
 
 func TestYOLOIsAvailableInDiscoveredAndCachedCatalogs(t *testing.T) {
@@ -394,7 +415,15 @@ func TestACPFixtureProcess(t *testing.T) {
 					"sessionUpdate": "available_commands_update", "availableCommands": []map[string]string{{"name": "compact"}},
 				},
 			}})
-			reply(msg.ID, map[string]any{"sessionId": "native-session", "configOptions": options()})
+			reply(msg.ID, map[string]any{
+				"sessionId":     "native-session",
+				"configOptions": options(),
+				"_meta": map[string]any{
+					"antigravity": map[string]any{
+						"tier": map[string]any{"name": "Google AI Pro", "id": "g1-pro-tier"},
+					},
+				},
+			})
 		case "session/close":
 			reply(msg.ID, struct{}{})
 		case "session/set_config_option":

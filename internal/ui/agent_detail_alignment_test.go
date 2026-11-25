@@ -42,12 +42,9 @@ func TestAgentDetailPagesAlignmentForCodexAndAntigravity(t *testing.T) {
 			{ID: "claude-sonnet", Name: "Claude Sonnet"},
 		},
 		Account: &domain.RuntimeAccount{
-			Mode: "account", State: "authenticated", Label: "Antigravity",
+			Mode: "account", State: "authenticated", Label: "Antigravity", Subscription: "Google AI Pro",
 			QuotaWindows: []domain.RuntimeQuotaWindow{
 				{Group: "Gemini Models", DurationSeconds: 604800, UsedPercent: 1, ResetsAt: &reset},
-				{Group: "Gemini Models", DurationSeconds: 18000, UsedPercent: 0, ResetsAt: &reset},
-				{Group: "Claude and GPT models", DurationSeconds: 604800, UsedPercent: 0, ResetsAt: &reset},
-				{Group: "Claude and GPT models", DurationSeconds: 18000, UsedPercent: 0, ResetsAt: &reset},
 			},
 		},
 		Installation: &domain.RuntimeInstallation{
@@ -118,20 +115,11 @@ func TestAgentDetailPagesAlignmentForCodexAndAntigravity(t *testing.T) {
 				if math.Abs(float64(methodText.X-(execField.X+configurationFieldInset))) > 1 {
 					t.Fatalf("single-method text edge %v differs from control text edge %v", methodText.X, execField.X+configurationFieldInset)
 				}
-				// Expand quota and verify its disclosure hover control extends cleanly past reading edges.
-				if err := ui.Click("额度"); err != nil {
-					t.Fatal(err)
+				if !ui.HasText("Google AI Pro") {
+					t.Fatalf("missing Antigravity subscription tier: %v", ui.Texts())
 				}
-				ui.Advance(time.Second)
-				quotaBtn, ok := ui.Find("额度")
-				if !ok {
-					t.Fatal("missing quota toggle")
-				}
-				if math.Abs(float64(quotaBtn.X-(execLabel.X-configurationHoverInset))) > 1 {
-					t.Fatalf("quota toggle clipped on left: quota=%+v execLabel=%+v", quotaBtn, execLabel)
-				}
-				if math.Abs(float64((quotaBtn.X+quotaBtn.W)-(execField.X+execField.W+configurationHoverInset))) > 1 {
-					t.Fatalf("quota toggle clipped on right: quota=%+v execField=%+v", quotaBtn, execField)
+				if ui.HasText("额度") {
+					t.Fatalf("Antigravity agent page should not show quota row: %v", ui.Texts())
 				}
 			}
 			auditCapture(t, ui, fmt.Sprintf("agent-%s-general", tc.name))

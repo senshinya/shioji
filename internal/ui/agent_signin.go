@@ -405,22 +405,6 @@ func (v *View) agentAuthentication(c *n.Context, t *n.Theme, key string, e *devi
 	})
 }
 
-func agentQuotaDetails(c *n.Context, t *n.Theme, windows []domain.RuntimeQuotaWindow, open *bool) {
-	deviceDisclosure(c, "额度", open, func() {
-		n.Column(c).FillWidth().Padding(4, 0, 4, 0).Children(func() {
-			for i, window := range windows {
-				label, value := app.RuntimeQuotaLabels(window)
-				n.Row(c.Key(i)).FillWidth().Height(configurationControlHeight).PaddingY(4).Gap(configurationSectionGap).AlignItems(n.Baseline).Children(func() {
-					n.Text(c, label).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).
-						Grow(1).MinWidth(0).SingleLine().TooltipWhenTruncated(label)
-					n.Text(c, value).FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).
-						TextColor(t.TextMuted).SingleLine()
-				})
-			}
-		})
-	})
-}
-
 func (v *View) agentManualAuthorization(c *n.Context, u *agentSignInUI, disabled bool) {
 	if u == nil || u.status.Phase != domain.SignInWaiting || !u.status.Challenge.ManualCode {
 		return

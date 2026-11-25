@@ -30,7 +30,7 @@ Antigravity 的选择题通过 ACP 表单进入会话的待处理面板，支持
 
 AGY 受管会话向原生 Hook 提供 `SHIOJI_CALLBACK_URL` 和 `SHIOJI_CALLBACK_TOKEN`。Hook 可向执行设备的回环端点发送带 Bearer 令牌的 HTTP POST，正文为 `{"id":"稳定事件标识","text":"排队消息"}`。worker 以当前会话、原生来源和执行代次核对接纳，使用稳定回执去重。重复事件沿用原回执，用户暂停的队列保持暂停。接口返回 202 时，消息已进入普通持久队列。
 
-设备重新检测时，默认原生配置目录可通过官方 CLI 的 `/usage` 零模型轮次结果读取五小时和周额度。设备页显示有效的模型组、已用百分比和可核实的重置时间。自定义 ACP 配置目录使用独立账号范围，额度未核实的窗口保持未知。[Lody 原生额度读取](https://github.com/LodyAI/Lody/blob/2e1bb69/apps/cli/src/agent/antigravity-quota.ts)
+设备重新检测或登录完成时，从 ACP `session/new` 响应的 `_meta.antigravity.tier` 读取订阅层级并随模型目录缓存保存；设备 Agent 配置页在账号行展示订阅层级，不额外展示额度行。
 
 文本 `@` 引用使用 worker 已保存的不可变快照。二进制路径附件只传执行设备上的已验证路径，访问仍受 Antigravity 当前权限约束。代码评论携带已选 diff 片段和比较基准。工具结果的内嵌图片、文本和设备文件链接由所属 worker 校验并保存为可跨客户端读取的附件。会话标题仅采纳同一原生会话的标题事件，用户手工命名优先。
 

@@ -623,7 +623,7 @@ func TestCompletedManualAuthorizationReplacesOlderWorkerVerificationMessage(t *t
 	}
 }
 
-func TestAgentQuotaDetailsAreCollapsedAndUseCompactRowsWhenOpened(t *testing.T) {
+func TestAgentPageShowsSubscriptionAndOmitsQuotaRow(t *testing.T) {
 	m := deviceUIModel()
 	state := m.DeviceStates["local"]
 	state.WorkerMinor = protocol.SignInManualCodeMinor
@@ -634,13 +634,13 @@ func TestAgentQuotaDetailsAreCollapsedAndUseCompactRowsWhenOpened(t *testing.T) 
 		Capabilities: domain.HarnessCapabilities{SkillManagement: true, ToolServices: true, HookManagement: true},
 	}
 	reset := time.Date(2026, 11, 30, 17, 27, 0, 0, time.Local)
-	info.Account = &domain.RuntimeAccount{Label: "Antigravity", State: "authenticated", QuotaWindows: []domain.RuntimeQuotaWindow{
-		{Group: "Gemini Models", DurationSeconds: 604800, UsedPercent: 1, ResetsAt: &reset},
-		{Group: "Gemini Models", DurationSeconds: 18000, UsedPercent: 0, ResetsAt: &reset},
-		{Group: "Claude and GPT models", DurationSeconds: 604800, UsedPercent: 0, ResetsAt: &reset},
-		{Group: "Claude and GPT models", DurationSeconds: 18000, UsedPercent: 0, ResetsAt: &reset},
-		{Group: "Gemini 4 Argon", DurationSeconds: 604800, UsedPercent: 0, ResetsAt: &reset},
-	}}
+	info.Account = &domain.RuntimeAccount{
+		Mode: "account", Label: "Antigravity", State: "authenticated", Subscription: "Google AI Pro",
+		QuotaWindows: []domain.RuntimeQuotaWindow{
+			{Group: "Gemini Models", DurationSeconds: 604800, UsedPercent: 1, ResetsAt: &reset},
+			{Group: "Claude and GPT models", DurationSeconds: 18000, UsedPercent: 0, ResetsAt: &reset},
+		},
+	}
 	e := agentEditor([]domain.HarnessInfo{info})
 	e.edit(info)
 	e.draft.login = true
@@ -651,36 +651,15 @@ func TestAgentQuotaDetailsAreCollapsedAndUseCompactRowsWhenOpened(t *testing.T) 
 	}, 950, 670)
 	ui.SetDark(true)
 	ui.Advance(time.Second)
-	const title = "Claude and GPT models · 5 小时额度"
-	const usage = "已用 0% · 11-30 17:27 重置"
-	if ui.HasText(title) || ui.HasText(usage) {
-		t.Fatal("quota details are visible by default")
+	if !ui.HasText("Google AI Pro") {
+		t.Fatalf("missing Antigravity subscription tier: %v", ui.Texts())
 	}
-	auditCapture(t, ui, "agy-quota-collapsed")
-	if err := ui.Click("额度"); err != nil {
-		t.Fatal(err)
-	}
-	ui.Advance(time.Second)
-	auditCapture(t, ui, "agy-quota-expanded")
-	ui.SetSize(550, 630)
-	ui.SetDark(false)
-	ui.Advance(time.Second)
-	name, hasName := ui.Find(title)
-	last, hasLast := ui.Find("Gemini 4 Argon · 每周额度")
-	if !hasName || !hasLast || name.W < 200 || name.H > 24 || last.Y-name.Y > 30 {
-		t.Fatalf("quota names should fit in adjacent compact rows: name=%+v next=%+v", name, last)
-	}
-	auditCapture(t, ui, "agy-quota-expanded-narrow")
-	if err := ui.Click("额度"); err != nil {
-		t.Fatal(err)
-	}
-	ui.Advance(time.Second)
-	if ui.HasText(title) || ui.HasText(usage) {
-		t.Fatal("quota details remain visible after collapsing")
+	if ui.HasText("额度") {
+		t.Fatalf("agent page should not render quota row: %v", ui.Texts())
 	}
 }
 
-func TestAgentReopenShowsAuthenticatedAccountAndQuotaWithoutSignInAttempt(t *testing.T) {
+func TestAgentReopenShowsAuthenticatedAccountAndSubscriptionWithoutQuotaRow(t *testing.T) {
 	for _, stateName := range []string{"authenticated", "configured"} {
 		t.Run(stateName, func(t *testing.T) {
 			m := deviceUIModel()
@@ -691,7 +670,7 @@ func TestAgentReopenShowsAuthenticatedAccountAndQuotaWithoutSignInAttempt(t *tes
 			info := domain.HarnessInfo{
 				ID: "antigravity", Name: "Antigravity", Icon: "antigravity", State: domain.RuntimeReady,
 				Account: &domain.RuntimeAccount{
-					Mode: "account", Label: "Antigravity", State: stateName,
+					Mode: "account", Label: "Antigravity", State: stateName, Subscription: "Google AI Pro",
 					QuotaWindows: []domain.RuntimeQuotaWindow{
 						{Group: "Gemini Models", DurationSeconds: 18000, UsedPercent: 12, ResetsAt: &reset},
 					},
@@ -707,8 +686,8 @@ func TestAgentReopenShowsAuthenticatedAccountAndQuotaWithoutSignInAttempt(t *tes
 				})
 			}, 950, 670)
 			ui.Advance(time.Second)
-			if !ui.HasText("已登录") || !ui.HasText("重新登录") || !ui.HasText("额度") {
-				t.Fatalf("reopened agent view lost login or quota for state=%q: %v", stateName, ui.Texts())
+			if !ui.HasText("已登录") || !ui.HasText("重新登录") || !ui.HasText("Google AI Pro") || ui.HasText("额度") {
+				t.Fatalf("reopened agent view account state mismatch for state=%q: %v", stateName, ui.Texts())
 			}
 		})
 	}

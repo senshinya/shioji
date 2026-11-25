@@ -86,6 +86,22 @@ type sessionResponse struct {
 			ModelID, Name string
 		}
 	} `json:"models"`
+	Meta struct {
+		Antigravity struct {
+			Tier struct {
+				Name string `json:"name"`
+				ID   string `json:"id"`
+			} `json:"tier"`
+		} `json:"antigravity"`
+	} `json:"_meta"`
+}
+
+func subscriptionTier(result sessionResponse) string {
+	name := strings.TrimSpace(result.Meta.Antigravity.Tier.Name)
+	if name == "" || strings.ContainsAny(name, "\r\n\x00") {
+		return ""
+	}
+	return name
 }
 
 func selectOption(options []configOption, category string) (configOption, bool) {
@@ -131,8 +147,6 @@ type runtime struct {
 	requests       map[string]nativeRequest
 	done           chan struct{} // Catalog lifetime only.
 	close          sync.Once
-	quotaCancel    context.CancelFunc
-	quotaDone      chan struct{}
 }
 
 func (a Adapter) Start(ctx context.Context, options harness.StartOptions) (harness.Runtime, error) {
@@ -209,17 +223,13 @@ func (a Adapter) Start(ctx context.Context, options harness.StartOptions) (harne
 		return nil, errors.New("agy 安装正在变化，请重新检测")
 	}
 	if options.CatalogOnly {
-		if err := r.discover(ctx, path, env); err != nil {
+		if err := r.discover(ctx); err != nil {
 			return nil, err
 		}
 		if err := r.closeProcess(ctx); err != nil {
 			return nil, err
 		}
 		r.process = nil
-		if !options.RefreshCatalog && r.ready.State == domain.RuntimeReady && r.ready.Account != nil &&
-			r.ready.Account.State == "authenticated" && len(r.ready.Account.QuotaWindows) == 0 {
-			r.startQuotaRefresh(path, env)
-		}
 	} else {
 		if r.native.AgentCapabilities.MCPMethods.HTTP {
 			r.bridge, err = r.startGoalBridge()
@@ -505,12 +515,11 @@ func (r *runtime) Done() <-chan struct{} {
 }
 
 func (r *runtime) Close(ctx context.Context) error {
-	quotaErr := r.stopQuota(ctx)
 	if r.process == nil {
 		r.close.Do(func() { close(r.done) })
-		return quotaErr
+		return nil
 	}
-	return errors.Join(quotaErr, r.callback.close(), r.closeProcess(ctx), r.bridge.close(ctx))
+	return errors.Join(r.callback.close(), r.closeProcess(ctx), r.bridge.close(ctx))
 }
 
 func (r *runtime) closeProcess(ctx context.Context) error {

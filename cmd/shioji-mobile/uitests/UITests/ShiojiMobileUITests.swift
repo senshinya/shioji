@@ -2597,21 +2597,16 @@ final class ShiojiMobileUITests: XCTestCase {
         XCTAssertFalse(code.exists)
     }
 
-    func testAntigravityAccountShowsCompletedLoginAndDisclosesQuota() {
+    func testAntigravityAccountShowsCompletedLoginAndSubscriptionWithoutQuota() {
         let app = launch("--preview-board-agent-agy-quota")
         let quota = app.buttons["额度"]
-        let period = app.staticTexts["Claude and GPT models · 5 小时额度"]
+        let subscription = app.staticTexts["Google AI Pro"]
         let pending = app.staticTexts["已提交授权信息，正在核对账号"]
         XCTAssertTrue(app.buttons["更换账号"].waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertFalse(pending.exists)
-        XCTAssertTrue(quota.exists)
-        XCTAssertFalse(period.exists)
-        capture("Antigravity iOS quota collapsed", app: app)
-        quota.tap()
-        XCTAssertTrue(period.waitForExistence(timeout: 5))
-        capture("Antigravity iOS quota expanded", app: app)
-        quota.tap()
-        XCTAssertTrue(period.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(subscription.exists)
+        XCTAssertFalse(quota.exists)
+        capture("Antigravity iOS subscription", app: app)
         app.buttons["更换账号"].tap()
         XCTAssertTrue(app.buttons["重新登录"].waitForExistence(timeout: 5))
         XCTAssertFalse(pending.exists)

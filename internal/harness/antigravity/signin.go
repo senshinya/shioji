@@ -177,7 +177,7 @@ func (l *terminalSignIn) Wait(ctx context.Context) (domain.Readiness, error) {
 	defer r.Close(context.Background())
 	ready := r.Readiness()
 	if ready.Account != nil {
-		account.QuotaWindows = ready.Account.QuotaWindows
+		account.Subscription = ready.Account.Subscription
 	}
 	ready.Account = account
 	return ready, nil

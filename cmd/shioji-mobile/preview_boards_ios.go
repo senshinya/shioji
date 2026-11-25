@@ -749,7 +749,7 @@ func (a *mobileApp) openPreviewBoard(board string) {
 			Models:       a.model.Readiness.Models,
 			Installation: &domain.RuntimeInstallation{Executable: "/opt/homebrew/bin/agy", Configurable: true, SignInMethods: []domain.SignInMethod{domain.SignInBrowser}}}
 		profile := agent
-		profile.Account = &domain.RuntimeAccount{Mode: "account", State: "authenticated", Label: "Antigravity",
+		profile.Account = &domain.RuntimeAccount{Mode: "account", State: "authenticated", Label: "Antigravity", Subscription: "Google AI Pro",
 			QuotaWindows: []domain.RuntimeQuotaWindow{
 				{Group: "Gemini Models", DurationSeconds: 604800, UsedPercent: 1, ResetsAt: &reset},
 				{Group: "Gemini Models", DurationSeconds: 18000, ResetsAt: &reset},

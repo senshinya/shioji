@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 
 	"shioji/internal/domain"
 	"shioji/internal/harness"
@@ -19,7 +18,7 @@ type cachedCatalog struct {
 	Models  domain.Readiness `json:"catalog"`
 }
 
-func (r *runtime) discover(ctx context.Context, executable string, env []string) error {
+func (r *runtime) discover(ctx context.Context) error {
 	dir := r.options.CatalogDirectory
 	path := filepath.Join(dir, "model-catalog.json")
 	if !r.options.RefreshCatalog {
@@ -63,16 +62,16 @@ func (r *runtime) discover(ctx context.Context, executable string, env []string)
 	if r.ready.State != domain.RuntimeReady {
 		return errors.New(r.ready.Error)
 	}
-	r.ready.Account = &domain.RuntimeAccount{Mode: "account", Label: "Antigravity", State: "authenticated",
-		QuotaWindows: queryNativeQuota(ctx, executable, r.native.AgentInfo.Version, env)}
+	r.ready.Account = &domain.RuntimeAccount{
+		Mode:         "account",
+		Label:        "Antigravity",
+		State:        "authenticated",
+		Subscription: subscriptionTier(found),
+	}
 	if dir == "" {
 		return nil
 	}
-	cached := r.ready
-	account := *r.ready.Account
-	account.QuotaWindows = nil
-	cached.Account = &account
-	return saveCatalog(dir, path, cachedCatalog{Version: r.version, Profile: r.profile, Models: cached})
+	return saveCatalog(dir, path, cachedCatalog{Version: r.version, Profile: r.profile, Models: r.ready})
 }
 
 func normalizeCachedAccount(ready *domain.Readiness) {
@@ -83,49 +82,13 @@ func normalizeCachedAccount(ready *domain.Readiness) {
 		ready.Account = &domain.RuntimeAccount{Mode: "account", Label: "Antigravity", State: "authenticated"}
 		return
 	}
-	if ready.Account.State == "configured" {
+	if ready.Account.State == "configured" || len(ready.Account.QuotaWindows) > 0 {
 		account := *ready.Account
-		account.State = "authenticated"
+		if account.State == "configured" {
+			account.State = "authenticated"
+		}
+		account.QuotaWindows = nil
 		ready.Account = &account
-	}
-}
-
-func (r *runtime) startQuotaRefresh(executable string, env []string) {
-	quotaEnv := slices.Clone(env)
-	version := r.native.AgentInfo.Version
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	r.quotaCancel = cancel
-	r.quotaDone = done
-	go func() {
-		defer close(done)
-		defer cancel()
-		windows := queryNativeQuota(ctx, executable, version, quotaEnv)
-		if len(windows) == 0 || ctx.Err() != nil {
-			return
-		}
-		r.mu.Lock()
-		if r.ready.Account != nil && !r.Stopped() {
-			account := *r.ready.Account
-			account.QuotaWindows = windows
-			r.ready.Account = &account
-		}
-		r.mu.Unlock()
-	}()
-}
-
-func (r *runtime) stopQuota(ctx context.Context) error {
-	if r.quotaCancel != nil {
-		r.quotaCancel()
-	}
-	if r.quotaDone == nil {
-		return nil
-	}
-	select {
-	case <-r.quotaDone:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
 	}
 }
 

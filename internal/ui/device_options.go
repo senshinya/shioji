@@ -17,7 +17,7 @@ type runtimeOptionDraft struct {
 	arguments, directory, instructions, titleModel string
 	environment                                    []runtimeEnvironmentDraft
 	nextID                                         int
-	advanced, login, quota                         bool
+	advanced, login                                bool
 	copiedUntil                                    time.Time
 	apiReveal                                      bool
 }
@@ -194,11 +194,6 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 							})
 							return 0
 						})
-					}
-					signIn := v.agentSignIn(key, info.ID)
-					if account := info.Account; accountAuthenticated(account) && len(account.QuotaWindows) > 0 &&
-						(signIn == nil || !signIn.status.Phase.Active()) {
-						agentQuotaDetails(c.Key("quota"), t, account.QuotaWindows, &e.draft.quota)
 					}
 				})
 			}).Label("Agent 接入内容")
@@ -467,9 +462,9 @@ func (v *View) agentConfigurationActions(c *n.Context, t *n.Theme, key string, c
 	animatedContentHeight(c, actions, changed, 180*time.Millisecond, func() float32 {
 		n.Row(c).FillWidth().Height(36).Justify(n.End).Gap(6).Children(func() {
 			if configurationAction(c, "取消").Disabled(e.busy).Clicked() {
-				advanced, login, quota := e.draft.advanced, e.draft.login, e.draft.quota
+				advanced, login := e.draft.advanced, e.draft.login
 				e.edit(info)
-				e.draft.advanced, e.draft.login, e.draft.quota = advanced, login, quota
+				e.draft.advanced, e.draft.login = advanced, login
 			}
 			if configurationAction(c, "保存").Label("保存 " + info.Name + " 路径").Disabled(disabled).Clicked() {
 				if err != nil {

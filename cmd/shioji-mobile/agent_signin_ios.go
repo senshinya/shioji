@@ -404,7 +404,6 @@ type mobileAgentAccountDraft struct {
 	endpoint, credential string
 	reauthorize          bool
 	reauthorizeAttempt   string
-	quotaOpen            bool
 }
 
 func (d *mobileAgentAccountDraft) selected(methods []domain.SignInMethod) domain.SignInMethod {
@@ -449,9 +448,6 @@ func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain
 		}
 		if account.Subscription != "" {
 			agentInfoRow(c, "订阅", account.Subscription)
-		}
-		if len(account.QuotaWindows) > 0 {
-			mobileAgentQuota(c.Key("quota"), account.QuotaWindows, &draft.quotaOpen)
 		}
 		ui.Row(c.Key("account-actions")).Wrap().Gap(10).Padding(14, 0, 4).Children(func() {
 			secondaryAction(c, "重新检测", refresh).PaddingX(16).Disabled(blocked || active)
@@ -546,26 +542,4 @@ func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain
 		})
 	}
 	a.agentSignInProgress(c, w, attempt)
-}
-
-func mobileAgentQuota(c *ui.Context, windows []domain.RuntimeQuotaWindow, expanded *bool) {
-	p := palette(c)
-	toggle := c.Key("toggle")
-	row := mobileButton(toggle, "额度", func() { *expanded = !*expanded }).FillWidth().Expanded(*expanded)
-	mobileRowContent(toggle, rowDivider(row, p.line), "额度", "", nil, false, func() {
-		arrow := rightSymbol
-		if *expanded {
-			arrow = downSymbol
-		}
-		alignedSymbol(toggle, arrow, "额度", mobileStatusFont(toggle, bodyTextSize), pickerIconSize, p.secondary)
-	})
-	mobileDisclosureBody(c.Key("details"), *expanded, func(body *ui.Context) {
-		for i, window := range windows {
-			title, value := app.RuntimeQuotaLabels(window)
-			rowDivider(ui.Column(body.Key(i)).Padding(10, 0).Gap(3), p.line).Children(func() {
-				label(body, title, controlTextSize, p.ink)
-				oneLine(body, value, captionTextSize, p.secondary)
-			})
-		}
-	})
 }
