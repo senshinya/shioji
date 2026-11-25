@@ -86,10 +86,7 @@ func (v *View) syncAgentSignIns(c *n.Context) {
 	}
 }
 func (v *View) startAgentSignIn(key string, e *deviceAgentEditor, info domain.HarnessInfo) {
-	if current := v.agentSignIn(key, info.ID); current != nil && current.status.Phase.Active() {
-		return
-	}
-	if v.Controller == nil {
+	if current := v.agentSignIn(key, info.ID); current != nil && current.status.Phase.Active() || v.Controller == nil {
 		return
 	}
 	options, err := e.draft.options()
@@ -103,7 +100,27 @@ func (v *View) startAgentSignIn(key string, e *deviceAgentEditor, info domain.Ha
 		e.error = "该 Agent 暂不支持此登录方式"
 		return
 	}
-	u := &agentSignInUI{initial: slices.Contains(methods, domain.SignInAPI), key: key, device: v.signInDevice(key), editor: e, autoOpen: true, status: domain.SignInStatus{ID: domain.NewID(), HarnessID: info.ID, Phase: domain.SignInStarting}}
+	config := protocol.RuntimeConfiguration{HarnessID: info.ID, Executable: strings.TrimSpace(e.path)}
+	if e.optionSupport[info.ID] {
+		config.Options = &options
+	}
+	e.error = ""
+	in := protocol.SignInInput{HarnessID: info.ID, Method: method, Configuration: &config}
+	if method == domain.SignInAPI {
+		in.API = &domain.APIConfiguration{Endpoint: strings.TrimSpace(e.draft.apiEndpoint), Credential: e.draft.apiCredential}
+	}
+	v.beginAgentSignIn(key, e, in, slices.Contains(methods, domain.SignInAPI))
+}
+
+func (v *View) beginAgentSignIn(key string, e *deviceAgentEditor, in protocol.SignInInput, initial bool) {
+	if current := v.agentSignIn(key, in.HarnessID); current != nil && current.status.Phase.Active() {
+		return
+	}
+	if v.Controller == nil {
+		return
+	}
+	in.ID = domain.NewID()
+	u := &agentSignInUI{initial: initial, key: key, device: v.signInDevice(key), editor: e, config: in.Configuration, autoOpen: true, status: domain.SignInStatus{ID: in.ID, HarnessID: in.HarnessID, Phase: domain.SignInStarting}}
 	if key == "" {
 		port, _ := strconv.Atoi(strings.TrimSpace(v.sshPort))
 		u.ssh = setupWorkerSSHPointer(v.setupWorkerSSH(port, v.sshSetup.Info))
@@ -111,7 +128,7 @@ func (v *View) startAgentSignIn(key string, e *deviceAgentEditor, info domain.Ha
 	if v.agentSignIns == nil {
 		v.agentSignIns = map[string]*agentSignInUI{}
 	}
-	v.agentSignIns[u.device+"/"+info.ID] = u
+	v.agentSignIns[u.device+"/"+in.HarnessID] = u
 	if key != "" {
 		if v.Model.SignInIDs == nil {
 			v.Model.SignInIDs = map[string]map[string]string{}
@@ -119,19 +136,9 @@ func (v *View) startAgentSignIn(key string, e *deviceAgentEditor, info domain.Ha
 		if v.Model.SignInIDs[key] == nil {
 			v.Model.SignInIDs[key] = map[string]string{}
 		}
-		v.Model.SignInIDs[key][info.ID] = u.status.ID
+		v.Model.SignInIDs[key][in.HarnessID] = u.status.ID
 	}
-	config := protocol.RuntimeConfiguration{HarnessID: info.ID, Executable: strings.TrimSpace(e.path)}
-	if e.optionSupport[info.ID] {
-		config.Options = &options
-	}
-	e.error = ""
-	u.config = &config
-	in := &protocol.SignInInput{ID: u.status.ID, HarnessID: info.ID, Method: method, Configuration: &config}
-	if method == domain.SignInAPI {
-		in.API = &domain.APIConfiguration{Endpoint: strings.TrimSpace(e.draft.apiEndpoint), Credential: e.draft.apiCredential}
-	}
-	v.sendSignIn(u, "start", in)
+	v.sendSignIn(u, "start", &in)
 }
 func (v *View) sendSignIn(u *agentSignInUI, action string, input *protocol.SignInInput) {
 	if u.pending || v.Controller == nil {
@@ -538,20 +545,7 @@ func (v *View) agentAPIConfiguration(c *n.Context, t *n.Theme, key string, e *de
 	if u != nil {
 		u.editor = e
 	}
-	row(c, "服务地址", func() {
-		setupField(c, "API 地址", &e.draft.apiEndpoint, "https://api.example.com/v1", disabled || active)
-	})
-	row(c, "API Key", func() {
-		n.Column(c).FillWidth().Height(28).Children(func() {
-			field := configurationTextField(c, &e.draft.apiCredential).Padding(4, 36, 4, 8).Label("API Key").Placeholder("可选").Disabled(disabled || active)
-			if !e.draft.apiReveal {
-				field.Password()
-			}
-			if iconButton(c, modelEye, "显示 API Key").Absolute().Right(0).Top(0).Disabled(disabled || active).Clicked() {
-				e.draft.apiReveal = !e.draft.apiReveal
-			}
-		})
-	})
+	agentAPIFields(c, row, &e.draft, disabled || active)
 	row(c, "", func() {
 		n.Row(c.Key("api-connection-status")).FillWidth().Height(28).AlignItems(n.Baseline).Gap(8).Children(func() {
 			caption := ""
@@ -570,6 +564,30 @@ func (v *View) agentAPIConfiguration(c *n.Context, t *n.Theme, key string, e *de
 			}
 		})
 	})
+}
+
+func agentAPIFields(c *n.Context, row func(*n.Context, string, func()), draft *runtimeOptionDraft, disabled bool) (submit bool) {
+	row(c, "服务地址", func() {
+		field := setupField(c, "API 地址", &draft.apiEndpoint, "https://api.example.com/v1", disabled)
+		submit = field.Submitted() && !field.Composing()
+	})
+	row(c, "API Key", func() {
+		n.Column(c).FillWidth().Height(configurationControlHeight).Children(func() {
+			field := configurationTextField(c, &draft.apiCredential).Padding(4, 36, 4, 8).Label("输入 API Key").Placeholder("可选").Disabled(disabled)
+			if !draft.apiReveal {
+				field.Password()
+			}
+			submit = submit || field.Submitted() && !field.Composing()
+			label := "显示 API Key"
+			if draft.apiReveal {
+				label = "隐藏 API Key"
+			}
+			if iconButton(c, modelEye, label).Absolute().Right(0).Top(0).Disabled(disabled).Clicked() {
+				draft.apiReveal = !draft.apiReveal
+			}
+		})
+	})
+	return submit
 }
 
 func (v *View) agentConnectionMode(c *n.Context, t *n.Theme, key string, e *deviceAgentEditor, info domain.HarnessInfo, disabled bool) {

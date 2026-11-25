@@ -17,8 +17,9 @@ type deviceAgentEditor struct {
 	options                 map[string]domain.RuntimeOptions
 	optionSupport           map[string]bool
 	draft                   runtimeOptionDraft
-	newProfile              *domain.AgentProfile
-	requestedProfile        domain.AgentProfile
+	profileAnchor           string
+	revealProfile           bool
+	focusProfileEntry       bool
 	epoch                   string
 	catalog                 []domain.HarnessInfo
 	paths                   map[string]string
@@ -61,9 +62,6 @@ func (v *View) deviceAgents(c *n.Context, t *n.Theme, key string, state *app.Dev
 	editor := *e
 	scope.Children(func() {
 		n.Column(c).FillWidth().Gap(4).Children(func() {
-			if state.WorkerMinor >= protocol.AgentProfileMinor {
-				v.deviceProfileCreation(c.Key("new-profile"), key, state, editor)
-			}
 			v.agentRows(c.Key("rows"), t, key, state.Connected, editor, false, func() { v.saveDeviceAgents(key, state, editor) })
 			if len(editor.catalog) == 0 {
 				label := "暂无 Agent"
@@ -177,7 +175,11 @@ func (v *View) deviceAgentPage(c *n.Context, t *n.Theme, key, deviceName string,
 				}
 			}
 			n.Row(c).FillWidth().Height(32).Gap(16).AlignItems(n.Baseline).Children(func() {
-				inlineIconText(c, harnessIcon(domain.HarnessDescriptor{ID: info.ID, Name: info.Name, Icon: info.Icon}), info.Name, n.Font{Family: t.Font, Size: configurationTitleSize, Weight: 400}, 24, 8, t.Text).FixedLineHeight(configurationTitleLine).Grow(1).MinWidth(0).TooltipWhenTruncated(info.Name)
+				n.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(n.Baseline).Children(func() {
+					inlineIconText(c, harnessIcon(domain.HarnessDescriptor{ID: info.ID, Name: info.Name, Icon: info.Icon}), info.Name, n.Font{Family: t.Font, Size: configurationTitleSize, Weight: 400}, 24, 8, t.Text).
+						FixedLineHeight(configurationTitleLine).MinWidth(0).Shrink(1).TooltipWhenTruncated(info.Name)
+					systemProfileBadge(c, info)
+				})
 				status := runtimeSetupLabel(info, state.Connected)
 				titleCenter := inlineFontMetrics(info.Name, n.Font{Family: t.Font, Size: configurationTitleSize, Weight: 400}).center
 				statusCenter := inlineFontMetrics(status, n.Font{Family: t.Font, Size: 12, Weight: 400}).center
@@ -247,9 +249,18 @@ func (v *View) agentRows(c *n.Context, t *n.Theme, key string, connected bool, e
 		info := &e.catalog[i]
 		n.Column(c.Key(info.ID)).FillWidth().Children(func() {
 			header := n.Row(c).FillWidth().Height(56).PaddingX(8).Gap(8).AlignItems(n.Center).Radius(6)
+			anchored := info.ID == e.profileAnchor
+			if anchored {
+				header.Background(t.SurfacePressed)
+			}
 			controlFeedback(c, header, 6)
 			header.Children(func() {
 				toggle := func() {
+					e.profileAnchor = ""
+					if !onboarding && v.canContinueDeviceProfile(key, *info) {
+						v.openDeviceProfile(key, info)
+						return
+					}
 					if e.openID != info.ID {
 						e.edit(*info)
 					}
@@ -258,11 +269,22 @@ func (v *View) agentRows(c *n.Context, t *n.Theme, key string, connected bool, e
 				button := n.ButtonBase(c).Background(n.Transparent).Grow(1).Height(56).Padding(10, 0).Label("配置 " + info.Name + " 路径").Disabled(info.Installation == nil).Children(func() {
 					n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
 						inlineSymbol(c, harnessIcon(domain.HarnessDescriptor{ID: info.ID, Name: info.Name, Icon: info.Icon}), info.Name, n.Font{Family: t.Font, Size: 14, Weight: 500}, 24, t.TextMuted)
-						n.Column(c).Grow(1).Children(func() {
-							n.Text(c, info.Name).FontSize(14).FontWeight(500).FixedLineHeight(20)
+						n.Column(c).Grow(1).MinWidth(0).Children(func() {
+							n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
+								n.Text(c, info.Name).FontSize(14).FontWeight(500).FixedLineHeight(20).
+									SingleLine().MinWidth(0).Shrink(1).TooltipWhenTruncated(info.Name)
+								systemProfileBadge(c, *info)
+							})
 							label := runtimeSetupLabel(*info, connected)
 							if key == "local" && !connected {
 								label = "状态待核对"
+							}
+							if connected && info.Profile != nil {
+								if profileModelsPending(*info) {
+									label = "模型待确认"
+								} else if info.Profile.Mode == domain.AgentProfileAPI && label == "需要登录" {
+									label = "待连接"
+								}
 							}
 							if !info.Configured {
 								label = "未启用"
@@ -274,6 +296,10 @@ func (v *View) agentRows(c *n.Context, t *n.Theme, key string, connected bool, e
 						})
 					})
 				})
+				if anchored && e.revealProfile {
+					e.revealProfile = false
+					button.Focus().ScrollIntoView()
+				}
 				if button.Clicked() {
 					toggle()
 				}

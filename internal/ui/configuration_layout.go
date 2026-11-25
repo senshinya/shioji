@@ -25,6 +25,7 @@ const (
 	configurationTextLine         = 20
 	configurationSectionSize      = 14
 	configurationListHeight       = 140
+	configurationProfileWidth     = 560
 	configurationHoverInset       = 8
 	workspaceDirectoryChoiceInset = 4
 	// Reserve room for centered add/remove button targets past their ink edge.

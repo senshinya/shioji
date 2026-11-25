@@ -11,6 +11,7 @@ const (
 	configurationSettingsForm configurationFormStyle = iota
 	configurationDeviceForm
 	configurationSetupForm
+	configurationProfileForm
 )
 
 func configurationFormRow(c *n.Context, label string, style configurationFormStyle, build func(), top ...bool) n.Element {
@@ -19,7 +20,7 @@ func configurationFormRow(c *n.Context, label string, style configurationFormSty
 	if alignTop {
 		row.PaddingY(6).AlignItems(n.Start)
 	}
-	if style == configurationSettingsForm {
+	if style == configurationSettingsForm || style == configurationProfileForm {
 		row.BorderWidth(0, 0, .5, 0).BorderColor(c.Theme().Border)
 	}
 	row.Children(func() {
@@ -39,7 +40,11 @@ func configurationFormRow(c *n.Context, label string, style configurationFormSty
 				width = min(320, (available-64)*.55)
 			}
 		}
-		n.Column(c).Width(width).Children(build)
+		control := n.Column(c).Width(width)
+		if style == configurationProfileForm {
+			control.MinWidth(0).Shrink(1)
+		}
+		control.Children(build)
 	})
 	return row
 }

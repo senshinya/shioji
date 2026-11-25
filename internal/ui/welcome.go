@@ -553,7 +553,9 @@ func (v *View) welcomeAgents(c *n.Context, t *n.Theme, f *welcomeFlow, add bool)
 					}
 					if n.ButtonBase(c.Key("open")).Height(48).Grow(1).Label("配置 " + info.Name).Disabled(e.busy || e.loading || info.Installation == nil).Children(func() {
 						n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-							inlineIconText(c, harnessIcon(domain.HarnessDescriptor{ID: info.ID, Name: info.Name, Icon: info.Icon}), info.Name, n.Font{Family: t.Font, Size: 13, Weight: 400}, 20, 12, t.Text)
+							inlineIconText(c, harnessIcon(domain.HarnessDescriptor{ID: info.ID, Name: info.Name, Icon: info.Icon}), info.Name, n.Font{Family: t.Font, Size: 13, Weight: 400}, 20, 12, t.Text).
+								MinWidth(0).Shrink(1).TooltipWhenTruncated(info.Name)
+							systemProfileBadge(c, *info)
 							n.Spacer(c).Grow(1)
 							n.Text(c.Key("runtime-status"), label).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 							inlineSymbol(c, disclosureRight, info.Name, n.Font{Family: t.Font, Size: 13, Weight: 400}, 14, t.TextMuted)

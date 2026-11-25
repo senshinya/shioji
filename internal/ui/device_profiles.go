@@ -3,8 +3,11 @@ package ui
 import (
 	"encoding/json"
 	"errors"
+	"net"
+	"net/url"
 	"slices"
 	"strings"
+	"unicode"
 
 	n "github.com/egoist/mygo/ui"
 
@@ -13,6 +16,19 @@ import (
 	"shioji/internal/protocol"
 )
 
+type deviceProfileEditor struct {
+	key, device string
+	draft       domain.AgentProfile
+	info        domain.HarnessInfo
+	request     domain.AgentProfile
+	auth        runtimeOptionDraft
+	method      domain.SignInMethod
+	focusName   bool
+	working     bool
+	seenSignIn  string
+	error       string
+}
+
 func profileModeLabel(mode domain.AgentProfileMode) string {
 	if mode == domain.AgentProfileAPI {
 		return "自定义 API"
@@ -20,104 +36,325 @@ func profileModeLabel(mode domain.AgentProfileMode) string {
 	return "账号授权"
 }
 
-func (v *View) deviceProfileCreation(c *n.Context, key string, state *app.DeviceState, e *deviceAgentEditor) {
+func deviceProfileProviders(e *deviceAgentEditor) []domain.HarnessInfo {
 	var agents []domain.HarnessInfo
 	for _, info := range e.catalog {
-		if len(info.ProfileModes) != 0 {
+		install := info.Installation
+		if len(info.ProfileModes) == 0 || install == nil || install.Issue == domain.RuntimeMissing || install.Issue == domain.RuntimeIncompatible {
+			continue
+		}
+		var modes []domain.AgentProfileMode
+		for _, mode := range info.ProfileModes {
+			if mode == domain.AgentProfileAPI && install.APISetup || mode == domain.AgentProfileAccount && len(profileSignInMethods(info)) != 0 {
+				modes = append(modes, mode)
+			}
+		}
+		if len(modes) != 0 {
+			info.ProfileModes = modes
 			agents = append(agents, info)
 		}
 	}
+	return agents
+}
+
+func profileModelsPending(info domain.HarnessInfo) bool {
+	return info.Profile != nil && info.Profile.Authorized && info.State == domain.RuntimeUnavailable &&
+		accountAuthenticated(info.Account) && (info.Installation == nil || info.Installation.Issue == "" || info.Installation.Issue == domain.RuntimeUnavailableIssue)
+}
+
+func (v *View) canContinueDeviceProfile(key string, info domain.HarnessInfo) bool {
+	if info.Profile == nil || info.Installation == nil {
+		return false
+	}
+	if info.Profile.Authorized {
+		return info.Configured && profileModelsPending(info)
+	}
+	if info.Installation.Issue == domain.RuntimeMissing || info.Installation.Issue == domain.RuntimeIncompatible {
+		return false
+	}
+	if info.Profile.Mode == domain.AgentProfileAPI {
+		return slices.Contains(v.agentSignInMethods(key, info), domain.SignInAPI)
+	}
+	return len(profileSignInMethods(info)) != 0
+}
+
+func (v *View) openDeviceProfile(key string, info *domain.HarnessInfo) {
+	p := &deviceProfileEditor{key: key, device: v.signInDevice(key)}
+	if info.Profile == nil {
+		p.draft = domain.AgentProfile{HarnessID: info.ID, Mode: info.ProfileModes[0]}
+		p.focusName = true
+	} else {
+		p.draft, p.info = *info.Profile, *info
+		if op := v.agentSignIn(key, info.ID); info.Profile.Authorized && op != nil && op.status.Phase == domain.SignInCompleted {
+			p.seenSignIn = op.status.ID
+		}
+	}
+	v.deviceProfile = p
+}
+
+func (v *View) syncDeviceProfile() {
+	p := v.deviceProfile
+	if p != nil && (!v.devices || v.deviceSelected != p.key || v.deviceTab != "agents" || v.signInDevice(p.key) != p.device) {
+		v.closeDeviceProfile(p)
+	}
+}
+
+func (v *View) closeDeviceProfile(p *deviceProfileEditor) {
+	if op := v.agentSignIns[p.device+"/"+p.info.ID]; op != nil && op.status.Phase.Active() {
+		// Keep polling an explicit operation after leaving the device page.
+		// A challenge arriving later is available when the profile is reopened.
+		op.autoOpen = false
+	}
+	p.auth = runtimeOptionDraft{}
+	delete(v.menuOpen, "profile-agent:"+p.key)
+	delete(v.menuOpen, "profile-method:"+p.key)
+	if v.deviceProfile == p {
+		v.deviceProfile = nil
+	}
+}
+
+func (v *View) returnFromDeviceProfile(e *deviceAgentEditor, p *deviceProfileEditor) {
+	if p.info.ID != "" {
+		e.profileAnchor, e.revealProfile = p.info.ID, true
+	} else {
+		e.focusProfileEntry = true
+	}
+	v.closeDeviceProfile(p)
+}
+
+func (v *View) deviceProfileEntry(c *n.Context, key string, state *app.DeviceState, e *deviceAgentEditor) {
+	if state.WorkerMinor < protocol.AgentProfileMinor {
+		return
+	}
+	agents := deviceProfileProviders(e)
 	if len(agents) == 0 {
 		return
 	}
-	disabled := !state.Connected || e.busy || e.loading || v.Controller == nil
-	n.Row(c).FillWidth().Justify(n.End).Children(func() {
-		if configurationAction(c.Key("open"), "新增 Profile").Disabled(disabled || e.newProfile != nil).Clicked() {
-			e.newProfile = &domain.AgentProfile{HarnessID: agents[0].ID, Mode: agents[0].ProfileModes[0]}
-			e.error = ""
-		}
+	const label = "新增 Profile"
+	button := control(c, configurationFieldRadius).Absolute().Right(0).Top((configurationTabHeight - configurationControlHeight) / 2).
+		Height(configurationControlHeight).PaddingX(configurationHoverInset).AlignItems(n.Center).
+		Label(label).Disabled(!state.Connected || e.busy || e.loading || v.Controller == nil)
+	button.Children(func() {
+		inlineIconText(c, plus, label, n.Font{Family: c.Theme().Font, Size: configurationValueSize, Weight: 500}, 14, 6, c.Theme().Text)
 	})
-	frame := n.Column(c.Key("form")).FillWidth().Clip()
-	draft := e.newProfile
-	animatedContentHeight(c, frame, draft != nil, configurationTabDuration, func() float32 {
-		if draft == nil {
-			return 0
+	if e.focusProfileEntry {
+		e.focusProfileEntry = false
+		button.Focus()
+	}
+	if button.Clicked() {
+		e.profileAnchor = ""
+		v.openDeviceProfile(key, &agents[0])
+		c.Services().Invalidate()
+	}
+}
+
+func (v *View) submitDeviceProfile(key string, state *app.DeviceState, e *deviceAgentEditor, p *deviceProfileEditor) {
+	p.error = ""
+	if p.info.Profile != nil && p.info.Profile.Authorized {
+		v.refreshDeviceProfileModels(key, state, e, p)
+		return
+	}
+	if p.draft.Mode == domain.AgentProfileAPI {
+		address := strings.TrimSpace(p.auth.apiEndpoint)
+		u, err := url.Parse(address)
+		if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || len(address) > 4096 {
+			p.error = "请输入不含凭据的 API 地址"
+			return
 		}
-		n.Column(c).FillWidth().PaddingX(configurationHoverInset).Children(func() {
-			deviceConfigRow(c, "名称", func() {
-				configurationTextField(c.Key("profile-name"), &draft.Name).Label("Profile 名称").Disabled(disabled)
-			})
-			deviceConfigRow(c, "Agent", func() {
-				var options []configurationTabItem
-				for _, info := range agents {
-					options = append(options, configurationTabItem{ID: info.ID, Label: info.Name})
+		ip := net.ParseIP(u.Hostname())
+		if u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || ip != nil && ip.IsLoopback())) {
+			p.error = "API 地址须使用 HTTPS，本机服务可使用 HTTP"
+			return
+		}
+	}
+	if p.info.ID != "" {
+		v.connectDeviceProfile(p)
+		return
+	}
+	draft := p.draft
+	draft.Name = strings.TrimSpace(draft.Name)
+	if draft.Name == "" || len(draft.Name) > 256 || strings.ContainsFunc(draft.Name, unicode.IsControl) {
+		p.error = "请输入有效的 Profile 名称"
+		return
+	}
+	firstAttempt := p.request.ID == ""
+	if firstAttempt {
+		draft.ID = domain.NewID()
+		p.request = draft
+	}
+	v.createDeviceProfile(key, state, e, p, firstAttempt)
+}
+
+func (v *View) createDeviceProfile(key string, state *app.DeviceState, e *deviceAgentEditor, p *deviceProfileEditor, firstAttempt bool) {
+	request, epoch := p.request, state.ConnectionEpoch
+	p.working = true
+	if !v.do(app.Job{ConnectionID: key, Method: "runtime.profile.create", Input: request, Apply: func(m *app.Model, data json.RawMessage, err error) {
+		p.working = false
+		current := m.DeviceStates[key]
+		if current == nil || current.ConnectionEpoch != epoch || m.ConnectionDeviceID(key) != p.device {
+			p.error = "创建结果待确认，连接恢复后可重试"
+			return
+		}
+		var result protocol.AgentSetupResult
+		if err == nil {
+			err = json.Unmarshal(data, &result)
+		}
+		if err != nil {
+			var remote *protocol.RemoteError
+			if errors.As(err, &remote) {
+				if firstAttempt {
+					p.request = domain.AgentProfile{}
 				}
-				draft.HarnessID = configurationTabs(c.Key("agent"), draft.HarnessID, options, configurationSegmented, disabled)
-			})
-			agent := agents[0]
-			for _, next := range agents {
-				if next.ID == draft.HarnessID {
-					agent = next
+				p.error = remote.Message
+			} else {
+				p.error = "创建结果待确认，重试会核对同一个 Profile"
+			}
+			return
+		}
+		if !result.Ready {
+			if firstAttempt {
+				p.request = domain.AgentProfile{}
+			}
+			p.error = result.Error
+			return
+		}
+		e.applyDeviceProfileCatalog(m, current, result)
+		i := slices.IndexFunc(result.Catalog, func(info domain.HarnessInfo) bool {
+			a := info.Profile
+			return info.ID == request.ID && a != nil && a.ID == request.ID &&
+				a.Name == request.Name && a.Mode == request.Mode && a.HarnessID == request.HarnessID
+		})
+		if i < 0 {
+			p.error = "设备未返回新建的 Profile，重试会核对同一个 Profile"
+			return
+		}
+		p.info, p.draft = result.Catalog[i], request
+		if v.deviceProfile == p && v.devices && v.deviceSelected == key && v.deviceTab == "agents" && current.Connected {
+			v.connectDeviceProfile(p)
+		}
+	}}) {
+		p.working = false
+		if firstAttempt {
+			p.request = domain.AgentProfile{}
+		}
+		p.error = "设备操作繁忙，请重试"
+	}
+}
+
+func profileSignInMethods(info domain.HarnessInfo) []domain.SignInMethod {
+	var methods []domain.SignInMethod
+	if info.Installation != nil {
+		for _, method := range info.Installation.SignInMethods {
+			switch method {
+			case domain.SignInBrowser, domain.SignInDeviceCode:
+				methods = append(methods, method)
+			}
+		}
+	}
+	return methods
+}
+
+func (v *View) connectDeviceProfile(p *deviceProfileEditor) {
+	info := p.info
+	if info.Profile == nil || info.Profile.Authorized {
+		return
+	}
+	in := protocol.SignInInput{HarnessID: info.ID}
+	if p.draft.Mode == domain.AgentProfileAPI {
+		if methods := v.agentSignInMethods(p.key, info); !slices.Contains(methods, domain.SignInAPI) {
+			p.error = "此 Profile 当前无法连接 API，请检查设备的 Agent"
+			return
+		}
+		in.Method = domain.SignInAPI
+		in.API = &domain.APIConfiguration{Endpoint: strings.TrimSpace(p.auth.apiEndpoint), Credential: p.auth.apiCredential}
+	} else {
+		in.Method = agentSignInMethod(p.key, &deviceAgentEditor{signInMethod: p.method}, profileSignInMethods(info))
+		if in.Method == "" {
+			p.error = "此 Profile 当前没有可用的授权方式，请检查设备的 Agent"
+			return
+		}
+	}
+	// A Profile already has its own saved adapter configuration on the worker.
+	v.beginAgentSignIn(p.key, nil, in, p.draft.Mode == domain.AgentProfileAPI)
+}
+
+func (v *View) syncDeviceProfileSetup(state *app.DeviceState, e *deviceAgentEditor, p *deviceProfileEditor) {
+	if p.info.ID == "" {
+		return
+	}
+	if op := v.agentSignIn(p.key, p.info.ID); op != nil && op.status.Phase == domain.SignInCompleted && p.seenSignIn != op.status.ID {
+		p.seenSignIn = op.status.ID
+		info := op.status.Profile
+		if info != nil && info.ID == p.info.ID && info.Profile != nil && info.Profile.ID == p.info.ID && info.Profile.Authorized {
+			e.refresh([]domain.HarnessInfo{*info})
+			for i, previous := range state.Readiness.Harnesses {
+				if previous.ID == info.ID {
+					state.Readiness.Harnesses[i] = *info
+					state.Readiness.Harnesses[i].Configured = previous.Configured
 					break
 				}
 			}
-			if !slices.Contains(agent.ProfileModes, draft.Mode) {
-				draft.Mode = agent.ProfileModes[0]
+			v.Model.RefreshDevices()
+		} else {
+			p.error = "设备未确认此 Profile 已接入，请重新检测"
+		}
+	}
+
+	// The owning device can publish a binding without this client's receipt.
+	// Never regress a confirmed binding while a catalog refresh is in flight.
+	if i := slices.IndexFunc(e.catalog, func(info domain.HarnessInfo) bool { return info.ID == p.info.ID }); i >= 0 {
+		current := e.catalog[i]
+		if current.Profile != nil && (!p.info.Profile.Authorized || current.Profile.Authorized) {
+			if current.Profile.Authorized && !p.info.Profile.Authorized {
+				p.auth, p.error = runtimeOptionDraft{}, ""
 			}
-			deviceConfigRow(c, "登录方式", func() {
-				var options []configurationTabItem
-				for _, mode := range agent.ProfileModes {
-					options = append(options, configurationTabItem{ID: string(mode), Label: profileModeLabel(mode)})
-				}
-				draft.Mode = domain.AgentProfileMode(configurationTabs(c.Key("mode"), string(draft.Mode), options, configurationSegmented, disabled))
-			})
-			n.Row(c.Key("actions")).FillWidth().Height(36).Justify(n.End).Gap(8).Children(func() {
-				if configurationAction(c.Key("cancel"), "取消").Disabled(e.busy).Clicked() {
-					e.newProfile = nil
-					e.requestedProfile = domain.AgentProfile{}
-					e.error = ""
-				}
-				if configurationAction(c.Key("create"), "创建").Label("创建 Profile").Disabled(disabled || strings.TrimSpace(draft.Name) == "").Clicked() {
-					v.createDeviceProfile(key, e, *draft)
-				}
-			})
-			deviceDivider(c)
-		})
-		return 0
-	})
+			p.info = current
+		}
+	}
+	if state.Connected && p.info.Profile.Authorized && p.info.State == domain.RuntimeReady {
+		v.returnFromDeviceProfile(e, p)
+	}
 }
 
-func (v *View) createDeviceProfile(key string, e *deviceAgentEditor, draft domain.AgentProfile) {
-	draft.Name = strings.TrimSpace(draft.Name)
-	prior := e.requestedProfile
-	id := prior.ID
-	prior.ID = ""
-	if prior != draft {
-		id = domain.NewID()
-	}
-	draft.ID = id
-	e.requestedProfile = draft
-	v.changeDeviceProfile(key, e, "runtime.profile.create", draft, func(result protocol.AgentSetupResult) error {
-		for _, info := range result.Catalog {
-			if info.ID == draft.ID && info.Profile != nil {
-				e.newProfile = nil
-				e.requestedProfile = domain.AgentProfile{}
-				e.edit(info)
-				e.draft.login = true
-				return nil
-			}
+func (v *View) refreshDeviceProfileModels(key string, state *app.DeviceState, e *deviceAgentEditor, p *deviceProfileEditor) {
+	p.working = true
+	epoch, id := state.ConnectionEpoch, p.info.ID
+	if !v.do(app.Job{ConnectionID: key, Method: "runtime.check", Input: protocol.RuntimeConfiguration{HarnessID: id}, Apply: func(m *app.Model, data json.RawMessage, err error) {
+		p.working = false
+		current := m.DeviceStates[key]
+		if current == nil || current.ConnectionEpoch != epoch || m.ConnectionDeviceID(key) != p.device {
+			p.error = "连接已变化，请重新检测模型"
+			return
 		}
-		return errors.New("设备未返回新建的 Profile")
-	})
+		var ready domain.Readiness
+		if err == nil {
+			err = json.Unmarshal(data, &ready)
+		}
+		if err != nil {
+			p.error = err.Error()
+			return
+		}
+		i := slices.IndexFunc(ready.Harnesses, func(info domain.HarnessInfo) bool { return info.ID == id })
+		if i < 0 {
+			p.error = "设备未返回模型状态，请确认此 Profile 已启用"
+			return
+		}
+		ready.Sessions = current.Readiness.Sessions
+		current.Readiness, p.info = ready, ready.Harnesses[i]
+		e.refresh([]domain.HarnessInfo{p.info})
+		m.RefreshDevices()
+		if v.deviceProfile == p && p.info.State == domain.RuntimeReady {
+			v.returnFromDeviceProfile(e, p)
+		}
+	}}) {
+		p.working = false
+		p.error = "设备操作繁忙，请重试"
+	}
 }
 
 func (v *View) setDeviceProfileEnabled(key string, e *deviceAgentEditor, id string, enabled bool) {
-	v.changeDeviceProfile(key, e, "runtime.agent.selection", protocol.RuntimeAgentSelection{HarnessID: id, Enabled: &enabled}, nil)
-}
-
-func (v *View) changeDeviceProfile(key string, e *deviceAgentEditor, method string, input any, applied func(protocol.AgentSetupResult) error) {
 	e.busy, e.error = true, ""
-	if !v.do(app.Job{ConnectionID: key, Method: method, Input: input, Apply: func(m *app.Model, data json.RawMessage, err error) {
+	if !v.do(app.Job{ConnectionID: key, Method: "runtime.agent.selection", Input: protocol.RuntimeAgentSelection{HarnessID: id, Enabled: &enabled}, Apply: func(m *app.Model, data json.RawMessage, err error) {
 		e.busy = false
 		state := m.DeviceStates[key]
 		if state == nil || state.ConnectionEpoch != e.epoch {
@@ -134,18 +371,17 @@ func (v *View) changeDeviceProfile(key string, e *deviceAgentEditor, method stri
 			e.error = err.Error()
 			return
 		}
-		next := agentEditor(result.Catalog)
-		e.catalog, e.paths, e.options, e.optionSupport = next.catalog, next.paths, next.options, next.optionSupport
-		result.Readiness.Sessions = state.Readiness.Sessions
-		state.Readiness = result.Readiness
-		if applied != nil {
-			if err := applied(result); err != nil {
-				e.error = err.Error()
-			}
-		}
-		m.RefreshDevices()
+		e.applyDeviceProfileCatalog(m, state, result)
 	}}) {
 		e.busy = false
 		e.error = "设备操作繁忙，请重试"
 	}
+}
+
+func (e *deviceAgentEditor) applyDeviceProfileCatalog(m *app.Model, state *app.DeviceState, result protocol.AgentSetupResult) {
+	next := agentEditor(result.Catalog)
+	e.catalog, e.paths, e.options, e.optionSupport = next.catalog, next.paths, next.options, next.optionSupport
+	result.Readiness.Sessions = state.Readiness.Sessions
+	state.Readiness = result.Readiness
+	m.RefreshDevices()
 }

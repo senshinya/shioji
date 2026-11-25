@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"encoding/json"
+	"errors"
 	n "github.com/egoist/mygo/ui"
 	"math"
 	"shioji/internal/app"
@@ -66,6 +68,221 @@ func TestAgentConfigurationReplacesDevicePageAndSlidesBack(t *testing.T) {
 	}
 }
 
+func TestProfileAuthorizationResumesFromDeviceListAndChecksModelsSeparately(t *testing.T) {
+	m := deviceUIModel()
+	state := m.DeviceStates["air"]
+	state.ConnectionEpoch = ""
+	state.WorkerMinor = protocol.AgentProfileMinor
+	profile := domain.AgentProfile{ID: "profile", Name: "工作账号", HarnessID: "codex", Mode: domain.AgentProfileAccount}
+	agent := domain.HarnessInfo{ID: "codex", Name: "Codex", Configured: true,
+		Installation: &domain.RuntimeInstallation{SignInMethods: []domain.SignInMethod{domain.SignInBrowser, domain.SignInDeviceCode}},
+		ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAccount}}
+	info := domain.HarnessInfo{ID: profile.ID, Name: profile.Name, Profile: &profile, Configured: true,
+		Installation: &domain.RuntimeInstallation{Issue: domain.RuntimeSignInRequired, SignInMethods: agent.Installation.SignInMethods}}
+	state.Readiness.Harnesses = []domain.HarnessInfo{agent, info}
+	v := New(m, app.NewController(""), "")
+	v.devices, v.deviceSelected, v.deviceTab = true, "air", "agents"
+	ui := n.NewTester(v.View, 850, 600)
+	ui.Advance(time.Second)
+	click := func(label string) {
+		t.Helper()
+		if err := ui.Click(label); err != nil {
+			t.Fatal(err, ui.Texts())
+		}
+		ui.Advance(time.Second)
+	}
+	click("配置 工作账号 路径")
+	click("继续授权")
+	job := welcomeJob(t, v.Controller, "runtime.signin.start")
+	in := job.Input.(protocol.SignInInput)
+	if job.ConnectionID != "air" || in.HarnessID != profile.ID || in.Method != domain.SignInDeviceCode || in.Configuration != nil {
+		t.Fatal("resuming authorization did not use the selected Profile on its owning device")
+	}
+	body, _ := json.Marshal(domain.SignInStatus{ID: in.ID, HarnessID: profile.ID, Phase: domain.SignInWaiting})
+	job.Apply(m, body, nil)
+	ui.Frame()
+	if !ui.HasText("等待账号授权") {
+		t.Fatal(ui.Texts())
+	}
+	// Apply the worker's cancellation receipt without opening a real provider.
+	if err := ui.Click("取消授权"); err != nil {
+		t.Fatal(err)
+	}
+	cancel := welcomeJob(t, v.Controller, "runtime.signin.cancel")
+	if cancel.Input.(protocol.SignInInput).ID != in.ID {
+		t.Fatal("cancel targeted another authorization")
+	}
+	body, _ = json.Marshal(domain.SignInStatus{ID: in.ID, HarnessID: profile.ID, Phase: domain.SignInCanceled})
+	cancel.Apply(m, body, nil)
+	ui.Frame()
+	click("稍后设置")
+	click("配置 工作账号 路径")
+	click("继续授权")
+	job = welcomeJob(t, v.Controller, "runtime.signin.start")
+	next := job.Input.(protocol.SignInInput)
+	if next.HarnessID != profile.ID || next.ID == in.ID {
+		t.Fatal("retry must keep the Profile and start a fresh authorization")
+	}
+	profile.Authorized = true
+	info.Profile, info.State, info.Error = &profile, domain.RuntimeUnavailable, "测试模型读取失败"
+	info.Installation = &domain.RuntimeInstallation{Issue: domain.RuntimeUnavailableIssue}
+	info.Account = &domain.RuntimeAccount{Mode: "account", State: "authenticated"}
+	body, _ = json.Marshal(domain.SignInStatus{ID: next.ID, HarnessID: profile.ID, Phase: domain.SignInCompleted, Profile: &info})
+	job.Apply(m, body, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	if !ui.HasText("测试模型读取失败") {
+		t.Fatal(ui.Texts())
+	}
+	click("稍后设置")
+	if !ui.HasText("模型待确认") {
+		t.Fatal(ui.Texts())
+	}
+	click("配置 工作账号 路径")
+	click("重试读取模型")
+	check := welcomeJob(t, v.Controller, "runtime.check")
+	if check.ConnectionID != "air" || check.Input.(protocol.RuntimeConfiguration).HarnessID != profile.ID || len(v.Controller.Jobs) != 0 {
+		t.Fatal("model retry did not target the bound Profile or restarted authorization")
+	}
+	info.State, info.Error = domain.RuntimeReady, ""
+	info.Installation = &domain.RuntimeInstallation{}
+	body, _ = json.Marshal(domain.Readiness{Harnesses: []domain.HarnessInfo{agent, info}})
+	check.Apply(m, body, nil)
+	ui.Frame()
+	ui.Advance(time.Second)
+	if !ui.HasText("已就绪") || ui.HasText("重试读取模型") {
+		t.Fatal("ready Profile did not return to the list", ui.Texts())
+	}
+}
+
+func TestProfileCreationRetriesUncertainReceiptAndIgnoresLateNavigation(t *testing.T) {
+	m := deviceUIModel()
+	state := m.DeviceStates["local"]
+	state.ConnectionEpoch = ""
+	state.WorkerMinor = protocol.AgentProfileMinor
+	agent := domain.HarnessInfo{ID: "codex", Name: "Codex", Configured: true,
+		Installation: &domain.RuntimeInstallation{SignInMethods: []domain.SignInMethod{domain.SignInBrowser}},
+		ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAccount}}
+	state.Readiness.Harnesses = []domain.HarnessInfo{agent}
+	v := New(m, app.NewController(""), "")
+	v.devices, v.deviceSelected, v.deviceTab = true, "local", "agents"
+	ui := n.NewTester(v.View, 1100, 680)
+	ui.Advance(time.Second)
+	click := func(label string) {
+		t.Helper()
+		if err := ui.Click(label); err != nil {
+			t.Fatal(err, ui.Texts())
+		}
+		ui.Advance(time.Second)
+	}
+	click("新增 Profile")
+	click("Profile 名称")
+	ui.Type("测试账号")
+	click("创建并登录")
+	create := welcomeJob(t, v.Controller, "runtime.profile.create")
+	initial := create.Input.(domain.AgentProfile)
+	create.Apply(m, nil, errors.New("test lost reply"))
+	ui.Frame()
+	if !ui.HasText("创建结果待确认") {
+		t.Fatal(ui.Texts())
+	}
+	click("创建并登录")
+	retry := welcomeJob(t, v.Controller, "runtime.profile.create")
+	if retry.Input != initial {
+		t.Fatal("an uncertain result changed the worker's creation identity")
+	}
+	retry.Apply(m, nil, &protocol.RemoteError{Code: "notSent", Message: "测试连接已变化"})
+	ui.Frame()
+	click("创建并登录")
+	retry = welcomeJob(t, v.Controller, "runtime.profile.create")
+	if retry.Input != initial {
+		t.Fatal("an unsent retry discarded an earlier unknown creation identity")
+	}
+	retry.Apply(m, nil, &protocol.RemoteError{Code: "worker", Message: "测试执行服务正在更新"})
+	ui.Frame()
+	click("创建并登录")
+	retry = welcomeJob(t, v.Controller, "runtime.profile.create")
+	if retry.Input != initial {
+		t.Fatal("a worker admission rejection discarded an earlier unknown creation identity")
+	}
+	click("选择设备：MacBook Air")
+	info := domain.HarnessInfo{ID: initial.ID, Name: initial.Name, Profile: &initial, Configured: true,
+		Installation: &domain.RuntimeInstallation{Issue: domain.RuntimeSignInRequired, SignInMethods: agent.Installation.SignInMethods}}
+	catalog := []domain.HarnessInfo{agent, info}
+	body, _ := json.Marshal(protocol.AgentSetupResult{Ready: true, Catalog: catalog, Readiness: domain.Readiness{Harnesses: catalog}})
+	retry.Apply(m, body, nil)
+	ui.Advance(time.Second)
+	if v.deviceSelected != "air" || ui.HasText("测试账号") {
+		t.Fatal("a late creation result navigated away from the other device", ui.Texts())
+	}
+	for len(v.Controller.Jobs) > 0 {
+		if job := <-v.Controller.Jobs; job.Method == "runtime.signin.start" {
+			t.Fatal("a late receipt started authorization after leaving the creation page")
+		}
+	}
+}
+
+func TestProfilePageUsesAuthoritativeBindingWithoutSignInReceipt(t *testing.T) {
+	m := deviceUIModel()
+	state := m.DeviceStates["local"]
+	state.ConnectionEpoch = ""
+	state.WorkerMinor = protocol.AgentProfileMinor
+	profile := domain.AgentProfile{ID: "api-profile", Name: "工作 API", HarnessID: "codex", Mode: domain.AgentProfileAPI}
+	info := domain.HarnessInfo{ID: profile.ID, Name: profile.Name, Configured: true, Profile: &profile,
+		Installation: &domain.RuntimeInstallation{Issue: domain.RuntimeSignInRequired, APISetup: true}}
+	state.Readiness.Harnesses = []domain.HarnessInfo{info}
+	v := New(m, app.NewController(""), "")
+	v.devices, v.deviceSelected, v.deviceTab = true, "local", "agents"
+	ui := n.NewTester(v.View, 1100, 680)
+	ui.Advance(time.Second)
+	if err := ui.Click("配置 工作 API 路径"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if err := ui.Click("API 地址"); err != nil {
+		t.Fatal(err, ui.Texts())
+	}
+	bound := profile
+	bound.Authorized = true
+	info.Profile, info.State = &bound, domain.RuntimeReady
+	info.Installation = &domain.RuntimeInstallation{}
+	info.Account = &domain.RuntimeAccount{Mode: "api", State: "authenticated"}
+	state.Readiness.Harnesses = []domain.HarnessInfo{info}
+	ui.Frame()
+	ui.Advance(time.Second)
+	if ui.HasText("重试连接") || !ui.HasText("已就绪") {
+		t.Fatal("authoritative binding did not exit the flow without resending credentials", ui.Texts())
+	}
+	for len(v.Controller.Jobs) > 0 {
+		if job := <-v.Controller.Jobs; job.Method == "runtime.signin.start" {
+			t.Fatal("authoritative binding caused another sign-in")
+		}
+	}
+}
+
+func TestProfileWithMissingRuntimeOpensExistingAgentDetail(t *testing.T) {
+	m := deviceUIModel()
+	state := m.DeviceStates["local"]
+	state.ConnectionEpoch = ""
+	state.WorkerMinor = protocol.AgentProfileMinor
+	profile := domain.AgentProfile{ID: "profile", Name: "工作账号", HarnessID: "codex", Mode: domain.AgentProfileAccount}
+	state.Readiness.Harnesses = []domain.HarnessInfo{{
+		ID: profile.ID, Name: profile.Name, Profile: &profile, Configured: true, State: domain.RuntimeUnavailable,
+		Installation: &domain.RuntimeInstallation{Issue: domain.RuntimeMissing, Documentation: "https://example.test/install"},
+	}}
+	v := New(m, app.NewController(""), "")
+	v.devices, v.deviceSelected, v.deviceTab = true, "local", "agents"
+	ui := n.NewTester(v.View, 1100, 680)
+	ui.Advance(time.Second)
+	if err := ui.Click("配置 工作账号 路径"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if !ui.HasText("未安装") || !ui.HasText("可执行文件") || ui.HasText("继续授权") {
+		t.Fatal("runtime repairs lost the existing Agent detail", ui.Texts())
+	}
+}
+
 func TestDeviceSidebarSelectionReturnsToSettingsFromAgentConfiguration(t *testing.T) {
 	m := deviceUIModel()
 	m.DeviceStates["local"].ConnectionEpoch = ""
@@ -117,8 +334,8 @@ func TestCreateDeviceProfileUsesSelectedAgentAndLoginMode(t *testing.T) {
 	state.ConnectionEpoch = ""
 	state.WorkerMinor = protocol.AgentProfileMinor
 	state.Readiness.Harnesses = []domain.HarnessInfo{
-		{ID: "codex", Name: "Codex", Configured: true, Installation: &domain.RuntimeInstallation{}, ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAccount, domain.AgentProfileAPI}},
-		{ID: "antigravity", Name: "Antigravity", Configured: true, Installation: &domain.RuntimeInstallation{}, ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAccount}},
+		{ID: "codex", Name: "Codex", Configured: true, Installation: &domain.RuntimeInstallation{APISetup: true, SignInMethods: []domain.SignInMethod{domain.SignInBrowser, domain.SignInDeviceCode}}, ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAccount, domain.AgentProfileAPI}},
+		{ID: "antigravity", Name: "Antigravity", Configured: true, Installation: &domain.RuntimeInstallation{SignInMethods: []domain.SignInMethod{domain.SignInBrowser}}, ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAccount}},
 	}
 	v := New(m, app.NewController(""), "")
 	v.devices, v.deviceSelected, v.deviceTab = true, "local", "agents"
@@ -128,16 +345,25 @@ func TestCreateDeviceProfileUsesSelectedAgentAndLoginMode(t *testing.T) {
 		t.Fatal(err, ui.Texts())
 	}
 	ui.Advance(time.Second)
+	if _, ok := ui.Find("配置 Codex 路径"); ok {
+		t.Fatal("the creation form left the Agent list visible", ui.Texts())
+	}
 	if err := ui.Click("Profile 名称"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Type("OpenAI API")
+	if err := ui.Click("选择 Agent"); err != nil {
+		t.Fatal(err)
+	}
 	if err := ui.Click("Antigravity"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(time.Second)
 	if ui.HasText("自定义 API") {
 		t.Fatal("Antigravity offered an unsupported Profile sign-in method")
+	}
+	if err := ui.Click("选择 Agent"); err != nil {
+		t.Fatal(err)
 	}
 	if err := ui.Click("Codex"); err != nil {
 		t.Fatal(err)
@@ -146,12 +372,61 @@ func TestCreateDeviceProfileUsesSelectedAgentAndLoginMode(t *testing.T) {
 	if err := ui.Click("自定义 API"); err != nil {
 		t.Fatal(err)
 	}
-	if err := ui.Click("创建 Profile"); err != nil {
+	ui.Advance(time.Second)
+	if err := ui.Click("API 地址"); err != nil {
+		t.Fatal(err, ui.Texts())
+	}
+	ui.Type("https://api.example.test/v1")
+	if err := ui.Click("输入 API Key"); err != nil {
+		t.Fatal(err, ui.Texts())
+	}
+	ui.Type("transient-test-key")
+	if err := ui.Click("创建并连接"); err != nil {
 		t.Fatal(err)
 	}
 	job := welcomeJob(t, v.Controller, "runtime.profile.create")
 	draft, ok := job.Input.(domain.AgentProfile)
 	if !ok || draft.ID == "" || draft.HarnessID != "codex" || draft.Mode != domain.AgentProfileAPI || draft.Name != "OpenAI API" {
 		t.Fatalf("wrong device Profile request: %+v", job.Input)
+	}
+	if len(v.Controller.Jobs) != 0 {
+		t.Fatal("authorization started without a worker receipt")
+	}
+	info := domain.HarnessInfo{ID: draft.ID, Name: draft.Name, Profile: &draft, Configured: true, Installation: &domain.RuntimeInstallation{APISetup: true, Issue: domain.RuntimeSignInRequired}}
+	catalog := append(append([]domain.HarnessInfo(nil), state.Readiness.Harnesses...), info)
+	body, _ := json.Marshal(protocol.AgentSetupResult{Ready: true, Catalog: catalog, Readiness: domain.Readiness{Harnesses: catalog}})
+	job.Apply(m, body, nil)
+	signIn := welcomeJob(t, v.Controller, "runtime.signin.start")
+	input := signIn.Input.(protocol.SignInInput)
+	if signIn.ConnectionID != "local" || input.HarnessID != draft.ID || input.Method != domain.SignInAPI ||
+		input.API == nil || input.API.Endpoint != "https://api.example.test/v1" || input.API.Credential != "transient-test-key" {
+		t.Fatalf("connection did not use the newly created Profile and form (owner %q, profile match %v, method %q, API present %v, endpoint match %v, key match %v)",
+			signIn.ConnectionID, input.HarnessID == draft.ID, input.Method, input.API != nil,
+			input.API != nil && input.API.Endpoint == "https://api.example.test/v1", input.API != nil && input.API.Credential == "transient-test-key")
+	}
+	body, _ = json.Marshal(domain.SignInStatus{ID: input.ID, HarnessID: draft.ID, Phase: domain.SignInFailed, Message: "测试连接失败"})
+	signIn.Apply(m, body, nil)
+	ui.Advance(time.Second)
+	if !ui.HasText("测试连接失败") || ui.HasText("常规") {
+		t.Fatal("failure left the creation flow", ui.Texts())
+	}
+	if err := ui.Click("重试连接"); err != nil {
+		t.Fatal(err, ui.Texts())
+	}
+	retry := welcomeJob(t, v.Controller, "runtime.signin.start")
+	next := retry.Input.(protocol.SignInInput)
+	if next.HarnessID != draft.ID || next.ID == input.ID || next.API == nil || *next.API != *input.API || len(v.Controller.Jobs) != 0 {
+		t.Fatal("retry did not reuse the Profile and its in-memory form")
+	}
+	bound := draft
+	bound.Authorized = true
+	info.Profile, info.State = &bound, domain.RuntimeReady
+	info.Installation = &domain.RuntimeInstallation{}
+	info.Account = &domain.RuntimeAccount{Mode: "api", State: "authenticated"}
+	body, _ = json.Marshal(domain.SignInStatus{ID: next.ID, HarnessID: draft.ID, Phase: domain.SignInCompleted, Profile: &info})
+	retry.Apply(m, body, nil)
+	ui.Advance(time.Second)
+	if _, ok := ui.Find("配置 OpenAI API 路径"); !ok || !ui.HasText("已就绪") || ui.HasText("API Key") {
+		t.Fatal("completion did not return to the new Agent row", ui.Texts())
 	}
 }

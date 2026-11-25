@@ -197,6 +197,7 @@ type View struct {
 	deviceSelected                                                                                                  string
 	deviceList                                                                                                      bool
 	deviceTab                                                                                                       string
+	deviceProfile                                                                                                   *deviceProfileEditor
 	deviceSearch                                                                                                    string
 	deviceStorageStates                                                                                             map[string]*deviceStorageState
 	clientStorageState                                                                                              *deviceStorageState
@@ -395,6 +396,7 @@ func (v *View) View(c *n.Context) {
 	}
 	v.flushDiffCommentInsertions(c)
 	v.syncTailnet()
+	v.syncDeviceProfile()
 	v.syncAgentSignIns(c)
 	v.syncToolServiceAuthorizations(c)
 	v.syncWorkerMigrations(c)
@@ -1100,6 +1102,7 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) (goalShown bool) {
 func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunConfig) {
 	ready := v.Model.RunReadiness()
 	descriptor := ready.Descriptor()
+	agent := runAgentCaption(ready)
 	summary := cfg.Model
 	if summary == "" {
 		summary = "未选择模型"
@@ -1114,7 +1117,7 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 		summary += " · Fast"
 	}
 	missing := v.Model.ModelUnavailable()
-	tip := descriptor.Name + " · " + summary
+	tip := agent + " · " + summary
 	description := tip
 	if missing {
 		tip = cfg.Model + " 已不可用，请更换模型"
@@ -1186,7 +1189,16 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 					n.Scroll(c).MaxHeight(300).FillWidth().Children(func() {
 						if phase == runMenuHarnesses {
 							for _, info := range v.Model.Readiness.Harnesses {
-								if ghost(c, info.Name).FillWidth().TextAlign(n.Start).Label(info.Name).Clicked() {
+								choice := control(c.Key(info.ID), 6).FillWidth().Height(28).PaddingX(8).Label(info.Name).Children(func() {
+									n.Row(c).FillWidth().Gap(6).AlignItems(n.Baseline).Children(func() {
+										n.Text(c, info.Name).MinWidth(0).Shrink(1).SingleLine().TooltipWhenTruncated(info.Name)
+										systemProfileBadge(c, info)
+									})
+								})
+								if isSystemAgentProfile(info) {
+									choice.Description(systemProfileHelp)
+								}
+								if choice.Clicked() {
 									if err := v.Model.SelectHarness(info.ID); err != nil {
 										v.Model.Error = err.Error()
 									}
@@ -1230,11 +1242,14 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 					return
 				}
 				if v.Model.SessionID == "" && len(v.Model.Readiness.Harnesses) > 1 {
-					if settingRow(c, "Agent", descriptor.Name+" ›").Disabled(v.Model.HasPendingInput()).Clicked() {
+					if settingRow(c, "Agent", agent+" ›").Disabled(v.Model.HasPendingInput()).Clicked() {
 						v.runMenu = runMenuHarnesses
 					}
 				} else {
-					n.Row(c).Height(28).PaddingX(8).AlignItems(n.Center).Children(func() { n.Text(c, "Agent").Grow(1); n.Text(c, descriptor.Name) })
+					n.Row(c).Height(28).PaddingX(8).AlignItems(n.Center).Children(func() {
+						n.Text(c, "Agent").Grow(1)
+						n.Text(c, agent).SingleLine().MaxWidth(160).TooltipWhenTruncated(agent)
+					})
 				}
 				if settingRow(c, "模型", cfg.Model+" ›").Clicked() {
 					v.runMenu = runMenuModels

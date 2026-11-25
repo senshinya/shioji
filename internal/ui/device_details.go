@@ -52,6 +52,7 @@ type deviceNameEditor struct {
 }
 
 func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
+	v.syncDeviceProfile()
 	if key == "tailnet" {
 		v.tailnetPage(c, t)
 		return
@@ -110,6 +111,11 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 	scope.Children(func() {
 		page, depth := "device", 0
 		var selected *domain.HarnessInfo
+		profile := v.deviceProfile
+		if profile != nil {
+			v.syncDeviceProfileSetup(state, *agentState, profile)
+			profile = v.deviceProfile
+		}
 		for i := range (*agentState).catalog {
 			if (*agentState).catalog[i].ID == (*agentState).pageID {
 				selected = &(*agentState).catalog[i]
@@ -117,9 +123,15 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 				break
 			}
 		}
+		if profile != nil {
+			page, depth = "profile-setup", 1
+		}
 
 		configurationTabPanel(c.Key("device-navigation"), page, depth, configurationPanelFill, func() {
-
+			if profile != nil {
+				v.deviceProfilePage(c, t, key, name, state, *agentState, profile)
+				return
+			}
 			if selected != nil {
 				v.deviceAgentPage(c, t, key, name, state, *agentState, *selected)
 				return
@@ -204,10 +216,21 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 				})
 			})
 			tabs := []configurationTabItem{{ID: "settings", Label: "设备设置"}, {ID: "agents", Label: "Agent"}, {ID: "workspaces", Label: "工作区"}}
-			n.Column(c).FillWidth().PaddingX(configurationInset).Children(func() { v.deviceTab = configurationTabs(c, v.deviceTab, tabs, configurationUnderline, false) })
+			n.Column(c).FillWidth().PaddingX(configurationInset).Children(func() {
+				n.Row(c).FillWidth().Children(func() {
+					v.deviceTab = configurationTabs(c, v.deviceTab, tabs, configurationUnderline, false)
+					if v.deviceTab == "agents" {
+						v.deviceProfileEntry(c.Key("new-profile"), key, state, *agentState)
+					}
+				})
+			})
 			configurationTabPanel(c.Key("device-tab-panel"), v.deviceTab, configurationTabIndex(tabs, v.deviceTab), configurationPanelFill, func() {
 				n.Scroll(c.Key("device-body:" + v.deviceTab)).FillWidth().Grow(1).Children(func() {
-					n.Column(c).FillWidth().Padding(configurationHeadingGap, configurationInset, configurationSectionGap).AlignItems(n.Start).Children(func() {
+					top := float32(configurationHeadingGap)
+					if v.deviceTab == "agents" {
+						top = configurationHoverInset
+					}
+					n.Column(c).FillWidth().Padding(top, configurationInset, configurationSectionGap).AlignItems(n.Start).Children(func() {
 						n.Column(c).FillWidth().Gap(configurationSectionGap).Children(func() {
 							if v.deviceTab == "agents" {
 								v.deviceAgents(c.Key("agents:"+key), t, key, state, agentState)

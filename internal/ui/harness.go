@@ -27,3 +27,31 @@ func harnessIcon(d domain.HarnessDescriptor) *n.SVG {
 	}
 	return genericAgentIcon
 }
+
+const systemProfileLabel = "系统"
+const systemProfileHelp = "跟随所属设备上的 Agent 原生配置，包括账号或 API 接入"
+
+func isSystemAgentProfile(info domain.HarnessInfo) bool {
+	// The catalog only attaches a Profile to isolated configurations.
+	// ProfileModes advertises creation options and can be absent on native entries.
+	return info.ID != "" && info.Profile == nil
+}
+
+func systemProfileBadge(c *n.Context, info domain.HarnessInfo) {
+	if isSystemAgentProfile(info) {
+		t := c.Theme()
+		n.Text(c, systemProfileLabel).FontSize(11).FixedLineHeight(16).PaddingX(4).Radius(4).
+			TextColor(t.TextMuted).Background(t.Text.Alpha(.065)).Shrink(0).
+			Description(systemProfileHelp).Tooltip(systemProfileHelp)
+	}
+}
+
+func runAgentCaption(ready domain.Readiness) string {
+	name := ready.Descriptor().Name
+	for _, info := range ready.Harnesses {
+		if info.ID == ready.HarnessID && isSystemAgentProfile(info) {
+			return name + " · " + systemProfileLabel
+		}
+	}
+	return name
+}
