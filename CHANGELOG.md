@@ -5,6 +5,25 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-25
+
+[源码](https://github.com/senshinya/shioji/tree/v0.10.0) · [与上一正式版 v0.9.1 比较](https://github.com/senshinya/shioji/compare/v0.9.1...v0.10.0)
+
+### Added
+
+- 设备 Profile 支持自定义 Responses API 和 Anthropic API。执行设备可查询模型列表，也可以使用手填的模型 ID。缺少兼容运行环境时，选择「安装并连接」即可安装对应的 Codex 或 Claude Code。
+- 自定义 Profile 可以从内置单色图标中选择，包括 Claude 图标，也可以使用 PNG、JPEG 或 WebP 图片。iPhone 和 iPad 客户端也可管理这些 Profile。
+
+### Changed
+
+- 新增 Profile 通过下拉菜单选择 Agent，并将接入配置放在同一张表单中。
+
+### Fixed
+
+- 修复长命令的悬浮提示超出 macOS 窗口的问题。
+
+GitHub Release 提供适用于 Apple Silicon 的 macOS 安装包。已安装支持自动更新的正式版可在 Shioji 菜单或「设置 → 关于」检查更新。使用自定义 Profile 需要更新所属设备的执行服务。本版执行服务使用协议 2.63，数据库沿用 schema 17。
+
 ## [0.9.1] - 2026-11-25
 
 [源码](https://github.com/senshinya/shioji/tree/v0.9.1) · [与上一正式版 v0.9.0 比较](https://github.com/senshinya/shioji/compare/v0.9.0...v0.9.1)
