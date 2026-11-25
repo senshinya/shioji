@@ -94,7 +94,7 @@ func (a Adapter) startNative(ctx context.Context, opts harness.StartOptions) (*a
 			return nil, errors.Join(err, opts.Scope.Stop(ctx))
 		}
 	}
-	r, err := Start(ctx, Options{launchEnv: env, Executable: a.Executable, Home: a.Home, Environment: a.runtimeOptions.Environment, Arguments: a.launchArguments(), Instructions: a.runtimeOptions.Instructions, Scope: opts.Scope, Executor: executor, OnStart: opts.OnStart, OnEvent: opts.OnEvent, OnMessage: opts.OnMessage, ImportResource: opts.ImportResource})
+	r, err := Start(ctx, Options{launchEnv: env, apiPreset: a.apiPreset, Executable: a.Executable, Home: a.Home, Environment: a.runtimeOptions.Environment, Arguments: a.launchArguments(), Instructions: a.runtimeOptions.Instructions, Scope: opts.Scope, Executor: executor, OnStart: opts.OnStart, OnEvent: opts.OnEvent, OnMessage: opts.OnMessage, ImportResource: opts.ImportResource})
 	if err != nil {
 		if executor != nil {
 			executor.Close(ctx)

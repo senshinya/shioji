@@ -252,7 +252,7 @@ func (a Adapter) ConfigureAPIWithProgress(ctx context.Context, in domain.APIConf
 		return domain.Readiness{}, apiSetupError("未找到可写的系统配置，请重新检测")
 	}
 	if !a.responses {
-		models, err := discoverAPIModels(ctx, in)
+		models, err := a.discoverAPIModels(ctx, in)
 		if err != nil {
 			return domain.Readiness{}, &harness.SetupError{Issue: domain.RuntimeUnavailableIssue, Message: err.Error()}
 		}

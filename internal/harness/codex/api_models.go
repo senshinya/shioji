@@ -29,15 +29,19 @@ func (a Adapter) APIModels(ctx context.Context, in domain.APIConfiguration) ([]d
 	if err != nil {
 		return nil, err
 	}
-	return discoverAPIModels(ctx, in)
+	return a.discoverAPIModels(ctx, in)
 }
 
-func discoverAPIModels(ctx context.Context, in domain.APIConfiguration) ([]domain.Model, error) {
+func (a Adapter) discoverAPIModels(ctx context.Context, in domain.APIConfiguration) ([]domain.Model, error) {
 	headers := http.Header{}
 	if in.Credential != "" {
 		headers.Set("Authorization", "Bearer "+in.Credential)
 	}
-	return fetchAPIModels(ctx, strings.TrimRight(in.Endpoint, "/")+"/models", headers, nil)
+	models, err := fetchAPIModels(ctx, strings.TrimRight(in.Endpoint, "/")+"/models", headers, nil)
+	if a.apiPreset != nil {
+		a.apiPreset.applyReasoningOptions(models)
+	}
+	return models, err
 }
 
 func fetchAPIModels(ctx context.Context, endpoint string, headers http.Header, known []domain.Model) ([]domain.Model, error) {
@@ -203,6 +207,9 @@ func (r *Runtime) availableAPIModels(ctx context.Context, known []domain.Model) 
 	}
 	if err != nil {
 		return nil, err
+	}
+	if r.apiPreset != nil && config.Config.Provider == r.apiPreset.id {
+		r.apiPreset.applyReasoningOptions(models)
 	}
 	for i := range models {
 		models[i].Default = models[i].ID == config.Config.Model

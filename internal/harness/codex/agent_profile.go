@@ -79,5 +79,5 @@ func (a Adapter) startAuthentication(ctx context.Context, authentication bool) (
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return Start(ctx, Options{launchEnv: env, Executable: a.Executable, Home: a.Home, Arguments: a.launchArguments(), authentication: authentication})
+	return Start(ctx, Options{launchEnv: env, apiPreset: a.apiPreset, Executable: a.Executable, Home: a.Home, Arguments: a.launchArguments(), authentication: authentication})
 }
