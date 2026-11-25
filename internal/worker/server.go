@@ -618,6 +618,25 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		return s.toolAuthorizationCommand(method, in)
 	case "runtime.catalog":
 		return s.runtimeProfiles(nil, true), nil
+	case "runtime.profile.icon":
+		in, err := decode[protocol.ProfileIconInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.changeProfileIcon(in)
+	case "runtime.profile.models":
+		in, err := decode[protocol.ProfileModelInput](body)
+		if err != nil {
+			return nil, err
+		}
+		if !domain.IsCustomAgent(in.HarnessID) {
+			return nil, harness.Unsupported("custom-profile-models")
+		}
+		provider, ok := s.adapter(in.HarnessID).(harness.APIModelsProvider)
+		if !ok {
+			return nil, harness.Unsupported("custom-profile-models")
+		}
+		return provider.APIModels(s.ctx, in.API)
 	case "runtime.profile.create":
 		in, err := decode[domain.AgentProfile](body)
 		if err != nil {

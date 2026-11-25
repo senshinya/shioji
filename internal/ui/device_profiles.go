@@ -17,16 +17,22 @@ import (
 )
 
 type deviceProfileEditor struct {
-	key, device string
-	draft       domain.AgentProfile
-	info        domain.HarnessInfo
-	request     domain.AgentProfile
-	auth        runtimeOptionDraft
-	method      domain.SignInMethod
-	agentChoice string
-	working     bool
-	seenSignIn  string
-	error       string
+	key, device                                string
+	draft                                      domain.AgentProfile
+	info                                       domain.HarnessInfo
+	request                                    domain.AgentProfile
+	auth                                       runtimeOptionDraft
+	method                                     domain.SignInMethod
+	agentChoice                                string
+	working                                    bool
+	modelRequest                               uint64
+	loadingModels                              bool
+	models                                     []domain.Model
+	modelError, modelEndpoint, modelCredential string
+	apiDrafts                                  map[string]runtimeOptionDraft
+	installRequested                           bool
+	seenSignIn                                 string
+	error                                      string
 }
 
 func profileModeLabel(mode domain.AgentProfileMode) string {
@@ -38,8 +44,13 @@ func profileModeLabel(mode domain.AgentProfileMode) string {
 
 func deviceProfileProviders(e *deviceAgentEditor) []domain.HarnessInfo {
 	var agents []domain.HarnessInfo
+	custom := false
 	for _, info := range e.catalog {
 		install := info.Installation
+		if domain.IsCustomAgent(info.ID) && info.Profile == nil {
+			custom = custom || slices.Contains(info.ProfileModes, domain.AgentProfileAPI)
+			continue
+		}
 		if len(info.ProfileModes) == 0 || install == nil || install.Issue == domain.RuntimeMissing || install.Issue == domain.RuntimeIncompatible {
 			continue
 		}
@@ -53,6 +64,9 @@ func deviceProfileProviders(e *deviceAgentEditor) []domain.HarnessInfo {
 			info.ProfileModes = modes
 			agents = append(agents, info)
 		}
+	}
+	if custom {
+		agents = append(agents, domain.HarnessInfo{ID: customProfileChoice, Name: "自定义", Icon: "profile-sliders", ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAPI}})
 	}
 	return agents
 }
@@ -68,6 +82,9 @@ func (v *View) canContinueDeviceProfile(key string, info domain.HarnessInfo) boo
 	}
 	if info.Profile.Authorized {
 		return info.Configured && profileModelsPending(info)
+	}
+	if domain.IsCustomAgent(info.Profile.HarnessID) {
+		return true
 	}
 	if info.Installation.Issue == domain.RuntimeMissing || info.Installation.Issue == domain.RuntimeIncompatible {
 		return false
@@ -90,7 +107,14 @@ func (v *View) openDeviceProfile(key string, info *domain.HarnessInfo) {
 }
 
 func (p *deviceProfileEditor) selectAgent(info domain.HarnessInfo) {
+	p.apiDrafts = nil
+	p.modelRequest++
+	p.loadingModels = false
+	p.modelError = ""
 	p.draft = domain.AgentProfile{HarnessID: info.ID, Mode: info.ProfileModes[0]}
+	if info.ID == customProfileChoice {
+		p.draft.HarnessID, p.draft.Icon = domain.AgentResponses, "profile-sliders"
+	}
 	p.auth = runtimeOptionDraft{}
 	p.method, p.error = "", ""
 }
@@ -110,6 +134,10 @@ func (v *View) closeDeviceProfile(p *deviceProfileEditor) {
 	}
 	p.auth = runtimeOptionDraft{}
 	delete(v.menuOpen, "profile-method:"+p.key)
+	delete(v.menuOpen, "profile-agent:"+p.key)
+	delete(v.menuOpen, "profile-api-models:"+p.key)
+	delete(v.menuOpen, "profile-icon:"+p.key)
+	p.models, p.apiDrafts, p.modelCredential = nil, nil, ""
 	if v.deviceProfile == p {
 		v.deviceProfile = nil
 	}
@@ -174,10 +202,18 @@ func (v *View) submitDeviceProfile(key string, state *app.DeviceState, e *device
 			return
 		}
 	}
+	if domain.IsCustomAgent(p.draft.HarnessID) {
+		if strings.TrimSpace(p.auth.apiModel) == "" || strings.TrimSpace(p.auth.apiCredential) == "" {
+			p.error = "请输入模型 ID 和 API Key"
+			return
+		}
+		p.installRequested = p.needsRuntime(e)
+	}
 	if p.info.ID != "" {
 		v.connectDeviceProfile(p)
 		return
 	}
+	p.installRequested = domain.IsCustomAgent(p.draft.HarnessID) && p.needsRuntime(e)
 	draft := p.draft
 	draft.Name = strings.TrimSpace(draft.Name)
 	if keyOnly {
@@ -271,12 +307,12 @@ func (v *View) connectDeviceProfile(p *deviceProfileEditor) {
 	}
 	in := protocol.SignInInput{HarnessID: info.ID}
 	if p.draft.Mode == domain.AgentProfileAPI {
-		if methods := v.agentSignInMethods(p.key, info); !slices.Contains(methods, domain.SignInAPI) {
+		if methods := v.agentSignInMethods(p.key, info); !slices.Contains(methods, domain.SignInAPI) && !domain.IsCustomAgent(p.draft.HarnessID) {
 			p.error = "此 Profile 当前无法连接 API，请检查设备的 Agent"
 			return
 		}
 		in.Method = domain.SignInAPI
-		in.API = &domain.APIConfiguration{Endpoint: strings.TrimSpace(p.auth.apiEndpoint), Credential: p.auth.apiCredential}
+		in.API = &domain.APIConfiguration{Endpoint: strings.TrimSpace(p.auth.apiEndpoint), Credential: p.auth.apiCredential, Model: strings.TrimSpace(p.auth.apiModel), InstallRuntime: p.installRequested}
 	} else {
 		in.Method = agentSignInMethod(p.key, &deviceAgentEditor{signInMethod: p.method}, profileSignInMethods(info))
 		if in.Method == "" {
@@ -323,6 +359,11 @@ func (v *View) syncDeviceProfileSetup(state *app.DeviceState, e *deviceAgentEdit
 	}
 	if state.Connected && p.info.Profile.Authorized && p.info.State == domain.RuntimeReady {
 		v.returnFromDeviceProfile(e, p)
+	}
+	if op := v.agentSignIn(p.key, p.info.ID); op != nil && op.status.Setup != nil && op.status.Setup.Phase == "verifying" && p.info.Installation != nil && !p.info.Profile.Authorized {
+		installation := *p.info.Installation
+		installation.Issue = domain.RuntimeSignInRequired
+		p.info.Installation = &installation
 	}
 }
 

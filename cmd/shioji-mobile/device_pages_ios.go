@@ -555,7 +555,7 @@ func (a *mobileApp) openRemoteAgents(parent *mygo.Window) {
 				var providers []domain.HarnessInfo
 				for _, info := range catalog {
 					install := info.Installation
-					if len(info.ProfileModes) != 0 && install != nil && install.Issue != domain.RuntimeMissing && install.Issue != domain.RuntimeIncompatible {
+					if len(info.ProfileModes) != 0 && install != nil && (domain.IsCustomAgent(info.ID) || install.Issue != domain.RuntimeMissing && install.Issue != domain.RuntimeIncompatible) {
 						providers = append(providers, info)
 					}
 				}
@@ -586,6 +586,16 @@ func (a *mobileApp) openRemoteAgents(parent *mygo.Window) {
 					status = "未启用"
 				}
 				open := func() {
+					if profile := agent.Profile; profile != nil && domain.IsCustomAgent(profile.HarnessID) && !profile.Authorized {
+						a.openCreateAgentProfile(w, catalog, func(result protocol.AgentSetupResult) {
+							next := redactRuntimeReadiness(domain.Readiness{Harnesses: result.Catalog})
+							refreshed = &next
+							result.Readiness.Sessions = m.Readiness.Sessions
+							m.Readiness = redactRuntimeReadiness(result.Readiness)
+							a.refresh()
+						}, agent)
+						return
+					}
 					a.openAgentSettingsAt(w, agent, "常规", "", func() {
 						if !a.preview && m.Connected {
 							load()
@@ -606,11 +616,24 @@ func (a *mobileApp) openRemoteAgents(parent *mygo.Window) {
 							method = "API Key"
 						}
 						detail = providerName + " · " + method
+						if domain.IsCustomAgent(profile.HarnessID) {
+							detail = mobileCustomAPILabel(profile.HarnessID)
+						}
 					}
 					if agent.State == domain.RuntimeReady {
 						status = ""
 					}
-					mobileRow(c.Key(agent.ID), agent.Name, detail, status, symbol, open)
+					row := c.Key(agent.ID)
+					if picture := app.AgentProfileIconImage(agent.Icon); picture != nil {
+						button := mobileButton(row, agent.Name, open).MinHeight(max(contentRowHeight, mobileTapSize(c)))
+						mobileRowContent(row, button, agent.Name, detail, nil, true, func() {
+							if status != "" {
+								oneLine(c, status, 13, palette(c).secondary).PassThrough()
+							}
+						}, ui.NewBitmap(picture))
+					} else {
+						mobileRow(row, agent.Name, detail, status, symbol, open)
+					}
 					continue
 				}
 				if m.WorkerMinor < protocol.RuntimeAgentSelectionMinor {
@@ -786,6 +809,22 @@ func (a *mobileApp) openAgentSettingsAt(parent *mygo.Window, agent domain.Harnes
 		settingsContent := func() {
 			switch tab {
 			case "常规":
+				if current.Profile != nil && domain.IsCustomAgent(current.Profile.HarnessID) {
+					formRow(c, "图标", func() {
+						a.mobileProfileIcon(c, w, current.Icon, blocked || authBusy, func(icon string) {
+							in := protocol.ProfileIconInput{ID: current.ID, Previous: current.Profile.Icon, Icon: icon}
+							a.pageJob(w, &req, "runtime.profile.icon", in, decodePage(func(out protocol.AgentSetupResult) error {
+								if !out.Ready || !applyAgent(domain.Readiness{Harnesses: out.Catalog}) {
+									return fmt.Errorf("设备未确认图标修改")
+								}
+								if onReturn != nil {
+									onReturn()
+								}
+								return nil
+							}))
+						}, func(err error) { req.err = err.Error() })
+					})
+				}
 				mobileSection(c, "账户")
 				a.agentAccountView(c, w, current, &account, blocked || unsaved, refetch)
 				if unsaved {

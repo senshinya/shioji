@@ -280,8 +280,17 @@ type SignIn interface {
 type SignInCodeReceiver interface {
 	SubmitCode(context.Context, string) error
 }
+type APIModelsProvider interface {
+	APIModels(context.Context, domain.APIConfiguration) ([]domain.Model, error)
+}
+
 type APIConfigurationProvider interface {
 	ConfigureAPI(context.Context, domain.APIConfiguration) (domain.Readiness, error)
+}
+
+// APISetupProgressProvider reports device-owned setup progress independently of authentication.
+type APISetupProgressProvider interface {
+	ConfigureAPIWithProgress(context.Context, domain.APIConfiguration, func(domain.RuntimeSetupProgress)) (domain.Readiness, error)
 }
 
 type SetupError struct {

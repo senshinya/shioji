@@ -16,7 +16,7 @@ func (a Adapter) ProfileModes() []domain.AgentProfileMode {
 	if a.profileMode != "" {
 		return nil
 	}
-	if a.apiPreset != nil {
+	if a.apiPreset != nil || a.responses {
 		return []domain.AgentProfileMode{domain.AgentProfileAPI}
 	}
 	return []domain.AgentProfileMode{domain.AgentProfileAccount, domain.AgentProfileAPI}
@@ -26,7 +26,7 @@ func (a Adapter) WithAgentProfile(id, name, directory string, mode domain.AgentP
 	if !slices.Contains(a.ProfileModes(), mode) {
 		return nil, harness.Unsupported("agent-profile")
 	}
-	return Adapter{Executable: a.Executable, Home: directory, profileID: id, profileName: name, profileMode: mode, apiPreset: a.apiPreset}, nil
+	return Adapter{Executable: a.Executable, Home: directory, profileID: id, profileName: name, profileMode: mode, apiPreset: a.apiPreset, responses: a.responses, managedState: a.managedState}, nil
 }
 
 func (a Adapter) ensureProfileConfig() error {

@@ -22,9 +22,17 @@ type Adapter struct {
 	profileID, profileName string
 	profileMode            domain.AgentProfileMode
 	apiPreset              *apiPreset
+	responses              bool
+	managedState           string
 }
 
 func (a Adapter) Descriptor() domain.HarnessDescriptor {
+	if a.responses {
+		if a.profileID != "" {
+			return domain.HarnessDescriptor{ID: a.profileID, Name: a.profileName, Icon: "openai"}
+		}
+		return domain.HarnessDescriptor{ID: domain.AgentResponses, Name: "Responses API", Icon: "openai", ProfileOnly: true}
+	}
 	if a.apiPreset != nil {
 		if a.profileID != "" {
 			return domain.HarnessDescriptor{ID: a.profileID, Name: a.profileName, Icon: a.apiPreset.id}
@@ -37,6 +45,14 @@ func (a Adapter) Descriptor() domain.HarnessDescriptor {
 	return domain.HarnessDescriptor{ID: "codex", Name: "Codex", Icon: "openai"}
 }
 func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.Runtime, error) {
+	if a.responses && a.profileID != "" {
+		var err error
+		a.Executable, err = a.responsesExecutable(ctx, false)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if a.Descriptor().ProfileOnly {
 		return nil, harness.Unsupported("execution-without-profile")
 	}
@@ -101,6 +117,16 @@ func (a Adapter) startNative(ctx context.Context, opts harness.StartOptions) (*a
 }
 
 func (a Adapter) CatalogVersion() (string, error) {
+	if a.responses {
+		ctx, cancel := context.WithTimeout(context.Background(), shellEnvironmentTimeout+2*time.Second)
+		defer cancel()
+		if executable, err := a.responsesExecutable(ctx, false); err == nil {
+			a.Executable = executable
+		} else {
+			return "", err
+		}
+	}
+
 	// Allow the shared probe to finish process cleanup and publish its result.
 	ctx, cancel := context.WithTimeout(context.Background(), shellEnvironmentTimeout+time.Second)
 	defer cancel()

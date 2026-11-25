@@ -85,9 +85,14 @@ func mobileHarnessSymbol(icon string) *ui.SVG {
 		return openAISymbol
 	case "antigravity":
 		return antigravitySymbol
+	case "claude":
+		return assets.Claude
 	case "deepseek":
 		return assets.DeepSeek
 	default:
+		if symbol := assets.ProfileSymbol(icon); symbol != nil {
+			return symbol
+		}
 		return terminalSymbol
 	}
 }

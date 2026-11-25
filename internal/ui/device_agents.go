@@ -6,6 +6,7 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"strings"
 	"time"
 )
 
@@ -104,6 +105,9 @@ func (v *View) deviceProfileRows(c *n.Context, t *n.Theme, key string, connected
 				mode = "API Key"
 			}
 			detail = provider + " · " + mode
+			if domain.IsCustomAgent(profile.HarnessID) {
+				detail = customAPILabel(profile.HarnessID) + " · " + customRuntimeName(profile.HarnessID)
+			}
 			if profileModelsPending(info) {
 				detail += " · 模型待确认"
 			} else if !profile.Authorized || info.State != domain.RuntimeReady || !connected {
@@ -114,7 +118,11 @@ func (v *View) deviceProfileRows(c *n.Context, t *n.Theme, key string, connected
 			Gap(8).AlignItems(n.Center).Label("打开 " + name + " 配置")
 		button.Children(func() {
 			n.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(n.Baseline).Children(func() {
-				inlineSymbol(c, harnessIcon(domain.HarnessDescriptor{Icon: info.Icon}), name, font, 24, t.TextMuted)
+				if strings.HasPrefix(info.Icon, domain.ProfilePNGPrefix) {
+					profileIconView(c, info.Icon, 18, t.TextMuted).AlignSelf(n.Start).Margin(2, 0, 0)
+				} else {
+					inlineSymbol(c, harnessIcon(domain.HarnessDescriptor{Icon: info.Icon}), name, font, 24, t.TextMuted)
+				}
 				n.Column(c).Grow(1).MinWidth(0).Children(func() {
 					n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
 						n.Text(c, name).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).SingleLine().MinWidth(0).Shrink(1).TooltipWhenTruncated(name)
@@ -276,8 +284,14 @@ func (v *View) deviceAgentPage(c *n.Context, t *n.Theme, key, deviceName string,
 			}
 			n.Row(c).FillWidth().Height(32).Gap(16).AlignItems(n.Baseline).Children(func() {
 				n.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(n.Baseline).Children(func() {
-					inlineIconText(c, harnessIcon(domain.HarnessDescriptor{ID: info.ID, Name: info.Name, Icon: info.Icon}), info.Name, n.Font{Family: t.Font, Size: configurationTitleSize, Weight: 400}, 24, 8, t.Text).
-						FixedLineHeight(configurationTitleLine).MinWidth(0).Shrink(1).TooltipWhenTruncated(info.Name)
+					if strings.HasPrefix(info.Icon, domain.ProfilePNGPrefix) {
+						profileIconView(c, info.Icon, 22, t.Text).AlignSelf(n.Center)
+						n.Text(c, info.Name).FontSize(configurationTitleSize).FixedLineHeight(configurationTitleLine).SingleLine().MinWidth(0).Shrink(1).TooltipWhenTruncated(info.Name)
+					} else {
+						inlineIconText(c, harnessIcon(domain.HarnessDescriptor{ID: info.ID, Name: info.Name, Icon: info.Icon}), info.Name, n.Font{Family: t.Font, Size: configurationTitleSize, Weight: 400}, 24, 8, t.Text).
+							FixedLineHeight(configurationTitleLine).MinWidth(0).Shrink(1).TooltipWhenTruncated(info.Name)
+					}
+
 					systemProfileBadge(c, info)
 				})
 				status := runtimeSetupLabel(info, state.Connected)

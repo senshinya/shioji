@@ -72,13 +72,20 @@ const (
 
 func (p SignInPhase) Active() bool { return p == SignInStarting || p == SignInWaiting }
 
+type RuntimeSetupProgress struct {
+	Phase      string `json:"phase"`
+	Downloaded int64  `json:"downloaded,omitempty"`
+	Total      int64  `json:"total,omitempty"`
+}
+
 type SignInStatus struct {
-	Profile   *HarnessInfo    `json:"profile,omitempty"`
-	ID        string          `json:"id"`
-	HarnessID string          `json:"harnessId"`
-	Phase     SignInPhase     `json:"phase"`
-	Challenge SignInChallenge `json:"challenge"`
-	Message   string          `json:"message,omitempty"`
+	Setup     *RuntimeSetupProgress `json:"setup,omitempty"`
+	Profile   *HarnessInfo          `json:"profile,omitempty"`
+	ID        string                `json:"id"`
+	HarnessID string                `json:"harnessId"`
+	Phase     SignInPhase           `json:"phase"`
+	Challenge SignInChallenge       `json:"challenge"`
+	Message   string                `json:"message,omitempty"`
 }
 
 // RuntimeOptions are device-owned defaults for subsequent harness launches.
@@ -124,9 +131,10 @@ type RuntimeAccount struct {
 	State             string               `json:"state"`
 }
 
-// APIConfiguration is an explicit, transient setup input. Credentials never enter Shioji persistence.
+// APIConfiguration is an explicit, transient setup input. The adapter owns credential storage. Setup inputs do not enter Profile metadata or the worker journal.
 type APIConfiguration struct {
-	Endpoint   string `json:"endpoint"`
-	Model      string `json:"model"`
-	Credential string `json:"credential"`
+	InstallRuntime bool   `json:"installRuntime,omitempty"`
+	Endpoint       string `json:"endpoint"`
+	Model          string `json:"model"`
+	Credential     string `json:"credential"`
 }

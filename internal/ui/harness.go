@@ -22,9 +22,13 @@ func harnessIcon(d domain.HarnessDescriptor) *n.SVG {
 	icons := map[string]*n.SVG{
 		"antigravity": antigravityMark,
 		"deepseek":    assets.DeepSeek,
+		"claude":      assets.Claude,
 		"openai":      openAIBlossom,
 	}
 	if icon := icons[d.Icon]; icon != nil {
+		return icon
+	}
+	if icon := assets.ProfileSymbol(d.Icon); icon != nil {
 		return icon
 	}
 	return genericAgentIcon

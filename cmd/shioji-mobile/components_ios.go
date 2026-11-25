@@ -413,11 +413,11 @@ func mobileDetailRow(c *ui.Context, title, subtitle, accessibilityName string, i
 	return mobileRowContent(c, row.MinHeight(max(contentRowHeight, mobileTapSize(c))), title, subtitle, icon, open != nil, tail)
 }
 
-func mobileRowContent(c *ui.Context, row ui.Element, title, subtitle string, icon *ui.SVG, disclosure bool, tail func()) ui.Element {
+func mobileRowContent(c *ui.Context, row ui.Element, title, subtitle string, icon *ui.SVG, disclosure bool, tail func(), pictures ...ui.ImageSource) ui.Element {
 	p := palette(c)
 	return row.AlignItems(ui.Center).Padding(8, 0).Gap(8).Children(func() {
 		ui.Row(c).Grow(1).MinWidth(0).AlignItems(ui.Start).Gap(6).PassThrough().Children(func() {
-			if icon != nil {
+			if icon != nil || len(pictures) != 0 {
 				font := mobileStatusFont(c, bodyTextSize)
 				line := ui.ShapeText(title, font, 0).Lines()
 				height := font.Size
@@ -425,7 +425,13 @@ func mobileRowContent(c *ui.Context, row ui.Element, title, subtitle string, ico
 					height = line[0].Ascent + line[0].Descent
 				}
 				ui.Column(c).Width(24).Height(height).Shrink(0).AlignItems(ui.Start).Justify(ui.Center).PassThrough().
-					Children(func() { alignedSymbol(c, icon, title, font, inlineIconSize, p.secondary) })
+					Children(func() {
+						if len(pictures) != 0 {
+							ui.Image(c, pictures[0]).Size(inlineIconSize, inlineIconSize).Fit(ui.Contain).PassThrough()
+						} else {
+							alignedSymbol(c, icon, title, font, inlineIconSize, p.secondary)
+						}
+					})
 			}
 			ui.Column(c).Grow(1).MinWidth(0).Gap(2).PassThrough().Children(func() {
 				label(c, title, bodyTextSize, p.ink).PassThrough()
@@ -487,8 +493,12 @@ func formInput(c *ui.Context, title, placeholder string, value *string) ui.Eleme
 }
 
 func formRow(c *ui.Context, title string, control func()) ui.Element {
+	return rowDivider(plainFormRow(c, title, control), palette(c).line)
+}
+
+func plainFormRow(c *ui.Context, title string, control func()) ui.Element {
 	p := palette(c)
-	return rowDivider(ui.Row(c).MinHeight(formRowHeight).Padding(6, 0).AlignItems(ui.Center).Gap(10), p.line).Children(func() {
+	return ui.Row(c).MinHeight(formRowHeight).Padding(6, 0).AlignItems(ui.Center).Gap(10).Children(func() {
 		label(c, title, bodyTextSize, p.ink).Grow(1).MinWidth(0)
 		control()
 	})
@@ -500,11 +510,14 @@ func rowDivider(row ui.Element, color ui.Color) ui.Element {
 
 func formChoice(c *ui.Context, title, value string, items func(*ui.Menu)) ui.Element {
 	return formRow(c, title, func() {
-		iconAction(c, value, title, nil, 0, pickerSymbol, pickerIconSize, bodyTextSize, 400, nil).PaddingX(0).
-			MaxWidthPercent(62).Value(value).Menu(items)
+		formChoiceControl(c, title, value, items)
 	})
 }
 
+func formChoiceControl(c *ui.Context, title, value string, items func(*ui.Menu)) {
+	iconAction(c, value, title, nil, 0, pickerSymbol, pickerIconSize, bodyTextSize, 400, nil).PaddingX(0).
+		MaxWidthPercent(62).Value(value).Menu(items)
+}
 func mobileChoiceRow(c *ui.Context, title, subtitle string, selected bool, choose func()) {
 	p := palette(c)
 	fill := p.canvas

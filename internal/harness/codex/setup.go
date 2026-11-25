@@ -19,6 +19,15 @@ func (a Adapter) Installation() domain.RuntimeInstallation {
 	ctx, cancel := context.WithTimeout(context.Background(), shellEnvironmentTimeout)
 	defer cancel()
 	env, _ := a.environment(ctx)
+	if a.responses {
+		path, err := a.responsesExecutable(ctx, false)
+		out := domain.RuntimeInstallation{APISetup: true, Executable: path, Configurable: a.profileID != "", Options: a.runtimeOptions,
+			OptionsSupported: domain.RuntimeOptionSupport{Instructions: true, TitleModel: true}}
+		if err != nil {
+			out.Issue = domain.RuntimeMissing
+		}
+		return out
+	}
 	path := a.Executable
 	if image, err := installedExecutable(path, env); err == nil {
 		path = image.path

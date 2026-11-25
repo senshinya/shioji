@@ -60,7 +60,7 @@ const Major = 2
 // Minor 60 accepts one-time browser authorization responses on their owning worker.
 // Minor 61 applies live session permission changes on the owning worker.
 // Minor 62 creates isolated device-owned Agent profiles.
-const Minor = 62
+const Minor = 63
 
 const CatalogMinor = 53
 const SubmissionReceiptMinor = 55
@@ -75,6 +75,18 @@ const ActiveGitConfirmationMinor = 59
 const SignInManualCodeMinor = 60
 const LivePermissionMinor = 61
 const AgentProfileMinor = 62
+const CustomAgentProfileMinor = 63
+
+type ProfileIconInput struct {
+	ID       string `json:"id"`
+	Previous string `json:"previous"`
+	Icon     string `json:"icon"`
+}
+
+type ProfileModelInput struct {
+	HarnessID string                  `json:"harnessId"`
+	API       domain.APIConfiguration `json:"api"`
+}
 
 // Structured questions identify support on desktop 54 and 55. The mobile
 // branch first acquired them at 57.

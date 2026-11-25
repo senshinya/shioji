@@ -55,10 +55,9 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 
 	n.Scroll(c.Key("profile-scroll")).FillWidth().Grow(1).Children(func() {
 		n.Column(c).FillWidth().Padding(configurationSubpageHeaderGap, configurationInset, configurationSectionGap).Children(func() {
-			n.Column(c.Key("profile-form")).FillWidth().MaxWidth(configurationProfileWidth).Label("Profile 配置").Children(func() {
-				deviceDivider(c)
+			n.Column(c.Key("profile-form")).FillWidth().Label("Profile 配置").Children(func() {
 				agents := deviceProfileProviders(e)
-				index := slices.IndexFunc(agents, func(info domain.HarnessInfo) bool { return info.ID == p.draft.HarnessID })
+				index := slices.IndexFunc(agents, func(info domain.HarnessInfo) bool { return info.ID == profileChoice(p.draft.HarnessID) })
 				agent := domain.HarnessInfo{Name: p.draft.HarnessID}
 				if index >= 0 {
 					agent = agents[index]
@@ -67,6 +66,7 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 				}
 				locked := p.info.ID != "" || !p.working && p.request.ID != ""
 				keyOnly := agent.Installation != nil && agent.Installation.APIKeyOnly
+				custom := domain.IsCustomAgent(p.draft.HarnessID)
 				submit := false
 				deviceProfileRow(c, "Agent", func() {
 					if locked {
@@ -80,9 +80,19 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 						})
 						return
 					}
-					profileAgentChoices(c.Key("agents"), t, agents, &p.agentChoice, disabled || busy)
+					name := agent.Name
+					if index < 0 {
+						name = "选择 Agent"
+					}
+					trigger := configurationChoiceField(c.Key("agents"), "选择 Agent", name, disabled || busy)
+					choices := make([]menuChoice, 0, len(agents))
+					for _, candidate := range agents {
+						id := candidate.ID
+						choices = append(choices, menuChoice{id: id, name: candidate.Name, icon: harnessIcon(domain.HarnessDescriptor{Icon: candidate.Icon}), checked: id == p.agentChoice, choose: func() { p.agentChoice = id }})
+					}
+					v.choiceMenu(c, t, "profile-agent:"+key, trigger, choices)
 				})
-				if !locked && p.agentChoice != p.draft.HarnessID {
+				if !locked && p.agentChoice != profileChoice(p.draft.HarnessID) {
 					if picked := slices.IndexFunc(agents, func(info domain.HarnessInfo) bool { return info.ID == p.agentChoice }); picked >= 0 {
 						p.selectAgent(agents[picked])
 						c.Services().Invalidate()
@@ -103,39 +113,74 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 							Placeholder("例如 " + agent.Name + " 工作").Disabled(disabled || busy)
 						submit = field.Submitted() && !field.Composing()
 					})
-					deviceProfileRow(c, "接入方式", func() {
-						if locked || len(agent.ProfileModes) <= 1 {
-							deviceProfileValue(c, profileModeLabel(p.draft.Mode))
-							return
-						}
-						var options []configurationTabItem
-						for _, mode := range agent.ProfileModes {
-							options = append(options, configurationTabItem{ID: string(mode), Label: profileModeLabel(mode)})
-						}
-						next := domain.AgentProfileMode(configurationTabs(c.Key("mode"), string(p.draft.Mode), options, configurationSegmented, disabled || busy))
-						if next != p.draft.Mode {
-							p.auth = runtimeOptionDraft{}
-							p.draft.Mode, p.error = next, ""
-						}
-					})
+					if custom {
+						deviceProfileRow(c, "图标", func() {
+							v.profileIconPicker(c, t, key, p.draft.Icon, disabled || busy || locked, func(icon string) {
+								if v.deviceProfile == p && p.info.ID == "" && p.request.ID == "" {
+									p.draft.Icon = icon
+								}
+							}, func(err error) {
+								if v.deviceProfile == p {
+									p.error = err.Error()
+								}
+							})
+						})
+						deviceProfileRow(c, "API 类型", func() {
+							if locked {
+								deviceProfileValue(c, customAPILabel(p.draft.HarnessID))
+								return
+							}
+							next := configurationTabs(c.Key("api-type"), p.draft.HarnessID, []configurationTabItem{
+								{ID: domain.AgentResponses, Label: "Responses API"}, {ID: domain.AgentAnthropic, Label: "Anthropic API"},
+							}, configurationSegmented, disabled || busy)
+							if next != p.draft.HarnessID {
+								if p.apiDrafts == nil {
+									p.apiDrafts = map[string]runtimeOptionDraft{}
+								}
+								p.apiDrafts[p.draft.HarnessID] = p.auth
+								p.draft.HarnessID, p.auth = next, p.apiDrafts[next]
+								p.modelRequest++
+								p.loadingModels, p.modelError, p.error = false, "", ""
+							}
+						})
+					} else {
+						n.Box(c.Key("access-gap")).Height(configurationSubpageHeaderGap).Shrink(0)
+						deviceProfileRow(c, "接入方式", func() {
+							if locked || len(agent.ProfileModes) <= 1 {
+								deviceProfileValue(c, profileModeLabel(p.draft.Mode))
+								return
+							}
+							var options []configurationTabItem
+							for _, mode := range agent.ProfileModes {
+								options = append(options, configurationTabItem{ID: string(mode), Label: profileModeLabel(mode)})
+							}
+							next := domain.AgentProfileMode(configurationTabs(c.Key("mode"), string(p.draft.Mode), options, configurationSegmented, disabled || busy))
+							if next != p.draft.Mode {
+								p.auth = runtimeOptionDraft{}
+								p.draft.Mode, p.error = next, ""
+							}
+						})
+					}
 				}
 				api = p.draft.Mode == domain.AgentProfileAPI
 				if !models {
-					access := n.Column(c.Key("profile-access:" + p.draft.HarnessID)).FillWidth()
-					if !keyOnly {
-						access.Margin(configurationHeadingGap, 0, 0)
-					}
-					access.Children(func() {
+					n.Column(c.Key("profile-access:" + p.draft.HarnessID)).FillWidth().Children(func() {
 						modeIndex := 0
 						if api {
 							modeIndex = 1
 						}
-						configurationTabPanel(c.Key("method"), string(p.draft.Mode), modeIndex, configurationPanelFit, func() {
-							if !keyOnly {
-								deviceDivider(c)
+						modeID := string(p.draft.Mode)
+						if custom {
+							modeID = p.draft.HarnessID
+							if modeID == domain.AgentResponses {
+								modeIndex = 0
 							}
+						}
+						configurationTabPanel(c.Key("method"), modeID, modeIndex, configurationPanelFit, func() {
 							if api {
-								if keyOnly {
+								if custom {
+									submit = v.customProfileFields(c, t, state, e, p, disabled || busy) || submit
+								} else if keyOnly {
 									submit = agentAPIKeyField(c, deviceProfileRow, &p.auth, disabled || busy, true)
 								} else {
 									submit = agentAPIFields(c, deviceProfileRow, &p.auth, disabled || busy) || submit
@@ -157,15 +202,24 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 					v.profileSignInStatus(c, t, p, op, disabled, state.Connected)
 				}
 				label := deviceProfileAction(p, op)
+				if domain.IsCustomAgent(p.draft.HarnessID) && !busy && !models && p.needsRuntime(e) {
+					label = "安装并连接"
+				}
 				if keyOnly && label == "创建并连接" {
 					label = "连接"
 				}
 				n.Row(c.Key("actions")).FillWidth().Padding(16, 0, 0).Gap(8).Justify(n.End).AlignItems(n.Center).Children(func() {
 					cancel := "取消"
 					cancelDisabled := leaveDisabled
-					cancelingAuth := waiting && state.Connected
+					cancelingAuth := (waiting || active && domain.IsCustomAgent(p.draft.HarnessID)) && state.Connected
 					if cancelingAuth {
 						cancel, cancelDisabled = "取消授权", disabled || op.pending
+						if api {
+							cancel = "取消连接"
+							if p.installRequested {
+								cancel = "取消安装"
+							}
+						}
 					} else if p.info.ID != "" {
 						cancel = "稍后设置"
 					}
@@ -182,6 +236,9 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 					cannotSubmit := disabled || p.working || active && (!waiting || op.status.Challenge.URL == "") ||
 						p.info.ID == "" && (index < 0 || !keyOnly && strings.TrimSpace(p.draft.Name) == "") ||
 						api && !models && (keyOnly && strings.TrimSpace(p.auth.apiCredential) == "" || !keyOnly && strings.TrimSpace(p.auth.apiEndpoint) == "")
+					if domain.IsCustomAgent(p.draft.HarnessID) && !models {
+						cannotSubmit = cannotSubmit || strings.TrimSpace(p.auth.apiModel) == "" || strings.TrimSpace(p.auth.apiCredential) == ""
+					}
 					fill, ink := t.Text, t.Background
 					if cannotSubmit {
 						fill, ink = t.SurfacePressed, t.TextMuted
@@ -205,27 +262,11 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 	})
 }
 
-func profileAgentChoices(c *n.Context, t *n.Theme, agents []domain.HarnessInfo, selected *string, disabled bool) {
-	n.RadioGroup(c, func() {
-		for _, agent := range agents {
-			on := *selected == agent.ID
-			color := t.TextMuted
-			if on {
-				color = t.Text
-			}
-			button := controlFeedback(c, n.RadioBase(c.Key(agent.ID), selected, agent.ID), 4).
-				Grow(1).MinWidth(0).Shrink(1).Height(24).Radius(4).Justify(n.Center).AlignItems(n.Center).
-				Label(agent.Name).Disabled(disabled)
-			if on {
-				button.Background(t.Background).Border(1, t.Border)
-			}
-			button.Children(func() {
-				inlineIconText(c, harnessIcon(domain.HarnessDescriptor{Icon: agent.Icon}), agent.Name,
-					n.Font{Family: t.Font, Size: configurationValueSize, Weight: 400}, 14, 4, color).
-					MinWidth(0).Shrink(1).TooltipWhenTruncated(agent.Name)
-			})
-		}
-	}).Row().FillWidth().Padding(2).Gap(2).Radius(5).Background(t.Text.Alpha(.045)).Label("选择 Agent")
+func customAPILabel(id string) string {
+	if id == domain.AgentAnthropic {
+		return "Anthropic API"
+	}
+	return "Responses API"
 }
 
 func (v *View) profileAuthorizationMethod(c *n.Context, t *n.Theme, key string, p *deviceProfileEditor, agent domain.HarnessInfo, disabled bool) {
@@ -318,6 +359,17 @@ func (v *View) profileSignInStatus(c *n.Context, t *n.Theme, p *deviceProfileEdi
 			}
 		case domain.SignInStarting:
 			color = t.TextMuted
+			if message == "" && domain.IsCustomAgent(p.draft.HarnessID) {
+				message = "正在准备运行环境"
+				if setup := op.status.Setup; setup != nil {
+					switch setup.Phase {
+					case "downloading":
+						message = "正在下载 " + customRuntimeName(p.draft.HarnessID)
+					case "verifying":
+						message = "正在验证 API 连接"
+					}
+				}
+			}
 		}
 	}
 	if p.auth.apiCredential != "" {
@@ -333,6 +385,10 @@ func (v *View) profileSignInStatus(c *n.Context, t *n.Theme, p *deviceProfileEdi
 				n.Text(c, hint).FillWidth().FontSize(configurationValueSize).FixedLineHeight(configurationTextLine).TextColor(t.TextMuted)
 			}
 		})
+	}
+	if op != nil && op.status.Phase.Active() && op.status.Setup != nil && op.status.Setup.Phase == "downloading" && op.status.Setup.Total > 0 {
+		setup := op.status.Setup
+		n.Progress(c, float64(setup.Downloaded)/float64(setup.Total)).FillWidth().Height(4).Margin(8, 0)
 	}
 	if op != nil && op.status.Phase == domain.SignInWaiting {
 		if p.info.Profile != nil && p.info.Profile.Authorized {

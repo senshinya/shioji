@@ -16,7 +16,7 @@ import (
 func (s *Server) configureAdapters() error {
 	adapters := s.config.Harnesses
 	if len(adapters) == 0 {
-		adapters = SystemAdapters("")
+		adapters = SystemAdapters("", s.config.Directory)
 	}
 	s.adapters = map[string]harness.Adapter{}
 	s.profileProviders = map[string]harness.AgentProfileProvider{}
@@ -185,6 +185,9 @@ func (s *Server) runtimeProfiles(sessions []string, allAdapters bool) domain.Rea
 		info := domain.HarnessInfo{Configured: enabled, ID: id, Name: descriptor.Name, Icon: descriptor.Icon, State: domain.RuntimeUnavailable}
 		if profile, ok := s.agentProfile(id); ok {
 			info.Profile = &profile
+			if profile.Icon != "" {
+				info.Icon = profile.Icon
+			}
 		} else if provider, ok := s.adapter(id).(harness.AgentProfileProvider); ok {
 			info.ProfileModes = provider.ProfileModes()
 		}
@@ -264,6 +267,9 @@ func (s *Server) runtimeProfiles(sessions []string, allAdapters bool) domain.Rea
 			info := domain.HarnessInfo{ID: profile.HarnessID, Name: d.Name, Icon: d.Icon, State: profile.State, Error: profile.Error, Models: profile.Models, Permissions: profile.Permissions, PermissionChoices: profile.PermissionChoices, Plan: profile.Plan, Capabilities: profile.Capabilities}
 			if configured, ok := s.agentProfile(profile.HarnessID); ok {
 				info.Profile = &configured
+				if configured.Icon != "" {
+					info.Icon = configured.Icon
+				}
 			}
 			selected.Sessions[id] = info
 		}

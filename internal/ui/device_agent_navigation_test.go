@@ -215,6 +215,7 @@ func TestProfileCreationRetriesUncertainReceiptAndIgnoresLateNavigation(t *testi
 		ui.Advance(time.Second)
 	}
 	click("新增 Profile")
+	click("选择 Agent")
 	click("Codex")
 	click("Profile 名称")
 	ui.Type("测试账号")
@@ -388,6 +389,10 @@ func TestCreateDeviceProfileUsesSelectedAgentAndLoginMode(t *testing.T) {
 	if _, ok := ui.Find("配置 Codex 路径"); ok {
 		t.Fatal("the creation form left the Agent list visible", ui.Texts())
 	}
+	if err := ui.Click("选择 Agent"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
 	if err := ui.Click("Antigravity"); err != nil {
 		t.Fatal(err)
 	}
@@ -395,6 +400,10 @@ func TestCreateDeviceProfileUsesSelectedAgentAndLoginMode(t *testing.T) {
 	if ui.HasText("自定义 API") {
 		t.Fatal("Antigravity offered an unsupported Profile sign-in method")
 	}
+	if err := ui.Click("选择 Agent"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
 	if err := ui.Click("Codex"); err != nil {
 		t.Fatal(err)
 	}
@@ -494,13 +503,16 @@ func TestDeviceProfilesHideUnconfiguredTypesAndDeepSeekOnlyAsksForKey(t *testing
 		ui.Advance(time.Second)
 	}
 	click("新增 Profile")
+	click("选择 Agent")
 	click("deepseek")
 	if ui.HasText("服务地址") {
 		t.Fatal("DeepSeek should use its fixed service URL")
 	}
 	click("输入 API Key")
 	ui.Type("fixture-key")
+	click("选择 Agent")
 	click("Codex")
+	click("选择 Agent")
 	click("deepseek")
 	if v.deviceProfile.auth.apiCredential != "" || v.deviceProfile.auth.apiReveal {
 		t.Fatal("switching agents retained a previous credential")
@@ -522,5 +534,67 @@ func TestDeviceProfilesHideUnconfiguredTypesAndDeepSeekOnlyAsksForKey(t *testing
 	input := signIn.Input.(protocol.SignInInput)
 	if signIn.ConnectionID != "local" || input.HarnessID != draft.ID || input.Method != domain.SignInAPI || input.API == nil || input.API.Endpoint != "" || input.API.Credential != "fresh-fixture-key" {
 		t.Fatal("DeepSeek setup did not send a key-only request for its own Profile")
+	}
+}
+
+func TestCustomProfileUsesDropdownExplicitIconAndOwningDeviceModelList(t *testing.T) {
+	m := deviceUIModel()
+	state := m.DeviceStates["local"]
+	state.ConnectionEpoch = ""
+	state.WorkerMinor = protocol.CustomAgentProfileMinor
+	state.Readiness.Harnesses = []domain.HarnessInfo{
+		{ID: domain.AgentResponses, Name: "Responses API", ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAPI}, Installation: &domain.RuntimeInstallation{APISetup: true, Issue: domain.RuntimeMissing}},
+		{ID: domain.AgentAnthropic, Name: "Anthropic API", ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAPI}, Installation: &domain.RuntimeInstallation{APISetup: true, Issue: domain.RuntimeMissing}},
+	}
+	v := New(m, app.NewController(""), "")
+	v.devices, v.deviceSelected, v.deviceTab = true, "local", "agents"
+	ui := n.NewTester(v.View, 1100, 700)
+	click := func(label string) {
+		t.Helper()
+		ui.Advance(time.Second)
+		if err := ui.Click(label); err != nil {
+			t.Fatal(err, ui.Texts())
+		}
+		ui.Advance(time.Second)
+	}
+	click("新增 Profile")
+	click("选择 Agent")
+	click("自定义")
+	if !ui.HasText("图标") {
+		t.Fatal("explicit icon row is missing", ui.Texts())
+	}
+	click("选择图标")
+	click("Claude")
+	click("Anthropic API")
+	click("Profile 名称")
+	ui.Type("自定义测试")
+	click("输入 API 地址")
+	ui.Type("https://api.example.test")
+	click("输入 API Key")
+	ui.Type("fixture-key")
+	click("获取模型")
+	models := welcomeJob(t, v.Controller, "runtime.profile.models")
+	in := models.Input.(protocol.ProfileModelInput)
+	if models.ConnectionID != "local" || in.HarnessID != domain.AgentAnthropic || in.API.Endpoint != "https://api.example.test" {
+		t.Fatal("model list did not target the selected device and protocol")
+	}
+	body, _ := json.Marshal([]domain.Model{{ID: "test-model", Name: "测试模型"}})
+	models.Apply(m, body, nil)
+	ui.Frame()
+	click("test-model")
+	click("安装并连接")
+	create := welcomeJob(t, v.Controller, "runtime.profile.create")
+	draft := create.Input.(domain.AgentProfile)
+	if draft.HarnessID != domain.AgentAnthropic || draft.Icon != "claude" || draft.Mode != domain.AgentProfileAPI {
+		t.Fatal("the saved Profile did not retain its API type and selected icon", draft)
+	}
+	info := domain.HarnessInfo{ID: draft.ID, Name: draft.Name, Profile: &draft, Installation: &domain.RuntimeInstallation{APISetup: true, Issue: domain.RuntimeMissing}}
+	catalog := append(state.Readiness.Harnesses, info)
+	body, _ = json.Marshal(protocol.AgentSetupResult{Ready: true, Catalog: catalog, Readiness: domain.Readiness{Harnesses: catalog}})
+	create.Apply(m, body, nil)
+	start := welcomeJob(t, v.Controller, "runtime.signin.start")
+	api := start.Input.(protocol.SignInInput).API
+	if api == nil || !api.InstallRuntime || api.Model != "test-model" {
+		t.Fatal("the selected model or installation intent was not sent")
 	}
 }

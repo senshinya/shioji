@@ -1,12 +1,22 @@
 # Harness 中立模型与适配边界
 
-Shioji 注册 Codex、Antigravity 和 deepseek 三种 Agent。独立内存驱动用于多 harness 契约测试。本文的接口说明以实际 Worker、adapter 和目录能力为准。Codex 的协议依据为 [冻结 schema](../design/protocol/codex-0.166.0/inventory.json) 和[官方 App Server 文档](https://developers.openai.com/codex/app-server/)。
+Shioji 提供 Codex、Antigravity、deepseek 和自定义 API Profile。独立内存驱动用于多 harness 契约测试。本文的接口说明以实际 Worker、adapter 和目录能力为准。Codex 的协议依据为 [冻结 schema](../design/protocol/codex-0.166.0/inventory.json) 和[官方 App Server 文档](https://developers.openai.com/codex/app-server/)。
 
 Codex adapter 启动时检查当前安装导出的协议形状和实际能力，不再按单一 CLI 版本白名单拒绝正常升级；0.166.0 保留为冻结录制基线，0.167.0 已通过真实 App Server 集成测试。缺少可选能力时显式关闭，必需上下文／安全契约不兼容时拒绝启动。详见 [本机版本与更新](local-worker-updates.md)。
 
 运行边界已由用户确定：采用自有完整 worker，取消 herdr-core 依赖。Codex adapter 位于 owning device 的 worker 内；客户端通过版本化 worker 协议接收中间结构，不自行持有远端 app-server 连接。
 
 首期执行设备限定为 macOS。最新可行性实验见 [macOS worker 技术验证](macos-worker-research-2026-11-03.md)；研究夹具与当前生产实现分别验证。
+
+## 自定义 API Profile
+
+在设备 Profile 页通过 Agent 下拉菜单选择「自定义」。Responses API 使用 Codex App Server，Anthropic API 使用 Claude Code。API 类型固定所属执行引擎，Profile ID 独立路由会话。macOS、iOS 和 iPadOS 的模型查询、配置验证及运行环境安装均由所属 worker 执行。图标可以选择内置单色标记，或将客户机选取的 PNG、JPEG、WebP 缩小为独立的 PNG 图标。图标属于 Profile。
+
+「获取模型」查询所选协议的模型目录，无需启动或安装 CLI。兼容网关未提供模型目录时可以手填模型 ID。接入验证使用指定模型的小请求。凭据存放在所属设备的私有 Profile 配置目录。
+
+已有兼容可执行文件时复用。「安装并连接」按需安装校验过的固定版本。缓存目录位于 worker 状态目录的 `agent-runtimes/<agent>/<version>/`。多个 Profile 可共享二进制。版本目录在下载校验和解包后发布。
+
+Claude Code 运行在受管会话进程中，使用 Shioji 提供的回环凭据代理。受限模式限制工作目录，Shell 工具使用原生沙箱并保留人工审批。每轮输入由明确的原生回执或同轮输出确认。已保存会话可续接。无可靠运行证据的输入保留待核对状态。目录公开普通文本、工具审批、停止和续接能力。图片、UTF-8 文本及代码评论附件作为独立内容块提交。
 
 ## deepseek
 

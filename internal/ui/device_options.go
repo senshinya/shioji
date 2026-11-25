@@ -13,7 +13,7 @@ import (
 var modelEye = svg("M2 10c4-7 12-7 16 0-4 7-12 7-16 0zM12 10a2 2 0 1 1-4 0 2 2 0 0 1 4 0")
 
 type runtimeOptionDraft struct {
-	apiEndpoint, apiCredential                     string
+	apiEndpoint, apiCredential, apiModel           string
 	arguments, directory, instructions, titleModel string
 	environment                                    []runtimeEnvironmentDraft
 	nextID                                         int
@@ -97,6 +97,19 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 				topRow.PaddingX(configurationHoverInset)
 			}
 			topRow.Children(func() {
+				if info.Profile != nil && domain.IsCustomAgent(info.Profile.HarnessID) {
+					row(c, "图标", func() {
+						v.profileIconPicker(c, t, info.ID, info.Icon, disabled, func(icon string) {
+							if e.pageID == info.ID && v.deviceSelected == key {
+								v.saveDeviceProfileIcon(key, e, info, icon)
+							}
+						}, func(err error) {
+							if e.pageID == info.ID {
+								e.error = err.Error()
+							}
+						})
+					})
+				}
 				if initial && info.Profile != nil {
 					row(c, "接入方式", func() { n.Text(c, "自定义 API").FontSize(configurationValueSize).PaddingX(configurationFieldInset) })
 				} else if initial {

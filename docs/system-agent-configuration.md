@@ -16,7 +16,7 @@ Account model availability is the native runtime's advertised model/list result.
 
 ## Device Agent profiles
 
-The device's Agent list includes its original native configurations and independently named profiles. A profile chooses one installed Agent and one supported sign-in mode at creation. Codex supports ChatGPT browser or device-code authorization and custom Responses API setup. Antigravity profiles use the Google account authorization flow. The owning worker advertises profile creation with protocol minor 62. macOS, iOS, and iPadOS manage the same device-owned list.
+The device's Agent list includes its original native configurations and independently named profiles. Codex profiles support ChatGPT browser or device-code authorization and Responses API setup. Antigravity profiles use Google account authorization. The worker advertises profiles with protocol minor 62. Minor 63 adds the Custom choice for Responses and Anthropic APIs, including optional model discovery, profile icons and managed installation on the execution device. macOS, iOS and iPadOS manage the same device-owned list.
 
 On macOS, the Agent toolbar opens a dedicated Profile form. A single action submits creation and continues to the selected authorization or API connection after the device confirms the Profile. An unconfirmed creation keeps the same request identity on retry. Once created, the name, Agent and sign-in mode are fixed. The user can retry setup on the same Profile or resume it from the Agent list. Confirmed authorization with unavailable models offers an independent model refresh. Once the worker reports readiness, the device page reveals the Profile in the list.
 

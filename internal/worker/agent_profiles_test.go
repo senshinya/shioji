@@ -260,3 +260,18 @@ func TestProfileAuthorizationBindingSurvivesWorkerRestart(t *testing.T) {
 		t.Fatal("changing a bound account began a new authorization")
 	}
 }
+
+func TestCustomProfileAdaptersAreAvailableWithoutAnInstallation(t *testing.T) {
+	adapters := SystemAdapters("/no-such-codex")
+	for _, protocol := range []string{"responses", "anthropic"} {
+		found := false
+		for _, adapter := range adapters {
+			if adapter.Descriptor().ID == protocol {
+				found = adapter.Descriptor().ProfileOnly
+			}
+		}
+		if !found {
+			t.Errorf("custom protocol %s is not registered as a profile-only adapter", protocol)
+		}
+	}
+}

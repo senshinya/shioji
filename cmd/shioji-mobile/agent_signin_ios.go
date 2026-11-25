@@ -308,7 +308,7 @@ func agentMobileSignInMethods(agent domain.HarnessInfo, minor int) []domain.Sign
 	if minor >= 20 && slices.Contains(install.SignInMethods, domain.SignInBrowser) {
 		methods = append(methods, domain.SignInBrowser)
 	}
-	if minor >= 21 && install.APISetup && (agent.Account == nil && install.Issue == domain.RuntimeSignInRequired || agent.Account != nil && agent.Account.State == "required") {
+	if minor >= 21 && install.APISetup && (agent.Profile != nil && !agent.Profile.Authorized && domain.IsCustomAgent(agent.Profile.HarnessID) || agent.Account == nil && install.Issue == domain.RuntimeSignInRequired || agent.Account != nil && agent.Account.State == "required") {
 		methods = append(methods, domain.SignInAPI)
 	}
 	return methods

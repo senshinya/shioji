@@ -174,6 +174,9 @@ func validateAPIConfiguration(in domain.APIConfiguration) (domain.APIConfigurati
 }
 
 func (a Adapter) ConfigureAPI(ctx context.Context, in domain.APIConfiguration) (domain.Readiness, error) {
+	return a.ConfigureAPIWithProgress(ctx, in, nil)
+}
+func (a Adapter) ConfigureAPIWithProgress(ctx context.Context, in domain.APIConfiguration, progress func(domain.RuntimeSetupProgress)) (domain.Readiness, error) {
 	if a.profileMode == domain.AgentProfileAccount {
 		return domain.Readiness{}, harness.Unsupported("profile-account-replacement")
 	}
@@ -183,6 +186,25 @@ func (a Adapter) ConfigureAPI(ctx context.Context, in domain.APIConfiguration) (
 	in, err := a.apiConfiguration(in)
 	if err != nil {
 		return domain.Readiness{}, &harness.SetupError{Issue: domain.RuntimeUnavailableIssue, Message: err.Error()}
+	}
+	if a.responses {
+		if in.Model == "" || in.Credential == "" {
+			return domain.Readiness{}, apiSetupError("请输入模型 ID 和 API Key")
+		}
+		a.Executable, err = a.responsesExecutable(ctx, in.InstallRuntime, func(done, total int64) {
+			if progress != nil {
+				progress(domain.RuntimeSetupProgress{Phase: "downloading", Downloaded: done, Total: total})
+			}
+		})
+		if err != nil {
+			return domain.Readiness{}, apiSetupError(err.Error())
+		}
+		if progress != nil {
+			progress(domain.RuntimeSetupProgress{Phase: "verifying"})
+		}
+		if err := a.verifyResponsesSetup(ctx, in); err != nil {
+			return domain.Readiness{}, err
+		}
 	}
 	if a.profileMode == domain.AgentProfileAPI {
 		if err := a.ensureProfileConfig(); err != nil {
@@ -229,27 +251,29 @@ func (a Adapter) ConfigureAPI(ctx context.Context, in domain.APIConfiguration) (
 	if file == "" || version == "" {
 		return domain.Readiness{}, apiSetupError("未找到可写的系统配置，请重新检测")
 	}
-	models, err := discoverAPIModels(ctx, in)
-	if err != nil {
-		return domain.Readiness{}, &harness.SetupError{Issue: domain.RuntimeUnavailableIssue, Message: err.Error()}
-	}
-	if in.Model == "" {
-		in.Model = models[0].ID
-		if a.apiPreset != nil {
-			for _, model := range models {
-				if model.ID == a.apiPreset.defaultModel {
-					in.Model = model.ID
-					break
+	if !a.responses {
+		models, err := discoverAPIModels(ctx, in)
+		if err != nil {
+			return domain.Readiness{}, &harness.SetupError{Issue: domain.RuntimeUnavailableIssue, Message: err.Error()}
+		}
+		if in.Model == "" {
+			in.Model = models[0].ID
+			if a.apiPreset != nil {
+				for _, model := range models {
+					if model.ID == a.apiPreset.defaultModel {
+						in.Model = model.ID
+						break
+					}
 				}
 			}
 		}
-	}
-	selected := false
-	for _, model := range models {
-		selected = selected || model.ID == in.Model
-	}
-	if !selected {
-		return domain.Readiness{}, &harness.SetupError{Issue: domain.RuntimeUnavailableIssue, Message: "所选模型已不可用，请重新获取模型"}
+		selected := false
+		for _, model := range models {
+			selected = selected || model.ID == in.Model
+		}
+		if !selected {
+			return domain.Readiness{}, &harness.SetupError{Issue: domain.RuntimeUnavailableIssue, Message: "所选模型已不可用，请重新获取模型"}
+		}
 	}
 	// Discovery performs network I/O. Another native client may authorize an
 	// account meanwhile; the config version alone does not cover auth storage.
@@ -272,7 +296,9 @@ func (a Adapter) ConfigureAPI(ctx context.Context, in domain.APIConfiguration) (
 		Strategy string `json:"mergeStrategy"`
 	}
 	providerID, providerName := "custom", "Custom API"
-	if a.apiPreset != nil {
+	if a.responses {
+		providerID = responsesProvider
+	} else if a.apiPreset != nil {
 		providerID, providerName = a.apiPreset.id, a.apiPreset.id
 	}
 	provider := map[string]any{"name": providerName, "base_url": in.Endpoint, "wire_api": "responses", "requires_openai_auth": false, "supports_websockets": false}

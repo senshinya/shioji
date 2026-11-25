@@ -161,7 +161,17 @@ func (s *Server) runSignIn(ctx context.Context, in protocol.SignInInput, entry *
 		if !ok {
 			err = harness.Unsupported("api-configuration")
 		} else {
-			ready, err = provider.ConfigureAPI(ctx, *in.API)
+			if reporter, ok := adapter.(harness.APISetupProgressProvider); ok {
+				ready, err = reporter.ConfigureAPIWithProgress(ctx, *in.API, func(value domain.RuntimeSetupProgress) {
+					s.signInMu.Lock()
+					defer s.signInMu.Unlock()
+					if entry.status.Phase.Active() && ctx.Err() == nil {
+						entry.status.Setup = &value
+					}
+				})
+			} else {
+				ready, err = provider.ConfigureAPI(ctx, *in.API)
+			}
 		}
 		in.API = nil // The credential has no role in polling, refresh or saved state.
 	} else if err == nil {
@@ -241,6 +251,9 @@ func (s *Server) runSignIn(ctx context.Context, in protocol.SignInInput, entry *
 	info := domain.HarnessInfo{ID: in.HarnessID, Name: descriptor.Name, Icon: descriptor.Icon, State: ready.State, Error: ready.Error, Account: ready.Account, Models: ready.Models, Permissions: ready.Permissions, PermissionChoices: ready.PermissionChoices, Plan: ready.Plan, Capabilities: ready.Capabilities}
 	if profile, ok := s.agentProfile(in.HarnessID); ok {
 		info.Profile = &profile
+		if profile.Icon != "" {
+			info.Icon = profile.Icon
+		}
 	}
 	if provider, ok := adapter.(harness.InstallationProvider); ok {
 		installation := provider.Installation()

@@ -70,6 +70,13 @@ func (h HarnessInfo) HasSystemProfile() bool {
 		h.Installation != nil && h.Installation.Issue == RuntimeAuthenticationExpired
 }
 
+const (
+	AgentResponses = "responses"
+	AgentAnthropic = "anthropic"
+)
+
+func IsCustomAgent(id string) bool { return id == AgentResponses || id == AgentAnthropic }
+
 type AgentProfileMode string
 
 const (
@@ -88,6 +95,7 @@ type AgentProfile struct {
 	Executable string           `json:"executable,omitempty"`
 	Disabled   bool             `json:"disabled,omitempty"`
 	Authorized bool             `json:"authorized,omitempty"`
+	Icon       string           `json:"icon,omitempty"`
 }
 type OptionChoice struct {
 	ID          string `json:"id"`

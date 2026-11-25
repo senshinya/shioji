@@ -62,6 +62,9 @@ func (s *Server) prepareAgentProfile(in domain.AgentProfile) (harness.Adapter, e
 	if !agentProfileID.MatchString(in.ID) || in.Name == "" || len(in.Name) > 256 || strings.ContainsFunc(in.Name, unicode.IsControl) {
 		return nil, errors.New("请输入有效的 Profile 名称")
 	}
+	if !domain.ValidProfileIcon(in.Icon) || in.Icon != "" && !domain.IsCustomAgent(in.HarnessID) {
+		return nil, errors.New("此 Profile 的图标无效")
+	}
 	if s.adapter(in.ID) != nil {
 		return nil, errors.New("Profile 标识已被使用")
 	}
@@ -177,6 +180,31 @@ func (s *Server) createAgentProfile(in domain.AgentProfile) (protocol.AgentSetup
 	s.runtimeMu.RUnlock()
 	if !discovered {
 		s.refreshInstallation(in.ID, adapter)
+	}
+	return s.agentSetupResult(), nil
+}
+
+func (s *Server) changeProfileIcon(in protocol.ProfileIconInput) (protocol.AgentSetupResult, error) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	if err := s.updateAdmission(); err != nil {
+		return protocol.AgentSetupResult{}, err
+	}
+	profile, ok := s.agentProfile(in.ID)
+	if !ok || !domain.IsCustomAgent(profile.HarnessID) || !domain.ValidProfileIcon(in.Icon) {
+		return protocol.AgentSetupResult{}, errors.New("此 Profile 的图标无效")
+	}
+	if profile.Icon != in.Previous && profile.Icon != in.Icon {
+		return protocol.AgentSetupResult{}, errors.New("图标已被其他客户端修改，请重新读取")
+	}
+	if profile.Icon != in.Icon {
+		profile.Icon = in.Icon
+		if err := s.writeAgentProfile(profile); err != nil {
+			return protocol.AgentSetupResult{}, err
+		}
+		s.runtimeMu.Lock()
+		s.agentProfiles[in.ID] = profile
+		s.runtimeMu.Unlock()
 	}
 	return s.agentSetupResult(), nil
 }

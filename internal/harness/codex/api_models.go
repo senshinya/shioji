@@ -16,11 +16,15 @@ import (
 	"time"
 
 	"shioji/internal/domain"
+	"shioji/internal/harness/modelapi"
 )
 
 // APIModels validates a draft connection without saving credentials or settings.
 func (a Adapter) APIModels(ctx context.Context, in domain.APIConfiguration) ([]domain.Model, error) {
 	in.Model = ""
+	if a.responses {
+		return modelapi.Models(ctx, domain.AgentResponses, in)
+	}
 	in, err := a.apiConfiguration(in)
 	if err != nil {
 		return nil, err
@@ -177,6 +181,26 @@ func (r *Runtime) availableAPIModels(ctx context.Context, known []domain.Model) 
 	}
 	u.RawQuery = query.Encode()
 	models, err := fetchAPIModels(ctx, u.String(), headers, known)
+	if config.Config.Provider == responsesProvider && config.Config.Model != "" {
+		if err != nil {
+			models = nil
+		}
+		found := false
+		for _, model := range models {
+			found = found || model.ID == config.Config.Model
+		}
+		if !found {
+			model := domain.Model{ID: config.Config.Model, Name: config.Config.Model}
+			for _, candidate := range known {
+				if candidate.ID == model.ID {
+					model = candidate
+					break
+				}
+			}
+			models = append(models, model)
+		}
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -20,7 +20,7 @@ func configurationFormRow(c *n.Context, label string, style configurationFormSty
 	if alignTop {
 		row.PaddingY(6).AlignItems(n.Start)
 	}
-	if style == configurationSettingsForm || style == configurationProfileForm {
+	if style == configurationSettingsForm {
 		row.BorderWidth(0, 0, .5, 0).BorderColor(c.Theme().Border)
 	}
 	row.Children(func() {

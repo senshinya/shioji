@@ -25,7 +25,6 @@ const (
 	configurationTextLine         = 20
 	configurationSectionSize      = 14
 	configurationListHeight       = 140
-	configurationProfileWidth     = 560
 	profileChevronSize            = 16
 	// disclosureRight uses a 24-point viewBox with its stroke ending at 16.75.
 	deviceTabActionTrailingInset  = configurationHoverInset + (toolbarActionSize-profileChevronSize)/2 + (24-16.75)*profileChevronSize/24

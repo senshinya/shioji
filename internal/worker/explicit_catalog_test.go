@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"shioji/internal/domain"
 	"shioji/internal/harness"
 )
 
@@ -38,12 +39,12 @@ func TestDeviceCatalogMarksOnlyUserRequestedModelDiscovery(t *testing.T) {
 	}
 }
 
-func TestWorkerCatalogRegistersDeepSeekAsAThirdAgentType(t *testing.T) {
+func TestWorkerCatalogRegistersBuiltInAgentTypes(t *testing.T) {
 	var ids []string
 	for _, a := range SystemAdapters("") {
 		ids = append(ids, a.Descriptor().ID)
 	}
-	if !slices.Equal(ids, []string{"codex", "antigravity", "deepseek"}) {
+	if !slices.Equal(ids, []string{"codex", "antigravity", "deepseek", domain.AgentResponses, domain.AgentAnthropic}) {
 		t.Fatalf("worker harness defaults = %v", ids)
 	}
 }
