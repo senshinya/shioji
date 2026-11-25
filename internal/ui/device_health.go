@@ -126,7 +126,7 @@ func (v *View) currentDeviceControl(c *n.Context, t *n.Theme) {
 			statusDotSize(c, name, font, color, 4, false).Label("设备连接指示")
 			inlineIconText(c, v.deviceGlyph(key), name, font, 14, 6, t.TextMuted).MinWidth(0).Shrink(1).Ellipsis("…")
 			if status != "" && v.connectionBlocker() == "" {
-				n.Text(c, status).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+				n.Text(c, status).SingleLine().Shrink(0).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 			}
 			inlineSymbol(c, chevron, name, font, 12, t.TextMuted)
 		})

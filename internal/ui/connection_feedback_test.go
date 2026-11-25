@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -64,6 +65,38 @@ func TestConnectionFeedbackUsesCurrentPhase(t *testing.T) {
 			t.Fatal("Agent detection asked for configuration")
 		}
 	})
+}
+
+func TestToolbarAgentCheckStaysOnOneLineBesideLongDeviceName(t *testing.T) {
+	for _, width := range []int{950, 1440} {
+		for _, dark := range []bool{false, true} {
+			name := fmt.Sprintf("%d-dark-%t", width, dark)
+			t.Run(name, func(t *testing.T) {
+				m := layoutModel()
+				m.LocalDeviceName = "MacBook Air at Home"
+				m.Readiness = domain.Readiness{State: domain.RuntimeRefreshing}
+				ui := n.NewTester(New(m, nil, "").View, width, 680)
+				ui.SetDark(dark)
+				ui.Advance(time.Second)
+				if dir := os.Getenv("SHIOJI_CONNECTION_CAPTURE"); dir != "" {
+					t.Setenv("SHIOJI_SKILL_SNAPSHOTS", dir)
+					saveNativeSkillImage(t, ui, "toolbar-agent-"+name+".png")
+				}
+				status, ok := ui.Find("正在检查 Agent")
+				device, _ := ui.Find("当前设备")
+				if !ok || status.H > 20 || status.Y+status.H > device.Y+device.H {
+					t.Fatalf("Agent check wraps or overflows the device control: status=%+v device=%+v", status, device)
+				}
+				if err := ui.Click("当前设备"); err != nil {
+					t.Fatal(err)
+				}
+				ui.Advance(time.Second)
+				if _, ok := ui.Find("当前设备状态"); !ok {
+					t.Fatal("device status popover did not open")
+				}
+			})
+		}
+	}
 }
 
 func TestStopFeedbackDoesNotClaimTheRequestFailed(t *testing.T) {
