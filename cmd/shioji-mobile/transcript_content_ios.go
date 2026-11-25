@@ -211,6 +211,13 @@ type mobileReasoningLiveState struct {
 	started *time.Time
 }
 
+type mobileReasoningState struct {
+	stream          conversationui.ReasoningTextStream
+	partStreams     map[int]*conversationui.ReasoningTextStream
+	wasLive         bool
+	collapsedByUser bool
+}
+
 const mobileReasoningMorph = 260 * time.Millisecond
 
 func mobileReasoningStatus(item domain.Item) string {
@@ -224,7 +231,19 @@ func mobileReasoningStatus(item domain.Item) string {
 	}[item.Status]
 }
 
-func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, open *bool, mark *markdown.RangeDecoration, live bool, phaseLabel string, started *time.Time, list *ui.ListState) {
+func mobileReasoningStreamText(c *ui.Context, stream *conversationui.ReasoningTextStream, text string, live, fresh bool, color ui.Color, font ui.Font, lineHeight float32, mark *markdown.RangeDecoration) ui.Element {
+	frame := stream.Advance(c.Now(), text, live, fresh, c.Preferences().ReduceMotion)
+	if frame.Animating {
+		c.AnimationFrame()
+	}
+	value := ui.RichText(c, conversationui.ReasoningSpans(frame, color)...).Wrap().
+		Font(font.Family).FontSize(font.Size).FixedLineHeight(lineHeight).
+		TextColor(color).Selectable().Label(frame.Visible)
+	decorateTranscriptText(c, value, frame.Visible, mark, nil)
+	return value
+}
+
+func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, open *bool, mark *markdown.RangeDecoration, live bool, phaseLabel string, started *time.Time, list *ui.ListState, freshArg ...bool) {
 	item = conversationui.ReasoningForDisplay(item)
 	p := palette(c)
 	summaryName := item.Name
@@ -234,13 +253,31 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 	font := mobileStatusFont(c, captionTextSize)
 	lineHeight := mobileStatusLineHeight(font)
 	hasBody := item.Text != "" || len(item.Parts) != 0 || len(item.Files) != 0 || item.Truncated
+	streaming := live && hasBody
+	liveStatus := live && !hasBody
+	fresh := false
+	if len(freshArg) > 0 {
+		fresh = freshArg[0]
+	}
 	if open == nil {
 		open = ui.Local(c.Root(), "tool:"+session.ID+":"+item.ID, func() bool { return false })
+	}
+	rs := ui.Local(c.Root(), "reasoning-state:"+session.ID+":"+item.ID, func() mobileReasoningState { return mobileReasoningState{} })
+	if streaming {
+		rs.wasLive = true
+	} else if rs.wasLive {
+		rs.wasLive = false
+		rs.collapsedByUser = false
+		*open = false
+	}
+	visible := hasBody && *open
+	if streaming {
+		visible = !rs.collapsedByUser
 	}
 	header := c.Key("reasoning-heading")
 	heading := ui.ButtonBase(header).MinHeight(mobileTapSize(c)).AlignSelf(ui.Start).AlignItems(ui.Center)
 	liveState := ui.Local(heading, "reasoning-live-state", func() mobileReasoningLiveState { return mobileReasoningLiveState{} })
-	if live {
+	if liveStatus {
 		if liveState.phase.IsZero() {
 			liveState.phase = c.Now()
 		}
@@ -254,24 +291,27 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 		liveState.started = started
 	}
 	target := float32(0)
-	if live {
+	if liveStatus {
 		target = 1
 	}
 	morphAnim := ui.Animation{Duration: mobileReasoningMorph, Ease: ui.EaseInOut}
 	liveProgress := target
-	if c.Preferences().ReduceMotion {
+	if c.Preferences().ReduceMotion || streaming {
 		heading.Jump("reasoning-live", target)
 	} else {
 		liveProgress = heading.AnimateTo("reasoning-live", target, morphAnim)
 	}
 	displayName := summaryName
-	if live {
+	if liveStatus {
 		displayName = liveState.caption
 	}
-	status := mobileReasoningStatus(item)
-	if hasBody && !live {
+	status := ""
+	if !streaming {
+		status = mobileReasoningStatus(item)
+	}
+	if hasBody && !liveStatus {
 		disclosure := "已折叠"
-		if *open {
+		if visible {
 			disclosure = "已展开"
 		}
 		value := disclosure
@@ -279,7 +319,11 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 			value = status + " · " + disclosure
 		}
 		heading.Role(ui.RoleButton).Label(summaryName).Value(value).OnClick(func() {
-			*open = !*open
+			if streaming {
+				rs.collapsedByUser = !rs.collapsedByUser
+			} else {
+				*open = !*open
+			}
 		})
 	} else {
 		heading.Label(displayName)
@@ -309,7 +353,7 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 				}
 			})
 			sweep.caption(lineKey.Key("title"), displayName, ui.ContentTransition{Animation: &morphAnim})
-			if live {
+			if liveStatus {
 				if liveState.started != nil && !liveState.started.IsZero() {
 					clockKey := lineKey.Key("elapsed")
 					slot := ui.Row(clockKey).MarginStart(6).AlignItems(ui.Baseline)
@@ -341,7 +385,7 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 										ContentTransition(ui.ContentTransition{Animation: &mobileTitleMotion})
 								}
 								if hasBody {
-									angle := -90 * (1 - mobileToolReveal(c, heading, *open, mark != nil))
+									angle := -90 * (1 - mobileToolReveal(c, heading, visible, mark != nil))
 									transcriptSymbol(lineKey.Key("chevron"), downSymbol, summaryName, font, 12, p.secondary).Transform(ui.Rotation(angle))
 								}
 							})
@@ -356,14 +400,17 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 			}
 		})
 	})
-	visible := !live && hasBody && *open
+	bodyFont := mobileStatusFont(c, controlTextSize)
+	bodyLineHeight := mobileStatusLineHeight(bodyFont)
 	if delta := toolResultPanel(c.Key(toolResultBodyKey(item.ID)), visible, mark != nil, nil, func(c *ui.Context) {
-		ui.Column(c).FillWidth().Gap(7).Padding(4, 0, 8, 10).BorderStartWidth(1).BorderColor(p.line).Children(func() {
+		ui.Column(c).FillWidth().Gap(7).Margin(0, 0, 0, mobileToolGlyphSlot/2).Padding(4, 0, 8, mobileToolGlyphSlot/2+6).BorderStartWidth(1).BorderColor(p.line).Children(func() {
 			if item.Text != "" {
 				row := c.Key("tool-summary")
 				block := ui.Column(row)
 				animateToolResultBlock(c, block)
-				block.Children(func() { toolResultText(row, item.Text, mark) })
+				block.Children(func() {
+					mobileReasoningStreamText(row, &rs.stream, item.Text, live, fresh, p.ink, bodyFont, bodyLineHeight, mark)
+				})
 			}
 			type fileKey struct {
 				path       string
@@ -377,7 +424,31 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 				animateToolResultBlock(c, block)
 				block.Children(func() { a.transcriptFile(row, file) })
 			}
-			a.contentParts(c, parent, session, item.Parts)
+			var nonTextParts []domain.ContentPart
+			for i, part := range item.Parts {
+				if part.Attachment == nil && (part.Kind == "" || part.Kind == "text") && part.Text != "" {
+					if rs.partStreams == nil {
+						rs.partStreams = make(map[int]*conversationui.ReasoningTextStream)
+					}
+					partStream := rs.partStreams[i]
+					if partStream == nil {
+						partStream = &conversationui.ReasoningTextStream{}
+						rs.partStreams[i] = partStream
+					}
+					row := c.Key(fmt.Sprintf("reasoning-part:%d", i))
+					block := ui.Column(row).Gap(3)
+					animateToolResultBlock(c, block)
+					block.Children(func() {
+						if part.Label != "" {
+							label(row, part.Label, captionTextSize, p.secondary).Selectable()
+						}
+						mobileReasoningStreamText(row, partStream, part.Text, live, fresh, p.ink, bodyFont, bodyLineHeight, mark)
+					})
+				} else {
+					nonTextParts = append(nonTextParts, part)
+				}
+			}
+			a.contentParts(c, parent, session, nonTextParts)
 			if item.Truncated {
 				note := label(c.Key("tool-truncated"), "内容过长，已截断显示", captionTextSize, p.secondary)
 				animateToolResultBlock(c, note)

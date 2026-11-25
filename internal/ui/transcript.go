@@ -660,7 +660,8 @@ func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow, ins
 		}
 		icon = toolThinkingIcon
 		label, _, _ = strings.Cut(body, "\n")
-		resultText(c.Key("reasoning"), body, t.TextMuted, func(text n.Element) {
+		entry := v.reasoningStreamEntry(row.item.ID)
+		v.reasoningStreamText(c.Key("reasoning"), row.item.ID, body, !row.item.Final, entry.fresh, t.TextMuted, func(text n.Element) {
 			text.Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).Wrap().Selectable()
 			v.decoratePlainFind(c, text, row.item, nil)
 		})

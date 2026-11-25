@@ -501,20 +501,16 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 	}
 	if workLive {
 		caption := ui.Local(frame, "activity:"+workTurn.ID, func() mobileActivityCaption { return mobileActivityCaption{} })
-		previousReasoning := ui.Local(frame, "live-reasoning:"+workTurn.ID, func() string { return "" })
-		if *previousReasoning != "" && liveReasoning != *previousReasoning {
-			*caption = mobileActivityCaption{}
-		}
-		*previousReasoning = liveReasoning
 		workCaption = caption.update(c, workCaption)
 	}
 	if liveCompaction != "" {
 		workCaption = "正在压缩上下文"
 	}
-	if (toolsShowProgress || liveReasoning != "") && !stop.pending() && len(transcript) > 0 {
+	liveEmptyReasoning := liveReasoning != "" && hasHiddenLiveReasoning && liveReasoning == hiddenLiveReasoning.ID
+	if (toolsShowProgress || liveEmptyReasoning) && !stop.pending() && len(transcript) > 0 {
 		last := transcript[len(transcript)-1]
 		if last.Footer == workTurn.ID && last.Receipt.BeforeInput == "" {
-			// The tool group or live reasoning row already draws the live status.
+			// The tool group or empty live reasoning row already draws the live status.
 			// A second, empty receipt would still reserve the transcript row's padding.
 			transcript = transcript[:len(transcript)-1]
 		}
@@ -522,7 +518,7 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 	// The local receipt can arrive before the Worker has published the turn.
 	// Reserve its eventual footer row while the journal catches up.
 	progressRow := -1
-	if !newer && !toolsShowProgress && liveReasoning == "" && liveCompaction == "" && !stop.pending() {
+	if !newer && !toolsShowProgress && !liveEmptyReasoning && liveCompaction == "" && !stop.pending() {
 		if last := len(transcript) - 1; last >= 0 && transcript[last].Footer != "" &&
 			transcript[last].Footer == workTurn.ID && transcript[last].Receipt.BeforeInput == "" {
 			progressRow = last
@@ -874,7 +870,7 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 				}
 				if group, ok := groups[first]; ok {
 					animateCalls := canAnimate && (tail.continuous || !interactive && preview == nil) && tail.arrivals[group.Key].IsZero()
-					a.toolGroup(row, parent, session, items[first:end], group, timeline, state, index+offset, workCaption, workStart, toolsShowProgress, animateCalls, target, reveal, decorate)
+					a.toolGroup(row, parent, session, items[first:end], group, timeline, state, index+offset, workCaption, workStart, toolsShowProgress, animateCalls, target, reveal, func(id string) bool { return tail.reasoningFresh[id] }, decorate)
 					return
 				}
 				var mark *markdown.RangeDecoration
@@ -989,7 +985,7 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 						body = timeline.bodies[item.ID]
 					}
 					if domain.ReasoningSummary(item) {
-						a.reasoningItem(row, parent, session, item, body, mark, item.ID == liveReasoning, workCaption, workStart, state)
+						a.reasoningItem(row, parent, session, item, body, mark, item.ID == liveReasoning, workCaption, workStart, state, tail.reasoningFresh[item.ID])
 					} else {
 						a.toolItem(row, parent, session, item, body, mark, false, state)
 					}

@@ -302,15 +302,16 @@ func TestFirstThinkingDotAlignsWithCaptionInk(t *testing.T) {
 			ui.SetScale(2)
 			ui.Advance(1100 * time.Millisecond)
 			saveNativeSkillImage(t, ui, fmt.Sprintf("first-thinking-dark-%t.png", dark))
-			row := v.historyRowBounds["thinking"]
+			row, hasFooter := ui.Find("回复信息")
 			clock, ok := ui.Find("运行时长")
-			if !ok || row.H == 0 || !ui.HasText("正在思考") {
+			if !hasFooter || !ok || row.H == 0 || !ui.HasText("正在思考") {
 				t.Fatal("missing first thinking caption or elapsed time", ui.Texts())
 			}
 			im := ui.Image()
 			dotTop, dotBottom := im.Bounds().Max.Y, -1
 			textTop, textBottom := im.Bounds().Max.Y, -1
-			for y := int(row.Y * 2); y < int((row.Y+row.H)*2); y++ {
+			headingBottom := row.Y + min(row.H, float32(20))
+			for y := int(row.Y * 2); y < int(headingBottom*2); y++ {
 				for x := int(row.X * 2); x < int(clock.X*2); x++ {
 					pixel := im.RGBAAt(x, y)
 					if x < int((row.X+16)*2) && int(pixel.G) > max(int(pixel.R), int(pixel.B))+16 {

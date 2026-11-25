@@ -175,7 +175,8 @@ func TestEmptyReasoningDoesNotCreateAnUnexpandableRow(t *testing.T) {
 }
 
 func TestStandaloneReasoningShowsOnlyThinkingThenMorphsInPlace(t *testing.T) {
-	const summary = "先核对现有状态机和渲染顺序。"
+	const chunk1 = "先核对现有状态机和渲染顺序，确认流式更新与高度动画的衔接方式。"
+	const chunk2 = "再验证多段换行在收到下一段内容后恢复输出，并在结束时自动折叠。"
 	for _, reduced := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reduceMotion=%t", reduced), func(t *testing.T) {
 			m := layoutModel()
@@ -189,64 +190,98 @@ func TestStandaloneReasoningShowsOnlyThinkingThenMorphsInPlace(t *testing.T) {
 			m.Details["s"] = d
 			v := New(m, nil, "")
 			ui := n.NewTester(v.View, 1180, 740)
+			ui.SetScale(2)
 			ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
 			ui.Advance(time.Second)
 
 			if !ui.HasText("正在思考") || ui.HasText("思考摘要") || slices.Contains(ui.Texts(), "进行中") {
 				t.Fatalf("empty running reasoning should show only 正在思考: %v", ui.Texts())
 			}
-			beforeEmpty, ok := ui.Find("正在思考")
-			if !ok {
-				t.Fatal("missing 正在思考 before summary text arrives")
-			}
 
-			// Streaming reasoning text while still thinking must keep showing
-			// only 正在思考 at the exact same Y position without 思考摘要/进行中.
-			d.Items[1].Text = summary + "\n"
+			// Streaming reasoning expands as 思考摘要 -> indented streamed body -> 正在思考 at bottom.
+			d.Items[1].Text = chunk1 + "\n\n\n"
 			m.Details["s"] = d
 			ui.Frame()
+			if !reduced {
+				ui.Advance(32 * time.Millisecond)
+				if ui.HasText(chunk1) {
+					t.Fatalf("first chunk should stream progressively rather than popping in at once: texts=%v", ui.Texts())
+				}
+			}
 			ui.Advance(time.Second)
-			if !ui.HasText("正在思考") || ui.HasText("思考摘要") || slices.Contains(ui.Texts(), "进行中") || ui.HasText(summary) {
-				t.Fatalf("streaming reasoning showed duplicate or expanded summary: %v", ui.Texts())
+			heading, hasHeading := ui.Find("思考摘要")
+			body, hasBody := ui.Find(chunk1)
+			thinking, hasThinking := ui.Find("正在思考")
+			if !hasHeading || !hasBody || !hasThinking || slices.Contains(ui.Texts(), "进行中") {
+				t.Fatalf("expected expanded 思考摘要 + indented body + bottom 正在思考: texts=%v", ui.Texts())
 			}
-			whileStreaming, ok := ui.Find("正在思考")
-			if !ok {
-				t.Fatal("missing 正在思考 while streaming summary")
+			if body.X <= heading.X+16 {
+				t.Fatalf("streaming reasoning body should be indented under 思考摘要: heading=%+v body=%+v", heading, body)
 			}
-			if math.Abs(float64(whileStreaming.Y-beforeEmpty.Y)) > 1 {
-				t.Fatalf("taking over live reasoning row moved vertically: %.1f -> %.1f", beforeEmpty.Y, whileStreaming.Y)
+			if !(heading.Y < body.Y && body.Y+body.H <= thinking.Y+1) {
+				t.Fatalf("expected vertical order 思考摘要 < body < 正在思考: heading=%.1f body=[%.1f,%.1f] thinking=%.1f", heading.Y, body.Y, body.Y+body.H, thinking.Y)
+			}
+			for _, txt := range ui.Texts() {
+				if strings.HasPrefix(txt, chunk1) && (strings.HasSuffix(txt, "\n") || strings.HasSuffix(txt, "\r")) {
+					t.Fatalf("streaming reasoning exposed trailing newline: %q", txt)
+				}
 			}
 
-			// Completing reasoning with a summary morphs the same row in-place
-			// into the collapsed 思考摘要 disclosure, then yields live progress below.
+			// A second chunk reveals the held-back intermediate newlines plus
+			// the new content while continuing to withhold the new trailing newlines.
+			d.Items[1].Text = chunk1 + "\n\n\n" + chunk2 + "\n\n\n"
+			m.Details["s"] = d
+			ui.Frame()
+			if !reduced {
+				for step := 0; step < 30; step++ {
+					ui.Advance(16 * time.Millisecond)
+					for _, txt := range ui.Texts() {
+						if strings.HasPrefix(txt, chunk1) && (strings.HasSuffix(txt, "\n") || strings.HasSuffix(txt, "\r")) {
+							t.Fatalf("step %d exposed trailing newline during multi-paragraph stream: %q", step, txt)
+						}
+					}
+				}
+			}
+			ui.Advance(time.Second)
+			wantFull := chunk1 + "\n\n\n" + chunk2
+			fullBody, ok := ui.Find(wantFull)
+			thinkingAfter, hasThinkingAfter := ui.Find("正在思考")
+			if !ok || !hasThinkingAfter || fullBody.Y+fullBody.H > thinkingAfter.Y+1 {
+				t.Fatalf("second chunk with intermediate newlines not shown above 正在思考: body=%+v thinking=%+v texts=%v", fullBody, thinkingAfter, ui.Texts())
+			}
+			if !reduced {
+				saveNativeSkillImage(t, ui, "reasoning-streaming-expanded-light.png")
+				ui.SetDark(true)
+				ui.Advance(100 * time.Millisecond)
+				saveNativeSkillImage(t, ui, "reasoning-streaming-expanded-dark.png")
+				ui.SetDark(false)
+				ui.Advance(100 * time.Millisecond)
+			}
+
+			// Completing reasoning automatically collapses the indented body
+			// while keeping 思考摘要 at the same position.
 			d.Items[1].Status = "completed"
 			d.Items[1].Final = true
 			m.Details["s"] = d
 			ui.Frame()
-			for step := 0; step < 6; step++ {
-				ui.Advance(35 * time.Millisecond)
-				heading, found := ui.Find("思考摘要")
-				if !found {
-					t.Fatalf("step %d: missing 思考摘要 during in-place transition: %v", step, ui.Texts())
-				}
-				if math.Abs(float64(heading.Y-whileStreaming.Y)) > 1 {
-					t.Fatalf("step %d: 思考摘要 jumped vertically during morph: %.1f -> %.1f", step, whileStreaming.Y, heading.Y)
-				}
-			}
 			ui.Advance(time.Second)
-			if !ui.HasText("思考摘要") || ui.HasText("正在思考") || ui.HasText("已完成") || ui.HasText(summary) {
-				t.Fatalf("completed reasoning did not settle into collapsed summary without 已完成: %v", ui.Texts())
+			if !ui.HasText("思考摘要") || ui.HasText("正在思考") || ui.HasText("已完成") || ui.HasText(wantFull) || ui.HasText(chunk1) {
+				t.Fatalf("completed reasoning did not auto-collapse into summary without 已完成: %v", ui.Texts())
 			}
 			settled, ok := ui.Find("思考摘要")
-			if !ok || math.Abs(float64(settled.Y-whileStreaming.Y)) > 1 {
-				t.Fatalf("settled 思考摘要 did not stay in place: %.1f -> %.1f", whileStreaming.Y, settled.Y)
+			if !ok || math.Abs(float64(settled.Y-heading.Y)) > 1 {
+				t.Fatalf("settled 思考摘要 did not stay in place: %.1f -> %.1f", heading.Y, settled.Y)
+			}
+			if !reduced {
+				saveNativeSkillImage(t, ui, "reasoning-auto-collapsed.png")
 			}
 			if err := ui.Click("思考摘要"); err != nil {
 				t.Fatal(err)
 			}
 			ui.Advance(time.Second)
-			if !ui.HasText(summary) {
-				t.Fatalf("clicking settled 思考摘要 did not reveal body: %v", ui.Texts())
+			reopened, ok := ui.Find(wantFull)
+			if !ok || reopened.X <= settled.X+16 {
+				t.Fatalf("clicking settled 思考摘要 did not reveal indented full body: settled=%+v body=%+v", settled, reopened)
 			}
 		})
 	}
@@ -351,6 +386,52 @@ func TestCompletedReasoningSummaryOmitsCompletedLabel(t *testing.T) {
 	}
 }
 
+func TestStandaloneReasoningManualCollapseDuringStreamingRespected(t *testing.T) {
+	const chunk1 = "第一段正在思考的摘要内容。"
+	const chunk2 = "第二段补充内容。"
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Turns = []domain.Turn{{ID: "t", Status: domain.ExecutionRunning}}
+	d.Items = []domain.Item{
+		{ID: "prompt", TurnID: "t", Kind: "user", Text: "检查", Status: "sent", Final: true},
+		{ID: "reason", TurnID: "t", Kind: "activity", Presentation: "reasoning", Name: "思考摘要", Text: chunk1 + "\n\n", Status: "running", ActivityOrder: 1},
+	}
+	m.Details["s"] = d
+	ui := n.NewTester(New(m, nil, "").View, 1180, 740)
+	ui.Advance(time.Second)
+	if !ui.HasText("思考摘要") || !ui.HasText(chunk1) || !ui.HasText("正在思考") {
+		t.Fatalf("live reasoning should start expanded above 正在思考: %v", ui.Texts())
+	}
+	if err := ui.Click("思考摘要"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if ui.HasText(chunk1) || !ui.HasText("正在思考") {
+		t.Fatalf("clicking live 思考摘要 should collapse body while keeping 正在思考: %v", ui.Texts())
+	}
+	d.Items[1].Text = chunk1 + "\n\n" + chunk2 + "\n\n"
+	m.Details["s"] = d
+	ui.Frame()
+	ui.Advance(time.Second)
+	if ui.HasText(chunk1) || ui.HasText(chunk2) {
+		t.Fatalf("later chunks should not override manual collapse during streaming: %v", ui.Texts())
+	}
+	d.Items[1].Status, d.Items[1].Final = "completed", true
+	m.Details["s"] = d
+	ui.Frame()
+	ui.Advance(time.Second)
+	if !ui.HasText("思考摘要") || ui.HasText(chunk1) {
+		t.Fatalf("completed reasoning should remain collapsed: %v", ui.Texts())
+	}
+	if err := ui.Click("思考摘要"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if !ui.HasText(chunk1 + "\n\n" + chunk2) {
+		t.Fatalf("reopening after completion did not show full summary: %v", ui.Texts())
+	}
+}
+
 func TestStandaloneReasoningWithoutSummaryLeavesNoRow(t *testing.T) {
 	m := layoutModel()
 	d := m.Details["s"]
@@ -395,5 +476,71 @@ func TestEmptyReasoningDoesNotSplitConsecutiveTools(t *testing.T) {
 	}
 	if groups != 1 {
 		t.Fatal("tools did not stay in a single group", rows)
+	}
+}
+
+func TestToolGroupRespectsCollapsePreferenceAndStreamsWhenExpanded(t *testing.T) {
+	const chunk1 = "工具组默认折叠时不主动展开，展开后应平滑流式显示当前思考摘要。"
+	const chunk2 = "后续新增段落继续流式输出，同时隐藏末尾多余换行。"
+	m := layoutModel()
+	// Follow the default preference: keep latest tool groups collapsed unless expanded.
+	m.Preferences.CollapseLatestTools = true
+	d := m.Details["s"]
+	d.Turns = []domain.Turn{{ID: "t", Status: domain.ExecutionRunning}}
+	d.Items = []domain.Item{
+		{ID: "prompt", TurnID: "t", Kind: "user", Text: "检查工具组默认折叠设置", Status: "sent", Final: true},
+	}
+	m.Details["s"] = d
+	v := New(m, nil, "")
+	ui := n.NewTester(v.View, 1180, 740)
+	ui.Advance(200 * time.Millisecond)
+
+	// Tool call + streaming reasoning arrive while CollapseLatestTools is enabled.
+	d.Items = append(d.Items,
+		domain.Item{ID: "t1", TurnID: "t", Kind: "tool", Presentation: "files", Name: "读取 internal/ui/transcript.go", Status: "completed", Final: true, ActivityOrder: 1},
+		domain.Item{ID: "r1", TurnID: "t", Kind: "activity", Presentation: "reasoning", Name: "思考摘要", Text: chunk1 + "\n\n\n", Status: "running", ActivityOrder: 2},
+	)
+	m.Details["s"] = d
+	ui.Frame()
+	ui.Advance(200 * time.Millisecond)
+
+	key := "tool-group:s/t1"
+	if !m.ToolDisclosure(key).Closed() || ui.HasText(chunk1) || !ui.HasText("1 次工具调用") {
+		t.Fatalf("tool group should stay collapsed under CollapseLatestTools=true: closed=%t texts=%v", m.ToolDisclosure(key).Closed(), ui.Texts())
+	}
+
+	// User manually expands the tool group while thinking is still live.
+	if err := ui.Click("1 次工具调用"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(32 * time.Millisecond)
+	if m.ToolDisclosure(key).Closed() {
+		t.Fatal("clicking collapsed tool group did not open it")
+	}
+	if ui.HasText(chunk1) {
+		t.Fatalf("live reasoning inside newly expanded tool group should stream progressively rather than popping in at once: texts=%v", ui.Texts())
+	}
+	ui.Advance(time.Second)
+	if !ui.HasText(chunk1) {
+		t.Fatalf("expanded tool group did not finish streaming first reasoning chunk: texts=%v", ui.Texts())
+	}
+	for _, txt := range ui.Texts() {
+		if strings.HasPrefix(txt, chunk1) && (strings.HasSuffix(txt, "\n") || strings.HasSuffix(txt, "\r")) {
+			t.Fatalf("expanded tool group exposed trailing newline: %q", txt)
+		}
+	}
+
+	// Next chunk streams into the open tool group with intermediate newlines restored.
+	d.Items[2].Text = chunk1 + "\n\n\n" + chunk2 + "\n\n\n"
+	m.Details["s"] = d
+	ui.Frame()
+	ui.Advance(32 * time.Millisecond)
+	wantFull := chunk1 + "\n\n\n" + chunk2
+	if ui.HasText(wantFull) {
+		t.Fatalf("second chunk inside expanded tool group should stream progressively: texts=%v", ui.Texts())
+	}
+	ui.Advance(time.Second)
+	if !ui.HasText(wantFull) {
+		t.Fatalf("second chunk with intermediate newlines missing inside expanded tool group: texts=%v", ui.Texts())
 	}
 }

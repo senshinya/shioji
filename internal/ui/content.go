@@ -172,7 +172,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 	if item.Presentation == "wait" {
 		return
 	}
-	v.activityBodyDisclosure(c, t, item, key, hasBody && !v.Model.Collapsed[key], transcriptAnchor...)
+	v.activityBodyDisclosure(c, t, item, key, hasBody && !v.Model.Collapsed[key], false, false, transcriptAnchor...)
 }
 
 type reasoningLiveState struct {
@@ -185,13 +185,27 @@ const reasoningMorphDuration = 260 * time.Millisecond
 
 func (v *View) reasoningActivityItem(c *n.Context, t *n.Theme, item domain.Item, key string, hasBody bool, transcriptAnchor ...bool) {
 	live := v.runningReasoning == item.ID && v.activityTurn == item.TurnID && item.WorkID == ""
+	streaming := live && hasBody
+	liveStatus := live && !hasBody
+	entry := v.reasoningStreamEntry(item.ID)
+	if streaming {
+		entry.wasLive = true
+	} else if entry.wasLive {
+		entry.wasLive = false
+		entry.collapsedByUser = false
+		v.Model.Collapsed[key] = true
+	}
+	open := hasBody && !v.Model.Collapsed[key]
+	if streaming {
+		open = !entry.collapsedByUser
+	}
 	summaryLabel := item.Name
 	if summaryLabel == "" {
 		summaryLabel = "思考摘要"
 	}
 	button := n.ButtonBase(c.Key("activity-heading")).AlignSelf(n.Start).MinHeight(20).Justify(n.Start)
 	liveState := n.Local(button, "reasoning-live-state", func() reasoningLiveState { return reasoningLiveState{} })
-	if live {
+	if liveStatus {
 		caption, phase := "正在思考", c.Now()
 		if p := v.runningProgress; p != nil && p.turn == item.TurnID {
 			caption = p.activityCaption(c, "正在思考")
@@ -202,7 +216,7 @@ func (v *View) reasoningActivityItem(c *n.Context, t *n.Theme, item domain.Item,
 		liveState.started = v.toolElapsed(item.TurnID)
 	}
 	target := float32(0)
-	if live {
+	if liveStatus {
 		target = 1
 	}
 	morphAnim := motionAnimation(c, reasoningMorphDuration)
@@ -210,13 +224,13 @@ func (v *View) reasoningActivityItem(c *n.Context, t *n.Theme, item domain.Item,
 		morphAnim.Ease = n.EaseInOut
 	}
 	liveProgress := target
-	if c.Preferences().ReduceMotion {
+	if c.Preferences().ReduceMotion || streaming {
 		button.Jump("reasoning-live", target)
 	} else {
 		liveProgress = button.AnimateTo("reasoning-live", target, morphAnim)
 	}
 	displayLabel := summaryLabel
-	if live {
+	if liveStatus {
 		displayLabel = liveState.caption
 		if displayLabel == "" {
 			displayLabel = "正在思考"
@@ -224,7 +238,7 @@ func (v *View) reasoningActivityItem(c *n.Context, t *n.Theme, item domain.Item,
 	}
 	button.Label(displayLabel)
 	color := t.TextMuted
-	if !live && hasBody {
+	if !liveStatus && hasBody {
 		color = textHoverColor(c, button, t.TextMuted)
 	}
 	button.Children(func() {
@@ -242,17 +256,17 @@ func (v *View) reasoningActivityItem(c *n.Context, t *n.Theme, item domain.Item,
 					}
 				}
 				if liveProgress > 0 {
-					statusDot(c.Key("dot"), displayLabel, font, t.Success, live, liveState.phase).Opacity(liveProgress)
+					statusDot(c.Key("dot"), displayLabel, font, t.Success, liveStatus, liveState.phase).Opacity(liveProgress)
 				}
 			})
 			titleAnim := morphAnim
 			title := n.Text(c.Key("reasoning-label"), displayLabel).
 				ContentTransition(n.ContentTransition{Animation: &titleAnim}).
 				FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color).MinWidth(0).MaxLines(2).Ellipsis("…")
-			if !live {
+			if !liveStatus {
 				title.TooltipWhenTruncated(summaryLabel)
 			}
-			if live {
+			if liveStatus {
 				if liveState.started != nil && !liveState.started.IsZero() {
 					clockSlot := n.Row(c.Key("elapsed-slot")).Height(20).AlignItems(n.Baseline)
 					clockSlot.Children(func() {
@@ -261,7 +275,7 @@ func (v *View) reasoningActivityItem(c *n.Context, t *n.Theme, item domain.Item,
 				}
 			} else {
 				status := ""
-				if item.Status != "" && item.Status != "completed" && !(item.Status == "running" && !item.Final) {
+				if !streaming && item.Status != "" && item.Status != "completed" && !(item.Status == "running" && !item.Final) {
 					status = activityStatus(item.Status)
 					if issue := toolIssueLabel(item); issue != "" {
 						status = issue
@@ -293,7 +307,7 @@ func (v *View) reasoningActivityItem(c *n.Context, t *n.Theme, item domain.Item,
 								}
 								if hasBody {
 									angle := float32(0)
-									if v.Model.Collapsed[key] {
+									if !open {
 										angle = -90
 									}
 									inlineSymbol(c.Key("activity-chevron"), transcriptChevron, summaryLabel, font, 14, color, angle).Shrink(0)
@@ -311,16 +325,22 @@ func (v *View) reasoningActivityItem(c *n.Context, t *n.Theme, item domain.Item,
 			}
 		})
 	})
-	if button.Clicked() && hasBody && !live {
+	if button.Clicked() && !liveStatus && hasBody {
 		if list := v.lists[v.Model.SessionID]; list != nil && (len(transcriptAnchor) == 0 || transcriptAnchor[0]) {
 			list.KeepRowWithinContent(v.currentTranscriptRow, button.Bounds().Y-list.Bounds(c).Y)
 		}
-		v.Model.Collapsed[key] = !v.Model.Collapsed[key]
+		if streaming {
+			entry.collapsedByUser = !entry.collapsedByUser
+			open = !entry.collapsedByUser
+		} else {
+			v.Model.Collapsed[key] = !v.Model.Collapsed[key]
+			open = !v.Model.Collapsed[key]
+		}
 	}
-	v.activityBodyDisclosure(c, t, item, key, !live && hasBody && !v.Model.Collapsed[key], transcriptAnchor...)
+	v.activityBodyDisclosure(c, t, item, key, open, streaming, entry.fresh, transcriptAnchor...)
 }
 
-func (v *View) activityBodyDisclosure(c *n.Context, t *n.Theme, item domain.Item, key string, open bool, transcriptAnchor ...bool) {
+func (v *View) activityBodyDisclosure(c *n.Context, t *n.Theme, item domain.Item, key string, open, liveReasoning, freshReasoning bool, transcriptAnchor ...bool) {
 	// Keep the measured stack in layout while it closes. Element exit
 	// snapshots alone do not reserve height for the transcript that follows.
 	frame := n.Column(c.Key("activity-body")).FillWidth().Clip().Margin(-8, 0, 0, 0)
@@ -328,13 +348,31 @@ func (v *View) activityBodyDisclosure(c *n.Context, t *n.Theme, item domain.Item
 	if open {
 		*retained = item
 	}
+	reasoning := domain.ReasoningSummary(item)
 	build := func() float32 {
 		innerHeightDelta := float32(0)
 		item := *retained
-		n.Column(c.Key("result-stack")).FillWidth().Padding(8, 0, 0, 0).Gap(8).Children(func() {
+		stack := n.Column(c.Key("result-stack")).FillWidth().Gap(8)
+		if reasoning {
+			stack.Padding(8, 0, 0, transcriptGlyphSlot+6).Draw(func(p *n.Painter, r n.Rect) {
+				if h := r.H - 10; h > 0 {
+					p.Fill(n.Rect{X: r.X + transcriptGlyphSlot/2 - .5, Y: r.Y + 8, W: 1, H: h}, t.Border, 0)
+				}
+			})
+		} else {
+			stack.Padding(8, 0, 0, 0)
+		}
+		stack.Children(func() {
 			if item.Text != "" {
-				resultText(c.Key("summary"), item.Text, t.TextMuted, func(text n.Element) { v.decoratePlainFind(c, text, item, nil) }).
-					Transition(resultBlockMotion(c)).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+				if reasoning {
+					v.reasoningStreamText(c.Key("summary"), item.ID, item.Text, liveReasoning, freshReasoning, t.TextMuted, func(text n.Element) {
+						text.FontSize(12).FixedLineHeight(20).Wrap().Selectable()
+						v.decoratePlainFind(c, text, item, nil)
+					})
+				} else {
+					resultText(c.Key("summary"), item.Text, t.TextMuted, func(text n.Element) { v.decoratePlainFind(c, text, item, nil) }).
+						Transition(resultBlockMotion(c)).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+				}
 			}
 			for _, file := range item.Files {
 				n.Column(c.Key("file:" + file.Path)).FillWidth().Gap(6).Transition(resultBlockMotion(c)).Children(func() {
@@ -400,7 +438,13 @@ func (v *View) activityBodyDisclosure(c *n.Context, t *n.Theme, item domain.Item
 						})
 						*mounted = true
 					default:
-						resultText(c.Key("part-text"), part.Text, t.TextMuted).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+						if reasoning {
+							v.reasoningStreamText(c.Key("part-text"), fmt.Sprintf("%s:part:%d", item.ID, i), part.Text, liveReasoning, freshReasoning, t.TextMuted, func(text n.Element) {
+								text.FontSize(12).FixedLineHeight(20).Wrap().Selectable()
+							})
+						} else {
+							resultText(c.Key("part-text"), part.Text, t.TextMuted).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+						}
 					}
 				})
 			}
@@ -428,8 +472,22 @@ func (v *View) activityBodyDisclosure(c *n.Context, t *n.Theme, item domain.Item
 		// changes must not reset the main conversation's follow animation.
 		animatedContentHeight(c, frame, open, 180*time.Millisecond, build)
 	} else {
-		v.transcriptContentHeight(c, frame, open, open, 180*time.Millisecond, build)
+		baseline := open && !(liveReasoning && freshReasoning)
+		v.transcriptContentHeight(c, frame, open, baseline, 180*time.Millisecond, build)
 	}
+}
+
+func (v *View) reasoningStreamText(c *n.Context, streamKey, text string, live, fresh bool, color n.Color, decorate ...func(n.Element)) n.Element {
+	entry := v.reasoningStreamEntry(streamKey)
+	frame := entry.stream.Advance(c.Now(), text, live, fresh, c.Preferences().ReduceMotion)
+	if frame.Animating {
+		c.AnimationFrame()
+	}
+	e := n.RichText(c, conversationui.ReasoningSpans(frame, color)...).FillWidth().TextColor(color)
+	for _, apply := range decorate {
+		apply(e)
+	}
+	return e
 }
 
 // Fade received suffixes in place. Earlier bytes keep their original ink;

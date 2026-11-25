@@ -29,6 +29,7 @@ type replyTail struct {
 	nextReveal           time.Time
 	arrivals             map[any]time.Time
 	streams              map[string]*mobileReplyPresentation
+	reasoningFresh       map[string]bool
 	receipts             map[string]time.Time
 	requests             map[string]bool
 }
@@ -58,6 +59,7 @@ func (s *replyTail) observe(now time.Time, scope replyHistoryScope, order int64,
 	}
 	if !continuous {
 		clear(s.streams)
+		clear(s.reasoningFresh)
 		clear(s.arrivals)
 		clear(s.receipts)
 		clear(s.requests)
@@ -68,11 +70,20 @@ func (s *replyTail) observe(now time.Time, scope replyHistoryScope, order int64,
 		s.streams = make(map[string]*mobileReplyPresentation)
 		s.receipts = make(map[string]time.Time)
 	}
+	if s.reasoningFresh == nil {
+		s.reasoningFresh = make(map[string]bool)
+	}
 	known := make(map[string]bool)
 	requests := make(map[string]bool, len(s.requests))
 	var receiptTurn string
 	var receiptUntil time.Time
 	for _, item := range items {
+		if domain.ReasoningSummary(item) && item.ID != "" {
+			if _, seen := s.reasoningFresh[item.ID]; !seen {
+				s.reasoningFresh[item.ID] = continuous || conversationui.ReasoningSummaryText(item) == ""
+			}
+			continue
+		}
 		if item.Kind == "request" || item.Kind == "request_result" {
 			hadReceipt, seen := s.requests[item.ID]
 			inline := item.Kind == "request" && domain.RequestState(item.Status) == domain.RequestAnswered &&

@@ -2,7 +2,11 @@ package conversationui
 
 import (
 	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
 
+	n "github.com/egoist/mygo/ui"
 	"shioji/internal/domain"
 )
 
@@ -54,13 +58,146 @@ func ReasoningForDisplay(item domain.Item) domain.Item {
 }
 
 func trimTrailingLineBreaks(text string) string {
-	content := strings.TrimRight(text, " \t\r\n")
+	content := strings.TrimRightFunc(text, unicode.IsSpace)
+	if content == "" {
+		return ""
+	}
 	lineBreak := strings.IndexAny(text[len(content):], "\r\n")
 	if lineBreak < 0 {
 		return text
 	}
-	if content == "" {
-		return ""
-	}
 	return text[:len(content)+lineBreak]
+}
+
+const reasoningFadeDuration = 180 * time.Millisecond
+
+// ReasoningFadeSpan marks a newly revealed slice of reasoning text while it
+// fades in to full opacity.
+type ReasoningFadeSpan struct {
+	Start, End int
+	Alpha      float32
+}
+
+// ReasoningTextFrame is the prefix and fading tail of a streaming summary for
+// the current frame.
+type ReasoningTextFrame struct {
+	Visible   string
+	Fades     []ReasoningFadeSpan
+	Animating bool
+}
+
+type reasoningRevealMark struct {
+	start, end int
+	at         time.Time
+}
+
+// ReasoningTextStream paces bursty or incremental plain-text reasoning updates
+// character-by-character without exposing trailing line breaks mid-stream.
+type ReasoningTextStream struct {
+	initialized bool
+	source      string
+	shown       int
+	carry       float64
+	last        time.Time
+	marks       []reasoningRevealMark
+}
+
+func (s *ReasoningTextStream) Advance(now time.Time, text string, live, fresh, reduceMotion bool) ReasoningTextFrame {
+	if !live || reduceMotion {
+		s.initialized, s.source, s.shown, s.carry, s.last, s.marks = true, text, len(text), 0, now, nil
+		return ReasoningTextFrame{Visible: text}
+	}
+	if !s.initialized {
+		s.initialized, s.source = true, text
+		if !fresh {
+			s.shown, s.last = len(text), now
+			return ReasoningTextFrame{Visible: text}
+		}
+		s.shown, s.last = 0, time.Time{}
+	} else if text != s.source {
+		if !strings.HasPrefix(text, s.source) {
+			s.source, s.shown, s.carry, s.last, s.marks = text, len(text), 0, now, nil
+			return ReasoningTextFrame{Visible: text}
+		}
+		s.source = text
+	}
+	if s.shown < len(text) {
+		dt := now.Sub(s.last)
+		if s.last.IsZero() || dt > 100*time.Millisecond {
+			dt = 16 * time.Millisecond
+		} else if dt < 0 {
+			dt = 0
+		}
+		s.last = now
+		remaining := utf8.RuneCountInString(text[s.shown:])
+		rate := max(120.0, float64(remaining)/0.45)
+		s.carry += rate * dt.Seconds()
+		count := min(remaining, int(s.carry))
+		if s.shown == 0 && count == 0 && remaining > 0 {
+			count = 1
+		}
+		s.carry -= float64(count)
+		next := s.shown
+		for i := 0; i < count && next < len(text); i++ {
+			_, size := utf8.DecodeRuneInString(text[next:])
+			next += size
+		}
+		if next < len(text) && trimTrailingLineBreaks(text[:next]) != text[:next] {
+			for next < len(text) {
+				r, size := utf8.DecodeRuneInString(text[next:])
+				next += size
+				if !unicode.IsSpace(r) {
+					break
+				}
+			}
+		}
+		if next > s.shown {
+			s.marks = append(s.marks, reasoningRevealMark{start: s.shown, end: next, at: now})
+			s.shown = next
+		}
+	} else {
+		s.carry = 0
+		s.last = now
+	}
+	active := s.marks[:0]
+	var fades []ReasoningFadeSpan
+	for _, mark := range s.marks {
+		if mark.end > s.shown {
+			continue
+		}
+		elapsed := now.Sub(mark.at)
+		if elapsed >= reasoningFadeDuration {
+			continue
+		}
+		progress := max(float32(0), float32(elapsed)/float32(reasoningFadeDuration))
+		active = append(active, mark)
+		fades = append(fades, ReasoningFadeSpan{Start: mark.start, End: mark.end, Alpha: n.EaseOut(progress)})
+	}
+	s.marks = active
+	return ReasoningTextFrame{
+		Visible:   text[:s.shown],
+		Fades:     fades,
+		Animating: s.shown < len(text) || len(fades) > 0,
+	}
+}
+
+// ReasoningSpans turns a ReasoningTextFrame into RichText spans that fade only
+// the newly revealed tail while keeping earlier bytes settled.
+func ReasoningSpans(frame ReasoningTextFrame, color n.Color) []n.Span {
+	if len(frame.Fades) == 0 {
+		return []n.Span{{Text: frame.Visible}}
+	}
+	spans := make([]n.Span, 0, len(frame.Fades)*2+1)
+	from := 0
+	for _, fade := range frame.Fades {
+		if fade.Start > from {
+			spans = append(spans, n.Span{Text: frame.Visible[from:fade.Start]})
+		}
+		spans = append(spans, n.Span{Text: frame.Visible[fade.Start:fade.End], Color: color.Alpha(fade.Alpha)})
+		from = fade.End
+	}
+	if from < len(frame.Visible) {
+		spans = append(spans, n.Span{Text: frame.Visible[from:]})
+	}
+	return spans
 }

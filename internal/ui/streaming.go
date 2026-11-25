@@ -51,6 +51,25 @@ func (s *replyStream) fresh() bool         { return s.phase == replyFresh || s.p
 func (s *replyStream) mount()              { s.phase = replyPhaseFor(s.live(), false) }
 func (s *replyStream) replace(prefix bool) { s.phase = replyPhaseFor(prefix, s.fresh()) }
 
+type reasoningStreamEntry struct {
+	stream          conversationui.ReasoningTextStream
+	fresh           bool
+	wasLive         bool
+	collapsedByUser bool
+}
+
+func (v *View) reasoningStreamEntry(key string) *reasoningStreamEntry {
+	if v.reasoningStreams == nil {
+		v.reasoningStreams = make(map[string]*reasoningStreamEntry)
+	}
+	entry := v.reasoningStreams[key]
+	if entry == nil {
+		entry = &reasoningStreamEntry{}
+		v.reasoningStreams[key] = entry
+	}
+	return entry
+}
+
 const receiptEntranceDuration = 200 * time.Millisecond
 
 func (v *View) syncReplyStreams(detail domain.SessionDetail) {
@@ -61,6 +80,7 @@ func (v *View) syncReplyStreams(detail domain.SessionDetail) {
 	if reset {
 		v.replySession, v.replyEpoch = m.SessionID, m.ConnectionEpoch
 		v.replyStreams = make(map[string]*replyStream)
+		v.reasoningStreams = make(map[string]*reasoningStreamEntry)
 		v.activityPatches = nil
 		v.replyLatestOrder = 0
 	}
@@ -83,6 +103,13 @@ func (v *View) syncReplyStreams(detail domain.SessionDetail) {
 	}
 	for _, item := range detail.Items {
 		v.replyLatestOrder = max(v.replyLatestOrder, item.Order)
+		if domain.ReasoningSummary(item) {
+			if _, known := v.reasoningStreams[item.ID]; !known {
+				empty := conversationui.ReasoningSummaryText(item) == ""
+				v.reasoningStreams[item.ID] = &reasoningStreamEntry{fresh: !reset || empty}
+			}
+			continue
+		}
 		if item.Kind != "assistant" && item.Kind != "request" && item.Kind != "request_result" {
 			continue
 		}

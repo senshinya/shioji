@@ -135,7 +135,7 @@ func (a *mobileApp) toolTimeline(s domain.Session) *mobileToolTimeline {
 
 func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain.Session, tools []domain.Item, group mobileclient.ToolGroup,
 	timeline *mobileToolTimeline, list *ui.ListState, rowIndex int, phase string, started *time.Time, observed, animateCalls bool, target string, reveal bool,
-	decorate func(domain.Item) *markdown.RangeDecoration) {
+	freshReasoning func(string) bool, decorate func(domain.Item) *markdown.RangeDecoration) {
 	p := palette(c)
 	title := fmt.Sprintf("%d 次工具调用", group.Count)
 	outcome := ""
@@ -271,7 +271,8 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 				}
 				call.Children(func() {
 					if domain.ReasoningSummary(tool) {
-						heading = mobileToolReasoning(row, tool, font, mark)
+						fresh := freshReasoning != nil && freshReasoning(tool.ID)
+						heading = mobileToolReasoning(row, session.ID, tool, font, mark, fresh)
 						return
 					}
 					body := timeline.bodies[tool.ID]
@@ -299,13 +300,12 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 	}
 }
 
-func mobileToolReasoning(c *ui.Context, item domain.Item, font ui.Font, mark *markdown.RangeDecoration) ui.Element {
+func mobileToolReasoning(c *ui.Context, sessionID string, item domain.Item, font ui.Font, mark *markdown.RangeDecoration, fresh bool) ui.Element {
 	body := conversationui.ReasoningSummaryText(item)
 	firstLine, _, _ := strings.Cut(body, "\n")
-	text := ui.Text(c.Key("reasoning"), body).Font(font.Family).FontSize(font.Size).
-		FixedLineHeight(mobileStatusLineHeight(font)).TextColor(palette(c).secondary).
-		Wrap().Selectable().FillWidth().MinWidth(0).MarginStart(mobileToolTextColumn)
-	decorateTranscriptText(c, text, body, mark, nil)
+	rs := ui.Local(c.Root(), "reasoning-state:"+sessionID+":"+item.ID, func() mobileReasoningState { return mobileReasoningState{} })
+	text := mobileReasoningStreamText(c.Key("reasoning"), &rs.stream, body, !item.Final, fresh, palette(c).secondary, font, mobileStatusLineHeight(font), mark).
+		FillWidth().MinWidth(0).MarginStart(mobileToolTextColumn)
 	if body != "" {
 		mobileToolGlyph(c.Key("timeline-icon"), toolThinkingSymbol, firstLine, font).Absolute().Left(mobileToolTimelineInset).Top(0)
 	}

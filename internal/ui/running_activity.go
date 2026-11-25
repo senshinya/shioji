@@ -230,7 +230,7 @@ func (v *View) progressFor(c *n.Context, turn domain.Turn) *runningProgress {
 // prose, use the actual disclosure deadline (no delay for an already folded
 // group), then continue crossfade and slot reclamation on the same timeline.
 func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domain.SessionDetail) {
-	previousGroup, previousReasoning, previousTurn := v.runningGroup, v.runningReasoning, v.activityTurn
+	previousGroup, previousTurn := v.runningGroup, v.activityTurn
 	v.runningGroup, v.runningReasoning, v.activityTurn = "", "", ""
 	if !v.Model.Connected || len(rows) == 0 {
 		v.runningProgress = nil
@@ -254,7 +254,7 @@ func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domai
 		return
 	}
 	if p != oldProgress {
-		previousGroup, previousReasoning, previousTurn = "", "", ""
+		previousGroup, previousTurn = "", ""
 	}
 	row := rows[len(rows)-1]
 	group := row.group
@@ -280,11 +280,6 @@ func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domai
 	if group == "" && activity.reasoning != "" && row.toolParent == "" && row.group == "" && row.item.ID == activity.reasoning && row.item.TurnID == turn.ID {
 		reasoning = row.item.ID
 	}
-	if previousReasoning != "" && previousTurn == turn.ID && reasoning != previousReasoning {
-		// Standalone thinking settled into its collapsed summary; start the
-		// next live indicator fresh instead of repeating "正在思考".
-		p.caption, p.pendingCaption, p.captionUntil = "", "", time.Time{}
-	}
 	if group != previousGroup || row.item.Kind == "assistant" && row.item.ID == activity.item {
 		// Visible prose and changes of progress owner use their own handoff.
 		p.captionUntil = time.Time{}
@@ -302,16 +297,7 @@ func (v *View) syncRunningGroup(c *n.Context, rows []transcriptRow, detail domai
 		return
 	}
 	if reasoning != "" {
-		p.handoff = nil
-		p.label = activity.label
-		p.elapsed = activity.started
 		v.runningReasoning, v.activityTurn = reasoning, turn.ID
-		// Take over the already visible live status slot without replaying row entrance.
-		if v.toolArrivals != nil {
-			delete(v.toolArrivals.motions, reasoning)
-		}
-		rows[len(rows)-1].opacity = 1
-		return
 	}
 	if p.handoff == nil && previousGroup != "" && previousTurn == turn.ID && row.item.Kind == "assistant" {
 		fadeAt := c.Now()
