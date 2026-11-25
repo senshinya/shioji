@@ -1,12 +1,14 @@
 # Shioji 发布
 
-当前正式版为 `v0.9.0`，最近的 macOS Beta 为 `v0.8.1`。`VERSION` 保存不带 `v` 的数字构建版本，macOS App 和 Runtime bundle 的版本均由构建脚本写入。iOS 与 iPadOS 的版本号和构建号记录在 `cmd/shioji-mobile/mygo.json`。
+当前正式版为 `v0.9.1`，最近的 macOS Beta 为 `v0.8.1`。`VERSION` 保存不带 `v` 的数字构建版本，macOS App 和 Runtime bundle 的版本均由构建脚本写入。iOS 与 iPadOS 的版本号和构建号记录在 `cmd/shioji-mobile/mygo.json`。
 
 ## 变更记录与发布说明
 
 完整变更见 [CHANGELOG.md](../CHANGELOG.md)。每次发布前比较上一正式标签与待发布代码的实际差异，核对面向用户的行为、兼容性和升级要求；不能只根据 commit message 生成说明。
 
 使用 `Added`、`Changed`、`Deprecated`、`Removed`、`Fixed`、`Security` 分类，只保留有内容的分类；版本标题包含数字版本、UTC 发布日期和源码／比较链接。说明用户影响，排除本地产物、内部重构和纯测试调整。GitHub Release 正文复用对应版本条目，并补充该版安装与更新方式。修改历史说明保留原发布日期，不移动标签或替换已发布二进制。
+
+v0.9.1 在所属设备执行服务升级时自动导入旧 Agent 登录配置，每个原 Agent ID 对应一条「系统」Profile。macOS 设备页各标签的主操作共用右侧位置。执行服务使用协议 2.62，数据库沿用 schema 17。GitHub Release 分发 Apple Silicon macOS 安装包。
 
 v0.9.0 新增 DeepSeek Responses 接入和设备级多账号 Profile。DeepSeek 需要 API Key 及执行设备上的 Codex app-server。执行服务使用协议 2.62，数据库沿用 schema 17。GitHub Release 分发 Apple Silicon macOS 安装包。
 

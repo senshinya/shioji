@@ -5,6 +5,20 @@
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-25
+
+[源码](https://github.com/senshinya/shioji/tree/v0.9.1) · [与上一正式版 v0.9.0 比较](https://github.com/senshinya/shioji/compare/v0.9.0...v0.9.1)
+
+### Changed
+
+- macOS 设备页将「重新检测」「新增 Profile」和「新建工作区」统一放在标签栏右侧。Profile 空态说明首次配置的用途，并分别显示离线、加载和读取失败状态。
+
+### Fixed
+
+- 所属设备的执行服务升级后会将旧 Agent 登录配置自动导入为「系统」Profile。每个原 Agent ID 只导入一次，已有登录和历史会话沿用原 ID。
+
+GitHub Release 提供适用于 Apple Silicon 的 macOS 安装包。已安装支持自动更新的正式版可在 Shioji 菜单或「设置 → 关于」检查更新。系统 Profile 的自动导入需要更新所属设备的执行服务。本版执行服务沿用协议 2.62 和 schema 17。
+
 ## [0.9.0] - 2026-11-25
 
 [源码](https://github.com/senshinya/shioji/tree/v0.9.0) · [与上一正式版 v0.8.4 比较](https://github.com/senshinya/shioji/compare/v0.8.4...v0.9.0)
