@@ -20,8 +20,11 @@ func TestActivityStatusStaysBesideItsTitle(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/dark=%v/width=%d", kind, dark, width), func(t *testing.T) {
 					v := New(layoutModel(), nil, "")
 					item := domain.Item{ID: "activity", Kind: "tool", Presentation: kind, Name: "检查边界条件", Text: "结果", Status: "completed", Final: true}
+					wantStatus := "已完成"
 					if kind == "reasoning" {
 						item.Kind = "activity"
+						item.Status = "interrupted"
+						wantStatus = "已中断"
 					}
 					ui := n.NewTester(func(c *n.Context) {
 						n.Column(c).Fill().Padding(24).Background(c.Theme().Background).Children(func() { v.activityItem(c, c.Theme(), item) })
@@ -29,7 +32,7 @@ func TestActivityStatusStaysBesideItsTitle(t *testing.T) {
 					ui.SetDark(dark)
 					ui.Advance(time.Second)
 					title, _ := ui.Find(item.Name)
-					status, ok := ui.Find("已完成")
+					status, ok := ui.Find(wantStatus)
 					font := n.Font{Family: v.Model.Preferences.InterfaceFont, Size: 11}
 					textWidth, _ := n.ShapeText(item.Name, font, 0).Size()
 					iconWidth := float32(0)
@@ -42,7 +45,7 @@ func TestActivityStatusStaysBesideItsTitle(t *testing.T) {
 					item.Name = strings.Repeat("很长的检查名称", 30)
 					ui.Frame()
 					ui.Advance(time.Second)
-					status, ok = ui.Find("已完成")
+					status, ok = ui.Find(wantStatus)
 					if !ok || status.W < 30 || status.X+status.W > float32(width)-23.5 {
 						t.Fatal("long activity title displaced its status", status)
 					}

@@ -211,6 +211,19 @@ type mobileReasoningLiveState struct {
 	started *time.Time
 }
 
+const mobileReasoningMorph = 260 * time.Millisecond
+
+func mobileReasoningStatus(item domain.Item) string {
+	if item.Status == "" || item.Status == "completed" || item.Status == "running" && !item.Final {
+		return ""
+	}
+	return map[string]string{
+		"starting": "正在启动", "running": "进行中",
+		"failed": "调用失败", "declined": "已拒绝", "interrupted": "已中断",
+		"stopped": "已停止", "unknown": "状态未知",
+	}[item.Status]
+}
+
 func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, open *bool, mark *markdown.RangeDecoration, live bool, phaseLabel string, started *time.Time, list *ui.ListState) {
 	item = conversationui.ReasoningForDisplay(item)
 	p := palette(c)
@@ -244,25 +257,19 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 	if live {
 		target = 1
 	}
+	morphAnim := ui.Animation{Duration: mobileReasoningMorph, Ease: ui.EaseInOut}
 	liveProgress := target
 	if c.Preferences().ReduceMotion {
 		heading.Jump("reasoning-live", target)
 	} else {
-		liveProgress = heading.AnimateTo("reasoning-live", target, ui.Animation{Duration: mobileReplyFade, Ease: ui.EaseOut})
+		liveProgress = heading.AnimateTo("reasoning-live", target, morphAnim)
 	}
 	displayName := summaryName
 	if live {
 		displayName = liveState.caption
 	}
+	status := mobileReasoningStatus(item)
 	if hasBody && !live {
-		status := ""
-		if item.Status != "" && !(item.Status == "running" && !item.Final) {
-			status = map[string]string{
-				"starting": "正在启动", "running": "进行中", "completed": "已完成",
-				"failed": "调用失败", "declined": "已拒绝", "interrupted": "已中断",
-				"stopped": "已停止", "unknown": "状态未知",
-			}[item.Status]
-		}
 		disclosure := "已折叠"
 		if *open {
 			disclosure = "已展开"
@@ -283,6 +290,9 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 		var sweep *mobileToolSweep
 		if liveProgress > 0 {
 			sweep = newMobileToolSweep(lineKey, line, liveState.phase)
+			if sweep != nil {
+				sweep.strength = liveProgress
+			}
 		}
 		line.Children(func() {
 			glyph := lineKey.Key("glyph")
@@ -298,37 +308,48 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 					mobileToolStatusDot(glyph.Key("live"), displayName, font, sweep).Opacity(liveProgress)
 				}
 			})
-			sweep.caption(lineKey.Key("title"), displayName, ui.ContentTransition{Animation: &ui.Animation{Duration: mobileReplyFade}})
-			if liveProgress > 0 && liveState.started != nil && !liveState.started.IsZero() {
-				clockKey := lineKey.Key("elapsed")
-				clockFont := font
-				clockFont.Features = "tnum"
-				clockWidth, _ := ui.ShapeText(mobileElapsed(c.Now().Sub(*liveState.started).Milliseconds()), clockFont, 0).Size()
-				slot := ui.Row(clockKey).MarginStart(6 * liveProgress).AlignItems(ui.Baseline).Clip()
-				if liveProgress < 1 {
-					slot.Width(clockWidth * liveProgress).Opacity(max(0, (liveProgress-.35)/.65))
+			sweep.caption(lineKey.Key("title"), displayName, ui.ContentTransition{Animation: &morphAnim})
+			if live {
+				if liveState.started != nil && !liveState.started.IsZero() {
+					clockKey := lineKey.Key("elapsed")
+					slot := ui.Row(clockKey).MarginStart(6).AlignItems(ui.Baseline)
+					slot.Children(func() { mobileClock(clockKey, *liveState.started, nil, font, sweep) })
 				}
-				slot.Children(func() { mobileClock(clockKey, *liveState.started, nil, font, sweep) })
-			}
-			if !live {
-				status := ""
-				if item.Status != "" && !(item.Status == "running" && !item.Final) {
-					status = map[string]string{
-						"starting": "正在启动", "running": "进行中", "completed": "已完成",
-						"failed": "调用失败", "declined": "已拒绝", "interrupted": "已中断",
-						"stopped": "已停止", "unknown": "状态未知",
-					}[item.Status]
+			} else {
+				clockOpacity := float32(0)
+				if liveProgress > 0 && liveState.started != nil && !liveState.started.IsZero() {
+					clockOpacity = max(0, (liveProgress-.45)/.55)
 				}
-				if status != "" || hasBody {
-					meta := ui.Row(lineKey.Key("settled-meta")).MarginStart(6).Gap(6).AlignItems(ui.Baseline).Opacity(1 - liveProgress)
-					meta.Children(func() {
-						if status != "" {
-							oneLine(lineKey.Key("tool-outcome"), status, captionTextSize, p.secondary).Shrink(0).FixedLineHeight(lineHeight).
-								ContentTransition(ui.ContentTransition{Animation: &mobileTitleMotion})
+				metaOpacity := float32(1)
+				if liveProgress > 0 {
+					metaOpacity = max(0, min(1, (.75-liveProgress)/.75))
+				}
+				if clockOpacity > 0 || status != "" || hasBody {
+					trailing := ui.Row(lineKey.Key("trailing-slot")).MinHeight(lineHeight).Shrink(0).AlignItems(ui.Baseline)
+					if clockOpacity > 0 {
+						clockFont := font
+						clockFont.Features = "tnum"
+						clockWidth, _ := ui.ShapeText(mobileElapsed(c.Now().Sub(*liveState.started).Milliseconds()), clockFont, 0).Size()
+						trailing.MinWidth(clockWidth + 6)
+					}
+					trailing.Children(func() {
+						if status != "" || hasBody {
+							meta := ui.Row(lineKey.Key("settled-meta")).MarginStart(6).Gap(6).Shrink(0).AlignItems(ui.Baseline).Opacity(metaOpacity)
+							meta.Children(func() {
+								if status != "" {
+									oneLine(lineKey.Key("tool-outcome"), status, captionTextSize, p.secondary).Shrink(0).FixedLineHeight(lineHeight).
+										ContentTransition(ui.ContentTransition{Animation: &mobileTitleMotion})
+								}
+								if hasBody {
+									angle := -90 * (1 - mobileToolReveal(c, heading, *open, mark != nil))
+									transcriptSymbol(lineKey.Key("chevron"), downSymbol, summaryName, font, 12, p.secondary).Transform(ui.Rotation(angle))
+								}
+							})
 						}
-						if hasBody {
-							angle := -90 * (1 - mobileToolReveal(c, heading, *open, mark != nil))
-							transcriptSymbol(lineKey.Key("chevron"), downSymbol, summaryName, font, 12, p.secondary).Transform(ui.Rotation(angle))
+						if clockOpacity > 0 {
+							clockKey := lineKey.Key("elapsed")
+							slot := ui.Row(clockKey).Absolute().Left(0).Top(0).MarginStart(6).AlignItems(ui.Baseline).Opacity(clockOpacity)
+							slot.Children(func() { mobileClock(clockKey, *liveState.started, nil, font, sweep) })
 						}
 					})
 				}
@@ -412,6 +433,9 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 		"failed": "调用失败", "declined": "已拒绝", "interrupted": "已中断",
 		"stopped": "已停止", "unknown": "状态未知",
 	}[item.Status]
+	if domain.ReasoningSummary(item) && item.Status == "completed" {
+		status = ""
+	}
 	issue := item.Status == "failed" || item.Status == "interrupted" || item.Status == "declined"
 	if item.Final && item.ExitCode != nil && *item.ExitCode != 0 {
 		status = fmt.Sprintf("退出码 %d", *item.ExitCode)

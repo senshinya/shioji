@@ -181,6 +181,8 @@ type reasoningLiveState struct {
 	started *time.Time
 }
 
+const reasoningMorphDuration = 260 * time.Millisecond
+
 func (v *View) reasoningActivityItem(c *n.Context, t *n.Theme, item domain.Item, key string, hasBody bool, transcriptAnchor ...bool) {
 	live := v.runningReasoning == item.ID && v.activityTurn == item.TurnID && item.WorkID == ""
 	summaryLabel := item.Name
@@ -203,11 +205,15 @@ func (v *View) reasoningActivityItem(c *n.Context, t *n.Theme, item domain.Item,
 	if live {
 		target = 1
 	}
+	morphAnim := motionAnimation(c, reasoningMorphDuration)
+	if !c.Preferences().ReduceMotion {
+		morphAnim.Ease = n.EaseInOut
+	}
 	liveProgress := target
 	if c.Preferences().ReduceMotion {
 		button.Jump("reasoning-live", target)
 	} else {
-		liveProgress = button.AnimateTo("reasoning-live", target, motionAnimation(c, 180*time.Millisecond))
+		liveProgress = button.AnimateTo("reasoning-live", target, morphAnim)
 	}
 	displayLabel := summaryLabel
 	if live {
@@ -239,44 +245,66 @@ func (v *View) reasoningActivityItem(c *n.Context, t *n.Theme, item domain.Item,
 					statusDot(c.Key("dot"), displayLabel, font, t.Success, live, liveState.phase).Opacity(liveProgress)
 				}
 			})
+			titleAnim := morphAnim
 			title := n.Text(c.Key("reasoning-label"), displayLabel).
-				ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).
+				ContentTransition(n.ContentTransition{Animation: &titleAnim}).
 				FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color).MinWidth(0).MaxLines(2).Ellipsis("…")
 			if !live {
 				title.TooltipWhenTruncated(summaryLabel)
 			}
-			if liveProgress > 0 && liveState.started != nil && !liveState.started.IsZero() {
-				clockSlot := n.Row(c.Key("elapsed-slot")).Height(20).AlignItems(n.Baseline).Clip()
-				clockSlot.Children(func() {
-					_, clockW := runningElapsed(c.Key("elapsed"), liveState.started, t.TextMuted, true)
-					if liveProgress < 1 {
-						fade := max(0, (liveProgress-.35)/.65)
-						clockSlot.Width(clockW * liveProgress).Opacity(fade)
-					}
-				})
-			}
-			if !live {
+			if live {
+				if liveState.started != nil && !liveState.started.IsZero() {
+					clockSlot := n.Row(c.Key("elapsed-slot")).Height(20).AlignItems(n.Baseline)
+					clockSlot.Children(func() {
+						runningElapsed(c.Key("elapsed"), liveState.started, t.TextMuted, true)
+					})
+				}
+			} else {
 				status := ""
-				if item.Status != "" && !(item.Status == "running" && !item.Final) {
+				if item.Status != "" && item.Status != "completed" && !(item.Status == "running" && !item.Final) {
 					status = activityStatus(item.Status)
 					if issue := toolIssueLabel(item); issue != "" {
 						status = issue
 					}
 				}
-				if status != "" || hasBody {
-					meta := n.Row(c.Key("settled-meta")).MarginStart(6).Gap(6).AlignItems(n.Baseline).Opacity(1 - liveProgress)
-					meta.Children(func() {
-						if status != "" {
-							animation := motionAnimation(c, 160*time.Millisecond)
-							n.Text(c.Key("activity-status"), status).SingleLine().Shrink(0).FontSize(font.Size).FixedLineHeight(20).TextColor(t.TextMuted).
-								ContentTransition(n.ContentTransition{Animation: &animation})
+				clockOpacity := float32(0)
+				if liveProgress > 0 && liveState.started != nil && !liveState.started.IsZero() {
+					clockOpacity = max(0, (liveProgress-.45)/.55)
+				}
+				metaOpacity := float32(1)
+				if liveProgress > 0 {
+					metaOpacity = max(0, min(1, (.75-liveProgress)/.75))
+				}
+				if clockOpacity > 0 || status != "" || hasBody {
+					trailing := n.Row(c.Key("trailing-slot")).Height(20).Shrink(0).AlignItems(n.Baseline)
+					if clockOpacity > 0 {
+						clockFont := n.Font{Family: c.Theme().Font, Size: transcriptCaptionSize, Weight: 400, Features: "tnum"}
+						clockW, _ := n.ShapeText(elapsedActivityLabel(*liveState.started, c.Now()), clockFont, 0).Size()
+						trailing.MinWidth(clockW + 6)
+					}
+					trailing.Children(func() {
+						if status != "" || hasBody {
+							meta := n.Row(c.Key("settled-meta")).MarginStart(6).Gap(6).Shrink(0).AlignItems(n.Baseline).Opacity(metaOpacity)
+							meta.Children(func() {
+								if status != "" {
+									animation := motionAnimation(c, 160*time.Millisecond)
+									n.Text(c.Key("activity-status"), status).SingleLine().Shrink(0).FontSize(font.Size).FixedLineHeight(20).TextColor(t.TextMuted).
+										ContentTransition(n.ContentTransition{Animation: &animation})
+								}
+								if hasBody {
+									angle := float32(0)
+									if v.Model.Collapsed[key] {
+										angle = -90
+									}
+									inlineSymbol(c.Key("activity-chevron"), transcriptChevron, summaryLabel, font, 14, color, angle).Shrink(0)
+								}
+							})
 						}
-						if hasBody {
-							angle := float32(0)
-							if v.Model.Collapsed[key] {
-								angle = -90
-							}
-							inlineSymbol(c.Key("activity-chevron"), transcriptChevron, summaryLabel, font, 14, color, angle).Shrink(0)
+						if clockOpacity > 0 {
+							clockSlot := n.Row(c.Key("elapsed-slot")).Absolute().Left(0).Top(0).Height(20).AlignItems(n.Baseline).Opacity(clockOpacity)
+							clockSlot.Children(func() {
+								runningElapsed(c.Key("elapsed"), liveState.started, t.TextMuted, true)
+							})
 						}
 					})
 				}

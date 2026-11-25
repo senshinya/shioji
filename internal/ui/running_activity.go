@@ -82,9 +82,7 @@ func (v *View) runningActivity(turn domain.Turn) runningActivity {
 				a.hiddenReasoning = domain.HistorySpacer(item)
 				if !item.Final {
 					a.label = "正在思考"
-					if !a.hiddenReasoning {
-						a.reasoning = item.ID
-					}
+					a.reasoning = item.ID
 				}
 				return a
 			}

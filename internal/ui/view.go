@@ -1762,7 +1762,9 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 			replacement = v.runningGroup
 		}
 	}
+	wasDelegated := n.Local(frame, "was-delegated", func() bool { return false })
 	if replacement != "" {
+		*wasDelegated = true
 		// The replacement summary already reveals its actual height. Give up
 		// the old slot on that same clock, so status ownership alone cannot
 		// change the transcript height or trigger bottom-follow scrolling.
@@ -1780,7 +1782,8 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 	if interrupted {
 		duration = 0
 	}
-	v.transcriptContentHeight(c, frame, !delegated && !waiting, !delegated && !waiting, duration, func() float32 {
+	initiallyVisible := !*wasDelegated && !delegated && !waiting
+	v.transcriptContentHeight(c, frame, !delegated && !waiting, initiallyVisible, duration, func() float32 {
 		row := replyFooterRow(c, state)
 		if !interrupted {
 			row.Transition(fadeMotion(c, 180*time.Millisecond))

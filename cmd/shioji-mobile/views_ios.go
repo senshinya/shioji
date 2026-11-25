@@ -443,10 +443,18 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 	var workCaption string
 	var workStart *time.Time
 	var workLive bool
+	var hiddenLiveReasoning domain.Item
+	var hasHiddenLiveReasoning bool
 	for _, turn := range slices.Backward(detail.Turns) {
 		if turn.Status.Active() {
 			workTurn = turn
 			workCaption, workStart, workLive = a.liveTurnStatus(sid, turn, detail.Requests, items)
+			if workLive {
+				if empty, ok := liveEmptyReasoningItem(detail.Items, turn.ID); ok {
+					hiddenLiveReasoning, hasHiddenLiveReasoning = empty, true
+					workCaption = "正在思考"
+				}
+			}
 			break
 		}
 	}
@@ -473,6 +481,21 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 				if domain.ReasoningSummary(item) && !item.Final && item.TurnID == workTurn.ID && item.WorkID == "" {
 					liveReasoning = item.ID
 				}
+			}
+		}
+		if liveReasoning == "" && hasHiddenLiveReasoning {
+			afterToolGroup := lastIdx >= 0 && transcript[lastIdx].Footer == "" &&
+				groups[transcript[lastIdx].First].Key != "" && items[transcript[lastIdx].First].TurnID == workTurn.ID
+			if !afterToolGroup {
+				idx := len(items)
+				items = append(slices.Clone(items), hiddenLiveReasoning)
+				insertAt := lastIdx + 1
+				updated := make([]mobileclient.TranscriptRow, 0, len(transcript)+1)
+				updated = append(updated, transcript[:insertAt]...)
+				updated = append(updated, mobileclient.TranscriptRow{First: idx, End: idx + 1})
+				updated = append(updated, transcript[insertAt:]...)
+				transcript = updated
+				liveReasoning = hiddenLiveReasoning.ID
 			}
 		}
 	}
@@ -1455,6 +1478,30 @@ func mobileClock(c *ui.Context, start time.Time, finish *time.Time, font ui.Font
 			p.After(time.Second - elapsed%time.Second)
 		}
 	}).Shrink(0)
+}
+
+func liveEmptyReasoningItem(items []domain.Item, turnID string) (domain.Item, bool) {
+	if turnID == "" {
+		return domain.Item{}, false
+	}
+	var latest *domain.Item
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if item.TurnID != turnID || item.WorkID != "" {
+			continue
+		}
+		eligible := item.Kind == "tool" ||
+			item.Kind == "assistant" && (item.ActivityOrder > 0 || strings.TrimSpace(item.Text) != "") ||
+			item.Kind == "activity" && item.Presentation == "compaction" ||
+			domain.ReasoningSummary(item)
+		if eligible && (latest == nil || item.ActivityOrder > latest.ActivityOrder) {
+			latest = &items[i]
+		}
+	}
+	if latest != nil && domain.ReasoningSummary(*latest) && !latest.Final && domain.HistorySpacer(*latest) {
+		return *latest, true
+	}
+	return domain.Item{}, false
 }
 
 func (a *mobileApp) liveTurnStatus(sid string, turn domain.Turn, requests []domain.PendingRequest, items []domain.Item) (string, *time.Time, bool) {

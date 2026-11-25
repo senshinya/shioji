@@ -292,6 +292,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 	}
 	endedTurns := map[string]bool{}
 	activeTurn := ""
+	var liveTurn domain.Turn
 	for _, turn := range v.Model.Details[v.Model.SessionID].Turns {
 		status := turn.Status
 		if status.Active() && v.stoppingTurn(turn.ID) {
@@ -300,8 +301,15 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		switch status {
 		case domain.ExecutionStarting, domain.ExecutionRunning:
 			activeTurn = turn.ID
+			liveTurn = turn
 		case domain.ExecutionCompleted, domain.ExecutionFailed, domain.ExecutionInterrupted, domain.ExecutionAbandoned:
 			endedTurns[turn.ID] = true
+		}
+	}
+	liveReasoningID := ""
+	if v.Model.Connected && activeTurn != "" {
+		if activity := v.runningActivity(liveTurn); activity.sending == "" && !activity.waiting && activity.compaction == "" && activity.reasoning != "" {
+			liveReasoningID = activity.reasoning
 		}
 	}
 	// Each tool run adds a title, optional trailing summary and gap.
@@ -309,7 +317,10 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 	rows := make([]transcriptRow, 0, len(items)+3*len(spans)+len(v.Model.Details[v.Model.SessionID].Turns))
 	for i := 0; i < len(items); {
 		item := items[i]
-		if domain.HistorySpacer(item) {
+		liveEmptyReasoning := liveReasoningID != "" && item.ID == liveReasoningID && !inToolSpan[i] &&
+			domain.ReasoningSummary(item) && !item.Final && item.WorkID == "" && item.TurnID == activeTurn &&
+			nextContent[i+1] == len(items) && latestTool < i
+		if domain.HistorySpacer(item) && !liveEmptyReasoning {
 			if len(rows) > 0 {
 				rows[len(rows)-1].end = i
 			}

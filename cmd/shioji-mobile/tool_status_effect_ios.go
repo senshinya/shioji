@@ -11,6 +11,7 @@ type mobileToolSweep struct {
 	row              ui.Element
 	started          time.Time
 	highlight, green ui.Color
+	strength         float32
 }
 
 var mobileSweepMask = ui.RGB(255, 255, 255)
@@ -85,7 +86,7 @@ func newMobileToolSweep(c *ui.Context, row ui.Element, started time.Time) *mobil
 	if c.Theme().Dark {
 		green = ui.RGB(114, 255, 165)
 	}
-	return &mobileToolSweep{row: row, started: started, highlight: palette(c).ink, green: green}
+	return &mobileToolSweep{row: row, started: started, highlight: palette(c).ink, green: green, strength: 1}
 }
 
 // Use the same continuous band as the Mac status row. Paint the shaped
@@ -116,7 +117,7 @@ func mobileSweepColor(ink, highlight ui.Color, center, width, x float32) ui.Colo
 }
 
 func (s *mobileToolSweep) color(p *ui.Painter, r ui.Rect, ink ui.Color) ui.Color {
-	if s == nil {
+	if s == nil || s.strength <= 0 {
 		return ink
 	}
 	center, width := s.band(p)
@@ -127,11 +128,11 @@ func (s *mobileToolSweep) color(p *ui.Painter, r ui.Rect, ink ui.Color) ui.Color
 	if int(ink.G) > int(max(ink.R, ink.B))+20 {
 		highlight = s.green
 	}
-	return mobileSweepColor(ink, highlight, center, width, r.X+r.W/2)
+	return ink.Mix(mobileSweepColor(ink, highlight, center, width, r.X+r.W/2), s.strength)
 }
 
 func (s *mobileToolSweep) text(p *ui.Painter, glyphs []ui.Glyph, x, baseline float32, ink ui.Color) {
-	if s == nil {
+	if s == nil || s.strength <= 0 {
 		p.Glyphs(glyphs, x, baseline, ink)
 		return
 	}
@@ -149,7 +150,7 @@ func (s *mobileToolSweep) text(p *ui.Painter, glyphs []ui.Glyph, x, baseline flo
 			continue
 		}
 		p.Glyphs(glyphs[start:i], x, baseline, ink)
-		p.Glyphs(glyphs[i:i+1], x, baseline, mobileSweepColor(ink, s.highlight, center, width, mid))
+		p.Glyphs(glyphs[i:i+1], x, baseline, ink.Mix(mobileSweepColor(ink, s.highlight, center, width, mid), s.strength))
 		start = i + 1
 	}
 	p.Glyphs(glyphs[start:], x, baseline, ink)
@@ -201,7 +202,14 @@ func (s *mobileToolSweep) caption(c *ui.Context, title string, transition ui.Con
 		target = max(width, extent.shown)
 		c.After(wait)
 	}
-	extent.shown = slot.AnimateTo("caption-width", target, ui.Animation{Duration: mobileReplyFade, Ease: ui.EaseOut})
+	fade := mobileFeedbackFade(mobileReplyFade)
+	if transition.Animation != nil && transition.Animation.Duration > 0 {
+		fade.Duration = transition.Animation.Duration
+		if transition.Animation.Ease != nil {
+			fade.Ease = transition.Animation.Ease
+		}
+	}
+	extent.shown = slot.AnimateTo("caption-width", target, ui.Animation{Duration: fade.Duration, Ease: ui.EaseOut})
 	slot.Width(extent.shown).Children(func() {
 		text := []rune(title)
 		glyphs := ui.Shape(title, font)
@@ -231,7 +239,7 @@ func (s *mobileToolSweep) caption(c *ui.Context, title string, transition ui.Con
 				glyphs = ui.Shape(display, font)
 			}
 			s.text(p, glyphs, r.X, baseline, ink)
-		}).MinWidth(0).Shrink(1).ClipX().Transition(mobileFeedbackFade(mobileReplyFade))
+		}).MinWidth(0).Shrink(1).ClipX().Transition(fade)
 	})
 }
 

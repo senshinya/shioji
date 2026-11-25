@@ -180,3 +180,50 @@ func TestMobilePanelTransitionFadesConditionalPanelInAndOut(t *testing.T) {
 		t.Fatalf("mobilePanelTransition snapped in without Enter fade: midPending=%v mid=%v end=%v", midPending, midPx, endPx)
 	}
 }
+
+func TestMobileReasoningOmitsCompletedLabelAndMorphsInPlace(t *testing.T) {
+	if got := mobileReasoningStatus(domain.Item{Status: "completed", Final: true}); got != "" {
+		t.Fatalf("completed reasoning status should be empty, got %q", got)
+	}
+	if got := mobileReasoningStatus(domain.Item{Status: "interrupted", Final: true}); got != "已中断" {
+		t.Fatalf("interrupted reasoning status = %q, want 已中断", got)
+	}
+	empty, ok := liveEmptyReasoningItem([]domain.Item{
+		{ID: "u", TurnID: "t", Kind: "user", Text: "检查", Status: "sent", Final: true},
+		{ID: "r", TurnID: "t", Kind: "activity", Presentation: "reasoning", Name: "思考摘要", Status: "running", ActivityOrder: 1},
+	}, "t")
+	if !ok || empty.ID != "r" {
+		t.Fatalf("expected empty running reasoning to be detected for in-place morph: ok=%v item=%+v", ok, empty)
+	}
+
+	m := app.NewModel()
+	session := domain.Session{ID: "s1", WorkspaceID: "w1"}
+	started := time.Now().Add(-4 * time.Second)
+	item := domain.Item{ID: "r", TurnID: "t", Kind: "activity", Presentation: "reasoning", Name: "思考摘要", Status: "running"}
+	live := true
+	open := false
+	a := &mobileApp{model: m}
+	tester := ui.NewTester(func(c *ui.Context) {
+		ui.Column(c).Fill().Padding(16).Children(func() {
+			a.reasoningItem(c.Key("reason"), nil, session, item, &open, nil, live, "正在思考", &started, nil)
+		})
+	}, 360, 200)
+	tester.Advance(time.Second)
+	if !tester.HasText("正在思考") || tester.HasText("思考摘要") {
+		t.Fatalf("expected live reasoning to show only 正在思考: %v", tester.Texts())
+	}
+
+	item.Parts = []domain.ContentPart{{Kind: "text", Text: "核对状态与动画。"}}
+	item.Status = "completed"
+	item.Final = true
+	live = false
+	tester.Frame()
+	tester.Advance(100 * time.Millisecond)
+	if !tester.FramePending() {
+		t.Fatal("reasoning morph settled too early instead of animating across frames")
+	}
+	tester.Advance(time.Second)
+	if !tester.HasText("思考摘要") || tester.HasText("已完成") || tester.HasText("正在思考") {
+		t.Fatalf("settled reasoning should show 思考摘要 without 已完成: %v", tester.Texts())
+	}
+}

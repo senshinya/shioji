@@ -234,8 +234,8 @@ func TestStandaloneReasoningShowsOnlyThinkingThenMorphsInPlace(t *testing.T) {
 				}
 			}
 			ui.Advance(time.Second)
-			if !ui.HasText("思考摘要") || ui.HasText("正在思考") || ui.HasText(summary) {
-				t.Fatalf("completed reasoning did not settle into collapsed summary: %v", ui.Texts())
+			if !ui.HasText("思考摘要") || ui.HasText("正在思考") || ui.HasText("已完成") || ui.HasText(summary) {
+				t.Fatalf("completed reasoning did not settle into collapsed summary without 已完成: %v", ui.Texts())
 			}
 			settled, ok := ui.Find("思考摘要")
 			if !ok || math.Abs(float64(settled.Y-whileStreaming.Y)) > 1 {
@@ -249,6 +249,105 @@ func TestStandaloneReasoningShowsOnlyThinkingThenMorphsInPlace(t *testing.T) {
 				t.Fatalf("clicking settled 思考摘要 did not reveal body: %v", ui.Texts())
 			}
 		})
+	}
+}
+
+func TestEmptyRunningReasoningMorphsInPlaceWhenCompletedWithSummary(t *testing.T) {
+	const summary = "先核对 Codex 空思考项在完成时补齐摘要的过渡。"
+	for _, reduced := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reduceMotion=%t", reduced), func(t *testing.T) {
+			m := layoutModel()
+			d := m.Details["s"]
+			started := time.Now().Add(-4 * time.Second)
+			d.Turns = []domain.Turn{{ID: "t", Status: domain.ExecutionRunning, StartedAt: &started}}
+			d.Items = []domain.Item{
+				{ID: "prompt", TurnID: "t", Kind: "user", Text: "检查一下问题", Status: "sent", Final: true},
+				{ID: "reason", TurnID: "t", Kind: "activity", Presentation: "reasoning", Name: "思考摘要", Status: "running", ActivityOrder: 1},
+			}
+			m.Details["s"] = d
+			v := New(m, nil, "")
+			ui := n.NewTester(v.View, 1180, 740)
+			ui.SetPreferences(n.Preferences{ReduceMotion: reduced})
+			ui.Advance(time.Second)
+
+			if v.runningReasoning != "reason" {
+				t.Fatalf("empty standalone running reasoning should own live status, got runningReasoning=%q", v.runningReasoning)
+			}
+			before, ok := ui.Find("正在思考")
+			if !ok || ui.HasText("思考摘要") || ui.HasText("已完成") {
+				t.Fatalf("expected only 正在思考 while empty reasoning runs: %v", ui.Texts())
+			}
+
+			// Codex delivers summary text on item/completed while turning Final=true.
+			d.Items[1].Parts = []domain.ContentPart{{Kind: "text", Text: summary}}
+			d.Items[1].Status = "completed"
+			d.Items[1].Final = true
+			m.Details["s"] = d
+			ui.Frame()
+
+			if !reduced {
+				// Frame 0 must not immediately snap the next footer to full height
+				// with a duplicate green dot while the reasoning row begins morphing.
+				if footer, found := ui.Find("回复信息"); found && footer.H >= 20 && activityGreenIn(ui, footer) {
+					t.Fatalf("next running footer popped in at full height on frame 0: %+v", footer)
+				}
+				sawMidMorph := false
+				for step := 0; step < 8; step++ {
+					ui.Advance(30 * time.Millisecond)
+					heading, found := ui.Find("思考摘要")
+					if !found {
+						t.Fatalf("step %d: missing 思考摘要 during morph: %v", step, ui.Texts())
+					}
+					if math.Abs(float64(heading.Y-before.Y)) > 1 {
+						t.Fatalf("step %d: 思考摘要 jumped vertically during morph: %.1f -> %.1f", step, before.Y, heading.Y)
+					}
+					if step < 4 && activityGreenIn(ui, v.historyRowBounds["reason"]) {
+						sawMidMorph = true
+					}
+				}
+				if !sawMidMorph {
+					t.Fatal("expected live thinking dot to fade smoothly during in-place morph")
+				}
+			}
+
+			ui.Advance(time.Second)
+			if !ui.HasText("思考摘要") || ui.HasText("正在思考") || ui.HasText("已完成") || ui.HasText(summary) {
+				t.Fatalf("completed reasoning did not settle cleanly without 已完成: %v", ui.Texts())
+			}
+			settled, ok := ui.Find("思考摘要")
+			if !ok || math.Abs(float64(settled.Y-before.Y)) > 1 {
+				t.Fatalf("settled 思考摘要 moved from live thinking row: %.1f -> %.1f", before.Y, settled.Y)
+			}
+			if err := ui.Click("思考摘要"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			if !ui.HasText(summary) {
+				t.Fatalf("clicking settled 思考摘要 did not reveal body: %v", ui.Texts())
+			}
+		})
+	}
+}
+
+func TestCompletedReasoningSummaryOmitsCompletedLabel(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Turns = []domain.Turn{{ID: "t", Status: domain.ExecutionCompleted}}
+	d.Items = []domain.Item{
+		{ID: "done", TurnID: "t", Kind: "activity", Presentation: "reasoning", Name: "思考摘要", Text: "已完成思考。", Status: "completed", Final: true},
+		{ID: "stopped", TurnID: "t", Kind: "activity", Presentation: "reasoning", Name: "中断思考摘要", Text: "被中断的思考。", Status: "interrupted", Final: true},
+	}
+	m.Details["s"] = d
+	ui := n.NewTester(New(m, nil, "").View, 950, 650)
+	ui.Advance(time.Second)
+	if !ui.HasText("思考摘要") {
+		t.Fatalf("missing completed reasoning heading: %v", ui.Texts())
+	}
+	if ui.HasText("已完成") {
+		t.Fatalf("completed reasoning summary should not display 已完成: %v", ui.Texts())
+	}
+	if !ui.HasText("中断思考摘要") || !ui.HasText("已中断") {
+		t.Fatalf("non-completed reasoning summary should retain its status: %v", ui.Texts())
 	}
 }
 
