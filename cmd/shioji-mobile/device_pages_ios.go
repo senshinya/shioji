@@ -550,27 +550,35 @@ func (a *mobileApp) openRemoteAgents(parent *mygo.Window) {
 			if len(catalog) == 0 && ready.HarnessID != "" {
 				catalog = []domain.HarnessInfo{{ID: ready.HarnessID, Name: ready.Descriptor().Name, State: ready.State, Models: ready.Models, Account: ready.Account}}
 			}
-			if m.WorkerMinor >= protocol.AgentProfileMinor && catalogEpoch == m.ConnectionEpoch {
+			managedProfiles := m.WorkerMinor >= protocol.AgentProfileMinor
+			if managedProfiles && catalogEpoch == m.ConnectionEpoch {
 				var providers []domain.HarnessInfo
 				for _, info := range catalog {
-					if len(info.ProfileModes) != 0 {
+					install := info.Installation
+					if len(info.ProfileModes) != 0 && install != nil && install.Issue != domain.RuntimeMissing && install.Issue != domain.RuntimeIncompatible {
 						providers = append(providers, info)
 					}
 				}
 				if len(providers) != 0 {
-					action(c, "新增 Profile", func() {
-						a.openCreateAgentProfile(w, providers, func(result protocol.AgentSetupResult) {
-							current := redactRuntimeReadiness(domain.Readiness{Harnesses: result.Catalog})
-							refreshed = &current
-							result.Readiness.Sessions = m.Readiness.Sessions
-							m.Readiness = redactRuntimeReadiness(result.Readiness)
-							a.refresh()
-							w.Invalidate()
-						})
-					}).Disabled(req.busy || !m.Connected)
+					ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
+						action(c, "新增 Profile", func() {
+							a.openCreateAgentProfile(w, providers, func(result protocol.AgentSetupResult) {
+								current := redactRuntimeReadiness(domain.Readiness{Harnesses: result.Catalog})
+								refreshed = &current
+								result.Readiness.Sessions = m.Readiness.Sessions
+								m.Readiness = redactRuntimeReadiness(result.Readiness)
+								a.refresh()
+								w.Invalidate()
+							})
+						}).Disabled(req.busy || !m.Connected)
+					})
 				}
 			}
+			profileCount := 0
 			for _, info := range catalog {
+				if managedProfiles && info.Profile == nil {
+					continue
+				}
 				agent := a.signedInAgent(info)
 				status := readinessName(agent.State)
 				enabled := info.Configured
@@ -585,6 +593,22 @@ func (a *mobileApp) openRemoteAgents(parent *mygo.Window) {
 					})
 				}
 				symbol := mobileHarnessSymbol(agent.Icon)
+				if managedProfiles {
+					profileCount++
+					providerName := info.Profile.HarnessID
+					if index := slices.IndexFunc(catalog, func(h domain.HarnessInfo) bool { return h.ID == providerName }); index >= 0 {
+						providerName = catalog[index].Name
+					}
+					method := mobileProfileModeLabel(info.Profile.Mode)
+					if agent.Installation != nil && agent.Installation.APIKeyOnly {
+						method = "API Key"
+					}
+					if agent.State == domain.RuntimeReady {
+						status = ""
+					}
+					mobileRow(c.Key(agent.ID), agent.Name, providerName+" · "+method, status, symbol, open)
+					continue
+				}
 				if m.WorkerMinor < protocol.RuntimeAgentSelectionMinor {
 					mobileRow(c.Key(agent.ID), agent.Name, "", status, symbol, open)
 					continue
@@ -600,10 +624,13 @@ func (a *mobileApp) openRemoteAgents(parent *mygo.Window) {
 					ui.Icon(row, rightSymbol).Size(13, 13).TextColor(palette(c).secondary).PassThrough()
 				})
 			}
-			if len(catalog) == 0 && !req.busy {
+			if (len(catalog) == 0 || managedProfiles && profileCount == 0) && !req.busy {
 				message := "正在连接执行服务…"
 				if a.model.Connected {
 					message = "该设备未报告可用的 Agent"
+					if managedProfiles {
+						message = "还没有 Profile"
+					}
 				} else if a.model.ConnectionError != "" {
 					message = a.model.ConnectionError
 				}
@@ -811,7 +838,7 @@ func (a *mobileApp) openAgentSettingsAt(parent *mygo.Window, agent domain.Harnes
 				}
 				if connect {
 					primaryAction(c, "连接 API", func() { a.connectAgentAPI(current, &account) }).
-						Disabled(blocked || authBusy || strings.TrimSpace(account.endpoint) == "")
+						Disabled(blocked || authBusy || !mobileAPICanConnect(current, &account))
 				} else if canShowSave {
 					primaryAction(c, "保存", save).Disabled(settingsBlocked)
 				}

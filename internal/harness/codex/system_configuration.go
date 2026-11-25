@@ -177,7 +177,10 @@ func (a Adapter) ConfigureAPI(ctx context.Context, in domain.APIConfiguration) (
 	if a.profileMode == domain.AgentProfileAccount {
 		return domain.Readiness{}, harness.Unsupported("profile-account-replacement")
 	}
-	in, err := validateAPIConfiguration(in)
+	if a.Descriptor().ProfileOnly {
+		return domain.Readiness{}, harness.Unsupported("api-configuration-without-profile")
+	}
+	in, err := a.apiConfiguration(in)
 	if err != nil {
 		return domain.Readiness{}, &harness.SetupError{Issue: domain.RuntimeUnavailableIssue, Message: err.Error()}
 	}
@@ -226,16 +229,18 @@ func (a Adapter) ConfigureAPI(ctx context.Context, in domain.APIConfiguration) (
 	if file == "" || version == "" {
 		return domain.Readiness{}, apiSetupError("未找到可写的系统配置，请重新检测")
 	}
-	models, err := a.APIModels(ctx, in)
+	models, err := discoverAPIModels(ctx, in)
 	if err != nil {
 		return domain.Readiness{}, &harness.SetupError{Issue: domain.RuntimeUnavailableIssue, Message: err.Error()}
 	}
 	if in.Model == "" {
 		in.Model = models[0].ID
-		for _, model := range models {
-			if model.ID == config.Config.Model || model.Default {
-				in.Model = model.ID
-				break
+		if a.apiPreset != nil {
+			for _, model := range models {
+				if model.ID == a.apiPreset.defaultModel {
+					in.Model = model.ID
+					break
+				}
 			}
 		}
 	}
@@ -266,7 +271,11 @@ func (a Adapter) ConfigureAPI(ctx context.Context, in domain.APIConfiguration) (
 		Value    any    `json:"value"`
 		Strategy string `json:"mergeStrategy"`
 	}
-	provider := map[string]any{"name": "Custom API", "base_url": in.Endpoint, "wire_api": "responses", "requires_openai_auth": false}
+	providerID, providerName := "custom", "Custom API"
+	if a.apiPreset != nil {
+		providerID, providerName = a.apiPreset.id, a.apiPreset.id
+	}
+	provider := map[string]any{"name": providerName, "base_url": in.Endpoint, "wire_api": "responses", "requires_openai_auth": false, "supports_websockets": false}
 	if in.Credential != "" {
 		provider["experimental_bearer_token"] = in.Credential
 	}
@@ -276,7 +285,7 @@ func (a Adapter) ConfigureAPI(ctx context.Context, in domain.APIConfiguration) (
 		Status     string          `json:"status"`
 		Overridden json.RawMessage `json:"overriddenMetadata"`
 	}
-	err = r.call(ctx, "config/batchWrite", map[string]any{"filePath": file, "expectedVersion": version, "reloadUserConfig": false, "edits": []edit{{"model_providers.custom", provider, "replace"}, {"model_provider", "custom", "replace"}, {"model", in.Model, "replace"}}}, &written)
+	err = r.call(ctx, "config/batchWrite", map[string]any{"filePath": file, "expectedVersion": version, "reloadUserConfig": false, "edits": []edit{{"model_providers." + providerID, provider, "replace"}, {"model_provider", providerID, "replace"}, {"model", in.Model, "replace"}}}, &written)
 	if err != nil {
 		return domain.Readiness{}, apiSetupError("配置未确认保存；请重新检测后再试")
 	}

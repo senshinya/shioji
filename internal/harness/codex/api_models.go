@@ -20,11 +20,15 @@ import (
 
 // APIModels validates a draft connection without saving credentials or settings.
 func (a Adapter) APIModels(ctx context.Context, in domain.APIConfiguration) ([]domain.Model, error) {
-	in.Model = "discovery"
-	in, err := validateAPIConfiguration(in)
+	in.Model = ""
+	in, err := a.apiConfiguration(in)
 	if err != nil {
 		return nil, err
 	}
+	return discoverAPIModels(ctx, in)
+}
+
+func discoverAPIModels(ctx context.Context, in domain.APIConfiguration) ([]domain.Model, error) {
 	headers := http.Header{}
 	if in.Credential != "" {
 		headers.Set("Authorization", "Bearer "+in.Credential)
@@ -59,7 +63,8 @@ func fetchAPIModels(ctx context.Context, endpoint string, headers http.Header, k
 	}
 	var result struct {
 		Data []struct {
-			ID string `json:"id"`
+			ID   string `json:"id"`
+			Name string `json:"name"`
 		} `json:"data"`
 		Models []struct {
 			ID         string `json:"slug"`
@@ -92,7 +97,7 @@ func fetchAPIModels(ctx context.Context, endpoint string, headers http.Header, k
 		models = append(models, model)
 	}
 	for _, m := range result.Data {
-		add(m.ID, "")
+		add(m.ID, m.Name)
 	}
 	for _, m := range result.Models {
 		if m.Visibility != "hide" {

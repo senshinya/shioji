@@ -38,12 +38,12 @@ func TestDeviceCatalogMarksOnlyUserRequestedModelDiscovery(t *testing.T) {
 	}
 }
 
-func TestWorkerCatalogOffersInstalledAntigravityAlongsideCodex(t *testing.T) {
+func TestWorkerCatalogRegistersDeepSeekAsAThirdAgentType(t *testing.T) {
 	var ids []string
 	for _, a := range SystemAdapters("") {
 		ids = append(ids, a.Descriptor().ID)
 	}
-	if !slices.Equal(ids, []string{"codex", "antigravity"}) {
+	if !slices.Equal(ids, []string{"codex", "antigravity", "deepseek"}) {
 		t.Fatalf("worker harness defaults = %v", ids)
 	}
 }

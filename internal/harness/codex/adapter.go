@@ -21,15 +21,25 @@ type Adapter struct {
 	launchEnv              []string
 	profileID, profileName string
 	profileMode            domain.AgentProfileMode
+	apiPreset              *apiPreset
 }
 
 func (a Adapter) Descriptor() domain.HarnessDescriptor {
+	if a.apiPreset != nil {
+		if a.profileID != "" {
+			return domain.HarnessDescriptor{ID: a.profileID, Name: a.profileName, Icon: a.apiPreset.id}
+		}
+		return domain.HarnessDescriptor{ID: a.apiPreset.id, Name: a.apiPreset.id, Icon: a.apiPreset.id, ProfileOnly: true}
+	}
 	if a.profileID != "" {
 		return domain.HarnessDescriptor{ID: a.profileID, Name: a.profileName, Icon: "openai"}
 	}
 	return domain.HarnessDescriptor{ID: "codex", Name: "Codex", Icon: "openai"}
 }
 func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.Runtime, error) {
+	if a.Descriptor().ProfileOnly {
+		return nil, harness.Unsupported("execution-without-profile")
+	}
 	if opts.CatalogOnly {
 		return a.startCatalog(ctx, opts)
 	}

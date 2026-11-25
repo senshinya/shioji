@@ -39,7 +39,7 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 		top = mainWindowTopInset
 	}
 	n.Column(c.Key("profile-heading")).FillWidth().Padding(top, configurationInset, 0).DragWindow().Children(func() {
-		back := configurationBackAction(c.Key("back"), "Agent", "返回 Agent 列表").Disabled(leaveDisabled)
+		back := configurationBackAction(c.Key("back"), "Profile", "返回 Profile 列表").Disabled(leaveDisabled)
 		if width < 900 {
 			back.MarginStart(60)
 		}
@@ -66,9 +66,10 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 					agent = e.catalog[source]
 				}
 				locked := p.info.ID != "" || !p.working && p.request.ID != ""
+				keyOnly := agent.Installation != nil && agent.Installation.APIKeyOnly
 				submit := false
 				deviceProfileRow(c, "Agent", func() {
-					if locked || len(agents) <= 1 {
+					if locked {
 						if agent.Name == "" {
 							agent.Name = "不可用"
 						}
@@ -79,60 +80,66 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 						})
 						return
 					}
-					trigger := configurationChoiceField(c.Key("agent"), "选择 Agent", agent.Name, disabled || busy)
-					var choices []menuChoice
-					for _, item := range agents {
-						icon := harnessIcon(domain.HarnessDescriptor{ID: item.ID, Name: item.Name, Icon: item.Icon})
-						choices = append(choices, menuChoice{id: item.ID, name: item.Name, icon: icon, checked: item.ID == p.draft.HarnessID, choose: func() {
-							p.draft.HarnessID = item.ID
-							if !slices.Contains(item.ProfileModes, p.draft.Mode) {
-								p.draft.Mode = item.ProfileModes[0]
-							}
-							p.auth.apiReveal = false
-							p.method, p.error = "", ""
-						}})
-					}
-					v.choiceMenu(c, t, "profile-agent:"+key, trigger, choices)
+					profileAgentChoices(c.Key("agents"), t, agents, &p.agentChoice, disabled || busy)
 				})
-				deviceProfileRow(c, "名称", func() {
-					if locked {
-						deviceProfileValue(c, p.draft.Name)
+				if !locked && p.agentChoice != p.draft.HarnessID {
+					if picked := slices.IndexFunc(agents, func(info domain.HarnessInfo) bool { return info.ID == p.agentChoice }); picked >= 0 {
+						p.selectAgent(agents[picked])
+						c.Services().Invalidate()
 						return
 					}
-					field := configurationTextField(c.Key("name"), &p.draft.Name).Label("Profile 名称").
-						Placeholder("例如 " + agent.Name + " 工作").Disabled(disabled || busy)
-					if p.focusName && !disabled {
-						field.Focus()
-						p.focusName = false
-					}
-					submit = field.Submitted() && !field.Composing()
-				})
-				deviceProfileRow(c, "接入方式", func() {
-					if locked || len(agent.ProfileModes) <= 1 {
-						deviceProfileValue(c, profileModeLabel(p.draft.Mode))
-						return
-					}
-					var options []configurationTabItem
-					for _, mode := range agent.ProfileModes {
-						options = append(options, configurationTabItem{ID: string(mode), Label: profileModeLabel(mode)})
-					}
-					next := domain.AgentProfileMode(configurationTabs(c.Key("mode"), string(p.draft.Mode), options, configurationSegmented, disabled || busy))
-					if next != p.draft.Mode {
-						p.auth.apiReveal = false
-						p.draft.Mode, p.error = next, ""
-					}
-				})
+				}
+				if !locked && index < 0 {
+					v.profileSignInStatus(c, t, p, op, disabled, state.Connected)
+					return
+				}
+				if !keyOnly {
+					deviceProfileRow(c, "名称", func() {
+						if locked {
+							deviceProfileValue(c, p.draft.Name)
+							return
+						}
+						field := configurationTextField(c.Key("name:"+p.draft.HarnessID), &p.draft.Name).Label("Profile 名称").
+							Placeholder("例如 " + agent.Name + " 工作").Disabled(disabled || busy)
+						submit = field.Submitted() && !field.Composing()
+					})
+					deviceProfileRow(c, "接入方式", func() {
+						if locked || len(agent.ProfileModes) <= 1 {
+							deviceProfileValue(c, profileModeLabel(p.draft.Mode))
+							return
+						}
+						var options []configurationTabItem
+						for _, mode := range agent.ProfileModes {
+							options = append(options, configurationTabItem{ID: string(mode), Label: profileModeLabel(mode)})
+						}
+						next := domain.AgentProfileMode(configurationTabs(c.Key("mode"), string(p.draft.Mode), options, configurationSegmented, disabled || busy))
+						if next != p.draft.Mode {
+							p.auth = runtimeOptionDraft{}
+							p.draft.Mode, p.error = next, ""
+						}
+					})
+				}
 				api = p.draft.Mode == domain.AgentProfileAPI
 				if !models {
-					n.Column(c.Key("profile-access")).FillWidth().Margin(configurationHeadingGap, 0, 0).Children(func() {
+					access := n.Column(c.Key("profile-access:" + p.draft.HarnessID)).FillWidth()
+					if !keyOnly {
+						access.Margin(configurationHeadingGap, 0, 0)
+					}
+					access.Children(func() {
 						modeIndex := 0
 						if api {
 							modeIndex = 1
 						}
 						configurationTabPanel(c.Key("method"), string(p.draft.Mode), modeIndex, configurationPanelFit, func() {
-							deviceDivider(c)
+							if !keyOnly {
+								deviceDivider(c)
+							}
 							if api {
-								submit = agentAPIFields(c, deviceProfileRow, &p.auth, disabled || busy) || submit
+								if keyOnly {
+									submit = agentAPIKeyField(c, deviceProfileRow, &p.auth, disabled || busy, true)
+								} else {
+									submit = agentAPIFields(c, deviceProfileRow, &p.auth, disabled || busy) || submit
+								}
 							} else {
 								if p.info.ID != "" {
 									agent = p.info
@@ -150,6 +157,9 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 					v.profileSignInStatus(c, t, p, op, disabled, state.Connected)
 				}
 				label := deviceProfileAction(p, op)
+				if keyOnly && label == "创建并连接" {
+					label = "连接"
+				}
 				n.Row(c.Key("actions")).FillWidth().Padding(16, 0, 0).Gap(8).Justify(n.End).AlignItems(n.Center).Children(func() {
 					cancel := "取消"
 					cancelDisabled := leaveDisabled
@@ -170,8 +180,8 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 						return
 					}
 					cannotSubmit := disabled || p.working || active && (!waiting || op.status.Challenge.URL == "") ||
-						p.info.ID == "" && (index < 0 || strings.TrimSpace(p.draft.Name) == "") ||
-						api && !models && strings.TrimSpace(p.auth.apiEndpoint) == ""
+						p.info.ID == "" && (index < 0 || !keyOnly && strings.TrimSpace(p.draft.Name) == "") ||
+						api && !models && (keyOnly && strings.TrimSpace(p.auth.apiCredential) == "" || !keyOnly && strings.TrimSpace(p.auth.apiEndpoint) == "")
 					fill, ink := t.Text, t.Background
 					if cannotSubmit {
 						fill, ink = t.SurfacePressed, t.TextMuted
@@ -193,6 +203,29 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 			})
 		})
 	})
+}
+
+func profileAgentChoices(c *n.Context, t *n.Theme, agents []domain.HarnessInfo, selected *string, disabled bool) {
+	n.RadioGroup(c, func() {
+		for _, agent := range agents {
+			on := *selected == agent.ID
+			color := t.TextMuted
+			if on {
+				color = t.Text
+			}
+			button := controlFeedback(c, n.RadioBase(c.Key(agent.ID), selected, agent.ID), 4).
+				Grow(1).MinWidth(0).Shrink(1).Height(24).Radius(4).Justify(n.Center).AlignItems(n.Center).
+				Label(agent.Name).Disabled(disabled)
+			if on {
+				button.Background(t.Background).Border(1, t.Border)
+			}
+			button.Children(func() {
+				inlineIconText(c, harnessIcon(domain.HarnessDescriptor{Icon: agent.Icon}), agent.Name,
+					n.Font{Family: t.Font, Size: configurationValueSize, Weight: 400}, 14, 4, color).
+					MinWidth(0).Shrink(1).TooltipWhenTruncated(agent.Name)
+			})
+		}
+	}).Row().FillWidth().Padding(2).Gap(2).Radius(5).Background(t.Text.Alpha(.045)).Label("选择 Agent")
 }
 
 func (v *View) profileAuthorizationMethod(c *n.Context, t *n.Theme, key string, p *deviceProfileEditor, agent domain.HarnessInfo, disabled bool) {

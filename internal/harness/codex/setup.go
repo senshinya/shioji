@@ -23,6 +23,13 @@ func (a Adapter) Installation() domain.RuntimeInstallation {
 	if image, err := installedExecutable(path, env); err == nil {
 		path = image.path
 	}
+	if a.apiPreset != nil {
+		return domain.RuntimeInstallation{
+			APISetup: a.apiSetupSupported(), APIKeyOnly: true, Executable: path, Configurable: a.profileID != "",
+			Documentation: a.apiPreset.documentation, Options: a.runtimeOptions,
+			OptionsSupported: domain.RuntimeOptionSupport{Instructions: true, TitleModel: true},
+		}
+	}
 	command := []string{path}
 	command = append(command, a.runtimeOptions.Arguments...)
 	command = append(command, "login", "--device-auth")

@@ -275,6 +275,9 @@ func (s *Server) agentEnabled(id string) bool {
 	if profile, ok := s.agentProfiles[id]; ok {
 		return !profile.Disabled
 	}
+	if adapter := s.adapters[id]; adapter != nil && adapter.Descriptor().ProfileOnly {
+		return false
+	}
 	if s.selectedHarnesses == nil {
 		return true
 	}
@@ -299,6 +302,9 @@ func (s *Server) configureAgents(in protocol.DeviceAgents) (protocol.AgentSetupR
 		if _, managed := s.agentProfile(entry.HarnessID); managed {
 			continue
 		}
+		if adapter := s.adapter(entry.HarnessID); adapter != nil && adapter.Descriptor().ProfileOnly {
+			continue
+		}
 		legacy = append(legacy, entry)
 		selected = append(selected, entry.HarnessID)
 	}
@@ -314,6 +320,9 @@ func (s *Server) selectRuntimeAgent(in protocol.RuntimeAgentSelection) (protocol
 	}
 	if profile, managed := s.agentProfile(in.HarnessID); managed {
 		return s.setAgentProfileEnabled(profile, *in.Enabled)
+	}
+	if adapter := s.adapter(in.HarnessID); adapter != nil && adapter.Descriptor().ProfileOnly {
+		return protocol.AgentSetupResult{}, errors.New("请为此 Agent 新增 Profile")
 	}
 	if s.agentEnabled(in.HarnessID) == *in.Enabled {
 		if !gate.TryRLock() {

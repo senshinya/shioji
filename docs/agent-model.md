@@ -1,12 +1,16 @@
 # Harness 中立模型与适配边界
 
-Shioji 注册 Codex 和 Antigravity 两个 Agent。独立内存驱动用于多 harness 契约测试。本文的接口说明以实际 Worker、adapter 和目录能力为准。Codex 的协议依据为 [冻结 schema](../design/protocol/codex-0.166.0/inventory.json) 和[官方 App Server 文档](https://developers.openai.com/codex/app-server/)。
+Shioji 注册 Codex、Antigravity 和 deepseek 三种 Agent。独立内存驱动用于多 harness 契约测试。本文的接口说明以实际 Worker、adapter 和目录能力为准。Codex 的协议依据为 [冻结 schema](../design/protocol/codex-0.166.0/inventory.json) 和[官方 App Server 文档](https://developers.openai.com/codex/app-server/)。
 
 Codex adapter 启动时检查当前安装导出的协议形状和实际能力，不再按单一 CLI 版本白名单拒绝正常升级；0.166.0 保留为冻结录制基线，0.167.0 已通过真实 App Server 集成测试。缺少可选能力时显式关闭，必需上下文／安全契约不兼容时拒绝启动。详见 [本机版本与更新](local-worker-updates.md)。
 
 运行边界已由用户确定：采用自有完整 worker，取消 herdr-core 依赖。Codex adapter 位于 owning device 的 worker 内；客户端通过版本化 worker 协议接收中间结构，不自行持有远端 app-server 连接。
 
 首期执行设备限定为 macOS。最新可行性实验见 [macOS worker 技术验证](macos-worker-research-2026-11-03.md)；研究夹具与当前生产实现分别验证。
+
+## deepseek
+
+deepseek 通过执行设备上的独立 Profile 接入。新增时选择 Agent 并填写 API Key，所属 worker 固定使用 `https://api.deepseek.com`，从 `/models` 读取目录，由复用的 app-server 执行引擎通过 `/responses` 请求模型。每个 Profile 有独立的 `CODEX_HOME`、会话路由标识和凭据，API Key 保存在该目录的原生配置。默认优先选择目录中存在的 `deepseek-flash`。[DeepSeek Responses 文档](https://api-docs.deepseek.com/zh-cn/guides/responses_api/) · [DeepSeek 模型目录文档](https://api-docs.deepseek.com/api/list-models/)
 
 ## Antigravity
 

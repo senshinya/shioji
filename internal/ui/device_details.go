@@ -5,6 +5,7 @@ import (
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 	"strconv"
 	"strings"
 	"time"
@@ -216,6 +217,9 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 				})
 			})
 			tabs := []configurationTabItem{{ID: "settings", Label: "设备设置"}, {ID: "agents", Label: "Agent"}, {ID: "workspaces", Label: "工作区"}}
+			if state.WorkerMinor >= protocol.AgentProfileMinor {
+				tabs[1].Label = "Profile"
+			}
 			n.Column(c).FillWidth().PaddingX(configurationInset).Children(func() {
 				n.Row(c).FillWidth().Children(func() {
 					v.deviceTab = configurationTabs(c, v.deviceTab, tabs, configurationUnderline, false)

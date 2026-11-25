@@ -35,9 +35,10 @@ func (c HarnessCapabilities) CanRequestCompaction() bool { return c.Compact || c
 func (c HarnessCapabilities) CanReopenIdle() bool { return c.Resume || c.Continue }
 
 type HarnessDescriptor struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Icon string `json:"icon,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Icon        string `json:"icon,omitempty"`
+	ProfileOnly bool   `json:"profileOnly,omitempty"`
 }
 type HarnessInfo struct {
 	Profile           *AgentProfile        `json:"profile,omitempty"`

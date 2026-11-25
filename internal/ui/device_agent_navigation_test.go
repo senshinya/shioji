@@ -91,7 +91,7 @@ func TestProfileAuthorizationResumesFromDeviceListAndChecksModelsSeparately(t *t
 		}
 		ui.Advance(time.Second)
 	}
-	click("配置 工作账号 路径")
+	click("打开 工作账号 配置")
 	click("继续授权")
 	job := welcomeJob(t, v.Controller, "runtime.signin.start")
 	in := job.Input.(protocol.SignInInput)
@@ -116,7 +116,7 @@ func TestProfileAuthorizationResumesFromDeviceListAndChecksModelsSeparately(t *t
 	cancel.Apply(m, body, nil)
 	ui.Frame()
 	click("稍后设置")
-	click("配置 工作账号 路径")
+	click("打开 工作账号 配置")
 	click("继续授权")
 	job = welcomeJob(t, v.Controller, "runtime.signin.start")
 	next := job.Input.(protocol.SignInInput)
@@ -138,7 +138,7 @@ func TestProfileAuthorizationResumesFromDeviceListAndChecksModelsSeparately(t *t
 	if !ui.HasText("模型待确认") {
 		t.Fatal(ui.Texts())
 	}
-	click("配置 工作账号 路径")
+	click("打开 工作账号 配置")
 	click("重试读取模型")
 	check := welcomeJob(t, v.Controller, "runtime.check")
 	if check.ConnectionID != "air" || check.Input.(protocol.RuntimeConfiguration).HarnessID != profile.ID || len(v.Controller.Jobs) != 0 {
@@ -150,7 +150,7 @@ func TestProfileAuthorizationResumesFromDeviceListAndChecksModelsSeparately(t *t
 	check.Apply(m, body, nil)
 	ui.Frame()
 	ui.Advance(time.Second)
-	if !ui.HasText("已就绪") || ui.HasText("重试读取模型") {
+	if _, listed := ui.Find("打开 工作账号 配置"); !listed || ui.HasText("重试读取模型") {
 		t.Fatal("ready Profile did not return to the list", ui.Texts())
 	}
 }
@@ -176,6 +176,7 @@ func TestProfileCreationRetriesUncertainReceiptAndIgnoresLateNavigation(t *testi
 		ui.Advance(time.Second)
 	}
 	click("新增 Profile")
+	click("Codex")
 	click("Profile 名称")
 	ui.Type("测试账号")
 	click("创建并登录")
@@ -235,7 +236,7 @@ func TestProfilePageUsesAuthoritativeBindingWithoutSignInReceipt(t *testing.T) {
 	v.devices, v.deviceSelected, v.deviceTab = true, "local", "agents"
 	ui := n.NewTester(v.View, 1100, 680)
 	ui.Advance(time.Second)
-	if err := ui.Click("配置 工作 API 路径"); err != nil {
+	if err := ui.Click("打开 工作 API 配置"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(time.Second)
@@ -250,7 +251,7 @@ func TestProfilePageUsesAuthoritativeBindingWithoutSignInReceipt(t *testing.T) {
 	state.Readiness.Harnesses = []domain.HarnessInfo{info}
 	ui.Frame()
 	ui.Advance(time.Second)
-	if ui.HasText("重试连接") || !ui.HasText("已就绪") {
+	if _, listed := ui.Find("打开 工作 API 配置"); !listed || ui.HasText("重试连接") {
 		t.Fatal("authoritative binding did not exit the flow without resending credentials", ui.Texts())
 	}
 	for len(v.Controller.Jobs) > 0 {
@@ -274,7 +275,7 @@ func TestProfileWithMissingRuntimeOpensExistingAgentDetail(t *testing.T) {
 	v.devices, v.deviceSelected, v.deviceTab = true, "local", "agents"
 	ui := n.NewTester(v.View, 1100, 680)
 	ui.Advance(time.Second)
-	if err := ui.Click("配置 工作账号 路径"); err != nil {
+	if err := ui.Click("打开 工作账号 配置"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(time.Second)
@@ -348,13 +349,6 @@ func TestCreateDeviceProfileUsesSelectedAgentAndLoginMode(t *testing.T) {
 	if _, ok := ui.Find("配置 Codex 路径"); ok {
 		t.Fatal("the creation form left the Agent list visible", ui.Texts())
 	}
-	if err := ui.Click("Profile 名称"); err != nil {
-		t.Fatal(err)
-	}
-	ui.Type("OpenAI API")
-	if err := ui.Click("选择 Agent"); err != nil {
-		t.Fatal(err)
-	}
 	if err := ui.Click("Antigravity"); err != nil {
 		t.Fatal(err)
 	}
@@ -362,13 +356,14 @@ func TestCreateDeviceProfileUsesSelectedAgentAndLoginMode(t *testing.T) {
 	if ui.HasText("自定义 API") {
 		t.Fatal("Antigravity offered an unsupported Profile sign-in method")
 	}
-	if err := ui.Click("选择 Agent"); err != nil {
-		t.Fatal(err)
-	}
 	if err := ui.Click("Codex"); err != nil {
 		t.Fatal(err)
 	}
 	ui.Advance(time.Second)
+	if err := ui.Click("Profile 名称"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Type("OpenAI API")
 	if err := ui.Click("自定义 API"); err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +421,67 @@ func TestCreateDeviceProfileUsesSelectedAgentAndLoginMode(t *testing.T) {
 	body, _ = json.Marshal(domain.SignInStatus{ID: next.ID, HarnessID: draft.ID, Phase: domain.SignInCompleted, Profile: &info})
 	retry.Apply(m, body, nil)
 	ui.Advance(time.Second)
-	if _, ok := ui.Find("配置 OpenAI API 路径"); !ok || !ui.HasText("已就绪") || ui.HasText("API Key") {
+	if _, ok := ui.Find("打开 OpenAI API 配置"); !ok || ui.HasText("API Key") {
 		t.Fatal("completion did not return to the new Agent row", ui.Texts())
+	}
+}
+
+func TestDeviceProfilesHideUnconfiguredTypesAndDeepSeekOnlyAsksForKey(t *testing.T) {
+	m := deviceUIModel()
+	state := m.DeviceStates["local"]
+	state.ConnectionEpoch = ""
+	state.WorkerMinor = protocol.AgentProfileMinor
+	profile := domain.AgentProfile{ID: "personal", Name: "个人配置", HarnessID: "deepseek", Mode: domain.AgentProfileAPI, Authorized: true}
+	state.Readiness.Harnesses = []domain.HarnessInfo{
+		{ID: "codex", Name: "Codex", Configured: true, ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAccount}, Installation: &domain.RuntimeInstallation{SignInMethods: []domain.SignInMethod{domain.SignInBrowser}}},
+		{ID: "deepseek", Name: "deepseek", Icon: "deepseek", ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAPI}, Installation: &domain.RuntimeInstallation{APISetup: true, APIKeyOnly: true}},
+		{ID: profile.ID, Name: profile.Name, Profile: &profile, Configured: true, State: domain.RuntimeReady, Installation: &domain.RuntimeInstallation{}},
+	}
+	v := New(m, app.NewController(""), "")
+	v.devices, v.deviceSelected, v.deviceTab = true, "local", "agents"
+	ui := n.NewTester(v.View, 1100, 680)
+	ui.Advance(time.Second)
+	if ui.HasText("Codex") || !ui.HasText(profile.Name) {
+		t.Fatal("the profile list must show saved profiles only", ui.Texts())
+	}
+	if _, ok := ui.Find("启用 " + profile.Name); ok {
+		t.Fatal("a login profile has a power switch")
+	}
+	click := func(label string) {
+		t.Helper()
+		if err := ui.Click(label); err != nil {
+			t.Fatal(err, ui.Texts())
+		}
+		ui.Advance(time.Second)
+	}
+	click("新增 Profile")
+	click("deepseek")
+	if ui.HasText("服务地址") {
+		t.Fatal("DeepSeek should use its fixed service URL")
+	}
+	click("输入 API Key")
+	ui.Type("fixture-key")
+	click("Codex")
+	click("deepseek")
+	if v.deviceProfile.auth.apiCredential != "" || v.deviceProfile.auth.apiReveal {
+		t.Fatal("switching agents retained a previous credential")
+	}
+	click("输入 API Key")
+	ui.Type("fresh-fixture-key")
+	click("连接")
+	create := welcomeJob(t, v.Controller, "runtime.profile.create")
+	draft := create.Input.(domain.AgentProfile)
+	if draft.Name != "deepseek" || draft.HarnessID != "deepseek" || draft.Mode != domain.AgentProfileAPI {
+		t.Fatal("unexpected DeepSeek profile metadata", draft)
+	}
+	info := domain.HarnessInfo{ID: draft.ID, Name: draft.Name, Profile: &draft, Configured: true,
+		Installation: &domain.RuntimeInstallation{Issue: domain.RuntimeSignInRequired, APISetup: true, APIKeyOnly: true}}
+	catalog := append(append([]domain.HarnessInfo(nil), state.Readiness.Harnesses...), info)
+	data, _ := json.Marshal(protocol.AgentSetupResult{Ready: true, Catalog: catalog, Readiness: domain.Readiness{Harnesses: catalog}})
+	create.Apply(m, data, nil)
+	signIn := welcomeJob(t, v.Controller, "runtime.signin.start")
+	input := signIn.Input.(protocol.SignInInput)
+	if signIn.ConnectionID != "local" || input.HarnessID != draft.ID || input.Method != domain.SignInAPI || input.API == nil || input.API.Endpoint != "" || input.API.Credential != "fresh-fixture-key" {
+		t.Fatal("DeepSeek setup did not send a key-only request for its own Profile")
 	}
 }

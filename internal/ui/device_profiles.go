@@ -23,7 +23,7 @@ type deviceProfileEditor struct {
 	request     domain.AgentProfile
 	auth        runtimeOptionDraft
 	method      domain.SignInMethod
-	focusName   bool
+	agentChoice string
 	working     bool
 	seenSignIn  string
 	error       string
@@ -80,16 +80,19 @@ func (v *View) canContinueDeviceProfile(key string, info domain.HarnessInfo) boo
 
 func (v *View) openDeviceProfile(key string, info *domain.HarnessInfo) {
 	p := &deviceProfileEditor{key: key, device: v.signInDevice(key)}
-	if info.Profile == nil {
-		p.draft = domain.AgentProfile{HarnessID: info.ID, Mode: info.ProfileModes[0]}
-		p.focusName = true
-	} else {
+	if info != nil && info.Profile != nil {
 		p.draft, p.info = *info.Profile, *info
 		if op := v.agentSignIn(key, info.ID); info.Profile.Authorized && op != nil && op.status.Phase == domain.SignInCompleted {
 			p.seenSignIn = op.status.ID
 		}
 	}
 	v.deviceProfile = p
+}
+
+func (p *deviceProfileEditor) selectAgent(info domain.HarnessInfo) {
+	p.draft = domain.AgentProfile{HarnessID: info.ID, Mode: info.ProfileModes[0]}
+	p.auth = runtimeOptionDraft{}
+	p.method, p.error = "", ""
 }
 
 func (v *View) syncDeviceProfile() {
@@ -106,7 +109,6 @@ func (v *View) closeDeviceProfile(p *deviceProfileEditor) {
 		op.autoOpen = false
 	}
 	p.auth = runtimeOptionDraft{}
-	delete(v.menuOpen, "profile-agent:"+p.key)
 	delete(v.menuOpen, "profile-method:"+p.key)
 	if v.deviceProfile == p {
 		v.deviceProfile = nil
@@ -131,11 +133,11 @@ func (v *View) deviceProfileEntry(c *n.Context, key string, state *app.DeviceSta
 		return
 	}
 	const label = "新增 Profile"
-	button := control(c, configurationFieldRadius).Absolute().Right(0).Top((configurationTabHeight - configurationControlHeight) / 2).
-		Height(configurationControlHeight).PaddingX(configurationHoverInset).AlignItems(n.Center).
+	button := control(c, configurationFieldRadius).Absolute().Right(0).Top((configurationTabHeight-configurationControlHeight)/2).
+		Height(configurationControlHeight).Padding(0, profileTrailingInkInset, 0, configurationHoverInset).AlignItems(n.Center).
 		Label(label).Disabled(!state.Connected || e.busy || e.loading || v.Controller == nil)
 	button.Children(func() {
-		inlineIconText(c, plus, label, n.Font{Family: c.Theme().Font, Size: configurationValueSize, Weight: 500}, 14, 6, c.Theme().Text)
+		n.Text(c, label).FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).SingleLine()
 	})
 	if e.focusProfileEntry {
 		e.focusProfileEntry = false
@@ -143,7 +145,7 @@ func (v *View) deviceProfileEntry(c *n.Context, key string, state *app.DeviceSta
 	}
 	if button.Clicked() {
 		e.profileAnchor = ""
-		v.openDeviceProfile(key, &agents[0])
+		v.openDeviceProfile(key, nil)
 		c.Services().Invalidate()
 	}
 }
@@ -154,7 +156,18 @@ func (v *View) submitDeviceProfile(key string, state *app.DeviceState, e *device
 		v.refreshDeviceProfileModels(key, state, e, p)
 		return
 	}
-	if p.draft.Mode == domain.AgentProfileAPI {
+	keyOnly := p.info.Installation != nil && p.info.Installation.APIKeyOnly
+	for _, info := range e.catalog {
+		if info.ID == p.draft.HarnessID && info.Installation != nil && info.Installation.APIKeyOnly {
+			keyOnly = true
+			break
+		}
+	}
+	if keyOnly && strings.TrimSpace(p.auth.apiCredential) == "" {
+		p.error = "请输入 API Key"
+		return
+	}
+	if p.draft.Mode == domain.AgentProfileAPI && !keyOnly {
 		address := strings.TrimSpace(p.auth.apiEndpoint)
 		u, err := url.Parse(address)
 		if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || len(address) > 4096 {
@@ -173,6 +186,9 @@ func (v *View) submitDeviceProfile(key string, state *app.DeviceState, e *device
 	}
 	draft := p.draft
 	draft.Name = strings.TrimSpace(draft.Name)
+	if keyOnly {
+		draft.Name = draft.HarnessID
+	}
 	if draft.Name == "" || len(draft.Name) > 256 || strings.ContainsFunc(draft.Name, unicode.IsControl) {
 		p.error = "请输入有效的 Profile 名称"
 		return

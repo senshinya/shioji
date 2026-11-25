@@ -10,7 +10,7 @@ import (
 
 // SystemAdapters provides device-local harnesses for all worker entry points.
 func SystemAdapters(codexExecutable string) []harness.Adapter {
-	return []harness.Adapter{codex.Adapter{Executable: codexExecutable}, antigravity.Adapter{}}
+	return []harness.Adapter{codex.Adapter{Executable: codexExecutable}, antigravity.Adapter{}, codex.NewDeepSeekAdapter(codexExecutable)}
 }
 
 // Prior single-harness worker versions kept Codex's catalog in the root.

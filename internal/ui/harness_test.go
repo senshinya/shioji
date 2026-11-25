@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestSystemProfileBadgeDistinguishesScannedAgentInDeviceAndWelcomeLists(t *testing.T) {
+func TestSystemProfileBadgeRemainsInSetupAndLegacyDeviceLists(t *testing.T) {
 	catalog := []domain.HarnessInfo{
 		{ID: "codex", Name: "Codex", Configured: true, State: domain.RuntimeReady, Installation: &domain.RuntimeInstallation{},
 			ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAccount}},
@@ -32,6 +32,7 @@ func TestSystemProfileBadgeDistinguishesScannedAgentInDeviceAndWelcomeLists(t *t
 			state.ConnectionEpoch = ""
 			state.Readiness.Harnesses = append([]domain.HarnessInfo(nil), catalog...)
 			if scenario.legacy {
+				state.WorkerMinor = protocol.AgentProfileMinor - 1
 				state.Readiness.Harnesses[0].ProfileModes = nil
 				state.Readiness.Harnesses[0].Configured = false
 			}
@@ -52,6 +53,12 @@ func TestSystemProfileBadgeDistinguishesScannedAgentInDeviceAndWelcomeLists(t *t
 			badge, shown := ui.Find("系统")
 			system, hasSystem := ui.Find("Codex")
 			independent, hasIndependent := ui.Find("Codex 工作")
+			if !scenario.legacy && !scenario.firstRun {
+				if shown || hasSystem || !hasIndependent {
+					t.Fatal("the Profile list must show saved configurations only", ui.Texts())
+				}
+				return
+			}
 			if !shown || !hasSystem || !hasIndependent || badge.X < system.X+system.W-1 || badge.Y < system.Y-1 || badge.Y >= independent.Y {
 				t.Fatal("system badge must sit on the discovered Agent's line", system, badge, independent, ui.Texts())
 			}

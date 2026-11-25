@@ -62,6 +62,10 @@ func (v *View) deviceAgents(c *n.Context, t *n.Theme, key string, state *app.Dev
 	editor := *e
 	scope.Children(func() {
 		n.Column(c).FillWidth().Gap(4).Children(func() {
+			if state.WorkerMinor >= protocol.AgentProfileMinor {
+				v.deviceProfileRows(c.Key("profiles"), t, key, state.Connected, editor)
+				return
+			}
 			v.agentRows(c.Key("rows"), t, key, state.Connected, editor, false, func() { v.saveDeviceAgents(key, state, editor) })
 			if len(editor.catalog) == 0 {
 				label := "暂无 Agent"
@@ -75,6 +79,78 @@ func (v *View) deviceAgents(c *n.Context, t *n.Theme, key string, state *app.Dev
 			}
 		})
 	})
+}
+
+func (v *View) deviceProfileRows(c *n.Context, t *n.Theme, key string, connected bool, e *deviceAgentEditor) {
+	font := n.Font{Family: t.Font, Size: 14, Weight: 500}
+	count := 0
+	for _, info := range e.catalog {
+		if info.Profile == nil {
+			continue
+		}
+		count++
+		name := info.Name
+		provider := info.Profile.HarnessID
+		for _, agent := range e.catalog {
+			if agent.ID == provider {
+				provider = agent.Name
+				break
+			}
+		}
+		mode := profileModeLabel(info.Profile.Mode)
+		if info.Installation != nil && info.Installation.APIKeyOnly {
+			mode = "API Key"
+		}
+		detail := provider + " · " + mode
+		if !info.Profile.Authorized || profileModelsPending(info) || info.State != domain.RuntimeReady || !connected {
+			status := runtimeSetupLabel(info, connected)
+			if profileModelsPending(info) {
+				status = "模型待确认"
+			}
+			detail += " · " + status
+		}
+		button := control(c.Key(info.ID), 6).FillWidth().Height(56).PaddingX(configurationHoverInset).
+			Gap(8).AlignItems(n.Center).Label("打开 " + name + " 配置")
+		button.Children(func() {
+			n.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(n.Baseline).Children(func() {
+				inlineSymbol(c, harnessIcon(domain.HarnessDescriptor{Icon: info.Icon}), name, font, 24, t.TextMuted)
+				n.Column(c).Grow(1).MinWidth(0).Children(func() {
+					n.Text(c, name).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).SingleLine().TooltipWhenTruncated(name)
+					n.Text(c, detail).FontSize(12).FixedLineHeight(16).SingleLine().TextColor(t.TextMuted).TooltipWhenTruncated(detail)
+				})
+			})
+			n.Row(c).Size(toolbarActionSize, toolbarActionSize).AlignItems(n.Center).Justify(n.Center).Children(func() {
+				n.Icon(c, disclosureRight).Size(profileChevronSize, profileChevronSize).TextColor(t.TextMuted)
+			})
+		})
+		if e.profileAnchor == info.ID && e.revealProfile {
+			e.revealProfile = false
+			button.Focus().ScrollIntoView()
+		}
+		if button.Clicked() {
+			e.profileAnchor = ""
+			if v.canContinueDeviceProfile(key, info) {
+				v.openDeviceProfile(key, &info)
+			} else {
+				if e.openID != info.ID {
+					e.edit(info)
+				}
+				e.pageID = info.ID
+			}
+			c.Services().Invalidate()
+		}
+		deviceDivider(c)
+	}
+	message := e.error
+	if message == "" && count == 0 {
+		message = "还没有 Profile"
+		if e.loading {
+			message = "正在读取 Profile…"
+		}
+	}
+	if message != "" {
+		n.Text(c, message).FontSize(12).TextColor(t.TextMuted).Padding(8, configurationHoverInset)
+	}
 }
 
 func (v *View) syncDeviceAgents(key string, state *app.DeviceState, e **deviceAgentEditor) {

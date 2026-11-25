@@ -9,6 +9,8 @@ import (
 	"time"
 	"unicode"
 
+	"shioji/internal/ui/assets"
+
 	"github.com/egoist/mygo/ui"
 )
 
@@ -83,6 +85,8 @@ func mobileHarnessSymbol(icon string) *ui.SVG {
 		return openAISymbol
 	case "antigravity":
 		return antigravitySymbol
+	case "deepseek":
+		return assets.DeepSeek
 	default:
 		return terminalSymbol
 	}

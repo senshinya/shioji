@@ -513,7 +513,11 @@ func (v *View) agentSystemAPI(c *n.Context, t *n.Theme, key string, e *deviceAge
 	}
 	account := info.Account
 	credential := map[string]string{"configured": "已配置", "managed": "由系统管理", "missing": "缺少凭据", "notRequired": "无需凭据"}[account.Credential]
-	for _, field := range []struct{ label, value string }{{"服务地址", account.Endpoint}, {"默认模型", account.Model}, {"API Key", credential}} {
+	endpoint := account.Endpoint
+	if info.Installation != nil && info.Installation.APIKeyOnly {
+		endpoint = ""
+	}
+	for _, field := range []struct{ label, value string }{{"服务地址", endpoint}, {"默认模型", account.Model}, {"API Key", credential}} {
 		if field.value == "" {
 			continue
 		}
@@ -571,9 +575,17 @@ func agentAPIFields(c *n.Context, row func(*n.Context, string, func()), draft *r
 		field := setupField(c, "API 地址", &draft.apiEndpoint, "https://api.example.com/v1", disabled)
 		submit = field.Submitted() && !field.Composing()
 	})
+	return agentAPIKeyField(c, row, draft, disabled, false) || submit
+}
+
+func agentAPIKeyField(c *n.Context, row func(*n.Context, string, func()), draft *runtimeOptionDraft, disabled, required bool) (submit bool) {
+	placeholder := "可选"
+	if required {
+		placeholder = "输入 API Key"
+	}
 	row(c, "API Key", func() {
 		n.Column(c).FillWidth().Height(configurationControlHeight).Children(func() {
-			field := configurationTextField(c, &draft.apiCredential).Padding(4, 36, 4, 8).Label("输入 API Key").Placeholder("可选").Disabled(disabled)
+			field := configurationTextField(c, &draft.apiCredential).Padding(4, 36, 4, 8).Label("输入 API Key").Placeholder(placeholder).Disabled(disabled)
 			if !draft.apiReveal {
 				field.Password()
 			}

@@ -17,6 +17,7 @@ const (
 
 type RuntimeInstallation struct {
 	APISetup         bool                 `json:"apiSetup,omitempty"`
+	APIKeyOnly       bool                 `json:"apiKeyOnly,omitempty"`
 	SignInMethods    []SignInMethod       `json:"signInMethods,omitempty"`
 	Options          RuntimeOptions       `json:"options"`
 	OptionsSupported RuntimeOptionSupport `json:"optionsSupported"`

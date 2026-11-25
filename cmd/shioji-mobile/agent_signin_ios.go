@@ -417,10 +417,23 @@ func (d *mobileAgentAccountDraft) selected(methods []domain.SignInMethod) domain
 }
 
 func (a *mobileApp) connectAgentAPI(agent domain.HarnessInfo, draft *mobileAgentAccountDraft) {
-	if endpoint := strings.TrimSpace(draft.endpoint); endpoint != "" && a.startAgentSignIn(agent, domain.SignInAPI,
-		&domain.APIConfiguration{Endpoint: endpoint, Credential: draft.credential}) {
+	if !mobileAPICanConnect(agent, draft) {
+		return
+	}
+	input := domain.APIConfiguration{Credential: draft.credential}
+	if agent.Installation == nil || !agent.Installation.APIKeyOnly {
+		input.Endpoint = strings.TrimSpace(draft.endpoint)
+	}
+	if a.startAgentSignIn(agent, domain.SignInAPI, &input) {
 		draft.credential = ""
 	}
+}
+
+func mobileAPICanConnect(agent domain.HarnessInfo, draft *mobileAgentAccountDraft) bool {
+	if agent.Installation != nil && agent.Installation.APIKeyOnly {
+		return strings.TrimSpace(draft.credential) != ""
+	}
+	return strings.TrimSpace(draft.endpoint) != ""
 }
 
 func agentInfoRow(c *ui.Context, title, value string) {
@@ -485,7 +498,7 @@ func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain
 	if agent.Account != nil && agent.Account.Mode == "api" {
 		account := agent.Account
 		agentInfoRow(c, "账号", agentAccountName(account))
-		if account.Endpoint != "" {
+		if account.Endpoint != "" && (agent.Installation == nil || !agent.Installation.APIKeyOnly) {
 			agentInfoRow(c, "服务地址", account.Endpoint)
 		}
 		if account.Model != "" {
@@ -498,12 +511,17 @@ func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain
 			secondaryAction(c, "重新检测", refresh).PaddingX(16).Disabled(blocked || active)
 		})
 	} else if apiAvailable && selected == domain.SignInAPI {
-		formRow(c, "服务地址", func() {
-			formInput(c, "API 地址", "https://api.example.com/v1", &draft.endpoint).
-				Autocorrect(false).Capitalize(ui.CapitalizeNone).ReturnKey(ui.ReturnNext).Disabled(blocked || active)
-		})
+		placeholder := "可选"
+		if agent.Installation != nil && agent.Installation.APIKeyOnly {
+			placeholder = "输入 API Key"
+		} else {
+			formRow(c, "服务地址", func() {
+				formInput(c, "API 地址", "https://api.example.com/v1", &draft.endpoint).
+					Autocorrect(false).Capitalize(ui.CapitalizeNone).ReturnKey(ui.ReturnNext).Disabled(blocked || active)
+			})
+		}
 		formRow(c, "API Key", func() {
-			formInput(c, "API Key", "可选", &draft.credential).Password().ReturnKey(ui.ReturnGo).
+			formInput(c, "API Key", placeholder, &draft.credential).Password().ReturnKey(ui.ReturnGo).
 				OnSubmit(func() { a.connectAgentAPI(agent, draft) }).Disabled(blocked || active)
 		})
 	} else {

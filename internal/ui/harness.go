@@ -5,6 +5,7 @@ import (
 
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/domain"
+	"shioji/internal/ui/assets"
 )
 
 // Google Antigravity monochrome brand asset: https://antigravity.google/press
@@ -20,6 +21,7 @@ var genericAgentIcon = svg("M3 4h14v12H3zM6 8l2 2-2 2M11 12h3")
 func harnessIcon(d domain.HarnessDescriptor) *n.SVG {
 	icons := map[string]*n.SVG{
 		"antigravity": antigravityMark,
+		"deepseek":    assets.DeepSeek,
 		"openai":      openAIBlossom,
 	}
 	if icon := icons[d.Icon]; icon != nil {
