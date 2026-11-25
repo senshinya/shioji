@@ -62,7 +62,7 @@ type HarnessInfo struct {
 // HasSystemProfile also recognizes native configurations reported by workers
 // that predate the persisted system Profile catalog.
 func (h HarnessInfo) HasSystemProfile() bool {
-	if h.ID == "" || h.Profile != nil {
+	if h.ID == "" || h.Profile != nil || h.IsCustomProfileProvider() {
 		return false
 	}
 	return h.SystemProfile || h.State == RuntimeReady ||
@@ -76,6 +76,12 @@ const (
 )
 
 func IsCustomAgent(id string) bool { return id == AgentResponses || id == AgentAnthropic }
+
+// A protocol entry is used to create a custom Profile. Saved Profiles have
+// their own IDs and remain visible in the Agent lists.
+func (h HarnessInfo) IsCustomProfileProvider() bool {
+	return h.Profile == nil && IsCustomAgent(h.ID)
+}
 
 type AgentProfileMode string
 

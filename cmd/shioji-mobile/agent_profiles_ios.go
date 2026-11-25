@@ -88,7 +88,7 @@ func (a *mobileApp) openCreateAgentProfile(parent *mygo.Window, providers []doma
 	customProviders := map[string]domain.HarnessInfo{}
 	var choices []domain.HarnessInfo
 	for _, provider := range providers {
-		if domain.IsCustomAgent(provider.ID) {
+		if provider.IsCustomProfileProvider() {
 			customProviders[provider.ID] = provider
 		} else if len(provider.ProfileModes) > 0 && provider.Installation != nil && provider.Installation.Issue != domain.RuntimeMissing && provider.Installation.Issue != domain.RuntimeIncompatible {
 			choices = append(choices, provider)
@@ -99,7 +99,7 @@ func (a *mobileApp) openCreateAgentProfile(parent *mygo.Window, providers []doma
 	}
 	var provider domain.HarnessInfo
 	var mode domain.AgentProfileMode
-	var name, credential, icon, selectedAPI string
+	var name, credential, icon, selectedAPI, completedRepairID string
 	var sent domain.AgentProfile
 	var saved domain.HarnessInfo
 	pageTitle := "新增 Profile"
@@ -117,6 +117,9 @@ func (a *mobileApp) openCreateAgentProfile(parent *mygo.Window, providers []doma
 		}
 		mode, name, icon, selectedAPI = sent.Mode, sent.Name, sent.Icon, sent.HarnessID
 		pageTitle = sent.Name
+		if previous := a.agentSignIns[saved.ID]; previous != nil && previous.status.Phase == domain.SignInCompleted {
+			completedRepairID = previous.status.ID
+		}
 	}
 	drafts := map[string]*domain.APIConfiguration{}
 	apiDraft := func(id string) *domain.APIConfiguration {
@@ -131,10 +134,11 @@ func (a *mobileApp) openCreateAgentProfile(parent *mygo.Window, providers []doma
 	w = a.page(pageTitle, func(c *ui.Context) {
 		custom := provider.ID == mobileCustomProfile
 		keyOnly := provider.Installation != nil && provider.Installation.APIKeyOnly
+		repair := saved.CanRepairAPIRuntime()
 		attempt := a.agentSignIns[saved.ID]
 		authBusy := custom && attempt != nil && attempt.status.Phase.Active()
 		if custom && drafts != nil && attempt != nil && attempt.status.Phase == domain.SignInCompleted && attempt.status.Profile != nil &&
-			attempt.status.Profile.Profile != nil && attempt.status.Profile.Profile.Authorized {
+			attempt.status.Profile.Profile != nil && attempt.status.Profile.Profile.Authorized && (!repair || completedRepairID != attempt.status.ID) {
 			drafts = nil
 			mygo.RunOnMain(func() {
 				if a.pageCurrent(w) {
@@ -218,6 +222,10 @@ func (a *mobileApp) openCreateAgentProfile(parent *mygo.Window, providers []doma
 					}
 				}
 			}).Disabled(locked)
+			if repair {
+				plainFormRow(c, "运行环境", func() { oneLine(c, "Claude Code · 未安装", bodyTextSize, palette(c).secondary) })
+				return
+			}
 			placeholder := "https://api.example.com/v1"
 			if selectedAPI == domain.AgentAnthropic {
 				placeholder = "https://api.anthropic.com"
@@ -269,6 +277,9 @@ func (a *mobileApp) openCreateAgentProfile(parent *mygo.Window, providers []doma
 			if custom && saved.ID != "" && !missing {
 				caption = "重试连接"
 			}
+			if repair {
+				caption = "安装运行环境"
+			}
 			if authBusy {
 				message := "正在准备运行环境"
 				if setup := attempt.status.Setup; setup != nil {
@@ -292,6 +303,12 @@ func (a *mobileApp) openCreateAgentProfile(parent *mygo.Window, providers []doma
 				}
 			}
 			primaryAction(c, caption, func() {
+				if repair {
+					if !a.startAgentSignIn(saved, domain.SignInAPI, &domain.APIConfiguration{InstallRuntime: true}) {
+						request.err = "未能开始安装，请重试"
+					}
+					return
+				}
 				connect := func(info domain.HarnessInfo) error {
 					configuration := domain.APIConfiguration{Credential: credential}
 					if custom {
@@ -341,7 +358,7 @@ func (a *mobileApp) openCreateAgentProfile(parent *mygo.Window, providers []doma
 					return nil
 				}))
 			}).Disabled(busy || !a.model.Connected || keyOnly && strings.TrimSpace(credential) == "" ||
-				!keyOnly && strings.TrimSpace(name) == "" || custom &&
+				!keyOnly && strings.TrimSpace(name) == "" || custom && !repair &&
 				(strings.TrimSpace(api.Endpoint) == "" || strings.TrimSpace(api.Credential) == "" || strings.TrimSpace(api.Model) == ""))
 		})
 	})

@@ -11,6 +11,7 @@ import (
 
 	"shioji/internal/domain"
 	"shioji/internal/harness"
+	"shioji/internal/harness/claudecode"
 	"shioji/internal/protocol"
 	"shioji/internal/supervisor"
 )
@@ -261,6 +262,64 @@ func TestProfileAuthorizationBindingSurvivesWorkerRestart(t *testing.T) {
 	}
 }
 
+type profileRuntimeRepairHarness struct {
+	memoryHarness
+	repairs *atomic.Int32
+}
+
+func (a profileRuntimeRepairHarness) ProfileModes() []domain.AgentProfileMode {
+	return []domain.AgentProfileMode{domain.AgentProfileAPI}
+}
+
+func (a profileRuntimeRepairHarness) WithAgentProfile(id, _, _ string, _ domain.AgentProfileMode) (harness.Adapter, error) {
+	a.id = id
+	return a, nil
+}
+
+func (a profileRuntimeRepairHarness) RepairAPIRuntime(context.Context, func(domain.RuntimeSetupProgress)) (domain.Readiness, error) {
+	a.repairs.Add(1)
+	return domain.Readiness{State: domain.RuntimeReady, Account: &domain.RuntimeAccount{State: "configured", Mode: "api", Credential: "configured"}}, nil
+}
+
+func TestBoundAPIProfileCanInstallRuntimeWithoutRebinding(t *testing.T) {
+	adapter := profileRuntimeRepairHarness{memoryHarness: memoryHarness{id: "test-api"}, repairs: &atomic.Int32{}}
+	server, _ := memoryWorker(t, adapter)
+	const id = "4caba940-68a1-411a-b011-65057140c964"
+	body, _ := json.Marshal(domain.AgentProfile{ID: id, HarnessID: "test-api", Name: "Work", Mode: domain.AgentProfileAPI})
+	if _, err := server.handle("runtime.profile.create", body); err != nil {
+		t.Fatal(err)
+	}
+	in := protocol.SignInInput{ID: "install", HarnessID: id, Method: domain.SignInAPI, API: &domain.APIConfiguration{InstallRuntime: true}}
+	if _, err := server.signInCommand("runtime.signin.start", in); err == nil {
+		t.Fatal("an unbound profile cannot repair a saved binding")
+	}
+	if err := server.bindAgentProfile(id); err != nil {
+		t.Fatal(err)
+	}
+	rebind := in
+	rebind.ID = "rebind"
+	rebind.API = &domain.APIConfiguration{InstallRuntime: true, Credential: "different key"}
+	if _, err := server.signInCommand("runtime.signin.start", rebind); err == nil {
+		t.Fatal("runtime repair must not replace credentials")
+	}
+	if _, err := server.signInCommand("runtime.signin.start", in); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(3 * time.Second); ; {
+		status, err := server.signInCommand("runtime.signin.status", in)
+		if err != nil || status.Phase == domain.SignInFailed || time.Now().After(deadline) {
+			t.Fatal(status, err)
+		}
+		if status.Phase == domain.SignInCompleted {
+			if status.Profile == nil || !status.Profile.Profile.Authorized || adapter.repairs.Load() != 1 {
+				t.Fatal("bound profile did not repair exactly once", status)
+			}
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestCustomProfileAdaptersAreAvailableWithoutAnInstallation(t *testing.T) {
 	adapters := SystemAdapters("/no-such-codex")
 	for _, protocol := range []string{"responses", "anthropic"} {
@@ -273,5 +332,34 @@ func TestCustomProfileAdaptersAreAvailableWithoutAnInstallation(t *testing.T) {
 		if !found {
 			t.Errorf("custom protocol %s is not registered as a profile-only adapter", protocol)
 		}
+	}
+}
+
+func TestAnthropicProviderRequiresACustomAPIProfile(t *testing.T) {
+	s, _ := memoryWorker(t, memoryHarness{id: "memory"}, claudecode.Adapter{State: t.TempDir()})
+	standalone := Server{config: Config{
+		Harnesses: []harness.Adapter{claudecode.Adapter{}}, DefaultHarnessID: domain.AgentAnthropic,
+	}}
+	if err := standalone.configureAdapters(); err == nil {
+		t.Fatal("the unbound provider was accepted as a default Agent")
+	}
+	if _, ok := s.runtimeReadiness().ForHarness(domain.AgentAnthropic); ok {
+		t.Fatal("the unbound provider appeared in execution readiness")
+	}
+	if _, err := s.configureRuntime(protocol.RuntimeConfiguration{HarnessID: domain.AgentAnthropic}); err == nil {
+		t.Fatal("the unbound provider accepted standalone runtime configuration")
+	}
+	if _, err := s.recheckRuntime(domain.AgentAnthropic); err == nil {
+		t.Fatal("the unbound provider accepted standalone runtime startup")
+	}
+	id := domain.NewID()
+	profile := domain.AgentProfile{ID: id, Name: "My API", HarnessID: domain.AgentAnthropic, Mode: domain.AgentProfileAccount}
+	if _, err := s.prepareAgentProfile(profile); err == nil {
+		t.Fatal("the provider accepted an account Profile")
+	}
+	profile.Mode = domain.AgentProfileAPI
+	bound, err := s.prepareAgentProfile(profile)
+	if err != nil || bound.Descriptor().ID != id || bound.Descriptor().ProfileOnly {
+		t.Fatalf("the existing API Profile route did not bind its own runtime: %v", err)
 	}
 }

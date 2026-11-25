@@ -47,7 +47,7 @@ func deviceProfileProviders(e *deviceAgentEditor) []domain.HarnessInfo {
 	custom := false
 	for _, info := range e.catalog {
 		install := info.Installation
-		if domain.IsCustomAgent(info.ID) && info.Profile == nil {
+		if info.IsCustomProfileProvider() {
 			custom = custom || slices.Contains(info.ProfileModes, domain.AgentProfileAPI)
 			continue
 		}
@@ -81,7 +81,7 @@ func (v *View) canContinueDeviceProfile(key string, info domain.HarnessInfo) boo
 		return false
 	}
 	if info.Profile.Authorized {
-		return info.Configured && profileModelsPending(info)
+		return info.CanRepairAPIRuntime() || info.Configured && profileModelsPending(info)
 	}
 	if domain.IsCustomAgent(info.Profile.HarnessID) {
 		return true
@@ -174,6 +174,12 @@ func (v *View) deviceProfileEntry(c *n.Context, key string, state *app.DeviceSta
 
 func (v *View) submitDeviceProfile(key string, state *app.DeviceState, e *deviceAgentEditor, p *deviceProfileEditor) {
 	p.error = ""
+	if p.info.CanRepairAPIRuntime() {
+		p.installRequested = true
+		v.beginAgentSignIn(key, nil, protocol.SignInInput{HarnessID: p.info.ID, Method: domain.SignInAPI,
+			API: &domain.APIConfiguration{InstallRuntime: true}}, true)
+		return
+	}
 	if p.info.Profile != nil && p.info.Profile.Authorized {
 		v.refreshDeviceProfileModels(key, state, e, p)
 		return

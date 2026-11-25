@@ -576,7 +576,7 @@ func (a *mobileApp) openRemoteAgents(parent *mygo.Window) {
 			}
 			profileCount := 0
 			for _, info := range catalog {
-				if managedProfiles && info.Profile == nil && !info.HasSystemProfile() {
+				if info.IsCustomProfileProvider() || managedProfiles && info.Profile == nil && !info.HasSystemProfile() {
 					continue
 				}
 				agent := a.signedInAgent(info)
@@ -586,7 +586,7 @@ func (a *mobileApp) openRemoteAgents(parent *mygo.Window) {
 					status = "未启用"
 				}
 				open := func() {
-					if profile := agent.Profile; profile != nil && domain.IsCustomAgent(profile.HarnessID) && !profile.Authorized {
+					if profile := agent.Profile; profile != nil && domain.IsCustomAgent(profile.HarnessID) && (!profile.Authorized || agent.CanRepairAPIRuntime()) {
 						a.openCreateAgentProfile(w, catalog, func(result protocol.AgentSetupResult) {
 							next := redactRuntimeReadiness(domain.Readiness{Harnesses: result.Catalog})
 							refreshed = &next

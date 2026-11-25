@@ -4,7 +4,7 @@ package claudecode
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"shioji/internal/domain"
@@ -57,16 +58,32 @@ func (a Adapter) WithExecutable(path string) (harness.Adapter, error) {
 func (a Adapter) Installation() domain.RuntimeInstallation {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
-	binary, _, err := a.executable(ctx, false)
+	binary, _, err := a.executable(ctx)
 	i := domain.RuntimeInstallation{APISetup: true, Executable: binary, Documentation: "https://code.claude.com/docs/en/setup"}
-	if err != nil {
+	if err != nil || managedagent.ClaudeNode.Find(a.State) == "" || managedagent.ClaudeSDK.Find(a.State) == "" {
 		i.Issue = domain.RuntimeMissing
+		if a.id != "" {
+			_, configErr := a.config()
+			i.CanRepair = configErr == nil
+		}
 	}
 	return i
 }
 
-func (a Adapter) executable(ctx context.Context, install bool, updates ...func(int64, int64)) (string, []string, error) {
+func (a Adapter) executable(ctx context.Context) (string, []string, error) {
 	env, _ := systemexec.Environment(ctx, nil)
+	for _, path := range a.localExecutables(env) {
+		if compatible(ctx, path, env) {
+			return path, env, nil
+		}
+	}
+	if path := managedagent.Claude.Find(a.State); path != "" {
+		return path, env, nil
+	}
+	return "", nil, &harness.SetupError{Issue: domain.RuntimeMissing, Message: "需要安装兼容的 Claude Code 运行环境"}
+}
+
+func (a Adapter) localExecutables(env []string) []string {
 	name := a.Executable
 	if name == "" {
 		name = "claude"
@@ -78,20 +95,59 @@ func (a Adapter) executable(ctx context.Context, install bool, updates ...func(i
 		}
 		candidates = append(candidates, "/opt/homebrew/bin/claude")
 	}
+	var paths []string
 	for _, candidate := range candidates {
-		path, err := systemexec.LookPath(candidate, env)
-		if err == nil && compatible(ctx, path, env) {
-			return path, env, nil
+		if path, err := systemexec.LookPath(candidate, env); err == nil && !slices.Contains(paths, path) {
+			paths = append(paths, path)
 		}
 	}
-	if path := managedagent.Claude.Find(a.State); path != "" {
-		return path, env, nil
+	return paths
+}
+
+func (a Adapter) CatalogVersion() (string, error) {
+	if a.home == "" {
+		return "", nil
 	}
-	if install {
-		path, err := managedagent.Claude.Ensure(ctx, a.State, updates...)
-		return path, env, err
+	policy, err := profileVersion(a.home)
+	if err != nil {
+		return "", err
 	}
-	return "", nil, &harness.SetupError{Issue: domain.RuntimeMissing, Message: "需要安装兼容的 Claude Code 运行环境"}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	env, _ := systemexec.Environment(ctx, nil)
+	return a.runtimeVersion(policy, env), nil
+}
+
+func (a Adapter) runtimeVersion(policy string, env []string) string {
+	inputs := []string{policy}
+	paths := append(a.localExecutables(env), managedagent.Claude.Find(a.State),
+		managedagent.ClaudeNode.Find(a.State), managedagent.ClaudeSDK.Find(a.State))
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			inputs = append(inputs, path)
+			continue
+		}
+		var identity uint64
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+			identity = stat.Ino
+		}
+		inputs = append(inputs, fmt.Sprintf("%s:%d:%d:%d", path, info.Size(), info.ModTime().UnixNano(), identity))
+	}
+	return digestText(inputs...)
+}
+
+func (a Adapter) ensureToolchain(ctx context.Context, progress func(domain.RuntimeSetupProgress)) error {
+	_, _, missing := a.executable(ctx)
+	err := managedagent.EnsureClaudeToolchain(ctx, a.State, missing != nil, func(done, total int64) {
+		if progress != nil {
+			progress(domain.RuntimeSetupProgress{Phase: "downloading", Downloaded: done, Total: total})
+		}
+	})
+	if err != nil {
+		return setupError(err.Error())
+	}
+	return nil
 }
 
 func compatible(ctx context.Context, binary string, env []string) bool {
@@ -149,12 +205,16 @@ func (a Adapter) ConfigureAPIWithProgress(ctx context.Context, in domain.APIConf
 	if in.Model == "" || in.Credential == "" {
 		return domain.Readiness{}, setupError("请输入模型 ID 和 API Key")
 	}
-	if _, _, err = a.executable(ctx, in.InstallRuntime, func(done, total int64) {
-		if progress != nil {
-			progress(domain.RuntimeSetupProgress{Phase: "downloading", Downloaded: done, Total: total})
+	if in.InstallRuntime {
+		if err := a.ensureToolchain(ctx, progress); err != nil {
+			return domain.Readiness{}, err
 		}
-	}); err != nil {
-		return domain.Readiness{}, setupError(err.Error())
+	}
+	if _, _, err = a.executable(ctx); err != nil {
+		return domain.Readiness{}, err
+	}
+	if managedagent.ClaudeNode.Find(a.State) == "" || managedagent.ClaudeSDK.Find(a.State) == "" {
+		return domain.Readiness{}, missingSDK()
 	}
 	if progress != nil {
 		progress(domain.RuntimeSetupProgress{Phase: "verifying"})
@@ -166,25 +226,41 @@ func (a Adapter) ConfigureAPIWithProgress(ctx context.Context, in domain.APIConf
 		return domain.Readiness{}, ctx.Err()
 	}
 	config := configuration{Endpoint: in.Endpoint, Model: in.Model, Key: in.Credential}
-	temp, err := os.CreateTemp(a.home, ".api-config-*")
-	if err != nil {
+	raw, err := json.Marshal(config)
+	if err != nil || savePrivate(filepath.Join(a.home, "settings-api.json"), raw) != nil {
 		return domain.Readiness{}, setupError("无法保存设备上的 API 配置")
 	}
-	defer os.Remove(temp.Name())
-	err = errors.Join(json.NewEncoder(temp).Encode(config), temp.Close())
-	if err != nil || os.Rename(temp.Name(), filepath.Join(a.home, "settings-api.json")) != nil {
-		return domain.Readiness{}, setupError("无法保存设备上的 API 配置")
+	return a.readiness(config), nil
+}
+
+func missingSDK() error {
+	return &harness.SetupError{Issue: domain.RuntimeMissing, Message: "需要在所属设备上安装 Claude Agent SDK"}
+}
+
+func (a Adapter) RepairAPIRuntime(ctx context.Context, progress func(domain.RuntimeSetupProgress)) (domain.Readiness, error) {
+	config, err := a.config()
+	if err != nil {
+		return domain.Readiness{}, err
+	}
+	if err := a.ensureToolchain(ctx, progress); err != nil {
+		return domain.Readiness{}, err
+	}
+	if _, _, err = a.executable(ctx); err != nil {
+		return domain.Readiness{}, err
 	}
 	return a.readiness(config), nil
 }
 
 func (a Adapter) readiness(config configuration) domain.Readiness {
 	return domain.Readiness{
-		HarnessID: a.id, State: domain.RuntimeReady, Models: []domain.Model{modelapi.Model(config.input())},
+		HarnessID: a.id, State: domain.RuntimeReady, Models: []domain.Model{modelapi.Model(config.input())}, Plan: true,
 		Account:           &domain.RuntimeAccount{State: "configured", Mode: "api", Label: "Anthropic API", Endpoint: config.Endpoint, Model: config.Model, Credential: "configured"},
 		Permissions:       []string{"default"},
 		PermissionChoices: []domain.OptionChoice{{ID: "default", Name: "按需批准"}},
-		Capabilities:      domain.HarnessCapabilities{Interrupt: true, Resume: true},
+		Capabilities: domain.HarnessCapabilities{Steer: true, Interrupt: true, Recovery: true, Resume: true,
+			Fork: true, Restart: true, CompactNeedsCheck: true, ConversationImport: true,
+			ToolServices: true, ToolServiceInspection: true, Skills: true, SkillManagement: true, Goals: true, WorkerGoals: true,
+			PathAttachments: true, HookManagement: true, HookInspection: true},
 	}
 }
 
@@ -192,7 +268,7 @@ func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.
 	if a.id == "" {
 		return nil, harness.Unsupported("execution-without-profile")
 	}
-	bin, env, err := a.executable(ctx, false)
+	bin, env, err := a.executable(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -200,8 +276,29 @@ func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.
 	if err != nil {
 		return nil, err
 	}
-	return &runtime{ready: a.readiness(config), config: config, opts: opts, binary: bin, env: env, home: a.home, done: make(chan struct{}), approvals: map[string]approval{}}, nil
+	node, sdk := managedagent.ClaudeNode.Find(a.State), managedagent.ClaudeSDK.Find(a.State)
+	if node == "" || sdk == "" {
+		return nil, missingSDK()
+	}
+	version, err := profileVersion(a.home)
+	if err != nil {
+		return nil, err
+	}
+	userHome, _ := os.UserHomeDir()
+	privateProfiles := a.home
+	if root := filepath.Join(a.State, "agent-profiles"); filepath.IsAbs(root) && filepath.Dir(a.home) == root {
+		privateProfiles = root
+	}
+	ready := a.readiness(config)
+	if officialEndpoint(config.Endpoint) {
+		ready.Models[0] = mergeModelOptions(ready.Models[0], modelOptions(ctx, node, sdk, bin))
+	}
+	return &runtime{ready: ready, config: config, opts: opts, binary: bin, node: node, sdk: sdk, env: env,
+		home: a.home, privateProfiles: privateProfiles, version: version, catalogVersion: a.runtimeVersion(version, env),
+		externalHome: filepath.Join(userHome, ".claude"), done: make(chan struct{}), approvals: map[string]approval{}}, nil
 }
+
+func (r *runtime) CatalogVersion() (string, error) { return r.catalogVersion, nil }
 
 // Claude receives a per-process loopback capability. The user's API Key stays
 // in the device adapter, outside Claude's tool environment and transcript.

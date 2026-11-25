@@ -23,7 +23,8 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 	op := v.agentSignIn(key, p.info.ID)
 	api := p.draft.Mode == domain.AgentProfileAPI
 	models := p.info.Profile != nil && p.info.Profile.Authorized
-	active := !models && op != nil && op.status.Phase.Active()
+	repair := p.info.CanRepairAPIRuntime()
+	active := (!models || repair) && op != nil && op.status.Phase.Active()
 	waiting := active && !api && op.status.Phase == domain.SignInWaiting
 	disabled := !state.Connected || e.loading || v.Controller == nil
 	busy := p.working || active
@@ -202,6 +203,12 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 					v.profileSignInStatus(c, t, p, op, disabled, state.Connected)
 				}
 				label := deviceProfileAction(p, op)
+				if repair {
+					label = "安装运行环境"
+					if active {
+						label = "正在安装…"
+					}
+				}
 				if domain.IsCustomAgent(p.draft.HarnessID) && !busy && !models && p.needsRuntime(e) {
 					label = "安装并连接"
 				}
@@ -216,7 +223,7 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 						cancel, cancelDisabled = "取消授权", disabled || op.pending
 						if api {
 							cancel = "取消连接"
-							if p.installRequested {
+							if repair || p.installRequested {
 								cancel = "取消安装"
 							}
 						}
@@ -335,7 +342,7 @@ func (v *View) profileSignInStatus(c *n.Context, t *n.Theme, p *deviceProfileEdi
 	case !connected:
 		message = "设备未连接，恢复后可继续。"
 		color = t.TextMuted
-	case p.info.Profile != nil && p.info.Profile.Authorized:
+	case p.info.Profile != nil && p.info.Profile.Authorized && !p.info.CanRepairAPIRuntime():
 		if !p.working {
 			message = p.info.Error
 			if message == "" {

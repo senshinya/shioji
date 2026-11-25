@@ -148,6 +148,9 @@ type StartOptions struct {
 	// InitialConfig is the accepted configuration for a new native conversation.
 	// Catalog probes and launches that resume an existing conversation omit it.
 	InitialConfig *domain.RunConfig
+	// SessionDirectory is private device storage for adapter-owned session resources.
+	// The worker removes it with the permanently deleted session.
+	SessionDirectory string
 	// ImportResource snapshots device-local or inline image/text bytes in worker storage.
 	// Adapters translate source encodings before calling this; journals carry only
 	// the returned immutable reference, never bytes or a runtime storage path.
@@ -291,6 +294,12 @@ type APIConfigurationProvider interface {
 // APISetupProgressProvider reports device-owned setup progress independently of authentication.
 type APISetupProgressProvider interface {
 	ConfigureAPIWithProgress(context.Context, domain.APIConfiguration, func(domain.RuntimeSetupProgress)) (domain.Readiness, error)
+}
+
+// APIRuntimeRepairProvider restores the runtime of a bound API profile using
+// its saved configuration.
+type APIRuntimeRepairProvider interface {
+	RepairAPIRuntime(context.Context, func(domain.RuntimeSetupProgress)) (domain.Readiness, error)
 }
 
 type SetupError struct {

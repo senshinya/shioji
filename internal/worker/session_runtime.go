@@ -287,7 +287,7 @@ func (s *Server) openSessionRuntime(ctx context.Context, id string, startup *ses
 		initial = &latest.Session.Config
 	}
 	go func() {
-		r, err := adapter.Start(startCtx, harness.StartOptions{Scope: scope, InitialConfig: initial, ImportResource: func(image harness.OutputResource) (domain.Attachment, error) {
+		r, err := adapter.Start(startCtx, harness.StartOptions{Scope: scope, InitialConfig: initial, SessionDirectory: dir, ImportResource: func(image harness.OutputResource) (domain.Attachment, error) {
 			return s.importOutputResource(d.Session.HarnessID, id, image)
 		}, OnMessage: func(ctx context.Context, input harness.IncomingMessage) error {
 			if !accepting.Load() {

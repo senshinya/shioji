@@ -39,12 +39,18 @@ func TestDeviceCatalogMarksOnlyUserRequestedModelDiscovery(t *testing.T) {
 	}
 }
 
-func TestWorkerCatalogRegistersBuiltInAgentTypes(t *testing.T) {
-	var ids []string
+func TestWorkerCatalogSeparatesAgentsFromProfileProviders(t *testing.T) {
+	var ids, providers []string
 	for _, a := range SystemAdapters("") {
-		ids = append(ids, a.Descriptor().ID)
+		d := a.Descriptor()
+		if d.ProfileOnly {
+			providers = append(providers, d.ID)
+		} else {
+			ids = append(ids, d.ID)
+		}
 	}
-	if !slices.Equal(ids, []string{"codex", "antigravity", "deepseek", domain.AgentResponses, domain.AgentAnthropic}) {
-		t.Fatalf("worker harness defaults = %v", ids)
+	if !slices.Equal(ids, []string{"codex", "antigravity"}) ||
+		!slices.Equal(providers, []string{"deepseek", domain.AgentResponses, domain.AgentAnthropic}) {
+		t.Fatalf("worker Agents = %v, Profile providers = %v", ids, providers)
 	}
 }

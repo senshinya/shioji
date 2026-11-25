@@ -16,7 +16,11 @@ Codex adapter 启动时检查当前安装导出的协议形状和实际能力，
 
 已有兼容可执行文件时复用。「安装并连接」按需安装校验过的固定版本。缓存目录位于 worker 状态目录的 `agent-runtimes/<agent>/<version>/`。多个 Profile 可共享二进制。版本目录在下载校验和解包后发布。
 
-Claude Code 运行在受管会话进程中，使用 Shioji 提供的回环凭据代理。受限模式限制工作目录，Shell 工具使用原生沙箱并保留人工审批。每轮输入由明确的原生回执或同轮输出确认。已保存会话可续接。无可靠运行证据的输入保留待核对状态。目录公开普通文本、工具审批、停止和续接能力。图片、UTF-8 文本及代码评论附件作为独立内容块提交。
+Claude Code 仅用于「新增 Profile → 自定义 → Anthropic API」。该协议入口只用于创建和配置自定义 Profile，Agent 列表使用已创建的 Profile 名称。该执行引擎采用 [t3code 的直接 SDK 接法](https://github.com/pingdotgg/t3code/blob/b20bb177b5e077600e749147b394e953387d1169/apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts#L1826-L1835)。所属 Go worker 通过受管辅助进程调用官方 TypeScript Claude Agent SDK 的 `query()`。SDK 启动 Claude Code，worker 继续负责会话接纳、审批、回执和回收。Node.js 与 SDK 按固定版本在设备端下载、校验，多个 Profile 共享。已有 Profile 可使用「安装运行环境」补齐依赖，沿用设备保存的 API 配置和会话标识。
+
+Claude Code 使用 Shioji 提供的回环凭据代理。受限模式限制工作目录，Shell 工具使用原生沙箱并保留人工审批。普通输入和同轮追加分别核对接纳，断线后读取所属会话的 SDK 回执。尚未确认的输入留待核对。原生压缩以 SDK 边界事件确认，历史分叉及原位修改使用已核对的独立原生线程。设备本机的 Claude CLI 历史通过只读目录导入，接续从核对过的副本开始。
+
+Anthropic Profile 支持结构化问题、Plan、上下文用量、标题、工具图像和会话附件快照。Goal 的暂停和接续由 Shioji 管理，Claude 通过专用工具回报所属轮次的进度。后台任务可按所属原生任务标识停止。MCP 配置限于 Profile，配置变更在下一轮采用。项目 Hooks 只读，Profile 的命令型 Hooks 需要逐项核对内容后授权，由空闲会话加载新版本。Skill 选择使用当前授权目录中的文件快照，动态命令或额外执行设置的 Skill 不出现在可发送目录。Profile 使用一个已验证的 API 模型。Anthropic 官方端点可按同一模型的原生能力开放 Effort 和 Fast。兼容网关使用其已确认的基础选项。
 
 ## deepseek
 

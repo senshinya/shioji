@@ -3,6 +3,7 @@ package managedagent
 
 import (
 	"archive/tar"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -39,7 +40,52 @@ var Claude = Release{
 	executable: "claude",
 }
 
+var ClaudeNode = Release{
+	name: "claude-sdk-node", version: "22.23.5",
+	url:    "https://nodejs.org/dist/v22.23.5/node-v22.23.5-darwin-arm64.tar.gz",
+	digest: "e7131995759b61a0170b646010d2ad35a5d37b4cb0d471f3e8317eac6f742f3d", size: 50004868,
+	executable: "node-v22.23.5-darwin-arm64/bin/node",
+}
+
+var ClaudeSDK = Release{
+	name: "claude-agent-sdk", version: "0.3.312",
+	url:    "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk/-/claude-agent-sdk-0.3.312.tgz",
+	digest: "98a6c27b00b273fa0598b80540aa152d9fb58b6a1ac885b5993381e98469926d", size: 1410313,
+	executable: "package/sdk.mjs",
+}
+
 var installs sync.Map
+
+// EnsureClaudeToolchain reports a single download total across the missing
+// components. A compatible device-installed CLI can be used with the SDK.
+func EnsureClaudeToolchain(ctx context.Context, state string, includeCLI bool, report func(int64, int64)) error {
+	releases := []Release{ClaudeNode, ClaudeSDK}
+	if includeCLI {
+		releases = append(releases, Claude)
+	}
+	pending := make([]Release, 0, len(releases))
+	var total, completed int64
+	for _, release := range releases {
+		if release.Find(state) == "" {
+			pending = append(pending, release)
+			total += release.size
+		}
+	}
+	for _, release := range pending {
+		var progress func(int64, int64)
+		if report != nil {
+			progress = func(done, _ int64) { report(completed+done, total) }
+		}
+		if _, err := release.Ensure(ctx, state, progress); err != nil {
+			return err
+		}
+		completed += release.size
+		if report != nil {
+			report(completed, total)
+		}
+	}
+	return nil
+}
 
 func (r Release) directory(state string) string {
 	return filepath.Join(state, "agent-runtimes", r.name, r.version)
@@ -109,17 +155,24 @@ func (r Release) Ensure(ctx context.Context, state string, updates ...func(int64
 	if err := r.download(ctx, archive, progress); err != nil {
 		return "", err
 	}
-	if strings.HasSuffix(r.url, ".tar.zst") {
+	stagedExecutable := filepath.Join(stage, r.executable)
+	switch {
+	case strings.HasSuffix(r.url, ".tar.gz"), strings.HasSuffix(r.url, ".tgz"):
+		if err := unpackGzipEntry(ctx, archive, r.executable, stagedExecutable); err != nil {
+			return "", errors.New("无法解包托管运行环境")
+		}
+	case strings.HasSuffix(r.url, ".tar.zst"):
 		if err := unpack(ctx, archive, stage); err != nil {
 			return "", errors.New("无法解包托管运行环境")
 		}
-		if err := os.Remove(archive); err != nil {
+	default:
+		if err := os.Rename(archive, stagedExecutable); err != nil {
 			return "", err
 		}
-	} else if err := os.Rename(archive, filepath.Join(stage, r.executable)); err != nil {
+	}
+	if err := os.Remove(archive); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
-	stagedExecutable := filepath.Join(stage, r.executable)
 	info, err := os.Lstat(stagedExecutable)
 	if err != nil || !info.Mode().IsRegular() {
 		return "", errors.New("运行环境缺少可执行文件")
@@ -137,6 +190,42 @@ func (r Release) Ensure(ctx context.Context, state string, updates ...func(int64
 		return "", errors.New("无法启用托管运行环境")
 	}
 	return filepath.Join(target, r.executable), nil
+}
+
+func unpackGzipEntry(ctx context.Context, archive, entry, out string) error {
+	file, err := os.Open(archive)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	compressed, err := gzip.NewReader(file)
+	if err != nil {
+		return err
+	}
+	defer compressed.Close()
+	reader := tar.NewReader(compressed)
+	for ctx.Err() == nil {
+		header, err := reader.Next()
+		if err != nil {
+			return err
+		}
+		if header.Name != entry {
+			continue
+		}
+		if header.Typeflag != tar.TypeReg || header.Size <= 0 || header.Size > 256<<20 {
+			return errors.New("invalid runtime archive member")
+		}
+		if err := os.MkdirAll(filepath.Dir(out), 0700); err != nil {
+			return err
+		}
+		target, err := os.OpenFile(out, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(target, reader)
+		return errors.Join(err, target.Close())
+	}
+	return ctx.Err()
 }
 
 func (r Release) download(ctx context.Context, target string, progress func(int64, int64)) error {

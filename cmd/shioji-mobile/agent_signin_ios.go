@@ -98,7 +98,8 @@ func (a *mobileApp) pollAgentSignIn(attempt *mobileAgentSignIn) {
 
 func (a *mobileApp) startAgentSignIn(agent domain.HarnessInfo, method domain.SignInMethod, api *domain.APIConfiguration) bool {
 	prior := a.agentSignIns[agent.ID]
-	if prior != nil && prior.status.Phase.Active() || !slices.Contains(agentMobileSignInMethods(agent, a.model.WorkerMinor), method) {
+	repair := agent.CanRepairAPIRuntime() && method == domain.SignInAPI && api != nil && *api == (domain.APIConfiguration{InstallRuntime: true})
+	if prior != nil && prior.status.Phase.Active() || !repair && !slices.Contains(agentMobileSignInMethods(agent, a.model.WorkerMinor), method) {
 		return false
 	}
 	attempt := &mobileAgentSignIn{method: method, status: domain.SignInStatus{ID: domain.NewID(), HarnessID: agent.ID, Phase: domain.SignInStarting}}

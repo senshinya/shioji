@@ -22,6 +22,11 @@ type workerSignIn struct {
 	login       harness.SignIn
 }
 
+func apiRuntimeRepair(in protocol.SignInInput) bool {
+	return in.Method == domain.SignInAPI && in.Configuration == nil && in.API != nil &&
+		*in.API == (domain.APIConfiguration{InstallRuntime: true})
+}
+
 func (s *Server) signInCommand(method string, in protocol.SignInInput) (domain.SignInStatus, error) {
 	if in.ID == "" || len(in.ID) > 128 || s.adapter(in.HarnessID) == nil {
 		return domain.SignInStatus{}, errors.New("登录请求无效")
@@ -94,7 +99,13 @@ func (s *Server) signInCommand(method string, in protocol.SignInInput) (domain.S
 	if current != nil && current.status.Phase.Active() {
 		return domain.SignInStatus{}, errors.New("该 Agent 已有登录正在进行")
 	}
-	if profile, ok := s.agentProfile(in.HarnessID); ok && profile.Authorized {
+	profile, _ := s.agentProfile(in.HarnessID)
+	if apiRuntimeRepair(in) {
+		_, supported := s.adapter(in.HarnessID).(harness.APIRuntimeRepairProvider)
+		if !profile.Authorized || profile.Mode != domain.AgentProfileAPI || !supported {
+			return domain.SignInStatus{}, errors.New("此 Profile 无法补装已绑定的运行环境")
+		}
+	} else if profile.Authorized {
 		return domain.SignInStatus{}, errors.New("此 Profile 已绑定账号或服务。请为新的账号或服务创建 Profile")
 	}
 	// Different harnesses may not reuse another authorization's operation identity.
@@ -156,22 +167,26 @@ func (s *Server) runSignIn(ctx context.Context, in protocol.SignInInput, entry *
 	var login harness.SignIn
 	var challenge domain.SignInChallenge
 	var ready domain.Readiness
+	progress := func(value domain.RuntimeSetupProgress) {
+		s.signInMu.Lock()
+		defer s.signInMu.Unlock()
+		if entry.status.Phase.Active() && ctx.Err() == nil {
+			entry.status.Setup = &value
+		}
+	}
 	if err == nil && in.Method == domain.SignInAPI {
-		provider, ok := adapter.(harness.APIConfigurationProvider)
-		if !ok {
-			err = harness.Unsupported("api-configuration")
-		} else {
-			if reporter, ok := adapter.(harness.APISetupProgressProvider); ok {
-				ready, err = reporter.ConfigureAPIWithProgress(ctx, *in.API, func(value domain.RuntimeSetupProgress) {
-					s.signInMu.Lock()
-					defer s.signInMu.Unlock()
-					if entry.status.Phase.Active() && ctx.Err() == nil {
-						entry.status.Setup = &value
-					}
-				})
+		if apiRuntimeRepair(in) {
+			if installer, ok := adapter.(harness.APIRuntimeRepairProvider); ok {
+				ready, err = installer.RepairAPIRuntime(ctx, progress)
 			} else {
-				ready, err = provider.ConfigureAPI(ctx, *in.API)
+				err = harness.Unsupported("api-runtime-repair")
 			}
+		} else if reporter, ok := adapter.(harness.APISetupProgressProvider); ok {
+			ready, err = reporter.ConfigureAPIWithProgress(ctx, *in.API, progress)
+		} else if provider, ok := adapter.(harness.APIConfigurationProvider); ok {
+			ready, err = provider.ConfigureAPI(ctx, *in.API)
+		} else {
+			err = harness.Unsupported("api-configuration")
 		}
 		in.API = nil // The credential has no role in polling, refresh or saved state.
 	} else if err == nil {

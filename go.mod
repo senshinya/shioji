@@ -6,6 +6,7 @@ require (
 	github.com/dop251/goja v0.0.0-20260603125802-cfe4039cb6d7
 	github.com/ebitengine/purego v0.11.1
 	github.com/egoist/mygo v0.10.0
+	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.20.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.46.0
@@ -35,7 +36,6 @@ require (
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/pprof v0.0.0-20261016150608-1facf8f91b50 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/hdevalence/ed25519consensus v0.2.0 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
 	github.com/jsimonetti/rtnetlink v1.4.2 // indirect

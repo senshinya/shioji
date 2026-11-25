@@ -94,8 +94,9 @@ func (s *Server) applyRuntimeOptions(id string, next harness.Adapter, options *d
 func (s *Server) configureRuntime(in protocol.RuntimeConfiguration) (domain.Readiness, error) {
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
-	provider, ok := s.adapter(in.HarnessID).(harness.InstallationProvider)
-	if !ok {
+	adapter := s.adapter(in.HarnessID)
+	provider, ok := adapter.(harness.InstallationProvider)
+	if !ok || adapter.Descriptor().ProfileOnly {
 		return domain.Readiness{}, harness.Unsupported("configure-runtime")
 	}
 	gate := s.catalogGate(in.HarnessID)
@@ -201,7 +202,7 @@ func (s *Server) recheckRuntime(id string) (domain.Readiness, error) {
 	if s.activeToolAuthorization(id) {
 		return domain.Readiness{}, errors.New("请先完成工具授权")
 	}
-	if s.adapter(id) == nil {
+	if adapter := s.adapter(id); adapter == nil || adapter.Descriptor().ProfileOnly {
 		return domain.Readiness{}, errors.New("Agent 不存在")
 	}
 	s.dispatchMu.Lock()

@@ -6,6 +6,7 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"slices"
 	"strings"
 	"time"
 )
@@ -46,7 +47,7 @@ func agentEditor(catalog []domain.HarnessInfo) *deviceAgentEditor {
 func (e *deviceAgentEditor) input() protocol.DeviceAgents {
 	in := protocol.DeviceAgents{Agents: []protocol.RuntimeConfiguration{}}
 	for _, info := range e.catalog {
-		if info.Configured && info.Profile == nil {
+		if info.Configured && info.Profile == nil && !info.IsCustomProfileProvider() {
 			entry := protocol.RuntimeConfiguration{HarnessID: info.ID, Executable: e.paths[info.ID]}
 			if e.optionSupport[info.ID] {
 				options := e.options[info.ID]
@@ -68,7 +69,7 @@ func (v *View) deviceAgents(c *n.Context, t *n.Theme, key string, state *app.Dev
 				return
 			}
 			v.agentRows(c.Key("rows"), t, key, state.Connected, editor, false, func() { v.saveDeviceAgents(key, state, editor) })
-			if len(editor.catalog) == 0 {
+			if !slices.ContainsFunc(editor.catalog, func(info domain.HarnessInfo) bool { return !info.IsCustomProfileProvider() }) {
 				label := "暂无 Agent"
 				if editor.loading {
 					label = "正在检测…"
@@ -361,6 +362,9 @@ func (v *View) saveDeviceAgents(key string, state *app.DeviceState, e *deviceAge
 func (v *View) agentRows(c *n.Context, t *n.Theme, key string, connected bool, e *deviceAgentEditor, onboarding bool, save func()) {
 	for i := range e.catalog {
 		info := &e.catalog[i]
+		if info.IsCustomProfileProvider() {
+			continue
+		}
 		n.Column(c.Key(info.ID)).FillWidth().Children(func() {
 			header := n.Row(c).FillWidth().Height(56).PaddingX(8).Gap(8).AlignItems(n.Center).Radius(6)
 			anchored := info.ID == e.profileAnchor

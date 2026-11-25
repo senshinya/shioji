@@ -35,9 +35,14 @@ func (s *Server) configureAdapters() error {
 		s.adapterOrder = append(s.adapterOrder, d.ID)
 	}
 	if s.config.DefaultHarnessID == "" {
-		s.config.DefaultHarnessID = s.adapterOrder[0]
+		for _, id := range s.adapterOrder {
+			if !s.adapters[id].Descriptor().ProfileOnly {
+				s.config.DefaultHarnessID = id
+				break
+			}
+		}
 	}
-	if s.adapters[s.config.DefaultHarnessID] == nil {
+	if adapter := s.adapters[s.config.DefaultHarnessID]; adapter == nil || adapter.Descriptor().ProfileOnly {
 		return errors.New("default harness is not configured")
 	}
 	if err := s.loadCatalogOwner(); err != nil {

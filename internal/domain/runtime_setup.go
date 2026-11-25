@@ -17,6 +17,7 @@ const (
 
 type RuntimeInstallation struct {
 	APISetup         bool                 `json:"apiSetup,omitempty"`
+	CanRepair        bool                 `json:"canRepair,omitempty"`
 	APIKeyOnly       bool                 `json:"apiKeyOnly,omitempty"`
 	SignInMethods    []SignInMethod       `json:"signInMethods,omitempty"`
 	Options          RuntimeOptions       `json:"options"`
@@ -28,6 +29,11 @@ type RuntimeInstallation struct {
 	Guide            string               `json:"guide,omitempty"`
 	Documentation    string               `json:"documentation,omitempty"`
 	SignInCommand    []string             `json:"signInCommand,omitempty"`
+}
+
+func (info HarnessInfo) CanRepairAPIRuntime() bool {
+	return info.Profile != nil && info.Profile.Authorized && info.Profile.Mode == AgentProfileAPI &&
+		info.Installation != nil && info.Installation.CanRepair
 }
 
 type SignInMethod string

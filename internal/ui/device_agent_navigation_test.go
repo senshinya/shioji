@@ -598,3 +598,59 @@ func TestCustomProfileUsesDropdownExplicitIconAndOwningDeviceModelList(t *testin
 		t.Fatal("the selected model or installation intent was not sent")
 	}
 }
+
+func TestBoundClaudeProfileInstallsMissingRuntimeWithoutNewCredentials(t *testing.T) {
+	m := deviceUIModel()
+	state := m.DeviceStates["local"]
+	state.ConnectionEpoch = ""
+	state.WorkerMinor = protocol.CustomAgentProfileMinor
+	profile := &domain.AgentProfile{ID: "saved-claude", Name: "Claude Work", HarnessID: domain.AgentAnthropic, Mode: domain.AgentProfileAPI, Authorized: true}
+	state.Readiness.Harnesses = []domain.HarnessInfo{
+		{ID: profile.ID, Name: profile.Name, Profile: profile, Configured: true, State: domain.RuntimeUnavailable,
+			Installation: &domain.RuntimeInstallation{CanRepair: true, Issue: domain.RuntimeMissing}},
+	}
+	v := New(m, app.NewController(""), "")
+	v.devices, v.deviceSelected, v.deviceTab = true, "local", "agents"
+	ui := n.NewTester(v.View, 1100, 700)
+	for _, label := range []string{profile.Name, "安装运行环境"} {
+		ui.Advance(time.Second)
+		if err := ui.Click(label); err != nil {
+			t.Fatal(err, ui.Texts())
+		}
+	}
+	job := welcomeJob(t, v.Controller, "runtime.signin.start")
+	input := job.Input.(protocol.SignInInput)
+	if job.ConnectionID != "local" || input.HarnessID != profile.ID || input.Method != domain.SignInAPI ||
+		input.API == nil || *input.API != (domain.APIConfiguration{InstallRuntime: true}) {
+		t.Fatal("runtime repair did not target the bound Profile")
+	}
+}
+
+func TestAnthropicProviderOnlyAppearsInCustomProfileSetup(t *testing.T) {
+	m := deviceUIModel()
+	v := New(m, app.NewController(""), "")
+	editor := agentEditor([]domain.HarnessInfo{
+		{ID: "codex", Name: "Codex", Configured: true},
+		{ID: domain.AgentAnthropic, Name: "Anthropic API", Configured: true,
+			ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAPI},
+			Installation: &domain.RuntimeInstallation{APISetup: true}},
+		{ID: "saved-api-profile", Name: "My API", Profile: &domain.AgentProfile{HarnessID: domain.AgentAnthropic}},
+	})
+	f := &welcomeFlow{key: "local", width: 560, agents: editor}
+	welcome := n.NewTester(func(c *n.Context) { v.welcomeAgents(c, c.Theme(), f, false) }, 800, 480)
+	welcome.Advance(time.Second)
+	if welcome.HasText("Anthropic API") || !welcome.HasText("Codex") || !welcome.HasText("My API") {
+		t.Fatal("first-run list exposed the provider instead of the saved Profile", welcome.Texts())
+	}
+	legacy := n.NewTester(func(c *n.Context) { v.agentRows(c, c.Theme(), "local", true, editor, false, func() {}) }, 800, 480)
+	if legacy.HasText("Anthropic API") || !legacy.HasText("My API") {
+		t.Fatal("legacy device list exposed a standalone provider", legacy.Texts())
+	}
+	choices := deviceProfileProviders(editor)
+	if len(choices) != 1 || choices[0].ID != customProfileChoice {
+		t.Fatalf("expected the existing custom Profile entry, got %+v", choices)
+	}
+	if in := editor.input(); len(in.Agents) != 1 || in.Agents[0].HarnessID != "codex" {
+		t.Fatalf("device setup submitted a custom provider as an Agent: %+v", in)
+	}
+}

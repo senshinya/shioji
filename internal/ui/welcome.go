@@ -540,8 +540,13 @@ func (v *View) welcomeAgents(c *n.Context, t *n.Theme, f *welcomeFlow, add bool)
 	catalogFrame := n.Column(c.Key("agent-catalog")).Width(f.width + 16).MarginX(-8).Clip()
 	animatedContentHeight(c, catalogFrame, true, 200*time.Millisecond, func() float32 {
 		n.Column(c).FillWidth().PaddingX(8).Children(func() {
+			shown := 0
 			for i := range e.catalog {
 				info := &e.catalog[i]
+				if info.IsCustomProfileProvider() {
+					continue
+				}
+				shown++
 				header := n.Row(c.Key(info.ID)).Width(f.width + 16).MarginX(-8).PaddingX(8).Height(56).Gap(12).AlignItems(n.Center).Radius(6).Transition(fadeMotion(c, 160*time.Millisecond))
 				controlFeedback(c, header, 6)
 				header.Children(func() {
@@ -569,7 +574,7 @@ func (v *View) welcomeAgents(c *n.Context, t *n.Theme, f *welcomeFlow, add bool)
 					}
 				})
 			}
-			if len(e.catalog) == 0 {
+			if shown == 0 {
 				label := "暂无可用 Agent"
 				if e.loading {
 					label = "正在检测 Agent"
