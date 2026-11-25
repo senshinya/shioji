@@ -278,40 +278,14 @@ func fmtWidth(width float32) string {
 	return "1240"
 }
 
-func TestDevicePathHeadingActionSharesVisibleCenter(t *testing.T) {
-	for _, dark := range []bool{false, true} {
-		v := devicePathsView()
-		ui := n.NewTester(v.View, 1240, 820)
-		ui.SetDark(dark)
-		ui.Advance(time.Second)
-		ink := func(label string) float64 {
-			r, ok := ui.Find(label)
-			if !ok {
-				t.Fatal(label)
-			}
-			im := ui.Image()
-			lo, hi := im.Bounds().Max.Y, -1
-			for y := int(r.Y); y < int(r.Y+r.H); y++ {
-				for x := int(r.X); x < int(r.X+r.W); x++ {
-					px := im.RGBAAt(x, y)
-					hit := px.R < 230
-					if dark {
-						hit = px.R > 56
-					}
-					if hit {
-						lo = min(lo, y)
-						hi = max(hi, y)
-					}
-				}
-			}
-			if hi < lo {
-				t.Fatal("missing heading ink", label)
-			}
-			return float64(lo+hi) / 2
-		}
-		a, b := ink("重新检测"), ink("添加连接路径")
-		if math.Abs(a-b) > 1 {
-			t.Fatal("heading caption and add icon do not share glyph center", a, b)
-		}
+func TestDevicePathAddActionStaysAboveConnectionDiagram(t *testing.T) {
+	v := readyDeviceSceneView()
+	ui := n.NewTester(v.View, 1240, 820)
+	ui.Advance(time.Second)
+	recheck, hasRecheck := ui.Find("重新检测设备")
+	add, hasAdd := ui.Find("添加连接路径")
+	diagram, hasDiagram := ui.Find("设备连接图")
+	if !hasRecheck || !hasAdd || !hasDiagram || recheck.Y+recheck.H > add.Y || add.Y+add.H > diagram.Y {
+		t.Fatal("the add path action must stay between the toolbar and the connection diagram", recheck, add, diagram)
 	}
 }

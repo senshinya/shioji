@@ -95,6 +95,7 @@ type Server struct {
 	adapters             map[string]harness.Adapter
 	adapterOrder         []string
 	agentProfiles        map[string]domain.AgentProfile
+	systemAgentProfiles  map[string]systemAgentProfile
 	profileProviders     map[string]harness.AgentProfileProvider
 	catalogs             map[string]harness.Runtime
 	catalogErrors        map[string]error
@@ -306,6 +307,11 @@ func New(ctx context.Context, config Config) (*Server, error) {
 		s.runtimeMu.RUnlock()
 		if !discovered {
 			s.refreshInstallation(id, s.adapter(id))
+		}
+	}
+	if !config.StartPaused {
+		if err := s.migrateSystemAgentProfiles(); err != nil {
+			return nil, errors.Join(err, s.Close())
 		}
 	}
 

@@ -182,17 +182,22 @@ func deviceSceneGeometry(count int) (float32, []deviceSceneRouteGeometry) {
 	return height, out
 }
 
-func (v *View) deviceStatusScene(c *n.Context, t *n.Theme, key string, state *app.DeviceState) {
+func (v *View) deviceRecheckAction(c *n.Context, key string, state *app.DeviceState, ui *deviceSceneUI) {
+	action := "重新检测"
+	if !state.Connected {
+		action = "重新连接"
+	}
+	if ui.pending {
+		action = "正在检测…"
+	}
+	if deviceTabAction(c, action).Label("重新检测设备").Disabled(v.Controller == nil || ui.pending).Clicked() {
+		v.refreshDeviceScene(key, state, ui)
+	}
+}
+
+func (v *View) deviceStatusScene(c *n.Context, t *n.Theme, key string, state *app.DeviceState, ui *deviceSceneUI) {
 	projection := v.deviceSceneProjection(key, state, c.Now())
 	root := n.Column(c).FillWidth().Label("设备状态区域")
-	ui := n.Local(root, "state", func() deviceSceneUI { return deviceSceneUI{open: map[string]bool{}, epoch: state.ConnectionEpoch} })
-	if ui.epoch != state.ConnectionEpoch {
-		ui.epoch = state.ConnectionEpoch
-		ui.pending = false
-		ui.request++
-		ui.error = ""
-	}
-
 	if ui.pending {
 		projection.Title = "正在检测设备"
 		projection.Busy = true
@@ -210,16 +215,6 @@ func (v *View) deviceStatusScene(c *n.Context, t *n.Theme, key string, state *ap
 			}
 			statusDot(c, projection.Title, font, color, projection.Busy)
 			n.Text(c, projection.Title).FontSize(14).FontWeight(500).FixedLineHeight(configurationTextLine).Grow(1).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
-			action := "重新检测"
-			if !state.Connected {
-				action = "重新连接"
-			}
-			if ui.pending {
-				action = "正在检测…"
-			}
-			if configurationAction(c, action).Label("重新检测设备").Disabled(v.Controller == nil || ui.pending).Clicked() {
-				v.refreshDeviceScene(key, state, ui)
-			}
 			if key != "local" {
 				v.deviceAddPath(c, t, projection.Connection)
 			}

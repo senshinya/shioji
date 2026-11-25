@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -214,6 +215,7 @@ func (s *Server) catalogLoop() {
 	defer s.wg.Done()
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	var migrationError string
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -286,6 +288,16 @@ func (s *Server) catalogLoop() {
 				s.wakeQueue()
 			}
 		}
+		s.dispatchMu.Lock()
+		if s.updateAdmission() == nil {
+			if err := s.migrateSystemAgentProfiles(); err == nil {
+				migrationError = ""
+			} else if err.Error() != migrationError {
+				migrationError = err.Error()
+				log.Printf("migrate system Agent profiles: %v", err)
+			}
+		}
+		s.dispatchMu.Unlock()
 	}
 }
 

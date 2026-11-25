@@ -11,6 +11,7 @@ import (
 	n "github.com/egoist/mygo/ui"
 	"shioji/internal/app"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 	"shioji/internal/tailnet"
 )
 
@@ -248,6 +249,17 @@ func TestDeviceSceneRecheckIsExplicitAndLateReplyCannotCrossEpoch(t *testing.T) 
 	if !ui.HasText("正在检测设备") {
 		t.Fatal("pending state invisible")
 	}
+	if err := ui.Click("工作区"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if err := ui.Click("设备设置"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if !ui.HasText("正在检测…") || !ui.HasText("正在检测设备") {
+		t.Fatal("changing tabs lost the pending device recheck")
+	}
 	v.Model.DeviceStates["air"].ConnectionEpoch = "replacement"
 	ui.Frame()
 	body := []byte(`{"state":"unavailable","harnesses":[]}`)
@@ -375,10 +387,51 @@ func TestDeviceSceneSectionsShareEdgesAndVerticalRhythm(t *testing.T) {
 		if !ok || math.Abs(float64(area.X-workspace.X)) > 1 || math.Abs(float64(area.X+area.W-workspace.X-workspace.W)) > 1 {
 			t.Fatal("workspace tab reading edges differ", area, workspace)
 		}
-		action, _ := ui.Find("新建工作区")
-		if math.Abs(float64(action.X+action.W-configurationHoverInset-workspace.X-workspace.W)) > 1 {
-			t.Fatal("workspace action does not share form right edge", action, workspace)
-		}
+	}
+}
+
+func TestDeviceTabActionsShareProfilePosition(t *testing.T) {
+	for _, width := range []int{600, 850, 1240} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			v := readyDeviceSceneView()
+			state := v.Model.DeviceStates["air"]
+			state.WorkerMinor = protocol.AgentProfileMinor
+			state.Readiness.Harnesses[0].ProfileModes = []domain.AgentProfileMode{domain.AgentProfileAccount}
+			state.Readiness.Harnesses[0].Installation = &domain.RuntimeInstallation{SignInMethods: []domain.SignInMethod{domain.SignInBrowser}}
+			ui := n.NewTester(v.View, width, 900)
+			ui.Advance(time.Second)
+			find := func(label string) n.Rect {
+				t.Helper()
+				rect, ok := ui.Find(label)
+				if !ok {
+					t.Fatal("missing device action", label, ui.Texts())
+				}
+				return rect
+			}
+			switchTab := func(label string) {
+				t.Helper()
+				if err := ui.Click(label); err != nil {
+					t.Fatal(err)
+				}
+				ui.Advance(time.Second)
+			}
+			settings := find("重新检测设备")
+			switchTab("工作区")
+			workspace := find("新建工作区")
+			switchTab("Profile")
+			profile := find("新增 Profile")
+			for _, action := range []n.Rect{settings, workspace} {
+				if math.Abs(float64(action.X+action.W-profile.X-profile.W)) > 1 || math.Abs(float64(action.Y-profile.Y)) > 1 || action.H != profile.H {
+					t.Errorf("tab action and Profile action have different trailing positions: %v versus %v", action, profile)
+				}
+			}
+			switchTab("工作区")
+			if err := ui.Click("新建工作区"); err != nil {
+				t.Fatal(err)
+			}
+			ui.Advance(time.Second)
+			find("远程主目录")
+		})
 	}
 }
 

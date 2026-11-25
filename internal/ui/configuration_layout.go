@@ -28,7 +28,7 @@ const (
 	configurationProfileWidth     = 560
 	profileChevronSize            = 16
 	// disclosureRight uses a 24-point viewBox with its stroke ending at 16.75.
-	profileTrailingInkInset       = configurationHoverInset + (toolbarActionSize-profileChevronSize)/2 + (24-16.75)*profileChevronSize/24
+	deviceTabActionTrailingInset  = configurationHoverInset + (toolbarActionSize-profileChevronSize)/2 + (24-16.75)*profileChevronSize/24
 	configurationHoverInset       = 8
 	workspaceDirectoryChoiceInset = 4
 	// Reserve room for centered add/remove button targets past their ink edge.

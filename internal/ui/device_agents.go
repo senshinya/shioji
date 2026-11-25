@@ -85,29 +85,30 @@ func (v *View) deviceProfileRows(c *n.Context, t *n.Theme, key string, connected
 	font := n.Font{Family: t.Font, Size: 14, Weight: 500}
 	count := 0
 	for _, info := range e.catalog {
-		if info.Profile == nil {
+		if info.Profile == nil && !info.HasSystemProfile() {
 			continue
 		}
 		count++
 		name := info.Name
-		provider := info.Profile.HarnessID
-		for _, agent := range e.catalog {
-			if agent.ID == provider {
-				provider = agent.Name
-				break
+		detail := runtimeSetupLabel(info, connected)
+		if profile := info.Profile; profile != nil {
+			provider := profile.HarnessID
+			for _, agent := range e.catalog {
+				if agent.ID == provider {
+					provider = agent.Name
+					break
+				}
 			}
-		}
-		mode := profileModeLabel(info.Profile.Mode)
-		if info.Installation != nil && info.Installation.APIKeyOnly {
-			mode = "API Key"
-		}
-		detail := provider + " · " + mode
-		if !info.Profile.Authorized || profileModelsPending(info) || info.State != domain.RuntimeReady || !connected {
-			status := runtimeSetupLabel(info, connected)
+			mode := profileModeLabel(profile.Mode)
+			if info.Installation != nil && info.Installation.APIKeyOnly {
+				mode = "API Key"
+			}
+			detail = provider + " · " + mode
 			if profileModelsPending(info) {
-				status = "模型待确认"
+				detail += " · 模型待确认"
+			} else if !profile.Authorized || info.State != domain.RuntimeReady || !connected {
+				detail += " · " + runtimeSetupLabel(info, connected)
 			}
-			detail += " · " + status
 		}
 		button := control(c.Key(info.ID), 6).FillWidth().Height(56).PaddingX(configurationHoverInset).
 			Gap(8).AlignItems(n.Center).Label("打开 " + name + " 配置")
@@ -115,7 +116,10 @@ func (v *View) deviceProfileRows(c *n.Context, t *n.Theme, key string, connected
 			n.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(n.Baseline).Children(func() {
 				inlineSymbol(c, harnessIcon(domain.HarnessDescriptor{Icon: info.Icon}), name, font, 24, t.TextMuted)
 				n.Column(c).Grow(1).MinWidth(0).Children(func() {
-					n.Text(c, name).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).SingleLine().TooltipWhenTruncated(name)
+					n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
+						n.Text(c, name).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).SingleLine().MinWidth(0).Shrink(1).TooltipWhenTruncated(name)
+						systemProfileBadge(c, info)
+					})
 					n.Text(c, detail).FontSize(12).FixedLineHeight(16).SingleLine().TextColor(t.TextMuted).TooltipWhenTruncated(detail)
 				})
 			})
@@ -141,16 +145,36 @@ func (v *View) deviceProfileRows(c *n.Context, t *n.Theme, key string, connected
 		}
 		deviceDivider(c)
 	}
-	message := e.error
-	if message == "" && count == 0 {
-		message = "还没有 Profile"
-		if e.loading {
-			message = "正在读取 Profile…"
+	if count == 0 {
+		deviceProfileEmpty(c.Key("empty"), t, connected, e)
+		return
+	}
+	if e.error != "" {
+		n.Text(c, e.error).FontSize(12).TextColor(t.TextMuted).Padding(configurationHoverInset)
+	}
+}
+
+func deviceProfileEmpty(c *n.Context, t *n.Theme, connected bool, e *deviceAgentEditor) {
+	title, hint := "还没有 Profile", "为这台设备保存 Agent 的账号授权或 API Key。"
+	switch {
+	case !connected:
+		title, hint = "设备未连接", "连接后查看这台设备的 Profile。"
+	case e.loading:
+		title, hint = "正在读取 Profile…", ""
+	case e.error != "":
+		title, hint = "无法读取 Profile", e.error
+	case len(deviceProfileProviders(e)) == 0:
+		hint = "在这台设备安装支持的 Agent 后，前往设备设置重新检测。"
+	}
+	n.Column(c).FillWidth().Padding(2*configurationSectionGap, configurationHoverInset, configurationSectionGap).
+		AlignItems(n.Center).Gap(4).Children(func() {
+		n.Icon(c, toolLockIcon).Size(28, 28).Margin(0, 0, 4).TextColor(t.TextMuted).IgnoreInput(true).Role(n.RoleNone)
+		n.Text(c, title).FontSize(configurationSectionSize).FontWeight(500).FixedLineHeight(configurationTextLine)
+		if hint != "" {
+			n.Text(c, hint).FillWidth().MaxWidth(360).FontSize(configurationLabelSize).
+				FixedLineHeight(configurationTextLine).TextAlign(n.Center).TextColor(t.TextMuted)
 		}
-	}
-	if message != "" {
-		n.Text(c, message).FontSize(12).TextColor(t.TextMuted).Padding(8, configurationHoverInset)
-	}
+	})
 }
 
 func (v *View) syncDeviceAgents(key string, state *app.DeviceState, e **deviceAgentEditor) {

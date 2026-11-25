@@ -8,19 +8,22 @@ import (
 	"time"
 )
 
-func TestSystemProfileBadgeRemainsInSetupAndLegacyDeviceLists(t *testing.T) {
+func TestSystemProfileBadgeAppearsInDeviceAndSetupLists(t *testing.T) {
 	catalog := []domain.HarnessInfo{
 		{ID: "codex", Name: "Codex", Configured: true, State: domain.RuntimeReady, Installation: &domain.RuntimeInstallation{},
+			Account:      &domain.RuntimeAccount{Mode: "account", State: "authenticated"},
 			ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAccount}},
 		{ID: "work", Name: "Codex 工作", Configured: true, State: domain.RuntimeReady, Installation: &domain.RuntimeInstallation{},
 			Profile: &domain.AgentProfile{ID: "work", HarnessID: "codex", Name: "Codex 工作", Authorized: true}},
 	}
 	for _, scenario := range []struct {
-		name     string
-		firstRun bool
-		legacy   bool
+		name        string
+		firstRun    bool
+		legacy      bool
+		unavailable bool
 	}{
 		{name: "device"},
+		{name: "migrated system Profile without a running Agent", unavailable: true},
 		{name: "first run", firstRun: true},
 		{name: "legacy configuration without profile creation capabilities", legacy: true},
 	} {
@@ -35,6 +38,11 @@ func TestSystemProfileBadgeRemainsInSetupAndLegacyDeviceLists(t *testing.T) {
 				state.WorkerMinor = protocol.AgentProfileMinor - 1
 				state.Readiness.Harnesses[0].ProfileModes = nil
 				state.Readiness.Harnesses[0].Configured = false
+			}
+			if scenario.unavailable {
+				info := &state.Readiness.Harnesses[0]
+				info.SystemProfile = true
+				info.State, info.Account, info.Configured = domain.RuntimeUnavailable, nil, false
 			}
 			v := New(m, nil, "")
 			if scenario.firstRun {
@@ -53,14 +61,8 @@ func TestSystemProfileBadgeRemainsInSetupAndLegacyDeviceLists(t *testing.T) {
 			badge, shown := ui.Find("系统")
 			system, hasSystem := ui.Find("Codex")
 			independent, hasIndependent := ui.Find("Codex 工作")
-			if !scenario.legacy && !scenario.firstRun {
-				if shown || hasSystem || !hasIndependent {
-					t.Fatal("the Profile list must show saved configurations only", ui.Texts())
-				}
-				return
-			}
 			if !shown || !hasSystem || !hasIndependent || badge.X < system.X+system.W-1 || badge.Y < system.Y-1 || badge.Y >= independent.Y {
-				t.Fatal("system badge must sit on the discovered Agent's line", system, badge, independent, ui.Texts())
+				t.Fatal("system badge must sit on the native configuration's line", system, badge, independent, ui.Texts())
 			}
 			count := 0
 			for _, label := range ui.Texts() {
@@ -70,6 +72,15 @@ func TestSystemProfileBadgeRemainsInSetupAndLegacyDeviceLists(t *testing.T) {
 			}
 			if count != 1 {
 				t.Fatal("an independent Profile was marked as system-managed", ui.Texts())
+			}
+			if !scenario.legacy && !scenario.firstRun {
+				if err := ui.Click("打开 Codex 配置"); err != nil {
+					t.Fatal(err)
+				}
+				ui.Advance(time.Second)
+				if !ui.HasText("常规") || v.deviceProfile != nil {
+					t.Fatal("system Profile must open its existing Agent configuration", ui.Texts())
+				}
 			}
 		})
 	}

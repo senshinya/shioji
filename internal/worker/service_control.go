@@ -72,6 +72,9 @@ func (s *Server) ResumeService(in supervisor.Control) error {
 	if intent.DeviceID != s.store.DeviceID() {
 		return errors.New("drain intent belongs to another device")
 	}
+	if e = s.migrateSystemAgentProfiles(); e != nil {
+		return e
+	}
 	for _, id := range intent.Queues {
 		q, e := s.store.Queue(id)
 		if e != nil {

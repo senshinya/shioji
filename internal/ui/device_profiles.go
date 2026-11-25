@@ -132,13 +132,7 @@ func (v *View) deviceProfileEntry(c *n.Context, key string, state *app.DeviceSta
 	if len(agents) == 0 {
 		return
 	}
-	const label = "新增 Profile"
-	button := control(c, configurationFieldRadius).Absolute().Right(0).Top((configurationTabHeight-configurationControlHeight)/2).
-		Height(configurationControlHeight).Padding(0, profileTrailingInkInset, 0, configurationHoverInset).AlignItems(n.Center).
-		Label(label).Disabled(!state.Connected || e.busy || e.loading || v.Controller == nil)
-	button.Children(func() {
-		n.Text(c, label).FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).SingleLine()
-	})
+	button := deviceTabAction(c, "新增 Profile").Disabled(!state.Connected || e.busy || e.loading || v.Controller == nil)
 	if e.focusProfileEntry {
 		e.focusProfileEntry = false
 		button.Focus()

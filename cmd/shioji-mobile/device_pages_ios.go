@@ -576,7 +576,7 @@ func (a *mobileApp) openRemoteAgents(parent *mygo.Window) {
 			}
 			profileCount := 0
 			for _, info := range catalog {
-				if managedProfiles && info.Profile == nil {
+				if managedProfiles && info.Profile == nil && !info.HasSystemProfile() {
 					continue
 				}
 				agent := a.signedInAgent(info)
@@ -595,18 +595,22 @@ func (a *mobileApp) openRemoteAgents(parent *mygo.Window) {
 				symbol := mobileHarnessSymbol(agent.Icon)
 				if managedProfiles {
 					profileCount++
-					providerName := info.Profile.HarnessID
-					if index := slices.IndexFunc(catalog, func(h domain.HarnessInfo) bool { return h.ID == providerName }); index >= 0 {
-						providerName = catalog[index].Name
-					}
-					method := mobileProfileModeLabel(info.Profile.Mode)
-					if agent.Installation != nil && agent.Installation.APIKeyOnly {
-						method = "API Key"
+					detail := "系统"
+					if profile := info.Profile; profile != nil {
+						providerName := profile.HarnessID
+						if index := slices.IndexFunc(catalog, func(h domain.HarnessInfo) bool { return h.ID == providerName }); index >= 0 {
+							providerName = catalog[index].Name
+						}
+						method := mobileProfileModeLabel(profile.Mode)
+						if agent.Installation != nil && agent.Installation.APIKeyOnly {
+							method = "API Key"
+						}
+						detail = providerName + " · " + method
 					}
 					if agent.State == domain.RuntimeReady {
 						status = ""
 					}
-					mobileRow(c.Key(agent.ID), agent.Name, providerName+" · "+method, status, symbol, open)
+					mobileRow(c.Key(agent.ID), agent.Name, detail, status, symbol, open)
 					continue
 				}
 				if m.WorkerMinor < protocol.RuntimeAgentSelectionMinor {

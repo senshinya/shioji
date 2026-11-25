@@ -12,6 +12,7 @@ import (
 	"shioji/internal/domain"
 	"shioji/internal/harness"
 	"shioji/internal/protocol"
+	"shioji/internal/supervisor"
 )
 
 type profileTestHarness struct{ memoryHarness }
@@ -22,6 +23,95 @@ func (a profileTestHarness) ProfileModes() []domain.AgentProfileMode {
 
 func (a profileTestHarness) WithAgentProfile(id, name, directory string, mode domain.AgentProfileMode) (harness.Adapter, error) {
 	return memoryHarness{id: id}, nil
+}
+
+func TestWorkerUpgradeMigratesSavedNativeProfile(t *testing.T) {
+	dir, err := os.MkdirTemp("", "shioji-profile-upgrade-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	settings := []byte(`{"version":1,"paths":{"saved":""},"selected":[]}`)
+	if err := os.WriteFile(filepath.Join(dir, "runtime-settings.json"), settings, 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := Config{Directory: dir, StartPaused: true, ServiceInstance: "candidate", ServiceOperation: "update", Harnesses: []harness.Adapter{
+		configurableMemory{memoryHarness: memoryHarness{id: "saved"}},
+		configurableMemory{memoryHarness: memoryHarness{id: "discovered"}},
+	}}
+	server, err := New(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	profilePath := filepath.Join(dir, "system-agent-profiles.json")
+	if _, err := os.Stat(profilePath); !os.IsNotExist(err) {
+		t.Fatal("uncommitted candidate migrated system Profiles", err)
+	}
+	if err = supervisor.SaveDrainIntent(dir, supervisor.DrainIntent{ID: "update", Instance: "old", DeviceID: server.store.DeviceID()}); err != nil {
+		t.Fatal(err)
+	}
+	resume := supervisor.Control{Instance: "candidate", OperationID: "update"}
+	if err = server.ResumeService(resume); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatal("upgrade did not persist the system Profile", err)
+	}
+	var saved []struct{ ID, Name string }
+	if err := json.Unmarshal(migrated, &saved); err != nil || len(saved) != 1 || saved[0].ID != "saved" || saved[0].Name == "" {
+		t.Fatal("upgrade did not preserve the native Profile identity", saved, err)
+	}
+	firstWrite, err := os.Stat(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMigrationUnchanged := func() {
+		t.Helper()
+		current, err := os.Stat(profilePath)
+		if err != nil || !os.SameFile(firstWrite, current) {
+			t.Fatal("migration rewrote an existing system Profile", err)
+		}
+		data, err := os.ReadFile(profilePath)
+		if err != nil || string(data) != string(migrated) {
+			t.Fatal("migration changed an existing system Profile", err)
+		}
+	}
+	if err = server.ResumeService(resume); err != nil {
+		t.Fatal(err)
+	}
+	assertMigrationUnchanged()
+	if err := server.Close(); err != nil {
+		t.Fatal(err)
+	}
+	config.StartPaused = false
+	config.ServiceInstance, config.ServiceOperation = "", ""
+	next, err := New(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = next.Close() })
+	assertMigrationUnchanged()
+	if got, err := os.ReadFile(filepath.Join(dir, "runtime-settings.json")); err != nil || string(got) != string(settings) {
+		t.Fatal("migration changed legacy settings", err)
+	}
+	if _, err := os.Stat(next.agentProfileHome("saved")); !os.IsNotExist(err) {
+		t.Fatal("system Profile must retain its native home", err)
+	}
+	result, err := next.handle("runtime.catalog", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := result.(domain.Readiness).Harnesses
+	if len(catalog) != 2 {
+		t.Fatal(catalog)
+	}
+	for _, info := range catalog {
+		if info.Configured || info.Profile != nil || info.SystemProfile != (info.ID == "saved") {
+			t.Errorf("wrong system Profile classification: %+v", info)
+		}
+	}
 }
 
 func TestAgentProfileSurvivesRestartAlongsideLegacySession(t *testing.T) {

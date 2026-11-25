@@ -42,6 +42,7 @@ type HarnessDescriptor struct {
 }
 type HarnessInfo struct {
 	Profile           *AgentProfile        `json:"profile,omitempty"`
+	SystemProfile     bool                 `json:"systemProfile,omitempty"`
 	ProfileModes      []AgentProfileMode   `json:"profileModes,omitempty"`
 	Account           *RuntimeAccount      `json:"account,omitempty"`
 	Configured        bool                 `json:"configured"`
@@ -56,6 +57,17 @@ type HarnessInfo struct {
 	PermissionChoices []OptionChoice       `json:"permissionChoices,omitempty"`
 	Plan              bool                 `json:"plan"`
 	Capabilities      HarnessCapabilities  `json:"capabilities"`
+}
+
+// HasSystemProfile also recognizes native configurations reported by workers
+// that predate the persisted system Profile catalog.
+func (h HarnessInfo) HasSystemProfile() bool {
+	if h.ID == "" || h.Profile != nil {
+		return false
+	}
+	return h.SystemProfile || h.State == RuntimeReady ||
+		h.Account != nil && (h.Account.Mode == "api" || h.Account.State == "authenticated" || h.Account.State == "configured") ||
+		h.Installation != nil && h.Installation.Issue == RuntimeAuthenticationExpired
 }
 
 type AgentProfileMode string

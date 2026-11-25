@@ -55,6 +55,9 @@ func (s *Server) configureAdapters() error {
 	if err := s.loadAgentProfiles(); err != nil {
 		return err
 	}
+	if err := s.loadSystemAgentProfiles(); err != nil {
+		return err
+	}
 	return s.loadRuntimeSettings()
 }
 
@@ -200,6 +203,7 @@ func (s *Server) runtimeProfiles(sessions []string, allAdapters bool) domain.Rea
 		s.runtimeMu.RLock()
 		state := s.catalogStates[id]
 		err := s.catalogErrors[id]
+		_, info.SystemProfile = s.systemAgentProfiles[id]
 		s.runtimeMu.RUnlock()
 		if state.phase == domain.RuntimeRefreshing || state.phase == domain.RuntimeUnavailable {
 			if len(state.previous.Models) > 0 {

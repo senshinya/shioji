@@ -12,6 +12,15 @@ import (
 )
 
 func deviceDivider(c *n.Context) { n.Column(c).FillWidth().Height(1).Background(c.Theme().Border) }
+
+func deviceTabAction(c *n.Context, label string) n.Element {
+	return control(c, configurationFieldRadius).Absolute().Right(0).Top((configurationTabHeight-configurationControlHeight)/2).
+		Height(configurationControlHeight).Padding(0, deviceTabActionTrailingInset, 0, configurationHoverInset).AlignItems(n.Center).
+		Label(label).Children(func() {
+		n.Text(c, label).FontSize(configurationLabelSize).FixedLineHeight(configurationTextLine).SingleLine()
+	})
+}
+
 func deviceHeading(c *n.Context, label string, action func()) {
 	n.Row(c).FillWidth().Height(configurationSectionHeader).AlignItems(n.Start).Children(func() {
 		configurationSectionTitle(c, label).Label(label).Grow(1)
@@ -74,6 +83,13 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 	}
 	state := v.deviceState(key)
 	scope := n.Column(c).FillWidth().FillHeight().Grow(1)
+	scene := n.Local(scope, "device-scene", func() deviceSceneUI { return deviceSceneUI{open: map[string]bool{}, epoch: state.ConnectionEpoch} })
+	if scene.epoch != state.ConnectionEpoch {
+		scene.epoch = state.ConnectionEpoch
+		scene.pending = false
+		scene.request++
+		scene.error = ""
+	}
 	agentState := n.Local(scope, "agent-editor", func() *deviceAgentEditor { return agentEditor(state.Readiness.Harnesses) })
 	v.syncDeviceAgents(key, state, agentState)
 	if v.deviceTab != "agents" {
@@ -223,8 +239,15 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 			n.Column(c).FillWidth().PaddingX(configurationInset).Children(func() {
 				n.Row(c).FillWidth().Children(func() {
 					v.deviceTab = configurationTabs(c, v.deviceTab, tabs, configurationUnderline, false)
-					if v.deviceTab == "agents" {
+					switch v.deviceTab {
+					case "agents":
 						v.deviceProfileEntry(c.Key("new-profile"), key, state, *agentState)
+					case "workspaces":
+						if deviceTabAction(c.Key("new-workspace"), "新建工作区").Disabled(!state.Connected || v.Controller == nil).Clicked() {
+							v.beginWorkspace(key)
+						}
+					case "settings":
+						v.deviceRecheckAction(c.Key("recheck-device"), key, state, scene)
 					}
 				})
 			})
@@ -242,10 +265,10 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 							}
 
 							if v.deviceTab == "workspaces" {
-								v.deviceWorkspaces(c.Key("workspaces:"+key), t, key, deviceID, state)
+								v.deviceWorkspaces(c.Key("workspaces:"+key), t, key, deviceID)
 							} else {
 								n.Column(c).FillWidth().Gap(deviceSceneContentGap).Children(func() {
-									v.deviceStatusScene(c.Key("scene:"+key), t, key, state)
+									v.deviceStatusScene(c.Key("scene:"+key), t, key, state, scene)
 									n.Column(c).FillWidth().Gap(0).Label("设备执行服务区域").Children(func() {
 										deviceHeading(c, "执行服务", nil)
 										v.deviceWorker(c.Key("worker:"+key), t, key, state)
@@ -267,14 +290,9 @@ func (v *View) deviceDetail(c *n.Context, t *n.Theme, key string) {
 	})
 }
 
-func (v *View) deviceWorkspaces(c *n.Context, t *n.Theme, key, deviceID string, state *app.DeviceState) {
+func (v *View) deviceWorkspaces(c *n.Context, t *n.Theme, key, deviceID string) {
 	m := v.Model
 	n.Column(c).FillWidth().Gap(0).Label("设备工作区区域").Children(func() {
-		n.Row(c).FillWidth().Height(configurationControlHeight).Justify(n.End).Children(func() {
-			if configurationAction(c, "新建工作区").Label("新建工作区").MarginEnd(-configurationHoverInset).Disabled(!state.Connected || v.Controller == nil).Clicked() {
-				v.beginWorkspace(key)
-			}
-		})
 		count := 0
 		for _, w := range m.Snapshot.Workspaces {
 			if w.DeviceID != deviceID && !(key == "local" && w.DeviceID == "") {

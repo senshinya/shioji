@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	n "github.com/egoist/mygo/ui"
 	"math"
 	"shioji/internal/app"
@@ -11,6 +12,44 @@ import (
 	"testing"
 	"time"
 )
+
+func TestDeviceProfileEmptyStateGuidesFirstConfiguration(t *testing.T) {
+	for _, width := range []int{850, 1240} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			m := deviceUIModel()
+			state := m.DeviceStates["air"]
+			state.ConnectionEpoch = ""
+			state.WorkerMinor = protocol.AgentProfileMinor
+			state.Readiness.Harnesses = []domain.HarnessInfo{{
+				ID: "codex", Name: "Codex", Configured: true, State: domain.RuntimeUnavailable,
+				Installation: &domain.RuntimeInstallation{Issue: domain.RuntimeSignInRequired, SignInMethods: []domain.SignInMethod{domain.SignInBrowser}},
+				ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAccount},
+			}}
+			v := New(m, app.NewController(""), "")
+			v.devices, v.deviceSelected, v.deviceTab = true, "air", "agents"
+			ui := n.NewTester(v.View, width, 680)
+			ui.SetDark(width == 850)
+			ui.Advance(time.Second)
+			saveNativeSkillImage(t, ui, fmt.Sprintf("profile-empty-%d.png", width))
+			if !ui.HasText("为这台设备保存 Agent 的账号授权或 API Key。") || !ui.HasText("还没有 Profile") {
+				t.Fatal("empty Profile page must explain what the first configuration is for", ui.Texts())
+			}
+			state.Connected = false
+			ui.Frame()
+			if ui.HasText("还没有 Profile") || !ui.HasText("连接后查看这台设备的 Profile。") {
+				t.Fatal("offline Profile page looks like a confirmed empty list", ui.Texts())
+			}
+			state.Connected = true
+			ui.Frame()
+			if err := ui.Click("新增 Profile"); err != nil {
+				t.Fatal(err)
+			}
+			if v.deviceProfile == nil {
+				t.Fatal("toolbar action did not open the Profile form")
+			}
+		})
+	}
+}
 
 // A nested disclosure or a replaced detail root would lose the full-page
 // transition and its return destination; exercise the actual device browser.
