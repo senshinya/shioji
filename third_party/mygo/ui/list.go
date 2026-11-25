@@ -830,18 +830,35 @@ func (s *ListState) sync(e *node, n int) {
 		end := max(0, s.wroteY+s.pinY-s.pinGlide.target)
 		scrollMoved = st.scrollY <= end
 	}
+	scrollDownToEnd := scrollMoved && !s.req.set && s.endAnchor() && st.scrollY > s.wroteY
 	s.heights.reveals, s.heights.gap = s.Reveals, s.gap
 	if s.req.end {
 		s.followPaused = false
 	}
 	if s.anchored() {
-		if s.req.set || scrollMoved {
+		if s.req.set || scrollMoved && !scrollDownToEnd {
 			if s.sentAnchor() && !s.req.set {
 				s.followPaused = true
 			}
 			s.anchorMode = listAnchorNone
 		} else if s.endAnchor() {
 			s.pinRow = max(0, n-1)
+			if scrollDownToEnd && s.anchorMode == listAnchorEnd {
+				d := st.scrollY - s.wroteY
+				s.pinGlide.advance(e.c.now)
+				s.pinGlide.value = max(s.pinGlide.target, s.pinGlide.value-d)
+				if s.pinGlide.value <= s.pinGlide.target+0.5 {
+					s.pinGlide = channel{value: s.pinGlide.target, target: s.pinGlide.target, at: e.c.now}
+				} else if s.pinGlide.curve && s.pinGlide.moving && s.pinGlide.duration > 0 {
+					t := min(1, max(0, e.c.now.Sub(s.pinGlide.start).Seconds()/s.pinGlide.duration.Seconds()))
+					p := float64(s.pinGlide.ease(float32(t)))
+					if p >= 1-1e-4 {
+						s.pinGlide = channel{value: s.pinGlide.target, target: s.pinGlide.target, at: e.c.now}
+					} else {
+						s.pinGlide.from = (s.pinGlide.value - s.pinGlide.target*p) / (1 - p)
+					}
+				}
+			}
 		} else if s.pinKey != nil {
 			row, ok := s.find(s.pinKey, s.pinRow, n)
 			if !ok {
@@ -908,8 +925,13 @@ func (s *ListState) sync(e *node, n int) {
 			s.req = listRequest{set: true, offset: true, y: max(0, st.scrollY)}
 		}
 		st.list = s
+	case scrollDownToEnd:
+		// Scrolled toward the end an animated end-glide is already heading to.
+		s.userAt = rt.frame
+		s.moveJump = true
 	case scrollMoved && !s.req.set && s.follows() && s.followLag.value > 0.5 && st.scrollY > s.wroteY:
-		// Scrolled toward the end it glides to: it goes on following.
+		// Scrolled toward the end it glides to: consume that lag and go on following.
+		s.followLag.value = max(0, s.followLag.value-(st.scrollY-s.wroteY))
 		s.userAt = rt.frame
 		s.moveJump = true
 	case scrollMoved && !s.req.set:
@@ -1854,12 +1876,31 @@ func (e *node) layoutList(w, h float32) {
 				s.beginAnchor()
 			} else if s.endAnchor() {
 				// Content appended during the glide moves the last row. Keep
-				// the current viewport still, then head for its updated end.
+				// the current viewport still on this frame while preserving the
+				// original glide deadline so fast output cannot restart the
+				// curve forever or trap the list behind its own bottom.
 				s.pinGlide.advance(e.c.now)
 				delta := padTop + hs.top(a, gap) - s.pinEndTop
 				if math.Abs(delta) > .5 || math.Abs(target-s.pinGlide.target) > .5 {
-					s.pinGlide.value += delta
-					headFor(&s.pinGlide, target, s.pinAnimation, e.c.now)
+					if !s.pinGlide.moving && !s.pinGlide.pending {
+						s.pinGlide = channel{value: target, target: target, at: e.c.now}
+					} else if s.pinGlide.pending {
+						s.pinGlide.value += delta
+						s.pinGlide.pendingTo = target
+					} else if s.pinGlide.curve && s.pinGlide.duration > 0 {
+						s.pinGlide.value += delta
+						t := min(1, max(0, e.c.now.Sub(s.pinGlide.start).Seconds()/s.pinGlide.duration.Seconds()))
+						p := float64(s.pinGlide.ease(float32(t)))
+						if p >= 1-1e-4 {
+							s.pinGlide = channel{value: target, target: target, at: e.c.now}
+						} else {
+							s.pinGlide.target = target
+							s.pinGlide.from = (s.pinGlide.value - target*p) / (1 - p)
+						}
+					} else {
+						s.pinGlide.value += delta
+						s.pinGlide.retarget(target, s.pinAnimation)
+					}
 				}
 			}
 			if s.endAnchor() {
@@ -2173,7 +2214,9 @@ func (s *ListState) glideToEnd(e *node, n, lo, hi int, H, C float64, shift func(
 				was = p.height
 			}
 			if m := followPlace(e.justify, C-d, was) - followPlace(e.justify, C, H); m > 0.5 || m < -0.5 {
-				ch.value = max(min(ch.value+m, H), -H)
+				visibleH := max(0, H-s.padTop-float64(e.pad[2]+e.border[2]+s.endOverlayHeight))
+				maxLag := min(H, max(96.0, visibleH*0.25))
+				ch.value = max(min(ch.value+m, maxLag), -maxLag)
 				ch.retarget(0, *s.FollowAnimation)
 			}
 			hugs = hugs || p.hugs && (d != 0 || follows)

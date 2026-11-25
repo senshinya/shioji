@@ -116,3 +116,43 @@ func TestFollowAnimationGlidesContentWhileDockInsetMovesDirectly(t *testing.T) {
 		t.Fatal("dock and content growth did not retain independent motion", before, first, middle, end)
 	}
 }
+
+func TestFollowAnimationBoundsLagDuringRapidLargeOutput(t *testing.T) {
+	s := ListState{
+		FollowEnd:       true,
+		FollowAnimation: &Animation{Spring: SpringOptions{Duration: 240 * time.Millisecond}},
+	}
+	height := float32(20)
+	tt := NewTester(func(c *Context) {
+		s.Key = func(i int) any { return i }
+		dock := Column(c.Key("dock")).Absolute().Left(0).Right(0).Bottom(0).Height(100)
+		s.EndOverlay = dock
+		List(c, &s, 22, func(i int) {
+			if i == 20 {
+				Text(c, "streaming").Height(height)
+			} else if i == 21 {
+				Box(c).Height(24)
+			} else {
+				Text(c, fmt.Sprint("row ", i)).Height(40)
+			}
+		}).Fill()
+	}, 600, 600)
+	tt.Advance(time.Second)
+
+	for step := 0; step < 40; step++ {
+		height += 160
+		tt.Frame()
+		tt.Advance(16 * time.Millisecond)
+		_, after := s.ScrollEdges()
+		if !s.FollowingEnd() {
+			t.Fatalf("lost FollowingEnd at step %d: after=%.1f", step, after)
+		}
+		if after > 160 {
+			t.Fatalf("follow lag grew too far behind the live bottom at step %d: after=%.1f", step, after)
+		}
+	}
+	tt.Advance(time.Second)
+	if _, after := s.ScrollEdges(); !s.AtEnd() || !s.FollowingEnd() || after > 1 {
+		t.Fatalf("did not settle at end: atEnd=%t following=%t after=%.1f", s.AtEnd(), s.FollowingEnd(), after)
+	}
+}

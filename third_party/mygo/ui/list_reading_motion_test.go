@@ -172,3 +172,52 @@ func TestAnimatedEndScrollKeepsVisibleRowsWhenPrefixEstimatesChange(t *testing.T
 		})
 	}
 }
+
+func TestAnimatedScrollToEndSettlesOnDeadlineDuringContinuousFastGrowth(t *testing.T) {
+	s := ListState{FollowEnd: true, Key: func(i int) any { return i }}
+	tailH := float32(40)
+	tt := NewTester(func(c *Context) {
+		List(c, &s, 40, func(i int) {
+			h := float32(40)
+			if i == 38 {
+				h = tailH
+			}
+			Text(c, fmt.Sprint("row-", i)).Height(h)
+		}).Fill()
+	}, 400, 400)
+	s.ScrollTo(10, Start)
+	tt.Frame()
+	s.ScrollToEnd(Animation{Duration: 320 * time.Millisecond, Ease: CubicBezier(.4, 0, .2, 1)})
+	tt.Frame()
+	// Continuously grow the tail every 16ms for 600ms (well past the 320ms deadline).
+	for step := 0; step < 38; step++ {
+		tailH += 60
+		tt.Frame()
+		tt.Advance(16 * time.Millisecond)
+	}
+	_, after := s.ScrollEdges()
+	if !s.AtEnd() || !s.FollowingEnd() || after > 1 {
+		t.Fatalf("continuous fast growth trapped ScrollToEnd behind the bottom: atEnd=%t following=%t after=%.1f", s.AtEnd(), s.FollowingEnd(), after)
+	}
+}
+
+func TestDownwardScrollDuringAnimatedEndGlideKeepsFollowing(t *testing.T) {
+	s := ListState{FollowEnd: true}
+	tt := NewTester(func(c *Context) {
+		List(c, &s, 100, func(i int) { Column(c).Height(40) }).Fill()
+	}, 400, 400)
+	s.ScrollTo(10, Start)
+	tt.Frame()
+	s.ScrollToEnd(Animation{Duration: 320 * time.Millisecond, Ease: Linear})
+	tt.Advance(80 * time.Millisecond)
+	before := s.wroteY
+	tt.Scroll(200, 200, 0, 120)
+	tt.Frame()
+	if !s.FollowingEnd() || s.wroteY < before {
+		t.Fatalf("downward scroll toward the end cancelled following or rewound: following=%t before=%.1f after=%.1f", s.FollowingEnd(), before, s.wroteY)
+	}
+	tt.Advance(400 * time.Millisecond)
+	if !s.AtEnd() || !s.FollowingEnd() {
+		t.Fatalf("animated end glide did not settle after downward scroll: atEnd=%t following=%t", s.AtEnd(), s.FollowingEnd())
+	}
+}
