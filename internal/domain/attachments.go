@@ -22,6 +22,7 @@ type Attachment struct {
 const DiffCommentResource = "diff-comment"
 const DiffSnapshotResource = "diff-snapshot"
 const PathAttachmentResource = "file-path"
+const ToolAudioResource = "tool-audio"
 const MaxMessageAttachments = 8
 
 func (a Attachment) InlineReference() bool {
@@ -62,7 +63,7 @@ func (in Submission) ValidateContent() error {
 	var total int64
 	seen := map[string]bool{}
 	for _, a := range in.Attachments {
-		if a.Kind != "" && a.Kind != DiffCommentResource && a.Kind != DiffSnapshotResource && a.Kind != PathAttachmentResource {
+		if a.Kind != "" && a.Kind != DiffCommentResource && a.Kind != DiffSnapshotResource && a.Kind != PathAttachmentResource && a.Kind != ToolAudioResource {
 			return errors.New("invalid reference resource")
 		}
 		if a.Kind == PathAttachmentResource && (a.SourcePath != "" || a.MIME != "application/octet-stream") {

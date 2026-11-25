@@ -69,7 +69,7 @@ func (a *mobileApp) contentParts(c *ui.Context, parent *mygo.Window, session dom
 		result := ui.Column(row).Gap(3)
 		animateToolResultBlock(c, result)
 		result.Children(func() {
-			if part.Label != "" {
+			if part.Label != "" && !(part.Kind == "audio" && part.Attachment != nil) {
 				label(row, part.Label, captionTextSize, p.secondary).Selectable()
 			}
 			if part.Attachment != nil {
@@ -93,10 +93,14 @@ func (a *mobileApp) contentParts(c *ui.Context, parent *mygo.Window, session dom
 						open = func() { a.attachmentPage(parent, session, item, false) }
 					}
 				}
-				if part.Kind == "file" {
+				action := "预览 "
+				if part.Kind == "file" || part.Kind == "audio" {
 					subtitle = snapshotSize(item.Size)
 				}
-				mobileDetailRow(row, name, subtitle, "预览 "+name, fileCodeSymbol, open, nil)
+				if part.Kind == "audio" {
+					action = "播放 "
+				}
+				mobileDetailRow(row, name, subtitle, action+name, fileCodeSymbol, open, nil)
 				return
 			}
 			switch part.Kind {

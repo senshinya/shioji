@@ -58,6 +58,7 @@ type runtime struct {
 	work            map[string]domain.WorkActivity
 	workCalls       map[string]string
 	workPlan        map[string]bool
+	workTools       map[string]map[string]domain.Item
 	workReplies     map[string]chan bool
 }
 
@@ -152,6 +153,7 @@ type frame struct {
 	ToolName      string          `json:"tool_name"`
 	ToolUseID     string          `json:"tool_use_id"`
 	Input         json.RawMessage `json:"input"`
+	ToolUseResult json.RawMessage `json:"tool_use_result"`
 	ReadyCommands []string        `json:"ready_commands"`
 	Servers       []mcpObservation
 	MCPRevision   string `json:"mcp_revision"`
@@ -734,7 +736,7 @@ func (r *runtime) processFrame(in frame) error {
 	if in.Type == "system" && in.TaskID != "" {
 		return r.observeWork(t, in)
 	}
-	if in.ParentToolUseID != "" {
+	if in.ParentToolUseID != "" || in.AgentID != "" && (in.Type == "user" || in.Type == "assistant" || in.Type == "stream_event") {
 		return r.observeWorkItem(in)
 	}
 	if in.Origin.Kind == "task-notification" {
@@ -814,8 +816,16 @@ func (r *runtime) processFrame(in frame) error {
 			return r.processFrame(frame{Type: "result", IsError: true})
 		}
 	case "system":
-		if in.Subtype == "compact_boundary" && t.turn.Presentation == "compaction" {
-			t.compacted = true
+		if in.Subtype == "compact_boundary" {
+			if t.turn.Presentation == "compaction" {
+				t.compacted = true
+				return nil
+			}
+			id := t.turn.ID + ":compact:" + in.UUID
+			if _, exists := t.items[id]; !exists {
+				return r.item(t, domain.Item{ID: id, TurnID: t.turn.ID, Kind: "activity",
+					Presentation: "compaction", Name: "上下文已压缩", Status: "completed", Final: true}, false)
+			}
 		}
 	case "rate_limit_event":
 		if in.RateLimit.Status == "rejected" {
@@ -830,17 +840,17 @@ func (r *runtime) processFrame(in frame) error {
 			r.confirm(t, nil)
 			return nil
 		}
+		sidecar := singleToolResultSidecar(in.Message.Content, in.ToolUseResult)
 		for _, block := range in.Message.Content {
 			id := t.tools[block.ToolUseID]
 			if block.Type != "tool_result" || id == "" {
 				continue
 			}
 			item := t.items[id]
-			item.Final, item.Status = true, "completed"
-			if block.IsError {
-				item.Status = "failed"
+			if item.Final {
+				continue
 			}
-			item.Parts = r.toolResultParts(id, block.Content)
+			item = r.completeTool(item, block, sidecar)
 			if err := r.item(t, item, false); err != nil {
 				return err
 			}
@@ -982,6 +992,10 @@ func (r *runtime) block(t *activeTurn, message string, index int, c content, fin
 	case "thinking":
 		item.Kind, item.Text = "reasoning", c.Thinking
 	case "tool_use":
+		if t.items[id].Final {
+			return nil
+		}
+		item.Presentation = sdkToolPresentation(c.Name)
 		if c.Name == "ExitPlanMode" && final {
 			if err := r.publishPlan(t, c.ID, c.Input); err != nil {
 				return err
@@ -992,7 +1006,8 @@ func (r *runtime) block(t *activeTurn, message string, index int, c content, fin
 		}
 		item.Kind, item.Name, item.Final = "tool", c.Name, false
 		if len(c.Input) > 0 {
-			item.Text = string(c.Input)
+			item.Text = boundedToolText(string(c.Input), 8<<10)
+			item.Truncated = len(item.Text) != len(c.Input)
 		}
 	default:
 		return nil
@@ -1004,14 +1019,23 @@ func (r *runtime) block(t *activeTurn, message string, index int, c content, fin
 	return r.item(t, item, !exists)
 }
 func (r *runtime) item(t *activeTurn, item domain.Item, start bool) error {
-	if r.config.Key != "" {
-		item.Text = strings.ReplaceAll(item.Text, r.config.Key, "••••")
-		for i := range item.Parts {
-			item.Parts[i].Text = strings.ReplaceAll(item.Parts[i].Text, r.config.Key, "••••")
-		}
-	}
+	item = r.redactItem(item)
 	t.items[item.ID] = item
 	return r.emit(domain.Event{Type: "item.upsert", Item: &item, ActivityStart: start})
+}
+
+func (r *runtime) redactItem(item domain.Item) domain.Item {
+	if r.config.Key != "" {
+		item.Text, item.Name = r.redact(item.Text), r.redact(item.Name)
+		for i := range item.Files {
+			item.Files[i].Path = r.redact(item.Files[i].Path)
+			item.Files[i].Patch = r.redact(item.Files[i].Patch)
+		}
+		for i := range item.Parts {
+			item.Parts[i].Text, item.Parts[i].Label = r.redact(item.Parts[i].Text), r.redact(item.Parts[i].Label)
+		}
+	}
+	return item
 }
 
 var _ harness.Runtime = (*runtime)(nil)

@@ -41,6 +41,7 @@ type logicalTurn struct {
 	message     string
 	stream      *domain.Item
 	tools       map[string]domain.Item
+	planCalls   map[string]bool
 	interrupted bool
 	sawUsage    bool
 }

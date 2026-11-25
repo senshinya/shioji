@@ -12,7 +12,7 @@ SCRIPT = Path(__file__).with_name("prepare-lan-preview.py")
 
 
 class LANPreviewTests(unittest.TestCase):
-    def test_patches_the_release_named_in_the_hub_process_title(self):
+    def test_patches_native_hub_release_without_a_node_server(self):
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp)
             dist = cache / "ryugi/artifacts/1.102.7/node_modules/ryugi-artifacts/dist"
@@ -20,7 +20,7 @@ class LANPreviewTests(unittest.TestCase):
             viewer.mkdir(parents=True)
             entry = viewer / "index.html"
             entry.write_text('<head><script type="module">crypto.randomUUID()</script></head>')
-            server = dist / "server.cjs"
+            server = cache / "native-hub-fixture.cjs"
             server.write_text(
                 "process.title='Ryugi hub (1.102.7) --artifacts-server-id=0123456789abcdef';"
                 "const s=require('node:http').createServer((q,r)=>r.end('ok'));"

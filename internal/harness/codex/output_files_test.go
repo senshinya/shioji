@@ -91,3 +91,22 @@ func TestImageResourceLinkDoesNotShiftExistingHistoryImageSlots(t *testing.T) {
 		t.Fatal("history link stole saved image", parts)
 	}
 }
+
+func TestCodexToolAudioImportsBytesWithoutFetchingRemoteURLs(t *testing.T) {
+	const packet = `{"method":"item/completed","params":{"threadId":"thread","turnId":"turn","item":{"id":"tool","type":"mcpToolCall","server":"demo","tool":"sound","status":"completed","result":{"content":[{"type":"audio","mimeType":"audio/wav","data":"UklGRnRlc3RXQVZF"},{"type":"audio","mimeType":"audio/wav","audioUrl":"https://example.invalid/sound.wav"}]}}}}`
+	n := NewNormalizer()
+	n.Bind("thread", "session", false)
+	imported := 0
+	n.importResource = func(source harness.OutputResource) (domain.Attachment, error) {
+		imported++
+		if source.Kind != "audio" || source.Name != "tool-output.wav" || source.Path != "" || string(source.Data) != "RIFFtestWAVE" {
+			t.Fatalf("unexpected audio source: %+v", source)
+		}
+		return domain.Attachment{ID: "snapshot", Name: source.Name}, nil
+	}
+	events := workFeed(t, n, packet)
+	if imported != 1 || len(events) != 1 || events[0].Item == nil || len(events[0].Item.Parts) != 2 ||
+		events[0].Item.Parts[0].Attachment == nil || events[0].Item.Parts[1].Attachment != nil {
+		t.Fatalf("inline audio was not imported independently: %+v", events)
+	}
+}

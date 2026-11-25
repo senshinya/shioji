@@ -57,6 +57,9 @@ func DescribeDiffResource(kind, name string, data []byte) (domain.Attachment, er
 	return a, nil
 }
 func describeStoredResource(a domain.Attachment, data []byte) (domain.Attachment, error) {
+	if a.Kind == domain.ToolAudioResource {
+		return DescribeToolAudio(a.Name, data)
+	}
 	if a.Kind == domain.PathAttachmentResource {
 		return DescribePathResource(a.Name, data)
 	}

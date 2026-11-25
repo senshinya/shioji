@@ -92,6 +92,12 @@ func (r *runtime) update(event sessionUpdate, raw json.RawMessage) error {
 			return nil
 		}
 		r.confirm(t, nil)
+		if steps, handled := t.checklist(tool.Update); handled {
+			if steps == nil {
+				return nil
+			}
+			return r.emit(domain.Event{Type: "plan", Plan: &domain.Plan{TurnID: t.turn.ID, Steps: steps}})
+		}
 		if err := r.finishStream(t); err != nil {
 			return err
 		}
@@ -112,7 +118,7 @@ func (r *runtime) update(event sessionUpdate, raw json.RawMessage) error {
 		r.confirm(t, nil)
 		plan := domain.Plan{TurnID: t.turn.ID}
 		for _, entry := range u.Entries {
-			plan.Steps = append(plan.Steps, domain.PlanStep{Text: clip(entry.Content, 4096), Status: entry.Status})
+			plan.Steps = append(plan.Steps, domain.PlanStep{Text: clip(entry.Content, 4096), Status: planStatus(entry.Status)})
 		}
 		return r.emit(domain.Event{Type: "plan", Plan: &plan})
 	}
@@ -167,15 +173,55 @@ func (r *runtime) importImage(id string, index int, content contentBlock) (domai
 }
 
 type toolUpdate struct {
-	ToolCallID, Title, Kind, Status string
-	RawOutput                       json.RawMessage
-	Content                         []struct {
+	ToolCallID, Name, Title, Kind, Status string
+	RawInput                              json.RawMessage
+	RawOutput                             json.RawMessage
+	Content                               []struct {
 		Type, Path string
 		OldText    *string
 		NewText    string
 		Content    contentBlock
 	}
 	Locations []struct{ Path string }
+}
+
+func planStatus(status string) string {
+	switch status {
+	case "running", "in_progress":
+		return "running"
+	case "done", "completed":
+		return "completed"
+	default:
+		return "pending"
+	}
+}
+
+func (t *logicalTurn) checklist(update toolUpdate) ([]domain.PlanStep, bool) {
+	name := update.Name
+	// Older AGY versions supplied the native identity only in this title.
+	if name == "" && (update.Title == "Run update_steps" || update.Title == "Running update_steps") {
+		name = "update_steps"
+	}
+	if name != "update_steps" && !t.planCalls[update.ToolCallID] {
+		return nil, false
+	}
+	if t.planCalls == nil {
+		t.planCalls = make(map[string]bool)
+	}
+	t.planCalls[update.ToolCallID] = true
+	var input struct {
+		Steps []struct{ Title, Status string }
+	}
+	if update.Status == "failed" || json.Unmarshal(update.RawInput, &input) != nil || input.Steps == nil {
+		return nil, true
+	}
+	steps := make([]domain.PlanStep, 0, min(len(input.Steps), 64))
+	for _, step := range input.Steps[:min(len(input.Steps), 64)] {
+		if text := strings.TrimSpace(step.Title); text != "" {
+			steps = append(steps, domain.PlanStep{Text: clip(text, 1024), Status: planStatus(step.Status)})
+		}
+	}
+	return steps, true
 }
 
 func (r *runtime) updateTool(tools map[string]domain.Item, turn string, update toolUpdate) error {
@@ -195,7 +241,7 @@ func applyToolUpdate(item *domain.Item, update toolUpdate) bool {
 	if item.Final && (item.Status != "unknown" || update.Status != "completed" && update.Status != "failed") {
 		return false
 	}
-	if update.Title != "" {
+	if update.Title != "" && (item.Presentation != "command" || item.Name == "") {
 		item.Name = clip(update.Title, 4096)
 	}
 	switch update.Kind {
@@ -219,7 +265,40 @@ func applyToolUpdate(item *domain.Item, update toolUpdate) bool {
 	return true
 }
 
+func firstNonempty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func (r *runtime) updateToolContent(item *domain.Item, update toolUpdate) {
+	var directory []domain.ContentPart
+	if item.Presentation == "command" {
+		if len(item.Parts) > 0 && item.Parts[0].Label == "工作目录" {
+			directory = item.Parts[:1:1]
+		}
+		var input struct {
+			CommandLine, Command, WorkingDirectory, WorkingDir, CWD string
+			NativeCommand                                           string `json:"command_line"`
+			NativeDir                                               string `json:"working_dir"`
+		}
+		if json.Unmarshal(update.RawInput, &input) == nil {
+			if command := firstNonempty(input.CommandLine, input.NativeCommand, input.Command); command != "" {
+				item.Name = clip(command, 4096)
+			}
+			if cwd := firstNonempty(input.WorkingDirectory, input.WorkingDir, input.NativeDir, input.CWD); cwd != "" {
+				directory = []domain.ContentPart{{Kind: "text", Label: "工作目录", Text: clip(cwd, 4096)}}
+				if len(item.Parts) > 0 && item.Parts[0].Label == "工作目录" {
+					item.Parts = item.Parts[1:]
+				}
+				item.Parts = append(slices.Clone(directory), item.Parts...)
+			}
+		}
+	}
+
 	if item.Presentation == "command" && len(update.RawOutput) != 0 {
 		var result struct {
 			CombinedOutput *string
@@ -239,22 +318,22 @@ func (r *runtime) updateToolContent(item *domain.Item, update toolUpdate) {
 			}
 			if len(update.Content) == 0 && result.CombinedOutput != nil {
 				value := clip(*result.CombinedOutput, 32<<10)
-				item.Parts = []domain.ContentPart{{Kind: "text", Text: value}}
+				item.Text = value
 				item.Truncated = item.Truncated || len(value) != len(*result.CombinedOutput)
 				return
 			}
 		}
 	}
 	if update.Content != nil {
-		item.Parts, item.Files = nil, nil
+		item.Parts, item.Files = slices.Clone(directory), nil
 		budget := 64 << 10
 		resourceIndices := map[string]int{}
 		for _, part := range update.Content {
 			switch {
 			case part.Type == "diff" && part.Path != "":
-				kind, old := "modified", ""
+				kind, old := "update", ""
 				if part.OldText == nil {
-					kind = "added"
+					kind = "add"
 				} else {
 					old = *part.OldText
 				}

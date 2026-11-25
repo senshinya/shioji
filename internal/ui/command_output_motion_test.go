@@ -134,3 +134,37 @@ func TestChildCommandOutputCollapseMovesFollowingMessageContinuously(t *testing.
 		})
 	}
 }
+
+func TestCommandMetadataSharesExistingDisclosure(t *testing.T) {
+	for _, reduce := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reduce=%v", reduce), func(t *testing.T) {
+			_, ui, items := commandMotionFixture(t, false, reduce)
+			(*items)[0].Parts = []domain.ContentPart{{Kind: "text", Label: "工作目录", Text: "/workspace"}}
+			ui.Frame()
+			ui.Advance(time.Second)
+			open, found := ui.Find("following content")
+			if !found || !ui.HasText("工作目录") || !ui.HasText("/workspace") {
+				t.Fatal("command metadata is not part of the existing disclosure")
+			}
+			if err := ui.Click("first command"); err != nil {
+				t.Fatal(err)
+			}
+			if !reduce {
+				start, _ := ui.Find("following content")
+				if math.Abs(float64(start.Y-open.Y)) > .5 {
+					t.Fatalf("the disclosure jumped on collapse: %+v -> %+v", open, start)
+				}
+				ui.Advance(60 * time.Millisecond)
+				middle, _ := ui.Find("following content")
+				ui.Advance(time.Second)
+				closed, _ := ui.Find("following content")
+				if middle.Y >= open.Y || middle.Y <= closed.Y {
+					t.Fatalf("the disclosure skipped its intermediate height: %+v -> %+v -> %+v", open, middle, closed)
+				}
+			}
+			if ui.HasText("/workspace") {
+				t.Fatal("closed command still shows its working directory")
+			}
+		})
+	}
+}

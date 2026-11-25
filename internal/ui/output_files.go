@@ -15,7 +15,11 @@ import (
 var saveAttachmentIcon = svg("M10 3v9M6 8l4 4 4-4M4 13v4h12v-4")
 
 func (v *View) outputFile(c *n.Context, t *n.Theme, a domain.Attachment) {
-	button := n.ButtonBase(c.Key("file:"+a.ID)).FillWidth().MaxWidth(360).Padding(8, 10).Radius(6).Label("预览文件：" + a.Name)
+	label := "预览文件：" + a.Name
+	if a.Kind == domain.ToolAudioResource {
+		label = "播放音频：" + a.Name
+	}
+	button := n.ButtonBase(c.Key("file:"+a.ID)).FillWidth().MaxWidth(360).Padding(8, 10).Radius(6).Label(label)
 	background := codeSurface(t)
 	if button.Hovered() || button.FocusVisible() {
 		background = t.SurfaceHover
@@ -29,6 +33,12 @@ func (v *View) outputFile(c *n.Context, t *n.Theme, a domain.Attachment) {
 		p.Origin.Surface = surface
 	}
 	if button.Clicked() {
+		if a.Kind == domain.ToolAudioResource {
+			source := v.Model.Details[v.Model.SessionID].Session
+			v.startLinkedFile(source, &fileLinkState{action: fileLinkOpen, path: a.Name, session: source.ID,
+				workspace: source.WorkspaceID, epoch: v.Model.ConnectionEpoch, loading: true, services: c.Services()}, &a)
+			return
+		}
 		theme := *t
 		v.openAttachment(a, v.Model.WorkspaceID, button.Bounds(), attachmentPreviewOrigin{Surface: surface, Radius: 6, Content: func(c *n.Context) {
 			n.Column(c).Fill().Padding(8, 10).Children(func() { fileResultContents(c, &theme, a) })

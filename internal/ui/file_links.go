@@ -98,14 +98,18 @@ func (v *View) startFileLink(source domain.Session, path string, services n.Serv
 	v.startLinkResource(source, path, services, fileLinkPreview, position...)
 }
 func (v *View) startLinkResource(source domain.Session, path string, services n.Services, action fileLinkAction, position ...fileLinkPosition) {
-	if v.attachmentPreview != nil {
-		v.attachmentPreview.close()
-	}
-	v.cancelFileLink()
 	s := &fileLinkState{action: action, session: source.ID, workspace: source.WorkspaceID, epoch: v.Model.ConnectionEpoch, path: path, loading: true, services: services}
 	if len(position) > 0 {
 		s.position = position[0]
 	}
+	v.startLinkedFile(source, s, nil)
+}
+
+func (v *View) startLinkedFile(source domain.Session, s *fileLinkState, audio *domain.Attachment) {
+	if v.attachmentPreview != nil {
+		v.attachmentPreview.close()
+	}
+	v.cancelFileLink()
 	v.fileLink = s
 	if v.Controller == nil || v.StatePath == "" || !v.Model.Connected {
 		s.loading = false
@@ -121,6 +125,12 @@ func (v *View) startLinkResource(source domain.Session, path string, services n.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	s.cancel = cancel
 	directory, controller := v.linkedFileDirectory(), v.Controller
+	var cache *app.AttachmentCache
+	var originals *attachments.Repository
+	if audio != nil {
+		cache, originals = v.displayCache(), v.staging()
+	}
+	path, action := s.path, s.action
 	v.Controller.AttachmentTask(func() app.Update {
 		defer cancel()
 		var result app.LinkedFile
@@ -131,7 +141,9 @@ func (v *View) startLinkResource(source domain.Session, path string, services n.
 		}
 		if err == nil {
 			progress := func(meta domain.FileResource, done int64) { s.total.Store(meta.Size); s.bytes.Store(done) }
-			if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+			if audio != nil {
+				result, err = cache.LinkedAudio(ctx, target, originals, *audio, directory)
+			} else if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 				result, err = target.FetchURL(ctx, directory, path, progress)
 			} else {
 				result, err = target.FetchFile(ctx, directory, source.ID, path, progress)

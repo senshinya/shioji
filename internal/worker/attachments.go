@@ -54,8 +54,8 @@ func (s *Server) attachmentInputs(in domain.Submission) ([]harness.AttachmentInp
 				return nil, e
 			}
 			out = append(out, harness.AttachmentInput{Attachment: a, Comment: &comment, ExecutionBranch: branch})
-		} else if a.Kind == domain.DiffSnapshotResource {
-			return nil, errors.New("Diff snapshots cannot be sent as model input")
+		} else if a.Kind == domain.DiffSnapshotResource || a.Kind == domain.ToolAudioResource {
+			return nil, errors.New("预览资源不能用作模型输入")
 		} else {
 			out = append(out, harness.AttachmentInput{Attachment: a, Path: path})
 		}

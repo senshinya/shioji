@@ -249,3 +249,42 @@ func TestOutputResourceSnapshotIsImmutableScopedAndIdempotent(t *testing.T) {
 		t.Fatal("foreign harness imported image")
 	}
 }
+
+func TestToolAudioStaysAWorkspaceOwnedOutputSnapshot(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	workspace, err := db.CreateWorkspace("audio", []string{t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := db.Accept(domain.Submission{OperationID: "sound", WorkspaceID: workspace.ID, HarnessID: "test", Text: "beep"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{store: db, attachments: attachments.New(t.TempDir())}
+	wav := []byte("RIFF\x26\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x40\x1f\x00\x00\x80\x3e\x00\x00\x02\x00\x10\x00data\x02\x00\x00\x00\x00\x00")
+	source := harness.OutputResource{Kind: "audio", SessionID: op.SessionID, ItemID: "tool", Name: "tool-output.wav", Data: wav}
+	ref, err := s.importOutputResource("test", op.SessionID, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := s.attachments.Get(workspace.ID, ref.ID, 0)
+	if err != nil || ref.MIME != "audio/wav" || !receipt.Complete || !bytes.Equal(receipt.Data, wav) {
+		t.Fatalf("audio did not survive the ordinary attachment route: %v, %+v", err, ref)
+	}
+	_, err = s.attachmentInputs(domain.Submission{WorkspaceID: workspace.ID, Text: "reuse", Attachments: []domain.Attachment{ref}})
+	if err == nil {
+		t.Fatal("output-only audio entered model inputs")
+	}
+	source.Name = "tool-output.command"
+	if _, err := s.importOutputResource("test", op.SessionID, source); err == nil {
+		t.Fatal("audio bytes with an executable extension were accepted")
+	}
+	source.Name, source.Data = "tool-output.wav", []byte("not audio")
+	if _, err := s.importOutputResource("test", op.SessionID, source); err == nil {
+		t.Fatal("fake audio was accepted")
+	}
+}

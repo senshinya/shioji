@@ -18,7 +18,7 @@ import (
 
 func (s *Server) importOutputResource(harnessID, sessionID string, source harness.OutputResource) (domain.Attachment, error) {
 	var none domain.Attachment
-	if (source.Kind != "image" && source.Kind != "file") || source.SessionID == "" || source.ItemID == "" || source.Index < 0 || source.Index >= 8 || sessionID != "" && source.SessionID != sessionID {
+	if (source.Kind != "image" && source.Kind != "file" && source.Kind != "audio") || source.SessionID == "" || source.ItemID == "" || source.Index < 0 || source.Index >= 8 || sessionID != "" && source.SessionID != sessionID {
 		return none, errors.New("资源不属于当前会话")
 	}
 	detail, err := s.store.Session(source.SessionID, 0, 1)
@@ -48,7 +48,7 @@ func (s *Server) importOutputResource(harnessID, sessionID string, source harnes
 	data := source.Data
 	name := source.Name
 	if source.Path != "" {
-		if len(data) != 0 {
+		if len(data) != 0 || source.Kind == "audio" {
 			return none, errors.New("资源来源不明确")
 		}
 		path := source.Path
@@ -112,7 +112,12 @@ func (s *Server) importOutputResource(harnessID, sessionID string, source harnes
 	if name == "" {
 		name = "工具结果"
 	}
-	a, err := attachments.Describe(name, data)
+	var a domain.Attachment
+	if source.Kind == "audio" {
+		a, err = attachments.DescribeToolAudio(name, data)
+	} else {
+		a, err = attachments.Describe(name, data)
+	}
 	if err != nil {
 		return none, err
 	}

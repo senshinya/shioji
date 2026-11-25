@@ -62,6 +62,18 @@ func (r *runtime) observeWork(turn *activeTurn, in frame) error {
 			return nil
 		}
 		work.Latest, work.CompletedAt, work.CanStop = r.redact(in.Summary), &now, false
+		for _, item := range r.workTools[in.TaskID] {
+			if !item.Final {
+				item.Final, item.Status = true, "unknown"
+				if work.State == "interrupted" {
+					item.Status = "interrupted"
+				}
+				if err := r.emit(domain.Event{Type: "work.item", WorkID: work.ID, WorkItem: &item}); err != nil {
+					return err
+				}
+			}
+		}
+		delete(r.workTools, in.TaskID)
 		for _, p := range r.approvals {
 			if p.request.WorkID == work.ID {
 				if err := r.invalidateApproval(p); err != nil {
@@ -83,8 +95,31 @@ func (r *runtime) observeWork(turn *activeTurn, in frame) error {
 }
 
 func (r *runtime) observeWorkItem(in frame) error {
-	work, exists := r.work[r.workCalls[in.ParentToolUseID]]
-	if !exists || in.Type != "assistant" || len(in.ErrorCode) != 0 && string(in.ErrorCode) != "null" {
+	agent := in.AgentID
+	if agent == "" {
+		agent = r.workCalls[in.ParentToolUseID]
+	}
+	work, exists := r.work[agent]
+	if !exists || len(in.ErrorCode) != 0 && string(in.ErrorCode) != "null" {
+		return nil
+	}
+	tools := r.workTools[agent]
+	if in.Type == "user" {
+		sidecar := singleToolResultSidecar(in.Message.Content, in.ToolUseResult)
+		for _, result := range in.Message.Content {
+			item, ok := tools[result.ToolUseID]
+			if result.Type != "tool_result" || !ok || item.Final {
+				continue
+			}
+			item = r.redactItem(r.completeTool(item, result, sidecar))
+			tools[result.ToolUseID] = item
+			if err := r.emit(domain.Event{Type: "work.item", WorkID: work.ID, WorkItem: &item}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if in.Type != "assistant" {
 		return nil
 	}
 	for i, block := range in.Message.Content {
@@ -96,11 +131,27 @@ func (r *runtime) observeWorkItem(in frame) error {
 		case "thinking":
 			item.Kind, item.Text = "reasoning", block.Thinking
 		case "tool_use":
-			item.Kind, item.Name, item.Text = "tool", block.Name, string(block.Input)
+			item.Kind, item.Name, item.Text = "tool", block.Name, boundedToolText(string(block.Input), 8<<10)
+			item.Presentation = sdkToolPresentation(block.Name)
+			item.Truncated = len(item.Text) != len(block.Input)
+			if block.ID != "" {
+				if tools[block.ID].ID != "" {
+					continue
+				}
+				item.Final, item.Status = false, "running"
+				if r.workTools == nil {
+					r.workTools = make(map[string]map[string]domain.Item)
+				}
+				if tools == nil {
+					tools = make(map[string]domain.Item)
+					r.workTools[agent] = tools
+				}
+				tools[block.ID] = r.redactItem(item)
+			}
 		default:
 			continue
 		}
-		item.Text = r.redact(item.Text)
+		item = r.redactItem(item)
 		if err := r.emit(domain.Event{Type: "work.item", WorkID: work.ID, WorkItem: &item}); err != nil {
 			return err
 		}

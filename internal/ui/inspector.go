@@ -596,13 +596,13 @@ func (v *View) inspectorTaskList(c *n.Context, t *n.Theme, state *changesState, 
 		switch step.Status {
 		case "completed":
 			status = "已完成"
-		case "running":
+		case "running", "in_progress":
 			status, color = "进行中", t.Text
 		}
 		font := n.Font{Family: c.Theme().Font, Size: transcriptCaptionSize, Weight: 400}
 		n.Row(c).FillWidth().Padding(8, 12).Gap(8).AlignItems(n.Baseline).Label(status + "：" + step.Text).Children(func() {
 			switch step.Status {
-			case "running":
+			case "running", "in_progress":
 				transcriptStatusDot(c, step.Text, font, t.Success, true)
 			case "completed":
 				transcriptSymbol(c, transcriptCheckIcon, step.Text, font, color)
@@ -610,7 +610,7 @@ func (v *View) inspectorTaskList(c *n.Context, t *n.Theme, state *changesState, 
 				transcriptStatusDot(c, step.Text, font, t.TextMuted, false)
 			}
 			text := n.Text(c, step.Text).Grow(1).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color)
-			if step.Status == "running" {
+			if step.Status == "running" || step.Status == "in_progress" {
 				shimmer(c, text, t.TextMuted, t.Text)
 			}
 		})

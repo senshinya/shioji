@@ -14,6 +14,34 @@ import (
 
 const yoloApproval = `{"sessionId":"native","toolCall":{"toolCallId":"native-tool","title":"Run command"},"options":[{"optionId":"deny","name":"Deny","kind":"reject_once"},{"optionId":"always","name":"Always allow","kind":"allow_always"},{"optionId":"once","name":"Allow once","kind":"allow_once"}]}`
 
+func TestAntigravityChecklistFeedsExistingPlan(t *testing.T) {
+	r, _, events := callbackRuntime()
+	r.active = &logicalTurn{turn: domain.Turn{ID: "turn"}, primary: make(chan error, 1), tools: map[string]domain.Item{}}
+	sendCallback(t, r, "session/update", `{"sessionId":"native","update":{"sessionUpdate":"plan","entries":[{"content":"正在执行的步骤","status":"in_progress"}]}}`, "")
+	sendCallback(t, r, "session/update", `{"sessionId":"native","update":{"sessionUpdate":"tool_call","toolCallId":"steps","title":"Run update_steps","kind":"other","rawInput":{"steps":[{"title":"已核对","status":"done"},{"title":"正在执行","status":"in_progress"}]}}}`, "")
+	sendCallback(t, r, "session/update", `{"sessionId":"native","update":{"sessionUpdate":"tool_call_update","toolCallId":"steps","status":"completed"}}`, "")
+	if len(*events) != 2 || (*events)[0].Plan == nil || (*events)[1].Plan == nil {
+		t.Fatalf("checklist was duplicated or lost: %+v", *events)
+	}
+	first, updated := (*events)[0].Plan, (*events)[1].Plan
+	if first.Steps[0].Status != "running" || updated.TurnID != "turn" || len(updated.Steps) != 2 ||
+		updated.Steps[0].Status != "completed" || updated.Steps[1].Status != "running" {
+		t.Fatalf("incorrect shared plan: %+v, %+v", first, updated)
+	}
+}
+
+func TestAntigravityCommandKeepsNativeInputAndOutputAcrossUpdates(t *testing.T) {
+	r, _, events := callbackRuntime()
+	r.active = &logicalTurn{turn: domain.Turn{ID: "turn"}, primary: make(chan error, 1), tools: map[string]domain.Item{}}
+	sendCallback(t, r, "session/update", `{"sessionId":"native","update":{"sessionUpdate":"tool_call","toolCallId":"cmd","name":"run_command","title":"Run command","kind":"execute","rawInput":{"CommandLine":"go test ./...","WorkingDirectory":"/workspace","private":"SECRET"}}}`, "")
+	sendCallback(t, r, "session/update", `{"sessionId":"native","update":{"sessionUpdate":"tool_call_update","toolCallId":"cmd","status":"completed","rawOutput":{"combined_output":"ok","exit_code":0}}}`, "")
+	last := (*events)[len(*events)-1].Item
+	if last.Name != "go test ./..." || last.ExitCode == nil || *last.ExitCode != 0 || len(last.Parts) != 1 ||
+		last.Parts[0].Label != "工作目录" || last.Parts[0].Text != "/workspace" || last.Text != "ok" {
+		t.Fatalf("native command context was lost at completion: %+v", last)
+	}
+}
+
 func TestYOLOAnswersToolApprovalWithoutOpeningARequest(t *testing.T) {
 	r, writes, events := callbackRuntime()
 	r.session.Config.Permission = "yolo"
@@ -154,7 +182,7 @@ func TestLateToolAndApprovalKeepOriginalTurnWhileAnotherPromptRuns(t *testing.T)
 	if item == nil || item.ID != "worker-tool" || item.TurnID != "previous" || item.Status != "completed" || r.active.confirmed {
 		t.Fatalf("late tool outcome was not applied to the existing item: %+v", item)
 	}
-	if item.ExitCode == nil || *item.ExitCode != 0 || len(item.Parts) != 1 || item.Parts[0].Text != "late command result" {
+	if item.ExitCode == nil || *item.ExitCode != 0 || item.Text != "late command result" {
 		t.Fatalf("native command output was lost: %+v", item)
 	}
 }

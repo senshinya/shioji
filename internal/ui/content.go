@@ -348,124 +348,8 @@ func (v *View) activityBodyDisclosure(c *n.Context, t *n.Theme, item domain.Item
 	if open {
 		*retained = item
 	}
-	reasoning := domain.ReasoningSummary(item)
 	build := func() float32 {
-		innerHeightDelta := float32(0)
-		item := *retained
-		stack := n.Column(c.Key("result-stack")).FillWidth().Gap(8)
-		if reasoning {
-			stack.Padding(8, 0, 0, transcriptGlyphSlot+6).Draw(func(p *n.Painter, r n.Rect) {
-				if h := r.H - 10; h > 0 {
-					p.Fill(n.Rect{X: r.X + transcriptGlyphSlot/2 - .5, Y: r.Y + 8, W: 1, H: h}, t.Border, 0)
-				}
-			})
-		} else {
-			stack.Padding(8, 0, 0, 0)
-		}
-		stack.Children(func() {
-			if item.Text != "" {
-				if reasoning {
-					v.reasoningStreamText(c.Key("summary"), item.ID, item.Text, liveReasoning, freshReasoning, t.TextMuted, func(text n.Element) {
-						text.FontSize(12).FixedLineHeight(20).Wrap().Selectable()
-						v.decoratePlainFind(c, text, item, nil)
-					})
-				} else {
-					resultText(c.Key("summary"), item.Text, t.TextMuted, func(text n.Element) { v.decoratePlainFind(c, text, item, nil) }).
-						Transition(resultBlockMotion(c)).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
-				}
-			}
-			for _, file := range item.Files {
-				n.Column(c.Key("file:" + file.Path)).FillWidth().Gap(6).Transition(resultBlockMotion(c)).Children(func() {
-					n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-						n.Text(c, file.Path).FontSize(11).FixedLineHeight(20).Grow(1).Selectable()
-						kind := map[string]string{"add": "新增", "delete": "删除", "update": "修改"}[file.Kind]
-						if file.Destination != "" {
-							kind = "移动"
-						}
-						n.Text(c, kind).FontSize(11).TextColor(t.TextMuted)
-					})
-					if file.Destination != "" {
-						n.Text(c.Key("destination"), "→ "+file.Destination).Transition(resultBlockMotion(c)).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
-					}
-					if file.Patch != "" {
-						v.activityDiff(c, t, key+"/"+file.Path, file)
-					}
-				})
-			}
-			occurrences := map[string]int{}
-			for i, part := range item.Parts {
-				identity := resultPartKey(part, i)
-				occurrence := occurrences[identity]
-				occurrences[identity]++
-				block := n.Column(c.Key(fmt.Sprintf("%s:%d", identity, occurrence))).FillWidth().Gap(4).Transition(resultBlockMotion(c))
-				block.Children(func() {
-					if part.Kind == "image" && part.Attachment != nil {
-						innerHeightDelta += v.outputImage(c, t, *part.Attachment)
-						return
-					}
-					if part.Kind == "file" && part.Attachment != nil {
-						v.outputFile(c, t, *part.Attachment)
-						return
-					}
-					if part.Label != "" {
-						n.Text(c.Key("label"), part.Label).Transition(resultBlockMotion(c)).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
-					}
-					switch part.Kind {
-					case "code":
-						n.Scroll(c).FillWidth().MaxHeight(180).Children(func() {
-							resultText(c.Key("code-text"), part.Text, t.Text).FillWidth().Font(v.Model.Preferences.CodeFont).FontSize(11).FixedLineHeight(18).Padding(8, 10).Radius(6).Background(codeSurface(t)).Selectable()
-						})
-					case "markdown":
-						v.activityMarkdown.Theme = v.md.Theme
-						v.bindMarkdownLinks(c, &v.activityMarkdown)
-						v.activityMarkdown.ShareSelection = true
-						v.activityMarkdown.WrapCode = true
-						if c.Preferences().ReduceMotion {
-							v.activityMarkdown.Reveal = &markdown.Reveal{Unit: markdown.AtOnce}
-						} else {
-							v.activityMarkdown.Reveal = &markdown.Reveal{Unit: markdown.ByCharacter, Fade: 180 * time.Millisecond, Smooth: true}
-						}
-						root := n.Column(c.Key("markdown")).FillWidth()
-						mounted := n.Local(root, "mounted", func() bool { return false })
-						root.Children(func() {
-							innerHeightDelta += v.markdownHeightDelta(func() {
-								if *mounted && !item.Final && !c.Preferences().ReduceMotion {
-									markdown.Stream(c, part.Text, &v.activityMarkdown).FillWidth().FontSize(12)
-								} else {
-									markdown.View(c, part.Text, &v.activityMarkdown).FillWidth().FontSize(12)
-								}
-							})
-						})
-						*mounted = true
-					default:
-						if reasoning {
-							v.reasoningStreamText(c.Key("part-text"), fmt.Sprintf("%s:part:%d", item.ID, i), part.Text, liveReasoning, freshReasoning, t.TextMuted, func(text n.Element) {
-								text.FontSize(12).FixedLineHeight(20).Wrap().Selectable()
-							})
-						} else {
-							resultText(c.Key("part-text"), part.Text, t.TextMuted).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
-						}
-					}
-				})
-			}
-			for _, agent := range item.Agents {
-				n.Column(c.Key("agent:" + agent.ID)).FillWidth().Gap(4).Transition(resultBlockMotion(c)).Children(func() {
-					n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-						font := n.Font{Family: c.Theme().Font, Size: transcriptCaptionSize, Weight: 400}
-						transcriptStatusDot(c, agent.ID, font, t.TextMuted, false)
-						n.Text(c, agent.ID).FontSize(transcriptCaptionSize).FixedLineHeight(20).Grow(1)
-						n.Text(c.Key("status"), activityStatus(agent.Status)).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
-					})
-					if agent.Message != "" {
-						n.Text(c.Key("message"), agent.Message).Transition(resultBlockMotion(c)).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).PaddingX(transcriptGlyphSlot + 8)
-					}
-				})
-			}
-			if item.Truncated {
-				n.Text(c.Key("truncated"), "内容过长，已截断显示").Transition(resultBlockMotion(c)).FontSize(11).TextColor(t.TextMuted)
-			}
-		})
-		return innerHeightDelta
+		return v.activityResultContents(c, t, *retained, key, liveReasoning, freshReasoning)
 	}
 	if len(transcriptAnchor) > 0 && !transcriptAnchor[0] {
 		// Child work details have their own scroll container. Their height
@@ -475,6 +359,125 @@ func (v *View) activityBodyDisclosure(c *n.Context, t *n.Theme, item domain.Item
 		baseline := open && !(liveReasoning && freshReasoning)
 		v.transcriptContentHeight(c, frame, open, baseline, 180*time.Millisecond, build)
 	}
+}
+
+func (v *View) activityResultContents(c *n.Context, t *n.Theme, item domain.Item, key string, liveReasoning, freshReasoning bool) float32 {
+	reasoning := domain.ReasoningSummary(item)
+	innerHeightDelta := float32(0)
+	stack := n.Column(c.Key("result-stack")).FillWidth().Gap(8)
+	if reasoning {
+		stack.Padding(8, 0, 0, transcriptGlyphSlot+6).Draw(func(p *n.Painter, r n.Rect) {
+			if h := r.H - 10; h > 0 {
+				p.Fill(n.Rect{X: r.X + transcriptGlyphSlot/2 - .5, Y: r.Y + 8, W: 1, H: h}, t.Border, 0)
+			}
+		})
+	} else {
+		stack.Padding(8, 0, 0, 0)
+	}
+	stack.Children(func() {
+		if item.Text != "" {
+			if reasoning {
+				v.reasoningStreamText(c.Key("summary"), item.ID, item.Text, liveReasoning, freshReasoning, t.TextMuted, func(text n.Element) {
+					text.FontSize(12).FixedLineHeight(20).Wrap().Selectable()
+					v.decoratePlainFind(c, text, item, nil)
+				})
+			} else {
+				resultText(c.Key("summary"), item.Text, t.TextMuted, func(text n.Element) { v.decoratePlainFind(c, text, item, nil) }).
+					Transition(resultBlockMotion(c)).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+			}
+		}
+		for _, file := range item.Files {
+			n.Column(c.Key("file:" + file.Path)).FillWidth().Gap(6).Transition(resultBlockMotion(c)).Children(func() {
+				n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
+					n.Text(c, file.Path).FontSize(11).FixedLineHeight(20).Grow(1).Selectable()
+					kind := map[string]string{"add": "新增", "delete": "删除", "update": "修改"}[file.Kind]
+					if file.Destination != "" {
+						kind = "移动"
+					}
+					n.Text(c, kind).FontSize(11).TextColor(t.TextMuted)
+				})
+				if file.Destination != "" {
+					n.Text(c.Key("destination"), "→ "+file.Destination).Transition(resultBlockMotion(c)).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
+				}
+				if file.Patch != "" {
+					v.activityDiff(c, t, key+"/"+file.Path, file)
+				}
+			})
+		}
+		occurrences := map[string]int{}
+		for i, part := range item.Parts {
+			identity := resultPartKey(part, i)
+			occurrence := occurrences[identity]
+			occurrences[identity]++
+			block := n.Column(c.Key(fmt.Sprintf("%s:%d", identity, occurrence))).FillWidth().Gap(4).Transition(resultBlockMotion(c))
+			block.Children(func() {
+				if part.Kind == "image" && part.Attachment != nil {
+					innerHeightDelta += v.outputImage(c, t, *part.Attachment)
+					return
+				}
+				if (part.Kind == "file" || part.Kind == "audio") && part.Attachment != nil {
+					v.outputFile(c, t, *part.Attachment)
+					return
+				}
+				if part.Label != "" {
+					n.Text(c.Key("label"), part.Label).Transition(resultBlockMotion(c)).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted)
+				}
+				switch part.Kind {
+				case "code":
+					n.Scroll(c).FillWidth().MaxHeight(180).Children(func() {
+						resultText(c.Key("code-text"), part.Text, t.Text).FillWidth().Font(v.Model.Preferences.CodeFont).FontSize(11).FixedLineHeight(18).Padding(8, 10).Radius(6).Background(codeSurface(t)).Selectable()
+					})
+				case "markdown":
+					v.activityMarkdown.Theme = v.md.Theme
+					v.bindMarkdownLinks(c, &v.activityMarkdown)
+					v.activityMarkdown.ShareSelection = true
+					v.activityMarkdown.WrapCode = true
+					if c.Preferences().ReduceMotion {
+						v.activityMarkdown.Reveal = &markdown.Reveal{Unit: markdown.AtOnce}
+					} else {
+						v.activityMarkdown.Reveal = &markdown.Reveal{Unit: markdown.ByCharacter, Fade: 180 * time.Millisecond, Smooth: true}
+					}
+					root := n.Column(c.Key("markdown")).FillWidth()
+					mounted := n.Local(root, "mounted", func() bool { return false })
+					root.Children(func() {
+						innerHeightDelta += v.markdownHeightDelta(func() {
+							if *mounted && !item.Final && !c.Preferences().ReduceMotion {
+								markdown.Stream(c, part.Text, &v.activityMarkdown).FillWidth().FontSize(12)
+							} else {
+								markdown.View(c, part.Text, &v.activityMarkdown).FillWidth().FontSize(12)
+							}
+						})
+					})
+					*mounted = true
+				default:
+					if reasoning {
+						v.reasoningStreamText(c.Key("part-text"), fmt.Sprintf("%s:part:%d", item.ID, i), part.Text, liveReasoning, freshReasoning, t.TextMuted, func(text n.Element) {
+							text.FontSize(12).FixedLineHeight(20).Wrap().Selectable()
+						})
+					} else {
+						resultText(c.Key("part-text"), part.Text, t.TextMuted).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
+					}
+				}
+			})
+		}
+		for _, agent := range item.Agents {
+			n.Column(c.Key("agent:" + agent.ID)).FillWidth().Gap(4).Transition(resultBlockMotion(c)).Children(func() {
+				n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
+					font := n.Font{Family: c.Theme().Font, Size: transcriptCaptionSize, Weight: 400}
+					transcriptStatusDot(c, agent.ID, font, t.TextMuted, false)
+					n.Text(c, agent.ID).FontSize(transcriptCaptionSize).FixedLineHeight(20).Grow(1)
+					n.Text(c.Key("status"), activityStatus(agent.Status)).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)})
+				})
+				if agent.Message != "" {
+					n.Text(c.Key("message"), agent.Message).Transition(resultBlockMotion(c)).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).PaddingX(transcriptGlyphSlot + 8)
+				}
+			})
+		}
+		if item.Truncated {
+			n.Text(c.Key("truncated"), "内容过长，已截断显示").Transition(resultBlockMotion(c)).FontSize(11).TextColor(t.TextMuted)
+		}
+	})
+	return innerHeightDelta
 }
 
 func (v *View) reasoningStreamText(c *n.Context, streamKey, text string, live, fresh bool, color n.Color, decorate ...func(n.Element)) n.Element {

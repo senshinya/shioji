@@ -315,14 +315,120 @@ func TestClaudeImportedMessageKeepsItsNativeTimestamp(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"UUID":"native","Type":"user","User":true,"Timestamp":"2026-01-03T15:11:10Z","Message":{"content":"fixture"}}`), &recorded); err != nil {
 		t.Fatal(err)
 	}
-	got := r.externalItems(recorded, "turn")
-	if len(got) != 1 || got[0].SentAt == nil || got[0].SentAt.Format(time.RFC3339) != recorded.Timestamp {
+	got, ok := r.externalItem(recorded, "turn", 0, recorded.Message.Content[0])
+	if !ok || got.SentAt == nil || got.SentAt.Format(time.RFC3339) != recorded.Timestamp {
 		t.Fatalf("the imported user message lost its timestamp: %+v", got)
 	}
 	recorded.Timestamp = ""
-	got = r.externalItems(recorded, "turn")
-	if len(got) != 1 || got[0].SentAt != nil {
+	got, ok = r.externalItem(recorded, "turn", 0, recorded.Message.Content[0])
+	if !ok || got.SentAt != nil {
 		t.Fatalf("an unknown timestamp should remain absent: %+v", got)
+	}
+}
+
+func TestClaudeChildToolResultUpdatesOnlyItsOwnTool(t *testing.T) {
+	var events []domain.Event
+	r := runtime{session: domain.Session{ID: "s", ThreadID: "native"}, work: map[string]domain.WorkActivity{
+		"child": {ID: "work", TurnID: "parent"},
+		"other": {ID: "other-work", TurnID: "parent"},
+	}, workCalls: map[string]string{"parent-call": "child"}, opts: harness.StartOptions{
+		OnEvent: func(e domain.Event) error { events = append(events, e); return nil },
+		ImportResource: func(source harness.OutputResource) (domain.Attachment, error) {
+			return domain.Attachment{ID: source.ItemID + ":image"}, nil
+		},
+	}}
+	for _, raw := range []string{
+		`{"type":"assistant","parent_tool_use_id":"parent-call","message":{"id":"child-message","content":[{"type":"tool_use","id":"child-call","name":"Read","input":{"file_path":"sample.png"}}]}}`,
+		`{"type":"user","agent_id":"other","parent_tool_use_id":"parent-call","message":{"content":[{"type":"tool_result","tool_use_id":"child-call","content":"wrong agent"}]}}`,
+		`{"type":"user","agent_id":"child","message":{"content":[{"type":"tool_result","tool_use_id":"child-call","is_error":true,"content":[{"type":"text","text":"preview failed"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"dGVzdA=="}}]}]}}`,
+	} {
+		var in frame
+		if err := json.Unmarshal([]byte(raw), &in); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.processFrame(in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(events) != 2 || events[0].WorkItem == nil || events[1].WorkItem == nil {
+		t.Fatalf("child tool result was discarded or misrouted: %+v", events)
+	}
+	start, finish := events[0].WorkItem, events[1].WorkItem
+	if start.Final || finish.ID != start.ID || finish.WorkID != "work" || !finish.Final || finish.Status != "failed" ||
+		len(finish.Parts) != 2 || finish.Parts[0].Text != "preview failed" || finish.Parts[1].Attachment == nil {
+		t.Fatalf("child result failed to update its own tool: %+v / %+v", start, finish)
+	}
+}
+
+func TestClaudeOwnedFileAndMCPResultsBecomeNativeDetails(t *testing.T) {
+	var events []domain.Event
+	r := runtime{turn: &activeTurn{turn: domain.Turn{ID: "turn"}, tools: map[string]string{"edit": "e", "mcp": "m"},
+		items: map[string]domain.Item{"e": {ID: "e", Name: "Edit"}, "m": {ID: "m", Name: "mcp__example__report"}}},
+		opts: harness.StartOptions{OnEvent: func(e domain.Event) error { events = append(events, e); return nil }}}
+	for _, wire := range []string{
+		`{"type":"user","tool_use_result":{"filePath":"example.go","structuredPatch":[{"oldStart":1,"oldLines":1,"newStart":1,"newLines":1,"lines":["-before","+after"]}]},"message":{"content":[{"type":"tool_result","tool_use_id":"edit","content":"updated"}]}}`,
+		`{"type":"user","tool_use_result":{"structuredContent":{"passed":true},"resourceLinks":[{"uri":"resource://report","name":"report.json"}]},"message":{"content":[{"type":"tool_result","tool_use_id":"mcp","content":"report"}]}}`,
+	} {
+		var in frame
+		if err := json.Unmarshal([]byte(wire), &in); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.processFrame(in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(events) != 2 {
+		t.Fatal("tool results were lost")
+	}
+	file, mc := events[0].Item, events[1].Item
+	if file.Presentation != "files" || len(file.Files) != 1 || file.Files[0].Patch != "@@ -1,1 +1,1 @@\n-before\n+after\n" ||
+		mc.Presentation != "mcp" || len(mc.Parts) != 3 || mc.Parts[1].Kind != "code" || !strings.Contains(mc.Parts[1].Text, `"passed": true`) ||
+		mc.Parts[2].Text != "resource://report" {
+		t.Fatalf("typed results missing: %+v / %+v", file, mc)
+	}
+}
+
+func TestClaudeImportedToolsKeepTheirResultsAndOriginalTurn(t *testing.T) {
+	var source []historyRecord
+	if err := json.Unmarshal([]byte(`[
+		{"uuid":"first","type":"user","user":true,"message":{"content":"Start"}},
+		{"uuid":"call","type":"assistant","message":{"content":[{"type":"tool_use","id":"step","name":"Read","input":{"file_path":"notes.txt"}}]}},
+		{"uuid":"second","type":"user","user":true,"message":{"content":"Continue"}},
+		{"uuid":"result","type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"step","is_error":true,"content":[{"type":"text","text":"Permission denied"},{"type":"image"}]}]}},
+		{"uuid":"finish","type":"assistant","message":{"stop_reason":"end_turn","content":"Done"}}
+	]`), &source); err != nil {
+		t.Fatal(err)
+	}
+	r := runtime{opts: harness.StartOptions{ImportResource: func(harness.OutputResource) (domain.Attachment, error) {
+		t.Fatal("history preview attempted to import media")
+		return domain.Attachment{}, nil
+	}}}
+	var out domain.ConversationPreview
+	r.projectHistory(source, &out)
+	if len(out.Items) != 4 || len(out.Turns) != 2 {
+		t.Fatalf("unexpected transcript: %+v", out)
+	}
+	item := out.Items[1]
+	if item.Kind != "tool" || item.TurnID != "first" || item.Status != "failed" || len(item.Parts) != 2 ||
+		item.Parts[0].Text != "Permission denied" || item.Parts[1].Text != "历史图片无法预览" {
+		t.Fatalf("tool result lost from its original turn: %+v", item)
+	}
+}
+
+func TestClaudeAutomaticCompactionUsesExistingActivity(t *testing.T) {
+	var events []domain.Event
+	r := runtime{turn: &activeTurn{turn: domain.Turn{ID: "turn"}, items: map[string]domain.Item{}},
+		opts: harness.StartOptions{OnEvent: func(e domain.Event) error { events = append(events, e); return nil }}}
+	in := frame{Type: "system", Subtype: "compact_boundary", UUID: "compact-1"}
+	if err := r.processFrame(in); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.processFrame(in); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Item == nil || events[0].Item.Presentation != "compaction" ||
+		events[0].Item.TurnID != "turn" || !events[0].Item.Final {
+		t.Fatalf("native automatic compaction not shown exactly once: %+v", events)
 	}
 }
 

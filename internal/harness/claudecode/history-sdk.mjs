@@ -37,7 +37,7 @@ try {
         uuid: record.uuid,
         type: record.type,
         user,
-        ...(request.action === "read" ? { message: record.message, timestamp: record.timestamp } : {}),
+        ...(request.action === "read" ? { message: record.message, timestamp: record.timestamp, toolUseResult: record.toolUseResult ?? record.tool_use_result } : {}),
         digest: createHash("sha256").update(JSON.stringify(record.message ?? null)).digest("hex"),
       };
     });

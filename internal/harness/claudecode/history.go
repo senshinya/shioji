@@ -26,6 +26,7 @@ type historyRecord struct {
 	UUID, Type, Digest string
 	User               bool
 	Timestamp          string
+	ToolUseResult      json.RawMessage
 	Message            struct {
 		StopReason string `json:"stop_reason"`
 		Content    contentBlocks

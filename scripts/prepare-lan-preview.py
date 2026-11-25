@@ -46,7 +46,8 @@ def running_viewer(port):
         if hub:
             cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
             dist = cache / "ryugi" / "artifacts" / hub[1] / "node_modules" / "ryugi-artifacts" / "dist"
-            if (dist / "server.cjs").is_file():
+            # The native daemon no longer ships server.cjs.
+            if (dist / "viewer" / "index.html").is_file():
                 return dist / "viewer"
         for argument in shlex.split(command):
             server = Path(argument)

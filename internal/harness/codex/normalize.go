@@ -39,6 +39,8 @@ type Normalizer struct {
 	sourceRequests    map[string]string
 	items             map[string]domain.Item
 	turns             map[string]domain.Turn
+	activeTurnThreads map[string]string
+	retries           map[string]domain.Item
 	totals            map[string]wire.Counters
 	usage             map[string]turnUsage
 }
@@ -58,7 +60,7 @@ type turnUsage struct {
 }
 
 func NewNormalizer() *Normalizer {
-	return &Normalizer{sessions: map[string]string{}, requests: map[string]*pending{}, sourceRequests: map[string]string{}, items: map[string]domain.Item{}, turns: map[string]domain.Turn{}, totals: map[string]wire.Counters{}, usage: map[string]turnUsage{}}
+	return &Normalizer{sessions: map[string]string{}, requests: map[string]*pending{}, sourceRequests: map[string]string{}, items: map[string]domain.Item{}, turns: map[string]domain.Turn{}, activeTurnThreads: map[string]string{}, retries: map[string]domain.Item{}, totals: map[string]wire.Counters{}, usage: map[string]turnUsage{}}
 }
 func (n *Normalizer) Bind(thread, session string, fresh bool) {
 	n.mu.Lock()
@@ -120,6 +122,14 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		if e.Turn != nil && e.Turn.Status != "running" {
 			return append(work, e), reply, nil
 		}
+		if n.activeTurnThreads[p.TurnID] == p.ThreadID && e.Item != nil && p.Delta != "" &&
+			(m.Method == "item/agentMessage/delta" || m.Method == "item/reasoning/summaryTextDelta") {
+			if retry, ok := n.retries[p.TurnID]; ok && !retry.Final {
+				retry.Name, retry.Status, retry.Final = "模型服务已恢复", "completed", true
+				n.retries[p.TurnID] = retry
+				return append([]domain.Event{{SessionID: sid, Type: "item.upsert", Item: &retry}, e}, work...), reply, nil
+			}
+		}
 		if goalMarker != nil {
 			return append([]domain.Event{{SessionID: sid, Type: "item.upsert", Item: goalMarker}, e}, work...), reply, nil
 		}
@@ -145,6 +155,17 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		if err := json.Unmarshal(m.Params, &reported); err != nil {
 			return nil, nil, err
 		}
+		if reported.WillRetry && n.activeTurnThreads[p.TurnID] == p.ThreadID {
+			previous, exists := n.retries[p.TurnID]
+			if exists && !previous.Final {
+				return nil, nil, nil
+			}
+			item := domain.Item{ID: "codex:retry:" + p.TurnID, TurnID: p.TurnID, Kind: "activity",
+				Presentation: "wait", Name: "模型服务正在重试", Status: "running"}
+			n.retries[p.TurnID] = item
+			event.Type, event.Item, event.ActivityStart = "item.upsert", &item, !exists
+			return emit(event)
+		}
 		if !reported.WillRetry && p.TurnID != "" && isUsageLimit(reported.Error) {
 			turn := n.turns[p.TurnID]
 			if turn.CompletedAt == nil && turn.Status != domain.ExecutionFailed {
@@ -153,6 +174,30 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 			}
 		}
 		return nil, nil, nil
+	case "model/rerouted":
+		if n.activeTurnThreads[p.TurnID] != p.ThreadID {
+			return nil, nil, nil
+		}
+		var route struct{ FromModel, ToModel string }
+		if err := json.Unmarshal(m.Params, &route); err != nil {
+			return nil, nil, err
+		}
+		from, to := strings.TrimSpace(route.FromModel), strings.TrimSpace(route.ToModel)
+		if from == "" || to == "" || from == to || len(from) > 128 || len(to) > 128 ||
+			strings.ContainsAny(from+to, "\r\n\x00") {
+			return nil, nil, nil
+		}
+		id := "codex:rerouted:" + p.TurnID
+		label := "模型已切换 · " + from + " → " + to
+		previous, seen := n.items[id]
+		if seen && previous.Name == label {
+			return nil, nil, nil
+		}
+		item := domain.Item{ID: id, TurnID: p.TurnID, Kind: "activity", Presentation: "context",
+			Name: label, Status: "completed", Final: true}
+		n.items[id] = item
+		event.Type, event.Item, event.ActivityStart = "item.upsert", &item, !seen
+		return emit(event)
 	case "thread/goal/updated", "thread/goal/cleared":
 		event.Type, event.GoalSource = "goal", p.ThreadID
 		if m.Method == "thread/goal/updated" {
@@ -207,6 +252,7 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		t.Status = normalizedTurnStatus(p.Turn.Status)
 		n.observeGoalTurn(p.ThreadID, m.Method == "turn/started", previous, t)
 		if t.Status == "running" {
+			n.activeTurnThreads[t.ID] = p.ThreadID
 			usage := n.usage[t.ID]
 			if usage.phase == usageUnobserved {
 				usage.baseline = n.totals[p.ThreadID]
@@ -240,6 +286,27 @@ func (n *Normalizer) Feed(data []byte) ([]domain.Event, []byte, error) {
 		n.turns[t.ID] = t
 		event.Type = "turn"
 		event.Turn = &t
+		if m.Method == "turn/completed" && !t.Status.Active() && n.activeTurnThreads[t.ID] == p.ThreadID {
+			delete(n.activeTurnThreads, t.ID)
+			delete(n.items, "codex:rerouted:"+t.ID)
+			if retry, ok := n.retries[t.ID]; ok {
+				delete(n.retries, t.ID)
+				if retry.Final {
+					return emit(event)
+				}
+				retry.Status, retry.Final = string(t.Status), true
+				switch t.Status {
+				case domain.ExecutionCompleted:
+					retry.Name = "模型服务已恢复"
+				case domain.ExecutionFailed:
+					retry.Name = "模型服务重试失败"
+				default:
+					retry.Name = "模型服务重试已结束"
+				}
+				events, reply, err := emit(event)
+				return append([]domain.Event{{SessionID: sid, Type: "item.upsert", Item: &retry}}, events...), reply, err
+			}
+		}
 		return emit(event)
 	case "thread/tokenUsage/updated":
 		usage := n.usage[p.TurnID]

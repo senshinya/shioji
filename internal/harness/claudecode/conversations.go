@@ -116,26 +116,12 @@ func (r *runtime) readConversation(ctx context.Context, launch domain.LaunchCont
 	if err != nil {
 		return out, err
 	}
-	var turn *domain.Turn
-	for _, record := range source.Records {
-		if record.User {
-			if turn != nil && turn.Status == domain.ExecutionUnknown {
-				turn.Status = domain.ExecutionInterrupted
-			}
-			out.Turns = append(out.Turns, domain.Turn{ID: record.UUID, Status: domain.ExecutionUnknown, StartedAt: record.timestamp()})
-			turn = &out.Turns[len(out.Turns)-1]
-		}
-		if turn == nil {
-			continue
-		}
-		if record.Type == "assistant" && record.Message.StopReason == "end_turn" {
-			turn.Status = domain.ExecutionCompleted
-			turn.CompletedAt = record.timestamp()
-		}
-		items := r.externalItems(record, turn.ID)
-		out.Items = append(out.Items, items...)
+	r.projectHistory(source.Records, &out)
+	if len(out.Turns) == 0 {
+		return out, errors.New("Claude Code 历史中没有可导入的消息")
 	}
-	if len(out.Items) == 0 || turn == nil {
+	turn := &out.Turns[len(out.Turns)-1]
+	if len(out.Items) == 0 {
 		return out, errors.New("Claude Code 历史中没有可导入的消息")
 	}
 	if turn.Status == domain.ExecutionCompleted {
@@ -157,6 +143,47 @@ func (r *runtime) readConversation(ctx context.Context, launch domain.LaunchCont
 	return out, nil
 }
 
+func (r *runtime) projectHistory(records []historyRecord, out *domain.ConversationPreview) {
+	var turn *domain.Turn
+	toolIndices := make(map[string]int)
+	for _, record := range records {
+		if record.User {
+			if turn != nil && turn.Status == domain.ExecutionUnknown {
+				turn.Status = domain.ExecutionInterrupted
+			}
+			out.Turns = append(out.Turns, domain.Turn{ID: record.UUID, Status: domain.ExecutionUnknown, StartedAt: record.timestamp()})
+			turn = &out.Turns[len(out.Turns)-1]
+		}
+		if turn == nil {
+			continue
+		}
+		if record.Type == "assistant" && record.Message.StopReason == "end_turn" {
+			turn.Status = domain.ExecutionCompleted
+			turn.CompletedAt = record.timestamp()
+		}
+		// The result can appear after another user input. Its native tool ID
+		// identifies the original row, irrespective of the current turn.
+		if record.Type == "user" {
+			sidecar := singleToolResultSidecar(record.Message.Content, record.ToolUseResult)
+			for _, block := range record.Message.Content {
+				if index, ok := toolIndices[block.ToolUseID]; block.Type == "tool_result" && ok {
+					item := r.applyToolResult(out.Items[index], block, sidecar, false)
+					out.Items[index] = r.redactItem(item)
+					delete(toolIndices, block.ToolUseID)
+				}
+			}
+		}
+		for index, block := range record.Message.Content {
+			if record.Type == "assistant" && block.Type == "tool_use" && block.ID != "" {
+				toolIndices[block.ID] = len(out.Items)
+			}
+			if item, ok := r.externalItem(record, turn.ID, index, block); ok {
+				out.Items = append(out.Items, item)
+			}
+		}
+	}
+}
+
 func firstItemInTurn(items []domain.Item, turn string) int {
 	for i, item := range items {
 		if item.TurnID == turn {
@@ -166,27 +193,24 @@ func firstItemInTurn(items []domain.Item, turn string) int {
 	return -1
 }
 
-func (r *runtime) externalItems(record historyRecord, turn string) []domain.Item {
-	var out []domain.Item
-	for index, block := range record.Message.Content {
-		item := domain.Item{ID: record.UUID + ":" + strconv.Itoa(index), TurnID: turn, Status: "completed", Final: true}
-		switch {
-		case record.User && block.Type == "text":
-			item.Kind, item.Text = "user", block.Text
-			item.SentAt = record.timestamp()
-		case record.Type == "assistant" && block.Type == "text":
-			item.Kind, item.Text = "assistant", block.Text
-		case record.Type == "assistant" && block.Type == "thinking":
-			item.Kind, item.Text = "reasoning", block.Thinking
-		case record.Type == "assistant" && block.Type == "tool_use":
-			item.Kind, item.Name, item.Text = "tool", block.Name, string(block.Input)
-		default:
-			continue
-		}
-		item.Text, item.Name = r.redact(item.Text), r.redact(item.Name)
-		out = append(out, item)
+func (r *runtime) externalItem(record historyRecord, turn string, index int, block content) (domain.Item, bool) {
+	item := domain.Item{ID: record.UUID + ":" + strconv.Itoa(index), TurnID: turn, Status: "completed", Final: true}
+	switch {
+	case record.User && block.Type == "text":
+		item.Kind, item.Text = "user", block.Text
+		item.SentAt = record.timestamp()
+	case record.Type == "assistant" && block.Type == "text":
+		item.Kind, item.Text = "assistant", block.Text
+	case record.Type == "assistant" && block.Type == "thinking":
+		item.Kind, item.Text = "reasoning", block.Thinking
+	case record.Type == "assistant" && block.Type == "tool_use":
+		item.Kind, item.Name, item.Text, item.Status = "tool", block.Name, boundedToolText(string(block.Input), 8<<10), "unknown"
+		item.Presentation = sdkToolPresentation(block.Name)
+		item.Truncated = len(item.Text) != len(block.Input)
+	default:
+		return domain.Item{}, false
 	}
-	return out
+	return r.redactItem(item), true
 }
 
 func (record historyRecord) timestamp() *time.Time {

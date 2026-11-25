@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -398,6 +399,7 @@ for await (const line of createInterface({ input: process.stdin })) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var observedWrite domain.Item
 	done := func(approve bool, want domain.ExecutionState) {
 		t.Helper()
 		sawText, sawApproval := false, false
@@ -416,6 +418,9 @@ for await (const line of createInterface({ input: process.stdin })) {
 						t.Fatal(err)
 					}
 					sawApproval = true
+				}
+				if e.Item != nil && e.Item.Kind == "tool" && e.Item.Name == "Write" && e.Item.Final {
+					observedWrite = *e.Item
 				}
 				if e.Item != nil && e.Item.Kind == "assistant" && e.Item.Final && e.Item.Text == "isolated reply" {
 					sawText = true
@@ -462,8 +467,26 @@ for await (const line of createInterface({ input: process.stdin })) {
 		t.Fatal(err)
 	}
 	done(true, domain.ExecutionCompleted)
+	if observedWrite.Presentation != "files" || observedWrite.Status != "completed" || len(observedWrite.Files) != 1 ||
+		observedWrite.Files[0].Path != writePath || observedWrite.Files[0].Kind != "add" {
+		t.Fatalf("Claude SDK Write result did not reach the native file row: %+v", observedWrite)
+	}
 	if data, err := os.ReadFile(writePath); err != nil || string(data) != "approved" {
 		t.Fatal("approved tool did not create its file", err)
+	}
+	// Read the generated transcript through the same pinned SDK path used by
+	// import. This also catches SDK versions that drop tool-result records.
+	engine := r.(*runtime)
+	history := &runtime{node: engine.node, sdk: engine.sdk, env: engine.env, externalHome: a.home,
+		ready: domain.Readiness{HarnessID: a.id}, config: engine.config}
+	previewed, err := history.ReadConversation(ctx, session.Context, session.ThreadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(previewed.Items, func(item domain.Item) bool {
+		return item.Name == "Write" && item.Status == "completed" && len(item.Parts) > 0
+	}) {
+		t.Fatal("the SDK history preview lost the completed Write result")
 	}
 	if _, err = r.Submit(ctx, session, "questions", harness.TurnInput{Text: "question-fixture"}); err != nil {
 		t.Fatal(err)

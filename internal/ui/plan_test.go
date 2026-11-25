@@ -8,6 +8,18 @@ import (
 	"time"
 )
 
+func TestSavedACPPlanShowsRunningStep(t *testing.T) {
+	m := layoutModel()
+	m.Inspectors["s"] = true
+	d := m.Details["s"]
+	d.Plan = &domain.Plan{TurnID: "t", Steps: []domain.PlanStep{{Text: "检查旧记录", Status: "in_progress"}}}
+	m.Details["s"] = d
+	ui := n.NewTester(New(m, nil, "").View, 1440, 900)
+	if _, ok := ui.Find("进行中：检查旧记录"); !ok {
+		t.Fatal("saved ACP running step appeared as pending")
+	}
+}
+
 func TestTaskDockStaysBelowDiffDuringFileNavigation(t *testing.T) {
 	m := layoutModel()
 	m.Inspectors["s"] = true

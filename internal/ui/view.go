@@ -1674,6 +1674,7 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 			if label == "" {
 				label = "工具活动"
 			}
+			key := v.commandOutputKey(item.ID, "")
 			heading := control(c).AlignSelf(n.Start).MinHeight(20).Justify(n.Start).Label(label).Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
 			if heading.Children(func() {
 				n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
@@ -1682,16 +1683,18 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 						n.Text(c.Key("command-issue"), issue).SingleLine().Shrink(0).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted).
 							Transition(resultBlockMotion(c))
 					}
-					if item.Text != "" {
+					if commandHasBody(item) {
 						angle := float32(0)
-						if v.Model.Collapsed[v.commandOutputKey(item.ID, "")] {
+						if v.Model.Collapsed[key] {
 							angle = -90
 						}
 						inlineSymbol(c.Key("command-chevron"), transcriptChevron, label, n.Font{Family: "Menlo", Size: transcriptCaptionSize}, 14, t.TextMuted, angle).Shrink(0).Transition(resultBlockMotion(c))
 					}
 				})
 			}).Clicked() {
-				key := v.commandOutputKey(item.ID, "")
+				if list := v.lists[v.Model.SessionID]; len(item.Parts)+len(item.Files) > 0 && list != nil {
+					list.KeepRowWithinContent(v.currentTranscriptRow, heading.Bounds().Y-list.Bounds(c).Y)
+				}
 				v.Model.Collapsed[key] = !v.Model.Collapsed[key]
 			}
 			v.commandOutput(c, t, item, heading)

@@ -8,6 +8,62 @@ import (
 	"shioji/internal/domain"
 )
 
+func TestCodexNativeRetryUsesOneOwnedActivity(t *testing.T) {
+	n := NewNormalizer()
+	n.Bind("thread", "session", false)
+	workFeed(t, n, `{"method":"turn/started","params":{"threadId":"thread","turn":{"id":"turn","status":"inProgress"}}}`)
+	message := `{"method":"error","params":{"threadId":"thread","turnId":"turn","willRetry":true,"error":{"message":"provider detail not exposed"}}}`
+	e := workFeed(t, n, message)
+	if len(e) != 1 || e[0].Item == nil || e[0].Item.Final || e[0].Item.Name != "模型服务正在重试" {
+		t.Fatalf("native retry was not shown: %+v", e)
+	}
+	if repeated := workFeed(t, n, message); len(repeated) != 0 {
+		t.Fatalf("retry repeated the activity: %+v", repeated)
+	}
+	recovered := workFeed(t, n, `{"method":"turn/completed","params":{"threadId":"thread","turn":{"id":"turn","status":"completed"}}}`)
+	if len(recovered) != 2 || recovered[0].Item == nil || recovered[0].Item.ID != e[0].Item.ID ||
+		!recovered[0].Item.Final || recovered[1].Turn.Status != domain.ExecutionCompleted {
+		t.Fatalf("retry row never settled: %+v", recovered)
+	}
+}
+
+func TestCodexRetrySettlesWhenModelOutputReturns(t *testing.T) {
+	n := NewNormalizer()
+	n.Bind("thread", "session", false)
+	workFeed(t, n, `{"method":"turn/started","params":{"threadId":"thread","turn":{"id":"turn","status":"inProgress"}}}`)
+	message := `{"method":"error","params":{"threadId":"thread","turnId":"turn","willRetry":true,"error":{"message":"recoverable"}}}`
+	first := workFeed(t, n, message)[0]
+	workFeed(t, n, `{"method":"item/started","params":{"threadId":"thread","turnId":"turn","item":{"id":"answer","type":"agentMessage","text":""}}}`)
+	events := workFeed(t, n, `{"method":"item/agentMessage/delta","params":{"threadId":"thread","turnId":"turn","itemId":"answer","delta":"reply"}}`)
+	if len(events) != 2 || events[0].Item == nil || events[0].Item.ID != first.Item.ID ||
+		events[0].Item.Name != "模型服务已恢复" || !events[0].Item.Final || events[1].Item.Text != "reply" {
+		t.Fatalf("the recovered model still appears to be retrying: %+v", events)
+	}
+	if again := workFeed(t, n, message); len(again) != 1 || again[0].ActivityStart || again[0].Item.ID != first.Item.ID || again[0].Item.Final {
+		t.Fatalf("the second retry did not update the original row: %+v", again)
+	}
+}
+
+func TestCodexModelRerouteIsScopedToTheNotifyingThread(t *testing.T) {
+	n := NewNormalizer()
+	n.Bind("thread", "session", false)
+	n.Bind("other", "other-session", false)
+	workFeed(t, n, `{"method":"turn/started","params":{"threadId":"thread","turn":{"id":"turn","status":"inProgress"}}}`)
+	packet := `{"method":"model/rerouted","params":{"threadId":"other","turnId":"turn","fromModel":"model-a","toModel":"model-b","reason":"internal"}}`
+	if foreign := workFeed(t, n, packet); len(foreign) != 0 {
+		t.Fatalf("foreign model event entered the transcript: %+v", foreign)
+	}
+	packet = strings.Replace(packet, "other", "thread", 1)
+	events := workFeed(t, n, packet)
+	if len(events) != 1 || events[0].Item == nil || events[0].Item.TurnID != "turn" ||
+		events[0].Item.Name != "模型已切换 · model-a → model-b" || !events[0].Item.Final {
+		t.Fatalf("native reroute was not shown: %+v", events)
+	}
+	if duplicate := workFeed(t, n, packet); len(duplicate) != 0 {
+		t.Fatalf("reroute was duplicated: %+v", duplicate)
+	}
+}
+
 func TestCodexReasoningSummaryStreamsAndFinalizesInPlace(t *testing.T) {
 	n := NewNormalizer()
 	n.Bind("thread", "session", false)

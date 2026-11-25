@@ -85,7 +85,7 @@ func normalizeItemWithResources(source wire.Item, final bool, save func(harness.
 		var err error
 		if encoded != "" {
 			if len(encoded) > base64.StdEncoding.EncodedLen(8<<20) {
-				err = errors.New("图片超过 8 MiB")
+				err = errors.New("资源超过 8 MiB")
 			} else {
 				image.Data, err = base64.StdEncoding.DecodeString(encoded)
 			}
@@ -195,14 +195,23 @@ func normalizeItemWithResources(source wire.Item, final bool, save func(harness.
 					part("image", "图片链接", firstNonempty(uri, "图片没有可预览的资源"))
 					continue
 				}
+				encoded, mime := b.Data, b.MimeType
 				if strings.HasPrefix(uri, "data:") {
+					header, payload, ok := strings.Cut(uri, ",")
+					if detected, base64 := strings.CutSuffix(strings.TrimPrefix(header, "data:"), ";base64"); ok && base64 {
+						encoded, mime = payload, detected
+					}
 					uri = ""
 				}
-				label := b.MimeType
-				if label == "" {
-					label = kind
+				if encoded != "" && (mime == "audio/wav" || mime == "audio/wave" || mime == "audio/x-wav") {
+					resourcePart("audio", "tool-output.wav", "", encoded, nil)
+					continue
 				}
-				part(kind, label, firstNonempty(uri, "媒体内容（资源预览尚未接入）"))
+				if encoded != "" && mime == "audio/mpeg" {
+					resourcePart("audio", "tool-output.mp3", "", encoded, nil)
+					continue
+				}
+				part("audio", firstNonempty(mime, "音频"), firstNonempty(uri, "没有可播放的 WAV 或 MP3 副本"))
 			case "resource_link":
 				if local := filePath(b.URI); local != "" && (b.MimeType == "" || textualResource(b.MimeType)) {
 					resourcePart("file", firstNonempty(b.Name, resourceName(b.URI)), local, "", nil)
