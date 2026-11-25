@@ -195,6 +195,13 @@ type Adapter interface {
 	Start(context.Context, StartOptions) (Runtime, error)
 }
 
+// AgentProfileProvider opens an isolated native configuration using the
+// directory assigned by the worker. Credentials stay behind the adapter.
+type AgentProfileProvider interface {
+	ProfileModes() []domain.AgentProfileMode
+	WithAgentProfile(id, name, directory string, mode domain.AgentProfileMode) (Adapter, error)
+}
+
 // Runtime is the accepted execution context, never the transport wire. Methods
 // whose capabilities are absent return Unsupported without accepting work.
 type Runtime interface {

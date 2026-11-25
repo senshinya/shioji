@@ -243,7 +243,7 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 	sid := session.ID
 	var warningItem string
 	if draft != nil && find == nil && preview == nil {
-		_, warningItem = conversationui.ComposerWarning(detail, a.model.UsageLimitForSession(sid, c.Now()))
+		_, warningItem = conversationui.ComposerWarning(detail, a.model.UsageLimitForSession(sid, c.Now()), a.model.Readiness.HarnessKind(session.HarnessID))
 	}
 	viewKey := sid
 	if initial.key != "" {
@@ -956,7 +956,7 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 							var regional bool
 							reply.Text, regional = conversationui.SplitRegionalAccessWarning(item)
 							if !regional {
-								reply.Text, _, _ = conversationui.SplitAntigravityQuotaWarning(session.HarnessID, item)
+								reply.Text, _, _ = conversationui.SplitAntigravityQuotaWarning(a.model.Readiness.HarnessKind(session.HarnessID), item)
 							}
 						}
 						var embedDelta float32
@@ -1162,14 +1162,14 @@ func (a *mobileApp) drawComposer(c *ui.Context, parent *mygo.Window, session dom
 			a.composerRuntimeStatus(c.Key("runtime-status"), parent, editor, ready.State, active)
 		}
 		if !home {
-			limit, item := conversationui.ComposerWarning(m.Details[sid], m.UsageLimitForSession(sid, c.Now()))
+			limit, item := conversationui.ComposerWarning(m.Details[sid], m.UsageLimitForSession(sid, c.Now()), m.Readiness.HarnessKind(m.Details[sid].Session.HarnessID))
 			canRetry := func() bool {
 				return connected && readyPhase && !firstPending && !a.draftSaveFailed() && m.CanRetryMessage(sid)
 			}
 			var retry func(ui.Rect)
 			if (limit.ID != "" || item != "") && canRetry() {
 				retry = func(button ui.Rect) {
-					current, currentItem := conversationui.ComposerWarning(m.Details[sid], m.UsageLimitForSession(sid, c.Now()))
+					current, currentItem := conversationui.ComposerWarning(m.Details[sid], m.UsageLimitForSession(sid, c.Now()), m.Readiness.HarnessKind(m.Details[sid].Session.HarnessID))
 					if !editor.current(a, parent) || !canRetry() || current.ID != limit.ID || currentItem != item {
 						return
 					}

@@ -12,16 +12,21 @@ import (
 // Adapter is configured at composition time. Codex settings never enter the
 // worker contract or the generic run configuration.
 type Adapter struct {
-	Executable, Home  string
-	defaultExecutable string
-	override          string
-	defaultHome       string
-	hasDefaultHome    bool
-	runtimeOptions    domain.RuntimeOptions
-	launchEnv         []string
+	Executable, Home       string
+	defaultExecutable      string
+	override               string
+	defaultHome            string
+	hasDefaultHome         bool
+	runtimeOptions         domain.RuntimeOptions
+	launchEnv              []string
+	profileID, profileName string
+	profileMode            domain.AgentProfileMode
 }
 
 func (a Adapter) Descriptor() domain.HarnessDescriptor {
+	if a.profileID != "" {
+		return domain.HarnessDescriptor{ID: a.profileID, Name: a.profileName, Icon: "openai"}
+	}
 	return domain.HarnessDescriptor{ID: "codex", Name: "Codex", Icon: "openai"}
 }
 func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.Runtime, error) {
@@ -63,7 +68,7 @@ func (a Adapter) startNative(ctx context.Context, opts harness.StartOptions) (*a
 			return nil, errors.Join(err, opts.Scope.Stop(ctx))
 		}
 	}
-	r, err := Start(ctx, Options{launchEnv: env, Executable: a.Executable, Home: a.Home, Environment: a.runtimeOptions.Environment, Arguments: a.runtimeOptions.Arguments, Instructions: a.runtimeOptions.Instructions, Scope: opts.Scope, Executor: executor, OnStart: opts.OnStart, OnEvent: opts.OnEvent, OnMessage: opts.OnMessage, ImportResource: opts.ImportResource})
+	r, err := Start(ctx, Options{launchEnv: env, Executable: a.Executable, Home: a.Home, Environment: a.runtimeOptions.Environment, Arguments: a.launchArguments(), Instructions: a.runtimeOptions.Instructions, Scope: opts.Scope, Executor: executor, OnStart: opts.OnStart, OnEvent: opts.OnEvent, OnMessage: opts.OnMessage, ImportResource: opts.ImportResource})
 	if err != nil {
 		if executor != nil {
 			executor.Close(ctx)
@@ -73,6 +78,7 @@ func (a Adapter) startNative(ctx context.Context, opts harness.StartOptions) (*a
 		}
 		return nil, err
 	}
+	r.profileID = a.profileID
 	after, identityErr := installedExecutable(image.path, env)
 	if identityErr != nil || after.version != image.version {
 		r.Close()
@@ -205,7 +211,11 @@ func (a Adapter) environment(ctx context.Context) ([]string, error) {
 	if a.launchEnv != nil {
 		return append([]string(nil), a.launchEnv...), nil
 	}
-	return codexEnvironment(ctx, a.Home, a.runtimeOptions.Environment)
+	env, err := codexEnvironment(ctx, a.Home, a.runtimeOptions.Environment)
+	if a.profileMode != "" {
+		env = append(stripProfileEnvironment(env), "CODEX_HOME="+a.Home)
+	}
+	return env, err
 }
 
 func (r *adapterRuntime) PendingOperations() int {

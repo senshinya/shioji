@@ -77,6 +77,9 @@ func (s *Server) signInCommand(method string, in protocol.SignInInput) (domain.S
 	if in.Method != domain.SignInBrowser && in.Method != domain.SignInDeviceCode && in.Method != domain.SignInAPI {
 		return domain.SignInStatus{}, errors.New("登录方式不可用")
 	}
+	if profile, ok := s.agentProfile(in.HarnessID); ok && (profile.Mode == domain.AgentProfileAPI) != (in.Method == domain.SignInAPI) {
+		return domain.SignInStatus{}, errors.New("请选择此 Profile 的登录方式")
+	}
 	if in.AuthorizationCode != "" || (in.Method == domain.SignInAPI) != (in.API != nil) {
 		return domain.SignInStatus{}, errors.New("接入配置无效")
 	}
@@ -90,6 +93,9 @@ func (s *Server) signInCommand(method string, in protocol.SignInInput) (domain.S
 	}
 	if current != nil && current.status.Phase.Active() {
 		return domain.SignInStatus{}, errors.New("该 Agent 已有登录正在进行")
+	}
+	if profile, ok := s.agentProfile(in.HarnessID); ok && profile.Authorized {
+		return domain.SignInStatus{}, errors.New("此 Profile 已绑定账号或服务。请为新的账号或服务创建 Profile")
 	}
 	// Different harnesses may not reuse another authorization's operation identity.
 	for _, entry := range s.signIns {
@@ -111,6 +117,11 @@ func (s *Server) signInAdapter(in protocol.SignInInput) (harness.Adapter, error)
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
 	adapter := s.adapter(in.HarnessID)
+	if _, managed := s.agentProfile(in.HarnessID); managed {
+		if err := s.checkAgentProfileHome(in.HarnessID, false); err != nil {
+			return nil, err
+		}
+	}
 	if in.Configuration == nil {
 		if err := s.runtimeSettingError(in.HarnessID); err != nil {
 			return nil, errors.New("请先修正 Agent 配置")
@@ -199,6 +210,13 @@ func (s *Server) runSignIn(ctx context.Context, in protocol.SignInInput, entry *
 		ready, err = login.Wait(ctx)
 	}
 	ready, err = confirmedSignInReadiness(ready, err)
+	if _, managed := s.agentProfile(in.HarnessID); err == nil && managed {
+		if !confirmedAccount(ready.Account) {
+			err = errors.New("Agent 未确认此 Profile 的登录")
+		} else {
+			err = s.bindAgentProfile(in.HarnessID)
+		}
+	}
 	if err == nil && ctx.Err() == nil && s.signInUsesSavedConfiguration(in) {
 		_, _ = s.recheckRuntime(in.HarnessID)
 	}
@@ -221,9 +239,13 @@ func (s *Server) runSignIn(ctx context.Context, in protocol.SignInInput, entry *
 	}
 	descriptor := adapter.Descriptor()
 	info := domain.HarnessInfo{ID: in.HarnessID, Name: descriptor.Name, Icon: descriptor.Icon, State: ready.State, Error: ready.Error, Account: ready.Account, Models: ready.Models, Permissions: ready.Permissions, PermissionChoices: ready.PermissionChoices, Plan: ready.Plan, Capabilities: ready.Capabilities}
+	if profile, ok := s.agentProfile(in.HarnessID); ok {
+		info.Profile = &profile
+	}
 	if provider, ok := adapter.(harness.InstallationProvider); ok {
 		installation := provider.Installation()
 		info.Installation = &installation
+		applyProfileBinding(&info)
 	}
 	entry.status.Profile = &info
 	entry.status.Phase = domain.SignInCompleted
@@ -275,11 +297,12 @@ func (s *Server) hasActiveSignIn() bool {
 // kept even when model discovery fails, without inventing selectable models.
 func confirmedSignInReadiness(ready domain.Readiness, err error) (domain.Readiness, error) {
 	var setup *harness.SetupError
-	if errors.As(err, &setup) && setup.Account != nil {
-		state := setup.Account.State
-		if state == "authenticated" || state == "configured" || state == "notRequired" {
-			return domain.Readiness{State: domain.RuntimeUnavailable, Account: setup.Account, Error: setup.Message}, nil
-		}
+	if errors.As(err, &setup) && confirmedAccount(setup.Account) {
+		return domain.Readiness{State: domain.RuntimeUnavailable, Account: setup.Account, Error: setup.Message}, nil
 	}
 	return ready, err
+}
+
+func confirmedAccount(account *domain.RuntimeAccount) bool {
+	return account != nil && (account.State == "authenticated" || account.State == "configured" || account.State == "notRequired")
 }

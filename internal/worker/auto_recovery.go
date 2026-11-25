@@ -79,7 +79,7 @@ func (s *Server) recoveryLoop() {
 		if s.updating.Load() || s.backgroundStopping.Load() || s.ctx.Err() != nil {
 			continue
 		}
-		for _, id := range s.adapterOrder {
+		for _, id := range s.adapterIDs() {
 			if !s.agentEnabled(id) {
 				continue
 			}

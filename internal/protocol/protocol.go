@@ -59,7 +59,8 @@ const Major = 2
 // Minor 59 permits confirmation of an observed checkout during an active turn.
 // Minor 60 accepts one-time browser authorization responses on their owning worker.
 // Minor 61 applies live session permission changes on the owning worker.
-const Minor = 61
+// Minor 62 creates isolated device-owned Agent profiles.
+const Minor = 62
 
 const CatalogMinor = 53
 const SubmissionReceiptMinor = 55
@@ -73,6 +74,7 @@ const QuestionReplyMinor = 57
 const ActiveGitConfirmationMinor = 59
 const SignInManualCodeMinor = 60
 const LivePermissionMinor = 61
+const AgentProfileMinor = 62
 
 // Structured questions identify support on desktop 54 and 55. The mobile
 // branch first acquired them at 57.

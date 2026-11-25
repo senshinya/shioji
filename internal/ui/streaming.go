@@ -212,12 +212,13 @@ func (v *View) assistantReply(c *n.Context, item domain.Item) {
 	detail := v.Model.Details[v.Model.SessionID]
 	text := item.Text
 	if !v.loadingBlocksComposer() {
+		harnessKind := v.Model.Readiness.HarnessKind(detail.Session.HarnessID)
 		body, regional := conversationui.SplitRegionalAccessWarning(item)
 		if !regional {
-			body, _, _ = conversationui.SplitAntigravityQuotaWarning(detail.Session.HarnessID, item)
+			body, _, _ = conversationui.SplitAntigravityQuotaWarning(harnessKind, item)
 		}
 		if body != item.Text {
-			if _, warning := conversationui.ComposerWarning(detail, v.Model.UsageLimitForSession(v.Model.SessionID, c.Now())); item.ID == warning {
+			if _, warning := conversationui.ComposerWarning(detail, v.Model.UsageLimitForSession(v.Model.SessionID, c.Now()), harnessKind); item.ID == warning {
 				text = body
 			}
 		}

@@ -131,7 +131,7 @@ func (s *Server) retireRuntimesForShutdown(ctx context.Context) error {
 			tasks = append(tasks, func() error { return waitRuntimeRetirement(ctx, op) })
 		}
 	}
-	for _, id := range s.adapterOrder {
+	for _, id := range s.adapterIDs() {
 		if r := s.catalogRuntime(id); r != nil {
 			tasks = append(tasks, func() error {
 				err := r.Close(ctx)

@@ -40,6 +40,8 @@ type HarnessDescriptor struct {
 	Icon string `json:"icon,omitempty"`
 }
 type HarnessInfo struct {
+	Profile           *AgentProfile        `json:"profile,omitempty"`
+	ProfileModes      []AgentProfileMode   `json:"profileModes,omitempty"`
 	Account           *RuntimeAccount      `json:"account,omitempty"`
 	Configured        bool                 `json:"configured"`
 	Installation      *RuntimeInstallation `json:"installation,omitempty"`
@@ -53,6 +55,26 @@ type HarnessInfo struct {
 	PermissionChoices []OptionChoice       `json:"permissionChoices,omitempty"`
 	Plan              bool                 `json:"plan"`
 	Capabilities      HarnessCapabilities  `json:"capabilities"`
+}
+
+type AgentProfileMode string
+
+const (
+	AgentProfileAccount AgentProfileMode = "account"
+	AgentProfileAPI     AgentProfileMode = "api"
+)
+
+// AgentProfile identifies an isolated configuration on the execution device.
+// ID is also its catalog and session routing key. The original installation
+// keeps using its existing harness ID and native configuration.
+type AgentProfile struct {
+	ID         string           `json:"id"`
+	HarnessID  string           `json:"harnessId"`
+	Name       string           `json:"name"`
+	Mode       AgentProfileMode `json:"mode"`
+	Executable string           `json:"executable,omitempty"`
+	Disabled   bool             `json:"disabled,omitempty"`
+	Authorized bool             `json:"authorized,omitempty"`
 }
 type OptionChoice struct {
 	ID          string `json:"id"`
@@ -87,6 +109,21 @@ func (r Readiness) ForHarness(id string) (Readiness, bool) {
 		}
 	}
 	return Readiness{}, false
+}
+
+// HarnessKind resolves a profile selector to the adapter's type for presentation.
+func (r Readiness) HarnessKind(id string) string {
+	for _, info := range r.Harnesses {
+		if info.ID == id && info.Profile != nil {
+			return info.Profile.HarnessID
+		}
+	}
+	for _, info := range r.Sessions {
+		if info.ID == id && info.Profile != nil {
+			return info.Profile.HarnessID
+		}
+	}
+	return id
 }
 func (r Readiness) Descriptor() HarnessDescriptor {
 	for _, h := range r.Harnesses {

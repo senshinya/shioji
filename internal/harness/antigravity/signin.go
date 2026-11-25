@@ -38,7 +38,10 @@ func (a Adapter) BeginSignIn(ctx context.Context, method domain.SignInMethod) (h
 	if method != domain.SignInBrowser {
 		return nil, none, harness.Unsupported("sign-in-method")
 	}
-	env, _ := systemexec.Environment(ctx, nil)
+	if a.profileID != "" && a.accountAlreadyBound() {
+		return nil, none, harness.Unsupported("profile-account-replacement")
+	}
+	env, _ := a.environment(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, none, err
 	}
@@ -166,6 +169,9 @@ func (l *terminalSignIn) Wait(ctx context.Context) (domain.Readiness, error) {
 	}
 	if l.waitErr != nil {
 		return domain.Readiness{}, errors.New("Antigravity 未确认授权")
+	}
+	if l.adapter.profileID != "" && !l.adapter.profileAuthReady() {
+		return domain.Readiness{}, errors.New("Antigravity 未确认此 Profile 的独立凭据")
 	}
 	account := &domain.RuntimeAccount{Mode: "account", Label: "Antigravity", State: "authenticated"}
 	probe, cancel := context.WithTimeout(ctx, 18*time.Second)

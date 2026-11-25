@@ -121,6 +121,7 @@ type sessionRequest struct {
 }
 
 type runtime struct {
+	descriptor   domain.HarnessDescriptor
 	options      harness.StartOptions
 	version      string
 	profile      string
@@ -150,13 +151,16 @@ type runtime struct {
 }
 
 func (a Adapter) Start(ctx context.Context, options harness.StartOptions) (harness.Runtime, error) {
-	env, _ := systemexec.Environment(ctx, nil)
+	env, _ := a.environment(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	path, err := a.executable(env)
 	if err != nil {
 		return nil, err
+	}
+	if a.profileID != "" && !a.profileAuthReady() {
+		return nil, &harness.SetupError{Issue: domain.RuntimeSignInRequired, Message: "请登录此 Profile 的 Google 账号"}
 	}
 	version, err := executableVersion(path)
 	if err != nil {
@@ -167,7 +171,7 @@ func (a Adapter) Start(ctx context.Context, options harness.StartOptions) (harne
 		profile = resolved
 	}
 	r := &runtime{
-		options: options, version: version, profile: profileKey(env), skillProfile: profile, done: make(chan struct{}), requests: make(map[string]nativeRequest),
+		descriptor: a.Descriptor(), options: options, version: version, profile: profileKey(env), skillProfile: profile, done: make(chan struct{}), requests: make(map[string]nativeRequest),
 		skillHome: systemexec.EnvironmentValue(env, "HOME"),
 		ready:     domain.Readiness{HarnessID: a.Descriptor().ID, State: domain.RuntimeUnavailable, Error: "请在设备 Agent 设置重新检测以获取模型"},
 	}
@@ -419,9 +423,12 @@ func (r *runtime) Readiness() domain.Readiness {
 		ready.Capabilities.Compact = compact
 		ready.Capabilities.CompactNeedsCheck = !advertised && ready.Capabilities.CompactNeedsCheck
 	}
-	d := (Adapter{}).Descriptor()
+	d := r.descriptor
+	if d.ID == "" {
+		d = (Adapter{}).Descriptor()
+	}
 	ready.Harnesses = []domain.HarnessInfo{{
-		ID: d.ID, Name: d.Name, State: ready.State, Error: ready.Error, Account: ready.Account,
+		ID: d.ID, Name: d.Name, Icon: d.Icon, State: ready.State, Error: ready.Error, Account: ready.Account,
 		Models: ready.Models, Permissions: ready.Permissions, PermissionChoices: ready.PermissionChoices,
 		Plan: ready.Plan, Capabilities: ready.Capabilities,
 	}}

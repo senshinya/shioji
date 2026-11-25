@@ -19,7 +19,10 @@ type accountSignIn struct {
 }
 
 func (a Adapter) BeginSignIn(ctx context.Context, method domain.SignInMethod) (harness.SignIn, domain.SignInChallenge, error) {
-	r, err := Start(ctx, Options{Executable: a.Executable, Home: a.Home, Arguments: a.runtimeOptions.Arguments, Environment: a.runtimeOptions.Environment, authentication: true})
+	if a.profileMode == domain.AgentProfileAPI || a.profileMode == domain.AgentProfileAccount && a.accountAlreadyBound() {
+		return nil, domain.SignInChallenge{}, harness.Unsupported("profile-account-replacement")
+	}
+	r, err := a.startAuthentication(ctx, true)
 	if err != nil {
 		return nil, domain.SignInChallenge{}, errors.New("无法启动登录，请检查 Agent 安装与配置")
 	}

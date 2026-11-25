@@ -170,7 +170,7 @@ func (s *Server) startCatalogOutsideDispatch(ctx context.Context, id string, sto
 	return s.startCatalog(ctx, id, stop, revision, refresh)
 }
 func (s *Server) borrowCatalog(id string) (harness.Runtime, func(), error) {
-	gate := s.catalogGates[id]
+	gate := s.catalogGate(id)
 	if gate == nil || !gate.TryRLock() {
 		return nil, nil, errCatalogRefreshing
 	}
@@ -224,7 +224,7 @@ func (s *Server) catalogLoop() {
 		if s.updating.Load() || s.backgroundStopping.Load() {
 			continue
 		}
-		for _, id := range s.adapterOrder {
+		for _, id := range s.adapterIDs() {
 			if !s.agentEnabled(id) {
 				continue
 			}
@@ -252,7 +252,7 @@ func (s *Server) catalogLoop() {
 			if state.phase == domain.RuntimeUnavailable && state.revision == installed && time.Now().Before(state.retryAt) {
 				continue
 			}
-			gate := s.catalogGates[id]
+			gate := s.catalogGate(id)
 			if !gate.TryLock() {
 				continue
 			}

@@ -94,6 +94,8 @@ type Server struct {
 	runtimeEvents        map[string]*runtimeEventGate
 	adapters             map[string]harness.Adapter
 	adapterOrder         []string
+	agentProfiles        map[string]domain.AgentProfile
+	profileProviders     map[string]harness.AgentProfileProvider
 	catalogs             map[string]harness.Runtime
 	catalogErrors        map[string]error
 	catalogGates         map[string]*sync.RWMutex
@@ -610,6 +612,12 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		return s.toolAuthorizationCommand(method, in)
 	case "runtime.catalog":
 		return s.runtimeProfiles(nil, true), nil
+	case "runtime.profile.create":
+		in, err := decode[domain.AgentProfile](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.createAgentProfile(in)
 	case "runtime.agent.selection":
 		in, err := decode[protocol.RuntimeAgentSelection](body)
 		if err != nil {

@@ -19,6 +19,7 @@ func (s *Server) configureAdapters() error {
 		adapters = SystemAdapters("")
 	}
 	s.adapters = map[string]harness.Adapter{}
+	s.profileProviders = map[string]harness.AgentProfileProvider{}
 	for _, a := range adapters {
 		d := a.Descriptor()
 		if d.ID == "" || d.ID == "." || d.ID == ".." || filepath.Base(d.ID) != d.ID || d.Name == "" {
@@ -28,6 +29,9 @@ func (s *Server) configureAdapters() error {
 			return fmt.Errorf("duplicate harness %q", d.ID)
 		}
 		s.adapters[d.ID] = a
+		if provider, ok := a.(harness.AgentProfileProvider); ok {
+			s.profileProviders[d.ID] = provider
+		}
 		s.adapterOrder = append(s.adapterOrder, d.ID)
 	}
 	if s.config.DefaultHarnessID == "" {
@@ -41,13 +45,29 @@ func (s *Server) configureAdapters() error {
 	}
 	s.catalogs = map[string]harness.Runtime{}
 	s.catalogErrors = map[string]error{}
+	s.runtimeSettingErrors = map[string]error{}
 	s.catalogStates = map[string]catalogState{}
 	s.installations = map[string]domain.RuntimeInstallation{}
 	s.catalogGates = map[string]*sync.RWMutex{}
 	for _, id := range s.adapterOrder {
 		s.catalogGates[id] = &sync.RWMutex{}
 	}
+	if err := s.loadAgentProfiles(); err != nil {
+		return err
+	}
 	return s.loadRuntimeSettings()
+}
+
+func (s *Server) adapterIDs() []string {
+	s.runtimeMu.RLock()
+	defer s.runtimeMu.RUnlock()
+	return append([]string(nil), s.adapterOrder...)
+}
+
+func (s *Server) catalogGate(id string) *sync.RWMutex {
+	s.runtimeMu.RLock()
+	defer s.runtimeMu.RUnlock()
+	return s.catalogGates[id]
 }
 
 // Installation discovery may read a login shell and inspect the native harness.
@@ -125,7 +145,7 @@ func (s *Server) openCatalog(ctx context.Context, id string, stop bool) (harness
 	if r := s.catalogRuntime(id); r != nil && !r.Stopped() {
 		return r, nil
 	}
-	gate := s.catalogGates[id]
+	gate := s.catalogGate(id)
 	if gate == nil || !gate.TryLock() {
 		return nil, errCatalogRefreshing
 	}
@@ -153,13 +173,18 @@ func (s *Server) runtimeReadiness(sessions ...string) domain.Readiness {
 }
 func (s *Server) runtimeProfiles(sessions []string, allAdapters bool) domain.Readiness {
 	var all []domain.HarnessInfo
-	for _, id := range s.adapterOrder {
+	for _, id := range s.adapterIDs() {
 		enabled := s.agentEnabled(id)
 		if !allAdapters && !enabled {
 			continue
 		}
 		descriptor := s.adapter(id).Descriptor()
 		info := domain.HarnessInfo{Configured: enabled, ID: id, Name: descriptor.Name, Icon: descriptor.Icon, State: domain.RuntimeUnavailable}
+		if profile, ok := s.agentProfile(id); ok {
+			info.Profile = &profile
+		} else if provider, ok := s.adapter(id).(harness.AgentProfileProvider); ok {
+			info.ProfileModes = provider.ProfileModes()
+		}
 		if r := s.catalogRuntime(id); r != nil {
 			ready := r.Readiness()
 			info.Account = ready.Account
@@ -208,6 +233,7 @@ func (s *Server) runtimeProfiles(sessions []string, allAdapters bool) domain.Rea
 				}
 			}
 			info.Installation = &installation
+			applyProfileBinding(&info)
 		}
 		all = append(all, info)
 	}
@@ -231,7 +257,11 @@ func (s *Server) runtimeProfiles(sessions []string, allAdapters bool) domain.Rea
 				selected.Sessions = map[string]domain.HarnessInfo{}
 			}
 			d := ready.Descriptor()
-			selected.Sessions[id] = domain.HarnessInfo{ID: profile.HarnessID, Name: d.Name, Icon: d.Icon, State: profile.State, Error: profile.Error, Models: profile.Models, Permissions: profile.Permissions, PermissionChoices: profile.PermissionChoices, Plan: profile.Plan, Capabilities: profile.Capabilities}
+			info := domain.HarnessInfo{ID: profile.HarnessID, Name: d.Name, Icon: d.Icon, State: profile.State, Error: profile.Error, Models: profile.Models, Permissions: profile.Permissions, PermissionChoices: profile.PermissionChoices, Plan: profile.Plan, Capabilities: profile.Capabilities}
+			if configured, ok := s.agentProfile(profile.HarnessID); ok {
+				info.Profile = &configured
+			}
+			selected.Sessions[id] = info
 		}
 	}
 	return selected

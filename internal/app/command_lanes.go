@@ -60,7 +60,7 @@ func commandTimeout(method string) time.Duration {
 		return 60 * time.Second
 	case "session.reconcile":
 		return 25 * time.Second
-	case "runtime.check", "runtime.configure":
+	case "runtime.check", "runtime.configure", "runtime.profile.create":
 		return 30 * time.Second
 	case "runtime.agents":
 		return 60 * time.Second

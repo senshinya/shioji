@@ -37,6 +37,14 @@ func conversationCandidate(t conversationThread) domain.ConversationCandidate {
 	}
 	return domain.ConversationCandidate{SourceRef: t.ID, HarnessID: "codex", Title: boundedTo(strings.TrimSpace(title), 512), Model: model, Directory: conversationDirectory(t.CWD), UpdatedAt: time.Unix(t.UpdatedAt, 0).UTC(), Active: t.Status.Type == "active"}
 }
+func (r *Runtime) profileConversationCandidate(thread conversationThread) domain.ConversationCandidate {
+	candidate := conversationCandidate(thread)
+	if r.profileID != "" {
+		candidate.HarnessID = r.profileID
+	}
+	return candidate
+}
+
 func conversationDirectory(value string) string {
 	value = sourceExecutionPath(value)
 	if canonical, err := filepath.EvalSymlinks(value); err == nil {
@@ -93,7 +101,7 @@ func (r *Runtime) Conversations(ctx context.Context, roots []string, cursor stri
 			return out, errors.New("历史目录超过分页上限")
 		}
 		for _, t := range page.Data {
-			c := conversationCandidate(t)
+			c := r.profileConversationCandidate(t)
 			if c.SourceRef != "" && c.Title != "" && t.ParentThreadID == nil && slices.Contains(roots, c.Directory) {
 				out.Items = append(out.Items, c)
 			}
@@ -149,7 +157,7 @@ func (r *Runtime) readConversation(ctx context.Context, launch domain.LaunchCont
 	if err := r.call(ctx, "thread/read", map[string]any{"threadId": source}, &meta); err != nil {
 		return out, "", err
 	}
-	out.Candidate = conversationCandidate(meta.Thread)
+	out.Candidate = r.profileConversationCandidate(meta.Thread)
 	if meta.Thread.ID != source || out.Candidate.Directory != launch.CWD {
 		return out, "", errors.New("历史来源不属于此目录")
 	}

@@ -19,7 +19,6 @@ func (s *Server) adapter(id string) harness.Adapter {
 	return s.adapters[id]
 }
 func (s *Server) loadRuntimeSettings() error {
-	s.runtimeSettingErrors = map[string]error{}
 	data, err := os.ReadFile(filepath.Join(s.config.Directory, "runtime-settings.json"))
 	if os.IsNotExist(err) {
 		return nil
@@ -99,7 +98,7 @@ func (s *Server) configureRuntime(in protocol.RuntimeConfiguration) (domain.Read
 	if !ok {
 		return domain.Readiness{}, harness.Unsupported("configure-runtime")
 	}
-	gate := s.catalogGates[in.HarnessID]
+	gate := s.catalogGate(in.HarnessID)
 	if !gate.TryLock() {
 		return domain.Readiness{}, errCatalogRefreshing
 	}
@@ -112,6 +111,11 @@ func (s *Server) configureRuntime(in protocol.RuntimeConfiguration) (domain.Read
 
 // Caller holds dispatchMu and the Agent catalog's write gate.
 func (s *Server) applyRuntimeConfiguration(in protocol.RuntimeConfiguration, provider harness.InstallationProvider) error {
+	if _, managed := s.agentProfile(in.HarnessID); managed {
+		if err := s.checkAgentProfileHome(in.HarnessID, false); err != nil {
+			return err
+		}
+	}
 	path := strings.TrimSpace(in.Executable)
 	if path != "" {
 		if !filepath.IsAbs(path) || len(path) > 4096 || strings.ContainsAny(path, "\x00\r\n") {
@@ -202,7 +206,7 @@ func (s *Server) recheckRuntime(id string) (domain.Readiness, error) {
 	}
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
-	gate := s.catalogGates[id]
+	gate := s.catalogGate(id)
 	if !gate.TryLock() {
 		return domain.Readiness{}, errCatalogRefreshing
 	}
@@ -268,6 +272,9 @@ type runtimeSettingsDocument struct {
 func (s *Server) agentEnabled(id string) bool {
 	s.runtimeMu.RLock()
 	defer s.runtimeMu.RUnlock()
+	if profile, ok := s.agentProfiles[id]; ok {
+		return !profile.Disabled
+	}
 	if s.selectedHarnesses == nil {
 		return true
 	}
@@ -279,24 +286,34 @@ func (s *Server) agentEnabled(id string) bool {
 	return false
 }
 func (s *Server) configureAgents(in protocol.DeviceAgents) (protocol.AgentSetupResult, error) {
-	if len(in.Agents) > len(s.adapterOrder) {
+	if len(in.Agents) > len(s.adapterIDs()) {
 		return protocol.AgentSetupResult{}, errors.New("请至少选择一个可用 Agent")
 	}
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
 	selected := make([]string, 0, len(in.Agents))
+	var legacy []protocol.RuntimeConfiguration
 	for _, entry := range in.Agents {
+		// Older desktop clients may submit the full catalog here. A legacy
+		// settings save must not change another client's managed profiles.
+		if _, managed := s.agentProfile(entry.HarnessID); managed {
+			continue
+		}
+		legacy = append(legacy, entry)
 		selected = append(selected, entry.HarnessID)
 	}
-	return s.applyAgentSelection(in.Agents, selected, "")
+	return s.applyAgentSelection(legacy, selected, "")
 }
 
 func (s *Server) selectRuntimeAgent(in protocol.RuntimeAgentSelection) (protocol.AgentSetupResult, error) {
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
-	gate := s.catalogGates[in.HarnessID]
+	gate := s.catalogGate(in.HarnessID)
 	if gate == nil || in.Enabled == nil {
 		return protocol.AgentSetupResult{}, errors.New("请选择适用于所属设备的 Agent 和启用状态")
+	}
+	if profile, managed := s.agentProfile(in.HarnessID); managed {
+		return s.setAgentProfileEnabled(profile, *in.Enabled)
 	}
 	if s.agentEnabled(in.HarnessID) == *in.Enabled {
 		if !gate.TryRLock() {
@@ -305,8 +322,11 @@ func (s *Server) selectRuntimeAgent(in protocol.RuntimeAgentSelection) (protocol
 		defer gate.RUnlock()
 		return s.agentSetupResult(), nil
 	}
-	selected := make([]string, 0, len(s.adapterOrder))
-	for _, id := range s.adapterOrder {
+	selected := make([]string, 0, len(s.adapterIDs()))
+	for _, id := range s.adapterIDs() {
+		if _, managed := s.agentProfile(id); managed {
+			continue
+		}
 		enabled := s.agentEnabled(id)
 		if id == in.HarnessID {
 			enabled = *in.Enabled
@@ -370,8 +390,11 @@ func (s *Server) applyAgentSelection(entries []protocol.RuntimeConfiguration, se
 			unlock[i]()
 		}
 	}()
-	for _, id := range s.adapterOrder {
-		gate := s.catalogGates[id]
+	for _, id := range s.adapterIDs() {
+		if _, managed := s.agentProfile(id); managed {
+			continue
+		}
+		gate := s.catalogGate(id)
 		if !gate.TryLock() {
 			return protocol.AgentSetupResult{}, errCatalogRefreshing
 		}
@@ -434,7 +457,10 @@ func (s *Server) applyAgentSelection(entries []protocol.RuntimeConfiguration, se
 	s.selectedHarnesses = selected
 	s.runtimeMu.Unlock()
 	committed = true
-	for _, id := range s.adapterOrder {
+	for _, id := range s.adapterIDs() {
+		if _, managed := s.agentProfile(id); managed {
+			continue
+		}
 		if (changedAgent == "" || changedAgent == id) && !s.agentEnabled(id) {
 			if r := s.catalogRuntime(id); r != nil {
 				ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)

@@ -13,8 +13,8 @@ const (
 	regionalAccessCaption = "FAILED_PRECONDITION · HTTP 400"
 )
 
-func latestAntigravityReply(detail domain.SessionDetail) (domain.Turn, domain.Item) {
-	if detail.Session.HarnessID != "antigravity" || detail.Session.Archived ||
+func latestAntigravityReply(detail domain.SessionDetail, harnessKind string) (domain.Turn, domain.Item) {
+	if harnessKind != "antigravity" || detail.Session.Archived ||
 		detail.History != nil && (detail.History.Newer || detail.History.Invalidated) {
 		return domain.Turn{}, domain.Item{}
 	}

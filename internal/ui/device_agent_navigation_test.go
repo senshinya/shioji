@@ -110,3 +110,48 @@ func TestDeviceSidebarSelectionReturnsToSettingsFromAgentConfiguration(t *testin
 		t.Fatal("selecting another device kept the Agent tab", v.deviceSelected, ui.Texts())
 	}
 }
+
+func TestCreateDeviceProfileUsesSelectedAgentAndLoginMode(t *testing.T) {
+	m := deviceUIModel()
+	state := m.DeviceStates["local"]
+	state.ConnectionEpoch = ""
+	state.WorkerMinor = protocol.AgentProfileMinor
+	state.Readiness.Harnesses = []domain.HarnessInfo{
+		{ID: "codex", Name: "Codex", Configured: true, Installation: &domain.RuntimeInstallation{}, ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAccount, domain.AgentProfileAPI}},
+		{ID: "antigravity", Name: "Antigravity", Configured: true, Installation: &domain.RuntimeInstallation{}, ProfileModes: []domain.AgentProfileMode{domain.AgentProfileAccount}},
+	}
+	v := New(m, app.NewController(""), "")
+	v.devices, v.deviceSelected, v.deviceTab = true, "local", "agents"
+	ui := n.NewTester(v.View, 1100, 820)
+	ui.Advance(time.Second)
+	if err := ui.Click("新增 Profile"); err != nil {
+		t.Fatal(err, ui.Texts())
+	}
+	ui.Advance(time.Second)
+	if err := ui.Click("Profile 名称"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Type("OpenAI API")
+	if err := ui.Click("Antigravity"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if ui.HasText("自定义 API") {
+		t.Fatal("Antigravity offered an unsupported Profile sign-in method")
+	}
+	if err := ui.Click("Codex"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if err := ui.Click("自定义 API"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ui.Click("创建 Profile"); err != nil {
+		t.Fatal(err)
+	}
+	job := welcomeJob(t, v.Controller, "runtime.profile.create")
+	draft, ok := job.Input.(domain.AgentProfile)
+	if !ok || draft.ID == "" || draft.HarnessID != "codex" || draft.Mode != domain.AgentProfileAPI || draft.Name != "OpenAI API" {
+		t.Fatalf("wrong device Profile request: %+v", job.Input)
+	}
+}

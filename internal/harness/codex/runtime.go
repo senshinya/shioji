@@ -37,6 +37,7 @@ type Options struct {
 	Executor         *Executor
 }
 type Runtime struct {
+	profileID        string
 	processEnv       []string
 	loginEvents      chan json.RawMessage
 	toolLogin        *toolServiceLogin

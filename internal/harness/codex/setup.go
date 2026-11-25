@@ -29,9 +29,27 @@ func (a Adapter) Installation() domain.RuntimeInstallation {
 	if a.Home != "" {
 		command = append([]string{"/usr/bin/env", "CODEX_HOME=" + a.Home}, command...)
 	}
+	if a.profileMode != "" {
+		installation := domain.RuntimeInstallation{Executable: path, Configurable: true, Documentation: "https://learn.chatgpt.com/docs/codex/cli", Options: a.runtimeOptions, OptionsSupported: domain.RuntimeOptionSupport{Instructions: true, TitleModel: true}}
+		installation.APISetup = a.profileMode == domain.AgentProfileAPI && a.apiSetupSupported()
+		if a.profileMode == domain.AgentProfileAccount {
+			if a.accountAlreadyBound() {
+				installation.Guide = "此 Profile 已绑定账号。使用其他账号时请新建 Profile。"
+			} else {
+				installation.SignInMethods = a.signInMethods()
+			}
+		}
+		return installation
+	}
 	return domain.RuntimeInstallation{APISetup: a.apiSetupSupported(), SignInMethods: a.signInMethods(), Options: a.runtimeOptions, OptionsSupported: domain.RuntimeOptionSupport{Arguments: true, Directory: true, Environment: true, Instructions: true, TitleModel: true}, Executable: path, Override: a.override, Configurable: true, Guide: "在该设备的终端安装或登录，然后重新检测", Documentation: "https://learn.chatgpt.com/docs/codex/cli", SignInCommand: command}
 }
 func (a Adapter) WithExecutable(path string) (harness.Adapter, error) {
+	if a.profileMode != "" {
+		if path != "" {
+			return nil, harness.Unsupported("profile-executable")
+		}
+		return a, nil
+	}
 	if a.defaultExecutable == "" {
 		a.defaultExecutable = a.Executable
 		if a.defaultExecutable == "" {
@@ -104,6 +122,9 @@ func authenticationIssue(code int, message string) domain.RuntimeIssue {
 }
 
 func (a Adapter) WithRuntimeOptions(options domain.RuntimeOptions) (harness.Adapter, error) {
+	if a.profileMode != "" && (len(options.Arguments) != 0 || options.Directory != "" || len(options.Environment) != 0) {
+		return nil, harness.Unsupported("profile-launch-overrides")
+	}
 	if len(options.Arguments) > 128 || len(options.Environment) > 128 || len(options.Instructions) > 64<<10 {
 		return nil, errors.New("运行配置过大")
 	}

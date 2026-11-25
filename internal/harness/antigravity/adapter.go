@@ -17,14 +17,24 @@ import (
 )
 
 type Adapter struct {
-	Executable string
+	Executable                               string
+	profileID, profileName, profileDirectory string
 }
 
 func (a Adapter) Descriptor() domain.HarnessDescriptor {
+	if a.profileID != "" {
+		return domain.HarnessDescriptor{ID: a.profileID, Name: a.profileName, Icon: "antigravity"}
+	}
 	return domain.HarnessDescriptor{ID: "antigravity", Name: "Antigravity", Icon: "antigravity"}
 }
 
 func (a Adapter) WithExecutable(path string) (harness.Adapter, error) {
+	if a.profileID != "" {
+		if path != "" {
+			return nil, harness.Unsupported("profile-executable")
+		}
+		return a, nil
+	}
 	a.Executable = path
 	return a, nil
 }
@@ -32,13 +42,22 @@ func (a Adapter) WithExecutable(path string) (harness.Adapter, error) {
 func (a Adapter) Installation() domain.RuntimeInstallation {
 	ctx, cancel := context.WithTimeout(context.Background(), systemexec.ShellEnvironmentTimeout+time.Second)
 	defer cancel()
-	env, _ := systemexec.Environment(ctx, nil)
+	env, _ := a.environment(ctx)
 	path, _ := a.executable(env)
 	if path == "" {
 		path = a.Executable
 	}
 	if path == "" {
 		path = "agy"
+	}
+	if a.profileID != "" {
+		installation := domain.RuntimeInstallation{Executable: path, Documentation: "https://antigravity.google/docs/cli"}
+		if a.accountAlreadyBound() {
+			installation.Guide = "此 Profile 已绑定账号。使用其他账号时请新建 Profile。"
+		} else {
+			installation.SignInMethods = []domain.SignInMethod{domain.SignInBrowser}
+		}
+		return installation
 	}
 	return domain.RuntimeInstallation{
 		Executable: path, Override: a.Executable, Configurable: true,
@@ -52,7 +71,7 @@ func (a Adapter) Installation() domain.RuntimeInstallation {
 func (a Adapter) CatalogVersion() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), systemexec.ShellEnvironmentTimeout+time.Second)
 	defer cancel()
-	env, _ := systemexec.Environment(ctx, nil)
+	env, _ := a.environment(ctx)
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}

@@ -66,6 +66,7 @@ func (e *deviceAgentEditor) edit(info domain.HarnessInfo) {
 	e.pageID = info.ID
 	e.path = e.paths[info.ID]
 	e.draft = newRuntimeOptionDraft(e.options[info.ID])
+	e.draft.login = info.Profile != nil && info.Profile.Mode == domain.AgentProfileAPI
 	e.error = ""
 }
 func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, connected bool, e *deviceAgentEditor, info domain.HarnessInfo, onboarding bool, save func()) {
@@ -96,7 +97,9 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 				topRow.PaddingX(configurationHoverInset)
 			}
 			topRow.Children(func() {
-				if initial {
+				if initial && info.Profile != nil {
+					row(c, "接入方式", func() { n.Text(c, "自定义 API").FontSize(configurationValueSize).PaddingX(configurationFieldInset) })
+				} else if initial {
 					row(c, "接入方式", func() { v.agentConnectionMode(c, t, key, e, info, disabled) })
 				} else {
 					row(c, "账号", func() {
@@ -112,7 +115,12 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 								label = runtimeSetupLabel(info, connected)
 							}
 						}
-						trigger := control(c.Key("account"), 5).FillWidth().Height(28).PaddingX(8).Radius(5).Label("管理账号").Disabled(install == nil || len(install.SignInCommand) == 0 && len(install.SignInMethods) == 0 || info.Account != nil && info.Account.State == "notRequired" && info.Account.Mode != "api").Children(func() {
+						showDetails := info.Account != nil && (info.Account.Mode == "api" || info.Profile != nil && accountAuthenticated(info.Account))
+						canOpen := install != nil && (showDetails || len(install.SignInCommand) != 0 || len(install.SignInMethods) != 0)
+						if info.Account != nil && info.Account.State == "notRequired" && info.Account.Mode != "api" {
+							canOpen = false
+						}
+						trigger := control(c.Key("account"), 5).FillWidth().Height(28).PaddingX(8).Radius(5).Label("管理账号").Disabled(!canOpen).Children(func() {
 							n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
 								n.Text(c, label).FontSize(12).FixedLineHeight(20).SingleLine().Shrink(1).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 160*time.Millisecond)})
 								if status != "" {
@@ -173,6 +181,10 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 						placeholder := "自动检测"
 						if install != nil && install.Executable != "" {
 							placeholder = install.Executable
+						}
+						if info.Profile != nil {
+							n.Text(c, placeholder).FontSize(configurationValueSize).SingleLine().TooltipWhenTruncated(placeholder).Selectable()
+							return
 						}
 						field := configurationTextField(c.Key("executable"), &e.path).Label(info.Name + " 可执行文件").Placeholder(placeholder).Tooltip("留空时在所属设备自动检测").Disabled(disabled)
 						if e.setup {
@@ -478,10 +490,10 @@ func (v *View) agentConfigurationActions(c *n.Context, t *n.Theme, key string, c
 				if onboarding {
 					e.openID = ""
 				} else {
-					if info.Configured {
+					if info.Configured && info.Profile == nil {
 						save()
 					} else {
-						v.saveDisabledAgentSettings(key, e, info.ID)
+						v.saveAgentRuntimeSettings(key, e, info.ID)
 					}
 				}
 			}

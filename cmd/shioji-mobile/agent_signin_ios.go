@@ -457,7 +457,7 @@ func (a *mobileApp) agentAccountView(c *ui.Context, w *mygo.Window, agent domain
 		})
 		return
 	}
-	if agent.Account == nil && !active && !draft.reauthorize && !a.preview {
+	if agent.Account == nil && !active && !draft.reauthorize && !a.preview && (agent.Profile == nil || len(methods) == 0) {
 		message := "设备尚未返回账号状态"
 		if blocked && a.model.Connected {
 			message = "正在读取设备账号…"

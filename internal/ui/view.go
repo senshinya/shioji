@@ -803,11 +803,11 @@ func (v *View) composer(c *n.Context, t *n.Theme, home bool) (goalShown bool) {
 				notice = codeSurface(t)
 			}
 			sid := m.SessionID
-			limit, item := conversationui.ComposerWarning(m.Details[sid], m.UsageLimitForSession(sid, c.Now()))
+			limit, item := conversationui.ComposerWarning(m.Details[sid], m.UsageLimitForSession(sid, c.Now()), m.Readiness.HarnessKind(m.Details[sid].Session.HarnessID))
 			var retry func(n.Rect)
 			if (limit.ID != "" || item != "") && v.canRetryMessage(sid) {
 				retry = func(button n.Rect) {
-					current, currentItem := conversationui.ComposerWarning(m.Details[sid], m.UsageLimitForSession(sid, c.Now()))
+					current, currentItem := conversationui.ComposerWarning(m.Details[sid], m.UsageLimitForSession(sid, c.Now()), m.Readiness.HarnessKind(m.Details[sid].Session.HarnessID))
 					if current.ID == limit.ID && currentItem == item {
 						width, _ := c.MeasureText(0, n.Span{Text: app.RetryMessageText, Font: t.Font, Size: userMessageFontSize})
 						source := conversationui.MessageFlightOrigin(button, width+2*userMessagePaddingX, userMessageLeading+2*userMessagePaddingY)

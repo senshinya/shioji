@@ -530,8 +530,45 @@ func (a *mobileApp) openRemoteAgents(parent *mygo.Window) {
 				ready = *refreshed
 			}
 			catalog := ready.Harnesses
+			if refreshed != nil && catalogEpoch == m.ConnectionEpoch {
+				catalog = slices.Clone(catalog)
+				for _, active := range m.Readiness.Harnesses {
+					index := slices.IndexFunc(catalog, func(info domain.HarnessInfo) bool { return info.ID == active.ID })
+					if index >= 0 {
+						catalog[index] = active
+					} else {
+						catalog = append(catalog, active)
+					}
+				}
+				for i := range catalog {
+					info := &catalog[i]
+					if info.Profile != nil && m.Connected {
+						_, info.Configured = m.Readiness.ForHarness(info.ID)
+					}
+				}
+			}
 			if len(catalog) == 0 && ready.HarnessID != "" {
 				catalog = []domain.HarnessInfo{{ID: ready.HarnessID, Name: ready.Descriptor().Name, State: ready.State, Models: ready.Models, Account: ready.Account}}
+			}
+			if m.WorkerMinor >= protocol.AgentProfileMinor && catalogEpoch == m.ConnectionEpoch {
+				var providers []domain.HarnessInfo
+				for _, info := range catalog {
+					if len(info.ProfileModes) != 0 {
+						providers = append(providers, info)
+					}
+				}
+				if len(providers) != 0 {
+					action(c, "新增 Profile", func() {
+						a.openCreateAgentProfile(w, providers, func(result protocol.AgentSetupResult) {
+							current := redactRuntimeReadiness(domain.Readiness{Harnesses: result.Catalog})
+							refreshed = &current
+							result.Readiness.Sessions = m.Readiness.Sessions
+							m.Readiness = redactRuntimeReadiness(result.Readiness)
+							a.refresh()
+							w.Invalidate()
+						})
+					}).Disabled(req.busy || !m.Connected)
+				}
 			}
 			for _, info := range catalog {
 				agent := a.signedInAgent(info)
@@ -747,7 +784,9 @@ func (a *mobileApp) openAgentSettingsAt(parent *mygo.Window, agent domain.Harnes
 						}
 					})
 					if install.Configurable {
-						formField(c, "覆盖路径", "自动发现", &settings.path).Disabled(authBusy || req.busy)
+						if current.Profile == nil {
+							formField(c, "覆盖路径", "自动发现", &settings.path).Disabled(authBusy || req.busy)
+						}
 						if modern {
 							a.runtimeSettingsFields(c, w, agent.ID, settings, authBusy || req.busy)
 						}

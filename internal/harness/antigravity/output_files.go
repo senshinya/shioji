@@ -11,7 +11,7 @@ import (
 	"shioji/internal/systemexec"
 )
 
-func (Adapter) OpenSessionOutputFile(ctx context.Context, session domain.Session, path string) (*os.File, error) {
+func (a Adapter) OpenSessionOutputFile(ctx context.Context, session domain.Session, path string) (*os.File, error) {
 	thread := session.ThreadID
 	if !filepath.IsLocal(thread) || thread == "." || filepath.Base(thread) != thread {
 		return nil, nil
@@ -23,7 +23,7 @@ func (Adapter) OpenSessionOutputFile(ctx context.Context, session domain.Session
 	}
 	ctx, cancel := context.WithTimeout(ctx, systemexec.ShellEnvironmentTimeout)
 	defer cancel()
-	env, _ := systemexec.Environment(ctx, nil)
+	env, _ := a.environment(ctx)
 	profile := skillProfileDirectory(env)
 	if !filepath.IsAbs(profile) {
 		return nil, nil

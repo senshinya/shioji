@@ -37,9 +37,9 @@ type usageNoticeState struct {
 
 // ComposerWarning selects the notice and the reply it represents. A saved
 // relative estimate is anchored to the original turn's completion time.
-func ComposerWarning(detail domain.SessionDetail, limit domain.Turn) (domain.Turn, string) {
-	turn, item := latestAntigravityReply(detail)
-	_, retryAfter, quota := SplitAntigravityQuotaWarning(detail.Session.HarnessID, item)
+func ComposerWarning(detail domain.SessionDetail, limit domain.Turn, harnessKind string) (domain.Turn, string) {
+	turn, item := latestAntigravityReply(detail, harnessKind)
+	_, retryAfter, quota := SplitAntigravityQuotaWarning(harnessKind, item)
 	if limit.UsageLimit != nil {
 		if quota && turn.ID == limit.ID {
 			return limit, item.ID

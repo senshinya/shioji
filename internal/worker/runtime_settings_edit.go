@@ -45,7 +45,7 @@ func runtimeSettingsConflict() error {
 }
 
 func (s *Server) readRuntimeSettings(in protocol.RuntimeSettingsQuery, private bool) (any, error) {
-	gate := s.catalogGates[in.HarnessID]
+	gate := s.catalogGate(in.HarnessID)
 	if gate == nil {
 		return nil, harness.Unsupported("configure-runtime")
 	}
@@ -80,7 +80,7 @@ func (s *Server) changeRuntimeSettings(in protocol.RuntimeSettingsChange) (proto
 	if !ok {
 		return protocol.RuntimeSettings{}, harness.Unsupported("configure-runtime")
 	}
-	gate := s.catalogGates[in.HarnessID]
+	gate := s.catalogGate(in.HarnessID)
 	if !gate.TryLock() {
 		return protocol.RuntimeSettings{}, errCatalogRefreshing
 	}

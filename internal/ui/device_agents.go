@@ -17,6 +17,8 @@ type deviceAgentEditor struct {
 	options                 map[string]domain.RuntimeOptions
 	optionSupport           map[string]bool
 	draft                   runtimeOptionDraft
+	newProfile              *domain.AgentProfile
+	requestedProfile        domain.AgentProfile
 	epoch                   string
 	catalog                 []domain.HarnessInfo
 	paths                   map[string]string
@@ -42,7 +44,7 @@ func agentEditor(catalog []domain.HarnessInfo) *deviceAgentEditor {
 func (e *deviceAgentEditor) input() protocol.DeviceAgents {
 	in := protocol.DeviceAgents{Agents: []protocol.RuntimeConfiguration{}}
 	for _, info := range e.catalog {
-		if info.Configured {
+		if info.Configured && info.Profile == nil {
 			entry := protocol.RuntimeConfiguration{HarnessID: info.ID, Executable: e.paths[info.ID]}
 			if e.optionSupport[info.ID] {
 				options := e.options[info.ID]
@@ -59,6 +61,9 @@ func (v *View) deviceAgents(c *n.Context, t *n.Theme, key string, state *app.Dev
 	editor := *e
 	scope.Children(func() {
 		n.Column(c).FillWidth().Gap(4).Children(func() {
+			if state.WorkerMinor >= protocol.AgentProfileMinor {
+				v.deviceProfileCreation(c.Key("new-profile"), key, state, editor)
+			}
 			v.agentRows(c.Key("rows"), t, key, state.Connected, editor, false, func() { v.saveDeviceAgents(key, state, editor) })
 			if len(editor.catalog) == 0 {
 				label := "暂无 Agent"
@@ -96,6 +101,7 @@ func (v *View) syncDeviceAgents(key string, state *app.DeviceState, e **deviceAg
 		for i := range (*e).catalog {
 			old := &(*e).catalog[i]
 			if next, ok := authoritative[old.ID]; ok {
+				delete(authoritative, old.ID)
 				next.Configured = true
 				*old = next
 				if (*e).openID != next.ID && next.Installation != nil {
@@ -104,6 +110,11 @@ func (v *View) syncDeviceAgents(key string, state *app.DeviceState, e **deviceAg
 				}
 			} else if state.WorkerMinor >= 16 {
 				old.Configured = false
+			}
+		}
+		for _, info := range state.Readiness.Harnesses {
+			if _, added := authoritative[info.ID]; added {
+				(*e).refresh([]domain.HarnessInfo{info})
 			}
 		}
 	}
@@ -268,9 +279,15 @@ func (v *View) agentRows(c *n.Context, t *n.Theme, key string, connected bool, e
 				}
 				enabled := info.Configured
 				if configurationSwitch(c, &enabled).Label("启用 " + info.Name).Disabled(e.readOnly || !connected || e.busy || e.loading || v.Controller == nil).Changed() {
-					info.Configured = enabled
+					if info.Profile == nil {
+						info.Configured = enabled
+					}
 					if !onboarding {
-						save()
+						if info.Profile != nil {
+							v.setDeviceProfileEnabled(key, e, info.ID, enabled)
+						} else {
+							save()
+						}
 					}
 				}
 				arrow := n.ButtonBase(c).Size(28, 28).AlignItems(n.Center).Justify(n.Center).Label("打开 " + info.Name + " 配置").Disabled(info.Installation == nil).Children(func() { n.Icon(c, disclosureRight).Size(16, 16).TextColor(t.TextMuted) })
@@ -293,7 +310,7 @@ func (v *View) agentRows(c *n.Context, t *n.Theme, key string, connected bool, e
 	})
 }
 
-func (v *View) saveDisabledAgentSettings(key string, e *deviceAgentEditor, id string) {
+func (v *View) saveAgentRuntimeSettings(key string, e *deviceAgentEditor, id string) {
 	e.busy = true
 	e.error = ""
 	in := protocol.RuntimeConfiguration{HarnessID: id, Executable: e.paths[id]}

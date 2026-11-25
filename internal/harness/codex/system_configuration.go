@@ -174,11 +174,19 @@ func validateAPIConfiguration(in domain.APIConfiguration) (domain.APIConfigurati
 }
 
 func (a Adapter) ConfigureAPI(ctx context.Context, in domain.APIConfiguration) (domain.Readiness, error) {
+	if a.profileMode == domain.AgentProfileAccount {
+		return domain.Readiness{}, harness.Unsupported("profile-account-replacement")
+	}
 	in, err := validateAPIConfiguration(in)
 	if err != nil {
 		return domain.Readiness{}, &harness.SetupError{Issue: domain.RuntimeUnavailableIssue, Message: err.Error()}
 	}
-	r, err := Start(ctx, Options{Executable: a.Executable, Home: a.Home, Arguments: a.runtimeOptions.Arguments, Environment: a.runtimeOptions.Environment, authentication: true})
+	if a.profileMode == domain.AgentProfileAPI {
+		if err := a.ensureProfileConfig(); err != nil {
+			return domain.Readiness{}, apiSetupError("无法准备 Profile 的原生配置")
+		}
+	}
+	r, err := a.startAuthentication(ctx, true)
 	if err != nil {
 		return domain.Readiness{}, apiSetupError("无法读取 Agent 配置，请重新检测")
 	}
@@ -240,7 +248,7 @@ func (a Adapter) ConfigureAPI(ctx context.Context, in domain.APIConfiguration) (
 	}
 	// Discovery performs network I/O. Another native client may authorize an
 	// account meanwhile; the config version alone does not cover auth storage.
-	guard, err := Start(ctx, Options{Executable: a.Executable, Home: a.Home, Arguments: a.runtimeOptions.Arguments, Environment: a.runtimeOptions.Environment, authentication: true})
+	guard, err := a.startAuthentication(ctx, true)
 	if err != nil {
 		return domain.Readiness{}, apiSetupError("无法确认当前授权状态，请重新检测")
 	}
@@ -276,7 +284,7 @@ func (a Adapter) ConfigureAPI(ctx context.Context, in domain.APIConfiguration) (
 		return domain.Readiness{}, apiSetupError("配置受到系统策略限制，请重新检测")
 	}
 	// Read from a fresh process, matching what a terminal Codex launch will see.
-	fresh, err := Start(ctx, Options{Executable: a.Executable, Home: a.Home, Arguments: a.runtimeOptions.Arguments, Environment: a.runtimeOptions.Environment})
+	fresh, err := a.startAuthentication(ctx, false)
 	if err != nil {
 		var setup *harness.SetupError
 		if errors.As(err, &setup) && setup.Account != nil {

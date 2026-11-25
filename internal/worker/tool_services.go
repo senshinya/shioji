@@ -38,7 +38,7 @@ func (s *Server) changeToolService(in protocol.ToolServiceInput) (domain.ToolSer
 }
 
 func (s *Server) toolRuntime(id string) (harness.ToolServiceRuntime, func(), error) {
-	gate := s.catalogGates[id]
+	gate := s.catalogGate(id)
 	if gate == nil || !s.agentEnabled(id) {
 		return nil, nil, errors.New("请先启用该 Agent")
 	}

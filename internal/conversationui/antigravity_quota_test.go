@@ -35,7 +35,7 @@ func TestAntigravityQuotaHistoryRequiresFinalProviderWarning(t *testing.T) {
 				Turns:   []domain.Turn{{ID: "turn", Status: domain.ExecutionCompleted, CompletedAt: tc.completed}},
 				Items:   []domain.Item{item},
 			}
-			turn, source := ComposerWarning(detail, domain.Turn{})
+			turn, source := ComposerWarning(detail, domain.Turn{}, detail.Session.HarnessID)
 			if tc.want == "" {
 				if found || body != tc.text || turn.UsageLimit != nil || source != "" {
 					t.Fatalf("ordinary content changed: %q", body)
