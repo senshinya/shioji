@@ -1577,18 +1577,22 @@ func attachTo(c, e *node, pw, ph float32) {
 	} else {
 		w = fitWidth(c, pw, pw)
 	}
-	var h float32
-	if v, ok := c.height.resolve(ph); ok {
-		h = c.clampH(v, ph)
-	} else {
-		h = heightAt(c, w, ph)
-	}
 	t := laidOutVisualBox(c.popover)
 	// No taller than the room the window has: one that scrolls, as a
 	// select's long list of options, scrolls, and children that shrink,
 	// as a scroll container inside a panel of SelectBase's, fit.
 	_, ay, _, sy := c.attachFractions()
-	h = min(h, roomAlong(t.Y, t.H, beside(ay, sy), c.m(0)+c.m(2), c.c.h, c.windowEdge()))
+	edge := c.windowEdge()
+	room := roomAlong(t.Y, t.H, beside(ay, sy), c.m(0)+c.m(2), c.c.h, edge)
+	var h float32
+	if c.kind == kindText && c.role == RoleTooltip {
+		w = min(w, max(c.c.w-2*edge, 0))
+		h = c.fitTooltipText(w, room)
+	} else if v, ok := c.height.resolve(ph); ok {
+		h = min(c.clampH(v, ph), room)
+	} else {
+		h = min(heightAt(c, w, ph), room)
+	}
 	c.x, c.y = attachedAt(c, e, t, pw, ph, w, h)
 	layoutBox(c, w, h)
 }

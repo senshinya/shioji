@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -107,6 +108,42 @@ func TestStyledTooltipExplainsDisabledWithoutOfferingAction(t *testing.T) {
 	tt.ClickAt(r.X+10, r.Y+10)
 	if clicks != 0 {
 		t.Fatal("disabled explanation enabled action")
+	}
+}
+
+func TestLongTooltipFitsWholeLinesBesideItsAnchor(t *testing.T) {
+	const width, height = 240, 225
+	command := "/bin/zsh -lc 'printf example\n" + strings.Repeat("printf %s \"Shioji 命令详情\"\n", 30) + "'"
+	for _, top := range []float32{12, 100, 191} {
+		tt := NewTester(func(c *Context) {
+			popupTestTheme(c)
+			ButtonBase(c).Absolute().Top(top).Left(12).Size(100, 22).Label("command").Tooltip(command)
+		}, width, height)
+		tt.Move(50, top+10)
+		tt.Advance(time.Second)
+
+		overlay := tt.rt.c.root.last
+		tip := overlay.first
+		if tip == nil || tip.role != RoleTooltip {
+			t.Fatal("command tooltip did not open")
+		}
+		label := tip
+		if tip.first != nil {
+			label = tip.first
+		}
+		if label.tl == nil || !label.tl.Truncated || len(label.tl.Lines) < 2 {
+			t.Fatal("long tooltip should end with a truncated preview of whole lines")
+		}
+		bounds := tip.Bounds()
+		textBottom := label.Bounds().Y + label.contentY() + label.tl.Height
+		if bounds.X < windowMargin || bounds.X+bounds.W > width-windowMargin ||
+			bounds.Y < windowMargin || bounds.Y+bounds.H > height-windowMargin ||
+			textBottom > bounds.Y+bounds.H {
+			t.Fatalf("tooltip text overflows at anchor y=%g: bounds=%+v, text bottom=%g", top, bounds, textBottom)
+		}
+		if top == 12 && bounds.Y < top+22 || top == 191 && bounds.Y+bounds.H > top {
+			t.Fatalf("tooltip does not use the open side of anchor y=%g: %+v", top, bounds)
+		}
 	}
 }
 

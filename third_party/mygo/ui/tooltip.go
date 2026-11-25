@@ -59,13 +59,13 @@ type tooltips struct {
 // the tip does. It returns the tip, or nil while it does not show;
 // Element.Tooltip is TooltipBase with the theme's look.
 func coreTooltipBase(c *context, anchor *node, fn func(tip *node)) *node {
-	tip, _ := tooltipBase(c, anchor, fn)
+	tip, _ := tooltipBase(c, anchor, "", fn)
 	return tip
 }
 
 // tooltipBase is TooltipBase, which also reports whether the keyboard
 // focus brought the tip rather than the pointer.
-func tooltipBase(c *context, anchor *node, fn func(tip *node)) (*node, bool) {
+func tooltipBase(c *context, anchor *node, value string, fn func(tip *node)) (*node, bool) {
 	anchor.flags |= flagHover
 	anchor.tip = true
 	// The theme the anchor builds with sets how long the pointer rests on
@@ -83,7 +83,12 @@ func tooltipBase(c *context, anchor *node, fn func(tip *node)) (*node, bool) {
 	}
 	var tip *node
 	coreOverlay(c, func() {
-		tip = coreBox(c).Absolute().IgnoreInput(true).Role(RoleTooltip)
+		if value == "" {
+			tip = coreBox(c)
+		} else {
+			tip = coreText(c, value)
+		}
+		tip.Absolute().IgnoreInput(true).Role(RoleTooltip)
 		fn(tip)
 		if tip.attach == 0 {
 			tip.AttachTo(anchor, AnchorTop, AnchorBottom)
@@ -126,20 +131,44 @@ func (e *node) Tooltip(s string) *node {
 	c := e.c
 	t := c.theme
 	fill, text := t.inverse()
-	tooltipBase(c, e, func(tip *node) {
+	tooltipBase(c, e, s, func(tip *node) {
 		if style := t.TooltipStyle; style != nil {
 			tip.MaxWidth(style.MaxWidth).Padding(style.PaddingY, style.PaddingX).Radius(style.Radius).Background(style.Surface).TextColor(style.Text).Border(1, style.Border).FontSize(style.FontSize).FixedLineHeight(style.LineHeight).Shadow(0, 2, 8, 0, RGBA(0, 0, 0, .12))
-			tip.Children(func() { coreText(c, s) })
 			tip.AttachTo(e, AnchorTop, AnchorBottom).Margin(0, 0, style.Gap, 0)
 			return
 		}
 		tip.MaxWidth(t.Space(80)).Padding(t.Space(1.25), t.Space(2)).Radius(t.Space(1.25)).
 			Background(fill).TextColor(text).FontSize(t.FontSize - 1)
 		tip.Shadow(0, 2, 8, 0, RGBA(0, 0, 0, 0.2))
-		tip.Children(func() { coreText(c, s) })
 		tip.AttachTo(e, AnchorTop, AnchorBottom).Margin(0, 0, t.Space(1.5), 0)
 	})
 	return e
+}
+
+// fitTooltipText fits a plain tooltip's wrapped text to complete lines in
+// the space left by its attachment. MaxLines adds an ellipsis to the last
+// visible line when the rest of the text does not fit.
+func (e *node) fitTooltipText(w, room float32) float32 {
+	width, height := w-e.padX(), room-e.padY()
+	if width <= 0 || height <= 0 {
+		e.hidden = true
+		return 0
+	}
+	layout := e.textLayout(max(width, 1))
+	if layout.Height > height {
+		for i, line := range layout.Lines {
+			if line.Y+line.Height > height {
+				if i == 0 {
+					e.hidden = true
+					return 0
+				}
+				e.MaxLines(i)
+				layout = e.textLayout(max(width, 1))
+				break
+			}
+		}
+	}
+	return layout.Height + e.padY()
 }
 
 // TooltipWhenTruncated shows s only when this text element's native layout
