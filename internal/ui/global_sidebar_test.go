@@ -80,7 +80,7 @@ func TestGlobalFooterKeepsOnlyThreeDIPAroundUnchangedTargets(t *testing.T) {
 		if footer.H != 34 {
 			t.Error("footer retains excessive vertical space", footer)
 		}
-		for _, label := range []string{"设备", "Tailnet", "端口转发", "设置"} {
+		for _, label := range []string{"设备", "Tailnet", "端口转发", "额度", "设置"} {
 			button, ok := ui.Find(label)
 			if !ok || math.Abs(float64(button.W-28)) > .01 || button.H != 28 {
 				t.Fatal("click target changed", label, button)
@@ -181,17 +181,18 @@ func TestQuickPanelClosedReopenHasNoResidualHorizontalMotion(t *testing.T) {
 func TestGlobalDockIconsHaveEqualVisibleExtentAndOpticalCenter(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, scale := range []float32{1, 2} {
+			icons := []*n.SVG{quickDeviceIcon, quickNetworkIcon, quickForwardIcon, quickQuotaIcon, settingsIcon}
 			ui := n.NewTester(func(c *n.Context) {
 				n.Row(c).Fill().Padding(12).Gap(8).Background(c.Theme().Surface).AlignItems(n.Start).Children(func() {
-					for i, icon := range []*n.SVG{quickDeviceIcon, quickNetworkIcon, quickForwardIcon, settingsIcon} {
+					for i, icon := range icons {
 						n.Column(c).Size(28, 28).AlignItems(n.Center).Justify(n.Center).Children(func() { n.Icon(c, icon).Size(16, 16).TextColor(c.Theme().TextMuted).Label(fmt.Sprint("glyph", i)) })
 					}
 				})
-			}, 180, 60)
+			}, 220, 60)
 			ui.SetDark(dark)
 			ui.SetScale(scale)
 			var firstCenter, firstHeight float64
-			for i := range 4 {
+			for i := range len(icons) {
 				box, _ := ui.Find(fmt.Sprint("glyph", i))
 				lo, hi := nativeQuickInkY(t, ui, box, scale)
 				center := float64(lo+hi) / (2 * float64(scale))
@@ -209,7 +210,7 @@ func TestGlobalDockIconsHaveEqualVisibleExtentAndOpticalCenter(t *testing.T) {
 func TestQuickHeadingActionsStayCompactAndAlignToTitleInk(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		for _, scale := range []float32{1, 2} {
-			for _, kind := range []string{"devices", "tailnet", "ports"} {
+			for _, kind := range []string{"devices", "tailnet", "ports", "quota"} {
 				t.Run(fmt.Sprintf("%v/%g/%s", dark, scale, kind), func(t *testing.T) {
 					v := New(deviceUIModel(), nil, "")
 					ui := n.NewTester(func(c *n.Context) {
@@ -223,6 +224,9 @@ func TestQuickHeadingActionsStayCompactAndAlignToTitleInk(t *testing.T) {
 					}
 					if kind == "ports" {
 						title, actions = "端口转发", []string{"创建端口转发", "收起端口转发面板"}
+					}
+					if kind == "quota" {
+						title, actions = "额度", []string{"管理展示的 Profile", "刷新额度", "收起额度面板"}
 					}
 					caption, _ := ui.Find(title + " 概览标题")
 					a, b := nativeQuickInkY(t, ui, caption, scale)

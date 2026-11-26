@@ -127,6 +127,10 @@ type Server struct {
 	dispatchReservations map[string]string
 	dispatchEpochs       map[string]uint64
 	mu                   sync.Mutex
+	quotaMu              sync.Mutex
+	quotaEntries         map[string]*quotaEntry
+	quotaVersion         int64
+	quotaWake            chan struct{}
 	conns                map[net.Conn]bool
 	wg                   sync.WaitGroup
 	once                 sync.Once
@@ -246,6 +250,7 @@ func New(ctx context.Context, config Config) (*Server, error) {
 	s.runtimes = map[string]harness.Runtime{}
 	s.runtimeEvents = map[string]*runtimeEventGate{}
 	s.runtimeCatalogs = map[string]harness.Runtime{}
+	s.initQuotaState()
 	if err = s.configureAdapters(); err != nil {
 		listener.Close()
 		db.Close()
@@ -511,7 +516,7 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 	// Connection recovery can observe the last committed state during a drain.
 	// These reads must not queue behind a mutation waiting for another session.
 	switch method {
-	case "events", "events.watch", "snapshot", "readiness", "operation", "operations", "device.health":
+	case "events", "events.watch", "snapshot", "readiness", "operation", "operations", "device.health", "runtime.quota":
 	default:
 		s.maintenance.RLock()
 		defer s.maintenance.RUnlock()
@@ -618,6 +623,12 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		return s.toolAuthorizationCommand(method, in)
 	case "runtime.catalog":
 		return s.runtimeProfiles(nil, true), nil
+	case "runtime.quota":
+		in, err := decode[protocol.QuotaQuery](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.readQuota(in)
 	case "runtime.profile.icon":
 		in, err := decode[protocol.ProfileIconInput](body)
 		if err != nil {
@@ -948,10 +959,36 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		if method == "events.watch" {
 			wait = time.Duration(max(1, min(q.WaitMS, 15_000))) * time.Millisecond
 		}
-		if err := s.store.WaitEvents(s.ctx, q.After, q.Generation, wait); err != nil {
-			return nil, err
+		waitCtx := s.ctx
+		var cancelWait context.CancelFunc
+		var stopQuotaWatch func()
+		if method == "events.watch" && wait > 0 {
+			if wake, already := s.quotaWatchChannel(q.AfterQuota); already {
+				wait = 0
+			} else if wake != nil {
+				waitCtx, cancelWait = context.WithCancel(s.ctx)
+				done := make(chan struct{})
+				go func() {
+					select {
+					case <-wake:
+						cancelWait()
+					case <-done:
+					}
+				}()
+				stopQuotaWatch = func() {
+					close(done)
+					cancelWait()
+				}
+			}
 		}
-		if method == "events.watch" {
+		waitErr := s.store.WaitEvents(waitCtx, q.After, q.Generation, wait)
+		if stopQuotaWatch != nil {
+			stopQuotaWatch()
+		}
+		if waitErr != nil && !(errors.Is(waitErr, context.Canceled) && s.ctx.Err() == nil) {
+			return nil, waitErr
+		}
+		if method == "events.watch" && wait > 0 {
 			// Coalesce token bursts for one native display frame. This wait uses
 			// the observation connection; commands remain independently available.
 			timer := time.NewTimer(12 * time.Millisecond)
@@ -970,7 +1007,8 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 		if err != nil {
 			return nil, err
 		}
-		page := EventPage{Generation: q.Generation, Sequence: head}
+		quotaVersion, quotaUpdates := s.quotaUpdatesAfter(q.AfterQuota)
+		page := EventPage{Generation: q.Generation, Sequence: head, QuotaVersion: quotaVersion, QuotaUpdates: quotaUpdates}
 		size := 0
 		for _, e := range events {
 			b, _ := json.Marshal(e)

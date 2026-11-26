@@ -16,6 +16,11 @@ func commandLane(job Job) string {
 	switch job.Method {
 	case "conversation.list", "conversation.preview":
 		return "conversation:read"
+	case "runtime.quota":
+		if in, ok := job.Input.(protocol.QuotaQuery); ok && in.HarnessID != "" {
+			return "quota:" + in.HarnessID
+		}
+		return "quota"
 	}
 	switch in := job.Input.(type) {
 	case domain.Submission:
@@ -62,6 +67,9 @@ func commandTimeout(method string) time.Duration {
 		return 25 * time.Second
 	case "runtime.check", "runtime.configure", "runtime.profile.create":
 		return 30 * time.Second
+	case "runtime.quota":
+		// Worker enforces a 20s per-query timeout; allow transport headroom.
+		return 25 * time.Second
 	case "runtime.agents":
 		return 60 * time.Second
 	case "session.fork", "session.restart":

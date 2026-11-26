@@ -376,10 +376,17 @@ func (v *View) sidebar(c *n.Context, t *n.Theme, width float32) {
 		if v.quickUI().selected != "" && v.portForward == nil {
 			if card.PressedOutside() {
 				v.quickUI().selected = ""
+				v.quickUI().quotaPickerOpen = false
+				v.stopQuotaTimers()
 			}
 			if c.Shortcut(0, n.KeyEscape) {
-				v.quickUI().focus = v.quickUI().selected
-				v.quickUI().selected = ""
+				if v.quickUI().selected == "quota" && v.quickUI().quotaPickerOpen {
+					v.quickUI().quotaPickerOpen = false
+				} else {
+					v.quickUI().focus = v.quickUI().selected
+					v.quickUI().selected = ""
+					v.stopQuotaTimers()
+				}
 			}
 		}
 	})

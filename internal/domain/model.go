@@ -306,6 +306,7 @@ type Event struct {
 	Item             *Item            `json:"item,omitempty"`
 	Request          *PendingRequest  `json:"request,omitempty"`
 	Turn             *Turn            `json:"turn,omitempty"`
+	Quota            *QuotaSnapshot   `json:"quota,omitempty"`
 }
 type Snapshot struct {
 	SessionInputTimes map[string]time.Time `json:"sessionInputTimes,omitempty"`

@@ -288,6 +288,10 @@ func (s *Server) runtimeProfiles(sessions []string, allAdapters bool) domain.Rea
 // Adapters report agent activity, not authoritative workspace/session commands.
 // Bind events to the configured harness and owned session before persistence.
 func (s *Server) onHarnessEvent(harnessID, sessionID string, e domain.Event) error {
+	if e.Type == "quota.updated" && e.Quota != nil {
+		s.recordQuotaPush(harnessID, *e.Quota)
+		return nil
+	}
 	if e.SessionID == "" {
 		return nil
 	}

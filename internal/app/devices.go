@@ -236,6 +236,7 @@ func (m *Model) ApplyDeviceUpdate(key string, update Update) {
 	if m.submissionReceipts == nil {
 		m.submissionReceipts = map[string]domain.Operation{}
 	}
+	m.quotaStore()
 	p := *m
 	p.Navigation = m.Navigation.Clone()
 	p.Notifications = nil

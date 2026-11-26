@@ -68,6 +68,8 @@ type Runtime struct {
 	scope            *managedexec.Scope
 	executor         *Executor
 	managedCoverage  bool
+	quotaMu          sync.Mutex
+	lastRateLimits   *codexRateLimitSnapshot
 }
 
 // CallError distinguishes explicit rejection from an unconfirmed external send.
@@ -250,6 +252,10 @@ func (r *Runtime) read(stdout io.Reader) {
 		}
 		if m.Method == "mcpServer/oauthLogin/completed" {
 			r.receiveToolLogin(m.Params)
+			continue
+		}
+		if m.Method == "account/rateLimits/updated" {
+			r.receiveRateLimitsUpdated(m.Params)
 			continue
 		}
 		if m.Method == "account/login/completed" && r.loginEvents != nil {

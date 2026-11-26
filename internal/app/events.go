@@ -48,16 +48,20 @@ func (c *Controller) observeEvents(ctx context.Context, device, generation strin
 			send(eventResult{err: err})
 			return
 		}
+		var afterQuota int64
 		for ctx.Err() == nil {
 			var page protocol.EventPage
 			callCtx, done := context.WithTimeout(ctx, 20*time.Second)
-			err = client.Call(callCtx, "events.watch", protocol.EventsQuery{After: after, Generation: generation, WaitMS: 15_000}, &page)
+			err = client.Call(callCtx, "events.watch", protocol.EventsQuery{After: after, AfterQuota: afterQuota, Generation: generation, WaitMS: 15_000}, &page)
 			done()
 			if !send(eventResult{page: page, err: err}) || err != nil {
 				return
 			}
 			if len(page.Events) > 0 {
 				after = page.Events[len(page.Events)-1].Sequence
+			}
+			if page.QuotaVersion > afterQuota {
+				afterQuota = page.QuotaVersion
 			}
 		}
 	}()

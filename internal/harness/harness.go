@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"shioji/internal/domain"
 	"shioji/internal/managedexec"
@@ -364,3 +365,25 @@ type WorkMessenger interface {
 
 // PendingRuntime exposes only unsettled native requests, without wire IDs.
 type PendingRuntime interface{ PendingOperations() int }
+
+// QuotaError carries structured retry and eligibility metadata from a quota probe.
+type QuotaError struct {
+	Message         string
+	RetryAfter      time.Duration
+	Unsupported     bool
+	AuthUnavailable bool
+}
+
+func (e *QuotaError) Error() string { return e.Message }
+
+// QuotaProvider reads provider-reported usage limits or balance on the owning device.
+// Credentials remain strictly inside the adapter.
+type QuotaProvider interface {
+	Quota(context.Context, *managedexec.Scope) (domain.QuotaSnapshot, error)
+}
+
+// QuotaRuntime is an optional capability on a started or catalog Runtime so the
+// worker can reuse an active process or managed catalog probe without extra spawns.
+type QuotaRuntime interface {
+	ReadQuota(context.Context) (domain.QuotaSnapshot, error)
+}

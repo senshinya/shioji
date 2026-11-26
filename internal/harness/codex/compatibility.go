@@ -59,6 +59,7 @@ var requestContracts = map[string][]string{
 	"config/read":              {"cwd", "includeLayers"},
 	"config/batchWrite":        {"edits", "filePath", "expectedVersion", "reloadUserConfig"},
 	"account/read":             {"refreshToken"},
+	"account/rateLimits/read":  {},
 	"account/login/cancel":     {"loginId"},
 	"configRequirements/read":  {},
 	"environment/add":          {"environmentId", "execServerUrl", "authBearerToken"},

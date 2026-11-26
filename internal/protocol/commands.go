@@ -51,13 +51,16 @@ type SessionQuery struct {
 }
 type EventsQuery struct {
 	After      int64  `json:"after"`
+	AfterQuota int64  `json:"afterQuota,omitempty"`
 	Generation string `json:"generation"`
 	WaitMS     int    `json:"waitMs,omitempty"`
 }
 type EventPage struct {
-	Sequence   int64          `json:"sequence,omitempty"`
-	Generation string         `json:"generation"`
-	Events     []domain.Event `json:"events"`
+	Sequence     int64                  `json:"sequence,omitempty"`
+	QuotaVersion int64                  `json:"quotaVersion,omitempty"`
+	Generation   string                 `json:"generation"`
+	Events       []domain.Event         `json:"events"`
+	QuotaUpdates []domain.QuotaSnapshot `json:"quotaUpdates,omitempty"`
 }
 type AnswerInput struct {
 	SessionID string        `json:"sessionId"`

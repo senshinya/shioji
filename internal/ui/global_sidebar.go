@@ -23,6 +23,13 @@ type quickSidebar struct {
 	selected, last, focus string
 	reset                 bool
 	devices, peers, ports n.ListState
+	quotaPickerOpen       bool
+	quotaTabs             n.ScrollState
+	quotaScroll           n.ScrollState
+	quotaPickerList       n.ScrollState
+	quotaLastTab          string
+	quotaTimer            *time.Timer
+	quotaTimerAt          time.Time
 }
 
 func (v *View) quickUI() *quickSidebar {
@@ -35,7 +42,15 @@ func (v *View) selectQuick(kind string) {
 	s := v.quickUI()
 	if s.selected == kind {
 		s.selected = ""
+		if kind == "quota" {
+			s.quotaPickerOpen = false
+			v.stopQuotaTimers()
+		}
 		return
+	}
+	if s.selected == "quota" && kind != "quota" {
+		s.quotaPickerOpen = false
+		v.stopQuotaTimers()
 	}
 	s.reset = s.selected == ""
 	s.selected, s.last = kind, kind
@@ -46,6 +61,8 @@ func quickIndex(kind string) int {
 		return 1
 	case "ports":
 		return 2
+	case "quota":
+		return 3
 	}
 	return 0
 }
@@ -56,12 +73,19 @@ func (v *View) quickFooter(c *n.Context, t *n.Theme) {
 		for _, item := range []struct {
 			kind, label string
 			icon        *n.SVG
-		}{{"devices", "设备", quickDeviceIcon}, {"tailnet", "Tailnet", quickNetworkIcon}, {"ports", "端口转发", quickForwardIcon}} {
+		}{{"devices", "设备", quickDeviceIcon}, {"tailnet", "Tailnet", quickNetworkIcon}, {"ports", "端口转发", quickForwardIcon}, {"quota", "额度", quickQuotaIcon}} {
 			button := control(c.Key(item.kind)).Size(targetSize, targetSize).Label(item.label).Selected(s.selected == item.kind).TextColor(t.TextMuted)
 			if s.selected == item.kind {
 				button.Background(t.SurfacePressed).TextColor(t.Text)
 			}
-			button.Children(func() { n.Icon(c, item.icon).Size(16, 16).Label(item.label + "图标").Role(n.RoleNone) })
+			button.Children(func() {
+				n.Icon(c, item.icon).Size(16, 16).Label(item.label + "图标").Role(n.RoleNone)
+				if item.kind == "quota" && s.selected != "quota" {
+					if sev := v.persistenceModel().OverallQuotaSeverity(); sev != app.QuotaSeverityNone {
+						n.Box(c.Key("quota-alert-dot")).Absolute().Top(4).Right(4).Size(5, 5).Radius(3).Background(quotaSeverityColor(t, sev)).PassThrough().Role(n.RoleNone)
+					}
+				}
+			})
 			if s.focus == item.kind {
 				button.Focus()
 				s.focus = ""
@@ -102,14 +126,21 @@ func (v *View) quickPanelHeight(kind string) float32 {
 		return 113 + max(32, 44*float32(len(v.Model.Tailnet.Peers)))
 	case "ports":
 		return 41 + max(32, 44*float32(len(v.persistenceModel().PortForwards)))
+	case "quota":
+		return v.quickQuotaHeight()
 	}
 	return 0
 }
 func (v *View) quickPanel(c *n.Context, t *n.Theme, color n.Color, available float32) {
 	s := v.quickUI()
+	v.syncQuotaScheduler(c)
 	host := n.Column(c.Key("global-quick-panel")).Absolute().Left(0).Right(0).Bottom(quickFooterHeight).Clip().Label("全局快捷面板")
 	animation := motionAnimation(c, 260*time.Millisecond)
-	target := min(v.quickPanelHeight(s.last), min(360, max(0, available-quickFooterHeight-40)))
+	maxCap := float32(360)
+	if s.last == "quota" && !s.quotaPickerOpen {
+		maxCap = quickQuotaMaxHeight
+	}
+	target := min(v.quickPanelHeight(s.last), min(maxCap, max(0, available-quickFooterHeight-40)))
 	height := host.AnimateTo("height", target, animation)
 	index := host.AnimateTo("index", float32(quickIndex(s.last)), animation)
 	if s.reset {
@@ -133,7 +164,7 @@ func (v *View) quickPanel(c *n.Context, t *n.Theme, color n.Color, available flo
 			if width == 0 {
 				width = host.Bounds().W
 			}
-			for i, kind := range []string{"devices", "tailnet", "ports"} {
+			for i, kind := range []string{"devices", "tailnet", "ports", "quota"} {
 				pane := n.Column(c.Key(kind)).Absolute().Left((float32(i) - index) * width).Top(0).Bottom(0).Width(width).MinHeight(0).Clip()
 				n.Inert(pane, s.selected != kind)
 				pane.Children(func() {
@@ -145,6 +176,8 @@ func (v *View) quickPanel(c *n.Context, t *n.Theme, color n.Color, available flo
 						v.quickTailnet(c, t)
 					case "ports":
 						v.quickPorts(c, t)
+					case "quota":
+						v.quickQuota(c, t)
 					}
 				})
 			}
@@ -159,10 +192,13 @@ func (v *View) quickHeading(c *n.Context, t *n.Theme, kind string) {
 	if kind == "ports" {
 		title = "端口转发"
 	}
+	if kind == "quota" {
+		title = "额度"
+	}
 	n.Row(c).Height(40).Shrink(0).FillWidth().Padding(6, 10, 6, 12).Gap(2).AlignItems(n.Baseline).Children(func() {
 		font := n.Font{Family: t.Font, Size: 13, Weight: 500}
 		n.Text(c, title).FontSize(13).FontWeight(500).FixedLineHeight(28).Label(title + " 概览标题")
-		if kind != "ports" {
+		if kind == "devices" || kind == "tailnet" {
 			label := "打开设备页"
 			if kind == "tailnet" {
 				label = "打开 Tailnet 配置"
@@ -185,9 +221,36 @@ func (v *View) quickHeading(c *n.Context, t *n.Theme, kind string) {
 		if kind == "ports" && quickHeadingAction(c.Key("add"), t, plus, "创建端口转发", title, font).Clicked() {
 			v.beginPortForward()
 		}
+		if kind == "quota" {
+			s := v.quickUI()
+			if !s.quotaPickerOpen {
+				if status := v.quickQuotaHeadingStatus(c.Now()); status != "" {
+					n.Text(c, status).FontSize(11).FixedLineHeight(28).TextColor(t.TextMuted).Padding(0, 4).Shrink(0)
+				}
+			}
+			pickLabel := "管理展示的 Profile"
+			if s.quotaPickerOpen {
+				pickLabel = "完成选择"
+			}
+			pickBtn := quickHeadingAction(c.Key("quota-pick"), t, quickQuotaPickIcon, pickLabel, title, font)
+			if s.quotaPickerOpen {
+				pickBtn.Background(t.SurfacePressed).Radius(6)
+			}
+			if pickBtn.Clicked() {
+				s.quotaPickerOpen = !s.quotaPickerOpen
+			}
+			refreshBtn := quickHeadingAction(c.Key("quota-refresh"), t, refreshIcon, "刷新额度", title, font).Disabled(len(v.quotaRefreshableTargets()) == 0)
+			if refreshBtn.Clicked() {
+				v.refreshAllQuotas(true, c.Now())
+			}
+		}
 		if quickHeadingAction(c.Key("collapse"), t, disclosureDown, "收起"+title+"面板", title, font).Clicked() {
 			v.quickUI().selected = ""
 			v.quickUI().focus = kind
+			if kind == "quota" {
+				v.quickUI().quotaPickerOpen = false
+				v.stopQuotaTimers()
+			}
 		}
 	})
 }

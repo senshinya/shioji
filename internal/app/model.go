@@ -46,6 +46,8 @@ type Model struct {
 	completionCutoffs          map[string]time.Time
 	completionReads            map[string]string
 	Navigation                 NavigationPreferences
+	QuotaPanel                 QuotaPanelPreferences
+	Quota                      *QuotaStore
 	WorkDetails                map[WorkKey]domain.WorkDetail
 	workReads                  []WorkKey
 	ServicePreparations        map[string]*ServicePreparation
@@ -125,7 +127,7 @@ type Model struct {
 }
 
 func NewModel() *Model {
-	return &Model{RemotePathUploads: map[string]bool{}, startedAt: time.Now(), completionCutoffs: map[string]time.Time{}, completionReads: map[string]string{}, HistoryAnchors: map[string]string{}, HistoryOpenings: map[string]bool{}, HistoryReads: map[string]*HistoryRead{}, HistoryOutlines: map[string]domain.HistoryOutline{}, homeDefaultsPending: true, WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{CollapseLatestTools: true}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, pendingGenerations: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, sessionConfigDrafts: map[string]sessionConfigDraft{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, independentInputs: map[string]bool{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
+	return &Model{Quota: &QuotaStore{Entries: map[string]*QuotaProfileState{}}, RemotePathUploads: map[string]bool{}, startedAt: time.Now(), completionCutoffs: map[string]time.Time{}, completionReads: map[string]string{}, HistoryAnchors: map[string]string{}, HistoryOpenings: map[string]bool{}, HistoryReads: map[string]*HistoryRead{}, HistoryOutlines: map[string]domain.HistoryOutline{}, homeDefaultsPending: true, WorkDetails: map[WorkKey]domain.WorkDetail{}, DraftSkills: map[string][]DraftSkill{}, HistoryActions: map[string]domain.HistoryChange{}, HistoryEdits: map[string]HistoryEdit{}, Preferences: (ClientPreferences{CollapseLatestTools: true}).Normalized(), Attachments: map[string][]DraftAttachment{}, DeviceStates: map[string]*DeviceState{}, PendingDevices: map[string]string{}, pendingGenerations: map[string]string{}, QueueExpanded: map[string]bool{}, QueueEdits: map[string]QueueEdit{}, FoldToolHistory: map[string]bool{}, Inspectors: map[string]bool{}, GitEpochs: map[string]string{}, GitDrafts: map[string]domain.GitChoice{}, GitRepositories: map[string]string{}, GitStatuses: map[string]domain.GitStatus{}, Drafts: map[string]string{}, Configs: map[string]domain.RunConfig{}, sessionConfigDrafts: map[string]sessionConfigDraft{}, Answers: map[string]string{}, Pager: map[string]int{}, Collapsed: map[string]bool{}, Pending: map[string]domain.Submission{}, independentInputs: map[string]bool{}, Details: map[string]domain.SessionDetail{}, Resolved: map[string]bool{}}
 }
 func (m *Model) DraftKey() string {
 	if m.SessionID == "" {
@@ -731,6 +733,7 @@ type savedState struct {
 	WorkerMaintenanceIDs       map[string]string                          `json:"workerMaintenanceIDs,omitempty"`
 	ArchivePolicyChanges       map[string]ArchivePolicyChange             `json:"archivePolicyChanges,omitempty"`
 	Navigation                 NavigationPreferences                      `json:"navigation,omitempty"`
+	QuotaPanel                 QuotaPanelPreferences                      `json:"quotaPanel,omitempty"`
 	ServicePreparations        map[string]*ServicePreparation             `json:"servicePreparations,omitempty"`
 	ServicePreparationDeviceID string                                     `json:"servicePreparationDeviceId,omitempty"`
 	WorkerMigrations           map[string]WorkerMigrationTarget           `json:"workerMigrations,omitempty"`
@@ -808,6 +811,7 @@ func (m *Model) Load(path string) error {
 	m.Preferences = saved.Preferences.Normalized()
 	m.ArchivePolicyChanges = saved.ArchivePolicyChanges
 	m.Navigation = saved.Navigation
+	m.QuotaPanel = saved.QuotaPanel.Normalized()
 	m.homeConfigContext = saved.HomeConfigContext
 	m.HomeHarnesses = saved.HomeHarnesses
 	m.HarnessConfigs = saved.HarnessConfigs

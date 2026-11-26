@@ -60,7 +60,8 @@ const Major = 2
 // Minor 60 accepts one-time browser authorization responses on their owning worker.
 // Minor 61 applies live session permission changes on the owning worker.
 // Minor 62 creates isolated device-owned Agent profiles.
-const Minor = 64
+// Minor 65 adds read-only owning-device Agent quota queries and push snapshots.
+const Minor = 65
 
 const CatalogMinor = 53
 const SubmissionReceiptMinor = 55
@@ -77,6 +78,20 @@ const LivePermissionMinor = 61
 const AgentProfileMinor = 62
 const CustomAgentProfileMinor = 63
 const ProfileEffortsMinor = 64
+const QuotaMinor = 65
+
+type QuotaQuery struct {
+	HarnessID string `json:"harnessId"`
+	Force     bool   `json:"force,omitempty"`
+}
+
+type QuotaResult struct {
+	Snapshot        *domain.QuotaSnapshot `json:"snapshot,omitempty"`
+	Error           string                `json:"error,omitempty"`
+	RetryAfterSecs  int                   `json:"retryAfterSecs,omitempty"`
+	Unsupported     bool                  `json:"unsupported,omitempty"`
+	AuthUnavailable bool                  `json:"authUnavailable,omitempty"`
+}
 
 // Nil selects automatic discovery. An explicit empty list hides effort.
 type ProfileEffortInput struct {

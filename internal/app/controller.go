@@ -983,6 +983,19 @@ func (c *Controller) Run(ctx context.Context) {
 		if page.Generation != generation {
 			return false
 		}
+		if len(page.QuotaUpdates) > 0 {
+			updates := append([]domain.QuotaSnapshot(nil), page.QuotaUpdates...)
+			now := time.Now().UTC()
+			c.post(func(m *Model) {
+				key := m.sourceConnection
+				if key == "" {
+					key = "local"
+				}
+				for _, snap := range updates {
+					m.ReceiveQuotaPush(key, snap, now)
+				}
+			})
+		}
 		if len(page.Events) == 0 {
 			return true
 		}
