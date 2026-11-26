@@ -267,7 +267,7 @@ func (a Adapter) readiness(config configuration) domain.Readiness {
 		Account:           &domain.RuntimeAccount{State: "configured", Mode: "api", Label: "Anthropic API", Endpoint: config.Endpoint, Model: config.Model, Credential: "configured"},
 		Permissions:       permissions,
 		PermissionChoices: choices,
-		Capabilities: domain.HarnessCapabilities{Steer: true, Interrupt: true, Recovery: true, Resume: true,
+		Capabilities: domain.HarnessCapabilities{Steer: true, Interrupt: true, Recovery: true, Resume: true, Continue: true,
 			Fork: true, Restart: true, CompactNeedsCheck: true,
 			ToolServices: true, ToolServiceInspection: true, Skills: true, SkillManagement: true, Goals: true, WorkerGoals: true,
 			PathAttachments: true, HookManagement: true, HookInspection: true},

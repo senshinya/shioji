@@ -1339,6 +1339,11 @@ func (s *Server) prepareSubmissionLocked(in domain.Submission, queueRevision int
 				return domain.Operation{}, errors.New("session has unsettled input")
 			}
 		}
+		if in.Continue {
+			if err = s.verifyContinuationLocked(preparation.ctx, catalog, d.Session); err != nil {
+				return domain.Operation{}, err
+			}
+		}
 		paths = append([]string{d.Session.Context.CWD}, d.Session.Context.AdditionalDirectories...)
 	}
 	if err := s.restoreOwnedWorktrees(paths); err != nil {

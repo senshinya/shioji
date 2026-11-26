@@ -28,6 +28,34 @@ func recoveryRunning(h domain.RecoveryHistory) bool {
 	return false
 }
 
+// Caller holds dispatchMu and the session transition through submission.
+func (s *Server) verifyContinuationLocked(ctx context.Context, runtime harness.Runtime, session domain.Session) error {
+	verifier, ok := runtime.(harness.RecoveryContinuationVerifier)
+	if !ok {
+		return nil
+	}
+	inputID, err := s.store.LatestRecoveryInput(session.ID)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	s.dispatchMu.Unlock()
+	err = verifier.VerifyContinuation(ctx, session, inputID)
+	s.dispatchMu.Lock()
+	if err != nil {
+		return err
+	}
+	current, err := s.store.SessionRecord(session.ID)
+	if err != nil {
+		return err
+	}
+	if current.Revision != session.Revision {
+		return errors.New("会话状态已改变，请重新核对")
+	}
+	return ctx.Err()
+}
+
 // Caller holds dispatchMu. An exited app-server can be replaced, but a recorded
 // live predecessor must first be stopped by an explicit user action.
 func (s *Server) recoveryRuntime(ctx context.Context, stop bool, selected ...string) (harness.Runtime, error) {

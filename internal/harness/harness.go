@@ -77,6 +77,12 @@ type ConversationContinuation interface {
 	PrepareConversation(context.Context, domain.Session) (string, error)
 }
 
+// RecoveryContinuationVerifier checks that the last accepted input remains in
+// the native context that will be used for an interrupted session's next turn.
+type RecoveryContinuationVerifier interface {
+	VerifyContinuation(context.Context, domain.Session, string) error
+}
+
 // ErrConversationSourceChanged means the imported snapshot must be checked
 // again before any input can be handed off to the private copy.
 var ErrConversationSourceChanged = errors.New("来源历史已变化，请重新核对历史后再发送")

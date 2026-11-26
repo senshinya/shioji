@@ -7,11 +7,30 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 
 	"shioji/internal/domain"
 )
+
+func (r *runtime) VerifyContinuation(ctx context.Context, s domain.Session, inputID string) error {
+	if operation, ok := strings.CutPrefix(inputID, "input:"); ok && operation != "" {
+		inputID = nativeInputID(s.ThreadID, operation)
+	}
+	var present bool
+	if nativeUUID.MatchString(inputID) {
+		if err := r.runHistorySDK(ctx, historyRequest{
+			Action: "verify-input", Thread: s.ThreadID, Directory: s.Context.CWD, Through: inputID,
+		}, &present); err != nil {
+			return err
+		}
+	}
+	if !present {
+		return errors.New("Claude Code 原生历史中缺少最后一条输入，可在新会话接续")
+	}
+	return nil
+}
 
 type inputReceipt struct {
 	Operation string

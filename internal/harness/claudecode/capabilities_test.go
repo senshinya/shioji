@@ -18,6 +18,50 @@ import (
 	"shioji/internal/harness/managedagent"
 )
 
+func TestClaudeAPIProfileAdvertisesOriginalSessionContinuation(t *testing.T) {
+	ready := (Adapter{id: "profile"}).readiness(configuration{Model: "fixture-model"})
+	if !ready.Capabilities.Continue {
+		t.Fatal("the ready Claude Code Profile blocks continuation of a verified original session")
+	}
+}
+
+func TestClaudeContinuationRequiresTheExactNativeUserInput(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node.js is required for the SDK history fixture")
+	}
+	home, cwd := t.TempDir(), t.TempDir()
+	sdk := filepath.Join(home, "sdk.mjs")
+	if err := os.WriteFile(sdk, []byte(`
+export async function getSessionMessages(thread, { dir }) {
+  if (thread !== "12410eb8-c695-4313-80ce-446b0a026595" || dir !== process.cwd()) {
+    throw new Error("unexpected source scope");
+  }
+  return [
+    { uuid: "b24b5a4d-0131-5c81-be08-713ff372a746", type: "user",
+      message: { content: "accepted input" } },
+    { uuid: "9f47e580-09b3-5f12-a266-bfa1414743ca", type: "user",
+      message: { content: [{ type: "tool_result" }] } },
+  ];
+}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	canonicalCWD, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	r := runtime{home: home, node: node, sdk: sdk}
+	s := domain.Session{ThreadID: "12410eb8-c695-4313-80ce-446b0a026595", Context: domain.LaunchContext{CWD: canonicalCWD}}
+	if err := r.VerifyContinuation(ctx, s, "input:accepted"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.VerifyContinuation(ctx, s, "input:missing"); err == nil {
+		t.Fatal("an older user input and a tool result do not prove the latest user input")
+	}
+}
+
 func TestClaudeInputHandoffKeepsNativeIdentityAcrossRuntimeStarts(t *testing.T) {
 	home := t.TempDir()
 	session := domain.Session{ID: domain.NewID(), ThreadID: domain.NewID()}

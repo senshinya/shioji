@@ -539,6 +539,14 @@ func (s *Store) CanContinue(id string, source domain.RecoveryHistory) (bool, err
 	return sourceContainsLatestInput(s.db.QueryRow("SELECT body FROM items WHERE session_id=? AND json_extract(body,'$.kind')='user' ORDER BY position DESC LIMIT 1", id), source)
 }
 
+func (s *Store) LatestRecoveryInput(id string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var inputID string
+	err := s.historyQueries().QueryRow("SELECT id FROM items WHERE session_id=? AND json_extract(body,'$.kind')='user' ORDER BY position DESC LIMIT 1", id).Scan(&inputID)
+	return inputID, err
+}
+
 func (s *Store) RecoverableSessionIDs() ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

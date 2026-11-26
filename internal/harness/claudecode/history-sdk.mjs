@@ -3,6 +3,14 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
 const { getSessionMessages, getSessionInfo, listSessions, forkSession } = await import(pathToFileURL(process.argv.at(-1)).href);
+const isUserInput = (record) => {
+  const body = record.message?.content;
+  return record.type === "user" && !record.is_meta &&
+    !record.isQueuedCommand && !record.isCompletedLocalCommand &&
+    (!record.origin?.kind || record.origin.kind === "human") &&
+    (typeof body === "string" || Array.isArray(body) && !body.some(({ type }) => type === "tool_result"));
+};
+
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
 try {
   const input = await lines[Symbol.asyncIterator]().next();
@@ -22,25 +30,21 @@ try {
       offset: request.offset ?? 0,
     });
     process.stdout.write(JSON.stringify(sessions));
+  } else if (request.action === "verify-input") {
+    const records = await getSessionMessages(request.thread, { dir: request.directory });
+    process.stdout.write(JSON.stringify(records.some((record) => record.uuid === request.through && isUserInput(record))));
   } else if (request.action === "boundaries" || request.action === "read") {
     const info = request.action === "read" ? await getSessionInfo(request.thread, { dir: request.directory }) : undefined;
     if (info?.fileSize > 64 * 1024 * 1024) throw new Error("History exceeds the import limit");
     const records = await getSessionMessages(request.thread, { dir: request.directory, limit: 10001 });
     if (records.length > 10000) throw new Error("History exceeds the inspection limit");
-    const boundaries = records.map((record) => {
-      const body = record.message?.content;
-      const user = record.type === "user" && !record.is_meta &&
-        !record.isQueuedCommand && !record.isCompletedLocalCommand &&
-        (!record.origin?.kind || record.origin.kind === "human") &&
-        (typeof body === "string" || Array.isArray(body) && !body.some(({ type }) => type === "tool_result"));
-      return {
-        uuid: record.uuid,
-        type: record.type,
-        user,
-        ...(request.action === "read" ? { message: record.message, timestamp: record.timestamp, toolUseResult: record.toolUseResult ?? record.tool_use_result } : {}),
-        digest: createHash("sha256").update(JSON.stringify(record.message ?? null)).digest("hex"),
-      };
-    });
+    const boundaries = records.map((record) => ({
+      uuid: record.uuid,
+      type: record.type,
+      user: isUserInput(record),
+      ...(request.action === "read" ? { message: record.message, timestamp: record.timestamp, toolUseResult: record.toolUseResult ?? record.tool_use_result } : {}),
+      digest: createHash("sha256").update(JSON.stringify(record.message ?? null)).digest("hex"),
+    }));
     if (request.action === "read") {
       process.stdout.write(JSON.stringify({ info, records: boundaries }));
     } else {
