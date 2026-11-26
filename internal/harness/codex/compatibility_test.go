@@ -81,3 +81,33 @@ func TestOptionalProtocolChangesDisableOnlyTheirCapabilities(t *testing.T) {
 		t.Fatal("capabilities do not match actual protocol", caps)
 	}
 }
+
+func TestMissingHistoryQueriesStillAllowReopeningIdleSessions(t *testing.T) {
+	for _, method := range []string{"thread/read", "thread/turns/list"} {
+		t.Run(method, func(t *testing.T) {
+			schema := compatibilityFixture(t)
+			changeRequest(t, &schema, method, func(s *requestShape) {
+				s.Required = append(s.Required, "futureRequired")
+			})
+			data, err := json.Marshal(schema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			support, err := protocolFromSchema(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runtime := &adapterRuntime{
+				Runtime:    &Runtime{protocol: support, done: make(chan struct{}), ready: domain.Readiness{State: domain.RuntimeReady}},
+				descriptor: Adapter{}.Descriptor(),
+			}
+			ready := runtime.Readiness()
+			if !ready.Capabilities.CanReopenIdle() || !ready.Harnesses[0].Capabilities.CanReopenIdle() {
+				t.Fatal("a compatible runtime with native resume should allow idle reclamation")
+			}
+			if ready.Capabilities.Recovery || ready.Capabilities.Continue {
+				t.Fatal("in-flight recovery and continuation still need compatible history queries")
+			}
+		})
+	}
+}

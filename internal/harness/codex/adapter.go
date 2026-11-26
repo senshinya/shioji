@@ -161,6 +161,7 @@ func (r *adapterRuntime) Readiness() domain.Readiness {
 	history := r.supports("thread/read") && r.supports("thread/turns/list")
 	fork := history && r.supports("thread/fork") && r.supports("thread/unsubscribe") && r.supports("thread/loaded/list")
 	ready.Capabilities = domain.HarnessCapabilities{ToolServices: r.supports("mcpServerStatus/list"), SkillManagement: r.supports("skills/list"), Skills: r.supports("skills/list"), Steer: r.supports("turn/steer"), Interrupt: r.supports("turn/interrupt"), Recovery: history, Continue: history, Reload: history && r.supports("thread/unsubscribe") && r.supports("thread/loaded/list"), Fork: fork, Restart: fork}
+	ready.Capabilities.Resume = r.supports("thread/resume")
 	ready.Capabilities.Goals = goals
 	ready.Capabilities.ToolServiceInspection = r.supports("config/read")
 	ready.Capabilities.PathAttachments = r.supports("turn/start")
