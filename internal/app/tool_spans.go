@@ -1,6 +1,10 @@
 package app
 
-import "shioji/internal/domain"
+import (
+	"slices"
+
+	"shioji/internal/domain"
+)
 
 // ToolSpan is a consecutive run starting at a tool call (or continuing an
 // earlier unloaded tool group) and merging subsequent tool calls and public
@@ -14,10 +18,25 @@ type ToolSpan struct {
 }
 
 func ToolSpans(items []domain.Item, history *domain.HistoryWindow, spacer func(domain.Item) bool) map[int]ToolSpan {
+	var groups []domain.HistoryToolGroup
+	var windowFirst int64
+	if history != nil {
+		windowFirst = history.First
+		for _, hint := range history.Groups {
+			// An older worker can report one group across a loaded boundary.
+			// Its ID and total cannot describe the distinct visible groups.
+			if !slices.ContainsFunc(items, func(item domain.Item) bool {
+				return item.Order >= hint.First && item.Order <= hint.Last &&
+					(item.TurnID != hint.TurnID || !domain.ToolGroupMember(item) && !spacer(item))
+			}) {
+				groups = append(groups, hint)
+			}
+		}
+	}
 	var spans map[int]ToolSpan
 	for i := 0; i < len(items); {
 		first := items[i]
-		if spacer(first) || first.Kind != "tool" && (!domain.ReasoningSummary(first) || !continuesHistoryToolGroup(first, history)) {
+		if spacer(first) || first.Kind != "tool" && (!domain.ReasoningSummary(first) || !continuesHistoryToolGroup(first, groups, windowFirst)) {
 			i++
 			continue
 		}
@@ -37,9 +56,9 @@ func ToolSpans(items []domain.Item, history *domain.HistoryWindow, spacer func(d
 			span.End++
 		}
 		span.Count = span.Loaded
-		if history != nil && first.Order > 0 {
+		if first.Order > 0 {
 			identified := false
-			for _, hint := range history.Groups {
+			for _, hint := range groups {
 				if hint.TurnID != first.TurnID || hint.Last < first.Order || hint.First > items[span.End-1].Order {
 					continue
 				}
@@ -67,12 +86,12 @@ func ToolSpans(items []domain.Item, history *domain.HistoryWindow, spacer func(d
 	return spans
 }
 
-func continuesHistoryToolGroup(item domain.Item, history *domain.HistoryWindow) bool {
-	if history == nil || item.Order <= 0 {
+func continuesHistoryToolGroup(item domain.Item, groups []domain.HistoryToolGroup, windowFirst int64) bool {
+	if item.Order <= 0 {
 		return false
 	}
-	for _, hint := range history.Groups {
-		if hint.TurnID == item.TurnID && hint.First < item.Order && hint.Last >= item.Order && (history.First == 0 || hint.First < history.First) {
+	for _, hint := range groups {
+		if hint.TurnID == item.TurnID && hint.First < item.Order && hint.Last >= item.Order && (windowFirst == 0 || hint.First < windowFirst) {
 			return true
 		}
 	}

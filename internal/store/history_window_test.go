@@ -192,7 +192,7 @@ func TestHistoryToolGroupSpansReasoningAndAutomaticApproval(t *testing.T) {
 	}
 	first := upsert("first-thought", "activity", "reasoning")
 	call := upsert("first-call", "tool", "files")
-	middle := upsert("middle-thought", "activity", "reasoning")
+	middle := upsert("middle-thought", "reasoning", "")
 	request := domain.PendingRequest{ID: "approval", TurnID: "t", ItemID: call.ID, Kind: "approval", Title: "Allow?", State: domain.RequestPending, Revision: 1}
 	apply(domain.Event{Type: "request.open", Request: &request})
 	request.State, request.Revision = domain.RequestResolved, 2
@@ -201,9 +201,9 @@ func TestHistoryToolGroupSpansReasoningAndAutomaticApproval(t *testing.T) {
 		t.Fatal("resolved approval should leave only the tool visible", resolved.Item)
 	}
 	upsert("second-call", "tool", "command")
-	last := upsert("last-thought", "activity", "reasoning")
-	upsert("answer", "assistant", "")
-	upsert("separate", "tool", "command")
+	last := upsert("last-thought", "reasoning", "")
+	upsert("status", "activity", "")
+	separate := upsert("separate", "tool", "command")
 
 	leading, err := s.SessionHistory(domain.HistoryQuery{SessionID: op.SessionID, AroundID: first.ID, Limit: 1})
 	if err != nil {
@@ -222,5 +222,13 @@ func TestHistoryToolGroupSpansReasoningAndAutomaticApproval(t *testing.T) {
 		if got := page.History.Groups; len(got) != 1 || got[0] != want {
 			t.Fatalf("page at %s lost its group: got=%+v want=%+v", around, got, want)
 		}
+	}
+	page, err := s.SessionHistory(domain.HistoryQuery{SessionID: op.SessionID, AroundID: separate.ID, SummaryOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := domain.HistoryToolGroup{ID: separate.ID, TurnID: "t", First: separate.Order, Last: separate.Order, Count: 1}
+	if got := page.History.Groups; len(got) != 1 || got[0] != want {
+		t.Fatalf("activity without a presentation must split tool groups: got=%+v want=%+v", got, want)
 	}
 }

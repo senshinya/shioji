@@ -190,7 +190,9 @@ func (s *Store) historyWindowLocked(id string, items []domain.Item, contextID st
 	return h, nil
 }
 
-const toolHistoryMemberSQL = `(json_extract(body,'$.kind')='tool' OR (json_extract(body,'$.kind') IN ('activity','reasoning') AND json_extract(body,'$.presentation')='reasoning'))`
+// Match domain.ToolGroupMember, including older reasoning records without a
+// presentation. Missing presentation on other activities must evaluate false.
+const toolHistoryMemberSQL = `(json_extract(body,'$.kind') IN ('tool','reasoning') OR (json_extract(body,'$.kind')='activity' AND COALESCE(json_extract(body,'$.presentation'),'')='reasoning'))`
 
 // Tool and summary bodies stay in SQLite; only potential boundaries need decoding.
 func (s *Store) historyToolBoundaryLocked(id string, item domain.Item, before bool) (int64, error) {
