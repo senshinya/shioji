@@ -5,6 +5,17 @@
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-11-26
+
+[源码](https://github.com/senshinya/shioji/tree/v0.10.2) · [与上一正式版 v0.10.1 比较](https://github.com/senshinya/shioji/compare/v0.10.1...v0.10.2)
+
+### Changed
+
+- 自定义 API Profile 提供 Codex、DeepSeek、Antigravity 和 Anthropic 图标，默认使用 Codex。已有 Profile 的图标继续显示。
+- 自定义 Responses API 和 Anthropic API 支持任意主机上的 HTTP 和 HTTPS 地址，包括公网 IPv4、IPv6、局域网和本机地址。获取模型和连接 API 使用同一地址规则。
+
+GitHub Release 分发适用于 Apple Silicon 的 macOS 安装包。已安装支持自动更新的正式版可在 Shioji 菜单或「设置 → 关于」检查更新。使用本版自定义 API 配置需要同步更新所属设备的执行服务。本版沿用协议 2.63 和数据库 schema 17。
+
 ## [0.10.1] - 2026-11-26
 
 [源码](https://github.com/senshinya/shioji/tree/v0.10.1) · [与上一正式版 v0.10.0 比较](https://github.com/senshinya/shioji/compare/v0.10.0...v0.10.1)

@@ -1,12 +1,14 @@
 # Shioji 发布
 
-当前正式版为 `v0.10.1`，最近的 macOS Beta 为 `v0.8.1`。`VERSION` 保存不带 `v` 的数字构建版本，macOS App 和 Runtime bundle 的版本均由构建脚本写入。iOS 与 iPadOS 的版本号和构建号记录在 `cmd/shioji-mobile/mygo.json`。
+当前正式版为 `v0.10.2`，最近的 macOS Beta 为 `v0.8.1`。`VERSION` 保存不带 `v` 的数字构建版本，macOS App 和 Runtime bundle 的版本均由构建脚本写入。iOS 与 iPadOS 的版本号和构建号记录在 `cmd/shioji-mobile/mygo.json`。
 
 ## 变更记录与发布说明
 
 完整变更见 [CHANGELOG.md](../CHANGELOG.md)。每次发布前比较上一正式标签与待发布代码的实际差异，核对面向用户的行为、兼容性和升级要求；不能只根据 commit message 生成说明。
 
 使用 `Added`、`Changed`、`Deprecated`、`Removed`、`Fixed`、`Security` 分类，只保留有内容的分类；版本标题包含数字版本、UTC 发布日期和源码／比较链接。说明用户影响，排除本地产物、内部重构和纯测试调整。GitHub Release 正文复用对应版本条目，并补充该版安装与更新方式。修改历史说明保留原发布日期，不移动标签或替换已发布二进制。
+
+v0.10.2 为自定义 API Profile 提供 Codex、DeepSeek、Antigravity 和 Anthropic 图标，允许通过 HTTP 连接公网、局域网和本机 API 地址。使用本版自定义 API 配置需要同步更新所属设备的执行服务。本版沿用协议 2.63 和 schema 17。GitHub Release 分发 Apple Silicon macOS 安装包。
 
 v0.10.1 支持只读导入 Antigravity 历史会话、实时显示 Codex 思考摘要，并将自定义 Anthropic API Profile 切换到官方 Claude Agent SDK。更新所属设备的执行服务以获得导入和运行时改进。本版沿用协议 2.63 和 schema 17。GitHub Release 分发 Apple Silicon macOS 安装包。
 
