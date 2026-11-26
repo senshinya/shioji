@@ -1,12 +1,14 @@
 # Shioji 发布
 
-当前正式版为 `v0.10.3`，最近的 macOS Beta 为 `v0.8.1`。`VERSION` 保存不带 `v` 的数字构建版本，macOS App 和 Runtime bundle 的版本均由构建脚本写入。iOS 与 iPadOS 的版本号和构建号记录在 `cmd/shioji-mobile/mygo.json`。
+当前正式版为 `v0.10.4`，最近的 macOS Beta 为 `v0.8.1`。`VERSION` 保存不带 `v` 的数字构建版本，macOS App 和 Runtime bundle 的版本均由构建脚本写入。iOS 与 iPadOS 的版本号和构建号记录在 `cmd/shioji-mobile/mygo.json`。
 
 ## 变更记录与发布说明
 
 完整变更见 [CHANGELOG.md](../CHANGELOG.md)。每次发布前比较上一正式标签与待发布代码的实际差异，核对面向用户的行为、兼容性和升级要求；不能只根据 commit message 生成说明。
 
 使用 `Added`、`Changed`、`Deprecated`、`Removed`、`Fixed`、`Security` 分类，只保留有内容的分类；版本标题包含数字版本、UTC 发布日期和源码／比较链接。说明用户影响，排除本地产物、内部重构和纯测试调整。GitHub Release 正文复用对应版本条目，并补充该版安装与更新方式。修改历史说明保留原发布日期，不移动标签或替换已发布二进制。
+
+v0.10.4 支持在 Claude 和 Codex Profile 中按模型配置推理档位。自动模式优先采用网关声明，缺少声明时采用运行环境报告。Claude Code 中断后可继续原会话，Codex 补报空闲会话恢复能力。相关功能需要更新所属设备的执行服务。本版使用协议 2.64 和 schema 17。GitHub Release 分发 Apple Silicon macOS 安装包。
 
 v0.10.3 为自定义 Anthropic API Profile 探测可用的 Claude Code 权限模式、思考力度和 Fast Mode，并修复回复内容块、历史工具分组和旧思考摘要的显示。运行及历史修复需要更新所属设备的执行服务。本版沿用协议 2.63 和 schema 17。GitHub Release 分发 Apple Silicon macOS 安装包。
 

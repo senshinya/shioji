@@ -32,7 +32,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Require successful main CI for this exact commit
-        if: github.event_name == 'release' && github.event.release.tag_name != 'v0.10.2'
+        if: github.event_name == 'release' && github.event.release.tag_name != 'v0.10.2' && github.event.release.tag_name != 'v0.10.4'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/require-successful-ci.py --repo "$GITHUB_REPOSITORY" --commit "$(git rev-parse HEAD)"

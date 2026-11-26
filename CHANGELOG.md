@@ -5,6 +5,21 @@
 
 ## [Unreleased]
 
+## [0.10.4] - 2026-11-26
+
+[源码](https://github.com/senshinya/shioji/tree/v0.10.4) · [与上一正式版 v0.10.3 比较](https://github.com/senshinya/shioji/compare/v0.10.3...v0.10.4)
+
+### Added
+
+- Claude 和 Codex 的独立 Profile 可以在「模型」页按模型手工设置推理档位或恢复自动。自动优先读取网关声明，缺少声明时使用 Claude SDK 或 Codex app-server 报告的档位。
+
+### Fixed
+
+- 修复 Claude Code 消息块解码和轮次结算，并让中断后的操作继续使用原会话。
+- 修复 Codex 空闲会话恢复能力未报告的问题。
+
+GitHub Release 分发适用于 Apple Silicon 的 macOS 安装包。支持自动更新的正式版可在 Shioji 菜单或「设置 → 关于」检查更新。使用本版 Profile 设置和会话恢复修复需要更新所属设备的执行服务。本版使用协议 2.64，数据库沿用 schema 17。
+
 ## [0.10.3] - 2026-11-26
 
 [源码](https://github.com/senshinya/shioji/tree/v0.10.3) · [与上一正式版 v0.10.2 比较](https://github.com/senshinya/shioji/compare/v0.10.2...v0.10.3)
