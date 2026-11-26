@@ -647,11 +647,10 @@ var toolThinkingIcon = newTranscriptIcon(conversationui.ThinkingIconPath)
 
 func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow, inset float32) {
 	icon := activityIcon(row.item.Presentation)
-	label := row.item.Name
+	label, _ := conversationui.ToolTitle(row.item)
 	font := n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}
 	if commandItem(row.item) {
 		icon = commandActivityIcon(row.item.Name)
-		font.Family = "Menlo"
 	}
 	if domain.ReasoningSummary(row.item) {
 		body := conversationui.ReasoningSummaryText(row.item)

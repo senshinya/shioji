@@ -1669,29 +1669,12 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 			v.activityItem(c, t, item)
 			return
 		}
+		item = conversationui.ToolForDisplay(item)
 		n.Column(c).FillWidth().Children(func() {
-			label := item.Name
-			if label == "" {
-				label = "工具活动"
-			}
 			key := v.commandOutputKey(item.ID, "")
-			heading := control(c).AlignSelf(n.Start).MinHeight(20).Justify(n.Start).Label(label).Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
-			if heading.Children(func() {
-				n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
-					n.Text(c, commandPreview(label)).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).Font("Menlo").FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted).MinWidth(0).MaxLines(2).Ellipsis("…")
-					if issue := toolIssueLabel(item); issue != "" {
-						n.Text(c.Key("command-issue"), issue).SingleLine().Shrink(0).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted).
-							Transition(resultBlockMotion(c))
-					}
-					if commandHasBody(item) {
-						angle := float32(0)
-						if v.Model.Collapsed[key] {
-							angle = -90
-						}
-						inlineSymbol(c.Key("command-chevron"), transcriptChevron, label, n.Font{Family: "Menlo", Size: transcriptCaptionSize}, 14, t.TextMuted, angle).Shrink(0).Transition(resultBlockMotion(c))
-					}
-				})
-			}).Clicked() {
+			hasBody := commandHasBody(item)
+			heading := v.activityHeading(c, t, item, key, hasBody)
+			if heading.Clicked() && hasBody {
 				if list := v.lists[v.Model.SessionID]; len(item.Parts)+len(item.Files) > 0 && list != nil {
 					list.KeepRowWithinContent(v.currentTranscriptRow, heading.Bounds().Y-list.Bounds(c).Y)
 				}

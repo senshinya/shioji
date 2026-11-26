@@ -275,26 +275,14 @@ func firstNonempty(values ...string) string {
 }
 
 func (r *runtime) updateToolContent(item *domain.Item, update toolUpdate) {
-	var directory []domain.ContentPart
 	if item.Presentation == "command" {
-		if len(item.Parts) > 0 && item.Parts[0].Label == "工作目录" {
-			directory = item.Parts[:1:1]
-		}
 		var input struct {
-			CommandLine, Command, WorkingDirectory, WorkingDir, CWD string
-			NativeCommand                                           string `json:"command_line"`
-			NativeDir                                               string `json:"working_dir"`
+			CommandLine, Command string
+			NativeCommand        string `json:"command_line"`
 		}
 		if json.Unmarshal(update.RawInput, &input) == nil {
 			if command := firstNonempty(input.CommandLine, input.NativeCommand, input.Command); command != "" {
 				item.Name = clip(command, 4096)
-			}
-			if cwd := firstNonempty(input.WorkingDirectory, input.WorkingDir, input.NativeDir, input.CWD); cwd != "" {
-				directory = []domain.ContentPart{{Kind: "text", Label: "工作目录", Text: clip(cwd, 4096)}}
-				if len(item.Parts) > 0 && item.Parts[0].Label == "工作目录" {
-					item.Parts = item.Parts[1:]
-				}
-				item.Parts = append(slices.Clone(directory), item.Parts...)
 			}
 		}
 	}
@@ -325,21 +313,18 @@ func (r *runtime) updateToolContent(item *domain.Item, update toolUpdate) {
 		}
 	}
 	if update.Content != nil {
-		item.Parts, item.Files = slices.Clone(directory), nil
+		item.Parts, item.Files = nil, nil
 		budget := 64 << 10
 		resourceIndices := map[string]int{}
 		for _, part := range update.Content {
 			switch {
 			case part.Type == "diff" && part.Path != "":
-				kind, old := "update", ""
-				if part.OldText == nil {
-					kind = "add"
-				} else {
-					old = *part.OldText
+				kind, diff := "add", part.NewText
+				if part.OldText != nil {
+					kind, diff = "update", patch(*part.OldText, part.NewText)
 				}
 				item.Presentation = "files"
 				path := clip(part.Path, 4096)
-				diff := patch(old, part.NewText)
 				if len(diff)+len(path) > budget {
 					item.Truncated, diff = true, ""
 				}

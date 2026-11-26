@@ -117,6 +117,20 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 		v.reasoningActivityItem(c, t, item, key, hasBody, transcriptAnchor...)
 		return
 	}
+	button := v.activityHeading(c, t, item, key, hasBody)
+	if button.Clicked() && hasBody {
+		if list := v.lists[v.Model.SessionID]; list != nil && (len(transcriptAnchor) == 0 || transcriptAnchor[0]) {
+			list.KeepRowWithinContent(v.currentTranscriptRow, button.Bounds().Y-list.Bounds(c).Y)
+		}
+		v.Model.Collapsed[key] = !v.Model.Collapsed[key]
+	}
+	if item.Presentation == "wait" {
+		return
+	}
+	v.activityBodyDisclosure(c, t, item, key, hasBody && !v.Model.Collapsed[key], false, false, transcriptAnchor...)
+}
+
+func (v *View) activityHeading(c *n.Context, t *n.Theme, item domain.Item, key string, hasBody bool) n.Element {
 	duration := ""
 	if item.Presentation == "wait" {
 		for _, part := range item.Parts {
@@ -126,12 +140,31 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 			}
 		}
 	}
-	label := item.Name
+	label, filename := conversationui.ToolTitle(item)
 	if label == "" {
 		label = "工具活动"
 	}
-	button := n.ButtonBase(c.Key("activity-heading")).AlignSelf(n.Start).MinHeight(20).Justify(n.Start).Label(label)
-	color := textHoverColor(c, button, t.TextMuted)
+	command := commandItem(item)
+	titleText := label
+	if command {
+		titleText = commandPreview(label)
+	}
+	heading := c.Key("activity-heading")
+	var button n.Element
+	color := t.TextMuted
+	if hasBody {
+		button = n.ButtonBase(heading).Expanded(!v.Model.Collapsed[key])
+		color = textHoverColor(c, button, color)
+	} else {
+		button = n.Row(heading)
+	}
+	button.AlignSelf(n.Start).MinHeight(20).Justify(n.Start).Label(label)
+	if command {
+		button.Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
+	}
+	if filename != "" {
+		button.Tooltip(filename)
+	}
 	button.Children(func() {
 		n.Row(c).Gap(6).AlignItems(n.Baseline).Children(func() {
 			font := n.Font{Family: c.Theme().Font, Size: transcriptCaptionSize, Weight: 400}
@@ -139,15 +172,15 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 			if item.Kind == "activity" {
 				transcriptSymbol(c, activityIcon(item.Presentation), label, font, color)
 			}
-			title := n.Text(c, label).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color).MinWidth(0).MaxLines(2).Ellipsis("…")
+			title := n.Text(c, titleText).ContentTransition(n.ContentTransition{Animation: animationPointer(c, 180*time.Millisecond)}).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color).MinWidth(0).MaxLines(2).Ellipsis("…")
 			if duration != "" {
 				title.SingleLine()
 				n.Text(c.Key("wait-duration"), duration).SingleLine().Shrink(0).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color)
 			}
 			title.TooltipWhenTruncated(label)
-			if item.Status != "" {
+			if issue := toolIssueLabel(item); issue != "" || !command && item.Status != "" {
 				status := activityStatus(item.Status)
-				if issue := toolIssueLabel(item); issue != "" {
+				if issue != "" {
 					status = issue
 				}
 				animation := motionAnimation(c, 160*time.Millisecond)
@@ -163,16 +196,7 @@ func (v *View) activityItem(c *n.Context, t *n.Theme, item domain.Item, transcri
 			}
 		})
 	})
-	if button.Clicked() && hasBody {
-		if list := v.lists[v.Model.SessionID]; list != nil && (len(transcriptAnchor) == 0 || transcriptAnchor[0]) {
-			list.KeepRowWithinContent(v.currentTranscriptRow, button.Bounds().Y-list.Bounds(c).Y)
-		}
-		v.Model.Collapsed[key] = !v.Model.Collapsed[key]
-	}
-	if item.Presentation == "wait" {
-		return
-	}
-	v.activityBodyDisclosure(c, t, item, key, hasBody && !v.Model.Collapsed[key], false, false, transcriptAnchor...)
+	return button
 }
 
 type reasoningLiveState struct {
@@ -363,6 +387,8 @@ func (v *View) activityBodyDisclosure(c *n.Context, t *n.Theme, item domain.Item
 
 func (v *View) activityResultContents(c *n.Context, t *n.Theme, item domain.Item, key string, liveReasoning, freshReasoning bool) float32 {
 	reasoning := domain.ReasoningSummary(item)
+	_, inlineFile := conversationui.ToolTitle(item)
+	text, parts, raw := conversationui.ToolResult(item)
 	innerHeightDelta := float32(0)
 	stack := n.Column(c.Key("result-stack")).FillWidth().Gap(8)
 	if reasoning {
@@ -375,27 +401,29 @@ func (v *View) activityResultContents(c *n.Context, t *n.Theme, item domain.Item
 		stack.Padding(8, 0, 0, 0)
 	}
 	stack.Children(func() {
-		if item.Text != "" {
+		if text != "" {
 			if reasoning {
-				v.reasoningStreamText(c.Key("summary"), item.ID, item.Text, liveReasoning, freshReasoning, t.TextMuted, func(text n.Element) {
+				v.reasoningStreamText(c.Key("summary"), item.ID, text, liveReasoning, freshReasoning, t.TextMuted, func(text n.Element) {
 					text.FontSize(12).FixedLineHeight(20).Wrap().Selectable()
 					v.decoratePlainFind(c, text, item, nil)
 				})
 			} else {
-				resultText(c.Key("summary"), item.Text, t.TextMuted, func(text n.Element) { v.decoratePlainFind(c, text, item, nil) }).
+				resultText(c.Key("summary"), text, t.TextMuted, func(text n.Element) { v.decoratePlainFind(c, text, item, nil) }).
 					Transition(resultBlockMotion(c)).FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
 			}
 		}
 		for _, file := range item.Files {
 			n.Column(c.Key("file:" + file.Path)).FillWidth().Gap(6).Transition(resultBlockMotion(c)).Children(func() {
-				n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
-					n.Text(c, file.Path).FontSize(11).FixedLineHeight(20).Grow(1).Selectable()
-					kind := map[string]string{"add": "新增", "delete": "删除", "update": "修改"}[file.Kind]
-					if file.Destination != "" {
-						kind = "移动"
-					}
-					n.Text(c, kind).FontSize(11).TextColor(t.TextMuted)
-				})
+				if inlineFile == "" {
+					n.Row(c).FillWidth().Gap(8).AlignItems(n.Baseline).Children(func() {
+						n.Text(c, file.Path).FontSize(11).FixedLineHeight(20).Grow(1).Selectable()
+						kind := map[string]string{"add": "新增", "delete": "删除", "update": "修改"}[file.Kind]
+						if file.Destination != "" {
+							kind = "移动"
+						}
+						n.Text(c, kind).FontSize(11).TextColor(t.TextMuted)
+					})
+				}
 				if file.Destination != "" {
 					n.Text(c.Key("destination"), "→ "+file.Destination).Transition(resultBlockMotion(c)).FontSize(11).FixedLineHeight(20).TextColor(t.TextMuted)
 				}
@@ -405,7 +433,7 @@ func (v *View) activityResultContents(c *n.Context, t *n.Theme, item domain.Item
 			})
 		}
 		occurrences := map[string]int{}
-		for i, part := range item.Parts {
+		for i, part := range parts {
 			identity := resultPartKey(part, i)
 			occurrence := occurrences[identity]
 			occurrences[identity]++
@@ -458,6 +486,24 @@ func (v *View) activityResultContents(c *n.Context, t *n.Theme, item domain.Item
 						resultText(c.Key("part-text"), part.Text, t.TextMuted).FillWidth().FontSize(12).FixedLineHeight(20).TextColor(t.TextMuted).Selectable()
 					}
 				}
+			})
+		}
+		if len(raw) != 0 {
+			root := c.Key("raw-tool-result")
+			details := domain.Item{ID: item.ID + ":raw", Name: "查看原始结果", Parts: raw, Final: item.Final}
+			rawKey := key + "/raw"
+			if _, seen := v.Model.Collapsed[rawKey]; !seen {
+				v.Model.Collapsed[rawKey] = true
+			}
+			n.Column(root).FillWidth().Gap(8).Children(func() {
+				if v.activityHeading(root, t, details, rawKey, true).Clicked() {
+					v.Model.Collapsed[rawKey] = !v.Model.Collapsed[rawKey]
+				}
+				open := !v.Model.Collapsed[rawKey]
+				frame := n.Column(root.Key("body")).FillWidth().Clip()
+				innerHeightDelta += conversationui.AnimatedContentHeight(root, frame, open, open, 180*time.Millisecond, func() float32 {
+					return v.activityResultContents(root, t, details, rawKey, false, false)
+				})
 			})
 		}
 		for _, agent := range item.Agents {

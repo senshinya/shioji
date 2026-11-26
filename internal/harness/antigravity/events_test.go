@@ -30,14 +30,13 @@ func TestAntigravityChecklistFeedsExistingPlan(t *testing.T) {
 	}
 }
 
-func TestAntigravityCommandKeepsNativeInputAndOutputAcrossUpdates(t *testing.T) {
+func TestAntigravityCommandKeepsNativeNameAndOutputAcrossUpdates(t *testing.T) {
 	r, _, events := callbackRuntime()
 	r.active = &logicalTurn{turn: domain.Turn{ID: "turn"}, primary: make(chan error, 1), tools: map[string]domain.Item{}}
 	sendCallback(t, r, "session/update", `{"sessionId":"native","update":{"sessionUpdate":"tool_call","toolCallId":"cmd","name":"run_command","title":"Run command","kind":"execute","rawInput":{"CommandLine":"go test ./...","WorkingDirectory":"/workspace","private":"SECRET"}}}`, "")
 	sendCallback(t, r, "session/update", `{"sessionId":"native","update":{"sessionUpdate":"tool_call_update","toolCallId":"cmd","status":"completed","rawOutput":{"combined_output":"ok","exit_code":0}}}`, "")
 	last := (*events)[len(*events)-1].Item
-	if last.Name != "go test ./..." || last.ExitCode == nil || *last.ExitCode != 0 || len(last.Parts) != 1 ||
-		last.Parts[0].Label != "工作目录" || last.Parts[0].Text != "/workspace" || last.Text != "ok" {
+	if last.Name != "go test ./..." || last.ExitCode == nil || *last.ExitCode != 0 || len(last.Parts) != 0 || last.Text != "ok" {
 		t.Fatalf("native command context was lost at completion: %+v", last)
 	}
 }
@@ -294,5 +293,15 @@ func TestIdleApprovalRequiresKnownToolFromSuccessfulTurn(t *testing.T) {
 				t.Fatal("resolving the idle request did not release admission")
 			}
 		})
+	}
+}
+
+func TestAntigravityAddedFileProvidesSourceWithoutHunkMarkers(t *testing.T) {
+	r, _, events := callbackRuntime()
+	r.active = &logicalTurn{turn: domain.Turn{ID: "turn"}, primary: make(chan error, 1), tools: map[string]domain.Item{}}
+	sendCallback(t, r, "session/update", `{"sessionId":"native","update":{"sessionUpdate":"tool_call","toolCallId":"edit","title":"Write","kind":"edit","status":"completed","content":[{"type":"diff","path":"example.go","oldText":null,"newText":"package main\n"}]}}`, "")
+	last := (*events)[len(*events)-1].Item
+	if len(last.Files) != 1 || last.Files[0].Kind != "add" || last.Files[0].Patch != "package main\n" {
+		t.Fatalf("the diff renderer received patch markers as file content: %+v", last.Files)
 	}
 }

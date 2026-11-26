@@ -139,11 +139,11 @@ func TestCommandMetadataSharesExistingDisclosure(t *testing.T) {
 	for _, reduce := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reduce=%v", reduce), func(t *testing.T) {
 			_, ui, items := commandMotionFixture(t, false, reduce)
-			(*items)[0].Parts = []domain.ContentPart{{Kind: "text", Label: "工作目录", Text: "/workspace"}}
+			(*items)[0].Parts = []domain.ContentPart{{Kind: "text", Label: "退出详情", Text: "回归通过"}}
 			ui.Frame()
 			ui.Advance(time.Second)
 			open, found := ui.Find("following content")
-			if !found || !ui.HasText("工作目录") || !ui.HasText("/workspace") {
+			if !found || !ui.HasText("退出详情") || !ui.HasText("回归通过") {
 				t.Fatal("command metadata is not part of the existing disclosure")
 			}
 			if err := ui.Click("first command"); err != nil {
@@ -162,8 +162,8 @@ func TestCommandMetadataSharesExistingDisclosure(t *testing.T) {
 					t.Fatalf("the disclosure skipped its intermediate height: %+v -> %+v -> %+v", open, middle, closed)
 				}
 			}
-			if ui.HasText("/workspace") {
-				t.Fatal("closed command still shows its working directory")
+			if ui.HasText("回归通过") {
+				t.Fatal("closed command still shows its metadata")
 			}
 		})
 	}

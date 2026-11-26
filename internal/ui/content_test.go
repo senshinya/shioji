@@ -544,3 +544,74 @@ func TestToolGroupRespectsCollapsePreferenceAndStreamsWhenExpanded(t *testing.T)
 		t.Fatalf("second chunk with intermediate newlines missing inside expanded tool group: texts=%v", ui.Texts())
 	}
 }
+
+func TestFileAndMCPToolsKeepTheExpandedRowsConcise(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Items = []domain.Item{
+		{ID: "edit", Kind: "tool", Presentation: "files", Name: "Edit", Final: true,
+			Files: []domain.FileChange{{Path: "/workspace/main.go", Kind: "update", Patch: "@@ -1 +1 @@\n-before\n+after\n"}}},
+		{ID: "separator", Kind: "assistant", Text: "继续核对结果。", Final: true},
+		{ID: "mcp", Kind: "tool", Presentation: "mcp", Name: "核对服务", Text: `{"verbose":true}`, Final: true,
+			Parts: []domain.ContentPart{{Kind: "text", Text: "检查通过。"}, {Kind: "code", Label: "结构化结果", Text: `{"ok":true}`}, {Kind: "resource", Label: "report.json", Text: "resource://report"}}},
+	}
+	m.Details["s"] = d
+	v := New(m, nil, "")
+	ui := n.NewTester(func(c *n.Context) {
+		n.Column(c).Fill().Children(func() {
+			for _, item := range d.Items {
+				n.Column(c.Key(item.ID)).FillWidth().Children(func() { v.item(c, c.Theme(), item) })
+			}
+		})
+	}, 620, 540)
+	if err := ui.Click("Edit main.go"); err != nil {
+		t.Fatal(err, ui.Texts())
+	}
+	ui.Advance(time.Second)
+	if _, ok := ui.Find("文件补丁：/workspace/main.go"); !ok || slices.Contains(ui.Texts(), "/workspace/main.go") {
+		t.Fatal("file name remained an extra row", ui.Texts())
+	}
+	if err := ui.Click("核对服务"); err != nil {
+		t.Fatal(err, ui.Texts())
+	}
+	ui.Advance(time.Second)
+	if !ui.HasText("检查通过。") || ui.HasText("结构化结果") || ui.HasText("resource://report") || ui.HasText(`{"verbose":true}`) {
+		t.Fatal("technical metadata dominated the result", ui.Texts())
+	}
+	if err := ui.Click("查看原始结果"); err != nil {
+		t.Fatal(err, ui.Texts())
+	}
+	ui.Advance(time.Second)
+	if !ui.HasText("resource://report") || !ui.HasText("结构化结果") || !ui.HasText("参数") {
+		t.Fatal("the compact view lost the raw result", ui.Texts())
+	}
+}
+
+func TestCommandAndToolDisclosureShareTheSameHeadingGeometry(t *testing.T) {
+	var reference n.Rect
+	for i, item := range []domain.Item{
+		{ID: "mcp", Kind: "tool", Presentation: "mcp", Name: "Read report", Text: "result", Final: true},
+		{ID: "command", Kind: "tool", Presentation: "command", Name: "Read report", Text: "result", Final: true,
+			Parts: []domain.ContentPart{{Kind: "text", Label: "工作目录", Text: "/legacy/workspace"}}},
+	} {
+		v := New(layoutModel(), nil, "")
+		v.Model.Collapsed[v.commandOutputKey(item.ID, "")] = true
+		ui := n.NewTester(func(c *n.Context) {
+			n.Column(c).Fill().Padding(12).Children(func() { v.item(c, c.Theme(), item) })
+		}, 620, 300)
+		heading, ok := ui.Find("Read report")
+		if !ok || i > 0 && reference != heading {
+			t.Fatalf("tool and command heading differ: ordinary=%+v command=%+v", reference, heading)
+		}
+		reference = heading
+		ui.Move(heading.X+heading.W-2, heading.Y+heading.H/2)
+		ui.Advance(200 * time.Millisecond)
+		if err := ui.Click("Read report"); err != nil {
+			t.Fatal(err)
+		}
+		ui.Advance(time.Second)
+		if !ui.HasText("result") || ui.HasText("/legacy/workspace") {
+			t.Fatal("disclosure did not keep the command output concise", ui.Texts())
+		}
+	}
+}

@@ -426,7 +426,7 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 				files[file.Path]++
 				block := ui.Column(row)
 				animateToolResultBlock(c, block)
-				block.Children(func() { a.transcriptFile(row, file) })
+				block.Children(func() { a.transcriptFile(row, file, false) })
 			}
 			var nonTextParts []domain.ContentPart
 			for i, part := range item.Parts {
@@ -464,9 +464,10 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 }
 
 func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, open *bool, mark *markdown.RangeDecoration, grouped bool, list *ui.ListState, anchors ...func()) ui.Element {
-	item = conversationui.ReasoningForDisplay(item)
+	item = conversationui.ToolForDisplay(conversationui.ReasoningForDisplay(item))
 	p := palette(c)
-	name, symbol := item.Name, terminalSymbol
+	name, inlineFile := conversationui.ToolTitle(item)
+	symbol := terminalSymbol
 	switch item.Presentation {
 	case "reasoning":
 		symbol = infoSymbol
@@ -486,17 +487,9 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 	isCommand := commandTool(item)
 	size, ink := float32(captionTextSize), p.ink
 	font := mobileStatusFont(c, size)
-	if isCommand {
-		font.Family = "monospace"
-	}
 	if grouped {
 		ink = p.secondary
 		symbol = mobileToolTimelineIcon(item.Presentation)
-		if isCommand {
-			size = captionTextSize
-			font = mobileStatusFont(c, size)
-			font.Family = "Menlo"
-		}
 	}
 	lineHeight := mobileStatusLineHeight(font)
 	titleName := name
@@ -608,7 +601,10 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 	}
 	heading.Children(children)
 	visible := hasBody && *open
+	text, parts, raw := conversationui.ToolResult(item)
+	var rawHeightDelta float32
 	build := func(c *ui.Context) {
+		rawHeightDelta = 0
 		block := ui.Column(c).FillWidth().Gap(7)
 		if grouped {
 			block.Padding(8, 0, 0, mobileToolTextColumn)
@@ -618,11 +614,11 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 		block.Children(func() {
 			if command != nil {
 				command.render(c.Key("command-output"), item, true, mark, name, a.codeFont())
-			} else if item.Text != "" {
+			} else if text != "" {
 				row := c.Key("tool-summary")
 				block := ui.Column(row)
 				animateToolResultBlock(c, block)
-				block.Children(func() { toolResultText(row, item.Text, mark) })
+				block.Children(func() { toolResultText(row, text, mark) })
 			}
 			type fileKey struct {
 				path       string
@@ -634,9 +630,28 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 				files[file.Path]++
 				block := ui.Column(row)
 				animateToolResultBlock(c, block)
-				block.Children(func() { a.transcriptFile(row, file) })
+				block.Children(func() { a.transcriptFile(row, file, inlineFile != "") })
 			}
-			a.contentParts(c, parent, session, item.Parts)
+			a.contentParts(c, parent, session, parts)
+			if len(raw) != 0 {
+				rawContext := c.Key("raw-tool-result")
+				rawPanel := ui.Column(rawContext).FillWidth()
+				expanded := ui.Local(rawPanel, "expanded", func() bool { return false })
+				rawPanel.Children(func() {
+					const title = "查看原始结果"
+					button := transcriptDisclosure(mobileButton(rawContext.Key("disclosure"), title, func() {
+						*expanded = !*expanded
+					})).AlignItems(ui.Baseline).Gap(6).Expanded(*expanded)
+					progress := mobileToolReveal(rawContext, button, *expanded, mark != nil)
+					button.Children(func() {
+						label(rawContext, title, captionTextSize, p.secondary).FixedLineHeight(lineHeight)
+						paintMobileToolChevron(rawContext.Key("chevron"), title, font, -90*(1-progress), nil)
+					})
+					rawHeightDelta = toolResultPanel(rawContext.Key("body"), *expanded, mark != nil || !grouped, nil, func(body *ui.Context) {
+						a.contentParts(body, parent, session, raw)
+					})
+				})
+			}
 			if item.Truncated {
 				note := label(c.Key("tool-truncated"), "内容过长，已截断显示", captionTextSize, p.secondary)
 				animateToolResultBlock(c, note)
@@ -648,7 +663,7 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 		frame := ui.Column(body).FillWidth().Shrink(0).Clip()
 		if delta := conversationui.AnimatedContentHeight(body, frame, visible, visible, mobileToolDisclosureDuration, func() float32 {
 			build(body.Key("result"))
-			return 0
+			return rawHeightDelta
 		}); delta != 0 && list != nil {
 			list.FollowAnimation = nil
 		}
@@ -752,7 +767,7 @@ func toolResultPanel(c *ui.Context, visible, immediate bool, progress *float32, 
 	return delta
 }
 
-func (a *mobileApp) transcriptFile(c *ui.Context, file domain.FileChange) {
+func (a *mobileApp) transcriptFile(c *ui.Context, file domain.FileChange, inlineName bool) {
 	p := palette(c)
 	kind := map[string]string{"add": "新增", "delete": "删除", "update": "修改"}[file.Kind]
 	if file.Destination != "" {
@@ -760,12 +775,14 @@ func (a *mobileApp) transcriptFile(c *ui.Context, file domain.FileChange) {
 	}
 	section := ui.Column(c).Gap(4)
 	section.Children(func() {
-		ui.Row(c).Gap(8).AlignItems(ui.Baseline).Children(func() {
-			label(c, file.Path, captionTextSize, p.ink).Font("monospace").MinWidth(0).Grow(1).Selectable()
-			if kind != "" {
-				label(c, kind, captionTextSize, p.secondary).Shrink(0)
-			}
-		})
+		if !inlineName {
+			ui.Row(c).Gap(8).AlignItems(ui.Baseline).Children(func() {
+				label(c, file.Path, captionTextSize, p.ink).Font("monospace").MinWidth(0).Grow(1).Selectable()
+				if kind != "" {
+					label(c, kind, captionTextSize, p.secondary).Shrink(0)
+				}
+			})
+		}
 		if file.Destination != "" {
 			label(c, file.Destination, captionTextSize, p.secondary).Font("monospace").Selectable()
 		}
