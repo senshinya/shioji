@@ -27,7 +27,7 @@ const (
 	permissionYOLO        = "yolo"
 
 	capabilitiesCacheFile    = "capabilities.json"
-	capabilitiesCacheVersion = 1
+	capabilitiesCacheVersion = 2
 )
 
 var allowedEffortLevels = []string{"low", "medium", "high", "xhigh", "max"}
@@ -109,28 +109,19 @@ func mergeModelOptions(model domain.Model, options []nativeModel) domain.Model {
 	}
 	native := options[at]
 	if native.SupportsEffort {
-		for _, effort := range native.SupportedEffortLevels {
-			if slices.Contains(allowedEffortLevels, effort) && !slices.Contains(model.Efforts, effort) {
-				model.Efforts = append(model.Efforts, effort)
-			}
-		}
+		model = model.WithEfforts(claudeEffortLevels(native.SupportedEffortLevels))
 	}
 	model.Fast = native.SupportsFastMode
 	return model
 }
 
-func mergeAPIModelOptions(model domain.Model, caps modelapi.AnthropicCapabilities) domain.Model {
-	model.Efforts = nil
-	for _, effort := range caps.Efforts {
-		if slices.Contains(allowedEffortLevels, effort) && !slices.Contains(model.Efforts, effort) {
-			model.Efforts = append(model.Efforts, effort)
-		}
-	}
-	model.Fast = caps.Fast
-	return model
+func claudeEffortLevels(levels []string) []string {
+	return slices.DeleteFunc(modelapi.NormalizeEfforts(levels), func(level string) bool {
+		return !slices.Contains(allowedEffortLevels, level)
+	})
 }
 
-func probeSDKCapabilities(ctx context.Context, node, sdk, binary string) sdkCapabilities {
+func probeSDKCapabilities(ctx context.Context, node, sdk, binary, model string) sdkCapabilities {
 	if node == "" || sdk == "" {
 		return sdkCapabilities{}
 	}
@@ -141,7 +132,7 @@ func probeSDKCapabilities(ctx context.Context, node, sdk, binary string) sdkCapa
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, node, "--input-type=module", "--eval", modelSDK, "--", binary, sdk)
+	cmd := exec.CommandContext(ctx, node, "--input-type=module", "--eval", modelSDK, "--", binary, sdk, model)
 	cmd.Dir = dir
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + dir, "CLAUDE_CONFIG_DIR=" + filepath.Join(dir, "profile"),
 		"ANTHROPIC_BASE_URL=http://127.0.0.1:1", "ANTHROPIC_API_KEY=shioji-model-catalog",

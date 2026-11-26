@@ -190,6 +190,9 @@ func (s *Server) runtimeProfiles(sessions []string, allAdapters bool) domain.Rea
 		info := domain.HarnessInfo{Configured: enabled, ID: id, Name: descriptor.Name, Icon: descriptor.Icon, State: domain.RuntimeUnavailable}
 		if profile, ok := s.agentProfile(id); ok {
 			info.Profile = &profile
+			if profile.Authorized && profile.SupportsEffortOverrides() {
+				info.EffortOverrides, _ = harness.ReadProfileEfforts(s.agentProfileHome(id))
+			}
 			if profile.Icon != "" {
 				info.Icon = profile.Icon
 			}

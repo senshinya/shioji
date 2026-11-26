@@ -277,11 +277,15 @@ func (a Adapter) readiness(config configuration) domain.Readiness {
 func applyCapabilities(ready domain.Readiness, config configuration, apiCaps modelapi.AnthropicCapabilities, sdkCaps sdkCapabilities) domain.Readiness {
 	ready.Permissions, ready.PermissionChoices = permissionChoices(sdkCaps.Permissions)
 	if len(ready.Models) > 0 {
-		if apiCaps.Probed {
-			ready.Models[0] = mergeAPIModelOptions(ready.Models[0], apiCaps)
-		} else if officialEndpoint(config.Endpoint) {
-			ready.Models[0] = mergeModelOptions(ready.Models[0], sdkCaps.Models)
+		model := mergeModelOptions(ready.Models[0], sdkCaps.Models)
+		model.Fast = apiCaps.Fast || !apiCaps.Probed && officialEndpoint(config.Endpoint) && model.Fast
+		if apiCaps.Efforts != nil {
+			if apiCaps.DefaultEffort != "" {
+				model.DefaultEffort = apiCaps.DefaultEffort
+			}
+			model = model.WithEfforts(claudeEffortLevels(apiCaps.Efforts))
 		}
+		ready.Models[0] = model
 	}
 	return ready
 }
@@ -299,7 +303,7 @@ func (a Adapter) resolveCapabilities(ctx context.Context, config configuration, 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sdkCaps = probeSDKCapabilities(ctx, node, sdk, bin)
+			sdkCaps = probeSDKCapabilities(ctx, node, sdk, bin, config.Model)
 		}()
 	}
 	if needAPI {
@@ -310,7 +314,7 @@ func (a Adapter) resolveCapabilities(ctx context.Context, config configuration, 
 		}()
 	}
 	wg.Wait()
-	if sdkCaps.Probed || apiCaps.Probed {
+	if sdkCaps.Probed || apiCaps.Probed || apiCaps.Efforts != nil {
 		saveCapabilitiesCache(a.home, cachedCapabilities{
 			Endpoint:       config.Endpoint,
 			Model:          config.Model,

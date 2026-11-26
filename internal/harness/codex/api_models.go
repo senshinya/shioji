@@ -73,11 +73,13 @@ func fetchAPIModels(ctx context.Context, endpoint string, headers http.Header, k
 		Data []struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
+			modelapi.EffortMetadata
 		} `json:"data"`
 		Models []struct {
 			ID         string `json:"slug"`
 			Name       string `json:"display_name"`
 			Visibility string `json:"visibility"`
+			modelapi.EffortMetadata
 		} `json:"models"`
 	}
 	if json.Unmarshal(data, &result) != nil {
@@ -89,7 +91,7 @@ func fetchAPIModels(ctx context.Context, endpoint string, headers http.Header, k
 	}
 	models := []domain.Model{}
 	seen := map[string]bool{}
-	add := func(id, name string) {
+	add := func(id, name string, effort modelapi.EffortMetadata) {
 		if id == "" || strings.ContainsAny(id, "\r\n\x00") || len(id) > 256 || seen[id] {
 			return
 		}
@@ -102,14 +104,14 @@ func fetchAPIModels(ctx context.Context, endpoint string, headers http.Header, k
 			model.Name = name
 		}
 		model.Default = false
-		models = append(models, model)
+		models = append(models, effort.Apply(model))
 	}
 	for _, m := range result.Data {
-		add(m.ID, m.Name)
+		add(m.ID, m.Name, m.EffortMetadata)
 	}
 	for _, m := range result.Models {
 		if m.Visibility != "hide" {
-			add(m.ID, m.Name)
+			add(m.ID, m.Name, m.EffortMetadata)
 		}
 	}
 	if len(models) == 0 {

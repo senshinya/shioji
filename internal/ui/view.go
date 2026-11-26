@@ -1228,6 +1228,11 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 						} else {
 							for _, model := range ready.Models {
 								if model.ID == cfg.Model {
+									if model.DefaultEffort == "" && ghost(c, "默认").FillWidth().TextAlign(n.Start).Disabled(ready.State != domain.RuntimeReady).Clicked() {
+										cfg.Effort = ""
+										v.Model.SetConfig(key, cfg)
+										v.runMenu = runMenuMain
+									}
 									for _, effort := range model.Efforts {
 										if ghost(c, effort).FillWidth().TextAlign(n.Start).Disabled(ready.State != domain.RuntimeReady).Clicked() {
 											cfg.Effort = effort
@@ -1261,7 +1266,11 @@ func (v *View) runControl(c *n.Context, t *n.Theme, key string, cfg domain.RunCo
 					}
 				}
 				if effortsAvailable {
-					if settingRow(c, "推理强度", cfg.Effort+" ›").Clicked() {
+					effort := cfg.Effort
+					if effort == "" {
+						effort = "默认"
+					}
+					if settingRow(c, "推理强度", effort+" ›").Clicked() {
 						v.runMenu = runMenuEfforts
 					}
 				}

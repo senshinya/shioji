@@ -51,6 +51,67 @@ func TestDeviceProfileEmptyStateGuidesFirstConfiguration(t *testing.T) {
 	}
 }
 
+func TestProfileModelPageShowsEffortSettings(t *testing.T) {
+	id := "effort-profile"
+	agent := domain.HarnessInfo{
+		ID: id, Name: "Gemini 公司专用", Configured: true, State: domain.RuntimeReady,
+		Profile:      &domain.AgentProfile{ID: id, Name: "Gemini 公司专用", HarnessID: domain.AgentAnthropic, Mode: domain.AgentProfileAPI, Authorized: true},
+		Installation: &domain.RuntimeInstallation{},
+		Models:       []domain.Model{{ID: "gemini-4-neon", Default: true, Efforts: []string{"low", "medium", "high", "xhigh", "max"}}},
+	}
+	open := func(agent domain.HarnessInfo, width int, dark bool) *n.Tester {
+		t.Helper()
+		m := deviceUIModel()
+		state := m.DeviceStates["air"]
+		state.ConnectionEpoch = ""
+		state.WorkerMinor = protocol.ProfileEffortsMinor
+		state.Readiness.Harnesses = []domain.HarnessInfo{agent}
+		v := New(m, app.NewController(""), "")
+		v.devices, v.deviceSelected, v.deviceTab = true, "air", "agents"
+		ui := n.NewTester(v.View, width, 740)
+		ui.SetDark(dark)
+		ui.Advance(time.Second)
+		if err := ui.Click("打开 " + agent.Name + " 配置"); err != nil {
+			t.Fatal(err, ui.Texts())
+		}
+		ui.Advance(time.Second)
+		if err := ui.Click("模型"); err != nil {
+			t.Fatal(err, ui.Texts())
+		}
+		ui.Advance(time.Second)
+		if !ui.HasText("推理档位") {
+			t.Fatal("model tab does not expose per-profile effort settings", ui.Texts())
+		}
+		return ui
+	}
+	ui := open(agent, 1160, false)
+	if !ui.HasText("自动") || ui.HasText("恢复自动") {
+		t.Fatal("automatic settings show a manual override", ui.Texts())
+	}
+	saveNativeSkillImage(t, ui, "profile-effort-automatic.png")
+
+	agent.Models[0].Efforts = []string{"low", "medium", "high", "xhigh"}
+	agent.EffortOverrides = map[string][]string{"gemini-4-neon": agent.Models[0].Efforts}
+	ui = open(agent, 850, true)
+	if !ui.HasText("手工配置") || !ui.HasText("恢复自动") {
+		t.Fatal("stored override cannot be restored to automatic", ui.Texts())
+	}
+	saveNativeSkillImage(t, ui, "profile-effort-manual.png")
+
+	agent.Name = "Codex API"
+	agent.Profile = &domain.AgentProfile{ID: id, Name: agent.Name, HarnessID: domain.AgentResponses, Mode: domain.AgentProfileAPI, Authorized: true}
+	agent.EffortOverrides = nil
+	agent.Models = []domain.Model{
+		{ID: "gpt-6.1-sol", Default: true, Efforts: []string{"low", "medium", "high", "xhigh"}},
+		{ID: "gpt-6-luna", Efforts: []string{"medium", "high"}},
+	}
+	ui = open(agent, 1160, false)
+	if !ui.HasText("配置模型") {
+		t.Fatal("Codex Profile does not expose a model-specific editor", ui.Texts())
+	}
+	saveNativeSkillImage(t, ui, "profile-effort-codex.png")
+}
+
 // A nested disclosure or a replaced detail root would lose the full-page
 // transition and its return destination; exercise the actual device browser.
 func TestAgentConfigurationReplacesDevicePageAndSlidesBack(t *testing.T) {

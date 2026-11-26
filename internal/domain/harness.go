@@ -41,6 +41,7 @@ type HarnessDescriptor struct {
 	ProfileOnly bool   `json:"profileOnly,omitempty"`
 }
 type HarnessInfo struct {
+	EffortOverrides   map[string][]string  `json:"effortOverrides,omitempty"`
 	Profile           *AgentProfile        `json:"profile,omitempty"`
 	SystemProfile     bool                 `json:"systemProfile,omitempty"`
 	ProfileModes      []AgentProfileMode   `json:"profileModes,omitempty"`
@@ -103,6 +104,11 @@ type AgentProfile struct {
 	Authorized bool             `json:"authorized,omitempty"`
 	Icon       string           `json:"icon,omitempty"`
 }
+
+func (p AgentProfile) SupportsEffortOverrides() bool {
+	return IsCustomAgent(p.HarnessID) || p.HarnessID == "codex"
+}
+
 type OptionChoice struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`

@@ -20,7 +20,9 @@ Claude Code 仅用于「新增 Profile → 自定义 → Anthropic API」。该�
 
 Claude Code 使用 Shioji 提供的回环凭据代理。受限模式限制工作目录，Shell 工具使用原生沙箱并保留人工审批。普通输入和同轮追加分别核对接纳，断线后读取所属会话的 SDK 回执。尚未确认的输入留待核对。原生压缩以 SDK 边界事件确认，历史分叉及原位修改使用已核对的独立原生线程。设备本机的 Claude CLI 历史通过只读目录导入，接续从核对过的副本开始。
 
-Anthropic Profile 支持结构化问题、Plan、上下文用量、标题、工具图像和会话附件快照。Goal 的暂停和接续由 Shioji 管理，Claude 通过专用工具回报所属轮次的进度。后台任务可按所属原生任务标识停止。MCP 配置限于 Profile，配置变更在下一轮采用。项目 Hooks 只读，Profile 的命令型 Hooks 需要逐项核对内容后授权，由空闲会话加载新版本。Skill 选择使用当前授权目录中的文件快照，动态命令或额外执行设置的 Skill 不出现在可发送目录。Profile 使用一个已验证的 API 模型。Anthropic 官方端点可按同一模型的原生能力开放 Effort 和 Fast。兼容网关使用其已确认的基础选项。
+Anthropic Profile 支持结构化问题、Plan、上下文用量、标题、工具图像和会话附件快照。Goal 的暂停和接续由 Shioji 管理，Claude 通过专用工具回报所属轮次的进度。后台任务可按所属原生任务标识停止。MCP 配置限于 Profile，配置变更在下一轮采用。项目 Hooks 只读，Profile 的命令型 Hooks 需要逐项核对内容后授权，由空闲会话加载新版本。Skill 选择使用当前授权目录中的文件快照，动态命令或额外执行设置的 Skill 不出现在可发送目录。Profile 使用一个已验证的 API 模型。
+
+Claude 和 Codex 的推理档位按所选模型解析。Profile「模型」页的手工档位优先，其次使用网关目录的声明，缺少声明时使用 Claude SDK 或 Codex app-server 对该模型报告的档位。空的声明或手工列表隐藏档位控件，恢复自动会移除手工值。Claude SDK 使用选定模型初始化并读取能力，无需发送推理请求。Fast 独立检测。档位配置由所属 worker 保存，下一次提交按当前选项核对，正在执行的轮次继续运行。
 
 ## deepseek
 

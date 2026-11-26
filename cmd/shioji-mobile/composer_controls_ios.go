@@ -189,6 +189,13 @@ func (a *mobileApp) runControls(c *ui.Context, parent *mygo.Window, editor *mobi
 		if len(selected.Efforts) > 0 {
 			menu.Separator()
 			menu.Submenu("推理强度", func(menu *ui.Menu) {
+				if selected.DefaultEffort == "" {
+					menuChoice(menu, "默认", config.Effort == "", func() {
+						next := config
+						next.Effort = ""
+						setConfig(next)
+					})
+				}
 				for _, effort := range selected.Efforts {
 					menuChoice(menu, composerEffortName(effort), effort == config.Effort, func() {
 						next := config

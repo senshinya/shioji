@@ -39,6 +39,7 @@ export function query({ options }) {
       return { commands: [] };
     },
     async supportedModels() {
+      if (options.model !== "claude-opus-4-6") return [];
       return [{ Value: "claude-opus-4-6", ResolvedModel: "claude-opus-4-6", SupportsEffort: true, SupportedEffortLevels: ["low", "high"], SupportsFastMode: true }];
     },
     async setPermissionMode(mode) {
@@ -57,17 +58,20 @@ export function query({ options }) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	full := probeSDKCapabilities(ctx, node, writeFixture(true, true), "/fixture/claude")
+	full := probeSDKCapabilities(ctx, node, writeFixture(true, true), "/fixture/claude", "claude-opus-4-6")
 	if !full.Probed || !full.Permissions.ReadOnly || !full.Permissions.Default || !full.Permissions.AutoApprove ||
 		!full.Permissions.AcceptEdits || !full.Permissions.YOLO || !full.Permissions.BypassPermissions || full.Permissions.BypassRestricted {
 		t.Fatalf("unexpected full SDK capabilities: %+v", full)
+	}
+	if len(full.Models) != 1 || full.Models[0].Value != "claude-opus-4-6" {
+		t.Fatalf("probe did not initialize the selected SDK model: %+v", full.Models)
 	}
 	perms, choices := permissionChoices(full.Permissions)
 	if !slices.Equal(perms, []string{"read-only", "default", "auto-approve", "yolo"}) || len(choices) != 4 {
 		t.Fatalf("unexpected full permission choices: %v %+v", perms, choices)
 	}
 
-	restricted := probeSDKCapabilities(ctx, node, writeFixture(false, false), "/fixture/claude")
+	restricted := probeSDKCapabilities(ctx, node, writeFixture(false, false), "/fixture/claude", "claude-opus-4-6")
 	if !restricted.Probed || restricted.Permissions.YOLO || restricted.Permissions.BypassPermissions {
 		t.Fatalf("disabled bypass must not expose YOLO: %+v", restricted)
 	}
@@ -95,10 +99,10 @@ func TestClaudeCapabilitiesApplyAPIProbeAndCache(t *testing.T) {
 		},
 	}
 
-	// Custom endpoint with no live API probe must not inherit offline SDK model options.
+	// Custom endpoints fall back to exact-model SDK efforts independently of Fast.
 	unprobed := applyCapabilities(Adapter{id: "p"}.readiness(cfg), cfg, modelapi.AnthropicCapabilities{}, sdkCaps)
-	if len(unprobed.Models[0].Efforts) != 0 || unprobed.Models[0].Fast {
-		t.Fatalf("custom endpoint leaked offline SDK model options: %+v", unprobed.Models[0])
+	if !slices.Equal(unprobed.Models[0].Efforts, []string{"low", "max"}) || unprobed.Models[0].Fast {
+		t.Fatalf("unexpected SDK fallback: %+v", unprobed.Models[0])
 	}
 
 	// Live API-probed effort and fast capabilities apply to custom endpoints and pass Validate.

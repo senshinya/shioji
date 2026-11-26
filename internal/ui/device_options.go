@@ -66,6 +66,7 @@ func (e *deviceAgentEditor) edit(info domain.HarnessInfo) {
 	e.pageID = info.ID
 	e.path = e.paths[info.ID]
 	e.draft = newRuntimeOptionDraft(e.options[info.ID])
+	e.effortDrafts, e.effortModel, e.effortError = nil, "", ""
 	e.draft.login = info.Profile != nil && info.Profile.Mode == domain.AgentProfileAPI
 	e.error = ""
 }
@@ -229,6 +230,7 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 				modelBox.Children(func() {
 					if !e.setup {
 						v.deviceModels(c.Key("models"), t, key, info)
+						v.deviceProfileEfforts(c.Key("profile-effort"), t, key, e, info, disabled, minor)
 					}
 					if e.setup {
 						deviceID := v.Model.ConnectionDeviceID(key)

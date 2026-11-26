@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -367,5 +368,73 @@ func TestAnthropicProviderRequiresACustomAPIProfile(t *testing.T) {
 		if _, err := s.prepareAgentProfile(profile); err != nil {
 			t.Errorf("unable to load API Profile with icon %q: %v", icon, err)
 		}
+	}
+}
+
+func TestProfileEffortChangeRejectsAnUnboundProfile(t *testing.T) {
+	s, _ := memoryWorker(t, memoryHarness{id: "memory"}, claudecode.Adapter{State: t.TempDir()})
+	id := domain.NewID()
+	if _, err := s.createAgentProfile(domain.AgentProfile{ID: id, Name: "My API", HarnessID: domain.AgentAnthropic, Mode: domain.AgentProfileAPI}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.handle("runtime.profile.effort", json.RawMessage(`{"id":"`+id+`","model":"model","efforts":["low"]}`))
+	if err == nil || err.Error() != "请先连接此 Profile" {
+		t.Fatalf("edit must be rejected at the profile boundary, got %v", err)
+	}
+}
+
+func TestProfileEffortChangesPersistAndRejectStaleEdits(t *testing.T) {
+	s, _ := memoryWorker(t, memoryHarness{id: "memory"}, claudecode.Adapter{State: t.TempDir()})
+	id := domain.NewID()
+	if _, err := s.createAgentProfile(domain.AgentProfile{ID: id, Name: "My API", HarnessID: domain.AgentAnthropic, Mode: domain.AgentProfileAPI}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.bindAgentProfile(id); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := (memoryHarness{id: id}).Start(s.ctx, harness.StartOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.runtimeMu.Lock()
+	s.catalogs[id] = runtime
+	s.runtimeMu.Unlock()
+	model := id + "-model"
+	change := func(previous, levels *[]string) (protocol.AgentSetupResult, error) {
+		body, err := json.Marshal(protocol.ProfileEffortInput{ID: id, Model: model, Previous: previous, Efforts: levels})
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, err := s.handle("runtime.profile.effort", body)
+		if err != nil {
+			return protocol.AgentSetupResult{}, err
+		}
+		return value.(protocol.AgentSetupResult), nil
+	}
+	initial := []string{"low", "xhigh"}
+	saved, err := change(nil, &initial)
+	if err != nil || !saved.Ready {
+		t.Fatal(saved, err)
+	}
+	stored, err := harness.ReadProfileEfforts(s.agentProfileHome(id))
+	if err != nil || !slices.Equal(stored[model], initial) {
+		t.Fatalf("stored profile efforts = %v, %v", stored, err)
+	}
+	sleep := []string{}
+	if _, err := change(nil, &sleep); err == nil {
+		t.Fatal("stale client overwrote settings")
+	}
+	if _, err := change(&initial, &sleep); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = harness.ReadProfileEfforts(s.agentProfileHome(id))
+	if err != nil || stored[model] == nil || len(stored[model]) != 0 {
+		t.Fatalf("an explicit empty override must survive storage: %v, %v", stored, err)
+	}
+	if _, err := change(&sleep, nil); err != nil {
+		t.Fatal(err)
+	}
+	if stored, err = harness.ReadProfileEfforts(s.agentProfileHome(id)); err != nil || len(stored) != 0 || runtime.Stopped() {
+		t.Fatalf("automatic settings must restore without stopping the runtime: %v, %v", stored, err)
 	}
 }

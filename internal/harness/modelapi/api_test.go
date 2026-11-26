@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"shioji/internal/domain"
@@ -45,5 +46,19 @@ func TestListsResponsesAndPaginatedAnthropicModels(t *testing.T) {
 		if err != nil || len(list) != 2 || list[1].Name != "Second" {
 			t.Fatal(list, err)
 		}
+	}
+}
+
+func TestModelCatalogPreservesDeclaredEffortAndMissingMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":[{"id":"gateway","supported_reasoning_levels":[{"effort":"low"},{"effort":"xhigh"}]},{"id":"native","capabilities":{"effort":{"supported":true,"medium":{"supported":true},"high":{"supported":false}}}},{"id":"disabled","supported_reasoning_levels":[]},{"id":"unknown"}]}`)
+	}))
+	defer server.Close()
+	models, err := Models(context.Background(), domain.AgentAnthropic, domain.APIConfiguration{Endpoint: server.URL})
+	if err != nil || len(models) != 4 {
+		t.Fatal(models, err)
+	}
+	if !slices.Equal(models[0].Efforts, []string{"low", "xhigh"}) || !slices.Equal(models[1].Efforts, []string{"medium"}) || models[2].Efforts == nil || models[3].Efforts != nil {
+		t.Fatalf("gateway declarations = %+v", models)
 	}
 }

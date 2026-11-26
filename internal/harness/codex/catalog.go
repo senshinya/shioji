@@ -42,7 +42,7 @@ func (a Adapter) startCatalog(ctx context.Context, options harness.StartOptions)
 		return nil, err
 	}
 	life, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	c := &catalogRuntime{adapter: a, options: options, ready: r.Readiness(), version: r.version, ctx: life, cancel: cancel, active: map[*adapterRuntime]*catalogProbe{}, done: make(chan struct{})}
+	c := &catalogRuntime{adapter: a, options: options, ready: r.describeReadiness(r.nativeReadiness()), version: r.version, ctx: life, cancel: cancel, active: map[*adapterRuntime]*catalogProbe{}, done: make(chan struct{})}
 	p := &catalogProbe{runtime: r, ctx: ctx, cancel: func() {}, stop: func() bool { return true }, inUse: true}
 	c.active[r] = p
 	err = c.release(p)
@@ -61,7 +61,7 @@ func (c *catalogRuntime) Readiness() domain.Readiness {
 			ready.Error = c.err.Error()
 		}
 	}
-	return ready
+	return harness.ApplyProfileEfforts(c.adapter.effortHome(), ready)
 }
 func (c *catalogRuntime) Validate(config domain.RunConfig) error {
 	return validateCodexConfig(c.Readiness(), config)

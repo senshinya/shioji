@@ -19,6 +19,9 @@ type deviceAgentEditor struct {
 	options                 map[string]domain.RuntimeOptions
 	optionSupport           map[string]bool
 	draft                   runtimeOptionDraft
+	effortDrafts            map[string]*app.ProfileEffortDraft
+	effortModel             string
+	effortError             string
 	profileAnchor           string
 	revealProfile           bool
 	focusProfileEntry       bool

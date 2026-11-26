@@ -196,7 +196,7 @@ type frame struct {
 func (r *runtime) Readiness() domain.Readiness {
 	ready := r.ready
 	ready.Capabilities.Compact = r.canCompact.Load()
-	return ready
+	return harness.ApplyProfileEfforts(r.home, ready)
 }
 func (r *runtime) Done() <-chan struct{} { return r.done }
 func (r *runtime) Stopped() bool {
@@ -221,8 +221,9 @@ func (r *runtime) Validate(c domain.RunConfig) error {
 		return invalid
 	}
 	if c.Fast || c.Effort != "" {
-		if len(r.ready.Models) != 1 || c.Fast && !r.ready.Models[0].Fast ||
-			c.Effort != "" && !slices.Contains(r.ready.Models[0].Efforts, c.Effort) {
+		ready := r.Readiness()
+		if len(ready.Models) != 1 || c.Fast && !ready.Models[0].Fast ||
+			c.Effort != "" && !slices.Contains(ready.Models[0].Efforts, c.Effort) {
 			return invalid
 		}
 	}

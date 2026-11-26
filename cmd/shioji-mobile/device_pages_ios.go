@@ -711,6 +711,8 @@ func (a *mobileApp) openAgentSettingsAt(parent *mygo.Window, agent domain.Harnes
 		}
 	}
 	settingsEpoch, accountEpoch := "", ""
+	effortModel := ""
+	effortDrafts := make(map[string]*app.ProfileEffortDraft)
 	loadSettings := func(discard bool) {
 		epoch := a.model.ConnectionEpoch
 		settingsEpoch = epoch
@@ -835,6 +837,24 @@ func (a *mobileApp) openAgentSettingsAt(parent *mygo.Window, agent domain.Harnes
 				}
 			case "模型":
 				a.agentModels(c, w, draftKey[0], current, req.busy || authBusy, refetch)
+				if a.model.WorkerMinor >= protocol.ProfileEffortsMinor && !a.preview {
+					mobileProfileEfforts(c, current, &effortModel, effortDrafts, blocked || authBusy, func(in protocol.ProfileEffortInput) {
+						epoch := a.model.ConnectionEpoch
+						a.pageJob(w, &req, "runtime.profile.effort", in, decodePage(func(out protocol.AgentSetupResult) error {
+							if a.model.ConnectionEpoch != epoch {
+								return fmt.Errorf("连接已变化，请刷新模型以确认保存结果")
+							}
+							if !out.Ready || !applyAgent(domain.Readiness{Harnesses: out.Catalog}) {
+								return fmt.Errorf("设备未确认推理档位修改")
+							}
+							delete(effortDrafts, in.Model)
+							out.Readiness.Sessions = a.model.Readiness.Sessions
+							a.model.Readiness = out.Readiness
+							a.model.RefreshDevices()
+							return nil
+						}))
+					})
+				}
 				if modern && settings.base.Support.TitleModel {
 					ui.Spacer(c).Height(12)
 					settings.titleModel(c, current.Models, settingsBlocked || current.State != domain.RuntimeReady || len(current.Models) == 0)

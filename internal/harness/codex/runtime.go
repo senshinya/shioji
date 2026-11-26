@@ -26,6 +26,7 @@ type Options struct {
 	launchEnv        []string
 	authentication   bool
 	apiPreset        *apiPreset
+	effortHome       string
 	ImportResource   func(harness.OutputResource) (domain.Attachment, error)
 	OnMessage        func(context.Context, harness.IncomingMessage) error
 	OnStart          func(int) error
@@ -39,6 +40,7 @@ type Options struct {
 }
 type Runtime struct {
 	profileID        string
+	effortHome       string
 	processEnv       []string
 	loginEvents      chan json.RawMessage
 	toolLogin        *toolServiceLogin
@@ -93,7 +95,7 @@ func Start(ctx context.Context, opts Options) (*Runtime, error) {
 	if opts.Executor != nil {
 		argv = append(argv, "-c", "features.shell_snapshot=false", "-c", "features.shell_snapshot_v2=false")
 	}
-	r := &Runtime{protocol: support, pending: map[string]chan wire.Message{}, done: make(chan struct{}), normalizer: NewNormalizer(), onEvent: opts.OnEvent, scope: opts.Scope, executor: opts.Executor, apiPreset: opts.apiPreset}
+	r := &Runtime{protocol: support, pending: map[string]chan wire.Message{}, done: make(chan struct{}), normalizer: NewNormalizer(), onEvent: opts.OnEvent, scope: opts.Scope, executor: opts.Executor, apiPreset: opts.apiPreset, effortHome: opts.effortHome}
 	r.normalizer.importResource = opts.ImportResource
 	r.normalizer.workControl = r.supports("turn/interrupt")
 	r.normalizer.workSteer = r.supports("turn/steer")
@@ -611,6 +613,10 @@ func (r *Runtime) catalog(ctx context.Context) (err error) {
 	return nil
 }
 func (r *Runtime) Readiness() domain.Readiness {
+	return harness.ApplyProfileEfforts(r.effortHome, r.nativeReadiness())
+}
+
+func (r *Runtime) nativeReadiness() domain.Readiness {
 	select {
 	case <-r.done:
 		return domain.Readiness{State: "unavailable", Error: "Codex app-server stopped; reconcile existing sessions before retrying"}

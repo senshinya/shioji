@@ -1,7 +1,7 @@
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 
-const [binary, sdk] = process.argv.slice(1);
+const [binary, sdk, model] = process.argv.slice(1);
 const { query } = await import(pathToFileURL(sdk).href);
 
 async function probeSession(options, inspect) {
@@ -31,6 +31,7 @@ let models = [];
 
 const base = await probeSession({
   pathToClaudeCodeExecutable: binary,
+  ...(model ? { model } : {}),
   persistSession: false,
   settingSources: [],
   tools: ["Read", "Glob", "Grep"],

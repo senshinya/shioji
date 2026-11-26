@@ -4,6 +4,7 @@ package domain
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"slices"
 	"time"
 )
 
@@ -346,6 +347,27 @@ type Model struct {
 	DefaultEffort string   `json:"defaultEffort"`
 	Fast          bool     `json:"fast"`
 }
+
+func (m Model) WithEfforts(levels []string) Model {
+	m.Efforts = levels
+	if !slices.Contains(levels, m.DefaultEffort) {
+		m.DefaultEffort = ""
+	}
+	return m
+}
+
+func ValidEffortLevel(value string) bool {
+	if len(value) == 0 || len(value) > 32 {
+		return false
+	}
+	for _, ch := range value {
+		if !(ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || ch == '-' || ch == '_') {
+			return false
+		}
+	}
+	return true
+}
+
 type Readiness struct {
 	Account           *RuntimeAccount        `json:"account,omitempty"`
 	Sessions          map[string]HarnessInfo `json:"sessions,omitempty"`

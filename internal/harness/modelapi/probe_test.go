@@ -12,49 +12,31 @@ import (
 	"shioji/internal/domain"
 )
 
-func TestProbeAnthropicDetectsValidatedEffortsAndFastMode(t *testing.T) {
+func TestProbeAnthropicReadsGatewayEffortEvenWhenFastIsInconclusive(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/messages" || r.Header.Get("x-api-key") != "fixture" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
+		if r.Header.Get("x-api-key") != "fixture" {
+			t.Error("gateway request is unauthenticated")
 		}
-		var req struct {
-			OutputConfig *struct {
-				Effort string `json:"effort"`
-			} `json:"output_config"`
-			Speed string `json:"speed"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
-			return
-		}
-		if req.OutputConfig != nil {
-			switch req.OutputConfig.Effort {
-			case "low", "medium", "high", "max":
-				fmt.Fprint(w, `{"id":"msg_1","type":"message","usage":{"input_tokens":1,"output_tokens":1}}`)
-			default:
-				http.Error(w, `{"type":"error","error":{"type":"invalid_request_error"}}`, http.StatusBadRequest)
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/models/claude-opus-4-6":
+			fmt.Fprint(w, `{"id":"claude-opus-4-6","supported_reasoning_levels":[{"effort":"low"},{"effort":"max"}]}`)
+		case "POST /v1/messages":
+			var req map[string]json.RawMessage
+			if json.NewDecoder(r.Body).Decode(&req) != nil || req["output_config"] != nil {
+				t.Error("effort discovery must not send generation probes")
 			}
-			return
+			http.Error(w, "rate limited", http.StatusTooManyRequests)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		if req.Speed != "" {
-			if r.Header.Get("anthropic-beta") == anthropicFastModeBeta && req.Speed == "fast" {
-				fmt.Fprint(w, `{"id":"msg_2","type":"message","usage":{"input_tokens":1,"output_tokens":1,"speed":"fast"}}`)
-				return
-			}
-			http.Error(w, `{"type":"error","error":{"type":"invalid_request_error"}}`, http.StatusBadRequest)
-			return
-		}
-		http.Error(w, "unexpected", http.StatusBadRequest)
 	}))
 	defer server.Close()
 
 	got := ProbeAnthropic(context.Background(), domain.APIConfiguration{
 		Endpoint: server.URL, Model: "claude-opus-4-6", Credential: "fixture",
 	})
-	wantEfforts := []string{"low", "medium", "high", "max"}
-	if !got.Probed || !got.Fast || !slices.Equal(got.Efforts, wantEfforts) {
-		t.Fatalf("ProbeAnthropic() = %+v, want probed=true fast=true efforts=%v", got, wantEfforts)
+	if got.Probed || got.Fast || !slices.Equal(got.Efforts, []string{"low", "max"}) {
+		t.Fatalf("gateway declaration was lost: %+v", got)
 	}
 }
 
@@ -72,45 +54,29 @@ func TestProbeAnthropicRejectsGatewaysThatSilentlyIgnoreParameters(t *testing.T)
 	}
 }
 
-func TestProbeAnthropicSupportsBetaEffortAndSentinelValidatedFast(t *testing.T) {
+func TestProbeAnthropicUsesSentinelWhenGatewayOmitsFastUsage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
 		var req struct {
-			OutputConfig *struct {
-				Effort string `json:"effort"`
-			} `json:"output_config"`
 			Speed string `json:"speed"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		if req.OutputConfig != nil {
-			if r.Header.Get("anthropic-beta") != anthropicEffortBeta {
-				http.Error(w, "beta required", http.StatusBadRequest)
-				return
-			}
-			if req.OutputConfig.Effort == "low" || req.OutputConfig.Effort == "high" {
-				fmt.Fprint(w, `{"id":"msg_beta","type":"message"}`)
-				return
-			}
-			http.Error(w, "invalid effort", http.StatusBadRequest)
+		if req.Speed == "fast" {
+			fmt.Fprint(w, `{"id":"msg_fast","type":"message","usage":{"input_tokens":1,"output_tokens":1}}`)
 			return
 		}
-		if req.Speed != "" {
-			if req.Speed == "fast" {
-				// Proxy strips usage.speed, so sentinel must verify validation.
-				fmt.Fprint(w, `{"id":"msg_fast","type":"message","usage":{"input_tokens":1,"output_tokens":1}}`)
-				return
-			}
-			http.Error(w, "invalid speed", http.StatusBadRequest)
-			return
-		}
-		http.Error(w, "bad request", http.StatusBadRequest)
+		http.Error(w, "invalid speed", http.StatusBadRequest)
 	}))
 	defer server.Close()
 
 	got := ProbeAnthropic(context.Background(), domain.APIConfiguration{
 		Endpoint: server.URL, Model: "claude-sonnet-4-6", Credential: "fixture",
 	})
-	if !got.Probed || !got.Fast || !slices.Equal(got.Efforts, []string{"low", "high"}) {
-		t.Fatalf("ProbeAnthropic() = %+v, want probed=true fast=true efforts=[low high]", got)
+	if !got.Probed || !got.Fast || got.Efforts != nil {
+		t.Fatalf("unexpected probe result: %+v", got)
 	}
 }
 

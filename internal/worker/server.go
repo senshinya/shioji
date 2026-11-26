@@ -624,6 +624,12 @@ func (s *Server) handleWithHistory(method string, body []byte, history *store.Hi
 			return nil, err
 		}
 		return s.changeProfileIcon(in)
+	case "runtime.profile.effort":
+		in, err := decode[protocol.ProfileEffortInput](body)
+		if err != nil {
+			return nil, err
+		}
+		return s.changeProfileEffort(in)
 	case "runtime.profile.models":
 		in, err := decode[protocol.ProfileModelInput](body)
 		if err != nil {

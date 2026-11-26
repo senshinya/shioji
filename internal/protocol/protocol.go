@@ -60,7 +60,7 @@ const Major = 2
 // Minor 60 accepts one-time browser authorization responses on their owning worker.
 // Minor 61 applies live session permission changes on the owning worker.
 // Minor 62 creates isolated device-owned Agent profiles.
-const Minor = 63
+const Minor = 64
 
 const CatalogMinor = 53
 const SubmissionReceiptMinor = 55
@@ -76,6 +76,15 @@ const SignInManualCodeMinor = 60
 const LivePermissionMinor = 61
 const AgentProfileMinor = 62
 const CustomAgentProfileMinor = 63
+const ProfileEffortsMinor = 64
+
+// Nil selects automatic discovery. An explicit empty list hides effort.
+type ProfileEffortInput struct {
+	ID       string    `json:"id"`
+	Model    string    `json:"model"`
+	Previous *[]string `json:"previous"`
+	Efforts  *[]string `json:"efforts"`
+}
 
 type ProfileIconInput struct {
 	ID       string `json:"id"`

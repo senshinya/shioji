@@ -66,6 +66,13 @@ func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.
 	return r, nil
 }
 
+func (a Adapter) effortHome() string {
+	if a.profileID != "" && a.apiPreset == nil {
+		return a.Home
+	}
+	return ""
+}
+
 func (a Adapter) startNative(ctx context.Context, opts harness.StartOptions) (*adapterRuntime, error) {
 	env, _ := a.environment(ctx)
 	if ctx.Err() != nil {
@@ -94,7 +101,7 @@ func (a Adapter) startNative(ctx context.Context, opts harness.StartOptions) (*a
 			return nil, errors.Join(err, opts.Scope.Stop(ctx))
 		}
 	}
-	r, err := Start(ctx, Options{launchEnv: env, apiPreset: a.apiPreset, Executable: a.Executable, Home: a.Home, Environment: a.runtimeOptions.Environment, Arguments: a.launchArguments(), Instructions: a.runtimeOptions.Instructions, Scope: opts.Scope, Executor: executor, OnStart: opts.OnStart, OnEvent: opts.OnEvent, OnMessage: opts.OnMessage, ImportResource: opts.ImportResource})
+	r, err := Start(ctx, Options{launchEnv: env, apiPreset: a.apiPreset, effortHome: a.effortHome(), Executable: a.Executable, Home: a.Home, Environment: a.runtimeOptions.Environment, Arguments: a.launchArguments(), Instructions: a.runtimeOptions.Instructions, Scope: opts.Scope, Executor: executor, OnStart: opts.OnStart, OnEvent: opts.OnEvent, OnMessage: opts.OnMessage, ImportResource: opts.ImportResource})
 	if err != nil {
 		if executor != nil {
 			executor.Close(ctx)
@@ -155,7 +162,10 @@ type adapterClose struct {
 }
 
 func (r *adapterRuntime) Readiness() domain.Readiness {
-	ready := r.Runtime.Readiness()
+	return r.describeReadiness(r.Runtime.Readiness())
+}
+
+func (r *adapterRuntime) describeReadiness(ready domain.Readiness) domain.Readiness {
 	ready.HarnessID = r.descriptor.ID
 	goals := ready.Capabilities.Goals
 	history := r.supports("thread/read") && r.supports("thread/turns/list")

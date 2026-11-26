@@ -58,6 +58,7 @@ func Models(ctx context.Context, id string, in domain.APIConfiguration) ([]domai
 				ID          string
 				Name        string
 				DisplayName string `json:"display_name"`
+				EffortMetadata
 			}
 			HasMore bool   `json:"has_more"`
 			LastID  string `json:"last_id"`
@@ -77,7 +78,7 @@ func Models(ctx context.Context, id string, in domain.APIConfiguration) ([]domai
 			if name == "" || len(name) > 256 || strings.ContainsAny(name, "\x00\r\n") {
 				name = row.ID
 			}
-			models = append(models, domain.Model{ID: row.ID, Name: name})
+			models = append(models, row.Apply(domain.Model{ID: row.ID, Name: name}))
 		}
 		if id != domain.AgentAnthropic || !listing.HasMore {
 			if len(models) == 0 {

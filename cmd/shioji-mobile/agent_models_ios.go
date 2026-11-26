@@ -8,6 +8,7 @@ import (
 
 	"shioji/internal/app"
 	"shioji/internal/domain"
+	"shioji/internal/protocol"
 )
 
 const modelFavoritePath = "M12 3l2.8 5.67 6.26.91-4.53 4.41 1.07 6.24L12 17.29l-5.6 2.94 1.07-6.24-4.53-4.41 6.26-.91Z"
@@ -22,6 +23,49 @@ func mobileModelName(model domain.Model) string {
 		return model.Name
 	}
 	return model.ID
+}
+
+func mobileProfileEfforts(c *ui.Context, agent domain.HarnessInfo, selected *string, drafts map[string]*app.ProfileEffortDraft, disabled bool, save func(protocol.ProfileEffortInput)) {
+	if agent.Profile == nil || !agent.Profile.Authorized || !agent.Profile.SupportsEffortOverrides() || len(agent.Models) == 0 {
+		return
+	}
+	i := slices.IndexFunc(agent.Models, func(model domain.Model) bool { return model.ID == *selected })
+	if i < 0 {
+		i = max(0, slices.IndexFunc(agent.Models, func(model domain.Model) bool { return model.Default }))
+	}
+	model := agent.Models[i]
+	disabled = disabled || agent.State != domain.RuntimeReady
+	draft := drafts[model.ID]
+	if draft == nil {
+		draft = &app.ProfileEffortDraft{}
+		drafts[model.ID] = draft
+	}
+	draft.Sync(agent, model)
+	if len(agent.Models) > 1 {
+		profileFormChoice(c, "配置模型", mobileModelName(model), func(menu *ui.Menu) {
+			for _, entry := range agent.Models {
+				menuChoice(menu, mobileModelName(entry), entry.ID == model.ID, func() { *selected = entry.ID })
+			}
+		}).Disabled(disabled)
+	}
+	field := profileFormInput(c.Key(model.ID), "推理档位", "用逗号分隔", &draft.Text).Disabled(disabled)
+	if !disabled && field.Submitted() && !field.Composing() && draft.Changed() {
+		save(draft.Input(agent.ID, model.ID, false))
+	}
+	ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+		mode := "自动"
+		if draft.Manual() {
+			mode = "手工配置"
+		}
+		ui.Column(c).Grow(1).Children(func() { oneLine(c, mode, captionTextSize, palette(c).secondary) })
+		if draft.Changed() {
+			action(c, "撤销", func() { *draft = app.ProfileEffortDraft{} }).Disabled(disabled)
+		}
+		if draft.Manual() {
+			action(c, "恢复自动", func() { save(draft.Input(agent.ID, model.ID, true)) }).Disabled(disabled)
+		}
+		action(c, "保存档位", func() { save(draft.Input(agent.ID, model.ID, false)) }).Disabled(disabled || draft.Manual() && !draft.Changed())
+	})
 }
 
 func (a *mobileApp) agentModels(c *ui.Context, w *mygo.Window, deviceID string, agent domain.HarnessInfo, busy bool, refresh func()) {
