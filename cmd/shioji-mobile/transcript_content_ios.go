@@ -467,8 +467,12 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 	item = conversationui.ToolForDisplay(conversationui.ReasoningForDisplay(item))
 	p := palette(c)
 	name, inlineFile := conversationui.ToolTitle(item)
+	presentation := item.Presentation
+	if domain.ReasoningSummary(item) {
+		presentation = "reasoning"
+	}
 	symbol := terminalSymbol
-	switch item.Presentation {
+	switch presentation {
 	case "reasoning":
 		symbol = infoSymbol
 		if name == "" {
@@ -489,7 +493,7 @@ func (a *mobileApp) toolItem(c *ui.Context, parent *mygo.Window, session domain.
 	font := mobileStatusFont(c, size)
 	if grouped {
 		ink = p.secondary
-		symbol = mobileToolTimelineIcon(item.Presentation)
+		symbol = mobileToolTimelineIcon(presentation)
 	}
 	lineHeight := mobileStatusLineHeight(font)
 	titleName := name

@@ -34,6 +34,22 @@ async function run() {
   };
   lines.once("close", close);
 
+  const defaultTools = ["Read", "Glob", "Grep", "Edit", "Write", "Bash", "AskUserQuestion", "ExitPlanMode", "Agent"];
+  const readOnlyTools = ["Read", "Glob", "Grep", "AskUserQuestion", "ExitPlanMode", "Agent"];
+  const permissionModeFor = (config) => {
+    if (config?.plan) return "plan";
+    if (config?.permission === "yolo") return "bypassPermissions";
+    if (config?.permission === "auto-approve" && start.accept_edits) return "acceptEdits";
+    return "default";
+  };
+  const extraArgsFor = (config) => {
+    const args = { "no-chrome": null, "replay-user-messages": null };
+    if (config?.permission !== "yolo" || start.bypass_restricted) {
+      args.restricted = null;
+    }
+    return args;
+  };
+
   function open(thread, resume, config, mcp, revision) {
     const prompts = new Readable({ objectMode: true, read() {} });
     const connection = { thread, config, prompts, mcp, revision, skillCommands: new Set(),
@@ -50,13 +66,14 @@ async function run() {
         settings: { ...start.settings, ...(config.effort ? { effortLevel: config.effort } : {}),
           ...(config.fast ? { fastMode: true } : {}) },
         settingSources: [],
-        tools: start.title ? [] : ["Read", "Glob", "Grep", "Edit", "Write", "Bash", "AskUserQuestion", "ExitPlanMode", "Agent"],
-        permissionMode: config.plan ? "plan" : "default",
+        tools: start.title ? [] : (config.permission === "read-only" ? readOnlyTools : defaultTools),
+        permissionMode: permissionModeFor(config),
+        ...(config.permission === "yolo" ? { allowDangerouslySkipPermissions: true } : {}),
         permissionPrompts: "host",
         includePartialMessages: true,
         strictMcpConfig: true,
         mcpServers: mcp ?? {},
-        extraArgs: { restricted: null, "no-chrome": null, "replay-user-messages": null },
+        extraArgs: extraArgsFor(config),
         async canUseTool(name, input, { signal, toolUseID, agentID }) {
           if (start.title || connection !== active || signal.aborted) {
             return { behavior: "deny", message: "Tool request cancelled." };
@@ -241,8 +258,8 @@ async function run() {
             break;
           }
           const config = message.configuration ?? active.config;
-          if (config.plan !== active.config.plan) {
-            await active.session.setPermissionMode(config.plan ? "plan" : "default");
+          if (permissionModeFor(config) !== permissionModeFor(active.config)) {
+            await active.session.setPermissionMode(permissionModeFor(config));
           }
           if (config.effort !== active.config.effort || config.fast !== active.config.fast) {
             await active.session.applyFlagSettings({ effortLevel: config.effort || null, fastMode: config.fast || null });

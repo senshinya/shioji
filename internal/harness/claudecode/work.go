@@ -27,6 +27,9 @@ func (r *runtime) observeWork(turn *activeTurn, in frame) error {
 		if r.workPlan == nil {
 			r.workPlan = make(map[string]bool)
 		}
+		if r.workPermission == nil {
+			r.workPermission = make(map[string]string)
+		}
 		kind := "background"
 		if in.TaskType == "local_agent" {
 			kind = "agent"
@@ -40,6 +43,7 @@ func (r *runtime) observeWork(turn *activeTurn, in frame) error {
 			Title: title, StartedAt: &now, State: "running", CanStop: true}
 		r.work[in.TaskID] = work
 		r.workPlan[in.TaskID] = turn.plan
+		r.workPermission[in.TaskID] = turn.permission
 		if in.ToolUseID != "" {
 			r.workCalls[in.ToolUseID] = in.TaskID
 		}
@@ -83,6 +87,7 @@ func (r *runtime) observeWork(turn *activeTurn, in frame) error {
 		}
 		delete(r.work, in.TaskID)
 		delete(r.workPlan, in.TaskID)
+		delete(r.workPermission, in.TaskID)
 		for call, target := range r.workCalls {
 			if target == in.TaskID {
 				delete(r.workCalls, call)

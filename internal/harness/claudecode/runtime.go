@@ -28,45 +28,51 @@ import (
 var agentSDKBridge string
 
 type runtime struct {
-	opts            harness.StartOptions
-	ready           domain.Readiness
-	config          configuration
-	binary, home    string
-	externalHome    string
-	privateProfiles string
-	version         string
-	catalogVersion  string
-	node, sdk       string
-	env             []string
-	title           bool
-	mu              sync.Mutex
-	writeMu         sync.Mutex
-	process         *exec.Cmd
-	input           io.WriteCloser
-	stopProxy       func()
-	done            chan struct{}
-	stopOnce        sync.Once
-	session         domain.Session
-	turn            *activeTurn
-	lastResult      completedResult
-	canCompact      atomic.Bool
-	approvals       map[string]approval
-	closing         bool
-	mcp             map[string]mcpObservation
-	mcpRevision     string
-	goalServer      *goalServer
-	work            map[string]domain.WorkActivity
-	workCalls       map[string]string
-	workPlan        map[string]bool
-	workTools       map[string]map[string]domain.Item
-	workReplies     map[string]chan bool
+	opts               harness.StartOptions
+	ready              domain.Readiness
+	config             configuration
+	sdkCaps            sdkCapabilities
+	binary, home       string
+	externalHome       string
+	privateProfiles    string
+	version            string
+	catalogVersion     string
+	node, sdk          string
+	env                []string
+	title              bool
+	mu                 sync.Mutex
+	writeMu            sync.Mutex
+	process            *exec.Cmd
+	input              io.WriteCloser
+	stopProxy          func()
+	done               chan struct{}
+	stopOnce           sync.Once
+	session            domain.Session
+	launchedPermission string
+	turn               *activeTurn
+	lastResult         completedResult
+	canCompact         atomic.Bool
+	approvals          map[string]approval
+	closing            bool
+	mcp                map[string]mcpObservation
+	mcpRevision        string
+	goalServer         *goalServer
+	work               map[string]domain.WorkActivity
+	workCalls          map[string]string
+	workPlan           map[string]bool
+	workPermission     map[string]string
+	workTools          map[string]map[string]domain.Item
+	workReplies        map[string]chan bool
 }
+
+var _ harness.LivePermissionRuntime = (*runtime)(nil)
 
 type activeTurn struct {
 	turn          domain.Turn
 	uuid          string
 	operation     string
 	plan          bool
+	permission    string
 	stopping      bool
 	interrupted   bool
 	receipt       chan error
@@ -188,9 +194,15 @@ func (r *runtime) Stopped() bool {
 }
 func (r *runtime) ManagedCoverage() bool { return r.opts.Scope != nil }
 func (r *runtime) ExecutionReady() bool  { return !r.opts.CatalogOnly && !r.Stopped() }
+func (r *runtime) allowsPermission(permission string) bool {
+	if len(r.ready.Permissions) == 0 {
+		return permission == permissionDefault
+	}
+	return slices.Contains(r.ready.Permissions, permission)
+}
 func (r *runtime) Validate(c domain.RunConfig) error {
 	invalid := errors.New("此 Claude Code Profile 不支持所选运行配置")
-	if c.Model != r.config.Model || c.Permission != "" && c.Permission != "default" {
+	if c.Model != r.config.Model || !r.allowsPermission(normalizePermission(c.Permission)) {
 		return invalid
 	}
 	if c.Fast || c.Effort != "" {
@@ -199,6 +211,36 @@ func (r *runtime) Validate(c domain.RunConfig) error {
 			return invalid
 		}
 	}
+	return nil
+}
+func (r *runtime) PermissionRequiresRestart(config domain.RunConfig) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.process == nil || r.launchedPermission == "" {
+		return false
+	}
+	return normalizePermission(config.Permission) != r.launchedPermission
+}
+func (r *runtime) ChangePermission(ctx context.Context, s domain.Session, permission string, accept func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.Stopped() || r.closing || r.session.ID != s.ID || r.session.ThreadID != s.ThreadID || r.process == nil {
+		return errors.New("所属运行环境已变化，权限未更改")
+	}
+	next := normalizePermission(permission)
+	if !r.allowsPermission(next) {
+		return errors.New("此 Claude Code Profile 不支持所选权限模式")
+	}
+	if r.launchedPermission != "" && next != r.launchedPermission {
+		return errors.New("请等待当前会话空闲后更改权限")
+	}
+	if err := accept(); err != nil {
+		return err
+	}
+	r.session.Config.Permission = next
 	return nil
 }
 func (r *runtime) Create(ctx context.Context, s domain.Session) (string, error) {
@@ -291,10 +333,31 @@ func (r *runtime) start(ctx context.Context, s domain.Session, resume bool) erro
 		glob := "(//" + strings.TrimPrefix(attachments, "/") + "/**)"
 		rules = append(rules, "Edit"+glob)
 	}
-	settings := map[string]any{"sandbox": map[string]any{
-		"enabled": true, "failIfUnavailable": true, "allowUnsandboxedCommands": false, "autoAllowBashIfSandboxed": false,
-		"filesystem": map[string]any{"denyRead": denyRead, "allowRead": readable, "allowWrite": allowed, "denyWrite": protected},
-	}}
+	permission := normalizePermission(s.Config.Permission)
+	settings := map[string]any{}
+	switch permission {
+	case permissionReadOnly:
+		denyWrite := append(slices.Clone(protected), allowed...)
+		rules = append(rules, "Write", "Edit", "Bash")
+		settings["sandbox"] = map[string]any{
+			"enabled": true, "failIfUnavailable": true, "allowUnsandboxedCommands": false, "autoAllowBashIfSandboxed": false,
+			"filesystem": map[string]any{"denyRead": denyRead, "allowRead": readable, "allowWrite": []string{}, "denyWrite": denyWrite},
+		}
+	case permissionAutoApprove:
+		settings["sandbox"] = map[string]any{
+			"enabled": true, "failIfUnavailable": true, "allowUnsandboxedCommands": false, "autoAllowBashIfSandboxed": true,
+			"filesystem": map[string]any{"denyRead": denyRead, "allowRead": readable, "allowWrite": allowed, "denyWrite": protected},
+		}
+	case permissionYOLO:
+		settings["sandbox"] = map[string]any{
+			"enabled": false, "allowUnsandboxedCommands": true,
+		}
+	default:
+		settings["sandbox"] = map[string]any{
+			"enabled": true, "failIfUnavailable": true, "allowUnsandboxedCommands": false, "autoAllowBashIfSandboxed": false,
+			"filesystem": map[string]any{"denyRead": denyRead, "allowRead": readable, "allowWrite": allowed, "denyWrite": protected},
+		}
+	}
 	if len(rules) > 0 {
 		settings["permissions"] = map[string]any{"deny": rules}
 	}
@@ -325,7 +388,7 @@ func (r *runtime) start(ctx context.Context, s domain.Session, resume bool) erro
 		r.mu.Unlock()
 		return errors.New("无法启动 Claude Code")
 	}
-	r.process, r.input, r.session, r.stopProxy = process, input, s, stopProxy
+	r.process, r.input, r.session, r.launchedPermission, r.stopProxy = process, input, s, permission, stopProxy
 	r.mu.Unlock()
 
 	ready := make(chan error, 1)
@@ -333,6 +396,7 @@ func (r *runtime) start(ctx context.Context, s domain.Session, resume bool) erro
 	if err = r.send(map[string]any{
 		"type": "start", "binary": r.binary, "thread": s.ThreadID, "resume": resume,
 		"title": r.title, "configuration": claudeTurnConfig(s.Config),
+		"accept_edits": r.sdkCaps.Permissions.AcceptEdits, "bypass_restricted": r.sdkCaps.Permissions.BypassRestricted,
 		"model": r.config.Model, "directories": additional, "settings": settings,
 		"mcp": tools, "mcp_revision": revision,
 	}); err != nil {
@@ -436,6 +500,10 @@ func (r *runtime) beginPrompt(ctx context.Context, operation string, input prepa
 	if err := r.Validate(config); err != nil {
 		return "", nil, &harness.DeliveryError{Message: err.Error()}
 	}
+	permission := normalizePermission(config.Permission)
+	if r.launchedPermission != "" && permission != r.launchedPermission {
+		return "", nil, &harness.DeliveryError{Message: "权限模式已变化，需在会话空闲后重新加载"}
+	}
 	if r.version != "" {
 		version, err := profileVersion(r.home)
 		if err != nil || version != r.version {
@@ -455,7 +523,7 @@ func (r *runtime) beginPrompt(ctx context.Context, operation string, input prepa
 	now := time.Now().UTC()
 	inputID := nativeInputID(r.session.ThreadID, operation)
 	t := &activeTurn{turn: domain.Turn{ID: inputID, Status: domain.ExecutionRunning, StartedAt: &now, Presentation: presentation},
-		uuid: inputID, operation: operation, plan: config.Plan, receipt: make(chan error, 1), items: map[string]domain.Item{}, tools: map[string]string{}}
+		uuid: inputID, operation: operation, plan: config.Plan, permission: permission, receipt: make(chan error, 1), items: map[string]domain.Item{}, tools: map[string]string{}}
 	t.goal, t.goalKey = input.Goal, input.GoalKey
 	if t.goal != nil && strings.HasPrefix(operation, domain.GoalContinuationPrefix) {
 		t.turn.Presentation = domain.GoalContinuationPresentation
@@ -484,7 +552,7 @@ func (r *runtime) beginPrompt(ctx context.Context, operation string, input prepa
 }
 
 func claudeTurnConfig(config domain.RunConfig) map[string]any {
-	return map[string]any{"plan": config.Plan, "effort": config.Effort, "fast": config.Fast}
+	return map[string]any{"permission": normalizePermission(config.Permission), "plan": config.Plan, "effort": config.Effort, "fast": config.Fast}
 }
 
 func nativeInputID(thread, operation string) string {

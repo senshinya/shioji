@@ -276,7 +276,7 @@ func (v *View) reasoningActivityItem(c *n.Context, t *n.Theme, item domain.Item,
 			font := n.Font{Family: c.Theme().Font, Size: transcriptCaptionSize, Weight: 400}
 			transcriptMarkerSlot(c.Key("icon")).MarginEnd(6).Children(func() {
 				if liveProgress < 1 {
-					icon := transcriptSymbol(c.Key("summary-icon"), activityIcon(item.Presentation), summaryLabel, font, color).Opacity(1 - liveProgress)
+					icon := transcriptSymbol(c.Key("summary-icon"), activityIcon("reasoning"), summaryLabel, font, color).Opacity(1 - liveProgress)
 					if liveProgress > 0 {
 						icon.Absolute().Left(0).Top(0)
 					}

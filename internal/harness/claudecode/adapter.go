@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -210,10 +211,12 @@ func (a Adapter) ConfigureAPIWithProgress(ctx context.Context, in domain.APIConf
 			return domain.Readiness{}, err
 		}
 	}
-	if _, _, err = a.executable(ctx); err != nil {
+	bin, env, err := a.executable(ctx)
+	if err != nil {
 		return domain.Readiness{}, err
 	}
-	if managedagent.ClaudeNode.Find(a.State) == "" || managedagent.ClaudeSDK.Find(a.State) == "" {
+	node, sdk := managedagent.ClaudeNode.Find(a.State), managedagent.ClaudeSDK.Find(a.State)
+	if node == "" || sdk == "" {
 		return domain.Readiness{}, missingSDK()
 	}
 	if progress != nil {
@@ -230,7 +233,9 @@ func (a Adapter) ConfigureAPIWithProgress(ctx context.Context, in domain.APIConf
 	if err != nil || savePrivate(filepath.Join(a.home, "settings-api.json"), raw) != nil {
 		return domain.Readiness{}, setupError("无法保存设备上的 API 配置")
 	}
-	return a.readiness(config), nil
+	version, _ := profileVersion(a.home)
+	apiCaps, sdkCaps := a.resolveCapabilities(ctx, config, node, sdk, bin, a.runtimeVersion(version, env), true, true)
+	return applyCapabilities(a.readiness(config), config, apiCaps, sdkCaps), nil
 }
 
 func missingSDK() error {
@@ -245,23 +250,76 @@ func (a Adapter) RepairAPIRuntime(ctx context.Context, progress func(domain.Runt
 	if err := a.ensureToolchain(ctx, progress); err != nil {
 		return domain.Readiness{}, err
 	}
-	if _, _, err = a.executable(ctx); err != nil {
+	bin, env, err := a.executable(ctx)
+	if err != nil {
 		return domain.Readiness{}, err
 	}
-	return a.readiness(config), nil
+	node, sdk := managedagent.ClaudeNode.Find(a.State), managedagent.ClaudeSDK.Find(a.State)
+	version, _ := profileVersion(a.home)
+	apiCaps, sdkCaps := a.resolveCapabilities(ctx, config, node, sdk, bin, a.runtimeVersion(version, env), true, false)
+	return applyCapabilities(a.readiness(config), config, apiCaps, sdkCaps), nil
 }
 
 func (a Adapter) readiness(config configuration) domain.Readiness {
+	permissions, choices := permissionChoices(sdkPermissionCapabilities{})
 	return domain.Readiness{
 		HarnessID: a.id, State: domain.RuntimeReady, Models: []domain.Model{modelapi.Model(config.input())}, Plan: true,
 		Account:           &domain.RuntimeAccount{State: "configured", Mode: "api", Label: "Anthropic API", Endpoint: config.Endpoint, Model: config.Model, Credential: "configured"},
-		Permissions:       []string{"default"},
-		PermissionChoices: []domain.OptionChoice{{ID: "default", Name: "按需批准"}},
+		Permissions:       permissions,
+		PermissionChoices: choices,
 		Capabilities: domain.HarnessCapabilities{Steer: true, Interrupt: true, Recovery: true, Resume: true,
 			Fork: true, Restart: true, CompactNeedsCheck: true,
 			ToolServices: true, ToolServiceInspection: true, Skills: true, SkillManagement: true, Goals: true, WorkerGoals: true,
 			PathAttachments: true, HookManagement: true, HookInspection: true},
 	}
+}
+
+func applyCapabilities(ready domain.Readiness, config configuration, apiCaps modelapi.AnthropicCapabilities, sdkCaps sdkCapabilities) domain.Readiness {
+	ready.Permissions, ready.PermissionChoices = permissionChoices(sdkCaps.Permissions)
+	if len(ready.Models) > 0 {
+		if apiCaps.Probed {
+			ready.Models[0] = mergeAPIModelOptions(ready.Models[0], apiCaps)
+		} else if officialEndpoint(config.Endpoint) {
+			ready.Models[0] = mergeModelOptions(ready.Models[0], sdkCaps.Models)
+		}
+	}
+	return ready
+}
+
+func (a Adapter) resolveCapabilities(ctx context.Context, config configuration, node, sdk, bin, runtimeVer string, probeAPI, forceRefresh bool) (modelapi.AnthropicCapabilities, sdkCapabilities) {
+	cache, hasCache := loadCapabilitiesCache(a.home, config.Endpoint, config.Model)
+	apiCaps, sdkCaps := cache.API, cache.SDK
+	needSDK := forceRefresh || !hasCache || !sdkCaps.Probed || cache.RuntimeVersion != runtimeVer
+	needAPI := probeAPI && (forceRefresh || !hasCache || !apiCaps.Probed)
+	if !needSDK && !needAPI {
+		return apiCaps, sdkCaps
+	}
+	var wg sync.WaitGroup
+	if needSDK {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sdkCaps = probeSDKCapabilities(ctx, node, sdk, bin)
+		}()
+	}
+	if needAPI {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			apiCaps = modelapi.ProbeAnthropic(ctx, config.input())
+		}()
+	}
+	wg.Wait()
+	if sdkCaps.Probed || apiCaps.Probed {
+		saveCapabilitiesCache(a.home, cachedCapabilities{
+			Endpoint:       config.Endpoint,
+			Model:          config.Model,
+			RuntimeVersion: runtimeVer,
+			API:            apiCaps,
+			SDK:            sdkCaps,
+		})
+	}
+	return apiCaps, sdkCaps
 }
 
 func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.Runtime, error) {
@@ -289,12 +347,11 @@ func (a Adapter) Start(ctx context.Context, opts harness.StartOptions) (harness.
 	if root := filepath.Join(a.State, "agent-profiles"); filepath.IsAbs(root) && filepath.Dir(a.home) == root {
 		privateProfiles = root
 	}
-	ready := a.readiness(config)
-	if officialEndpoint(config.Endpoint) {
-		ready.Models[0] = mergeModelOptions(ready.Models[0], modelOptions(ctx, node, sdk, bin))
-	}
-	return &runtime{ready: ready, config: config, opts: opts, binary: bin, node: node, sdk: sdk, env: env,
-		home: a.home, privateProfiles: privateProfiles, version: version, catalogVersion: a.runtimeVersion(version, env),
+	catalogVersion := a.runtimeVersion(version, env)
+	apiCaps, sdkCaps := a.resolveCapabilities(ctx, config, node, sdk, bin, catalogVersion, opts.CatalogOnly, opts.RefreshCatalog)
+	ready := applyCapabilities(a.readiness(config), config, apiCaps, sdkCaps)
+	return &runtime{ready: ready, config: config, sdkCaps: sdkCaps, opts: opts, binary: bin, node: node, sdk: sdk, env: env,
+		home: a.home, privateProfiles: privateProfiles, version: version, catalogVersion: catalogVersion,
 		externalHome: filepath.Join(userHome, ".claude"), done: make(chan struct{}), approvals: map[string]approval{}}, nil
 }
 

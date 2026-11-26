@@ -14,15 +14,81 @@ import (
 	"time"
 
 	"shioji/internal/domain"
+	"shioji/internal/harness/modelapi"
 )
 
 //go:embed model-sdk.mjs
 var modelSDK string
 
+const (
+	permissionReadOnly    = "read-only"
+	permissionDefault     = "default"
+	permissionAutoApprove = "auto-approve"
+	permissionYOLO        = "yolo"
+
+	capabilitiesCacheFile    = "capabilities.json"
+	capabilitiesCacheVersion = 1
+)
+
+var allowedEffortLevels = []string{"low", "medium", "high", "xhigh", "max"}
+
 type nativeModel struct {
 	Value, ResolvedModel             string
 	SupportsFastMode, SupportsEffort bool
 	SupportedEffortLevels            []string
+}
+
+type sdkPermissionCapabilities struct {
+	ReadOnly          bool `json:"readOnly"`
+	Default           bool `json:"default"`
+	AutoApprove       bool `json:"autoApprove"`
+	AcceptEdits       bool `json:"acceptEdits"`
+	YOLO              bool `json:"yolo"`
+	BypassPermissions bool `json:"bypassPermissions"`
+	BypassRestricted  bool `json:"bypassRestricted"`
+}
+
+type sdkCapabilities struct {
+	Probed      bool                      `json:"probed"`
+	Models      []nativeModel             `json:"models,omitempty"`
+	Permissions sdkPermissionCapabilities `json:"permissions"`
+}
+
+type cachedCapabilities struct {
+	Schema         int                            `json:"schema"`
+	Endpoint       string                         `json:"endpoint"`
+	Model          string                         `json:"model"`
+	RuntimeVersion string                         `json:"runtimeVersion"`
+	API            modelapi.AnthropicCapabilities `json:"api"`
+	SDK            sdkCapabilities                `json:"sdk"`
+	ProbedAt       time.Time                      `json:"probedAt"`
+}
+
+func normalizePermission(value string) string {
+	if value == "" {
+		return permissionDefault
+	}
+	return value
+}
+
+func permissionChoices(caps sdkPermissionCapabilities) ([]string, []domain.OptionChoice) {
+	var permissions []string
+	var choices []domain.OptionChoice
+	if caps.ReadOnly {
+		permissions = append(permissions, permissionReadOnly)
+		choices = append(choices, domain.OptionChoice{ID: permissionReadOnly, Name: "只读", Description: "仅查看"})
+	}
+	permissions = append(permissions, permissionDefault)
+	choices = append(choices, domain.OptionChoice{ID: permissionDefault, Name: "默认权限", Description: "按需请求批准"})
+	if caps.AutoApprove {
+		permissions = append(permissions, permissionAutoApprove)
+		choices = append(choices, domain.OptionChoice{ID: permissionAutoApprove, Name: "自动批准", Description: "沙盒内自动批准"})
+	}
+	if caps.YOLO && caps.BypassPermissions {
+		permissions = append(permissions, permissionYOLO)
+		choices = append(choices, domain.OptionChoice{ID: permissionYOLO, Name: "YOLO", Description: "不限制沙盒或批准"})
+	}
+	return permissions, choices
 }
 
 func officialEndpoint(value string) bool {
@@ -44,7 +110,7 @@ func mergeModelOptions(model domain.Model, options []nativeModel) domain.Model {
 	native := options[at]
 	if native.SupportsEffort {
 		for _, effort := range native.SupportedEffortLevels {
-			if slices.Contains([]string{"low", "medium", "high", "xhigh", "max"}, effort) && !slices.Contains(model.Efforts, effort) {
+			if slices.Contains(allowedEffortLevels, effort) && !slices.Contains(model.Efforts, effort) {
 				model.Efforts = append(model.Efforts, effort)
 			}
 		}
@@ -53,13 +119,27 @@ func mergeModelOptions(model domain.Model, options []nativeModel) domain.Model {
 	return model
 }
 
-func modelOptions(ctx context.Context, node, sdk, binary string) []nativeModel {
+func mergeAPIModelOptions(model domain.Model, caps modelapi.AnthropicCapabilities) domain.Model {
+	model.Efforts = nil
+	for _, effort := range caps.Efforts {
+		if slices.Contains(allowedEffortLevels, effort) && !slices.Contains(model.Efforts, effort) {
+			model.Efforts = append(model.Efforts, effort)
+		}
+	}
+	model.Fast = caps.Fast
+	return model
+}
+
+func probeSDKCapabilities(ctx context.Context, node, sdk, binary string) sdkCapabilities {
+	if node == "" || sdk == "" {
+		return sdkCapabilities{}
+	}
 	dir, err := os.MkdirTemp("", "shioji-claude-models-")
 	if err != nil {
-		return nil
+		return sdkCapabilities{}
 	}
 	defer os.RemoveAll(dir)
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, node, "--input-type=module", "--eval", modelSDK, "--", binary, sdk)
 	cmd.Dir = dir
@@ -69,9 +149,47 @@ func modelOptions(ctx context.Context, node, sdk, binary string) []nativeModel {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	out, err := cmd.Output()
-	var values []nativeModel
-	if err != nil || json.Unmarshal(out, &values) != nil {
-		return nil
+	if err != nil {
+		return sdkCapabilities{}
 	}
-	return values
+	var probed sdkCapabilities
+	if json.Unmarshal(out, &probed) == nil && probed.Probed {
+		return probed
+	}
+	var legacy []nativeModel
+	if json.Unmarshal(out, &legacy) == nil {
+		return sdkCapabilities{Models: legacy}
+	}
+	return sdkCapabilities{}
+}
+
+func loadCapabilitiesCache(home, endpoint, model string) (cachedCapabilities, bool) {
+	var cache cachedCapabilities
+	if home == "" {
+		return cache, false
+	}
+	p := filepath.Join(home, capabilitiesCacheFile)
+	stat, err := os.Lstat(p)
+	if err != nil || !stat.Mode().IsRegular() || stat.Mode().Perm()&0077 != 0 || stat.Size() > 64<<10 {
+		return cache, false
+	}
+	raw, err := os.ReadFile(p)
+	if err != nil || json.Unmarshal(raw, &cache) != nil {
+		return cache, false
+	}
+	if cache.Schema != capabilitiesCacheVersion || cache.Endpoint != endpoint || cache.Model != model {
+		return cachedCapabilities{}, false
+	}
+	return cache, true
+}
+
+func saveCapabilitiesCache(home string, cache cachedCapabilities) {
+	if home == "" {
+		return
+	}
+	cache.Schema = capabilitiesCacheVersion
+	cache.ProbedAt = time.Now().UTC()
+	if raw, err := json.Marshal(cache); err == nil {
+		_ = savePrivate(filepath.Join(home, capabilitiesCacheFile), raw)
+	}
 }

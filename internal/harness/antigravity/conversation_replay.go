@@ -115,6 +115,9 @@ func (h *historyReplay) message(frameKind, id, text string) {
 		kind = "reasoning"
 	}
 	item := h.nextItem(kind)
+	if kind == "reasoning" {
+		item.Presentation = "reasoning"
+	}
 	item.Text = clip(text, 128<<10)
 	item.Truncated = len(text) != len(item.Text)
 	h.items = append(h.items, item)
