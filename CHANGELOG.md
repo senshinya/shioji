@@ -5,6 +5,26 @@
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-26
+
+[源码](https://github.com/senshinya/shioji/tree/v0.10.1) · [与上一正式版 v0.10.0 比较](https://github.com/senshinya/shioji/compare/v0.10.0...v0.10.1)
+
+### Added
+
+- 可以在工作区预览、只读导入 Antigravity（AGY）历史会话。导入保留消息、思考摘要和工具记录，原会话可以继续在 AGY 中使用。
+- Codex 在生成回复时实时显示思考摘要。内嵌 WAV 和 MP3 工具结果可通过系统预览打开。
+
+### Changed
+
+- 自定义 Anthropic API Profile 在所属执行设备上通过官方 Claude Agent SDK 运行 Claude Code。会话可展示子 Agent 结果、文件差异、MCP 结构化结果和上下文压缩状态。
+- AGY 命令复用普通工具行的布局和折叠交互，并更新现有任务清单与后台任务面板。单文件差异的文件名直接显示在工具标题中，MCP 原始数据可按需展开。
+
+### Fixed
+
+- DeepSeek 支持为兼容模型选择思考模式。macOS 设备工具栏的状态保持单行显示。
+
+GitHub Release 提供适用于 Apple Silicon 的 macOS 安装包。已安装支持自动更新的正式版可在 Shioji 菜单或「设置 → 关于」检查更新。AGY 历史导入及运行时改进需要更新所属设备的执行服务。本版沿用协议 2.63 和数据库 schema 17。
+
 ## [0.10.0] - 2026-11-25
 
 [源码](https://github.com/senshinya/shioji/tree/v0.10.0) · [与上一正式版 v0.9.1 比较](https://github.com/senshinya/shioji/compare/v0.9.1...v0.10.0)
