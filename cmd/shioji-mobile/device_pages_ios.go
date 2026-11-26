@@ -811,7 +811,7 @@ func (a *mobileApp) openAgentSettingsAt(parent *mygo.Window, agent domain.Harnes
 			case "常规":
 				if current.Profile != nil && domain.IsCustomAgent(current.Profile.HarnessID) {
 					formRow(c, "图标", func() {
-						a.mobileProfileIcon(c, w, current.Icon, blocked || authBusy, func(icon string) {
+						mobileProfileIcon(c, current.Icon, blocked || authBusy, func(icon string) {
 							in := protocol.ProfileIconInput{ID: current.ID, Previous: current.Profile.Icon, Icon: icon}
 							a.pageJob(w, &req, "runtime.profile.icon", in, decodePage(func(out protocol.AgentSetupResult) error {
 								if !out.Ready || !applyAgent(domain.Readiness{Harnesses: out.Catalog}) {
@@ -822,7 +822,7 @@ func (a *mobileApp) openAgentSettingsAt(parent *mygo.Window, agent domain.Harnes
 								}
 								return nil
 							}))
-						}, func(err error) { req.err = err.Error() })
+						})
 					})
 				}
 				mobileSection(c, "账户")

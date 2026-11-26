@@ -10,6 +10,15 @@ import (
 	"shioji/internal/domain"
 )
 
+func TestNormalizeAcceptsHTTPOnAnyHost(t *testing.T) {
+	for _, endpoint := range []string{"http://203.0.113.42:8080/v1", "http://[2001:db8::42]:8080/v1", "http://192.168.1.42/v1", "http://api.example.test/v1", "http://127.0.0.1/v1"} {
+		in := domain.APIConfiguration{Endpoint: endpoint, Model: "m", Credential: "fixture"}
+		if got, err := Normalize(in); err != nil || got != in {
+			t.Errorf("Normalize(%q) = %+v, %v", endpoint, got, err)
+		}
+	}
+}
+
 func TestListsResponsesAndPaginatedAnthropicModels(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {

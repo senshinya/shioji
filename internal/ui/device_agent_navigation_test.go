@@ -564,18 +564,34 @@ func TestCustomProfileUsesDropdownExplicitIconAndOwningDeviceModelList(t *testin
 		t.Fatal("explicit icon row is missing", ui.Texts())
 	}
 	click("选择图标")
-	click("Claude")
+	saveNativeSkillImage(t, ui, "custom-api-icons-light.png")
+	for _, label := range []string{"Codex", "DeepSeek", "Antigravity", "Anthropic"} {
+		if _, ok := ui.Find(label); !ok {
+			t.Fatalf("missing profile icon %q", label)
+		}
+	}
+	if _, ok := ui.Find("从文件选取…"); ok {
+		t.Fatal("the icon picker should only offer the four brand icons")
+	}
+	click("DeepSeek")
+	if icon := v.deviceProfile.draft.Icon; icon != "deepseek" {
+		t.Fatalf("DeepSeek selection saved %q", icon)
+	}
+	ui.SetDark(true)
+	click("选择图标")
+	saveNativeSkillImage(t, ui, "custom-api-icons-dark.png")
+	click("Anthropic")
 	click("Anthropic API")
 	click("Profile 名称")
 	ui.Type("自定义测试")
 	click("输入 API 地址")
-	ui.Type("https://api.example.test")
+	ui.Type("http://203.0.113.42:8080")
 	click("输入 API Key")
 	ui.Type("fixture-key")
 	click("获取模型")
 	models := welcomeJob(t, v.Controller, "runtime.profile.models")
 	in := models.Input.(protocol.ProfileModelInput)
-	if models.ConnectionID != "local" || in.HarnessID != domain.AgentAnthropic || in.API.Endpoint != "https://api.example.test" {
+	if models.ConnectionID != "local" || in.HarnessID != domain.AgentAnthropic || in.API.Endpoint != "http://203.0.113.42:8080" {
 		t.Fatal("model list did not target the selected device and protocol")
 	}
 	body, _ := json.Marshal([]domain.Model{{ID: "test-model", Name: "测试模型"}})
@@ -594,7 +610,7 @@ func TestCustomProfileUsesDropdownExplicitIconAndOwningDeviceModelList(t *testin
 	create.Apply(m, body, nil)
 	start := welcomeJob(t, v.Controller, "runtime.signin.start")
 	api := start.Input.(protocol.SignInInput).API
-	if api == nil || !api.InstallRuntime || api.Model != "test-model" {
+	if api == nil || !api.InstallRuntime || api.Model != "test-model" || api.Endpoint != "http://203.0.113.42:8080" {
 		t.Fatal("the selected model or installation intent was not sent")
 	}
 }

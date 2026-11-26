@@ -4,6 +4,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 
 	mygo "github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -11,6 +12,7 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"shioji/internal/ui/assets"
 )
 
 const mobileCustomProfile = "custom-profile"
@@ -29,12 +31,15 @@ func mobileCustomAPILabel(id string) string {
 	return "Responses API"
 }
 
-var mobileProfileIcons = []struct{ id, name string }{
-	{"profile-sliders", "调节"}, {"profile-terminal", "终端"}, {"profile-code", "代码"}, {"profile-cube", "方块"},
-	{"profile-spark", "星光"}, {"profile-bolt", "闪电"}, {"profile-orbit", "轨道"}, {"claude", "Claude"},
-}
+var mobileProfileMenuIcons = sync.OnceValue(func() map[string]*mygo.MenuIcon {
+	icons := make(map[string]*mygo.MenuIcon, len(assets.ProfileIconChoices))
+	for _, choice := range assets.ProfileIconChoices {
+		icons[choice.ID], _ = mygo.NewMenuIconSVG(mobileHarnessSymbol(choice.ID), true)
+	}
+	return icons
+})
 
-func (a *mobileApp) mobileProfileIcon(c *ui.Context, w *mygo.Window, icon string, disabled bool, choose func(string), report func(error)) {
+func mobileProfileIcon(c *ui.Context, icon string, disabled bool, choose func(string)) {
 	p := palette(c)
 	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 		if picture := app.AgentProfileIconImage(icon); picture != nil {
@@ -44,29 +49,11 @@ func (a *mobileApp) mobileProfileIcon(c *ui.Context, w *mygo.Window, icon string
 		}
 		iconAction(c, "选择图标", "选择图标", nil, 0, pickerSymbol, pickerIconSize, bodyTextSize, 400, nil).
 			Disabled(disabled).Menu(func(menu *ui.Menu) {
-			for _, choice := range mobileProfileIcons {
-				menuChoice(menu, choice.name, choice.id == icon, func() { choose(choice.id) })
-			}
-			if menu.Item("从文件选取…").Chosen() && a.controller != nil {
-				owner, model, epoch := a.controller, a.model, a.model.ConnectionEpoch
-				a.controller.AttachmentTask(func() app.Update {
-					paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: w, Title: "选择 Profile 图标", Message: "PNG、JPEG 或 WebP 图片"})
-					value := ""
-					if err == nil && len(paths) == 1 {
-						value, err = app.ReadAgentProfileIcon(paths[0])
-					}
-					return func(_ *app.Model) {
-						if !a.pageCurrent(w) || owner != a.controller || model != a.model || epoch != model.ConnectionEpoch {
-							return
-						}
-						if err != nil {
-							report(err)
-						} else if value != "" {
-							choose(value)
-						}
-						w.Invalidate()
-					}
-				})
+			icons := mobileProfileMenuIcons()
+			for _, choice := range assets.ProfileIconChoices {
+				if menu.Item(choice.Name).Icon(icons[choice.ID]).Checked(choice.ID == icon).Chosen() {
+					choose(choice.ID)
+				}
 			}
 		})
 	})
@@ -174,7 +161,7 @@ func (a *mobileApp) openCreateAgentProfile(parent *mygo.Window, providers []doma
 					menuChoice(menu, item.Name, item.ID == provider.ID, func() {
 						provider = item
 						mode, name, credential = item.ProfileModes[0], "", ""
-						selectedAPI, icon = domain.AgentResponses, "profile-sliders"
+						selectedAPI, icon = domain.AgentResponses, assets.DefaultProfileIcon
 						if _, ok := customProviders[selectedAPI]; !ok {
 							selectedAPI = domain.AgentAnthropic
 						}
@@ -199,11 +186,11 @@ func (a *mobileApp) openCreateAgentProfile(parent *mygo.Window, providers []doma
 			})
 			if custom {
 				plainFormRow(c, "图标", func() {
-					a.mobileProfileIcon(c, w, icon, locked, func(next string) {
+					mobileProfileIcon(c, icon, locked, func(next string) {
 						if saved.ID == "" {
 							icon = next
 						}
-					}, func(err error) { request.err = err.Error() })
+					})
 				})
 			}
 			if !custom {

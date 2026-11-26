@@ -5,12 +5,12 @@ import (
 	"errors"
 	"strings"
 
-	mygo "github.com/egoist/mygo"
 	n "github.com/egoist/mygo/ui"
 
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"shioji/internal/ui/assets"
 )
 
 const customProfileChoice = "custom-profile"
@@ -166,13 +166,7 @@ func (v *View) loadProfileModels(state *app.DeviceState, p *deviceProfileEditor)
 	}
 }
 
-var profileIconChoices = []struct{ id, name string }{
-	{"profile-sliders", "调节"}, {"profile-terminal", "终端"}, {"profile-code", "代码"},
-	{"profile-cube", "方块"}, {"profile-spark", "星光"}, {"profile-bolt", "闪电"},
-	{"profile-orbit", "轨道"}, {"claude", "Claude"},
-}
-
-func (v *View) profileIconPicker(c *n.Context, t *n.Theme, key, selected string, disabled bool, choose func(string), report func(error)) {
+func (v *View) profileIconPicker(c *n.Context, t *n.Theme, key, selected string, disabled bool, choose func(string)) {
 	if v.menuOpen == nil {
 		v.menuOpen = map[string]bool{}
 	}
@@ -185,42 +179,30 @@ func (v *View) profileIconPicker(c *n.Context, t *n.Theme, key, selected string,
 			open = !open
 		}
 		popover(c.Key(menuKey), trigger, &open, func(panel n.Element) {
-			compactMenuSurface(panel, t).Padding(4).Width(244).Children(func() {
+			compactMenuSurface(panel, t).Padding(4).Width(128).Role(n.RoleMenu).Children(func() {
 				n.Row(c).Gap(2).FocusGroup(n.Horizontal).Children(func() {
-					for _, item := range profileIconChoices {
-						button := control(c.Key(item.id), 5).Size(27, 28).Label(item.name)
-						if selected == item.id {
+					for _, item := range assets.ProfileIconChoices {
+						checked := selected == item.ID
+						button := control(c.Key(item.ID), 5).Size(28, 28).Label(item.Name).Tooltip(item.Name).
+							Role(n.RoleMenuItemRadio).Checked(checked)
+						if checked {
 							button.Background(menuSelectionSurface(t)).AutoFocus()
 						}
-						button.Children(func() { profileIconView(c, item.id, 16, t.TextMuted) })
+						button.Children(func() {
+							size := float32(16)
+							// The Anthropic artwork fills its viewBox. The other marks have inset ink.
+							if item.ID == "claude" {
+								size = 11
+							}
+							profileIconView(c, item.ID, size, t.TextMuted)
+						})
 						if button.Clicked() {
-							choose(item.id)
+							choose(item.ID)
 							open = false
 							trigger.Focus()
 						}
 					}
 				})
-				deviceDivider(c)
-				if configurationAction(c, "从文件选取…").FillWidth().AlignSelf(n.Start).Clicked() {
-					open = false
-					chooseFile := func() app.Update {
-						paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: v.nativeWindow, Title: "选择 Profile 图标", Message: "PNG、JPEG 或 WebP 图片"})
-						icon := ""
-						if err == nil && len(paths) == 1 {
-							icon, err = app.ReadAgentProfileIcon(paths[0])
-						}
-						return func(_ *app.Model) {
-							if err != nil {
-								report(err)
-							} else if icon != "" {
-								choose(icon)
-							}
-						}
-					}
-					if v.Controller != nil {
-						v.Controller.AttachmentTask(chooseFile)
-					}
-				}
 			})
 		})
 		v.menuOpen[menuKey] = open

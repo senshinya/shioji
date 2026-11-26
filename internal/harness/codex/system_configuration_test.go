@@ -111,11 +111,18 @@ func TestAPISetupWritesNativeConfigAndPreservesUnrelatedSettings(t *testing.T) {
 }
 
 func TestAPISetupRejectsUnsafeEndpointBeforeWriting(t *testing.T) {
-	for _, endpoint := range []string{"http://example.com/v1", "https://user:secret@example.com/v1", "https://example.com/v1?key=secret", "file:///tmp/config"} {
+	for _, endpoint := range []string{"https://user:secret@example.com/v1", "https://example.com/v1?key=secret", "file:///tmp/config"} {
 		_, err := (Adapter{}).ConfigureAPI(context.Background(), domain.APIConfiguration{Endpoint: endpoint, Model: "m", Credential: "do-not-echo"})
 		if err == nil || strings.Contains(err.Error(), "do-not-echo") {
 			t.Fatal("unsafe setup accepted", endpoint, err)
 		}
+	}
+}
+
+func TestAPISetupAcceptsNonLoopbackHTTP(t *testing.T) {
+	in := domain.APIConfiguration{Endpoint: "http://203.0.113.42:8080/v1", Model: "m", Credential: "fixture"}
+	if got, err := (Adapter{}).apiConfiguration(in); err != nil || got != in {
+		t.Fatalf("API configuration rejected non-loopback HTTP: %v", err)
 	}
 }
 

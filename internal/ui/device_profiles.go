@@ -3,8 +3,6 @@ package ui
 import (
 	"encoding/json"
 	"errors"
-	"net"
-	"net/url"
 	"slices"
 	"strings"
 	"unicode"
@@ -14,6 +12,7 @@ import (
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"shioji/internal/ui/assets"
 )
 
 type deviceProfileEditor struct {
@@ -113,7 +112,7 @@ func (p *deviceProfileEditor) selectAgent(info domain.HarnessInfo) {
 	p.modelError = ""
 	p.draft = domain.AgentProfile{HarnessID: info.ID, Mode: info.ProfileModes[0]}
 	if info.ID == customProfileChoice {
-		p.draft.HarnessID, p.draft.Icon = domain.AgentResponses, "profile-sliders"
+		p.draft.HarnessID, p.draft.Icon = domain.AgentResponses, assets.DefaultProfileIcon
 	}
 	p.auth = runtimeOptionDraft{}
 	p.method, p.error = "", ""
@@ -194,19 +193,6 @@ func (v *View) submitDeviceProfile(key string, state *app.DeviceState, e *device
 	if keyOnly && strings.TrimSpace(p.auth.apiCredential) == "" {
 		p.error = "请输入 API Key"
 		return
-	}
-	if p.draft.Mode == domain.AgentProfileAPI && !keyOnly {
-		address := strings.TrimSpace(p.auth.apiEndpoint)
-		u, err := url.Parse(address)
-		if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || len(address) > 4096 {
-			p.error = "请输入不含凭据的 API 地址"
-			return
-		}
-		ip := net.ParseIP(u.Hostname())
-		if u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || ip != nil && ip.IsLoopback())) {
-			p.error = "API 地址须使用 HTTPS，本机服务可使用 HTTP"
-			return
-		}
 	}
 	if domain.IsCustomAgent(p.draft.HarnessID) {
 		if strings.TrimSpace(p.auth.apiModel) == "" || strings.TrimSpace(p.auth.apiCredential) == "" {

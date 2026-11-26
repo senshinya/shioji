@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"shioji/internal/harness"
 	"strconv"
@@ -163,9 +162,8 @@ func validateAPIConfiguration(in domain.APIConfiguration) (domain.APIConfigurati
 	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || len(in.Endpoint) > 4096 {
 		return in, errors.New("请输入不含凭据的 API 地址")
 	}
-	ip := net.ParseIP(u.Hostname())
-	if u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || ip != nil && ip.IsLoopback())) {
-		return in, errors.New("API 地址须使用 HTTPS，本机服务可使用 HTTP")
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return in, errors.New("请输入 HTTP 或 HTTPS API 地址")
 	}
 	if len(in.Model) > 256 || strings.ContainsAny(in.Model, "\x00\r\n") || len(in.Credential) > 16<<10 || strings.ContainsAny(in.Credential, "\x00\r\n") {
 		return in, errors.New("请检查模型名称和 API Key")

@@ -362,4 +362,10 @@ func TestAnthropicProviderRequiresACustomAPIProfile(t *testing.T) {
 	if err != nil || bound.Descriptor().ID != id || bound.Descriptor().ProfileOnly {
 		t.Fatalf("the existing API Profile route did not bind its own runtime: %v", err)
 	}
+	for _, icon := range []string{"openai", "deepseek", "antigravity", "claude", "profile-sliders"} {
+		profile.Icon = icon
+		if _, err := s.prepareAgentProfile(profile); err != nil {
+			t.Errorf("unable to load API Profile with icon %q: %v", icon, err)
+		}
+	}
 }

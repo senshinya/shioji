@@ -22,6 +22,15 @@ var claudeSVG []byte
 
 var Claude = ui.MustParseSVG(claudeSVG)
 
+const DefaultProfileIcon = "openai"
+
+var ProfileIconChoices = [...]struct{ ID, Name string }{
+	{DefaultProfileIcon, "Codex"},
+	{"deepseek", "DeepSeek"},
+	{"antigravity", "Antigravity"},
+	{"claude", "Anthropic"},
+}
+
 var profileSymbols = map[string]*ui.SVG{
 	"profile-sliders":  profileSymbol("M3 6h14M3 14h14M6 4v4M14 12v4"),
 	"profile-terminal": profileSymbol("M3 4h14v12H3zM6 8l2 2-2 2M11 12h3"),

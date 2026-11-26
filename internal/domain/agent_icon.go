@@ -10,7 +10,10 @@ const ProfilePNGPrefix = "data:image/png;base64,"
 
 func ValidProfileIcon(icon string) bool {
 	switch icon {
-	case "", "profile-sliders", "profile-terminal", "profile-code", "profile-cube", "profile-spark", "profile-bolt", "profile-orbit", "claude":
+	case "", "openai", "deepseek", "antigravity", "claude":
+		return true
+	// Existing profiles may still use the original symbols.
+	case "profile-sliders", "profile-terminal", "profile-code", "profile-cube", "profile-spark", "profile-bolt", "profile-orbit":
 		return true
 	}
 	if !strings.HasPrefix(icon, ProfilePNGPrefix) || len(icon) > 20<<10 {

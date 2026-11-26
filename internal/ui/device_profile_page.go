@@ -120,10 +120,6 @@ func (v *View) deviceProfilePage(c *n.Context, t *n.Theme, key, device string, s
 								if v.deviceProfile == p && p.info.ID == "" && p.request.ID == "" {
 									p.draft.Icon = icon
 								}
-							}, func(err error) {
-								if v.deviceProfile == p {
-									p.error = err.Error()
-								}
 							})
 						})
 						deviceProfileRow(c, "API 类型", func() {

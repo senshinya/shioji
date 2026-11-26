@@ -103,10 +103,6 @@ func (v *View) agentConfigurationContent(c *n.Context, t *n.Theme, key string, c
 							if e.pageID == info.ID && v.deviceSelected == key {
 								v.saveDeviceProfileIcon(key, e, info, icon)
 							}
-						}, func(err error) {
-							if e.pageID == info.ID {
-								e.error = err.Error()
-							}
 						})
 					})
 				}
