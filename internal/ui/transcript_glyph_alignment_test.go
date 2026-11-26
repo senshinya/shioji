@@ -104,10 +104,6 @@ func TestTranscriptStatusGlyphsAlignWithToolHeadingDot(t *testing.T) {
 			for _, label := range []string{"启动 Agent", "等待 Tools", "Search files"} {
 				bounds, ok := ui.Find(label)
 				want, _ := n.ShapeText(label, n.Font{Family: fontFamily, Size: 11, Weight: 400}, 0).Size()
-				if label != "启动 Agent" {
-					// The tester resolves these two labels to the disclosure row.
-					bounds.W -= 22
-				}
 				if !ok || math.Abs(float64(bounds.W-want)) > .5 {
 					t.Errorf("%s: caption width %.2f, want 11 DIP text width %.2f", label, bounds.W, want)
 				}
