@@ -24,12 +24,14 @@ type initialization struct {
 		Name, Version string
 	} `json:"agentInfo"`
 	AgentCapabilities struct {
+		LoadSession        bool
 		MCPMethods         struct{ HTTP bool } `json:"mcpCapabilities"`
 		PromptCapabilities struct {
 			Image           bool
 			EmbeddedContext bool
 		}
 		SessionCapabilities struct {
+			List                  *struct{}
 			Resume                *struct{}
 			Close                 *struct{}
 			AdditionalDirectories *struct{}
@@ -127,6 +129,8 @@ type runtime struct {
 	profile      string
 	skillProfile string
 	skillHome    string
+	historyBin   string
+	historyEnv   []string
 	native       initialization
 	process      *rpc
 	bridge       *goalBridge
@@ -227,6 +231,8 @@ func (a Adapter) Start(ctx context.Context, options harness.StartOptions) (harne
 		return nil, errors.New("agy 安装正在变化，请重新检测")
 	}
 	if options.CatalogOnly {
+		r.historyBin, r.historyEnv = path, slices.Clone(env)
+		r.ready.Capabilities = r.capabilities()
 		if err := r.discover(ctx); err != nil {
 			return nil, err
 		}
@@ -257,7 +263,7 @@ func (r *runtime) capabilities() domain.HarnessCapabilities {
 		Goals: goals, WorkerGoals: goals, ExclusivePlan: true, PathAttachments: true, Skills: true, SkillManagement: true,
 		Interrupt: true, Steer: verifiedConcurrentPrompt(r.native.AgentInfo.Version),
 		Resume: resume, CompactNeedsCheck: resume, Reload: resume && r.native.AgentCapabilities.SessionCapabilities.Close != nil,
-		Fork: portable, PortableFork: portable,
+		Fork: portable, PortableFork: portable, ConversationImport: r.historyAvailable(),
 		ToolServices: r.skillProfile != "", ToolServiceInspection: r.skillProfile != "",
 		HookManagement: r.skillProfile != "", HookInspection: r.skillProfile != "",
 	}

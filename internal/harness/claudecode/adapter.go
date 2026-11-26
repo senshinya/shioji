@@ -258,7 +258,7 @@ func (a Adapter) readiness(config configuration) domain.Readiness {
 		Permissions:       []string{"default"},
 		PermissionChoices: []domain.OptionChoice{{ID: "default", Name: "按需批准"}},
 		Capabilities: domain.HarnessCapabilities{Steer: true, Interrupt: true, Recovery: true, Resume: true,
-			Fork: true, Restart: true, CompactNeedsCheck: true, ConversationImport: true,
+			Fork: true, Restart: true, CompactNeedsCheck: true,
 			ToolServices: true, ToolServiceInspection: true, Skills: true, SkillManagement: true, Goals: true, WorkerGoals: true,
 			PathAttachments: true, HookManagement: true, HookInspection: true},
 	}

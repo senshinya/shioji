@@ -31,12 +31,21 @@ func (s *Server) conversationScope(in protocol.ConversationQuery) (domain.Worksp
 	}
 	return zero, errors.New("工作区不可用")
 }
+func (s *Server) borrowConversationCatalog(id string) (harness.Runtime, func(), error) {
+	r, release, err := s.borrowCatalog(id)
+	if err == nil && !r.Readiness().Capabilities.ConversationImport {
+		release()
+		return nil, nil, harness.Unsupported("conversation-import")
+	}
+	return r, release, err
+}
+
 func (s *Server) listConversations(in protocol.ConversationQuery) (domain.ConversationCatalog, error) {
 	w, err := s.conversationScope(in)
 	if err != nil {
 		return domain.ConversationCatalog{}, err
 	}
-	r, release, err := s.borrowCatalog(in.HarnessID)
+	r, release, err := s.borrowConversationCatalog(in.HarnessID)
 	if err != nil {
 		return domain.ConversationCatalog{}, err
 	}
@@ -77,7 +86,7 @@ func (s *Server) previewConversation(in protocol.ConversationQuery) (domain.Conv
 	if in.SourceRef == "" || in.Directory == "" {
 		return domain.ConversationPreview{}, errors.New("缺少会话来源或目录")
 	}
-	r, release, err := s.borrowCatalog(in.HarnessID)
+	r, release, err := s.borrowConversationCatalog(in.HarnessID)
 	if err != nil {
 		return domain.ConversationPreview{}, err
 	}
@@ -118,7 +127,7 @@ func (s *Server) importConversation(in protocol.ConversationImportInput) (domain
 	} else if !errors.Is(e, sql.ErrNoRows) {
 		return domain.Session{}, e
 	}
-	r, release, err := s.borrowCatalog(in.HarnessID)
+	r, release, err := s.borrowConversationCatalog(in.HarnessID)
 	if err != nil {
 		return domain.Session{}, err
 	}

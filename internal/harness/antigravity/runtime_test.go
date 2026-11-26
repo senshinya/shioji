@@ -379,6 +379,10 @@ func TestACPFixtureProcess(t *testing.T) {
 			{"id": "mode", "category": "mode", "type": "select", "currentValue": mode, "options": []map[string]string{{"value": "default", "name": "Default"}, {"value": "plan", "name": "Plan"}}},
 		}
 	}
+	var history historyFixture
+	if raw, err := os.ReadFile(os.Getenv("SHIOJI_ACP_FIXTURE_LOG") + ".history"); err == nil {
+		_ = json.Unmarshal(raw, &history)
+	}
 	var first, pendingCompact json.RawMessage
 	for in.Scan() {
 		var msg struct {
@@ -395,9 +399,50 @@ func TestACPFixtureProcess(t *testing.T) {
 		}
 		_, _ = log.WriteString(msg.Method + "\n")
 		switch msg.Method {
+		case "session/list":
+			if history.Root == "" || os.Getenv("GEMINI_HOME") != history.Root {
+				os.Exit(17)
+			}
+			reply(msg.ID, map[string]any{"sessions": []map[string]string{
+				{"sessionId": fixtureHistoryID, "cwd": history.CWD, "title": "Fixture history", "updatedAt": "2026-11-26T00:00:00Z"},
+				{"sessionId": "2544f711-8879-4358-a53a-43e27cc9d702", "cwd": history.Root, "title": "Foreign history"},
+			}})
+		case "session/load":
+			home := os.Getenv("GEMINI_HOME")
+			if history.Root == "" || home == history.Root || msg.Params.CWD == history.CWD || msg.Params.SessionID != fixtureHistoryID ||
+				msg.Params.MCPServers == nil || len(msg.Params.MCPServers) != 0 {
+				os.Exit(18)
+			}
+			if _, err := os.Stat(filepath.Join(home, "antigravity-cli", "conversations", fixtureHistoryID+".db")); err != nil {
+				os.Exit(19)
+			}
+			token := filepath.Join(home, "antigravity-cli", "acp_token.json")
+			if info, err := os.Stat(token); err != nil || info.Mode().Perm() != 0600 {
+				os.Exit(20)
+			}
+			// Updates for a different session must not enter the preview.
+			update("user_message_chunk", "foreign content")
+			for _, raw := range []string{
+				`{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"first question"}}`,
+				`{"sessionUpdate":"tool_call","toolCallId":"check","title":"Run command","kind":"execute","status":"in_progress","rawInput":{"command":"go test"}}`,
+				`{"sessionUpdate":"tool_call_update","toolCallId":"check","status":"completed","rawOutput":{"combinedOutput":"verified"}}`,
+				`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"first "}}`,
+				`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"answer"}}`,
+				`{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"second question"}}`,
+				`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"second answer"}}`,
+			} {
+				_ = out.Encode(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+					"sessionId": fixtureHistoryID, "update": json.RawMessage(raw),
+				}})
+			}
+			reply(msg.ID, map[string]any{"sessionId": fixtureHistoryID})
 		case "initialize":
+			sessionCaps := map[string]any{"resume": map[string]any{}, "close": map[string]any{}, "additionalDirectories": map[string]any{}}
+			if history.Root != "" {
+				sessionCaps["list"] = map[string]any{}
+			}
 			reply(msg.ID, map[string]any{"protocolVersion": 1, "agentInfo": map[string]string{"name": "Antigravity ACP Server", "version": "1.5.15"},
-				"agentCapabilities": map[string]any{"sessionCapabilities": map[string]any{"resume": map[string]any{}, "close": map[string]any{}, "additionalDirectories": map[string]any{}}, "promptCapabilities": map[string]bool{"image": true}}})
+				"agentCapabilities": map[string]any{"loadSession": history.Root != "", "sessionCapabilities": sessionCaps, "promptCapabilities": map[string]bool{"image": true}}})
 		case "session/new", "session/resume":
 			if _, err := os.Stat(os.Getenv("SHIOJI_ACP_FIXTURE_LOG") + ".auth-required"); err == nil {
 				_ = out.Encode(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32000, "message": "auth required"}})

@@ -20,6 +20,11 @@ func (a completeImportHarness) Start(ctx context.Context, opts harness.StartOpti
 	}
 	return &completeImportRuntime{r.(*memoryRuntime)}, nil
 }
+func (r *completeImportRuntime) Readiness() domain.Readiness {
+	out := r.memoryRuntime.Readiness()
+	out.Capabilities.ConversationImport = true
+	return out
+}
 func (r *completeImportRuntime) Conversations(context.Context, []string, string) (domain.ConversationCatalog, error) {
 	return domain.ConversationCatalog{}, nil
 }

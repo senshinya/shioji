@@ -48,7 +48,7 @@ type rpc struct {
 	next    atomic.Uint64
 }
 
-func startRPC(ctx context.Context, argv, env []string, opts harness.StartOptions, handler func(packet) error) (*rpc, error) {
+func startRPC(ctx context.Context, argv, env []string, opts harness.StartOptions, handler func(packet) error, directory ...string) (*rpc, error) {
 	var cmd *exec.Cmd
 	var in io.WriteCloser
 	var out io.Reader
@@ -56,7 +56,7 @@ func startRPC(ctx context.Context, argv, env []string, opts harness.StartOptions
 	if opts.Scope != nil {
 		cmd, in, out, err = opts.Scope.StartOwned(ctx, "agent", argv, env, opts.OnStart)
 	} else {
-		cmd, in, out, err = startProcess(argv, env, opts.OnStart)
+		cmd, in, out, err = startProcess(argv, env, opts.OnStart, directory...)
 	}
 	if err != nil {
 		return nil, err
@@ -65,8 +65,11 @@ func startRPC(ctx context.Context, argv, env []string, opts harness.StartOptions
 	return c, nil
 }
 
-func startProcess(argv, env []string, onStart func(int) error) (*exec.Cmd, io.WriteCloser, io.Reader, error) {
+func startProcess(argv, env []string, onStart func(int) error, directory ...string) (*exec.Cmd, io.WriteCloser, io.Reader, error) {
 	cmd := exec.Command(argv[0], argv[1:]...)
+	if len(directory) > 0 {
+		cmd.Dir = directory[0]
+	}
 	cmd.Env = env
 	cmd.Stderr = io.Discard
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
