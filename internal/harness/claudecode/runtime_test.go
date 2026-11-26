@@ -427,7 +427,8 @@ for await (const line of createInterface({ input: process.stdin })) {
 						t.Fatalf("unexpected tool approval: %s", e.Request.Title)
 					}
 					answer := domain.Answer{RequestID: e.Request.ID, Revision: e.Request.Revision, Decision: "accept"}
-					if e.Request.Kind == "form" {
+					if e.Request.Kind == "questions" {
+						answer.Decision = ""
 						answer.Answers = map[string][]string{"0": {"Keep", "Refactor"}}
 					}
 					if err := r.Respond(answer); err != nil {

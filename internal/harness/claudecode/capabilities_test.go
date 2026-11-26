@@ -282,14 +282,23 @@ func TestClaudeQuestionRoundTripUsesNativeLabels(t *testing.T) {
 	if err := r.processFrame(in); err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 || events[0].Request == nil || events[0].Request.Kind != "form" {
-		t.Fatalf("expected a structured form, got %+v", events)
+	if len(events) != 1 || events[0].Request == nil || events[0].Request.Kind != "questions" {
+		t.Fatalf("expected structured questions, got %+v", events)
 	}
 	req := *events[0].Request
-	answer := domain.Answer{RequestID: req.ID, Revision: req.Revision, Decision: "accept",
-		Answers: map[string][]string{"0": {"Lint", "Unit"}, "1:other": {"Device A"}}}
-	if err := r.Respond(domain.Answer{RequestID: req.ID, Revision: req.Revision, Decision: "accept"}); err == nil {
-		t.Fatal("an incomplete form was accepted")
+	if len(req.Questions) != 2 || !req.Questions[0].MultiSelect || req.Questions[1].MultiSelect || !req.Questions[0].Custom || !req.Questions[1].Custom ||
+		req.Questions[0].Header != "Checks" || req.Questions[1].Header != "Target" ||
+		len(req.Questions[0].Options) != 2 || req.Questions[0].Options[0].Description != "Lint sources" {
+		t.Fatalf("unexpected questions payload: %+v", req.Questions)
+	}
+	answer := domain.Answer{RequestID: req.ID, Revision: req.Revision,
+		Answers: map[string][]string{"0": {"Lint", "Unit"}, "1": {"Device A"}}}
+	if err := r.Respond(domain.Answer{RequestID: req.ID, Revision: req.Revision}); err == nil {
+		t.Fatal("an incomplete question set was accepted")
+	}
+	if err := r.Respond(domain.Answer{RequestID: req.ID, Revision: req.Revision,
+		Answers: map[string][]string{"0": {"Lint"}, "1": {"Debug", "Release"}}}); err == nil {
+		t.Fatal("multiple answers were accepted for a single-select question")
 	}
 	receipt, err := r.submitApproval(answer)
 	if err != nil {

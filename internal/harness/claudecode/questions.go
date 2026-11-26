@@ -10,76 +10,71 @@ import (
 )
 
 // The native reply uses question text and option labels as identifiers. Keep
-// those values private to the adapter and give the UI stable per-form IDs.
+// those values private to the adapter and give the UI stable per-question IDs.
 type nativeQuestion struct {
-	Question    string
-	Options     []domain.Option
-	MultiSelect bool
+	Question    string          `json:"question"`
+	Header      string          `json:"header"`
+	Options     []domain.Option `json:"options"`
+	MultiSelect bool            `json:"multiSelect"`
 }
 
-func questionForm(raw json.RawMessage, key string) ([]nativeQuestion, []domain.FormField, error) {
-	var input struct{ Questions []nativeQuestion }
+func questionRequest(raw json.RawMessage, key string) ([]nativeQuestion, []domain.Question, error) {
+	var input struct {
+		Questions []nativeQuestion `json:"questions"`
+	}
 	invalid := errors.New("Claude Code 问题格式无效")
 	if json.Unmarshal(raw, &input) != nil || len(input.Questions) == 0 || len(input.Questions) > 4 {
 		return nil, nil, invalid
 	}
 	seen := make(map[string]bool)
-	var fields []domain.FormField
+	questions := make([]domain.Question, 0, len(input.Questions))
 	for i, q := range input.Questions {
 		if strings.TrimSpace(q.Question) == "" || seen[q.Question] || len(q.Options) < 2 || len(q.Options) > 4 {
 			return nil, nil, invalid
 		}
 		seen[q.Question] = true
-		id := strconv.Itoa(i)
-		field := domain.FormField{ID: id, Title: q.Question, Type: "string"}
-		if q.MultiSelect {
-			field.Type = "array"
+		if key != "" && (strings.Contains(q.Question, key) || strings.Contains(q.Header, key)) {
+			return nil, nil, invalid
 		}
-		var descriptions []string
+		options := make([]domain.Option, 0, len(q.Options))
 		labels := make(map[string]bool)
 		for _, option := range q.Options {
 			if strings.TrimSpace(option.Label) == "" || labels[option.Label] {
 				return nil, nil, invalid
 			}
-			labels[option.Label] = true
-			field.Options = append(field.Options, domain.FormOption{Value: option.Label, Label: option.Label})
-			if option.Description != "" {
-				descriptions = append(descriptions, option.Label+" · "+option.Description)
-			}
-		}
-		field.Description = strings.Join(descriptions, "\n")
-		if key != "" && strings.Contains(field.Title+field.Description, key) {
-			return nil, nil, invalid
-		}
-		for _, option := range field.Options {
-			if key != "" && strings.Contains(option.Value, key) {
+			if key != "" && (strings.Contains(option.Label, key) || strings.Contains(option.Description, key)) {
 				return nil, nil, invalid
 			}
+			labels[option.Label] = true
+			options = append(options, domain.Option{Label: option.Label, Description: option.Description})
 		}
-		fields = append(fields, field, domain.FormField{ID: id + ":other", Title: "自定义回答", Type: "string"})
+		questions = append(questions, domain.Question{
+			ID:          strconv.Itoa(i),
+			Header:      q.Header,
+			Text:        q.Question,
+			Options:     options,
+			MultiSelect: q.MultiSelect,
+			Custom:      true,
+		})
 	}
-	return input.Questions, fields, nil
+	return input.Questions, questions, nil
 }
 
 func questionAnswers(p approval, answers map[string][]string) (map[string]string, error) {
-	values, err := domain.FormContent(p.request.Fields, answers)
-	if err != nil {
-		return nil, err
-	}
 	reply := make(map[string]string, len(p.questions))
 	for i, question := range p.questions {
 		id := strconv.Itoa(i)
 		var selected []string
-		switch value := values[id].(type) {
-		case string:
-			selected = []string{value}
-		case []string:
-			selected = value
+		seen := make(map[string]bool)
+		for _, raw := range answers[id] {
+			value := strings.TrimSpace(raw)
+			if value == "" || seen[value] {
+				continue
+			}
+			seen[value] = true
+			selected = append(selected, value)
 		}
-		if other, ok := values[id+":other"].(string); ok && strings.TrimSpace(other) != "" {
-			selected = append(selected, other)
-		}
-		if len(selected) == 0 || !question.MultiSelect && len(selected) != 1 {
+		if len(selected) == 0 || (!question.MultiSelect && len(selected) != 1) {
 			return nil, errors.New("请为每个问题填写答案，单选题只能选择一项或填写自定义回答")
 		}
 		reply[question.Question] = strings.Join(selected, ", ")

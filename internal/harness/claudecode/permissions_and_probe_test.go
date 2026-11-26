@@ -207,8 +207,8 @@ func TestClaudePermissionModesEnforceApprovalAndRestartBoundaries(t *testing.T) 
 		t.Fatalf("plan mode must block Bash even in yolo: wire=%v events=%d", wire, len(events))
 	}
 	_, events = runApproval(permissionYOLO, false, "AskUserQuestion", `{"questions":[{"question":"Proceed?","header":"Confirm","options":[{"label":"Yes","description":"Continue"},{"label":"No","description":"Stop"}]}]}`)
-	if len(events) != 1 || events[0].Request == nil || events[0].Request.Kind != "form" {
-		t.Fatalf("yolo must still surface AskUserQuestion forms: %+v", events)
+	if len(events) != 1 || events[0].Request == nil || events[0].Request.Kind != "questions" || len(events[0].Request.Questions) != 1 {
+		t.Fatalf("yolo must still surface AskUserQuestion requests: %+v", events)
 	}
 
 	// Default mode opens an approval request card.

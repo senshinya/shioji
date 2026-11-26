@@ -241,11 +241,24 @@ func (a *mobileApp) renderRequestPanel(c *ui.Context, parent *mygo.Window, sid, 
 				values[field.ID] = []string{}
 			}
 		}
+		multiSelect := make(map[string]bool)
+		for _, question := range request.Questions {
+			if question.MultiSelect {
+				multiSelect[question.ID] = true
+			}
+		}
 		for id, text := range state.text {
 			if request.Kind != "form" {
 				text = strings.TrimSpace(text)
 			}
-			if text != "" {
+			if text == "" {
+				continue
+			}
+			if multiSelect[id] {
+				if !slices.Contains(values[id], text) {
+					values[id] = append(values[id], text)
+				}
+			} else {
 				values[id] = []string{text}
 			}
 		}
@@ -480,7 +493,7 @@ func requestFields(c *ui.Context, request domain.PendingRequest, state *requestP
 	p := palette(c)
 	for i, question := range request.Questions {
 		row := c.Key(question.ID)
-		if i != 0 {
+		if i != 0 && question.Header != "" {
 			label(row, question.Header, 13, p.ink).FontWeight(600).Padding(10, 0, 0).Role(ui.RoleHeading)
 		}
 		if question.Text != "" {
@@ -489,6 +502,15 @@ func requestFields(c *ui.Context, request domain.PendingRequest, state *requestP
 		for _, option := range question.Options {
 			choice := row.Key(option.Label)
 			mobileChoiceRow(choice, option.Label, option.Description, slices.Contains(state.values[question.ID], option.Label), func() {
+				if question.MultiSelect {
+					values := state.values[question.ID]
+					if index := slices.Index(values, option.Label); index >= 0 {
+						state.values[question.ID] = slices.Delete(values, index, index+1)
+					} else {
+						state.values[question.ID] = append(values, option.Label)
+					}
+					return
+				}
 				state.values[question.ID] = []string{option.Label}
 				delete(state.text, question.ID)
 				delete(state.custom, question.ID)
@@ -496,6 +518,13 @@ func requestFields(c *ui.Context, request domain.PendingRequest, state *requestP
 		}
 		if question.Custom && len(question.Options) != 0 {
 			mobileChoiceRow(row.Key("custom"), "自定义答案", "", state.custom[question.ID], func() {
+				if question.MultiSelect {
+					state.custom[question.ID] = !state.custom[question.ID]
+					if !state.custom[question.ID] {
+						delete(state.text, question.ID)
+					}
+					return
+				}
 				state.custom[question.ID] = true
 				delete(state.values, question.ID)
 			})
@@ -503,7 +532,12 @@ func requestFields(c *ui.Context, request domain.PendingRequest, state *requestP
 		if state.custom[question.ID] || len(question.Options) == 0 {
 			text := state.text[question.ID]
 			label(row, "答案", 12, p.secondary).Padding(5, 1, 0)
-			change := func() { state.text[question.ID] = text; delete(state.values, question.ID) }
+			change := func() {
+				state.text[question.ID] = text
+				if !question.MultiSelect {
+					delete(state.values, question.ID)
+				}
+			}
 			if question.Secret {
 				ui.TextInputBase(row, &text).Label("自定义答案内容").Height(mobileTapSize(c)).Placeholder("输入你的答案").PaddingX(10).
 					Password().Radius(9).Background(p.canvas).OnChange(change)

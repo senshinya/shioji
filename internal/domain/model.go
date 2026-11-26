@@ -177,12 +177,13 @@ type AgentActivity struct {
 	Message string `json:"message,omitempty"`
 }
 type Question struct {
-	ID      string   `json:"id"`
-	Header  string   `json:"header"`
-	Text    string   `json:"text"`
-	Options []Option `json:"options,omitempty"`
-	Custom  bool     `json:"custom"`
-	Secret  bool     `json:"secret,omitempty"`
+	ID          string   `json:"id"`
+	Header      string   `json:"header"`
+	Text        string   `json:"text"`
+	Options     []Option `json:"options,omitempty"`
+	MultiSelect bool     `json:"multiSelect,omitempty"`
+	Custom      bool     `json:"custom"`
+	Secret      bool     `json:"secret,omitempty"`
 }
 
 // QuestionReply associates a normal input with a nonblocking transcript question.

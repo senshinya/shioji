@@ -198,7 +198,7 @@ func (v *View) pendingBody(c *n.Context, t *n.Theme, current requestPage, index 
 			} else if page.question >= 0 {
 				missing := 0
 				for _, q := range page.request.Questions {
-					if strings.TrimSpace(v.questionAnswer(page.request, q)) == "" {
+					if len(v.questionValues(page.request, q)) == 0 {
 						missing++
 					}
 				}

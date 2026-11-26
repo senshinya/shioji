@@ -3,9 +3,11 @@ package ui
 import (
 	"fmt"
 	n "github.com/egoist/mygo/ui"
+	"math"
 	"shioji/internal/app"
 	"shioji/internal/domain"
 	"shioji/internal/protocol"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -400,4 +402,291 @@ func TestFormOptionGrowsWithWrappedText(t *testing.T) {
 	if !ok || !wrapped || short.H != 32 || long.H < 48 {
 		t.Fatalf("choice heights single=%+v wrapped=%+v", short, long)
 	}
+}
+
+func TestMultiQuestionPanelSwitchesPagesSupportsMultiSelectAndSubmitsTogether(t *testing.T) {
+	m := layoutModel()
+	d := m.Details["s"]
+	d.Requests = []domain.PendingRequest{{
+		ID: "ask", SessionID: "s", State: "pending", Revision: 1, Kind: "questions", Title: "需要回答",
+		Questions: []domain.Question{
+			{
+				ID: "0", Header: "插件", Text: "要安装哪些插件？", MultiSelect: true, Custom: true,
+				Options: []domain.Option{
+					{Label: "ryugi", Description: "安装 ryugi"},
+					{Label: "impeccable", Description: "安装 impeccable"},
+				},
+			},
+			{
+				ID: "1", Header: "作用域", Text: "安装到哪个作用域？", Custom: true,
+				Options: []domain.Option{
+					{Label: "User", Description: "所有项目可用"},
+					{Label: "Project", Description: "仅当前项目"},
+				},
+			},
+		},
+	}}
+	m.Details["s"] = d
+	ctl := app.NewController("")
+	ui := n.NewTester(New(m, ctl, "").View, 1100, 720)
+	ui.Advance(time.Second)
+
+	if !ui.HasText("要安装哪些插件？") || ui.HasText("安装到哪个作用域？") {
+		t.Fatalf("multi-question panel should show one question per page: %v", ui.Texts())
+	}
+	if _, ok := ui.Find("1 / 2"); !ok {
+		t.Fatalf("missing multi-question pager 1 / 2: %v", ui.Texts())
+	}
+	if !ui.HasText("还有 2 个问题未回答") {
+		t.Fatalf("expected 2 unanswered questions indicator: %v", ui.Texts())
+	}
+
+	if err := ui.Click("ryugi"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ui.Click("impeccable"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ui.Click("自定义答案"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Type("extra-plugin")
+	ui.Advance(200 * time.Millisecond)
+
+	if !ui.HasText("还有 1 个问题未回答") {
+		t.Fatalf("expected 1 unanswered question remaining after answering first page: %v", ui.Texts())
+	}
+	if err := ui.Click("提交答案"); err != nil {
+		t.Fatal(err)
+	}
+	for len(ctl.Jobs) > 0 {
+		if (<-ctl.Jobs).Method == "request.respond" {
+			t.Fatal("partial answers must not submit before all questions are answered")
+		}
+	}
+
+	if err := ui.Click("下一个请求"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if !ui.HasText("安装到哪个作用域？") || ui.HasText("要安装哪些插件？") {
+		t.Fatalf("pager did not switch to second question: %v", ui.Texts())
+	}
+	if _, ok := ui.Find("2 / 2"); !ok {
+		t.Fatalf("missing multi-question pager 2 / 2: %v", ui.Texts())
+	}
+	if err := ui.Click("User"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(200 * time.Millisecond)
+	if ui.HasText("未回答") {
+		t.Fatalf("unanswered indicator remained after all questions answered: %v", ui.Texts())
+	}
+
+	if err := ui.Click("提交答案"); err != nil {
+		t.Fatal(err)
+	}
+	job := welcomeJob(t, ctl, "request.respond")
+	answer := job.Input.(protocol.AnswerInput).Answer
+	if answer.Decision != "" {
+		t.Fatalf("expected empty decision for questions answer, got %q", answer.Decision)
+	}
+	if !slices.Equal(answer.Answers["0"], []string{"ryugi", "impeccable", "extra-plugin"}) {
+		t.Fatalf("multi-select answers mismatch: %#v", answer.Answers["0"])
+	}
+	if !slices.Equal(answer.Answers["1"], []string{"User"}) {
+		t.Fatalf("single-select answer mismatch: %#v", answer.Answers["1"])
+	}
+}
+
+func TestRequestRadioAndCheckboxIndicatorAlignsWithTextInk(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, tc := range []struct {
+			name     string
+			label    string
+			radio    bool
+			selected bool
+			width    int
+		}{
+			{"radio-selected-han", "继续检查", true, true, 320},
+			{"radio-unselected-han", "继续检查", true, false, 320},
+			{"radio-selected-latin", "Continue", true, true, 320},
+			{"radio-selected-mixed-wrapped", "Claude Code 检查并安装插件到用户目录的完整说明文本", true, true, 180},
+			{"checkbox-checked-han", "继续检查", false, true, 320},
+			{"checkbox-unchecked-latin", "Continue", false, false, 320},
+		} {
+			t.Run(fmt.Sprintf("dark=%v/%s", dark, tc.name), func(t *testing.T) {
+				selected := ""
+				if tc.selected {
+					selected = tc.label
+				}
+				checked := tc.selected
+				ui := n.NewTester(func(c *n.Context) {
+					theme := c.Theme()
+					n.Column(c).Fill().Padding(16).Background(theme.Surface).Children(func() {
+						if tc.radio {
+							requestRadio(c, theme, &selected, tc.label, tc.label)
+						} else {
+							requestCheckbox(c, theme, &checked, tc.label)
+						}
+					})
+				}, tc.width, 120)
+				ui.SetDark(dark)
+				ui.SetScale(2)
+				ui.Advance(time.Second)
+
+				row, ok := ui.Find(tc.label)
+				if !ok {
+					t.Fatalf("missing choice row for %q", tc.label)
+				}
+				im := ui.Image()
+				bg := im.RGBAAt(2, 2)
+				const scale = 2
+				indicatorRight := int((row.X + requestChoicePaddingX + requestChoiceIndicatorSize + 2) * scale)
+				textLeft := int((row.X + requestChoiceTextIndent - 1) * scale)
+				firstLineBottom := int((row.Y + requestChoicePaddingY + requestChoiceLineHeight) * scale)
+				rowTop := int(row.Y * scale)
+				rowRight := int((row.X + row.W - requestChoicePaddingX) * scale)
+
+				inkBounds := func(x0, x1, y0, y1 int) (top, bottom int) {
+					top, bottom = im.Bounds().Max.Y, -1
+					for y := max(0, y0); y < min(im.Bounds().Max.Y, y1); y++ {
+						for x := max(0, x0); x < min(im.Bounds().Max.X, x1); x++ {
+							p := im.RGBAAt(x, y)
+							if max(absChannel(p.R, bg.R), absChannel(p.G, bg.G), absChannel(p.B, bg.B)) > 25 {
+								top = min(top, y)
+								bottom = max(bottom, y)
+							}
+						}
+					}
+					return top, bottom
+				}
+
+				indTop, indBottom := inkBounds(int(row.X*scale), indicatorRight, rowTop, firstLineBottom)
+				txtTop, txtBottom := inkBounds(textLeft, rowRight, rowTop, firstLineBottom)
+				if indBottom < 0 || txtBottom < 0 {
+					t.Fatalf("missing rendered ink: indicator=[%d,%d] text=[%d,%d]", indTop, indBottom, txtTop, txtBottom)
+				}
+				indCenter := float64(indTop+indBottom) / (2 * scale)
+				txtCenter := float64(txtTop+txtBottom) / (2 * scale)
+				if math.Abs(indCenter-txtCenter) > 1.0 {
+					t.Fatalf("indicator vertical center %.2f misaligned with first-line text ink center %.2f (ind=[%d,%d] txt=[%d,%d])",
+						indCenter, txtCenter, indTop, indBottom, txtTop, txtBottom)
+				}
+			})
+		}
+	}
+}
+
+func TestClaudeMultiQuestionAndChoiceAlignmentSnapshots(t *testing.T) {
+	m := layoutModel()
+	m.Readiness.Harnesses = []domain.HarnessInfo{{
+		ID: "claude-code", Name: "Claude Code", Icon: "claude", Configured: true, State: domain.RuntimeReady,
+		Models:      []domain.Model{{ID: "claude-opus-4-6", Name: "claude-opus-4-6", Default: true}},
+		Permissions: []string{"default"},
+	}}
+	m.Snapshot.Sessions[0].Title = "检查 Claude Code 并安装 ryugi 和 impeccable"
+	m.Snapshot.Sessions[0].HarnessID = "claude-code"
+	m.Snapshot.Sessions[0].Config = domain.RunConfig{Model: "claude-opus-4-6", Permission: "default"}
+	d := m.Details["s"]
+	d.Session = m.Snapshot.Sessions[0]
+	d.Items = []domain.Item{
+		{ID: "u1", Kind: "user", Text: "检查本机 Claude Code 环境，并安装 ryugi 和 impeccable。", Final: true},
+		{ID: "a1", Kind: "assistant", Text: "已检查本机 Claude Code 配置与插件目录。在继续安装前，请先确认以下 3 个问题。", Final: true},
+		{ID: "request:ask", Kind: "request", Text: "需要回答", Status: "pending"},
+	}
+	d.Requests = []domain.PendingRequest{{
+		ID: "ask", SessionID: "s", State: "pending", Revision: 1, Kind: "questions", Title: "需要回答",
+		Questions: []domain.Question{
+			{
+				ID: "0", Header: "插件", Text: "需要安装哪些插件？（可多选）", MultiSelect: true, Custom: true,
+				Options: []domain.Option{
+					{Label: "ryugi（设计画板与验收插件）", Description: "在本地画板中管理设计稿、验收截图与批注"},
+					{Label: "impeccable（界面走查技能）", Description: "提供视觉细节检查、排版与一致性审查"},
+				},
+			},
+			{
+				ID: "1", Header: "作用域", Text: "希望安装到哪个作用域？", Custom: true,
+				Options: []domain.Option{
+					{Label: "User（全部项目可用，推荐）", Description: "写入 ~/.claude/plugins，对所有仓库生效"},
+					{Label: "Project（仅当前仓库）", Description: "仅在当前工作区启用，便于按项目隔离"},
+				},
+			},
+			{
+				ID: "2", Header: "重启确认", Text: "安装完成后是否立即重新检测 Claude Code 能力？", Custom: true,
+				Options: []domain.Option{
+					{Label: "立即检测并刷新", Description: "安装后自动校验命令与插件注册状态"},
+					{Label: "稍后手动检测", Description: "仅完成安装，保持当前会话状态不变"},
+				},
+			},
+		},
+	}}
+	m.Details["s"] = d
+	ctl := app.NewController("")
+	ui := n.NewTester(New(m, ctl, "").View, 1100, 720)
+	ui.SetScale(2)
+	ui.Advance(time.Second)
+
+	if err := ui.Click("ryugi（设计画板与验收插件）"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ui.Click("impeccable（界面走查技能）"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Move(0, 0)
+	ui.Advance(400 * time.Millisecond)
+	saveNativeSkillImage(t, ui, "claude-multi-question-page1.png")
+
+	if err := ui.Click("下一个请求"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if err := ui.Click("User（全部项目可用，推荐）"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Move(0, 0)
+	ui.Advance(400 * time.Millisecond)
+	saveNativeSkillImage(t, ui, "claude-multi-question-page2-radio.png")
+
+	if err := ui.Click("下一个请求"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if err := ui.Click("立即检测并刷新"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Move(0, 0)
+	ui.SetDark(true)
+	ui.Advance(time.Second)
+	saveNativeSkillImage(t, ui, "claude-multi-question-page3-ready-dark.png")
+
+	// Side-by-side light & dark close-up of radio and checkbox alignment using Shioji's theme.
+	renderPair := func(dark bool, name string) {
+		selected := "User（全部项目可用，推荐）"
+		checked := true
+		unchecked := false
+		closeup := n.NewTester(func(c *n.Context) {
+			theme := applyAppearance(c, m.Preferences)
+			n.Column(c).Fill().Padding(24).Gap(8).Background(theme.Background).Children(func() {
+				n.Text(c, "单选与多选指示器对齐对比").FontSize(13).FontWeight(500).FixedLineHeight(20)
+				n.Column(c).FillWidth().Padding(4).Background(theme.Surface).Border(1, theme.Border).Radius(8).Children(func() {
+					requestRadio(c, theme, &selected, "User（全部项目可用，推荐）", "User（全部项目可用，推荐）")
+					processingPanelDivider(c, theme)
+					requestRadio(c, theme, &selected, "Project", "Project（仅当前仓库）")
+					processingPanelDivider(c, theme)
+					requestRadio(c, theme, &selected, "Wrapped", "超长多行选项：指示器应始终与首行中文及 Claude Code 英文文本的可见墨迹中心对齐")
+					processingPanelDivider(c, theme)
+					requestCheckbox(c, theme, &checked, "ryugi（已勾选多选项）")
+					processingPanelDivider(c, theme)
+					requestCheckbox(c, theme, &unchecked, "impeccable（未勾选多选项）")
+				})
+			})
+		}, 460, 290)
+		closeup.SetDark(dark)
+		closeup.SetScale(2)
+		closeup.Advance(time.Second)
+		saveNativeSkillImage(t, closeup, name)
+	}
+	renderPair(false, "choice-alignment-light.png")
+	renderPair(true, "choice-alignment-dark.png")
 }

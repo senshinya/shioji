@@ -630,11 +630,16 @@ func (r *runtime) submitApproval(a domain.Answer) (<-chan error, error) {
 	if p.receipt != nil {
 		return nil, &harness.DeliveryError{Uncertain: true, Message: "Claude Code 审批仍待确认"}
 	}
-	if a.Decision != "accept" && a.Decision != "decline" && !(len(p.questions) > 0 && a.Decision == "cancel") {
+	if len(p.questions) > 0 {
+		if a.Decision != "" && a.Decision != "accept" && a.Decision != "decline" && a.Decision != "cancel" {
+			return nil, errors.New("审批选项不可用")
+		}
+	} else if a.Decision != "accept" && a.Decision != "decline" {
 		return nil, errors.New("审批选项不可用")
 	}
+	allow := a.Decision == "accept" || (len(p.questions) > 0 && a.Decision == "")
 	var answers map[string]string
-	if a.Decision == "accept" && len(p.questions) > 0 {
+	if allow && len(p.questions) > 0 {
 		var err error
 		answers, err = questionAnswers(p, a.Answers)
 		if err != nil {
@@ -643,7 +648,7 @@ func (r *runtime) submitApproval(a domain.Answer) (<-chan error, error) {
 	}
 	p.receipt = make(chan error, 1)
 	r.approvals[a.RequestID] = p
-	if err := r.reply(p.native, a.Decision == "accept", answers); err != nil {
+	if err := r.reply(p.native, allow, answers); err != nil {
 		return nil, &harness.DeliveryError{Uncertain: true, Message: "Claude Code 审批结果待核对"}
 	}
 	return p.receipt, nil

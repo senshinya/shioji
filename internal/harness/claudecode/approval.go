@@ -51,13 +51,13 @@ func (r *runtime) openApproval(turn *activeTurn, in frame) error {
 		if len(in.Input) > 64<<10 {
 			return r.reply(p.native, false, nil)
 		}
-		questions, fields, err := questionForm(in.Input, r.config.Key)
+		native, questions, err := questionRequest(in.Input, r.config.Key)
 		if err != nil {
 			return r.reply(p.native, false, nil)
 		}
-		p.questions = questions
-		p.request.Kind, p.request.Title, p.request.Text = "form", "回答问题", ""
-		p.request.Fields, p.request.Choices = fields, nil
+		p.questions = native
+		p.request.Kind, p.request.Title, p.request.Text = "questions", "需要回答", ""
+		p.request.Questions, p.request.Choices = questions, nil
 	} else if permission == permissionAutoApprove || permission == permissionYOLO {
 		return r.reply(p.native, true, nil)
 	} else {

@@ -58,7 +58,7 @@ func (v *View) requestBody(c *n.Context, t *n.Theme, r domain.PendingRequest, qu
 				continue
 			}
 			checked := containsSelection(selected, choice.ID)
-			if controlFeedback(c, n.Checkbox(c.Key(choice.ID), &checked, choice.Label).FillWidth().MinHeight(32).Padding(6, 6).AlignItems(n.Start).FontSize(12).FixedLineHeight(18), 4).Changed() {
+			if controlFeedback(c, requestCheckbox(c.Key(choice.ID), t, &checked, choice.Label), 4).Changed() {
 				selected = toggleSelection(selected, choice.ID, checked)
 				v.saveRequestSelection(r, "permissions", selected)
 			}
@@ -81,7 +81,92 @@ func (v *View) requestBody(c *n.Context, t *n.Theme, r domain.PendingRequest, qu
 	}
 }
 
-const initialQuestionOptions = 3
+const (
+	initialQuestionOptions     = 3
+	requestChoiceIndicatorSize = 14
+	requestChoiceIndicatorGap  = 8
+	requestChoiceLineHeight    = 18
+	requestChoicePaddingY      = 7
+	requestChoicePaddingX      = 6
+	requestChoiceTextIndent    = requestChoicePaddingX + requestChoiceIndicatorSize + requestChoiceIndicatorGap
+)
+
+func requestChoiceIndicator(c *n.Context, label string, font n.Font, draw func(p *n.Painter, r n.Rect)) n.Element {
+	m := inlineFontMetrics(label, font)
+	return n.RichText(c, n.Span{Text: string(rune(0xFFFC)), ObjectWidth: requestChoiceIndicatorSize, ObjectHeight: m.ascent, ObjectDescent: m.descent}).
+		Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(requestChoiceLineHeight).
+		Role(n.RoleNone).Shrink(0).
+		DrawObjects(func(p *n.Painter, _ int, r n.Rect) {
+			r.Y += m.ascent - (requestChoiceIndicatorSize/2 + m.center)
+			r.W, r.H = requestChoiceIndicatorSize, requestChoiceIndicatorSize
+			draw(p, r)
+		})
+}
+
+func requestRadio(c *n.Context, t *n.Theme, selected *string, value, label string) n.Element {
+	font := n.Font{Family: t.Font, Size: 12, Weight: 400}
+	e := n.RadioBase(c, selected, value).FillWidth().MinHeight(32).Padding(requestChoicePaddingY, requestChoicePaddingX).
+		Gap(requestChoiceIndicatorGap).AlignItems(n.Baseline).FocusRing(false).Label(label)
+	on := *selected == value
+	focused := e.FocusVisible()
+	hovered := e.Hovered()
+	e.Children(func() {
+		requestChoiceIndicator(c, label, font, func(p *n.Painter, r n.Rect) {
+			radius := float32(requestChoiceIndicatorSize) / 2
+			if on {
+				p.Fill(r, t.Accent, radius)
+				const dot float32 = 6
+				p.Fill(n.Rect{X: r.X + (r.W-dot)/2, Y: r.Y + (r.H-dot)/2, W: dot, H: dot}, t.AccentText, dot/2)
+			} else {
+				border := t.Border.Mix(t.Text, .25)
+				if hovered {
+					border = t.Accent
+				}
+				p.Fill(r, t.Background, radius)
+				p.Stroke(r, border, radius, 1)
+			}
+			if focused {
+				p.FocusRing(r, [4]float32{radius, radius, radius, radius})
+			}
+		})
+		if label != "" {
+			n.Text(c, label).FontSize(font.Size).FixedLineHeight(requestChoiceLineHeight).MinWidth(0).Shrink(1)
+		}
+	})
+	return e
+}
+
+func requestCheckbox(c *n.Context, t *n.Theme, checked *bool, label string) n.Element {
+	font := n.Font{Family: t.Font, Size: 12, Weight: 400}
+	e := n.CheckboxBase(c, checked).FillWidth().MinHeight(32).Padding(requestChoicePaddingY, requestChoicePaddingX).
+		Gap(requestChoiceIndicatorGap).AlignItems(n.Baseline).FocusRing(false).Label(label)
+	on := *checked
+	focused := e.FocusVisible()
+	hovered := e.Hovered()
+	e.Children(func() {
+		requestChoiceIndicator(c, label, font, func(p *n.Painter, r n.Rect) {
+			const radius float32 = 3
+			if on {
+				p.Fill(r, t.Accent, radius)
+				p.Icon(check, r, t.AccentText)
+			} else {
+				border := t.Border.Mix(t.Text, .25)
+				if hovered {
+					border = t.Accent
+				}
+				p.Fill(r, t.Background, radius)
+				p.Stroke(r, border, radius, 1)
+			}
+			if focused {
+				p.FocusRing(r, [4]float32{radius, radius, radius, radius})
+			}
+		})
+		if label != "" {
+			n.Text(c, label).FontSize(font.Size).FixedLineHeight(requestChoiceLineHeight).MinWidth(0).Shrink(1)
+		}
+	})
+	return e
+}
 
 func (v *View) customQuestionActive(key string) bool {
 	switch v.Model.Answers["source:"+key] {
@@ -108,6 +193,35 @@ func (v *View) questionAnswer(r domain.PendingRequest, q domain.Question) string
 	return v.Model.Answers[key]
 }
 
+func (v *View) questionValues(r domain.PendingRequest, q domain.Question) []string {
+	key := requestKey(r, q.ID)
+	if q.Secret {
+		if strings.TrimSpace(v.secretAnswers[key]) == "" {
+			return nil
+		}
+		return []string{v.secretAnswers[key]}
+	}
+	if q.MultiSelect {
+		var values []string
+		for _, selected := range v.requestSelection(r, q.ID, nil) {
+			if trimmed := strings.TrimSpace(selected); trimmed != "" && !containsSelection(values, trimmed) {
+				values = append(values, trimmed)
+			}
+		}
+		if q.Custom || len(q.Options) == 0 {
+			if custom := strings.TrimSpace(v.Model.Answers["custom:"+key]); custom != "" && !containsSelection(values, custom) {
+				values = append(values, custom)
+			}
+		}
+		return values
+	}
+	value := v.Model.Answers[key]
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return []string{value}
+}
+
 func (v *View) questionField(c *n.Context, t *n.Theme, r domain.PendingRequest, q domain.Question, expanded bool) {
 	key := requestKey(r, q.ID)
 	n.Text(c, q.Text).FontSize(13).FixedLineHeight(20)
@@ -120,38 +234,61 @@ func (v *View) questionField(c *n.Context, t *n.Theme, r domain.PendingRequest, 
 		}
 		return
 	}
-	preset := v.Model.Answers[key]
-	if v.customQuestionActive(key) {
-		preset = ""
-	}
-	selected := textBinding(v.answerBindings, key, preset)
 	if len(q.Options) > 0 {
 		options := q.Options
 		if !expanded {
 			options = options[:min(initialQuestionOptions, len(options))]
 		}
-		n.Column(c).FillWidth().Children(func() {
-			for i, option := range options {
-				if i > 0 {
-					processingPanelDivider(c, t)
+		if q.MultiSelect {
+			selectedValues := v.requestSelection(r, q.ID, nil)
+			n.Column(c).FillWidth().Children(func() {
+				for i, option := range options {
+					if i > 0 {
+						processingPanelDivider(c, t)
+					}
+					checked := containsSelection(selectedValues, option.Label)
+					if controlFeedback(c, requestCheckbox(c.Key(option.Label), t, &checked, option.Label).Tooltip(option.Description), 4).Changed() {
+						selectedValues = toggleSelection(selectedValues, option.Label, checked)
+						v.saveRequestSelection(r, q.ID, selectedValues)
+					}
+					if option.Description != "" {
+						n.Text(c, option.Description).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Padding(0, 6, 6, requestChoiceTextIndent)
+					}
 				}
-				if controlFeedback(c, n.Radio(c.Key(option.Label), &selected.Text, option.Label, option.Label).FillWidth().MinHeight(32).Padding(6, 6).AlignItems(n.Start).FontSize(12).FixedLineHeight(18).Label(option.Label).Tooltip(option.Description), 4).Changed() {
-					v.Model.Answers[key] = selected.Text
-					v.Model.Answers["source:"+key] = "preset"
-					selected.LastModel = selected.Text
-				}
-				if option.Description != "" {
-					n.Text(c, option.Description).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Padding(0, 6, 6, 30)
-				}
+			})
+		} else {
+			preset := v.Model.Answers[key]
+			if v.customQuestionActive(key) {
+				preset = ""
 			}
-		})
+			selected := textBinding(v.answerBindings, key, preset)
+			n.Column(c).FillWidth().Children(func() {
+				for i, option := range options {
+					if i > 0 {
+						processingPanelDivider(c, t)
+					}
+					if controlFeedback(c, requestRadio(c.Key(option.Label), t, &selected.Text, option.Label, option.Label).Tooltip(option.Description), 4).Changed() {
+						v.Model.Answers[key] = selected.Text
+						v.Model.Answers["source:"+key] = "preset"
+						selected.LastModel = selected.Text
+					}
+					if option.Description != "" {
+						n.Text(c, option.Description).FontSize(11).FixedLineHeight(18).TextColor(t.TextMuted).Padding(0, 6, 6, requestChoiceTextIndent)
+					}
+				}
+			})
+		}
 	}
 	if q.Custom || len(q.Options) == 0 {
 		custom := textBinding(v.customBindings, key, v.Model.Answers["custom:"+key])
 		input := n.TextAreaBase(c.Key("answer:"+key), &custom.Text).FillWidth().Lines(1, 4).MinHeight(32).MaxHeight(96).Padding(5, 8).FontSize(12).FixedLineHeight(20).Background(raised(t)).Border(1, t.Border).Radius(requestRadius).Label("自定义答案").Placeholder("输入答案…").PlaceholderColor(subtle(t))
 		fieldFeedback(c, input)
 		if input.Changed() {
-			v.useCustomQuestionAnswer(key, custom.Text)
+			if q.MultiSelect {
+				v.Model.Answers["custom:"+key] = custom.Text
+			} else {
+				v.useCustomQuestionAnswer(key, custom.Text)
+			}
 			custom.LastModel = custom.Text
 		}
 	}
@@ -163,21 +300,35 @@ func (v *View) questionSelectionControls(c *n.Context, t *n.Theme, page requestP
 		return
 	}
 	key := requestKey(page.request, q.ID)
-	value, draft := v.Model.Answers[key], v.Model.Answers["custom:"+key]
-	custom := v.customQuestionActive(key)
 	long := len(q.Options) > initialQuestionOptions
 	expanded := expandedOptions[page.key()]
 	status := ""
-	canUseDraft := q.Custom && len(q.Options) > 0 && !custom && strings.TrimSpace(draft) != ""
-	index := slices.IndexFunc(q.Options, func(option domain.Option) bool { return option.Label == value })
-	if q.Custom && len(q.Options) > 0 && strings.TrimSpace(value) != "" {
-		if custom {
-			status = "将提交自定义答案"
-		} else if index >= 0 {
-			status = "将提交预设「" + value + "」"
+	canUseDraft := false
+	if q.MultiSelect {
+		selected := v.requestSelection(page.request, q.ID, nil)
+		hiddenSelected := 0
+		for i := initialQuestionOptions; i < len(q.Options); i++ {
+			if containsSelection(selected, q.Options[i].Label) {
+				hiddenSelected++
+			}
 		}
-	} else if long && !expanded && !custom && index >= initialQuestionOptions {
-		status = "已选「" + value + "」"
+		if long && !expanded && hiddenSelected > 0 {
+			status = fmt.Sprintf("已选 %d 项", len(selected))
+		}
+	} else {
+		value, draft := v.Model.Answers[key], v.Model.Answers["custom:"+key]
+		custom := v.customQuestionActive(key)
+		canUseDraft = q.Custom && len(q.Options) > 0 && !custom && strings.TrimSpace(draft) != ""
+		index := slices.IndexFunc(q.Options, func(option domain.Option) bool { return option.Label == value })
+		if q.Custom && len(q.Options) > 0 && strings.TrimSpace(value) != "" {
+			if custom {
+				status = "将提交自定义答案"
+			} else if index >= 0 {
+				status = "将提交预设「" + value + "」"
+			}
+		} else if long && !expanded && !custom && index >= initialQuestionOptions {
+			status = "已选「" + value + "」"
+		}
 	}
 	if long {
 		label := fmt.Sprintf("显示全部 %d 个选项", len(q.Options))
@@ -193,7 +344,7 @@ func (v *View) questionSelectionControls(c *n.Context, t *n.Theme, page requestP
 		}
 	}
 	if canUseDraft && configurationAction(c.Key("activate-custom-answer"), "使用自定义答案").Clicked() {
-		v.useCustomQuestionAnswer(key, draft)
+		v.useCustomQuestionAnswer(key, v.Model.Answers["custom:"+key])
 		c.Services().Invalidate()
 	}
 	if status != "" {
@@ -229,7 +380,7 @@ func (v *View) formField(c *n.Context, t *n.Theme, r domain.PendingRequest, f do
 		}
 		if f.Type == "boolean" {
 			checked := len(values) == 1 && values[0] == "true"
-			if controlFeedback(c, n.Checkbox(c, &checked, title).FillWidth().MinHeight(32).Padding(6, 6).AlignItems(n.Start).FontSize(12).FixedLineHeight(18), 4).Changed() {
+			if controlFeedback(c, requestCheckbox(c, t, &checked, title), 4).Changed() {
 				value := "false"
 				if checked {
 					value = "true"
@@ -246,7 +397,7 @@ func (v *View) formField(c *n.Context, t *n.Theme, r domain.PendingRequest, f do
 					}
 					if f.Type == "array" {
 						checked := containsSelection(values, option.Value)
-						if controlFeedback(c, n.Checkbox(c.Key(option.Value), &checked, option.Label).FillWidth().MinHeight(32).Padding(6, 6).AlignItems(n.Start).FontSize(12).FixedLineHeight(18).Label(option.Label), 4).Changed() {
+						if controlFeedback(c, requestCheckbox(c.Key(option.Value), t, &checked, option.Label), 4).Changed() {
 							values = toggleSelection(values, option.Value, checked)
 							v.saveRequestSelection(r, f.ID, values)
 						}
@@ -255,7 +406,7 @@ func (v *View) formField(c *n.Context, t *n.Theme, r domain.PendingRequest, f do
 						if len(values) > 0 {
 							value = values[0]
 						}
-						if controlFeedback(c, n.Radio(c.Key(option.Value), &value, option.Value, option.Label).FillWidth().MinHeight(32).Padding(6, 6).AlignItems(n.Start).FontSize(12).FixedLineHeight(18).Label(option.Label), 4).Changed() {
+						if controlFeedback(c, requestRadio(c.Key(option.Value), t, &value, option.Value, option.Label), 4).Changed() {
 							values = []string{value}
 							v.saveRequestSelection(r, f.ID, values)
 						}
@@ -391,11 +542,11 @@ func (v *View) requestActions(c *n.Context, t *n.Theme, page requestPage, expand
 			answers := map[string][]string{}
 			missing := 0
 			for _, q := range r.Questions {
-				value := v.questionAnswer(r, q)
-				if strings.TrimSpace(value) == "" {
+				values := v.questionValues(r, q)
+				if len(values) == 0 {
 					missing++
 				}
-				answers[q.ID] = []string{value}
+				answers[q.ID] = values
 			}
 			action("提交答案", "", true, answers, missing > 0)
 			if page.question >= 0 {
