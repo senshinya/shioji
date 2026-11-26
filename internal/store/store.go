@@ -866,7 +866,7 @@ func (s *Store) applyLocked(sid string, e domain.Event) (domain.Event, error) {
 			return e, nil
 		}
 		item.Text += e.Text
-		if clipped := clipEventText(item.Text, 160<<10); clipped != item.Text {
+		if clipped := domain.ClipDisplayText(item.Text, 160<<10); clipped != item.Text {
 			item.Text, item.Truncated, item.Final = clipped, true, true
 		}
 		if err = putItem(tx, sid, &item); err != nil {

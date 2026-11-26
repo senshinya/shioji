@@ -749,9 +749,9 @@ for await (const line of createInterface({ input: process.stdin })) {
 	done(true, domain.ExecutionCompleted)
 	reader.mu.Lock()
 	var target string
-	for id, work := range reader.work {
+	for _, work := range reader.work {
 		if work.Active() && work.CanStop {
-			target = id
+			target = work.ID
 		}
 	}
 	reader.mu.Unlock()
@@ -766,7 +766,7 @@ for await (const line of createInterface({ input: process.stdin })) {
 	for settled := false; !settled; {
 		select {
 		case event := <-events:
-			settled = event.Work != nil && event.Work.Reference == target && event.Work.State == "interrupted"
+			settled = event.Work != nil && event.Work.ID == target && event.Work.State == "stopped"
 		case <-stopped.C:
 			t.Fatal("no native acknowledgement of the stopped background task")
 		}

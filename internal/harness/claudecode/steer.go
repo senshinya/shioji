@@ -15,10 +15,13 @@ type steerInput struct {
 }
 
 func (t *activeTurn) ownsFrame(in frame) bool {
-	owns := func(id string) bool {
+	return in.matchesInput(func(id string) bool {
 		_, pending := t.pendingSteer[id]
 		return id != "" && (id == t.uuid || pending || t.acceptedSteer[id] != "")
-	}
+	})
+}
+
+func (in frame) matchesInput(owns func(string) bool) bool {
 	// Some older CLI builds omit prompt IDs. Preserve the single-turn
 	// fallback for unstamped output, but never use a conflicting stamp.
 	if len(in.UserMessageUUIDs) > 0 {

@@ -4,8 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
-	"unicode/utf8"
 
 	"shioji/internal/domain"
 )
@@ -28,26 +26,6 @@ func CheckSubmissionJournal(in domain.Submission) error {
 		return errors.New("event exceeds recoverable page budget")
 	}
 	return nil
-}
-
-func clipEventText(text string, limit int) string {
-	if len(blob(text)) <= limit {
-		return text
-	}
-	const suffix = "\n[Output limit reached]"
-	low, high := 0, len(text)
-	for low < high {
-		mid := low + (high-low+1)/2
-		if len(blob(text[:mid]+suffix)) <= limit {
-			low = mid
-		} else {
-			high = mid - 1
-		}
-	}
-	for low < len(text) && !utf8.RuneStart(text[low]) {
-		low--
-	}
-	return strings.ToValidUTF8(text[:low], "�") + suffix
 }
 
 // A shared checkout is an external mutation. Keep its intent until the
@@ -151,7 +129,7 @@ func (s *Store) completeInput(id string, outcome domain.Delivery, message, turn 
 	}
 	defer tx.Rollback()
 	state := outcome.Operation
-	message = clipEventText(message, 32<<10)
+	message = domain.ClipDisplayText(message, 32<<10)
 	op, err := operation(tx, id)
 	if err != nil {
 		return err
@@ -250,7 +228,7 @@ func (s *Store) RejectUnhandedInput(id, message string) error {
 	if !unhanded(op) {
 		return ErrInputHandoffRevoked
 	}
-	message = clipEventText(message, 32<<10)
+	message = domain.ClipDisplayText(message, 32<<10)
 	if err := rejectUnhandedInput(tx, op, message, domain.ExecutionFailed); err != nil {
 		return err
 	}

@@ -249,6 +249,8 @@ func (r *runtime) ActivateHistory(ctx context.Context, s domain.Session, prepare
 	}
 	r.session.ThreadID = prepared
 	r.lastResult = completedResult{}
+	r.lateToolTurns = nil
+	r.workRunIDs = nil
 	r.mcp = nil
 	r.mcpRevision = ""
 	// The next prompt is ordered behind activation in the bridge. A pipe

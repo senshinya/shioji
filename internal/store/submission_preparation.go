@@ -93,7 +93,7 @@ func (s *Store) RejectReceivedSubmission(id, cause string) error {
 		return err
 	}
 	defer tx.Rollback()
-	message := clipEventText(cause, 32<<10)
+	message := domain.ClipDisplayText(cause, 32<<10)
 	result, err := tx.Exec("UPDATE received_submissions SET input=NULL,error=? WHERE id=? AND input IS NOT NULL", message, id)
 	if err != nil {
 		return err

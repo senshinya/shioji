@@ -28,6 +28,11 @@ func singleToolResultSidecar(blocks contentBlocks, raw json.RawMessage) json.Raw
 	return nil
 }
 
+func sidecarDetachesTool(sidecar json.RawMessage) bool {
+	var receipt struct{ DetachedToolCall bool }
+	return len(sidecar) > 0 && json.Unmarshal(sidecar, &receipt) == nil && receipt.DetachedToolCall
+}
+
 func sdkToolPresentation(name string) string {
 	switch {
 	case name == "Edit" || name == "Write":
@@ -137,7 +142,7 @@ func sdkMCPResult(raw json.RawMessage) ([]domain.ContentPart, bool) {
 	return parts, limited
 }
 
-func boundedToolText(text string, maxBytes int) string {
+func boundedText(text string, maxBytes int) string {
 	if len(text) <= maxBytes {
 		return text
 	}
@@ -151,7 +156,7 @@ func (r *runtime) toolResultParts(item string, raw json.RawMessage, live bool) (
 	budget := 12 << 10
 	var text string
 	if json.Unmarshal(raw, &text) == nil {
-		bounded := boundedToolText(text, budget)
+		bounded := boundedText(text, budget)
 		return []domain.ContentPart{{Kind: "text", Text: bounded}}, len(text) != len(bounded)
 	}
 	var native []struct {
@@ -172,7 +177,7 @@ func (r *runtime) toolResultParts(item string, raw json.RawMessage, live bool) (
 			break
 		}
 		if block.Type == "text" {
-			bounded := boundedToolText(block.Text, budget)
+			bounded := boundedText(block.Text, budget)
 			budget -= len(bounded)
 			limited = limited || len(bounded) != len(block.Text)
 			if bounded != "" {

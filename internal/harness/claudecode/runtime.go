@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,11 +59,13 @@ type runtime struct {
 	mcpRevision        string
 	goalServer         *goalServer
 	work               map[string]domain.WorkActivity
+	workRunIDs         map[string]string
 	workCalls          map[string]string
 	workPlan           map[string]bool
 	workPermission     map[string]string
 	workTools          map[string]map[string]domain.Item
 	workReplies        map[string]chan bool
+	lateToolTurns      []lateToolTurn
 }
 
 var _ harness.LivePermissionRuntime = (*runtime)(nil)
@@ -80,6 +83,8 @@ type activeTurn struct {
 	assistantNext map[string]int
 	items         map[string]domain.Item
 	tools         map[string]string
+	detachedTools map[string]bool
+	denials       map[string]string
 	errorCode     string
 	limit         *domain.UsageLimit
 	compacted     bool
@@ -143,17 +148,26 @@ type frame struct {
 	CommandUUID                  string   `json:"command_uuid"`
 	State                        string
 	TaskID                       string `json:"task_id"`
+	RunID                        string `json:"run_id"`
 	AgentID                      string `json:"agent_id"`
 	ParentToolUseID              string `json:"parent_tool_use_id"`
 	TaskType                     string `json:"task_type"`
 	Background                   bool   `json:"is_backgrounded"`
 	Status, Description, Summary string
 	Origin                       struct{ Kind string }
-	IsError                      bool            `json:"is_error"`
-	ErrorCode                    json.RawMessage `json:"error"`
-	UsedTokens                   *int64          `json:"used_tokens"`
-	LimitTokens                  *int64          `json:"limit_tokens"`
-	RateLimit                    struct {
+	IsError                      bool   `json:"is_error"`
+	TerminalReason               string `json:"terminal_reason"`
+	APIErrorStatus               int    `json:"api_error_status"`
+	LocalCommand                 string `json:"local_command"`
+	CommandOutput                string `json:"content"`
+	ResultText                   string `json:"result"`
+	PermissionDenials            []struct {
+		ToolUseID string `json:"tool_use_id"`
+	} `json:"permission_denials"`
+	ErrorCode   json.RawMessage `json:"error"`
+	UsedTokens  *int64          `json:"used_tokens"`
+	LimitTokens *int64          `json:"limit_tokens"`
+	RateLimit   struct {
 		Status   string
 		ResetsAt int64 `json:"resetsAt"`
 	} `json:"rate_limit_info"`
@@ -164,6 +178,7 @@ type frame struct {
 	ReadyCommands []string        `json:"ready_commands"`
 	Servers       []mcpObservation
 	MCPRevision   string `json:"mcp_revision"`
+	DenialMessage string `json:"-"`
 	Message       struct {
 		ID      string
 		Content contentBlocks
@@ -710,11 +725,10 @@ func (r *runtime) emit(e domain.Event) error {
 func (r *runtime) receive(output io.Reader, ready chan<- error) {
 	scanner := bufio.NewScanner(output)
 	scanner.Buffer(make([]byte, 64<<10), maxClaudeFrame)
-	protocolError := false
+	var decodeErr, eventErr error
 	for scanner.Scan() {
 		var in frame
-		if json.Unmarshal(scanner.Bytes(), &in) != nil {
-			protocolError = true
+		if decodeErr = json.Unmarshal(scanner.Bytes(), &in); decodeErr != nil {
 			break
 		}
 		if in.Type == "ready" && ready != nil {
@@ -724,25 +738,29 @@ func (r *runtime) receive(output io.Reader, ready chan<- error) {
 			continue
 		}
 		r.mu.Lock()
-		err := r.processFrame(in)
+		eventErr = r.processFrame(in)
+		if eventErr != nil {
+			// Fence new inputs while the pipe drains. Runtime loss still
+			// reconciles any input whose execution could not be persisted.
+			r.closing = true
+		}
 		r.mu.Unlock()
-		if err != nil {
-			protocolError = true
+		if eventErr != nil {
 			break
 		}
 	}
-	if protocolError || scanner.Err() != nil {
-		if r.opts.Scope != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = r.opts.Scope.Terminate(ctx, true)
-			cancel()
-		} else {
-			_ = syscall.Kill(-r.process.Process.Pid, syscall.SIGKILL)
-		}
-		_ = r.process.Process.Kill()
-	}
 	_ = r.input.Close()
-	_ = r.process.Wait()
+	if eventErr != nil {
+		// Do not log raw SDK or store error text, which can include private data.
+		log.Print("Claude Code could not apply a runtime observation")
+		r.waitAfterEventFailure(output)
+	} else {
+		if decodeErr != nil || scanner.Err() != nil {
+			log.Print("Claude Code received an invalid bridge frame")
+			r.killBridge()
+		}
+		_ = r.process.Wait()
+	}
 	r.stopProxy()
 
 	r.mu.Lock()
@@ -750,7 +768,7 @@ func (r *runtime) receive(output io.Reader, ready chan<- error) {
 		_ = r.goalServer.server.Close()
 	}
 
-	unexpected, bound := !r.closing, r.session.ID != ""
+	unexpected, bound := !r.closing || eventErr != nil, r.session.ID != ""
 	if r.turn != nil {
 		r.confirm(r.turn, deliveryUnknown())
 		r.finishSteers(r.turn)
@@ -774,6 +792,36 @@ func (r *runtime) receive(output io.Reader, ready chan<- error) {
 			_ = r.opts.OnLost()
 		}
 	}
+}
+
+func (r *runtime) waitAfterEventFailure(output io.Reader) {
+	// The bridge can still be writing buffered observations while it
+	// handles EOF. Drain those bytes without applying more state.
+	go func() { _, _ = io.Copy(io.Discard, output) }()
+	exited := make(chan struct{})
+	go func() {
+		_ = r.process.Wait()
+		close(exited)
+	}()
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-exited:
+	case <-timer.C:
+		r.killBridge()
+		<-exited
+	}
+}
+
+func (r *runtime) killBridge() {
+	if r.opts.Scope != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = r.opts.Scope.Terminate(ctx, true)
+	} else {
+		_ = syscall.Kill(-r.process.Process.Pid, syscall.SIGKILL)
+	}
+	_ = r.process.Process.Kill()
 }
 
 func (r *runtime) confirm(t *activeTurn, err error) {
@@ -856,6 +904,11 @@ func (r *runtime) processFrame(in frame) error {
 		}
 		return nil
 	}
+	if in.Type == "user" && !in.IsReplay || in.Type == "assistant" {
+		if err := r.observeToolResults(t, in); err != nil {
+			return err
+		}
+	}
 	if t == nil || !t.ownsFrame(in) {
 		return nil
 	}
@@ -885,7 +938,17 @@ func (r *runtime) processFrame(in frame) error {
 			return r.processFrame(frame{Type: "result", IsError: true})
 		}
 	case "system":
-		if in.Subtype == "compact_boundary" {
+		switch in.Subtype {
+		case "permission_denied":
+			if in.ToolUseID != "" {
+				if t.denials == nil {
+					t.denials = make(map[string]string)
+				}
+				t.denials[in.ToolUseID] = in.DenialMessage
+			}
+		case "local_command_output":
+			return r.replyText(t, "local:"+in.UUID, in.CommandOutput)
+		case "compact_boundary":
 			if t.turn.Presentation == "compaction" {
 				t.compacted = true
 				return nil
@@ -907,22 +970,6 @@ func (r *runtime) processFrame(in frame) error {
 	case "user":
 		if in.UUID == t.uuid && in.IsReplay {
 			r.confirm(t, nil)
-			return nil
-		}
-		sidecar := singleToolResultSidecar(in.Message.Content, in.ToolUseResult)
-		for _, block := range in.Message.Content {
-			id := t.tools[block.ToolUseID]
-			if block.Type != "tool_result" || id == "" {
-				continue
-			}
-			item := t.items[id]
-			if item.Final {
-				continue
-			}
-			item = r.completeTool(item, block, sidecar)
-			if err := r.item(t, item, false); err != nil {
-				return err
-			}
 		}
 	case "stream_event":
 		r.confirm(t, nil)
@@ -937,7 +984,10 @@ func (r *runtime) processFrame(in frame) error {
 		case "content_block_delta":
 			id := blockID(t, t.messageID, in.Event.Index)
 			item, ok := t.items[id]
-			if !ok {
+			if !ok || item.Final || item.Truncated {
+				return nil
+			}
+			if delta := in.Event.Delta.Type; delta != "text_delta" && delta != "thinking_delta" {
 				return nil
 			}
 			item.Text += in.Event.Delta.Text + in.Event.Delta.Thinking
@@ -977,6 +1027,10 @@ func (r *runtime) processFrame(in frame) error {
 			return nil
 		}
 		r.finishSteers(t)
+		t.interrupted = t.interrupted || in.TerminalReason == "aborted_tools" || in.TerminalReason == "aborted_streaming"
+		if err := r.settlePermissionDenials(t, in); err != nil {
+			return err
+		}
 		for _, p := range r.approvals {
 			if p.agent == "" && p.request.TurnID == t.turn.ID {
 				if err := r.invalidateApproval(p); err != nil {
@@ -1006,16 +1060,22 @@ func (r *runtime) processFrame(in frame) error {
 		accumulateUsage(&in.Usage, t.segmentUsage)
 		terminal.InputTokens, terminal.OutputTokens, terminal.CachedInputTokens = &in.Usage.Input, &in.Usage.Output, &in.Usage.Cache
 		terminal.Status = domain.ExecutionCompleted
+		failure := terminalFailure(in, t.errorCode)
 		if t.interrupted {
 			terminal.Status = domain.ExecutionInterrupted
-		} else if in.IsError || in.Subtype != "success" || t.errorCode != "" {
-			terminal.Status, terminal.Error = domain.ExecutionFailed, claudeFailure(t.errorCode)
-			if t.errorCode == "rate_limit" || t.errorCode == "" && t.limit != nil {
+		} else if in.IsError || in.Subtype != "success" || failure != "" {
+			terminal.Status, terminal.Error = domain.ExecutionFailed, claudeFailure(failure)
+			if failure == "rate_limit" || in.APIErrorStatus == 0 && t.errorCode == "" && t.limit != nil {
 				terminal.Error = claudeFailure("rate_limit")
 				terminal.UsageLimit = t.limit
 				if terminal.UsageLimit == nil {
 					terminal.UsageLimit = &domain.UsageLimit{}
 				}
+			}
+		}
+		if terminal.Status == domain.ExecutionCompleted && in.LocalCommand != "compact" && !t.hasReply() {
+			if err := r.replyText(t, "result:"+in.UUID, in.ResultText); err != nil {
+				return err
 			}
 		}
 		if terminal.Presentation == "compaction" {
@@ -1031,6 +1091,7 @@ func (r *runtime) processFrame(in frame) error {
 		for _, operation := range t.acceptedSteer {
 			r.recordReceipt(operation, terminal)
 		}
+		r.rememberUnsettledTools(t)
 		r.turn = nil
 		return r.emit(domain.Event{Type: "turn", Turn: &terminal, GoalProgress: t.goal})
 	}
@@ -1086,7 +1147,7 @@ func (r *runtime) block(t *activeTurn, message string, index int, c content, fin
 		}
 		item.Kind, item.Name, item.Final = "tool", c.Name, false
 		if len(c.Input) > 0 {
-			item.Text = boundedToolText(string(c.Input), 8<<10)
+			item.Text = boundedText(string(c.Input), 8<<10)
 			item.Truncated = len(item.Text) != len(c.Input)
 		}
 	default:
@@ -1099,9 +1160,19 @@ func (r *runtime) block(t *activeTurn, message string, index int, c content, fin
 	return r.item(t, item, !exists)
 }
 func (r *runtime) item(t *activeTurn, item domain.Item, start bool) error {
-	item = r.redactItem(item)
+	item = limitReplyText(r.redactItem(item))
 	t.items[item.ID] = item
 	return r.emit(domain.Event{Type: "item.upsert", Item: &item, ActivityStart: start})
+}
+
+// Each upsert is its own journal record. Leave room for JSON escaping and
+// envelope overhead even when the provider returns a complete block at once.
+func limitReplyText(item domain.Item) domain.Item {
+	if item.Kind == "assistant" || item.Kind == "reasoning" {
+		text := domain.ClipDisplayText(item.Text, 160<<10)
+		item.Text, item.Truncated = text, item.Truncated || text != item.Text
+	}
+	return item
 }
 
 func (r *runtime) redactItem(item domain.Item) domain.Item {

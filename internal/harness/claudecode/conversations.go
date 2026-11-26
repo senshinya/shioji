@@ -204,7 +204,7 @@ func (r *runtime) externalItem(record historyRecord, turn string, index int, blo
 	case record.Type == "assistant" && block.Type == "thinking":
 		item.Kind, item.Presentation, item.Text = "reasoning", "reasoning", block.Thinking
 	case record.Type == "assistant" && block.Type == "tool_use":
-		item.Kind, item.Name, item.Text, item.Status = "tool", block.Name, boundedToolText(string(block.Input), 8<<10), "unknown"
+		item.Kind, item.Name, item.Text, item.Status = "tool", block.Name, boundedText(string(block.Input), 8<<10), "unknown"
 		item.Presentation = sdkToolPresentation(block.Name)
 		item.Truncated = len(item.Text) != len(block.Input)
 	default:

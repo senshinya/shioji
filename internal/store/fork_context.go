@@ -45,7 +45,7 @@ func (s *Store) PortableForkContext(id, input string) (domain.ForkContext, error
 			prefix.Omitted = true
 			break
 		}
-		limited := clipEventText(entry.Text, min(remaining, 8192))
+		limited := domain.ClipDisplayText(entry.Text, min(remaining, 8192))
 		if limited != entry.Text {
 			prefix.Omitted = true
 		}
