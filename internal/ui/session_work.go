@@ -592,7 +592,7 @@ func (v *View) sessionWorkDetail(c *n.Context, t *n.Theme, kind string, p *workP
 			block.Transition(resultBlockMotion(c))
 		}
 		block.Children(func() {
-			if item.Kind == "assistant" || item.Kind == "reasoning" {
+			if item.Kind == "assistant" {
 
 				initialized := n.Local(n.Column(c.Key("mount")), "seeded", func() bool { return false })
 				streaming := stream != nil && stream.live() && (!item.Final || stream.changedAt.Equal(c.Now()) || stream.fresh())

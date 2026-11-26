@@ -82,7 +82,7 @@ type HistoryMatches struct {
 
 // ReasoningSummary identifies the public reasoning rows in conversation history.
 func ReasoningSummary(item Item) bool {
-	return item.Presentation == "reasoning" && (item.Kind == "activity" || item.Kind == "reasoning")
+	return item.Kind == "reasoning" || item.Kind == "activity" && item.Presentation == "reasoning"
 }
 
 // ToolGroupMember identifies items that can appear inside an active tool group:

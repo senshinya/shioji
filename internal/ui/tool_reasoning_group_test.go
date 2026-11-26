@@ -18,7 +18,7 @@ func TestToolGroupMergesOnlyFollowingReasoningSummaries(t *testing.T) {
 	d := m.Details["s"]
 	d.Items = []domain.Item{
 		{ID: "prompt", TurnID: "t", Kind: "user", Text: "检查会话记录的渲染顺序", Status: "sent"},
-		{ID: "plan", TurnID: "t", Kind: "activity", Presentation: "reasoning", Name: "思考摘要", Text: leadingSummary + "\n\n", Status: "completed", Final: true},
+		{ID: "plan", TurnID: "t", Kind: "reasoning", Text: leadingSummary + "\n\n", Status: "completed", Final: true},
 	}
 	d.Turns = []domain.Turn{{ID: "t", Status: domain.ExecutionRunning}}
 	m.Details["s"] = d

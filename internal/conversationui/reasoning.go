@@ -36,7 +36,7 @@ func ReasoningSummaryText(item domain.Item) string {
 // ReasoningForDisplay drops trailing line breaks from each rendered summary
 // block while leaving the recorded text and its interior line breaks intact.
 func ReasoningForDisplay(item domain.Item) domain.Item {
-	if item.Presentation != "reasoning" {
+	if !domain.ReasoningSummary(item) {
 		return item
 	}
 	item.Text = trimTrailingLineBreaks(item.Text)

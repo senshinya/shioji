@@ -202,7 +202,7 @@ func (r *runtime) externalItem(record historyRecord, turn string, index int, blo
 	case record.Type == "assistant" && block.Type == "text":
 		item.Kind, item.Text = "assistant", block.Text
 	case record.Type == "assistant" && block.Type == "thinking":
-		item.Kind, item.Text = "reasoning", block.Thinking
+		item.Kind, item.Presentation, item.Text = "reasoning", "reasoning", block.Thinking
 	case record.Type == "assistant" && block.Type == "tool_use":
 		item.Kind, item.Name, item.Text, item.Status = "tool", block.Name, boundedToolText(string(block.Input), 8<<10), "unknown"
 		item.Presentation = sdkToolPresentation(block.Name)

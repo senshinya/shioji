@@ -287,6 +287,31 @@ func TestChildToolResourcesRenderNativeFile(t *testing.T) {
 
 }
 
+func TestChildReasoningUsesExistingSummary(t *testing.T) {
+	v, ui := sessionWorkFixture(t)
+	key := v.Model.WorkKey("s", "agent-a")
+	d := v.Model.WorkDetails[key]
+	const thinking = "先核对父节点的两个分支。"
+	d.Items = append(d.Items, domain.WorkItem{Item: domain.Item{
+		ID: "thinking", Kind: "reasoning", Text: thinking, Status: "completed", Final: true,
+	}})
+	v.Model.WorkDetails[key] = d
+	if err := ui.Click("查看子 Agent：检查边界条件"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if !ui.HasText("思考摘要") || ui.HasText(thinking) {
+		t.Fatalf("expected a collapsed thinking summary in child details: %v", ui.Texts())
+	}
+	if err := ui.Click("思考摘要"); err != nil {
+		t.Fatal(err)
+	}
+	ui.Advance(time.Second)
+	if !ui.HasText(thinking) || !ui.HasText("子 Agent 正在检查父节点引用") {
+		t.Fatalf("child thinking and reply did not remain distinct: %v", ui.Texts())
+	}
+}
+
 func TestParallelWorkReadsShareBoundedClientCache(t *testing.T) {
 	m := layoutModel()
 	m.SecondarySessionID = "secondary"

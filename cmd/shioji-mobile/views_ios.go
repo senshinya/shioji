@@ -1534,7 +1534,7 @@ func (a *mobileApp) liveTurnStatus(sid string, turn domain.Turn, requests []doma
 				status = "正在执行命令"
 			}
 		case "reasoning", "activity":
-			if latest.Presentation == "reasoning" {
+			if domain.ReasoningSummary(*latest) {
 				status = "正在思考"
 			}
 		}

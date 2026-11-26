@@ -71,6 +71,7 @@ type activeTurn struct {
 	interrupted   bool
 	receipt       chan error
 	messageID     string
+	assistantNext map[string]int
 	items         map[string]domain.Item
 	tools         map[string]string
 	errorCode     string
@@ -885,11 +886,20 @@ func (r *runtime) processFrame(in frame) error {
 		if t.turn.Presentation == "compaction" {
 			return nil
 		}
-		for index, block := range in.Message.Content {
-			if err := r.block(t, in.Message.ID, index, block, true); err != nil {
+		// Claude Code delivers completed blocks in separate assistant frames
+		// with the same message ID. Their indexes continue across those frames.
+		message := in.Message.ID
+		index := t.assistantNext[message]
+		for _, block := range in.Message.Content {
+			if err := r.block(t, message, index, block, true); err != nil {
 				return err
 			}
+			index++
 		}
+		if t.assistantNext == nil {
+			t.assistantNext = make(map[string]int)
+		}
+		t.assistantNext[message] = index
 	case "result":
 		r.confirm(t, nil)
 		if len(t.pendingSteer) > 0 && !t.interrupted {
@@ -911,6 +921,8 @@ func (r *runtime) processFrame(in frame) error {
 				item.Final = true
 				if t.interrupted {
 					item.Status = "interrupted"
+				} else if item.Kind == "tool" {
+					item.Status = "unknown"
 				} else {
 					item.Status = "completed"
 				}
@@ -990,7 +1002,7 @@ func (r *runtime) block(t *activeTurn, message string, index int, c content, fin
 	case "text":
 		item.Kind, item.Text = "assistant", c.Text
 	case "thinking":
-		item.Kind, item.Text = "reasoning", c.Thinking
+		item.Kind, item.Presentation, item.Text = "reasoning", "reasoning", c.Thinking
 	case "tool_use":
 		if t.items[id].Final {
 			return nil

@@ -148,6 +148,13 @@ func TestClaudeCodeProfileRunsAnIsolatedStreamingTurn(t *testing.T) {
 	digest := sha256.Sum256(snapshot)
 	snapshotPath := filepath.Join(runtimeFiles, "claude-attachments", hex.EncodeToString(digest[:])+".txt")
 	var protectedReadChecked, snapshotReadChecked atomic.Bool
+	var sentThinkingFixture atomic.Bool
+	thinkingBlock := func(event func(string, string)) {
+		event("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`)
+		event("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"isolated reasoning"}}`)
+		event("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"fixture-signature"}}`)
+		event("content_block_stop", `{"type":"content_block_stop","index":0}`)
+	}
 	writePath := filepath.Join(workspace, "approval-fixture.txt")
 	waitingForInterrupt := make(chan struct{}, 1)
 	waitingForSteer := make(chan struct{}, 1)
@@ -281,25 +288,33 @@ func TestClaudeCodeProfileRunsAnIsolatedStreamingTurn(t *testing.T) {
 			}
 			event := func(name, payload string) { fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, payload) }
 			event("message_start", `{"type":"message_start","message":{"id":"msg_tool","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}`)
-			event("content_block_start", fmt.Sprintf(`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":%q,"name":%q,"input":{}}}`, toolID, toolName))
-			delta, _ := json.Marshal(map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]string{"type": "input_json_delta", "partial_json": string(arg)}})
+			toolIndex := 0
+			if toolID == "toolu_fixture" {
+				thinkingBlock(event)
+				toolIndex = 1
+			}
+			event("content_block_start", fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"tool_use","id":%q,"name":%q,"input":{}}}`, toolIndex, toolID, toolName))
+			delta, _ := json.Marshal(map[string]any{"type": "content_block_delta", "index": toolIndex, "delta": map[string]string{"type": "input_json_delta", "partial_json": string(arg)}})
 			event("content_block_delta", string(delta))
-			event("content_block_stop", `{"type":"content_block_stop","index":0}`)
+			event("content_block_stop", fmt.Sprintf(`{"type":"content_block_stop","index":%d}`, toolIndex))
 			event("message_delta", `{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":2}}`)
 			event("message_stop", `{"type":"message_stop"}`)
 			return
 		}
 
-		for _, event := range []struct{ kind, data string }{
-			{"message_start", `{"type":"message_start","message":{"id":"msg_fixture","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}`},
-			{"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`},
-			{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"isolated reply"}}`},
-			{"content_block_stop", `{"type":"content_block_stop","index":0}`},
-			{"message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}`},
-			{"message_stop", `{"type":"message_stop"}`},
-		} {
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.kind, event.data)
+		event := func(name, payload string) { fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, payload) }
+		event("message_start", `{"type":"message_start","message":{"id":"msg_fixture","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}`)
+		textIndex := 0
+		childReply := strings.Contains(messages, "Answer only with a brief fixture reply") && !strings.Contains(messages, `"tool_use_id":"toolu_child"`)
+		if sentThinkingFixture.CompareAndSwap(false, true) || childReply {
+			thinkingBlock(event)
+			textIndex = 1
 		}
+		event("content_block_start", fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"text","text":""}}`, textIndex))
+		event("content_block_delta", fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"text_delta","text":"isolated reply"}}`, textIndex))
+		event("content_block_stop", fmt.Sprintf(`{"type":"content_block_stop","index":%d}`, textIndex))
+		event("message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}`)
+		event("message_stop", `{"type":"message_stop"}`)
 	}))
 	defer service.Close()
 
@@ -403,6 +418,7 @@ for await (const line of createInterface({ input: process.stdin })) {
 	done := func(approve bool, want domain.ExecutionState) {
 		t.Helper()
 		sawText, sawApproval := false, false
+		firstTurnItems := map[string]domain.Item{}
 		for {
 			select {
 			case e := <-events:
@@ -425,9 +441,26 @@ for await (const line of createInterface({ input: process.stdin })) {
 				if e.Item != nil && e.Item.Kind == "assistant" && e.Item.Final && e.Item.Text == "isolated reply" {
 					sawText = true
 				}
+				if e.Item != nil && e.Item.TurnID == firstTurn {
+					firstTurnItems[e.Item.ID] = *e.Item
+				}
 				if e.Turn != nil && e.Turn.Status != domain.ExecutionRunning {
 					if e.Turn.Status != want || (want == domain.ExecutionCompleted && !sawText) || sawApproval != approve {
 						t.Fatalf("terminal %v, text %v, approval %v", e.Turn, sawText, sawApproval)
+					}
+					if e.Turn.ID == firstTurn {
+						reasoning, replies := 0, 0
+						for _, item := range firstTurnItems {
+							if domain.ReasoningSummary(item) && item.Text == "isolated reasoning" && item.Final {
+								reasoning++
+							}
+							if item.Kind == "assistant" && item.Text == "isolated reply" && item.Final {
+								replies++
+							}
+						}
+						if reasoning != 1 || replies != 1 {
+							t.Fatalf("expected one thinking summary and one reply from the native SDK, got %d and %d", reasoning, replies)
+						}
 					}
 					return
 				}
@@ -468,7 +501,7 @@ for await (const line of createInterface({ input: process.stdin })) {
 	}
 	done(true, domain.ExecutionCompleted)
 	if observedWrite.Presentation != "files" || observedWrite.Status != "completed" || len(observedWrite.Files) != 1 ||
-		observedWrite.Files[0].Path != writePath || observedWrite.Files[0].Kind != "add" {
+		observedWrite.Files[0].Path != writePath || observedWrite.Files[0].Kind != "add" || !strings.Contains(observedWrite.Text, "approved") {
 		t.Fatalf("Claude SDK Write result did not reach the native file row: %+v", observedWrite)
 	}
 	if data, err := os.ReadFile(writePath); err != nil || string(data) != "approved" {
@@ -741,7 +774,8 @@ for await (const line of createInterface({ input: process.stdin })) {
 	if _, err := r.Submit(ctx, session, "start-child", harness.TurnInput{Text: "start-child-fixture"}); err != nil {
 		t.Fatal("could not run the native subagent fixture", err)
 	}
-	sawChild, sawChildText := false, false
+	sawChild := false
+	childItems := make(map[string]domain.Item)
 	for settled := false; !settled; {
 		select {
 		case event := <-events:
@@ -754,12 +788,17 @@ for await (const line of createInterface({ input: process.stdin })) {
 			if event.Work != nil && event.Work.Kind == "agent" {
 				sawChild = true
 			}
-			if event.WorkItem != nil && event.WorkItem.Text == "isolated reply" {
-				sawChildText = true
+			if event.WorkItem != nil {
+				childItems[event.WorkItem.ID] = *event.WorkItem
 			}
 			if event.Turn != nil && !event.Turn.Status.Active() {
-				if !sawChild || !sawChildText || event.Turn.Status != domain.ExecutionCompleted {
-					t.Fatalf("native subagent did not project its independent trace: child=%v text=%v result=%v", sawChild, sawChildText, event.Turn.Status)
+				sawChildText, sawChildThinking := false, false
+				for _, item := range childItems {
+					sawChildText = sawChildText || item.Kind == "assistant" && item.Text == "isolated reply"
+					sawChildThinking = sawChildThinking || domain.ReasoningSummary(item) && item.Text == "isolated reasoning"
+				}
+				if !sawChild || !sawChildText || !sawChildThinking || event.Turn.Status != domain.ExecutionCompleted {
+					t.Fatalf("native subagent lost distinct items: child=%v text=%v thinking=%v result=%v", sawChild, sawChildText, sawChildThinking, event.Turn.Status)
 				}
 				settled = true
 			}

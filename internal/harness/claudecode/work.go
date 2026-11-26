@@ -122,14 +122,20 @@ func (r *runtime) observeWorkItem(in frame) error {
 	if in.Type != "assistant" {
 		return nil
 	}
+	// Child output is projected from completed frames only. Each frame has
+	// its own UUID, even when multiple frames share the same message ID.
+	source := in.UUID
+	if source == "" {
+		source = in.Message.ID
+	}
 	for i, block := range in.Message.Content {
-		item := domain.Item{ID: work.ID + ":" + in.Message.ID + ":" + strconv.Itoa(i), WorkID: work.ID,
+		item := domain.Item{ID: work.ID + ":" + source + ":" + strconv.Itoa(i), WorkID: work.ID,
 			TurnID: work.TurnID, Status: "completed", Final: true}
 		switch block.Type {
 		case "text":
 			item.Kind, item.Text = "assistant", block.Text
 		case "thinking":
-			item.Kind, item.Text = "reasoning", block.Thinking
+			item.Kind, item.Presentation, item.Text = "reasoning", "reasoning", block.Thinking
 		case "tool_use":
 			item.Kind, item.Name, item.Text = "tool", block.Name, boundedToolText(string(block.Input), 8<<10)
 			item.Presentation = sdkToolPresentation(block.Name)
