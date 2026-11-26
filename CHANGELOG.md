@@ -5,6 +5,25 @@
 
 ## [Unreleased]
 
+## [0.10.5] - 2026-11-26
+
+[源码](https://github.com/senshinya/shioji/tree/v0.10.5) · [与上一正式版 v0.10.4 比较](https://github.com/senshinya/shioji/compare/v0.10.4...v0.10.5)
+
+### Added
+
+- 左边栏底部快捷栏新增「额度」上拉面板，可选择任意已连接设备上的 Codex 订阅账号、Antigravity 系统默认 Profile 与 DeepSeek 余额进行展示（选择配置仅保存在本机，不同步到其他设备）。支持顶部横向标签切换、按接口实际返回字段动态展示、实时推送/定时刷新以及失败指数退避与缓存保留。
+
+### Changed
+
+- 桌面端与移动端在工具调用开始时，自动将同轮紧邻的上方思考摘要并入工具组，并以平滑原地变形过渡显示。
+- Claude Code 的多问题提问改为左右切换分页面板，支持多选复选与自定义回答，全部作答后统一提交。
+
+### Fixed
+
+- 修复桌面端提问卡片单选与复选指示器和首行文字的垂直对齐，以及空实时思考摘要基线偏下裁切的问题。
+
+GitHub Release 分发适用于 Apple Silicon 的 macOS 安装包。支持自动更新的正式版可在 Shioji 菜单或「设置 → 关于」检查更新。使用本版额度查询、实时推送与 Claude Code 多问题更新需要更新所属设备的执行服务。本版使用协议 2.65，数据库沿用 schema 17。
+
 ## [0.10.4] - 2026-11-26
 
 [源码](https://github.com/senshinya/shioji/tree/v0.10.4) · [与上一正式版 v0.10.3 比较](https://github.com/senshinya/shioji/compare/v0.10.3...v0.10.4)
