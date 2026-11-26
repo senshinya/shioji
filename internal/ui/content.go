@@ -263,35 +263,47 @@ func (v *View) reasoningActivityItem(c *n.Context, t *n.Theme, item domain.Item,
 		}
 	}
 	button.Label(displayLabel)
+	if (len(transcriptAnchor) == 0 || transcriptAnchor[0]) && v.toolArrivals != nil {
+		if v.toolArrivals.standalone == nil {
+			v.toolArrivals.standalone = map[string]standaloneReasoningSnapshot{}
+		}
+		v.toolArrivals.standalone[item.ID] = standaloneReasoningSnapshot{
+			itemID:  item.ID,
+			label:   displayLabel,
+			wasLive: liveStatus,
+			wasOpen: open,
+			hasBody: hasBody,
+			phase:   liveState.phase,
+			started: liveState.started,
+			turnID:  item.TurnID,
+		}
+	}
 	color := t.TextMuted
 	if !liveStatus && hasBody {
 		color = textHoverColor(c, button, t.TextMuted)
 	}
 	button.Children(func() {
-		line := n.Row(c).Height(20).AlignItems(n.Baseline)
+		line := n.Row(c.Key("heading-line")).Height(20).AlignItems(n.Baseline)
 		if liveProgress > 0 {
 			shimmerToolStatus(c, line, liveState.phase, t.Text, liveProgress)
 		}
 		line.Children(func() {
 			font := n.Font{Family: c.Theme().Font, Size: transcriptCaptionSize, Weight: 400}
 			transcriptMarkerSlot(c.Key("icon")).MarginEnd(6).Children(func() {
-				if liveProgress < 1 {
-					icon := transcriptSymbol(c.Key("summary-icon"), activityIcon("reasoning"), summaryLabel, font, color).Opacity(1 - liveProgress)
-					if liveProgress > 0 {
-						icon.Absolute().Left(0).Top(0)
-					}
-				}
+				transcriptSymbol(c.Key("summary-icon"), activityIcon("reasoning"), summaryLabel, font, color).Opacity(1 - liveProgress)
 				if liveProgress > 0 {
-					statusDot(c.Key("dot"), displayLabel, font, t.Success, liveStatus, liveState.phase).Opacity(liveProgress)
+					transcriptStatusDot(c.Key("dot"), displayLabel, font, t.Success, liveStatus, liveState.phase).Absolute().Left(0).Top(0).Opacity(liveProgress)
 				}
 			})
 			titleAnim := morphAnim
-			title := n.Text(c.Key("reasoning-label"), displayLabel).
-				ContentTransition(n.ContentTransition{Animation: &titleAnim}).
-				FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color).MinWidth(0).MaxLines(2).Ellipsis("…")
-			if !liveStatus {
-				title.TooltipWhenTruncated(summaryLabel)
-			}
+			n.Column(c.Key("heading-label-box")).MinHeight(20).MinWidth(0).Shrink(1).Children(func() {
+				title := n.Text(c.Key("heading-label"), displayLabel).
+					ContentTransition(n.ContentTransition{Animation: &titleAnim}).
+					FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color).MinWidth(0).MaxLines(2).Ellipsis("…")
+				if !liveStatus {
+					title.TooltipWhenTruncated(summaryLabel)
+				}
+			})
 			if liveStatus {
 				if liveState.started != nil && !liveState.started.IsZero() {
 					clockSlot := n.Row(c.Key("elapsed-slot")).Height(20).AlignItems(n.Baseline)

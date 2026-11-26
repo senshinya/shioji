@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestToolSpansMergeOnlyFollowingReasoningSummaries(t *testing.T) {
+func TestToolSpansMergeLeadingAndFollowingReasoningSummaries(t *testing.T) {
 	items := []domain.Item{
 		{ID: "plan", TurnID: "t", Kind: "activity", Presentation: "reasoning", Text: "先分析范围", Final: true},
 		{ID: "read", TurnID: "t", Kind: "tool", Presentation: "files", Final: true},
@@ -16,28 +16,26 @@ func TestToolSpansMergeOnlyFollowingReasoningSummaries(t *testing.T) {
 		{ID: "next-plan", TurnID: "t", Kind: "activity", Presentation: "reasoning", Text: "准备下一组", Final: true},
 		{ID: "next-tool", TurnID: "t", Kind: "tool", Presentation: "command", Final: true},
 		{ID: "next-think", TurnID: "t", Kind: "activity", Presentation: "reasoning", Text: "确认结果", Final: true},
+		{ID: "other-turn-thought", TurnID: "t2", Kind: "activity", Presentation: "reasoning", Text: "单独思考", Final: true},
 	}
 	spans := ToolSpans(items, nil, domain.HistorySpacer)
 	if len(spans) != 2 {
 		t.Fatalf("got %d spans, want 2: %+v", len(spans), spans)
 	}
-	if _, merged := spans[0]; merged {
-		t.Fatalf("leading reasoning before first tool was merged: %+v", spans)
-	}
-	if _, merged := spans[6]; merged {
-		t.Fatalf("leading reasoning before second tool group was merged: %+v", spans)
-	}
-	first := spans[1]
+	first := spans[0]
 	if first.ID != "read" || first.End != 5 || first.Count != 2 || first.Loaded != 2 || !first.Unfinished {
 		t.Fatalf("first span = %+v, want ID=read End=5 Count=2 Loaded=2 Unfinished=true", first)
 	}
-	second := spans[7]
+	second := spans[6]
 	if second.ID != "next-tool" || second.End != 9 || second.Count != 1 || second.Loaded != 1 || second.Unfinished {
 		t.Fatalf("second span = %+v, want ID=next-tool End=9 Count=1 Loaded=1 Unfinished=false", second)
 	}
+	if _, merged := spans[9]; merged {
+		t.Fatalf("standalone reasoning without tools was merged: %+v", spans)
+	}
 }
 
-func TestToolSpansContinueUnloadedGroupOnLeadingReasoningWithoutPullingEarlierSummary(t *testing.T) {
+func TestToolSpansContinueUnloadedGroupOnLeadingReasoning(t *testing.T) {
 	// Window starts at a reasoning summary that follows an unloaded tool call.
 	partial := []domain.Item{
 		{ID: "think", TurnID: "t", Order: 4, Kind: "activity", Presentation: "reasoning", Text: "继续检查", Final: true},
@@ -69,24 +67,21 @@ func TestToolSpansContinueUnloadedGroupOnLeadingReasoningWithoutPullingEarlierSu
 		t.Fatalf("trailing summary page lost its group: %+v", spans)
 	}
 
-	// Older workers that included leading reasoning in hint.First must still not
-	// merge a loaded reasoning summary that appeared before the first tool.
-	legacy := []domain.Item{
+	// Leading reasoning summary before the first tool merges into the tool group
+	// while keeping the group's ID anchored to the first tool call.
+	withLeading := []domain.Item{
 		{ID: "prompt", TurnID: "t", Order: 1, Kind: "user", Text: "check"},
 		{ID: "plan", TurnID: "t", Order: 2, Kind: "activity", Presentation: "reasoning", Text: "先分析", Final: true},
 		{ID: "read", TurnID: "t", Order: 3, Kind: "tool", Final: true},
 		{ID: "think", TurnID: "t", Order: 4, Kind: "activity", Presentation: "reasoning", Text: "再核对", Final: true},
 	}
-	legacyHistory := &domain.HistoryWindow{
+	withLeadingHistory := &domain.HistoryWindow{
 		First:  1,
 		Last:   4,
 		Groups: []domain.HistoryToolGroup{{ID: "read", TurnID: "t", First: 2, Last: 4, Count: 1}},
 	}
-	spans = ToolSpans(legacy, legacyHistory, domain.HistorySpacer)
-	if _, merged := spans[1]; merged {
-		t.Fatalf("legacy hint pulled leading reasoning into the tool group: %+v", spans)
-	}
-	if span := spans[2]; len(spans) != 1 || span.ID != "read" || span.End != 4 || span.Count != 1 || span.Loaded != 1 {
-		t.Fatalf("tool span with legacy hint = %+v", spans)
+	spans = ToolSpans(withLeading, withLeadingHistory, domain.HistorySpacer)
+	if span := spans[1]; len(spans) != 1 || span.ID != "read" || span.End != 4 || span.Count != 1 || span.Loaded != 1 {
+		t.Fatalf("tool span with leading reasoning = %+v", spans)
 	}
 }

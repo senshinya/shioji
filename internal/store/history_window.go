@@ -45,12 +45,15 @@ func (s *Store) sessionHistorySnapshot(q domain.HistoryQuery) (domain.SessionDet
 		if e != nil {
 			return out, e
 		}
-		if item.Kind != "tool" {
+		if !domain.ToolGroupMember(item) {
 			return out, errors.New("invalid tool group")
 		}
 		group, e := s.historyToolGroupLocked(q.SessionID, item)
 		if e != nil {
 			return out, e
+		}
+		if group.Count == 0 {
+			return out, errors.New("invalid tool group")
 		}
 		out.History = &domain.HistoryWindow{Groups: []domain.HistoryToolGroup{group}}
 		err = s.historyQueries().QueryRow("SELECT COALESCE(MAX(sequence),0) FROM journal").Scan(&out.Sequence)
@@ -231,18 +234,19 @@ func (s *Store) historyToolGroupLocked(id string, item domain.Item) (domain.Hist
 		return domain.HistoryToolGroup{}, err
 	}
 	g := domain.HistoryToolGroup{TurnID: item.TurnID}
-	var firstTool, last sql.NullInt64
+	var firstMember, firstTool, last sql.NullInt64
 	err = s.historyQueries().QueryRow(`SELECT
+		MIN(position),
 		MIN(CASE WHEN json_extract(body,'$.kind')='tool' THEN position END),
 		MAX(position),
 		COALESCE(SUM(CASE WHEN json_extract(body,'$.kind')='tool' THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN json_extract(body,'$.kind')='tool' AND json_extract(body,'$.final') AND (COALESCE(json_extract(body,'$.exitCode'),0)!=0 OR json_extract(body,'$.status') IN ('failed','declined','interrupted')) THEN 1 ELSE 0 END),0)
-		FROM items WHERE session_id=? AND position>? AND position<? AND `+toolHistoryMemberSQL, id, before, after).Scan(&firstTool, &last, &g.Count, &g.Issues)
-	if err != nil || !firstTool.Valid || item.Order < firstTool.Int64 {
+		FROM items WHERE session_id=? AND position>? AND position<? AND `+toolHistoryMemberSQL, id, before, after).Scan(&firstMember, &firstTool, &last, &g.Count, &g.Issues)
+	if err != nil || !firstTool.Valid || !firstMember.Valid {
 		return domain.HistoryToolGroup{}, err
 	}
-	g.First, g.Last = firstTool.Int64, last.Int64
-	err = s.historyQueries().QueryRow("SELECT id FROM items WHERE session_id=? AND position=?", id, g.First).Scan(&g.ID)
+	g.First, g.Last = firstMember.Int64, last.Int64
+	err = s.historyQueries().QueryRow("SELECT id FROM items WHERE session_id=? AND position=?", id, firstTool.Int64).Scan(&g.ID)
 	return g, err
 }
 

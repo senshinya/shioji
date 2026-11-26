@@ -205,7 +205,7 @@ func TestMobileReasoningOmitsCompletedLabelAndMorphsInPlace(t *testing.T) {
 	a := &mobileApp{model: m}
 	tester := ui.NewTester(func(c *ui.Context) {
 		ui.Column(c).Fill().Padding(16).Children(func() {
-			a.reasoningItem(c.Key("reason"), nil, session, item, &open, nil, live, "正在思考", &started, nil)
+			a.reasoningItem(c.Key("reason"), nil, session, item, &open, nil, live, "正在思考", &started, nil, nil)
 		})
 	}, 360, 200)
 	tester.Advance(time.Second)

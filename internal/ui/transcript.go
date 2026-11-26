@@ -51,8 +51,72 @@ type toolArrivalState struct {
 	seen          map[string]bool
 	motions       map[string]*toolDisclosureMotion
 	footerKeys    map[string]string // Restart waiting rows retain their native animation state.
+	groupKeys     map[string]string // Tool groups merged from a leading reasoning summary keep its row key.
+	morphs        map[string]*toolGroupMorph
+	standalone    map[string]standaloneReasoningSnapshot
 	steerFooter   *steerFooterHandoff
 	heldSteerTurn string
+}
+
+type standaloneReasoningSnapshot struct {
+	itemID  string
+	label   string
+	wasLive bool
+	wasOpen bool
+	hasBody bool
+	phase   time.Time
+	started *time.Time
+	turnID  string
+}
+
+type toolGroupMorph struct {
+	origin     standaloneReasoningSnapshot
+	started    time.Time
+	duration   time.Duration
+	wasOpen    bool
+	openIDs    map[string]bool
+	keepStatus bool
+}
+
+func (m *toolGroupMorph) progress(now time.Time, reduce bool) float32 {
+	if m == nil || reduce || m.duration <= 0 {
+		return 0
+	}
+	elapsed := now.Sub(m.started)
+	if elapsed >= m.duration {
+		return 0
+	}
+	t := min(1, max(0, float32(elapsed)/float32(m.duration)))
+	return 1 - n.EaseInOut(t)
+}
+
+func (v *View) activeToolGroupMorph(group string) (*toolGroupMorph, float32) {
+	if v.toolArrivals == nil {
+		return nil, 0
+	}
+	m := v.toolArrivals.morphs[group]
+	if m == nil {
+		return nil, 0
+	}
+	p := m.progress(v.frameTime, v.reduceMotion)
+	if p <= 0 {
+		return nil, 0
+	}
+	return m, p
+}
+
+func (v *View) leadingReasoningMorphProgress(group, itemID string) float32 {
+	m, p := v.activeToolGroupMorph(group)
+	if m == nil || p <= 0 || !m.openIDs[itemID] {
+		return 0
+	}
+	if m.wasOpen && v.Model.ToolDisclosure(group).Closed() {
+		// While folding straight into a collapsed tool group, keep the
+		// outgoing reasoning body at its original indent and omit the
+		// timeline glyph rather than sliding right just before vanishing.
+		return 1
+	}
+	return p
 }
 
 // An automatic compaction or hook can arrive before the adapter can confirm
@@ -245,6 +309,7 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		}
 	}
 	seen := make(map[string]bool, len(items)+len(v.Model.Details[v.Model.SessionID].Turns))
+	var nextStandalone map[string]standaloneReasoningSnapshot
 	arrival := func(key string) float32 {
 		seen[key] = true
 		if arrivals.seen != nil && !arrivals.seen[key] && !v.reduceMotion {
@@ -264,9 +329,22 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 	}
 	defer func() {
 		arrivals.seen = seen
+		arrivals.standalone = nextStandalone
 		for key := range arrivals.motions {
 			if !seen[key] {
 				delete(arrivals.motions, key)
+			}
+		}
+		for key := range arrivals.groupKeys {
+			if !seen[key] {
+				delete(arrivals.groupKeys, key)
+			}
+		}
+		for key, morph := range arrivals.morphs {
+			if !seen[key] || morph.progress(v.frameTime, v.reduceMotion) <= 0 {
+				delete(arrivals.morphs, key)
+			} else {
+				v.toolsAnimating = true
 			}
 		}
 	}()
@@ -336,6 +414,42 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			if item.Kind != "user" && item.Kind != "assistant" && item.Kind != "request" && item.Kind != "request_result" {
 				progress = arrival(item.ID)
 			}
+			if domain.ReasoningSummary(item) {
+				display := conversationui.ReasoningForDisplay(item)
+				label := display.Name
+				if label == "" {
+					label = "思考摘要"
+				}
+				hasBody := activityHasBody(display)
+				wasLive := liveEmptyReasoning
+				if wasLive {
+					label = "正在思考"
+				}
+				actKey := "activity:" + v.Model.SessionID + "/" + item.ID
+				wasOpen := hasBody && !v.Model.Collapsed[actKey]
+				if liveReasoningID == item.ID && hasBody && item.TurnID == activeTurn && item.WorkID == "" {
+					wasOpen = !v.reasoningStreamEntry(item.ID).collapsedByUser
+				}
+				snap := standaloneReasoningSnapshot{
+					itemID:  item.ID,
+					label:   label,
+					wasLive: wasLive,
+					wasOpen: wasOpen,
+					hasBody: hasBody,
+					turnID:  item.TurnID,
+				}
+				if prev, ok := arrivals.standalone[item.ID]; ok {
+					snap.phase = prev.phase
+					snap.started = prev.started
+					if prev.wasLive == wasLive && prev.label != "" {
+						snap.label = prev.label
+					}
+				}
+				if nextStandalone == nil {
+					nextStandalone = map[string]standaloneReasoningSnapshot{}
+				}
+				nextStandalone[item.ID] = snap
+			}
 			rows = append(rows, transcriptRow{key: item.ID, item: receipts.attach(item), end: i, opacity: progress})
 			i++
 			continue
@@ -381,6 +495,81 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			}
 			v.Model.SetToolDisclosure(key, disclosure)
 		}
+		liveTail := activeTurn != "" && item.TurnID == activeTurn && latestTool < end && !hasLaterContent
+		if arrivals.seen != nil && !arrivals.seen[key] && !baseline && !collapseHistory && len(arrivals.standalone) > 0 {
+			var origin standaloneReasoningSnapshot
+			foundOrigin := false
+			if domain.ReasoningSummary(item) {
+				origin, foundOrigin = arrivals.standalone[item.ID]
+			} else {
+				for k := i - 1; k >= 0 && items[k].TurnID == item.TurnID && domain.HistorySpacer(items[k]); k-- {
+					if domain.ReasoningSummary(items[k]) {
+						if prev, ok := arrivals.standalone[items[k].ID]; ok {
+							origin, foundOrigin = prev, true
+							break
+						}
+					}
+				}
+			}
+			if foundOrigin {
+				if arrivals.groupKeys == nil {
+					arrivals.groupKeys = map[string]string{}
+				}
+				arrivals.groupKeys[key] = origin.itemID
+				arrivals.seen[key] = true
+				delete(arrivals.motions, key)
+				openIDs := map[string]bool{}
+				if origin.wasOpen {
+					openIDs[origin.itemID] = true
+				}
+				for j := i; j < end; j++ {
+					if prev, ok := arrivals.standalone[items[j].ID]; ok && prev.wasOpen {
+						openIDs[items[j].ID] = true
+					}
+				}
+				willOpen := !disclosure.Closed()
+				keepStatus := liveTail && v.Model.Connected && !origin.wasLive && (willOpen || origin.wasOpen)
+				if !v.reduceMotion {
+					if arrivals.morphs == nil {
+						arrivals.morphs = map[string]*toolGroupMorph{}
+					}
+					arrivals.morphs[key] = &toolGroupMorph{
+						origin:     origin,
+						started:    v.frameTime,
+						duration:   reasoningMorphDuration,
+						wasOpen:    origin.wasOpen,
+						openIDs:    openIDs,
+						keepStatus: keepStatus,
+					}
+					v.toolsAnimating = true
+					if v.toolMotions == nil {
+						v.toolMotions = map[string]*toolDisclosureMotion{}
+					}
+					if !origin.wasOpen && willOpen {
+						v.toolMotions[key] = &toolDisclosureMotion{from: 0, to: 1, start: v.frameTime, duration: reasoningMorphDuration}
+						for _, call := range items[i:end] {
+							if !domain.HistorySpacer(call) {
+								arrivals.seen[call.ID] = true
+								delete(arrivals.motions, call.ID)
+							}
+						}
+					} else if origin.wasOpen && !willOpen {
+						v.toolMotions[key] = &toolDisclosureMotion{from: 1, to: 0, start: v.frameTime, duration: reasoningMorphDuration}
+						for _, call := range items[i:end] {
+							if !domain.HistorySpacer(call) {
+								arrivals.seen[call.ID] = true
+								delete(arrivals.motions, call.ID)
+							}
+						}
+					} else if origin.wasOpen && willOpen {
+						for id := range openIDs {
+							arrivals.seen[id] = true
+							delete(arrivals.motions, id)
+						}
+					}
+				}
+			}
+		}
 		opacity, show := float32(1), !disclosure.Closed()
 		if motion := v.toolMotions[key]; motion != nil {
 			if v.reduceMotion {
@@ -414,8 +603,14 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 			heading.toolReveal = opacity
 		}
 		rows = append(rows, heading)
+		morph, morphP := v.activeToolGroupMorph(key)
+		closingMorph := morph != nil && morph.wasOpen && disclosure.Closed()
 		for j := i; show && j < end; j++ {
 			if !domain.HistorySpacer(items[j]) {
+				if closingMorph && !morph.openIDs[items[j].ID] {
+					seen[items[j].ID] = true
+					continue
+				}
 				progress := min(opacity, arrival(items[j].ID))
 				rows = append(rows, transcriptRow{key: items[j].ID, item: items[j], end: j, toolParent: key, opacity: progress})
 			} else {
@@ -424,11 +619,18 @@ func (v *View) transcriptRows(items []domain.Item) []transcriptRow {
 		}
 		// Keep the outgoing status slot in the same height reveal when
 		// another item takes over. The status renderer checks the current owner.
-		liveTail := activeTurn != "" && item.TurnID == activeTurn && latestTool < end && !hasLaterContent
 		progress := v.runningProgress
 		outgoing := v.runningGroup == key || progress != nil && progress.handoff != nil && progress.handoff.group == key
 		if show && v.Model.Connected && (liveTail || outgoing && v.toolMotions[key] != nil) {
-			rows = append(rows, transcriptRow{key: key + ":status", item: item, end: end - 1, toolParent: key, toolStatus: true, opacity: min(opacity, heading.opacity)})
+			statusOpacity := min(opacity, heading.opacity)
+			if morph != nil && morph.keepStatus {
+				if !disclosure.Closed() {
+					statusOpacity = 1
+				} else if morphP > 0 {
+					statusOpacity = opacity
+				}
+			}
+			rows = append(rows, transcriptRow{key: key + ":status", item: item, end: end - 1, toolParent: key, toolStatus: true, opacity: statusOpacity})
 		}
 		i = end
 	}
@@ -471,6 +673,8 @@ func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index
 	}
 
 	opened := !v.Model.ToolDisclosure(row.group).Closed()
+	morph, morphProgress := v.activeToolGroupMorph(row.group)
+	suppressInline := morph != nil && morph.keepStatus && opened
 	progress := v.runningProgress
 	inline := float32(0)
 	live := progress != nil && v.runningGroup == row.group
@@ -478,13 +682,36 @@ func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index
 	var elapsed *time.Time
 	var shimmerAt time.Time
 	if live {
-		inline = 1 - row.toolReveal
-		if inline > 0 {
-			phase, elapsed, shimmerAt = progress.toolCaption(c), v.toolElapsed(row.item.TurnID), progress.started
+		if !suppressInline {
+			inline = 1 - row.toolReveal
+			if inline > 0 {
+				phase, elapsed, shimmerAt = progress.toolCaption(c), v.toolElapsed(row.item.TurnID), progress.started
+			}
 		}
 	} else if h := v.steerFooterTransition(); h != nil && h.tool != nil && h.tool.group == row.group && h.tool.inline {
 		inline = 1 - h.fraction(c.Now())
 		phase, elapsed, shimmerAt = h.tool.label, h.tool.elapsed, h.tool.shimmerAt
+	}
+	originLive := morph != nil && morph.origin.wasLive
+	closingMorph := morph != nil && morph.wasOpen && !opened
+	inlineFactor := 1 - morphProgress
+	if closingMorph {
+		// row.toolReveal already animates 1 -> 0 on the morph clock, so
+		// inline = 1 - row.toolReveal already carries the 0 -> 1 curve.
+		inlineFactor = 1
+	}
+	dotWeight := inline * inlineFactor
+	if originLive {
+		dotWeight += morphProgress
+	}
+	thinkingWeight := float32(0)
+	if morph != nil && !originLive {
+		thinkingWeight = morphProgress
+	}
+	terminalWeight := max(0, 1-dotWeight-thinkingWeight)
+	titleShimmerAt := shimmerAt
+	if titleShimmerAt.IsZero() && originLive {
+		titleShimmerAt = morph.origin.phase
 	}
 	description := outcome
 	if live {
@@ -493,31 +720,67 @@ func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index
 			description += "，" + outcome
 		}
 	}
-	button := n.ButtonBase(c).AlignSelf(n.Start).Height(20).Justify(n.Start).Label(label).Description(description).Expanded(opened)
+	button := n.ButtonBase(c.Key("activity-heading")).AlignSelf(n.Start).Height(20).Justify(n.Start).Label(label).Description(description).Expanded(opened)
 	color := textHoverColor(c, button, t.TextMuted)
 	font := n.Font{Family: t.Font, Size: transcriptCaptionSize, Weight: 400}
 	button.Children(func() {
-		line := n.Row(c).Height(20).AlignItems(n.Baseline)
-		if inline > 0 {
-			line.Label("工具组运行状态")
-			shimmerToolStatus(c, line, shimmerAt, t.Text, inline)
+		line := n.Row(c.Key("heading-line")).Height(20).AlignItems(n.Baseline)
+		if dotWeight > 0 {
+			if inline > 0 {
+				line.Label("工具组运行状态")
+			}
+			shimmerToolStatus(c, line, titleShimmerAt, t.Text, dotWeight)
 		}
 		line.Children(func() {
 			transcriptMarkerSlot(c.Key("icon")).MarginEnd(toolSummaryGap).Children(func() {
-				transcriptSymbol(c.Key("terminal"), transcriptCommandIcon, label, font, color).Opacity(1 - inline)
-				if inline > 0 {
-					transcriptStatusDot(c.Key("dot"), label, font, t.Success, true, shimmerAt).Absolute().Left(0).Top(0).Opacity(inline)
+				transcriptSymbol(c.Key("terminal"), transcriptCommandIcon, label, font, color).Opacity(terminalWeight)
+				if thinkingWeight > 0 {
+					transcriptSymbol(c.Key("summary-icon"), activityIcon("reasoning"), label, font, color).Absolute().Left(0).Top(0).Opacity(thinkingWeight)
+				}
+				if dotWeight > 0 {
+					transcriptStatusDot(c.Key("dot"), label, font, t.Success, live || originLive, titleShimmerAt).Absolute().Left(0).Top(0).Opacity(dotWeight)
 				}
 			})
 			countAnimation := animationPointer(c, 180*time.Millisecond)
-			n.Text(c.Key("count"), label).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color).
-				ContentTransition(n.ContentTransition{Numeric: true, Animation: countAnimation})
+			labelBox := n.Column(c.Key("heading-label-box")).MinHeight(20).MinWidth(0).Shrink(0)
+			naturalLabelW := float32(0)
+			if morphProgress > 0 && morph.origin.label != "" {
+				originW, _ := n.ShapeText(morph.origin.label, font, 0).Size()
+				targetW, _ := n.ShapeText(label, font, 0).Size()
+				naturalLabelW = max(originW, targetW)
+				labelBox.Width(originW + (targetW-originW)*(1-morphProgress)).Clip()
+			}
+			labelBox.Children(func() {
+				if morphProgress > 0 {
+					morphAnim := motionAnimation(c, reasoningMorphDuration)
+					if !c.Preferences().ReduceMotion {
+						morphAnim.Ease = n.EaseInOut
+					}
+					headingText := n.Text(c.Key("heading-label"), label).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color).SingleLine().
+						ContentTransition(n.ContentTransition{Animation: &morphAnim})
+					if naturalLabelW > 0 {
+						headingText.MinWidth(naturalLabelW)
+					}
+				} else {
+					n.Text(c.Key("heading-label"), label).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(color).SingleLine().
+						ContentTransition(n.ContentTransition{Numeric: true, Animation: countAnimation})
+				}
+			})
 			if outcome != "" {
 				n.Text(c.Key("outcome"), outcome).FontSize(transcriptCaptionSize).FixedLineHeight(20).TextColor(t.TextMuted).MarginStart(toolSummaryGap).
 					ContentTransition(n.ContentTransition{Numeric: true, Animation: countAnimation})
 			}
-			if inline > 0 {
-				v.toolProgressCaption(c.Key("inline"), t, phase, elapsed, inline, true)
+			inlineExtent := inline * inlineFactor
+			if inlineExtent > 0 {
+				v.toolProgressCaption(c.Key("inline"), t, phase, elapsed, inlineExtent, true)
+			}
+			clockOpacity := float32(0)
+			if originLive && inline == 0 && morphProgress > 0 && morph.origin.started != nil && !morph.origin.started.IsZero() {
+				clockOpacity = max(0, (morphProgress-.45)/.55)
+			}
+			chevronOpacity := float32(1)
+			if originLive && morphProgress > 0 {
+				chevronOpacity = max(0, min(1, (.75-morphProgress)/.75))
 			}
 			angle := -90 * (1 - row.toolReveal)
 			if c.Preferences().ReduceMotion {
@@ -526,7 +789,21 @@ func (v *View) toolGroupTitle(c *n.Context, t *n.Theme, row transcriptRow, index
 					angle = 0
 				}
 			}
-			inlineSymbolWithAnimation(c.Key("chevron"), transcriptChevron, label, font, 14, color, n.Animation{}, angle).MarginStart(toolSummaryGap)
+			if clockOpacity > 0 {
+				trailing := n.Row(c.Key("trailing-slot")).Height(20).Shrink(0).AlignItems(n.Baseline)
+				clockFont := n.Font{Family: c.Theme().Font, Size: transcriptCaptionSize, Weight: 400, Features: "tnum"}
+				clockW, _ := n.ShapeText(elapsedActivityLabel(*morph.origin.started, c.Now()), clockFont, 0).Size()
+				trailing.MinWidth(clockW + toolSummaryGap)
+				trailing.Children(func() {
+					inlineSymbolWithAnimation(c.Key("chevron"), transcriptChevron, label, font, 14, color, n.Animation{}, angle).MarginStart(toolSummaryGap).Opacity(chevronOpacity)
+					clockSlot := n.Row(c.Key("elapsed-slot")).Absolute().Left(0).Top(0).Height(20).AlignItems(n.Baseline).Opacity(clockOpacity)
+					clockSlot.Children(func() {
+						runningElapsed(c.Key("elapsed"), morph.origin.started, t.TextMuted, true)
+					})
+				})
+			} else {
+				inlineSymbolWithAnimation(c.Key("chevron"), transcriptChevron, label, font, 14, color, n.Animation{}, angle).MarginStart(toolSummaryGap).Opacity(chevronOpacity)
+			}
 		})
 	})
 	if button.Clicked() {
@@ -538,6 +815,11 @@ func (v *View) toolGroupProgress(c *n.Context, t *n.Theme, row transcriptRow) {
 	progress := v.runningProgress
 	if progress == nil || v.runningGroup != row.toolParent {
 		return
+	}
+	if row.opacity <= 0 {
+		if morph, p := v.activeToolGroupMorph(row.toolParent); morph != nil && morph.origin.wasLive && p > 0 {
+			return
+		}
 	}
 	v.toolProgressLine(c, t, progress.toolCaption(c), v.toolElapsed(row.item.TurnID), progress.started, row.opacity)
 }
@@ -652,6 +934,7 @@ func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow, ins
 	if commandItem(row.item) {
 		icon = commandActivityIcon(row.item.Name)
 	}
+	morphP := float32(0)
 	if domain.ReasoningSummary(row.item) {
 		body := conversationui.ReasoningSummaryText(row.item)
 		if body == "" {
@@ -660,13 +943,25 @@ func (v *View) toolTimelineItem(c *n.Context, t *n.Theme, row transcriptRow, ins
 		icon = toolThinkingIcon
 		label, _, _ = strings.Cut(body, "\n")
 		entry := v.reasoningStreamEntry(row.item.ID)
-		v.reasoningStreamText(c.Key("reasoning"), row.item.ID, body, !row.item.Final, entry.fresh, t.TextMuted, func(text n.Element) {
-			text.Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).Wrap().Selectable()
-			v.decoratePlainFind(c, text, row.item, nil)
+		morphP = v.leadingReasoningMorphProgress(row.toolParent, row.item.ID)
+		bodySlot := n.Column(c.Key("reasoning-body")).FillWidth()
+		if morphP > 0 {
+			const indentDelta = (toolTimelineInset + toolGlyphSlot + toolTimelineGap) - (transcriptGlyphSlot + 6)
+			bodySlot.Transform(n.Translation(-indentDelta*morphP, 0))
+		}
+		bodySlot.Children(func() {
+			v.reasoningStreamText(c.Key("reasoning"), row.item.ID, body, !row.item.Final, entry.fresh, t.TextMuted, func(text n.Element) {
+				text.Font(font.Family).FontSize(font.Size).FontWeight(font.Weight).FixedLineHeight(20).Wrap().Selectable()
+				v.decoratePlainFind(c, text, row.item, nil)
+			})
 		})
 	} else {
 		v.item(c, t, row.item)
 	}
 	// A small neutral mask interrupts the rail around each native glyph.
-	toolGlyph(c, icon, label, font, t.TextMuted).Absolute().Left(inset).Top(0).Background(t.Background)
+	glyph := toolGlyph(c, icon, label, font, t.TextMuted).Absolute().Left(inset).Top(0).Background(t.Background)
+	if morphP > 0 {
+		// Fade the timeline glyph in once the sliding text clears the icon slot.
+		glyph.Opacity(max(0, (.55-morphP)/.55))
+	}
 }

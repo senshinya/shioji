@@ -560,9 +560,9 @@ func (a *mobileApp) openPreviewBoard(board string) {
 		detail.Items = []domain.Item{
 			{ID: "question-receipt", Kind: "request_result", Text: "已提交回答", Final: true,
 				Parts: []domain.ContentPart{{Kind: "text", Label: "采用哪种缓存策略？", Text: "保留现有缓存"}}},
-			{ID: "reasoning", Kind: "activity", Presentation: "reasoning", Name: "思考摘要", Final: true,
+			{ID: "reasoning", TurnID: "turn-reasoning", Kind: "activity", Presentation: "reasoning", Name: "思考摘要", Final: true,
 				Parts: []domain.ContentPart{{Kind: "text", Text: "对照重连前后的历史事件。"}}},
-			{ID: "tool-results", Kind: "tool", Presentation: "mcp", Name: "检查工作区", Final: true, Status: "failed", ExitCode: new(3),
+			{ID: "tool-results", TurnID: "turn-tool", Kind: "tool", Presentation: "mcp", Name: "检查工作区", Final: true, Status: "failed", ExitCode: new(3),
 				Parts: []domain.ContentPart{
 					{Kind: "markdown", Label: "检查结果", Text: "**已核对事件顺序**"},
 					{Kind: "code", Label: "命令输出", Text: "worker ping: ok"},

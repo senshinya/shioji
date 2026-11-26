@@ -204,7 +204,7 @@ func (s *replyTail) draw(c *ui.Context, item domain.Item, options *markdown.Opti
 
 // New event rows get real space as they enter. Replies grow inside their own
 // measured clip, and accepted local inputs use the composer handoff.
-func (s *replyTail) revealEvents(c *ui.Context, state *ui.ListState, rows []mobileclient.TranscriptRow, items []domain.Item, offset int) {
+func (s *replyTail) revealEvents(c *ui.Context, state *ui.ListState, rows []mobileclient.TranscriptRow, items []domain.Item, offset int, skip ...func(mobileclient.TranscriptRow) bool) {
 	if c.Preferences().ReduceMotion {
 		clear(s.arrivals)
 		return
@@ -215,6 +215,9 @@ func (s *replyTail) revealEvents(c *ui.Context, state *ui.ListState, rows []mobi
 	}
 	for index, row := range rows {
 		if row.Footer != "" {
+			continue
+		}
+		if len(skip) > 0 && skip[0] != nil && skip[0](row) {
 			continue
 		}
 		item := items[row.First]

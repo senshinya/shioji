@@ -359,7 +359,7 @@ func TestSentMessageRunsPreserveFileAndSkillOrderingWithUnicodeOffsets(t *testin
 	}
 }
 
-func TestReasoningMergesForwardIntoToolGroupWithoutPullingEarlierSummary(t *testing.T) {
+func TestReasoningMergesLeadingAndFollowingIntoToolGroup(t *testing.T) {
 	turn := domain.Turn{ID: "t", Status: domain.ExecutionRunning}
 	items := []domain.Item{
 		{ID: "leading", TurnID: "t", Kind: "activity", Presentation: "reasoning", Text: "Inspect", Final: true},
@@ -370,18 +370,15 @@ func TestReasoningMergesForwardIntoToolGroupWithoutPullingEarlierSummary(t *test
 	detail := domain.SessionDetail{Turns: []domain.Turn{turn}}
 	rows := TranscriptRows(items, detail.Turns, true, nil)
 	groups := timeline.Groups(items, rows, detail, true, false)
-	if _, merged := groups[0]; merged || rows[0].First != 0 || rows[0].End != 1 {
-		t.Fatalf("leading reasoning before the first tool was merged: rows=%+v groups=%+v", rows, groups)
-	}
-	group := groups[1]
-	if rows[1].First != 1 || rows[1].End != 3 || group.Count != 1 || !group.Live || !group.Open || group.Outcome != "" {
-		t.Fatalf("following thinking did not stay in the live tool group: rows=%+v group=%+v", rows, group)
+	group, merged := groups[0]
+	if !merged || rows[0].First != 0 || rows[0].End != 3 || group.Key != "tool-group:tool" || group.Count != 1 || !group.Live || !group.Open || group.Outcome != "" {
+		t.Fatalf("leading and following reasoning did not stay in one live tool group: rows=%+v groups=%+v", rows, groups)
 	}
 	items = append(items, domain.Item{ID: "answer", TurnID: "t", Kind: "assistant", Text: "Done", ActivityOrder: 3})
 	rows = TranscriptRows(items, detail.Turns, true, nil)
 	groups = timeline.Groups(items, rows, detail, true, false)
-	group = groups[1]
-	if _, merged := groups[0]; merged || rows[1].End != 3 || group.Open || group.Live || group.Outcome != ToolGroupCompleted {
+	group = groups[0]
+	if rows[0].First != 0 || rows[0].End != 3 || group.Open || group.Live || group.Outcome != ToolGroupCompleted {
 		t.Fatalf("reply did not seal the group using the tool result: rows=%+v groups=%+v", rows, groups)
 	}
 	// A standalone reasoning summary in a later turn counts as visible content

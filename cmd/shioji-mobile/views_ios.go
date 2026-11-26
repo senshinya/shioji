@@ -528,6 +528,7 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 			transcript = append(slices.Clone(transcript), mobileclient.TranscriptRow{Footer: viewKey})
 		}
 	}
+	timeline.observeTranscript(c, transcript, items, groups, toolsShowProgress, liveReasoning, liveEmptyReasoning, canAnimate)
 	replyOrder, lastReply := projection.replyOrder, projection.lastReply
 
 	offset, rows := 0, len(transcript)
@@ -593,6 +594,9 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 				return transcriptTurnKey(row.Footer)
 			}
 			if group, ok := groups[row.First]; ok {
+				if key := timeline.groupKeys[group.Key]; key != "" {
+					return key
+				}
 				return group.Key
 			}
 			return compaction.rowKey(items[row.First].ID)
@@ -689,7 +693,10 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 	}
 	tail.observe(c.Now(), scope, replyOrder, items,
 		canReveal && turns[lastReply.TurnID].Status != domain.ExecutionInterrupted, projection)
-	tail.revealEvents(c, state, transcript, items, offset)
+	tail.revealEvents(c, state, transcript, items, offset, func(row mobileclient.TranscriptRow) bool {
+		group, ok := groups[row.First]
+		return ok && timeline.groupKeys[group.Key] != ""
+	})
 	if len(state.Reveals) != 0 {
 		state.FollowAnimation = nil
 	}
@@ -985,7 +992,7 @@ func (a *mobileApp) renderTranscript(c *ui.Context, parent *mygo.Window, session
 						body = timeline.bodies[item.ID]
 					}
 					if domain.ReasoningSummary(item) {
-						a.reasoningItem(row, parent, session, item, body, mark, item.ID == liveReasoning, workCaption, workStart, state, tail.reasoningFresh[item.ID])
+						a.reasoningItem(row, parent, session, item, body, mark, item.ID == liveReasoning, workCaption, workStart, state, timeline, tail.reasoningFresh[item.ID])
 					} else {
 						a.toolItem(row, parent, session, item, body, mark, false, state)
 					}

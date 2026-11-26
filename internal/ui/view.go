@@ -1420,6 +1420,12 @@ func (v *View) conversation(c *n.Context, t *n.Theme, switchPane bool) {
 		}
 	}
 	v.historySuffixReveals(c, state, rows)
+	if len(state.Reveals) != 0 {
+		// Reveals own the frame-by-frame row height curve; keep the list
+		// locked directly to the bottom instead of stacking a lagging follow
+		// glide on top of the reveal animation.
+		state.FollowAnimation = nil
+	}
 	historyEndRow := len(rows) + 1
 	hasNewer := detail.History != nil && detail.History.Newer
 	if hasNewer {
@@ -1444,6 +1450,13 @@ func (v *View) conversation(c *n.Context, t *n.Theme, switchPane bool) {
 				return key
 			}
 			return "turn-footer:" + row.footer
+		}
+		if row.toolTitle {
+			if key := v.toolArrivals.groupKeys[row.group]; key != "" {
+				return key
+			}
+		} else if row.toolParent != "" && !row.toolStatus {
+			return "tool-item:" + row.key
 		}
 		return row.key
 	}
@@ -1534,7 +1547,11 @@ func (v *View) conversation(c *n.Context, t *n.Theme, switchPane bool) {
 		if entry.toolStatus {
 			bottom = 4
 		} else if entry.toolTitle && entry.group == v.runningGroup {
-			bottom = 4 + 4*entry.toolReveal
+			if morph, _ := v.activeToolGroupMorph(entry.group); morph != nil && morph.keepStatus && !v.Model.ToolDisclosure(entry.group).Closed() {
+				bottom = 8
+			} else {
+				bottom = 4 + 4*entry.toolReveal
+			}
 		}
 		if item.Presentation == "compaction" && row < len(rows) && rows[row].footer == item.TurnID && rows[row].replyBefore == nil && v.Model.Connected {
 			turn := turns[item.TurnID]
@@ -1568,12 +1585,14 @@ func (v *View) conversation(c *n.Context, t *n.Theme, switchPane bool) {
 			}
 			v.sentMessagePose(c, content, item)
 			if entry.toolParent != "" && !entry.toolStatus {
+				morphP := v.leadingReasoningMorphProgress(entry.toolParent, entry.item.ID)
+				railX := toolTimelineInset*(1-morphP) + toolGlyphSlot/2 - .5
 				content.Padding(0, 0, bottom, toolTimelineInset+toolGlyphSlot+toolTimelineGap).Draw(func(p *n.Painter, r n.Rect) {
 					height := r.H
 					if row == len(rows) || rows[row].toolParent != entry.toolParent || rows[row].toolStatus {
 						height = 10
 					}
-					p.Fill(n.Rect{X: r.X + toolTimelineInset + toolGlyphSlot/2 - .5, Y: r.Y, W: 1, H: height}, t.Border, 0)
+					p.Fill(n.Rect{X: r.X + railX, Y: r.Y, W: 1, H: height}, t.Border, 0)
 				})
 				content.Opacity(entry.opacity)
 				if !v.reduceMotion {
@@ -1771,8 +1790,14 @@ func (v *View) replyFooter(c *n.Context, t *n.Theme, turn domain.Turn, preparing
 			}
 		} else if liveEmptyReasoning {
 			replacement = v.runningReasoning
-		} else if v.runningGroup != "" && v.activityTurn == turn.ID && v.Model.ToolDisclosure(v.runningGroup).Closed() && v.toolMotions[v.runningGroup] == nil {
-			replacement = v.runningGroup
+		} else if v.runningGroup != "" && v.activityTurn == turn.ID {
+			morph, _ := v.activeToolGroupMorph(v.runningGroup)
+			closedIdle := v.Model.ToolDisclosure(v.runningGroup).Closed() && v.toolMotions[v.runningGroup] == nil
+			if morph != nil && morph.keepStatus {
+				replacement = v.runningGroup + ":status"
+			} else if closedIdle && (morph == nil || morph.origin.wasLive) {
+				replacement = v.runningGroup
+			}
 		}
 	}
 	wasDelegated := n.Local(frame, "was-delegated", func() bool { return false })

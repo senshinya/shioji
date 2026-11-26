@@ -247,7 +247,7 @@ func mobileReasoningStreamText(c *ui.Context, stream *conversationui.ReasoningTe
 	return value
 }
 
-func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, open *bool, mark *markdown.RangeDecoration, live bool, phaseLabel string, started *time.Time, list *ui.ListState, freshArg ...bool) {
+func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session domain.Session, item domain.Item, open *bool, mark *markdown.RangeDecoration, live bool, phaseLabel string, started *time.Time, list *ui.ListState, timeline *mobileToolTimeline, freshArg ...bool) {
 	item = conversationui.ReasoningForDisplay(item)
 	p := palette(c)
 	summaryName := item.Name
@@ -278,8 +278,8 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 	if streaming {
 		visible = !rs.collapsedByUser
 	}
-	header := c.Key("reasoning-heading")
-	heading := ui.ButtonBase(header).MinHeight(mobileTapSize(c)).AlignSelf(ui.Start).AlignItems(ui.Center)
+	header := c.Key("disclosure")
+	heading := transcriptDisclosure(ui.ButtonBase(header)).MinHeight(transcriptMetadataHeight).AlignItems(ui.Start)
 	liveState := ui.Local(heading, "reasoning-live-state", func() mobileReasoningLiveState { return mobileReasoningLiveState{} })
 	if liveStatus {
 		if liveState.phase.IsZero() {
@@ -308,6 +308,20 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 	displayName := summaryName
 	if liveStatus {
 		displayName = liveState.caption
+	}
+	if timeline != nil {
+		if timeline.standalone == nil {
+			timeline.standalone = make(map[string]mobileStandaloneReasoning)
+		}
+		timeline.standalone[item.ID] = mobileStandaloneReasoning{
+			itemID:  item.ID,
+			label:   displayName,
+			wasLive: liveStatus,
+			wasOpen: visible,
+			hasBody: hasBody,
+			phase:   liveState.phase,
+			started: liveState.started,
+		}
 	}
 	status := ""
 	if !streaming {
@@ -356,7 +370,9 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 					mobileToolStatusDot(glyph.Key("live"), displayName, font, sweep).Opacity(liveProgress)
 				}
 			})
-			sweep.caption(lineKey.Key("title"), displayName, ui.ContentTransition{Animation: &morphAnim})
+			ui.Column(lineKey.Key("title-box")).MinWidth(0).Shrink(1).Children(func() {
+				sweep.caption(lineKey.Key("title"), displayName, ui.ContentTransition{Animation: &morphAnim})
+			})
 			if liveStatus {
 				if liveState.started != nil && !liveState.started.IsZero() {
 					clockKey := lineKey.Key("elapsed")
@@ -406,7 +422,7 @@ func (a *mobileApp) reasoningItem(c *ui.Context, parent *mygo.Window, session do
 	})
 	bodyFont := mobileStatusFont(c, controlTextSize)
 	bodyLineHeight := mobileStatusLineHeight(bodyFont)
-	if delta := toolResultPanel(c.Key(toolResultBodyKey(item.ID)), visible, mark != nil, nil, func(c *ui.Context) {
+	if delta := toolResultPanel(c.Key("body"), visible, mark != nil, nil, func(c *ui.Context) {
 		ui.Column(c).FillWidth().Gap(7).Margin(0, 0, 0, mobileToolGlyphSlot/2).Padding(4, 0, 8, mobileToolGlyphSlot/2+6).BorderStartWidth(1).BorderColor(p.line).Children(func() {
 			if item.Text != "" {
 				row := c.Key("tool-summary")

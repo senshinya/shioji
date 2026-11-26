@@ -86,8 +86,8 @@ func ReasoningSummary(item Item) bool {
 }
 
 // ToolGroupMember identifies items that can appear inside an active tool group:
-// tool calls and subsequent public reasoning summaries. A tool group starts on
-// a tool call and never pulls earlier reasoning summaries backward into it.
+// tool calls and contiguous public reasoning summaries from the same turn,
+// including leading summaries immediately before the first tool call.
 // Spacers can occur between members without becoming visible rows or adding to
 // the call count.
 func ToolGroupMember(item Item) bool {

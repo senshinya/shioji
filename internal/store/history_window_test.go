@@ -205,23 +205,22 @@ func TestHistoryToolGroupSpansReasoningAndAutomaticApproval(t *testing.T) {
 	upsert("status", "activity", "")
 	separate := upsert("separate", "tool", "command")
 
-	leading, err := s.SessionHistory(domain.HistoryQuery{SessionID: op.SessionID, AroundID: first.ID, Limit: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leading.History.Groups) != 0 {
-		t.Fatalf("leading reasoning before the first tool must not join a group: %+v", leading.History.Groups)
-	}
-
-	for _, around := range []string{call.ID, middle.ID, last.ID} {
+	wantGroup := domain.HistoryToolGroup{ID: call.ID, TurnID: "t", First: first.Order, Last: last.Order, Count: 2}
+	for _, around := range []string{first.ID, call.ID, middle.ID, last.ID} {
 		page, err := s.SessionHistory(domain.HistoryQuery{SessionID: op.SessionID, AroundID: around, Limit: 1})
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := domain.HistoryToolGroup{ID: call.ID, TurnID: "t", First: call.Order, Last: last.Order, Count: 2}
-		if got := page.History.Groups; len(got) != 1 || got[0] != want {
-			t.Fatalf("page at %s lost its group: got=%+v want=%+v", around, got, want)
+		if got := page.History.Groups; len(got) != 1 || got[0] != wantGroup {
+			t.Fatalf("page at %s lost its group: got=%+v want=%+v", around, got, wantGroup)
 		}
+	}
+	summaryFromLeading, err := s.SessionHistory(domain.HistoryQuery{SessionID: op.SessionID, AroundID: first.ID, SummaryOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := summaryFromLeading.History.Groups; len(got) != 1 || got[0] != wantGroup {
+		t.Fatalf("SummaryOnly on leading reasoning = %+v, want %+v", got, wantGroup)
 	}
 	page, err := s.SessionHistory(domain.HistoryQuery{SessionID: op.SessionID, AroundID: separate.ID, SummaryOnly: true})
 	if err != nil {
@@ -230,5 +229,21 @@ func TestHistoryToolGroupSpansReasoningAndAutomaticApproval(t *testing.T) {
 	want := domain.HistoryToolGroup{ID: separate.ID, TurnID: "t", First: separate.Order, Last: separate.Order, Count: 1}
 	if got := page.History.Groups; len(got) != 1 || got[0] != want {
 		t.Fatalf("activity without a presentation must split tool groups: got=%+v want=%+v", got, want)
+	}
+
+	// A reasoning summary with no tool in its contiguous run remains standalone.
+	standalone := *apply(domain.Event{Type: "item.upsert", Item: &domain.Item{
+		ID: "standalone-thought", TurnID: "t2", Kind: "activity", Presentation: "reasoning",
+		Text: "standalone", Status: "completed", Final: true,
+	}}).Item
+	alonePage, err := s.SessionHistory(domain.HistoryQuery{SessionID: op.SessionID, AroundID: standalone.ID, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(alonePage.History.Groups) != 0 {
+		t.Fatalf("standalone reasoning without tools must not form a group: %+v", alonePage.History.Groups)
+	}
+	if _, err := s.SessionHistory(domain.HistoryQuery{SessionID: op.SessionID, AroundID: standalone.ID, SummaryOnly: true}); err == nil {
+		t.Fatal("SummaryOnly on standalone reasoning without tools should fail")
 	}
 }

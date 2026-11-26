@@ -67,12 +67,166 @@ func mobileToolTimelineIcon(presentation string) *ui.SVG {
 	}
 }
 
+type mobileStandaloneReasoning struct {
+	itemID  string
+	label   string
+	wasLive bool
+	wasOpen bool
+	hasBody bool
+	phase   time.Time
+	started *time.Time
+}
+
+type mobileToolGroupMorph struct {
+	origin     mobileStandaloneReasoning
+	started    time.Time
+	duration   time.Duration
+	wasOpen    bool
+	openIDs    map[string]bool
+	keepStatus bool
+}
+
+func (m *mobileToolGroupMorph) progress(now time.Time, reduce bool) float32 {
+	if m == nil || reduce || m.duration <= 0 {
+		return 0
+	}
+	elapsed := now.Sub(m.started)
+	if elapsed >= m.duration {
+		return 0
+	}
+	t := min(1, max(0, float32(elapsed)/float32(m.duration)))
+	return 1 - ui.EaseInOut(t)
+}
+
 type mobileToolTimeline struct {
 	thread            string
 	bodies            map[string]*bool
 	disclosureVersion uint64
 	projection        *mobileTranscriptProjection
+	groupKeys         map[string]string
+	morphs            map[string]*mobileToolGroupMorph
+	standalone        map[string]mobileStandaloneReasoning
+	seenGroups        map[string]bool
 	mobileclient.ToolTimeline
+}
+
+func (t *mobileToolTimeline) activeMorph(c *ui.Context, groupKey string) (*mobileToolGroupMorph, float32) {
+	if t == nil || t.morphs == nil {
+		return nil, 0
+	}
+	m := t.morphs[groupKey]
+	if m == nil {
+		return nil, 0
+	}
+	p := m.progress(c.Now(), c.Preferences().ReduceMotion)
+	if p <= 0 {
+		return nil, 0
+	}
+	return m, p
+}
+
+func (t *mobileToolTimeline) observeTranscript(c *ui.Context, transcript []mobileclient.TranscriptRow, items []domain.Item, groups map[int]mobileclient.ToolGroup, toolsShowProgress bool, liveReasoning string, liveEmptyReasoning, canAnimate bool) {
+	now := c.Now()
+	reduce := c.Preferences().ReduceMotion
+	presentGroups := make(map[string]bool, len(groups))
+	var nextStandalone map[string]mobileStandaloneReasoning
+	for _, row := range transcript {
+		if row.Footer != "" {
+			continue
+		}
+		item := items[row.First]
+		group, ok := groups[row.First]
+		if !ok {
+			if domain.ReasoningSummary(item) {
+				if nextStandalone == nil {
+					nextStandalone = make(map[string]mobileStandaloneReasoning)
+				}
+				wasLive := liveEmptyReasoning && item.ID == liveReasoning
+				if prev, exists := t.standalone[item.ID]; exists {
+					prev.wasLive = wasLive
+					nextStandalone[item.ID] = prev
+				} else {
+					display := conversationui.ReasoningForDisplay(item)
+					label := display.Name
+					if label == "" {
+						label = "思考摘要"
+					}
+					if wasLive {
+						label = "正在思考"
+					}
+					hasBody := display.Text != "" || len(display.Parts) != 0 || len(display.Files) != 0 || display.Truncated
+					nextStandalone[item.ID] = mobileStandaloneReasoning{
+						itemID:  item.ID,
+						label:   label,
+						wasLive: wasLive,
+						hasBody: hasBody,
+					}
+				}
+			}
+			continue
+		}
+		presentGroups[group.Key] = true
+		if t.seenGroups != nil && !t.seenGroups[group.Key] && len(t.standalone) > 0 {
+			var origin mobileStandaloneReasoning
+			found := false
+			if domain.ReasoningSummary(item) {
+				origin, found = t.standalone[item.ID]
+			} else {
+				for k := row.First - 1; k >= 0 && items[k].TurnID == item.TurnID && domain.HistorySpacer(items[k]); k-- {
+					if domain.ReasoningSummary(items[k]) {
+						if prev, exists := t.standalone[items[k].ID]; exists {
+							origin, found = prev, true
+							break
+						}
+					}
+				}
+			}
+			if found {
+				if t.groupKeys == nil {
+					t.groupKeys = make(map[string]string)
+				}
+				t.groupKeys[group.Key] = origin.itemID
+				openIDs := make(map[string]bool)
+				if origin.wasOpen {
+					openIDs[origin.itemID] = true
+				}
+				for j := row.First; j < row.End; j++ {
+					if prev, exists := t.standalone[items[j].ID]; exists && prev.wasOpen {
+						openIDs[items[j].ID] = true
+					}
+				}
+				keepStatus := toolsShowProgress && group.Live && !origin.wasLive && (group.Open || origin.wasOpen)
+				if canAnimate && !reduce {
+					if t.morphs == nil {
+						t.morphs = make(map[string]*mobileToolGroupMorph)
+					}
+					t.morphs[group.Key] = &mobileToolGroupMorph{
+						origin:     origin,
+						started:    now,
+						duration:   mobileReasoningMorph,
+						wasOpen:    origin.wasOpen,
+						openIDs:    openIDs,
+						keepStatus: keepStatus,
+					}
+					c.AnimationFrame()
+				}
+			}
+		}
+	}
+	t.seenGroups = presentGroups
+	t.standalone = nextStandalone
+	for key := range t.groupKeys {
+		if !presentGroups[key] {
+			delete(t.groupKeys, key)
+		}
+	}
+	for key, morph := range t.morphs {
+		if !presentGroups[key] || morph.progress(now, reduce) <= 0 {
+			delete(t.morphs, key)
+		} else {
+			c.AnimationFrame()
+		}
+	}
 }
 
 func (t *mobileToolTimeline) Toggle(key string) {
@@ -94,12 +248,15 @@ func (m *mobileToolDisclosure) position(now time.Time) (float32, bool) {
 	return m.from + (m.to-m.from)*float32(elapsed)/float32(m.duration), true
 }
 
-func mobileToolReveal(c *ui.Context, header ui.Element, open, immediate bool) float32 {
+func mobileToolReveal(c *ui.Context, header ui.Element, open, immediate bool, initialFrom ...float32) float32 {
 	target := float32(0)
 	if open {
 		target = 1
 	}
 	motion := ui.Local(header, "tool-disclosure", func() mobileToolDisclosure {
+		if len(initialFrom) > 0 && !immediate && !c.Preferences().ReduceMotion && initialFrom[0] != target {
+			return mobileToolDisclosure{from: initialFrom[0], to: target, start: c.Now(), duration: mobileReasoningMorph}
+		}
 		return mobileToolDisclosure{to: target}
 	})
 	if immediate || c.Preferences().ReduceMotion {
@@ -147,18 +304,55 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 	}
 	live := observed && group.Live
 	inline := live && !group.Open
+	morph, morphP := timeline.activeMorph(c, group.Key)
+	originLive := morph != nil && morph.origin.wasLive
+	suppressInline := morph != nil && morph.keepStatus && group.Open
 	header := c.Key("disclosure")
 	font := mobileStatusFont(c, captionTextSize)
 	lineHeight := mobileStatusLineHeight(font)
 	button := transcriptDisclosure(mobileButton(header, title, nil)).
 		MinHeight(transcriptMetadataHeight).AlignItems(ui.Start).Expanded(group.Open)
-	progress := mobileToolReveal(c, button, group.Open, target != "")
-	showInline := live && progress < 1
+	var progress float32
+	if morph != nil && !morph.wasOpen && group.Open {
+		progress = mobileToolReveal(c, button, group.Open, target != "", 0)
+	} else if morph != nil && morph.wasOpen && !group.Open {
+		progress = mobileToolReveal(c, button, group.Open, target != "", 1)
+	} else {
+		progress = mobileToolReveal(c, button, group.Open, target != "")
+	}
+	showInline := live && progress < 1 && !suppressInline
+	closingMorph := morph != nil && morph.wasOpen && !group.Open
+	inlineWeight := float32(0)
+	if showInline {
+		inlineWeight = 1 - progress
+	}
+	inlineFactor := 1 - morphP
+	if closingMorph {
+		inlineFactor = 1
+	}
+	dotWeight := inlineWeight * inlineFactor
+	if originLive {
+		dotWeight += morphP
+	}
+	thinkingWeight := float32(0)
+	if morph != nil && !originLive {
+		thinkingWeight = morphP
+	}
+	terminalWeight := max(0, 1-dotWeight-thinkingWeight)
 	arrivals := ui.Local(button, "tool-call-arrivals", func() mobileToolCallArrivals { return nil })
+	if *arrivals == nil && morph != nil && morph.wasOpen && group.Open && len(morph.openIDs) > 0 {
+		*arrivals = make(mobileToolCallArrivals, len(morph.openIDs))
+		for id := range morph.openIDs {
+			(*arrivals)[id] = time.Time{}
+		}
+	}
 	arrivals.observe(c.Now(), tools, animateCalls && group.Open && progress == 1 && target == "")
 	sweepStart := *ui.Local(button, "tool-sweep-start", func() time.Time { return c.Now() })
 	if started != nil && !started.IsZero() {
 		sweepStart = *started
+	}
+	if originLive && !morph.origin.phase.IsZero() {
+		sweepStart = morph.origin.phase
 	}
 	value := outcome
 	if inline {
@@ -180,28 +374,50 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 		line := header.Key("line")
 		row := ui.Row(line).MinWidth(0).MinHeight(lineHeight).Shrink(1).AlignItems(ui.Baseline).Gap(mobileToolSummaryGap).PassThrough()
 		var sweep *mobileToolSweep
-		if showInline {
+		if dotWeight > 0 {
 			sweep = newMobileToolSweep(line, row, sweepStart)
+			if sweep != nil {
+				sweep.strength = dotWeight
+			}
 		}
 		row.Children(func() {
-			glyph := line.Key("group-glyph")
-			if showInline {
+			glyph := line.Key("glyph")
+			if dotWeight > 0 || thinkingWeight > 0 {
 				icon := ui.Row(glyph).Width(mobileToolGlyphSlot).Height(lineHeight).AlignItems(ui.Baseline)
 				icon.Children(func() {
-					mobileToolGlyph(glyph.Key("terminal"), toolTerminalSymbol, title, font).Opacity(progress)
-					mobileToolStatusDot(glyph.Key("live"), title, font, sweep).Absolute().Left(0).Top(0).Opacity(1 - progress)
+					mobileToolGlyph(glyph.Key("terminal"), toolTerminalSymbol, title, font).Opacity(terminalWeight)
+					if thinkingWeight > 0 {
+						transcriptSymbol(glyph.Key("summary"), infoSymbol, title, font, 14, p.secondary).Absolute().Left(0).Top(0).Opacity(thinkingWeight)
+					}
+					if dotWeight > 0 {
+						mobileToolStatusDot(glyph.Key("live"), title, font, sweep).Absolute().Left(0).Top(0).Opacity(dotWeight)
+					}
 				})
 			} else {
 				mobileToolGlyph(glyph, toolTerminalSymbol, title, font)
 			}
 			numeric := ui.ContentTransition{Numeric: true, Animation: &ui.Animation{Duration: mobileReplyFade}}
-			sweep.caption(line.Key("count"), title, numeric)
+			titleBox := ui.Column(line.Key("title-box")).MinWidth(0).Shrink(0)
+			if morphP > 0 && morph.origin.label != "" {
+				originW, _ := ui.ShapeText(morph.origin.label, font, 0).Size()
+				targetW, _ := ui.ShapeText(title, font, 0).Size()
+				titleBox.Width(originW + (targetW-originW)*(1-morphP)).Clip()
+			}
+			titleBox.Children(func() {
+				if morphP > 0 {
+					morphAnim := ui.Animation{Duration: mobileReasoningMorph, Ease: ui.EaseInOut}
+					sweep.caption(line.Key("title"), title, ui.ContentTransition{Animation: &morphAnim})
+				} else {
+					sweep.caption(line.Key("title"), title, numeric)
+				}
+			})
 			if outcome != "" {
 				sweep.caption(line.Key("outcome"), outcome, numeric)
 			}
-			if showInline {
+			inlineExtent := inlineWeight * inlineFactor
+			if inlineExtent > 0 {
 				phaseKey := line.Key("inline-phase")
-				if progress == 0 {
+				if inlineExtent >= 1 {
 					mobileToolPhase(phaseKey, phase, started, sweep)
 				} else {
 					width, _ := ui.ShapeText(phase, font, 0).Size()
@@ -212,11 +428,39 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 						width += clockWidth + mobileToolSummaryGap
 					}
 					ui.Row(phaseKey).Gap(mobileToolSummaryGap).AlignItems(ui.Baseline).
-						Width(width * (1 - progress)).MinWidth(0).Clip().Opacity(1 - progress).
+						Width(width * inlineExtent).MinWidth(0).Clip().Opacity(inlineExtent).
 						Children(func() { mobileToolPhase(phaseKey, phase, started, sweep) })
 				}
 			}
-			paintMobileToolChevron(line.Key("arrow"), title, font, -90*(1-progress), sweep)
+			chevronOpacity := float32(1)
+			if originLive && morphP > 0 {
+				chevronOpacity = max(0, min(1, (.75-morphP)/.75))
+			}
+			clockOpacity := float32(0)
+			if originLive && !showInline && morphP > 0 && morph.origin.started != nil && !morph.origin.started.IsZero() {
+				clockOpacity = max(0, (morphP-.45)/.55)
+			}
+			if clockOpacity > 0 {
+				trailing := ui.Row(line.Key("trailing-slot")).MinHeight(lineHeight).Shrink(0).AlignItems(ui.Baseline)
+				clockFont := font
+				clockFont.Features = "tnum"
+				clockWidth, _ := ui.ShapeText(mobileElapsed(c.Now().Sub(*morph.origin.started).Milliseconds()), clockFont, 0).Size()
+				trailing.MinWidth(clockWidth + mobileToolSummaryGap)
+				trailing.Children(func() {
+					ui.Row(line.Key("arrow-slot")).Opacity(chevronOpacity).Children(func() {
+						paintMobileToolChevron(line.Key("arrow"), title, font, -90*(1-progress), sweep)
+					})
+					clockKey := line.Key("elapsed")
+					slot := ui.Row(clockKey).Absolute().Left(0).Top(0).AlignItems(ui.Baseline).Opacity(clockOpacity)
+					slot.Children(func() { mobileClock(clockKey, *morph.origin.started, nil, font, sweep) })
+				})
+			} else if chevronOpacity < 1 {
+				ui.Row(line.Key("arrow-slot")).Opacity(chevronOpacity).Children(func() {
+					paintMobileToolChevron(line.Key("arrow"), title, font, -90*(1-progress), sweep)
+				})
+			} else {
+				paintMobileToolChevron(line.Key("arrow"), title, font, -90*(1-progress), sweep)
+			}
 		})
 	})
 	type previousToolProgress struct {
@@ -230,10 +474,14 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 	} else if group.Open || progress == 0 {
 		*trailing = previousToolProgress{}
 	}
+	keepTrailingOutside := trailing.active && morph != nil && morph.keepStatus && group.Open && progress < 1
 	if delta := toolResultPanel(c.Key("body"), group.Open, target != "", &progress, func(c *ui.Context) {
 		ui.Box(c.Key("heading-clearance")).Height(mobileToolRowGap - (transcriptMetadataHeight - 20)).Shrink(0)
 		for index, tool := range tools {
 			if domain.HistorySpacer(tool) {
+				continue
+			}
+			if closingMorph && !morph.openIDs[tool.ID] {
 				continue
 			}
 			row := c.Key(tool.ID)
@@ -242,6 +490,14 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 				// The measured row already moves the followed viewport.
 				list.FollowAnimation = nil
 				c.AnimationFrame()
+			}
+			leadMorphP := float32(0)
+			if morph != nil && morphP > 0 && morph.openIDs[tool.ID] {
+				if closingMorph {
+					leadMorphP = 1
+				} else {
+					leadMorphP = morphP
+				}
 			}
 			mobileToolCallLayout(row, entrance, func(call ui.Element) {
 				call.Padding(0, 0, mobileToolRowGap, 0)
@@ -260,7 +516,7 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 					call.Draw(func(painter *ui.Painter, bounds ui.Rect) {
 						bar := heading.LayoutBounds()
 						center := bar.Y + lineHeight/2
-						x := bounds.X + mobileToolTimelineInset + mobileToolGlyphSlot/2 - .5
+						x := bounds.X + mobileToolTimelineInset*(1-leadMorphP) + mobileToolGlyphSlot/2 - .5
 						if index > 0 && center > bounds.Y+9 {
 							painter.Fill(ui.Rect{X: x, Y: bounds.Y, W: 1, H: center - bounds.Y - 9}, p.line, 0)
 						}
@@ -272,7 +528,7 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 				call.Children(func() {
 					if domain.ReasoningSummary(tool) {
 						fresh := freshReasoning != nil && freshReasoning(tool.ID)
-						heading = mobileToolReasoning(row, session.ID, tool, font, mark, fresh)
+						heading = mobileToolReasoning(row, session.ID, tool, font, mark, fresh, leadMorphP)
 						return
 					}
 					body := timeline.bodies[tool.ID]
@@ -286,9 +542,13 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 		}
 		// Keep the outgoing status in the measured stack until the clip closes.
 		// Removing its height on click would move the bounded scroll anchor early.
-		if trailing.active {
+		if trailing.active && !keepTrailingOutside {
 			row := c.Key("progress")
-			status := ui.Row(row).MinHeight(lineHeight).AlignSelf(ui.Start).Gap(mobileToolSummaryGap).AlignItems(ui.Baseline).Opacity(progress)
+			statusOpacity := progress
+			if morph != nil && morph.keepStatus && group.Open {
+				statusOpacity = 1
+			}
+			status := ui.Row(row).MinHeight(lineHeight).AlignSelf(ui.Start).Gap(mobileToolSummaryGap).AlignItems(ui.Baseline).Opacity(statusOpacity)
 			sweep := newMobileToolSweep(row, status, sweepStart)
 			status.Children(func() {
 				mobileToolStatusDot(row, trailing.phase, font, sweep)
@@ -298,16 +558,36 @@ func (a *mobileApp) toolGroup(c *ui.Context, parent *mygo.Window, session domain
 	}, list.Bounds(c).H); delta != 0 && list != nil {
 		list.FollowAnimation = nil
 	}
+	if keepTrailingOutside {
+		row := c.Key("morph-progress")
+		status := ui.Row(row).MarginTop(transcriptItemGap).MinHeight(transcriptMetadataHeight).AlignSelf(ui.Start).Gap(mobileToolSummaryGap).AlignItems(ui.Baseline)
+		sweep := newMobileToolSweep(row, status, sweepStart)
+		status.Children(func() {
+			mobileToolStatusDot(row, trailing.phase, font, sweep)
+			mobileToolPhase(row, trailing.phase, trailing.started, sweep)
+		})
+	}
 }
 
-func mobileToolReasoning(c *ui.Context, sessionID string, item domain.Item, font ui.Font, mark *markdown.RangeDecoration, fresh bool) ui.Element {
+func mobileToolReasoning(c *ui.Context, sessionID string, item domain.Item, font ui.Font, mark *markdown.RangeDecoration, fresh bool, morphP ...float32) ui.Element {
 	body := conversationui.ReasoningSummaryText(item)
 	firstLine, _, _ := strings.Cut(body, "\n")
 	rs := ui.Local(c.Root(), "reasoning-state:"+sessionID+":"+item.ID, func() mobileReasoningState { return mobileReasoningState{} })
+	p := float32(0)
+	if len(morphP) > 0 {
+		p = morphP[0]
+	}
 	text := mobileReasoningStreamText(c.Key("reasoning"), &rs.stream, body, !item.Final, fresh, palette(c).secondary, font, mobileStatusLineHeight(font), mark).
 		FillWidth().MinWidth(0).MarginStart(mobileToolTextColumn)
+	if p > 0 {
+		const indentDelta = mobileToolTextColumn - (mobileToolGlyphSlot + 6)
+		text.Transform(ui.Translation(-indentDelta*p, 0))
+	}
 	if body != "" {
-		mobileToolGlyph(c.Key("timeline-icon"), toolThinkingSymbol, firstLine, font).Absolute().Left(mobileToolTimelineInset).Top(0)
+		glyph := mobileToolGlyph(c.Key("timeline-icon"), toolThinkingSymbol, firstLine, font).Absolute().Left(mobileToolTimelineInset).Top(0)
+		if p > 0 {
+			glyph.Opacity(max(0, (.55-p)/.55))
+		}
 	}
 	return text
 }

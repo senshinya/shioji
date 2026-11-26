@@ -6,9 +6,10 @@ import (
 	"shioji/internal/domain"
 )
 
-// ToolSpan is a consecutive run starting at a tool call (or continuing an
-// earlier unloaded tool group) and merging subsequent tool calls and public
-// summaries from one turn. Count includes calls outside the loaded window.
+// ToolSpan is a consecutive run of tool calls and contiguous public reasoning
+// summaries from one turn, including leading summaries immediately before the
+// first tool call (or continuing an unloaded tool group). Count includes calls
+// outside the loaded window.
 type ToolSpan struct {
 	ID         string
 	End        int
@@ -19,9 +20,7 @@ type ToolSpan struct {
 
 func ToolSpans(items []domain.Item, history *domain.HistoryWindow, spacer func(domain.Item) bool) map[int]ToolSpan {
 	var groups []domain.HistoryToolGroup
-	var windowFirst int64
 	if history != nil {
-		windowFirst = history.First
 		for _, hint := range history.Groups {
 			// An older worker can report one group across a loaded boundary.
 			// Its ID and total cannot describe the distinct visible groups.
@@ -36,7 +35,7 @@ func ToolSpans(items []domain.Item, history *domain.HistoryWindow, spacer func(d
 	var spans map[int]ToolSpan
 	for i := 0; i < len(items); {
 		first := items[i]
-		if spacer(first) || first.Kind != "tool" && (!domain.ReasoningSummary(first) || !continuesHistoryToolGroup(first, groups, windowFirst)) {
+		if spacer(first) || !domain.ToolGroupMember(first) {
 			i++
 			continue
 		}
@@ -75,7 +74,7 @@ func ToolSpans(items []domain.Item, history *domain.HistoryWindow, spacer func(d
 				}
 			}
 		}
-		if span.ID != "" {
+		if span.ID != "" && span.Count > 0 {
 			if spans == nil {
 				spans = make(map[int]ToolSpan)
 			}
@@ -84,16 +83,4 @@ func ToolSpans(items []domain.Item, history *domain.HistoryWindow, spacer func(d
 		i = span.End
 	}
 	return spans
-}
-
-func continuesHistoryToolGroup(item domain.Item, groups []domain.HistoryToolGroup, windowFirst int64) bool {
-	if item.Order <= 0 {
-		return false
-	}
-	for _, hint := range groups {
-		if hint.TurnID == item.TurnID && hint.First < item.Order && hint.Last >= item.Order && (windowFirst == 0 || hint.First < windowFirst) {
-			return true
-		}
-	}
-	return false
 }
