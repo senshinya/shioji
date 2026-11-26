@@ -144,21 +144,23 @@ func (v *View) activityHeading(c *n.Context, t *n.Theme, item domain.Item, key s
 	if label == "" {
 		label = "工具活动"
 	}
-	command := commandItem(item)
+	command := item.Presentation == "command"
 	titleText := label
 	if command {
 		titleText = commandPreview(label)
 	}
 	heading := c.Key("activity-heading")
 	var button n.Element
-	color := t.TextMuted
 	if hasBody {
 		button = n.ButtonBase(heading).Expanded(!v.Model.Collapsed[key])
-		color = textHoverColor(c, button, color)
 	} else {
 		button = n.Row(heading)
 	}
-	button.AlignSelf(n.Start).MinHeight(20).Justify(n.Start).Label(label)
+	color := textHoverColor(c, button, t.TextMuted)
+	button.AlignSelf(n.Start).MinHeight(20).Justify(n.Start)
+	if hasBody || command {
+		button.Label(label)
+	}
 	if command {
 		button.Tooltip(label).ContextMenu(commandCopyMenu(c, item.Name))
 	}

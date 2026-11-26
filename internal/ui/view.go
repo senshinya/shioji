@@ -1669,6 +1669,7 @@ func (v *View) item(c *n.Context, t *n.Theme, item domain.Item) {
 			v.activityItem(c, t, item)
 			return
 		}
+		item.Presentation = "command"
 		item = conversationui.ToolForDisplay(item)
 		n.Column(c).FillWidth().Children(func() {
 			key := v.commandOutputKey(item.ID, "")

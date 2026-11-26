@@ -70,16 +70,30 @@ func TestActivityTooltipOnlyWhenHeadingIsClipped(t *testing.T) {
 			})
 		}, 500, 300)
 		ui.Advance(time.Second)
-		want := 0
-		for _, text := range ui.Texts() {
-			if text == name {
-				want++
-			}
+		heading, ok := ui.Find(name)
+		if !ok || !ui.HasText("已完成") {
+			t.Fatal("tool heading or its status is missing", ui.Texts())
 		}
+		// Hover the first line of the static label. The center of a two-line
+		// label lies between the lines and need not hit the text itself.
+		ui.Move(heading.X+10, heading.Y+10)
+		ui.Advance(time.Second)
+		want := 1
 		if long {
 			want++
 		}
-		if got := hoverTextCount(t, ui, name, name); got != want {
+		got := 0
+		for _, text := range ui.Texts() {
+			if text == name {
+				got++
+			}
+		}
+		if long {
+			saveNativeSkillImage(t, ui, "activity-tooltip-clipped.png")
+		} else {
+			saveNativeSkillImage(t, ui, "activity-tooltip-short.png")
+		}
+		if got != want {
 			t.Fatal("activity tooltip does not follow two-line clipping", long, got, ui.Texts())
 		}
 	}

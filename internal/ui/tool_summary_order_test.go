@@ -83,10 +83,9 @@ func TestCommandDisclosureCueRequiresExpandableOutput(t *testing.T) {
 				if !found {
 					t.Fatal("command heading missing")
 				}
-				font := n.Font{Family: "Menlo", Size: 11}
+				font := n.Font{Family: v.Model.Preferences.InterfaceFont, Size: transcriptCaptionSize}
 				prefix := float32(0)
 				if child {
-					font = n.Font{Family: v.Model.Preferences.InterfaceFont, Size: 11}
 					prefix = 22 // command icon and its gap
 				}
 				width, _ := n.ShapeText(item.Name, font, 0).Size()

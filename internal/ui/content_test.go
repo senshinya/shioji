@@ -593,6 +593,7 @@ func TestCommandAndToolDisclosureShareTheSameHeadingGeometry(t *testing.T) {
 		{ID: "mcp", Kind: "tool", Presentation: "mcp", Name: "Read report", Text: "result", Final: true},
 		{ID: "command", Kind: "tool", Presentation: "command", Name: "Read report", Text: "result", Final: true,
 			Parts: []domain.ContentPart{{Kind: "text", Label: "工作目录", Text: "/legacy/workspace"}}},
+		{ID: "historical", Kind: "tool", Name: "Read report", Text: "result", Final: true},
 	} {
 		v := New(layoutModel(), nil, "")
 		v.Model.Collapsed[v.commandOutputKey(item.ID, "")] = true
