@@ -1,11 +1,11 @@
 {
   "name": "Shioji",
   "identifier": "ai.shioji.mobile",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "icon": "../../packaging/assets/Shioji-iOS.png",
   "out": "../../build/mobile",
   "ios": {
-    "buildNumber": "47",
+    "buildNumber": "48",
     "minimumSystemVersion": "17.0",
     "infoPlist": {
       "NSLocalNetworkUsageDescription": "连接你选择的 Shioji 执行设备。"

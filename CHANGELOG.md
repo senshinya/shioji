@@ -5,6 +5,21 @@
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-11-26
+
+[源码](https://github.com/senshinya/shioji/tree/v0.10.3) · [与上一正式版 v0.10.2 比较](https://github.com/senshinya/shioji/compare/v0.10.2...v0.10.3)
+
+### Added
+
+- 自定义 Anthropic API Profile 根据 Claude Code 运行环境提供只读、默认权限、自动批准和 YOLO 等可用选项，并为支持的模型提供思考力度与 Fast Mode。
+
+### Fixed
+
+- 修复 Claude Code 流式正文、思考摘要和工具调用的显示，避免同条回复中的内容块相互覆盖。
+- 修复长会话分页时相邻工具组串组的问题，并兼容旧版 Claude Code 和 Antigravity 历史中的思考摘要。
+
+GitHub Release 分发适用于 Apple Silicon 的 macOS 安装包。已安装支持自动更新的正式版可在 Shioji 菜单或「设置 → 关于」检查更新。Claude Code 运行和会话历史修复需要更新所属设备的执行服务。本版沿用协议 2.63 和数据库 schema 17。
+
 ## [0.10.2] - 2026-11-26
 
 [源码](https://github.com/senshinya/shioji/tree/v0.10.2) · [与上一正式版 v0.10.1 比较](https://github.com/senshinya/shioji/compare/v0.10.1...v0.10.2)
